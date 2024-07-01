@@ -4,6 +4,7 @@ package pam
 #cgo CFLAGS: -I.
 #cgo LDFLAGS: -lpam -fPIC
 
+#include <stdlib.h>
 #include <security/pam_appl.h>
 #include <security/pam_modules.h>
 #include <security/pam_ext.h>
@@ -13,16 +14,16 @@ import (
 	"unsafe"
 )
 
-func (this *Handle) GetUser(prompt string) (string, *Error) {
+func (this *Handle) GetUser(prompt string) (string, error) {
 	var cUser *C.char
 
 	var getResult Result
 	if len(prompt) > 0 {
 		cPrompt := C.CString(prompt)
 		defer C.free(unsafe.Pointer(cPrompt))
-		getResult = Result(C.pam_get_user(this.native, cUser, cPrompt))
+		getResult = Result(C.pam_get_user(this.native, &cUser, cPrompt))
 	} else {
-		getResult = Result(C.pam_get_user(this.native, cUser, nil))
+		getResult = Result(C.pam_get_user(this.native, &cUser, nil))
 	}
 
 	if !getResult.IsSuccess() {

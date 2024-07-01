@@ -27,14 +27,13 @@ type executionContext struct {
 }
 
 func pamSmAuthenticate(ph *pam.Handle, flags pam.Flags, args ...string) pam.Result {
-	eCtx, pamErr := resolveExecutionContext(ph, flags, args...)
-	if pamErr != nil {
+	eCtx, err := resolveExecutionContext(ph, flags, args...)
+	if pamErr := pam.ForceAsError(err); pamErr != nil {
 		pamErr.Result.Syslogf(ph, "%v", pamErr)
 		return pamErr.Result
 	}
 
-	err := authFlow(ph, eCtx)
-	if pe := errors.ForceAs(err); pe != nil {
+	if pe := errors.ForceAs(authFlow(ph, eCtx)); pe != nil {
 		pe.Syslog(ph)
 		return pe.ResultCause
 	}
@@ -46,7 +45,7 @@ func pamSmSetcred(_ *pam.Handle, _ pam.Flags, _ ...string) pam.Result {
 	return pam.ResultIgnore
 }
 
-func resolveExecutionContext(ph *pam.Handle, _ pam.Flags, args ...string) (*executionContext, *pam.Error) {
+func resolveExecutionContext(ph *pam.Handle, _ pam.Flags, args ...string) (*executionContext, error) {
 	var ctx executionContext
 
 	if err := ctx.configuration.ParseArgs(args); err != nil {
@@ -80,9 +79,9 @@ func authFlow(ph *pam.Handle, eCtx *executionContext) error {
 	}
 
 	if v := dar.VerificationURIComplete; v != "" {
-		ph.Infof("Open %s in your browser and approve the login request. Waiting for approval...", v)
+		ph.UncheckedInfof("Open %s in your browser and approve the login request. Waiting for approval...", v)
 	} else {
-		ph.Infof("Open %s in your browser and enter the code %s. Waiting for approval...", dar.VerificationURI, dar.UserCode)
+		ph.UncheckedInfof("Open %s in your browser and enter the code %s. Waiting for approval...", dar.VerificationURI, dar.UserCode)
 	}
 
 	token, err := oidcCl.RetrieveDeviceAuthToken(ctx, dar)

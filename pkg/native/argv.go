@@ -8,11 +8,12 @@ char* argv_i(char **argv, int i) {
 }
 */
 import "C"
+import "unsafe"
 
-func ParseCArgv(argc C.int, argv **C.char) []string {
-	args := make([]string, int(argc))
-	for i := 0; i < int(argc); i++ {
-		args[i] = C.GoString(C.argv_i(argv, C.int(i)))
+func ParseCArgv(argc int, argv unsafe.Pointer) []string {
+	args := make([]string, argc)
+	for i := 0; i < argc; i++ {
+		args[i] = C.GoString(C.argv_i((**C.char)(argv), C.int(i)))
 	}
 	return args
 }

@@ -1,6 +1,9 @@
 package pam
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 type Error struct {
 	Result    Result
@@ -18,6 +21,27 @@ func (this *Error) Error() string {
 
 func (this *Error) Unwrap() error {
 	return this.Cause
+}
+
+func AsError(err error) *Error {
+	var pe *Error
+	if errors.As(err, &pe) {
+		return pe
+	}
+	return nil
+}
+
+func ForceAsError(err error) *Error {
+	pe := AsError(err)
+	if err != nil && pe == nil {
+		pe = &Error{
+			Result:    ResultSystemErr,
+			CauseType: ErrorCauseTypeSystem,
+			Message:   err.Error(),
+			Cause:     err,
+		}
+	}
+	return pe
 }
 
 type ErrorCauseType uint8
