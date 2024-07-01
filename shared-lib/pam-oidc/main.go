@@ -12,6 +12,7 @@ import (
 	"github.com/engity/pam-oidc/pkg/core"
 	"github.com/engity/pam-oidc/pkg/errors"
 	"github.com/engity/pam-oidc/pkg/oidc"
+	"github.com/engity/pam-oidc/pkg/user"
 	"log/syslog"
 	"strings"
 
@@ -52,14 +53,14 @@ func resolveExecutionContext(ph *pam.Handle, _ pam.Flags, args ...string) (*exec
 		return nil, pam.ResultSystemErr.Errorf(pam.ErrorCauseTypeConfiguration, "failed to parse config: %v", err)
 	}
 
-	user, err := ph.GetUser("")
+	u, err := ph.GetUser("")
 	if err != nil {
 		return nil, err
 	}
-	if len(user) == 0 {
+	if len(u) == 0 {
 		return nil, pam.ResultUserUnknown.Errorf(pam.ErrorCauseTypeUser, "empty user")
 	}
-	ctx.user = user
+	ctx.user = u
 
 	return &ctx, nil
 }
@@ -115,6 +116,34 @@ func authFlow(ph *pam.Handle, eCtx *executionContext) error {
 	_ = userInfoEncoder.Encode(userInfo)
 
 	ph.Syslogf(syslog.LOG_INFO, "Token: %s \n\n IdToken: %s \n\n UserInfo: %s", bufToken.String(), bufIdToken.String(), bufUserInfo.String())
+
+	toUser := "foo"
+
+	if err := ph.SetUser(toUser); err != nil {
+		ph.Syslogf(syslog.LOG_ERR, "cannot set user to %q: %v", toUser, err)
+	}
+
+	u, err := user.Lookup(toUser)
+	if err != nil {
+		ph.Syslogf(syslog.LOG_ERR, "cannot lookup user %q: %v", toUser, err)
+	}
+	if u != nil {
+		ph.Syslogf(syslog.LOG_INFO, "user: %+v", u)
+		g, err := u.GetGroup()
+		if err != nil {
+			ph.Syslogf(syslog.LOG_ERR, "cannot get group of %v: %v", u, err)
+		} else {
+			ph.Syslogf(syslog.LOG_INFO, "user's group: %+v", g)
+		}
+		gs, err := u.GetGroups()
+		if err != nil {
+			ph.Syslogf(syslog.LOG_ERR, "cannot get groups of %v: %v", u, err)
+		} else {
+			for i, g := range gs {
+				ph.Syslogf(syslog.LOG_INFO, "user's group #%d: %+v", i, g)
+			}
+		}
+	}
 
 	return nil
 }
