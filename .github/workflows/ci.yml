@@ -1,0 +1,65 @@
+name: Continuous Integration
+
+on:
+  push:
+
+  pull_request:
+    types:
+      - opened
+      - reopened
+
+jobs:
+  test:
+    name: Tests
+    strategy:
+      matrix:
+        os: [ ubuntu-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Install Ubuntu dependencies
+        run: sudo apt install libpam0g-dev
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install goveralls
+        run: go install github.com/mattn/goveralls@latest
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@v0.15.9
+
+      - name: Test
+        run: |
+          mkdir -p var
+          go test -v -covermode atomic "-coverprofile=var/profile.cov" ./...
+
+      - name: GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: build --snapshot --clean
+        env:
+          BIFROEST_VENDOR: engity
+
+      - name: Send coverage
+        if: false
+        env:
+          COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          goveralls "-coverprofile=profile.cov" "-service=github" "-parallel" "-flagname=go-${{ matrix.os }}"

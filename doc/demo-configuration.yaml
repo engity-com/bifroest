@@ -1,0 +1,378 @@
+## This is a configuration to use with Engity's Bifröst to show how to configure it the right way.
+##
+## If the values are marked with "@default" this means you're not required to write them into the final
+## configuration if you want to use them as it is. They are just written here for better visualization.
+
+ssh:
+    ## Where to bind the service to.
+    ## @default
+    ## @[]address - syntax: [<host>]:<port>
+    addresses: [ ":22" ]
+
+    keys:
+        ## Where to store the host keys at. If they do not exist, they will be created as Ed25519 key.
+        ## @default
+        ## @[]path
+        hostKeys: [ /etc/engity/bifroest/key ]
+
+        ## Restrict which RSA keys are allowed to be used.
+        ## @default
+        ## @enum[none, all, at-least-1024-bits, at-least-2048-bits, at-least-3072-bits, at-least-4096-bits]
+        rsaRestriction: at-least-4096-bits
+
+        ## Restrict which DSA keys are allowed to be used.
+        ## @default
+        ## @enum[none, all, at-least-1024-bits, at-least-2048-bits, at-least-3072-bits]
+        dsaRestriction: none
+
+        ## Restrict which ECDSA keys are allowed to be used.
+        ## @default
+        ## @enum[none, all, at-least-256-bits, at-least-384-bits, at-least-521-bits]
+        ecdsaRestriction: at-least-384-bits
+
+        ## Restrict which ECDSA keys are allowed to be used.
+        ## @default
+        ## @enum[none, all, at-least-256-bits]
+        ed25519Restriction: all
+
+        ## Banner which will be shown if the connection was based on an authentication method (like OIDC) which
+        ## does not have its own public key authentication. At this point the authentication was successful AND
+        ## the client submitted at least one public key (as authentication try). This key will be used and this
+        ## message will be shown to the client to inform, that this key will be used for the session from now on.
+        ## As a result the original authentication will be skipped (like OIDC) as long it is not expired and the
+        ## client presents the same public key.
+        ## @default
+        ## @template{context: {session: Session, key: PublicKey, new: bool}}
+        rememberMeNotification: "If you return until {{.session.validUntil | format `dateTimeT`}} with the same public key ({{.key | fingerprint}}), you can seamlessly login again.\n\n"
+
+    ## For how long a connection can be idle before it will forcibly be closed.
+    ## The client can send keep alive packages to extend the idle time.
+    ## @default
+    ## @duration
+    idleTimeout: 10m
+
+    ## The maximum duration a connection can be connected before it will be forcibly be closed,
+    ## regardless if there are actions or not.
+    ## @default
+    ## @duration
+    maxTimeout: 0
+
+    ## How much different authentication methods a client can use before the connection will be
+    ## rejected.
+    ## @default
+    ## @uint
+    maxAuthTries: 6
+
+    ## The maximum amount of parallel connections on this service. Each new connecting connection
+    ## will be rejected.
+    ## @default
+    ## @uint
+    maxConnections: 255
+
+    ## Banner which will be shown if the client connects to the server before the first
+    ## even the validation of authorizations or similar happens.
+    ## @default
+    ## @template{context: {}}
+    banner: "{{`/etc/ssh/sshd-banner` | file `optional` | default `Transcend with Engity's Bifröst\n\n` }}"
+
+session:
+    ## Defines which session type should be used.
+    ## @enum[fs]
+    type: fs
+
+    ###################################################
+    ## type: fs
+    ###################################################
+
+    ## For how long a session can be idle before it will forcibly be closed and will be
+    ## disposed and can therefore not be used again. This can extend by actions of the
+    ## client (regular interactions or keep alive) across all of client's connections.
+    ## @default
+    ## @duration
+    idleTimeout: 30m
+
+    ## The maximum duration of a session before it will be forcibly be closed and be disposed
+    ## regardless if there are actions or not.
+    ## @default
+    ## @duration
+    maxTimeout: 0
+
+    ## The maximum amount of parallel connections of one session. Each new connecting connection
+    ## will be instantly closed.
+    ## @default
+    ## @uint
+    maxConnections: 10
+
+    ## Where the session information are stored, locally.
+    ## @default
+    ## @path
+    storage: /var/lib/engity/bifroest/sessions
+
+    ## All files/directories inside the session storage will be stored with this mode.
+    ## @default
+    ## @fileMode - octal representation
+    fileMode: 600
+
+## Flows can hold one or more flows.
+## The order is important: The flow which is accepted and the authorization is successful,
+## will be used; otherwise the next will be tried.
+flows:
+    - ## Authorize using an OpenID Connect provider and connect them to the local environment. Potentially also
+        ## create the user locally if they do not exist and delete them automatically if their session disposes.
+
+        ## The name of the flow. Will be used anywhere to identify and store information about it.
+        ## @flowName - syntax: [a-z][a-z0-9]+
+        name: sso
+
+        requirement:
+            ## Defines what the requesting (<requesting-name>@<host>) should match. If empty everything will be
+            ## included. Important keep ^ and $ to ensure a full match, otherwise it matches only a part of it.
+            ## @regex
+            includedRequestingName: ^sso$
+
+            ## Defines what the requesting (<requesting-name>@<host>) should NOT match. If empty everything will
+            ## still be included. Important keep ^ and $ to ensure a full match, otherwise it matches only a
+            ## part of it.
+            ## @default
+            ## @regex
+            excludedRequestingName: ""
+
+        authorization:
+            ## In this example oidcDeviceAuth will be used. See the documentation of your OpenID Connect identity
+            ## provider for more details.
+            type: oidcDeviceAuth
+            ## @string
+            issuer: https://login.microsoftonline.com/my-great-tenant-uuid/v2.0
+            ## @string
+            clientId: my-great-client-uuid
+            ## @string
+            clientSecret: very-secret-secret
+            ## @[]string
+            scopes:
+                - openid
+                - email
+                - profile
+
+            ## If enabled also the ID Token will be retrieved and available as port of the authentication.
+            ## See: https://openid.net/specs/openid-connect-core-1_0.html#IDToken
+            ## @default
+            ## @bool
+            retrieveIdToken: true
+
+            ## If enabled also the UserInfo will be retrieved and available as port of the authentication.
+            ## See: https://openid.net/specs/openid-connect-core-1_0.html#UserInfo
+            ## @default
+            ## @bool
+            retrieveUserInfo: false
+
+        environment:
+            ## In this example we'll use the local environment.
+            type: local
+
+            ## Will create the user if it does not exist to match the provided requirements (see below).
+            ## If this property is false the user has to exist, otherwise the execution will fail and
+            ## the connection will be closed instantly.
+            ## @bool
+            createIfAbsent: true
+
+            ## If an existing user does not match the provided requirements (see below) and this property
+            ## is true, this user will be adjusted to match the requirements.
+            ## @bool
+            updateIfDifferent: true
+
+            ## The username of the user that should be taken. If no user with this name does exist, it will be
+            ## created.
+            ## @template{context{authentication{token{..},idToken{..},userInfo{..}}}} -> username
+            name: "{{.authorization.idToken.email}}"
+
+            ## The display name the user should have.
+            ## @template{context{authentication{token{..},idToken{..},userInfo{..}}}} -> string
+            displayName: "{{.authorization.idToken.name}}"
+
+            ## It is also possible to define the UID. But in dynamic environment it does not make a lot of sense.
+            ## @default
+            ## @template{context{authentication{token{..},idToken{..},userInfo{..}}}} -> uint
+            #uid: ""
+
+            ## The group the user should get. If not set, a group matching the user's name will be created.
+            #group:
+            #   ## The group name.
+            #   ## @default
+            #   ## @template{context{authentication{token{..},idToken{..},userInfo{..}}}} -> groupname
+            #   #name: ""
+            #
+            #   ## It is also possible to define the GID. But in dynamic environment it does not make a lot of sense.
+            #   ## @default
+            #   ## @template{context{authentication{token{..},idToken{..},userInfo{..}}}} -> uint
+            #   #gid: ""
+
+            ## All other groups, that should the user have.
+            groups:
+                - ## OIDC
+                    ## The group name.
+                    ## @template{context{authentication{token{..},idToken{..},userInfo{..}}}} -> groupname
+                    name: oidc
+
+                    ## It is also possible to define the GID. But in dynamic environment it does not make a lot of
+                    ## sense.
+                    ## @default
+                    ## @template{context{authentication{token{..},idToken{..},userInfo{..}}}} -> uint
+                    #gid: ""
+
+            ## Shell that should be used by the user.
+            ## @template{context{authentication{token{..},idToken{..},userInfo{..}}}} -> path
+            shell: "/bin/bash"
+
+            ## Home directory where the user should be created. If not provided it will be always "/home/<username>".
+            ## @default
+            ## @template{context{authentication{token{..},idToken{..},userInfo{..}}}} -> path
+            #homeDir: ""
+
+            ## Template directory where to create the user's home directory. Defaults to "/etc/skel".
+            ## @default
+            ## @template{context{authentication{token{..},idToken{..},userInfo{..}}}} -> path
+            #skel: ""
+
+            ## Has to be true (after being evaluated) that the user is allowed to use this environment. This is by
+            ## default always true.
+            ## @template{context{authentication{token{..},idToken{..},userInfo{..}}}} -> bool
+            loginAllowed: |
+            {{ and
+              (.authorization.idToken.groups | has "my-great-group-uuid")
+              (.authorization.idToken.tid    | eq  "my-great-tenant-uuid")
+            }}
+
+            dispose:
+                ## Tell the environment to delete this user afterward, if it's corresponding session will be disposed.
+                ## @default
+                ## @template{context{authentication{token{..},idToken{..},userInfo{..}}}} -> bool
+                deleteManagedUser: true
+
+                ## Do also delete the user's home directory in this case.
+                ## @default
+                ## @template{context{authentication{token{..},idToken{..},userInfo{..}}}} -> bool
+                deleteManagedUserHomeDir: true
+
+                ## ... and kill all eventually running processes.
+                ## @default
+                ## @template{context{authentication{token{..},idToken{..},userInfo{..}}}} -> bool
+                killManagedUserProcesses: true
+
+            ## Banner which will be shown to the user upon successfully start of its environment.
+            ## @default
+            ## @template{context{authentication{token{..},idToken{..},userInfo{..}}}} -> string
+            banner: ""
+
+            ## Defines if the user is also allowed to do port forwarding in this environment or not.
+            ## @default
+            ## @template{context{authentication{token{..},idToken{..},userInfo{..}}}} -> bool
+            portForwardingAllowed: true
+
+    - ## Authorize using the local users and their public keys (if possible) and connect them to the local environment.
+
+        name: local
+
+        requirement:
+            ## Defines what the requesting (<requesting-name>@<host>) should match. If empty everything will be
+            ## included. Important keep ^ and $ to ensure a full match, otherwise it matches only a part of it.
+            ## @default
+            ## @regex
+            includedRequestingName: ""
+
+            ## Defines what the requesting (<requesting-name>@<host>) should NOT match. If empty everything will
+            ## still be included. Important keep ^ and $ to ensure a full match, otherwise it matches only a
+            ## part of it.
+            ## @default
+            ## @regex
+            excludedRequestingName: ""
+
+        authorization:
+            type: local
+
+            ## Defines which pam service to be used to validate the password (and more). If empty /etc/shadow will be
+            ## used directly.
+            ## @default
+            ## @string
+            pamService: ""
+
+            password:
+                ## If enabled the user can authenticate itself via password (if available). If false it is always
+                ## rejected.
+                ## @default
+                ## @template{context{remoteName}} -> bool
+                allowed: true
+
+                ## Enables also interactive way of query the password.
+                ## @default
+                ## @template{context{remoteName}} -> bool
+                interactiveAllowed: true
+
+                ## If true also empty password are allowed. Be aware: This is highly dangerous!
+                ## @default
+                ## @template{context{remoteName}} -> bool
+                emptyAllowed: false
+
+        environment:
+            ## In this example we'll use the local environment.
+            type: local
+
+            ## As createIfAbsent and updateIfDifferent both are false by default as a consequence the user always
+            ## has to exist to be able to use this environment. As the authorization is based on a local user, this
+            ## makes fully sense in this example.
+            #createIfAbsent: false
+            #updateIfDifferent: false
+
+            ## The username of the user that should be taken. In this example the user has to exist.
+            ## @template{context{authentication{user{name,uid,group,..}}}} -> username
+            name: "{{.authorization.user.name}}"
+
+            ## Has to be true (after being evaluated) that the user is allowed to use this environment. This is by
+            ## default always true.
+            ## @template{context{authentication{user{name,uid,group,..}}}} -> bool
+            loginAllowed: |
+            {{ or
+              (.authorization.user.group.name | eq "ssh" )
+              (.authorization.user.groups     | firstMatching `{{.name | eq "ssh"}}`)
+            }}
+
+            dispose: {}
+                ## These properties have no affect, as this user is never managed (authorization: type=local) in this
+                ## case, although they are all true.
+                #deleteManagedUser: true
+                #deleteManagedUserHomeDir: true
+                #killManagedUserProcesses: true
+
+            ## Banner which will be shown to the user upon successfully start of its environment.
+            ## @default
+            ## @template{context{authentication{user{name,uid,group,..}}}} -> string
+            banner: ""
+
+            ## Defines if the user is also allowed to do port forwarding in this environment or not.
+            ## @default
+            ## @template{context{authentication{user{name,uid,group,..}}}} -> bool
+            portForwardingAllowed: true
+
+## The housekeeping is running in the background asynchronously and continuously. It does free up resources like
+## dispose sessions, environments and authorizations.
+housekeeping:
+    ## How often the housekeeping should run.
+    ## @default
+    ## @duration
+    every: 10m
+
+    ## How long should be waited upon start of the application before the first run. If 0 it is also blocking,
+    ## before even the first connection will be accepted.
+    ## @default
+    ## @duration
+    initialDelay: 0
+
+    ## If true the service will try to repair maybe corrupt/broken states by itself, if safe possible.
+    ## @default
+    ## @bool
+    autoRepair: true
+
+    ## For how long a disposed session will be kept. The session will no longer be usable, but it might be
+    ## helpful for audit reasons.
+    ## @default
+    ## @duration
+    keepExpiredFor: 336h # 14 days
