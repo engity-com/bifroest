@@ -129,19 +129,9 @@ func authFlow(ph *pam.Handle, eCtx *executionContext) error {
 	}
 	if u != nil {
 		ph.Syslogf(syslog.LOG_INFO, "user: %+v", u)
-		g, err := u.GetGroup()
-		if err != nil {
-			ph.Syslogf(syslog.LOG_ERR, "cannot get group of %v: %v", u, err)
-		} else {
-			ph.Syslogf(syslog.LOG_INFO, "user's group: %+v", g)
-		}
-		gs, err := u.GetGroups()
-		if err != nil {
-			ph.Syslogf(syslog.LOG_ERR, "cannot get groups of %v: %v", u, err)
-		} else {
-			for i, g := range gs {
-				ph.Syslogf(syslog.LOG_INFO, "user's group #%d: %+v", i, g)
-			}
+		ph.Syslogf(syslog.LOG_INFO, "user's group: %+v", u.Group)
+		for i, g := range u.Groups {
+			ph.Syslogf(syslog.LOG_INFO, "user's group #%d: %+v", i, g)
 		}
 	}
 

@@ -15,8 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coreos/go-oidc/v3/oidc"
-
 	"github.com/engity/pam-oidc/pkg/errors"
 )
 
@@ -34,53 +32,46 @@ const (
 )
 
 func NewConfiguration() (*Configuration, error) {
+	o, err := NewConfigurationOidc()
+	if err != nil {
+		return nil, err
+	}
+	u, err := NewConfigurationUser()
+	if err != nil {
+		return nil, err
+	}
 	return &Configuration{
+		Oidc:    *o,
+		User:    *u,
 		Timeout: time.Minute * 10,
-		Scopes:  []string{oidc.ScopeOpenID, "profile", "email"},
 	}, nil
 }
 
 type Configuration struct {
-	// Issuer is the OpenID Connect issuer
-	Issuer       string
-	ClientId     string
-	ClientSecret string
-	Timeout      time.Duration
-	Scopes       []string
+	Oidc ConfigurationOidc `yaml:"oidc,omitempty"`
+	User ConfigurationUser `yaml:"user,omitempty"`
 
-	// UserTemplate is a template that, when rendered with the JWT claims, should
-	// match the user being authenticated.
-	UserTemplate string
-	// GroupsClaimKey is the name of the key within the token claims that
-	// specifies which groups a user is a member of.
-	GroupsClaimKey string
-	// AuthorizedGroups is a list of groups required for authentication to pass.
-	// A user must be a member of at least one of the groups in the list, if
-	// specified.
-	AuthorizedGroups []string
-	// RequireACRs is a list of required ACRs required for authentication to pass.
-	// one of the acr values must be present in the claims.
-	RequireACRs []string
+	Timeout time.Duration `yaml:"timeout,omitempty"`
 }
 
-func (this Configuration) GetIssuer() string {
-	return strings.Clone(this.Issuer)
+func (this Configuration) GetOidcIssuer() string {
+	return strings.Clone(this.Oidc.Issuer)
 }
 
-func (this Configuration) GetClientId() string {
-	return strings.Clone(this.ClientId)
+func (this Configuration) GetOidcClientId() string {
+	return strings.Clone(this.Oidc.ClientId)
 }
 
-func (this Configuration) GetClientSecret() string {
-	return strings.Clone(this.ClientSecret)
+func (this Configuration) GetOidcClientSecret() string {
+	return strings.Clone(this.Oidc.ClientSecret)
 }
 
 func (this Configuration) GetTimeout() time.Duration {
 	return this.Timeout
 }
 
-func (this Configuration) GetScopes() []string {
-	return slices.Clone(this.Scopes)
+func (this Configuration) GetOidcScopes() []string {
+	return slices.Clone(this.Oidc.Scopes)
 }
 
 func (this Configuration) NewContext() (context.Context, context.CancelFunc) {

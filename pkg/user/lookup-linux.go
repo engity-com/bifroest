@@ -72,16 +72,7 @@ func Lookup(username string) (*User, error) {
 		return nil, nil
 	}
 
-	result := User{
-		Uid:         uint64(_C_pw_uid(pwd)),
-		Gid:         uint64(_C_pw_gid(pwd)),
-		Name:        _C_GoString(_C_pw_name(pwd)),
-		DisplayName: _C_GoString(_C_pw_gecos(pwd)),
-		Shell:       _C_GoString(_C_pw_shell(pwd)),
-		HomeDir:     _C_GoString(_C_pw_dir(pwd)),
-	}
-
-	return &result, nil
+	return buildUser(pwd)
 }
 
 func LookupUid(uid uint64) (*User, error) {
@@ -101,13 +92,33 @@ func LookupUid(uid uint64) (*User, error) {
 		return nil, nil
 	}
 
+	return buildUser(&pwd)
+}
+
+func buildUser(pwd *_C_struct_passwd) (*User, error) {
+	name := _C_GoString(_C_pw_name(pwd))
+	uid := uint64(_C_pw_uid(pwd))
+	gid := uint64(_C_pw_gid(pwd))
+	group, err := LookupGid(gid)
+	if err != nil {
+		return nil, fmt.Errorf("cannot lookup group of user %d(%s): %w", uid, name, err)
+	}
+	if group == nil {
+		return nil, fmt.Errorf("group %d referenced at user %d(%s) does not exist", gid, uid, name)
+	}
+	groups, err := lookupGroupsOf(name, gid)
+	if err != nil {
+		return nil, fmt.Errorf("cannot lookup groups of user %d(%s): %w", uid, name, err)
+	}
+
 	return &User{
-		Uid:         uint64(_C_pw_uid(&pwd)),
-		Gid:         uint64(_C_pw_gid(&pwd)),
-		Name:        _C_GoString(_C_pw_name(&pwd)),
-		DisplayName: _C_GoString(_C_pw_gecos(&pwd)),
-		Shell:       _C_GoString(_C_pw_shell(&pwd)),
-		HomeDir:     _C_GoString(_C_pw_dir(&pwd)),
+		Uid:         uid,
+		Group:       *group,
+		Groups:      groups,
+		Name:        _C_GoString(_C_pw_name(pwd)),
+		DisplayName: _C_GoString(_C_pw_gecos(pwd)),
+		Shell:       _C_GoString(_C_pw_shell(pwd)),
+		HomeDir:     _C_GoString(_C_pw_dir(pwd)),
 	}, nil
 }
 
@@ -134,10 +145,10 @@ func getStructPasswd(username string) (*_C_struct_passwd, error) {
 
 const maxGroups = 2048
 
-func (this *User) GetGids() ([]uint64, error) {
-	userGID := _C_gid_t(this.Gid)
-	loginC := make([]byte, len(this.Name)+1)
-	copy(loginC, this.Name)
+func lookupGids(name string, gid uint64) ([]uint64, error) {
+	userGID := _C_gid_t(gid)
+	loginC := make([]byte, len(name)+1)
+	copy(loginC, name)
 
 	n := _C_int(256)
 	gidsC := make([]_C_gid_t, n)
@@ -145,7 +156,7 @@ func (this *User) GetGids() ([]uint64, error) {
 	if rv == -1 {
 		// Mac is the only Unix that does not set n properly when rv == -1, so
 		// we need to use different logic for Mac vs. the other OS's.
-		if err := groupRetry(this.Name, loginC, userGID, &gidsC, &n); err != nil {
+		if err := groupRetry(name, loginC, userGID, &gidsC, &n); err != nil {
 			return nil, err
 		}
 	}

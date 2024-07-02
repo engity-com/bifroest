@@ -1,8 +1,8 @@
 package oidc
 
 type Configuration interface {
-	GetIssuer() string
-	GetClientId() string
-	GetClientSecret() string
-	GetScopes() []string
+	GetOidcIssuer() string
+	GetOidcClientId() string
+	GetOidcClientSecret() string
+	GetOidcScopes() []string
 }

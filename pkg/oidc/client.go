@@ -27,21 +27,21 @@ func NewClient(ctx context.Context, conf Configuration) (*Client, error) {
 		return failf("nil configuration")
 	}
 
-	provider, err := oidc.NewProvider(ctx, conf.GetIssuer())
+	provider, err := oidc.NewProvider(ctx, conf.GetOidcIssuer())
 	if err != nil {
-		return failf("cannot evaluate OIDC issuer %q: %w", conf.GetIssuer(), err)
+		return failf("cannot evaluate OIDC issuer %q: %w", conf.GetOidcIssuer(), err)
 	}
 
 	result := Client{
 		oauth2Config: oauth2.Config{
-			ClientID:     conf.GetClientId(),
-			ClientSecret: conf.GetClientSecret(),
+			ClientID:     conf.GetOidcClientId(),
+			ClientSecret: conf.GetOidcClientSecret(),
 			Endpoint:     provider.Endpoint(),
-			Scopes:       conf.GetScopes(),
+			Scopes:       conf.GetOidcScopes(),
 		},
 		provider: provider,
 		verifier: provider.Verifier(&oidc.Config{
-			ClientID: conf.GetClientId(),
+			ClientID: conf.GetOidcClientId(),
 		}),
 	}
 

@@ -1,15 +1,18 @@
 package user
 
 import (
+	"errors"
 	"fmt"
-	"strconv"
+	"github.com/engity/pam-oidc/pkg/execution"
+	"strings"
 )
 
 type User struct {
 	Name        string
 	DisplayName string
 	Uid         uint64
-	Gid         uint64
+	Group       Group
+	Groups      Groups
 	Shell       string
 	HomeDir     string
 }
@@ -18,41 +21,91 @@ func (this User) String() string {
 	return fmt.Sprintf("%d(%s)", this.Uid, this.Name)
 }
 
-func (this User) GetGroup() (*Group, error) {
-	g, err := LookupGid(this.Gid)
-	if err != nil {
-		return nil, fmt.Errorf("user %v: %w", this, err)
+func (this User) IsEqualTo(other *User) bool {
+	if other == nil {
+		return false
 	}
-
-	if g == nil {
-		return &Group{
-			Gid:  this.Gid,
-			Name: strconv.FormatUint(this.Gid, 10),
-		}, nil
-	}
-
-	return g, nil
+	return this.Name == other.Name &&
+		this.DisplayName == other.DisplayName &&
+		this.Uid == other.Uid &&
+		this.Group.IsEqualTo(&other.Group) &&
+		this.Groups.IsEqualTo(&other.Groups) &&
+		this.Shell == other.Shell &&
+		this.HomeDir == other.HomeDir
 }
 
-func (this User) GetGroups() ([]*Group, error) {
-	gids, err := this.GetGids()
-	if err != nil {
-		return nil, err
+type DeleteOpts struct {
+	Chroot        string
+	RemoveHomeDir *bool
+	Force         *bool
+}
+
+func Delete(name string, opts *DeleteOpts, using execution.Executor) error {
+	if len(name) == 0 {
+		return fmt.Errorf("cannot delete user with empty name")
 	}
-	gs := make([]*Group, len(gids))
-	for i, gid := range gids {
-		g, err := LookupGid(gid)
-		if err != nil {
-			return nil, fmt.Errorf("user %v: %w", this, err)
-		}
-		if g == nil {
-			gs[i] = &Group{
-				Gid:  gid,
-				Name: strconv.FormatUint(gid, 10),
-			}
+	fail := func(err error) error {
+		return fmt.Errorf("cannot delete user %s: %w", name, err)
+	}
+	failf := func(message string, args ...any) error {
+		return fail(fmt.Errorf(message, args...))
+	}
+
+	tOpts := opts.OrDefaults()
+	var args []string
+	if v := tOpts.Chroot; len(v) > 0 {
+		args = append(args, "-R", v)
+	}
+	if v := tOpts.Force; v != nil && *v {
+		args = append(args, "-f")
+	}
+	if v := tOpts.RemoveHomeDir; v != nil && *v {
+		args = append(args, "-r")
+	}
+	args = append(args, name)
+
+	if err := using.Execute("userdel", args...); err != nil {
+		var ee *execution.Error
+		if errors.As(err, &ee) && ee.ExitCode == 6 {
+			// This means already deleted: ok for us.
 		} else {
-			gs[i] = g
+			return failf("cannot delete group %s: %w", name, err)
 		}
 	}
-	return gs, nil
+
+	return nil
+}
+
+func (this DeleteOpts) Clone() DeleteOpts {
+	var rhd *bool
+	if v := this.RemoveHomeDir; v != nil {
+		nv := *v
+		rhd = &nv
+	}
+	var fr *bool
+	if v := this.Force; v != nil {
+		nv := *v
+		fr = &nv
+	}
+	return DeleteOpts{
+		strings.Clone(this.Chroot),
+		rhd,
+		fr,
+	}
+}
+
+func (this *DeleteOpts) OrDefaults() DeleteOpts {
+	var result DeleteOpts
+	if v := this; v != nil {
+		result = v.Clone()
+	}
+	if v := result.RemoveHomeDir; v == nil {
+		nv := true
+		result.RemoveHomeDir = &nv
+	}
+	if v := result.Force; v == nil {
+		nv := true
+		result.Force = &nv
+	}
+	return result
 }

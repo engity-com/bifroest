@@ -1,0 +1,18 @@
+name: "pam_oidc"
+arch: "amd64"
+platform: "linux"
+version: "0.1.0"
+description: |
+  Enable OpenID Connect/SSO for PAM. Bring your SSH or similar to the SSO era without extra tooling on client side.
+vendor: "Engity GmbH"
+homepage: "https://engity.com"
+license: "GPL-3.0"
+section: "admin"
+priority: "optional"
+maintainer: "Engity Developers <hello@engity.com>"
+contents:
+  - src: pam_oidc.so
+    dst: /usr/lib64/security/pam_oidc.so
+#  - src: /usr/lib64/security/${VERSIONED}
+#    dst: /usr/lib64/security/pam_oidc.so
+#    type: symlink

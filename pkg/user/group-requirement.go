@@ -6,48 +6,120 @@ import (
 	"strings"
 )
 
+var defaultGroup = GroupRequirement{1500, "pam-oidc"}
+
 type GroupRequirement struct {
-	Gid  uint64
-	Name string
+	Gid  uint64 `yaml:"gid,omitempty"`
+	Name string `yaml:"name,omitempty"`
 }
 
-func (this GroupRequirement) Ensure() (*Group, error) {
-	var existing *Group
-	var err error
-	if this.Gid > 0 {
-		if existing, err = LookupGid(this.Gid); err != nil {
-			return nil, err
+func (this GroupRequirement) Clone() GroupRequirement {
+	return GroupRequirement{
+		this.Gid,
+		strings.Clone(this.Name),
+	}
+}
+
+func (this GroupRequirement) IsZero() bool {
+	return this.Gid == 0 &&
+		len(this.Name) == 0
+}
+
+func (this GroupRequirement) IsEqualTo(other *GroupRequirement) bool {
+	if other == nil {
+		return false
+	}
+	return this.Gid == other.Gid &&
+		this.Name == other.Name
+}
+
+func (this GroupRequirement) DoesFulfil(other *Group) bool {
+	if other == nil {
+		return false
+	}
+	return this.Gid == other.Gid &&
+		this.Name == other.Name
+}
+
+func (this GroupRequirement) String() string {
+	if name := this.Name; len(name) > 0 {
+		if gid := this.Gid; gid > 0 {
+			return fmt.Sprintf("%d(%s)", gid, name)
+		} else {
+			return strings.Clone(name)
 		}
-	} else if len(this.Name) > 0 {
-		if existing, err = LookupGroup(this.Name); err != nil {
-			return nil, err
-		}
+	} else if gid := this.Gid; gid > 0 {
+		return strconv.FormatUint(gid, 10)
 	} else {
-		return nil, fmt.Errorf("group requirement with neither GID nor name")
+		return "<empty>"
 	}
-
-	if existing == nil {
-		return this.create()
-	}
-
-	return nil, fmt.Errorf("TODO!!!!!")
 }
 
-func (this GroupRequirement) create() (*Group, error) {
+func (this GroupRequirement) name() string {
 	name := strings.Clone(this.Name)
-	if len(name) == 0 {
-		name = fmt.Sprintf("group%d", this.Gid)
+	if len(name) > 0 {
+		return name
+	}
+	if gid := this.Gid; gid > 0 {
+		return fmt.Sprintf("group-%d", gid)
+	}
+	return ""
+}
+
+type GroupRequirements []GroupRequirement
+
+func (this GroupRequirements) Clone() GroupRequirements {
+	result := make(GroupRequirements, len(this))
+	for i, v := range this {
+		result[i] = v.Clone()
+	}
+	return result
+}
+
+func (this GroupRequirements) IsZero() bool {
+	return len(this) == 0
+}
+
+func (this GroupRequirements) Contains(other *GroupRequirement) bool {
+	if other == nil {
+		return false
+	}
+	for _, candidate := range this {
+		if candidate.IsEqualTo(other) {
+			return true
+		}
+	}
+	return false
+}
+
+func (this GroupRequirements) IsEqualTo(other *GroupRequirements) bool {
+	if other == nil {
+		return len(this) == 0
+	}
+	if len(this) != len(*other) {
+		return false
 	}
 
-	var args []string
-	if v := this.Gid; v > 0 {
-		args = append(args, "-g", strconv.FormatUint(v, 10))
+	for i, candidate := range this {
+		if candidate.IsEqualTo(&(*other)[i]) {
+			return true
+		}
 	}
-	args = append(args, name)
+	return false
+}
 
-	if err := execCommand("groupadd", args...); err != nil {
-		return nil, fmt.Errorf("cannot create group %s: %w", name, err)
+func (this GroupRequirements) DoesFulfil(other *Groups) bool {
+	if other == nil {
+		return len(this) == 0
+	}
+	if len(this) != len(*other) {
+		return false
 	}
 
-	return LookupGroup(name)
+	for i, candidate := range this {
+		if candidate.DoesFulfil(&(*other)[i]) {
+			return true
+		}
+	}
+	return false
 }
