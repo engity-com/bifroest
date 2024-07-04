@@ -1,0 +1,10 @@
+oidc:
+  issuer: https://accounts.google.com
+  clientId: 237795654007-evs0fhl6gepanh3k5gsk8a0mdc7akrmu.apps.googleusercontent.com
+  clientSecret: some-secret
+  scopes:
+    - openid
+    - email
+    - profile
+user:
+  shell: /bin/bash

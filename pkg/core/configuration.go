@@ -1,34 +1,17 @@
 package core
 
-/*
-#cgo CFLAGS: -I.
-#cgo LDFLAGS: -lpam -fPIC
-
-#include <stdlib.h>
-
-char* argv_i(const char **argv, int i);
-*/
-import "C"
 import (
 	"context"
+	"io"
+	"os"
 	"slices"
 	"strings"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/engity/pam-oidc/pkg/common"
 	"github.com/engity/pam-oidc/pkg/errors"
-)
-
-const (
-	ConfigKeyIssuer       = "issuer"
-	ConfigKeyClientId     = "client_id"
-	ConfigKeyClientSecret = "client_secret"
-	ConfigKeyTimeout      = "timeout"
-	ConfigKeyScopes       = "scopes"
-
-	ConfigKeyUserTemplate     = "user_template"
-	ConfigKeyGroupsClaim      = "groups_claim"
-	ConfigKeyAuthorizedGroups = "authorized_groups"
-	ConfigKeyRequireAcr       = "require_acr"
 )
 
 func NewConfiguration() (*Configuration, error) {
@@ -43,13 +26,14 @@ func NewConfiguration() (*Configuration, error) {
 	return &Configuration{
 		Oidc:    *o,
 		User:    *u,
-		Timeout: time.Minute * 10,
+		Timeout: time.Minute * 5,
 	}, nil
 }
 
 type Configuration struct {
 	Oidc ConfigurationOidc `yaml:"oidc,omitempty"`
 	User ConfigurationUser `yaml:"user,omitempty"`
+	Pam  ConfigurationPam  `yaml:"pam,omitempty"`
 
 	Timeout time.Duration `yaml:"timeout,omitempty"`
 }
@@ -74,11 +58,11 @@ func (this Configuration) GetOidcScopes() []string {
 	return slices.Clone(this.Oidc.Scopes)
 }
 
-func (this Configuration) NewContext() (context.Context, context.CancelFunc) {
+func (this Configuration) ToContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), this.Timeout)
 }
 
-func (this Configuration) Validate() error {
+func (this Configuration) Validate(key common.StructuredKey) error {
 	fail := func(err error) error {
 		return err
 	}
@@ -86,89 +70,58 @@ func (this Configuration) Validate() error {
 		return fail(errors.Newf(errors.TypeConfig, msg, args...))
 	}
 
-	if this.Issuer == "" {
-		return failf("required PAM option %s missing", ConfigKeyIssuer)
-	}
-	if this.ClientId == "" {
-		return failf("required PAM option %s missing", ConfigKeyClientId)
-	}
-	if this.ClientSecret == "" {
-		return failf("required PAM option %s missing", ConfigKeyClientSecret)
-	}
 	if this.Timeout == 0 {
-		return failf("required PAM option %s missing", ConfigKeyTimeout)
+		return failf("required option %v missing", key.Child("timeout"))
 	}
 	if this.Timeout < 0 {
-		return failf("PAM option %s negative but has to be always positive", ConfigKeyTimeout)
+		return failf("option %v negative but has to be always positive", key.Child("timeout"))
 	}
-	if len(this.Scopes) == 0 {
-		return failf("required PAM option %s missing", ConfigKeyScopes)
+
+	if err := this.Oidc.Validate(key.Child("oidc")); err != nil {
+		return fail(err)
+	}
+	if err := this.User.Validate(key.Child("user")); err != nil {
+		return fail(err)
+	}
+	if err := this.Pam.Validate(key.Child("pam")); err != nil {
+		return fail(err)
 	}
 
 	return nil
 }
 
-func (this *Configuration) ParseArgs(args []string) error {
+func (this *Configuration) LoadFromFile(fn string) error {
+	f, err := os.Open(fn)
+	if os.IsNotExist(err) {
+		return errors.Newf(errors.TypeConfig, "configuration file %q does not exist", fn)
+	}
+	if err != nil {
+		return errors.Newf(errors.TypeConfig, "cannot open configuration file %q: %w", fn, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	return this.LoadFromYaml(f, fn)
+}
+
+func (this *Configuration) LoadFromYaml(reader io.Reader, fn string) error {
+	if fn == "" {
+		fn = "<anonymous>"
+	}
+
+	decoder := yaml.NewDecoder(reader)
+	decoder.KnownFields(true)
 	buf, err := NewConfiguration()
 	if err != nil {
 		return err
 	}
+	if err := decoder.Decode(&buf); err != nil {
+		return errors.Newf(errors.TypeConfig, "cannot parse configuration file %q: %w", fn, err)
+	}
 
-	for _, arg := range args {
-		if err := buf.ParseArg(arg); err != nil {
-			return err
-		}
+	if err := buf.Validate(nil); err != nil {
+		return errors.Newf(errors.TypeConfig, "configuration file %q contains problems: %w", fn, err)
 	}
 
 	*this = *buf
-
-	return nil
-}
-
-func (this *Configuration) ParseArg(arg string) error {
-	fail := func(err error) error {
-		return err
-	}
-	failf := func(msg string, args ...any) error {
-		return fail(errors.Newf(errors.TypeConfig, msg, args...))
-	}
-
-	parts := strings.SplitN(arg, "=", 2)
-	if len(parts) != 2 {
-		return failf("malformed arg: %v", arg)
-	}
-	key := parts[0]
-	value := parts[1]
-
-	switch key {
-	case ConfigKeyIssuer:
-		this.Issuer = value
-	case ConfigKeyClientId:
-		this.ClientId = value
-	case ConfigKeyClientSecret:
-		this.ClientSecret = value
-	case ConfigKeyTimeout:
-		v, err := time.ParseDuration(value)
-		if err != nil {
-			return failf("malformed arg: %v", arg)
-		}
-		this.Timeout = v
-	case ConfigKeyScopes:
-		scopes := strings.Split(value, ",")
-		for i, v := range scopes {
-			scopes[i] = strings.TrimSpace(v)
-		}
-		this.Scopes = slices.DeleteFunc(scopes, func(s string) bool { return len(s) == 0 })
-	case ConfigKeyUserTemplate:
-		this.UserTemplate = value
-	case ConfigKeyGroupsClaim:
-		this.GroupsClaimKey = value
-	case ConfigKeyAuthorizedGroups:
-		this.AuthorizedGroups = strings.Split(value, ",")
-	case ConfigKeyRequireAcr:
-		this.RequireACRs = strings.Split(value, ",")
-	default:
-		return failf("unknown option: %v", key)
-	}
 	return nil
 }

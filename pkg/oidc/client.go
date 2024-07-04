@@ -23,6 +23,10 @@ func NewClient(ctx context.Context, conf Configuration) (*Client, error) {
 		return fail(errors.Newf(errors.TypeConfig, msg, args...))
 	}
 
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	if conf == nil {
 		return failf("nil configuration")
 	}
@@ -56,6 +60,10 @@ func (this *Client) InitiateDeviceAuth(ctx context.Context) (*oauth2.DeviceAuthR
 		return fail(errors.Newf(errors.TypeNetwork, msg, args...))
 	}
 
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	response, err := this.oauth2Config.DeviceAuth(ctx)
 	if err != nil {
 		return failf("cannot initiate successful device auth: %w", err)
@@ -70,6 +78,10 @@ func (this *Client) RetrieveDeviceAuthToken(ctx context.Context, using *oauth2.D
 	}
 	failf := func(pt errors.Type, msg string, args ...any) (*oauth2.Token, error) {
 		return fail(errors.Newf(pt, msg, args...))
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	if using == nil || using.DeviceCode == "" {
@@ -95,6 +107,10 @@ func (this *Client) VerifyToken(ctx context.Context, token *oauth2.Token) (*oidc
 		return fail(errors.Newf(pt, msg, args...))
 	}
 
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	if token == nil || token.AccessToken == "" {
 		return failf(errors.TypeSystem, "no token provided")
 	}
@@ -118,6 +134,10 @@ func (this *Client) GetUserInfo(ctx context.Context, token *oauth2.Token) (*oidc
 	}
 	failf := func(pt errors.Type, msg string, args ...any) (*oidc.UserInfo, error) {
 		return fail(errors.Newf(pt, msg, args...))
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	result, err := this.provider.UserInfo(ctx, oauth2.StaticTokenSource(token))

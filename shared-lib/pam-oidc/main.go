@@ -8,15 +8,13 @@ package main
 import "C"
 
 import (
-	"encoding/json"
+	oidc2 "github.com/coreos/go-oidc/v3/oidc"
+	"github.com/engity/pam-oidc/pkg/common"
 	"github.com/engity/pam-oidc/pkg/core"
 	"github.com/engity/pam-oidc/pkg/errors"
-	"github.com/engity/pam-oidc/pkg/oidc"
-	"github.com/engity/pam-oidc/pkg/user"
-	"log/syslog"
-	"strings"
-
 	"github.com/engity/pam-oidc/pkg/pam"
+	"golang.org/x/oauth2"
+	"log/syslog"
 )
 
 func main() {
@@ -49,7 +47,7 @@ func pamSmSetcred(_ *pam.Handle, _ pam.Flags, _ ...string) pam.Result {
 func resolveExecutionContext(ph *pam.Handle, _ pam.Flags, args ...string) (*executionContext, error) {
 	var ctx executionContext
 
-	if err := ctx.configuration.ParseArgs(args); err != nil {
+	if err := ctx.configuration.LoadFromArgs(args...); err != nil {
 		return nil, pam.ResultSystemErr.Errorf(pam.ErrorCauseTypeConfiguration, "failed to parse config: %v", err)
 	}
 
@@ -66,73 +64,32 @@ func resolveExecutionContext(ph *pam.Handle, _ pam.Flags, args ...string) (*exec
 }
 
 func authFlow(ph *pam.Handle, eCtx *executionContext) error {
-	ctx, cancelFunc := eCtx.configuration.NewContext()
-	defer cancelFunc()
-
-	oidcCl, err := oidc.NewClient(ctx, eCtx.configuration)
+	cord, err := core.NewCoordinator(&eCtx.configuration)
 	if err != nil {
 		return err
 	}
 
-	dar, err := oidcCl.InitiateDeviceAuth(ctx)
-	if err != nil {
-		return err
-	}
-
-	if v := dar.VerificationURIComplete; v != "" {
-		ph.UncheckedInfof("Open %s in your browser and approve the login request. Waiting for approval...", v)
-	} else {
-		ph.UncheckedInfof("Open %s in your browser and enter the code %s. Waiting for approval...", dar.VerificationURI, dar.UserCode)
-	}
-
-	token, err := oidcCl.RetrieveDeviceAuthToken(ctx, dar)
-	if err != nil {
-		return err
-	}
-
-	var bufToken strings.Builder
-	tokenEncoder := json.NewEncoder(&bufToken)
-	tokenEncoder.SetIndent("", "   ")
-	_ = tokenEncoder.Encode(token)
-
-	idToken, err := oidcCl.VerifyToken(ctx, token)
-	if err != nil {
-		return err
-	}
-
-	var bufIdToken strings.Builder
-	idTokenEncoder := json.NewEncoder(&bufIdToken)
-	idTokenEncoder.SetIndent("", "   ")
-	_ = idTokenEncoder.Encode(idToken)
-
-	userInfo, err := oidcCl.GetUserInfo(ctx, token)
-	if err != nil {
-		return err
-	}
-
-	var bufUserInfo strings.Builder
-	userInfoEncoder := json.NewEncoder(&bufUserInfo)
-	userInfoEncoder.SetIndent("", "   ")
-	_ = userInfoEncoder.Encode(userInfo)
-
-	ph.Syslogf(syslog.LOG_INFO, "Token: %s \n\n IdToken: %s \n\n UserInfo: %s", bufToken.String(), bufIdToken.String(), bufUserInfo.String())
-
-	toUser := "foo"
-
-	if err := ph.SetUser(toUser); err != nil {
-		ph.Syslogf(syslog.LOG_ERR, "cannot set user to %q: %v", toUser, err)
-	}
-
-	u, err := user.Lookup(toUser)
-	if err != nil {
-		ph.Syslogf(syslog.LOG_ERR, "cannot lookup user %q: %v", toUser, err)
-	}
-	if u != nil {
-		ph.Syslogf(syslog.LOG_INFO, "user: %+v", u)
-		ph.Syslogf(syslog.LOG_INFO, "user's group: %+v", u.Group)
-		for i, g := range u.Groups {
-			ph.Syslogf(syslog.LOG_INFO, "user's group #%d: %+v", i, g)
+	cord.OnDeviceAuthStarted = func(dar *oauth2.DeviceAuthResponse) error {
+		if v := dar.VerificationURIComplete; v != "" {
+			ph.UncheckedInfof("Open %s in your browser and approve the login request. Waiting for approval...", v)
+		} else {
+			ph.UncheckedInfof("Open %s in your browser and enter the code %s. Waiting for approval...", dar.VerificationURI, dar.UserCode)
 		}
+		return nil
+	}
+
+	cord.OnTokenReceived = func(token *oauth2.Token) error {
+		ph.Syslogf(syslog.LOG_INFO, "Token:\n%s", common.ToDebugString(token))
+		return nil
+	}
+
+	cord.OnUserInfoReceived = func(userInfo *oidc2.UserInfo) error {
+		ph.Syslogf(syslog.LOG_INFO, "UserInfo:\n%s", common.ToDebugString(userInfo))
+		return nil
+	}
+
+	if _, err := cord.Run(nil, eCtx.user); err != nil {
+		return err
 	}
 
 	return nil

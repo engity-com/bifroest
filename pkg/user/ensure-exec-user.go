@@ -7,11 +7,12 @@ import (
 	"strings"
 )
 
-func (this ExecutionBasedEnsurer) Ensure(req *Requirement) (*User, error) {
+func (this ExecutionBasedEnsurer) Ensure(req *Requirement, opts *EnsureOpts) (*User, error) {
 	if req == nil {
 		return nil, fmt.Errorf("nil user requirement")
 	}
 	target := req.Clone()
+	_opts := opts.OrDefaults()
 
 	if target.Group.IsZero() {
 		target.Group = defaultGroup.Clone()
@@ -26,10 +27,10 @@ func (this ExecutionBasedEnsurer) Ensure(req *Requirement) (*User, error) {
 		target.Shell = "/bin/sh"
 	}
 
-	return this.ensure(&target)
+	return this.ensure(&target, &_opts)
 }
 
-func (this ExecutionBasedEnsurer) ensure(req *Requirement) (*User, error) {
+func (this ExecutionBasedEnsurer) ensure(req *Requirement, opts *EnsureOpts) (*User, error) {
 	fail := func(err error) (*User, error) {
 		return nil, fmt.Errorf("cannot ensure user %v: %w", this, err)
 	}
@@ -54,24 +55,27 @@ func (this ExecutionBasedEnsurer) ensure(req *Requirement) (*User, error) {
 		}
 	}
 
-	group, err := this.EnsureGroup(&req.Group)
+	group, err := this.EnsureGroup(&req.Group, opts)
 	if err != nil {
 		return fail(err)
 	}
-	groups, err := this.ensureGroups(req.Groups)
+	groups, err := this.ensureGroups(req.Groups, opts)
 	if err != nil {
 		return fail(err)
 	}
 
 	if existing == nil {
-		result, err := this.create(req, group, groups...)
-		if err != nil {
-			return fail(err)
+		if *opts.CreateAllowed {
+			result, err := this.create(req, group, groups...)
+			if err != nil {
+				return fail(err)
+			}
+			return result, nil
 		}
-		return result, nil
+		return nil, nil
 	}
 
-	if req.DoesFulfil(existing) {
+	if req.DoesFulfil(existing) || !*opts.ModifyAllowed {
 		return existing, nil
 	}
 

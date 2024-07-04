@@ -6,10 +6,11 @@ import (
 	"strings"
 )
 
-func (this ExecutionBasedEnsurer) EnsureGroup(req *GroupRequirement) (*Group, error) {
+func (this ExecutionBasedEnsurer) EnsureGroup(req *GroupRequirement, opts *EnsureOpts) (*Group, error) {
 	if req == nil {
 		return nil, fmt.Errorf("nil group requirement")
 	}
+	_opts := opts.OrDefaults()
 	fail := func(err error) (*Group, error) {
 		return nil, fmt.Errorf("cannot ensure group %v: %w", req, err)
 	}
@@ -32,14 +33,17 @@ func (this ExecutionBasedEnsurer) EnsureGroup(req *GroupRequirement) (*Group, er
 	}
 
 	if existing == nil {
-		result, err := this.createGroup(req)
-		if err != nil {
-			return fail(err)
+		if *_opts.CreateAllowed {
+			result, err := this.createGroup(req)
+			if err != nil {
+				return fail(err)
+			}
+			return result, nil
 		}
-		return result, nil
+		return nil, nil
 	}
 
-	if req.DoesFulfil(existing) {
+	if req.DoesFulfil(existing) || !*_opts.ModifyAllowed {
 		return existing, nil
 	}
 
@@ -123,10 +127,10 @@ func (this ExecutionBasedEnsurer) modifyGroup(req *GroupRequirement, existing *G
 	return result, nil
 }
 
-func (this ExecutionBasedEnsurer) ensureGroups(req GroupRequirements) ([]*Group, error) {
+func (this ExecutionBasedEnsurer) ensureGroups(req GroupRequirements, opts *EnsureOpts) ([]*Group, error) {
 	result := make([]*Group, len(req))
 	for i, v := range req {
-		g, err := this.EnsureGroup(&v)
+		g, err := this.EnsureGroup(&v, opts)
 		if err != nil {
 			return nil, fmt.Errorf("%d: %w", i, err)
 		}

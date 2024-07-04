@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/engity/pam-oidc/pkg/execution"
-	"strings"
 )
 
 type User struct {
@@ -35,7 +34,6 @@ func (this User) IsEqualTo(other *User) bool {
 }
 
 type DeleteOpts struct {
-	Chroot        string
 	RemoveHomeDir *bool
 	Force         *bool
 }
@@ -53,9 +51,6 @@ func Delete(name string, opts *DeleteOpts, using execution.Executor) error {
 
 	tOpts := opts.OrDefaults()
 	var args []string
-	if v := tOpts.Chroot; len(v) > 0 {
-		args = append(args, "-R", v)
-	}
 	if v := tOpts.Force; v != nil && *v {
 		args = append(args, "-f")
 	}
@@ -88,7 +83,6 @@ func (this DeleteOpts) Clone() DeleteOpts {
 		fr = &nv
 	}
 	return DeleteOpts{
-		strings.Clone(this.Chroot),
 		rhd,
 		fr,
 	}
