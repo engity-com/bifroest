@@ -2,10 +2,13 @@ package core
 
 import (
 	"context"
+	errors2 "errors"
 	"fmt"
-
 	oidc2 "github.com/coreos/go-oidc/v3/oidc"
+	log "github.com/echocat/slf4g"
+	"github.com/engity/pam-oidc/pkg/pam"
 	"golang.org/x/oauth2"
+	"log/syslog"
 
 	"github.com/engity/pam-oidc/pkg/common"
 	"github.com/engity/pam-oidc/pkg/errors"
@@ -30,7 +33,15 @@ type Coordinator struct {
 	OnUserInfoReceived  func(token *oidc2.UserInfo) error
 }
 
-func (this *Coordinator) Run(ctx context.Context, requestedUserName string) (*user.User, CoordinatorRunResult, error) {
+func logFoof(ph *pam.Handle, msg string, args ...any) {
+	if ph != nil {
+		ph.Syslogf(syslog.LOG_INFO, msg, args...)
+	} else {
+		log.Infof(msg, args...)
+	}
+}
+
+func (this *Coordinator) Run(ctx context.Context, requestedUserName string, ph *pam.Handle) (*user.User, CoordinatorRunResult, error) {
 	fail := func(result CoordinatorRunResult, err error) (*user.User, CoordinatorRunResult, error) {
 		return nil, result, err
 	}
@@ -48,7 +59,11 @@ func (this *Coordinator) Run(ctx context.Context, requestedUserName string) (*us
 		return nil, CoordinatorRunResultRequestingNameForbidden, nil
 	}
 
-	rcOidcResolved, err := this.remoteAuthorize(ctx)
+	logFoof(ph, "R1")
+	rcOidcResolved, err := this.remoteAuthorize(ctx, ph)
+	if errors2.Is(err, context.DeadlineExceeded) {
+		return fail(CoordinatorRunResultOidcAuthorizeTimeout, err)
+	}
 	if err != nil {
 		return fail(CoordinatorRunResultOidcAuthorizeFailed, err)
 	}
@@ -76,7 +91,7 @@ func (this *Coordinator) Run(ctx context.Context, requestedUserName string) (*us
 	return u, CoordinatorRunResultSuccess, nil
 }
 
-func (this *Coordinator) remoteAuthorize(ctx context.Context) (*RenderContextOidcResolved, error) {
+func (this *Coordinator) remoteAuthorize(ctx context.Context, ph *pam.Handle) (*RenderContextOidcResolved, error) {
 	fail := func(err error) (*RenderContextOidcResolved, error) {
 		return nil, err
 	}
@@ -84,16 +99,19 @@ func (this *Coordinator) remoteAuthorize(ctx context.Context) (*RenderContextOid
 		return fail(errors.Newf(errors.TypeConfig, message, args...))
 	}
 
-	client, err := oidc.NewClient(ctx, this.Configuration)
+	logFoof(ph, "RA1")
+	client, err := oidc.NewClient(ctx, this.Configuration, ph)
 	if err != nil {
 		return fail(err)
 	}
 
+	logFoof(ph, "RA2")
 	dar, err := client.InitiateDeviceAuth(ctx)
 	if err != nil {
 		return fail(err)
 	}
 
+	logFoof(ph, "RA3")
 	if cb := this.OnDeviceAuthStarted; cb != nil {
 		if err := cb(dar); err != nil {
 			return fail(err)
@@ -102,10 +120,12 @@ func (this *Coordinator) remoteAuthorize(ctx context.Context) (*RenderContextOid
 
 	var result RenderContextOidcResolved
 
+	logFoof(ph, "RA4")
 	token, err := client.RetrieveDeviceAuthToken(ctx, dar)
 	if err != nil {
 		return fail(err)
 	}
+	logFoof(ph, "RA5")
 	if cb := this.OnTokenReceived; cb != nil {
 		if err := cb(token); err != nil {
 			return fail(err)
@@ -216,6 +236,7 @@ type CoordinatorRunResult uint8
 const (
 	CoordinatorRunResultSuccess CoordinatorRunResult = iota
 	CoordinatorRunResultRequestingNameForbidden
+	CoordinatorRunResultOidcAuthorizeTimeout
 	CoordinatorRunResultOidcAuthorizeFailed
 	CoordinatorRunResultRequirementResolutionFailed
 	CoordinatorRunResultLoginAllowedResolutionFailed
@@ -230,6 +251,8 @@ func (this CoordinatorRunResult) String() string {
 		return "success"
 	case CoordinatorRunResultRequestingNameForbidden:
 		return "requesting name forbidden"
+	case CoordinatorRunResultOidcAuthorizeTimeout:
+		return "oidc authorize timeout"
 	case CoordinatorRunResultOidcAuthorizeFailed:
 		return "oidc authorize failed"
 	case CoordinatorRunResultRequirementResolutionFailed:

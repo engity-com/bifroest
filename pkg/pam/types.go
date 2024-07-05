@@ -222,10 +222,6 @@ func (this Result) SyslogPriority() syslog.Priority {
 	}
 }
 
-func (this Result) Syslogf(ph *Handle, message string, args ...any) {
-	ph.Syslogf(this.SyslogPriority(), message, args...)
-}
-
 func (this Result) IsSuccess() bool {
 	switch this {
 	case ResultSuccess:

@@ -1,6 +1,5 @@
 package errors
 
-import "C"
 import (
 	"github.com/engity/pam-oidc/pkg/pam"
 )

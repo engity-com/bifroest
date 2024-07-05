@@ -63,7 +63,7 @@ func doTestFlow() error {
 		return nil
 	}
 
-	u, res, err := cord.Run(nil, requestedUsername)
+	u, res, err := cord.Run(nil, requestedUsername, nil)
 	if err != nil {
 		return err
 	}

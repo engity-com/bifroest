@@ -5,10 +5,12 @@ import (
 	"strings"
 )
 
-func ToDebugString(what any) string {
+func ToDebugString(formatted bool, what any) string {
 	var buf strings.Builder
 	encoder := json.NewEncoder(&buf)
-	encoder.SetIndent("", "   ")
+	if formatted {
+		encoder.SetIndent("", "   ")
+	}
 	_ = encoder.Encode(what)
 	return buf.String()
 }
