@@ -4,6 +4,7 @@ import (
 	"github.com/alecthomas/kingpin"
 	oidc2 "github.com/coreos/go-oidc/v3/oidc"
 	log "github.com/echocat/slf4g"
+	"github.com/echocat/slf4g/fields"
 	"github.com/engity/pam-oidc/pkg/core"
 	"golang.org/x/oauth2"
 )
@@ -36,24 +37,44 @@ func doTestFlow() error {
 		return nil
 	}
 
-	cord.OnTokenReceived = func(token *oauth2.Token) error {
-		log.With("token", token).
+	cord.OnTokenReceived = func(v *oauth2.Token) error {
+		log.With("token", v).
 			Info("Token received.")
 		return nil
 	}
 
-	cord.OnUserInfoReceived = func(userInfo *oidc2.UserInfo) error {
-		log.With("userInfo", userInfo).
+	cord.OnIdTokenReceived = func(v *oidc2.IDToken) error {
+		claims := map[string]any{}
+		if err := v.Claims(&claims); err != nil {
+			return err
+		}
+		log.With("token", claims).
+			Info("IdToken received.")
+		return nil
+	}
+
+	cord.OnUserInfoReceived = func(v *oidc2.UserInfo) error {
+		claims := map[string]any{}
+		if err := v.Claims(&claims); err != nil {
+			return err
+		}
+		log.With("userInfo", claims).
 			Info("UserInfo received.")
 		return nil
 	}
 
-	u, err := cord.Run(nil, requestedUsername)
+	u, res, err := cord.Run(nil, requestedUsername)
 	if err != nil {
 		return err
 	}
 
-	log.With("user", u).
+	log.With("user", fields.LazyFunc(func() interface{} {
+		if u != nil {
+			return u
+		}
+		return fields.Exclude
+	})).
+		With("result", res).
 		Info("User resolved.")
 
 	return nil

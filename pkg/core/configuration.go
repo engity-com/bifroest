@@ -33,7 +33,6 @@ func NewConfiguration() (*Configuration, error) {
 type Configuration struct {
 	Oidc ConfigurationOidc `yaml:"oidc,omitempty"`
 	User ConfigurationUser `yaml:"user,omitempty"`
-	Pam  ConfigurationPam  `yaml:"pam,omitempty"`
 
 	Timeout time.Duration `yaml:"timeout,omitempty"`
 }
@@ -81,9 +80,6 @@ func (this Configuration) Validate(key common.StructuredKey) error {
 		return fail(err)
 	}
 	if err := this.User.Validate(key.Child("user")); err != nil {
-		return fail(err)
-	}
-	if err := this.Pam.Validate(key.Child("pam")); err != nil {
 		return fail(err)
 	}
 

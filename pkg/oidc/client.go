@@ -88,7 +88,7 @@ func (this *Client) RetrieveDeviceAuthToken(ctx context.Context, using *oauth2.D
 		return failf(errors.TypeSystem, "no device auth response provided")
 	}
 
-	response, err := this.oauth2Config.DeviceAccessToken(ctx, using)
+	response, err := this.oauth2Config.DeviceAccessToken(ctx, using, oauth2.SetAuthURLParam("client_secret", this.oauth2Config.ClientSecret))
 	if sdkerrors.Is(err, context.DeadlineExceeded) {
 		return failf(errors.TypeUser, "authorize of device timed out")
 	}

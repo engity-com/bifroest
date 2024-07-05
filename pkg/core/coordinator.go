@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 
 	oidc2 "github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
@@ -25,12 +26,13 @@ type Coordinator struct {
 
 	OnDeviceAuthStarted func(*oauth2.DeviceAuthResponse) error
 	OnTokenReceived     func(token *oauth2.Token) error
+	OnIdTokenReceived   func(token *oidc2.IDToken) error
 	OnUserInfoReceived  func(token *oidc2.UserInfo) error
 }
 
-func (this *Coordinator) Run(ctx context.Context, requestedUserName string) (*user.User, error) {
-	fail := func(err error) (*user.User, error) {
-		return nil, err
+func (this *Coordinator) Run(ctx context.Context, requestedUserName string) (*user.User, CoordinatorRunResult, error) {
+	fail := func(result CoordinatorRunResult, err error) (*user.User, CoordinatorRunResult, error) {
+		return nil, result, err
 	}
 
 	if ctx == nil {
@@ -39,34 +41,47 @@ func (this *Coordinator) Run(ctx context.Context, requestedUserName string) (*us
 		defer cancelFunc()
 	}
 
-	if v := this.Configuration.Pam.AllowedUserName; !v.IsZero() && !v.MatchString(requestedUserName) {
-		return nil, nil
+	if v := this.Configuration.User.AllowedRequestingName; !v.IsZero() && !v.MatchString(requestedUserName) {
+		return nil, CoordinatorRunResultRequestingNameForbidden, nil
 	}
-	if v := this.Configuration.Pam.ForbiddenUserName; !v.IsZero() && v.MatchString(requestedUserName) {
-		return nil, nil
+	if v := this.Configuration.User.ForbiddenRequestingName; !v.IsZero() && v.MatchString(requestedUserName) {
+		return nil, CoordinatorRunResultRequestingNameForbidden, nil
 	}
 
-	token, userInfo, err := this.remoteAuthorize(ctx)
+	rcOidcResolved, err := this.remoteAuthorize(ctx)
 	if err != nil {
-		return fail(err)
+		return fail(CoordinatorRunResultOidcAuthorizeFailed, err)
 	}
 
-	req, err := this.toUserRequirement(token, userInfo)
+	rcReqResolved, err := this.toUserRequirement(rcOidcResolved)
 	if err != nil {
-		return fail(err)
+		return fail(CoordinatorRunResultRequirementResolutionFailed, err)
 	}
 
-	u, err := this.ensureUser(req)
+	if allowed, err := this.isLoginAllowed(rcReqResolved); err != nil {
+		return fail(CoordinatorRunResultLoginAllowedResolutionFailed, err)
+	} else if !allowed {
+		return nil, CoordinatorRunResultLoginForbidden, nil
+	}
+
+	u, err := this.ensureUser(rcReqResolved)
 	if err != nil {
-		return fail(err)
+		return fail(CoordinatorRunResultUserEnsuringFailed, err)
 	}
 
-	return u, nil
+	if u == nil {
+		return nil, CoordinatorRunResultNoSuchUser, nil
+	}
+
+	return u, CoordinatorRunResultSuccess, nil
 }
 
-func (this *Coordinator) remoteAuthorize(ctx context.Context) (*oauth2.Token, *oidc2.UserInfo, error) {
-	fail := func(err error) (*oauth2.Token, *oidc2.UserInfo, error) {
-		return nil, nil, err
+func (this *Coordinator) remoteAuthorize(ctx context.Context) (*RenderContextOidcResolved, error) {
+	fail := func(err error) (*RenderContextOidcResolved, error) {
+		return nil, err
+	}
+	failf := func(message string, args ...any) (*RenderContextOidcResolved, error) {
+		return fail(errors.Newf(errors.TypeConfig, message, args...))
 	}
 
 	client, err := oidc.NewClient(ctx, this.Configuration)
@@ -85,78 +100,149 @@ func (this *Coordinator) remoteAuthorize(ctx context.Context) (*oauth2.Token, *o
 		}
 	}
 
+	var result RenderContextOidcResolved
+
 	token, err := client.RetrieveDeviceAuthToken(ctx, dar)
 	if err != nil {
 		return fail(err)
 	}
-
 	if cb := this.OnTokenReceived; cb != nil {
 		if err := cb(token); err != nil {
 			return fail(err)
 		}
 	}
-
-	userInfo, err := client.GetUserInfo(ctx, token)
-	if err != nil {
-		return fail(err)
+	if err := result.Oidc.Token.SetRaw(token); err != nil {
+		return failf("cannot set token to render context: %w", err)
 	}
 
-	if cb := this.OnUserInfoReceived; cb != nil {
-		if err := cb(userInfo); err != nil {
+	if this.Configuration.Oidc.RetrieveIdToken {
+		idToken, err := client.VerifyToken(ctx, token)
+		if err != nil {
 			return fail(err)
+		}
+		if cb := this.OnIdTokenReceived; cb != nil {
+			if err := cb(idToken); err != nil {
+				return fail(err)
+			}
+		}
+		if err := result.Oidc.IdToken.SetRaw(idToken); err != nil {
+			return failf("cannot set id token to render context: %w", err)
 		}
 	}
 
-	return token, userInfo, nil
+	if this.Configuration.Oidc.RetrieveUserInfo {
+		userInfo, err := client.GetUserInfo(ctx, token)
+		if err != nil {
+			return fail(err)
+		}
+		if cb := this.OnUserInfoReceived; cb != nil {
+			if err := cb(userInfo); err != nil {
+				return fail(err)
+			}
+		}
+		if err := result.Oidc.UserInfo.SetRaw(userInfo); err != nil {
+			return failf("cannot set user info to render context: %w", err)
+		}
+	}
+
+	return &result, nil
 }
 
-func (this *Coordinator) toUserRequirement(token *oauth2.Token, userInfo *oidc2.UserInfo) (*user.Requirement, error) {
-	fail := func(err error) (*user.Requirement, error) {
+func (this *Coordinator) toUserRequirement(rc *RenderContextOidcResolved) (*RenderContextRequirementResolved, error) {
+	fail := func(err error) (*RenderContextRequirementResolved, error) {
 		return nil, err
 	}
-	failf := func(message string, args ...any) (*user.Requirement, error) {
+	failf := func(message string, args ...any) (*RenderContextRequirementResolved, error) {
 		return fail(errors.Newf(errors.TypeConfig, message, args...))
 	}
 
-	data := coordinatorContextResolveUserRequirement{
-		Oidc: coordinatorContextOidc{
-			Token:    token,
-			UserInfo: userInfo,
-		},
-	}
-
-	req, err := this.Configuration.User.Render(common.StructuredKeyOf("user"), data)
+	req, err := this.Configuration.User.Render(common.StructuredKeyOf("user"), rc)
 	if err != nil {
 		return failf("cannot render user requirement based oidc information: %w", err)
 	}
 
-	return &req, nil
+	return &RenderContextRequirementResolved{
+		rc,
+		req,
+	}, nil
 }
 
-func (this *Coordinator) ensureUser(req *user.Requirement) (*user.User, error) {
+func (this *Coordinator) isLoginAllowed(rc *RenderContextRequirementResolved) (bool, error) {
+	fail := func(err error) (bool, error) {
+		return false, err
+	}
+	failf := func(message string, args ...any) (bool, error) {
+		return fail(errors.Newf(errors.TypeConfig, message, args...))
+	}
+
+	allowed, err := this.Configuration.User.LoginAllowed.Render(rc)
+	if err != nil {
+		return failf("cannot evaluate if user is allowed to longin or not: %w", err)
+	}
+
+	return allowed, nil
+}
+
+func (this *Coordinator) ensureUser(rc *RenderContextRequirementResolved) (*user.User, error) {
 	fail := func(err error) (*user.User, error) {
 		return nil, err
 	}
-	failf := func(message string, args ...any) (*user.User, error) {
-		return fail(errors.Newf(errors.TypeSystem, message, args...))
+	failf := func(pt errors.Type, message string, args ...any) (*user.User, error) {
+		return fail(errors.Newf(pt, message, args...))
 	}
 
-	u, err := this.UserEnsurer.Ensure(req, &user.EnsureOpts{
-		CreateAllowed: &this.Configuration.User.CreateIfAbsent,
-		ModifyAllowed: &this.Configuration.User.UpdateIfDifferent,
-	})
+	var opts user.EnsureOpts
+	if v, err := this.Configuration.User.CreateIfAbsent.Render(rc); err != nil {
+		return failf(errors.TypeConfig, "cannot resolve user.createIfAbsent: %w", err)
+	} else {
+		opts.CreateAllowed = &v
+	}
+	if v, err := this.Configuration.User.UpdateIfDifferent.Render(rc); err != nil {
+		return failf(errors.TypeConfig, "cannot resolve user.updateIfDifferent: %w", err)
+	} else {
+		opts.ModifyAllowed = &v
+	}
+
+	u, err := this.UserEnsurer.Ensure(&rc.User, &opts)
 	if err != nil {
-		return failf("cannot ensure user %v: %w", req, u)
+		return failf(errors.TypeSystem, "cannot ensure user %v: %w", rc, u)
 	}
 
 	return u, nil
 }
 
-type coordinatorContextResolveUserRequirement struct {
-	Oidc coordinatorContextOidc
-}
+type CoordinatorRunResult uint8
 
-type coordinatorContextOidc struct {
-	Token    *oauth2.Token
-	UserInfo *oidc2.UserInfo
+const (
+	CoordinatorRunResultSuccess CoordinatorRunResult = iota
+	CoordinatorRunResultRequestingNameForbidden
+	CoordinatorRunResultOidcAuthorizeFailed
+	CoordinatorRunResultRequirementResolutionFailed
+	CoordinatorRunResultLoginAllowedResolutionFailed
+	CoordinatorRunResultLoginForbidden
+	CoordinatorRunResultUserEnsuringFailed
+	CoordinatorRunResultNoSuchUser
+)
+
+func (this CoordinatorRunResult) String() string {
+	switch this {
+	case CoordinatorRunResultSuccess:
+		return "success"
+	case CoordinatorRunResultRequestingNameForbidden:
+		return "requesting name forbidden"
+	case CoordinatorRunResultOidcAuthorizeFailed:
+		return "oidc authorize failed"
+	case CoordinatorRunResultRequirementResolutionFailed:
+		return "requirement resolution failed"
+	case CoordinatorRunResultLoginAllowedResolutionFailed:
+		return "login allowed resolution failed"
+	case CoordinatorRunResultLoginForbidden:
+		return "login forbidden"
+	case CoordinatorRunResultUserEnsuringFailed:
+		return "user ensuring failed"
+	case CoordinatorRunResultNoSuchUser:
+		return "no such user"
+	default:
+		return fmt.Sprintf("unknown result %d", this)
+	}
 }

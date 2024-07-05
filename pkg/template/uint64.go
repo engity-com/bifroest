@@ -34,7 +34,12 @@ func (this Uint64) Render(data any) (uint64, error) {
 		if err := tmpl.Execute(&buf, data); err != nil {
 			return 0, err
 		}
-		result, err := strconv.ParseUint(strings.TrimSpace(buf.String()), 10, 64)
+		plain := strings.TrimSpace(buf.String())
+		if len(plain) == 0 || plain == "<no value>" {
+			return 0, nil
+		}
+
+		result, err := strconv.ParseUint(plain, 10, 64)
 		if err != nil {
 			return 0, fmt.Errorf("templated uint64 results in a value that cannot be parsed as uint64: %q", buf.String())
 		}

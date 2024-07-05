@@ -12,11 +12,17 @@ type ConfigurationOidc struct {
 	ClientId     string   `yaml:"clientId,omitempty"`
 	ClientSecret string   `yaml:"clientSecret,omitempty"`
 	Scopes       []string `yaml:"scopes,omitempty"`
+
+	RetrieveIdToken  bool `yaml:"retrieveIdToken,omitempty"`
+	RetrieveUserInfo bool `yaml:"retrieveUserInfo,omitempty"`
 }
 
 func NewConfigurationOidc() (*ConfigurationOidc, error) {
 	return &ConfigurationOidc{
 		Scopes: []string{oidc.ScopeOpenID, "profile", "email"},
+
+		RetrieveIdToken:  true,
+		RetrieveUserInfo: false,
 	}, nil
 }
 
