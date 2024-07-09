@@ -121,3 +121,8 @@ func (this *Configuration) LoadFromYaml(reader io.Reader, fn string) error {
 	*this = *buf
 	return nil
 }
+
+type ConfigurationProvider interface {
+	Get(ConfigurationKey) (*Configuration, error)
+	GetKeys() ([]ConfigurationKey, error)
+}

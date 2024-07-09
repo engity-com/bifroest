@@ -1,7 +1,9 @@
 package user
 
-import "github.com/engity/pam-oidc/pkg/execution"
+import (
+	"github.com/engity/pam-oidc/pkg/sys"
+)
 
 type ExecutionBasedEnsurer struct {
-	Executor execution.Executor
+	Executor sys.Executor
 }

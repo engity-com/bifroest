@@ -3,7 +3,7 @@ package user
 import (
 	"errors"
 	"fmt"
-	"github.com/engity/pam-oidc/pkg/execution"
+	"github.com/engity/pam-oidc/pkg/sys"
 	"strconv"
 	"strings"
 )
@@ -37,7 +37,7 @@ type DeleteGroupOpts struct {
 	Force *bool
 }
 
-func DeleteGroup(name string, opts *DeleteGroupOpts, using execution.Executor) error {
+func DeleteGroup(name string, opts *DeleteGroupOpts, using sys.Executor) error {
 	if len(name) == 0 {
 		return fmt.Errorf("cannot delete group with empty name")
 	}
@@ -56,7 +56,7 @@ func DeleteGroup(name string, opts *DeleteGroupOpts, using execution.Executor) e
 	args = append(args, name)
 
 	if err := using.Execute("groupdel", args...); err != nil {
-		var ee *execution.Error
+		var ee *sys.Error
 		if errors.As(err, &ee) && ee.ExitCode == 6 {
 			// This means already deleted: ok for us.
 		} else {

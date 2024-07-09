@@ -2,7 +2,7 @@ package user
 
 import (
 	"fmt"
-	"github.com/engity/pam-oidc/pkg/execution"
+	"github.com/engity/pam-oidc/pkg/sys"
 	"testing"
 )
 
@@ -121,7 +121,7 @@ func TestEnsure(t *testing.T) {
 
 func purgeOldUsers(t *testing.T, names ...string) {
 	for _, name := range names {
-		if err := Delete(name, nil, execution.Default); err != nil {
+		if err := Delete(name, nil, sys.DefaultExecutor); err != nil {
 			t.Fatalf("cannot purge old user %s: %v", name, err)
 		}
 	}
@@ -129,7 +129,7 @@ func purgeOldUsers(t *testing.T, names ...string) {
 
 func purgeOldGroups(t *testing.T, names ...string) {
 	for _, name := range names {
-		if err := DeleteGroup(name, nil, execution.Default); err != nil {
+		if err := DeleteGroup(name, nil, sys.DefaultExecutor); err != nil {
 			t.Fatalf("cannot purge old group %s: %v", name, err)
 		}
 	}

@@ -286,6 +286,25 @@ const (
 	FlagChangeExpiredAuthToken = Flag(_PAM_CHANGE_EXPIRED_AUTHTOK)
 )
 
+func (this Flag) String() string {
+	switch this {
+	case FlagSilent:
+		return "silent"
+	case FlagDisallowNullAuthToken /*FlagDeleteCredentials*/ :
+		return "disallow null auth token OR delete credentials"
+	case FlagEstablishCredentials:
+		return "establish credentials"
+	case FlagReinitializeCredentials:
+		return "reinitialize credentials"
+	case FlagRefreshCredentials:
+		return "refresh credentials"
+	case FlagChangeExpiredAuthToken:
+		return "change expired auth token"
+	default:
+		return fmt.Sprintf("flag-%d", this)
+	}
+}
+
 func FlagsFromBitMask(in uint64) Flags {
 	result := Flags{}
 	result.FromBitMask(in)

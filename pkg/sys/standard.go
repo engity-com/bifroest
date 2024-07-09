@@ -1,4 +1,4 @@
-package execution
+package sys
 
 import (
 	"bytes"
@@ -8,11 +8,11 @@ import (
 	"slices"
 )
 
-type Standard struct {
+type StandardExecutor struct {
 	UsingSudo bool
 }
 
-func (this Standard) Execute(program string, args ...string) error {
+func (this StandardExecutor) Execute(program string, args ...string) error {
 	var c *exec.Cmd
 	if this.UsingSudo {
 		c = exec.Command("sudo", slices.Concat([]string{program}, args)...)

@@ -1,11 +1,11 @@
 package user
 
 import (
-	"github.com/engity/pam-oidc/pkg/execution"
+	"github.com/engity/pam-oidc/pkg/sys"
 )
 
 var DefaultEnsurer Ensurer = &ExecutionBasedEnsurer{
-	Executor: execution.Default,
+	Executor: sys.DefaultExecutor,
 }
 
 type Ensurer interface {

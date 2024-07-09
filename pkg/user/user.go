@@ -3,7 +3,7 @@ package user
 import (
 	"errors"
 	"fmt"
-	"github.com/engity/pam-oidc/pkg/execution"
+	"github.com/engity/pam-oidc/pkg/sys"
 )
 
 type User struct {
@@ -38,7 +38,7 @@ type DeleteOpts struct {
 	Force         *bool
 }
 
-func Delete(name string, opts *DeleteOpts, using execution.Executor) error {
+func Delete(name string, opts *DeleteOpts, using sys.Executor) error {
 	if len(name) == 0 {
 		return fmt.Errorf("cannot delete user with empty name")
 	}
@@ -60,7 +60,7 @@ func Delete(name string, opts *DeleteOpts, using execution.Executor) error {
 	args = append(args, name)
 
 	if err := using.Execute("userdel", args...); err != nil {
-		var ee *execution.Error
+		var ee *sys.Error
 		if errors.As(err, &ee) && ee.ExitCode == 6 {
 			// This means already deleted: ok for us.
 		} else {

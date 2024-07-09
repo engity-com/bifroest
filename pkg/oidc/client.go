@@ -4,15 +4,8 @@ import (
 	"context"
 	sdkerrors "errors"
 	"github.com/coreos/go-oidc/v3/oidc"
-	log "github.com/echocat/slf4g"
 	"github.com/engity/pam-oidc/pkg/errors"
-	"github.com/engity/pam-oidc/pkg/pam"
 	"golang.org/x/oauth2"
-	"io"
-	"log/syslog"
-	"net/http"
-	"runtime"
-	"time"
 )
 
 func init() {
@@ -25,36 +18,7 @@ type Client struct {
 	verifier     *oidc.IDTokenVerifier
 }
 
-func logFoof(ph *pam.Handle, msg string, args ...any) {
-	if ph != nil {
-		ph.Syslogf(syslog.LOG_INFO, msg, args...)
-	} else {
-		log.Infof(msg, args...)
-	}
-}
-
-func writeGoroutineStacks(w io.Writer) error {
-	// We don't know how big the buffer needs to be to collect
-	// all the goroutines. Start with 1 MB and try a few times, doubling each time.
-	// Give up and use a truncated trace if 64 MB is not enough.
-	buf := make([]byte, 1<<20)
-	for i := 0; ; i++ {
-		n := runtime.Stack(buf, true)
-		if n < len(buf) {
-			buf = buf[:n]
-			break
-		}
-		if len(buf) >= 64<<20 {
-			// Filled 64 MB - stop there.
-			break
-		}
-		buf = make([]byte, 2*len(buf))
-	}
-	_, err := w.Write(buf)
-	return err
-}
-
-func NewClient(ctx context.Context, conf Configuration, ph *pam.Handle) (*Client, error) {
+func NewClient(ctx context.Context, conf Configuration) (*Client, error) {
 	fail := func(err error) (*Client, error) {
 		return nil, err
 	}
@@ -62,7 +26,6 @@ func NewClient(ctx context.Context, conf Configuration, ph *pam.Handle) (*Client
 		return fail(errors.Newf(errors.TypeConfig, msg, args...))
 	}
 
-	logFoof(ph, "ON1")
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -71,21 +34,11 @@ func NewClient(ctx context.Context, conf Configuration, ph *pam.Handle) (*Client
 		return failf("nil configuration")
 	}
 
-	logFoof(ph, "ON2: %v", conf.GetOidcIssuer())
-	timeout, cancelFunc := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancelFunc()
-	req, nil := http.NewRequestWithContext(timeout, "GET", "https://echocat.org/robots.txt", nil)
-	resp, _ := http.DefaultClient.Do(req)
-	logFoof(ph, "ON2a")
-	b, _ := io.ReadAll(resp.Body)
-	logFoof(ph, "ON2b: %s", string(b))
-
 	provider, err := oidc.NewProvider(ctx, conf.GetOidcIssuer())
 	if err != nil {
 		return failf("cannot evaluate OIDC issuer %q: %w", conf.GetOidcIssuer(), err)
 	}
 
-	logFoof(ph, "ON3")
 	result := Client{
 		oauth2Config: oauth2.Config{
 			ClientID:     conf.GetOidcClientId(),

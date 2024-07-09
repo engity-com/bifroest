@@ -1,8 +1,10 @@
-package execution
+package sys
 
-import "fmt"
+import (
+	"fmt"
+)
 
-var Default Executor = &Standard{
+var DefaultExecutor Executor = &StandardExecutor{
 	UsingSudo: true,
 }
 

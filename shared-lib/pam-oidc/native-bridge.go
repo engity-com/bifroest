@@ -26,8 +26,8 @@ int pam_sm_setcred(pam_handle_t *pamh, int flags, int argc, const char **argv) {
 import "C"
 
 import (
-	"github.com/engity/pam-oidc/pkg/native"
 	"github.com/engity/pam-oidc/pkg/pam"
+	"github.com/engity/pam-oidc/pkg/sys"
 	"unsafe"
 )
 
@@ -35,7 +35,7 @@ import (
 func pamSmAuthenticateS(pamh *C.pam_handle_t, flags C.int, argc C.int, argv **C.char) C.int {
 	handle := pam.NewHandle(unsafe.Pointer(pamh))
 	pfs := pam.FlagsFromBitMask(uint64(flags))
-	args := native.ParseCArgv(int(argc), unsafe.Pointer(argv))
+	args := sys.ParseCArgv(int(argc), unsafe.Pointer(argv))
 
 	return C.int(pamSmAuthenticate(handle, pfs, args...))
 }
@@ -44,7 +44,7 @@ func pamSmAuthenticateS(pamh *C.pam_handle_t, flags C.int, argc C.int, argv **C.
 func pamSmSetcredS(pamh *C.pam_handle_t, flags C.int, argc C.int, argv **C.char) C.int {
 	handle := pam.NewHandle(unsafe.Pointer(pamh))
 	pfs := pam.FlagsFromBitMask(uint64(flags))
-	args := native.ParseCArgv(int(argc), unsafe.Pointer(argv))
+	args := sys.ParseCArgv(int(argc), unsafe.Pointer(argv))
 
 	return C.int(pamSmSetcred(handle, pfs, args...))
 }

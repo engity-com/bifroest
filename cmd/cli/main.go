@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/engity/pam-oidc/pkg/common"
+	"github.com/engity/pam-oidc/pkg/user"
 	"os"
 
 	"github.com/alecthomas/kingpin"
@@ -11,8 +13,12 @@ import (
 )
 
 var (
-	configurationRef  core.ConfigurationRef
-	requestedUsername string
+	configurationRefs core.ConfigurationRefs
+
+	socketPerm  = common.MustNewFileMode("0600")
+	socketPath  = core.DefaultSocketPath
+	socketUser  user.UserRef
+	socketGroup user.GroupRef
 )
 
 func main() {
@@ -29,7 +35,8 @@ func main() {
 	app.Flag("log.format", "").SetValue(lv.Consumer.Formatter)
 	app.Flag("log.colorMode", "").SetValue(lv.Consumer.Formatter.ColorMode)
 
-	registerTestFlowCmd(app)
+	//registerTestFlowCmd(app)
+	registerServiceCmd(app)
 
 	kingpin.MustParse(app.Parse(os.Args[1:]))
 }
