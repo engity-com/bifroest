@@ -118,7 +118,7 @@ func (this GroupRequirementTemplates) isEqualTo(other *GroupRequirementTemplates
 		return false
 	}
 	for i, tv := range this {
-		if tv.IsEqualTo((*other)[i]) {
+		if !tv.IsEqualTo((*other)[i]) {
 			return false
 		}
 	}

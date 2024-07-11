@@ -54,7 +54,7 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 					Environment: Environment{&EnvironmentLocal{
 						User: UserRequirementTemplate{
 							Name:        template.MustNewString(DefaultUserNameTmpl),
-							DisplayName: template.MustNewString(DefaultUserNameTmpl),
+							DisplayName: template.MustNewString(DefaultUserDisplayNameTmpl),
 							Group: GroupRequirementTemplate{
 								Name: template.MustNewString(DefaultGroupNameTmpl),
 							},

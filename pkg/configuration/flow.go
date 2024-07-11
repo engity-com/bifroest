@@ -99,7 +99,7 @@ func (this Flows) isEqualTo(other *Flows) bool {
 		return false
 	}
 	for i, tv := range this {
-		if tv.IsEqualTo((*other)[i]) {
+		if !tv.IsEqualTo((*other)[i]) {
 			return false
 		}
 	}

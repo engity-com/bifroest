@@ -26,8 +26,8 @@ func (this *EnvironmentLocal) SetDefaults() error {
 
 		fixedDefault("loginAllowed", func(v *EnvironmentLocal) *template.Bool { return &v.LoginAllowed }, template.MustNewBool(DefaultEnvironmentLocalLoginAllowedTmpl)),
 
-		fixedDefault("createIfAbsent", func(v *EnvironmentLocal) *template.Bool { return &v.LoginAllowed }, template.MustNewBool(DefaultEnvironmentLocalCreateIfAbsentTmpl)),
-		fixedDefault("updateIfDifferent", func(v *EnvironmentLocal) *template.Bool { return &v.LoginAllowed }, template.MustNewBool(DefaultEnvironmentLocalUpdateIfDifferentTmpl)),
+		fixedDefault("createIfAbsent", func(v *EnvironmentLocal) *template.Bool { return &v.CreateIfAbsent }, template.MustNewBool(DefaultEnvironmentLocalCreateIfAbsentTmpl)),
+		fixedDefault("updateIfDifferent", func(v *EnvironmentLocal) *template.Bool { return &v.UpdateIfDifferent }, template.MustNewBool(DefaultEnvironmentLocalUpdateIfDifferentTmpl)),
 	)
 }
 
