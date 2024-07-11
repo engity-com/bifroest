@@ -17,10 +17,21 @@ func (this Group) String() string {
 	return fmt.Sprintf("%d(%s)", this.Gid, this.Name)
 }
 
-func (this Group) IsEqualTo(other *Group) bool {
+func (this Group) IsEqualTo(other any) bool {
 	if other == nil {
 		return false
 	}
+	switch v := other.(type) {
+	case Group:
+		return this.isEqualTo(&v)
+	case *Group:
+		return this.isEqualTo(v)
+	default:
+		return false
+	}
+}
+
+func (this Group) isEqualTo(other *Group) bool {
 	return this.Gid == other.Gid &&
 		this.Name == other.Name
 }
@@ -135,10 +146,21 @@ func (this Groups) Contains(other *Group) bool {
 	return false
 }
 
-func (this Groups) IsEqualTo(other *Groups) bool {
+func (this Groups) IsEqualTo(other any) bool {
 	if other == nil {
-		return len(this) == 0
+		return false
 	}
+	switch v := other.(type) {
+	case Groups:
+		return this.isEqualTo(&v)
+	case *Groups:
+		return this.isEqualTo(v)
+	default:
+		return false
+	}
+}
+
+func (this Groups) isEqualTo(other *Groups) bool {
 	if len(this) != len(*other) {
 		return false
 	}

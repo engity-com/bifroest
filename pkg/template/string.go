@@ -69,3 +69,21 @@ func (this *String) UnmarshalText(text []byte) error {
 func (this *String) Set(text string) error {
 	return this.UnmarshalText([]byte(text))
 }
+
+func (this String) IsEqualTo(other any) bool {
+	if other == nil {
+		return false
+	}
+	switch v := other.(type) {
+	case String:
+		return this.isEqualTo(&v)
+	case *String:
+		return this.isEqualTo(v)
+	default:
+		return false
+	}
+}
+
+func (this String) isEqualTo(other *String) bool {
+	return this.plain == other.plain
+}

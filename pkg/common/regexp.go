@@ -65,3 +65,24 @@ func (this *Regexp) MatchString(s string) bool {
 	}
 	return false
 }
+
+func (this Regexp) IsEqualTo(other any) bool {
+	if other == nil {
+		return false
+	}
+	switch v := other.(type) {
+	case Regexp:
+		return this.isEqualTo(&v)
+	case *Regexp:
+		return this.isEqualTo(v)
+	default:
+		return false
+	}
+}
+
+func (this Regexp) isEqualTo(other *Regexp) bool {
+	if other.v == nil {
+		return this.v == nil
+	}
+	return this.v.String() == other.v.String()
+}

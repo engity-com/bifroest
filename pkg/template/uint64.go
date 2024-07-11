@@ -79,3 +79,21 @@ func (this *Uint64) UnmarshalText(text []byte) error {
 func (this *Uint64) Set(text string) error {
 	return this.UnmarshalText([]byte(text))
 }
+
+func (this Uint64) IsEqualTo(other any) bool {
+	if other == nil {
+		return false
+	}
+	switch v := other.(type) {
+	case Uint64:
+		return this.isEqualTo(&v)
+	case *Uint64:
+		return this.isEqualTo(v)
+	default:
+		return false
+	}
+}
+
+func (this Uint64) isEqualTo(other *Uint64) bool {
+	return this.plain == other.plain
+}

@@ -67,3 +67,21 @@ func (this *FileMode) Set(text string) error {
 func (this FileMode) Get() os.FileMode {
 	return this.v
 }
+
+func (this FileMode) IsEqualTo(other any) bool {
+	if other == nil {
+		return false
+	}
+	switch v := other.(type) {
+	case FileMode:
+		return this.isEqualTo(&v)
+	case *FileMode:
+		return this.isEqualTo(v)
+	default:
+		return false
+	}
+}
+
+func (this FileMode) isEqualTo(other *FileMode) bool {
+	return this.v == other.v
+}

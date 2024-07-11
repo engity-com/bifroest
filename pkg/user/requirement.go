@@ -41,10 +41,21 @@ func (this Requirement) IsZero() bool {
 		len(this.Skel) == 0
 }
 
-func (this Requirement) IsEqualTo(other *Requirement) bool {
+func (this Requirement) IsEqualTo(other any) bool {
 	if other == nil {
 		return false
 	}
+	switch v := other.(type) {
+	case Requirement:
+		return this.isEqualTo(&v)
+	case *Requirement:
+		return this.isEqualTo(v)
+	default:
+		return false
+	}
+}
+
+func (this Requirement) isEqualTo(other *Requirement) bool {
 	return this.Name == other.Name &&
 		this.DisplayName == other.DisplayName &&
 		this.Uid == other.Uid &&

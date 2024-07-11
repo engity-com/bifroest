@@ -20,10 +20,21 @@ func (this User) String() string {
 	return fmt.Sprintf("%d(%s)", this.Uid, this.Name)
 }
 
-func (this User) IsEqualTo(other *User) bool {
+func (this User) IsEqualTo(other any) bool {
 	if other == nil {
 		return false
 	}
+	switch v := other.(type) {
+	case User:
+		return this.isEqualTo(&v)
+	case *User:
+		return this.isEqualTo(v)
+	default:
+		return false
+	}
+}
+
+func (this User) isEqualTo(other *User) bool {
 	return this.Name == other.Name &&
 		this.DisplayName == other.DisplayName &&
 		this.Uid == other.Uid &&

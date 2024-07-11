@@ -25,10 +25,21 @@ func (this GroupRequirement) IsZero() bool {
 		len(this.Name) == 0
 }
 
-func (this GroupRequirement) IsEqualTo(other *GroupRequirement) bool {
+func (this GroupRequirement) IsEqualTo(other any) bool {
 	if other == nil {
 		return false
 	}
+	switch v := other.(type) {
+	case GroupRequirement:
+		return this.isEqualTo(&v)
+	case *GroupRequirement:
+		return this.isEqualTo(v)
+	default:
+		return false
+	}
+}
+
+func (this GroupRequirement) isEqualTo(other *GroupRequirement) bool {
 	return this.Gid == other.Gid &&
 		this.Name == other.Name
 }
@@ -92,10 +103,21 @@ func (this GroupRequirements) Contains(other *GroupRequirement) bool {
 	return false
 }
 
-func (this GroupRequirements) IsEqualTo(other *GroupRequirements) bool {
+func (this GroupRequirements) IsEqualTo(other any) bool {
 	if other == nil {
-		return len(this) == 0
+		return false
 	}
+	switch v := other.(type) {
+	case GroupRequirements:
+		return this.isEqualTo(&v)
+	case *GroupRequirements:
+		return this.isEqualTo(v)
+	default:
+		return false
+	}
+}
+
+func (this GroupRequirements) isEqualTo(other *GroupRequirements) bool {
 	if len(this) != len(*other) {
 		return false
 	}

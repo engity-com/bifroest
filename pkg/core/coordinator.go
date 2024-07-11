@@ -5,13 +5,14 @@ import (
 	errors2 "errors"
 	oidc2 "github.com/coreos/go-oidc/v3/oidc"
 	"github.com/engity/pam-oidc/pkg/common"
+	"github.com/engity/pam-oidc/pkg/configuration"
 	"github.com/engity/pam-oidc/pkg/errors"
 	"github.com/engity/pam-oidc/pkg/oidc"
 	"github.com/engity/pam-oidc/pkg/user"
 	"golang.org/x/oauth2"
 )
 
-func NewCoordinator(conf *Configuration) (*Coordinator, error) {
+func NewCoordinator(conf *configuration.Configuration) (*Coordinator, error) {
 	return &Coordinator{
 		Configuration: conf,
 		UserEnsurer:   user.DefaultEnsurer,
@@ -19,7 +20,7 @@ func NewCoordinator(conf *Configuration) (*Coordinator, error) {
 }
 
 type Coordinator struct {
-	Configuration *Configuration
+	Configuration *configuration.Configuration
 	UserEnsurer   user.Ensurer
 
 	OnDeviceAuthStarted func(*oauth2.DeviceAuthResponse) error
