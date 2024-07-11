@@ -50,6 +50,20 @@ func (this NetAddress) String() string {
 	}
 }
 
+func (this NetAddress) Listen() (net.Listener, error) {
+	pv := this.v
+	if pv == nil {
+		return nil, fmt.Errorf("cannot listen to empty address")
+	}
+
+	switch v := pv.(type) {
+	case *net.TCPAddr:
+		return net.ListenTCP(v.Network(), v)
+	default:
+		panic(fmt.Errorf("illegal address type: %v(%v)", reflect.TypeOf(pv), pv))
+	}
+}
+
 func (this *NetAddress) UnmarshalText(text []byte) error {
 	if len(text) == 0 {
 		this.v = nil

@@ -1,24 +1,16 @@
 package main
 
 import (
-	"github.com/engity/pam-oidc/pkg/common"
-	"github.com/engity/pam-oidc/pkg/user"
+	"github.com/engity/pam-oidc/pkg/configuration"
 	"os"
 
 	"github.com/alecthomas/kingpin"
 	"github.com/echocat/slf4g/native"
 	"github.com/echocat/slf4g/native/facade/value"
-
-	"github.com/engity/pam-oidc/pkg/core"
 )
 
 var (
-	configurationRefs core.ConfigurationRefs
-
-	socketPerm  = common.MustNewFileMode("0600")
-	socketPath  = core.DefaultSocketPath
-	socketUser  user.UserRef
-	socketGroup user.GroupRef
+	configurationRef = configuration.MustNewConfigurationRef("/etc/yasshd/configuration.yaml")
 )
 
 func main() {
@@ -35,8 +27,7 @@ func main() {
 	app.Flag("log.format", "").SetValue(lv.Consumer.Formatter)
 	app.Flag("log.colorMode", "").SetValue(lv.Consumer.Formatter.ColorMode)
 
-	//registerTestFlowCmd(app)
-	registerServiceCmd(app)
+	registerRunCmd(app)
 
 	kingpin.MustParse(app.Parse(os.Args[1:]))
 }
