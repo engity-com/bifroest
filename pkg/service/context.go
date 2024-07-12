@@ -4,6 +4,7 @@ import (
 	log "github.com/echocat/slf4g"
 	"github.com/engity-com/yasshd/pkg/authorization"
 	"github.com/engity-com/yasshd/pkg/common"
+	"github.com/engity-com/yasshd/pkg/environment"
 	"github.com/gliderlabs/ssh"
 	gssh "golang.org/x/crypto/ssh"
 	"net"
@@ -95,9 +96,14 @@ func (this *environmentRequest) Authorization() authorization.Authorization {
 
 type environmentTask struct {
 	environmentRequest
-	session ssh.Session
+	session  ssh.Session
+	taskType environment.TaskType
 }
 
 func (this *environmentTask) Session() ssh.Session {
 	return this.session
+}
+
+func (this *environmentTask) TaskType() environment.TaskType {
+	return this.taskType
 }

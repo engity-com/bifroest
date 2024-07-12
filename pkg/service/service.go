@@ -96,7 +96,7 @@ func (this *Service) prepareServer(_ context.Context, svc *service) (err error) 
 	svc.server.MaxTimeout = this.Configuration.Ssh.MaxTimeout.Native()
 	svc.server.ServerConfigCallback = svc.createNewServerConfig
 	svc.server.ConnCallback = svc.onNewConnConnection
-	svc.server.Handler = svc.handler
+	svc.server.Handler = svc.handleShellSession
 	svc.server.LocalPortForwardingCallback = svc.onLocalPortForwardingRequested
 	svc.server.ReversePortForwardingCallback = svc.onReversePortForwardingRequested
 	svc.server.PublicKeyHandler = svc.handlePublicKey
@@ -109,6 +109,9 @@ func (this *Service) prepareServer(_ context.Context, svc *service) (err error) 
 	}
 	svc.server.ChannelHandlers = map[string]ssh.ChannelHandler{
 		"session": svc.handleNewSession,
+	}
+	svc.server.SubsystemHandlers = map[string]ssh.SubsystemHandler{
+		"sftp": svc.handleSftpSession,
 	}
 	if svc.server.HostSigners, err = this.loadHostSigners(); err != nil {
 		return fail(err)
@@ -149,38 +152,6 @@ type service struct {
 	authorization authorization.Authorizer
 	environment   environment.Environment
 	server        ssh.Server
-}
-
-func (this *service) handler(sess ssh.Session) {
-	l := log.With("remoteUser", sess.User()).
-		With("remoteAddr", sess.RemoteAddr())
-
-	l.With("remote", sess.RemoteAddr()).
-		With("env", sess.Environ()).
-		With("command", sess.Command()).
-		Info("new remote session")
-
-	auth := sess.Context().Value(authorizationCtxKey).(authorization.Authorization)
-	if auth == nil {
-		l.Error("no authorization resolved, but it should")
-		_ = sess.Exit(91)
-		return
-	}
-
-	t := environmentTask{
-		environmentRequest: environmentRequest{
-			service:       this,
-			remote:        &remote{sess.Context()},
-			authorization: auth,
-		},
-		session: sess,
-	}
-
-	if err := this.environment.Run(&t); err != nil {
-		l.WithError(err).Error("run of environment failed")
-		_ = sess.Exit(92)
-		return
-	}
 }
 
 func (this *service) logger(ctx ssh.Context) log.Logger {
@@ -342,5 +313,55 @@ func (this *service) createNewServerConfig(ctx ssh.Context) *gssh.ServerConfig {
 		ServerVersion: "SSH-2.0-yasshd",
 		MaxAuthTries:  int(this.Configuration.Ssh.MaxAuthTries),
 	}
+}
 
+func (this *service) handleShellSession(sess ssh.Session) {
+	l := this.logger(sess.Context())
+
+	l.With("remote", sess.RemoteAddr()).
+		With("type", "shell").
+		With("env", sess.Environ()).
+		With("command", sess.Command()).
+		Info("new remote session")
+
+	this.executeSession(sess, environment.TaskTypeShell, l)
+}
+
+func (this *service) handleSftpSession(sess ssh.Session) {
+	l := this.logger(sess.Context())
+
+	l.With("remote", sess.RemoteAddr()).
+		With("type", "sftp").
+		With("env", sess.Environ()).
+		With("command", sess.Command()).
+		Info("new remote session")
+
+	this.executeSession(sess, environment.TaskTypeSftp, l)
+}
+
+func (this *service) executeSession(sess ssh.Session, taskType environment.TaskType, l log.Logger) {
+	defer func() { l.Info("session ended") }()
+
+	auth := sess.Context().Value(authorizationCtxKey).(authorization.Authorization)
+	if auth == nil {
+		l.Error("no authorization resolved, but it should")
+		_ = sess.Exit(91)
+		return
+	}
+
+	t := environmentTask{
+		environmentRequest: environmentRequest{
+			service:       this,
+			remote:        &remote{sess.Context()},
+			authorization: auth,
+		},
+		session:  sess,
+		taskType: taskType,
+	}
+
+	if err := this.environment.Run(&t); err != nil {
+		l.WithError(err).Error("run of environment failed")
+		_ = sess.Exit(92)
+		return
+	}
 }

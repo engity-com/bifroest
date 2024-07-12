@@ -8,7 +8,7 @@ import (
 )
 
 func registerRunCmd(app *kingpin.Application) {
-	cmd := app.Command("run", "Run the service.").
+	cmd := app.Command("run", "Runs the service.").
 		Action(func(*kingpin.ParseContext) error {
 			return doRun()
 		})

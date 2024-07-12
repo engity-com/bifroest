@@ -173,6 +173,9 @@ func (this *OidcDeviceAuth) RetrieveDeviceAuthToken(ctx context.Context, using *
 	if sdkerrors.Is(err, context.DeadlineExceeded) {
 		return failf(errors.TypeUser, "authorize of device timed out")
 	}
+	if sdkerrors.Is(err, context.Canceled) {
+		return failf(errors.TypeUser, "authorize cancelled by user")
+	}
 	if err != nil {
 		return failf(errors.TypeNetwork, "cannot authorize device: %w", err)
 	}

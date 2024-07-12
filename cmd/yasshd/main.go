@@ -1,6 +1,7 @@
 package main
 
 import (
+	log "github.com/echocat/slf4g"
 	"github.com/engity-com/yasshd/pkg/configuration"
 	"os"
 
@@ -11,10 +12,17 @@ import (
 
 var (
 	configurationRef = configuration.MustNewConfigurationRef("/etc/yasshd/configuration.yaml")
+	workingDir       = func() string {
+		v, err := os.Getwd()
+		if err == nil {
+			return v
+		}
+		return "/"
+	}()
 )
 
 func main() {
-	app := kingpin.New("yasshd-cli", "Cli to manage yasshd").
+	app := kingpin.New("yasshd", "SSH server which provides authorization and authentication via OpenID Connect and classic mechanisms to access a real host or a dedicated Docker container.").
 		UsageWriter(os.Stderr).
 		ErrorWriter(os.Stderr).
 		Terminate(func(i int) {
@@ -28,6 +36,10 @@ func main() {
 	app.Flag("log.colorMode", "").SetValue(lv.Consumer.Formatter.ColorMode)
 
 	registerRunCmd(app)
+	registerSftpServerCmd(app)
 
-	kingpin.MustParse(app.Parse(os.Args[1:]))
+	if _, err := app.Parse(os.Args[1:]); err != nil {
+		log.WithError(err).Error("execution failed")
+		os.Exit(1)
+	}
 }

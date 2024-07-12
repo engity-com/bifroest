@@ -14,3 +14,10 @@ func (this *Local) setWinsize(f *os.File, w, h int) error {
 	}
 	return err
 }
+
+func (this *Local) getPathEnv() string {
+	if v := os.Getenv("PATH"); v != "" {
+		return v
+	}
+	return "/bin;/usr/bin"
+}

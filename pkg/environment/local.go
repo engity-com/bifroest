@@ -4,11 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"github.com/creack/pty"
-	log "github.com/echocat/slf4g"
+	"github.com/echocat/slf4g"
+	"github.com/echocat/slf4g/level"
 	"github.com/engity-com/yasshd/pkg/configuration"
 	"github.com/engity-com/yasshd/pkg/sys"
 	"github.com/engity-com/yasshd/pkg/user"
 	"github.com/gliderlabs/ssh"
+	"github.com/kardianos/osext"
 	"io"
 	"os"
 	"os/exec"
@@ -125,17 +127,34 @@ func (this *Local) runCommand(t Task, u *user.User) error {
 	sess := t.Session()
 
 	cmd := exec.Cmd{
-		Path: u.Shell,
-		Args: []string{"-" + filepath.Base(u.Shell)},
+		Dir: u.HomeDir,
 		SysProcAttr: &syscall.SysProcAttr{
 			Credential: &creds,
 			Setsid:     true,
 		},
+		Env: []string{
+			"PATH=" + this.getPathEnv(),
+		},
 	}
-	cmd.Env = append(cmd.Env,
-		"PATH="+os.Getenv("PATH"), // TODO! Improve
-		"TZ="+os.Getenv("TZ"),     // TODO! Improve
-	)
+
+	switch t.TaskType() {
+	case TaskTypeShell:
+		cmd.Path = u.Shell
+		cmd.Args = []string{"-" + filepath.Base(u.Shell)}
+	case TaskTypeSftp:
+		efn, err := osext.Executable()
+		if err != nil {
+			return fmt.Errorf("cannot resolve the location of the server's executable location: %w", err)
+		}
+		cmd.Path = efn
+		cmd.Args = []string{efn, "sftp-server"}
+	default:
+		return fmt.Errorf("illegal task type: %v", t.TaskType())
+	}
+
+	if v := os.Getenv("TZ"); v != "" {
+		cmd.Env = append(cmd.Env, "TZ="+os.Getenv("TZ"))
+	}
 	cmd.Env = append(cmd.Env, sess.Environ()...)
 	cmd.Env = append(cmd.Env,
 		"HOME="+u.HomeDir,
@@ -181,7 +200,17 @@ func (this *Local) runCommand(t Task, u *user.User) error {
 	} else {
 		cmd.Stdin = sess
 		cmd.Stdout = sess
-		cmd.Stderr = sess.Stderr()
+		if t.TaskType() == TaskTypeSftp {
+			cmd.Stderr = &log.LoggingWriter{
+				Logger:         l,
+				LevelExtractor: level.FixedLevelExtractor(level.Error),
+			}
+		} else {
+			cmd.Stderr = sess.Stderr()
+		}
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("cannot start process %v: %w", cmd.Args, err)
+		}
 	}
 
 	if err := cmd.Wait(); err != nil {
