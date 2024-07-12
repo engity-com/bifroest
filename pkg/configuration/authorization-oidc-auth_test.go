@@ -6,33 +6,33 @@ import (
 
 func TestAuthorizationOidc_UnmarshalYAML(t *testing.T) {
 	runUnmarshalYamlTests(t,
-		unmarshalYamlTestCase[AuthorizationOidc]{
+		unmarshalYamlTestCase[AuthorizationOidcDeviceAuth]{
 			name:          "empty",
 			yaml:          ``,
 			expectedError: `EOF`,
 		},
-		unmarshalYamlTestCase[AuthorizationOidc]{
+		unmarshalYamlTestCase[AuthorizationOidcDeviceAuth]{
 			name:          "issuer-missing",
 			yaml:          `{}`,
 			expectedError: `[issuer] required but absent`,
 		},
-		unmarshalYamlTestCase[AuthorizationOidc]{
+		unmarshalYamlTestCase[AuthorizationOidcDeviceAuth]{
 			name:          "client-id-missing",
 			yaml:          `issuer: https://foo-bar`,
 			expectedError: `[clientId] required but absent`,
 		},
-		unmarshalYamlTestCase[AuthorizationOidc]{
+		unmarshalYamlTestCase[AuthorizationOidcDeviceAuth]{
 			name: "client-secret-missing",
 			yaml: `issuer: https://foo-bar
 clientId: abc`,
 			expectedError: `[clientSecret] required but absent`,
 		},
-		unmarshalYamlTestCase[AuthorizationOidc]{
+		unmarshalYamlTestCase[AuthorizationOidcDeviceAuth]{
 			name: "required-set",
 			yaml: `issuer: https://foo-bar
 clientId: anId
 clientSecret: aSecret`,
-			expected: AuthorizationOidc{
+			expected: AuthorizationOidcDeviceAuth{
 				Issuer:           "https://foo-bar",
 				ClientId:         "anId",
 				ClientSecret:     "aSecret",
@@ -41,7 +41,7 @@ clientSecret: aSecret`,
 				RetrieveUserInfo: false,
 			},
 		},
-		unmarshalYamlTestCase[AuthorizationOidc]{
+		unmarshalYamlTestCase[AuthorizationOidcDeviceAuth]{
 			name: "all-set",
 			yaml: `issuer: https://foo-bar
 clientId: anId
@@ -49,7 +49,7 @@ clientSecret: aSecret
 scopes: [a,b,c]
 retrieveIdToken: false
 retrieveUserInfo: true`,
-			expected: AuthorizationOidc{
+			expected: AuthorizationOidcDeviceAuth{
 				Issuer:           "https://foo-bar",
 				ClientId:         "anId",
 				ClientSecret:     "aSecret",

@@ -40,7 +40,7 @@ clientId: abc`,
 issuer: https://foo-bar
 clientId: anId
 clientSecret: aSecret`,
-			expected: Authorization{&AuthorizationOidc{
+			expected: Authorization{&AuthorizationOidcDeviceAuth{
 				Issuer:           "https://foo-bar",
 				ClientId:         "anId",
 				ClientSecret:     "aSecret",

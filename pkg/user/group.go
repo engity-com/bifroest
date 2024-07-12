@@ -3,7 +3,7 @@ package user
 import (
 	"errors"
 	"fmt"
-	"github.com/engity/pam-oidc/pkg/sys"
+	"github.com/engity-com/yasshd/pkg/sys"
 	"strconv"
 	"strings"
 )

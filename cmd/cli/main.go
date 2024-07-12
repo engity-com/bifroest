@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/engity/pam-oidc/pkg/configuration"
+	"github.com/engity-com/yasshd/pkg/configuration"
 	"os"
 
 	"github.com/alecthomas/kingpin"
@@ -14,7 +14,7 @@ var (
 )
 
 func main() {
-	app := kingpin.New("pam-oidc-cli", "Cli to manage pam-oidc").
+	app := kingpin.New("yasshd-cli", "Cli to manage yasshd").
 		UsageWriter(os.Stderr).
 		ErrorWriter(os.Stderr).
 		Terminate(func(i int) {

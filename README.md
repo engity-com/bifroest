@@ -1,17 +1,17 @@
-# pam-oidc
+# yasshd
 
 ## Example
 
 In `/etc/pam.d/ssh`:
 
 ```
-auth requisite pam-oidc.so <options>
+auth requisite yasshd.so <options>
 ```
 
 Example for Google:
 
 ```
-auth requisite pam-oidc.so
+auth requisite yasshd.so
 ```
 
 ## References

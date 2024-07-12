@@ -2,7 +2,7 @@ package user
 
 import (
 	"fmt"
-	"github.com/engity/pam-oidc/pkg/sys"
+	"github.com/engity-com/yasshd/pkg/sys"
 	"testing"
 )
 
@@ -37,8 +37,8 @@ func TestEnsure(t *testing.T) {
 			Name:        "user-1600",
 			DisplayName: "",
 			Uid:         1600,
-			Group:       Group{1500, "pam-oidc"},
-			Groups:      []Group{{1500, "pam-oidc"}},
+			Group:       Group{1500, "yasshd"},
+			Groups:      []Group{{1500, "yasshd"}},
 			Shell:       "/bin/sh",
 			HomeDir:     "/home/user-1600",
 		},

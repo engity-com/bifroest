@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"gopkg.in/yaml.v3"
 	"reflect"
+	"strings"
 )
 
 type Authorization struct {
@@ -18,7 +19,7 @@ type AuthorizationV interface {
 }
 
 func (this *Authorization) SetDefaults() error {
-	*this = Authorization{&AuthorizationOidc{}}
+	*this = Authorization{&AuthorizationOidcDeviceAuth{}}
 	if err := this.V.SetDefaults(); err != nil {
 		return err
 	}
@@ -54,11 +55,11 @@ func (this *Authorization) UnmarshalYAML(node *yaml.Node) error {
 		return reportYamlRelatedErr(node, err)
 	}
 
-	switch typeBuf.Type {
+	switch strings.ToLower(typeBuf.Type) {
 	case "":
 		return reportYamlRelatedErrf(node, "[type] required but absent")
-	case "oidc":
-		this.V = &AuthorizationOidc{}
+	case "oidc-device-auth", "oidc_device_auth", "oidcdeviceauth":
+		this.V = &AuthorizationOidcDeviceAuth{}
 	default:
 		return reportYamlRelatedErrf(node, "[type] illegal type: %q", typeBuf.Type)
 	}
@@ -79,8 +80,8 @@ func (this *Authorization) MarshalYAML() (any, error) {
 	}
 
 	switch typeBuf.AuthorizationV.(type) {
-	case *AuthorizationOidc:
-		typeBuf.Type = "oidc"
+	case *AuthorizationOidcDeviceAuth:
+		typeBuf.Type = "oidcDeviceAuth"
 	default:
 		return nil, fmt.Errorf("[type] illegal type: %v", reflect.TypeOf(typeBuf.AuthorizationV))
 	}

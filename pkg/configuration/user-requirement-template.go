@@ -2,17 +2,17 @@ package configuration
 
 import (
 	"fmt"
-	"github.com/engity/pam-oidc/pkg/common"
-	"github.com/engity/pam-oidc/pkg/template"
-	"github.com/engity/pam-oidc/pkg/user"
+	"github.com/engity-com/yasshd/pkg/common"
+	"github.com/engity-com/yasshd/pkg/template"
+	"github.com/engity-com/yasshd/pkg/user"
 	"gopkg.in/yaml.v3"
 )
 
 const (
-	DefaultUserNameTmpl        = "{{.Oidc.IdToken.Claims.email}}"
-	DefaultUserDisplayNameTmpl = "{{.Oidc.IdToken.Claims.name}}"
+	DefaultUserNameTmpl        = "{{.Authorization.IdToken.Claims.email}}"
+	DefaultUserDisplayNameTmpl = "{{.Authorization.IdToken.Claims.name}}"
 	DefaultUserShellTmpl       = "/bin/bash"
-	DefaultUserHomeDirTmpl     = "/home/managed/{{.Oidc.IdToken.Claims.email}}"
+	DefaultUserHomeDirTmpl     = "/home/managed/{{.Authorization.IdToken.Claims.email}}"
 )
 
 type UserRequirementTemplate struct {
@@ -72,32 +72,33 @@ func (this *UserRequirementTemplate) UnmarshalYAML(node *yaml.Node) error {
 	})
 }
 
-func (this UserRequirementTemplate) Render(key common.StructuredKey, data any) (result user.Requirement, err error) {
+func (this UserRequirementTemplate) Render(key common.StructuredKey, data any) (_ *user.Requirement, err error) {
+	result := user.Requirement{}
 	if result.Name, err = this.Name.Render(data); err != nil {
-		return user.Requirement{}, fmt.Errorf("[%v] %w", key.Child("name"), err)
+		return nil, fmt.Errorf("[%v] %w", key.Child("name"), err)
 	}
 	if result.DisplayName, err = this.DisplayName.Render(data); err != nil {
-		return user.Requirement{}, fmt.Errorf("[%v] %w", key.Child("displayName"), err)
+		return nil, fmt.Errorf("[%v] %w", key.Child("displayName"), err)
 	}
 	if result.Uid, err = this.Uid.Render(data); err != nil {
-		return user.Requirement{}, fmt.Errorf("[%v] %w", key.Child("uid"), err)
+		return nil, fmt.Errorf("[%v] %w", key.Child("uid"), err)
 	}
 	if result.Group, err = this.Group.Render(key.Child("group"), data); err != nil {
-		return user.Requirement{}, err
+		return nil, err
 	}
 	if result.Groups, err = this.Groups.Render(key.Child("groups"), data); err != nil {
-		return user.Requirement{}, err
+		return nil, err
 	}
 	if result.Shell, err = this.Shell.Render(data); err != nil {
-		return user.Requirement{}, fmt.Errorf("[%v] %w", key.Child("shell"), err)
+		return nil, fmt.Errorf("[%v] %w", key.Child("shell"), err)
 	}
 	if result.HomeDir, err = this.HomeDir.Render(data); err != nil {
-		return user.Requirement{}, fmt.Errorf("[%v] %w", key.Child("homeDir"), err)
+		return nil, fmt.Errorf("[%v] %w", key.Child("homeDir"), err)
 	}
 	if result.Skel, err = this.Skel.Render(data); err != nil {
-		return user.Requirement{}, fmt.Errorf("[%v] %w", key.Child("skel"), err)
+		return nil, fmt.Errorf("[%v] %w", key.Child("skel"), err)
 	}
-	return result, nil
+	return &result, nil
 }
 
 func (this UserRequirementTemplate) IsEqualTo(other any) bool {

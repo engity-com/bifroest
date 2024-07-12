@@ -3,6 +3,7 @@ package crypto
 import (
 	"crypto"
 	"crypto/dsa"
+	"encoding/base64"
 	"encoding/pem"
 	"fmt"
 	"github.com/mikesmitty/edkey"
@@ -12,7 +13,11 @@ import (
 	"os"
 )
 
-func EnsureFile(fn string, reqOnAbsence *KeyRequirement, rand io.Reader) (crypto.Signer, error) {
+func SshPublicKeyLongFingerPrint(in ssh.PublicKey) string {
+	return in.Type() + " " + base64.StdEncoding.EncodeToString(in.Marshal())
+}
+
+func EnsureKeyFile(fn string, reqOnAbsence *KeyRequirement, rand io.Reader) (crypto.Signer, error) {
 	raw, err := os.ReadFile(fn)
 	if os.IsNotExist(err) {
 		return reqOnAbsence.CreateFile(rand, fn)

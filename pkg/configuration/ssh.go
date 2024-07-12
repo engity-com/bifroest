@@ -1,38 +1,52 @@
 package configuration
 
 import (
-	"github.com/engity/pam-oidc/pkg/common"
+	"github.com/engity-com/yasshd/pkg/common"
 	"gopkg.in/yaml.v3"
 )
 
 var (
-	DefaultSshAddress = []common.NetAddress{common.MustNewNetAddress(":2222")}
+	DefaultSshAddresses   = []common.NetAddress{common.MustNewNetAddress(":2222")}
+	DefaultSshIdleTimeout = common.MustNewDuration("30m")
+	DefaultSshMaxTimeout  = common.MustNewDuration("0")
+	DefaultMaxAuthTries   = uint8(6)
 )
 
 type Ssh struct {
-	Address common.NetAddresses `yaml:"address"`
-	HostKey string              `yaml:"hostKey"`
+	Addresses    common.NetAddresses `yaml:"addresses"`
+	Keys         Keys                `yaml:"keys"`
+	IdleTimeout  common.Duration     `yaml:"idleTimeout"`
+	MaxTimeout   common.Duration     `yaml:"maxTimeout"`
+	MaxAuthTries uint8               `yaml:"maxAuthTries"`
 }
 
 func (this *Ssh) SetDefaults() error {
 	return setDefaults(this,
-		fixedDefault("address", func(v *Ssh) *common.NetAddresses { return &v.Address }, DefaultSshAddress),
-		fixedDefault("hostKey", func(v *Ssh) *string { return &v.HostKey }, DefaultHostKeyLocation),
+		fixedDefault("addresses", func(v *Ssh) *common.NetAddresses { return &v.Addresses }, DefaultSshAddresses),
+		func(v *Ssh) (string, defaulter) { return "keys", &v.Keys },
+		fixedDefault("idleTimeout", func(v *Ssh) *common.Duration { return &v.IdleTimeout }, DefaultSshIdleTimeout),
+		fixedDefault("maxTimeout", func(v *Ssh) *common.Duration { return &v.MaxTimeout }, DefaultSshMaxTimeout),
+		fixedDefault("maxAuthTries", func(v *Ssh) *uint8 { return &v.MaxAuthTries }, DefaultMaxAuthTries),
 	)
 }
 
 func (this *Ssh) Trim() error {
 	return trim(this,
-		func(v *Ssh) (string, trimmer) { return "address", &v.Address },
-		func(v *Ssh) (string, trimmer) { return "hostKey", &stringTrimmer{&v.HostKey} },
+		func(v *Ssh) (string, trimmer) { return "addresses", &v.Addresses },
+		func(v *Ssh) (string, trimmer) { return "keys", &v.Keys },
+		func(v *Ssh) (string, trimmer) { return "idleTimeout", &v.Keys },
+		func(v *Ssh) (string, trimmer) { return "maxTimeout", &v.Keys },
+		func(v *Ssh) (string, trimmer) { return "maxAuthTries", &v.Keys },
 	)
 }
 
 func (this *Ssh) Validate() error {
 	return validate(this,
-		func(v *Ssh) (string, validator) { return "address", &v.Address },
-		notEmptySliceValidate("address", func(v *Ssh) *[]common.NetAddress { return (*[]common.NetAddress)(&v.Address) }),
-		notEmptyStringValidate("hostKey", func(v *Ssh) *string { return &v.HostKey }),
+		func(v *Ssh) (string, validator) { return "addresses", &v.Addresses },
+		func(v *Ssh) (string, validator) { return "keys", &v.Keys },
+		func(v *Ssh) (string, validator) { return "idleTimeout", &v.Keys },
+		func(v *Ssh) (string, validator) { return "maxTimeout", &v.Keys },
+		func(v *Ssh) (string, validator) { return "maxAuthTries", &v.Keys },
 	)
 }
 
@@ -58,6 +72,9 @@ func (this Ssh) IsEqualTo(other any) bool {
 }
 
 func (this Ssh) isEqualTo(other *Ssh) bool {
-	return isEqual(&this.Address, &other.Address) &&
-		this.HostKey == other.HostKey
+	return isEqual(&this.Addresses, &other.Addresses) &&
+		isEqual(&this.Keys, &other.Keys) &&
+		isEqual(&this.IdleTimeout, &other.IdleTimeout) &&
+		isEqual(&this.MaxTimeout, &other.MaxTimeout) &&
+		this.MaxAuthTries == other.MaxAuthTries
 }

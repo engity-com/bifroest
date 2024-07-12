@@ -89,6 +89,20 @@ func (this *stringTrimmer) Trim() error {
 	return nil
 }
 
+type stringSliceTrimmer struct {
+	target *[]string
+}
+
+func (this *stringSliceTrimmer) Trim() error {
+	for i, v := range *this.target {
+		(*this.target)[i] = strings.TrimSpace(v)
+	}
+	*this.target = slices.DeleteFunc(*this.target, func(v string) bool {
+		return v == ""
+	})
+	return nil
+}
+
 type sliceTrimmer[T any] struct {
 	target    *[]T
 	condition func(t T) bool

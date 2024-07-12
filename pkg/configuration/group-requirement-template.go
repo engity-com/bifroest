@@ -2,9 +2,9 @@ package configuration
 
 import (
 	"fmt"
-	"github.com/engity/pam-oidc/pkg/common"
-	"github.com/engity/pam-oidc/pkg/template"
-	"github.com/engity/pam-oidc/pkg/user"
+	"github.com/engity-com/yasshd/pkg/common"
+	"github.com/engity-com/yasshd/pkg/template"
+	"github.com/engity-com/yasshd/pkg/user"
 	"gopkg.in/yaml.v3"
 )
 

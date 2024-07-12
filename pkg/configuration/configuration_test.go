@@ -1,8 +1,9 @@
 package configuration
 
 import (
-	"github.com/engity/pam-oidc/pkg/common"
-	"github.com/engity/pam-oidc/pkg/template"
+	"github.com/engity-com/yasshd/pkg/common"
+	"github.com/engity-com/yasshd/pkg/crypto"
+	"github.com/engity-com/yasshd/pkg/template"
 	"testing"
 )
 
@@ -34,8 +35,14 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
     clientSecret: aSecret`,
 			expected: Configuration{
 				Ssh: Ssh{
-					Address: DefaultSshAddress,
-					HostKey: DefaultHostKeyLocation,
+					Addresses: DefaultSshAddresses,
+					Keys: Keys{
+						HostKeys:           DefaultHostKeyLocations,
+						RsaRestriction:     crypto.DefaultRsaRestriction,
+						DsaRestriction:     crypto.DefaultDsaRestriction,
+						EcdsaRestriction:   crypto.DefaultEcdsaRestriction,
+						Ed25519Restriction: crypto.DefaultEd25519Restriction,
+					},
 				},
 				Flows: []Flow{{
 					Name: "foo",
@@ -43,7 +50,7 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 						IncludedRequestingName: common.MustNewRegexp(""),
 						ExcludedRequestingName: common.MustNewRegexp(""),
 					},
-					Authorization: Authorization{&AuthorizationOidc{
+					Authorization: Authorization{&AuthorizationOidcDeviceAuth{
 						Issuer:           "https://foo-bar",
 						ClientId:         "anId",
 						ClientSecret:     "aSecret",

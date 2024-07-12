@@ -4,22 +4,22 @@ import (
 	"fmt"
 )
 
-type FlowKey string
+type FlowName string
 
-func (this FlowKey) IsZero() bool {
+func (this FlowName) IsZero() bool {
 	return len(this) == 0
 }
 
-func (this FlowKey) MarshalText() (text []byte, err error) {
+func (this FlowName) MarshalText() (text []byte, err error) {
 	return []byte(this.String()), nil
 }
 
-func (this FlowKey) String() string {
+func (this FlowName) String() string {
 	return string(this)
 }
 
-func (this *FlowKey) UnmarshalText(text []byte) error {
-	buf := FlowKey(text)
+func (this *FlowName) UnmarshalText(text []byte) error {
+	buf := FlowName(text)
 	if err := buf.Validate(); err != nil {
 		return err
 	}
@@ -27,11 +27,11 @@ func (this *FlowKey) UnmarshalText(text []byte) error {
 	return nil
 }
 
-func (this *FlowKey) Set(text string) error {
+func (this *FlowName) Set(text string) error {
 	return this.UnmarshalText([]byte(text))
 }
 
-func (this FlowKey) Validate() error {
+func (this FlowName) Validate() error {
 	if len(this) == 0 {
 		return fmt.Errorf("illegal flow key: empty")
 	}
@@ -48,20 +48,24 @@ func (this FlowKey) Validate() error {
 	return nil
 }
 
-func (this FlowKey) IsEqualTo(other any) bool {
+func (this FlowName) IsEqualTo(other any) bool {
 	if other == nil {
 		return false
 	}
 	switch v := other.(type) {
-	case FlowKey:
+	case string:
+		return string(this) == v
+	case *string:
+		return string(this) == *v
+	case FlowName:
 		return this.isEqualTo(&v)
-	case *FlowKey:
+	case *FlowName:
 		return this.isEqualTo(v)
 	default:
 		return false
 	}
 }
 
-func (this FlowKey) isEqualTo(other *FlowKey) bool {
+func (this FlowName) isEqualTo(other *FlowName) bool {
 	return this == *other
 }

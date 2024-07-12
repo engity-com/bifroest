@@ -5,7 +5,7 @@ import (
 )
 
 type Flow struct {
-	Name          FlowKey         `yaml:"name"`
+	Name          FlowName        `yaml:"name"`
 	Requirement   FlowRequirement `yaml:"requirement,omitempty"`
 	Authorization Authorization   `yaml:"authorization"`
 	Environment   Environment     `yaml:"environment"`
@@ -31,7 +31,7 @@ func (this *Flow) Trim() error {
 
 func (this *Flow) Validate() error {
 	return validate(this,
-		notZeroValidate("name", func(v *Flow) *FlowKey { return &v.Name }),
+		notZeroValidate("name", func(v *Flow) *FlowName { return &v.Name }),
 		func(v *Flow) (string, validator) { return "requirement", &v.Requirement },
 		func(v *Flow) (string, validator) { return "authorization", &v.Authorization },
 		func(v *Flow) (string, validator) { return "environment", &v.Environment },

@@ -5,7 +5,7 @@ import (
 )
 
 var DefaultExecutor Executor = &StandardExecutor{
-	UsingSudo: true,
+	UsingSudo: false,
 }
 
 type Executor interface {

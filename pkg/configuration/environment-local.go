@@ -1,7 +1,7 @@
 package configuration
 
 import (
-	"github.com/engity/pam-oidc/pkg/template"
+	"github.com/engity-com/yasshd/pkg/template"
 	"gopkg.in/yaml.v3"
 )
 

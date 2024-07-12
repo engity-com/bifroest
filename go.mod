@@ -1,11 +1,11 @@
-module github.com/engity/pam-oidc
+module github.com/engity-com/yasshd
 
 go 1.22
 
 require (
 	github.com/Masterminds/sprig/v3 v3.2.3
 	github.com/alecthomas/kingpin v2.2.6+incompatible
-	github.com/coreos/go-oidc/v3 v3.10.0
+	github.com/coreos/go-oidc/v3 v3.11.0
 	github.com/creack/pty v1.1.21
 	github.com/echocat/slf4g v1.5.3
 	github.com/echocat/slf4g/native v1.5.3

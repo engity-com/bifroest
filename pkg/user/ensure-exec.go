@@ -1,7 +1,7 @@
 package user
 
 import (
-	"github.com/engity/pam-oidc/pkg/sys"
+	"github.com/engity-com/yasshd/pkg/sys"
 )
 
 type ExecutionBasedEnsurer struct {
