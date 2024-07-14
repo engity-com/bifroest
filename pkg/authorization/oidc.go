@@ -7,18 +7,18 @@ import (
 	"golang.org/x/oauth2"
 )
 
-type Oidc struct {
+type OidcAuth struct {
 	Token    OidcToken
 	IdToken  OidcIdToken
 	UserInfo OidcUserInfo
 	flow     configuration.FlowName
 }
 
-func (this *Oidc) IsAuthorized() bool {
+func (this *OidcAuth) IsAuthorized() bool {
 	return true
 }
 
-func (this *Oidc) Flow() configuration.FlowName {
+func (this *OidcAuth) Flow() configuration.FlowName {
 	return this.flow
 }
 

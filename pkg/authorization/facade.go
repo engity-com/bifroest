@@ -75,7 +75,7 @@ type facaded struct {
 	Authorizer
 
 	flow        configuration.FlowName
-	requirement *configuration.FlowRequirement
+	requirement *configuration.Requirement
 }
 
 func (this *facaded) setConf(ctx context.Context, flow *configuration.Flow) error {
@@ -102,17 +102,10 @@ func (this *facaded) setConf(ctx context.Context, flow *configuration.Flow) erro
 func (this *facaded) canHandle(req Request) (bool, error) {
 	incl, excl := this.requirement.IncludedRequestingName, this.requirement.ExcludedRequestingName
 
-	user := req.Remote().User()
-
-	// If both is zero we always require the name of the flow as the req
-	if incl.IsZero() && excl.IsZero() {
-		return this.flow.IsEqualTo(user), nil
-	}
-
-	if !incl.IsZero() && !incl.MatchString(user) {
+	if !incl.IsZero() && !incl.MatchString(req.Remote().User()) {
 		return false, nil
 	}
-	if !excl.IsZero() && excl.MatchString(user) {
+	if !excl.IsZero() && excl.MatchString(req.Remote().User()) {
 		return false, nil
 	}
 

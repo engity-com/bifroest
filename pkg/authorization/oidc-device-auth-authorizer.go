@@ -10,7 +10,7 @@ import (
 	"golang.org/x/oauth2"
 )
 
-type OidcDeviceAuth struct {
+type OidcDeviceAuthAuthorizer struct {
 	flow configuration.FlowName
 	conf *configuration.AuthorizationOidcDeviceAuth
 
@@ -19,11 +19,11 @@ type OidcDeviceAuth struct {
 	verifier     *oidc.IDTokenVerifier
 }
 
-func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *configuration.AuthorizationOidcDeviceAuth) (*OidcDeviceAuth, error) {
-	fail := func(err error) (*OidcDeviceAuth, error) {
+func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *configuration.AuthorizationOidcDeviceAuth) (*OidcDeviceAuthAuthorizer, error) {
+	fail := func(err error) (*OidcDeviceAuthAuthorizer, error) {
 		return nil, err
 	}
-	failf := func(msg string, args ...any) (*OidcDeviceAuth, error) {
+	failf := func(msg string, args ...any) (*OidcDeviceAuthAuthorizer, error) {
 		return fail(errors.Newf(errors.TypeConfig, msg, args...))
 	}
 
@@ -40,7 +40,7 @@ func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *c
 		return failf("cannot evaluate OIDC issuer %q: %w", conf.Issuer, err)
 	}
 
-	result := OidcDeviceAuth{
+	result := OidcDeviceAuthAuthorizer{
 		flow: flow,
 		conf: conf,
 
@@ -59,7 +59,7 @@ func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *c
 	return &result, nil
 }
 
-func (this *OidcDeviceAuth) AuthorizeInteractive(req InteractiveRequest) (Authorization, error) {
+func (this *OidcDeviceAuthAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Authorization, error) {
 	fail := func(err error) (Authorization, error) {
 		return nil, fmt.Errorf("cannot authorize via oidc device auth: %w", err)
 	}
@@ -84,7 +84,7 @@ func (this *OidcDeviceAuth) AuthorizeInteractive(req InteractiveRequest) (Author
 		return failf("cannot send device code request to user: %w", err)
 	}
 
-	auth := Oidc{
+	auth := OidcAuth{
 		flow: this.flow,
 	}
 
@@ -133,7 +133,7 @@ func (this *OidcDeviceAuth) AuthorizeInteractive(req InteractiveRequest) (Author
 	return &auth, nil
 }
 
-func (this *OidcDeviceAuth) InitiateDeviceAuth(ctx context.Context) (*oauth2.DeviceAuthResponse, error) {
+func (this *OidcDeviceAuthAuthorizer) InitiateDeviceAuth(ctx context.Context) (*oauth2.DeviceAuthResponse, error) {
 	fail := func(err error) (*oauth2.DeviceAuthResponse, error) {
 		return nil, err
 	}
@@ -153,7 +153,7 @@ func (this *OidcDeviceAuth) InitiateDeviceAuth(ctx context.Context) (*oauth2.Dev
 	return response, err
 }
 
-func (this *OidcDeviceAuth) RetrieveDeviceAuthToken(ctx context.Context, using *oauth2.DeviceAuthResponse) (*oauth2.Token, error) {
+func (this *OidcDeviceAuthAuthorizer) RetrieveDeviceAuthToken(ctx context.Context, using *oauth2.DeviceAuthResponse) (*oauth2.Token, error) {
 	fail := func(err error) (*oauth2.Token, error) {
 		return nil, err
 	}
@@ -183,7 +183,7 @@ func (this *OidcDeviceAuth) RetrieveDeviceAuthToken(ctx context.Context, using *
 	return response, err
 }
 
-func (this *OidcDeviceAuth) VerifyToken(ctx context.Context, token *oauth2.Token) (*oidc.IDToken, error) {
+func (this *OidcDeviceAuthAuthorizer) VerifyToken(ctx context.Context, token *oauth2.Token) (*oidc.IDToken, error) {
 	fail := func(err error) (*oidc.IDToken, error) {
 		return nil, err
 	}
@@ -212,7 +212,7 @@ func (this *OidcDeviceAuth) VerifyToken(ctx context.Context, token *oauth2.Token
 	return idToken, nil
 }
 
-func (this *OidcDeviceAuth) GetUserInfo(ctx context.Context, token *oauth2.Token) (*oidc.UserInfo, error) {
+func (this *OidcDeviceAuthAuthorizer) GetUserInfo(ctx context.Context, token *oauth2.Token) (*oidc.UserInfo, error) {
 	fail := func(err error) (*oidc.UserInfo, error) {
 		return nil, err
 	}
@@ -232,10 +232,10 @@ func (this *OidcDeviceAuth) GetUserInfo(ctx context.Context, token *oauth2.Token
 	return result, nil
 }
 
-func (this *OidcDeviceAuth) AuthorizePublicKey(PublicKeyRequest) (Authorization, error) {
+func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(PublicKeyRequest) (Authorization, error) {
 	return Forbidden(), nil
 }
 
-func (this *OidcDeviceAuth) AuthorizePassword(PasswordRequest) (Authorization, error) {
+func (this *OidcDeviceAuthAuthorizer) AuthorizePassword(PasswordRequest) (Authorization, error) {
 	return Forbidden(), nil
 }

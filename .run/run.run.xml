@@ -1,0 +1,13 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="run" type="GoApplicationRunConfiguration" factoryName="Go Application">
+    <module name="yasshd" />
+    <working_directory value="$PROJECT_DIR$" />
+    <parameters value="run --log.level=debug -cvar/demo-configuration.yaml" />
+    <sudo value="true" />
+    <kind value="PACKAGE" />
+    <package value="github.com/engity-com/yasshd/cmd/yasshd" />
+    <directory value="$PROJECT_DIR$" />
+    <output_directory value="/tmp/yasshd" />
+    <method v="2" />
+  </configuration>
+</component>

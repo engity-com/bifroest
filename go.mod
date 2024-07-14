@@ -12,10 +12,12 @@ require (
 	github.com/gliderlabs/ssh v0.3.7
 	github.com/kardianos/osext v0.0.0-20190222173326-2bc1f35cddc0
 	github.com/mikesmitty/edkey v0.0.0-20170222072505-3356ea4e686a
+	github.com/msteinert/pam/v2 v2.0.0
 	github.com/pkg/sftp v1.13.6
 	github.com/stretchr/testify v1.9.0
 	golang.org/x/crypto v0.25.0
 	golang.org/x/oauth2 v0.21.0
+	golang.org/x/term v0.22.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

@@ -72,6 +72,16 @@ func (this *interactiveAuthorizeRequest) SendInfo(message string) error {
 	return err
 }
 
+func (this *interactiveAuthorizeRequest) SendError(message string) error {
+	_, err := this.challenger("", "Error: "+message, nil, nil)
+	return err
+}
+
+func (this *interactiveAuthorizeRequest) Prompt(message string, echo bool) (string, error) {
+	resp, err := this.challenger("", "", []string{message}, []bool{echo})
+	return resp[0], err
+}
+
 type environmentRequest struct {
 	service       *service
 	remote        *remote

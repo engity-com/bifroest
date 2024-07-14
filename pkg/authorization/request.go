@@ -27,4 +27,6 @@ type PasswordRequest interface {
 type InteractiveRequest interface {
 	Request
 	SendInfo(string) error
+	SendError(string) error
+	Prompt(msg string, echoOn bool) (string, error)
 }

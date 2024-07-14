@@ -5,10 +5,23 @@ import (
 )
 
 type Flow struct {
-	Name          FlowName        `yaml:"name"`
-	Requirement   FlowRequirement `yaml:"requirement,omitempty"`
-	Authorization Authorization   `yaml:"authorization"`
-	Environment   Environment     `yaml:"environment"`
+	// Name unique name within the while configuration which identifies the Flow.
+	Name FlowName `yaml:"name"`
+
+	// Requirement represents all rules the connection has to meet to be able to be accepted by this flow.
+	Requirement Requirement `yaml:"requirement,omitempty"`
+
+	// Session defines how new and existing sessions (a connection relates to) should be treated by the service.
+	// These session should not be mixed up with [ssh sessions].
+	//
+	// [ssh sessions]: https://datatracker.ietf.org/doc/html/rfc4254#section-6
+	Session Session `yaml:"session"`
+
+	// Authorization defines how a connection can be authorized to get access to this flow.
+	Authorization Authorization `yaml:"authorization"`
+
+	// Environment defines to which Environment the connection will be connected ones every step before was successful.
+	Environment Environment `yaml:"environment"`
 }
 
 func (this *Flow) SetDefaults() error {

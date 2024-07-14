@@ -46,7 +46,7 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 				},
 				Flows: []Flow{{
 					Name: "foo",
-					Requirement: FlowRequirement{
+					Requirement: Requirement{
 						IncludedRequestingName: common.MustNewRegexp(""),
 						ExcludedRequestingName: common.MustNewRegexp(""),
 					},
