@@ -6,18 +6,40 @@ import (
 )
 
 var (
-	DefaultSshAddresses   = []common.NetAddress{common.MustNewNetAddress(":2222")}
-	DefaultSshIdleTimeout = common.MustNewDuration("30m")
-	DefaultSshMaxTimeout  = common.MustNewDuration("0")
-	DefaultMaxAuthTries   = uint8(6)
+	// DefaultSshAddresses is the default setting for Ssh.Addresses.
+	DefaultSshAddresses = []common.NetAddress{common.MustNewNetAddress(":2222")}
+
+	// DefaultSshIdleTimeout is the default setting for Ssh.IdleTimeout.
+	DefaultSshIdleTimeout = common.MustNewDuration("5m")
+
+	// DefaultSshMaxTimeout is the default setting for Ssh.MaxTimeout.
+	DefaultSshMaxTimeout = common.MustNewDuration("0")
+
+	// DefaultMaxAuthTries is the default setting for Ssh.MaxAuthTries.
+	DefaultMaxAuthTries = uint8(6)
 )
 
+// Ssh defines how the ssh part of the service should be defined.
 type Ssh struct {
-	Addresses    common.NetAddresses `yaml:"addresses"`
-	Keys         Keys                `yaml:"keys"`
-	IdleTimeout  common.Duration     `yaml:"idleTimeout"`
-	MaxTimeout   common.Duration     `yaml:"maxTimeout"`
-	MaxAuthTries uint8               `yaml:"maxAuthTries"`
+	// Addresses which the service will bind to. This can be more than one but at least one.
+	// Defaults to DefaultSshAddresses.
+	Addresses common.NetAddresses `yaml:"addresses"`
+
+	// Keys represents all key related settings of the service.
+	Keys Keys `yaml:"keys"`
+
+	// IdleTimeout represents the duration a connection can be idle until it will be forcibly closed.
+	// 0 means no limitation at all. Defaults to DefaultSshIdleTimeout.
+	IdleTimeout common.Duration `yaml:"idleTimeout"`
+
+	// MaxTimeout represents the maximum duration a whole connection can last, regardless if it is idle or active
+	// until it will be forcibly closed. 0 means no limitation at all. Defaults to DefaultSshMaxTimeout.
+	MaxTimeout common.Duration `yaml:"maxTimeout"`
+
+	// MaxAuthTries represents the maximum amount of tries a client can do while a connection with different
+	// authorizations before the connection will be forcibly closed. 0 means no limitation at all.
+	// Defaults to DefaultMaxAuthTries.
+	MaxAuthTries uint8 `yaml:"maxAuthTries"`
 }
 
 func (this *Ssh) SetDefaults() error {
@@ -34,9 +56,9 @@ func (this *Ssh) Trim() error {
 	return trim(this,
 		func(v *Ssh) (string, trimmer) { return "addresses", &v.Addresses },
 		func(v *Ssh) (string, trimmer) { return "keys", &v.Keys },
-		func(v *Ssh) (string, trimmer) { return "idleTimeout", &v.Keys },
-		func(v *Ssh) (string, trimmer) { return "maxTimeout", &v.Keys },
-		func(v *Ssh) (string, trimmer) { return "maxAuthTries", &v.Keys },
+		noopTrim[Ssh]("idleTimeout"),
+		noopTrim[Ssh]("maxTimeout"),
+		noopTrim[Ssh]("maxAuthTries"),
 	)
 }
 
@@ -44,9 +66,9 @@ func (this *Ssh) Validate() error {
 	return validate(this,
 		func(v *Ssh) (string, validator) { return "addresses", &v.Addresses },
 		func(v *Ssh) (string, validator) { return "keys", &v.Keys },
-		func(v *Ssh) (string, validator) { return "idleTimeout", &v.Keys },
-		func(v *Ssh) (string, validator) { return "maxTimeout", &v.Keys },
-		func(v *Ssh) (string, validator) { return "maxAuthTries", &v.Keys },
+		noopValidate[Ssh]("idleTimeout"),
+		noopValidate[Ssh]("maxTimeout"),
+		noopValidate[Ssh]("maxAuthTries"),
 	)
 }
 

@@ -90,6 +90,12 @@ func (this *facaded) setConf(ctx context.Context, flow *configuration.Flow) erro
 			return fail(err)
 		}
 		this.Authorizer = v
+	case *configuration.AuthorizationLocal:
+		v, err := NewLocal(ctx, flow.Name, authConf)
+		if err != nil {
+			return fail(err)
+		}
+		this.Authorizer = v
 	default:
 		return fail(fmt.Errorf("cannot handle authorization type %v", reflect.TypeOf(flow.Authorization.V)))
 	}

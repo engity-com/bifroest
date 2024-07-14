@@ -7,8 +7,8 @@ import (
 
 const (
 	DefaultEnvironmentLocalLoginAllowedTmpl      = "true"
-	DefaultEnvironmentLocalCreateIfAbsentTmpl    = "true"
-	DefaultEnvironmentLocalUpdateIfDifferentTmpl = "true"
+	DefaultEnvironmentLocalCreateIfAbsentTmpl    = "false"
+	DefaultEnvironmentLocalUpdateIfDifferentTmpl = "false"
 )
 
 type EnvironmentLocal struct {

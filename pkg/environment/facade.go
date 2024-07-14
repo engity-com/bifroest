@@ -55,7 +55,7 @@ func newInstance(_ context.Context, flow *configuration.Flow) (env Environment, 
 	case *configuration.EnvironmentLocal:
 		env, err = NewLocal(flow.Name, envConf)
 	default:
-		return fail(fmt.Errorf("cannot handle authorization type %v", reflect.TypeOf(flow.Authorization.V)))
+		return fail(fmt.Errorf("cannot handle environment type %v", reflect.TypeOf(flow.Authorization.V)))
 	}
 
 	if err != nil {

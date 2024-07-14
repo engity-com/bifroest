@@ -28,13 +28,13 @@ type UserRequirementTemplate struct {
 
 func (this *UserRequirementTemplate) SetDefaults() error {
 	return setDefaults(this,
-		fixedDefault("name", func(v *UserRequirementTemplate) *template.String { return &v.Name }, template.MustNewString(DefaultUserNameTmpl)),
-		fixedDefault("displayName", func(v *UserRequirementTemplate) *template.String { return &v.DisplayName }, template.MustNewString(DefaultUserDisplayNameTmpl)),
+		noopSetDefault[UserRequirementTemplate]("name"),
+		noopSetDefault[UserRequirementTemplate]("displayName"),
 		noopSetDefault[UserRequirementTemplate]("uid"),
 		func(v *UserRequirementTemplate) (string, defaulter) { return "group", &v.Group },
-		noopSetDefault[UserRequirementTemplate]("groups"),
-		fixedDefault("shell", func(v *UserRequirementTemplate) *template.String { return &v.Shell }, template.MustNewString(DefaultUserShellTmpl)),
-		fixedDefault("homeDir", func(v *UserRequirementTemplate) *template.String { return &v.HomeDir }, template.MustNewString(DefaultUserHomeDirTmpl)),
+		func(v *UserRequirementTemplate) (string, defaulter) { return "groups", &v.Groups },
+		noopSetDefault[UserRequirementTemplate]("shell"),
+		noopSetDefault[UserRequirementTemplate]("homeDir"),
 		noopSetDefault[UserRequirementTemplate]("skel"),
 	)
 }
@@ -57,8 +57,8 @@ func (this *UserRequirementTemplate) Validate() error {
 		notZeroValidate("name", func(v *UserRequirementTemplate) *template.String { return &v.Name }),
 		noopValidate[UserRequirementTemplate]("displayName"),
 		noopValidate[UserRequirementTemplate]("uid"),
-		noopValidate[UserRequirementTemplate]("group"),
-		noopValidate[UserRequirementTemplate]("groups"),
+		func(v *UserRequirementTemplate) (string, validator) { return "group", &v.Group },
+		func(v *UserRequirementTemplate) (string, validator) { return "groups", &v.Groups },
 		noopValidate[UserRequirementTemplate]("shell"),
 		noopValidate[UserRequirementTemplate]("homeDir"),
 		noopValidate[UserRequirementTemplate]("skel"),

@@ -27,14 +27,33 @@ type Bool struct {
 	tmpl  *template.Template
 }
 
+func (this Bool) IsHardCodedFalse() bool {
+	switch strings.ToLower(strings.TrimSpace(this.plain)) {
+	case "false", "disabled", "0", "no", "off", "":
+		return true
+	default:
+		return false
+	}
+}
+
 func (this Bool) Render(data any) (bool, error) {
+	if this.IsHardCodedFalse() {
+		return false, nil
+	}
+
+	// Hardcoded true check
+	switch strings.ToLower(strings.TrimSpace(this.plain)) {
+	case "true", "enabled", "1", "yes", "on":
+		return true, nil
+	}
+
 	if tmpl := this.tmpl; tmpl != nil {
 		var buf strings.Builder
 		if err := tmpl.Execute(&buf, data); err != nil {
 			return false, err
 		}
 		switch strings.ToLower(strings.TrimSpace(buf.String())) {
-		case "false", "0", "no", "off", "<no value>", "":
+		case "false", "disabled", "0", "no", "off", "<no value>", "":
 			return false, nil
 		default:
 			return true, nil

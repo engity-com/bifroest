@@ -19,7 +19,7 @@ type AuthorizationV interface {
 }
 
 func (this *Authorization) SetDefaults() error {
-	*this = Authorization{&AuthorizationOidcDeviceAuth{}}
+	*this = Authorization{&AuthorizationLocal{}}
 	if err := this.V.SetDefaults(); err != nil {
 		return err
 	}
@@ -60,6 +60,8 @@ func (this *Authorization) UnmarshalYAML(node *yaml.Node) error {
 		return reportYamlRelatedErrf(node, "[type] required but absent")
 	case "oidc-device-auth", "oidc_device_auth", "oidcdeviceauth":
 		this.V = &AuthorizationOidcDeviceAuth{}
+	case "local":
+		this.V = &AuthorizationLocal{}
 	default:
 		return reportYamlRelatedErrf(node, "[type] illegal type: %q", typeBuf.Type)
 	}
@@ -82,6 +84,8 @@ func (this *Authorization) MarshalYAML() (any, error) {
 	switch typeBuf.AuthorizationV.(type) {
 	case *AuthorizationOidcDeviceAuth:
 		typeBuf.Type = "oidcDeviceAuth"
+	case *AuthorizationLocal:
+		typeBuf.Type = "local"
 	default:
 		return nil, fmt.Errorf("[type] illegal type: %v", reflect.TypeOf(typeBuf.AuthorizationV))
 	}

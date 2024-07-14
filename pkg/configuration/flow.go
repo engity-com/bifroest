@@ -4,6 +4,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Flow represents a dedicated flow within the service.
+//
+// Each flow has a unique Name where it can be identified with.
+//
+// # Steps
+//
+// It follows the follows steps:
+//  1. Check if the current connection meet the defined Requirement.
+//  2. Register a new session or use an existing one based on Session configuration.
+//  3. Try to authorize the current connection based on Authorization.
+//  4. If it was successfully authorized create and run a new Environment.
 type Flow struct {
 	// Name unique name within the while configuration which identifies the Flow.
 	Name FlowName `yaml:"name"`
@@ -27,7 +38,9 @@ type Flow struct {
 func (this *Flow) SetDefaults() error {
 	return setDefaults(this,
 		noopSetDefault[Flow]("name"),
+
 		func(v *Flow) (string, defaulter) { return "requirement", &v.Requirement },
+		func(v *Flow) (string, defaulter) { return "session", &v.Session },
 		func(v *Flow) (string, defaulter) { return "authorization", &v.Authorization },
 		func(v *Flow) (string, defaulter) { return "environment", &v.Environment },
 	)
@@ -36,7 +49,9 @@ func (this *Flow) SetDefaults() error {
 func (this *Flow) Trim() error {
 	return trim(this,
 		noopTrim[Flow]("name"),
+
 		func(v *Flow) (string, trimmer) { return "requirement", &v.Requirement },
+		func(v *Flow) (string, trimmer) { return "session", &v.Session },
 		func(v *Flow) (string, trimmer) { return "authorization", &v.Authorization },
 		func(v *Flow) (string, trimmer) { return "environment", &v.Environment },
 	)
@@ -45,7 +60,9 @@ func (this *Flow) Trim() error {
 func (this *Flow) Validate() error {
 	return validate(this,
 		notZeroValidate("name", func(v *Flow) *FlowName { return &v.Name }),
+
 		func(v *Flow) (string, validator) { return "requirement", &v.Requirement },
+		func(v *Flow) (string, validator) { return "session", &v.Session },
 		func(v *Flow) (string, validator) { return "authorization", &v.Authorization },
 		func(v *Flow) (string, validator) { return "environment", &v.Environment },
 	)
@@ -76,9 +93,11 @@ func (this Flow) isEqualTo(other *Flow) bool {
 	return isEqual(&this.Name, &other.Name) &&
 		isEqual(&this.Requirement, &other.Requirement) &&
 		isEqual(&this.Authorization, &other.Authorization) &&
+		isEqual(&this.Session, &other.Session) &&
 		isEqual(&this.Environment, &other.Environment)
 }
 
+// Flows defines a set of Flow instances.
 type Flows []Flow
 
 func (this *Flows) SetDefaults() error {

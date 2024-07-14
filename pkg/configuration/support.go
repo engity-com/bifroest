@@ -326,3 +326,21 @@ func isEqual[T equaler](left, right *T) bool {
 	}
 	return (*left).IsEqualTo(*right)
 }
+
+func isEqualSlice[T equaler](left, right *[]T) bool {
+	if left == nil && right == nil {
+		return true
+	}
+	if left == nil || right == nil {
+		return false
+	}
+	if len(*left) != len(*right) {
+		return false
+	}
+	for i, lv := range *left {
+		if !isEqual[T](&lv, &((*right)[i])) {
+			return false
+		}
+	}
+	return false
+}
