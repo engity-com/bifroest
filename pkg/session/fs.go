@@ -1,91 +1,34 @@
 package session
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/engity-com/yasshd/pkg/configuration"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 	"net"
-	"os"
-	"path/filepath"
-	"sync"
+	"time"
 )
 
-type FsRepository struct {
-	Directory string
-
-	mutex sync.RWMutex
-}
-
-func (this *FsRepository) path(flow configuration.FlowName, id uuid.UUID, kind string) (string, error) {
-	fs, err := flow.MarshalText()
-	if err != nil {
-		return "", err
-	}
-	is, err := id.MarshalText()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(this.Directory, string(fs), string(is), kind), nil
-}
-
-func (this *FsRepository) openRead(flow configuration.FlowName, id uuid.UUID, kind string) (*os.File, error) {
-	fn, err := this.path(flow, id, kind)
-	if err != nil {
-		return nil, err
-	}
-	return os.Open(fn)
-}
-
-func (this *FsRepository) openWrite(flow configuration.FlowName, id uuid.UUID, kind string) (*os.File, error) {
-	fn, err := this.path(flow, id, kind)
-	if err != nil {
-		return nil, err
-	}
-	_ = os.MkdirAll(filepath.Dir(fn), 0700)
-	return os.OpenFile(fn, os.O_WRONLY|os.O_TRUNC, 0600)
-}
-
-func (this *FsRepository) Create(flow configuration.FlowName, remoteUser string, remoteAddr net.IP) (Session, error) {
-	fail := func(err error) (Session, error) {
-		return nil, fmt.Errorf("cannot create session for user %q@%v at flow %v: %w", remoteUser, remoteAddr, flow, err)
-	}
-
-	id, err := uuid.NewUUID()
-	if err != nil {
-		return fail(err)
-	}
-
-	sess := fsSession{
-		FsRepository: this,
-		flow:         flow,
-		id:           id,
-	}
-
-	//TODO implement me
-	panic("implement me")
-}
-
-func (this *FsRepository) Find(name configuration.FlowName, uuid uuid.UUID) (Session, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (this *FsRepository) FindByPublicKey(key ssh.PublicKey) (Session, error) {
-	//TODO implement me
-	panic("implement me")
-}
+const (
+	FsFileSession      = "se.json"
+	FsFileLastAccessed = "la.json"
+)
 
 type fsSession struct {
-	*FsRepository
-	flow configuration.FlowName
-	id   uuid.UUID
+	repository *FsRepository
+
+	VFlow  configuration.FlowName `json:"flow"`
+	VId    uuid.UUID              `json:"id"`
+	VState State                  `json:"state"`
+
+	VCreatedAt  time.Time `json:"createdAt"`
+	VRemoteUser string    `json:"remoteUser"`
+	VRemoteAddr net.IP    `json:"remoteAddr"`
 }
 
 func (this *fsSession) Info() (Info, error) {
-
-	//TODO implement me
-	panic("implement me")
+	return this, nil
 }
 
 func (this *fsSession) PublicKeys(consumer func(key ssh.PublicKey) (canContinue bool, err error)) error {
@@ -98,7 +41,35 @@ func (this *fsSession) AddPublicKey(key ssh.PublicKey) error {
 	panic("implement me")
 }
 
-func (this *fsSession) NotifyLastAccess(remoteUser string, remoteAddr net.IP) error {
-	//TODO implement me
-	panic("implement me")
+func (this *fsSession) NotifyLastAccess(remoteUser string, remoteAddr net.IP, newState State) error {
+	buf := fsLastAccessed{
+		session:     this,
+		VAt:         time.Now().Truncate(time.Millisecond),
+		VRemoteUser: remoteUser,
+		VRemoteAddr: remoteAddr,
+	}
+	if err := buf.save(); err != nil {
+		return err
+	}
+	if newState != 0 && newState != this.VState {
+		this.VState = newState
+		if err := buf.save(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (this *fsSession) save() error {
+	f, _, err := this.repository.openWrite(this.VFlow, this.VId, FsFileSession)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+
+	if err := json.NewEncoder(f).Encode(this); err != nil {
+		return fmt.Errorf("cannot encode session %v/%v: %w", this.VFlow, this.VId, err)
+	}
+
+	return nil
 }

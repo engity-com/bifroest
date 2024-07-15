@@ -10,5 +10,5 @@ type Session interface {
 	PublicKeys(func(key ssh.PublicKey) (canContinue bool, err error)) error
 
 	AddPublicKey(key ssh.PublicKey) error
-	NotifyLastAccess(remoteUser string, remoteAddr net.IP) error
+	NotifyLastAccess(remoteUser string, remoteAddr net.IP, newState State) error
 }

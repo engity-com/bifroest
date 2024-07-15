@@ -7,22 +7,22 @@ import (
 	"time"
 )
 
-type Info struct {
-	Flow         configuration.FlowName `json:"flow,omitempty"`
-	Id           uuid.UUID              `json:"id"`
-	State        State                  `json:"state,omitempty"`
-	Created      InfoCreated            `json:"created,omitempty"`
-	LastAccessed InfoLastAccessed       `json:"lastAccessed,omitempty"`
+type Info interface {
+	Flow() configuration.FlowName
+	Id() uuid.UUID
+	State() State
+	Created() (InfoCreated, error)
+	LastAccessed() (InfoLastAccessed, error)
 }
 
-type InfoCreated struct {
-	At         time.Time `json:"at"`
-	RemoteUser string    `json:"remoteUser,omitempty"`
-	RemoteAddr net.IP    `json:"remoteAddr,omitempty"`
+type InfoCreated interface {
+	At() time.Time
+	RemoteUser() string
+	RemoteAddr() net.IP
 }
 
-type InfoLastAccessed struct {
-	At         time.Time `json:"at"`
-	RemoteUser string    `json:"remoteUser,omitempty"`
-	RemoteAddr net.IP    `json:"remoteAddr,omitempty"`
+type InfoLastAccessed interface {
+	At() time.Time
+	RemoteUser() string
+	RemoteAddr() net.IP
 }

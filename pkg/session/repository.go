@@ -9,6 +9,10 @@ import (
 
 type Repository interface {
 	Create(flow configuration.FlowName, remoteUser string, remoteAddr net.IP) (Session, error)
-	Find(configuration.FlowName, uuid.UUID) (Session, error)
+
+	FindBy(configuration.FlowName, uuid.UUID) (Session, error)
 	FindByPublicKey(ssh.PublicKey) (Session, error)
+
+	DeleteBy(configuration.FlowName, uuid.UUID) error
+	Delete(Session) error
 }

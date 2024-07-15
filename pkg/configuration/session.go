@@ -30,6 +30,9 @@ type Session struct {
 	// this amount means that all new connections will be forcibly closed while connection process.
 	// 0 means no limitation at all. Defaults to DefaultSessionMaxConnections
 	MaxConnections uint16 `yaml:"maxConnections"`
+
+	// Storage defines where are session.Session instances are stored. Defaults to DefaultSessionStorage
+	Storage string `yaml:"storage"`
 }
 
 func (this *Session) SetDefaults() error {
@@ -37,6 +40,7 @@ func (this *Session) SetDefaults() error {
 		fixedDefault("idleTimeout", func(v *Session) *common.Duration { return &v.IdleTimeout }, DefaultSessionIdleTimeout),
 		fixedDefault("maxTimeout", func(v *Session) *common.Duration { return &v.MaxTimeout }, DefaultSessionMaxTimeout),
 		fixedDefault("maxConnections", func(v *Session) *uint16 { return &v.MaxConnections }, DefaultSessionMaxConnections),
+		fixedDefault("storage", func(v *Session) *string { return &v.Storage }, DefaultSessionStorage),
 	)
 }
 
@@ -45,6 +49,7 @@ func (this *Session) Trim() error {
 		noopTrim[Session]("idleTimeout"),
 		noopTrim[Session]("maxTimeout"),
 		noopTrim[Session]("maxConnections"),
+		noopTrim[Session]("storage"),
 	)
 }
 
@@ -53,6 +58,7 @@ func (this *Session) Validate() error {
 		noopValidate[Session]("idleTimeout"),
 		noopValidate[Session]("maxTimeout"),
 		noopValidate[Session]("maxConnections"),
+		noopValidate[Session]("storage"),
 	)
 }
 
@@ -80,5 +86,6 @@ func (this Session) IsEqualTo(other any) bool {
 func (this Session) isEqualTo(other *Session) bool {
 	return isEqual(&this.IdleTimeout, &other.IdleTimeout) &&
 		isEqual(&this.MaxTimeout, &other.MaxTimeout) &&
-		this.MaxConnections == other.MaxConnections
+		this.MaxConnections == other.MaxConnections &&
+		this.Storage == other.Storage
 }

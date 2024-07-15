@@ -2,6 +2,7 @@ package configuration
 
 import (
 	"fmt"
+	"strings"
 )
 
 type FlowName string
@@ -68,4 +69,8 @@ func (this FlowName) IsEqualTo(other any) bool {
 
 func (this FlowName) isEqualTo(other *FlowName) bool {
 	return this == *other
+}
+
+func (this FlowName) Clone() FlowName {
+	return FlowName(strings.Clone(string(this)))
 }
