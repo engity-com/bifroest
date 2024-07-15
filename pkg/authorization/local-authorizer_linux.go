@@ -2,25 +2,34 @@ package authorization
 
 import (
 	"errors"
-	"github.com/engity-com/yasshd/pkg/user"
+	"github.com/engity-com/yasshd/pkg/sys"
 	"github.com/msteinert/pam/v2"
 )
 
-func (this *LocalAuthorizer) checkPassword(req PasswordRequest, u *user.User, validatePassword func(*user.User, string, Request) (bool, error)) (success bool, rErr error) {
-	return pamAuthorizeForPamHandlerFunc(this.conf.PamService, passwordRequestToPamHandlerFunc(req, validatePassword), u)
+func (this *LocalAuthorizer) checkPassword(req PasswordRequest, requestedUsername string, validatePassword func(string, Request) (bool, error)) (username string, env sys.EnvVars, success bool, rErr error) {
+	return pamAuthorizeForPamHandlerFunc(this.conf.PamService, false, passwordRequestToPamHandlerFunc(req, validatePassword), requestedUsername)
 }
 
-func (this *LocalAuthorizer) checkInteractive(req InteractiveRequest, u *user.User, validatePassword func(*user.User, string, Request) (bool, error)) (success bool, rErr error) {
-	return pamAuthorizeForPamHandlerFunc(this.conf.PamService, interactiveRequestToPamHandlerFunc(req, validatePassword), u)
+func (this *LocalAuthorizer) checkInteractive(req InteractiveRequest, requestedUsername string, validatePassword func(string, Request) (bool, error)) (username string, env sys.EnvVars, success bool, rErr error) {
+	return pamAuthorizeForPamHandlerFunc(this.conf.PamService, true, interactiveRequestToPamHandlerFunc(req, validatePassword), requestedUsername)
 }
 
-func passwordRequestToPamHandlerFunc(req PasswordRequest, validatePassword func(*user.User, string, Request) (bool, error)) func(pam.Style, string) (string, error) {
+func passwordRequestToPamHandlerFunc(req PasswordRequest, validatePassword func(string, Request) (bool, error)) func(pam.Style, string) (string, error) {
+	check := func() (string, error) {
+		password := req.RemotePassword()
+		ok, err := validatePassword(req.RemotePassword(), req)
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			return "", pam.ErrCredInsufficient
+		}
+		return password, nil
+	}
 	return func(s pam.Style, msg string) (string, error) {
 		switch s {
-		case pam.PromptEchoOff:
-			return req.RemotePassword(), nil
-		case pam.PromptEchoOn:
-			return req.RemotePassword(), nil
+		case pam.PromptEchoOff, pam.PromptEchoOn:
+			return check()
 		case pam.ErrorMsg:
 			return "", errors.New("error messages are not supported when just checking password")
 		case pam.TextInfo:
@@ -31,13 +40,26 @@ func passwordRequestToPamHandlerFunc(req PasswordRequest, validatePassword func(
 	}
 }
 
-func interactiveRequestToPamHandlerFunc(req InteractiveRequest, validatePassword func(*user.User, string, Request) (bool, error)) func(pam.Style, string) (string, error) {
+func interactiveRequestToPamHandlerFunc(req InteractiveRequest, validatePassword func(string, Request) (bool, error)) func(pam.Style, string) (string, error) {
+	check := func(password string, err error) (string, error) {
+		if err != nil {
+			return "", err
+		}
+		ok, err := validatePassword(password, req)
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			return "", pam.ErrCredInsufficient
+		}
+		return password, nil
+	}
 	return func(s pam.Style, msg string) (string, error) {
 		switch s {
 		case pam.PromptEchoOff:
-			return req.Prompt(msg, false)
+			return check(req.Prompt(msg, false))
 		case pam.PromptEchoOn:
-			return req.Prompt(msg, true)
+			return check(req.Prompt(msg, true))
 		case pam.ErrorMsg:
 			return "", req.SendError(msg)
 		case pam.TextInfo:
@@ -48,10 +70,13 @@ func interactiveRequestToPamHandlerFunc(req InteractiveRequest, validatePassword
 	}
 }
 
-func pamAuthorizeForPamHandlerFunc(pamService string, handler func(pam.Style, string) (string, error), u *user.User) (success bool, rErr error) {
-	t, err := pam.StartFunc(pamService, u.Name, handler)
+func pamAuthorizeForPamHandlerFunc(pamService string, interactive bool, handler func(pam.Style, string) (string, error), requestedUsername string) (username string, env sys.EnvVars, success bool, rErr error) {
+	fail := func(err error) (string, sys.EnvVars, bool, error) {
+		return "", nil, false, err
+	}
+	t, err := pam.StartFunc(pamService, requestedUsername, handler)
 	if err != nil {
-		return false, err
+		return fail(err)
 	}
 	defer func() {
 		if err := t.End(); err != nil && rErr == nil {
@@ -59,15 +84,35 @@ func pamAuthorizeForPamHandlerFunc(pamService string, handler func(pam.Style, st
 			success = false
 		}
 	}()
+	defer func() {
+		if v, err := t.GetItem(pam.User); err != nil {
+			if rErr == nil {
+				rErr = err
+			}
+			success = false
+		} else {
+			username = v
+		}
+	}()
 
-	if err := t.Authenticate(pam.Silent); err != nil {
+	var flags pam.Flags
+	if !interactive {
+		flags = pam.Silent
+	}
+
+	if err := t.Authenticate(flags); err != nil {
 		switch err {
-		case pam.ErrAuthinfoUnavail, pam.ErrAuthtokExpired, pam.ErrUserUnknown, pam.ErrIgnore, pam.ErrCredUnavail, pam.ErrAcctExpired, pam.ErrCredInsufficient:
-			return false, nil
+		case pam.ErrAuth, pam.ErrAuthinfoUnavail, pam.ErrAuthtokExpired, pam.ErrUserUnknown, pam.ErrIgnore, pam.ErrCredUnavail, pam.ErrAcctExpired, pam.ErrCredInsufficient:
+			return "", nil, false, nil
 		default:
-			return false, err
+			return fail(err)
 		}
 	}
 
-	return true, nil
+	es, err := t.GetEnvList()
+	if err != nil {
+		return fail(err)
+	}
+
+	return "", es, true, nil
 }

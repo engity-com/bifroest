@@ -5,10 +5,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const (
-	DefaultEnvironmentLocalLoginAllowedTmpl      = "true"
-	DefaultEnvironmentLocalCreateIfAbsentTmpl    = "false"
-	DefaultEnvironmentLocalUpdateIfDifferentTmpl = "false"
+var (
+	DefaultEnvironmentLocalLoginAllowed      = template.MustNewBool("true")
+	DefaultEnvironmentLocalCreateIfAbsent    = template.MustNewBool("false")
+	DefaultEnvironmentLocalUpdateIfDifferent = template.MustNewBool("false")
+	DefaultEnvironmentLocalBanner            = template.MustNewString("{{if osJoin .Authorization.HomeDir `.hushlogin` | fileExists | not}}{{`/etc/motd` | file `optional`}}{{end}}")
 )
 
 type EnvironmentLocal struct {
@@ -18,16 +19,20 @@ type EnvironmentLocal struct {
 
 	CreateIfAbsent    template.Bool `yaml:"createIfAbsent,omitempty"`
 	UpdateIfDifferent template.Bool `yaml:"updateIfDifferent,omitempty"`
+
+	Banner template.String `yaml:"banner,omitempty"`
 }
 
 func (this *EnvironmentLocal) SetDefaults() error {
 	return setDefaults(this,
 		func(v *EnvironmentLocal) (string, defaulter) { return "", &v.User },
 
-		fixedDefault("loginAllowed", func(v *EnvironmentLocal) *template.Bool { return &v.LoginAllowed }, template.MustNewBool(DefaultEnvironmentLocalLoginAllowedTmpl)),
+		fixedDefault("loginAllowed", func(v *EnvironmentLocal) *template.Bool { return &v.LoginAllowed }, DefaultEnvironmentLocalLoginAllowed),
 
-		fixedDefault("createIfAbsent", func(v *EnvironmentLocal) *template.Bool { return &v.CreateIfAbsent }, template.MustNewBool(DefaultEnvironmentLocalCreateIfAbsentTmpl)),
-		fixedDefault("updateIfDifferent", func(v *EnvironmentLocal) *template.Bool { return &v.UpdateIfDifferent }, template.MustNewBool(DefaultEnvironmentLocalUpdateIfDifferentTmpl)),
+		fixedDefault("createIfAbsent", func(v *EnvironmentLocal) *template.Bool { return &v.CreateIfAbsent }, DefaultEnvironmentLocalCreateIfAbsent),
+		fixedDefault("updateIfDifferent", func(v *EnvironmentLocal) *template.Bool { return &v.UpdateIfDifferent }, DefaultEnvironmentLocalUpdateIfDifferent),
+
+		fixedDefault("banner", func(v *EnvironmentLocal) *template.String { return &v.Banner }, DefaultEnvironmentLocalBanner),
 	)
 }
 
@@ -39,6 +44,8 @@ func (this *EnvironmentLocal) Trim() error {
 
 		noopTrim[EnvironmentLocal]("createIfAbsent"),
 		noopTrim[EnvironmentLocal]("updateIfDifferent"),
+
+		noopTrim[EnvironmentLocal]("banner"),
 	)
 }
 
@@ -50,6 +57,8 @@ func (this *EnvironmentLocal) Validate() error {
 
 		noopValidate[EnvironmentLocal]("createIfAbsent"),
 		noopValidate[EnvironmentLocal]("updateIfDifferent"),
+
+		noopValidate[EnvironmentLocal]("banner"),
 	)
 }
 
@@ -78,5 +87,6 @@ func (this EnvironmentLocal) isEqualTo(other *EnvironmentLocal) bool {
 	return isEqual(&this.User, &other.User) &&
 		isEqual(&this.LoginAllowed, &other.LoginAllowed) &&
 		isEqual(&this.CreateIfAbsent, &other.CreateIfAbsent) &&
-		isEqual(&this.UpdateIfDifferent, &other.UpdateIfDifferent)
+		isEqual(&this.UpdateIfDifferent, &other.UpdateIfDifferent) &&
+		isEqual(&this.Banner, &other.Banner)
 }

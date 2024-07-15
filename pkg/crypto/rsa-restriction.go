@@ -16,7 +16,9 @@ const (
 	RsaRestrictionAtLeast2048Bits
 	RsaRestrictionAtLeast3072Bits
 	RsaRestrictionAtLeast4096Bits
+)
 
+var (
 	DefaultRsaRestriction = RsaRestrictionAtLeast4096Bits
 )
 

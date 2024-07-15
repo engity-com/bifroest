@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/engity-com/yasshd/pkg/configuration"
+	"github.com/engity-com/yasshd/pkg/sys"
 	"golang.org/x/oauth2"
 )
 
@@ -16,6 +17,10 @@ type OidcAuth struct {
 
 func (this *OidcAuth) IsAuthorized() bool {
 	return true
+}
+
+func (this *OidcAuth) EnvVars() sys.EnvVars {
+	return nil
 }
 
 func (this *OidcAuth) Flow() configuration.FlowName {

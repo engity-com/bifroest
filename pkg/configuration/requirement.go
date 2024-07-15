@@ -5,6 +5,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var (
+	DefaultRequirementIncludedRequestingName = common.MustNewRegexp("")
+	DefaultRequirementExcludedRequestingName = common.MustNewRegexp("")
+)
+
 type Requirement struct {
 	IncludedRequestingName common.Regexp `yaml:"includedRequestingName,omitempty"`
 	ExcludedRequestingName common.Regexp `yaml:"excludedRequestingName,omitempty"`
@@ -12,8 +17,8 @@ type Requirement struct {
 
 func (this *Requirement) SetDefaults() error {
 	return setDefaults(this,
-		fixedDefault("includedRequestingName", func(v *Requirement) *common.Regexp { return &v.IncludedRequestingName }, common.MustNewRegexp("")),
-		fixedDefault("excludedRequestingName", func(v *Requirement) *common.Regexp { return &v.ExcludedRequestingName }, common.MustNewRegexp("")),
+		fixedDefault("includedRequestingName", func(v *Requirement) *common.Regexp { return &v.IncludedRequestingName }, DefaultRequirementIncludedRequestingName),
+		fixedDefault("excludedRequestingName", func(v *Requirement) *common.Regexp { return &v.ExcludedRequestingName }, DefaultRequirementExcludedRequestingName),
 	)
 }
 

@@ -13,7 +13,9 @@ const (
 	Ed25519RestrictionNone Ed25519Restriction = iota
 	Ed25519RestrictionAll
 	Ed25519RestrictionAtLeast256Bits
+)
 
+var (
 	DefaultEd25519Restriction = Ed25519RestrictionAll
 )
 

@@ -15,7 +15,9 @@ const (
 	EcdsaRestrictionAtLeast256Bits
 	EcdsaRestrictionAtLeast384Bits
 	EcdsaRestrictionAtLeast521Bits
+)
 
+var (
 	DefaultEcdsaRestriction = EcdsaRestrictionAtLeast384Bits
 )
 

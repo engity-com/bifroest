@@ -2,6 +2,7 @@ package configuration
 
 import (
 	"github.com/engity-com/yasshd/pkg/common"
+	"github.com/engity-com/yasshd/pkg/template"
 	"gopkg.in/yaml.v3"
 )
 
@@ -15,8 +16,11 @@ var (
 	// DefaultSshMaxTimeout is the default setting for Ssh.MaxTimeout.
 	DefaultSshMaxTimeout = common.MustNewDuration("0")
 
-	// DefaultMaxAuthTries is the default setting for Ssh.MaxAuthTries.
-	DefaultMaxAuthTries = uint8(6)
+	// DefaultSshMaxAuthTries is the default setting for Ssh.MaxAuthTries.
+	DefaultSshMaxAuthTries = uint8(6)
+
+	// DefaultSshBanner is the default setting for Ssh.Banner.
+	DefaultSshBanner = template.MustNewString("{{`/etc/ssh/sshd-banner` | file `optional`}}")
 )
 
 // Ssh defines how the ssh part of the service should be defined.
@@ -38,8 +42,11 @@ type Ssh struct {
 
 	// MaxAuthTries represents the maximum amount of tries a client can do while a connection with different
 	// authorizations before the connection will be forcibly closed. 0 means no limitation at all.
-	// Defaults to DefaultMaxAuthTries.
+	// Defaults to DefaultSshMaxAuthTries.
 	MaxAuthTries uint8 `yaml:"maxAuthTries"`
+
+	// Banner will be displayed if the clients connects to the server before any other action takes place.
+	Banner template.String `yaml:"banner,omitempty"`
 }
 
 func (this *Ssh) SetDefaults() error {
@@ -48,7 +55,8 @@ func (this *Ssh) SetDefaults() error {
 		func(v *Ssh) (string, defaulter) { return "keys", &v.Keys },
 		fixedDefault("idleTimeout", func(v *Ssh) *common.Duration { return &v.IdleTimeout }, DefaultSshIdleTimeout),
 		fixedDefault("maxTimeout", func(v *Ssh) *common.Duration { return &v.MaxTimeout }, DefaultSshMaxTimeout),
-		fixedDefault("maxAuthTries", func(v *Ssh) *uint8 { return &v.MaxAuthTries }, DefaultMaxAuthTries),
+		fixedDefault("maxAuthTries", func(v *Ssh) *uint8 { return &v.MaxAuthTries }, DefaultSshMaxAuthTries),
+		fixedDefault("banner", func(v *Ssh) *template.String { return &v.Banner }, DefaultSshBanner),
 	)
 }
 
@@ -59,6 +67,7 @@ func (this *Ssh) Trim() error {
 		noopTrim[Ssh]("idleTimeout"),
 		noopTrim[Ssh]("maxTimeout"),
 		noopTrim[Ssh]("maxAuthTries"),
+		noopTrim[Ssh]("banner"),
 	)
 }
 
@@ -69,6 +78,7 @@ func (this *Ssh) Validate() error {
 		noopValidate[Ssh]("idleTimeout"),
 		noopValidate[Ssh]("maxTimeout"),
 		noopValidate[Ssh]("maxAuthTries"),
+		noopValidate[Ssh]("banner"),
 	)
 }
 
@@ -98,5 +108,6 @@ func (this Ssh) isEqualTo(other *Ssh) bool {
 		isEqual(&this.Keys, &other.Keys) &&
 		isEqual(&this.IdleTimeout, &other.IdleTimeout) &&
 		isEqual(&this.MaxTimeout, &other.MaxTimeout) &&
-		this.MaxAuthTries == other.MaxAuthTries
+		this.MaxAuthTries == other.MaxAuthTries &&
+		isEqual(&this.Banner, &other.Banner)
 }

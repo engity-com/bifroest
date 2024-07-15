@@ -33,7 +33,7 @@ func (this String) Render(data any) (string, error) {
 		if err := tmpl.Execute(&buf, data); err != nil {
 			return "", err
 		}
-		return strings.TrimSpace(buf.String()), nil
+		return buf.String(), nil
 	}
 	return "", nil
 }

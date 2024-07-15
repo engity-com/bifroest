@@ -8,13 +8,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const (
-	DefaultUserNameTmpl        = "{{.Authorization.IdToken.Claims.email}}"
-	DefaultUserDisplayNameTmpl = "{{.Authorization.IdToken.Claims.name}}"
-	DefaultUserShellTmpl       = "/bin/bash"
-	DefaultUserHomeDirTmpl     = "/home/managed/{{.Authorization.IdToken.Claims.email}}"
-)
-
 type UserRequirementTemplate struct {
 	Name        template.String           `yaml:"name,omitempty"`
 	DisplayName template.String           `yaml:"displayName,omitempty"`

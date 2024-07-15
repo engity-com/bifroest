@@ -97,7 +97,7 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 }
 
 func (this *LocalAuthorizer) getAuthorizedKeysFilesOf(req PublicKeyRequest, u *user.User) ([]string, error) {
-	ctx := authorizedKeysRequestContext{req, u}
+	ctx := AuthorizedKeysRequestContext{req, u}
 	return common.MapSliceErr(this.conf.AuthorizedKeys, func(tmpl template.String) (string, error) {
 		return tmpl.Render(&ctx)
 	})
@@ -116,18 +116,7 @@ func (this *LocalAuthorizer) AuthorizePassword(req PasswordRequest) (Authorizati
 		return Forbidden(), nil
 	}
 
-	u, err := user.Lookup(req.Remote().User())
-	if err != nil {
-		return failf("cannot lookup user: %w", err)
-	}
-	if u == nil {
-		req.Logger().Debug("local user not found")
-		return Forbidden(), nil
-	}
-
-	rc := passwordRequestContext{req, u}
-
-	allowed, err := this.conf.Password.Allowed.Render(rc)
+	allowed, err := this.conf.Password.Allowed.Render(req)
 	if err != nil {
 		return failf("cannot evaluate of user is allowed: %w", err)
 	}
@@ -136,7 +125,7 @@ func (this *LocalAuthorizer) AuthorizePassword(req PasswordRequest) (Authorizati
 		return Forbidden(), nil
 	}
 
-	ok, err := this.checkPassword(req, u, this.validatePassword)
+	username, ev, ok, err := this.checkPassword(req, req.Remote().User(), this.validatePassword)
 	if err != nil {
 		return failf("cannot validate password: %w", err)
 	}
@@ -144,7 +133,16 @@ func (this *LocalAuthorizer) AuthorizePassword(req PasswordRequest) (Authorizati
 		return Forbidden(), nil
 	}
 
-	return &Local{u, this.flow}, nil
+	u, err := user.Lookup(username)
+	if err != nil {
+		return failf("cannot lookup user %q: %w", username, err)
+	}
+	if u == nil {
+		req.Logger().Warn("local user %q not found; but it was just resolve before", username)
+		return Forbidden(), nil
+	}
+
+	return &Local{u, ev, this.flow}, nil
 }
 
 func (this *LocalAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Authorization, error) {
@@ -160,18 +158,7 @@ func (this *LocalAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Autho
 		return Forbidden(), nil
 	}
 
-	u, err := user.Lookup(req.Remote().User())
-	if err != nil {
-		return failf("cannot lookup user: %w", err)
-	}
-	if u == nil {
-		req.Logger().Debug("local user not found")
-		return Forbidden(), nil
-	}
-
-	rc := interactiveRequestContext{req, u}
-
-	allowed, err := this.conf.Password.Allowed.Render(rc)
+	allowed, err := this.conf.Password.Allowed.Render(req)
 	if err != nil {
 		return failf("cannot evaluate of user is allowed: %w", err)
 	}
@@ -180,7 +167,7 @@ func (this *LocalAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Autho
 		return Forbidden(), nil
 	}
 
-	ok, err := this.checkInteractive(req, u, this.validatePassword)
+	username, ev, ok, err := this.checkInteractive(req, req.Remote().User(), this.validatePassword)
 	if err != nil {
 		return failf("cannot validate password: %w", err)
 	}
@@ -188,10 +175,19 @@ func (this *LocalAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Autho
 		return Forbidden(), nil
 	}
 
-	return &Local{u, this.flow}, nil
+	u, err := user.Lookup(username)
+	if err != nil {
+		return failf("cannot lookup user %q: %w", username, err)
+	}
+	if u == nil {
+		req.Logger().Warn("local user %q not found; but it was just resolve before", username)
+		return Forbidden(), nil
+	}
+
+	return &Local{u, ev, this.flow}, nil
 }
 
-func (this *LocalAuthorizer) validatePassword(u *user.User, password string, req Request) (bool, error) {
+func (this *LocalAuthorizer) validatePassword(password string, req Request) (bool, error) {
 	fail := func(err error) (bool, error) {
 		return false, err
 	}
@@ -200,8 +196,7 @@ func (this *LocalAuthorizer) validatePassword(u *user.User, password string, req
 	}
 
 	if len(password) == 0 {
-		rc := requestContext{req, u}
-		allowed, err := this.conf.Password.EmptyAllowed.Render(rc)
+		allowed, err := this.conf.Password.EmptyAllowed.Render(req)
 		if err != nil {
 			return failf("cannot evaluate of user is allowed for empty passwords: %w", err)
 		}
@@ -214,22 +209,7 @@ func (this *LocalAuthorizer) validatePassword(u *user.User, password string, req
 	return true, nil
 }
 
-type requestContext struct {
-	Request
-	User *user.User
-}
-
-type passwordRequestContext struct {
-	PasswordRequest
-	User *user.User
-}
-
-type authorizedKeysRequestContext struct {
+type AuthorizedKeysRequestContext struct {
 	PublicKeyRequest
-	User *user.User
-}
-
-type interactiveRequestContext struct {
-	InteractiveRequest
 	User *user.User
 }

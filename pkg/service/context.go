@@ -7,6 +7,7 @@ import (
 	"github.com/engity-com/yasshd/pkg/environment"
 	"github.com/gliderlabs/ssh"
 	gssh "golang.org/x/crypto/ssh"
+	"io"
 	"net"
 )
 
@@ -79,6 +80,9 @@ func (this *interactiveAuthorizeRequest) SendError(message string) error {
 
 func (this *interactiveAuthorizeRequest) Prompt(message string, echo bool) (string, error) {
 	resp, err := this.challenger("", "", []string{message}, []bool{echo})
+	if resp == nil {
+		return "", io.ErrUnexpectedEOF
+	}
 	return resp[0], err
 }
 

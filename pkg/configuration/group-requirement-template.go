@@ -8,8 +8,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const (
-	DefaultGroupNameTmpl = "managed"
+var (
+	DefaultGroupRequirementName = template.MustNewString("managed")
 )
 
 type GroupRequirementTemplate struct {
@@ -30,7 +30,7 @@ func (this GroupRequirementTemplate) Render(key common.StructuredKey, data any) 
 func (this *GroupRequirementTemplate) SetDefaults() error {
 	return setDefaults(this,
 		noopSetDefault[GroupRequirementTemplate]("gid"),
-		fixedDefault("name", func(v *GroupRequirementTemplate) *template.String { return &v.Name }, template.MustNewString(DefaultGroupNameTmpl)),
+		fixedDefault("name", func(v *GroupRequirementTemplate) *template.String { return &v.Name }, DefaultGroupRequirementName),
 	)
 }
 

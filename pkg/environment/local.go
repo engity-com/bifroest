@@ -1,7 +1,6 @@
 package environment
 
 import (
-	"errors"
 	"fmt"
 	"github.com/creack/pty"
 	"github.com/echocat/slf4g"
@@ -15,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -61,6 +61,15 @@ func (this *Local) WillBeAccepted(req Request) (ok bool, err error) {
 	}
 
 	return ok, nil
+}
+
+func (this *Local) Banner(req Request) (io.ReadCloser, error) {
+	b, err := this.conf.Banner.Render(req)
+	if err != nil {
+		return nil, err
+	}
+
+	return io.NopCloser(strings.NewReader(b)), nil
 }
 
 func (this *Local) Run(t Task) error {
@@ -132,15 +141,20 @@ func (this *Local) runCommand(t Task, u *user.User) error {
 			Credential: &creds,
 			Setsid:     true,
 		},
-		Env: []string{
-			"PATH=" + this.getPathEnv(),
-		},
+	}
+
+	ev := sys.EnvVars{
+		"PATH": this.getPathEnv(),
 	}
 
 	switch t.TaskType() {
 	case TaskTypeShell:
 		cmd.Path = u.Shell
-		cmd.Args = []string{"-" + filepath.Base(u.Shell)}
+		if rc := t.Session().RawCommand(); len(rc) > 0 {
+			cmd.Args = []string{filepath.Base(u.Shell), "-c", rc}
+		} else {
+			cmd.Args = []string{"-" + filepath.Base(u.Shell)}
+		}
 	case TaskTypeSftp:
 		efn, err := osext.Executable()
 		if err != nil {
@@ -152,15 +166,17 @@ func (this *Local) runCommand(t Task, u *user.User) error {
 		return fmt.Errorf("illegal task type: %v", t.TaskType())
 	}
 
-	if v := os.Getenv("TZ"); v != "" {
-		cmd.Env = append(cmd.Env, "TZ="+os.Getenv("TZ"))
+	if v, ok := os.LookupEnv("TZ"); ok {
+		ev.Set("TZ", v)
 	}
-	cmd.Env = append(cmd.Env, sess.Environ()...)
-	cmd.Env = append(cmd.Env,
-		"HOME="+u.HomeDir,
-		"USER="+u.Name,
-		"LOGNAME="+u.Name,
-		"SHELL="+u.Shell)
+	ev.AddAllOf(t.Authorization().EnvVars())
+	ev.Add(sess.Environ()...)
+	ev.Set(
+		"HOME", u.HomeDir,
+		"USER", u.Name,
+		"LOGNAME", u.Name,
+		"SHELL", u.Shell,
+	)
 
 	if ssh.AgentRequested(sess) {
 		l, err := ssh.NewAgentListener()
@@ -177,14 +193,15 @@ func (this *Local) runCommand(t Task, u *user.User) error {
 
 	// tODO! If not exist ~/.hushlogin display /etc/motd
 
-	// TODO! Run Run $HOME/.ssh/rc, /etc/ssh/sshrc
-
 	if ptyReq, winCh, isPty := sess.Pty(); isPty {
-		cmd.Env = append(cmd.Env, "TERM="+ptyReq.Term)
+		ev.Set("TERM", ptyReq.Term)
+		cmd.Env = ev.Strings()
 		f, err := pty.Start(&cmd)
 		if err != nil {
 			return fmt.Errorf("cannot start process %v: %w", cmd.Args, err)
 		}
+		defer this.killIfNeeded(t, &cmd)
+		defer func() { _ = f.Close() }()
 
 		go func() {
 			for win := range winCh {
@@ -198,6 +215,7 @@ func (this *Local) runCommand(t Task, u *user.User) error {
 		}()
 		_, _ = io.Copy(sess, f) // stdout
 	} else {
+		cmd.Env = ev.Strings()
 		cmd.Stdin = sess
 		cmd.Stdout = sess
 		if t.TaskType() == TaskTypeSftp {
@@ -211,15 +229,25 @@ func (this *Local) runCommand(t Task, u *user.User) error {
 		if err := cmd.Start(); err != nil {
 			return fmt.Errorf("cannot start process %v: %w", cmd.Args, err)
 		}
+		defer this.killIfNeeded(t, &cmd)
 	}
 
-	if err := cmd.Wait(); err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			return sess.Exit(ee.ExitCode())
-		}
+	if state, err := cmd.Process.Wait(); err != nil {
 		return err
+	} else if ec := state.ExitCode(); ec != 0 {
+		return t.Session().Exit(ec)
 	}
 
 	return nil
+}
+
+func (this *Local) killIfNeeded(t Task, cmd *exec.Cmd) {
+	go func() {
+		ctx := t.Context()
+		select {
+		case <-ctx.Done():
+			// Just to be sure, kill the process to do not leave anything behind...
+			_ = cmd.Process.Kill()
+		}
+	}()
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/engity-com/yasshd/pkg/configuration"
+	"io"
 	"reflect"
 )
 
@@ -35,6 +36,15 @@ func (this *Facade) WillBeAccepted(req Request) (bool, error) {
 		return false, fmt.Errorf("does not find valid environment for flow %v", flow)
 	}
 	return candidate.WillBeAccepted(req)
+}
+
+func (this *Facade) Banner(req Request) (io.ReadCloser, error) {
+	flow := req.Authorization().Flow()
+	candidate, ok := this.entries[flow]
+	if !ok {
+		return nil, fmt.Errorf("does not find valid environment for flow %v", flow)
+	}
+	return candidate.Banner(req)
 }
 
 func (this *Facade) Run(t Task) error {

@@ -6,11 +6,13 @@ import (
 	"fmt"
 	log "github.com/echocat/slf4g"
 	"github.com/engity-com/yasshd/pkg/authorization"
+	"github.com/engity-com/yasshd/pkg/common"
 	"github.com/engity-com/yasshd/pkg/configuration"
 	"github.com/engity-com/yasshd/pkg/crypto"
 	"github.com/engity-com/yasshd/pkg/environment"
 	"github.com/gliderlabs/ssh"
 	gssh "golang.org/x/crypto/ssh"
+	"io"
 	"net"
 	"sync"
 )
@@ -32,21 +34,36 @@ func (this *Service) Run() error {
 		return err
 	}
 
-	var wg sync.WaitGroup
-
-	for _, addr := range this.Configuration.Ssh.Addresses {
+	lns := make([]struct {
+		ln   net.Listener
+		addr common.NetAddress
+	}, len(this.Configuration.Ssh.Addresses))
+	defer func() {
+		// Close all opened listeners
+		for _, ln := range lns {
+			if ln.ln != nil {
+				_ = ln.ln.Close()
+			}
+		}
+	}()
+	for i, addr := range this.Configuration.Ssh.Addresses {
 		ln, err := addr.Listen()
 		if err != nil {
-			// TODO! Stop the other already started listeners...
 			return fmt.Errorf("cannot listen to %v: %w", addr, err)
 		}
+		lns[i].addr = addr
+		lns[i].ln = ln
+	}
+
+	var wg sync.WaitGroup
+	for _, ln := range lns {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			l := log.With("address", addr)
+			l := log.With("address", ln.addr)
 
 			l.Info("listening...")
-			if err := svc.server.Serve(ln); err != nil {
+			if err := svc.server.Serve(ln.ln); err != nil {
 				l.WithError(err).Fatal("cannot serve")
 			}
 		}()
@@ -301,7 +318,16 @@ func (this *service) handleBanner(ctx ssh.Context) string {
 		With("sessionId", ctx.SessionID())
 	this.setLogger(ctx, l)
 
-	return ""
+	if b, err := this.Configuration.Ssh.Banner.Render(&BannerContext{ctx}); err != nil {
+		log.WithError(err).Warn("cannot retrieve banner; showing none")
+		return ""
+	} else {
+		return b
+	}
+}
+
+type BannerContext struct {
+	Context ssh.Context
 }
 
 func (this *service) handleNewSession(srv *ssh.Server, conn *gssh.ServerConn, newChan gssh.NewChannel, ctx ssh.Context) {
@@ -349,19 +375,38 @@ func (this *service) executeSession(sess ssh.Session, taskType environment.TaskT
 		return
 	}
 
-	t := environmentTask{
-		environmentRequest: environmentRequest{
-			service:       this,
-			remote:        &remote{sess.Context()},
-			authorization: auth,
-		},
-		session:  sess,
-		taskType: taskType,
+	req := environmentRequest{
+		service:       this,
+		remote:        &remote{sess.Context()},
+		authorization: auth,
 	}
 
+	if len(sess.RawCommand()) == 0 && taskType == environment.TaskTypeShell {
+		banner, err := this.environment.Banner(&req)
+		if err != nil {
+			l.WithError(err).Error("cannot retrieve banner")
+			_ = sess.Exit(92)
+			return
+		}
+		if banner != nil {
+			defer func() { _ = banner.Close() }()
+			if _, err := io.Copy(sess, banner); err != nil {
+				l.WithError(err).Error("cannot print banner")
+				_ = sess.Exit(92)
+			}
+		}
+	}
+
+	t := environmentTask{
+		environmentRequest: req,
+		session:            sess,
+		taskType:           taskType,
+	}
 	if err := this.environment.Run(&t); err != nil {
 		l.WithError(err).Error("run of environment failed")
-		_ = sess.Exit(92)
+		_ = sess.Exit(93)
 		return
 	}
+
+	_ = sess.Exit(0)
 }

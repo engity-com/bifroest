@@ -1,9 +1,13 @@
 package authorization
 
-import "github.com/engity-com/yasshd/pkg/configuration"
+import (
+	"github.com/engity-com/yasshd/pkg/configuration"
+	"github.com/engity-com/yasshd/pkg/sys"
+)
 
 type Authorization interface {
 	IsAuthorized() bool
+	EnvVars() sys.EnvVars
 	Flow() configuration.FlowName
 }
 
@@ -17,6 +21,10 @@ var forbiddenI = forbiddenResponse{}
 
 func (this *forbiddenResponse) IsAuthorized() bool {
 	return false
+}
+
+func (this *forbiddenResponse) EnvVars() sys.EnvVars {
+	return nil
 }
 
 func (this *forbiddenResponse) Flow() configuration.FlowName {

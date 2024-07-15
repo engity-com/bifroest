@@ -15,7 +15,9 @@ const (
 	DsaRestrictionAtLeast1024Bits
 	DsaRestrictionAtLeast2048Bits
 	DsaRestrictionAtLeast3072Bits
+)
 
+var (
 	DefaultDsaRestriction = DsaRestrictionNone
 )
 
