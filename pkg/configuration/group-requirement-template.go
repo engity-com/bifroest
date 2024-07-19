@@ -13,7 +13,7 @@ var (
 )
 
 type GroupRequirementTemplate struct {
-	Gid  template.Uint64 `yaml:"gid,omitempty"`
+	Gid  template.Uint32 `yaml:"gid,omitempty"`
 	Name template.String `yaml:"name,omitempty"`
 }
 

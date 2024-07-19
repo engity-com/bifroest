@@ -9,7 +9,7 @@ import (
 var defaultGroup = GroupRequirement{1500, "yasshd"}
 
 type GroupRequirement struct {
-	Gid  uint64 `yaml:"gid,omitempty"`
+	Gid  uint32 `yaml:"gid,omitempty"`
 	Name string `yaml:"name,omitempty"`
 }
 
@@ -60,7 +60,7 @@ func (this GroupRequirement) String() string {
 			return strings.Clone(name)
 		}
 	} else if gid := this.Gid; gid > 0 {
-		return strconv.FormatUint(gid, 10)
+		return strconv.FormatUint(uint64(gid), 10)
 	} else {
 		return "<empty>"
 	}

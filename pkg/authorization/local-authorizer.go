@@ -51,7 +51,7 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 		return Forbidden(), nil
 	}
 
-	u, err := user.Lookup(req.Remote().User())
+	u, err := user.Lookup(req.Remote().User(), this.conf.AllowBadNames)
 	if err != nil {
 		return failf("cannot lookup user: %w", err)
 	}
@@ -133,7 +133,7 @@ func (this *LocalAuthorizer) AuthorizePassword(req PasswordRequest) (Authorizati
 		return Forbidden(), nil
 	}
 
-	u, err := user.Lookup(username)
+	u, err := user.Lookup(username, this.conf.AllowBadNames)
 	if err != nil {
 		return failf("cannot lookup user %q: %w", username, err)
 	}
@@ -175,7 +175,7 @@ func (this *LocalAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Autho
 		return Forbidden(), nil
 	}
 
-	u, err := user.Lookup(username)
+	u, err := user.Lookup(username, this.conf.AllowBadNames)
 	if err != nil {
 		return failf("cannot lookup user %q: %w", username, err)
 	}

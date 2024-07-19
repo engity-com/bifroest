@@ -11,7 +11,7 @@ import (
 type UserRequirementTemplate struct {
 	Name        template.String           `yaml:"name,omitempty"`
 	DisplayName template.String           `yaml:"displayName,omitempty"`
-	Uid         template.Uint64           `yaml:"uid,omitempty"`
+	Uid         template.Uint32           `yaml:"uid,omitempty"`
 	Group       GroupRequirementTemplate  `yaml:"group,omitempty"`
 	Groups      GroupRequirementTemplates `yaml:"groups,omitempty"`
 	Shell       template.String           `yaml:"shell,omitempty"`

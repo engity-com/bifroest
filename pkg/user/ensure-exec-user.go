@@ -45,12 +45,12 @@ func (this ExecutionBasedEnsurer) ensure(req *Requirement, opts *EnsureOpts) (*U
 	var existing *User
 	var err error
 	if req.Uid > 0 {
-		if existing, err = LookupUid(req.Uid); err != nil {
+		if existing, err = LookupUid(req.Uid, this.AllowBadNames); err != nil {
 			return nil, err
 		}
 	}
 	if existing == nil && len(req.Name) > 0 {
-		if existing, err = Lookup(req.Name); err != nil {
+		if existing, err = Lookup(req.Name, this.AllowBadNames); err != nil {
 			return nil, err
 		}
 	}
@@ -96,7 +96,7 @@ func (this ExecutionBasedEnsurer) create(req *Requirement, group *Group, groups 
 
 	var args []string
 	if v := req.Uid; v > 0 {
-		args = append(args, "-u", strconv.FormatUint(v, 10))
+		args = append(args, "-u", strconv.FormatUint(uint64(v), 10))
 	}
 	if v := req.HomeDir; len(v) > 0 {
 		args = append(args, "-d", v)
@@ -108,7 +108,7 @@ func (this ExecutionBasedEnsurer) create(req *Requirement, group *Group, groups 
 	args = append(args,
 		"--badname", "-m",
 		"-c", req.DisplayName,
-		"-g", strconv.FormatUint(group.Gid, 10),
+		"-g", strconv.FormatUint(uint64(group.Gid), 10),
 		"-G", formatGidsOfGroups(groups...),
 		"-s", req.Shell,
 		name,
@@ -118,7 +118,7 @@ func (this ExecutionBasedEnsurer) create(req *Requirement, group *Group, groups 
 		return failf("cannot create user %s: %w", name, err)
 	}
 
-	result, err := Lookup(name)
+	result, err := Lookup(name, this.AllowBadNames)
 	if err != nil {
 		return failf("cannot lookup user after it was created: %w", err)
 	}
@@ -142,13 +142,13 @@ func (this ExecutionBasedEnsurer) modify(req *Requirement, existing *User, group
 	if v := req.Name; len(v) > 0 {
 		args = append(args, "-l", strings.Clone(v))
 		lookup = func() (*User, error) {
-			return Lookup(v)
+			return Lookup(v, this.AllowBadNames)
 		}
 	}
 	if v := req.Uid; v > 0 {
-		args = append(args, "-u", strconv.FormatUint(v, 10))
+		args = append(args, "-u", strconv.FormatUint(uint64(v), 10))
 		lookup = func() (*User, error) {
-			return LookupUid(v)
+			return LookupUid(v, this.AllowBadNames)
 		}
 	}
 	if lookup == nil {
@@ -160,7 +160,7 @@ func (this ExecutionBasedEnsurer) modify(req *Requirement, existing *User, group
 	args = append(args,
 		"--badname",
 		"-c", req.DisplayName,
-		"-g", strconv.FormatUint(group.Gid, 10),
+		"-g", strconv.FormatUint(uint64(group.Gid), 10),
 		"-G", formatGidsOfGroups(groups...),
 		"-s", req.Shell,
 		existing.Name,

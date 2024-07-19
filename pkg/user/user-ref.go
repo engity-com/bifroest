@@ -36,15 +36,15 @@ func (this *UserRef) UnmarshalText(text []byte) error {
 	}
 
 	if len(buf.plain) > 0 {
-		if id, err := strconv.ParseUint(buf.plain, 10, 64); err == nil {
-			buf.v, err = LookupUid(id)
+		if id, err := strconv.ParseUint(buf.plain, 10, 32); err == nil {
+			buf.v, err = LookupUid(uint32(id), true)
 			if err != nil {
 				return fmt.Errorf("cannot resolve user by ID #%d: %w", id, err)
 			}
 		}
 		if buf.v == nil {
 			var err error
-			buf.v, err = Lookup(buf.plain)
+			buf.v, err = Lookup(buf.plain, true)
 			if err != nil {
 				return fmt.Errorf("cannot resolve user by name %q: %w", buf.plain, err)
 			}

@@ -9,7 +9,7 @@ import (
 type Requirement struct {
 	Name        string            `yaml:"name,omitempty"`
 	DisplayName string            `yaml:"displayName,omitempty"`
-	Uid         uint64            `yaml:"uid,omitempty"`
+	Uid         uint32            `yaml:"uid,omitempty"`
 	Group       GroupRequirement  `yaml:"group,omitempty"`
 	Groups      GroupRequirements `yaml:"groups,omitempty"`
 	Shell       string            `yaml:"shell,omitempty"`
@@ -87,7 +87,7 @@ func (this Requirement) String() string {
 			return strings.Clone(name)
 		}
 	} else if gid := this.Uid; gid > 0 {
-		return strconv.FormatUint(gid, 10)
+		return strconv.FormatUint(uint64(gid), 10)
 	} else {
 		return "<empty>"
 	}

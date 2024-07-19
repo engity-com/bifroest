@@ -1,3 +1,5 @@
+//go:build unix && !android
+
 package user
 
 import (
@@ -9,7 +11,7 @@ import (
 )
 
 type Group struct {
-	Gid  uint64
+	Gid  uint32
 	Name string
 }
 
@@ -39,7 +41,7 @@ func (this Group) isEqualTo(other *Group) bool {
 func formatGidsOfGroups(ins ...*Group) string {
 	strs := make([]string, len(ins))
 	for i, in := range ins {
-		strs[i] = strconv.FormatUint(in.Gid, 10)
+		strs[i] = strconv.FormatUint(uint64(in.Gid), 10)
 	}
 	return strings.Join(strs, ",")
 }
@@ -99,33 +101,6 @@ func (this *DeleteGroupOpts) OrDefaults() DeleteGroupOpts {
 		result.Force = &nv
 	}
 	return result
-}
-
-func lookupGroups(gids ...uint64) (Groups, error) {
-	gs := make(Groups, len(gids))
-	for i, gid := range gids {
-		g, err := LookupGid(gid)
-		if err != nil {
-			return nil, err
-		}
-		if g == nil {
-			gs[i] = Group{
-				Gid:  gid,
-				Name: strconv.FormatUint(gid, 10),
-			}
-		} else {
-			gs[i] = *g
-		}
-	}
-	return gs, nil
-}
-
-func lookupGroupsOf(username string, gid uint64) (Groups, error) {
-	gids, err := lookupGids(username, gid)
-	if err != nil {
-		return nil, err
-	}
-	return lookupGroups(gids...)
 }
 
 type Groups []Group

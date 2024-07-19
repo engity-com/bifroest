@@ -5,5 +5,6 @@ import (
 )
 
 type ExecutionBasedEnsurer struct {
-	Executor sys.Executor
+	Executor      sys.Executor
+	AllowBadNames bool
 }
