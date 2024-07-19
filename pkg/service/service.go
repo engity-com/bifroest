@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	log "github.com/echocat/slf4g"
-	"github.com/engity-com/yasshd/pkg/authorization"
-	"github.com/engity-com/yasshd/pkg/common"
-	"github.com/engity-com/yasshd/pkg/configuration"
-	"github.com/engity-com/yasshd/pkg/crypto"
-	"github.com/engity-com/yasshd/pkg/environment"
+	"github.com/engity-com/bifroest/pkg/authorization"
+	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/gliderlabs/ssh"
 	gssh "golang.org/x/crypto/ssh"
 	"io"
@@ -336,7 +336,7 @@ func (this *service) handleNewSession(srv *ssh.Server, conn *gssh.ServerConn, ne
 
 func (this *service) createNewServerConfig(ctx ssh.Context) *gssh.ServerConfig {
 	return &gssh.ServerConfig{
-		ServerVersion: "SSH-2.0-yasshd",
+		ServerVersion: "SSH-2.0-engity-bifroest",
 		MaxAuthTries:  int(this.Configuration.Ssh.MaxAuthTries),
 	}
 }

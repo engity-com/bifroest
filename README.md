@@ -1,17 +1,17 @@
-# yasshd
+# Enity's Bifröst
 
 ## Example
 
 In `/etc/pam.d/ssh`:
 
 ```
-auth requisite yasshd.so <options>
+auth requisite bifroest.so <options>
 ```
 
 Example for Google:
 
 ```
-auth requisite yasshd.so
+auth requisite bifroest.so
 ```
 
 ## References

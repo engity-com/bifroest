@@ -3,7 +3,7 @@ package session
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/engity-com/yasshd/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 	"net"

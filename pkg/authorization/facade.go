@@ -3,7 +3,7 @@ package authorization
 import (
 	"context"
 	"fmt"
-	"github.com/engity-com/yasshd/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/configuration"
 	"reflect"
 )
 

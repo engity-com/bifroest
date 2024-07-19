@@ -1,5 +1,5 @@
 package configuration
 
 const (
-	DefaultHostKeyLocation = "/etc/yasshd/key"
+	DefaultHostKeyLocation = "/etc/engity/bifroest/key"
 )

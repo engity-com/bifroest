@@ -2,9 +2,9 @@ package service
 
 import (
 	log "github.com/echocat/slf4g"
-	"github.com/engity-com/yasshd/pkg/authorization"
-	"github.com/engity-com/yasshd/pkg/common"
-	"github.com/engity-com/yasshd/pkg/environment"
+	"github.com/engity-com/bifroest/pkg/authorization"
+	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/gliderlabs/ssh"
 	gssh "golang.org/x/crypto/ssh"
 	"io"

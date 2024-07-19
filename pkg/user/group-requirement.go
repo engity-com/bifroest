@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-var defaultGroup = GroupRequirement{1500, "yasshd"}
+var defaultGroup = GroupRequirement{1500, "bifroest"}
 
 type GroupRequirement struct {
 	Gid  uint32 `yaml:"gid,omitempty"`

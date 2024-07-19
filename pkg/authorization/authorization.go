@@ -1,8 +1,8 @@
 package authorization
 
 import (
-	"github.com/engity-com/yasshd/pkg/configuration"
-	"github.com/engity-com/yasshd/pkg/sys"
+	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 type Authorization interface {

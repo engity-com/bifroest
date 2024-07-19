@@ -2,7 +2,7 @@ package authorization
 
 import (
 	"github.com/echocat/slf4g"
-	"github.com/engity-com/yasshd/pkg/common"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/gliderlabs/ssh"
 	gssh "golang.org/x/crypto/ssh"
 )

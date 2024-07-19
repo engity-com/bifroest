@@ -1,7 +1,7 @@
 package configuration
 
 import (
-	"github.com/engity-com/yasshd/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/errors"
 	"gopkg.in/yaml.v3"
 	"io"
 	"os"

@@ -4,9 +4,9 @@ package configuration
 
 import (
 	"fmt"
-	"github.com/engity-com/yasshd/pkg/common"
-	"github.com/engity-com/yasshd/pkg/template"
-	"github.com/engity-com/yasshd/pkg/user"
+	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/template"
+	"github.com/engity-com/bifroest/pkg/user"
 	"gopkg.in/yaml.v3"
 )
 

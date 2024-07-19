@@ -1,9 +1,9 @@
 package configuration
 
 import (
-	"github.com/engity-com/yasshd/pkg/common"
-	"github.com/engity-com/yasshd/pkg/crypto"
-	"github.com/engity-com/yasshd/pkg/template"
+	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/template"
 	"testing"
 )
 

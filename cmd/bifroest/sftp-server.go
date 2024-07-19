@@ -2,7 +2,7 @@ package main
 
 import (
 	"github.com/alecthomas/kingpin"
-	"github.com/engity-com/yasshd/pkg/sftp"
+	"github.com/engity-com/bifroest/pkg/sftp"
 	"os"
 )
 

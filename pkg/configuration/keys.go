@@ -1,7 +1,7 @@
 package configuration
 
 import (
-	"github.com/engity-com/yasshd/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/crypto"
 	"gopkg.in/yaml.v3"
 	"slices"
 )

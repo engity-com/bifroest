@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/engity-com/yasshd/pkg/common"
-	"github.com/engity-com/yasshd/pkg/configuration"
-	"github.com/engity-com/yasshd/pkg/crypto"
-	"github.com/engity-com/yasshd/pkg/errors"
-	"github.com/engity-com/yasshd/pkg/template"
-	"github.com/engity-com/yasshd/pkg/user"
+	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/template"
+	"github.com/engity-com/bifroest/pkg/user"
 	"golang.org/x/crypto/ssh"
 )
 

@@ -7,7 +7,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/engity-com/yasshd/pkg/sys"
+	"github.com/engity-com/bifroest/pkg/sys"
 	"io"
 )
 

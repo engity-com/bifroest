@@ -3,7 +3,7 @@ package main
 import (
 	"github.com/alecthomas/kingpin"
 	log "github.com/echocat/slf4g"
-	"github.com/engity-com/yasshd/pkg/service"
+	"github.com/engity-com/bifroest/pkg/service"
 	"os"
 )
 

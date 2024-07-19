@@ -1,15 +1,58 @@
-oidc:
-  issuer: https://login.microsoftonline.com/my-great-tenant-uuid/v2.0
-  clientId: my-great-client-uuid
-  clientSecret: very-secret-secret
-  scopes:
-    - openid
-    - email
-    - profile
-user:
-  shell: /bin/bash
-  loginAllowed: |
-    {{ and
-      (.Oidc.IdToken.Claims.groups | has "my-great-group-uuid")
-      (.Oidc.IdToken.Claims.tid    | eq "my-great-tenant-uuid")
-    }}
+ssh:
+  addresses: [ ":2022" ]
+  idleTimeout: 5m
+  maxTimeout: 0
+  maxAuthTries: 6
+  keys:
+    hostKeys: [ var/ssh-key ]
+
+flows:
+  - name: sso
+    requirement:
+      includedRequestingName: ^sso$
+    authorization:
+      type: oidcDeviceAuth
+      issuer: https://login.microsoftonline.com/my-great-tenant-uuid/v2.0
+      clientId: my-great-client-uuid
+      clientSecret: very-secret-secret
+      scopes:
+        - openid
+        - email
+        - profile
+    session:
+      idleTimeout: 30m
+      maxTimeout: 0
+      maxConnections: 10
+    environment:
+      type: local
+      name: "{{.Authorization.IdToken.Claims.email}}"
+      displayName: "{{.Authorization.IdToken.Claims.name}}"
+      shell: "/bin/bash"
+      groups:
+        - name: azuread
+      createIfAbsent: true
+      updateIfDifferent: true
+      loginAllowed: |
+        {{ and 
+          (.Authorization.IdToken.Claims.groups | has "my-great-group-uuid")
+          (.Authorization.IdToken.Claims.tid    | eq  "my-great-tenant-uuid")
+        }}
+
+  - name: local
+    authorization:
+      type: local
+      password:
+        allowed: true
+        interactiveAllowed: true
+    session:
+      idleTimeout: 30m
+      maxTimeout: 0
+      maxConnections: 10
+    environment:
+      type: local
+      name: "{{.Authorization.Name}}"
+      loginAllowed: |
+        {{ or 
+          (.Authorization.Group.Name | eq "ssh" )
+          (.Authorization.Groups | firstMatching `{{.Name | eq "ssh"}}`)
+        }}

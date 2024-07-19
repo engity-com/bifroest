@@ -2,7 +2,7 @@ package main
 
 import (
 	log "github.com/echocat/slf4g"
-	"github.com/engity-com/yasshd/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/configuration"
 	"os"
 
 	"github.com/alecthomas/kingpin"
@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	configurationRef = configuration.MustNewConfigurationRef("/etc/yasshd/configuration.yaml")
+	configurationRef = configuration.MustNewConfigurationRef("/etc/engity/bifroest/configuration.yaml")
 	workingDir       = func() string {
 		v, err := os.Getwd()
 		if err == nil {
@@ -22,7 +22,7 @@ var (
 )
 
 func main() {
-	app := kingpin.New("yasshd", "SSH server which provides authorization and authentication via OpenID Connect and classic mechanisms to access a real host or a dedicated Docker container.").
+	app := kingpin.New("bifroest", "SSH server which provides authorization and authentication via OpenID Connect and classic mechanisms to access a real host or a dedicated Docker container.").
 		UsageWriter(os.Stderr).
 		ErrorWriter(os.Stderr).
 		Terminate(func(i int) {

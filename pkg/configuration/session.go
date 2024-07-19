@@ -1,7 +1,7 @@
 package configuration
 
 import (
-	"github.com/engity-com/yasshd/pkg/common"
+	"github.com/engity-com/bifroest/pkg/common"
 	"gopkg.in/yaml.v3"
 )
 

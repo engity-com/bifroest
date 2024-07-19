@@ -3,8 +3,8 @@ package authorization
 import (
 	"fmt"
 	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/engity-com/yasshd/pkg/configuration"
-	"github.com/engity-com/yasshd/pkg/sys"
+	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/sys"
 	"golang.org/x/oauth2"
 )
 
