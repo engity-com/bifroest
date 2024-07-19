@@ -6,7 +6,6 @@ import (
 )
 
 var (
-	DefaultEnvironmentLocalAllowBadNames     = true
 	DefaultEnvironmentLocalLoginAllowed      = template.MustNewBool("true")
 	DefaultEnvironmentLocalCreateIfAbsent    = template.MustNewBool("false")
 	DefaultEnvironmentLocalUpdateIfDifferent = template.MustNewBool("false")
@@ -16,8 +15,7 @@ var (
 type EnvironmentLocal struct {
 	User UserRequirementTemplate `yaml:",inline"`
 
-	AllowBadNames bool          `yaml:"allowBadNames"`
-	LoginAllowed  template.Bool `yaml:"loginAllowed,omitempty"`
+	LoginAllowed template.Bool `yaml:"loginAllowed,omitempty"`
 
 	CreateIfAbsent    template.Bool `yaml:"createIfAbsent,omitempty"`
 	UpdateIfDifferent template.Bool `yaml:"updateIfDifferent,omitempty"`
@@ -29,7 +27,6 @@ func (this *EnvironmentLocal) SetDefaults() error {
 	return setDefaults(this,
 		func(v *EnvironmentLocal) (string, defaulter) { return "", &v.User },
 
-		fixedDefault("allowBadNames", func(v *EnvironmentLocal) *bool { return &v.AllowBadNames }, DefaultEnvironmentLocalAllowBadNames),
 		fixedDefault("loginAllowed", func(v *EnvironmentLocal) *template.Bool { return &v.LoginAllowed }, DefaultEnvironmentLocalLoginAllowed),
 
 		fixedDefault("createIfAbsent", func(v *EnvironmentLocal) *template.Bool { return &v.CreateIfAbsent }, DefaultEnvironmentLocalCreateIfAbsent),
@@ -43,7 +40,6 @@ func (this *EnvironmentLocal) Trim() error {
 	return trim(this,
 		func(v *EnvironmentLocal) (string, trimmer) { return "", &v.User },
 
-		noopTrim[EnvironmentLocal]("allowBadNames"),
 		noopTrim[EnvironmentLocal]("loginAllowed"),
 
 		noopTrim[EnvironmentLocal]("createIfAbsent"),
@@ -57,7 +53,6 @@ func (this *EnvironmentLocal) Validate() error {
 	return validate(this,
 		func(v *EnvironmentLocal) (string, validator) { return "", &v.User },
 
-		noopValidate[EnvironmentLocal]("allowBadNames"),
 		noopValidate[EnvironmentLocal]("loginAllowed"),
 
 		noopValidate[EnvironmentLocal]("createIfAbsent"),
@@ -89,8 +84,7 @@ func (this EnvironmentLocal) IsEqualTo(other any) bool {
 }
 
 func (this EnvironmentLocal) isEqualTo(other *EnvironmentLocal) bool {
-	return this.AllowBadNames == other.AllowBadNames &&
-		isEqual(&this.User, &other.User) &&
+	return isEqual(&this.User, &other.User) &&
 		isEqual(&this.LoginAllowed, &other.LoginAllowed) &&
 		isEqual(&this.CreateIfAbsent, &other.CreateIfAbsent) &&
 		isEqual(&this.UpdateIfDifferent, &other.UpdateIfDifferent) &&

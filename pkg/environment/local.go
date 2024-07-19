@@ -45,7 +45,7 @@ func NewLocal(flow configuration.FlowName, conf *configuration.EnvironmentLocal)
 			Executor: &sys.StandardExecutor{
 				UsingSudo: true,
 			},
-			AllowBadNames: conf.AllowBadNames,
+			AllowBadNames: true,
 		},
 	}
 
