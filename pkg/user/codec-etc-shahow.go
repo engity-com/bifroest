@@ -4,8 +4,6 @@ package user
 
 import (
 	"errors"
-	"fmt"
-	"github.com/engity-com/yasshd/pkg/sys"
 	"io"
 )
 
@@ -76,26 +74,13 @@ func (this *etcShadowEntry) setLine(line [][]byte, allowBadName bool) error {
 }
 
 func decodeEtcShadow(allowBadName bool, consumer codecConsumer[*etcShadowEntry]) (rErr error) {
-	f, err := sys.OpenAndLockFileForRead(etcShadowFn)
-	if err != nil {
-		return fmt.Errorf("cannot open %s: %w", etcShadowFn, err)
-	}
-	defer func() {
-		if err := f.Close(); err != nil && rErr == nil {
-			rErr = err
-		}
-	}()
-
-	return decodeEtcShadowOf(etcShadowFn, f, allowBadName, consumer)
+	return decodeEtcShadowFromFile(etcShadowFn, allowBadName, consumer)
 }
 
-func decodeEtcShadowOf(fn string, r io.Reader, allowBadName bool, consumer codecConsumer[*etcShadowEntry]) error {
-	var entry etcShadowEntry
-	return parseColonFile(fn, r, 8, func(line [][]byte) error {
-		if err := entry.setLine(line, allowBadName); err != nil {
-			return err
-		}
+func decodeEtcShadowFromFile(fn string, allowBadName bool, consumer codecConsumer[*etcShadowEntry]) (rErr error) {
+	return decodeColonLinesFromFile(fn, allowBadName, consumer, decodeEtcShadowFromReader)
+}
 
-		return consumer(&entry)
-	})
+func decodeEtcShadowFromReader(fn string, r io.Reader, allowBadName bool, consumer codecConsumer[*etcShadowEntry]) error {
+	return decodeColonLinesFromReader(fn, r, allowBadName, 8, consumer)
 }

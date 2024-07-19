@@ -5,7 +5,8 @@ import (
 )
 
 var DefaultEnsurer Ensurer = &ExecutionBasedEnsurer{
-	Executor: sys.DefaultExecutor,
+	Executor:      sys.DefaultExecutor,
+	AllowBadNames: true,
 }
 
 type Ensurer interface {

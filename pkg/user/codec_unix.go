@@ -2,7 +2,14 @@
 
 package user
 
-import "errors"
+import (
+	"bufio"
+	"bytes"
+	"errors"
+	"fmt"
+	"github.com/engity-com/yasshd/pkg/sys"
+	"io"
+)
 
 var (
 	errEmptyUserName    = errors.New("empty user name")
@@ -14,6 +21,56 @@ var (
 	errTooLongGeocs     = errors.New("geocs is longer than 255 characters")
 	errIllegalGeocs     = errors.New("illegal geocs")
 )
+
+type codecElementP[T any] interface {
+	*T
+	setLine(line [][]byte, allowBadName bool) error
+}
+
+type codecElementDecoder[T any, PT codecElementP[T]] func(fn string, r io.Reader, allowBadName bool, consumer codecConsumer[PT]) error
+
+func decodeColonLinesFromFile[T any, PT codecElementP[T]](fn string, allowBadName bool, consumer codecConsumer[PT], decoder codecElementDecoder[T, PT]) (rErr error) {
+	f, err := sys.OpenAndLockFileForRead(fn)
+	if err != nil {
+		return fmt.Errorf("cannot open %s: %w", fn, err)
+	}
+	defer func() {
+		if err := f.Close(); err != nil && rErr == nil {
+			rErr = err
+		}
+	}()
+
+	return decoder(fn, f, allowBadName, consumer)
+}
+
+func decodeColonLinesFromReader[T any, PT codecElementP[T]](fn string, r io.Reader, allowBadName bool, expectedAmountOfColumns int, consumer codecConsumer[PT]) (err error) {
+	rd := bufio.NewScanner(r)
+	rd.Split(bufio.ScanLines)
+
+	var lineNum uint32
+	for rd.Scan() {
+		line := bytes.SplitN(rd.Bytes(), colonFileSeparator, expectedAmountOfColumns+1)
+		if len(line) == 1 && len(bytes.TrimSpace(line[0])) == 0 {
+			continue
+		}
+		if len(line) != expectedAmountOfColumns {
+			return fmt.Errorf("cannot parse %s:%d: illegal amount of columns; expected %d; but got: %d", fn, lineNum, expectedAmountOfColumns, len(line))
+		}
+		var pv PT = new(T)
+		if err := pv.setLine(line, allowBadName); err != nil {
+			return fmt.Errorf("cannot parse %s:%d: %w", fn, lineNum, err)
+		}
+
+		if err := consumer(pv); err == codecConsumeEnd {
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("cannot parse %s:%d: %w", fn, lineNum, err)
+		}
+		lineNum++
+	}
+
+	return nil
+}
 
 func validateUserName(in []byte, allowBad bool) error {
 	if allowBad {
@@ -115,13 +172,16 @@ func validateGeocs(in []byte) error {
 	return nil
 }
 
-func validateColonFilePathColumn(in []byte, tooLong, illegal error) error {
+func validateColonFilePathColumn(in []byte, errEmpty, errTooLong, errIllegal error) error {
+	if len(in) == 0 {
+		return errEmpty
+	}
 	if len(in) > 255 {
-		return tooLong
+		return errTooLong
 	}
 	for _, c := range in {
 		if c == 0 || c == ':' || c == '\n' {
-			return illegal
+			return errIllegal
 		}
 	}
 	return nil

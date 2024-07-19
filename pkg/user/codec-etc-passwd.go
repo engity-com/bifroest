@@ -4,8 +4,6 @@ package user
 
 import (
 	"errors"
-	"fmt"
-	"github.com/engity-com/yasshd/pkg/sys"
 	"io"
 )
 
@@ -20,8 +18,10 @@ var (
 	errEtcPasswdIllegalUid     = errors.New("illegal UID")
 	errEtcPasswdEmptyGid       = errors.New("empty GID")
 	errEtcPasswdIllegalGid     = errors.New("illegal GID")
+	errEtcPasswdEmptyHomeDir   = errors.New("empty home directory")
 	errEtcPasswdTooLongHomeDir = errors.New("home directory is longer than 255 characters")
 	errEtcPasswdIllegalHomeDir = errors.New("illegal home directory")
+	errEtcPasswdEmptyShell     = errors.New("empty shell")
 	errEtcPasswdTooLongShell   = errors.New("shell is longer than 255 characters")
 	errEtcPasswdIllegalShell   = errors.New("illegal shell")
 )
@@ -43,10 +43,10 @@ func (this *etcPasswdEntry) validate(allowBadName bool) error {
 	if err := validateGeocs(this.geocs); err != nil {
 		return err
 	}
-	if err := validateColonFilePathColumn(this.homeDir, errEtcPasswdTooLongHomeDir, errEtcPasswdIllegalHomeDir); err != nil {
+	if err := validateColonFilePathColumn(this.homeDir, errEtcPasswdEmptyHomeDir, errEtcPasswdTooLongHomeDir, errEtcPasswdIllegalHomeDir); err != nil {
 		return err
 	}
-	if err := validateColonFilePathColumn(this.shell, errEtcPasswdTooLongShell, errEtcPasswdIllegalShell); err != nil {
+	if err := validateColonFilePathColumn(this.shell, errEtcPasswdEmptyShell, errEtcPasswdTooLongShell, errEtcPasswdIllegalShell); err != nil {
 		return err
 	}
 	return nil
@@ -74,26 +74,13 @@ func (this *etcPasswdEntry) setLine(line [][]byte, allowBadName bool) error {
 }
 
 func decodeEtcPasswd(allowBadName bool, consumer codecConsumer[*etcPasswdEntry]) (rErr error) {
-	f, err := sys.OpenAndLockFileForRead(etcPasswdFn)
-	if err != nil {
-		return fmt.Errorf("cannot open %s: %w", etcPasswdFn, err)
-	}
-	defer func() {
-		if err := f.Close(); err != nil && rErr == nil {
-			rErr = err
-		}
-	}()
-
-	return decodeEtcPasswdOf(etcPasswdFn, f, allowBadName, consumer)
+	return decodeEtcPasswdFromFile(etcPasswdFn, allowBadName, consumer)
 }
 
-func decodeEtcPasswdOf(fn string, r io.Reader, allowBadName bool, consumer codecConsumer[*etcPasswdEntry]) error {
-	var entry etcPasswdEntry
-	return parseColonFile(fn, r, 7, func(line [][]byte) error {
-		if err := entry.setLine(line, allowBadName); err != nil {
-			return err
-		}
+func decodeEtcPasswdFromFile(fn string, allowBadName bool, consumer codecConsumer[*etcPasswdEntry]) (rErr error) {
+	return decodeColonLinesFromFile(fn, allowBadName, consumer, decodeEtcPasswdFromReader)
+}
 
-		return consumer(&entry)
-	})
+func decodeEtcPasswdFromReader(fn string, r io.Reader, allowBadName bool, consumer codecConsumer[*etcPasswdEntry]) error {
+	return decodeColonLinesFromReader(fn, r, allowBadName, 7, consumer)
 }

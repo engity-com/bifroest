@@ -1,11 +1,7 @@
 package user
 
 import (
-	"bufio"
-	"bytes"
 	"errors"
-	"fmt"
-	"io"
 	"strconv"
 )
 
@@ -16,27 +12,6 @@ var (
 )
 
 type codecConsumer[T any] func(T) error
-
-func parseColonFile(fn string, r io.Reader, expectedAmountOfColumns int, consumer func(line [][]byte) error) (err error) {
-	rd := bufio.NewScanner(r)
-	rd.Split(bufio.ScanLines)
-
-	var lineNum uint32
-	for rd.Scan() {
-		line := bytes.SplitN(rd.Bytes(), colonFileSeparator, expectedAmountOfColumns+1)
-		if len(line) != expectedAmountOfColumns {
-			continue
-		}
-		if err := consumer(line); err == codecConsumeEnd {
-			return nil
-		} else if err != nil {
-			return fmt.Errorf("cannot parse %s:%d: %w", fn, lineNum, err)
-		}
-		lineNum++
-	}
-
-	return nil
-}
 
 func parseUint32Column(line [][]byte, columnIndex int, errEmpty, errIllegal error) (_ uint32, hasValue bool, _ error) {
 	if len(line[columnIndex]) == 0 {

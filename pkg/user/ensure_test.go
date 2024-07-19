@@ -98,7 +98,7 @@ func TestEnsure(t *testing.T) {
 			var actual *User
 			for ensureStep, req := range c.req {
 				var err error
-				actual, err = DefaultEnsurer.Ensure(&req)
+				actual, err = DefaultEnsurer.Ensure(&req, nil)
 				if err != nil {
 					if c.err != nil {
 						if c.err.Error() != err.Error() {
