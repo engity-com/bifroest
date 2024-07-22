@@ -11,7 +11,7 @@ var (
 	colonFileSeparator = []byte(":")
 )
 
-type codecConsumer[T any] func(T) error
+type codecConsumer[T any] func(T, error) error
 
 func parseUint32Column(line [][]byte, columnIndex int, errEmpty, errIllegal error) (_ uint32, hasValue bool, _ error) {
 	if len(line[columnIndex]) == 0 {

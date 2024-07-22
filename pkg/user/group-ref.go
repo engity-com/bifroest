@@ -37,14 +37,14 @@ func (this *GroupRef) UnmarshalText(text []byte) error {
 
 	if len(buf.plain) > 0 {
 		if id, err := strconv.ParseUint(buf.plain, 10, 32); err == nil {
-			buf.v, err = LookupGid(uint32(id), true)
+			buf.v, err = LookupGid(uint32(id), true, true)
 			if err != nil {
 				return fmt.Errorf("cannot resolve group by ID #%d: %w", id, err)
 			}
 		}
 		if buf.v == nil {
 			var err error
-			buf.v, err = LookupGroup(buf.plain, true)
+			buf.v, err = LookupGroup(buf.plain, true, true)
 			if err != nil {
 				return fmt.Errorf("cannot resolve group by name %q: %w", buf.plain, err)
 			}

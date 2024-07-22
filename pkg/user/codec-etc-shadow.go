@@ -12,6 +12,7 @@ const (
 )
 
 var (
+	errEtcShadowEmptyPassword        = errors.New("empty password")
 	errEtcShadowEmptyLastChangedAt   = errors.New("empty last changed at")
 	errEtcShadowIllegalLastChangedAt = errors.New("illegal last changed at")
 	errEtcShadowIllegalMinimumAge    = errors.New("illegal minimum age")
@@ -37,8 +38,11 @@ type etcShadowEntry struct {
 }
 
 func (this *etcShadowEntry) validate(allowBadName bool) error {
-	if err := validateGroupName(this.name, allowBadName); err != nil {
+	if err := validateUserName(this.name, allowBadName); err != nil {
 		return err
+	}
+	if len(this.password) == 0 {
+		return errEtcShadowEmptyPassword
 	}
 	return nil
 }

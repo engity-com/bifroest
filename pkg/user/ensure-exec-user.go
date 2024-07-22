@@ -45,12 +45,12 @@ func (this ExecutionBasedEnsurer) ensure(req *Requirement, opts *EnsureOpts) (*U
 	var existing *User
 	var err error
 	if req.Uid > 0 {
-		if existing, err = LookupUid(req.Uid, this.AllowBadNames); err != nil {
+		if existing, err = LookupUid(req.Uid, this.AllowBadNames, this.SkipIllegalEntries); err != nil {
 			return nil, err
 		}
 	}
 	if existing == nil && len(req.Name) > 0 {
-		if existing, err = Lookup(req.Name, this.AllowBadNames); err != nil {
+		if existing, err = Lookup(req.Name, this.AllowBadNames, this.SkipIllegalEntries); err != nil {
 			return nil, err
 		}
 	}
@@ -118,7 +118,7 @@ func (this ExecutionBasedEnsurer) create(req *Requirement, group *Group, groups 
 		return failf("cannot create user %s: %w", name, err)
 	}
 
-	result, err := Lookup(name, this.AllowBadNames)
+	result, err := Lookup(name, this.AllowBadNames, this.SkipIllegalEntries)
 	if err != nil {
 		return failf("cannot lookup user after it was created: %w", err)
 	}
@@ -142,13 +142,13 @@ func (this ExecutionBasedEnsurer) modify(req *Requirement, existing *User, group
 	if v := req.Name; len(v) > 0 {
 		args = append(args, "-l", strings.Clone(v))
 		lookup = func() (*User, error) {
-			return Lookup(v, this.AllowBadNames)
+			return Lookup(v, this.AllowBadNames, this.SkipIllegalEntries)
 		}
 	}
 	if v := req.Uid; v > 0 {
 		args = append(args, "-u", strconv.FormatUint(uint64(v), 10))
 		lookup = func() (*User, error) {
-			return LookupUid(v, this.AllowBadNames)
+			return LookupUid(v, this.AllowBadNames, this.SkipIllegalEntries)
 		}
 	}
 	if lookup == nil {

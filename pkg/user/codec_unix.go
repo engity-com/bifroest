@@ -47,21 +47,22 @@ func decodeColonLinesFromReader[T any, PT codecElementP[T]](fn string, r io.Read
 	rd := bufio.NewScanner(r)
 	rd.Split(bufio.ScanLines)
 
+	var pv PT = new(T)
+
 	var lineNum uint32
 	for rd.Scan() {
 		line := bytes.SplitN(rd.Bytes(), colonFileSeparator, expectedAmountOfColumns+1)
 		if len(line) == 1 && len(bytes.TrimSpace(line[0])) == 0 {
 			continue
 		}
+		var slErr error
 		if len(line) != expectedAmountOfColumns {
-			return fmt.Errorf("cannot parse %s:%d: illegal amount of columns; expected %d; but got: %d", fn, lineNum, expectedAmountOfColumns, len(line))
-		}
-		var pv PT = new(T)
-		if err := pv.setLine(line, allowBadName); err != nil {
-			return fmt.Errorf("cannot parse %s:%d: %w", fn, lineNum, err)
+			slErr = fmt.Errorf("illegal amount of columns; expected %d; but got: %d", expectedAmountOfColumns, len(line))
+		} else {
+			slErr = pv.setLine(line, allowBadName)
 		}
 
-		if err := consumer(pv); err == codecConsumeEnd {
+		if err := consumer(pv, slErr); err == codecConsumeEnd {
 			return nil
 		} else if err != nil {
 			return fmt.Errorf("cannot parse %s:%d: %w", fn, lineNum, err)

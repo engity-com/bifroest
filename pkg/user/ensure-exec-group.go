@@ -21,11 +21,11 @@ func (this ExecutionBasedEnsurer) EnsureGroup(req *GroupRequirement, opts *Ensur
 	var existing *Group
 	var err error
 	if v := req.Gid; v > 0 {
-		if existing, err = LookupGid(v, this.AllowBadNames); err != nil {
+		if existing, err = LookupGid(v, this.AllowBadNames, this.SkipIllegalEntries); err != nil {
 			return nil, err
 		}
 	} else if v := req.Name; len(req.Name) > 0 {
-		if existing, err = LookupGroup(v, this.AllowBadNames); err != nil {
+		if existing, err = LookupGroup(v, this.AllowBadNames, this.SkipIllegalEntries); err != nil {
 			return nil, err
 		}
 	} else {
@@ -74,7 +74,7 @@ func (this ExecutionBasedEnsurer) createGroup(req *GroupRequirement) (*Group, er
 		return failf("cannot create group %s: %w", name, err)
 	}
 
-	result, err := LookupGroup(name, this.AllowBadNames)
+	result, err := LookupGroup(name, this.AllowBadNames, this.SkipIllegalEntries)
 	if err != nil {
 		return failf("cannot lookup group after it was created: %w", err)
 	}
@@ -98,13 +98,13 @@ func (this ExecutionBasedEnsurer) modifyGroup(req *GroupRequirement, existing *G
 	if v := req.Name; len(v) > 0 {
 		args = append(args, "-n", strings.Clone(v))
 		lookup = func() (*Group, error) {
-			return LookupGroup(v, this.AllowBadNames)
+			return LookupGroup(v, this.AllowBadNames, this.SkipIllegalEntries)
 		}
 	}
 	if v := req.Gid; v > 0 {
 		args = append(args, "-g", strconv.FormatUint(uint64(v), 10))
 		lookup = func() (*Group, error) {
-			return LookupGid(v, this.AllowBadNames)
+			return LookupGid(v, this.AllowBadNames, this.SkipIllegalEntries)
 		}
 	}
 	if lookup == nil {

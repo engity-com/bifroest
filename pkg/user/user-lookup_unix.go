@@ -7,18 +7,18 @@ import (
 	"fmt"
 )
 
-func Lookup(name string, allowBadName bool) (*User, error) {
+func Lookup(name string, allowBadName, skipIllegalEntries bool) (*User, error) {
 	if !allowBadName && validateUserName([]byte(name), false) != nil {
 		return nil, nil
 	}
 
-	return lookupBy(allowBadName, func(entry *etcPasswdEntry) bool {
+	return lookupBy(allowBadName, skipIllegalEntries, func(entry *etcPasswdEntry) bool {
 		return bytes.Equal(entry.name, []byte(name))
 	})
 }
 
-func LookupUid(uid uint32, allowBadName bool) (*User, error) {
-	return lookupBy(allowBadName, func(entry *etcPasswdEntry) bool {
+func LookupUid(uid uint32, allowBadName, skipIllegalEntries bool) (*User, error) {
+	return lookupBy(allowBadName, skipIllegalEntries, func(entry *etcPasswdEntry) bool {
 		if entry.uid != uid {
 			return false
 		}
@@ -29,15 +29,21 @@ func LookupUid(uid uint32, allowBadName bool) (*User, error) {
 	})
 }
 
-func lookupBy(allowBadName bool, predicate func(entry *etcPasswdEntry) bool) (*User, error) {
+func lookupBy(allowBadName, skipIllegalEntries bool, predicate func(entry *etcPasswdEntry) bool) (*User, error) {
 	var result *User
 
-	if err := decodeEtcPasswd(true, func(entry *etcPasswdEntry) error {
+	if err := decodeEtcPasswd(true, func(entry *etcPasswdEntry, lpErr error) error {
+		if lpErr != nil {
+			if skipIllegalEntries {
+				return nil
+			}
+			return lpErr
+		}
 		if !predicate(entry) {
-
+			return nil
 		}
 
-		u, err := entry.toUser(allowBadName)
+		u, err := entry.toUser(allowBadName, skipIllegalEntries)
 		if err != nil {
 			return err
 		}
@@ -50,7 +56,7 @@ func lookupBy(allowBadName bool, predicate func(entry *etcPasswdEntry) bool) (*U
 	return result, nil
 }
 
-func (this *etcPasswdEntry) toUser(allowBadName bool) (*User, error) {
+func (this *etcPasswdEntry) toUser(allowBadName, skipIllegalEntries bool) (*User, error) {
 	result := User{
 		Name:        string(this.name),
 		DisplayName: string(this.geocs),
@@ -59,7 +65,7 @@ func (this *etcPasswdEntry) toUser(allowBadName bool) (*User, error) {
 		HomeDir:     string(this.homeDir),
 	}
 
-	if v, err := LookupGid(this.gid, allowBadName); err != nil {
+	if v, err := LookupGid(this.gid, allowBadName, skipIllegalEntries); err != nil {
 		return nil, fmt.Errorf("lookup of user's %d(%s) group %d failed: %w", this.uid, string(this.name), this.gid, err)
 	} else if v == nil {
 		return nil, fmt.Errorf("lookup of user's %d(%s) group %d failed: no such group", this.uid, string(this.name), this.gid)
@@ -67,7 +73,13 @@ func (this *etcPasswdEntry) toUser(allowBadName bool) (*User, error) {
 		result.Group = *v
 	}
 
-	if err := decodeEtcGroup(allowBadName, func(entry *etcGroupEntry) error {
+	if err := decodeEtcGroup(allowBadName, func(entry *etcGroupEntry, lpErr error) error {
+		if lpErr != nil {
+			if skipIllegalEntries {
+				return nil
+			}
+			return lpErr
+		}
 		for _, candidate := range entry.userNames {
 			if bytes.Equal(candidate, this.name) {
 				result.Groups = append(result.Groups, *entry.toGroup())
