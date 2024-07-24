@@ -1,3 +1,5 @@
+//go:build moo && unix && !android
+
 package user
 
 import (
@@ -129,18 +131,18 @@ bar::12:ccc`,
 				"test",
 				strings.NewReader(c.content),
 				c.allowBadName,
-				func(entry *etcGroupEntry, lpErr error) error {
+				func(entry *etcGroupEntry, lpErr error) (codecConsumerResult, error) {
 					if lpErr != nil {
 						if c.skipIllegalEntries {
-							return nil
+							return codecConsumerResultContinue, nil
 						}
-						return fmt.Errorf("<TEST> %w", lpErr)
+						return 0, fmt.Errorf("<TEST> %w", lpErr)
 					}
 					if err := c.shouldFailWith; err != nil {
-						return err
+						return 0, err
 					}
 					actual = append(actual, *entry)
-					return nil
+					return codecConsumerResultContinue, nil
 				})
 
 			if expectedErr := c.expectedErr; expectedErr != "" {
@@ -148,6 +150,134 @@ bar::12:ccc`,
 			} else {
 				require.NoError(t, actualErr)
 				require.Equal(t, actual, c.expected)
+			}
+		})
+	}
+}
+
+func Test_modifyEtcGroupFromReaderToWriter(t *testing.T) {
+	cases := []struct {
+		name               string
+		content            string
+		allowBadName       bool
+		skipIllegalEntries bool
+		shouldFailWith     error
+		newEntries         []etcGroupEntry
+		modifyEntries      map[string]codecModifyEntry[etcGroupEntry]
+		expected           string
+		expectedErr        string
+	}{{
+		name: "keep-as-it-is",
+		content: `root:x:0:
+
+foo:abc:1:aaa,bbb
+
+bar::12:ccc`,
+		allowBadName: false,
+		expected: `root:x:0:
+foo:abc:1:aaa,bbb
+bar::12:ccc
+`,
+	}, {
+		name: "modify-an-entry",
+		content: `root:x:0:
+
+foo:abc:1:aaa,bbb
+
+bar::12:ccc`,
+		allowBadName: false,
+		modifyEntries: map[string]codecModifyEntry[etcGroupEntry]{
+			"foo": {codecHandlerResultUpdate, etcGroupEntry{b("new"), b("XnewX"), 666, bs("a", "b", "c")}},
+		},
+		expected: `root:x:0:
+new,XnewX,666,a,b,c
+bar::12:ccc
+`,
+	}, {
+		name: "keep-an-entry",
+		content: `root:x:0:
+
+foo:abc:1:aaa,bbb
+
+bar::12:ccc`,
+		allowBadName: false,
+		modifyEntries: map[string]codecModifyEntry[etcGroupEntry]{
+			"foo": {codecHandlerResultContinue, etcGroupEntry{b("new"), b("XnewX"), 666, bs("a", "b", "c")}},
+		},
+		expected: `root:x:0:
+foo:abc:1:aaa,bbb
+bar::12:ccc
+`,
+	}, {
+		name: "delete-an-entry",
+		content: `root:x:0:
+
+foo:abc:1:aaa,bbb
+
+bar::12:ccc`,
+		allowBadName: false,
+		modifyEntries: map[string]codecModifyEntry[etcGroupEntry]{
+			"foo": {codecHandlerResultSkip, etcGroupEntry{b("new"), b("XnewX"), 666, bs("a", "b", "c")}},
+		},
+		expected: `root:x:0:
+bar::12:ccc
+`,
+	}, {
+		name: "add-an-entry",
+		content: `root:x:0:
+
+foo:abc:1:aaa,bbb
+
+bar::12:ccc`,
+		allowBadName: false,
+		newEntries: []etcGroupEntry{
+			{b("new"), b("XnewX"), 666, bs("a", "b", "c")},
+		},
+		expected: `root:x:0:
+foo:abc:1:aaa,bbb
+bar::12:ccc
+new,XnewX,666,a,b,c
+`,
+	}}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var newEntriesI int
+
+			var actual strings.Builder
+			actualErr := modifyEtcGroupFromReaderToWriter(
+				"test",
+				strings.NewReader(c.content),
+				&actual,
+				c.allowBadName,
+				func(entry *etcGroupEntry, lpErr error) (codecHandlerResult, error) {
+					if lpErr != nil {
+						if c.skipIllegalEntries {
+							return codecHandlerResultContinue, nil
+						}
+						return 0, fmt.Errorf("<TEST> %w", lpErr)
+					}
+					if err := c.shouldFailWith; err != nil {
+						return 0, err
+					}
+					if nv, ok := c.modifyEntries[string(entry.name)]; ok {
+						*entry = nv.v
+						return nv.r, nil
+					}
+					return codecHandlerResultContinue, nil
+				}, func(allowBadName bool) (*etcGroupEntry, error) {
+					if len(c.newEntries) <= newEntriesI {
+						return nil, nil
+					}
+					i := newEntriesI
+					newEntriesI++
+					return &c.newEntries[i], nil
+				})
+
+			if expectedErr := c.expectedErr; expectedErr != "" {
+				require.EqualError(t, actualErr, expectedErr)
+			} else {
+				require.NoError(t, actualErr)
+				require.Equal(t, c.expected, actual.String())
 			}
 		})
 	}

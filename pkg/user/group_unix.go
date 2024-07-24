@@ -10,8 +10,10 @@ import (
 	"strings"
 )
 
+type GroupId uint32
+
 type Group struct {
-	Gid  uint32
+	Gid  GroupId
 	Name string
 }
 

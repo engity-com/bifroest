@@ -1,12 +1,26 @@
+//go:build moo && unix && !android
+
 package user
 
 import (
 	"fmt"
 	"github.com/engity-com/bifroest/pkg/sys"
+	"github.com/stretchr/testify/require"
+	"os"
 	"testing"
 )
 
-func TestEnsure(t *testing.T) {
+func TestEtcUnixEnsurer_Ensure(t *testing.T) {
+	var instance EtcUnixEnsurer
+	var err error
+
+	instance.PasswdFile, err = os.MkdirTemp("", "etc-unix-ensurer-ensure-passwd")
+	require.NoError(t, err)
+	instance.GroupFile, err = os.MkdirTemp("", "etc-unix-ensurer-ensure-group")
+	require.NoError(t, err)
+	instance.ShadowFile, err = os.MkdirTemp("", "etc-unix-ensurer-ensure-shadow")
+	require.NoError(t, err)
+
 	cases := []struct {
 		req []Requirement
 		u   User
@@ -98,7 +112,7 @@ func TestEnsure(t *testing.T) {
 			var actual *User
 			for ensureStep, req := range c.req {
 				var err error
-				actual, err = DefaultEnsurer.Ensure(&req, nil)
+				actual, err = instance.Ensure(&req, nil)
 				if err != nil {
 					if c.err != nil {
 						if c.err.Error() != err.Error() {

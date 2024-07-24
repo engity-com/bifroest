@@ -41,7 +41,7 @@ func NewLocal(flow configuration.FlowName, conf *configuration.EnvironmentLocal)
 		flow: flow,
 		conf: conf,
 
-		Ensurer: user.ExecutionBasedEnsurer{
+		Ensurer: user.EtcUnixEnsurer{
 			Executor: &sys.StandardExecutor{
 				UsingSudo: true,
 			},

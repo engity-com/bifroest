@@ -1,3 +1,5 @@
+//go:build unix
+
 package user
 
 import (
@@ -9,8 +11,8 @@ import (
 var defaultGroup = GroupRequirement{1500, "bifroest"}
 
 type GroupRequirement struct {
-	Gid  uint32 `yaml:"gid,omitempty"`
-	Name string `yaml:"name,omitempty"`
+	Gid  GroupId `yaml:"gid,omitempty"`
+	Name string  `yaml:"name,omitempty"`
 }
 
 func (this GroupRequirement) Clone() GroupRequirement {

@@ -1,3 +1,5 @@
+//go:build moo && unix && !android
+
 package user
 
 import (
@@ -166,18 +168,18 @@ bar::11:12:Bar Name:/home/bar:/bin/barsh`,
 				"test",
 				strings.NewReader(c.content),
 				c.allowBadName,
-				func(entry *etcPasswdEntry, lpErr error) error {
+				func(entry *etcPasswdEntry, lpErr error) (codecConsumerResult, error) {
 					if lpErr != nil {
 						if c.skipIllegalEntries {
-							return nil
+							return codecConsumerResultContinue, nil
 						}
-						return fmt.Errorf("<TEST> %w", lpErr)
+						return 0, fmt.Errorf("<TEST> %w", lpErr)
 					}
 					if err := c.shouldFailWith; err != nil {
-						return err
+						return 0, err
 					}
 					actual = append(actual, *entry)
-					return nil
+					return codecConsumerResultContinue, nil
 				})
 
 			if expectedErr := c.expectedErr; expectedErr != "" {
@@ -190,14 +192,7 @@ bar::11:12:Bar Name:/home/bar:/bin/barsh`,
 	}
 }
 
-func b(in string) []byte {
-	return []byte(in)
-}
-
-func bs(ins ...string) [][]byte {
-	result := make([][]byte, len(ins))
-	for i, in := range ins {
-		result[i] = b(in)
-	}
-	return result
+type codecModifyEntry[T any] struct {
+	r codecHandlerResult
+	v T
 }

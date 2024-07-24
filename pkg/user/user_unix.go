@@ -9,10 +9,12 @@ import (
 	"syscall"
 )
 
+type Id uint32
+
 type User struct {
 	Name        string
 	DisplayName string
-	Uid         uint32
+	Uid         Id
 	Group       Group
 	Groups      Groups
 	Shell       string

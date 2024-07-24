@@ -1,3 +1,5 @@
+//go:build moo && unix && !android
+
 package user
 
 import (
@@ -175,18 +177,18 @@ bar:XbarX:1767222000:10:100:::1798758000`,
 				"test",
 				strings.NewReader(c.content),
 				c.allowBadName,
-				func(entry *etcShadowEntry, lpErr error) error {
+				func(entry *etcShadowEntry, lpErr error) (codecConsumerResult, error) {
 					if lpErr != nil {
 						if c.skipIllegalEntries {
-							return nil
+							return codecConsumerResultContinue, nil
 						}
-						return fmt.Errorf("<TEST> %w", lpErr)
+						return 0, fmt.Errorf("<TEST> %w", lpErr)
 					}
 					if err := c.shouldFailWith; err != nil {
-						return err
+						return 0, err
 					}
 					actual = append(actual, *entry)
-					return nil
+					return codecConsumerResultContinue, nil
 				})
 
 			if expectedErr := c.expectedErr; expectedErr != "" {

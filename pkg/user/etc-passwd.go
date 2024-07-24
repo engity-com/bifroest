@@ -4,11 +4,12 @@ package user
 
 import (
 	"errors"
-	"io"
+	"strconv"
 )
 
 const (
-	etcPasswdFn = "/etc/passwd"
+	etcPasswdFn     = "/etc/passwd"
+	etcPasswdColons = 7
 )
 
 var (
@@ -73,14 +74,20 @@ func (this *etcPasswdEntry) setLine(line [][]byte, allowBadName bool) error {
 	return nil
 }
 
-func decodeEtcPasswd(allowBadName bool, consumer codecConsumer[*etcPasswdEntry]) (rErr error) {
-	return decodeEtcPasswdFromFile(etcPasswdFn, allowBadName, consumer)
-}
+func (this *etcPasswdEntry) encodeLine(allowBadName bool) ([][]byte, error) {
+	if err := this.validate(allowBadName); err != nil {
+		return nil, err
+	}
 
-func decodeEtcPasswdFromFile(fn string, allowBadName bool, consumer codecConsumer[*etcPasswdEntry]) (rErr error) {
-	return decodeColonLinesFromFile(fn, allowBadName, consumer, decodeEtcPasswdFromReader)
-}
+	line := make([][]byte, 7)
+	line[0] = this.name
+	line[1] = this.password
+	line[2] = []byte(strconv.FormatUint(uint64(this.uid), 10))
+	line[3] = []byte(strconv.FormatUint(uint64(this.gid), 10))
+	line[4] = this.geocs
+	line[5] = this.homeDir
+	line[6] = this.shell
 
-func decodeEtcPasswdFromReader(fn string, r io.Reader, allowBadName bool, consumer codecConsumer[*etcPasswdEntry]) error {
-	return decodeColonLinesFromReader(fn, r, allowBadName, 7, consumer)
+	return line, nil
+
 }

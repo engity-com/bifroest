@@ -5,11 +5,12 @@ package user
 import (
 	"bytes"
 	"errors"
-	"io"
+	"strconv"
 )
 
 const (
-	etcGroupFn = "/etc/group"
+	etcGroupFn     = "/etc/group"
+	etcGroupColons = 4
 )
 
 var (
@@ -57,14 +58,16 @@ func (this *etcGroupEntry) setLine(line [][]byte, allowBadName bool) error {
 	return nil
 }
 
-func decodeEtcGroup(allowBadName bool, consumer codecConsumer[*etcGroupEntry]) (rErr error) {
-	return decodeEtcGroupFromFile(etcGroupFn, allowBadName, consumer)
-}
+func (this *etcGroupEntry) encodeLine(allowBadName bool) ([][]byte, error) {
+	if err := this.validate(allowBadName); err != nil {
+		return nil, err
+	}
 
-func decodeEtcGroupFromFile(fn string, allowBadName bool, consumer codecConsumer[*etcGroupEntry]) (rErr error) {
-	return decodeColonLinesFromFile(fn, allowBadName, consumer, decodeEtcGroupFromReader)
-}
+	line := make([][]byte, 4)
+	line[0] = this.name
+	line[1] = this.password
+	line[2] = []byte(strconv.FormatUint(uint64(this.gid), 10))
+	line[3] = bytes.Join(this.userNames, colonCommaFileSeparator)
 
-func decodeEtcGroupFromReader(fn string, r io.Reader, allowBadName bool, consumer codecConsumer[*etcGroupEntry]) error {
-	return decodeColonLinesFromReader(fn, r, allowBadName, 4, consumer)
+	return line, nil
 }

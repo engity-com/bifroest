@@ -1,3 +1,5 @@
+//go:build moo
+
 package user
 
 import (

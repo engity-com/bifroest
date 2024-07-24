@@ -1,3 +1,5 @@
+//go:build moo && unix && !android
+
 package user
 
 import (
@@ -7,7 +9,7 @@ import (
 	"strings"
 )
 
-func (this ExecutionBasedEnsurer) Ensure(req *Requirement, opts *EnsureOpts) (*User, error) {
+func (this EtcUnixEnsurer) Ensure(req *Requirement, opts *EnsureOpts) (*User, error) {
 	if req == nil {
 		return nil, fmt.Errorf("nil user requirement")
 	}
@@ -30,7 +32,7 @@ func (this ExecutionBasedEnsurer) Ensure(req *Requirement, opts *EnsureOpts) (*U
 	return this.ensure(&target, &_opts)
 }
 
-func (this ExecutionBasedEnsurer) ensure(req *Requirement, opts *EnsureOpts) (*User, error) {
+func (this EtcUnixEnsurer) ensure(req *Requirement, opts *EnsureOpts) (*User, error) {
 	fail := func(err error) (*User, error) {
 		return nil, fmt.Errorf("cannot ensure user %v: %w", this, err)
 	}
@@ -86,7 +88,7 @@ func (this ExecutionBasedEnsurer) ensure(req *Requirement, opts *EnsureOpts) (*U
 	return result, nil
 }
 
-func (this ExecutionBasedEnsurer) create(req *Requirement, group *Group, groups ...*Group) (*User, error) {
+func (this EtcUnixEnsurer) create(req *Requirement, group *Group, groups ...*Group) (*User, error) {
 	fail := func(err error) (*User, error) {
 		return nil, err
 	}
@@ -129,7 +131,7 @@ func (this ExecutionBasedEnsurer) create(req *Requirement, group *Group, groups 
 	return result, nil
 }
 
-func (this ExecutionBasedEnsurer) modify(req *Requirement, existing *User, group *Group, groups ...*Group) (*User, error) {
+func (this EtcUnixEnsurer) modify(req *Requirement, existing *User, group *Group, groups ...*Group) (*User, error) {
 	fail := func(err error) (*User, error) {
 		return nil, err
 	}

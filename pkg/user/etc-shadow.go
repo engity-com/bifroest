@@ -4,11 +4,12 @@ package user
 
 import (
 	"errors"
-	"io"
+	"strconv"
 )
 
 const (
-	etcShadowFn = "/etc/shadow"
+	etcShadowFn     = "/etc/shadow"
+	etcShadowColons = 8
 )
 
 var (
@@ -77,14 +78,26 @@ func (this *etcShadowEntry) setLine(line [][]byte, allowBadName bool) error {
 	return nil
 }
 
-func decodeEtcShadow(allowBadName bool, consumer codecConsumer[*etcShadowEntry]) (rErr error) {
-	return decodeEtcShadowFromFile(etcShadowFn, allowBadName, consumer)
-}
+func (this *etcShadowEntry) encodeLine(allowBadName bool) ([][]byte, error) {
+	if err := this.validate(allowBadName); err != nil {
+		return nil, err
+	}
 
-func decodeEtcShadowFromFile(fn string, allowBadName bool, consumer codecConsumer[*etcShadowEntry]) (rErr error) {
-	return decodeColonLinesFromFile(fn, allowBadName, consumer, decodeEtcShadowFromReader)
-}
+	line := make([][]byte, 8)
+	line[0] = this.name
+	line[1] = this.password
+	line[2] = []byte(strconv.FormatUint(this.lastChangedTs, 10))
+	line[3] = []byte(strconv.FormatUint(uint64(this.minimumAgeInDays), 10))
+	line[4] = []byte(strconv.FormatUint(uint64(this.maximumAgeInDays), 10))
+	if this.hasWarnAge {
+		line[5] = []byte(strconv.FormatUint(uint64(this.warnAgeInDays), 10))
+	}
+	if this.hasInactiveAge {
+		line[6] = []byte(strconv.FormatUint(uint64(this.inactiveAgeInDays), 10))
+	}
+	if this.hasExpire {
+		line[7] = []byte(strconv.FormatUint(this.expireAtTs, 10))
+	}
 
-func decodeEtcShadowFromReader(fn string, r io.Reader, allowBadName bool, consumer codecConsumer[*etcShadowEntry]) error {
-	return decodeColonLinesFromReader(fn, r, allowBadName, 8, consumer)
+	return line, nil
 }

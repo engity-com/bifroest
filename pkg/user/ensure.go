@@ -1,14 +1,5 @@
 package user
 
-import (
-	"github.com/engity-com/bifroest/pkg/sys"
-)
-
-var DefaultEnsurer Ensurer = &ExecutionBasedEnsurer{
-	Executor:      sys.DefaultExecutor,
-	AllowBadNames: true,
-}
-
 type Ensurer interface {
 	Ensure(*Requirement, *EnsureOpts) (*User, error)
 	EnsureGroup(*GroupRequirement, *EnsureOpts) (*Group, error)

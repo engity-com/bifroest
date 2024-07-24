@@ -1,4 +1,4 @@
-//go:build unix && !android
+//go:build moo && unix
 
 package user
 
@@ -32,23 +32,23 @@ func LookupUid(uid uint32, allowBadName, skipIllegalEntries bool) (*User, error)
 func lookupBy(allowBadName, skipIllegalEntries bool, predicate func(entry *etcPasswdEntry) bool) (*User, error) {
 	var result *User
 
-	if err := decodeEtcPasswd(true, func(entry *etcPasswdEntry, lpErr error) error {
+	if err := decodeEtcPasswd(true, func(entry *etcPasswdEntry, lpErr error) (codecConsumerResult, error) {
 		if lpErr != nil {
 			if skipIllegalEntries {
-				return nil
+				return codecConsumerResultContinue, nil
 			}
-			return lpErr
+			return 0, lpErr
 		}
 		if !predicate(entry) {
-			return nil
+			return codecConsumerResultContinue, nil
 		}
 
 		u, err := entry.toUser(allowBadName, skipIllegalEntries)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		result = u
-		return codecConsumeEnd
+		return codecConsumerResultCancel, nil
 	}); err != nil {
 		return nil, err
 	}
@@ -73,19 +73,19 @@ func (this *etcPasswdEntry) toUser(allowBadName, skipIllegalEntries bool) (*User
 		result.Group = *v
 	}
 
-	if err := decodeEtcGroup(allowBadName, func(entry *etcGroupEntry, lpErr error) error {
+	if err := decodeEtcGroup(allowBadName, func(entry *etcGroupEntry, lpErr error) (codecConsumerResult, error) {
 		if lpErr != nil {
 			if skipIllegalEntries {
-				return nil
+				return codecConsumerResultContinue, nil
 			}
-			return lpErr
+			return 0, lpErr
 		}
 		for _, candidate := range entry.userNames {
 			if bytes.Equal(candidate, this.name) {
 				result.Groups = append(result.Groups, *entry.toGroup())
 			}
 		}
-		return nil
+		return codecConsumerResultContinue, nil
 	}); err != nil {
 		return nil, fmt.Errorf("lookup of user's %d(%s) groups (/etc/group) failed: %w", this.uid, string(this.name), err)
 	}

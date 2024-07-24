@@ -1,3 +1,5 @@
+//go:build unix
+
 package user
 
 import (
@@ -9,7 +11,7 @@ import (
 type Requirement struct {
 	Name        string            `yaml:"name,omitempty"`
 	DisplayName string            `yaml:"displayName,omitempty"`
-	Uid         uint32            `yaml:"uid,omitempty"`
+	Uid         Id                `yaml:"uid,omitempty"`
 	Group       GroupRequirement  `yaml:"group,omitempty"`
 	Groups      GroupRequirements `yaml:"groups,omitempty"`
 	Shell       string            `yaml:"shell,omitempty"`

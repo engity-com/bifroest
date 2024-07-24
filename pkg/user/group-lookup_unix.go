@@ -1,4 +1,4 @@
-//go:build unix && !android
+//go:build moo && unix && !android
 
 package user
 
@@ -29,20 +29,20 @@ func LookupGid(gid uint32, allowBadName, skipIllegalEntries bool) (*Group, error
 func lookupGroupBy(skipIllegalEntries bool, predicate func(entry *etcGroupEntry) bool) (*Group, error) {
 	var result *Group
 
-	if err := decodeEtcGroup(true, func(entry *etcGroupEntry, lpErr error) error {
+	if err := decodeEtcGroup(true, func(entry *etcGroupEntry, lpErr error) (codecConsumerResult, error) {
 		if lpErr != nil {
 			if skipIllegalEntries {
-				return nil
+				return codecConsumerResultContinue, nil
 			}
-			return lpErr
+			return 0, lpErr
 		}
 		if !predicate(entry) {
-			return nil
+			return codecConsumerResultContinue, nil
 		}
 
 		u := entry.toGroup()
 		result = u
-		return codecConsumeEnd
+		return codecConsumerResultCancel, nil
 	}); err != nil {
 		return nil, err
 	}
