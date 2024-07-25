@@ -20,10 +20,10 @@ github.com/creack/pty v1.1.21/go.mod h1:MOBLtS5ELjhRRrroQr9kyvTxUAFNvYEK993ew/Vr
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/echocat/slf4g v1.5.3 h1:DdQGyHwdv3+hxRWJh+ZAikUDMVt4TWQg//kcsYJ1SLk=
-github.com/echocat/slf4g v1.5.3/go.mod h1:YvF/d1TcPvT+/xiHStLHPI4xPT1GGeEmPczn2MSljNA=
-github.com/echocat/slf4g/native v1.5.3 h1:eR14gqITxjoQ3Q5BYTInAKrDR9O7H1YgOn9tEki48F8=
-github.com/echocat/slf4g/native v1.5.3/go.mod h1:8hMNlQaGVhqjB97Ykh0dqsxcgYFBSGQkWkv2uC3JI5c=
+github.com/echocat/slf4g v1.6.0 h1:7jUx4P8M87UIWVslSK8nYZwS4HT7sh5WBwstab4EDZA=
+github.com/echocat/slf4g v1.6.0/go.mod h1:YvF/d1TcPvT+/xiHStLHPI4xPT1GGeEmPczn2MSljNA=
+github.com/echocat/slf4g/native v1.6.0 h1:kLVjwVps5gf4xoVQJQXBR+pYbRF+ZmuVuqMJGerZ0aY=
+github.com/echocat/slf4g/native v1.6.0/go.mod h1:Ueg542Lc2H1U7g0PqIHpZj39RPau4k0qbVTVTxNrbKA=
 github.com/frankban/quicktest v1.14.6 h1:7Xjx+VpznH+oBnejlPUj8oUpdxnVs4f8XU8WnHkI4W8=
 github.com/frankban/quicktest v1.14.6/go.mod h1:4ptaffx2x8+WTWXmUCuVU6aPUX1/Mz7zb5vbUoiM6w0=
 github.com/fsnotify/fsnotify v1.7.0 h1:8JEhPFa5W2WU7YfeZzPNqzMP6Lwt7L2715Ggo0nosvA=

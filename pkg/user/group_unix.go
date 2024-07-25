@@ -12,6 +12,23 @@ import (
 
 type GroupId uint32
 
+func (this GroupId) MarshalText() (text []byte, err error) {
+	return []byte(this.String()), nil
+}
+
+func (this *GroupId) UnmarshalText(text []byte) error {
+	buf, err := strconv.ParseUint(string(text), 0, 32)
+	if err != nil {
+		return fmt.Errorf("illegal group id: %s", string(text))
+	}
+	*this = GroupId(buf)
+	return nil
+}
+
+func (this GroupId) String() string {
+	return strconv.FormatUint(uint64(this), 10)
+}
+
 type Group struct {
 	Gid  GroupId
 	Name string

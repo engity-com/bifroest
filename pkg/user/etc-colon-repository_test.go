@@ -3,6 +3,7 @@ package user
 import (
 	"context"
 	log "github.com/echocat/slf4g"
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"io"
@@ -13,6 +14,8 @@ import (
 )
 
 func TestEtcColonRepository_Init(t *testing.T) {
+	testlog.Hook(t)
+
 	cases := []struct {
 		name   string
 		passwd string
@@ -435,6 +438,8 @@ bar:XbarX:1767222000:10:100:::1798758000`,
 }
 
 func TestEtcColonRepository_OnFsEvents(t *testing.T) {
+	testlog.Hook(t)
+
 	passwdFile := newTestFile(t, "passwd", `root:x:0:0:root:/root:/bin/sh
 foo:abc:1:2:Foo Name:/home/foo:/bin/foosh 
 bar::11:12::/home/bar:/bin/barsh`)

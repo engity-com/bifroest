@@ -8,6 +8,8 @@ import (
 )
 
 func TestConfiguration_UnmarshalYAML(t *testing.T) {
+	testlog.Hook(t)
+
 	runUnmarshalYamlTests(t,
 		unmarshalYamlTestCase[Configuration]{
 			name:          "empty",

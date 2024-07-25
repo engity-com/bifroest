@@ -5,6 +5,8 @@ import (
 )
 
 func TestAuthorization_UnmarshalYAML(t *testing.T) {
+	testlog.Hook(t)
+
 	runUnmarshalYamlTests(t,
 		unmarshalYamlTestCase[Authorization]{
 			name:          "empty",

@@ -6,10 +6,28 @@ import (
 	"errors"
 	"fmt"
 	"github.com/engity-com/bifroest/pkg/sys"
+	"strconv"
 	"syscall"
 )
 
 type Id uint32
+
+func (this Id) MarshalText() (text []byte, err error) {
+	return []byte(this.String()), nil
+}
+
+func (this *Id) UnmarshalText(text []byte) error {
+	buf, err := strconv.ParseUint(string(text), 0, 32)
+	if err != nil {
+		return fmt.Errorf("illegal user id: %s", string(text))
+	}
+	*this = Id(buf)
+	return nil
+}
+
+func (this Id) String() string {
+	return strconv.FormatUint(uint64(this), 10)
+}
 
 type User struct {
 	Name        string

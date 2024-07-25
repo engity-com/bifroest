@@ -1,10 +1,13 @@
 package configuration
 
 import (
+	"github.com/echocat/slf4g/sdk/testlog"
 	"testing"
 )
 
 func TestAuthorizationOidc_UnmarshalYAML(t *testing.T) {
+	testlog.Hook(t)
+
 	runUnmarshalYamlTests(t,
 		unmarshalYamlTestCase[AuthorizationOidcDeviceAuth]{
 			name:          "empty",

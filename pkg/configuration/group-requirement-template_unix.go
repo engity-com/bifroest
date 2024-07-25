@@ -15,8 +15,8 @@ var (
 )
 
 type GroupRequirementTemplate struct {
-	Gid  template.Uint32 `yaml:"gid,omitempty"`
-	Name template.String `yaml:"name,omitempty"`
+	Gid  template.TextMarshaller[user.GroupId, *user.GroupId] `yaml:"gid,omitempty"`
+	Name template.String                                      `yaml:"name,omitempty"`
 }
 
 func (this GroupRequirementTemplate) Render(key common.StructuredKey, data any) (result user.GroupRequirement, err error) {
