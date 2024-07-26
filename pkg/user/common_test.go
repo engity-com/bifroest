@@ -1,6 +1,7 @@
 package user
 
 import (
+	"bytes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"io"
@@ -49,4 +50,39 @@ func (this testFile) update(t *testing.T, with string) {
 
 	_, err = io.Copy(f, strings.NewReader(with))
 	require.NoError(t, err)
+}
+
+func (this testFile) content(t *testing.T) string {
+	f, err := os.OpenFile(string(this), os.O_RDONLY, 0)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, f.Close())
+	}()
+
+	all, err := io.ReadAll(f)
+	require.NoError(t, err)
+
+	return string(all)
+}
+
+type namedReader struct {
+	io.Reader
+	name string
+}
+
+func (this namedReader) Name() string {
+	return this.name
+}
+
+type namedBytesBuffer struct {
+	bytes.Buffer
+}
+
+func (this namedBytesBuffer) Name() string {
+	return "test"
+}
+
+func (this namedBytesBuffer) Truncate(n int64) error {
+	this.Buffer.Truncate(int(n))
+	return nil
 }

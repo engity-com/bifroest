@@ -1,37 +1,23 @@
-//go:build unix && !android
+//go:build unix
 
 package user
 
 import (
-	"errors"
 	"fmt"
-	"github.com/engity-com/bifroest/pkg/sys"
 	"strconv"
 	"strings"
 )
 
-type GroupId uint32
-
-func (this GroupId) MarshalText() (text []byte, err error) {
-	return []byte(this.String()), nil
-}
-
-func (this *GroupId) UnmarshalText(text []byte) error {
-	buf, err := strconv.ParseUint(string(text), 0, 32)
-	if err != nil {
-		return fmt.Errorf("illegal group id: %s", string(text))
-	}
-	*this = GroupId(buf)
-	return nil
-}
-
-func (this GroupId) String() string {
-	return strconv.FormatUint(uint64(this), 10)
-}
-
 type Group struct {
 	Gid  GroupId
 	Name string
+}
+
+func (this Group) Clone() (*Group, error) {
+	return &Group{
+		Gid:  this.Gid,
+		Name: strings.Clone(this.Name),
+	}, nil
 }
 
 func (this Group) String() string {
@@ -57,46 +43,8 @@ func (this Group) isEqualTo(other *Group) bool {
 		this.Name == other.Name
 }
 
-func formatGidsOfGroups(ins ...*Group) string {
-	strs := make([]string, len(ins))
-	for i, in := range ins {
-		strs[i] = strconv.FormatUint(uint64(in.Gid), 10)
-	}
-	return strings.Join(strs, ",")
-}
-
 type DeleteGroupOpts struct {
 	Force *bool
-}
-
-func DeleteGroup(name string, opts *DeleteGroupOpts, using sys.Executor) error {
-	if len(name) == 0 {
-		return fmt.Errorf("cannot delete group with empty name")
-	}
-	fail := func(err error) error {
-		return fmt.Errorf("cannot delete group %s: %w", name, err)
-	}
-	failf := func(message string, args ...any) error {
-		return fail(fmt.Errorf(message, args...))
-	}
-
-	tOpts := opts.OrDefaults()
-	var args []string
-	if v := tOpts.Force; v != nil && *v {
-		args = append(args, "-f")
-	}
-	args = append(args, name)
-
-	if err := using.Execute("groupdel", args...); err != nil {
-		var ee *sys.Error
-		if errors.As(err, &ee) && ee.ExitCode == 6 {
-			// This means already deleted: ok for us.
-		} else {
-			return failf("cannot delete group %s: %w", name, err)
-		}
-	}
-
-	return nil
 }
 
 func (this DeleteGroupOpts) Clone() DeleteGroupOpts {
@@ -165,4 +113,45 @@ func (this Groups) isEqualTo(other *Groups) bool {
 		}
 	}
 	return false
+}
+
+func (this Groups) Clone() (*Groups, error) {
+	result := make(Groups, len(this))
+	for i, v := range this {
+		nv, err := v.Clone()
+		if err != nil {
+			return nil, err
+		}
+		result[i] = *nv
+	}
+	return &result, nil
+}
+
+type GroupId uint32
+
+func (this GroupId) MarshalText() (text []byte, err error) {
+	return []byte(this.String()), nil
+}
+
+func (this *GroupId) UnmarshalText(text []byte) error {
+	buf, err := strconv.ParseUint(string(text), 0, 32)
+	if err != nil {
+		return fmt.Errorf("illegal group id: %s", string(text))
+	}
+	*this = GroupId(buf)
+	return nil
+}
+
+func (this GroupId) String() string {
+	return strconv.FormatUint(uint64(this), 10)
+}
+
+func GroupIdEqualsP(a, b *GroupId) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
 }

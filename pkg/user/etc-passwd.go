@@ -1,19 +1,20 @@
-//go:build unix && !android
+//go:build unix
 
 package user
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
+	"time"
 )
 
 const (
-	etcPasswdFn     = "/etc/passwd"
 	etcPasswdColons = 7
 )
 
 var (
-	shadowedPassword = []byte("x")
+	DefaultEtcPasswd = "/etc/passwd"
 
 	errEtcPasswdEmptyUid       = errors.New("empty UID")
 	errEtcPasswdIllegalUid     = errors.New("illegal UID")
@@ -53,7 +54,7 @@ func (this *etcPasswdEntry) validate(allowBadName bool) error {
 	return nil
 }
 
-func (this *etcPasswdEntry) setLine(line [][]byte, allowBadName bool) error {
+func (this *etcPasswdEntry) decode(line [][]byte, allowBadName bool) error {
 	var err error
 	this.name = line[0]
 	this.password = line[1]
@@ -74,7 +75,7 @@ func (this *etcPasswdEntry) setLine(line [][]byte, allowBadName bool) error {
 	return nil
 }
 
-func (this *etcPasswdEntry) encodeLine(allowBadName bool) ([][]byte, error) {
+func (this *etcPasswdEntry) encode(allowBadName bool) ([][]byte, error) {
 	if err := this.validate(allowBadName); err != nil {
 		return nil, err
 	}
@@ -91,3 +92,70 @@ func (this *etcPasswdEntry) encodeLine(allowBadName bool) ([][]byte, error) {
 	return line, nil
 
 }
+
+type etcPasswdRef struct {
+	*etcPasswdEntry
+	*etcShadowEntry
+}
+
+func (this *Requirement) toEtcPasswdRef(gui GroupId, idGenerator func() (Id, error)) (*etcPasswdRef, error) {
+	result := etcPasswdRef{
+		&etcPasswdEntry{
+			[]byte{},
+			[]byte("x"),
+			uint32(0),
+			uint32(gui),
+			[]byte(this.DisplayName),
+			[]byte(this.HomeDir),
+			[]byte(this.Shell),
+		},
+		&etcShadowEntry{
+			[]byte{},
+			[]byte("*"),
+			uint64(time.Now().Unix()),
+			0,
+			99999,
+			7, true,
+			0, false,
+			0, false,
+		},
+	}
+
+	if v := this.Uid; v != nil {
+		result.uid = uint32(*v)
+	} else if v, err := idGenerator(); err != nil {
+		return nil, err
+	} else {
+		result.uid = uint32(v)
+	}
+
+	if v := this.Name; v != "" {
+		result.etcPasswdEntry.name = []byte(v)
+	} else {
+		result.etcPasswdEntry.name = []byte(fmt.Sprintf("u%d", result.etcPasswdEntry.uid))
+	}
+	result.etcShadowEntry.name = result.etcPasswdEntry.name
+
+	return &result, nil
+}
+
+func (this *Requirement) updateEtcPasswdRef(ref *etcPasswdRef, gui GroupId) error {
+	if v := this.Uid; v != nil {
+		ref.etcPasswdEntry.uid = uint32(*v)
+	}
+	ref.etcPasswdEntry.gid = uint32(gui)
+
+	if v := this.Name; v != "" {
+		ref.etcPasswdEntry.name = []byte(v)
+		ref.etcShadowEntry.name = ref.etcPasswdEntry.name
+	}
+
+	ref.etcPasswdEntry.geocs = []byte(this.DisplayName)
+	ref.etcPasswdEntry.shell = []byte(this.Shell)
+	ref.etcPasswdEntry.homeDir = []byte(this.HomeDir) //TODO! We should consider to move it?
+
+	return nil
+}
+
+type nameToEtcPasswdRef map[string]*etcPasswdRef
+type idToEtcPasswdRef map[Id]*etcPasswdRef

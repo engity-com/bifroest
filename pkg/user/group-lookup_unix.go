@@ -1,4 +1,4 @@
-//go:build moo && unix && !android
+//go:build moo && unix
 
 package user
 

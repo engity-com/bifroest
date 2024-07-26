@@ -16,6 +16,8 @@ import (
 type LocalAuthorizer struct {
 	flow configuration.FlowName
 	conf *configuration.AuthorizationLocal
+
+	userRepository user.Repository
 }
 
 func NewLocal(_ context.Context, flow configuration.FlowName, conf *configuration.AuthorizationLocal) (*LocalAuthorizer, error) {
@@ -31,8 +33,9 @@ func NewLocal(_ context.Context, flow configuration.FlowName, conf *configuratio
 	}
 
 	result := LocalAuthorizer{
-		flow: flow,
-		conf: conf,
+		flow:           flow,
+		conf:           conf,
+		userRepository: user.DefaultRepository,
 	}
 
 	return &result, nil
@@ -51,7 +54,7 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 		return Forbidden(), nil
 	}
 
-	u, err := user.Lookup(req.Remote().User(), true)
+	u, err := this.userRepository.LookupByName(req.Remote().User())
 	if err != nil {
 		return failf("cannot lookup user: %w", err)
 	}
@@ -133,7 +136,7 @@ func (this *LocalAuthorizer) AuthorizePassword(req PasswordRequest) (Authorizati
 		return Forbidden(), nil
 	}
 
-	u, err := user.Lookup(username, true)
+	u, err := this.userRepository.LookupByName(username)
 	if err != nil {
 		return failf("cannot lookup user %q: %w", username, err)
 	}
@@ -175,7 +178,7 @@ func (this *LocalAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Autho
 		return Forbidden(), nil
 	}
 
-	u, err := user.Lookup(username, true)
+	u, err := this.userRepository.LookupByName(username)
 	if err != nil {
 		return failf("cannot lookup user %q: %w", username, err)
 	}

@@ -1,4 +1,4 @@
-//go:build unix && !android
+//go:build unix
 
 package user
 
@@ -8,11 +8,12 @@ import (
 )
 
 const (
-	etcShadowFn     = "/etc/shadow"
 	etcShadowColons = 8
 )
 
 var (
+	DefaultEtcShadow = "/etc/shadow"
+
 	errEtcShadowEmptyPassword        = errors.New("empty password")
 	errEtcShadowEmptyLastChangedAt   = errors.New("empty last changed at")
 	errEtcShadowIllegalLastChangedAt = errors.New("illegal last changed at")
@@ -48,7 +49,7 @@ func (this *etcShadowEntry) validate(allowBadName bool) error {
 	return nil
 }
 
-func (this *etcShadowEntry) setLine(line [][]byte, allowBadName bool) error {
+func (this *etcShadowEntry) decode(line [][]byte, allowBadName bool) error {
 	var err error
 	this.name = line[0]
 	this.password = line[1]
@@ -78,7 +79,7 @@ func (this *etcShadowEntry) setLine(line [][]byte, allowBadName bool) error {
 	return nil
 }
 
-func (this *etcShadowEntry) encodeLine(allowBadName bool) ([][]byte, error) {
+func (this *etcShadowEntry) encode(allowBadName bool) ([][]byte, error) {
 	if err := this.validate(allowBadName); err != nil {
 		return nil, err
 	}
@@ -91,12 +92,18 @@ func (this *etcShadowEntry) encodeLine(allowBadName bool) ([][]byte, error) {
 	line[4] = []byte(strconv.FormatUint(uint64(this.maximumAgeInDays), 10))
 	if this.hasWarnAge {
 		line[5] = []byte(strconv.FormatUint(uint64(this.warnAgeInDays), 10))
+	} else {
+		line[5] = []byte{}
 	}
 	if this.hasInactiveAge {
 		line[6] = []byte(strconv.FormatUint(uint64(this.inactiveAgeInDays), 10))
+	} else {
+		line[6] = []byte{}
 	}
 	if this.hasExpire {
 		line[7] = []byte(strconv.FormatUint(this.expireAtTs, 10))
+	} else {
+		line[7] = []byte{}
 	}
 
 	return line, nil

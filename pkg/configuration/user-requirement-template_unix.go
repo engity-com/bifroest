@@ -1,4 +1,4 @@
-//go:build unix && !android
+//go:build unix
 
 package configuration
 
@@ -11,14 +11,14 @@ import (
 )
 
 type UserRequirementTemplate struct {
-	Name        template.String                            `yaml:"name,omitempty"`
-	DisplayName template.String                            `yaml:"displayName,omitempty"`
-	Uid         template.TextMarshaller[user.Id, *user.Id] `yaml:"uid,omitempty"`
-	Group       GroupRequirementTemplate                   `yaml:"group,omitempty"`
-	Groups      GroupRequirementTemplates                  `yaml:"groups,omitempty"`
-	Shell       template.String                            `yaml:"shell,omitempty"`
-	HomeDir     template.String                            `yaml:"homeDir,omitempty"`
-	Skel        template.String                            `yaml:"skel,omitempty"`
+	Name        template.String                             `yaml:"name,omitempty"`
+	DisplayName template.String                             `yaml:"displayName,omitempty"`
+	Uid         *template.TextMarshaller[user.Id, *user.Id] `yaml:"uid,omitempty"`
+	Group       GroupRequirementTemplate                    `yaml:"group,omitempty"`
+	Groups      GroupRequirementTemplates                   `yaml:"groups,omitempty"`
+	Shell       template.String                             `yaml:"shell,omitempty"`
+	HomeDir     template.String                             `yaml:"homeDir,omitempty"`
+	Skel        template.String                             `yaml:"skel,omitempty"`
 }
 
 func (this *UserRequirementTemplate) SetDefaults() error {
@@ -75,8 +75,12 @@ func (this UserRequirementTemplate) Render(key common.StructuredKey, data any) (
 	if result.DisplayName, err = this.DisplayName.Render(data); err != nil {
 		return nil, fmt.Errorf("[%v] %w", key.Child("displayName"), err)
 	}
-	if result.Uid, err = this.Uid.Render(data); err != nil {
-		return nil, fmt.Errorf("[%v] %w", key.Child("uid"), err)
+	if v := this.Uid; v != nil {
+		buf, err := this.Uid.Render(data)
+		if err != nil {
+			return nil, fmt.Errorf("[%v] %w", key.Child("uid"), err)
+		}
+		result.Uid = &buf
 	}
 	if result.Group, err = this.Group.Render(key.Child("group"), data); err != nil {
 		return nil, err

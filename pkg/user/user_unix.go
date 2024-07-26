@@ -1,33 +1,13 @@
-//go:build unix && !android
+//go:build unix
 
 package user
 
 import (
-	"errors"
 	"fmt"
-	"github.com/engity-com/bifroest/pkg/sys"
 	"strconv"
+	"strings"
 	"syscall"
 )
-
-type Id uint32
-
-func (this Id) MarshalText() (text []byte, err error) {
-	return []byte(this.String()), nil
-}
-
-func (this *Id) UnmarshalText(text []byte) error {
-	buf, err := strconv.ParseUint(string(text), 0, 32)
-	if err != nil {
-		return fmt.Errorf("illegal user id: %s", string(text))
-	}
-	*this = Id(buf)
-	return nil
-}
-
-func (this Id) String() string {
-	return strconv.FormatUint(uint64(this), 10)
-}
 
 type User struct {
 	Name        string
@@ -70,39 +50,6 @@ func (this User) isEqualTo(other *User) bool {
 type DeleteOpts struct {
 	RemoveHomeDir *bool
 	Force         *bool
-}
-
-func Delete(name string, opts *DeleteOpts, using sys.Executor) error {
-	if len(name) == 0 {
-		return fmt.Errorf("cannot delete user with empty name")
-	}
-	fail := func(err error) error {
-		return fmt.Errorf("cannot delete user %s: %w", name, err)
-	}
-	failf := func(message string, args ...any) error {
-		return fail(fmt.Errorf(message, args...))
-	}
-
-	tOpts := opts.OrDefaults()
-	var args []string
-	if v := tOpts.Force; v != nil && *v {
-		args = append(args, "-f")
-	}
-	if v := tOpts.RemoveHomeDir; v != nil && *v {
-		args = append(args, "-r")
-	}
-	args = append(args, name)
-
-	if err := using.Execute("userdel", args...); err != nil {
-		var ee *sys.Error
-		if errors.As(err, &ee) && ee.ExitCode == 6 {
-			// This means already deleted: ok for us.
-		} else {
-			return failf("cannot delete group %s: %w", name, err)
-		}
-	}
-
-	return nil
 }
 
 func (this DeleteOpts) Clone() DeleteOpts {
@@ -148,4 +95,54 @@ func (this User) ToCredentials() syscall.Credential {
 		Gid:    uint32(this.Group.Gid),
 		Groups: gids,
 	}
+}
+
+func (this User) Clone() (*User, error) {
+	group, err := this.Group.Clone()
+	if err != nil {
+		return nil, err
+	}
+	groups, err := this.Groups.Clone()
+	if err != nil {
+		return nil, err
+	}
+
+	return &User{
+		strings.Clone(this.Name),
+		strings.Clone(this.DisplayName),
+		this.Uid,
+		*group,
+		*groups,
+		strings.Clone(this.Shell),
+		strings.Clone(this.HomeDir),
+	}, nil
+}
+
+type Id uint32
+
+func (this Id) MarshalText() (text []byte, err error) {
+	return []byte(this.String()), nil
+}
+
+func (this *Id) UnmarshalText(text []byte) error {
+	buf, err := strconv.ParseUint(string(text), 0, 32)
+	if err != nil {
+		return fmt.Errorf("illegal user id: %s", string(text))
+	}
+	*this = Id(buf)
+	return nil
+}
+
+func (this Id) String() string {
+	return strconv.FormatUint(uint64(this), 10)
+}
+
+func IdEqualsP(a, b *Id) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
 }

@@ -4,6 +4,7 @@ package user
 
 import (
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -11,7 +12,7 @@ import (
 type Requirement struct {
 	Name        string            `yaml:"name,omitempty"`
 	DisplayName string            `yaml:"displayName,omitempty"`
-	Uid         Id                `yaml:"uid,omitempty"`
+	Uid         *Id               `yaml:"uid,omitempty"`
 	Group       GroupRequirement  `yaml:"group,omitempty"`
 	Groups      GroupRequirements `yaml:"groups,omitempty"`
 	Shell       string            `yaml:"shell,omitempty"`
@@ -32,10 +33,27 @@ func (this Requirement) Clone() Requirement {
 	}
 }
 
+func (this Requirement) OrDefaults() Requirement {
+	result := this.Clone()
+	if result.Name == "" && result.Uid != nil {
+		result.Name = fmt.Sprintf("user-%d", *result.Uid)
+	}
+	if result.HomeDir == "" && result.Name != "" {
+		result.HomeDir = filepath.Join("/home", result.Name)
+	}
+	if result.Group.IsZero() {
+		result.Group = GroupRequirement{Name: strings.Clone(this.Name)}
+	}
+	if result.Groups.IsZero() {
+		result.Groups = GroupRequirements{{Name: defaultGroupName}}
+	}
+	return result
+}
+
 func (this Requirement) IsZero() bool {
 	return len(this.Name) == 0 &&
 		len(this.DisplayName) == 0 &&
-		this.Uid == 0 &&
+		this.Uid == nil &&
 		this.Group.IsZero() &&
 		this.Groups.IsZero() &&
 		len(this.Shell) == 0 &&
@@ -60,7 +78,7 @@ func (this Requirement) IsEqualTo(other any) bool {
 func (this Requirement) isEqualTo(other *Requirement) bool {
 	return this.Name == other.Name &&
 		this.DisplayName == other.DisplayName &&
-		this.Uid == other.Uid &&
+		IdEqualsP(this.Uid, other.Uid) &&
 		this.Group.IsEqualTo(&other.Group) &&
 		this.Groups.IsEqualTo(&other.Groups) &&
 		this.Shell == other.Shell &&
@@ -68,28 +86,27 @@ func (this Requirement) isEqualTo(other *Requirement) bool {
 		this.Skel == other.Skel
 }
 
-func (this Requirement) DoesFulfil(other *User) bool {
-	if other == nil {
+func (this Requirement) doesFulfilRef(target *etcPasswdRef) bool {
+	if target == nil {
 		return false
 	}
-	return this.Name == other.Name &&
-		this.DisplayName == other.DisplayName &&
-		this.Uid == other.Uid &&
-		this.Group.DoesFulfil(&other.Group) &&
-		this.Groups.DoesFulfil(&other.Groups) &&
-		this.Shell == other.Shell &&
-		this.HomeDir == other.HomeDir
+	uid := Id(target.uid)
+	return this.Name == string(target.etcPasswdEntry.name) &&
+		this.DisplayName == string(target.etcPasswdEntry.geocs) &&
+		IdEqualsP(this.Uid, &uid) &&
+		this.Shell == string(target.etcPasswdEntry.shell) &&
+		this.HomeDir == string(target.etcPasswdEntry.homeDir)
 }
 
 func (this Requirement) String() string {
 	if name := this.Name; len(name) > 0 {
-		if uid := this.Uid; uid > 0 {
+		if uid := this.Uid; uid != nil {
 			return fmt.Sprintf("%d(%s)", uid, name)
 		} else {
 			return strings.Clone(name)
 		}
-	} else if gid := this.Uid; gid > 0 {
-		return strconv.FormatUint(uint64(gid), 10)
+	} else if uid := this.Uid; uid != nil {
+		return strconv.FormatUint(uint64(*uid), 10)
 	} else {
 		return "<empty>"
 	}
@@ -100,7 +117,7 @@ func (this Requirement) name() string {
 	if len(name) > 0 {
 		return name
 	}
-	if uid := this.Uid; uid > 0 {
+	if uid := this.Uid; uid != nil {
 		return fmt.Sprintf("user-%d", uid)
 	}
 	return ""

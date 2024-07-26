@@ -1,283 +1,167 @@
-//go:build moo && unix && !android
+//go:build unix
 
 package user
 
 import (
-	"errors"
-	"fmt"
+	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/stretchr/testify/require"
-	"strings"
 	"testing"
 )
 
-func Test_decodeEtcGroupFromReader(t *testing.T) {
+func Test_etcGroupEntry_decode(t *testing.T) {
+	testlog.Hook(t)
+
 	cases := []struct {
-		name               string
-		content            string
-		allowBadName       bool
-		skipIllegalEntries bool
-		shouldFailWith     error
-		expected           []etcGroupEntry
-		expectedErr        string
+		name         string
+		given        [][]byte
+		allowBadName bool
+		expected     etcGroupEntry
+		expectedErr  string
 	}{{
-		name: "simple",
-		content: `root:x:0:
-
-foo:abc:1:aaa,bbb
-
-bar::12:ccc`,
+		name:         "simple",
+		given:        bs("root", "x", "0", ""),
 		allowBadName: false,
-		expected: []etcGroupEntry{
-			{b("root"), b("x"), 0, nil},
-			{b("foo"), b("abc"), 1, bs("aaa", "bbb")},
-			{b("bar"), b(""), 12, bs("ccc")},
-		},
+		expected:     etcGroupEntry{b("root"), b("x"), 0, nil},
 	}, {
-		name: "forbidden-bad-name",
-		content: `root:x:0:
-foo@:abc:1:aaa,bbb
-bar::12:ccc`,
+		name:         "forbidden-bad-group-name",
+		given:        bs("root@", "x", "0", ""),
 		allowBadName: false,
-		expectedErr:  "cannot parse test:1: <TEST> illegal group name",
+		expectedErr:  "illegal group name",
 	}, {
-		name: "allowed-bad-name",
-		content: `root:x:0:
-foo@:abc:1:aaa,bbb
-bar::12:ccc`,
+		name:         "allowed-bad-group-name",
+		given:        bs("root@", "x", "0", ""),
 		allowBadName: true,
-		expected: []etcGroupEntry{
-			{b("root"), b("x"), 0, nil},
-			{b("foo@"), b("abc"), 1, bs("aaa", "bbb")},
-			{b("bar"), b(""), 12, bs("ccc")},
-		},
+		expected:     etcGroupEntry{b("root@"), b("x"), 0, nil},
 	}, {
-		name: "empty-group-name",
-		content: `root:x:0:
-:abc:1:aaa,bbb
-bar::12:ccc`,
+		name:         "empty-group-name",
+		given:        bs("", "x", "0", ""),
 		allowBadName: false,
-		expectedErr:  "cannot parse test:1: <TEST> empty group name",
+		expectedErr:  "empty group name",
 	}, {
-		name: "illegal-group-name",
-		content: `root:x:0:
-fo	o@:abc:1:aaa,bbb
-bar::12:ccc`,
+		name:         "illegal-group-name",
+		given:        bs("ro\tot", "x", "0", ""),
 		allowBadName: true,
-		expectedErr:  "cannot parse test:1: <TEST> illegal group name",
+		expectedErr:  "illegal group name",
 	}, {
-		name: "too-long-group-name",
-		content: `root:x:0:
-a012345678901234567890123456789012:abc:1:aaa,bbb
-bar::12:ccc`,
+		name:         "too-long-group-name",
+		given:        bs("a012345678901234567890123456789012", "x", "0", ""),
 		allowBadName: true,
-		expectedErr:  "cannot parse test:1: <TEST> group name is longer than 32 characters",
+		expectedErr:  "group name is longer than 32 characters",
 	}, {
-		name: "empty-gid",
-		content: `root:x:0:
-foo:abc::aaa,bbb
-bar::12:ccc`,
+		name:         "empty-gid",
+		given:        bs("root", "x", "", ""),
 		allowBadName: true,
-		expectedErr:  "cannot parse test:1: <TEST> empty GID",
+		expectedErr:  "empty GID",
 	}, {
-		name: "illegal-gid",
-		content: `root:x:0:
-foo:abc:-1:aaa,bbb
-bar::12:ccc`,
+		name:         "illegal-gid",
+		given:        bs("root", "x", "-0", ""),
 		allowBadName: true,
-		expectedErr:  "cannot parse test:1: <TEST> illegal GID",
+		expectedErr:  "illegal GID",
 	}, {
-		name: "empty-user-name",
-		content: `root:x:0:
-foo:abc:1:,bbb
-bar::12:ccc`,
+		name:         "one-user-name",
+		given:        bs("root", "x", "666", "one"),
 		allowBadName: false,
-		expectedErr:  "cannot parse test:1: <TEST> empty user name",
+		expected:     etcGroupEntry{b("root"), b("x"), 666, bs("one")},
 	}, {
-		name: "illegal-user-name",
-		content: `root:x:0:
-foo:abc:1:aa@a,bbb
-bar::12:ccc`,
+		name:         "two-user-names",
+		given:        bs("root", "x", "123", "one,two"),
 		allowBadName: false,
-		expectedErr:  "cannot parse test:1: <TEST> illegal user name",
+		expected:     etcGroupEntry{b("root"), b("x"), 123, bs("one", "two")},
 	}, {
-		name: "illegal-amount-of-columns",
-		content: `root:x:0:
-foo:abc:1:aaa,bbb:
-bar::12:ccc`,
-		allowBadName: true,
-		expectedErr:  "cannot parse test:1: <TEST> illegal amount of columns; expected 4; but got: 5",
+		name:         "empty-user-name",
+		given:        bs("root", "x", "0", ",two"),
+		allowBadName: false,
+		expectedErr:  "empty user name",
 	}, {
-		name: "skip-illegal-entry",
-		content: `root:x:0:
-foo:abc:1:aaa,bbb:
-bar::12:ccc`,
-		skipIllegalEntries: true,
-		expected: []etcGroupEntry{
-			{b("root"), b("x"), 0, nil},
-			{b("bar"), b(""), 12, bs("ccc")},
-		},
-	}, {
-		name: "should-fail",
-		content: `root:x:0:
-foo:abc:1:aaa,bbb
-bar::12:ccc`,
-		shouldFailWith: errors.New("expected"),
-		expectedErr:    "cannot parse test:0: expected",
+		name:         "illegal-user-name",
+		given:        bs("root", "x", "0", "one@,two"),
+		allowBadName: false,
+		expectedErr:  "illegal user name",
 	}}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			var actual []etcGroupEntry
-			actualErr := decodeEtcGroupFromReader(
-				"test",
-				strings.NewReader(c.content),
-				c.allowBadName,
-				func(entry *etcGroupEntry, lpErr error) (codecConsumerResult, error) {
-					if lpErr != nil {
-						if c.skipIllegalEntries {
-							return codecConsumerResultContinue, nil
-						}
-						return 0, fmt.Errorf("<TEST> %w", lpErr)
-					}
-					if err := c.shouldFailWith; err != nil {
-						return 0, err
-					}
-					actual = append(actual, *entry)
-					return codecConsumerResultContinue, nil
-				})
+			var actual etcGroupEntry
+			actualErr := actual.decode(c.given, c.allowBadName)
 
 			if expectedErr := c.expectedErr; expectedErr != "" {
 				require.EqualError(t, actualErr, expectedErr)
 			} else {
 				require.NoError(t, actualErr)
-				require.Equal(t, actual, c.expected)
+				require.Equal(t, c.expected, actual)
 			}
 		})
 	}
 }
 
-func Test_modifyEtcGroupFromReaderToWriter(t *testing.T) {
+func Test_etcGroupEntry_encode(t *testing.T) {
+	testlog.Hook(t)
+
 	cases := []struct {
-		name               string
-		content            string
-		allowBadName       bool
-		skipIllegalEntries bool
-		shouldFailWith     error
-		newEntries         []etcGroupEntry
-		modifyEntries      map[string]codecModifyEntry[etcGroupEntry]
-		expected           string
-		expectedErr        string
+		name         string
+		given        etcGroupEntry
+		allowBadName bool
+		expected     [][]byte
+		expectedErr  string
 	}{{
-		name: "keep-as-it-is",
-		content: `root:x:0:
-
-foo:abc:1:aaa,bbb
-
-bar::12:ccc`,
+		name:         "simple",
+		given:        etcGroupEntry{b("root"), b("x"), 0, nil},
 		allowBadName: false,
-		expected: `root:x:0:
-foo:abc:1:aaa,bbb
-bar::12:ccc
-`,
+		expected:     bs("root", "x", "0", ""),
 	}, {
-		name: "modify-an-entry",
-		content: `root:x:0:
-
-foo:abc:1:aaa,bbb
-
-bar::12:ccc`,
+		name:         "forbidden-bad-group-name",
+		given:        etcGroupEntry{b("root@"), b("x"), 0, nil},
 		allowBadName: false,
-		modifyEntries: map[string]codecModifyEntry[etcGroupEntry]{
-			"foo": {codecHandlerResultUpdate, etcGroupEntry{b("new"), b("XnewX"), 666, bs("a", "b", "c")}},
-		},
-		expected: `root:x:0:
-new,XnewX,666,a,b,c
-bar::12:ccc
-`,
+		expectedErr:  "illegal group name",
 	}, {
-		name: "keep-an-entry",
-		content: `root:x:0:
-
-foo:abc:1:aaa,bbb
-
-bar::12:ccc`,
-		allowBadName: false,
-		modifyEntries: map[string]codecModifyEntry[etcGroupEntry]{
-			"foo": {codecHandlerResultContinue, etcGroupEntry{b("new"), b("XnewX"), 666, bs("a", "b", "c")}},
-		},
-		expected: `root:x:0:
-foo:abc:1:aaa,bbb
-bar::12:ccc
-`,
+		name:         "allowed-bad-group-name",
+		given:        etcGroupEntry{b("root@"), b("x"), 0, nil},
+		allowBadName: true,
+		expected:     bs("root@", "x", "0", ""),
 	}, {
-		name: "delete-an-entry",
-		content: `root:x:0:
-
-foo:abc:1:aaa,bbb
-
-bar::12:ccc`,
+		name:         "empty-group-name",
+		given:        etcGroupEntry{b(""), b("x"), 0, nil},
 		allowBadName: false,
-		modifyEntries: map[string]codecModifyEntry[etcGroupEntry]{
-			"foo": {codecHandlerResultSkip, etcGroupEntry{b("new"), b("XnewX"), 666, bs("a", "b", "c")}},
-		},
-		expected: `root:x:0:
-bar::12:ccc
-`,
+		expectedErr:  "empty group name",
 	}, {
-		name: "add-an-entry",
-		content: `root:x:0:
-
-foo:abc:1:aaa,bbb
-
-bar::12:ccc`,
+		name:         "illegal-group-name",
+		given:        etcGroupEntry{b("ro\tot"), b("x"), 0, nil},
+		allowBadName: true,
+		expectedErr:  "illegal group name",
+	}, {
+		name:         "too-long-group-name",
+		given:        etcGroupEntry{b("a012345678901234567890123456789012"), b("x"), 0, nil},
+		allowBadName: true,
+		expectedErr:  "group name is longer than 32 characters",
+	}, {
+		name:         "one-user-name",
+		given:        etcGroupEntry{b("root"), b("x"), 666, bs("one")},
 		allowBadName: false,
-		newEntries: []etcGroupEntry{
-			{b("new"), b("XnewX"), 666, bs("a", "b", "c")},
-		},
-		expected: `root:x:0:
-foo:abc:1:aaa,bbb
-bar::12:ccc
-new,XnewX,666,a,b,c
-`,
+		expected:     bs("root", "x", "666", "one"),
+	}, {
+		name:         "two-user-names",
+		given:        etcGroupEntry{b("root"), b("x"), 123, bs("one", "two")},
+		allowBadName: false,
+		expected:     bs("root", "x", "123", "one,two"),
+	}, {
+		name:         "empty-user-name",
+		given:        etcGroupEntry{b("root"), b("x"), 123, bs("", "two")},
+		allowBadName: false,
+		expectedErr:  "empty user name",
+	}, {
+		name:         "illegal-user-name",
+		given:        etcGroupEntry{b("root"), b("x"), 123, bs("@one", "two")},
+		allowBadName: false,
+		expectedErr:  "illegal user name",
 	}}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			var newEntriesI int
-
-			var actual strings.Builder
-			actualErr := modifyEtcGroupFromReaderToWriter(
-				"test",
-				strings.NewReader(c.content),
-				&actual,
-				c.allowBadName,
-				func(entry *etcGroupEntry, lpErr error) (codecHandlerResult, error) {
-					if lpErr != nil {
-						if c.skipIllegalEntries {
-							return codecHandlerResultContinue, nil
-						}
-						return 0, fmt.Errorf("<TEST> %w", lpErr)
-					}
-					if err := c.shouldFailWith; err != nil {
-						return 0, err
-					}
-					if nv, ok := c.modifyEntries[string(entry.name)]; ok {
-						*entry = nv.v
-						return nv.r, nil
-					}
-					return codecHandlerResultContinue, nil
-				}, func(allowBadName bool) (*etcGroupEntry, error) {
-					if len(c.newEntries) <= newEntriesI {
-						return nil, nil
-					}
-					i := newEntriesI
-					newEntriesI++
-					return &c.newEntries[i], nil
-				})
+			actual, actualErr := c.given.encode(c.allowBadName)
 
 			if expectedErr := c.expectedErr; expectedErr != "" {
 				require.EqualError(t, actualErr, expectedErr)
 			} else {
 				require.NoError(t, actualErr)
-				require.Equal(t, c.expected, actual.String())
+				require.Equal(t, c.expected, actual)
 			}
 		})
 	}

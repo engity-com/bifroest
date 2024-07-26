@@ -22,7 +22,7 @@ type Local struct {
 	flow configuration.FlowName
 	conf *configuration.EnvironmentLocal
 
-	Ensurer user.Ensurer
+	userRepository user.Repository
 }
 
 func NewLocal(flow configuration.FlowName, conf *configuration.EnvironmentLocal) (*Local, error) {
@@ -38,16 +38,9 @@ func NewLocal(flow configuration.FlowName, conf *configuration.EnvironmentLocal)
 	}
 
 	result := Local{
-		flow: flow,
-		conf: conf,
-
-		Ensurer: user.EtcUnixEnsurer{
-			Executor: &sys.StandardExecutor{
-				UsingSudo: true,
-			},
-			AllowBadNames:      true,
-			SkipIllegalEntries: true,
-		},
+		flow:           flow,
+		conf:           conf,
+		userRepository: user.DefaultRepository,
 	}
 
 	return &result, nil
@@ -122,7 +115,7 @@ func (this *Local) renderContext(t Task) (req *user.Requirement, createIfAbsent,
 }
 
 func (this *Local) ensureUser(req *user.Requirement, createIfAbsent, updateIfDifferent bool) (u *user.User, err error) {
-	u, err = this.Ensurer.Ensure(req, &user.EnsureOpts{
+	u, err = this.userRepository.Ensure(req, &user.EnsureOpts{
 		CreateAllowed: &createIfAbsent,
 		ModifyAllowed: &updateIfDifferent,
 	})

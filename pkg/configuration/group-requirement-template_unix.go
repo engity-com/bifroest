@@ -1,4 +1,4 @@
-//go:build unix && !android
+//go:build unix
 
 package configuration
 
@@ -15,13 +15,17 @@ var (
 )
 
 type GroupRequirementTemplate struct {
-	Gid  template.TextMarshaller[user.GroupId, *user.GroupId] `yaml:"gid,omitempty"`
-	Name template.String                                      `yaml:"name,omitempty"`
+	Gid  *template.TextMarshaller[user.GroupId, *user.GroupId] `yaml:"gid,omitempty"`
+	Name template.String                                       `yaml:"name,omitempty"`
 }
 
 func (this GroupRequirementTemplate) Render(key common.StructuredKey, data any) (result user.GroupRequirement, err error) {
-	if result.Gid, err = this.Gid.Render(data); err != nil {
-		return user.GroupRequirement{}, fmt.Errorf("[%v] %w", key.Child("gid"), err)
+	if v := this.Gid; v != nil {
+		buf, err := v.Render(data)
+		if err != nil {
+			return user.GroupRequirement{}, fmt.Errorf("[%v] %w", key.Child("gid"), err)
+		}
+		result.Gid = &buf
 	}
 	if result.Name, err = this.Name.Render(data); err != nil {
 		return user.GroupRequirement{}, fmt.Errorf("[%v] %w", key.Child("name"), err)
