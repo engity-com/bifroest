@@ -17,7 +17,7 @@ require (
 	github.com/msteinert/pam/v2 v2.0.0
 	github.com/pkg/sftp v1.13.6
 	github.com/stretchr/testify v1.9.0
-	golang.org/x/crypto v0.25.0
+	golang.org/x/crypto v0.26.0
 	golang.org/x/oauth2 v0.22.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -39,5 +39,5 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/spf13/cast v1.6.0 // indirect
-	golang.org/x/sys v0.22.0 // indirect
+	golang.org/x/sys v0.23.0 // indirect
 )
