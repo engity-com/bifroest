@@ -36,7 +36,7 @@ func (this Requirement) Clone() Requirement {
 func (this Requirement) OrDefaults() Requirement {
 	result := this.Clone()
 	if result.Name == "" && result.Uid != nil {
-		result.Name = fmt.Sprintf("user-%d", *result.Uid)
+		result.Name = fmt.Sprintf("u%d", *result.Uid)
 	}
 	if result.HomeDir == "" && result.Name != "" {
 		result.HomeDir = filepath.Join("/home", result.Name)
@@ -87,13 +87,13 @@ func (this Requirement) isEqualTo(other *Requirement) bool {
 }
 
 func (this Requirement) doesFulfilRef(target *etcPasswdRef) bool {
-	if target == nil {
+	if target == nil || (this.Name == "" && this.Uid == nil) {
 		return false
 	}
 	uid := Id(target.uid)
-	return this.Name == string(target.etcPasswdEntry.name) &&
+	return (this.Name == "" || this.Name == string(target.etcPasswdEntry.name)) &&
 		this.DisplayName == string(target.etcPasswdEntry.geocs) &&
-		IdEqualsP(this.Uid, &uid) &&
+		(this.Uid == nil || *this.Uid == uid) &&
 		this.Shell == string(target.etcPasswdEntry.shell) &&
 		this.HomeDir == string(target.etcPasswdEntry.homeDir)
 }
@@ -118,7 +118,7 @@ func (this Requirement) name() string {
 		return name
 	}
 	if uid := this.Uid; uid != nil {
-		return fmt.Sprintf("user-%d", uid)
+		return fmt.Sprintf("u%d", uid)
 	}
 	return ""
 }

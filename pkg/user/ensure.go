@@ -22,7 +22,7 @@ type Ensurer interface {
 	// If the User does exist but does not match the Requirement and
 	// EnsureOpts.ModifyAllowed is false,  ErrUserDoesNotFulfilRequirement
 	// will be returned as error.
-	Ensure(*Requirement, *EnsureOpts) (*User, error)
+	Ensure(*Requirement, *EnsureOpts) (*User, EnsureResult, error)
 
 	// EnsureGroup ensures that Group exists for the given GroupRequirement.
 	//
@@ -32,7 +32,7 @@ type Ensurer interface {
 	// If the Group does exist but does not match the GroupRequirement and
 	// EnsureOpts.ModifyAllowed is false, ErrGroupDoesNotFulfilRequirement
 	// will be returned as error.
-	EnsureGroup(*GroupRequirement, *EnsureOpts) (*Group, error)
+	EnsureGroup(*GroupRequirement, *EnsureOpts) (*Group, EnsureResult, error)
 }
 
 // EnsureOpts adds some more hints what should happen when
@@ -82,3 +82,13 @@ func (this *EnsureOpts) OrDefaults() EnsureOpts {
 	}
 	return result
 }
+
+type EnsureResult uint8
+
+const (
+	EnsureResultUnknown EnsureResult = iota
+	EnsureResultError
+	EnsureResultUnchanged
+	EnsureResultModified
+	EnsureResultCreated
+)

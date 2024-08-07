@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
@@ -107,7 +108,7 @@ func (this *FsRepository) FindBy(flow configuration.FlowName, id uuid.UUID) (Ses
 		}
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
+	defer common.IgnoreCloseError(f)
 
 	buf := fsSession{
 		repository: this,

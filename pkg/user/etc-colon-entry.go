@@ -115,6 +115,7 @@ func (this *etcColonEntries[T, PT]) decode(expectedNumberOfColons int, allowBadN
 
 type etcUnixEntriesTarget interface {
 	io.Writer
+	io.Seeker
 	Name() string
 	Truncate(int64) error
 }
@@ -129,6 +130,9 @@ func (this etcColonEntries[T, PT]) encode(allowBadName bool, to etcUnixEntriesTa
 		return fail(fmt.Errorf(msg, args...))
 	}
 
+	if _, err := to.Seek(0, io.SeekStart); err != nil {
+		return failf("cannot go to start of file before write: %w", err)
+	}
 	if err := to.Truncate(0); err != nil {
 		return failf("cannot empty file before write: %w", err)
 	}

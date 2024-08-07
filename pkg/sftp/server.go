@@ -5,6 +5,7 @@ import (
 	"fmt"
 	log "github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/level"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/pkg/sftp"
 	"io"
 	"os"
@@ -24,7 +25,7 @@ func (this *Server) Run(target io.ReadWriteCloser) error {
 	if err != nil {
 		return fmt.Errorf("cannot initialize sftp-server: %w", err)
 	}
-	defer func() { _ = s.Close() }()
+	defer common.IgnoreCloseError(s)
 
 	if err := s.Serve(); errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		// Ignoring...

@@ -95,7 +95,7 @@ type etcGroupRef struct {
 	*etcGroupEntry
 }
 
-func (this *GroupRequirement) toEtcGroupRef(idGenerator func() (GroupId, error)) (*etcGroupRef, error) {
+func (this *GroupRequirement) toEtcGroupRef(idGenerator func() GroupId) *etcGroupRef {
 	entry := etcGroupEntry{
 		nil,
 		[]byte("x"),
@@ -104,10 +104,8 @@ func (this *GroupRequirement) toEtcGroupRef(idGenerator func() (GroupId, error))
 	}
 	if v := this.Gid; v != nil {
 		entry.gid = uint32(*v)
-	} else if v, err := idGenerator(); err != nil {
-		return nil, err
 	} else {
-		entry.gid = uint32(v)
+		entry.gid = uint32(idGenerator())
 	}
 
 	if v := this.Name; v != "" {
@@ -116,7 +114,7 @@ func (this *GroupRequirement) toEtcGroupRef(idGenerator func() (GroupId, error))
 		entry.name = []byte(fmt.Sprintf("g%d", entry.gid))
 	}
 
-	return &etcGroupRef{&entry}, nil
+	return &etcGroupRef{&entry}
 }
 
 func (this *GroupRequirement) updateEtcGroupRef(ref *etcGroupRef) error {

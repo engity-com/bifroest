@@ -389,7 +389,7 @@ func (this *service) executeSession(sess ssh.Session, taskType environment.TaskT
 			return
 		}
 		if banner != nil {
-			defer func() { _ = banner.Close() }()
+			defer common.IgnoreCloseError(banner)
 			if _, err := io.Copy(sess, banner); err != nil {
 				l.WithError(err).Error("cannot print banner")
 				_ = sess.Exit(92)

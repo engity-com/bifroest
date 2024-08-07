@@ -4,17 +4,14 @@ package user
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	log "github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/fields"
+	"github.com/engity-com/bifroest/pkg/common"
 	"os"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
-
-	"github.com/fsnotify/fsnotify"
 )
 
 var (
@@ -24,6 +21,7 @@ var (
 	ErrEtcColonRepositoryUnsupportedRename error = StringError("etc colon repository does not support renaming of files")
 
 	DefaultFileSystemSyncThreshold = time.Second * 2
+	DefaultCreateFilesIfAbsent     = false
 	DefaultAllowBadName            = false
 	DefaultAllowBadLine            = true
 )
@@ -53,6 +51,13 @@ type EtcColonRepository struct {
 	// password information of a user from.
 	// If empty DefaultEtcShadow will be used.
 	ShadowFilename string
+
+	// CreateFilesIfAbsent tells the repository to create the related files if
+	// they do not exist. This only makes in very few amount of cases really
+	// sense; so: You should now what you're doing.
+	//
+	// If empty DefaultCreateFilesIfAbsent will be used.
+	CreateFilesIfAbsent *bool
 
 	// AllowBadName defines that if bad names of users and groups are allowed
 	// within the files.
@@ -97,7 +102,7 @@ type EtcColonRepository struct {
 	idToGroup        idToEtcGroupRef
 	usernameToGroups nameToEtcGroupRefs
 
-	handles     etcUnixModifierHandles
+	handles     etcColonRepositoryHandles
 	mutex       sync.RWMutex
 	reloadTimer *time.Timer
 }
@@ -115,7 +120,11 @@ func (this *EtcColonRepository) Init() error {
 				first = false
 				return
 			}
-			if err := this.load(&this.mutex); err != nil {
+
+			this.mutex.Lock()
+			defer this.mutex.Unlock()
+
+			if err := this.load(); err != nil {
 				this.onUnhandledAsyncError(this.logger(), err, "cannot reload repository")
 			}
 		})
@@ -125,7 +134,7 @@ func (this *EtcColonRepository) Init() error {
 		return err
 	}
 
-	return this.load(nil) // We do not provider a mutex, because we're already inside a lock
+	return this.load()
 }
 
 // LookupByName implements Repository.LookupByName.
@@ -179,15 +188,19 @@ func (this *EtcColonRepository) LookupGroupByName(name string) (*Group, error) {
 		return nil, ErrNoSuchGroup
 	}
 
-	return this.refToGroup(ref)
+	return this.refToGroup(ref), nil
 }
 
 // LookupGroupById implements Repository.LookupGroupById.
 func (this *EtcColonRepository) LookupGroupById(id GroupId) (*Group, error) {
-	return this.lookupGroupById(id, this.mutex.RLocker())
+	result := this.lookupGroupById(id, this.mutex.RLocker())
+	if result == nil {
+		return nil, ErrNoSuchGroup
+	}
+	return result, nil
 }
 
-func (this *EtcColonRepository) lookupGroupById(id GroupId, mutex sync.Locker) (*Group, error) {
+func (this *EtcColonRepository) lookupGroupById(id GroupId, mutex sync.Locker) *Group {
 	if mutex != nil {
 		mutex.Lock()
 		defer mutex.Unlock()
@@ -196,7 +209,7 @@ func (this *EtcColonRepository) lookupGroupById(id GroupId, mutex sync.Locker) (
 	i2g := this.idToGroup
 	gr, ok := i2g[id]
 	if !ok {
-		return nil, ErrNoSuchGroup
+		return nil
 	}
 
 	return this.refToGroup(gr)
@@ -282,7 +295,7 @@ func (this *EtcColonRepository) isRequirementFulfilled(req *Requirement, mutex s
 	}
 
 	var groupRefs []*etcGroupRef
-	if u2gs := this.usernameToGroups; u2gs == nil {
+	if u2gs := this.usernameToGroups; u2gs != nil {
 		if vs, ok := u2gs[string(existing.etcPasswdEntry.name)]; ok {
 			groupRefs = vs
 		}
@@ -309,65 +322,69 @@ func (this *EtcColonRepository) isRequirementFulfilled(req *Requirement, mutex s
 	return existing, user, err
 }
 
+func (this *EtcColonRepository) ensurePreChecks(req *Requirement, opts *EnsureOpts, mutex sync.Locker) (existing *etcPasswdRef, user *User, _ EnsureResult, err error) {
+	if existing, user, err = this.isRequirementFulfilled(req, mutex); err != nil {
+		return nil, nil, EnsureResultError, err
+	} else if user != nil {
+		return nil, user, EnsureResultUnchanged, nil
+	}
+
+	if existing == nil && !*opts.CreateAllowed {
+		return nil, nil, EnsureResultError, ErrNoSuchUser
+	}
+
+	if !*opts.ModifyAllowed {
+		return nil, nil, EnsureResultError, ErrUserDoesNotFulfilRequirement
+	}
+
+	return existing, user, EnsureResultUnknown, nil
+}
+
 // Ensure implements Ensurer.Ensure.
-func (this *EtcColonRepository) Ensure(req *Requirement, opts *EnsureOpts) (*User, error) {
+func (this *EtcColonRepository) Ensure(req *Requirement, opts *EnsureOpts) (_ *User, _ EnsureResult, rErr error) {
 	if req == nil {
 		panic("nil user requirement")
 	}
 	tReq := req.OrDefaults()
 	tOpts := opts.OrDefaults()
 
-	var err error
-	var result *User
-	var existing *etcPasswdRef
-
-	if existing, result, err = this.isRequirementFulfilled(&tReq, this.mutex.RLocker()); err != nil || result != nil {
-		return result, err
-	}
-
-	if existing == nil && !*tOpts.CreateAllowed {
-		return nil, ErrNoSuchUser
-	}
-
-	if !*tOpts.ModifyAllowed {
-		return nil, ErrUserDoesNotFulfilRequirement
+	existing, user, pResult, err := this.ensurePreChecks(&tReq, &tOpts, this.mutex.RLocker())
+	if err != nil || pResult != EnsureResultUnknown {
+		return user, pResult, err
 	}
 
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 
-	if existing, result, err = this.isRequirementFulfilled(&tReq, nil); err != nil || result != nil {
-		return result, err
-	}
-
-	if existing == nil && !*tOpts.CreateAllowed {
-		return nil, ErrNoSuchUser
-	}
-
-	if !*tOpts.ModifyAllowed {
-		return nil, ErrUserDoesNotFulfilRequirement
-	}
-
-	_, group, err := this.ensureGroup(&tReq.Group, &tOpts, nil)
+	f, err := this.openAndLoad(true, true)
 	if err != nil {
-		return nil, err
+		return nil, EnsureResultError, err
 	}
+	defer common.KeepError(&rErr, f.close)
+
+	existing, user, pResult, err = this.ensurePreChecks(&tReq, &tOpts, nil)
+	if err != nil || pResult != EnsureResultUnknown {
+		return user, pResult, err
+	}
+
+	_, group, _, err := this.ensureGroup(&tReq.Group, &tOpts)
+	if err != nil {
+		return nil, EnsureResultError, err
+	}
+
 	groupRefs, groups, err := this.ensureGroups(&tReq.Groups, &tOpts)
 	if err != nil {
-		return nil, err
+		return nil, EnsureResultError, err
 	}
 
 	if existing == nil {
-		ref, err := tReq.toEtcPasswdRef(group.Gid, func() (Id, error) {
+		ref := tReq.toEtcPasswdRef(group.Gid, func() Id {
 			result := this.findHighestUid()
 			if result < 1000 {
-				result = 1000
+				return 1000
 			}
-			return result, nil
+			return result + 1
 		})
-		if err != nil {
-			return nil, err
-		}
 		this.handles.passwd.entries = append(this.handles.passwd.entries, etcColonEntry[etcPasswdEntry, *etcPasswdEntry]{
 			entry:   ref.etcPasswdEntry,
 			rawLine: nil,
@@ -383,18 +400,18 @@ func (this *EtcColonRepository) Ensure(req *Requirement, opts *EnsureOpts) (*Use
 			gr.userNames = append(gr.userNames, ref.etcPasswdEntry.name)
 		}
 
-		if err := this.handles.save(); err != nil {
-			return nil, err
+		if err := f.save(); err != nil {
+			return nil, EnsureResultError, err
 		}
 
-		return this.refAndGroupsToUser(ref, group, &groups), nil
+		return this.refAndGroupsToUser(ref, group, &groups), EnsureResultCreated, nil
 	}
 
 	oldName := existing.etcPasswdEntry.name
 	oldUid := existing.etcPasswdEntry.uid
 
 	if err := tReq.updateEtcPasswdRef(existing, group.Gid); err != nil {
-		return nil, err
+		return nil, EnsureResultError, err
 	}
 
 	if bytes.Equal(oldName, existing.etcPasswdEntry.name) {
@@ -422,87 +439,92 @@ func (this *EtcColonRepository) Ensure(req *Requirement, opts *EnsureOpts) (*Use
 	}
 	this.usernameToGroups[string(existing.etcPasswdEntry.name)] = groupRefs
 
-	if err := this.handles.save(); err != nil {
-		return nil, err
+	if err := f.save(); err != nil {
+		return nil, EnsureResultError, err
 	}
 
-	return this.refAndGroupsToUser(existing, group, &groups), nil
+	return this.refAndGroupsToUser(existing, group, &groups), EnsureResultModified, nil
+}
+
+func (this *EtcColonRepository) preEnsureGroup(req *GroupRequirement, opts *EnsureOpts, mutex sync.Locker) (*etcGroupRef, *Group, EnsureResult, error) {
+	existing := this.lookupGroupByRequirement(req, mutex)
+	if existing != nil && req.doesFulfilRef(existing) {
+		return existing, this.refToGroup(existing), EnsureResultUnchanged, nil
+	}
+
+	if existing == nil && !*opts.CreateAllowed {
+		return nil, nil, EnsureResultError, ErrNoSuchGroup
+	}
+
+	if !*opts.ModifyAllowed {
+		return existing, nil, EnsureResultError, ErrGroupDoesNotFulfilRequirement
+	}
+	return existing, nil, EnsureResultUnknown, nil
 }
 
 // EnsureGroup implements Ensurer.EnsureGroup.
-func (this *EtcColonRepository) EnsureGroup(req *GroupRequirement, opts *EnsureOpts) (*Group, error) {
+func (this *EtcColonRepository) EnsureGroup(req *GroupRequirement, opts *EnsureOpts) (_ *Group, _ EnsureResult, rErr error) {
 	if req == nil {
 		panic("nil group requirement")
 	}
+	tReq := req.OrDefaults()
 	tOpts := opts.OrDefaults()
 
-	existing := this.lookupGroupByRequirement(req, this.mutex.RLocker())
-	if existing != nil && req.doesFulfilRef(existing) {
-		return this.refToGroup(existing)
+	_, group, pResult, err := this.preEnsureGroup(&tReq, &tOpts, this.mutex.RLocker())
+	if err != nil || pResult != EnsureResultUnknown {
+		return group, pResult, err
 	}
 
-	if existing == nil && !*tOpts.CreateAllowed {
-		return nil, ErrNoSuchGroup
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	f, err := this.openAndLoad(true, true)
+	if err != nil {
+		return nil, EnsureResultError, err
+	}
+	defer common.KeepError(&rErr, f.close)
+
+	_, group, result, err := this.ensureGroup(&tReq, &tOpts)
+	if err != nil {
+		return nil, EnsureResultError, err
+	}
+	if result == EnsureResultModified || result == EnsureResultCreated {
+		if err := f.save(); err != nil {
+			return nil, EnsureResultError, err
+		}
 	}
 
-	if !*tOpts.ModifyAllowed {
-		return nil, ErrGroupDoesNotFulfilRequirement
-	}
-
-	_, result, err := this.ensureGroup(req, &tOpts, &this.mutex)
-	return result, err
+	return group, result, nil
 }
 
-func (this *EtcColonRepository) ensureGroup(req *GroupRequirement, opts *EnsureOpts, mutex sync.Locker) (*etcGroupRef, *Group, error) {
-	if req == nil {
-		panic("nil group requirement")
-	}
-	tOpts := opts.OrDefaults()
+func (this *EtcColonRepository) ensureGroup(forUser *Requirement, req *GroupRequirement, opts *EnsureOpts) (*etcGroupRef, *Group, EnsureResult, error) {
+	tReq := req.OrDefaultsForUser(forUser)
 
-	if mutex != nil {
-		mutex.Lock()
-		defer mutex.Unlock()
-	}
-
-	existing := this.lookupGroupByRequirement(req, nil)
-	if existing != nil && req.doesFulfilRef(existing) {
-		group, err := this.refToGroup(existing)
-		return existing, group, err
-	}
-
-	if existing == nil && !*tOpts.CreateAllowed {
-		return nil, nil, ErrNoSuchGroup
-	}
-
-	if !*tOpts.ModifyAllowed {
-		return existing, nil, ErrGroupDoesNotFulfilRequirement
+	existing, group, pResult, err := this.preEnsureGroup(&tReq, opts, nil)
+	if err != nil || pResult != EnsureResultUnknown {
+		return existing, group, pResult, err
 	}
 
 	if existing == nil {
-		ref, err := req.toEtcGroupRef(func() (GroupId, error) {
+		ref := tReq.toEtcGroupRef(func() GroupId {
 			result := this.findHighestGid()
 			if result < 1000 {
-				result = 1000
+				return 1000
 			}
-			return result, nil
+			return result + 1
 		})
-		if err != nil {
-			return nil, nil, err
-		}
 		this.handles.group.entries = append(this.handles.group.entries, etcColonEntry[etcGroupEntry, *etcGroupEntry]{
 			entry:   ref.etcGroupEntry,
 			rawLine: nil,
 		})
 		this.nameToGroup[string(ref.etcGroupEntry.name)] = ref
 		this.idToGroup[GroupId(ref.etcGroupEntry.gid)] = ref
-		result, err := this.refToGroup(ref)
-		return ref, result, err
+		return ref, this.refToGroup(ref), EnsureResultCreated, nil
 	}
 
 	oldName := existing.etcGroupEntry.name
 	oldGid := existing.etcGroupEntry.gid
-	if err := req.updateEtcGroupRef(existing); err != nil {
-		return existing, nil, err
+	if err := tReq.updateEtcGroupRef(existing); err != nil {
+		return existing, nil, EnsureResultError, err
 	}
 
 	if !bytes.Equal(oldName, existing.etcGroupEntry.name) {
@@ -514,28 +536,24 @@ func (this *EtcColonRepository) ensureGroup(req *GroupRequirement, opts *EnsureO
 		this.idToGroup[GroupId(existing.etcGroupEntry.gid)] = existing
 	}
 
-	result, err := this.refToGroup(existing)
-	return existing, result, err
+	return existing, this.refToGroup(existing), EnsureResultModified, nil
 }
 
 func (this *EtcColonRepository) ensureGroups(reqs *GroupRequirements, opts *EnsureOpts) ([]*etcGroupRef, Groups, error) {
-	if reqs == nil {
-		panic("nil group requirements")
-	}
 	tOpts := opts.OrDefaults()
 
 	refs := make([]*etcGroupRef, len(*reqs))
-	result := make(Groups, len(*reqs))
+	groups := make(Groups, len(*reqs))
 	for i, req := range *reqs {
-		ref, v, err := this.ensureGroup(&req, &tOpts, nil)
+		ref, v, _, err := this.ensureGroup(&req, &tOpts)
 		if err != nil {
 			return nil, nil, err
 		}
 		refs[i] = ref
-		result[i] = *v
+		groups[i] = *v
 	}
 
-	return refs, result, nil
+	return refs, groups, nil
 }
 
 func (this *EtcColonRepository) findHighestGid() GroupId {
@@ -563,16 +581,9 @@ func (this *EtcColonRepository) findHighestUid() Id {
 }
 
 func (this *EtcColonRepository) refToUser(ref *etcPasswdRef) (*User, error) {
-	fail := func(err error) (*User, error) {
-		return nil, fmt.Errorf("user %d(%s): %w", ref.etcPasswdEntry.uid, string(ref.etcPasswdEntry.name), err)
-	}
-
-	group, err := this.lookupGroupById(GroupId(ref.etcPasswdEntry.gid), nil)
-	if errors.Is(err, ErrNoSuchGroup) {
-		return nil, fmt.Errorf("user %d(%s) references group %d which does not exist", ref.etcPasswdEntry.uid, string(ref.etcPasswdEntry.name), ref.etcPasswdEntry.gid)
-	}
-	if err != nil {
-		return fail(err)
+	group := this.lookupGroupById(GroupId(ref.etcPasswdEntry.gid), nil)
+	if group == nil {
+		group = &Group{GroupId(ref.etcPasswdEntry.gid), fmt.Sprintf("g%d", ref.etcPasswdEntry.gid)}
 	}
 
 	var groups Groups
@@ -580,11 +591,7 @@ func (this *EtcColonRepository) refToUser(ref *etcPasswdRef) (*User, error) {
 		if gs, ok := u2gs[string(ref.etcPasswdEntry.name)]; ok {
 			groups = make([]Group, len(gs))
 			for i, g := range gs {
-				group, err := this.lookupGroupById(GroupId(g.gid), nil)
-				if err != nil {
-					return fail(err)
-				}
-				groups[i] = *group
+				groups[i] = *this.refToGroup(g)
 			}
 		}
 	}
@@ -604,16 +611,19 @@ func (this *EtcColonRepository) refAndGroupsToUser(ref *etcPasswdRef, group *Gro
 	}
 }
 
-func (this *EtcColonRepository) refToGroup(ref *etcGroupRef) (*Group, error) {
+func (this *EtcColonRepository) refToGroup(ref *etcGroupRef) *Group {
 	return &Group{
 		GroupId(ref.gid),
 		strings.Clone(string(ref.name)),
-	}, nil
+	}
 }
 
 // Close disposes this repository after usage.
 func (this *EtcColonRepository) Close() error {
-	return this.handles.close(&this.mutex)
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+
+	return this.handles.close()
 }
 
 func (this *EtcColonRepository) onUnhandledAsyncError(logger log.Logger, err error, detail string) {
@@ -630,7 +640,7 @@ func (this *EtcColonRepository) onUnhandledAsyncError(logger log.Logger, err err
 			msgPrefix = string(sErr)
 			canAddErrIfPresent = false
 		} else {
-			msgPrefix = "unknown error"
+			msgPrefix = "unexpected error"
 		}
 	}
 
@@ -639,7 +649,7 @@ func (this *EtcColonRepository) onUnhandledAsyncError(logger log.Logger, err err
 	}
 
 	logger.Fatal(msgPrefix + "; will exit now to and hope for a restart of this service to reset the state (exit code 17)")
-	os.Exit(17)
+	etcColonRepositoryExitFunc()
 }
 
 func (this *EtcColonRepository) scheduleReload(l log.Logger) {
@@ -656,12 +666,7 @@ func (this *EtcColonRepository) scheduleReload(l log.Logger) {
 	}
 }
 
-func (this *EtcColonRepository) load(mutex sync.Locker) error {
-	if mutex != nil {
-		mutex.Lock()
-		defer mutex.Unlock()
-	}
-
+func (this *EtcColonRepository) load() (rErr error) {
 	l := this.logger()
 
 	start := time.Now()
@@ -669,31 +674,10 @@ func (this *EtcColonRepository) load(mutex sync.Locker) error {
 		l.Debug("load user repository...")
 	}
 
-	err := this.handles.load() // we do not add the mutex again, because we're already in lock
+	_, err := this.openAndLoad(false, false)
 	if err != nil {
 		return err
 	}
-
-	nameToGroup, idToGroup, usernameToGroups, err := this.loadGroupsRefs()
-	if err != nil {
-		return fmt.Errorf("cannot load group entries: %w", err)
-	}
-
-	usernameToShadow, err := this.loadShadowsRefs()
-	if err != nil {
-		return fmt.Errorf("cannot load shadow entries: %w", err)
-	}
-
-	nameToUser, idToUser, err := this.loadUsersRefs(usernameToShadow)
-	if err != nil {
-		return fmt.Errorf("cannot load user entries: %w", err)
-	}
-
-	this.idToUser = idToUser
-	this.nameToUser = nameToUser
-	this.idToGroup = idToGroup
-	this.nameToGroup = nameToGroup
-	this.usernameToGroups = usernameToGroups
 
 	lw := l.With("duration", fields.LazyFunc(func() any { return time.Since(start).Truncate(time.Microsecond).String() }))
 	if l.IsDebugEnabled() {
@@ -705,7 +689,39 @@ func (this *EtcColonRepository) load(mutex sync.Locker) error {
 	return nil
 }
 
-func (this *EtcColonRepository) loadGroupsRefs() (nameToEtcGroupRef, idToEtcGroupRef, nameToEtcGroupRefs, error) {
+func (this *EtcColonRepository) openAndLoad(rw, returnHandles bool) (_ *openedEtcColonRepositoryHandles, rErr error) {
+	doNotCloseHandles := false
+
+	f, err := this.handles.open(rw)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if !doNotCloseHandles {
+			common.KeepError(&rErr, f.close)
+		}
+	}()
+
+	if err := f.load(); err != nil {
+		return nil, err
+	}
+	this.rebuildIndexes()
+
+	if returnHandles {
+		doNotCloseHandles = true
+		return f, nil
+	}
+
+	return nil, nil
+}
+
+func (this *EtcColonRepository) rebuildIndexes() {
+	this.nameToGroup, this.idToGroup, this.usernameToGroups = this.loadGroupsRefs()
+	usernameToShadow := this.loadShadowsRefs()
+	this.nameToUser, this.idToUser = this.loadUsersRefs(usernameToShadow)
+}
+
+func (this *EtcColonRepository) loadGroupsRefs() (nameToEtcGroupRef, idToEtcGroupRef, nameToEtcGroupRefs) {
 	nameToGroup := make(nameToEtcGroupRef, len(this.handles.group.entries))
 	idToGroup := make(idToEtcGroupRef, len(this.handles.group.entries))
 	usernameToGroup := nameToEtcGroupRefs{}
@@ -721,10 +737,10 @@ func (this *EtcColonRepository) loadGroupsRefs() (nameToEtcGroupRef, idToEtcGrou
 		}
 	}
 
-	return nameToGroup, idToGroup, usernameToGroup, nil
+	return nameToGroup, idToGroup, usernameToGroup
 }
 
-func (this *EtcColonRepository) loadShadowsRefs() (map[string]*etcShadowEntry, error) {
+func (this *EtcColonRepository) loadShadowsRefs() map[string]*etcShadowEntry {
 	nameToShadow := make(map[string]*etcShadowEntry, len(this.handles.shadow.entries))
 
 	for _, e := range this.handles.shadow.entries {
@@ -733,10 +749,10 @@ func (this *EtcColonRepository) loadShadowsRefs() (map[string]*etcShadowEntry, e
 		}
 	}
 
-	return nameToShadow, nil
+	return nameToShadow
 }
 
-func (this *EtcColonRepository) loadUsersRefs(usernameToShadow map[string]*etcShadowEntry) (nameToEtcPasswdRef, idToEtcPasswdRef, error) {
+func (this *EtcColonRepository) loadUsersRefs(usernameToShadow map[string]*etcShadowEntry) (nameToEtcPasswdRef, idToEtcPasswdRef) {
 	nameToUser := make(nameToEtcPasswdRef, len(this.handles.passwd.entries))
 	idToUser := make(idToEtcPasswdRef, len(this.handles.passwd.entries))
 
@@ -751,7 +767,7 @@ func (this *EtcColonRepository) loadUsersRefs(usernameToShadow map[string]*etcSh
 		}
 	}
 
-	return nameToUser, idToUser, nil
+	return nameToUser, idToUser
 }
 
 func (this *EtcColonRepository) logger() log.Logger {
@@ -759,6 +775,14 @@ func (this *EtcColonRepository) logger() log.Logger {
 		return v
 	}
 	return log.GetRootLogger()
+}
+
+func (this *EtcColonRepository) getCreateFilesIfAbsent() bool {
+	if v := this.CreateFilesIfAbsent; v != nil {
+		return *v
+	}
+	//goland:noinspection GoBoolExpressions
+	return DefaultCreateFilesIfAbsent
 }
 
 func (this *EtcColonRepository) getAllowBadName() bool {
@@ -777,302 +801,6 @@ func (this *EtcColonRepository) getAllowBadLine() bool {
 	return DefaultAllowBadLine
 }
 
-type etcUnixModifierHandles struct {
-	passwd etcUnixModifierFileHandle[etcPasswdEntry, *etcPasswdEntry]
-	group  etcUnixModifierFileHandle[etcGroupEntry, *etcGroupEntry]
-	shadow etcUnixModifierFileHandle[etcShadowEntry, *etcShadowEntry]
-}
-
-func (this *etcUnixModifierHandles) init(owner *EtcColonRepository) error {
-	success := false
-	defer func() {
-		if !success {
-			_ = this.close(nil)
-		}
-	}()
-
-	if err := this.passwd.init(owner.PasswdFilename, DefaultEtcPasswd, etcPasswdColons, owner); err != nil {
-		return err
-	}
-	if err := this.group.init(owner.GroupFilename, DefaultEtcGroup, etcGroupColons, owner); err != nil {
-		return err
-	}
-	if err := this.shadow.init(owner.ShadowFilename, DefaultEtcShadow, etcShadowColons, owner); err != nil {
-		return err
-	}
-
-	success = true
-	return nil
-}
-
-func (this *etcUnixModifierHandles) load() error {
-	if err := this.passwd.load(); err != nil {
-		return err
-	}
-	if err := this.group.load(); err != nil {
-		return err
-	}
-	if err := this.shadow.load(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (this *etcUnixModifierHandles) save() error {
-	if err := this.passwd.save(); err != nil {
-		return err
-	}
-	if err := this.group.save(); err != nil {
-		return err
-	}
-	if err := this.shadow.save(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (this *etcUnixModifierHandles) close(mutex sync.Locker) (rErr error) {
-	if mutex != nil {
-		mutex.Lock()
-		defer mutex.Unlock()
-	}
-
-	defer func() {
-		if err := this.passwd.close(); err != nil && rErr == nil {
-			rErr = err
-		}
-	}()
-	defer func() {
-		if err := this.group.close(); err != nil && rErr == nil {
-			rErr = err
-		}
-	}()
-	defer func() {
-		if err := this.shadow.close(); err != nil && rErr == nil {
-			rErr = err
-		}
-	}()
-
-	return nil
-}
-
-type etcUnixModifierFileHandle[T any, PT etcColonEntryValue[T]] struct {
-	owner *EtcColonRepository
-
-	fn             string
-	numberOfColons int
-
-	watcher       *fsnotify.Watcher
-	entries       etcColonEntries[T, PT]
-	numberOfReads uint64
-}
-
-func (this *etcUnixModifierFileHandle[T, PT]) init(fn, defFn string, numberOfColons int, owner *EtcColonRepository) error {
-	if this.watcher != nil {
-		return nil
-	}
-
-	this.owner = owner
-	this.fn = fn
-	if this.fn == "" {
-		this.fn = defFn
-	}
-	this.numberOfColons = numberOfColons
-
-	success := false
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return fmt.Errorf("cannot initialize file watcher for %q: %w", this.fn, err)
-	}
-	defer func() {
-		if !success {
-			_ = watcher.Close()
-		}
-	}()
-	this.watcher = watcher
-	defer func() {
-		if !success {
-			this.watcher = nil
-		}
-	}()
-
-	go this.watchForChanges(watcher)
-
-	if err := watcher.Add(this.fn); err != nil {
-		return fmt.Errorf("cannot watch for filesystem changes of %q: %w", this.fn, err)
-	}
-
-	success = true
-	return nil
-}
-
-func (this *etcUnixModifierFileHandle[T, PT]) watchForChanges(watcher *fsnotify.Watcher) {
-	for {
-		select {
-		case event, ok := <-watcher.Events:
-			if !ok {
-				return
-			}
-			l := this.owner.logger().
-				With("op", event.Op).
-				With("file", this.fn)
-
-			if event.Has(fsnotify.Remove) {
-				// TODO! Add handling of remove event ... although this should be really not normal behavior.
-				this.owner.onUnhandledAsyncError(l, ErrEtcColonRepositoryUnsupportedRemove, "")
-			} else if event.Has(fsnotify.Rename) {
-				// TODO! Add handling of rename event ... although this should be really not normal behavior.
-				this.owner.onUnhandledAsyncError(l, ErrEtcColonRepositoryUnsupportedRename, "")
-			} else if event.Has(fsnotify.Write) {
-				this.owner.scheduleReload(l)
-			}
-		case err, ok := <-watcher.Errors:
-			if !ok {
-				return
-			}
-			l := this.owner.logger().
-				With("file", this.fn)
-			this.owner.onUnhandledAsyncError(l, err, "error while handling file watcher events")
-		}
-	}
-}
-
-func (this *etcUnixModifierFileHandle[T, PT]) load() (rErr error) {
-	if this.fn == "" || this.watcher == nil {
-		return fmt.Errorf("was not initialized")
-	}
-
-	f, err := this.openFile(false)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := f.Close(); err != nil && rErr == nil {
-			rErr = err
-		}
-	}()
-
-	if err := this.entries.decode(this.numberOfColons, this.owner.getAllowBadName(), this.owner.getAllowBadLine(), f); err != nil {
-		return err
-	}
-
-	this.numberOfReads++
-	return nil
-}
-
-func (this *etcUnixModifierFileHandle[T, PT]) openFile(write bool) (*os.File, error) {
-	fm := os.O_RDONLY
-	lm := syscall.LOCK_SH
-	if write {
-		fm = os.O_WRONLY | os.O_TRUNC | os.O_CREATE
-		lm = syscall.LOCK_EX
-	}
-	success := false
-
-	f, err := os.OpenFile(this.fn, fm, 0600)
-	if err != nil {
-		return nil, fmt.Errorf("cannot open %q: %w", this.fn, err)
-	}
-	defer func() {
-		if !success {
-			_ = f.Close()
-		}
-	}()
-
-	if err := this.lockFile(f, lm); err != nil {
-		return nil, err
-	}
-	defer func() {
-		if !success {
-			_ = this.lockFile(f, syscall.LOCK_UN)
-		}
-	}()
-
-	success = true
-	return f, nil
-}
-
-func (this *etcUnixModifierFileHandle[T, PT]) closeFile(f *os.File) (rErr error) {
-	if f == nil {
-		return nil
-	}
-
-	defer func() {
-		if err := f.Close(); err != nil && rErr == nil {
-			rErr = err
-		}
-	}()
-
-	return this.lockFile(f, syscall.LOCK_UN)
-}
-
-func (this *etcUnixModifierFileHandle[T, PT]) lockFile(which *os.File, how int) error {
-	done := false
-	doneErrChan := make(chan error, 1)
-	defer close(doneErrChan)
-
-	go func(fd, how int) {
-		for {
-			err := syscall.Flock(fd, how)
-
-			//goland:noinspection GoDirectComparisonOfErrors
-			if err == syscall.EINTR {
-				if done {
-					return
-				}
-				continue
-			}
-			doneErrChan <- err
-			return
-		}
-	}(int(which.Fd()), how)
-
-	fail := func(err error) error {
-		if err == nil {
-			return nil
-		}
-		var op string
-		switch how {
-		case syscall.LOCK_EX:
-			op = "lock file for write"
-		case syscall.LOCK_UN:
-			op = "unlock file"
-		default:
-			op = "lock file for read"
-		}
-		return fmt.Errorf("cannot %s %q: %w", op, which.Name(), err)
-	}
-	select {
-	case doneErr := <-doneErrChan:
-		return fail(doneErr)
-	}
-}
-
-func (this *etcUnixModifierFileHandle[T, PT]) save() (rErr error) {
-	f, err := this.openFile(true)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := this.closeFile(f); err != nil && rErr == nil {
-			rErr = err
-		}
-	}()
-
-	return this.entries.encode(this.owner.getAllowBadName(), f)
-}
-
-func (this *etcUnixModifierFileHandle[T, PT]) close() error {
-	if watcher := this.watcher; watcher != nil {
-		defer func() {
-			this.watcher = nil
-		}()
-		if err := watcher.Close(); err != nil {
-			return err
-		}
-	}
-
-	return nil
+var etcColonRepositoryExitFunc = func() {
+	os.Exit(17)
 }

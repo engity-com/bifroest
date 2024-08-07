@@ -8,6 +8,7 @@ import (
 	crand "crypto/rand"
 	"crypto/rsa"
 	"fmt"
+	"github.com/engity-com/bifroest/pkg/common"
 	"io"
 	"os"
 	"path/filepath"
@@ -40,7 +41,7 @@ func (this KeyRequirement) CreateFile(rand io.Reader, fn string) (crypto.Signer,
 
 	_ = os.MkdirAll(filepath.Dir(fn), 0700)
 	f, err := os.OpenFile(fn, os.O_CREATE|os.O_WRONLY, 0400)
-	defer func() { _ = f.Close() }()
+	defer common.IgnoreCloseError(f)
 
 	if err := WriteSshPrivateKey(pk, f); err != nil {
 		return nil, fmt.Errorf("cannot write new private key to %q: %w", fn, err)

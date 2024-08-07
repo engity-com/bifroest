@@ -5,6 +5,7 @@ import (
 	"github.com/creack/pty"
 	"github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/level"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/engity-com/bifroest/pkg/user"
@@ -178,7 +179,7 @@ func (this *Local) runCommand(t Task, u *user.User) error {
 		if err != nil {
 			log.Fatal(err)
 		}
-		defer func() { _ = l.Close() }()
+		defer common.IgnoreCloseError(l)
 		go ssh.ForwardAgentConnections(l, sess)
 		cmd.Env = append(cmd.Env, "SSH_AUTH_SOCK"+l.Addr().String())
 	}
@@ -196,7 +197,7 @@ func (this *Local) runCommand(t Task, u *user.User) error {
 			return fmt.Errorf("cannot start process %v: %w", cmd.Args, err)
 		}
 		defer this.killIfNeeded(t, &cmd)
-		defer func() { _ = f.Close() }()
+		defer common.IgnoreCloseError(f)
 
 		go func() {
 			for win := range winCh {

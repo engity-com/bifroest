@@ -1,6 +1,7 @@
 package configuration
 
 import (
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"gopkg.in/yaml.v3"
 	"io"
@@ -49,7 +50,7 @@ func (this *Configuration) LoadFromFile(fn string) error {
 	if err != nil {
 		return errors.Newf(errors.TypeConfig, "cannot open configuration file %q: %w", fn, err)
 	}
-	defer func() { _ = f.Close() }()
+	defer common.IgnoreCloseError(f)
 
 	return this.LoadFromYaml(f, fn)
 }

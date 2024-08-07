@@ -98,7 +98,7 @@ type etcPasswdRef struct {
 	*etcShadowEntry
 }
 
-func (this *Requirement) toEtcPasswdRef(gui GroupId, idGenerator func() (Id, error)) (*etcPasswdRef, error) {
+func (this *Requirement) toEtcPasswdRef(gui GroupId, idGenerator func() Id) *etcPasswdRef {
 	result := etcPasswdRef{
 		&etcPasswdEntry{
 			[]byte{},
@@ -123,10 +123,8 @@ func (this *Requirement) toEtcPasswdRef(gui GroupId, idGenerator func() (Id, err
 
 	if v := this.Uid; v != nil {
 		result.uid = uint32(*v)
-	} else if v, err := idGenerator(); err != nil {
-		return nil, err
 	} else {
-		result.uid = uint32(v)
+		result.uid = uint32(idGenerator())
 	}
 
 	if v := this.Name; v != "" {
@@ -136,7 +134,7 @@ func (this *Requirement) toEtcPasswdRef(gui GroupId, idGenerator func() (Id, err
 	}
 	result.etcShadowEntry.name = result.etcPasswdEntry.name
 
-	return &result, nil
+	return &result
 }
 
 func (this *Requirement) updateEtcPasswdRef(ref *etcPasswdRef, gui GroupId) error {

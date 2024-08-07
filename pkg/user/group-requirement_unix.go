@@ -22,6 +22,24 @@ func (this GroupRequirement) Clone() GroupRequirement {
 	}
 }
 
+func (this GroupRequirement) OrDefaults() GroupRequirement {
+	result := this.Clone()
+	if result.Name == "" && result.Gid != nil {
+		result.Name = fmt.Sprintf("g%d", *result.Gid)
+	}
+	return result
+}
+
+func (this GroupRequirement) OrDefaultsForUser(user *Requirement) GroupRequirement {
+	result := this.OrDefaults()
+	if user != nil {
+		if result.Name == "" && result.Gid == nil {
+			result.Name = strings.Clone(user.Name)
+		}
+	}
+	return result
+}
+
 func (this GroupRequirement) IsZero() bool {
 	return this.Gid == nil &&
 		len(this.Name) == 0
@@ -47,12 +65,12 @@ func (this GroupRequirement) isEqualTo(other *GroupRequirement) bool {
 }
 
 func (this GroupRequirement) doesFulfilRef(ref *etcGroupRef) bool {
-	if ref == nil {
+	if ref == nil || (this.Name == "" && this.Gid == nil) {
 		return false
 	}
 	gid := GroupId(ref.gid)
-	return GroupIdEqualsP(this.Gid, &gid) &&
-		this.Name == string(ref.name)
+	return (this.Gid == nil || *this.Gid == gid) &&
+		(this.Name == "" || this.Name == string(ref.name))
 }
 
 func (this GroupRequirement) String() string {

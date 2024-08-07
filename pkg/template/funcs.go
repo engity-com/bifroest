@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/Masterminds/sprig/v3"
+	"github.com/engity-com/bifroest/pkg/common"
 	"io"
 	"io/fs"
 	"os"
@@ -150,7 +151,7 @@ func file(arg0 string, args ...string) (string, error) {
 		}
 		return "", err
 	}
-	defer func() { _ = f.Close() }()
+	defer common.IgnoreCloseError(f)
 
 	var buf bytes.Buffer
 	if _, err := io.Copy(&buf, io.LimitReader(f, maximumReadFileSize)); err != nil {

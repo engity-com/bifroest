@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/engity-com/bifroest/pkg/common"
 	"net"
 	"strings"
 	"time"
@@ -34,7 +35,7 @@ func (this *fsLastAccessed) save() error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
+	defer common.IgnoreCloseError(f)
 
 	if err := json.NewEncoder(f).Encode(this); err != nil {
 		return fmt.Errorf("cannot encode session %v/%v: %w", this.session.VFlow, this.session.VId, err)

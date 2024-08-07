@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
@@ -65,7 +66,7 @@ func (this *fsSession) save() error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
+	defer common.IgnoreCloseError(f)
 
 	if err := json.NewEncoder(f).Encode(this); err != nil {
 		return fmt.Errorf("cannot encode session %v/%v: %w", this.VFlow, this.VId, err)

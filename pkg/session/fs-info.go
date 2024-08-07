@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/google/uuid"
 )
@@ -33,7 +34,7 @@ func (this *fsSession) LastAccessed() (InfoLastAccessed, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = r.Close() }()
+	defer common.IgnoreCloseError(r)
 
 	buf := fsLastAccessed{
 		session: this,

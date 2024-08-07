@@ -2,10 +2,12 @@ package user
 
 import (
 	"bytes"
+	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -24,6 +26,24 @@ func bs(ins ...string) [][]byte {
 		result[i] = b(in)
 	}
 	return result
+}
+
+func newTestFile(t *testing.T, name string, content string) testFile {
+	prefix := t.Name()
+	prefix = strings.ReplaceAll(prefix, "/", "_")
+	prefix = strings.ReplaceAll(prefix, "\\", "_")
+	prefix = strings.ReplaceAll(prefix, "*", "_")
+	prefix = strings.ReplaceAll(prefix, "$", "_")
+
+	f, err := os.CreateTemp("", "go-test-"+prefix+"-"+name+"-*")
+	require.NoError(t, err)
+
+	_, err = io.Copy(f, strings.NewReader(content))
+	require.NoError(t, err)
+
+	require.NoError(t, f.Close())
+
+	return testFile(f.Name())
 }
 
 type testFile string
@@ -82,7 +102,50 @@ func (this namedBytesBuffer) Name() string {
 	return "test"
 }
 
+func (this namedBytesBuffer) Seek(offset int64, whence int) (int64, error) {
+	if offset != 0 {
+		return 0, fmt.Errorf("cannot seek to non-zero offset")
+	}
+	if whence != io.SeekStart {
+		return 0, fmt.Errorf("cannot seek to non-start whence")
+	}
+	this.Buffer.Reset()
+	return 0, nil
+}
+
 func (this namedBytesBuffer) Truncate(n int64) error {
 	this.Buffer.Truncate(int(n))
 	return nil
+}
+
+func newTestDir(t *testing.T, name string) testDir {
+	prefix := t.Name()
+	prefix = strings.ReplaceAll(prefix, "/", "_")
+	prefix = strings.ReplaceAll(prefix, "\\", "_")
+	prefix = strings.ReplaceAll(prefix, "*", "_")
+	prefix = strings.ReplaceAll(prefix, "$", "_")
+
+	result, err := os.MkdirTemp("", "go-test-"+prefix+"-"+name+"-*")
+	require.NoError(t, err)
+
+	return testDir(result)
+}
+
+type testDir string
+
+func (this testDir) dispose(t *testing.T) {
+	if keepPkgUserFiles {
+		t.Logf("Directory %q preserved", this)
+		return
+	}
+
+	err := os.RemoveAll(string(this))
+	if os.IsNotExist(err) {
+		return
+	}
+	assert.NoError(t, err, "test directory %q should be deleted after the test", this)
+}
+
+func (this testDir) child(sub ...string) string {
+	return filepath.Join(append([]string{string(this)}, sub...)...)
 }
