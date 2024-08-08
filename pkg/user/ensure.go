@@ -45,6 +45,13 @@ type EnsureOpts struct {
 	// ModifyAllowed defines that a User or Group can be modified if it
 	// does not meet the provided requirement. Default: true
 	ModifyAllowed *bool
+
+	// HomeDir defines if the home directory of the User should be
+	// touched or not (does not affect Group). This will create
+	// the home directory upon the user is created and move it once
+	// the home directory of an existing user is changing.
+	// Default: true
+	HomeDir *bool
 }
 
 // Clone create a copy of the current instance.
@@ -59,9 +66,15 @@ func (this EnsureOpts) Clone() EnsureOpts {
 		nv := *v
 		ma = &nv
 	}
+	var hd *bool
+	if v := this.HomeDir; v != nil {
+		nv := *v
+		hd = &nv
+	}
 	return EnsureOpts{
 		ca,
 		ma,
+		hd,
 	}
 }
 
@@ -79,6 +92,10 @@ func (this *EnsureOpts) OrDefaults() EnsureOpts {
 	if v := result.ModifyAllowed; v == nil {
 		nv := true
 		result.ModifyAllowed = &nv
+	}
+	if v := result.HomeDir; v == nil {
+		nv := true
+		result.HomeDir = &nv
 	}
 	return result
 }

@@ -3,6 +3,7 @@ module github.com/engity-com/bifroest
 go 1.22
 
 require (
+	github.com/GehirnInc/crypt v0.0.0-20230320061759-8cc1b52080c5
 	github.com/Masterminds/sprig/v3 v3.2.3
 	github.com/alecthomas/kingpin v2.2.6+incompatible
 	github.com/coreos/go-oidc/v3 v3.11.0

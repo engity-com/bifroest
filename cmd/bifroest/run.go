@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"github.com/alecthomas/kingpin"
 	log "github.com/echocat/slf4g"
 	"github.com/engity-com/bifroest/pkg/service"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
 func registerRunCmd(app *kingpin.Application) {
@@ -29,7 +32,19 @@ func doRun() error {
 		return nil
 	}
 
-	if err := svc.Run(); err != nil {
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	defer cancelFunc()
+
+	sigs := make(chan os.Signal, 1)
+	defer close(sigs)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-sigs
+		log.With("signal", sig).Info("received signal")
+		cancelFunc()
+	}()
+
+	if err := svc.Run(ctx); err != nil {
 		return fail(err)
 	}
 

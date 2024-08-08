@@ -116,8 +116,24 @@ func (this UserRequirementTemplate) IsEqualTo(other any) bool {
 
 func (this UserRequirementTemplate) isEqualTo(other *UserRequirementTemplate) bool {
 	return isEqual(&this.Name, &other.Name) &&
-		isEqual(&this.DisplayName, &other.DisplayName) &&
 		isEqual(&this.Uid, &other.Uid) &&
+		this.isEqualButNameAndUidTo(other)
+}
+
+func (this UserRequirementTemplate) IsDefaultButNameAndUid() bool {
+	var buf UserRequirementTemplate
+	common.Must(buf.SetDefaults())
+	return this.isEqualButNameAndUidTo(&buf)
+}
+
+func (this UserRequirementTemplate) IsDefault() bool {
+	var buf UserRequirementTemplate
+	common.Must(buf.SetDefaults())
+	return this.isEqualTo(&buf)
+}
+
+func (this UserRequirementTemplate) isEqualButNameAndUidTo(other *UserRequirementTemplate) bool {
+	return isEqual(&this.DisplayName, &other.DisplayName) &&
 		isEqual(&this.Group, &other.Group) &&
 		isEqual(&this.Groups, &other.Groups) &&
 		isEqual(&this.Shell, &other.Shell) &&

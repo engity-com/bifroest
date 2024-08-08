@@ -2,7 +2,6 @@ package authorization
 
 import (
 	"context"
-	sdkerrors "errors"
 	"fmt"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -170,11 +169,15 @@ func (this *OidcDeviceAuthAuthorizer) RetrieveDeviceAuthToken(ctx context.Contex
 	}
 
 	response, err := this.oauth2Config.DeviceAccessToken(ctx, using, oauth2.SetAuthURLParam("client_secret", this.oauth2Config.ClientSecret))
-	if sdkerrors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.DeadlineExceeded) {
 		return failf(errors.TypeUser, "authorize of device timed out")
 	}
-	if sdkerrors.Is(err, context.Canceled) {
+	if errors.Is(err, context.Canceled) {
 		return failf(errors.TypeUser, "authorize cancelled by user")
+	}
+	var oaErr *oauth2.RetrieveError
+	if errors.As(err, &oaErr) && oaErr.ErrorCode == "expired_token" {
+		return failf(errors.TypeUser, "authorize of device timed out by IdP")
 	}
 	if err != nil {
 		return failf(errors.TypeNetwork, "cannot authorize device: %w", err)
@@ -238,4 +241,8 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(PublicKeyRequest) (Auth
 
 func (this *OidcDeviceAuthAuthorizer) AuthorizePassword(PasswordRequest) (Authorization, error) {
 	return Forbidden(), nil
+}
+
+func (this *OidcDeviceAuthAuthorizer) Close() error {
+	return nil
 }

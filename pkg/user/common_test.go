@@ -35,7 +35,9 @@ func newTestFile(t *testing.T, name string, content string) testFile {
 	prefix = strings.ReplaceAll(prefix, "*", "_")
 	prefix = strings.ReplaceAll(prefix, "$", "_")
 
-	f, err := os.CreateTemp("", "go-test-"+prefix+"-"+name+"-*")
+	fn := newTestDir(t, prefix).child(name)
+
+	f, err := os.OpenFile(fn, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
 	require.NoError(t, err)
 
 	_, err = io.Copy(f, strings.NewReader(content))
@@ -54,11 +56,10 @@ func (this testFile) dispose(t *testing.T) {
 		return
 	}
 
-	err := os.Remove(string(this))
-	if os.IsNotExist(err) {
-		return
+	dir := filepath.Dir(string(this))
+	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
+		t.Errorf("test directory %q should be deleted after the test; but was: %v", dir, err)
 	}
-	assert.NoError(t, err, "test file %q should be deleted after the test", this)
 }
 
 func (this testFile) update(t *testing.T, with string) {

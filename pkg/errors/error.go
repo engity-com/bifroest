@@ -31,3 +31,8 @@ func (this *Error) Error() string {
 func (this *Error) Unwrap() error {
 	return this.Cause
 }
+
+func IsError(err error) (eErr *Error, ok bool) {
+	ok = As(err, &eErr)
+	return
+}

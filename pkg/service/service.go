@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	log "github.com/echocat/slf4g"
 	"github.com/engity-com/bifroest/pkg/authorization"
@@ -10,6 +9,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/environment"
+	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/gliderlabs/ssh"
 	gssh "golang.org/x/crypto/ssh"
 	"io"
@@ -28,24 +28,51 @@ type Service struct {
 	Logger log.Logger
 }
 
-func (this *Service) Run() error {
+func (this *Service) isProblematicError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, net.ErrClosed) {
+		return false
+	}
+	return true
+}
+
+func (this *Service) Run(ctx context.Context) (rErr error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	svc, err := this.prepare()
 	if err != nil {
 		return err
 	}
+	defer common.KeepCloseError(&rErr, svc)
 
 	lns := make([]struct {
 		ln   net.Listener
 		addr common.NetAddress
 	}, len(this.Configuration.Ssh.Addresses))
-	defer func() {
-		// Close all opened listeners
+	var lnMutex sync.Mutex
+	closeLns := func() {
+		lnMutex.Lock()
+		defer lnMutex.Unlock()
+
 		for _, ln := range lns {
 			if ln.ln != nil {
-				_ = ln.ln.Close()
+				defer func(target *net.Listener) {
+					*target = nil
+				}(&ln.ln)
+				if err := ln.ln.Close(); this.isProblematicError(err) && rErr == nil {
+					rErr = err
+				}
 			}
 		}
-	}()
+	}
+	defer closeLns()
+
 	for i, addr := range this.Configuration.Ssh.Addresses {
 		ln, err := addr.Listen()
 		if err != nil {
@@ -55,30 +82,56 @@ func (this *Service) Run() error {
 		lns[i].ln = ln
 	}
 
+	done := make(chan error, len(lns))
 	var wg sync.WaitGroup
 	for _, ln := range lns {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			l := log.With("address", ln.addr)
+			l := this.logger().With("address", ln.addr)
 
 			l.Info("listening...")
-			if err := svc.server.Serve(ln.ln); err != nil {
-				l.WithError(err).Fatal("cannot serve")
+			if err := svc.server.Serve(ln.ln); this.isProblematicError(err) {
+				l.WithError(err).Error("listening... FAILED!")
+				done <- err
+				return
 			}
+			l.Info("listening... DONE!")
+			done <- nil
 		}()
 	}
 
+	go func() {
+		for {
+			select {
+			case err, ok := <-done:
+				if !ok {
+					return
+				}
+				if this.isProblematicError(err) && rErr == nil {
+					rErr = err
+				}
+				closeLns()
+			case <-ctx.Done():
+				if err := ctx.Err(); this.isProblematicError(err) && rErr == nil {
+					rErr = err
+				}
+				closeLns()
+			}
+		}
+	}()
 	wg.Wait()
 
-	return nil
+	close(done)
+
+	return
 }
 
 func (this *Service) logger() log.Logger {
 	if v := this.Logger; v != nil {
 		return v
 	}
-	return log.GetRootLogger()
+	return log.GetLogger("service")
 }
 
 func (this *Service) prepare() (svc *service, err error) {
@@ -166,8 +219,8 @@ func (this *Service) loadHostSigners() ([]ssh.Signer, error) {
 type service struct {
 	*Service
 
-	authorization authorization.Authorizer
-	environment   environment.Environment
+	authorization authorization.CloseableAuthorizer
+	environment   environment.CloseableEnvironment
 	server        ssh.Server
 }
 
@@ -183,7 +236,7 @@ func (this *service) setLogger(ctx ssh.Context, logger log.Logger) {
 }
 
 func (this *service) onNewConnConnection(ctx ssh.Context, conn net.Conn) net.Conn {
-	logger := log.
+	logger := this.logger(ctx).
 		With("remote", conn.RemoteAddr())
 	logger.Debug("new connection started")
 	this.setLogger(ctx, logger)
@@ -242,6 +295,10 @@ func (this *service) handlePublicKey(ctx ssh.Context, key ssh.PublicKey) bool {
 		publicKey: key,
 	})
 	if err != nil {
+		if eErr, ok := errors.IsError(err); ok && eErr.Type == errors.TypeUser {
+			l.WithError(err).Debug("public key failed by user")
+			return false
+		}
 		if !this.isSilentError(err) {
 			l.WithError(err).Warn("was not able to resolve public key authorization request; treat as rejected")
 		}
@@ -269,6 +326,10 @@ func (this *service) handlePassword(ctx ssh.Context, password string) bool {
 		password: password,
 	})
 	if err != nil {
+		if eErr, ok := errors.IsError(err); ok && eErr.Type == errors.TypeUser {
+			l.WithError(err).Debug("password failed by user")
+			return false
+		}
 		if !this.isSilentError(err) {
 			l.WithError(err).Warn("was not able to resolve password authorization request; treat as rejected")
 		}
@@ -296,6 +357,10 @@ func (this *service) handleKeyboardInteractiveChallenge(ctx ssh.Context, challen
 		challenger: challenger,
 	})
 	if err != nil {
+		if eErr, ok := errors.IsError(err); ok && eErr.Type == errors.TypeUser {
+			l.WithError(err).Debug("interactive failed by user")
+			return false
+		}
 		if !this.isSilentError(err) {
 			l.WithError(err).Warn("was not able to resolve interactive authorization request; treat as rejected")
 		}
@@ -319,7 +384,7 @@ func (this *service) handleBanner(ctx ssh.Context) string {
 	this.setLogger(ctx, l)
 
 	if b, err := this.Configuration.Ssh.Banner.Render(&BannerContext{ctx}); err != nil {
-		log.WithError(err).Warn("cannot retrieve banner; showing none")
+		l.WithError(err).Warn("cannot retrieve banner; showing none")
 		return ""
 	} else {
 		return b
@@ -409,4 +474,10 @@ func (this *service) executeSession(sess ssh.Session, taskType environment.TaskT
 	}
 
 	_ = sess.Exit(0)
+}
+
+func (this *service) Close() (rErr error) {
+	defer common.KeepCloseError(&rErr, this.authorization)
+	defer common.KeepCloseError(&rErr, this.environment)
+	return nil
 }

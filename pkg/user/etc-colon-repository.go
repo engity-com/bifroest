@@ -8,23 +8,25 @@ import (
 	log "github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/fields"
 	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/crypto/unix/password"
+	"github.com/fsnotify/fsnotify"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 )
 
 var (
-	DefaultRepository Repository = &EtcColonRepository{}
-
-	ErrEtcColonRepositoryUnsupportedRemove error = StringError("etc colon repository does not support removing of files")
-	ErrEtcColonRepositoryUnsupportedRename error = StringError("etc colon repository does not support renaming of files")
-
 	DefaultFileSystemSyncThreshold = time.Second * 2
 	DefaultCreateFilesIfAbsent     = false
-	DefaultAllowBadName            = false
+	DefaultAllowBadName            = true
 	DefaultAllowBadLine            = true
 )
+
+func init() {
+	DefaultRepositoryProvider = &SharedRepositoryProvider[*EtcColonRepository]{V: &EtcColonRepository{}}
+}
 
 // EtcColonRepository implements Repository based on the /etc/passwd file standard
 // commonly used in Unix operating systems (see [Wikipedia article] for more
@@ -92,8 +94,8 @@ type EtcColonRepository struct {
 	// DefaultFileSystemSyncThreshold.
 	FileSystemSyncThreshold time.Duration
 
-	// Logger will be used to log events to. If empty the log.GetRootLogger()
-	// will be used.
+	// Logger will be used to log events to. If empty the
+	// log.GetLogger("user-repository") will be used.
 	Logger log.Logger
 
 	nameToUser       nameToEtcPasswdRef
@@ -101,6 +103,8 @@ type EtcColonRepository struct {
 	nameToGroup      nameToEtcGroupRef
 	idToGroup        idToEtcGroupRef
 	usernameToGroups nameToEtcGroupRefs
+
+	watcher *fsnotify.Watcher
 
 	handles     etcColonRepositoryHandles
 	mutex       sync.RWMutex
@@ -112,7 +116,12 @@ func (this *EtcColonRepository) Init() error {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 
-	if this.reloadTimer == nil {
+	if this.watcher != nil {
+		return nil
+	}
+
+	success := false
+	{
 		first := true
 		this.reloadTimer = time.AfterFunc(-1, func() {
 			// The first load we want to do manually to catch the error directly...
@@ -121,20 +130,37 @@ func (this *EtcColonRepository) Init() error {
 				return
 			}
 
-			this.mutex.Lock()
-			defer this.mutex.Unlock()
-
-			if err := this.load(); err != nil {
-				this.onUnhandledAsyncError(this.logger(), err, "cannot reload repository")
-			}
+			this.onReloadTimer()
 		})
 	}
 
 	if err := this.handles.init(this); err != nil {
 		return err
 	}
+	defer common.DoOnFailureIgnore(&success, this.handles.close)
 
-	return this.load()
+	if err := this.load(); err != nil {
+		return err
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("cannot initialize file watcher: %w", err)
+	}
+	defer common.DoOnFailureIgnore(&success, watcher.Close)
+
+	go this.watchForChanges(watcher)
+
+	for v := range this.handles.getDirectories() {
+		this.logger().With("directory", v).Debug("watching changes within directory")
+		if err := watcher.Add(v); err != nil {
+			return err
+		}
+	}
+
+	this.watcher = watcher
+	success = true
+	return nil
 }
 
 // LookupByName implements Repository.LookupByName.
@@ -367,7 +393,7 @@ func (this *EtcColonRepository) Ensure(req *Requirement, opts *EnsureOpts) (_ *U
 		return user, pResult, err
 	}
 
-	_, group, _, err := this.ensureGroup(&tReq.Group, &tOpts)
+	_, group, _, err := this.ensureGroup(&tReq, &tReq.Group, &tOpts)
 	if err != nil {
 		return nil, EnsureResultError, err
 	}
@@ -430,6 +456,14 @@ func (this *EtcColonRepository) Ensure(req *Requirement, opts *EnsureOpts) (_ *U
 			notAlreadyHandledGroupRefs[v.gid] = v
 		}
 	}
+	if !bytes.Equal(oldName, existing.etcPasswdEntry.name) {
+		if vs, ok := this.usernameToGroups[string(oldName)]; ok {
+			for _, v := range vs {
+				v.etcGroupEntry.removeUserName(oldName)
+			}
+		}
+		delete(this.usernameToGroups, string(oldName))
+	}
 	for _, gr := range groupRefs {
 		delete(notAlreadyHandledGroupRefs, gr.gid)
 		gr.etcGroupEntry.addUniqueUserName(existing.etcPasswdEntry.name)
@@ -444,6 +478,206 @@ func (this *EtcColonRepository) Ensure(req *Requirement, opts *EnsureOpts) (_ *U
 	}
 
 	return this.refAndGroupsToUser(existing, group, &groups), EnsureResultModified, nil
+}
+
+// DeleteById implements Repository.DeleteById.
+func (this *EtcColonRepository) DeleteById(id Id) (rErr error) {
+	return this.deleteRef(func() (*etcPasswdRef, error) {
+		i2u := this.idToUser
+		if i2u == nil {
+			return nil, ErrNoSuchUser
+		}
+
+		ref, ok := i2u[id]
+		if !ok {
+			return nil, ErrNoSuchUser
+		}
+
+		return ref, nil
+	})
+}
+
+// DeleteByName implements Repository.DeleteByName.
+func (this *EtcColonRepository) DeleteByName(name string) (rErr error) {
+	return this.deleteRef(func() (*etcPasswdRef, error) {
+		n2u := this.nameToUser
+		if n2u == nil {
+			return nil, ErrNoSuchUser
+		}
+
+		ref, ok := n2u[name]
+		if !ok {
+			return nil, ErrNoSuchUser
+		}
+
+		return ref, nil
+	})
+}
+
+func (this *EtcColonRepository) deleteRef(selector func() (*etcPasswdRef, error)) (rErr error) {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+
+	f, err := this.openAndLoad(true, true)
+	if err != nil {
+		return err
+	}
+	defer common.KeepError(&rErr, f.close)
+
+	ref, err := selector()
+	if err != nil {
+		return err
+	}
+
+	delete(this.nameToUser, string(ref.etcPasswdEntry.name))
+	delete(this.idToUser, Id(ref.etcPasswdEntry.uid))
+
+	for _, gRef := range this.usernameToGroups[string(ref.etcPasswdEntry.name)] {
+		gRef.removeUserName(ref.etcPasswdEntry.name)
+	}
+	delete(this.usernameToGroups, string(ref.etcPasswdEntry.name))
+
+	this.handles.passwd.entries = slices.DeleteFunc(this.handles.passwd.entries, func(candidate etcColonEntry[etcPasswdEntry, *etcPasswdEntry]) bool {
+		if candidate.entry == nil {
+			return false
+		}
+		return candidate.entry.uid == ref.etcPasswdEntry.uid
+	})
+	this.handles.shadow.entries = slices.DeleteFunc(this.handles.shadow.entries, func(candidate etcColonEntry[etcShadowEntry, *etcShadowEntry]) bool {
+		if candidate.entry == nil {
+			return false
+		}
+		return bytes.Equal(candidate.entry.name, ref.etcShadowEntry.name)
+	})
+
+	return f.save()
+}
+
+// ValidatePasswordById implements Repository.ValidatePasswordById.
+func (this *EtcColonRepository) ValidatePasswordById(id Id, pass []byte) (bool, error) {
+	return this.validatePasswordRef(pass, func() (*etcPasswdRef, error) {
+		i2u := this.idToUser
+		if i2u == nil {
+			return nil, ErrNoSuchUser
+		}
+
+		ref, ok := i2u[id]
+		if !ok {
+			return nil, ErrNoSuchUser
+		}
+
+		return ref, nil
+	})
+}
+
+// ValidatePasswordByName implements Repository.ValidatePasswordByName.
+func (this *EtcColonRepository) ValidatePasswordByName(name string, pass []byte) (bool, error) {
+	return this.validatePasswordRef(pass, func() (*etcPasswdRef, error) {
+		n2u := this.nameToUser
+		if n2u == nil {
+			return nil, ErrNoSuchUser
+		}
+
+		ref, ok := n2u[name]
+		if !ok {
+			return nil, ErrNoSuchUser
+		}
+
+		return ref, nil
+	})
+}
+
+func (this *EtcColonRepository) validatePasswordRef(pass []byte, selector func() (*etcPasswdRef, error)) (_ bool, rErr error) {
+	this.mutex.RLock()
+	defer this.mutex.RUnlock()
+
+	ref, err := selector()
+	if err != nil {
+		return false, err
+	}
+
+	if ref.etcShadowEntry == nil {
+		if ref.etcPasswdEntry == nil {
+			return false, nil
+		}
+		return bytes.Equal(ref.etcPasswdEntry.password, pass), nil
+	}
+
+	ok, err := password.Validate(pass, ref.etcShadowEntry.password)
+	if err != nil {
+		return false, err
+	}
+	return ok, nil
+}
+
+// DeleteGroupById implements Repository.DeleteGroupById.
+func (this *EtcColonRepository) DeleteGroupById(id GroupId) (rErr error) {
+	return this.deleteGroupRef(func() (*etcGroupRef, error) {
+		i2g := this.idToGroup
+		if i2g == nil {
+			return nil, ErrNoSuchGroup
+		}
+
+		ref, ok := i2g[id]
+		if !ok {
+			return nil, ErrNoSuchGroup
+		}
+
+		return ref, nil
+	})
+}
+
+// DeleteGroupByName implements Repository.DeleteGroupByName.
+func (this *EtcColonRepository) DeleteGroupByName(name string) (rErr error) {
+	return this.deleteGroupRef(func() (*etcGroupRef, error) {
+		n2g := this.nameToGroup
+		if n2g == nil {
+			return nil, ErrNoSuchGroup
+		}
+
+		ref, ok := n2g[name]
+		if !ok {
+			return nil, ErrNoSuchGroup
+		}
+
+		return ref, nil
+	})
+}
+
+func (this *EtcColonRepository) deleteGroupRef(selector func() (*etcGroupRef, error)) (rErr error) {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+
+	f, err := this.openAndLoad(true, true)
+	if err != nil {
+		return err
+	}
+	defer common.KeepError(&rErr, f.close)
+
+	ref, err := selector()
+	if err != nil {
+		return err
+	}
+
+	for _, uEntry := range this.handles.passwd.entries {
+		if uEntry.entry == nil {
+			continue
+		}
+		if uEntry.entry.gid == ref.etcGroupEntry.gid {
+			return fmt.Errorf("cannot delete group because it is still used by user %d(%s)", uEntry.entry.uid, string(uEntry.entry.name))
+		}
+	}
+
+	delete(this.nameToGroup, string(ref.etcGroupEntry.name))
+	delete(this.idToGroup, GroupId(ref.etcGroupEntry.gid))
+	this.handles.group.entries = slices.DeleteFunc(this.handles.group.entries, func(candidate etcColonEntry[etcGroupEntry, *etcGroupEntry]) bool {
+		if candidate.entry == nil {
+			return false
+		}
+		return candidate.entry.gid == ref.etcGroupEntry.gid
+	})
+
+	return f.save()
 }
 
 func (this *EtcColonRepository) preEnsureGroup(req *GroupRequirement, opts *EnsureOpts, mutex sync.Locker) (*etcGroupRef, *Group, EnsureResult, error) {
@@ -483,7 +717,7 @@ func (this *EtcColonRepository) EnsureGroup(req *GroupRequirement, opts *EnsureO
 	}
 	defer common.KeepError(&rErr, f.close)
 
-	_, group, result, err := this.ensureGroup(&tReq, &tOpts)
+	_, group, result, err := this.ensureGroup(nil, &tReq, &tOpts)
 	if err != nil {
 		return nil, EnsureResultError, err
 	}
@@ -545,7 +779,7 @@ func (this *EtcColonRepository) ensureGroups(reqs *GroupRequirements, opts *Ensu
 	refs := make([]*etcGroupRef, len(*reqs))
 	groups := make(Groups, len(*reqs))
 	for i, req := range *reqs {
-		ref, v, _, err := this.ensureGroup(&req, &tOpts)
+		ref, v, _, err := this.ensureGroup(nil, &req, &tOpts)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -559,6 +793,9 @@ func (this *EtcColonRepository) ensureGroups(reqs *GroupRequirements, opts *Ensu
 func (this *EtcColonRepository) findHighestGid() GroupId {
 	var result GroupId
 	for _, v := range this.handles.group.entries {
+		if v.entry == nil {
+			continue
+		}
 		actual := GroupId(v.entry.gid)
 		if actual > result {
 			result = actual
@@ -571,6 +808,9 @@ func (this *EtcColonRepository) findHighestGid() GroupId {
 func (this *EtcColonRepository) findHighestUid() Id {
 	var result Id
 	for _, v := range this.handles.passwd.entries {
+		if v.entry == nil {
+			continue
+		}
 		actual := Id(v.entry.uid)
 		if actual > result {
 			result = actual
@@ -666,12 +906,21 @@ func (this *EtcColonRepository) scheduleReload(l log.Logger) {
 	}
 }
 
+func (this *EtcColonRepository) onReloadTimer() {
+	this.mutex.RLock()
+	defer this.mutex.RUnlock()
+
+	if err := this.load(); err != nil {
+		this.onUnhandledAsyncError(this.logger(), err, "cannot reload repository")
+	}
+}
+
 func (this *EtcColonRepository) load() (rErr error) {
 	l := this.logger()
 
 	start := time.Now()
 	if l.IsDebugEnabled() {
-		l.Debug("load user repository...")
+		l.Debug("loading...")
 	}
 
 	_, err := this.openAndLoad(false, false)
@@ -681,9 +930,9 @@ func (this *EtcColonRepository) load() (rErr error) {
 
 	lw := l.With("duration", fields.LazyFunc(func() any { return time.Since(start).Truncate(time.Microsecond).String() }))
 	if l.IsDebugEnabled() {
-		lw.Info("load user repository... DONE!")
+		lw.Info("loading... DONE!")
 	} else {
-		lw.Info("user repository loaded")
+		lw.Info("loaded")
 	}
 
 	return nil
@@ -727,13 +976,14 @@ func (this *EtcColonRepository) loadGroupsRefs() (nameToEtcGroupRef, idToEtcGrou
 	usernameToGroup := nameToEtcGroupRefs{}
 
 	for _, e := range this.handles.group.entries {
-		if e.entry != nil {
-			ref := etcGroupRef{e.entry}
-			nameToGroup[string(e.entry.name)] = &ref
-			idToGroup[GroupId(e.entry.gid)] = &ref
-			for _, un := range ref.userNames {
-				usernameToGroup[string(un)] = append(usernameToGroup[string(un)], &ref)
-			}
+		if e.entry == nil {
+			continue
+		}
+		ref := etcGroupRef{e.entry}
+		nameToGroup[string(e.entry.name)] = &ref
+		idToGroup[GroupId(e.entry.gid)] = &ref
+		for _, un := range ref.userNames {
+			usernameToGroup[string(un)] = append(usernameToGroup[string(un)], &ref)
 		}
 	}
 
@@ -744,9 +994,10 @@ func (this *EtcColonRepository) loadShadowsRefs() map[string]*etcShadowEntry {
 	nameToShadow := make(map[string]*etcShadowEntry, len(this.handles.shadow.entries))
 
 	for _, e := range this.handles.shadow.entries {
-		if e.entry != nil {
-			nameToShadow[string(e.entry.name)] = e.entry
+		if e.entry == nil {
+			continue
 		}
+		nameToShadow[string(e.entry.name)] = e.entry
 	}
 
 	return nameToShadow
@@ -757,14 +1008,15 @@ func (this *EtcColonRepository) loadUsersRefs(usernameToShadow map[string]*etcSh
 	idToUser := make(idToEtcPasswdRef, len(this.handles.passwd.entries))
 
 	for _, e := range this.handles.passwd.entries {
-		if e.entry != nil {
-			shadow := usernameToShadow[string(e.entry.name)]
-
-			ref := etcPasswdRef{e.entry, shadow}
-
-			nameToUser[string(e.entry.name)] = &ref
-			idToUser[Id(e.entry.uid)] = &ref
+		if e.entry == nil {
+			continue
 		}
+		shadow := usernameToShadow[string(e.entry.name)]
+
+		ref := etcPasswdRef{e.entry, shadow}
+
+		nameToUser[string(e.entry.name)] = &ref
+		idToUser[Id(e.entry.uid)] = &ref
 	}
 
 	return nameToUser, idToUser
@@ -774,7 +1026,7 @@ func (this *EtcColonRepository) logger() log.Logger {
 	if v := this.Logger; v != nil {
 		return v
 	}
-	return log.GetRootLogger()
+	return log.GetLogger("user-repository")
 }
 
 func (this *EtcColonRepository) getCreateFilesIfAbsent() bool {
@@ -799,6 +1051,39 @@ func (this *EtcColonRepository) getAllowBadLine() bool {
 	}
 	//goland:noinspection GoBoolExpressions
 	return DefaultAllowBadLine
+}
+
+func (this *EtcColonRepository) watchForChanges(watcher *fsnotify.Watcher) {
+	for {
+		select {
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			l := this.logger().
+				With("op", event.Op).
+				With("file", event.Name)
+
+			match, err := this.handles.matchesFilename(event.Name)
+			if err != nil {
+				this.onUnhandledAsyncError(l, err, "cannot evaluate filename of event")
+			}
+			if !match {
+				continue
+			}
+			switch event.Op {
+			case fsnotify.Create, fsnotify.Write, fsnotify.Rename, fsnotify.Remove:
+				this.scheduleReload(l)
+			default:
+				// ignored
+			}
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			this.onUnhandledAsyncError(this.logger(), err, "error while handling file watcher events")
+		}
+	}
 }
 
 var etcColonRepositoryExitFunc = func() {

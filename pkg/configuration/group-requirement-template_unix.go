@@ -76,7 +76,7 @@ func (this GroupRequirementTemplate) IsEqualTo(other any) bool {
 }
 
 func (this GroupRequirementTemplate) isEqualTo(other *GroupRequirementTemplate) bool {
-	return isEqual(&this.Gid, &other.Gid) &&
+	return isEqual(this.Gid, other.Gid) &&
 		isEqual(&this.Name, &other.Name)
 }
 

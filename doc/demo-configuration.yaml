@@ -33,7 +33,7 @@ flows:
       createIfAbsent: true
       updateIfDifferent: true
       loginAllowed: |
-        {{ and 
+        {{ and
           (.Authorization.IdToken.Claims.groups | has "my-great-group-uuid")
           (.Authorization.IdToken.Claims.tid    | eq  "my-great-tenant-uuid")
         }}
@@ -52,7 +52,7 @@ flows:
       type: local
       name: "{{.Authorization.Name}}"
       loginAllowed: |
-        {{ or 
+        {{ or
           (.Authorization.Group.Name | eq "ssh" )
-          (.Authorization.Groups | firstMatching `{{.Name | eq "ssh"}}`)
+          (.Authorization.Groups     | firstMatching `{{.Name | eq "ssh"}}`)
         }}

@@ -3,6 +3,7 @@ package authorization
 import (
 	"context"
 	"fmt"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"reflect"
 )
@@ -71,8 +72,16 @@ func (this *Facade) AuthorizeInteractive(req InteractiveRequest) (Authorization,
 	return Forbidden(), nil
 }
 
+func (this *Facade) Close() (rErr error) {
+	defer func() { this.entries = nil }()
+	for _, candidate := range this.entries {
+		defer common.KeepCloseError(&rErr, candidate)
+	}
+	return nil
+}
+
 type facaded struct {
-	Authorizer
+	CloseableAuthorizer
 
 	flow        configuration.FlowName
 	requirement *configuration.Requirement
@@ -83,23 +92,30 @@ func (this *facaded) setConf(ctx context.Context, flow *configuration.Flow) erro
 		return fmt.Errorf("cannot initizalize authorization for flow %q: %w", flow.Name, err)
 	}
 
+	var newV CloseableAuthorizer
 	switch authConf := flow.Authorization.V.(type) {
 	case *configuration.AuthorizationOidcDeviceAuth:
 		v, err := NewOidcDeviceAuth(ctx, flow.Name, authConf)
 		if err != nil {
 			return fail(err)
 		}
-		this.Authorizer = v
+		newV = v
 	case *configuration.AuthorizationLocal:
 		v, err := NewLocal(ctx, flow.Name, authConf)
 		if err != nil {
 			return fail(err)
 		}
-		this.Authorizer = v
+		newV = v
 	default:
 		return fail(fmt.Errorf("cannot handle authorization type %v", reflect.TypeOf(flow.Authorization.V)))
 	}
 
+	if oldV := this.CloseableAuthorizer; oldV != nil {
+		if err := oldV.Close(); err != nil {
+			return err
+		}
+	}
+	this.CloseableAuthorizer = newV
 	this.requirement = &flow.Requirement
 	this.flow = flow.Name
 	return nil

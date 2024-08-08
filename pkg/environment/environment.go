@@ -7,3 +7,8 @@ type Environment interface {
 	Banner(Request) (io.ReadCloser, error)
 	Run(Task) error
 }
+
+type CloseableEnvironment interface {
+	Environment
+	io.Closer
+}

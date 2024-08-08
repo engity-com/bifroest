@@ -20,7 +20,7 @@ var (
 	DefaultSshMaxAuthTries = uint8(6)
 
 	// DefaultSshBanner is the default setting for Ssh.Banner.
-	DefaultSshBanner = template.MustNewString("{{`/etc/ssh/sshd-banner` | file `optional`}}")
+	DefaultSshBanner = template.MustNewString("{{`/etc/ssh/sshd-banner` | file `optional` | default `Transcend with Engity's Bifröst\n\n` }}")
 )
 
 // Ssh defines how the ssh part of the service should be defined.

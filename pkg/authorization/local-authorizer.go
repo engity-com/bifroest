@@ -17,7 +17,7 @@ type LocalAuthorizer struct {
 	flow configuration.FlowName
 	conf *configuration.AuthorizationLocal
 
-	userRepository user.Repository
+	userRepository user.CloseableRepository
 }
 
 func NewLocal(_ context.Context, flow configuration.FlowName, conf *configuration.AuthorizationLocal) (*LocalAuthorizer, error) {
@@ -32,10 +32,15 @@ func NewLocal(_ context.Context, flow configuration.FlowName, conf *configuratio
 		return failf("nil configuration")
 	}
 
+	userRepository, err := user.DefaultRepositoryProvider.Create()
+	if err != nil {
+		return nil, err
+	}
+
 	result := LocalAuthorizer{
 		flow:           flow,
 		conf:           conf,
-		userRepository: user.DefaultRepository,
+		userRepository: userRepository,
 	}
 
 	return &result, nil
@@ -55,12 +60,12 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	}
 
 	u, err := this.userRepository.LookupByName(req.Remote().User())
-	if err != nil {
-		return failf("cannot lookup user: %w", err)
-	}
-	if u == nil {
+	if errors.Is(err, user.ErrNoSuchUser) {
 		req.Logger().Debug("local user not found")
 		return Forbidden(), nil
+	}
+	if err != nil {
+		return failf("cannot lookup user: %w", err)
 	}
 
 	files, err := this.getAuthorizedKeysFilesOf(req, u)
@@ -137,12 +142,12 @@ func (this *LocalAuthorizer) AuthorizePassword(req PasswordRequest) (Authorizati
 	}
 
 	u, err := this.userRepository.LookupByName(username)
-	if err != nil {
-		return failf("cannot lookup user %q: %w", username, err)
-	}
-	if u == nil {
+	if errors.Is(err, user.ErrNoSuchUser) {
 		req.Logger().Warn("local user %q not found; but it was just resolve before", username)
 		return Forbidden(), nil
+	}
+	if err != nil {
+		return failf("cannot lookup user %q: %w", username, err)
 	}
 
 	return &Local{u, ev, this.flow}, nil
@@ -179,12 +184,12 @@ func (this *LocalAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Autho
 	}
 
 	u, err := this.userRepository.LookupByName(username)
-	if err != nil {
-		return failf("cannot lookup user %q: %w", username, err)
-	}
-	if u == nil {
+	if errors.Is(err, user.ErrNoSuchUser) {
 		req.Logger().Warn("local user %q not found; but it was just resolve before", username)
 		return Forbidden(), nil
+	}
+	if err != nil {
+		return failf("cannot lookup user %q: %w", username, err)
 	}
 
 	return &Local{u, ev, this.flow}, nil
@@ -210,6 +215,10 @@ func (this *LocalAuthorizer) validatePassword(password string, req Request) (boo
 	}
 
 	return true, nil
+}
+
+func (this *LocalAuthorizer) Close() error {
+	return this.userRepository.Close()
 }
 
 type AuthorizedKeysRequestContext struct {

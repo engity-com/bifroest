@@ -8,6 +8,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/sys"
+	"github.com/engity-com/bifroest/pkg/template"
 	"github.com/engity-com/bifroest/pkg/user"
 	"github.com/gliderlabs/ssh"
 	"github.com/kardianos/osext"
@@ -23,7 +24,7 @@ type Local struct {
 	flow configuration.FlowName
 	conf *configuration.EnvironmentLocal
 
-	userRepository user.Repository
+	userRepository user.CloseableRepository
 }
 
 func NewLocal(flow configuration.FlowName, conf *configuration.EnvironmentLocal) (*Local, error) {
@@ -38,10 +39,15 @@ func NewLocal(flow configuration.FlowName, conf *configuration.EnvironmentLocal)
 		return failf("nil configuration")
 	}
 
+	userRepository, err := user.DefaultRepositoryProvider.Create()
+	if err != nil {
+		return nil, err
+	}
+
 	result := Local{
 		flow:           flow,
 		conf:           conf,
-		userRepository: user.DefaultRepository,
+		userRepository: userRepository,
 	}
 
 	return &result, nil
@@ -73,19 +79,24 @@ func (this *Local) Run(t Task) error {
 		return err
 	}
 
-	req, createIfAbsent, updateIfDifferent, err := this.renderContext(t)
-	if err != nil {
-		return fail(err)
-	}
-
-	u, err := this.ensureUser(req, createIfAbsent, updateIfDifferent)
-	if err != nil {
-		return fail(err)
+	var u *user.User
+	var err error
+	if this.conf.User.IsDefaultButNameAndUid() {
+		if name := this.conf.User.Name; !name.IsZero() {
+			if u, err = this.lookupByName(t, name); err != nil {
+				return fail(err)
+			}
+		} else if uid := this.conf.User.Uid; uid != nil {
+			if u, err = this.lookupByUid(t, *uid); err != nil {
+				return fail(err)
+			}
+		}
 	}
 
 	if u == nil {
-		t.Logger().Info("no user could be resolved; exit now")
-		return nil
+		if u, err = this.ensureUserByTask(t); err != nil {
+			return fail(err)
+		}
 	}
 
 	if err := this.runCommand(t, u); err != nil {
@@ -95,28 +106,66 @@ func (this *Local) Run(t Task) error {
 	return nil
 }
 
-func (this *Local) renderContext(t Task) (req *user.Requirement, createIfAbsent, updateIfDifferent bool, err error) {
-	fail := func(err error) (*user.Requirement, bool, bool, error) {
-		return nil, false, false, err
+func (this *Local) ensureUserByTask(t Task) (*user.User, error) {
+	fail := func(err error) (*user.User, error) {
+		return nil, err
+	}
+	failf := func(msg string, args ...any) (*user.User, error) {
+		return fail(fmt.Errorf(msg, args...))
 	}
 
-	if req, err = this.conf.User.Render(nil, t); err != nil {
-		return fail(fmt.Errorf("cannot render user requirement: %w", err))
+	req, err := this.conf.User.Render(nil, t)
+	if err != nil {
+		return failf("cannot render user requirement: %w", err)
 	}
 
-	if createIfAbsent, err = this.conf.CreateIfAbsent.Render(t); err != nil {
-		return fail(fmt.Errorf("cannot render createIfAbsent: %w", err))
+	createIfAbsent, err := this.conf.CreateIfAbsent.Render(t)
+	if err != nil {
+		return failf("cannot render createIfAbsent: %w", err)
 	}
 
-	if updateIfDifferent, err = this.conf.UpdateIfDifferent.Render(t); err != nil {
-		return fail(fmt.Errorf("cannot render updateIfDifferent: %w", err))
+	updateIfDifferent, err := this.conf.UpdateIfDifferent.Render(t)
+	if err != nil {
+		return failf("cannot render updateIfDifferent: %w", err)
 	}
 
-	return req, createIfAbsent, updateIfDifferent, nil
+	return this.ensureUser(req, createIfAbsent, updateIfDifferent)
+}
+
+func (this *Local) lookupByUid(t Task, tmpl template.TextMarshaller[user.Id, *user.Id]) (*user.User, error) {
+	fail := func(err error) (*user.User, error) {
+		return nil, err
+	}
+	failf := func(msg string, args ...any) (*user.User, error) {
+		return fail(fmt.Errorf(msg, args...))
+	}
+
+	uid, err := tmpl.Render(t)
+	if err != nil {
+		return failf("cannot render UID: %w", err)
+	}
+
+	return this.userRepository.LookupById(uid)
+}
+
+func (this *Local) lookupByName(t Task, tmpl template.String) (*user.User, error) {
+	fail := func(err error) (*user.User, error) {
+		return nil, err
+	}
+	failf := func(msg string, args ...any) (*user.User, error) {
+		return fail(fmt.Errorf(msg, args...))
+	}
+
+	name, err := tmpl.Render(t)
+	if err != nil {
+		return failf("cannot render user name: %w", err)
+	}
+
+	return this.userRepository.LookupByName(name)
 }
 
 func (this *Local) ensureUser(req *user.Requirement, createIfAbsent, updateIfDifferent bool) (u *user.User, err error) {
-	u, err = this.userRepository.Ensure(req, &user.EnsureOpts{
+	u, _, err = this.userRepository.Ensure(req, &user.EnsureOpts{
 		CreateAllowed: &createIfAbsent,
 		ModifyAllowed: &updateIfDifferent,
 	})
@@ -235,6 +284,10 @@ func (this *Local) runCommand(t Task, u *user.User) error {
 	}
 
 	return nil
+}
+
+func (this *Local) Close() error {
+	return this.userRepository.Close()
 }
 
 func (this *Local) killIfNeeded(t Task, cmd *exec.Cmd) {

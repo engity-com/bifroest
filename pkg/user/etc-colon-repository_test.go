@@ -41,9 +41,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar`,
-			shadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+			shadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 			expectedPasswdEntries: etcColonEntries[etcPasswdEntry, *etcPasswdEntry]{
 				{&etcPasswdEntry{b("root"), b("x"), 0, 0, b("root"), b("/root"), b("/bin/sh")}, nil},
 				{&etcPasswdEntry{b("foo"), b("abc"), 1, 2, b("Foo Name"), b("/home/foo"), b("/bin/foosh ")}, nil},
@@ -55,9 +55,9 @@ bar:XbarX:1767222000:10:100:::1798758000`,
 				{&etcGroupEntry{b("bar"), b(""), 12, bs("bar")}, nil},
 			},
 			expectedShadowEntries: etcColonEntries[etcShadowEntry, *etcShadowEntry]{
-				{&etcShadowEntry{b("root"), b("XrootX"), 1704063600, 10, 100, 50, true, 200, true, 1735686000, true}, nil},
-				{&etcShadowEntry{b("foo"), b("XfooX"), 1735686000, 10, 100, 0, false, 0, false, 0, false}, nil},
-				{&etcShadowEntry{b("bar"), b("XbarX"), 1767222000, 10, 100, 0, false, 0, false, 1798758000, true}, nil},
+				{&etcShadowEntry{b("root"), b("XrootX"), 19722, 10, 100, 50, true, 200, true, 20088, true}, nil},
+				{&etcShadowEntry{b("foo"), b("XfooX"), 20088, 10, 100, 0, false, 0, false, 0, false}, nil},
+				{&etcShadowEntry{b("bar"), b("XbarX"), 20453, 10, 100, 0, false, 0, false, 20818, true}, nil},
 			},
 		},
 
@@ -70,9 +70,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:aaa,bbb
 bar::12:ccc`,
-			shadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+			shadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 			expectedError: ":1: illegal user name",
 		},
 		{
@@ -83,9 +83,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo@:abc:1:aaa,bbb
 bar::12:ccc`,
-			shadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+			shadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 			expectedError: ":1: illegal group name",
 		},
 		{
@@ -96,9 +96,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:aaa,bbb
 bar::12:ccc`,
-			shadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo@:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+			shadow: `root:XrootX:19722:10:100:50:200:20088:
+foo@:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 			expectedError: ":1: illegal user name",
 		},
 
@@ -112,9 +112,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:aaa,bbb
 bar::12:ccc`,
-			shadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+			shadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 			expectedPasswdEntries: etcColonEntries[etcPasswdEntry, *etcPasswdEntry]{
 				{&etcPasswdEntry{b("root"), b("x"), 0, 0, b("root"), b("/root"), b("/bin/sh")}, nil},
 				{&etcPasswdEntry{b("foo@"), b("abc"), 1, 2, b("Foo Name"), b("/home/foo"), b("/bin/foosh ")}, nil},
@@ -126,9 +126,9 @@ bar:XbarX:1767222000:10:100:::1798758000`,
 				{&etcGroupEntry{b("bar"), b(""), 12, bs("ccc")}, nil},
 			},
 			expectedShadowEntries: etcColonEntries[etcShadowEntry, *etcShadowEntry]{
-				{&etcShadowEntry{b("root"), b("XrootX"), 1704063600, 10, 100, 50, true, 200, true, 1735686000, true}, nil},
-				{&etcShadowEntry{b("foo"), b("XfooX"), 1735686000, 10, 100, 0, false, 0, false, 0, false}, nil},
-				{&etcShadowEntry{b("bar"), b("XbarX"), 1767222000, 10, 100, 0, false, 0, false, 1798758000, true}, nil},
+				{&etcShadowEntry{b("root"), b("XrootX"), 19722, 10, 100, 50, true, 200, true, 20088, true}, nil},
+				{&etcShadowEntry{b("foo"), b("XfooX"), 20088, 10, 100, 0, false, 0, false, 0, false}, nil},
+				{&etcShadowEntry{b("bar"), b("XbarX"), 20453, 10, 100, 0, false, 0, false, 20818, true}, nil},
 			},
 		},
 		{
@@ -140,9 +140,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo@:abc:1:aaa,bbb
 bar::12:ccc`,
-			shadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+			shadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 			expectedPasswdEntries: etcColonEntries[etcPasswdEntry, *etcPasswdEntry]{
 				{&etcPasswdEntry{b("root"), b("x"), 0, 0, b("root"), b("/root"), b("/bin/sh")}, nil},
 				{&etcPasswdEntry{b("foo"), b("abc"), 1, 2, b("Foo Name"), b("/home/foo"), b("/bin/foosh ")}, nil},
@@ -154,9 +154,9 @@ bar:XbarX:1767222000:10:100:::1798758000`,
 				{&etcGroupEntry{b("bar"), b(""), 12, bs("ccc")}, nil},
 			},
 			expectedShadowEntries: etcColonEntries[etcShadowEntry, *etcShadowEntry]{
-				{&etcShadowEntry{b("root"), b("XrootX"), 1704063600, 10, 100, 50, true, 200, true, 1735686000, true}, nil},
-				{&etcShadowEntry{b("foo"), b("XfooX"), 1735686000, 10, 100, 0, false, 0, false, 0, false}, nil},
-				{&etcShadowEntry{b("bar"), b("XbarX"), 1767222000, 10, 100, 0, false, 0, false, 1798758000, true}, nil},
+				{&etcShadowEntry{b("root"), b("XrootX"), 19722, 10, 100, 50, true, 200, true, 20088, true}, nil},
+				{&etcShadowEntry{b("foo"), b("XfooX"), 20088, 10, 100, 0, false, 0, false, 0, false}, nil},
+				{&etcShadowEntry{b("bar"), b("XbarX"), 20453, 10, 100, 0, false, 0, false, 20818, true}, nil},
 			},
 		},
 		{
@@ -168,9 +168,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:aaa,bbb
 bar::12:ccc`,
-			shadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo@:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+			shadow: `root:XrootX:19722:10:100:50:200:20088:
+foo@:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 			expectedPasswdEntries: etcColonEntries[etcPasswdEntry, *etcPasswdEntry]{
 				{&etcPasswdEntry{b("root"), b("x"), 0, 0, b("root"), b("/root"), b("/bin/sh")}, nil},
 				{&etcPasswdEntry{b("foo"), b("abc"), 1, 2, b("Foo Name"), b("/home/foo"), b("/bin/foosh ")}, nil},
@@ -182,9 +182,9 @@ bar:XbarX:1767222000:10:100:::1798758000`,
 				{&etcGroupEntry{b("bar"), b(""), 12, bs("ccc")}, nil},
 			},
 			expectedShadowEntries: etcColonEntries[etcShadowEntry, *etcShadowEntry]{
-				{&etcShadowEntry{b("root"), b("XrootX"), 1704063600, 10, 100, 50, true, 200, true, 1735686000, true}, nil},
-				{&etcShadowEntry{b("foo@"), b("XfooX"), 1735686000, 10, 100, 0, false, 0, false, 0, false}, nil},
-				{&etcShadowEntry{b("bar"), b("XbarX"), 1767222000, 10, 100, 0, false, 0, false, 1798758000, true}, nil},
+				{&etcShadowEntry{b("root"), b("XrootX"), 19722, 10, 100, 50, true, 200, true, 20088, true}, nil},
+				{&etcShadowEntry{b("foo@"), b("XfooX"), 20088, 10, 100, 0, false, 0, false, 0, false}, nil},
+				{&etcShadowEntry{b("bar"), b("XbarX"), 20453, 10, 100, 0, false, 0, false, 20818, true}, nil},
 			},
 		},
 
@@ -197,9 +197,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:aaa,bbb
 bar::12:ccc`,
-			shadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+			shadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 			expectedError: ":1: illegal amount of columns; expected 7; but got: 8",
 		},
 		{
@@ -210,9 +210,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:aaa,bbb:
 bar::12:ccc`,
-			shadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+			shadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 			expectedError: ":1: illegal amount of columns; expected 4; but got: 5",
 		},
 		{
@@ -223,10 +223,10 @@ bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:aaa,bbb
 bar::12:ccc`,
-			shadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100::::
-bar:XbarX:1767222000:10:100:::1798758000`,
-			expectedError: ":1: illegal amount of columns; expected 8; but got: 9",
+			shadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100:::::
+bar:XbarX:20453:10:100:::20818:`,
+			expectedError: ":1: illegal amount of columns; expected 9; but got: 10",
 		},
 
 		// allow bad lines
@@ -239,9 +239,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:aaa,bbb
 bar::12:ccc`,
-			shadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+			shadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 			expectedPasswdEntries: etcColonEntries[etcPasswdEntry, *etcPasswdEntry]{
 				{&etcPasswdEntry{b("root"), b("x"), 0, 0, b("root"), b("/root"), b("/bin/sh")}, nil},
 				{nil, b("foo:abc:1:2:Foo Name:/home/foo:/bin/foosh :")},
@@ -253,9 +253,9 @@ bar:XbarX:1767222000:10:100:::1798758000`,
 				{&etcGroupEntry{b("bar"), b(""), 12, bs("ccc")}, nil},
 			},
 			expectedShadowEntries: etcColonEntries[etcShadowEntry, *etcShadowEntry]{
-				{&etcShadowEntry{b("root"), b("XrootX"), 1704063600, 10, 100, 50, true, 200, true, 1735686000, true}, nil},
-				{&etcShadowEntry{b("foo"), b("XfooX"), 1735686000, 10, 100, 0, false, 0, false, 0, false}, nil},
-				{&etcShadowEntry{b("bar"), b("XbarX"), 1767222000, 10, 100, 0, false, 0, false, 1798758000, true}, nil},
+				{&etcShadowEntry{b("root"), b("XrootX"), 19722, 10, 100, 50, true, 200, true, 20088, true}, nil},
+				{&etcShadowEntry{b("foo"), b("XfooX"), 20088, 10, 100, 0, false, 0, false, 0, false}, nil},
+				{&etcShadowEntry{b("bar"), b("XbarX"), 20453, 10, 100, 0, false, 0, false, 20818, true}, nil},
 			},
 		},
 		{
@@ -267,9 +267,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:aaa,bbb:
 bar::12:ccc`,
-			shadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+			shadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 			expectedPasswdEntries: etcColonEntries[etcPasswdEntry, *etcPasswdEntry]{
 				{&etcPasswdEntry{b("root"), b("x"), 0, 0, b("root"), b("/root"), b("/bin/sh")}, nil},
 				{&etcPasswdEntry{b("foo"), b("abc"), 1, 2, b("Foo Name"), b("/home/foo"), b("/bin/foosh ")}, nil},
@@ -281,9 +281,9 @@ bar:XbarX:1767222000:10:100:::1798758000`,
 				{&etcGroupEntry{b("bar"), b(""), 12, bs("ccc")}, nil},
 			},
 			expectedShadowEntries: etcColonEntries[etcShadowEntry, *etcShadowEntry]{
-				{&etcShadowEntry{b("root"), b("XrootX"), 1704063600, 10, 100, 50, true, 200, true, 1735686000, true}, nil},
-				{&etcShadowEntry{b("foo"), b("XfooX"), 1735686000, 10, 100, 0, false, 0, false, 0, false}, nil},
-				{&etcShadowEntry{b("bar"), b("XbarX"), 1767222000, 10, 100, 0, false, 0, false, 1798758000, true}, nil},
+				{&etcShadowEntry{b("root"), b("XrootX"), 19722, 10, 100, 50, true, 200, true, 20088, true}, nil},
+				{&etcShadowEntry{b("foo"), b("XfooX"), 20088, 10, 100, 0, false, 0, false, 0, false}, nil},
+				{&etcShadowEntry{b("bar"), b("XbarX"), 20453, 10, 100, 0, false, 0, false, 20818, true}, nil},
 			},
 		},
 		{
@@ -295,9 +295,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:aaa,bbb
 bar::12:ccc`,
-			shadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100::::
-bar:XbarX:1767222000:10:100:::1798758000`,
+			shadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100:::::
+bar:XbarX:20453:10:100:::20818:`,
 			expectedPasswdEntries: etcColonEntries[etcPasswdEntry, *etcPasswdEntry]{
 				{&etcPasswdEntry{b("root"), b("x"), 0, 0, b("root"), b("/root"), b("/bin/sh")}, nil},
 				{&etcPasswdEntry{b("foo"), b("abc"), 1, 2, b("Foo Name"), b("/home/foo"), b("/bin/foosh ")}, nil},
@@ -309,9 +309,9 @@ bar:XbarX:1767222000:10:100:::1798758000`,
 				{&etcGroupEntry{b("bar"), b(""), 12, bs("ccc")}, nil},
 			},
 			expectedShadowEntries: etcColonEntries[etcShadowEntry, *etcShadowEntry]{
-				{&etcShadowEntry{b("root"), b("XrootX"), 1704063600, 10, 100, 50, true, 200, true, 1735686000, true}, nil},
-				{nil, b("foo:XfooX:1735686000:10:100::::")},
-				{&etcShadowEntry{b("bar"), b("XbarX"), 1767222000, 10, 100, 0, false, 0, false, 1798758000, true}, nil},
+				{&etcShadowEntry{b("root"), b("XrootX"), 19722, 10, 100, 50, true, 200, true, 20088, true}, nil},
+				{nil, b("foo:XfooX:20088:10:100:::::")},
+				{&etcShadowEntry{b("bar"), b("XbarX"), 20453, 10, 100, 0, false, 0, false, 20818, true}, nil},
 			},
 		},
 
@@ -325,9 +325,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:aaa,bbb
 bar::12:ccc`,
-			shadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+			shadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 			expectedPasswdEntries: etcColonEntries[etcPasswdEntry, *etcPasswdEntry]{
 				{&etcPasswdEntry{b("root"), b("x"), 0, 0, b("root"), b("/root"), b("/bin/sh")}, nil},
 				{nil, b("foo@:abc:1:2:Foo Name:/home/foo:/bin/foosh ")},
@@ -339,9 +339,9 @@ bar:XbarX:1767222000:10:100:::1798758000`,
 				{&etcGroupEntry{b("bar"), b(""), 12, bs("ccc")}, nil},
 			},
 			expectedShadowEntries: etcColonEntries[etcShadowEntry, *etcShadowEntry]{
-				{&etcShadowEntry{b("root"), b("XrootX"), 1704063600, 10, 100, 50, true, 200, true, 1735686000, true}, nil},
-				{&etcShadowEntry{b("foo"), b("XfooX"), 1735686000, 10, 100, 0, false, 0, false, 0, false}, nil},
-				{&etcShadowEntry{b("bar"), b("XbarX"), 1767222000, 10, 100, 0, false, 0, false, 1798758000, true}, nil},
+				{&etcShadowEntry{b("root"), b("XrootX"), 19722, 10, 100, 50, true, 200, true, 20088, true}, nil},
+				{&etcShadowEntry{b("foo"), b("XfooX"), 20088, 10, 100, 0, false, 0, false, 0, false}, nil},
+				{&etcShadowEntry{b("bar"), b("XbarX"), 20453, 10, 100, 0, false, 0, false, 20818, true}, nil},
 			},
 		},
 		{
@@ -353,9 +353,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo@:abc:1:aaa,bbb
 bar::12:ccc`,
-			shadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+			shadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 			expectedPasswdEntries: etcColonEntries[etcPasswdEntry, *etcPasswdEntry]{
 				{&etcPasswdEntry{b("root"), b("x"), 0, 0, b("root"), b("/root"), b("/bin/sh")}, nil},
 				{&etcPasswdEntry{b("foo"), b("abc"), 1, 2, b("Foo Name"), b("/home/foo"), b("/bin/foosh ")}, nil},
@@ -367,9 +367,9 @@ bar:XbarX:1767222000:10:100:::1798758000`,
 				{&etcGroupEntry{b("bar"), b(""), 12, bs("ccc")}, nil},
 			},
 			expectedShadowEntries: etcColonEntries[etcShadowEntry, *etcShadowEntry]{
-				{&etcShadowEntry{b("root"), b("XrootX"), 1704063600, 10, 100, 50, true, 200, true, 1735686000, true}, nil},
-				{&etcShadowEntry{b("foo"), b("XfooX"), 1735686000, 10, 100, 0, false, 0, false, 0, false}, nil},
-				{&etcShadowEntry{b("bar"), b("XbarX"), 1767222000, 10, 100, 0, false, 0, false, 1798758000, true}, nil},
+				{&etcShadowEntry{b("root"), b("XrootX"), 19722, 10, 100, 50, true, 200, true, 20088, true}, nil},
+				{&etcShadowEntry{b("foo"), b("XfooX"), 20088, 10, 100, 0, false, 0, false, 0, false}, nil},
+				{&etcShadowEntry{b("bar"), b("XbarX"), 20453, 10, 100, 0, false, 0, false, 20818, true}, nil},
 			},
 		},
 		{
@@ -381,9 +381,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:aaa,bbb
 bar::12:ccc`,
-			shadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo@:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+			shadow: `root:XrootX:19722:10:100:50:200:20088:
+foo@:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 			expectedPasswdEntries: etcColonEntries[etcPasswdEntry, *etcPasswdEntry]{
 				{&etcPasswdEntry{b("root"), b("x"), 0, 0, b("root"), b("/root"), b("/bin/sh")}, nil},
 				{&etcPasswdEntry{b("foo"), b("abc"), 1, 2, b("Foo Name"), b("/home/foo"), b("/bin/foosh ")}, nil},
@@ -395,9 +395,9 @@ bar:XbarX:1767222000:10:100:::1798758000`,
 				{&etcGroupEntry{b("bar"), b(""), 12, bs("ccc")}, nil},
 			},
 			expectedShadowEntries: etcColonEntries[etcShadowEntry, *etcShadowEntry]{
-				{&etcShadowEntry{b("root"), b("XrootX"), 1704063600, 10, 100, 50, true, 200, true, 1735686000, true}, nil},
-				{nil, b("foo@:XfooX:1735686000:10:100:::")},
-				{&etcShadowEntry{b("bar"), b("XbarX"), 1767222000, 10, 100, 0, false, 0, false, 1798758000, true}, nil},
+				{&etcShadowEntry{b("root"), b("XrootX"), 19722, 10, 100, 50, true, 200, true, 20088, true}, nil},
+				{nil, b("foo@:XfooX:20088:10:100::::")},
+				{&etcShadowEntry{b("bar"), b("XbarX"), 20453, 10, 100, 0, false, 0, false, 20818, true}, nil},
 			},
 		},
 	}
@@ -441,13 +441,13 @@ func Test_EtcColonRepository_Init_withNonExistingFiles(t *testing.T) {
 	testlog.Hook(t)
 
 	instance := EtcColonRepository{
-		PasswdFilename: "#/@/!/foo/passwd",
-		GroupFilename:  "#/@/!/foo/group",
-		ShadowFilename: "#/@/!/foo/shadow",
+		PasswdFilename: "/@/!/foo/passwd",
+		GroupFilename:  "/@/!/foo/group",
+		ShadowFilename: "/@/!/foo/shadow",
 	}
 
 	actualErr := instance.Init()
-	assert.ErrorContains(t, actualErr, "open #/@/!/foo/passwd: file does not exist")
+	assert.ErrorContains(t, actualErr, "open /@/!/foo/passwd: no such file or directory")
 }
 
 func Test_EtcColonRepository_Init_withNonExistingFilesButAllowedToCreate(t *testing.T) {
@@ -456,17 +456,17 @@ func Test_EtcColonRepository_Init_withNonExistingFilesButAllowedToCreate(t *test
 	dir := newTestDir(t, "some")
 
 	instance := EtcColonRepository{
-		PasswdFilename:      dir.child("/passwd"),
-		GroupFilename:       dir.child("/group"),
-		ShadowFilename:      dir.child("/shadow"),
+		PasswdFilename:      dir.child("etc", "passwd"),
+		GroupFilename:       dir.child("etc", "group"),
+		ShadowFilename:      dir.child("etc", "shadow"),
 		CreateFilesIfAbsent: common.P(true),
 	}
 
 	actualErr := instance.Init()
 	assert.NoError(t, actualErr)
-	assert.FileExists(t, dir.child("/passwd"))
-	assert.FileExists(t, dir.child("/group"))
-	assert.FileExists(t, dir.child("/shadow"))
+	assert.FileExists(t, dir.child("etc", "passwd"))
+	assert.FileExists(t, dir.child("etc", "group"))
+	assert.FileExists(t, dir.child("etc", "shadow"))
 }
 
 func Test_EtcColonRepository_onFsEvents(t *testing.T) {
@@ -480,9 +480,9 @@ bar::11:12::/home/bar:/bin/barsh`)
 foo:abc:1:aaa,bbb
 bar::12:ccc`)
 	defer groupFile.dispose(t)
-	shadowFile := newTestFile(t, "shadow", `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`)
+	shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`)
 	defer shadowFile.dispose(t)
 
 	instance := EtcColonRepository{
@@ -506,8 +506,6 @@ bar:XbarX:1767222000:10:100:::1798758000`)
 		expectedGroupEntries  etcColonEntries[etcGroupEntry, *etcGroupEntry]
 		expectedShadowEntries etcColonEntries[etcShadowEntry, *etcShadowEntry]
 
-		onUnhandledAsyncError func(logger log.Logger, err error, detail string)
-
 		expectedError string
 	}{
 		{
@@ -518,9 +516,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foos:abc:1:aaa,bbb
 bar::12:ccc`,
-			shadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foos:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+			shadow: `root:XrootX:19722:10:100:50:200:20088:
+foos:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 			expectedPasswdEntries: etcColonEntries[etcPasswdEntry, *etcPasswdEntry]{
 				{&etcPasswdEntry{b("root"), b("x"), 0, 0, b("root"), b("/root"), b("/bin/sh")}, nil},
 				{&etcPasswdEntry{b("foos"), b("abc"), 1, 2, b("Foo Name"), b("/home/foo"), b("/bin/foosh ")}, nil},
@@ -532,9 +530,9 @@ bar:XbarX:1767222000:10:100:::1798758000`,
 				{&etcGroupEntry{b("bar"), b(""), 12, bs("ccc")}, nil},
 			},
 			expectedShadowEntries: etcColonEntries[etcShadowEntry, *etcShadowEntry]{
-				{&etcShadowEntry{b("root"), b("XrootX"), 1704063600, 10, 100, 50, true, 200, true, 1735686000, true}, nil},
-				{&etcShadowEntry{b("foos"), b("XfooX"), 1735686000, 10, 100, 0, false, 0, false, 0, false}, nil},
-				{&etcShadowEntry{b("bar"), b("XbarX"), 1767222000, 10, 100, 0, false, 0, false, 1798758000, true}, nil},
+				{&etcShadowEntry{b("root"), b("XrootX"), 19722, 10, 100, 50, true, 200, true, 20088, true}, nil},
+				{&etcShadowEntry{b("foos"), b("XfooX"), 20088, 10, 100, 0, false, 0, false, 0, false}, nil},
+				{&etcShadowEntry{b("bar"), b("XbarX"), 20453, 10, 100, 0, false, 0, false, 20818, true}, nil},
 			},
 		},
 		{
@@ -543,8 +541,8 @@ bar:XbarX:1767222000:10:100:::1798758000`,
 bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 bar::12:ccc`,
-			shadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-bar:XbarX:1767222000:10:100:::1798758000`,
+			shadow: `root:XrootX:19722:10:100:50:200:20088:
+bar:XbarX:20453:10:100:::20818:`,
 			expectedPasswdEntries: etcColonEntries[etcPasswdEntry, *etcPasswdEntry]{
 				{&etcPasswdEntry{b("root"), b("x"), 0, 0, b("root"), b("/root"), b("/bin/sh")}, nil},
 				{&etcPasswdEntry{b("bar"), b(""), 11, 12, b(""), b("/home/bar"), b("/bin/barsh")}, nil},
@@ -554,15 +552,18 @@ bar:XbarX:1767222000:10:100:::1798758000`,
 				{&etcGroupEntry{b("bar"), b(""), 12, bs("ccc")}, nil},
 			},
 			expectedShadowEntries: etcColonEntries[etcShadowEntry, *etcShadowEntry]{
-				{&etcShadowEntry{b("root"), b("XrootX"), 1704063600, 10, 100, 50, true, 200, true, 1735686000, true}, nil},
-				{&etcShadowEntry{b("bar"), b("XbarX"), 1767222000, 10, 100, 0, false, 0, false, 1798758000, true}, nil},
+				{&etcShadowEntry{b("root"), b("XrootX"), 19722, 10, 100, 50, true, 200, true, 20088, true}, nil},
+				{&etcShadowEntry{b("bar"), b("XbarX"), 20453, 10, 100, 0, false, 0, false, 20818, true}, nil},
 			},
 		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			instance.OnUnhandledAsyncError = c.onUnhandledAsyncError
+			var unhandledAsyncError error
+			instance.OnUnhandledAsyncError = func(logger log.Logger, err error, detail string) {
+				unhandledAsyncError = err
+			}
 			instance.FileSystemSyncThreshold = 1
 
 			passwdFile.update(t, c.passwd)
@@ -573,6 +574,8 @@ bar:XbarX:1767222000:10:100:::1798758000`,
 			assert.Equal(t, c.expectedPasswdEntries, instance.handles.passwd.entries)
 			assert.Equal(t, c.expectedGroupEntries, instance.handles.group.entries)
 			assert.Equal(t, c.expectedShadowEntries, instance.handles.shadow.entries)
+
+			assert.NoError(t, unhandledAsyncError)
 		})
 	}
 }
@@ -618,10 +621,10 @@ foo:abc:1:foo,bbb
 bar::12:bar
 testg:x:1000:test
 $`,
-		expectedShadow: `^root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000
-test:\*:\d+:0:99999:7::
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:
+test:\*:\d+:0:99999:7:::
 $`,
 	}, {
 		name: "full-new-by-id",
@@ -649,10 +652,10 @@ foo:abc:1:foo,bbb
 bar::12:bar
 testg:x:1000:u666
 $`,
-		expectedShadow: `^root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000
-u666:\*:\d+:0:99999:7::
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:
+u666:\*:\d+:0:99999:7:::
 $`,
 	}, {
 		name: "add-to-existing-group",
@@ -679,10 +682,10 @@ $`,
 foo:abc:1:foo,bbb,test
 bar::12:bar
 $`,
-		expectedShadow: `^root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000
-test:\*:\d+:0:99999:7::
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:
+test:\*:\d+:0:99999:7:::
 $`,
 	}, {
 		name: "update-existing-to-defaults",
@@ -702,9 +705,9 @@ foo:abc:1:bbb
 bar::12:bar
 bifroest:x:1000:foo
 $`,
-		expectedShadow: `^root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:
 $`,
 	}, {
 		name: "update-existing-to-defaults-by-id",
@@ -714,7 +717,7 @@ $`,
 		},
 
 		expectedResult: EnsureResultModified,
-		expected:       User{"u1", "", 1, Group{1000, "g1000"}, Groups{{1001, "bifroest"}}, "/bin/a/shell", "/home/u1"},
+		expected:       User{"u1", "", 1, Group{1000, "u1"}, Groups{{1001, "bifroest"}}, "/bin/a/shell", "/home/u1"},
 		expectedPasswd: `^root:x:0:0:root:/root:/bin/sh
 u1:abc:1:1000::/home/u1:/bin/a/shell
 bar::11:12::/home/bar:/bin/barsh
@@ -722,12 +725,35 @@ $`,
 		expectedGroup: `^root:x:0:
 foo:abc:1:bbb
 bar::12:bar
-g1000:x:1000:
+u1:x:1000:
 bifroest:x:1001:u1
 $`,
-		expectedShadow: `^root:XrootX:1704063600:10:100:50:200:1735686000
-u1:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+u1:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:
+$`,
+	}, {
+		name: "update-existing-to-defaults-by-name",
+		requirement: Requirement{
+			Name:  "foo",
+			Uid:   common.P[Id](666),
+			Shell: "/bin/a/shell",
+		},
+
+		expectedResult: EnsureResultModified,
+		expected:       User{"foo", "", 666, Group{1, "foo"}, Groups{{1000, "bifroest"}}, "/bin/a/shell", "/home/foo"},
+		expectedPasswd: `^root:x:0:0:root:/root:/bin/sh
+foo:abc:666:1::/home/foo:/bin/a/shell
+bar::11:12::/home/bar:/bin/barsh
+$`,
+		expectedGroup: `^root:x:0:
+foo:abc:1:bbb
+bar::12:bar
+bifroest:x:1000:foo
+$`,
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:
 $`,
 	}, {
 		name: "update-exiting-to-new-group",
@@ -750,9 +776,9 @@ bar::12:bar
 foo1:x:1000:
 foo2:x:1001:foo
 $`,
-		expectedShadow: `^root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:
 $`,
 	}, {
 		name: "unchanged",
@@ -773,9 +799,9 @@ bar::11:12::/home/bar:/bin/barsh$`,
 		expectedGroup: `^root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar$`,
-		expectedShadow: `^root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000$`,
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:$`,
 	}, {
 		name: "unchanged-if-all-else-forbidden",
 		requirement: Requirement{
@@ -799,9 +825,9 @@ bar::11:12::/home/bar:/bin/barsh$`,
 		expectedGroup: `^root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar$`,
-		expectedShadow: `^root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000$`,
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:$`,
 	}, {
 		name: "modification-of-user-forbidden",
 		requirement: Requirement{
@@ -824,9 +850,9 @@ bar::11:12::/home/bar:/bin/barsh$`,
 		expectedGroup: `^root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar$`,
-		expectedShadow: `^root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000$`,
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:$`,
 	}, {
 		name: "modification-of-users-group-forbidden",
 		requirement: Requirement{
@@ -849,9 +875,9 @@ bar::11:12::/home/bar:/bin/barsh$`,
 		expectedGroup: `^root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar$`,
-		expectedShadow: `^root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000$`,
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:$`,
 	}, {
 		name: "creation-of-user-forbidden",
 		requirement: Requirement{
@@ -874,9 +900,9 @@ bar::11:12::/home/bar:/bin/barsh$`,
 		expectedGroup: `^root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar$`,
-		expectedShadow: `^root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000$`,
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:$`,
 	}, {
 		name: "creation-of-users-group-forbidden",
 		requirement: Requirement{
@@ -899,9 +925,9 @@ bar::11:12::/home/bar:/bin/barsh$`,
 		expectedGroup: `^root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar$`,
-		expectedShadow: `^root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000$`,
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:$`,
 	}, {
 		name: "creation-of-users-groups-forbidden",
 		requirement: Requirement{
@@ -924,9 +950,9 @@ bar::11:12::/home/bar:/bin/barsh$`,
 		expectedGroup: `^root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar$`,
-		expectedShadow: `^root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000$`,
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:$`,
 	}}
 
 	for _, c := range cases {
@@ -939,9 +965,9 @@ bar::11:12::/home/bar:/bin/barsh`)
 foo:abc:1:foo,bbb
 bar::12:bar`)
 			defer groupFile.dispose(t)
-			shadowFile := newTestFile(t, "shadow", `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`)
+			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`)
 			defer shadowFile.dispose(t)
 
 			var syncError error
@@ -969,6 +995,480 @@ bar:XbarX:1767222000:10:100:::1798758000`)
 			assert.Regexp(t, c.expectedPasswd, passwdFile.content(t))
 			assert.Regexp(t, c.expectedGroup, groupFile.content(t))
 			assert.Regexp(t, c.expectedShadow, shadowFile.content(t))
+
+			actualErr = instance.Close()
+			require.NoError(t, actualErr)
+
+			assert.NoError(t, syncError)
+		})
+	}
+}
+
+func Test_EtcColonRepository_DeleteById(t *testing.T) {
+	testlog.Hook(t)
+
+	cases := []struct {
+		name    string
+		givenId Id
+
+		expectedPasswd string
+		expectedGroup  string
+		expectedShadow string
+
+		expectedErr string
+	}{{
+		name:    "ok",
+		givenId: 1,
+		expectedPasswd: `^root:x:0:0:root:/root:/bin/sh
+bar::11:12::/home/bar:/bin/barsh
+$`,
+		expectedGroup: `^root:x:0:
+foo:abc:1:bbb
+bar::12:bar
+$`,
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+bar:XbarX:20453:10:100:::20818:
+$`,
+	}, {
+		name:    "does-not-exist",
+		givenId: 2,
+
+		expectedErr: ErrNoSuchUser.Error(),
+		expectedPasswd: `^root:x:0:0:root:/root:/bin/sh
+foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
+bar::11:12::/home/bar:/bin/barsh$`,
+		expectedGroup: `^root:x:0:
+foo:abc:1:foo,bbb
+bar::12:bar$`,
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:$`,
+	}}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			passwdFile := newTestFile(t, "passwd", `root:x:0:0:root:/root:/bin/sh
+foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
+bar::11:12::/home/bar:/bin/barsh`)
+			defer passwdFile.dispose(t)
+			groupFile := newTestFile(t, "group", `root:x:0:
+foo:abc:1:foo,bbb
+bar::12:bar`)
+			defer groupFile.dispose(t)
+			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`)
+			defer shadowFile.dispose(t)
+
+			var syncError error
+			instance := EtcColonRepository{
+				PasswdFilename: string(passwdFile),
+				GroupFilename:  string(groupFile),
+				ShadowFilename: string(shadowFile),
+				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
+					syncError = err
+				},
+			}
+
+			actualErr := instance.Init()
+			require.NoError(t, actualErr)
+
+			actualErr = instance.DeleteById(c.givenId)
+			if expectedErr := c.expectedErr; expectedErr != "" {
+				assert.ErrorContains(t, actualErr, expectedErr)
+			} else {
+				require.NoError(t, actualErr)
+			}
+
+			assert.Regexp(t, c.expectedPasswd, passwdFile.content(t))
+			assert.Regexp(t, c.expectedGroup, groupFile.content(t))
+			assert.Regexp(t, c.expectedShadow, shadowFile.content(t))
+
+			actualErr = instance.Close()
+			require.NoError(t, actualErr)
+
+			assert.NoError(t, syncError)
+		})
+	}
+}
+
+func Test_EtcColonRepository_DeleteByName(t *testing.T) {
+	testlog.Hook(t)
+
+	cases := []struct {
+		name      string
+		givenName string
+
+		expectedPasswd string
+		expectedGroup  string
+		expectedShadow string
+
+		expectedErr string
+	}{{
+		name:      "ok",
+		givenName: "foo",
+		expectedPasswd: `^root:x:0:0:root:/root:/bin/sh
+bar::11:12::/home/bar:/bin/barsh
+$`,
+		expectedGroup: `^root:x:0:
+foo:abc:1:bbb
+bar::12:bar
+$`,
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+bar:XbarX:20453:10:100:::20818:
+$`,
+	}, {
+		name:      "does-not-exist",
+		givenName: "foo2",
+
+		expectedErr: ErrNoSuchUser.Error(),
+		expectedPasswd: `^root:x:0:0:root:/root:/bin/sh
+foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
+bar::11:12::/home/bar:/bin/barsh$`,
+		expectedGroup: `^root:x:0:
+foo:abc:1:foo,bbb
+bar::12:bar$`,
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:$`,
+	}}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			passwdFile := newTestFile(t, "passwd", `root:x:0:0:root:/root:/bin/sh
+foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
+bar::11:12::/home/bar:/bin/barsh`)
+			defer passwdFile.dispose(t)
+			groupFile := newTestFile(t, "group", `root:x:0:
+foo:abc:1:foo,bbb
+bar::12:bar`)
+			defer groupFile.dispose(t)
+			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`)
+			defer shadowFile.dispose(t)
+
+			var syncError error
+			instance := EtcColonRepository{
+				PasswdFilename: string(passwdFile),
+				GroupFilename:  string(groupFile),
+				ShadowFilename: string(shadowFile),
+				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
+					syncError = err
+				},
+			}
+
+			actualErr := instance.Init()
+			require.NoError(t, actualErr)
+
+			actualErr = instance.DeleteByName(c.givenName)
+			if expectedErr := c.expectedErr; expectedErr != "" {
+				assert.ErrorContains(t, actualErr, expectedErr)
+			} else {
+				require.NoError(t, actualErr)
+			}
+
+			assert.Regexp(t, c.expectedPasswd, passwdFile.content(t))
+			assert.Regexp(t, c.expectedGroup, groupFile.content(t))
+			assert.Regexp(t, c.expectedShadow, shadowFile.content(t))
+
+			actualErr = instance.Close()
+			require.NoError(t, actualErr)
+
+			assert.NoError(t, syncError)
+		})
+	}
+}
+
+func Test_EtcColonRepository_ValidatePasswordById(t *testing.T) {
+	testlog.Hook(t)
+
+	cases := []struct {
+		name          string
+		givenId       Id
+		givenPassword string
+
+		expected    bool
+		expectedErr string
+	}{{
+		name: "match",
+
+		givenId:       1,
+		givenPassword: "foobar",
+
+		expected: true,
+	}, {
+		name:          "mismatch",
+		givenId:       1,
+		givenPassword: "foobar-wrong",
+
+		expected: false,
+	}, {
+		name:    "does-not-exist",
+		givenId: 2,
+
+		expected:    false,
+		expectedErr: ErrNoSuchUser.Error(),
+	}}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			passwdFile := newTestFile(t, "passwd", `root:x:0:0:root:/root:/bin/sh
+foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
+bar::11:12::/home/bar:/bin/barsh`)
+			defer passwdFile.dispose(t)
+			groupFile := newTestFile(t, "group", `root:x:0:
+foo:abc:1:foo,bbb
+bar::12:bar`)
+			defer groupFile.dispose(t)
+			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+foo:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`)
+			defer shadowFile.dispose(t)
+
+			var syncError error
+			instance := EtcColonRepository{
+				PasswdFilename: string(passwdFile),
+				GroupFilename:  string(groupFile),
+				ShadowFilename: string(shadowFile),
+				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
+					syncError = err
+				},
+			}
+
+			actualErr := instance.Init()
+			require.NoError(t, actualErr)
+
+			actual, actualErr := instance.ValidatePasswordById(c.givenId, []byte(c.givenPassword))
+			if expectedErr := c.expectedErr; expectedErr != "" {
+				assert.ErrorContains(t, actualErr, expectedErr)
+			} else {
+				require.NoError(t, actualErr)
+				assert.Equal(t, c.expected, actual)
+			}
+
+			actualErr = instance.Close()
+			require.NoError(t, actualErr)
+
+			assert.NoError(t, syncError)
+		})
+	}
+}
+
+func Test_EtcColonRepository_ValidatePasswordById_withoutShadow(t *testing.T) {
+	testlog.Hook(t)
+
+	cases := []struct {
+		name          string
+		givenId       Id
+		givenPassword string
+
+		expected    bool
+		expectedErr string
+	}{{
+		name: "match",
+
+		givenId:       1,
+		givenPassword: "abc",
+
+		expected: true,
+	}, {
+		name:          "mismatch",
+		givenId:       1,
+		givenPassword: "abc-wrong",
+
+		expected: false,
+	}, {
+		name:    "does-not-exist",
+		givenId: 2,
+
+		expected:    false,
+		expectedErr: ErrNoSuchUser.Error(),
+	}}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			passwdFile := newTestFile(t, "passwd", `root:x:0:0:root:/root:/bin/sh
+foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
+bar::11:12::/home/bar:/bin/barsh`)
+			defer passwdFile.dispose(t)
+			groupFile := newTestFile(t, "group", `root:x:0:
+foo:abc:1:foo,bbb
+bar::12:bar`)
+			defer groupFile.dispose(t)
+			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+bar:XbarX:20453:10:100:::20818:`)
+			defer shadowFile.dispose(t)
+
+			var syncError error
+			instance := EtcColonRepository{
+				PasswdFilename: string(passwdFile),
+				GroupFilename:  string(groupFile),
+				ShadowFilename: string(shadowFile),
+				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
+					syncError = err
+				},
+			}
+
+			actualErr := instance.Init()
+			require.NoError(t, actualErr)
+
+			actual, actualErr := instance.ValidatePasswordById(c.givenId, []byte(c.givenPassword))
+			if expectedErr := c.expectedErr; expectedErr != "" {
+				assert.ErrorContains(t, actualErr, expectedErr)
+			} else {
+				require.NoError(t, actualErr)
+				assert.Equal(t, c.expected, actual)
+			}
+
+			actualErr = instance.Close()
+			require.NoError(t, actualErr)
+
+			assert.NoError(t, syncError)
+		})
+	}
+}
+
+func Test_EtcColonRepository_ValidatePasswordByName(t *testing.T) {
+	testlog.Hook(t)
+
+	cases := []struct {
+		name          string
+		givenName     string
+		givenPassword string
+
+		expected    bool
+		expectedErr string
+	}{{
+		name: "match",
+
+		givenName:     "foo",
+		givenPassword: "foobar",
+
+		expected: true,
+	}, {
+		name:          "mismatch",
+		givenName:     "foo",
+		givenPassword: "foobar-wrong",
+
+		expected: false,
+	}, {
+		name:      "does-not-exist",
+		givenName: "foo2",
+
+		expected:    false,
+		expectedErr: ErrNoSuchUser.Error(),
+	}}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			passwdFile := newTestFile(t, "passwd", `root:x:0:0:root:/root:/bin/sh
+foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
+bar::11:12::/home/bar:/bin/barsh`)
+			defer passwdFile.dispose(t)
+			groupFile := newTestFile(t, "group", `root:x:0:
+foo:abc:1:foo,bbb
+bar::12:bar`)
+			defer groupFile.dispose(t)
+			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+foo:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`)
+			defer shadowFile.dispose(t)
+
+			var syncError error
+			instance := EtcColonRepository{
+				PasswdFilename: string(passwdFile),
+				GroupFilename:  string(groupFile),
+				ShadowFilename: string(shadowFile),
+				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
+					syncError = err
+				},
+			}
+
+			actualErr := instance.Init()
+			require.NoError(t, actualErr)
+
+			actual, actualErr := instance.ValidatePasswordByName(c.givenName, []byte(c.givenPassword))
+			if expectedErr := c.expectedErr; expectedErr != "" {
+				assert.ErrorContains(t, actualErr, expectedErr)
+			} else {
+				require.NoError(t, actualErr)
+				assert.Equal(t, c.expected, actual)
+			}
+
+			actualErr = instance.Close()
+			require.NoError(t, actualErr)
+
+			assert.NoError(t, syncError)
+		})
+	}
+}
+
+func Test_EtcColonRepository_ValidatePasswordByName_withoutShadow(t *testing.T) {
+	testlog.Hook(t)
+
+	cases := []struct {
+		name          string
+		givenName     string
+		givenPassword string
+
+		expected    bool
+		expectedErr string
+	}{{
+		name: "match",
+
+		givenName:     "foo",
+		givenPassword: "abc",
+
+		expected: true,
+	}, {
+		name:          "mismatch",
+		givenName:     "foo",
+		givenPassword: "abc-wrong",
+
+		expected: false,
+	}, {
+		name:      "does-not-exist",
+		givenName: "foo2",
+
+		expected:    false,
+		expectedErr: ErrNoSuchUser.Error(),
+	}}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			passwdFile := newTestFile(t, "passwd", `root:x:0:0:root:/root:/bin/sh
+foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
+bar::11:12::/home/bar:/bin/barsh`)
+			defer passwdFile.dispose(t)
+			groupFile := newTestFile(t, "group", `root:x:0:
+foo:abc:1:foo,bbb
+bar::12:bar`)
+			defer groupFile.dispose(t)
+			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+bar:XbarX:20453:10:100:::20818:`)
+			defer shadowFile.dispose(t)
+
+			var syncError error
+			instance := EtcColonRepository{
+				PasswdFilename: string(passwdFile),
+				GroupFilename:  string(groupFile),
+				ShadowFilename: string(shadowFile),
+				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
+					syncError = err
+				},
+			}
+
+			actualErr := instance.Init()
+			require.NoError(t, actualErr)
+
+			actual, actualErr := instance.ValidatePasswordByName(c.givenName, []byte(c.givenPassword))
+			if expectedErr := c.expectedErr; expectedErr != "" {
+				assert.ErrorContains(t, actualErr, expectedErr)
+			} else {
+				require.NoError(t, actualErr)
+				assert.Equal(t, c.expected, actual)
+			}
 
 			actualErr = instance.Close()
 			require.NoError(t, actualErr)
@@ -1112,9 +1612,9 @@ bar::11:12::/home/bar:/bin/barsh`
 foo:abc:1:foo,bbb
 bar::12:bar`)
 			defer groupFile.dispose(t)
-			givenShadowContent := `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`
+			givenShadowContent := `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`
 			shadowFile := newTestFile(t, "shadow", givenShadowContent)
 			defer shadowFile.dispose(t)
 
@@ -1143,6 +1643,234 @@ bar:XbarX:1767222000:10:100:::1798758000`
 			assert.Regexp(t, givenPasswdContent, passwdFile.content(t))
 			assert.Regexp(t, c.expectedGroup, groupFile.content(t))
 			assert.Regexp(t, givenShadowContent, shadowFile.content(t))
+
+			actualErr = instance.Close()
+			require.NoError(t, actualErr)
+
+			assert.NoError(t, syncError)
+		})
+	}
+}
+
+func Test_EtcColonRepository_DeleteGroupById(t *testing.T) {
+	testlog.Hook(t)
+
+	cases := []struct {
+		name    string
+		givenId GroupId
+
+		expectedPasswd string
+		expectedGroup  string
+		expectedShadow string
+
+		expectedErr string
+	}{{
+		name:    "ok",
+		givenId: 2,
+		expectedPasswd: `^root:x:0:0:root:/root:/bin/sh
+foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
+bar::11:12::/home/bar:/bin/barsh
+$`,
+		expectedGroup: `^root:x:0:
+foo:abc:1:foo,bbb
+bar::12:bar
+foo3::3:foo,bbb
+$`,
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:
+$`,
+	}, {
+		name:    "does-not-exist",
+		givenId: 4,
+
+		expectedErr: ErrNoSuchGroup.Error(),
+		expectedPasswd: `^root:x:0:0:root:/root:/bin/sh
+foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
+bar::11:12::/home/bar:/bin/barsh$`,
+		expectedGroup: `^root:x:0:
+foo:abc:1:foo,bbb
+bar::12:bar
+foo2::2:foo,bbb
+foo3::3:foo,bbb
+$`,
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:$`,
+	}, {
+		name:    "still-in-use",
+		givenId: 1,
+
+		expectedErr: "cannot delete group because it is still used by user 1(foo)",
+		expectedPasswd: `^root:x:0:0:root:/root:/bin/sh
+foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
+bar::11:12::/home/bar:/bin/barsh$`,
+		expectedGroup: `^root:x:0:
+foo:abc:1:foo,bbb
+bar::12:bar
+foo2::2:foo,bbb
+foo3::3:foo,bbb
+$`,
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:$`,
+	}}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			passwdFile := newTestFile(t, "passwd", `root:x:0:0:root:/root:/bin/sh
+foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
+bar::11:12::/home/bar:/bin/barsh`)
+			defer passwdFile.dispose(t)
+			groupFile := newTestFile(t, "group", `root:x:0:
+foo:abc:1:foo,bbb
+bar::12:bar
+foo2::2:foo,bbb
+foo3::3:foo,bbb
+`)
+			defer groupFile.dispose(t)
+			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`)
+			defer shadowFile.dispose(t)
+
+			var syncError error
+			instance := EtcColonRepository{
+				PasswdFilename: string(passwdFile),
+				GroupFilename:  string(groupFile),
+				ShadowFilename: string(shadowFile),
+				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
+					syncError = err
+				},
+			}
+
+			actualErr := instance.Init()
+			require.NoError(t, actualErr)
+
+			actualErr = instance.DeleteGroupById(c.givenId)
+			if expectedErr := c.expectedErr; expectedErr != "" {
+				assert.ErrorContains(t, actualErr, expectedErr)
+			} else {
+				require.NoError(t, actualErr)
+			}
+
+			assert.Regexp(t, c.expectedPasswd, passwdFile.content(t))
+			assert.Regexp(t, c.expectedGroup, groupFile.content(t))
+			assert.Regexp(t, c.expectedShadow, shadowFile.content(t))
+
+			actualErr = instance.Close()
+			require.NoError(t, actualErr)
+
+			assert.NoError(t, syncError)
+		})
+	}
+}
+
+func Test_EtcColonRepository_DeleteGroupByName(t *testing.T) {
+	testlog.Hook(t)
+
+	cases := []struct {
+		name      string
+		givenName string
+
+		expectedPasswd string
+		expectedGroup  string
+		expectedShadow string
+
+		expectedErr string
+	}{{
+		name:      "ok",
+		givenName: "foo2",
+		expectedPasswd: `^root:x:0:0:root:/root:/bin/sh
+foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
+bar::11:12::/home/bar:/bin/barsh
+$`,
+		expectedGroup: `^root:x:0:
+foo:abc:1:foo,bbb
+bar::12:bar
+foo3::3:foo,bbb
+$`,
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:
+$`,
+	}, {
+		name:      "does-not-exist",
+		givenName: "foo4",
+
+		expectedErr: ErrNoSuchGroup.Error(),
+		expectedPasswd: `^root:x:0:0:root:/root:/bin/sh
+foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
+bar::11:12::/home/bar:/bin/barsh$`,
+		expectedGroup: `^root:x:0:
+foo:abc:1:foo,bbb
+bar::12:bar
+foo2::2:foo,bbb
+foo3::3:foo,bbb
+$`,
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:$`,
+	}, {
+		name:      "still-in-use",
+		givenName: "foo",
+
+		expectedErr: "cannot delete group because it is still used by user 1(foo)",
+		expectedPasswd: `^root:x:0:0:root:/root:/bin/sh
+foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
+bar::11:12::/home/bar:/bin/barsh$`,
+		expectedGroup: `^root:x:0:
+foo:abc:1:foo,bbb
+bar::12:bar
+foo2::2:foo,bbb
+foo3::3:foo,bbb
+$`,
+		expectedShadow: `^root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:$`,
+	}}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			passwdFile := newTestFile(t, "passwd", `root:x:0:0:root:/root:/bin/sh
+foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
+bar::11:12::/home/bar:/bin/barsh`)
+			defer passwdFile.dispose(t)
+			groupFile := newTestFile(t, "group", `root:x:0:
+foo:abc:1:foo,bbb
+bar::12:bar
+foo2::2:foo,bbb
+foo3::3:foo,bbb
+`)
+			defer groupFile.dispose(t)
+			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`)
+			defer shadowFile.dispose(t)
+
+			var syncError error
+			instance := EtcColonRepository{
+				PasswdFilename: string(passwdFile),
+				GroupFilename:  string(groupFile),
+				ShadowFilename: string(shadowFile),
+				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
+					syncError = err
+				},
+			}
+
+			actualErr := instance.Init()
+			require.NoError(t, actualErr)
+
+			actualErr = instance.DeleteGroupByName(c.givenName)
+			if expectedErr := c.expectedErr; expectedErr != "" {
+				assert.ErrorContains(t, actualErr, expectedErr)
+			} else {
+				require.NoError(t, actualErr)
+			}
+
+			assert.Regexp(t, c.expectedPasswd, passwdFile.content(t))
+			assert.Regexp(t, c.expectedGroup, groupFile.content(t))
+			assert.Regexp(t, c.expectedShadow, shadowFile.content(t))
 
 			actualErr = instance.Close()
 			require.NoError(t, actualErr)
@@ -1269,9 +1997,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 		givenGroup: `root:x:0:
 foo:abc:1:bbb
 bar::12:bar`,
-		givenShadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+		givenShadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 
 		expected: User{"foo", "Foo Name", 1, Group{1, "foo"}, nil, "/bin/foosh", "/home/foo"},
 	}, {
@@ -1284,9 +2012,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 		givenGroup: `root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar`,
-		givenShadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+		givenShadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 
 		expected: User{"foo", "Foo Name", 1, Group{1, "foo"}, Groups{{1, "foo"}}, "/bin/foosh", "/home/foo"},
 	}, {
@@ -1299,9 +2027,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 		givenGroup: `root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar`,
-		givenShadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+		givenShadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 
 		expectedErr: ErrNoSuchUser.Error(),
 	}, {
@@ -1314,9 +2042,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 		givenGroup: `root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar`,
-		givenShadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+		givenShadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 
 		expected: User{"foo", "Foo Name", 1, Group{2, "g2"}, Groups{{1, "foo"}}, "/bin/foosh", "/home/foo"},
 	}, {
@@ -1329,9 +2057,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 		givenGroup: `root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar`,
-		givenShadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+		givenShadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 
 		hook: func(instance *EtcColonRepository) {
 			instance.usernameToGroups["foo"] = append(instance.usernameToGroups["foo"], &etcGroupRef{&etcGroupEntry{gid: 666}})
@@ -1412,9 +2140,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 		givenGroup: `root:x:0:
 foo:abc:1:bbb
 bar::12:bar`,
-		givenShadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+		givenShadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 
 		expected: User{"foo", "Foo Name", 1, Group{1, "foo"}, nil, "/bin/foosh", "/home/foo"},
 	}, {
@@ -1427,9 +2155,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 		givenGroup: `root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar`,
-		givenShadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+		givenShadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 
 		expected: User{"foo", "Foo Name", 1, Group{1, "foo"}, Groups{{1, "foo"}}, "/bin/foosh", "/home/foo"},
 	}, {
@@ -1442,9 +2170,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 		givenGroup: `root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar`,
-		givenShadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+		givenShadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 
 		expectedErr: ErrNoSuchUser.Error(),
 	}, {
@@ -1457,9 +2185,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 		givenGroup: `root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar`,
-		givenShadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+		givenShadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 
 		expected: User{"foo", "Foo Name", 1, Group{2, "g2"}, Groups{{1, "foo"}}, "/bin/foosh", "/home/foo"},
 	}, {
@@ -1472,9 +2200,9 @@ bar::11:12::/home/bar:/bin/barsh`,
 		givenGroup: `root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar`,
-		givenShadow: `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`,
+		givenShadow: `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`,
 
 		hook: func(instance *EtcColonRepository) {
 			instance.usernameToGroups["foo"] = append(instance.usernameToGroups["foo"], &etcGroupRef{&etcGroupEntry{gid: 666}})
@@ -1569,9 +2297,9 @@ bar::11:12::/home/bar:/bin/barsh`)
 			defer passwdFile.dispose(t)
 			groupFile := newTestFile(t, "group", c.givenGroup)
 			defer groupFile.dispose(t)
-			shadowFile := newTestFile(t, "shadow", `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`)
+			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`)
 			defer shadowFile.dispose(t)
 
 			var syncError error
@@ -1647,9 +2375,9 @@ bar::11:12::/home/bar:/bin/barsh`)
 			defer passwdFile.dispose(t)
 			groupFile := newTestFile(t, "group", c.givenGroup)
 			defer groupFile.dispose(t)
-			shadowFile := newTestFile(t, "shadow", `root:XrootX:1704063600:10:100:50:200:1735686000
-foo:XfooX:1735686000:10:100:::
-bar:XbarX:1767222000:10:100:::1798758000`)
+			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+foo:XfooX:20088:10:100::::
+bar:XbarX:20453:10:100:::20818:`)
 			defer shadowFile.dispose(t)
 
 			var syncError error

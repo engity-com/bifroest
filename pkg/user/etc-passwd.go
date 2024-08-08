@@ -112,7 +112,7 @@ func (this *Requirement) toEtcPasswdRef(gui GroupId, idGenerator func() Id) *etc
 		&etcShadowEntry{
 			[]byte{},
 			[]byte("*"),
-			uint64(time.Now().Unix()),
+			uint32(time.Now().Unix() / 60 / 60 / 24),
 			0,
 			99999,
 			7, true,
