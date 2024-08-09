@@ -47,44 +47,6 @@ func (this User) isEqualTo(other *User) bool {
 		this.HomeDir == other.HomeDir
 }
 
-type DeleteOpts struct {
-	RemoveHomeDir *bool
-	Force         *bool
-}
-
-func (this DeleteOpts) Clone() DeleteOpts {
-	var rhd *bool
-	if v := this.RemoveHomeDir; v != nil {
-		nv := *v
-		rhd = &nv
-	}
-	var fr *bool
-	if v := this.Force; v != nil {
-		nv := *v
-		fr = &nv
-	}
-	return DeleteOpts{
-		rhd,
-		fr,
-	}
-}
-
-func (this *DeleteOpts) OrDefaults() DeleteOpts {
-	var result DeleteOpts
-	if v := this; v != nil {
-		result = v.Clone()
-	}
-	if v := result.RemoveHomeDir; v == nil {
-		nv := true
-		result.RemoveHomeDir = &nv
-	}
-	if v := result.Force; v == nil {
-		nv := true
-		result.Force = &nv
-	}
-	return result
-}
-
 func (this User) ToCredentials() syscall.Credential {
 	gids := make([]uint32, len(this.Groups))
 	for i, gid := range this.Groups {

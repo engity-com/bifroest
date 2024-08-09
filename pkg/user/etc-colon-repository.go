@@ -440,10 +440,12 @@ func (this *EtcColonRepository) Ensure(req *Requirement, opts *EnsureOpts) (_ *U
 		}
 
 		if homeDir := ref.homeDir; len(homeDir) > 0 && opts.IsHomeDir() {
-			if err := this.createHomeDir(ref, req.Skel, string(homeDir)); err != nil {
+			if err := this.createHomeDir(ref, req.Skel, string(homeDir), opts.GetOnHomeDirExist()); err != nil {
 				return nil, EnsureResultError, err
 			}
 		}
+
+		this.loggerForRef(ref).Info("user created")
 
 		return this.refAndGroupsToUser(ref, group, &groups), EnsureResultCreated, nil
 	}
@@ -494,20 +496,33 @@ func (this *EtcColonRepository) Ensure(req *Requirement, opts *EnsureOpts) (_ *U
 	}
 
 	if !bytes.Equal(oldHomeDir, existing.etcPasswdEntry.homeDir) && opts.IsHomeDir() {
-		if err := this.moveHomeDir(existing, string(oldHomeDir), string(existing.etcPasswdEntry.homeDir)); err != nil {
+		if err := this.moveHomeDir(existing, string(oldHomeDir), string(existing.etcPasswdEntry.homeDir), opts.GetOnHomeDirExist()); err != nil {
 			return nil, EnsureResultError, err
 		}
 	}
 
+	this.loggerForRef(existing).Info("user updated")
+
 	return this.refAndGroupsToUser(existing, group, &groups), EnsureResultModified, nil
 }
 
-func (this *EtcColonRepository) createHomeDir(ref *etcPasswdRef, skel, homeDir string) error {
+func (this *EtcColonRepository) createHomeDir(ref *etcPasswdRef, skel, homeDir string, ohde EnsureOnHomeDirExist) error {
 	fail := func(err error) error {
-		return errors.Newf(errors.TypeSystem, "cannot create user's %d(%s) home directory (%s): %w", ref.uid, string(ref.etcPasswdEntry.name), homeDir, err)
+		return errors.Newf(errors.TypeSystem, "cannot create user's %v home directory (%s): %w", ref, homeDir, err)
 	}
 	failf := func(msg string, args ...any) error {
 		return fail(fmt.Errorf(msg, args...))
+	}
+
+	l := this.loggerForRef(ref).
+		With("homeDir", homeDir).
+		With("skel", skel)
+
+	canContinue, canLog, err := this.existingHomeDirCheck(l, ref, homeDir, ohde)
+	if err != nil {
+		return fail(err)
+	} else if !canContinue {
+		return nil
 	}
 
 	if err := os.MkdirAll(homeDir, 0700); err != nil {
@@ -536,12 +551,27 @@ func (this *EtcColonRepository) createHomeDir(ref *etcPasswdRef, skel, homeDir s
 		}
 	}
 
+	if canLog {
+		l.Info("user's home directory created")
+	}
+
 	return nil
 }
 
-func (this *EtcColonRepository) moveHomeDir(ref *etcPasswdRef, oldHomeDir string, newHomeDir string) error {
+func (this *EtcColonRepository) moveHomeDir(ref *etcPasswdRef, oldHomeDir string, newHomeDir string, ohde EnsureOnHomeDirExist) error {
 	fail := func(err error) error {
-		return errors.Newf(errors.TypeSystem, "cannot move user's %d(%s) home directory from %q to %q: %w", ref.uid, string(ref.etcPasswdEntry.name), oldHomeDir, newHomeDir, err)
+		return errors.Newf(errors.TypeSystem, "cannot move user's %v home directory from %q to %q: %w", ref, oldHomeDir, newHomeDir, err)
+	}
+
+	l := this.loggerForRef(ref).
+		With("new", newHomeDir).
+		With("old", oldHomeDir)
+
+	canContinue, canLog, err := this.existingHomeDirCheck(l, ref, newHomeDir, ohde)
+	if err != nil {
+		return fail(err)
+	} else if !canContinue {
+		return nil
 	}
 
 	if _, err := os.Stat(oldHomeDir); os.IsNotExist(err) {
@@ -556,26 +586,66 @@ func (this *EtcColonRepository) moveHomeDir(ref *etcPasswdRef, oldHomeDir string
 	if err := os.Rename(oldHomeDir, newHomeDir); err != nil {
 		return fail(err)
 	}
-	if err := filepath.Walk(newHomeDir, func(path string, fi fs.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if err := etcColonRepositoryChownFunc(path, int(ref.uid), int(ref.gid)); err != nil {
-			return err
-		}
-
-		return nil
-	}); err != nil {
+	if err := this.chownRecursively(newHomeDir, ref.uid, ref.gid); err != nil {
 		return fail(err)
+	}
+
+	if canLog {
+		l.Info("user's home directory moved")
 	}
 
 	return nil
 }
 
+func (this *EtcColonRepository) existingHomeDirCheck(logger log.Logger, ref *etcPasswdRef, homeDir string, ohde EnsureOnHomeDirExist) (canContinue, canLog bool, _ error) {
+	fi, err := os.Stat(homeDir)
+	if os.IsNotExist(err) {
+		return true, true, nil
+	}
+	if err != nil {
+		return false, false, fmt.Errorf("cannot check for existing home dir (%s): %w", homeDir, err)
+	}
+
+	if ohde == EnsureOnHomeDirExistTakeover {
+		if !fi.IsDir() {
+			return false, false, fmt.Errorf("home directory (%s) exists and should be taken over; but it is a file", homeDir)
+		}
+
+		logger.Info("directory already exist; it will be taken over")
+		if err := this.chownRecursively(homeDir, ref.uid, ref.gid); err != nil {
+			return false, false, fmt.Errorf("cannot chown recursively existing home dir (%s) to take it over: %w", homeDir, err)
+		}
+		return false, false, nil
+	}
+
+	if ohde == EnsureOnHomeDirExistOverwrite {
+		logger.Info("directory already exist; it will be overwritten")
+		if err := os.RemoveAll(homeDir); err != nil {
+			return false, false, fmt.Errorf("home directory (%s) exists and should be overwritten, but it cannot be deleted: %w", homeDir, err)
+		}
+		return true, false, nil
+	}
+
+	return false, false, fmt.Errorf("home directory (%s) already exists", homeDir)
+}
+
+func (this *EtcColonRepository) chownRecursively(fn string, uid, gid uint32) error {
+	return filepath.Walk(fn, func(path string, fi fs.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if err := etcColonRepositoryChownFunc(path, int(uid), int(gid)); err != nil {
+			return err
+		}
+
+		return nil
+	})
+}
+
 // DeleteById implements Repository.DeleteById.
-func (this *EtcColonRepository) DeleteById(id Id) (rErr error) {
-	return this.deleteRef(func() (*etcPasswdRef, error) {
+func (this *EtcColonRepository) DeleteById(id Id, opts *DeleteOpts) (rErr error) {
+	return this.deleteRef(opts, func() (*etcPasswdRef, error) {
 		i2u := this.idToUser
 		if i2u == nil {
 			return nil, ErrNoSuchUser
@@ -591,8 +661,8 @@ func (this *EtcColonRepository) DeleteById(id Id) (rErr error) {
 }
 
 // DeleteByName implements Repository.DeleteByName.
-func (this *EtcColonRepository) DeleteByName(name string) (rErr error) {
-	return this.deleteRef(func() (*etcPasswdRef, error) {
+func (this *EtcColonRepository) DeleteByName(name string, opts *DeleteOpts) (rErr error) {
+	return this.deleteRef(opts, func() (*etcPasswdRef, error) {
 		n2u := this.nameToUser
 		if n2u == nil {
 			return nil, ErrNoSuchUser
@@ -607,7 +677,7 @@ func (this *EtcColonRepository) DeleteByName(name string) (rErr error) {
 	})
 }
 
-func (this *EtcColonRepository) deleteRef(selector func() (*etcPasswdRef, error)) (rErr error) {
+func (this *EtcColonRepository) deleteRef(opts *DeleteOpts, selector func() (*etcPasswdRef, error)) (rErr error) {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 
@@ -642,6 +712,10 @@ func (this *EtcColonRepository) deleteRef(selector func() (*etcPasswdRef, error)
 		}
 		return bytes.Equal(candidate.entry.name, ref.etcShadowEntry.name)
 	})
+
+	//TODO! User home directory delete? - opts
+
+	this.loggerForRef(ref).Info("user deleted")
 
 	return f.save()
 }
@@ -693,8 +767,8 @@ func (this *EtcColonRepository) validatePasswordRef(pass string, selector func()
 }
 
 // DeleteGroupById implements Repository.DeleteGroupById.
-func (this *EtcColonRepository) DeleteGroupById(id GroupId) (rErr error) {
-	return this.deleteGroupRef(func() (*etcGroupRef, error) {
+func (this *EtcColonRepository) DeleteGroupById(id GroupId, opts *DeleteOpts) (rErr error) {
+	return this.deleteGroupRef(opts, func() (*etcGroupRef, error) {
 		i2g := this.idToGroup
 		if i2g == nil {
 			return nil, ErrNoSuchGroup
@@ -710,8 +784,8 @@ func (this *EtcColonRepository) DeleteGroupById(id GroupId) (rErr error) {
 }
 
 // DeleteGroupByName implements Repository.DeleteGroupByName.
-func (this *EtcColonRepository) DeleteGroupByName(name string) (rErr error) {
-	return this.deleteGroupRef(func() (*etcGroupRef, error) {
+func (this *EtcColonRepository) DeleteGroupByName(name string, opts *DeleteOpts) (rErr error) {
+	return this.deleteGroupRef(opts, func() (*etcGroupRef, error) {
 		n2g := this.nameToGroup
 		if n2g == nil {
 			return nil, ErrNoSuchGroup
@@ -726,7 +800,7 @@ func (this *EtcColonRepository) DeleteGroupByName(name string) (rErr error) {
 	})
 }
 
-func (this *EtcColonRepository) deleteGroupRef(selector func() (*etcGroupRef, error)) (rErr error) {
+func (this *EtcColonRepository) deleteGroupRef(opts *DeleteOpts, selector func() (*etcGroupRef, error)) (rErr error) {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 
@@ -758,6 +832,8 @@ func (this *EtcColonRepository) deleteGroupRef(selector func() (*etcGroupRef, er
 		}
 		return candidate.entry.gid == ref.etcGroupEntry.gid
 	})
+
+	this.loggerForGroupRef(ref).Info("group deleted")
 
 	return f.save()
 }
@@ -839,6 +915,9 @@ func (this *EtcColonRepository) ensureGroup(forUser *Requirement, req *GroupRequ
 		})
 		this.nameToGroup[string(ref.etcGroupEntry.name)] = ref
 		this.idToGroup[GroupId(ref.etcGroupEntry.gid)] = ref
+
+		this.loggerForGroupRef(ref).Info("group created")
+
 		return ref, this.refToGroup(ref), EnsureResultCreated, nil
 	}
 
@@ -856,6 +935,8 @@ func (this *EtcColonRepository) ensureGroup(forUser *Requirement, req *GroupRequ
 		delete(this.idToGroup, GroupId(existing.etcGroupEntry.gid))
 		this.idToGroup[GroupId(existing.etcGroupEntry.gid)] = existing
 	}
+
+	this.loggerForGroupRef(existing).Info("group updated")
 
 	return existing, this.refToGroup(existing), EnsureResultModified, nil
 }
@@ -989,7 +1070,7 @@ func (this *EtcColonRepository) scheduleReload(l log.Logger) {
 	this.mutex.RLock()
 	defer this.mutex.RUnlock()
 
-	l.Debug("schedule reload of repository")
+	l.Trace("schedule reload of repository")
 
 	this.reloadTimer.Stop()
 	if v := this.FileSystemSyncThreshold; v != 0 {
@@ -1120,6 +1201,14 @@ func (this *EtcColonRepository) logger() log.Logger {
 		return v
 	}
 	return log.GetLogger("user-repository")
+}
+
+func (this *EtcColonRepository) loggerForRef(ref *etcPasswdRef) log.Logger {
+	return this.logger().With("user", ref)
+}
+
+func (this *EtcColonRepository) loggerForGroupRef(ref *etcGroupRef) log.Logger {
+	return this.logger().With("group", ref)
 }
 
 func (this *EtcColonRepository) getCreateFilesIfAbsent() bool {

@@ -41,11 +41,11 @@ type Repository interface {
 
 	// DeleteById will delete the user by the given Id. If the
 	// user does not exist ErrNoSuchUser is returned.
-	DeleteById(Id) error
+	DeleteById(Id, *DeleteOpts) error
 
 	// DeleteByName will delete the user by the given name. If the
 	// user does not exist ErrNoSuchUser is returned.
-	DeleteByName(string) error
+	DeleteByName(string, *DeleteOpts) error
 
 	// ValidatePasswordById will validate the given password
 	// the given user by its Id. It returns true if the given
@@ -61,11 +61,11 @@ type Repository interface {
 
 	// DeleteGroupById will delete the group by the given GroupId.
 	// If the group does not exist ErrNoSuchGroup is returned.
-	DeleteGroupById(GroupId) error
+	DeleteGroupById(GroupId, *DeleteOpts) error
 
 	// DeleteGroupByName will delete the group by the given name.
 	// If the group does not exist ErrNoSuchGroup is returned.
-	DeleteGroupByName(string) error
+	DeleteGroupByName(string, *DeleteOpts) error
 }
 
 // CloseableRepository represents a Repository which needs to be closed
@@ -142,4 +142,21 @@ type failingRepositoryProvider struct{}
 
 func (this failingRepositoryProvider) Create() (CloseableRepository, error) {
 	return nil, errors.Newf(errors.TypeSystem, "no such repository")
+}
+
+// DeleteOpts adds some more hints what should happen when
+// Repository.DeleteById or its derivates is used.
+type DeleteOpts struct {
+	// HomeDir defines if the home directory of the User should be
+	// deleted or not (does not affect Group). Default: true
+	HomeDir *bool
+}
+
+func (this *DeleteOpts) IsHomeDir() bool {
+	if this != nil {
+		if v := this.HomeDir; v != nil {
+			return *v
+		}
+	}
+	return true
 }

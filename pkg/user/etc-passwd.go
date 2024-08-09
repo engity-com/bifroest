@@ -101,6 +101,13 @@ func (this *etcPasswdEntry) encode(allowBadName bool) ([][]byte, error) {
 
 }
 
+func (this *etcPasswdEntry) String() string {
+	if this == nil {
+		return ""
+	}
+	return fmt.Sprintf("%d(%s)", this.uid, string(this.name))
+}
+
 type etcPasswdRef struct {
 	*etcPasswdEntry
 	*etcShadowEntry
@@ -114,6 +121,19 @@ func (this *etcPasswdRef) validatePassword(pass string) (bool, error) {
 		return v.validatePassword(pass)
 	}
 	return false, nil
+}
+
+func (this *etcPasswdRef) String() string {
+	if this == nil {
+		return ""
+	}
+	if v := this.etcPasswdEntry; v != nil {
+		return v.String()
+	}
+	if v := this.etcShadowEntry; v != nil {
+		return v.String()
+	}
+	return ""
 }
 
 func (this *Requirement) toEtcPasswdRef(gui GroupId, idGenerator func() Id) *etcPasswdRef {

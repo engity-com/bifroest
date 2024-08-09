@@ -91,8 +91,25 @@ func (this *etcGroupEntry) removeUserName(username []byte) {
 	})
 }
 
+func (this *etcGroupEntry) String() string {
+	if this == nil {
+		return ""
+	}
+	return fmt.Sprintf("%d(%s)", this.gid, string(this.name))
+}
+
 type etcGroupRef struct {
 	*etcGroupEntry
+}
+
+func (this *etcGroupRef) String() string {
+	if this == nil {
+		return ""
+	}
+	if v := this.etcGroupEntry; v != nil {
+		return v.String()
+	}
+	return ""
 }
 
 func (this *GroupRequirement) toEtcGroupRef(idGenerator func() GroupId) *etcGroupRef {

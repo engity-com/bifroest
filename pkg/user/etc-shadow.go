@@ -154,3 +154,10 @@ func (this *etcShadowEntry) encode(allowBadName bool) ([][]byte, error) {
 
 	return line, nil
 }
+
+func (this *etcShadowEntry) String() string {
+	if this == nil {
+		return ""
+	}
+	return string(this.name)
+}

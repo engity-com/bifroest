@@ -1,6 +1,10 @@
 package user
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
 
 var (
 	// ErrUserDoesNotFulfilRequirement indicates that a User does not
@@ -52,6 +56,11 @@ type EnsureOpts struct {
 	// the home directory of an existing user is changing.
 	// Default: true
 	HomeDir *bool
+
+	// OnHomeDirExist defines what should happen if the destination of the
+	// home directory (on creation and move) already exist.
+	// Default: EnsureOnHomeDirExistOverwrite
+	OnHomeDirExist EnsureOnHomeDirExist
 }
 
 func (this *EnsureOpts) IsCreateAllowed() bool {
@@ -79,6 +88,104 @@ func (this *EnsureOpts) IsHomeDir() bool {
 		}
 	}
 	return true
+}
+
+func (this *EnsureOpts) GetOnHomeDirExist() EnsureOnHomeDirExist {
+	if this != nil {
+		if v := this.OnHomeDirExist; v != EnsureOnHomeDirExistUnknown {
+			return v
+		}
+	}
+	return EnsureOnHomeDirExistOverwrite
+}
+
+type EnsureOnHomeDirExist uint8
+
+const (
+	EnsureOnHomeDirExistUnknown EnsureOnHomeDirExist = iota
+	EnsureOnHomeDirExistFail
+	EnsureOnHomeDirExistTakeover
+	EnsureOnHomeDirExistOverwrite
+)
+
+func (this EnsureOnHomeDirExist) IsZero() bool {
+	return this == EnsureOnHomeDirExistUnknown
+}
+
+func (this EnsureOnHomeDirExist) MarshalText() (text []byte, err error) {
+	switch this {
+	case EnsureOnHomeDirExistUnknown:
+		return []byte("unknown"), nil
+	case EnsureOnHomeDirExistFail:
+		return []byte("fail"), nil
+	case EnsureOnHomeDirExistTakeover:
+		return []byte("takeover"), nil
+	case EnsureOnHomeDirExistOverwrite:
+		return []byte("overwrite"), nil
+	default:
+		return nil, fmt.Errorf("unknown ensure on home dir exists: %d", this)
+	}
+}
+
+func (this EnsureOnHomeDirExist) String() string {
+	v, err := this.MarshalText()
+	if err != nil {
+		return fmt.Sprintf("unknown-ensure-on-home-dir-exists-%d", this)
+	}
+	return string(v)
+}
+
+func (this *EnsureOnHomeDirExist) UnmarshalText(text []byte) error {
+	var buf EnsureOnHomeDirExist
+	switch strings.ToLower(string(text)) {
+	case "unknown", "":
+		buf = EnsureOnHomeDirExistUnknown
+	case "fail":
+		buf = EnsureOnHomeDirExistFail
+	case "takeover":
+		buf = EnsureOnHomeDirExistTakeover
+	case "overwrite", "override":
+		buf = EnsureOnHomeDirExistOverwrite
+	default:
+		return fmt.Errorf("unknown ensure on home dir exists: %s", string(text))
+	}
+	*this = buf
+	return nil
+}
+
+func (this *EnsureOnHomeDirExist) Set(text string) error {
+	return this.UnmarshalText([]byte(text))
+}
+
+func (this EnsureOnHomeDirExist) Validate() error {
+	_, err := this.MarshalText()
+	return err
+}
+
+func (this EnsureOnHomeDirExist) IsEqualTo(other any) bool {
+	if other == nil {
+		return false
+	}
+	switch v := other.(type) {
+	case string:
+		return string(this) == v
+	case *string:
+		return string(this) == *v
+	case EnsureOnHomeDirExist:
+		return this.isEqualTo(&v)
+	case *EnsureOnHomeDirExist:
+		return this.isEqualTo(v)
+	default:
+		return false
+	}
+}
+
+func (this EnsureOnHomeDirExist) isEqualTo(other *EnsureOnHomeDirExist) bool {
+	return this == *other
+}
+
+func (this EnsureOnHomeDirExist) Clone() EnsureOnHomeDirExist {
+	return this
 }
 
 type EnsureResult uint8
