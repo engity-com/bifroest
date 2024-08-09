@@ -412,7 +412,13 @@ func (this *EtcColonRepository) Ensure(req *Requirement, opts *EnsureOpts) (_ *U
 			if result < 1000 {
 				return 1000
 			}
-			return result + 1
+			result++
+			if result == 65534 {
+				// Yeah... we never want to return 65534, because it is nobody.
+				// See: https://wiki.ubuntu.com/nobody
+				result++
+			}
+			return result
 		})
 		this.handles.passwd.entries = append(this.handles.passwd.entries, etcColonEntry[etcPasswdEntry, *etcPasswdEntry]{
 			entry:   ref.etcPasswdEntry,
@@ -819,7 +825,13 @@ func (this *EtcColonRepository) ensureGroup(forUser *Requirement, req *GroupRequ
 			if result < 1000 {
 				return 1000
 			}
-			return result + 1
+			result++
+			if result == 65534 {
+				// Yeah... we never want to return 65534, because it is nobody.
+				// See: https://wiki.ubuntu.com/nobody
+				result++
+			}
+			return result
 		})
 		this.handles.group.entries = append(this.handles.group.entries, etcColonEntry[etcGroupEntry, *etcGroupEntry]{
 			entry:   ref.etcGroupEntry,
@@ -869,6 +881,10 @@ func (this *EtcColonRepository) findHighestGid() GroupId {
 		if v.entry == nil {
 			continue
 		}
+		if v.entry.gid == uint32(65534) && string(v.entry.name) == "nogroup" {
+			// Yeah... strange exception, we'll simply skip it. See: https://wiki.ubuntu.com/nobody
+			continue
+		}
 		actual := GroupId(v.entry.gid)
 		if actual > result {
 			result = actual
@@ -882,6 +898,10 @@ func (this *EtcColonRepository) findHighestUid() Id {
 	var result Id
 	for _, v := range this.handles.passwd.entries {
 		if v.entry == nil {
+			continue
+		}
+		if v.entry.uid == uint32(65534) && string(v.entry.name) == "nobody" {
+			// Yeah... strange exception, we'll simply skip it. See: https://wiki.ubuntu.com/nobody
 			continue
 		}
 		actual := Id(v.entry.uid)
