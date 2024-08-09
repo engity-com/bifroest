@@ -8,13 +8,15 @@ import (
 	log "github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/fields"
 	"github.com/engity-com/bifroest/pkg/common"
-	"github.com/engity-com/bifroest/pkg/crypto/unix/password"
+	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/fsnotify/fsnotify"
+	"github.com/otiai10/copy"
 	"os"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 )
 
 var (
@@ -355,11 +357,11 @@ func (this *EtcColonRepository) ensurePreChecks(req *Requirement, opts *EnsureOp
 		return nil, user, EnsureResultUnchanged, nil
 	}
 
-	if existing == nil && !*opts.CreateAllowed {
+	if existing == nil && !opts.IsCreateAllowed() {
 		return nil, nil, EnsureResultError, ErrNoSuchUser
 	}
 
-	if !*opts.ModifyAllowed {
+	if !opts.IsModifyAllowed() {
 		return nil, nil, EnsureResultError, ErrUserDoesNotFulfilRequirement
 	}
 
@@ -372,9 +374,8 @@ func (this *EtcColonRepository) Ensure(req *Requirement, opts *EnsureOpts) (_ *U
 		panic("nil user requirement")
 	}
 	tReq := req.OrDefaults()
-	tOpts := opts.OrDefaults()
 
-	existing, user, pResult, err := this.ensurePreChecks(&tReq, &tOpts, this.mutex.RLocker())
+	existing, user, pResult, err := this.ensurePreChecks(&tReq, opts, this.mutex.RLocker())
 	if err != nil || pResult != EnsureResultUnknown {
 		return user, pResult, err
 	}
@@ -388,17 +389,17 @@ func (this *EtcColonRepository) Ensure(req *Requirement, opts *EnsureOpts) (_ *U
 	}
 	defer common.KeepError(&rErr, f.close)
 
-	existing, user, pResult, err = this.ensurePreChecks(&tReq, &tOpts, nil)
+	existing, user, pResult, err = this.ensurePreChecks(&tReq, opts, nil)
 	if err != nil || pResult != EnsureResultUnknown {
 		return user, pResult, err
 	}
 
-	_, group, _, err := this.ensureGroup(&tReq, &tReq.Group, &tOpts)
+	_, group, _, err := this.ensureGroup(&tReq, &tReq.Group, opts)
 	if err != nil {
 		return nil, EnsureResultError, err
 	}
 
-	groupRefs, groups, err := this.ensureGroups(&tReq.Groups, &tOpts)
+	groupRefs, groups, err := this.ensureGroups(&tReq.Groups, opts)
 	if err != nil {
 		return nil, EnsureResultError, err
 	}
@@ -430,11 +431,18 @@ func (this *EtcColonRepository) Ensure(req *Requirement, opts *EnsureOpts) (_ *U
 			return nil, EnsureResultError, err
 		}
 
+		if homeDir := ref.homeDir; len(homeDir) > 0 && opts.IsHomeDir() {
+			if err := this.createHomeDir(ref, req.Skel, string(homeDir)); err != nil {
+				return nil, EnsureResultError, err
+			}
+		}
+
 		return this.refAndGroupsToUser(ref, group, &groups), EnsureResultCreated, nil
 	}
 
 	oldName := existing.etcPasswdEntry.name
 	oldUid := existing.etcPasswdEntry.uid
+	oldHomeDir := existing.etcPasswdEntry.homeDir
 
 	if err := tReq.updateEtcPasswdRef(existing, group.Gid); err != nil {
 		return nil, EnsureResultError, err
@@ -477,7 +485,43 @@ func (this *EtcColonRepository) Ensure(req *Requirement, opts *EnsureOpts) (_ *U
 		return nil, EnsureResultError, err
 	}
 
+	if !bytes.Equal(oldHomeDir, existing.etcPasswdEntry.homeDir) && opts.IsHomeDir() {
+		// TODO! Move the home directory
+	}
+
 	return this.refAndGroupsToUser(existing, group, &groups), EnsureResultModified, nil
+}
+
+func (this *EtcColonRepository) createHomeDir(ref *etcPasswdRef, skel, homeDir string) error {
+	fail := func(err error) error {
+		return errors.Newf(errors.TypeSystem, "cannot create user's %d(%s) home directory (%s): %w", ref.uid, string(ref.etcPasswdEntry.name), homeDir, err)
+	}
+	failf := func(msg string, args ...any) error {
+		return fail(fmt.Errorf(msg, args...))
+	}
+
+	if err := os.MkdirAll(homeDir, 0700); err != nil {
+		return fail(err)
+	}
+	if err := etcColonRepositoryChownFunc(homeDir, int(ref.uid), int(ref.gid)); err != nil {
+		return fail(err)
+	}
+
+	if skel != "" {
+		control := func(srcinfo os.FileInfo, dest string) (func(*error), error) {
+			this.logger().With("file", dest).Debug("yeah")
+			return copy.PerservePermission(srcinfo, dest)
+		}
+		if err := copy.Copy(skel, homeDir, copy.Options{
+			PreserveTimes:     true,
+			Specials:          true,
+			PermissionControl: *(*copy.PermissionControlFunc)(unsafe.Pointer(&control)),
+		}); err != nil {
+			return failf("cannot copy skel directory %q: %w", skel, err)
+		}
+	}
+
+	return nil
 }
 
 // DeleteById implements Repository.DeleteById.
@@ -554,7 +598,7 @@ func (this *EtcColonRepository) deleteRef(selector func() (*etcPasswdRef, error)
 }
 
 // ValidatePasswordById implements Repository.ValidatePasswordById.
-func (this *EtcColonRepository) ValidatePasswordById(id Id, pass []byte) (bool, error) {
+func (this *EtcColonRepository) ValidatePasswordById(id Id, pass string) (bool, error) {
 	return this.validatePasswordRef(pass, func() (*etcPasswdRef, error) {
 		i2u := this.idToUser
 		if i2u == nil {
@@ -571,7 +615,7 @@ func (this *EtcColonRepository) ValidatePasswordById(id Id, pass []byte) (bool, 
 }
 
 // ValidatePasswordByName implements Repository.ValidatePasswordByName.
-func (this *EtcColonRepository) ValidatePasswordByName(name string, pass []byte) (bool, error) {
+func (this *EtcColonRepository) ValidatePasswordByName(name string, pass string) (bool, error) {
 	return this.validatePasswordRef(pass, func() (*etcPasswdRef, error) {
 		n2u := this.nameToUser
 		if n2u == nil {
@@ -587,7 +631,7 @@ func (this *EtcColonRepository) ValidatePasswordByName(name string, pass []byte)
 	})
 }
 
-func (this *EtcColonRepository) validatePasswordRef(pass []byte, selector func() (*etcPasswdRef, error)) (_ bool, rErr error) {
+func (this *EtcColonRepository) validatePasswordRef(pass string, selector func() (*etcPasswdRef, error)) (_ bool, rErr error) {
 	this.mutex.RLock()
 	defer this.mutex.RUnlock()
 
@@ -596,18 +640,7 @@ func (this *EtcColonRepository) validatePasswordRef(pass []byte, selector func()
 		return false, err
 	}
 
-	if ref.etcShadowEntry == nil {
-		if ref.etcPasswdEntry == nil {
-			return false, nil
-		}
-		return bytes.Equal(ref.etcPasswdEntry.password, pass), nil
-	}
-
-	ok, err := password.Validate(pass, ref.etcShadowEntry.password)
-	if err != nil {
-		return false, err
-	}
-	return ok, nil
+	return ref.validatePassword(pass)
 }
 
 // DeleteGroupById implements Repository.DeleteGroupById.
@@ -686,11 +719,11 @@ func (this *EtcColonRepository) preEnsureGroup(req *GroupRequirement, opts *Ensu
 		return existing, this.refToGroup(existing), EnsureResultUnchanged, nil
 	}
 
-	if existing == nil && !*opts.CreateAllowed {
+	if existing == nil && !opts.IsCreateAllowed() {
 		return nil, nil, EnsureResultError, ErrNoSuchGroup
 	}
 
-	if !*opts.ModifyAllowed {
+	if !opts.IsModifyAllowed() {
 		return existing, nil, EnsureResultError, ErrGroupDoesNotFulfilRequirement
 	}
 	return existing, nil, EnsureResultUnknown, nil
@@ -702,9 +735,8 @@ func (this *EtcColonRepository) EnsureGroup(req *GroupRequirement, opts *EnsureO
 		panic("nil group requirement")
 	}
 	tReq := req.OrDefaults()
-	tOpts := opts.OrDefaults()
 
-	_, group, pResult, err := this.preEnsureGroup(&tReq, &tOpts, this.mutex.RLocker())
+	_, group, pResult, err := this.preEnsureGroup(&tReq, opts, this.mutex.RLocker())
 	if err != nil || pResult != EnsureResultUnknown {
 		return group, pResult, err
 	}
@@ -717,7 +749,7 @@ func (this *EtcColonRepository) EnsureGroup(req *GroupRequirement, opts *EnsureO
 	}
 	defer common.KeepError(&rErr, f.close)
 
-	_, group, result, err := this.ensureGroup(nil, &tReq, &tOpts)
+	_, group, result, err := this.ensureGroup(nil, &tReq, opts)
 	if err != nil {
 		return nil, EnsureResultError, err
 	}
@@ -774,12 +806,10 @@ func (this *EtcColonRepository) ensureGroup(forUser *Requirement, req *GroupRequ
 }
 
 func (this *EtcColonRepository) ensureGroups(reqs *GroupRequirements, opts *EnsureOpts) ([]*etcGroupRef, Groups, error) {
-	tOpts := opts.OrDefaults()
-
 	refs := make([]*etcGroupRef, len(*reqs))
 	groups := make(Groups, len(*reqs))
 	for i, req := range *reqs {
-		ref, v, _, err := this.ensureGroup(nil, &req, &tOpts)
+		ref, v, _, err := this.ensureGroup(nil, &req, opts)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1089,3 +1119,5 @@ func (this *EtcColonRepository) watchForChanges(watcher *fsnotify.Watcher) {
 var etcColonRepositoryExitFunc = func() {
 	os.Exit(17)
 }
+
+var etcColonRepositoryChownFunc = os.Chown

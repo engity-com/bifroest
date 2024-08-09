@@ -3,6 +3,7 @@
 package user
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"strconv"
@@ -36,6 +37,13 @@ type etcPasswdEntry struct {
 	geocs    []byte
 	homeDir  []byte
 	shell    []byte
+}
+
+func (this *etcPasswdEntry) validatePassword(pass string) (bool, error) {
+	if bytes.Equal(this.password, []byte{'x'}) {
+		return false, nil
+	}
+	return string(this.password) == pass, nil
 }
 
 func (this *etcPasswdEntry) validate(allowBadName bool) error {
@@ -98,6 +106,16 @@ type etcPasswdRef struct {
 	*etcShadowEntry
 }
 
+func (this *etcPasswdRef) validatePassword(pass string) (bool, error) {
+	if v := this.etcShadowEntry; v != nil {
+		return v.validatePassword(pass)
+	}
+	if v := this.etcPasswdEntry; v != nil {
+		return v.validatePassword(pass)
+	}
+	return false, nil
+}
+
 func (this *Requirement) toEtcPasswdRef(gui GroupId, idGenerator func() Id) *etcPasswdRef {
 	result := etcPasswdRef{
 		&etcPasswdEntry{
@@ -150,7 +168,7 @@ func (this *Requirement) updateEtcPasswdRef(ref *etcPasswdRef, gui GroupId) erro
 
 	ref.etcPasswdEntry.geocs = []byte(this.DisplayName)
 	ref.etcPasswdEntry.shell = []byte(this.Shell)
-	ref.etcPasswdEntry.homeDir = []byte(this.HomeDir) //TODO! We should consider to move it?
+	ref.etcPasswdEntry.homeDir = []byte(this.HomeDir)
 
 	return nil
 }

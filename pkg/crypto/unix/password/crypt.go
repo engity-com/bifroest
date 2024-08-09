@@ -11,10 +11,10 @@ var (
 )
 
 type Crypt interface {
-	Validate(password, hash []byte) (bool, error)
+	Validate(password string, hash []byte) (bool, error)
 }
 
-func Validate(password, hash []byte) (bool, error) {
+func Validate(password string, hash []byte) (bool, error) {
 	for prefix, crypt := range Instances {
 		if bytes.HasPrefix(hash, []byte(prefix)) {
 			return crypt.Validate(password, hash)

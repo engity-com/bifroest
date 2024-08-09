@@ -54,50 +54,31 @@ type EnsureOpts struct {
 	HomeDir *bool
 }
 
-// Clone create a copy of the current instance.
-func (this EnsureOpts) Clone() EnsureOpts {
-	var ca *bool
-	if v := this.CreateAllowed; v != nil {
-		nv := *v
-		ca = &nv
+func (this *EnsureOpts) IsCreateAllowed() bool {
+	if this != nil {
+		if v := this.CreateAllowed; v != nil {
+			return *v
+		}
 	}
-	var ma *bool
-	if v := this.ModifyAllowed; v != nil {
-		nv := *v
-		ma = &nv
-	}
-	var hd *bool
-	if v := this.HomeDir; v != nil {
-		nv := *v
-		hd = &nv
-	}
-	return EnsureOpts{
-		ca,
-		ma,
-		hd,
-	}
+	return true
 }
 
-// OrDefaults create a copy of this instance where all
-// nil fields are populated with its default values.
-func (this *EnsureOpts) OrDefaults() EnsureOpts {
-	var result EnsureOpts
-	if v := this; v != nil {
-		result = v.Clone()
+func (this *EnsureOpts) IsModifyAllowed() bool {
+	if this != nil {
+		if v := this.ModifyAllowed; v != nil {
+			return *v
+		}
 	}
-	if v := result.CreateAllowed; v == nil {
-		nv := true
-		result.CreateAllowed = &nv
+	return true
+}
+
+func (this *EnsureOpts) IsHomeDir() bool {
+	if this != nil {
+		if v := this.HomeDir; v != nil {
+			return *v
+		}
 	}
-	if v := result.ModifyAllowed; v == nil {
-		nv := true
-		result.ModifyAllowed = &nv
-	}
-	if v := result.HomeDir; v == nil {
-		nv := true
-		result.HomeDir = &nv
-	}
-	return result
+	return true
 }
 
 type EnsureResult uint8

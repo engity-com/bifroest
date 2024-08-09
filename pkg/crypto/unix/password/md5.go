@@ -13,9 +13,9 @@ func init() {
 
 type Md5 struct{}
 
-func (p *Md5) Validate(password, hash []byte) (bool, error) {
+func (p *Md5) Validate(password string, hash []byte) (bool, error) {
 	c := md5_crypt.New()
-	if err := c.Verify(string(password), hash); errors.Is(err, crypt.ErrKeyMismatch) {
+	if err := c.Verify(password, hash); errors.Is(err, crypt.ErrKeyMismatch) {
 		return false, nil
 	} else if err != nil {
 		return false, err

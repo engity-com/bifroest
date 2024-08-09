@@ -235,7 +235,6 @@ func (this *Local) runCommand(t Task, u *user.User) error {
 
 	// TODO!  read $HOME/.ssh/environment.
 	// TODO! Global configuration with environment
-
 	// tODO! If not exist ~/.hushlogin display /etc/motd
 
 	if ptyReq, winCh, isPty := sess.Pty(); isPty {

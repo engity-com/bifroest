@@ -51,13 +51,13 @@ type Repository interface {
 	// the given user by its Id. It returns true if the given
 	// password is valid. It will return ErrNoSuchUser if the
 	// given user does not exist.
-	ValidatePasswordById(Id, []byte) (bool, error)
+	ValidatePasswordById(id Id, pass string) (bool, error)
 
 	// ValidatePasswordByName will validate the given password
 	// the given user by its name. It returns true if the given
 	// password is valid. It will return ErrNoSuchUser if the
 	// given user does not exist.
-	ValidatePasswordByName(string, []byte) (bool, error)
+	ValidatePasswordByName(name string, pass string) (bool, error)
 
 	// DeleteGroupById will delete the group by the given GroupId.
 	// If the group does not exist ErrNoSuchGroup is returned.

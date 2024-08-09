@@ -28,62 +28,81 @@ func bs(ins ...string) [][]byte {
 	return result
 }
 
-func newTestFile(t *testing.T, name string, content string) testFile {
-	prefix := t.Name()
-	prefix = strings.ReplaceAll(prefix, "/", "_")
-	prefix = strings.ReplaceAll(prefix, "\\", "_")
-	prefix = strings.ReplaceAll(prefix, "*", "_")
-	prefix = strings.ReplaceAll(prefix, "$", "_")
-
-	fn := newTestDir(t, prefix).child(name)
-
-	f, err := os.OpenFile(fn, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
-	require.NoError(t, err)
-
-	_, err = io.Copy(f, strings.NewReader(content))
-	require.NoError(t, err)
-
-	require.NoError(t, f.Close())
-
-	return testFile(f.Name())
+func newTestFile(t testing.TB, name string) *testFile {
+	return newTestDir(t).file(name)
 }
 
-type testFile string
+func newNamedTestFile(t testing.TB, fn string) *testFile {
+	f, err := os.OpenFile(fn, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
 
-func (this testFile) dispose(t *testing.T) {
+	result := &testFile{t, nil, f.Name()}
+
+	return result
+}
+
+type testFile struct {
+	t     testing.TB
+	root  *testDir
+	_name string
+}
+
+func (this *testFile) dispose() {
 	if keepPkgUserFiles {
-		t.Logf("File %q preserved", this)
+		this.t.Logf("File %q preserved", this)
 		return
 	}
 
-	dir := filepath.Dir(string(this))
+	dir := filepath.Dir(this.name())
 	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
-		t.Errorf("test directory %q should be deleted after the test; but was: %v", dir, err)
+		this.t.Errorf("test directory %q should be deleted after the test; but was: %v", dir, err)
 	}
 }
 
-func (this testFile) update(t *testing.T, with string) {
-	f, err := os.OpenFile(string(this), os.O_TRUNC|os.O_WRONLY, 0600)
-	require.NoError(t, err)
+func (this *testFile) setContent(with string) *testFile {
+	f, err := os.OpenFile(this.name(), os.O_TRUNC|os.O_WRONLY, 0600)
+	require.NoError(this.t, err)
 	defer func() {
-		require.NoError(t, f.Close())
+		require.NoError(this.t, f.Close())
 	}()
 
 	_, err = io.Copy(f, strings.NewReader(with))
-	require.NoError(t, err)
+	require.NoError(this.t, err)
+	return this
 }
 
-func (this testFile) content(t *testing.T) string {
-	f, err := os.OpenFile(string(this), os.O_RDONLY, 0)
-	require.NoError(t, err)
+func (this *testFile) setPerms(mode os.FileMode) *testFile {
+	err := os.Chmod(this.name(), mode)
+	require.NoError(this.t, err)
+	return this
+}
+
+func (this *testFile) content() string {
+	f, err := os.OpenFile(this.name(), os.O_RDONLY, 0)
+	require.NoError(this.t, err)
 	defer func() {
-		require.NoError(t, f.Close())
+		require.NoError(this.t, f.Close())
 	}()
 
 	all, err := io.ReadAll(f)
-	require.NoError(t, err)
+	require.NoError(this.t, err)
 
 	return string(all)
+}
+
+func (this *testFile) perms() os.FileMode {
+	fi, err := os.Stat(this.name())
+	require.NoError(this.t, err)
+	return fi.Mode()
+}
+
+func (this testFile) name() string {
+	return this._name
+}
+
+func (this testFile) String() string {
+	return this.name()
 }
 
 type namedReader struct {
@@ -119,34 +138,83 @@ func (this namedBytesBuffer) Truncate(n int64) error {
 	return nil
 }
 
-func newTestDir(t *testing.T, name string) testDir {
+func newTestDir(t testing.TB) *testDir {
 	prefix := t.Name()
 	prefix = strings.ReplaceAll(prefix, "/", "_")
 	prefix = strings.ReplaceAll(prefix, "\\", "_")
 	prefix = strings.ReplaceAll(prefix, "*", "_")
 	prefix = strings.ReplaceAll(prefix, "$", "_")
 
-	result, err := os.MkdirTemp("", "go-test-"+prefix+"-"+name+"-*")
+	resultPath, err := os.MkdirTemp("", "go-test-"+prefix+"-*")
 	require.NoError(t, err)
 
-	return testDir(result)
+	result := &testDir{t, nil, resultPath}
+	t.Cleanup(func() {
+		result.dispose()
+	})
+	return result
 }
 
-type testDir string
+type testDir struct {
+	t     testing.TB
+	root  *testDir
+	_name string
+}
 
-func (this testDir) dispose(t *testing.T) {
+func (this *testDir) dispose() {
 	if keepPkgUserFiles {
-		t.Logf("Directory %q preserved", this)
+		this.t.Logf("Directory %q preserved", this)
 		return
 	}
 
-	err := os.RemoveAll(string(this))
+	err := os.RemoveAll(this._name)
 	if os.IsNotExist(err) {
 		return
 	}
-	assert.NoError(t, err, "test directory %q should be deleted after the test", this)
+	assert.NoError(this.t, err, "test directory %v should be deleted after the test", this)
 }
 
-func (this testDir) child(sub ...string) string {
-	return filepath.Join(append([]string{string(this)}, sub...)...)
+func (this *testDir) name() string {
+	return this._name
+}
+
+func (this *testDir) String() string {
+	return this.name()
+}
+
+func (this *testDir) child(name string, sub ...string) string {
+	return filepath.Join(append([]string{this.name(), name}, sub...)...)
+}
+
+func (this *testDir) setPerms(mode os.FileMode) *testDir {
+	err := os.Chmod(this.name(), mode)
+	require.NoError(this.t, err)
+	return this
+}
+
+func (this *testDir) dir(name string, sub ...string) *testDir {
+	fn := this.child(name, sub...)
+	err := os.MkdirAll(fn, 0700)
+	require.NoError(this.t, err)
+
+	result := &testDir{this.t, this.root, fn}
+	if result.root == nil {
+		result.root = this
+	}
+
+	return result
+}
+
+func (this *testDir) file(name string, sub ...string) *testFile {
+	fn := this.child(name, sub...)
+	err := os.MkdirAll(filepath.Dir(fn), 0700)
+	require.NoError(this.t, err)
+
+	result := newNamedTestFile(this.t, fn)
+	result.root = this.root
+	if result.root == nil {
+		result.root = this
+	}
+
+	return result
 }

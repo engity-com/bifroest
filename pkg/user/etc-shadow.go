@@ -3,8 +3,11 @@
 package user
 
 import (
+	"bytes"
 	"errors"
+	"github.com/engity-com/bifroest/pkg/crypto/unix/password"
 	"strconv"
+	"time"
 )
 
 const (
@@ -24,6 +27,10 @@ var (
 	errEtcShadowIllegalInactiveAge   = errors.New("illegal inactive age")
 	errEtcShadowIllegalExpireAt      = errors.New("illegal expire at")
 	errEtcShadowIllegalUnused        = errors.New("illegal unused (9)")
+
+	nonStarPassword              = []byte{'*'}
+	nonExclamationPassword       = []byte{'!'}
+	nonDoubleExclamationPassword = []byte{'!', '!'}
 )
 
 type etcShadowEntry struct {
@@ -38,6 +45,40 @@ type etcShadowEntry struct {
 	hasInactiveAge      bool   //6
 	expireAtTsInDays    uint32 //7
 	hasExpire           bool   //7
+}
+
+func (this *etcShadowEntry) validatePassword(pass string) (bool, error) {
+	if len(this.password) == 0 ||
+		bytes.Equal(this.password, nonStarPassword) ||
+		bytes.Equal(this.password, nonExclamationPassword) ||
+		bytes.Equal(this.password, nonDoubleExclamationPassword) {
+		return false, nil
+	}
+
+	ok, err := password.Validate(pass, this.password)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, err
+	}
+
+	today := uint32(time.Now().Unix() / 60 / 60 / 24)
+
+	if this.hasInactiveAge {
+		expireAt := this.maximumAgeInDays + this.lastChangedAtInDays + this.inactiveAgeInDays
+		if expireAt >= today {
+			return false, nil
+		}
+	}
+
+	if this.hasExpire {
+		if this.expireAtTsInDays >= today {
+			return false, nil
+		}
+	}
+
+	return true, nil
 }
 
 func (this *etcShadowEntry) validate(allowBadName bool) error {

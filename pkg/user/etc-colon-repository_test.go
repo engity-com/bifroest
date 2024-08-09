@@ -9,6 +9,9 @@ import (
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -404,17 +407,15 @@ bar:XbarX:20453:10:100:::20818:`,
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			passwdFile := newTestFile(t, "passwd", c.passwd)
-			defer passwdFile.dispose(t)
-			groupFile := newTestFile(t, "group", c.group)
-			defer groupFile.dispose(t)
-			shadowFile := newTestFile(t, "shadow", c.shadow)
-			defer shadowFile.dispose(t)
+			dir := newTestDir(t)
+			passwdFile := dir.file("passwd").setContent(c.passwd)
+			groupFile := dir.file("group").setContent(c.group)
+			shadowFile := dir.file("shadow").setContent(c.shadow)
 
 			instance := EtcColonRepository{
-				PasswdFilename:        string(passwdFile),
-				GroupFilename:         string(groupFile),
-				ShadowFilename:        string(shadowFile),
+				PasswdFilename:        passwdFile.name(),
+				GroupFilename:         groupFile.name(),
+				ShadowFilename:        shadowFile.name(),
 				AllowBadName:          &c.allowBadName,
 				AllowBadLine:          &c.allowBadLine,
 				OnUnhandledAsyncError: c.onUnhandledAsyncError,
@@ -453,7 +454,7 @@ func Test_EtcColonRepository_Init_withNonExistingFiles(t *testing.T) {
 func Test_EtcColonRepository_Init_withNonExistingFilesButAllowedToCreate(t *testing.T) {
 	testlog.Hook(t)
 
-	dir := newTestDir(t, "some")
+	dir := newTestDir(t)
 
 	instance := EtcColonRepository{
 		PasswdFilename:      dir.child("etc", "passwd"),
@@ -472,23 +473,21 @@ func Test_EtcColonRepository_Init_withNonExistingFilesButAllowedToCreate(t *test
 func Test_EtcColonRepository_onFsEvents(t *testing.T) {
 	testlog.Hook(t)
 
-	passwdFile := newTestFile(t, "passwd", `root:x:0:0:root:/root:/bin/sh
+	dir := newTestDir(t)
+	passwdFile := dir.file("passwd").setContent(`root:x:0:0:root:/root:/bin/sh
 foo:abc:1:2:Foo Name:/home/foo:/bin/foosh 
 bar::11:12::/home/bar:/bin/barsh`)
-	defer passwdFile.dispose(t)
-	groupFile := newTestFile(t, "group", `root:x:0:
+	groupFile := dir.file("group").setContent(`root:x:0:
 foo:abc:1:aaa,bbb
 bar::12:ccc`)
-	defer groupFile.dispose(t)
-	shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+	shadowFile := dir.file("shadow").setContent(`root:XrootX:19722:10:100:50:200:20088:
 foo:XfooX:20088:10:100::::
 bar:XbarX:20453:10:100:::20818:`)
-	defer shadowFile.dispose(t)
 
 	instance := EtcColonRepository{
-		PasswdFilename: string(passwdFile),
-		GroupFilename:  string(groupFile),
-		ShadowFilename: string(shadowFile),
+		PasswdFilename: passwdFile.name(),
+		GroupFilename:  groupFile.name(),
+		ShadowFilename: shadowFile.name(),
 	}
 	require.NoError(t, instance.Init())
 
@@ -566,9 +565,9 @@ bar:XbarX:20453:10:100:::20818:`,
 			}
 			instance.FileSystemSyncThreshold = 1
 
-			passwdFile.update(t, c.passwd)
-			groupFile.update(t, c.group)
-			shadowFile.update(t, c.shadow)
+			passwdFile.setContent(c.passwd)
+			groupFile.setContent(c.group)
+			shadowFile.setContent(c.shadow)
 			time.Sleep(150 * time.Millisecond)
 
 			assert.Equal(t, c.expectedPasswdEntries, instance.handles.passwd.entries)
@@ -957,24 +956,22 @@ bar:XbarX:20453:10:100:::20818:$`,
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			passwdFile := newTestFile(t, "passwd", `root:x:0:0:root:/root:/bin/sh
+			dir := newTestDir(t)
+			passwdFile := dir.file("passwd").setContent(`root:x:0:0:root:/root:/bin/sh
 foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`)
-			defer passwdFile.dispose(t)
-			groupFile := newTestFile(t, "group", `root:x:0:
+			groupFile := dir.file("group").setContent(`root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar`)
-			defer groupFile.dispose(t)
-			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+			shadowFile := dir.file("shadow").setContent(`root:XrootX:19722:10:100:50:200:20088:
 foo:XfooX:20088:10:100::::
 bar:XbarX:20453:10:100:::20818:`)
-			defer shadowFile.dispose(t)
 
 			var syncError error
 			instance := EtcColonRepository{
-				PasswdFilename: string(passwdFile),
-				GroupFilename:  string(groupFile),
-				ShadowFilename: string(shadowFile),
+				PasswdFilename: passwdFile.name(),
+				GroupFilename:  groupFile.name(),
+				ShadowFilename: shadowFile.name(),
 				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
 					syncError = err
 				},
@@ -992,9 +989,9 @@ bar:XbarX:20453:10:100:::20818:`)
 			}
 
 			assert.Equal(t, c.expectedResult, actualResult)
-			assert.Regexp(t, c.expectedPasswd, passwdFile.content(t))
-			assert.Regexp(t, c.expectedGroup, groupFile.content(t))
-			assert.Regexp(t, c.expectedShadow, shadowFile.content(t))
+			assert.Regexp(t, c.expectedPasswd, passwdFile.content())
+			assert.Regexp(t, c.expectedGroup, groupFile.content())
+			assert.Regexp(t, c.expectedShadow, shadowFile.content())
 
 			actualErr = instance.Close()
 			require.NoError(t, actualErr)
@@ -1002,6 +999,96 @@ bar:XbarX:20453:10:100:::20818:`)
 			assert.NoError(t, syncError)
 		})
 	}
+}
+
+func Test_EtcColonRepository_Ensure_homeDirectoryCreation(t *testing.T) {
+	testlog.Hook(t)
+
+	dir := newTestDir(t)
+
+	skel := dir.dir("skel")
+	skel.file(".profile").setContent("something...").setPerms(0644)
+	skelSecret := skel.dir("secret").setPerms(0700)
+	skelSecret.file("key").setContent("something secret...").setPerms(0600)
+	skelOther := skel.dir("other").setPerms(0755)
+	skelOther.file("info").setContent("some info...").setPerms(0644)
+
+	homeDirFn := dir.child("home-dir")
+
+	etc := dir.dir("etc")
+
+	var unhandledAsyncError error
+	var unhandledAsyncErrorDetail string
+	instance := EtcColonRepository{
+		PasswdFilename: etc.file("passwd").name(),
+		GroupFilename:  etc.file("group").name(),
+		ShadowFilename: etc.file("shadow").name(),
+		OnUnhandledAsyncError: func(_ log.Logger, err error, detail string) {
+			unhandledAsyncError = err
+			unhandledAsyncErrorDetail = detail
+		},
+	}
+
+	require.NoError(t, instance.Init())
+
+	defer func() {
+		etcColonRepositoryChownFunc = os.Chown
+	}()
+	type ownerShip struct {
+		uid, gid int
+	}
+	calledChowns := map[string]ownerShip{}
+	etcColonRepositoryChownFunc = func(name string, uid, gid int) error {
+		calledChowns[name] = ownerShip{uid, gid}
+		return nil
+	}
+
+	actualUser, actualResult, actualErr := instance.Ensure(&Requirement{
+		Name:        "foo",
+		DisplayName: "Foo Name",
+		Uid:         common.P[Id](2),
+		Group:       GroupRequirement{common.P[GroupId](2), "foo"},
+		Groups:      nil,
+		Shell:       "/bin/foosh",
+		HomeDir:     dir.child("home-dir"),
+		Skel:        skel.name(),
+	}, nil)
+	require.NoError(t, actualErr)
+	require.Equal(t, EnsureResultCreated, actualResult)
+	require.NotNil(t, actualUser)
+	require.Equal(t, homeDirFn, actualUser.HomeDir)
+
+	compare := func(left, right string) {
+		assert.NoError(t, filepath.Walk(left, func(leftPath string, leftFi fs.FileInfo, err error) error {
+			require.NoError(t, err)
+
+			rel, err := filepath.Rel(left, leftPath)
+			require.NoError(t, err)
+			rightPath := filepath.Join(right, rel)
+
+			rightFi, err := os.Stat(rightPath)
+			require.NoError(t, err)
+
+			assert.Equal(t, leftFi.Mode(), rightFi.Mode())
+			assert.Equal(t, leftFi.IsDir(), rightFi.IsDir())
+			assert.Equal(t, leftFi.Size(), rightFi.Size())
+			assert.Equal(t, leftFi.ModTime(), rightFi.ModTime())
+			if !leftFi.IsDir() {
+				leftContent := (&testFile{t, dir, leftPath}).content()
+				rightContent := (&testFile{t, dir, rightPath}).content()
+				assert.Equal(t, leftContent, rightContent)
+			}
+
+			log.Info(leftPath, rightPath)
+			return nil
+		}))
+	}
+	compare(skel.name(), homeDirFn)
+	compare(homeDirFn, skel.name())
+
+	assert.NoError(t, instance.Close())
+	assert.NoError(t, unhandledAsyncError)
+	assert.Empty(t, unhandledAsyncErrorDetail)
 }
 
 func Test_EtcColonRepository_DeleteById(t *testing.T) {
@@ -1047,24 +1134,22 @@ bar:XbarX:20453:10:100:::20818:$`,
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			passwdFile := newTestFile(t, "passwd", `root:x:0:0:root:/root:/bin/sh
+			dir := newTestDir(t)
+			passwdFile := dir.file("passwd").setContent(`root:x:0:0:root:/root:/bin/sh
 foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`)
-			defer passwdFile.dispose(t)
-			groupFile := newTestFile(t, "group", `root:x:0:
+			groupFile := dir.file("group").setContent(`root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar`)
-			defer groupFile.dispose(t)
-			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+			shadowFile := dir.file("shadow").setContent(`root:XrootX:19722:10:100:50:200:20088:
 foo:XfooX:20088:10:100::::
 bar:XbarX:20453:10:100:::20818:`)
-			defer shadowFile.dispose(t)
 
 			var syncError error
 			instance := EtcColonRepository{
-				PasswdFilename: string(passwdFile),
-				GroupFilename:  string(groupFile),
-				ShadowFilename: string(shadowFile),
+				PasswdFilename: passwdFile.name(),
+				GroupFilename:  groupFile.name(),
+				ShadowFilename: shadowFile.name(),
 				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
 					syncError = err
 				},
@@ -1080,9 +1165,9 @@ bar:XbarX:20453:10:100:::20818:`)
 				require.NoError(t, actualErr)
 			}
 
-			assert.Regexp(t, c.expectedPasswd, passwdFile.content(t))
-			assert.Regexp(t, c.expectedGroup, groupFile.content(t))
-			assert.Regexp(t, c.expectedShadow, shadowFile.content(t))
+			assert.Regexp(t, c.expectedPasswd, passwdFile.content())
+			assert.Regexp(t, c.expectedGroup, groupFile.content())
+			assert.Regexp(t, c.expectedShadow, shadowFile.content())
 
 			actualErr = instance.Close()
 			require.NoError(t, actualErr)
@@ -1135,24 +1220,22 @@ bar:XbarX:20453:10:100:::20818:$`,
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			passwdFile := newTestFile(t, "passwd", `root:x:0:0:root:/root:/bin/sh
+			dir := newTestDir(t)
+			passwdFile := dir.file("passwd").setContent(`root:x:0:0:root:/root:/bin/sh
 foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`)
-			defer passwdFile.dispose(t)
-			groupFile := newTestFile(t, "group", `root:x:0:
+			groupFile := dir.file("group").setContent(`root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar`)
-			defer groupFile.dispose(t)
-			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+			shadowFile := dir.file("shadow").setContent(`root:XrootX:19722:10:100:50:200:20088:
 foo:XfooX:20088:10:100::::
 bar:XbarX:20453:10:100:::20818:`)
-			defer shadowFile.dispose(t)
 
 			var syncError error
 			instance := EtcColonRepository{
-				PasswdFilename: string(passwdFile),
-				GroupFilename:  string(groupFile),
-				ShadowFilename: string(shadowFile),
+				PasswdFilename: passwdFile.name(),
+				GroupFilename:  groupFile.name(),
+				ShadowFilename: shadowFile.name(),
 				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
 					syncError = err
 				},
@@ -1168,9 +1251,9 @@ bar:XbarX:20453:10:100:::20818:`)
 				require.NoError(t, actualErr)
 			}
 
-			assert.Regexp(t, c.expectedPasswd, passwdFile.content(t))
-			assert.Regexp(t, c.expectedGroup, groupFile.content(t))
-			assert.Regexp(t, c.expectedShadow, shadowFile.content(t))
+			assert.Regexp(t, c.expectedPasswd, passwdFile.content())
+			assert.Regexp(t, c.expectedGroup, groupFile.content())
+			assert.Regexp(t, c.expectedShadow, shadowFile.content())
 
 			actualErr = instance.Close()
 			require.NoError(t, actualErr)
@@ -1213,24 +1296,22 @@ func Test_EtcColonRepository_ValidatePasswordById(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			passwdFile := newTestFile(t, "passwd", `root:x:0:0:root:/root:/bin/sh
+			dir := newTestDir(t)
+			passwdFile := dir.file("passwd").setContent(`root:x:0:0:root:/root:/bin/sh
 foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`)
-			defer passwdFile.dispose(t)
-			groupFile := newTestFile(t, "group", `root:x:0:
+			groupFile := dir.file("group").setContent(`root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar`)
-			defer groupFile.dispose(t)
-			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+			shadowFile := dir.file("shadow").setContent(`root:XrootX:19722:10:100:50:200:20088:
 foo:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:20088:10:100::::
 bar:XbarX:20453:10:100:::20818:`)
-			defer shadowFile.dispose(t)
 
 			var syncError error
 			instance := EtcColonRepository{
-				PasswdFilename: string(passwdFile),
-				GroupFilename:  string(groupFile),
-				ShadowFilename: string(shadowFile),
+				PasswdFilename: passwdFile.name(),
+				GroupFilename:  groupFile.name(),
+				ShadowFilename: shadowFile.name(),
 				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
 					syncError = err
 				},
@@ -1239,7 +1320,7 @@ bar:XbarX:20453:10:100:::20818:`)
 			actualErr := instance.Init()
 			require.NoError(t, actualErr)
 
-			actual, actualErr := instance.ValidatePasswordById(c.givenId, []byte(c.givenPassword))
+			actual, actualErr := instance.ValidatePasswordById(c.givenId, c.givenPassword)
 			if expectedErr := c.expectedErr; expectedErr != "" {
 				assert.ErrorContains(t, actualErr, expectedErr)
 			} else {
@@ -1288,23 +1369,21 @@ func Test_EtcColonRepository_ValidatePasswordById_withoutShadow(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			passwdFile := newTestFile(t, "passwd", `root:x:0:0:root:/root:/bin/sh
+			dir := newTestDir(t)
+			passwdFile := dir.file("passwd").setContent(`root:x:0:0:root:/root:/bin/sh
 foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`)
-			defer passwdFile.dispose(t)
-			groupFile := newTestFile(t, "group", `root:x:0:
+			groupFile := dir.file("group").setContent(`root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar`)
-			defer groupFile.dispose(t)
-			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+			shadowFile := dir.file("shadow").setContent(`root:XrootX:19722:10:100:50:200:20088:
 bar:XbarX:20453:10:100:::20818:`)
-			defer shadowFile.dispose(t)
 
 			var syncError error
 			instance := EtcColonRepository{
-				PasswdFilename: string(passwdFile),
-				GroupFilename:  string(groupFile),
-				ShadowFilename: string(shadowFile),
+				PasswdFilename: passwdFile.name(),
+				GroupFilename:  groupFile.name(),
+				ShadowFilename: shadowFile.name(),
 				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
 					syncError = err
 				},
@@ -1313,7 +1392,7 @@ bar:XbarX:20453:10:100:::20818:`)
 			actualErr := instance.Init()
 			require.NoError(t, actualErr)
 
-			actual, actualErr := instance.ValidatePasswordById(c.givenId, []byte(c.givenPassword))
+			actual, actualErr := instance.ValidatePasswordById(c.givenId, c.givenPassword)
 			if expectedErr := c.expectedErr; expectedErr != "" {
 				assert.ErrorContains(t, actualErr, expectedErr)
 			} else {
@@ -1362,24 +1441,22 @@ func Test_EtcColonRepository_ValidatePasswordByName(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			passwdFile := newTestFile(t, "passwd", `root:x:0:0:root:/root:/bin/sh
+			dir := newTestDir(t)
+			passwdFile := dir.file("passwd").setContent(`root:x:0:0:root:/root:/bin/sh
 foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`)
-			defer passwdFile.dispose(t)
-			groupFile := newTestFile(t, "group", `root:x:0:
+			groupFile := dir.file("group").setContent(`root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar`)
-			defer groupFile.dispose(t)
-			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+			shadowFile := dir.file("shadow").setContent(`root:XrootX:19722:10:100:50:200:20088:
 foo:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:20088:10:100::::
 bar:XbarX:20453:10:100:::20818:`)
-			defer shadowFile.dispose(t)
 
 			var syncError error
 			instance := EtcColonRepository{
-				PasswdFilename: string(passwdFile),
-				GroupFilename:  string(groupFile),
-				ShadowFilename: string(shadowFile),
+				PasswdFilename: passwdFile.name(),
+				GroupFilename:  groupFile.name(),
+				ShadowFilename: shadowFile.name(),
 				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
 					syncError = err
 				},
@@ -1388,7 +1465,7 @@ bar:XbarX:20453:10:100:::20818:`)
 			actualErr := instance.Init()
 			require.NoError(t, actualErr)
 
-			actual, actualErr := instance.ValidatePasswordByName(c.givenName, []byte(c.givenPassword))
+			actual, actualErr := instance.ValidatePasswordByName(c.givenName, c.givenPassword)
 			if expectedErr := c.expectedErr; expectedErr != "" {
 				assert.ErrorContains(t, actualErr, expectedErr)
 			} else {
@@ -1437,23 +1514,21 @@ func Test_EtcColonRepository_ValidatePasswordByName_withoutShadow(t *testing.T) 
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			passwdFile := newTestFile(t, "passwd", `root:x:0:0:root:/root:/bin/sh
+			dir := newTestDir(t)
+			passwdFile := dir.file("passwd").setContent(`root:x:0:0:root:/root:/bin/sh
 foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`)
-			defer passwdFile.dispose(t)
-			groupFile := newTestFile(t, "group", `root:x:0:
+			groupFile := dir.file("group").setContent(`root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar`)
-			defer groupFile.dispose(t)
-			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+			shadowFile := dir.file("shadow").setContent(`root:XrootX:19722:10:100:50:200:20088:
 bar:XbarX:20453:10:100:::20818:`)
-			defer shadowFile.dispose(t)
 
 			var syncError error
 			instance := EtcColonRepository{
-				PasswdFilename: string(passwdFile),
-				GroupFilename:  string(groupFile),
-				ShadowFilename: string(shadowFile),
+				PasswdFilename: passwdFile.name(),
+				GroupFilename:  groupFile.name(),
+				ShadowFilename: shadowFile.name(),
 				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
 					syncError = err
 				},
@@ -1462,7 +1537,7 @@ bar:XbarX:20453:10:100:::20818:`)
 			actualErr := instance.Init()
 			require.NoError(t, actualErr)
 
-			actual, actualErr := instance.ValidatePasswordByName(c.givenName, []byte(c.givenPassword))
+			actual, actualErr := instance.ValidatePasswordByName(c.givenName, c.givenPassword)
 			if expectedErr := c.expectedErr; expectedErr != "" {
 				assert.ErrorContains(t, actualErr, expectedErr)
 			} else {
@@ -1603,26 +1678,25 @@ bar::12:bar$`,
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			dir := newTestDir(t)
+
 			givenPasswdContent := `root:x:0:0:root:/root:/bin/sh
 foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`
-			passwdFile := newTestFile(t, "passwd", givenPasswdContent)
-			defer passwdFile.dispose(t)
-			groupFile := newTestFile(t, "group", `root:x:0:
+			passwdFile := dir.file("passwd").setContent(givenPasswdContent)
+			groupFile := dir.file("group").setContent(`root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar`)
-			defer groupFile.dispose(t)
 			givenShadowContent := `root:XrootX:19722:10:100:50:200:20088:
 foo:XfooX:20088:10:100::::
 bar:XbarX:20453:10:100:::20818:`
-			shadowFile := newTestFile(t, "shadow", givenShadowContent)
-			defer shadowFile.dispose(t)
+			shadowFile := dir.file("shadow").setContent(givenShadowContent)
 
 			var syncError error
 			instance := EtcColonRepository{
-				PasswdFilename: string(passwdFile),
-				GroupFilename:  string(groupFile),
-				ShadowFilename: string(shadowFile),
+				PasswdFilename: passwdFile.name(),
+				GroupFilename:  groupFile.name(),
+				ShadowFilename: shadowFile.name(),
 				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
 					syncError = err
 				},
@@ -1640,9 +1714,9 @@ bar:XbarX:20453:10:100:::20818:`
 			}
 
 			assert.Equal(t, c.expectedResult, actualResult)
-			assert.Regexp(t, givenPasswdContent, passwdFile.content(t))
-			assert.Regexp(t, c.expectedGroup, groupFile.content(t))
-			assert.Regexp(t, givenShadowContent, shadowFile.content(t))
+			assert.Regexp(t, givenPasswdContent, passwdFile.content())
+			assert.Regexp(t, c.expectedGroup, groupFile.content())
+			assert.Regexp(t, givenShadowContent, shadowFile.content())
 
 			actualErr = instance.Close()
 			require.NoError(t, actualErr)
@@ -1718,27 +1792,26 @@ bar:XbarX:20453:10:100:::20818:$`,
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			passwdFile := newTestFile(t, "passwd", `root:x:0:0:root:/root:/bin/sh
+			dir := newTestDir(t)
+
+			passwdFile := dir.file("passwd").setContent(`root:x:0:0:root:/root:/bin/sh
 foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`)
-			defer passwdFile.dispose(t)
-			groupFile := newTestFile(t, "group", `root:x:0:
+			groupFile := dir.file("group").setContent(`root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar
 foo2::2:foo,bbb
 foo3::3:foo,bbb
 `)
-			defer groupFile.dispose(t)
-			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+			shadowFile := dir.file("shadow").setContent(`root:XrootX:19722:10:100:50:200:20088:
 foo:XfooX:20088:10:100::::
 bar:XbarX:20453:10:100:::20818:`)
-			defer shadowFile.dispose(t)
 
 			var syncError error
 			instance := EtcColonRepository{
-				PasswdFilename: string(passwdFile),
-				GroupFilename:  string(groupFile),
-				ShadowFilename: string(shadowFile),
+				PasswdFilename: passwdFile.name(),
+				GroupFilename:  groupFile.name(),
+				ShadowFilename: shadowFile.name(),
 				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
 					syncError = err
 				},
@@ -1754,9 +1827,9 @@ bar:XbarX:20453:10:100:::20818:`)
 				require.NoError(t, actualErr)
 			}
 
-			assert.Regexp(t, c.expectedPasswd, passwdFile.content(t))
-			assert.Regexp(t, c.expectedGroup, groupFile.content(t))
-			assert.Regexp(t, c.expectedShadow, shadowFile.content(t))
+			assert.Regexp(t, c.expectedPasswd, passwdFile.content())
+			assert.Regexp(t, c.expectedGroup, groupFile.content())
+			assert.Regexp(t, c.expectedShadow, shadowFile.content())
 
 			actualErr = instance.Close()
 			require.NoError(t, actualErr)
@@ -1832,27 +1905,26 @@ bar:XbarX:20453:10:100:::20818:$`,
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			passwdFile := newTestFile(t, "passwd", `root:x:0:0:root:/root:/bin/sh
+			dir := newTestDir(t)
+
+			passwdFile := dir.file("passwd").setContent(`root:x:0:0:root:/root:/bin/sh
 foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`)
-			defer passwdFile.dispose(t)
-			groupFile := newTestFile(t, "group", `root:x:0:
+			groupFile := dir.file("group").setContent(`root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar
 foo2::2:foo,bbb
 foo3::3:foo,bbb
 `)
-			defer groupFile.dispose(t)
-			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+			shadowFile := dir.file("shadow").setContent(`root:XrootX:19722:10:100:50:200:20088:
 foo:XfooX:20088:10:100::::
 bar:XbarX:20453:10:100:::20818:`)
-			defer shadowFile.dispose(t)
 
 			var syncError error
 			instance := EtcColonRepository{
-				PasswdFilename: string(passwdFile),
-				GroupFilename:  string(groupFile),
-				ShadowFilename: string(shadowFile),
+				PasswdFilename: passwdFile.name(),
+				GroupFilename:  groupFile.name(),
+				ShadowFilename: shadowFile.name(),
 				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
 					syncError = err
 				},
@@ -1868,9 +1940,9 @@ bar:XbarX:20453:10:100:::20818:`)
 				require.NoError(t, actualErr)
 			}
 
-			assert.Regexp(t, c.expectedPasswd, passwdFile.content(t))
-			assert.Regexp(t, c.expectedGroup, groupFile.content(t))
-			assert.Regexp(t, c.expectedShadow, shadowFile.content(t))
+			assert.Regexp(t, c.expectedPasswd, passwdFile.content())
+			assert.Regexp(t, c.expectedGroup, groupFile.content())
+			assert.Regexp(t, c.expectedShadow, shadowFile.content())
 
 			actualErr = instance.Close()
 			require.NoError(t, actualErr)
@@ -2070,18 +2142,16 @@ bar:XbarX:20453:10:100:::20818:`,
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			passwdFile := newTestFile(t, "passwd", c.givenPasswd)
-			defer passwdFile.dispose(t)
-			groupFile := newTestFile(t, "group", c.givenGroup)
-			defer groupFile.dispose(t)
-			shadowFile := newTestFile(t, "shadow", c.givenShadow)
-			defer shadowFile.dispose(t)
+			dir := newTestDir(t)
+			passwdFile := dir.file("passwd").setContent(c.givenPasswd)
+			groupFile := dir.file("group").setContent(c.givenGroup)
+			shadowFile := dir.file("shadow").setContent(c.givenShadow)
 
 			var syncError error
 			instance := EtcColonRepository{
-				PasswdFilename: string(passwdFile),
-				GroupFilename:  string(groupFile),
-				ShadowFilename: string(shadowFile),
+				PasswdFilename: passwdFile.name(),
+				GroupFilename:  groupFile.name(),
+				ShadowFilename: shadowFile.name(),
 				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
 					syncError = err
 				},
@@ -2213,18 +2283,16 @@ bar:XbarX:20453:10:100:::20818:`,
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			passwdFile := newTestFile(t, "passwd", c.givenPasswd)
-			defer passwdFile.dispose(t)
-			groupFile := newTestFile(t, "group", c.givenGroup)
-			defer groupFile.dispose(t)
-			shadowFile := newTestFile(t, "shadow", c.givenShadow)
-			defer shadowFile.dispose(t)
+			dir := newTestDir(t)
+			passwdFile := dir.file("passwd").setContent(c.givenPasswd)
+			groupFile := dir.file("group").setContent(c.givenGroup)
+			shadowFile := dir.file("shadow").setContent(c.givenShadow)
 
 			var syncError error
 			instance := EtcColonRepository{
-				PasswdFilename: string(passwdFile),
-				GroupFilename:  string(groupFile),
-				ShadowFilename: string(shadowFile),
+				PasswdFilename: passwdFile.name(),
+				GroupFilename:  groupFile.name(),
+				ShadowFilename: shadowFile.name(),
 				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
 					syncError = err
 				},
@@ -2291,22 +2359,20 @@ bar::12:bar`,
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			passwdFile := newTestFile(t, "passwd", `root:x:0:0:root:/root:/bin/sh
+			dir := newTestDir(t)
+			passwdFile := dir.file("passwd").setContent(`root:x:0:0:root:/root:/bin/sh
 foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`)
-			defer passwdFile.dispose(t)
-			groupFile := newTestFile(t, "group", c.givenGroup)
-			defer groupFile.dispose(t)
-			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+			groupFile := dir.file("group").setContent(c.givenGroup)
+			shadowFile := dir.file("shadow").setContent(`root:XrootX:19722:10:100:50:200:20088:
 foo:XfooX:20088:10:100::::
 bar:XbarX:20453:10:100:::20818:`)
-			defer shadowFile.dispose(t)
 
 			var syncError error
 			instance := EtcColonRepository{
-				PasswdFilename: string(passwdFile),
-				GroupFilename:  string(groupFile),
-				ShadowFilename: string(shadowFile),
+				PasswdFilename: passwdFile.name(),
+				GroupFilename:  groupFile.name(),
+				ShadowFilename: shadowFile.name(),
 				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
 					syncError = err
 				},
@@ -2369,22 +2435,20 @@ bar::12:bar`,
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			passwdFile := newTestFile(t, "passwd", `root:x:0:0:root:/root:/bin/sh
+			dir := newTestDir(t)
+			passwdFile := dir.file("passwd").setContent(`root:x:0:0:root:/root:/bin/sh
 foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`)
-			defer passwdFile.dispose(t)
-			groupFile := newTestFile(t, "group", c.givenGroup)
-			defer groupFile.dispose(t)
-			shadowFile := newTestFile(t, "shadow", `root:XrootX:19722:10:100:50:200:20088:
+			groupFile := dir.file("group").setContent(c.givenGroup)
+			shadowFile := dir.file("shadow").setContent(`root:XrootX:19722:10:100:50:200:20088:
 foo:XfooX:20088:10:100::::
 bar:XbarX:20453:10:100:::20818:`)
-			defer shadowFile.dispose(t)
 
 			var syncError error
 			instance := EtcColonRepository{
-				PasswdFilename: string(passwdFile),
-				GroupFilename:  string(groupFile),
-				ShadowFilename: string(shadowFile),
+				PasswdFilename: passwdFile.name(),
+				GroupFilename:  groupFile.name(),
+				ShadowFilename: shadowFile.name(),
 				OnUnhandledAsyncError: func(logger log.Logger, err error, detail string) {
 					syncError = err
 				},

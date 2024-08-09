@@ -1,4 +1,4 @@
-//go:build !without_cgo && linux
+//go:build cgo && linux && !without_yescrypt
 
 package password
 
@@ -17,8 +17,8 @@ func init() {
 
 type Yescrypt struct{}
 
-func (p *Yescrypt) Validate(password, hash []byte) (bool, error) {
-	cKey := C.CString(string(password))
+func (p *Yescrypt) Validate(password string, hash []byte) (bool, error) {
+	cKey := C.CString(password)
 	defer C.free(unsafe.Pointer(cKey))
 	cHash := C.CString(string(hash))
 	defer C.free(unsafe.Pointer(cHash))

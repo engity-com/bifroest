@@ -6,8 +6,8 @@ import (
 )
 
 var (
+	DefaultAuthorizationLocalPamService     = defaultAuthorizationLocalPamService
 	DefaultAuthorizationLocalAuthorizedKeys = []template.String{template.MustNewString("{{.User.HomeDir}}/.ssh/authorized_keys")}
-	DefaultAuthorizationLocalPamService     = "sshd"
 )
 
 type AuthorizationLocal struct {

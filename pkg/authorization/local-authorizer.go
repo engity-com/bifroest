@@ -8,6 +8,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/engity-com/bifroest/pkg/template"
 	"github.com/engity-com/bifroest/pkg/user"
 	"golang.org/x/crypto/ssh"
@@ -224,4 +225,31 @@ func (this *LocalAuthorizer) Close() error {
 type AuthorizedKeysRequestContext struct {
 	PublicKeyRequest
 	User *user.User
+}
+
+func (this *LocalAuthorizer) checkPasswordViaRepository(req PasswordRequest, requestedUsername string, validatePassword func(string, Request) (bool, error)) (username string, env sys.EnvVars, success bool, rErr error) {
+	pass := req.RemotePassword()
+	return this.checkPasswordValueViaRepository(req, pass, requestedUsername, validatePassword)
+}
+
+func (this *LocalAuthorizer) checkInteractiveViaRepository(req InteractiveRequest, requestedUsername string, validatePassword func(string, Request) (bool, error)) (username string, env sys.EnvVars, success bool, rErr error) {
+	pass, err := req.Prompt("Password", false)
+	if err != nil {
+		return "", nil, false, err
+	}
+
+	return this.checkPasswordValueViaRepository(req, pass, requestedUsername, validatePassword)
+}
+
+func (this *LocalAuthorizer) checkPasswordValueViaRepository(req Request, requestedPassword, requestedUsername string, validatePassword func(string, Request) (bool, error)) (username string, env sys.EnvVars, success bool, rErr error) {
+	ok, err := validatePassword(requestedPassword, req)
+	if err != nil || !ok {
+		return "", nil, false, err
+	}
+
+	if ok, err := this.userRepository.ValidatePasswordByName(requestedUsername, requestedPassword); err != nil || !ok {
+		return "", nil, false, err
+	}
+
+	return requestedUsername, nil, true, nil
 }

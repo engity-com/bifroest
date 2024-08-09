@@ -1,3 +1,5 @@
+//go:build cgo && linux && !without_pam
+
 package authorization
 
 import (
@@ -7,11 +9,19 @@ import (
 )
 
 func (this *LocalAuthorizer) checkPassword(req PasswordRequest, requestedUsername string, validatePassword func(string, Request) (bool, error)) (username string, env sys.EnvVars, success bool, rErr error) {
-	return pamAuthorizeForPamHandlerFunc(this.conf.PamService, false, passwordRequestToPamHandlerFunc(req, validatePassword), requestedUsername)
+	if v := this.conf.PamService; v != "" {
+		return pamAuthorizeForPamHandlerFunc(v, false, passwordRequestToPamHandlerFunc(req, validatePassword), requestedUsername)
+	}
+
+	return this.checkPasswordViaRepository(req, requestedUsername, validatePassword)
 }
 
 func (this *LocalAuthorizer) checkInteractive(req InteractiveRequest, requestedUsername string, validatePassword func(string, Request) (bool, error)) (username string, env sys.EnvVars, success bool, rErr error) {
-	return pamAuthorizeForPamHandlerFunc(this.conf.PamService, true, interactiveRequestToPamHandlerFunc(req, validatePassword), requestedUsername)
+	if v := this.conf.PamService; v != "" {
+		return pamAuthorizeForPamHandlerFunc(v, true, interactiveRequestToPamHandlerFunc(req, validatePassword), requestedUsername)
+	}
+
+	return this.checkInteractiveViaRepository(req, requestedUsername, validatePassword)
 }
 
 func passwordRequestToPamHandlerFunc(req PasswordRequest, validatePassword func(string, Request) (bool, error)) func(pam.Style, string) (string, error) {
