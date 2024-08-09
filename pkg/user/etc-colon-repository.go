@@ -11,7 +11,9 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/fsnotify/fsnotify"
 	"github.com/otiai10/copy"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -486,7 +488,9 @@ func (this *EtcColonRepository) Ensure(req *Requirement, opts *EnsureOpts) (_ *U
 	}
 
 	if !bytes.Equal(oldHomeDir, existing.etcPasswdEntry.homeDir) && opts.IsHomeDir() {
-		// TODO! Move the home directory
+		if err := this.moveHomeDir(existing, string(oldHomeDir), string(existing.etcPasswdEntry.homeDir)); err != nil {
+			return nil, EnsureResultError, err
+		}
 	}
 
 	return this.refAndGroupsToUser(existing, group, &groups), EnsureResultModified, nil
@@ -509,8 +513,13 @@ func (this *EtcColonRepository) createHomeDir(ref *etcPasswdRef, skel, homeDir s
 
 	if skel != "" {
 		control := func(srcinfo os.FileInfo, dest string) (func(*error), error) {
-			this.logger().With("file", dest).Debug("yeah")
-			return copy.PerservePermission(srcinfo, dest)
+			orig, err := copy.PerservePermission(srcinfo, dest)
+			return func(reported *error) {
+				orig(reported)
+				if *reported == nil {
+					*reported = etcColonRepositoryChownFunc(dest, int(ref.uid), int(ref.gid))
+				}
+			}, err
 		}
 		if err := copy.Copy(skel, homeDir, copy.Options{
 			PreserveTimes:     true,
@@ -519,6 +528,40 @@ func (this *EtcColonRepository) createHomeDir(ref *etcPasswdRef, skel, homeDir s
 		}); err != nil {
 			return failf("cannot copy skel directory %q: %w", skel, err)
 		}
+	}
+
+	return nil
+}
+
+func (this *EtcColonRepository) moveHomeDir(ref *etcPasswdRef, oldHomeDir string, newHomeDir string) error {
+	fail := func(err error) error {
+		return errors.Newf(errors.TypeSystem, "cannot move user's %d(%s) home directory from %q to %q: %w", ref.uid, string(ref.etcPasswdEntry.name), oldHomeDir, newHomeDir, err)
+	}
+
+	if _, err := os.Stat(oldHomeDir); os.IsNotExist(err) {
+		// This is ok, we do simply nothing...
+		return nil
+	} else if err != nil {
+		return fail(err)
+	}
+
+	_ = os.MkdirAll(filepath.Dir(newHomeDir), 0700)
+
+	if err := os.Rename(oldHomeDir, newHomeDir); err != nil {
+		return fail(err)
+	}
+	if err := filepath.Walk(newHomeDir, func(path string, fi fs.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if err := etcColonRepositoryChownFunc(path, int(ref.uid), int(ref.gid)); err != nil {
+			return err
+		}
+
+		return nil
+	}); err != nil {
+		return fail(err)
 	}
 
 	return nil

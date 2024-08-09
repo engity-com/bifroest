@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -582,6 +583,15 @@ bar:XbarX:20453:10:100:::20818:`,
 func Test_EtcColonRepository_Ensure(t *testing.T) {
 	testlog.Hook(t)
 
+	dir := newTestDir(t)
+
+	skel := dir.dir("skel")
+
+	defer func() {
+		etcColonRepositoryChownFunc = os.Chown
+	}()
+	etcColonRepositoryChownFunc = func(string, int, int) error { return nil }
+
 	cases := []struct {
 		name        string
 		requirement Requirement
@@ -604,16 +614,16 @@ func Test_EtcColonRepository_Ensure(t *testing.T) {
 			},
 			Groups:  GroupRequirements{{Name: "testg"}},
 			Shell:   "/bin/a/shell",
-			HomeDir: "/home/test",
-			Skel:    "/etc/skels",
+			HomeDir: dir.child("full-new"),
+			Skel:    skel.name(),
 		},
 
 		expectedResult: EnsureResultCreated,
-		expected:       User{"test", "XtestX", 1000, Group{1000, "testg"}, Groups{{1000, "testg"}}, "/bin/a/shell", "/home/test"},
+		expected:       User{"test", "XtestX", 1000, Group{1000, "testg"}, Groups{{1000, "testg"}}, "/bin/a/shell", dir.child("full-new")},
 		expectedPasswd: `^root:x:0:0:root:/root:/bin/sh
 foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh
-test:x:1000:1000:XtestX:/home/test:/bin/a/shell
+test:x:1000:1000:XtestX:` + dir.child("full-new") + `:/bin/a/shell
 $`,
 		expectedGroup: `^root:x:0:
 foo:abc:1:foo,bbb
@@ -635,16 +645,16 @@ $`,
 			},
 			Groups:  GroupRequirements{{Name: "testg"}},
 			Shell:   "/bin/a/shell",
-			HomeDir: "/home/test",
-			Skel:    "/etc/skels",
+			HomeDir: dir.child("full-new-by-id"),
+			Skel:    skel.name(),
 		},
 
 		expectedResult: EnsureResultCreated,
-		expected:       User{"u666", "XtestX", 666, Group{1000, "testg"}, Groups{{1000, "testg"}}, "/bin/a/shell", "/home/test"},
+		expected:       User{"u666", "XtestX", 666, Group{1000, "testg"}, Groups{{1000, "testg"}}, "/bin/a/shell", dir.child("full-new-by-id")},
 		expectedPasswd: `^root:x:0:0:root:/root:/bin/sh
 foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh
-u666:x:666:1000:XtestX:/home/test:/bin/a/shell
+u666:x:666:1000:XtestX:` + dir.child("full-new-by-id") + `:/bin/a/shell
 $`,
 		expectedGroup: `^root:x:0:
 foo:abc:1:foo,bbb
@@ -666,16 +676,16 @@ $`,
 			},
 			Groups:  GroupRequirements{{Name: "foo"}},
 			Shell:   "/bin/a/shell",
-			HomeDir: "/home/test",
-			Skel:    "/etc/skels",
+			HomeDir: dir.child("add-to-existing-group"),
+			Skel:    skel.name(),
 		},
 
 		expectedResult: EnsureResultCreated,
-		expected:       User{"test", "XtestX", 1000, Group{0, "root"}, Groups{{1, "foo"}}, "/bin/a/shell", "/home/test"},
+		expected:       User{"test", "XtestX", 1000, Group{0, "root"}, Groups{{1, "foo"}}, "/bin/a/shell", dir.child("add-to-existing-group")},
 		expectedPasswd: `^root:x:0:0:root:/root:/bin/sh
 foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh
-test:x:1000:0:XtestX:/home/test:/bin/a/shell
+test:x:1000:0:XtestX:` + dir.child("add-to-existing-group") + `:/bin/a/shell
 $`,
 		expectedGroup: `^root:x:0:
 foo:abc:1:foo,bbb,test
@@ -1001,7 +1011,7 @@ bar:XbarX:20453:10:100:::20818:`)
 	}
 }
 
-func Test_EtcColonRepository_Ensure_homeDirectoryCreation(t *testing.T) {
+func Test_EtcColonRepository_Ensure_homeDirectory_create(t *testing.T) {
 	testlog.Hook(t)
 
 	dir := newTestDir(t)
@@ -1034,12 +1044,12 @@ func Test_EtcColonRepository_Ensure_homeDirectoryCreation(t *testing.T) {
 	defer func() {
 		etcColonRepositoryChownFunc = os.Chown
 	}()
-	type ownerShip struct {
-		uid, gid int
-	}
-	calledChowns := map[string]ownerShip{}
+	// Odd, but we have to do it this way otherwise the tests always requires root permissions.
+	calledChowns := map[string]struct{}{}
 	etcColonRepositoryChownFunc = func(name string, uid, gid int) error {
-		calledChowns[name] = ownerShip{uid, gid}
+		assert.Equal(t, uid, 2)
+		assert.Equal(t, gid, 3)
+		calledChowns[name] = struct{}{}
 		return nil
 	}
 
@@ -1047,7 +1057,7 @@ func Test_EtcColonRepository_Ensure_homeDirectoryCreation(t *testing.T) {
 		Name:        "foo",
 		DisplayName: "Foo Name",
 		Uid:         common.P[Id](2),
-		Group:       GroupRequirement{common.P[GroupId](2), "foo"},
+		Group:       GroupRequirement{common.P[GroupId](3), "foo"},
 		Groups:      nil,
 		Shell:       "/bin/foosh",
 		HomeDir:     dir.child("home-dir"),
@@ -1085,6 +1095,92 @@ func Test_EtcColonRepository_Ensure_homeDirectoryCreation(t *testing.T) {
 	}
 	compare(skel.name(), homeDirFn)
 	compare(homeDirFn, skel.name())
+
+	notAlreadyCheckedChowns := maps.Clone(calledChowns)
+	assert.NoError(t, filepath.Walk(homeDirFn, func(path string, fi fs.FileInfo, err error) error {
+		require.NoError(t, err)
+
+		_, chownHappened := notAlreadyCheckedChowns[path]
+		assert.Equal(t, true, chownHappened)
+		delete(notAlreadyCheckedChowns, path)
+		return nil
+	}))
+
+	assert.Len(t, notAlreadyCheckedChowns, 0)
+
+	assert.NoError(t, instance.Close())
+	assert.NoError(t, unhandledAsyncError)
+	assert.Empty(t, unhandledAsyncErrorDetail)
+}
+
+func Test_EtcColonRepository_Ensure_homeDirectory_move(t *testing.T) {
+	testlog.Hook(t)
+
+	dir := newTestDir(t)
+
+	oldHd := dir.dir("old")
+	oldHd.file(".profile").setContent("something...").setPerms(0644)
+	oldHdSecret := oldHd.dir("secret").setPerms(0700)
+	oldHdSecret.file("key").setContent("something secret...").setPerms(0600)
+	oldHdOther := oldHd.dir("other").setPerms(0755)
+	oldHdOther.file("info").setContent("some info...").setPerms(0644)
+
+	newHd := dir.child("new")
+
+	etc := dir.dir("etc")
+
+	var unhandledAsyncError error
+	var unhandledAsyncErrorDetail string
+	instance := EtcColonRepository{
+		PasswdFilename: etc.file("passwd").setContent(`foo:abc:1:2:Foo Name:` + oldHd.name() + `:/bin/foosh`).name(),
+		GroupFilename:  etc.file("group").setContent("g2:x:2:\ng4:x:4:").name(),
+		ShadowFilename: etc.file("shadow").setContent("foo:x:19722:10:100::::").name(),
+		OnUnhandledAsyncError: func(_ log.Logger, err error, detail string) {
+			unhandledAsyncError = err
+			unhandledAsyncErrorDetail = detail
+		},
+	}
+
+	require.NoError(t, instance.Init())
+
+	defer func() {
+		etcColonRepositoryChownFunc = os.Chown
+	}()
+	// Odd, but we have to do it this way otherwise the tests always requires root permissions.
+	calledChowns := map[string]struct{}{}
+	etcColonRepositoryChownFunc = func(name string, uid, gid int) error {
+		assert.Equal(t, uid, 3)
+		assert.Equal(t, gid, 4)
+		calledChowns[name] = struct{}{}
+		return nil
+	}
+
+	actualUser, actualResult, actualErr := instance.Ensure(&Requirement{
+		Name:        "foo",
+		DisplayName: "Foo Name",
+		Uid:         common.P[Id](3),
+		Group:       GroupRequirement{common.P[GroupId](4), "foo"},
+		Groups:      nil,
+		Shell:       "/bin/foosh",
+		HomeDir:     newHd,
+		Skel:        "/foo",
+	}, nil)
+	require.NoError(t, actualErr)
+	require.Equal(t, EnsureResultModified, actualResult)
+	require.NotNil(t, actualUser)
+	require.Equal(t, newHd, actualUser.HomeDir)
+
+	notAlreadyCheckedChowns := maps.Clone(calledChowns)
+	assert.NoError(t, filepath.Walk(newHd, func(path string, fi fs.FileInfo, err error) error {
+		require.NoError(t, err)
+
+		_, chownHappened := notAlreadyCheckedChowns[path]
+		assert.Equal(t, true, chownHappened)
+		delete(notAlreadyCheckedChowns, path)
+		return nil
+	}))
+
+	assert.Len(t, notAlreadyCheckedChowns, 0)
 
 	assert.NoError(t, instance.Close())
 	assert.NoError(t, unhandledAsyncError)
