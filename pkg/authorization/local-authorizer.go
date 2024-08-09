@@ -233,7 +233,7 @@ func (this *LocalAuthorizer) checkPasswordViaRepository(req PasswordRequest, req
 }
 
 func (this *LocalAuthorizer) checkInteractiveViaRepository(req InteractiveRequest, requestedUsername string, validatePassword func(string, Request) (bool, error)) (username string, env sys.EnvVars, success bool, rErr error) {
-	pass, err := req.Prompt("Password", false)
+	pass, err := req.Prompt("Password: ", false)
 	if err != nil {
 		return "", nil, false, err
 	}
