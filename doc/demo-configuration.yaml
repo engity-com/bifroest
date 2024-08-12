@@ -5,7 +5,15 @@ ssh:
   maxAuthTries: 6
   keys:
     hostKeys: [ var/ssh-key ]
+    rememberMeNotification: |
 
+      If you return until {{.Session.Info.ValidUntil | format `dateTimeT`}} with the same public key ({{.Key | fingerprint}}), you can seamlessly login again.
+
+
+session:
+  type: fs
+  storage: /var/lib/engity/bifroest/sessions
+  fileMode: 666
 flows:
   - name: sso
     requirement:
@@ -41,6 +49,8 @@ flows:
   - name: local
     authorization:
       type: local
+      # Will bypass PAM and check the passwords directly against /etc/shadow
+      pamService: ""
       password:
         allowed: true
         interactiveAllowed: true

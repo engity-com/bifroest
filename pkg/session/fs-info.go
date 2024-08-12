@@ -36,7 +36,7 @@ func (this *fsSession) ValidUntil() (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	return lastAccessed.At().Add(this.VTimeout.Native()), nil
+	return lastAccessed.At().Add(this.repository.conf.IdleTimeout.Native()), nil
 }
 
 func (this *fsSession) LastAccessed() (InfoLastAccessed, error) {

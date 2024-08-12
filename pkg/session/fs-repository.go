@@ -122,7 +122,6 @@ func (this *FsRepository) Create(flow configuration.FlowName, remote common.Remo
 		VCreatedAt:  time.Now().Truncate(time.Millisecond),
 		VRemoteUser: remote.User(),
 		VRemoteHost: remote.Host(),
-		VTimeout:    this.conf.IdleTimeout,
 	}
 	if err := sess.save(); err != nil {
 		return fail(err)

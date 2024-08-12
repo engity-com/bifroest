@@ -36,8 +36,6 @@ type fsSession struct {
 	VCreatedAt  time.Time `json:"createdAt"`
 	VRemoteUser string    `json:"remoteUser"`
 	VRemoteHost net.Host  `json:"remoteHost"`
-
-	VTimeout common.Duration `json:"timeout"`
 }
 
 func (this *fsSession) Info() (Info, error) {
