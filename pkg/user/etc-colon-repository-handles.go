@@ -3,6 +3,7 @@ package user
 import (
 	"fmt"
 	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/sys"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -80,7 +81,7 @@ func (this *etcColonRepositoryHandles) openFile(fn string, rw bool, isCreateRetr
 
 	result, err := os.OpenFile(fn, fm, 0600)
 	if err != nil {
-		if os.IsNotExist(err) && !isCreateRetry && this.owner.getCreateFilesIfAbsent() {
+		if sys.IsNotExist(err) && !isCreateRetry && this.owner.getCreateFilesIfAbsent() {
 			_ = os.MkdirAll(filepath.Dir(fn), 0700)
 			return this.openFile(fn, rw, true)
 		}

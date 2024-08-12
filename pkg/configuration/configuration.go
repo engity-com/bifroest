@@ -3,19 +3,28 @@ package configuration
 import (
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/sys"
 	"gopkg.in/yaml.v3"
 	"io"
 	"os"
 )
 
 type Configuration struct {
-	Ssh   Ssh   `yaml:"ssh"`
+	Ssh Ssh `yaml:"ssh"`
+
+	// Session defines how new and existing sessions (a connection relates to) should be treated by the service.
+	// These session should not be mixed up with [ssh sessions].
+	//
+	// [ssh sessions]: https://datatracker.ietf.org/doc/html/rfc4254#section-6
+	Session Session `yaml:"session"`
+
 	Flows Flows `yaml:"flows"`
 }
 
 func (this *Configuration) SetDefaults() error {
 	return setDefaults(this,
 		func(v *Configuration) (string, defaulter) { return "ssh", &v.Ssh },
+		func(v *Configuration) (string, defaulter) { return "session", &v.Session },
 		func(v *Configuration) (string, defaulter) { return "flows", &v.Flows },
 	)
 }
@@ -23,6 +32,7 @@ func (this *Configuration) SetDefaults() error {
 func (this *Configuration) Trim() error {
 	return trim(this,
 		func(v *Configuration) (string, trimmer) { return "ssh", &v.Ssh },
+		func(v *Configuration) (string, trimmer) { return "session", &v.Session },
 		func(v *Configuration) (string, trimmer) { return "flows", &v.Flows },
 	)
 }
@@ -30,6 +40,7 @@ func (this *Configuration) Trim() error {
 func (this *Configuration) Validate() error {
 	return validate(this,
 		func(v *Configuration) (string, validator) { return "ssh", &v.Ssh },
+		func(v *Configuration) (string, validator) { return "session", &v.Session },
 		func(v *Configuration) (string, validator) { return "flows", &v.Flows },
 		notEmptySliceValidate("flows", func(v *Configuration) *[]Flow { return (*[]Flow)(&v.Flows) }),
 	)
@@ -44,7 +55,7 @@ func (this *Configuration) UnmarshalYAML(node *yaml.Node) error {
 
 func (this *Configuration) LoadFromFile(fn string) error {
 	f, err := os.Open(fn)
-	if os.IsNotExist(err) {
+	if sys.IsNotExist(err) {
 		return errors.Newf(errors.TypeConfig, "configuration file %q does not exist", fn)
 	}
 	if err != nil {
@@ -91,5 +102,6 @@ func (this Configuration) IsEqualTo(other any) bool {
 
 func (this Configuration) isEqualTo(other *Configuration) bool {
 	return isEqual(&this.Ssh, &other.Ssh) &&
+		isEqual(&this.Session, &other.Session) &&
 		isEqual(&this.Flows, &other.Flows)
 }

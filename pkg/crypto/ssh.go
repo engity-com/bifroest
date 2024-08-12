@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"fmt"
+	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/gliderlabs/ssh"
 	gssh "golang.org/x/crypto/ssh"
 	"os"
@@ -18,7 +19,7 @@ func DoWithEachAuthorizedKey[R any](requireExistence bool, callback func(gssh.Pu
 
 	for _, file := range files {
 		rest, err := os.ReadFile(file)
-		if !requireExistence && os.IsNotExist(err) {
+		if !requireExistence && sys.IsNotExist(err) {
 			continue
 		}
 		if err != nil {

@@ -1,8 +1,9 @@
 package common
 
-import "net"
+import "github.com/engity-com/bifroest/pkg/net"
 
 type Remote interface {
 	User() string
-	Addr() net.Addr
+	Host() net.Host
+	String() string
 }

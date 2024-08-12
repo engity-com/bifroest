@@ -3,6 +3,7 @@ package authorization
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -47,6 +48,53 @@ func NewLocal(_ context.Context, flow configuration.FlowName, conf *configuratio
 	return &result, nil
 }
 
+func (this *LocalAuthorizer) AuthorizeSession(req SessionRequest) (Authorization, error) {
+	sess := req.Session()
+	if sess == nil {
+		return Forbidden(req.Remote()), nil
+	}
+
+	fail := func(err error) (Authorization, error) {
+		return nil, errors.Newf(errors.TypeSystem, "cannot authorize via existing session's authorization token: %w", err)
+	}
+
+	at, err := sess.AuthorizationToken()
+	if err != nil {
+		return fail(err)
+	}
+	if len(at) == 0 {
+		return Forbidden(req.Remote()), nil
+	}
+
+	var buf localToken
+	if err := json.Unmarshal(at, &buf); err != nil {
+		return fail(err)
+	}
+	req.Logger().Debug("session restored")
+
+	var u *user.User
+	if v := buf.User.Uid; v != nil {
+		if u, err = this.userRepository.LookupById(*v); err != nil {
+			return fail(err)
+		}
+	} else if v := buf.User.Name; v != "" {
+		if u, err = this.userRepository.LookupByName(v); err != nil {
+			return fail(err)
+		}
+	} else {
+		return Forbidden(req.Remote()), nil
+	}
+
+	return &Local{
+		u,
+		req.Remote(),
+		nil,
+		this.flow,
+	}, nil
+
+	return Forbidden(req.Remote()), nil
+}
+
 func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authorization, error) {
 	fail := func(err error) (Authorization, error) {
 		return nil, fmt.Errorf("cannot authorize local %q via authorized keys: %w", req.Remote().User(), err)
@@ -57,13 +105,13 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 
 	if len(this.conf.AuthorizedKeys) == 0 {
 		req.Logger().Debug("authorized keys disabled for local user")
-		return Forbidden(), nil
+		return Forbidden(req.Remote()), nil
 	}
 
 	u, err := this.userRepository.LookupByName(req.Remote().User())
 	if errors.Is(err, user.ErrNoSuchUser) {
 		req.Logger().Debug("local user not found")
-		return Forbidden(), nil
+		return Forbidden(req.Remote()), nil
 	}
 	if err != nil {
 		return failf("cannot lookup user: %w", err)
@@ -75,7 +123,7 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	}
 	if len(files) == 0 {
 		req.Logger().Debug("local user does not has any authorized keys file")
-		return Forbidden(), nil
+		return Forbidden(req.Remote()), nil
 	}
 
 	foundMatch, err := crypto.DoWithEachAuthorizedKey[bool](false, func(candidate ssh.PublicKey) (ok bool, canContinue bool, err error) {
@@ -96,12 +144,14 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 
 	if !foundMatch {
 		req.Logger().Debug("presented public key does not match any authorized keys of local user")
-		return Forbidden(), nil
+		return Forbidden(req.Remote()), nil
 	}
 
 	return &Local{
-		User: u,
-		flow: this.flow,
+		u,
+		req.Remote(),
+		nil,
+		this.flow,
 	}, nil
 }
 
@@ -122,7 +172,7 @@ func (this *LocalAuthorizer) AuthorizePassword(req PasswordRequest) (Authorizati
 
 	if this.conf.Password.Allowed.IsHardCodedFalse() {
 		req.Logger().Debug("passwords disabled for local user")
-		return Forbidden(), nil
+		return Forbidden(req.Remote()), nil
 	}
 
 	allowed, err := this.conf.Password.Allowed.Render(req)
@@ -131,7 +181,7 @@ func (this *LocalAuthorizer) AuthorizePassword(req PasswordRequest) (Authorizati
 	}
 	if !allowed {
 		req.Logger().Debug("passwords are disabled for local user")
-		return Forbidden(), nil
+		return Forbidden(req.Remote()), nil
 	}
 
 	username, ev, ok, err := this.checkPassword(req, req.Remote().User(), this.validatePassword)
@@ -139,19 +189,19 @@ func (this *LocalAuthorizer) AuthorizePassword(req PasswordRequest) (Authorizati
 		return failf("cannot validate password: %w", err)
 	}
 	if !ok {
-		return Forbidden(), nil
+		return Forbidden(req.Remote()), nil
 	}
 
 	u, err := this.userRepository.LookupByName(username)
 	if errors.Is(err, user.ErrNoSuchUser) {
 		req.Logger().Warn("local user %q not found; but it was just resolve before", username)
-		return Forbidden(), nil
+		return Forbidden(req.Remote()), nil
 	}
 	if err != nil {
 		return failf("cannot lookup user %q: %w", username, err)
 	}
 
-	return &Local{u, ev, this.flow}, nil
+	return &Local{u, req.Remote(), ev, this.flow}, nil
 }
 
 func (this *LocalAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Authorization, error) {
@@ -164,7 +214,7 @@ func (this *LocalAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Autho
 
 	if this.conf.Password.InteractiveAllowed.IsHardCodedFalse() {
 		req.Logger().Debug("passwords disabled for local user")
-		return Forbidden(), nil
+		return Forbidden(req.Remote()), nil
 	}
 
 	allowed, err := this.conf.Password.Allowed.Render(req)
@@ -173,7 +223,7 @@ func (this *LocalAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Autho
 	}
 	if !allowed {
 		req.Logger().Debug("passwords are disabled for local user")
-		return Forbidden(), nil
+		return Forbidden(req.Remote()), nil
 	}
 
 	username, ev, ok, err := this.checkInteractive(req, req.Remote().User(), this.validatePassword)
@@ -181,19 +231,19 @@ func (this *LocalAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Autho
 		return failf("cannot validate password: %w", err)
 	}
 	if !ok {
-		return Forbidden(), nil
+		return Forbidden(req.Remote()), nil
 	}
 
 	u, err := this.userRepository.LookupByName(username)
 	if errors.Is(err, user.ErrNoSuchUser) {
 		req.Logger().Warn("local user %q not found; but it was just resolve before", username)
-		return Forbidden(), nil
+		return Forbidden(req.Remote()), nil
 	}
 	if err != nil {
 		return failf("cannot lookup user %q: %w", username, err)
 	}
 
-	return &Local{u, ev, this.flow}, nil
+	return &Local{u, req.Remote(), ev, this.flow}, nil
 }
 
 func (this *LocalAuthorizer) validatePassword(password string, req Request) (bool, error) {

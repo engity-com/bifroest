@@ -27,6 +27,21 @@ type Facade struct {
 	entries []facaded
 }
 
+func (this *Facade) AuthorizeSession(req SessionRequest) (Authorization, error) {
+	for _, candidate := range this.entries {
+		if ok, err := candidate.canHandle(req); err != nil {
+			return nil, fmt.Errorf("[%v] %w", candidate.flow, err)
+		} else if ok {
+			if resp, err := candidate.AuthorizeSession(req); err != nil {
+				return nil, fmt.Errorf("[%v] %w", candidate.flow, err)
+			} else if resp.IsAuthorized() {
+				return resp, nil
+			}
+		}
+	}
+	return Forbidden(req.Remote()), nil
+}
+
 func (this *Facade) AuthorizePublicKey(req PublicKeyRequest) (Authorization, error) {
 	for _, candidate := range this.entries {
 		if ok, err := candidate.canHandle(req); err != nil {
@@ -39,7 +54,7 @@ func (this *Facade) AuthorizePublicKey(req PublicKeyRequest) (Authorization, err
 			}
 		}
 	}
-	return Forbidden(), nil
+	return Forbidden(req.Remote()), nil
 }
 
 func (this *Facade) AuthorizePassword(req PasswordRequest) (Authorization, error) {
@@ -54,7 +69,7 @@ func (this *Facade) AuthorizePassword(req PasswordRequest) (Authorization, error
 			}
 		}
 	}
-	return Forbidden(), nil
+	return Forbidden(req.Remote()), nil
 }
 
 func (this *Facade) AuthorizeInteractive(req InteractiveRequest) (Authorization, error) {
@@ -69,7 +84,7 @@ func (this *Facade) AuthorizeInteractive(req InteractiveRequest) (Authorization,
 			}
 		}
 	}
-	return Forbidden(), nil
+	return Forbidden(req.Remote()), nil
 }
 
 func (this *Facade) Close() (rErr error) {

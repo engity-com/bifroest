@@ -6,7 +6,7 @@ type State uint8
 
 const (
 	StateUnchanged State = iota
-	StateNew             = iota
+	StateNew
 	StateAuthorized
 )
 

@@ -2,10 +2,12 @@ package authorization
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/gliderlabs/ssh"
 	"golang.org/x/oauth2"
 )
 
@@ -58,6 +60,39 @@ func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *c
 	return &result, nil
 }
 
+func (this *OidcDeviceAuthAuthorizer) AuthorizeSession(req SessionRequest) (Authorization, error) {
+	sess := req.Session()
+	if sess == nil {
+		return Forbidden(req.Remote()), nil
+	}
+
+	fail := func(err error) (Authorization, error) {
+		return nil, errors.Newf(errors.TypeSystem, "cannot authorize via existing session's authorization token: %w", err)
+	}
+
+	at, err := sess.AuthorizationToken()
+	if err != nil {
+		return fail(err)
+	}
+	if len(at) == 0 {
+		return Forbidden(req.Remote()), nil
+	}
+
+	var buf oidcToken
+	if err := json.Unmarshal(at, &buf); err != nil {
+		return fail(err)
+	}
+	// TODO! Refresh the token!
+	req.Logger().Debug("token restored")
+
+	auth, err := this.finalizeAuth(req, &buf, req.Context())
+	if err != nil {
+		return fail(err)
+	}
+
+	return auth, nil
+}
+
 func (this *OidcDeviceAuthAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Authorization, error) {
 	fail := func(err error) (Authorization, error) {
 		return nil, fmt.Errorf("cannot authorize via oidc device auth: %w", err)
@@ -83,19 +118,37 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizeInteractive(req InteractiveReques
 		return failf("cannot send device code request to user: %w", err)
 	}
 
-	auth := OidcAuth{
-		flow: this.flow,
-	}
-
-	token, err := this.RetrieveDeviceAuthToken(ctx, dar)
+	buf, err := this.RetrieveDeviceAuthToken(ctx, dar)
 	if err != nil {
 		return fail(err)
 	}
-	if err := auth.Token.SetRaw(token); err != nil {
-		return failf("cannot store token at response: %w", err)
+	req.Logger().Debug("token received")
+
+	token := newOidcToken(buf)
+	auth, err := this.finalizeAuth(req, &token, ctx)
+	if err != nil {
+		return fail(err)
 	}
 
-	req.Logger().Debug("token received")
+	return auth, nil
+}
+
+func (this *OidcDeviceAuthAuthorizer) finalizeAuth(req Request, token *oidcToken, ctx ssh.Context) (Authorization, error) {
+	fail := func(err error) (Authorization, error) {
+		return nil, err
+	}
+	failf := func(message string, args ...any) (Authorization, error) {
+		return fail(fmt.Errorf(message, args...))
+	}
+
+	auth := OidcAuth{
+		flow:   this.flow,
+		remote: req.Remote(),
+	}
+
+	if err := auth.Token.SetRaw(token.Token); err != nil {
+		return failf("cannot store token at response: %w", err)
+	}
 
 	if this.conf.RetrieveIdToken {
 		idToken, err := this.VerifyToken(ctx, token)
@@ -126,7 +179,7 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizeInteractive(req InteractiveReques
 	if ok, err := req.Validate(&auth); err != nil {
 		return fail(err)
 	} else if !ok {
-		return Forbidden(), nil
+		return Forbidden(req.Remote()), nil
 	}
 
 	return &auth, nil
@@ -186,7 +239,7 @@ func (this *OidcDeviceAuthAuthorizer) RetrieveDeviceAuthToken(ctx context.Contex
 	return response, err
 }
 
-func (this *OidcDeviceAuthAuthorizer) VerifyToken(ctx context.Context, token *oauth2.Token) (*oidc.IDToken, error) {
+func (this *OidcDeviceAuthAuthorizer) VerifyToken(ctx context.Context, token *oidcToken) (*oidc.IDToken, error) {
 	fail := func(err error) (*oidc.IDToken, error) {
 		return nil, err
 	}
@@ -198,16 +251,15 @@ func (this *OidcDeviceAuthAuthorizer) VerifyToken(ctx context.Context, token *oa
 		ctx = context.Background()
 	}
 
-	if token == nil || token.AccessToken == "" {
+	if token.Token == nil || token.Token.AccessToken == "" {
 		return failf(errors.TypeSystem, "no token provided")
 	}
 
-	rawIdToken, ok := token.Extra("id_token").(string)
-	if !ok {
+	if token.IdToken == "" {
 		return failf(errors.TypePermission, "token does not contain id_token")
 	}
 
-	idToken, err := this.verifier.Verify(ctx, rawIdToken)
+	idToken, err := this.verifier.Verify(ctx, token.IdToken)
 	if err != nil {
 		return failf(errors.TypePermission, "cannot verify ID token: %w", err)
 	}
@@ -215,7 +267,7 @@ func (this *OidcDeviceAuthAuthorizer) VerifyToken(ctx context.Context, token *oa
 	return idToken, nil
 }
 
-func (this *OidcDeviceAuthAuthorizer) GetUserInfo(ctx context.Context, token *oauth2.Token) (*oidc.UserInfo, error) {
+func (this *OidcDeviceAuthAuthorizer) GetUserInfo(ctx context.Context, token *oidcToken) (*oidc.UserInfo, error) {
 	fail := func(err error) (*oidc.UserInfo, error) {
 		return nil, err
 	}
@@ -227,7 +279,7 @@ func (this *OidcDeviceAuthAuthorizer) GetUserInfo(ctx context.Context, token *oa
 		ctx = context.Background()
 	}
 
-	result, err := this.provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
+	result, err := this.provider.UserInfo(ctx, oauth2.StaticTokenSource(token.Token))
 	if err != nil {
 		return failf(errors.TypePermission, "%w", err)
 	}
@@ -235,12 +287,12 @@ func (this *OidcDeviceAuthAuthorizer) GetUserInfo(ctx context.Context, token *oa
 	return result, nil
 }
 
-func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(PublicKeyRequest) (Authorization, error) {
-	return Forbidden(), nil
+func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authorization, error) {
+	return Forbidden(req.Remote()), nil
 }
 
-func (this *OidcDeviceAuthAuthorizer) AuthorizePassword(PasswordRequest) (Authorization, error) {
-	return Forbidden(), nil
+func (this *OidcDeviceAuthAuthorizer) AuthorizePassword(req PasswordRequest) (Authorization, error) {
+	return Forbidden(req.Remote()), nil
 }
 
 func (this *OidcDeviceAuthAuthorizer) Close() error {

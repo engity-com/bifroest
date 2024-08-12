@@ -5,18 +5,25 @@ import (
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/environment"
+	"github.com/engity-com/bifroest/pkg/net"
+	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/gliderlabs/ssh"
 	gssh "golang.org/x/crypto/ssh"
 	"io"
-	"net"
 )
 
 type remote struct {
 	ssh.Context
 }
 
-func (this *remote) Addr() net.Addr {
-	return this.RemoteAddr()
+func (this *remote) Host() net.Host {
+	var result net.Host
+	_ = result.SetNetAddr(this.RemoteAddr())
+	return result
+}
+
+func (this *remote) String() string {
+	return this.User() + "@" + this.Host().String()
 }
 
 type authorizeRequest struct {
@@ -43,6 +50,15 @@ func (this *authorizeRequest) Validate(auth authorization.Authorization) (bool, 
 		authorization: auth,
 	}
 	return this.service.environment.WillBeAccepted(&req)
+}
+
+type sessionAuthorizeRequest struct {
+	authorizeRequest
+	session session.Session
+}
+
+func (this *sessionAuthorizeRequest) Session() session.Session {
+	return this.session
 }
 
 type publicKeyAuthorizeRequest struct {
@@ -90,6 +106,7 @@ type environmentRequest struct {
 	service       *service
 	remote        *remote
 	authorization authorization.Authorization
+	session       session.Session
 }
 
 func (this *environmentRequest) Context() ssh.Context {
@@ -108,16 +125,26 @@ func (this *environmentRequest) Authorization() authorization.Authorization {
 	return this.authorization
 }
 
-type environmentTask struct {
-	environmentRequest
-	session  ssh.Session
-	taskType environment.TaskType
+func (this *environmentRequest) FindSession() session.Session {
+	return this.session
 }
 
-func (this *environmentTask) Session() ssh.Session {
-	return this.session
+type environmentTask struct {
+	environmentRequest
+	sshSession ssh.Session
+	taskType   environment.TaskType
+}
+
+func (this *environmentTask) SshSession() ssh.Session {
+	return this.sshSession
 }
 
 func (this *environmentTask) TaskType() environment.TaskType {
 	return this.taskType
+}
+
+type rememberMeNotificationContext struct {
+	Authorization authorization.Authorization
+	Session       session.Session
+	Key           ssh.PublicKey
 }

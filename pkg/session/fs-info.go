@@ -6,6 +6,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/google/uuid"
+	"time"
 )
 
 func (this *fsSession) Flow() configuration.FlowName {
@@ -18,12 +19,24 @@ func (this *fsSession) Id() uuid.UUID {
 	return result
 }
 
+func (this *fsSession) String() string {
+	return this.Id().String()
+}
+
 func (this *fsSession) State() State {
 	return this.VState
 }
 
 func (this *fsSession) Created() (InfoCreated, error) {
 	return this, nil
+}
+
+func (this *fsSession) ValidUntil() (time.Time, error) {
+	lastAccessed, err := this.LastAccessed()
+	if err != nil {
+		return time.Time{}, err
+	}
+	return lastAccessed.At().Add(this.VTimeout.Native()), nil
 }
 
 func (this *fsSession) LastAccessed() (InfoLastAccessed, error) {

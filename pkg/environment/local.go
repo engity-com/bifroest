@@ -178,7 +178,7 @@ func (this *Local) ensureUser(req *user.Requirement, createIfAbsent, updateIfDif
 func (this *Local) runCommand(t Task, u *user.User) error {
 	l := t.Logger()
 	creds := u.ToCredentials()
-	sess := t.Session()
+	sess := t.SshSession()
 
 	cmd := exec.Cmd{
 		Dir: u.HomeDir,
@@ -195,7 +195,7 @@ func (this *Local) runCommand(t Task, u *user.User) error {
 	switch t.TaskType() {
 	case TaskTypeShell:
 		cmd.Path = u.Shell
-		if rc := t.Session().RawCommand(); len(rc) > 0 {
+		if rc := t.SshSession().RawCommand(); len(rc) > 0 {
 			cmd.Args = []string{filepath.Base(u.Shell), "-c", rc}
 		} else {
 			cmd.Args = []string{"-" + filepath.Base(u.Shell)}
@@ -226,14 +226,13 @@ func (this *Local) runCommand(t Task, u *user.User) error {
 	if ssh.AgentRequested(sess) {
 		l, err := ssh.NewAgentListener()
 		if err != nil {
-			log.Fatal(err)
+			return fmt.Errorf("cannot listen to agent: %w", err)
 		}
 		defer common.IgnoreCloseError(l)
 		go ssh.ForwardAgentConnections(l, sess)
 		cmd.Env = append(cmd.Env, "SSH_AUTH_SOCK"+l.Addr().String())
 	}
 
-	// TODO!  read $HOME/.ssh/environment.
 	// TODO! Global configuration with environment
 	// tODO! If not exist ~/.hushlogin display /etc/motd
 
@@ -279,7 +278,7 @@ func (this *Local) runCommand(t Task, u *user.User) error {
 	if state, err := cmd.Process.Wait(); err != nil {
 		return err
 	} else if ec := state.ExitCode(); ec != 0 {
-		return t.Session().Exit(ec)
+		return t.SshSession().Exit(ec)
 	}
 
 	return nil

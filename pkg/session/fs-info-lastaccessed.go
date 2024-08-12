@@ -1,11 +1,10 @@
 package session
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"github.com/engity-com/bifroest/pkg/common"
-	"net"
+	"github.com/engity-com/bifroest/pkg/net"
 	"strings"
 	"time"
 )
@@ -15,23 +14,31 @@ type fsLastAccessed struct {
 
 	VAt         time.Time `json:"at"`
 	VRemoteUser string    `json:"remoteUser"`
-	VRemoteAddr net.IP    `json:"remoteAddr"`
+	VRemoteAddr net.Host  `json:"remoteAddr"`
+}
+
+func (this *fsLastAccessed) String() string {
+	return this.User() + "@" + this.VRemoteAddr.String()
 }
 
 func (this *fsLastAccessed) At() time.Time {
 	return this.VAt
 }
 
-func (this *fsLastAccessed) RemoteUser() string {
+func (this *fsLastAccessed) Remote() common.Remote {
+	return this
+}
+
+func (this *fsLastAccessed) User() string {
 	return strings.Clone(this.VRemoteUser)
 }
 
-func (this *fsLastAccessed) RemoteAddr() net.IP {
-	return bytes.Clone(this.VRemoteAddr)
+func (this *fsLastAccessed) Host() net.Host {
+	return this.VRemoteAddr.Clone()
 }
 
 func (this *fsLastAccessed) save() error {
-	f, _, err := this.session.repository.openWrite(this.session.VFlow, this.session.VId, FsFileLastAccessed)
+	f, _, err := this.session.repository.openWrite(this.session.VFlow, this.session.VId, FsFileLastAccessed, false)
 	if err != nil {
 		return err
 	}

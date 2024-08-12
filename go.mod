@@ -15,6 +15,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/kardianos/osext v0.0.0-20190222173326-2bc1f35cddc0
 	github.com/mikesmitty/edkey v0.0.0-20170222072505-3356ea4e686a
+	github.com/mr-tron/base58 v1.2.0
 	github.com/msteinert/pam/v2 v2.0.0
 	github.com/otiai10/copy v1.14.0
 	github.com/pkg/sftp v1.13.6

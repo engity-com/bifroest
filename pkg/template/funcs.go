@@ -2,9 +2,13 @@ package template
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"github.com/Masterminds/sprig/v3"
 	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/sys"
+	"golang.org/x/crypto/ssh"
 	"io"
 	"io/fs"
 	"os"
@@ -13,6 +17,7 @@ import (
 	"reflect"
 	"strings"
 	"text/template"
+	"time"
 )
 
 const (
@@ -29,6 +34,8 @@ var (
 		"dirExists":     dirExists,
 		"osJoin":        filepath.Join,
 		"pathJoin":      path.Join,
+		"fingerprint":   fingerprint,
+		"format":        format,
 	}
 
 	allFuncs template.FuncMap
@@ -146,7 +153,7 @@ func file(arg0 string, args ...string) (string, error) {
 
 	f, err := os.Open(fa.filename)
 	if err != nil {
-		if os.IsNotExist(err) && fa.optional {
+		if sys.IsNotExist(err) && fa.optional {
 			return "", nil
 		}
 		return "", err
@@ -175,7 +182,7 @@ func stat(arg0 string, args ...string) (fs.FileInfo, error) {
 
 	fi, err := os.Stat(fa.filename)
 	if err != nil {
-		if os.IsNotExist(err) && fa.optional {
+		if sys.IsNotExist(err) && fa.optional {
 			return nil, nil
 		}
 		return nil, err
@@ -187,7 +194,7 @@ func stat(arg0 string, args ...string) (fs.FileInfo, error) {
 func fileExists(filename string) (bool, error) {
 	fi, err := os.Stat(filename)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if sys.IsNotExist(err) {
 			return false, nil
 		}
 		return false, err
@@ -199,11 +206,115 @@ func fileExists(filename string) (bool, error) {
 func dirExists(filename string) (bool, error) {
 	fi, err := os.Stat(filename)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if sys.IsNotExist(err) {
 			return false, nil
 		}
 		return false, err
 	}
 
 	return fi.IsDir(), nil
+}
+
+func fingerprint(arg any, args ...any) (string, error) {
+	args = append([]any{arg}, args...)
+	what := args[len(args)-1]
+	args = args[:len(args)-1]
+	switch v := what.(type) {
+	case ssh.PublicKey:
+		return fingerprintPublicKey(v, args...)
+	default:
+		return "", fmt.Errorf("unsupported type %T", v)
+	}
+}
+
+func fingerprintPublicKey(what ssh.PublicKey, opts ...any) (string, error) {
+	var modern bool
+
+	for _, opt := range opts {
+		switch opt {
+		case "sha", "modern":
+			modern = true
+		case "md5", "legacy":
+			modern = false
+		default:
+			return "", fmt.Errorf("illegal option: %v", opt)
+		}
+	}
+
+	if modern {
+		sum := sha256.Sum256(what.Marshal())
+		return base64.RawStdEncoding.EncodeToString(sum[:]), nil
+	} else {
+		return ssh.FingerprintLegacyMD5(what), nil
+	}
+}
+
+func format(arg any, args ...any) (string, error) {
+	args = append([]any{arg}, args...)
+	what := args[len(args)-1]
+	args = args[:len(args)-1]
+	switch v := what.(type) {
+	case time.Time:
+		return formatDate(&v, args...)
+	case *time.Time:
+		return formatDate(v, args...)
+	default:
+		return "", fmt.Errorf("unsupported type %T", v)
+	}
+}
+
+func formatDate(what *time.Time, opts ...any) (string, error) {
+	layout := time.Layout
+	if len(opts) > 0 {
+		switch opts[0] {
+		case "default":
+			layout = time.Layout
+		case "ansic":
+			layout = time.ANSIC
+		case "unix":
+			layout = time.UnixDate
+		case "ruby":
+			layout = time.RubyDate
+		case "rfc822":
+			layout = time.RFC822
+		case "rfc822z":
+			layout = time.RFC822Z
+		case "rfc850":
+			layout = time.RFC850
+		case "rfc1123":
+			layout = time.RFC1123
+		case "rfc1123z":
+			layout = time.RFC1123Z
+		case "rfc3339":
+			layout = time.RFC3339
+		case "rfc3339Nano":
+			layout = time.RFC3339Nano
+		case "kitchen":
+			layout = time.Kitchen
+		case "stamp":
+			layout = time.Stamp
+		case "stampMilli":
+			layout = time.StampMilli
+		case "stampMicro":
+			layout = time.StampMicro
+		case "stampNano":
+			layout = time.StampNano
+		case "dateTime":
+			layout = time.DateTime
+		case "dateTimeT":
+			layout = "2006-01-02 15:04:05 MST"
+		case "date", "dateOnly":
+			layout = time.DateOnly
+		case "time", "timeOnly":
+			layout = time.TimeOnly
+		default:
+			layout = fmt.Sprint(opts[0])
+		}
+	} else if len(opts) > 1 {
+		for _, opt := range opts[1:] {
+			return "", fmt.Errorf("illegal option: %v", opt)
+		}
+	}
+
+	return what.Format(layout), nil
 }

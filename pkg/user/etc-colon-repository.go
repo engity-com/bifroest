@@ -9,6 +9,7 @@ import (
 	"github.com/echocat/slf4g/fields"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/fsnotify/fsnotify"
 	"github.com/otiai10/copy"
 	"io/fs"
@@ -574,7 +575,7 @@ func (this *EtcColonRepository) moveHomeDir(ref *etcPasswdRef, oldHomeDir string
 		return nil
 	}
 
-	if _, err := os.Stat(oldHomeDir); os.IsNotExist(err) {
+	if _, err := os.Stat(oldHomeDir); sys.IsNotExist(err) {
 		// This is ok, we do simply nothing...
 		return nil
 	} else if err != nil {
@@ -599,7 +600,7 @@ func (this *EtcColonRepository) moveHomeDir(ref *etcPasswdRef, oldHomeDir string
 
 func (this *EtcColonRepository) existingHomeDirCheck(logger log.Logger, ref *etcPasswdRef, homeDir string, ohde EnsureOnHomeDirExist) (canContinue, canLog bool, _ error) {
 	fi, err := os.Stat(homeDir)
-	if os.IsNotExist(err) {
+	if sys.IsNotExist(err) {
 		return true, true, nil
 	}
 	if err != nil {
@@ -718,7 +719,7 @@ func (this *EtcColonRepository) deleteRef(opts *DeleteOpts, selector func() (*et
 	}
 
 	if opts.IsHomeDir() {
-		if err := os.RemoveAll(string(ref.homeDir)); os.IsNotExist(err) {
+		if err := os.RemoveAll(string(ref.homeDir)); sys.IsNotExist(err) {
 			// Ok...
 		} else if err != nil {
 

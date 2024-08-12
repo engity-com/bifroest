@@ -1,4 +1,4 @@
-//go:build moo
+//go:build disabled
 
 package user
 

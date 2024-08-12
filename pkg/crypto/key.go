@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
+	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/mikesmitty/edkey"
 	"golang.org/x/crypto/ed25519"
 	"golang.org/x/crypto/ssh"
@@ -19,7 +20,7 @@ func SshPublicKeyLongFingerPrint(in ssh.PublicKey) string {
 
 func EnsureKeyFile(fn string, reqOnAbsence *KeyRequirement, rand io.Reader) (crypto.Signer, error) {
 	raw, err := os.ReadFile(fn)
-	if os.IsNotExist(err) {
+	if sys.IsNotExist(err) {
 		return reqOnAbsence.CreateFile(rand, fn)
 	} else if err != nil {
 		return nil, fmt.Errorf("cannot read %q: %w", fn, err)

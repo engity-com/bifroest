@@ -2,13 +2,14 @@ package configuration
 
 import (
 	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/template"
 	"gopkg.in/yaml.v3"
 )
 
 var (
 	// DefaultSshAddresses is the default setting for Ssh.Addresses.
-	DefaultSshAddresses = []common.NetAddress{common.MustNewNetAddress(":2222")}
+	DefaultSshAddresses = []net.NetAddress{net.MustNewNetAddress(":2222")}
 
 	// DefaultSshIdleTimeout is the default setting for Ssh.IdleTimeout.
 	DefaultSshIdleTimeout = common.MustNewDuration("5m")
@@ -27,7 +28,7 @@ var (
 type Ssh struct {
 	// Addresses which the service will bind to. This can be more than one but at least one.
 	// Defaults to DefaultSshAddresses.
-	Addresses common.NetAddresses `yaml:"addresses"`
+	Addresses net.NetAddresses `yaml:"addresses"`
 
 	// Keys represents all key related settings of the service.
 	Keys Keys `yaml:"keys"`
@@ -51,7 +52,7 @@ type Ssh struct {
 
 func (this *Ssh) SetDefaults() error {
 	return setDefaults(this,
-		fixedDefault("addresses", func(v *Ssh) *common.NetAddresses { return &v.Addresses }, DefaultSshAddresses),
+		fixedDefault("addresses", func(v *Ssh) *net.NetAddresses { return &v.Addresses }, DefaultSshAddresses),
 		func(v *Ssh) (string, defaulter) { return "keys", &v.Keys },
 		fixedDefault("idleTimeout", func(v *Ssh) *common.Duration { return &v.IdleTimeout }, DefaultSshIdleTimeout),
 		fixedDefault("maxTimeout", func(v *Ssh) *common.Duration { return &v.MaxTimeout }, DefaultSshMaxTimeout),

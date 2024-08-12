@@ -3,6 +3,7 @@ package user
 import (
 	"bytes"
 	"fmt"
+	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"io"
@@ -55,7 +56,7 @@ func (this *testFile) dispose() {
 	}
 
 	dir := filepath.Dir(this.name())
-	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
+	if err := os.RemoveAll(dir); err != nil && !sys.IsNotExist(err) {
 		this.t.Errorf("test directory %q should be deleted after the test; but was: %v", dir, err)
 	}
 }
@@ -168,7 +169,7 @@ func (this *testDir) dispose() {
 	}
 
 	err := os.RemoveAll(this._name)
-	if os.IsNotExist(err) {
+	if sys.IsNotExist(err) {
 		return
 	}
 	assert.NoError(this.t, err, "test directory %v should be deleted after the test", this)

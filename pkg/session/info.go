@@ -1,9 +1,9 @@
 package session
 
 import (
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/google/uuid"
-	"net"
 	"time"
 )
 
@@ -13,16 +13,16 @@ type Info interface {
 	State() State
 	Created() (InfoCreated, error)
 	LastAccessed() (InfoLastAccessed, error)
+	ValidUntil() (time.Time, error)
+	String() string
 }
 
 type InfoCreated interface {
 	At() time.Time
-	RemoteUser() string
-	RemoteAddr() net.IP
+	Remote() common.Remote
 }
 
 type InfoLastAccessed interface {
 	At() time.Time
-	RemoteUser() string
-	RemoteAddr() net.IP
+	Remote() common.Remote
 }

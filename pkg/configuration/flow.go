@@ -12,7 +12,8 @@ import (
 //
 // It follows the follows steps:
 //  1. Check if the current connection meet the defined Requirement.
-//  2. Register a new session or use an existing one based on Session configuration.
+//  2. Register a new session or use an existing one based on Session configuration
+//     (configured via root Configuration - because is used by every flow together).
 //  3. Try to authorize the current connection based on Authorization.
 //  4. If it was successfully authorized create and run a new Environment.
 type Flow struct {
@@ -21,12 +22,6 @@ type Flow struct {
 
 	// Requirement represents all rules the connection has to meet to be able to be accepted by this flow.
 	Requirement Requirement `yaml:"requirement,omitempty"`
-
-	// Session defines how new and existing sessions (a connection relates to) should be treated by the service.
-	// These session should not be mixed up with [ssh sessions].
-	//
-	// [ssh sessions]: https://datatracker.ietf.org/doc/html/rfc4254#section-6
-	Session Session `yaml:"session"`
 
 	// Authorization defines how a connection can be authorized to get access to this flow.
 	Authorization Authorization `yaml:"authorization"`
@@ -40,7 +35,6 @@ func (this *Flow) SetDefaults() error {
 		noopSetDefault[Flow]("name"),
 
 		func(v *Flow) (string, defaulter) { return "requirement", &v.Requirement },
-		func(v *Flow) (string, defaulter) { return "session", &v.Session },
 		func(v *Flow) (string, defaulter) { return "authorization", &v.Authorization },
 		func(v *Flow) (string, defaulter) { return "environment", &v.Environment },
 	)
@@ -51,7 +45,6 @@ func (this *Flow) Trim() error {
 		noopTrim[Flow]("name"),
 
 		func(v *Flow) (string, trimmer) { return "requirement", &v.Requirement },
-		func(v *Flow) (string, trimmer) { return "session", &v.Session },
 		func(v *Flow) (string, trimmer) { return "authorization", &v.Authorization },
 		func(v *Flow) (string, trimmer) { return "environment", &v.Environment },
 	)
@@ -62,7 +55,6 @@ func (this *Flow) Validate() error {
 		notZeroValidate("name", func(v *Flow) *FlowName { return &v.Name }),
 
 		func(v *Flow) (string, validator) { return "requirement", &v.Requirement },
-		func(v *Flow) (string, validator) { return "session", &v.Session },
 		func(v *Flow) (string, validator) { return "authorization", &v.Authorization },
 		func(v *Flow) (string, validator) { return "environment", &v.Environment },
 	)
@@ -93,7 +85,6 @@ func (this Flow) isEqualTo(other *Flow) bool {
 	return isEqual(&this.Name, &other.Name) &&
 		isEqual(&this.Requirement, &other.Requirement) &&
 		isEqual(&this.Authorization, &other.Authorization) &&
-		isEqual(&this.Session, &other.Session) &&
 		isEqual(&this.Environment, &other.Environment)
 }
 

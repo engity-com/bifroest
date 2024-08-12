@@ -2,20 +2,25 @@ package configuration
 
 import (
 	"github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/template"
 	"gopkg.in/yaml.v3"
 	"slices"
 )
 
 var (
-	DefaultHostKeyLocations = []string{DefaultHostKeyLocation}
+	DefaultHostKeyLocations             = []string{DefaultHostKeyLocation}
+	DefaultMaxKeysDuringHandshake uint8 = 1
+	DefaultRememberMeNotification       = template.MustNewString("\nIf you return until {{.Session.Info.ValidUntil | format `dateTimeT`}} with the same public key ({{.Key | fingerprint}}), you can seamlessly login again.\n\n")
 )
 
 type Keys struct {
-	HostKeys           []string                  `yaml:"hostKeys"`
-	RsaRestriction     crypto.RsaRestriction     `yaml:"rsaRestriction"`
-	DsaRestriction     crypto.DsaRestriction     `yaml:"dsaRestriction"`
-	EcdsaRestriction   crypto.EcdsaRestriction   `yaml:"ecdsaRestriction"`
-	Ed25519Restriction crypto.Ed25519Restriction `yaml:"ed25519Restriction"`
+	HostKeys               []string                  `yaml:"hostKeys"`
+	RsaRestriction         crypto.RsaRestriction     `yaml:"rsaRestriction"`
+	DsaRestriction         crypto.DsaRestriction     `yaml:"dsaRestriction"`
+	EcdsaRestriction       crypto.EcdsaRestriction   `yaml:"ecdsaRestriction"`
+	Ed25519Restriction     crypto.Ed25519Restriction `yaml:"ed25519Restriction"`
+	MaxKeysDuringHandshake uint8                     `yaml:"maxKeysDuringHandshake"`
+	RememberMeNotification template.String           `yaml:"rememberMeNotification"`
 }
 
 func (this *Keys) SetDefaults() error {
@@ -25,6 +30,8 @@ func (this *Keys) SetDefaults() error {
 		fixedDefault("dsaRestriction", func(v *Keys) *crypto.DsaRestriction { return &v.DsaRestriction }, crypto.DefaultDsaRestriction),
 		fixedDefault("ecdsaRestriction", func(v *Keys) *crypto.EcdsaRestriction { return &v.EcdsaRestriction }, crypto.DefaultEcdsaRestriction),
 		fixedDefault("ed25519Restriction", func(v *Keys) *crypto.Ed25519Restriction { return &v.Ed25519Restriction }, crypto.DefaultEd25519Restriction),
+		fixedDefault("maxKeysDuringHandshake", func(v *Keys) *uint8 { return &v.MaxKeysDuringHandshake }, DefaultMaxKeysDuringHandshake),
+		fixedDefault("rememberMeNotification", func(v *Keys) *template.String { return &v.RememberMeNotification }, DefaultRememberMeNotification),
 	)
 }
 
@@ -35,6 +42,8 @@ func (this *Keys) Trim() error {
 		noopTrim[Keys]("dsaRestriction"),
 		noopTrim[Keys]("ecdsaRestriction"),
 		noopTrim[Keys]("ed25519Restriction"),
+		noopTrim[Keys]("maxKeysDuringHandshake"),
+		noopTrim[Keys]("rememberMeNotification"),
 	)
 }
 
@@ -45,6 +54,8 @@ func (this *Keys) Validate() error {
 		func(v *Keys) (string, validator) { return "dsaRestriction", &v.DsaRestriction },
 		func(v *Keys) (string, validator) { return "ecdsaRestriction", &v.EcdsaRestriction },
 		func(v *Keys) (string, validator) { return "ed25519Restriction", &v.Ed25519Restriction },
+		noopValidate[Keys]("maxKeysDuringHandshake"),
+		noopValidate[Keys]("rememberMeNotification"),
 	)
 }
 
@@ -74,7 +85,9 @@ func (this Keys) isEqualTo(other *Keys) bool {
 		isEqual(&this.RsaRestriction, &other.RsaRestriction) &&
 		isEqual(&this.DsaRestriction, &other.DsaRestriction) &&
 		isEqual(&this.EcdsaRestriction, &other.EcdsaRestriction) &&
-		isEqual(&this.Ed25519Restriction, &other.Ed25519Restriction)
+		isEqual(&this.Ed25519Restriction, &other.Ed25519Restriction) &&
+		this.MaxKeysDuringHandshake == other.MaxKeysDuringHandshake &&
+		isEqual(&this.RememberMeNotification, &other.RememberMeNotification)
 }
 
 func (this Keys) KeyAllowed(in any) (bool, error) {

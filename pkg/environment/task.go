@@ -13,6 +13,6 @@ const (
 
 type Task interface {
 	Request
-	Session() ssh.Session
+	SshSession() ssh.Session
 	TaskType() TaskType
 }

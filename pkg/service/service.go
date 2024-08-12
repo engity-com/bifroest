@@ -4,22 +4,28 @@ import (
 	"context"
 	"fmt"
 	log "github.com/echocat/slf4g"
+	"github.com/echocat/slf4g/fields"
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/errors"
+	bnet "github.com/engity-com/bifroest/pkg/net"
+	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/gliderlabs/ssh"
 	gssh "golang.org/x/crypto/ssh"
 	"io"
 	"net"
 	"sync"
+	"time"
 )
 
 var (
 	loggerCtxKey        = struct{ uint64 }{83439637}
 	authorizationCtxKey = struct{ uint64 }{10282643}
+	sessionCtxKey       = struct{ uint64 }{60219034}
+	handshakeKeysCtxKey = struct{ uint64 }{30072498}
 )
 
 type Service struct {
@@ -53,7 +59,7 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 
 	lns := make([]struct {
 		ln   net.Listener
-		addr common.NetAddress
+		addr bnet.NetAddress
 	}, len(this.Configuration.Ssh.Addresses))
 	var lnMutex sync.Mutex
 	closeLns := func() {
@@ -142,6 +148,9 @@ func (this *Service) prepare() (svc *service, err error) {
 	ctx := context.Background()
 	svc = &service{Service: this}
 
+	if svc.sessions, err = session.NewRepositoryFacade(ctx, &this.Configuration.Session); err != nil {
+		return fail(err)
+	}
 	if svc.authorization, err = authorization.NewFacade(ctx, &this.Configuration.Flows); err != nil {
 		return fail(err)
 	}
@@ -219,16 +228,55 @@ func (this *Service) loadHostSigners() ([]ssh.Signer, error) {
 type service struct {
 	*Service
 
+	sessions      session.CloseableRepository
 	authorization authorization.CloseableAuthorizer
 	environment   environment.CloseableEnvironment
 	server        ssh.Server
 }
 
-func (this *service) logger(ctx ssh.Context) log.Logger {
-	if v, ok := ctx.Value(loggerCtxKey).(log.Logger); ok {
-		return v
+func serviceDoWithContext[C any, T any](ctx ssh.Context, ctxKey any, converter func(C) T, or T) T {
+	if v, ok := ctx.Value(ctxKey).(C); ok {
+		return converter(v)
 	}
-	return this.Service.logger()
+	return or
+}
+
+func serviceDoWithContextLazy[C any, T any](ctx ssh.Context, ctxKey any, converter func(C) T, or T) fields.Lazy {
+	return fields.LazyFunc(func() any {
+		return serviceDoWithContext[C, T](ctx, ctxKey, converter, or)
+	})
+}
+
+func serviceDoWithContextOrFieldExcludeErrLazy[C any, T any](ctx ssh.Context, ctxKey any, converter func(C) (T, error)) fields.Lazy {
+	return serviceDoWithContextLazy[C, any](ctx, ctxKey, func(c C) any {
+		v, err := converter(c)
+		if err != nil {
+			return fields.Exclude
+		}
+		return v
+	}, fields.Exclude)
+}
+
+func serviceDoWithContextOrFieldExcludeLazy[C any, T any](ctx ssh.Context, ctxKey any, converter func(C) T) fields.Lazy {
+	return serviceDoWithContextLazy[C, any](ctx, ctxKey, func(c C) any {
+		return converter(c)
+	}, fields.Exclude)
+}
+
+func (this *service) logger(ctx ssh.Context) log.Logger {
+	var result log.Logger
+	if v, ok := ctx.Value(loggerCtxKey).(log.Logger); ok {
+		result = v
+	} else {
+		result = this.Service.logger()
+	}
+	result.With("remoteUser", fields.LazyFunc(func() any { return ctx.User() }))
+	result.With("remote", fields.LazyFunc(func() any { return ctx.RemoteAddr() }))
+	result.With("ssh", fields.LazyFunc(func() any { return ctx.SessionID() }))
+	result.With("session", serviceDoWithContextOrFieldExcludeErrLazy[session.Session, session.Info](ctx, sessionCtxKey, session.Session.Info))
+	result.With("flow", serviceDoWithContextOrFieldExcludeLazy[authorization.Authorization, configuration.FlowName](ctx, authorizationCtxKey, authorization.Authorization.Flow))
+
+	return result
 }
 
 func (this *service) setLogger(ctx ssh.Context, logger log.Logger) {
@@ -236,8 +284,7 @@ func (this *service) setLogger(ctx ssh.Context, logger log.Logger) {
 }
 
 func (this *service) onNewConnConnection(ctx ssh.Context, conn net.Conn) net.Conn {
-	logger := this.logger(ctx).
-		With("remote", conn.RemoteAddr())
+	logger := this.logger(ctx)
 	logger.Debug("new connection started")
 	this.setLogger(ctx, logger)
 
@@ -249,8 +296,8 @@ func (this *service) onLocalPortForwardingRequested(ctx ssh.Context, destination
 		With("host", destinationHost).
 		With("port", destinationPort)
 
-	l.Debug("local port forwarding request was accepted")
-	return true // TODO! Handle port forwarding
+	l.Debug("local port forwarding currently not supported")
+	return false // TODO! Handle port forwarding
 }
 
 func (this *service) onReversePortForwardingRequested(ctx ssh.Context, bindHost string, bindPort uint32) bool {
@@ -258,8 +305,8 @@ func (this *service) onReversePortForwardingRequested(ctx ssh.Context, bindHost 
 		With("host", bindHost).
 		With("port", bindPort)
 
-	l.Debug("reverse port forwarding request was accepted")
-	return true // TODO! Handle port forwarding
+	l.Debug("reverse port forwarding currently not supported")
+	return false // TODO! Handle port forwarding
 }
 
 func (this *service) isSilentError(err error) bool {
@@ -287,29 +334,69 @@ func (this *service) handlePublicKey(ctx ssh.Context, key ssh.PublicKey) bool {
 		return false
 	}
 
-	auth, err := this.authorization.AuthorizePublicKey(&publicKeyAuthorizeRequest{
-		authorizeRequest: authorizeRequest{
-			service: this,
-			remote:  remote{ctx},
-		},
-		publicKey: key,
+	this.registerHandshakePublicKey(ctx, key)
+
+	authReq := authorizeRequest{
+		service: this,
+		remote:  remote{ctx},
+	}
+
+	var auth authorization.Authorization
+	sess, err := this.sessions.FindByPublicKey(key, func(candidate session.Session) (bool, error) {
+		info, err := candidate.Info()
+		if err != nil {
+			return false, err
+		}
+		vu, err := info.ValidUntil()
+		if err != nil {
+			return false, err
+		}
+		return time.Now().Before(vu), nil //TODO! More checks?
 	})
-	if err != nil {
-		if eErr, ok := errors.IsError(err); ok && eErr.Type == errors.TypeUser {
-			l.WithError(err).Debug("public key failed by user")
+	if errors.Is(err, session.ErrNoSuchSession) {
+		// Ok, just continue...
+	} else if err != nil {
+		l.WithError(err).
+			Error("cannot check for existing session")
+		return false
+	} else {
+		auth, err = this.authorization.AuthorizeSession(&sessionAuthorizeRequest{authReq, sess})
+		if err != nil {
+			if eErr, ok := errors.IsError(err); ok && eErr.Type == errors.TypeUser {
+				l.WithError(err).Debug("session based authorization failed by user; continue with regular...")
+			} else {
+				if !this.isSilentError(err) {
+					l.WithError(err).Warn("was not able to resolve public key authorization request; treat as rejected")
+				}
+				return false
+			}
+		} else if auth.IsAuthorized() {
+			ctx.SetValue(sessionCtxKey, sess)
+		}
+	}
+
+	if auth == nil || !auth.IsAuthorized() {
+		auth, err = this.authorization.AuthorizePublicKey(&publicKeyAuthorizeRequest{authReq, key})
+		if err != nil {
+			if eErr, ok := errors.IsError(err); ok && eErr.Type == errors.TypeUser {
+				l.WithError(err).Debug("public key failed by user")
+				return false
+			}
+			if !this.isSilentError(err) {
+				l.WithError(err).Warn("was not able to resolve public key authorization request; treat as rejected")
+			}
 			return false
 		}
-		if !this.isSilentError(err) {
-			l.WithError(err).Warn("was not able to resolve public key authorization request; treat as rejected")
-		}
-		return false
 	}
-	if !auth.IsAuthorized() {
+
+	if auth == nil || !auth.IsAuthorized() {
 		l.Debug("public key rejected")
 		return false
 	}
 
 	ctx.SetValue(authorizationCtxKey, auth)
+	// We've authorized via the public key we do not store them.
+	ctx.SetValue(handshakeKeysCtxKey, nil)
 
 	l.Debug("public key accepted")
 	return true
@@ -378,9 +465,7 @@ func (this *service) handleKeyboardInteractiveChallenge(ctx ssh.Context, challen
 }
 
 func (this *service) handleBanner(ctx ssh.Context) string {
-	l := this.logger(ctx).
-		With("remoteUser", ctx.User()).
-		With("sessionId", ctx.SessionID())
+	l := this.logger(ctx)
 	this.setLogger(ctx, l)
 
 	if b, err := this.Configuration.Ssh.Banner.Render(&BannerContext{ctx}); err != nil {
@@ -409,8 +494,7 @@ func (this *service) createNewServerConfig(ctx ssh.Context) *gssh.ServerConfig {
 func (this *service) handleShellSession(sess ssh.Session) {
 	l := this.logger(sess.Context())
 
-	l.With("remote", sess.RemoteAddr()).
-		With("type", "shell").
+	l.With("type", "shell").
 		With("env", sess.Environ()).
 		With("command", sess.Command()).
 		Info("new remote session")
@@ -421,8 +505,7 @@ func (this *service) handleShellSession(sess ssh.Session) {
 func (this *service) handleSftpSession(sess ssh.Session) {
 	l := this.logger(sess.Context())
 
-	l.With("remote", sess.RemoteAddr()).
-		With("type", "sftp").
+	l.With("type", "sftp").
 		With("env", sess.Environ()).
 		With("command", sess.Command()).
 		Info("new remote session")
@@ -430,53 +513,112 @@ func (this *service) handleSftpSession(sess ssh.Session) {
 	this.executeSession(sess, environment.TaskTypeSftp, l)
 }
 
-func (this *service) executeSession(sess ssh.Session, taskType environment.TaskType, l log.Logger) {
+func (this *service) executeSession(sshSess ssh.Session, taskType environment.TaskType, l log.Logger) {
 	defer func() { l.Info("session ended") }()
 
-	auth := sess.Context().Value(authorizationCtxKey).(authorization.Authorization)
+	ctx := sshSess.Context()
+	auth, _ := ctx.Value(authorizationCtxKey).(authorization.Authorization)
 	if auth == nil {
 		l.Error("no authorization resolved, but it should")
-		_ = sess.Exit(91)
+		_ = sshSess.Exit(91)
 		return
+	}
+
+	sess, _ := ctx.Value(sessionCtxKey).(session.Session)
+	if sess == nil {
+		at, err := auth.MarshalToken()
+		if err != nil {
+			l.WithError(err).Error("cannot marshal authorization token")
+			_ = sshSess.Exit(92)
+		}
+		sess, err = this.sessions.Create(auth.Flow(), auth.Remote(), at)
+		if err != nil {
+			l.WithError(err).Error("cannot create session")
+			_ = sshSess.Exit(92)
+			return
+		} else {
+			ctx.SetValue(sessionCtxKey, sess)
+		}
 	}
 
 	req := environmentRequest{
 		service:       this,
-		remote:        &remote{sess.Context()},
+		remote:        &remote{ctx},
 		authorization: auth,
+		session:       sess,
 	}
 
-	if len(sess.RawCommand()) == 0 && taskType == environment.TaskTypeShell {
+	if sess != nil {
+		pubs := this.handshakePublicKeys(ctx)
+		if len(pubs) > 0 {
+			if err := sess.AddPublicKey(pubs[0]); err != nil {
+				l.WithError(err).Error("cannot add public key to session")
+				_ = sshSess.Exit(92)
+				return
+			}
+			if v := this.Configuration.Ssh.Keys.RememberMeNotification; !v.IsZero() {
+				buf, err := v.Render(&rememberMeNotificationContext{auth, sess, pubs[0]})
+				if err != nil {
+					l.WithError(err).Error("cannot render remember me notification")
+					_ = sshSess.Exit(92)
+					return
+				}
+				_, _ = io.WriteString(sshSess, buf)
+			}
+		}
+
+		if err := sess.NotifyLastAccess(req.remote, session.StateAuthorized); err != nil {
+			l.WithError(err).Error("cannot update session sate")
+			_ = sshSess.Exit(92)
+			return
+		}
+	}
+
+	if len(sshSess.RawCommand()) == 0 && taskType == environment.TaskTypeShell {
 		banner, err := this.environment.Banner(&req)
 		if err != nil {
 			l.WithError(err).Error("cannot retrieve banner")
-			_ = sess.Exit(92)
+			_ = sshSess.Exit(92)
 			return
 		}
 		if banner != nil {
 			defer common.IgnoreCloseError(banner)
-			if _, err := io.Copy(sess, banner); err != nil {
+			if _, err := io.Copy(sshSess, banner); err != nil {
 				l.WithError(err).Error("cannot print banner")
-				_ = sess.Exit(92)
+				_ = sshSess.Exit(92)
 			}
 		}
 	}
 
 	t := environmentTask{
 		environmentRequest: req,
-		session:            sess,
+		sshSession:         sshSess,
 		taskType:           taskType,
 	}
 	if err := this.environment.Run(&t); err != nil {
 		l.WithError(err).Error("run of environment failed")
-		_ = sess.Exit(93)
+		_ = sshSess.Exit(93)
 		return
 	}
 
-	_ = sess.Exit(0)
+	_ = sshSess.Exit(0)
+}
+
+func (this *service) registerHandshakePublicKey(ctx ssh.Context, pub ssh.PublicKey) {
+	keys, _ := ctx.Value(handshakeKeysCtxKey).([]ssh.PublicKey)
+	if uint8(len(keys)) < this.Configuration.Ssh.Keys.MaxKeysDuringHandshake {
+		keys = append(keys, pub)
+		ctx.SetValue(handshakeKeysCtxKey, keys)
+	}
+}
+
+func (this *service) handshakePublicKeys(ctx ssh.Context) []ssh.PublicKey {
+	keys, _ := ctx.Value(handshakeKeysCtxKey).([]ssh.PublicKey)
+	return keys
 }
 
 func (this *service) Close() (rErr error) {
+	defer common.KeepCloseError(&rErr, this.sessions)
 	defer common.KeepCloseError(&rErr, this.authorization)
 	defer common.KeepCloseError(&rErr, this.environment)
 	return nil
