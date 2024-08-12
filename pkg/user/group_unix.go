@@ -43,33 +43,6 @@ func (this Group) isEqualTo(other *Group) bool {
 		this.Name == other.Name
 }
 
-type DeleteGroupOpts struct {
-	Force *bool
-}
-
-func (this DeleteGroupOpts) Clone() DeleteGroupOpts {
-	var fr *bool
-	if v := this.Force; v != nil {
-		nv := *v
-		fr = &nv
-	}
-	return DeleteGroupOpts{
-		fr,
-	}
-}
-
-func (this *DeleteGroupOpts) OrDefaults() DeleteGroupOpts {
-	var result DeleteGroupOpts
-	if v := this; v != nil {
-		result = v.Clone()
-	}
-	if v := result.Force; v == nil {
-		nv := true
-		result.Force = &nv
-	}
-	return result
-}
-
 type Groups []Group
 
 func (this Groups) IsZero() bool {

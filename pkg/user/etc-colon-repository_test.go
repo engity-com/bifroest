@@ -1191,8 +1191,9 @@ func Test_EtcColonRepository_DeleteById(t *testing.T) {
 	testlog.Hook(t)
 
 	cases := []struct {
-		name    string
-		givenId Id
+		name      string
+		givenId   Id
+		givenOpts DeleteOpts
 
 		expectedPasswd string
 		expectedGroup  string
@@ -1254,7 +1255,7 @@ bar:XbarX:20453:10:100:::20818:`)
 			actualErr := instance.Init()
 			require.NoError(t, actualErr)
 
-			actualErr = instance.DeleteById(c.givenId)
+			actualErr = instance.DeleteById(c.givenId, &c.givenOpts)
 			if expectedErr := c.expectedErr; expectedErr != "" {
 				assert.ErrorContains(t, actualErr, expectedErr)
 			} else {
@@ -1279,6 +1280,7 @@ func Test_EtcColonRepository_DeleteByName(t *testing.T) {
 	cases := []struct {
 		name      string
 		givenName string
+		givenOpts DeleteOpts
 
 		expectedPasswd string
 		expectedGroup  string
@@ -1340,7 +1342,7 @@ bar:XbarX:20453:10:100:::20818:`)
 			actualErr := instance.Init()
 			require.NoError(t, actualErr)
 
-			actualErr = instance.DeleteByName(c.givenName)
+			actualErr = instance.DeleteByName(c.givenName, &c.givenOpts)
 			if expectedErr := c.expectedErr; expectedErr != "" {
 				assert.ErrorContains(t, actualErr, expectedErr)
 			} else {
@@ -1388,6 +1390,18 @@ func Test_EtcColonRepository_ValidatePasswordById(t *testing.T) {
 
 		expected:    false,
 		expectedErr: ErrNoSuchUser.Error(),
+	}, {
+		name:          "expired-thresholds",
+		givenId:       3,
+		givenPassword: "foobar",
+
+		expected: false,
+	}, {
+		name:          "expired-ts",
+		givenId:       4,
+		givenPassword: "foobar",
+
+		expected: false,
 	}}
 
 	for _, c := range cases {
@@ -1395,13 +1409,17 @@ func Test_EtcColonRepository_ValidatePasswordById(t *testing.T) {
 			dir := newTestDir(t)
 			passwdFile := dir.file("passwd").setContent(`root:x:0:0:root:/root:/bin/sh
 foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
-bar::11:12::/home/bar:/bin/barsh`)
+bar::11:12::/home/bar:/bin/barsh
+expired:abc:3:1::/bin/false:/bin/false
+expired-ts:abc:4:1::/bin/false:/bin/false`)
 			groupFile := dir.file("group").setContent(`root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar`)
 			shadowFile := dir.file("shadow").setContent(`root:XrootX:19722:10:100:50:200:20088:
 foo:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:20088:10:100::::
-bar:XbarX:20453:10:100:::20818:`)
+bar:XbarX:20453:10:100:::20818:
+expired:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:19931:1:10::5::
+expired-ts:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:19931:1:10:::19931:`)
 
 			var syncError error
 			instance := EtcColonRepository{
@@ -1533,6 +1551,18 @@ func Test_EtcColonRepository_ValidatePasswordByName(t *testing.T) {
 
 		expected:    false,
 		expectedErr: ErrNoSuchUser.Error(),
+	}, {
+		name:          "expired-thresholds",
+		givenName:     "expired",
+		givenPassword: "foobar",
+
+		expected: false,
+	}, {
+		name:          "expired-ts",
+		givenName:     "expired-ts",
+		givenPassword: "foobar",
+
+		expected: false,
 	}}
 
 	for _, c := range cases {
@@ -1540,13 +1570,17 @@ func Test_EtcColonRepository_ValidatePasswordByName(t *testing.T) {
 			dir := newTestDir(t)
 			passwdFile := dir.file("passwd").setContent(`root:x:0:0:root:/root:/bin/sh
 foo:abc:1:1:Foo Name:/home/foo:/bin/foosh
-bar::11:12::/home/bar:/bin/barsh`)
+bar::11:12::/home/bar:/bin/barsh
+expired:abc:3:1::/bin/false:/bin/false
+expired-ts:abc:4:1::/bin/false:/bin/false`)
 			groupFile := dir.file("group").setContent(`root:x:0:
 foo:abc:1:foo,bbb
 bar::12:bar`)
 			shadowFile := dir.file("shadow").setContent(`root:XrootX:19722:10:100:50:200:20088:
 foo:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:20088:10:100::::
-bar:XbarX:20453:10:100:::20818:`)
+bar:XbarX:20453:10:100:::20818:
+expired:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:19931:1:10::5::
+expired:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIMuhuB:19931:1:10:::19931:`)
 
 			var syncError error
 			instance := EtcColonRepository{
@@ -1826,8 +1860,9 @@ func Test_EtcColonRepository_DeleteGroupById(t *testing.T) {
 	testlog.Hook(t)
 
 	cases := []struct {
-		name    string
-		givenId GroupId
+		name      string
+		givenId   GroupId
+		givenOpts DeleteOpts
 
 		expectedPasswd string
 		expectedGroup  string
@@ -1916,7 +1951,7 @@ bar:XbarX:20453:10:100:::20818:`)
 			actualErr := instance.Init()
 			require.NoError(t, actualErr)
 
-			actualErr = instance.DeleteGroupById(c.givenId)
+			actualErr = instance.DeleteGroupById(c.givenId, &c.givenOpts)
 			if expectedErr := c.expectedErr; expectedErr != "" {
 				assert.ErrorContains(t, actualErr, expectedErr)
 			} else {
@@ -1941,6 +1976,7 @@ func Test_EtcColonRepository_DeleteGroupByName(t *testing.T) {
 	cases := []struct {
 		name      string
 		givenName string
+		givenOpts DeleteOpts
 
 		expectedPasswd string
 		expectedGroup  string
@@ -2029,7 +2065,7 @@ bar:XbarX:20453:10:100:::20818:`)
 			actualErr := instance.Init()
 			require.NoError(t, actualErr)
 
-			actualErr = instance.DeleteGroupByName(c.givenName)
+			actualErr = instance.DeleteGroupByName(c.givenName, &c.givenOpts)
 			if expectedErr := c.expectedErr; expectedErr != "" {
 				assert.ErrorContains(t, actualErr, expectedErr)
 			} else {

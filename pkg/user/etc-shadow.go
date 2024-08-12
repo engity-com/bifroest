@@ -67,13 +67,13 @@ func (this *etcShadowEntry) validatePassword(pass string) (bool, error) {
 
 	if this.hasInactiveAge {
 		expireAt := this.maximumAgeInDays + this.lastChangedAtInDays + this.inactiveAgeInDays
-		if expireAt >= today {
+		if expireAt <= today {
 			return false, nil
 		}
 	}
 
 	if this.hasExpire {
-		if this.expireAtTsInDays >= today {
+		if this.expireAtTsInDays <= today {
 			return false, nil
 		}
 	}

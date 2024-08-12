@@ -713,11 +713,22 @@ func (this *EtcColonRepository) deleteRef(opts *DeleteOpts, selector func() (*et
 		return bytes.Equal(candidate.entry.name, ref.etcShadowEntry.name)
 	})
 
-	//TODO! User home directory delete? - opts
+	if err := f.save(); err != nil {
+		return err
+	}
+
+	if opts.IsHomeDir() {
+		if err := os.RemoveAll(string(ref.homeDir)); os.IsNotExist(err) {
+			// Ok...
+		} else if err != nil {
+
+			return err
+		}
+	}
 
 	this.loggerForRef(ref).Info("user deleted")
 
-	return f.save()
+	return nil
 }
 
 // ValidatePasswordById implements Repository.ValidatePasswordById.
@@ -800,7 +811,7 @@ func (this *EtcColonRepository) DeleteGroupByName(name string, opts *DeleteOpts)
 	})
 }
 
-func (this *EtcColonRepository) deleteGroupRef(opts *DeleteOpts, selector func() (*etcGroupRef, error)) (rErr error) {
+func (this *EtcColonRepository) deleteGroupRef(_ *DeleteOpts, selector func() (*etcGroupRef, error)) (rErr error) {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 

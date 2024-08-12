@@ -114,6 +114,11 @@ func Test_etcShadowEntry_decode(t *testing.T) {
 		given:        bs("root", "XrootX", "19722", "10", "100", "50", "200", "-20088", ""),
 		allowBadName: true,
 		expectedErr:  "illegal expire at",
+	}, {
+		name:         "value-in-unused",
+		given:        bs("root", "XrootX", "19722", "10", "100", "50", "200", "20088", "0"),
+		allowBadName: true,
+		expectedErr:  "illegal unused (9)",
 	}}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -42,16 +42,6 @@ func (this *etcColonRepositoryHandles) open(rw bool) (_ *openedEtcColonRepositor
 	var err error
 	defer common.DoOnFailureIgnore(&success, result.close)
 
-	if result.passwd, err = this.passwd.openFile(rw); err != nil {
-		return nil, err
-	}
-	if result.group, err = this.group.openFile(rw); err != nil {
-		return nil, err
-	}
-	if result.shadow, err = this.shadow.openFile(rw); err != nil {
-		return nil, err
-	}
-
 	if rw {
 		directories := this.getDirectories()
 		result.lockFiles = make([]*os.File, len(directories))
@@ -63,6 +53,16 @@ func (this *etcColonRepositoryHandles) open(rw bool) (_ *openedEtcColonRepositor
 			}
 			i++
 		}
+	}
+
+	if result.passwd, err = this.passwd.openFile(rw); err != nil {
+		return nil, err
+	}
+	if result.group, err = this.group.openFile(rw); err != nil {
+		return nil, err
+	}
+	if result.shadow, err = this.shadow.openFile(rw); err != nil {
+		return nil, err
 	}
 
 	success = true
@@ -209,12 +209,12 @@ func (this *openedEtcColonRepositoryHandles) save() error {
 }
 
 func (this *openedEtcColonRepositoryHandles) close() (rErr error) {
-	defer common.KeepError(&rErr, this.passwd.close)
-	defer common.KeepError(&rErr, this.group.close)
-	defer common.KeepError(&rErr, this.shadow.close)
 	for _, f := range this.lockFiles {
 		defer common.KeepError(&rErr, f.Close)
 	}
+	defer common.KeepError(&rErr, this.passwd.close)
+	defer common.KeepError(&rErr, this.group.close)
+	defer common.KeepError(&rErr, this.shadow.close)
 
 	return nil
 }
