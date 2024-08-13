@@ -7,6 +7,7 @@ import (
 	"github.com/echocat/slf4g/level"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/engity-com/bifroest/pkg/template"
 	"github.com/engity-com/bifroest/pkg/user"
@@ -17,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 )
 
@@ -74,9 +76,9 @@ func (this *Local) Banner(req Request) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader(b)), nil
 }
 
-func (this *Local) Run(t Task) error {
-	fail := func(err error) error {
-		return err
+func (this *Local) Run(t Task) (int, error) {
+	fail := func(err error) (int, error) {
+		return -1, err
 	}
 
 	var u *user.User
@@ -99,11 +101,7 @@ func (this *Local) Run(t Task) error {
 		}
 	}
 
-	if err := this.runCommand(t, u); err != nil {
-		return fail(err)
-	}
-
-	return nil
+	return this.runCommand(t, u)
 }
 
 func (this *Local) ensureUserByTask(t Task) (*user.User, error) {
@@ -175,16 +173,15 @@ func (this *Local) ensureUser(req *user.Requirement, createIfAbsent, updateIfDif
 	return u, nil
 }
 
-func (this *Local) runCommand(t Task, u *user.User) error {
+func (this *Local) runCommand(t Task, u *user.User) (exitCode int, rErr error) {
 	l := t.Logger()
 	creds := u.ToCredentials()
-	sess := t.SshSession()
+	sshSess := t.SshSession()
 
 	cmd := exec.Cmd{
 		Dir: u.HomeDir,
 		SysProcAttr: &syscall.SysProcAttr{
 			Credential: &creds,
-			Setsid:     true,
 		},
 	}
 
@@ -203,19 +200,19 @@ func (this *Local) runCommand(t Task, u *user.User) error {
 	case TaskTypeSftp:
 		efn, err := osext.Executable()
 		if err != nil {
-			return fmt.Errorf("cannot resolve the location of the server's executable location: %w", err)
+			return -1, fmt.Errorf("cannot resolve the location of the server's executable location: %w", err)
 		}
 		cmd.Path = efn
 		cmd.Args = []string{efn, "sftp-server"}
 	default:
-		return fmt.Errorf("illegal task type: %v", t.TaskType())
+		return -1, fmt.Errorf("illegal task type: %v", t.TaskType())
 	}
 
 	if v, ok := os.LookupEnv("TZ"); ok {
 		ev.Set("TZ", v)
 	}
 	ev.AddAllOf(t.Authorization().EnvVars())
-	ev.Add(sess.Environ()...)
+	ev.Add(sshSess.Environ()...)
 	ev.Set(
 		"HOME", u.HomeDir,
 		"USER", u.Name,
@@ -223,78 +220,147 @@ func (this *Local) runCommand(t Task, u *user.User) error {
 		"SHELL", u.Shell,
 	)
 
-	if ssh.AgentRequested(sess) {
+	if ssh.AgentRequested(sshSess) {
 		l, err := ssh.NewAgentListener()
 		if err != nil {
-			return fmt.Errorf("cannot listen to agent: %w", err)
+			return -1, fmt.Errorf("cannot listen to agent: %w", err)
 		}
 		defer common.IgnoreCloseError(l)
-		go ssh.ForwardAgentConnections(l, sess)
+		go ssh.ForwardAgentConnections(l, sshSess)
 		cmd.Env = append(cmd.Env, "SSH_AUTH_SOCK"+l.Addr().String())
 	}
 
 	// TODO! Global configuration with environment
 	// tODO! If not exist ~/.hushlogin display /etc/motd
 
-	if ptyReq, winCh, isPty := sess.Pty(); isPty {
-		ev.Set("TERM", ptyReq.Term)
-		cmd.Env = ev.Strings()
-		f, err := pty.Start(&cmd)
-		if err != nil {
-			return fmt.Errorf("cannot start process %v: %w", cmd.Args, err)
+	cmd.Stdin = sshSess
+	cmd.Stdout = sshSess
+	if t.TaskType() == TaskTypeSftp {
+		cmd.Stderr = &log.LoggingWriter{
+			Logger:         l,
+			LevelExtractor: level.FixedLevelExtractor(level.Error),
 		}
-		defer this.killIfNeeded(t, &cmd)
-		defer common.IgnoreCloseError(f)
+	} else {
+		cmd.Stderr = sshSess.Stderr()
+	}
+
+	var fPty, fTty *os.File
+	if ptyReq, winCh, isPty := sshSess.Pty(); isPty {
+		ev.Set("TERM", ptyReq.Term)
+		var err error
+		fPty, fTty, err = pty.Open()
+		if err != nil {
+			return -1, fmt.Errorf("cannot allocate pty: %w", err)
+		}
+		defer common.IgnoreCloseError(fPty)
+		defer common.IgnoreCloseError(fTty)
+		cmd.SysProcAttr.Setsid = true
+		cmd.SysProcAttr.Setctty = true
+		cmd.Stderr = fTty
+		cmd.Stdout = fTty
+		cmd.Stdin = fTty
 
 		go func() {
-			for win := range winCh {
-				if err := this.setWinsize(f, win.Width, win.Height); err != nil {
+			for {
+				win, ok := <-winCh
+				if !ok {
+					return
+				}
+				size := pty.Winsize{uint16(win.Height), uint16(win.Width), 0, 0}
+				if err := pty.Setsize(fPty, &size); err != nil {
 					l.WithError(err).Warn("cannot set winsize; ignoring")
 				}
 			}
 		}()
+	}
+	cmd.Env = ev.Strings()
+
+	if err := cmd.Start(); err != nil {
+		return -1, fmt.Errorf("cannot start process %v: %w", cmd.Args, err)
+	}
+	l.With("pid", cmd.Process.Pid).
+		Debug("user's process started")
+
+	type doneT struct {
+		exitCode int
+		err      error
+	}
+	processDone := make(chan doneT, 1)
+	copyDone := make(chan error, 2)
+	var activeRoutines sync.WaitGroup
+	defer func() {
 		go func() {
-			_, _ = io.Copy(f, sess) // stdin
+			activeRoutines.Wait()
+			defer close(copyDone)
+			defer close(processDone)
 		}()
-		_, _ = io.Copy(sess, f) // stdout
-	} else {
-		cmd.Env = ev.Strings()
-		cmd.Stdin = sess
-		cmd.Stdout = sess
-		if t.TaskType() == TaskTypeSftp {
-			cmd.Stderr = &log.LoggingWriter{
-				Logger:         l,
-				LevelExtractor: level.FixedLevelExtractor(level.Error),
+	}()
+
+	if fPty != nil {
+		doCopy := func(from io.Reader, to io.Writer, name string) {
+			defer activeRoutines.Done()
+			if _, err := io.Copy(to, from); this.isRelevantError(err) {
+				copyDone <- err
+			} else {
+				copyDone <- nil
 			}
+			l.Tracef("finished copy %s", name)
+		}
+		activeRoutines.Add(1)
+		go doCopy(fPty, sshSess, "pty -> ssh")
+		activeRoutines.Add(1)
+		go doCopy(sshSess, fPty, "ssh -> pty")
+	}
+
+	activeRoutines.Add(1)
+	go func() {
+		defer activeRoutines.Done()
+		if state, err := cmd.Process.Wait(); err != nil {
+			processDone <- doneT{-1, err}
 		} else {
-			cmd.Stderr = sess.Stderr()
+			processDone <- doneT{state.ExitCode(), nil}
 		}
-		if err := cmd.Start(); err != nil {
-			return fmt.Errorf("cannot start process %v: %w", cmd.Args, err)
+		l.Trace("finished process")
+	}()
+
+	defer this.kill(&cmd, l)
+
+	for {
+		select {
+		case <-t.Context().Done():
+			if err := t.Context().Err(); err != nil && rErr == nil {
+				rErr = err
+			}
+			return -2, rErr
+		case status := <-processDone:
+			if status.err != nil && rErr == nil {
+				rErr = status.err
+			}
+			return status.exitCode, rErr
+		case err := <-copyDone:
+			if err != nil && rErr == nil {
+				rErr = err
+				return -1, rErr
+			}
 		}
-		defer this.killIfNeeded(t, &cmd)
 	}
+}
 
-	if state, err := cmd.Process.Wait(); err != nil {
-		return err
-	} else if ec := state.ExitCode(); ec != 0 {
-		return t.SshSession().Exit(ec)
-	}
-
-	return nil
+func (this *Local) isRelevantError(err error) bool {
+	return err != nil && !errors.Is(err, syscall.EIO) && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 func (this *Local) Close() error {
 	return this.userRepository.Close()
 }
 
-func (this *Local) killIfNeeded(t Task, cmd *exec.Cmd) {
-	go func() {
-		ctx := t.Context()
-		select {
-		case <-ctx.Done():
-			// Just to be sure, kill the process to do not leave anything behind...
-			_ = cmd.Process.Kill()
-		}
-	}()
+func (this *Local) kill(cmd *exec.Cmd, logger log.Logger) {
+	// TODO! We should consider the whole tree...
+	if err := cmd.Process.Kill(); errors.Is(err, os.ErrProcessDone) {
+		// Ok, great.
+	} else if err != nil {
+		logger.WithError(err).
+			With("pid", cmd.Process.Pid).
+			Warn("cannot kill process")
+	}
 }

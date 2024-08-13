@@ -48,11 +48,11 @@ func (this *Facade) Banner(req Request) (io.ReadCloser, error) {
 	return candidate.Banner(req)
 }
 
-func (this *Facade) Run(t Task) error {
+func (this *Facade) Run(t Task) (int, error) {
 	flow := t.Authorization().Flow()
 	candidate, ok := this.entries[flow]
 	if !ok {
-		return fmt.Errorf("does not find valid environment for flow %v", flow)
+		return -1, fmt.Errorf("does not find valid environment for flow %v", flow)
 	}
 	return candidate.Run(t)
 }

@@ -33,15 +33,11 @@ func (this *simple) SetAuthorizationToken([]byte) (rErr error) {
 	return nil
 }
 
-func (this *simple) HasPublicKey(pub ssh.PublicKey) (bool, error) {
+func (this *simple) HasPublicKey(ssh.PublicKey) (bool, error) {
 	return false, nil
 }
 
-func (this *simple) IteratePublicKey(func(ssh.PublicKey) (bool, error)) error {
-	return nil
-}
-
-func (this *simple) AddPublicKey(pub ssh.PublicKey) error {
+func (this *simple) AddPublicKey(ssh.PublicKey) error {
 	return nil
 }
 

@@ -35,6 +35,8 @@ func NewFsRepository(conf *configuration.SessionFs) (*FsRepository, error) {
 type FsRepository struct {
 	conf *configuration.SessionFs
 
+	connectionInterceptors fsConnectionInterceptors
+
 	mutex sync.RWMutex
 }
 
@@ -114,7 +116,7 @@ func (this *FsRepository) Create(flow configuration.FlowName, remote common.Remo
 		return fail(err)
 	}
 
-	sess := fsSession{
+	sess := fs{
 		repository:  this,
 		VFlow:       flow,
 		VId:         id,
@@ -155,7 +157,7 @@ func (this *FsRepository) findBy(flow configuration.FlowName, id uuid.UUID) (Ses
 	}
 	defer common.IgnoreCloseError(f)
 
-	buf := fsSession{
+	buf := fs{
 		repository: this,
 	}
 	if err := json.NewDecoder(f).Decode(&buf); err != nil {
@@ -246,7 +248,7 @@ func (this *FsRepository) Delete(s Session) error {
 		return nil
 	}
 	switch v := s.(type) {
-	case *fsSession:
+	case *fs:
 		return this.DeleteBy(v.VFlow, v.VId)
 	default:
 		return fmt.Errorf("unknown session type: %T", v)

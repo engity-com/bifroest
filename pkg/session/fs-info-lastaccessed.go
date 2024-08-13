@@ -10,7 +10,7 @@ import (
 )
 
 type fsLastAccessed struct {
-	session *fsSession
+	session *fs
 
 	VAt         time.Time `json:"at"`
 	VRemoteUser string    `json:"remoteUser"`

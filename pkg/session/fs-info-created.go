@@ -7,16 +7,16 @@ import (
 	"time"
 )
 
-func (this *fsSession) At() time.Time {
+func (this *fs) At() time.Time {
 	return this.VCreatedAt
 }
 
-func (this *fsSession) Remote() common.Remote {
+func (this *fs) Remote() common.Remote {
 	return fsSessionRemote{this}
 }
 
 type fsSessionRemote struct {
-	*fsSession
+	*fs
 }
 
 func (this fsSessionRemote) String() string {

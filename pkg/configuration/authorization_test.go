@@ -1,6 +1,7 @@
 package configuration
 
 import (
+	"github.com/echocat/slf4g/sdk/testlog"
 	"testing"
 )
 

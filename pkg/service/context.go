@@ -145,6 +145,11 @@ func (this *environmentTask) TaskType() environment.TaskType {
 
 type rememberMeNotificationContext struct {
 	Authorization authorization.Authorization
-	Session       session.Session
+	Session       rememberMeNotificationContextSession
 	Key           ssh.PublicKey
+}
+
+type rememberMeNotificationContextSession struct {
+	session.Session
+	New bool
 }

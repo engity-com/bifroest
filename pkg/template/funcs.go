@@ -228,7 +228,8 @@ func fingerprint(arg any, args ...any) (string, error) {
 }
 
 func fingerprintPublicKey(what ssh.PublicKey, opts ...any) (string, error) {
-	var modern bool
+	modern := false
+	long := true
 
 	for _, opt := range opts {
 		switch opt {
@@ -236,16 +237,27 @@ func fingerprintPublicKey(what ssh.PublicKey, opts ...any) (string, error) {
 			modern = true
 		case "md5", "legacy":
 			modern = false
+		case "long":
+			long = true
+		case "short":
+			long = false
 		default:
 			return "", fmt.Errorf("illegal option: %v", opt)
 		}
 	}
 
 	if modern {
+		if long {
+			ssh.FingerprintSHA256(what)
+		}
 		sum := sha256.Sum256(what.Marshal())
 		return base64.RawStdEncoding.EncodeToString(sum[:]), nil
 	} else {
-		return ssh.FingerprintLegacyMD5(what), nil
+		result := ssh.FingerprintLegacyMD5(what)
+		if long {
+			result = what.Type() + ":" + result
+		}
+		return result, nil
 	}
 }
 

@@ -9,29 +9,29 @@ import (
 	"time"
 )
 
-func (this *fsSession) Flow() configuration.FlowName {
+func (this *fs) Flow() configuration.FlowName {
 	return this.VFlow.Clone()
 }
 
-func (this *fsSession) Id() uuid.UUID {
+func (this *fs) Id() uuid.UUID {
 	var result uuid.UUID
 	copy(result[:], this.VId[:])
 	return result
 }
 
-func (this *fsSession) String() string {
+func (this *fs) String() string {
 	return this.Id().String()
 }
 
-func (this *fsSession) State() State {
+func (this *fs) State() State {
 	return this.VState
 }
 
-func (this *fsSession) Created() (InfoCreated, error) {
+func (this *fs) Created() (InfoCreated, error) {
 	return this, nil
 }
 
-func (this *fsSession) ValidUntil() (time.Time, error) {
+func (this *fs) ValidUntil() (time.Time, error) {
 	lastAccessed, err := this.LastAccessed()
 	if err != nil {
 		return time.Time{}, err
@@ -39,7 +39,7 @@ func (this *fsSession) ValidUntil() (time.Time, error) {
 	return lastAccessed.At().Add(this.repository.conf.IdleTimeout.Native()), nil
 }
 
-func (this *fsSession) LastAccessed() (InfoLastAccessed, error) {
+func (this *fs) lastAccessed() (*fsLastAccessed, error) {
 	this.repository.mutex.RLock()
 	defer this.repository.mutex.RUnlock()
 
@@ -57,4 +57,8 @@ func (this *fsSession) LastAccessed() (InfoLastAccessed, error) {
 	}
 
 	return &buf, nil
+}
+
+func (this *fs) LastAccessed() (InfoLastAccessed, error) {
+	return this.lastAccessed()
 }
