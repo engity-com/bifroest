@@ -149,7 +149,7 @@ func (this *Service) prepare() (svc *service, err error) {
 	ctx := context.Background()
 	svc = &service{Service: this}
 
-	if svc.sessions, err = session.NewRepositoryFacade(ctx, &this.Configuration.Session); err != nil {
+	if svc.sessions, err = session.NewFacadeRepository(ctx, &this.Configuration.Session); err != nil {
 		return fail(err)
 	}
 	if svc.authorizer, err = authorization.NewAuthorizerFacade(ctx, &this.Configuration.Flows); err != nil {

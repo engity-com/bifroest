@@ -11,6 +11,10 @@ var (
 	DefaultSessionFsStorage = defaultSessionFsStorage
 	// DefaultSessionFsFileMode is the default setting for SessionFs.FileMode.
 	DefaultSessionFsFileMode = sys.FileMode(0600)
+
+	_ = RegisterSessionV(func() SessionV {
+		return &SessionFs{}
+	})
 )
 
 // SessionFs defines an implementation of Session on file system base.
@@ -94,4 +98,8 @@ func (this SessionFs) isEqualTo(other *SessionFs) bool {
 		this.MaxConnections == other.MaxConnections &&
 		this.Storage == other.Storage &&
 		this.FileMode == other.FileMode
+}
+
+func (this SessionFs) Types() []string {
+	return []string{"fs", "file-system"}
 }

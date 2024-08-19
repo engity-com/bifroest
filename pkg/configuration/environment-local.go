@@ -1,3 +1,5 @@
+//go:build linux
+
 package configuration
 
 import (
@@ -11,6 +13,10 @@ var (
 	DefaultEnvironmentLocalUpdateIfDifferent     = template.BoolOf(false)
 	DefaultEnvironmentLocalBanner                = template.MustNewString("")
 	DefaultEnvironmentLocalPortForwardingAllowed = template.BoolOf(true)
+
+	_ = RegisterEnvironmentV(func() EnvironmentV {
+		return &EnvironmentLocal{}
+	})
 )
 
 type EnvironmentLocal struct {
@@ -104,4 +110,8 @@ func (this EnvironmentLocal) isEqualTo(other *EnvironmentLocal) bool {
 		isEqual(&this.Dispose, &other.Dispose) &&
 		isEqual(&this.Banner, &other.Banner) &&
 		isEqual(&this.PortForwardingAllowed, &other.PortForwardingAllowed)
+}
+
+func (this EnvironmentLocal) Types() []string {
+	return []string{"local"}
 }

@@ -1,3 +1,5 @@
+//go:build linux
+
 package configuration
 
 import (
@@ -8,12 +10,16 @@ import (
 var (
 	DefaultAuthorizationLocalPamService     = defaultAuthorizationLocalPamService
 	DefaultAuthorizationLocalAuthorizedKeys = []template.String{template.MustNewString("{{.user.homeDir}}/.ssh/authorized_keys")}
+
+	_ = RegisterAuthorizationV(func() AuthorizationV {
+		return &AuthorizationLocal{}
+	})
 )
 
 type AuthorizationLocal struct {
-	AuthorizedKeys []template.String `yaml:"authorizedKeys,omitempty"`
-	Password       Password          `yaml:"password,omitempty"`
-	PamService     string            `yaml:"pamService,omitempty"`
+	AuthorizedKeys []template.String  `yaml:"authorizedKeys,omitempty"`
+	Password       PasswordProperties `yaml:"password,omitempty"`
+	PamService     string             `yaml:"pamService,omitempty"`
 }
 
 func (this *AuthorizationLocal) SetDefaults() error {
@@ -65,4 +71,8 @@ func (this AuthorizationLocal) isEqualTo(other *AuthorizationLocal) bool {
 	return isEqualSlice(&this.AuthorizedKeys, &other.AuthorizedKeys) &&
 		isEqual(&this.Password, &other.Password) &&
 		this.PamService == other.PamService
+}
+
+func (this AuthorizationLocal) Types() []string {
+	return []string{"local"}
 }

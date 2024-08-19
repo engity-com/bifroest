@@ -8,6 +8,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
 	"reflect"
+	"unsafe"
 )
 
 func NewAuthorizerFacade(ctx context.Context, flows *configuration.Flows) (*AuthorizerFacade, error) {
@@ -17,7 +18,7 @@ func NewAuthorizerFacade(ctx context.Context, flows *configuration.Flows) (*Auth
 
 	entries := make([]facaded, len(*flows))
 	for i, flow := range *flows {
-		if err := entries[i].setConf(ctx, &flow); err != nil {
+		if err := entries[i].newFrom(ctx, &flow); err != nil {
 			return nil, err
 		}
 	}
@@ -103,35 +104,20 @@ type facaded struct {
 	requirement *configuration.Requirement
 }
 
-func (this *facaded) setConf(ctx context.Context, flow *configuration.Flow) error {
+func (this *facaded) newFrom(ctx context.Context, flow *configuration.Flow) error {
 	fail := func(err error) error {
 		return fmt.Errorf("cannot initizalize authorization for flow %q: %w", flow.Name, err)
 	}
 
-	var newV CloseableAuthorizer
-	switch authConf := flow.Authorization.V.(type) {
-	case *configuration.AuthorizationOidcDeviceAuth:
-		v, err := NewOidcDeviceAuth(ctx, flow.Name, authConf)
-		if err != nil {
-			return fail(err)
-		}
-		newV = v
-	case *configuration.AuthorizationLocal:
-		v, err := NewLocal(ctx, flow.Name, authConf)
-		if err != nil {
-			return fail(err)
-		}
-		newV = v
-	default:
-		return fail(fmt.Errorf("cannot handle authorization type %v", reflect.TypeOf(flow.Authorization.V)))
+	factory, ok := configurationTypeToAuthorizerFactory[reflect.TypeOf(flow.Authorization.V)]
+	if !ok {
+		return fail(errors.Config.Newf("cannot handle authorization type %v", reflect.TypeOf(flow.Authorization.V)))
 	}
-
-	if oldV := this.CloseableAuthorizer; oldV != nil {
-		if err := oldV.Close(); err != nil {
-			return err
-		}
+	v, err := factory(ctx, flow.Name, flow.Authorization.V)
+	if err != nil {
+		return fail(err)
 	}
-	this.CloseableAuthorizer = newV
+	this.CloseableAuthorizer = v
 	this.requirement = &flow.Requirement
 	this.flow = flow.Name
 	return nil
@@ -148,4 +134,16 @@ func (this *facaded) canHandle(req Request) (bool, error) {
 	}
 
 	return true, nil
+}
+
+var (
+	configurationTypeToAuthorizerFactory map[reflect.Type]AuthorizerFactory[any, CloseableAuthorizer]
+)
+
+type AuthorizerFactory[C any, A CloseableAuthorizer] func(ctx context.Context, flow configuration.FlowName, conf C) (A, error)
+
+func RegisterAuthorizer[C any, A CloseableAuthorizer](factory AuthorizerFactory[C, A]) AuthorizerFactory[C, A] {
+	ct := reflect.TypeFor[C]()
+	configurationTypeToAuthorizerFactory[ct] = *(*AuthorizerFactory[any, CloseableAuthorizer])(unsafe.Pointer(&factory))
+	return factory
 }

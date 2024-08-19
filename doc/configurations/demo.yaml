@@ -237,10 +237,10 @@ flows:
             ## default always true.
             ## @template{context{authentication{token{..},idToken{..},userInfo{..}}}} -> bool
             loginAllowed: |
-            {{ and
-              (.authorization.idToken.groups | has "my-great-group-uuid")
-              (.authorization.idToken.tid    | eq  "my-great-tenant-uuid")
-            }}
+                {{ and
+                  (.authorization.idToken.groups | has "my-great-group-uuid")
+                  (.authorization.idToken.tid    | eq  "my-great-tenant-uuid")
+                }}
 
             dispose:
                 ## Tell the environment to delete this user afterward, if it's corresponding session will be disposed.
@@ -330,17 +330,17 @@ flows:
             ## default always true.
             ## @template{context{authentication{user{name,uid,group,..}}}} -> bool
             loginAllowed: |
-            {{ or
-              (.authorization.user.group.name | eq "ssh" )
-              (.authorization.user.groups     | firstMatching `{{.name | eq "ssh"}}`)
-            }}
+                {{ or
+                  (.authorization.user.group.name | eq "ssh" )
+                  (.authorization.user.groups     | firstMatching `{{.name | eq "ssh"}}`)
+                }}
 
-            dispose: {}
-                ## These properties have no affect, as this user is never managed (authorization: type=local) in this
-                ## case, although they are all true.
-                #deleteManagedUser: true
-                #deleteManagedUserHomeDir: true
-                #killManagedUserProcesses: true
+            dispose: { }
+              ## These properties have no affect, as this user is never managed (authorization: type=local) in this
+              ## case, although they are all true.
+              #deleteManagedUser: true
+              #deleteManagedUserHomeDir: true
+            #killManagedUserProcesses: true
 
             ## Banner which will be shown to the user upon successfully start of its environment.
             ## @default

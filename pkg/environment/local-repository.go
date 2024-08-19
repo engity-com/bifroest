@@ -1,3 +1,5 @@
+//go:build linux
+
 package environment
 
 import (
@@ -11,6 +13,10 @@ import (
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/template"
 	"github.com/engity-com/bifroest/pkg/user"
+)
+
+var (
+	_ = RegisterRepository(NewLocalRepository)
 )
 
 type LocalRepository struct {

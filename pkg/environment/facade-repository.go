@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
 	"reflect"
+	"unsafe"
 )
 
 func NewRepositoryFacade(ctx context.Context, flows *configuration.Flows) (*RepositoryFacade, error) {
@@ -66,18 +68,33 @@ func (this *RepositoryFacade) Close() (rErr error) {
 
 func newInstance(ctx context.Context, flow *configuration.Flow) (env CloseableRepository, err error) {
 	fail := func(err error) (CloseableRepository, error) {
-		return nil, fmt.Errorf("cannot initizalize environment for flow %q: %w", flow.Name, err)
+		return nil, errors.System.Newf("cannot initizalize environment for flow %q: %w", flow.Name, err)
 	}
 
-	switch envConf := flow.Environment.V.(type) {
-	case *configuration.EnvironmentLocal:
-		env, err = NewLocalRepository(ctx, flow.Name, envConf)
-	default:
-		return fail(fmt.Errorf("cannot handle environment type %v", reflect.TypeOf(flow.Authorization.V)))
+	if flow.Environment.V == nil {
+		return fail(errors.Config.Newf("no environment configured"))
 	}
 
+	factory, ok := configurationTypeToRepositoryFactory[reflect.TypeOf(flow.Environment.V)]
+	if !ok {
+		return fail(errors.Config.Newf("cannot handle environment type %v", reflect.TypeOf(flow.Environment.V)))
+	}
+	instance, err := factory(ctx, flow.Name, flow.Environment.V)
 	if err != nil {
-		return fail(fmt.Errorf("cannot initizalize environment for flow %q: %w", flow.Name, err))
+		return fail(err)
 	}
-	return env, nil
+
+	return instance, nil
+}
+
+var (
+	configurationTypeToRepositoryFactory map[reflect.Type]RepositoryFactory[any, CloseableRepository]
+)
+
+type RepositoryFactory[C any, R CloseableRepository] func(ctx context.Context, flow configuration.FlowName, conf C) (R, error)
+
+func RegisterRepository[C any, R CloseableRepository](factory RepositoryFactory[C, R]) RepositoryFactory[C, R] {
+	ct := reflect.TypeFor[C]()
+	configurationTypeToRepositoryFactory[ct] = *(*RepositoryFactory[any, CloseableRepository])(unsafe.Pointer(&factory))
+	return factory
 }

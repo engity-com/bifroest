@@ -1,3 +1,5 @@
+//go:build linux
+
 package authorization
 
 import (
@@ -15,6 +17,10 @@ import (
 	"github.com/engity-com/bifroest/pkg/template"
 	"github.com/engity-com/bifroest/pkg/user"
 	"golang.org/x/crypto/ssh"
+)
+
+var (
+	_ = RegisterAuthorizer(NewLocal)
 )
 
 type LocalAuthorizer struct {

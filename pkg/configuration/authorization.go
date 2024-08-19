@@ -3,7 +3,6 @@ package configuration
 import (
 	"fmt"
 	"gopkg.in/yaml.v3"
-	"reflect"
 	"strings"
 )
 
@@ -16,13 +15,29 @@ type AuthorizationV interface {
 	trimmer
 	validator
 	equaler
+	Types() []string
+}
+
+var (
+	typeToAuthorizationFactory map[string]AuthorizationVFactory
+)
+
+type AuthorizationVFactory func() AuthorizationV
+
+func RegisterAuthorizationV(factory AuthorizationVFactory) AuthorizationVFactory {
+	pt := factory()
+	ts := pt.Types()
+	if len(ts) == 0 {
+		panic(fmt.Errorf("the instance does not provide any type"))
+	}
+	for _, t := range ts {
+		typeToAuthorizationFactory[t] = factory
+	}
+	return factory
 }
 
 func (this *Authorization) SetDefaults() error {
-	*this = Authorization{&AuthorizationLocal{}}
-	if err := this.V.SetDefaults(); err != nil {
-		return err
-	}
+	*this = Authorization{}
 	return nil
 }
 
@@ -55,17 +70,16 @@ func (this *Authorization) UnmarshalYAML(node *yaml.Node) error {
 		return reportYamlRelatedErr(node, err)
 	}
 
-	switch strings.ToLower(typeBuf.Type) {
-	case "":
+	if typeBuf.Type == "" {
 		return reportYamlRelatedErrf(node, "[type] required but absent")
-	case "oidc-device-auth", "oidc_device_auth", "oidcdeviceauth":
-		this.V = &AuthorizationOidcDeviceAuth{}
-	case "local":
-		this.V = &AuthorizationLocal{}
-	default:
+	}
+
+	factory, ok := typeToEnvironmentFactory[typeBuf.Type]
+	if !ok {
 		return reportYamlRelatedErrf(node, "[type] illegal type: %q", typeBuf.Type)
 	}
 
+	this.V = factory()
 	if err := node.Decode(this.V); err != nil {
 		return reportYamlRelatedErr(node, err)
 	}
@@ -76,18 +90,14 @@ func (this *Authorization) UnmarshalYAML(node *yaml.Node) error {
 func (this *Authorization) MarshalYAML() (any, error) {
 	typeBuf := struct {
 		AuthorizationV `yaml:",inline"`
-		Type           string `yaml:"type"`
+		Type           string `yaml:"type,omitempty"`
 	}{
 		AuthorizationV: this.V,
 	}
 
-	switch typeBuf.AuthorizationV.(type) {
-	case *AuthorizationOidcDeviceAuth:
-		typeBuf.Type = "oidcDeviceAuth"
-	case *AuthorizationLocal:
-		typeBuf.Type = "local"
-	default:
-		return nil, fmt.Errorf("[type] illegal type: %v", reflect.TypeOf(typeBuf.AuthorizationV))
+	if this.V != nil {
+		typeBuf.Type = this.V.Types()[0]
+		typeBuf.AuthorizationV = this.V
 	}
 
 	return typeBuf, nil
@@ -112,4 +122,13 @@ func (this Authorization) isEqualTo(other *Authorization) bool {
 		return this.V == nil
 	}
 	return this.V.IsEqualTo(other.V)
+}
+
+func GetSupportedAuthorizationVs() []string {
+	result := make([]string, len(typeToAuthorizationFactory))
+	var i int
+	for k := range typeToAuthorizationFactory {
+		result[i] = strings.Clone(k)
+	}
+	return result
 }

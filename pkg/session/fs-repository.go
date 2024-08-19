@@ -27,7 +27,11 @@ const (
 	maxFsRepositoryPublicKeyLineSize = 6 * 1024
 )
 
-func NewFsRepository(conf *configuration.SessionFs) (*FsRepository, error) {
+var (
+	_ = RegisterRepository(NewFsRepository)
+)
+
+func NewFsRepository(_ context.Context, conf *configuration.SessionFs) (*FsRepository, error) {
 	result := FsRepository{
 		conf: conf,
 	}

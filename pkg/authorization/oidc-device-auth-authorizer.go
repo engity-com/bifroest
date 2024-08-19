@@ -12,6 +12,10 @@ import (
 	"golang.org/x/oauth2"
 )
 
+var (
+	_ = RegisterAuthorizer(NewOidcDeviceAuth)
+)
+
 type OidcDeviceAuthAuthorizer struct {
 	flow configuration.FlowName
 	conf *configuration.AuthorizationOidcDeviceAuth

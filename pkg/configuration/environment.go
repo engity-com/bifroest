@@ -3,7 +3,7 @@ package configuration
 import (
 	"fmt"
 	"gopkg.in/yaml.v3"
-	"reflect"
+	"strings"
 )
 
 type Environment struct {
@@ -15,13 +15,29 @@ type EnvironmentV interface {
 	trimmer
 	validator
 	equaler
+	Types() []string
+}
+
+var (
+	typeToEnvironmentFactory map[string]EnvironmentVFactory
+)
+
+type EnvironmentVFactory func() EnvironmentV
+
+func RegisterEnvironmentV(factory EnvironmentVFactory) EnvironmentVFactory {
+	pt := factory()
+	ts := pt.Types()
+	if len(ts) == 0 {
+		panic(fmt.Errorf("the instance does not provide any type"))
+	}
+	for _, t := range ts {
+		typeToEnvironmentFactory[t] = factory
+	}
+	return factory
 }
 
 func (this *Environment) SetDefaults() error {
-	*this = Environment{&EnvironmentLocal{}}
-	if err := this.V.SetDefaults(); err != nil {
-		return err
-	}
+	*this = Environment{}
 	return nil
 }
 
@@ -54,15 +70,16 @@ func (this *Environment) UnmarshalYAML(node *yaml.Node) error {
 		return reportYamlRelatedErr(node, err)
 	}
 
-	switch typeBuf.Type {
-	case "":
+	if typeBuf.Type == "" {
 		return reportYamlRelatedErrf(node, "[type] required but absent")
-	case "local":
-		this.V = &EnvironmentLocal{}
-	default:
+	}
+
+	factory, ok := typeToEnvironmentFactory[typeBuf.Type]
+	if !ok {
 		return reportYamlRelatedErrf(node, "[type] illegal type: %q", typeBuf.Type)
 	}
 
+	this.V = factory()
 	if err := node.Decode(this.V); err != nil {
 		return reportYamlRelatedErr(node, err)
 	}
@@ -73,16 +90,12 @@ func (this *Environment) UnmarshalYAML(node *yaml.Node) error {
 func (this *Environment) MarshalYAML() (any, error) {
 	typeBuf := struct {
 		EnvironmentV `yaml:",inline"`
-		Type         string `yaml:"type"`
-	}{
-		EnvironmentV: this.V,
-	}
+		Type         string `yaml:"type,omitempty"`
+	}{}
 
-	switch typeBuf.EnvironmentV.(type) {
-	case *EnvironmentLocal:
-		typeBuf.Type = "local"
-	default:
-		return nil, fmt.Errorf("[type] illegal type: %v", reflect.TypeOf(typeBuf.EnvironmentV))
+	if this.V != nil {
+		typeBuf.Type = this.V.Types()[0]
+		typeBuf.EnvironmentV = this.V
 	}
 
 	return typeBuf, nil
@@ -107,4 +120,13 @@ func (this Environment) isEqualTo(other *Environment) bool {
 		return this.V == nil
 	}
 	return this.V.IsEqualTo(other.V)
+}
+
+func GetSupportedEnvironmentVs() []string {
+	result := make([]string, len(typeToEnvironmentFactory))
+	var i int
+	for k := range typeToEnvironmentFactory {
+		result[i] = strings.Clone(k)
+	}
+	return result
 }

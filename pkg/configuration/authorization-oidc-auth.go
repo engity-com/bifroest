@@ -10,6 +10,10 @@ var (
 	DefaultAuthorizationOidcScopes           = []string{oidc.ScopeOpenID, "profile", "email"}
 	DefaultAuthorizationOidcRetrieveIdToken  = true
 	DefaultAuthorizationOidcRetrieveUserInfo = false
+
+	_ = RegisterAuthorizationV(func() AuthorizationV {
+		return &AuthorizationOidcDeviceAuth{}
+	})
 )
 
 type AuthorizationOidcDeviceAuth struct {
@@ -85,4 +89,8 @@ func (this AuthorizationOidcDeviceAuth) isEqualTo(other *AuthorizationOidcDevice
 		slices.EqualFunc(this.Scopes, other.Scopes, func(l, r string) bool { return l == r }) &&
 		this.RetrieveIdToken == other.RetrieveIdToken &&
 		this.RetrieveUserInfo == other.RetrieveUserInfo
+}
+
+func (this AuthorizationOidcDeviceAuth) Types() []string {
+	return []string{"oidc-device-auth", "oidc_device_auth", "oidcdeviceauth"}
 }
