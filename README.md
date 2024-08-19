@@ -1,4 +1,4 @@
-# Enity's Bifröst
+# Engity's Bifröst
 
 Bifröst (speaken as "Beef-roest"), is an advanced SSH server. It can be used as a drop-in-replacement for [OpenSSH Server](https://www.openssh.com/), but it was actually created with some more advanced stuff in mind; see below.
 
@@ -85,7 +85,7 @@ This project is currently still in the development phase. We do guarantee a stab
 
 ## Contributing
 
-**Enity's Bifröst** is an open source project by [Engity GmbH](https://engity.com). So if you want to make this project even better, you can contribute to this project on [Github](https://github.com/engity-com/bifroest) by [fork us](https://github.com/engity-com/bifroest/fork).
+**Engity's Bifröst** is an open source project by [Engity GmbH](https://engity.com). So if you want to make this project even better, you can contribute to this project on [Github](https://github.com/engity-com/bifroest) by [fork us](https://github.com/engity-com/bifroest/fork).
 
 If you commit code to this project, you have to accept that this code will be released under the [license](#license) of this project.
 
