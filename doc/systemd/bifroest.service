@@ -1,5 +1,5 @@
 [Unit]
-Description=Enity's Bifröst is an SSH server which provides authorization and authentication via OpenID Connect and classic mechanisms to access a real host.
+Description=Engity's Bifröst is an SSH server which provides authorization and authentication via OpenID Connect and classic mechanisms to access a real host.
 Wants=network.target
 
 [Service]

@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	title    = "Enity's Bifröst"
+	title    = "Engity's Bifröst"
 	version  = "development"
 	revision = "HEAD"
 	edition  = ""

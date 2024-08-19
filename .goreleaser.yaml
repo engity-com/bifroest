@@ -1,6 +1,6 @@
 version: 2
 
-project_name: "Enity's Bifröst"
+project_name: "Engity's Bifröst"
 dist: var/dist
 report_sizes: true
 
