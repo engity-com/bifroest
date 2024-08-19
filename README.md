@@ -5,7 +5,7 @@ Bifröst (speaken as "Beef-roest"), is an advanced SSH server. It can be used as
 ## TOC
 
 * [Features](#features)
-* [Installation](#installation)
+* [Getting started](#getting-started)
 * [State](#state)
 * [Contributing](#contributing)
 * [License](#license)
@@ -15,6 +15,7 @@ Bifröst (speaken as "Beef-roest"), is an advanced SSH server. It can be used as
 1. [SSH protocol complaint](#ssh-protocol-complaint)
 2. [OpenID Connect](#openid-connect)
 3. [Remember me](#remember-me)
+4. [Automatic user provisioning](#automatic-user-provisioning)
 
 #### SSH protocol complaint
 
@@ -29,9 +30,15 @@ You can connect via your **SSH keys**, as usually. And so on...
 
 If authorized via another authentication token then a Public Key, it can store (temporally) your provided Public Key, for faster reconnect, while the session is still alive.
 
+#### Automatic user provisioning
+
+If a local environment is used where the user executes inside and [OpenID Connect](#openid-connect) was used to authorize a user, Bifröst can automatically create these users based on a defined requirement template.
+
+It can also automatically clean up these users as they're no longer needed, for example: If their session becoming idle and times out (30 minutes). In this case the user itself, its home directory and all running processes can be cleaned up.
+
 #### More to come...
 
-## Installation
+## Getting started
 
 1. Download the latest version of Bifröst (see [releases page](https://github.com/engity-com/bifroest/releases)):
    ```shell
@@ -41,10 +48,10 @@ If authorized via another authentication token then a Public Key, it can store (
    # Example
    curl -sSLf https://github.com/engity-com/bifroest/releases/download/v1.2.3/bifroest-linux-amd64-extended.tgz | sudo tar -zxv -C /usr/bin bifroest
    ```
-2. Configure Bifröst. For example download the demo configuration and adjust for your needs (see [our demo configuration](doc/demo-configuration.yaml) for the documentation about it):
+2. Configure Bifröst. For example download the demo configuration and adjust for your needs (see [our demo configuration](doc/configurations/demo.yaml) for the documentation about it):
    ```shell
    sudo mkdir -p /etc/engity/bifroest/
-   sudo curl -sSLf https://raw.githubusercontent.com/engity-com/bifroest/main/doc/demo-configuration.yaml -o /etc/engity/bifroest/configuration.yaml
+   sudo curl -sSLf https://raw.githubusercontent.com/engity-com/bifroest/main/doc/configurations/sshd-dropin-replacement.yaml -o /etc/engity/bifroest/configuration.yaml
    # Adjust it to your needs
    sudo vi /etc/engity/bifroest/configuration.yaml
    ```
@@ -52,7 +59,26 @@ If authorized via another authentication token then a Public Key, it can store (
    ```shell
    sudo bifroest run
    ```
-   
+
+### Let it run automatically
+
+#### systemd
+
+To enable Bifröst to run at every server start where [systemd](https://wiki.archlinux.org/title/Systemd) is available, simply:
+1. Download [our example service configuration](doc/systemd/bifroest.service):
+   ```shell
+   sudo curl -sSLf https://raw.githubusercontent.com/engity-com/bifroest/main/doc/systemd/bifroest.service -o /etc/systemd/system/bifroest.service
+   ```
+2. Reload the systemd daemon:
+   ```shell
+   sudo systemctl daemon-reload
+   ```
+3. Enable and start Bifröst:
+   ```shell
+   sudo systemctl enable bifroest.service
+   sudo systemctl start bifroest.service
+   ```
+
 ## State
 
 This project is currently still in the development phase. We do guarantee a stable application (file a bug once you finde one) but not an 100% stable configuration/command/API structure. 
