@@ -7,8 +7,9 @@ Bifröst (speaken as "Beef-roest"), is an advanced SSH server. It can be used as
 * [Features](#features)
 * [Getting started](#getting-started)
 * [Status](#status)
-* [Contributing](#contributing)
-* [License](#license)
+* [License](LICENSE)
+* [Code of Conduct](CODE_OF_CONDUCT.md)
+* [Contributing](CONTRIBUTING.md)
 
 ## Features
 
@@ -83,12 +84,7 @@ To enable Bifröst to run at every server start where [systemd](https://wiki.arc
 
 This project is currently under development. The application is stable ([file a bug if you find one](https://github.com/engity-com/bifroest/issues/new/choose)), but the configuration/command/API structure needs improvement.
 
-## Contributing
-
-**Engity's Bifröst** is an open source project of [Engity GmbH](https://engity.com). If you want to make this project even better, we invite you to contribute to this project on [Github](https://github.com/engity-com/bifroest) by [forking us](https://github.com/engity-com/bifroest/fork).
-
-If you contribute code to this project, please read our [Contributor License Agreement](CLA.md).
-
-## License
-
-See the [LICENSE](LICENSE) file.
+## More topics
+* [License](LICENSE)
+* [Code of Conduct](CODE_OF_CONDUCT.md)
+* [Contributing](CONTRIBUTING.md)
