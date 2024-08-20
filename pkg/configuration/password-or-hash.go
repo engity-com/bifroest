@@ -2,7 +2,6 @@ package configuration
 
 import (
 	"bytes"
-	"fmt"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"strings"
 )
@@ -14,39 +13,23 @@ var (
 type PasswordOrHash []byte
 
 func (this PasswordOrHash) String() string {
-	v, err := this.MarshalText()
-	if err != nil {
-		return err.Error()
-	}
-	return string(v)
+	return string(this)
 }
 
 func (this PasswordOrHash) MarshalText() ([]byte, error) {
-	switch this {
-	case PasswordOrHashTypePlain:
-		return []byte("plain"), nil
-	case PasswordOrHashTypeBcrypt:
-		return []byte("bcrypt"), nil
-	default:
-		return nil, fmt.Errorf("unknown-password-or-hash-type-%d", this)
+	if err := this.Validate(); err != nil {
+		return nil, err
 	}
+	return bytes.Clone(this), nil
 }
 
 func (this *PasswordOrHash) Set(plain string) error {
-	parts := strings.SplitAfterN(plain, ":", 2)
-	if len(parts) != 2 {
-		return errors.Config.Newf("%w: %v")
+	buf := PasswordOrHash(plain)
+	if err := buf.Validate(); err != nil {
+		return err
 	}
-	switch plain {
-	case "plain":
-		*this = PasswordOrHashTypePlain
-		return nil
-	case "bcrypt":
-		*this = PasswordOrHashTypeBcrypt
-		return nil
-	default:
-		return fmt.Errorf("invalid password or hash type: %q", plain)
-	}
+	*this = buf
+	return nil
 }
 
 func (this *PasswordOrHash) UnmarshalText(b []byte) error {
@@ -54,7 +37,17 @@ func (this *PasswordOrHash) UnmarshalText(b []byte) error {
 }
 
 func (this PasswordOrHash) Validate() error {
-	return validateSlice(this)
+	parts := strings.SplitAfterN(string(this), ":", 2)
+	if len(parts) != 2 {
+		return errors.Config.Newf("%w: %v", ErrIllegalPasswordOrHash, string(this))
+	}
+
+	var t PasswordOrHashType
+	if err := t.Set(parts[0]); err != nil {
+		return errors.Config.Newf("%w: %v: %v", ErrIllegalPasswordOrHash, string(this), err)
+	}
+
+	return nil
 }
 
 func (this PasswordOrHash) IsEqualTo(other any) bool {

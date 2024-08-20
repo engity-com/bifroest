@@ -30,7 +30,7 @@ func (this *AuthorizationSimpleEntry) Validate() error {
 	return validate(this,
 		notEmptyStringValidate[AuthorizationSimpleEntry]("name", func(v *AuthorizationSimpleEntry) *string { return &v.Name }),
 		noopValidate[AuthorizationSimpleEntry]("authorizedKeys"),
-		noopValidate[AuthorizationSimpleEntry]("password"),
+		func(v *AuthorizationSimpleEntry) (string, validator) { return "password", &v.Password },
 	)
 }
 
