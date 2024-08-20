@@ -41,7 +41,7 @@ jobs:
         run: go install github.com/mattn/goveralls@latest
 
       - name: Install Syft
-        uses: anchore/sbom-action/download-syft@v0.15.9
+        uses: anchore/sbom-action/download-syft@v0.17.1
 
       - name: Test
         run: |
