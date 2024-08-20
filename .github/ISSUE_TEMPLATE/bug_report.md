@@ -9,10 +9,14 @@ assignees: ''
 ## Environment
 
 ### Bifröst
-<!-- output of `bifroest version` -->
+```text
+Paste here output of `bifroest version`!
+```
 
 ### Client
-<!-- first line of output of `ssh -v localhost` -->
+```text
+Paste here output's first line of `ssh -v localhost`!
+```
 
 ## Describe the bug
 <!-- A clear and concise description of what the bug is. -->
