@@ -40,7 +40,6 @@ func (this *LocalRepository) new(u *user.User, sess session.Session, portForward
 }
 
 func (this *local) configureShellCmd(t Task, cmd *exec.Cmd) error {
-	shell := this.user.Shell
 	if rc := t.SshSession().RawCommand(); len(rc) > 0 {
 		cmd.Args = []string{filepath.Base(this.user.Shell), "-c", rc}
 	} else {
@@ -60,16 +59,16 @@ func (this *local) configureEnvMid(ev *sys.EnvVars) {
 		"HOME", this.user.HomeDir,
 		"USER", this.user.Name,
 		"LOGNAME", this.user.Name,
-		"SHELL", this.getShell(),
+		"SHELL", this.user.Shell,
 	)
 }
 
 func (this *local) configureCmd(cmd *exec.Cmd) {
 	creds := this.user.ToCredentials()
-	cmd.SysProcAttr.Setsid.Credential = &creds
+	cmd.SysProcAttr.Credential = &creds
 }
 
-func (this *local) configureCmdForPty(cmd *exec.Cmd, pty Pty, tty Tty) error {
+func (this *local) configureCmdForPty(cmd *exec.Cmd, pty, tty *os.File) error {
 	cmd.SysProcAttr.Setsid = true
 	cmd.SysProcAttr.Setctty = true
 
