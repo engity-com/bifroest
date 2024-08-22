@@ -12,6 +12,12 @@ type defaulter interface {
 	SetDefaults() error
 }
 
+type defaulterFunc func() error
+
+func (f defaulterFunc) SetDefaults() error {
+	return f()
+}
+
 func setDefaults[T any](target *T, fs ...func(*T) (string, defaulter)) error {
 	for _, f := range fs {
 		n, d := f(target)
@@ -233,20 +239,6 @@ func reportYamlRelatedErr(node *yaml.Node, err error) error {
 
 func reportYamlRelatedErrf(node *yaml.Node, message string, args ...any) error {
 	return reportYamlRelatedErr(node, fmt.Errorf(message, args...))
-}
-
-func enrichWithFile(err error, file string) error {
-	var ole *LocationError
-	if errors.As(err, &ole) {
-		if ole.File == "" {
-			ole.File = file
-		}
-		return err
-	}
-	return &LocationError{
-		File:  file,
-		Cause: err,
-	}
 }
 
 type LocationError struct {

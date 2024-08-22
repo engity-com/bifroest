@@ -19,7 +19,7 @@ type EnvironmentV interface {
 }
 
 var (
-	typeToEnvironmentFactory map[string]EnvironmentVFactory
+	typeToEnvironmentFactory = make(map[string]EnvironmentVFactory)
 )
 
 type EnvironmentVFactory func() EnvironmentV
@@ -74,7 +74,7 @@ func (this *Environment) UnmarshalYAML(node *yaml.Node) error {
 		return reportYamlRelatedErrf(node, "[type] required but absent")
 	}
 
-	factory, ok := typeToEnvironmentFactory[typeBuf.Type]
+	factory, ok := typeToEnvironmentFactory[strings.ToLower(typeBuf.Type)]
 	if !ok {
 		return reportYamlRelatedErrf(node, "[type] illegal type: %q", typeBuf.Type)
 	}

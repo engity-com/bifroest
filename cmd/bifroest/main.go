@@ -14,10 +14,6 @@ import (
 	"github.com/echocat/slf4g/native/facade/value"
 )
 
-const (
-	defaultConfigurationRef = "/etc/engity/bifroest/configuration.yaml"
-)
-
 var (
 	configurationRef configuration.ConfigurationRef
 	registerCommands []func(*kingpin.Application)

@@ -1,19 +1,32 @@
 package configuration
 
 import (
+	"fmt"
+	"github.com/engity-com/bifroest/pkg/crypto"
 	"gopkg.in/yaml.v3"
 )
 
 type AuthorizationSimpleEntry struct {
-	Name           string         `yaml:"name"`
-	AuthorizedKeys []string       `yaml:"authorizedKeys,omitempty"`
-	Password       PasswordOrHash `yaml:"password,omitempty"`
+	Name               string                    `yaml:"name"`
+	AuthorizedKeys     crypto.AuthorizedKeys     `yaml:"authorizedKeys,omitempty"`
+	AuthorizedKeysFile crypto.AuthorizedKeysFile `yaml:"authorizedKeysFile,omitempty"`
+	Password           crypto.Password           `yaml:"password,omitempty"`
+}
+
+func (this *AuthorizationSimpleEntry) GetField(name string) (any, bool, error) {
+	switch name {
+	case "name":
+		return this.Name, true, nil
+	default:
+		return nil, false, fmt.Errorf("unknown field %q", name)
+	}
 }
 
 func (this *AuthorizationSimpleEntry) SetDefaults() error {
 	return setDefaults(this,
 		noopSetDefault[AuthorizationSimpleEntry]("name"),
 		noopSetDefault[AuthorizationSimpleEntry]("authorizedKeys"),
+		noopSetDefault[AuthorizationSimpleEntry]("authorizedKeysFile"),
 		noopSetDefault[AuthorizationSimpleEntry]("password"),
 	)
 }
@@ -21,7 +34,8 @@ func (this *AuthorizationSimpleEntry) SetDefaults() error {
 func (this *AuthorizationSimpleEntry) Trim() error {
 	return trim(this,
 		func(v *AuthorizationSimpleEntry) (string, trimmer) { return "name", &stringTrimmer{&v.Name} },
-		noopTrim[AuthorizationSimpleEntry]("authorizedKeys"),
+		func(v *AuthorizationSimpleEntry) (string, trimmer) { return "authorizedKeys", &v.AuthorizedKeys },
+		noopTrim[AuthorizationSimpleEntry]("authorizedKeysFile"),
 		noopTrim[AuthorizationSimpleEntry]("password"),
 	)
 }
@@ -29,7 +43,10 @@ func (this *AuthorizationSimpleEntry) Trim() error {
 func (this *AuthorizationSimpleEntry) Validate() error {
 	return validate(this,
 		notEmptyStringValidate[AuthorizationSimpleEntry]("name", func(v *AuthorizationSimpleEntry) *string { return &v.Name }),
-		noopValidate[AuthorizationSimpleEntry]("authorizedKeys"),
+		func(v *AuthorizationSimpleEntry) (string, validator) { return "authorizedKeys", &v.AuthorizedKeys },
+		func(v *AuthorizationSimpleEntry) (string, validator) {
+			return "authorizedKeysFile", &v.AuthorizedKeysFile
+		},
 		func(v *AuthorizationSimpleEntry) (string, validator) { return "password", &v.Password },
 	)
 }
@@ -57,7 +74,8 @@ func (this AuthorizationSimpleEntry) IsEqualTo(other any) bool {
 
 func (this AuthorizationSimpleEntry) isEqualTo(other *AuthorizationSimpleEntry) bool {
 	return this.Name == other.Name &&
-		isEqualSlice(&this.AuthorizedKeys, &other.AuthorizedKeys) &&
+		isEqual(&this.AuthorizedKeys, &other.AuthorizedKeys) &&
+		isEqual(&this.AuthorizedKeysFile, &other.AuthorizedKeysFile) &&
 		isEqual(&this.Password, &other.Password)
 }
 

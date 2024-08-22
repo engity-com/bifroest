@@ -8,7 +8,6 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
 	"reflect"
-	"unsafe"
 )
 
 func NewAuthorizerFacade(ctx context.Context, flows *configuration.Flows) (*AuthorizerFacade, error) {
@@ -113,11 +112,12 @@ func (this *facaded) newFrom(ctx context.Context, flow *configuration.Flow) erro
 	if !ok {
 		return fail(errors.Config.Newf("cannot handle authorization type %v", reflect.TypeOf(flow.Authorization.V)))
 	}
-	v, err := factory(ctx, flow.Name, flow.Authorization.V)
-	if err != nil {
+	m := reflect.ValueOf(factory)
+	rets := m.Call([]reflect.Value{reflect.ValueOf(ctx), reflect.ValueOf(flow.Name), reflect.ValueOf(flow.Authorization.V)})
+	if err, ok := rets[1].Interface().(error); ok && err != nil {
 		return fail(err)
 	}
-	this.CloseableAuthorizer = v
+	this.CloseableAuthorizer = rets[0].Interface().(CloseableAuthorizer)
 	this.requirement = &flow.Requirement
 	this.flow = flow.Name
 	return nil
@@ -137,13 +137,13 @@ func (this *facaded) canHandle(req Request) (bool, error) {
 }
 
 var (
-	configurationTypeToAuthorizerFactory map[reflect.Type]AuthorizerFactory[any, CloseableAuthorizer]
+	configurationTypeToAuthorizerFactory = make(map[reflect.Type]any)
 )
 
 type AuthorizerFactory[C any, A CloseableAuthorizer] func(ctx context.Context, flow configuration.FlowName, conf C) (A, error)
 
 func RegisterAuthorizer[C any, A CloseableAuthorizer](factory AuthorizerFactory[C, A]) AuthorizerFactory[C, A] {
 	ct := reflect.TypeFor[C]()
-	configurationTypeToAuthorizerFactory[ct] = *(*AuthorizerFactory[any, CloseableAuthorizer])(unsafe.Pointer(&factory))
+	configurationTypeToAuthorizerFactory[ct] = factory
 	return factory
 }

@@ -19,7 +19,7 @@ type AuthorizationV interface {
 }
 
 var (
-	typeToAuthorizationFactory map[string]AuthorizationVFactory
+	typeToAuthorizationFactory = make(map[string]AuthorizationVFactory)
 )
 
 type AuthorizationVFactory func() AuthorizationV
@@ -74,7 +74,7 @@ func (this *Authorization) UnmarshalYAML(node *yaml.Node) error {
 		return reportYamlRelatedErrf(node, "[type] required but absent")
 	}
 
-	factory, ok := typeToEnvironmentFactory[typeBuf.Type]
+	factory, ok := typeToAuthorizationFactory[strings.ToLower(typeBuf.Type)]
 	if !ok {
 		return reportYamlRelatedErrf(node, "[type] illegal type: %q", typeBuf.Type)
 	}

@@ -3,18 +3,73 @@
 package environment
 
 import (
+	"context"
 	log "github.com/echocat/slf4g"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
+	"github.com/engity-com/bifroest/pkg/user"
 	"github.com/gliderlabs/ssh"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 )
 
-func (this *local) configureCmd(_ *exec.Cmd) {}
+type local struct {
+	repository                 *LocalRepository
+	session                    session.Session
+	user                       *user.User
+	portForwardingAllowed      bool
+	deleteUserOnDispose        bool
+	deleteUserHomeDirOnDispose bool
+	killUserProcessesOnDispose bool
+}
 
-func (this *local) configureCmdForPty(cmd *exec.Cmd, pty, tty *os.File) error {
+func (this *LocalRepository) new(u *user.User, sess session.Session, portForwardingAllowed bool, lt *localToken) *local {
+	return &local{
+		this,
+		sess,
+		u,
+		portForwardingAllowed,
+		lt.User.DeleteOnDispose,
+		lt.User.DeleteHomeDirOnDispose,
+		lt.User.KillProcessesOnDispose,
+	}
+}
+
+func (this *local) configureShellCmd(t Task, cmd *exec.Cmd) error {
+	shell := this.user.Shell
+	if rc := t.SshSession().RawCommand(); len(rc) > 0 {
+		cmd.Args = []string{filepath.Base(this.user.Shell), "-c", rc}
+	} else {
+		cmd.Args = []string{"-" + filepath.Base(this.user.Shell)}
+	}
+	return nil
+}
+
+func (this *local) configureEnvBefore(ev *sys.EnvVars) {
+	if v, ok := os.LookupEnv("TZ"); ok {
+		ev.Set("TZ", v)
+	}
+}
+
+func (this *local) configureEnvMid(ev *sys.EnvVars) {
+	ev.Set(
+		"HOME", this.user.HomeDir,
+		"USER", this.user.Name,
+		"LOGNAME", this.user.Name,
+		"SHELL", this.getShell(),
+	)
+}
+
+func (this *local) configureCmd(cmd *exec.Cmd) {
+	creds := this.user.ToCredentials()
+	cmd.SysProcAttr.Setsid.Credential = &creds
+}
+
+func (this *local) configureCmdForPty(cmd *exec.Cmd, pty Pty, tty Tty) error {
 	cmd.SysProcAttr.Setsid = true
 	cmd.SysProcAttr.Setctty = true
 
@@ -48,4 +103,26 @@ func (this *local) signal(cmd *exec.Cmd, logger log.Logger, signal ssh.Signal) {
 			With("signal", sig).
 			Warn("cannot send signal to process")
 	}
+}
+
+func (this *local) dispose(ctx context.Context) (bool, error) {
+	fail := func(err error) (bool, error) {
+		return false, err
+	}
+
+	disposed := false
+	if this.deleteUserOnDispose {
+		if err := this.repository.userRepository.DeleteById(ctx, this.user.Uid, &user.DeleteOpts{
+			HomeDir:       common.P(this.deleteUserHomeDirOnDispose),
+			KillProcesses: common.P(this.killUserProcessesOnDispose),
+		}); errors.Is(err, user.ErrNoSuchUser) {
+			// Ok, continue....
+		} else if err != nil {
+			return fail(err)
+		} else {
+			disposed = true
+		}
+	}
+
+	return disposed, nil
 }

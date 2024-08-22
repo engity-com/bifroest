@@ -8,7 +8,6 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
 	"reflect"
-	"unsafe"
 )
 
 func NewRepositoryFacade(ctx context.Context, flows *configuration.Flows) (*RepositoryFacade, error) {
@@ -79,22 +78,22 @@ func newInstance(ctx context.Context, flow *configuration.Flow) (env CloseableRe
 	if !ok {
 		return fail(errors.Config.Newf("cannot handle environment type %v", reflect.TypeOf(flow.Environment.V)))
 	}
-	instance, err := factory(ctx, flow.Name, flow.Environment.V)
-	if err != nil {
+	m := reflect.ValueOf(factory)
+	rets := m.Call([]reflect.Value{reflect.ValueOf(ctx), reflect.ValueOf(flow.Name), reflect.ValueOf(flow.Environment.V)})
+	if err, ok := rets[1].Interface().(error); ok && err != nil {
 		return fail(err)
 	}
-
-	return instance, nil
+	return rets[0].Interface().(CloseableRepository), nil
 }
 
 var (
-	configurationTypeToRepositoryFactory map[reflect.Type]RepositoryFactory[any, CloseableRepository]
+	configurationTypeToRepositoryFactory = make(map[reflect.Type]any)
 )
 
 type RepositoryFactory[C any, R CloseableRepository] func(ctx context.Context, flow configuration.FlowName, conf C) (R, error)
 
 func RegisterRepository[C any, R CloseableRepository](factory RepositoryFactory[C, R]) RepositoryFactory[C, R] {
 	ct := reflect.TypeFor[C]()
-	configurationTypeToRepositoryFactory[ct] = *(*RepositoryFactory[any, CloseableRepository])(unsafe.Pointer(&factory))
+	configurationTypeToRepositoryFactory[ct] = factory
 	return factory
 }

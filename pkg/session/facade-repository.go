@@ -6,7 +6,6 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"reflect"
-	"unsafe"
 )
 
 func NewFacadeRepository(ctx context.Context, conf *configuration.Session) (*FacadeRepository, error) {
@@ -37,22 +36,22 @@ func newRepositoryInstance(ctx context.Context, conf *configuration.Session) (Cl
 	if !ok {
 		return fail(errors.Config.Newf("cannot handle session type %v", reflect.TypeOf(conf.V)))
 	}
-	instance, err := factory(ctx, conf.V)
-	if err != nil {
+	m := reflect.ValueOf(factory)
+	rets := m.Call([]reflect.Value{reflect.ValueOf(ctx), reflect.ValueOf(conf.V)})
+	if err, ok := rets[1].Interface().(error); ok && err != nil {
 		return fail(err)
 	}
-
-	return instance, nil
+	return rets[0].Interface().(CloseableRepository), nil
 }
 
 var (
-	configurationTypeToRepositoryFactory map[reflect.Type]RepositoryFactory[any, CloseableRepository]
+	configurationTypeToRepositoryFactory = make(map[reflect.Type]any)
 )
 
 type RepositoryFactory[C any, R CloseableRepository] func(ctx context.Context, conf C) (R, error)
 
 func RegisterRepository[C any, R CloseableRepository](factory RepositoryFactory[C, R]) RepositoryFactory[C, R] {
 	ct := reflect.TypeFor[C]()
-	configurationTypeToRepositoryFactory[ct] = *(*RepositoryFactory[any, CloseableRepository])(unsafe.Pointer(&factory))
+	configurationTypeToRepositoryFactory[ct] = factory
 	return factory
 }

@@ -32,7 +32,7 @@ type SessionV interface {
 }
 
 var (
-	typeToSessionFactory map[string]SessionVFactory
+	typeToSessionFactory = make(map[string]SessionVFactory)
 )
 
 type SessionVFactory func() SessionV
@@ -87,7 +87,7 @@ func (this *Session) UnmarshalYAML(node *yaml.Node) error {
 		return reportYamlRelatedErrf(node, "[type] required but absent")
 	}
 
-	factory, ok := typeToEnvironmentFactory[typeBuf.Type]
+	factory, ok := typeToSessionFactory[strings.ToLower(typeBuf.Type)]
 	if !ok {
 		return reportYamlRelatedErrf(node, "[type] illegal type: %q", typeBuf.Type)
 	}

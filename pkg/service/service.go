@@ -178,6 +178,7 @@ func (this *Service) prepareServer(_ context.Context, svc *service) (err error) 
 	svc.server.ServerConfigCallback = svc.createNewServerConfig
 	svc.server.ConnCallback = svc.onNewConnConnection
 	svc.server.Handler = svc.handleSshShellSession
+	svc.server.PtyCallback = svc.onPtyRequest
 	svc.server.ReversePortForwardingCallback = svc.onReversePortForwardingRequested
 	svc.server.PublicKeyHandler = svc.handlePublicKey
 	svc.server.PasswordHandler = svc.handlePassword

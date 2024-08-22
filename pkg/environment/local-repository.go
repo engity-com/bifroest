@@ -1,5 +1,3 @@
-//go:build linux
-
 package environment
 
 import (
@@ -7,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	log "github.com/echocat/slf4g"
-	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
@@ -114,34 +111,13 @@ func (this *LocalRepository) Ensure(req Request) (Environment, error) {
 		userIsManaged = true
 	}
 
+	lt, err := this.newLocalToken(u, req, userIsManaged)
+	if err != nil {
+		return fail(err)
+	}
 	portForwardingAllowed, err := this.conf.PortForwardingAllowed.Render(req)
 	if err != nil {
 		return fail(err)
-	}
-
-	deleteOnDispose, err := this.conf.Dispose.DeleteManagedUser.Render(req)
-	if err != nil {
-		return fail(err)
-	}
-	deleteHomeDirOnDispose, err := this.conf.Dispose.DeleteManagedUserHomeDir.Render(req)
-	if err != nil {
-		return fail(err)
-	}
-	killProcessesOnDispose, err := this.conf.Dispose.KillManagedUserProcesses.Render(req)
-	if err != nil {
-		return fail(err)
-	}
-
-	lt := localToken{
-		localTokenUser{
-			u.Name,
-			common.P(u.Uid),
-			userIsManaged,
-			deleteOnDispose && userIsManaged,
-			deleteHomeDirOnDispose && deleteOnDispose && userIsManaged,
-			killProcessesOnDispose && userIsManaged,
-		},
-		portForwardingAllowed,
 	}
 	if ltb, err := json.Marshal(lt); err != nil {
 		return failf(errors.System, "cannot marshal environment token: %w", err)
@@ -149,15 +125,7 @@ func (this *LocalRepository) Ensure(req Request) (Environment, error) {
 		return failf(errors.System, "cannot store environment token at session: %w", err)
 	}
 
-	return &local{
-		this,
-		sess,
-		u,
-		portForwardingAllowed,
-		lt.User.DeleteOnDispose,
-		lt.User.DeleteHomeDirOnDispose,
-		lt.User.KillProcessesOnDispose,
-	}, nil
+	return this.new(u, sess, portForwardingAllowed, lt), nil
 }
 
 func (this *LocalRepository) FindBySession(ctx context.Context, sess session.Session, opts *FindOpts) (Environment, error) {
@@ -189,19 +157,19 @@ func (this *LocalRepository) FindBySession(ctx context.Context, sess session.Ses
 	if len(ltb) == 0 {
 		return fail(ErrNoSuchEnvironment)
 	}
-	var tb localToken
-	if err := json.Unmarshal(ltb, &tb); err != nil {
+	var lt localToken
+	if err := json.Unmarshal(ltb, &lt); err != nil {
 		return failf(errors.System, "cannot decode environment token: %w", err)
 	}
 
 	var u *user.User
-	if v := tb.User.Name; len(v) != 0 {
+	if v := lt.User.Name; len(v) != 0 {
 		if u, err = this.userRepository.LookupByName(ctx, v); errors.Is(err, user.ErrNoSuchUser) {
 			return userNotFound(v)
 		} else if err != nil {
 			return failf(errors.System, "cannot lookup environment's user by name %q: %w", v, err)
 		}
-	} else if v := tb.User.Uid; v != nil {
+	} else if v := lt.User.Uid; v != nil {
 		if u, err = this.userRepository.LookupById(ctx, *v); errors.Is(err, user.ErrNoSuchUser) {
 			return userNotFound(v)
 		} else if err != nil {
@@ -211,15 +179,7 @@ func (this *LocalRepository) FindBySession(ctx context.Context, sess session.Ses
 		return failf(errors.System, "environment token does not contain valid user information: %w", err)
 	}
 
-	return &local{
-		this,
-		sess,
-		u,
-		tb.PortForwardingAllowed,
-		tb.User.DeleteOnDispose,
-		tb.User.DeleteHomeDirOnDispose,
-		tb.User.KillProcessesOnDispose,
-	}, nil
+	return this.new(u, sess, lt.PortForwardingAllowed, &lt), nil
 }
 
 type localEnsureOpts struct {

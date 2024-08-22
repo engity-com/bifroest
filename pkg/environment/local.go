@@ -1,5 +1,3 @@
-//go:build linux
-
 package environment
 
 import (
@@ -12,29 +10,17 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
-	"github.com/engity-com/bifroest/pkg/user"
 	"github.com/gliderlabs/ssh"
 	"github.com/kardianos/osext"
 	"io"
 	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 )
-
-type local struct {
-	repository                 *LocalRepository
-	session                    session.Session
-	user                       *user.User
-	portForwardingAllowed      bool
-	deleteUserOnDispose        bool
-	deleteUserHomeDirOnDispose bool
-	killUserProcessesOnDispose bool
-}
 
 func (this *local) Session() session.Session {
 	return this.session
@@ -51,14 +37,11 @@ func (this *local) Banner(req Request) (io.ReadCloser, error) {
 
 func (this *local) Run(t Task) (exitCode int, rErr error) {
 	l := t.Logger()
-	creds := this.user.ToCredentials()
 	sshSess := t.SshSession()
 
 	cmd := exec.Cmd{
-		Dir: this.user.HomeDir,
-		SysProcAttr: &syscall.SysProcAttr{
-			Credential: &creds,
-		},
+		Dir:         this.user.HomeDir,
+		SysProcAttr: &syscall.SysProcAttr{},
 	}
 
 	ev := sys.EnvVars{
@@ -67,11 +50,8 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 
 	switch t.TaskType() {
 	case TaskTypeShell:
-		cmd.Path = this.user.Shell
-		if rc := t.SshSession().RawCommand(); len(rc) > 0 {
-			cmd.Args = []string{filepath.Base(this.user.Shell), "-c", rc}
-		} else {
-			cmd.Args = []string{"-" + filepath.Base(this.user.Shell)}
+		if err := this.configureShellCmd(t, &cmd); err != nil {
+			return -1, err
 		}
 	case TaskTypeSftp:
 		efn, err := osext.Executable()
@@ -84,17 +64,10 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		return -1, fmt.Errorf("illegal task type: %v", t.TaskType())
 	}
 
-	if v, ok := os.LookupEnv("TZ"); ok {
-		ev.Set("TZ", v)
-	}
+	this.configureEnvBefore(&ev)
 	ev.AddAllOf(t.Authorization().EnvVars())
 	ev.Add(sshSess.Environ()...)
-	ev.Set(
-		"HOME", this.user.HomeDir,
-		"USER", this.user.Name,
-		"LOGNAME", this.user.Name,
-		"SHELL", this.user.Shell,
-	)
+	this.configureEnvMid(&ev)
 
 	if ssh.AgentRequested(sshSess) {
 		l, err := ssh.NewAgentListener()
@@ -123,7 +96,6 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 
 	var fPty, fTty *os.File
 	if ptyReq, winCh, isPty := sshSess.Pty(); isPty {
-		ev.Set("TERM", ptyReq.Term)
 		var err error
 		fPty, fTty, err = pty.Open()
 		if err != nil {
@@ -131,6 +103,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		}
 		defer common.IgnoreCloseError(fPty)
 		defer common.IgnoreCloseError(fTty)
+		ev.Set("TERM", ptyReq.Term)
 		if err := this.configureCmdForPty(&cmd, fPty, fTty); err != nil {
 			return -1, fmt.Errorf("cannot configure cmd for pty: %w", err)
 		}
@@ -237,18 +210,9 @@ func (this *local) Dispose(ctx context.Context) (bool, error) {
 		return false, errors.Newf(errors.System, "cannot dispose environment: %w", err)
 	}
 
-	disposed := false
-	if this.deleteUserOnDispose {
-		if err := this.repository.userRepository.DeleteById(ctx, this.user.Uid, &user.DeleteOpts{
-			HomeDir:       common.P(this.deleteUserHomeDirOnDispose),
-			KillProcesses: common.P(this.killUserProcessesOnDispose),
-		}); errors.Is(err, user.ErrNoSuchUser) {
-			// Ok, continue....
-		} else if err != nil {
-			return fail(err)
-		} else {
-			disposed = true
-		}
+	disposed, err := this.dispose(ctx)
+	if err != nil {
+		return fail(err)
 	}
 
 	sess := this.session
@@ -267,7 +231,7 @@ func (this *local) isRelevantError(err error) bool {
 
 func (this *local) kill(cmd *exec.Cmd, logger log.Logger) {
 	// TODO! We should consider the whole tree...
-	if err := cmd.Process.Kill(); errors.Is(err, os.ErrProcessDone) {
+	if err := cmd.Process.Kill(); errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.EINVAL) {
 		// Ok, great.
 	} else if err != nil {
 		logger.WithError(err).
