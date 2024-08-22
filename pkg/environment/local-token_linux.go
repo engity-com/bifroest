@@ -2,7 +2,10 @@
 
 package environment
 
-import "github.com/engity-com/bifroest/pkg/user"
+import (
+	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/user"
+)
 
 type localTokenUser struct {
 	Name                   string   `json:"name,omitempty"`
