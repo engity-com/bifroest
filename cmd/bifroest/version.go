@@ -103,3 +103,7 @@ func (this versionT) GoVersion() string {
 func (this versionT) Platform() string {
 	return runtime.GOOS + "/" + runtime.GOARCH
 }
+
+func (this versionT) Features() common.VersionFeatures {
+	return featuresV
+}

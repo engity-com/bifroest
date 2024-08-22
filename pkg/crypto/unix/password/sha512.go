@@ -23,3 +23,7 @@ func (p *Sha512) Validate(password string, hash []byte) (bool, error) {
 		return true, nil
 	}
 }
+
+func (p *Sha512) Name() string {
+	return "sha512"
+}

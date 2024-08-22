@@ -23,3 +23,7 @@ func (p *Sha256) Validate(password string, hash []byte) (bool, error) {
 		return true, nil
 	}
 }
+
+func (p *Sha256) Name() string {
+	return "sha256"
+}

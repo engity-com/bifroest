@@ -23,3 +23,7 @@ func (p *Apr1) Validate(password string, hash []byte) (bool, error) {
 		return true, nil
 	}
 }
+
+func (p *Apr1) Name() string {
+	return "apr1"
+}

@@ -20,6 +20,7 @@ type AuthorizationV interface {
 
 var (
 	typeToAuthorizationFactory = make(map[string]AuthorizationVFactory)
+	authorizationVs            []AuthorizationV
 )
 
 type AuthorizationVFactory func() AuthorizationV
@@ -31,8 +32,9 @@ func RegisterAuthorizationV(factory AuthorizationVFactory) AuthorizationVFactory
 		panic(fmt.Errorf("the instance does not provide any type"))
 	}
 	for _, t := range ts {
-		typeToAuthorizationFactory[t] = factory
+		typeToAuthorizationFactory[strings.ToLower(t)] = factory
 	}
+	authorizationVs = append(authorizationVs, pt)
 	return factory
 }
 
@@ -125,10 +127,9 @@ func (this Authorization) isEqualTo(other *Authorization) bool {
 }
 
 func GetSupportedAuthorizationVs() []string {
-	result := make([]string, len(typeToAuthorizationFactory))
-	var i int
-	for k := range typeToAuthorizationFactory {
-		result[i] = strings.Clone(k)
+	result := make([]string, len(authorizationVs))
+	for i, v := range authorizationVs {
+		result[i] = strings.Clone(v.Types()[0])
 	}
 	return result
 }

@@ -20,6 +20,7 @@ type EnvironmentV interface {
 
 var (
 	typeToEnvironmentFactory = make(map[string]EnvironmentVFactory)
+	environmentVs            []EnvironmentV
 )
 
 type EnvironmentVFactory func() EnvironmentV
@@ -31,8 +32,9 @@ func RegisterEnvironmentV(factory EnvironmentVFactory) EnvironmentVFactory {
 		panic(fmt.Errorf("the instance does not provide any type"))
 	}
 	for _, t := range ts {
-		typeToEnvironmentFactory[t] = factory
+		typeToEnvironmentFactory[strings.ToLower(t)] = factory
 	}
+	environmentVs = append(environmentVs, pt)
 	return factory
 }
 
@@ -123,10 +125,9 @@ func (this Environment) isEqualTo(other *Environment) bool {
 }
 
 func GetSupportedEnvironmentVs() []string {
-	result := make([]string, len(typeToEnvironmentFactory))
-	var i int
-	for k := range typeToEnvironmentFactory {
-		result[i] = strings.Clone(k)
+	result := make([]string, len(environmentVs))
+	for i, v := range environmentVs {
+		result[i] = strings.Clone(v.Types()[0])
 	}
 	return result
 }

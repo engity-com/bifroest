@@ -23,3 +23,7 @@ func (p *Md5) Validate(password string, hash []byte) (bool, error) {
 		return true, nil
 	}
 }
+
+func (p *Md5) Name() string {
+	return "md5"
+}

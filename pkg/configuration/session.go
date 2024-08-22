@@ -33,6 +33,7 @@ type SessionV interface {
 
 var (
 	typeToSessionFactory = make(map[string]SessionVFactory)
+	sessionVs            []SessionV
 )
 
 type SessionVFactory func() SessionV
@@ -44,8 +45,9 @@ func RegisterSessionV(factory SessionVFactory) SessionVFactory {
 		panic(fmt.Errorf("the instance does not provide any type"))
 	}
 	for _, t := range ts {
-		typeToSessionFactory[t] = factory
+		typeToSessionFactory[strings.ToLower(t)] = factory
 	}
+	sessionVs = append(sessionVs, pt)
 	return factory
 }
 
@@ -136,10 +138,9 @@ func (this Session) isEqualTo(other *Session) bool {
 }
 
 func GetSupportedSessionVs() []string {
-	result := make([]string, len(typeToSessionFactory))
-	var i int
-	for k := range typeToSessionFactory {
-		result[i] = strings.Clone(k)
+	result := make([]string, len(sessionVs))
+	for i, v := range sessionVs {
+		result[i] = strings.Clone(v.Types()[0])
 	}
 	return result
 }
