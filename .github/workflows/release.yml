@@ -18,7 +18,7 @@ jobs:
         run: sudo apt install libpam0g-dev
 
       - name: Install Syft
-        uses: anchore/sbom-action/download-syft@v0.15.9
+        uses: anchore/sbom-action/download-syft@v0.17.2
 
       - name: Checkout code
         uses: actions/checkout@v4
