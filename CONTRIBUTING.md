@@ -1,14 +1,14 @@
 # Contributing Guidelines
 
-Contributions are welcome via [GitHub Pull Requests](https://docs.github.com/articles/about-pull-requests). This document outlines the process to help get your contribution accepted.
+Contributions are welcome via [GitHub Pull Requests](https://docs.github.com/articles/about-pull-requests) ("PR"). This document outlines the process to help get your contribution accepted.
 
-Any type of contribution is welcome; from new features, bug fixes, or documentation improvements. However, [Engity](https://engity.com) will review the proposals and perform a triage over them. By doing so, we will ensure that the most valuable contributions for the community will be implemented in due time.
+Any kind of contribution is welcome, from new features to bug fixes to documentation improvements. However, [Engity](https://engity.com) will review the proposals and perform a triage over them. By doing so, we will ensure that the most valuable contributions for the community will be implemented in due time.
 
 ## How to Contribute
 
 1. [Fork this repository]((https://github.com/engity-com/bifroest/fork)), develop, and test your changes.
 2. [Submit a pull request](https://docs.github.com/articles/creating-a-pull-request).
-3. You have read and agreed to our [Contributor License Agreement](CLA.md) which are checked as part of the created pull request pipelines.
+3. Read and agree to our [Contributor License Agreement](CLA.md) as requested in the pull request.
 
 ### Technical Requirements
 
@@ -29,7 +29,7 @@ When submitting a PR make sure that it:
 
 #### Schedule
 
-There are no fixed cycles for releases. Currently, they are triggered as soon bugfixes, security updates or main features arriving. 
+There are no fixed cycles for releases. Currently, they are triggered as soon bugfixes, security updates, or main features arrive.
 
 #### Creation
 
