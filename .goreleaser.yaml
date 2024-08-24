@@ -15,6 +15,7 @@ builds:
     binary: bifroest
     goos:
       - linux
+      - windows
     env:
       - CGO_ENABLED=0
     goarch:

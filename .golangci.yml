@@ -1,5 +1,8 @@
 run:
   timeout: 20m
+  build-tags:
+    - without-pam
+    - without-yescrypt
 
 linters:
   enable:
