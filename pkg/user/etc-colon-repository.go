@@ -382,7 +382,7 @@ func (this *EtcColonRepository) Ensure(ctx context.Context, req *Requirement, op
 	}
 	tReq := req.OrDefaults()
 
-	existing, user, pResult, err := this.ensurePreChecks(ctx, &tReq, opts, this.mutex.RLocker())
+	_, user, pResult, err := this.ensurePreChecks(ctx, &tReq, opts, this.mutex.RLocker())
 	if err != nil || pResult != EnsureResultUnknown {
 		return user, pResult, err
 	}
