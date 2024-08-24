@@ -1,14 +1,15 @@
 # Engity's Bifröst
 
-Bifröst (speaken as "Beef-roest"), is an advanced SSH server. It can be used as a drop-in-replacement for [OpenSSH Server](https://www.openssh.com/), but it was actually created with some more advanced stuff in mind; see below.
+Bifröst (spoken as "Bee-frest"), is an advanced SSH server. It can be used as a drop-in-replacement for [OpenSSH Server](https://www.openssh.com/), but it was actually created with some more advanced stuff in mind; see below.
 
 ## TOC
 
 * [Features](#features)
 * [Getting started](#getting-started)
-* [State](#state)
-* [Contributing](#contributing)
-* [License](#license)
+* [Status](#status)
+* [License](LICENSE)
+* [Code of Conduct](CODE_OF_CONDUCT.md)
+* [Contributing](CONTRIBUTING.md)
 
 ## Features
 
@@ -79,16 +80,11 @@ To enable Bifröst to run at every server start where [systemd](https://wiki.arc
    sudo systemctl start bifroest.service
    ```
 
-## State
+## Status
 
-This project is currently still in the development phase. We do guarantee a stable application (file a bug once you finde one) but not an 100% stable configuration/command/API structure. 
+This project is currently under development. The application is stable ([file a bug if you find one](https://github.com/engity-com/bifroest/issues/new/choose)), but the configuration/command/API structure needs improvement.
 
-## Contributing
-
-**Engity's Bifröst** is an open source project by [Engity GmbH](https://engity.com). So if you want to make this project even better, you can contribute to this project on [Github](https://github.com/engity-com/bifroest) by [fork us](https://github.com/engity-com/bifroest/fork).
-
-If you commit code to this project, you have to accept that this code will be released under the [license](#license) of this project.
-
-## License
-
-See the [LICENSE](LICENSE) file.
+## More topics
+* [License](LICENSE)
+* [Code of Conduct](CODE_OF_CONDUCT.md)
+* [Contributing](CONTRIBUTING.md)
