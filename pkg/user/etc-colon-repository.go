@@ -396,6 +396,7 @@ func (this *EtcColonRepository) Ensure(ctx context.Context, req *Requirement, op
 	}
 	defer common.KeepError(&rErr, f.close)
 
+	var existing *etcPasswdRef
 	existing, user, pResult, err = this.ensurePreChecks(ctx, &tReq, opts, nil)
 	if err != nil || pResult != EnsureResultUnknown {
 		return user, pResult, err
