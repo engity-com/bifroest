@@ -71,7 +71,7 @@ func (this *testFile) setContent(with string) *testFile {
 		require.NoError(this.t, f.Close())
 	}()
 
-	_, err = io.Copy(f, strings.NewReader(with))
+	_, err = io.Copy(f, strings.NewReader(strings.ReplaceAll(with, "$space$", " ")))
 	require.NoError(this.t, err)
 	return this
 }
