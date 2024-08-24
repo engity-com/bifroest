@@ -1,9 +1,8 @@
 package configuration
 
 type ConfigurationRef struct {
-	v       Configuration
-	fn      string
-	loadErr error
+	v  Configuration
+	fn string
 }
 
 func (this ConfigurationRef) IsZero() bool {

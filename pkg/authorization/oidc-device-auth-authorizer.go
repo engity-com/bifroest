@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
 	coidc "github.com/coreos/go-oidc/v3/oidc"
 	log "github.com/echocat/slf4g"
+	"golang.org/x/oauth2"
+
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
-	"golang.org/x/oauth2"
 )
 
 var (
@@ -359,7 +361,7 @@ func (this *OidcDeviceAuthAuthorizer) retrieveDeviceAuthToken(ctx context.Contex
 		return failf(errors.User, "authorize of device timed out")
 	}
 	if errors.Is(err, context.Canceled) {
-		return failf(errors.User, "authorize cancelled by user")
+		return failf(errors.User, "authorize canceled by user")
 	}
 	var oaErr *oauth2.RetrieveError
 	if errors.As(err, &oaErr) && oaErr.ErrorCode == "expired_token" {

@@ -3,11 +3,12 @@ package environment
 import (
 	"context"
 	"fmt"
+	"reflect"
+
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
-	"reflect"
 )
 
 func NewRepositoryFacade(ctx context.Context, flows *configuration.Flows) (*RepositoryFacade, error) {

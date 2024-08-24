@@ -2,12 +2,14 @@ package main
 
 import (
 	"fmt"
-	"github.com/alecthomas/kingpin"
-	"github.com/engity-com/bifroest/pkg/common"
 	"os"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/alecthomas/kingpin"
+
+	"github.com/engity-com/bifroest/pkg/common"
 )
 
 var (
@@ -95,9 +97,7 @@ func (this versionT) Vendor() string {
 }
 
 func (this versionT) GoVersion() string {
-	v := runtime.Version()
-	strings.TrimPrefix(v, "go")
-	return v
+	return strings.TrimPrefix(runtime.Version(), "go")
 }
 
 func (this versionT) Platform() string {

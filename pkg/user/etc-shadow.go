@@ -5,9 +5,10 @@ package user
 import (
 	"bytes"
 	"errors"
-	"github.com/engity-com/bifroest/pkg/crypto/unix/password"
 	"strconv"
 	"time"
+
+	"github.com/engity-com/bifroest/pkg/crypto/unix/password"
 )
 
 const (

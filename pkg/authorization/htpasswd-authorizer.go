@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
 	log "github.com/echocat/slf4g"
+
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
@@ -243,11 +245,4 @@ func (this *HtpasswdAuthorizer) RestoreFromSession(ctx context.Context, sess ses
 
 func (this *HtpasswdAuthorizer) Close() error {
 	return nil
-}
-
-func (this *HtpasswdAuthorizer) logger() log.Logger {
-	if v := this.Logger; v != nil {
-		return v
-	}
-	return log.GetLogger("authorizer")
 }

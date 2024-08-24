@@ -1,9 +1,10 @@
 package configuration
 
 import (
+	"slices"
+
 	"github.com/coreos/go-oidc/v3/oidc"
 	"gopkg.in/yaml.v3"
-	"slices"
 )
 
 var (

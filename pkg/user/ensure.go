@@ -10,11 +10,11 @@ import (
 var (
 	// ErrUserDoesNotFulfilRequirement indicates that a User does not
 	// meet the provided Requirement.
-	ErrUserDoesNotFulfilRequirement = errors.New("user does not fulfil requirement")
+	ErrUserDoesNotFulfilRequirement = errors.New("user does not fulfill requirement")
 
 	// ErrGroupDoesNotFulfilRequirement indicates that a Group does not
 	// meet the provided GroupRequirement.
-	ErrGroupDoesNotFulfilRequirement = errors.New("group does not fulfil requirement")
+	ErrGroupDoesNotFulfilRequirement = errors.New("group does not fulfill requirement")
 )
 
 // Ensurer ensures that a User or Group meets the provided requirements.

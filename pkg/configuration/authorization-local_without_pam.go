@@ -3,7 +3,7 @@
 package configuration
 
 var (
-	defaultAuthorizationLocalPamService = ""
+	defaultAuthorizationLocalPamService = "" //nolint:golint,unused
 )
 
 func IsPamSupported() bool {

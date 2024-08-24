@@ -4,8 +4,10 @@ package authorization
 
 import (
 	"errors"
-	"github.com/engity-com/bifroest/pkg/sys"
+
 	"github.com/msteinert/pam/v2"
+
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 func (this *LocalAuthorizer) checkPassword(req PasswordRequest, requestedUsername string, validatePassword func(string, Request) (bool, error)) (username string, env sys.EnvVars, success bool, rErr error) {

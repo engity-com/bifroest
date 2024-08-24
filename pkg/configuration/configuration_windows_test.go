@@ -1,3 +1,5 @@
+//go:build windows
+
 package configuration
 
 import (
@@ -79,22 +81,13 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 					}},
 					Environment: Environment{&EnvironmentLocal{
 						User: UserRequirementTemplate{
-							Name:        template.MustNewString("foo"),
-							DisplayName: template.MustNewString(""),
-							Group: GroupRequirementTemplate{
-								Name: DefaultGroupRequirementName,
-							},
-							Shell:   template.MustNewString(""),
-							HomeDir: template.MustNewString(""),
+							Name:  template.MustNewString("foo"),
+							Shell: DefaultUserRequirementShell,
 						},
-						LoginAllowed:      DefaultEnvironmentLocalLoginAllowed,
-						CreateIfAbsent:    DefaultEnvironmentLocalCreateIfAbsent,
-						UpdateIfDifferent: DefaultEnvironmentLocalUpdateIfDifferent,
-						Dispose: EnvironmentLocalDispose{
-							DeleteManagedUser:        DefaultEnvironmentLocalDisposeDeleteManagedUser,
-							DeleteManagedUserHomeDir: DefaultEnvironmentLocalDisposeDeleteManagedUserHomeDir,
-							KillManagedUserProcesses: DefaultEnvironmentLocalDisposeKillManagedUserProcesses,
-						},
+						LoginAllowed:          DefaultEnvironmentLocalLoginAllowed,
+						CreateIfAbsent:        DefaultEnvironmentLocalCreateIfAbsent,
+						UpdateIfDifferent:     DefaultEnvironmentLocalUpdateIfDifferent,
+						Dispose:               EnvironmentLocalDispose{},
 						Banner:                DefaultEnvironmentLocalBanner,
 						PortForwardingAllowed: DefaultEnvironmentLocalPortForwardingAllowed,
 					}},

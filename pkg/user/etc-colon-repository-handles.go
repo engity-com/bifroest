@@ -4,11 +4,12 @@ package user
 
 import (
 	"fmt"
-	"github.com/engity-com/bifroest/pkg/common"
-	"github.com/engity-com/bifroest/pkg/sys"
 	"os"
 	"path/filepath"
 	"syscall"
+
+	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 type etcColonRepositoryHandles struct {

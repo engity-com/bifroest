@@ -2,11 +2,13 @@ package session
 
 import (
 	"context"
+
+	"github.com/google/uuid"
+	"golang.org/x/crypto/ssh"
+
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
-	"github.com/google/uuid"
-	"golang.org/x/crypto/ssh"
 )
 
 var (

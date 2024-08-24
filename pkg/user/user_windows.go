@@ -31,7 +31,7 @@ func (this User) GetField(name string) (any, bool, error) {
 }
 
 func (this User) String() string {
-	return fmt.Sprintf("%d(%s)", this.Uid, this.Name)
+	return fmt.Sprintf("%v(%s)", this.Uid, this.Name)
 }
 
 func (this User) IsEqualTo(other any) bool {

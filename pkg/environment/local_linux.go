@@ -4,17 +4,19 @@ package environment
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"syscall"
+
 	log "github.com/echocat/slf4g"
+	"github.com/gliderlabs/ssh"
+
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/engity-com/bifroest/pkg/user"
-	"github.com/gliderlabs/ssh"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"syscall"
 )
 
 type local struct {

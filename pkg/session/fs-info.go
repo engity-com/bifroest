@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"time"
+
+	"github.com/google/uuid"
+
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/net"
-	"github.com/google/uuid"
-	"os"
-	"time"
 )
 
 type fsInfo struct {

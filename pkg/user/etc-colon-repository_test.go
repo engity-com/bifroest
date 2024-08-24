@@ -4,20 +4,22 @@ package user
 
 import (
 	"context"
-	errors "errors"
-	log "github.com/echocat/slf4g"
-	"github.com/echocat/slf4g/level"
-	"github.com/echocat/slf4g/sdk/testlog"
-	"github.com/echocat/slf4g/testing/recording"
-	"github.com/engity-com/bifroest/pkg/common"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"errors"
 	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	log "github.com/echocat/slf4g"
+	"github.com/echocat/slf4g/level"
+	"github.com/echocat/slf4g/sdk/testlog"
+	"github.com/echocat/slf4g/testing/recording"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/engity-com/bifroest/pkg/common"
 )
 
 func Test_EtcColonRepository_Init(t *testing.T) {
@@ -43,7 +45,7 @@ func Test_EtcColonRepository_Init(t *testing.T) {
 		{
 			name: "all-content",
 			passwd: `root:x:0:0:root:/root:/bin/sh
-foo:abc:1:2:Foo Name:/home/foo:/bin/foosh 
+foo:abc:1:2:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:foo,bbb
@@ -72,7 +74,7 @@ bar:XbarX:20453:10:100:::20818:`,
 		{
 			name: "fail-with-bad-name-in-passwd",
 			passwd: `root:x:0:0:root:/root:/bin/sh
-foo@:abc:1:2:Foo Name:/home/foo:/bin/foosh 
+foo@:abc:1:2:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:aaa,bbb
@@ -85,7 +87,7 @@ bar:XbarX:20453:10:100:::20818:`,
 		{
 			name: "fail-with-bad-name-in-group",
 			passwd: `root:x:0:0:root:/root:/bin/sh
-foo:abc:1:2:Foo Name:/home/foo:/bin/foosh 
+foo:abc:1:2:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo@:abc:1:aaa,bbb
@@ -98,7 +100,7 @@ bar:XbarX:20453:10:100:::20818:`,
 		{
 			name: "fail-with-bad-name-in-shadow",
 			passwd: `root:x:0:0:root:/root:/bin/sh
-foo:abc:1:2:Foo Name:/home/foo:/bin/foosh 
+foo:abc:1:2:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:aaa,bbb
@@ -114,7 +116,7 @@ bar:XbarX:20453:10:100:::20818:`,
 			name:         "allow-bad-name-in-passwd",
 			allowBadName: true,
 			passwd: `root:x:0:0:root:/root:/bin/sh
-foo@:abc:1:2:Foo Name:/home/foo:/bin/foosh 
+foo@:abc:1:2:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:aaa,bbb
@@ -142,7 +144,7 @@ bar:XbarX:20453:10:100:::20818:`,
 			name:         "allow-bad-name-in-group",
 			allowBadName: true,
 			passwd: `root:x:0:0:root:/root:/bin/sh
-foo:abc:1:2:Foo Name:/home/foo:/bin/foosh 
+foo:abc:1:2:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo@:abc:1:aaa,bbb
@@ -170,7 +172,7 @@ bar:XbarX:20453:10:100:::20818:`,
 			name:         "allow-bad-name-in-shadow",
 			allowBadName: true,
 			passwd: `root:x:0:0:root:/root:/bin/sh
-foo:abc:1:2:Foo Name:/home/foo:/bin/foosh 
+foo:abc:1:2:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:aaa,bbb
@@ -199,7 +201,7 @@ bar:XbarX:20453:10:100:::20818:`,
 		{
 			name: "fail-with-line-in-passwd",
 			passwd: `root:x:0:0:root:/root:/bin/sh
-foo:abc:1:2:Foo Name:/home/foo:/bin/foosh: 
+foo:abc:1:2:Foo Name:/home/foo:/bin/foosh:
 bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:aaa,bbb
@@ -269,7 +271,7 @@ bar:XbarX:20453:10:100:::20818:`,
 			name:         "allow-bad-lines-in-group",
 			allowBadLine: true,
 			passwd: `root:x:0:0:root:/root:/bin/sh
-foo:abc:1:2:Foo Name:/home/foo:/bin/foosh 
+foo:abc:1:2:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:aaa,bbb:
@@ -297,7 +299,7 @@ bar:XbarX:20453:10:100:::20818:`,
 			name:         "allow-bad-lines-in-shadow",
 			allowBadLine: true,
 			passwd: `root:x:0:0:root:/root:/bin/sh
-foo:abc:1:2:Foo Name:/home/foo:/bin/foosh 
+foo:abc:1:2:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:aaa,bbb
@@ -327,7 +329,7 @@ bar:XbarX:20453:10:100:::20818:`,
 			name:         "allow-bad-lines-in-passwd-by-bad-names",
 			allowBadLine: true,
 			passwd: `root:x:0:0:root:/root:/bin/sh
-foo@:abc:1:2:Foo Name:/home/foo:/bin/foosh 
+foo@:abc:1:2:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:aaa,bbb
@@ -355,7 +357,7 @@ bar:XbarX:20453:10:100:::20818:`,
 			name:         "allow-bad-lines-in-group-by-bad-names",
 			allowBadLine: true,
 			passwd: `root:x:0:0:root:/root:/bin/sh
-foo:abc:1:2:Foo Name:/home/foo:/bin/foosh 
+foo:abc:1:2:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo@:abc:1:aaa,bbb
@@ -383,7 +385,7 @@ bar:XbarX:20453:10:100:::20818:`,
 			name:         "allow-bad-lines-in-shadow-by-bad-names",
 			allowBadLine: true,
 			passwd: `root:x:0:0:root:/root:/bin/sh
-foo:abc:1:2:Foo Name:/home/foo:/bin/foosh 
+foo:abc:1:2:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foo:abc:1:aaa,bbb
@@ -479,7 +481,7 @@ func Test_EtcColonRepository_onFsEvents(t *testing.T) {
 
 	dir := newTestDir(t)
 	passwdFile := dir.file("passwd").setContent(`root:x:0:0:root:/root:/bin/sh
-foo:abc:1:2:Foo Name:/home/foo:/bin/foosh 
+foo:abc:1:2:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`)
 	groupFile := dir.file("group").setContent(`root:x:0:
 foo:abc:1:aaa,bbb
@@ -515,7 +517,7 @@ bar:XbarX:20453:10:100:::20818:`)
 		{
 			name: "modify-entry",
 			passwd: `root:x:0:0:root:/root:/bin/sh
-foos:abc:1:2:Foo Name:/home/foo:/bin/foosh 
+foos:abc:1:2:Foo Name:/home/foo:/bin/foosh
 bar::11:12::/home/bar:/bin/barsh`,
 			group: `root:x:0:
 foos:abc:1:aaa,bbb

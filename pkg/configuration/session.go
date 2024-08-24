@@ -2,10 +2,12 @@ package configuration
 
 import (
 	"fmt"
-	"github.com/engity-com/bifroest/pkg/common"
-	"gopkg.in/yaml.v3"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/engity-com/bifroest/pkg/common"
 )
 
 var (
@@ -52,7 +54,10 @@ func RegisterSessionV(factory SessionVFactory) SessionVFactory {
 }
 
 func (this *Session) SetDefaults() error {
-	*this = Session{}
+	*this = Session{&SessionFs{}}
+	if err := this.V.SetDefaults(); err != nil {
+		return err
+	}
 	return nil
 }
 

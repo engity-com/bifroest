@@ -6,9 +6,10 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"golang.org/x/crypto/ssh"
 	"io"
 	"strings"
+
+	"golang.org/x/crypto/ssh"
 )
 
 var (
@@ -129,7 +130,7 @@ func parseAuthorizedKey(line []byte) (out ssh.PublicKey, comment string, options
 	var algo string
 	algo, line = cutOffSshKeyAlgo(line)
 	if algo == "" {
-		// No key type recognised. Maybe there's an options field at the beginning.
+		// No key type recognized. Maybe there's an options field at the beginning.
 		var b byte
 		inQuote := false
 		optionStart := 0

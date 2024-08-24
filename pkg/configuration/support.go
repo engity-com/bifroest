@@ -3,9 +3,10 @@ package configuration
 import (
 	"errors"
 	"fmt"
-	"gopkg.in/yaml.v3"
 	"slices"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 type defaulter interface {
@@ -319,6 +320,7 @@ func isEqual[T equaler](left, right *T) bool {
 	return (*left).IsEqualTo(*right)
 }
 
+//nolint:golint,unused
 func isEqualSlice[T equaler](left, right *[]T) bool {
 	if left == nil && right == nil {
 		return true

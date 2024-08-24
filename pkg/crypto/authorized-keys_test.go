@@ -2,16 +2,19 @@ package crypto
 
 import (
 	"fmt"
-	"github.com/engity-com/bifroest/pkg/common"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"golang.org/x/crypto/ssh"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
+
+	"github.com/engity-com/bifroest/pkg/common"
 )
 
+//nolint:golint,unused
 var (
 	dsa1Pub, dsa1Fn             = mustSshPublicKey("dsa-1")
 	ecdsa1Pub, ecdsa1Fn         = mustSshPublicKey("ecdsa-1")

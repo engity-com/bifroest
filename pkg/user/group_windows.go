@@ -23,7 +23,7 @@ func (this Group) GetField(name string) (any, bool, error) {
 }
 
 func (this Group) String() string {
-	return fmt.Sprintf("%d(%s)", this.Gid, this.Name)
+	return fmt.Sprintf("%v(%s)", this.Gid, this.Name)
 }
 
 func (this Group) IsEqualTo(other any) bool {

@@ -3,14 +3,16 @@ package authorization
 import (
 	"context"
 	"fmt"
+	"sync"
+
 	coidc "github.com/coreos/go-oidc/v3/oidc"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/oauth2"
+
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
-	"golang.org/x/crypto/ssh"
-	"golang.org/x/oauth2"
-	"sync"
 )
 
 type oidc struct {

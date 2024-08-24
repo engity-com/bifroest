@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"bytes"
+
 	"github.com/tg123/go-htpasswd"
 )
 

@@ -2,8 +2,9 @@ package configuration
 
 import (
 	"fmt"
-	"gopkg.in/yaml.v3"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Authorization struct {

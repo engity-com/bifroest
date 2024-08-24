@@ -5,13 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+
 	log "github.com/echocat/slf4g"
+	"golang.org/x/crypto/ssh"
+
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
-	"golang.org/x/crypto/ssh"
-	"strings"
 )
 
 var (

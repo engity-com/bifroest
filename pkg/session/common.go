@@ -2,8 +2,9 @@ package session
 
 import (
 	"bytes"
-	"github.com/engity-com/bifroest/pkg/errors"
 	"io"
+
+	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 func isReaderEqualToBytes(left io.Reader, right []byte) (bool, error) {

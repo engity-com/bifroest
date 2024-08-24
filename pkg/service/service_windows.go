@@ -3,9 +3,11 @@
 package service
 
 import (
-	"github.com/engity-com/bifroest/pkg/errors"
-	"github.com/gliderlabs/ssh"
 	"syscall"
+
+	"github.com/gliderlabs/ssh"
+
+	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 func (this *service) isAcceptableNewConnectionError(err error) bool {

@@ -3,14 +3,16 @@ package session
 import (
 	"context"
 	"fmt"
-	"github.com/engity-com/bifroest/pkg/common"
-	"github.com/engity-com/bifroest/pkg/configuration"
-	"github.com/engity-com/bifroest/pkg/sys"
-	"github.com/google/uuid"
-	"golang.org/x/crypto/ssh"
 	"io"
 	"os"
 	"time"
+
+	"github.com/google/uuid"
+	"golang.org/x/crypto/ssh"
+
+	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 const (

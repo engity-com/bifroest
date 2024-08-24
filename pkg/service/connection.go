@@ -2,17 +2,19 @@ package service
 
 import (
 	"fmt"
-	log "github.com/echocat/slf4g"
-	"github.com/echocat/slf4g/fields"
-	"github.com/engity-com/bifroest/pkg/authorization"
-	"github.com/engity-com/bifroest/pkg/errors"
-	"github.com/engity-com/bifroest/pkg/session"
-	"github.com/gliderlabs/ssh"
 	"net"
 	"os"
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	log "github.com/echocat/slf4g"
+	"github.com/echocat/slf4g/fields"
+	"github.com/gliderlabs/ssh"
+
+	"github.com/engity-com/bifroest/pkg/authorization"
+	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/session"
 )
 
 func (this *service) onNewConnConnection(ctx ssh.Context, orig net.Conn) net.Conn {

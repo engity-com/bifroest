@@ -5,12 +5,14 @@ package authorization
 import (
 	"context"
 	"fmt"
+
+	"golang.org/x/crypto/ssh"
+
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/engity-com/bifroest/pkg/user"
-	"golang.org/x/crypto/ssh"
 )
 
 type local struct {

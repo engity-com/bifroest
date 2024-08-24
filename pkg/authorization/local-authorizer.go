@@ -7,7 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
 	log "github.com/echocat/slf4g"
+	"golang.org/x/crypto/ssh"
+
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
@@ -16,7 +19,6 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/engity-com/bifroest/pkg/template"
 	"github.com/engity-com/bifroest/pkg/user"
-	"golang.org/x/crypto/ssh"
 )
 
 var (
@@ -161,6 +163,20 @@ func (this *LocalAuthorizer) isAuthorizedViaPublicKey(req PublicKeyRequest, u *u
 	}
 
 	return true, nil
+}
+
+type userEnabledRequest struct {
+	Request
+	user *user.User
+}
+
+func (this *userEnabledRequest) GetField(name string) (any, bool) {
+	switch name {
+	case "user":
+		return this.user, true
+	default:
+		return nil, false
+	}
 }
 
 func (this *LocalAuthorizer) getAuthorizedKeysFilesOf(req PublicKeyRequest, u *user.User) ([]string, error) {

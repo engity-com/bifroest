@@ -82,5 +82,5 @@ func (this UserRequirementTemplate) IsEqualTo(other any) bool {
 
 func (this UserRequirementTemplate) isEqualTo(other *UserRequirementTemplate) bool {
 	return isEqual(&this.Name, &other.Name) &&
-		isEqual(&this.Uid, &other.Uid)
+		isEqual(this.Uid, other.Uid)
 }

@@ -5,9 +5,11 @@ package user
 import (
 	"context"
 	"fmt"
-	"github.com/engity-com/bifroest/pkg/errors"
-	"golang.org/x/sys/windows"
 	"os/user"
+
+	"golang.org/x/sys/windows"
+
+	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 func init() {

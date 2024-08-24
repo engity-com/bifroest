@@ -6,14 +6,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	log "github.com/echocat/slf4g"
-	"github.com/echocat/slf4g/fields"
-	"github.com/engity-com/bifroest/pkg/common"
-	"github.com/engity-com/bifroest/pkg/errors"
-	"github.com/engity-com/bifroest/pkg/sys"
-	"github.com/fsnotify/fsnotify"
-	"github.com/otiai10/copy"
-	"github.com/shirou/gopsutil/process"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -23,6 +15,16 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
+
+	log "github.com/echocat/slf4g"
+	"github.com/echocat/slf4g/fields"
+	"github.com/fsnotify/fsnotify"
+	"github.com/otiai10/copy"
+	"github.com/shirou/gopsutil/process"
+
+	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 var (

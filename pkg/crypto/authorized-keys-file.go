@@ -1,9 +1,11 @@
 package crypto
 
 import (
-	"github.com/engity-com/bifroest/pkg/common"
-	"golang.org/x/crypto/ssh"
 	"os"
+
+	"golang.org/x/crypto/ssh"
+
+	"github.com/engity-com/bifroest/pkg/common"
 )
 
 type AuthorizedKeysFile string

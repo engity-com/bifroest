@@ -3,8 +3,17 @@ package service
 import (
 	"context"
 	"fmt"
+	"io"
+	"net"
+	"sync"
+	"sync/atomic"
+	"syscall"
+
 	log "github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/fields"
+	"github.com/gliderlabs/ssh"
+	gssh "golang.org/x/crypto/ssh"
+
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -13,13 +22,6 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 	bnet "github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
-	"github.com/gliderlabs/ssh"
-	gssh "golang.org/x/crypto/ssh"
-	"io"
-	"net"
-	"sync"
-	"sync/atomic"
-	"syscall"
 )
 
 var (

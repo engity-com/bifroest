@@ -1,11 +1,14 @@
+//go:build test
+
 package user
 
 import (
 	"bytes"
-	"github.com/echocat/slf4g/sdk/testlog"
-	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
+
+	"github.com/echocat/slf4g/sdk/testlog"
+	"github.com/stretchr/testify/require"
 )
 
 func Test_etcColonEntry_decode(t *testing.T) {

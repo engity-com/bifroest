@@ -2,10 +2,11 @@ package configuration
 
 import (
 	"fmt"
-	"github.com/stretchr/testify/assert"
-	"gopkg.in/yaml.v3"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"gopkg.in/yaml.v3"
 )
 
 type unmarshalYamlTestCase[T equaler] struct {

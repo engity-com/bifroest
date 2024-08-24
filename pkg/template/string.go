@@ -2,9 +2,10 @@ package template
 
 import (
 	"fmt"
-	"github.com/engity-com/bifroest/internal/text/template"
 	"strings"
 	"text/template/parse"
+
+	"github.com/engity-com/bifroest/internal/text/template"
 )
 
 func NewString(plain string) (String, error) {

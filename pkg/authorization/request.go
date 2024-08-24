@@ -2,11 +2,11 @@ package authorization
 
 import (
 	"github.com/echocat/slf4g"
-	"github.com/engity-com/bifroest/pkg/common"
-	"github.com/engity-com/bifroest/pkg/session"
-	"github.com/engity-com/bifroest/pkg/user"
 	"github.com/gliderlabs/ssh"
 	gssh "golang.org/x/crypto/ssh"
+
+	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/session"
 )
 
 type Request interface {
@@ -32,18 +32,4 @@ type InteractiveRequest interface {
 	SendInfo(string) error
 	SendError(string) error
 	Prompt(msg string, echoOn bool) (string, error)
-}
-
-type userEnabledRequest struct {
-	Request
-	user *user.User
-}
-
-func (this *userEnabledRequest) GetField(name string) (any, bool) {
-	switch name {
-	case "user":
-		return this.user, true
-	default:
-		return nil, false
-	}
 }

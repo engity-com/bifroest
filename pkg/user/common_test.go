@@ -1,20 +1,23 @@
+//nolint:golint,unused
 package user
 
 import (
 	"bytes"
 	"fmt"
-	"github.com/engity-com/bifroest/pkg/sys"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 var (
-	keepPkgUserFiles = os.Getenv("KEEP_PKG_USER_TEST_FILES") == "yes"
+	keepPkgUserFiles = os.Getenv("KEEP_PKG_USER_TEST_FILES") == "yes" //nolint:golint,unused
 )
 
 func b(in string) []byte {

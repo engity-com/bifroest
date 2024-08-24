@@ -4,6 +4,7 @@ package authorization
 
 import (
 	"fmt"
+
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 

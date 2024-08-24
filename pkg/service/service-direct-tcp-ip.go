@@ -1,14 +1,16 @@
 package service
 
 import (
-	"github.com/engity-com/bifroest/pkg/common"
-	"github.com/engity-com/bifroest/pkg/environment"
-	"github.com/gliderlabs/ssh"
-	gssh "golang.org/x/crypto/ssh"
 	"io"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/gliderlabs/ssh"
+	gssh "golang.org/x/crypto/ssh"
+
+	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/environment"
 )
 
 type localForwardChannelData struct {
@@ -96,7 +98,7 @@ func (this *service) handleNewDirectTcpIp(_ *ssh.Server, _ *gssh.ServerConn, new
 			if direction != "" {
 				ld = ld.With("direction", direction)
 			}
-			ld.WithError(rErr).Error("cannot successful handle port forwarding request; cancelling...")
+			ld.WithError(rErr).Error("cannot successful handle port forwarding request; canceling...")
 		} else {
 			ld.Info("port forwarding finished")
 		}

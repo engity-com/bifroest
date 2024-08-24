@@ -3,9 +3,10 @@
 package user
 
 import (
+	"testing"
+
 	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func Test_etcGroupEntry_decode(t *testing.T) {

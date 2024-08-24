@@ -3,12 +3,14 @@ package sftp
 import (
 	"errors"
 	"fmt"
-	log "github.com/echocat/slf4g"
-	"github.com/echocat/slf4g/level"
-	"github.com/engity-com/bifroest/pkg/common"
-	"github.com/pkg/sftp"
 	"io"
 	"os"
+
+	log "github.com/echocat/slf4g"
+	"github.com/echocat/slf4g/level"
+	"github.com/pkg/sftp"
+
+	"github.com/engity-com/bifroest/pkg/common"
 )
 
 type Server struct {
@@ -40,13 +42,6 @@ func (this *Server) debugLogWriter() io.Writer {
 		Logger:         this.Logger,
 		LevelExtractor: level.FixedLevelExtractor(level.Debug),
 	}
-}
-
-func (this *Server) logger() log.Logger {
-	if v := this.Logger; v != nil {
-		return v
-	}
-	return log.GetRootLogger()
 }
 
 func (this *Server) workingDir() string {

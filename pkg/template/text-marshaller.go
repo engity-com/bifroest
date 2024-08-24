@@ -3,8 +3,9 @@ package template
 import (
 	"encoding"
 	"fmt"
-	"github.com/engity-com/bifroest/internal/text/template"
 	"strings"
+
+	"github.com/engity-com/bifroest/internal/text/template"
 )
 
 func NewTextMarshaller[T TextMarshallerArgument, PT TextMarshallerArgumentP[T]](plain string) (TextMarshaller[T, PT], error) {

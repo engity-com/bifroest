@@ -2,9 +2,10 @@ package user
 
 import (
 	"context"
-	"github.com/engity-com/bifroest/pkg/errors"
 	"io"
 	"sync"
+
+	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 var (
@@ -89,7 +90,7 @@ type SharedRepositoryProvider[T interface {
 	Init(context.Context) error
 }] struct {
 	V      T
-	usages uint16
+	usages int16
 	mutex  sync.Mutex
 }
 

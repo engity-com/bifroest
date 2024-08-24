@@ -3,9 +3,11 @@ package environment
 import (
 	"context"
 	"errors"
-	log "github.com/echocat/slf4g"
-	"github.com/engity-com/bifroest/pkg/session"
 	"io"
+
+	log "github.com/echocat/slf4g"
+
+	"github.com/engity-com/bifroest/pkg/session"
 )
 
 var (

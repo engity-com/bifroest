@@ -2,10 +2,11 @@ package session
 
 import (
 	"fmt"
-	"github.com/engity-com/bifroest/pkg/common"
-	"github.com/engity-com/bifroest/pkg/net"
 	"strings"
 	"time"
+
+	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/net"
 )
 
 type fsCreated struct {

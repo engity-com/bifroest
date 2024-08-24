@@ -3,9 +3,10 @@ package session
 import (
 	"context"
 	"fmt"
+	"reflect"
+
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
-	"reflect"
 )
 
 func NewFacadeRepository(ctx context.Context, conf *configuration.Session) (*FacadeRepository, error) {

@@ -3,6 +3,7 @@ package password
 import (
 	"github.com/GehirnInc/crypt"
 	"github.com/GehirnInc/crypt/apr1_crypt"
+
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 

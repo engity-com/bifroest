@@ -3,15 +3,6 @@ package environment
 import (
 	"context"
 	"fmt"
-	"github.com/creack/pty"
-	log "github.com/echocat/slf4g"
-	"github.com/echocat/slf4g/level"
-	"github.com/engity-com/bifroest/pkg/common"
-	"github.com/engity-com/bifroest/pkg/errors"
-	"github.com/engity-com/bifroest/pkg/session"
-	"github.com/engity-com/bifroest/pkg/sys"
-	"github.com/gliderlabs/ssh"
-	"github.com/kardianos/osext"
 	"io"
 	"net"
 	"os"
@@ -20,6 +11,17 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+
+	"github.com/creack/pty"
+	log "github.com/echocat/slf4g"
+	"github.com/echocat/slf4g/level"
+	"github.com/gliderlabs/ssh"
+	"github.com/kardianos/osext"
+
+	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/session"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 func (this *local) Session() session.Session {
@@ -117,7 +119,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 				if !ok {
 					return
 				}
-				size := pty.Winsize{uint16(win.Height), uint16(win.Width), 0, 0}
+				size := pty.Winsize{Rows: uint16(win.Height), Cols: uint16(win.Width)}
 				if err := pty.Setsize(fPty, &size); err != nil {
 					l.WithError(err).Warn("cannot set winsize; ignoring")
 				}

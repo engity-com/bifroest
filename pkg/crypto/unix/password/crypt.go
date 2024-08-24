@@ -2,8 +2,9 @@ package password
 
 import (
 	"bytes"
-	"github.com/engity-com/bifroest/pkg/errors"
 	"sort"
+
+	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 var (

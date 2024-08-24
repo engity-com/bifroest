@@ -1,11 +1,12 @@
 package service
 
 import (
+	"github.com/gliderlabs/ssh"
+	gssh "golang.org/x/crypto/ssh"
+
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
-	"github.com/gliderlabs/ssh"
-	gssh "golang.org/x/crypto/ssh"
 )
 
 func (this *service) handlePublicKey(ctx ssh.Context, key ssh.PublicKey) bool {

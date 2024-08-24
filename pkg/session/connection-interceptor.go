@@ -1,11 +1,12 @@
 package session
 
 import (
-	log "github.com/echocat/slf4g"
-	"github.com/gliderlabs/ssh"
 	"io"
 	"net"
 	"time"
+
+	log "github.com/echocat/slf4g"
+	"github.com/gliderlabs/ssh"
 )
 
 type ConnectionInterceptor interface {

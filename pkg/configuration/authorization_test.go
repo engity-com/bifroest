@@ -1,8 +1,9 @@
 package configuration
 
 import (
-	"github.com/echocat/slf4g/sdk/testlog"
 	"testing"
+
+	"github.com/echocat/slf4g/sdk/testlog"
 )
 
 func TestAuthorization_UnmarshalYAML(t *testing.T) {

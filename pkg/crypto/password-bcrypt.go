@@ -1,8 +1,9 @@
 package crypto
 
 import (
-	"github.com/engity-com/bifroest/pkg/errors"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 func (this PasswordType) encodeBcrypt(password []byte) ([]byte, error) {

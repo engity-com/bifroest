@@ -2,9 +2,11 @@ package crypto
 
 import (
 	"fmt"
-	"github.com/engity-com/bifroest/pkg/sys"
-	"golang.org/x/crypto/ssh"
 	"os"
+
+	"golang.org/x/crypto/ssh"
+
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 func DoWithEachAuthorizedKey[R any](requireExistence bool, callback func(ssh.PublicKey) (result R, canContinue bool, err error), files ...string) (result R, err error) {

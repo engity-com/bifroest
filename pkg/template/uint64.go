@@ -2,9 +2,10 @@ package template
 
 import (
 	"fmt"
-	"github.com/engity-com/bifroest/internal/text/template"
 	"strconv"
 	"strings"
+
+	"github.com/engity-com/bifroest/internal/text/template"
 )
 
 func NewUint64(plain string) (Uint64, error) {
