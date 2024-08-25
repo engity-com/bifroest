@@ -1014,6 +1014,7 @@ bar:XbarX:20453:10:100:::20818:`)
 			require.NoError(t, actualErr)
 
 			assert.NoError(t, syncError)
+			time.Sleep(100 * time.Millisecond)
 		})
 	}
 }
