@@ -80,6 +80,10 @@ func (this *Id) UnmarshalText(text []byte) error {
 	return nil
 }
 
+func (this *Id) Set(plain string) error {
+	return this.UnmarshalText([]byte(plain))
+}
+
 func (this Id) String() string {
 	v, err := this.MarshalText()
 	if err != nil {
