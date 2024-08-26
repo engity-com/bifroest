@@ -91,3 +91,10 @@ jobs:
           args: build --snapshot --clean
         env:
           BIFROEST_VENDOR: engity
+
+      - name: Archive package results
+        uses: actions/upload-artifact@v4
+        with:
+          retention-days: 1
+          name: dist
+          path: dist
