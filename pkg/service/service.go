@@ -33,6 +33,7 @@ var (
 
 type Service struct {
 	Configuration configuration.Configuration
+	Version       common.Version
 
 	Logger log.Logger
 }
@@ -269,7 +270,7 @@ func (this *service) isRelevantError(err error) bool {
 
 func (this *service) createNewServerConfig(ssh.Context) *gssh.ServerConfig {
 	return &gssh.ServerConfig{
-		ServerVersion: "SSH-2.0-Engity-Bifroest_0.1.0",
+		ServerVersion: "SSH-2.0-Engity-Bifroest_" + this.Version.Version(),
 		MaxAuthTries:  int(this.Configuration.Ssh.MaxAuthTries),
 	}
 }

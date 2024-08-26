@@ -97,4 +97,4 @@ jobs:
         with:
           retention-days: 1
           name: dist
-          path: dist
+          path: var/dist
