@@ -4,6 +4,7 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/gliderlabs/ssh"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/environment"
+	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 type localForwardChannelData struct {
@@ -146,4 +148,22 @@ func (this *service) handleNewDirectTcpIp(_ *ssh.Server, _ *gssh.ServerConn, new
 func (this *service) onReversePortForwardingRequested(_ ssh.Context, _ string, _ uint32) bool {
 	// TODO! Maybe more checks here in the future?
 	return true
+}
+
+func (this *service) isAcceptableNewConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var sce syscall.Errno
+	if errors.As(err, &sce) {
+		switch sce {
+		case syscall.ECONNREFUSED, syscall.ETIMEDOUT, syscall.EHOSTDOWN, syscall.ENETUNREACH:
+			return true
+		default:
+			return false
+		}
+	}
+
+	return false
 }

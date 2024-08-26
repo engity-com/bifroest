@@ -1,13 +1,15 @@
-//go:build linux
+//go:build unix
 
 package configuration
 
 import (
+	"testing"
+
 	"github.com/echocat/slf4g/sdk/testlog"
+
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/template"
-	"testing"
 )
 
 func TestConfiguration_UnmarshalYAML(t *testing.T) {
@@ -33,7 +35,7 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 			name: "required-set",
 			yaml: `flows:
 - name: foo
-  authorization: 
+  authorization:
     type: oidcDeviceAuth
     issuer: https://foo-bar
     clientId: anId

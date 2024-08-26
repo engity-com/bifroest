@@ -1,13 +1,15 @@
-//go:build linux
+//go:build unix
 
 package configuration
 
 import (
 	"fmt"
+
+	"gopkg.in/yaml.v3"
+
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/template"
 	"github.com/engity-com/bifroest/pkg/user"
-	"gopkg.in/yaml.v3"
 )
 
 var (
