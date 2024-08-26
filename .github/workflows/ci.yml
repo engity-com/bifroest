@@ -88,7 +88,7 @@ jobs:
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: build --snapshot --clean
+          args: release --snapshot --clean
         env:
           BIFROEST_VENDOR: engity
 
@@ -97,4 +97,6 @@ jobs:
         with:
           retention-days: 1
           name: dist
-          path: var/dist
+          path: |
+            var/dist/*.tgz*
+            var/dist/*.zip*
