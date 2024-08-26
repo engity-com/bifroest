@@ -149,3 +149,29 @@ func (this *service) resolveAuthorizationAndSession(sshSess ssh.Session) (author
 	}
 	return auth, sess, oldState, nil
 }
+
+func (this *service) onPtyRequest(ctx ssh.Context, pty ssh.Pty) bool {
+	auth, ok := ctx.Value(authorizationCtxKey).(authorization.Authorization)
+	if !ok {
+		return false
+	}
+
+	logger := this.logger(ctx)
+
+	ok, err := this.environments.DoesSupportPty(&environmentRequest{
+		this,
+		&remote{ctx},
+		auth,
+	}, pty)
+	if this.isRelevantError(err) {
+		logger.WithError(err).Warn("cannot evaluate if PTY is allowed or not for request")
+		return false
+	}
+
+	if !ok {
+		logger.Debug("PTY was requested but is forbidden")
+	}
+
+	logger.Debug("PTY was requested and was permitted")
+	return true
+}

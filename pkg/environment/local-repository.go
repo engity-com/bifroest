@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	log "github.com/echocat/slf4g"
+	"github.com/gliderlabs/ssh"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
@@ -63,6 +64,10 @@ func (this *LocalRepository) WillBeAccepted(req Request) (ok bool, err error) {
 	}
 
 	return ok, nil
+}
+
+func (this *LocalRepository) DoesSupportPty(Request, ssh.Pty) (bool, error) {
+	return true, nil
 }
 
 func (this *LocalRepository) Ensure(req Request) (Environment, error) {

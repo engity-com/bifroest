@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/gliderlabs/ssh"
+
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
@@ -39,6 +41,15 @@ func (this *RepositoryFacade) WillBeAccepted(req Request) (bool, error) {
 		return false, fmt.Errorf("does not find valid environment for flow %v", flow)
 	}
 	return candidate.WillBeAccepted(req)
+}
+
+func (this *RepositoryFacade) DoesSupportPty(req Request, pty ssh.Pty) (bool, error) {
+	flow := req.Authorization().Flow()
+	candidate, ok := this.entries[flow]
+	if !ok {
+		return false, fmt.Errorf("does not find valid environment for flow %v", flow)
+	}
+	return candidate.DoesSupportPty(req, pty)
 }
 
 func (this *RepositoryFacade) Ensure(req Request) (Environment, error) {

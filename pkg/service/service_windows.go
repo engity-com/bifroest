@@ -5,8 +5,6 @@ package service
 import (
 	"syscall"
 
-	"github.com/gliderlabs/ssh"
-
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
@@ -25,9 +23,5 @@ func (this *service) isAcceptableNewConnectionError(err error) bool {
 		}
 	}
 
-	return false
-}
-
-func (this *service) onPtyRequest(_ ssh.Context, _ ssh.Pty) bool {
 	return false
 }

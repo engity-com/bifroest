@@ -6,6 +6,7 @@ import (
 	"io"
 
 	log "github.com/echocat/slf4g"
+	"github.com/gliderlabs/ssh"
 
 	"github.com/engity-com/bifroest/pkg/session"
 )
@@ -19,6 +20,10 @@ type Repository interface {
 	// WillBeAccepted returns true if it is possible to get an Environment for the
 	// provided Request.
 	WillBeAccepted(Request) (bool, error)
+
+	// DoesSupportPty will return true if the resulting Environment will support
+	// an PTY.
+	DoesSupportPty(Request, ssh.Pty) (bool, error)
 
 	// Ensure will create or return an environment that matches the given Request.
 	// If it is not acceptable to do this action with the provided Request
