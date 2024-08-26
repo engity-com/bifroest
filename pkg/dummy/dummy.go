@@ -294,26 +294,3 @@ func (this *Dummy) createPlayground() (tview.Primitive, func()) {
 
 	return instance, instance.reset
 }
-
-func (this *Dummy) evaluateButtons(e *tcell.EventMouse) []string {
-	var mbs []string
-	m := func(match tcell.ButtonMask, name string) {
-		if e.Buttons()&match != 0 {
-			mbs = append(mbs, name)
-		}
-	}
-	m(tcell.Button1, "Button1")
-	m(tcell.Button2, "Button2")
-	m(tcell.Button3, "Button3")
-	m(tcell.Button4, "Button4")
-	m(tcell.Button5, "Button5")
-	m(tcell.Button6, "Button6")
-	m(tcell.Button7, "Button7")
-	m(tcell.Button8, "Button8")
-	m(tcell.WheelUp, "WheelUp")
-	m(tcell.WheelDown, "WheelDown")
-	m(tcell.WheelLeft, "WheelLeft")
-	m(tcell.WheelRight, "WheelRight")
-
-	return mbs
-}

@@ -3,11 +3,13 @@
 package configuration
 
 import (
+	"testing"
+
 	"github.com/echocat/slf4g/sdk/testlog"
+
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/template"
-	"testing"
 )
 
 func TestConfiguration_UnmarshalYAML(t *testing.T) {
@@ -33,14 +35,14 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 			name: "required-set",
 			yaml: `flows:
 - name: foo
-  authorization: 
+  authorization:
     type: oidcDeviceAuth
     issuer: https://foo-bar
     clientId: anId
     clientSecret: aSecret
   environment:
-    type: local
-    name: foo`,
+    type: dummy
+    introduction: Foobar`,
 			expected: Configuration{
 				Ssh: Ssh{
 					Addresses: DefaultSshAddresses,
@@ -79,17 +81,10 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 						RetrieveIdToken:  DefaultAuthorizationOidcRetrieveIdToken,
 						RetrieveUserInfo: DefaultAuthorizationOidcRetrieveUserInfo,
 					}},
-					Environment: Environment{&EnvironmentLocal{
-						User: UserRequirementTemplate{
-							Name:  template.MustNewString("foo"),
-							Shell: DefaultUserRequirementShell,
-						},
-						LoginAllowed:          DefaultEnvironmentLocalLoginAllowed,
-						CreateIfAbsent:        DefaultEnvironmentLocalCreateIfAbsent,
-						UpdateIfDifferent:     DefaultEnvironmentLocalUpdateIfDifferent,
-						Dispose:               EnvironmentLocalDispose{},
-						Banner:                DefaultEnvironmentLocalBanner,
-						PortForwardingAllowed: DefaultEnvironmentLocalPortForwardingAllowed,
+					Environment: Environment{&EnvironmentDummy{
+						LoginAllowed:       DefaultEnvironmentDummyLoginAllowed,
+						Introduction:       template.MustNewString("Foobar"),
+						IntroductionStyled: DefaultEnvironmentDummyIntroductionStyled,
 					}},
 				}},
 				HouseKeeping: HouseKeeping{

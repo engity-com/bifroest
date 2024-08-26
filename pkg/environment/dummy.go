@@ -32,15 +32,6 @@ func (this *dummy) Banner(Request) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(nil)), nil
 }
 
-func (this *dummy) introduction(req Request) (string, error) {
-	b, err := this.repository.conf.Introduction.Render(req)
-	if err != nil {
-		return "", err
-	}
-
-	return b, nil
-}
-
 func (this *dummy) Run(t Task) (exitCode int, rErr error) {
 	switch t.TaskType() {
 	case TaskTypeShell:
