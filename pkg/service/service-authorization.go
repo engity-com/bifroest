@@ -170,6 +170,7 @@ func (this *service) onPtyRequest(ctx ssh.Context, pty ssh.Pty) bool {
 
 	if !ok {
 		logger.Debug("PTY was requested but is forbidden")
+		return false
 	}
 
 	logger.Debug("PTY was requested and was permitted")

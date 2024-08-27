@@ -60,3 +60,7 @@ func (this AuthorizationSimple) isEqualTo(other *AuthorizationSimple) bool {
 func (this AuthorizationSimple) Types() []string {
 	return []string{"simple"}
 }
+
+func (this AuthorizationSimple) FeatureFlags() []string {
+	return []string{"simple"}
+}

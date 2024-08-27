@@ -6,6 +6,6 @@ var (
 	defaultAuthorizationLocalPamService = "sshd"
 )
 
-func IsPamSupported() bool {
-	return true
+func (this AuthorizationLocal) FeatureFlags() []string {
+	return "local[pam]"
 }

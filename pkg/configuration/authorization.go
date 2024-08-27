@@ -2,6 +2,7 @@ package configuration
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -17,6 +18,7 @@ type AuthorizationV interface {
 	validator
 	equaler
 	Types() []string
+	FeatureFlags() []string
 }
 
 var (
@@ -127,10 +129,11 @@ func (this Authorization) isEqualTo(other *Authorization) bool {
 	return this.V.IsEqualTo(other.V)
 }
 
-func GetSupportedAuthorizationVs() []string {
-	result := make([]string, len(authorizationVs))
-	for i, v := range authorizationVs {
-		result[i] = strings.Clone(v.Types()[0])
+func GetSupportedAuthorizationFeatureFlags() []string {
+	var result []string
+	for _, v := range authorizationVs {
+		result = append(result, v.FeatureFlags()...)
 	}
+	sort.Strings(result)
 	return result
 }

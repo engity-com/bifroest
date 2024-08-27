@@ -26,7 +26,7 @@ func Validate(password string, hash []byte) (bool, error) {
 	return false, ErrNoSuchCrypt
 }
 
-func GetSupportedCrypts() []string {
+func GetSupportedFeatureFlags() []string {
 	result := make([]string, len(Instances))
 	var i int
 	for _, v := range Instances {

@@ -2,6 +2,7 @@ package configuration
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -31,6 +32,7 @@ type SessionV interface {
 	validator
 	equaler
 	Types() []string
+	FeatureFlags() []string
 }
 
 var (
@@ -142,10 +144,11 @@ func (this Session) isEqualTo(other *Session) bool {
 	return this.V.IsEqualTo(other.V)
 }
 
-func GetSupportedSessionVs() []string {
-	result := make([]string, len(sessionVs))
-	for i, v := range sessionVs {
-		result[i] = strings.Clone(v.Types()[0])
+func GetSupportedSessionFeatureFlags() []string {
+	var result []string
+	for _, v := range sessionVs {
+		result = append(result, v.FeatureFlags()...)
 	}
+	sort.Strings(result)
 	return result
 }

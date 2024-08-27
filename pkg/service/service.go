@@ -92,6 +92,8 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 		lns[i].ln = ln
 	}
 
+	this.logger().WithAll(common.VersionToMap(this.Version)).Info("started")
+
 	done := make(chan error, len(lns))
 	var wg sync.WaitGroup
 	for _, ln := range lns {

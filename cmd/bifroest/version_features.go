@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto/unix/password"
@@ -14,13 +13,10 @@ var (
 type features struct{}
 
 func (this *features) ForEach(consumer func(common.VersionFeatureCategory)) {
-	consumer(&featureCategory{"authorizations", configuration.GetSupportedAuthorizationVs})
-	consumer(&featureCategory{"environments", configuration.GetSupportedEnvironmentVs})
-	consumer(&featureCategory{"sessions", configuration.GetSupportedSessionVs})
-	consumer(&featureCategory{"pam", func() []string {
-		return []string{fmt.Sprint(configuration.IsPamSupported())}
-	}})
-	consumer(&featureCategory{"password-crypt", password.GetSupportedCrypts})
+	consumer(&featureCategory{"authorization", configuration.GetSupportedAuthorizationFeatureFlags})
+	consumer(&featureCategory{"environment", configuration.GetSupportedEnvironmentFeatureFlags})
+	consumer(&featureCategory{"session", configuration.GetSupportedSessionFeatureFlags})
+	consumer(&featureCategory{"password-crypt", password.GetSupportedFeatureFlags})
 }
 
 type featureCategory struct {

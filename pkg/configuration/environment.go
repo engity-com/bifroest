@@ -2,6 +2,7 @@ package configuration
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -17,6 +18,7 @@ type EnvironmentV interface {
 	validator
 	equaler
 	Types() []string
+	FeatureFlags() []string
 }
 
 var (
@@ -125,10 +127,11 @@ func (this Environment) isEqualTo(other *Environment) bool {
 	return this.V.IsEqualTo(other.V)
 }
 
-func GetSupportedEnvironmentVs() []string {
-	result := make([]string, len(environmentVs))
-	for i, v := range environmentVs {
-		result[i] = strings.Clone(v.Types()[0])
+func GetSupportedEnvironmentFeatureFlags() []string {
+	var result []string
+	for _, v := range environmentVs {
+		result = append(result, v.FeatureFlags()...)
 	}
+	sort.Strings(result)
 	return result
 }

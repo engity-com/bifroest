@@ -54,6 +54,28 @@ Features: `
 	}
 }
 
+func VersionToMap(v Version) map[string]any {
+	result := map[string]any{
+		"version":  v.Version(),
+		"revision": v.Revision(),
+		"edition":  v.Edition(),
+		"buildAt":  v.BuildAt(),
+		"vendor":   v.Vendor(),
+		"go":       v.GoVersion(),
+		"platform": v.Platform(),
+	}
+
+	v.Features().ForEach(func(category VersionFeatureCategory) {
+		var fts []string
+		category.ForEach(func(feature VersionFeature) {
+			fts = append(fts, feature.Name())
+		})
+		result["features-"+category.Name()] = strings.Join(fts, ",")
+	})
+
+	return result
+}
+
 type VersionEdition uint8
 
 const (

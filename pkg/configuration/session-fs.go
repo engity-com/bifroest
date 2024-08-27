@@ -104,3 +104,7 @@ func (this SessionFs) isEqualTo(other *SessionFs) bool {
 func (this SessionFs) Types() []string {
 	return []string{"fs", "file-system"}
 }
+
+func (this SessionFs) FeatureFlags() []string {
+	return []string{"fs"}
+}

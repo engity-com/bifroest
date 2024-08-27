@@ -1,5 +1,3 @@
-//go:build unix
-
 package environment
 
 import (
@@ -9,7 +7,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,31 +21,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
-	"github.com/engity-com/bifroest/pkg/sys"
-	"github.com/engity-com/bifroest/pkg/user"
 )
-
-type local struct {
-	repository                 *LocalRepository
-	session                    session.Session
-	user                       *user.User
-	portForwardingAllowed      bool
-	deleteUserOnDispose        bool
-	deleteUserHomeDirOnDispose bool
-	killUserProcessesOnDispose bool
-}
-
-func (this *LocalRepository) new(u *user.User, sess session.Session, portForwardingAllowed bool, lt *localToken) *local {
-	return &local{
-		this,
-		sess,
-		u,
-		portForwardingAllowed,
-		lt.User.DeleteOnDispose,
-		lt.User.DeleteHomeDirOnDispose,
-		lt.User.KillProcessesOnDispose,
-	}
-}
 
 func (this *local) Session() session.Session {
 	return this.session
@@ -67,18 +40,14 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	l := t.Logger()
 	sshSess := t.SshSession()
 
-	cmd := exec.Cmd{
-		Dir:         this.user.HomeDir,
-		SysProcAttr: &syscall.SysProcAttr{},
-	}
-
-	ev := sys.EnvVars{
-		"PATH": this.getPathEnv(),
+	cmd, ev, err := this.createCmdAndEnv(t)
+	if err != nil {
+		return -1, err
 	}
 
 	switch t.TaskType() {
 	case TaskTypeShell:
-		if err := this.configureShellCmd(t, &cmd); err != nil {
+		if err := this.configureShellCmd(t, cmd); err != nil {
 			return -1, err
 		}
 	case TaskTypeSftp:
@@ -92,18 +61,6 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		return -1, fmt.Errorf("illegal task type: %v", t.TaskType())
 	}
 
-	if v, ok := os.LookupEnv("TZ"); ok {
-		ev.Set("TZ", v)
-	}
-	ev.AddAllOf(t.Authorization().EnvVars())
-	ev.Add(sshSess.Environ()...)
-	ev.Set(
-		"HOME", this.user.HomeDir,
-		"USER", this.user.Name,
-		"LOGNAME", this.user.Name,
-		"SHELL", this.user.Shell,
-	)
-
 	if ssh.AgentRequested(sshSess) {
 		l, err := ssh.NewAgentListener()
 		if err != nil {
@@ -113,9 +70,6 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		go ssh.ForwardAgentConnections(l, sshSess)
 		cmd.Env = append(cmd.Env, "SSH_AUTH_SOCK"+l.Addr().String())
 	}
-
-	// TODO! Global configuration with environment
-	// tODO! If not exist ~/.hushlogin display /etc/motd
 
 	cmd.Stdin = sshSess
 	cmd.Stdout = sshSess
@@ -127,7 +81,6 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	} else {
 		cmd.Stderr = sshSess.Stderr()
 	}
-	this.configureCmd(&cmd)
 
 	var fPty, fTty *os.File
 	if ptyReq, winCh, isPty := sshSess.Pty(); isPty {
@@ -139,7 +92,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		defer common.IgnoreCloseError(fPty)
 		defer common.IgnoreCloseError(fTty)
 		ev.Set("TERM", ptyReq.Term)
-		if err := this.configureCmdForPty(&cmd, fPty, fTty); err != nil {
+		if err := this.configureCmdForPty(cmd, fPty, fTty); err != nil {
 			return -1, fmt.Errorf("cannot configure cmd for pty: %w", err)
 		}
 		cmd.Stderr = fTty
@@ -212,12 +165,12 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	}()
 
 	sshSess.Signals(signals)
-	defer this.kill(&cmd, l)
+	defer this.kill(cmd, l)
 	for {
 		select {
 		case s, ok := <-signals:
 			if ok {
-				this.signal(&cmd, l, s)
+				this.signal(cmd, l, s)
 			}
 		case <-t.Context().Done():
 			if err := t.Context().Err(); err != nil && rErr == nil {
@@ -287,76 +240,4 @@ func (this *local) NewDestinationConnection(ctx context.Context, host string, po
 	dest := net.JoinHostPort(host, strconv.FormatInt(int64(port), 10))
 	var dialer net.Dialer
 	return dialer.DialContext(ctx, "tcp", dest)
-}
-
-func (this *local) configureShellCmd(t Task, cmd *exec.Cmd) error {
-	if rc := t.SshSession().RawCommand(); len(rc) > 0 {
-		cmd.Args = []string{filepath.Base(this.user.Shell), "-c", rc}
-	} else {
-		cmd.Args = []string{"-" + filepath.Base(this.user.Shell)}
-	}
-	return nil
-}
-
-func (this *local) configureCmd(cmd *exec.Cmd) {
-	creds := this.user.ToCredentials()
-	cmd.SysProcAttr.Credential = &creds
-}
-
-func (this *local) configureCmdForPty(cmd *exec.Cmd, pty, tty *os.File) error {
-	cmd.SysProcAttr.Setsid = true
-	cmd.SysProcAttr.Setctty = true
-
-	if err := syscall.SetNonblock(int(pty.Fd()), true); err != nil {
-		return err
-	}
-	if err := syscall.SetNonblock(int(tty.Fd()), true); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (this *local) getPathEnv() string {
-	if v := os.Getenv("PATH"); v != "" {
-		return v
-	}
-	return "/bin;/usr/bin"
-}
-
-func (this *local) signal(cmd *exec.Cmd, logger log.Logger, signal ssh.Signal) {
-	var sig sys.Signal
-	if err := sig.Set(string(signal)); err != nil {
-		sig = sys.SIGKILL
-	}
-
-	if err := cmd.Process.Signal(sig.Native()); errors.Is(err, os.ErrProcessDone) {
-		// Ignored.
-	} else if err != nil {
-		logger.WithError(err).
-			With("pid", cmd.Process.Pid).
-			With("signal", sig).
-			Warn("cannot send signal to process")
-	}
-}
-
-func (this *local) dispose(ctx context.Context) (bool, error) {
-	fail := func(err error) (bool, error) {
-		return false, err
-	}
-
-	disposed := false
-	if this.deleteUserOnDispose {
-		if err := this.repository.userRepository.DeleteById(ctx, this.user.Uid, &user.DeleteOpts{
-			HomeDir:       common.P(this.deleteUserHomeDirOnDispose),
-			KillProcesses: common.P(this.killUserProcessesOnDispose),
-		}); errors.Is(err, user.ErrNoSuchUser) {
-			// Ok, continue....
-		} else if err != nil {
-			return fail(err)
-		} else {
-			disposed = true
-		}
-	}
-
-	return disposed, nil
 }

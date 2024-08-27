@@ -82,3 +82,7 @@ func (this AuthorizationHtpasswd) isEqualTo(other *AuthorizationHtpasswd) bool {
 func (this AuthorizationHtpasswd) Types() []string {
 	return []string{"htpasswd"}
 }
+
+func (this AuthorizationHtpasswd) FeatureFlags() []string {
+	return []string{"htpasswd"}
+}

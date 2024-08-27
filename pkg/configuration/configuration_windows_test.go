@@ -9,7 +9,6 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/crypto"
-	"github.com/engity-com/bifroest/pkg/template"
 )
 
 func TestConfiguration_UnmarshalYAML(t *testing.T) {
@@ -41,8 +40,7 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
     clientId: anId
     clientSecret: aSecret
   environment:
-    type: dummy
-    introduction: Foobar`,
+    type: local`,
 			expected: Configuration{
 				Ssh: Ssh{
 					Addresses: DefaultSshAddresses,
@@ -81,10 +79,13 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 						RetrieveIdToken:  DefaultAuthorizationOidcRetrieveIdToken,
 						RetrieveUserInfo: DefaultAuthorizationOidcRetrieveUserInfo,
 					}},
-					Environment: Environment{&EnvironmentDummy{
-						LoginAllowed:       DefaultEnvironmentDummyLoginAllowed,
-						Introduction:       template.MustNewString("Foobar"),
-						IntroductionStyled: DefaultEnvironmentDummyIntroductionStyled,
+					Environment: Environment{&EnvironmentLocal{
+						LoginAllowed:          DefaultEnvironmentLocalLoginAllowed,
+						Banner:                DefaultEnvironmentLocalBanner,
+						ShellCommand:          DefaultEnvironmentLocalShellCommand,
+						ExecCommandPrefix:     DefaultEnvironmentLocalExecCommandPrefix,
+						Directory:             DefaultEnvironmentLocalDirectory,
+						PortForwardingAllowed: DefaultEnvironmentLocalPortForwardingAllowed,
 					}},
 				}},
 				HouseKeeping: HouseKeeping{

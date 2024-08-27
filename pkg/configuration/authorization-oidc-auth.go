@@ -95,3 +95,7 @@ func (this AuthorizationOidcDeviceAuth) isEqualTo(other *AuthorizationOidcDevice
 func (this AuthorizationOidcDeviceAuth) Types() []string {
 	return []string{"oidcDeviceAuth", "oidc-device-auth", "oidc_device_auth"}
 }
+
+func (this AuthorizationOidcDeviceAuth) FeatureFlags() []string {
+	return []string{"oidcDeviceAuth"}
+}

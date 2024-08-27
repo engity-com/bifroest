@@ -1,4 +1,4 @@
-//go:build !cgo || !linux || without_pam
+//go:build (!cgo || !linux || without_pam) && unix
 
 package configuration
 
@@ -6,6 +6,6 @@ var (
 	defaultAuthorizationLocalPamService = "" //nolint:golint,unused
 )
 
-func IsPamSupported() bool {
-	return false
+func (this AuthorizationLocal) FeatureFlags() []string {
+	return "local"
 }
