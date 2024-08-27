@@ -30,7 +30,7 @@ ssh:
         ## @enum[none, all, at-least-256-bits, at-least-384-bits, at-least-521-bits]
         ecdsaRestriction: at-least-384-bits
 
-        ## Restrict which ECDSA keys are allowed to be used.
+        ## Restrict which ED25519 keys are allowed to be used.
         ## @default
         ## @enum[none, all, at-least-256-bits]
         ed25519Restriction: all

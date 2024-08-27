@@ -45,7 +45,8 @@ archives:
     files:
       - LICENSE
       - README.md
-      - doc/*
+      - SECURITY.md
+      - contrib/*
     builds_info:
       group: root
       owner: root
@@ -58,7 +59,8 @@ archives:
     files:
       - LICENSE
       - README.md
-      - doc/*
+      - SECURITY.md
+      - contrib/*
     builds_info:
       group: root
       owner: root

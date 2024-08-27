@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg width="512px" height="512px" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" xmlns:serif="http://www.serif.com/" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;">
+    <style>
+        #angle {
+            fill:#000;
+        }
+        @media (prefers-color-scheme: dark) {
+            #angle {
+                fill:#fff;
+            }
+        }
+    </style>
+    <path id="angle" d="M343.312,182.838l-40.324,-0l-0,-21.617c-0,-24.686 -20.085,-44.771 -44.771,-44.771c-24.685,-0 -44.767,20.085 -44.767,44.771l-0,21.617l-40.325,-0l0,-21.617c0,-46.921 38.175,-85.096 85.092,-85.096c46.92,0 85.095,38.175 85.095,85.096l0,21.617Z" style="fill:fff;fill-rule:nonzero;"/>
+    <path id="g" d="M366.293,237.643l-0,-47.99l-108.073,-48.33l-112.513,48.092l0,135.006c0,72.676 99.5,107.74 103.736,109.199l6.557,2.255l6.557,-2.255c4.236,-1.459 103.736,-36.523 103.736,-109.199l-0,-50.174l-106.218,0l-0,40.325l65.893,-0l0,9.849c0,33.172 -45.689,58.667 -69.964,68.573c-24.307,-9.92 -69.972,-35.412 -69.972,-68.573l-0,-108.385l71.823,-30.703l68.113,30.464l0,21.846l40.325,-0Z" style="fill:#ffd000;fill-rule:nonzero;"/>
+</svg>

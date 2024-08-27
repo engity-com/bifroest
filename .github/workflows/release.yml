@@ -4,6 +4,12 @@ on:
   release:
     types: [ published ]
 
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to be released (syntax: v<major>.<minor>.<patch>)"
+        required: true
+
 jobs:
   release:
     name: "Release"
@@ -47,3 +53,35 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BIFROEST_VENDOR: engity
+
+  documentation:
+    name: "Documentation"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.x
+
+      - name: Install dependencies
+        run: |
+          pip install -r docs/requirements.txt
+
+      - name: Setup Git
+        run: |
+          git config user.email "info@engity.com"
+          git config user.name  "Engity Bot"
+
+      - name: Deploy
+        run: |
+          VERSION_INPUT="${{ github.event.inputs.version }}"
+          VERSION_REF="${{ github.ref }}"
+          export VERSION=$(test -z "${VERSION_INPUT}" && echo $(echo "${VERSION_REF}" | sed -e "s#^refs/tags/##g" | sed -e "s#^v##g") || echo "${VERSION_INPUT}")
+          echo "Version: ${VERSION}"
+          mike deploy --push --update-aliases "${VERSION}" latest

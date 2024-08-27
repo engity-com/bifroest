@@ -1,0 +1,140 @@
+site_name: Engity's Bifröst
+site_dir: var/doc
+site_url: https://bifroest.engity.org/
+repo_url: https://github.com/engity-com/bifroest
+repo_name: engity-com/bifroest
+edit_uri: edit/main/docs/
+docs_dir: docs
+copyright: Copyright © 2024 <a href="https://engity.com">Engity GmbH</a>
+strict: false
+
+plugins:
+  - search
+  - macros:
+      module_name: docs/.theme/marcos/main
+      j2_block_start_string: '<%'
+      j2_block_end_string: '%>'
+      j2_variable_start_string: '<<'
+      j2_variable_end_string: '>>'
+      on_error_fail: true
+      on_undefined: strict
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - def_list
+  - attr_list
+  - footnotes
+  - tables
+  - toc:
+      toc_depth: 5
+  - pymdownx.caret
+  - pymdownx.mark
+  - pymdownx.tilde
+  - pymdownx.details
+  - pymdownx.snippets
+  - pymdownx.highlight:
+      linenums: true
+      use_pygments: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.blocks.html
+
+extra:
+  version:
+    provider: mike
+  generator: false
+  social:
+    - name: GitHub
+      icon: fontawesome/brands/github
+      link: https://github.com/engity-com/bifroest/
+    - name: Engity
+      icon: engity
+      link: https://engity.com
+extra_css:
+  - assets/extra.css
+
+theme:
+  custom_dir: docs/.theme
+  name: material
+  language: en
+  logo: assets/icon.svg
+  favicon: assets/favicon.svg
+  icon:
+    repo: fontawesome/brands/github
+    edit: material/pencil
+    view: material/eye
+
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
+
+  features:
+    - navigation.tabs
+    - navigation.path
+    - toc.integrate
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - content.action.edit
+    - content.action.view
+    - content.code.copy
+    - content.tooltips
+    - content.code.annotate
+    - toc.follow
+
+nav:
+  - About:
+    - Welcome: index.md
+    - Use cases: usecases.md
+    - Getting started: getting-started.md
+  - Documentation:
+    - documentation/index.md
+    - documentation/configuration.md
+    - Connections:
+      - documentation/connection/index.md
+      - SSH: documentation/connection/ssh.md
+    - documentation/flow.md
+    - Authorizations:
+      - documentation/authorization/index.md
+      - Local: documentation/authorization/local.md
+      - OIDC: documentation/authorization/oidc.md
+      - Simple: documentation/authorization/simple.md
+      - Htpasswd: documentation/authorization/htpasswd.md
+    - Environments:
+      - documentation/environment/index.md
+      - Local: documentation/environment/local.md
+    - Sessions:
+      - documentation/session/index.md
+      - Filesystem: documentation/session/fs.md
+    - documentation/housekeeping.md
+    - documentation/cli.md
+    - Templating:
+        - documentation/templating/index.md
+    - Context Objects:
+        - documentation/context/index.md
+        - Authorization: documentation/context/authorization.md
+        - Connection: documentation/context/connection.md
+    - documentation/data-type.md
