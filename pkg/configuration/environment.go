@@ -2,8 +2,10 @@ package configuration
 
 import (
 	"fmt"
+	"sort"
+	"strings"
+
 	"gopkg.in/yaml.v3"
-	"reflect"
 )
 
 type Environment struct {
@@ -15,13 +17,32 @@ type EnvironmentV interface {
 	trimmer
 	validator
 	equaler
+	Types() []string
+	FeatureFlags() []string
+}
+
+var (
+	typeToEnvironmentFactory = make(map[string]EnvironmentVFactory)
+	environmentVs            []EnvironmentV
+)
+
+type EnvironmentVFactory func() EnvironmentV
+
+func RegisterEnvironmentV(factory EnvironmentVFactory) EnvironmentVFactory {
+	pt := factory()
+	ts := pt.Types()
+	if len(ts) == 0 {
+		panic(fmt.Errorf("the instance does not provide any type"))
+	}
+	for _, t := range ts {
+		typeToEnvironmentFactory[strings.ToLower(t)] = factory
+	}
+	environmentVs = append(environmentVs, pt)
+	return factory
 }
 
 func (this *Environment) SetDefaults() error {
-	*this = Environment{&EnvironmentLocal{}}
-	if err := this.V.SetDefaults(); err != nil {
-		return err
-	}
+	*this = Environment{}
 	return nil
 }
 
@@ -54,15 +75,16 @@ func (this *Environment) UnmarshalYAML(node *yaml.Node) error {
 		return reportYamlRelatedErr(node, err)
 	}
 
-	switch typeBuf.Type {
-	case "":
+	if typeBuf.Type == "" {
 		return reportYamlRelatedErrf(node, "[type] required but absent")
-	case "local":
-		this.V = &EnvironmentLocal{}
-	default:
+	}
+
+	factory, ok := typeToEnvironmentFactory[strings.ToLower(typeBuf.Type)]
+	if !ok {
 		return reportYamlRelatedErrf(node, "[type] illegal type: %q", typeBuf.Type)
 	}
 
+	this.V = factory()
 	if err := node.Decode(this.V); err != nil {
 		return reportYamlRelatedErr(node, err)
 	}
@@ -73,16 +95,12 @@ func (this *Environment) UnmarshalYAML(node *yaml.Node) error {
 func (this *Environment) MarshalYAML() (any, error) {
 	typeBuf := struct {
 		EnvironmentV `yaml:",inline"`
-		Type         string `yaml:"type"`
-	}{
-		EnvironmentV: this.V,
-	}
+		Type         string `yaml:"type,omitempty"`
+	}{}
 
-	switch typeBuf.EnvironmentV.(type) {
-	case *EnvironmentLocal:
-		typeBuf.Type = "local"
-	default:
-		return nil, fmt.Errorf("[type] illegal type: %v", reflect.TypeOf(typeBuf.EnvironmentV))
+	if this.V != nil {
+		typeBuf.Type = this.V.Types()[0]
+		typeBuf.EnvironmentV = this.V
 	}
 
 	return typeBuf, nil
@@ -107,4 +125,13 @@ func (this Environment) isEqualTo(other *Environment) bool {
 		return this.V == nil
 	}
 	return this.V.IsEqualTo(other.V)
+}
+
+func GetSupportedEnvironmentFeatureFlags() []string {
+	var result []string
+	for _, v := range environmentVs {
+		result = append(result, v.FeatureFlags()...)
+	}
+	sort.Strings(result)
+	return result
 }

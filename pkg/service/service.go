@@ -3,8 +3,17 @@ package service
 import (
 	"context"
 	"fmt"
+	"io"
+	"net"
+	"sync"
+	"sync/atomic"
+	"syscall"
+
 	log "github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/fields"
+	"github.com/gliderlabs/ssh"
+	gssh "golang.org/x/crypto/ssh"
+
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -13,13 +22,6 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 	bnet "github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
-	"github.com/gliderlabs/ssh"
-	gssh "golang.org/x/crypto/ssh"
-	"io"
-	"net"
-	"sync"
-	"sync/atomic"
-	"syscall"
 )
 
 var (
@@ -31,6 +33,7 @@ var (
 
 type Service struct {
 	Configuration configuration.Configuration
+	Version       common.Version
 
 	Logger log.Logger
 }
@@ -88,6 +91,8 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 		lns[i].addr = addr
 		lns[i].ln = ln
 	}
+
+	this.logger().WithAll(common.VersionToMap(this.Version)).Info("started")
 
 	done := make(chan error, len(lns))
 	var wg sync.WaitGroup
@@ -149,7 +154,7 @@ func (this *Service) prepare() (svc *service, err error) {
 	ctx := context.Background()
 	svc = &service{Service: this}
 
-	if svc.sessions, err = session.NewRepositoryFacade(ctx, &this.Configuration.Session); err != nil {
+	if svc.sessions, err = session.NewFacadeRepository(ctx, &this.Configuration.Session); err != nil {
 		return fail(err)
 	}
 	if svc.authorizer, err = authorization.NewAuthorizerFacade(ctx, &this.Configuration.Flows); err != nil {
@@ -178,6 +183,7 @@ func (this *Service) prepareServer(_ context.Context, svc *service) (err error) 
 	svc.server.ServerConfigCallback = svc.createNewServerConfig
 	svc.server.ConnCallback = svc.onNewConnConnection
 	svc.server.Handler = svc.handleSshShellSession
+	svc.server.PtyCallback = svc.onPtyRequest
 	svc.server.ReversePortForwardingCallback = svc.onReversePortForwardingRequested
 	svc.server.PublicKeyHandler = svc.handlePublicKey
 	svc.server.PasswordHandler = svc.handlePassword
@@ -266,7 +272,7 @@ func (this *service) isRelevantError(err error) bool {
 
 func (this *service) createNewServerConfig(ssh.Context) *gssh.ServerConfig {
 	return &gssh.ServerConfig{
-		ServerVersion: "SSH-2.0-Engity-Bifroest_0.1.0",
+		ServerVersion: "SSH-2.0-Engity-Bifroest_" + this.Version.Version(),
 		MaxAuthTries:  int(this.Configuration.Ssh.MaxAuthTries),
 	}
 }

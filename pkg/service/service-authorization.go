@@ -1,11 +1,12 @@
 package service
 
 import (
+	"github.com/gliderlabs/ssh"
+	gssh "golang.org/x/crypto/ssh"
+
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
-	"github.com/gliderlabs/ssh"
-	gssh "golang.org/x/crypto/ssh"
 )
 
 func (this *service) handlePublicKey(ctx ssh.Context, key ssh.PublicKey) bool {
@@ -147,4 +148,31 @@ func (this *service) resolveAuthorizationAndSession(sshSess ssh.Session) (author
 		}
 	}
 	return auth, sess, oldState, nil
+}
+
+func (this *service) onPtyRequest(ctx ssh.Context, pty ssh.Pty) bool {
+	auth, ok := ctx.Value(authorizationCtxKey).(authorization.Authorization)
+	if !ok {
+		return false
+	}
+
+	logger := this.logger(ctx)
+
+	ok, err := this.environments.DoesSupportPty(&environmentRequest{
+		this,
+		&remote{ctx},
+		auth,
+	}, pty)
+	if this.isRelevantError(err) {
+		logger.WithError(err).Warn("cannot evaluate if PTY is allowed or not for request")
+		return false
+	}
+
+	if !ok {
+		logger.Debug("PTY was requested but is forbidden")
+		return false
+	}
+
+	logger.Debug("PTY was requested and was permitted")
+	return true
 }

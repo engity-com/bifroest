@@ -3,8 +3,9 @@
 package user
 
 import (
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func Test_etcShadowEntry_decode(t *testing.T) {

@@ -1,12 +1,14 @@
 package configuration
 
 import (
+	"io"
+	"os"
+
+	"gopkg.in/yaml.v3"
+
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/sys"
-	"gopkg.in/yaml.v3"
-	"io"
-	"os"
 )
 
 type Configuration struct {

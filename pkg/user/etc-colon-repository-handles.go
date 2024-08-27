@@ -1,12 +1,15 @@
+//go:build unix
+
 package user
 
 import (
 	"fmt"
-	"github.com/engity-com/bifroest/pkg/common"
-	"github.com/engity-com/bifroest/pkg/sys"
 	"os"
 	"path/filepath"
 	"syscall"
+
+	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 type etcColonRepositoryHandles struct {
@@ -132,10 +135,8 @@ func (this *etcColonRepositoryHandles) lockFile(which *os.File, how int) error {
 		}
 		return fmt.Errorf("cannot %s %q: %w", op, which.Name(), err)
 	}
-	select {
-	case doneErr := <-doneErrChan:
-		return fail(doneErr)
-	}
+	doneErr := <-doneErrChan
+	return fail(doneErr)
 }
 
 func (this *etcColonRepositoryHandles) close() (rErr error) {

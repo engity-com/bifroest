@@ -3,8 +3,9 @@ package crypto
 import (
 	"crypto/ed25519"
 	"fmt"
-	"golang.org/x/crypto/ssh"
 	"strings"
+
+	"golang.org/x/crypto/ssh"
 )
 
 type Ed25519Restriction uint8

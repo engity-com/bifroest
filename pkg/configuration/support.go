@@ -3,13 +3,20 @@ package configuration
 import (
 	"errors"
 	"fmt"
-	"gopkg.in/yaml.v3"
 	"slices"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 type defaulter interface {
 	SetDefaults() error
+}
+
+type defaulterFunc func() error
+
+func (f defaulterFunc) SetDefaults() error {
+	return f()
 }
 
 func setDefaults[T any](target *T, fs ...func(*T) (string, defaulter)) error {
@@ -235,20 +242,6 @@ func reportYamlRelatedErrf(node *yaml.Node, message string, args ...any) error {
 	return reportYamlRelatedErr(node, fmt.Errorf(message, args...))
 }
 
-func enrichWithFile(err error, file string) error {
-	var ole *LocationError
-	if errors.As(err, &ole) {
-		if ole.File == "" {
-			ole.File = file
-		}
-		return err
-	}
-	return &LocationError{
-		File:  file,
-		Cause: err,
-	}
-}
-
 type LocationError struct {
 	File   string
 	Line   int
@@ -327,6 +320,7 @@ func isEqual[T equaler](left, right *T) bool {
 	return (*left).IsEqualTo(*right)
 }
 
+//nolint:golint,unused
 func isEqualSlice[T equaler](left, right *[]T) bool {
 	if left == nil && right == nil {
 		return true

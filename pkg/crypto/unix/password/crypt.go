@@ -2,6 +2,8 @@ package password
 
 import (
 	"bytes"
+	"sort"
+
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
@@ -12,6 +14,7 @@ var (
 
 type Crypt interface {
 	Validate(password string, hash []byte) (bool, error)
+	Name() string
 }
 
 func Validate(password string, hash []byte) (bool, error) {
@@ -21,4 +24,15 @@ func Validate(password string, hash []byte) (bool, error) {
 		}
 	}
 	return false, ErrNoSuchCrypt
+}
+
+func GetSupportedFeatureFlags() []string {
+	result := make([]string, len(Instances))
+	var i int
+	for _, v := range Instances {
+		result[i] = v.Name()
+		i++
+	}
+	sort.Strings(result)
+	return result
 }

@@ -3,8 +3,9 @@ package crypto
 import (
 	"crypto/ecdsa"
 	"fmt"
-	"golang.org/x/crypto/ssh"
 	"strings"
+
+	"golang.org/x/crypto/ssh"
 )
 
 type EcdsaRestriction uint8

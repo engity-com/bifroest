@@ -3,16 +3,18 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/alecthomas/kingpin"
-	log "github.com/echocat/slf4g"
-	"github.com/engity-com/bifroest/pkg/common"
-	"github.com/engity-com/bifroest/pkg/errors"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+
+	"github.com/alecthomas/kingpin"
+	log "github.com/echocat/slf4g"
+
+	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 var (
@@ -83,7 +85,7 @@ func dummyServerHandleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodHead {
 		return
 	}
-	_, err = fmt.Fprintf(w, `Hello from a dummy-server!
+	_, _ = fmt.Fprintf(w, `Hello from a dummy-server!
 
 Called URI: %v
 Method:     %v

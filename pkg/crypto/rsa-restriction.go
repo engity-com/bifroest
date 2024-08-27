@@ -3,8 +3,9 @@ package crypto
 import (
 	"crypto/rsa"
 	"fmt"
-	"golang.org/x/crypto/ssh"
 	"strings"
+
+	"golang.org/x/crypto/ssh"
 )
 
 type RsaRestriction uint8

@@ -2,10 +2,12 @@ package session
 
 import (
 	"context"
+	"time"
+
+	"github.com/google/uuid"
+
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
-	"github.com/google/uuid"
-	"time"
 )
 
 type Info interface {

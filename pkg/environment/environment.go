@@ -2,8 +2,9 @@ package environment
 
 import (
 	"context"
-	"github.com/engity-com/bifroest/pkg/session"
 	"io"
+
+	"github.com/engity-com/bifroest/pkg/session"
 )
 
 type Environment interface {

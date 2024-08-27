@@ -1,8 +1,11 @@
+//go:build unix
+
 package configuration
 
 import (
-	"github.com/engity-com/bifroest/pkg/template"
 	"gopkg.in/yaml.v3"
+
+	"github.com/engity-com/bifroest/pkg/template"
 )
 
 var (

@@ -111,14 +111,3 @@ func (this Requirement) String() string {
 		return "<empty>"
 	}
 }
-
-func (this Requirement) name() string {
-	name := strings.Clone(this.Name)
-	if len(name) > 0 {
-		return name
-	}
-	if uid := this.Uid; uid != nil {
-		return fmt.Sprintf("u%d", uid)
-	}
-	return ""
-}

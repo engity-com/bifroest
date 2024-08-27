@@ -1,9 +1,11 @@
 package main
 
 import (
-	"github.com/alecthomas/kingpin"
-	"github.com/engity-com/bifroest/pkg/sftp"
 	"os"
+
+	"github.com/alecthomas/kingpin"
+
+	"github.com/engity-com/bifroest/pkg/sftp"
 )
 
 var (
@@ -53,7 +55,7 @@ func (this *stdpipe) Close() (rErr error) {
 		rErr = err
 	}
 	if err := os.Stdout.Close(); err != nil && rErr == nil {
-		rErr = err
+		rErr = err //nolint:golint,staticcheck
 	}
 	return nil
 }

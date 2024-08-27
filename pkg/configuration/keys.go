@@ -1,10 +1,12 @@
 package configuration
 
 import (
+	"slices"
+
+	"gopkg.in/yaml.v3"
+
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/template"
-	"gopkg.in/yaml.v3"
-	"slices"
 )
 
 var (

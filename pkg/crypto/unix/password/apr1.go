@@ -3,6 +3,7 @@ package password
 import (
 	"github.com/GehirnInc/crypt"
 	"github.com/GehirnInc/crypt/apr1_crypt"
+
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
@@ -22,4 +23,8 @@ func (p *Apr1) Validate(password string, hash []byte) (bool, error) {
 	} else {
 		return true, nil
 	}
+}
+
+func (p *Apr1) Name() string {
+	return "apr1"
 }

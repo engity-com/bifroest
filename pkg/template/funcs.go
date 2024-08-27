@@ -5,11 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"github.com/Masterminds/sprig/v3"
-	"github.com/engity-com/bifroest/internal/text/template"
-	"github.com/engity-com/bifroest/pkg/common"
-	"github.com/engity-com/bifroest/pkg/sys"
-	"golang.org/x/crypto/ssh"
 	"io"
 	"io/fs"
 	"os"
@@ -18,6 +13,13 @@ import (
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/Masterminds/sprig/v3"
+	"golang.org/x/crypto/ssh"
+
+	"github.com/engity-com/bifroest/internal/text/template"
+	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 const (

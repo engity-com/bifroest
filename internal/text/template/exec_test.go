@@ -820,7 +820,7 @@ func testExecute(execTests []execTest, template *Template, t *testing.T) {
 				fmt.Printf("%s: %s\n\t%s\n", test.name, test.input, err)
 			}
 		}
-		result := b.String()
+		result := strings.ReplaceAll(b.String(), "\r\n", "\n")
 		if result != test.output {
 			t.Errorf("%s: expected\n\t%q\ngot\n\t%q", test.name, test.output, result)
 		}

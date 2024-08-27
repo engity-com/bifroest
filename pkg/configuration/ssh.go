@@ -1,11 +1,13 @@
 package configuration
 
 import (
+	"time"
+
+	"gopkg.in/yaml.v3"
+
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/template"
-	"gopkg.in/yaml.v3"
-	"time"
 )
 
 var (

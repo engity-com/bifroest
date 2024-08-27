@@ -1,11 +1,14 @@
+//go:build windows
+
 package configuration
 
 import (
+	"testing"
+
 	"github.com/echocat/slf4g/sdk/testlog"
+
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/crypto"
-	"github.com/engity-com/bifroest/pkg/template"
-	"testing"
 )
 
 func TestConfiguration_UnmarshalYAML(t *testing.T) {
@@ -31,14 +34,13 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 			name: "required-set",
 			yaml: `flows:
 - name: foo
-  authorization: 
+  authorization:
     type: oidcDeviceAuth
     issuer: https://foo-bar
     clientId: anId
     clientSecret: aSecret
   environment:
-    type: local
-    name: foo`,
+    type: local`,
 			expected: Configuration{
 				Ssh: Ssh{
 					Addresses: DefaultSshAddresses,
@@ -78,24 +80,11 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 						RetrieveUserInfo: DefaultAuthorizationOidcRetrieveUserInfo,
 					}},
 					Environment: Environment{&EnvironmentLocal{
-						User: UserRequirementTemplate{
-							Name:        template.MustNewString("foo"),
-							DisplayName: template.MustNewString(""),
-							Group: GroupRequirementTemplate{
-								Name: DefaultGroupRequirementName,
-							},
-							Shell:   template.MustNewString(""),
-							HomeDir: template.MustNewString(""),
-						},
-						LoginAllowed:      DefaultEnvironmentLocalLoginAllowed,
-						CreateIfAbsent:    DefaultEnvironmentLocalCreateIfAbsent,
-						UpdateIfDifferent: DefaultEnvironmentLocalUpdateIfDifferent,
-						Dispose: EnvironmentLocalDispose{
-							DeleteManagedUser:        DefaultEnvironmentLocalDisposeDeleteManagedUser,
-							DeleteManagedUserHomeDir: DefaultEnvironmentLocalDisposeDeleteManagedUserHomeDir,
-							KillManagedUserProcesses: DefaultEnvironmentLocalDisposeKillManagedUserProcesses,
-						},
+						LoginAllowed:          DefaultEnvironmentLocalLoginAllowed,
 						Banner:                DefaultEnvironmentLocalBanner,
+						ShellCommand:          DefaultEnvironmentLocalShellCommand,
+						ExecCommandPrefix:     DefaultEnvironmentLocalExecCommandPrefix,
+						Directory:             DefaultEnvironmentLocalDirectory,
 						PortForwardingAllowed: DefaultEnvironmentLocalPortForwardingAllowed,
 					}},
 				}},

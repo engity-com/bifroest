@@ -3,12 +3,14 @@ package session
 import (
 	"context"
 	"errors"
+	"io"
+
 	log "github.com/echocat/slf4g"
-	"github.com/engity-com/bifroest/pkg/common"
-	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
-	"io"
+
+	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/configuration"
 )
 
 var (

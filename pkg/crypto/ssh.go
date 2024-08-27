@@ -2,13 +2,14 @@ package crypto
 
 import (
 	"fmt"
-	"github.com/engity-com/bifroest/pkg/sys"
-	"github.com/gliderlabs/ssh"
-	gssh "golang.org/x/crypto/ssh"
 	"os"
+
+	"golang.org/x/crypto/ssh"
+
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-func DoWithEachAuthorizedKey[R any](requireExistence bool, callback func(gssh.PublicKey) (result R, canContinue bool, err error), files ...string) (result R, err error) {
+func DoWithEachAuthorizedKey[R any](requireExistence bool, callback func(ssh.PublicKey) (result R, canContinue bool, err error), files ...string) (result R, err error) {
 	fail := func(err error) (R, error) {
 		var empty R
 		return empty, err
@@ -27,7 +28,7 @@ func DoWithEachAuthorizedKey[R any](requireExistence bool, callback func(gssh.Pu
 		}
 		var entry int
 		for len(rest) > 0 {
-			var pub gssh.PublicKey
+			var pub ssh.PublicKey
 			pub, _, _, rest, err = ssh.ParseAuthorizedKey(rest)
 			if err != nil {
 				return failf("failed to parse entry #%d of authorized keys file %q: %v", entry, file, err)

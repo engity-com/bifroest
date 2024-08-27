@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
-	"github.com/alecthomas/kingpin"
-	log "github.com/echocat/slf4g"
-	"github.com/engity-com/bifroest/pkg/service"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/alecthomas/kingpin"
+	log "github.com/echocat/slf4g"
+
+	"github.com/engity-com/bifroest/pkg/service"
 )
 
 var _ = registerCommand(func(app *kingpin.Application) {
@@ -25,6 +27,7 @@ var _ = registerCommand(func(app *kingpin.Application) {
 func doRun() error {
 	svc := service.Service{
 		Configuration: *configurationRef.Get(),
+		Version:       versionV,
 	}
 
 	fail := func(err error) error {

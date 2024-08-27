@@ -27,3 +27,7 @@ func (p *Yescrypt) Validate(password string, hash []byte) (bool, error) {
 
 	return C.GoString(out) == string(hash), nil
 }
+
+func (p *Yescrypt) Name() string {
+	return "yescrypt"
+}

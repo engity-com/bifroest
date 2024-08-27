@@ -2,8 +2,9 @@ package template
 
 import (
 	"fmt"
-	"github.com/engity-com/bifroest/internal/text/template"
 	"strings"
+
+	"github.com/engity-com/bifroest/internal/text/template"
 )
 
 func NewBool(plain string) (Bool, error) {

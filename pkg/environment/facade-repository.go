@@ -3,10 +3,14 @@ package environment
 import (
 	"context"
 	"fmt"
+	"reflect"
+
+	"github.com/gliderlabs/ssh"
+
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
-	"reflect"
 )
 
 func NewRepositoryFacade(ctx context.Context, flows *configuration.Flows) (*RepositoryFacade, error) {
@@ -39,6 +43,15 @@ func (this *RepositoryFacade) WillBeAccepted(req Request) (bool, error) {
 	return candidate.WillBeAccepted(req)
 }
 
+func (this *RepositoryFacade) DoesSupportPty(req Request, pty ssh.Pty) (bool, error) {
+	flow := req.Authorization().Flow()
+	candidate, ok := this.entries[flow]
+	if !ok {
+		return false, fmt.Errorf("does not find valid environment for flow %v", flow)
+	}
+	return candidate.DoesSupportPty(req, pty)
+}
+
 func (this *RepositoryFacade) Ensure(req Request) (Environment, error) {
 	flow := req.Authorization().Flow()
 	candidate, ok := this.entries[flow]
@@ -66,18 +79,33 @@ func (this *RepositoryFacade) Close() (rErr error) {
 
 func newInstance(ctx context.Context, flow *configuration.Flow) (env CloseableRepository, err error) {
 	fail := func(err error) (CloseableRepository, error) {
-		return nil, fmt.Errorf("cannot initizalize environment for flow %q: %w", flow.Name, err)
+		return nil, errors.System.Newf("cannot initizalize environment for flow %q: %w", flow.Name, err)
 	}
 
-	switch envConf := flow.Environment.V.(type) {
-	case *configuration.EnvironmentLocal:
-		env, err = NewLocalRepository(ctx, flow.Name, envConf)
-	default:
-		return fail(fmt.Errorf("cannot handle environment type %v", reflect.TypeOf(flow.Authorization.V)))
+	if flow.Environment.V == nil {
+		return fail(errors.Config.Newf("no environment configured"))
 	}
 
-	if err != nil {
-		return fail(fmt.Errorf("cannot initizalize environment for flow %q: %w", flow.Name, err))
+	factory, ok := configurationTypeToRepositoryFactory[reflect.TypeOf(flow.Environment.V)]
+	if !ok {
+		return fail(errors.Config.Newf("cannot handle environment type %v", reflect.TypeOf(flow.Environment.V)))
 	}
-	return env, nil
+	m := reflect.ValueOf(factory)
+	rets := m.Call([]reflect.Value{reflect.ValueOf(ctx), reflect.ValueOf(flow.Name), reflect.ValueOf(flow.Environment.V)})
+	if err, ok := rets[1].Interface().(error); ok && err != nil {
+		return fail(err)
+	}
+	return rets[0].Interface().(CloseableRepository), nil
+}
+
+var (
+	configurationTypeToRepositoryFactory = make(map[reflect.Type]any)
+)
+
+type RepositoryFactory[C any, R CloseableRepository] func(ctx context.Context, flow configuration.FlowName, conf C) (R, error)
+
+func RegisterRepository[C any, R CloseableRepository](factory RepositoryFactory[C, R]) RepositoryFactory[C, R] {
+	ct := reflect.TypeFor[C]()
+	configurationTypeToRepositoryFactory[ct] = factory
+	return factory
 }

@@ -1,6 +1,6 @@
 module github.com/engity-com/bifroest
 
-go 1.22.0
+go 1.23.0
 
 require (
 	github.com/GehirnInc/crypt v0.0.0-20230320061759-8cc1b52080c5
@@ -21,6 +21,7 @@ require (
 	github.com/pkg/sftp v1.13.6
 	github.com/shirou/gopsutil v3.21.11+incompatible
 	github.com/stretchr/testify v1.9.0
+	github.com/tg123/go-htpasswd v1.2.2
 	golang.org/x/crypto v0.26.0
 	golang.org/x/oauth2 v0.22.0
 	gopkg.in/yaml.v3 v3.0.1

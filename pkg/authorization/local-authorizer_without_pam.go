@@ -1,9 +1,10 @@
-//go:build !cgo || !linux || without_pam
+//go:build (!cgo || without_pam) && linux
 
 package authorization
 
 import (
 	"fmt"
+
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 

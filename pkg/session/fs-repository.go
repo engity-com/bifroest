@@ -8,26 +8,32 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	log "github.com/echocat/slf4g"
-	"github.com/engity-com/bifroest/pkg/common"
-	"github.com/engity-com/bifroest/pkg/configuration"
-	"github.com/engity-com/bifroest/pkg/errors"
-	"github.com/engity-com/bifroest/pkg/sys"
-	"github.com/google/uuid"
-	"github.com/mr-tron/base58"
-	"golang.org/x/crypto/ssh"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	log "github.com/echocat/slf4g"
+	"github.com/google/uuid"
+	"github.com/mr-tron/base58"
+	"golang.org/x/crypto/ssh"
+
+	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 const (
 	maxFsRepositoryPublicKeyLineSize = 6 * 1024
 )
 
-func NewFsRepository(conf *configuration.SessionFs) (*FsRepository, error) {
+var (
+	_ = RegisterRepository(NewFsRepository)
+)
+
+func NewFsRepository(_ context.Context, conf *configuration.SessionFs) (*FsRepository, error) {
 	result := FsRepository{
 		conf: conf,
 	}
@@ -428,7 +434,6 @@ func (this *FsRepository) doFindAutoCleanIfAllowed(ctx context.Context, flow con
 				Warn(successMessage)
 		}
 	}
-	return
 }
 
 func (this *FsRepository) doAutoCleanUnexpectedFilesIfAllowed(_ context.Context, sess *fs, opts *FindOpts) {
@@ -517,7 +522,6 @@ func (this *FsRepository) doFindAutoCleanFlowContentIfAllowed(_ context.Context,
 				Warn(successMessage)
 		}
 	}
-	return
 }
 
 func (this *FsRepository) doFindAutoCleanRootContentIfAllowed(_ context.Context, fn string, opts *FindOpts, successMessage string, cause error) {
@@ -537,7 +541,6 @@ func (this *FsRepository) doFindAutoCleanRootContentIfAllowed(_ context.Context,
 				Warn(successMessage)
 		}
 	}
-	return
 }
 
 func (this *FsRepository) Delete(ctx context.Context, s Session) error {
@@ -680,7 +683,7 @@ func (this *FsRepository) findPublicKeyIn(ctx context.Context, flow configuratio
 		line := scanner.Bytes()
 		lineN++
 		if len(line) == 0 {
-			//Skip empty lines...
+			// Skip empty lines...
 			continue
 		}
 		keyBytes, err := base64.StdEncoding.DecodeString(string(line))

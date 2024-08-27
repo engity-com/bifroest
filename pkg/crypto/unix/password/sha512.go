@@ -3,6 +3,7 @@ package password
 import (
 	"github.com/GehirnInc/crypt"
 	"github.com/GehirnInc/crypt/sha512_crypt"
+
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
@@ -22,4 +23,8 @@ func (p *Sha512) Validate(password string, hash []byte) (bool, error) {
 	} else {
 		return true, nil
 	}
+}
+
+func (p *Sha512) Name() string {
+	return "sha512"
 }

@@ -2,8 +2,9 @@ package session
 
 import (
 	"context"
-	"github.com/engity-com/bifroest/pkg/configuration"
 	"time"
+
+	"github.com/engity-com/bifroest/pkg/configuration"
 )
 
 type Predicate func(context.Context, Session) (bool, error)

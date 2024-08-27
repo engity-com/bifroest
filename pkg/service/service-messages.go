@@ -1,11 +1,13 @@
 package service
 
 import (
+	"io"
+
+	"github.com/gliderlabs/ssh"
+
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
-	"github.com/gliderlabs/ssh"
-	"io"
 )
 
 func (this *service) handleBanner(ctx ssh.Context) string {

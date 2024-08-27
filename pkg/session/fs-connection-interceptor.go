@@ -3,13 +3,15 @@ package session
 import (
 	"context"
 	"fmt"
-	log "github.com/echocat/slf4g"
-	"github.com/engity-com/bifroest/pkg/configuration"
-	"github.com/gliderlabs/ssh"
-	"github.com/google/uuid"
 	"net"
 	"sync/atomic"
 	"time"
+
+	log "github.com/echocat/slf4g"
+	"github.com/gliderlabs/ssh"
+	"github.com/google/uuid"
+
+	"github.com/engity-com/bifroest/pkg/configuration"
 )
 
 func (this *fs) ConnectionInterceptor(context.Context) (ConnectionInterceptor, error) {

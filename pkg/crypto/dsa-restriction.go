@@ -3,8 +3,9 @@ package crypto
 import (
 	"crypto/dsa"
 	"fmt"
-	"golang.org/x/crypto/ssh"
 	"strings"
+
+	"golang.org/x/crypto/ssh"
 )
 
 type DsaRestriction uint8

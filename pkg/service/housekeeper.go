@@ -2,14 +2,17 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
+	"time"
+
 	log "github.com/echocat/slf4g"
+
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
-	"sync/atomic"
-	"time"
 )
 
 type houseKeeper struct {
@@ -71,15 +74,15 @@ func (this *houseKeeper) checkedRun(ctx context.Context) (nextRunIn time.Duratio
 		}
 	}()
 
-	//defer func() {
-	//	if v := recover(); v != nil {
-	//		if err, ok := v.(error); ok {
-	//			rErr = err
-	//		} else {
-	//			rErr = fmt.Errorf("panic while housekeeping occured: %v", v)
-	//		}
-	//	}
-	//}()
+	defer func() {
+		if v := recover(); v != nil {
+			if err, ok := v.(error); ok {
+				rErr = err
+			} else {
+				rErr = fmt.Errorf("panic while housekeeping occurred: %v", v)
+			}
+		}
+	}()
 
 	l.Debug("housekeeping run started")
 

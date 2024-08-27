@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"io"
+
+	"github.com/gliderlabs/ssh"
+	gssh "golang.org/x/crypto/ssh"
+
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/errors"
-	"github.com/gliderlabs/ssh"
-	gssh "golang.org/x/crypto/ssh"
-	"io"
 )
 
 func (this *service) handleNewSshSession(srv *ssh.Server, conn *gssh.ServerConn, newChan gssh.NewChannel, ctx ssh.Context) {

@@ -2,11 +2,13 @@ package configuration
 
 import (
 	"fmt"
-	"github.com/engity-com/bifroest/pkg/common"
-	"gopkg.in/yaml.v3"
-	"reflect"
+	"sort"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/engity-com/bifroest/pkg/common"
 )
 
 var (
@@ -29,6 +31,28 @@ type SessionV interface {
 	trimmer
 	validator
 	equaler
+	Types() []string
+	FeatureFlags() []string
+}
+
+var (
+	typeToSessionFactory = make(map[string]SessionVFactory)
+	sessionVs            []SessionV
+)
+
+type SessionVFactory func() SessionV
+
+func RegisterSessionV(factory SessionVFactory) SessionVFactory {
+	pt := factory()
+	ts := pt.Types()
+	if len(ts) == 0 {
+		panic(fmt.Errorf("the instance does not provide any type"))
+	}
+	for _, t := range ts {
+		typeToSessionFactory[strings.ToLower(t)] = factory
+	}
+	sessionVs = append(sessionVs, pt)
+	return factory
 }
 
 func (this *Session) SetDefaults() error {
@@ -68,13 +92,16 @@ func (this *Session) UnmarshalYAML(node *yaml.Node) error {
 		return reportYamlRelatedErr(node, err)
 	}
 
-	switch strings.ToLower(typeBuf.Type) {
-	case "fs", "file_system":
-		this.V = &SessionFs{}
-	default:
+	if typeBuf.Type == "" {
+		return reportYamlRelatedErrf(node, "[type] required but absent")
+	}
+
+	factory, ok := typeToSessionFactory[strings.ToLower(typeBuf.Type)]
+	if !ok {
 		return reportYamlRelatedErrf(node, "[type] illegal type: %q", typeBuf.Type)
 	}
 
+	this.V = factory()
 	if err := node.Decode(this.V); err != nil {
 		return reportYamlRelatedErr(node, err)
 	}
@@ -86,15 +113,11 @@ func (this *Session) MarshalYAML() (any, error) {
 	typeBuf := struct {
 		SessionV `yaml:",inline"`
 		Type     string `yaml:"type"`
-	}{
-		SessionV: this.V,
-	}
+	}{}
 
-	switch typeBuf.SessionV.(type) {
-	case *SessionFs:
-		typeBuf.Type = "fs"
-	default:
-		return nil, fmt.Errorf("[type] illegal type: %v", reflect.TypeOf(typeBuf.SessionV))
+	if this.V != nil {
+		typeBuf.Type = this.V.Types()[0]
+		typeBuf.SessionV = this.V
 	}
 
 	return typeBuf, nil
@@ -119,4 +142,13 @@ func (this Session) isEqualTo(other *Session) bool {
 		return this.V == nil
 	}
 	return this.V.IsEqualTo(other.V)
+}
+
+func GetSupportedSessionFeatureFlags() []string {
+	var result []string
+	for _, v := range sessionVs {
+		result = append(result, v.FeatureFlags()...)
+	}
+	sort.Strings(result)
+	return result
 }

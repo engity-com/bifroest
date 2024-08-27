@@ -1,9 +1,10 @@
 package configuration
 
 import (
+	"gopkg.in/yaml.v3"
+
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/sys"
-	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -11,6 +12,10 @@ var (
 	DefaultSessionFsStorage = defaultSessionFsStorage
 	// DefaultSessionFsFileMode is the default setting for SessionFs.FileMode.
 	DefaultSessionFsFileMode = sys.FileMode(0600)
+
+	_ = RegisterSessionV(func() SessionV {
+		return &SessionFs{}
+	})
 )
 
 // SessionFs defines an implementation of Session on file system base.
@@ -94,4 +99,12 @@ func (this SessionFs) isEqualTo(other *SessionFs) bool {
 		this.MaxConnections == other.MaxConnections &&
 		this.Storage == other.Storage &&
 		this.FileMode == other.FileMode
+}
+
+func (this SessionFs) Types() []string {
+	return []string{"fs", "file-system"}
+}
+
+func (this SessionFs) FeatureFlags() []string {
+	return []string{"fs"}
 }

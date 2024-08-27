@@ -5,12 +5,14 @@ import (
 	"crypto/dsa"
 	"encoding/pem"
 	"fmt"
-	"github.com/engity-com/bifroest/pkg/sys"
+	"io"
+	"os"
+
 	"github.com/mikesmitty/edkey"
 	"golang.org/x/crypto/ed25519"
 	"golang.org/x/crypto/ssh"
-	"io"
-	"os"
+
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 func EnsureKeyFile(fn string, reqOnAbsence *KeyRequirement, rand io.Reader) (crypto.Signer, error) {
