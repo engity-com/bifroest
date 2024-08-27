@@ -7,5 +7,5 @@ var (
 )
 
 func (this AuthorizationLocal) FeatureFlags() []string {
-	return "local"
+	return []string{"local"}
 }
