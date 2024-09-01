@@ -10,11 +10,23 @@ before:
     - go generate ./...
 
 builds:
-  - id: generic
+  - id: generic-tgz
     main: ./cmd/bifroest
     binary: bifroest
     goos:
       - linux
+    env:
+      - CGO_ENABLED=0
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - "-s -w -X main.edition=generic -X main.version={{.Version}} -X main.revision={{.Commit}} -X main.buildAt={{.Date}} -X main.vendor={{envOrDefault `BIFROEST_VENDOR` `unknown`}}"
+
+  - id: generic-zip
+    main: ./cmd/bifroest
+    binary: bifroest
+    goos:
       - windows
     env:
       - CGO_ENABLED=0
@@ -24,7 +36,7 @@ builds:
     ldflags:
       - "-s -w -X main.edition=generic -X main.version={{.Version}} -X main.revision={{.Commit}} -X main.buildAt={{.Date}} -X main.vendor={{envOrDefault `BIFROEST_VENDOR` `unknown`}}"
 
-  - id: extended
+  - id: extended-tgz
     main: ./cmd/bifroest
     binary: bifroest
     goos:
@@ -37,10 +49,10 @@ builds:
       - "-s -w -X main.edition=extended -X main.version={{.Version}} -X main.revision={{.Commit}} -X main.buildAt={{.Date}} -X main.vendor={{envOrDefault `BIFROEST_VENDOR` `unknown`}}"
 
 archives:
-  - id: generic
+  - id: generic-tgz
     format: tgz
     builds:
-      - generic
+      - generic-tgz
     name_template: "bifroest-{{ .Os }}-{{ .Arch }}-generic"
     files:
       - LICENSE
@@ -51,10 +63,24 @@ archives:
       group: root
       owner: root
 
-  - id: extended
+  - id: generic-zip
+    format: zip
+    builds:
+      - generic-zip
+    name_template: "bifroest-{{ .Os }}-{{ .Arch }}-generic"
+    files:
+      - LICENSE
+      - README.md
+      - SECURITY.md
+      - contrib/*
+    builds_info:
+      group: root
+      owner: root
+
+  - id: extended-tgz
     format: tgz
     builds:
-      - extended
+      - extended-tgz
     name_template: "bifroest-{{ .Os }}-{{ .Arch }}-extended"
     files:
       - LICENSE

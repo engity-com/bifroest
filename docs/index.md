@@ -1,3 +1,7 @@
+---
+description: Bifröst is a highly customizable SSH server with several way to authorize a user and where and how to execute its session.
+---
+
 # Engity's Bifröst
 
 ## Welcome
@@ -28,6 +32,6 @@ It can also automatically clean up these users as they're no longer needed, for 
 ### More to come...
 
 ## More topics
-* [Getting started](getting-started.md)
+* [Getting started](setup/index.md)
 * [Use-Cases](usecases.md)
-* [Configuration](documentation/configuration.md)
+* [Configuration](reference/configuration.md)

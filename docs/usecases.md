@@ -1,9 +1,10 @@
 ---
 toc_depth: 2
+description: As Bifröst is very flexible how it can be configured, here some use-cases which can be fulfilled by it.
 ---
 # Use cases
 
-As Bifröst is very flexible how it can be configured (see [configuration documentation](documentation/configuration.md)), here some use-cases which can be fulfilled by it:
+As Bifröst is very flexible how it can be configured (see [configuration documentation](reference/configuration.md)), here some use-cases which can be fulfilled by it:
 
 1. [**Off**-board users within 15 minutes of the organization](#offboard)
 2. [**On**-board users within 15 minutes in the organization](#onboard)
@@ -42,13 +43,13 @@ How do you ensure you really removed this user everywhere?
 3. Have user's public keys stored at shared users or even the `root` user.
 
 #### Do
-Use the [OpenID Connect authorization](documentation/authorization/oidc.md).
+Use the [OpenID Connect authorization](reference/authorization/oidc.md).
 
 As the users always authorized by your [Identity Provider (IdP)](https://openid.net/developers/how-connect-works/), and this is always evaluated when someone tries to access the service via SSH, it will also immediately reject the authorization to this service.
 
 No need to access any of these services directly to remove/de-authorize these users.
 
-If the [environments are configured accordingly](documentation/environment/index.md) (which is the default) all user's files and processes will be removed/killed automatically, too.
+If the [environments are configured accordingly](reference/environment/index.md) (which is the default) all user's files and processes will be removed/killed automatically, too.
 
 ## On-board users within 15 minutes in the organization {:id=onboard}
 
@@ -73,13 +74,13 @@ How this should be done now (not days or weeks)?<br>
 
 ### Solution
 
-Use the [OpenID Connect authorization](documentation/authorization/oidc.md).
+Use the [OpenID Connect authorization](reference/authorization/oidc.md).
 
-There is no need to create them somewhere on the server itself. The [OIDC authorization](documentation/authorization/oidc.md) will resolve them using the configured [Identity Provider (IdP)](https://openid.net/developers/how-connect-works/) - that's it!
+There is no need to create them somewhere on the server itself. The [OIDC authorization](reference/authorization/oidc.md) will resolve them using the configured [Identity Provider (IdP)](https://openid.net/developers/how-connect-works/) - that's it!
 
 No need to access any of these services directly to create/authorize these users.
 
-If the [environments are configured accordingly](documentation/environment/index.md) (which is the default) all user's resources (like home directory) will be created automatically.
+If the [environments are configured accordingly](reference/environment/index.md) (which is the default) all user's resources (like home directory) will be created automatically.
 
 ## Bastion Host / Jump Host {:id=bastion}
 
@@ -99,7 +100,7 @@ The following cases are usually used:
 1. Set up a bastion host either:
    1. Inside the private network itself (in case of [AWS a dedicated EC2 instance](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/concepts.html) for example of [instance-type `t2.micro`](https://aws.amazon.com/ec2/instance-types/))
    2. or outside with a fixed VPN connection inside the private network.
-2. Configure your favored [authorization](documentation/authorization/index.md) (for example [OpenID Connect](documentation/authorization/oidc.md) for best [on-boarding](#onboard) and [off-boarding](#offboard) experience).
+2. Configure your favored [authorization](reference/authorization/index.md) (for example [OpenID Connect](reference/authorization/oidc.md) for best [on-boarding](#onboard) and [off-boarding](#offboard) experience).
 
 ## Different rules for different users per host {:id=multi-environment}
 
@@ -107,13 +108,13 @@ The following cases are usually used:
 
 1. Assume you have an SSH server.
 2. Different users should be authorized differently.
-3. Different users should be executed into different [environments](documentation/environment/index.md) (the one into a local one with permission A, another one with permission B and the other one into a remote one).
+3. Different users should be executed into different [environments](reference/environment/index.md) (the one into a local one with permission A, another one with permission B and the other one into a remote one).
 
 This is currently not really possible, except with different [OpenSSH sshd](https://man.openbsd.org/sshd.8) setups on one host, or even different hosts or hacky [PAM](https://en.wikipedia.org/wiki/Linux_PAM) or [shell](https://en.wikipedia.org/wiki/Unix_shell) setups.
 
 ### Solution
 
-You're using Bifröst with multiple [flows](documentation/flow.md), configured. Each flow can handle different authorization and environments.
+You're using Bifröst with multiple [flows](reference/flow.md), configured. Each flow can handle different authorization and environments.
 
 ## Drop-in-Replacement {:id=drop-in-replacement}
 
@@ -121,5 +122,5 @@ You simply want to use something else than [OpenSSH sshd](https://man.openbsd.or
 
 
 ## More topics
-* [Configuration](documentation/configuration.md)
+* [Configuration](reference/configuration.md)
 * [Features](index.md#features)

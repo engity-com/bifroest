@@ -259,6 +259,15 @@ func (this *sessionContext) GetField(name string) (any, bool, error) {
 	}
 }
 
-type bannerContext struct {
+type connectionContext struct {
 	Context ssh.Context
+}
+
+func (this *connectionContext) GetField(name string) (any, bool, error) {
+	switch name {
+	case "remote":
+		return remote{this.Context}, true, nil
+	default:
+		return nil, false, fmt.Errorf("unknown field %q", name)
+	}
 }

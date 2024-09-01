@@ -19,6 +19,9 @@ plugins:
       on_error_fail: true
       on_undefined: strict
 
+hooks:
+  - docs/.theme/hooks/main.py
+
 markdown_extensions:
   - abbr
   - admonition
@@ -52,13 +55,23 @@ extra:
   version:
     provider: mike
   generator: false
+  social_banner: assets/social-banner.png
   social:
     - name: GitHub
       icon: fontawesome/brands/github
       link: https://github.com/engity-com/bifroest/
+    - name: LinkedIn
+      icon: fontawesome/brands/linkedin
+      link: https://www.linkedin.com/company/engity/
     - name: Engity
       icon: engity
       link: https://engity.com
+  footer:
+    links:
+      - name: Legal Notice
+        link: https://engity.com/legal-notice/
+      - name: License
+        link: legal/license.md
 extra_css:
   - assets/extra.css
 
@@ -94,7 +107,7 @@ theme:
   features:
     - navigation.tabs
     - navigation.path
-    - toc.integrate
+    #- toc.integrate
     - navigation.top
     - navigation.footer
     - navigation.indexes
@@ -106,35 +119,53 @@ theme:
     - toc.follow
 
 nav:
-  - About:
-    - Welcome: index.md
-    - Use cases: usecases.md
-    - Getting started: getting-started.md
-  - Documentation:
-    - documentation/index.md
-    - documentation/configuration.md
-    - Connections:
-      - documentation/connection/index.md
-      - SSH: documentation/connection/ssh.md
-    - documentation/flow.md
-    - Authorizations:
-      - documentation/authorization/index.md
-      - Local: documentation/authorization/local.md
-      - OIDC: documentation/authorization/oidc.md
-      - Simple: documentation/authorization/simple.md
-      - Htpasswd: documentation/authorization/htpasswd.md
-    - Environments:
-      - documentation/environment/index.md
-      - Local: documentation/environment/local.md
-    - Sessions:
-      - documentation/session/index.md
-      - Filesystem: documentation/session/fs.md
-    - documentation/housekeeping.md
-    - documentation/cli.md
-    - Templating:
-        - documentation/templating/index.md
-    - Context Objects:
-        - documentation/context/index.md
-        - Authorization: documentation/context/authorization.md
-        - Connection: documentation/context/connection.md
-    - documentation/data-type.md
+  - Home:
+      - Welcome: index.md
+      - Use cases: usecases.md
+  - Getting started:
+      - setup/index.md
+      - setup/distribution.md
+      - Security: setup/security.md
+      - License: legal/license.md
+  - Reference:
+      - reference/index.md
+      - reference/configuration.md
+      - Connections:
+          - reference/connection/index.md
+          - SSH: reference/connection/ssh.md
+      - reference/flow.md
+      - Authorizations:
+          - reference/authorization/index.md
+          - Local: reference/authorization/local.md
+          - OIDC: reference/authorization/oidc.md
+          - Simple: reference/authorization/simple.md
+          - Htpasswd: reference/authorization/htpasswd.md
+      - Environments:
+          - reference/environment/index.md
+          - Local: reference/environment/local.md
+      - Sessions:
+          - reference/session/index.md
+          - Filesystem: reference/session/fs.md
+      - reference/housekeeping.md
+      - reference/cli.md
+      - Templating:
+          - reference/templating/index.md
+      - Context Objects:
+          - reference/context/index.md
+          - Authorization: reference/context/authorization.md
+          - Authorization Request: reference/context/authorization-request.md
+          - Connection: reference/context/connection.md
+          - Local Group: reference/context/local-group.md
+          - Local User: reference/context/local-user.md
+          - OIDC Token: reference/context/oidc-token.md
+          - OIDC ID Token: reference/context/oidc-id-token.md
+          - OIDC User Info: reference/context/oidc-user-info.md
+          - Remote: reference/context/remote.md
+          - Simple Entry: reference/context/simple-entry.md
+      - reference/data-type.md
+  - Community:
+      - Community: community/index.md
+      - Issues: https://github.com/engity-com/bifroest/issues
+      - Discussions: https://github.com/engity-com/bifroest/discussions
+      - Contributing: community/contributing.md
+      - Code of Conduct: community/code-of-conduct.md
