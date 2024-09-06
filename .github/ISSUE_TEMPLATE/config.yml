@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+    - name: Discussions
+      url: https://github.com/engity-com/bifroest/discussions
+      about: Maybe you just want to know how something works and what are best practises? Please try out our discussions.
     - name: Contact to Engity
       url: https://engity.com/contact
       about: Please send us direct contact requests here.

@@ -1,0 +1,71 @@
+name: "🐛 Bug Report"
+description: Create a report to help us improve
+title: "[BUG] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Would you like to help us improve Bifröst? That would be great! 🙂
+
+        Please also check out [our 💬 Discussions](https://github.com/engity-com/bifroest/discussions)  if you are looking for best practices, discussing new ideas, or if your configuration is not working as expected.
+
+  - type: textarea
+    id: version-bifroest
+    attributes:
+      label: Bifröst's Version
+      description: Paste here the output of `bifroest version`.
+      placeholder: Output of `bifroest version`
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: version-client
+    attributes:
+      label: Client's Version
+      description: Paste here output's first line of `ssh -v localhost`.
+      placeholder: Output's first line of of `ssh -v localhost`
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug description
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to reproduce
+      description: If applicable, add screenshots to help explain your problem.
+      placeholder: |
+        1. Connected to '...'
+        2. Executed '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: A clear and concise description of what you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Add any other context about the problem here.
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: Thank you for your contribution. 🙏
