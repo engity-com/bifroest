@@ -10,6 +10,7 @@ strict: false
 
 plugins:
   - search
+  - inline-svg
   - macros:
       module_name: docs/.theme/marcos/main
       j2_block_start_string: '<%'

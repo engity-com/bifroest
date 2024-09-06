@@ -4,6 +4,8 @@ description: Bifröst is a highly customizable SSH server with several way to au
 
 # Engity's Bifröst
 
+![Engity's Bifröst](assets/logo-with-text.svg){. class=bifroest-logo title="Logo of Engity's Bifröst with title"}
+
 ## Welcome
 
 Bifröst (spoken as "Bee-frest"), is a highly customizable SSH server with several way to authorize a user and where and how to execute its session. It can be used as a drop-in-replacement for [OpenSSH's sshd](https://man.openbsd.org/sshd), but it was actually created with some more advanced stuff in mind; see below.

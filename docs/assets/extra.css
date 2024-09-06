@@ -13,6 +13,26 @@
     background-color: hsla(var(--md-hue), 15%, 9%, 1);
 }
 
+.md-typeset p.bifroest-logo {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+}
+p.bifroest-logo .switchable,
+p.bifroest-logo .switchable path,
+p.bifroest-logo .switchable rect {
+    fill: #253340;
+}
+[data-md-color-scheme="slate"] p.bifroest-logo .switchable,
+[data-md-color-scheme="slate"] p.bifroest-logo .switchable path,
+[data-md-color-scheme="slate"] p.bifroest-logo .switchable rect {
+    fill: #ffffff;
+}
+[data-md-color-scheme="slate"] p.bifroest-logo .switchable.text,
+[data-md-color-scheme="slate"] p.bifroest-logo .switchable.text path,
+[data-md-color-scheme="slate"] p.bifroest-logo .switchable.text rect {
+    fill: var(--md-typeset-color);
+}
+
 [data-hint-type="required"],
 [data-hint-type="optional"],
 [data-hint-type="requirement"] {

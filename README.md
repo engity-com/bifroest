@@ -1,5 +1,7 @@
 # Engity's Bifröst
 
+![Engity's Bifröst](docs/assets/logo-with-text.svg)
+
 Bifröst (spoken as "Bee-frest"), is an advanced SSH server. It can be used as a drop-in-replacement for [OpenSSH Server](https://www.openssh.com/), but it was actually created with some more advanced stuff in mind; see below.
 
 ## TOC
