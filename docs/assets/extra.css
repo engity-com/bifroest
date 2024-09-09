@@ -13,10 +13,17 @@
     background-color: hsla(var(--md-hue), 15%, 9%, 1);
 }
 
-.md-typeset p.bifroest-logo {
-    margin-left: 0 !important;
-    margin-right: 0 !important;
+.md-typeset h1:has(+p.bifroest-logo) {
+    display: none;
 }
+.md-typeset h1 + p.bifroest-logo {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+.md-typeset h1 + p.bifroest-logo svg {
+    margin-top: -2.4em;
+}
+
 p.bifroest-logo .switchable,
 p.bifroest-logo .switchable path,
 p.bifroest-logo .switchable rect {
