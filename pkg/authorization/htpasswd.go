@@ -48,7 +48,7 @@ func (this *htpasswd) GetField(name string, ce ContextEnabled) (any, bool, error
 	return getField(name, ce, this, func() (any, bool, error) {
 		switch name {
 		case "user":
-			return this.Remote(), true, nil
+			return this.Remote().User(), true, nil
 		default:
 			return nil, false, fmt.Errorf("unknown field %q", name)
 		}

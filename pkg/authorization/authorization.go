@@ -2,6 +2,7 @@ package authorization
 
 import (
 	"context"
+	"fmt"
 
 	"golang.org/x/crypto/ssh"
 
@@ -55,4 +56,10 @@ func (this forbiddenResponse) FindSession() session.Session {
 
 func (this forbiddenResponse) Dispose(context.Context) (bool, error) {
 	return false, nil
+}
+
+func (this *forbiddenResponse) GetField(name string, ce ContextEnabled) (any, bool, error) {
+	return getField(name, ce, this, func() (any, bool, error) {
+		return nil, false, fmt.Errorf("unknown field %q", name)
+	})
 }
