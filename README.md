@@ -54,7 +54,7 @@ It can also automatically clean up these users as they're no longer needed, for 
    # Example
    curl -sSLf https://github.com/engity-com/bifroest/releases/download/v1.2.3/bifroest-linux-amd64-extended.tgz | sudo tar -zxv -C /usr/bin bifroest
    ```
-2. Configure Bifröst. For example download the demo configuration and adjust for your needs (see [documentation of configuration](doc/configuration.md) for the documentation about it):
+2. Configure Bifröst. For example, download the demo configuration and adjust it to your needs (see [documentation of configuration](doc/configuration.md) for more details):
    ```shell
    sudo mkdir -p /etc/engity/bifroest/
    sudo curl -sSLf https://raw.githubusercontent.com/engity-com/bifroest/main/contrib/configurations/sshd-dropin-replacement.yaml -o /etc/engity/bifroest/configuration.yaml
@@ -87,7 +87,7 @@ To enable Bifröst to run at every server start where [systemd](https://wiki.arc
 
 ### What's next?
 
-Read [Use-Cases](doc/usecases.md) and [the configuration documentation](doc/configuration.md) to see what you can do more with Bifröst.
+Read [Use-Cases](doc/usecases.md) and [the configuration documentation](doc/configuration.md) to see what else you can do with Bifröst.
 
 ## Status
 
