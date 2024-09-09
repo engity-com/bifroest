@@ -1,10 +1,10 @@
 ---
 toc_depth: 4
-description: How to authorize a requesting user via the local user database of the host where Bifröst is running on.
+description: How to authorize a requesting user via the local user database of the host on which Bifröst is running on.
 ---
 # Local authorization
 
-Authorizes a requesting user via the local user database of the host where Bifröst is running on.
+Authorizes a requesting user via the local user database of the host on which Bifröst is running on.
 
 !!! note
     This authorization requires Bifröst to run with root permissions.
@@ -21,7 +21,7 @@ Contains files of the format of classic [authorized keys](../data-type.md#author
 Contains files of the format of classic [authorized keys](../data-type.md#authorized-keys) Bifröst will look in for [SSH Public Keys](../data-type.md#ssh-public-key) .
 
 <<property("pamService", "string", default="<os and edition specific>")>>
-If set to a non-empty value, this [PAM](https://wiki.archlinux.org/title/PAM) service will be used while the authorization process, instead of `/etc/passwd` and `/etc/shadow` directly.
+If set to a non-empty value, this [PAM](https://wiki.archlinux.org/title/PAM) service will be used during the authorization process instead of `/etc/passwd` and `/etc/shadow` directly.
 
 ##### Default settings
 
@@ -31,7 +31,7 @@ If set to a non-empty value, this [PAM](https://wiki.archlinux.org/title/PAM) se
 
 ## Password
 
-The password can either validated via `/etc/passwd` and `/etc/shadow` (default) or via PAM (if [`pamService`](#property-pamService) is set to a valid value).
+The password can either be validated via `/etc/passwd` and `/etc/shadow` (default) or via PAM (if [`pamService`](#property-pamService) is set to a valid value).
 
 ### Support of yescrypt {. #password-yescrypt}
 
@@ -40,13 +40,13 @@ The password can either validated via `/etc/passwd` and `/etc/shadow` (default) 
 ### Properties {. #password-properties}
 
 <<property_with_holder("allowed", "Bool Template", "../templating/index.md#bool", "Context Password Authorization Request", "../context/authorization-request.md#password", default=True, id_prefix="password-", heading=4)>>
-If `true`, the user is allowed to use password via classic password. authentication
+If `true`, the user is allowed to use passwords via classic password authentication
 
 <<property_with_holder("interactiveAllowed", "Bool Template", "../templating/index.md#bool", "Context Interactive Authorization Request", "../context/authorization-request.md#interactive", default=True, id_prefix="password-", heading=4)>>
-If `true`, the user is allowed to use password via interactive authentication.
+If `true`, the user is allowed to use passwords via interactive authentication.
 
 <<property_with_holder("emptyAllowed", "Bool Template", "../templating/index.md#bool", "Context * Authorization Request", "../context/authorization-request.md", default=False, id_prefix="password-", heading=4)>>
-If `true`, the user can also use empty password.
+If `true`, the user is allowed to use empty password.
 
 !!! warning
     This is explicitly not recommend.

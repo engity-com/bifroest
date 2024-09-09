@@ -20,7 +20,7 @@ Identifies the user with its host and username.
 
 ## Public Key
 
-Is used while the try to use the authentication method `publickey` where the user's clients presents one of the user's [SSH Public Keys](../data-type.md#ssh-public-key).
+Is used at the attempt to use the authentication method `publickey` where the user's client presents one of the user's [SSH Public Keys](../data-type.md#ssh-public-key).
 
 ### Properties
 
@@ -32,7 +32,7 @@ The provided [SSH Public Key](../data-type.md#ssh-public-key) of the requesting 
 
 ## Password
 
-Is used while the try to use the authentication method `password` where the user's clients presents the password the user either handed over directly to the SSH client software via command line, stdin or when the client asks for it.
+Is used at the attempt to use the authentication method `password` where the user's client presents the password the user either handed over directly to the SSH client software via command line, stdin or when the client asks for it.
 
 ### Properties
 
@@ -44,7 +44,7 @@ The provided password.
 
 ## Interactive
 
-Is used while the try to use the authentication method `keyboard-interactive` where the user's client give the control to the server to request interactively more information from the user. Usually this is another way to either request the password or multi-factor-information.
+Is used at the attempt to use the authentication method `keyboard-interactive` where the user's client give the control to the server to interactively request more information from the user. Usually, this is another way to request either the password or multi-factor-information.
 
 ### Properties
 

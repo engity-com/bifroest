@@ -1,5 +1,5 @@
 ---
-description: How to access context information about an user's ID Token of its successful authorization done via OpenID Connect (OIDC).
+description: How to access context information about a user's ID Token of its successful authorization done via OpenID Connect (OIDC).
 ---
 
 # Context OpenID Connect (OIDC) ID Token

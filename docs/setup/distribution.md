@@ -10,7 +10,7 @@ Bifröst is available in different distributions.
 
 ### Generic {: #linux-generic}
 
-The generic Linux distribution of Bifröst contains features that run on every Linux distribution, regardless if Ubuntu, Alpine, RedHat, ... It even does not have any requirements which other shared libs needs to be installed. On the other hand it lacks some features the [extended version](#linux-extended) has.
+The generic Linux distribution of Bifröst contains features that run on every Linux distribution, regardless of Ubuntu, Alpine, RedHat, ... It does not even have any requirements on which other shared libraries need to be installed. On the other hand, it lacks some features the [extended version](#linux-extended) has.
 
 ### Extended {: #linux-extended}
 
@@ -20,7 +20,7 @@ The extended Linux distribution of Bifröst currently only runs on Ubuntu 22.04+
 sudo apt install libpam0g -y
 ```
 
-On the other hand it provides additional features, like:
+On the other hand, it provides additional features like:
 
 1. [PAM authentication](../reference/authorization/local.md#property-pamService) via [Local authorization](../reference/authorization/local.md)
 2. Support of [yescrypt](../reference/authorization/local.md#password-yescrypt) for `/etc/shadow` files, used for [Local authorization](../reference/authorization/local.md).
@@ -28,7 +28,7 @@ On the other hand it provides additional features, like:
 ## Windows {: #windows}
 
 ### Generic {: #windows-generic}
-The generic Windows distribution of Bifröst contains all supported features for Windows from Windows 7+ on. It even does not have any requirements which other shared libs needs to be installed.
+The generic Windows distribution of Bifröst contains all supported features for Windows from Windows 7+ on. It does not even have any requirements on which other shared libraries need to be installed.
 
 ### Extended {: #windows-extended}
 Currently, not available.

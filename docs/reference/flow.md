@@ -4,7 +4,7 @@ description: A flow represents a flow of a user's session from the authorization
 ---
 # Flows
 
-A flow represents a flow of a user's session from the [authorization](authorization/index.md) to the active [environment](environment/index.md). Bifröst cannot just interpret one flow, like the majority of the SSH server, it can interpret *one or more*. With this approach Bifröst can do something similar like HTTP servers implementing [Virtual hosting](https://en.wikipedia.org/wiki/Virtual_hosting) - but in this case it is based on the combination of the requesting usernames (see [requirement](#requirement)) and which [authorization](authorization/index.md) the user can fulfill.
+A flow represents a flow of a user's session from the [authorization](authorization/index.md) to the active [environment](environment/index.md). Unlike the majority of the SSH servers, Bifröst cannot only interpret one flow, it can interpret *one or more*. With this approach Bifröst can do something similar like HTTP servers are implementing [Virtual hosting](https://en.wikipedia.org/wiki/Virtual_hosting) - but in this case it is based on the combination of the requesting usernames (see [requirement](#requirement)) and which [authorization](authorization/index.md) the user can fulfill.
 
 For each configured flow, Bifröst will evaluate the following checks. If one of them does not succeed, Bifröst will end the evaluating of the current flow and will try the next one as long more candidates are available:
 
@@ -56,7 +56,7 @@ flows:
 
 ## Requirement
 
-The requirement has to be fulfilled, before even the [authorization](#property-authorization) is evaluated.
+The requirement has to be fulfilled, even before the [authorization](#property-authorization) is evaluated.
 
 ### Configuration {: id=requirement-configuration }
 

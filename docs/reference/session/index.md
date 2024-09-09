@@ -8,7 +8,7 @@ A session is grouping one or more connections of a user together. This enables t
 
 1. ... to connect with several connections to the same [environment](../environment/index.md),
 2. ... to use the same [environment](../environment/index.md), although all other prior connections are already disconnected, but the timeout of idle sessions is not already reached,
-3. ... and the authorization _more lean_ by remember the user by its [SSH Public Key](../data-type.md#ssh-public-key) instead of (for example of the [OpenID Connect Authorization](../authorization/oidc.md)) bugging the user again and again through the authorization flow.
+3. ... and the authorization _more lean_ by remembering the user by its [SSH Public Key](../data-type.md#ssh-public-key) instead of (for example of the [OpenID Connect Authorization](../authorization/oidc.md)) repeatedly asking the user to go through the authorization flow.
 
 ## Types
 

@@ -1,5 +1,5 @@
 ---
-description: Bifröst is a highly customizable SSH server with several way to authorize a user and where and how to execute its session.
+description: Bifröst is a highly customizable SSH server with several ways to authorize a user and options where and how to execute a user's session.
 ---
 
 # Engity's Bifröst
@@ -8,28 +8,29 @@ description: Bifröst is a highly customizable SSH server with several way to au
 
 ## Welcome
 
-Bifröst (spoken as "Bee-frest"), is a highly customizable SSH server with several way to authorize a user and where and how to execute its session. It can be used as a drop-in-replacement for [OpenSSH's sshd](https://man.openbsd.org/sshd), but it was actually created with some more advanced stuff in mind; see below.
+Bifröst (spoken as "Bee-frest"), is a highly customizable SSH server with several ways to authorize a user and where and how to execute its session. It can be used as a drop-in-replacement for [OpenSSH's sshd](https://man.openbsd.org/sshd), but it was actually created with some more advanced stuff in mind; see below.
 
 ## Features
 
 ### SSH protocol complaint
+
 
 Fully **[SSH protocol](https://www.rfc-editor.org/rfc/rfc4253) compliant server**, like you would expect.
 
 ### OpenID Connect
 You can connect via your **SSH keys**, as usually. And so on...
 
-...but you can also use **[OpenID Connect](https://openid.net/)** (or OAuth2) identity provider. The best thing about this is: In contrast to the other SSH servers with OpenID Connect, you don't need any other client locally installed, than your regular SSH Client ([OpenSSH](https://www.openssh.com/), [PuTTy](https://www.putty.org/), ...).
+...but you can also use **[OpenID Connect](https://openid.net/)** (or OAuth2) identity provider. The best thing about it: In contrast to the other SSH servers with OpenID Connect you don't need to install another client in addition to your regular SSH Client ([OpenSSH](https://www.openssh.com/), [PuTTy](https://www.putty.org/), ...).
 
 ### Remember me
 
-If authorized via another authentication token then a Public Key, it can store (temporally) your provided Public Key, for faster reconnect, while the session is still alive.
+Once authenticated using a public key, Bifröst can (temporarily) store that public key for faster reconnection while the session is still active.
 
 ### Automatic user provisioning
 
-If a local environment is used where the user executes inside and [OpenID Connect](#openid-connect) was used to authorize a user, Bifröst can automatically create these users based on a defined requirement template.
+If a user needs to be authorized in a local environment using [OpenID Connect](#openid-connect), Bifröst can automatically create a local user based on a pre-defined requirement template.
 
-It can also automatically clean up these users as they're no longer needed, for example: If their session becoming idle and times out (30 minutes). In this case the user itself, its home directory and all running processes can be cleaned up.
+Bifröst can also automatically clean up these local users once they are no longer needed. For example: If their session times out after a defined idle-time, the local user, their home directory, and all running processes can be cleaned up.
 
 ### More to come...
 

@@ -6,10 +6,10 @@ Bifröst (spoken as "Bee-frest"), is an advanced SSH server. It can be used as a
 
 ## TOC
 
-* [Use-cases](doc/usecases.md)
+* [Use-cases](https://bifroest.engity.org/latest/usecases/)
 * [Features](#features)
 * [Getting started](#getting-started)
-* [Configuration](doc/configuration.md)
+* [Configuration](https://bifroest.engity.org/latest/reference/configuration/)
 * [Status](#status)
 * [License](LICENSE)
 * [Code of Conduct](CODE_OF_CONDUCT.md)
@@ -54,7 +54,7 @@ It can also automatically clean up these users as they're no longer needed, for 
    # Example
    curl -sSLf https://github.com/engity-com/bifroest/releases/download/v1.2.3/bifroest-linux-amd64-extended.tgz | sudo tar -zxv -C /usr/bin bifroest
    ```
-2. Configure Bifröst. For example download the demo configuration and adjust for your needs (see [documentation of configuration](doc/configuration.md) for the documentation about it):
+2. Configure Bifröst. For example, download the demo configuration and adjust it to your needs (see [documentation of configuration](doc/configuration.md) for more details):
    ```shell
    sudo mkdir -p /etc/engity/bifroest/
    sudo curl -sSLf https://raw.githubusercontent.com/engity-com/bifroest/main/contrib/configurations/sshd-dropin-replacement.yaml -o /etc/engity/bifroest/configuration.yaml
@@ -87,15 +87,15 @@ To enable Bifröst to run at every server start where [systemd](https://wiki.arc
 
 ### What's next?
 
-Read [Use-Cases](doc/usecases.md) and [the configuration documentation](doc/configuration.md) to see what you can do more with Bifröst.
+Read [Use-Cases](https://bifroest.engity.org/latest/usecases/) and [the configuration documentation](https://bifroest.engity.org/latest/reference/configuration/) to see what else you can do with Bifröst.
 
 ## Status
 
 This project is currently under development. The application is stable ([file a bug if you find one](https://github.com/engity-com/bifroest/issues/new/choose)), but the configuration/command/API structure needs improvement.
 
 ## More topics
-* [Use-Cases](doc/usecases.md)
-* [Configuration](doc/configuration.md)
+* [Use-Cases](https://bifroest.engity.org/latest/usecases/)
+* [Configuration](https://bifroest.engity.org/latest/reference/configuration/)
 * [License](LICENSE)
 * [Code of Conduct](CODE_OF_CONDUCT.md)
 * [Contributing](CONTRIBUTING.md)
