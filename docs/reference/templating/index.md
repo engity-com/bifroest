@@ -4,9 +4,9 @@ description: In many places Bifröst can be customized using templating. How doe
 
 # Templating
 
-In many places of the [configuration](../configuration.md) Bifröst can be not just customized using static strings or numbers, also templates can be used.
+In many places of the [configuration](../configuration.md) Bifröst can not only be customized by using static strings or numbers, but by using templates as well.
 
-Bifröst is using the [template engine of Go](https://pkg.go.dev/text/template). Here is a collection of quite good resources to learn can be found at [HashiCrop's Nomand Developer documentation](https://developer.hashicorp.com/nomad/tutorials/templates/go-template-syntax).
+Bifröst uses the [template engine of Go](https://pkg.go.dev/text/template). A collection of rather good resources to learn can be found at [HashiCrop's Nomand Developer documentation](https://developer.hashicorp.com/nomad/tutorials/templates/go-template-syntax).
 
 In the documentation of each Bifröst's component you can find the type (like [String Template](#string) or [Bool Template](#bool)) and the corresponding [context object](../context/index.md) (like [Connection](../context/connection.md) or [Authorization](../context/authorization.md)). The result will be like:
 

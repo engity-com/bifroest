@@ -1,5 +1,5 @@
 ---
-description: How to get started with Bifröst? How to get it, install it, configure it and run it.
+description: How to get started with Bifröst? How to install, configure and run it.
 toc_depth: 2
 ---
 
@@ -28,7 +28,7 @@ toc_depth: 2
     curl -sSLf <<release_asset_url("bifroest-linux-amd64-extended.tgz")>> | sudo tar -zxv -C /usr/bin bifroest
     ```
 
-2. Configure Bifröst. For example download the demo configuration and adjust for your needs (see [documentation of configuration](../reference/configuration.md) for the documentation about it):
+2. Configure Bifröst. For example download the demo configuration and adjust it to your needs (see [documentation of configuration](../reference/configuration.md) for the documentation about it):
    ```shell
    sudo mkdir -p /etc/engity/bifroest/
    sudo curl -sSLf <<asset_url("contrib/configurations/sshd-dropin-replacement.yaml", True)>> -o /etc/engity/bifroest/configuration.yaml

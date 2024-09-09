@@ -13,9 +13,9 @@ Authorizes a requesting user via credentials stored in [htpasswd format](#format
 Has to be set to `htpasswd` to enable the htpasswd authorization.
 
 <<property("file", "File Path", "../data-type.md#file-path", default="<os specific>")>>
-A file where each line contains entry in [htpasswd format](#format).
+A file where each line contains an entry in [htpasswd format](#format).
 
-The default value is different, per platform Bifröst runs on:
+The default value varies depending on the platform Bifröst runs on:
 
 * Linux: `/etc/engity/bifroest/htpasswd`
 * Window: `C:\ProgramData\Engity\Bifroest\htpasswd`
@@ -41,11 +41,11 @@ authorization:
 
 ## Format
 
-htpasswd is a format created for [Apache HTTP Server](https://httpd.apache.org/) to enable an easy way to configure [Basic Authentication](https://en.wikipedia.org/wiki/Basic_access_authentication) for web servers. Nowadays, it is used in more web server projects than just the Apache HTTP Server and also in other project type, like Bifröst. Because: There is a huge toolset around to create those files.
+htpasswd is a format created for [Apache HTTP Server](https://httpd.apache.org/) to enable an easy way to configure [Basic Authentication](https://en.wikipedia.org/wiki/Basic_access_authentication) for web servers. Nowadays it is used in more web server projects than just the Apache HTTP Server and also in other project type like Bifröst. The reason: There is a huge toolset available to create those files.
 
 ## Tools
 
-1. [Apache HTTP Server command line tool](https://httpd.apache.org/docs/2.4/programs/htpasswd.html) which can by easily installed on many systems, like:
+1. [Apache HTTP Server command line tool](https://httpd.apache.org/docs/2.4/programs/htpasswd.html) which can be easily installed on many systems such as:
     * Ubuntu:
       ```shell
       sudo apt-get install apache2-utils -y

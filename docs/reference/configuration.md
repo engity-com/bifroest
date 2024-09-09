@@ -5,7 +5,7 @@ description: Documentation how Bifröst can be configured will all its possible 
 
 Bifröst will be configured in the [YAML language](https://en.wikipedia.org/wiki/YAML).
 
-It can be either is taken by default from:
+By default, the configuration is token from the following location:
 
 * Linux: `/etc/engity/bifroest/configuration.yaml`
 * Windows: `C:\ProgramData\Engity\Bifroest\configuration.yaml`
@@ -21,13 +21,13 @@ bifroest run --configuration=/my/config.yaml
 Defines how the SSH connections itself will behave.
 
 <<property("session", "Session", "session/index.md")>>
-Defines how the sessions inside Bifröst are handled, where and how.
+Defines where and how the sessions inside Bifröst are handled.
 
 <<property("flows", "Flow", "flow.md", required=True)>>
 Defines which flows are evaluated for user sessions.
 
 <<property("housekeeping", "Housekeeping", "housekeeping.md")>>
-Defines how Bifröst will clean up it's sessions and connections.
+Defines how Bifröst will clean up its sessions and connections.
 
 ## Examples
 

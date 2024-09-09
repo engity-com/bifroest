@@ -1,10 +1,10 @@
 ---
-description: How users are connecting to Bifröst and how to control them.
+description: How users connect to Bifröst and how to control them.
 ---
 
 # Connections
 
-Connections representing the way users connecting to Bifröst. Currently, Bifröst is supporting the [SSH protocol](ssh.md), only.
+Connections represent the way users connect to Bifröst. Currently, Bifröst supports exclusively the [SSH protocol](ssh.md).
 
 ## Variants
 

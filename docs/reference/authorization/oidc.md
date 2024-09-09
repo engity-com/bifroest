@@ -6,11 +6,11 @@ description: How to authorize a requesting user via OpenID Connect (OIDC) with B
 
 Authorizes a requesting user via [OpenID Connect (OIDC)](https://openid.net/developers/how-connect-works/).
 
-There is no need that the actual user exists in any way on the host machine of Bifröst. Even if the [local environment](../environment/local.md) is used together with [`createIfAbsent`](../environment/local.md#linux-property-createIfAbsent-evaluation) and [`updateIfDifferent`](../environment/local.md#linux-property-updateIfDifferent-evaluation) set to `true` it will create/update the users; therefore no need of tools like Puppet or Ansible are required.
+There is no need that the actual user exists in any way on the host machine of Bifröst. Even if the [local environment](../environment/local.md) is used together with [`createIfAbsent`](../environment/local.md#linux-property-createIfAbsent-evaluation) and [`updateIfDifferent`](../environment/local.md#linux-property-updateIfDifferent-evaluation) set to `true` it will create/update the users. There is no need for tools like Puppet or Ansible.
 
-As a result this enables in an easy way SSO for big, but also smaller organizations; see [use cases for more details](../../usecases.md).
+This provides an easy way for SSO in all types of organizations, small or big. See [use cases for more details](../../usecases.md).
 
-Currently, there the following flow of OpenID Connect is supported:
+Currently the following flow of OpenID Connect is supported:
 
 * [Device Auth](#device-auth)
 
@@ -47,10 +47,10 @@ scopes:
 ```
 
 <<property("retrieveIdToken", "bool", None, id_prefix="device-auth-", default=True, heading=4)>>
-Will retrieve the ID Token makes it available in the [corresponding context via `idToken`](../context/authorization.md#oidc-property-idToken).
+Will retrieve the ID Token and makes it available in the [corresponding context via `idToken`](../context/authorization.md#oidc-property-idToken).
 
 <<property("retrieveUserInfo", "bool", None, id_prefix="device-auth-", default=False, heading=4)>>
-Will retrieve the UserInfo makes it available in the [corresponding context via `userInfo`](../context/authorization.md#oidc-property-userInfo).
+Will retrieve the UserInfo and makes it available in the [corresponding context via `userInfo`](../context/authorization.md#oidc-property-userInfo).
 
 ### Context {: #device-auth-context }
 

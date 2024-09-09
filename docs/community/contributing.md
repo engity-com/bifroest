@@ -3,9 +3,9 @@ description: How to contribute to Bifröst technically and which guidelines are 
 ---
 # Contributing Guidelines
 
-Contributions are welcome via [GitHub Pull Requests](https://docs.github.com/articles/about-pull-requests) ("PR"). This document outlines the process to help get your contribution accepted.
+Contributions are welcome via [GitHub Pull Requests](https://docs.github.com/articles/about-pull-requests) ("PR"). This document outlines the process to help you get your contribution accepted.
 
-Any kind of contribution is welcome, from new features to bug fixes to documentation improvements. However, [Engity](https://engity.com) will review the proposals and perform a triage over them. By doing so, we will ensure that the most valuable contributions for the community will be implemented in due time.
+Any kind of contribution is welcome, from adding new features or bug fixes to improving the documentation. However, [Engity](https://engity.com) will review the proposals and perform a triage over them. By doing so, we will ensure that the most valuable contributions for the community will be implemented in due time.
 
 ## How to Contribute
 
@@ -15,7 +15,7 @@ Any kind of contribution is welcome, from new features to bug fixes to documenta
 
 ### Technical Requirements
 
-When submitting a PR make sure that it:
+When submitting a PR, make sure that it:
 
 - Must pass CI jobs/actions.
 - Must follow [Golang best practices](https://go.dev/doc/effective_go).
@@ -33,16 +33,14 @@ When submitting a PR make sure that it:
 
 #### Schedule
 
-There are no fixed cycles for releases. Currently, they are triggered as soon bugfixes, security updates, or main features arrive.
+There are no fixed cycles for releases. Currently, they are triggered as soon bugfixes, security updates or main features arrive.
 
 #### Creation
 
-First of all, prepare the release notes as usual, and merge them.
+First of all prepare the release notes as usual and merge them.
 
 Once the release notes are ready, a release train is launched by *tagging* from `main` to `vX.Y.Z`.
 
 #### Validation
 
 The `vX.Y.Z` tag will go through the release CI.
-
-If anything fails the release tag is dropped, the issue fixed in `main` and a new release train is started on a new tag.

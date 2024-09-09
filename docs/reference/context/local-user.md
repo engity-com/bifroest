@@ -4,7 +4,7 @@ description: How to access context information about a local user within Bifrös
 
 # Context Local User
 
-Represents a local user which is usually the resolve of the [Local authorization](../authorization/local.md).
+Represents a local user which is usually resolved by the [Local authorization](../authorization/local.md).
 
 ## Properties
 

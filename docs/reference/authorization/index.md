@@ -1,10 +1,10 @@
 ---
-description: Everything in Bifröst starts here. A user is required to be authorized at first. Bifröst supports types, you can choose from to adjust to your needs.
+description: Everything in Bifröst starts here. A user must be authorized at first. Bifröst supports types you can choose from to adjust to your needs.
 ---
 
 # Authorizations
 
-Everything in Bifröst starts here. A user is required to be authorized at first. Bifröst supports [different types of authorizations](#types), you can choose from to adjust to your needs.
+Everything in Bifröst starts here. A user must be authorized at first. Bifröst supports [different types of authorizations](#types) you can choose from to adjust to your needs.
 
 ## Types
 

@@ -1,5 +1,5 @@
 ---
-description: How to operate with Bifröst via its Command line interface (CLI) and what commands are available?
+description: How to operate with Bifröst via its Command Line Interface (CLI). What commands are available?
 ---
 
 # Command line interface (CLI)
@@ -16,7 +16,7 @@ Includes [all general flags](#general-flags).
 
 <<flag_with_holder("configuration", "File Path", "data-type.md#file-path", "Configuration", "configuration.md", default="<os specific>", aliases=["c"],id_prefix="run-", heading=4)>>
 
-The default value is different, per platform Bifröst runs on:
+The default value varies depending on the platform Bifröst runs on:
 
 * Linux: `/etc/engity/bifroest/configuration.yaml`
 * Windows: `C:\ProgramData\Engity\Bifroest\configuration.yaml`
@@ -40,7 +40,7 @@ Defines the minimum level at which the log messages will be logged.
 In which format the log output should be printed.
 
 <<flag("log.colorMode", "Log Color Mode", "data-type.md#log-color-mode", default="auto", heading=4)>>
-Tells if to log in color or not.
+Tells whether to log in color or not.
 
 <<flag("version", default="auto", heading=4)>>
 Same as using sub-command [`version`](#version).
