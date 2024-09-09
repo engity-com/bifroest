@@ -14,7 +14,8 @@
 }
 
 .md-typeset h1:has(+p.bifroest-logo) {
-    display: none;
+    opacity: 0;
+    height: 0;
 }
 .md-typeset h1 + p.bifroest-logo {
     margin: 0 !important;
