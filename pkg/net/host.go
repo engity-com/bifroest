@@ -16,7 +16,7 @@ func (this Host) String() string {
 	if v := this.IP; len(v) != 0 {
 		return v.String()
 	}
-	return this.Dns
+	return strings.Clone(this.Dns)
 }
 
 func (this Host) MarshalText() ([]byte, error) {

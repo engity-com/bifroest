@@ -2,43 +2,59 @@ package environment
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/strslice"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
-	"github.com/docker/go-connections/sockets"
+	"github.com/docker/go-connections/nat"
 	log "github.com/echocat/slf4g"
 	"github.com/gliderlabs/ssh"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/imp"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
 var (
 	_ = RegisterRepository(NewDockerRepository)
+)
 
-	LinuxRunForeverCommand   = []string{`/bin/sh`, `-c`, `while true; do sleep 10; done`}
-	WindowsRunForeverCommand = []string{`powershell.exe`, `-Command`, `while ($true) { sleep 10 }`}
+const (
+	BifroestUnixBinaryMountTarget    = `/usr/bin/bifroest`
+	BifroestWindowsBinaryMountTarget = `C:\Program Files\Engity\Bifroest\bifroest.exe`
+
+	DockerLabelPrefix                = "org.engity.bifroest/"
+	DockerLabelSessionId             = DockerLabelPrefix + "session-id"
+	DockerLabelCreatedRemoteUser     = DockerLabelPrefix + "created-remote-user"
+	DockerLabelCreatedRemoteHost     = DockerLabelPrefix + "created-remote-host"
+	DockerLabelShellCommand          = DockerLabelPrefix + "shellCommand"
+	DockerLabelExecCommand           = DockerLabelPrefix + "execCommand"
+	DockerLabelSftpCommand           = DockerLabelPrefix + "sftpCommand"
+	DockerLabelUser                  = DockerLabelPrefix + "user"
+	DockerLabelDirectory             = DockerLabelPrefix + "directory"
+	DockerLabelPortForwardingAllowed = DockerLabelPrefix + "portForwardingAllowed"
 )
 
 type DockerRepository struct {
-	flow configuration.FlowName
-	conf *configuration.EnvironmentDocker
+	flow        configuration.FlowName
+	conf        *configuration.EnvironmentDocker
+	impBinaries imp.BinaryProvider
 
 	Logger log.Logger
 }
 
-func NewDockerRepository(ctx context.Context, flow configuration.FlowName, conf *configuration.EnvironmentDocker) (*DockerRepository, error) {
+func NewDockerRepository(_ context.Context, flow configuration.FlowName, conf *configuration.EnvironmentDocker, ibp imp.BinaryProvider) (*DockerRepository, error) {
 	fail := func(err error) (*DockerRepository, error) {
 		return nil, err
 	}
@@ -51,8 +67,9 @@ func NewDockerRepository(ctx context.Context, flow configuration.FlowName, conf 
 	}
 
 	result := DockerRepository{
-		flow: flow,
-		conf: conf,
+		flow:        flow,
+		conf:        conf,
+		impBinaries: ibp,
 	}
 
 	return &result, nil
@@ -105,25 +122,24 @@ func (this *DockerRepository) Ensure(req Request) (Environment, error) {
 		return existing, nil
 	}
 
-	t, err := this.newDockerToken(req)
-	if err != nil {
-		return fail(err)
-	}
-
-	apiClient, err := this.toApiClient(t)
+	apiClient, err := this.newApiClientFor(sess)
 	if err != nil {
 		return fail(err)
 	}
 	defer common.DoOnFailureIgnore(&success, apiClient.Close)
 
-	hostOs, hostArch, err := this.resolveEnvironment(req, apiClient)
+	si, err := apiClient.ServerVersion(req.Context())
+	if err != nil {
+		return failf(errors.System, "cannot retrieve docker host's version: %w", err)
+	}
+	hostOs, hostArch := si.Os, si.Arch
+
+	t, err := this.requestToToken(req, hostOs, hostArch)
 	if err != nil {
 		return fail(err)
 	}
-	if err := t.enrichWithHostDetails(req, hostOs, hostArch); err != nil {
-		return fail(err)
-	}
-	config, err := this.resolveContainerConfig(req, sess, hostOs, hostArch)
+
+	config, err := this.resolveContainerConfig(req, t, sess, hostOs, hostArch)
 	if err != nil {
 		return fail(err)
 	}
@@ -131,12 +147,12 @@ func (this *DockerRepository) Ensure(req Request) (Environment, error) {
 	if err != nil {
 		return fail(err)
 	}
-	name, err := this.conf.Name.Render(req)
+	networkingConfig, err := this.resolveNetworkingConfig(req)
 	if err != nil {
 		return fail(err)
 	}
 
-	c, err := this.createContainer(req.Context(), apiClient, config, hostConfig, name, true)
+	c, err := this.createContainer(req.Context(), apiClient, config, hostConfig, networkingConfig, sess, true)
 	if err != nil {
 		return failf(errors.System, "cannot create container: %w", err)
 	}
@@ -149,16 +165,10 @@ func (this *DockerRepository) Ensure(req Request) (Environment, error) {
 			}
 		}
 	}()
-	t.Id = c.ID
+	t.containerId = c.ID
 
-	if err := apiClient.ContainerStart(req.Context(), t.Id, container.StartOptions{}); err != nil {
-		return failf(errors.System, "cannot start container #%s: %w", t.Id, err)
-	}
-
-	if tb, err := json.Marshal(t); err != nil {
-		return failf(errors.System, "cannot marshal environment token: %w", err)
-	} else if err := sess.SetEnvironmentToken(req.Context(), tb); err != nil {
-		return failf(errors.System, "cannot store environment token at session: %w", err)
+	if err := apiClient.ContainerStart(req.Context(), t.containerId, container.StartOptions{}); err != nil {
+		return failf(errors.System, "cannot start container #%s: %w", t.containerId, err)
 	}
 
 	result := docker{
@@ -172,11 +182,14 @@ func (this *DockerRepository) Ensure(req Request) (Environment, error) {
 	return &result, nil
 }
 
-func (this *DockerRepository) createContainer(ctx context.Context, apiClient *client.Client, config *container.Config, hostConfig *container.HostConfig, name string, retryAllowed bool) (container.CreateResponse, error) {
-	c, err := apiClient.ContainerCreate(ctx, config, hostConfig, nil, nil, name)
+func (this *DockerRepository) createContainer(ctx context.Context, apiClient client.APIClient, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, sess session.Session, retryAllowed bool) (container.CreateResponse, error) {
+	name := fmt.Sprintf("bifroest-%v", sess.Id())
+	c, err := apiClient.ContainerCreate(ctx, config, hostConfig, networkingConfig, nil, name)
 	if err != nil {
-		other, _, fErr := this.findContainerByName(ctx, apiClient, name)
-		if fErr == nil {
+		other, _, fErr := this.findContainerBy(ctx, apiClient, filters.NewArgs(
+			filters.Arg("name", name),
+		))
+		if fErr == nil && other != nil {
 			if other.State == "running" {
 				// There is another one running with the same name. We use this one instead.
 				return container.CreateResponse{ID: other.ID}, nil
@@ -184,7 +197,7 @@ func (this *DockerRepository) createContainer(ctx context.Context, apiClient *cl
 			if retryAllowed {
 				// Every other state is not acceptable. Remove this contain and try again...
 				if _, rErr := this.removeContainer(ctx, apiClient, other.ID); rErr == nil {
-					return this.createContainer(ctx, apiClient, config, hostConfig, name, false)
+					return this.createContainer(ctx, apiClient, config, hostConfig, networkingConfig, sess, false)
 				}
 			}
 		}
@@ -193,23 +206,7 @@ func (this *DockerRepository) createContainer(ctx context.Context, apiClient *cl
 	return c, nil
 }
 
-func (this *DockerRepository) resolveEnvironment(req Request, apiClient client.APIClient) (os, arch string, _ error) {
-	fail := func(err error) (string, string, error) {
-		return "", "", err
-	}
-	failf := func(msg string, args ...any) (string, string, error) {
-		return fail(errors.Config.Newf(msg, args...))
-	}
-
-	si, err := apiClient.Info(req.Context())
-	if err != nil {
-		return failf("cannot retrieve docker host's system information: %w", err)
-	}
-
-	return si.OSType, si.Architecture, nil
-}
-
-func (this *DockerRepository) resolveContainerConfig(req Request, sess session.Session, hostOs, hostArch string) (_ *container.Config, err error) {
+func (this *DockerRepository) resolveContainerConfig(req Request, t *dockerToken, sess session.Session, hostOs, hostArch string) (_ *container.Config, err error) {
 	fail := func(err error) (*container.Config, error) {
 		return nil, err
 	}
@@ -219,11 +216,7 @@ func (this *DockerRepository) resolveContainerConfig(req Request, sess session.S
 
 	var result container.Config
 
-	result.Labels = map[string]string{
-		"org.engity.bifroest/session-id":          sess.Id().String(),
-		"org.engity.bifroest/created-remote-user": req.Remote().User(),
-		"org.engity.bifroest/created-remote-host": req.Remote().Host().String(),
-	}
+	result.Labels = t.toLabels(sess)
 
 	if result.Image, err = this.conf.Image.Render(req); err != nil {
 		return failf("cannot evaluate image: %w", err)
@@ -232,9 +225,17 @@ func (this *DockerRepository) resolveContainerConfig(req Request, sess session.S
 	if result.Cmd, err = this.conf.BlockCommand.Render(req); err != nil {
 		return failf("cannot evaluate mainCommand: %w", err)
 	}
-
-	if err := this.enrichContainerConfigOsSpecific(req, hostOs, hostArch, &result); err != nil {
-		return fail(err)
+	result.Env = []string{
+		"BIFROEST_IMP_ACCESS_TOKEN=test",
+		"BIFROEST_SESSION_ID=" + sess.Id().String(),
+	}
+	if len(result.Cmd) == 0 {
+		switch hostOs {
+		case "windows":
+			result.Cmd = []string{BifroestWindowsBinaryMountTarget, `imp`}
+		default:
+			result.Cmd = []string{BifroestUnixBinaryMountTarget, `imp`}
+		}
 	}
 
 	return &result, nil
@@ -244,10 +245,83 @@ func (this *DockerRepository) resolveHostConfig(req Request, hostOs, hostArch st
 	fail := func(err error) (*container.HostConfig, error) {
 		return nil, err
 	}
+	failf := func(msg string, args ...any) (_ *container.HostConfig, err error) {
+		return fail(errors.Config.Newf(msg, args...))
+	}
+
 	var result container.HostConfig
 
-	if err := this.enrichHostConfigOsSpecific(req, hostOs, hostArch, &result); err != nil {
-		return fail(err)
+	result.AutoRemove = true
+	if result.Binds, err = this.conf.Volumes.Render(req); err != nil {
+		return failf("cannot evaluate volumes: %w", err)
+	}
+	if result.CapAdd, err = this.conf.Capabilities.Render(req); err != nil {
+		return failf("cannot evaluate capabilities: %w", err)
+	}
+	if result.Privileged, err = this.conf.Privileged.Render(req); err != nil {
+		return failf("cannot evaluate capabilities: %w", err)
+	}
+	if result.DNS, err = this.conf.DnsServers.Render(req); err != nil {
+		return failf("cannot evaluate dnsServer: %w", err)
+	}
+	if result.DNSSearch, err = this.conf.DnsSearch.Render(req); err != nil {
+		return failf("cannot evaluate dnsSearch: %w", err)
+	}
+
+	result.PortBindings = map[nat.Port][]nat.PortBinding{
+		"8000/tcp": {{
+			HostIP:   "127.166.0.1",
+			HostPort: "8000",
+		}},
+	}
+
+	impBinaryPath, err := this.impBinaries.FindBinaryFor(req.Context(), hostOs, hostArch)
+	if err != nil {
+		return failf("cannot resolve imp binary path: %w", err)
+	}
+	if impBinaryPath != "" {
+		impBinaryPath, err = filepath.Abs(impBinaryPath)
+		if err != nil {
+			return failf("cannot resolve full imp binary path: %w", err)
+		}
+		var targetPath string
+		switch hostOs {
+		case "windows":
+			targetPath = BifroestWindowsBinaryMountTarget
+		default:
+			targetPath = BifroestUnixBinaryMountTarget
+		}
+		result.Mounts = append(result.Mounts, mount.Mount{
+			Type:     mount.TypeBind,
+			Source:   impBinaryPath,
+			Target:   targetPath,
+			ReadOnly: true,
+			BindOptions: &mount.BindOptions{
+				NonRecursive:     true,
+				CreateMountpoint: true,
+			},
+		})
+	}
+
+	return &result, nil
+}
+
+func (this *DockerRepository) resolveNetworkingConfig(req Request) (*network.NetworkingConfig, error) {
+	fail := func(err error) (*network.NetworkingConfig, error) {
+		return nil, err
+	}
+	failf := func(msg string, args ...any) (_ *network.NetworkingConfig, err error) {
+		return fail(errors.Config.Newf(msg, args...))
+	}
+
+	var result network.NetworkingConfig
+
+	if v, err := this.conf.Network.Render(req); err != nil {
+		return failf("cannot evaluate network: %w", err)
+	} else {
+		result.EndpointsConfig = map[string]*network.EndpointSettings{
+			v: {},
+		}
 	}
 
 	return &result, nil
@@ -263,96 +337,59 @@ func (this *DockerRepository) FindBySession(ctx context.Context, sess session.Se
 
 	success := false
 
-	containerNotFound := func(id string) (Environment, error) {
-		if !opts.IsAutoCleanUpAllowed() {
-			return failf(errors.Expired, "container #%s of session cannot longer be found; treat as expired", id)
-		}
-		// Clear the stored token.
-		if err := sess.SetEnvironmentToken(ctx, nil); err != nil {
-			return failf(errors.System, "cannot clear existing environment token of session after its container (#%s) does not seem to exist any longer: %w", id, err)
-		}
-		opts.GetLogger(this.logger).
-			With("session", sess).
-			With("container", id).
-			Debug("session's user does not longer seem to exist; treat environment as expired; therefore according environment token was removed from session")
-		return fail(ErrNoSuchEnvironment)
-	}
-
-	tb, err := sess.EnvironmentToken(ctx)
-	if err != nil {
-		return failf(errors.System, "cannot get environment token: %w", err)
-	}
-	if len(tb) == 0 {
-		return fail(ErrNoSuchEnvironment)
-	}
-	var t dockerToken
-	if err := json.Unmarshal(tb, &t); err != nil {
-		return failf(errors.System, "cannot decode environment token: %w", err)
-	}
-
-	apiClient, err := this.toApiClient(&t)
+	apiClient, err := this.newApiClientFor(sess)
 	if err != nil {
 		return fail(err)
 	}
 	common.DoOnFailureIgnore(&success, apiClient.Close)
 
-	c, _, err := this.findContainerById(ctx, apiClient, t.Id)
+	containerInWrongState := func(containerId string, cause error) (Environment, error) {
+		if !opts.IsAutoCleanUpAllowed() {
+			if cause != nil {
+				return failf(errors.Expired, "container (#%s) of session #%v is in a wrong state; treat as expired: %w", containerId, sess.Id(), cause)
+			}
+			return failf(errors.Expired, "container (#%s) of session #%v is in a wrong state; treat as expired", containerId, sess.Id())
+		}
+
+		if _, err := this.removeContainer(ctx, apiClient, containerId); err != nil {
+			return failf(errors.System, "cannot clear existing environment token of session #%v after its container (#%s) does not seem to exist any longer: %w", sess.Id(), containerId, err)
+		}
+
+		l := opts.GetLogger(this.logger).
+			With("session", sess).
+			With("container", containerId)
+		if err != nil {
+			l = l.WithError(err)
+		}
+		l.Debug("session's container is in a wrong state; treat environment as expired; therefore this container was removed")
+		return fail(ErrNoSuchEnvironment)
+	}
+
+	c, _, err := this.findContainerBySession(ctx, apiClient, sess)
 	if err != nil {
 		return fail(err)
 	}
 	if c == nil {
-		return containerNotFound(t.Id)
+		return fail(ErrNoSuchEnvironment)
 	}
 	if c.State != "running" {
-		return containerNotFound(t.Id)
+		return containerInWrongState(c.ID, nil)
 	}
+
+	t, err := this.containerToToken(c, sess)
+	if err != nil {
+		return containerInWrongState(c.ID, err)
+	}
+	t.containerId = c.ID
 
 	result := docker{
 		repository: this,
 		session:    sess,
-		token:      &t,
+		token:      t,
 		apiClient:  apiClient,
 	}
 	success = true
 	return &result, nil
-}
-
-func (this *DockerRepository) toApiClient(t *dockerToken) (_ *client.Client, err error) {
-	fail := func(err error) (*client.Client, error) {
-		return nil, err
-	}
-
-	hostURL, err := client.ParseHostURL(client.DefaultDockerHost)
-	if err != nil {
-		return fail(err)
-	}
-
-	httpTransport := http.Transport{}
-	if err := sockets.ConfigureTransport(&httpTransport, hostURL.Scheme, hostURL.Host); err != nil {
-		return fail(err)
-	}
-	httpClient := http.Client{
-		Transport:     &httpTransport,
-		CheckRedirect: client.CheckRedirect,
-	}
-
-	clientOpts := []client.Opt{client.WithHTTPClient(&httpClient)}
-	if v := t.Host; v != "" {
-		clientOpts = append(clientOpts, client.WithHost(v))
-	}
-	if v := t.ApiVersion; v != "" {
-		clientOpts = append(clientOpts, client.WithVersion(v))
-	}
-	if httpTransport.TLSClientConfig, err = t.toTlsConfig(); err != nil {
-		return fail(err)
-	}
-
-	apiClient, err := client.NewClientWithOpts(clientOpts...)
-	if err != nil {
-		return fail(err)
-	}
-
-	return apiClient, nil
 }
 
 func (this *DockerRepository) removeContainer(ctx context.Context, apiClient client.APIClient, id string) (bool, error) {
@@ -367,15 +404,9 @@ func (this *DockerRepository) removeContainer(ctx context.Context, apiClient cli
 	return true, nil
 }
 
-func (this *DockerRepository) findContainerById(ctx context.Context, apiClient client.APIClient, id string) (*types.Container, int, error) {
+func (this *DockerRepository) findContainerBySession(ctx context.Context, apiClient client.APIClient, sess session.Session) (*types.Container, int, error) {
 	return this.findContainerBy(ctx, apiClient, filters.NewArgs(
-		filters.Arg("id", id),
-	))
-}
-
-func (this *DockerRepository) findContainerByName(ctx context.Context, apiClient client.APIClient, name string) (*types.Container, int, error) {
-	return this.findContainerBy(ctx, apiClient, filters.NewArgs(
-		filters.Arg("name", name),
+		filters.Arg("label="+DockerLabelSessionId, sess.Id().String()),
 	))
 }
 

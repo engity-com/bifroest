@@ -4,11 +4,6 @@ project_name: "Engity's Bifröst"
 dist: var/dist
 report_sizes: true
 
-before:
-  hooks:
-    - go mod tidy
-    - go generate ./...
-
 builds:
   - id: generic-tgz
     main: ./cmd/bifroest
@@ -19,6 +14,7 @@ builds:
       - CGO_ENABLED=0
     goarch:
       - amd64
+      - arm
       - arm64
     ldflags:
       - "-s -w -X main.edition=generic -X main.version={{.Version}} -X main.revision={{.Commit}} -X main.buildAt={{.Date}} -X main.vendor={{envOrDefault `BIFROEST_VENDOR` `unknown`}}"
@@ -32,6 +28,7 @@ builds:
       - CGO_ENABLED=0
     goarch:
       - amd64
+      - arm
       - arm64
     ldflags:
       - "-s -w -X main.edition=generic -X main.version={{.Version}} -X main.revision={{.Commit}} -X main.buildAt={{.Date}} -X main.vendor={{envOrDefault `BIFROEST_VENDOR` `unknown`}}"

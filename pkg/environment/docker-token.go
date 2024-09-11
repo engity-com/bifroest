@@ -1,120 +1,191 @@
 package environment
 
 import (
-	"crypto/tls"
-	"path/filepath"
-	"runtime"
+	"encoding/json"
+	"strings"
 
-	"github.com/docker/go-connections/tlsconfig"
+	"github.com/docker/docker/api/types"
 
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/net"
+	"github.com/engity-com/bifroest/pkg/session"
 )
 
 type dockerToken struct {
-	Host       string `json:"host,omitempty"`
-	ApiVersion string `json:"apiVersion,omitempty"`
-	CertPath   string `json:"certPath,omitempty"`
-	TlsVerify  bool   `json:"tlsVerify,omitempty"`
+	containerId        string
+	containerAddresses []net.Host
 
-	Id string `json:"id"`
+	remoteUser string
+	remoteHost net.Host
 
-	ShellCommand          []string `json:"shellCommand"`
-	ExecCommand           []string `json:"execCommand"`
-	SftpCommand           []string `json:"sftpCommand,omitempty"`
-	Directory             string   `json:"directory,omitempty"`
-	User                  string   `json:"user,omitempty"`
-	PortForwardingAllowed bool     `json:"portForwardingAllowed,omitempty"`
+	shellCommand []string
+	execCommand  []string
+	sftpCommand  []string
+	user         string
+	directory    string
+
+	portForwardingAllowed bool
 }
 
-func (this *DockerRepository) newDockerToken(req Request) (_ *dockerToken, err error) {
+func (this *DockerRepository) requestToToken(req Request, hostOs, hostArch string) (_ *dockerToken, err error) {
 	fail := func(err error) (*dockerToken, error) {
 		return nil, err
 	}
-	failf := func(msg string, args ...any) (*dockerToken, error) {
+	failf := func(msg string, args ...any) (_ *dockerToken, err error) {
 		return fail(errors.Config.Newf(msg, args...))
 	}
+
 	var result dockerToken
 
-	if result.Host, err = this.conf.Host.Render(req); err != nil {
-		return failf("cannot evaluate host: %w", err)
-	}
-	if result.ApiVersion, err = this.conf.ApiVersion.Render(req); err != nil {
-		return failf("cannot evaluate apiVersion: %w", err)
-	}
-	if result.CertPath, err = this.conf.CertPath.Render(req); err != nil {
-		return failf("cannot evaluate certPath: %w", err)
-	}
-	if result.TlsVerify, err = this.conf.TlsVerify.Render(req); err != nil {
-		return failf("cannot evaluate tlsVerify: %w", err)
-	}
+	result.remoteUser = req.Remote().User()
+	result.remoteHost = req.Remote().Host().Clone()
 
-	if result.ShellCommand, err = this.conf.ShellCommand.Render(req); err != nil {
+	if result.shellCommand, err = this.conf.ShellCommand.Render(req); err != nil {
 		return failf("cannot evaluate shellCommand: %w", err)
 	}
-	if result.ExecCommand, err = this.conf.ExecCommand.Render(req); err != nil {
+	if len(result.shellCommand) == 0 {
+		switch hostOs {
+		case "windows":
+			result.shellCommand = []string{`C:\WINDOWS\system32\cmd.exe`}
+		case "linux":
+			result.shellCommand = []string{`/bin/sh`}
+		default:
+			return failf("shellCommand was not defined for docker environment and default cannot be resolved for %s/%s", hostOs, hostArch)
+		}
+	}
+
+	if result.execCommand, err = this.conf.ExecCommand.Render(req); err != nil {
 		return failf("cannot evaluate execCommand: %w", err)
 	}
-	if result.SftpCommand, err = this.conf.SftpCommand.Render(req); err != nil {
+	if len(result.execCommand) == 0 {
+		switch hostOs {
+		case "windows":
+			result.execCommand = []string{`C:\WINDOWS\system32\cmd.exe`, `/C`}
+		case "linux":
+			result.execCommand = []string{`/bin/sh`, `-c`}
+		default:
+			return failf("execCommand was not defined for docker environment and default cannot be resolved for %s/%s", hostOs, hostArch)
+		}
+	}
+
+	if result.sftpCommand, err = this.conf.SftpCommand.Render(req); err != nil {
 		return failf("cannot evaluate sftpCommand: %w", err)
 	}
-	if result.User, err = this.conf.User.Render(req); err != nil {
+	if len(result.sftpCommand) == 0 {
+		switch hostOs {
+		case "windows":
+			result.sftpCommand = []string{BifroestWindowsBinaryMountTarget, `sftp-server`}
+		default:
+			result.sftpCommand = []string{BifroestUnixBinaryMountTarget, `sftp-server`}
+		}
+	}
+
+	if result.user, err = this.conf.User.Render(req); err != nil {
 		return failf("cannot evaluate user: %w", err)
 	}
-	if result.Directory, err = this.conf.Directory.Render(req); err != nil {
+	if result.directory, err = this.conf.Directory.Render(req); err != nil {
 		return failf("cannot evaluate directory: %w", err)
 	}
-	if result.PortForwardingAllowed, err = this.conf.PortForwardingAllowed.Render(req); err != nil {
+	if result.portForwardingAllowed, err = this.conf.PortForwardingAllowed.Render(req); err != nil {
 		return failf("cannot evaluate portForwardingAllowed: %w", err)
 	}
 
 	return &result, nil
 }
 
-func (this *dockerToken) toTlsConfig() (*tls.Config, error) {
-	if v := this.CertPath; v != "" {
-		return tlsconfig.Client(tlsconfig.Options{
-			CAFile:             filepath.Join(v, "ca.pem"),
-			CertFile:           filepath.Join(v, "cert.pem"),
-			KeyFile:            filepath.Join(v, "key.pem"),
-			InsecureSkipVerify: !this.TlsVerify,
-		})
+func (this *DockerRepository) containerToToken(container *types.Container, expected session.Session) (_ *dockerToken, err error) {
+	fail := func(err error) (*dockerToken, error) {
+		return nil, err
 	}
-	return nil, nil
-}
-
-func (this *dockerToken) enrichWithHostDetails(_ Request, hostOs, hostArch string) (err error) {
-	fail := func(err error) error {
-		return err
-	}
-	failf := func(msg string, args ...any) error {
+	failf := func(msg string, args ...any) (_ *dockerToken, err error) {
 		return fail(errors.Config.Newf(msg, args...))
 	}
-
-	if len(this.SftpCommand) == 0 && hostOs == runtime.GOOS && hostArch == runtime.GOARCH {
-		this.SftpCommand = []string{BifroestBinaryMountTarget, `sftp-server`}
+	decodeStrings := func(in string) (result []string, err error) {
+		err = json.Unmarshal([]byte(in), &result)
+		return result, err
 	}
 
-	if len(this.ShellCommand) == 0 {
-		switch hostOs {
-		case "windows":
-			this.ShellCommand = []string{`C:\WINDOWS\system32\cmd.exe`}
-		case "linux":
-			this.ShellCommand = []string{`/bin/sh`}
-		default:
-			return failf("shellCommand was not defined for docker environment and default cannot be resolved for %s/%s", hostOs, hostArch)
+	var result dockerToken
+
+	labels := container.Labels
+	if v := labels[DockerLabelSessionId]; v == "" {
+		return failf("missing %s label", DockerLabelSessionId)
+	} else if v != expected.Id().String() {
+		return failf("%s label contains session id: %q; but expected was: %q", DockerLabelSessionId, v, expected.Id().String())
+	}
+
+	result.remoteUser = labels[DockerLabelCreatedRemoteUser]
+	if v := labels[DockerLabelCreatedRemoteHost]; v == "" {
+		return failf("missing %s label", DockerLabelCreatedRemoteHost)
+	} else if err = result.remoteHost.Set(v); err != nil {
+		return failf("cannot decode remoteHost: %w", err)
+	}
+
+	if v := labels[DockerLabelShellCommand]; v == "" {
+		return failf("missing %s label", DockerLabelShellCommand)
+	} else if result.shellCommand, err = decodeStrings(v); err != nil {
+		return failf("cannot decode shellCommand: %w", err)
+	}
+	if v := labels[DockerLabelExecCommand]; v == "" {
+		return failf("missing %s label", DockerLabelExecCommand)
+	} else if result.execCommand, err = decodeStrings(v); err != nil {
+		return failf("cannot decode execCommand: %w", err)
+	}
+	if v := labels[DockerLabelSftpCommand]; v == "" {
+		result.sftpCommand = nil
+	} else if result.sftpCommand, err = decodeStrings(v); err != nil {
+		return failf("cannot decode sftpCommand: %w", err)
+	}
+
+	result.user = labels[DockerLabelUser]
+	result.directory = labels[DockerLabelDirectory]
+	result.portForwardingAllowed = labels[DockerLabelPortForwardingAllowed] == "true"
+
+	if netSettings := container.NetworkSettings; netSettings != nil && netSettings.Networks != nil {
+		result.containerAddresses = make([]net.Host, len(netSettings.Networks))
+		var i int
+		for _, v := range netSettings.Networks {
+			if err := result.containerAddresses[i].Set(v.IPAddress); err != nil {
+				return failf("cannot decode network address of network %q: %w", v.NetworkID, err)
+			}
+			i++
 		}
 	}
 
-	if len(this.ExecCommand) == 0 {
-		switch hostOs {
-		case "windows":
-			this.ExecCommand = []string{`C:\WINDOWS\system32\cmd.exe`, `/C`}
-		case "linux":
-			this.ExecCommand = []string{`/bin/sh`, `-c`}
-		default:
-			return failf("execCommand was not defined for docker environment and default cannot be resolved for %s/%s", hostOs, hostArch)
-		}
+	return &result, nil
+}
+
+func (this dockerToken) toLabels(using session.Session) map[string]string {
+	mustEncodeJson := func(what any) string {
+		bytes, err := json.Marshal(what)
+		common.Must(err)
+		return string(bytes)
 	}
 
-	return nil
+	return map[string]string{
+		DockerLabelSessionId: strings.Clone(using.Id().String()),
+
+		DockerLabelCreatedRemoteUser: this.User(),
+		DockerLabelCreatedRemoteHost: this.Host().String(),
+
+		DockerLabelShellCommand:          mustEncodeJson(this.shellCommand),
+		DockerLabelExecCommand:           mustEncodeJson(this.execCommand),
+		DockerLabelSftpCommand:           mustEncodeJson(this.sftpCommand),
+		DockerLabelUser:                  strings.Clone(this.user),
+		DockerLabelDirectory:             strings.Clone(this.directory),
+		DockerLabelPortForwardingAllowed: mustEncodeJson(this.portForwardingAllowed),
+	}
+}
+
+func (this dockerToken) User() string {
+	return strings.Clone(this.remoteUser)
+}
+
+func (this dockerToken) Host() net.Host {
+	return this.remoteHost.Clone()
+}
+
+func (this dockerToken) String() string {
+	return this.User() + "@" + this.Host().String()
 }

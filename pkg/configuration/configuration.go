@@ -23,6 +23,8 @@ type Configuration struct {
 	Flows Flows `yaml:"flows"`
 
 	HouseKeeping HouseKeeping `yaml:"housekeeping"`
+
+	Imp Imp `yaml:"imp"`
 }
 
 func (this *Configuration) SetDefaults() error {
@@ -31,6 +33,7 @@ func (this *Configuration) SetDefaults() error {
 		func(v *Configuration) (string, defaulter) { return "session", &v.Session },
 		func(v *Configuration) (string, defaulter) { return "flows", &v.Flows },
 		func(v *Configuration) (string, defaulter) { return "houseKeeping", &v.HouseKeeping },
+		func(v *Configuration) (string, defaulter) { return "imp", &v.Imp },
 	)
 }
 
@@ -40,6 +43,7 @@ func (this *Configuration) Trim() error {
 		func(v *Configuration) (string, trimmer) { return "session", &v.Session },
 		func(v *Configuration) (string, trimmer) { return "flows", &v.Flows },
 		func(v *Configuration) (string, trimmer) { return "houseKeeping", &v.HouseKeeping },
+		func(v *Configuration) (string, trimmer) { return "imp", &v.Imp },
 	)
 }
 
@@ -50,6 +54,7 @@ func (this *Configuration) Validate() error {
 		func(v *Configuration) (string, validator) { return "flows", &v.Flows },
 		notEmptySliceValidate("flows", func(v *Configuration) *[]Flow { return (*[]Flow)(&v.Flows) }),
 		func(v *Configuration) (string, validator) { return "houseKeeping", &v.HouseKeeping },
+		func(v *Configuration) (string, validator) { return "imp", &v.Imp },
 	)
 }
 
@@ -111,5 +116,6 @@ func (this Configuration) isEqualTo(other *Configuration) bool {
 	return isEqual(&this.Ssh, &other.Ssh) &&
 		isEqual(&this.Session, &other.Session) &&
 		isEqual(&this.Flows, &other.Flows) &&
-		isEqual(&this.HouseKeeping, &other.HouseKeeping)
+		isEqual(&this.HouseKeeping, &other.HouseKeeping) &&
+		isEqual(&this.Imp, &other.Imp)
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/imp"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/template"
 	"github.com/engity-com/bifroest/pkg/user"
@@ -30,7 +31,7 @@ type LocalRepository struct {
 	userRepository user.CloseableRepository
 }
 
-func NewLocalRepository(ctx context.Context, flow configuration.FlowName, conf *configuration.EnvironmentLocal) (*LocalRepository, error) {
+func NewLocalRepository(ctx context.Context, flow configuration.FlowName, conf *configuration.EnvironmentLocal, _ imp.BinaryProvider) (*LocalRepository, error) {
 	fail := func(err error) (*LocalRepository, error) {
 		return nil, err
 	}

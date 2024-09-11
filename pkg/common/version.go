@@ -29,24 +29,28 @@ Revision: ` + v.Revision() + `
 Edition:  ` + v.Edition().String() + `
 Build:    ` + v.BuildAt().Format(time.RFC3339) + ` by ` + v.Vendor() + `
 Go:       ` + v.GoVersion() + `
-Platform: ` + v.Platform() + `
-Features: `
+Platform: ` + v.Platform()
 
 		csnl := 0
+		hasFeatures := false
 		v.Features().ForEach(func(category VersionFeatureCategory) {
+			hasFeatures = true
 			cnl := len(category.Name()) + 1
 			if cnl > csnl {
 				csnl = cnl
 			}
 		})
 
-		v.Features().ForEach(func(category VersionFeatureCategory) {
-			var fts []string
-			category.ForEach(func(feature VersionFeature) {
-				fts = append(fts, feature.Name())
+		if hasFeatures {
+			result += "\nFeatures:"
+			v.Features().ForEach(func(category VersionFeatureCategory) {
+				var fts []string
+				category.ForEach(func(feature VersionFeature) {
+					fts = append(fts, feature.Name())
+				})
+				result += fmt.Sprintf("\n\t%-"+strconv.Itoa(csnl)+"s %s", category.Name()+":", strings.Join(fts, " "))
 			})
-			result += fmt.Sprintf("\n\t%-"+strconv.Itoa(csnl)+"s %s", category.Name()+":", strings.Join(fts, " "))
-		})
+		}
 
 		return result
 	default:

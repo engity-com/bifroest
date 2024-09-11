@@ -11,11 +11,11 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/gliderlabs/ssh"
+	"golang.org/x/net/proxy"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
@@ -63,8 +63,8 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	l := t.Logger()
 
 	opts := container.ExecOptions{
-		User:         this.token.User,
-		WorkingDir:   this.token.Directory,
+		User:         this.token.user,
+		WorkingDir:   this.token.directory,
 		AttachStdin:  true,
 		AttachStderr: true,
 		AttachStdout: true,
@@ -81,12 +81,12 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	switch t.TaskType() {
 	case TaskTypeShell:
 		if v := sshSess.Command(); len(v) > 0 {
-			opts.Cmd = append(this.token.ExecCommand, v...)
+			opts.Cmd = append(this.token.execCommand, v...)
 		} else {
-			opts.Cmd = slices.Clone(this.token.ShellCommand)
+			opts.Cmd = slices.Clone(this.token.shellCommand)
 		}
 	case TaskTypeSftp:
-		opts.Cmd = slices.Clone(this.token.SftpCommand)
+		opts.Cmd = slices.Clone(this.token.sftpCommand)
 	default:
 		return failf("illegal task type: %v", t.TaskType())
 	}
@@ -128,14 +128,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	}
 	opts.Env = ev.Strings()
 
-	if e, err := apiClient.ContainerExecCreate(t.Context(), this.token.Id, opts); err != nil {
-		c, ec, fErr := this.findContainer(t.Context())
-		if fErr != nil {
-			return failf("cannot execute command: %w", err)
-		}
-		if c.State != "running" {
-			return ec, err
-		}
+	if e, err := apiClient.ContainerExecCreate(t.Context(), this.token.containerId, opts); err != nil {
 		return failf("cannot execute command: %w", err)
 	} else {
 		execId = e.ID
@@ -203,7 +196,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		select {
 		case s, ok := <-signals:
 			if ok {
-				if err := apiClient.ContainerKill(sshSess.Context(), this.token.Id, string(s)); err != nil {
+				if err := apiClient.ContainerKill(sshSess.Context(), this.token.containerId, string(s)); err != nil {
 					l.WithError(err).
 						With("signal", string(s)).
 						Warn("cannot send signal; ignoring")
@@ -231,25 +224,14 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	}
 }
 
-func (this *docker) findContainer(ctx context.Context) (*types.Container, int, error) {
-	return this.repository.findContainerById(ctx, this.apiClient, this.token.Id)
-}
-
 func (this *docker) Dispose(ctx context.Context) (bool, error) {
 	fail := func(err error) (bool, error) {
 		return false, errors.Newf(errors.System, "cannot dispose environment: %w", err)
 	}
 
-	ok, err := this.repository.removeContainer(ctx, this.apiClient, this.token.Id)
+	ok, err := this.repository.removeContainer(ctx, this.apiClient, this.token.containerId)
 	if err != nil {
 		return fail(err)
-	}
-
-	sess := this.session
-	if sess != nil {
-		if err := sess.SetEnvironmentToken(ctx, nil); err != nil {
-			return fail(err)
-		}
 	}
 
 	return ok, nil
@@ -260,16 +242,21 @@ func (this *docker) isRelevantError(err error) bool {
 }
 
 func (this *docker) IsPortForwardingAllowed(_ string, _ uint32) (bool, error) {
-	return this.token.PortForwardingAllowed, nil
+	return this.token.portForwardingAllowed, nil
 }
 
 func (this *docker) NewDestinationConnection(ctx context.Context, host string, port uint32) (io.ReadWriteCloser, error) {
-	if !this.token.PortForwardingAllowed {
+	if !this.token.portForwardingAllowed {
 		return nil, errors.Newf(errors.Permission, "portforwarning not allowed")
 	}
 
-	// TODO! Dail into the container
+	// TODO! Should be configured better....
+	socks5, err := proxy.SOCKS5("tcp", ":8800", &proxy.Auth{}, proxy.Direct)
+	if err != nil {
+		return nil, err
+	}
+	socks5C := socks5.(proxy.ContextDialer)
+
 	dest := net.JoinHostPort(host, strconv.FormatInt(int64(port), 10))
-	var dialer net.Dialer
-	return dialer.DialContext(ctx, "tcp", dest)
+	return socks5C.DialContext(ctx, "tcp", dest)
 }

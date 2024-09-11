@@ -20,6 +20,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/imp"
 	bnet "github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 )
@@ -154,13 +155,16 @@ func (this *Service) prepare() (svc *service, err error) {
 	ctx := context.Background()
 	svc = &service{Service: this}
 
+	if svc.impBinaries, err = imp.NewBinaries(ctx, this.Version, &this.Configuration.Imp); err != nil {
+		return fail(err)
+	}
 	if svc.sessions, err = session.NewFacadeRepository(ctx, &this.Configuration.Session); err != nil {
 		return fail(err)
 	}
 	if svc.authorizer, err = authorization.NewAuthorizerFacade(ctx, &this.Configuration.Flows); err != nil {
 		return fail(err)
 	}
-	if svc.environments, err = environment.NewRepositoryFacade(ctx, &this.Configuration.Flows); err != nil {
+	if svc.environments, err = environment.NewRepositoryFacade(ctx, &this.Configuration.Flows, svc.impBinaries); err != nil {
 		return fail(err)
 	}
 	if err = svc.houseKeeper.init(svc); err != nil {
@@ -240,6 +244,7 @@ type service struct {
 	authorizer     authorization.CloseableAuthorizer
 	environments   environment.CloseableRepository
 	houseKeeper    houseKeeper
+	impBinaries    *imp.Binaries
 	server         ssh.Server
 	forwardHandler ssh.ForwardedTCPHandler
 
@@ -278,6 +283,7 @@ func (this *service) createNewServerConfig(ssh.Context) *gssh.ServerConfig {
 }
 
 func (this *service) Close() (rErr error) {
+	defer common.KeepCloseError(&rErr, this.impBinaries)
 	defer common.KeepCloseError(&rErr, this.sessions)
 	defer common.KeepCloseError(&rErr, this.authorizer)
 	defer common.KeepCloseError(&rErr, this.environments)
