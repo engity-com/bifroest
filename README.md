@@ -1,15 +1,20 @@
 # Engity's Bifröst
 
+![Engity's Bifröst](docs/assets/logo-with-text.svg)
+
 Bifröst (spoken as "Bee-frest"), is an advanced SSH server. It can be used as a drop-in-replacement for [OpenSSH Server](https://www.openssh.com/), but it was actually created with some more advanced stuff in mind; see below.
 
 ## TOC
 
+* [Use-cases](https://bifroest.engity.org/latest/usecases/)
 * [Features](#features)
 * [Getting started](#getting-started)
+* [Configuration](https://bifroest.engity.org/latest/reference/configuration/)
 * [Status](#status)
 * [License](LICENSE)
 * [Code of Conduct](CODE_OF_CONDUCT.md)
 * [Contributing](CONTRIBUTING.md)
+* [Security](SECURITY.md)
 
 ## Features
 
@@ -45,14 +50,14 @@ It can also automatically clean up these users as they're no longer needed, for 
    ```shell
    # Syntax
    curl -sSLf https://github.com/engity-com/bifroest/releases/download/<version>/bifroest-<os>-<arch>-<edition>.tgz | sudo tar -zxv -C /usr/bin bifroest
-   
+
    # Example
    curl -sSLf https://github.com/engity-com/bifroest/releases/download/v1.2.3/bifroest-linux-amd64-extended.tgz | sudo tar -zxv -C /usr/bin bifroest
    ```
-2. Configure Bifröst. For example download the demo configuration and adjust for your needs (see [our demo configuration](doc/configurations/demo.yaml) for the documentation about it):
+2. Configure Bifröst. For example, download the demo configuration and adjust it to your needs (see [documentation of configuration](doc/configuration.md) for more details):
    ```shell
    sudo mkdir -p /etc/engity/bifroest/
-   sudo curl -sSLf https://raw.githubusercontent.com/engity-com/bifroest/main/doc/configurations/sshd-dropin-replacement.yaml -o /etc/engity/bifroest/configuration.yaml
+   sudo curl -sSLf https://raw.githubusercontent.com/engity-com/bifroest/main/contrib/configurations/sshd-dropin-replacement.yaml -o /etc/engity/bifroest/configuration.yaml
    # Adjust it to your needs
    sudo vi /etc/engity/bifroest/configuration.yaml
    ```
@@ -66,9 +71,9 @@ It can also automatically clean up these users as they're no longer needed, for 
 #### systemd
 
 To enable Bifröst to run at every server start where [systemd](https://wiki.archlinux.org/title/Systemd) is available, simply:
-1. Download [our example service configuration](doc/systemd/bifroest.service):
+1. Download [our example service configuration](contrib/systemd/bifroest.service):
    ```shell
-   sudo curl -sSLf https://raw.githubusercontent.com/engity-com/bifroest/main/doc/systemd/bifroest.service -o /etc/systemd/system/bifroest.service
+   sudo curl -sSLf https://raw.githubusercontent.com/engity-com/bifroest/main/contrib/systemd/bifroest.service -o /etc/systemd/system/bifroest.service
    ```
 2. Reload the systemd daemon:
    ```shell
@@ -80,11 +85,18 @@ To enable Bifröst to run at every server start where [systemd](https://wiki.arc
    sudo systemctl start bifroest.service
    ```
 
+### What's next?
+
+Read [Use-Cases](https://bifroest.engity.org/latest/usecases/) and [the configuration documentation](https://bifroest.engity.org/latest/reference/configuration/) to see what else you can do with Bifröst.
+
 ## Status
 
 This project is currently under development. The application is stable ([file a bug if you find one](https://github.com/engity-com/bifroest/issues/new/choose)), but the configuration/command/API structure needs improvement.
 
 ## More topics
+* [Use-Cases](https://bifroest.engity.org/latest/usecases/)
+* [Configuration](https://bifroest.engity.org/latest/reference/configuration/)
 * [License](LICENSE)
 * [Code of Conduct](CODE_OF_CONDUCT.md)
 * [Contributing](CONTRIBUTING.md)
+* [Security](SECURITY.md)

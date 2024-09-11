@@ -288,7 +288,7 @@ func (this *LocalAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Autho
 		return fail(fmt.Errorf(message, args...))
 	}
 
-	allowed, err := this.conf.Password.Allowed.Render(req)
+	allowed, err := this.conf.Password.InteractiveAllowed.Render(req)
 	if err != nil {
 		return failf("cannot evaluate of user is allowed: %w", err)
 	}

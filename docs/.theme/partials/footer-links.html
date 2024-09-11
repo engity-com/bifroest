@@ -1,0 +1,15 @@
+{%- if "extra" in config and "footer" in config.extra and "links" in config.extra.footer and config.extra.footer.links and page%}
+    <ul class="md-footer-links">
+        {% for link in config.extra.footer.links %}
+            <li{% if "id" in link %} id="{{link.id}}"{% endif %}>
+                {%- set target = namespace(link=link.link) %}
+                {%- for candidate in pages %}
+                    {%- if candidate.src_uri == link.link %}
+                       {%- set target.link = candidate.url_relative_to(page.file) %}
+                    {%- endif %}
+                {%- endfor %}
+                <a href="{{target.link}}">{{link.name}}</a>
+            </li>
+        {% endfor %}
+    </ul>
+{% endif -%}

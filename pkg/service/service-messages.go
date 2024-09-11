@@ -13,7 +13,7 @@ import (
 func (this *service) handleBanner(ctx ssh.Context) string {
 	l := this.logger(ctx)
 
-	if b, err := this.Configuration.Ssh.Banner.Render(&bannerContext{ctx}); err != nil {
+	if b, err := this.Configuration.Ssh.Banner.Render(&connectionContext{ctx}); err != nil {
 		l.WithError(err).Warn("cannot retrieve banner; showing none")
 		return ""
 	} else {
