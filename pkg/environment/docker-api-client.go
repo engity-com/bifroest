@@ -8,23 +8,16 @@ import (
 	"github.com/docker/go-connections/sockets"
 	"github.com/docker/go-connections/tlsconfig"
 
+	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
-	"github.com/engity-com/bifroest/pkg/session"
 )
 
-type dockerConnectionReference struct {
-	host       string
-	apiVersion string
-	certPath   string
-	tlsVerify  bool
-}
-
-func (this *DockerRepository) newApiClientFor(sess session.Session) (_ client.APIClient, _ error) {
+func newDockerApiClient(conf *configuration.EnvironmentDocker) (_ client.APIClient, _ error) {
 	fail := func(err error) (client.APIClient, error) {
 		return nil, err
 	}
 
-	ref, err := this.newConnectionReference(sess)
+	ref, err := newDockerConnectionReference(conf)
 	if err != nil {
 		return fail(err)
 	}
@@ -36,28 +29,38 @@ func (this *DockerRepository) newApiClientFor(sess session.Session) (_ client.AP
 	return apiClient, nil
 }
 
-func (this *DockerRepository) newConnectionReference(sess session.Session) (_ *dockerConnectionReference, err error) {
+func newDockerConnectionReference(conf *configuration.EnvironmentDocker) (_ *dockerConnectionReference, err error) {
 	fail := func(err error) (*dockerConnectionReference, error) {
 		return nil, err
 	}
 	failf := func(msg string, args ...any) (*dockerConnectionReference, error) {
 		return fail(errors.Config.Newf(msg, args...))
 	}
+
+	data := struct{}{}
+
 	var result dockerConnectionReference
 
-	if result.host, err = this.conf.Host.Render(sess); err != nil {
+	if result.host, err = conf.Host.Render(data); err != nil {
 		return failf("cannot evaluate host: %w", err)
 	}
-	if result.apiVersion, err = this.conf.ApiVersion.Render(sess); err != nil {
+	if result.apiVersion, err = conf.ApiVersion.Render(data); err != nil {
 		return failf("cannot evaluate apiVersion: %w", err)
 	}
-	if result.certPath, err = this.conf.CertPath.Render(sess); err != nil {
+	if result.certPath, err = conf.CertPath.Render(data); err != nil {
 		return failf("cannot evaluate certPath: %w", err)
 	}
-	if result.tlsVerify, err = this.conf.TlsVerify.Render(sess); err != nil {
+	if result.tlsVerify, err = conf.TlsVerify.Render(data); err != nil {
 		return failf("cannot evaluate tlsVerify: %w", err)
 	}
 	return &result, nil
+}
+
+type dockerConnectionReference struct {
+	host       string
+	apiVersion string
+	certPath   string
+	tlsVerify  bool
 }
 
 func (this dockerConnectionReference) toApiClient() (_ *client.Client, err error) {

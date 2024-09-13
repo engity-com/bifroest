@@ -8,15 +8,20 @@ import (
 	"sync/atomic"
 	"syscall"
 
-	"github.com/alecthomas/kingpin"
+	"github.com/alecthomas/kingpin/v2"
 	log "github.com/echocat/slf4g"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/imp"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 var (
-	socks5Service imp.Service
+	impService = func() *imp.Service {
+		return &imp.Service{
+			Version: versionV,
+		}
+	}()
 )
 
 var _ = registerCommand(func(app *kingpin.Application) {
@@ -25,15 +30,11 @@ var _ = registerCommand(func(app *kingpin.Application) {
 		Action(func(*kingpin.ParseContext) error {
 			return doImp()
 		})
-	cmd.Flag("access-token", "Access token to accessing the imp service.").
+	cmd.Flag("access-token", "Access token to accessing the imp service (hex encoded).").
 		Envar("BIFROEST_IMP_ACCESS_TOKEN").
 		PlaceHolder("<path>").
 		Required().
-		StringVar(&socks5Service.AccessToken)
-	cmd.Flag("socks5-address", "Address where the imp is serving its socks5 server.").
-		Default(":8000").
-		PlaceHolder("[<host>]:<port>").
-		StringVar(&socks5Service.Address)
+		HexBytesVar(&impService.ExpectedToken)
 })
 
 func doImp() error {
@@ -42,7 +43,7 @@ func doImp() error {
 
 	sigs := make(chan os.Signal, 1)
 	defer close(sigs)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigs, syscall.SIGTERM)
 	go func() {
 		sig := <-sigs
 		log.With("signal", sig).Info("received signal")
@@ -52,10 +53,12 @@ func doImp() error {
 	var rErr atomic.Pointer[error]
 	var wg sync.WaitGroup
 
+	ln := sys.NewStdinStdoutSocket(true)
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := socks5Service.Run(ctx); err != nil {
+		if err := impService.Serve(ctx, ln); err != nil {
 			rErr.CompareAndSwap(nil, &err)
 		}
 	}()

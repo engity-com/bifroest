@@ -3,6 +3,7 @@ package sys
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"syscall"
@@ -13,6 +14,13 @@ var (
 )
 
 type Signal uint8
+
+func (this Signal) SendToProcess(p *os.Process) error {
+	if p == nil {
+		return nil
+	}
+	return this.sendToProcess(p)
+}
 
 func (this Signal) String() string {
 	if this == 0 {
@@ -54,7 +62,7 @@ func (this *Signal) Set(plain string) error {
 	}
 
 	if candidate, ok := strToSignal[plainU]; ok {
-		*this = Signal(candidate)
+		*this = candidate
 		return nil
 	}
 

@@ -3,6 +3,7 @@
 package sys
 
 import (
+	"os"
 	"syscall"
 )
 
@@ -83,3 +84,7 @@ var (
 		"XFSZ":   SIGXFSZ,
 	}
 )
+
+func (this Signal) sendToProcess(p *os.Process) error {
+	return p.Signal(this.Native())
+}

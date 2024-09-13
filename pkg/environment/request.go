@@ -5,11 +5,11 @@ import (
 	"github.com/gliderlabs/ssh"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
-	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/net"
 )
 
 type Request interface {
-	Remote() common.Remote
+	Remote() net.Remote
 	Context() ssh.Context
 	Logger() log.Logger
 	Authorization() authorization.Authorization

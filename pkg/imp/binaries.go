@@ -10,7 +10,6 @@ import (
 	"runtime"
 
 	log "github.com/echocat/slf4g"
-	"github.com/kardianos/osext"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -36,7 +35,7 @@ type Binaries struct {
 	Logger log.Logger
 }
 
-func (this *Binaries) FindBinaryFor(ctx context.Context, os, arch string) (_ string, rErr error) {
+func (this *Binaries) FindBinaryFor(ctx context.Context, hostOs, hostArch string) (_ string, rErr error) {
 	fail := func(err error) (string, error) {
 		return "", err
 	}
@@ -45,12 +44,12 @@ func (this *Binaries) FindBinaryFor(ctx context.Context, os, arch string) (_ str
 	}
 
 	l := this.logger().
-		With("os", os).
-		With("arch", arch).
+		With("os", hostOs).
+		With("arch", hostArch).
 		With("version", this.version.Version())
 
-	if sys.IsBinaryCompatibleWithHost(runtime.GOOS, os, runtime.GOARCH, arch) {
-		result, err := osext.Executable()
+	if sys.IsBinaryCompatibleWithHost(runtime.GOOS, hostOs, runtime.GOARCH, hostArch) {
+		result, err := goos.Executable()
 		if err != nil {
 			return failf(errors.System, "cannot resolve the location of the server's executable location: %w", err)
 		}
@@ -58,7 +57,7 @@ func (this *Binaries) FindBinaryFor(ctx context.Context, os, arch string) (_ str
 		return result, nil
 	}
 
-	fn, err := this.alternativesLocationFor(os, arch)
+	fn, err := this.alternativesLocationFor(hostOs, hostArch)
 	if err != nil {
 		return fail(err)
 	}
@@ -83,7 +82,7 @@ func (this *Binaries) FindBinaryFor(ctx context.Context, os, arch string) (_ str
 		return fn, nil
 	}
 
-	du, err := this.alternativesDownloadUrlFor(os, arch)
+	du, err := this.alternativesDownloadUrlFor(hostOs, hostArch)
 	if err != nil {
 		return fail(err)
 	}

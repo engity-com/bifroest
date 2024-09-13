@@ -4,7 +4,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/alecthomas/kingpin"
+	"github.com/alecthomas/kingpin/v2"
 	log "github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/level"
 	"github.com/echocat/slf4g/native"
@@ -21,7 +21,7 @@ type LogProvider interface {
 }
 
 func ConfigureLoggingForFlags(app *kingpin.Application, of LogProvider) {
-	native.DefaultProvider.Consumer = consumer.NewWriter(os.Stdout)
+	native.DefaultProvider.Consumer = consumer.NewWriter(os.Stderr)
 
 	lv := value.NewProvider(of)
 	app.Flag("log.level", "Defines the minimum level at which the log messages will be logged. Default: "+lv.Level.String()).

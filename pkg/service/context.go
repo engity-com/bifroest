@@ -9,7 +9,6 @@ import (
 	gssh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
-	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
@@ -58,7 +57,7 @@ func (this *authorizeRequest) Context() ssh.Context {
 	return this.remote.Context
 }
 
-func (this *authorizeRequest) Remote() common.Remote {
+func (this *authorizeRequest) Remote() net.Remote {
 	return &this.remote
 }
 
@@ -165,7 +164,7 @@ func (this *environmentRequest) Context() ssh.Context {
 	return this.remote.Context
 }
 
-func (this *environmentRequest) Remote() common.Remote {
+func (this *environmentRequest) Remote() net.Remote {
 	return this.remote
 }
 

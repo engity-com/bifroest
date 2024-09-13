@@ -1,10 +1,11 @@
 package main
 
 import (
-	"github.com/alecthomas/kingpin"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/alecthomas/kingpin/v2"
 )
 
 var _ = registerCommand(func(app *kingpin.Application) {

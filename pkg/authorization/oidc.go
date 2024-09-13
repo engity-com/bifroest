@@ -9,8 +9,8 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/oauth2"
 
-	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
@@ -19,7 +19,7 @@ type oidc struct {
 	token             OidcToken
 	idToken           OidcIdToken
 	userInfo          OidcUserInfo
-	remote            common.Remote
+	remote            net.Remote
 	flow              configuration.FlowName
 	session           session.Session
 	sessionsPublicKey ssh.PublicKey
@@ -40,7 +40,7 @@ func (this *oidc) GetField(name string, ce ContextEnabled) (any, bool, error) {
 	})
 }
 
-func (this *oidc) Remote() common.Remote {
+func (this *oidc) Remote() net.Remote {
 	return this.remote
 }
 

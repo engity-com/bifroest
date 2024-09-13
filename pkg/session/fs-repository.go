@@ -22,6 +22,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -126,7 +127,7 @@ func (this *FsRepository) dirFileMode() sys.FileMode {
 	return result
 }
 
-func (this *FsRepository) Create(ctx context.Context, flow configuration.FlowName, remote common.Remote, authToken []byte) (Session, error) {
+func (this *FsRepository) Create(ctx context.Context, flow configuration.FlowName, remote net.Remote, authToken []byte) (Session, error) {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 

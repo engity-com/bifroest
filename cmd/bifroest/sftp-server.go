@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/alecthomas/kingpin"
+	"github.com/alecthomas/kingpin/v2"
 
 	"github.com/engity-com/bifroest/pkg/sftp"
 )

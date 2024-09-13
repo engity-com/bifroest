@@ -6,8 +6,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/net"
 )
 
 type Info interface {
@@ -24,10 +24,10 @@ type Info interface {
 
 type InfoCreated interface {
 	At() time.Time
-	Remote() common.Remote
+	Remote() net.Remote
 }
 
 type InfoLastAccessed interface {
 	At() time.Time
-	Remote() common.Remote
+	Remote() net.Remote
 }

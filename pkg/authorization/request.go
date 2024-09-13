@@ -5,14 +5,14 @@ import (
 	"github.com/gliderlabs/ssh"
 	gssh "golang.org/x/crypto/ssh"
 
-	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
 type Request interface {
 	Sessions() session.Repository
 	Context() ssh.Context
-	Remote() common.Remote
+	Remote() net.Remote
 	Logger() log.Logger
 	Validate(Authorization) (bool, error)
 }

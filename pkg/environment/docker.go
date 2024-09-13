@@ -14,7 +14,6 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
-	"github.com/gliderlabs/ssh"
 	"golang.org/x/net/proxy"
 
 	"github.com/engity-com/bifroest/pkg/common"
@@ -100,7 +99,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	// 		return failf("cannot listen to agent: %w", err)
 	// 	}
 	// 	defer common.IgnoreCloseError(al)
-	// 	go ssh.ForwardAgentConnections(al, sshSess)
+	// go ssh.ForwardAgentConnections(al, sshSess)
 	// 	ev.Set("SSH_AUTH_SOCK", al.Addr().String())
 	// }
 
@@ -142,13 +141,11 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		return failf("cannot attach to execution #%v: %w", execId, err)
 	}
 
-	signals := make(chan ssh.Signal, 1)
 	copyDone := make(chan error, 2)
 	var activeRoutines sync.WaitGroup
 	defer func() {
 		go func() {
 			activeRoutines.Wait()
-			defer close(signals)
 			defer close(copyDone)
 		}()
 	}()
@@ -191,17 +188,9 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		return ei.ExitCode, nil
 	}
 
-	sshSess.Signals(signals)
 	for {
 		select {
-		case s, ok := <-signals:
-			if ok {
-				if err := apiClient.ContainerKill(sshSess.Context(), this.token.containerId, string(s)); err != nil {
-					l.WithError(err).
-						With("signal", string(s)).
-						Warn("cannot send signal; ignoring")
-				}
-			}
+		// TODO! Send kill to child command
 		case <-t.Context().Done():
 			if err := t.Context().Err(); err != nil && rErr == nil {
 				rErr = err

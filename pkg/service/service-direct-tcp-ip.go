@@ -1,9 +1,6 @@
 package service
 
 import (
-	"io"
-	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -13,6 +10,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 type localForwardChannelData struct {
@@ -77,72 +75,40 @@ func (this *service) handleNewDirectTcpIp(_ *ssh.Server, _ *gssh.ServerConn, new
 
 	go gssh.DiscardRequests(reqs)
 
-	type done struct {
-		name  string
-		error error
+	nameOf := func(isL2r bool) string {
+		if isL2r {
+			return "source -> destination"
+		}
+		return "destination -> source"
 	}
-	dones := make(chan done, 2)
-	var wg sync.WaitGroup
-	var rErr error
-	var direction string
-	var s2d, d2s atomic.Int64
-	started := time.Now()
-	go func() {
-		wg.Wait()
-		close(dones)
 
-		ld := l.
-			With("s2d", s2d.Load()).
-			With("d2s", d2s.Load()).
-			With("duration", time.Since(started).Truncate(time.Microsecond))
-
-		if rErr != nil {
-			if direction != "" {
-				ld = ld.With("direction", direction)
+	_ = sys.FullDuplexCopy(ctx, sConn, dConn, &sys.FullDuplexCopyOpts{
+		OnStart: func() {
+			l.Debug("port forwarding started")
+		},
+		OnEnd: func(s2d, d2s int64, duration time.Duration, err error, wasInL2r *bool) {
+			ld := l.
+				With("s2d", s2d).
+				With("d2s", d2s).
+				With("duration", duration)
+			if wasInL2r != nil {
+				ld = ld.With("direction", nameOf(*wasInL2r))
 			}
-			ld.WithError(rErr).Error("cannot successful handle port forwarding request; canceling...")
-		} else {
-			ld.Info("port forwarding finished")
-		}
-	}()
 
-	copyFull := func(from io.Reader, to io.Writer, name string) {
-		defer wg.Done()
-		n, err := io.Copy(to, from)
-		if this.isRelevantError(err) {
-			dones <- done{name, err}
-		} else {
-			dones <- done{name, nil}
-		}
-		if name == "destination -> source" {
-			d2s.Store(n)
-		} else {
-			s2d.Store(n)
-		}
-		l.WithError(err).Tracef("coping of %s done", name)
-	}
-	wg.Add(2)
-	go copyFull(dConn, sConn, "destination -> source")
-	go copyFull(sConn, dConn, "source -> destination")
-
-	l.Debug("port forwarding started")
-
-	for {
-		select {
-		case <-ctx.Done():
-			if err := ctx.Err(); this.isSilentError(err) {
-				rErr = err
-				direction = ""
+			if err != nil {
+				ld.WithError(err).Error("cannot successful handle port forwarding request; canceling...")
+			} else {
+				ld.Info("port forwarding finished")
 			}
-			return
-		case v := <-dones:
-			if this.isRelevantError(v.error) {
-				rErr = v.error
-				direction = v.name
+		},
+		OnStreamEnd: func(isL2r bool, err error) {
+			name := "source -> destination"
+			if !isL2r {
+				name = "destination -> source"
 			}
-			return
-		}
-	}
+			l.WithError(err).Tracef("coping of %s done", name)
+		},
+	})
 }
 
 func (this *service) onReversePortForwardingRequested(_ ssh.Context, _ string, _ uint32) bool {

@@ -122,25 +122,25 @@ func (this *DockerRepository) containerToToken(container *types.Container, expec
 		return failf("cannot decode remoteHost: %w", err)
 	}
 
-	if v := labels[DockerLabelShellCommand]; v == "" {
-		return failf("missing %s label", DockerLabelShellCommand)
+	if v := labels[DockerAnnotationShellCommand]; v == "" {
+		return failf("missing %s label", DockerAnnotationShellCommand)
 	} else if result.shellCommand, err = decodeStrings(v); err != nil {
 		return failf("cannot decode shellCommand: %w", err)
 	}
-	if v := labels[DockerLabelExecCommand]; v == "" {
-		return failf("missing %s label", DockerLabelExecCommand)
+	if v := labels[DockerAnnotationExecCommand]; v == "" {
+		return failf("missing %s label", DockerAnnotationExecCommand)
 	} else if result.execCommand, err = decodeStrings(v); err != nil {
 		return failf("cannot decode execCommand: %w", err)
 	}
-	if v := labels[DockerLabelSftpCommand]; v == "" {
+	if v := labels[DockerAnnotationSftpCommand]; v == "" {
 		result.sftpCommand = nil
 	} else if result.sftpCommand, err = decodeStrings(v); err != nil {
 		return failf("cannot decode sftpCommand: %w", err)
 	}
 
-	result.user = labels[DockerLabelUser]
-	result.directory = labels[DockerLabelDirectory]
-	result.portForwardingAllowed = labels[DockerLabelPortForwardingAllowed] == "true"
+	result.user = labels[DockerAnnotationUser]
+	result.directory = labels[DockerAnnotationDirectory]
+	result.portForwardingAllowed = labels[DockerAnnotationPortForwardingAllowed] == "true"
 
 	if netSettings := container.NetworkSettings; netSettings != nil && netSettings.Networks != nil {
 		result.containerAddresses = make([]net.Host, len(netSettings.Networks))
@@ -169,12 +169,12 @@ func (this dockerToken) toLabels(using session.Session) map[string]string {
 		DockerLabelCreatedRemoteUser: this.User(),
 		DockerLabelCreatedRemoteHost: this.Host().String(),
 
-		DockerLabelShellCommand:          mustEncodeJson(this.shellCommand),
-		DockerLabelExecCommand:           mustEncodeJson(this.execCommand),
-		DockerLabelSftpCommand:           mustEncodeJson(this.sftpCommand),
-		DockerLabelUser:                  strings.Clone(this.user),
-		DockerLabelDirectory:             strings.Clone(this.directory),
-		DockerLabelPortForwardingAllowed: mustEncodeJson(this.portForwardingAllowed),
+		DockerAnnotationShellCommand:          mustEncodeJson(this.shellCommand),
+		DockerAnnotationExecCommand:           mustEncodeJson(this.execCommand),
+		DockerAnnotationSftpCommand:           mustEncodeJson(this.sftpCommand),
+		DockerAnnotationUser:                  strings.Clone(this.user),
+		DockerAnnotationDirectory:             strings.Clone(this.directory),
+		DockerAnnotationPortForwardingAllowed: mustEncodeJson(this.portForwardingAllowed),
 	}
 }
 

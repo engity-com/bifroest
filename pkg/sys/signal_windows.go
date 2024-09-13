@@ -3,7 +3,12 @@
 package sys
 
 import (
+	"os"
 	"syscall"
+
+	"golang.org/x/sys/windows"
+
+	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 const (
@@ -38,4 +43,32 @@ var (
 		"TERM": SIGTERM,
 		"TRAP": SIGTRAP,
 	}
+
+	dllKernel32                  = windows.NewLazySystemDLL("kernel32.dll")
+	procAttachConsole            = dllKernel32.NewProc("AttachConsole")
+	procSetConsoleCtrlHandler    = dllKernel32.NewProc("SetConsoleCtrlHandler")
+	procGenerateConsoleCtrlEvent = dllKernel32.NewProc("GenerateConsoleCtrlEvent")
 )
+
+func (this Signal) sendToProcess(p *os.Process) error {
+	if this == SIGINT {
+		return this.sendIntToProcess(p)
+	}
+	return p.Signal(this.Native())
+}
+
+func (this Signal) sendIntToProcess(p *os.Process) error {
+	r1, _, err := procAttachConsole.Call(uintptr(p.Pid))
+	if r1 == 0 && !errors.Is(err, syscall.ERROR_ACCESS_DENIED) {
+		return err
+	}
+	r1, _, err = procSetConsoleCtrlHandler.Call(0, 1)
+	if r1 == 0 {
+		return err
+	}
+	r1, _, err = procGenerateConsoleCtrlEvent.Call(windows.CTRL_BREAK_EVENT, uintptr(p.Pid))
+	if r1 == 0 {
+		return err
+	}
+	return nil
+}

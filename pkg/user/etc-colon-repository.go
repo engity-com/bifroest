@@ -20,7 +20,7 @@ import (
 	"github.com/echocat/slf4g/fields"
 	"github.com/fsnotify/fsnotify"
 	"github.com/otiai10/copy"
-	"github.com/shirou/gopsutil/process"
+	"github.com/shirou/gopsutil/v4/process"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"

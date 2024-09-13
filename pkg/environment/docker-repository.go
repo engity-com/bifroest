@@ -3,19 +3,16 @@ package environment
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/strslice"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
-	"github.com/docker/go-connections/nat"
 	log "github.com/echocat/slf4g"
 	"github.com/gliderlabs/ssh"
 
@@ -34,27 +31,36 @@ const (
 	BifroestUnixBinaryMountTarget    = `/usr/bin/bifroest`
 	BifroestWindowsBinaryMountTarget = `C:\Program Files\Engity\Bifroest\bifroest.exe`
 
-	DockerLabelPrefix                = "org.engity.bifroest/"
-	DockerLabelSessionId             = DockerLabelPrefix + "session-id"
-	DockerLabelCreatedRemoteUser     = DockerLabelPrefix + "created-remote-user"
-	DockerLabelCreatedRemoteHost     = DockerLabelPrefix + "created-remote-host"
-	DockerLabelShellCommand          = DockerLabelPrefix + "shellCommand"
-	DockerLabelExecCommand           = DockerLabelPrefix + "execCommand"
-	DockerLabelSftpCommand           = DockerLabelPrefix + "sftpCommand"
-	DockerLabelUser                  = DockerLabelPrefix + "user"
-	DockerLabelDirectory             = DockerLabelPrefix + "directory"
-	DockerLabelPortForwardingAllowed = DockerLabelPrefix + "portForwardingAllowed"
+	DockerLabelPrefix            = "org.engity.bifroest/"
+	DockerLabelFlow              = DockerLabelPrefix + "flow"
+	DockerLabelSessionId         = DockerLabelPrefix + "session-id"
+	DockerLabelCreatedRemoteUser = DockerLabelPrefix + "created-remote-user"
+	DockerLabelCreatedRemoteHost = DockerLabelPrefix + "created-remote-host"
+
+	DockerAnnotationPrefix                = DockerLabelPrefix
+	DockerAnnotationShellCommand          = DockerAnnotationPrefix + "shellCommand"
+	DockerAnnotationExecCommand           = DockerAnnotationPrefix + "execCommand"
+	DockerAnnotationSftpCommand           = DockerAnnotationPrefix + "sftpCommand"
+	DockerAnnotationUser                  = DockerAnnotationPrefix + "user"
+	DockerAnnotationDirectory             = DockerAnnotationPrefix + "directory"
+	DockerAnnotationPortForwardingAllowed = DockerAnnotationPrefix + "portForwardingAllowed"
+	DockerAnnotationAccessToken           = DockerAnnotationPrefix + "accessToken"
 )
 
 type DockerRepository struct {
 	flow        configuration.FlowName
 	conf        *configuration.EnvironmentDocker
 	impBinaries imp.BinaryProvider
+	apiClient   client.APIClient
+	hostOs      string
+	hostArch    string
+
+	imps sync.Map
 
 	Logger log.Logger
 }
 
-func NewDockerRepository(_ context.Context, flow configuration.FlowName, conf *configuration.EnvironmentDocker, ibp imp.BinaryProvider) (*DockerRepository, error) {
+func NewDockerRepository(ctx context.Context, flow configuration.FlowName, conf *configuration.EnvironmentDocker, ibp imp.BinaryProvider) (*DockerRepository, error) {
 	fail := func(err error) (*DockerRepository, error) {
 		return nil, err
 	}
@@ -66,10 +72,27 @@ func NewDockerRepository(_ context.Context, flow configuration.FlowName, conf *c
 		return failf("nil configuration")
 	}
 
+	apiClient, err := newDockerApiClient(conf)
+	if err != nil {
+		return fail(err)
+	}
+
+	si, err := apiClient.ServerVersion(ctx)
+	if err != nil {
+		return failf("cannot retrieve docker host's version: %w", err)
+	}
+
 	result := DockerRepository{
 		flow:        flow,
 		conf:        conf,
 		impBinaries: ibp,
+		apiClient:   apiClient,
+		hostOs:      si.Os,
+		hostArch:    si.Arch,
+	}
+
+	if err := result.recoverDangling(ctx); err != nil {
+		return fail(err)
 	}
 
 	return &result, nil
@@ -122,7 +145,7 @@ func (this *DockerRepository) Ensure(req Request) (Environment, error) {
 		return existing, nil
 	}
 
-	apiClient, err := this.newApiClientFor(sess)
+	apiClient, err := this.newDockerApiClient(sess)
 	if err != nil {
 		return fail(err)
 	}
@@ -206,127 +229,6 @@ func (this *DockerRepository) createContainer(ctx context.Context, apiClient cli
 	return c, nil
 }
 
-func (this *DockerRepository) resolveContainerConfig(req Request, t *dockerToken, sess session.Session, hostOs, hostArch string) (_ *container.Config, err error) {
-	fail := func(err error) (*container.Config, error) {
-		return nil, err
-	}
-	failf := func(msg string, args ...any) (_ *container.Config, err error) {
-		return fail(errors.Config.Newf(msg, args...))
-	}
-
-	var result container.Config
-
-	result.Labels = t.toLabels(sess)
-
-	if result.Image, err = this.conf.Image.Render(req); err != nil {
-		return failf("cannot evaluate image: %w", err)
-	}
-	result.Entrypoint = strslice.StrSlice{}
-	if result.Cmd, err = this.conf.BlockCommand.Render(req); err != nil {
-		return failf("cannot evaluate mainCommand: %w", err)
-	}
-	result.Env = []string{
-		"BIFROEST_IMP_ACCESS_TOKEN=test",
-		"BIFROEST_SESSION_ID=" + sess.Id().String(),
-	}
-	if len(result.Cmd) == 0 {
-		switch hostOs {
-		case "windows":
-			result.Cmd = []string{BifroestWindowsBinaryMountTarget, `imp`}
-		default:
-			result.Cmd = []string{BifroestUnixBinaryMountTarget, `imp`}
-		}
-	}
-
-	return &result, nil
-}
-
-func (this *DockerRepository) resolveHostConfig(req Request, hostOs, hostArch string) (_ *container.HostConfig, err error) {
-	fail := func(err error) (*container.HostConfig, error) {
-		return nil, err
-	}
-	failf := func(msg string, args ...any) (_ *container.HostConfig, err error) {
-		return fail(errors.Config.Newf(msg, args...))
-	}
-
-	var result container.HostConfig
-
-	result.AutoRemove = true
-	if result.Binds, err = this.conf.Volumes.Render(req); err != nil {
-		return failf("cannot evaluate volumes: %w", err)
-	}
-	if result.CapAdd, err = this.conf.Capabilities.Render(req); err != nil {
-		return failf("cannot evaluate capabilities: %w", err)
-	}
-	if result.Privileged, err = this.conf.Privileged.Render(req); err != nil {
-		return failf("cannot evaluate capabilities: %w", err)
-	}
-	if result.DNS, err = this.conf.DnsServers.Render(req); err != nil {
-		return failf("cannot evaluate dnsServer: %w", err)
-	}
-	if result.DNSSearch, err = this.conf.DnsSearch.Render(req); err != nil {
-		return failf("cannot evaluate dnsSearch: %w", err)
-	}
-
-	result.PortBindings = map[nat.Port][]nat.PortBinding{
-		"8000/tcp": {{
-			HostIP:   "127.166.0.1",
-			HostPort: "8000",
-		}},
-	}
-
-	impBinaryPath, err := this.impBinaries.FindBinaryFor(req.Context(), hostOs, hostArch)
-	if err != nil {
-		return failf("cannot resolve imp binary path: %w", err)
-	}
-	if impBinaryPath != "" {
-		impBinaryPath, err = filepath.Abs(impBinaryPath)
-		if err != nil {
-			return failf("cannot resolve full imp binary path: %w", err)
-		}
-		var targetPath string
-		switch hostOs {
-		case "windows":
-			targetPath = BifroestWindowsBinaryMountTarget
-		default:
-			targetPath = BifroestUnixBinaryMountTarget
-		}
-		result.Mounts = append(result.Mounts, mount.Mount{
-			Type:     mount.TypeBind,
-			Source:   impBinaryPath,
-			Target:   targetPath,
-			ReadOnly: true,
-			BindOptions: &mount.BindOptions{
-				NonRecursive:     true,
-				CreateMountpoint: true,
-			},
-		})
-	}
-
-	return &result, nil
-}
-
-func (this *DockerRepository) resolveNetworkingConfig(req Request) (*network.NetworkingConfig, error) {
-	fail := func(err error) (*network.NetworkingConfig, error) {
-		return nil, err
-	}
-	failf := func(msg string, args ...any) (_ *network.NetworkingConfig, err error) {
-		return fail(errors.Config.Newf(msg, args...))
-	}
-
-	var result network.NetworkingConfig
-
-	if v, err := this.conf.Network.Render(req); err != nil {
-		return failf("cannot evaluate network: %w", err)
-	} else {
-		result.EndpointsConfig = map[string]*network.EndpointSettings{
-			v: {},
-		}
-	}
-
-	return &result, nil
-}
-
 func (this *DockerRepository) FindBySession(ctx context.Context, sess session.Session, opts *FindOpts) (Environment, error) {
 	fail := func(err error) (Environment, error) {
 		return nil, err
@@ -337,7 +239,7 @@ func (this *DockerRepository) FindBySession(ctx context.Context, sess session.Se
 
 	success := false
 
-	apiClient, err := this.newApiClientFor(sess)
+	apiClient, err := this.newDockerApiClient(sess)
 	if err != nil {
 		return fail(err)
 	}
@@ -365,7 +267,7 @@ func (this *DockerRepository) FindBySession(ctx context.Context, sess session.Se
 		return fail(ErrNoSuchEnvironment)
 	}
 
-	c, _, err := this.findContainerBySession(ctx, apiClient, sess)
+	c, _, err := this.findContainerBySession(ctx, sess)
 	if err != nil {
 		return fail(err)
 	}
@@ -392,8 +294,8 @@ func (this *DockerRepository) FindBySession(ctx context.Context, sess session.Se
 	return &result, nil
 }
 
-func (this *DockerRepository) removeContainer(ctx context.Context, apiClient client.APIClient, id string) (bool, error) {
-	if err := apiClient.ContainerRemove(ctx, id, container.RemoveOptions{
+func (this *DockerRepository) removeContainer(ctx context.Context, id string) (bool, error) {
+	if err := this.apiClient.ContainerRemove(ctx, id, container.RemoveOptions{
 		RemoveVolumes: true,
 		Force:         true,
 	}); errdefs.IsNotFound(err) {
@@ -404,14 +306,28 @@ func (this *DockerRepository) removeContainer(ctx context.Context, apiClient cli
 	return true, nil
 }
 
-func (this *DockerRepository) findContainerBySession(ctx context.Context, apiClient client.APIClient, sess session.Session) (*types.Container, int, error) {
-	return this.findContainerBy(ctx, apiClient, filters.NewArgs(
+func (this *DockerRepository) findContainers(ctx context.Context) ([]types.Container, error) {
+	list, err := this.apiClient.ContainerList(ctx, container.ListOptions{
+		All: true,
+		Filters: filters.NewArgs(
+			filters.Arg("label="+DockerLabelFlow, this.flow.String()),
+			filters.Arg("status", "running"),
+		),
+	})
+	if err != nil {
+		return nil, errors.System.Newf("cannot list container of flow %v: %w", this.flow, err)
+	}
+	return list, nil
+}
+
+func (this *DockerRepository) findContainerBySession(ctx context.Context, sess session.Session) (*types.Container, int, error) {
+	return this.findContainerBy(ctx, filters.NewArgs(
 		filters.Arg("label="+DockerLabelSessionId, sess.Id().String()),
 	))
 }
 
-func (this *DockerRepository) findContainerBy(ctx context.Context, apiClient client.APIClient, filters filters.Args) (*types.Container, int, error) {
-	list, err := apiClient.ContainerList(ctx, container.ListOptions{
+func (this *DockerRepository) findContainerBy(ctx context.Context, filters filters.Args) (*types.Container, int, error) {
+	list, err := this.apiClient.ContainerList(ctx, container.ListOptions{
 		Limit:   1,
 		Filters: filters,
 	})
@@ -435,6 +351,27 @@ func (this *DockerRepository) findContainerBy(ctx context.Context, apiClient cli
 	}
 
 	return &list[0], exitCode, nil
+}
+
+func (this *DockerRepository) recoverDangling(ctx context.Context) error {
+	fail := func(err error) error {
+		return errors.System.Newf("cannot recover dangling containers of flow %v: %w", this.flow, err)
+	}
+	failf := func(msg string, args ...any) error {
+		return fail(fmt.Errorf(msg, args...))
+	}
+
+	candidates, err := this.findContainers(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	for _, candidate := range candidates {
+		if err := this.attachExisting(ctx, &candidate); err != nil {
+			return failf("cannot attach container %v: %w", candidate.ID, err)
+		}
+	}
+
+	return nil
 }
 
 func (this *DockerRepository) Close() error {

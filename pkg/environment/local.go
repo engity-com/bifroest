@@ -15,7 +15,6 @@ import (
 	log "github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/level"
 	"github.com/gliderlabs/ssh"
-	"github.com/kardianos/osext"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
@@ -65,7 +64,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 			return fail(err)
 		}
 	case TaskTypeSftp:
-		efn, err := osext.Executable()
+		efn, err := os.Executable()
 		if err != nil {
 			return failf("cannot resolve the location of the server's executable location: %w", err)
 		}

@@ -42,7 +42,7 @@ func (this *fsLastAccessed) At() time.Time {
 	return this.at
 }
 
-func (this *fsLastAccessed) Remote() common.Remote {
+func (this *fsLastAccessed) Remote() net.Remote {
 	return &this.remote
 }
 

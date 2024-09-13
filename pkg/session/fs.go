@@ -12,6 +12,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -151,11 +152,11 @@ func (this *fs) DeletePublicKey(ctx context.Context, pub ssh.PublicKey) error {
 	return this.repository.deletePublicKey(ctx, this.flow, this.id, pub)
 }
 
-func (this *fs) NotifyLastAccess(ctx context.Context, remote common.Remote, newState State) (State, error) {
+func (this *fs) NotifyLastAccess(ctx context.Context, remote net.Remote, newState State) (State, error) {
 	return this.notifyLastAccess(ctx, remote, newState)
 }
 
-func (this *fs) notifyLastAccess(ctx context.Context, remote common.Remote, newState State) (State, error) {
+func (this *fs) notifyLastAccess(ctx context.Context, remote net.Remote, newState State) (State, error) {
 	var buf fsLastAccessed
 	buf.at = time.Now().Truncate(time.Millisecond)
 	buf.VRemoteUser = remote.User()

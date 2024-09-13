@@ -6,9 +6,9 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/net"
 )
 
 var (
@@ -34,7 +34,7 @@ type Session interface {
 	SetEnvironmentToken(context.Context, []byte) error
 	AddPublicKey(context.Context, ssh.PublicKey) error
 	DeletePublicKey(context.Context, ssh.PublicKey) error
-	NotifyLastAccess(ctx context.Context, remote common.Remote, newState State) (oldState State, err error)
+	NotifyLastAccess(ctx context.Context, remote net.Remote, newState State) (oldState State, err error)
 	Dispose(ctx context.Context) (bool, error)
 
 	String() string
