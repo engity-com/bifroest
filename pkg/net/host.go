@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"net"
+	"strconv"
 	"strings"
 )
 
@@ -70,4 +71,8 @@ func (this Host) Clone() Host {
 	}
 
 	return Host{Dns: strings.Clone(this.Dns)}
+}
+
+func (this Host) StringJoinedWithPort(port uint16) string {
+	return net.JoinHostPort(this.String(), strconv.FormatUint(uint64(port), 10))
 }

@@ -1,13 +1,11 @@
 package protocol
 
 import (
-	"fmt"
-	"io"
-	"net"
+	"context"
 
-	"github.com/google/uuid"
+	"github.com/vmihailenco/msgpack/v5"
 
-	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/codec"
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
@@ -15,8 +13,6 @@ type Method uint8
 
 const (
 	MethodEcho Method = iota
-	MethodDirectTcp
-	MethodAgentForward
 	MethodKill
 	MethodExit
 )
@@ -25,39 +21,32 @@ var (
 	ErrIllegalMethod = errors.System.Newf("Illegal protocol method")
 )
 
-func (this *Method) Read(from io.Reader) error {
-	buf := make([]byte, 1)
-	if n, err := from.Read(buf); err != nil {
-		return err
-	} else if n != 1 {
-		return io.ErrUnexpectedEOF
-	}
-	candidate := Method(buf[0])
-	if err := candidate.Validate(); err != nil {
-		return err
-	}
-	*this = candidate
-	return nil
+func (this Method) EncodeMsgpack(enc *msgpack.Encoder) error {
+	return this.EncodeMsgPack(enc)
 }
 
-func (this Method) Write(to io.Writer) error {
-	if err := this.Validate(); err != nil {
+func (this *Method) DecodeMsgpack(dec *msgpack.Decoder) error {
+	return this.DecodeMsgPack(dec)
+}
+
+func (this Method) EncodeMsgPack(enc codec.MsgPackEncoder) error {
+	if err := enc.EncodeUint8(uint8(this)); err != nil {
 		return err
-	}
-	if n, err := to.Write([]byte{byte(this)}); err != nil {
-		return err
-	} else if n != 1 {
-		return io.ErrShortWrite
 	}
 	return nil
 }
 
-func (this Method) String() string {
-	v, ok := protocolMethodToString[this]
-	if !ok {
-		return fmt.Sprintf("illegal-protocol-method-%d", this)
+func (this *Method) DecodeMsgPack(dec codec.MsgPackDecoder) error {
+	plain, err := dec.DecodeUint8()
+	if err != nil {
+		return err
 	}
-	return v
+	buf := Method(plain)
+	if err := buf.Validate(); err != nil {
+		return err
+	}
+	*this = buf
+	return nil
 }
 
 func (this Method) Validate() error {
@@ -70,11 +59,9 @@ func (this Method) Validate() error {
 
 var (
 	stringToProtocolMethod = map[string]Method{
-		"echo":         MethodEcho,
-		"directTcp":    MethodDirectTcp,
-		"agentForward": MethodAgentForward,
-		"kill":         MethodKill,
-		"exit":         MethodExit,
+		"echo": MethodEcho,
+		"kill": MethodKill,
+		"exit": MethodExit,
 	}
 	protocolMethodToString = func(in map[string]Method) map[Method]string {
 		result := make(map[Method]string, len(in))
@@ -85,47 +72,50 @@ var (
 	}(stringToProtocolMethod)
 )
 
-func (this *ClientSession) doAndReturn(method Method, connectionId uuid.UUID, action func(net.Conn) error) (_ net.Conn, rErr error) {
-	var connectionPartId uint32
-	defer func() {
-		if connectionPartId > 0 {
-			if err := this.PeekLastError(connectionPartId); err != nil {
-				rErr = err
-			}
-		}
-	}()
-
-	fail := func(err error) (net.Conn, error) {
-		return nil, err
+func handleFromServerSide[
+	REQ any, REQP interface {
+		DecodeMsgPack(dec codec.MsgPackDecoder) error
+		*REQ
+	},
+	RSP codec.MsgPackCustomEncoder,
+](_ context.Context, header *Header, conn codec.MsgPackConn, action func(REQP) RSP) error {
+	fail := func(err error) error {
+		return errors.Network.Newf("handling %v failed: %w", header.Method, err)
 	}
 
-	success := false
-	stream, err := this.session.OpenStream()
-	if err != nil {
-		return fail(err)
-	}
-	defer common.DoOnFailureIgnore(&success, stream.Close)
-	connectionPartId = stream.ID()
-
-	if _, err := stream.Write(connectionId[:]); err != nil {
-		return fail(err)
-	}
-	if err := method.Write(stream); err != nil {
-		return fail(err)
-	}
-	if err := action(stream); err != nil {
+	var req REQP = new(REQ)
+	if err := req.DecodeMsgPack(conn); err != nil {
 		return fail(err)
 	}
 
-	success = true
-	return stream, nil
+	rsp := action(req)
+
+	if err := rsp.EncodeMsgPack(conn); err != nil {
+		return fail(err)
+	}
+
+	return nil
 }
 
-func (this *ClientSession) do(method Method, connectionId uuid.UUID, action func(net.Conn) error) error {
-	conn, err := this.doAndReturn(method, connectionId, action)
-	if err != nil {
-		return err
+func handleFromClientSide[
+	RSP any, RSPP interface {
+		DecodeMsgPack(dec codec.MsgPackDecoder) error
+		*RSP
+	},
+	REQ codec.MsgPackCustomEncoder,
+](_ context.Context, header *Header, conn codec.MsgPackConn, req REQ, action func(RSPP) error) error {
+	fail := func(err error) error {
+		return errors.Network.Newf("handling %v failed: %w", header.Method, err)
 	}
-	defer common.IgnoreCloseError(conn)
-	return nil
+
+	if err := req.EncodeMsgPack(conn); err != nil {
+		return fail(err)
+	}
+
+	var rsp RSPP = new(RSP)
+	if err := rsp.DecodeMsgPack(conn); err != nil {
+		return fail(err)
+	}
+
+	return action(rsp)
 }

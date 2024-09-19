@@ -18,12 +18,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
-	"github.com/engity-com/bifroest/pkg/session"
 )
-
-func (this *local) Session() session.Session {
-	return this.session
-}
 
 func (this *local) Banner(req Request) (io.ReadCloser, error) {
 	b, err := this.repository.conf.Banner.Render(req)
@@ -224,6 +219,10 @@ func (this *local) Dispose(ctx context.Context) (bool, error) {
 	}
 
 	return disposed, nil
+}
+
+func (this *local) Release() error {
+	return nil
 }
 
 func (this *local) isRelevantError(err error) bool {

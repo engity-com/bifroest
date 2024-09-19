@@ -13,7 +13,6 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/imp"
-	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 var (
@@ -22,6 +21,7 @@ var (
 			Version: versionV,
 		}
 	}()
+	encodecMasterPublicKey string
 )
 
 var _ = registerCommand(func(app *kingpin.Application) {
@@ -30,20 +30,23 @@ var _ = registerCommand(func(app *kingpin.Application) {
 		Action(func(*kingpin.ParseContext) error {
 			return doImp()
 		})
-	cmd.Flag("access-token", "Access token to accessing the imp service (hex encoded).").
-		Envar("BIFROEST_IMP_ACCESS_TOKEN").
+	cmd.Flag("master-public-key", "Access token to accessing the imp service (hex encoded).").
+		Envar("BIFROEST_MASTER_PUBLIC_KEY").
 		PlaceHolder("<path>").
 		Required().
-		HexBytesVar(&impService.ExpectedToken)
+		StringVar(&encodecMasterPublicKey)
 })
 
 func doImp() error {
+	// TODO! Parse encodecMasterPublicKey
+	panic(":encodecMasterPublicKey")
+
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	defer cancelFunc()
 
 	sigs := make(chan os.Signal, 1)
 	defer close(sigs)
-	signal.Notify(sigs, syscall.SIGTERM)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigs
 		log.With("signal", sig).Info("received signal")
@@ -53,12 +56,10 @@ func doImp() error {
 	var rErr atomic.Pointer[error]
 	var wg sync.WaitGroup
 
-	ln := sys.NewStdinStdoutSocket(true)
-
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := impService.Serve(ctx, ln); err != nil {
+		if err := impService.Serve(ctx); err != nil {
 			rErr.CompareAndSwap(nil, &err)
 		}
 	}()

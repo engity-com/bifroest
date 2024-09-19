@@ -23,7 +23,7 @@ type LocalRepository struct {
 	Logger log.Logger
 }
 
-func NewLocalRepository(_ context.Context, flow configuration.FlowName, conf *configuration.EnvironmentLocal, _ imp.BinaryProvider) (*LocalRepository, error) {
+func NewLocalRepository(_ context.Context, flow configuration.FlowName, conf *configuration.EnvironmentLocal, _ imp.Imp) (*LocalRepository, error) {
 	fail := func(err error) (*LocalRepository, error) {
 		return nil, err
 	}

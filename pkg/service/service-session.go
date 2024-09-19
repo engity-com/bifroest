@@ -88,9 +88,10 @@ func (this *service) executeSession(sshSess ssh.Session, taskType environment.Ta
 		return fail(err)
 	}
 
+	ctx := sshSess.Context()
 	req := environmentRequest{
 		service:       this,
-		remote:        &remote{sshSess.Context()},
+		remote:        &remote{ctx},
 		authorization: auth,
 	}
 
@@ -98,9 +99,10 @@ func (this *service) executeSession(sshSess ssh.Session, taskType environment.Ta
 	if err != nil {
 		return fail(err)
 	}
+	defer common.KeepError(&rErr, env.Release)
 
-	sshSess.Context().SetValue(environmentKeyCtxKey, env)
-	defer sshSess.Context().SetValue(environmentKeyCtxKey, nil)
+	ctx.SetValue(environmentKeyCtxKey, env)
+	defer ctx.SetValue(environmentKeyCtxKey, nil)
 
 	if len(sshSess.RawCommand()) == 0 && taskType == environment.TaskTypeShell {
 		banner, err := env.Banner(&req)

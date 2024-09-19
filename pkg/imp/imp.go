@@ -5,57 +5,42 @@ import (
 	"io"
 	"net"
 
-	"github.com/google/uuid"
-
+	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/imp/protocol"
-	"github.com/engity-com/bifroest/pkg/session"
-	"github.com/engity-com/bifroest/pkg/sys"
+	bsession "github.com/engity-com/bifroest/pkg/session"
 )
 
-type Imp struct {
-	client protocol.Client
-}
-
-func (this *Imp) Connect(ctx context.Context, token []byte, sess session.Session, conn net.Conn) (*Session, error) {
-	cs, err := this.client.Open(ctx, token, sess.Id(), conn)
+func NewImp(ctx context.Context, version common.Version, conf *configuration.Imp) (Imp, error) {
+	binaries, err := NewBinaries(ctx, version, conf)
 	if err != nil {
 		return nil, err
 	}
-	return &Session{
-		this,
-		cs,
+	return &imp{
+		Binaries: binaries,
 	}, nil
 }
 
-func (this *Imp) GetInitSignal(_ session.Session) (sys.Signal, error) {
-	return sys.SIGINT, nil
+type Imp interface {
+	io.Closer
+	BinaryProvider
+	Connect(ctx context.Context, token []byte, sess bsession.Session, conn net.Conn) (Session, error)
+	GetReconnectSignal(context.Context) (string, error)
 }
 
-type Session struct {
-	parent        *Imp
-	clientSession *protocol.ClientSession
+type imp struct {
+	*Binaries
+	master protocol.Master
 }
 
-func (this *Session) Echo(connectionId uuid.UUID, in string) (out string, _ error) {
-	return this.clientSession.Echo(connectionId, in)
+func (this *imp) Connect(ctx context.Context, token []byte, sess bsession.Session, conn net.Conn) (Session, error) {
+	cs, err := this.master.Open(ctx, token, sess.Id(), conn)
+	if err != nil {
+		return nil, err
+	}
+	return cs, nil
 }
 
-func (this *Session) InitiateDirectTcp(connectionId uuid.UUID, host string, port uint32) (net.Conn, error) {
-	return this.clientSession.InitiateDirectTcp(connectionId, host, port)
-}
-
-func (this *Session) InitiateAgentForward(connectionId uuid.UUID) (_ io.ReadWriteCloser, socketPath string, _ error) {
-	return this.clientSession.InitiateAgentForward(connectionId)
-}
-
-func (this *Session) Kill(connectionId uuid.UUID, pid int, signal sys.Signal) error {
-	return this.clientSession.Kill(connectionId, pid, signal)
-}
-
-func (this *Session) Exit(connectionId uuid.UUID, exitCode int) error {
-	return this.clientSession.Exit(connectionId, exitCode)
-}
-
-func (this *Session) Close() error {
-	return this.clientSession.Close()
+func (this *imp) GetReconnectSignal(_ context.Context) (string, error) {
+	return "SIGINT", nil
 }

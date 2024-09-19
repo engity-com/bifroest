@@ -2,7 +2,7 @@ package imp
 
 import (
 	"context"
-	"net"
+	"crypto"
 
 	log "github.com/echocat/slf4g"
 
@@ -12,14 +12,14 @@ import (
 )
 
 type Service struct {
-	Version common.Version
-
-	ExpectedToken []byte
+	Version         common.Version
+	Addr            string
+	MasterPublicKey crypto.PublicKey
 
 	Logger log.Logger
 }
 
-func (this *Service) Serve(ctx context.Context, ln net.Listener) error {
+func (this *Service) Serve(ctx context.Context) error {
 	fail := func(err error) error {
 		return err
 	}
@@ -29,7 +29,7 @@ func (this *Service) Serve(ctx context.Context, ln net.Listener) error {
 		return fail(err)
 	}
 
-	if err := instance.serve(ctx, ln); err != nil && !bnet.IsClosedError(err) {
+	if err := instance.serve(ctx); err != nil && !bnet.IsClosedError(err) {
 		return fail(err)
 	}
 	return nil
@@ -40,9 +40,9 @@ func (this *Service) createInstance() (*service, error) {
 		Service: this,
 	}
 
-	result.server.Version = this.Version
-	result.server.ExpectedToken = this.ExpectedToken
-	result.server.Logger = this.logger()
+	result.imp.Addr = this.Addr
+	result.imp.MasterPublicKey = this.MasterPublicKey
+	result.imp.Logger = this.logger()
 
 	return &result, nil
 }
@@ -57,15 +57,15 @@ func (this *Service) logger() log.Logger {
 type service struct {
 	*Service
 
-	server protocol.Server
+	imp protocol.Imp
 }
 
-func (this *service) serve(ctx context.Context, ln net.Listener) error {
+func (this *service) serve(ctx context.Context) error {
 	fail := func(err error) error {
 		return err
 	}
 
-	if err := this.server.Serve(ctx, ln); err != nil {
+	if err := this.imp.Serve(ctx); err != nil {
 		return fail(err)
 	}
 

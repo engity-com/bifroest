@@ -7,13 +7,17 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/vmihailenco/msgpack/v5"
+
+	"github.com/engity-com/bifroest/pkg/codec"
 )
 
 var (
 	ErrUnknownSignal = errors.New("unknown signal")
 )
 
-type Signal uint8
+type Signal uint16
 
 func (this Signal) SendToProcess(p *os.Process) error {
 	if p == nil {
@@ -103,6 +107,27 @@ func (this Signal) IsEqualTo(other any) bool {
 	default:
 		return false
 	}
+}
+
+func (this Signal) EncodeMsgpack(enc *msgpack.Encoder) error {
+	return this.EncodeMsgPack(enc)
+}
+
+func (this *Signal) DecodeMsgpack(dec *msgpack.Decoder) (err error) {
+	return this.DecodeMsgPack(dec)
+}
+
+func (this Signal) EncodeMsgPack(enc codec.MsgPackEncoder) error {
+	return enc.EncodeUint16(uint16(this))
+}
+
+func (this *Signal) DecodeMsgPack(dec codec.MsgPackDecoder) error {
+	v, err := dec.DecodeUint16()
+	if err != nil {
+		return err
+	}
+	*this = Signal(v)
+	return nil
 }
 
 const (

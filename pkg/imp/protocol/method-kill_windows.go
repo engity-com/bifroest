@@ -11,7 +11,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-func (this *Server) kill(pid int, signal sys.Signal) error {
+func (this *imp) kill(pid int, signal sys.Signal) error {
 	p, err := os.FindProcess(pid)
 	if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
 		return nil

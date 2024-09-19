@@ -14,14 +14,14 @@ import (
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
-func NewRepositoryFacade(ctx context.Context, flows *configuration.Flows, ibp imp.BinaryProvider) (*RepositoryFacade, error) {
+func NewRepositoryFacade(ctx context.Context, flows *configuration.Flows, i imp.Imp) (*RepositoryFacade, error) {
 	if flows == nil {
 		return &RepositoryFacade{}, nil
 	}
 
 	entries := make(map[configuration.FlowName]CloseableRepository, len(*flows))
 	for _, flow := range *flows {
-		instance, err := newInstance(ctx, &flow, ibp)
+		instance, err := newInstance(ctx, &flow, i)
 		if err != nil {
 			return nil, err
 		}
@@ -78,7 +78,7 @@ func (this *RepositoryFacade) Close() (rErr error) {
 	return nil
 }
 
-func newInstance(ctx context.Context, flow *configuration.Flow, ibp imp.BinaryProvider) (env CloseableRepository, err error) {
+func newInstance(ctx context.Context, flow *configuration.Flow, i imp.Imp) (env CloseableRepository, err error) {
 	fail := func(err error) (CloseableRepository, error) {
 		return nil, errors.System.Newf("cannot initizalize environment for flow %q: %w", flow.Name, err)
 	}
@@ -92,7 +92,7 @@ func newInstance(ctx context.Context, flow *configuration.Flow, ibp imp.BinaryPr
 		return fail(errors.Config.Newf("cannot handle environment type %v", reflect.TypeOf(flow.Environment.V)))
 	}
 	m := reflect.ValueOf(factory)
-	rets := m.Call([]reflect.Value{reflect.ValueOf(ctx), reflect.ValueOf(flow.Name), reflect.ValueOf(flow.Environment.V), reflect.ValueOf(ibp)})
+	rets := m.Call([]reflect.Value{reflect.ValueOf(ctx), reflect.ValueOf(flow.Name), reflect.ValueOf(flow.Environment.V), reflect.ValueOf(i)})
 	if err, ok := rets[1].Interface().(error); ok && err != nil {
 		return fail(err)
 	}
@@ -103,7 +103,7 @@ var (
 	configurationTypeToRepositoryFactory = make(map[reflect.Type]any)
 )
 
-type RepositoryFactory[C any, R CloseableRepository] func(ctx context.Context, flow configuration.FlowName, conf C, ibp imp.BinaryProvider) (R, error)
+type RepositoryFactory[C any, R CloseableRepository] func(context.Context, configuration.FlowName, C, imp.Imp) (R, error)
 
 func RegisterRepository[C any, R CloseableRepository](factory RepositoryFactory[C, R]) RepositoryFactory[C, R] {
 	ct := reflect.TypeFor[C]()
