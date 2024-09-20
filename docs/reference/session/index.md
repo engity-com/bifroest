@@ -20,3 +20,4 @@ A session is grouping one or more connections of a user together. This enables t
    ```yaml
    type: fs
    ```
+
