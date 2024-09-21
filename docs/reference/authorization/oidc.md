@@ -1,12 +1,12 @@
 ---
 toc_depth: 4
-description: How to authorize a requesting user via OpenID Connect (OIDC) with Bifröst.
+description: How to authorize a user request via OpenID Connect (OIDC) with Bifröst.
 ---
 # OpenID Connect (OIDC) authorization
 
-Authorizes a requesting user via [OpenID Connect (OIDC)](https://openid.net/developers/how-connect-works/).
+Authorizes a user request via [OpenID Connect (OIDC)](https://openid.net/developers/how-connect-works/).
 
-There is no need that the actual user exists in any way on the host machine of Bifröst. Even if the [local environment](../environment/local.md) is used together with [`createIfAbsent`](../environment/local.md#linux-property-createIfAbsent-evaluation) and [`updateIfDifferent`](../environment/local.md#linux-property-updateIfDifferent-evaluation) set to `true` it will create/update the users. There is no need for tools like Puppet or Ansible.
+There is no need that the actual user exists in any way on the host machine of Bifröst. Even if the [local environment](../environment/local.md) is used together with [`createIfAbsent`](../environment/local.md#linux-property-createIfAbsent-evaluation) and [`updateIfDifferent`](../environment/local.md#linux-property-updateIfDifferent-evaluation) set to `true`, it will create/update the users. There is no need for tools like Puppet or Ansible.
 
 This provides an easy way for SSO in all types of organizations, small or big. See [use cases for more details](../../usecases.md).
 

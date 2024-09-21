@@ -1,5 +1,5 @@
 ---
-description: How to contribute to Bifröst technically and which guidelines are in place.
+description: >Technical contributions to Bifröst and corresponding guidelines.
 ---
 # Contributing Guidelines
 
@@ -15,14 +15,14 @@ Any kind of contribution is welcome, from adding new features or bug fixes to im
 
 ### Technical Requirements
 
-When submitting a PR, make sure that it:
+When submitting a Pull Request ("PR"), make sure that it:
 
 - Must pass CI jobs/actions.
 - Must follow [Golang best practices](https://go.dev/doc/effective_go).
 - Is signed off with the line `Signed-off-by: <Your-Name> <Your-email>`. [Learn more about signing off on commits](https://docs.github.com/en/organizations/managing-organization-settings/managing-the-commit-signoff-policy-for-your-organization).
 
-    !!! note
-        Signing off on a commit is different from signing a commit, such as with a GPG key.
+    !!! Note
+        Signing-off a commit is different from signing a commit, such as with a GPG key.
 
 ### PR Approval
 
@@ -33,11 +33,11 @@ When submitting a PR, make sure that it:
 
 #### Schedule
 
-There are no fixed cycles for releases. Currently, they are triggered as soon bugfixes, security updates or main features arrive.
+There are no fixed cycles for releases. Currently, they are triggered as soon as bugfixes, security updates or main features arrive.
 
 #### Creation
 
-First of all prepare the release notes as usual and merge them.
+First of all, prepare the release notes as usual and merge them.
 
 Once the release notes are ready, a release train is launched by *tagging* from `main` to `vX.Y.Z`.
 

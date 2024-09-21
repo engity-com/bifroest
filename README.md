@@ -18,12 +18,12 @@ Bifröst (spoken as "Bee-frest"), is an advanced SSH server. It can be used as a
 
 ## Features
 
-1. [SSH protocol complaint](#ssh-protocol-complaint)
+1. [SSH protocol compliant](#ssh-protocol-compliant)
 2. [OpenID Connect](#openid-connect)
 3. [Remember me](#remember-me)
 4. [Automatic user provisioning](#automatic-user-provisioning)
 
-#### SSH protocol complaint
+#### SSH protocol compliant
 
 Fully **[SSH protocol](https://www.rfc-editor.org/rfc/rfc4253) compliant server**, like you would expect.
 

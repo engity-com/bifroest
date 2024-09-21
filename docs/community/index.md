@@ -6,11 +6,11 @@ description: Read here all about how to become a member of Bifröst's community.
 
 You are a part of making Bifröst great. Thank you! 💪
 
-To be part of this community be sure you read our [Contributor Covenant Code of Conduct](code-of-conduct.md).
+To be part of this community, be sure you read our [Contributor Covenant Code of Conduct](code-of-conduct.md).
 
 ## Discussions
 
-We're using [GitHub Discussion](https://github.com/engity-com/bifroest/discussions) for conversations about how to use Bifröst, exchanging ideas, do announcements and much more.
+We're using [GitHub Discussion](https://github.com/engity-com/bifroest/discussions) for conversations about how to use Bifröst, for exchanging ideas, for doing announcements and much more.
 
 * [See existing topics.](https://github.com/engity-com/bifroest/discussions)
 * [Start a new topic.](https://github.com/engity-com/bifroest/discussions/new/choose)

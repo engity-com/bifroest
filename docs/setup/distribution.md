@@ -10,7 +10,7 @@ Bifröst is available in different distributions.
 
 ### Generic {: #linux-generic}
 
-The generic Linux distribution of Bifröst contains features that run on every Linux distribution, regardless of Ubuntu, Alpine, RedHat, ... It does not even have any requirements on which other shared libraries need to be installed. On the other hand, it lacks some features the [extended version](#linux-extended) has.
+The generic Linux distribution of Bifröst contains features that run on every Linux distribution, regardless of Ubuntu, Alpine, RedHat, ... It does not even have any requirements on which other shared libraries need to be installed. On the other hand, it lacks some features of the [extended version](#linux-extended).
 
 ### Extended {: #linux-extended}
 

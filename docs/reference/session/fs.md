@@ -4,7 +4,7 @@ description: How to store Bifröst sessions on the local filesystem.
 
 # Filesystem session
 
-This variant of [session](index.md) is stored on the same local filesystem where also Bifröst is running.
+This variant of [session](index.md) is stored on the same local filesystem onb which also Bifröst is running.
 
 ## Properties
 

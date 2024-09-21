@@ -12,7 +12,7 @@ Bifröst (spoken as "Bee-frest"), is a highly customizable SSH server with sever
 
 ## Features
 
-### SSH protocol complaint
+### SSH protocol compliant
 
 
 Fully **[SSH protocol](https://www.rfc-editor.org/rfc/rfc4253) compliant server**, like you would expect.

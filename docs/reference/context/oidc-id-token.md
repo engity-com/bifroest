@@ -22,7 +22,7 @@ Holds the `sub` property of the [ID Token](https://openid.net/specs/openid-conne
 
 <<property("expiry", "datetime")>>
 
-Date when this token will be expired. You will never get a token where this value is in the past.
+Date when this token will expire. You will never get a token where this value is in the past.
 
 <<property("issuedAt", "datetime")>>
 

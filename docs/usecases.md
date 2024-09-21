@@ -6,7 +6,7 @@ description: "Bifröst is very flexible in its configuration (see configuration 
 
 As Bifröst is very flexible on how it can be configured (see [configuration documentation](reference/configuration.md)), here are some use-cases which can be fulfilled by it:
 
-1. [**Off**-board users within 15 minutes of the organization](#offboard)
+1. [**Off**-board users within the legally binding 15 minutes timeframe of the organization](#offboard)
 2. [**On**-board users within 15 minutes in the organization](#onboard)
 3. [Bastion Host / Jump Host](#bastion)
 4. [Different rules for different users per host](#multi-environment)
@@ -16,7 +16,7 @@ As Bifröst is very flexible on how it can be configured (see [configuration doc
 
     We're planning to also implement a [Docker](https://github.com/engity-com/bifroest/issues/11) and a [Kubernetes](https://github.com/engity-com/bifroest/issues/12) environment. This will create much more use-cases, soon. 🤠
 
-## Off-board users within 15 minutes of the organization {:id=offboard}
+## Off-board users within the legally binding 15 minutes timeframe of the organization {:id=offboard}
 
 ### Problem
 
@@ -32,7 +32,7 @@ In cases of SSH servers, this often results in going through all servers and eit
 * Remove user's public keys (if you can find out who it is 🤯),
 * or change the [Ansible](https://www.ansible.com/) or [Puppet](https://www.puppet.com/) configuration and apply it on every machine.
 
-How this should be done within 15 minutes (not days or weeks)?<br>
+How this should be done within the legally binding 15 minutes timeframe AND NOT over days or weeks?<br>
 How do you ensure you really removed this user everywhere?
 
 ### Solution
@@ -45,15 +45,15 @@ How do you ensure you really removed this user everywhere?
 #### Do
 Use the [OpenID Connect authorization](reference/authorization/oidc.md).
 
-As the users are always authorized by your [Identity Provider (IdP)](https://openid.net/developers/how-connect-works/) this is always evaluated when someone tries to access the service via SSH. It will also immediately reject the authorization to this service.
+As the users are always authorized by your [Identity Provider (IdP)](https://openid.net/developers/how-connect-works/), their access rights are always evaluated when someone tries to access the service via SSH. If the IdP rejects the authorization, Bifröst will also immediately reject the authorization to this service. Depending on the residual duration of the off-token, the user rights are taken away within a maximum timeframe of 15 minutes.
 
-No need to access any of these services directly to remove/de-authorize these users.
+There is no need to access any of these services directly to remove/de-authorize these users.
 
-If the [environments are configured accordingly](reference/environment/index.md) (which is the default) all of the user's files and processes will be removed/killed automatically, too.
+If the [environments are configured accordingly](reference/environment/index.md) (default setting) all of the user's files and processes will be removed/killed automatically, too.
 
 ## On-board users within 15 minutes in the organization {:id=onboard}
 
-This is quite similar to [Off-board users within 15 minutes of the organization](#offboard), but obviously reverse.
+This is quite similar to [Off-board users within the legally binding 15 minutes of the organization](#offboard), but obviously reverse.
 
 ### Problem
 
@@ -69,8 +69,8 @@ In case of SSH servers, this often results in going through all servers and eith
 * Add a dedicated user (with password or authorized key),
 * or changing the [Ansible](https://www.ansible.com/) or [Puppet](https://www.puppet.com/) configuration and apply it at every machine.
 
-How can this be done quickly (not in days or weeks)?<br>
-"Did I really give him access everywhere?"
+How can this be done quickly AND NOT in days or weeks?<br>
+Often admins have to ask themselves: "Did I really give them access everywhere?"
 
 ### Solution
 
@@ -78,9 +78,9 @@ Use the [OpenID Connect authorization](reference/authorization/oidc.md).
 
 There is no need to create them somewhere on the server itself. The [OIDC authorization](reference/authorization/oidc.md) will do that using the configured [Identity Provider (IdP)](https://openid.net/developers/how-connect-works/) - that's it!
 
-No need to access any of these services directly to create/authorize these users.
+There is no need to access any of these services directly to create/authorize these users.
 
-If the [environments are configured accordingly](reference/environment/index.md) (which is the default) all of the user's resources (like the home directory) will be created automatically.
+If the [environments are configured accordingly](reference/environment/index.md) (default setting), all of the user's resources (like the home directory) will be created automatically.
 
 ## Bastion Host / Jump Host {:id=bastion}
 
@@ -92,14 +92,14 @@ If the [environments are configured accordingly](reference/environment/index.md)
 
 The following cases are usually used:
 
-* You need to start a VPN connection with an VPN server to get a direct connection to this network. Either you have to deal with quirky VPN desktop client software or SSO isn't working (which might only make sense for small organizations).
+* You need to start a VPN connection with a VPN server to get a direct connection to this network. Either you have to deal with quirky VPN desktop client software or the SSO isn't working (which might only make sense for small organizations).
 * There is a [bastion host](https://en.wikipedia.org/wiki/Bastion_host) in-place, based on [OpenSSH sshd](https://man.openbsd.org/sshd.8) which will run into [on-boarding](#onboard) and [off-boarding](#offboard) issues.
 
 ### Solution
 
-1. Set up a bastion host either:
+1. Set up a bastion host, either:
    1. Inside the private network itself (in case of [AWS a dedicated EC2 instance](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/concepts.html) for example of [instance-type `t2.micro`](https://aws.amazon.com/ec2/instance-types/))
-   2. or outside with a fixed VPN connection inside the private network.
+   2. or outside the network with a fixed VPN connection to get inside the private network.
 2. Configure your preferred [authorization](reference/authorization/index.md) (for example [OpenID Connect](reference/authorization/oidc.md) for best [on-boarding](#onboard) and [off-boarding](#offboard) experience).
 
 ## Different rules for different users per host {:id=multi-environment}
@@ -110,11 +110,11 @@ The following cases are usually used:
 2. Different users should be authorized differently.
 3. Different users should run in different [environments](reference/environment/index.md) (one in a local environment with permission A, another with permission B, and a third user in a remote environment).
 
-This is almost impossible with current technology, except with different [OpenSSH sshd](https://man.openbsd.org/sshd.8) setups on a host, or even different hosts, or hacked [PAM](https://en.wikipedia.org/wiki/Linux_PAM) or [shell](https://en.wikipedia.org/wiki/Unix_shell) setups.
+This is almost impossible with current technologies except with different [OpenSSH sshd](https://man.openbsd.org/sshd.8) setups on a host, or even different hosts, or hacked [PAM](https://en.wikipedia.org/wiki/Linux_PAM) or [shell](https://en.wikipedia.org/wiki/Unix_shell) set-ups.
 
 ### Solution
 
-Use Bifröst with multiple [flows](reference/flow.md), configured. Each flow can handle different authorizations and environments.
+Use Bifröst with multiple configured [flows](reference/flow.md). Each flow can handle different authorizations and environments.
 
 ## Drop-in-Replacement {:id=drop-in-replacement}
 
