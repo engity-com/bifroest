@@ -6,7 +6,7 @@ description: A flow represents a flow of a user's session from the authorization
 
 A flow represents a flow of a user's session from the [authorization](authorization/index.md) to the active [environment](environment/index.md). Unlike the majority of the SSH servers, Bifröst cannot only interpret one flow, it can interpret *one or more*. With this approach Bifröst can do something similar like HTTP servers are implementing [Virtual hosting](https://en.wikipedia.org/wiki/Virtual_hosting) - but in this case it is based on the combination of the requesting usernames (see [requirement](#requirement)) and which [authorization](authorization/index.md) the user can fulfill.
 
-For each configured flow, Bifröst will evaluate the following checks. If one of them does not succeed, Bifröst will end the evaluating of the current flow and will try the next one as long more candidates are available:
+For each configured flow, Bifröst will evaluate the following checks. If one of them does not succeed, Bifröst will end the evaluating of the current flow and will try the next one as long as more candidates are available:
 
 1. Is there already a matching [session](session/index.md) existing; if yes: Execute immediately into the environment of this [session](session/index.md) and skip the following evaluations.
 2. Is the [requirement](#requirement) fulfilled?
@@ -29,7 +29,7 @@ For each configured flow, Bifröst will evaluate the following checks. If one of
 :   Will be evaluated to ensure the requesting user is allowed to access [the environment of this flow](#property-environment).
 
 <<property("environment", "Environment", "environment/index.md", required=True)>>
-:   Once all requirements are fulfilled and the user is authorized successfully, he will execute into this [environment](environment/index.md).
+:   Once all requirements are fulfilled and the user is successfully authorized, he will execute into this [environment](environment/index.md).
 
 ## Example
 
