@@ -47,7 +47,7 @@ toc_depth: 2
 
 ### systemd
 
-To enable Bifröst to run at every server start where [systemd](https://wiki.archlinux.org/title/Systemd) is available, simply:
+To enable Bifröst to run on every server start where [systemd](https://wiki.archlinux.org/title/Systemd) is available, simply:
 1. Download <<asset_link("contrib/systemd/bifroest.service", "our example service configuration")>>:
    ```shell
    sudo curl -sSLf <<asset_url("contrib/systemd/bifroest.service", True)>> -o /etc/systemd/system/bifroest.service
