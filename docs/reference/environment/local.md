@@ -5,7 +5,7 @@ toc_depth: 4
 
 # Local environment
 
-A Local environment is executed on the host itself (same host where Bifröst is running).
+A local environment is executed on the host itself (same host where Bifröst is running).
 
 Currently, we support different variants provided by the host operating system which is executing the environment.
 
@@ -17,14 +17,14 @@ The Linux variant is only supported by Linux based operating systems.
 
 It can run as the Bifröst user itself, but can also [impersonate](https://en.wiktionary.org/wiki/impersonate) another user.
 
-!!! note
-    If impersonating another user Bifröst than is running at, root permissions are required.
+!!! Note
+    If impersonating another user Bifröst is running at, root permissions are required.
 
 ### User requirement {: #linux-user-requirement}
 
 Users have to fulfill the defined requirements ([`name`](#linux-property-name), [`displayName`](#linux-property-displayName), [`uid`](#linux-property-uid), [`group`](#linux-property-group), [`groups`](#linux-property-groups), [`shell`](#linux-property-shell), [`homeDir`](#linux-property-homeDir) and [`skel`](#linux-property-skel)).
 
-If a user does not fulfill this requirement he is not eligible for the environment. The environment **can** create a user ([`createIfAbsent`](#linux-property-createIfAbsent) = `true`) or even update an existing one ([`updateIfDifferent`](#linux-property-updateIfDifferent) = `true`) to match this requirement. This does not make a lot of sense for [local users](../authorization/local.md); but for [users authorized via OIDC](../authorization/oidc.md) - which usually do not exist locally.
+If a user does not fulfill this requirement they are not eligible for the environment. The environment **can** creates a user ([`createIfAbsent`](#linux-property-createIfAbsent) = `true`) or even updates an existing one ([`updateIfDifferent`](#linux-property-updateIfDifferent) = `true`) to match this requirement. This does not make a lot of sense for [local users](../authorization/local.md); but for [users authorized via OIDC](../authorization/oidc.md) - which usually do not exist locally.
 
 See the evaluation matrix of [`createIfAbsent`](#linux-property-createIfAbsent-evaluation) and [`updateIfDifferent`](#linux-property-updateIfDifferent-evaluation) to see the actual reactions of the local environment per users requirement evaluation state.
 
@@ -124,13 +124,13 @@ The groups (do not confuse with the [primary group](#linux-property-group)) the 
    ```
 
 <<property_with_holder("shell", "String Template", "../templating/index.md#string", "Authorization", "../context/authorization.md", default="/bin/sh", id_prefix="linux-", heading=4, requirement="linux-user-requirement")>>
-The [shell](https://en.wikipedia.org/wiki/Shell_(computing)) the user should have. If not defined means this requirement won'T be evaluated or applied (in case of creation/modification of a user).
+The [shell](https://en.wikipedia.org/wiki/Shell_(computing)) the user should have. Not defined means this requirement won'T be evaluated or applied (in case of creation/modification of a user).
 
 <<property_with_holder("homeDir", "String Template", "../templating/index.md#string", "Authorization", "../context/authorization.md", default="/home/<user.name>", id_prefix="linux-", heading=4, requirement="linux-user-requirement")>>
-The home directory the user should have. If not defined means this requirement won't be evaluated or applied (in case of creation/modification of a user).
+The home directory the user should have. Not defined means this requirement won't be evaluated or applied (in case of creation/modification of a user).
 
 <<property_with_holder("skel", "String Template", "../templating/index.md#string", "Authorization", "../context/authorization.md", default="/etc/skel", id_prefix="linux-", heading=4, requirement="linux-user-requirement")>>
-Is a directory on the Bifröst hosts where a user that needs to be created, will receive its initial files of its [home directory](#linux-property-homeDir) from (= user's home skeleton/template directory).
+If a new user needs to be created in a directory on the Bifröst hosts, it will receive its initial files of its [home directory](#linux-property-homeDir) from (= user's home skeleton/template directory).
 
 <<property_with_holder("createIfAbsent", "Bool Template", "../templating/index.md#bool", "Authorization", "../context/authorization.md", default=false, id_prefix="linux-", heading=4)>>
 Will create the local user if it does not exist to match the provided requirements (see below). If this property is `false` the user has to exist, otherwise the execution will fail and the connection will be closed immediately.
@@ -251,7 +251,7 @@ In combination with [`deleteManagedUser`](#linux-dispose-property-deleteManagedU
 
 The Windows variant is only supported by Windows 7+ based operating systems.
 
-!!! warning
+!!! Warning
 In contrast to the [Linux](#linux) version this variant **CANNOT** [impersonate](https://en.wiktionary.org/wiki/impersonate). As a consequence, each user session always executes as the user the Bifröst process itself runs with.
 
     Impersonating on a Windows machine requires either full credentials (password) or another running process the session tokens can be cloned from. As both conflicts how we intend Bifröst to work, both solutions leave a lot of use-cases behind. Since it is very "hacky", we decided to stick with the simple approach.

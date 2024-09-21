@@ -6,7 +6,7 @@ description: How to access context information about an authorized user with Bif
 
 Represents a fully authorized connection of a user.
 
-There are more specialized variants of the authorization available, based which authorization type was used:
+There are more specialized variants of the authorization available, based on which authorization type was used:
 
 | Variant                        | Authorization                                     |
 |--------------------------------|---------------------------------------------------|
