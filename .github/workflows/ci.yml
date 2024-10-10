@@ -1,4 +1,9 @@
 name: Continuous Integration
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  BIFROEST_VENDOR: engity
+
 on:
   push:
 
@@ -100,10 +105,7 @@ jobs:
 
       - name: Build
         run: |
-          go run ./cmd/build --log.colorMode=always
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BIFROEST_VENDOR: engity
+          go run ./cmd/build build --log.colorMode=always
 
       - name: Archive package results
         uses: actions/upload-artifact@v4

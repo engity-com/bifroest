@@ -1,5 +1,9 @@
 name: "Release"
 
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  BIFROEST_VENDOR: engity
+
 on:
   release:
     types: [ published ]
@@ -52,10 +56,7 @@ jobs:
 
       - name: Build/Release
         run: |
-          go run ./cmd/build --log.colorMode=always
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BIFROEST_VENDOR: engity
+          go run ./cmd/build build --log.colorMode=always
 
   documentation:
     name: "Documentation"
