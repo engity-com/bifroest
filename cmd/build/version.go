@@ -11,9 +11,9 @@ import (
 )
 
 var (
-	versionPattern = regexp.MustCompile("^\\w[\\w.-]{0,127}$")
+	versionPattern = regexp.MustCompile(`^\w[\w.-]{0,127}$`)
 
-	versionNormalizePattern = regexp.MustCompile("[^\\w]+")
+	versionNormalizePattern = regexp.MustCompile(`[^\w]+`)
 )
 
 type version struct {

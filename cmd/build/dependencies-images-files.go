@@ -184,7 +184,7 @@ func (this *dependenciesImagesFiles) getFileFromLayer(layer v1.Layer, sourceFn, 
 			return failf("cannot read TAR from uncompressed part of layer: %w", err)
 		}
 		if strings.EqualFold(header.Name, sourceFn) {
-			to, err := gos.OpenFile(targetFn, gos.O_TRUNC|gos.O_CREATE|gos.O_WRONLY, 644)
+			to, err := gos.OpenFile(targetFn, gos.O_TRUNC|gos.O_CREATE|gos.O_WRONLY, 0644)
 			if err != nil {
 				return failf("cannot create file %q: %w", targetFn, err)
 			}

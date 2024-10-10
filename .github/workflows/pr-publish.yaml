@@ -1,7 +1,7 @@
 name: Pull-Requests Images
 
 env:
-  LABEL_NAME: "test publish"
+  LABEL_NAME: "test_publish"
   WORKFLOW_CI_FN: "ci.yaml"
   GITHUB_TOKEN: ${{ github.token }}
   GITHUB_PR_ID: ${{github.event.number}}

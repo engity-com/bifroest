@@ -248,10 +248,6 @@ func (this *build) time() time.Time {
 	}
 }
 
-func (this *build) timeFormatted() string {
-	return this.time().Format(time.RFC3339)
-}
-
 func (this *build) getBuildContext(ctx context.Context) (*buildContext, error) {
 	for {
 		if v := this.buildContextP.Load(); v != nil {
@@ -369,7 +365,7 @@ func (this *build) resolveStages(ctx context.Context) (buildStages, error) {
 			return nil, err
 		}
 		// Ok, in this case allow images...
-		if pr.isOpen() && pr.hasLabel("test publish") {
+		if pr.isOpen() && pr.hasLabel("test_publish") {
 			return allBuildStageVariants, nil
 		}
 	}

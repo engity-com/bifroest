@@ -31,10 +31,6 @@ func (this os) String() string {
 	return v
 }
 
-func (this os) ociString() string {
-	return this.String()
-}
-
 func (this *os) Set(plain string) error {
 	v, ok := stringToOs[plain]
 	if !ok {

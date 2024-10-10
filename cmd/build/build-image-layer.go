@@ -25,10 +25,6 @@ type imageArtifactLayerItem struct {
 	mode       gos.FileMode
 }
 
-func (this imageArtifactLayerItem) open() (*gos.File, error) {
-	return gos.Open(this.sourceFile)
-}
-
 func createImageArtifactLayer(os os, id string, time time.Time, items iter.Seq2[imageArtifactLayerItem, error]) (*buildImageLayer, error) {
 	fail := func(err error) (*buildImageLayer, error) {
 		return nil, fmt.Errorf("cannot create tar layer: %w", err)
