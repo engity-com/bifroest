@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"os/user"
 	"runtime"
 	"strconv"
@@ -28,6 +29,7 @@ func newBase() *base {
 	result := &base{
 		waitTimeout: time.Second * 3,
 		actor:       currentUserName,
+		title:       "Engity's Bifröst",
 	}
 	result.repo = newRepo(result)
 	result.build = newBuild(result)
@@ -44,10 +46,14 @@ type base struct {
 
 	waitTimeout time.Duration
 	actor       string
+	title       string
 	rawCommit   string
 	rawRef      string
 	rawHeadRef  string
 	rawPr       uint
+
+	optionsOutputFilename string
+	summaryOutputFilename string
 
 	versionP atomic.Pointer[version]
 	commitP  atomic.Pointer[string]
@@ -64,6 +70,10 @@ func (this *base) init(ctx context.Context, app *kingpin.Application) {
 		Envar("GITHUB_ACTOR").
 		PlaceHolder("<actor-name>").
 		StringVar(&this.actor)
+	app.Flag("title", "").
+		Default(this.title).
+		PlaceHolder("<title>").
+		StringVar(&this.title)
 	app.Flag("commit", "").
 		Envar("GITHUB_SHA").
 		PlaceHolder("<sha>").
@@ -79,6 +89,14 @@ func (this *base) init(ctx context.Context, app *kingpin.Application) {
 	app.Flag("pr", "").
 		PlaceHolder("<prNumber>").
 		UintVar(&this.rawPr)
+	app.Flag("optionsOutputFilename", "").
+		Envar("GITHUB_OUTPUT").
+		PlaceHolder("<filename>").
+		StringVar(&this.optionsOutputFilename)
+	app.Flag("summaryOutputFilename", "").
+		Envar("GITHUB_STEP_SUMMARY").
+		PlaceHolder("<filename>").
+		StringVar(&this.summaryOutputFilename)
 
 	app.Command("status", "").
 		Action(func(*kingpin.ParseContext) error {
@@ -197,6 +215,9 @@ func (this *base) resolvePr() uint {
 			return 0
 		}
 		n, _ := strconv.ParseUint(strings.TrimSuffix(v, "/merge"), 10, 64)
+		if n > uint64(math.MaxUint) {
+			return 0 // or handle the error appropriately
+		}
 		return uint(n)
 	}
 	return 0

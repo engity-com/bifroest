@@ -31,10 +31,6 @@ func (this os) String() string {
 	return v
 }
 
-func (this os) ociString() string {
-	return this.String()
-}
-
 func (this *os) Set(plain string) error {
 	v, ok := stringToOs[plain]
 	if !ok {
@@ -50,6 +46,15 @@ func (this os) execExt() string {
 		return ".exe"
 	default:
 		return ""
+	}
+}
+
+func (this os) isUnix() bool {
+	switch this {
+	case osLinux:
+		return true
+	default:
+		return false
 	}
 }
 

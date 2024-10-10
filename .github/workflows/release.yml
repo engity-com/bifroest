@@ -1,5 +1,9 @@
 name: "Release"
 
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  BIFROEST_VENDOR: "Engity GmbH"
+
 on:
   release:
     types: [ published ]
@@ -14,32 +18,28 @@ jobs:
   release:
     name: "Release"
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/engity-com/build-images/go
     steps:
-      - name: Install Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          check-latest: true
-          cache-dependency-path: |
-            go.sum
-
-      - name: Install Ubuntu dependencies
-        run: sudo apt install libpam0g-dev
-
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Cache
+      - name: Cache Go
         uses: actions/cache@v4
         with:
-          path: |
-            .cache
-            ~/go/pkg/mod
+          path: ~/go/pkg/mod
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
+
+      - name: Cache images dependencies
+        uses: actions/cache@v4
+        with:
+          path: .cache/dependencies/images
+          key: images-dependencies
+          restore-keys: images-dependencies
 
       - name: Install dependencies
         run: |
@@ -52,10 +52,7 @@ jobs:
 
       - name: Build/Release
         run: |
-          go run ./cmd/build --log.colorMode=always
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BIFROEST_VENDOR: engity
+          go run ./cmd/build build --log.colorMode=always
 
   documentation:
     name: "Documentation"
@@ -76,7 +73,8 @@ jobs:
         run: |
           pip install -r docs/requirements.txt
 
-      - uses: actions/cache@v4
+      - name: Cache
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ hashFiles('docs/requirements.txt') }}

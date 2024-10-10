@@ -82,7 +82,7 @@ func TestVersion_evaluateLatest(t *testing.T) {
 	}
 }
 
-func TestVersion_tags(t *testing.T) {
+func TestVersion_tags_semver(t *testing.T) {
 	var instance version
 
 	require.NoError(t, instance.Set("v2.3.4"))
@@ -140,6 +140,35 @@ func TestVersion_tags(t *testing.T) {
 			given.latestPatch = c.patch
 
 			actual := slices.Collect(given.tags("x", c.root))
+			assert.Equal(t, c.outputs, actual)
+		})
+	}
+}
+
+func TestVersion_tags_other(t *testing.T) {
+	cases := []struct {
+		input   string
+		prefix  string
+		root    string
+		outputs []string
+	}{{
+		input:   "x123x",
+		prefix:  "p",
+		root:    "r",
+		outputs: a("px123x"),
+	}, {
+		input:   "v1.2.3",
+		prefix:  "p",
+		root:    "r",
+		outputs: a("p1.2.3"),
+	}}
+
+	for _, c := range cases {
+		t.Run(c.input+"-"+c.prefix+"-"+c.root, func(t *testing.T) {
+			var instance version
+			require.NoError(t, instance.Set(c.input))
+
+			actual := slices.Collect(instance.tags(c.prefix, c.root))
 			assert.Equal(t, c.outputs, actual)
 		})
 	}

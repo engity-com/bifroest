@@ -418,6 +418,7 @@ bar:XbarX:20453:10:100:::20818:`,
 			groupFile := dir.file("group").setContent(c.group)
 			shadowFile := dir.file("shadow").setContent(c.shadow)
 
+			var asyncError error
 			instance := EtcColonRepository{
 				PasswdFilename:        passwdFile.name(),
 				GroupFilename:         groupFile.name(),
@@ -425,6 +426,11 @@ bar:XbarX:20453:10:100:::20818:`,
 				AllowBadName:          &c.allowBadName,
 				AllowBadLine:          &c.allowBadLine,
 				OnUnhandledAsyncError: c.onUnhandledAsyncError,
+			}
+			if instance.OnUnhandledAsyncError == nil {
+				instance.OnUnhandledAsyncError = func(_ log.Logger, err error, _ string) {
+					asyncError = err
+				}
 			}
 
 			actualErr := instance.Init(context.Background())
@@ -440,6 +446,8 @@ bar:XbarX:20453:10:100:::20818:`,
 
 			actualErr = instance.Close()
 			require.NoError(t, actualErr)
+
+			require.NoError(t, asyncError)
 		})
 	}
 }
@@ -1454,6 +1462,7 @@ expired-ts:$y$j9T$as2ASyXW241FbtyMlNNQU1$sy6H9k6uXgaY1DeIKI5zPVsczWLD82k5UeQVuIM
 			require.NoError(t, actualErr)
 
 			assert.NoError(t, syncError)
+			time.Sleep(150 * time.Millisecond)
 		})
 	}
 }

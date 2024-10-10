@@ -19,25 +19,11 @@ func newRepoPackages(r *repo) *repoPackages {
 
 type repoPackages struct {
 	*repo
-
-	subs []string
 }
 
-func (this *repoPackages) init(ctx context.Context, app *kingpin.Application) {
-	app.Flag("package-subs", "").
-		PlaceHolder("<tag>[,<tag>...]").
-		StringsVar(&this.subs)
+func (this *repoPackages) init(_ context.Context, _ *kingpin.Application) {}
 
-	cmdDit := app.Command("delete-image-tag", "")
-	tags := cmdDit.Arg("tags", "").
-		Required().
-		Strings()
-	cmdDit.Action(func(*kingpin.ParseContext) error {
-		return this.deleteVersionsWithTags(ctx, *tags)
-	})
-}
-
-func (this *repoPackages) deleteVersionsWithTags(ctx context.Context, tags []string) error {
+func (this *repoPackages) deleteVersionsWithTags(ctx context.Context, tags ...string) error {
 	del := func(sub string) error {
 		for candidate, err := range this.versionsWithAtLeastOneTag(ctx, sub, tags) {
 			if err != nil {
@@ -55,15 +41,8 @@ func (this *repoPackages) deleteVersionsWithTags(ctx context.Context, tags []str
 		return nil
 	}
 
-	if len(this.subs) == 0 {
-		if err := del(""); err != nil {
-			return err
-		}
-	}
-	for _, sub := range this.subs {
-		if err := del(sub); err != nil {
-			return err
-		}
+	if err := del(""); err != nil {
+		return err
 	}
 
 	return nil

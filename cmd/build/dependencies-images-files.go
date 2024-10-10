@@ -3,6 +3,7 @@ package main
 import (
 	"archive/tar"
 	"context"
+	"crypto/sha1"
 	"fmt"
 	"io"
 	gos "os"
@@ -15,6 +16,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/crane"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/types"
+	"github.com/mr-tron/base58"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/sys"
@@ -70,7 +72,7 @@ func (this *dependenciesImagesFiles) downloadNetapi32DllFor(ctx context.Context,
 		return nil, nil
 	}
 
-	targetFn := filepath.Join(this.cacheDirectory, os.String()+"-"+arch.String(), "netapi32.dll")
+	targetFn := this.cacheLocationFor(os, arch, "netapi32.dll")
 
 	err := this.getFileFromImage(ctx, os, arch, this.imageWithNetapi32Dll, "Files/Windows/System32/netapi32.dll", targetFn)
 	if err != nil {
@@ -78,6 +80,11 @@ func (this *dependenciesImagesFiles) downloadNetapi32DllFor(ctx context.Context,
 	}
 
 	return []imageFileDependency{{os, arch, targetFn, netapi32DllFilename, 0644}}, nil
+}
+
+func (this *dependenciesImagesFiles) cacheLocationFor(os os, arch arch, base string) string {
+	hash := sha1.Sum([]byte(base))
+	return filepath.Join(this.cacheDirectory, os.String()+"-"+arch.String(), base58.Encode(hash[:]), "netapi32.dll")
 }
 
 func (this *dependenciesImagesFiles) getFileFromImage(ctx context.Context, os os, arch arch, imgName string, sourceFn, targetFn string) (rErr error) {
@@ -184,7 +191,7 @@ func (this *dependenciesImagesFiles) getFileFromLayer(layer v1.Layer, sourceFn, 
 			return failf("cannot read TAR from uncompressed part of layer: %w", err)
 		}
 		if strings.EqualFold(header.Name, sourceFn) {
-			to, err := gos.OpenFile(targetFn, gos.O_TRUNC|gos.O_CREATE|gos.O_WRONLY, 644)
+			to, err := gos.OpenFile(targetFn, gos.O_TRUNC|gos.O_CREATE|gos.O_WRONLY, 0644)
 			if err != nil {
 				return failf("cannot create file %q: %w", targetFn, err)
 			}

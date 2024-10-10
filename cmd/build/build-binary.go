@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	gos "os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -49,7 +48,7 @@ func (this *buildBinary) compile(ctx context.Context, p *platform) (*buildArtifa
 		With("stage", buildStageBinary).
 		With("file", a.filepath)
 
-	ldFlags := "-s -w " + a.toLdFlags(a.os)
+	ldFlags := " -s -w " + a.toLdFlags(a.os)
 
 	start := time.Now()
 	l.Debug("building binary...")
@@ -141,41 +140,4 @@ func (this *buildBinary) compile(ctx context.Context, p *platform) (*buildArtifa
 
 	success = true
 	return a, nil
-}
-
-func (this *buildBinary) buildLdFlags(ctx context.Context, _ os, _ arch, e edition, forTesting bool, version string) (string, error) {
-	fail := func(err error) (string, error) {
-		return "", err
-	}
-
-	testPrefix := ""
-	testSuffix := ""
-	if forTesting {
-		testPrefix = "TEST"
-		testSuffix = "TEST"
-	}
-	commit, err := this.build.commit(ctx)
-	if err != nil {
-		return fail(err)
-	}
-
-	return "-s -w" +
-		fmt.Sprintf(" -X main.edition=%v", e) +
-		fmt.Sprintf(" -X main.version=%s%s%s", testPrefix, version, testSuffix) +
-		fmt.Sprintf(" -X main.revision=%s", commit) +
-		fmt.Sprintf(" -X main.vendor=%s", this.build.vendor) +
-		fmt.Sprintf(" -X main.buildAt=%s", this.build.timeFormatted()), nil
-}
-
-func (this *buildBinary) outputName(o os, a arch, e edition, forTesting bool, version string) string {
-	dir := filepath.Join(this.build.dest, version)
-	_ = gos.MkdirAll(dir, 0755)
-
-	fn := fmt.Sprintf("%s-%v-%v-%v", this.prefix, o, a, e)
-	if forTesting {
-		fn += "-test"
-	}
-	fn += o.execExt()
-
-	return filepath.Join(dir, fn)
 }

@@ -19,30 +19,42 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/partial"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/types"
+	"github.com/google/go-github/v65/github"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/engity-com/bifroest/pkg/common"
+)
+
+const (
+	ImageAnnotationEdition  = "org.engity.bifroest.edition"
+	ImageAnnotationPlatform = "org.engity.bifroest.platform"
 )
 
 func newBuildImage(b *build) *buildImage {
 	return &buildImage{
 		build: b,
 
-		defaultConfigFile: "contrib/configurations/sshd-dropin-replacement.yaml",
+		dummyConfiguration:   "cmd/build/contrib/dummy-for-oci-images.yaml",
+		defaultConfiguration: "contrib/configurations/sshd-dropin-replacement.yaml",
 	}
 }
 
 type buildImage struct {
 	*build
 
-	defaultConfigFile string
+	dummyConfiguration   string
+	defaultConfiguration string
 }
 
 func (this *buildImage) attach(cmd *kingpin.CmdClause) {
-	cmd.Flag("defaultConfigFile", "").
-		Default(this.defaultConfigFile).
+	cmd.Flag("dummyConfiguration", "").
+		Default(this.dummyConfiguration).
 		PlaceHolder("<file>").
-		StringVar(&this.defaultConfigFile)
+		StringVar(&this.dummyConfiguration)
+	cmd.Flag("defaultConfiguration", "").
+		Default(this.defaultConfiguration).
+		PlaceHolder("<file>").
+		StringVar(&this.defaultConfiguration)
 }
 
 func (this *buildImage) create(ctx context.Context, binary *buildArtifact) (_ buildArtifacts, rErr error) {
@@ -127,10 +139,7 @@ func (this *buildImage) createPart(ctx context.Context, binary *buildArtifact) (
 	cfg.OSFeatures = ociPlatform.OSFeatures
 	cfg.Variant = ociPlatform.Variant
 
-	cfg.Config.Labels = map[string]string{
-		v1.AnnotationDescription: "Test test",
-		v1.AnnotationSource:      this.repo.fullName(),
-	}
+	cfg.Config.Labels = make(map[string]string)
 	cfg.Config.Env = binary.os.extendPathWith(binary.platform.os.bifroestBinaryDirPath(), cfg.Config.Env)
 	cfg.Config.Entrypoint = []string{binary.platform.os.bifroestBinaryFilePath()}
 	cfg.Config.Cmd = []string{"run"}
@@ -143,16 +152,48 @@ func (this *buildImage) createPart(ctx context.Context, binary *buildArtifact) (
 		return fail(err)
 	}
 
-	img = mutate.Annotations(img, map[string]string{
-		v1.AnnotationDescription: "This is a description " + a.platform.String(),
-	}).(gcv1.Image)
+	annotations, err := this.createAnnotations(ctx, a.edition, func(v version, rm *github.Repository, m map[string]string) error {
+		m[ImageAnnotationPlatform] = a.platform.String()
+		return nil
+	})
+	if err != nil {
+		return fail(err)
+	}
 
-	binaryLayer, err := binary.toLayer(common.JoinSeq2[imageArtifactLayerItem, error](
-		common.Seq2ErrOf[imageArtifactLayerItem](imageArtifactLayerItem{
-			sourceFile: this.defaultConfigFile,
+	img = mutate.Annotations(img, annotations).(gcv1.Image)
+
+	artifacts := []imageArtifactLayerItem{{
+		sourceFile: this.defaultConfiguration,
+		targetFile: binary.platform.os.bifroestConfigFilePath(),
+		mode:       0644,
+	}}
+
+	if !a.os.isUnix() || strings.EqualFold(from, "scratch") {
+		artifacts = []imageArtifactLayerItem{{
+			sourceFile: this.dummyConfiguration,
 			targetFile: binary.platform.os.bifroestConfigFilePath(),
 			mode:       0644,
-		}),
+		}}
+	}
+
+	if a.os.isUnix() && strings.EqualFold(from, "scratch") {
+		artifacts = append(artifacts, imageArtifactLayerItem{
+			sourceFile: "cmd/build/contrib/passwd",
+			targetFile: "/etc/passwd",
+			mode:       0644,
+		}, imageArtifactLayerItem{
+			sourceFile: "cmd/build/contrib/group",
+			targetFile: "/etc/group",
+			mode:       0644,
+		}, imageArtifactLayerItem{
+			sourceFile: "cmd/build/contrib/shadow",
+			targetFile: "/etc/shadow",
+			mode:       0600,
+		})
+	}
+
+	binaryLayer, err := binary.toLayer(common.JoinSeq2[imageArtifactLayerItem, error](
+		common.Seq2ErrOf[imageArtifactLayerItem](artifacts...),
 		common.Seq2ErrOf[imageArtifactLayerItem](artifactDepItems...),
 	))
 	if err != nil {
@@ -176,12 +217,12 @@ func (this *buildImage) createPart(ctx context.Context, binary *buildArtifact) (
 	return a, nil
 }
 
-func (this *buildImage) merge(_ context.Context, as buildArtifacts) (_ buildArtifacts, rErr error) {
+func (this *buildImage) merge(ctx context.Context, as buildArtifacts) (_ buildArtifacts, rErr error) {
 	result := slices.Collect(as.withoutType(buildArtifactTypeImage))
 
 	success := false
 	for _, e := range allEditionVariants {
-		a, err := this.createdMerged(e, as)
+		a, err := this.createdMerged(ctx, e, as)
 		if err != nil {
 			return nil, err
 		}
@@ -195,19 +236,67 @@ func (this *buildImage) merge(_ context.Context, as buildArtifacts) (_ buildArti
 	return result, nil
 }
 
-func (this *buildImage) createdMerged(e edition, as buildArtifacts) (result *buildArtifact, _ error) {
+func (this *buildImage) createAnnotations(ctx context.Context, e edition, additional func(version, *github.Repository, map[string]string) error) (map[string]string, error) {
+	rm, err := this.repo.meta(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	ver, err := this.version(ctx)
+	if err != nil {
+		return nil, err
+	}
+	commit, err := this.commit(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	result := map[string]string{
+		v1.AnnotationCreated:       this.time().Format(time.RFC3339),
+		v1.AnnotationURL:           rm.GetHTMLURL() + "/pkgs/container/" + this.repo.name.String(),
+		v1.AnnotationDocumentation: rm.GetHomepage(),
+		v1.AnnotationSource:        rm.GetHTMLURL(),
+		v1.AnnotationVersion:       ver.String(),
+		v1.AnnotationRevision:      commit,
+		v1.AnnotationVendor:        this.vendor,
+		v1.AnnotationTitle:         this.title,
+		v1.AnnotationDescription:   rm.GetDescription(),
+		ImageAnnotationEdition:     e.String(),
+	}
+
+	if l := rm.GetLicense(); l != nil {
+		result[v1.AnnotationLicenses] = l.GetSPDXID()
+	}
+
+	for tag := range ver.tags(e.String()+"-", e.String()) {
+		result[v1.AnnotationRefName] = tag
+		break
+	}
+
+	if additional != nil {
+		if err := additional(ver, rm, result); err != nil {
+			return nil, err
+		}
+	}
+
+	return result, err
+}
+
+func (this *buildImage) createdMerged(ctx context.Context, e edition, as buildArtifacts) (result *buildArtifact, _ error) {
 	l := log.With("edition", e).
 		With("stage", buildStageImage)
 
 	start := time.Now()
 	l.Debug("merge images...")
 
+	annotations, err := this.createAnnotations(ctx, e, nil)
+	if err != nil {
+		return nil, err
+	}
+
 	var manifest gcv1.ImageIndex = empty.Index
-	mutate.IndexMediaType(manifest, types.DockerManifestList)
-	manifest = mutate.Annotations(manifest, map[string]string{
-		v1.AnnotationSource:      this.repo.fullName(),
-		v1.AnnotationDescription: "This is a description",
-	}).(gcv1.ImageIndex)
+	manifest = mutate.IndexMediaType(manifest, types.DockerManifestList)
+	manifest = mutate.Annotations(manifest, annotations).(gcv1.ImageIndex)
 
 	var adds []mutate.IndexAddendum
 	var refA *buildArtifact

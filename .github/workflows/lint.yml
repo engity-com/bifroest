@@ -1,11 +1,11 @@
 name: Lint
 on:
-  push:
-
   pull_request:
     types:
       - opened
       - reopened
+      - synchronize
+      - ready_for_review
 
 permissions:
   contents: read
@@ -20,14 +20,15 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Go
         uses: actions/setup-go@v5
         with:
+          cache: false
           go-version-file: go.mod
           check-latest: true
-          cache-dependency-path: |
-            go.sum
 
       - name: Install Ubuntu dependencies
         if: ${{ matrix.os == 'ubuntu-latest' }}

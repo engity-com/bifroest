@@ -17,15 +17,11 @@ import (
 func newBuildDigest(b *build) *buildDigest {
 	return &buildDigest{
 		build: b,
-
-		defaultConfigFile: "contrib/configurations/sshd-dropin-replacement.yaml",
 	}
 }
 
 type buildDigest struct {
 	*build
-
-	defaultConfigFile string
 }
 
 func (this *buildDigest) attach(_ *kingpin.CmdClause) {}

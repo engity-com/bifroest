@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -81,7 +82,6 @@ func (this *build) init(ctx context.Context, app *kingpin.Application) {
 			StringVar(&this.prefix)
 		cmd.Flag("stages", "").
 			PlaceHolder("<" + strings.Join(allBuildStageVariants.Strings(), "|") + ">[,...]").
-			Default(this.rawStages.String()).
 			SetValue(&this.rawStages)
 		cmd.Flag("os", "").
 			PlaceHolder("<" + strings.Join(allOsVariants.Strings(), "|") + ">[,...]").
@@ -111,6 +111,11 @@ func (this *build) init(ctx context.Context, app *kingpin.Application) {
 		this.digest.attach(cmd)
 	}
 
+	attach(app.Command("evaluate-environment", "").
+		Action(func(*kingpin.ParseContext) error {
+			return this.evaluateEnvironment(ctx)
+		}))
+
 	attach(app.Command("build", "").
 		Action(func(*kingpin.ParseContext) (rErr error) {
 			as, err := this.buildAll(ctx, this.testing)
@@ -136,7 +141,102 @@ func (this *build) allPlatforms(forTesting bool) iter.Seq[*platform] {
 	}
 }
 
+func (this *build) evaluateEnvironment(ctx context.Context) error {
+	commit, err := this.commit(ctx)
+	if err != nil {
+		return err
+	}
+	ref, err := this.ref(ctx)
+	if err != nil {
+		return err
+	}
+	ver, err := this.version(ctx)
+	if err != nil {
+		return err
+	}
+	pr := this.pr()
+	stages, err := this.stages(ctx)
+	if err != nil {
+		return err
+	}
+
+	log.With("commit", commit).
+		With("version", ver).
+		With("ref", ref).
+		With("pr", pr).
+		With("stages", stages).
+		Info()
+	prStr := strconv.FormatUint(uint64(pr), 10)
+
+	if fn := this.optionsOutputFilename; fn != "" {
+		f, err := gos.OpenFile(fn, gos.O_CREATE|gos.O_APPEND|gos.O_WRONLY, 0644)
+		if err != nil {
+			return err
+		}
+		defer common.IgnoreCloseError(f)
+
+		if _, err = fmt.Fprint(f, ""+
+			"commit="+commit+"\n"+
+			"version="+ver.String()+"\n"+
+			"ref="+ref+"\n"+
+			"pr="+prStr+"\n",
+		); err != nil {
+			return err
+		}
+
+		for _, stage := range allBuildStageVariants {
+			if _, err = fmt.Fprintf(f, "stage-%v=%v\n", stage, stages.contains(stage)); err != nil {
+				return err
+			}
+		}
+
+		log.With("file", fn).
+			Info("options output created")
+	}
+
+	if fn := this.summaryOutputFilename; fn != "" {
+		f, err := gos.OpenFile(fn, gos.O_CREATE|gos.O_APPEND|gos.O_WRONLY, 0644)
+		if err != nil {
+			return err
+		}
+		defer common.IgnoreCloseError(f)
+
+		baseUrl := "https://" + this.repo.fullName()
+
+		if _, err = fmt.Fprint(f, "## Build environment\n"+
+			"| Name | Value |\n"+
+			"| ---- | ----- |\n"+
+			"| Commit | [`"+commit+"`]("+baseUrl+"/commit/"+commit+") |\n"+
+			"| Version | `"+ver.String()+"` |\n"+
+			"| Ref | [`"+ref+"`]("+baseUrl+"/tree/"+ref+") |\n"+
+			"| PR | [`"+prStr+"`]("+baseUrl+"/pull/"+prStr+") |\n"+
+			"\n",
+			"## Available stages\n"+
+				"| Name | Enabled |\n"+
+				"| ---- | ------- |\n",
+		); err != nil {
+			return err
+		}
+
+		for _, stage := range allBuildStageVariants {
+			if _, err = fmt.Fprintf(f, "| `%v` | `%v` |\n", stage, stages.contains(stage)); err != nil {
+				return err
+			}
+		}
+
+		log.With("file", fn).
+			Info("summary output created")
+	}
+
+	return nil
+}
+
 func (this *build) buildAll(ctx context.Context, forTesting bool) (artifacts buildArtifacts, _ error) {
+	stages, err := this.stages(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	if this.updateCaCerts {
 		if err := this.dependencies.caCerts.generatePem(ctx); err != nil {
 			return nil, err
@@ -153,7 +253,7 @@ func (this *build) buildAll(ctx context.Context, forTesting bool) (artifacts bui
 		artifacts = append(artifacts, vs...)
 	}
 
-	if this.stages.contains(buildStageImage) {
+	if stages.contains(buildStageImage) {
 		var err error
 		artifacts, err = this.image.merge(ctx, artifacts)
 		if err != nil {
@@ -161,7 +261,7 @@ func (this *build) buildAll(ctx context.Context, forTesting bool) (artifacts bui
 		}
 	}
 
-	if this.stages.contains(buildStageDigest) {
+	if stages.contains(buildStageDigest) {
 		var err error
 		artifacts, err = this.digest.create(ctx, artifacts)
 		if err != nil {
@@ -169,8 +269,8 @@ func (this *build) buildAll(ctx context.Context, forTesting bool) (artifacts bui
 		}
 	}
 
-	if this.stages.contains(buildStagePublish) {
-		if err := this.image.publish(ctx, artifacts); err != nil {
+	if stages.contains(buildStagePublish) {
+		if err := this.publish(ctx, artifacts); err != nil {
 			return nil, err
 		}
 	}
@@ -184,13 +284,18 @@ func (this *build) buildSingle(ctx context.Context, p *platform) (artifacts buil
 		return nil, fmt.Errorf("cannot build %v: %w", *p, err)
 	}
 
+	stages, err := this.stages(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	l := log.With("platform", p)
 
 	success := false
 	common.IgnoreCloseErrorIfFalse(&success, artifacts)
 
 	var ba *buildArtifact
-	if this.stages.contains(buildStageBinary) && p.isBinarySupported(this.assumedBuildOs(), this.assumedBuildArch()) {
+	if stages.contains(buildStageBinary) && p.isBinarySupported(this.assumedBuildOs(), this.assumedBuildArch()) {
 		var err error
 		ba, err = this.binary.compile(ctx, p)
 		if err != nil {
@@ -202,7 +307,7 @@ func (this *build) buildSingle(ctx context.Context, p *platform) (artifacts buil
 		l.With("stage", buildStageBinary).Info("build binary skipped")
 	}
 
-	if ba != nil && this.stages.contains(buildStageArchive) {
+	if ba != nil && stages.contains(buildStageArchive) {
 		aa, err := this.archive.create(ctx, ba)
 		if err != nil {
 			return fail(err)
@@ -212,7 +317,7 @@ func (this *build) buildSingle(ctx context.Context, p *platform) (artifacts buil
 		l.With("stage", buildStageArchive).Info("build archive skipped")
 	}
 
-	if ba != nil && this.stages.contains(buildStageImage) && ba.isImageSupported() {
+	if ba != nil && stages.contains(buildStageImage) && ba.isImageSupported() {
 		aas, err := this.image.create(ctx, ba)
 		if err != nil {
 			return fail(err)
@@ -226,6 +331,48 @@ func (this *build) buildSingle(ctx context.Context, p *platform) (artifacts buil
 	return artifacts, nil
 }
 
+func (this *build) publish(ctx context.Context, as buildArtifacts) error {
+	fail := func(err error) error {
+		return fmt.Errorf("cannot publish: %w", err)
+	}
+
+	if err := this.image.publish(ctx, as); err != nil {
+		return fail(err)
+	}
+
+	release, err := this.repo.releases.findCurrent(ctx)
+	if err != nil {
+		return fail(err)
+	}
+
+	if release == nil {
+		log.Info("outside of release; publish artifacts skipped")
+		return nil
+	}
+
+	l := log.With("release", release)
+
+	start := time.Now()
+	l.Debug("publish release...")
+
+	for a := range as.filter(func(candidate *buildArtifact) bool {
+		return candidate.t.canBePublished()
+	}) {
+		if _, err := release.uploadAsset(ctx, a.name(), a.mediaType(), "", a.filepath); err != nil {
+			return fail(err)
+		}
+	}
+
+	ll := l.With("duration", time.Since(start).Truncate(time.Millisecond))
+	if l.IsDebugEnabled() {
+		ll.Info("publish release...DONE!")
+	} else {
+		ll.Info("release published")
+	}
+
+	return nil
+}
+
 func (this *build) time() time.Time {
 	for {
 		if v := this.timeP.Load(); v != nil {
@@ -237,10 +384,6 @@ func (this *build) time() time.Time {
 		}
 		runtime.Gosched()
 	}
-}
-
-func (this *build) timeFormatted() string {
-	return this.time().Format(time.RFC3339)
 }
 
 func (this *build) getBuildContext(ctx context.Context) (*buildContext, error) {
@@ -350,17 +493,21 @@ func (this *build) resolveStages(ctx context.Context) (buildStages, error) {
 
 	// Assume release...
 	if ver.semver != nil {
+		log.With("version", ver).
+			Infof("as this is a release version; stage %v was implicitly enabled", buildStagePublish)
 		return allBuildStageVariants, nil
 	}
 
 	// Check if the PR is allowed to have images...
 	if v := this.pr(); v > 0 {
-		pr, err := this.repo.prs.byId(ctx, int(v))
+		pr, err := this.repo.prs.byId(ctx, v)
 		if err != nil {
 			return nil, err
 		}
 		// Ok, in this case allow images...
-		if pr.isOpen() && pr.hasLabel("test publish") {
+		if pr.isOpen() && pr.hasLabel(this.repo.prs.testPublishLabel) {
+			log.With("pr", v).
+				Infof("as this is a PR and it was the label %v; stage %v was implicitly enabled", this.repo.prs.testPublishLabel, buildStagePublish)
 			return allBuildStageVariants, nil
 		}
 	}
@@ -396,6 +543,6 @@ func (this buildContext) toLdFlags(testing bool) string {
 	}
 	return "-X main.version=" + testPrefix + this.version.String() + testSuffix +
 		" -X main.revision=" + this.revision +
-		" -X main.vendor=" + this.vendor +
+		" -X " + strconv.Quote("main.vendor="+this.vendor) +
 		" -X main.buildAt=" + this.time.Format(time.RFC3339)
 }

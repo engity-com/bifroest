@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	gos "os"
 	"slices"
 	"strings"
 	"time"
@@ -16,127 +15,80 @@ import (
 func newRepoPrs(r *repo) *repoPrs {
 	return &repoPrs{
 		repo: r,
+
+		testPublishLabel: "test_publish",
 	}
 }
 
-func (this *repoPrs) init(ctx context.Context, app *kingpin.Application) {
-	var prNumber int
-	var workflowFn string
-	var label string
+type repoPrs struct {
+	*repo
 
-	cmdRpw := app.Command("rerun-pr-workflow", "")
-	cmdRpw.Arg("prNumber", "").
-		Required().
-		IntVar(&prNumber)
-	cmdRpw.Arg("workflowFilename", "").
-		Required().
-		StringVar(&workflowFn)
-	cmdRpw.Action(func(*kingpin.ParseContext) error {
-		return this.rerunLatestWorkflowCmd(ctx, prNumber, workflowFn)
-	})
-
-	cmdHpl := app.Command("has-pr-label", "")
-	cmdHpl.Arg("prNumber", "").
-		Required().
-		IntVar(&prNumber)
-	cmdHpl.Arg("label", "").
-		Required().
-		StringVar(&label)
-	cmdHpl.Action(func(*kingpin.ParseContext) error {
-		return this.hasLabelCmd(ctx, prNumber, label)
-	})
-
-	cmdIpo := app.Command("is-pr-open", "")
-	cmdIpo.Arg("prNumber", "").
-		Required().
-		IntVar(&prNumber)
-	cmdIpo.Action(func(*kingpin.ParseContext) error {
-		return this.isOpenCmd(ctx, prNumber)
-	})
+	testPublishLabel string
 }
 
 func (this *repoPrs) Validate() error { return nil }
 
-type repoPrs struct {
-	*repo
+func (this *repoPrs) init(ctx context.Context, app *kingpin.Application) {
+	app.Flag("label-test-publish", "").
+		Default(this.testPublishLabel).
+		StringVar(&this.testPublishLabel)
+
+	var eventAction string
+	var label string
+
+	cmdIu := app.Command("inspect-pr-action", "")
+	cmdIu.Arg("eventAction", "").
+		Required().
+		StringVar(&eventAction)
+	cmdIu.Arg("label", "").
+		StringVar(&label)
+	cmdIu.Action(func(*kingpin.ParseContext) error {
+		return this.inspectAction(ctx, eventAction, label)
+	})
 }
 
-func (this *repoPrs) rerunLatestWorkflowCmd(ctx context.Context, prNumber int, workflowFn string) error {
-	v, err := this.byId(ctx, prNumber)
+func (this *repoPrs) inspectAction(ctx context.Context, eventAction string, label string) error {
+	prNumber := this.pr()
+	if prNumber == 0 {
+		return fmt.Errorf("the environment does not contain a pr reference")
+	}
+
+	pr, err := this.byId(ctx, prNumber)
 	if err != nil {
 		return err
 	}
 
-	l := log.With("pr", prNumber).
-		With("workflowFn", workflowFn)
+	if (eventAction == "labeled" || eventAction == "unlabeled") && label == "" {
+		return fmt.Errorf("for labeled and unlabeled actions the label argument is required")
+	}
 
-	start := time.Now()
-	for ctx.Err() == nil {
-		wfr, err := v.latestWorkflowRun(ctx, workflowFn)
-		if err != nil {
+	if eventAction == "labeled" && label == this.testPublishLabel && pr.isOpen() {
+		log.With("pr", pr).
+			With("label", this.testPublishLabel).
+			Info("PR received label for being allowed to publish; rerun the latest workflow to enable them now...")
+
+		if err := pr.rerunLatestCiWorkflow(ctx); err != nil {
 			return err
 		}
-		lw := l.With("workflowRun", wfr)
-		if wfr.Status != nil && strings.EqualFold(*wfr.Status, "completed") {
-			if err := wfr.rerun(ctx); err != nil {
-				return err
-			}
-			lw.With("workflowRunUrl", *wfr.HTMLURL).
-				With("prUrl", *v.HTMLURL).
-				Info("rerun of workflow run was successfully triggered")
-			return nil
-		}
-		lw.With("duration", time.Since(start).Truncate(time.Second)).
-			Info("latest workflow run is still running - continue waiting...")
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(this.base.waitTimeout):
-		}
 	}
 
-	return ctx.Err()
-}
+	if (eventAction == "unlabeled" && label == this.testPublishLabel && pr.isOpen()) ||
+		eventAction == "closed" {
 
-func (this *repoPrs) hasLabelCmd(ctx context.Context, prNumber int, label string) error {
-	v, err := this.byId(ctx, prNumber)
-	if err != nil {
-		return err
-	}
+		log.With("pr", pr).
+			With("label", this.testPublishLabel).
+			Info("PR was unlabeled or closed; therefore delete all images that might be related to this PR...")
 
-	l := log.With("pr", prNumber).
-		With("label", label)
-	if v.hasLabel(label) {
-		l.Info("label is present")
-		gos.Exit(0)
-	} else {
-		l.Info("label is absent")
-		gos.Exit(1)
+		if err := pr.deleteRelatedArtifacts(ctx); err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
-func (this *repoPrs) isOpenCmd(ctx context.Context, prNumber int) error {
-	v, err := this.byId(ctx, prNumber)
-	if err != nil {
-		return err
-	}
-
-	l := log.With("pr", prNumber)
-	if v.isOpen() {
-		l.Info("pr is open")
-		gos.Exit(0)
-	} else {
-		l.Info("pr is closed")
-		gos.Exit(1)
-	}
-
-	return nil
-}
-
-func (this *repoPrs) byId(ctx context.Context, number int) (*repoPr, error) {
-	v, _, err := this.client().PullRequests.Get(ctx, this.owner.String(), this.name.String(), number)
+func (this *repoPrs) byId(ctx context.Context, number uint) (*repoPr, error) {
+	v, _, err := this.client().PullRequests.Get(ctx, this.owner.String(), this.name.String(), int(number))
 	if err != nil {
 		return nil, fmt.Errorf("cannot retrieve pull request %d from %v: %w", number, this.base, err)
 	}
@@ -169,10 +121,45 @@ func (this *repoPr) isOpen() bool {
 	return this.State != nil && strings.EqualFold(*this.State, "open")
 }
 
-func (this *repoPr) latestWorkflowRun(ctx context.Context, workflowFn string) (*repoWorkflowRun, error) {
-	wf, err := this.parent.actions.workflowByFilename(ctx, workflowFn)
+func (this *repoPr) rerunLatestCiWorkflow(ctx context.Context) error {
+	return this.rerunLatestWorkflow(ctx, this.parent.actions.ciWorkflow)
+}
+
+func (this *repoPr) rerunLatestWorkflow(ctx context.Context, workflowLoader func(context.Context) (*repoWorkflow, error)) error {
+	l := log.With("pr", this.GetID())
+
+	start := time.Now()
+	for ctx.Err() == nil {
+		wfr, err := this.latestWorkflowRun(ctx, workflowLoader)
+		if err != nil {
+			return err
+		}
+		lw := l.With("workflowRun", wfr)
+		if wfr.Status != nil && strings.EqualFold(*wfr.Status, "completed") {
+			if err := wfr.rerun(ctx); err != nil {
+				return err
+			}
+			lw.With("workflowRunUrl", *wfr.HTMLURL).
+				With("prUrl", this.GetHTMLURL()).
+				Info("rerun of workflow run was successfully triggered")
+			return nil
+		}
+		lw.With("duration", time.Since(start).Truncate(time.Second)).
+			Info("latest workflow run is still running - continue waiting...")
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(this.parent.base.waitTimeout):
+		}
+	}
+
+	return ctx.Err()
+}
+
+func (this *repoPr) latestWorkflowRun(ctx context.Context, workflowLoader func(context.Context) (*repoWorkflow, error)) (*repoWorkflowRun, error) {
+	wf, err := workflowLoader(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("cannot get workflow %s of %v: %w", workflowFn, this, err)
+		return nil, fmt.Errorf("cannot get workflow of %v: %w", this, err)
 	}
 	for candidate, err := range wf.runs(ctx) {
 		if err != nil {
@@ -185,4 +172,27 @@ func (this *repoPr) latestWorkflowRun(ctx context.Context, workflowFn string) (*
 		}
 	}
 	return nil, nil
+}
+
+func (this *repoPr) deleteRelatedArtifacts(ctx context.Context) error {
+	fail := func(err error) error {
+		return fmt.Errorf("cannot delete artifacts for %v: %w", this, err)
+	}
+
+	do := func(tag string) error {
+		return this.parent.actions.packages.deleteVersionsWithTags(ctx, tag)
+	}
+
+	mainTag := fmt.Sprintf("pr-%d", this.GetID())
+
+	if err := do(mainTag); err != nil {
+		return fail(err)
+	}
+	for _, ed := range allEditionVariants {
+		if err := do(ed.String() + "-" + mainTag); err != nil {
+			return fail(err)
+		}
+	}
+
+	return nil
 }

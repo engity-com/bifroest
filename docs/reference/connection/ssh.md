@@ -25,7 +25,7 @@ How many different authentication methods a client can use before the connection
 <<property("maxConnections", "uint8", None, default=255)>>
 The maximum amount of parallel connections on this service. Every additional connection beyond will be rejected.
 
-<<property_with_holder("banner", "String Template", "../templating/index.md#string", "Connection", "../context/connection.md", default='{{ `/etc/ssh/sshd-banner` | file `optional` | default `Transcend with Engity Bifröst\n\n` }}')>>
+<<property_with_holder("banner", "String Template", "../templating/index.md#string", "Connection", "../context/connection.md", default='{{ `/etc/ssh/sshd-banner` | file `optional` | default `Transcend with Engity\'s Bifröst\n\n` }}')>>
 Banner which will be shown when the client connects to the server even before the first validation of authorizations or similar happens.
 
 ## Examples

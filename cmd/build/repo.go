@@ -76,6 +76,7 @@ type repo struct {
 	releases *repoReleases
 
 	clientP atomic.Pointer[github.Client]
+	metaP   atomic.Pointer[github.Repository]
 }
 
 func (this *repo) String() string {
@@ -114,6 +115,23 @@ func (this *repo) client() *github.Client {
 			WithAuthToken(this.githubToken)
 		if this.clientP.CompareAndSwap(nil, v) {
 			return v
+		}
+		runtime.Gosched()
+	}
+}
+
+func (this *repo) meta(ctx context.Context) (*github.Repository, error) {
+	for {
+		v := this.metaP.Load()
+		if v != nil {
+			return v, nil
+		}
+		v, _, err := this.client().Repositories.Get(ctx, this.owner.String(), this.name.String())
+		if err != nil {
+			return nil, err
+		}
+		if this.metaP.CompareAndSwap(nil, v) {
+			return v, nil
 		}
 		runtime.Gosched()
 	}

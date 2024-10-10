@@ -12,13 +12,25 @@ import (
 func newRepoActions(r *repo) *repoActions {
 	return &repoActions{
 		repo: r,
+
+		workflowFilenameCi: "ci.yml",
 	}
 }
 
-func (this *repoActions) init(_ context.Context, _ *kingpin.Application) {}
-
 type repoActions struct {
 	*repo
+
+	workflowFilenameCi string
+}
+
+func (this *repoActions) init(_ context.Context, app *kingpin.Application) {
+	app.Flag("workflow-filename-ci", "").
+		Default(this.workflowFilenameCi).
+		StringVar(&this.workflowFilenameCi)
+}
+
+func (this *repoActions) ciWorkflow(ctx context.Context) (*repoWorkflow, error) {
+	return this.workflowByFilename(ctx, this.workflowFilenameCi)
 }
 
 func (this *repoActions) workflowByFilename(ctx context.Context, fn string) (*repoWorkflow, error) {

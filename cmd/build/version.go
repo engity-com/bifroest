@@ -11,9 +11,9 @@ import (
 )
 
 var (
-	versionPattern = regexp.MustCompile("^\\w[\\w.-]{0,127}$")
+	versionPattern = regexp.MustCompile(`^\w[\w.-]{0,127}$`)
 
-	versionNormalizePattern = regexp.MustCompile("[^\\w]+")
+	versionNormalizePattern = regexp.MustCompile(`[^\w]+`)
 )
 
 type version struct {
@@ -54,7 +54,7 @@ func (this version) tags(prefix string, rootTag string) iter.Seq[string] {
 	return func(yield func(string) bool) {
 		smv := this.semver
 		if smv == nil {
-			yield(this.raw)
+			yield(prefix + this.raw)
 			return
 		}
 

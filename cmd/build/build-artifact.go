@@ -1,18 +1,17 @@
 package main
 
 import (
-	"archive/tar"
 	"fmt"
-	"io"
 	"iter"
 	gos "os"
+	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 
 	"github.com/engity-com/bifroest/pkg/common"
-	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 type buildArtifactCloser func() error
@@ -36,7 +35,29 @@ func (this *buildArtifact) toLdFlags(o os) string {
 }
 
 func (this *buildArtifact) String() string {
-	return this.platform.String() + "/" + this.t.String() + ":" + this.filepath
+	return this.platform.String() + "/" + this.t.String() + ":" + this.name()
+}
+
+func (this *buildArtifact) mediaType() string {
+	switch this.t {
+	case buildArtifactTypeDigest:
+		return "text/plain; charset=utf-8"
+	case buildArtifactTypeArchive:
+		switch strings.ToLower(path.Ext(this.name())) {
+		case ".tgz":
+			return "application/tar+gzip"
+		case ".zip":
+			return "application/zip"
+		default:
+			return "application/octet-stream"
+		}
+	default:
+		return "application/octet-stream"
+	}
+}
+
+func (this *buildArtifact) name() string {
+	return filepath.Base(this.filepath)
 }
 
 func (this *buildArtifact) Close() (rErr error) {
@@ -109,12 +130,6 @@ func (this buildArtifacts) onlyOfType(t buildArtifactType) iter.Seq[*buildArtifa
 	})
 }
 
-func (this buildArtifacts) onlyOfEdition(e edition) iter.Seq[*buildArtifact] {
-	return this.filter(func(candidate *buildArtifact) bool {
-		return candidate.edition == e
-	})
-}
-
 func (this buildArtifacts) withoutType(t buildArtifactType) iter.Seq[*buildArtifact] {
 	return this.filter(func(candidate *buildArtifact) bool {
 		return candidate.t != t
@@ -177,145 +192,6 @@ func (this *buildArtifact) toLayer(otherItems iter.Seq2[imageArtifactLayerItem, 
 
 	success = true
 	return result.layer, nil
-}
-
-func (this *buildArtifact) toTarReader(configFilename string) func() (io.ReadCloser, error) {
-	return func() (io.ReadCloser, error) {
-		success := false
-		pr, pw := io.Pipe()
-		result := &buildArtifactTarReader{owner: this, pr: pr, pw: pw}
-		defer common.IgnoreErrorIfFalse(&success, result.Close)
-
-		bf, err := this.openFile()
-		if err != nil {
-			return nil, err
-		}
-		defer common.IgnoreErrorIfFalse(&success, bf.Close)
-
-		bfi, err := bf.Stat()
-		if err != nil {
-			return nil, err
-		}
-
-		cf, err := gos.Open(configFilename)
-		if err != nil {
-			return nil, err
-		}
-		defer common.IgnoreErrorIfFalse(&success, cf.Close)
-
-		cfi, err := cf.Stat()
-		if err != nil {
-			return nil, err
-		}
-
-		adjustPath := func(in string) string {
-			// Also at Windows we need to always use /, because of the TAR format.
-			// The OCI runtime will fix this back to \ at execution.
-			in = strings.ReplaceAll(in, "\\", "/")
-			if len(in) > 3 && (in[0] == 'C' || in[0] == 'c') && in[1] == ':' && in[2] == '/' {
-				in = "Files/" + in[3:]
-			}
-			return in
-		}
-
-		go func() {
-			tw := tar.NewWriter(pw)
-			defer common.IgnoreCloseError(tw)
-
-			var format tar.Format
-			var paxRecords map[string]string
-
-			if this.platform.os == osWindows {
-				format = tar.FormatPAX
-				paxRecords = map[string]string{
-					"MSWINDOWS.rawsd": windowsUserOwnerAndGroupSID,
-				}
-
-				if err := tw.WriteHeader(&tar.Header{
-					Typeflag:   tar.TypeDir,
-					Name:       "Files",
-					Size:       bfi.Size(),
-					Mode:       0555,
-					Format:     format,
-					PAXRecords: paxRecords,
-					ModTime:    this.time,
-				}); err != nil {
-					_ = pw.CloseWithError(err)
-					return
-				}
-				if err := tw.WriteHeader(&tar.Header{
-					Typeflag:   tar.TypeDir,
-					Name:       "Hives",
-					Size:       bfi.Size(),
-					Mode:       0555,
-					Format:     format,
-					PAXRecords: paxRecords,
-					ModTime:    this.time,
-				}); err != nil {
-					_ = pw.CloseWithError(err)
-					return
-				}
-			}
-
-			if err := tw.WriteHeader(&tar.Header{
-				Typeflag:   tar.TypeReg,
-				Name:       adjustPath(this.platform.os.bifroestBinaryFilePath()),
-				Size:       bfi.Size(),
-				Mode:       0755,
-				Format:     format,
-				PAXRecords: paxRecords,
-				ModTime:    this.time,
-			}); err != nil {
-				_ = pw.CloseWithError(err)
-				return
-			}
-
-			if _, err := io.Copy(tw, bf); err != nil && !errors.Is(err, io.ErrClosedPipe) {
-				_ = pw.CloseWithError(err)
-				return
-			}
-
-			if err := tw.WriteHeader(&tar.Header{
-				Typeflag:   tar.TypeReg,
-				Name:       adjustPath(this.platform.os.bifroestConfigFilePath()),
-				Size:       cfi.Size(),
-				Mode:       0644,
-				Format:     format,
-				PAXRecords: paxRecords,
-				ModTime:    this.time,
-			}); err != nil {
-				_ = pw.CloseWithError(err)
-				return
-			}
-
-			if _, err := io.Copy(tw, cf); err != nil && !errors.Is(err, io.ErrClosedPipe) {
-				_ = pw.CloseWithError(err)
-				return
-			}
-
-			_ = pw.CloseWithError(nil)
-		}()
-
-		success = true
-		return result, nil
-
-	}
-}
-
-type buildArtifactTarReader struct {
-	owner *buildArtifact
-	pr    *io.PipeReader
-	pw    *io.PipeWriter
-}
-
-func (this *buildArtifactTarReader) Read(p []byte) (n int, err error) {
-	return this.pr.Read(p)
-}
-
-func (this *buildArtifactTarReader) Close() (rErr error) {
-	defer common.KeepCloseError(&rErr, this.pr)
-	defer common.KeepCloseError(&rErr, this.pw)
-	return nil
 }
 
 // userOwnerAndGroupSID is a magic value needed to make the binary executable
