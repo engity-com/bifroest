@@ -81,7 +81,6 @@ func (this *build) init(ctx context.Context, app *kingpin.Application) {
 			StringVar(&this.prefix)
 		cmd.Flag("stages", "").
 			PlaceHolder("<" + strings.Join(allBuildStageVariants.Strings(), "|") + ">[,...]").
-			Default(this.rawStages.String()).
 			SetValue(&this.rawStages)
 		cmd.Flag("os", "").
 			PlaceHolder("<" + strings.Join(allOsVariants.Strings(), "|") + ">[,...]").
@@ -137,6 +136,11 @@ func (this *build) allPlatforms(forTesting bool) iter.Seq[*platform] {
 }
 
 func (this *build) buildAll(ctx context.Context, forTesting bool) (artifacts buildArtifacts, _ error) {
+	stages, err := this.stages(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	if this.updateCaCerts {
 		if err := this.dependencies.caCerts.generatePem(ctx); err != nil {
 			return nil, err
@@ -153,7 +157,7 @@ func (this *build) buildAll(ctx context.Context, forTesting bool) (artifacts bui
 		artifacts = append(artifacts, vs...)
 	}
 
-	if this.stages.contains(buildStageImage) {
+	if stages.contains(buildStageImage) {
 		var err error
 		artifacts, err = this.image.merge(ctx, artifacts)
 		if err != nil {
@@ -161,7 +165,7 @@ func (this *build) buildAll(ctx context.Context, forTesting bool) (artifacts bui
 		}
 	}
 
-	if this.stages.contains(buildStageDigest) {
+	if stages.contains(buildStageDigest) {
 		var err error
 		artifacts, err = this.digest.create(ctx, artifacts)
 		if err != nil {
@@ -169,7 +173,7 @@ func (this *build) buildAll(ctx context.Context, forTesting bool) (artifacts bui
 		}
 	}
 
-	if this.stages.contains(buildStagePublish) {
+	if stages.contains(buildStagePublish) {
 		if err := this.image.publish(ctx, artifacts); err != nil {
 			return nil, err
 		}
@@ -184,13 +188,18 @@ func (this *build) buildSingle(ctx context.Context, p *platform) (artifacts buil
 		return nil, fmt.Errorf("cannot build %v: %w", *p, err)
 	}
 
+	stages, err := this.stages(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	l := log.With("platform", p)
 
 	success := false
 	common.IgnoreCloseErrorIfFalse(&success, artifacts)
 
 	var ba *buildArtifact
-	if this.stages.contains(buildStageBinary) && p.isBinarySupported(this.assumedBuildOs(), this.assumedBuildArch()) {
+	if stages.contains(buildStageBinary) && p.isBinarySupported(this.assumedBuildOs(), this.assumedBuildArch()) {
 		var err error
 		ba, err = this.binary.compile(ctx, p)
 		if err != nil {
@@ -202,7 +211,7 @@ func (this *build) buildSingle(ctx context.Context, p *platform) (artifacts buil
 		l.With("stage", buildStageBinary).Info("build binary skipped")
 	}
 
-	if ba != nil && this.stages.contains(buildStageArchive) {
+	if ba != nil && stages.contains(buildStageArchive) {
 		aa, err := this.archive.create(ctx, ba)
 		if err != nil {
 			return fail(err)
@@ -212,7 +221,7 @@ func (this *build) buildSingle(ctx context.Context, p *platform) (artifacts buil
 		l.With("stage", buildStageArchive).Info("build archive skipped")
 	}
 
-	if ba != nil && this.stages.contains(buildStageImage) && ba.isImageSupported() {
+	if ba != nil && stages.contains(buildStageImage) && ba.isImageSupported() {
 		aas, err := this.image.create(ctx, ba)
 		if err != nil {
 			return fail(err)
