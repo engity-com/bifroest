@@ -71,6 +71,8 @@ jobs:
       matrix:
         os: [ ubuntu-latest ]
     runs-on: ${{ matrix.os }}
+    container:
+      image: ghcr.io/engity-com/build-images/go
     steps:
       - name: Install Ubuntu dependencies
         if: ${{ matrix.os == 'ubuntu-latest' }}
