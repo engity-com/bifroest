@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"os/user"
 	"runtime"
 	"strconv"
@@ -197,7 +198,7 @@ func (this *base) resolvePr() uint {
 			return 0
 		}
 		n, _ := strconv.ParseUint(strings.TrimSuffix(v, "/merge"), 10, 64)
-		if n > uint64(^uint(0)) {
+		if n > uint64(math.MaxUint) {
 			return 0 // or handle the error appropriately
 		}
 		return uint(n)
