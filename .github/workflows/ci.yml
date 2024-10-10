@@ -1,4 +1,9 @@
 name: Continuous Integration
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  BIFROEST_VENDOR: engity
+
 on:
   push:
 
@@ -15,11 +20,6 @@ jobs:
         os: [ ubuntu-latest, windows-latest ]
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Install Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: stable
-
       - name: Install Ubuntu dependencies
         if: ${{ matrix.os == 'ubuntu-latest' }}
         run: sudo apt install libpam0g-dev
@@ -29,16 +29,30 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache-dependency-path: |
+            go.sum
+
       - name: Cache
         uses: actions/cache@v4
         with:
-          path: ~/go/pkg/mod
+          path: |
+            .cache
+            ~/go/pkg/mod
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
 
       - name: Install goveralls
         run: go install github.com/mattn/goveralls@latest
+
+      - name: Install dependencies
+        run: |
+          go mod download
 
       - name: Test
         run: |
@@ -57,16 +71,9 @@ jobs:
       matrix:
         os: [ ubuntu-latest ]
     runs-on: ${{ matrix.os }}
+    container:
+      image: ghcr.io/engity-com/build-images/go
     steps:
-      - name: Install Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: stable
-
-      - name: Install Ubuntu dependencies
-        if: ${{ matrix.os == 'ubuntu-latest' }}
-        run: sudo apt install libpam0g-dev
-
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -75,22 +82,24 @@ jobs:
       - name: Cache
         uses: actions/cache@v4
         with:
-          path: ~/go/pkg/mod
+          path: |
+            .cache
+            ~/go/pkg/mod
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
 
-      - name: Install Syft
-        uses: anchore/sbom-action/download-syft@v0.17.2
+      - name: Git configure
+        run: |
+          git config --global --add safe.directory $(pwd)
 
-      - name: GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: release --snapshot --clean
-        env:
-          BIFROEST_VENDOR: engity
+      - name: Install dependencies
+        run: |
+          go mod download
+
+      - name: Build
+        run: |
+          go run ./cmd/build build --log.colorMode=always
 
       - name: Archive package results
         uses: actions/upload-artifact@v4
@@ -98,8 +107,8 @@ jobs:
           retention-days: 1
           name: dist
           path: |
-            var/dist/*.tgz*
-            var/dist/*.zip*
+            var/dist/**/*
+
   doc:
     name: Documentation
     runs-on: ubuntu-latest
@@ -114,6 +123,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: 3.x
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ hashFiles('docs/requirements.txt') }}
 
       - name: Install dependencies
         run: |

@@ -26,7 +26,7 @@ func (this *houseKeeper) init(service *service) error {
 	this.service = service
 	var ctx context.Context
 	ctx, this.contextCancel = context.WithCancel(context.Background())
-	defer common.DoOnFailure(&success, this.contextCancel)
+	defer common.DoIfFalse(&success, this.contextCancel)
 
 	var nextRunIn time.Duration
 	if initialDelay := this.service.Configuration.HouseKeeping.InitialDelay; initialDelay.IsZero() {

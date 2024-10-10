@@ -1,14 +1,10 @@
-//go:build cgo && linux && !without_yescrypt
-
 package password
 
-/*
-#cgo LDFLAGS: -lcrypt
-#include <stdlib.h>
-#include <crypt.h>
-*/
-import "C"
-import "unsafe"
+import (
+	"bytes"
+
+	"github.com/openwall/yescrypt-go"
+)
 
 func init() {
 	instance := &Yescrypt{}
@@ -18,14 +14,11 @@ func init() {
 type Yescrypt struct{}
 
 func (p *Yescrypt) Validate(password string, hash []byte) (bool, error) {
-	cKey := C.CString(password)
-	defer C.free(unsafe.Pointer(cKey))
-	cHash := C.CString(string(hash))
-	defer C.free(unsafe.Pointer(cHash))
-
-	out := C.crypt(cKey, cHash)
-
-	return C.GoString(out) == string(hash), nil
+	rehash, err := yescrypt.Hash([]byte(password), hash)
+	if err != nil {
+		return false, err
+	}
+	return bytes.Equal(rehash, hash), nil
 }
 
 func (p *Yescrypt) Name() string {

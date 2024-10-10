@@ -28,16 +28,22 @@ func IgnoreCloseError(when io.Closer) {
 	}
 }
 
-func DoOnFailure(assertToBeTrue *bool, otherwise func()) {
+func DoIfFalse(assertToBeTrue *bool, otherwise func()) {
 	if otherwise != nil && !*assertToBeTrue {
 		otherwise()
 	}
 }
 
-func DoOnFailureIgnore(assertToBeTrue *bool, otherwise func() error) {
-	DoOnFailure(assertToBeTrue, func() {
+func IgnoreErrorIfFalse(assertToBeTrue *bool, otherwise func() error) {
+	DoIfFalse(assertToBeTrue, func() {
 		if otherwise != nil {
 			_ = otherwise()
 		}
 	})
+}
+
+func IgnoreCloseErrorIfFalse(assertToBeTrue *bool, otherwise io.Closer) {
+	if otherwise != nil {
+		IgnoreErrorIfFalse(assertToBeTrue, otherwise.Close)
+	}
 }

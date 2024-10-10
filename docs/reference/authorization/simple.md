@@ -63,6 +63,6 @@ This authorization will produce a context of type [Authorization Simple](../cont
 
 ## Compatibility
 
-| [`linux`/`generic`](../../setup/distribution.md#linux-generic) | [`linux`/`extended`](../../setup/distribution.md#linux-extended) | [`windows`/`generic`](../../setup/distribution.md#windows-generic) |
-| - | - | - |
-| <<compatibility(True)>> | <<compatibility(True)>> | <<compatibility(True)>> |
+| <<dist("linux")>> | <<dist("windows")>> |
+| - | - |
+| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"windows")>> |
