@@ -58,6 +58,9 @@ p.bifroest-logo .switchable rect {
 [data-supported=true] {
     color: #309c30;
 }
+[data-supported=none] {
+    color: var(--md-default-fg-color--light);
+}
 [data-supported=false] {
     color: #dc6a43;
 }
@@ -68,8 +71,21 @@ p.bifroest-logo .switchable rect {
 .md-typeset > .admonition:not(.subtitle),
 .md-typeset > .highlight:not(.subtitle),
 .md-typeset > .md-typeset__table:not(.subtitle),
+.md-typeset > .md-typeset__scrollwrap > .md-typeset__table:not(.subtitle),
 .md-typeset > blockquote:not(.subtitle) {
-    margin-left: 1em;
+    margin-left: 12px;
+}
+
+.md-typeset > .md-typeset__table:not(.subtitle),
+    .md-typeset > .md-typeset__scrollwrap > .md-typeset__table:not(.subtitle) {
+    padding-left: 0;
+}
+
+html .md-typeset .admonition > :last-child {
+    margin-bottom: 0.5em;
+}
+html .md-typeset .admonition > :not(.admonition-title):first-child {
+    margin-top: 0.5em;
 }
 
 .md-typeset > .md-typeset__scrollwrap:not(.subtitle) {
@@ -191,6 +207,10 @@ footer .md-footer-meta.md-typeset ul.md-footer-links {
     gap: 0.5em;
 }
 
+footer .md-footer-meta.md-typeset .md-footer-links__container {
+    width: unset;
+}
+
 footer .md-footer-meta.md-typeset ul.md-footer-links > li {
     margin: 0;
     padding: 0;
@@ -220,4 +240,31 @@ footer .md-footer-meta.md-typeset ul.md-footer-links > li:last-child::after {
     footer .md-footer-meta.md-typeset .md-footer-meta__inner {
         flex-direction: column-reverse;
     }
+}
+
+.md-typeset table:not([class]) th {
+    min-width: unset;
+}
+
+.md-typeset table thead th > .dist-edition-ref,
+.md-typeset table thead th > .else-ref {
+    writing-mode: vertical-lr;
+}
+
+.md-typeset table[data-kind=compatibility_matrix] th,
+.md-typeset table[data-kind=compatibility_matrix] td {
+    padding: 0.75em 1em;
+}
+
+.md-typeset table[data-kind=compatibility_matrix] thead tr:first-child th:first-child {
+    vertical-align: bottom;
+}
+
+.md-typeset table[data-kind=compatibility_matrix] thead tr:first-child th:not(:first-child) {
+    padding-bottom: 0;
+    text-align: center;
+}
+
+.md-typeset table[data-kind=compatibility_matrix] thead tr:last-child th {
+    padding-top: 0.5em;
 }

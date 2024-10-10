@@ -21,7 +21,7 @@ type etcColonRepositoryHandles struct {
 
 func (this *etcColonRepositoryHandles) init(owner *EtcColonRepository) error {
 	success := false
-	defer common.DoOnFailureIgnore(&success, this.close)
+	defer common.IgnoreErrorIfFalse(&success, this.close)
 
 	this.owner = owner
 
@@ -44,7 +44,7 @@ func (this *etcColonRepositoryHandles) open(rw bool) (_ *openedEtcColonRepositor
 
 	var result openedEtcColonRepositoryHandles
 	var err error
-	defer common.DoOnFailureIgnore(&success, result.close)
+	defer common.IgnoreErrorIfFalse(&success, result.close)
 
 	if rw {
 		directories := this.getDirectories()
@@ -90,7 +90,7 @@ func (this *etcColonRepositoryHandles) openFile(fn string, rw bool, isCreateRetr
 		}
 		return nil, fmt.Errorf("cannot open %q: %w", fn, err)
 	}
-	defer common.DoOnFailureIgnore(&success, result.Close)
+	defer common.IgnoreErrorIfFalse(&success, result.Close)
 
 	if err := this.lockFile(result, lm); err != nil {
 		return nil, err
