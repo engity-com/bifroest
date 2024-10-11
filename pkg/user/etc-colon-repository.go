@@ -146,7 +146,7 @@ func (this *EtcColonRepository) Init(ctx context.Context) error {
 	if err := this.handles.init(this); err != nil {
 		return err
 	}
-	defer common.DoOnFailureIgnore(&success, this.handles.close)
+	defer common.IgnoreErrorIfFalse(&success, this.handles.close)
 
 	if err := this.load(ctx); err != nil {
 		return err
@@ -156,7 +156,7 @@ func (this *EtcColonRepository) Init(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("cannot initialize file watcher: %w", err)
 	}
-	defer common.DoOnFailureIgnore(&success, watcher.Close)
+	defer common.IgnoreErrorIfFalse(&success, watcher.Close)
 
 	go this.watchForChanges(watcher)
 

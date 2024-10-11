@@ -25,7 +25,7 @@ How many different authentication methods a client can use before the connection
 <<property("maxConnections", "uint8", None, default=255)>>
 The maximum amount of parallel connections on this service. Every additional connection beyond will be rejected.
 
-<<property_with_holder("banner", "String Template", "../templating/index.md#string", "Connection", "../context/connection.md", default='{{ `/etc/ssh/sshd-banner` | file `optional` | default `Transcend with Engity Bifröst\n\n` }}')>>
+<<property_with_holder("banner", "String Template", "../templating/index.md#string", "Connection", "../context/connection.md", default='{{ `/etc/ssh/sshd-banner` | file `optional` | default `Transcend with Engity\'s Bifröst\n\n` }}')>>
 Banner which will be shown when the client connects to the server even before the first validation of authorizations or similar happens.
 
 ## Examples
@@ -83,6 +83,7 @@ rememberMeNotification: "If you return until {{.session.validUntil | format `dat
 
 ## Compatibility
 
-| [`linux`/`generic`](../../setup/distribution.md#linux-generic) | [`linux`/`extended`](../../setup/distribution.md#linux-extended) | [`windows`/`generic`](../../setup/distribution.md#windows-generic) |
-| - | - | - |
-| <<compatibility(True)>> | <<compatibility(True)>> | <<compatibility(True)>> |
+| <<dist("linux")>> | <<dist("windows")>> |
+| - | - |
+| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"windows")>> |
+

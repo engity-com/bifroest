@@ -14,16 +14,26 @@ The generic Linux distribution of Bifröst contains features that run on every L
 
 ### Extended {: #linux-extended}
 
-The extended Linux distribution of Bifröst currently only runs on Ubuntu 22.04+. It also requires some libraries that are installed:
+The extended Linux distribution of Bifröst currently only runs on Debian 12+, Ubuntu 22.04+ and Fedora 39+.
 
-```shell
-sudo apt install libpam0g -y
-```
-
-On the other hand, it provides additional features like:
+It does provide the following features:
 
 1. [PAM authentication](../reference/authorization/local.md#property-pamService) via [Local authorization](../reference/authorization/local.md)
-2. Support of [yescrypt](../reference/authorization/local.md#password-yescrypt) for `/etc/shadow` files, used for [Local authorization](../reference/authorization/local.md).
+
+### Dependencies
+
+| Name | Shared-Lib | Version |
+| - | - | - |
+| [GNU C Library (glibc)](https://www.gnu.org/software/libc/) | `libc.so.6` | 2.34+ |
+| [Linux PAM (Pluggable Authentication Modules for Linux)](https://github.com/linux-pam/linux-pam) | `libpam.so.0` | 1.4+ |
+
+#### Installation
+
+* **Debian/Ubuntu**: Usually installed by default, in some cases the following command might be necessary:
+   ```shell
+   sudo apt install libpam0g -y
+   ```
+* **RedHat/Fedora**: Already installed by default.
 
 ## Windows {: #windows}
 
@@ -31,14 +41,14 @@ On the other hand, it provides additional features like:
 The generic Windows distribution of Bifröst contains all supported features for Windows from Windows 7+ on. It does not even have any requirements on which other shared libraries need to be installed.
 
 ### Extended {: #windows-extended}
-Currently, not available.
+Not available.
 
 ## Matrix
 
-| Architecture | [`linux`<br>`generic`](#linux-generic) | [`linux`<br>`extended`](#linux-extended) | [`windows`<br>`generic`](#windows-generic) | [`windows`<br>`extended`](#windows-extended) |
-| - | - | - | - | - |
-| `amd64` | :octicons-check-circle-24: | :octicons-check-circle-24: | :octicons-check-circle-24: | :octicons-circle-24: |
-| `arm64` | :octicons-check-circle-24: | :octicons-check-circle-24: | :octicons-check-circle-24: | :octicons-circle-24: |
+!!! tip ""
+    Cells express support in format of `<generic>`/`<extended>`.
+
+<<compatibility_matrix()>>
 
 ## Ways to obtain
 
