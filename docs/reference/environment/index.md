@@ -1,10 +1,10 @@
 ---
-description: How environments within Bifröst work where the users sessions are executed.
+description: How environments within Bifröst work when user sessions are executed.
 ---
 
 # Environments
 
-Bifröst executes user sessions within environments. These environments can either be the [local environment](local.md) of the host (where Bifröst runs on) itself or even containers (currently in development [Docker](https://github.com/engity-com/bifroest/issues/11) and [Kubernetes](https://github.com/engity-com/bifroest/issues/12)).
+Bifröst executes user sessions within environments. These environments can either be the [local environment](local.md) of the host (on which Bifröst runs on) itself or even containers (currently in development [Docker](https://github.com/engity-com/bifroest/issues/11) and [Kubernetes](https://github.com/engity-com/bifroest/issues/12)).
 
 ## Types
 

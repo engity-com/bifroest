@@ -1,11 +1,11 @@
 ---
 toc_depth: 3
-description: How to authorize a requesting user via credentials stored in htpasswd format with Bifröst.
+description: How to authorize an user request via credentials stored in htpasswd format with Bifröst.
 ---
 
 # Htpasswd authorization
 
-Authorizes a requesting user via credentials stored in [htpasswd format](#format).
+Authorizes an user request via credentials stored in [htpasswd format](#format).
 
 ## Properties
 
@@ -41,7 +41,7 @@ authorization:
 
 ## Format
 
-htpasswd is a format created for [Apache HTTP Server](https://httpd.apache.org/) to enable an easy way to configure [Basic Authentication](https://en.wikipedia.org/wiki/Basic_access_authentication) for web servers. Nowadays it is used in more web server projects than just the Apache HTTP Server and also in other project type like Bifröst. The reason: There is a huge toolset available to create those files.
+htpasswd is a format created for [Apache HTTP Server](https://httpd.apache.org/) to enable an easy way to configure [Basic Authentication](https://en.wikipedia.org/wiki/Basic_access_authentication) for web servers. Nowadays, it is used in more web server projects than just the Apache HTTP Server and also in other project types like Bifröst. The reason: There is a huge toolset available to create those files.
 
 ## Tools
 

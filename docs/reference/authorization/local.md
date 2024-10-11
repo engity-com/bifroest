@@ -1,12 +1,12 @@
 ---
 toc_depth: 4
-description: How to authorize a requesting user via the local user database of the host on which Bifröst is running on.
+description: How to authorize an user request via the local user database of the host on which Bifröst is running on.
 ---
 # Local authorization
 
-Authorizes a requesting user via the local user database of the host on which Bifröst is running on.
+Authorizes a user request via the local user database of the host on which Bifröst is running.
 
-!!! note
+!!! Note
     This authorization requires Bifröst to run with root permissions.
 
 ## Properties
@@ -15,13 +15,13 @@ Authorizes a requesting user via the local user database of the host on which Bi
 Has to be set to `local` to enable the local authorization.
 
 <<property_with_holder("authorizedKeys", "Array", None, "Authorized Keys", "../data-type.md#authorized-keys", default=["{{.user.homeDir}}/.ssh/authorized_keys"])>>
-Contains files of the format of classic [authorized keys](../data-type.md#authorized-keys) Bifröst will look in for [SSH Public Keys](../data-type.md#ssh-public-key) .
+Contains files with the format of classic [authorized keys](../data-type.md#authorized-keys), in which Bifröst will look for [SSH Public Keys](../data-type.md#ssh-public-key).
 
 <<property("password", "Password", "#password")>>
-Contains files of the format of classic [authorized keys](../data-type.md#authorized-keys) Bifröst will look in for [SSH Public Keys](../data-type.md#ssh-public-key) .
+Contains files of with format of classic [authorized keys](../data-type.md#authorized-keys), in which Bifröst will look for [SSH Public Keys](../data-type.md#ssh-public-key).
 
 <<property("pamService", "string", default="<os and edition specific>")>>
-If set to a non-empty value, this [PAM](https://wiki.archlinux.org/title/PAM) service will be used during the authorization process instead of `/etc/passwd` and `/etc/shadow` directly.
+If set to a non-empty value, this [PAM](https://wiki.archlinux.org/title/PAM) service will be directly used during the authorization process instead of `/etc/passwd` and `/etc/shadow`.
 
 ##### Default settings
 
@@ -42,7 +42,7 @@ If `true`, the user is allowed to use passwords via classic password authenticat
 If `true`, the user is allowed to use passwords via interactive authentication.
 
 <<property_with_holder("emptyAllowed", "Bool Template", "../templating/index.md#bool", "Context * Authorization Request", "../context/authorization-request.md", default=False, id_prefix="password-", heading=4)>>
-If `true`, the user is allowed to use empty password.
+If `true`, the user is allowed to use empty passwords.
 
 !!! warning
     This is explicitly not recommend.
