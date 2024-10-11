@@ -5,6 +5,9 @@ toc_depth: 2
 
 # Getting started
 
+!!! tip
+     This guide shows how to install Bifröst from [downloadable archive](distribution.md#archive). If you like to use Bifröst inside a container, see our documentation for [OCI/Docker Images](distribution.md#image).
+
 ## Installation
 
 1. Download Bifröst (see [release page](<< release_url() >>)):<br>
@@ -19,7 +22,7 @@ toc_depth: 2
     !!! tip ""
         Cells express support in format of `<generic>`/`<extended>`.
 
-    <<compatibility_matrix()>>
+    <<compatibility_matrix(packaging="archive")>>
 
     #### Example
     ```shell
