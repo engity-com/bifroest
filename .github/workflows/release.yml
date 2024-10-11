@@ -1,5 +1,9 @@
 name: "Release"
 
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  BIFROEST_VENDOR: "Engity GmbH"
+
 on:
   release:
     types: [ published ]
@@ -14,24 +18,15 @@ jobs:
   release:
     name: "Release"
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/engity-com/build-images/go
     steps:
-      - name: Install Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: stable
-
-      - name: Install Ubuntu dependencies
-        run: sudo apt install libpam0g-dev
-
-      - name: Install Syft
-        uses: anchore/sbom-action/download-syft@v0.17.2
-
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Cache
+      - name: Cache Go
         uses: actions/cache@v4
         with:
           path: ~/go/pkg/mod
@@ -39,20 +34,25 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
+      - name: Cache images dependencies
+        uses: actions/cache@v4
+        with:
+          path: .cache/dependencies/images
+          key: images-dependencies
+          restore-keys: images-dependencies
+
+      - name: Install dependencies
+        run: |
+          go mod download
+
       - name: Test
         run: |
           mkdir -p var
           go test -v ./...
 
-      - name: GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BIFROEST_VENDOR: engity
+      - name: Build/Release
+        run: |
+          go run ./cmd/build build --log.colorMode=always
 
   documentation:
     name: "Documentation"
@@ -72,6 +72,12 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r docs/requirements.txt
+
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ hashFiles('docs/requirements.txt') }}
 
       - name: Setup Git
         run: |

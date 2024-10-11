@@ -25,17 +25,13 @@ If set to a non-empty value, this [PAM](https://wiki.archlinux.org/title/PAM) se
 
 ##### Default settings
 
-| [`linux`/`extended`](../../setup/distribution.md#linux-extended) | anything else |
+| <<dist("linux","extended")>> | <<else_ref()>> |
 | - | - |
 | `sshd` | _empty_ |
 
 ## Password
 
 The password can either be validated via `/etc/passwd` and `/etc/shadow` (default) or via PAM (if [`pamService`](#property-pamService) is set to a valid value).
-
-### Support of yescrypt {. #password-yescrypt}
-
-[yescrypt](https://en.wikipedia.org/wiki/Yescrypt) is a cryptographic key derivation function used for password hashing in some modern Linux distributions (such as Ubuntu). Their support gives Bifröst the possibility to evaluate their passwords, the [`linux`/`extended` edition](../../setup/distribution.md#linux-extended) of Bifröst is required.
 
 ### Properties {. #password-properties}
 
@@ -48,7 +44,7 @@ If `true`, the user is allowed to use passwords via interactive authentication.
 <<property_with_holder("emptyAllowed", "Bool Template", "../templating/index.md#bool", "Context * Authorization Request", "../context/authorization-request.md", default=False, id_prefix="password-", heading=4)>>
 If `true`, the user is allowed to use empty passwords.
 
-!!! Warning
+!!! warning
     This is explicitly not recommend.
 
 ## Context
@@ -59,8 +55,7 @@ This authorization will produce a context of type [Authorization Local](../conte
 
 ## Compatibility
 
-| Feature | [`linux`/`generic`](../../setup/distribution.md#linux-generic) | [`linux`/`extended`](../../setup/distribution.md#linux-extended) | [`windows`/`generic`](../../setup/distribution.md#windows-generic) |
-| - | - | - | - |
-| [PAM](#property-pamService) | <<compatibility(False)>> | <<compatibility(True)>> | <<compatibility(False)>> |
-| [yescrypt](#password-yescrypt) | <<compatibility(False)>> | <<compatibility(True)>> | <<compatibility(False)>> |
-| anything else | <<compatibility(True)>> | <<compatibility(True)>> | <<compatibility(False)>> |
+| Feature | <<dist("linux")>> | <<dist("windows")>> |
+| - | - | - |
+| [PAM](#property-pamService) | <<compatibility_editions(False,True,"linux")>> | <<compatibility_editions(False,None,"windows")>> |
+| <<else_ref()>> | <<compatibility_editions(True,True,"windows")>> | <<compatibility_editions(False,None,"windows")>> |
