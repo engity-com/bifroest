@@ -14,15 +14,12 @@ repo = "engity-com/bifroest"
 repo_http_url = "https://github.com/" + repo
 repo_raw_url = "https://raw.githubusercontent.com/" + repo
 raw_version = pos.getenv('VERSION')
-version = raw_version if raw_version is not None else "development"
-branch = raw_version if raw_version is not None else "main"
-release = raw_version if raw_version is not None else "latest"
-
+release = (("v" if raw_version.__len__() > 0 and raw_version[0].isdigit() else "") +raw_version) if raw_version is not None and raw_version.__len__() > 0 else "latest"
+branch = (("v" if raw_version.__len__() > 0 and raw_version[0].isdigit() else "") +raw_version) if raw_version is not None and raw_version.__len__() > 0 else "main"
 
 class Os(str, Enum):
     linux = 'linux'
     windows = 'windows'
-
 
 class Arch(str, Enum):
     i386 = '386'
