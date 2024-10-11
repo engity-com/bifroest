@@ -41,6 +41,10 @@ jobs:
           key: images-dependencies
           restore-keys: images-dependencies
 
+      - name: Git configure
+        run: |
+          git config --global --add safe.directory $(pwd)
+
       - name: Install dependencies
         run: |
           go mod download
