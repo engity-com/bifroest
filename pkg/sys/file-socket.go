@@ -134,12 +134,12 @@ func (this *fileSocket) Accept() (gonet.Conn, error) {
 	if err != nil {
 		return fail(err)
 	}
-	defer common.DoOnFailureIgnore(&success, reader.Close)
+	defer common.IgnoreCloseErrorIfFalse(&success, reader)
 	writer, err := CloneFile(this.writer)
 	if err != nil {
 		return fail(err)
 	}
-	defer common.DoOnFailureIgnore(&success, writer.Close)
+	defer common.IgnoreCloseErrorIfFalse(&success, writer)
 
 	newConn := net.NewConnectionFrom(
 		reader,
