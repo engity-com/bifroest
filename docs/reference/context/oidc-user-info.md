@@ -4,7 +4,7 @@ description: How to access context information about a user's UserInfo of its su
 
 # Context OpenID Connect (OIDC) UserInfo
 
-Holds the full user information about a user who was authorized via [OIDC](../authorization/oidc.md), if configured and available.
+Holds the full user information about a user who was authorized via [OIDC](../authorization/oidc.md), if configured and if available.
 
 ## Properties
 

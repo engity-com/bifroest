@@ -1,12 +1,12 @@
 ---
 toc_depth: 4
-description: How to authorize a requesting user via OpenID Connect (OIDC) with Bifröst.
+description: How to authorize a user request via OpenID Connect (OIDC) with Bifröst.
 ---
 # OpenID Connect (OIDC) authorization
 
-Authorizes a requesting user via [OpenID Connect (OIDC)](https://openid.net/developers/how-connect-works/).
+Authorizes a user request via [OpenID Connect (OIDC)](https://openid.net/developers/how-connect-works/).
 
-There is no need that the actual user exists in any way on the host machine of Bifröst. Even if the [local environment](../environment/local.md) is used together with [`createIfAbsent`](../environment/local.md#linux-property-createIfAbsent-evaluation) and [`updateIfDifferent`](../environment/local.md#linux-property-updateIfDifferent-evaluation) set to `true` it will create/update the users. There is no need for tools like Puppet or Ansible.
+There is no need that the actual user exists in any way on the host machine of Bifröst. Even if the [local environment](../environment/local.md) is used together with [`createIfAbsent`](../environment/local.md#linux-property-createIfAbsent-evaluation) and [`updateIfDifferent`](../environment/local.md#linux-property-updateIfDifferent-evaluation) set to `true`, it will create/update the users. There is no need for tools like Puppet or Ansible.
 
 This provides an easy way for SSO in all types of organizations, small or big. See [use cases for more details](../../usecases.md).
 
@@ -71,6 +71,6 @@ scopes:
 
 ## Compatibility
 
-| [`linux`/`generic`](../../setup/distribution.md#linux-generic) | [`linux`/`extended`](../../setup/distribution.md#linux-extended) | [`windows`/`generic`](../../setup/distribution.md#windows-generic) |
-| - | - | - |
-| <<compatibility(True)>> | <<compatibility(True)>> | <<compatibility(True)>> |
+| <<dist("linux")>> | <<dist("windows")>> |
+| - | - |
+| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"windows")>> |

@@ -11,6 +11,10 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
+var (
+	DefaultStartMessage = ""
+)
+
 type Configuration struct {
 	Ssh Ssh `yaml:"ssh"`
 
@@ -25,6 +29,8 @@ type Configuration struct {
 	HouseKeeping HouseKeeping `yaml:"housekeeping"`
 
 	Imp Imp `yaml:"imp"`
+
+	StartMessage string `yaml:"startMessage,omitempty"`
 }
 
 func (this *Configuration) SetDefaults() error {
@@ -34,6 +40,7 @@ func (this *Configuration) SetDefaults() error {
 		func(v *Configuration) (string, defaulter) { return "flows", &v.Flows },
 		func(v *Configuration) (string, defaulter) { return "houseKeeping", &v.HouseKeeping },
 		func(v *Configuration) (string, defaulter) { return "imp", &v.Imp },
+		fixedDefault("startMessage", func(v *Configuration) *string { return &v.StartMessage }, DefaultStartMessage),
 	)
 }
 
@@ -44,6 +51,7 @@ func (this *Configuration) Trim() error {
 		func(v *Configuration) (string, trimmer) { return "flows", &v.Flows },
 		func(v *Configuration) (string, trimmer) { return "houseKeeping", &v.HouseKeeping },
 		func(v *Configuration) (string, trimmer) { return "imp", &v.Imp },
+		noopTrim[Configuration]("startMessage"),
 	)
 }
 
@@ -55,6 +63,7 @@ func (this *Configuration) Validate() error {
 		notEmptySliceValidate("flows", func(v *Configuration) *[]Flow { return (*[]Flow)(&v.Flows) }),
 		func(v *Configuration) (string, validator) { return "houseKeeping", &v.HouseKeeping },
 		func(v *Configuration) (string, validator) { return "imp", &v.Imp },
+		noopValidate[Configuration]("startMessage"),
 	)
 }
 
@@ -117,5 +126,6 @@ func (this Configuration) isEqualTo(other *Configuration) bool {
 		isEqual(&this.Session, &other.Session) &&
 		isEqual(&this.Flows, &other.Flows) &&
 		isEqual(&this.HouseKeeping, &other.HouseKeeping) &&
-		isEqual(&this.Imp, &other.Imp)
+		isEqual(&this.Imp, &other.Imp) &&
+		this.StartMessage == other.StartMessage
 }

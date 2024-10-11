@@ -25,7 +25,7 @@ How many different authentication methods a client can use before the connection
 <<property("maxConnections", "uint8", None, default=255)>>
 The maximum amount of parallel connections on this service. Every additional connection beyond will be rejected.
 
-<<property_with_holder("banner", "String Template", "../templating/index.md#string", "Connection", "../context/connection.md", default='{{ `/etc/ssh/sshd-banner` | file `optional` | default `Transcend with Engity Bifröst\n\n` }}')>>
+<<property_with_holder("banner", "String Template", "../templating/index.md#string", "Connection", "../context/connection.md", default='{{ `/etc/ssh/sshd-banner` | file `optional` | default `Transcend with Engity\'s Bifröst\n\n` }}')>>
 Banner which will be shown when the client connects to the server even before the first validation of authorizations or similar happens.
 
 ## Examples
@@ -68,7 +68,7 @@ Restrict which ED25519 keys are allowed to be used.
 
 <<property_with_holder("rememberMeNotification", "String Template", "../templating/index.md#string", "Authorization", "../context/authorization.md", default="If you return until {{.session.validUntil | format `dateTimeT`}} with the same public key ({{.key | fingerprint}}), you can seamlessly log in again.\n\n", heading=4)>>
 
-Banner which will be shown if the connection was based on an authentication method (like OIDC) which does not have its own public key authentication. At this point the authentication was successful AND the client submitted at least one public key (as authentication try). This key will be used and this message will be shown to the client to inform, that this key will be used for the session from now on. As a result, the original authentication will be skipped (like OIDC) as long as it is not expired and the client presents the same public key.
+Banner which will be shown if the connection was based on an authentication method (like OIDC) which does not have its own public key authentication. At this point, the authentication was successful AND the client submitted at least one public key (as authentication try). This key will be used and this message will be shown to the client to inform that this key will be used for the session from now on. As a result, the original authentication will be skipped (like OIDC) as long as it is not expired and the client presents the same public key.
 
 ### Examples
 
@@ -83,6 +83,7 @@ rememberMeNotification: "If you return until {{.session.validUntil | format `dat
 
 ## Compatibility
 
-| [`linux`/`generic`](../../setup/distribution.md#linux-generic) | [`linux`/`extended`](../../setup/distribution.md#linux-extended) | [`windows`/`generic`](../../setup/distribution.md#windows-generic) |
-| - | - | - |
-| <<compatibility(True)>> | <<compatibility(True)>> | <<compatibility(True)>> |
+| <<dist("linux")>> | <<dist("windows")>> |
+| - | - |
+| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"windows")>> |
+

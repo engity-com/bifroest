@@ -5,7 +5,7 @@ description: Documentation how Bifröst can be configured will all its possible 
 
 Bifröst will be configured in the [YAML language](https://en.wikipedia.org/wiki/YAML).
 
-By default, the configuration is token from the following location:
+By default, the configuration is taken from the following location:
 
 * Linux: `/etc/engity/bifroest/configuration.yaml`
 * Windows: `C:\ProgramData\Engity\Bifroest\configuration.yaml`

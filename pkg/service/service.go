@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -56,6 +57,15 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+
+	if msg := this.Configuration.StartMessage; msg != "" {
+		for _, line := range strings.Split(msg, "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				log.Warn(line)
+			}
+		}
+	}
+
 	svc, err := this.prepare()
 	if err != nil {
 		return err

@@ -806,7 +806,7 @@ func (this *FsRepository) deletePublicKey(ctx context.Context, flow configuratio
 	if err != nil {
 		return fmt.Errorf("cannot open session file (%q) of %v/%v for write: %w", fnBuf, flow, id, err)
 	}
-	defer common.DoOnFailureIgnore(&renamed, func() error { return os.Remove(fnBuf) })
+	defer common.IgnoreErrorIfFalse(&renamed, func() error { return os.Remove(fnBuf) })
 	defer common.KeepCloseError(&rErr, fBuf)
 
 	nAdded := 0

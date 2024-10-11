@@ -16,12 +16,10 @@ toc_depth: 2
 
     #### Matrix
 
-    > Column headers in format of `<os>`/`<edition>`.
+    !!! tip ""
+        Cells express support in format of `<generic>`/`<extended>`.
 
-    | `arch` | [`linux`/`generic`](distribution.md#linux-generic) | [`linux`/`extended`](distribution.md#linux-extended) | [`windows`/`generic`](distribution.md#windows-generic) | [`windows`/`extended`](distribution.md#windows-extended) |
-    | - | - | - | - | - |
-    | `amd64` | :octicons-check-circle-24: | :octicons-check-circle-24: | :octicons-check-circle-24: | :octicons-circle-24: |
-    | `arm64` | :octicons-check-circle-24: | :octicons-check-circle-24: | :octicons-check-circle-24: | :octicons-circle-24: |
+    <<compatibility_matrix()>>
 
     #### Example
     ```shell
@@ -47,7 +45,7 @@ toc_depth: 2
 
 ### systemd
 
-To enable Bifröst to run at every server start where [systemd](https://wiki.archlinux.org/title/Systemd) is available, simply:
+To enable Bifröst to run on every server, start where [systemd](https://wiki.archlinux.org/title/Systemd) is available, simply:
 1. Download <<asset_link("contrib/systemd/bifroest.service", "our example service configuration")>>:
    ```shell
    sudo curl -sSLf <<asset_url("contrib/systemd/bifroest.service", True)>> -o /etc/systemd/system/bifroest.service

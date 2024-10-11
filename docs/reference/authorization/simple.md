@@ -5,7 +5,7 @@ description: How to authorize a requesting user the simplest way with Bifröst.
 
 # Simple authorization
 
-Authorizes a requesting user via stored credentials.
+Authorizes a user request via stored credentials.
 
 ## Properties
 
@@ -13,7 +13,7 @@ Authorizes a requesting user via stored credentials.
 Has to be set to `simple` to enable simple authorization.
 
 <<property_with_holder("entries", "Array", None, "Entry", "#entry")>>
-Each entry will be inspected to try to authorize a remote user.
+Each entry will be inspected to check if a remote user should be authorized.
 
 ## Entry
 
@@ -37,7 +37,7 @@ Contains [SSH Public Keys](../data-type.md#ssh-public-key) in the format of clas
 Similar to [`authorizedKeys`](#entry-property-authorizedKeys), but in a dedicated file.
 
 <<property("password", "Password", "../data-type.md#password", id_prefix="entry-", heading=4)>>
-Password (if user uses interactive or password authentication methods) to be evaluated against.
+Password (if user uses interactive or password authentication method) to be evaluated against.
 
 ## Context
 
@@ -63,6 +63,6 @@ This authorization will produce a context of type [Authorization Simple](../cont
 
 ## Compatibility
 
-| [`linux`/`generic`](../../setup/distribution.md#linux-generic) | [`linux`/`extended`](../../setup/distribution.md#linux-extended) | [`windows`/`generic`](../../setup/distribution.md#windows-generic) |
-| - | - | - |
-| <<compatibility(True)>> | <<compatibility(True)>> | <<compatibility(True)>> |
+| <<dist("linux")>> | <<dist("windows")>> |
+| - | - |
+| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"windows")>> |

@@ -1,0 +1,31 @@
+## This configuration should only be used as dummy configuration within OCI/Docker images.
+## It will create (if not exists)
+## for the regular sshd.
+
+startMessage: >
+  Welcome to Engity's Bifröst!
+  This instance is running a demo configuration that is NOT
+  intended for production use. Therefore, it is not possible to
+  log in to this instance until it is configured.
+  See https://bifroest.engity.org/latest/setup/ for more details.
+
+ssh:
+  addresses: [ ":22" ]
+  banner: |+
+    Transcend with Engity's Bifröst
+    ===============================
+
+    This instance is running a demo configuration that is NOT
+    intended for production use. Therefore, it is not possible to
+    log in to this instance until it is configured.
+
+    See https://bifroest.engity.org/latest/setup/ for more details.
+
+flows:
+  - name: default
+    authorization:
+      type: htpasswd
+    environment:
+      type: local
+      # This property will not be evaluated in Windows.
+      name: "demo"

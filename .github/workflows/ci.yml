@@ -1,25 +1,65 @@
 name: Continuous Integration
-on:
-  push:
 
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  BIFROEST_VENDOR: "Engity GmbH"
+
+on:
   pull_request:
     types:
       - opened
       - reopened
+      - synchronize
+      - ready_for_review
 
 jobs:
+  evaluate:
+    name: Evaluate
+    runs-on: ubuntu-latest
+    outputs:
+      commit: "${{ steps.refs.outputs.commit }}"
+      version: "${{ steps.refs.outputs.version }}"
+      ref: "${{ steps.refs.outputs.ref }}"
+      pr: "${{ steps.refs.outputs.pr }}"
+      stage-binary: "${{ steps.refs.outputs.stage-binary }}"
+      stage-archive: "${{ steps.refs.outputs.stage-archive }}"
+      stage-image: "${{ steps.refs.outputs.stage-image }}"
+      stage-digest: "${{ steps.refs.outputs.stage-digest }}"
+      stage-publish: "${{ steps.refs.outputs.stage-publish }}"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          cache: false
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Cache Go
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Execute
+        id: refs
+        run: |
+          go run ./cmd/build evaluate-environment --log.colorMode=always
+
   test:
     name: Tests
+    needs: [ evaluate ]
     strategy:
       matrix:
         os: [ ubuntu-latest, windows-latest ]
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Install Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: stable
-
       - name: Install Ubuntu dependencies
         if: ${{ matrix.os == 'ubuntu-latest' }}
         run: sudo apt install libpam0g-dev
@@ -29,7 +69,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Cache
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          cache: false
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Cache Go
         uses: actions/cache@v4
         with:
           path: ~/go/pkg/mod
@@ -39,6 +86,10 @@ jobs:
 
       - name: Install goveralls
         run: go install github.com/mattn/goveralls@latest
+
+      - name: Install dependencies
+        run: |
+          go mod download
 
       - name: Test
         run: |
@@ -53,26 +104,17 @@ jobs:
           goveralls "-coverprofile=profile.cov" "-service=github" "-parallel" "-flagname=go-${{ matrix.os }}"
   package:
     name: Package
-    strategy:
-      matrix:
-        os: [ ubuntu-latest ]
-    runs-on: ${{ matrix.os }}
+    needs: [ evaluate ]
+    runs-on: "ubuntu-latest"
+    container:
+      image: ghcr.io/engity-com/build-images/go
     steps:
-      - name: Install Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: stable
-
-      - name: Install Ubuntu dependencies
-        if: ${{ matrix.os == 'ubuntu-latest' }}
-        run: sudo apt install libpam0g-dev
-
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Cache
+      - name: Cache Go
         uses: actions/cache@v4
         with:
           path: ~/go/pkg/mod
@@ -80,28 +122,37 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
-      - name: Install Syft
-        uses: anchore/sbom-action/download-syft@v0.17.2
-
-      - name: GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+      - name: Cache images dependencies
+        uses: actions/cache@v4
         with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: release --snapshot --clean
-        env:
-          BIFROEST_VENDOR: engity
+          path: .cache/dependencies/images
+          key: images-dependencies
+          restore-keys: images-dependencies
+
+      - name: Git configure
+        run: |
+          git config --global --add safe.directory $(pwd)
+
+      - name: Install dependencies
+        run: |
+          go mod download
+
+      - name: Build
+        run: |
+          go run ./cmd/build build --log.colorMode=always
 
       - name: Archive package results
+        if: needs.evaluate.outputs.stage-publish == 'true'
         uses: actions/upload-artifact@v4
         with:
           retention-days: 1
           name: dist
           path: |
-            var/dist/*.tgz*
-            var/dist/*.zip*
+            var/dist/**/*
+
   doc:
     name: Documentation
+    needs: [ evaluate ]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -111,9 +162,15 @@ jobs:
           persist-credentials: true
 
       - name: Install Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: 3.x
+
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ hashFiles('docs/requirements.txt') }}
 
       - name: Install dependencies
         run: |
@@ -124,7 +181,16 @@ jobs:
           mkdocs --color build -c
 
       - name: Deploy
+        id: deploy
+        if: needs.evaluate.outputs.stage-publish == 'true'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          command: pages deploy --project-name=bifroest-engity-org var/doc
+          command: pages deploy --branch=${{ needs.evaluate.outputs.version }} --commit-dirty=true --project-name=bifroest-engity-org var/doc
+
+      - name: Report
+        if: needs.evaluate.outputs.stage-publish == 'true'
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          echo "Documentation is available at ${DEPLOYMENT_URL}" >> "$GITHUB_STEP_SUMMARY"

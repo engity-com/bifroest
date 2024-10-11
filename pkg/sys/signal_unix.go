@@ -27,7 +27,6 @@ const (
 	SIGPWR    = Signal(syscall.SIGPWR)
 	SIGQUIT   = Signal(syscall.SIGQUIT)
 	SIGSEGV   = Signal(syscall.SIGSEGV)
-	SIGSTKFLT = Signal(syscall.SIGSTKFLT)
 	SIGSTOP   = Signal(syscall.SIGSTOP)
 	SIGSYS    = Signal(syscall.SIGSYS)
 	SIGTERM   = Signal(syscall.SIGTERM)
@@ -35,7 +34,6 @@ const (
 	SIGTSTP   = Signal(syscall.SIGTSTP)
 	SIGTTIN   = Signal(syscall.SIGTTIN)
 	SIGTTOU   = Signal(syscall.SIGTTOU)
-	SIGUNUSED = Signal(syscall.SIGUNUSED)
 	SIGURG    = Signal(syscall.SIGURG)
 	SIGUSR1   = Signal(syscall.SIGUSR1)
 	SIGUSR2   = Signal(syscall.SIGUSR2)
@@ -66,7 +64,6 @@ var (
 		"PWR":    SIGPWR,
 		"QUIT":   SIGQUIT,
 		"SEGV":   SIGSEGV,
-		"STKFLT": SIGSTKFLT,
 		"STOP":   SIGSTOP,
 		"SYS":    SIGSYS,
 		"TERM":   SIGTERM,
@@ -74,7 +71,6 @@ var (
 		"TSTP":   SIGTSTP,
 		"TTIN":   SIGTTIN,
 		"TTOU":   SIGTTOU,
-		"UNUSED": SIGUNUSED,
 		"URG":    SIGURG,
 		"USR1":   SIGUSR1,
 		"USR2":   SIGUSR2,
