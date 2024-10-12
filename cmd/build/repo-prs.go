@@ -34,23 +34,29 @@ func (this *repoPrs) init(ctx context.Context, app *kingpin.Application) {
 		StringVar(&this.testPublishLabel)
 
 	var eventAction string
+	var prNumber uint
 	var label string
 
 	cmdIu := app.Command("inspect-pr-action", "")
 	cmdIu.Arg("eventAction", "").
 		Required().
 		StringVar(&eventAction)
+	cmdIu.Arg("prNumber", "").
+		Required().
+		UintVar(&prNumber)
 	cmdIu.Arg("label", "").
 		StringVar(&label)
 	cmdIu.Action(func(*kingpin.ParseContext) error {
-		return this.inspectAction(ctx, eventAction, label)
+		return this.inspectAction(ctx, eventAction, prNumber, label)
 	})
 }
 
-func (this *repoPrs) inspectAction(ctx context.Context, eventAction string, label string) error {
-	prNumber := this.pr()
+func (this *repoPrs) inspectAction(ctx context.Context, eventAction string, prNumber uint, label string) error {
 	if prNumber == 0 {
-		return fmt.Errorf("the environment does not contain a pr reference")
+		prNumber = this.pr()
+	}
+	if prNumber == 0 {
+		return fmt.Errorf("neither the environment does not contain a pr reference nor the command was called with it")
 	}
 
 	pr, err := this.byId(ctx, prNumber)
