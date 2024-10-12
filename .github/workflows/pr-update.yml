@@ -49,4 +49,4 @@ jobs:
         id: refs
         run: |
           set -ex
-          go run ./cmd/build inspect-pr-action --log.colorMode=always "${{github.event.action}}" "${{github.event.label.name}}"
+          go run ./cmd/build inspect-pr-action --log.colorMode=always "${{github.event.action}}" "${{github.event.number}}" "${{github.event.label.name}}"
