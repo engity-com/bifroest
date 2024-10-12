@@ -33,7 +33,7 @@ require (
 	github.com/tg123/go-htpasswd v1.2.2
 	github.com/things-go/go-socks5 v0.0.5
 	github.com/vmihailenco/msgpack/v5 v5.4.1
-	golang.org/x/crypto v0.27.0
+	golang.org/x/crypto v0.28.0
 	golang.org/x/net v0.29.0
 	golang.org/x/oauth2 v0.23.0
 	golang.org/x/sys v0.26.0

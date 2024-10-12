@@ -13,13 +13,20 @@ from mkdocs_macros.plugin import MacrosPlugin
 repo = "engity-com/bifroest"
 repo_http_url = "https://github.com/" + repo
 repo_raw_url = "https://raw.githubusercontent.com/" + repo
+repo_container_uri = "ghcr.io/" + repo
 raw_version = pos.getenv('VERSION')
-release = (("v" if raw_version.__len__() > 0 and raw_version[0].isdigit() else "") +raw_version) if raw_version is not None and raw_version.__len__() > 0 else "latest"
-branch = (("v" if raw_version.__len__() > 0 and raw_version[0].isdigit() else "") +raw_version) if raw_version is not None and raw_version.__len__() > 0 else "main"
+release = (("v" if raw_version.__len__() > 0 and raw_version[0].isdigit() else "") + raw_version) if raw_version is not None and raw_version.__len__() > 0 else "latest"
+branch = (("v" if raw_version.__len__() > 0 and raw_version[0].isdigit() else "") + raw_version) if raw_version is not None and raw_version.__len__() > 0 else "main"
+
+
+class Packaging(str, Enum):
+    archive = 'archive'
+    image = 'image'
 
 class Os(str, Enum):
     linux = 'linux'
     windows = 'windows'
+
 
 class Arch(str, Enum):
     i386 = '386'
@@ -439,6 +446,23 @@ def define_env(env: MacrosPlugin):
         )
 
     @env.macro
+    def container_image_uri(
+            tag: str | None = None
+    ) -> str:
+        if tag is not None and tag.find("*") >= 0:
+            if raw_version is not None:
+                tag = tag.replace("*", f"{"-" if tag.find("*") > 0 else ""}{raw_version}")
+            else:
+                tag = tag.replace("*", "")
+
+        return f"{repo_container_uri}{f":{tag}" if tag is not None else ""}"
+
+    @env.macro
+    def container_packages_url() -> str:
+        return f"{repo_http_url}/pkgs/container/bifroest"
+
+
+    @env.macro
     def asset_url(file: str, raw: bool = False) -> str:
         if raw:
             return f"{repo_raw_url}/{branch}/{file}"
@@ -519,22 +543,27 @@ def define_env(env: MacrosPlugin):
     @env.macro
     def compatibility_matrix(
             os: Os | None = None,
+            packaging: str | Packaging | None = None,
     ) -> str:
+        if type(packaging) is str:
+            packaging = Packaging[packaging]
+
         result = '<table markdown="span" data-kind="compatibility_matrix"><thead markdown="span">'
-        result += '<tr markdown="span"><th rowspan="2">Architecture</th>'
+        result += f'<tr markdown="span"><th{' rowspan="2"' if packaging is None else ''}>Architecture</th>'
         if os is not None:
-            result += f'<th colspan="2">{dist(os)}</th>'
+            result += f'<th{' colspan="2"' if packaging is None else ''} markdown="span">{dist(os)}</th>'
         else:
             for osv in Os:
-                result += f'<th colspan="2" markdown="span">{dist(osv)}</th>'
+                result += f'<th{' colspan="2"' if packaging is None else ''} markdown="span">{dist(osv)}</th>'
         result += "</tr>"
 
-        if os is not None:
-            result += '<th>Binary</th><th>Image</th>'
-        else:
-            for _ in Os:
+        if packaging is None:
+            if os is not None:
                 result += '<th>Binary</th><th>Image</th>'
-        result += '</tr>'
+            else:
+                for _ in Os:
+                    result += '<th>Binary</th><th>Image</th>'
+            result += '</tr>'
 
         result += '</thead><tbody markdown="span">'
 
@@ -544,14 +573,18 @@ def define_env(env: MacrosPlugin):
             if os is not None:
                 generic = support_matrix.lookup(os, arch, EditionKind.generic)
                 extended = support_matrix.lookup(os, arch, EditionKind.extended)
-                result += f'<td markdown="span">{compatibility_editions(True if generic and generic.binary_supported else None, True if extended and extended.binary_supported else None, os)}</td>'
-                result += f'<td markdown="span">{compatibility_editions(True if generic and generic.image_supported else None, True if extended and extended.image_supported else None, os)}</td>'
+                if packaging == Packaging.archive or packaging is None:
+                    result += f'<td markdown="span">{compatibility_editions(True if generic and generic.binary_supported else None, True if extended and extended.binary_supported else None, os)}</td>'
+                if packaging == Packaging.image or packaging is None:
+                    result += f'<td markdown="span">{compatibility_editions(True if generic and generic.image_supported else None, True if extended and extended.image_supported else None, os)}</td>'
             else:
                 for osv in Os:
                     generic = support_matrix.lookup(osv, arch, EditionKind.generic)
                     extended = support_matrix.lookup(osv, arch, EditionKind.extended)
-                    result += f'<td markdown="span">{compatibility_editions(True if generic and generic.binary_supported else None, True if extended and extended.binary_supported else None, osv)}</td>'
-                    result += f'<td markdown="span">{compatibility_editions(True if generic and generic.image_supported else None, True if extended and extended.image_supported else None, osv)}</td>'
+                    if packaging == Packaging.archive or packaging is None:
+                        result += f'<td markdown="span">{compatibility_editions(True if generic and generic.binary_supported else None, True if extended and extended.binary_supported else None, osv)}</td>'
+                    if packaging == Packaging.image or packaging is None:
+                        result += f'<td markdown="span">{compatibility_editions(True if generic and generic.image_supported else None, True if extended and extended.image_supported else None, osv)}</td>'
 
             result += '<tr>'
 
