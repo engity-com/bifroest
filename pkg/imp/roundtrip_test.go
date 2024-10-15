@@ -116,8 +116,8 @@ func roundtrip(t *testing.T) {
 		assert.Equal(t, "thanks for: foo", resp)
 	})
 	t.Run("kill", func(t *testing.T) {
-		err := sess.Kill(ctx, connId, 666, sys.SIGTRAP)
-		require.Equal(t, err, ErrNoSuchProcess)
+		err := sess.Kill(ctx, connId, 66666666666, sys.SIGTRAP)
+		require.Equal(t, ErrNoSuchProcess, err)
 	})
 	t.Run("port-forward-tcp", func(t *testing.T) {
 		hc := http.Client{
@@ -165,7 +165,6 @@ func roundtripImp(t *testing.T) {
 			With("context", "imp-test").
 			Info("received signal")
 		cancelFn()
-		return
 	}()
 
 	svc := Service{
@@ -261,10 +260,10 @@ func runCmd(ctx context.Context, t *testing.T, cmd *exec.Cmd, onDone func()) {
 				// Expected exit code.
 				return
 			}
-			t.Fatalf("IMP failed with %d; see above", ecErr.ExitCode())
+			t.Errorf("IMP failed with %d; see above", ecErr.ExitCode())
 			return
 		}
-		t.Fatalf("IMP failed with unexpected execution error: %v", err)
+		t.Errorf("IMP failed with unexpected execution error: %v", err)
 	}
 }
 

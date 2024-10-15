@@ -212,10 +212,3 @@ func (this *Imp) getAddr() string {
 	}
 	return ":" + strconv.Itoa(DefaultPort)
 }
-
-func (this *Imp) logger() log.Logger {
-	if v := this.Logger; v != nil {
-		return v
-	}
-	return log.GetLogger("imp")
-}

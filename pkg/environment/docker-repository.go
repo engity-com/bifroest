@@ -515,20 +515,6 @@ func (this *DockerRepository) removeContainer(ctx context.Context, id string) (b
 	return true, nil
 }
 
-func (this *DockerRepository) findContainers(ctx context.Context) ([]types.Container, error) {
-	list, err := this.apiClient.ContainerList(ctx, container.ListOptions{
-		All: true,
-		Filters: filters.NewArgs(
-			filters.Arg("label="+DockerLabelFlow, this.flow.String()),
-			filters.Arg("status", "running"),
-		),
-	})
-	if err != nil {
-		return nil, errors.System.Newf("cannot list container of flow %v: %w", this.flow, err)
-	}
-	return list, nil
-}
-
 func (this *DockerRepository) findContainerBySession(ctx context.Context, sess session.Session) (c *types.Container, exitCode int, err error) {
 	return this.findContainerBy(ctx, filters.NewArgs(
 		filters.Arg("label="+DockerLabelSessionId, sess.Id().String()),

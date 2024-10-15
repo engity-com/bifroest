@@ -133,6 +133,6 @@ func (this Host) IsEqualTo(other any) bool {
 }
 
 func (this Host) isEqualTo(other *Host) bool {
-	return bytes.Equal(this.IP, other.IP) &&
+	return net.IP.Equal(this.IP, other.IP) &&
 		this.Dns == other.Dns
 }

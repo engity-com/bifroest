@@ -7,38 +7,28 @@ import (
 )
 
 var (
-	DefaultEnvironmentImpBindingPorts = net.MustNewPortPredicate("30000-65500")
-	DefaultEnvironmentImpBindingHost  = net.MustNewHost("127.0.0.1")
-	DefaultEnvironmentImpHost         = DefaultEnvironmentImpBindingHost
+	DefaultEnvironmentImpBindingHost = net.MustNewHost("127.0.0.1")
 )
 
 type EnvironmentImp struct {
-	BindingPorts net.PortPredicate `yaml:"bindingPorts"`
-	BindingHost  net.Host          `yaml:"bindingHost"`
-	Host         net.Host          `yaml:"host"`
+	BindingHost net.Host `yaml:"bindingHost"`
 }
 
 func (this *EnvironmentImp) SetDefaults() error {
 	return setDefaults(this,
-		fixedDefault("bindingPorts", func(v *EnvironmentImp) *net.PortPredicate { return &v.BindingPorts }, DefaultEnvironmentImpBindingPorts),
 		fixedDefault("bindingHost", func(v *EnvironmentImp) *net.Host { return &v.BindingHost }, DefaultEnvironmentImpBindingHost),
-		fixedDefault("host", func(v *EnvironmentImp) *net.Host { return &v.Host }, DefaultEnvironmentImpHost),
 	)
 }
 
 func (this *EnvironmentImp) Trim() error {
 	return trim(this,
-		noopTrim[EnvironmentImp]("bindingPorts"),
 		noopTrim[EnvironmentImp]("bindingHost"),
-		noopTrim[EnvironmentImp]("host"),
 	)
 }
 
 func (this *EnvironmentImp) Validate() error {
 	return validate(this,
-		func(v *EnvironmentImp) (string, validator) { return "bindingPorts", v.BindingPorts },
 		func(v *EnvironmentImp) (string, validator) { return "bindingHost", v.BindingHost },
-		func(v *EnvironmentImp) (string, validator) { return "host", v.Host },
 	)
 }
 
@@ -64,7 +54,5 @@ func (this EnvironmentImp) IsEqualTo(other any) bool {
 }
 
 func (this EnvironmentImp) isEqualTo(other *EnvironmentImp) bool {
-	return isEqual(&this.BindingPorts, &other.BindingPorts) &&
-		isEqual(&this.BindingHost, &other.BindingHost) &&
-		isEqual(&this.Host, &other.Host)
+	return isEqual(&this.BindingHost, &other.BindingHost)
 }

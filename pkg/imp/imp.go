@@ -9,7 +9,6 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/net"
-	"github.com/engity-com/bifroest/pkg/session"
 )
 
 var (
@@ -46,8 +45,6 @@ type Imp interface {
 type imp struct {
 	*Binaries
 	master *protocol.Master
-
-	sessionToPort map[session.Id]uint16
 }
 
 func (this *imp) Open(ctx context.Context, ref Ref) (Session, error) {

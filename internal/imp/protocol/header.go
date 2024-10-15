@@ -26,7 +26,7 @@ func (this *Header) DecodeMsgpack(dec *msgpack.Decoder) error {
 }
 
 func (this Header) EncodeMsgpack(enc *msgpack.Encoder) error {
-	return this.EncodeMsgpack(enc)
+	return this.EncodeMsgPack(enc)
 }
 
 func (this Header) EncodeMsgPack(enc codec.MsgPackEncoder) error {

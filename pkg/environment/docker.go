@@ -9,7 +9,6 @@ import (
 	"syscall"
 
 	"github.com/docker/docker/api/types"
-	"golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/crypto"
@@ -24,7 +23,6 @@ type docker struct {
 
 	containerId string
 	sessionId   session.Id
-	publicKey   ssh.PublicKey
 
 	remoteUser string
 	remoteHost net.Host
