@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -107,9 +108,14 @@ func (this *dependenciesCaCerts) generate(ctx context.Context, to io.Writer) err
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if cert.Trust != certparse.ServerTrustedDelegator {
+		if (cert.Trust & certparse.ServerTrustedDelegator) == 0 {
 			continue
 		}
+
+		log.With("subject", cert.Cert.Subject).
+			With("label", cert.Label).
+			With("serial", hex.EncodeToString(cert.Cert.SerialNumber.Bytes())).
+			Trace("ca cert added")
 
 		if err := pem.Encode(to, &pem.Block{
 			Type:  "CERTIFICATE",
