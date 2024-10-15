@@ -247,9 +247,7 @@ func runCmd(ctx context.Context, t *testing.T, cmd *exec.Cmd, onDone func()) {
 			t.Errorf("Cannot get IMP process %d: %v", cmd.Process.Pid, err)
 			return
 		}
-		if err := p.Terminate(); err != nil {
-			t.Logf("Cannot terminate IMP process %d: %v", cmd.Process.Pid, err)
-		}
+		_ = p.Terminate()
 	}()
 
 	if err := cmd.Wait(); err != nil {

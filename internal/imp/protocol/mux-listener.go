@@ -6,7 +6,6 @@ import (
 	gonet "net"
 	"sync/atomic"
 
-	log "github.com/echocat/slf4g"
 	"github.com/things-go/go-socks5/statute"
 
 	"github.com/engity-com/bifroest/pkg/common"
@@ -74,11 +73,6 @@ func (this *muxListener) handleNewConn(conn gonet.Conn) error {
 	if err != nil {
 		return err
 	}
-	log.Withf("peek", "%d", peek[0]).
-		Withf("socks5", "%d", statute.VersionSocks5).
-		Withf("rpc", "%d", HeaderMagic).
-		With("remote", conn.RemoteAddr()).
-		Info("new connection")
 	switch peek[0] {
 	case statute.VersionSocks5:
 		this.socks5.connChan <- bc
