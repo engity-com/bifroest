@@ -256,7 +256,7 @@ func runCmd(ctx context.Context, t *testing.T, cmd *exec.Cmd, onDone func()) {
 		var ecErr *exec.ExitError
 		if errors.As(err, &ecErr) {
 			exitCode := ecErr.ExitCode()
-			if exitCode == 666 {
+			if exitCode == 666 || exitCode == 154 {
 				// Expected exit code.
 				return
 			}
