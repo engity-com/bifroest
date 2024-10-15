@@ -2,6 +2,7 @@ package codec
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"net"
 	"reflect"
@@ -30,6 +31,7 @@ func GetPooledMsgPackDecoder(r io.Reader) *msgpack.Decoder {
 
 func ReleasePooledMsgPackDecoder(v *msgpack.Decoder) {
 	decoders.Put(v)
+	ReleasePooledBufReader(v.Buffered().(*bufio.Reader))
 }
 
 func GetPooledMsgPackEncoder(w io.Writer) *msgpack.Encoder {
@@ -42,7 +44,7 @@ func ReleasePooledMsgPackEncoder(v *msgpack.Encoder) {
 	encoders.Put(v)
 }
 
-func GetPooledMsgPackConn(conn net.Conn) *msgPackConn {
+func GetPooledMsgPackConn(conn net.Conn) MsgPackConn {
 	result := msgPackConns.Get().(*msgPackConn)
 	result.Conn = conn
 	result.Encoder = GetPooledMsgPackEncoder(conn)
@@ -50,11 +52,18 @@ func GetPooledMsgPackConn(conn net.Conn) *msgPackConn {
 	return result
 }
 
-func ReleasePooledMsgPackConn(v *msgPackConn) {
-	msgPackConns.Put(v)
+func ReleasePooledMsgPackConn(v MsgPackConn) {
+	instance, ok := v.(*msgPackConn)
+	if !ok {
+		panic(fmt.Errorf("unsupported connection %T", v))
+	}
+	ReleasePooledMsgPackEncoder(instance.Encoder)
+	ReleasePooledMsgPackDecoder(instance.Decoder)
+	msgPackConns.Put(instance)
 }
 
 type MsgPackEncoder interface {
+	Writer() io.Writer
 	Encode(v any) error
 	EncodeMulti(v ...any) error
 	EncodeValue(v reflect.Value) error
@@ -83,6 +92,7 @@ type MsgPackEncoder interface {
 }
 
 type MsgPackDecoder interface {
+	Buffered() io.Reader
 	Decode(v any) error
 	DecodeMulti(v ...any) error
 	DecodeValue(v reflect.Value) error

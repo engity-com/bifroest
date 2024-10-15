@@ -201,10 +201,12 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	}
 }
 
-func (this *local) Dispose(ctx context.Context) (bool, error) {
+func (this *local) Dispose(ctx context.Context) (_ bool, rErr error) {
 	fail := func(err error) (bool, error) {
 		return false, errors.Newf(errors.System, "cannot dispose environment: %w", err)
 	}
+
+	defer common.KeepCloseError(&rErr, this)
 
 	disposed, err := this.dispose(ctx)
 	if err != nil {
@@ -221,7 +223,7 @@ func (this *local) Dispose(ctx context.Context) (bool, error) {
 	return disposed, nil
 }
 
-func (this *local) Release() error {
+func (this *local) Close() error {
 	return nil
 }
 

@@ -31,7 +31,7 @@ type LocalRepository struct {
 	userRepository user.CloseableRepository
 }
 
-func NewLocalRepository(ctx context.Context, flow configuration.FlowName, conf *configuration.EnvironmentLocal, _ imp.BinaryProvider) (*LocalRepository, error) {
+func NewLocalRepository(ctx context.Context, flow configuration.FlowName, conf *configuration.EnvironmentLocal, _ imp.Imp) (*LocalRepository, error) {
 	fail := func(err error) (*LocalRepository, error) {
 		return nil, err
 	}

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alecthomas/kingpin"
+	"github.com/alecthomas/kingpin/v2"
 	"github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/fields"
 	"github.com/google/go-containerregistry/pkg/authn"

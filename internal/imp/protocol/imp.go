@@ -2,7 +2,6 @@ package protocol
 
 import (
 	"context"
-	gocrypto "crypto"
 	"crypto/tls"
 	"crypto/x509"
 	"net"
@@ -26,12 +25,12 @@ const (
 )
 
 type Imp struct {
-	MasterPublicKey gocrypto.PublicKey
+	MasterPublicKey crypto.PublicKey
 	Addr            string
 	Logger          log.Logger
 }
 
-func (this *Imp) Serve(_ context.Context) error {
+func (this *Imp) Serve(ctx context.Context) error {
 	fail := func(err error) error {
 		return err
 	}
@@ -59,8 +58,9 @@ func (this *Imp) Serve(_ context.Context) error {
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(1)
+
 	var rpcErr atomic.Pointer[error]
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		if err := instance.serveRpc(instance.listener.Rpc()); err != nil {
@@ -70,16 +70,31 @@ func (this *Imp) Serve(_ context.Context) error {
 		}
 	}()
 
-	if err := instance.serveSocks5(instance.listener.Socks5()); err != nil {
-		return err
+	var socksErr atomic.Pointer[error]
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := instance.serveSocks5(instance.listener.Socks5()); err != nil {
+			if !bnet.IsClosedError(err) {
+				socksErr.Store(&err)
+			}
+		}
+	}()
+
+	<-ctx.Done()
+	if err := instance.listener.Close(); err != nil {
+		return failf("cannot close listener: %v", err)
 	}
 
 	wg.Wait()
 	if err := rpcErr.Load(); err != nil {
-		return *err
+		return failf("problems while listening to rpc: %w", *err)
+	}
+	if err := socksErr.Load(); err != nil {
+		return failf("problems while listening to socks5: %w", *err)
 	}
 
-	return err
+	return nil
 }
 
 type imp struct {
@@ -126,7 +141,7 @@ func (this *imp) serveRpcConn(ctx context.Context, plainConn net.Conn) (rErr err
 	defer common.KeepCloseError(&rErr, conn)
 
 	var header Header
-	if err := header.EncodeMsgPack(conn); err != nil {
+	if err := header.DecodeMsgPack(conn); err != nil {
 		return fail(err)
 	}
 
@@ -156,33 +171,37 @@ func (this *Imp) createTlsConfig() (*tls.Config, error) {
 		return fail(err)
 	}
 
+	verifier, err := peerVerifierForPublicKey(this.MasterPublicKey)
+	if err != nil {
+		return nil, err
+	}
 	return &tls.Config{
 		Certificates: []tls.Certificate{{
 			Certificate: [][]byte{cert.Raw},
-			PrivateKey:  prv,
+			PrivateKey:  prv.ToSdk(),
 		}},
-		VerifyPeerCertificate: peerVerifierForPublicKey(this.MasterPublicKey),
+		VerifyPeerCertificate: verifier,
 		MinVersion:            minTlsVersion,
 		CipherSuites:          tlsCipherSuites,
 		ClientAuth:            tls.RequireAnyClientCert,
 	}, nil
 }
 
-func (this *Imp) generatePrivateKey() (gocrypto.Signer, error) {
+func (this *Imp) generatePrivateKey() (crypto.PrivateKey, error) {
 	req := crypto.KeyRequirement{
 		Type: crypto.KeyTypeEd25519,
 	}
 	result, err := req.GenerateKey(nil)
 	if err != nil {
-		return nil, errors.System.Newf("cannot generate private key for IMP: %w", err)
+		return nil, errors.System.Newf("cannot generate private key for imp: %w", err)
 	}
 	return result, nil
 }
 
-func (this *Imp) getOwnCertificate(prv gocrypto.Signer) (*x509.Certificate, error) {
+func (this *Imp) getOwnCertificate(prv crypto.PrivateKey) (*x509.Certificate, error) {
 	cert, err := generateCertificateForPrivateKey("bifroest-imp", prv)
 	if err != nil {
-		return nil, errors.System.Newf("cannot generate certificate for IMP: %w", err)
+		return nil, errors.System.Newf("cannot generate certificate for imp: %w", err)
 	}
 	return cert, nil
 }

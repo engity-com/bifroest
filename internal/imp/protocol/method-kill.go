@@ -11,6 +11,10 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
+var (
+	ErrNoSuchProcess = errors.System.Newf("no such process")
+)
+
 type methodKillRequest struct {
 	pid    int
 	signal sys.Signal

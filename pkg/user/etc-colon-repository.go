@@ -1313,7 +1313,7 @@ func (this *EtcColonRepository) killAllOf(ctx context.Context, uid uint32) error
 		if len(pUids) == 0 {
 			continue
 		}
-		if pUids[0] != int32(uid) {
+		if pUids[0] != uid {
 			continue
 		}
 

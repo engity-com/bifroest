@@ -2,44 +2,52 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"fmt"
 	"os"
 	"os/signal"
-	"sync"
-	"sync/atomic"
 	"syscall"
 
 	"github.com/alecthomas/kingpin/v2"
 	log "github.com/echocat/slf4g"
 
 	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/imp"
 )
 
-var (
-	impService = func() *imp.Service {
-		return &imp.Service{
-			Version: versionV,
-		}
-	}()
-	encodecMasterPublicKey string
-)
-
 var _ = registerCommand(func(app *kingpin.Application) {
+	addr := fmt.Sprintf(":%d", imp.ServicePort)
+	var encodecMasterPublicKey string
+
 	cmd := app.Command("imp", "Runs the imp service.").
 		Hidden().
 		Action(func(*kingpin.ParseContext) error {
-			return doImp()
+			return doImp(encodecMasterPublicKey, addr)
 		})
-	cmd.Flag("master-public-key", "Access token to accessing the imp service (hex encoded).").
+	cmd.Flag("addr", "Address to bind to.").
+		Default(addr).
+		PlaceHolder("[<host>]:<port>").
+		StringVar(&addr)
+	cmd.Flag("master-public-key", "Public SSH key of the master service which is accessing this imp instance.").
 		Envar("BIFROEST_MASTER_PUBLIC_KEY").
-		PlaceHolder("<path>").
+		PlaceHolder("<base64 std raw encoded ssh public key>").
 		Required().
 		StringVar(&encodecMasterPublicKey)
 })
 
-func doImp() error {
-	// TODO! Parse encodecMasterPublicKey
-	panic(":encodecMasterPublicKey")
+func doImp(encodecMasterPublicKey, addr string) error {
+	service := imp.Service{
+		Version: versionV,
+		Addr:    addr,
+	}
+
+	if b, err := base64.RawStdEncoding.DecodeString(encodecMasterPublicKey); err != nil {
+		return errors.System.Newf("cannot decode imp master's public key: %w", err)
+	} else if service.MasterPublicKey, err = crypto.ParsePublicKeyBytes(b); err != nil {
+		return errors.System.Newf("cannot decode imp master's public key: %w", err)
+	}
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	defer cancelFunc()
@@ -53,25 +61,14 @@ func doImp() error {
 		cancelFunc()
 	}()
 
-	var rErr atomic.Pointer[error]
-	var wg sync.WaitGroup
+	log.WithAll(common.VersionToMap(versionV)).
+		Info("Engity's Bifröst imp running...")
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		if err := impService.Serve(ctx); err != nil {
-			rErr.CompareAndSwap(nil, &err)
-		}
-	}()
-
-	log.WithAll(common.VersionToMap(versionV)).Info("Engity's Bifröst imp running...")
-	wg.Wait()
-
-	if v := rErr.Load(); v != nil {
-		log.WithError(*v).Error()
+	if err := service.Serve(ctx); err != nil {
+		log.WithError(err).Error()
 		os.Exit(1)
-		return nil
 	}
 
+	log.Info("bye!")
 	return nil
 }

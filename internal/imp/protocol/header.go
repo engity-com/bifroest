@@ -3,6 +3,7 @@ package protocol
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/vmihailenco/msgpack/v5"
 
@@ -29,8 +30,10 @@ func (this Header) EncodeMsgpack(enc *msgpack.Encoder) error {
 }
 
 func (this Header) EncodeMsgPack(enc codec.MsgPackEncoder) error {
-	if err := enc.EncodeUint8(HeaderMagic); err != nil {
+	if n, err := enc.Writer().Write([]byte{HeaderMagic}); err != nil {
 		return err
+	} else if n != 1 {
+		return io.ErrShortWrite
 	}
 	if err := this.Method.EncodeMsgPack(enc); err != nil {
 		return err
@@ -42,10 +45,14 @@ func (this Header) EncodeMsgPack(enc codec.MsgPackEncoder) error {
 }
 
 func (this *Header) DecodeMsgPack(dec codec.MsgPackDecoder) (err error) {
-	if v, err := dec.DecodeUint8(); err != nil {
+	hmb := make([]byte, 1)
+
+	if n, err := dec.Buffered().Read(hmb); err != nil {
 		return err
-	} else if v != HeaderMagic {
-		return fmt.Errorf("header magic number is invalid - expected %d, got %d", HeaderMagic, v)
+	} else if n != 1 {
+		return io.ErrUnexpectedEOF
+	} else if hmb[0] != HeaderMagic {
+		return fmt.Errorf("header magic number is invalid - expected %d, got %d", HeaderMagic, hmb[0])
 	}
 	if err := this.Method.DecodeMsgPack(dec); err != nil {
 		return err
@@ -71,7 +78,7 @@ func (this *Master) do(ctx context.Context, ref Ref, connectionId connection.Id,
 		Method:       method,
 		ConnectionId: connectionId,
 	}
-	if err := header.DecodeMsgPack(conn); err != nil {
+	if err := header.EncodeMsgPack(conn); err != nil {
 		return fail(err)
 	}
 

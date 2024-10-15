@@ -3,7 +3,6 @@ package session
 import (
 	"context"
 
-	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -17,7 +16,7 @@ var (
 
 type Session interface {
 	Flow() configuration.FlowName
-	Id() uuid.UUID
+	Id() Id
 	Info(context.Context) (Info, error)
 	AuthorizationToken(context.Context) ([]byte, error)
 	EnvironmentToken(context.Context) ([]byte, error)

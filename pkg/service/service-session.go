@@ -99,7 +99,7 @@ func (this *service) executeSession(sshSess ssh.Session, taskType environment.Ta
 	if err != nil {
 		return fail(err)
 	}
-	defer common.KeepError(&rErr, env.Release)
+	defer common.KeepCloseError(&rErr, env)
 
 	ctx.SetValue(environmentKeyCtxKey, env)
 	defer ctx.SetValue(environmentKeyCtxKey, nil)

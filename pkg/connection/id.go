@@ -7,11 +7,22 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 
 	"github.com/engity-com/bifroest/pkg/codec"
+	"github.com/engity-com/bifroest/pkg/common"
 )
 
-const (
-	idLen = len(Id{})
-)
+func NewId() (Id, error) {
+	raw, err := uuid.NewRandom()
+	if err != nil {
+		return Id{}, err
+	}
+	return Id(raw), nil
+}
+
+func MustNewId() Id {
+	id, err := NewId()
+	common.Must(err)
+	return id
+}
 
 type Id uuid.UUID
 

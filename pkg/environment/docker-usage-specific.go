@@ -3,18 +3,16 @@ package environment
 import (
 	"context"
 	"io"
-	gonet "net"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
-	"golang.org/x/net/proxy"
 
 	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
@@ -208,13 +206,10 @@ func (this *docker) NewDestinationConnection(ctx context.Context, host string, p
 		return nil, errors.Newf(errors.Permission, "portforwarning not allowed")
 	}
 
-	// TODO! Should be configured better....
-	socks5, err := proxy.SOCKS5("tcp", ":8800", &proxy.Auth{}, proxy.Direct)
+	connId, err := connection.NewId()
 	if err != nil {
 		return nil, err
 	}
-	socks5C := socks5.(proxy.ContextDialer)
 
-	dest := gonet.JoinHostPort(host, strconv.FormatInt(int64(port), 10))
-	return socks5C.DialContext(ctx, "tcp", dest)
+	return this.impSession.InitiateDirectTcp(ctx, connId, host, port)
 }

@@ -116,6 +116,10 @@ func (this EcdsaRestriction) BitsAllowed(in int) bool {
 
 func (this EcdsaRestriction) KeyAllowed(in any) (bool, error) {
 	switch v := in.(type) {
+	case PrivateKey:
+		return this.KeyAllowed(v.ToSdk())
+	case PublicKey:
+		return this.KeyAllowed(v.ToSdk())
 	case ssh.Signer:
 		return this.KeyAllowed(v.PublicKey())
 	case ssh.CryptoPublicKey:

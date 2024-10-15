@@ -165,7 +165,12 @@ func (this *Service) prepare() (svc *service, err error) {
 	ctx := context.Background()
 	svc = &service{Service: this}
 
-	if svc.imp, err = imp.NewImp(ctx, this.Version, &this.Configuration.Imp); err != nil {
+	hostSigners, err := this.loadHostPrivateKeys()
+	if err != nil {
+		return fail(err)
+	}
+
+	if svc.imp, err = imp.NewImp(ctx, this.Version, hostSigners[0], &this.Configuration.Imp); err != nil {
 		return fail(err)
 	}
 	if svc.sessions, err = session.NewFacadeRepository(ctx, &this.Configuration.Session); err != nil {
@@ -180,17 +185,14 @@ func (this *Service) prepare() (svc *service, err error) {
 	if err = svc.houseKeeper.init(svc); err != nil {
 		return fail(err)
 	}
-	if err := this.prepareServer(ctx, svc); err != nil {
+	if err := this.prepareServer(ctx, svc, hostSigners); err != nil {
 		return fail(err)
 	}
 
 	return svc, nil
 }
 
-func (this *Service) prepareServer(_ context.Context, svc *service) (err error) {
-	fail := func(err error) error {
-		return err
-	}
+func (this *Service) prepareServer(_ context.Context, svc *service, hostPrivateKeys []crypto.PrivateKey) (err error) {
 
 	svc.server.IdleTimeout = 0 // handled by service's connection
 	svc.server.MaxTimeout = 0  // handled by service's connection
@@ -214,16 +216,17 @@ func (this *Service) prepareServer(_ context.Context, svc *service) (err error) 
 	svc.server.SubsystemHandlers = map[string]ssh.SubsystemHandler{
 		"sftp": svc.handleSshSftpSession,
 	}
-	if svc.server.HostSigners, err = this.loadHostSigners(); err != nil {
-		return fail(err)
+	svc.server.HostSigners = make([]ssh.Signer, len(hostPrivateKeys))
+	for i, v := range hostPrivateKeys {
+		svc.server.HostSigners[i] = v.ToSsh()
 	}
 
 	return nil
 }
 
-func (this *Service) loadHostSigners() ([]ssh.Signer, error) {
+func (this *Service) loadHostPrivateKeys() ([]crypto.PrivateKey, error) {
 	kc := &this.Configuration.Ssh.Keys
-	result := make([]ssh.Signer, len(kc.HostKeys))
+	result := make([]crypto.PrivateKey, len(kc.HostKeys))
 	for i, fn := range kc.HostKeys {
 		pk, err := crypto.EnsureKeyFile(fn, &crypto.KeyRequirement{
 			Type: crypto.KeyTypeEd25519,
@@ -237,12 +240,7 @@ func (this *Service) loadHostSigners() ([]ssh.Signer, error) {
 		} else if !ok {
 			return nil, fmt.Errorf("cannot check if host key %q is not allowed by restrictions: %w", fn, err)
 		}
-
-		signer, err := gssh.NewSignerFromKey(pk)
-		if err != nil {
-			return nil, fmt.Errorf("cannot convert host key %q: %w", fn, err)
-		}
-		result[i] = signer
+		result[i] = pk
 	}
 	return result, nil
 }

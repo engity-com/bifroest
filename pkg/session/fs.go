@@ -7,7 +7,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/common"
@@ -29,12 +28,12 @@ type fs struct {
 	repository *FsRepository
 
 	flow configuration.FlowName
-	id   uuid.UUID
+	id   Id
 
 	info fsInfo
 }
 
-func (this *fs) init(repository *FsRepository, flow configuration.FlowName, id uuid.UUID) {
+func (this *fs) init(repository *FsRepository, flow configuration.FlowName, id Id) {
 	this.repository = repository
 	this.flow = flow
 	this.id = id
@@ -49,7 +48,7 @@ func (this *fs) Flow() configuration.FlowName {
 	return this.flow
 }
 
-func (this *fs) Id() uuid.UUID {
+func (this *fs) Id() Id {
 	return this.id
 }
 

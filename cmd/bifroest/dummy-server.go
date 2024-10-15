@@ -17,22 +17,20 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
-var (
-	addr = ":8783"
-)
-
 var _ = registerCommand(func(app *kingpin.Application) {
+	addr := ":8783"
 	cmd := app.Command("dummy-server", "This is a supporting command which simply runs forever until it receives a interrupt signal.").
 		Hidden().
 		Action(func(*kingpin.ParseContext) error {
-			return doDummyServer()
+			return doDummyServer(addr)
 		})
-	cmd.Flag("addr", "Address to bind to. Default: "+addr).
+	cmd.Flag("addr", "Address to bind to.").
+		Default(addr).
 		PlaceHolder("[<host>]:<port>").
 		StringVar(&addr)
 })
 
-func doDummyServer() (rErr error) {
+func doDummyServer(addr string) (rErr error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to listen to address %q: %w", addr, err)

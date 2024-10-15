@@ -2,13 +2,17 @@ package imp
 
 import (
 	"context"
-	"crypto"
 
 	log "github.com/echocat/slf4g"
 
+	"github.com/engity-com/bifroest/internal/imp/protocol"
 	"github.com/engity-com/bifroest/pkg/common"
-	"github.com/engity-com/bifroest/pkg/imp/protocol"
+	"github.com/engity-com/bifroest/pkg/crypto"
 	bnet "github.com/engity-com/bifroest/pkg/net"
+)
+
+const (
+	ServicePort = 8683
 )
 
 type Service struct {

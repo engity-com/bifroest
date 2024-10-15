@@ -1,11 +1,9 @@
-//go:build windows
+//go:build unix
 
 package protocol
 
 import (
 	"os"
-
-	"golang.org/x/sys/windows"
 
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/sys"
@@ -13,11 +11,13 @@ import (
 
 func (this *imp) kill(pid int, signal sys.Signal) error {
 	p, err := os.FindProcess(pid)
-	if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
-		return nil
-	}
 	if err != nil {
 		return err
 	}
-	return p.Signal(signal.Native())
+	if err := p.Signal(signal.Native()); errors.Is(err, os.ErrProcessDone) {
+		return ErrNoSuchProcess
+	} else if err != nil {
+		return err
+	}
+	return nil
 }

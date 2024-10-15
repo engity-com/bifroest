@@ -73,7 +73,7 @@ func EncodeMsgPack(err error, using codec.MsgPackEncoder) error {
 	return eErr.EncodeMsgPack(using)
 }
 
-func DecodeMsgPack(using codec.MsgPackDecoder) (*Error, error) {
+func DecodeMsgPack(using codec.MsgPackDecoder) (error, error) {
 	var buf Error
 	if err := buf.DecodeMsgPack(using); err != nil {
 		return nil, err

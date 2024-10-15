@@ -25,7 +25,6 @@ var (
 	DefaultEnvironmentDockerShellCommand = template.MustNewStrings()
 	DefaultEnvironmentDockerExecCommand  = template.MustNewStrings()
 	DefaultEnvironmentDockerSftpCommand  = template.MustNewStrings()
-	DefaultEnvironmentDockerBlockCommand = template.MustNewStrings()
 	DefaultEnvironmentDockerDirectory    = template.MustNewString("")
 	DefaultEnvironmentDockerUser         = template.MustNewString("")
 
@@ -56,13 +55,14 @@ type EnvironmentDocker struct {
 	ShellCommand template.Strings `yaml:"shellCommand,omitempty"`
 	ExecCommand  template.Strings `yaml:"execCommand,omitempty"`
 	SftpCommand  template.Strings `yaml:"sftpCommand,omitempty"`
-	BlockCommand template.Strings `yaml:"blockCommand,omitempty"`
 	Directory    template.String  `yaml:"directory"`
 	User         template.String  `yaml:"user,omitempty"`
 
 	Banner template.String `yaml:"banner,omitempty"`
 
 	PortForwardingAllowed template.Bool `yaml:"portForwardingAllowed,omitempty"`
+
+	Imp EnvironmentImp `yaml:"imp"`
 }
 
 func (this *EnvironmentDocker) SetDefaults() error {
@@ -85,13 +85,14 @@ func (this *EnvironmentDocker) SetDefaults() error {
 		fixedDefault("shellCommand", func(v *EnvironmentDocker) *template.Strings { return &v.ShellCommand }, DefaultEnvironmentDockerShellCommand),
 		fixedDefault("execCommand", func(v *EnvironmentDocker) *template.Strings { return &v.ExecCommand }, DefaultEnvironmentDockerExecCommand),
 		fixedDefault("sftpCommand", func(v *EnvironmentDocker) *template.Strings { return &v.SftpCommand }, DefaultEnvironmentDockerSftpCommand),
-		fixedDefault("blockCommand", func(v *EnvironmentDocker) *template.Strings { return &v.BlockCommand }, DefaultEnvironmentDockerBlockCommand),
 		fixedDefault("directory", func(v *EnvironmentDocker) *template.String { return &v.Directory }, DefaultEnvironmentDockerDirectory),
 		fixedDefault("user", func(v *EnvironmentDocker) *template.String { return &v.User }, DefaultEnvironmentDockerUser),
 
 		fixedDefault("banner", func(v *EnvironmentDocker) *template.String { return &v.Banner }, DefaultEnvironmentDockerBanner),
 
 		fixedDefault("portForwardingAllowed", func(v *EnvironmentDocker) *template.Bool { return &v.PortForwardingAllowed }, DefaultEnvironmentDockerPortForwardingAllowed),
+
+		func(v *EnvironmentDocker) (string, defaulter) { return "imp", &v.Imp },
 	)
 }
 
@@ -114,7 +115,6 @@ func (this *EnvironmentDocker) Trim() error {
 		noopTrim[EnvironmentDocker]("dnsSearch"),
 		noopTrim[EnvironmentDocker]("shellCommand"),
 		noopTrim[EnvironmentDocker]("execCommand"),
-		noopTrim[EnvironmentDocker]("blockCommand"),
 		noopTrim[EnvironmentDocker]("sftpCommand"),
 		noopTrim[EnvironmentDocker]("directory"),
 		noopTrim[EnvironmentDocker]("user"),
@@ -122,6 +122,8 @@ func (this *EnvironmentDocker) Trim() error {
 		noopTrim[EnvironmentDocker]("banner"),
 
 		noopTrim[EnvironmentDocker]("portForwardingAllowed"),
+
+		func(v *EnvironmentDocker) (string, trimmer) { return "imp", &v.Imp },
 	)
 }
 
@@ -143,7 +145,6 @@ func (this *EnvironmentDocker) Validate() error {
 		noopValidate[EnvironmentDocker]("dnsSearch"),
 		noopValidate[EnvironmentDocker]("shellCommand"),
 		noopValidate[EnvironmentDocker]("execCommand"),
-		noopValidate[EnvironmentDocker]("blockCommand"),
 		noopValidate[EnvironmentDocker]("sftpCommand"),
 		noopValidate[EnvironmentDocker]("directory"),
 		noopValidate[EnvironmentDocker]("user"),
@@ -151,6 +152,8 @@ func (this *EnvironmentDocker) Validate() error {
 		noopValidate[EnvironmentDocker]("banner"),
 
 		noopValidate[EnvironmentDocker]("portForwardingAllowed"),
+
+		func(v *EnvironmentDocker) (string, validator) { return "imp", &v.Imp },
 	)
 }
 
@@ -190,12 +193,12 @@ func (this EnvironmentDocker) isEqualTo(other *EnvironmentDocker) bool {
 		isEqual(&this.DnsSearch, &other.DnsSearch) &&
 		isEqual(&this.ShellCommand, &other.ShellCommand) &&
 		isEqual(&this.ExecCommand, &other.ExecCommand) &&
-		isEqual(&this.BlockCommand, &other.BlockCommand) &&
 		isEqual(&this.SftpCommand, &other.SftpCommand) &&
 		isEqual(&this.Directory, &other.Directory) &&
 		isEqual(&this.User, &other.User) &&
 		isEqual(&this.Banner, &other.Banner) &&
-		isEqual(&this.PortForwardingAllowed, &other.PortForwardingAllowed)
+		isEqual(&this.PortForwardingAllowed, &other.PortForwardingAllowed) &&
+		isEqual(&this.Imp, &other.Imp)
 }
 
 func (this EnvironmentDocker) Types() []string {
