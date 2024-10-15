@@ -188,14 +188,14 @@ func (this *testConn) RemoteAddr() net.Addr {
 	panic("not implemented")
 }
 
-func (this *testConn) SetDeadline(t time.Time) error {
+func (this *testConn) SetDeadline(time.Time) error {
 	panic("not implemented")
 }
 
-func (this *testConn) SetReadDeadline(t time.Time) error {
+func (this *testConn) SetReadDeadline(time.Time) error {
 	panic("not implemented")
 }
 
-func (this *testConn) SetWriteDeadline(t time.Time) error {
+func (this *testConn) SetWriteDeadline(time.Time) error {
 	panic("not implemented")
 }
