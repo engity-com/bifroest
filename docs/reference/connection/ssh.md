@@ -42,6 +42,9 @@ maxConnections: 255
 banner: "Yeah!"
 ```
 
+<<property("preparationMessages", "Preparation Messages", "#preparation-messages")>>
+See [below](#preparation-messages).
+
 ## Keys
 
 ### Configuration
@@ -53,6 +56,8 @@ Default Locations:
 
 * Linux: `/etc/engity/bifroest/key`
 * Windows: `C:\ProgramData\Engity\Bifroest\key`
+
+The backend type is [Strings Template](../templating/index.md#strings)<[Core](../context/core.md)>.
 
 <<property("rsaRestriction", "RSA Restriction", "../data-type.md#rsa-restriction", default="at-least-4096-bits", heading=4)>>
 Restrict which RSA keys are allowed to be used.
@@ -80,6 +85,16 @@ ecdsaRestriction: at-least-384-bits
 ed25519Restriction: all
 rememberMeNotification: "If you return until {{.session.validUntil | format `dateTimeT`}} with the same public key {{.key | fingerprint}}), you can seamlessly login again.\n\n"
 ```
+
+## Preparation Messages
+
+### Configuration
+
+TODO!
+
+### Examples
+
+TODO!
 
 ## Compatibility
 

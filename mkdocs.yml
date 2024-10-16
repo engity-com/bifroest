@@ -144,6 +144,7 @@ nav:
           - Htpasswd: reference/authorization/htpasswd.md
       - Environments:
           - reference/environment/index.md
+          - Docker: reference/environment/docker.md
           - Local: reference/environment/local.md
       - Sessions:
           - reference/session/index.md
