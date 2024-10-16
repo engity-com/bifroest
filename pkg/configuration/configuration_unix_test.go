@@ -59,6 +59,14 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 					MaxAuthTries:   DefaultSshMaxAuthTries,
 					MaxConnections: DefaultSshMaxConnections,
 					Banner:         DefaultSshBanner,
+					PreparationMessages: PreparationMessages{{
+						Id:     DefaultPreparationMessageId,
+						Flow:   DefaultPreparationMessageFlow,
+						Start:  DefaultPreparationMessageStart,
+						Update: DefaultPreparationMessageUpdate,
+						End:    DefaultPreparationMessageEnd,
+						Error:  DefaultPreparationMessageError,
+					}},
 				},
 				Session: Session{&SessionFs{
 					IdleTimeout:    DefaultSessionIdleTimeout,
@@ -74,9 +82,9 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 						ExcludedRequestingName: common.MustNewRegexp(""),
 					},
 					Authorization: Authorization{&AuthorizationOidcDeviceAuth{
-						Issuer:           "https://foo-bar",
-						ClientId:         "anId",
-						ClientSecret:     "aSecret",
+						Issuer:           template.MustNewUrl("https://foo-bar"),
+						ClientId:         template.MustNewString("anId"),
+						ClientSecret:     template.MustNewString("aSecret"),
 						Scopes:           DefaultAuthorizationOidcScopes,
 						RetrieveIdToken:  DefaultAuthorizationOidcRetrieveIdToken,
 						RetrieveUserInfo: DefaultAuthorizationOidcRetrieveUserInfo,

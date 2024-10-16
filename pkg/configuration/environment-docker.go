@@ -15,18 +15,20 @@ var (
 	DefaultEnvironmentDockerCertPath   = template.MustNewString("{{ env `DOCKER_CERT_PATH` }}")
 	DefaultEnvironmentDockerTlsVerify  = template.MustNewBool("{{ env `DOCKER_TLS_VERIFY` | ne `` }}")
 
-	DefaultEnvironmentDockerImage        = template.MustNewString("alpine:latest")
-	DefaultEnvironmentDockerNetwork      = template.MustNewString(network.NetworkDefault)
-	DefaultEnvironmentDockerVolumes      = template.MustNewStrings()
-	DefaultEnvironmentDockerCapabilities = template.MustNewStrings()
-	DefaultEnvironmentDockerPrivileged   = template.BoolOf(false)
-	DefaultEnvironmentDockerDnsServers   = template.MustNewStrings()
-	DefaultEnvironmentDockerDnsSearch    = template.MustNewStrings()
-	DefaultEnvironmentDockerShellCommand = template.MustNewStrings()
-	DefaultEnvironmentDockerExecCommand  = template.MustNewStrings()
-	DefaultEnvironmentDockerSftpCommand  = template.MustNewStrings()
-	DefaultEnvironmentDockerDirectory    = template.MustNewString("")
-	DefaultEnvironmentDockerUser         = template.MustNewString("")
+	DefaultEnvironmentDockerImage                = template.MustNewString("alpine")
+	DefaultEnvironmentDockerImagePullPolicy      = PullPolicyIfAbsent
+	DefaultEnvironmentDockerImagePullCredentials = template.MustNewString("")
+	DefaultEnvironmentDockerNetwork              = template.MustNewString(network.NetworkDefault)
+	DefaultEnvironmentDockerVolumes              = template.MustNewStrings()
+	DefaultEnvironmentDockerCapabilities         = template.MustNewStrings()
+	DefaultEnvironmentDockerPrivileged           = template.BoolOf(false)
+	DefaultEnvironmentDockerDnsServers           = template.MustNewStrings()
+	DefaultEnvironmentDockerDnsSearch            = template.MustNewStrings()
+	DefaultEnvironmentDockerShellCommand         = template.MustNewStrings()
+	DefaultEnvironmentDockerExecCommand          = template.MustNewStrings()
+	DefaultEnvironmentDockerSftpCommand          = template.MustNewStrings()
+	DefaultEnvironmentDockerDirectory            = template.MustNewString("")
+	DefaultEnvironmentDockerUser                 = template.MustNewString("")
 
 	DefaultEnvironmentDockerBanner                = template.MustNewString("")
 	DefaultEnvironmentDockerPortForwardingAllowed = template.BoolOf(true)
@@ -44,13 +46,15 @@ type EnvironmentDocker struct {
 	CertPath   template.String `yaml:"certPath,omitempty"`
 	TlsVerify  template.Bool   `yaml:"tlsVerify,omitempty"`
 
-	Image        template.String  `yaml:"image"`
-	Network      template.String  `yaml:"network"`
-	Volumes      template.Strings `yaml:"volumes,omitempty"`
-	Capabilities template.Strings `yaml:"capabilities,omitempty"`
-	Privileged   template.Bool    `yaml:"privileged,omitempty"`
-	DnsServers   template.Strings `yaml:"dnsServers,omitempty"`
-	DnsSearch    template.Strings `yaml:"dnsSearch,omitempty"`
+	Image                template.String  `yaml:"image"`
+	ImagePullPolicy      PullPolicy       `yaml:"imagePullPolicy,omitempty"`
+	ImagePullCredentials template.String  `yaml:"imagePullCredentials,omitempty"`
+	Network              template.String  `yaml:"network"`
+	Volumes              template.Strings `yaml:"volumes,omitempty"`
+	Capabilities         template.Strings `yaml:"capabilities,omitempty"`
+	Privileged           template.Bool    `yaml:"privileged,omitempty"`
+	DnsServers           template.Strings `yaml:"dnsServers,omitempty"`
+	DnsSearch            template.Strings `yaml:"dnsSearch,omitempty"`
 
 	ShellCommand template.Strings `yaml:"shellCommand,omitempty"`
 	ExecCommand  template.Strings `yaml:"execCommand,omitempty"`
@@ -75,6 +79,8 @@ func (this *EnvironmentDocker) SetDefaults() error {
 		fixedDefault("tlsVerify", func(v *EnvironmentDocker) *template.Bool { return &v.TlsVerify }, DefaultEnvironmentDockerTlsVerify),
 
 		fixedDefault("image", func(v *EnvironmentDocker) *template.String { return &v.Image }, DefaultEnvironmentDockerImage),
+		fixedDefault("imagePullPolicy", func(v *EnvironmentDocker) *PullPolicy { return &v.ImagePullPolicy }, DefaultEnvironmentDockerImagePullPolicy),
+		fixedDefault("imagePullCredentials", func(v *EnvironmentDocker) *template.String { return &v.ImagePullCredentials }, DefaultEnvironmentDockerImagePullCredentials),
 		fixedDefault("network", func(v *EnvironmentDocker) *template.String { return &v.Network }, DefaultEnvironmentDockerNetwork),
 		fixedDefault("volumes", func(v *EnvironmentDocker) *template.Strings { return &v.Volumes }, DefaultEnvironmentDockerVolumes),
 		fixedDefault("capabilities", func(v *EnvironmentDocker) *template.Strings { return &v.Capabilities }, DefaultEnvironmentDockerCapabilities),
@@ -107,6 +113,8 @@ func (this *EnvironmentDocker) Trim() error {
 
 		noopTrim[EnvironmentDocker]("name"),
 		noopTrim[EnvironmentDocker]("image"),
+		noopTrim[EnvironmentDocker]("imagePullPolicy"),
+		noopTrim[EnvironmentDocker]("imagePullCredentials"),
 		noopTrim[EnvironmentDocker]("network"),
 		noopTrim[EnvironmentDocker]("volumes"),
 		noopTrim[EnvironmentDocker]("capabilities"),
@@ -129,29 +137,35 @@ func (this *EnvironmentDocker) Trim() error {
 
 func (this *EnvironmentDocker) Validate() error {
 	return validate(this,
-		noopValidate[EnvironmentDocker]("loginAllowed"),
+		func(v *EnvironmentDocker) (string, validator) { return "loginAllowed", &v.LoginAllowed },
 
-		noopValidate[EnvironmentDocker]("host"),
-		noopValidate[EnvironmentDocker]("apiVersion"),
-		noopValidate[EnvironmentDocker]("certPath"),
-		noopValidate[EnvironmentDocker]("tlsVerify"),
+		func(v *EnvironmentDocker) (string, validator) { return "host", &v.Host },
+		func(v *EnvironmentDocker) (string, validator) { return "apiVersion", &v.ApiVersion },
+		func(v *EnvironmentDocker) (string, validator) { return "certPath", &v.CertPath },
+		func(v *EnvironmentDocker) (string, validator) { return "tlsVerify", &v.TlsVerify },
 
+		func(v *EnvironmentDocker) (string, validator) { return "image", &v.Image },
 		notZeroValidate("image", func(v *EnvironmentDocker) *template.String { return &v.Image }),
+		func(v *EnvironmentDocker) (string, validator) { return "imagePullPolicy", &v.ImagePullPolicy },
+		func(v *EnvironmentDocker) (string, validator) { return "imagePullCredentials", &v.ImagePullCredentials },
+		func(v *EnvironmentDocker) (string, validator) { return "network", &v.Network },
 		notZeroValidate("network", func(v *EnvironmentDocker) *template.String { return &v.Network }),
-		noopValidate[EnvironmentDocker]("volumes"),
-		noopValidate[EnvironmentDocker]("capabilities"),
-		noopValidate[EnvironmentDocker]("privileged"),
-		noopValidate[EnvironmentDocker]("dnsServers"),
-		noopValidate[EnvironmentDocker]("dnsSearch"),
-		noopValidate[EnvironmentDocker]("shellCommand"),
-		noopValidate[EnvironmentDocker]("execCommand"),
-		noopValidate[EnvironmentDocker]("sftpCommand"),
-		noopValidate[EnvironmentDocker]("directory"),
-		noopValidate[EnvironmentDocker]("user"),
+		func(v *EnvironmentDocker) (string, validator) { return "volumes", &v.Volumes },
+		func(v *EnvironmentDocker) (string, validator) { return "capabilities", &v.Capabilities },
+		func(v *EnvironmentDocker) (string, validator) { return "privileged", &v.Privileged },
+		func(v *EnvironmentDocker) (string, validator) { return "dnsServers", &v.DnsServers },
+		func(v *EnvironmentDocker) (string, validator) { return "dnsSearch", &v.DnsSearch },
+		func(v *EnvironmentDocker) (string, validator) { return "shellCommand", &v.ShellCommand },
+		func(v *EnvironmentDocker) (string, validator) { return "execCommand", &v.ExecCommand },
+		func(v *EnvironmentDocker) (string, validator) { return "sftpCommand", &v.SftpCommand },
+		func(v *EnvironmentDocker) (string, validator) { return "directory", &v.Directory },
+		func(v *EnvironmentDocker) (string, validator) { return "user", &v.User },
 
-		noopValidate[EnvironmentDocker]("banner"),
+		func(v *EnvironmentDocker) (string, validator) { return "banner", &v.Banner },
 
-		noopValidate[EnvironmentDocker]("portForwardingAllowed"),
+		func(v *EnvironmentDocker) (string, validator) {
+			return "portForwardingAllowed", &v.PortForwardingAllowed
+		},
 
 		func(v *EnvironmentDocker) (string, validator) { return "imp", &v.Imp },
 	)
@@ -185,6 +199,8 @@ func (this EnvironmentDocker) isEqualTo(other *EnvironmentDocker) bool {
 		isEqual(&this.CertPath, &other.CertPath) &&
 		isEqual(&this.TlsVerify, &other.TlsVerify) &&
 		isEqual(&this.Image, &other.Image) &&
+		isEqual(&this.ImagePullPolicy, &other.ImagePullPolicy) &&
+		isEqual(&this.ImagePullCredentials, &other.ImagePullCredentials) &&
 		isEqual(&this.Network, &other.Network) &&
 		isEqual(&this.Volumes, &other.Volumes) &&
 		isEqual(&this.Capabilities, &other.Capabilities) &&

@@ -90,9 +90,12 @@ func (this *service) executeSession(sshSess ssh.Session, taskType environment.Ta
 
 	ctx := sshSess.Context()
 	req := environmentRequest{
-		service:       this,
-		remote:        &remote{ctx},
-		authorization: auth,
+		environmentContext{
+			service:       this,
+			remote:        &remote{ctx},
+			authorization: auth,
+		},
+		sshSess,
 	}
 
 	env, err := this.environments.Ensure(&req)
@@ -118,7 +121,7 @@ func (this *service) executeSession(sshSess ssh.Session, taskType environment.Ta
 	}
 
 	t := environmentTask{
-		environmentRequest: req,
+		environmentContext: req.environmentContext,
 		sshSession:         sshSess,
 		taskType:           taskType,
 	}

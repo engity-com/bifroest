@@ -38,9 +38,13 @@ func (this *EnvironmentLocalDispose) Trim() error {
 
 func (this *EnvironmentLocalDispose) Validate() error {
 	return validate(this,
-		noopValidate[EnvironmentLocalDispose]("deleteManagedUser"),
-		noopValidate[EnvironmentLocalDispose]("deleteManagedUserHomeDir"),
-		noopValidate[EnvironmentLocalDispose]("killManagedUserProcesses"),
+		func(v *EnvironmentLocalDispose) (string, validator) { return "deleteManagedUser", &v.DeleteManagedUser },
+		func(v *EnvironmentLocalDispose) (string, validator) {
+			return "deleteManagedUserHomeDir", &v.DeleteManagedUserHomeDir
+		},
+		func(v *EnvironmentLocalDispose) (string, validator) {
+			return "killManagedUserProcesses", &v.KillManagedUserProcesses
+		},
 	)
 }
 

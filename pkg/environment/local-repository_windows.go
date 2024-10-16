@@ -43,7 +43,7 @@ func NewLocalRepository(_ context.Context, flow configuration.FlowName, conf *co
 	return &result, nil
 }
 
-func (this *LocalRepository) DoesSupportPty(Request, ssh.Pty) (bool, error) {
+func (this *LocalRepository) DoesSupportPty(Context, ssh.Pty) (bool, error) {
 	return false, nil
 }
 

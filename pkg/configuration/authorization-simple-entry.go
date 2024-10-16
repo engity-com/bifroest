@@ -2,8 +2,10 @@ package configuration
 
 import (
 	"fmt"
-	"github.com/engity-com/bifroest/pkg/crypto"
+
 	"gopkg.in/yaml.v3"
+
+	"github.com/engity-com/bifroest/pkg/crypto"
 )
 
 type AuthorizationSimpleEntry struct {
@@ -82,7 +84,7 @@ func (this AuthorizationSimpleEntry) isEqualTo(other *AuthorizationSimpleEntry) 
 type AuthorizationSimpleEntries []AuthorizationSimpleEntry
 
 func (this *AuthorizationSimpleEntries) SetDefaults() error {
-	return setSliceDefaults(this)
+	return setSliceDefaults(this) // Empty, be default.
 }
 
 func (this *AuthorizationSimpleEntries) Trim() error {
@@ -91,6 +93,15 @@ func (this *AuthorizationSimpleEntries) Trim() error {
 
 func (this AuthorizationSimpleEntries) Validate() error {
 	return validateSlice(this)
+}
+
+func (this *AuthorizationSimpleEntries) UnmarshalYAML(node *yaml.Node) error {
+	// Clear the entries before...
+	*this = AuthorizationSimpleEntries{}
+	return unmarshalYAML(this, node, func(target *AuthorizationSimpleEntries, node *yaml.Node) error {
+		type raw AuthorizationSimpleEntries
+		return node.Decode((*raw)(target))
+	})
 }
 
 func (this AuthorizationSimpleEntries) IsEqualTo(other any) bool {

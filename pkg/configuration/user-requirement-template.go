@@ -52,13 +52,14 @@ func (this *UserRequirementTemplate) Trim() error {
 func (this *UserRequirementTemplate) Validate() error {
 	return validate(this,
 		notZeroValidate("name", func(v *UserRequirementTemplate) *template.String { return &v.Name }),
-		noopValidate[UserRequirementTemplate]("displayName"),
-		noopValidate[UserRequirementTemplate]("uid"),
+		func(v *UserRequirementTemplate) (string, validator) { return "name", &v.Name },
+		func(v *UserRequirementTemplate) (string, validator) { return "displayName", &v.DisplayName },
+		func(v *UserRequirementTemplate) (string, validator) { return "uid", v.Uid },
 		func(v *UserRequirementTemplate) (string, validator) { return "group", &v.Group },
 		func(v *UserRequirementTemplate) (string, validator) { return "groups", &v.Groups },
-		noopValidate[UserRequirementTemplate]("shell"),
-		noopValidate[UserRequirementTemplate]("homeDir"),
-		noopValidate[UserRequirementTemplate]("skel"),
+		func(v *UserRequirementTemplate) (string, validator) { return "shell", &v.Shell },
+		func(v *UserRequirementTemplate) (string, validator) { return "homeDir", &v.HomeDir },
+		func(v *UserRequirementTemplate) (string, validator) { return "skel", &v.Skel },
 	)
 }
 

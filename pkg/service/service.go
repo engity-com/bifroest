@@ -58,7 +58,9 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 		ctx = context.Background()
 	}
 
-	if msg := this.Configuration.StartMessage; msg != "" {
+	if msg, err := this.Configuration.StartMessage.Render(noopContext{}); err != nil {
+		return err
+	} else if msg != "" {
 		for _, line := range strings.Split(msg, "\n") {
 			if line = strings.TrimSpace(line); line != "" {
 				log.Warn(line)
@@ -226,8 +228,17 @@ func (this *Service) prepareServer(_ context.Context, svc *service, hostPrivateK
 
 func (this *Service) loadHostPrivateKeys() ([]crypto.PrivateKey, error) {
 	kc := &this.Configuration.Ssh.Keys
-	result := make([]crypto.PrivateKey, len(kc.HostKeys))
-	for i, fn := range kc.HostKeys {
+
+	hostKeys, err := kc.HostKeys.Render(noopContext{})
+	if err != nil {
+		return nil, errors.Config.Newf("cannot render hostKeys: %w", err)
+	}
+
+	var result []crypto.PrivateKey
+	for _, fn := range hostKeys {
+		if fn == "" {
+			continue
+		}
 		pk, err := crypto.EnsureKeyFile(fn, &crypto.KeyRequirement{
 			Type: crypto.KeyTypeEd25519,
 		}, nil)
@@ -240,7 +251,7 @@ func (this *Service) loadHostPrivateKeys() ([]crypto.PrivateKey, error) {
 		} else if !ok {
 			return nil, fmt.Errorf("cannot check if host key %q is not allowed by restrictions: %w", fn, err)
 		}
-		result[i] = pk
+		result = append(result, pk)
 	}
 	return result, nil
 }

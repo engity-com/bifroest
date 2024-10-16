@@ -12,7 +12,7 @@ import (
 func NewUrl(plain string) (Url, error) {
 	var buf Url
 	if err := buf.Set(plain); err != nil {
-		return Url{}, nil
+		return Url{}, err
 	}
 	return buf, nil
 }
@@ -125,6 +125,10 @@ func (this *Url) UnmarshalText(text []byte) error {
 
 func (this *Url) Set(text string) error {
 	return this.UnmarshalText([]byte(text))
+}
+
+func (this Url) Validate() error {
+	return nil
 }
 
 func (this Url) IsEqualTo(other any) bool {

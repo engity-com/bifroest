@@ -11,7 +11,7 @@ import (
 func NewUint64(plain string) (Uint64, error) {
 	var buf Uint64
 	if err := buf.Set(plain); err != nil {
-		return Uint64{}, nil
+		return Uint64{}, err
 	}
 	return buf, nil
 }
@@ -107,6 +107,10 @@ func (this *Uint64) UnmarshalText(text []byte) error {
 
 func (this *Uint64) Set(text string) error {
 	return this.UnmarshalText([]byte(text))
+}
+
+func (this Uint64) Validate() error {
+	return nil
 }
 
 func (this Uint64) IsEqualTo(other any) bool {

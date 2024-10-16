@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	coidc "github.com/coreos/go-oidc/v3/oidc"
 	log "github.com/echocat/slf4g"
@@ -45,9 +46,36 @@ func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *c
 		return failf("nil configuration")
 	}
 
-	provider, err := coidc.NewProvider(ctx, conf.Issuer)
+	rCtx := noopContext{}
+	issuer, err := conf.Issuer.Render(rCtx)
 	if err != nil {
-		return failf("cannot evaluate OIDC issuer %q: %w", conf.Issuer, err)
+		return failf("cannot render issuer: %w", err)
+	}
+
+	provider, err := coidc.NewProvider(ctx, issuer.String())
+	if err != nil {
+		return failf("cannot evaluate OIDC issuer %q: %w", issuer, err)
+	}
+
+	clientId, err := conf.ClientId.Render(rCtx)
+	if err != nil {
+		return failf("cannot render clientId: %w", err)
+	}
+	clientSecret, err := conf.ClientSecret.Render(rCtx)
+	if err != nil {
+		return failf("cannot render clientSecret: %w", err)
+	}
+	rawScopes, err := conf.Scopes.Render(rCtx)
+	if err != nil {
+		return failf("cannot render scopes: %w", err)
+	}
+	var scopes []string
+	for _, rawScope := range rawScopes {
+		rawScope = strings.TrimSpace(rawScope)
+		if rawScope == "" {
+			continue
+		}
+		scopes = append(scopes, rawScope)
 	}
 
 	result := OidcDeviceAuthAuthorizer{
@@ -55,19 +83,21 @@ func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *c
 		conf: conf,
 
 		oauth2Config: oauth2.Config{
-			ClientID:     conf.ClientId,
-			ClientSecret: conf.ClientSecret,
+			ClientID:     clientId,
+			ClientSecret: clientSecret,
 			Endpoint:     provider.Endpoint(),
-			Scopes:       conf.Scopes,
+			Scopes:       scopes,
 		},
 		provider: provider,
 		verifier: provider.Verifier(&coidc.Config{
-			ClientID: conf.ClientId,
+			ClientID: clientId,
 		}),
 	}
 
 	return &result, nil
 }
+
+type noopContext struct{}
 
 func (this *OidcDeviceAuthAuthorizer) RestoreFromSession(ctx context.Context, sess session.Session, opts *RestoreOpts) (Authorization, error) {
 	fail := func(err error) (Authorization, error) {

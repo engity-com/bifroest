@@ -9,9 +9,12 @@ import (
 	gssh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
+	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/environment"
+	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
+	"github.com/engity-com/bifroest/pkg/template"
 )
 
 type remote struct {
@@ -70,12 +73,12 @@ func (this *authorizeRequest) Sessions() session.Repository {
 }
 
 func (this *authorizeRequest) Validate(auth authorization.Authorization) (bool, error) {
-	req := environmentRequest{
+	ctx := environmentContext{
 		service:       this.service,
 		remote:        &this.remote,
 		authorization: auth,
 	}
-	return this.service.environments.WillBeAccepted(&req)
+	return this.service.environments.WillBeAccepted(&ctx)
 }
 
 type publicKeyAuthorizeRequest struct {
@@ -141,13 +144,13 @@ func (this *interactiveAuthorizeRequest) Prompt(message string, echo bool) (stri
 	return resp[0], err
 }
 
-type environmentRequest struct {
+type environmentContext struct {
 	service       *service
 	remote        *remote
 	authorization authorization.Authorization
 }
 
-func (this *environmentRequest) GetField(name string) (any, bool, error) {
+func (this *environmentContext) GetField(name string) (any, bool, error) {
 	switch name {
 	case "context":
 		return this.remote.Context, true, nil
@@ -160,24 +163,135 @@ func (this *environmentRequest) GetField(name string) (any, bool, error) {
 	}
 }
 
-func (this *environmentRequest) Context() ssh.Context {
+func (this *environmentContext) Context() ssh.Context {
 	return this.remote.Context
 }
 
-func (this *environmentRequest) Remote() net.Remote {
+func (this *environmentContext) Remote() net.Remote {
 	return this.remote
 }
 
-func (this *environmentRequest) Logger() log.Logger {
+func (this *environmentContext) Logger() log.Logger {
 	return this.service.logger(this.remote)
 }
 
-func (this *environmentRequest) Authorization() authorization.Authorization {
+func (this *environmentContext) Authorization() authorization.Authorization {
 	return this.authorization
 }
 
+type environmentRequest struct {
+	environmentContext
+	sshSession ssh.Session
+}
+
+func (this *environmentRequest) StartPreparation(id, title string, attrs environment.PreparationProgressAttributes) (environment.PreparationProgress, error) {
+	flowStr := this.authorization.Flow().String()
+
+	for _, candidate := range this.service.Configuration.Ssh.PreparationMessages {
+		if !candidate.Flow.MatchString(flowStr) {
+			continue
+		}
+		if !candidate.Id.MatchString(id) {
+			continue
+		}
+		result := &environmentRequestPreparationProgress{this, id, title, attrs, &candidate}
+		if err := result.printStart(); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
+
+	return nil, nil
+}
+
+type environmentRequestPreparationProgress struct {
+	*environmentRequest
+	id    string
+	title string
+	attrs environment.PreparationProgressAttributes
+	pm    *configuration.PreparationMessage
+}
+
+func (this *environmentRequestPreparationProgress) GetField(name string) (any, bool, error) {
+	switch name {
+	case "id":
+		return this.id, true, nil
+	case "title":
+		return this.title, true, nil
+	default:
+		if this.attrs != nil {
+			v, ok := this.attrs[name]
+			if ok {
+				return v, true, nil
+			}
+		}
+		return this.environmentRequest.GetField(name)
+	}
+}
+
+func (this *environmentRequestPreparationProgress) print(tmpl *template.String, data any) error {
+	v, err := tmpl.Render(data)
+	if err != nil {
+		return errors.Network.Newf("cannot render preparation progress message for client: %w", err)
+	}
+	if v == "" {
+		return nil
+	}
+	_, err = this.sshSession.Write([]byte(v))
+	if err != nil {
+		return errors.Network.Newf("cannot print preparation progress message to client: %w", err)
+	}
+	return nil
+}
+
+func (this *environmentRequestPreparationProgress) printStart() error {
+	return this.print(&this.pm.Start, this)
+}
+
+func (this *environmentRequestPreparationProgress) Report(progress float32) error {
+	return this.print(&this.pm.Update, environmentRequestPreparationProgressProgress{this, progress})
+}
+
+func (this *environmentRequestPreparationProgress) Done() error {
+	return this.print(&this.pm.End, this)
+}
+
+func (this *environmentRequestPreparationProgress) Error(err error) error {
+	return this.print(&this.pm.Error, environmentRequestPreparationProgressError{this, err})
+}
+
+type environmentRequestPreparationProgressProgress struct {
+	*environmentRequestPreparationProgress
+	progress float32
+}
+
+func (this environmentRequestPreparationProgressProgress) GetField(name string) (any, bool, error) {
+	switch name {
+	case "progress":
+		return this.progress, true, nil
+	case "percentage":
+		return this.progress * 100.0, true, nil
+	default:
+		return this.environmentRequestPreparationProgress.GetField(name)
+	}
+}
+
+type environmentRequestPreparationProgressError struct {
+	*environmentRequestPreparationProgress
+	error error
+}
+
+func (this environmentRequestPreparationProgressError) GetField(name string) (any, bool, error) {
+	switch name {
+	case "error":
+		return this.error, true, nil
+	default:
+		return this.environmentRequestPreparationProgress.GetField(name)
+	}
+}
+
 type environmentTask struct {
-	environmentRequest
+	environmentContext
 	sshSession ssh.Session
 	taskType   environment.TaskType
 }
@@ -187,7 +301,7 @@ func (this *environmentTask) GetField(name string) (any, bool, error) {
 	case "taskType":
 		return this.taskType, true, nil
 	default:
-		return this.environmentRequest.GetField(name)
+		return this.environmentContext.GetField(name)
 	}
 }
 
@@ -269,4 +383,7 @@ func (this *connectionContext) GetField(name string) (any, bool, error) {
 	default:
 		return nil, false, fmt.Errorf("unknown field %q", name)
 	}
+}
+
+type noopContext struct {
 }

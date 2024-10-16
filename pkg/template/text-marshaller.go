@@ -11,7 +11,7 @@ import (
 func NewTextMarshaller[T TextMarshallerArgument, PT TextMarshallerArgumentP[T]](plain string) (TextMarshaller[T, PT], error) {
 	var buf TextMarshaller[T, PT]
 	if err := buf.Set(plain); err != nil {
-		return TextMarshaller[T, PT]{}, nil
+		return TextMarshaller[T, PT]{}, err
 	}
 	return buf, nil
 }
@@ -102,6 +102,10 @@ func (this TextMarshaller[T, PT]) IsEqualTo(other any) bool {
 	default:
 		return false
 	}
+}
+
+func (this TextMarshaller[T, PT]) Validate() error {
+	return nil
 }
 
 func (this TextMarshaller[T, PT]) isEqualTo(other *TextMarshaller[T, PT]) bool {

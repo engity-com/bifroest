@@ -9,10 +9,11 @@ import (
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/sys"
+	"github.com/engity-com/bifroest/pkg/template"
 )
 
 var (
-	DefaultStartMessage = ""
+	DefaultStartMessage = template.MustNewString("")
 )
 
 type Configuration struct {
@@ -30,7 +31,7 @@ type Configuration struct {
 
 	Imp Imp `yaml:"imp"`
 
-	StartMessage string `yaml:"startMessage,omitempty"`
+	StartMessage template.String `yaml:"startMessage,omitempty"`
 }
 
 func (this *Configuration) SetDefaults() error {
@@ -40,7 +41,7 @@ func (this *Configuration) SetDefaults() error {
 		func(v *Configuration) (string, defaulter) { return "flows", &v.Flows },
 		func(v *Configuration) (string, defaulter) { return "houseKeeping", &v.HouseKeeping },
 		func(v *Configuration) (string, defaulter) { return "imp", &v.Imp },
-		fixedDefault("startMessage", func(v *Configuration) *string { return &v.StartMessage }, DefaultStartMessage),
+		fixedDefault("startMessage", func(v *Configuration) *template.String { return &v.StartMessage }, DefaultStartMessage),
 	)
 }
 
@@ -60,10 +61,10 @@ func (this *Configuration) Validate() error {
 		func(v *Configuration) (string, validator) { return "ssh", &v.Ssh },
 		func(v *Configuration) (string, validator) { return "session", &v.Session },
 		func(v *Configuration) (string, validator) { return "flows", &v.Flows },
-		notEmptySliceValidate("flows", func(v *Configuration) *[]Flow { return (*[]Flow)(&v.Flows) }),
+		notZeroValidate("flows", func(v *Configuration) *Flows { return &v.Flows }),
 		func(v *Configuration) (string, validator) { return "houseKeeping", &v.HouseKeeping },
 		func(v *Configuration) (string, validator) { return "imp", &v.Imp },
-		noopValidate[Configuration]("startMessage"),
+		func(v *Configuration) (string, validator) { return "startMessage", &v.StartMessage },
 	)
 }
 
@@ -127,5 +128,5 @@ func (this Configuration) isEqualTo(other *Configuration) bool {
 		isEqual(&this.Flows, &other.Flows) &&
 		isEqual(&this.HouseKeeping, &other.HouseKeeping) &&
 		isEqual(&this.Imp, &other.Imp) &&
-		this.StartMessage == other.StartMessage
+		isEqual(&this.StartMessage, &other.StartMessage)
 }

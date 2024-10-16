@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/echocat/slf4g/sdk/testlog"
+
+	"github.com/engity-com/bifroest/pkg/template"
 )
 
 func TestAuthorization_UnmarshalYAML(t *testing.T) {
@@ -45,9 +47,9 @@ issuer: https://foo-bar
 clientId: anId
 clientSecret: aSecret`,
 			expected: Authorization{&AuthorizationOidcDeviceAuth{
-				Issuer:           "https://foo-bar",
-				ClientId:         "anId",
-				ClientSecret:     "aSecret",
+				Issuer:           template.MustNewUrl("https://foo-bar"),
+				ClientId:         template.MustNewString("anId"),
+				ClientSecret:     template.MustNewString("aSecret"),
 				Scopes:           DefaultAuthorizationOidcScopes,
 				RetrieveIdToken:  true,
 				RetrieveUserInfo: false,

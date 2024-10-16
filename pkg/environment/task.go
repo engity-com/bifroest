@@ -25,7 +25,7 @@ func (this TaskType) String() string {
 }
 
 type Task interface {
-	Request
+	Context
 	SshSession() ssh.Session
 	TaskType() TaskType
 }

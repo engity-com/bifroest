@@ -32,8 +32,8 @@ func (this *Imp) Trim() error {
 
 func (this *Imp) Validate() error {
 	return validate(this,
-		noopValidate[Imp]("alternativesDownloadUrl"),
-		noopValidate[Imp]("alternativesLocation"),
+		func(v *Imp) (string, validator) { return "alternativesDownloadUrl", &v.AlternativesDownloadUrl },
+		func(v *Imp) (string, validator) { return "alternativesLocation", &v.AlternativesLocation },
 	)
 }
 

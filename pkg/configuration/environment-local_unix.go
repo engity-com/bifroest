@@ -63,15 +63,17 @@ func (this *EnvironmentLocal) Validate() error {
 	return validate(this,
 		func(v *EnvironmentLocal) (string, validator) { return "", &v.User },
 
-		noopValidate[EnvironmentLocal]("loginAllowed"),
+		func(v *EnvironmentLocal) (string, validator) { return "loginAllowed", &v.LoginAllowed },
 
-		noopValidate[EnvironmentLocal]("createIfAbsent"),
-		noopValidate[EnvironmentLocal]("updateIfDifferent"),
+		func(v *EnvironmentLocal) (string, validator) { return "createIfAbsent", &v.CreateIfAbsent },
+		func(v *EnvironmentLocal) (string, validator) { return "updateIfDifferent", &v.UpdateIfDifferent },
 		func(v *EnvironmentLocal) (string, validator) { return "dispose", &v.Dispose },
 
-		noopValidate[EnvironmentLocal]("banner"),
+		func(v *EnvironmentLocal) (string, validator) { return "banner", &v.Banner },
 
-		noopValidate[EnvironmentLocal]("portForwardingAllowed"),
+		func(v *EnvironmentLocal) (string, validator) {
+			return "portForwardingAllowed", &v.PortForwardingAllowed
+		},
 	)
 }
 

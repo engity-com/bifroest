@@ -13,8 +13,10 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/api/types/strslice"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
@@ -97,19 +99,19 @@ func NewDockerRepository(ctx context.Context, flow configuration.FlowName, conf 
 	}, nil
 }
 
-func (this *DockerRepository) WillBeAccepted(req Request) (ok bool, err error) {
+func (this *DockerRepository) WillBeAccepted(ctx Context) (ok bool, err error) {
 	fail := func(err error) (bool, error) {
 		return false, err
 	}
 
-	if ok, err = this.conf.LoginAllowed.Render(req); err != nil {
+	if ok, err = this.conf.LoginAllowed.Render(ctx); err != nil {
 		return fail(fmt.Errorf("cannot evaluate if user is allowed to login or not: %w", err))
 	}
 
 	return ok, nil
 }
 
-func (this *DockerRepository) DoesSupportPty(Request, ssh.Pty) (bool, error) {
+func (this *DockerRepository) DoesSupportPty(Context, ssh.Pty) (bool, error) {
 	return true, nil
 }
 
@@ -156,8 +158,19 @@ func (this *DockerRepository) createContainerBy(req Request, sess session.Sessio
 		return fail(err)
 	}
 
+	if this.conf.ImagePullPolicy == configuration.PullPolicyAlways {
+		if err := this.pullImage(req, config.Image); err != nil {
+			return failf(errors.System, "cannot pull container image %s: %w", config.Image, err)
+		}
+	}
 	success := false
 	cr, err := this.apiClient.ContainerCreate(req.Context(), config, hostConfig, networkingConfig, nil, "")
+	if this.isNoSuchImageError(err) && this.conf.ImagePullPolicy != configuration.PullPolicyAlways {
+		if err := this.pullImage(req, config.Image); err != nil {
+			return failf(errors.System, "cannot pull container image %s: %w", config.Image, err)
+		}
+		cr, err = this.apiClient.ContainerCreate(req.Context(), config, hostConfig, networkingConfig, nil, "")
+	}
 	if err != nil {
 		return failf(errors.System, "cannot create container: %w", err)
 	}
@@ -183,6 +196,85 @@ func (this *DockerRepository) createContainerBy(req Request, sess session.Sessio
 	success = true
 	return c, nil
 
+}
+
+func (this *DockerRepository) pullImage(req Request, ref string) error {
+	var progress PreparationProgress
+	fail := func(err error) error {
+		if progress != nil {
+			_ = progress.Error(err)
+		}
+		return err
+	}
+
+	var err error
+	progress, err = req.StartPreparation(
+		"pull-image",
+		fmt.Sprintf("Pulling image %s", ref),
+		PreparationProgressAttributes{
+			"image": ref,
+		},
+	)
+	if err != nil {
+		return fail(err)
+	}
+
+	var opts image.PullOptions
+
+	if opts.RegistryAuth, err = this.resolvePullCredentials(req, ref); err != nil {
+		return fail(err)
+	}
+
+	rc, err := this.apiClient.ImagePull(req.Context(), ref, opts)
+	if err != nil {
+		return fail(err)
+	}
+	defer common.IgnoreCloseError(rc)
+
+	if progress == nil {
+		return nil
+	}
+
+	l := req.Logger().
+		With("image", ref)
+	if err := handleImagePullProgress(rc, progress, l); err != nil {
+		return fail(err)
+	}
+	return err
+}
+
+func (this *DockerRepository) resolvePullCredentials(req Request, _ string) (string, error) {
+	fail := func(err error) (string, error) {
+		return "", errors.Config.Newf("cannot resolve image pull credentials: %w", err)
+	}
+
+	plain, err := this.conf.ImagePullCredentials.Render(req)
+	if err != nil {
+		return fail(err)
+	}
+
+	if plain == "" {
+		return "", nil
+	}
+
+	if buf, err := registry.DecodeAuthConfig(plain); err == nil && (buf.Auth != "" || buf.Username != "" || buf.Password != "") {
+		// We can take it as it is, because it is in fully valid format.
+		return plain, nil
+	}
+
+	var buf registry.AuthConfig
+	if err := json.Unmarshal([]byte(plain), &buf); err == nil && (buf.Auth != "" || buf.Username != "" || buf.Password != "") {
+		// Ok, is close to be perfect, just encode it base64 url based...
+		return base64.URLEncoding.EncodeToString([]byte(plain)), nil
+	}
+
+	// Seems to be direct auth string...
+	buf.Auth = plain
+	result, err := registry.EncodeAuthConfig(buf)
+	if err != nil {
+		return fail(err)
+	}
+	return result, nil
 }
 
 func (this *DockerRepository) resolveContainerConfig(req Request, sess session.Session) (_ *container.Config, err error) {
@@ -517,7 +609,7 @@ func (this *DockerRepository) removeContainer(ctx context.Context, id string) (b
 
 func (this *DockerRepository) findContainerBySession(ctx context.Context, sess session.Session) (c *types.Container, exitCode int, err error) {
 	return this.findContainerBy(ctx, filters.NewArgs(
-		filters.Arg("label="+DockerLabelSessionId, sess.Id().String()),
+		filters.Arg("label", DockerLabelSessionId+"="+sess.Id().String()),
 	))
 }
 func (this *DockerRepository) findContainerById(ctx context.Context, id string) (c *types.Container, exitCode int, err error) {
@@ -562,5 +654,21 @@ func (this *DockerRepository) logger() log.Logger {
 	if v := this.Logger; v != nil {
 		return v
 	}
-	return log.GetLogger("authorizer")
+	return log.GetLogger("docker-repository")
+}
+
+func (this *DockerRepository) isNoSuchImageError(err error) bool {
+	for {
+		if err == nil {
+			return false
+		}
+		if msg := err.Error(); strings.HasPrefix(msg, "No such image:") {
+			return true
+		}
+		ue, ok := err.(interface{ Unwrap() error })
+		if !ok {
+			return false
+		}
+		err = ue.Unwrap()
+	}
 }

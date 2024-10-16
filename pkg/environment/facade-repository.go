@@ -35,22 +35,22 @@ type RepositoryFacade struct {
 	entries map[configuration.FlowName]CloseableRepository
 }
 
-func (this *RepositoryFacade) WillBeAccepted(req Request) (bool, error) {
-	flow := req.Authorization().Flow()
+func (this *RepositoryFacade) WillBeAccepted(ctx Context) (bool, error) {
+	flow := ctx.Authorization().Flow()
 	candidate, ok := this.entries[flow]
 	if !ok {
 		return false, fmt.Errorf("does not find valid environment for flow %v", flow)
 	}
-	return candidate.WillBeAccepted(req)
+	return candidate.WillBeAccepted(ctx)
 }
 
-func (this *RepositoryFacade) DoesSupportPty(req Request, pty ssh.Pty) (bool, error) {
-	flow := req.Authorization().Flow()
+func (this *RepositoryFacade) DoesSupportPty(ctx Context, pty ssh.Pty) (bool, error) {
+	flow := ctx.Authorization().Flow()
 	candidate, ok := this.entries[flow]
 	if !ok {
 		return false, fmt.Errorf("does not find valid environment for flow %v", flow)
 	}
-	return candidate.DoesSupportPty(req, pty)
+	return candidate.DoesSupportPty(ctx, pty)
 }
 
 func (this *RepositoryFacade) Ensure(req Request) (Environment, error) {
