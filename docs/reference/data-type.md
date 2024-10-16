@@ -109,3 +109,6 @@ Can be one of:
 The public variant of an [SSH keypair](https://wiki.archlinux.org/title/SSH_keys) of a user.
 
 Please refer to the [good documentation at GitHub how to create SSH (public) keys](https://docs.github.com/de/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent).
+
+## URL
+Represents a classical [URL](https://en.wikipedia.org/wiki/URL) to reference resources (for example) in the internet, like [https://bifroest.engity.org](https://bifroest.engity.org).

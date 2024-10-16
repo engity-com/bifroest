@@ -149,14 +149,17 @@ nav:
           - reference/session/index.md
           - Filesystem: reference/session/fs.md
       - reference/housekeeping.md
+      - reference/imp.md
       - reference/cli.md
       - Templating:
           - reference/templating/index.md
       - Context Objects:
           - reference/context/index.md
+          - Alternative Binary: reference/context/alternative-binary.md
           - Authorization: reference/context/authorization.md
           - Authorization Request: reference/context/authorization-request.md
           - Connection: reference/context/connection.md
+          - Core: reference/context/core.md
           - Local Group: reference/context/local-group.md
           - Local User: reference/context/local-user.md
           - OIDC Token: reference/context/oidc-token.md

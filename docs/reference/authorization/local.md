@@ -17,6 +17,8 @@ Has to be set to `local` to enable the local authorization.
 <<property_with_holder("authorizedKeys", "Array", None, "Authorized Keys", "../data-type.md#authorized-keys", default=["{{.user.homeDir}}/.ssh/authorized_keys"])>>
 Contains files with the format of classic [authorized keys](../data-type.md#authorized-keys), in which Bifröst will look for [SSH Public Keys](../data-type.md#ssh-public-key).
 
+The backend type is [Strings Template](../templating/index.md#strings)<[Core](../context/core.md)>.
+
 <<property("password", "Password", "#password")>>
 Contains files of with format of classic [authorized keys](../data-type.md#authorized-keys), in which Bifröst will look for [SSH Public Keys](../data-type.md#ssh-public-key).
 

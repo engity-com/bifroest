@@ -24,6 +24,29 @@ Examples:
 * `Foo{{ "Xyz" }}Bar` or will result in `FooXyzBar`.
 * `Foo{{ 123 }}Bar` or will result in `Foo123Bar`.
 
+### Strings {: #strings}
+
+This is simply an array of [String](#string) = **Array<[String](#string)>** and will result in Array<string>.
+
+Examples:
+
+```yaml title="Input"
+foos:
+  - Foo{{ "Xyz" }}Bar
+  - Foo{{ 123 }}Bar
+```
+
+```yaml title="Result"
+foos:
+  - FooXyzBar
+  - Foo123Bar
+```
+
+### URL {: #url}
+
+This is similar to [String](#string) and will result in the data type [URL](../data-type.md#url).
+
+
 ### Bool {: #bool}
 
 A template of type Bool is always rendered into a boolean value (`true` or `false`). The following rules are evaluated to decide for either `true` or `false`:

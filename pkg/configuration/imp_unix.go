@@ -3,5 +3,5 @@
 package configuration
 
 var (
-	defaultImpAlternativesLocation = `/var/lib/engity/bifroest/imp/binaries/{{.Version}}/{{.Os}}-{{.Architecture}}{{.Ext}}`
+	defaultImpAlternativesLocation = `/var/lib/engity/bifroest/imp/binaries/{{.version}}/{{.os}}-{{.arch}}{{.ext}}`
 )

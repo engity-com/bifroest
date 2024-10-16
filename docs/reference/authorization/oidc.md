@@ -21,7 +21,7 @@ Currently the following flow of OpenID Connect is supported:
 <<property("type", "Authorization Type", default="oidc", required=True, id_prefix="device-auth-", heading=4)>>
 Has to be set to `oidcDeviceAuth` to enable the OIDC DeviceAuth authorization.
 
-<<property("issuer", "URL", None, id_prefix="device-auth-", heading=4, required=True)>>
+<<property_with_holder("issuer", "URL Template", "../templating/index.md#url", "Core", "../context/core.md", id_prefix="device-auth-", heading=4, required=True)>>
 The issuer is the URL identifier for the service which is issued by your identity provider.
 
 ##### Examples {: #device-auth-property-issuer-examples }
@@ -29,13 +29,13 @@ The issuer is the URL identifier for the service which is issued by your identit
 * `https://accounts.google.com`
 * `https://login.salesforce.com`
 
-<<property("clientId", "string", None, id_prefix="device-auth-", heading=4, required=True)>>
+<<property_with_holder("clientId", "String Template", "../templating/index.md#string", "Core", "../context/core.md", id_prefix="device-auth-", heading=4, required=True)>>
 Client ID issued by your identity provider.
 
-<<property("clientSecret", "string", None, id_prefix="device-auth-", heading=4, required=True)>>
+<<property_with_holder("clientSecret", "String Template", "../templating/index.md#string", "Core", "../context/core.md", id_prefix="device-auth-", heading=4, required=True)>>
 Secret for the corresponding [Client ID](#device-auth-property-clientId).
 
-<<property_with_holder("scopes", "Array", None, "string", None, id_prefix="device-auth-", heading=4, required=True)>>
+<<property_with_holder("scopes", "Strings Template", "../templating/index.md#strings", "Core", "../context/core.md", id_prefix="device-auth-", heading=4, required=True)>>
 Scopes to request the token from the identity provider for.
 
 ##### Examples {: #device-auth-property-scopes-examples }

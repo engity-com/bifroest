@@ -186,3 +186,28 @@ func (this alternativeResolutionContext) Ext() string {
 		return ""
 	}
 }
+func (this alternativeResolutionContext) PackageExt() string {
+	switch this.Os {
+	case "windows":
+		return ".zip"
+	default:
+		return ".tgz"
+	}
+}
+
+func (this alternativeResolutionContext) GetField(name string) (any, bool, error) {
+	switch name {
+	case "os":
+		return this.Os, true, nil
+	case "architecture", "arch":
+		return this.Architecture, true, nil
+	case "version":
+		return this.Version, true, nil
+	case "ext":
+		return this.Ext(), true, nil
+	case "packageExt":
+		return this.PackageExt(), true, nil
+	default:
+		return nil, false, nil
+	}
+}

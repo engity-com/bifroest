@@ -357,7 +357,9 @@ func (this *DockerRepository) resolveHostConfig(req Request) (_ *container.HostC
 	var result container.HostConfig
 
 	result.AutoRemove = true
-	result.PublishAllPorts = true
+	if !this.conf.ImpPublishHost.IsZero() {
+		result.PublishAllPorts = true
+	}
 	if result.Binds, err = this.conf.Volumes.Render(req); err != nil {
 		return failf("cannot evaluate volumes: %w", err)
 	}

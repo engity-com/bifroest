@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	DefaultImpAlternativesDownloadUrl = template.MustNewUrl("https://github.com/engity-com/bifroest/releases/download/v{{.Version}}/bifroest-{{.Os}}-{{.Architecture}}-generic.{{if eq .Os `windows`}}zip{{else}}tgz{{end}}")
+	DefaultImpAlternativesDownloadUrl = template.MustNewUrl("https://github.com/engity-com/bifroest/releases/download/v{{.version}}/bifroest-{{.os}}-{{.arch}}-generic{{.packageExt}}")
 	DefaultImpAlternativesLocation    = template.MustNewString(defaultImpAlternativesLocation)
 )
 

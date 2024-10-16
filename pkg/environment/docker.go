@@ -161,6 +161,39 @@ func (this *docker) parseContainer(container *types.Container) (err error) {
 	this.directory = labels[DockerLabelDirectory]
 	this.portForwardingAllowed = labels[DockerLabelPortForwardingAllowed] == "true"
 
+	if this.impBinding, err = this.resolveImpBinding(container); err != nil {
+		return fail(err)
+	}
+
+	return nil
+}
+
+func (this *docker) resolveImpBinding(container *types.Container) (net.HostPort, error) {
+	fail := func(err error) (net.HostPort, error) {
+		return net.HostPort{}, err
+	}
+	failf := func(msg string, args ...any) (net.HostPort, error) {
+		return fail(errors.System.Newf(msg, args...))
+	}
+
+	iph := this.repository.conf.ImpPublishHost
+	if iph.IsZero() {
+		ns := container.NetworkSettings
+		if ns == nil {
+			return failf("missing network settings of container %v", container.ID)
+		}
+		result := net.HostPort{Port: imp.ServicePort}
+		for n, candidate := range ns.Networks {
+			if ip := candidate.IPAddress; ip != "" {
+				if err := result.Host.Set(ip); err != nil {
+					return failf("cannot parse ip address of network %s to: %w", n, err)
+				}
+				return result, nil
+			}
+		}
+		return failf("network configuration of container does not any valid network configuration")
+	}
+
 	for _, candidate := range container.Ports {
 		if candidate.PrivatePort != imp.ServicePort {
 			continue
@@ -168,16 +201,15 @@ func (this *docker) parseContainer(container *types.Container) (err error) {
 		if candidate.Type != "tcp" {
 			continue
 		}
-		if err := this.impBinding.Host.Set(candidate.IP); err != nil {
+		result := net.HostPort{Port: candidate.PublicPort}
+		if err := result.Host.Set(candidate.IP); err != nil {
 			return failf("cannot parse ip address where the host is bound to: %w", err)
 		}
-		this.impBinding.Port = candidate.PublicPort
-		break
+		if result.Host.IsZero() {
+			result.Host = iph.Clone()
+		}
+		return result, nil
 	}
 
-	if this.impBinding.IsZero() {
-		return failf("container does not contain any valid imp binding")
-	}
-
-	return nil
+	return failf("container does not have any valid exposed port")
 }

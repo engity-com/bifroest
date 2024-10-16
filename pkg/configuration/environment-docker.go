@@ -4,6 +4,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"gopkg.in/yaml.v3"
 
+	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/template"
 )
 
@@ -32,6 +33,7 @@ var (
 
 	DefaultEnvironmentDockerBanner                = template.MustNewString("")
 	DefaultEnvironmentDockerPortForwardingAllowed = template.BoolOf(true)
+	DefaultEnvironmentDockerImpPublishHost        = net.MustNewHost("")
 
 	_ = RegisterEnvironmentV(func() EnvironmentV {
 		return &EnvironmentDocker{}
@@ -65,8 +67,7 @@ type EnvironmentDocker struct {
 	Banner template.String `yaml:"banner,omitempty"`
 
 	PortForwardingAllowed template.Bool `yaml:"portForwardingAllowed,omitempty"`
-
-	Imp EnvironmentImp `yaml:"imp"`
+	ImpPublishHost        net.Host      `yaml:"impPublishHost"`
 }
 
 func (this *EnvironmentDocker) SetDefaults() error {
@@ -97,8 +98,7 @@ func (this *EnvironmentDocker) SetDefaults() error {
 		fixedDefault("banner", func(v *EnvironmentDocker) *template.String { return &v.Banner }, DefaultEnvironmentDockerBanner),
 
 		fixedDefault("portForwardingAllowed", func(v *EnvironmentDocker) *template.Bool { return &v.PortForwardingAllowed }, DefaultEnvironmentDockerPortForwardingAllowed),
-
-		func(v *EnvironmentDocker) (string, defaulter) { return "imp", &v.Imp },
+		fixedDefault("impPublishHost", func(v *EnvironmentDocker) *net.Host { return &v.ImpPublishHost }, DefaultEnvironmentDockerImpPublishHost),
 	)
 }
 
@@ -131,7 +131,7 @@ func (this *EnvironmentDocker) Trim() error {
 
 		noopTrim[EnvironmentDocker]("portForwardingAllowed"),
 
-		func(v *EnvironmentDocker) (string, trimmer) { return "imp", &v.Imp },
+		noopTrim[EnvironmentDocker]("impPublishHost"),
 	)
 }
 
@@ -167,7 +167,7 @@ func (this *EnvironmentDocker) Validate() error {
 			return "portForwardingAllowed", &v.PortForwardingAllowed
 		},
 
-		func(v *EnvironmentDocker) (string, validator) { return "imp", &v.Imp },
+		func(v *EnvironmentDocker) (string, validator) { return "impPublishHost", &v.ImpPublishHost },
 	)
 }
 
@@ -214,7 +214,7 @@ func (this EnvironmentDocker) isEqualTo(other *EnvironmentDocker) bool {
 		isEqual(&this.User, &other.User) &&
 		isEqual(&this.Banner, &other.Banner) &&
 		isEqual(&this.PortForwardingAllowed, &other.PortForwardingAllowed) &&
-		isEqual(&this.Imp, &other.Imp)
+		isEqual(&this.ImpPublishHost, &other.ImpPublishHost)
 }
 
 func (this EnvironmentDocker) Types() []string {
