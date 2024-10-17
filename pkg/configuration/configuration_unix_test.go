@@ -111,9 +111,9 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 						PortForwardingAllowed: DefaultEnvironmentLocalPortForwardingAllowed,
 					}},
 				}},
-				Imp: Imp{
-					AlternativesDownloadUrl: DefaultImpAlternativesDownloadUrl,
-					AlternativesLocation:    DefaultImpAlternativesLocation,
+				Alternatives: Alternatives{
+					DownloadUrl: DefaultAlternativesDownloadUrl,
+					Location:    DefaultAlternativesLocation,
 				},
 				HouseKeeping: HouseKeeping{
 					Every:          DefaultHouseKeepingEvery,

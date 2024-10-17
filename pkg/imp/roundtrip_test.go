@@ -24,7 +24,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/common"
-	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/net"
@@ -99,7 +98,7 @@ func roundtrip(t *testing.T) {
 	wg.Add(1)
 	go roundtripDummyService(ctx, t, wg.Done)
 
-	master, err := NewImp(ctx, nil, masterKey, &configuration.Imp{})
+	master, err := NewImp(ctx, masterKey)
 	require.NoError(t, err)
 	defer func() {
 		assert.NoError(t, master.Close())

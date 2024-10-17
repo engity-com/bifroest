@@ -1,4 +1,4 @@
-package imp
+package alternatives
 
 import (
 	"context"
@@ -17,25 +17,26 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-type BinaryProvider interface {
+type Provider interface {
+	io.Closer
 	FindBinaryFor(ctx context.Context, os, arch string) (string, error)
 }
 
-func NewBinaries(_ context.Context, version common.Version, conf *configuration.Imp) (*Binaries, error) {
-	return &Binaries{
+func NewProvider(_ context.Context, version common.Version, conf *configuration.Alternatives) (Provider, error) {
+	return &provider{
 		conf:    conf,
 		version: version,
 	}, nil
 }
 
-type Binaries struct {
-	conf    *configuration.Imp
+type provider struct {
+	conf    *configuration.Alternatives
 	version common.Version
 
 	Logger log.Logger
 }
 
-func (this *Binaries) FindBinaryFor(ctx context.Context, hostOs, hostArch string) (_ string, rErr error) {
+func (this *provider) FindBinaryFor(ctx context.Context, hostOs, hostArch string) (_ string, rErr error) {
 	fail := func(err error) (string, error) {
 		return "", err
 	}
@@ -129,7 +130,7 @@ func (this *Binaries) FindBinaryFor(ctx context.Context, hostOs, hostArch string
 	return fn, nil
 }
 
-func (this *Binaries) alternativesLocationFor(os, arch string) (string, error) {
+func (this *provider) alternativesLocationFor(os, arch string) (string, error) {
 	fail := func(err error) (string, error) {
 		return "", err
 	}
@@ -138,14 +139,14 @@ func (this *Binaries) alternativesLocationFor(os, arch string) (string, error) {
 	}
 
 	ctx := alternativeResolutionContext{os, arch, this.version.Version()}
-	result, err := this.conf.AlternativesLocation.Render(ctx)
+	result, err := this.conf.Location.Render(ctx)
 	if err != nil {
 		return failf(errors.Config, "cannot resolve imp alternative location: %w", err)
 	}
 	return result, nil
 }
 
-func (this *Binaries) alternativesDownloadUrlFor(os, arch string) (*url.URL, error) {
+func (this *provider) alternativesDownloadUrlFor(os, arch string) (*url.URL, error) {
 	fail := func(err error) (*url.URL, error) {
 		return nil, err
 	}
@@ -154,21 +155,21 @@ func (this *Binaries) alternativesDownloadUrlFor(os, arch string) (*url.URL, err
 	}
 
 	ctx := alternativeResolutionContext{os, arch, this.version.Version()}
-	result, err := this.conf.AlternativesDownloadUrl.Render(ctx)
+	result, err := this.conf.DownloadUrl.Render(ctx)
 	if err != nil {
 		return failf(errors.Config, "cannot resolve imp alternative download url: %w", err)
 	}
 	return result, nil
 }
 
-func (this *Binaries) logger() log.Logger {
+func (this *provider) logger() log.Logger {
 	if v := this.Logger; v != nil {
 		return v
 	}
 	return log.GetLogger("imp.binaries")
 }
 
-func (this *Binaries) Close() error {
+func (this *provider) Close() error {
 	return nil
 }
 

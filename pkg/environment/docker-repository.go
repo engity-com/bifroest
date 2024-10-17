@@ -24,6 +24,7 @@ import (
 	"github.com/echocat/slf4g"
 	"github.com/gliderlabs/ssh"
 
+	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
@@ -55,9 +56,10 @@ const (
 )
 
 type DockerRepository struct {
-	flow configuration.FlowName
-	conf *configuration.EnvironmentDocker
-	imp  imp.Imp
+	flow         configuration.FlowName
+	conf         *configuration.EnvironmentDocker
+	alternatives alternatives.Provider
+	imp          imp.Imp
 
 	apiClient   client.APIClient
 	hostVersion *types.Version
@@ -68,7 +70,7 @@ type DockerRepository struct {
 	activeInstances sync.Map
 }
 
-func NewDockerRepository(ctx context.Context, flow configuration.FlowName, conf *configuration.EnvironmentDocker, i imp.Imp) (*DockerRepository, error) {
+func NewDockerRepository(ctx context.Context, flow configuration.FlowName, conf *configuration.EnvironmentDocker, ap alternatives.Provider, i imp.Imp) (*DockerRepository, error) {
 	fail := func(err error) (*DockerRepository, error) {
 		return nil, err
 	}
@@ -91,11 +93,12 @@ func NewDockerRepository(ctx context.Context, flow configuration.FlowName, conf 
 	}
 
 	return &DockerRepository{
-		flow:        flow,
-		conf:        conf,
-		imp:         i,
-		apiClient:   apiClient,
-		hostVersion: &hostVersion,
+		flow:         flow,
+		conf:         conf,
+		alternatives: ap,
+		imp:          i,
+		apiClient:    apiClient,
+		hostVersion:  &hostVersion,
 	}, nil
 }
 
@@ -381,7 +384,7 @@ func (this *DockerRepository) resolveHostConfig(req Request) (_ *container.HostC
 	// 	HostPort: strconv.FormatUint(uint64(impBinding.Port), 10),
 	// }}}
 
-	impBinaryPath, err := this.imp.FindBinaryFor(req.Context(), this.hostVersion.Os, this.hostVersion.Arch)
+	impBinaryPath, err := this.alternatives.FindBinaryFor(req.Context(), this.hostVersion.Os, this.hostVersion.Arch)
 	if err != nil {
 		return failf("cannot resolve imp binary path: %w", err)
 	}

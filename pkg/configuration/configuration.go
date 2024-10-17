@@ -29,7 +29,7 @@ type Configuration struct {
 
 	HouseKeeping HouseKeeping `yaml:"housekeeping"`
 
-	Imp Imp `yaml:"imp"`
+	Alternatives Alternatives `yaml:"alternatives"`
 
 	StartMessage template.String `yaml:"startMessage,omitempty"`
 }
@@ -40,7 +40,7 @@ func (this *Configuration) SetDefaults() error {
 		func(v *Configuration) (string, defaulter) { return "session", &v.Session },
 		func(v *Configuration) (string, defaulter) { return "flows", &v.Flows },
 		func(v *Configuration) (string, defaulter) { return "houseKeeping", &v.HouseKeeping },
-		func(v *Configuration) (string, defaulter) { return "imp", &v.Imp },
+		func(v *Configuration) (string, defaulter) { return "alternatives", &v.Alternatives },
 		fixedDefault("startMessage", func(v *Configuration) *template.String { return &v.StartMessage }, DefaultStartMessage),
 	)
 }
@@ -51,7 +51,7 @@ func (this *Configuration) Trim() error {
 		func(v *Configuration) (string, trimmer) { return "session", &v.Session },
 		func(v *Configuration) (string, trimmer) { return "flows", &v.Flows },
 		func(v *Configuration) (string, trimmer) { return "houseKeeping", &v.HouseKeeping },
-		func(v *Configuration) (string, trimmer) { return "imp", &v.Imp },
+		func(v *Configuration) (string, trimmer) { return "alternatives", &v.Alternatives },
 		noopTrim[Configuration]("startMessage"),
 	)
 }
@@ -63,7 +63,7 @@ func (this *Configuration) Validate() error {
 		func(v *Configuration) (string, validator) { return "flows", &v.Flows },
 		notZeroValidate("flows", func(v *Configuration) *Flows { return &v.Flows }),
 		func(v *Configuration) (string, validator) { return "houseKeeping", &v.HouseKeeping },
-		func(v *Configuration) (string, validator) { return "imp", &v.Imp },
+		func(v *Configuration) (string, validator) { return "alternatives", &v.Alternatives },
 		func(v *Configuration) (string, validator) { return "startMessage", &v.StartMessage },
 	)
 }
@@ -127,6 +127,6 @@ func (this Configuration) isEqualTo(other *Configuration) bool {
 		isEqual(&this.Session, &other.Session) &&
 		isEqual(&this.Flows, &other.Flows) &&
 		isEqual(&this.HouseKeeping, &other.HouseKeeping) &&
-		isEqual(&this.Imp, &other.Imp) &&
+		isEqual(&this.Alternatives, &other.Alternatives) &&
 		isEqual(&this.StartMessage, &other.StartMessage)
 }
