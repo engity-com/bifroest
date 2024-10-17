@@ -6,10 +6,15 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/alecthomas/kingpin"
+	"github.com/alecthomas/kingpin/v2"
 	log "github.com/echocat/slf4g"
 
+	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/service"
+)
+
+var (
+	configurationRef configuration.ConfigurationRef
 )
 
 var _ = registerCommand(func(app *kingpin.Application) {

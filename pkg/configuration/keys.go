@@ -1,8 +1,6 @@
 package configuration
 
 import (
-	"slices"
-
 	"gopkg.in/yaml.v3"
 
 	"github.com/engity-com/bifroest/pkg/crypto"
@@ -10,12 +8,12 @@ import (
 )
 
 var (
-	DefaultHostKeyLocations       = []string{DefaultHostKeyLocation}
+	DefaultHostKeyLocations       = template.MustNewStrings(DefaultHostKeyLocation)
 	DefaultRememberMeNotification = template.MustNewString("\nIf you return until {{.session.validUntil | format `dateTimeT`}} with the same public key ({{.key | fingerprint}}), you can seamlessly login again.\n\n")
 )
 
 type Keys struct {
-	HostKeys               []string                  `yaml:"hostKeys"`
+	HostKeys               template.Strings          `yaml:"hostKeys"`
 	RsaRestriction         crypto.RsaRestriction     `yaml:"rsaRestriction"`
 	DsaRestriction         crypto.DsaRestriction     `yaml:"dsaRestriction"`
 	EcdsaRestriction       crypto.EcdsaRestriction   `yaml:"ecdsaRestriction"`
@@ -25,7 +23,7 @@ type Keys struct {
 
 func (this *Keys) SetDefaults() error {
 	return setDefaults(this,
-		fixedDefault("hostKeys", func(v *Keys) *[]string { return &v.HostKeys }, DefaultHostKeyLocations),
+		fixedDefault("hostKeys", func(v *Keys) *template.Strings { return &v.HostKeys }, DefaultHostKeyLocations),
 		fixedDefault("rsaRestriction", func(v *Keys) *crypto.RsaRestriction { return &v.RsaRestriction }, crypto.DefaultRsaRestriction),
 		fixedDefault("dsaRestriction", func(v *Keys) *crypto.DsaRestriction { return &v.DsaRestriction }, crypto.DefaultDsaRestriction),
 		fixedDefault("ecdsaRestriction", func(v *Keys) *crypto.EcdsaRestriction { return &v.EcdsaRestriction }, crypto.DefaultEcdsaRestriction),
@@ -36,7 +34,7 @@ func (this *Keys) SetDefaults() error {
 
 func (this *Keys) Trim() error {
 	return trim(this,
-		func(v *Keys) (string, trimmer) { return "hostKeys", &stringSliceTrimmer{&v.HostKeys} },
+		noopTrim[Keys]("hostKeys"),
 		noopTrim[Keys]("rsaRestriction"),
 		noopTrim[Keys]("dsaRestriction"),
 		noopTrim[Keys]("ecdsaRestriction"),
@@ -47,12 +45,13 @@ func (this *Keys) Trim() error {
 
 func (this *Keys) Validate() error {
 	return validate(this,
-		notEmptySliceValidate("hostKeys", func(v *Keys) *[]string { return &v.HostKeys }),
+		func(v *Keys) (string, validator) { return "hostKeys", &v.HostKeys },
+		notZeroValidate("hostKeys", func(v *Keys) *template.Strings { return &v.HostKeys }),
 		func(v *Keys) (string, validator) { return "rsaRestriction", &v.RsaRestriction },
 		func(v *Keys) (string, validator) { return "dsaRestriction", &v.DsaRestriction },
 		func(v *Keys) (string, validator) { return "ecdsaRestriction", &v.EcdsaRestriction },
 		func(v *Keys) (string, validator) { return "ed25519Restriction", &v.Ed25519Restriction },
-		noopValidate[Keys]("rememberMeNotification"),
+		func(v *Keys) (string, validator) { return "rememberMeNotification", &v.RememberMeNotification },
 	)
 }
 
@@ -78,7 +77,7 @@ func (this Keys) IsEqualTo(other any) bool {
 }
 
 func (this Keys) isEqualTo(other *Keys) bool {
-	return slices.Equal(this.HostKeys, other.HostKeys) &&
+	return isEqual(&this.HostKeys, &other.HostKeys) &&
 		isEqual(&this.RsaRestriction, &other.RsaRestriction) &&
 		isEqual(&this.DsaRestriction, &other.DsaRestriction) &&
 		isEqual(&this.EcdsaRestriction, &other.EcdsaRestriction) &&

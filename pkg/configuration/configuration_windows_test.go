@@ -9,6 +9,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/template"
 )
 
 func TestConfiguration_UnmarshalYAML(t *testing.T) {
@@ -57,6 +58,14 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 					MaxAuthTries:   DefaultSshMaxAuthTries,
 					MaxConnections: DefaultSshMaxConnections,
 					Banner:         DefaultSshBanner,
+					PreparationMessages: PreparationMessages{{
+						Id:     DefaultPreparationMessageId,
+						Flow:   DefaultPreparationMessageFlow,
+						Start:  DefaultPreparationMessageStart,
+						Update: DefaultPreparationMessageUpdate,
+						End:    DefaultPreparationMessageEnd,
+						Error:  DefaultPreparationMessageError,
+					}},
 				},
 				Session: Session{&SessionFs{
 					IdleTimeout:    DefaultSessionIdleTimeout,
@@ -72,9 +81,9 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 						ExcludedRequestingName: common.MustNewRegexp(""),
 					},
 					Authorization: Authorization{&AuthorizationOidcDeviceAuth{
-						Issuer:           "https://foo-bar",
-						ClientId:         "anId",
-						ClientSecret:     "aSecret",
+						Issuer:           template.MustNewUrl("https://foo-bar"),
+						ClientId:         template.MustNewString("anId"),
+						ClientSecret:     template.MustNewString("aSecret"),
 						Scopes:           DefaultAuthorizationOidcScopes,
 						RetrieveIdToken:  DefaultAuthorizationOidcRetrieveIdToken,
 						RetrieveUserInfo: DefaultAuthorizationOidcRetrieveUserInfo,
@@ -88,12 +97,17 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 						PortForwardingAllowed: DefaultEnvironmentLocalPortForwardingAllowed,
 					}},
 				}},
+				Alternatives: Alternatives{
+					DownloadUrl: DefaultAlternativesDownloadUrl,
+					Location:    DefaultAlternativesLocation,
+				},
 				HouseKeeping: HouseKeeping{
 					Every:          DefaultHouseKeepingEvery,
 					InitialDelay:   DefaultHouseKeepingInitialDelay,
 					AutoRepair:     DefaultHouseKeepingAutoRepair,
 					KeepExpiredFor: DefaultHouseKeepingKeepExpiredFor,
 				},
+				StartMessage: DefaultStartMessage,
 			},
 		},
 	)

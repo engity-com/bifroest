@@ -22,6 +22,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -51,7 +52,7 @@ type FsRepository struct {
 	mutex sync.RWMutex
 }
 
-func (this *FsRepository) dir(flow configuration.FlowName, id uuid.UUID) (string, error) {
+func (this *FsRepository) dir(flow configuration.FlowName, id Id) (string, error) {
 	fs, err := flow.MarshalText()
 	if err != nil {
 		return "", err
@@ -63,7 +64,7 @@ func (this *FsRepository) dir(flow configuration.FlowName, id uuid.UUID) (string
 	return filepath.Join(this.conf.Storage, string(fs), string(is)), nil
 }
 
-func (this *FsRepository) file(flow configuration.FlowName, id uuid.UUID, kind string) (string, error) {
+func (this *FsRepository) file(flow configuration.FlowName, id Id, kind string) (string, error) {
 	dir, err := this.dir(flow, id)
 	if err != nil {
 		return "", err
@@ -71,7 +72,7 @@ func (this *FsRepository) file(flow configuration.FlowName, id uuid.UUID, kind s
 	return filepath.Join(dir, kind), nil
 }
 
-func (this *FsRepository) openRead(flow configuration.FlowName, id uuid.UUID, kind string) (*os.File, string, error) {
+func (this *FsRepository) openRead(flow configuration.FlowName, id Id, kind string) (*os.File, string, error) {
 	fn, err := this.file(flow, id, kind)
 	if err != nil {
 		return nil, "", err
@@ -83,7 +84,7 @@ func (this *FsRepository) openRead(flow configuration.FlowName, id uuid.UUID, ki
 	return f, fn, nil
 }
 
-func (this *FsRepository) openWrite(flow configuration.FlowName, id uuid.UUID, kind string, rw bool) (*os.File, string, error) {
+func (this *FsRepository) openWrite(flow configuration.FlowName, id Id, kind string, rw bool) (*os.File, string, error) {
 	fn, err := this.file(flow, id, kind)
 	if err != nil {
 		return nil, "", err
@@ -100,7 +101,7 @@ func (this *FsRepository) openWrite(flow configuration.FlowName, id uuid.UUID, k
 	return f, fn, nil
 }
 
-func (this *FsRepository) stat(flow configuration.FlowName, id uuid.UUID, kind string) (os.FileInfo, error) {
+func (this *FsRepository) stat(flow configuration.FlowName, id Id, kind string) (os.FileInfo, error) {
 	fn, err := this.file(flow, id, kind)
 	if err != nil {
 		return nil, err
@@ -126,7 +127,7 @@ func (this *FsRepository) dirFileMode() sys.FileMode {
 	return result
 }
 
-func (this *FsRepository) Create(ctx context.Context, flow configuration.FlowName, remote common.Remote, authToken []byte) (Session, error) {
+func (this *FsRepository) Create(ctx context.Context, flow configuration.FlowName, remote net.Remote, authToken []byte) (Session, error) {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 
@@ -134,10 +135,11 @@ func (this *FsRepository) Create(ctx context.Context, flow configuration.FlowNam
 		return nil, fmt.Errorf("cannot create session for user %v at flow %v: %w", remote, flow, err)
 	}
 
-	id, err := uuid.NewUUID()
+	vid, err := uuid.NewUUID()
 	if err != nil {
 		return fail(err)
 	}
+	id := Id(vid)
 
 	var sess fs
 	sess.info.VState = StateNew
@@ -160,14 +162,14 @@ func (this *FsRepository) Create(ctx context.Context, flow configuration.FlowNam
 	return &sess, nil
 }
 
-func (this *FsRepository) FindBy(ctx context.Context, flow configuration.FlowName, id uuid.UUID, opts *FindOpts) (Session, error) {
+func (this *FsRepository) FindBy(ctx context.Context, flow configuration.FlowName, id Id, opts *FindOpts) (Session, error) {
 	this.mutex.RLock()
 	defer this.mutex.RUnlock()
 
 	return this.findBy(ctx, flow, id, opts, false)
 }
 
-func (this *FsRepository) findBy(ctx context.Context, flow configuration.FlowName, id uuid.UUID, opts *FindOpts, expectedToExist bool) (*fs, error) {
+func (this *FsRepository) findBy(ctx context.Context, flow configuration.FlowName, id Id, opts *FindOpts, expectedToExist bool) (*fs, error) {
 	cleanUpIfAllowedAndFail := func(err error) (*fs, error) {
 		this.doFindAutoCleanIfAllowed(ctx, flow, id, opts, "found broken session; it was removed entirely", err)
 		return nil, err
@@ -212,7 +214,7 @@ func (this *FsRepository) FindByPublicKey(ctx context.Context, key ssh.PublicKey
 		return nil, fmt.Errorf("cannot find session for public key: %w", err)
 	}
 
-	loadCandidate := func(flow configuration.FlowName, id uuid.UUID) (*fs, error) {
+	loadCandidate := func(flow configuration.FlowName, id Id) (*fs, error) {
 		this.mutex.RLock()
 		defer this.mutex.RUnlock()
 
@@ -233,7 +235,7 @@ func (this *FsRepository) FindByPublicKey(ctx context.Context, key ssh.PublicKey
 			return false, err
 		}
 
-		if err := this.iterateFlowDirs(ctx, flow, func(id uuid.UUID, path string) (bool, error) {
+		if err := this.iterateFlowDirs(ctx, flow, func(id Id, path string) (bool, error) {
 			if err := ctx.Err(); err != nil {
 				return false, err
 			}
@@ -268,7 +270,7 @@ func (this *FsRepository) FindByAccessToken(ctx context.Context, t []byte, opts 
 		return nil, fmt.Errorf("cannot find session for public key: %w", err)
 	}
 
-	loadCandidate := func(flow configuration.FlowName, id uuid.UUID) (*fs, error) {
+	loadCandidate := func(flow configuration.FlowName, id Id) (*fs, error) {
 		this.mutex.RLock()
 		defer this.mutex.RUnlock()
 
@@ -289,7 +291,7 @@ func (this *FsRepository) FindByAccessToken(ctx context.Context, t []byte, opts 
 			return false, err
 		}
 
-		if err := this.iterateFlowDirs(ctx, flow, func(id uuid.UUID, path string) (bool, error) {
+		if err := this.iterateFlowDirs(ctx, flow, func(id Id, path string) (bool, error) {
 			if err := ctx.Err(); err != nil {
 				return false, err
 			}
@@ -320,7 +322,7 @@ func (this *FsRepository) FindByAccessToken(ctx context.Context, t []byte, opts 
 }
 
 func (this *FsRepository) FindAll(ctx context.Context, consumer Consumer, opts *FindOpts) error {
-	loadCandidate := func(flow configuration.FlowName, id uuid.UUID) (*fs, error) {
+	loadCandidate := func(flow configuration.FlowName, id Id) (*fs, error) {
 		this.mutex.RLock()
 		defer this.mutex.RUnlock()
 
@@ -333,7 +335,7 @@ func (this *FsRepository) FindAll(ctx context.Context, consumer Consumer, opts *
 			return false, err
 		}
 
-		err := this.iterateFlowDirs(ctx, flow, func(id uuid.UUID, path string) (bool, error) {
+		err := this.iterateFlowDirs(ctx, flow, func(id Id, path string) (bool, error) {
 			if err := ctx.Err(); err != nil {
 				return false, err
 			}
@@ -352,14 +354,14 @@ func (this *FsRepository) FindAll(ctx context.Context, consumer Consumer, opts *
 	}, opts)
 }
 
-func (this *FsRepository) DeleteBy(ctx context.Context, flow configuration.FlowName, id uuid.UUID) error {
+func (this *FsRepository) DeleteBy(ctx context.Context, flow configuration.FlowName, id Id) error {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 
 	return this.deleteBy(ctx, flow, id)
 }
 
-func (this *FsRepository) deleteBy(ctx context.Context, flow configuration.FlowName, id uuid.UUID) error {
+func (this *FsRepository) deleteBy(ctx context.Context, flow configuration.FlowName, id Id) error {
 	dir, err := this.dir(flow, id)
 	if err != nil {
 		return err
@@ -378,7 +380,7 @@ func (this *FsRepository) deleteBy(ctx context.Context, flow configuration.FlowN
 	return nil
 }
 
-func (this *FsRepository) disposeBy(ctx context.Context, flow configuration.FlowName, id uuid.UUID) (bool, error) {
+func (this *FsRepository) disposeBy(ctx context.Context, flow configuration.FlowName, id Id) (bool, error) {
 	var disposed bool
 
 	if this.connectionInterceptors != nil {
@@ -417,7 +419,7 @@ func (this *FsRepository) disposeBy(ctx context.Context, flow configuration.Flow
 	return disposed, nil
 }
 
-func (this *FsRepository) doFindAutoCleanIfAllowed(ctx context.Context, flow configuration.FlowName, id uuid.UUID, opts *FindOpts, successMessage string, cause error) {
+func (this *FsRepository) doFindAutoCleanIfAllowed(ctx context.Context, flow configuration.FlowName, id Id, opts *FindOpts, successMessage string, cause error) {
 	if opts.IsAutoCleanUpAllowed() {
 		logger := opts.GetLogger(this.logger).
 			Withf("sesion", "%v/%v", flow, id)
@@ -606,7 +608,7 @@ func (this *FsRepository) iterateFlows(ctx context.Context, consumer func(flow c
 	return nil
 }
 
-func (this *FsRepository) iterateFlowDirs(ctx context.Context, flow configuration.FlowName, consumer func(id uuid.UUID, path string) (canContinue bool, err error), opts *FindOpts) (rErr error) {
+func (this *FsRepository) iterateFlowDirs(ctx context.Context, flow configuration.FlowName, consumer func(id Id, path string) (canContinue bool, err error), opts *FindOpts) (rErr error) {
 	fs, err := flow.MarshalText()
 	if err != nil {
 		return err
@@ -648,7 +650,7 @@ func (this *FsRepository) iterateFlowDirs(ctx context.Context, flow configuratio
 			this.doFindAutoCleanFlowContentIfAllowed(ctx, flow, filepath.Join(dirName, entry.Name()), opts, "found file inside flow directory which should not be there; it was deleted", nil)
 			continue
 		}
-		var id uuid.UUID
+		var id Id
 		if err := id.UnmarshalText([]byte(entry.Name())); err != nil {
 			this.doFindAutoCleanFlowContentIfAllowed(ctx, flow, filepath.Join(dirName, entry.Name()), opts, "found directory which isn't a UUID inside flow directory which should not be there; it was deleted entirely", nil)
 			// We ignore directories which does not match UUID in their names.
@@ -666,7 +668,7 @@ func (this *FsRepository) iterateFlowDirs(ctx context.Context, flow configuratio
 	return nil
 }
 
-func (this *FsRepository) findPublicKeyIn(ctx context.Context, flow configuration.FlowName, id uuid.UUID, f *os.File, consumer func(key ssh.PublicKey, lineN int) (canContinue bool, _ error)) (lineN int, rErr error) {
+func (this *FsRepository) findPublicKeyIn(ctx context.Context, flow configuration.FlowName, id Id, f *os.File, consumer func(key ssh.PublicKey, lineN int) (canContinue bool, _ error)) (lineN int, rErr error) {
 	failN := func(lineN int, err error) (int, error) {
 		return lineN, fmt.Errorf("cannot handle publicKeys file (%q:%d) of session %v/%v: %w", f.Name(), lineN, flow, id, err)
 	}
@@ -708,7 +710,7 @@ func (this *FsRepository) findPublicKeyIn(ctx context.Context, flow configuratio
 	return lineN, nil
 }
 
-func (this *FsRepository) hasPublicKey(ctx context.Context, flow configuration.FlowName, id uuid.UUID, pub ssh.PublicKey) (found bool, rErr error) {
+func (this *FsRepository) hasPublicKey(ctx context.Context, flow configuration.FlowName, id Id, pub ssh.PublicKey) (found bool, rErr error) {
 	kind := this.publicKeyKind(pub)
 	f, _, err := this.openRead(flow, id, kind)
 	if sys.IsNotExist(err) {
@@ -739,7 +741,7 @@ func (this *FsRepository) hasPublicKey(ctx context.Context, flow configuration.F
 	return found, nil
 }
 
-func (this *FsRepository) addPublicKey(ctx context.Context, flow configuration.FlowName, id uuid.UUID, pub ssh.PublicKey) (rErr error) {
+func (this *FsRepository) addPublicKey(ctx context.Context, flow configuration.FlowName, id Id, pub ssh.PublicKey) (rErr error) {
 	if _, err := this.stat(flow, id, FsFileSession); err != nil {
 		return fmt.Errorf("cannot session's %v/%v last access because cannot stat info: %w", flow, id, err)
 	}
@@ -787,7 +789,7 @@ func (this *FsRepository) addPublicKey(ctx context.Context, flow configuration.F
 	return nil
 }
 
-func (this *FsRepository) deletePublicKey(ctx context.Context, flow configuration.FlowName, id uuid.UUID, pub ssh.PublicKey) (rErr error) {
+func (this *FsRepository) deletePublicKey(ctx context.Context, flow configuration.FlowName, id Id, pub ssh.PublicKey) (rErr error) {
 	kind := this.publicKeyKind(pub)
 	fIn, fn, err := this.openRead(flow, id, kind)
 	if sys.IsNotExist(err) {
@@ -849,7 +851,7 @@ func (this *FsRepository) deletePublicKey(ctx context.Context, flow configuratio
 	return nil
 }
 
-func (this *FsRepository) hasAccessToken(_ context.Context, flow configuration.FlowName, id uuid.UUID, t []byte) (found bool, rErr error) {
+func (this *FsRepository) hasAccessToken(_ context.Context, flow configuration.FlowName, id Id, t []byte) (found bool, rErr error) {
 	f, _, err := this.openRead(flow, id, FsFileAccessToken)
 	if sys.IsNotExist(err) {
 		return false, nil

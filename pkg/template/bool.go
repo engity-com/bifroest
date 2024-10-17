@@ -10,7 +10,7 @@ import (
 func NewBool(plain string) (Bool, error) {
 	var buf Bool
 	if err := buf.Set(plain); err != nil {
-		return Bool{}, nil
+		return Bool{}, err
 	}
 	return buf, nil
 }
@@ -117,6 +117,10 @@ func (this *Bool) UnmarshalText(text []byte) error {
 
 func (this *Bool) Set(text string) error {
 	return this.UnmarshalText([]byte(text))
+}
+
+func (this Bool) Validate() error {
+	return nil
 }
 
 func (this Bool) IsEqualTo(other any) bool {

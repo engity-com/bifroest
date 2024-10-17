@@ -36,9 +36,9 @@ func (this *PasswordProperties) Trim() error {
 
 func (this *PasswordProperties) Validate() error {
 	return validate(this,
-		noopValidate[PasswordProperties]("allowed"),
-		noopValidate[PasswordProperties]("interactiveAllowed"),
-		noopValidate[PasswordProperties]("emptyAllowed"),
+		func(v *PasswordProperties) (string, validator) { return "allowed", &v.Allowed },
+		func(v *PasswordProperties) (string, validator) { return "interactiveAllowed", &v.InteractiveAllowed },
+		func(v *PasswordProperties) (string, validator) { return "emptyAllowed", &v.EmptyAllowed },
 	)
 }
 

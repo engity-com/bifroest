@@ -8,7 +8,7 @@ import (
 	gexec "os/exec"
 	"strings"
 
-	"github.com/alecthomas/kingpin"
+	"github.com/alecthomas/kingpin/v2"
 
 	"github.com/engity-com/bifroest/pkg/errors"
 )

@@ -3,7 +3,6 @@ package configuration
 import (
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -32,7 +31,8 @@ func setDefaults[T any](target *T, fs ...func(*T) (string, defaulter)) error {
 	return nil
 }
 
-func setSliceDefaults[T any, S ~[]T](target *S) error {
+func setSliceDefaults[T any, S ~[]T](target *S, initialValues ...T) error {
+	*target = initialValues
 	for i, v := range *target {
 		var pv any = &v
 		if err := pv.(defaulter).SetDefaults(); err != nil {
@@ -96,36 +96,6 @@ func (this *stringTrimmer) Trim() error {
 	return nil
 }
 
-type stringSliceTrimmer struct {
-	target *[]string
-}
-
-func (this *stringSliceTrimmer) Trim() error {
-	for i, v := range *this.target {
-		(*this.target)[i] = strings.TrimSpace(v)
-	}
-	*this.target = slices.DeleteFunc(*this.target, func(v string) bool {
-		return v == ""
-	})
-	return nil
-}
-
-type sliceTrimmer[T any] struct {
-	target    *[]T
-	condition func(t T) bool
-}
-
-func (this *sliceTrimmer[T]) Trim() error {
-	*this.target = slices.DeleteFunc(*this.target, this.condition)
-	return nil
-}
-
-func trimSliceBy[T any, V any](name string, target func(*T) *[]V, condition func(v V) bool) func(*T) (string, trimmer) {
-	return func(t *T) (string, trimmer) {
-		return name, &sliceTrimmer[V]{target(t), condition}
-	}
-}
-
 type validator interface {
 	Validate() error
 }
@@ -133,6 +103,9 @@ type validator interface {
 func validate[T any](target T, fs ...func(T) (string, validator)) error {
 	for _, f := range fs {
 		n, d := f(target)
+		if d == nil {
+			continue
+		}
 		if err := d.Validate(); err != nil {
 			if n == "" {
 				return err
@@ -151,23 +124,6 @@ func validateSlice[T any, S ~[]T](target S) error {
 		}
 	}
 	return nil
-}
-
-type notEmptySliceValidator[T any] struct {
-	target *[]T
-}
-
-func (this *notEmptySliceValidator[T]) Validate() error {
-	if len(*this.target) == 0 {
-		return fmt.Errorf("required but absent")
-	}
-	return nil
-}
-
-func notEmptySliceValidate[T any, V any](name string, target func(*T) *[]V) func(*T) (string, validator) {
-	return func(t *T) (string, validator) {
-		return name, &notEmptySliceValidator[V]{target(t)}
-	}
 }
 
 type notEmptyStringValidator struct {
@@ -318,23 +274,4 @@ func isEqual[T equaler](left, right *T) bool {
 		return false
 	}
 	return (*left).IsEqualTo(*right)
-}
-
-//nolint:golint,unused
-func isEqualSlice[T equaler](left, right *[]T) bool {
-	if left == nil && right == nil {
-		return true
-	}
-	if left == nil || right == nil {
-		return false
-	}
-	if len(*left) != len(*right) {
-		return false
-	}
-	for i, lv := range *left {
-		if !isEqual[T](&lv, &((*right)[i])) {
-			return false
-		}
-	}
-	return false
 }

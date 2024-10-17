@@ -38,6 +38,7 @@ var (
 		"pathJoin":      path.Join,
 		"fingerprint":   fingerprint,
 		"format":        format,
+		"env":           env,
 	}
 
 	allFuncs template.FuncMap
@@ -344,4 +345,15 @@ func formatDate(what *time.Time, opts ...any) (string, error) {
 	}
 
 	return what.Format(layout), nil
+}
+
+func env(key string, or ...string) string {
+	v, ok := os.LookupEnv(key)
+	if ok {
+		return v
+	}
+	if len(or) > 0 {
+		return or[0]
+	}
+	return ""
 }

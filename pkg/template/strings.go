@@ -41,6 +41,10 @@ func (this Strings) IsZero() bool {
 	return len(this) == 0
 }
 
+func (this Strings) Validate() error {
+	return nil
+}
+
 func (this Strings) IsEqualTo(other any) bool {
 	if other == nil {
 		return false
