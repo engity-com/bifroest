@@ -7,7 +7,7 @@ Defines the behavior of the SSH protocol for a user who is connecting to Bifrös
 
 ## Configuration
 
-<<property_with_holder("addresses", "Array", None, "Net Address", "../data-type.md#net-address", default=[":22"])>>
+<<property("addresses", array_ref("Net Address", "../data-type.md#net-address"), default=[":22"])>>
 To which address the service will bind and listen to.
 ``
 <<property("keys", "Keys", "#keys")>>
@@ -25,7 +25,7 @@ How many different authentication methods a client can use before the connection
 <<property("maxConnections", "uint8", None, default=255)>>
 The maximum amount of parallel connections on this service. Every additional connection beyond will be rejected.
 
-<<property_with_holder("banner", "String Template", "../templating/index.md#string", "Connection", "../context/connection.md", default='{{ `/etc/ssh/sshd-banner` | file `optional` | default `Transcend with Engity\'s Bifröst\n\n` }}')>>
+<<property("banner", "string", template_context="../context/connection.md", default='{{ `/etc/ssh/sshd-banner` | file `optional` | default `Transcend with Engity\'s Bifröst\n\n` }}')>>
 Banner which will be shown when the client connects to the server even before the first validation of authorizations or similar happens.
 
 ## Examples
@@ -42,14 +42,14 @@ maxConnections: 255
 banner: "Yeah!"
 ```
 
-<<property("preparationMessages", "Preparation Messages", "#preparation-messages")>>
-See [below](#preparation-messages).
+<<property("preparationMessages", "Preparation Messages", "#preparationMessages")>>
+See [below](#preparationMessages).
 
 ## Keys
 
-### Configuration
+### Configuration {: #keys-configuration }
 
-<<property_with_holder("hostKeys", "Array", None, "File Path", "../data-type.md#file-path", default=['<defaultLocation>'], heading=4)>>
+<<property("hostKeys", array_ref("File Path", "../data-type.md#file-path"), default=['<defaultLocation>'], heading=4, id_prefix="keys-")>>
 Where to store the host keys at. If they do not exist, they will be created as Ed25519 key.
 
 Default Locations:
@@ -57,25 +57,23 @@ Default Locations:
 * Linux: `/etc/engity/bifroest/key`
 * Windows: `C:\ProgramData\Engity\Bifroest\key`
 
-The backend type is [Strings Template](../templating/index.md#strings)<[Core](../context/core.md)>.
-
-<<property("rsaRestriction", "RSA Restriction", "../data-type.md#rsa-restriction", default="at-least-4096-bits", heading=4)>>
+<<property("rsaRestriction", "RSA Restriction", "../data-type.md#rsa-restriction", default="at-least-4096-bits", heading=4, id_prefix="keys-")>>
 Restrict which RSA keys are allowed to be used.
 
-<<property("dsaRestriction", "DSA Restriction", "../data-type.md#dsa-restriction", default="none", heading=4)>>
+<<property("dsaRestriction", "DSA Restriction", "../data-type.md#dsa-restriction", default="none", heading=4, id_prefix="keys-")>>
 Restrict which DSA keys are allowed to be used.
 
-<<property("ecdsaRestriction", "ECDSA Restriction", "../data-type.md#ecdsa-restriction", default="at-least-384-bits", heading=4)>>
+<<property("ecdsaRestriction", "ECDSA Restriction", "../data-type.md#ecdsa-restriction", default="at-least-384-bits", heading=4, id_prefix="keys-")>>
 Restrict which ECDSA keys are allowed to be used.
 
-<<property("ed25519Restriction", "ED25519 Restriction", "../data-type.md#ed25519-restriction", default="all", heading= 4)>>
+<<property("ed25519Restriction", "ED25519 Restriction", "../data-type.md#ed25519-restriction", default="all", heading= 4, id_prefix="keys-")>>
 Restrict which ED25519 keys are allowed to be used.
 
-<<property_with_holder("rememberMeNotification", "String Template", "../templating/index.md#string", "Authorization", "../context/authorization.md", default="If you return until {{.session.validUntil | format `dateTimeT`}} with the same public key ({{.key | fingerprint}}), you can seamlessly log in again.\n\n", heading=4)>>
+<<property("rememberMeNotification", "string", template_context="../context/authorization.md", default="If you return until {{.session.validUntil | format `dateTimeT`}} with the same public key ({{.key | fingerprint}}), you can seamlessly log in again.\n\n", heading=4, id_prefix="keys-")>>
 
 Banner which will be shown if the connection was based on an authentication method (like OIDC) which does not have its own public key authentication. At this point, the authentication was successful AND the client submitted at least one public key (as authentication try). This key will be used and this message will be shown to the client to inform that this key will be used for the session from now on. As a result, the original authentication will be skipped (like OIDC) as long as it is not expired and the client presents the same public key.
 
-### Examples
+### Examples {: #keys-examples }
 
 ```yaml
 hostKeys: [ /etc/engity/bifroest/key ]
@@ -86,15 +84,61 @@ ed25519Restriction: all
 rememberMeNotification: "If you return until {{.session.validUntil | format `dateTimeT`}} with the same public key {{.key | fingerprint}}), you can seamlessly login again.\n\n"
 ```
 
-## Preparation Messages
+## Preparation Messages {: #preparationMessages }
 
-### Configuration
+In some cases the connection will not be available instantly. For example if the [docker environment](../environment/docker.md) is used and an image needs to be downloaded first, this could take some seconds. In these cases different parts of Bifröst might trigger these messages being displayed. By default, all of them are displayed as described [below](#preparationMessages-configuration).
 
-TODO!
+As this is an array of preparation messages, the first which matches, wins.
 
-### Examples
+### Configuration {: #preparationMessages-configuration }
 
-TODO!
+<<property("id", "Regex", "../data-type.md#regex", default=".*", heading=4, id_prefix="preparationMessages-")>>
+Each preparation proces has a unique ID (like [`pull-image`](../environment/docker.md#preparationProcess-pull-image) of the [docker environment](../environment/docker.md)).
+
+This property defines a [regular expression](../data-type.md#regex) this ID has to match together with [`flow`](#preparationMessages-property-flow).
+
+<<property("flow", "Regex", "../data-type.md#regex", default=".*", heading=4, id_prefix="preparationMessages-")>>
+Each preparation process will be produces by a [flow](../flow.md).
+
+This property defines a [regular expression](../data-type.md#regex) the [name of this flow](../flow.md#property-name) has to match together with [`id`](#preparationMessages-property-id).
+
+<<property("start", "string", template_context="../context/preparation-process.md", default="{{.title}}...", heading=4, id_prefix="preparationMessages-")>>
+This message is shown when a preparation process starts.
+
+<<property("update", "string", template_context="../context/preparation-process.md", default="\r{{.title}}... {{.percentage | printf `%.0f%%`}}", heading=4, id_prefix="preparationMessages-")>>
+This message is shown on each status change of a preparation process.
+
+<<property("end", "string", template_context="../context/preparation-process.md", default="\r{{.title}}... DONE!\n", heading=4, id_prefix="preparationMessages-")>>
+This message is shown if the preparation process finishes successful.
+
+<<property("error", "string", template_context="../context/preparation-process.md", default="\r{{.title}}... FAILED! Contact server operator for more information. Disconnecting now...\n", heading=4, id_prefix="preparationMessages-")>>
+This message is shown if the preparation process finishes with an error. The direct consequence will be that the connection will be closed by Bifröst immediately.
+
+### Examples {: #preparationMessages-examples }
+
+```yaml title="Show special message for pull-image process (all flows), but default for the rest"
+preparationMessages:
+  - id: ^pull-image$
+    # {{.image}} is NOT part of the common set of properties of
+    # a Preparation Message it is specific to this message.
+    # Please visit the details of each Preparation Message type
+    # for details.
+    start: "Going to download image {{.image}}..."
+    update: "\rGoing to download image {{.image}}... {{.percentage | printf `%.0f%%`}}"
+    end: "\rImage {{.image}} downloaded.\n"
+    error: "\rFailed to download image {{.image}}.\n"
+  - {} # Entry with all default values as mentioned above
+```
+
+```yaml title="Disable messages completely, for all preparation processes"
+preparationMessages:
+  - start: ""
+    update: ""
+    end: ""
+    error: ""
+```
+
+
 
 ## Compatibility
 

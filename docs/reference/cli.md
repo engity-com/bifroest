@@ -14,7 +14,7 @@ Syntax: `bifroest run [flags]`
 
 Includes [all general flags](#general-flags).
 
-<<flag_with_holder("configuration", "File Path", "data-type.md#file-path", "Configuration", "configuration.md", default="<os specific>", aliases=["c"],id_prefix="run-", heading=4)>>
+<<flag("configuration", ref("File Path", "data-type.md#file-path", ref("Configuration", "configuration.md")), default="<os specific>", aliases=["c"],id_prefix="run-", heading=4)>>
 
 The default value varies depending on the platform Bifröst runs on:
 

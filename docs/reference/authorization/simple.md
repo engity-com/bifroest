@@ -12,7 +12,7 @@ Authorizes a user request via stored credentials.
 <<property("type", "Authorization Type", default="simple", required=True)>>
 Has to be set to `simple` to enable simple authorization.
 
-<<property_with_holder("entries", "Array", None, "Entry", "#entry")>>
+<<property("entries", array_ref("Entry", "#entry"))>>
 Each entry will be inspected to check if a remote user should be authorized.
 
 ## Entry
@@ -33,7 +33,7 @@ Like: `ssh <name>@my-great-domain.tld` to match this entry.
 <<property("authorizedKeys", "Authorized Keys", "../data-type.md#authorized-keys", id_prefix="entry-", heading=4)>>
 Contains [SSH Public Keys](../data-type.md#ssh-public-key) in the format of classic [authorized keys](../data-type.md#authorized-keys).
 
-<<property_with_holder("authorizedKeysFile", "File Path", "../data-type.md#file-path", "Authorized Keys", "../data-type.md#authorized-keys", id_prefix="entry-", heading=4)>>
+<<property("authorizedKeysFile", ref("File Path", "../data-type.md#file-path", ref("Authorized Keys", "../data-type.md#authorized-keys")), id_prefix="entry-", heading=4)>>
 Similar to [`authorizedKeys`](#entry-property-authorizedKeys), but in a dedicated file.
 
 <<property("password", "Password", "../data-type.md#password", id_prefix="entry-", heading=4)>>

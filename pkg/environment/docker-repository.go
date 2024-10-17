@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/docker/cli/opts"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
@@ -366,6 +367,17 @@ func (this *DockerRepository) resolveHostConfig(req Request) (_ *container.HostC
 	if result.Binds, err = this.conf.Volumes.Render(req); err != nil {
 		return failf("cannot evaluate volumes: %w", err)
 	}
+	if raws, err := this.conf.Mounts.Render(req); err != nil {
+		return failf("cannot evaluate mounts: %w", err)
+	} else {
+		var buf opts.MountOpt
+		for i, raw := range raws {
+			if err := buf.Set(raw); err != nil {
+				return failf("cannot evaluate mount %d: %w", i, err)
+			}
+		}
+		result.Mounts = buf.Value()
+	}
 	if result.CapAdd, err = this.conf.Capabilities.Render(req); err != nil {
 		return failf("cannot evaluate capabilities: %w", err)
 	}
@@ -496,11 +508,12 @@ func (this *DockerRepository) resolveNetworkingConfig(req Request) (*network.Net
 
 	var result network.NetworkingConfig
 
-	if v, err := this.conf.Network.Render(req); err != nil {
+	if vs, err := this.conf.Networks.Render(req); err != nil {
 		return failf("cannot evaluate network: %w", err)
 	} else {
-		result.EndpointsConfig = map[string]*network.EndpointSettings{
-			v: {},
+		result.EndpointsConfig = make(map[string]*network.EndpointSettings, len(vs))
+		for _, v := range vs {
+			result.EndpointsConfig[v] = &network.EndpointSettings{}
 		}
 	}
 

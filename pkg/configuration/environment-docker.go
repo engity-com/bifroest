@@ -19,8 +19,9 @@ var (
 	DefaultEnvironmentDockerImage                = template.MustNewString("alpine")
 	DefaultEnvironmentDockerImagePullPolicy      = PullPolicyIfAbsent
 	DefaultEnvironmentDockerImagePullCredentials = template.MustNewString("")
-	DefaultEnvironmentDockerNetwork              = template.MustNewString(network.NetworkDefault)
+	DefaultEnvironmentDockerNetworks             = template.MustNewStrings(network.NetworkDefault)
 	DefaultEnvironmentDockerVolumes              = template.MustNewStrings()
+	DefaultEnvironmentDockerMounts               = template.MustNewStrings()
 	DefaultEnvironmentDockerCapabilities         = template.MustNewStrings()
 	DefaultEnvironmentDockerPrivileged           = template.BoolOf(false)
 	DefaultEnvironmentDockerDnsServers           = template.MustNewStrings()
@@ -51,8 +52,9 @@ type EnvironmentDocker struct {
 	Image                template.String  `yaml:"image"`
 	ImagePullPolicy      PullPolicy       `yaml:"imagePullPolicy,omitempty"`
 	ImagePullCredentials template.String  `yaml:"imagePullCredentials,omitempty"`
-	Network              template.String  `yaml:"network"`
+	Networks             template.Strings `yaml:"networks"`
 	Volumes              template.Strings `yaml:"volumes,omitempty"`
+	Mounts               template.Strings `yaml:"mounts,omitempty"`
 	Capabilities         template.Strings `yaml:"capabilities,omitempty"`
 	Privileged           template.Bool    `yaml:"privileged,omitempty"`
 	DnsServers           template.Strings `yaml:"dnsServers,omitempty"`
@@ -82,8 +84,9 @@ func (this *EnvironmentDocker) SetDefaults() error {
 		fixedDefault("image", func(v *EnvironmentDocker) *template.String { return &v.Image }, DefaultEnvironmentDockerImage),
 		fixedDefault("imagePullPolicy", func(v *EnvironmentDocker) *PullPolicy { return &v.ImagePullPolicy }, DefaultEnvironmentDockerImagePullPolicy),
 		fixedDefault("imagePullCredentials", func(v *EnvironmentDocker) *template.String { return &v.ImagePullCredentials }, DefaultEnvironmentDockerImagePullCredentials),
-		fixedDefault("network", func(v *EnvironmentDocker) *template.String { return &v.Network }, DefaultEnvironmentDockerNetwork),
+		fixedDefault("network", func(v *EnvironmentDocker) *template.Strings { return &v.Networks }, DefaultEnvironmentDockerNetworks),
 		fixedDefault("volumes", func(v *EnvironmentDocker) *template.Strings { return &v.Volumes }, DefaultEnvironmentDockerVolumes),
+		fixedDefault("mounts", func(v *EnvironmentDocker) *template.Strings { return &v.Mounts }, DefaultEnvironmentDockerMounts),
 		fixedDefault("capabilities", func(v *EnvironmentDocker) *template.Strings { return &v.Capabilities }, DefaultEnvironmentDockerCapabilities),
 		fixedDefault("privileged", func(v *EnvironmentDocker) *template.Bool { return &v.Privileged }, DefaultEnvironmentDockerPrivileged),
 		fixedDefault("dnsServers", func(v *EnvironmentDocker) *template.Strings { return &v.DnsServers }, DefaultEnvironmentDockerDnsServers),
@@ -117,6 +120,7 @@ func (this *EnvironmentDocker) Trim() error {
 		noopTrim[EnvironmentDocker]("imagePullCredentials"),
 		noopTrim[EnvironmentDocker]("network"),
 		noopTrim[EnvironmentDocker]("volumes"),
+		noopTrim[EnvironmentDocker]("mounts"),
 		noopTrim[EnvironmentDocker]("capabilities"),
 		noopTrim[EnvironmentDocker]("privileged"),
 		noopTrim[EnvironmentDocker]("dnsServers"),
@@ -148,9 +152,10 @@ func (this *EnvironmentDocker) Validate() error {
 		notZeroValidate("image", func(v *EnvironmentDocker) *template.String { return &v.Image }),
 		func(v *EnvironmentDocker) (string, validator) { return "imagePullPolicy", &v.ImagePullPolicy },
 		func(v *EnvironmentDocker) (string, validator) { return "imagePullCredentials", &v.ImagePullCredentials },
-		func(v *EnvironmentDocker) (string, validator) { return "network", &v.Network },
-		notZeroValidate("network", func(v *EnvironmentDocker) *template.String { return &v.Network }),
+		func(v *EnvironmentDocker) (string, validator) { return "network", &v.Networks },
+		notZeroValidate("network", func(v *EnvironmentDocker) *template.Strings { return &v.Networks }),
 		func(v *EnvironmentDocker) (string, validator) { return "volumes", &v.Volumes },
+		func(v *EnvironmentDocker) (string, validator) { return "mounts", &v.Mounts },
 		func(v *EnvironmentDocker) (string, validator) { return "capabilities", &v.Capabilities },
 		func(v *EnvironmentDocker) (string, validator) { return "privileged", &v.Privileged },
 		func(v *EnvironmentDocker) (string, validator) { return "dnsServers", &v.DnsServers },
@@ -201,8 +206,9 @@ func (this EnvironmentDocker) isEqualTo(other *EnvironmentDocker) bool {
 		isEqual(&this.Image, &other.Image) &&
 		isEqual(&this.ImagePullPolicy, &other.ImagePullPolicy) &&
 		isEqual(&this.ImagePullCredentials, &other.ImagePullCredentials) &&
-		isEqual(&this.Network, &other.Network) &&
+		isEqual(&this.Networks, &other.Networks) &&
 		isEqual(&this.Volumes, &other.Volumes) &&
+		isEqual(&this.Mounts, &other.Mounts) &&
 		isEqual(&this.Capabilities, &other.Capabilities) &&
 		isEqual(&this.Privileged, &other.Privileged) &&
 		isEqual(&this.DnsServers, &other.DnsServers) &&

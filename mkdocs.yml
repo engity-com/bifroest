@@ -150,7 +150,7 @@ nav:
           - reference/session/index.md
           - Filesystem: reference/session/fs.md
       - reference/housekeeping.md
-      - reference/imp.md
+      - reference/alternatives.md
       - reference/cli.md
       - Templating:
           - reference/templating/index.md
@@ -166,6 +166,7 @@ nav:
           - OIDC Token: reference/context/oidc-token.md
           - OIDC ID Token: reference/context/oidc-id-token.md
           - OIDC User Info: reference/context/oidc-user-info.md
+          - Preparation Process: reference/context/preparation-process.md
           - Remote: reference/context/remote.md
           - Simple Entry: reference/context/simple-entry.md
       - reference/data-type.md
