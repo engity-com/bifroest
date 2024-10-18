@@ -105,6 +105,11 @@ Socket address in format <code>\[&lt;[Host](#host)&gt;]:&lt;port&gt;</code>.
 ## Password
 Represents an encoded or plain password that can be evaluated if it does match a requested one.
 
+## Password Type
+Can be one of:
+* `plain`
+* `bcrypt`
+
 ## Pull Policy
 Can be one of:
 * `ifAbsend`

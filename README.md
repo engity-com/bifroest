@@ -8,7 +8,7 @@ Bifröst (spoken as "Bee-frest"), is an advanced SSH server. It can be used as a
 
 * [Use-cases](https://bifroest.engity.org/latest/usecases/)
 * [Features](#features)
-* [Getting started](#getting-started)
+* [Getting started](https://bifroest.engity.org/latest/setup/)
 * [Configuration](https://bifroest.engity.org/latest/reference/configuration/)
 * [Status](#status)
 * [License](LICENSE)
@@ -20,8 +20,9 @@ Bifröst (spoken as "Bee-frest"), is an advanced SSH server. It can be used as a
 
 1. [SSH protocol compliant](#ssh-protocol-compliant)
 2. [OpenID Connect](#openid-connect)
-3. [Remember me](#remember-me)
-4. [Automatic user provisioning](#automatic-user-provisioning)
+3. [Docker environments](#docker-environments)
+4. [Remember me](#remember-me)
+5. [Automatic user provisioning](#automatic-user-provisioning)
 
 #### SSH protocol compliant
 
@@ -31,6 +32,10 @@ Fully **[SSH protocol](https://www.rfc-editor.org/rfc/rfc4253) compliant server*
 You can connect via your **SSH keys**, as usually. And so on...
 
 ...but you can also use **[OpenID Connect](https://openid.net/)** (or OAuth2) identity provider. The best thing about this is: In contrast to the other SSH servers with OpenID Connect, you don't need any other client locally installed, than your regular SSH Client ([OpenSSH](https://www.openssh.com/), [PuTTy](https://www.putty.org/), ...).
+
+#### Docker environments
+
+You can execute your users into individual Docker containers, with custom images, network settings, ...
 
 #### Remember me
 
@@ -44,50 +49,9 @@ It can also automatically clean up these users as they're no longer needed, for 
 
 #### More to come...
 
-## Getting started
+## What's next?
 
-1. Download the latest version of Bifröst (see [releases page](https://github.com/engity-com/bifroest/releases)):
-   ```shell
-   # Syntax
-   curl -sSLf https://github.com/engity-com/bifroest/releases/download/<version>/bifroest-<os>-<arch>-<edition>.tgz | sudo tar -zxv -C /usr/bin bifroest
-
-   # Example
-   curl -sSLf https://github.com/engity-com/bifroest/releases/download/v1.2.3/bifroest-linux-amd64-extended.tgz | sudo tar -zxv -C /usr/bin bifroest
-   ```
-2. Configure Bifröst. For example, download the demo configuration and adjust it to your needs (see [documentation of configuration](doc/configuration.md) for more details):
-   ```shell
-   sudo mkdir -p /etc/engity/bifroest/
-   sudo curl -sSLf https://raw.githubusercontent.com/engity-com/bifroest/main/contrib/configurations/sshd-dropin-replacement.yaml -o /etc/engity/bifroest/configuration.yaml
-   # Adjust it to your needs
-   sudo vi /etc/engity/bifroest/configuration.yaml
-   ```
-3. Run Bifröst:
-   ```shell
-   sudo bifroest run
-   ```
-
-### Let it run automatically
-
-#### systemd
-
-To enable Bifröst to run at every server start where [systemd](https://wiki.archlinux.org/title/Systemd) is available, simply:
-1. Download [our example service configuration](contrib/systemd/bifroest.service):
-   ```shell
-   sudo curl -sSLf https://raw.githubusercontent.com/engity-com/bifroest/main/contrib/systemd/bifroest.service -o /etc/systemd/system/bifroest.service
-   ```
-2. Reload the systemd daemon:
-   ```shell
-   sudo systemctl daemon-reload
-   ```
-3. Enable and start Bifröst:
-   ```shell
-   sudo systemctl enable bifroest.service
-   sudo systemctl start bifroest.service
-   ```
-
-### What's next?
-
-Read [Use-Cases](https://bifroest.engity.org/latest/usecases/) and [the configuration documentation](https://bifroest.engity.org/latest/reference/configuration/) to see what else you can do with Bifröst.
+Read [Use-Cases](https://bifroest.engity.org/latest/usecases/), our [Getting starting guide](https://bifroest.engity.org/latest/setup/) and [the configuration documentation](https://bifroest.engity.org/latest/reference/configuration/) to see what else you can do with Bifröst.
 
 ## Status
 
@@ -95,6 +59,7 @@ This project is currently under development. The application is stable ([file a 
 
 ## More topics
 * [Use-Cases](https://bifroest.engity.org/latest/usecases/)
+* [Getting started](https://bifroest.engity.org/latest/setup/)
 * [Configuration](https://bifroest.engity.org/latest/reference/configuration/)
 * [License](LICENSE)
 * [Code of Conduct](CODE_OF_CONDUCT.md)

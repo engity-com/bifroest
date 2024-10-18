@@ -1,11 +1,15 @@
 ---
-description: A docker environment is executed on the host itself (same host on which Bifröst is running).
+description: When using Docker environments, each user session runs in a separate Docker container.
 toc_depth: 5
 ---
 
 # Docker environment
 
-TODO!
+When using Docker environments, each user session runs in a separate Docker container. This is in contrast to the [local environment](local.md), where each user session runs on the same host as Bifröst.
+
+This is useful if you explicitly do not want to give users access to the host itself, but to environments where they can work with defined toolsets. Especially if you want to create demo or training environments.
+
+But also if you want to set up a [Bastion/Jump host](../../usecases.md#bastion), where a user can jump from this server to another network, this can be very helpful. In this case, using different [networks](#property-networks) can be beneficial.
 
 ## Configuration {: #configuration}
 
@@ -55,7 +59,7 @@ Is a directory which should contain the following files:
 If this variable is empty (which can be also the case if <code>{{ env \`DOCKER_CERT_PATH\` }}</code> evaluates to empty) and [`tlsVerify`](#property-tlsVerify) is set to `false`, all Docker API Hosts are accepted.
 
 <<property("tlsVerify", "bool", template_context="../context/authorization.md", default="{{ env `DOCKER_TLS_VERIFY` | ne `` }}")>>
-If this variable is `false` (which can be also the case if <code>{{ env \`DOCKER_TLS_VERIFY\` }}</code> evaluates to empty),  all Docker API Hosts are accepted.
+If this variable is `false` (which can be also the case if <code>{{ env \`DOCKER_TLS_VERIFY\` }}</code> evaluates to empty), all Docker API Hosts are accepted.
 
 !!! danger
      Setting this to `false` is only recommend, if connecting to the local socket connection (on the same machine - see [`host`'s default behavior](#property-host)).
@@ -147,6 +151,7 @@ If not defined the value [`USER`](https://docs.docker.com/reference/dockerfile/#
 Will be displayed to the user upon connection to its environment.
 
 <h4 id="property-banner-examples">Examples</h4>
+
 1. If [local user](../authorization/local.md) is used, show its name in a message:
    ```yaml
    banner: "Hello, {{.authorization.user.name}}!\n"

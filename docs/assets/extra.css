@@ -74,6 +74,10 @@ p.bifroest-logo .switchable rect {
     color: #dc6a43;
 }
 
+.md-typeset .twemoji.warning {
+    color: #dc6a43;
+}
+
 .md-typeset > p:not(.subtitle),
 .md-typeset > ol:not(.subtitle),
 .md-typeset > ul:not(.subtitle),

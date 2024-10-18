@@ -103,7 +103,7 @@ type validator interface {
 func validate[T any](target T, fs ...func(T) (string, validator)) error {
 	for _, f := range fs {
 		n, d := f(target)
-		if d == nil {
+		if d == nil || nil == (validator)(nil) {
 			continue
 		}
 		if err := d.Validate(); err != nil {

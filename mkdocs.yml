@@ -126,6 +126,9 @@ nav:
       - Use cases: usecases.md
   - Getting started:
       - setup/index.md
+      - Installation:
+          - On Host: setup/on-host.md
+          - In Docker: setup/in-docker.md
       - setup/distribution.md
       - Security: setup/security.md
       - License: legal/license.md
@@ -142,6 +145,7 @@ nav:
           - OIDC: reference/authorization/oidc.md
           - Simple: reference/authorization/simple.md
           - Htpasswd: reference/authorization/htpasswd.md
+          - None: reference/authorization/none.md
       - Environments:
           - reference/environment/index.md
           - Docker: reference/environment/docker.md

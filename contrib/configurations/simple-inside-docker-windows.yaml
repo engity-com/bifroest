@@ -1,0 +1,33 @@
+startMessage: >
+  Welcome to Engity's Bifröst!
+  This instance runs a demo configuration that shows how to
+  operate Bifröst and its sessions inside Docker. It is NOT
+  intended for production use. This instance runs a demo
+  configuration that is NOT intended for production use.
+  Therefore, it will simply display a message similar to
+  this one and will close the connection immediately.
+  See https://bifroest.engity.org/latest/setup/in-docker/
+
+ssh:
+  banner: |+
+    Transcend with Engity's Bifröst
+    ===============================
+
+    This instance runs a demo configuration that is NOT intended for
+    production use. Please refer the following page to complete the
+    setup: https://bifroest.engity.org/latest/setup/in-docker/
+
+    You should be able to log in to this instance using the credentials
+    printed the frist time Bifröst was started on this machine.
+
+flows:
+  - name: default
+    authorization:
+      type: simple
+      entries:
+        - name: demo
+          passwordFile: "C:\\ProgramData\\Engity\\Bifroest\\passwords\\dummy"
+          createPasswordFileIfAbsentOfType: plain
+    environment:
+      type: docker
+      image: alpine

@@ -13,25 +13,13 @@ import (
 	"github.com/engity-com/bifroest/pkg/service"
 )
 
-var (
-	configurationRef configuration.ConfigurationRef
-)
-
 var _ = registerCommand(func(app *kingpin.Application) {
-	cmd := app.Command("run", "Runs the service.").
-		Action(func(*kingpin.ParseContext) error {
-			return doRun()
-		})
-	cmd.Flag("configuration", "Configuration which should be used to serve the service. Default: "+defaultConfigurationRef).
-		Short('c').
-		Default(defaultConfigurationRef).
-		PlaceHolder("<path>").
-		SetValue(&configurationRef)
+	configureRunCmd(app)
 })
 
-func doRun() error {
+func doRunDefault(conf configuration.ConfigurationRef) error {
 	svc := service.Service{
-		Configuration: *configurationRef.Get(),
+		Configuration: *conf.Get(),
 		Version:       versionV,
 	}
 

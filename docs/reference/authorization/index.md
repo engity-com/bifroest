@@ -12,6 +12,7 @@ Everything in Bifröst starts here. Firstly, a user must be authorized. Bifröst
 2. `oidc`: [OpenID Connect (OIDC)](oidc.md)
 3. `simple`: [Simple](simple.md)
 4. `htpasswd`: [Htpasswd](htpasswd.md)
+5. `none`: [None](none.md)
 
 ## Examples
 

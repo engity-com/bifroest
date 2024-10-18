@@ -26,7 +26,7 @@ flows:
       type: simple
       entries:
         - name: demo
-          passwordFile: "/etc/engity/bifroest/passwords/demo"
+          passwordFile: "C:\\ProgramData\\Engity\\Bifroest\\passwords\\dummy"
           createPasswordFileIfAbsentOfType: plain
     environment:
       type: dummy

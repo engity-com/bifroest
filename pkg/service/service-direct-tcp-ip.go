@@ -65,6 +65,11 @@ func (this *service) handleNewDirectTcpIp(_ *ssh.Server, _ *gssh.ServerConn, new
 		_ = newChan.Reject(gssh.ConnectionFailed, err.Error())
 		return
 	}
+	if dConn == nil {
+		l.Info("connection rejected")
+		_ = newChan.Reject(gssh.ConnectionFailed, "rejected")
+		return
+	}
 	defer common.IgnoreCloseError(dConn)
 
 	sConn, reqs, err := newChan.Accept()

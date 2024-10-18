@@ -214,7 +214,9 @@ func (this *SimpleAuthorizer) AuthorizePassword(req PasswordRequest) (Authorizat
 		return Forbidden(req.Remote()), nil
 	}
 
-	if expected := entry.Password; expected.IsZero() {
+	if expected, err := entry.GetPassword(); err != nil {
+		return failf("cannot get password of entry %q: %w", entry.Name, err)
+	} else if expected.IsZero() {
 		return Forbidden(req.Remote()), nil
 	} else if ok, err := expected.Compare([]byte(req.RemotePassword())); err != nil || !ok {
 		return Forbidden(req.Remote()), nil
@@ -251,7 +253,9 @@ func (this *SimpleAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Auth
 		return fail(err)
 	}
 
-	if expected := entry.Password; expected.IsZero() {
+	if expected, err := entry.GetPassword(); err != nil {
+		return failf("cannot get password of entry %q: %w", entry.Name, err)
+	} else if expected.IsZero() {
 		return Forbidden(req.Remote()), nil
 	} else if ok, err := expected.Compare([]byte(pass)); err != nil || !ok {
 		return Forbidden(req.Remote()), nil
