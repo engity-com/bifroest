@@ -320,9 +320,9 @@ If `true`, users are allowed to use SSH's port forwarding mechanism.
        }}
    ```
 
-## Compatibility
+`## Compatibility
 
 | <<dist("linux")>> | <<dist("windows")>> |
 | - | - |
 | <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"windows")>> |
-
+`

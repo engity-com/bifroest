@@ -188,3 +188,22 @@ In cases if an [image](#property-image) needs to be pulled, either it does not e
 
 <<property("image", "string", id_prefix="preparationProcess-pull-image-", heading=5)>>
 Holds the tag of the image to be downloaded.
+
+
+### Examples {: #examples}
+
+1. Simple:
+   ```yaml
+   type: docker
+   ```
+2. With ubuntu image:
+   ```yaml
+   type: docker
+   image: ubuntu
+   ```
+
+## Compatibility
+
+| <<dist("linux")>> | <<dist("windows")>> |
+| - | - |
+| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"windows")>> |

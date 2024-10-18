@@ -150,6 +150,7 @@ nav:
           - reference/environment/index.md
           - Docker: reference/environment/docker.md
           - Local: reference/environment/local.md
+          - Dummy: reference/environment/dummy.md
       - Sessions:
           - reference/session/index.md
           - Filesystem: reference/session/fs.md
