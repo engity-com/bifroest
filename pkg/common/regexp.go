@@ -66,6 +66,10 @@ func (this *Regexp) MatchString(s string) bool {
 	return false
 }
 
+func (this Regexp) Validate() error {
+	return nil
+}
+
 func (this Regexp) IsEqualTo(other any) bool {
 	if other == nil {
 		return false

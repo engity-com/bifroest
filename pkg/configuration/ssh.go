@@ -59,6 +59,10 @@ type Ssh struct {
 
 	// Banner will be displayed if the clients connects to the server before any other action takes place.
 	Banner template.String `yaml:"banner,omitempty"`
+
+	// PreparationMessages will be displayed if any kind of preparation is required before the ssh session can
+	// finally be used.
+	PreparationMessages PreparationMessages `yaml:"preparationMessages,omitempty"`
 }
 
 func (this *Ssh) SetDefaults() error {
@@ -70,6 +74,7 @@ func (this *Ssh) SetDefaults() error {
 		fixedDefault("maxAuthTries", func(v *Ssh) *uint8 { return &v.MaxAuthTries }, DefaultSshMaxAuthTries),
 		fixedDefault("maxConnections", func(v *Ssh) *uint32 { return &v.MaxConnections }, DefaultSshMaxConnections),
 		fixedDefault("banner", func(v *Ssh) *template.String { return &v.Banner }, DefaultSshBanner),
+		func(v *Ssh) (string, defaulter) { return "preparationMessages", &v.PreparationMessages },
 	)
 }
 
@@ -82,6 +87,7 @@ func (this *Ssh) Trim() error {
 		noopTrim[Ssh]("maxAuthTries"),
 		noopTrim[Ssh]("maxConnections"),
 		noopTrim[Ssh]("banner"),
+		func(v *Ssh) (string, trimmer) { return "preparationMessages", &v.PreparationMessages },
 	)
 }
 
@@ -89,11 +95,12 @@ func (this *Ssh) Validate() error {
 	return validate(this,
 		func(v *Ssh) (string, validator) { return "addresses", &v.Addresses },
 		func(v *Ssh) (string, validator) { return "keys", &v.Keys },
-		noopValidate[Ssh]("idleTimeout"),
-		noopValidate[Ssh]("maxTimeout"),
+		func(v *Ssh) (string, validator) { return "idleTimeout", &v.IdleTimeout },
+		func(v *Ssh) (string, validator) { return "maxTimeout", &v.MaxTimeout },
 		noopValidate[Ssh]("maxAuthTries"),
 		noopValidate[Ssh]("maxConnections"),
-		noopValidate[Ssh]("banner"),
+		func(v *Ssh) (string, validator) { return "banner", &v.Banner },
+		func(v *Ssh) (string, validator) { return "preparationMessages", &v.PreparationMessages },
 	)
 }
 
@@ -125,5 +132,6 @@ func (this Ssh) isEqualTo(other *Ssh) bool {
 		isEqual(&this.MaxTimeout, &other.MaxTimeout) &&
 		this.MaxAuthTries == other.MaxAuthTries &&
 		this.MaxConnections == other.MaxConnections &&
-		isEqual(&this.Banner, &other.Banner)
+		isEqual(&this.Banner, &other.Banner) &&
+		isEqual(&this.PreparationMessages, &other.PreparationMessages)
 }

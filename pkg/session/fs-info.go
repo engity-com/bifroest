@@ -7,8 +7,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/net"
@@ -63,7 +61,7 @@ func (this *fsInfo) Flow() configuration.FlowName {
 	return this.session.flow
 }
 
-func (this *fsInfo) Id() uuid.UUID {
+func (this *fsInfo) Id() Id {
 	return this.session.id
 }
 

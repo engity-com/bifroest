@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alecthomas/kingpin"
+	"github.com/alecthomas/kingpin/v2"
 	"github.com/echocat/slf4g"
 
 	"github.com/engity-com/bifroest/pkg/common"

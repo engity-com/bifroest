@@ -158,7 +158,7 @@ func (this *service) onPtyRequest(ctx ssh.Context, pty ssh.Pty) bool {
 
 	logger := this.logger(ctx)
 
-	ok, err := this.environments.DoesSupportPty(&environmentRequest{
+	ok, err := this.environments.DoesSupportPty(&environmentContext{
 		this,
 		&remote{ctx},
 		auth,

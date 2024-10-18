@@ -10,8 +10,10 @@ import (
 	log "github.com/echocat/slf4g"
 	"github.com/gliderlabs/ssh"
 
+	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/imp"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
@@ -22,7 +24,7 @@ type LocalRepository struct {
 	Logger log.Logger
 }
 
-func NewLocalRepository(_ context.Context, flow configuration.FlowName, conf *configuration.EnvironmentLocal) (*LocalRepository, error) {
+func NewLocalRepository(_ context.Context, flow configuration.FlowName, conf *configuration.EnvironmentLocal, _ alternatives.Provider, _ imp.Imp) (*LocalRepository, error) {
 	fail := func(err error) (*LocalRepository, error) {
 		return nil, err
 	}
@@ -42,7 +44,7 @@ func NewLocalRepository(_ context.Context, flow configuration.FlowName, conf *co
 	return &result, nil
 }
 
-func (this *LocalRepository) DoesSupportPty(Request, ssh.Pty) (bool, error) {
+func (this *LocalRepository) DoesSupportPty(Context, ssh.Pty) (bool, error) {
 	return false, nil
 }
 

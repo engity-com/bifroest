@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"iter"
 
-	"github.com/alecthomas/kingpin"
+	"github.com/alecthomas/kingpin/v2"
 	"github.com/google/go-github/v65/github"
 )
 

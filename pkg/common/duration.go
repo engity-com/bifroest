@@ -71,6 +71,10 @@ func (this *Duration) SetNative(v time.Duration) {
 	this.v = v
 }
 
+func (this *Duration) Validate() error {
+	return nil
+}
+
 func (this Duration) IsEqualTo(other any) bool {
 	if other == nil {
 		return false

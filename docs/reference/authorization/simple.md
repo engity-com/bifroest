@@ -12,7 +12,7 @@ Authorizes a user request via stored credentials.
 <<property("type", "Authorization Type", default="simple", required=True)>>
 Has to be set to `simple` to enable simple authorization.
 
-<<property_with_holder("entries", "Array", None, "Entry", "#entry")>>
+<<property("entries", array_ref("Entry", "#entry"))>>
 Each entry will be inspected to check if a remote user should be authorized.
 
 ## Entry
@@ -22,6 +22,7 @@ Always one property of the following properties has to match in combination with
 * [`authorizedKeys`](#entry-property-authorizedKeys)
 * [`authorizedKeysFile`](#entry-property-authorizedKeysFile)
 * [`password`](#entry-property-password)
+* [`passwordFile`](#entry-property-passwordFile)
 
 ### Properties {: #entry-properties }
 
@@ -33,11 +34,23 @@ Like: `ssh <name>@my-great-domain.tld` to match this entry.
 <<property("authorizedKeys", "Authorized Keys", "../data-type.md#authorized-keys", id_prefix="entry-", heading=4)>>
 Contains [SSH Public Keys](../data-type.md#ssh-public-key) in the format of classic [authorized keys](../data-type.md#authorized-keys).
 
-<<property_with_holder("authorizedKeysFile", "File Path", "../data-type.md#file-path", "Authorized Keys", "../data-type.md#authorized-keys", id_prefix="entry-", heading=4)>>
+<<property("authorizedKeysFile", ref("File Path", "../data-type.md#file-path", ref("Authorized Keys", "../data-type.md#authorized-keys")), id_prefix="entry-", heading=4)>>
 Similar to [`authorizedKeys`](#entry-property-authorizedKeys), but in a dedicated file.
 
 <<property("password", "Password", "../data-type.md#password", id_prefix="entry-", heading=4)>>
 Password (if user uses interactive or password authentication method) to be evaluated against.
+
+<<property("passwordFile", ref("File Path", "../data-type.md#file-path", ref("Password", "../data-type.md#password")), id_prefix="entry-", heading=4)>>
+Same as [`password`](#entry-property-password), but is receiving the value from this file.
+
+If both properties are defined and have values, [`password`](#entry-property-password) will be used.
+
+<<property("createPasswordFileIfAbsentOfType", "Password Type", "../data-type.md#password-type", id_prefix="entry-", heading=4)>>
+If this property is provided and [`passwordFile`](#entry-property-passwordFile) is defined, but does not exist, the file will be generated with a random password of this type.
+
+The result will be printed into the startup logs of Bifröst.
+
+This feature is usually only makes sense for cases where you want to create dummy configurations of Bifröst to demonstrate some functionality, like we're utilizing it in our demonstration configurations: [contrib/configurations/simple-inside-docker.yaml](<<asset_url("contrib/configurations/simple-inside-docker.yaml")>>).
 
 ## Context
 

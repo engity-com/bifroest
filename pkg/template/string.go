@@ -11,7 +11,7 @@ import (
 func NewString(plain string) (String, error) {
 	var buf String
 	if err := buf.Set(plain); err != nil {
-		return String{}, nil
+		return String{}, err
 	}
 	return buf, nil
 }
@@ -92,6 +92,10 @@ func (this *String) UnmarshalText(text []byte) error {
 
 func (this *String) Set(text string) error {
 	return this.UnmarshalText([]byte(text))
+}
+
+func (this String) Validate() error {
+	return nil
 }
 
 func (this String) IsEqualTo(other any) bool {

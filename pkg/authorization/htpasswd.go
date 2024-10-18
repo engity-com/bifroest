@@ -6,21 +6,21 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 type htpasswd struct {
-	remote            common.Remote
+	remote            net.Remote
 	envVars           sys.EnvVars
 	flow              configuration.FlowName
 	session           session.Session
 	sessionsPublicKey ssh.PublicKey
 }
 
-func (this *htpasswd) Remote() common.Remote {
+func (this *htpasswd) Remote() net.Remote {
 	return this.remote
 }
 
@@ -48,7 +48,7 @@ func (this *htpasswd) GetField(name string, ce ContextEnabled) (any, bool, error
 	return getField(name, ce, this, func() (any, bool, error) {
 		switch name {
 		case "user":
-			return this.Remote(), true, nil
+			return this.Remote().User(), true, nil
 		default:
 			return nil, false, fmt.Errorf("unknown field %q", name)
 		}

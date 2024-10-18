@@ -1,8 +1,11 @@
 package configuration
 
 import (
-	"github.com/echocat/slf4g/sdk/testlog"
 	"testing"
+
+	"github.com/echocat/slf4g/sdk/testlog"
+
+	"github.com/engity-com/bifroest/pkg/template"
 )
 
 func TestAuthorizationOidc_UnmarshalYAML(t *testing.T) {
@@ -36,9 +39,9 @@ clientId: abc`,
 clientId: anId
 clientSecret: aSecret`,
 			expected: AuthorizationOidcDeviceAuth{
-				Issuer:           "https://foo-bar",
-				ClientId:         "anId",
-				ClientSecret:     "aSecret",
+				Issuer:           template.MustNewUrl("https://foo-bar"),
+				ClientId:         template.MustNewString("anId"),
+				ClientSecret:     template.MustNewString("aSecret"),
 				Scopes:           DefaultAuthorizationOidcScopes,
 				RetrieveIdToken:  true,
 				RetrieveUserInfo: false,
@@ -53,10 +56,10 @@ scopes: [a,b,c]
 retrieveIdToken: false
 retrieveUserInfo: true`,
 			expected: AuthorizationOidcDeviceAuth{
-				Issuer:           "https://foo-bar",
-				ClientId:         "anId",
-				ClientSecret:     "aSecret",
-				Scopes:           []string{"a", "b", "c"},
+				Issuer:           template.MustNewUrl("https://foo-bar"),
+				ClientId:         template.MustNewString("anId"),
+				ClientSecret:     template.MustNewString("aSecret"),
+				Scopes:           template.MustNewStrings("a", "b", "c"),
 				RetrieveIdToken:  false,
 				RetrieveUserInfo: true,
 			},

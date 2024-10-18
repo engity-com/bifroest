@@ -28,11 +28,11 @@ The primary group of the user.
 
 Shortcut for [`group.gid`](#property-group).
 
-<<property_with_holder("groups", "Array", None, "Local Group", "local-group.md")>>
+<<property("groups", array_ref("Local Group", "local-group.md"))>>
 
 The groups (do not confuse with the [primary group](#property-group)) of the user.
 
-<<property_with_holder("gids", "Array", None, "uint32")>>
+<<property("gids", array_ref("uint32"))>>
 
 Shortcut for [`groups.*.gid`](#property-groups).
 

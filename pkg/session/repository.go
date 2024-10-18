@@ -6,11 +6,10 @@ import (
 	"io"
 
 	log "github.com/echocat/slf4g"
-	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/net"
 )
 
 var (
@@ -18,14 +17,14 @@ var (
 )
 
 type Repository interface {
-	Create(ctx context.Context, flow configuration.FlowName, remote common.Remote, authToken []byte) (Session, error)
+	Create(ctx context.Context, flow configuration.FlowName, remote net.Remote, authToken []byte) (Session, error)
 
-	FindBy(context.Context, configuration.FlowName, uuid.UUID, *FindOpts) (Session, error)
+	FindBy(context.Context, configuration.FlowName, Id, *FindOpts) (Session, error)
 	FindByPublicKey(context.Context, ssh.PublicKey, *FindOpts) (Session, error)
 	FindByAccessToken(context.Context, []byte, *FindOpts) (Session, error)
 	FindAll(context.Context, Consumer, *FindOpts) error
 
-	DeleteBy(context.Context, configuration.FlowName, uuid.UUID) error
+	DeleteBy(context.Context, configuration.FlowName, Id) error
 	Delete(context.Context, Session) error
 }
 

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/Masterminds/semver/v3"
-	"github.com/alecthomas/kingpin"
+	"github.com/alecthomas/kingpin/v2"
 	log "github.com/echocat/slf4g"
 	"github.com/google/go-github/v65/github"
 

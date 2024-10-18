@@ -92,7 +92,11 @@ func (this Flow) isEqualTo(other *Flow) bool {
 type Flows []Flow
 
 func (this *Flows) SetDefaults() error {
-	return setSliceDefaults(this)
+	return setSliceDefaults(this) // Empty, be default.
+}
+
+func (this Flows) IsZero() bool {
+	return len(this) == 0
 }
 
 func (this *Flows) Trim() error {
@@ -101,6 +105,15 @@ func (this *Flows) Trim() error {
 
 func (this Flows) Validate() error {
 	return validateSlice(this)
+}
+
+func (this *Flows) UnmarshalYAML(node *yaml.Node) error {
+	// Clear the entries before...
+	*this = Flows{}
+	return unmarshalYAML(this, node, func(target *Flows, node *yaml.Node) error {
+		type raw Flows
+		return node.Decode((*raw)(target))
+	})
 }
 
 func (this Flows) IsEqualTo(other any) bool {

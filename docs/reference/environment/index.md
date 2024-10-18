@@ -8,7 +8,9 @@ Bifröst executes user sessions within environments. These environments can eith
 
 ## Types
 
-1. `local`: [Local](local.md)
+1. `docker`: [Docker](docker.md)
+2. `local`: [Local](local.md)
+3. `dummy`: [Dummy](dummy.md)
 
 ## Examples
 

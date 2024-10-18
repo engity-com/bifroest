@@ -55,6 +55,15 @@ p.bifroest-logo .switchable rect {
     color: #b69237;
 }
 
+.md-typeset [data-hint-type="templated"] {
+    color: var(--md-typeset-color);
+    vertical-align: baseline;
+    font-size: 0.8em;
+    opacity: 0.6;
+    margin-left: 0.3em;
+    margin-right: -0.3em;
+}
+
 [data-supported=true] {
     color: #309c30;
 }
@@ -62,6 +71,10 @@ p.bifroest-logo .switchable rect {
     color: var(--md-default-fg-color--light);
 }
 [data-supported=false] {
+    color: #dc6a43;
+}
+
+.md-typeset .twemoji.warning {
     color: #dc6a43;
 }
 
@@ -131,6 +144,10 @@ html .md-typeset .admonition > :not(.admonition-title):first-child {
 
 .md-typeset details.plain summary + div {
     margin-bottom: 0;
+}
+
+.md-typeset .property-title code {
+    text-transform: none;
 }
 
 .md-typeset .property-title:has(+ .property-description) {
