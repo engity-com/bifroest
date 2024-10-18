@@ -148,10 +148,3 @@ func (this *NoneAuthorizer) RestoreFromSession(ctx context.Context, sess session
 func (this *NoneAuthorizer) Close() error {
 	return nil
 }
-
-func (this *NoneAuthorizer) logger() log.Logger {
-	if v := this.Logger; v != nil {
-		return v
-	}
-	return log.GetLogger("authorizer")
-}
