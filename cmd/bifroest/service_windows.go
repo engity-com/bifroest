@@ -99,19 +99,17 @@ func (this *windowsService) Execute(_ []string, r <-chan svc.ChangeRequest, chan
 
 	go func() {
 		for {
-			select {
-			case c := <-r:
-				switch c.Cmd {
-				case svc.Interrogate:
-					changes <- c.CurrentStatus
-					// Testing deadlock from https://code.google.com/p/winsvc/issues/detail?id=4
-					time.Sleep(100 * time.Millisecond)
-					changes <- c.CurrentStatus
-				case svc.Stop, svc.Shutdown:
-					cancelFunc()
-				default:
-					_ = this.logger.Error(1, fmt.Errorf("unexpected control request #%d", c).Error())
-				}
+			c := <-r
+			switch c.Cmd {
+			case svc.Interrogate:
+				changes <- c.CurrentStatus
+				// Testing deadlock from https://code.google.com/p/winsvc/issues/detail?id=4
+				time.Sleep(100 * time.Millisecond)
+				changes <- c.CurrentStatus
+			case svc.Stop, svc.Shutdown:
+				cancelFunc()
+			default:
+				_ = this.logger.Error(1, fmt.Errorf("unexpected control request #%d", c).Error())
 			}
 		}
 	}()
