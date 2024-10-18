@@ -3,6 +3,7 @@ package environment
 import (
 	"context"
 	"io"
+	"math"
 	"strings"
 
 	"github.com/engity-com/bifroest/pkg/session"
@@ -28,6 +29,9 @@ func (this *dummy) Run(t Task) (int, error) {
 	exitCode, err := this.repository.conf.ExitCode.Render(t)
 	if err != nil {
 		return -1, err
+	}
+	if exitCode < math.MinInt || exitCode > math.MaxInt {
+		return 1, nil
 	}
 	return int(exitCode), nil
 }

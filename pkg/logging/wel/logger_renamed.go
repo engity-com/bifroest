@@ -1,3 +1,5 @@
+//go:build windows
+
 package wel
 
 import log "github.com/echocat/slf4g"

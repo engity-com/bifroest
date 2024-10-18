@@ -3,6 +3,7 @@ package configuration
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -103,7 +104,7 @@ type validator interface {
 func validate[T any](target T, fs ...func(T) (string, validator)) error {
 	for _, f := range fs {
 		n, d := f(target)
-		if d == nil || nil == (validator)(nil) {
+		if reflect.ValueOf(d).IsNil() {
 			continue
 		}
 		if err := d.Validate(); err != nil {

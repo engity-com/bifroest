@@ -22,9 +22,9 @@ func TestInt64(t *testing.T) {
 		plain:    "{{.foo}}",
 		expected: 666,
 	}, {
-		data:              map[string]any{"foo": "-11"},
-		plain:             "{{.foo}}",
-		expectedRenderErr: errors.New(`templated int64 results in a value that cannot be parsed as int64: "-11"`),
+		data:     map[string]any{"foo": "-11"},
+		plain:    "{{.foo}}",
+		expected: -11,
 	}, {
 		data:              map[string]any{"foobar": "666"},
 		plain:             "{{.foo}}",

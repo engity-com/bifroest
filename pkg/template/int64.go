@@ -58,7 +58,7 @@ func (this Int64) Render(data any) (int64, error) {
 		if err != nil {
 			return 0, fmt.Errorf("templated int64 results in a value that cannot be parsed as int64: %q", buf.String())
 		}
-		return int64(result), nil
+		return result, nil
 	}
 	return 0, nil
 }
