@@ -3,5 +3,5 @@
 package configuration
 
 var (
-	defaultAlternativesLocation = `/var/lib/engity/bifroest/binaries/{{.version}}/{{.os}}-{{.arch}}{{.ext}}`
+	defaultAlternativesLocation = `/var/lib/engity/bifroest/binaries/{{.version}}/{{.os}}-{{.arch}}-{{.edition}}{{.ext}}`
 )

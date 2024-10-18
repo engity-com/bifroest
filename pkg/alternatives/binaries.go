@@ -204,6 +204,8 @@ func (this alternativeResolutionContext) GetField(name string) (any, bool, error
 		return this.Architecture, true, nil
 	case "version":
 		return this.Version, true, nil
+	case "edition":
+		return "generic", true, nil
 	case "ext":
 		return this.Ext(), true, nil
 	case "packageExt":

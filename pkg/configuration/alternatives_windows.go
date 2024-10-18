@@ -3,5 +3,5 @@
 package configuration
 
 var (
-	defaultAlternativesLocation = `C:\ProgramData\Engity\Bifroest\binaries\{{.version}}\{{.os}}-{{.arch}}{{.ext}}`
+	defaultAlternativesLocation = `C:\ProgramData\Engity\Bifroest\binaries\{{.version}}\{{.os}}-{{.arch}}-{{.edition}}{{.ext}}`
 )
