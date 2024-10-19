@@ -9,6 +9,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	bnet "github.com/engity-com/bifroest/pkg/net"
+	"github.com/engity-com/bifroest/pkg/session"
 )
 
 const (
@@ -19,6 +20,7 @@ type Service struct {
 	Version         common.Version
 	Addr            string
 	MasterPublicKey crypto.PublicKey
+	SessionId       session.Id
 
 	Logger log.Logger
 }
@@ -46,6 +48,7 @@ func (this *Service) createInstance() (*service, error) {
 
 	result.imp.Addr = this.Addr
 	result.imp.MasterPublicKey = this.MasterPublicKey
+	result.imp.SessionId = this.SessionId
 	result.imp.Logger = this.logger()
 
 	return &result, nil

@@ -41,8 +41,11 @@ type docker struct {
 	owners atomic.Int32
 }
 
+func (this *docker) SessionId() session.Id {
+	return this.sessionId
+}
+
 func (this *docker) PublicKey() crypto.PublicKey {
-	// TODO! Maybe we should also consider to extract the key information here.
 	return nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"github.com/engity-com/bifroest/internal/imp/protocol"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/net"
+	"github.com/engity-com/bifroest/pkg/session"
 )
 
 var (
@@ -14,6 +15,7 @@ var (
 )
 
 type Ref interface {
+	SessionId() session.Id
 	PublicKey() crypto.PublicKey
 	EndpointAddr() net.HostPort
 }

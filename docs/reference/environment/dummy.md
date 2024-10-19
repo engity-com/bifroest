@@ -36,11 +36,11 @@ After [`banner`](#property-banner) was printed to the user, the environment will
 
 1. Simple:
    ```yaml
-   type: simple
+   type: dummy
    ```
 2. With message:
    ```yaml
-   type: simple
+   type: dummy
    banner: "Hello, {{.authorization.idToken.name}}!\n"
    ```
 

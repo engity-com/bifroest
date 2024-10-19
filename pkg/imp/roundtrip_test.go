@@ -27,6 +27,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/net"
+	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -34,6 +35,7 @@ const (
 	flagRoundtripTestProcess         = "imp-roundtrip-test-process"
 	flagRoundtripTestImpAddress      = "imp-roundtrip-test-imp-addr"
 	flagRoundtripTestMasterPublicKey = "imp-roundtrip-test-master-public-key"
+	flagRoundtripTestSessionId       = "imp-roundtrip-test-session-id"
 )
 
 var (
@@ -45,6 +47,7 @@ var (
 		Host: net.MustNewHost("localhost"),
 		Port: 45321,
 	}
+	roundtripTestSessionId session.Id
 
 	roundtripTestEnabled          = flag.Bool("imp-roundtrip-test-enabled", true, "")
 	roundtripTestImpProcess       = flag.Bool(flagRoundtripTestProcess, false, "")
@@ -56,6 +59,7 @@ var (
 func init() {
 	flag.Var(&roundtripTestImpAddress, flagRoundtripTestImpAddress, "")
 	flag.Var(&roundtripTestServiceAddress, "imp-roundtrip-test-service-addr", "")
+	flag.Var(&roundtripTestSessionId, flagRoundtripTestSessionId, "")
 }
 
 func TestRoundtrip(t *testing.T) {
@@ -78,8 +82,11 @@ func roundtrip(t *testing.T) {
 
 	masterKey := generatePrivateKey(t)
 
+	sessionId, err := session.NewId()
+	require.NoError(t, err)
+
 	var wg sync.WaitGroup
-	impCmd := prepareRoundtripImpCmd(t, masterKey.PublicKey())
+	impCmd := prepareRoundtripImpCmd(t, masterKey.PublicKey(), sessionId)
 	wg.Add(1)
 	go runCmd(ctx, t, impCmd, wg.Done)
 	defer wg.Wait()
@@ -104,7 +111,7 @@ func roundtrip(t *testing.T) {
 		assert.NoError(t, master.Close())
 	}()
 
-	sess, err := master.Open(ctx, refV)
+	sess, err := master.Open(ctx, refImpl{sessionId})
 	require.NoError(t, err)
 
 	connId := connection.MustNewId()
@@ -169,6 +176,7 @@ func roundtripImp(t *testing.T) {
 	svc := Service{
 		Addr:            roundtripTestImpAddress.String(),
 		MasterPublicKey: decodePublicKeyString(t, *roundtripTestMasterPublicKey),
+		SessionId:       roundtripTestSessionId,
 	}
 
 	err := svc.Serve(ctx)
@@ -206,7 +214,7 @@ func generatePrivateKey(t *testing.T) crypto.PrivateKey {
 	return result
 }
 
-func prepareRoundtripImpCmd(t *testing.T, masterPublicKey crypto.PublicKey) *exec.Cmd {
+func prepareRoundtripImpCmd(t *testing.T, masterPublicKey crypto.PublicKey, sessionId session.Id) *exec.Cmd {
 	ex, err := os.Executable()
 	require.NoError(t, err)
 
@@ -214,6 +222,7 @@ func prepareRoundtripImpCmd(t *testing.T, masterPublicKey crypto.PublicKey) *exe
 		"--" + flagRoundtripTestProcess,
 		"--" + flagRoundtripTestImpAddress + "=" + roundtripTestImpAddress.String(),
 		"--" + flagRoundtripTestMasterPublicKey + "=" + base64.StdEncoding.EncodeToString(masterPublicKey.Marshal()),
+		"--" + flagRoundtripTestSessionId + "=" + sessionId.String(),
 	}
 	var cmd *exec.Cmd
 	if addr := *roundtripTestAttachToDebugger; addr != "" {
@@ -272,13 +281,16 @@ func decodePublicKeyString(t *testing.T, in string) crypto.PublicKey {
 	return result
 }
 
-var refV = refImpl{}
-
 type refImpl struct {
+	sessionId session.Id
+}
+
+func (this refImpl) SessionId() session.Id {
+	return this.sessionId
 }
 
 func (this refImpl) PublicKey() crypto.PublicKey {
-	return nil // TODO! Maybe do it better...
+	return nil
 }
 
 func (this refImpl) EndpointAddr() net.HostPort {

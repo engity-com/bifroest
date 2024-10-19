@@ -15,32 +15,40 @@ import (
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/imp"
+	"github.com/engity-com/bifroest/pkg/session"
 )
 
 var _ = registerCommand(func(app *kingpin.Application) {
 	addr := fmt.Sprintf(":%d", imp.ServicePort)
 	var encodecMasterPublicKey string
+	var sessionId session.Id
 
 	cmd := app.Command("imp", "Runs the imp service.").
 		Hidden().
 		Action(func(*kingpin.ParseContext) error {
-			return doImp(encodecMasterPublicKey, addr)
+			return doImp(encodecMasterPublicKey, sessionId, addr)
 		})
 	cmd.Flag("addr", "Address to bind to.").
 		Default(addr).
 		PlaceHolder("[<host>]:<port>").
 		StringVar(&addr)
-	cmd.Flag("master-public-key", "Public SSH key of the master service which is accessing this imp instance.").
+	cmd.Flag("masterPublicKey", "Public SSH key of the master service which is accessing this imp instance.").
 		Envar("BIFROEST_MASTER_PUBLIC_KEY").
 		PlaceHolder("<base64 std raw encoded ssh public key>").
 		Required().
 		StringVar(&encodecMasterPublicKey)
+	cmd.Flag("sessionId", "Session ID of which this IMP is working for.").
+		Envar("BIFROEST_SESSION_ID").
+		PlaceHolder("<sessionId>").
+		Required().
+		SetValue(&sessionId)
 })
 
-func doImp(encodecMasterPublicKey, addr string) error {
+func doImp(encodecMasterPublicKey string, sessionId session.Id, addr string) error {
 	service := imp.Service{
-		Version: versionV,
-		Addr:    addr,
+		Version:   versionV,
+		SessionId: sessionId,
+		Addr:      addr,
 	}
 
 	if b, err := base64.RawStdEncoding.DecodeString(encodecMasterPublicKey); err != nil {

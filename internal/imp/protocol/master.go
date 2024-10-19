@@ -12,7 +12,9 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/codec"
 	"github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/net"
+	"github.com/engity-com/bifroest/pkg/session"
 )
 
 func NewMaster(_ context.Context, masterPrivateKey crypto.PrivateKey) (*Master, error) {
@@ -24,7 +26,7 @@ func NewMaster(_ context.Context, masterPrivateKey crypto.PrivateKey) (*Master, 
 		PrivateKey: masterPrivateKey,
 	}
 
-	cert, err := generateCertificateForPrivateKey("bifroest-master", masterPrivateKey)
+	cert, err := generateCertificateForPrivateKey("bifroest-master", session.Id{}, masterPrivateKey)
 	if err != nil {
 		return fail(err)
 	}
@@ -61,6 +63,7 @@ type Master struct {
 }
 
 type Ref interface {
+	SessionId() session.Id
 	PublicKey() crypto.PublicKey
 	EndpointAddr() net.HostPort
 }
@@ -103,8 +106,10 @@ func (this *Master) tlsDialerFor(ref Ref) (_ *tls.Dialer, releaser func(), _ err
 			return nil, nil, err
 		}
 		result.Config.VerifyPeerCertificate = verifier
+	} else if sessionId := ref.SessionId(); !sessionId.IsZero() {
+		result.Config.VerifyPeerCertificate = peerVerifierForSessionId(sessionId)
 	} else {
-		result.Config.VerifyPeerCertificate = alwaysAcceptPeerVerifier
+		return nil, nil, errors.System.Newf("the imp ref provider neither a publicKey nor a sessionId")
 	}
 	return result, func() {
 		result.Config.VerifyPeerCertificate = alwaysRejectPeerVerifier

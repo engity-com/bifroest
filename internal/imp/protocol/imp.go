@@ -18,6 +18,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
 	bnet "github.com/engity-com/bifroest/pkg/net"
+	"github.com/engity-com/bifroest/pkg/session"
 )
 
 const (
@@ -26,6 +27,7 @@ const (
 
 type Imp struct {
 	MasterPublicKey crypto.PublicKey
+	SessionId       session.Id
 	Addr            string
 	Logger          log.Logger
 }
@@ -199,7 +201,7 @@ func (this *Imp) generatePrivateKey() (crypto.PrivateKey, error) {
 }
 
 func (this *Imp) getOwnCertificate(prv crypto.PrivateKey) (*x509.Certificate, error) {
-	cert, err := generateCertificateForPrivateKey("bifroest-imp", prv)
+	cert, err := generateCertificateForPrivateKey("bifroest-imp", this.SessionId, prv)
 	if err != nil {
 		return nil, errors.System.Newf("cannot generate certificate for imp: %w", err)
 	}

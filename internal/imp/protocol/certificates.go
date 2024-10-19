@@ -10,9 +10,10 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/session"
 )
 
-func generateCertificateForPrivateKey(name string, prv crypto.PrivateKey) (*x509.Certificate, error) {
+func generateCertificateForPrivateKey(name string, sessionId session.Id, prv crypto.PrivateKey) (*x509.Certificate, error) {
 	fail := func(err error) (*x509.Certificate, error) {
 		return nil, err
 	}
@@ -20,11 +21,24 @@ func generateCertificateForPrivateKey(name string, prv crypto.PrivateKey) (*x509
 		return fail(errors.System.Newf(msg, args...))
 	}
 
+	var extraNames []pkix.AttributeTypeAndValue
+	if !sessionId.IsZero() {
+		sessB, err := sessionId.MarshalText()
+		if err != nil {
+			return fail(err)
+		}
+		extraNames = append(extraNames, pkix.AttributeTypeAndValue{
+			Type:  crypto.ObjectIdSessionId.ToNativeDirect(),
+			Value: string(sessB),
+		})
+	}
+
 	var err error
 	template := x509.Certificate{
 		KeyUsage: x509.KeyUsageDigitalSignature,
 		Subject: pkix.Name{
 			CommonName: name,
+			ExtraNames: extraNames,
 		},
 		NotBefore:             time.Now().Add(-24 * time.Hour),
 		NotAfter:              time.Now().Add(24 * time.Hour * 30),
@@ -73,8 +87,31 @@ func peerVerifierForPublicKey(expected crypto.PublicKey) (func([][]byte, [][]*x5
 	}, nil
 }
 
-func alwaysAcceptPeerVerifier(_ [][]byte, _ [][]*x509.Certificate) error {
-	return nil
+func peerVerifierForSessionId(expected session.Id) func([][]byte, [][]*x509.Certificate) error {
+	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+		if len(rawCerts) == 0 {
+			return fmt.Errorf("no remote certificates presented: rejecting")
+		}
+		cert, err := x509.ParseCertificate(rawCerts[0])
+		if err != nil {
+			return fmt.Errorf("failed to parse remote certificate: %v: rejecting", err)
+		}
+		for _, candidate := range cert.Subject.Names {
+			if crypto.ObjectIdSessionId.IsEqualTo(candidate.Type) {
+				if str, ok := candidate.Value.(string); ok {
+					var buf session.Id
+					if err := buf.Set(str); err == nil {
+						if expected.IsEqualTo(buf) {
+							return nil
+						}
+						return fmt.Errorf("peer certificate was issued for another sessionId: %v != %v: rejecting", expected, buf)
+					}
+				}
+				return fmt.Errorf("peer certificate has extraName %v but no sessionId value: rejecting", crypto.ObjectIdSessionId)
+			}
+		}
+		return fmt.Errorf("peer certificate has no %v extraName: rejecting", crypto.ObjectIdSessionId)
+	}
 }
 
 func alwaysRejectPeerVerifier(_ [][]byte, _ [][]*x509.Certificate) error {
