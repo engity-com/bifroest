@@ -4,15 +4,13 @@ import (
 	"context"
 	"time"
 
-	"github.com/google/uuid"
-
-	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/net"
 )
 
 type Info interface {
 	Flow() configuration.FlowName
-	Id() uuid.UUID
+	Id() Id
 	State() State
 	Created(context.Context) (InfoCreated, error)
 	LastAccessed(context.Context) (InfoLastAccessed, error)
@@ -24,10 +22,10 @@ type Info interface {
 
 type InfoCreated interface {
 	At() time.Time
-	Remote() common.Remote
+	Remote() net.Remote
 }
 
 type InfoLastAccessed interface {
 	At() time.Time
-	Remote() common.Remote
+	Remote() net.Remote
 }

@@ -4,6 +4,10 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/vmihailenco/msgpack/v5"
+
+	"github.com/engity-com/bifroest/pkg/codec"
 )
 
 type Type uint8
@@ -74,6 +78,32 @@ func (t Type) IsEqualTo(other any) bool {
 	default:
 		return false
 	}
+}
+
+func (this Type) EncodeMsgpack(enc *msgpack.Encoder) error {
+	return this.EncodeMsgPack(enc)
+}
+
+func (this *Type) DecodeMsgpack(dec *msgpack.Decoder) (err error) {
+	return this.DecodeMsgPack(dec)
+}
+
+func (this Type) EncodeMsgPack(enc codec.MsgPackEncoder) error {
+	return enc.EncodeUint8(uint8(this))
+}
+
+func (this *Type) DecodeMsgPack(dec codec.MsgPackDecoder) error {
+	v, err := dec.DecodeUint8()
+	if err != nil {
+		return err
+	}
+	buf := Type(v)
+	_, ok := typeToStr[buf]
+	if !ok {
+		return fmt.Errorf("unknown-type-%d", v)
+	}
+	*this = buf
+	return nil
 }
 
 var (

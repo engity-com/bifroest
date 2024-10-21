@@ -166,7 +166,7 @@ func (this *houseKeeper) dispose(ctx context.Context, logger log.Logger, sess se
 	return environmentDisposed || authorizationDisposed || sessionDisposed, nil
 }
 
-func (this *houseKeeper) disposeEnvironment(ctx context.Context, logger log.Logger, sess session.Session) (bool, error) {
+func (this *houseKeeper) disposeEnvironment(ctx context.Context, logger log.Logger, sess session.Session) (_ bool, rErr error) {
 	fail := func(err error) (bool, error) {
 		return false, errors.Newf(errors.System, "cannot dispose authorization: %w", err)
 	}
@@ -182,6 +182,7 @@ func (this *houseKeeper) disposeEnvironment(ctx context.Context, logger log.Logg
 	if err != nil {
 		return fail(err)
 	}
+	defer common.KeepCloseError(&rErr, env)
 
 	disposed, err := env.Dispose(ctx)
 	if err != nil {

@@ -9,14 +9,15 @@ As Bifröst is very flexible on how it can be configured (see [configuration doc
 1. [**Off**-board users within the legally binding 15 minutes timeframe of the organization](#offboard)
 2. [**On**-board users within 15 minutes in the organization](#onboard)
 3. [Bastion Host / Jump Host](#bastion)
-4. [Different rules for different users per host](#multi-environment)
-5. [Drop-in-Replacement](#drop-in-replacement)
+4. [Isolated Demo/Training environments](#demos)
+5. [Different rules for different user groups per host](#multi-environment)
+6. [Drop-in-Replacement](#drop-in-replacement)
 
 !!! tip
 
-    We're planning to also implement a [Docker](https://github.com/engity-com/bifroest/issues/11) and a [Kubernetes](https://github.com/engity-com/bifroest/issues/12) environment. This will create much more use-cases, soon. 🤠
+    We're planning to also implement a [Kubernetes environment](https://github.com/engity-com/bifroest/issues/12), [SSH server chaining](https://github.com/engity-com/bifroest/issues/27) and [Session recording](https://github.com/engity-com/bifroest/issues/28). This will create much more use-cases, soon. 🤠
 
-## Off-board users within the legally binding 15 minutes timeframe of the organization {:id=offboard}
+## Off-board users within the legally binding 15 minutes timeframe of the organization {: #offboard}
 
 ### Problem
 
@@ -51,7 +52,7 @@ There is no need to access any of these services directly to remove/de-authorize
 
 If the [environments are configured accordingly](reference/environment/index.md) (default setting) all of the user's files and processes will be removed/killed automatically, too.
 
-## On-board users within 15 minutes in the organization {:id=onboard}
+## On-board users within 15 minutes in the organization {: #onboard}
 
 This is quite similar to [Off-board users within the legally binding 15 minutes of the organization](#offboard), but obviously reverse.
 
@@ -82,7 +83,7 @@ There is no need to access any of these services directly to create/authorize th
 
 If the [environments are configured accordingly](reference/environment/index.md) (default setting), all of the user's resources (like the home directory) will be created automatically.
 
-## Bastion Host / Jump Host {:id=bastion}
+## Bastion Host / Jump Host {: #bastion}
 
 ### Problem
 
@@ -98,11 +99,30 @@ The following cases are usually used:
 ### Solution
 
 1. Set up a bastion host, either:
-   1. Inside the private network itself (in case of [AWS a dedicated EC2 instance](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/concepts.html) for example of [instance-type `t2.micro`](https://aws.amazon.com/ec2/instance-types/))
-   2. or outside the network with a fixed VPN connection to get inside the private network.
+    1. Inside the private network itself (in case of [AWS a dedicated EC2 instance](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/concepts.html) for example of [instance-type `t2.micro`](https://aws.amazon.com/ec2/instance-types/))
+    2. or outside the network with a fixed VPN connection to get inside the private network.
 2. Configure your preferred [authorization](reference/authorization/index.md) (for example [OpenID Connect](reference/authorization/oidc.md) for best [on-boarding](#onboard) and [off-boarding](#offboard) experience).
+3. Plus: If you're using the [docker environment](reference/environment/docker.md), you also gain the maximum possible security by environment isolation.
 
-## Different rules for different users per host {:id=multi-environment}
+## Isolated Demo/Training environments {: #demos }
+
+### Problem
+
+1. Assume you want to show how your software can be used (demonstration) or you want to create training sessions for users.
+2. You need an environment where your users can easily can have command interaction with.
+3. Each user needs a dedicated and isolated environment.
+4. You want to provide your own set of tools within these environments.
+
+### Solution
+
+1. Choose your favorite [authorization mechanism](reference/authorization/index.md), such as:
+    1. [OpenID Connect](reference/authorization/oidc.md) to ensure, that only users are already registered at your application are able to connect to your service or even using public social accounts like [GitHub](https://docs.github.com/v3/oauth) or [Google](https://developers.google.com/identity/openid-connect/openid-connect) to freely connect to your service.
+    2. Maybe you want to use [fixed passwords](reference/authorization/simple.md).
+    3. :material-alert-octagon:{: .warning } Also disable any kind of password request is possible, but only recommended for these kinds of purposes, nothing else. In this case, you can use the [none authorization](reference/authorization/none.md).
+2. Create an OCI/Docker image with the applications you want to show.
+3. Configure the [docker environment](reference/environment/docker.md) and [reference your image](reference/environment/docker.md#property-image).
+
+## Different rules for different user groups per host {: #multi-environment}
 
 ### Problem
 
@@ -116,7 +136,7 @@ This is almost impossible with current technologies except with different [OpenS
 
 Use Bifröst with multiple configured [flows](reference/flow.md). Each flow can handle different authorizations and environments.
 
-## Drop-in-Replacement {:id=drop-in-replacement}
+## Drop-in-Replacement {: #drop-in-replacement}
 
 You simply want to use something else than [OpenSSH sshd](https://man.openbsd.org/sshd.8), Bifröst will do this, too. 😉 Just use << asset_link("contrib/configurations/sshd-dropin-replacement.yaml", "this configuration") >>.
 

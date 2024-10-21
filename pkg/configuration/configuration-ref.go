@@ -1,5 +1,11 @@
 package configuration
 
+import (
+	"path/filepath"
+
+	"github.com/engity-com/bifroest/pkg/errors"
+)
+
 type ConfigurationRef struct {
 	v  Configuration
 	fn string
@@ -42,6 +48,14 @@ func (this *ConfigurationRef) Get() *Configuration {
 
 func (this *ConfigurationRef) GetFilename() string {
 	return this.fn
+}
+
+func (this *ConfigurationRef) MakeAbsolute() error {
+	abs, err := filepath.Abs(this.fn)
+	if err != nil {
+		return errors.Config.Newf("canont make this configuration file reference absolute: %w", err)
+	}
+	return this.Set(abs)
 }
 
 func (this ConfigurationRef) IsEqualTo(other any) bool {

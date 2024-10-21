@@ -16,6 +16,7 @@ On this page you'll find:
     1. [Archives](#archive)
     2. [OCI/Docker Images](#image)
 
+<div id="compatibility"></div>
 <<compatibility_matrix()>>
 > Cells express support in format of `<generic>`/`<extended>`.
 
@@ -95,9 +96,8 @@ See the [release page](<< release_url() >>) for all available downloads.
 * Windows Generic on AMD64:
     ```{.powershell title="Run elevated"}
     mkdir -Force 'C:\Program Files\Engity\Bifroest'
-    cd 'C:\Program Files\Engity\Bifroest'
     curl -sSLf -o "${Env:Temp}\bifroest.zip" <<release_asset_url("bifroest-windows-amd64-generic.zip")>>
-    Expand-Archive "${Env:Temp}\bifroest.zip" -DestinationPath .
+    Expand-Archive "${Env:Temp}\bifroest.zip" -DestinationPath 'C:\Program Files\Engity\Bifroest'
     ```
 
 ### OCI/Docker Images {: #image}

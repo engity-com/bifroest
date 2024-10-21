@@ -1,16 +1,19 @@
 package configuration
 
 import (
-	"slices"
-
 	"github.com/coreos/go-oidc/v3/oidc"
 	"gopkg.in/yaml.v3"
+
+	"github.com/engity-com/bifroest/pkg/template"
 )
 
 var (
-	DefaultAuthorizationOidcScopes           = []string{oidc.ScopeOpenID, "profile", "email"}
-	DefaultAuthorizationOidcRetrieveIdToken  = true
-	DefaultAuthorizationOidcRetrieveUserInfo = false
+	DefaultAuthorizationOidcDefaultIssuer       = template.MustNewUrl("")
+	DefaultAuthorizationOidcDefaultClientId     = template.MustNewString("")
+	DefaultAuthorizationOidcDefaultClientSecret = template.MustNewString("")
+	DefaultAuthorizationOidcScopes              = template.MustNewStrings(oidc.ScopeOpenID, "profile", "email")
+	DefaultAuthorizationOidcRetrieveIdToken     = true
+	DefaultAuthorizationOidcRetrieveUserInfo    = false
 
 	_ = RegisterAuthorizationV(func() AuthorizationV {
 		return &AuthorizationOidcDeviceAuth{}
@@ -18,10 +21,10 @@ var (
 )
 
 type AuthorizationOidcDeviceAuth struct {
-	Issuer       string   `yaml:"issuer"`
-	ClientId     string   `yaml:"clientId"`
-	ClientSecret string   `yaml:"clientSecret"`
-	Scopes       []string `yaml:"scopes"`
+	Issuer       template.Url     `yaml:"issuer"`
+	ClientId     template.String  `yaml:"clientId"`
+	ClientSecret template.String  `yaml:"clientSecret"`
+	Scopes       template.Strings `yaml:"scopes"`
 
 	RetrieveIdToken  bool `yaml:"retrieveIdToken,omitempty"`
 	RetrieveUserInfo bool `yaml:"retrieveUserInfo,omitempty"`
@@ -29,10 +32,10 @@ type AuthorizationOidcDeviceAuth struct {
 
 func (this *AuthorizationOidcDeviceAuth) SetDefaults() error {
 	return setDefaults(this,
-		noopSetDefault[AuthorizationOidcDeviceAuth]("issuer"),
-		noopSetDefault[AuthorizationOidcDeviceAuth]("clientId"),
-		noopSetDefault[AuthorizationOidcDeviceAuth]("clientSecret"),
-		fixedDefault("scopes", func(v *AuthorizationOidcDeviceAuth) *[]string { return &v.Scopes }, DefaultAuthorizationOidcScopes),
+		fixedDefault("issuer", func(v *AuthorizationOidcDeviceAuth) *template.Url { return &v.Issuer }, DefaultAuthorizationOidcDefaultIssuer),
+		fixedDefault("clientId", func(v *AuthorizationOidcDeviceAuth) *template.String { return &v.ClientId }, DefaultAuthorizationOidcDefaultClientId),
+		fixedDefault("clientSecret", func(v *AuthorizationOidcDeviceAuth) *template.String { return &v.ClientSecret }, DefaultAuthorizationOidcDefaultClientSecret),
+		fixedDefault("scopes", func(v *AuthorizationOidcDeviceAuth) *template.Strings { return &v.Scopes }, DefaultAuthorizationOidcScopes),
 
 		fixedDefault("retrieveIdToken", func(v *AuthorizationOidcDeviceAuth) *bool { return &v.RetrieveIdToken }, DefaultAuthorizationOidcRetrieveIdToken),
 		fixedDefault("retrieveUserInfo", func(v *AuthorizationOidcDeviceAuth) *bool { return &v.RetrieveUserInfo }, DefaultAuthorizationOidcRetrieveUserInfo),
@@ -44,7 +47,7 @@ func (this *AuthorizationOidcDeviceAuth) Trim() error {
 		noopTrim[AuthorizationOidcDeviceAuth]("issuer"),
 		noopTrim[AuthorizationOidcDeviceAuth]("clientId"),
 		noopTrim[AuthorizationOidcDeviceAuth]("clientSecret"),
-		trimSliceBy("scopes", func(v *AuthorizationOidcDeviceAuth) *[]string { return &v.Scopes }, func(v string) bool { return v == "" }),
+		noopTrim[AuthorizationOidcDeviceAuth]("scopes"),
 
 		noopTrim[AuthorizationOidcDeviceAuth]("retrieveIdToken"),
 		noopTrim[AuthorizationOidcDeviceAuth]("retrieveUserInfo"),
@@ -53,10 +56,14 @@ func (this *AuthorizationOidcDeviceAuth) Trim() error {
 
 func (this *AuthorizationOidcDeviceAuth) Validate() error {
 	return validate(this,
-		notEmptyStringValidate("issuer", func(v *AuthorizationOidcDeviceAuth) *string { return &v.Issuer }),
-		notEmptyStringValidate("clientId", func(v *AuthorizationOidcDeviceAuth) *string { return &v.ClientId }),
-		notEmptyStringValidate("clientSecret", func(v *AuthorizationOidcDeviceAuth) *string { return &v.ClientSecret }),
-		notEmptySliceValidate("scopes", func(v *AuthorizationOidcDeviceAuth) *[]string { return &v.Scopes }),
+		func(v *AuthorizationOidcDeviceAuth) (string, validator) { return "issuer", &v.Issuer },
+		notZeroValidate("issuer", func(v *AuthorizationOidcDeviceAuth) *template.Url { return &v.Issuer }),
+		func(v *AuthorizationOidcDeviceAuth) (string, validator) { return "clientId", &v.ClientId },
+		notZeroValidate("clientId", func(v *AuthorizationOidcDeviceAuth) *template.String { return &v.ClientId }),
+		func(v *AuthorizationOidcDeviceAuth) (string, validator) { return "clientSecret", &v.ClientSecret },
+		notZeroValidate("clientSecret", func(v *AuthorizationOidcDeviceAuth) *template.String { return &v.ClientSecret }),
+		func(v *AuthorizationOidcDeviceAuth) (string, validator) { return "scopes", &v.Scopes },
+		notZeroValidate("scopes", func(v *AuthorizationOidcDeviceAuth) *template.Strings { return &v.Scopes }),
 
 		noopValidate[AuthorizationOidcDeviceAuth]("retrieveIdToken"),
 		noopValidate[AuthorizationOidcDeviceAuth]("retrieveUserInfo"),
@@ -85,9 +92,10 @@ func (this AuthorizationOidcDeviceAuth) IsEqualTo(other any) bool {
 }
 
 func (this AuthorizationOidcDeviceAuth) isEqualTo(other *AuthorizationOidcDeviceAuth) bool {
-	return this.Issuer == other.Issuer &&
-		this.ClientId == other.ClientId &&
-		slices.EqualFunc(this.Scopes, other.Scopes, func(l, r string) bool { return l == r }) &&
+	return isEqual(&this.Issuer, &other.Issuer) &&
+		isEqual(&this.ClientId, &other.ClientId) &&
+		isEqual(&this.ClientSecret, &other.ClientSecret) &&
+		isEqual(&this.Scopes, &other.Scopes) &&
 		this.RetrieveIdToken == other.RetrieveIdToken &&
 		this.RetrieveUserInfo == other.RetrieveUserInfo
 }

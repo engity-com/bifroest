@@ -14,6 +14,7 @@ There are more specialized variants of the authorization available, based on whi
 | [Local](#local)                | [Local](../authorization/local.md)                |
 | [OpenID Connect (OIDC)](#oidc) | [OpenID Connect (OIDC)](../authorization/oidc.md) |
 | [Simple](#simple)              | [Simple](../authorization/simple.md)              |
+| [None](#none)                  | [None](../authorization/none.md)                  |
 
 ## Htpasswd
 
@@ -62,3 +63,11 @@ Is the result of a successful authorization via [Simple authorization](../author
 <<property("entry", "Simple Entry", "simple-entry.md", id_prefix="simple-", heading=4)>>
 
 Holds a representation of the authorized record of [Simple authorization entries](../authorization/simple.md#property-entries).
+
+## None
+
+Is the result of a successful authorization via [None authorization](../authorization/none.md).
+
+### Properties
+
+_None._

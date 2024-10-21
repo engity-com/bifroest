@@ -20,7 +20,7 @@ For each configured flow, Bifröst will evaluate the following checks. If one of
 :   Defines the unique name of the flow. It will be used inside logs, as references for the stored [sessions](session/index.md), ...
 
     !!! warning
-        Changing this value afterward means to break all existing sessions.
+         Changing this value afterward means to break all existing sessions.
 
 <<property("requirement", "Requirement", "#requirement")>>
 :   See [Requirement](#requirement), below.
@@ -64,13 +64,13 @@ The requirement has to be fulfilled, even before the [authorization](#property-a
 If this property is set, the requesting name (`ssh <requesting name>@my-host.tld`) has to fulfill this regular expression. If empty everything will be included.
 
 !!! warning
-    Keep `^` and `$` to ensure a full match, otherwise it matches only a part of it.
+     Keep `^` and `$` to ensure a full match, otherwise it matches only a part of it.
 
 <<property("excludedRequestingName", "Regex", "data-type.md#regex", default="\"\"", id_prefix="requirement-", heading=4)>>
 If this property is set, the requesting name (`ssh <requesting name>@my-host.tld`) has to **NOT** fulfill this regular expression. If empty everything will be included.
 
 !!! warning
-    Keep `^` and `$` to ensure a full match, otherwise it matches only a part of it.
+     Keep `^` and `$` to ensure a full match, otherwise it matches only a part of it.
 
 ### Example {: id=requirement-example }
 

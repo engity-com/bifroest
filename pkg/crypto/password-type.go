@@ -2,8 +2,11 @@ package crypto
 
 import (
 	"bytes"
+	crand "crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 )
 
 var (
@@ -69,6 +72,24 @@ func (this PasswordType) Compare(encoded, password []byte) (bool, error) {
 	default:
 		return false, fmt.Errorf("%w: %d", ErrIllegalPasswordType, this)
 	}
+}
+
+func (this PasswordType) Generate(rand io.Reader) (decoded []byte, encoded Password, _ error) {
+	if rand == nil {
+		rand = crand.Reader
+	}
+	buf := make([]byte, 16)
+	if _, err := io.ReadFull(rand, buf); err != nil {
+		return nil, nil, err
+	}
+	decoded = base64.RawStdEncoding.AppendEncode(nil, buf)
+	suffix, err := this.Encode(decoded)
+	if err != nil {
+		return nil, nil, err
+	}
+	prefix, _ := this.MarshalText()
+
+	return decoded, bytes.Join([][]byte{prefix, suffix}, []byte{':'}), nil
 }
 
 func (this *PasswordType) UnmarshalText(b []byte) error {

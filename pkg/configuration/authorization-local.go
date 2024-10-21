@@ -10,7 +10,7 @@ import (
 
 var (
 	DefaultAuthorizationLocalPamService     = defaultAuthorizationLocalPamService
-	DefaultAuthorizationLocalAuthorizedKeys = []template.String{template.MustNewString("{{.user.homeDir}}/.ssh/authorized_keys")}
+	DefaultAuthorizationLocalAuthorizedKeys = template.MustNewStrings("{{.user.homeDir}}/.ssh/authorized_keys")
 
 	_ = RegisterAuthorizationV(func() AuthorizationV {
 		return &AuthorizationLocal{}
@@ -18,14 +18,14 @@ var (
 )
 
 type AuthorizationLocal struct {
-	AuthorizedKeys []template.String  `yaml:"authorizedKeys,omitempty"`
+	AuthorizedKeys template.Strings   `yaml:"authorizedKeys,omitempty"`
 	Password       PasswordProperties `yaml:"password,omitempty"`
 	PamService     string             `yaml:"pamService,omitempty"`
 }
 
 func (this *AuthorizationLocal) SetDefaults() error {
 	return setDefaults(this,
-		fixedDefault("authorizedKeys", func(v *AuthorizationLocal) *[]template.String { return &v.AuthorizedKeys }, DefaultAuthorizationLocalAuthorizedKeys),
+		fixedDefault("authorizedKeys", func(v *AuthorizationLocal) *template.Strings { return &v.AuthorizedKeys }, DefaultAuthorizationLocalAuthorizedKeys),
 		func(v *AuthorizationLocal) (string, defaulter) { return "password", &v.Password },
 		fixedDefault("pamService", func(v *AuthorizationLocal) *string { return &v.PamService }, DefaultAuthorizationLocalPamService),
 	)
@@ -41,7 +41,7 @@ func (this *AuthorizationLocal) Trim() error {
 
 func (this *AuthorizationLocal) Validate() error {
 	return validate(this,
-		noopValidate[AuthorizationLocal]("authorizedKeys"),
+		func(v *AuthorizationLocal) (string, validator) { return "authorizedKeys", &v.AuthorizedKeys },
 		func(v *AuthorizationLocal) (string, validator) { return "password", &v.Password },
 		noopValidate[AuthorizationLocal]("pamService"),
 	)
@@ -69,7 +69,7 @@ func (this AuthorizationLocal) IsEqualTo(other any) bool {
 }
 
 func (this AuthorizationLocal) isEqualTo(other *AuthorizationLocal) bool {
-	return isEqualSlice(&this.AuthorizedKeys, &other.AuthorizedKeys) &&
+	return isEqual(&this.AuthorizedKeys, &other.AuthorizedKeys) &&
 		isEqual(&this.Password, &other.Password) &&
 		this.PamService == other.PamService
 }

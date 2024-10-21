@@ -29,6 +29,12 @@ Defines which flows are evaluated for user sessions.
 <<property("housekeeping", "Housekeeping", "housekeeping.md")>>
 Defines how Bifröst will clean up its sessions and connections.
 
+<<property("alternatives", "Alternatives", "alternatives.md")>>
+Defines how the imp (if needed) behaves to help to bridge context boundaries, for example to enable port-forwarding into an OCI container.
+
+<<property("startMessage", "string", template_context="context/core.md", default="")>>
+If defined this message will be displayed in the log files of Bifröst on startup.
+
 ## Examples
 
 1. Simple:
@@ -44,6 +50,9 @@ Defines how Bifröst will clean up its sessions and connections.
         # ...
     housekeeping:
       # ...
+    alternatives:
+      # ...
+    startMessage: ""
     ```
 
 2. ??? plain "Drop in replacement for OpenSSH sshd"

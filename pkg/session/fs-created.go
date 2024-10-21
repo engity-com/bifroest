@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/net"
 )
 
@@ -24,7 +23,7 @@ func (this *fsCreated) At() time.Time {
 	return this.info.createdAt
 }
 
-func (this *fsCreated) Remote() common.Remote {
+func (this *fsCreated) Remote() net.Remote {
 	return &this.remote
 }
 

@@ -61,6 +61,9 @@ func (this *Password) SetPassword(t PasswordType, password []byte) error {
 }
 
 func (this Password) Validate() error {
+	if len(this) == 0 {
+		return nil
+	}
 	parts := strings.SplitN(string(this), ":", 2)
 	if len(parts) != 2 {
 		return fmt.Errorf("%w: %v", ErrIllegalPassword, string(this))

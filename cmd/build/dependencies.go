@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 
-	"github.com/alecthomas/kingpin"
+	"github.com/alecthomas/kingpin/v2"
 )
 
 func newDependencies(b *base) *dependencies {

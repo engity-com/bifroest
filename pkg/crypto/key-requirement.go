@@ -1,7 +1,6 @@
 package crypto
 
 import (
-	"crypto"
 	"crypto/dsa"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -34,7 +33,7 @@ type KeyRequirement struct {
 	EllipticCurveType *EllipticCurveType
 }
 
-func (this KeyRequirement) CreateFile(rand io.Reader, fn string) (crypto.Signer, error) {
+func (this KeyRequirement) CreateFile(rand io.Reader, fn string) (PrivateKey, error) {
 	pk, err := this.GenerateKey(rand)
 	if err != nil {
 		return nil, err
@@ -54,8 +53,8 @@ func (this KeyRequirement) CreateFile(rand io.Reader, fn string) (crypto.Signer,
 	return pk, nil
 }
 
-func (this KeyRequirement) GenerateKey(rand io.Reader) (crypto.Signer, error) {
-	done := func(s crypto.Signer, err error) (crypto.Signer, error) {
+func (this KeyRequirement) GenerateKey(rand io.Reader) (PrivateKey, error) {
+	done := func(s PrivateKey, err error) (PrivateKey, error) {
 		if err != nil {
 			return nil, fmt.Errorf("cannot gerate %v private key: %w", this.Type, err)
 		}
@@ -78,15 +77,19 @@ func (this KeyRequirement) GenerateKey(rand io.Reader) (crypto.Signer, error) {
 	}
 }
 
-func (this KeyRequirement) generateRsa(rand io.Reader) (crypto.Signer, error) {
+func (this KeyRequirement) generateRsa(rand io.Reader) (PrivateKey, error) {
 	bitSize := DefaultKeyBitSize
 	if v := this.BitSize; v != nil {
 		bitSize = *v
 	}
-	return rsa.GenerateKey(rand, bitSize)
+	sdk, err := rsa.GenerateKey(rand, bitSize)
+	if err != nil {
+		return nil, err
+	}
+	return PrivateKeyFromSdk(sdk)
 }
 
-func (this KeyRequirement) generateDsa(rand io.Reader) (crypto.Signer, error) {
+func (this KeyRequirement) generateDsa(rand io.Reader) (PrivateKey, error) {
 	parameterSize := DefaultDsaParameterSize
 	if v := this.DsaParameterSize; v != nil {
 		parameterSize = *v
@@ -101,10 +104,10 @@ func (this KeyRequirement) generateDsa(rand io.Reader) (crypto.Signer, error) {
 		return nil, err
 	}
 
-	return &dsaPrivateKey{&pk}, nil
+	return PrivateKeyFromSdk(&dsaPrivateKey{&pk})
 }
 
-func (this KeyRequirement) generateEcdsa(rand io.Reader) (crypto.Signer, error) {
+func (this KeyRequirement) generateEcdsa(rand io.Reader) (PrivateKey, error) {
 	curveType := DefaultEllipticCurveType
 	if v := this.EllipticCurveType; v != nil {
 		curveType = *v
@@ -115,10 +118,17 @@ func (this KeyRequirement) generateEcdsa(rand io.Reader) (crypto.Signer, error) 
 		return nil, err
 	}
 
-	return ecdsa.GenerateKey(curve, rand)
+	sdk, err := ecdsa.GenerateKey(curve, rand)
+	if err != nil {
+		return nil, err
+	}
+	return PrivateKeyFromSdk(sdk)
 }
 
-func (this KeyRequirement) generateEd25519(rand io.Reader) (crypto.Signer, error) {
-	_, prv, err := ed25519.GenerateKey(rand)
-	return prv, err
+func (this KeyRequirement) generateEd25519(rand io.Reader) (PrivateKey, error) {
+	_, sdk, err := ed25519.GenerateKey(rand)
+	if err != nil {
+		return nil, err
+	}
+	return PrivateKeyFromSdk(sdk)
 }

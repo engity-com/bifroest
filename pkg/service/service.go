@@ -15,12 +15,14 @@ import (
 	"github.com/gliderlabs/ssh"
 	gssh "golang.org/x/crypto/ssh"
 
+	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/imp"
 	bnet "github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 )
@@ -57,7 +59,9 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 		ctx = context.Background()
 	}
 
-	if msg := this.Configuration.StartMessage; msg != "" {
+	if msg, err := this.Configuration.StartMessage.Render(noopContext{}); err != nil {
+		return err
+	} else if msg != "" {
 		for _, line := range strings.Split(msg, "\n") {
 			if line = strings.TrimSpace(line); line != "" {
 				log.Warn(line)
@@ -164,30 +168,37 @@ func (this *Service) prepare() (svc *service, err error) {
 	ctx := context.Background()
 	svc = &service{Service: this}
 
+	hostSigners, err := this.loadHostPrivateKeys()
+	if err != nil {
+		return fail(err)
+	}
+
+	if svc.alternatives, err = alternatives.NewProvider(ctx, this.Version, &this.Configuration.Alternatives); err != nil {
+		return fail(err)
+	}
+	if svc.imp, err = imp.NewImp(ctx, hostSigners[0]); err != nil {
+		return fail(err)
+	}
 	if svc.sessions, err = session.NewFacadeRepository(ctx, &this.Configuration.Session); err != nil {
 		return fail(err)
 	}
 	if svc.authorizer, err = authorization.NewAuthorizerFacade(ctx, &this.Configuration.Flows); err != nil {
 		return fail(err)
 	}
-	if svc.environments, err = environment.NewRepositoryFacade(ctx, &this.Configuration.Flows); err != nil {
+	if svc.environments, err = environment.NewRepositoryFacade(ctx, &this.Configuration.Flows, svc.alternatives, svc.imp); err != nil {
 		return fail(err)
 	}
 	if err = svc.houseKeeper.init(svc); err != nil {
 		return fail(err)
 	}
-	if err := this.prepareServer(ctx, svc); err != nil {
+	if err := this.prepareServer(ctx, svc, hostSigners); err != nil {
 		return fail(err)
 	}
 
 	return svc, nil
 }
 
-func (this *Service) prepareServer(_ context.Context, svc *service) (err error) {
-	fail := func(err error) error {
-		return err
-	}
-
+func (this *Service) prepareServer(_ context.Context, svc *service, hostPrivateKeys []crypto.PrivateKey) (err error) {
 	svc.server.IdleTimeout = 0 // handled by service's connection
 	svc.server.MaxTimeout = 0  // handled by service's connection
 	svc.server.ServerConfigCallback = svc.createNewServerConfig
@@ -210,17 +221,27 @@ func (this *Service) prepareServer(_ context.Context, svc *service) (err error) 
 	svc.server.SubsystemHandlers = map[string]ssh.SubsystemHandler{
 		"sftp": svc.handleSshSftpSession,
 	}
-	if svc.server.HostSigners, err = this.loadHostSigners(); err != nil {
-		return fail(err)
+	svc.server.HostSigners = make([]ssh.Signer, len(hostPrivateKeys))
+	for i, v := range hostPrivateKeys {
+		svc.server.HostSigners[i] = v.ToSsh()
 	}
 
 	return nil
 }
 
-func (this *Service) loadHostSigners() ([]ssh.Signer, error) {
+func (this *Service) loadHostPrivateKeys() ([]crypto.PrivateKey, error) {
 	kc := &this.Configuration.Ssh.Keys
-	result := make([]ssh.Signer, len(kc.HostKeys))
-	for i, fn := range kc.HostKeys {
+
+	hostKeys, err := kc.HostKeys.Render(noopContext{})
+	if err != nil {
+		return nil, errors.Config.Newf("cannot render hostKeys: %w", err)
+	}
+
+	var result []crypto.PrivateKey
+	for _, fn := range hostKeys {
+		if fn == "" {
+			continue
+		}
 		pk, err := crypto.EnsureKeyFile(fn, &crypto.KeyRequirement{
 			Type: crypto.KeyTypeEd25519,
 		}, nil)
@@ -233,12 +254,7 @@ func (this *Service) loadHostSigners() ([]ssh.Signer, error) {
 		} else if !ok {
 			return nil, fmt.Errorf("cannot check if host key %q is not allowed by restrictions: %w", fn, err)
 		}
-
-		signer, err := gssh.NewSignerFromKey(pk)
-		if err != nil {
-			return nil, fmt.Errorf("cannot convert host key %q: %w", fn, err)
-		}
-		result[i] = signer
+		result = append(result, pk)
 	}
 	return result, nil
 }
@@ -250,6 +266,8 @@ type service struct {
 	authorizer     authorization.CloseableAuthorizer
 	environments   environment.CloseableRepository
 	houseKeeper    houseKeeper
+	alternatives   alternatives.Provider
+	imp            imp.Imp
 	server         ssh.Server
 	forwardHandler ssh.ForwardedTCPHandler
 
@@ -288,6 +306,8 @@ func (this *service) createNewServerConfig(ssh.Context) *gssh.ServerConfig {
 }
 
 func (this *service) Close() (rErr error) {
+	defer common.KeepCloseError(&rErr, this.alternatives)
+	defer common.KeepCloseError(&rErr, this.imp)
 	defer common.KeepCloseError(&rErr, this.sessions)
 	defer common.KeepCloseError(&rErr, this.authorizer)
 	defer common.KeepCloseError(&rErr, this.environments)
