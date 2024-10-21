@@ -8,8 +8,6 @@ import (
 	gonet "net"
 	"sync"
 
-	"golang.org/x/net/proxy"
-
 	"github.com/engity-com/bifroest/pkg/codec"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
@@ -36,30 +34,13 @@ func NewMaster(_ context.Context, masterPrivateKey crypto.PrivateKey) (*Master, 
 		}
 	}
 
-	result.socks5Dialers.New = func() any {
-		s5d := &socks5Dialer{
-			master: result,
-			ref:    nil,
-		}
-		s5d.dialerDialer.parent = s5d
-
-		if d, err := proxy.SOCKS5("<later>", "<later>", nil, &s5d.dialerDialer); err != nil {
-			panic(err)
-		} else {
-			s5d.Dialer = d.(Dialer)
-		}
-
-		return s5d
-	}
-
 	return result, nil
 }
 
 type Master struct {
 	PrivateKey crypto.PrivateKey
 
-	tlsDialers    sync.Pool
-	socks5Dialers sync.Pool
+	tlsDialers sync.Pool
 }
 
 type Ref interface {
@@ -117,15 +98,6 @@ func (this *Master) tlsDialerFor(ref Ref) (_ *tls.Dialer, releaser func(), _ err
 	}, nil
 }
 
-func (this *Master) socks5DialerFor(ref Ref) (_ *socks5Dialer, releaser func()) {
-	result := this.socks5Dialers.Get().(*socks5Dialer)
-	result.ref = ref
-	return result, func() {
-		result.ref = nil
-		this.socks5Dialers.Put(result)
-	}
-}
-
 func (this *Master) basicTlsConfigFor(ownCertificate *x509.Certificate, sdk crypto2.Signer) *tls.Config {
 	return &tls.Config{
 		Certificates: []tls.Certificate{{
@@ -136,32 +108,4 @@ func (this *Master) basicTlsConfigFor(ownCertificate *x509.Certificate, sdk cryp
 		CipherSuites:       tlsCipherSuites,
 		InsecureSkipVerify: true,
 	}
-}
-
-type Dialer interface {
-	proxy.ContextDialer
-	proxy.Dialer
-}
-
-type socks5Dialer struct {
-	Dialer
-
-	master       *Master
-	dialerDialer socks5DialerDialer
-	ref          Ref
-}
-
-type socks5DialerDialer struct {
-	parent *socks5Dialer
-}
-
-func (this *socks5DialerDialer) DialContext(ctx context.Context, network string, addr string) (gonet.Conn, error) {
-	if network != "<later>" || addr != "<later>" {
-		panic("called from illegal stack position")
-	}
-	return this.parent.master.DialContext(ctx, this.parent.ref)
-}
-
-func (this *socks5DialerDialer) Dial(network string, addr string) (gonet.Conn, error) {
-	return this.DialContext(context.Background(), network, addr)
 }

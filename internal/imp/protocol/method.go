@@ -15,6 +15,8 @@ const (
 	MethodEcho Method = iota
 	MethodKill
 	MethodExit
+	MethodTcpForward
+	MethodNamedPipe
 )
 
 var (
@@ -59,9 +61,11 @@ func (this Method) Validate() error {
 
 var (
 	stringToProtocolMethod = map[string]Method{
-		"echo": MethodEcho,
-		"kill": MethodKill,
-		"exit": MethodExit,
+		"echo":       MethodEcho,
+		"kill":       MethodKill,
+		"exit":       MethodExit,
+		"tcpForward": MethodTcpForward,
+		"namedPipe":  MethodNamedPipe,
 	}
 	protocolMethodToString = func(in map[string]Method) map[Method]string {
 		result := make(map[Method]string, len(in))

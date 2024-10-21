@@ -3,6 +3,7 @@ package protocol
 import (
 	"context"
 
+	log "github.com/echocat/slf4g"
 	"github.com/vmihailenco/msgpack/v5"
 
 	"github.com/engity-com/bifroest/pkg/codec"
@@ -69,7 +70,7 @@ func (this *methodEchoResponse) DecodeMsgPack(dec codec.MsgPackDecoder) (err err
 	return nil
 }
 
-func (this *imp) handleMethodEcho(ctx context.Context, header *Header, conn codec.MsgPackConn) error {
+func (this *imp) handleMethodEcho(ctx context.Context, header *Header, _ log.Logger, conn codec.MsgPackConn) error {
 	return handleFromServerSide(ctx, header, conn, func(req *methodEchoRequest) methodEchoResponse {
 		return methodEchoResponse{msg: "thanks for: " + req.msg}
 	})

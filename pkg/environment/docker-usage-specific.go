@@ -10,10 +10,12 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/gliderlabs/ssh"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -76,16 +78,15 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 
 	// TODO! Does not work because we need to forward a correct socket into the container
 	// in this case we have to mount a directory into the container to ensure this.
-	// --------
-	// if ssh.AgentRequested(sshSess) {
-	// 	al, err := ssh.NewAgentListener()
-	// 	if err != nil {
-	// 		return failf("cannot listen to agent: %w", err)
-	// 	}
-	// 	defer common.IgnoreCloseError(al)
-	// go ssh.ForwardAgentConnections(al, sshSess)
-	// 	ev.Set("SSH_AUTH_SOCK", al.Addr().String())
-	// }
+	if ssh.AgentRequested(sshSess) {
+		al, err := net.NewNamedPipe("ssh-agent", "")
+		if err != nil {
+			return failf("cannot listen to agent: %w", err)
+		}
+		defer common.IgnoreCloseError(al)
+		go ssh.ForwardAgentConnections(al, sshSess)
+		ev.Set("SSH_AUTH_SOCK", al.Addr().String())
+	}
 
 	var execId string
 	if ptyReq, winCh, isPty := sshSess.Pty(); isPty {
@@ -211,5 +212,5 @@ func (this *docker) NewDestinationConnection(ctx context.Context, host string, p
 		return nil, err
 	}
 
-	return this.impSession.InitiateDirectTcp(ctx, connId, host, port)
+	return this.impSession.InitiateTcpForward(ctx, connId, host, port)
 }

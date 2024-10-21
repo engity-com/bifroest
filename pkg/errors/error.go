@@ -53,6 +53,25 @@ func (this *Error) Unwrap() error {
 	return this.Cause
 }
 
+func (this *Error) Extendf(msg string, args ...any) *Error {
+	return &Error{
+		Message: fmt.Sprintf("%v: "+msg, append([]any{this}, args...)...),
+		Cause:   this,
+		Type:    this.Type,
+	}
+}
+
+func (this *Error) Extend(args ...any) *Error {
+	if len(args) == 0 {
+		return this
+	}
+	return &Error{
+		Message: fmt.Sprintf("%v: %v", this, fmt.Sprint(args...)),
+		Cause:   this,
+		Type:    this.Type,
+	}
+}
+
 func IsError(err error) (eErr *Error, ok bool) {
 	ok = As(err, &eErr)
 	return

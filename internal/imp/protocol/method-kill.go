@@ -3,6 +3,7 @@ package protocol
 import (
 	"context"
 
+	log "github.com/echocat/slf4g"
 	"github.com/vmihailenco/msgpack/v5"
 
 	"github.com/engity-com/bifroest/pkg/codec"
@@ -74,7 +75,7 @@ func (this *methodKillResponse) DecodeMsgPack(dec codec.MsgPackDecoder) (err err
 	return nil
 }
 
-func (this *imp) handleMethodKill(ctx context.Context, header *Header, conn codec.MsgPackConn) error {
+func (this *imp) handleMethodKill(ctx context.Context, header *Header, _ log.Logger, conn codec.MsgPackConn) error {
 	return handleFromServerSide(ctx, header, conn, func(req *methodKillRequest) methodKillResponse {
 		var rsp methodKillResponse
 		if err := this.kill(req.pid, req.signal); err != nil {

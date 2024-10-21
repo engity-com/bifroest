@@ -48,16 +48,29 @@ func FullDuplexCopy(ctx context.Context, left io.ReadWriter, right io.ReadWriter
 		}
 
 		n, err := io.Copy(to, from)
-		if isRelevantError(err) {
-			dones <- done{isL2r, err}
-		} else {
-			dones <- done{isL2r, nil}
+		if !isRelevantError(err) {
+			// If this is NOT relevant, set it always to nil...
+			err = nil
 		}
+
+		if err == nil {
+			if cw, ok := to.(CloseWriter); ok {
+				err = cw.CloseWrite()
+				if !isRelevantError(err) {
+					// If this is NOT relevant, set it always to nil...
+					err = nil
+				}
+			}
+		}
+
+		dones <- done{isL2r, err}
+
 		if isL2r {
 			l2r.Store(n)
 		} else {
 			r2l.Store(n)
 		}
+
 		if opts != nil {
 			if f := opts.OnStreamEnd; f != nil {
 				f(isL2r, err)

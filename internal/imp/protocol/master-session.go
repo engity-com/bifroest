@@ -2,11 +2,11 @@ package protocol
 
 import (
 	"context"
-	"net"
-	"strconv"
+	gonet "net"
 
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -19,26 +19,30 @@ func (this *MasterSession) Close() error {
 	return nil
 }
 
-func (this *MasterSession) InitiateDirectTcp(ctx context.Context, connectionId connection.Id, host string, port uint32) (net.Conn, error) {
-	fail := func(err error) (net.Conn, error) {
-		return nil, errors.Network.Newf("cannot initiate direct tcp connection for %v to %s:%d: %w", connectionId, host, port, err)
+func (this *MasterSession) InitiateTcpForward(ctx context.Context, connectionId connection.Id, target net.HostPort) (gonet.Conn, error) {
+	fail := func(err error) (gonet.Conn, error) {
+		return nil, errors.Network.Newf("cannot initiate direct tcp connection for %v to %v: %w", connectionId, target, err)
 	}
 
-	dialer, releaser := this.parent.socks5DialerFor(this.ref)
-	defer releaser()
-
-	dest := net.JoinHostPort(host, strconv.FormatInt(int64(port), 10))
-
-	conn, err := dialer.DialContext(ctx, "tcp", dest)
+	result, err := this.parent.methodTcpForward(ctx, this.ref, connectionId, target)
 	if err != nil {
 		return fail(err)
 	}
-	return conn, nil
+
+	return result, nil
 }
 
-func (this *MasterSession) InitiateAgentForward(ctx context.Context, connectionId connection.Id) (_ net.Conn, socketPath string, _ error) {
-	// TODO implement me
-	panic("implement me")
+func (this *MasterSession) InitiateNamedPipe(ctx context.Context, connectionId connection.Id, purpose net.Purpose) (net.NamedPipe, error) {
+	fail := func(err error) (net.NamedPipe, error) {
+		return nil, errors.Network.Newf("cannot initiate direct tcp connection for %v of %v: %w", connectionId, purpose, err)
+	}
+
+	result, err := this.parent.methodNamedPipe(ctx, this.ref, connectionId, purpose)
+	if err != nil {
+		return fail(err)
+	}
+
+	return result, nil
 }
 
 func (this *MasterSession) Echo(ctx context.Context, connectionId connection.Id, in string) (string, error) {

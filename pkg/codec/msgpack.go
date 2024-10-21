@@ -145,6 +145,13 @@ type msgPackConn struct {
 	*msgpack.Decoder
 }
 
+func (this *msgPackConn) NetConn() net.Conn {
+	if nce, ok := this.Conn.(interface{ NetConn() net.Conn }); ok {
+		return nce.NetConn()
+	}
+	return nil
+}
+
 func (this *msgPackConn) Close() error {
 	defer ReleasePooledMsgPackConn(this)
 	return this.Conn.Close()

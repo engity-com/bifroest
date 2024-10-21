@@ -125,18 +125,21 @@ func roundtrip(t *testing.T) {
 		err := sess.Kill(ctx, connId, 66666666666, sys.SIGTRAP)
 		require.Equal(t, ErrNoSuchProcess, err)
 	})
-	t.Run("port-forward-tcp", func(t *testing.T) {
+	t.Run("tcp-forward", func(t *testing.T) {
 		hc := http.Client{
 			Transport: &http.Transport{
 				DialContext: func(ctx context.Context, network, addr string) (gonet.Conn, error) {
 					assert.Equal(t, network, "tcp")
 					assert.Equal(t, addr, "foo:80")
-					conn, err := sess.InitiateDirectTcp(ctx, connId, roundtripTestServiceAddress.Host.String(), uint32(roundtripTestServiceAddress.Port))
+					conn, err := sess.InitiateTcpForward(ctx, connId, roundtripTestServiceAddress)
 					assert.NoError(t, err)
 					return conn, nil
 				},
 			},
 		}
+		// Because it will keep the connection to the imp open. If we do not close it, it will block forever...
+		defer hc.CloseIdleConnections()
+
 		resp, err := hc.Get("http://foo/")
 		require.NoError(t, err)
 		defer common.IgnoreCloseError(resp.Body)
@@ -146,6 +149,11 @@ func roundtrip(t *testing.T) {
 		b, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
 		assert.Equal(t, "OK!", string(b))
+	})
+	t.Run("named-pipe", func(t *testing.T) {
+		pipe, err := sess.InitiateNamedPipe(ctx, connId, "foo")
+		require.NoError(t, err)
+		defer common.IgnoreCloseError(pipe)
 	})
 
 	// Has to be the last run!

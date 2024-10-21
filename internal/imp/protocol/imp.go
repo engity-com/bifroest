@@ -7,11 +7,8 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"sync"
-	"sync/atomic"
 
 	log "github.com/echocat/slf4g"
-	"github.com/things-go/go-socks5"
 
 	"github.com/engity-com/bifroest/pkg/codec"
 	"github.com/engity-com/bifroest/pkg/common"
@@ -54,46 +51,18 @@ func (this *Imp) Serve(ctx context.Context) error {
 	tlsLn := tls.NewListener(ln, tlsConfig)
 
 	instance := &imp{
-		Imp:      this,
-		listener: NewMuxListener(tlsLn),
-		socks5:   socks5.NewServer(socks5.WithLogger(log.GetLogger("socks5"))),
+		Imp: this,
 	}
 
-	var wg sync.WaitGroup
-
-	var rpcErr atomic.Pointer[error]
-	wg.Add(1)
 	go func() {
-		defer wg.Done()
-		if err := instance.serveRpc(instance.listener.Rpc()); err != nil {
-			if !bnet.IsClosedError(err) && !errors.Is(err, http.ErrServerClosed) {
-				rpcErr.Store(&err)
-			}
-		}
+		<-ctx.Done()
+		_ = tlsLn.Close()
 	}()
 
-	var socksErr atomic.Pointer[error]
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		if err := instance.serveSocks5(instance.listener.Socks5()); err != nil {
-			if !bnet.IsClosedError(err) {
-				socksErr.Store(&err)
-			}
+	if err := instance.serveRpc(ctx, tlsLn); err != nil {
+		if !bnet.IsClosedError(err) && !errors.Is(err, http.ErrServerClosed) {
+			return failf("problems while listening to rpc: %w", err)
 		}
-	}()
-
-	<-ctx.Done()
-	if err := instance.listener.Close(); err != nil {
-		return failf("cannot close listener: %v", err)
-	}
-
-	wg.Wait()
-	if err := rpcErr.Load(); err != nil {
-		return failf("problems while listening to rpc: %w", *err)
-	}
-	if err := socksErr.Load(); err != nil {
-		return failf("problems while listening to socks5: %w", *err)
 	}
 
 	return nil
@@ -101,31 +70,16 @@ func (this *Imp) Serve(ctx context.Context) error {
 
 type imp struct {
 	*Imp
-	listener MuxListener
-	socks5   *socks5.Server
 }
 
-func (this *imp) serveSocks5(ln net.Listener) error {
+func (this *imp) serveRpc(ctx context.Context, ln net.Listener) error {
 	defer common.IgnoreCloseError(ln)
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			return err
 		}
-		if err := this.socks5.ServeConn(conn); err != nil {
-			log.GetLogger("socks5").WithError(err).Warn()
-		}
-	}
-}
 
-func (this *imp) serveRpc(ln net.Listener) error {
-	ctx := context.Background()
-	defer common.IgnoreCloseError(ln)
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			return err
-		}
 		if err := this.serveRpcConn(ctx, conn); err != nil {
 			log.GetLogger("rpc").WithError(err).Warn()
 		}
@@ -146,14 +100,22 @@ func (this *imp) serveRpcConn(ctx context.Context, plainConn net.Conn) (rErr err
 	if err := header.DecodeMsgPack(conn); err != nil {
 		return fail(err)
 	}
+	l := this.logger().
+		With("remote", plainConn.RemoteAddr()).
+		With("method", header.Method).
+		With("connectionId", header.ConnectionId)
 
 	switch header.Method {
 	case MethodEcho:
-		return done(this.handleMethodEcho(ctx, &header, conn))
+		return done(this.handleMethodEcho(ctx, &header, l, conn))
 	case MethodKill:
-		return done(this.handleMethodKill(ctx, &header, conn))
+		return done(this.handleMethodKill(ctx, &header, l, conn))
 	case MethodExit:
-		return done(this.handleMethodExit(ctx, &header, conn))
+		return done(this.handleMethodExit(ctx, &header, l, conn))
+	case MethodTcpForward:
+		return done(this.handleMethodTcpForward(ctx, &header, l, conn))
+	case MethodNamedPipe:
+		return done(this.handleMethodNamedPipe(ctx, &header, l, conn))
 	default:
 		return fail(errors.Network.Newf("unsupported method %v", header.Method))
 	}
@@ -213,4 +175,13 @@ func (this *Imp) getAddr() string {
 		return v
 	}
 	return ":" + strconv.Itoa(DefaultPort)
+}
+
+func (this *Imp) logger() log.Logger {
+	result := this.Logger
+	if result == nil {
+		result = log.GetLogger("imp")
+	}
+	return result.
+		With("sessionId", this.SessionId)
 }

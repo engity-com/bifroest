@@ -6,9 +6,11 @@ require (
 	github.com/GehirnInc/crypt v0.0.0-20230320061759-8cc1b52080c5
 	github.com/Masterminds/semver/v3 v3.3.0
 	github.com/Masterminds/sprig/v3 v3.3.0
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/alecthomas/kingpin/v2 v2.4.0
 	github.com/coreos/go-oidc/v3 v3.11.0
 	github.com/creack/pty v1.1.23
+	github.com/docker/cli v27.3.1+incompatible
 	github.com/docker/docker v27.3.1+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/echocat/slf4g v1.6.1
@@ -30,10 +32,9 @@ require (
 	github.com/shirou/gopsutil/v4 v4.24.9
 	github.com/stretchr/testify v1.9.0
 	github.com/tg123/go-htpasswd v1.2.2
-	github.com/things-go/go-socks5 v0.0.5
 	github.com/vmihailenco/msgpack/v5 v5.4.1
+	github.com/xtaci/smux v1.5.31
 	golang.org/x/crypto v0.28.0
-	golang.org/x/net v0.30.0
 	golang.org/x/oauth2 v0.23.0
 	golang.org/x/sys v0.26.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -43,14 +44,12 @@ require (
 	dario.cat/mergo v1.0.1 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20230124172434-306776ec8161 // indirect
 	github.com/Masterminds/goutils v1.1.1 // indirect
-	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b // indirect
 	github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/containerd/stargz-snapshotter/estargz v0.15.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
-	github.com/docker/cli v27.3.1+incompatible // indirect
 	github.com/docker/distribution v2.8.3+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.8.2 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
