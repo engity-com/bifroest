@@ -106,31 +106,8 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 		<-ctx.Done()
 		_ = pipe.Close()
 	}()
-	if nce, ok := conn.(interface{ NetConn() gonet.Conn }); ok {
-		nc := nce.NetConn()
-		if nc != nil {
-			go func() {
-				buf := make([]byte, 0)
-				i := 0
-				for {
-					_, err := nc.Read(buf)
-					logger.WithError(err).With("i", i).Info()
-					if err != nil {
-						_ = pipe.Close()
-						return
-					}
-					i++
-				}
-			}()
-		}
-	}
 
 	conf := baseNamedPipeConfig()
-	muxClient, err := smux.Client(conn, conf)
-	if err != nil {
-		return failResponse(err)
-	}
-
 	rsp := methodNamedPipeResponse{path: pipe.Path()}
 	if err := rsp.EncodeMsgPack(conn); err != nil {
 		return failCore(err)
@@ -141,6 +118,49 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 			return "source -> destination"
 		}
 		return "destination -> source"
+	}
+
+	in, out := gonet.Pipe()
+	defer common.IgnoreCloseError(in)
+	defer common.IgnoreCloseError(out)
+
+	go func() {
+		if err := sys.FullDuplexCopy(ctx, conn, in, &sys.FullDuplexCopyOpts{
+			OnStart: func() {
+				logger.Debug("port forwarding started")
+			},
+			OnEnd: func(s2d, d2s int64, duration time.Duration, err error, wasInL2r *bool) {
+				ld := logger.
+					With("s2d", s2d).
+					With("d2s", d2s).
+					With("duration", duration)
+				if wasInL2r != nil {
+					ld = ld.With("direction", nameOf(*wasInL2r))
+				}
+
+				if err != nil {
+					ld.WithError(err).Error("cannot successful handle port forwarding request; canceling...")
+				} else {
+					ld.Info("port forwarding finished")
+				}
+			},
+			OnStreamEnd: func(isL2r bool, err error) {
+				defer common.IgnoreCloseError(pipe)
+				name := "source -> destination"
+				if !isL2r {
+					name = "destination -> source"
+				}
+				logger.WithError(err).Tracef("coping of %s done", name)
+			},
+		}); err != nil {
+			logger.WithError(err).
+				Error("connection failed unexpectedly")
+		}
+	}()
+
+	muxClient, err := smux.Client(out, conf)
+	if err != nil {
+		return failResponse(err)
 	}
 
 	for {
