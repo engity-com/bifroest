@@ -171,6 +171,8 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 
 		err = sess.Ping(ctx, connId)
 		require.NoError(t, err)
+
+		time.Sleep(time.Millisecond * 100)
 	})
 
 	if *roundtripTestWithKill {
@@ -191,6 +193,8 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 				assert.False(t, running)
 			}, 1*time.Minute, 100*time.Millisecond)
 		})
+
+		time.Sleep(time.Millisecond * 100)
 	}
 
 	t.Run("tcp-forward", func(t *testing.T) {
@@ -221,6 +225,8 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 		b, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
 		assert.Equal(t, "OK!", string(b))
+
+		time.Sleep(time.Millisecond * 100)
 	})
 
 	t.Run("named-pipe", func(t *testing.T) {
@@ -251,6 +257,8 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 			assert.NoError(t, err)
 
 			assert.Equal(t, "foobar", string(buf))
+
+			time.Sleep(time.Millisecond * 100)
 		}()
 
 		time.Sleep(time.Millisecond * 100)
@@ -268,6 +276,8 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 		require.NoError(t, remote.Close())
 		require.NoError(t, local.Close())
 		iwg.Wait()
+
+		time.Sleep(time.Millisecond * 100)
 	})
 
 	t.Run("named-pipe-noop", func(t *testing.T) {
@@ -283,6 +293,8 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 		time.Sleep(time.Millisecond * 100)
 
 		require.NoError(t, local.Close())
+
+		time.Sleep(time.Millisecond * 100)
 	})
 }
 
