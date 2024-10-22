@@ -10,6 +10,10 @@ import (
 	"github.com/engity-com/bifroest/pkg/net"
 )
 
+const (
+	EnvName = "BIFROEST_SESSION_ID"
+)
+
 var (
 	ErrMaxConnectionsPerSessionReached = errors.Newf(errors.User, "max connections per session reached")
 )

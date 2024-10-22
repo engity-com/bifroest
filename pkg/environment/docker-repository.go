@@ -23,6 +23,7 @@ import (
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/go-connections/nat"
 	"github.com/echocat/slf4g"
+	"github.com/echocat/slf4g/level"
 	"github.com/gliderlabs/ssh"
 
 	"github.com/engity-com/bifroest/pkg/alternatives"
@@ -65,7 +66,8 @@ type DockerRepository struct {
 	apiClient   client.APIClient
 	hostVersion *types.Version
 
-	Logger log.Logger
+	Logger              log.Logger
+	defaultLogLevelName string
 
 	sessionIdMutex  common.KeyedMutex[session.Id]
 	activeInstances sync.Map
@@ -93,14 +95,26 @@ func NewDockerRepository(ctx context.Context, flow configuration.FlowName, conf 
 		return failf("cannot retrieve docker host's version: %w", err)
 	}
 
-	return &DockerRepository{
+	result := DockerRepository{
 		flow:         flow,
 		conf:         conf,
 		alternatives: ap,
 		imp:          i,
 		apiClient:    apiClient,
 		hostVersion:  &hostVersion,
-	}, nil
+	}
+
+	lp := result.logger().GetProvider()
+	if la, ok := lp.(level.Aware); ok {
+		if lna, ok := lp.(level.NamesAware); ok {
+			lvl := la.GetLevel()
+			if result.defaultLogLevelName, err = lna.GetLevelNames().ToName(lvl); err != nil {
+				return failf("cannot transform to name of level %v: %w", lvl, err)
+			}
+		}
+	}
+
+	return &result, nil
 }
 
 func (this *DockerRepository) WillBeAccepted(ctx Context) (ok bool, err error) {
@@ -182,7 +196,7 @@ func (this *DockerRepository) createContainerBy(req Request, sess session.Sessio
 	defer func() {
 		if !success {
 			if _, err := this.removeContainer(req.Context(), containerId); err != nil {
-				req.Logger().
+				req.Connection().Logger().
 					WithError(err).
 					Warn("cannot remove orphan container within emergency cleanup; container could still be there")
 			}
@@ -223,13 +237,13 @@ func (this *DockerRepository) pullImage(req Request, ref string) error {
 		return fail(err)
 	}
 
-	var opts image.PullOptions
+	var pOpts image.PullOptions
 
-	if opts.RegistryAuth, err = this.resolvePullCredentials(req, ref); err != nil {
+	if pOpts.RegistryAuth, err = this.resolvePullCredentials(req, ref); err != nil {
 		return fail(err)
 	}
 
-	rc, err := this.apiClient.ImagePull(req.Context(), ref, opts)
+	rc, err := this.apiClient.ImagePull(req.Context(), ref, pOpts)
 	if err != nil {
 		return fail(err)
 	}
@@ -239,7 +253,7 @@ func (this *DockerRepository) pullImage(req Request, ref string) error {
 		return nil
 	}
 
-	l := req.Logger().
+	l := req.Connection().Logger().
 		With("image", ref)
 	if err := handleImagePullProgress(rc, progress, l); err != nil {
 		return fail(err)
@@ -291,12 +305,13 @@ func (this *DockerRepository) resolveContainerConfig(req Request, sess session.S
 
 	var result container.Config
 
+	remote := req.Connection().Remote()
 	result.Labels = map[string]string{
 		DockerLabelFlow:      this.flow.String(),
 		DockerLabelSessionId: sess.Id().String(),
 
-		DockerLabelCreatedRemoteUser: req.Remote().User(),
-		DockerLabelCreatedRemoteHost: req.Remote().Host().String(),
+		DockerLabelCreatedRemoteUser: remote.User(),
+		DockerLabelCreatedRemoteHost: remote.Host().String(),
 	}
 	if result.Labels[DockerLabelShellCommand], err = this.resolveEncodedShellCommand(req); err != nil {
 		return fail(err)
@@ -329,12 +344,17 @@ func (this *DockerRepository) resolveContainerConfig(req Request, sess session.S
 	result.Entrypoint = strslice.StrSlice{}
 	switch this.hostVersion.Os {
 	case sys.OsWindows:
-		result.Cmd = []string{BifroestWindowsBinaryMountTarget, `imp`, `--log.colorMode=always`}
+		result.Cmd = []string{BifroestWindowsBinaryMountTarget}
 	case sys.OsLinux:
 		result.User = "root"
-		result.Cmd = []string{BifroestUnixBinaryMountTarget, `imp`, `--log.colorMode=always`}
+		result.Cmd = []string{BifroestUnixBinaryMountTarget}
 	default:
 		return failf("cannot resolve target path for host %s/%s", this.hostVersion.Os, this.hostVersion.Arch)
+	}
+
+	result.Cmd = append(result.Cmd, `imp`, `--log.colorMode=always`)
+	if this.defaultLogLevelName != "" {
+		result.Cmd = append(result.Cmd, `--log.level=`+this.defaultLogLevelName)
 	}
 
 	masterPub, err := this.imp.GetMasterPublicKey()
@@ -343,8 +363,8 @@ func (this *DockerRepository) resolveContainerConfig(req Request, sess session.S
 	}
 
 	result.Env = []string{
-		"BIFROEST_MASTER_PUBLIC_KEY=" + base64.RawStdEncoding.EncodeToString(masterPub.Marshal()),
-		"BIFROEST_SESSION_ID=" + sess.Id().String(),
+		imp.EnvVarMasterPublicKey + "=" + base64.RawStdEncoding.EncodeToString(masterPub.Marshal()),
+		session.EnvName + "=" + sess.Id().String(),
 	}
 
 	return &result, nil
@@ -582,16 +602,19 @@ func (this *DockerRepository) findOrEnsureBySession(ctx context.Context, sess se
 		}
 	}
 
+	logger := this.logger().
+		With("containerId", c.ID).
+		With("sessionId", sessId)
+
 	removeContainerUnchecked := func() {
 		if _, err := this.removeContainer(ctx, c.ID); err != nil {
-			this.logger().
+			logger.
 				WithError(err).
-				With("containerId", c.ID).
 				Warnf("cannot broken container; need to be done manually")
 		}
 	}
 
-	instance, err := this.new(ctx, c)
+	instance, err := this.new(ctx, c, logger)
 	if err != nil {
 		if errors.Is(err, containerContainsProblemsErr) {
 			if createUsing != nil {

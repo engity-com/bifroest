@@ -13,7 +13,9 @@ import (
 	"github.com/gliderlabs/ssh"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
+	bconn "github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/errors"
+	bnet "github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
@@ -55,7 +57,7 @@ func (this *service) onNewConnConnection(ctx ssh.Context, orig net.Conn) net.Con
 
 	if wrapped != nil {
 		logger.Debug("new connection started")
-		ctx.SetValue(loggerCtxKey, logger)
+		ctx.SetValue(connectionCtxKey, wrapped)
 	}
 
 	return wrapped
@@ -76,9 +78,15 @@ func (this *service) newConnection(orig net.Conn, ctx ssh.Context, logger log.Lo
 		}
 	}
 
+	id, err := bconn.NewId()
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Now().UnixMilli()
 	result := &connection{
 		Conn:    orig,
+		id:      id,
 		context: ctx,
 		logger:  logger,
 		service: this,
@@ -90,6 +98,7 @@ func (this *service) newConnection(orig net.Conn, ctx ssh.Context, logger log.Lo
 
 type connection struct {
 	net.Conn
+	id      bconn.Id
 	context ssh.Context
 	logger  log.Logger
 	service *service
@@ -101,6 +110,18 @@ type connection struct {
 
 	read    atomic.Int64
 	written atomic.Int64
+}
+
+func (this *connection) Id() bconn.Id {
+	return this.id
+}
+
+func (this *connection) Remote() bnet.Remote {
+	return &remote{this.context}
+}
+
+func (this *connection) Logger() log.Logger {
+	return this.logger
 }
 
 func (this *connection) doWithInterceptor(consumer func(session.ConnectionInterceptor) error) error {

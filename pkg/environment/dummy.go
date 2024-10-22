@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
@@ -36,11 +37,11 @@ func (this *dummy) Run(t Task) (int, error) {
 	return int(exitCode), nil
 }
 
-func (this *dummy) IsPortForwardingAllowed(string, uint32) (bool, error) {
+func (this *dummy) IsPortForwardingAllowed(net.HostPort) (bool, error) {
 	return false, nil
 }
 
-func (this *dummy) NewDestinationConnection(context.Context, string, uint32) (io.ReadWriteCloser, error) {
+func (this *dummy) NewDestinationConnection(context.Context, net.HostPort) (io.ReadWriteCloser, error) {
 	return nil, nil
 }
 

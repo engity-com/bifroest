@@ -49,7 +49,7 @@ func NewSimple(_ context.Context, flow configuration.FlowName, conf *configurati
 
 func (this *SimpleAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authorization, error) {
 	fail := func(err error) (Authorization, error) {
-		return nil, fmt.Errorf("cannot authorize simple %q via authorized keys: %w", req.Remote().User(), err)
+		return nil, fmt.Errorf("cannot authorize simple %q via authorized keys: %w", req.Connection().Remote().User(), err)
 	}
 	failf := func(message string, args ...any) (Authorization, error) {
 		return fail(fmt.Errorf(message, args...))
@@ -60,19 +60,19 @@ func (this *SimpleAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriz
 		return fail(err)
 	}
 	if !accepted {
-		return Forbidden(req.Remote()), nil
+		return Forbidden(req.Connection().Remote()), nil
 	}
 
 	sess, err := req.Sessions().FindByPublicKey(req.Context(), req.RemotePublicKey(), (&session.FindOpts{}).WithPredicate(
 		session.IsFlow(this.flow),
 		session.IsStillValid,
-		session.IsRemoteName(req.Remote().User()),
+		session.IsRemoteName(req.Connection().Remote().User()),
 	))
 	if errors.Is(err, session.ErrNoSuchSession) {
 		if ok, err := this.isAuthorizedViaPublicKey(req, entry); err != nil {
 			return fail(err)
 		} else if !ok {
-			return Forbidden(req.Remote()), nil
+			return Forbidden(req.Connection().Remote()), nil
 		}
 		sess, err = this.ensureSessionFor(req, entry)
 		if err != nil {
@@ -92,7 +92,7 @@ func (this *SimpleAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriz
 
 func (this *SimpleAuthorizer) lookupEntry(req Request) (entry *configuration.AuthorizationSimpleEntry, auth *simple, accepted bool, err error) {
 	for _, candidate := range this.conf.Entries {
-		if !strings.EqualFold(candidate.Name, req.Remote().User()) {
+		if !strings.EqualFold(candidate.Name, req.Connection().Remote().User()) {
 			continue
 		}
 		entry = &candidate
@@ -105,7 +105,7 @@ func (this *SimpleAuthorizer) lookupEntry(req Request) (entry *configuration.Aut
 
 	auth = &simple{
 		entry,
-		req.Remote(),
+		req.Connection().Remote(),
 		nil,
 		this.flow,
 		nil,
@@ -157,7 +157,7 @@ func (this *SimpleAuthorizer) isAuthorizedViaPublicKey(req PublicKeyRequest, ent
 	}
 
 	if !foundMatch {
-		req.Logger().Debug("presented public key does not match any authorized keys of simple user")
+		req.Connection().Logger().Debug("presented public key does not match any authorized keys of simple user")
 		return false, nil
 	}
 
@@ -186,10 +186,10 @@ func (this *SimpleAuthorizer) ensureSessionFor(req Request, entry *configuration
 	sess, err := req.Sessions().FindByAccessToken(req.Context(), at, (&session.FindOpts{}).WithPredicate(
 		session.IsFlow(this.flow),
 		session.IsStillValid,
-		session.IsRemoteName(req.Remote().User()),
+		session.IsRemoteName(req.Connection().Remote().User()),
 	))
 	if errors.Is(err, session.ErrNoSuchSession) {
-		sess, err = req.Sessions().Create(req.Context(), this.flow, req.Remote(), at)
+		sess, err = req.Sessions().Create(req.Context(), this.flow, req.Connection().Remote(), at)
 	}
 	if err != nil {
 		return fail(err)
@@ -200,7 +200,7 @@ func (this *SimpleAuthorizer) ensureSessionFor(req Request, entry *configuration
 
 func (this *SimpleAuthorizer) AuthorizePassword(req PasswordRequest) (Authorization, error) {
 	fail := func(err error) (Authorization, error) {
-		return nil, fmt.Errorf("cannot authorize simple %q via password: %w", req.Remote().User(), err)
+		return nil, fmt.Errorf("cannot authorize simple %q via password: %w", req.Connection().Remote().User(), err)
 	}
 	failf := func(message string, args ...any) (Authorization, error) {
 		return fail(fmt.Errorf(message, args...))
@@ -211,15 +211,15 @@ func (this *SimpleAuthorizer) AuthorizePassword(req PasswordRequest) (Authorizat
 		return fail(err)
 	}
 	if !accepted {
-		return Forbidden(req.Remote()), nil
+		return Forbidden(req.Connection().Remote()), nil
 	}
 
 	if expected, err := entry.GetPassword(); err != nil {
 		return failf("cannot get password of entry %q: %w", entry.Name, err)
 	} else if expected.IsZero() {
-		return Forbidden(req.Remote()), nil
+		return Forbidden(req.Connection().Remote()), nil
 	} else if ok, err := expected.Compare([]byte(req.RemotePassword())); err != nil || !ok {
-		return Forbidden(req.Remote()), nil
+		return Forbidden(req.Connection().Remote()), nil
 	}
 
 	sess, err := this.ensureSessionFor(req, entry)
@@ -234,7 +234,7 @@ func (this *SimpleAuthorizer) AuthorizePassword(req PasswordRequest) (Authorizat
 
 func (this *SimpleAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Authorization, error) {
 	fail := func(err error) (Authorization, error) {
-		return nil, fmt.Errorf("cannot authorize simple %q via password: %w", req.Remote().User(), err)
+		return nil, fmt.Errorf("cannot authorize simple %q via password: %w", req.Connection().Remote().User(), err)
 	}
 	failf := func(message string, args ...any) (Authorization, error) {
 		return fail(fmt.Errorf(message, args...))
@@ -245,7 +245,7 @@ func (this *SimpleAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Auth
 		return fail(err)
 	}
 	if !accepted {
-		return Forbidden(req.Remote()), nil
+		return Forbidden(req.Connection().Remote()), nil
 	}
 
 	pass, err := req.Prompt("Password: ", false)
@@ -256,9 +256,9 @@ func (this *SimpleAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Auth
 	if expected, err := entry.GetPassword(); err != nil {
 		return failf("cannot get password of entry %q: %w", entry.Name, err)
 	} else if expected.IsZero() {
-		return Forbidden(req.Remote()), nil
+		return Forbidden(req.Connection().Remote()), nil
 	} else if ok, err := expected.Compare([]byte(pass)); err != nil || !ok {
-		return Forbidden(req.Remote()), nil
+		return Forbidden(req.Connection().Remote()), nil
 	}
 
 	sess, err := this.ensureSessionFor(req, entry)

@@ -33,12 +33,12 @@ var _ = registerCommand(func(app *kingpin.Application) {
 		PlaceHolder("[<host>]:<port>").
 		StringVar(&addr)
 	cmd.Flag("masterPublicKey", "Public SSH key of the master service which is accessing this imp instance.").
-		Envar("BIFROEST_MASTER_PUBLIC_KEY").
+		Envar(imp.EnvVarMasterPublicKey).
 		PlaceHolder("<base64 std raw encoded ssh public key>").
 		Required().
 		StringVar(&encodecMasterPublicKey)
 	cmd.Flag("sessionId", "Session ID of which this IMP is working for.").
-		Envar("BIFROEST_SESSION_ID").
+		Envar(session.EnvName).
 		PlaceHolder("<sessionId>").
 		Required().
 		SetValue(&sessionId)

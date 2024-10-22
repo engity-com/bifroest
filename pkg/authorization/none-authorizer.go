@@ -44,14 +44,14 @@ func NewNone(_ context.Context, flow configuration.FlowName, conf *configuration
 
 func (this *NoneAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authorization, error) {
 	fail := func(err error) (Authorization, error) {
-		return nil, fmt.Errorf("cannot authorize none %q via authorized keys: %w", req.Remote().User(), err)
+		return nil, fmt.Errorf("cannot authorize none %q via authorized keys: %w", req.Connection().Remote().User(), err)
 	}
 	failf := func(message string, args ...any) (Authorization, error) {
 		return fail(fmt.Errorf(message, args...))
 	}
 
 	auth := &none{
-		req.Remote(),
+		req.Connection().Remote(),
 		nil,
 		this.flow,
 		nil,
@@ -61,10 +61,10 @@ func (this *NoneAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authorizat
 	sess, err := req.Sessions().FindByPublicKey(req.Context(), req.RemotePublicKey(), (&session.FindOpts{}).WithPredicate(
 		session.IsFlow(this.flow),
 		session.IsStillValid,
-		session.IsRemoteName(req.Remote().User()),
+		session.IsRemoteName(req.Connection().Remote().User()),
 	))
 	if errors.Is(err, session.ErrNoSuchSession) {
-		sess, err = req.Sessions().Create(req.Context(), this.flow, req.Remote(), nil)
+		sess, err = req.Sessions().Create(req.Context(), this.flow, req.Connection().Remote(), nil)
 		if err != nil {
 			return fail(err)
 		}
@@ -82,16 +82,16 @@ func (this *NoneAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authorizat
 
 func (this *NoneAuthorizer) AuthorizePassword(req PasswordRequest) (Authorization, error) {
 	fail := func(err error) (Authorization, error) {
-		return nil, fmt.Errorf("cannot authorize none %q via password: %w", req.Remote().User(), err)
+		return nil, fmt.Errorf("cannot authorize none %q via password: %w", req.Connection().Remote().User(), err)
 	}
 
-	sess, err := req.Sessions().Create(req.Context(), this.flow, req.Remote(), nil)
+	sess, err := req.Sessions().Create(req.Context(), this.flow, req.Connection().Remote(), nil)
 	if err != nil {
 		return fail(err)
 	}
 
 	return &none{
-		req.Remote(),
+		req.Connection().Remote(),
 		nil,
 		this.flow,
 		sess,
@@ -101,16 +101,16 @@ func (this *NoneAuthorizer) AuthorizePassword(req PasswordRequest) (Authorizatio
 
 func (this *NoneAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Authorization, error) {
 	fail := func(err error) (Authorization, error) {
-		return nil, fmt.Errorf("cannot authorize none %q via password: %w", req.Remote().User(), err)
+		return nil, fmt.Errorf("cannot authorize none %q via password: %w", req.Connection().Remote().User(), err)
 	}
 
-	sess, err := req.Sessions().Create(req.Context(), this.flow, req.Remote(), nil)
+	sess, err := req.Sessions().Create(req.Context(), this.flow, req.Connection().Remote(), nil)
 	if err != nil {
 		return fail(err)
 	}
 
 	return &none{
-		req.Remote(),
+		req.Connection().Remote(),
 		nil,
 		this.flow,
 		sess,

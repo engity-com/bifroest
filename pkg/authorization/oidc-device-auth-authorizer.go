@@ -185,19 +185,19 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizeInteractive(req InteractiveReques
 	if err != nil {
 		return fail(err)
 	}
-	req.Logger().Debug("token received")
+	req.Connection().Logger().Debug("token received")
 
 	t := newOidcToken(buf)
-	auth, err := this.finalizeAuth(ctx, req.Logger(), &t, true)
+	auth, err := this.finalizeAuth(ctx, req.Connection().Logger(), &t, true)
 	if err != nil {
 		return fail(err)
 	}
-	auth.remote = req.Remote()
+	auth.remote = req.Connection().Remote()
 
 	if ok, err := req.Validate(auth); err != nil {
 		return failf("error validating authorization: %w", err)
 	} else if !ok {
-		return Forbidden(req.Remote()), nil
+		return Forbidden(req.Connection().Remote()), nil
 	}
 
 	sess, err := this.ensureSessionFor(req, &t)
@@ -221,10 +221,10 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (
 	sess, err := req.Sessions().FindByPublicKey(req.Context(), req.RemotePublicKey(), (&session.FindOpts{}).WithPredicate(
 		session.IsFlow(this.flow),
 		session.IsStillValid,
-		session.IsRemoteName(req.Remote().User()),
+		session.IsRemoteName(req.Connection().Remote().User()),
 	))
 	if errors.Is(err, session.ErrNoSuchSession) {
-		return Forbidden(req.Remote()), nil
+		return Forbidden(req.Connection().Remote()), nil
 	}
 	if err != nil {
 		return failf("cannot find session: %w", err)
@@ -235,7 +235,7 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (
 		return fail(err)
 	}
 	if len(at) == 0 {
-		return Forbidden(req.Remote()), nil
+		return Forbidden(req.Connection().Remote()), nil
 	}
 
 	var t oidcToken
@@ -244,9 +244,9 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (
 	}
 	// TODO! Refresh the token
 
-	req.Logger().Debug("token restored")
+	req.Connection().Logger().Debug("token restored")
 
-	auth, err := this.finalizeAuth(req.Context(), req.Logger(), &t, true)
+	auth, err := this.finalizeAuth(req.Context(), req.Connection().Logger(), &t, true)
 	if err != nil {
 		return fail(err)
 	}
@@ -255,7 +255,7 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (
 	if ok, err := req.Validate(auth); err != nil {
 		return fail(err)
 	} else if !ok {
-		return Forbidden(req.Remote()), nil
+		return Forbidden(req.Connection().Remote()), nil
 	}
 
 	if err := this.updateSessionWith(req.Context(), &t, sess); err != nil {
@@ -342,7 +342,7 @@ func (this *OidcDeviceAuthAuthorizer) ensureSessionFor(req Request, t *oidcToken
 	}
 
 	// TODO! Maybe find a way to restore an existing one?
-	sess, err := req.Sessions().Create(req.Context(), this.flow, req.Remote(), at)
+	sess, err := req.Sessions().Create(req.Context(), this.flow, req.Connection().Remote(), at)
 	if err != nil {
 		return fail(err)
 	}
@@ -456,7 +456,7 @@ func (this *OidcDeviceAuthAuthorizer) getUserInfo(ctx context.Context, token *oi
 }
 
 func (this *OidcDeviceAuthAuthorizer) AuthorizePassword(req PasswordRequest) (Authorization, error) {
-	return Forbidden(req.Remote()), nil
+	return Forbidden(req.Connection().Remote()), nil
 }
 
 func (this *OidcDeviceAuthAuthorizer) Close() error {

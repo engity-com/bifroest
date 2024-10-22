@@ -10,6 +10,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -19,6 +20,24 @@ type localForwardChannelData struct {
 
 	OriginAddr string
 	OriginPort uint32
+}
+
+func (this localForwardChannelData) dest() (net.HostPort, error) {
+	var buf net.HostPort
+	if err := buf.Host.Set(this.DestAddr); err != nil {
+		return net.HostPort{}, err
+	}
+	buf.Port = uint16(this.DestPort)
+	return buf, nil
+}
+
+func (this localForwardChannelData) origin() (net.HostPort, error) {
+	var buf net.HostPort
+	if err := buf.Host.Set(this.OriginAddr); err != nil {
+		return net.HostPort{}, err
+	}
+	buf.Port = uint16(this.OriginPort)
+	return buf, nil
 }
 
 func (this *service) handleNewDirectTcpIp(_ *ssh.Server, _ *gssh.ServerConn, newChan gssh.NewChannel, ctx ssh.Context) {
@@ -31,9 +50,15 @@ func (this *service) handleNewDirectTcpIp(_ *ssh.Server, _ *gssh.ServerConn, new
 		_ = newChan.Reject(gssh.ConnectionFailed, "error parsing forward data: "+err.Error())
 		return
 	}
+	dest, err := d.dest()
+	if err != nil {
+		l.WithError(err).
+			Info("cannot parse client's forward data; rejecting...")
+		_ = newChan.Reject(gssh.ConnectionFailed, "error parsing forward data: "+err.Error())
+		return
+	}
 
-	l = l.With("destAddr", d.DestAddr).
-		With("destPort", d.DestPort)
+	l = l.With("dest", dest)
 
 	env, ok := ctx.Value(environmentKeyCtxKey).(environment.Environment)
 	if !ok {
@@ -42,7 +67,7 @@ func (this *service) handleNewDirectTcpIp(_ *ssh.Server, _ *gssh.ServerConn, new
 		return
 	}
 
-	if ok, err := env.IsPortForwardingAllowed(d.DestAddr, d.DestPort); err != nil {
+	if ok, err := env.IsPortForwardingAllowed(dest); err != nil {
 		l.WithError(err).
 			Error("cannot check if port forwarding is allowed; rejecting...")
 		_ = newChan.Reject(gssh.ConnectionFailed, "port forwarding is disabled")
@@ -53,7 +78,7 @@ func (this *service) handleNewDirectTcpIp(_ *ssh.Server, _ *gssh.ServerConn, new
 		return
 	}
 
-	dConn, err := env.NewDestinationConnection(ctx, d.DestAddr, d.DestPort)
+	dConn, err := env.NewDestinationConnection(ctx, dest)
 	if err != nil {
 		if this.isAcceptableNewConnectionError(err) {
 			l.WithError(err).

@@ -32,7 +32,8 @@ import (
 )
 
 const (
-	flagRoundtripTestProcess         = "imp-roundtrip-test-process"
+	flagRoundtripTestDummyProcess    = "imp-roundtrip-test-dummy-process"
+	flagRoundtripTestImpProcess      = "imp-roundtrip-test-imp-process"
 	flagRoundtripTestImpAddress      = "imp-roundtrip-test-imp-addr"
 	flagRoundtripTestMasterPublicKey = "imp-roundtrip-test-master-public-key"
 	flagRoundtripTestSessionId       = "imp-roundtrip-test-session-id"
@@ -50,7 +51,9 @@ var (
 	roundtripTestSessionId session.Id
 
 	roundtripTestEnabled          = flag.Bool("imp-roundtrip-test-enabled", true, "")
-	roundtripTestImpProcess       = flag.Bool(flagRoundtripTestProcess, false, "")
+	roundtripTestWithKill         = flag.Bool("imp-roundtrip-test-with-kill", true, "")
+	roundtripTestDummyProcess     = flag.Bool(flagRoundtripTestDummyProcess, false, "")
+	roundtripTestImpProcess       = flag.Bool(flagRoundtripTestImpProcess, false, "")
 	roundtripTestAttachToDebugger = flag.String("imp-roundtrip-test-attach-to-debugger", "", "")
 	roundtripTestDebuggerOutput   = flag.String("imp-roundtrip-test-debugger-output", "", "")
 	roundtripTestMasterPublicKey  = flag.String(flagRoundtripTestMasterPublicKey, "", "")
@@ -62,33 +65,79 @@ func init() {
 	flag.Var(&roundtripTestSessionId, flagRoundtripTestSessionId, "")
 }
 
-func TestRoundtrip(t *testing.T) {
+func TestRoundtripAsSeparateProcess(t *testing.T) {
 	testlog.Hook(t)
 
 	if *roundtripTestImpProcess {
-		roundtripImp(t)
+		runRoundtripImpProcess(t)
+		return
+	}
+
+	if *roundtripTestDummyProcess {
+		runRoundtripDummyProcess(t)
 		return
 	}
 
 	if *roundtripTestEnabled {
-		roundtrip(t)
+		runRoundtripMaster(t, func(masterKey crypto.PublicKey, sessId session.Id) func(context.Context, func()) {
+			impCmd := prepareRoundtripImpCmd(t, masterKey, sessId)
+			return func(ctx context.Context, onDone func()) {
+				runCmd(ctx, t, impCmd, onDone)
+			}
+		})
 		return
 	}
 }
 
-func roundtrip(t *testing.T) {
+func TestRoundtrip(t *testing.T) {
+	testlog.Hook(t)
+
+	if *roundtripTestDummyProcess {
+		runRoundtripDummyProcess(t)
+		return
+	}
+
+	if *roundtripTestEnabled {
+		runRoundtripMaster(t, func(masterKey crypto.PublicKey, sessId session.Id) func(context.Context, func()) {
+			svc := Service{
+				Addr:            roundtripTestImpAddress.String(),
+				MasterPublicKey: masterKey,
+				SessionId:       sessId,
+			}
+			return func(ctx context.Context, onDone func()) {
+				defer onDone()
+				assert.NoError(t, svc.Serve(ctx))
+			}
+		})
+		return
+	}
+}
+
+func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, session.Id) func(context.Context, func())) {
 	ctx, cancelFn := context.WithCancel(context.Background())
 	defer cancelFn()
 
 	masterKey := generatePrivateKey(t)
-
+	connId, err := connection.NewId()
+	require.NoError(t, err)
 	sessionId, err := session.NewId()
 	require.NoError(t, err)
 
 	var wg sync.WaitGroup
-	impCmd := prepareRoundtripImpCmd(t, masterKey.PublicKey(), sessionId)
+
+	impCmd := impPreparation(masterKey.PublicKey(), sessionId)
 	wg.Add(1)
-	go runCmd(ctx, t, impCmd, wg.Done)
+	go impCmd(ctx, wg.Done)
+
+	var dummyCmdPid int
+	if *roundtripTestWithKill {
+		dummyCmd := prepareRoundtripDummyCmd(t, connId)
+		wg.Add(1)
+		go runCmd(ctx, t, dummyCmd, wg.Done)
+		time.Sleep(100 * time.Millisecond)
+		dummyCmdPid = dummyCmd.Process.Pid
+	}
+
 	defer wg.Wait()
 	defer cancelFn()
 
@@ -103,7 +152,7 @@ func roundtrip(t *testing.T) {
 	}
 
 	wg.Add(1)
-	go roundtripDummyService(ctx, t, wg.Done)
+	go runRoundtripDummyService(t, ctx, wg.Done)
 
 	master, err := NewImp(ctx, masterKey)
 	require.NoError(t, err)
@@ -114,17 +163,28 @@ func roundtrip(t *testing.T) {
 	sess, err := master.Open(ctx, refImpl{sessionId})
 	require.NoError(t, err)
 
-	connId := connection.MustNewId()
-	t.Run("echo", func(t *testing.T) {
-		resp, err := sess.Echo(ctx, connId, "foo")
+	t.Run("ping", func(t *testing.T) {
+		err := sess.Ping(ctx, connId)
 		require.NoError(t, err)
+	})
 
-		assert.Equal(t, "thanks for: foo", resp)
-	})
-	t.Run("kill", func(t *testing.T) {
-		err := sess.Kill(ctx, connId, 66666666666, sys.SIGTRAP)
-		require.Equal(t, ErrNoSuchProcess, err)
-	})
+	if *roundtripTestWithKill {
+		t.Run("kill", func(t *testing.T) {
+			target, err := process.NewProcess(int32(dummyCmdPid))
+			require.NoError(t, err)
+			running, err := target.IsRunning()
+			require.NoError(t, err)
+			require.True(t, running)
+
+			require.NoError(t, sess.Kill(ctx, connId, 0, sys.SIGTERM))
+			time.Sleep(100 * time.Millisecond)
+
+			running, err = target.IsRunning()
+			require.NoError(t, err)
+			require.False(t, running)
+		})
+	}
+
 	t.Run("tcp-forward", func(t *testing.T) {
 		hc := http.Client{
 			Transport: &http.Transport{
@@ -150,24 +210,52 @@ func roundtrip(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "OK!", string(b))
 	})
-	t.Run("named-pipe", func(t *testing.T) {
-		pipe, err := sess.InitiateNamedPipe(ctx, connId, "foo")
-		require.NoError(t, err)
-		defer common.IgnoreCloseError(pipe)
-	})
 
-	// Has to be the last run!
-	t.Run("exit", func(t *testing.T) {
-		err := sess.Exit(ctx, connId, 666)
-		if net.IsClosedError(err) {
-			// Ok
-		} else if err != nil {
-			t.Fatal(err)
-		}
+	t.Run("named-pipe", func(t *testing.T) {
+		local, err := sess.InitiateNamedPipe(ctx, connId, "foo")
+		require.NoError(t, err)
+		require.NotNil(t, local)
+		defer common.IgnoreCloseError(local)
+
+		var iwg sync.WaitGroup
+		iwg.Add(1)
+		go func() {
+			defer iwg.Done()
+			localConn, err := local.AcceptConn()
+			require.NoError(t, err)
+			if t.Failed() {
+				return
+			}
+			defer func() {
+				assert.NoError(t, localConn.Close())
+			}()
+
+			buf := make([]byte, 6)
+			_, err = localConn.Read(buf)
+			assert.NoError(t, err)
+
+			assert.Equal(t, "foobar", string(buf))
+		}()
+
+		time.Sleep(time.Millisecond * 100)
+
+		assert.NotEmpty(t, local.Path())
+		remote, err := net.ConnectToNamedPipe(ctx, local.Path())
+		require.NoError(t, err)
+		defer common.IgnoreCloseError(remote)
+
+		_, err = remote.Write([]byte("foobar"))
+		require.NoError(t, err)
+
+		time.Sleep(time.Millisecond * 100)
+
+		require.NoError(t, remote.Close())
+		require.NoError(t, local.Close())
+		iwg.Wait()
 	})
 }
 
-func roundtripImp(t *testing.T) {
+func runRoundtripImpProcess(t *testing.T) {
 	ctx, cancelFn := context.WithCancel(context.Background())
 
 	sigs := make(chan os.Signal, 1)
@@ -191,7 +279,17 @@ func roundtripImp(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func roundtripDummyService(ctx context.Context, t *testing.T, onDone func()) {
+func runRoundtripDummyProcess(_ *testing.T) {
+	sigs := make(chan os.Signal, 1)
+	defer close(sigs)
+	signal.Notify(sigs, syscall.SIGTERM)
+	sig := <-sigs
+	log.With("signal", sig).
+		With("context", "imp-test").
+		Info("received signal")
+}
+
+func runRoundtripDummyService(t *testing.T, ctx context.Context, onDone func()) {
 	defer onDone()
 	ln, err := gonet.Listen("tcp", roundtripTestServiceAddress.String())
 	require.NoError(t, err)
@@ -205,7 +303,7 @@ func roundtripDummyService(ctx context.Context, t *testing.T, onDone func()) {
 
 	go func() {
 		err := srv.Serve(ln)
-		if !net.IsClosedError(err) && !errors.Is(err, http.ErrServerClosed) {
+		if !sys.IsClosedError(err) && !errors.Is(err, http.ErrServerClosed) {
 			require.NoError(t, err)
 		}
 	}()
@@ -227,7 +325,7 @@ func prepareRoundtripImpCmd(t *testing.T, masterPublicKey crypto.PublicKey, sess
 	require.NoError(t, err)
 
 	args := []string{"-test.run=^" + t.Name() + "$",
-		"--" + flagRoundtripTestProcess,
+		"--" + flagRoundtripTestImpProcess,
 		"--" + flagRoundtripTestImpAddress + "=" + roundtripTestImpAddress.String(),
 		"--" + flagRoundtripTestMasterPublicKey + "=" + base64.StdEncoding.EncodeToString(masterPublicKey.Marshal()),
 		"--" + flagRoundtripTestSessionId + "=" + sessionId.String(),
@@ -245,6 +343,20 @@ func prepareRoundtripImpCmd(t *testing.T, masterPublicKey crypto.PublicKey, sess
 	}
 	cmd = exec.Command(ex, args...)
 	cmd.Env = os.Environ()
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd
+}
+
+func prepareRoundtripDummyCmd(t *testing.T, connectionId connection.Id) *exec.Cmd {
+	ex, err := os.Executable()
+	require.NoError(t, err)
+
+	cmd := exec.Command(ex, "-test.run=^"+t.Name()+"$",
+		"--"+flagRoundtripTestDummyProcess,
+	)
+	cmd.Env = append(os.Environ(), connection.EnvName+"="+connectionId.String())
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

@@ -14,8 +14,8 @@ import (
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
-	bnet "github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 const (
@@ -59,8 +59,8 @@ func (this *Imp) Serve(ctx context.Context) error {
 		_ = tlsLn.Close()
 	}()
 
-	if err := instance.serveRpc(ctx, tlsLn); err != nil {
-		if !bnet.IsClosedError(err) && !errors.Is(err, http.ErrServerClosed) {
+	if err := instance.serve(ctx, tlsLn); err != nil {
+		if !sys.IsClosedError(err) && !errors.Is(err, http.ErrServerClosed) {
 			return failf("problems while listening to rpc: %w", err)
 		}
 	}
@@ -72,21 +72,25 @@ type imp struct {
 	*Imp
 }
 
-func (this *imp) serveRpc(ctx context.Context, ln net.Listener) error {
+func (this *imp) serve(ctx context.Context, ln net.Listener) error {
+	this.logger().Debug("going to serve...")
 	defer common.IgnoreCloseError(ln)
+	defer this.logger().Debug("going to serve... DONE!")
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			return err
 		}
 
-		if err := this.serveRpcConn(ctx, conn); err != nil {
-			log.GetLogger("rpc").WithError(err).Warn()
+		if err := this.serveConn(ctx, conn); err != nil && !sys.IsClosedError(err) {
+			this.logger().
+				WithError(err).
+				Warn("serve connection failed")
 		}
 	}
 }
 
-func (this *imp) serveRpcConn(ctx context.Context, plainConn net.Conn) (rErr error) {
+func (this *imp) serveConn(ctx context.Context, plainConn net.Conn) (rErr error) {
 	fail := func(err error) error {
 		return err
 	}
@@ -105,13 +109,14 @@ func (this *imp) serveRpcConn(ctx context.Context, plainConn net.Conn) (rErr err
 		With("method", header.Method).
 		With("connectionId", header.ConnectionId)
 
+	l.Debug("going to handle connection...")
+	defer l.Debug("going to handle connection... DONE!")
+
 	switch header.Method {
-	case MethodEcho:
-		return done(this.handleMethodEcho(ctx, &header, l, conn))
+	case MethodPing:
+		return done(this.handleMethodPing(ctx, &header, l, conn))
 	case MethodKill:
 		return done(this.handleMethodKill(ctx, &header, l, conn))
-	case MethodExit:
-		return done(this.handleMethodExit(ctx, &header, l, conn))
 	case MethodTcpForward:
 		return done(this.handleMethodTcpForward(ctx, &header, l, conn))
 	case MethodNamedPipe:

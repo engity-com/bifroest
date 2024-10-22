@@ -2,7 +2,6 @@ package protocol
 
 import (
 	"context"
-	gonet "net"
 	"time"
 
 	log "github.com/echocat/slf4g"
@@ -84,6 +83,9 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 	failCore := func(err error) error {
 		return errors.Network.Newf("handling %v failed: %w", header.Method, err)
 	}
+	failCoref := func(msg string, args ...any) error {
+		return failCore(errors.Network.Newf(msg, args...))
+	}
 	failResponse := func(err error) error {
 		rsp := methodNamedPipeResponse{error: err}
 		if err := rsp.EncodeMsgPack(conn); err != nil {
@@ -94,8 +96,9 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 
 	var req methodNamedPipeRequest
 	if err := req.DecodeMsgPack(conn); err != nil {
-		return failCore(err)
+		return failCoref("cannot decode request: %w", err)
 	}
+	logger = logger.With("purpose", req.purpose)
 
 	pipe, err := net.NewNamedPipe(req.purpose)
 	if err != nil {
@@ -110,8 +113,10 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 	conf := baseNamedPipeConfig()
 	rsp := methodNamedPipeResponse{path: pipe.Path()}
 	if err := rsp.EncodeMsgPack(conn); err != nil {
-		return failCore(err)
+		return failCoref("cannot encode response: %w", err)
 	}
+
+	logger = logger.With("path", pipe.Path())
 
 	nameOf := func(isL2r bool) string {
 		if isL2r {
@@ -120,55 +125,23 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 		return "destination -> source"
 	}
 
-	in, out := gonet.Pipe()
-	defer common.IgnoreCloseError(in)
-	defer common.IgnoreCloseError(out)
+	go net.NotifyClosed(conn, func() {
+		_ = pipe.Close()
+	}, func(err error) {
+		logger.WithError(err).Warn("problems while watching for connection being closed; this could lead to dangling connections inside the IMP")
+	})
 
-	go func() {
-		if err := sys.FullDuplexCopy(ctx, conn, in, &sys.FullDuplexCopyOpts{
-			OnStart: func() {
-				logger.Debug("port forwarding started")
-			},
-			OnEnd: func(s2d, d2s int64, duration time.Duration, err error, wasInL2r *bool) {
-				ld := logger.
-					With("s2d", s2d).
-					With("d2s", d2s).
-					With("duration", duration)
-				if wasInL2r != nil {
-					ld = ld.With("direction", nameOf(*wasInL2r))
-				}
-
-				if err != nil {
-					ld.WithError(err).Error("cannot successful handle port forwarding request; canceling...")
-				} else {
-					ld.Info("port forwarding finished")
-				}
-			},
-			OnStreamEnd: func(isL2r bool, err error) {
-				defer common.IgnoreCloseError(pipe)
-				name := "source -> destination"
-				if !isL2r {
-					name = "destination -> source"
-				}
-				logger.WithError(err).Tracef("coping of %s done", name)
-			},
-		}); err != nil {
-			logger.WithError(err).
-				Error("connection failed unexpectedly")
-		}
-	}()
-
-	muxClient, err := smux.Client(out, conf)
+	muxClient, err := smux.Client(conn, conf)
 	if err != nil {
-		return failResponse(err)
+		return failCoref("cannot create mux client: %w", err)
 	}
 
 	for {
-		pipeConn, err := pipe.AcceptNamedPipeConnection()
-		if net.IsClosedError(err) {
+		pipeConn, err := pipe.AcceptConn()
+		if sys.IsClosedError(err) {
 			return nil
 		} else if err != nil {
-			return failResponse(err)
+			return failCoref("cannot accept connection from pipe", err)
 		}
 		go func(pipeConn net.CloseWriterConn) struct{} {
 			defer common.IgnoreCloseError(pipeConn)
@@ -180,6 +153,9 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 			}
 
 			muxConn, err := muxClient.Open()
+			if sys.IsClosedError(err) {
+				return struct{}{}
+			}
 			if err != nil {
 				return fail(err)
 			}
@@ -187,7 +163,7 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 
 			if err := sys.FullDuplexCopy(ctx, pipeConn, muxConn, &sys.FullDuplexCopyOpts{
 				OnStart: func() {
-					logger.Debug("port forwarding started")
+					logger.Debug("named pipe started")
 				},
 				OnEnd: func(s2d, d2s int64, duration time.Duration, err error, wasInL2r *bool) {
 					ld := logger.
@@ -199,9 +175,9 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 					}
 
 					if err != nil {
-						ld.WithError(err).Error("cannot successful handle port forwarding request; canceling...")
+						ld.WithError(err).Error("cannot successful handle named pipe streaming; canceling...")
 					} else {
-						ld.Info("port forwarding finished")
+						ld.Info("named pipe streaming finished")
 					}
 				},
 				OnStreamEnd: func(isL2r bool, err error) {
@@ -252,7 +228,7 @@ func (this *Master) methodNamedPipe(ctx context.Context, ref Ref, connectionId c
 	}
 	defer common.IgnoreCloseErrorIfFalse(&success, muxServer)
 
-	ln, err := net.AsListener(muxServer.OpenStream, muxServer.Close, func() string {
+	ln, err := net.AsListener(muxServer.AcceptStream, muxServer.Close, func() string {
 		return rsp.path
 	})
 	if err != nil {

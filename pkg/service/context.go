@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"io"
 
-	log "github.com/echocat/slf4g"
 	"github.com/gliderlabs/ssh"
 	gssh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	bconn "github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/net"
@@ -43,29 +43,27 @@ func (this *remote) String() string {
 }
 
 type authorizeRequest struct {
-	service *service
-	remote  remote
+	service    *service
+	connection *connection
 }
 
 func (this *authorizeRequest) GetField(name string) (any, bool, error) {
 	switch name {
+	case "connection":
+		return this.connection, true, nil
 	case "remote":
-		return this.remote, true, nil
+		return this.connection.Remote(), true, nil
 	default:
 		return nil, false, fmt.Errorf("unknown field %q", name)
 	}
 }
 
 func (this *authorizeRequest) Context() ssh.Context {
-	return this.remote.Context
+	return this.connection.context
 }
 
-func (this *authorizeRequest) Remote() net.Remote {
-	return &this.remote
-}
-
-func (this *authorizeRequest) Logger() log.Logger {
-	return this.service.logger(this.remote)
+func (this *authorizeRequest) Connection() bconn.Connection {
+	return this.connection
 }
 
 func (this *authorizeRequest) Sessions() session.Repository {
@@ -75,7 +73,7 @@ func (this *authorizeRequest) Sessions() session.Repository {
 func (this *authorizeRequest) Validate(auth authorization.Authorization) (bool, error) {
 	ctx := environmentContext{
 		service:       this.service,
-		remote:        &this.remote,
+		connection:    this.connection,
 		authorization: auth,
 	}
 	return this.service.environments.WillBeAccepted(&ctx)
@@ -146,16 +144,18 @@ func (this *interactiveAuthorizeRequest) Prompt(message string, echo bool) (stri
 
 type environmentContext struct {
 	service       *service
-	remote        *remote
+	connection    *connection
 	authorization authorization.Authorization
 }
 
 func (this *environmentContext) GetField(name string) (any, bool, error) {
 	switch name {
 	case "context":
-		return this.remote.Context, true, nil
+		return this.connection.context, true, nil
+	case "connection":
+		return this.connection, true, nil
 	case "remote":
-		return this.remote, true, nil
+		return this.connection.Remote(), true, nil
 	case "authorization":
 		return this.authorization, true, nil
 	default:
@@ -164,15 +164,11 @@ func (this *environmentContext) GetField(name string) (any, bool, error) {
 }
 
 func (this *environmentContext) Context() ssh.Context {
-	return this.remote.Context
+	return this.connection.context
 }
 
-func (this *environmentContext) Remote() net.Remote {
-	return this.remote
-}
-
-func (this *environmentContext) Logger() log.Logger {
-	return this.service.logger(this.remote)
+func (this *environmentContext) Connection() bconn.Connection {
+	return this.connection
 }
 
 func (this *environmentContext) Authorization() authorization.Authorization {

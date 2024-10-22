@@ -83,7 +83,7 @@ func (this *LocalRepository) Ensure(req Request) (Environment, error) {
 
 	if existing, err := this.FindBySession(req.Context(), sess, nil); err != nil {
 		if !errors.Is(err, ErrNoSuchEnvironment) {
-			req.Logger().
+			req.Connection().Logger().
 				WithError(err).
 				Warn("cannot restore environment from existing session; will create a new one")
 		}

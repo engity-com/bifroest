@@ -1,19 +1,22 @@
 package net
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/binary"
 	"net"
+	"os"
 	"time"
 
 	"github.com/mr-tron/base58"
 
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 type NamedPipe interface {
 	net.Listener
-	AcceptNamedPipeConnection() (CloseWriterConn, error)
+	AcceptConn() (CloseWriterConn, error)
 	Path() string
 }
 
@@ -65,15 +68,27 @@ func NewNamedPipeId() (string, error) {
 }
 
 func AsNamedPipe(ln net.Listener, path string) (NamedPipe, error) {
-	return &namedPipe{ln, path}, nil
+	return &namedPipe{ln, path, false}, nil
+}
+
+func ConnectToNamedPipe(ctx context.Context, path string) (net.Conn, error) {
+	fail := func(err error) (net.Conn, error) {
+		return nil, errors.Network.Newf("cannot connect to named pipe for %s: %w", path, err)
+	}
+	result, err := connectToNamedPipe(ctx, path)
+	if err != nil {
+		return fail(err)
+	}
+	return result, err
 }
 
 type namedPipe struct {
 	net.Listener
-	path string
+	path          string
+	deleteOnClose bool
 }
 
-func (this *namedPipe) AcceptNamedPipeConnection() (CloseWriterConn, error) {
+func (this *namedPipe) AcceptConn() (CloseWriterConn, error) {
 	conn, err := this.Accept()
 	if err != nil {
 		return nil, err
@@ -83,4 +98,14 @@ func (this *namedPipe) AcceptNamedPipeConnection() (CloseWriterConn, error) {
 
 func (this *namedPipe) Path() string {
 	return this.path
+}
+
+func (this *namedPipe) Close() (rErr error) {
+	defer common.KeepError(&rErr, func() error {
+		if !this.deleteOnClose {
+			return nil
+		}
+		return os.Remove(this.path)
+	})
+	return this.Listener.Close()
 }

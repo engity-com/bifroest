@@ -3,10 +3,9 @@ package environment
 import (
 	"context"
 	"io"
-	"net"
+	gonet "net"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -18,6 +17,8 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/net"
+	"github.com/engity-com/bifroest/pkg/session"
 )
 
 func (this *local) Banner(req Request) (io.ReadCloser, error) {
@@ -37,7 +38,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		return fail(errors.System.Newf(msg, args...))
 	}
 
-	l := t.Logger()
+	l := t.Connection().Logger()
 	sshSess := t.SshSession()
 
 	auth := t.Authorization()
@@ -51,7 +52,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		return fail(err)
 	}
 
-	ev.Set("BIFROEST_SESSION_ID", sess.Id().String())
+	ev.Set(session.EnvName, sess.Id().String())
 
 	switch t.TaskType() {
 	case TaskTypeShell:
@@ -70,13 +71,13 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	}
 
 	if ssh.AgentRequested(sshSess) {
-		l, err := ssh.NewAgentListener()
+		ln, err := net.NewNamedPipe("ssh-agent")
 		if err != nil {
 			return failf("cannot listen to agent: %w", err)
 		}
-		defer common.IgnoreCloseError(l)
-		go ssh.ForwardAgentConnections(l, sshSess)
-		ev.Set("SSH_AUTH_SOCK", l.Addr().String())
+		defer common.IgnoreCloseError(ln)
+		go ssh.ForwardAgentConnections(ln, sshSess)
+		ev.Set("SSH_AUTH_SOCK", ln.Path())
 	}
 
 	cmd.Stdin = sshSess
@@ -181,9 +182,6 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 				this.signal(cmd, l, s)
 			}
 		case <-t.Context().Done():
-			if err := t.Context().Err(); err != nil && rErr == nil {
-				rErr = err
-			}
 			return -2, rErr
 		case status, ok := <-processDone:
 			if ok {
@@ -242,16 +240,15 @@ func (this *local) kill(cmd *exec.Cmd, logger log.Logger) {
 	}
 }
 
-func (this *local) IsPortForwardingAllowed(_ string, _ uint32) (bool, error) {
+func (this *local) IsPortForwardingAllowed(net.HostPort) (bool, error) {
 	return this.portForwardingAllowed, nil
 }
 
-func (this *local) NewDestinationConnection(ctx context.Context, host string, port uint32) (io.ReadWriteCloser, error) {
+func (this *local) NewDestinationConnection(ctx context.Context, dest net.HostPort) (io.ReadWriteCloser, error) {
 	if !this.portForwardingAllowed {
 		return nil, errors.Newf(errors.Permission, "portforwarning not allowed")
 	}
 
-	dest := net.JoinHostPort(host, strconv.FormatInt(int64(port), 10))
-	var dialer net.Dialer
-	return dialer.DialContext(ctx, "tcp", dest)
+	var dialer gonet.Dialer
+	return dialer.DialContext(ctx, "tcp", dest.String())
 }

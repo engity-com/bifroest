@@ -63,7 +63,11 @@ func (this *Master) DialContext(ctx context.Context, ref Ref) (gonet.Conn, error
 	}
 	defer releaser()
 
-	return dialer.DialContext(ctx, "tcp", ref.EndpointAddr().String())
+	result, err := dialer.DialContext(ctx, "tcp", ref.EndpointAddr().String())
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (this *Master) DialContextWithMsgPack(ctx context.Context, ref Ref) (codec.MsgPackConn, error) {

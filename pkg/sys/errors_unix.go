@@ -1,6 +1,6 @@
 //go:build unix
 
-package net
+package sys
 
 func isClosedError(err error) bool {
 	return false

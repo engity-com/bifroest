@@ -45,7 +45,7 @@ func NewHtpasswd(_ context.Context, flow configuration.FlowName, conf *configura
 
 func (this *HtpasswdAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authorization, error) {
 	fail := func(err error) (Authorization, error) {
-		return nil, fmt.Errorf("cannot authorize htpasswd %q via authorized keys: %w", req.Remote().User(), err)
+		return nil, fmt.Errorf("cannot authorize htpasswd %q via authorized keys: %w", req.Connection().Remote().User(), err)
 	}
 	failf := func(message string, args ...any) (Authorization, error) {
 		return fail(fmt.Errorf(message, args...))
@@ -54,16 +54,16 @@ func (this *HtpasswdAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Author
 	sess, err := req.Sessions().FindByPublicKey(req.Context(), req.RemotePublicKey(), (&session.FindOpts{}).WithPredicate(
 		session.IsFlow(this.flow),
 		session.IsStillValid,
-		session.IsRemoteName(req.Remote().User()),
+		session.IsRemoteName(req.Connection().Remote().User()),
 	))
 	if errors.Is(err, session.ErrNoSuchSession) {
-		return Forbidden(req.Remote()), nil
+		return Forbidden(req.Connection().Remote()), nil
 	} else if err != nil {
 		return failf("cannot find session: %w", err)
 	}
 
 	auth := &htpasswd{
-		remote:            req.Remote(),
+		remote:            req.Connection().Remote(),
 		envVars:           nil,
 		flow:              this.flow,
 		session:           sess,
@@ -73,7 +73,7 @@ func (this *HtpasswdAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Author
 	if accepted, err := req.Validate(auth); err != nil {
 		return nil, fmt.Errorf("cannot validate request: %w", err)
 	} else if !accepted {
-		return Forbidden(req.Remote()), nil
+		return Forbidden(req.Connection().Remote()), nil
 	}
 
 	return auth, nil
@@ -82,13 +82,13 @@ func (this *HtpasswdAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Author
 func (this *HtpasswdAuthorizer) lookupEntry(req Request, password string) (auth *htpasswd, accepted bool, err error) {
 	match := false
 	if f := this.conf.File; !f.IsZero() {
-		if f.Match(req.Remote().User(), password) {
+		if f.Match(req.Connection().Remote().User(), password) {
 			match = true
 		}
 	}
 
 	if f := this.conf.Entries; !match && !f.IsZero() {
-		if f.Match(req.Remote().User(), password) {
+		if f.Match(req.Connection().Remote().User(), password) {
 			match = true
 		}
 	}
@@ -98,7 +98,7 @@ func (this *HtpasswdAuthorizer) lookupEntry(req Request, password string) (auth 
 	}
 
 	auth = &htpasswd{
-		req.Remote(),
+		req.Connection().Remote(),
 		nil,
 		this.flow,
 		nil,
@@ -123,7 +123,7 @@ func (this *HtpasswdAuthorizer) ensureSessionFor(req Request) (session.Session, 
 
 	buf := htpasswdToken{
 		User: htpasswdTokenUser{
-			Name: req.Remote().User(),
+			Name: req.Connection().Remote().User(),
 		},
 		EnvVars: nil,
 	}
@@ -135,10 +135,10 @@ func (this *HtpasswdAuthorizer) ensureSessionFor(req Request) (session.Session, 
 	sess, err := req.Sessions().FindByAccessToken(req.Context(), at, (&session.FindOpts{}).WithPredicate(
 		session.IsFlow(this.flow),
 		session.IsStillValid,
-		session.IsRemoteName(req.Remote().User()),
+		session.IsRemoteName(req.Connection().Remote().User()),
 	))
 	if errors.Is(err, session.ErrNoSuchSession) {
-		sess, err = req.Sessions().Create(req.Context(), this.flow, req.Remote(), at)
+		sess, err = req.Sessions().Create(req.Context(), this.flow, req.Connection().Remote(), at)
 	}
 	if err != nil {
 		return fail(err)
@@ -149,7 +149,7 @@ func (this *HtpasswdAuthorizer) ensureSessionFor(req Request) (session.Session, 
 
 func (this *HtpasswdAuthorizer) AuthorizePassword(req PasswordRequest) (Authorization, error) {
 	fail := func(err error) (Authorization, error) {
-		return nil, fmt.Errorf("cannot authorize htpasswd %q via password: %w", req.Remote().User(), err)
+		return nil, fmt.Errorf("cannot authorize htpasswd %q via password: %w", req.Connection().Remote().User(), err)
 	}
 	failf := func(message string, args ...any) (Authorization, error) {
 		return fail(fmt.Errorf(message, args...))
@@ -160,7 +160,7 @@ func (this *HtpasswdAuthorizer) AuthorizePassword(req PasswordRequest) (Authoriz
 		return fail(err)
 	}
 	if !accepted {
-		return Forbidden(req.Remote()), nil
+		return Forbidden(req.Connection().Remote()), nil
 	}
 
 	sess, err := this.ensureSessionFor(req)
@@ -174,7 +174,7 @@ func (this *HtpasswdAuthorizer) AuthorizePassword(req PasswordRequest) (Authoriz
 
 func (this *HtpasswdAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Authorization, error) {
 	fail := func(err error) (Authorization, error) {
-		return nil, fmt.Errorf("cannot authorize htpasswd %q via password: %w", req.Remote().User(), err)
+		return nil, fmt.Errorf("cannot authorize htpasswd %q via password: %w", req.Connection().Remote().User(), err)
 	}
 	failf := func(message string, args ...any) (Authorization, error) {
 		return fail(fmt.Errorf(message, args...))
@@ -190,7 +190,7 @@ func (this *HtpasswdAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Au
 		return fail(err)
 	}
 	if !accepted {
-		return Forbidden(req.Remote()), nil
+		return Forbidden(req.Connection().Remote()), nil
 	}
 
 	sess, err := this.ensureSessionFor(req)

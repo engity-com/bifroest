@@ -10,7 +10,8 @@ import (
 )
 
 func (this *service) handlePublicKey(ctx ssh.Context, key ssh.PublicKey) bool {
-	l := this.logger(ctx).
+	conn := this.connection(ctx)
+	l := conn.logger.
 		With("key", key.Type()+":"+gssh.FingerprintLegacyMD5(key))
 
 	keyTypeAllowed, err := this.Configuration.Ssh.Keys.KeyAllowed(key)
@@ -29,8 +30,8 @@ func (this *service) handlePublicKey(ctx ssh.Context, key ssh.PublicKey) bool {
 	}
 
 	authReq := authorizeRequest{
-		service: this,
-		remote:  remote{ctx},
+		service:    this,
+		connection: conn,
 	}
 
 	auth, err := this.authorizer.AuthorizePublicKey(&publicKeyAuthorizeRequest{authReq, key})
@@ -59,12 +60,13 @@ func (this *service) handlePublicKey(ctx ssh.Context, key ssh.PublicKey) bool {
 }
 
 func (this *service) handlePassword(ctx ssh.Context, password string) bool {
-	l := this.logger(ctx)
+	conn := this.connection(ctx)
+	l := conn.logger
 
 	auth, err := this.authorizer.AuthorizePassword(&passwordAuthorizeRequest{
 		authorizeRequest: authorizeRequest{
-			service: this,
-			remote:  remote{ctx},
+			service:    this,
+			connection: conn,
 		},
 		password: password,
 	})
@@ -90,12 +92,13 @@ func (this *service) handlePassword(ctx ssh.Context, password string) bool {
 }
 
 func (this *service) handleKeyboardInteractiveChallenge(ctx ssh.Context, challenger gssh.KeyboardInteractiveChallenge) bool {
-	l := this.logger(ctx)
+	conn := this.connection(ctx)
+	l := conn.logger
 
 	auth, err := this.authorizer.AuthorizeInteractive(&interactiveAuthorizeRequest{
 		authorizeRequest: authorizeRequest{
-			service: this,
-			remote:  remote{ctx},
+			service:    this,
+			connection: conn,
 		},
 		challenger: challenger,
 	})
@@ -156,11 +159,15 @@ func (this *service) onPtyRequest(ctx ssh.Context, pty ssh.Pty) bool {
 		return false
 	}
 
-	logger := this.logger(ctx)
+	conn := this.connection(ctx)
+	if conn == nil {
+		return false
+	}
+	logger := conn.Logger()
 
 	ok, err := this.environments.DoesSupportPty(&environmentContext{
 		this,
-		&remote{ctx},
+		conn,
 		auth,
 	}, pty)
 	if this.isRelevantError(err) {

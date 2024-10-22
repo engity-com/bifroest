@@ -4,6 +4,7 @@ import (
 	"context"
 
 	log "github.com/echocat/slf4g"
+	"github.com/shirou/gopsutil/v4/process"
 	"github.com/vmihailenco/msgpack/v5"
 
 	"github.com/engity-com/bifroest/pkg/codec"
@@ -77,11 +78,39 @@ func (this *methodKillResponse) DecodeMsgPack(dec codec.MsgPackDecoder) (err err
 
 func (this *imp) handleMethodKill(ctx context.Context, header *Header, _ log.Logger, conn codec.MsgPackConn) error {
 	return handleFromServerSide(ctx, header, conn, func(req *methodKillRequest) methodKillResponse {
-		var rsp methodKillResponse
-		if err := this.kill(req.pid, req.signal); err != nil {
-			rsp.error = err
+		pid := req.pid
+		fail := func(err error) methodKillResponse {
+			return methodKillResponse{errors.System.Newf("cannot kill process %d of %v with %v: %w", pid, header.ConnectionId, req.signal, err)}
 		}
-		return rsp
+
+		if pid == 0 {
+			expectedEnv := connection.EnvName + "=" + header.ConnectionId.String()
+			candidates, err := process.ProcessesWithContext(ctx)
+			if err != nil {
+				return fail(err)
+			}
+			for _, candidate := range candidates {
+				envs, err := candidate.Environ()
+				if err != nil || len(envs) == 0 {
+					continue
+				}
+				for _, env := range envs {
+					if env == expectedEnv {
+						pid = int(candidate.Pid)
+						break
+					}
+				}
+				if pid != 0 {
+					break
+				}
+			}
+		}
+
+		if err := this.kill(ctx, pid, req.signal); err != nil {
+			return fail(err)
+		}
+
+		return methodKillResponse{}
 	})
 }
 

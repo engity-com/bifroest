@@ -25,7 +25,8 @@ func (this *service) handleSshSftpSession(sess ssh.Session) {
 }
 
 func (this *service) uncheckedExecuteSshSession(sshSess ssh.Session, taskType environment.TaskType) {
-	l := this.logger(sshSess.Context())
+	conn := this.connection(sshSess.Context())
+	l := conn.logger
 
 	handled := false
 	defer func() {
@@ -39,7 +40,7 @@ func (this *service) uncheckedExecuteSshSession(sshSess ssh.Session, taskType en
 		With("command", sshSess.Command()).
 		Info("new remote session")
 
-	if exitCode, err := this.executeSession(sshSess, taskType); err != nil {
+	if exitCode, err := this.executeSession(sshSess, conn, taskType); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			l.Info("session ended unexpectedly; maybe timeout")
 			if exitCode < 0 {
@@ -71,7 +72,7 @@ func (this *service) uncheckedExecuteSshSession(sshSess ssh.Session, taskType en
 	}
 }
 
-func (this *service) executeSession(sshSess ssh.Session, taskType environment.TaskType) (exitCode int, rErr error) {
+func (this *service) executeSession(sshSess ssh.Session, conn *connection, taskType environment.TaskType) (exitCode int, rErr error) {
 	fail := func(err error) (int, error) {
 		return -1, err
 	}
@@ -92,7 +93,7 @@ func (this *service) executeSession(sshSess ssh.Session, taskType environment.Ta
 	req := environmentRequest{
 		environmentContext{
 			service:       this,
-			remote:        &remote{ctx},
+			connection:    conn,
 			authorization: auth,
 		},
 		sshSess,

@@ -1,19 +1,17 @@
 package authorization
 
 import (
-	"github.com/echocat/slf4g"
 	"github.com/gliderlabs/ssh"
 	gssh "golang.org/x/crypto/ssh"
 
-	"github.com/engity-com/bifroest/pkg/net"
+	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
 type Request interface {
 	Sessions() session.Repository
+	Connection() connection.Connection
 	Context() ssh.Context
-	Remote() net.Remote
-	Logger() log.Logger
 	Validate(Authorization) (bool, error)
 }
 

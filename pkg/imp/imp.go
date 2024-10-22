@@ -10,6 +10,10 @@ import (
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
+const (
+	EnvVarMasterPublicKey = "BIFROEST_MASTER_PUBLIC_KEY"
+)
+
 var (
 	ErrNoSuchProcess = protocol.ErrNoSuchProcess
 )

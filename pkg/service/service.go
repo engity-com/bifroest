@@ -28,7 +28,7 @@ import (
 )
 
 var (
-	loggerCtxKey         = struct{ uint64 }{83439637}
+	connectionCtxKey     = struct{ uint64 }{83439637}
 	authorizationCtxKey  = struct{ uint64 }{10282643}
 	handshakeKeyCtxKey   = struct{ uint64 }{30072498}
 	environmentKeyCtxKey = struct{ uint64 }{46415512}
@@ -139,9 +139,6 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 				}
 				closeLns()
 			case <-ctx.Done():
-				if err := ctx.Err(); this.isProblematicError(err) && rErr == nil {
-					rErr = err
-				}
 				closeLns()
 			}
 		}
@@ -283,9 +280,16 @@ func withLazyContextOrFieldExclude[C any](ctx ssh.Context, ctxKey any) fields.La
 	})
 }
 
-func (this *service) logger(ctx ssh.Context) log.Logger {
-	if v, ok := ctx.Value(loggerCtxKey).(log.Logger); ok {
+func (this *service) connection(ctx ssh.Context) *connection {
+	if v, ok := ctx.Value(connectionCtxKey).(*connection); ok {
 		return v
+	}
+	return nil
+}
+
+func (this *service) logger(ctx ssh.Context) log.Logger {
+	if v := this.connection(ctx); v != nil {
+		return v.Logger()
 	}
 	return this.Service.logger()
 }

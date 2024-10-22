@@ -10,12 +10,15 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
+	log "github.com/echocat/slf4g"
 	"github.com/gliderlabs/ssh"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/imp"
 	"github.com/engity-com/bifroest/pkg/net"
+	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -45,7 +48,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		return failf("authorization without session is not supported to run docker environment")
 	}
 	sshSess := t.SshSession()
-	l := t.Logger()
+	l := t.Connection().Logger()
 
 	opts := container.ExecOptions{
 		User:         this.user,
@@ -61,7 +64,8 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	}
 	ev.AddAllOf(t.Authorization().EnvVars())
 	ev.Add(t.SshSession().Environ()...)
-	ev.Set("BIFROEST_SESSION_ID", sess.Id().String())
+	ev.Set(session.EnvName, sess.Id().String())
+	ev.Set(connection.EnvName, t.Connection().Id().String())
 
 	switch t.TaskType() {
 	case TaskTypeShell:
@@ -76,16 +80,14 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		return failf("illegal task type: %v", t.TaskType())
 	}
 
-	// TODO! Does not work because we need to forward a correct socket into the container
-	// in this case we have to mount a directory into the container to ensure this.
 	if ssh.AgentRequested(sshSess) {
-		al, err := net.NewNamedPipe("ssh-agent", "")
+		ln, err := this.impSession.InitiateNamedPipe(t.Context(), t.Connection().Id(), "ssh-agent")
 		if err != nil {
-			return failf("cannot listen to agent: %w", err)
+			return fail(err)
 		}
-		defer common.IgnoreCloseError(al)
-		go ssh.ForwardAgentConnections(al, sshSess)
-		ev.Set("SSH_AUTH_SOCK", al.Addr().String())
+		defer common.IgnoreCloseError(ln)
+		go ssh.ForwardAgentConnections(ln, sshSess)
+		ev.Set("SSH_AUTH_SOCK", ln.Path())
 	}
 
 	var execId string
@@ -126,11 +128,13 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		return failf("cannot attach to execution #%v: %w", execId, err)
 	}
 
+	signals := make(chan ssh.Signal, 1)
 	copyDone := make(chan error, 2)
 	var activeRoutines sync.WaitGroup
 	defer func() {
 		go func() {
 			activeRoutines.Wait()
+			defer close(signals)
 			defer close(copyDone)
 		}()
 	}()
@@ -173,13 +177,14 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		return ei.ExitCode, nil
 	}
 
+	sshSess.Signals(signals)
 	for {
 		select {
-		// TODO! Send kill to child command
-		case <-t.Context().Done():
-			if err := t.Context().Err(); err != nil && rErr == nil {
-				rErr = err
+		case s, ok := <-signals:
+			if ok {
+				this.signal(t.Context(), l, t.Connection(), s)
 			}
+		case <-t.Context().Done():
 			return -2, rErr
 		case err, ok := <-copyDone:
 			ea.Close()
@@ -198,11 +203,26 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	}
 }
 
-func (this *docker) IsPortForwardingAllowed(_ string, _ uint32) (bool, error) {
+func (this *docker) signal(ctx context.Context, logger log.Logger, conn connection.Connection, sshSignal ssh.Signal) {
+	var signal sys.Signal
+	if err := signal.Set(string(sshSignal)); err != nil {
+		signal = sys.SIGKILL
+	}
+
+	if err := this.impSession.Kill(ctx, conn.Id(), 0, signal); errors.Is(err, imp.ErrNoSuchProcess) {
+		// Ok.
+	} else if err != nil {
+		logger.WithError(err).
+			With("signal", signal).
+			Warn("cannot send signal to process")
+	}
+}
+
+func (this *docker) IsPortForwardingAllowed(_ net.HostPort) (bool, error) {
 	return this.portForwardingAllowed, nil
 }
 
-func (this *docker) NewDestinationConnection(ctx context.Context, host string, port uint32) (io.ReadWriteCloser, error) {
+func (this *docker) NewDestinationConnection(ctx context.Context, dest net.HostPort) (io.ReadWriteCloser, error) {
 	if !this.portForwardingAllowed {
 		return nil, errors.Newf(errors.Permission, "portforwarning not allowed")
 	}
@@ -212,5 +232,5 @@ func (this *docker) NewDestinationConnection(ctx context.Context, host string, p
 		return nil, err
 	}
 
-	return this.impSession.InitiateTcpForward(ctx, connId, host, port)
+	return this.impSession.InitiateTcpForward(ctx, connId, dest)
 }

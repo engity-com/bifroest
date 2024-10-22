@@ -7,10 +7,13 @@ import (
 	"io"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/docker/docker/api/types"
+	log "github.com/echocat/slf4g"
 
 	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/imp"
@@ -53,7 +56,7 @@ func (this *docker) EndpointAddr() net.HostPort {
 	return this.impBinding
 }
 
-func (this *DockerRepository) new(ctx context.Context, container *types.Container) (*docker, error) {
+func (this *DockerRepository) new(ctx context.Context, container *types.Container, logger log.Logger) (*docker, error) {
 	fail := func(err error) (*docker, error) {
 		return nil, errors.System.Newf("cannot create environment from container %s of flow %v: %w", container.ID, this.flow, err)
 	}
@@ -68,6 +71,29 @@ func (this *DockerRepository) new(ctx context.Context, container *types.Containe
 	if result.impSession, err = this.imp.Open(ctx, result); err != nil {
 		return fail(err)
 	}
+
+	connId, err := connection.NewId()
+	if err != nil {
+		return fail(err)
+	}
+
+	for try := 1; try <= 200; try++ {
+		if err := result.impSession.Ping(ctx, connId); err == nil {
+			break
+		} else if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			// try waiting...
+		} else {
+			return fail(err)
+		}
+		l := logger.With("try", try)
+		if try <= 2 {
+			l.Debug("waiting for container's imp getting ready...")
+		} else {
+			l.Info("still waiting for container's imp getting ready...")
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
 	result.owners.Add(1)
 
 	return result, nil

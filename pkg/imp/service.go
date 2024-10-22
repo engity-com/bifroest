@@ -8,8 +8,8 @@ import (
 	"github.com/engity-com/bifroest/internal/imp/protocol"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/crypto"
-	bnet "github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 const (
@@ -35,7 +35,7 @@ func (this *Service) Serve(ctx context.Context) error {
 		return fail(err)
 	}
 
-	if err := instance.serve(ctx); err != nil && !bnet.IsClosedError(err) {
+	if err := instance.serve(ctx); err != nil && !sys.IsClosedError(err) {
 		return fail(err)
 	}
 	return nil

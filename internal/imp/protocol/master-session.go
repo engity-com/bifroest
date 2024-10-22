@@ -34,7 +34,7 @@ func (this *MasterSession) InitiateTcpForward(ctx context.Context, connectionId 
 
 func (this *MasterSession) InitiateNamedPipe(ctx context.Context, connectionId connection.Id, purpose net.Purpose) (net.NamedPipe, error) {
 	fail := func(err error) (net.NamedPipe, error) {
-		return nil, errors.Network.Newf("cannot initiate direct tcp connection for %v of %v: %w", connectionId, purpose, err)
+		return nil, errors.Network.Newf("cannot named pipe for %v of %v: %w", connectionId, purpose, err)
 	}
 
 	result, err := this.parent.methodNamedPipe(ctx, this.ref, connectionId, purpose)
@@ -45,14 +45,10 @@ func (this *MasterSession) InitiateNamedPipe(ctx context.Context, connectionId c
 	return result, nil
 }
 
-func (this *MasterSession) Echo(ctx context.Context, connectionId connection.Id, in string) (string, error) {
-	return this.parent.methodEcho(ctx, this.ref, connectionId, in)
+func (this *MasterSession) Ping(ctx context.Context, connectionId connection.Id) error {
+	return this.parent.methodPing(ctx, this.ref, connectionId)
 }
 
 func (this *MasterSession) Kill(ctx context.Context, connectionId connection.Id, pid int, signal sys.Signal) error {
 	return this.parent.methodKill(ctx, this.ref, connectionId, pid, signal)
-}
-
-func (this *MasterSession) Exit(ctx context.Context, connectionId connection.Id, exitCode int) error {
-	return this.parent.methodExit(ctx, this.ref, connectionId, exitCode)
 }

@@ -41,6 +41,15 @@ func FullDuplexCopy(ctx context.Context, left io.ReadWriter, right io.ReadWriter
 
 	copyFull := func(from io.Reader, to io.Writer, isL2r bool) {
 		defer wg.Done()
+		defer func() {
+			if e := recover(); e != nil {
+				if err, ok := e.(error); ok && err.Error() == "send on closed channel" {
+					// ignore
+				} else {
+					panic(e)
+				}
+			}
+		}()
 		if opts != nil {
 			if f := opts.OnStreamStart; f != nil {
 				f(isL2r)
@@ -90,25 +99,17 @@ func FullDuplexCopy(ctx context.Context, left io.ReadWriter, right io.ReadWriter
 	for {
 		select {
 		case <-ctx.Done():
-			if err := ctx.Err(); !isSilentError(err) {
-				errWasInL2r = nil
-				return err
-			}
-			return nil
+			return
 		case v := <-dones:
-			if isRelevantError(v.error) {
+			if v.error != nil {
 				errWasInL2r = &v.wasL2r
 				return v.error
 			}
-			return nil
+			return
 		}
 	}
 }
 
-func isSilentError(err error) bool {
-	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
-}
-
 func isRelevantError(err error) bool {
-	return err != nil && !errors.Is(err, syscall.EIO) && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF)
+	return err != nil && !errors.Is(err, syscall.EIO) && !IsClosedError(err)
 }

@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/vmihailenco/msgpack/v5"
 
@@ -12,9 +13,8 @@ import (
 type Method uint8
 
 const (
-	MethodEcho Method = iota
+	MethodPing Method = iota
 	MethodKill
-	MethodExit
 	MethodTcpForward
 	MethodNamedPipe
 )
@@ -52,18 +52,30 @@ func (this *Method) DecodeMsgPack(dec codec.MsgPackDecoder) error {
 }
 
 func (this Method) Validate() error {
-	_, ok := protocolMethodToString[this]
+	_, err := this.MarshalText()
+	return err
+}
+
+func (this Method) String() string {
+	v, ok := protocolMethodToString[this]
 	if !ok {
-		return errors.System.Newf("%w: %d", ErrIllegalMethod, this)
+		return fmt.Sprintf("illegal-method-%d", this)
 	}
-	return nil
+	return v
+}
+
+func (this Method) MarshalText() ([]byte, error) {
+	v, ok := protocolMethodToString[this]
+	if !ok {
+		return nil, errors.System.Newf("%w: %d", ErrIllegalMethod, this)
+	}
+	return []byte(v), nil
 }
 
 var (
 	stringToProtocolMethod = map[string]Method{
-		"echo":       MethodEcho,
+		"ping":       MethodPing,
 		"kill":       MethodKill,
-		"exit":       MethodExit,
 		"tcpForward": MethodTcpForward,
 		"namedPipe":  MethodNamedPipe,
 	}
