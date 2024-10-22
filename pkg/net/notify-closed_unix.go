@@ -22,7 +22,7 @@ func notifyClosed(rc syscall.RawConn, onClosed func(), onUnexpectedEnd func(erro
 
 	if err := rc.Control(func(fd uintptr) {
 		if err := epollCtl(epFd, unix.EPOLL_CTL_ADD, int(fd), &unix.EpollEvent{
-			Events: unix.EPOLLHUP,
+			Events: unix.EPOLLHUP | unix.EPOLLRDHUP,
 			Fd:     int32(fd),
 		}); err != nil {
 			onUnexpectedEnd(errors.Network.Newf("failed to register fd for close notifications: %w", err))
