@@ -1,7 +1,7 @@
 package main
 
 import (
-	"os"
+	goos "os"
 
 	log "github.com/echocat/slf4g"
 
@@ -22,11 +22,11 @@ func registerCommand(rc func(*kingpin.Application)) func(*kingpin.Application) {
 
 func main() {
 	app := kingpin.New("bifroest", "SSH server which provides authorization and authentication via OpenID Connect and classic mechanisms to access a real host or a dedicated Docker container.").
-		UsageWriter(os.Stderr).
-		ErrorWriter(os.Stderr).
+		UsageWriter(goos.Stderr).
+		ErrorWriter(goos.Stderr).
 		Terminate(func(i int) {
 			code := max(i, 1)
-			os.Exit(code)
+			goos.Exit(code)
 		})
 
 	logging.ConfigureLoggingForFlags(app, native.DefaultProvider)
@@ -35,8 +35,8 @@ func main() {
 		rc(app)
 	}
 
-	if _, err := app.Parse(os.Args[1:]); err != nil {
+	if _, err := app.Parse(goos.Args[1:]); err != nil {
 		log.WithError(err).Error("execution failed")
-		os.Exit(1)
+		goos.Exit(1)
 	}
 }

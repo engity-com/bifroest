@@ -4,18 +4,18 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"os"
+	goos "os"
 	"os/signal"
 	"syscall"
 
 	"github.com/alecthomas/kingpin/v2"
 	log "github.com/echocat/slf4g"
 
-	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/imp"
 	"github.com/engity-com/bifroest/pkg/session"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 var _ = registerCommand(func(app *kingpin.Application) {
@@ -60,7 +60,7 @@ func doImp(encodecMasterPublicKey string, sessionId session.Id, addr string) err
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	defer cancelFunc()
 
-	sigs := make(chan os.Signal, 1)
+	sigs := make(chan goos.Signal, 1)
 	defer close(sigs)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -69,12 +69,12 @@ func doImp(encodecMasterPublicKey string, sessionId session.Id, addr string) err
 		cancelFunc()
 	}()
 
-	log.WithAll(common.VersionToMap(versionV)).
+	log.WithAll(sys.VersionToMap(versionV)).
 		Info("Engity's Bifröst imp running...")
 
 	if err := service.Serve(ctx); err != nil {
 		log.WithError(err).Error()
-		os.Exit(1)
+		goos.Exit(1)
 	}
 
 	log.Info("bye!")

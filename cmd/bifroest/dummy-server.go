@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
+	goos "os"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -39,7 +39,7 @@ func doDummyServer(addr string) (rErr error) {
 
 	srv := http.Server{Handler: newDummyMux()}
 
-	sigs := make(chan os.Signal, 1)
+	sigs := make(chan goos.Signal, 1)
 	defer close(sigs)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	go func() {

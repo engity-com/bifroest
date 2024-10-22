@@ -1,31 +1,31 @@
 package sys
 
-import "runtime"
-
-var binaryCompatibilityMatrix = map[string]map[string]map[string]struct{}{
-	"linux": {
-		"amd64": {
-			"386": struct{}{},
+var binaryCompatibilityMatrix = map[Os]map[Arch]map[Arch]struct{}{
+	OsLinux: {
+		ArchAmd64: {
+			Arch386: struct{}{},
 		},
-		"arm64": {
-			"arm": struct{}{},
+		ArchArm64: {
+			ArchArmV6: struct{}{},
+			ArchArmV7: struct{}{},
 		},
 	},
-	"windows": {
-		"amd64": {
-			"386": struct{}{},
+	OsWindows: {
+		ArchAmd64: {
+			Arch386: struct{}{},
 		},
-		"arm64": {
-			"arm": struct{}{},
+		ArchArm64: {
+			ArchArmV6: struct{}{},
+			ArchArmV7: struct{}{},
 		},
 	},
 }
 
-func IsBinaryCompatibleWithHost(binaryOs, binaryArch, hostOs, hostArch string) bool {
-	if binaryOs != hostOs {
+func IsBinaryCompatibleWithHost(binaryOs Os, binaryArch Arch, hostOs Os, hostArch Arch) bool {
+	if !binaryOs.IsEqualTo(hostOs) {
 		return false
 	}
-	if binaryArch == hostArch {
+	if binaryArch.IsEqualTo(hostArch) {
 		return true
 	}
 
@@ -42,8 +42,4 @@ func IsBinaryCompatibleWithHost(binaryOs, binaryArch, hostOs, hostArch string) b
 	_, ok = byArch[binaryArch]
 
 	return ok
-}
-
-func IsBinaryCompatibleWithArch(binaryArch, hostArch string) bool {
-	return IsBinaryCompatibleWithHost(runtime.GOOS, binaryArch, runtime.GOOS, hostArch)
 }

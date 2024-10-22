@@ -6,7 +6,6 @@ import (
 	log "github.com/echocat/slf4g"
 
 	"github.com/engity-com/bifroest/internal/imp/protocol"
-	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
@@ -17,7 +16,7 @@ const (
 )
 
 type Service struct {
-	Version         common.Version
+	Version         sys.Version
 	Addr            string
 	MasterPublicKey crypto.PublicKey
 	SessionId       session.Id

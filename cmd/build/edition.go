@@ -3,17 +3,17 @@ package main
 import (
 	"strings"
 
-	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-type edition common.VersionEdition
+type edition sys.VersionEdition
 
 func (this edition) String() string {
-	return common.VersionEdition(this).String()
+	return sys.VersionEdition(this).String()
 }
 
 func (this *edition) Set(plain string) error {
-	var buf common.VersionEdition
+	var buf sys.VersionEdition
 	if err := buf.Set(plain); err != nil {
 		return err
 	}
@@ -90,9 +90,9 @@ func (this *editions) Set(plain string) error {
 }
 
 const (
-	editionUnknown  = edition(common.VersionEditionUnknown)
-	editionGeneric  = edition(common.VersionEditionGeneric)
-	editionExtended = edition(common.VersionEditionExtended)
+	editionUnknown  = edition(sys.VersionEditionUnknown)
+	editionGeneric  = edition(sys.VersionEditionGeneric)
+	editionExtended = edition(sys.VersionEditionExtended)
 )
 
 var (

@@ -27,7 +27,8 @@ Bifröst executes user sessions within environments. These environments can eith
    ```yaml
    type: docker
    image: ubuntu
-   ## Using /bin/bash instead of /bin/sh, because it does exist in the image
+   ## Using /bin/bash instead of /bin/sh,
+   ## because it does exist in the image
    shellCommand: [/bin/bash]
    execCommand: [/bin/bash, -c]
 

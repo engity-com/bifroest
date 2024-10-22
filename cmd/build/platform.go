@@ -83,8 +83,10 @@ func (this platform) isImageSupported() bool {
 	}
 }
 
-func (this platform) toLdFlags(o os) string {
-	return this.edition.toLdFlags(o)
+func (this platform) toLdFlags() string {
+	return this.os.toLdFlags() +
+		" " + this.arch.toLdFlags(this.os) +
+		" " + this.edition.toLdFlags(this.os)
 }
 
 func (this platform) filenamePrefix(mainPrefix string) string {

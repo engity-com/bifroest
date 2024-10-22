@@ -221,7 +221,8 @@ Holds the tag of the image to be downloaded.
    ```yaml
    type: docker
    image: ubuntu
-   ## Using /bin/bash instead of /bin/sh, because it does exist in the image
+   ## Using /bin/bash instead of /bin/sh,
+   ## because it does exist in the image
    shellCommand: [/bin/bash]
    execCommand: [/bin/bash, -c]
 
@@ -237,14 +238,16 @@ Holds the tag of the image to be downloaded.
    ```yaml
    type: docker
    image: my.own.registry.com/foo/bar
-   ## Using the pull credentials, which are stored inside /etc/engity/bifroest/secrets/my.own.registry.com
+   ## Using the pull credentials, which are stored inside:
+   ## /etc/engity/bifroest/secrets/my.own.registry.com
    imagePullCredentials: "{{ file `/etc/engity/bifroest/secrets/my.own.registry.com` }}"
    ```
 4. Using my own registry with secret from environment variable:
    ```yaml
    type: docker
    image: my.own.registry.com/foo/bar
-   ## Using the pull credentials, which are stored inside /etc/engity/bifroest/secrets/my.own.registry.com
+   ## Using the pull credentials, which are stored inside
+   ## MY_GREAT_SECRET environment variable
    imagePullCredentials: "{{ env `MY_GREAT_SECRET` }}"
    ```
 

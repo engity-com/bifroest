@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"os"
+	goos "os"
 	"os/signal"
 	"syscall"
 
@@ -25,14 +25,14 @@ func doRunDefault(conf configuration.ConfigurationRef) error {
 
 	fail := func(err error) error {
 		log.Error(err)
-		os.Exit(1)
+		goos.Exit(1)
 		return nil
 	}
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	defer cancelFunc()
 
-	sigs := make(chan os.Signal, 1)
+	sigs := make(chan goos.Signal, 1)
 	defer close(sigs)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	go func() {

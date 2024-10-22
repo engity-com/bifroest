@@ -29,8 +29,8 @@ type buildArtifact struct {
 	lock    sync.Mutex
 }
 
-func (this *buildArtifact) toLdFlags(o os) string {
-	return this.platform.toLdFlags(o) +
+func (this *buildArtifact) toLdFlags() string {
+	return this.platform.toLdFlags() +
 		" " + this.buildContext.toLdFlags(this.testing)
 }
 

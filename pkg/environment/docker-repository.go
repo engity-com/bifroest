@@ -64,6 +64,8 @@ type DockerRepository struct {
 	imp          imp.Imp
 
 	apiClient   client.APIClient
+	hostOs      sys.Os
+	hostArch    sys.Arch
 	hostVersion *types.Version
 
 	Logger              log.Logger
@@ -102,6 +104,13 @@ func NewDockerRepository(ctx context.Context, flow configuration.FlowName, conf 
 		imp:          i,
 		apiClient:    apiClient,
 		hostVersion:  &hostVersion,
+	}
+
+	if err = result.hostOs.SetOci(result.hostVersion.Os); err != nil {
+		return failf("cannot parse docker host's os: %w", err)
+	}
+	if err = result.hostArch.SetOci(result.hostVersion.Arch); err != nil {
+		return failf("cannot parse docker host's os: %w", err)
 	}
 
 	lp := result.logger().GetProvider()
@@ -342,14 +351,14 @@ func (this *DockerRepository) resolveContainerConfig(req Request, sess session.S
 		return failf("cannot evaluate image: %w", err)
 	}
 	result.Entrypoint = strslice.StrSlice{}
-	switch this.hostVersion.Os {
+	switch this.hostOs {
 	case sys.OsWindows:
 		result.Cmd = []string{BifroestWindowsBinaryMountTarget}
 	case sys.OsLinux:
 		result.User = "root"
 		result.Cmd = []string{BifroestUnixBinaryMountTarget}
 	default:
-		return failf("cannot resolve target path for host %s/%s", this.hostVersion.Os, this.hostVersion.Arch)
+		return failf("cannot resolve target path for host %s/%s", this.hostOs, this.hostArch)
 	}
 
 	result.Cmd = append(result.Cmd, `imp`, `--log.colorMode=always`)
@@ -416,7 +425,7 @@ func (this *DockerRepository) resolveHostConfig(req Request) (_ *container.HostC
 	// 	HostPort: strconv.FormatUint(uint64(impBinding.Port), 10),
 	// }}}
 
-	impBinaryPath, err := this.alternatives.FindBinaryFor(req.Context(), this.hostVersion.Os, this.hostVersion.Arch)
+	impBinaryPath, err := this.alternatives.FindBinaryFor(req.Context(), this.hostOs, this.hostArch)
 	if err != nil {
 		return failf("cannot resolve imp binary path: %w", err)
 	}
@@ -426,13 +435,13 @@ func (this *DockerRepository) resolveHostConfig(req Request) (_ *container.HostC
 			return failf("cannot resolve full imp binary path: %w", err)
 		}
 		var targetPath string
-		switch this.hostVersion.Os {
+		switch this.hostOs {
 		case sys.OsWindows:
 			targetPath = BifroestWindowsBinaryMountTarget
 		case sys.OsLinux:
 			targetPath = BifroestUnixBinaryMountTarget
 		default:
-			return failf("cannot resolve target path for host %s/%s", this.hostVersion.Os, this.hostVersion.Arch)
+			return failf("cannot resolve target path for host %s/%s", this.hostOs, this.hostArch)
 		}
 		result.Mounts = append(result.Mounts, mount.Mount{
 			Type:     mount.TypeBind,
@@ -459,13 +468,13 @@ func (this *DockerRepository) resolveEncodedShellCommand(req Request) (string, e
 		return failf("cannot evaluate shellCommand: %w", err)
 	}
 	if len(v) == 0 {
-		switch this.hostVersion.Os {
+		switch this.hostOs {
 		case sys.OsWindows:
 			v = []string{`C:\WINDOWS\system32\cmd.exe`}
 		case sys.OsLinux:
 			v = []string{`/bin/sh`}
 		default:
-			return failf("shellCommand was not defined for docker environment and default cannot be resolved for %s/%s", this.hostVersion.Os, this.hostVersion.Arch)
+			return failf("shellCommand was not defined for docker environment and default cannot be resolved for %s/%s", this.hostOs, this.hostArch)
 		}
 	}
 	b, err := json.Marshal(v)
@@ -482,13 +491,13 @@ func (this *DockerRepository) resolveEncodedExecCommand(req Request) (string, er
 		return failf("cannot evaluate execCommand: %w", err)
 	}
 	if len(v) == 0 {
-		switch this.hostVersion.Os {
+		switch this.hostOs {
 		case sys.OsWindows:
 			v = []string{`C:\WINDOWS\system32\cmd.exe`, `/C`}
 		case sys.OsLinux:
 			v = []string{`/bin/sh`, `-c`}
 		default:
-			return failf("execCommand was not defined for docker environment and default cannot be resolved for %s/%s", this.hostVersion.Os, this.hostVersion.Arch)
+			return failf("execCommand was not defined for docker environment and default cannot be resolved for %s/%s", this.hostOs, this.hostArch)
 		}
 	}
 	b, err := json.Marshal(v)
@@ -505,13 +514,13 @@ func (this *DockerRepository) resolveEncodedSftpCommand(req Request) (string, er
 		return failf("cannot evaluate sftpCommand: %w", err)
 	}
 	if len(v) == 0 {
-		switch this.hostVersion.Os {
+		switch this.hostOs {
 		case sys.OsWindows:
 			v = []string{BifroestWindowsBinaryMountTarget, `sftp-server`}
 		case sys.OsLinux:
 			v = []string{BifroestUnixBinaryMountTarget, `sftp-server`}
 		default:
-			return failf("sftpCommand was not defined for docker environment and default cannot be resolved for %s/%s", this.hostVersion.Os, this.hostVersion.Arch)
+			return failf("sftpCommand was not defined for docker environment and default cannot be resolved for %s/%s", this.hostOs, this.hostArch)
 		}
 	}
 	b, err := json.Marshal(v)

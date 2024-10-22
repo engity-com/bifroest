@@ -1,7 +1,7 @@
 package main
 
 import (
-	"os"
+	goos "os"
 	"os/signal"
 	"syscall"
 
@@ -17,7 +17,7 @@ var _ = registerCommand(func(app *kingpin.Application) {
 })
 
 func doForever() error {
-	sigs := make(chan os.Signal, 1)
+	sigs := make(chan goos.Signal, 1)
 	defer close(sigs)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	<-sigs

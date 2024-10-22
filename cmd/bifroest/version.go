@@ -2,14 +2,14 @@ package main
 
 import (
 	"fmt"
-	"os"
+	goos "os"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/alecthomas/kingpin/v2"
 
-	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 var (
@@ -19,8 +19,12 @@ var (
 	edition  = ""
 	buildAt  = ""
 	vendor   = "unknown"
+	os       = runtime.GOOS
+	arch     = runtime.GOARCH
 
-	editionV common.VersionEdition
+	osV      sys.Os
+	archV    sys.Arch
+	editionV sys.VersionEdition
 	buildAtV time.Time
 )
 
@@ -39,24 +43,30 @@ var _ = registerCommand(func(app *kingpin.Application) {
 
 	app.Flag("version", "Show version details of this executable.").
 		Action(func(*kingpin.ParseContext) error {
-			defer os.Exit(1)
+			defer goos.Exit(1)
 			return doVersion()
 		}).
 		Bool()
 })
 
 func doVersion() error {
-	f := common.VersionFormatShort
+	f := sys.VersionFormatShort
 	if long {
-		f = common.VersionFormatLong
+		f = sys.VersionFormatLong
 	}
-	fmt.Println(common.FormatVersion(versionV, f))
+	fmt.Println(sys.FormatVersion(versionV, f))
 	return nil
 }
 
 func init() {
 	if err := editionV.Set(edition); err != nil {
 		panic(fmt.Errorf("illegal main.edidtion value (%q): %w", edition, err))
+	}
+	if err := osV.Set(os); err != nil {
+		panic(fmt.Errorf("illegal main.os value (%q): %w", arch, err))
+	}
+	if err := archV.Set(arch); err != nil {
+		panic(fmt.Errorf("illegal main.arch value (%q): %w", arch, err))
 	}
 	//goland:noinspection GoBoolExpressions
 	if buildAt == "" {
@@ -84,7 +94,7 @@ func (this versionT) Revision() string {
 	return revision
 }
 
-func (this versionT) Edition() common.VersionEdition {
+func (this versionT) Edition() sys.VersionEdition {
 	return editionV
 }
 
@@ -100,10 +110,14 @@ func (this versionT) GoVersion() string {
 	return strings.TrimPrefix(runtime.Version(), "go")
 }
 
-func (this versionT) Platform() string {
-	return runtime.GOOS + "/" + runtime.GOARCH
+func (this versionT) Arch() sys.Arch {
+	return archV
 }
 
-func (this versionT) Features() common.VersionFeatures {
+func (this versionT) Os() sys.Os {
+	return osV
+}
+
+func (this versionT) Features() sys.VersionFeatures {
 	return featuresV
 }

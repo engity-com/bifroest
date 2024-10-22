@@ -48,7 +48,7 @@ func (this *buildBinary) compile(ctx context.Context, p *platform) (*buildArtifa
 		With("stage", buildStageBinary).
 		With("file", a.filepath)
 
-	ldFlags := " -s -w " + a.toLdFlags(a.os)
+	ldFlags := " -s -w " + a.toLdFlags()
 
 	start := time.Now()
 	l.Debug("building binary...")

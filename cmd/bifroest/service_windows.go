@@ -5,7 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
+	goos "os"
 	"time"
 
 	"github.com/alecthomas/kingpin/v2"
@@ -128,7 +128,7 @@ func (this *windowsService) install(conf configuration.ConfigurationRef, start, 
 		return err
 	}
 
-	exe, err := os.Executable()
+	exe, err := goos.Executable()
 	if err != nil {
 		return errors.System.Newf("cannot resolve own executable: %w", err)
 	}

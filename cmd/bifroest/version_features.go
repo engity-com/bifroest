@@ -1,9 +1,9 @@
 package main
 
 import (
-	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto/unix/password"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 var (
@@ -12,7 +12,7 @@ var (
 
 type features struct{}
 
-func (this *features) ForEach(consumer func(common.VersionFeatureCategory)) {
+func (this *features) ForEach(consumer func(sys.VersionFeatureCategory)) {
 	consumer(&featureCategory{"authorization", configuration.GetSupportedAuthorizationFeatureFlags})
 	consumer(&featureCategory{"environment", configuration.GetSupportedEnvironmentFeatureFlags})
 	consumer(&featureCategory{"session", configuration.GetSupportedSessionFeatureFlags})
@@ -28,7 +28,7 @@ func (this *featureCategory) Name() string {
 	return this.name
 }
 
-func (this *featureCategory) ForEach(consumer func(common.VersionFeature)) {
+func (this *featureCategory) ForEach(consumer func(sys.VersionFeature)) {
 	for _, v := range this.getter() {
 		consumer(feature(v))
 	}

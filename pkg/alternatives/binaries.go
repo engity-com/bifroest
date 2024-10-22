@@ -7,7 +7,6 @@ import (
 	"net/url"
 	goos "os"
 	"path/filepath"
-	"runtime"
 
 	log "github.com/echocat/slf4g"
 
@@ -19,10 +18,10 @@ import (
 
 type Provider interface {
 	io.Closer
-	FindBinaryFor(ctx context.Context, os, arch string) (string, error)
+	FindBinaryFor(ctx context.Context, os sys.Os, arch sys.Arch) (string, error)
 }
 
-func NewProvider(_ context.Context, version common.Version, conf *configuration.Alternatives) (Provider, error) {
+func NewProvider(_ context.Context, version sys.Version, conf *configuration.Alternatives) (Provider, error) {
 	return &provider{
 		conf:    conf,
 		version: version,
@@ -31,12 +30,12 @@ func NewProvider(_ context.Context, version common.Version, conf *configuration.
 
 type provider struct {
 	conf    *configuration.Alternatives
-	version common.Version
+	version sys.Version
 
 	Logger log.Logger
 }
 
-func (this *provider) FindBinaryFor(ctx context.Context, hostOs, hostArch string) (_ string, rErr error) {
+func (this *provider) FindBinaryFor(ctx context.Context, hostOs sys.Os, hostArch sys.Arch) (_ string, rErr error) {
 	fail := func(err error) (string, error) {
 		return "", err
 	}
@@ -49,7 +48,7 @@ func (this *provider) FindBinaryFor(ctx context.Context, hostOs, hostArch string
 		With("arch", hostArch).
 		With("version", this.version.Version())
 
-	if sys.IsBinaryCompatibleWithHost(runtime.GOOS, hostOs, runtime.GOARCH, hostArch) {
+	if sys.IsBinaryCompatibleWithHost(this.version.Os(), this.version.Arch(), hostOs, hostArch) {
 		result, err := goos.Executable()
 		if err != nil {
 			return failf(errors.System, "cannot resolve the location of the server's executable location: %w", err)
@@ -130,7 +129,7 @@ func (this *provider) FindBinaryFor(ctx context.Context, hostOs, hostArch string
 	return fn, nil
 }
 
-func (this *provider) alternativesLocationFor(os, arch string) (string, error) {
+func (this *provider) alternativesLocationFor(os sys.Os, arch sys.Arch) (string, error) {
 	fail := func(err error) (string, error) {
 		return "", err
 	}
@@ -146,7 +145,7 @@ func (this *provider) alternativesLocationFor(os, arch string) (string, error) {
 	return result, nil
 }
 
-func (this *provider) alternativesDownloadUrlFor(os, arch string) (*url.URL, error) {
+func (this *provider) alternativesDownloadUrlFor(os sys.Os, arch sys.Arch) (*url.URL, error) {
 	fail := func(err error) (*url.URL, error) {
 		return nil, err
 	}
@@ -174,22 +173,22 @@ func (this *provider) Close() error {
 }
 
 type alternativeResolutionContext struct {
-	Os           string
-	Architecture string
-	Version      string
+	os      sys.Os
+	arch    sys.Arch
+	version string
 }
 
 func (this alternativeResolutionContext) Ext() string {
-	switch this.Os {
-	case "windows":
+	switch this.os {
+	case sys.OsWindows:
 		return ".exe"
 	default:
 		return ""
 	}
 }
 func (this alternativeResolutionContext) PackageExt() string {
-	switch this.Os {
-	case "windows":
+	switch this.os {
+	case sys.OsWindows:
 		return ".zip"
 	default:
 		return ".tgz"
@@ -199,11 +198,11 @@ func (this alternativeResolutionContext) PackageExt() string {
 func (this alternativeResolutionContext) GetField(name string) (any, bool, error) {
 	switch name {
 	case "os":
-		return this.Os, true, nil
+		return this.os, true, nil
 	case "architecture", "arch":
-		return this.Architecture, true, nil
+		return this.arch, true, nil
 	case "version":
-		return this.Version, true, nil
+		return this.version, true, nil
 	case "edition":
 		return "generic", true, nil
 	case "ext":

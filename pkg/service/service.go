@@ -25,6 +25,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/imp"
 	bnet "github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 var (
@@ -36,7 +37,7 @@ var (
 
 type Service struct {
 	Configuration configuration.Configuration
-	Version       common.Version
+	Version       sys.Version
 
 	Logger log.Logger
 }
@@ -106,7 +107,7 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 		lns[i].ln = ln
 	}
 
-	this.logger().WithAll(common.VersionToMap(this.Version)).Info("started")
+	this.logger().WithAll(sys.VersionToMap(this.Version)).Info("started")
 
 	done := make(chan error, len(lns))
 	var wg sync.WaitGroup
