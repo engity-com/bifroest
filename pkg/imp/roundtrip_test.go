@@ -118,8 +118,6 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 	defer cancelFn()
 
 	masterKey := generatePrivateKey(t)
-	connId, err := connection.NewId()
-	require.NoError(t, err)
 	sessionId, err := session.NewId()
 	require.NoError(t, err)
 
@@ -130,8 +128,11 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 	go impCmd(ctx, wg.Done)
 
 	var dummyCmdPid int
+	var dummyCmdConnectionId connection.Id
 	if *roundtripTestWithKill {
-		dummyCmd := prepareRoundtripDummyCmd(t, connId)
+		dummyCmdConnectionId, err = connection.NewId()
+		require.NoError(t, err)
+		dummyCmd := prepareRoundtripDummyCmd(t, dummyCmdConnectionId)
 		wg.Add(1)
 		go runCmd(ctx, t, dummyCmd, wg.Done)
 		time.Sleep(100 * time.Millisecond)
@@ -164,19 +165,25 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 	require.NoError(t, err)
 
 	t.Run("ping", func(t *testing.T) {
-		err := sess.Ping(ctx, connId)
+		testlog.Hook(t)
+		connId, err := connection.NewId()
+		require.NoError(t, err)
+
+		err = sess.Ping(ctx, connId)
 		require.NoError(t, err)
 	})
 
 	if *roundtripTestWithKill {
 		t.Run("kill", func(t *testing.T) {
+			testlog.Hook(t)
+
 			target, err := process.NewProcess(int32(dummyCmdPid))
 			require.NoError(t, err)
 			running, err := target.IsRunning()
 			require.NoError(t, err)
 			require.True(t, running)
 
-			require.NoError(t, sess.Kill(ctx, connId, 0, sys.SIGTERM))
+			require.NoError(t, sess.Kill(ctx, dummyCmdConnectionId, 0, sys.SIGTERM))
 			time.Sleep(100 * time.Millisecond)
 
 			running, err = target.IsRunning()
@@ -186,6 +193,10 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 	}
 
 	t.Run("tcp-forward", func(t *testing.T) {
+		testlog.Hook(t)
+		connId, err := connection.NewId()
+		require.NoError(t, err)
+
 		hc := http.Client{
 			Transport: &http.Transport{
 				DialContext: func(ctx context.Context, network, addr string) (gonet.Conn, error) {
@@ -212,6 +223,10 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 	})
 
 	t.Run("named-pipe", func(t *testing.T) {
+		testlog.Hook(t)
+		connId, err := connection.NewId()
+		require.NoError(t, err)
+
 		local, err := sess.InitiateNamedPipe(ctx, connId, "foo")
 		require.NoError(t, err)
 		require.NotNil(t, local)
@@ -252,6 +267,21 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 		require.NoError(t, remote.Close())
 		require.NoError(t, local.Close())
 		iwg.Wait()
+	})
+
+	t.Run("named-pipe-noop", func(t *testing.T) {
+		testlog.Hook(t)
+		connId, err := connection.NewId()
+		require.NoError(t, err)
+
+		local, err := sess.InitiateNamedPipe(ctx, connId, "foo")
+		require.NoError(t, err)
+		require.NotNil(t, local)
+		defer common.IgnoreCloseError(local)
+
+		time.Sleep(time.Millisecond * 100)
+
+		require.NoError(t, local.Close())
 	})
 }
 
