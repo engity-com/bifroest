@@ -5,13 +5,22 @@ import (
 
 	log "github.com/echocat/slf4g"
 	"github.com/gliderlabs/ssh"
+	glssh "github.com/gliderlabs/ssh"
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-const authAgentChannelName = "auth-agent@openssh.com"
+const (
+	AuthSockEnvName = "SSH_AUTH_SOCK"
+
+	authAgentChannelName = "auth-agent@openssh.com"
+)
+
+func AgentRequested(sshSess ssh.Session) bool {
+	return glssh.AgentRequested(sshSess)
+}
 
 func ForwardAgentConnections(ln gonet.Listener, logger log.Logger, sshSess ssh.Session) {
 	ctx := sshSess.Context()

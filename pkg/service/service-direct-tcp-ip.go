@@ -31,15 +31,6 @@ func (this localForwardChannelData) dest() (net.HostPort, error) {
 	return buf, nil
 }
 
-func (this localForwardChannelData) origin() (net.HostPort, error) {
-	var buf net.HostPort
-	if err := buf.Host.Set(this.OriginAddr); err != nil {
-		return net.HostPort{}, err
-	}
-	buf.Port = uint16(this.OriginPort)
-	return buf, nil
-}
-
 func (this *service) handleNewDirectTcpIp(_ *ssh.Server, _ *gssh.ServerConn, newChan gssh.NewChannel, ctx ssh.Context) {
 	l := this.logger(ctx)
 

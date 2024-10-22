@@ -81,14 +81,14 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		return failf("illegal task type: %v", t.TaskType())
 	}
 
-	if glssh.AgentRequested(sshSess) {
+	if ssh.AgentRequested(sshSess) {
 		ln, err := this.impSession.InitiateNamedPipe(t.Context(), t.Connection().Id(), "ssh-agent")
 		if err != nil {
 			return fail(err)
 		}
 		defer common.IgnoreCloseError(ln)
 		go ssh.ForwardAgentConnections(ln, l, sshSess)
-		ev.Set("SSH_AUTH_SOCK", ln.Path())
+		ev.Set(ssh.AuthSockEnvName, ln.Path())
 	}
 
 	var execId string
