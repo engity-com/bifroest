@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -82,7 +83,7 @@ func TestRoundtripAsSeparateProcess(t *testing.T) {
 		runRoundtripMaster(t, func(masterKey crypto.PublicKey, sessId session.Id) func(context.Context, func()) {
 			impCmd := prepareRoundtripImpCmd(t, masterKey, sessId)
 			return func(ctx context.Context, onDone func()) {
-				runCmd(ctx, t, impCmd, onDone)
+				runCmd(ctx, t, impCmd, onDone, nil)
 			}
 		})
 		return
@@ -127,16 +128,15 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 	wg.Add(1)
 	go impCmd(ctx, wg.Done)
 
-	var dummyCmdPid int
+	var dummyCmdPid atomic.Int64
 	var dummyCmdConnectionId connection.Id
 	if *roundtripTestWithKill {
 		dummyCmdConnectionId, err = connection.NewId()
 		require.NoError(t, err)
 		dummyCmd := prepareRoundtripDummyCmd(t, dummyCmdConnectionId)
 		wg.Add(1)
-		go runCmd(ctx, t, dummyCmd, wg.Done)
+		go runCmd(ctx, t, dummyCmd, wg.Done, &dummyCmdPid)
 		time.Sleep(100 * time.Millisecond)
-		dummyCmdPid = dummyCmd.Process.Pid
 	}
 
 	defer wg.Wait()
@@ -177,7 +177,7 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 		t.Run("kill", func(t *testing.T) {
 			testlog.Hook(t)
 
-			target, err := process.NewProcess(int32(dummyCmdPid))
+			target, err := process.NewProcess(int32(dummyCmdPid.Load()))
 			require.NoError(t, err)
 			running, err := target.IsRunning()
 			require.NoError(t, err)
@@ -186,9 +186,11 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 			require.NoError(t, sess.Kill(ctx, dummyCmdConnectionId, 0, sys.SIGTERM))
 			time.Sleep(100 * time.Millisecond)
 
-			running, err = target.IsRunning()
-			require.NoError(t, err)
-			require.False(t, running)
+			require.EventuallyWithT(t, func(t *assert.CollectT) {
+				running, err = target.IsRunning()
+				assert.NoError(t, err)
+				assert.False(t, running)
+			}, 1*time.Minute, 100*time.Millisecond)
 		})
 	}
 
@@ -322,7 +324,10 @@ func runRoundtripDummyProcess(_ *testing.T) {
 func runRoundtripDummyService(t *testing.T, ctx context.Context, onDone func()) {
 	defer onDone()
 	ln, err := gonet.Listen("tcp", roundtripTestServiceAddress.String())
-	require.NoError(t, err)
+	assert.NoError(t, err)
+	if t.Failed() {
+		return
+	}
 	defer common.IgnoreCloseError(ln)
 
 	srv := http.Server{
@@ -334,7 +339,7 @@ func runRoundtripDummyService(t *testing.T, ctx context.Context, onDone func()) 
 	go func() {
 		err := srv.Serve(ln)
 		if !sys.IsClosedError(err) && !errors.Is(err, http.ErrServerClosed) {
-			require.NoError(t, err)
+			assert.NoError(t, err)
 		}
 	}()
 
@@ -393,10 +398,17 @@ func prepareRoundtripDummyCmd(t *testing.T, connectionId connection.Id) *exec.Cm
 	return cmd
 }
 
-func runCmd(ctx context.Context, t *testing.T, cmd *exec.Cmd, onDone func()) {
+func runCmd(ctx context.Context, t *testing.T, cmd *exec.Cmd, onDone func(), pidDrain *atomic.Int64) {
 	defer onDone()
 	err := cmd.Start()
-	require.NoError(t, err)
+	assert.NoError(t, err)
+	if t.Failed() {
+		return
+	}
+
+	if pidDrain != nil {
+		pidDrain.Store(int64(cmd.Process.Pid))
+	}
 
 	go func() {
 		<-ctx.Done()

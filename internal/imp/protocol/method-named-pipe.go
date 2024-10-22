@@ -105,11 +105,11 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 		return failResponse(err)
 	}
 	defer common.IgnoreCloseError(pipe)
-	go func() {
+	go func(logger log.Logger) {
 		<-ctx.Done()
 		logger.Trace("closed from context received")
 		_ = pipe.Close()
-	}()
+	}(logger)
 
 	conf := baseNamedPipeConfig()
 	rsp := methodNamedPipeResponse{path: pipe.Path()}

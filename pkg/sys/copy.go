@@ -28,7 +28,7 @@ func FullDuplexCopy(ctx context.Context, left io.ReadWriter, right io.ReadWriter
 	var errWasInL2r *bool
 	var l2r, r2l atomic.Int64
 	started := time.Now()
-	go func() {
+	defer func() {
 		wg.Wait()
 		close(dones)
 

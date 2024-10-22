@@ -12,6 +12,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 type NamedPipe interface {
@@ -105,7 +106,10 @@ func (this *namedPipe) Close() (rErr error) {
 		if !this.deleteOnClose {
 			return nil
 		}
-		return os.Remove(this.path)
+		if err := os.Remove(this.path); err != nil && !sys.IsNotExist(err) {
+			return err
+		}
+		return nil
 	})
 	return this.Listener.Close()
 }
