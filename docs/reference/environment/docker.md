@@ -81,6 +81,27 @@ If the image needs to be pulled, it will trigger the [`image-pull` preparation p
 <<property("imagePullCredentials", "Docker Pull Credentials", "../data-type.md#docker-pull-credentials", template_context="../context/authorization.md")>>
 Defines credentials which should be used to pull the defined [`image`](#property-image).
 
+<h4 id="property-imagePullCredentials-examples">Examples</h4>
+
+1. Using direct json:
+   ```yaml
+   imagePullCredentials: |
+    {"username":"foo","password":"bar"}
+   ```
+2. Using base64 URL encoded json:
+   ```yaml
+   imagePullCredentials: |
+    eyJ1c2VybmFtZSI6ImZvbyIsInBhc3N3b3JkIjoiYmFyIn0
+   ```
+3. Using content from file:
+   ```yaml
+   imagePullCredentials: "{{ file `/etc/engity/bifroest/secrets/my-great-secret` }}"
+   ```
+4. Using content from environment variable:
+   ```yaml
+   imagePullCredentials: "{{ env `MY_GREAT_SECRET` }}"
+   ```
+
 <<property("networks", array_ref("string"), template_context="../context/authorization.md", default=["default"])>>
 Defines the container networks this container should be connected to.
 
@@ -200,6 +221,31 @@ Holds the tag of the image to be downloaded.
    ```yaml
    type: docker
    image: ubuntu
+   ## Using /bin/bash instead of /bin/sh, because it does exist in the image
+   shellCommand: [/bin/bash]
+   execCommand: [/bin/bash, -c]
+
+   ## Only allow login if the OIDC's groups has "my-great-group-uuid"
+   ## ...and the tid (tenant ID) is "my-great-tenant-uuid"
+   loginAllowed: |
+       {{ and
+         (.authorization.idToken.groups | has "my-great-group-uuid")
+         (.authorization.idToken.tid    | eq  "my-great-tenant-uuid")
+       }}
+   ```
+3. Using my own registry with secret from file:
+   ```yaml
+   type: docker
+   image: my.own.registry.com/foo/bar
+   ## Using the pull credentials, which are stored inside /etc/engity/bifroest/secrets/my.own.registry.com
+   imagePullCredentials: "{{ file `/etc/engity/bifroest/secrets/my.own.registry.com` }}"
+   ```
+4. Using my own registry with secret from environment variable:
+   ```yaml
+   type: docker
+   image: my.own.registry.com/foo/bar
+   ## Using the pull credentials, which are stored inside /etc/engity/bifroest/secrets/my.own.registry.com
+   imagePullCredentials: "{{ env `MY_GREAT_SECRET` }}"
    ```
 
 ## Compatibility

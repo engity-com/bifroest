@@ -184,7 +184,6 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 			require.True(t, running)
 
 			require.NoError(t, sess.Kill(ctx, dummyCmdConnectionId, 0, sys.SIGTERM))
-			time.Sleep(100 * time.Millisecond)
 
 			require.EventuallyWithT(t, func(t *assert.CollectT) {
 				running, err = target.IsRunning()
