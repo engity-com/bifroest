@@ -13,12 +13,13 @@ import (
 	"github.com/creack/pty"
 	log "github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/level"
-	"github.com/gliderlabs/ssh"
+	glssh "github.com/gliderlabs/ssh"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
+	"github.com/engity-com/bifroest/pkg/ssh"
 )
 
 func (this *local) Banner(req Request) (io.ReadCloser, error) {
@@ -70,13 +71,13 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		return failf("illegal task type: %v", t.TaskType())
 	}
 
-	if ssh.AgentRequested(sshSess) {
+	if glssh.AgentRequested(sshSess) {
 		ln, err := net.NewNamedPipe("ssh-agent")
 		if err != nil {
 			return failf("cannot listen to agent: %w", err)
 		}
 		defer common.IgnoreCloseError(ln)
-		go ssh.ForwardAgentConnections(ln, sshSess)
+		go ssh.ForwardAgentConnections(ln, l, sshSess)
 		ev.Set("SSH_AUTH_SOCK", ln.Path())
 	}
 
@@ -133,7 +134,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		exitCode int
 		err      error
 	}
-	signals := make(chan ssh.Signal, 1)
+	signals := make(chan glssh.Signal, 1)
 	processDone := make(chan doneT, 1)
 	copyDone := make(chan error, 2)
 	var activeRoutines sync.WaitGroup

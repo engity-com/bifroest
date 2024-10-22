@@ -107,6 +107,7 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 	defer common.IgnoreCloseError(pipe)
 	go func() {
 		<-ctx.Done()
+		logger.Trace("closed from context received")
 		_ = pipe.Close()
 	}()
 
@@ -126,6 +127,7 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 	}
 
 	go net.NotifyClosed(conn, func() {
+		logger.Trace("client connection was closed")
 		_ = pipe.Close()
 	}, func(err error) {
 		logger.WithError(err).Warn("problems while watching for connection being closed; this could lead to dangling connections inside the IMP")
@@ -145,6 +147,9 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 		}
 		go func(pipeConn net.CloseWriterConn) struct{} {
 			defer common.IgnoreCloseError(pipeConn)
+
+			logger.Debug("handling connection from pipe...")
+			defer logger.Debug("handling connection from pipe... DONE!")
 
 			fail := func(err error) struct{} {
 				logger.WithError(err).

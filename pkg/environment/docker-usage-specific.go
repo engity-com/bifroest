@@ -11,7 +11,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
 	log "github.com/echocat/slf4g"
-	"github.com/gliderlabs/ssh"
+	glssh "github.com/gliderlabs/ssh"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/connection"
@@ -19,6 +19,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/imp"
 	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
+	"github.com/engity-com/bifroest/pkg/ssh"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -80,13 +81,13 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		return failf("illegal task type: %v", t.TaskType())
 	}
 
-	if ssh.AgentRequested(sshSess) {
+	if glssh.AgentRequested(sshSess) {
 		ln, err := this.impSession.InitiateNamedPipe(t.Context(), t.Connection().Id(), "ssh-agent")
 		if err != nil {
 			return fail(err)
 		}
 		defer common.IgnoreCloseError(ln)
-		go ssh.ForwardAgentConnections(ln, sshSess)
+		go ssh.ForwardAgentConnections(ln, l, sshSess)
 		ev.Set("SSH_AUTH_SOCK", ln.Path())
 	}
 
@@ -128,7 +129,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		return failf("cannot attach to execution #%v: %w", execId, err)
 	}
 
-	signals := make(chan ssh.Signal, 1)
+	signals := make(chan glssh.Signal, 1)
 	copyDone := make(chan error, 2)
 	var activeRoutines sync.WaitGroup
 	defer func() {
@@ -203,7 +204,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	}
 }
 
-func (this *docker) signal(ctx context.Context, logger log.Logger, conn connection.Connection, sshSignal ssh.Signal) {
+func (this *docker) signal(ctx context.Context, logger log.Logger, conn connection.Connection, sshSignal glssh.Signal) {
 	var signal sys.Signal
 	if err := signal.Set(string(sshSignal)); err != nil {
 		signal = sys.SIGKILL

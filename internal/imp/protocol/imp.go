@@ -82,11 +82,13 @@ func (this *imp) serve(ctx context.Context, ln net.Listener) error {
 			return err
 		}
 
-		if err := this.serveConn(ctx, conn); err != nil && !sys.IsClosedError(err) {
-			this.logger().
-				WithError(err).
-				Warn("serve connection failed")
-		}
+		go func() {
+			if err := this.serveConn(ctx, conn); err != nil && !sys.IsClosedError(err) {
+				this.logger().
+					WithError(err).
+					Warn("serve connection failed")
+			}
+		}()
 	}
 }
 
