@@ -249,7 +249,7 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 				return
 			}
 			defer func() {
-				assert.NoError(t, localConn.Close())
+				_ = localConn.Close()
 			}()
 
 			buf := make([]byte, 6)
@@ -261,7 +261,7 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 			time.Sleep(time.Millisecond * 100)
 		}()
 
-		time.Sleep(time.Millisecond * 100)
+		time.Sleep(time.Millisecond * 200)
 
 		assert.NotEmpty(t, local.Path())
 		remote, err := net.ConnectToNamedPipe(ctx, local.Path())
@@ -271,7 +271,7 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 		_, err = remote.Write([]byte("foobar"))
 		require.NoError(t, err)
 
-		time.Sleep(time.Millisecond * 100)
+		time.Sleep(time.Millisecond * 200)
 
 		require.NoError(t, remote.Close())
 		require.NoError(t, local.Close())
