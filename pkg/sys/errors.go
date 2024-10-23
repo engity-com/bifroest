@@ -3,7 +3,7 @@ package sys
 import (
 	"errors"
 	"io"
-	"net"
+	gonet "net"
 	"os"
 )
 
@@ -17,7 +17,7 @@ func IsClosedError(err error) bool {
 		return false
 	}
 
-	if errors.Is(err, io.ErrClosedPipe) || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+	if errors.Is(err, io.ErrClosedPipe) || errors.Is(err, io.EOF) || errors.Is(err, gonet.ErrClosed) {
 		return true
 	}
 
@@ -25,7 +25,7 @@ func IsClosedError(err error) bool {
 		return true
 	}
 
-	var noe *net.OpError
+	var noe *gonet.OpError
 	if errors.As(err, &noe) && noe.Err != nil {
 		switch noe.Err.Error() {
 		case "use of closed network connection":

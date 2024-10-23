@@ -2,7 +2,7 @@ package protocol
 
 import (
 	"context"
-	crypto2 "crypto"
+	gocrypto "crypto"
 	"crypto/tls"
 	"crypto/x509"
 	gonet "net"
@@ -102,7 +102,7 @@ func (this *Master) tlsDialerFor(ref Ref) (_ *tls.Dialer, releaser func(), _ err
 	}, nil
 }
 
-func (this *Master) basicTlsConfigFor(ownCertificate *x509.Certificate, sdk crypto2.Signer) *tls.Config {
+func (this *Master) basicTlsConfigFor(ownCertificate *x509.Certificate, sdk gocrypto.Signer) *tls.Config {
 	return &tls.Config{
 		Certificates: []tls.Certificate{{
 			Certificate: [][]byte{ownCertificate.Raw},

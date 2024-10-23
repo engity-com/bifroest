@@ -2,7 +2,7 @@ package net
 
 import (
 	"bytes"
-	"net"
+	gonet "net"
 	"strings"
 
 	"github.com/engity-com/bifroest/pkg/common"
@@ -21,7 +21,7 @@ func MustNewHost(in string) Host {
 }
 
 type Host struct {
-	IP  net.IP
+	IP  gonet.IP
 	Dns string
 }
 
@@ -45,7 +45,7 @@ func (this *Host) UnmarshalText(in []byte) error {
 		return nil
 	}
 
-	if v := net.ParseIP(string(in)); v != nil {
+	if v := gonet.ParseIP(string(in)); v != nil {
 		*this = Host{IP: v}
 		return nil
 	}
@@ -58,27 +58,27 @@ func (this *Host) Set(in string) error {
 	return this.UnmarshalText([]byte(in))
 }
 
-func (this *Host) SetNetAddr(in net.Addr) error {
+func (this *Host) SetNetAddr(in gonet.Addr) error {
 	switch t := in.(type) {
-	case *net.IPNet:
+	case *gonet.IPNet:
 		if len(t.IP) == 0 {
 			return errors.Config.Newf("invalid address with empty IP")
 		}
 		*this = Host{IP: t.IP}
 		return nil
-	case *net.IPAddr:
+	case *gonet.IPAddr:
 		if len(t.IP) == 0 {
 			return errors.Config.Newf("invalid address with empty IP")
 		}
 		*this = Host{IP: t.IP}
 		return nil
-	case *net.TCPAddr:
+	case *gonet.TCPAddr:
 		if len(t.IP) == 0 {
 			return errors.Config.Newf("invalid address with empty IP")
 		}
 		*this = Host{IP: t.IP}
 		return nil
-	case *net.UDPAddr:
+	case *gonet.UDPAddr:
 		if len(t.IP) == 0 {
 			return errors.Config.Newf("invalid address with empty IP")
 		}
@@ -111,7 +111,7 @@ func (this Host) IsZero() bool {
 
 func (this Host) Validate() error {
 	switch len(this.IP) {
-	case net.IPv4len, net.IPv6len, 0:
+	case gonet.IPv4len, gonet.IPv6len, 0:
 		return nil
 	default:
 		return errors.Config.Newf("illegal IP address: %v", this.IP)
@@ -133,6 +133,6 @@ func (this Host) IsEqualTo(other any) bool {
 }
 
 func (this Host) isEqualTo(other *Host) bool {
-	return net.IP.Equal(this.IP, other.IP) &&
+	return gonet.IP.Equal(this.IP, other.IP) &&
 		this.Dns == other.Dns
 }

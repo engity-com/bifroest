@@ -36,6 +36,8 @@ var (
 	DefaultEnvironmentDockerPortForwardingAllowed = template.BoolOf(true)
 	DefaultEnvironmentDockerImpPublishHost        = net.MustNewHost("")
 
+	DefaultEnvironmentDockerCleanOrphan = template.BoolOf(true)
+
 	_ = RegisterEnvironmentV(func() EnvironmentV {
 		return &EnvironmentDocker{}
 	})
@@ -69,7 +71,9 @@ type EnvironmentDocker struct {
 	Banner template.String `yaml:"banner,omitempty"`
 
 	PortForwardingAllowed template.Bool `yaml:"portForwardingAllowed,omitempty"`
-	ImpPublishHost        net.Host      `yaml:"impPublishHost"`
+	ImpPublishHost        net.Host      `yaml:"impPublishHost,omitempty"`
+
+	CleanOrphan template.Bool `yaml:"cleanOrphan,omitempty"`
 }
 
 func (this *EnvironmentDocker) SetDefaults() error {
@@ -102,6 +106,8 @@ func (this *EnvironmentDocker) SetDefaults() error {
 
 		fixedDefault("portForwardingAllowed", func(v *EnvironmentDocker) *template.Bool { return &v.PortForwardingAllowed }, DefaultEnvironmentDockerPortForwardingAllowed),
 		fixedDefault("impPublishHost", func(v *EnvironmentDocker) *net.Host { return &v.ImpPublishHost }, DefaultEnvironmentDockerImpPublishHost),
+
+		fixedDefault("cleanOrphan", func(v *EnvironmentDocker) *template.Bool { return &v.CleanOrphan }, DefaultEnvironmentDockerCleanOrphan),
 	)
 }
 
@@ -136,6 +142,8 @@ func (this *EnvironmentDocker) Trim() error {
 		noopTrim[EnvironmentDocker]("portForwardingAllowed"),
 
 		noopTrim[EnvironmentDocker]("impPublishHost"),
+
+		noopTrim[EnvironmentDocker]("cleanOrphan"),
 	)
 }
 
@@ -173,6 +181,8 @@ func (this *EnvironmentDocker) Validate() error {
 		},
 
 		func(v *EnvironmentDocker) (string, validator) { return "impPublishHost", &v.ImpPublishHost },
+
+		func(v *EnvironmentDocker) (string, validator) { return "cleanOrphan", &v.CleanOrphan },
 	)
 }
 
@@ -220,7 +230,8 @@ func (this EnvironmentDocker) isEqualTo(other *EnvironmentDocker) bool {
 		isEqual(&this.User, &other.User) &&
 		isEqual(&this.Banner, &other.Banner) &&
 		isEqual(&this.PortForwardingAllowed, &other.PortForwardingAllowed) &&
-		isEqual(&this.ImpPublishHost, &other.ImpPublishHost)
+		isEqual(&this.ImpPublishHost, &other.ImpPublishHost) &&
+		isEqual(&this.CleanOrphan, &other.CleanOrphan)
 }
 
 func (this EnvironmentDocker) Types() []string {

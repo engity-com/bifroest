@@ -4,27 +4,27 @@ import (
 	"context"
 	"io"
 
-	"github.com/gliderlabs/ssh"
-	gssh "golang.org/x/crypto/ssh"
+	glssh "github.com/gliderlabs/ssh"
+	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
-func (this *service) handleNewSshSession(srv *ssh.Server, conn *gssh.ServerConn, newChan gssh.NewChannel, ctx ssh.Context) {
-	ssh.DefaultSessionHandler(srv, conn, newChan, ctx)
+func (this *service) handleNewSshSession(srv *glssh.Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx glssh.Context) {
+	glssh.DefaultSessionHandler(srv, conn, newChan, ctx)
 }
 
-func (this *service) handleSshShellSession(sess ssh.Session) {
+func (this *service) handleSshShellSession(sess glssh.Session) {
 	this.uncheckedExecuteSshSession(sess, environment.TaskTypeShell)
 }
 
-func (this *service) handleSshSftpSession(sess ssh.Session) {
+func (this *service) handleSshSftpSession(sess glssh.Session) {
 	this.uncheckedExecuteSshSession(sess, environment.TaskTypeSftp)
 }
 
-func (this *service) uncheckedExecuteSshSession(sshSess ssh.Session, taskType environment.TaskType) {
+func (this *service) uncheckedExecuteSshSession(sshSess glssh.Session, taskType environment.TaskType) {
 	conn := this.connection(sshSess.Context())
 	l := conn.logger
 
@@ -72,7 +72,7 @@ func (this *service) uncheckedExecuteSshSession(sshSess ssh.Session, taskType en
 	}
 }
 
-func (this *service) executeSession(sshSess ssh.Session, conn *connection, taskType environment.TaskType) (exitCode int, rErr error) {
+func (this *service) executeSession(sshSess glssh.Session, conn *connection, taskType environment.TaskType) (exitCode int, rErr error) {
 	fail := func(err error) (int, error) {
 		return -1, err
 	}
@@ -80,7 +80,7 @@ func (this *service) executeSession(sshSess ssh.Session, conn *connection, taskT
 		return fail(errors.Newf(t, msg, args...))
 	}
 
-	auth, sess, oldState, err := this.resolveAuthorizationAndSession(sshSess)
+	auth, sess, oldState, err := this.resolveAuthorizationAndSession(sshSess.Context())
 	if err != nil {
 		return fail(err)
 	}
@@ -89,7 +89,6 @@ func (this *service) executeSession(sshSess ssh.Session, conn *connection, taskT
 		return fail(err)
 	}
 
-	ctx := sshSess.Context()
 	req := environmentRequest{
 		environmentContext{
 			service:       this,
@@ -104,9 +103,6 @@ func (this *service) executeSession(sshSess ssh.Session, conn *connection, taskT
 		return fail(err)
 	}
 	defer common.KeepCloseError(&rErr, env)
-
-	ctx.SetValue(environmentKeyCtxKey, env)
-	defer ctx.SetValue(environmentKeyCtxKey, nil)
 
 	if len(sshSess.RawCommand()) == 0 && taskType == environment.TaskTypeShell {
 		banner, err := env.Banner(&req)

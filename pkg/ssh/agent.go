@@ -4,7 +4,6 @@ import (
 	gonet "net"
 
 	log "github.com/echocat/slf4g"
-	"github.com/gliderlabs/ssh"
 	glssh "github.com/gliderlabs/ssh"
 	gossh "golang.org/x/crypto/ssh"
 
@@ -18,13 +17,13 @@ const (
 	authAgentChannelName = "auth-agent@openssh.com"
 )
 
-func AgentRequested(sshSess ssh.Session) bool {
+func AgentRequested(sshSess glssh.Session) bool {
 	return glssh.AgentRequested(sshSess)
 }
 
-func ForwardAgentConnections(ln gonet.Listener, logger log.Logger, sshSess ssh.Session) {
+func ForwardAgentConnections(ln gonet.Listener, logger log.Logger, sshSess glssh.Session) {
 	ctx := sshSess.Context()
-	sshConn := ctx.Value(ssh.ContextKeyConn).(gossh.Conn)
+	sshConn := ctx.Value(glssh.ContextKeyConn).(gossh.Conn)
 	for {
 		conn, err := ln.Accept()
 		if sys.IsClosedError(err) {

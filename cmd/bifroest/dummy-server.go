@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"net"
+	gonet "net"
 	"net/http"
 	goos "os"
 	"os/signal"
@@ -31,7 +31,7 @@ var _ = registerCommand(func(app *kingpin.Application) {
 })
 
 func doDummyServer(addr string) (rErr error) {
-	ln, err := net.Listen("tcp", addr)
+	ln, err := gonet.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to listen to address %q: %w", addr, err)
 	}

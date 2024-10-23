@@ -3,14 +3,14 @@ package service
 import (
 	"io"
 
-	"github.com/gliderlabs/ssh"
+	glssh "github.com/gliderlabs/ssh"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
-func (this *service) handleBanner(ctx ssh.Context) string {
+func (this *service) handleBanner(ctx glssh.Context) string {
 	l := this.logger(ctx)
 
 	if b, err := this.Configuration.Ssh.Banner.Render(&connectionContext{ctx}); err != nil {
@@ -21,12 +21,12 @@ func (this *service) handleBanner(ctx ssh.Context) string {
 	}
 }
 
-func (this *service) showRememberMe(sshSess ssh.Session, auth authorization.Authorization, _ session.Session, state session.State) error {
+func (this *service) showRememberMe(sshSess glssh.Session, auth authorization.Authorization, _ session.Session, state session.State) error {
 	ctx := sshSess.Context()
 
 	pub := auth.FindSessionsPublicKey()
 	if pub == nil {
-		pub, _ = ctx.Value(handshakeKeyCtxKey).(ssh.PublicKey)
+		pub, _ = ctx.Value(handshakeKeyCtxKey).(glssh.PublicKey)
 	}
 	if pub != nil {
 		if v := this.Configuration.Ssh.Keys.RememberMeNotification; !v.IsZero() {

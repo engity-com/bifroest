@@ -10,7 +10,7 @@ import (
 	"syscall"
 
 	log "github.com/echocat/slf4g"
-	"github.com/gliderlabs/ssh"
+	glssh "github.com/gliderlabs/ssh"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
@@ -101,7 +101,7 @@ func (this *local) getPathEnv() string {
 	return "/bin:/usr/bin"
 }
 
-func (this *local) signal(cmd *exec.Cmd, logger log.Logger, signal ssh.Signal) {
+func (this *local) signal(cmd *exec.Cmd, logger log.Logger, signal glssh.Signal) {
 	var sig sys.Signal
 	if err := sig.Set(string(signal)); err != nil {
 		sig = sys.SIGKILL

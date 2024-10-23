@@ -1,9 +1,9 @@
 package authorization
 
-import "github.com/gliderlabs/ssh"
+import glssh "github.com/gliderlabs/ssh"
 
 type ContextEnabled interface {
-	Context() ssh.Context
+	Context() glssh.Context
 }
 
 func getField(name string, ce ContextEnabled, of Authorization, def func() (any, bool, error)) (any, bool, error) {

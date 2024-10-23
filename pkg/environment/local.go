@@ -20,6 +20,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/ssh"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 func (this *local) Banner(req Request) (io.ReadCloser, error) {
@@ -227,7 +228,7 @@ func (this *local) Close() error {
 }
 
 func (this *local) isRelevantError(err error) bool {
-	return err != nil && !errors.Is(err, syscall.EIO) && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF)
+	return err != nil && !errors.Is(err, syscall.EIO) && !sys.IsClosedError(err)
 }
 
 func (this *local) kill(cmd *exec.Cmd, logger log.Logger) {

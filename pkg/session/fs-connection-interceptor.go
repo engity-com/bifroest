@@ -3,7 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
-	"net"
+	gonet "net"
 	"sync/atomic"
 	"time"
 
@@ -93,11 +93,11 @@ func (this *fsConnectionInterceptorStack) close() error {
 	return nil
 }
 
-func (this *fsConnectionInterceptorStack) OnReadConnection(ssh.Context, log.Logger, net.Conn) (time.Time, ConnectionInterceptorResult, error) {
+func (this *fsConnectionInterceptorStack) OnReadConnection(ssh.Context, log.Logger, gonet.Conn) (time.Time, ConnectionInterceptorResult, error) {
 	return this.onConnectionAction()
 }
 
-func (this *fsConnectionInterceptorStack) OnWriteConnection(ssh.Context, log.Logger, net.Conn) (time.Time, ConnectionInterceptorResult, error) {
+func (this *fsConnectionInterceptorStack) OnWriteConnection(ssh.Context, log.Logger, gonet.Conn) (time.Time, ConnectionInterceptorResult, error) {
 	return this.onConnectionAction()
 }
 

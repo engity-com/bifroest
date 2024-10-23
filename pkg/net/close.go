@@ -1,17 +1,17 @@
 package net
 
 import (
-	"net"
+	gonet "net"
 
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 type CloseWriterConn interface {
-	net.Conn
+	gonet.Conn
 	sys.CloseWriter
 }
 
-func AsCloseWriterConn(conn net.Conn) CloseWriterConn {
+func AsCloseWriterConn(conn gonet.Conn) CloseWriterConn {
 	if v, ok := conn.(CloseWriterConn); ok {
 		return v
 	}
@@ -19,7 +19,7 @@ func AsCloseWriterConn(conn net.Conn) CloseWriterConn {
 }
 
 type closeWriterConn struct {
-	net.Conn
+	gonet.Conn
 }
 
 func (this *closeWriterConn) CloseWrite() error {

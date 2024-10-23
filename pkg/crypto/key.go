@@ -2,7 +2,7 @@ package crypto
 
 import (
 	"bytes"
-	"crypto"
+	gocrypto "crypto"
 	"crypto/dsa"
 	"crypto/ed25519"
 	"encoding/base64"
@@ -38,7 +38,7 @@ func PublicKeyFromSsh(in ssh.PublicKey) (PublicKey, error) {
 	return &result, nil
 }
 
-func PublicKeyFromSdk(in crypto.PublicKey) (PublicKey, error) {
+func PublicKeyFromSdk(in gocrypto.PublicKey) (PublicKey, error) {
 	s, err := ssh.NewPublicKey(in)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrIllegalSshKey, err)
@@ -53,20 +53,20 @@ type PublicKey interface {
 	Type() string
 	Marshal() []byte
 	ToSsh() ssh.PublicKey
-	ToSdk() crypto.PublicKey
+	ToSdk() gocrypto.PublicKey
 	IsEqualTo(PublicKey) bool
 }
 
 type publicKeySshWrapper struct {
 	ssh.PublicKey
-	sdk crypto.PublicKey
+	sdk gocrypto.PublicKey
 }
 
 func (this *publicKeySshWrapper) ToSsh() ssh.PublicKey {
 	return this.PublicKey
 }
 
-func (this *publicKeySshWrapper) ToSdk() crypto.PublicKey {
+func (this *publicKeySshWrapper) ToSdk() gocrypto.PublicKey {
 	return this.sdk
 }
 
@@ -88,7 +88,7 @@ func (this *publicKeySshWrapper) IsEqualTo(other PublicKey) bool {
 	return true
 }
 
-func PrivateKeyFromSdk(sdk crypto.Signer) (PrivateKey, error) {
+func PrivateKeyFromSdk(sdk gocrypto.Signer) (PrivateKey, error) {
 	v, err := ssh.NewSignerFromKey(sdk)
 	if err != nil {
 		return nil, err
@@ -100,14 +100,14 @@ type PrivateKey interface {
 	Type() string
 	PublicKey() PublicKey
 	ToSsh() ssh.Signer
-	ToSdk() crypto.Signer
+	ToSdk() gocrypto.Signer
 	MarshalPemBlock() (*pem.Block, error)
 }
 
 type privateKeyWrapper struct {
 	pub publicKeySshWrapper
 	ssh ssh.Signer
-	sdk crypto.Signer
+	sdk gocrypto.Signer
 }
 
 func (this *privateKeyWrapper) Type() string {
@@ -122,7 +122,7 @@ func (this *privateKeyWrapper) ToSsh() ssh.Signer {
 	return this.ssh
 }
 
-func (this *privateKeyWrapper) ToSdk() crypto.Signer {
+func (this *privateKeyWrapper) ToSdk() gocrypto.Signer {
 	return this.sdk
 }
 
@@ -156,7 +156,7 @@ func EnsureKeyFile(fn string, reqOnAbsence *KeyRequirement, rand io.Reader) (Pri
 		return nil, fmt.Errorf("cannot parse private key %q: %w", fn, err)
 	}
 
-	return PrivateKeyFromSdk(pk.(crypto.Signer))
+	return PrivateKeyFromSdk(pk.(gocrypto.Signer))
 }
 
 func WriteSshPrivateKey(pk PrivateKey, to io.Writer) error {
@@ -176,11 +176,11 @@ type dsaPrivateKey struct {
 	*dsa.PrivateKey
 }
 
-func (this *dsaPrivateKey) Public() crypto.PublicKey {
+func (this *dsaPrivateKey) Public() gocrypto.PublicKey {
 	return this.PublicKey
 }
 
-func (this *dsaPrivateKey) Sign(rand io.Reader, digest []byte, _ crypto.SignerOpts) ([]byte, error) {
+func (this *dsaPrivateKey) Sign(rand io.Reader, digest []byte, _ gocrypto.SignerOpts) ([]byte, error) {
 	r, s, err := dsa.Sign(rand, this.PrivateKey, digest)
 	if err != nil {
 		return nil, err

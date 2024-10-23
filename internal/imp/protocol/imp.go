@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"net"
+	gonet "net"
 	"net/http"
 	"strconv"
 
@@ -43,7 +43,7 @@ func (this *Imp) Serve(ctx context.Context) error {
 	}
 
 	addr := this.getAddr()
-	ln, err := net.Listen("tcp", addr)
+	ln, err := gonet.Listen("tcp", addr)
 	if err != nil {
 		return failf("cannot listen to %s: %v", addr, err)
 	}
@@ -72,7 +72,7 @@ type imp struct {
 	*Imp
 }
 
-func (this *imp) serve(ctx context.Context, ln net.Listener) error {
+func (this *imp) serve(ctx context.Context, ln gonet.Listener) error {
 	this.logger().Debug("going to serve...")
 	defer common.IgnoreCloseError(ln)
 	defer this.logger().Debug("going to serve... DONE!")
@@ -92,7 +92,7 @@ func (this *imp) serve(ctx context.Context, ln net.Listener) error {
 	}
 }
 
-func (this *imp) serveConn(ctx context.Context, plainConn net.Conn) (rErr error) {
+func (this *imp) serveConn(ctx context.Context, plainConn gonet.Conn) (rErr error) {
 	fail := func(err error) error {
 		return err
 	}

@@ -5,7 +5,7 @@ package net
 import (
 	"context"
 	"fmt"
-	"net"
+	gonet "net"
 
 	"github.com/Microsoft/go-winio"
 )
@@ -31,6 +31,6 @@ func newNamedPipe(purpose Purpose, id string) (NamedPipe, error) {
 	return &namedPipe{ln, path, true}, nil
 }
 
-func connectToNamedPipe(ctx context.Context, path string) (net.Conn, error) {
+func connectToNamedPipe(ctx context.Context, path string) (gonet.Conn, error) {
 	return winio.DialPipeContext(ctx, path)
 }

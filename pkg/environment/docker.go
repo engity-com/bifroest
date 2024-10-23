@@ -19,6 +19,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/imp"
 	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 type docker struct {
@@ -130,7 +131,7 @@ func (this *docker) closeGuarded() error {
 }
 
 func (this *docker) isRelevantError(err error) bool {
-	return err != nil && !errors.Is(err, syscall.EIO) && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF)
+	return err != nil && !errors.Is(err, syscall.EIO) && !sys.IsClosedError(err)
 }
 
 var (

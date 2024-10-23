@@ -1,8 +1,8 @@
 package authorization
 
 import (
-	"github.com/gliderlabs/ssh"
-	gssh "golang.org/x/crypto/ssh"
+	glssh "github.com/gliderlabs/ssh"
+	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/session"
@@ -11,13 +11,13 @@ import (
 type Request interface {
 	Sessions() session.Repository
 	Connection() connection.Connection
-	Context() ssh.Context
+	Context() glssh.Context
 	Validate(Authorization) (bool, error)
 }
 
 type PublicKeyRequest interface {
 	Request
-	RemotePublicKey() gssh.PublicKey
+	RemotePublicKey() gossh.PublicKey
 }
 
 type PasswordRequest interface {

@@ -165,6 +165,7 @@ nav:
           - Authorization: reference/context/authorization.md
           - Authorization Request: reference/context/authorization-request.md
           - Connection: reference/context/connection.md
+          - Container: reference/context/container.md
           - Core: reference/context/core.md
           - Local Group: reference/context/local-group.md
           - Local User: reference/context/local-user.md

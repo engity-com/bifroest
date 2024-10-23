@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
-	"net"
+	gonet "net"
 	"os"
 	"time"
 
@@ -16,7 +16,7 @@ import (
 )
 
 type NamedPipe interface {
-	net.Listener
+	gonet.Listener
 	AcceptConn() (CloseWriterConn, error)
 	Path() string
 }
@@ -68,12 +68,12 @@ func NewNamedPipeId() (string, error) {
 	return base58.Encode(buf), nil
 }
 
-func AsNamedPipe(ln net.Listener, path string) (NamedPipe, error) {
+func AsNamedPipe(ln gonet.Listener, path string) (NamedPipe, error) {
 	return &namedPipe{ln, path, false}, nil
 }
 
-func ConnectToNamedPipe(ctx context.Context, path string) (net.Conn, error) {
-	fail := func(err error) (net.Conn, error) {
+func ConnectToNamedPipe(ctx context.Context, path string) (gonet.Conn, error) {
+	fail := func(err error) (gonet.Conn, error) {
 		return nil, errors.Network.Newf("cannot connect to named pipe for %s: %w", path, err)
 	}
 	result, err := connectToNamedPipe(ctx, path)
@@ -84,7 +84,7 @@ func ConnectToNamedPipe(ctx context.Context, path string) (net.Conn, error) {
 }
 
 type namedPipe struct {
-	net.Listener
+	gonet.Listener
 	path          string
 	deleteOnClose bool
 }

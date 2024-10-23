@@ -10,6 +10,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
@@ -90,6 +91,16 @@ func (this *houseKeeper) checkedRun(ctx context.Context) (nextRunIn time.Duratio
 }
 
 func (this *houseKeeper) run(logger log.Logger, ctx context.Context) error {
+	if err := this.inspectSessions(logger, ctx); err != nil {
+		return err
+	}
+	if err := this.cleanup(logger, ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (this *houseKeeper) inspectSessions(logger log.Logger, ctx context.Context) error {
 	return this.service.sessions.FindAll(ctx, this.inspectSession, &session.FindOpts{
 		AutoCleanUpAllowed: common.P(this.service.Configuration.HouseKeeping.AutoRepair),
 		Logger:             logger,
@@ -216,6 +227,18 @@ func (this *houseKeeper) disposeAuthorization(ctx context.Context, logger log.Lo
 	}
 
 	return disposed, nil
+}
+
+func (this *houseKeeper) cleanup(logger log.Logger, ctx context.Context) error {
+	return this.service.environments.Cleanup(ctx, &environment.CleanupOpts{
+		FlowOfNamePredicate: this.doesFlowExists,
+		Logger:              logger,
+	})
+}
+
+func (this *houseKeeper) doesFlowExists(name configuration.FlowName) (bool, error) {
+	_, ok := this.service.knownFlows[name]
+	return ok, nil
 }
 
 func (this *houseKeeper) Close() error {

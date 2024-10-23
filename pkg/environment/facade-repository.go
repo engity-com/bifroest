@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/gliderlabs/ssh"
+	glssh "github.com/gliderlabs/ssh"
 
 	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/common"
@@ -45,7 +45,7 @@ func (this *RepositoryFacade) WillBeAccepted(ctx Context) (bool, error) {
 	return candidate.WillBeAccepted(ctx)
 }
 
-func (this *RepositoryFacade) DoesSupportPty(ctx Context, pty ssh.Pty) (bool, error) {
+func (this *RepositoryFacade) DoesSupportPty(ctx Context, pty glssh.Pty) (bool, error) {
 	flow := ctx.Authorization().Flow()
 	candidate, ok := this.entries[flow]
 	if !ok {
@@ -75,6 +75,15 @@ func (this *RepositoryFacade) FindBySession(ctx context.Context, sess session.Se
 func (this *RepositoryFacade) Close() (rErr error) {
 	for _, entity := range this.entries {
 		defer common.KeepCloseError(&rErr, entity)
+	}
+	return nil
+}
+
+func (this *RepositoryFacade) Cleanup(ctx context.Context, opts *CleanupOpts) error {
+	for _, entity := range this.entries {
+		if err := entity.Cleanup(ctx, opts); err != nil {
+			return err
+		}
 	}
 	return nil
 }

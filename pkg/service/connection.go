@@ -2,7 +2,7 @@ package service
 
 import (
 	"fmt"
-	"net"
+	gonet "net"
 	"os"
 	"strconv"
 	"sync/atomic"
@@ -10,21 +10,21 @@ import (
 
 	log "github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/fields"
-	"github.com/gliderlabs/ssh"
+	glssh "github.com/gliderlabs/ssh"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
 	bconn "github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/errors"
-	bnet "github.com/engity-com/bifroest/pkg/net"
+	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
-func (this *service) onNewConnConnection(ctx ssh.Context, orig net.Conn) net.Conn {
+func (this *service) onNewConnConnection(ctx glssh.Context, orig gonet.Conn) gonet.Conn {
 	logger := this.Service.logger().WithAll(map[string]any{
-		"local":      withLazyContextOrFieldExclude[net.Addr](ctx, ssh.ContextKeyLocalAddr),
-		"remoteUser": withLazyContextOrFieldExclude[string](ctx, ssh.ContextKeyUser),
-		"remote":     withLazyContextOrFieldExclude[net.Addr](ctx, ssh.ContextKeyRemoteAddr),
-		"ssh":        withLazyContextOrFieldExclude[string](ctx, ssh.ContextKeySessionID),
+		"local":      withLazyContextOrFieldExclude[gonet.Addr](ctx, glssh.ContextKeyLocalAddr),
+		"remoteUser": withLazyContextOrFieldExclude[string](ctx, glssh.ContextKeyUser),
+		"remote":     withLazyContextOrFieldExclude[gonet.Addr](ctx, glssh.ContextKeyRemoteAddr),
+		"ssh":        withLazyContextOrFieldExclude[string](ctx, glssh.ContextKeySessionID),
 		"session": fields.LazyFunc(func() any {
 			auth, ok := ctx.Value(authorizationCtxKey).(authorization.Authorization)
 			if !ok {
@@ -63,7 +63,7 @@ func (this *service) onNewConnConnection(ctx ssh.Context, orig net.Conn) net.Con
 	return wrapped
 }
 
-func (this *service) newConnection(orig net.Conn, ctx ssh.Context, logger log.Logger) (net.Conn, error) {
+func (this *service) newConnection(orig gonet.Conn, ctx glssh.Context, logger log.Logger) (gonet.Conn, error) {
 	for {
 		current := this.activeConnections.Load()
 		if current >= int64(this.Configuration.Ssh.MaxConnections) {
@@ -97,9 +97,9 @@ func (this *service) newConnection(orig net.Conn, ctx ssh.Context, logger log.Lo
 }
 
 type connection struct {
-	net.Conn
+	gonet.Conn
 	id      bconn.Id
-	context ssh.Context
+	context glssh.Context
 	logger  log.Logger
 	service *service
 	created int64
@@ -116,7 +116,7 @@ func (this *connection) Id() bconn.Id {
 	return this.id
 }
 
-func (this *connection) Remote() bnet.Remote {
+func (this *connection) Remote() net.Remote {
 	return &remote{this.context}
 }
 
@@ -161,7 +161,7 @@ func (this *connection) doWithInterceptor(consumer func(session.ConnectionInterc
 	return consumer(v)
 }
 
-func (this *connection) doWithInterceptorOnAction(op string, action func(session.ConnectionInterceptor, ssh.Context, log.Logger, net.Conn) (time.Time, session.ConnectionInterceptorResult, error)) error {
+func (this *connection) doWithInterceptorOnAction(op string, action func(session.ConnectionInterceptor, glssh.Context, log.Logger, gonet.Conn) (time.Time, session.ConnectionInterceptorResult, error)) error {
 	var deadline time.Time
 	var t connectionTimeType
 	err := this.doWithInterceptor(func(v session.ConnectionInterceptor) error {
@@ -184,7 +184,7 @@ func (this *connection) doWithInterceptorOnAction(op string, action func(session
 		if err := this.Conn.Close(); err != nil {
 			return err
 		}
-		return &net.OpError{
+		return &gonet.OpError{
 			Op:     op,
 			Net:    this.Conn.LocalAddr().Network(),
 			Source: this.Conn.RemoteAddr(),

@@ -195,6 +195,14 @@ At this address Bifröst will then connect to the IMP process inside the contain
 
 This is usually required, if you run Bifröst on a Docker/Podman for Desktop installation (such as on Windows or macOS) where the Docker daemon does not run on the host directly, but inside virtual machine.
 
+<<property("cleanOrphan", "bool", template_context="../context/container.md", default=True)>>
+While the [housekeeping iterations](../housekeeping.md) this environment will look for containers that can be inspected by its docker daemon connection if there is any container that does not belong to any flow of this Bifröst instance.
+
+This is useful to clean up old containers which are leftovers after you changed the configuration of Bifröst.
+
+!!! warning
+     If there are using multiple Bifröst installations the same Docker host, this should be disabled. Otherwise, each instance is removing the container of the other instance.
+
 ## Preparation Processes {: #preparationProcesses }
 
 If events about preparation processes are emitted by this environment, they are picked up by connections (like [SSH](../connection/ssh.md#preparationMessages)) and handled.

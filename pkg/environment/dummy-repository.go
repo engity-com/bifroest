@@ -3,7 +3,7 @@ package environment
 import (
 	"context"
 
-	"github.com/gliderlabs/ssh"
+	glssh "github.com/gliderlabs/ssh"
 
 	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -32,7 +32,7 @@ func (this *DummyRepository) WillBeAccepted(_ Context) (bool, error) {
 	return true, nil
 }
 
-func (this *DummyRepository) DoesSupportPty(_ Context, _ ssh.Pty) (bool, error) {
+func (this *DummyRepository) DoesSupportPty(_ Context, _ glssh.Pty) (bool, error) {
 	return true, nil
 }
 
@@ -49,5 +49,9 @@ func (this *DummyRepository) FindBySession(_ context.Context, sess session.Sessi
 }
 
 func (this *DummyRepository) Close() error {
+	return nil
+}
+
+func (this *DummyRepository) Cleanup(context.Context, *CleanupOpts) error {
 	return nil
 }

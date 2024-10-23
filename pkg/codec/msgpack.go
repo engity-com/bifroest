@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"net"
+	gonet "net"
 	"reflect"
 	"sync"
 	"time"
@@ -44,7 +44,7 @@ func ReleasePooledMsgPackEncoder(v *msgpack.Encoder) {
 	encoders.Put(v)
 }
 
-func GetPooledMsgPackConn(conn net.Conn) MsgPackConn {
+func GetPooledMsgPackConn(conn gonet.Conn) MsgPackConn {
 	result := msgPackConns.Get().(*msgPackConn)
 	result.Conn = conn
 	result.Encoder = GetPooledMsgPackEncoder(conn)
@@ -126,7 +126,7 @@ type MsgPackDecoder interface {
 }
 
 type MsgPackConn interface {
-	net.Conn
+	gonet.Conn
 	MsgPackEncoder
 	MsgPackDecoder
 }
@@ -140,13 +140,13 @@ type MsgPackCustomEncoder interface {
 }
 
 type msgPackConn struct {
-	net.Conn
+	gonet.Conn
 	*msgpack.Encoder
 	*msgpack.Decoder
 }
 
-func (this *msgPackConn) NetConn() net.Conn {
-	if nce, ok := this.Conn.(interface{ NetConn() net.Conn }); ok {
+func (this *msgPackConn) NetConn() gonet.Conn {
+	if nce, ok := this.Conn.(interface{ NetConn() gonet.Conn }); ok {
 		return nce.NetConn()
 	}
 	return nil

@@ -24,7 +24,7 @@ import (
 	"github.com/docker/go-connections/nat"
 	"github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/level"
-	"github.com/gliderlabs/ssh"
+	glssh "github.com/gliderlabs/ssh"
 
 	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/common"
@@ -138,7 +138,7 @@ func (this *DockerRepository) WillBeAccepted(ctx Context) (ok bool, err error) {
 	return ok, nil
 }
 
-func (this *DockerRepository) DoesSupportPty(Context, ssh.Pty) (bool, error) {
+func (this *DockerRepository) DoesSupportPty(Context, glssh.Pty) (bool, error) {
 	return true, nil
 }
 
@@ -700,6 +700,75 @@ func (this *DockerRepository) Close() error {
 	return nil
 }
 
+func (this *DockerRepository) Cleanup(ctx context.Context, opts *CleanupOpts) error {
+	fail := func(err error) error {
+		return errors.System.Newf("cannot cleanup potential orhpan docker containers: %w", err)
+	}
+
+	list, err := this.apiClient.ContainerList(ctx, container.ListOptions{
+		All: true,
+		Filters: filters.NewArgs(
+			filters.Arg("label", DockerLabelFlow),
+		),
+	})
+	if err != nil {
+		return fail(err)
+	}
+
+	l := opts.GetLogger(this.logger)
+
+	for _, c := range list {
+		cl := l.With("containerId", c.ID)
+		if ns := c.Names; len(ns) > 0 {
+			cl = cl.With("containerName", strings.TrimPrefix(ns[0], "/"))
+		}
+
+		var flow configuration.FlowName
+		if err := flow.Set(c.Labels[DockerLabelFlow]); err != nil || flow.IsZero() {
+			cl.WithError(err).
+				Warnf("container does have an illegal %v label; this warn message will appear again until this is fixed; skipping...", DockerLabelFlow)
+			continue
+		}
+
+		cl = cl.With("flow", flow)
+
+		if flow.IsEqualTo(this.flow) {
+			cl.Debug("found container that is owned by this flow environment; ignoring...")
+			continue
+		}
+
+		globalHasFlow, err := opts.HasFlowOfName(flow)
+		if err != nil {
+			return fail(err)
+		}
+
+		if globalHasFlow {
+			cl.Debug("found container that is owned by another environment; ignoring...")
+			continue
+		}
+
+		shouldBeCleaned, err := this.conf.CleanOrphan.Render(dockerContainerContext{&c})
+		if err != nil {
+			return fail(err)
+		}
+
+		if !shouldBeCleaned {
+			cl.Debug("found container that isn't owned by anybody, but should be kept; ignoring...")
+			continue
+		}
+
+		if ok, err := this.removeContainer(ctx, c.ID); err != nil {
+			cl.WithError(err).
+				Warn("cannot remove orphan container; this message might continue appearing until manually fixed; skipping...")
+			continue
+		} else if ok {
+			cl.Info("orphan container removed")
+		}
+	}
+
+	return nil
+}
+
 func (this *DockerRepository) logger() log.Logger {
 	if v := this.Logger; v != nil {
 		return v
@@ -720,5 +789,41 @@ func (this *DockerRepository) isNoSuchImageError(err error) bool {
 			return false
 		}
 		err = ue.Unwrap()
+	}
+}
+
+type dockerContainerContext struct {
+	container *types.Container
+}
+
+func (this *dockerContainerContext) GetField(name string) (any, bool, error) {
+	switch name {
+	case "id":
+		return this.container.ID, true, nil
+	case "image":
+		return this.container.Image, true, nil
+	case "name":
+		if len(this.container.Names) == 0 {
+			return nil, true, nil
+		}
+		return strings.TrimPrefix(this.container.Names[0], "/"), true, nil
+	case "flow":
+		if this.container.Labels == nil {
+			return nil, true, nil
+		}
+		plain, ok := this.container.Labels[DockerLabelFlow]
+		if !ok {
+			return nil, true, nil
+		}
+		var flow configuration.FlowName
+		if err := flow.Set(plain); err != nil {
+			return nil, false, err
+		}
+		if flow.IsZero() {
+			return nil, true, nil
+		}
+		return flow, true, nil
+	default:
+		return nil, false, fmt.Errorf("unknown field %q", name)
 	}
 }

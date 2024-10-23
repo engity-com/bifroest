@@ -2,18 +2,18 @@ package session
 
 import (
 	"io"
-	"net"
+	gonet "net"
 	"time"
 
 	log "github.com/echocat/slf4g"
-	"github.com/gliderlabs/ssh"
+	glssh "github.com/gliderlabs/ssh"
 )
 
 type ConnectionInterceptor interface {
 	io.Closer
 
-	OnReadConnection(ssh.Context, log.Logger, net.Conn) (time.Time, ConnectionInterceptorResult, error)
-	OnWriteConnection(ssh.Context, log.Logger, net.Conn) (time.Time, ConnectionInterceptorResult, error)
+	OnReadConnection(glssh.Context, log.Logger, gonet.Conn) (time.Time, ConnectionInterceptorResult, error)
+	OnWriteConnection(glssh.Context, log.Logger, gonet.Conn) (time.Time, ConnectionInterceptorResult, error)
 }
 
 type ConnectionInterceptorResult uint8

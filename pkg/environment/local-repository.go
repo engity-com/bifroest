@@ -1,6 +1,7 @@
 package environment
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -18,4 +19,8 @@ func (this *LocalRepository) WillBeAccepted(ctx Context) (ok bool, err error) {
 	}
 
 	return ok, nil
+}
+
+func (this *LocalRepository) Cleanup(context.Context, *CleanupOpts) error {
+	return nil
 }

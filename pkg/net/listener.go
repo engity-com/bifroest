@@ -1,24 +1,24 @@
 package net
 
 import (
-	"net"
+	gonet "net"
 )
 
-func AsListener[C net.Conn](
+func AsListener[C gonet.Conn](
 	accept func() (C, error),
 	close func() error,
 	addr func() string,
-) (net.Listener, error) {
+) (gonet.Listener, error) {
 	return &listener[C]{accept, close, addr}, nil
 }
 
-type listener[C net.Conn] struct {
+type listener[C gonet.Conn] struct {
 	accept func() (C, error)
 	close  func() error
 	addr   func() string
 }
 
-func (this *listener[C]) Accept() (net.Conn, error) {
+func (this *listener[C]) Accept() (gonet.Conn, error) {
 	result, err := this.accept()
 	return result, err
 }
@@ -27,7 +27,7 @@ func (this *listener[C]) Close() error {
 	return this.close()
 }
 
-func (this *listener[C]) Addr() net.Addr {
+func (this *listener[C]) Addr() gonet.Addr {
 	return addrAdapter(this.addr)
 }
 

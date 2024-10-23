@@ -1,7 +1,7 @@
 package net
 
 import (
-	"net"
+	gonet "net"
 	"syscall"
 
 	"github.com/engity-com/bifroest/pkg/errors"
@@ -11,7 +11,7 @@ var (
 	ErrNotifyClosedUnsupported = errors.Network.Newf("notify closed is not supported for this connection")
 )
 
-func NotifyClosed(conn net.Conn, onClosed func(), onUnexpectedEnd func(error)) {
+func NotifyClosed(conn gonet.Conn, onClosed func(), onUnexpectedEnd func(error)) {
 	if onClosed == nil {
 		panic(errors.System.Newf("onClosed is nil"))
 	}
@@ -20,7 +20,7 @@ func NotifyClosed(conn net.Conn, onClosed func(), onUnexpectedEnd func(error)) {
 	}
 
 	for {
-		nce, ok := conn.(interface{ NetConn() net.Conn })
+		nce, ok := conn.(interface{ NetConn() gonet.Conn })
 		if !ok {
 			break
 		}

@@ -3,8 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
-	"io"
-	"net"
+	gonet "net"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -12,8 +11,8 @@ import (
 
 	log "github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/fields"
-	"github.com/gliderlabs/ssh"
-	gssh "golang.org/x/crypto/ssh"
+	glssh "github.com/gliderlabs/ssh"
+	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/authorization"
@@ -29,10 +28,9 @@ import (
 )
 
 var (
-	connectionCtxKey     = struct{ uint64 }{83439637}
-	authorizationCtxKey  = struct{ uint64 }{10282643}
-	handshakeKeyCtxKey   = struct{ uint64 }{30072498}
-	environmentKeyCtxKey = struct{ uint64 }{46415512}
+	connectionCtxKey    = struct{ uint64 }{83439637}
+	authorizationCtxKey = struct{ uint64 }{10282643}
+	handshakeKeyCtxKey  = struct{ uint64 }{30072498}
 )
 
 type Service struct {
@@ -49,7 +47,7 @@ func (this *Service) isProblematicError(err error) bool {
 	if errors.Is(err, context.Canceled) {
 		return false
 	}
-	if errors.Is(err, net.ErrClosed) {
+	if errors.Is(err, gonet.ErrClosed) {
 		return false
 	}
 	return true
@@ -77,7 +75,7 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 	defer common.KeepCloseError(&rErr, svc)
 
 	lns := make([]struct {
-		ln   net.Listener
+		ln   gonet.Listener
 		addr bnet.NetAddress
 	}, len(this.Configuration.Ssh.Addresses))
 	var lnMutex sync.Mutex
@@ -87,7 +85,7 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 
 		for _, ln := range lns {
 			if ln.ln != nil {
-				defer func(target *net.Listener) {
+				defer func(target *gonet.Listener) {
 					*target = nil
 				}(&ln.ln)
 				if err := ln.ln.Close(); this.isProblematicError(err) && rErr == nil {
@@ -166,6 +164,11 @@ func (this *Service) prepare() (svc *service, err error) {
 	ctx := context.Background()
 	svc = &service{Service: this}
 
+	svc.knownFlows = make(map[configuration.FlowName]struct{})
+	for _, flow := range this.Configuration.Flows {
+		svc.knownFlows[flow.Name] = struct{}{}
+	}
+
 	hostSigners, err := this.loadHostPrivateKeys()
 	if err != nil {
 		return fail(err)
@@ -208,18 +211,18 @@ func (this *Service) prepareServer(_ context.Context, svc *service, hostPrivateK
 	svc.server.PasswordHandler = svc.handlePassword
 	svc.server.KeyboardInteractiveHandler = svc.handleKeyboardInteractiveChallenge
 	svc.server.BannerHandler = svc.handleBanner
-	svc.server.RequestHandlers = map[string]ssh.RequestHandler{
+	svc.server.RequestHandlers = map[string]glssh.RequestHandler{
 		"tcpip-forward":        svc.forwardHandler.HandleSSHRequest,
 		"cancel-tcpip-forward": svc.forwardHandler.HandleSSHRequest,
 	}
-	svc.server.ChannelHandlers = map[string]ssh.ChannelHandler{
+	svc.server.ChannelHandlers = map[string]glssh.ChannelHandler{
 		"session":      svc.handleNewSshSession,
 		"direct-tcpip": svc.handleNewDirectTcpIp,
 	}
-	svc.server.SubsystemHandlers = map[string]ssh.SubsystemHandler{
+	svc.server.SubsystemHandlers = map[string]glssh.SubsystemHandler{
 		"sftp": svc.handleSshSftpSession,
 	}
-	svc.server.HostSigners = make([]ssh.Signer, len(hostPrivateKeys))
+	svc.server.HostSigners = make([]glssh.Signer, len(hostPrivateKeys))
 	for i, v := range hostPrivateKeys {
 		svc.server.HostSigners[i] = v.ToSsh()
 	}
@@ -266,13 +269,15 @@ type service struct {
 	houseKeeper    houseKeeper
 	alternatives   alternatives.Provider
 	imp            imp.Imp
-	server         ssh.Server
-	forwardHandler ssh.ForwardedTCPHandler
+	server         glssh.Server
+	forwardHandler glssh.ForwardedTCPHandler
+
+	knownFlows map[configuration.FlowName]struct{}
 
 	activeConnections atomic.Int64
 }
 
-func withLazyContextOrFieldExclude[C any](ctx ssh.Context, ctxKey any) fields.Lazy {
+func withLazyContextOrFieldExclude[C any](ctx glssh.Context, ctxKey any) fields.Lazy {
 	return fields.LazyFunc(func() any {
 		if v, ok := ctx.Value(ctxKey).(C); ok {
 			return v
@@ -281,14 +286,14 @@ func withLazyContextOrFieldExclude[C any](ctx ssh.Context, ctxKey any) fields.La
 	})
 }
 
-func (this *service) connection(ctx ssh.Context) *connection {
+func (this *service) connection(ctx glssh.Context) *connection {
 	if v, ok := ctx.Value(connectionCtxKey).(*connection); ok {
 		return v
 	}
 	return nil
 }
 
-func (this *service) logger(ctx ssh.Context) log.Logger {
+func (this *service) logger(ctx glssh.Context) log.Logger {
 	if v := this.connection(ctx); v != nil {
 		return v.Logger()
 	}
@@ -300,11 +305,11 @@ func (this *service) isSilentError(err error) bool {
 }
 
 func (this *service) isRelevantError(err error) bool {
-	return err != nil && !errors.Is(err, syscall.EIO) && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF)
+	return err != nil && !errors.Is(err, syscall.EIO) && !sys.IsClosedError(err)
 }
 
-func (this *service) createNewServerConfig(ssh.Context) *gssh.ServerConfig {
-	return &gssh.ServerConfig{
+func (this *service) createNewServerConfig(glssh.Context) *gossh.ServerConfig {
+	return &gossh.ServerConfig{
 		ServerVersion: "SSH-2.0-Engity-Bifroest_" + this.Version.Version(),
 		MaxAuthTries:  int(this.Configuration.Ssh.MaxAuthTries),
 	}

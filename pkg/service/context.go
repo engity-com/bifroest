@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/gliderlabs/ssh"
-	gssh "golang.org/x/crypto/ssh"
+	glssh "github.com/gliderlabs/ssh"
+	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -18,7 +18,7 @@ import (
 )
 
 type remote struct {
-	ssh.Context
+	glssh.Context
 }
 
 func (this *remote) GetField(name string) (any, bool, error) {
@@ -58,7 +58,7 @@ func (this *authorizeRequest) GetField(name string) (any, bool, error) {
 	}
 }
 
-func (this *authorizeRequest) Context() ssh.Context {
+func (this *authorizeRequest) Context() glssh.Context {
 	return this.connection.context
 }
 
@@ -81,7 +81,7 @@ func (this *authorizeRequest) Validate(auth authorization.Authorization) (bool, 
 
 type publicKeyAuthorizeRequest struct {
 	authorizeRequest
-	publicKey gssh.PublicKey
+	publicKey gossh.PublicKey
 }
 
 func (this *publicKeyAuthorizeRequest) GetField(name string) (any, bool, error) {
@@ -93,7 +93,7 @@ func (this *publicKeyAuthorizeRequest) GetField(name string) (any, bool, error) 
 	}
 }
 
-func (this *publicKeyAuthorizeRequest) RemotePublicKey() gssh.PublicKey {
+func (this *publicKeyAuthorizeRequest) RemotePublicKey() gossh.PublicKey {
 	return this.publicKey
 }
 
@@ -117,7 +117,7 @@ func (this *passwordAuthorizeRequest) RemotePassword() string {
 
 type interactiveAuthorizeRequest struct {
 	authorizeRequest
-	challenger gssh.KeyboardInteractiveChallenge
+	challenger gossh.KeyboardInteractiveChallenge
 }
 
 func (this *interactiveAuthorizeRequest) GetField(name string) (any, bool, error) {
@@ -163,7 +163,7 @@ func (this *environmentContext) GetField(name string) (any, bool, error) {
 	}
 }
 
-func (this *environmentContext) Context() ssh.Context {
+func (this *environmentContext) Context() glssh.Context {
 	return this.connection.context
 }
 
@@ -177,7 +177,7 @@ func (this *environmentContext) Authorization() authorization.Authorization {
 
 type environmentRequest struct {
 	environmentContext
-	sshSession ssh.Session
+	reportWriter io.Writer
 }
 
 func (this *environmentRequest) StartPreparation(id, title string, attrs environment.PreparationProgressAttributes) (environment.PreparationProgress, error) {
@@ -226,6 +226,10 @@ func (this *environmentRequestPreparationProgress) GetField(name string) (any, b
 }
 
 func (this *environmentRequestPreparationProgress) print(tmpl *template.String, data any) error {
+	w := this.reportWriter
+	if w == nil {
+		return nil
+	}
 	v, err := tmpl.Render(data)
 	if err != nil {
 		return errors.Network.Newf("cannot render preparation progress message for client: %w", err)
@@ -233,7 +237,7 @@ func (this *environmentRequestPreparationProgress) print(tmpl *template.String, 
 	if v == "" {
 		return nil
 	}
-	_, err = this.sshSession.Write([]byte(v))
+	_, err = w.Write([]byte(v))
 	if err != nil {
 		return errors.Network.Newf("cannot print preparation progress message to client: %w", err)
 	}
@@ -288,7 +292,7 @@ func (this environmentRequestPreparationProgressError) GetField(name string) (an
 
 type environmentTask struct {
 	environmentContext
-	sshSession ssh.Session
+	sshSession glssh.Session
 	taskType   environment.TaskType
 }
 
@@ -301,7 +305,7 @@ func (this *environmentTask) GetField(name string) (any, bool, error) {
 	}
 }
 
-func (this *environmentTask) SshSession() ssh.Session {
+func (this *environmentTask) SshSession() glssh.Session {
 	return this.sshSession
 }
 
@@ -309,7 +313,7 @@ func (this *environmentTask) TaskType() environment.TaskType {
 	return this.taskType
 }
 
-func newRememberMeNotificationContext(ctx ssh.Context, auth authorization.Authorization, newSession bool, pub ssh.PublicKey) *rememberMeNotificationContext {
+func newRememberMeNotificationContext(ctx glssh.Context, auth authorization.Authorization, newSession bool, pub glssh.PublicKey) *rememberMeNotificationContext {
 	return &rememberMeNotificationContext{
 		ctx,
 		newSession,
@@ -319,17 +323,17 @@ func newRememberMeNotificationContext(ctx ssh.Context, auth authorization.Author
 }
 
 type contextEnabled interface {
-	Context() ssh.Context
+	Context() glssh.Context
 }
 
 type rememberMeNotificationContext struct {
-	context       ssh.Context
+	context       glssh.Context
 	newSession    bool
 	authorization authorization.Authorization
-	key           ssh.PublicKey
+	key           glssh.PublicKey
 }
 
-func (this *rememberMeNotificationContext) Context() ssh.Context {
+func (this *rememberMeNotificationContext) Context() glssh.Context {
 	return this.context
 }
 
@@ -369,7 +373,7 @@ func (this *sessionContext) GetField(name string) (any, bool, error) {
 }
 
 type connectionContext struct {
-	Context ssh.Context
+	Context glssh.Context
 }
 
 func (this *connectionContext) GetField(name string) (any, bool, error) {

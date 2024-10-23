@@ -1,7 +1,7 @@
 package environment
 
 import (
-	"github.com/gliderlabs/ssh"
+	glssh "github.com/gliderlabs/ssh"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/connection"
@@ -9,6 +9,6 @@ import (
 
 type Context interface {
 	Connection() connection.Connection
-	Context() ssh.Context
+	Context() glssh.Context
 	Authorization() authorization.Authorization
 }
