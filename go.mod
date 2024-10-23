@@ -28,7 +28,7 @@ require (
 	github.com/opencontainers/image-spec v1.1.0
 	github.com/openwall/yescrypt-go v1.0.0
 	github.com/otiai10/copy v1.14.0
-	github.com/pkg/sftp v1.13.6
+	github.com/pkg/sftp v1.13.7
 	github.com/shirou/gopsutil/v4 v4.24.9
 	github.com/stretchr/testify v1.9.0
 	github.com/tg123/go-htpasswd v1.2.2
