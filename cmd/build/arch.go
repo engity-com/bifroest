@@ -59,6 +59,10 @@ func (this *arch) Set(plain string) error {
 	return nil
 }
 
+func (this arch) toLdFlags(_ os) string {
+	return "-X main.arch=" + this.String()
+}
+
 func (this arch) isOsSupported(o os) bool {
 	return this.details().isOsSupported(o)
 }

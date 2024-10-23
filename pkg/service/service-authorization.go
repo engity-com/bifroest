@@ -1,17 +1,18 @@
 package service
 
 import (
-	"github.com/gliderlabs/ssh"
-	gssh "golang.org/x/crypto/ssh"
+	glssh "github.com/gliderlabs/ssh"
+	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
-func (this *service) handlePublicKey(ctx ssh.Context, key ssh.PublicKey) bool {
-	l := this.logger(ctx).
-		With("key", key.Type()+":"+gssh.FingerprintLegacyMD5(key))
+func (this *service) handlePublicKey(ctx glssh.Context, key glssh.PublicKey) bool {
+	conn := this.connection(ctx)
+	l := conn.logger.
+		With("key", key.Type()+":"+gossh.FingerprintLegacyMD5(key))
 
 	keyTypeAllowed, err := this.Configuration.Ssh.Keys.KeyAllowed(key)
 	if err != nil {
@@ -24,13 +25,13 @@ func (this *service) handlePublicKey(ctx ssh.Context, key ssh.PublicKey) bool {
 		return false
 	}
 
-	if _, ok := ctx.Value(handshakeKeyCtxKey).(ssh.PublicKey); !ok {
+	if _, ok := ctx.Value(handshakeKeyCtxKey).(glssh.PublicKey); !ok {
 		ctx.SetValue(handshakeKeyCtxKey, key)
 	}
 
 	authReq := authorizeRequest{
-		service: this,
-		remote:  remote{ctx},
+		service:    this,
+		connection: conn,
 	}
 
 	auth, err := this.authorizer.AuthorizePublicKey(&publicKeyAuthorizeRequest{authReq, key})
@@ -58,13 +59,14 @@ func (this *service) handlePublicKey(ctx ssh.Context, key ssh.PublicKey) bool {
 	return true
 }
 
-func (this *service) handlePassword(ctx ssh.Context, password string) bool {
-	l := this.logger(ctx)
+func (this *service) handlePassword(ctx glssh.Context, password string) bool {
+	conn := this.connection(ctx)
+	l := conn.logger
 
 	auth, err := this.authorizer.AuthorizePassword(&passwordAuthorizeRequest{
 		authorizeRequest: authorizeRequest{
-			service: this,
-			remote:  remote{ctx},
+			service:    this,
+			connection: conn,
 		},
 		password: password,
 	})
@@ -89,13 +91,14 @@ func (this *service) handlePassword(ctx ssh.Context, password string) bool {
 	return true
 }
 
-func (this *service) handleKeyboardInteractiveChallenge(ctx ssh.Context, challenger gssh.KeyboardInteractiveChallenge) bool {
-	l := this.logger(ctx)
+func (this *service) handleKeyboardInteractiveChallenge(ctx glssh.Context, challenger gossh.KeyboardInteractiveChallenge) bool {
+	conn := this.connection(ctx)
+	l := conn.logger
 
 	auth, err := this.authorizer.AuthorizeInteractive(&interactiveAuthorizeRequest{
 		authorizeRequest: authorizeRequest{
-			service: this,
-			remote:  remote{ctx},
+			service:    this,
+			connection: conn,
 		},
 		challenger: challenger,
 	})
@@ -120,12 +123,11 @@ func (this *service) handleKeyboardInteractiveChallenge(ctx ssh.Context, challen
 	return true
 }
 
-func (this *service) resolveAuthorizationAndSession(sshSess ssh.Session) (authorization.Authorization, session.Session, session.State, error) {
+func (this *service) resolveAuthorizationAndSession(ctx glssh.Context) (authorization.Authorization, session.Session, session.State, error) {
 	failf := func(t errors.Type, msg string, args ...any) (authorization.Authorization, session.Session, session.State, error) {
 		return nil, nil, 0, errors.Newf(t, msg, args...)
 	}
 
-	ctx := sshSess.Context()
 	auth, _ := ctx.Value(authorizationCtxKey).(authorization.Authorization)
 	if auth == nil {
 		return failf(errors.System, "no authorization resolved, but it should")
@@ -137,30 +139,35 @@ func (this *service) resolveAuthorizationAndSession(sshSess ssh.Session) (author
 
 	var err error
 	var oldState session.State
-	if oldState, err = sess.NotifyLastAccess(sshSess.Context(), &remote{ctx}, session.StateAuthorized); err != nil {
+	if oldState, err = sess.NotifyLastAccess(ctx, &remote{ctx}, session.StateAuthorized); err != nil {
 		return failf(errors.System, "cannot update session sate: %w", err)
 	}
 	if oldState == session.StateNew {
-		if pub, _ := ctx.Value(handshakeKeyCtxKey).(ssh.PublicKey); pub != nil {
-			if err := sess.AddPublicKey(sshSess.Context(), pub); err != nil {
+		if pub, _ := ctx.Value(handshakeKeyCtxKey).(glssh.PublicKey); pub != nil {
+			if err := sess.AddPublicKey(ctx, pub); err != nil {
 				return failf(errors.System, "cannot add public key to session: %w", err)
 			}
 		}
 	}
+
 	return auth, sess, oldState, nil
 }
 
-func (this *service) onPtyRequest(ctx ssh.Context, pty ssh.Pty) bool {
+func (this *service) onPtyRequest(ctx glssh.Context, pty glssh.Pty) bool {
 	auth, ok := ctx.Value(authorizationCtxKey).(authorization.Authorization)
 	if !ok {
 		return false
 	}
 
-	logger := this.logger(ctx)
+	conn := this.connection(ctx)
+	if conn == nil {
+		return false
+	}
+	logger := conn.Logger()
 
-	ok, err := this.environments.DoesSupportPty(&environmentRequest{
+	ok, err := this.environments.DoesSupportPty(&environmentContext{
 		this,
-		&remote{ctx},
+		conn,
 		auth,
 	}, pty)
 	if this.isRelevantError(err) {

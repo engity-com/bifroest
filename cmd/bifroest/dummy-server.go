@@ -3,37 +3,35 @@ package main
 import (
 	"context"
 	"fmt"
-	"net"
+	gonet "net"
 	"net/http"
-	"os"
+	goos "os"
 	"os/signal"
 	"strings"
 	"syscall"
 
-	"github.com/alecthomas/kingpin"
+	"github.com/alecthomas/kingpin/v2"
 	log "github.com/echocat/slf4g"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
-var (
-	addr = ":8783"
-)
-
 var _ = registerCommand(func(app *kingpin.Application) {
+	addr := ":8783"
 	cmd := app.Command("dummy-server", "This is a supporting command which simply runs forever until it receives a interrupt signal.").
 		Hidden().
 		Action(func(*kingpin.ParseContext) error {
-			return doDummyServer()
+			return doDummyServer(addr)
 		})
-	cmd.Flag("addr", "Address to bind to. Default: "+addr).
+	cmd.Flag("addr", "Address to bind to.").
+		Default(addr).
 		PlaceHolder("[<host>]:<port>").
 		StringVar(&addr)
 })
 
-func doDummyServer() (rErr error) {
-	ln, err := net.Listen("tcp", addr)
+func doDummyServer(addr string) (rErr error) {
+	ln, err := gonet.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to listen to address %q: %w", addr, err)
 	}
@@ -41,7 +39,7 @@ func doDummyServer() (rErr error) {
 
 	srv := http.Server{Handler: newDummyMux()}
 
-	sigs := make(chan os.Signal, 1)
+	sigs := make(chan goos.Signal, 1)
 	defer close(sigs)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	go func() {

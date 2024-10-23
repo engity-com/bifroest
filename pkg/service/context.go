@@ -4,19 +4,21 @@ import (
 	"fmt"
 	"io"
 
-	log "github.com/echocat/slf4g"
-	"github.com/gliderlabs/ssh"
-	gssh "golang.org/x/crypto/ssh"
+	glssh "github.com/gliderlabs/ssh"
+	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
-	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/configuration"
+	bconn "github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/environment"
+	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
+	"github.com/engity-com/bifroest/pkg/template"
 )
 
 type remote struct {
-	ssh.Context
+	glssh.Context
 }
 
 func (this *remote) GetField(name string) (any, bool, error) {
@@ -41,29 +43,27 @@ func (this *remote) String() string {
 }
 
 type authorizeRequest struct {
-	service *service
-	remote  remote
+	service    *service
+	connection *connection
 }
 
 func (this *authorizeRequest) GetField(name string) (any, bool, error) {
 	switch name {
+	case "connection":
+		return this.connection, true, nil
 	case "remote":
-		return this.remote, true, nil
+		return this.connection.Remote(), true, nil
 	default:
 		return nil, false, fmt.Errorf("unknown field %q", name)
 	}
 }
 
-func (this *authorizeRequest) Context() ssh.Context {
-	return this.remote.Context
+func (this *authorizeRequest) Context() glssh.Context {
+	return this.connection.context
 }
 
-func (this *authorizeRequest) Remote() common.Remote {
-	return &this.remote
-}
-
-func (this *authorizeRequest) Logger() log.Logger {
-	return this.service.logger(this.remote)
+func (this *authorizeRequest) Connection() bconn.Connection {
+	return this.connection
 }
 
 func (this *authorizeRequest) Sessions() session.Repository {
@@ -71,17 +71,17 @@ func (this *authorizeRequest) Sessions() session.Repository {
 }
 
 func (this *authorizeRequest) Validate(auth authorization.Authorization) (bool, error) {
-	req := environmentRequest{
+	ctx := environmentContext{
 		service:       this.service,
-		remote:        &this.remote,
+		connection:    this.connection,
 		authorization: auth,
 	}
-	return this.service.environments.WillBeAccepted(&req)
+	return this.service.environments.WillBeAccepted(&ctx)
 }
 
 type publicKeyAuthorizeRequest struct {
 	authorizeRequest
-	publicKey gssh.PublicKey
+	publicKey gossh.PublicKey
 }
 
 func (this *publicKeyAuthorizeRequest) GetField(name string) (any, bool, error) {
@@ -93,7 +93,7 @@ func (this *publicKeyAuthorizeRequest) GetField(name string) (any, bool, error) 
 	}
 }
 
-func (this *publicKeyAuthorizeRequest) RemotePublicKey() gssh.PublicKey {
+func (this *publicKeyAuthorizeRequest) RemotePublicKey() gossh.PublicKey {
 	return this.publicKey
 }
 
@@ -117,7 +117,7 @@ func (this *passwordAuthorizeRequest) RemotePassword() string {
 
 type interactiveAuthorizeRequest struct {
 	authorizeRequest
-	challenger gssh.KeyboardInteractiveChallenge
+	challenger gossh.KeyboardInteractiveChallenge
 }
 
 func (this *interactiveAuthorizeRequest) GetField(name string) (any, bool, error) {
@@ -142,18 +142,20 @@ func (this *interactiveAuthorizeRequest) Prompt(message string, echo bool) (stri
 	return resp[0], err
 }
 
-type environmentRequest struct {
+type environmentContext struct {
 	service       *service
-	remote        *remote
+	connection    *connection
 	authorization authorization.Authorization
 }
 
-func (this *environmentRequest) GetField(name string) (any, bool, error) {
+func (this *environmentContext) GetField(name string) (any, bool, error) {
 	switch name {
 	case "context":
-		return this.remote.Context, true, nil
+		return this.connection.context, true, nil
+	case "connection":
+		return this.connection, true, nil
 	case "remote":
-		return this.remote, true, nil
+		return this.connection.Remote(), true, nil
 	case "authorization":
 		return this.authorization, true, nil
 	default:
@@ -161,25 +163,136 @@ func (this *environmentRequest) GetField(name string) (any, bool, error) {
 	}
 }
 
-func (this *environmentRequest) Context() ssh.Context {
-	return this.remote.Context
+func (this *environmentContext) Context() glssh.Context {
+	return this.connection.context
 }
 
-func (this *environmentRequest) Remote() common.Remote {
-	return this.remote
+func (this *environmentContext) Connection() bconn.Connection {
+	return this.connection
 }
 
-func (this *environmentRequest) Logger() log.Logger {
-	return this.service.logger(this.remote)
-}
-
-func (this *environmentRequest) Authorization() authorization.Authorization {
+func (this *environmentContext) Authorization() authorization.Authorization {
 	return this.authorization
 }
 
+type environmentRequest struct {
+	environmentContext
+	reportWriter io.Writer
+}
+
+func (this *environmentRequest) StartPreparation(id, title string, attrs environment.PreparationProgressAttributes) (environment.PreparationProgress, error) {
+	flowStr := this.authorization.Flow().String()
+
+	for _, candidate := range this.service.Configuration.Ssh.PreparationMessages {
+		if !candidate.Flow.MatchString(flowStr) {
+			continue
+		}
+		if !candidate.Id.MatchString(id) {
+			continue
+		}
+		result := &environmentRequestPreparationProgress{this, id, title, attrs, &candidate}
+		if err := result.printStart(); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
+
+	return nil, nil
+}
+
+type environmentRequestPreparationProgress struct {
+	*environmentRequest
+	id    string
+	title string
+	attrs environment.PreparationProgressAttributes
+	pm    *configuration.PreparationMessage
+}
+
+func (this *environmentRequestPreparationProgress) GetField(name string) (any, bool, error) {
+	switch name {
+	case "id":
+		return this.id, true, nil
+	case "title":
+		return this.title, true, nil
+	default:
+		if this.attrs != nil {
+			v, ok := this.attrs[name]
+			if ok {
+				return v, true, nil
+			}
+		}
+		return this.environmentRequest.GetField(name)
+	}
+}
+
+func (this *environmentRequestPreparationProgress) print(tmpl *template.String, data any) error {
+	w := this.reportWriter
+	if w == nil {
+		return nil
+	}
+	v, err := tmpl.Render(data)
+	if err != nil {
+		return errors.Network.Newf("cannot render preparation progress message for client: %w", err)
+	}
+	if v == "" {
+		return nil
+	}
+	_, err = w.Write([]byte(v))
+	if err != nil {
+		return errors.Network.Newf("cannot print preparation progress message to client: %w", err)
+	}
+	return nil
+}
+
+func (this *environmentRequestPreparationProgress) printStart() error {
+	return this.print(&this.pm.Start, this)
+}
+
+func (this *environmentRequestPreparationProgress) Report(progress float32) error {
+	return this.print(&this.pm.Update, environmentRequestPreparationProgressProgress{this, progress})
+}
+
+func (this *environmentRequestPreparationProgress) Done() error {
+	return this.print(&this.pm.End, this)
+}
+
+func (this *environmentRequestPreparationProgress) Error(err error) error {
+	return this.print(&this.pm.Error, environmentRequestPreparationProgressError{this, err})
+}
+
+type environmentRequestPreparationProgressProgress struct {
+	*environmentRequestPreparationProgress
+	progress float32
+}
+
+func (this environmentRequestPreparationProgressProgress) GetField(name string) (any, bool, error) {
+	switch name {
+	case "progress":
+		return this.progress, true, nil
+	case "percentage":
+		return this.progress * 100.0, true, nil
+	default:
+		return this.environmentRequestPreparationProgress.GetField(name)
+	}
+}
+
+type environmentRequestPreparationProgressError struct {
+	*environmentRequestPreparationProgress
+	error error
+}
+
+func (this environmentRequestPreparationProgressError) GetField(name string) (any, bool, error) {
+	switch name {
+	case "error":
+		return this.error, true, nil
+	default:
+		return this.environmentRequestPreparationProgress.GetField(name)
+	}
+}
+
 type environmentTask struct {
-	environmentRequest
-	sshSession ssh.Session
+	environmentContext
+	sshSession glssh.Session
 	taskType   environment.TaskType
 }
 
@@ -188,11 +301,11 @@ func (this *environmentTask) GetField(name string) (any, bool, error) {
 	case "taskType":
 		return this.taskType, true, nil
 	default:
-		return this.environmentRequest.GetField(name)
+		return this.environmentContext.GetField(name)
 	}
 }
 
-func (this *environmentTask) SshSession() ssh.Session {
+func (this *environmentTask) SshSession() glssh.Session {
 	return this.sshSession
 }
 
@@ -200,7 +313,7 @@ func (this *environmentTask) TaskType() environment.TaskType {
 	return this.taskType
 }
 
-func newRememberMeNotificationContext(ctx ssh.Context, auth authorization.Authorization, newSession bool, pub ssh.PublicKey) *rememberMeNotificationContext {
+func newRememberMeNotificationContext(ctx glssh.Context, auth authorization.Authorization, newSession bool, pub glssh.PublicKey) *rememberMeNotificationContext {
 	return &rememberMeNotificationContext{
 		ctx,
 		newSession,
@@ -210,17 +323,17 @@ func newRememberMeNotificationContext(ctx ssh.Context, auth authorization.Author
 }
 
 type contextEnabled interface {
-	Context() ssh.Context
+	Context() glssh.Context
 }
 
 type rememberMeNotificationContext struct {
-	context       ssh.Context
+	context       glssh.Context
 	newSession    bool
 	authorization authorization.Authorization
-	key           ssh.PublicKey
+	key           glssh.PublicKey
 }
 
-func (this *rememberMeNotificationContext) Context() ssh.Context {
+func (this *rememberMeNotificationContext) Context() glssh.Context {
 	return this.context
 }
 
@@ -260,7 +373,7 @@ func (this *sessionContext) GetField(name string) (any, bool, error) {
 }
 
 type connectionContext struct {
-	Context ssh.Context
+	Context glssh.Context
 }
 
 func (this *connectionContext) GetField(name string) (any, bool, error) {
@@ -270,4 +383,7 @@ func (this *connectionContext) GetField(name string) (any, bool, error) {
 	default:
 		return nil, false, fmt.Errorf("unknown field %q", name)
 	}
+}
+
+type noopContext struct {
 }

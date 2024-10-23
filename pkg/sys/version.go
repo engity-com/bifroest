@@ -1,4 +1,4 @@
-package common
+package sys
 
 import (
 	"fmt"
@@ -15,7 +15,8 @@ type Version interface {
 	BuildAt() time.Time
 	Vendor() string
 	GoVersion() string
-	Platform() string
+	Os() Os
+	Arch() Arch
 	Features() VersionFeatures
 }
 
@@ -29,28 +30,32 @@ Revision: ` + v.Revision() + `
 Edition:  ` + v.Edition().String() + `
 Build:    ` + v.BuildAt().Format(time.RFC3339) + ` by ` + v.Vendor() + `
 Go:       ` + v.GoVersion() + `
-Platform: ` + v.Platform() + `
-Features: `
+Platform: ` + v.Os().String() + `/` + v.Arch().String()
 
 		csnl := 0
+		hasFeatures := false
 		v.Features().ForEach(func(category VersionFeatureCategory) {
+			hasFeatures = true
 			cnl := len(category.Name()) + 1
 			if cnl > csnl {
 				csnl = cnl
 			}
 		})
 
-		v.Features().ForEach(func(category VersionFeatureCategory) {
-			var fts []string
-			category.ForEach(func(feature VersionFeature) {
-				fts = append(fts, feature.Name())
+		if hasFeatures {
+			result += "\nFeatures:"
+			v.Features().ForEach(func(category VersionFeatureCategory) {
+				var fts []string
+				category.ForEach(func(feature VersionFeature) {
+					fts = append(fts, feature.Name())
+				})
+				result += fmt.Sprintf("\n\t%-"+strconv.Itoa(csnl)+"s %s", category.Name()+":", strings.Join(fts, " "))
 			})
-			result += fmt.Sprintf("\n\t%-"+strconv.Itoa(csnl)+"s %s", category.Name()+":", strings.Join(fts, " "))
-		})
+		}
 
 		return result
 	default:
-		return v.Title() + ` ` + v.Version() + `-` + v.Revision() + `+` + v.Edition().String() + `@` + v.Platform() + ` ` + v.BuildAt().Format(time.RFC3339)
+		return v.Title() + ` ` + v.Version() + `-` + v.Revision() + `+` + v.Edition().String() + `@` + v.Os().String() + `/` + v.Arch().String() + ` ` + v.BuildAt().Format(time.RFC3339)
 	}
 }
 
@@ -62,7 +67,7 @@ func VersionToMap(v Version) map[string]any {
 		"buildAt":  v.BuildAt(),
 		"vendor":   v.Vendor(),
 		"go":       v.GoVersion(),
-		"platform": v.Platform(),
+		"platform": v.Os().String() + "/" + v.Arch().String(),
 	}
 
 	v.Features().ForEach(func(category VersionFeatureCategory) {

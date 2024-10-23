@@ -9,10 +9,11 @@ import (
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/sys"
+	"github.com/engity-com/bifroest/pkg/template"
 )
 
 var (
-	DefaultStartMessage = ""
+	DefaultStartMessage = template.MustNewString("")
 )
 
 type Configuration struct {
@@ -28,7 +29,9 @@ type Configuration struct {
 
 	HouseKeeping HouseKeeping `yaml:"housekeeping"`
 
-	StartMessage string `yaml:"startMessage,omitempty"`
+	Alternatives Alternatives `yaml:"alternatives"`
+
+	StartMessage template.String `yaml:"startMessage,omitempty"`
 }
 
 func (this *Configuration) SetDefaults() error {
@@ -37,7 +40,8 @@ func (this *Configuration) SetDefaults() error {
 		func(v *Configuration) (string, defaulter) { return "session", &v.Session },
 		func(v *Configuration) (string, defaulter) { return "flows", &v.Flows },
 		func(v *Configuration) (string, defaulter) { return "houseKeeping", &v.HouseKeeping },
-		fixedDefault("startMessage", func(v *Configuration) *string { return &v.StartMessage }, DefaultStartMessage),
+		func(v *Configuration) (string, defaulter) { return "alternatives", &v.Alternatives },
+		fixedDefault("startMessage", func(v *Configuration) *template.String { return &v.StartMessage }, DefaultStartMessage),
 	)
 }
 
@@ -47,6 +51,7 @@ func (this *Configuration) Trim() error {
 		func(v *Configuration) (string, trimmer) { return "session", &v.Session },
 		func(v *Configuration) (string, trimmer) { return "flows", &v.Flows },
 		func(v *Configuration) (string, trimmer) { return "houseKeeping", &v.HouseKeeping },
+		func(v *Configuration) (string, trimmer) { return "alternatives", &v.Alternatives },
 		noopTrim[Configuration]("startMessage"),
 	)
 }
@@ -56,9 +61,10 @@ func (this *Configuration) Validate() error {
 		func(v *Configuration) (string, validator) { return "ssh", &v.Ssh },
 		func(v *Configuration) (string, validator) { return "session", &v.Session },
 		func(v *Configuration) (string, validator) { return "flows", &v.Flows },
-		notEmptySliceValidate("flows", func(v *Configuration) *[]Flow { return (*[]Flow)(&v.Flows) }),
+		notZeroValidate("flows", func(v *Configuration) *Flows { return &v.Flows }),
 		func(v *Configuration) (string, validator) { return "houseKeeping", &v.HouseKeeping },
-		noopValidate[Configuration]("startMessage"),
+		func(v *Configuration) (string, validator) { return "alternatives", &v.Alternatives },
+		func(v *Configuration) (string, validator) { return "startMessage", &v.StartMessage },
 	)
 }
 
@@ -121,5 +127,6 @@ func (this Configuration) isEqualTo(other *Configuration) bool {
 		isEqual(&this.Session, &other.Session) &&
 		isEqual(&this.Flows, &other.Flows) &&
 		isEqual(&this.HouseKeeping, &other.HouseKeeping) &&
-		this.StartMessage == other.StartMessage
+		isEqual(&this.Alternatives, &other.Alternatives) &&
+		isEqual(&this.StartMessage, &other.StartMessage)
 }

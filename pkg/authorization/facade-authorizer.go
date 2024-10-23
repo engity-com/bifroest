@@ -42,7 +42,7 @@ func (this *AuthorizerFacade) AuthorizePublicKey(req PublicKeyRequest) (Authoriz
 			}
 		}
 	}
-	return Forbidden(req.Remote()), nil
+	return Forbidden(req.Connection().Remote()), nil
 }
 
 func (this *AuthorizerFacade) AuthorizePassword(req PasswordRequest) (Authorization, error) {
@@ -57,7 +57,7 @@ func (this *AuthorizerFacade) AuthorizePassword(req PasswordRequest) (Authorizat
 			}
 		}
 	}
-	return Forbidden(req.Remote()), nil
+	return Forbidden(req.Connection().Remote()), nil
 }
 
 func (this *AuthorizerFacade) AuthorizeInteractive(req InteractiveRequest) (Authorization, error) {
@@ -72,7 +72,7 @@ func (this *AuthorizerFacade) AuthorizeInteractive(req InteractiveRequest) (Auth
 			}
 		}
 	}
-	return Forbidden(req.Remote()), nil
+	return Forbidden(req.Connection().Remote()), nil
 }
 
 func (this *AuthorizerFacade) RestoreFromSession(ctx context.Context, sess session.Session, opts *RestoreOpts) (Authorization, error) {
@@ -127,10 +127,10 @@ func (this *facaded) newFrom(ctx context.Context, flow *configuration.Flow) erro
 func (this *facaded) canHandle(req Request) (bool, error) {
 	incl, excl := this.requirement.IncludedRequestingName, this.requirement.ExcludedRequestingName
 
-	if !incl.IsZero() && !incl.MatchString(req.Remote().User()) {
+	if !incl.IsZero() && !incl.MatchString(req.Connection().Remote().User()) {
 		return false, nil
 	}
-	if !excl.IsZero() && excl.MatchString(req.Remote().User()) {
+	if !excl.IsZero() && excl.MatchString(req.Connection().Remote().User()) {
 		return false, nil
 	}
 

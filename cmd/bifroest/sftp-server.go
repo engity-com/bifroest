@@ -1,16 +1,16 @@
 package main
 
 import (
-	"os"
+	goos "os"
 
-	"github.com/alecthomas/kingpin"
+	"github.com/alecthomas/kingpin/v2"
 
 	"github.com/engity-com/bifroest/pkg/sftp"
 )
 
 var (
 	workingDir = func() string {
-		v, err := os.Getwd()
+		v, err := goos.Getwd()
 		if err == nil {
 			return v
 		}
@@ -43,18 +43,18 @@ func doSftpServer() error {
 type stdpipe struct{}
 
 func (this *stdpipe) Read(p []byte) (n int, err error) {
-	return os.Stdin.Read(p)
+	return goos.Stdin.Read(p)
 }
 
 func (this *stdpipe) Write(p []byte) (n int, err error) {
-	return os.Stdout.Write(p)
+	return goos.Stdout.Write(p)
 }
 
 func (this *stdpipe) Close() (rErr error) {
-	if err := os.Stdin.Close(); err != nil {
+	if err := goos.Stdin.Close(); err != nil {
 		rErr = err
 	}
-	if err := os.Stdout.Close(); err != nil && rErr == nil {
+	if err := goos.Stdout.Close(); err != nil && rErr == nil {
 		rErr = err //nolint:golint,staticcheck
 	}
 	return nil

@@ -8,10 +8,12 @@ import (
 	"fmt"
 
 	log "github.com/echocat/slf4g"
-	"github.com/gliderlabs/ssh"
+	glssh "github.com/gliderlabs/ssh"
 
+	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/imp"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/template"
 	"github.com/engity-com/bifroest/pkg/user"
@@ -30,7 +32,7 @@ type LocalRepository struct {
 	userRepository user.CloseableRepository
 }
 
-func NewLocalRepository(ctx context.Context, flow configuration.FlowName, conf *configuration.EnvironmentLocal) (*LocalRepository, error) {
+func NewLocalRepository(ctx context.Context, flow configuration.FlowName, conf *configuration.EnvironmentLocal, _ alternatives.Provider, _ imp.Imp) (*LocalRepository, error) {
 	fail := func(err error) (*LocalRepository, error) {
 		return nil, err
 	}
@@ -56,7 +58,7 @@ func NewLocalRepository(ctx context.Context, flow configuration.FlowName, conf *
 	return &result, nil
 }
 
-func (this *LocalRepository) DoesSupportPty(Request, ssh.Pty) (bool, error) {
+func (this *LocalRepository) DoesSupportPty(Context, glssh.Pty) (bool, error) {
 	return true, nil
 }
 
@@ -81,7 +83,7 @@ func (this *LocalRepository) Ensure(req Request) (Environment, error) {
 
 	if existing, err := this.FindBySession(req.Context(), sess, nil); err != nil {
 		if !errors.Is(err, ErrNoSuchEnvironment) {
-			req.Logger().
+			req.Connection().Logger().
 				WithError(err).
 				Warn("cannot restore environment from existing session; will create a new one")
 		}

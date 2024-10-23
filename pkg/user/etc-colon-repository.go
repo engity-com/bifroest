@@ -20,7 +20,7 @@ import (
 	"github.com/echocat/slf4g/fields"
 	"github.com/fsnotify/fsnotify"
 	"github.com/otiai10/copy"
-	"github.com/shirou/gopsutil/process"
+	"github.com/shirou/gopsutil/v4/process"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
@@ -1313,7 +1313,7 @@ func (this *EtcColonRepository) killAllOf(ctx context.Context, uid uint32) error
 		if len(pUids) == 0 {
 			continue
 		}
-		if pUids[0] != int32(uid) {
+		if pUids[0] != uid {
 			continue
 		}
 

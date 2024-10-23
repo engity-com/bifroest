@@ -23,6 +23,10 @@ var goos = func() os {
 	return buf
 }()
 
+func (this os) toLdFlags() string {
+	return "-X main.os=" + this.String()
+}
+
 func (this os) String() string {
 	v, ok := osToString[this]
 	if !ok {

@@ -1,25 +1,23 @@
 package authorization
 
 import (
-	"github.com/echocat/slf4g"
-	"github.com/gliderlabs/ssh"
-	gssh "golang.org/x/crypto/ssh"
+	glssh "github.com/gliderlabs/ssh"
+	gossh "golang.org/x/crypto/ssh"
 
-	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
 type Request interface {
 	Sessions() session.Repository
-	Context() ssh.Context
-	Remote() common.Remote
-	Logger() log.Logger
+	Connection() connection.Connection
+	Context() glssh.Context
 	Validate(Authorization) (bool, error)
 }
 
 type PublicKeyRequest interface {
 	Request
-	RemotePublicKey() gssh.PublicKey
+	RemotePublicKey() gossh.PublicKey
 }
 
 type PasswordRequest interface {

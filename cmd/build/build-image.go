@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alecthomas/kingpin"
+	"github.com/alecthomas/kingpin/v2"
 	"github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/fields"
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -34,23 +34,29 @@ func newBuildImage(b *build) *buildImage {
 	return &buildImage{
 		build: b,
 
-		dummyConfiguration:   "cmd/build/contrib/dummy-for-oci-images.yaml",
-		defaultConfiguration: "contrib/configurations/sshd-dropin-replacement.yaml",
+		dummyConfigurationUnix:    "cmd/build/contrib/dummy-for-oci-images.yaml",
+		dummyConfigurationWindows: "cmd/build/contrib/dummy-for-oci-images-windows.yaml",
+		defaultConfiguration:      "contrib/configurations/sshd-dropin-replacement.yaml",
 	}
 }
 
 type buildImage struct {
 	*build
 
-	dummyConfiguration   string
-	defaultConfiguration string
+	dummyConfigurationUnix    string
+	dummyConfigurationWindows string
+	defaultConfiguration      string
 }
 
 func (this *buildImage) attach(cmd *kingpin.CmdClause) {
-	cmd.Flag("dummyConfiguration", "").
-		Default(this.dummyConfiguration).
+	cmd.Flag("dummyConfigurationUnix", "").
+		Default(this.dummyConfigurationUnix).
 		PlaceHolder("<file>").
-		StringVar(&this.dummyConfiguration)
+		StringVar(&this.dummyConfigurationUnix)
+	cmd.Flag("dummyConfigurationWindows", "").
+		Default(this.dummyConfigurationWindows).
+		PlaceHolder("<file>").
+		StringVar(&this.dummyConfigurationWindows)
 	cmd.Flag("defaultConfiguration", "").
 		Default(this.defaultConfiguration).
 		PlaceHolder("<file>").
@@ -167,13 +173,11 @@ func (this *buildImage) createPart(ctx context.Context, binary *buildArtifact) (
 		targetFile: binary.platform.os.bifroestConfigFilePath(),
 		mode:       0644,
 	}}
-
-	if !a.os.isUnix() || strings.EqualFold(from, "scratch") {
-		artifacts = []imageArtifactLayerItem{{
-			sourceFile: this.dummyConfiguration,
-			targetFile: binary.platform.os.bifroestConfigFilePath(),
-			mode:       0644,
-		}}
+	if strings.EqualFold(from, "scratch") {
+		artifacts[0].sourceFile = this.dummyConfigurationUnix
+	}
+	if !a.os.isUnix() {
+		artifacts[0].sourceFile = this.dummyConfigurationWindows
 	}
 
 	if a.os.isUnix() && strings.EqualFold(from, "scratch") {

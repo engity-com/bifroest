@@ -2,7 +2,7 @@ package net
 
 import (
 	"fmt"
-	"net"
+	gonet "net"
 	"reflect"
 	"slices"
 	"strings"
@@ -25,7 +25,7 @@ func MustNewNetAddress(plain string) NetAddress {
 }
 
 type NetAddress struct {
-	v net.Addr
+	v gonet.Addr
 }
 
 func (this NetAddress) IsZero() bool {
@@ -43,22 +43,22 @@ func (this NetAddress) String() string {
 	}
 
 	switch v := pv.(type) {
-	case *net.TCPAddr:
+	case *gonet.TCPAddr:
 		return v.String()
 	default:
 		panic(fmt.Errorf("illegal address type: %v(%v)", reflect.TypeOf(pv), pv))
 	}
 }
 
-func (this NetAddress) Listen() (net.Listener, error) {
+func (this NetAddress) Listen() (gonet.Listener, error) {
 	pv := this.v
 	if pv == nil {
 		return nil, fmt.Errorf("cannot listen to empty address")
 	}
 
 	switch v := pv.(type) {
-	case *net.TCPAddr:
-		return net.ListenTCP(v.Network(), v)
+	case *gonet.TCPAddr:
+		return gonet.ListenTCP(v.Network(), v)
 	default:
 		panic(fmt.Errorf("illegal address type: %v(%v)", reflect.TypeOf(pv), pv))
 	}
@@ -81,10 +81,10 @@ func (this *NetAddress) UnmarshalText(text []byte) error {
 		}
 	}
 
-	var resolver func() (net.Addr, error)
+	var resolver func() (gonet.Addr, error)
 	switch network {
 	case "tcp", "tcp4", "tcp6":
-		resolver = func() (net.Addr, error) { return net.ResolveTCPAddr(network, address) }
+		resolver = func() (gonet.Addr, error) { return gonet.ResolveTCPAddr(network, address) }
 	default:
 		panic(fmt.Errorf("illegal network %q for requested address %q", network, string(text)))
 	}
@@ -102,7 +102,7 @@ func (this *NetAddress) Set(text string) error {
 	return this.UnmarshalText([]byte(text))
 }
 
-func (this NetAddress) Get() net.Addr {
+func (this NetAddress) Get() gonet.Addr {
 	return this.v
 }
 

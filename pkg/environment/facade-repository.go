@@ -5,22 +5,24 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/gliderlabs/ssh"
+	glssh "github.com/gliderlabs/ssh"
 
+	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/imp"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
-func NewRepositoryFacade(ctx context.Context, flows *configuration.Flows) (*RepositoryFacade, error) {
+func NewRepositoryFacade(ctx context.Context, flows *configuration.Flows, ap alternatives.Provider, i imp.Imp) (*RepositoryFacade, error) {
 	if flows == nil {
 		return &RepositoryFacade{}, nil
 	}
 
 	entries := make(map[configuration.FlowName]CloseableRepository, len(*flows))
 	for _, flow := range *flows {
-		instance, err := newInstance(ctx, &flow)
+		instance, err := newInstance(ctx, &flow, ap, i)
 		if err != nil {
 			return nil, err
 		}
@@ -34,22 +36,22 @@ type RepositoryFacade struct {
 	entries map[configuration.FlowName]CloseableRepository
 }
 
-func (this *RepositoryFacade) WillBeAccepted(req Request) (bool, error) {
-	flow := req.Authorization().Flow()
+func (this *RepositoryFacade) WillBeAccepted(ctx Context) (bool, error) {
+	flow := ctx.Authorization().Flow()
 	candidate, ok := this.entries[flow]
 	if !ok {
 		return false, fmt.Errorf("does not find valid environment for flow %v", flow)
 	}
-	return candidate.WillBeAccepted(req)
+	return candidate.WillBeAccepted(ctx)
 }
 
-func (this *RepositoryFacade) DoesSupportPty(req Request, pty ssh.Pty) (bool, error) {
-	flow := req.Authorization().Flow()
+func (this *RepositoryFacade) DoesSupportPty(ctx Context, pty glssh.Pty) (bool, error) {
+	flow := ctx.Authorization().Flow()
 	candidate, ok := this.entries[flow]
 	if !ok {
 		return false, fmt.Errorf("does not find valid environment for flow %v", flow)
 	}
-	return candidate.DoesSupportPty(req, pty)
+	return candidate.DoesSupportPty(ctx, pty)
 }
 
 func (this *RepositoryFacade) Ensure(req Request) (Environment, error) {
@@ -77,7 +79,16 @@ func (this *RepositoryFacade) Close() (rErr error) {
 	return nil
 }
 
-func newInstance(ctx context.Context, flow *configuration.Flow) (env CloseableRepository, err error) {
+func (this *RepositoryFacade) Cleanup(ctx context.Context, opts *CleanupOpts) error {
+	for _, entity := range this.entries {
+		if err := entity.Cleanup(ctx, opts); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func newInstance(ctx context.Context, flow *configuration.Flow, ap alternatives.Provider, i imp.Imp) (env CloseableRepository, err error) {
 	fail := func(err error) (CloseableRepository, error) {
 		return nil, errors.System.Newf("cannot initizalize environment for flow %q: %w", flow.Name, err)
 	}
@@ -91,7 +102,13 @@ func newInstance(ctx context.Context, flow *configuration.Flow) (env CloseableRe
 		return fail(errors.Config.Newf("cannot handle environment type %v", reflect.TypeOf(flow.Environment.V)))
 	}
 	m := reflect.ValueOf(factory)
-	rets := m.Call([]reflect.Value{reflect.ValueOf(ctx), reflect.ValueOf(flow.Name), reflect.ValueOf(flow.Environment.V)})
+	rets := m.Call([]reflect.Value{
+		reflect.ValueOf(ctx),
+		reflect.ValueOf(flow.Name),
+		reflect.ValueOf(flow.Environment.V),
+		reflect.ValueOf(ap),
+		reflect.ValueOf(i),
+	})
 	if err, ok := rets[1].Interface().(error); ok && err != nil {
 		return fail(err)
 	}
@@ -102,7 +119,7 @@ var (
 	configurationTypeToRepositoryFactory = make(map[reflect.Type]any)
 )
 
-type RepositoryFactory[C any, R CloseableRepository] func(ctx context.Context, flow configuration.FlowName, conf C) (R, error)
+type RepositoryFactory[C any, R CloseableRepository] func(context.Context, configuration.FlowName, C, alternatives.Provider, imp.Imp) (R, error)
 
 func RegisterRepository[C any, R CloseableRepository](factory RepositoryFactory[C, R]) RepositoryFactory[C, R] {
 	ct := reflect.TypeFor[C]()

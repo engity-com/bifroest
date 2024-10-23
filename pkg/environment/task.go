@@ -3,7 +3,7 @@ package environment
 import (
 	"fmt"
 
-	"github.com/gliderlabs/ssh"
+	glssh "github.com/gliderlabs/ssh"
 )
 
 type TaskType uint8
@@ -25,7 +25,7 @@ func (this TaskType) String() string {
 }
 
 type Task interface {
-	Request
-	SshSession() ssh.Session
+	Context
+	SshSession() glssh.Session
 	TaskType() TaskType
 }

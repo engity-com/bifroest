@@ -1,7 +1,7 @@
 package crypto
 
-import "crypto"
+import gocrypto "crypto"
 
 type Restriction interface {
-	KeyAllowed(crypto.Signer) (bool, error)
+	KeyAllowed(gocrypto.Signer) (bool, error)
 }

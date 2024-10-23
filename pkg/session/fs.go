@@ -7,11 +7,11 @@ import (
 	"os"
 	"time"
 
-	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -28,12 +28,12 @@ type fs struct {
 	repository *FsRepository
 
 	flow configuration.FlowName
-	id   uuid.UUID
+	id   Id
 
 	info fsInfo
 }
 
-func (this *fs) init(repository *FsRepository, flow configuration.FlowName, id uuid.UUID) {
+func (this *fs) init(repository *FsRepository, flow configuration.FlowName, id Id) {
 	this.repository = repository
 	this.flow = flow
 	this.id = id
@@ -48,7 +48,7 @@ func (this *fs) Flow() configuration.FlowName {
 	return this.flow
 }
 
-func (this *fs) Id() uuid.UUID {
+func (this *fs) Id() Id {
 	return this.id
 }
 
@@ -151,11 +151,11 @@ func (this *fs) DeletePublicKey(ctx context.Context, pub ssh.PublicKey) error {
 	return this.repository.deletePublicKey(ctx, this.flow, this.id, pub)
 }
 
-func (this *fs) NotifyLastAccess(ctx context.Context, remote common.Remote, newState State) (State, error) {
+func (this *fs) NotifyLastAccess(ctx context.Context, remote net.Remote, newState State) (State, error) {
 	return this.notifyLastAccess(ctx, remote, newState)
 }
 
-func (this *fs) notifyLastAccess(ctx context.Context, remote common.Remote, newState State) (State, error) {
+func (this *fs) notifyLastAccess(ctx context.Context, remote net.Remote, newState State) (State, error) {
 	var buf fsLastAccessed
 	buf.at = time.Now().Truncate(time.Millisecond)
 	buf.VRemoteUser = remote.User()

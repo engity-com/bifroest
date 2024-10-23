@@ -29,6 +29,12 @@ Defines which flows are evaluated for user sessions.
 <<property("housekeeping", "Housekeeping", "housekeeping.md")>>
 Defines how Bifröst will clean up its sessions and connections.
 
+<<property("alternatives", "Alternatives", "alternatives.md")>>
+Defines how the imp (if needed) behaves to help to bridge context boundaries, for example to enable port-forwarding into an OCI container.
+
+<<property("startMessage", "string", template_context="context/core.md", default="")>>
+If defined this message will be displayed in the log files of Bifröst on startup.
+
 ## Examples
 
 1. Simple:
@@ -44,16 +50,31 @@ Defines how Bifröst will clean up its sessions and connections.
         # ...
     housekeeping:
       # ...
+    alternatives:
+      # ...
+    startMessage: ""
     ```
 
 2. ??? plain "Drop in replacement for OpenSSH sshd"
-    ```yaml title="<< asset_link('contrib/configurations/sshd-dropin-replacement.yaml') >>"
+    ```yaml
     --8<-- "contrib/configurations/sshd-dropin-replacement.yaml"
     ```
 
-3. ??? plain "Complex"
-    ```yaml title="<< asset_link('contrib/configurations/demo.yaml') >>"
-    --8<-- "contrib/configurations/demo.yaml"
+3. ??? plain "Docker environment with OpenID Connect authorization"
+    This example is using the [Docker environment](environment/docker.md) with [OpenID Connection authorization](authorization/oidc.md).
+    ```yaml
+    flows:
+      - name: docker
+        authorization:
+          type: oidcDeviceAuth
+          issuer: https://login.microsoftonline.com/my-great-tenant-uuid/v2.0
+          clientId: my-great-client-uuid
+          clientSecret: very-secret-secret
+          scopes:
+            - openid
+            - email
+            - profile
+        environment:
+          type: docker
+          image: alpine
     ```
-
-

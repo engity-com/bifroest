@@ -8,16 +8,40 @@ Bifröst executes user sessions within environments. These environments can eith
 
 ## Types
 
-1. `local`: [Local](local.md)
+1. `local`: [Local](local.md) executes on the host itself (same host on which Bifröst is running).
+2. `docker`: [Docker](docker.md) executes each user session inside a separate Docker container.
+3. `dummy`: [Dummy](dummy.md) for demonstration purposes, it simply prints a message and exists immediately.
 
 ## Examples
 
-1. Using [local environment on Linux](local.md#linux):
+1. Using [local environment](local.md):
    ```yaml
    type: local
    name: "{{.authorization.user.name}}"
    ```
-2. Using [local environment on Windows](local.md#windows):
+2. Using simple [docker environment](docker.md):
    ```yaml
-   type: local
+   type: docker
+   ```
+3. Using [docker environment](docker.md) with Ubuntu image and additional settings:
+   ```yaml
+   type: docker
+   image: ubuntu
+   ## Using /bin/bash instead of /bin/sh,
+   ## because it does exist in the image
+   shellCommand: [/bin/bash]
+   execCommand: [/bin/bash, -c]
+
+   ## Only allow login if the OIDC's groups has "my-great-group-uuid"
+   ## ...and the tid (tenant ID) is "my-great-tenant-uuid"
+   loginAllowed: |
+       {{ and
+         (.authorization.idToken.groups | has "my-great-group-uuid")
+         (.authorization.idToken.tid    | eq  "my-great-tenant-uuid")
+       }}
+   ```
+4. Using [dummy environment](dummy.md) with a simple message:
+   ```yaml
+   type: dummy
+   banner: "Hello, {{.authorization.idToken.name}}!\n"
    ```

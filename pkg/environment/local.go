@@ -2,12 +2,10 @@ package environment
 
 import (
 	"context"
-	"fmt"
 	"io"
-	"net"
+	gonet "net"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -15,17 +13,15 @@ import (
 	"github.com/creack/pty"
 	log "github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/level"
-	"github.com/gliderlabs/ssh"
-	"github.com/kardianos/osext"
+	glssh "github.com/gliderlabs/ssh"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
+	"github.com/engity-com/bifroest/pkg/ssh"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
-
-func (this *local) Session() session.Session {
-	return this.session
-}
 
 func (this *local) Banner(req Request) (io.ReadCloser, error) {
 	b, err := this.repository.conf.Banner.Render(req)
@@ -37,38 +33,53 @@ func (this *local) Banner(req Request) (io.ReadCloser, error) {
 }
 
 func (this *local) Run(t Task) (exitCode int, rErr error) {
-	l := t.Logger()
+	fail := func(err error) (int, error) {
+		return -1, err
+	}
+	failf := func(msg string, args ...any) (int, error) {
+		return fail(errors.System.Newf(msg, args...))
+	}
+
+	l := t.Connection().Logger()
 	sshSess := t.SshSession()
+
+	auth := t.Authorization()
+	sess := auth.FindSession()
+	if sess == nil {
+		return failf("authorization without session is not supported to run docker environment")
+	}
 
 	cmd, ev, err := this.createCmdAndEnv(t)
 	if err != nil {
-		return -1, err
+		return fail(err)
 	}
+
+	ev.Set(session.EnvName, sess.Id().String())
 
 	switch t.TaskType() {
 	case TaskTypeShell:
 		if err := this.configureShellCmd(t, cmd); err != nil {
-			return -1, err
+			return fail(err)
 		}
 	case TaskTypeSftp:
-		efn, err := osext.Executable()
+		efn, err := os.Executable()
 		if err != nil {
-			return -1, fmt.Errorf("cannot resolve the location of the server's executable location: %w", err)
+			return failf("cannot resolve the location of the server's executable location: %w", err)
 		}
 		cmd.Path = efn
 		cmd.Args = []string{efn, "sftp-server"}
 	default:
-		return -1, fmt.Errorf("illegal task type: %v", t.TaskType())
+		return failf("illegal task type: %v", t.TaskType())
 	}
 
 	if ssh.AgentRequested(sshSess) {
-		l, err := ssh.NewAgentListener()
+		ln, err := net.NewNamedPipe("ssh-agent")
 		if err != nil {
-			return -1, fmt.Errorf("cannot listen to agent: %w", err)
+			return failf("cannot listen to agent: %w", err)
 		}
-		defer common.IgnoreCloseError(l)
-		go ssh.ForwardAgentConnections(l, sshSess)
-		cmd.Env = append(cmd.Env, "SSH_AUTH_SOCK"+l.Addr().String())
+		defer common.IgnoreCloseError(ln)
+		go ssh.ForwardAgentConnections(ln, l, sshSess)
+		ev.Set(ssh.AuthSockEnvName, ln.Path())
 	}
 
 	cmd.Stdin = sshSess
@@ -87,13 +98,13 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		var err error
 		fPty, fTty, err = pty.Open()
 		if err != nil {
-			return -1, fmt.Errorf("cannot allocate pty: %w", err)
+			return failf("cannot allocate pty: %w", err)
 		}
 		defer common.IgnoreCloseError(fPty)
 		defer common.IgnoreCloseError(fTty)
 		ev.Set("TERM", ptyReq.Term)
 		if err := this.configureCmdForPty(cmd, fPty, fTty); err != nil {
-			return -1, fmt.Errorf("cannot configure cmd for pty: %w", err)
+			return failf("cannot configure cmd for pty: %w", err)
 		}
 		cmd.Stderr = fTty
 		cmd.Stdout = fTty
@@ -115,7 +126,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	cmd.Env = ev.Strings()
 
 	if err := cmd.Start(); err != nil {
-		return -1, fmt.Errorf("cannot start process %v: %w", cmd.Args, err)
+		return failf("cannot start process %v: %w", cmd.Args, err)
 	}
 	l.With("pid", cmd.Process.Pid).
 		Debug("user's process started")
@@ -124,7 +135,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		exitCode int
 		err      error
 	}
-	signals := make(chan ssh.Signal, 1)
+	signals := make(chan glssh.Signal, 1)
 	processDone := make(chan doneT, 1)
 	copyDone := make(chan error, 2)
 	var activeRoutines sync.WaitGroup
@@ -173,9 +184,6 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 				this.signal(cmd, l, s)
 			}
 		case <-t.Context().Done():
-			if err := t.Context().Err(); err != nil && rErr == nil {
-				rErr = err
-			}
 			return -2, rErr
 		case status, ok := <-processDone:
 			if ok {
@@ -193,10 +201,12 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	}
 }
 
-func (this *local) Dispose(ctx context.Context) (bool, error) {
+func (this *local) Dispose(ctx context.Context) (_ bool, rErr error) {
 	fail := func(err error) (bool, error) {
 		return false, errors.Newf(errors.System, "cannot dispose environment: %w", err)
 	}
+
+	defer common.KeepCloseError(&rErr, this)
 
 	disposed, err := this.dispose(ctx)
 	if err != nil {
@@ -213,8 +223,12 @@ func (this *local) Dispose(ctx context.Context) (bool, error) {
 	return disposed, nil
 }
 
+func (this *local) Close() error {
+	return nil
+}
+
 func (this *local) isRelevantError(err error) bool {
-	return err != nil && !errors.Is(err, syscall.EIO) && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF)
+	return err != nil && !errors.Is(err, syscall.EIO) && !sys.IsClosedError(err)
 }
 
 func (this *local) kill(cmd *exec.Cmd, logger log.Logger) {
@@ -228,16 +242,15 @@ func (this *local) kill(cmd *exec.Cmd, logger log.Logger) {
 	}
 }
 
-func (this *local) IsPortForwardingAllowed(_ string, _ uint32) (bool, error) {
+func (this *local) IsPortForwardingAllowed(net.HostPort) (bool, error) {
 	return this.portForwardingAllowed, nil
 }
 
-func (this *local) NewDestinationConnection(ctx context.Context, host string, port uint32) (io.ReadWriteCloser, error) {
+func (this *local) NewDestinationConnection(ctx context.Context, dest net.HostPort) (io.ReadWriteCloser, error) {
 	if !this.portForwardingAllowed {
 		return nil, errors.Newf(errors.Permission, "portforwarning not allowed")
 	}
 
-	dest := net.JoinHostPort(host, strconv.FormatInt(int64(port), 10))
-	var dialer net.Dialer
-	return dialer.DialContext(ctx, "tcp", dest)
+	var dialer gonet.Dialer
+	return dialer.DialContext(ctx, "tcp", dest.String())
 }

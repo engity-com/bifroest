@@ -3,13 +3,12 @@ package session
 import (
 	"context"
 	"fmt"
-	"net"
+	gonet "net"
 	"sync/atomic"
 	"time"
 
 	log "github.com/echocat/slf4g"
 	"github.com/gliderlabs/ssh"
-	"github.com/google/uuid"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 )
@@ -24,7 +23,7 @@ func (this *fs) ConnectionInterceptor(context.Context) (ConnectionInterceptor, e
 
 	byFlow, hasByFlow := this.repository.connectionInterceptors[this.flow]
 	if !hasByFlow {
-		byFlow = make(map[uuid.UUID]*fsConnectionInterceptorStack)
+		byFlow = make(map[Id]*fsConnectionInterceptorStack)
 		this.repository.connectionInterceptors[this.flow] = byFlow
 	}
 
@@ -43,12 +42,12 @@ func (this *fs) ConnectionInterceptor(context.Context) (ConnectionInterceptor, e
 	return byId.create()
 }
 
-type fsConnectionInterceptors map[configuration.FlowName]map[uuid.UUID]*fsConnectionInterceptorStack
+type fsConnectionInterceptors map[configuration.FlowName]map[Id]*fsConnectionInterceptorStack
 
 type fsConnectionInterceptorStack struct {
 	repository *FsRepository
 	flow       configuration.FlowName
-	id         uuid.UUID
+	id         Id
 	created    int64
 	active     atomic.Int32
 
@@ -94,11 +93,11 @@ func (this *fsConnectionInterceptorStack) close() error {
 	return nil
 }
 
-func (this *fsConnectionInterceptorStack) OnReadConnection(ssh.Context, log.Logger, net.Conn) (time.Time, ConnectionInterceptorResult, error) {
+func (this *fsConnectionInterceptorStack) OnReadConnection(ssh.Context, log.Logger, gonet.Conn) (time.Time, ConnectionInterceptorResult, error) {
 	return this.onConnectionAction()
 }
 
-func (this *fsConnectionInterceptorStack) OnWriteConnection(ssh.Context, log.Logger, net.Conn) (time.Time, ConnectionInterceptorResult, error) {
+func (this *fsConnectionInterceptorStack) OnWriteConnection(ssh.Context, log.Logger, gonet.Conn) (time.Time, ConnectionInterceptorResult, error) {
 	return this.onConnectionAction()
 }
 

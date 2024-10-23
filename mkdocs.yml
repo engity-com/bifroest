@@ -126,6 +126,9 @@ nav:
       - Use cases: usecases.md
   - Getting started:
       - setup/index.md
+      - Installation:
+          - On Host: setup/on-host.md
+          - In Docker: setup/in-docker.md
       - setup/distribution.md
       - Security: setup/security.md
       - License: legal/license.md
@@ -142,26 +145,34 @@ nav:
           - OIDC: reference/authorization/oidc.md
           - Simple: reference/authorization/simple.md
           - Htpasswd: reference/authorization/htpasswd.md
+          - None: reference/authorization/none.md
       - Environments:
           - reference/environment/index.md
+          - Docker: reference/environment/docker.md
           - Local: reference/environment/local.md
+          - Dummy: reference/environment/dummy.md
       - Sessions:
           - reference/session/index.md
           - Filesystem: reference/session/fs.md
       - reference/housekeeping.md
+      - reference/alternatives.md
       - reference/cli.md
       - Templating:
           - reference/templating/index.md
       - Context Objects:
           - reference/context/index.md
+          - Alternative Binary: reference/context/alternative-binary.md
           - Authorization: reference/context/authorization.md
           - Authorization Request: reference/context/authorization-request.md
           - Connection: reference/context/connection.md
+          - Container: reference/context/container.md
+          - Core: reference/context/core.md
           - Local Group: reference/context/local-group.md
           - Local User: reference/context/local-user.md
           - OIDC Token: reference/context/oidc-token.md
           - OIDC ID Token: reference/context/oidc-id-token.md
           - OIDC User Info: reference/context/oidc-user-info.md
+          - Preparation Process: reference/context/preparation-process.md
           - Remote: reference/context/remote.md
           - Simple Entry: reference/context/simple-entry.md
       - reference/data-type.md

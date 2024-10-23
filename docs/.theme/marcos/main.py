@@ -1,3 +1,4 @@
+import html
 import json
 import os as pos
 import os.path as path
@@ -15,13 +16,16 @@ repo_http_url = "https://github.com/" + repo
 repo_raw_url = "https://raw.githubusercontent.com/" + repo
 repo_container_uri = "ghcr.io/" + repo
 raw_version = pos.getenv('VERSION')
-release = (("v" if raw_version.__len__() > 0 and raw_version[0].isdigit() else "") + raw_version) if raw_version is not None and raw_version.__len__() > 0 else "latest"
-branch = (("v" if raw_version.__len__() > 0 and raw_version[0].isdigit() else "") + raw_version) if raw_version is not None and raw_version.__len__() > 0 else "main"
+release = (("v" if raw_version.__len__() > 0 and raw_version[
+    0].isdigit() else "") + raw_version) if raw_version is not None and raw_version.__len__() > 0 else "latest"
+branch = (("v" if raw_version.__len__() > 0 and raw_version[
+    0].isdigit() else "") + raw_version) if raw_version is not None and raw_version.__len__() > 0 else "main"
 
 
 class Packaging(str, Enum):
     archive = 'archive'
     image = 'image'
+
 
 class Os(str, Enum):
     linux = 'linux'
@@ -227,21 +231,29 @@ class TypeRef:
     def __init__(
             self,
             title: str,
-            ref: str | None = None,
-            args: Sequence[TypeRefT] | None = None,
+            ref: str | None,
+            *args: TypeRefT | None,
     ):
+        def filter_out_nones(candidate: TypeRefT | None) -> bool:
+            return candidate is not None
+
         self.title = title
         self.ref = ref
-        self.args = args
+        self.args = list(filter(filter_out_nones, args))
 
     @property
     def markdown(self) -> str:
-        result = self.title
-        if isinstance(self.ref, str):
-            result = f"[{result}]({self.ref})"
+        array = self.title == "Array" and self.ref is None and len(self.args) == 1
+        if array:
+            result = '<span data-hint-type="array">[]</span>'
+        else:
+            result = self.title
+            if isinstance(self.ref, str):
+                result = f"[{result}]({self.ref})"
 
-        if isinstance(self.args, Sequence) and len(self.args) > 0:
-            result += "<"
+        if len(self.args) > 0:
+            if not array:
+                result += "&lt;"
             first = True
             for arg in self.args:
                 if first:
@@ -249,7 +261,8 @@ class TypeRef:
                 else:
                     result += ","
                 result += arg.markdown
-            result += ">"
+            if not array:
+                result += "&gt;"
 
         return result
 
@@ -265,6 +278,7 @@ def define_env(env: MacrosPlugin):
             heading: int = 3,
             requirement: bool | str = False,
             optional: bool = False,
+            template_context: TypeRefT | TypeRef | None = None,
     ):
         if id_prefix is None:
             id_prefix = ""
@@ -276,6 +290,13 @@ def define_env(env: MacrosPlugin):
         result += "/// html | div.property-description\n"
         result += "<span class=\"property-assign\"></span>"
         result += data_type.markdown
+
+        if template_context is not None:
+            templating: File = env.variables.files.get_file_from_path("reference/templating/index.md")
+            templating_ref = PurePath(
+                path.relpath(templating.src_path, path.dirname(env.page.file.src_path))).as_posix()
+            result += f" [:material-file-replace-outline:{{ title=\"Templated with {template_context.title}\" data-hint-type=\"templated\" }}]({templating_ref}) {template_context.markdown}"
+
         if required:
             result += " :material-asterisk-circle-outline:{ title=\"Required\" data-hint-type=\"required\" }"
         if optional:
@@ -287,6 +308,7 @@ def define_env(env: MacrosPlugin):
 
         if default is not None:
             default_str = json.dumps(default, ensure_ascii=False)
+            default_str = default_str.replace("`", "\`")
             if len(default_str) > 30:
                 result += f""" = :material-keyboard-return:\n///\n
 ```{{.json .property-description-default-block linenums=0}}
@@ -294,15 +316,48 @@ def define_env(env: MacrosPlugin):
 ```
 """
             else:
-                result += f" = `{default_str}`" + "\n///"
+                result += f" = <code>{html.escape(default_str)}</code>" + "\n///"
         else:
             result += "\n///"
         return result
 
     @env.macro
+    def ref(
+            title: str | None = None,
+            ref: str | None = None,
+            *args: TypeRef | TypeRefT | None,
+    ) -> TypeRef | TypeRefT | None:
+        if ref is not None:
+            if title is None:
+                if ref == "bool" or ref == "string" and ref == "number" and ref == "uint" and ref == "integer" and ref == "float":
+                    title = ref
+                else:
+                    file: File = env.variables.files.get_file_from_path(
+                        path.normpath(path.dirname(env.page.file.src_path) + "/" + ref))
+                    if file is None:
+                        title = path.basename(ref)
+                    else:
+                        title = file.page.title
+
+            return TypeRef(title, ref, *args)
+
+        if title is not None:
+            return TypeRef(title, None, *args)
+
+        return None
+
+    @env.macro
+    def array_ref(
+            title: str | None = None,
+            ref_n: str | None = None,
+            *args: TypeRef | TypeRefT | None,
+    ) -> TypeRef | TypeRefT | None:
+        return ref("Array", None, ref(title, ref_n, *args))
+
+    @env.macro
     def property(
             name: str,
-            data_type_title: str,
+            data_type: str | TypeRef | TypeRefT,
             data_type_reference: str | None = None,
             default=None,
             required: bool = False,
@@ -310,45 +365,22 @@ def define_env(env: MacrosPlugin):
             heading: int = 3,
             requirement: bool = False,
             optional: bool = False,
+            template_context_title: str | None = None,
+            template_context: str | None = None,
     ):
-        return property_extended(
-            name=name,
-            data_type=TypeRef(data_type_title, data_type_reference),
-            default=default,
-            required=required,
-            id_prefix=id_prefix,
-            heading=heading,
-            requirement=requirement,
-            optional=optional
-        )
+        if isinstance(data_type, str):
+            data_type = TypeRef(data_type, data_type_reference)
 
-    @env.macro
-    def property_with_holder(
-            name: str,
-            data_holder_title: str, data_holder_reference: str | None,
-            data_type_title: str, data_type_reference: str | None = None,
-            default=None,
-            required: bool = False,
-            id_prefix: str = "",
-            heading: int = 3,
-            requirement: bool = False,
-            optional: bool = False,
-    ) -> str:
-        # noinspection PyTypeChecker
         return property_extended(
             name=name,
-            data_type=TypeRef(
-                data_holder_title, data_holder_reference,
-                [
-                    TypeRef(data_type_title, data_type_reference)
-                ] if data_type_title is not None and data_type_title != "" else []
-            ),
+            data_type=data_type,
             default=default,
             required=required,
             id_prefix=id_prefix,
             heading=heading,
             requirement=requirement,
-            optional=optional
+            optional=optional,
+            template_context=ref(template_context_title, template_context)
         )
 
     @env.macro
@@ -400,7 +432,7 @@ def define_env(env: MacrosPlugin):
     @env.macro
     def flag(
             name: str,
-            data_type_title: str | None = None,
+            data_type: str | TypeRef | TypeRefT | None = None,
             data_type_reference: str | None = None,
             default=None,
             required: bool = False,
@@ -408,36 +440,12 @@ def define_env(env: MacrosPlugin):
             heading: int = 3,
             aliases: Sequence[str] | None = None
     ):
-        return flag_extended(
-            name=name,
-            data_type=TypeRef(data_type_title, data_type_reference) if data_type_title is not None else None,
-            default=default,
-            required=required,
-            id_prefix=id_prefix,
-            heading=heading,
-            aliases=aliases,
-        )
+        if isinstance(data_type, str):
+            data_type = TypeRef(data_type, data_type_reference)
 
-    @env.macro
-    def flag_with_holder(
-            name: str,
-            data_holder_title: str, data_holder_reference: str | None,
-            data_type_title: str, data_type_reference: str | None = None,
-            default=None,
-            required: bool = False,
-            id_prefix: str = "",
-            heading: int = 3,
-            aliases: Sequence[str] | None = None
-    ) -> str:
-        # noinspection PyTypeChecker
         return flag_extended(
             name=name,
-            data_type=TypeRef(
-                data_holder_title, data_holder_reference,
-                [
-                    TypeRef(data_type_title, data_type_reference)
-                ] if data_type_title is not None and data_type_title != "" else []
-            ),
+            data_type=data_type,
             default=default,
             required=required,
             id_prefix=id_prefix,
@@ -460,7 +468,6 @@ def define_env(env: MacrosPlugin):
     @env.macro
     def container_packages_url() -> str:
         return f"{repo_http_url}/pkgs/container/bifroest"
-
 
     @env.macro
     def asset_url(file: str, raw: bool = False) -> str:
@@ -568,16 +575,24 @@ def define_env(env: MacrosPlugin):
         result += '</thead><tbody markdown="span">'
 
         for arch in Arch:
-            result += f'<tr markdown="span"><td markdown="span">`{arch.name}`</td>'
 
             if os is not None:
                 generic = support_matrix.lookup(os, arch, EditionKind.generic)
                 extended = support_matrix.lookup(os, arch, EditionKind.extended)
-                if packaging == Packaging.archive or packaging is None:
-                    result += f'<td markdown="span">{compatibility_editions(True if generic and generic.binary_supported else None, True if extended and extended.binary_supported else None, os)}</td>'
-                if packaging == Packaging.image or packaging is None:
-                    result += f'<td markdown="span">{compatibility_editions(True if generic and generic.image_supported else None, True if extended and extended.image_supported else None, os)}</td>'
+
+                if (generic and (generic.binary_supported or generic.image_supported)) or (extended and (extended.binary_supported or extended.image_supported)):
+                    result += f'<tr markdown="span"><td markdown="span">`{arch.name}`</td>'
+
+                    if packaging == Packaging.archive or packaging is None:
+                        result += f'<td markdown="span">{compatibility_editions(True if generic and generic.binary_supported else None, True if extended and extended.binary_supported else None, os)}</td>'
+                    if packaging == Packaging.image or packaging is None:
+                        result += f'<td markdown="span">{compatibility_editions(True if generic and generic.image_supported else None, True if extended and extended.image_supported else None, os)}</td>'
+
+                    result += '<tr>'
+
             else:
+                result += f'<tr markdown="span"><td markdown="span">`{arch.name}`</td>'
+
                 for osv in Os:
                     generic = support_matrix.lookup(osv, arch, EditionKind.generic)
                     extended = support_matrix.lookup(osv, arch, EditionKind.extended)
@@ -586,7 +601,7 @@ def define_env(env: MacrosPlugin):
                     if packaging == Packaging.image or packaging is None:
                         result += f'<td markdown="span">{compatibility_editions(True if generic and generic.image_supported else None, True if extended and extended.image_supported else None, osv)}</td>'
 
-            result += '<tr>'
+                result += '<tr>'
 
         result += '</tbody>'
         result += '</table>'

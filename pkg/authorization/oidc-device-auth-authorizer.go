@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	coidc "github.com/coreos/go-oidc/v3/oidc"
 	log "github.com/echocat/slf4g"
@@ -45,9 +46,36 @@ func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *c
 		return failf("nil configuration")
 	}
 
-	provider, err := coidc.NewProvider(ctx, conf.Issuer)
+	rCtx := noopContext{}
+	issuer, err := conf.Issuer.Render(rCtx)
 	if err != nil {
-		return failf("cannot evaluate OIDC issuer %q: %w", conf.Issuer, err)
+		return failf("cannot render issuer: %w", err)
+	}
+
+	provider, err := coidc.NewProvider(ctx, issuer.String())
+	if err != nil {
+		return failf("cannot evaluate OIDC issuer %q: %w", issuer, err)
+	}
+
+	clientId, err := conf.ClientId.Render(rCtx)
+	if err != nil {
+		return failf("cannot render clientId: %w", err)
+	}
+	clientSecret, err := conf.ClientSecret.Render(rCtx)
+	if err != nil {
+		return failf("cannot render clientSecret: %w", err)
+	}
+	rawScopes, err := conf.Scopes.Render(rCtx)
+	if err != nil {
+		return failf("cannot render scopes: %w", err)
+	}
+	var scopes []string
+	for _, rawScope := range rawScopes {
+		rawScope = strings.TrimSpace(rawScope)
+		if rawScope == "" {
+			continue
+		}
+		scopes = append(scopes, rawScope)
 	}
 
 	result := OidcDeviceAuthAuthorizer{
@@ -55,19 +83,21 @@ func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *c
 		conf: conf,
 
 		oauth2Config: oauth2.Config{
-			ClientID:     conf.ClientId,
-			ClientSecret: conf.ClientSecret,
+			ClientID:     clientId,
+			ClientSecret: clientSecret,
 			Endpoint:     provider.Endpoint(),
-			Scopes:       conf.Scopes,
+			Scopes:       scopes,
 		},
 		provider: provider,
 		verifier: provider.Verifier(&coidc.Config{
-			ClientID: conf.ClientId,
+			ClientID: clientId,
 		}),
 	}
 
 	return &result, nil
 }
+
+type noopContext struct{}
 
 func (this *OidcDeviceAuthAuthorizer) RestoreFromSession(ctx context.Context, sess session.Session, opts *RestoreOpts) (Authorization, error) {
 	fail := func(err error) (Authorization, error) {
@@ -155,19 +185,19 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizeInteractive(req InteractiveReques
 	if err != nil {
 		return fail(err)
 	}
-	req.Logger().Debug("token received")
+	req.Connection().Logger().Debug("token received")
 
 	t := newOidcToken(buf)
-	auth, err := this.finalizeAuth(ctx, req.Logger(), &t, true)
+	auth, err := this.finalizeAuth(ctx, req.Connection().Logger(), &t, true)
 	if err != nil {
 		return fail(err)
 	}
-	auth.remote = req.Remote()
+	auth.remote = req.Connection().Remote()
 
 	if ok, err := req.Validate(auth); err != nil {
 		return failf("error validating authorization: %w", err)
 	} else if !ok {
-		return Forbidden(req.Remote()), nil
+		return Forbidden(req.Connection().Remote()), nil
 	}
 
 	sess, err := this.ensureSessionFor(req, &t)
@@ -191,10 +221,10 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (
 	sess, err := req.Sessions().FindByPublicKey(req.Context(), req.RemotePublicKey(), (&session.FindOpts{}).WithPredicate(
 		session.IsFlow(this.flow),
 		session.IsStillValid,
-		session.IsRemoteName(req.Remote().User()),
+		session.IsRemoteName(req.Connection().Remote().User()),
 	))
 	if errors.Is(err, session.ErrNoSuchSession) {
-		return Forbidden(req.Remote()), nil
+		return Forbidden(req.Connection().Remote()), nil
 	}
 	if err != nil {
 		return failf("cannot find session: %w", err)
@@ -205,7 +235,7 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (
 		return fail(err)
 	}
 	if len(at) == 0 {
-		return Forbidden(req.Remote()), nil
+		return Forbidden(req.Connection().Remote()), nil
 	}
 
 	var t oidcToken
@@ -214,9 +244,9 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (
 	}
 	// TODO! Refresh the token
 
-	req.Logger().Debug("token restored")
+	req.Connection().Logger().Debug("token restored")
 
-	auth, err := this.finalizeAuth(req.Context(), req.Logger(), &t, true)
+	auth, err := this.finalizeAuth(req.Context(), req.Connection().Logger(), &t, true)
 	if err != nil {
 		return fail(err)
 	}
@@ -225,7 +255,7 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (
 	if ok, err := req.Validate(auth); err != nil {
 		return fail(err)
 	} else if !ok {
-		return Forbidden(req.Remote()), nil
+		return Forbidden(req.Connection().Remote()), nil
 	}
 
 	if err := this.updateSessionWith(req.Context(), &t, sess); err != nil {
@@ -312,7 +342,7 @@ func (this *OidcDeviceAuthAuthorizer) ensureSessionFor(req Request, t *oidcToken
 	}
 
 	// TODO! Maybe find a way to restore an existing one?
-	sess, err := req.Sessions().Create(req.Context(), this.flow, req.Remote(), at)
+	sess, err := req.Sessions().Create(req.Context(), this.flow, req.Connection().Remote(), at)
 	if err != nil {
 		return fail(err)
 	}
@@ -426,7 +456,7 @@ func (this *OidcDeviceAuthAuthorizer) getUserInfo(ctx context.Context, token *oi
 }
 
 func (this *OidcDeviceAuthAuthorizer) AuthorizePassword(req PasswordRequest) (Authorization, error) {
-	return Forbidden(req.Remote()), nil
+	return Forbidden(req.Connection().Remote()), nil
 }
 
 func (this *OidcDeviceAuthAuthorizer) Close() error {

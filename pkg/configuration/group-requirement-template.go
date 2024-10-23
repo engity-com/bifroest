@@ -51,8 +51,8 @@ func (this *GroupRequirementTemplate) Trim() error {
 
 func (this *GroupRequirementTemplate) Validate() error {
 	return validate(this,
-		noopValidate[GroupRequirementTemplate]("gid"),
-		noopValidate[GroupRequirementTemplate]("name"),
+		func(v *GroupRequirementTemplate) (string, validator) { return "gid", v.Gid },
+		func(v *GroupRequirementTemplate) (string, validator) { return "name", &v.Name },
 	)
 }
 
@@ -96,7 +96,7 @@ func (this GroupRequirementTemplates) Render(key common.StructuredKey, data any)
 }
 
 func (this *GroupRequirementTemplates) SetDefaults() error {
-	return setSliceDefaults(this)
+	return setSliceDefaults(this) // Empty, be default.
 }
 
 func (this *GroupRequirementTemplates) Trim() error {
@@ -105,6 +105,15 @@ func (this *GroupRequirementTemplates) Trim() error {
 
 func (this GroupRequirementTemplates) Validate() error {
 	return validateSlice(this)
+}
+
+func (this *GroupRequirementTemplates) UnmarshalYAML(node *yaml.Node) error {
+	// Clear the entries before...
+	*this = GroupRequirementTemplates{}
+	return unmarshalYAML(this, node, func(target *GroupRequirementTemplates, node *yaml.Node) error {
+		type raw GroupRequirementTemplates
+		return node.Decode((*raw)(target))
+	})
 }
 
 func (this GroupRequirementTemplates) IsEqualTo(other any) bool {

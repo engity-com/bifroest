@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alecthomas/kingpin"
+	"github.com/alecthomas/kingpin/v2"
 	"github.com/echocat/slf4g"
 
 	"github.com/engity-com/bifroest/pkg/common"
@@ -48,7 +48,7 @@ func (this *buildBinary) compile(ctx context.Context, p *platform) (*buildArtifa
 		With("stage", buildStageBinary).
 		With("file", a.filepath)
 
-	ldFlags := " -s -w " + a.toLdFlags(a.os)
+	ldFlags := " -s -w " + a.toLdFlags()
 
 	start := time.Now()
 	l.Debug("building binary...")

@@ -66,12 +66,14 @@ func (this *EnvironmentLocal) Trim() error {
 
 func (this *EnvironmentLocal) Validate() error {
 	return validate(this,
-		noopValidate[EnvironmentLocal]("loginAllowed"),
-		noopValidate[EnvironmentLocal]("banner"),
-		noopValidate[EnvironmentLocal]("shellCommand"),
-		noopValidate[EnvironmentLocal]("execCommandPrefix"),
-		noopValidate[EnvironmentLocal]("directory"),
-		noopValidate[EnvironmentLocal]("portForwardingAllowed"),
+		func(v *EnvironmentLocal) (string, validator) { return "loginAllowed", &v.LoginAllowed },
+		func(v *EnvironmentLocal) (string, validator) { return "banner", &v.Banner },
+		func(v *EnvironmentLocal) (string, validator) { return "shellCommand", &v.ShellCommand },
+		func(v *EnvironmentLocal) (string, validator) { return "execCommandPrefix", &v.ExecCommandPrefix },
+		func(v *EnvironmentLocal) (string, validator) { return "directory", &v.Directory },
+		func(v *EnvironmentLocal) (string, validator) {
+			return "portForwardingAllowed", &v.PortForwardingAllowed
+		},
 	)
 }
 

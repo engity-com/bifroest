@@ -2,8 +2,12 @@ package configuration
 
 import (
 	"fmt"
-	"github.com/engity-com/bifroest/pkg/crypto"
+
+	log "github.com/echocat/slf4g"
 	"gopkg.in/yaml.v3"
+
+	"github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 type AuthorizationSimpleEntry struct {
@@ -11,6 +15,9 @@ type AuthorizationSimpleEntry struct {
 	AuthorizedKeys     crypto.AuthorizedKeys     `yaml:"authorizedKeys,omitempty"`
 	AuthorizedKeysFile crypto.AuthorizedKeysFile `yaml:"authorizedKeysFile,omitempty"`
 	Password           crypto.Password           `yaml:"password,omitempty"`
+	PasswordFile       crypto.PasswordFile       `yaml:"passwordFile,omitempty"`
+
+	CreatePasswordFileIfAbsentOfType *crypto.PasswordType `yaml:"createPasswordFileIfAbsentOfType,omitempty"`
 }
 
 func (this *AuthorizationSimpleEntry) GetField(name string) (any, bool, error) {
@@ -28,6 +35,9 @@ func (this *AuthorizationSimpleEntry) SetDefaults() error {
 		noopSetDefault[AuthorizationSimpleEntry]("authorizedKeys"),
 		noopSetDefault[AuthorizationSimpleEntry]("authorizedKeysFile"),
 		noopSetDefault[AuthorizationSimpleEntry]("password"),
+		noopSetDefault[AuthorizationSimpleEntry]("passwordFile"),
+
+		noopSetDefault[AuthorizationSimpleEntry]("createPasswordFileIfAbsentOfType"),
 	)
 }
 
@@ -37,10 +47,36 @@ func (this *AuthorizationSimpleEntry) Trim() error {
 		func(v *AuthorizationSimpleEntry) (string, trimmer) { return "authorizedKeys", &v.AuthorizedKeys },
 		noopTrim[AuthorizationSimpleEntry]("authorizedKeysFile"),
 		noopTrim[AuthorizationSimpleEntry]("password"),
+		noopTrim[AuthorizationSimpleEntry]("passwordFile"),
+
+		noopTrim[AuthorizationSimpleEntry]("createPasswordFileIfAbsentOfType"),
 	)
 }
 
 func (this *AuthorizationSimpleEntry) Validate() error {
+	if t := this.CreatePasswordFileIfAbsentOfType; t != nil && this.Name != "" {
+		if err := this.CreatePasswordFileIfAbsentOfType.Validate(); err != nil {
+			return err
+		}
+		if f := this.PasswordFile; !f.IsZero() {
+			if pw, err := this.PasswordFile.GetPassword(); pw.IsZero() {
+				decoded, encoded, err := t.Generate(nil)
+				if err != nil {
+					return errors.System.Newf("cannot generate new password for file %v: %w", f, err)
+				}
+				if err := f.SetPassword(encoded); err != nil {
+					return errors.System.Newf("cannot generate new password for file %v: %w", f, err)
+				}
+
+				log.With("name", this.Name).
+					With("password", string(decoded)).
+					Warn("new password created and saved for user")
+
+			} else if err != nil {
+				return err
+			}
+		}
+	}
 	return validate(this,
 		notEmptyStringValidate[AuthorizationSimpleEntry]("name", func(v *AuthorizationSimpleEntry) *string { return &v.Name }),
 		func(v *AuthorizationSimpleEntry) (string, validator) { return "authorizedKeys", &v.AuthorizedKeys },
@@ -48,6 +84,11 @@ func (this *AuthorizationSimpleEntry) Validate() error {
 			return "authorizedKeysFile", &v.AuthorizedKeysFile
 		},
 		func(v *AuthorizationSimpleEntry) (string, validator) { return "password", &v.Password },
+		func(v *AuthorizationSimpleEntry) (string, validator) { return "passwordFile", &v.PasswordFile },
+
+		func(v *AuthorizationSimpleEntry) (string, validator) {
+			return "createPasswordFileIfAbsentOfType", v.CreatePasswordFileIfAbsentOfType
+		},
 	)
 }
 
@@ -76,13 +117,25 @@ func (this AuthorizationSimpleEntry) isEqualTo(other *AuthorizationSimpleEntry) 
 	return this.Name == other.Name &&
 		isEqual(&this.AuthorizedKeys, &other.AuthorizedKeys) &&
 		isEqual(&this.AuthorizedKeysFile, &other.AuthorizedKeysFile) &&
-		isEqual(&this.Password, &other.Password)
+		isEqual(&this.Password, &other.Password) &&
+		isEqual(&this.PasswordFile, &other.PasswordFile) &&
+		isEqual(this.CreatePasswordFileIfAbsentOfType, other.CreatePasswordFileIfAbsentOfType)
+}
+
+func (this AuthorizationSimpleEntry) GetPassword() (crypto.Password, error) {
+	if v := this.Password; !v.IsZero() {
+		return v, nil
+	}
+	if v := this.PasswordFile; !v.IsZero() {
+		return v.GetPassword()
+	}
+	return nil, nil
 }
 
 type AuthorizationSimpleEntries []AuthorizationSimpleEntry
 
 func (this *AuthorizationSimpleEntries) SetDefaults() error {
-	return setSliceDefaults(this)
+	return setSliceDefaults(this) // Empty, be default.
 }
 
 func (this *AuthorizationSimpleEntries) Trim() error {
@@ -91,6 +144,15 @@ func (this *AuthorizationSimpleEntries) Trim() error {
 
 func (this AuthorizationSimpleEntries) Validate() error {
 	return validateSlice(this)
+}
+
+func (this *AuthorizationSimpleEntries) UnmarshalYAML(node *yaml.Node) error {
+	// Clear the entries before...
+	*this = AuthorizationSimpleEntries{}
+	return unmarshalYAML(this, node, func(target *AuthorizationSimpleEntries, node *yaml.Node) error {
+		type raw AuthorizationSimpleEntries
+		return node.Decode((*raw)(target))
+	})
 }
 
 func (this AuthorizationSimpleEntries) IsEqualTo(other any) bool {
