@@ -1,12 +1,6 @@
 ## The configuration can be used if you simply want to use Engity's Bifröst as a drop-in-replacement
 ## for the regular sshd.
 
-ssh:
-  addresses: [ ":22" ]
-
-session:
-  type: fs
-
 flows:
   - name: local
     authorization:

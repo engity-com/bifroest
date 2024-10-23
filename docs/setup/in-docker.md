@@ -76,7 +76,7 @@ In the majority of the cases you might run Linux or Windows on AMD64, which is s
 3. Configure Bifröst. For example download the demo configuration and adjust it to your needs (see [documentation of configuration](../reference/configuration.md) for the documentation about it):
    ```powershell
    mkdir -Force 'C:\ProgramData\Engity\Bifroest'
-   curl -sSLf <<asset_url("contrib/configurations/dummy-windows.yaml", True)>> -o 'C:\ProgramData\Engity\Bifroest\configuration.yaml'
+   curl -sSLf <<asset_url("contrib/configurations/simple-inside-docker-windows.yaml", True)>> -o 'C:\ProgramData\Engity\Bifroest\configuration.yaml'
    # Adjust it to your needs
    notepad 'C:\ProgramData\Engity\Bifroest\configuration.yaml'
    ```
