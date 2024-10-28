@@ -1,6 +1,6 @@
 ---
 toc_depth: 4
-description: How to authorize a requesting user the simplest way with Bifröst.
+description: How to simply authorize a requesting user with Bifröst.
 ---
 
 # Simple authorization
@@ -50,7 +50,7 @@ If this property is provided and [`passwordFile`](#entry-property-passwordFile) 
 
 The result will be printed into the startup logs of Bifröst.
 
-This feature is usually only makes sense for cases where you want to create dummy configurations of Bifröst to demonstrate some functionality, like we're utilizing it in our demonstration configurations: [contrib/configurations/simple-inside-docker.yaml](<<asset_url("contrib/configurations/simple-inside-docker.yaml")>>).
+This feature usually only makes sense for cases where you want to create dummy configurations of Bifröst to demonstrate some functionality, like we're utilizing it in our demonstration configurations: [contrib/configurations/simple-inside-docker.yaml](<<asset_url("contrib/configurations/simple-inside-docker.yaml")>>).
 
 ## Context
 
