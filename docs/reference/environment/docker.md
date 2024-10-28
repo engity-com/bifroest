@@ -7,9 +7,9 @@ toc_depth: 5
 
 When using Docker environments, each user session runs in a separate Docker container. This is in contrast to the [local environment](local.md), where each user session runs on the same host as Bifröst.
 
-This is useful if you explicitly do not want to give users access to the host itself, but to environments where they can work with defined toolsets. Especially if you want to create demo or training environments.
+This is useful if you explicitly do not want to give users access to the host itself, but to environments where they can work with defined toolsets. This is especially true, if you want to create demo or training environments.
 
-But also if you want to set up a [Bastion/Jump host](../../usecases.md#bastion), where a user can jump from this server to another network, this can be very helpful. In this case, using different [networks](#property-networks) can be beneficial.
+In another use case you can set up a [Bastion/Jump host](../../usecases.md#bastion), what allows the user to jump from one server to another network. Using different [networks](#property-networks) can be beneficial to XXX.
 
 ## Configuration {: #configuration}
 
@@ -108,7 +108,7 @@ Defines the container networks this container should be connected to.
 Empty always defaults to `["default"]`.
 
 !!! note
-     As long [`impPublishHost`](#property-impPublishHost) isn't set, the **first** network should be always reachable by Bifröst itself. This can be either the case if Bifröst itself runs inside of Docker (Bifröst in Docker) or it runs on the host machine and there is a valid route (which is the default Linux native, but not on Docker/Podman for Desktop).
+     As long as [`impPublishHost`](#property-impPublishHost) isn't set, the **first** network should be always reachable by Bifröst itself. This can be either the case if Bifröst itself runs inside of Docker (Bifröst in Docker) or it runs on the host machine and there is a valid route (which is the default Linux native, but not on Docker/Podman for Desktop).
 
 <<property("volumes", array_ref("string"), template_context="../context/authorization.md")>>
 Defines which volumes should be mounted into the container. Each entry is an individual mount statement.
@@ -193,15 +193,15 @@ At this address Bifröst will then connect to the IMP process inside the contain
 !!! warning
      To set this property makes only sense as long you have a firewall in place, which prevents external attackers to connect to the host ports, and you have no other choice. Usually Bifröst can connect via the container networks to IMP directly (see [`networks`](#property-networks)).
 
-This is usually required, if you run Bifröst on a Docker/Podman for Desktop installation (such as on Windows or macOS) where the Docker daemon does not run on the host directly, but inside virtual machine.
+This is usually required, if you run Bifröst on a Docker/Podman for Desktop installation (such as on Windows or macOS) where the Docker daemon does not run on the host directly, but inside a virtual machine.
 
 <<property("cleanOrphan", "bool", template_context="../context/container.md", default=True)>>
 While the [housekeeping iterations](../housekeeping.md) this environment will look for containers that can be inspected by its docker daemon connection if there is any container that does not belong to any flow of this Bifröst instance.
 
-This is useful to clean up old containers which are leftovers after you changed the configuration of Bifröst.
+This is useful to clean up old containers which are leftovers after you have changed the configuration of Bifröst.
 
 !!! warning
-     If there are using multiple Bifröst installations the same Docker host, this should be disabled. Otherwise, each instance is removing the container of the other instance.
+     If multiple Bifröst installations are using the same Docker host, this should be disabled. Otherwise, each instance is removing the container of the other instance.
 
 ## Preparation Processes {: #preparationProcesses }
 
