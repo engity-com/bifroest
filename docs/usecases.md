@@ -4,7 +4,8 @@ description: "Bifröst is very flexible in its configuration (see configuration 
 ---
 # Use cases
 
-As Bifröst is very flexible on how it can be configured (see [configuration documentation](reference/configuration.md)), here are some use-cases which can be fulfilled by it:
+Bifröst helps IT admins to administer servers much faster, more secure, with more options, and much more flexible than without using Bifröst. 
+A big advantage of Bifröst is the simple and flexible configuration (see [configuration documentation](reference/configuration.md)). Below, you find some use-cases showing that Bifröst makes the difference:
 
 1. [**Off**-board users within the legally binding 15 minutes timeframe of the organization](#offboard)
 2. [**On**-board users within 15 minutes in the organization](#onboard)
@@ -109,7 +110,7 @@ The following cases are usually used:
 ### Problem
 
 1. Assume you want to show how your software can be used (demonstration) or you want to create training sessions for users.
-2. You need an environment where your users can easily can have command interaction with.
+2. You need an environment where your users can easily have command interaction with.
 3. Each user needs a dedicated and isolated environment.
 4. You want to provide your own set of tools within these environments.
 
@@ -118,7 +119,7 @@ The following cases are usually used:
 1. Choose your favorite [authorization mechanism](reference/authorization/index.md), such as:
     1. [OpenID Connect](reference/authorization/oidc.md) to ensure, that only users are already registered at your application are able to connect to your service or even using public social accounts like [GitHub](https://docs.github.com/v3/oauth) or [Google](https://developers.google.com/identity/openid-connect/openid-connect) to freely connect to your service.
     2. Maybe you want to use [fixed passwords](reference/authorization/simple.md).
-    3. :material-alert-octagon:{: .warning } Also disable any kind of password request is possible, but only recommended for these kinds of purposes, nothing else. In this case, you can use the [none authorization](reference/authorization/none.md).
+    3. :material-alert-octagon:{: .warning } Disable any kind of password request, which is only recommended for these kinds of purposes, nothing else. In this case, you can use the [none authorization](reference/authorization/none.md).
 2. Create an OCI/Docker image with the applications you want to show.
 3. Configure the [docker environment](reference/environment/docker.md) and [reference your image](reference/environment/docker.md#property-image).
 
@@ -126,7 +127,7 @@ The following cases are usually used:
 
 ### Problem
 
-1. Assume you have an SSH server.
+1. Assume you have a SSH server.
 2. Different users should be authorized differently.
 3. Different users should run in different [environments](reference/environment/index.md) (one in a local environment with permission A, another with permission B, and a third user in a remote environment).
 
