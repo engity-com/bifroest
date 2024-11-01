@@ -163,17 +163,18 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Setup Git
-        run: |
-          git config user.email "info@engity.com"
-          git config user.name  "Engity Bot"
-
       - name: Create temp repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: true
           path: var/doc
+
+      - name: Setup Git
+        working-directory: var/doc
+        run: |
+          git config user.email "info@engity.com"
+          git config user.name  "Engity Bot"
 
       - name: Prepare temp repository
         working-directory: var/doc
