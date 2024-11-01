@@ -116,6 +116,8 @@ jobs:
         run: |
           git add -A
           git commit -m "Release v${{ github.event.inputs.version }}"
+          git push --delete origin "docs/v${{ github.event.inputs.version }}" || true
+          git tag -d "docs/v${{ github.event.inputs.version }}" || true
           git tag -a "docs/v${{ github.event.inputs.version }}" -m "Release v${{ github.event.inputs.version }}"
           git push origin "docs/v${{ github.event.inputs.version }}"
           echo "Documentation is available at https://bifroest.engity.org/v${{ github.event.inputs.version }}/" >> "$GITHUB_STEP_SUMMARY"

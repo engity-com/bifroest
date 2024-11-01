@@ -208,6 +208,8 @@ jobs:
         run: |
           git add -A
           git commit -m "Release PR-${{ needs.evaluate.outputs.pr }}"
+          git push --delete origin "docs/pr-${{ needs.evaluate.outputs.pr }}" || true
+          git tag -d "docs/pr-${{ needs.evaluate.outputs.pr }}" || true
           git tag -a "docs/pr-${{ needs.evaluate.outputs.pr }}" -m "Release PR-${{ needs.evaluate.outputs.pr }}"
           git push origin "docs/pr-${{ needs.evaluate.outputs.pr }}"
           echo "Documentation is available at https://bifroest.engity.org/pr-${{ needs.evaluate.outputs.pr }}/" >> "$GITHUB_STEP_SUMMARY"
