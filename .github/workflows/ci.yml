@@ -206,7 +206,8 @@ jobs:
         if: needs.evaluate.outputs.stage-publish == 'true' && needs.evaluate.outputs.pr
         working-directory: var/doc
         run: |
-          git commit -a -m "Release PR-${{ needs.evaluate.outputs.pr }}"
+          git add -A
+          git commit -m "Release PR-${{ needs.evaluate.outputs.pr }}"
           git tag -a "docs/pr-${{ needs.evaluate.outputs.pr }}" -m "Release PR-${{ needs.evaluate.outputs.pr }}"
           git push origin "docs/pr-${{ needs.evaluate.outputs.pr }}"
           echo "Documentation is available at https://bifroest.engity.org/pr-${{ needs.evaluate.outputs.pr }}/" >> "$GITHUB_STEP_SUMMARY"
