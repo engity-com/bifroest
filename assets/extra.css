@@ -1,0 +1,270 @@
+:root {
+    --md-hue: 225deg;
+}
+
+[data-md-color-scheme="default"],
+[data-md-color-scheme="slate"] {
+    --md-primary-fg-color:        #284696;
+    --md-typeset-a-color: var(--md-primary-fg-color)
+}
+
+[data-md-color-scheme="slate"] .md-tabs,
+[data-md-color-scheme="slate"] .md-header {
+    background-color: hsla(var(--md-hue), 15%, 9%, 1);
+}
+
+.md-typeset h1:has(+p.bifroest-logo) {
+    opacity: 0;
+    height: 0;
+}
+.md-typeset h1 + p.bifroest-logo {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+.md-typeset h1 + p.bifroest-logo svg {
+    margin-top: -2.4em;
+}
+
+p.bifroest-logo .switchable,
+p.bifroest-logo .switchable path,
+p.bifroest-logo .switchable rect {
+    fill: #253340;
+}
+[data-md-color-scheme="slate"] p.bifroest-logo .switchable,
+[data-md-color-scheme="slate"] p.bifroest-logo .switchable path,
+[data-md-color-scheme="slate"] p.bifroest-logo .switchable rect {
+    fill: #ffffff;
+}
+[data-md-color-scheme="slate"] p.bifroest-logo .switchable.text,
+[data-md-color-scheme="slate"] p.bifroest-logo .switchable.text path,
+[data-md-color-scheme="slate"] p.bifroest-logo .switchable.text rect {
+    fill: var(--md-typeset-color);
+}
+
+[data-hint-type="required"],
+[data-hint-type="optional"],
+[data-hint-type="requirement"] {
+    font-size: 0.75em;
+}
+
+[data-hint-type="required"] {
+    color: #dc6a43;
+}
+
+[data-hint-type="requirement"] {
+    color: #b69237;
+}
+
+[data-supported=true] {
+    color: #309c30;
+}
+[data-supported=none] {
+    color: var(--md-default-fg-color--light);
+}
+[data-supported=false] {
+    color: #dc6a43;
+}
+
+.md-typeset > p:not(.subtitle),
+.md-typeset > ol:not(.subtitle),
+.md-typeset > ul:not(.subtitle),
+.md-typeset > .admonition:not(.subtitle),
+.md-typeset > .highlight:not(.subtitle),
+.md-typeset > .md-typeset__table:not(.subtitle),
+.md-typeset > .md-typeset__scrollwrap > .md-typeset__table:not(.subtitle),
+.md-typeset > blockquote:not(.subtitle) {
+    margin-left: 12px;
+}
+
+.md-typeset > .md-typeset__table:not(.subtitle),
+    .md-typeset > .md-typeset__scrollwrap > .md-typeset__table:not(.subtitle) {
+    padding-left: 0;
+}
+
+html .md-typeset .admonition > :last-child {
+    margin-bottom: 0.5em;
+}
+html .md-typeset .admonition > :not(.admonition-title):first-child {
+    margin-top: 0.5em;
+}
+
+.md-typeset > .md-typeset__scrollwrap:not(.subtitle) {
+    margin-left: 0;
+}
+
+.md-typeset details.plain {
+    border: none;
+    background: none;
+    border-radius: 0;
+    margin: 0;
+    padding: 0;
+    font-size: inherit;
+    box-shadow: none;
+}
+
+.md-typeset details.plain summary {
+    border: none;
+    background: none;
+    border-radius: 0;
+    margin: 0;
+    padding: 0;
+    font-size: inherit;
+    font-weight: inherit;
+    color: var(--md-typeset-a-color);
+}
+
+.md-typeset details.plain summary:focus,
+.md-typeset details.plain summary:hover {
+    color: var(--md-accent-fg-color);
+}
+
+.md-typeset details.plain summary::before {
+    content: none;
+}
+
+.md-typeset details.plain summary::after {
+    display: inline-block;
+    position: relative;
+    top: 0.25em;
+    left: 0.4em;
+}
+
+.md-typeset details.plain summary + div {
+    margin-bottom: 0;
+}
+
+.md-typeset .property-title:has(+ .property-description) {
+    display: inline-block;
+    margin-top: 0.5em;
+}
+
+.md-typeset .property-title:has(+ .property-description + .property-description-default-block) {
+    margin-bottom: 0;
+}
+
+.md-typeset .property-title + .property-description .property-alias {
+    margin: 0 0.1em 0 0;
+}
+
+.md-typeset .property-title + .property-description .property-assign::before {
+    content: ":";
+    font-size: 0.8em;
+    font-weight: normal;
+    margin: 0  0.5em 0 0;
+    display: inline-block;
+}
+
+.md-typeset .property-title + .property-description {
+    display: inline-block;
+}
+
+.md-typeset .property-title + .property-description > * {
+    margin: 0;
+}
+
+.md-typeset .property-title + .property-description::after {
+    content: "";
+    display: block;
+}
+
+.md-typeset .property-title + .property-description + .property-description-default-block {
+    margin-top: -0.7em;
+    margin-left: 1em;
+}
+
+.md-typeset .property-title + .property-description + p,
+.md-typeset .property-title + .property-description + .property-description-default-block + p,
+.md-typeset .property-title + .property-description + ol,
+.md-typeset .property-title + .property-description + .property-description-default-block + ol,
+.md-typeset .property-title + .property-description + ul,
+.md-typeset .property-title + .property-description + .property-description-default-block + ul,
+.md-typeset .property-title + .property-description + .admonition,
+.md-typeset .property-title + .property-description + .property-description-default-block + .admonition,
+.md-typeset .property-title + .property-description + .highlight,
+.md-typeset .property-title + .property-description + .property-description-default-block + .highlight,
+.md-typeset .property-title + .property-description + .md-typeset__scrollwrap,
+.md-typeset .property-title + .property-description + .property-description-default-block + .md-typeset__scrollwrap,
+.md-typeset .property-title + .property-description + blockquote,
+.md-typeset .property-title + .property-description + .property-description-default-block + blockquote {
+    margin-top: 0;
+}
+
+.md-typeset .property-title + .property-description + dl:last-child,
+.md-typeset .property-title + .property-description + .property-description-default-block + dl:last-child {
+    margin-bottom: 0;
+}
+
+dd > p:first-child {
+    margin-top: 0;
+}
+
+footer .md-footer-meta.md-typeset ul.md-footer-links {
+    margin: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: row;
+    font-size: .64rem;
+    gap: 0.5em;
+}
+
+footer .md-footer-meta.md-typeset .md-footer-links__container {
+    width: unset;
+}
+
+footer .md-footer-meta.md-typeset ul.md-footer-links > li {
+    margin: 0;
+    padding: 0;
+    opacity: 0.6;
+}
+
+footer .md-footer-meta.md-typeset ul.md-footer-links > li::after {
+    content: "|";
+    padding: 0 0 0 0.3em;
+    opacity: 0.6;
+}
+
+footer .md-footer-meta.md-typeset ul.md-footer-links > li:last-child::after {
+    content: none;
+}
+
+@media screen and (max-width: 450px) {
+    footer .md-footer-meta.md-typeset ul.md-footer-links {
+        display: block;
+    }
+    footer .md-footer-meta.md-typeset ul.md-footer-links li::after {
+        content: none;
+    }
+}
+
+@media screen and (max-width: 719px) {
+    footer .md-footer-meta.md-typeset .md-footer-meta__inner {
+        flex-direction: column-reverse;
+    }
+}
+
+.md-typeset table:not([class]) th {
+    min-width: unset;
+}
+
+.md-typeset table thead th > .dist-edition-ref,
+.md-typeset table thead th > .else-ref {
+    writing-mode: vertical-lr;
+}
+
+.md-typeset table[data-kind=compatibility_matrix] th,
+.md-typeset table[data-kind=compatibility_matrix] td {
+    padding: 0.75em 1em;
+}
+
+.md-typeset table[data-kind=compatibility_matrix] thead tr:first-child th:first-child {
+    vertical-align: bottom;
+}
+
+.md-typeset table[data-kind=compatibility_matrix] thead tr:first-child th:not(:first-child) {
+    padding-bottom: 0;
+    text-align: center;
+}
+
+.md-typeset table[data-kind=compatibility_matrix] thead tr:last-child th {
+    padding-top: 0.5em;
+}
