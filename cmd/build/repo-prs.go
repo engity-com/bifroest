@@ -185,11 +185,20 @@ func (this *repoPr) deleteRelatedArtifacts(ctx context.Context) error {
 		return fmt.Errorf("cannot delete artifacts for %v: %w", this, err)
 	}
 
+	docsTag := fmt.Sprintf("docs/pr-%d", this.GetNumber())
+	if err := this.parent.execute(ctx, "git", "push", "--delete", "origin", docsTag).
+		do(); err != nil {
+		log.With("pr", this.GetNumber()).
+			With("tag", docsTag).
+			WithError(err).
+			Info("cannot delete tag in Git; this can be a problem or simply mean that the tag does not exist; ignoring...")
+	}
+
 	do := func(tag string) error {
 		return this.parent.actions.packages.deleteVersionsWithTags(ctx, tag)
 	}
 
-	mainTag := fmt.Sprintf("pr-%d", this.GetID())
+	mainTag := fmt.Sprintf("pr-%d", this.GetNumber())
 
 	if err := do(mainTag); err != nil {
 		return fail(err)

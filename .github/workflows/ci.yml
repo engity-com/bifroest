@@ -150,16 +150,37 @@ jobs:
           path: |
             var/dist/**/*
 
-  doc:
+  documentation:
     name: Documentation
     needs: [ evaluate ]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: true
+
+      - name: Create temp repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          path: var/doc
+
+      - name: Setup Git
+        working-directory: var/doc
+        run: |
+          git config user.email "info@engity.com"
+          git config user.name  "Engity Bot"
+
+      - name: Prepare temp repository
+        working-directory: var/doc
+        run: |
+          git branch -d temp-deploy || true
+          git switch --orphan temp-deploy
 
       - name: Install Python
         uses: actions/setup-python@v5
@@ -179,18 +200,16 @@ jobs:
       - name: Build
         run: |
           mkdocs --color build -c
+          rm -f var/doc/requirements.txt
 
       - name: Deploy
-        id: deploy
-        if: needs.evaluate.outputs.stage-publish == 'true'
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          command: pages deploy --branch=${{ needs.evaluate.outputs.version }} --commit-dirty=true --project-name=bifroest-engity-org var/doc
-
-      - name: Report
-        if: needs.evaluate.outputs.stage-publish == 'true'
-        env:
-          DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
+        if: needs.evaluate.outputs.stage-publish == 'true' && needs.evaluate.outputs.pr
+        working-directory: var/doc
         run: |
-          echo "Documentation is available at ${DEPLOYMENT_URL}" >> "$GITHUB_STEP_SUMMARY"
+          git add -A
+          git commit -m "Release PR-${{ needs.evaluate.outputs.pr }}"
+          git push --delete origin "docs/pr-${{ needs.evaluate.outputs.pr }}" || true
+          git tag -d "docs/pr-${{ needs.evaluate.outputs.pr }}" || true
+          git tag -a "docs/pr-${{ needs.evaluate.outputs.pr }}" -m "Release PR-${{ needs.evaluate.outputs.pr }}"
+          git push origin "docs/pr-${{ needs.evaluate.outputs.pr }}"
+          echo "Documentation is available at https://bifroest.engity.org/pr-${{ needs.evaluate.outputs.pr }}/" >> "$GITHUB_STEP_SUMMARY"
