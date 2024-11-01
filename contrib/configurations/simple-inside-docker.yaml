@@ -6,7 +6,7 @@ startMessage: >
   configuration that is NOT intended for production use.
   Therefore, it will simply display a message similar to
   this one and will close the connection immediately.
-  See https://bifroest.engity.org/latest/setup/in-docker/
+  See https://bifroest.engity.org/setup/in-docker/
 
 ssh:
   banner: |+
@@ -15,7 +15,7 @@ ssh:
 
     This instance runs a demo configuration that is NOT intended for
     production use. Please refer the following page to complete the
-    setup: https://bifroest.engity.org/latest/setup/in-docker/
+    setup: https://bifroest.engity.org/setup/in-docker/
 
     You should be able to log in to this instance using the credentials
     printed the frist time Bifröst was started on this machine.

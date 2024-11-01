@@ -6,10 +6,10 @@ Bifröst (spoken as "Bee-frest"), is an advanced SSH server. It can be used as a
 
 ## TOC
 
-* [Use-cases](https://bifroest.engity.org/latest/usecases/)
+* [Use-cases](https://bifroest.engity.org/usecases/)
 * [Features](#features)
-* [Getting started](https://bifroest.engity.org/latest/setup/)
-* [Configuration](https://bifroest.engity.org/latest/reference/configuration/)
+* [Getting started](https://bifroest.engity.org/setup/)
+* [Configuration](https://bifroest.engity.org/reference/configuration/)
 * [Status](#status)
 * [License](LICENSE)
 * [Code of Conduct](CODE_OF_CONDUCT.md)
@@ -51,16 +51,16 @@ It can also automatically clean up these users as they're no longer needed, for 
 
 ## What's next?
 
-Read [Use-Cases](https://bifroest.engity.org/latest/usecases/), our [Getting starting guide](https://bifroest.engity.org/latest/setup/) and [the configuration documentation](https://bifroest.engity.org/latest/reference/configuration/) to see what else you can do with Bifröst.
+Read [Use-Cases](https://bifroest.engity.org/usecases/), our [Getting starting guide](https://bifroest.engity.org/setup/) and [the configuration documentation](https://bifroest.engity.org/reference/configuration/) to see what else you can do with Bifröst.
 
 ## Status
 
 This project is currently under development. The application is stable ([file a bug if you find one](https://github.com/engity-com/bifroest/issues/new/choose)), but the configuration/command/API structure needs improvement.
 
 ## More topics
-* [Use-Cases](https://bifroest.engity.org/latest/usecases/)
-* [Getting started](https://bifroest.engity.org/latest/setup/)
-* [Configuration](https://bifroest.engity.org/latest/reference/configuration/)
+* [Use-Cases](https://bifroest.engity.org/usecases/)
+* [Getting started](https://bifroest.engity.org/setup/)
+* [Configuration](https://bifroest.engity.org/reference/configuration/)
 * [License](LICENSE)
 * [Code of Conduct](CODE_OF_CONDUCT.md)
 * [Contributing](CONTRIBUTING.md)

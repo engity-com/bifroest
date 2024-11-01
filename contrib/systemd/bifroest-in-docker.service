@@ -5,7 +5,7 @@ After=docker.service
 
 [Service]
 # Adjust this line to your needs which edition/version of Bifröst should be used.
-# Visit https://bifroest.engity.org/latest/setup/distribution/#image for more details.
+# Visit https://bifroest.engity.org/setup/distribution/#image for more details.
 Environment=IMAGE=ghcr.io/engity-com/bifroest:latest
 # Comment this line out if you don't want always the latest version of Bifröst
 ExecStartPre=/usr/bin/docker pull ${IMAGE}
