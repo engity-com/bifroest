@@ -68,6 +68,24 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
+      - name: Setup Git
+        run: |
+          git config user.email "info@engity.com"
+          git config user.name  "Engity Bot"
+
+      - name: Create temp repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          path: var/doc
+
+      - name: Prepare temp repository
+        working-directory: var/doc
+        run: |
+          git branch -d temp-deploy || true
+          git switch --orphan temp-deploy
+
       - name: Install Python
         uses: actions/setup-python@v5
         with:
@@ -83,15 +101,18 @@ jobs:
           path: ~/.cache/pip
           key: ${{ hashFiles('docs/requirements.txt') }}
 
-      - name: Setup Git
-        run: |
-          git config user.email "info@engity.com"
-          git config user.name  "Engity Bot"
-
-      - name: Deploy
+      - name: Build
         run: |
           VERSION_INPUT="${{ github.event.inputs.version }}"
           VERSION_REF="${{ github.ref }}"
           export VERSION=$(test -z "${VERSION_INPUT}" && echo $(echo "${VERSION_REF}" | sed -e "s#^refs/tags/##g" | sed -e "s#^v##g") || echo "${VERSION_INPUT}")
           echo "Version: ${VERSION}"
-          mike deploy --push --update-aliases "${VERSION}" latest
+          mkdocs --color build -c
+          rm -f var/doc/requirements.txt
+
+      - name: Deploy
+        working-directory: var/doc
+        run: |
+          git tag -a "docs/v${{ github.event.inputs.version }}" -m "Release v${{ github.event.inputs.version }}"
+          git push origin "docs/v${{ github.event.inputs.version }}"
+          echo "Documentation is available at https://bifroest.engity.org/v${{ github.event.inputs.version }}/" >> "$GITHUB_STEP_SUMMARY"
