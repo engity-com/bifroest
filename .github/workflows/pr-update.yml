@@ -23,6 +23,7 @@ jobs:
       pull-requests: read
       actions: write
       packages: write
+      contents: write
 
     steps:
       - name: Checkout code
