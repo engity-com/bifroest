@@ -113,6 +113,7 @@ jobs:
       - name: Deploy
         working-directory: var/doc
         run: |
+          git commit -a -m "Release v${{ github.event.inputs.version }}"
           git tag -a "docs/v${{ github.event.inputs.version }}" -m "Release v${{ github.event.inputs.version }}"
           git push origin "docs/v${{ github.event.inputs.version }}"
           echo "Documentation is available at https://bifroest.engity.org/v${{ github.event.inputs.version }}/" >> "$GITHUB_STEP_SUMMARY"
