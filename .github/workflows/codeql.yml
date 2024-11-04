@@ -9,9 +9,28 @@ on:
     - cron: '0 18 * * 0'
 
 jobs:
+  files-changed:
+    name: Detect file changes
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.changes.outputs.go }}
+      docs: ${{ steps.changes.outputs.docs }}
+      any: ${{ steps.changes.outputs.any }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for backend file changes
+        uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: .github/filters.yml
+
   analyze:
     name: Analyze
     runs-on: ubuntu-latest
+    needs: [ files-changed ]
+    if: needs.files-changed.outputs.go == 'true'
 
     strategy:
       fail-fast: false
