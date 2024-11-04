@@ -1,0 +1,21 @@
+# This is used by the action https://github.com/dorny/paths-filter
+
+go: &go
+  - 'go.mod'
+  - 'go.sum'
+  - '.golangci.yml'
+  - 'pkg/**'
+  - 'cmd/**'
+  - 'internal/**'
+  - 'contrib/**'
+
+docs: &docs
+  - 'mkdocs.yml'
+  - 'docs/**'
+  - 'contrib/**'
+  - '**/*.md'
+  - 'LICENSE'
+
+any:
+  - *go
+  - *docs

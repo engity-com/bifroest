@@ -13,6 +13,23 @@ on:
       - ready_for_review
 
 jobs:
+  files-changed:
+    name: Detect file changes
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.changes.outputs.go }}
+      docs: ${{ steps.changes.outputs.docs }}
+      any: ${{ steps.changes.outputs.any }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for backend file changes
+        uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: .github/filters.yml
+
   evaluate:
     name: Evaluate
     runs-on: ubuntu-latest
@@ -54,7 +71,8 @@ jobs:
 
   test:
     name: Tests
-    needs: [ evaluate ]
+    needs: [ evaluate, files-changed ]
+    if: needs.files-changed.outputs.go == 'true'
     strategy:
       matrix:
         os: [ ubuntu-latest, windows-latest ]
@@ -104,7 +122,8 @@ jobs:
           goveralls "-coverprofile=profile.cov" "-service=github" "-parallel" "-flagname=go-${{ matrix.os }}"
   package:
     name: Package
-    needs: [ evaluate ]
+    needs: [ evaluate, files-changed ]
+    if: needs.files-changed.outputs.go == 'true'
     runs-on: "ubuntu-latest"
     container:
       image: ghcr.io/engity-com/build-images/go
@@ -152,7 +171,8 @@ jobs:
 
   documentation:
     name: Documentation
-    needs: [ evaluate ]
+    needs: [ evaluate, files-changed ]
+    if: needs.files-changed.outputs.docs == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
