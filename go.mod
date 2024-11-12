@@ -35,7 +35,7 @@ require (
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/xtaci/smux v1.5.31
 	golang.org/x/crypto v0.29.0
-	golang.org/x/oauth2 v0.23.0
+	golang.org/x/oauth2 v0.24.0
 	golang.org/x/sys v0.27.0
 	gopkg.in/yaml.v3 v3.0.1
 )
