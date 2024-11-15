@@ -10,7 +10,7 @@ There is no need that the actual user exists in any way on the host machine of B
 
 This provides an easy way for SSO in all types of organizations, small or big. See [use cases for more details](../../usecases.md).
 
-Currently the following flow of OpenID Connect is supported:
+Currently, the following flow of OpenID Connect is supported:
 
 * [Device Auth](#device-auth)
 

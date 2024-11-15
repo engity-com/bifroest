@@ -65,6 +65,7 @@ func (this *buildArtifact) Close() (rErr error) {
 	defer this.lock.Unlock()
 
 	for _, closer := range this.onClose {
+		//goland:noinspection GoDeferInLoop
 		defer common.KeepError(&rErr, closer)
 	}
 
@@ -119,6 +120,7 @@ type buildArtifacts []*buildArtifact
 
 func (this buildArtifacts) Close() (rErr error) {
 	for _, v := range this {
+		//goland:noinspection GoDeferInLoop
 		defer common.KeepCloseError(&rErr, v)
 	}
 	return nil

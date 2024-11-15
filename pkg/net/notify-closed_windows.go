@@ -43,6 +43,7 @@ func notifyClosed(rc syscall.RawConn, onClosed func(), onUnexpectedEnd func(erro
 		}()
 
 		_, err = windows.WaitForSingleObject(eventHandle, windows.INFINITE)
+		//goland:noinspection GoTypeAssertionOnErrors
 		if sce, ok := err.(syscall.Errno); ok && sce == 0 {
 			// Ok
 		} else if err != nil {
@@ -65,6 +66,7 @@ func notifyClosed(rc syscall.RawConn, onClosed func(), onUnexpectedEnd func(erro
 
 func wsaCreateEvent() (windows.Handle, error) {
 	ret, _, err := procWSACreateEvent.Call()
+	//goland:noinspection GoTypeAssertionOnErrors
 	if sce, ok := err.(syscall.Errno); ok && sce == 0 {
 		return windows.Handle(ret), nil
 	}
@@ -84,6 +86,7 @@ func wsaEventSelect(fd windows.Handle, kind uint32) (windows.Handle, error) {
 		return 0, err
 	}
 	_, _, err = procWSAEventSelect.Call(uintptr(fd), uintptr(event), uintptr(kind))
+	//goland:noinspection GoTypeAssertionOnErrors
 	if sce, ok := err.(syscall.Errno); ok && sce == 0 {
 		return event, nil
 	}

@@ -8,29 +8,45 @@ import (
 	goos "os"
 	"path/filepath"
 
+	"github.com/docker/docker/errdefs"
 	log "github.com/echocat/slf4g"
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/daemon"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/oci/images"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 type Provider interface {
 	io.Closer
 	FindBinaryFor(ctx context.Context, os sys.Os, arch sys.Arch) (string, error)
+	FindOciImageFor(ctx context.Context, os sys.Os, arch sys.Arch, opts FindOciImageOpts) (string, error)
+}
+
+type FindOciImageOpts struct {
+	Local bool
+	Force bool
 }
 
 func NewProvider(_ context.Context, version sys.Version, conf *configuration.Alternatives) (Provider, error) {
+	ib, err := images.NewBuilder()
+	if err != nil {
+		return nil, err
+	}
 	return &provider{
-		conf:    conf,
-		version: version,
+		conf:          conf,
+		version:       version,
+		imagesBuilder: ib,
 	}, nil
 }
 
 type provider struct {
-	conf    *configuration.Alternatives
-	version sys.Version
+	conf          *configuration.Alternatives
+	version       sys.Version
+	imagesBuilder *images.Builder
 
 	Logger log.Logger
 }
@@ -127,6 +143,69 @@ func (this *provider) FindBinaryFor(ctx context.Context, hostOs sys.Os, hostArch
 	l.Info("there is no existing imp alternative existing; downloading it... DONE!")
 
 	return fn, nil
+}
+
+func (this *provider) FindOciImageFor(ctx context.Context, os sys.Os, arch sys.Arch, opts FindOciImageOpts) (_ string, rErr error) {
+	fail := func(err error) (string, error) {
+		return "", errors.System.Newf("cannot find oci image for %v/%v: %w", os, arch, err)
+	}
+	failf := func(msg string, args ...any) (string, error) {
+		return fail(errors.System.Newf(msg, args...))
+	}
+	version := this.version.Version()
+
+	if !opts.Local {
+		return "ghcr.io/engity-com/bifroest:generic-" + version, nil
+	}
+
+	tag, err := name.NewTag("local/bifroest:generic-" + version)
+	if err != nil {
+		return fail(err)
+	}
+
+	if !opts.Force {
+		if _, err := daemon.Image(tag, daemon.WithContext(ctx)); errdefs.IsNotFound(err) {
+			// This is Ok, we'll continue to build it...
+		} else if err != nil {
+			return fail(err)
+		} else {
+			return tag.String(), nil
+		}
+	}
+
+	sourceBinaryLocation, err := this.FindBinaryFor(ctx, os, arch)
+	if err != nil {
+		return fail(err)
+	}
+
+	targetBinaryLocation := sys.BifroestBinaryLocation(os)
+	if len(targetBinaryLocation) == 0 {
+		return failf("cannot resolve Bifröst's binary location for os %v", os)
+	}
+
+	img, err := this.imagesBuilder.Build(ctx, images.BuildRequest{
+		From:                 images.ImageMinimal,
+		Os:                   os,
+		Arch:                 arch,
+		BifroestBinarySource: sourceBinaryLocation,
+		EntryPoint:           []string{targetBinaryLocation},
+		Cmd:                  []string{},
+		ExposedPorts: map[string]struct{}{
+			"22/tcp": {},
+		},
+		AddDummyConfiguration: true,
+		AddSkeletonStructure:  true,
+	})
+	if err != nil {
+		return fail(err)
+	}
+	defer common.KeepCloseError(&rErr, img)
+
+	if _, err := daemon.Write(tag, img, daemon.WithContext(ctx)); err != nil {
+		return fail(err)
+	}
+
+	return tag.String(), nil
 }
 
 func (this *provider) alternativesLocationFor(os sys.Os, arch sys.Arch) (string, error) {

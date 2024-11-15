@@ -17,7 +17,7 @@ var _ = registerCommand(func(app *kingpin.Application) {
 	configureRunCmd(app)
 })
 
-func doRunDefault(conf configuration.ConfigurationRef) error {
+func doRunDefault(conf configuration.Ref) error {
 	svc := service.Service{
 		Configuration: *conf.Get(),
 		Version:       versionV,

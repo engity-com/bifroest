@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	gonet "net"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -40,9 +41,6 @@ var (
 )
 
 const (
-	BifroestUnixBinaryMountTarget    = `/usr/bin/bifroest`
-	BifroestWindowsBinaryMountTarget = `C:\Program Files\Engity\Bifroest\bifroest.exe`
-
 	DockerLabelPrefix            = "org.engity.bifroest/"
 	DockerLabelFlow              = DockerLabelPrefix + "flow"
 	DockerLabelSessionId         = DockerLabelPrefix + "session-id"
@@ -73,6 +71,8 @@ type DockerRepository struct {
 
 	sessionIdMutex  common.KeyedMutex[session.Id]
 	activeInstances sync.Map
+
+	rawDialer gonet.Dialer
 }
 
 func NewDockerRepository(ctx context.Context, flow configuration.FlowName, conf *configuration.EnvironmentDocker, ap alternatives.Provider, i imp.Imp) (*DockerRepository, error) {
@@ -192,7 +192,7 @@ func (this *DockerRepository) createContainerBy(req Request, sess session.Sessio
 	}
 	success := false
 	cr, err := this.apiClient.ContainerCreate(req.Context(), config, hostConfig, networkingConfig, nil, "")
-	if this.isNoSuchImageError(err) && this.conf.ImagePullPolicy != configuration.PullPolicyAlways {
+	if this.isNoSuchImageError(err) && this.conf.ImagePullPolicy != configuration.PullPolicyAlways && this.conf.ImagePullPolicy != configuration.PullPolicyNever {
 		if err := this.pullImage(req, config.Image); err != nil {
 			return failf(errors.System, "cannot pull container image %s: %w", config.Image, err)
 		}
@@ -351,14 +351,12 @@ func (this *DockerRepository) resolveContainerConfig(req Request, sess session.S
 		return failf("cannot evaluate image: %w", err)
 	}
 	result.Entrypoint = strslice.StrSlice{}
-	switch this.hostOs {
-	case sys.OsWindows:
-		result.Cmd = []string{BifroestWindowsBinaryMountTarget}
-	case sys.OsLinux:
-		result.User = "root"
-		result.Cmd = []string{BifroestUnixBinaryMountTarget}
-	default:
+	result.Cmd = []string{sys.BifroestBinaryLocation(this.hostOs)}
+	if len(result.Cmd[0]) == 0 {
 		return failf("cannot resolve target path for host %s/%s", this.hostOs, this.hostArch)
+	}
+	if this.hostOs == sys.OsLinux {
+		result.User = "root"
 	}
 
 	result.Cmd = append(result.Cmd, `imp`, `--log.colorMode=always`)
@@ -434,13 +432,8 @@ func (this *DockerRepository) resolveHostConfig(req Request) (_ *container.HostC
 		if err != nil {
 			return failf("cannot resolve full imp binary path: %w", err)
 		}
-		var targetPath string
-		switch this.hostOs {
-		case sys.OsWindows:
-			targetPath = BifroestWindowsBinaryMountTarget
-		case sys.OsLinux:
-			targetPath = BifroestUnixBinaryMountTarget
-		default:
+		targetPath := sys.BifroestBinaryLocation(this.hostOs)
+		if targetPath == "" {
 			return failf("cannot resolve target path for host %s/%s", this.hostOs, this.hostArch)
 		}
 		result.Mounts = append(result.Mounts, mount.Mount{
@@ -514,12 +507,8 @@ func (this *DockerRepository) resolveEncodedSftpCommand(req Request) (string, er
 		return failf("cannot evaluate sftpCommand: %w", err)
 	}
 	if len(v) == 0 {
-		switch this.hostOs {
-		case sys.OsWindows:
-			v = []string{BifroestWindowsBinaryMountTarget, `sftp-server`}
-		case sys.OsLinux:
-			v = []string{BifroestUnixBinaryMountTarget, `sftp-server`}
-		default:
+		v = []string{sys.BifroestBinaryLocation(this.hostOs), `sftp-server`}
+		if len(v[0]) == 0 {
 			return failf("sftpCommand was not defined for docker environment and default cannot be resolved for %s/%s", this.hostOs, this.hostArch)
 		}
 	}

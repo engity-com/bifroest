@@ -90,7 +90,7 @@ func (this *Int64) UnmarshalText(text []byte) error {
 	}
 
 	if v, err := strconv.ParseInt(string(text), 10, 64); err == nil {
-		*this = Int64Of(int64(v))
+		*this = Int64Of(v)
 		return nil
 	}
 

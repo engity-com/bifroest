@@ -35,6 +35,16 @@ func (this *Os) UnmarshalText(in []byte) error {
 	return nil
 }
 
+func (this Os) Validate() error {
+	_, err := this.MarshalText()
+	return err
+}
+
+func (this Os) AppendExtToFilename(filename string) string {
+	v := osToExt[this]
+	return filename + v
+}
+
 func (this *Os) Set(plain string) error {
 	return this.UnmarshalText([]byte(plain))
 }
@@ -62,6 +72,9 @@ var (
 	osToName = map[Os]string{
 		OsLinux:   "linux",
 		OsWindows: "windows",
+	}
+	osToExt = map[Os]string{
+		OsWindows: ".exe",
 	}
 	stringToOs = func(in map[Os]string) map[string]Os {
 		result := make(map[string]Os, len(in))

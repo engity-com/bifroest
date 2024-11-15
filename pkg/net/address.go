@@ -8,35 +8,35 @@ import (
 	"strings"
 )
 
-func NewNetAddress(plain string) (NetAddress, error) {
-	var buf NetAddress
+func NewAddress(plain string) (Address, error) {
+	var buf Address
 	if err := buf.Set(plain); err != nil {
-		return NetAddress{}, nil
+		return Address{}, nil
 	}
 	return buf, nil
 }
 
-func MustNewNetAddress(plain string) NetAddress {
-	buf, err := NewNetAddress(plain)
+func MustNewAddress(plain string) Address {
+	buf, err := NewAddress(plain)
 	if err != nil {
 		panic(err)
 	}
 	return buf
 }
 
-type NetAddress struct {
+type Address struct {
 	v gonet.Addr
 }
 
-func (this NetAddress) IsZero() bool {
+func (this Address) IsZero() bool {
 	return this.v == nil
 }
 
-func (this NetAddress) MarshalText() (text []byte, err error) {
+func (this Address) MarshalText() (text []byte, err error) {
 	return []byte(this.String()), nil
 }
 
-func (this NetAddress) String() string {
+func (this Address) String() string {
 	pv := this.v
 	if pv == nil {
 		return ""
@@ -50,7 +50,7 @@ func (this NetAddress) String() string {
 	}
 }
 
-func (this NetAddress) Listen() (gonet.Listener, error) {
+func (this Address) Listen() (gonet.Listener, error) {
 	pv := this.v
 	if pv == nil {
 		return nil, fmt.Errorf("cannot listen to empty address")
@@ -64,7 +64,7 @@ func (this NetAddress) Listen() (gonet.Listener, error) {
 	}
 }
 
-func (this *NetAddress) UnmarshalText(text []byte) error {
+func (this *Address) UnmarshalText(text []byte) error {
 	if len(text) == 0 {
 		this.v = nil
 		return nil
@@ -98,39 +98,39 @@ func (this *NetAddress) UnmarshalText(text []byte) error {
 	return nil
 }
 
-func (this *NetAddress) Set(text string) error {
+func (this *Address) Set(text string) error {
 	return this.UnmarshalText([]byte(text))
 }
 
-func (this NetAddress) Get() gonet.Addr {
+func (this Address) Get() gonet.Addr {
 	return this.v
 }
 
-func (this NetAddress) IsEqualTo(other any) bool {
+func (this Address) IsEqualTo(other any) bool {
 	if other == nil {
 		return false
 	}
 	switch v := other.(type) {
-	case NetAddress:
+	case Address:
 		return this.isEqualTo(&v)
-	case *NetAddress:
+	case *Address:
 		return this.isEqualTo(v)
 	default:
 		return false
 	}
 }
 
-func (this NetAddress) isEqualTo(other *NetAddress) bool {
+func (this Address) isEqualTo(other *Address) bool {
 	return reflect.DeepEqual(this.v, other.v)
 }
 
-type NetAddresses []NetAddress
+type NetAddresses []Address
 
 func (this *NetAddresses) Trim() error {
 	if this == nil {
 		return nil
 	}
-	*this = slices.DeleteFunc(*this, func(e NetAddress) bool {
+	*this = slices.DeleteFunc(*this, func(e Address) bool {
 		return e.IsZero()
 	})
 	return nil

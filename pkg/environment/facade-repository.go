@@ -74,6 +74,7 @@ func (this *RepositoryFacade) FindBySession(ctx context.Context, sess session.Se
 
 func (this *RepositoryFacade) Close() (rErr error) {
 	for _, entity := range this.entries {
+		//goland:noinspection GoDeferInLoop
 		defer common.KeepCloseError(&rErr, entity)
 	}
 	return nil

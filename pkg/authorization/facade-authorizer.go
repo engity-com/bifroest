@@ -92,6 +92,7 @@ func (this *AuthorizerFacade) RestoreFromSession(ctx context.Context, sess sessi
 func (this *AuthorizerFacade) Close() (rErr error) {
 	defer func() { this.entries = nil }()
 	for _, candidate := range this.entries {
+		//goland:noinspection GoDeferInLoop
 		defer common.KeepCloseError(&rErr, candidate)
 	}
 	return nil

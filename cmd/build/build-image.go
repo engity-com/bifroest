@@ -230,6 +230,7 @@ func (this *buildImage) merge(ctx context.Context, as buildArtifacts) (_ buildAr
 		if err != nil {
 			return nil, err
 		}
+		//goland:noinspection GoDeferInLoop
 		defer common.IgnoreCloseErrorIfFalse(&success, a)
 		if a != nil {
 			result = append(result, a)

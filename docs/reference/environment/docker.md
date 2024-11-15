@@ -123,7 +123,7 @@ Defines which volumes should be mounted into the container. Each entry is an ind
 This is the equivalent of `--mount` flag of Docker. See [Bind mounts documentation of Docker](https://docs.docker.com/engine/storage/volumes/) about the syntax of these entries.
 
 <<property("capabilities", array_ref("string"), template_context="../context/authorization.md")>>
-List of Unix kernel capabilities to be added to the container. This enables a more fine grained version in contrast to give all capabilities to the container with [`privileged`](#property-privileged) = `true`.
+List of Unix kernel capabilities to be added to the container. This enables a more fine-grained version in contrast to give all capabilities to the container with [`privileged`](#property-privileged) = `true`.
 
 Does only work on Unix based systems.
 

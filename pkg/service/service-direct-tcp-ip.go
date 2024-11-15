@@ -163,7 +163,8 @@ func (this *service) isAcceptableNewConnectionError(err error) bool {
 
 	var sce syscall.Errno
 	if errors.As(err, &sce) {
-		switch sce {
+		switch //goland:noinspection GoDirectComparisonOfErrors
+		sce {
 		case syscall.ECONNREFUSED, syscall.ETIMEDOUT, syscall.EHOSTDOWN, syscall.ENETUNREACH:
 			return true
 		default:

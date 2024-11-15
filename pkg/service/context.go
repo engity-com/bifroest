@@ -158,6 +158,8 @@ func (this *environmentContext) GetField(name string) (any, bool, error) {
 		return this.connection.Remote(), true, nil
 	case "authorization":
 		return this.authorization, true, nil
+	case "session":
+		return this.authorization.FindSession(), true, nil
 	default:
 		return nil, false, fmt.Errorf("unknown field %q", name)
 	}

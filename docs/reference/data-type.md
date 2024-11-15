@@ -114,6 +114,7 @@ Can be one of:
 Can be one of:
 * `ifAbsend`
 * `always`
+* `never`
 
 ## Regex
 Regular expression of [Go flavor](https://pkg.go.dev/regexp). You can play around with it at [regex.com](https://regex101.com/r/fRdVOl/1).

@@ -59,7 +59,7 @@ func (this *AuthorizationSimpleEntry) Validate() error {
 			return err
 		}
 		if f := this.PasswordFile; !f.IsZero() {
-			if pw, err := this.PasswordFile.GetPassword(); pw.IsZero() {
+			if pw, err := this.PasswordFile.GetPassword(); pw == nil || pw.IsZero() {
 				decoded, encoded, err := t.Generate(nil)
 				if err != nil {
 					return errors.System.Newf("cannot generate new password for file %v: %w", f, err)

@@ -4,7 +4,7 @@ description: "Bifröst is very flexible in its configuration (see configuration 
 ---
 # Use cases
 
-Bifröst helps IT admins to administer servers much faster, more secure, with more options, and much more flexible than without using Bifröst. 
+Bifröst helps IT admins to administer servers much faster, more secure, with more options, and much more flexible than without using Bifröst.
 A big advantage of Bifröst is the simple and flexible configuration (see [configuration documentation](reference/configuration.md)). Below, you find some use-cases showing that Bifröst makes the difference:
 
 1. [**Off**-board users within the legally binding 15 minutes timeframe of the organization](#offboard)
@@ -51,7 +51,7 @@ As the users are always authorized by your [Identity Provider (IdP)](https://ope
 
 There is no need to access any of these services directly to remove/de-authorize these users.
 
-If the [environments are configured accordingly](reference/environment/index.md) (default setting) all of the user's files and processes will be removed/killed automatically, too.
+If the [environments are configured accordingly](reference/environment/index.md) (default setting) all the user's files and processes will be removed/killed automatically, too.
 
 ## On-board users within 15 minutes in the organization {: #onboard}
 
@@ -82,7 +82,7 @@ There is no need to create them somewhere on the server itself. The [OIDC author
 
 There is no need to access any of these services directly to create/authorize these users.
 
-If the [environments are configured accordingly](reference/environment/index.md) (default setting), all of the user's resources (like the home directory) will be created automatically.
+If the [environments are configured accordingly](reference/environment/index.md) (default setting), all the user's resources (like the home directory) will be created automatically.
 
 ## Bastion Host / Jump Host {: #bastion}
 
@@ -127,7 +127,7 @@ The following cases are usually used:
 
 ### Problem
 
-1. Assume you have a SSH server.
+1. Assume you have an SSH server.
 2. Different users should be authorized differently.
 3. Different users should run in different [environments](reference/environment/index.md) (one in a local environment with permission A, another with permission B, and a third user in a remote environment).
 

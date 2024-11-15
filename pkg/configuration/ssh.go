@@ -12,7 +12,7 @@ import (
 
 var (
 	// DefaultSshAddresses is the default setting for Ssh.Addresses.
-	DefaultSshAddresses = []net.NetAddress{net.MustNewNetAddress(":22")}
+	DefaultSshAddresses = []net.Address{net.MustNewAddress(":22")}
 
 	// DefaultSshIdleTimeout is the default setting for Ssh.IdleTimeout.
 	DefaultSshIdleTimeout = common.DurationOf(10 * time.Minute)

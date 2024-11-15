@@ -195,6 +195,7 @@ func (this *dependenciesImagesFiles) getFileFromLayer(layer v1.Layer, sourceFn, 
 			if err != nil {
 				return failf("cannot create file %q: %w", targetFn, err)
 			}
+			//goland:noinspection GoDeferInLoop
 			defer common.KeepCloseError(&rErr, to)
 
 			if _, err := io.Copy(to, tr); err != nil {

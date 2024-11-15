@@ -40,6 +40,10 @@ func (this *fs) init(repository *FsRepository, flow configuration.FlowName, id I
 	this.info.init(this)
 }
 
+func (this *fs) GetField(name string, ce contextEnabled) (any, bool, error) {
+	return this.info.GetField(name, ce)
+}
+
 func (this *fs) Info(context.Context) (Info, error) {
 	return &this.info, nil
 }

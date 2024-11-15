@@ -3,15 +3,18 @@ package imp
 import (
 	"context"
 	"io"
+	gonet "net"
 
 	"github.com/engity-com/bifroest/internal/imp/protocol"
 	"github.com/engity-com/bifroest/pkg/crypto"
-	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
 const (
 	EnvVarMasterPublicKey = "BIFROEST_MASTER_PUBLIC_KEY"
+
+	DefaultInitPathUnix    = `/var/lib/engity/bifroest/init`
+	DefaultInitPathWindows = `C:\ProgramData\Engity\Bifroest\init`
 )
 
 var (
@@ -21,7 +24,7 @@ var (
 type Ref interface {
 	SessionId() session.Id
 	PublicKey() crypto.PublicKey
-	EndpointAddr() net.HostPort
+	Dial(context.Context) (gonet.Conn, error)
 }
 
 func NewImp(ctx context.Context, bifroestPrivateKey crypto.PrivateKey) (Imp, error) {
