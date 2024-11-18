@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -66,7 +67,6 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 		Stdout:    true,
 		Stderr:    true,
 	}
-	// TODO! this.user / this.directory is ignored!?
 
 	streamOpts := remotecommand.StreamOptions{
 		Stdin:  sshSess,
@@ -81,21 +81,29 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 	ev.AddAllOf(t.Authorization().EnvVars())
 	ev.Add(t.SshSession().Environ()...)
 	ev.Set(session.EnvName, sess.Id().String())
-	ev.Set(connection.EnvName, t.Connection().Id().String())
 
+	var path string
+	var command []string
 	switch t.TaskType() {
 	case TaskTypeShell:
 		if v := sshSess.Command(); len(v) > 0 {
-			opts.Command = append(this.execCommand, v...)
+			command = append(this.execCommand, v...)
 		} else {
-			opts.Command = slices.Clone(this.shellCommand)
+			command = slices.Clone(this.shellCommand)
 		}
 	case TaskTypeSftp:
-		opts.Command = slices.Clone(this.sftpCommand)
+		command = slices.Clone(this.sftpCommand)
 	default:
 		return failf("illegal task type: %v", t.TaskType())
 	}
-	// TODO! Wrap this into the wrapper exec command
+
+	path = command[0]
+	if this.repository.conf.Os == sys.OsLinux {
+		command[0] = filepath.Base(command[0])
+		if t.TaskType() == TaskTypeShell {
+			command[0] = "-" + command[0]
+		}
+	}
 
 	if ssh.AgentRequested(sshSess) {
 		ln, err := this.impSession.InitiateNamedPipe(t.Context(), t.Connection().Id(), "ssh-agent")
@@ -113,8 +121,32 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 		streamOpts.Tty = true
 		streamOpts.TerminalSizeQueue = &terminalQueueSizeFromSsh{winCh}
 	}
-	// TODO! we need to set the environment variables some way
-	// opts.Env = ev.Strings()
+
+	opts.Command = []string{sys.BifroestBinaryLocation(this.repository.conf.Os), "exec",
+		"-c", t.Connection().Id().String(),
+		"-p", path,
+		"-x",
+	}
+	if v := this.directory; len(v) > 0 {
+		opts.Command = append(opts.Command, "-d", v)
+	}
+	for k, v := range ev {
+		opts.Command = append(opts.Command, "-e"+k+"="+v)
+	}
+	switch this.repository.conf.Os {
+	case sys.OsLinux:
+		if v := this.user; len(v) > 0 {
+			opts.Command = append(opts.Command, "-u", v)
+		}
+		if v := this.group; len(v) > 0 {
+			opts.Command = append(opts.Command, "-g", v)
+		}
+	default:
+		// No additional stuff...
+	}
+
+	opts.Command = append(opts.Command, "--")
+	opts.Command = append(opts.Command, command...)
 
 	req.VersionedParams(&opts, scheme.ParameterCodec)
 	exec, err := remotecommand.NewSPDYExecutor(this.repository.client.RestConfig(), "POST", req.URL())
@@ -135,6 +167,7 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 
 	activeRoutines.Add(1)
 	go func() {
+		defer activeRoutines.Done()
 		cErr := exec.StreamWithContext(t.Context(), streamOpts)
 		if this.isRelevantError(cErr) {
 			streamDone <- cErr
@@ -145,8 +178,15 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 	}()
 
 	finish := func() (int, error) {
-		// TODO! Find a way to retrieve error code.
-		return 0, nil
+		exitCode, err := this.impSession.GetConnectionExitCode(t.Context(), t.Connection().Id())
+		if errors.Is(err, connection.ErrNotFound) {
+			l.Debug("it was not possible to find an exitCode for the current connection; will treat it as 0")
+			exitCode = 0
+		} else if err != nil {
+			l.WithError(err).Warn("it was not possible to retrieve the exitCode for the current connection; will treat it as 1")
+			exitCode = 1
+		}
+		return exitCode, nil
 	}
 
 	sshSess.Signals(signals)

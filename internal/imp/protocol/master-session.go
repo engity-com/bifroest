@@ -49,6 +49,22 @@ func (this *MasterSession) Ping(ctx context.Context, connectionId connection.Id)
 	return this.parent.methodPing(ctx, this.ref, connectionId)
 }
 
+func (this *MasterSession) GetConnectionExitCode(ctx context.Context, connectionId connection.Id) (int, error) {
+	fail := func(err error) (int, error) {
+		return 0, errors.Network.Newf("cannot get connection exitCode for %v: %w", connectionId, err)
+	}
+
+	result, err := this.parent.methodGetConnectionExitCode(ctx, this.ref, connectionId)
+	if errors.Is(err, connection.ErrNotFound) {
+		return 0, connection.ErrNotFound
+	}
+	if err != nil {
+		return fail(err)
+	}
+
+	return result, nil
+}
+
 func (this *MasterSession) Kill(ctx context.Context, connectionId connection.Id, pid int, signal sys.Signal) error {
 	return this.parent.methodKill(ctx, this.ref, connectionId, pid, signal)
 }

@@ -17,6 +17,7 @@ const (
 	MethodKill
 	MethodTcpForward
 	MethodNamedPipe
+	MethodGetConnectionExitCode
 )
 
 var (
@@ -74,10 +75,11 @@ func (this Method) MarshalText() ([]byte, error) {
 
 var (
 	stringToProtocolMethod = map[string]Method{
-		"ping":       MethodPing,
-		"kill":       MethodKill,
-		"tcpForward": MethodTcpForward,
-		"namedPipe":  MethodNamedPipe,
+		"ping":                  MethodPing,
+		"kill":                  MethodKill,
+		"tcpForward":            MethodTcpForward,
+		"namedPipe":             MethodNamedPipe,
+		"getConnectionExitCode": MethodGetConnectionExitCode,
 	}
 	protocolMethodToString = func(in map[string]Method) map[Method]string {
 		result := make(map[Method]string, len(in))

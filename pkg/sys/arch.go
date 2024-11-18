@@ -91,6 +91,11 @@ func (this Arch) IsZero() bool {
 	return this == 0
 }
 
+func (this Arch) Validate() error {
+	_, err := this.MarshalText()
+	return err
+}
+
 func (this Arch) IsEqualTo(other any) bool {
 	switch v := other.(type) {
 	case Arch:

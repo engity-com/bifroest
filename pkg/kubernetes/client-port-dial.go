@@ -6,7 +6,7 @@ import (
 	"io"
 	gonet "net"
 	"net/http"
-	"os"
+	"strings"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
@@ -20,6 +20,11 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
+)
+
+var (
+	ErrPodNotFound      = fmt.Errorf("pod not found")
+	ErrEndpointNotFound = fmt.Errorf("endpoint not found")
 )
 
 func (this *client) DialPod(ctx context.Context, namespace, name, port string) (gonet.Conn, error) {
@@ -68,7 +73,10 @@ func (this *client) dial(ctx context.Context, restClient rest.Interface, gvk sch
 	if err != nil {
 		var statusErr kerrors.APIStatus
 		if errors.As(err, &statusErr) && statusErr.Status().Reason == metav1.StatusReasonNotFound {
-			return fail(os.ErrNotExist)
+			return fail(ErrEndpointNotFound)
+		}
+		if strings.HasPrefix(err.Error(), "unable to upgrade connection: pod not found") {
+			return fail(ErrPodNotFound)
 		}
 		return fail(err)
 	}

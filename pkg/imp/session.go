@@ -16,6 +16,10 @@ type Session interface {
 	InitiateTcpForward(ctx context.Context, connectionId connection.Id, target net.HostPort) (gonet.Conn, error)
 	InitiateNamedPipe(ctx context.Context, connectionId connection.Id, purpose net.Purpose) (net.NamedPipe, error)
 
+	// GetConnectionExitCode will return either the exitCode (if found)
+	// or [connection.ErrNotFound] if the corresponding connection can't be found.
+	GetConnectionExitCode(ctx context.Context, connectionId connection.Id) (int, error)
+
 	// Kill will try to kill the process with the given signal.
 	// If pid is 0, the process will be resolved by its connection.EnvVar that is matching the provided
 	// connectionId.

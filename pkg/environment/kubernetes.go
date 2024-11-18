@@ -19,6 +19,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/imp"
+	bkube "github.com/engity-com/bifroest/pkg/kubernetes"
 	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
@@ -38,6 +39,7 @@ type kubernetes struct {
 	execCommand  []string
 	sftpCommand  []string
 	user         string
+	group        string
 	directory    string
 
 	portForwardingAllowed bool
@@ -83,7 +85,7 @@ func (this *KubernetesRepository) new(ctx context.Context, pod *v1.Pod, logger l
 	for try := 1; try <= 200; try++ {
 		if err := result.impSession.Ping(ctx, connId); err == nil {
 			break
-		} else if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || sys.IsNotExist(err) {
+		} else if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, bkube.ErrEndpointNotFound) {
 			// try waiting...
 		} else {
 			return fail(err)
@@ -91,10 +93,10 @@ func (this *KubernetesRepository) new(ctx context.Context, pod *v1.Pod, logger l
 		l := logger.With("try", try)
 		if try <= 2 {
 			l.Debug("waiting for container's imp getting ready...")
-		} else {
+		} else if try%30 == 0 {
 			l.Info("still waiting for container's imp getting ready...")
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
 
 	result.owners.Add(1)
@@ -110,7 +112,7 @@ func (this *kubernetes) Dispose(ctx context.Context) (_ bool, rErr error) {
 	defer this.repository.sessionIdMutex.Lock(this.sessionId)()
 	defer common.KeepError(&rErr, this.closeGuarded)
 
-	ok, err := this.repository.removePod(ctx, this.namespace, this.name)
+	ok, err := this.repository.removePod(ctx, this.namespace, this.name, nil)
 	if err != nil {
 		return fail(err)
 	}
@@ -184,19 +186,26 @@ func (this *kubernetes) parsePod(pod *v1.Pod) (err error) {
 		return failf("missing annotation %s", KubernetesAnnotationShellCommand)
 	} else if this.shellCommand, err = decodeStrings(v); err != nil {
 		return failf("cannot decode annotation %s: %w", KubernetesAnnotationShellCommand, err)
+	} else if len(this.shellCommand) == 0 || len(this.shellCommand[0]) == 0 {
+		return failf("illegal annotation value for %s", KubernetesAnnotationShellCommand)
 	}
 	if v := annotations[KubernetesAnnotationExecCommand]; v == "" {
 		return failf("missing annotation %s", KubernetesAnnotationExecCommand)
 	} else if this.execCommand, err = decodeStrings(v); err != nil {
 		return failf("cannot decode annotation %s: %w", KubernetesAnnotationExecCommand, err)
+	} else if len(this.execCommand) == 0 || len(this.execCommand[0]) == 0 {
+		return failf("illegal annotation value for %s", KubernetesAnnotationExecCommand)
 	}
 	if v := annotations[KubernetesAnnotationSftpCommand]; v == "" {
 		this.sftpCommand = nil
 	} else if this.sftpCommand, err = decodeStrings(v); err != nil {
 		return failf("cannot decode annotation %s: %w", KubernetesAnnotationSftpCommand, err)
+	} else if len(this.sftpCommand) == 0 || len(this.sftpCommand[0]) == 0 {
+		return failf("illegal annotation value for %s", KubernetesAnnotationSftpCommand)
 	}
 
 	this.user = annotations[KubernetesAnnotationUser]
+	this.group = annotations[KubernetesAnnotationGroup]
 	this.directory = annotations[KubernetesAnnotationDirectory]
 	this.portForwardingAllowed = annotations[KubernetesAnnotationPortForwardingAllowed] == "true"
 

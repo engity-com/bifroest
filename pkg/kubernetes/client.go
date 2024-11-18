@@ -6,7 +6,6 @@ import (
 	"reflect"
 	"sync/atomic"
 
-	dynamicT "k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -28,8 +27,7 @@ type client struct {
 	contextName string
 	namespace   string
 
-	typed   atomic.Pointer[kubernetes.Clientset]
-	dynamic atomic.Pointer[dynamicT.Interface]
+	typed atomic.Pointer[kubernetes.Clientset]
 }
 
 func (this *client) String() string {
@@ -48,7 +46,6 @@ func (this *client) ClientSet() (kubernetes.Interface, error) {
 		}
 
 		if this.restConfig == nil {
-			// TODO! We should find a way to implement this, too
 			return nil, errors.System.Newf("currently there is no support for mock of %v", reflect.TypeOf((*kubernetes.Interface)(nil)).Elem())
 		}
 

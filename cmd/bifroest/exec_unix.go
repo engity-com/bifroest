@@ -10,15 +10,19 @@ import (
 
 	"github.com/alecthomas/kingpin/v2"
 
+	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 type execOpts struct {
-	workingDirectory string
-	environment      map[string]string
-	user, group      string
-	path             string
-	argv             []string
+	storeExitCodeForConnectionId bool
+	exitCodeByConnectionIdPath   string
+	connectionId                 connection.Id
+	workingDirectory             string
+	environment                  map[string]string
+	user, group                  string
+	path                         string
+	argv                         []string
 }
 
 func registerExecCmdFlags(cmd *kingpin.CmdClause, opts *execOpts) {

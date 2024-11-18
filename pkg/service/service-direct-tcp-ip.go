@@ -143,8 +143,11 @@ func (this *service) handleNewDirectTcpIp(_ *glssh.Server, _ *gossh.ServerConn, 
 		},
 		OnStreamEnd: func(isL2r bool, err error) {
 			name := "source -> destination"
-			if !isL2r {
+			if isL2r {
+				_ = dConn.Close()
+			} else {
 				name = "destination -> source"
+				_ = sConn.Close()
 			}
 			l.WithError(err).Tracef("coping of %s done", name)
 		},
