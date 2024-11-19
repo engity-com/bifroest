@@ -122,7 +122,7 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 		streamOpts.TerminalSizeQueue = &terminalQueueSizeFromSsh{winCh}
 	}
 
-	opts.Command = []string{sys.BifroestBinaryLocation(this.repository.conf.Os), "exec",
+	opts.Command = []string{sys.BifroestBinaryFileLocation(this.repository.conf.Os), "exec",
 		"-c", t.Connection().Id().String(),
 		"-p", path,
 		"-x",

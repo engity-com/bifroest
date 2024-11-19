@@ -58,6 +58,10 @@ func (this *EnvVars) AddAllOf(in EnvVars) {
 	}
 }
 
+func (this EnvVars) SetEnv(key, val string) {
+	this.set(key, val)
+}
+
 func (this EnvVars) Strings() []string {
 	if this == nil {
 		return nil

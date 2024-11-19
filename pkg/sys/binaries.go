@@ -1,16 +1,30 @@
 package sys
 
 const (
-	BifroestBinaryLocationUnix    = `/usr/bin/bifroest`
-	BifroestBinaryLocationWindows = `C:\Program Files\Engity\Bifroest\bifroest.exe`
+	BifroestBinaryDirLocationUnix    = `/usr/bin`
+	BifroestBinaryDirLocationWindows = `C:\Program Files\Engity\Bifroest`
+
+	BifroestBinaryFileLocationUnix    = BifroestBinaryDirLocationUnix + `/bifroest`
+	BifroestBinaryFileLocationWindows = BifroestBinaryDirLocationWindows + `\bifroest.exe`
 )
 
-func BifroestBinaryLocation(os Os) string {
+func BifroestBinaryFileLocation(os Os) string {
 	switch os {
 	case OsWindows:
-		return BifroestBinaryLocationWindows
+		return BifroestBinaryFileLocationWindows
 	case OsLinux:
-		return BifroestBinaryLocationUnix
+		return BifroestBinaryFileLocationUnix
+	default:
+		return ""
+	}
+}
+
+func BifroestBinaryDirLocation(os Os) string {
+	switch os {
+	case OsWindows:
+		return BifroestBinaryDirLocationWindows
+	case OsLinux:
+		return BifroestBinaryDirLocationUnix
 	default:
 		return ""
 	}

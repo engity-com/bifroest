@@ -63,16 +63,10 @@ func (this *execCmd) String() string {
 	return this.cmd.String()
 }
 
-func (this *execCmd) setEnv(key, val string) {
+func (this *execCmd) SetEnv(key, val string) {
 	this.env[key] = val
 }
 
-func (this *execCmd) attachStd() *execCmd {
-	this.cmd.Stdin = gos.Stdin
-	this.cmd.Stdout = gos.Stdout
-	this.cmd.Stderr = gos.Stderr
-	return this
-}
 func (this *execCmd) do() error {
 	this.cmd.Env = make([]string, len(this.env))
 	var i int

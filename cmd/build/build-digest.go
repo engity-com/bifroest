@@ -11,6 +11,7 @@ import (
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/echocat/slf4g"
 
+	bib "github.com/engity-com/bifroest/internal/build"
 	"github.com/engity-com/bifroest/pkg/common"
 )
 
@@ -33,8 +34,8 @@ func (this *buildDigest) create(_ context.Context, as buildArtifacts) (_ buildAr
 
 	success := false
 	result := &buildArtifact{
-		platform: &platform{
-			testing: as[0].testing,
+		Platform: &bib.Platform{
+			Testing: as[0].Testing,
 		},
 		buildContext: as[0].buildContext,
 		t:            buildArtifactTypeDigest,

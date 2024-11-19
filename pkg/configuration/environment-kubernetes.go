@@ -25,7 +25,6 @@ var (
 	DefaultEnvironmentKubernetesImage                = template.MustNewString("alpine")
 	DefaultEnvironmentKubernetesImagePullPolicy      = PullPolicyIfAbsent
 	DefaultEnvironmentKubernetesImagePullCredentials = template.MustNewString("")
-	DefaultEnvironmentKubernetesImageContextMode     = ContextModeOnline
 	DefaultEnvironmentKubernetesReadyTimeout         = template.DurationOf(5 * time.Minute)
 	DefaultEnvironmentKubernetesRemoveTimeout        = 1 * time.Minute
 
@@ -64,7 +63,6 @@ type EnvironmentKubernetes struct {
 	Image                template.String   `yaml:"image"`
 	ImagePullPolicy      PullPolicy        `yaml:"imagePullPolicy,omitempty"`
 	ImagePullCredentials template.String   `yaml:"imagePullCredentials,omitempty"`
-	ImageContextMode     ContextMode       `yaml:"imageContextMode,omitempty"`
 	ReadyTimeout         template.Duration `yaml:"readyTimeout,omitempty"`
 	RemoveTimeout        time.Duration     `yaml:"removeTimeout,omitempty"`
 	Capabilities         template.Strings  `yaml:"capabilities,omitempty"`
@@ -79,9 +77,8 @@ type EnvironmentKubernetes struct {
 	User         template.String  `yaml:"user,omitempty"`
 	Group        template.String  `yaml:"group,omitempty"`
 
-	Banner template.String `yaml:"banner,omitempty"`
-
-	PortForwardingAllowed template.Bool `yaml:"portForwardingAllowed,omitempty"`
+	Banner                template.String `yaml:"banner,omitempty"`
+	PortForwardingAllowed template.Bool   `yaml:"portForwardingAllowed,omitempty"`
 
 	CleanOrphan template.Bool `yaml:"cleanOrphan,omitempty"`
 }
@@ -101,7 +98,6 @@ func (this *EnvironmentKubernetes) SetDefaults() error {
 		fixedDefault("image", func(v *EnvironmentKubernetes) *template.String { return &v.Image }, DefaultEnvironmentKubernetesImage),
 		fixedDefault("imagePullPolicy", func(v *EnvironmentKubernetes) *PullPolicy { return &v.ImagePullPolicy }, DefaultEnvironmentKubernetesImagePullPolicy),
 		fixedDefault("imagePullCredentials", func(v *EnvironmentKubernetes) *template.String { return &v.ImagePullCredentials }, DefaultEnvironmentKubernetesImagePullCredentials),
-		fixedDefault("imageContextMode", func(v *EnvironmentKubernetes) *ContextMode { return &v.ImageContextMode }, DefaultEnvironmentKubernetesImageContextMode),
 		fixedDefault("readyTimeout", func(v *EnvironmentKubernetes) *template.Duration { return &v.ReadyTimeout }, DefaultEnvironmentKubernetesReadyTimeout),
 		fixedDefault("removeTimeout", func(v *EnvironmentKubernetes) *time.Duration { return &v.RemoveTimeout }, DefaultEnvironmentKubernetesRemoveTimeout),
 		fixedDefault("capabilities", func(v *EnvironmentKubernetes) *template.Strings { return &v.Capabilities }, DefaultEnvironmentKubernetesCapabilities),
@@ -139,7 +135,6 @@ func (this *EnvironmentKubernetes) Trim() error {
 		noopTrim[EnvironmentKubernetes]("image"),
 		noopTrim[EnvironmentKubernetes]("imagePullPolicy"),
 		noopTrim[EnvironmentKubernetes]("imagePullCredentials"),
-		noopTrim[EnvironmentKubernetes]("imageContextMode"),
 		noopTrim[EnvironmentKubernetes]("readyTimeout"),
 		noopTrim[EnvironmentKubernetes]("removeTimeout"),
 		noopTrim[EnvironmentKubernetes]("capabilities"),
@@ -180,7 +175,6 @@ func (this *EnvironmentKubernetes) Validate() error {
 		func(v *EnvironmentKubernetes) (string, validator) {
 			return "imagePullCredentials", &v.ImagePullCredentials
 		},
-		func(v *EnvironmentKubernetes) (string, validator) { return "imageContextMode", &v.ImageContextMode },
 		func(v *EnvironmentKubernetes) (string, validator) { return "readyTimeout", &v.ReadyTimeout },
 		func(v *EnvironmentKubernetes) (string, validator) {
 			return "removeTimeout", validatorFunc(func() error {
@@ -244,7 +238,6 @@ func (this EnvironmentKubernetes) isEqualTo(other *EnvironmentKubernetes) bool {
 		isEqual(&this.Image, &other.Image) &&
 		isEqual(&this.ImagePullPolicy, &other.ImagePullPolicy) &&
 		isEqual(&this.ImagePullCredentials, &other.ImagePullCredentials) &&
-		isEqual(&this.ImageContextMode, &other.ImageContextMode) &&
 		isEqual(&this.ReadyTimeout, &other.ReadyTimeout) &&
 		this.RemoveTimeout == other.RemoveTimeout &&
 		isEqual(&this.Capabilities, &other.Capabilities) &&

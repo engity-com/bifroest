@@ -16,7 +16,9 @@ import (
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/echocat/slf4g"
 
+	bib "github.com/engity-com/bifroest/internal/build"
 	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 func newBuild(b *base) *build {
@@ -27,9 +29,9 @@ func newBuild(b *base) *build {
 		dest:      "var/dist",
 		prefix:    "bifroest",
 		rawStages: nil,
-		oses:      allOsVariants,
-		archs:     allArchVariants,
-		editions:  allEditionVariants,
+		oses:      sys.AllOsVariants(),
+		archs:     sys.AllArchVariants(),
+		editions:  sys.AllEditionVariants(),
 		testing:   false,
 
 		updateCaCerts:        true,
@@ -53,9 +55,9 @@ type build struct {
 	dest      string
 	prefix    string
 	rawStages buildStages
-	oses      oses
-	archs     archs
-	editions  editions
+	oses      sys.Oses
+	archs     sys.Archs
+	editions  sys.Editions
 	testing   bool
 
 	updateCaCerts        bool
@@ -84,15 +86,15 @@ func (this *build) init(ctx context.Context, app *kingpin.Application) {
 			PlaceHolder("<" + strings.Join(allBuildStageVariants.Strings(), "|") + ">[,...]").
 			SetValue(&this.rawStages)
 		cmd.Flag("os", "").
-			PlaceHolder("<" + strings.Join(allOsVariants.Strings(), "|") + ">[,...]").
+			PlaceHolder("<" + strings.Join(sys.AllOsVariants().Strings(), "|") + ">[,...]").
 			Default(this.oses.String()).
 			SetValue(&this.oses)
 		cmd.Flag("arch", "").
-			PlaceHolder("<" + strings.Join(allArchVariants.Strings(), "|") + ">[,...]").
+			PlaceHolder("<" + strings.Join(sys.AllArchVariants().Strings(), "|") + ">[,...]").
 			Default(this.archs.String()).
 			SetValue(&this.archs)
 		cmd.Flag("edition", "").
-			PlaceHolder("<" + strings.Join(allEditionVariants.Strings(), "|") + ">[,...]").
+			PlaceHolder("<" + strings.Join(sys.AllEditionVariants().Strings(), "|") + ">[,...]").
 			Default(this.editions.String()).
 			SetValue(&this.editions)
 		cmd.Flag("testing", "").
@@ -128,11 +130,11 @@ func (this *build) init(ctx context.Context, app *kingpin.Application) {
 		}))
 }
 
-func (this *build) allPlatforms(forTesting bool) iter.Seq[*platform] {
-	return func(yield func(*platform) bool) {
-		for p := range allBinaryPlatforms(forTesting, this.assumedBuildOs(), this.assumedBuildArch()) {
-			if slices.Contains(this.oses, p.os) &&
-				slices.Contains(this.archs, p.arch) && slices.Contains(this.editions, p.edition) {
+func (this *build) allPlatforms(forTesting bool) iter.Seq[*bib.Platform] {
+	return func(yield func(*bib.Platform) bool) {
+		for p := range bib.AllBinaryPlatforms(forTesting, this.assumedBuildOs(), this.assumedBuildArch()) {
+			if slices.Contains(this.oses, p.Os) &&
+				slices.Contains(this.archs, p.Arch) && slices.Contains(this.editions, p.Edition) {
 				if !yield(p) {
 					return
 				}
@@ -279,7 +281,7 @@ func (this *build) buildAll(ctx context.Context, forTesting bool) (artifacts bui
 	return artifacts, nil
 }
 
-func (this *build) buildSingle(ctx context.Context, p *platform) (artifacts buildArtifacts, _ error) {
+func (this *build) buildSingle(ctx context.Context, p *bib.Platform) (artifacts buildArtifacts, _ error) {
 	fail := func(err error) ([]*buildArtifact, error) {
 		return nil, fmt.Errorf("cannot build %v: %w", *p, err)
 	}
@@ -295,7 +297,7 @@ func (this *build) buildSingle(ctx context.Context, p *platform) (artifacts buil
 	common.IgnoreCloseErrorIfFalse(&success, artifacts)
 
 	var ba *buildArtifact
-	if stages.contains(buildStageBinary) && p.isBinarySupported(this.assumedBuildOs(), this.assumedBuildArch()) {
+	if stages.contains(buildStageBinary) && p.IsBinarySupported(this.assumedBuildOs(), this.assumedBuildArch()) {
 		var err error
 		ba, err = this.binary.compile(ctx, p)
 		if err != nil {
@@ -317,7 +319,7 @@ func (this *build) buildSingle(ctx context.Context, p *platform) (artifacts buil
 		l.With("stage", buildStageArchive).Info("build archive skipped")
 	}
 
-	if ba != nil && stages.contains(buildStageImage) && ba.isImageSupported() {
+	if ba != nil && stages.contains(buildStageImage) && ba.IsImageSupported() {
 		aas, err := this.image.create(ctx, ba)
 		if err != nil {
 			return fail(err)
@@ -414,7 +416,7 @@ func (this *build) getBuildContext(ctx context.Context) (*buildContext, error) {
 	}
 }
 
-func (this *build) newBuildFileArtifact(ctx context.Context, p *platform, t buildArtifactType, fn string) (*buildArtifact, error) {
+func (this *build) newBuildFileArtifact(ctx context.Context, p *bib.Platform, t buildArtifactType, fn string) (*buildArtifact, error) {
 	success := false
 	result, err := this.newBuildArtifact(ctx, p, t)
 	if err != nil {
@@ -428,40 +430,28 @@ func (this *build) newBuildFileArtifact(ctx context.Context, p *platform, t buil
 	return result, nil
 }
 
-func (this *build) newBuildArtifact(ctx context.Context, p *platform, t buildArtifactType) (*buildArtifact, error) {
+func (this *build) newBuildArtifact(ctx context.Context, p *bib.Platform, t buildArtifactType) (*buildArtifact, error) {
 	bc, err := this.getBuildContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	return &buildArtifact{
-		platform:     p,
+		Platform:     p,
 		buildContext: bc,
 		t:            t,
 	}, nil
 }
 
-func (this *build) assumedBuildOs() os {
-	if goos == osWindows && this.wslBuildDistribution != "" {
-		return osLinux
+func (this *build) assumedBuildOs() sys.Os {
+	if bib.Goos == sys.OsWindows && this.wslBuildDistribution != "" {
+		return sys.OsLinux
 	}
-	return goos
+	return bib.Goos
 }
 
-func (this *build) assumedBuildArch() arch {
-	return goarch
-}
-
-func (this *build) translateToWslPath(in string) (string, error) {
-	if goos != osWindows {
-		return "", fmt.Errorf("can only translate %q to wsl path if os is: %v; but is: %v", in, osWindows, goos)
-	}
-	abs, err := filepath.Abs(in)
-	if err != nil {
-		return "", err
-	}
-
-	return "/mnt/" + strings.ToLower(abs[0:1]) + filepath.ToSlash(abs[2:]), nil
+func (this *build) assumedBuildArch() sys.Arch {
+	return bib.Goarch
 }
 
 func (this *build) stages(ctx context.Context) (buildStages, error) {
@@ -532,17 +522,4 @@ func (this buildContext) filepath(fn string) string {
 	dir := filepath.Join(this.build.dest, this.version.String())
 	_ = gos.MkdirAll(dir, 0755)
 	return filepath.Join(dir, fn)
-}
-
-func (this buildContext) toLdFlags(testing bool) string {
-	testPrefix := ""
-	testSuffix := ""
-	if testing {
-		testPrefix = "TEST"
-		testSuffix = "TEST"
-	}
-	return "-X main.version=" + testPrefix + this.version.String() + testSuffix +
-		" -X main.revision=" + this.revision +
-		" -X " + strconv.Quote("main.vendor="+this.vendor) +
-		" -X main.buildAt=" + this.time.Format(time.RFC3339)
 }

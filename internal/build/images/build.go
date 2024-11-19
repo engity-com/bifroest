@@ -15,6 +15,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 
+	bib "github.com/engity-com/bifroest/internal/build"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/sys"
@@ -33,24 +34,19 @@ var (
 	contrib embed.FS
 )
 
-func NewBuilder() (*Builder, error) {
-	return &Builder{}, nil
-}
-
-type Builder struct {
-}
-
 type BuildRequest struct {
 	From string
 	Os   sys.Os
 	Arch sys.Arch
 	Time time.Time
 
+	PathEnv      []string
 	Env          sys.EnvVars
 	EntryPoint   []string
 	Cmd          []string
 	ExposedPorts map[string]struct{}
 	Annotations  map[string]string
+	Labels       map[string]string
 
 	Contents               iter.Seq2[LayerItem, error]
 	BifroestBinarySource   string
@@ -63,7 +59,7 @@ func (this BuildRequest) ToOciPlatform() (*v1.Platform, error) {
 	return v1.ParsePlatform(this.Os.String() + "/" + this.Arch.Oci())
 }
 
-func (this *Builder) Build(ctx context.Context, req BuildRequest) (Image, error) {
+func Build(ctx context.Context, req BuildRequest) (Image, error) {
 	fail := func(err error) (Image, error) {
 		return nil, err
 	}
@@ -115,7 +111,11 @@ func (this *Builder) Build(ctx context.Context, req BuildRequest) (Image, error)
 	cfg.OSVersion = platform.OSVersion
 	cfg.OSFeatures = platform.OSFeatures
 	cfg.Variant = platform.Variant
-	cfg.Config.Labels = make(map[string]string)
+	if v := req.Labels; v != nil {
+		cfg.Config.Labels = v
+	} else {
+		cfg.Config.Labels = make(map[string]string)
+	}
 	if v := req.ExposedPorts; v != nil {
 		cfg.Config.ExposedPorts = v
 	} else {
@@ -127,7 +127,7 @@ func (this *Builder) Build(ctx context.Context, req BuildRequest) (Image, error)
 	if v := req.Cmd; len(v) > 0 {
 		cfg.Config.Cmd = v
 	}
-	cfg.Config.Env = req.Env.Strings()
+	cfg.Config.Env = bib.ExtendPathWith(req.Os, req.Env, req.PathEnv...).Strings()
 	img, err = mutate.ConfigFile(img, cfg)
 	if err != nil {
 		return fail(err)
@@ -139,7 +139,7 @@ func (this *Builder) Build(ctx context.Context, req BuildRequest) (Image, error)
 	}
 	img = mutate.Annotations(img, annotations).(v1.Image)
 
-	contents, err := this.collectBaseContents(req)
+	contents, err := collectBaseContents(req)
 	if err != nil {
 		return fail(err)
 	}
@@ -171,7 +171,7 @@ func (this *Builder) Build(ctx context.Context, req BuildRequest) (Image, error)
 	return &result, nil
 }
 
-func (this *Builder) collectBaseContents(req BuildRequest) (iter.Seq2[LayerItem, error], error) {
+func collectBaseContents(req BuildRequest) (iter.Seq2[LayerItem, error], error) {
 	fail := func(err error) (iter.Seq2[LayerItem, error], error) {
 		return nil, err
 	}
@@ -237,7 +237,7 @@ func (this *Builder) collectBaseContents(req BuildRequest) (iter.Seq2[LayerItem,
 		item := LayerItem{
 			SourceFs:   req.BifroestBinarySourceFs,
 			SourceFile: v,
-			TargetFile: sys.BifroestBinaryLocation(req.Os),
+			TargetFile: sys.BifroestBinaryFileLocation(req.Os),
 			Mode:       0755,
 		}
 

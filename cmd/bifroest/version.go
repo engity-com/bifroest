@@ -24,7 +24,7 @@ var (
 
 	osV      sys.Os
 	archV    sys.Arch
-	editionV sys.VersionEdition
+	editionV sys.Edition
 	buildAtV time.Time
 )
 
@@ -94,7 +94,7 @@ func (this versionT) Revision() string {
 	return revision
 }
 
-func (this versionT) Edition() sys.VersionEdition {
+func (this versionT) Edition() sys.Edition {
 	return editionV
 }
 

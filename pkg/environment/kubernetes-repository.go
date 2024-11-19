@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -429,35 +430,58 @@ func (this *KubernetesRepository) resolveInitContainerConfig(req Request, _ sess
 
 	result.Name = "init"
 
-	switch this.conf.ImageContextMode {
-	case configuration.ContextModeOffline, configuration.ContextModeDebug:
-		pp, err := req.StartPreparation("ensure-image", "Ensure IMP image", PreparationProgressAttributes{
-			"os":   this.conf.Os,
-			"arch": this.conf.Arch,
-		})
-		if err != nil {
-			return fail(err)
-		}
+	var wg sync.WaitGroup
+	doneCh := make(chan struct{}, 1)
+	defer close(doneCh)
+	var ppErr atomic.Pointer[error]
+	var findErr atomic.Pointer[error]
 
-		if result.Image, err = this.alternatives.FindOciImageFor(req.Context(), this.conf.Os, this.conf.Arch, alternatives.FindOciImageOpts{
-			Local: true,
-			Force: this.conf.ImageContextMode == configuration.ContextModeDebug,
-		}); err != nil {
-			if pp != nil {
-				_ = pp.Error(err)
-			}
-			return fail(err)
-		}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 
-		if pp != nil {
-			if err := pp.Done(); err != nil {
-				return fail(err)
+		var pp PreparationProgress
+
+		oneSecondPassedTimer := time.NewTimer(1 * time.Second)
+		defer oneSecondPassedTimer.Stop()
+
+		for {
+			select {
+			case <-oneSecondPassedTimer.C:
+				if pp, err = req.StartPreparation("ensure-image", "Ensure IMP image", PreparationProgressAttributes{
+					"os":   this.conf.Os,
+					"arch": this.conf.Arch,
+				}); err != nil {
+					ppErr.Store(&err)
+					return
+				}
+
+			case _, _ = <-doneCh:
+				if pp != nil {
+					var pErr error
+					if fErr := findErr.Load(); fErr != nil {
+						pErr = pp.Error(*fErr)
+					} else {
+						pErr = pp.Done()
+					}
+					if pErr != nil {
+						ppErr.Store(&pErr)
+					}
+				}
+				return
 			}
 		}
-	default:
-		if result.Image, err = this.alternatives.FindOciImageFor(req.Context(), this.conf.Os, this.conf.Arch, alternatives.FindOciImageOpts{}); err != nil {
-			return fail(err)
-		}
+	}()
+
+	if result.Image, err = this.alternatives.FindOciImageFor(req.Context(), this.conf.Os, this.conf.Arch); err != nil {
+		findErr.Store(&err)
+		return fail(err)
+	}
+
+	doneCh <- struct{}{}
+	wg.Wait()
+	if err := ppErr.Load(); err != nil {
+		return fail(*err)
 	}
 
 	var targetPath string
@@ -502,20 +526,15 @@ func (this *KubernetesRepository) resolveContainerConfig(req Request, sess sessi
 		return fail(err)
 	}
 
-	switch this.conf.ImageContextMode {
-	case configuration.ContextModeDebug, configuration.ContextModeOffline:
+	switch this.conf.ImagePullPolicy {
+	case configuration.PullPolicyIfAbsent:
+		result.ImagePullPolicy = v1.PullIfNotPresent
+	case configuration.PullPolicyAlways:
+		result.ImagePullPolicy = v1.PullAlways
+	case configuration.PullPolicyNever:
 		result.ImagePullPolicy = v1.PullNever
 	default:
-		switch this.conf.ImagePullPolicy {
-		case configuration.PullPolicyIfAbsent:
-			result.ImagePullPolicy = v1.PullIfNotPresent
-		case configuration.PullPolicyAlways:
-			result.ImagePullPolicy = v1.PullAlways
-		case configuration.PullPolicyNever:
-			result.ImagePullPolicy = v1.PullNever
-		default:
-			return failf("image pull policy %v is not supported for kubernetes environments", this.conf.ImagePullPolicy)
-		}
+		return failf("image pull policy %v is not supported for kubernetes environments", this.conf.ImagePullPolicy)
 	}
 
 	result.Ports = []v1.ContainerPort{{
@@ -527,7 +546,7 @@ func (this *KubernetesRepository) resolveContainerConfig(req Request, sess sessi
 
 	result.Command = strslice.StrSlice{}
 	result.SecurityContext = &v1.SecurityContext{}
-	result.Command = []string{sys.BifroestBinaryLocation(this.conf.Os)}
+	result.Command = []string{sys.BifroestBinaryFileLocation(this.conf.Os)}
 	if len(result.Command[0]) == 0 {
 		return failf("cannot resolve target path for host %v", this.conf.Os)
 	}
@@ -659,7 +678,7 @@ func (this *KubernetesRepository) resolveEncodedSftpCommand(req Request) (string
 		return failf("cannot evaluate sftpCommand: %w", err)
 	}
 	if len(v) == 0 {
-		v = []string{sys.BifroestBinaryLocation(this.conf.Os), `sftp-server`}
+		v = []string{sys.BifroestBinaryFileLocation(this.conf.Os), `sftp-server`}
 		if len(v[0]) == 0 {
 			return failf("sftpCommand was not defined for kubernetes environment and default cannot be resolved for %v", this.conf.Os)
 		}
