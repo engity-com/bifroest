@@ -5,7 +5,7 @@ go 1.23.0
 require (
 	dario.cat/mergo v1.0.1
 	github.com/GehirnInc/crypt v0.0.0-20230320061759-8cc1b52080c5
-	github.com/Masterminds/semver/v3 v3.3.0
+	github.com/Masterminds/semver/v3 v3.3.1
 	github.com/Masterminds/sprig/v3 v3.3.0
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/alecthomas/kingpin/v2 v2.4.0
@@ -34,7 +34,7 @@ require (
 	github.com/stretchr/testify v1.9.0
 	github.com/tg123/go-htpasswd v1.2.3
 	github.com/vmihailenco/msgpack/v5 v5.4.1
-	github.com/xtaci/smux v1.5.31
+	github.com/xtaci/smux v1.5.32
 	golang.org/x/crypto v0.29.0
 	golang.org/x/oauth2 v0.24.0
 	golang.org/x/sys v0.27.0
