@@ -21,9 +21,10 @@ var (
 	DefaultEnvironmentKubernetesNamespace            = template.MustNewString("")
 	DefaultEnvironmentKubernetesOs                   = sys.OsLinux
 	DefaultEnvironmentKubernetesArch                 = sys.ArchAmd64
-	DefaultEnvironmentKubernetesServiceAccount       = template.MustNewString("")
+	DefaultEnvironmentKubernetesServiceAccountName   = template.MustNewString("")
 	DefaultEnvironmentKubernetesImage                = template.MustNewString("alpine")
 	DefaultEnvironmentKubernetesImagePullPolicy      = PullPolicyIfAbsent
+	DefaultEnvironmentKubernetesImagePullSecretName  = template.MustNewString("")
 	DefaultEnvironmentKubernetesImagePullCredentials = template.MustNewString("")
 	DefaultEnvironmentKubernetesReadyTimeout         = template.DurationOf(5 * time.Minute)
 	DefaultEnvironmentKubernetesRemoveTimeout        = 1 * time.Minute
@@ -59,9 +60,10 @@ type EnvironmentKubernetes struct {
 	Namespace            template.String   `yaml:"namespace,omitempty"`
 	Os                   sys.Os            `yaml:"os"`
 	Arch                 sys.Arch          `yaml:"arch"`
-	ServiceAccount       template.String   `yaml:"serviceAccount,omitempty"`
+	ServiceAccountName   template.String   `yaml:"serviceAccountName,omitempty"`
 	Image                template.String   `yaml:"image"`
 	ImagePullPolicy      PullPolicy        `yaml:"imagePullPolicy,omitempty"`
+	ImagePullSecretName  template.String   `yaml:"imagePullSecretName,omitempty"`
 	ImagePullCredentials template.String   `yaml:"imagePullCredentials,omitempty"`
 	ReadyTimeout         template.Duration `yaml:"readyTimeout,omitempty"`
 	RemoveTimeout        time.Duration     `yaml:"removeTimeout,omitempty"`
@@ -94,9 +96,10 @@ func (this *EnvironmentKubernetes) SetDefaults() error {
 		fixedDefault("namespace", func(v *EnvironmentKubernetes) *template.String { return &v.Namespace }, DefaultEnvironmentKubernetesNamespace),
 		fixedDefault("os", func(v *EnvironmentKubernetes) *sys.Os { return &v.Os }, DefaultEnvironmentKubernetesOs),
 		fixedDefault("arch", func(v *EnvironmentKubernetes) *sys.Arch { return &v.Arch }, DefaultEnvironmentKubernetesArch),
-		fixedDefault("serviceAccount", func(v *EnvironmentKubernetes) *template.String { return &v.ServiceAccount }, DefaultEnvironmentKubernetesServiceAccount),
+		fixedDefault("serviceAccountName", func(v *EnvironmentKubernetes) *template.String { return &v.ServiceAccountName }, DefaultEnvironmentKubernetesServiceAccountName),
 		fixedDefault("image", func(v *EnvironmentKubernetes) *template.String { return &v.Image }, DefaultEnvironmentKubernetesImage),
 		fixedDefault("imagePullPolicy", func(v *EnvironmentKubernetes) *PullPolicy { return &v.ImagePullPolicy }, DefaultEnvironmentKubernetesImagePullPolicy),
+		fixedDefault("imagePullSecretName", func(v *EnvironmentKubernetes) *template.String { return &v.ImagePullSecretName }, DefaultEnvironmentKubernetesImagePullSecretName),
 		fixedDefault("imagePullCredentials", func(v *EnvironmentKubernetes) *template.String { return &v.ImagePullCredentials }, DefaultEnvironmentKubernetesImagePullCredentials),
 		fixedDefault("readyTimeout", func(v *EnvironmentKubernetes) *template.Duration { return &v.ReadyTimeout }, DefaultEnvironmentKubernetesReadyTimeout),
 		fixedDefault("removeTimeout", func(v *EnvironmentKubernetes) *time.Duration { return &v.RemoveTimeout }, DefaultEnvironmentKubernetesRemoveTimeout),
@@ -131,9 +134,10 @@ func (this *EnvironmentKubernetes) Trim() error {
 		noopTrim[EnvironmentKubernetes]("namespace"),
 		noopTrim[EnvironmentKubernetes]("os"),
 		noopTrim[EnvironmentKubernetes]("arch"),
-		noopTrim[EnvironmentKubernetes]("serviceAccount"),
+		noopTrim[EnvironmentKubernetes]("serviceAccountName"),
 		noopTrim[EnvironmentKubernetes]("image"),
 		noopTrim[EnvironmentKubernetes]("imagePullPolicy"),
+		noopTrim[EnvironmentKubernetes]("imagePullSecretName"),
 		noopTrim[EnvironmentKubernetes]("imagePullCredentials"),
 		noopTrim[EnvironmentKubernetes]("readyTimeout"),
 		noopTrim[EnvironmentKubernetes]("removeTimeout"),
@@ -168,10 +172,13 @@ func (this *EnvironmentKubernetes) Validate() error {
 		func(v *EnvironmentKubernetes) (string, validator) { return "namespace", &v.Namespace },
 		func(v *EnvironmentKubernetes) (string, validator) { return "os", &v.Os },
 		func(v *EnvironmentKubernetes) (string, validator) { return "arch", &v.Arch },
-		func(v *EnvironmentKubernetes) (string, validator) { return "serviceAccount", &v.ServiceAccount },
+		func(v *EnvironmentKubernetes) (string, validator) { return "serviceAccountName", &v.ServiceAccountName },
 		func(v *EnvironmentKubernetes) (string, validator) { return "image", &v.Image },
 		notZeroValidate("image", func(v *EnvironmentKubernetes) *template.String { return &v.Image }),
 		func(v *EnvironmentKubernetes) (string, validator) { return "imagePullPolicy", &v.ImagePullPolicy },
+		func(v *EnvironmentKubernetes) (string, validator) {
+			return "imagePullSecretName", &v.ImagePullSecretName
+		},
 		func(v *EnvironmentKubernetes) (string, validator) {
 			return "imagePullCredentials", &v.ImagePullCredentials
 		},
@@ -234,9 +241,10 @@ func (this EnvironmentKubernetes) isEqualTo(other *EnvironmentKubernetes) bool {
 		isEqual(&this.Namespace, &other.Namespace) &&
 		isEqual(&this.Os, &other.Os) &&
 		isEqual(&this.Arch, &other.Arch) &&
-		isEqual(&this.ServiceAccount, &other.ServiceAccount) &&
+		isEqual(&this.ServiceAccountName, &other.ServiceAccountName) &&
 		isEqual(&this.Image, &other.Image) &&
 		isEqual(&this.ImagePullPolicy, &other.ImagePullPolicy) &&
+		isEqual(&this.ImagePullSecretName, &other.ImagePullSecretName) &&
 		isEqual(&this.ImagePullCredentials, &other.ImagePullCredentials) &&
 		isEqual(&this.ReadyTimeout, &other.ReadyTimeout) &&
 		this.RemoveTimeout == other.RemoveTimeout &&

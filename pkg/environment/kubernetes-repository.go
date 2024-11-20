@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,8 +20,10 @@ import (
 	v1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	watch2 "k8s.io/apimachinery/pkg/watch"
+	corev1 "k8s.io/client-go/applyconfigurations/core/v1"
 	v2 "k8s.io/client-go/kubernetes/typed/core/v1"
 
 	"github.com/engity-com/bifroest/pkg/alternatives"
@@ -171,9 +174,23 @@ func (this *KubernetesRepository) createPodBy(req Request, sess session.Session)
 		return fail(errors.Newf(t, msg, args...))
 	}
 
-	config, err := this.resolvePodConfig(req, sess)
+	success := false
+
+	config, managedSecretName, err := this.resolvePodConfig(req, sess)
 	if err != nil {
 		return fail(err)
+	}
+	if managedSecretName != "" {
+		defer func() {
+			if !success {
+				if err := this.deletePullSecret(req.Context(), managedSecretName, config); err != nil {
+					req.Connection().Logger().WithError(err).
+						With("namespace", config.Namespace).
+						With("name", managedSecretName).
+						Warn("cannot delete orphan pull secret; it might stay and needs to be removed manually")
+				}
+			}
+		}()
 	}
 
 	clientSet, err := this.client.ClientSet()
@@ -195,18 +212,24 @@ func (this *KubernetesRepository) createPodBy(req Request, sess session.Session)
 		FieldValidation: "Strict",
 	})
 	if err != nil {
-		var status kerrors.APIStatus
-		if errors.As(err, &status) && status.Status().Code == 404 && status.Status().Details != nil && status.Status().Details.Kind == "namespaces" {
-			if err := this.createNamespace(req.Context(), config.Namespace); err != nil {
-				return failf(errors.System, "cannot create POD: namespace does not exist and can't be created: %w", err)
-			}
-			created, err = client.Create(req.Context(), config, metav1.CreateOptions{
-				FieldValidation: "Strict",
-			})
-		}
-	}
-	if err != nil {
 		return failf(errors.System, "cannot create POD: %w", err)
+	}
+	defer func() {
+		if !success {
+			if err := this.deletePod(req.Context(), config); err != nil {
+				req.Connection().Logger().WithError(err).
+					With("namespace", config.Namespace).
+					With("name", config.Name).
+					Warn("cannot delete orphan pod; it might stay and needs to be removed manually")
+			}
+		}
+	}()
+	created.TypeMeta = config.TypeMeta
+
+	if managedSecretName != "" {
+		if err := this.addOwnerReferenceToPullSecret(req.Context(), managedSecretName, created); err != nil {
+			return fail(err)
+		}
 	}
 
 	watch, err := client.Watch(req.Context(), metav1.ListOptions{
@@ -246,6 +269,7 @@ func (this *KubernetesRepository) createPodBy(req Request, sess session.Session)
 							return nil, err
 						}
 					}
+					success = true
 					return p, nil
 				default:
 					return fail(errors.System.Newf("pod %v/%v is unexpted state, see kubernetes logs for more details", p.Namespace, p.Name))
@@ -255,30 +279,162 @@ func (this *KubernetesRepository) createPodBy(req Request, sess session.Session)
 	}
 }
 
-func (this *KubernetesRepository) createNamespace(ctx context.Context, namespace string) error {
+func (this *KubernetesRepository) ensureNamespace(ctx context.Context, namespace string) error {
 	fail := func(err error) error {
-		return errors.System.Newf("cannot create namespace %q: %w", namespace, err)
+		return errors.System.Newf("cannot ensure namespace %q: %w", namespace, err)
 	}
 
 	clientSet, err := this.client.ClientSet()
 	if err != nil {
 		return fail(err)
 	}
+	client := clientSet.CoreV1().Namespaces()
 
-	var req v1.Namespace
-	req.Name = namespace
-	if _, err := clientSet.CoreV1().Namespaces().Create(ctx, &req, metav1.CreateOptions{
-		FieldValidation: "Strict",
-	}); err != nil {
+	_, err = client.Get(ctx, namespace, metav1.GetOptions{})
+	if kerrors.IsNotFound(err) {
+		// Ok... not there, create it...
+		req := v1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: namespace,
+			},
+		}
+		_, err = client.Create(ctx, &req, metav1.CreateOptions{
+			FieldValidation: "Strict",
+		})
+	}
+	if err != nil {
 		return fail(err)
 	}
 
 	return nil
 }
 
-func (this *KubernetesRepository) resolvePullCredentials(req Request, _ string) (string, error) {
-	fail := func(err error) (string, error) {
-		return "", errors.Config.Newf("cannot resolve image pull credentials: %w", err)
+func (this *KubernetesRepository) resolvePullSecretName(req Request, forImage string, pod *v1.Pod) (name string, managed bool, err error) {
+	fail := func(t errors.Type, err error) (string, bool, error) {
+		return "", false, t.Newf("cannot resolve image pull secret name: %w", err)
+	}
+	failf := func(t errors.Type, msg string, args ...any) (string, bool, error) {
+		return fail(t, t.Newf(msg, args...))
+	}
+
+	name, err = this.conf.ImagePullSecretName.Render(req)
+	if err != nil {
+		return fail(errors.Config, err)
+	}
+
+	credentials, err := this.resolvePullCredentials(req, forImage)
+	if err != nil {
+		return fail(errors.Config, err)
+	}
+
+	if len(credentials) == 0 {
+		// Either if set or empty
+		return name, false, nil
+	}
+
+	if name == "" {
+		name = "pull-secret." + pod.Name
+	}
+
+	// Now ensure that the secret exists...
+	clientSet, err := this.client.ClientSet()
+	if err != nil {
+		return fail(errors.System, err)
+	}
+	client := clientSet.CoreV1().Secrets(pod.Namespace)
+
+	template := corev1.Secret(name, pod.Namespace)
+	template.Type = common.P(v1.SecretTypeDockerConfigJson)
+	template.Data = map[string][]byte{
+		v1.DockerConfigJsonKey: credentials,
+	}
+	template.Labels = pod.Labels
+
+	if _, err := client.Apply(req.Context(), template, metav1.ApplyOptions{Force: true, FieldManager: "application/apply-patch"}); err != nil {
+		return failf(errors.System, "cannot apply image secret %v/%v for to be crated pod %v/%v: %w", pod.Namespace, name, pod.Namespace, pod.Name, err)
+	}
+
+	return name, true, nil
+}
+
+func (this *KubernetesRepository) deletePullSecret(ctx context.Context, name string, pod *v1.Pod) error {
+	fail := func(err error) error {
+		return errors.System.Newf("cannot remove image pull secret %v/%v: %w", pod.Namespace, name, err)
+	}
+
+	clientSet, err := this.client.ClientSet()
+	if err != nil {
+		return fail(err)
+	}
+	client := clientSet.CoreV1().Secrets(pod.Namespace)
+
+	if err := client.Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: common.P(metav1.DeletePropagationForeground)}); kerrors.IsNotFound(err) {
+		// Ignore
+	} else if err != nil {
+		return fail(err)
+	}
+
+	return nil
+}
+func (this *KubernetesRepository) deletePod(ctx context.Context, pod *v1.Pod) error {
+	fail := func(err error) error {
+		return errors.System.Newf("cannot remove pod %v/%v: %w", pod.Namespace, pod.Name, err)
+	}
+
+	clientSet, err := this.client.ClientSet()
+	if err != nil {
+		return fail(err)
+	}
+	client := clientSet.CoreV1().Pods(pod.Namespace)
+
+	if err := client.Delete(ctx, pod.Name, metav1.DeleteOptions{PropagationPolicy: common.P(metav1.DeletePropagationForeground)}); kerrors.IsNotFound(err) {
+		// Ignore
+	} else if err != nil {
+		return fail(err)
+	}
+
+	return nil
+}
+
+func (this *KubernetesRepository) addOwnerReferenceToPullSecret(ctx context.Context, name string, pod *v1.Pod) error {
+	fail := func(err error) error {
+		return errors.System.Newf("cannot add owner reference for image pull secret %q: %w", name, err)
+	}
+
+	clientSet, err := this.client.ClientSet()
+	if err != nil {
+		return fail(err)
+	}
+	client := clientSet.CoreV1().Secrets(pod.Namespace)
+
+	patch := map[string]any{
+		"metadata": map[string]any{
+			"ownerReferences": []any{
+				map[string]any{
+					"apiVersion": pod.APIVersion,
+					"kind":       pod.Kind,
+					"name":       pod.Name,
+					"uid":        pod.UID,
+				},
+			},
+		},
+	}
+
+	patchB, err := json.Marshal(patch)
+	if err != nil {
+		return fail(err)
+	}
+
+	if _, err := client.Patch(ctx, name, types.StrategicMergePatchType, patchB, metav1.PatchOptions{}); err != nil {
+		return fail(err)
+	}
+
+	return nil
+}
+
+func (this *KubernetesRepository) resolvePullCredentials(req Request, image string) ([]byte, error) {
+	fail := func(err error) ([]byte, error) {
+		return nil, errors.Config.Newf("cannot resolve image pull credentials: %w", err)
 	}
 
 	plain, err := this.conf.ImagePullCredentials.Render(req)
@@ -287,38 +443,87 @@ func (this *KubernetesRepository) resolvePullCredentials(req Request, _ string) 
 	}
 
 	if plain == "" {
-		return "", nil
+		return nil, nil
 	}
 
-	if buf, err := registry.DecodeAuthConfig(plain); err == nil && (buf.Auth != "" || buf.Username != "" || buf.Password != "") {
-		// We can take it as it is, because it is in fully valid format.
-		return plain, nil
+	var buf dockerPullSecret
+	if err := json.Unmarshal([]byte(plain), &buf); err == nil && len(buf.Auths) > 0 {
+		// We can take it as it is, because it is fully valid...
+		return []byte(plain), nil
 	}
 
-	var buf registry.AuthConfig
-	if err := json.Unmarshal([]byte(plain), &buf); err == nil && (buf.Auth != "" || buf.Username != "" || buf.Password != "") {
-		// Ok, is close to be perfect, just encode it base64 url based...
-		return base64.URLEncoding.EncodeToString([]byte(plain)), nil
+	ir := this.extractRegistryFromImage(image)
+
+	if v, err := registry.DecodeAuthConfig(plain); err == nil && (v.Auth != "" || v.Username != "" || v.Password != "") {
+		// Seems to be an encoded docker authConfig. Just wrap it...
+		buf.Auths = map[string]registry.AuthConfig{
+			ir: *v,
+		}
 	}
 
-	// Seems to be direct auth string...
-	buf.Auth = plain
-	result, err := registry.EncodeAuthConfig(buf)
+	if buf.Auths == nil || len(buf.Auths) == 0 {
+		var v registry.AuthConfig
+		if err := json.Unmarshal([]byte(plain), &v); err == nil && (v.Auth != "" || v.Username != "" || v.Password != "") {
+			// Seems to be a json encoded authConfig. Just wrap it...
+			buf.Auths = map[string]registry.AuthConfig{
+				ir: v,
+			}
+		}
+	}
+
+	if buf.Auths == nil || len(buf.Auths) == 0 {
+		// Seems to be direct auth string...
+		buf.Auths = map[string]registry.AuthConfig{
+			ir: {
+				Auth: plain,
+			},
+		}
+	}
+
+	result, err := json.Marshal(buf)
 	if err != nil {
 		return fail(err)
 	}
+
 	return result, nil
 }
 
-func (this *KubernetesRepository) resolvePodConfig(req Request, sess session.Session) (result *v1.Pod, err error) {
-	fail := func(err error) (*v1.Pod, error) {
-		return nil, err
+func (this *KubernetesRepository) extractRegistryFromImage(image string) string {
+	pathAndTag := strings.SplitAfterN(image, ":", 2)
+	path := pathAndTag[0]
+
+	slashed := strings.SplitAfterN(path, "/", 2)
+	if len(slashed) < 2 {
+		// Like "image"
+		return "index.docker.io"
 	}
-	failf := func(msg string, args ...any) (*v1.Pod, error) {
+
+	if strings.IndexByte(slashed[0], '.') < 0 {
+		// Like "project/image[/..]"
+		return "index.docker.io"
+	}
+
+	return slashed[0]
+}
+
+type dockerPullSecret struct {
+	Auths map[string]registry.AuthConfig `json:"auths"`
+}
+
+func (this *KubernetesRepository) resolvePodConfig(req Request, sess session.Session) (result *v1.Pod, managedSecretName string, err error) {
+	fail := func(err error) (*v1.Pod, string, error) {
+		return nil, "", err
+	}
+	failf := func(msg string, args ...any) (*v1.Pod, string, error) {
 		return fail(errors.Config.Newf(msg, args...))
 	}
 
-	result = &v1.Pod{}
+	result = &v1.Pod{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "v1",
+			Kind:       "Pod",
+		},
+	}
 
 	if result.Name, err = this.conf.Name.Render(req); err != nil {
 		return fail(err)
@@ -332,6 +537,10 @@ func (this *KubernetesRepository) resolvePodConfig(req Request, sess session.Ses
 		} else {
 			result.Namespace = "bifroest"
 		}
+	}
+
+	if err := this.ensureNamespace(req.Context(), result.Namespace); err != nil {
+		return failf("cannot ensure POD's namespace (%q): %w", result.Namespace, err)
 	}
 
 	remote := req.Connection().Remote()
@@ -368,10 +577,12 @@ func (this *KubernetesRepository) resolvePodConfig(req Request, sess session.Ses
 		result.Annotations[KubernetesAnnotationPortForwardingAllowed] = "true"
 	}
 
+	var containerImage string
 	if v, err := this.resolveContainerConfig(req, sess); err != nil {
 		return fail(err)
 	} else {
 		result.Spec.Containers = []v1.Container{v}
+		containerImage = v.Image
 	}
 
 	if v, err := this.resolveInitContainerConfig(req, sess); err != nil {
@@ -389,9 +600,18 @@ func (this *KubernetesRepository) resolvePodConfig(req Request, sess session.Ses
 	default:
 		return failf("os %v is unsupported for kubernetes environments", this.conf.Os)
 	}
-	// TODO imagePullSecrets
 
-	if result.Spec.ServiceAccountName, err = this.conf.ServiceAccount.Render(req); err != nil {
+	secretName, secretManaged, err := this.resolvePullSecretName(req, containerImage, result)
+	if err != nil {
+		return fail(err)
+	}
+	if secretName != "" {
+		result.Spec.ImagePullSecrets = []v1.LocalObjectReference{{
+			Name: secretName,
+		}}
+	}
+
+	if result.Spec.ServiceAccountName, err = this.conf.ServiceAccountName.Render(req); err != nil {
 		return fail(err)
 	}
 	result.Spec.RestartPolicy = v1.RestartPolicyNever
@@ -417,7 +637,11 @@ func (this *KubernetesRepository) resolvePodConfig(req Request, sess session.Ses
 		return failf("cannot evaluate dnsSearch: %w", err)
 	}
 
-	return result, nil
+	if secretManaged {
+		return result, secretName, nil
+	}
+
+	return result, "", nil
 }
 
 func (this *KubernetesRepository) resolveInitContainerConfig(req Request, _ session.Session) (result v1.Container, err error) {
