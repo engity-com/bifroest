@@ -86,7 +86,18 @@ func NewKubernetesRepository(_ context.Context, flow configuration.FlowName, con
 		return failf("nil configuration")
 	}
 
-	client, err := conf.Config.GetClient(conf.Context)
+	core := struct{}{}
+	kCfg, err := conf.Config.Render(&core)
+	if err != nil {
+		return fail(err)
+	}
+
+	kCtx, err := conf.Context.Render(&core)
+	if err != nil {
+		return fail(err)
+	}
+
+	client, err := kCfg.GetClient(kCtx)
 	if err != nil {
 		return fail(err)
 	}
@@ -461,7 +472,7 @@ func (this *KubernetesRepository) resolvePullCredentials(req Request, image stri
 		}
 	}
 
-	if buf.Auths == nil || len(buf.Auths) == 0 {
+	if len(buf.Auths) == 0 {
 		var v registry.AuthConfig
 		if err := json.Unmarshal([]byte(plain), &v); err == nil && (v.Auth != "" || v.Username != "" || v.Password != "") {
 			// Seems to be a json encoded authConfig. Just wrap it...
@@ -471,7 +482,7 @@ func (this *KubernetesRepository) resolvePullCredentials(req Request, image stri
 		}
 	}
 
-	if buf.Auths == nil || len(buf.Auths) == 0 {
+	if len(buf.Auths) == 0 {
 		// Seems to be direct auth string...
 		buf.Auths = map[string]registry.AuthConfig{
 			ir: {
@@ -532,11 +543,7 @@ func (this *KubernetesRepository) resolvePodConfig(req Request, sess session.Ses
 		return fail(err)
 	}
 	if result.Namespace == "" {
-		if cn := this.client.Namespace(); cn != "" {
-			result.Namespace = cn
-		} else {
-			result.Namespace = "bifroest"
-		}
+		result.Namespace = this.client.Namespace()
 	}
 
 	if err := this.ensureNamespace(req.Context(), result.Namespace); err != nil {
@@ -1042,10 +1049,7 @@ func (this *KubernetesRepository) removePod(ctx context.Context, namespace, name
 		return fail(err)
 	}
 
-	dp := metav1.DeletePropagationForeground
-	if err := client.Delete(ctx, name, metav1.DeleteOptions{
-		PropagationPolicy: &dp,
-	}); errdefs.IsNotFound(err) {
+	if err := client.Delete(ctx, name, metav1.DeleteOptions{}); errdefs.IsNotFound(err) {
 		return false, nil
 	} else if err != nil {
 		return fail(err)

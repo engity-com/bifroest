@@ -39,9 +39,9 @@ require (
 	golang.org/x/oauth2 v0.24.0
 	golang.org/x/sys v0.27.0
 	gopkg.in/yaml.v3 v3.0.1
-	k8s.io/api v0.31.2
-	k8s.io/apimachinery v0.31.2
-	k8s.io/client-go v0.31.2
+	k8s.io/api v0.31.3
+	k8s.io/apimachinery v0.31.3
+	k8s.io/client-go v0.31.3
 )
 
 require (
@@ -94,7 +94,7 @@ require (
 	github.com/morikuni/aec v1.0.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/mxk/go-flowrate v0.0.0-20140419014527-cca7078d478f // indirect
-	github.com/onsi/ginkgo/v2 v2.21.0 // indirect
+	github.com/onsi/ginkgo/v2 v2.22.0 // indirect
 	github.com/onsi/gomega v1.35.1 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect

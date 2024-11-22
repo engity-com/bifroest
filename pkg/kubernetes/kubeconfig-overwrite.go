@@ -7,10 +7,12 @@ import (
 	"path/filepath"
 
 	"k8s.io/client-go/rest"
+
+	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 type kubeconfigOverwrites struct {
-	defaultPath string
+	defaultFile string
 
 	serviceHost          string
 	serviceTokenFile     string
@@ -18,14 +20,20 @@ type kubeconfigOverwrites struct {
 	serviceNamespaceFile string
 }
 
-func (this kubeconfigOverwrites) resolveDefaultPath() string {
-	if v := this.defaultPath; v != "" {
+func (this kubeconfigOverwrites) resolveDefaultFile() string {
+	if v := this.defaultFile; v != "" {
 		return v
 	}
 	if u, err := user.Current(); err == nil {
 		return filepath.Join(u.HomeDir, ".kube", "config")
 	}
 	return filepath.Join(".kube", "config")
+}
+
+func (this kubeconfigOverwrites) resolveDefault() ([]byte, string, error) {
+	fn := this.resolveDefaultFile()
+	b, err := os.ReadFile(fn)
+	return b, fn, err
 }
 
 func (this kubeconfigOverwrites) resolveServiceHost() (string, error) {
@@ -46,6 +54,14 @@ func (this kubeconfigOverwrites) resolveServiceTokenFile() string {
 	return ServiceTokenFile
 }
 
+func (this kubeconfigOverwrites) resolveServiceToken() (string, error) {
+	v, err := this.dataFromFile("token", this.resolveServiceTokenFile())
+	if err != nil {
+		return "", err
+	}
+	return string(v), nil
+}
+
 func (this kubeconfigOverwrites) resolveServiceRootCaFile() string {
 	if v := this.serviceRootCaFile; v != "" {
 		return v
@@ -53,9 +69,29 @@ func (this kubeconfigOverwrites) resolveServiceRootCaFile() string {
 	return ServiceRootCAFile
 }
 
+func (this kubeconfigOverwrites) resolveServiceRootCaData() ([]byte, error) {
+	return this.dataFromFile("root CA", this.resolveServiceRootCaFile())
+}
+
 func (this kubeconfigOverwrites) resolveServiceNamespaceFile() string {
 	if v := this.serviceNamespaceFile; v != "" {
 		return v
 	}
 	return ServiceNamespaceFile
+}
+
+func (this kubeconfigOverwrites) resolveServiceNamespace() (string, error) {
+	v, err := this.dataFromFile("namespace", this.resolveServiceNamespaceFile())
+	if err != nil {
+		return "", err
+	}
+	return string(v), err
+}
+
+func (this kubeconfigOverwrites) dataFromFile(name, fn string) ([]byte, error) {
+	v, err := os.ReadFile(fn)
+	if err != nil {
+		return nil, errors.Config.Newf("can't read %s file %q: %w", name, fn, err)
+	}
+	return v, nil
 }

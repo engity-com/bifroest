@@ -23,7 +23,6 @@ type Client interface {
 
 type client struct {
 	restConfig  *rest.Config
-	plainSource string
 	contextName string
 	namespace   string
 
@@ -31,7 +30,7 @@ type client struct {
 }
 
 func (this *client) String() string {
-	return this.plainSource
+	return this.contextName
 }
 
 func (this *client) RestConfig() *rest.Config {
@@ -51,7 +50,7 @@ func (this *client) ClientSet() (kubernetes.Interface, error) {
 
 		result, err := kubernetes.NewForConfig(this.restConfig)
 		if err != nil {
-			return nil, errors.System.Newf("cannot create new typed kubernetes client from %q: %w", this.plainSource, err)
+			return nil, errors.System.Newf("cannot create new kubernetes client: %w", err)
 		}
 		if this.typed.CompareAndSwap(nil, result) {
 			return result, nil
@@ -64,5 +63,8 @@ func (this *client) ContextName() string {
 }
 
 func (this *client) Namespace() string {
-	return this.namespace
+	if v := this.namespace; v != "" {
+		return v
+	}
+	return "default"
 }

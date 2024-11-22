@@ -14,8 +14,8 @@ import (
 var (
 	DefaultEnvironmentKubernetesLoginAllowed = template.BoolOf(true)
 
-	DefaultEnvironmentKubernetesConfig  = kubernetes.MustNewKubeconfig("")
-	DefaultEnvironmentKubernetesContext = ""
+	DefaultEnvironmentKubernetesConfig  = template.MustNewTextMarshaller[kubernetes.Kubeconfig, *kubernetes.Kubeconfig]("")
+	DefaultEnvironmentKubernetesContext = template.MustNewString("")
 
 	DefaultEnvironmentKubernetesName                 = template.MustNewString("bifroest-{{.session.id}}")
 	DefaultEnvironmentKubernetesNamespace            = template.MustNewString("")
@@ -53,8 +53,8 @@ var (
 type EnvironmentKubernetes struct {
 	LoginAllowed template.Bool `yaml:"loginAllowed,omitempty"`
 
-	Config  kubernetes.Kubeconfig `yaml:"config,omitempty"`
-	Context string                `yaml:"context,omitempty"`
+	Config  template.TextMarshaller[kubernetes.Kubeconfig, *kubernetes.Kubeconfig] `yaml:"config,omitempty"`
+	Context template.String                                                        `yaml:"context,omitempty"`
 
 	Name                 template.String   `yaml:"name"`
 	Namespace            template.String   `yaml:"namespace,omitempty"`
@@ -89,8 +89,10 @@ func (this *EnvironmentKubernetes) SetDefaults() error {
 	return setDefaults(this,
 		fixedDefault("loginAllowed", func(v *EnvironmentKubernetes) *template.Bool { return &v.LoginAllowed }, DefaultEnvironmentKubernetesLoginAllowed),
 
-		fixedDefault("config", func(v *EnvironmentKubernetes) *kubernetes.Kubeconfig { return &v.Config }, DefaultEnvironmentKubernetesConfig),
-		fixedDefault("context", func(v *EnvironmentKubernetes) *string { return &v.Context }, DefaultEnvironmentKubernetesContext),
+		fixedDefault("config", func(v *EnvironmentKubernetes) *template.TextMarshaller[kubernetes.Kubeconfig, *kubernetes.Kubeconfig] {
+			return &v.Config
+		}, DefaultEnvironmentKubernetesConfig),
+		fixedDefault("context", func(v *EnvironmentKubernetes) *template.String { return &v.Context }, DefaultEnvironmentKubernetesContext),
 
 		fixedDefault("name", func(v *EnvironmentKubernetes) *template.String { return &v.Name }, DefaultEnvironmentKubernetesName),
 		fixedDefault("namespace", func(v *EnvironmentKubernetes) *template.String { return &v.Namespace }, DefaultEnvironmentKubernetesNamespace),
