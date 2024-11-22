@@ -155,7 +155,7 @@ If not defined, the following command will be used:
 * Linux: `["/bin/sh", "-c"]`
 * Windows: `["C:\WINDOWS\system32\cmd.exe", "/C"]`
 
-<<property("sftpCommand", array_ref("string"), template_context="../context/authorization.md", default="<bifroest sftp-server>")>>
+<<property("sftpCommand", array_ref("string"), template_context="../context/authorization.md", default=["bifroest", "sftp-server"])>>
 Defines the sftp server command which should be used. Usually you should not be required to modify this, because by default Bifröst is handling this by itself.
 
 <<property("directory", "File Path", "../data-type.md#file-path", template_context="../context/authorization.md")>>
