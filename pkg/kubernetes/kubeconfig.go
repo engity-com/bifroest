@@ -9,6 +9,7 @@ import (
 
 	"dario.cat/mergo"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	clientcmdlatest "k8s.io/client-go/tools/clientcmd/api/latest"
@@ -154,7 +155,7 @@ func (this *Kubeconfig) loadDefaultConfig() (*clientcmdapi.Config, error) {
 
 	v, fn, err := this.overwrites.resolveDefault()
 	if sys.IsNotExist(err) {
-		if result, err := this.loadInclusterConfig(); sys.IsNotExist(err) {
+		if result, err := this.loadInclusterConfig(); errors.Is(err, rest.ErrNotInCluster) {
 			return nil, errors.Config.Newf("neither does the default kubeconfig %q exists nor was a specific file provided nor was the environment variable %s and %s provided nor does this instance run inside kubernetes directly", fn, EnvVarKubeconfig, EnvVarKubeconfigFiles)
 		} else if err != nil {
 			return nil, err
