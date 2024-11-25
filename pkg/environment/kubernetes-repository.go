@@ -1176,10 +1176,39 @@ func (this *KubernetesRepository) Cleanup(ctx context.Context, opts *CleanupOpts
 
 			cl = cl.With("flow", flow)
 
+			var sessionId session.Id
+			if err := sessionId.Set(candidate.Labels[KubernetesLabelSessionId]); err != nil || flow.IsZero() {
+				if ok, err := this.removePod(ctx, candidate.Namespace, candidate.Name, nil); err != nil {
+					cl.WithError(err).
+						Warn("cannot remove dead pod; this message might continue appearing until manually fixed; skipping...")
+				} else if ok {
+					cl.Info("pod without session id was removed removed")
+				}
+				continue
+			} else if !sessionId.IsZero() {
+				cl = cl.With("session", sessionId)
+			}
+
 			if flow.IsEqualTo(this.flow) {
 				switch candidate.Status.Phase {
 				case v1.PodPending, v1.PodRunning:
-					cl.Debug("found pod that is owned by this flow environment; ignoring...")
+					ok, err := opts.HasSession(ctx, this.flow, sessionId)
+					if err != nil {
+						cl.WithError(err).
+							Warn("cannot if the session of pod exists; this message might continue appearing until manually fixed; skipping...")
+						continue
+					}
+
+					if ok != nil && !*ok {
+						if ok, err := this.removePod(ctx, candidate.Namespace, candidate.Name, nil); err != nil {
+							cl.WithError(err).
+								Warn("cannot remove pod without valid session; this message might continue appearing until manually fixed; skipping...")
+						} else if ok {
+							cl.Info("pod without valid session removed")
+						}
+					} else {
+						cl.Debug("found pod that is owned by this flow environment; ignoring...")
+					}
 				default:
 					if ok, err := this.removePod(ctx, candidate.Namespace, candidate.Name, nil); err != nil {
 						cl.WithError(err).
