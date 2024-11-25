@@ -151,6 +151,25 @@ func Test_Kubeconfig_GetClient_wrongFormatted_fails(t *testing.T) {
 	require.Nil(t, actual)
 }
 
+func Test_Kubeconfig_GetClient_emptyIncluster_succeeds(t *testing.T) {
+	defer unsetEnvVarTemporary(EnvVarKubeconfig)()
+	defer unsetEnvVarTemporary(EnvVarKubeconfigFiles)()
+	defer setEnvVarTemporaryTo("KUBERNETES_SERVICE_HOST", "127.0.0.66")()
+	defer setEnvVarTemporaryTo("KUBERNETES_SERVICE_PORT", "8081")()
+	instance := Kubeconfig{}
+	instance.overwrites.defaultFile = "resources/non_existent"
+	instance.overwrites.serviceTokenFile = "resources/serviceaccount_token"
+	instance.overwrites.serviceRootCaFile = "resources/serviceaccount_ca.crt"
+	instance.overwrites.serviceNamespaceFile = "resources/serviceaccount_namespace"
+
+	actual, actualErr := instance.getClient("")
+	require.NoError(t, actualErr)
+	require.NotNil(t, actual)
+	require.Equal(t, "https://127.0.0.66:8081", actual.restConfig.Host)
+	require.Equal(t, KubeconfigInCluster, actual.contextName)
+	require.Equal(t, "aNamespace", actual.namespace)
+}
+
 func Test_Kubeconfig_GetClient_incluster_succeeds(t *testing.T) {
 	defer unsetEnvVarTemporary(EnvVarKubeconfig)()
 	defer unsetEnvVarTemporary(EnvVarKubeconfigFiles)()
