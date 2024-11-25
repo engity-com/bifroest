@@ -124,7 +124,7 @@ Can be one of:
 Can be one of:
 
 * `ifAbsend`: The resource (e.g. an image) is pulled only if it is not already present locally.
-* `always`: Everytime a context is crated (for example a new environment) the latest version of the resource will be pulled from the remote registry (for example an image). It does not matter if the resource does already exist or not. If the resource (like images) is based on Digest, if the digest is the same, the corresponding sub-resources will not be pulled.
+* `always`: Everytime a context is crated (for example a new environment) the latest version of the resource will be pulled from the remote registry (for example an image). It does not matter if the resource does already exist or not. No matter if the resource (like images) is based on digest or of the digest is the same, the digest is the same, the corresponding sub-resources will not be pulled.
 * `never`: The resource (like an image) has to be present. Otherwise, the process will fail.
 
 ## Regex

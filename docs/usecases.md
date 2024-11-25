@@ -17,7 +17,7 @@ A big advantage of Bifröst is the simple and flexible configuration (see [confi
 
 !!! tip
 
-    We're planning to also implement an [SSH server chaining / transparent proxy for SSH](https://github.com/engity-com/bifroest/issues/27) and [Session recording](https://github.com/engity-com/bifroest/issues/28). This will create much more use-cases, soon. 🤠
+    We're planning to also implement an [SSH server chaining / transparent proxy for SSH](https://github.com/engity-com/bifroest/issues/27) and [Session recording](https://github.com/engity-com/bifroest/issues/28). This will soon create much more use-cases. 🤠
 
 ## Off-board users within the legally binding 15 minutes timeframe of the organization {: #offboard}
 
@@ -83,7 +83,7 @@ There is no need to create them somewhere on the server itself. The [OIDC author
 
 There is no need to access any of these services directly to create/authorize these users.
 
-If the [environments are configured accordingly](reference/environment/index.md) (default setting), all the user's resources (like the home directory) will be created automatically.
+If the [environments are configured accordingly](reference/environment/index.md) (default setting), all the user's resources (like the home directory) will be automatically created.
 
 ## Bastion Host / Jump Host {: #bastion}
 
@@ -121,11 +121,11 @@ Usually, you either make the Kubernetes cluster's API directly accessible over t
 1. Have a Bifröst instance inside your protected network, which port 22 is exposed to the internet.
 2. Protect the access with every mechanism you like [OpenID Connect](reference/authorization/oidc.md).
 3. Pick an OCI/Docker image which holds [kubectl](https://kubernetes.io/docs/reference/kubectl/).
-4. Configure the [kubernetes environment](reference/environment/kubernetes.md) which to a [kubeconfig](reference/environment/kubernetes.md#property-config) to be able to access the Kubernetes cluster inside your network.
+4. Configure the [kubernetes environment](reference/environment/kubernetes.md) with a [kubeconfig](reference/environment/kubernetes.md#property-config) which is able to access the Kubernetes cluster inside your network.
 
 As a result your people can easily use a default SSH agent with [OpenID Connect](reference/authorization/oidc.md) to access a kubectl instance which is able to control your cluster without exposing your cluster directly to the public internet.
 
-As a plus the users accessing these instance have easier access to the resources like databases and rest APIs inside kubernetes, because they can directly use the cluster internal domain names, instance `kubectl port-forward`.
+As a plus, the users accessing this instance have easier access to the resources like databases and rest APIs inside Kubernetes, because they can directly use the cluster internal domain names, instance `kubectl port-forward`.
 
 ## Isolated Demo/Training environments {: #demos }
 

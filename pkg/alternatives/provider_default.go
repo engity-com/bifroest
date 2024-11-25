@@ -33,7 +33,7 @@ func (this *provider) FindBinaryFor(ctx context.Context, hostOs sys.Os, hostArch
 		if err != nil {
 			return failf(errors.System, "cannot resolve the location of the server's executable location: %w", err)
 		}
-		l.Debug("requested binaries does match current binary; returning itself")
+		l.Debug("requested binaries matches current binary; returning itself")
 		return result, nil
 	}
 
@@ -56,7 +56,7 @@ func (this *provider) FindBinaryFor(ctx context.Context, hostOs sys.Os, hostArch
 		if err := goos.RemoveAll(fn); err != nil {
 			return failf(errors.System, "cannot remove old alternative location file %q: %w", fn, err)
 		}
-		l.Warn("existing alternatives location which is broken exists and was deleted")
+		l.Warn("existing broken alternatives' location exists and has been deleted")
 	} else {
 		l.Debug("existing alternatives location was returned")
 		return fn, nil
@@ -67,7 +67,7 @@ func (this *provider) FindBinaryFor(ctx context.Context, hostOs sys.Os, hostArch
 		return fail(err)
 	}
 	if du == nil {
-		l.Debug("there does no existing alternative at location and the download url resolves to empty")
+		l.Debug("no existing alternative location and download url resolves to empty")
 		return "", nil
 	}
 

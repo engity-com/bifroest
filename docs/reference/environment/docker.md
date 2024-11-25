@@ -9,7 +9,7 @@ When using Docker environments, each user session runs in a separate Docker cont
 
 This is useful if you explicitly do not want to give users access to the host itself, but to environments where they can work with defined toolsets. This is especially true, if you want to create demo or training environments.
 
-In another use case you can set up a [Bastion/Jump host](../../usecases.md#bastion), what allows the user to jump from one server to another network. Using different [networks](#property-networks) can be beneficial too.
+In another use case you can set up a [Bastion/Jump host](../../usecases.md#bastion), what allows the user to jump from one server to another network. Using different [networks](#property-networks) can be beneficial, too.
 
 ## Configuration {: #configuration}
 
