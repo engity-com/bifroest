@@ -30,7 +30,7 @@ require (
 	github.com/otiai10/copy v1.14.0
 	github.com/pkg/sftp v1.13.7
 	github.com/shirou/gopsutil/v4 v4.24.10
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.10.0
 	github.com/tg123/go-htpasswd v1.2.3
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/xtaci/smux v1.5.31
