@@ -12,6 +12,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	gcv1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/daemon"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/partial"
@@ -39,9 +40,14 @@ func newBuildImage(b *build) *buildImage {
 
 type buildImage struct {
 	*build
+
+	pushToDockerDaemon bool
 }
 
-func (this *buildImage) attach(_ *kingpin.CmdClause) {}
+func (this *buildImage) attach(cmd *kingpin.CmdClause) {
+	cmd.Flag("pushToDockerDaemon", "").
+		BoolVar(&this.pushToDockerDaemon)
+}
 
 func (this *buildImage) create(ctx context.Context, binary *buildArtifact) (_ buildArtifacts, rErr error) {
 	var result buildArtifacts
@@ -98,7 +104,7 @@ func (this *buildImage) createPart(ctx context.Context, binary *buildArtifact) (
 		From:                 from,
 		Os:                   a.Os,
 		Arch:                 a.Arch,
-		BifroestBinarySource: a.filepath,
+		BifroestBinarySource: binary.filepath,
 		PathEnv:              []string{bifroestTargetDirLocation},
 		EntryPoint:           []string{bifroestTargetFileLocation},
 		Cmd:                  []string{"run"},
@@ -107,6 +113,8 @@ func (this *buildImage) createPart(ctx context.Context, binary *buildArtifact) (
 		},
 		AddDummyConfiguration: true,
 		AddSkeletonStructure:  true,
+		Time:                  a.time,
+		Vendor:                this.vendor,
 	}
 
 	deps, err := this.dependencies.imagesFiles.downloadFilesFor(ctx, a.Os, a.Arch)
@@ -127,6 +135,7 @@ func (this *buildImage) createPart(ctx context.Context, binary *buildArtifact) (
 	}); err != nil {
 		return fail(err)
 	}
+	buildRequest.Labels = buildRequest.Annotations
 
 	img, err := images.Build(ctx, buildRequest)
 	if err != nil {
@@ -135,6 +144,17 @@ func (this *buildImage) createPart(ctx context.Context, binary *buildArtifact) (
 
 	defer common.IgnoreCloseErrorIfFalse(&success, img)
 	binary.addCloser(img.Close)
+
+	if this.pushToDockerDaemon {
+		tag, err := name.NewTag(fmt.Sprintf("%s:build-%v-%v-%v-%v", this.repo.fullImageName(), a.version, a.Os, a.Arch, a.Edition))
+		if err != nil {
+			return fail(err)
+		}
+
+		if _, err := daemon.Write(tag, img, daemon.WithContext(ctx)); err != nil {
+			return fail(err)
+		}
+	}
 
 	a.ociImage = img
 

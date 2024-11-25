@@ -35,10 +35,11 @@ var (
 )
 
 type BuildRequest struct {
-	From string
-	Os   sys.Os
-	Arch sys.Arch
-	Time time.Time
+	From   string
+	Os     sys.Os
+	Arch   sys.Arch
+	Time   time.Time
+	Vendor string
 
 	PathEnv      []string
 	Env          sys.EnvVars
@@ -106,6 +107,12 @@ func Build(ctx context.Context, req BuildRequest) (Image, error) {
 		return fail(err)
 	}
 	cfg = cfg.DeepCopy()
+	if v := req.Vendor; len(v) > 0 {
+		cfg.Author = v
+	} else {
+		cfg.Author = ""
+	}
+	cfg.Created = v1.Time{Time: req.Time}
 	cfg.Architecture = platform.Architecture
 	cfg.OS = platform.OS
 	cfg.OSVersion = platform.OSVersion
