@@ -21,7 +21,7 @@ const (
 
 func configureRunCmd(app *kingpin.Application) *kingpin.Application {
 	var ws windowsService
-	var conf configuration.ConfigurationRef
+	var conf configuration.Ref
 	cmd := app.Command("run", "Runs the service.").
 		Action(func(*kingpin.ParseContext) error {
 			return doRun(conf, &ws)
@@ -36,7 +36,7 @@ func configureRunCmd(app *kingpin.Application) *kingpin.Application {
 
 }
 
-func doRun(conf configuration.ConfigurationRef, ws *windowsService) error {
+func doRun(conf configuration.Ref, ws *windowsService) error {
 	inService, err := svc.IsWindowsService()
 	if err != nil {
 		return errors.System.Newf("failed to determine if we are running in service: %w", err)

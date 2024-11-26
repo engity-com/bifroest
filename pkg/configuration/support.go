@@ -144,6 +144,12 @@ func notEmptyStringValidate[T any](name string, target func(*T) *string) func(*T
 	}
 }
 
+type validatorFunc func() error
+
+func (this validatorFunc) Validate() error {
+	return this()
+}
+
 type zerorer interface {
 	IsZero() bool
 }

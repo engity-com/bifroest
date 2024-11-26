@@ -466,6 +466,6 @@ func (this refImpl) PublicKey() crypto.PublicKey {
 	return nil
 }
 
-func (this refImpl) EndpointAddr() net.HostPort {
-	return roundtripTestImpAddress
+func (this refImpl) Dial(ctx context.Context) (gonet.Conn, error) {
+	return new(gonet.Dialer).DialContext(ctx, "tcp", roundtripTestImpAddress.String())
 }

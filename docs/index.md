@@ -14,13 +14,20 @@ Bifröst (spoken as "Bee-frest"), is a highly customizable SSH server with sever
 
 ### SSH protocol compliant
 
-
 Fully **[SSH protocol](https://www.rfc-editor.org/rfc/rfc4253) compliant server**, like you would expect.
 
 ### OpenID Connect
 You can connect via your **SSH keys**, as usually. And so on...
 
 ...but you can also use **[OpenID Connect](https://openid.net/)** (or OAuth2) identity provider. The best thing about it: In contrast to the other SSH servers with OpenID Connect you don't need to install another client in addition to your regular SSH Client ([OpenSSH](https://www.openssh.com/), [PuTTy](https://www.putty.org/), ...).
+
+#### Docker environments
+
+You can execute your users into individual Docker containers with custom images, network settings, and much more...
+
+#### Kubernetes environments
+
+Be directly inside a dedicated Pod inside your Kubernetes cluster and have access to all of its resources without extra port forwarding.
 
 ### Remember me
 

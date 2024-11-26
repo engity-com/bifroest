@@ -1,0 +1,14 @@
+startMessage: >
+  Welcome to Engity's Bifröst!
+  This instance runs a default configuration.
+  See https://bifroest.engity.org/setup/ for more details.
+
+flows:
+  - name: local
+    authorization:
+      type: local
+      pamService: "sshd"
+
+    environment:
+      type: local
+      name: "{{.authorization.user.name}}"

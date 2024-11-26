@@ -9,7 +9,7 @@ When using Docker environments, each user session runs in a separate Docker cont
 
 This is useful if you explicitly do not want to give users access to the host itself, but to environments where they can work with defined toolsets. This is especially true, if you want to create demo or training environments.
 
-In another use case you can set up a [Bastion/Jump host](../../usecases.md#bastion), what allows the user to jump from one server to another network. Using different [networks](#property-networks) can be beneficial to XXX.
+In another use case you can set up a [Bastion/Jump host](../../usecases.md#bastion), what allows the user to jump from one server to another network. Using different [networks](#property-networks) can be beneficial, too.
 
 ## Configuration {: #configuration}
 
@@ -123,7 +123,7 @@ Defines which volumes should be mounted into the container. Each entry is an ind
 This is the equivalent of `--mount` flag of Docker. See [Bind mounts documentation of Docker](https://docs.docker.com/engine/storage/volumes/) about the syntax of these entries.
 
 <<property("capabilities", array_ref("string"), template_context="../context/authorization.md")>>
-List of Unix kernel capabilities to be added to the container. This enables a more fine grained version in contrast to give all capabilities to the container with [`privileged`](#property-privileged) = `true`.
+List of Unix kernel capabilities to be added to the container. This enables a more fine-grained version in contrast to give all capabilities to the container with [`privileged`](#property-privileged) = `true`.
 
 Does only work on Unix based systems.
 
@@ -155,18 +155,18 @@ If not defined, the following command will be used:
 * Linux: `["/bin/sh", "-c"]`
 * Windows: `["C:\WINDOWS\system32\cmd.exe", "/C"]`
 
-<<property("sftpCommand", array_ref("string"), template_context="../context/authorization.md", default="<bifroest sftp-server>")>>
+<<property("sftpCommand", array_ref("string"), template_context="../context/authorization.md", default=["bifroest", "sftp-server"])>>
 Defines the sftp server command which should be used. Usually you should not be required to modify this, because by default Bifröst is handling this by itself.
 
 <<property("directory", "File Path", "../data-type.md#file-path", template_context="../context/authorization.md")>>
 Defines the working directory of the initial process inside the container for each execution.
 
-If not defined the value [`WORKDIR`](https://docs.docker.com/reference/dockerfile/#workdir) will be used. If this is absent, too: `/`.
+If not defined the value [`WORKDIR`](https://docs.docker.com/reference/dockerfile/#workdir) will be used. If this is absent it defaults to: `/`.
 
 <<property("user", "string", template_context="../context/authorization.md")>>
 Defines the user will run with inside the container.
 
-If not defined the value [`USER`](https://docs.docker.com/reference/dockerfile/#user) will be used. If this is absent, too: `root`.
+If not defined the value [`USER`](https://docs.docker.com/reference/dockerfile/#user) will be used. If this is absent it defaults to: `root`.
 
 <<property("banner", "string", template_context="../context/authorization.md", default="")>>
 Will be displayed to the user upon connection to its environment.
@@ -211,7 +211,7 @@ The docker environment emits the following processes:
 
 ### `pull-image` {: #preparationProcess-pull-image }
 
-In cases if an [image](#property-image) needs to be pulled, either it does not exist or [`imagePullPolicy`](#property-imagePullPolicy) is to [`always`](../data-type.md#pull-policy), the image pull process starts. As this will block the user interaction with its session, this process event is emitted. It makes it possible to show the progress of download to the user.
+In cases an [image](#property-image) needs to be pulled, either it does not exist or [`imagePullPolicy`](#property-imagePullPolicy) is to [`always`](../data-type.md#pull-policy), the image pull process starts. As this will block the user interaction with its session, this process event is emitted. It makes it possible to show the progress of download to the user.
 
 #### Properties
 
@@ -219,7 +219,7 @@ In cases if an [image](#property-image) needs to be pulled, either it does not e
 Holds the tag of the image to be downloaded.
 
 
-### Examples {: #examples}
+## Examples {: #examples}
 
 1. Simple:
    ```yaml

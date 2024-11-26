@@ -37,9 +37,9 @@ func (this FlowName) Validate() error {
 		return fmt.Errorf("illegal flow key: empty")
 	}
 	for _, c := range string(this) {
-		if (c >= 'a' && 'z' <= c) ||
-			(c >= 'A' && 'Z' <= c) ||
-			(c >= '0' && '9' <= c) ||
+		if (c >= 'a' && 'z' >= c) ||
+			(c >= 'A' && 'Z' >= c) ||
+			(c >= '0' && '9' >= c) ||
 			c == '-' || c == '.' {
 			// Ok
 		} else {

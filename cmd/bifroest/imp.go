@@ -11,6 +11,7 @@ import (
 	"github.com/alecthomas/kingpin/v2"
 	log "github.com/echocat/slf4g"
 
+	"github.com/engity-com/bifroest/internal/imp/protocol"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/imp"
@@ -21,12 +22,13 @@ import (
 var _ = registerCommand(func(app *kingpin.Application) {
 	addr := fmt.Sprintf(":%d", imp.ServicePort)
 	var encodecMasterPublicKey string
+	exitCodeByConnectionIdPath := protocol.DefaultExitCodeByConnectionIdPath
 	var sessionId session.Id
 
 	cmd := app.Command("imp", "Runs the imp service.").
 		Hidden().
 		Action(func(*kingpin.ParseContext) error {
-			return doImp(encodecMasterPublicKey, sessionId, addr)
+			return doImp(encodecMasterPublicKey, sessionId, exitCodeByConnectionIdPath, addr)
 		})
 	cmd.Flag("addr", "Address to bind to.").
 		Default(addr).
@@ -37,6 +39,10 @@ var _ = registerCommand(func(app *kingpin.Application) {
 		PlaceHolder("<base64 std raw encoded ssh public key>").
 		Required().
 		StringVar(&encodecMasterPublicKey)
+	cmd.Flag("exitCodeByConnectionIdPath", "Contains exitCodes by their connectionId.").
+		Default(exitCodeByConnectionIdPath).
+		PlaceHolder("<path>").
+		StringVar(&exitCodeByConnectionIdPath)
 	cmd.Flag("sessionId", "Session ID of which this IMP is working for.").
 		Envar(session.EnvName).
 		PlaceHolder("<sessionId>").
@@ -44,11 +50,12 @@ var _ = registerCommand(func(app *kingpin.Application) {
 		SetValue(&sessionId)
 })
 
-func doImp(encodecMasterPublicKey string, sessionId session.Id, addr string) error {
+func doImp(encodecMasterPublicKey string, sessionId session.Id, exitCodeByConnectionIdPath, addr string) error {
 	service := imp.Service{
-		Version:   versionV,
-		SessionId: sessionId,
-		Addr:      addr,
+		Version:                    versionV,
+		SessionId:                  sessionId,
+		ExitCodeByConnectionIdPath: exitCodeByConnectionIdPath,
+		Addr:                       addr,
 	}
 
 	if b, err := base64.RawStdEncoding.DecodeString(encodecMasterPublicKey); err != nil {

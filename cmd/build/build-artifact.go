@@ -11,13 +11,14 @@ import (
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 
+	bbi "github.com/engity-com/bifroest/internal/build"
 	"github.com/engity-com/bifroest/pkg/common"
 )
 
 type buildArtifactCloser func() error
 
 type buildArtifact struct {
-	*platform
+	*bbi.Platform
 	*buildContext
 
 	t        buildArtifactType
@@ -29,13 +30,8 @@ type buildArtifact struct {
 	lock    sync.Mutex
 }
 
-func (this *buildArtifact) toLdFlags() string {
-	return this.platform.toLdFlags() +
-		" " + this.buildContext.toLdFlags(this.testing)
-}
-
 func (this *buildArtifact) String() string {
-	return this.platform.String() + "/" + this.t.String() + ":" + this.name()
+	return this.Platform.String() + "/" + this.t.String() + ":" + this.name()
 }
 
 func (this *buildArtifact) mediaType() string {
@@ -65,6 +61,7 @@ func (this *buildArtifact) Close() (rErr error) {
 	defer this.lock.Unlock()
 
 	for _, closer := range this.onClose {
+		//goland:noinspection GoDeferInLoop
 		defer common.KeepError(&rErr, closer)
 	}
 
@@ -119,6 +116,7 @@ type buildArtifacts []*buildArtifact
 
 func (this buildArtifacts) Close() (rErr error) {
 	for _, v := range this {
+		//goland:noinspection GoDeferInLoop
 		defer common.KeepCloseError(&rErr, v)
 	}
 	return nil
@@ -161,41 +159,3 @@ func (this *buildArtifact) createFile() (*gos.File, error) {
 
 	return gos.OpenFile(this.filepath, gos.O_CREATE|gos.O_TRUNC|gos.O_WRONLY, 0644)
 }
-
-func (this *buildArtifact) toLayer(otherItems iter.Seq2[imageArtifactLayerItem, error]) (v1.Layer, error) {
-	if this.t != buildArtifactTypeBinary {
-		return nil, fmt.Errorf("cannot create layer of non-binary artifact: %v", this)
-	}
-
-	items := common.JoinSeq2[imageArtifactLayerItem, error](
-		common.SingleSeq2Of[imageArtifactLayerItem, error](imageArtifactLayerItem{
-			sourceFile: this.filepath,
-			targetFile: this.platform.os.bifroestBinaryFilePath(),
-			mode:       755,
-		}, nil),
-		otherItems,
-	)
-
-	success := false
-	result, err := createImageArtifactLayer(
-		this.os,
-		strings.ReplaceAll(this.platform.String()+"-"+this.t.String(), "/", "-"),
-		this.time,
-		items,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer common.IgnoreCloseErrorIfFalse(&success, result)
-
-	this.addCloser(result.Close)
-
-	success = true
-	return result.layer, nil
-}
-
-// userOwnerAndGroupSID is a magic value needed to make the binary executable
-// in a Windows container.
-//
-// owner: BUILTIN/Users group: BUILTIN/Users ($sddlValue="O:BUG:BU")
-const windowsUserOwnerAndGroupSID = "AQAAgBQAAAAkAAAAAAAAAAAAAAABAgAAAAAABSAAAAAhAgAAAQIAAAAAAAUgAAAAIQIAAA=="

@@ -32,10 +32,6 @@ func bs(ins ...string) [][]byte {
 	return result
 }
 
-func newTestFile(t testing.TB, name string) *testFile {
-	return newTestDir(t).file(name)
-}
-
 func newNamedTestFile(t testing.TB, fn string) *testFile {
 	f, err := os.OpenFile(fn, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
 	require.NoError(t, err)

@@ -20,13 +20,17 @@ import (
 
 const (
 	DefaultPort = 9687
+
+	DefaultExitCodeByConnectionIdPathUnix    = `/var/lib/engity/bifroest/exitcodes`
+	DefaultExitCodeByConnectionIdPathWindows = `C:\ProgramData\Engity\Bifroest\exitcodes`
 )
 
 type Imp struct {
-	MasterPublicKey crypto.PublicKey
-	SessionId       session.Id
-	Addr            string
-	Logger          log.Logger
+	MasterPublicKey            crypto.PublicKey
+	SessionId                  session.Id
+	ExitCodeByConnectionIdPath string
+	Addr                       string
+	Logger                     log.Logger
 }
 
 func (this *Imp) Serve(ctx context.Context) error {
@@ -123,6 +127,8 @@ func (this *imp) serveConn(ctx context.Context, plainConn gonet.Conn) (rErr erro
 		return done(this.handleMethodTcpForward(ctx, &header, l, conn))
 	case MethodNamedPipe:
 		return done(this.handleMethodNamedPipe(ctx, &header, l, conn))
+	case MethodGetConnectionExitCode:
+		return done(this.handleMethodGetConnectionExitCode(ctx, &header, l, conn))
 	default:
 		return fail(errors.Network.Newf("unsupported method %v", header.Method))
 	}

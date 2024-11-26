@@ -58,13 +58,17 @@ func (this *EnvVars) AddAllOf(in EnvVars) {
 	}
 }
 
-func (this *EnvVars) Strings() []string {
-	if *this == nil {
+func (this EnvVars) SetEnv(key, val string) {
+	this.set(key, val)
+}
+
+func (this EnvVars) Strings() []string {
+	if this == nil {
 		return nil
 	}
-	result := make([]string, len(*this))
+	result := make([]string, len(this))
 	var i int
-	for k, v := range *this {
+	for k, v := range this {
 		result[i] = k + "=" + v
 		i++
 	}

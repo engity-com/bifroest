@@ -16,10 +16,11 @@ const (
 )
 
 type Service struct {
-	Version         sys.Version
-	Addr            string
-	MasterPublicKey crypto.PublicKey
-	SessionId       session.Id
+	Version                    sys.Version
+	ExitCodeByConnectionIdPath string
+	Addr                       string
+	MasterPublicKey            crypto.PublicKey
+	SessionId                  session.Id
 
 	Logger log.Logger
 }
@@ -45,6 +46,7 @@ func (this *Service) createInstance() (*service, error) {
 		Service: this,
 	}
 
+	result.imp.ExitCodeByConnectionIdPath = this.ExitCodeByConnectionIdPath
 	result.imp.Addr = this.Addr
 	result.imp.MasterPublicKey = this.MasterPublicKey
 	result.imp.SessionId = this.SessionId

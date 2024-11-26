@@ -91,6 +91,10 @@ type CleanupOpts struct {
 	// there exists another flow with this name.
 	FlowOfNamePredicate func(configuration.FlowName) (bool, error)
 
+	// SessionExists returns true if the given session (by its [session.Id]) does
+	// exist within the whole Bifröst context.
+	SessionExists func(context.Context, configuration.FlowName, session.Id) (bool, error)
+
 	// Logger will be used (if any log is required) instead of the standard logger.
 	Logger log.Logger
 }
@@ -102,6 +106,21 @@ func (this *CleanupOpts) HasFlowOfName(name configuration.FlowName) (bool, error
 		}
 	}
 	return false, nil
+}
+
+// HasSession calls SessionExists and returns its values. If SessionExists or in case
+// of errors the actual result will be nil.
+func (this *CleanupOpts) HasSession(ctx context.Context, flow configuration.FlowName, id session.Id) (*bool, error) {
+	if this != nil {
+		if v := this.SessionExists; v != nil {
+			result, err := v(ctx, flow, id)
+			if err != nil {
+				return nil, err
+			}
+			return &result, nil
+		}
+	}
+	return nil, nil
 }
 
 func (this *CleanupOpts) GetLogger(or func() log.Logger) log.Logger {

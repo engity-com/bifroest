@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	gonet "net"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -53,8 +54,8 @@ func (this *docker) PublicKey() crypto.PublicKey {
 	return nil
 }
 
-func (this *docker) EndpointAddr() net.HostPort {
-	return this.impBinding
+func (this *docker) Dial(ctx context.Context) (gonet.Conn, error) {
+	return this.repository.rawDialer.DialContext(ctx, "tcp", this.impBinding.String())
 }
 
 func (this *DockerRepository) new(ctx context.Context, container *types.Container, logger log.Logger) (*docker, error) {

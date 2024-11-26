@@ -76,7 +76,7 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 
 	lns := make([]struct {
 		ln   gonet.Listener
-		addr bnet.NetAddress
+		addr bnet.Address
 	}, len(this.Configuration.Ssh.Addresses))
 	var lnMutex sync.Mutex
 	closeLns := func() {
@@ -85,6 +85,7 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 
 		for _, ln := range lns {
 			if ln.ln != nil {
+				//goland:noinspection GoDeferInLoop
 				defer func(target *gonet.Listener) {
 					*target = nil
 				}(&ln.ln)

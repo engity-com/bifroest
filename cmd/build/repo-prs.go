@@ -10,6 +10,8 @@ import (
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/echocat/slf4g"
 	"github.com/google/go-github/v65/github"
+
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 func newRepoPrs(r *repo) *repoPrs {
@@ -203,7 +205,7 @@ func (this *repoPr) deleteRelatedArtifacts(ctx context.Context) error {
 	if err := do(mainTag); err != nil {
 		return fail(err)
 	}
-	for _, ed := range allEditionVariants {
+	for _, ed := range sys.AllEditionVariants() {
 		if err := do(ed.String() + "-" + mainTag); err != nil {
 			return fail(err)
 		}

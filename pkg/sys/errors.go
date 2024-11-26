@@ -8,6 +8,9 @@ import (
 )
 
 func IsNotExist(err error) bool {
+	if os.IsNotExist(err) {
+		return true
+	}
 	var pe *os.PathError
 	return errors.As(err, &pe) && os.IsNotExist(pe)
 }

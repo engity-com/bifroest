@@ -9,9 +9,9 @@ import (
 	"sync"
 
 	"github.com/engity-com/bifroest/pkg/codec"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
-	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
@@ -28,10 +28,8 @@ func NewMaster(_ context.Context, masterPrivateKey crypto.PrivateKey) (*Master, 
 	if err != nil {
 		return fail(err)
 	}
-	result.tlsDialers.New = func() any {
-		return &tls.Dialer{
-			Config: result.basicTlsConfigFor(cert, masterPrivateKey.ToSdk()),
-		}
+	result.tlsConfigs.New = func() any {
+		return result.basicTlsConfigFor(cert, masterPrivateKey.ToSdk())
 	}
 
 	return result, nil
@@ -40,13 +38,13 @@ func NewMaster(_ context.Context, masterPrivateKey crypto.PrivateKey) (*Master, 
 type Master struct {
 	PrivateKey crypto.PrivateKey
 
-	tlsDialers sync.Pool
+	tlsConfigs sync.Pool
 }
 
 type Ref interface {
 	SessionId() session.Id
 	PublicKey() crypto.PublicKey
-	EndpointAddr() net.HostPort
+	Dial(context.Context) (gonet.Conn, error)
 }
 
 func (this *Master) Open(_ context.Context, ref Ref) (*MasterSession, error) {
@@ -57,17 +55,26 @@ func (this *Master) Open(_ context.Context, ref Ref) (*MasterSession, error) {
 }
 
 func (this *Master) DialContext(ctx context.Context, ref Ref) (gonet.Conn, error) {
-	dialer, releaser, err := this.tlsDialerFor(ref)
+	tlsConfig, releaser, err := this.tlsConfigFor(ref)
 	if err != nil {
 		return nil, err
 	}
 	defer releaser()
 
-	result, err := dialer.DialContext(ctx, "tcp", ref.EndpointAddr().String())
+	success := false
+	rawConn, err := ref.Dial(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return result, nil
+	defer common.IgnoreCloseErrorIfFalse(&success, rawConn)
+
+	conn := tls.Client(rawConn, tlsConfig)
+	if err := conn.HandshakeContext(ctx); err != nil {
+		return nil, err
+	}
+
+	success = true
+	return conn, nil
 }
 
 func (this *Master) DialContextWithMsgPack(ctx context.Context, ref Ref) (codec.MsgPackConn, error) {
@@ -82,23 +89,23 @@ func (this *Master) DialContextWithMsgPack(ctx context.Context, ref Ref) (codec.
 	return codec.GetPooledMsgPackConn(conn), nil
 }
 
-func (this *Master) tlsDialerFor(ref Ref) (_ *tls.Dialer, releaser func(), _ error) {
-	result := this.tlsDialers.Get().(*tls.Dialer)
+func (this *Master) tlsConfigFor(ref Ref) (_ *tls.Config, releaser func(), _ error) {
+	result := this.tlsConfigs.Get().(*tls.Config)
 
 	if pub := ref.PublicKey(); pub != nil {
 		verifier, err := peerVerifierForPublicKey(pub)
 		if err != nil {
 			return nil, nil, err
 		}
-		result.Config.VerifyPeerCertificate = verifier
+		result.VerifyPeerCertificate = verifier
 	} else if sessionId := ref.SessionId(); !sessionId.IsZero() {
-		result.Config.VerifyPeerCertificate = peerVerifierForSessionId(sessionId)
+		result.VerifyPeerCertificate = peerVerifierForSessionId(sessionId)
 	} else {
 		return nil, nil, errors.System.Newf("the imp ref provider neither a publicKey nor a sessionId")
 	}
 	return result, func() {
-		result.Config.VerifyPeerCertificate = alwaysRejectPeerVerifier
-		this.tlsDialers.Put(result)
+		result.VerifyPeerCertificate = alwaysRejectPeerVerifier
+		this.tlsConfigs.Put(result)
 	}, nil
 }
 

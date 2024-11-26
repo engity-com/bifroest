@@ -232,6 +232,7 @@ func (this *houseKeeper) disposeAuthorization(ctx context.Context, logger log.Lo
 func (this *houseKeeper) cleanup(logger log.Logger, ctx context.Context) error {
 	return this.service.environments.Cleanup(ctx, &environment.CleanupOpts{
 		FlowOfNamePredicate: this.doesFlowExists,
+		SessionExists:       this.doesSessionExist(logger),
 		Logger:              logger,
 	})
 }
@@ -239,6 +240,21 @@ func (this *houseKeeper) cleanup(logger log.Logger, ctx context.Context) error {
 func (this *houseKeeper) doesFlowExists(name configuration.FlowName) (bool, error) {
 	_, ok := this.service.knownFlows[name]
 	return ok, nil
+}
+
+func (this *houseKeeper) doesSessionExist(logger log.Logger) func(ctx context.Context, flow configuration.FlowName, sessionId session.Id) (bool, error) {
+	return func(ctx context.Context, flow configuration.FlowName, sessionId session.Id) (bool, error) {
+		_, err := this.service.sessions.FindBy(ctx, flow, sessionId, &session.FindOpts{
+			AutoCleanUpAllowed: common.P(true),
+			Logger:             logger,
+		})
+		if errors.Is(err, session.ErrNoSuchSession) {
+			return false, nil
+		} else if err != nil {
+			return false, err
+		}
+		return true, nil
+	}
 }
 
 func (this *houseKeeper) Close() error {

@@ -37,6 +37,10 @@ You can connect via your **SSH keys**, as usually. And so on...
 
 You can execute your users into individual Docker containers with custom images, network settings, and much more...
 
+#### Kubernetes environments
+
+Be directly inside a dedicated Pod inside your Kubernetes cluster and have access to all of its resources without extra port forwarding.
+
 #### Remember me
 
 If authorized via another authentication token then a Public Key, it can store (temporally) your provided Public Key, for faster reconnect, while the session is still alive.

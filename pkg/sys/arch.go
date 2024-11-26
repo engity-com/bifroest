@@ -2,6 +2,8 @@ package sys
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 )
 
 type Arch uint8
@@ -21,10 +23,6 @@ type archDetails struct {
 	name string
 	bare string
 	oci  string
-
-	i386  string
-	arm   string
-	amd64 string
 }
 
 func (this Arch) String() string {
@@ -91,6 +89,11 @@ func (this Arch) IsZero() bool {
 	return this == 0
 }
 
+func (this Arch) Validate() error {
+	_, err := this.MarshalText()
+	return err
+}
+
 func (this Arch) IsEqualTo(other any) bool {
 	switch v := other.(type) {
 	case Arch:
@@ -102,13 +105,44 @@ func (this Arch) IsEqualTo(other any) bool {
 	}
 }
 
+type Archs []Arch
+
+func (this Archs) String() string {
+	return strings.Join(this.Strings(), ",")
+}
+
+func (this Archs) Strings() []string {
+	strs := make([]string, len(this))
+	for i, v := range this {
+		strs[i] = v.String()
+	}
+	return strs
+}
+
+func (this *Archs) Set(plain string) error {
+	parts := strings.Split(plain, ",")
+	buf := make(Archs, len(parts))
+	for i, part := range parts {
+		part = strings.TrimSpace(part)
+		if err := buf[i].Set(part); err != nil {
+			return err
+		}
+	}
+	*this = buf
+	return nil
+}
+
+func AllArchVariants() Archs {
+	return slices.Clone(allArchVariants)
+}
+
 var (
 	// See https://go.dev/doc/install/source for more details
 	archToDetails = map[Arch]archDetails{
-		Arch386:      {name: "386", i386: "sse2"},
-		ArchAmd64:    {name: "amd64", amd64: "v1"},
-		ArchArmV6:    {name: "armv6", bare: "arm", oci: "arm/v6", arm: "6"},
-		ArchArmV7:    {name: "armv7", bare: "arm", oci: "arm/v7", arm: "7"},
+		Arch386:      {name: "386"},
+		ArchAmd64:    {name: "amd64"},
+		ArchArmV6:    {name: "armv6", bare: "arm", oci: "arm/v6"},
+		ArchArmV7:    {name: "armv7", bare: "arm", oci: "arm/v7"},
 		ArchArm64:    {name: "arm64"},
 		ArchMips64Le: {name: "mips64le"},
 		ArchRiscV64:  {name: "riscv64"},
@@ -128,6 +162,15 @@ var (
 			} else {
 				result[v.name] = k
 			}
+		}
+		return result
+	}(archToDetails)
+	allArchVariants = func(in map[Arch]archDetails) Archs {
+		result := make(Archs, len(in))
+		var i int
+		for k := range in {
+			result[i] = k
+			i++
 		}
 		return result
 	}(archToDetails)
