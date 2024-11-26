@@ -110,16 +110,22 @@ jobs:
           VERSION_REF="${{ github.ref }}"
           export VERSION=$(test -z "${VERSION_INPUT}" && echo $(echo "${VERSION_REF}" | sed -e "s#^refs/tags/##g" | sed -e "s#^v##g") || echo "${VERSION_INPUT}")
           echo "Version: ${VERSION}"
+
           mkdocs --color build -c
           rm -f var/doc/requirements.txt
 
       - name: Deploy
         working-directory: var/doc
         run: |
+          VERSION_INPUT="${{ github.event.inputs.version }}"
+          VERSION_REF="${{ github.ref }}"
+          export VERSION=$(test -z "${VERSION_INPUT}" && echo $(echo "${VERSION_REF}" | sed -e "s#^refs/tags/##g" | sed -e "s#^v##g") || echo "${VERSION_INPUT}")
+          echo "Version: ${VERSION}"
+
           git add -A
-          git commit -m "Release v${{ github.event.inputs.version }}"
-          git push --delete origin "docs/v${{ github.event.inputs.version }}" || true
-          git tag -d "docs/v${{ github.event.inputs.version }}" || true
-          git tag -a "docs/v${{ github.event.inputs.version }}" -m "Release v${{ github.event.inputs.version }}"
-          git push origin "docs/v${{ github.event.inputs.version }}"
-          echo "Documentation is available at https://bifroest.engity.org/v${{ github.event.inputs.version }}/" >> "$GITHUB_STEP_SUMMARY"
+          git commit -m "Release v${VERSION}"
+          git push --delete origin "docs/v${VERSION}" || true
+          git tag -d "docs/v${VERSION}" || true
+          git tag -a "docs/v${VERSION}" -m "Release v${VERSION}"
+          git push origin "docs/v${VERSION}"
+          echo "Documentation is available at https://bifroest.engity.org/v${VERSION}/" >> "$GITHUB_STEP_SUMMARY"
