@@ -21,8 +21,9 @@ Bifröst (spoken as "Bee-frest"), is an advanced SSH server. It can be used as a
 1. [SSH protocol compliant](#ssh-protocol-compliant)
 2. [OpenID Connect](#openid-connect)
 3. [Docker environments](#docker-environments)
-4. [Remember me](#remember-me)
-5. [Automatic user provisioning](#automatic-user-provisioning)
+4. [Kubernetes environments](#kubernetes-environments)
+5. [Remember me](#remember-me)
+6. [Automatic user provisioning](#automatic-user-provisioning)
 
 #### SSH protocol compliant
 
