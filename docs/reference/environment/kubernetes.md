@@ -244,12 +244,12 @@ Will be displayed to the user upon connection to its environment.
 If `true`, users are allowed to use SSH's port forwarding mechanism.
 
 <<property("cleanOrphan", "bool", template_context="../context/container.md", default=True)>>
-While the [housekeeping iterations](../housekeeping.md) this environment will look for containers that can be inspected by its docker daemon connection if there is any container that does not belong to any flow of this Bifröst instance.
+While the [housekeeping iterations](../housekeeping.md) this environment will look for pods that can be inspected based on the provided [config](#property-config). Is there any container that does not belong to any flow of this Bifröst instance, it will be removed.
 
-This is useful to clean up old containers which are leftovers after you have changed the configuration of Bifröst.
+This is useful to clean up old pods which are leftovers after you have changed the configuration of Bifröst.
 
 !!! warning
-     If multiple Bifröst installations are using the same Docker host, this should be disabled. Otherwise, each instance is removing the container of the other instance.
+     If multiple Bifröst installations are using the same [config](#property-config)/cluster, this should be disabled. Otherwise, each instance is removing the pods of the other instance.
 
 ## Preparation Processes {: #preparationProcesses }
 
