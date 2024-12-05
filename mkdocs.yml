@@ -130,7 +130,7 @@ nav:
           - On Host: setup/on-host.md
           - In Docker: setup/in-docker.md
       - setup/distribution.md
-      - Security: setup/security.md
+      - Security: https://github.com/engity-com/bifroest/blob/main/SECURITY.md
       - License: legal/license.md
   - Reference:
       - reference/index.md
