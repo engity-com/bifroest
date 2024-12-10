@@ -15,6 +15,7 @@ import (
 )
 
 //nolint:golint,unused
+//goland:noinspection ALL
 var (
 	dsa1Pub, dsa1Fn             = mustSshPublicKey("dsa-1")
 	ecdsa1Pub, ecdsa1Fn         = mustSshPublicKey("ecdsa-1")

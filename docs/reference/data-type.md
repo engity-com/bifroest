@@ -3,6 +3,9 @@ description: A collection of simple data-types used within Bifröst.
 toc_depth: 2
 ---
 
+## Arch (Architecture) {: #arch }
+Represents an architecture. Here are all values supported where also a distribution of Bifröst is available for. See [distributions](../setup/distribution.md#compatibility) for available values.
+
 # Data types
 
 A collection of simple data-types used within Bifröst. More complex ones are defined on their dedicated pages.
@@ -76,6 +79,9 @@ A location of a file on the local file system. Like `/foo/bar`
 ## Host
 Represents a host(-name), which can be either an [IPv4](https://en.wikipedia.org/wiki/IPv4), [IPv6](https://en.wikipedia.org/wiki/IPv6) or [DNS name](https://en.wikipedia.org/wiki/Domain_Name_System).
 
+## Kubeconfig
+Configuration file in YAML format that defines how to access a Kubernetes cluster. See [official Kubernetes documentation](https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/) for more details.
+
 ## Log Color Mode
 Can be one of:
 
@@ -102,18 +108,24 @@ Can be one of:
 ## Net Address
 Socket address in format <code>\[&lt;[Host](#host)&gt;]:&lt;port&gt;</code>.
 
+## Os (Operating System) {: #os }
+Represents an operating system. Here are all values supported where also a distribution of Bifröst is available for. See [distributions](../setup/distribution.md#compatibility) for available values.
+
 ## Password
 Represents an encoded or plain password that can be evaluated if it does match a requested one.
 
 ## Password Type
 Can be one of:
+
 * `plain`
 * `bcrypt`
 
 ## Pull Policy
 Can be one of:
-* `ifAbsend`
-* `always`
+
+* `ifAbsend`: The resource (e.g. an image) is pulled only if it is not already present locally.
+* `always`: Everytime a context is crated (for example a new environment) the latest version of the resource will be pulled from the remote registry (for example an image). It does not matter if the resource does already exist or not. No matter if the resource (like images) is based on digest or of the digest is the same, the digest is the same, the corresponding sub-resources will not be pulled.
+* `never`: The resource (like an image) has to be present. Otherwise, the process will fail.
 
 ## Regex
 Regular expression of [Go flavor](https://pkg.go.dev/regexp). You can play around with it at [regex.com](https://regex101.com/r/fRdVOl/1).

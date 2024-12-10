@@ -11,12 +11,14 @@ type PullPolicy uint8
 const (
 	PullPolicyIfAbsent PullPolicy = iota
 	PullPolicyAlways
+	PullPolicyNever
 )
 
 var (
 	pullPolicyToName = map[PullPolicy]string{
 		PullPolicyIfAbsent: "ifAbsent",
 		PullPolicyAlways:   "always",
+		PullPolicyNever:    "never",
 	}
 	nameToPullPolicy = func(in map[PullPolicy]string) map[string]PullPolicy {
 		result := make(map[string]PullPolicy, len(in))

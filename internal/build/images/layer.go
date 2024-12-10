@@ -1,9 +1,10 @@
-package main
+package images
 
 import (
 	"archive/tar"
 	"fmt"
 	"io"
+	"io/fs"
 	"iter"
 	gos "os"
 	"path"
@@ -14,45 +15,64 @@ import (
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
+	"github.com/google/uuid"
 
 	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-type imageArtifactLayerItem struct {
-	sourceFile string
-	targetFile string
-	mode       gos.FileMode
+type LayerOpts struct {
+	Os   sys.Os
+	Id   string
+	Time time.Time
 }
 
-func createImageArtifactLayer(os os, id string, time time.Time, items iter.Seq2[imageArtifactLayerItem, error]) (*buildImageLayer, error) {
-	fail := func(err error) (*buildImageLayer, error) {
-		return nil, fmt.Errorf("cannot create tar layer: %w", err)
+func NewTarLayer(from iter.Seq2[LayerItem, error], opts LayerOpts) (*BufferedLayer, error) {
+	fail := func(err error) (*BufferedLayer, error) {
+		return nil, errors.System.Newf("cannot create tar layer: %w", err)
+	}
+	failf := func(msg string, args ...any) (*BufferedLayer, error) {
+		return fail(errors.System.Newf(msg, args...))
 	}
 
 	dir := filepath.Join("var", "layers")
 	_ = gos.MkdirAll(dir, 0755)
 
+	if opts.Os.IsZero() {
+		return failf("no os provided")
+	}
+	if opts.Id == "" {
+		u, err := uuid.NewUUID()
+		if err != nil {
+			return fail(err)
+		}
+		opts.Id = u.String()
+	}
+	if opts.Time.IsZero() {
+		opts.Time = time.Now()
+	}
+
 	fAlreadyClosed := false
 	success := false
-	f, err := gos.CreateTemp(dir, id+"-*.tar")
+	f, err := gos.CreateTemp(dir, opts.Id+"-*.tar")
 	if err != nil {
 		return fail(err)
 	}
 	defer common.IgnoreErrorIfFalse(&success, func() error { return gos.Remove(f.Name()) })
 	defer common.IgnoreCloseErrorIfFalse(&fAlreadyClosed, f)
 
-	if err := createImageArtifactLayerTar(os, time, items, f); err != nil {
+	if err := createImageArtifactLayerTar(&opts, from, f); err != nil {
 		return fail(err)
 	}
 	common.IgnoreCloseError(f)
 	fAlreadyClosed = true
 
-	result := &buildImageLayer{
+	result := &BufferedLayer{
 		bufferFilename: f.Name(),
 	}
 
-	if result.layer, err = tarball.LayerFromOpener(result.open); err != nil {
+	if result.Layer, err = tarball.LayerFromOpener(result.open); err != nil {
 		return fail(err)
 	}
 
@@ -60,7 +80,7 @@ func createImageArtifactLayer(os os, id string, time time.Time, items iter.Seq2[
 	return result, nil
 }
 
-func createImageArtifactLayerTar(os os, time time.Time, items iter.Seq2[imageArtifactLayerItem, error], target io.Writer) error {
+func createImageArtifactLayerTar(opts *LayerOpts, items iter.Seq2[LayerItem, error], target io.Writer) error {
 	fail := func(err error) error {
 		return err
 	}
@@ -85,7 +105,7 @@ func createImageArtifactLayerTar(os os, time time.Time, items iter.Seq2[imageArt
 			Mode:       mode,
 			Format:     format,
 			PAXRecords: paxRecords,
-			ModTime:    time,
+			ModTime:    opts.Time,
 		}
 		if dir {
 			header.Typeflag = tar.TypeDir
@@ -105,7 +125,7 @@ func createImageArtifactLayerTar(os os, time time.Time, items iter.Seq2[imageArt
 	var dirMode int64 = 0755
 	alreadyCreatedDirectories := map[string]struct{}{}
 
-	if os == osWindows {
+	if opts.Os == sys.OsWindows {
 		dirMode = 0555
 		format = tar.FormatPAX
 		paxRecords = map[string]string{
@@ -132,8 +152,14 @@ func createImageArtifactLayerTar(os os, time time.Time, items iter.Seq2[imageArt
 		}
 	}
 
-	addItem := func(item imageArtifactLayerItem) (rErr error) {
-		f, err := gos.Open(item.sourceFile)
+	addItem := func(item LayerItem) (rErr error) {
+		var f fs.File
+		var err error
+		if v := item.SourceFs; v != nil {
+			f, err = v.Open(item.SourceFile)
+		} else {
+			f, err = gos.Open(item.SourceFile)
+		}
 		if err != nil {
 			return fail(err)
 		}
@@ -143,7 +169,7 @@ func createImageArtifactLayerTar(os os, time time.Time, items iter.Seq2[imageArt
 			return fail(err)
 		}
 
-		targetFile := adjustTargetFilename(item.targetFile)
+		targetFile := adjustTargetFilename(item.TargetFile)
 
 		var directoriesToCreate []string
 		currentPath := path.Dir(targetFile)
@@ -161,7 +187,7 @@ func createImageArtifactLayerTar(os os, time time.Time, items iter.Seq2[imageArt
 			}
 		}
 
-		if err := writeHeader(false, targetFile, fi.Size(), int64(item.mode)); err != nil {
+		if err := writeHeader(false, targetFile, fi.Size(), int64(item.Mode)); err != nil {
 			return fail(err)
 		}
 		_, err = io.Copy(tw, f)
@@ -175,7 +201,7 @@ func createImageArtifactLayerTar(os os, time time.Time, items iter.Seq2[imageArt
 		}
 
 		if err := addItem(item); err != nil {
-			return failf("cannot add item %q -> %q: %w", item.sourceFile, item.targetFile, err)
+			return failf("cannot add item %q -> %q: %w", item.SourceFile, item.TargetFile, err)
 		}
 	}
 
@@ -186,19 +212,25 @@ func createImageArtifactLayerTar(os os, time time.Time, items iter.Seq2[imageArt
 	return nil
 }
 
-type buildImageLayer struct {
+type BufferedLayer struct {
 	bufferFilename string
-	layer          v1.Layer
+	Layer          v1.Layer
 }
 
-func (this *buildImageLayer) open() (io.ReadCloser, error) {
+func (this *BufferedLayer) open() (io.ReadCloser, error) {
 	return gos.Open(this.bufferFilename)
 }
 
-func (this *buildImageLayer) Close() error {
+func (this *BufferedLayer) Close() error {
 	err := gos.Remove(this.bufferFilename)
 	if sys.IsNotExist(err) {
 		return nil
 	}
 	return err
 }
+
+// userOwnerAndGroupSID is a magic value needed to make the binary executable
+// in a Windows container.
+//
+// owner: BUILTIN/Users group: BUILTIN/Users ($sddlValue="O:BUG:BU")
+const windowsUserOwnerAndGroupSID = "AQAAgBQAAAAkAAAAAAAAAAAAAAABAgAAAAAABSAAAAAhAgAAAQIAAAAAAAUgAAAAIQIAAA=="

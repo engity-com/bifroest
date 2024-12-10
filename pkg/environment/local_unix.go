@@ -75,9 +75,6 @@ func (this *local) createCmdAndEnv(t Task) (*exec.Cmd, *sys.EnvVars, error) {
 		"SHELL", this.user.Shell,
 	)
 
-	// TODO! Global configuration with environment
-	// tODO! If not exist ~/.hushlogin display /etc/motd
-
 	return &cmd, &ev, nil
 }
 

@@ -8,30 +8,23 @@ import (
 	"github.com/engity-com/bifroest/pkg/sftp"
 )
 
-var (
-	workingDir = func() string {
-		v, err := goos.Getwd()
-		if err == nil {
-			return v
-		}
-		return "/"
-	}()
-)
-
 var _ = registerCommand(func(app *kingpin.Application) {
+	cwd := workingDirectory()
+
 	cmd := app.Command("sftp-server", "Run the sftp server instance used by this instance.").
 		Hidden().
 		Action(func(*kingpin.ParseContext) error {
-			return doSftpServer()
+			return doSftpServer(cwd)
 		})
-	cmd.Flag("workingDir", "Directory to start in. Default: "+workingDir).
+	cmd.Flag("workingDir", "Directory to start in.").
+		Default(cwd).
 		PlaceHolder("<path>").
-		StringVar(&workingDir)
+		StringVar(&cwd)
 })
 
-func doSftpServer() error {
+func doSftpServer(cwd string) error {
 	s := sftp.Server{
-		WorkingDir: workingDir,
+		WorkingDir: cwd,
 	}
 
 	if err := s.Run(&stdpipe{}); err != nil {

@@ -6,25 +6,25 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
-type ConfigurationRef struct {
+type Ref struct {
 	v  Configuration
 	fn string
 }
 
-func (this ConfigurationRef) IsZero() bool {
+func (this Ref) IsZero() bool {
 	return len(this.fn) == 0
 }
 
-func (this ConfigurationRef) MarshalText() (text []byte, err error) {
+func (this Ref) MarshalText() (text []byte, err error) {
 	return []byte(this.String()), nil
 }
 
-func (this ConfigurationRef) String() string {
+func (this Ref) String() string {
 	return this.fn
 }
 
-func (this *ConfigurationRef) UnmarshalText(text []byte) error {
-	buf := ConfigurationRef{
+func (this *Ref) UnmarshalText(text []byte) error {
+	buf := Ref{
 		fn: string(text),
 	}
 
@@ -38,19 +38,19 @@ func (this *ConfigurationRef) UnmarshalText(text []byte) error {
 	return nil
 }
 
-func (this *ConfigurationRef) Set(text string) error {
+func (this *Ref) Set(text string) error {
 	return this.UnmarshalText([]byte(text))
 }
 
-func (this *ConfigurationRef) Get() *Configuration {
+func (this *Ref) Get() *Configuration {
 	return &this.v
 }
 
-func (this *ConfigurationRef) GetFilename() string {
+func (this *Ref) GetFilename() string {
 	return this.fn
 }
 
-func (this *ConfigurationRef) MakeAbsolute() error {
+func (this *Ref) MakeAbsolute() error {
 	abs, err := filepath.Abs(this.fn)
 	if err != nil {
 		return errors.Config.Newf("canont make this configuration file reference absolute: %w", err)
@@ -58,20 +58,20 @@ func (this *ConfigurationRef) MakeAbsolute() error {
 	return this.Set(abs)
 }
 
-func (this ConfigurationRef) IsEqualTo(other any) bool {
+func (this Ref) IsEqualTo(other any) bool {
 	if other == nil {
 		return false
 	}
 	switch v := other.(type) {
-	case ConfigurationRef:
+	case Ref:
 		return this.isEqualTo(&v)
-	case *ConfigurationRef:
+	case *Ref:
 		return this.isEqualTo(v)
 	default:
 		return false
 	}
 }
 
-func (this ConfigurationRef) isEqualTo(other *ConfigurationRef) bool {
+func (this Ref) isEqualTo(other *Ref) bool {
 	return this.fn == other.fn
 }

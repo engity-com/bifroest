@@ -9,7 +9,7 @@ After=docker.service
 Environment=IMAGE=ghcr.io/engity-com/bifroest:latest
 # Comment this line out if you don't want always the latest version of Bifröst
 ExecStartPre=/usr/bin/docker pull ${IMAGE}
-ExecStartPre=mkdir -p /var/lib/engity/bifroest
+ExecStartPre=/usr/bin/mkdir -p /var/lib/engity/bifroest
 ExecStart=/usr/bin/docker run --rm --name bifroest -p 22:22 -v /var/run/docker.sock:/var/run/docker.sock -v /etc/engity/bifroest:/etc/engity/bifroest -v /var/lib/engity/bifroest:/var/lib/engity/bifroest ${IMAGE} run --log.colorMode=always
 Restart=always
 Type=simple

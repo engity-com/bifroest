@@ -2,6 +2,7 @@
   <profile version="1.0">
     <option name="myName" value="Project Default" />
     <inspection_tool class="GoBoolExpressions" enabled="false" level="WARNING" enabled_by_default="false" />
+    <inspection_tool class="GoMixedReceiverTypes" enabled="true" level="TEXT ATTRIBUTES" enabled_by_default="true" editorAttributes="CONSIDERATION_ATTRIBUTES" />
     <inspection_tool class="GoReceiverNames" enabled="true" level="INFORMATION" enabled_by_default="true" />
   </profile>
 </component>

@@ -130,7 +130,7 @@ nav:
           - On Host: setup/on-host.md
           - In Docker: setup/in-docker.md
       - setup/distribution.md
-      - Security: setup/security.md
+      - Security: https://github.com/engity-com/bifroest/blob/main/SECURITY.md
       - License: legal/license.md
   - Reference:
       - reference/index.md
@@ -149,6 +149,7 @@ nav:
       - Environments:
           - reference/environment/index.md
           - Docker: reference/environment/docker.md
+          - Kubernetes: reference/environment/kubernetes.md
           - Local: reference/environment/local.md
           - Dummy: reference/environment/dummy.md
       - Sessions:

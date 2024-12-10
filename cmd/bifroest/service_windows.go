@@ -27,7 +27,7 @@ const (
 
 type windowsService struct {
 	name   string
-	conf   configuration.ConfigurationRef
+	conf   configuration.Ref
 	logger *eventlog.Log
 }
 
@@ -42,7 +42,7 @@ func (this *windowsService) registerFlagsAt(cmd *kingpin.CmdClause) *kingpin.Cmd
 var _ = registerCommand(func(app *kingpin.Application) {
 	svcCmd := app.Command("service", "")
 
-	var conf configuration.ConfigurationRef
+	var conf configuration.Ref
 	var svc windowsService
 	common := func(cmd *kingpin.CmdClause) *kingpin.CmdClause {
 		return svc.registerFlagsAt(cmd)
@@ -123,7 +123,7 @@ func (this *windowsService) Execute(_ []string, r <-chan svc.ChangeRequest, chan
 	return false, 0
 }
 
-func (this *windowsService) install(conf configuration.ConfigurationRef, start, retry bool) error {
+func (this *windowsService) install(conf configuration.Ref, start, retry bool) error {
 	if err := conf.MakeAbsolute(); err != nil {
 		return err
 	}

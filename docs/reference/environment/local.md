@@ -24,7 +24,7 @@ It can run as the Bifröst user itself, but can also [impersonate](https://en.wi
 
 Users have to fulfill the defined requirements ([`name`](#linux-property-name), [`displayName`](#linux-property-displayName), [`uid`](#linux-property-uid), [`group`](#linux-property-group), [`groups`](#linux-property-groups), [`shell`](#linux-property-shell), [`homeDir`](#linux-property-homeDir) and [`skel`](#linux-property-skel)).
 
-If a user does not fulfill this requirement they are not eligible for the environment. The environment **can** creates a user ([`createIfAbsent`](#linux-property-createIfAbsent) = `true`) or even updates an existing one ([`updateIfDifferent`](#linux-property-updateIfDifferent) = `true`) to match this requirement. This does not make a lot of sense for [local users](../authorization/local.md); but for [users authorized via OIDC](../authorization/oidc.md) - which usually do not exist locally.
+If a user does not fulfill this requirement they are not eligible for the environment. The environment **can** create a user ([`createIfAbsent`](#linux-property-createIfAbsent) = `true`) or even updates an existing one ([`updateIfDifferent`](#linux-property-updateIfDifferent) = `true`) to match this requirement. This does not make a lot of sense for [local users](../authorization/local.md); but for [users authorized via OIDC](../authorization/oidc.md) - which usually do not exist locally.
 
 See the evaluation matrix of [`createIfAbsent`](#linux-property-createIfAbsent-evaluation) and [`updateIfDifferent`](#linux-property-updateIfDifferent-evaluation) to see the actual reactions of the local environment per users requirement evaluation state.
 
@@ -147,7 +147,7 @@ This property (together with [`updateIfDifferent`](#linux-property-updateIfDiffe
 <<property("updateIfDifferent", "bool", template_context="../context/authorization.md", default=false, id_prefix="linux-", heading=4)>>
 If an existing user does not match the provided requirements (see below) and the property is `true`, this user is asked to match the requirements.
 
-This property (together with [`createIfAbsent`](#linux-property-createIfAbsent)) should be `true` if you're using authorizations like [OIDC](../authorization/oidc.md), where the user is not expected to exist locally and you don't want to create each user individually.
+This property (together with [`createIfAbsent`](#linux-property-createIfAbsent)) should be `true` if you're using authorizations like [OIDC](../authorization/oidc.md), where the user is not expected to exist locally, and you don't want to create each user individually.
 
 ##### Evaluation {: #linux-property-updateIfDifferent-evaluation}
 | [`updateIfDifferent`](#linux-property-updateIfDifferent) | = `false`  | = `true` |

@@ -5,7 +5,7 @@ description: How to authorize an user request via credentials stored in htpasswd
 
 # Htpasswd authorization
 
-Authorizes an user request via credentials stored in [htpasswd format](#format).
+Authorizes a user request via credentials stored in [htpasswd format](#format).
 
 ## Properties
 

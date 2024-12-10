@@ -11,6 +11,7 @@ import (
 	"github.com/echocat/slf4g"
 	"github.com/mattn/go-zglob"
 
+	bib "github.com/engity-com/bifroest/internal/build"
 	"github.com/engity-com/bifroest/pkg/common"
 )
 
@@ -40,11 +41,11 @@ func (this *buildArchive) attach(cmd *kingpin.CmdClause) {
 }
 
 func (this *buildArchive) create(ctx context.Context, binary *buildArtifact) (_ *buildArtifact, rErr error) {
-	format := binary.platform.os.archiveFormat()
-	fn := binary.platform.filenamePrefix(this.prefix) + format.ext()
+	format := bib.ArchiveFormatFor(binary.Platform.Os)
+	fn := binary.Platform.FilenamePrefix(this.prefix) + format.Ext()
 
 	success := false
-	a, err := this.build.newBuildFileArtifact(ctx, binary.platform, buildArtifactTypeArchive, fn)
+	a, err := this.build.newBuildFileArtifact(ctx, binary.Platform, buildArtifactTypeArchive, fn)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +55,7 @@ func (this *buildArchive) create(ctx context.Context, binary *buildArtifact) (_ 
 		return nil, fmt.Errorf("cannot create %v: %w", a, err)
 	}
 
-	l := log.With("platform", a.platform).
+	l := log.With("platform", a.Platform).
 		With("stage", buildStageArchive)
 
 	start := time.Now()
@@ -72,7 +73,7 @@ func (this *buildArchive) create(ctx context.Context, binary *buildArtifact) (_ 
 	}
 	defer common.KeepCloseError(&rErr, baw)
 
-	if err := baw.addFile(this.prefix+binary.platform.os.execExt(), binary.filepath, 0755); err != nil {
+	if err := baw.addFile(binary.Platform.Os.AppendExtToFilename(this.prefix), binary.filepath, 0755); err != nil {
 		return fail(err)
 	}
 	for _, res := range this.includedResources {
@@ -117,11 +118,11 @@ func (this *buildArchive) addResource(src string, to buildArchiveWriter) error {
 }
 
 func (this *buildArchive) newWriter(binary *buildArtifact, w io.Writer) (buildArchiveWriter, error) {
-	format := binary.platform.os.archiveFormat()
-	switch binary.platform.os.archiveFormat() {
-	case packFormatTgz:
+	format := bib.ArchiveFormatFor(binary.Platform.Os)
+	switch format {
+	case bib.ArchiveFormatTgz:
 		return this.newTgzWriter(binary.time, w)
-	case packFormatZip:
+	case bib.ArchiveFormatZip:
 		return this.newZipWriter(binary.time, w)
 	default:
 		return nil, fmt.Errorf("unknown archive format: %v", format)

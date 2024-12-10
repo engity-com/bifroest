@@ -11,7 +11,7 @@ type Version interface {
 	Title() string
 	Version() string
 	Revision() string
-	Edition() VersionEdition
+	Edition() Edition
 	BuildAt() time.Time
 	Vendor() string
 	GoVersion() string
@@ -79,43 +79,6 @@ func VersionToMap(v Version) map[string]any {
 	})
 
 	return result
-}
-
-type VersionEdition uint8
-
-const (
-	VersionEditionUnknown VersionEdition = iota
-	VersionEditionGeneric
-	VersionEditionExtended
-)
-
-func (this VersionEdition) String() string {
-	switch this {
-	case VersionEditionUnknown:
-		return "unknown"
-	case VersionEditionGeneric:
-		return "generic"
-	case VersionEditionExtended:
-		return "extended"
-	default:
-		return fmt.Sprintf("unknown-%d", this)
-	}
-}
-
-func (this *VersionEdition) Set(plain string) error {
-	switch plain {
-	case "", "unknown":
-		*this = VersionEditionUnknown
-		return nil
-	case "generic":
-		*this = VersionEditionGeneric
-		return nil
-	case "extended":
-		*this = VersionEditionExtended
-		return nil
-	default:
-		return fmt.Errorf("invalid edition: %q", plain)
-	}
 }
 
 type VersionFormat uint8

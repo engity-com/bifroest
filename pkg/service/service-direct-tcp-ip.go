@@ -143,8 +143,11 @@ func (this *service) handleNewDirectTcpIp(_ *glssh.Server, _ *gossh.ServerConn, 
 		},
 		OnStreamEnd: func(isL2r bool, err error) {
 			name := "source -> destination"
-			if !isL2r {
+			if isL2r {
+				_ = dConn.Close()
+			} else {
 				name = "destination -> source"
+				_ = sConn.Close()
 			}
 			l.WithError(err).Tracef("coping of %s done", name)
 		},
@@ -163,7 +166,8 @@ func (this *service) isAcceptableNewConnectionError(err error) bool {
 
 	var sce syscall.Errno
 	if errors.As(err, &sce) {
-		switch sce {
+		switch //goland:noinspection GoDirectComparisonOfErrors
+		sce {
 		case syscall.ECONNREFUSED, syscall.ETIMEDOUT, syscall.EHOSTDOWN, syscall.ENETUNREACH:
 			return true
 		default:

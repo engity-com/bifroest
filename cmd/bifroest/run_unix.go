@@ -13,7 +13,7 @@ const (
 )
 
 func configureRunCmd(app *kingpin.Application) *kingpin.Application {
-	var conf configuration.ConfigurationRef
+	var conf configuration.Ref
 	cmd := app.Command("run", "Runs the service.").
 		Action(func(*kingpin.ParseContext) error {
 			return doRun(conf)
@@ -26,6 +26,6 @@ func configureRunCmd(app *kingpin.Application) *kingpin.Application {
 	return app
 }
 
-func doRun(conf configuration.ConfigurationRef) error {
+func doRun(conf configuration.Ref) error {
 	return doRunDefault(conf)
 }

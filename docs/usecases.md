@@ -4,19 +4,20 @@ description: "Bifröst is very flexible in its configuration (see configuration 
 ---
 # Use cases
 
-Bifröst helps IT admins to administer servers much faster, more secure, with more options, and much more flexible than without using Bifröst. 
+Bifröst helps IT admins to administer servers much faster, more secure, with more options, and much more flexible than without using Bifröst.
 A big advantage of Bifröst is the simple and flexible configuration (see [configuration documentation](reference/configuration.md)). Below, you find some use-cases showing that Bifröst makes the difference:
 
 1. [**Off**-board users within the legally binding 15 minutes timeframe of the organization](#offboard)
 2. [**On**-board users within 15 minutes in the organization](#onboard)
 3. [Bastion Host / Jump Host](#bastion)
-4. [Isolated Demo/Training environments](#demos)
-5. [Different rules for different user groups per host](#multi-environment)
-6. [Drop-in-Replacement](#drop-in-replacement)
+4. [Access Kubernetes clusters without publicly exposing their APIs](#kubernetes-firewall)
+5. [Isolated Demo/Training environments](#demos)
+6. [Different rules for different user groups per host](#multi-environment)
+7. [Drop-in-Replacement](#drop-in-replacement)
 
 !!! tip
 
-    We're planning to also implement a [Kubernetes environment](https://github.com/engity-com/bifroest/issues/12), [SSH server chaining](https://github.com/engity-com/bifroest/issues/27) and [Session recording](https://github.com/engity-com/bifroest/issues/28). This will create much more use-cases, soon. 🤠
+    We're planning to also implement an [SSH server chaining / transparent proxy for SSH](https://github.com/engity-com/bifroest/issues/27) and [Session recording](https://github.com/engity-com/bifroest/issues/28). This will soon create much more use-cases. 🤠
 
 ## Off-board users within the legally binding 15 minutes timeframe of the organization {: #offboard}
 
@@ -51,7 +52,7 @@ As the users are always authorized by your [Identity Provider (IdP)](https://ope
 
 There is no need to access any of these services directly to remove/de-authorize these users.
 
-If the [environments are configured accordingly](reference/environment/index.md) (default setting) all of the user's files and processes will be removed/killed automatically, too.
+If the [environments are configured accordingly](reference/environment/index.md) (default setting) all the user's files and processes will be removed/killed automatically, too.
 
 ## On-board users within 15 minutes in the organization {: #onboard}
 
@@ -82,7 +83,7 @@ There is no need to create them somewhere on the server itself. The [OIDC author
 
 There is no need to access any of these services directly to create/authorize these users.
 
-If the [environments are configured accordingly](reference/environment/index.md) (default setting), all of the user's resources (like the home directory) will be created automatically.
+If the [environments are configured accordingly](reference/environment/index.md) (default setting), all the user's resources (like the home directory) will be automatically created.
 
 ## Bastion Host / Jump Host {: #bastion}
 
@@ -105,6 +106,27 @@ The following cases are usually used:
 2. Configure your preferred [authorization](reference/authorization/index.md) (for example [OpenID Connect](reference/authorization/oidc.md) for best [on-boarding](#onboard) and [off-boarding](#offboard) experience).
 3. Plus: If you're using the [docker environment](reference/environment/docker.md), you also gain the maximum possible security by environment isolation.
 
+## Access Kubernetes clusters without publicly exposing their APIs {: #kubernetes-firewall}
+
+### Problem
+
+1. Assume you have one or more Kubernetes clusters.
+2. There kubernetes clusters should be accessed by your developers and/or support agents to do development and debugging work.
+3. The people who should access this can be located inside the office (with protected networks) but also in untrusted environments like working from home.
+
+Usually, you either make the Kubernetes cluster's API directly accessible over the internet and secure them with (hopefully) secure secrets or shield them behind firewalls. In these cases every person who wants to access the cluster API then has to use a VPN software to access the cluster's API which also introduce other issues in usability, costs and complexity.
+
+### Solution
+
+1. Have a Bifröst instance inside your protected network, which port 22 is exposed to the internet.
+2. Protect the access with every mechanism you like [OpenID Connect](reference/authorization/oidc.md).
+3. Pick an OCI/Docker image which holds [kubectl](https://kubernetes.io/docs/reference/kubectl/).
+4. Configure the [kubernetes environment](reference/environment/kubernetes.md) with a [kubeconfig](reference/environment/kubernetes.md#property-config) which is able to access the Kubernetes cluster inside your network.
+
+As a result your people can easily use a default SSH agent with [OpenID Connect](reference/authorization/oidc.md) to access a kubectl instance which is able to control your cluster without exposing your cluster directly to the public internet.
+
+As a plus, the users accessing this instance have easier access to the resources like databases and rest APIs inside Kubernetes, because they can directly use the cluster internal domain names, instance `kubectl port-forward`.
+
 ## Isolated Demo/Training environments {: #demos }
 
 ### Problem
@@ -121,13 +143,13 @@ The following cases are usually used:
     2. Maybe you want to use [fixed passwords](reference/authorization/simple.md).
     3. :material-alert-octagon:{: .warning } Disable any kind of password request, which is only recommended for these kinds of purposes, nothing else. In this case, you can use the [none authorization](reference/authorization/none.md).
 2. Create an OCI/Docker image with the applications you want to show.
-3. Configure the [docker environment](reference/environment/docker.md) and [reference your image](reference/environment/docker.md#property-image).
+3. Configure the [kubernetes environment](reference/environment/kubernetes.md) or the [docker environment](reference/environment/docker.md) with [a reference to your own image](reference/environment/docker.md#property-image).
 
 ## Different rules for different user groups per host {: #multi-environment}
 
 ### Problem
 
-1. Assume you have a SSH server.
+1. Assume you have an SSH server.
 2. Different users should be authorized differently.
 3. Different users should run in different [environments](reference/environment/index.md) (one in a local environment with permission A, another with permission B, and a third user in a remote environment).
 
