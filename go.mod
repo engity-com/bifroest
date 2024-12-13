@@ -39,7 +39,7 @@ require (
 	golang.org/x/oauth2 v0.24.0
 	golang.org/x/sys v0.28.0
 	gopkg.in/yaml.v3 v3.0.1
-	k8s.io/api v0.31.3
+	k8s.io/api v0.32.0
 	k8s.io/apimachinery v0.32.0
 	k8s.io/client-go v0.31.3
 )
