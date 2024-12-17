@@ -12,7 +12,7 @@ Holds the information about a [Preparation Process](../connection/ssh.md#prepara
 
 Each preparation process has its own unique ID (like [`pull-image`](../environment/docker.md#preparationProcess-pull-image) of the [docker environment](../environment/docker.md)).
 
-Please refer the documentation of the supported [environments](../environment/index.md) for their preparation process kinds.
+For information about process types, see the documentation for the supported [environments](../environment/index.md).
 
 <<property("flow", "string")>>
 
@@ -39,4 +39,4 @@ In case of error events, this holds the full error information.
 
 Each preparation process can provide other information, like [`image` in case of a docker `pull-image` process](../environment/docker.md#preparationProcess-pull-image-property-image).
 
-Please refer the documentation of the supported [environments](../environment/index.md) for their process kinds.
+For information about process types, see the documentation for the supported [environments](../environment/index.md).
