@@ -28,7 +28,7 @@ require (
 	github.com/msteinert/pam/v2 v2.0.0
 	github.com/opencontainers/image-spec v1.1.0
 	github.com/openwall/yescrypt-go v1.0.0
-	github.com/otiai10/copy v1.14.0
+	github.com/otiai10/copy v1.14.1
 	github.com/pkg/sftp v1.13.7
 	github.com/shirou/gopsutil/v4 v4.24.12
 	github.com/stretchr/testify v1.10.0
@@ -96,6 +96,7 @@ require (
 	github.com/onsi/ginkgo/v2 v2.22.0 // indirect
 	github.com/onsi/gomega v1.36.1 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
+	github.com/otiai10/mint v1.6.3 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
