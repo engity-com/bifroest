@@ -52,8 +52,8 @@ github.com/ebitengine/purego v0.8.1 h1:sdRKd6plj7KYW33EH5As6YKfe8m9zbN9JMrOjNVF/
 github.com/ebitengine/purego v0.8.1/go.mod h1:iIjxzd6CiRiOG0UyXP+V1+jWqUXVjPKLAI0mRfJZTmQ=
 github.com/echocat/slf4g v1.6.2 h1:fZPzeDaO7exJYOHVLlEE4EY4J7u9ekIfh9r7nc6sAFc=
 github.com/echocat/slf4g v1.6.2/go.mod h1:YvF/d1TcPvT+/xiHStLHPI4xPT1GGeEmPczn2MSljNA=
-github.com/echocat/slf4g/native v1.6.1 h1:g8Y8abLWwFkSQit4JQUvPO1MqpHUiPFZZINjkvPzY50=
-github.com/echocat/slf4g/native v1.6.1/go.mod h1:ijM/ey57jUdK7k0uqbhfJJYK6K8DtbEp+HfyDMBO63E=
+github.com/echocat/slf4g/native v1.6.2 h1:wzDYak1mDG30W6++dfptrS3jPuOKrVSH05/V0sKd5ho=
+github.com/echocat/slf4g/native v1.6.2/go.mod h1:nttm/tfuBoiBR05xqp+e/5a2hJYQsRXuLDg9LqOoZbs=
 github.com/emicklei/go-restful/v3 v3.12.1 h1:PJMDIM/ak7btuL8Ex0iYET9hxM3CI2sjZtzpL63nKAU=
 github.com/emicklei/go-restful/v3 v3.12.1/go.mod h1:6n3XBCmQQb25CM2LCACGz8ukIrRry+4bhvbpWn3mrbc=
 github.com/felixge/httpsnoop v1.0.4 h1:NFTV2Zj1bL4mc9sqWACXbQFVBBg2W3GPvqp8/ESS2Wg=
