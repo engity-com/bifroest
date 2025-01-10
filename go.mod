@@ -14,7 +14,7 @@ require (
 	github.com/docker/cli v27.4.1+incompatible
 	github.com/docker/docker v27.4.1+incompatible
 	github.com/docker/go-connections v0.5.0
-	github.com/echocat/slf4g v1.6.2
+	github.com/echocat/slf4g v1.6.3
 	github.com/echocat/slf4g/native v1.6.2
 	github.com/fsnotify/fsnotify v1.8.0
 	github.com/gliderlabs/ssh v0.3.8
