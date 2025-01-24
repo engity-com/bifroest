@@ -16,18 +16,18 @@ func Test_Kubeconfig_GetClient_emptyAndNoDefault_fails(t *testing.T) {
 	instance := Kubeconfig{}
 	instance.overwrites.defaultFile = "resources/does_not_exist.yml"
 
-	actual, actualErr := instance.GetClient("")
+	actual, actualErr := instance.GetClient("", "")
 	require.ErrorContains(t, actualErr, `neither does the default kubeconfig "resources/does_not_exist.yml" exists nor was a `)
 	require.Nil(t, actual)
 }
 
-func Test_Kubeconfig_GetClient_emptyAndTwoContexts_succeeds(t *testing.T) {
+func Test_Kubeconfig_GetClient_twoContexts_succeeds(t *testing.T) {
 	defer unsetEnvVarTemporary(EnvVarKubeconfig)()
 	defer unsetEnvVarTemporary(EnvVarKubeconfigFiles)()
-	instance := Kubeconfig{}
-	instance.overwrites.defaultFile = "resources/kubeconfig_two_contexts.yml"
+	instance := Kubeconfig{plain: []byte("resources/kubeconfig_two_contexts.yml")}
+	instance.overwrites.defaultFile = "resources/does_not_exist.yml"
 
-	actual, actualErr := instance.getClient("")
+	actual, actualErr := instance.getClient("", "")
 	require.NoError(t, actualErr)
 	require.NotNil(t, actual)
 	require.Equal(t, "http://127.0.0.1:8080", actual.restConfig.Host)
@@ -41,7 +41,7 @@ func Test_Kubeconfig_GetClient_emptyTwoContexts_specificContext_succeeds(t *test
 	instance := Kubeconfig{}
 	instance.overwrites.defaultFile = "resources/kubeconfig_two_contexts.yml"
 
-	actual, actualErr := instance.getClient("context2")
+	actual, actualErr := instance.getClient("context2", "")
 	require.NoError(t, actualErr)
 	require.NotNil(t, actual)
 	require.Equal(t, "http://127.0.0.2:8080", actual.restConfig.Host)
@@ -55,7 +55,7 @@ func Test_Kubeconfig_GetClient_emptyAndEnvVarSet_succeeds(t *testing.T) {
 	instance := Kubeconfig{}
 	instance.overwrites.defaultFile = "resources/kubeconfig_two_contexts.yml"
 
-	actual, actualErr := instance.getClient("")
+	actual, actualErr := instance.getClient("", "")
 	require.NoError(t, actualErr)
 	require.NotNil(t, actual)
 	require.Equal(t, "http://127.0.0.3:8080", actual.restConfig.Host)
@@ -69,7 +69,7 @@ func Test_Kubeconfig_GetClient_emptyAndEnvVarFilesSet_succeeds(t *testing.T) {
 	instance := Kubeconfig{}
 	instance.overwrites.defaultFile = "resources/non_existent.yml"
 
-	actual, actualErr := instance.getClient("")
+	actual, actualErr := instance.getClient("", "")
 	require.NoError(t, actualErr)
 	require.NotNil(t, actual)
 	require.Equal(t, "http://127.0.0.3:8080", actual.restConfig.Host)
@@ -83,7 +83,7 @@ func Test_Kubeconfig_GetClient_emptyAndEnvVarMultiFilesSet_succeeds(t *testing.T
 	instance := Kubeconfig{}
 	instance.overwrites.defaultFile = "resources/non_existent.yml"
 
-	actual, actualErr := instance.getClient("")
+	actual, actualErr := instance.getClient("", "")
 	require.NoError(t, actualErr)
 	require.NotNil(t, actual)
 	require.Equal(t, "http://127.0.0.1:8080", actual.restConfig.Host)
@@ -97,7 +97,7 @@ func Test_Kubeconfig_GetClient_emptyAndEnvVarMultiFilesSetAndExplicitContext_suc
 	instance := Kubeconfig{}
 	instance.overwrites.defaultFile = "resources/non_existent.yml"
 
-	actual, actualErr := instance.getClient("context3")
+	actual, actualErr := instance.getClient("context3", "")
 	require.NoError(t, actualErr)
 	require.NotNil(t, actual)
 	require.Equal(t, "http://127.0.0.3:8080", actual.restConfig.Host)
@@ -111,7 +111,7 @@ func Test_Kubeconfig_GetClient_emptyAndAllEnvVarsSet_succeeds(t *testing.T) {
 	instance := Kubeconfig{}
 	instance.overwrites.defaultFile = "resources/non_existent.yml"
 
-	actual, actualErr := instance.getClient("")
+	actual, actualErr := instance.getClient("", "")
 	require.NoError(t, actualErr)
 	require.NotNil(t, actual)
 	require.Equal(t, "http://127.0.0.3:8080", actual.restConfig.Host)
@@ -125,7 +125,7 @@ func Test_Kubeconfig_GetClient_emptyAndTwoContexts_withoutCurrentContext_fails(t
 	instance := Kubeconfig{}
 	instance.overwrites.defaultFile = "resources/kubeconfig_without_current_context.yml"
 
-	actual, actualErr := instance.getClient("")
+	actual, actualErr := instance.getClient("", "")
 	require.Equal(t, clientcmd.ErrNoContext, actualErr)
 	require.Nil(t, actual)
 }
@@ -136,18 +136,18 @@ func Test_Kubeconfig_GetClient_emptyTwoContexts_specificNonExistingContext_fails
 	instance := Kubeconfig{}
 	instance.overwrites.defaultFile = "resources/kubeconfig_two_contexts.yml"
 
-	actual, actualErr := instance.getClient("wrong")
+	actual, actualErr := instance.getClient("wrong", "")
 	require.ErrorContains(t, actualErr, `kubeconfig does not contain context "wrong"`)
 	require.Nil(t, actual)
 }
 
-func Test_Kubeconfig_GetClient_wrongFormatted_fails(t *testing.T) {
+func Test_Kubeconfig_GetClient_doesNotExist_fails(t *testing.T) {
 	defer unsetEnvVarTemporary(EnvVarKubeconfig)()
 	defer unsetEnvVarTemporary(EnvVarKubeconfigFiles)()
 	instance := Kubeconfig{plain: []byte("fooo")}
 
-	actual, actualErr := instance.getClient("wrong")
-	require.ErrorContains(t, actualErr, "couldn't get version/kind; json parse error")
+	actual, actualErr := instance.getClient("wrong", "")
+	require.ErrorContains(t, actualErr, "open fooo: ")
 	require.Nil(t, actual)
 }
 
@@ -162,7 +162,7 @@ func Test_Kubeconfig_GetClient_emptyIncluster_succeeds(t *testing.T) {
 	instance.overwrites.serviceRootCaFile = "resources/serviceaccount_ca.crt"
 	instance.overwrites.serviceNamespaceFile = "resources/serviceaccount_namespace"
 
-	actual, actualErr := instance.getClient("")
+	actual, actualErr := instance.getClient("", "")
 	require.NoError(t, actualErr)
 	require.NotNil(t, actual)
 	require.Equal(t, "https://127.0.0.66:8081", actual.restConfig.Host)
@@ -180,7 +180,7 @@ func Test_Kubeconfig_GetClient_incluster_succeeds(t *testing.T) {
 	instance.overwrites.serviceRootCaFile = "resources/serviceaccount_ca.crt"
 	instance.overwrites.serviceNamespaceFile = "resources/serviceaccount_namespace"
 
-	actual, actualErr := instance.getClient("")
+	actual, actualErr := instance.getClient("", "")
 	require.NoError(t, actualErr)
 	require.NotNil(t, actual)
 	require.Equal(t, "https://127.0.0.66:8081", actual.restConfig.Host)
@@ -198,7 +198,7 @@ func Test_Kubeconfig_GetClient_incluster_withoutServiceHost_fails(t *testing.T) 
 	instance.overwrites.serviceRootCaFile = "resources/serviceaccount_ca.crt"
 	instance.overwrites.serviceNamespaceFile = "resources/serviceaccount_namespace"
 
-	actual, actualErr := instance.getClient("unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined")
+	actual, actualErr := instance.getClient("unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined", "")
 	require.ErrorContains(t, actualErr, "")
 	require.Nil(t, actual)
 }
@@ -213,7 +213,7 @@ func Test_Kubeconfig_GetClient_incluster_withoutServicePort_fails(t *testing.T) 
 	instance.overwrites.serviceRootCaFile = "resources/serviceaccount_ca.crt"
 	instance.overwrites.serviceNamespaceFile = "resources/serviceaccount_namespace"
 
-	actual, actualErr := instance.getClient("unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined")
+	actual, actualErr := instance.getClient("unable to load in-cluster configuration, KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT must be defined", "")
 	require.ErrorContains(t, actualErr, "")
 	require.Nil(t, actual)
 }
@@ -228,7 +228,7 @@ func Test_Kubeconfig_GetClient_incluster_withoutTokenFile_fails(t *testing.T) {
 	instance.overwrites.serviceRootCaFile = "resources/serviceaccount_ca.crt"
 	instance.overwrites.serviceNamespaceFile = "resources/serviceaccount_namespace"
 
-	actual, actualErr := instance.getClient("")
+	actual, actualErr := instance.getClient("", "")
 	require.ErrorContains(t, actualErr, `can't read token file "resources/serviceaccount_token_non_existing"`)
 	require.Nil(t, actual)
 }
@@ -243,7 +243,7 @@ func Test_Kubeconfig_GetClient_incluster_withoutRootCaFile_fails(t *testing.T) {
 	instance.overwrites.serviceRootCaFile = "resources/serviceaccount_ca.crt_non_existing"
 	instance.overwrites.serviceNamespaceFile = "resources/serviceaccount_namespace"
 
-	actual, actualErr := instance.getClient("")
+	actual, actualErr := instance.getClient("", "")
 	require.ErrorContains(t, actualErr, `can't read root CA file "resources/serviceaccount_ca.crt_non_existing"`)
 	require.Nil(t, actual)
 }
@@ -258,7 +258,7 @@ func Test_Kubeconfig_GetClient_incluster_withoutNamespaceFail_fails(t *testing.T
 	instance.overwrites.serviceRootCaFile = "resources/serviceaccount_ca.crt"
 	instance.overwrites.serviceNamespaceFile = "resources/serviceaccount_namespace_non_existing"
 
-	actual, actualErr := instance.getClient("")
+	actual, actualErr := instance.getClient("", "")
 	require.ErrorContains(t, actualErr, `can't read namespace file "resources/serviceaccount_namespace_non_existing"`)
 	require.Nil(t, actual)
 }
