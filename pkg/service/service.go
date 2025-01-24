@@ -12,6 +12,7 @@ import (
 	log "github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/fields"
 	glssh "github.com/gliderlabs/ssh"
+	"github.com/pires/go-proxyproto"
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/alternatives"
@@ -116,8 +117,13 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 			defer wg.Done()
 			l := this.logger().With("address", ln.addr)
 
+			tln := ln.ln
+			if this.Configuration.Ssh.ProxyProtocol {
+				tln = &proxyproto.Listener{Listener: tln}
+			}
+
 			l.Info("listening...")
-			if err := svc.server.Serve(ln.ln); this.isProblematicError(err) {
+			if err := svc.server.Serve(tln); this.isProblematicError(err) {
 				l.WithError(err).Error("listening... FAILED!")
 				done <- err
 				return

@@ -25,6 +25,9 @@ How many different authentication methods a client can use before the connection
 <<property("maxConnections", "uint8", None, default=255)>>
 The maximum amount of parallel connections on this service. Every additional connection beyond will be rejected.
 
+<<property("proxyProtocol", "bool", None, default=false)>>
+If enabled Bifröst will support incoming connection the [PROXY protocol versions 1 and 2 format](https://www.haproxy.com/blog/use-the-proxy-protocol-to-preserve-a-clients-ip-address).
+
 <<property("banner", "string", template_context="../context/connection.md", default='{{ `/etc/ssh/sshd-banner` | file `optional` | default `Transcend with Engity\'s Bifröst\n\n` }}')>>
 Banner which will be shown when the client connects to the server even before the first validation of authorizations or similar happens.
 

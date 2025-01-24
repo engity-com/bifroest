@@ -9,6 +9,7 @@ import (
 	"net/url"
 	goos "os"
 	"path/filepath"
+	"strings"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
@@ -110,7 +111,9 @@ func (this *provider) FindBinaryFor(ctx context.Context, hostOs sys.Os, hostArch
 }
 
 func (this *provider) FindOciImageFor(_ context.Context, _ sys.Os, _ sys.Arch) (string, error) {
-	return "ghcr.io/engity-com/bifroest:generic-" + this.version.Version(), nil
+	ver := this.version.Version()
+	ver = strings.TrimPrefix(ver, "v")
+	return "ghcr.io/engity-com/bifroest:generic-" + ver, nil
 }
 
 func (this *provider) alternativesLocationFor(os sys.Os, arch sys.Arch) (string, error) {

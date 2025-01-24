@@ -26,6 +26,8 @@ var (
 	// DefaultSshMaxConnections is the default setting for Ssh.MaxConnections.
 	DefaultSshMaxConnections = uint32(255)
 
+	DefaultProxyProtocol = false
+
 	// DefaultSshBanner is the default setting for Ssh.Banner.
 	DefaultSshBanner = template.MustNewString("{{`/etc/ssh/sshd-banner` | file `optional` | default `Transcend with Engity's Bifröst\n\n` }}")
 )
@@ -57,6 +59,9 @@ type Ssh struct {
 	// Defaults to DefaultSshMaxConnections.
 	MaxConnections uint32 `yaml:"maxConnections"`
 
+	// ProxyProtocol defines if the proxy protocol should be respected.
+	ProxyProtocol bool `yaml:"proxyProtocol,omitempty"`
+
 	// Banner will be displayed if the clients connects to the server before any other action takes place.
 	Banner template.String `yaml:"banner,omitempty"`
 
@@ -73,6 +78,7 @@ func (this *Ssh) SetDefaults() error {
 		fixedDefault("maxTimeout", func(v *Ssh) *common.Duration { return &v.MaxTimeout }, DefaultSshMaxTimeout),
 		fixedDefault("maxAuthTries", func(v *Ssh) *uint8 { return &v.MaxAuthTries }, DefaultSshMaxAuthTries),
 		fixedDefault("maxConnections", func(v *Ssh) *uint32 { return &v.MaxConnections }, DefaultSshMaxConnections),
+		fixedDefault("proxyProtocol", func(v *Ssh) *bool { return &v.ProxyProtocol }, DefaultProxyProtocol),
 		fixedDefault("banner", func(v *Ssh) *template.String { return &v.Banner }, DefaultSshBanner),
 		func(v *Ssh) (string, defaulter) { return "preparationMessages", &v.PreparationMessages },
 	)
@@ -86,6 +92,7 @@ func (this *Ssh) Trim() error {
 		noopTrim[Ssh]("maxTimeout"),
 		noopTrim[Ssh]("maxAuthTries"),
 		noopTrim[Ssh]("maxConnections"),
+		noopTrim[Ssh]("proxyProtocol"),
 		noopTrim[Ssh]("banner"),
 		func(v *Ssh) (string, trimmer) { return "preparationMessages", &v.PreparationMessages },
 	)
@@ -99,6 +106,7 @@ func (this *Ssh) Validate() error {
 		func(v *Ssh) (string, validator) { return "maxTimeout", &v.MaxTimeout },
 		noopValidate[Ssh]("maxAuthTries"),
 		noopValidate[Ssh]("maxConnections"),
+		noopValidate[Ssh]("proxyProtocol"),
 		func(v *Ssh) (string, validator) { return "banner", &v.Banner },
 		func(v *Ssh) (string, validator) { return "preparationMessages", &v.PreparationMessages },
 	)
@@ -132,6 +140,7 @@ func (this Ssh) isEqualTo(other *Ssh) bool {
 		isEqual(&this.MaxTimeout, &other.MaxTimeout) &&
 		this.MaxAuthTries == other.MaxAuthTries &&
 		this.MaxConnections == other.MaxConnections &&
+		this.ProxyProtocol == other.ProxyProtocol &&
 		isEqual(&this.Banner, &other.Banner) &&
 		isEqual(&this.PreparationMessages, &other.PreparationMessages)
 }
