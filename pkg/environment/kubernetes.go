@@ -45,6 +45,7 @@ type kubernetes struct {
 	portForwardingAllowed bool
 
 	impSession imp.Session
+	environ    sys.EnvVars
 
 	owners atomic.Int32
 }
@@ -83,7 +84,8 @@ func (this *KubernetesRepository) new(ctx context.Context, pod *v1.Pod, logger l
 	}
 
 	for try := 1; try <= 200; try++ {
-		if err := result.impSession.Ping(ctx, connId); err == nil {
+		if environ, err := result.impSession.GetEnvironment(ctx, connId); err == nil {
+			result.environ = environ
 			break
 		} else if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, bkube.ErrEndpointNotFound) {
 			// try waiting...

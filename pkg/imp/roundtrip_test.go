@@ -296,6 +296,22 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 
 		time.Sleep(time.Millisecond * 100)
 	})
+
+	t.Run("get-environment", func(t *testing.T) {
+		testlog.Hook(t)
+		connId, err := connection.NewId()
+		require.NoError(t, err)
+
+		env, err := sess.GetEnvironment(ctx, connId)
+		require.NoError(t, err)
+
+		var expected sys.EnvVars
+		expected.Add(os.Environ()...)
+		require.Equal(t, expected, env)
+	})
+
+	time.Sleep(time.Millisecond * 100)
+
 }
 
 func runRoundtripImpProcess(t *testing.T) {

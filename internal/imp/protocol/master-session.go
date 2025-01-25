@@ -65,6 +65,10 @@ func (this *MasterSession) GetConnectionExitCode(ctx context.Context, connection
 	return result, nil
 }
 
+func (this *MasterSession) GetEnvironment(ctx context.Context, connectionId connection.Id) (sys.EnvVars, error) {
+	return this.parent.methodGetEnvironment(ctx, this.ref, connectionId)
+}
+
 func (this *MasterSession) Kill(ctx context.Context, connectionId connection.Id, pid int, signal sys.Signal) error {
 	return this.parent.methodKill(ctx, this.ref, connectionId, pid, signal)
 }

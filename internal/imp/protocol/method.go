@@ -18,6 +18,7 @@ const (
 	MethodTcpForward
 	MethodNamedPipe
 	MethodGetConnectionExitCode
+	MethodGetEnvironment
 )
 
 var (
@@ -80,6 +81,7 @@ var (
 		"tcpForward":            MethodTcpForward,
 		"namedPipe":             MethodNamedPipe,
 		"getConnectionExitCode": MethodGetConnectionExitCode,
+		"getEnvironment":        MethodGetEnvironment,
 	}
 	protocolMethodToString = func(in map[string]Method) map[Method]string {
 		result := make(map[Method]string, len(in))
