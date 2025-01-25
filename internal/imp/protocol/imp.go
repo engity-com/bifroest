@@ -129,6 +129,8 @@ func (this *imp) serveConn(ctx context.Context, plainConn gonet.Conn) (rErr erro
 		return done(this.handleMethodNamedPipe(ctx, &header, l, conn))
 	case MethodGetConnectionExitCode:
 		return done(this.handleMethodGetConnectionExitCode(ctx, &header, l, conn))
+	case MethodGetEnvironment:
+		return done(this.handleMethodGetEnvironment(ctx, &header, l, conn))
 	default:
 		return fail(errors.Network.Newf("unsupported method %v", header.Method))
 	}

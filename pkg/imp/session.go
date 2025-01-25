@@ -20,6 +20,8 @@ type Session interface {
 	// or [connection.ErrNotFound] if the corresponding connection can't be found.
 	GetConnectionExitCode(ctx context.Context, connectionId connection.Id) (int, error)
 
+	GetEnvironment(ctx context.Context, connectionId connection.Id) (sys.EnvVars, error)
+
 	// Kill will try to kill the process with the given signal.
 	// If pid is 0, the process will be resolved by its connection.EnvVar that is matching the provided
 	// connectionId.

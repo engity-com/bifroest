@@ -75,6 +75,7 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 	}
 
 	ev := sys.EnvVars{}
+	ev.AddAllOf(this.environ)
 	if v, ok := os.LookupEnv("TZ"); ok {
 		ev.Set("TZ", v)
 	}
