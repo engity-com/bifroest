@@ -80,6 +80,10 @@ func (this *DockerRepository) new(ctx context.Context, container *types.Containe
 	}
 
 	for try := 1; try <= 200; try++ {
+		if err := ctx.Err(); err != nil {
+			return fail(err)
+		}
+
 		if err := result.impSession.Ping(ctx, connId); err == nil {
 			break
 		} else if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
@@ -93,7 +97,10 @@ func (this *DockerRepository) new(ctx context.Context, container *types.Containe
 		} else {
 			l.Info("still waiting for container's imp getting ready...")
 		}
-		time.Sleep(500 * time.Millisecond)
+
+		if err := common.Sleep(ctx, 500*time.Millisecond); err != nil {
+			return fail(err)
+		}
 	}
 
 	result.owners.Add(1)

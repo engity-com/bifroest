@@ -136,14 +136,14 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 		dummyCmd := prepareRoundtripDummyCmd(t, dummyCmdConnectionId)
 		wg.Add(1)
 		go runCmd(ctx, t, dummyCmd, wg.Done, &dummyCmdPid)
-		time.Sleep(100 * time.Millisecond)
+		common.SleepSilently(ctx, 100*time.Millisecond)
 	}
 
 	defer wg.Wait()
 	defer cancelFn()
 
 	for i := 0; i < 10000; i++ {
-		time.Sleep(1 * time.Millisecond)
+		common.SleepSilently(ctx, 1*time.Millisecond)
 		conn, err := gonet.DialTimeout("tcp", roundtripTestImpAddress.String(), time.Millisecond*10)
 		if err != nil {
 			continue
@@ -172,7 +172,7 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 		err = sess.Ping(ctx, connId)
 		require.NoError(t, err)
 
-		time.Sleep(time.Millisecond * 100)
+		common.SleepSilently(ctx, time.Millisecond*100)
 	})
 
 	if *roundtripTestWithKill {
@@ -194,7 +194,7 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 			}, 1*time.Minute, 100*time.Millisecond)
 		})
 
-		time.Sleep(time.Millisecond * 100)
+		common.SleepSilently(ctx, time.Millisecond*100)
 	}
 
 	t.Run("tcp-forward", func(t *testing.T) {
@@ -226,7 +226,7 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 		require.NoError(t, err)
 		assert.Equal(t, "OK!", string(b))
 
-		time.Sleep(time.Millisecond * 100)
+		common.SleepSilently(ctx, time.Millisecond*100)
 	})
 
 	t.Run("named-pipe", func(t *testing.T) {
@@ -258,10 +258,10 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 
 			assert.Equal(t, "foobar", string(buf))
 
-			time.Sleep(time.Millisecond * 100)
+			common.SleepSilently(ctx, time.Millisecond*100)
 		}()
 
-		time.Sleep(time.Millisecond * 200)
+		common.SleepSilently(ctx, time.Millisecond*200)
 
 		assert.NotEmpty(t, local.Path())
 		remote, err := net.ConnectToNamedPipe(ctx, local.Path())
@@ -271,13 +271,13 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 		_, err = remote.Write([]byte("foobar"))
 		require.NoError(t, err)
 
-		time.Sleep(time.Millisecond * 200)
+		common.SleepSilently(ctx, time.Millisecond*200)
 
 		require.NoError(t, remote.Close())
 		require.NoError(t, local.Close())
 		iwg.Wait()
 
-		time.Sleep(time.Millisecond * 100)
+		common.SleepSilently(ctx, time.Millisecond*100)
 	})
 
 	t.Run("named-pipe-noop", func(t *testing.T) {
@@ -290,11 +290,11 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 		require.NotNil(t, local)
 		defer common.IgnoreCloseError(local)
 
-		time.Sleep(time.Millisecond * 100)
+		common.SleepSilently(ctx, time.Millisecond*100)
 
 		require.NoError(t, local.Close())
 
-		time.Sleep(time.Millisecond * 100)
+		common.SleepSilently(ctx, time.Millisecond*100)
 	})
 
 	t.Run("get-environment", func(t *testing.T) {
@@ -310,7 +310,7 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 		require.Equal(t, expected, env)
 	})
 
-	time.Sleep(time.Millisecond * 100)
+	common.SleepSilently(ctx, time.Millisecond*100)
 
 }
 

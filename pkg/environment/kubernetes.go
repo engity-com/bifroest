@@ -12,6 +12,7 @@ import (
 	"time"
 
 	log "github.com/echocat/slf4g"
+	"github.com/moby/spdystream"
 	v1 "k8s.io/api/core/v1"
 
 	"github.com/engity-com/bifroest/pkg/common"
@@ -66,31 +67,44 @@ func (this *KubernetesRepository) new(ctx context.Context, pod *v1.Pod, logger l
 	fail := func(err error) (*kubernetes, error) {
 		return nil, errors.System.Newf("cannot create environment from pod %v/%v of flow %v: %w", pod.Namespace, pod.Name, this.flow, err)
 	}
+	failf := func(msg string, args ...any) (*kubernetes, error) {
+		return fail(errors.System.Newf(msg, args...))
+	}
 
 	result := &kubernetes{
 		repository: this,
 	}
 	if err := result.parsePod(pod); err != nil {
-		return fail(err)
+		return failf("cannot parse pod: %w", err)
 	}
 	var err error
 	if result.impSession, err = this.imp.Open(ctx, result); err != nil {
-		return fail(err)
+		return failf("cannot open IMP session: %w", err)
 	}
 
 	connId, err := connection.NewId()
 	if err != nil {
-		return fail(err)
+		return failf("cannot create new connection ID: %w", err)
 	}
 
 	for try := 1; try <= 200; try++ {
+		if err := ctx.Err(); err != nil {
+			return fail(err)
+		}
+
 		if environ, err := result.impSession.GetEnvironment(ctx, connId); err == nil {
 			result.environ = environ
 			break
-		} else if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, bkube.ErrEndpointNotFound) {
+		} else if errors.Is(err, io.EOF) ||
+			errors.Is(err, io.ErrUnexpectedEOF) ||
+			errors.Is(err, bkube.ErrEndpointNotFound) ||
+			errors.Is(err, spdystream.ErrWriteClosedStream) ||
+			errors.Is(err, spdystream.ErrReset) ||
+			errors.Is(err, spdystream.ErrTimeout) ||
+			errors.Is(err, spdystream.ErrInvalidStreamId) {
 			// try waiting...
 		} else {
-			return fail(err)
+			return failf("cannot get environment of created pod: %w", err)
 		}
 		l := logger.With("try", try)
 		if try <= 2 {
@@ -98,7 +112,10 @@ func (this *KubernetesRepository) new(ctx context.Context, pod *v1.Pod, logger l
 		} else if try%30 == 0 {
 			l.Info("still waiting for container's imp getting ready...")
 		}
-		time.Sleep(50 * time.Millisecond)
+
+		if err := common.Sleep(ctx, 50*time.Millisecond); err != nil {
+			return fail(err)
+		}
 	}
 
 	result.owners.Add(1)
