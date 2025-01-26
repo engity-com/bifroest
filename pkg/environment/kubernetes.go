@@ -88,6 +88,10 @@ func (this *KubernetesRepository) new(ctx context.Context, pod *v1.Pod, logger l
 	}
 
 	for try := 1; try <= 200; try++ {
+		if err := ctx.Err(); err != nil {
+			return fail(err)
+		}
+
 		if environ, err := result.impSession.GetEnvironment(ctx, connId); err == nil {
 			result.environ = environ
 			break
@@ -108,7 +112,10 @@ func (this *KubernetesRepository) new(ctx context.Context, pod *v1.Pod, logger l
 		} else if try%30 == 0 {
 			l.Info("still waiting for container's imp getting ready...")
 		}
-		time.Sleep(50 * time.Millisecond)
+
+		if err := common.Sleep(ctx, 50*time.Millisecond); err != nil {
+			return fail(err)
+		}
 	}
 
 	result.owners.Add(1)
