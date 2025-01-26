@@ -199,18 +199,20 @@ func (this *httpstreamConn) RemoteAddr() gonet.Addr {
 }
 
 func (this *httpstreamConn) SetDeadline(t time.Time) error {
-	this.delegate.SetIdleTimeout(time.Until(t))
+	if !t.IsZero() {
+		this.delegate.SetIdleTimeout(time.Until(t))
+	} else {
+		this.delegate.SetIdleTimeout(0)
+	}
 	return nil
 }
 
 func (this *httpstreamConn) SetReadDeadline(t time.Time) error {
-	this.delegate.SetIdleTimeout(time.Until(t))
-	return nil
+	return this.SetDeadline(t)
 }
 
 func (this *httpstreamConn) SetWriteDeadline(t time.Time) error {
-	this.delegate.SetIdleTimeout(time.Until(t))
-	return nil
+	return this.SetDeadline(t)
 }
 
 type httpstreamAddr string
