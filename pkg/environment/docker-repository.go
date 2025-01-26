@@ -219,6 +219,9 @@ func (this *DockerRepository) createContainerBy(req Request, sess session.Sessio
 	if err != nil {
 		return fail(err)
 	}
+	if c == nil {
+		return failf(errors.System, "container %v died instant after initial start", containerId)
+	}
 
 	success = true
 	return c, nil
