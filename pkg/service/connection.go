@@ -19,6 +19,25 @@ import (
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
+type wrappedNetOpError struct {
+	*gonet.OpError
+}
+
+func (this wrappedNetOpError) Error() string {
+	if v := this.OpError; v != nil {
+		return v.Error()
+	}
+	return ""
+}
+
+func (this wrappedNetOpError) String() string {
+	return this.Error()
+}
+
+func (this wrappedNetOpError) Unwrap() error {
+	return this.OpError
+}
+
 func (this *service) onNewConnConnection(ctx glssh.Context, orig gonet.Conn) gonet.Conn {
 	logger := this.Service.logger().WithAll(map[string]any{
 		"local":      withLazyContextOrFieldExclude[gonet.Addr](ctx, glssh.ContextKeyLocalAddr),
@@ -104,9 +123,10 @@ type connection struct {
 	service *service
 	created int64
 
-	interceptorP atomic.Pointer[session.ConnectionInterceptor]
-	closed       atomic.Bool
-	lastActivity atomic.Int64
+	interceptorP           atomic.Pointer[session.ConnectionInterceptor]
+	closed                 atomic.Bool
+	lastActivity           atomic.Int64
+	lastConnectionTimeType atomic.Uint32
 
 	read    atomic.Int64
 	written atomic.Int64
@@ -220,7 +240,28 @@ func (this *connection) doWithInterceptorOnAction(op string, action func(session
 		}
 	}
 
+	this.lastConnectionTimeType.Store(uint32(t))
+	this.lastActivity.Store(time.Now().UnixMilli())
 	return nil
+}
+
+func (this *connection) inspectIoError(err error) {
+	if err == nil {
+		return
+	}
+	var wnor wrappedNetOpError
+	if errors.As(err, &wnor) {
+		return
+		// We do not want to react to ourselves
+	}
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		t := connectionTimeType(this.lastConnectionTimeType.Load())
+		if t > 0 {
+			this.logger.
+				With("reason", t).
+				Info("connection was forcibly closed")
+		}
+	}
 }
 
 func (this *connection) Write(p []byte) (int, error) {
@@ -229,6 +270,7 @@ func (this *connection) Write(p []byte) (int, error) {
 	}
 	n, err := this.Conn.Write(p)
 	this.written.Add(int64(n))
+	this.inspectIoError(err)
 	return n, err
 }
 
@@ -238,6 +280,7 @@ func (this *connection) Read(b []byte) (int, error) {
 	}
 	n, err := this.Conn.Read(b)
 	this.read.Add(int64(n))
+	this.inspectIoError(err)
 	return n, err
 }
 

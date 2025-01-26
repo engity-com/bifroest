@@ -3,11 +3,16 @@
 package alternatives
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"io"
 	"net/http"
 	"net/url"
 	goos "os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -95,13 +100,50 @@ func (this *provider) FindBinaryFor(ctx context.Context, hostOs sys.Os, hostArch
 		return failf(errors.System, "cannot create directory to store alternative %v inside: %w", fn, err)
 	}
 
+	expectedFnInPackage := hostOs.AppendExtToFilename("bifroest")
+	var in io.Reader = resp.Body
+	switch path.Ext(du.Path) {
+	case ".tgz":
+		gz, err := gzip.NewReader(in)
+		if err != nil {
+			return failf(errors.System, "cannot read GZIP stream of alternative from %v: %w", du, err)
+		}
+		defer common.IgnoreCloseError(gz)
+		tr := tar.NewReader(gz)
+		for {
+			hdr, err := tr.Next()
+			if err == io.EOF {
+				return failf(errors.System, "cannot find file with name %q inside alternative from %v: %w", expectedFnInPackage, du, err)
+			}
+			if hdr != nil && hdr.Name == expectedFnInPackage {
+				in = tr
+				break
+			}
+		}
+	case ".zip":
+		buf, err := io.ReadAll(in)
+		if err != nil {
+			return failf(errors.System, "cannot read buffer stream of alternative from %v: %w", du, err)
+		}
+		zr, err := zip.NewReader(bytes.NewReader(buf), int64(len(buf)))
+		if err != nil {
+			return failf(errors.System, "cannot read ZIP stream of alternative from %v: %w", du, err)
+		}
+		zf, err := zr.Open(expectedFnInPackage)
+		if err != nil {
+			return failf(errors.System, "cannot read file with name %q inside alternative from %v: %w", expectedFnInPackage, du, err)
+		}
+		defer common.IgnoreCloseError(zf)
+		in = zf
+	}
+
 	out, err := goos.OpenFile(fn, goos.O_CREATE|goos.O_TRUNC|goos.O_WRONLY, 0644)
 	if err != nil {
 		return failf(errors.System, "cannot create target file %q to store alternative inside: %w", fn, err)
 	}
 	defer common.KeepCloseError(&rErr, out)
 
-	if _, err := io.Copy(out, resp.Body); err != nil {
+	if _, err := io.Copy(out, in); err != nil {
 		return failf(errors.System, "cannot store %q into target file %q to store alternative inside: %w", du, fn, err)
 	}
 
@@ -111,9 +153,7 @@ func (this *provider) FindBinaryFor(ctx context.Context, hostOs sys.Os, hostArch
 }
 
 func (this *provider) FindOciImageFor(_ context.Context, _ sys.Os, _ sys.Arch) (string, error) {
-	ver := this.version.Version()
-	ver = strings.TrimPrefix(ver, "v")
-	return "ghcr.io/engity-com/bifroest:generic-" + ver, nil
+	return "ghcr.io/engity-com/bifroest:generic-" + this.getVersionRef(), nil
 }
 
 func (this *provider) alternativesLocationFor(os sys.Os, arch sys.Arch) (string, error) {
@@ -124,7 +164,7 @@ func (this *provider) alternativesLocationFor(os sys.Os, arch sys.Arch) (string,
 		return fail(errors.Newf(t, msg, args...))
 	}
 
-	ctx := alternativeResolutionContext{os, arch, this.version.Version()}
+	ctx := alternativeResolutionContext{os, arch, this.getVersionRef()}
 	result, err := this.conf.Location.Render(ctx)
 	if err != nil {
 		return failf(errors.Config, "cannot resolve alternative location: %w", err)
@@ -140,10 +180,16 @@ func (this *provider) alternativesDownloadUrlFor(os sys.Os, arch sys.Arch) (*url
 		return fail(errors.Newf(t, msg, args...))
 	}
 
-	ctx := alternativeResolutionContext{os, arch, this.version.Version()}
+	ctx := alternativeResolutionContext{os, arch, this.getVersionRef()}
 	result, err := this.conf.DownloadUrl.Render(ctx)
 	if err != nil {
 		return failf(errors.Config, "cannot resolve alternative download url: %w", err)
 	}
 	return result, nil
+}
+
+func (this *provider) getVersionRef() string {
+	ver := this.version.Version()
+	ver = strings.TrimPrefix(ver, "v")
+	return ver
 }
