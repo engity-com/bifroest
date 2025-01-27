@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	goos "os"
@@ -56,7 +57,7 @@ func doDlv(addr string, wait bool, args []string) (rErr error) {
 	if err != nil {
 		return failf("cannot start to listen to %s: %w", addr, err)
 	}
-	defer common.IgnoreCloseError(ln)
+	// defer common.IgnoreCloseError(ln)
 
 	fn, err := goos.Executable()
 	if err != nil {
@@ -73,31 +74,38 @@ func doDlv(addr string, wait bool, args []string) (rErr error) {
 		APIVersion:     2,
 		DisconnectChan: disconnectChan,
 		Debugger: debugger.Config{
-			WorkingDir: ".",
-			Backend:    "default",
-			// Foreground:     true,
+			WorkingDir:     ".",
+			Backend:        "default",
+			Foreground:     true,
 			ExecuteKind:    debugger.ExecutingExistingFile,
 			CheckGoVersion: true,
-			// Stdin:          "",
-			// Stdout:         proc.OutputRedirect{File: goos.Stdout},
-			// Stderr:         proc.OutputRedirect{File: goos.Stderr},
 		},
 	})
 
 	if err := server.Run(); err != nil {
 		return fail(err)
 	}
-	defer common.KeepError(&rErr, server.Stop)
 
 	field := reflect.ValueOf(server).Elem().FieldByName("debugger")
 	dbg := *reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Interface().(**debugger.Debugger)
-
 	pid := dbg.ProcessPid()
 
-	p, err := goos.FindProcess(pid)
-	if err != nil {
-		return failf("cannot find process with PID %d we want to debug: %w", pid, err)
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errChan := make(chan error, 1)
+	exitCodeChan := make(chan int, 1)
+	go func() {
+		ec, err := waitForDlvTargetProcess(ctx, pid)
+		if err != nil {
+			errChan <- err
+			return
+		}
+
+		exitCodeChan <- ec
+	}()
+
+	defer common.KeepError(&rErr, server.Stop)
 
 	exitChan := make(chan struct{})
 	defer close(exitChan)
@@ -114,9 +122,7 @@ func doDlv(addr string, wait bool, args []string) (rErr error) {
 					continue
 				}
 				sig := sys.Signal(scs)
-				if err := sig.SendToProcess(p); err != nil {
-					log.WithError(err).With("pid", p.Pid).Warn("cannot send signal to process")
-				}
+				_ = sig.SendToPid(pid)
 			}
 		}
 	}()
@@ -125,31 +131,22 @@ func doDlv(addr string, wait bool, args []string) (rErr error) {
 		lnAddr := ln.Addr().String()
 		dial, err := net.Dial("tcp", lnAddr)
 		if err != nil {
-			return failf("cannot connect initially to %s: %w", lnAddr, err)
+			log.WithError(err).
+				With("addr", lnAddr).
+				Warn("can't do initial connect")
+			return
 		}
 		client := rpc2.NewClientFromConn(dial)
 		_ = client.Disconnect(true)
 	}
 
-	ps, err := p.Wait()
-	if err != nil {
-		log.WithError(err).With("pid", pid).Error("try wait for process... FAILED!")
-		return failf("cannot wait for process with PID %d: %w", pid, err)
-	}
-	ws := ps.Sys().(syscall.WaitStatus)
-
-	if ws.Exited() {
-		goos.Exit(ws.ExitStatus())
+	select {
+	case err := <-errChan:
+		return err
+	case exitCode := <-exitCodeChan:
+		goos.Exit(exitCode)
+		return nil
+	case <-disconnectChan:
 		return nil
 	}
-
-	if ws.Signaled() {
-		return fmt.Errorf("process received with signal %v (%d)", ws.Signal(), ws.Signal())
-	}
-
-	if ws.Stopped() {
-		return fmt.Errorf("process was stopped by signal %v (%d)", ws.StopSignal(), ws.StopSignal())
-	}
-
-	return nil
 }

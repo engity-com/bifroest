@@ -84,3 +84,7 @@ var (
 func (this Signal) sendToProcess(p *os.Process) error {
 	return p.Signal(this.Native())
 }
+
+func (this Signal) sendToPid(pid int) error {
+	return syscall.Kill(pid, this.Native())
+}

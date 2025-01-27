@@ -40,9 +40,11 @@ func Build(ctx context.Context, req BuildRequest) error {
 		return fail(errors.System.Newf(msg, args...))
 	}
 
-	ldFlags := " " + req.toLdFlags()
+	cFlags := ""
+	ldFlags := req.toLdFlags()
 	if !debug.IsEmbeddedDlvEnabled() {
-		ldFlags = " -w -s" + ldFlags
+		ldFlags = "-w -s " + ldFlags
+		cFlags = "all=-N -l"
 	}
 
 	var buildEnvPath string
@@ -59,7 +61,13 @@ func Build(ctx context.Context, req BuildRequest) error {
 	env := sys.EnvVars{}
 	env.Add(gos.Environ()...)
 	program := "go"
-	args := []string{"build", "-ldflags", ldFlags, "-o", outputFilePath}
+	args := []string{"build", "-o", outputFilePath}
+	if ldFlags != "" {
+		args = append(args, "-ldflags", ldFlags)
+	}
+	if cFlags != "" {
+		args = append(args, "-gcflags", cFlags)
+	}
 	if vs := req.Tags; len(vs) > 0 {
 		args = append(args, "-tags", strings.Join(vs, " "))
 	}
