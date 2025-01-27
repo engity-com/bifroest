@@ -76,11 +76,14 @@ func (this *imp) handleMethodTcpForward(ctx context.Context, header *Header, log
 	failCore := func(err error) error {
 		return errors.Network.Newf("handling %v failed: %w", header.Method, err)
 	}
-	failResponse := func(err error) error {
-		rsp := methodTcpForwardResponse{error: err}
-		if err := rsp.EncodeMsgPack(conn); err != nil {
+	failConnectResponse := func(err error) error {
+		wrapped := reWrapIfUserFacingNetworkErrors(err)
+
+		if err := (methodTcpForwardResponse{error: wrapped}).EncodeMsgPack(conn); err != nil {
 			return failCore(err)
 		}
+		logger.WithError(err).
+			Info("port forwarding failed")
 		return nil
 	}
 
@@ -88,17 +91,17 @@ func (this *imp) handleMethodTcpForward(ctx context.Context, header *Header, log
 	if err := req.DecodeMsgPack(conn); err != nil {
 		return failCore(err)
 	}
+	logger = logger.With("target", req.target)
 
 	var dialer gonet.Dialer
 	target, err := dialer.DialContext(ctx, "tcp", req.target.String())
 	if err != nil {
-		return failResponse(err)
+		return failConnectResponse(err)
 	}
 	defer common.IgnoreCloseError(target)
 
-	rsp := methodTcpForwardResponse{error: nil}
-	if err := rsp.EncodeMsgPack(conn); err != nil {
-		return failResponse(err)
+	if err := (methodTcpForwardResponse{}).EncodeMsgPack(conn); err != nil {
+		return failCore(err)
 	}
 
 	nameOf := func(isL2r bool) string {
@@ -163,6 +166,9 @@ func (this *Master) methodTcpForward(ctx context.Context, ref Ref, connectionId 
 	var rsp methodTcpForwardResponse
 	if err := rsp.DecodeMsgPack(conn); err != nil {
 		return fail(err)
+	}
+	if err := rsp.error; err != nil {
+		return fail(errors.AsRemoteError(err))
 	}
 
 	success = true

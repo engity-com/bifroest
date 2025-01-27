@@ -26,6 +26,13 @@ func (this Signal) SendToProcess(p *os.Process) error {
 	return this.sendToProcess(p)
 }
 
+func (this Signal) SendToPid(pid int) error {
+	if pid == 0 {
+		return nil
+	}
+	return this.sendToPid(pid)
+}
+
 func (this Signal) String() string {
 	if this == 0 {
 		return ""

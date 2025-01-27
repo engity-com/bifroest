@@ -86,11 +86,15 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 	failCoref := func(msg string, args ...any) error {
 		return failCore(errors.Network.Newf(msg, args...))
 	}
-	failResponse := func(err error) error {
-		rsp := methodNamedPipeResponse{error: err}
-		if err := rsp.EncodeMsgPack(conn); err != nil {
+	failConnectResponse := func(err error) error {
+		wrapped := reWrapIfUserFacingNetworkErrors(err)
+
+		if err := (methodNamedPipeResponse{error: wrapped}).EncodeMsgPack(conn); err != nil {
 			return failCore(err)
 		}
+
+		logger.WithError(err).
+			Info("named pipe streaming failed")
 		return nil
 	}
 
@@ -102,7 +106,7 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 
 	pipe, err := net.NewNamedPipe(req.purpose)
 	if err != nil {
-		return failResponse(err)
+		return failConnectResponse(err)
 	}
 	defer common.IgnoreCloseError(pipe)
 	go func(logger log.Logger) {
@@ -112,8 +116,7 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 	}(logger)
 
 	conf := baseNamedPipeConfig()
-	rsp := methodNamedPipeResponse{path: pipe.Path()}
-	if err := rsp.EncodeMsgPack(conn); err != nil {
+	if err := (methodNamedPipeResponse{path: pipe.Path()}).EncodeMsgPack(conn); err != nil {
 		return failCoref("cannot encode response: %w", err)
 	}
 
@@ -224,6 +227,9 @@ func (this *Master) methodNamedPipe(ctx context.Context, ref Ref, connectionId c
 	var rsp methodNamedPipeResponse
 	if err := rsp.DecodeMsgPack(conn); err != nil {
 		return fail(err)
+	}
+	if err := rsp.error; err != nil {
+		return fail(errors.AsRemoteError(err))
 	}
 
 	conf := baseNamedPipeConfig()

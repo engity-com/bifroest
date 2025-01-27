@@ -18,6 +18,7 @@ import (
 	"github.com/engity-com/bifroest/internal/build/binary"
 	"github.com/engity-com/bifroest/internal/build/images"
 	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/debug"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
@@ -54,15 +55,6 @@ func (this *provider) FindBinaryFor(ctx context.Context, hostOs sys.Os, hostArch
 		With("os", hostOs).
 		With("arch", hostArch).
 		With("version", this.version.Version())
-
-	if sys.IsBinaryCompatibleWithHost(this.version.Os(), this.version.Arch(), hostOs, hostArch) {
-		result, err := goos.Executable()
-		if err != nil {
-			return failf("cannot resolve the location of the server's executable location: %w", err)
-		}
-		l.Debug("requested imp binaries does match current binary; returning itself")
-		return result, nil
-	}
 
 	result := filepath.Join("var", "dist", "local-development",
 		hostOs.AppendExtToFilename("bifroest-"+hostOs.String()+"-"+hostArch.String()+"-generic"),
@@ -104,6 +96,7 @@ func (this *provider) FindBinaryFor(ctx context.Context, hostOs sys.Os, hostArch
 		},
 		Version:    "local-development",
 		TargetFile: result,
+		Tags:       debug.GetTargetBuildTags(),
 	}
 
 	l.Info("there is no alternative existing; building it...")

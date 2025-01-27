@@ -99,7 +99,7 @@ func (this *Master) methodGetEnvironment(ctx context.Context, ref Ref, connectio
 	if err := this.do(ctx, ref, connectionId, MethodGetEnvironment, func(header *Header, conn codec.MsgPackConn) error {
 		return handleFromClientSide(ctx, header, conn, methodGetEnvironmentRequest{}, func(v *methodGetEnvironmentResponse) error {
 			result = v.variables
-			return v.error
+			return errors.AsRemoteError(v.error)
 		})
 	}); err != nil {
 		return nil, err

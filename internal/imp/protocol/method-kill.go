@@ -120,7 +120,7 @@ func (this *Master) methodKill(ctx context.Context, ref Ref, connectionId connec
 			pid:    pid,
 			signal: signal,
 		}, func(v *methodKillResponse) error {
-			return v.error
+			return errors.AsRemoteError(v.error)
 		})
 	})
 }

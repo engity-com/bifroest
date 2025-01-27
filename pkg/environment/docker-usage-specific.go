@@ -83,12 +83,16 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 
 	if ssh.AgentRequested(sshSess) {
 		ln, err := this.impSession.InitiateNamedPipe(t.Context(), t.Connection().Id(), "ssh-agent")
-		if err != nil {
+		var re errors.RemoteError
+		if errors.As(err, &re) {
+			l.WithError(err).Warn("it was not possible to initiate named pipe for agent; agent deactivated")
+		} else if err != nil {
 			return fail(err)
+		} else {
+			defer common.IgnoreCloseError(ln)
+			go ssh.ForwardAgentConnections(ln, l, sshSess)
+			ev.Set(ssh.AuthSockEnvName, ln.Path())
 		}
-		defer common.IgnoreCloseError(ln)
-		go ssh.ForwardAgentConnections(ln, l, sshSess)
-		ev.Set(ssh.AuthSockEnvName, ln.Path())
 	}
 
 	var execId string

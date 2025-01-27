@@ -86,7 +86,7 @@ func (this *Master) DialContextWithMsgPack(ctx context.Context, ref Ref) (codec.
 	if err != nil {
 		return fail(err)
 	}
-	return codec.GetPooledMsgPackConn(conn), nil
+	return codec.NewMsgPackConn(conn), nil
 }
 
 func (this *Master) tlsConfigFor(ref Ref) (_ *tls.Config, releaser func(), _ error) {

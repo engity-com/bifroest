@@ -50,15 +50,26 @@ var (
 	procGenerateConsoleCtrlEvent = dllKernel32.NewProc("GenerateConsoleCtrlEvent")
 )
 
+func (this Signal) sendToPid(pid int) error {
+	if this == SIGINT {
+		return this.sendIntToPid(pid)
+	}
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return this.sendToProcess(p)
+}
+
 func (this Signal) sendToProcess(p *os.Process) error {
 	if this == SIGINT {
-		return this.sendIntToProcess(p)
+		return this.sendIntToPid(p.Pid)
 	}
 	return p.Signal(this.Native())
 }
 
-func (this Signal) sendIntToProcess(p *os.Process) error {
-	r1, _, err := procAttachConsole.Call(uintptr(p.Pid))
+func (this Signal) sendIntToPid(pid int) error {
+	r1, _, err := procAttachConsole.Call(uintptr(pid))
 	if r1 == 0 && !errors.Is(err, syscall.ERROR_ACCESS_DENIED) {
 		return err
 	}
@@ -66,7 +77,7 @@ func (this Signal) sendIntToProcess(p *os.Process) error {
 	if r1 == 0 {
 		return err
 	}
-	r1, _, err = procGenerateConsoleCtrlEvent.Call(windows.CTRL_BREAK_EVENT, uintptr(p.Pid))
+	r1, _, err = procGenerateConsoleCtrlEvent.Call(windows.CTRL_BREAK_EVENT, uintptr(pid))
 	if r1 == 0 {
 		return err
 	}
