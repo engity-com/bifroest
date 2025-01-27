@@ -839,26 +839,24 @@ func (this *KubernetesRepository) resolveContainerConfig(req Request, sess sessi
 		targetPort = debug.DlvPort
 	}
 
-	if !debug.IsEmbeddedDlvEnabled() {
-		result.LivenessProbe = &v1.Probe{
-			ProbeHandler: v1.ProbeHandler{
-				TCPSocket: &v1.TCPSocketAction{
-					Port: intstr.FromInt32(targetPort),
-				},
+	result.LivenessProbe = &v1.Probe{
+		ProbeHandler: v1.ProbeHandler{
+			TCPSocket: &v1.TCPSocketAction{
+				Port: intstr.FromInt32(targetPort),
 			},
-			PeriodSeconds:    5,
-			FailureThreshold: 1,
-		}
+		},
+		PeriodSeconds:    5,
+		FailureThreshold: 1,
+	}
 
-		result.StartupProbe = &v1.Probe{
-			ProbeHandler: v1.ProbeHandler{
-				TCPSocket: &v1.TCPSocketAction{
-					Port: intstr.FromInt32(targetPort),
-				},
+	result.StartupProbe = &v1.Probe{
+		ProbeHandler: v1.ProbeHandler{
+			TCPSocket: &v1.TCPSocketAction{
+				Port: intstr.FromInt32(targetPort),
 			},
-			PeriodSeconds:    1,
-			FailureThreshold: 60,
-		}
+		},
+		PeriodSeconds:    1,
+		FailureThreshold: 60,
 	}
 
 	if vs, err := this.conf.Capabilities.Render(req); err != nil {

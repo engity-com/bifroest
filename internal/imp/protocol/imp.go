@@ -103,7 +103,7 @@ func (this *imp) serveConn(ctx context.Context, plainConn gonet.Conn) (rErr erro
 	done := func(err error) error {
 		return err
 	}
-	conn := codec.GetPooledMsgPackConn(plainConn)
+	conn := codec.NewMsgPackConn(plainConn)
 	defer common.KeepCloseError(&rErr, conn)
 
 	var header Header

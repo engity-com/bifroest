@@ -1,9 +1,7 @@
 package errors
 
 import (
-	"bytes"
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
 
@@ -102,11 +100,7 @@ func (this *Type) DecodeMsgPack(dec codec.MsgPackDecoder) error {
 	buf := Type(v)
 	_, ok := typeToStr[buf]
 	if !ok {
-		var bb bytes.Buffer
-		bb.WriteByte(byte(buf))
-		_, _ = io.Copy(&bb, dec.Buffered())
-
-		return fmt.Errorf("unknown error type: %d (msgpck) - %s", v, bb.String())
+		return fmt.Errorf("unknown error type: %d (msgpck)", v)
 	}
 	*this = buf
 	return nil

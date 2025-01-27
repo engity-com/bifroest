@@ -1,3 +1,5 @@
+//go:build embedded_dlv
+
 package main
 
 import (

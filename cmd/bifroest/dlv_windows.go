@@ -1,4 +1,4 @@
-//go:build windows
+//go:build windows && embedded_dlv
 
 package main
 
@@ -9,7 +9,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
-func waitForDlvTargetProcess(ctx context.Context, pid int) (int, error) {
+func waitForDlvTargetProcess(_ context.Context, pid int) (int, error) {
 	p, err := goos.FindProcess(pid)
 	if err != nil {
 		return -1, errors.System.Newf("cannot find process with PID %d we want to debug: %w", pid, err)

@@ -1,4 +1,4 @@
-//go:build unix
+//go:build unix && embedded_dlv
 
 package main
 

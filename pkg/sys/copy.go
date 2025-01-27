@@ -56,7 +56,17 @@ func FullDuplexCopy(ctx context.Context, left io.ReadWriter, right io.ReadWriter
 			}
 		}
 
-		n, err := io.Copy(to, from)
+		var err error
+		var n int64
+		defer func() {
+			if opts != nil {
+				if f := opts.OnStreamEnd; f != nil {
+					f(isL2r, err)
+				}
+			}
+		}()
+
+		n, err = io.Copy(to, from)
 		if !isRelevantError(err) {
 			// If this is NOT relevant, set it always to nil...
 			err = nil
@@ -78,12 +88,6 @@ func FullDuplexCopy(ctx context.Context, left io.ReadWriter, right io.ReadWriter
 			l2r.Store(n)
 		} else {
 			r2l.Store(n)
-		}
-
-		if opts != nil {
-			if f := opts.OnStreamEnd; f != nil {
-				f(isL2r, err)
-			}
 		}
 	}
 	wg.Add(2)
