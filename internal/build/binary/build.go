@@ -12,6 +12,7 @@ import (
 
 	"github.com/engity-com/bifroest/internal/build"
 	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/debug"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
@@ -22,6 +23,7 @@ type BuildRequest struct {
 	Version  string
 	Vendor   string
 	Revision string
+	Tags     []string
 
 	TargetFile string
 
@@ -38,8 +40,10 @@ func Build(ctx context.Context, req BuildRequest) error {
 		return fail(errors.System.Newf(msg, args...))
 	}
 
-	ldFlags := " -s -w " + req.toLdFlags()
-	req.Platform.ToLdFlags()
+	ldFlags := " " + req.toLdFlags()
+	if !debug.IsEmbeddedDlvEnabled() {
+		ldFlags = " -w -s" + ldFlags
+	}
 
 	var buildEnvPath string
 
@@ -55,7 +59,12 @@ func Build(ctx context.Context, req BuildRequest) error {
 	env := sys.EnvVars{}
 	env.Add(gos.Environ()...)
 	program := "go"
-	args := []string{"build", "-ldflags", ldFlags, "-o", outputFilePath, "./cmd/bifroest"}
+	args := []string{"build", "-ldflags", ldFlags, "-o", outputFilePath}
+	if vs := req.Tags; len(vs) > 0 {
+		args = append(args, "-tags", strings.Join(vs, " "))
+	}
+	args = append(args, "./cmd/bifroest")
+
 	if req.WslBuildDistribution != "" {
 		wd, err := gos.Getwd()
 		if err != nil {

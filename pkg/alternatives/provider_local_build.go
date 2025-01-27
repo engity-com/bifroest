@@ -18,6 +18,7 @@ import (
 	"github.com/engity-com/bifroest/internal/build/binary"
 	"github.com/engity-com/bifroest/internal/build/images"
 	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/debug"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
@@ -104,6 +105,7 @@ func (this *provider) FindBinaryFor(ctx context.Context, hostOs sys.Os, hostArch
 		},
 		Version:    "local-development",
 		TargetFile: result,
+		Tags:       debug.GetTargetBuildTags(),
 	}
 
 	l.Info("there is no alternative existing; building it...")

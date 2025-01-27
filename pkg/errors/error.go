@@ -40,9 +40,10 @@ func IsType(err error, t Type, otherT ...Type) bool {
 }
 
 type Error struct {
-	Message string
-	Cause   error
-	Type    Type
+	Message    string
+	Cause      error
+	Type       Type
+	UserFacing bool
 }
 
 func (this *Error) Error() string {
@@ -79,7 +80,7 @@ func IsError(err error) (eErr *Error, ok bool) {
 
 func EncodeMsgPack(err error, using codec.MsgPackEncoder) error {
 	if err == nil {
-		return Unknown.EncodeMsgPack(using)
+		return Error{}.EncodeMsgPack(using)
 	}
 
 	eErr, ok := IsError(err)
@@ -115,11 +116,13 @@ func (this Error) EncodeMsgPack(enc codec.MsgPackEncoder) error {
 	if err := this.Type.EncodeMsgPack(enc); err != nil {
 		return err
 	}
-	if this.Type == 0 {
-		return nil
-	}
-	if err := enc.EncodeString(this.Error()); err != nil {
-		return err
+	if this.Type != 0 {
+		if err := enc.EncodeString(this.Message); err != nil {
+			return err
+		}
+		if err := enc.EncodeBool(this.UserFacing); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -129,12 +132,13 @@ func (this *Error) DecodeMsgPack(dec codec.MsgPackDecoder) (err error) {
 	if err = buf.Type.DecodeMsgPack(dec); err != nil {
 		return err
 	}
-	if buf.Type == 0 {
-		*this = buf
-		return nil
-	}
-	if buf.Message, err = dec.DecodeString(); err != nil {
-		return err
+	if buf.Type != 0 {
+		if buf.Message, err = dec.DecodeString(); err != nil {
+			return err
+		}
+		if buf.UserFacing, err = dec.DecodeBool(); err != nil {
+			return err
+		}
 	}
 	*this = buf
 	return nil

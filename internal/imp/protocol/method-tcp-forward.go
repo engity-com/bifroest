@@ -1,7 +1,9 @@
 package protocol
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	gonet "net"
 	"time"
 
@@ -14,6 +16,11 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/sys"
+)
+
+var (
+	magic1 = []byte("[-start]")
+	magic2 = []byte("[start-]")
 )
 
 type methodTcpForwardRequest struct {
@@ -47,7 +54,9 @@ func (this *methodTcpForwardRequest) DecodeMsgPack(dec codec.MsgPackDecoder) (er
 }
 
 type methodTcpForwardResponse struct {
-	error error
+	magic1 []byte
+	error  error
+	magic2 []byte
 }
 
 func (this methodTcpForwardResponse) EncodeMsgpack(enc *msgpack.Encoder) error {
@@ -59,15 +68,31 @@ func (this *methodTcpForwardResponse) DecodeMsgpack(dec *msgpack.Decoder) (err e
 }
 
 func (this methodTcpForwardResponse) EncodeMsgPack(enc codec.MsgPackEncoder) error {
+	if err := enc.EncodeBytes(this.magic1); err != nil {
+		return err
+	}
 	if err := errors.EncodeMsgPack(this.error, enc); err != nil {
+		return err
+	}
+	if err := enc.EncodeBytes(this.magic2); err != nil {
 		return err
 	}
 	return nil
 }
 
 func (this *methodTcpForwardResponse) DecodeMsgPack(dec codec.MsgPackDecoder) (err error) {
+	if v, err := dec.DecodeBytes(); err != nil {
+		return err
+	} else if !bytes.Equal(magic1, v) {
+		return fmt.Errorf("expected %q, got %q", string(magic1), string(v))
+	}
 	if this.error, err = errors.DecodeMsgPack(dec); err != nil {
 		return err
+	}
+	if v, err := dec.DecodeBytes(); err != nil {
+		return err
+	} else if !bytes.Equal(magic2, v) {
+		return fmt.Errorf("expected %q, got %q", string(magic2), string(v))
 	}
 	return nil
 }
@@ -76,11 +101,14 @@ func (this *imp) handleMethodTcpForward(ctx context.Context, header *Header, log
 	failCore := func(err error) error {
 		return errors.Network.Newf("handling %v failed: %w", header.Method, err)
 	}
-	failResponse := func(err error) error {
-		rsp := methodTcpForwardResponse{error: err}
-		if err := rsp.EncodeMsgPack(conn); err != nil {
+	failConnectResponse := func(err error) error {
+		wrapped := reWrapIfUserFacingNetworkErrors(err)
+
+		if err := (methodTcpForwardResponse{error: wrapped}).EncodeMsgPack(conn); err != nil {
 			return failCore(err)
 		}
+		logger.WithError(err).
+			Info("port forwarding failed")
 		return nil
 	}
 
@@ -88,18 +116,19 @@ func (this *imp) handleMethodTcpForward(ctx context.Context, header *Header, log
 	if err := req.DecodeMsgPack(conn); err != nil {
 		return failCore(err)
 	}
+	logger = logger.With("target", req.target)
 
 	var dialer gonet.Dialer
 	target, err := dialer.DialContext(ctx, "tcp", req.target.String())
 	if err != nil {
-		return failResponse(err)
+		return failConnectResponse(err)
 	}
 	defer common.IgnoreCloseError(target)
 
-	rsp := methodTcpForwardResponse{error: nil}
-	if err := rsp.EncodeMsgPack(conn); err != nil {
-		return failResponse(err)
+	if err := (methodTcpForwardResponse{}).EncodeMsgPack(conn); err != nil {
+		return failCore(err)
 	}
+	logger.Info("encoded")
 
 	nameOf := func(isL2r bool) string {
 		if isL2r {
@@ -163,6 +192,9 @@ func (this *Master) methodTcpForward(ctx context.Context, ref Ref, connectionId 
 	var rsp methodTcpForwardResponse
 	if err := rsp.DecodeMsgPack(conn); err != nil {
 		return fail(err)
+	}
+	if err := rsp.error; err != nil {
+		return fail(errors.AsRemoteError(err))
 	}
 
 	success = true

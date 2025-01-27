@@ -1,7 +1,9 @@
 package errors
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
@@ -37,7 +39,7 @@ func (t Type) IsErr(err error) bool {
 func (t Type) String() string {
 	v, ok := typeToStr[t]
 	if !ok {
-		return "unknown-" + strconv.FormatUint(uint64(t), 10)
+		return "unknown-error-type-" + strconv.FormatUint(uint64(t), 10)
 	}
 	return v
 }
@@ -45,7 +47,7 @@ func (t Type) String() string {
 func (t Type) MarshalText() ([]byte, error) {
 	v, ok := typeToStr[t]
 	if !ok {
-		return nil, fmt.Errorf("unknown-type-%d", t)
+		return nil, fmt.Errorf("unknown error type: %d", t)
 	}
 	return []byte(v), nil
 }
@@ -53,7 +55,7 @@ func (t Type) MarshalText() ([]byte, error) {
 func (t *Type) Set(plain string) error {
 	candidate, ok := strToType[strings.ToLower(plain)]
 	if !ok {
-		return fmt.Errorf("unknown-type: %q", plain)
+		return fmt.Errorf("unknown error type: %q", plain)
 	}
 	*t = candidate
 	return nil
@@ -100,7 +102,11 @@ func (this *Type) DecodeMsgPack(dec codec.MsgPackDecoder) error {
 	buf := Type(v)
 	_, ok := typeToStr[buf]
 	if !ok {
-		return fmt.Errorf("unknown-type-%d", v)
+		var bb bytes.Buffer
+		bb.WriteByte(byte(buf))
+		_, _ = io.Copy(&bb, dec.Buffered())
+
+		return fmt.Errorf("unknown error type: %d (msgpck) - %s", v, bb.String())
 	}
 	*this = buf
 	return nil

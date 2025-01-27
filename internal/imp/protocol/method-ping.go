@@ -64,7 +64,7 @@ func (this *imp) handleMethodPing(ctx context.Context, header *Header, _ log.Log
 func (this *Master) methodPing(ctx context.Context, ref Ref, connectionId connection.Id) error {
 	return this.do(ctx, ref, connectionId, MethodPing, func(header *Header, conn codec.MsgPackConn) error {
 		return handleFromClientSide(ctx, header, conn, methodPingRequest{}, func(v *methodPingResponse) error {
-			return v.error
+			return errors.AsRemoteError(v.error)
 		})
 	})
 }

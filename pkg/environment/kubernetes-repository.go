@@ -29,6 +29,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/debug"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/imp"
 	bkp "github.com/engity-com/bifroest/pkg/kubernetes"
@@ -770,8 +771,8 @@ func (this *KubernetesRepository) resolveContainerConfig(req Request, sess sessi
 
 	result.Ports = []v1.ContainerPort{{
 		Name:          "imp",
-		ContainerPort: 8683,
-		Protocol:      "TCP",
+		ContainerPort: imp.ServicePort,
+		Protocol:      v1.ProtocolTCP,
 	}}
 	// TODO! Maybe, allow other ports?
 
@@ -786,12 +787,29 @@ func (this *KubernetesRepository) resolveContainerConfig(req Request, sess sessi
 		result.SecurityContext.RunAsGroup = common.P[int64](0)
 	}
 
-	result.Args = []string{
-		`imp`,
-		`--log.colorMode=always`,
+	withLogging := func(in ...string) []string {
+		out := append(in, "--log.colorMode=always")
+		if v := this.defaultLogLevelName; v != "" {
+			out = append(out, "--log.level="+v)
+		}
+		return out
 	}
-	if this.defaultLogLevelName != "" {
-		result.Args = append(result.Args, `--log.level=`+this.defaultLogLevelName)
+
+	result.Args = withLogging("imp")
+
+	if debug.IsEmbeddedDlvEnabled() {
+		debugArgs := []string{"dlv"}
+		if debug.ShouldEmbeddedDlvWait() {
+			debugArgs = append(debugArgs, "--wait")
+		}
+		debugArgs = withLogging(debugArgs...)
+		debugArgs = append(debugArgs, "--")
+		result.Args = append(debugArgs, result.Args...)
+		result.Ports = append(result.Ports, v1.ContainerPort{
+			Name:          "dlv",
+			ContainerPort: debug.DlvPort,
+			Protocol:      v1.ProtocolTCP,
+		})
 	}
 
 	masterPub, err := this.imp.GetMasterPublicKey()
@@ -815,24 +833,32 @@ func (this *KubernetesRepository) resolveContainerConfig(req Request, sess sessi
 	}}
 	// TODO! Maybe, allow other volume mounts? (see above at POD config itself)
 
-	result.LivenessProbe = &v1.Probe{
-		ProbeHandler: v1.ProbeHandler{
-			TCPSocket: &v1.TCPSocketAction{
-				Port: intstr.FromInt32(imp.ServicePort),
-			},
-		},
-		PeriodSeconds:    5,
-		FailureThreshold: 1,
+	var targetPort int32 = imp.ServicePort
+
+	if debug.IsEmbeddedDlvEnabled() {
+		targetPort = debug.DlvPort
 	}
 
-	result.StartupProbe = &v1.Probe{
-		ProbeHandler: v1.ProbeHandler{
-			TCPSocket: &v1.TCPSocketAction{
-				Port: intstr.FromInt32(imp.ServicePort),
+	if !debug.IsEmbeddedDlvEnabled() {
+		result.LivenessProbe = &v1.Probe{
+			ProbeHandler: v1.ProbeHandler{
+				TCPSocket: &v1.TCPSocketAction{
+					Port: intstr.FromInt32(targetPort),
+				},
 			},
-		},
-		PeriodSeconds:    1,
-		FailureThreshold: 60,
+			PeriodSeconds:    5,
+			FailureThreshold: 1,
+		}
+
+		result.StartupProbe = &v1.Probe{
+			ProbeHandler: v1.ProbeHandler{
+				TCPSocket: &v1.TCPSocketAction{
+					Port: intstr.FromInt32(targetPort),
+				},
+			},
+			PeriodSeconds:    1,
+			FailureThreshold: 60,
+		}
 	}
 
 	if vs, err := this.conf.Capabilities.Render(req); err != nil {
@@ -1049,12 +1075,6 @@ func (this *KubernetesRepository) removePod(ctx context.Context, namespace, name
 		return fail(err)
 	}
 
-	if err := client.Delete(ctx, name, metav1.DeleteOptions{}); errdefs.IsNotFound(err) {
-		return false, nil
-	} else if err != nil {
-		return fail(err)
-	}
-
 	watch, err := client.Watch(ctx, metav1.ListOptions{
 		FieldSelector: "metadata.name=" + name,
 	})
@@ -1064,6 +1084,12 @@ func (this *KubernetesRepository) removePod(ctx context.Context, namespace, name
 		return fail(err)
 	}
 	defer watch.Stop()
+
+	if err := client.Delete(ctx, name, metav1.DeleteOptions{}); errdefs.IsNotFound(err) {
+		return false, nil
+	} else if err != nil {
+		return fail(err)
+	}
 
 	l := this.logger().
 		With("namespace", namespace).

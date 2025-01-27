@@ -1,6 +1,8 @@
 package service
 
 import (
+	"fmt"
+	"io"
 	"syscall"
 	"time"
 
@@ -90,14 +92,20 @@ func (this *service) handleNewDirectTcpIp(_ *glssh.Server, _ *gossh.ServerConn, 
 
 	dConn, err := env.NewDestinationConnection(ctx, dest)
 	if err != nil {
-		if this.isAcceptableNewConnectionError(err) {
+		var re errors.RemoteError
+		if errors.As(err, &re) {
 			l.WithError(err).
 				Info("cannot connect to port forwarding destination; rejecting...")
+			_ = newChan.Reject(gossh.ConnectionFailed, fmt.Sprintf("cannot connect to %v: %v", dest, re))
+		} else if ufe := this.reWrapUserFacingErrors(err); ufe != nil {
+			l.WithError(ufe).
+				Info("cannot connect to port forwarding destination; rejecting...")
+			_ = newChan.Reject(gossh.ConnectionFailed, fmt.Sprintf("cannot connect to %v: %v", dest, ufe))
 		} else {
 			l.WithError(err).
 				Warn("cannot connect to port forwarding destination; rejecting...")
+			_ = newChan.Reject(gossh.ConnectionFailed, fmt.Sprintf("cannot connect to %v: internal error", dest))
 		}
-		_ = newChan.Reject(gossh.ConnectionFailed, err.Error())
 		return
 	}
 	if dConn == nil {
@@ -159,21 +167,34 @@ func (this *service) onReversePortForwardingRequested(_ glssh.Context, _ string,
 	return true
 }
 
-func (this *service) isAcceptableNewConnectionError(err error) bool {
+func (this *service) reWrapUserFacingErrors(err error) *errors.Error {
 	if err == nil {
-		return false
+		return nil
+	}
+
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return &errors.Error{
+			Message:    io.EOF.Error(),
+			Cause:      err,
+			Type:       errors.Network,
+			UserFacing: true,
+		}
 	}
 
 	var sce syscall.Errno
 	if errors.As(err, &sce) {
-		switch //goland:noinspection GoDirectComparisonOfErrors
-		sce {
+		switch sce {
 		case syscall.ECONNREFUSED, syscall.ETIMEDOUT, syscall.EHOSTDOWN, syscall.ENETUNREACH:
-			return true
+			return &errors.Error{
+				Message:    sce.Error(),
+				Cause:      sce,
+				Type:       errors.Network,
+				UserFacing: true,
+			}
 		default:
-			return false
+			return nil
 		}
 	}
 
-	return false
+	return nil
 }

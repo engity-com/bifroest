@@ -99,7 +99,7 @@ func (this *Master) methodGetConnectionExitCode(ctx context.Context, ref Ref, co
 	if err := this.do(ctx, ref, connectionId, MethodGetConnectionExitCode, func(header *Header, conn codec.MsgPackConn) error {
 		return handleFromClientSide(ctx, header, conn, methodGetConnectionExitCodeRequest{}, func(v *methodGetConnectionExitCodeResponse) error {
 			if err := v.error; err != nil {
-				return err
+				return errors.AsRemoteError(err)
 			}
 			if !v.found {
 				return connection.ErrNotFound
