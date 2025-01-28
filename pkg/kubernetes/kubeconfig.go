@@ -122,16 +122,7 @@ func (this *Kubeconfig) loadConfigFrom(plain []byte) (*clientcmdapi.Config, erro
 		return this.loadInclusterConfig()
 	}
 
-	raw, err := os.ReadFile(string(plain))
-	if err != nil {
-		return nil, err
-	}
-
-	return this.parseConfigFrom(raw)
-}
-
-func (this *Kubeconfig) parseConfigFrom(raw []byte) (*clientcmdapi.Config, error) {
-	decoded, _, err := clientcmdlatest.Codec.Decode(raw, &configGvk, clientcmdapi.NewConfig())
+	decoded, _, err := clientcmdlatest.Codec.Decode(plain, &configGvk, clientcmdapi.NewConfig())
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +132,7 @@ func (this *Kubeconfig) parseConfigFrom(raw []byte) (*clientcmdapi.Config, error
 func (this *Kubeconfig) loadDefaultConfig() (*clientcmdapi.Config, error) {
 	if v, ok := os.LookupEnv(EnvVarKubeconfig); ok && len(v) > 0 {
 		// As path was empty, but KUBE_CONFIG is set, use it's content.
-		result, err := this.parseConfigFrom([]byte(v))
+		result, err := this.loadConfigFrom([]byte(v))
 		if err != nil {
 			return nil, errors.Config.Newf("cannot parse kubeconfig of environment variable %s: %w", EnvVarKubeconfig, err)
 		}
@@ -176,7 +167,7 @@ func (this *Kubeconfig) loadDefaultConfig() (*clientcmdapi.Config, error) {
 		return nil, errors.Config.Newf("cannot load kubeconfig %q: %w", fn, err)
 	}
 
-	result, err := this.parseConfigFrom(v)
+	result, err := this.loadConfigFrom(v)
 	if err != nil {
 		return nil, errors.Config.Newf("cannot parse kubeconfig %q: %w", fn, err)
 	}
@@ -214,11 +205,11 @@ func (this *Kubeconfig) loadInclusterConfig() (result *clientcmdapi.Config, err 
 	return result, nil
 }
 
-func (this *Kubeconfig) GetClient(contextName, namespace string) (Client, error) {
-	return this.getClient(contextName, namespace)
+func (this *Kubeconfig) GetClient(contextName string) (Client, error) {
+	return this.getClient(contextName)
 }
 
-func (this *Kubeconfig) getClient(contextName, namespace string) (*client, error) {
+func (this *Kubeconfig) getClient(contextName string) (*client, error) {
 	loader := kubeconfigLoader{
 		loader:  this.loadConfig,
 		context: contextName,
@@ -239,11 +230,12 @@ func (this *Kubeconfig) getClient(contextName, namespace string) (*client, error
 		return nil, clientcmd.ErrNoContext
 	}
 
+	var namespace string
 	if rc.Contexts == nil {
 		return nil, errors.Config.Newf("no contexts defined in kubeconfig")
 	} else if ctx, ok := rc.Contexts[rc.CurrentContext]; !ok {
 		return nil, errors.Config.Newf("kubeconfig does not contain context %q", rc.CurrentContext)
-	} else if namespace == "" {
+	} else {
 		namespace = ctx.Namespace
 	}
 
