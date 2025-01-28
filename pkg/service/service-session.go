@@ -37,7 +37,7 @@ func (this *service) uncheckedExecuteSshSession(sshSess glssh.Session, taskType 
 
 	l.With("type", taskType).
 		With("env", sshSess.Environ()).
-		With("command", sshSess.Command()).
+		With("command", sshSess.RawCommand()).
 		Info("new remote session")
 
 	if exitCode, err := this.executeSession(sshSess, conn, taskType); err != nil {
