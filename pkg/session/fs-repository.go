@@ -28,6 +28,9 @@ import (
 
 const (
 	maxFsRepositoryPublicKeyLineSize = 6 * 1024
+
+	// Be default we do not want to touch [FsFileLastAccessed] more than once per minute.
+	defaultTouchThreshold = 1 * time.Minute
 )
 
 var (
@@ -35,8 +38,22 @@ var (
 )
 
 func NewFsRepository(_ context.Context, conf *configuration.SessionFs) (*FsRepository, error) {
+	touchThreshold := defaultTouchThreshold
+	if v := conf.IdleTimeout.Native(); v > 0 {
+		touchThreshold = v
+	}
+	if v := conf.MaxTimeout.Native(); v > 0 && v < touchThreshold {
+		touchThreshold = v
+	}
+	if touchThreshold > defaultTouchThreshold {
+		touchThreshold = defaultTouchThreshold
+	} else {
+		touchThreshold = touchThreshold / 2
+	}
+
 	result := FsRepository{
-		conf: conf,
+		conf:           conf,
+		touchThreshold: touchThreshold,
 	}
 
 	return &result, nil
@@ -46,6 +63,8 @@ type FsRepository struct {
 	Logger log.Logger
 
 	conf *configuration.SessionFs
+
+	touchThreshold time.Duration
 
 	connectionInterceptors fsConnectionInterceptors
 
@@ -147,10 +166,10 @@ func (this *FsRepository) Create(ctx context.Context, flow configuration.FlowNam
 	sess.info.VRemoteUser = remote.User()
 	sess.info.VRemoteHost = remote.Host()
 	sess.init(this, flow, id)
-	if err := sess.info.save(ctx); err != nil {
+	if err := sess.info.save(); err != nil {
 		return fail(err)
 	}
-	if _, err := sess.notifyLastAccess(ctx, remote, StateUnchanged); err != nil {
+	if _, err := sess.notifyLastAccess(remote, StateUnchanged); err != nil {
 		return fail(err)
 	}
 	if len(authToken) > 0 {
@@ -411,7 +430,7 @@ func (this *FsRepository) disposeBy(ctx context.Context, flow configuration.Flow
 		disposed = true
 	} else {
 		sess.info.VState = StateDisposed
-		if err := sess.info.save(ctx); err != nil {
+		if err := sess.info.save(); err != nil {
 			return fail(err)
 		}
 	}

@@ -1,7 +1,6 @@
 package session
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -46,7 +45,7 @@ func (this *fsLastAccessed) Remote() net.Remote {
 	return &this.remote
 }
 
-func (this *fsLastAccessed) save(_ context.Context) error {
+func (this *fsLastAccessed) save() error {
 	if _, err := this.info.stat(); err != nil {
 		return fmt.Errorf("cannot session's %v last access because cannot stat info: %w", this, err)
 	}
@@ -60,7 +59,8 @@ func (this *fsLastAccessed) save(_ context.Context) error {
 	if err := json.NewEncoder(f).Encode(this); err != nil {
 		return fmt.Errorf("cannot encode session %v: %w", this.info.session, err)
 	}
-	if err := os.Chtimes(f.Name(), time.Now(), this.at); err != nil {
+	now := time.Now()
+	if err := os.Chtimes(f.Name(), now, now); err != nil {
 		return fmt.Errorf("cannot change time of session's last access %v: %w", this, err)
 	}
 
