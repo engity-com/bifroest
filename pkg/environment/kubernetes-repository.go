@@ -98,7 +98,7 @@ func NewKubernetesRepository(_ context.Context, flow configuration.FlowName, con
 		return fail(err)
 	}
 
-	client, err := kCfg.GetClient(kCtx, "")
+	client, err := kCfg.GetClient(kCtx)
 	if err != nil {
 		return fail(err)
 	}
