@@ -155,23 +155,23 @@ func (this *fs) DeletePublicKey(ctx context.Context, pub ssh.PublicKey) error {
 	return this.repository.deletePublicKey(ctx, this.flow, this.id, pub)
 }
 
-func (this *fs) NotifyLastAccess(ctx context.Context, remote net.Remote, newState State) (State, error) {
-	return this.notifyLastAccess(ctx, remote, newState)
+func (this *fs) NotifyLastAccess(_ context.Context, remote net.Remote, newState State) (State, error) {
+	return this.notifyLastAccess(remote, newState)
 }
 
-func (this *fs) notifyLastAccess(ctx context.Context, remote net.Remote, newState State) (State, error) {
+func (this *fs) notifyLastAccess(remote net.Remote, newState State) (State, error) {
 	var buf fsLastAccessed
 	buf.at = time.Now().Truncate(time.Millisecond)
 	buf.VRemoteUser = remote.User()
 	buf.VRemoteHost = remote.Host()
 	buf.init(&this.info)
-	if err := buf.save(ctx); err != nil {
+	if err := buf.save(); err != nil {
 		return 0, err
 	}
 	oldState := this.info.VState
 	if newState != 0 && newState != this.info.VState {
 		this.info.VState = newState
-		if err := this.info.save(ctx); err != nil {
+		if err := this.info.save(); err != nil {
 			return 0, err
 		}
 	}

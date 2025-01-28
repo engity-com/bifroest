@@ -77,8 +77,8 @@ func (this *fsInfo) Created(context.Context) (InfoCreated, error) {
 	return &this.created, nil
 }
 
-func (this *fsInfo) ValidUntil(ctx context.Context) (result time.Time, _ error) {
-	lastAccessed, err := this.LastAccessed(ctx)
+func (this *fsInfo) ValidUntil(context.Context) (result time.Time, _ error) {
+	lastAccessed, err := this.lastAccessed()
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -95,7 +95,7 @@ func (this *fsInfo) ValidUntil(ctx context.Context) (result time.Time, _ error) 
 	return result, nil
 }
 
-func (this *fsInfo) lastAccessed(_ context.Context) (*fsLastAccessed, error) {
+func (this *fsInfo) lastAccessed() (*fsLastAccessed, error) {
 	this.session.repository.mutex.RLock()
 	defer this.session.repository.mutex.RUnlock()
 
@@ -123,11 +123,11 @@ func (this *fsInfo) stat() (os.FileInfo, error) {
 	return this.session.repository.stat(this.session.flow, this.session.id, FsFileSession)
 }
 
-func (this *fsInfo) LastAccessed(ctx context.Context) (InfoLastAccessed, error) {
-	return this.lastAccessed(ctx)
+func (this *fsInfo) LastAccessed(context.Context) (InfoLastAccessed, error) {
+	return this.lastAccessed()
 }
 
-func (this *fsInfo) save(_ context.Context) error {
+func (this *fsInfo) save() error {
 	f, _, err := this.session.repository.openWrite(this.session.flow, this.session.id, FsFileSession, false)
 	if err != nil {
 		return err
@@ -138,7 +138,8 @@ func (this *fsInfo) save(_ context.Context) error {
 		return fmt.Errorf("cannot encode session %v: %w", this, err)
 	}
 
-	if err := os.Chtimes(f.Name(), time.Now(), this.createdAt); err != nil {
+	now := time.Now()
+	if err := os.Chtimes(f.Name(), now, now); err != nil {
 		return fmt.Errorf("cannot change time of session %v: %w", this, err)
 	}
 

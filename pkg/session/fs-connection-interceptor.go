@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	gonet "net"
+	"os"
 	"sync/atomic"
 	"time"
 
@@ -105,10 +106,26 @@ func (this *fsConnectionInterceptorStack) onConnectionAction() (time.Time, Conne
 	if this.disposed.Load() {
 		return time.Time{}, ConnectionInterceptorResultDisposed, nil
 	}
+	now := time.Now()
+	nowMilli := now.UnixMilli()
+
+	if this.lastActivity.Load()+this.repository.touchThreshold.Milliseconds() < nowMilli {
+		// We only touch the times of the [FsFileLastAccessed] in when the threshold is reached
+		// otherwise we might produce too much write noise on the file system.
+		fn, err := this.repository.file(this.flow, this.id, FsFileLastAccessed)
+		if err != nil {
+			return time.Time{}, ConnectionInterceptorResultNone, fmt.Errorf("cannot get file for last accessed time of session %v/%v: %w", this.flow, this.id, err)
+		}
+		if err := os.Chtimes(fn, now, now); err != nil {
+			return time.Time{}, ConnectionInterceptorResultNone, fmt.Errorf("cannot update last accessed time of session %v/%v on file %s: %w", this.flow, this.id, fn, err)
+		}
+		this.lastActivity.Store(nowMilli)
+	}
+
 	var deadline time.Time
 	var t ConnectionInterceptorResult
 	if v := this.repository.conf.IdleTimeout; !v.IsZero() {
-		deadline = time.UnixMilli(this.lastActivity.Load() + v.Native().Milliseconds())
+		deadline = now.Add(v.Native())
 		t = ConnectionInterceptorResultIdle
 	}
 

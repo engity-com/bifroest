@@ -111,7 +111,7 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 	logger := this.logger().With("session", sess)
 	started := time.Now()
 
-	reportAndContiue := func(err error) (bool, error) {
+	reportAndContinue := func(err error) (bool, error) {
 		logger.WithError(err).
 			With("duration", time.Since(started).Truncate(time.Microsecond)).
 			Warn("cannot inspect session; skipping...")
@@ -121,23 +121,23 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 	logger.Debug("inspecting session...")
 
 	if shouldBeDeleted, err := session.IsExpiredWithThreshold(this.service.Configuration.HouseKeeping.KeepExpiredFor.Native())(ctx, sess); err != nil {
-		return reportAndContiue(err)
+		return reportAndContinue(err)
 	} else if shouldBeDeleted {
 		if _, err := this.dispose(ctx, logger, sess); err != nil {
-			return reportAndContiue(err)
+			return reportAndContinue(err)
 		}
 
 		if err := this.service.sessions.Delete(ctx, sess); err != nil {
-			return reportAndContiue(err)
+			return reportAndContinue(err)
 		}
 		logger.Info("session reached maximum age to be kept after being expired and was therefore deleted")
 
 	} else if expired, err := session.IsExpired(ctx, sess); err != nil {
-		return reportAndContiue(err)
+		return reportAndContinue(err)
 	} else if expired {
 		disposed, err := this.dispose(ctx, logger, sess)
 		if err != nil {
-			return reportAndContiue(err)
+			return reportAndContinue(err)
 		}
 		if disposed {
 			logger.Info("session is expired and was therefore disposed")
