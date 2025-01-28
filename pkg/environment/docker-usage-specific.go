@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -70,8 +71,8 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 
 	switch t.TaskType() {
 	case TaskTypeShell:
-		if v := sshSess.Command(); len(v) > 0 {
-			opts.Cmd = append(this.execCommand, v...)
+		if v := sshSess.RawCommand(); len(v) > 0 {
+			opts.Cmd = append(this.execCommand, v)
 		} else {
 			opts.Cmd = slices.Clone(this.shellCommand)
 		}
@@ -190,10 +191,15 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 				this.signal(t.Context(), l, t.Connection(), s)
 			}
 		case <-t.Context().Done():
+			go this.signalDetached(l, t.Connection())
+
 			return -2, rErr
 		case err, ok := <-copyDone:
 			ea.Close()
 			_ = ea.CloseWrite()
+
+			this.signalDetached(l, t.Connection())
+
 			if ok && err != nil && rErr == nil {
 				return -1, err
 			}
@@ -208,13 +214,19 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	}
 }
 
+func (this *docker) signalDetached(logger log.Logger, conn connection.Connection) {
+	ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancelFunc()
+	this.signal(ctx, logger, conn, glssh.SIGINT)
+}
+
 func (this *docker) signal(ctx context.Context, logger log.Logger, conn connection.Connection, sshSignal glssh.Signal) {
 	var signal sys.Signal
 	if err := signal.Set(string(sshSignal)); err != nil {
 		signal = sys.SIGKILL
 	}
 
-	if err := this.impSession.Kill(ctx, conn.Id(), 0, signal); errors.Is(err, imp.ErrNoSuchProcess) {
+	if err := this.impSession.Kill(ctx, conn.Id(), 0, signal); (err != nil && err.Error() == imp.ErrNoSuchProcess.Error()) || errors.Is(err, context.DeadlineExceeded) {
 		// Ok.
 	} else if err != nil {
 		logger.WithError(err).

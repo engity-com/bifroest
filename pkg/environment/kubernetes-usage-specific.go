@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	log "github.com/echocat/slf4g"
 	glssh "github.com/gliderlabs/ssh"
@@ -87,8 +88,8 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 	var command []string
 	switch t.TaskType() {
 	case TaskTypeShell:
-		if v := sshSess.Command(); len(v) > 0 {
-			command = append(this.execCommand, v...)
+		if v := sshSess.RawCommand(); len(v) > 0 {
+			command = append(this.execCommand, v)
 		} else {
 			command = slices.Clone(this.shellCommand)
 		}
@@ -202,9 +203,14 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 				this.signal(t.Context(), l, t.Connection(), s)
 			}
 		case <-t.Context().Done():
+			go this.signalDetached(l, t.Connection())
+
 			return -2, rErr
 		case err, ok := <-streamDone:
 			_ = sshSess.CloseWrite()
+
+			this.signalDetached(l, t.Connection())
+
 			if ok && err != nil && rErr == nil {
 				return -1, err
 			}
@@ -234,13 +240,19 @@ func (this *terminalQueueSizeFromSsh) Next() *remotecommand.TerminalSize {
 	}
 }
 
+func (this *kubernetes) signalDetached(logger log.Logger, conn connection.Connection) {
+	ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancelFunc()
+	this.signal(ctx, logger, conn, glssh.SIGINT)
+}
+
 func (this *kubernetes) signal(ctx context.Context, logger log.Logger, conn connection.Connection, sshSignal glssh.Signal) {
 	var signal sys.Signal
 	if err := signal.Set(string(sshSignal)); err != nil {
 		signal = sys.SIGKILL
 	}
 
-	if err := this.impSession.Kill(ctx, conn.Id(), 0, signal); errors.Is(err, imp.ErrNoSuchProcess) {
+	if err := this.impSession.Kill(ctx, conn.Id(), 0, signal); (err != nil && err.Error() == imp.ErrNoSuchProcess.Error()) || errors.Is(err, context.DeadlineExceeded) {
 		// Ok.
 	} else if err != nil {
 		logger.WithError(err).

@@ -105,6 +105,9 @@ func (this *imp) handleMethodKill(ctx context.Context, header *Header, _ log.Log
 				}
 			}
 		}
+		if pid == 0 {
+			return methodKillResponse{ErrNoSuchProcess}
+		}
 
 		if err := this.kill(ctx, pid, req.signal); err != nil {
 			return fail(err)
