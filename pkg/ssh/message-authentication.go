@@ -36,9 +36,7 @@ var (
 
 	DefaultMessageAuthentications = []MessageAuthentication{
 		MessageAuthenticationHmacSha2B512Etm,
-		MessageAuthenticationHmacSha2B512,
 		MessageAuthenticationHmacSha2B256Etm,
-		MessageAuthenticationHmacSha2B256,
 	}
 )
 

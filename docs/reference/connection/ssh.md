@@ -103,7 +103,7 @@ rememberMeNotification: "If you return until {{.session.validUntil | format `dat
 
 ### Configuration {: #messages-configuration }
 
-<<property("authentications", "Authentications", "../data-type.md#ssh-message-authentication", default=["hmac-sha2-512-etm@openssh.com", "hmac-sha2-512", "hmac-sha2-256-etm@openssh.com", "hmac-sha2-256"], heading=4, id_prefix="messages-")>>
+<<property("authentications", "Authentications", "../data-type.md#ssh-message-authentication", default=["hmac-sha2-512-etm@openssh.com", "hmac-sha2-256-etm@openssh.com"], heading=4, id_prefix="messages-")>>
 Restrict which message authentications are allowed to be used.
 
 <<property("ciphers", "Ciphers", "../data-type.md#ssh-ciphers", default=["aes256-gcm@openssh.com", "aes256-ctr", "aes192-ctr"], heading=4, id_prefix="messages-")>>
@@ -114,9 +114,7 @@ Restrict which ciphers are allowed to be used.
 ```yaml
 authentications:
   - hmac-sha2-512-etm@openssh.com
-  - hmac-sha2-512
   - hmac-sha2-256-etm@openssh.com
-  - hmac-sha2-256
 ciphers:
   - aes256-gcm@openssh.com
   - aes256-ctr
