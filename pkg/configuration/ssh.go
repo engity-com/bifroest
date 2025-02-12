@@ -41,6 +41,9 @@ type Ssh struct {
 	// Keys represents all key related settings of the service.
 	Keys Keys `yaml:"keys"`
 
+	// Messages represents all message related settings of the service.
+	Messages Messages `yaml:"messages"`
+
 	// IdleTimeout represents the duration a connection can be idle until it will be forcibly closed.
 	// 0 means no limitation at all. Defaults to DefaultSshIdleTimeout.
 	IdleTimeout common.Duration `yaml:"idleTimeout"`
@@ -74,6 +77,7 @@ func (this *Ssh) SetDefaults() error {
 	return setDefaults(this,
 		fixedDefault("addresses", func(v *Ssh) *net.NetAddresses { return &v.Addresses }, DefaultSshAddresses),
 		func(v *Ssh) (string, defaulter) { return "keys", &v.Keys },
+		func(v *Ssh) (string, defaulter) { return "messages", &v.Messages },
 		fixedDefault("idleTimeout", func(v *Ssh) *common.Duration { return &v.IdleTimeout }, DefaultSshIdleTimeout),
 		fixedDefault("maxTimeout", func(v *Ssh) *common.Duration { return &v.MaxTimeout }, DefaultSshMaxTimeout),
 		fixedDefault("maxAuthTries", func(v *Ssh) *uint8 { return &v.MaxAuthTries }, DefaultSshMaxAuthTries),
@@ -88,6 +92,7 @@ func (this *Ssh) Trim() error {
 	return trim(this,
 		func(v *Ssh) (string, trimmer) { return "addresses", &v.Addresses },
 		func(v *Ssh) (string, trimmer) { return "keys", &v.Keys },
+		func(v *Ssh) (string, trimmer) { return "messages", &v.Messages },
 		noopTrim[Ssh]("idleTimeout"),
 		noopTrim[Ssh]("maxTimeout"),
 		noopTrim[Ssh]("maxAuthTries"),
@@ -102,6 +107,7 @@ func (this *Ssh) Validate() error {
 	return validate(this,
 		func(v *Ssh) (string, validator) { return "addresses", &v.Addresses },
 		func(v *Ssh) (string, validator) { return "keys", &v.Keys },
+		func(v *Ssh) (string, validator) { return "messages", &v.Messages },
 		func(v *Ssh) (string, validator) { return "idleTimeout", &v.IdleTimeout },
 		func(v *Ssh) (string, validator) { return "maxTimeout", &v.MaxTimeout },
 		noopValidate[Ssh]("maxAuthTries"),
@@ -136,6 +142,7 @@ func (this Ssh) IsEqualTo(other any) bool {
 func (this Ssh) isEqualTo(other *Ssh) bool {
 	return isEqual(&this.Addresses, &other.Addresses) &&
 		isEqual(&this.Keys, &other.Keys) &&
+		isEqual(&this.Messages, &other.Messages) &&
 		isEqual(&this.IdleTimeout, &other.IdleTimeout) &&
 		isEqual(&this.MaxTimeout, &other.MaxTimeout) &&
 		this.MaxAuthTries == other.MaxAuthTries &&

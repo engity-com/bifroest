@@ -176,6 +176,31 @@ func (this *Service) prepare() (svc *service, err error) {
 		svc.knownFlows[flow.Name] = struct{}{}
 	}
 
+	sshKeysExchanges, err := this.Configuration.Ssh.Keys.Exchanges.MarshalTexts()
+	if err != nil {
+		return fail(err)
+	}
+	svc.resolvedSshKeysExchanges = make([]string, len(sshKeysExchanges))
+	for i, n := range sshKeysExchanges {
+		svc.resolvedSshKeysExchanges[i] = string(n)
+	}
+	sshMessagesAuthentications, err := this.Configuration.Ssh.Messages.Authentications.MarshalTexts()
+	if err != nil {
+		return fail(err)
+	}
+	svc.resolvedSshMessagesAuthentications = make([]string, len(sshMessagesAuthentications))
+	for i, n := range sshMessagesAuthentications {
+		svc.resolvedSshMessagesAuthentications[i] = string(n)
+	}
+	sshMessagesCiphers, err := this.Configuration.Ssh.Messages.Ciphers.MarshalTexts()
+	if err != nil {
+		return fail(err)
+	}
+	svc.resolvedSshMessagesCiphers = make([]string, len(sshMessagesCiphers))
+	for i, n := range sshMessagesCiphers {
+		svc.resolvedSshMessagesCiphers[i] = string(n)
+	}
+
 	hostSigners, err := this.loadHostPrivateKeys()
 	if err != nil {
 		return fail(err)
@@ -281,6 +306,10 @@ type service struct {
 
 	knownFlows map[configuration.FlowName]struct{}
 
+	resolvedSshKeysExchanges           []string
+	resolvedSshMessagesAuthentications []string
+	resolvedSshMessagesCiphers         []string
+
 	activeConnections atomic.Int64
 }
 
@@ -319,6 +348,11 @@ func (this *service) createNewServerConfig(glssh.Context) *gossh.ServerConfig {
 	return &gossh.ServerConfig{
 		ServerVersion: "SSH-2.0-Engity-Bifroest_" + this.Version.Version(),
 		MaxAuthTries:  int(this.Configuration.Ssh.MaxAuthTries),
+		Config: gossh.Config{
+			KeyExchanges: this.resolvedSshKeysExchanges,
+			Ciphers:      this.resolvedSshMessagesCiphers,
+			MACs:         this.resolvedSshMessagesAuthentications,
+		},
 	}
 }
 

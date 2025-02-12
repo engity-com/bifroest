@@ -47,11 +47,16 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 					Addresses: DefaultSshAddresses,
 					Keys: Keys{
 						HostKeys:               DefaultHostKeyLocations,
+						Exchanges:              DefaultKeyExchanges,
 						RsaRestriction:         crypto.DefaultRsaRestriction,
 						DsaRestriction:         crypto.DefaultDsaRestriction,
 						EcdsaRestriction:       crypto.DefaultEcdsaRestriction,
 						Ed25519Restriction:     crypto.DefaultEd25519Restriction,
 						RememberMeNotification: DefaultRememberMeNotification,
+					},
+					Messages: Messages{
+						Authentications: DefaultMessagesAuthentications,
+						Ciphers:         DefaultMessagesCiphers,
 					},
 					IdleTimeout:    DefaultSshIdleTimeout,
 					MaxTimeout:     DefaultSshMaxTimeout,
