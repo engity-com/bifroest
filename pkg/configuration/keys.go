@@ -4,16 +4,19 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/ssh"
 	"github.com/engity-com/bifroest/pkg/template"
 )
 
 var (
 	DefaultHostKeyLocations       = template.MustNewStrings(DefaultHostKeyLocation)
+	DefaultKeyExchanges           = ssh.DefaultKeyExchanges
 	DefaultRememberMeNotification = template.MustNewString("\nIf you return until {{.session.validUntil | format `dateTimeT`}} with the same public key ({{.key | fingerprint}}), you can seamlessly login again.\n\n")
 )
 
 type Keys struct {
 	HostKeys               template.Strings          `yaml:"hostKeys"`
+	Exchanges              ssh.KeyExchanges          `yaml:"exchanges"`
 	RsaRestriction         crypto.RsaRestriction     `yaml:"rsaRestriction"`
 	DsaRestriction         crypto.DsaRestriction     `yaml:"dsaRestriction"`
 	EcdsaRestriction       crypto.EcdsaRestriction   `yaml:"ecdsaRestriction"`
@@ -24,6 +27,7 @@ type Keys struct {
 func (this *Keys) SetDefaults() error {
 	return setDefaults(this,
 		fixedDefault("hostKeys", func(v *Keys) *template.Strings { return &v.HostKeys }, DefaultHostKeyLocations),
+		fixedDefault("exchanges", func(v *Keys) *ssh.KeyExchanges { return &v.Exchanges }, DefaultKeyExchanges),
 		fixedDefault("rsaRestriction", func(v *Keys) *crypto.RsaRestriction { return &v.RsaRestriction }, crypto.DefaultRsaRestriction),
 		fixedDefault("dsaRestriction", func(v *Keys) *crypto.DsaRestriction { return &v.DsaRestriction }, crypto.DefaultDsaRestriction),
 		fixedDefault("ecdsaRestriction", func(v *Keys) *crypto.EcdsaRestriction { return &v.EcdsaRestriction }, crypto.DefaultEcdsaRestriction),
@@ -35,6 +39,7 @@ func (this *Keys) SetDefaults() error {
 func (this *Keys) Trim() error {
 	return trim(this,
 		noopTrim[Keys]("hostKeys"),
+		noopTrim[Keys]("exchanges"),
 		noopTrim[Keys]("rsaRestriction"),
 		noopTrim[Keys]("dsaRestriction"),
 		noopTrim[Keys]("ecdsaRestriction"),
@@ -47,6 +52,8 @@ func (this *Keys) Validate() error {
 	return validate(this,
 		func(v *Keys) (string, validator) { return "hostKeys", &v.HostKeys },
 		notZeroValidate("hostKeys", func(v *Keys) *template.Strings { return &v.HostKeys }),
+		func(v *Keys) (string, validator) { return "exchanges", &v.Exchanges },
+		notZeroValidate("exchanges", func(v *Keys) *ssh.KeyExchanges { return &v.Exchanges }),
 		func(v *Keys) (string, validator) { return "rsaRestriction", &v.RsaRestriction },
 		func(v *Keys) (string, validator) { return "dsaRestriction", &v.DsaRestriction },
 		func(v *Keys) (string, validator) { return "ecdsaRestriction", &v.EcdsaRestriction },
@@ -78,6 +85,7 @@ func (this Keys) IsEqualTo(other any) bool {
 
 func (this Keys) isEqualTo(other *Keys) bool {
 	return isEqual(&this.HostKeys, &other.HostKeys) &&
+		isEqual(&this.Exchanges, &other.Exchanges) &&
 		isEqual(&this.RsaRestriction, &other.RsaRestriction) &&
 		isEqual(&this.DsaRestriction, &other.DsaRestriction) &&
 		isEqual(&this.EcdsaRestriction, &other.EcdsaRestriction) &&

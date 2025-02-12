@@ -140,6 +140,46 @@ Can be one of:
 * `at-least-3072-bits`
 * `at-least-4096-bits`
 
+## SSH Ciphers
+Can be one of:
+
+* `aes128-cbc`
+* `3des-cbc`
+* `arcfour`
+* `arcfour128`
+* `arcfour256`
+* `chacha20-poly1305@openssh.com`
+* `aes128-ctr`
+* `aes192-ctr`
+* `aes256-ctr`
+* `aes128-gcm@openssh.com`
+* `aes256-gcm@openssh.com`
+
+## SSH Key Exchange
+Can be one of:
+
+* `diffie-hellman-group1-sha1`
+* `diffie-hellman-group14-sha1`
+* `diffie-hellman-group14-sha256`
+* `diffie-hellman-group16-sha512`
+* `ecdh-sha2-nistp256`
+* `ecdh-sha2-nistp384`
+* `ecdh-sha2-nistp521`
+* `curve25519-sha256@libssh.org`
+* `curve25519-sha256`
+* `diffie-hellman-group-exchange-sha1`
+* `"diffie-hellman-group-exchange-sha256`
+
+## SSH Message Authentication
+Can be one of:
+
+* `hmac-sha1`
+* `hmac-sha1-96`
+* `hmac-sha2-256`
+* `hmac-sha2-512`
+* `hmac-sha2-256-etm@openssh.com`
+* `hmac-sha2-512-etm@openssh.com`
+
 ## SSH Public Key
 The public variant of an [SSH keypair](https://wiki.archlinux.org/title/SSH_keys) of a user.
 

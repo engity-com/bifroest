@@ -13,6 +13,9 @@ To which address the service will bind and listen to.
 <<property("keys", "Keys", "#keys")>>
 See [below](#keys).
 
+<<property("messages", "Messages", "#messages")>>
+See [below](#messages).
+
 <<property("idleTimeout", "Duration", "../data-type.md#duration", default="10m")>>
 For how long a connection can be idle before it will forcibly be closed. The client can send keep alive packages to extend the idle time. `0` means that the connection will never time out.
 
@@ -38,6 +41,8 @@ addresses: [ ":22" ]
 keys:
   hostKeys: [ /etc/engity/bifroest/key ]
   # ...
+messages:
+  # ...
 idleTimeout: 10m
 maxTimeout: 0
 maxAuthTries: 6
@@ -60,6 +65,9 @@ Default Locations:
 * Linux: `/etc/engity/bifroest/key`
 * Windows: `C:\ProgramData\Engity\Bifroest\key`
 
+<<property("exchanges", "Exchanges", "../data-type.md#ssh-key-exchange", default=["curve25519-sha256@libssh.org", "curve25519-sha256", "diffie-hellman-group16-sha512", "diffie-hellman-group14-sha256"], heading=4, id_prefix="keys-")>>
+Restrict which key exchanges are allowed to be used.
+
 <<property("rsaRestriction", "RSA Restriction", "../data-type.md#rsa-restriction", default="at-least-4096-bits", heading=4, id_prefix="keys-")>>
 Restrict which RSA keys are allowed to be used.
 
@@ -80,11 +88,40 @@ Banner which will be shown if the connection was based on an authentication meth
 
 ```yaml
 hostKeys: [ /etc/engity/bifroest/key ]
+exchanges:
+  - curve25519-sha256@libssh.org
+  - curve25519-sha256
+  - diffie-hellman-group16-sha512
+  - diffie-hellman-group14-sha256
 rsaRestriction: at-least-4096-bits
 dsaRestriction: none
 ecdsaRestriction: at-least-384-bits
 ed25519Restriction: all
 rememberMeNotification: "If you return until {{.session.validUntil | format `dateTimeT`}} with the same public key {{.key | fingerprint}}), you can seamlessly login again.\n\n"
+```
+
+## Messages
+
+### Configuration {: #messages-configuration }
+
+<<property("authentications", "Authentications", "../data-type.md#ssh-message-authentication", default=["hmac-sha2-512-etm@openssh.com", "hmac-sha2-512", "hmac-sha2-256-etm@openssh.com", "hmac-sha2-256"], heading=4, id_prefix="messages-")>>
+Restrict which message authentications are allowed to be used.
+
+<<property("ciphers", "Ciphers", "../data-type.md#ssh-ciphers", default=["aes256-gcm@openssh.com", "aes256-ctr", "aes192-ctr"], heading=4, id_prefix="messages-")>>
+Restrict which ciphers are allowed to be used.
+
+### Examples {: #messages-examples }
+
+```yaml
+authentications:
+  - hmac-sha2-512-etm@openssh.com
+  - hmac-sha2-512
+  - hmac-sha2-256-etm@openssh.com
+  - hmac-sha2-256
+ciphers:
+  - aes256-gcm@openssh.com
+  - aes256-ctr
+  - aes192-ctr
 ```
 
 ## Preparation Messages {: #preparationMessages }
@@ -140,8 +177,6 @@ preparationMessages:
     end: ""
     error: ""
 ```
-
-
 
 ## Compatibility
 
