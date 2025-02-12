@@ -48,7 +48,6 @@ var (
 		KeyExchangeCurve25519Sha256LibSsh,
 		KeyExchangeCurve25519Sha256,
 		KeyExchangeDh16Sha512,
-		KeyExchangeDh14Sha256,
 	}
 )
 

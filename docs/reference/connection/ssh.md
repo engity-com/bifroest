@@ -65,7 +65,7 @@ Default Locations:
 * Linux: `/etc/engity/bifroest/key`
 * Windows: `C:\ProgramData\Engity\Bifroest\key`
 
-<<property("exchanges", "Exchanges", "../data-type.md#ssh-key-exchange", default=["curve25519-sha256@libssh.org", "curve25519-sha256", "diffie-hellman-group16-sha512", "diffie-hellman-group14-sha256"], heading=4, id_prefix="keys-")>>
+<<property("exchanges", "Exchanges", "../data-type.md#ssh-key-exchange", default=["curve25519-sha256@libssh.org", "curve25519-sha256", "diffie-hellman-group16-sha512"], heading=4, id_prefix="keys-")>>
 Restrict which key exchanges are allowed to be used.
 
 <<property("rsaRestriction", "RSA Restriction", "../data-type.md#rsa-restriction", default="at-least-4096-bits", heading=4, id_prefix="keys-")>>
@@ -92,7 +92,6 @@ exchanges:
   - curve25519-sha256@libssh.org
   - curve25519-sha256
   - diffie-hellman-group16-sha512
-  - diffie-hellman-group14-sha256
 rsaRestriction: at-least-4096-bits
 dsaRestriction: none
 ecdsaRestriction: at-least-384-bits
