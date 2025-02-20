@@ -11,7 +11,7 @@ require (
 	github.com/alecthomas/kingpin/v2 v2.4.0
 	github.com/coreos/go-oidc/v3 v3.12.0
 	github.com/creack/pty v1.1.24
-	github.com/docker/cli v27.5.1+incompatible
+	github.com/docker/cli v28.0.0+incompatible
 	github.com/docker/docker v27.5.1+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/echocat/slf4g v1.6.3
