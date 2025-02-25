@@ -38,7 +38,7 @@ require (
 	github.com/tg123/go-htpasswd v1.2.3
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/xtaci/smux v1.5.32
-	golang.org/x/crypto v0.33.0
+	golang.org/x/crypto v0.35.0
 	golang.org/x/oauth2 v0.26.0
 	golang.org/x/sys v0.30.0
 	gopkg.in/yaml.v3 v3.0.1
