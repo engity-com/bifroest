@@ -18,7 +18,7 @@ require (
 	github.com/echocat/slf4g/native v1.6.3
 	github.com/fsnotify/fsnotify v1.8.0
 	github.com/gliderlabs/ssh v0.3.8
-	github.com/go-delve/delve v1.24.0
+	github.com/go-delve/delve v1.24.1
 	github.com/google/go-containerregistry v0.20.3
 	github.com/google/go-github/v65 v65.0.0
 	github.com/google/uuid v1.6.0
@@ -109,7 +109,7 @@ require (
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spf13/cast v1.7.1 // indirect
-	github.com/spf13/pflag v1.0.5 // indirect
+	github.com/spf13/pflag v1.0.6 // indirect
 	github.com/tklauser/go-sysconf v0.3.14 // indirect
 	github.com/tklauser/numcpus v0.9.0 // indirect
 	github.com/vbatts/tar-split v0.11.6 // indirect
@@ -128,6 +128,7 @@ require (
 	golang.org/x/exp v0.0.0-20230224173230-c95f2b4c22f2 // indirect
 	golang.org/x/net v0.33.0 // indirect
 	golang.org/x/sync v0.12.0 // indirect
+	golang.org/x/telemetry v0.0.0-20241106142447-58a1122356f5 // indirect
 	golang.org/x/term v0.30.0 // indirect
 	golang.org/x/text v0.23.0 // indirect
 	golang.org/x/time v0.8.0 // indirect
