@@ -34,6 +34,10 @@ linters:
         text: SA1012
       - path: (.+)\.go$
         text: SA1019
+      - path: (.+)\.go$
+        text: QF1008
+      - path: (.+)\.go$
+        text: ST1006
     paths:
       - internal/fmtsort
       - internal/text

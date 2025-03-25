@@ -3,7 +3,6 @@ package images
 import (
 	"context"
 	"embed"
-	_ "embed"
 	"io/fs"
 	"iter"
 	"strings"
