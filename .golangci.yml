@@ -1,6 +1,4 @@
-run:
-  timeout: 20m
-
+version: "2"
 linters:
   enable:
     - asasalint
@@ -9,23 +7,43 @@ linters:
     - misspell
   disable:
     - ineffassign
-
-linters-settings:
-  misspell:
-    locale: US
-    ignore-words:
-      - engity
-      - bifröst
-      - bifroest
-
-issues:
-  exclude-dirs:
-    - internal/fmtsort
-    - internal/text
-  exclude:
-    - S1002
-    - S1005
-    - S1016
-    - S1031
-    - SA1012
-    - SA1019
+  settings:
+    misspell:
+      locale: US
+      ignore-rules:
+        - engity
+        - bifröst
+        - bifroest
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - path: (.+)\.go$
+        text: S1002
+      - path: (.+)\.go$
+        text: S1005
+      - path: (.+)\.go$
+        text: S1016
+      - path: (.+)\.go$
+        text: S1031
+      - path: (.+)\.go$
+        text: SA1012
+      - path: (.+)\.go$
+        text: SA1019
+    paths:
+      - internal/fmtsort
+      - internal/text
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
