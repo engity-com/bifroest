@@ -2,6 +2,8 @@ module github.com/engity-com/bifroest
 
 go 1.23.0
 
+toolchain go1.24.1
+
 require (
 	dario.cat/mergo v1.0.1
 	github.com/GehirnInc/crypt v0.0.0-20230320061759-8cc1b52080c5
@@ -33,7 +35,7 @@ require (
 	github.com/otiai10/copy v1.14.1
 	github.com/pires/go-proxyproto v0.8.0
 	github.com/pkg/sftp v1.13.9
-	github.com/shirou/gopsutil/v4 v4.25.2
+	github.com/shirou/gopsutil/v4 v4.25.3
 	github.com/stretchr/testify v1.10.0
 	github.com/tg123/go-htpasswd v1.2.3
 	github.com/vmihailenco/msgpack/v5 v5.4.1
