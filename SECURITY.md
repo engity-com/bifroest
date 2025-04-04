@@ -10,9 +10,9 @@
 
 | Version    | Supported          |
 |------------|--------------------|
-| `0.4.x`+   | :white_check_mark: |
-| `0.3.x`    | :warning:          |
-| `0.2.x`-   | :x:                |
+| `0.6.x`+   | :white_check_mark: |
+| `0.5.x`    | :warning:          |
+| `0.4.x`-   | :x:                |
 
 > [!NOTE]
 > Legend of symbols:
