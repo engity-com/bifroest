@@ -127,7 +127,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.35.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.5.0 // indirect
 	golang.org/x/arch v0.15.0 // indirect
-	golang.org/x/net v0.37.0 // indirect
+	golang.org/x/net v0.38.0 // indirect
 	golang.org/x/sync v0.13.0 // indirect
 	golang.org/x/telemetry v0.0.0-20250310203348-fdfaad844314 // indirect
 	golang.org/x/term v0.31.0 // indirect
