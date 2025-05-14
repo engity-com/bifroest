@@ -27,7 +27,7 @@ require (
 	github.com/mikesmitty/edkey v0.0.0-20170222072505-3356ea4e686a
 	github.com/moby/spdystream v0.5.0
 	github.com/mr-tron/base58 v1.2.0
-	github.com/msteinert/pam/v2 v2.0.0
+	github.com/msteinert/pam/v2 v2.1.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/openwall/yescrypt-go v1.0.0
 	github.com/otiai10/copy v1.14.1
