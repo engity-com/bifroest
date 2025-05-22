@@ -168,7 +168,8 @@ Can be one of:
 * `curve25519-sha256@libssh.org`
 * `curve25519-sha256`
 * `diffie-hellman-group-exchange-sha1`
-* `"diffie-hellman-group-exchange-sha256`
+* `diffie-hellman-group-exchange-sha256`
+* `mlkem768x25519-sha256`
 
 ## SSH Message Authentication
 Can be one of:

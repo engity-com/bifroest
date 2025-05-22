@@ -20,6 +20,7 @@ const (
 	KeyExchangeCurve25519Sha256
 	KeyExchangeDhgexSha1
 	KeyExchangeDhgexSha256
+	KeyExchangeMlkem768x25519xSha256
 )
 
 var (
@@ -35,6 +36,7 @@ var (
 		KeyExchangeCurve25519Sha256:       "curve25519-sha256",
 		KeyExchangeDhgexSha1:              "diffie-hellman-group-exchange-sha1",
 		KeyExchangeDhgexSha256:            "diffie-hellman-group-exchange-sha256",
+		KeyExchangeMlkem768x25519xSha256:  "mlkem768x25519-sha256",
 	}
 	name2KeyExchange = func(in map[KeyExchange]string) map[string]KeyExchange {
 		result := make(map[string]KeyExchange, len(in))
@@ -48,6 +50,7 @@ var (
 		KeyExchangeCurve25519Sha256LibSsh,
 		KeyExchangeCurve25519Sha256,
 		KeyExchangeDh16Sha512,
+		KeyExchangeMlkem768x25519xSha256,
 	}
 )
 
