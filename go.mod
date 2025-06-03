@@ -33,7 +33,7 @@ require (
 	github.com/otiai10/copy v1.14.1
 	github.com/pires/go-proxyproto v0.8.1
 	github.com/pkg/sftp v1.13.9
-	github.com/shirou/gopsutil/v4 v4.25.4
+	github.com/shirou/gopsutil/v4 v4.25.5
 	github.com/stretchr/testify v1.10.0
 	github.com/tg123/go-htpasswd v1.2.4
 	github.com/vmihailenco/msgpack/v5 v5.4.1
@@ -60,7 +60,7 @@ require (
 	github.com/docker/distribution v2.8.3+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.9.3 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
-	github.com/ebitengine/purego v0.8.2 // indirect
+	github.com/ebitengine/purego v0.8.4 // indirect
 	github.com/emicklei/go-restful/v3 v3.12.2 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
