@@ -80,7 +80,7 @@ jobs:
     steps:
       - name: Install Ubuntu dependencies
         if: ${{ matrix.os == 'ubuntu-latest' }}
-        run: sudo apt install libpam0g-dev
+        run: sudo apt update && sudo apt install libpam0g-dev
 
       - name: Checkout code
         uses: actions/checkout@v4
