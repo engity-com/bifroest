@@ -22,7 +22,7 @@ jobs:
       any: ${{ steps.changes.outputs.any }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Check for backend file changes
         uses: dorny/paths-filter@v3
@@ -45,7 +45,7 @@ jobs:
       stage-publish: "${{ steps.refs.outputs.stage-publish }}"
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -83,7 +83,7 @@ jobs:
         run: sudo apt update && sudo apt install libpam0g-dev
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -129,7 +129,7 @@ jobs:
       image: ghcr.io/engity-com/build-images/go
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -178,13 +178,13 @@ jobs:
       contents: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
           persist-credentials: true
 
       - name: Create temp repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
           persist-credentials: true
