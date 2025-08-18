@@ -15,7 +15,6 @@ const (
 	ArchArmV6
 	ArchArmV7
 	ArchArm64
-	ArchMips64Le
 	ArchRiscV64
 )
 
@@ -139,13 +138,12 @@ func AllArchVariants() Archs {
 var (
 	// See https://go.dev/doc/install/source for more details
 	archToDetails = map[Arch]archDetails{
-		Arch386:      {name: "386"},
-		ArchAmd64:    {name: "amd64"},
-		ArchArmV6:    {name: "armv6", bare: "arm", oci: "arm/v6"},
-		ArchArmV7:    {name: "armv7", bare: "arm", oci: "arm/v7"},
-		ArchArm64:    {name: "arm64"},
-		ArchMips64Le: {name: "mips64le"},
-		ArchRiscV64:  {name: "riscv64"},
+		Arch386:     {name: "386"},
+		ArchAmd64:   {name: "amd64"},
+		ArchArmV6:   {name: "armv6", bare: "arm", oci: "arm/v6"},
+		ArchArmV7:   {name: "armv7", bare: "arm", oci: "arm/v7"},
+		ArchArm64:   {name: "arm64"},
+		ArchRiscV64: {name: "riscv64"},
 	}
 	stringToArch = func(in map[Arch]archDetails) map[string]Arch {
 		result := make(map[string]Arch, len(in))

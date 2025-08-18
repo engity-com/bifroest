@@ -38,7 +38,6 @@ class Arch(str, Enum):
     armv6 = 'armv6'
     armv7 = 'armv7'
     arm64 = 'arm64'
-    mips64le = 'mips64le'
     riscv64 = 'riscv64'
 
 
@@ -190,11 +189,6 @@ support_matrix = SupportMatrix(
         Os.linux, Arch.arm64,
         True, True,
         True, True
-    ),
-    editions_of(
-        Os.linux, Arch.mips64le,
-        True, True,
-        True, False
     ),
     editions_of(
         Os.linux, Arch.riscv64,
