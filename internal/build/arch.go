@@ -128,17 +128,5 @@ var (
 			}},
 			sys.OsWindows: {},
 		}},
-		sys.ArchMips64Le: {os: map[sys.Os]archOsDetails{
-			sys.OsLinux: {fromImage: fromDefaultLinux, build: map[archBuildKey]archBuildDetails{
-				{sys.OsLinux, sys.ArchAmd64}:   {"mips64el-linux-gnuabi64-gcc"},
-				{sys.OsWindows, sys.ArchAmd64}: {},
-			}},
-		}},
-		sys.ArchRiscV64: {os: map[sys.Os]archOsDetails{
-			sys.OsLinux: {fromImage: fromDefaultLinux, build: map[archBuildKey]archBuildDetails{
-				{sys.OsLinux, sys.ArchAmd64}:   {},
-				{sys.OsWindows, sys.ArchAmd64}: {},
-			}},
-		}},
 	}
 )
