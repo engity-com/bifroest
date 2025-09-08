@@ -30,7 +30,7 @@ python-dotenv==1.1.1
 PyYAML==6.0.2
 pyyaml_env_tag==1.1
 reedsolo==1.7.0
-requests==2.32.4
+requests==2.32.5
 requests-file==2.1.0
 requests-toolbelt==1.0.0
 ruamel.yaml==0.18.15
