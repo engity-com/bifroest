@@ -33,7 +33,7 @@ reedsolo==1.7.0
 requests==2.32.4
 requests-file==2.1.0
 requests-toolbelt==1.0.0
-ruamel.yaml==0.18.14
+ruamel.yaml==0.18.15
 ruamel.yaml.clib==0.2.12
 semantic-version==2.10.0
 setuptools==80.9.0
