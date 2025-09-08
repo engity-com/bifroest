@@ -549,8 +549,8 @@ def define_env(env: MacrosPlugin):
         if type(packaging) is str:
             packaging = Packaging[packaging]
 
-        result = '<table markdown="span" data-kind="compatibility_matrix"><thead markdown="span">'
-        result += f'<tr markdown="span"><th{' rowspan="2"' if packaging is None else ''}>Architecture</th>'
+        result = '<table markdown="1" data-kind="compatibility_matrix"><thead markdown="1">'
+        result += f'<tr markdown="1"><th{' rowspan="2"' if packaging is None else ''}>Architecture</th>'
         if os is not None:
             result += f'<th{' colspan="2"' if packaging is None else ''} markdown="span">{dist(os)}</th>'
         else:
@@ -559,6 +559,7 @@ def define_env(env: MacrosPlugin):
         result += "</tr>"
 
         if packaging is None:
+            result += '<tr>'
             if os is not None:
                 result += '<th>Binary</th><th>Image</th>'
             else:
@@ -566,7 +567,7 @@ def define_env(env: MacrosPlugin):
                     result += '<th>Binary</th><th>Image</th>'
             result += '</tr>'
 
-        result += '</thead><tbody markdown="span">'
+        result += '</thead><tbody markdown="1">'
 
         for arch in Arch:
 
@@ -575,17 +576,17 @@ def define_env(env: MacrosPlugin):
                 extended = support_matrix.lookup(os, arch, EditionKind.extended)
 
                 if (generic and (generic.binary_supported or generic.image_supported)) or (extended and (extended.binary_supported or extended.image_supported)):
-                    result += f'<tr markdown="span"><td markdown="span">`{arch.name}`</td>'
+                    result += f'<tr markdown="1"><td markdown="span">`{arch.name}`</td>'
 
                     if packaging == Packaging.archive or packaging is None:
                         result += f'<td markdown="span">{compatibility_editions(True if generic and generic.binary_supported else None, True if extended and extended.binary_supported else None, os)}</td>'
                     if packaging == Packaging.image or packaging is None:
                         result += f'<td markdown="span">{compatibility_editions(True if generic and generic.image_supported else None, True if extended and extended.image_supported else None, os)}</td>'
 
-                    result += '<tr>'
+                    result += '</tr>'
 
             else:
-                result += f'<tr markdown="span"><td markdown="span">`{arch.name}`</td>'
+                result += f'<tr markdown="1"><td markdown="span">`{arch.name}`</td>'
 
                 for osv in Os:
                     generic = support_matrix.lookup(osv, arch, EditionKind.generic)
@@ -595,7 +596,7 @@ def define_env(env: MacrosPlugin):
                     if packaging == Packaging.image or packaging is None:
                         result += f'<td markdown="span">{compatibility_editions(True if generic and generic.image_supported else None, True if extended and extended.image_supported else None, osv)}</td>'
 
-                result += '<tr>'
+                result += '</tr>'
 
         result += '</tbody>'
         result += '</table>'
