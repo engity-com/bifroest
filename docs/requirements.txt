@@ -7,7 +7,7 @@ mkdocs-plugin-inline-svg==0.1.0
 noiseprotocol==0.3.1
 packaging==25.0
 paginate==0.5.7
-paho-mqtt==1.6.1
+paho-mqtt==2.1.0
 pathspec==0.12.1
 pillow==10.4.0
 platformdirs==4.4.0
