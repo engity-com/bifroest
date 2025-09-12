@@ -12,7 +12,7 @@ pathspec==0.12.1
 pillow==10.4.0
 platformdirs==4.4.0
 platformio==6.1.18
-protobuf==6.31.1
+protobuf==6.32.1
 puremagic==1.30
 pycparser==2.22
 pydantic==2.11.7
