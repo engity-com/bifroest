@@ -9,7 +9,7 @@ packaging==25.0
 paginate==0.5.7
 paho-mqtt==2.1.0
 pathspec==0.12.1
-pillow==10.4.0
+pillow==11.3.0
 platformdirs==4.4.0
 platformio==6.1.18
 protobuf==6.32.1
