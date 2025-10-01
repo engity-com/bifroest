@@ -60,5 +60,5 @@ wcmatch==10.1
 webencodings==0.5.1
 wheel==0.45.1
 wsproto==1.2.0
-zeroconf==0.147.0
+zeroconf==0.147.2
 zipp==3.23.0
