@@ -56,8 +56,8 @@ github.com/docker/go-units v0.5.0 h1:69rxXcBk27SvSaaxTtLh/8llcHD8vYHT7WSdRZ/jvr4
 github.com/docker/go-units v0.5.0/go.mod h1:fgPhTUdO+D/Jk86RDLlptpiXQzgHJF7gydDDbaIK4Dk=
 github.com/ebitengine/purego v0.8.4 h1:CF7LEKg5FFOsASUj0+QwaXf8Ht6TlFxg09+S9wz0omw=
 github.com/ebitengine/purego v0.8.4/go.mod h1:iIjxzd6CiRiOG0UyXP+V1+jWqUXVjPKLAI0mRfJZTmQ=
-github.com/echocat/slf4g v1.6.3 h1:tkDzxbC+r2xRuZdjrrs6Nqgwt58NxB+Ha0x/oxMfUC4=
-github.com/echocat/slf4g v1.6.3/go.mod h1:YvF/d1TcPvT+/xiHStLHPI4xPT1GGeEmPczn2MSljNA=
+github.com/echocat/slf4g v1.7.0 h1:3xYnotPi7VejsFJI0kj4u0lfVsHWj5JsIheahhABqNM=
+github.com/echocat/slf4g v1.7.0/go.mod h1:YvF/d1TcPvT+/xiHStLHPI4xPT1GGeEmPczn2MSljNA=
 github.com/echocat/slf4g/native v1.7.0 h1:zjm7yDBCIrzZEcJDQMMpke7T+VzkoCLXibwkC7p1XuY=
 github.com/echocat/slf4g/native v1.7.0/go.mod h1:6ap2wna8A0hB8HrGy7jI0XSUF+7MmDVimcldnLy/K8Q=
 github.com/emicklei/go-restful/v3 v3.13.0 h1:C4Bl2xDndpU6nJ4bc1jXd+uTmYPVUwkD6bFY/oTyCes=
