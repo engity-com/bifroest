@@ -27,7 +27,7 @@ pyparsing==3.2.3
 pyserial==3.5
 python-dateutil==2.9.0.post0
 python-dotenv==1.1.1
-PyYAML==6.0.2
+PyYAML==6.0.3
 pyyaml_env_tag==1.1
 reedsolo==1.7.0
 requests==2.32.5
@@ -47,7 +47,7 @@ tinycss2==1.4.0
 tornado==6.5.2
 tqdm==4.67.1
 truststore==0.10.1
-typing-inspection==0.4.1
+typing-inspection==0.4.2
 typing_extensions==4.15.0
 tzdata==2025.2
 tzlocal==5.3.1
