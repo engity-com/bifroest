@@ -47,7 +47,7 @@ tinycss2==1.4.0
 tornado==6.5.2
 tqdm==4.67.1
 truststore==0.10.1
-typing-inspection==0.4.1
+typing-inspection==0.4.2
 typing_extensions==4.15.0
 tzdata==2025.2
 tzlocal==5.3.1
