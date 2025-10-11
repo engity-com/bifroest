@@ -12,7 +12,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.16.0
 	github.com/creack/pty v1.1.24
 	github.com/docker/cli v28.5.1+incompatible
-	github.com/docker/docker v28.5.0+incompatible
+	github.com/docker/docker v28.5.1+incompatible
 	github.com/docker/go-connections v0.6.0
 	github.com/echocat/slf4g v1.7.0
 	github.com/echocat/slf4g/native v1.7.0
