@@ -15,7 +15,7 @@ platformio==6.1.18
 protobuf==6.32.1
 puremagic==1.30
 pycparser==2.23
-pydantic==2.11.9
+pydantic==2.12.3
 pydantic-settings==2.11.0
 pydantic_core==2.33.2
 pyelftools==0.32
