@@ -162,7 +162,7 @@ jobs:
 
       - name: Archive package results
         if: needs.evaluate.outputs.stage-publish == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           retention-days: 1
           name: dist
