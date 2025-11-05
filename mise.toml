@@ -1,0 +1,66 @@
+[tasks."install"]
+run = [
+    { task = "install:go" },
+    { task = "install:docs" }
+]
+
+[tasks."install:go"]
+run = "go mod download"
+
+[tasks."install:docs"]
+run = "pip install -r docs/requirements.txt"
+
+[tasks."lint"]
+run = [
+    { task = "lint:go" }
+]
+
+[tasks."lint:go"]
+run = "golangci-lint run --color=always"
+
+[tasks."test"]
+run = [
+    { task = "test:go" }
+]
+
+[tasks."test:go"]
+depends = ["build:var"]
+run = 'go test -v -covermode atomic -coverprofile=var/profile.cov ./...'
+
+[tasks."build"]
+run = [
+    { task = "build:go" },
+    { task = "build:docs" }
+]
+
+[tasks."build:go"]
+run = "go run ./cmd/build build --log.colorMode=always"
+
+[tasks."build:docs"]
+run = [
+    "mkdocs --color build -c",
+    "rm -f var/doc/requirements.txt"
+]
+run_windows = [
+    'mkdocs --color build -c',
+    '''del var\doc\requirements.txt'''
+]
+
+[tasks."build:var"]
+hide = true
+run = "mkdir -p var"
+run_windows = 'if not exist var mkdir var'
+
+[tasks."ci:evaluate-environment"]
+hide = true
+run = "go run ./cmd/build evaluate-environment --log.colorMode=always"
+
+[tasks."ci:inspect-pr-action"]
+hide = true
+run = "go run ./cmd/build inspect-pr-action --log.colorMode=always"
+
+[settings]
+env_file = ".env"
+
+[alias]
+golangci-lint = "aqua:golangci/golangci-lint"

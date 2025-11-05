@@ -48,7 +48,7 @@ func (this *stdpipe) Close() (rErr error) {
 		rErr = err
 	}
 	if err := goos.Stdout.Close(); err != nil && rErr == nil {
-		rErr = err //nolint:golint,staticcheck
+		rErr = err //nolint:staticcheck
 	}
 	return nil
 }

@@ -3,7 +3,7 @@
 package configuration
 
 var (
-	defaultAuthorizationLocalPamService = "" //nolint:golint,unused
+	defaultAuthorizationLocalPamService = "" //nolint:unused
 )
 
 func (this AuthorizationLocal) FeatureFlags() []string {

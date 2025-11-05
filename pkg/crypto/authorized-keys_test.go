@@ -14,7 +14,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/common"
 )
 
-//nolint:golint,unused
+//nolint:unused
 //goland:noinspection ALL
 var (
 	dsa1Pub, dsa1Fn             = mustSshPublicKey("dsa-1")

@@ -41,22 +41,20 @@ jobs:
           key: images-dependencies
           restore-keys: images-dependencies
 
+      - name: Install MISE
+        uses: jdx/mise-action@v3
+
       - name: Git configure
-        run: |
-          git config --global --add safe.directory $(pwd)
+        run: git config --global --add safe.directory $(pwd)
 
       - name: Install dependencies
-        run: |
-          go mod download
+        run: mise install:go
 
       - name: Test
-        run: |
-          mkdir -p var
-          go test -v ./...
+        run: mise run test:go
 
       - name: Build/Release
-        run: |
-          go run ./cmd/build build --log.colorMode=always
+        run: mise run build:go
 
   documentation:
     name: "Documentation"
@@ -89,20 +87,17 @@ jobs:
           git branch -d temp-deploy || true
           git switch --orphan temp-deploy
 
-      - name: Install Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: 3.x
-
-      - name: Install dependencies
-        run: |
-          pip install -r docs/requirements.txt
+      - name: Install MISE
+        uses: jdx/mise-action@v3
 
       - name: Cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ hashFiles('docs/requirements.txt') }}
+
+      - name: Install dependencies
+        run: mise run install:docs
 
       - name: Build
         run: |
@@ -111,8 +106,7 @@ jobs:
           export VERSION=$(test -z "${VERSION_INPUT}" && echo $(echo "${VERSION_REF}" | sed -e "s#^refs/tags/##g" | sed -e "s#^v##g") || echo "${VERSION_INPUT}")
           echo "Version: ${VERSION}"
 
-          mkdocs --color build -c
-          rm -f var/doc/requirements.txt
+          mise run build:docs
 
       - name: Deploy
         working-directory: var/doc

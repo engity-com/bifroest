@@ -13,4 +13,4 @@ updates:
   - package-ecosystem: "pip"
     directory: "/docs"
     schedule:
-      interval: "weekly"
+      interval: "monthly"

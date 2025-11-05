@@ -1,0 +1,3 @@
+go            prefix:1.25
+golangci-lint v2.6.1
+python        3.13
