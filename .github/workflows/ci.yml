@@ -191,16 +191,14 @@ jobs:
           git branch -d temp-deploy || true
           git switch --orphan temp-deploy
 
-      - name: Install Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: 3.x
-
       - name: Cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ hashFiles('docs/requirements.txt') }}
+
+      - name: Install MISE
+        uses: jdx/mise-action@v3
 
       - name: Install dependencies
         run: mise run install:docs
