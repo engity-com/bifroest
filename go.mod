@@ -33,7 +33,7 @@ require (
 	github.com/otiai10/copy v1.14.1
 	github.com/pires/go-proxyproto v0.8.1
 	github.com/pkg/sftp v1.13.10
-	github.com/shirou/gopsutil/v4 v4.25.9
+	github.com/shirou/gopsutil/v4 v4.25.10
 	github.com/stretchr/testify v1.11.1
 	github.com/tg123/go-htpasswd v1.2.4
 	github.com/vmihailenco/msgpack/v5 v5.4.1
