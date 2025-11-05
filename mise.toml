@@ -8,7 +8,7 @@ run = [
 run = "go mod download"
 
 [tasks."install:docs"]
-run = "pip install -r docs/requirements.txt"
+run = "python -m pip install -r docs/requirements.txt"
 
 [tasks."lint"]
 run = [
@@ -64,3 +64,6 @@ env_file = ".env"
 
 [alias]
 golangci-lint = "aqua:golangci/golangci-lint"
+
+[env]
+_.python.venv = { path = ".pyvenv", create = true, uv_create_args = ['--seed'] }
