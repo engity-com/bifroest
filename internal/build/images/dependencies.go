@@ -108,7 +108,7 @@ func getFileFromImage(ctx context.Context, req FetchDependenciesRequest, imgName
 	for i, layer := range layers {
 		ok, err := getFileFromLayer(layer, sourceFn, targetFn)
 		if err != nil {
-			return failf("layer %d", i, err)
+			return failf("layer %d: %w", i, err)
 		}
 		if ok {
 			l = l.With("duration", time.Since(start).Truncate(time.Millisecond))
@@ -170,7 +170,7 @@ func getFileFromLayer(layer v1.Layer, sourceFn, targetFn string) (_ bool, rErr e
 			defer common.KeepCloseError(&rErr, to)
 
 			if _, err := io.Copy(to, tr); err != nil {
-				return failf("cannot write file from archive %q to %q: %w", targetFn, err)
+				return failf("cannot write file from archive %q: %w", targetFn, err)
 			}
 
 			return true, nil

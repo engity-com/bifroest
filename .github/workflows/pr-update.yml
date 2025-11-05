@@ -31,13 +31,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Go
-        uses: actions/setup-go@v6
-        with:
-          cache: false
-          go-version-file: go.mod
-          check-latest: true
-
       - name: Cache Go
         uses: actions/cache@v4
         with:
@@ -46,8 +39,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
+      - name: Install MISE
+        uses: jdx/mise-action@v3
+
       - name: Execute
         id: refs
-        run: |
-          set -ex
-          go run ./cmd/build inspect-pr-action --log.colorMode=always "${{github.event.action}}" "${{github.event.number}}" "${{github.event.label.name}}"
+        run: mise run ci:inspect-pr-action "${{github.event.action}}" "${{github.event.number}}" "${{github.event.label.name}}"

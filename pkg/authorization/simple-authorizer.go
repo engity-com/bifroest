@@ -151,7 +151,7 @@ func (this *SimpleAuthorizer) isAuthorizedViaPublicKey(req PublicKeyRequest, ent
 				}
 				return true, nil
 			}); err != nil {
-				return failf("cannot resolve authorized keys of user %q", entry.Name, err)
+				return failf("cannot resolve authorized keys of user %q: %w", entry.Name, err)
 			}
 		}
 	}

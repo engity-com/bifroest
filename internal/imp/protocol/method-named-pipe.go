@@ -146,7 +146,7 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 		if sys.IsClosedError(err) {
 			return nil
 		} else if err != nil {
-			return failCoref("cannot accept connection from pipe", err)
+			return failCoref("cannot accept connection from pipe: %w", err)
 		}
 		go func(pipeConn net.CloseWriterConn) struct{} {
 			defer common.IgnoreCloseError(pipeConn)

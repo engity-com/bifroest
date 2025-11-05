@@ -1,4 +1,4 @@
-//nolint:golint,unused
+//nolint:unused
 package user
 
 import (
@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	keepPkgUserFiles = os.Getenv("KEEP_PKG_USER_TEST_FILES") == "yes" //nolint:golint,unused
+	keepPkgUserFiles = os.Getenv("KEEP_PKG_USER_TEST_FILES") == "yes" //nolint:unused
 )
 
 func b(in string) []byte {

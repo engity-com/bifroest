@@ -49,13 +49,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Go
-        uses: actions/setup-go@v6
-        with:
-          cache: false
-          go-version-file: go.mod
-          check-latest: true
-
       - name: Cache Go
         uses: actions/cache@v4
         with:
@@ -64,10 +57,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
+      - name: Install MISE
+        uses: jdx/mise-action@v3
+
       - name: Execute
         id: refs
         run: |
-          go run ./cmd/build evaluate-environment --log.colorMode=always
+          mise run ci:evaluate-environment
 
   test:
     name: Tests
@@ -87,13 +83,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Go
-        uses: actions/setup-go@v6
-        with:
-          cache: false
-          go-version-file: go.mod
-          check-latest: true
-
       - name: Cache Go
         uses: actions/cache@v4
         with:
@@ -102,24 +91,24 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
-      - name: Install goveralls
-        run: go install github.com/mattn/goveralls@latest
+      - name: Install MISE
+        uses: jdx/mise-action@v3
 
       - name: Install dependencies
-        run: |
-          go mod download
+        run: mise run install:go
 
       - name: Test
-        run: |
-          mkdir -p var
-          go test -v -covermode atomic "-coverprofile=var/profile.cov" ./...
+        run: mise run test:go
 
       - name: Send coverage
         if: false
-        env:
-          COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          goveralls "-coverprofile=profile.cov" "-service=github" "-parallel" "-flagname=go-${{ matrix.os }}"
+        uses: coverallsapp/github-action@v2
+        with:
+          parallel: true
+          flag-name: go-${{ matrix.os }}
+          format: golang
+          file: profile.cov
+
   package:
     name: Package
     needs: [ evaluate, files-changed ]
@@ -141,6 +130,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
+      - name: Install MISE
+        uses: jdx/mise-action@v3
+
       - name: Cache images dependencies
         uses: actions/cache@v4
         with:
@@ -149,16 +141,13 @@ jobs:
           restore-keys: images-dependencies
 
       - name: Git configure
-        run: |
-          git config --global --add safe.directory $(pwd)
+        run: git config --global --add safe.directory $(pwd)
 
       - name: Install dependencies
-        run: |
-          go mod download
+        run: mise run install:go
 
       - name: Build
-        run: |
-          go run ./cmd/build build --log.colorMode=always
+        run: mise run build:go
 
       - name: Archive package results
         if: needs.evaluate.outputs.stage-publish == 'true'
@@ -214,13 +203,10 @@ jobs:
           key: ${{ hashFiles('docs/requirements.txt') }}
 
       - name: Install dependencies
-        run: |
-          pip install -r docs/requirements.txt
+        run: mise run install:docs
 
       - name: Build
-        run: |
-          mkdocs --color build -c
-          rm -f var/doc/requirements.txt
+        run: mise run build:docs
 
       - name: Deploy
         if: needs.evaluate.outputs.stage-publish == 'true' && needs.evaluate.outputs.pr
