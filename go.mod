@@ -18,7 +18,7 @@ require (
 	github.com/echocat/slf4g/native v1.7.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gliderlabs/ssh v0.3.8
-	github.com/go-delve/delve v1.25.2
+	github.com/go-delve/delve v1.26.0
 	github.com/google/go-containerregistry v0.20.6
 	github.com/google/go-github/v65 v65.0.0
 	github.com/google/uuid v1.6.0
@@ -78,7 +78,6 @@ require (
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/pprof v0.0.0-20250630185457-6e76a2b096b5 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
-	github.com/hashicorp/golang-lru v1.0.2 // indirect
 	github.com/huandu/xstrings v1.5.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
