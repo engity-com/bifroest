@@ -15,7 +15,7 @@ require (
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.6.0
 	github.com/echocat/slf4g v1.8.3
-	github.com/echocat/slf4g/native v1.8.2
+	github.com/echocat/slf4g/native v1.8.3
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gliderlabs/ssh v0.3.8
 	github.com/go-delve/delve v1.26.0
