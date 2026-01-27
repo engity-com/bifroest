@@ -31,7 +31,7 @@ require (
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/openwall/yescrypt-go v1.0.0
 	github.com/otiai10/copy v1.14.1
-	github.com/pires/go-proxyproto v0.9.0
+	github.com/pires/go-proxyproto v0.9.1
 	github.com/pkg/sftp v1.13.10
 	github.com/shirou/gopsutil/v4 v4.25.12
 	github.com/stretchr/testify v1.11.1
