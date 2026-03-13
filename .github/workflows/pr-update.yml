@@ -40,7 +40,7 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Install MISE
-        uses: jdx/mise-action@v3
+        uses: jdx/mise-action@v4
 
       - name: Execute
         id: refs
