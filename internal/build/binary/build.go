@@ -44,7 +44,9 @@ func Build(ctx context.Context, req BuildRequest) error {
 	ldFlags := req.toLdFlags()
 	if !debug.IsEmbeddedDlvEnabled() {
 		ldFlags = "-w -s " + ldFlags
-		cFlags = "all=-N -l"
+		if req.Platform.Os != sys.OsWindows || req.Platform.Arch != sys.ArchArm64 {
+			cFlags = "all=-N -l"
+		}
 	}
 
 	var buildEnvPath string
