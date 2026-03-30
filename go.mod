@@ -1,6 +1,6 @@
 module github.com/engity-com/bifroest
 
-go 1.25.7
+go 1.26
 
 require (
 	dario.cat/mergo v1.0.2
@@ -25,6 +25,7 @@ require (
 	github.com/gwatts/rootcerts v0.0.0-20250601184604-370a9a75f341
 	github.com/mattn/go-zglob v0.0.6
 	github.com/mikesmitty/edkey v0.0.0-20170222072505-3356ea4e686a
+	github.com/moby/moby/api v1.54.0
 	github.com/moby/spdystream v0.5.0
 	github.com/mr-tron/base58 v1.2.0
 	github.com/msteinert/pam/v2 v2.1.0
@@ -46,6 +47,8 @@ require (
 	k8s.io/apimachinery v0.35.3
 	k8s.io/client-go v0.35.3
 )
+
+replace github.com/docker/docker => github.com/moby/moby v28.5.2+incompatible
 
 require (
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
@@ -91,7 +94,6 @@ require (
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
-	github.com/moby/moby/api v1.54.0 // indirect
 	github.com/moby/moby/client v0.3.0 // indirect
 	github.com/moby/sys/atomicwriter v0.1.0 // indirect
 	github.com/moby/term v0.5.2 // indirect

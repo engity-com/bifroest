@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/cli/opts"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -21,11 +22,11 @@ import (
 	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/api/types/strslice"
 	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
 	"github.com/docker/go-connections/nat"
 	"github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/level"
 	glssh "github.com/gliderlabs/ssh"
+	mobymount "github.com/moby/moby/api/types/mount"
 
 	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/common"
@@ -164,11 +165,11 @@ func (this *DockerRepository) Ensure(req Request) (Environment, error) {
 	return this.findOrEnsureBySession(req.Context(), sess, nil, req, true)
 }
 
-func (this *DockerRepository) createContainerBy(req Request, sess session.Session) (*types.Container, error) {
-	fail := func(err error) (*types.Container, error) {
+func (this *DockerRepository) createContainerBy(req Request, sess session.Session) (*container.Summary, error) {
+	fail := func(err error) (*container.Summary, error) {
 		return nil, err
 	}
-	failf := func(t errors.Type, msg string, args ...any) (*types.Container, error) {
+	failf := func(t errors.Type, msg string, args ...any) (*container.Summary, error) {
 		return fail(errors.Newf(t, msg, args...))
 	}
 
@@ -406,7 +407,10 @@ func (this *DockerRepository) resolveHostConfig(req Request) (_ *container.HostC
 				return failf("cannot evaluate mount %d: %w", i, err)
 			}
 		}
-		result.Mounts = buf.Value()
+		result.Mounts = make([]mount.Mount, len(buf.Value()))
+		for i, value := range buf.Value() {
+			result.Mounts[i] = toDockerMount(value)
+		}
 	}
 	if result.CapAdd, err = this.conf.Capabilities.Render(req); err != nil {
 		return failf("cannot evaluate capabilities: %w", err)
@@ -452,6 +456,81 @@ func (this *DockerRepository) resolveHostConfig(req Request) (_ *container.HostC
 	}
 
 	return &result, nil
+}
+
+func toDockerMount(value mobymount.Mount) mount.Mount {
+	return mount.Mount{
+		Type:           mount.Type(value.Type),
+		Source:         value.Source,
+		Target:         value.Target,
+		ReadOnly:       value.ReadOnly,
+		Consistency:    mount.Consistency(value.Consistency),
+		BindOptions:    toDockerBindOptions(value.BindOptions),
+		VolumeOptions:  toDockerVolumeOptions(value.VolumeOptions),
+		ImageOptions:   toDockerImageOptions(value.ImageOptions),
+		TmpfsOptions:   toDockerTmpfsOptions(value.TmpfsOptions),
+		ClusterOptions: toDockerClusterOptions(value.ClusterOptions),
+	}
+}
+
+func toDockerBindOptions(value *mobymount.BindOptions) *mount.BindOptions {
+	if value == nil {
+		return nil
+	}
+	return &mount.BindOptions{
+		Propagation:            mount.Propagation(value.Propagation),
+		NonRecursive:           value.NonRecursive,
+		CreateMountpoint:       value.CreateMountpoint,
+		ReadOnlyNonRecursive:   value.ReadOnlyNonRecursive,
+		ReadOnlyForceRecursive: value.ReadOnlyForceRecursive,
+	}
+}
+
+func toDockerVolumeOptions(value *mobymount.VolumeOptions) *mount.VolumeOptions {
+	if value == nil {
+		return nil
+	}
+	return &mount.VolumeOptions{
+		NoCopy:       value.NoCopy,
+		Labels:       value.Labels,
+		Subpath:      value.Subpath,
+		DriverConfig: toDockerDriver(value.DriverConfig),
+	}
+}
+
+func toDockerImageOptions(value *mobymount.ImageOptions) *mount.ImageOptions {
+	if value == nil {
+		return nil
+	}
+	return &mount.ImageOptions{Subpath: value.Subpath}
+}
+
+func toDockerTmpfsOptions(value *mobymount.TmpfsOptions) *mount.TmpfsOptions {
+	if value == nil {
+		return nil
+	}
+	return &mount.TmpfsOptions{
+		SizeBytes: value.SizeBytes,
+		Mode:      value.Mode,
+		Options:   value.Options,
+	}
+}
+
+func toDockerClusterOptions(value *mobymount.ClusterOptions) *mount.ClusterOptions {
+	if value == nil {
+		return nil
+	}
+	return &mount.ClusterOptions{}
+}
+
+func toDockerDriver(value *mobymount.Driver) *mount.Driver {
+	if value == nil {
+		return nil
+	}
+	return &mount.Driver{
+		Name:    value.Name,
+		Options: value.Options,
+	}
 }
 
 func (this *DockerRepository) resolveEncodedShellCommand(req Request) (string, error) {
@@ -641,7 +720,7 @@ func (this *DockerRepository) removeContainer(ctx context.Context, id string) (b
 	if err := this.apiClient.ContainerRemove(ctx, id, container.RemoveOptions{
 		RemoveVolumes: true,
 		Force:         true,
-	}); errdefs.IsNotFound(err) {
+	}); cerrdefs.IsNotFound(err) {
 		return false, nil
 	} else if err != nil {
 		return false, errors.System.Newf("cannot remove container #%s: %w", id, err)
@@ -649,18 +728,18 @@ func (this *DockerRepository) removeContainer(ctx context.Context, id string) (b
 	return true, nil
 }
 
-func (this *DockerRepository) findContainerBySession(ctx context.Context, sess session.Session) (c *types.Container, exitCode int, err error) {
+func (this *DockerRepository) findContainerBySession(ctx context.Context, sess session.Session) (c *container.Summary, exitCode int, err error) {
 	return this.findContainerBy(ctx, filters.NewArgs(
 		filters.Arg("label", DockerLabelSessionId+"="+sess.Id().String()),
 	))
 }
-func (this *DockerRepository) findContainerById(ctx context.Context, id string) (c *types.Container, exitCode int, err error) {
+func (this *DockerRepository) findContainerById(ctx context.Context, id string) (c *container.Summary, exitCode int, err error) {
 	return this.findContainerBy(ctx, filters.NewArgs(
 		filters.Arg("id", id),
 	))
 }
 
-func (this *DockerRepository) findContainerBy(ctx context.Context, filters filters.Args) (c *types.Container, exitCode int, err error) {
+func (this *DockerRepository) findContainerBy(ctx context.Context, filters filters.Args) (c *container.Summary, exitCode int, err error) {
 	list, err := this.apiClient.ContainerList(ctx, container.ListOptions{
 		Limit:   1,
 		All:     true,
@@ -785,7 +864,7 @@ func (this *DockerRepository) isNoSuchImageError(err error) bool {
 }
 
 type dockerContainerContext struct {
-	container *types.Container
+	container *container.Summary
 }
 
 func (this *dockerContainerContext) GetField(name string) (any, bool, error) {
