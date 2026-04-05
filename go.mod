@@ -26,7 +26,7 @@ require (
 	github.com/gwatts/rootcerts v0.0.0-20250601184604-370a9a75f341
 	github.com/mattn/go-zglob v0.0.6
 	github.com/mikesmitty/edkey v0.0.0-20170222072505-3356ea4e686a
-	github.com/moby/moby/api v1.54.0
+	github.com/moby/moby/api v1.54.1
 	github.com/moby/spdystream v0.5.0
 	github.com/mr-tron/base58 v1.2.0
 	github.com/msteinert/pam/v2 v2.1.0
