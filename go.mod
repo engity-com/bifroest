@@ -14,7 +14,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/docker/cli v29.4.0+incompatible
 	github.com/docker/docker v28.5.2+incompatible
-	github.com/docker/go-connections v0.6.0
+	github.com/docker/go-connections v0.7.0
 	github.com/echocat/slf4g v1.8.4
 	github.com/echocat/slf4g/native v1.8.4
 	github.com/fsnotify/fsnotify v1.9.0
