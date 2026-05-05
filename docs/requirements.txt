@@ -9,7 +9,7 @@ ghp-import==2.1.0
 hjson==3.1.0
 idna==3.11
 importlib_metadata==8.7.0
-importlib_resources==6.5.2
+importlib_resources==7.1.0
 Jinja2==3.1.6
 Markdown==3.10.2
 MarkupSafe==3.0.3
