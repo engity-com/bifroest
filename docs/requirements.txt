@@ -7,7 +7,7 @@ click==8.4.2
 colorama==0.4.6
 ghp-import==2.1.0
 hjson==3.1.0
-idna==3.15
+idna==3.18
 importlib_metadata==8.7.0
 importlib_resources==7.1.0
 Jinja2==3.1.6
