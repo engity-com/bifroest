@@ -37,7 +37,7 @@ require (
 	github.com/pkg/sftp v1.13.10
 	github.com/shirou/gopsutil/v4 v4.26.5
 	github.com/stretchr/testify v1.11.1
-	github.com/tg123/go-htpasswd v1.2.4
+	github.com/tg123/go-htpasswd v1.2.5
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/xtaci/smux v1.5.34
 	golang.org/x/crypto v0.53.0
