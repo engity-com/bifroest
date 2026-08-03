@@ -58,7 +58,7 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Install MISE
-        uses: jdx/mise-action@v4
+        uses: jdx/mise-action@v4.2.3
 
       - name: Execute
         id: refs
@@ -92,7 +92,7 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Install MISE
-        uses: jdx/mise-action@v4
+        uses: jdx/mise-action@v4.2.3
 
       - name: Install dependencies
         run: mise run install:go
@@ -131,7 +131,7 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Install MISE
-        uses: jdx/mise-action@v4
+        uses: jdx/mise-action@v4.2.3
 
       - name: Cache images dependencies
         uses: actions/cache@v6
@@ -198,7 +198,7 @@ jobs:
           key: ${{ hashFiles('docs/requirements.txt') }}
 
       - name: Install MISE
-        uses: jdx/mise-action@v4
+        uses: jdx/mise-action@v4.2.3
 
       - name: Install dependencies
         run: mise run install:docs
