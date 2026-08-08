@@ -19,7 +19,7 @@ require (
 	github.com/echocat/slf4g/native v1.8.4
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gliderlabs/ssh v0.3.8
-	github.com/go-delve/delve v1.27.0
+	github.com/go-delve/delve v1.27.1
 	github.com/google/go-containerregistry v0.21.8
 	github.com/google/go-github/v65 v65.0.0
 	github.com/google/uuid v1.6.0
@@ -122,7 +122,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/arch v0.20.0 // indirect
+	golang.org/x/arch v0.28.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/telemetry v0.0.0-20250815182358-98dc7c9adeb6 // indirect
