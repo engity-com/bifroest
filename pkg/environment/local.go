@@ -15,6 +15,7 @@ import (
 	"github.com/echocat/slf4g/level"
 	glssh "github.com/gliderlabs/ssh"
 
+	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/net"
@@ -72,7 +73,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		return failf("illegal task type: %v", t.TaskType())
 	}
 
-	if ssh.AgentRequested(sshSess) {
+	if ssh.AgentRequested(sshSess) && authorization.IsAgentForwardingAllowed(auth) {
 		ln, err := net.NewNamedPipe("ssh-agent")
 		if err != nil {
 			return failf("cannot listen to agent: %w", err)

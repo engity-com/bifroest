@@ -9,7 +9,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-func DoWithEachAuthorizedKey[R any](requireExistence bool, callback func(ssh.PublicKey) (result R, canContinue bool, err error), files ...string) (result R, err error) {
+func DoWithEachAuthorizedKey[R any](requireExistence bool, callback func(ssh.PublicKey, []AuthorizedKeyOption) (result R, canContinue bool, err error), files ...string) (result R, err error) {
 	fail := func(err error) (R, error) {
 		var empty R
 		return empty, err
@@ -29,12 +29,19 @@ func DoWithEachAuthorizedKey[R any](requireExistence bool, callback func(ssh.Pub
 		var entry int
 		for len(rest) > 0 {
 			var pub ssh.PublicKey
-			pub, _, _, rest, err = ssh.ParseAuthorizedKey(rest)
+			var plainOptions []string
+			pub, _, plainOptions, rest, err = ssh.ParseAuthorizedKey(rest)
 			if err != nil {
 				return failf("failed to parse entry #%d of authorized keys file %q: %v", entry, file, err)
 			}
+			options := make([]AuthorizedKeyOption, len(plainOptions))
+			for i, plainOption := range plainOptions {
+				if err := options[i].Set(plainOption); err != nil {
+					return failf("failed to parse option #%d of entry #%d of authorized keys file %q: %v", i, entry, file, err)
+				}
+			}
 			var canContinue bool
-			result, canContinue, err = callback(pub)
+			result, canContinue, err = callback(pub, options)
 			if err != nil {
 				return failf("failed to evaluate entry #%d of authorized keys file %q: %v", entry, file, err)
 			}

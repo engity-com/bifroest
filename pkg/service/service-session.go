@@ -84,6 +84,10 @@ func (this *service) executeSession(sshSess glssh.Session, conn *connection, tas
 	if err != nil {
 		return fail(err)
 	}
+	sshSess, forcedCommand := applyAuthorizedKeyPolicy(auth, sshSess)
+	if forcedCommand {
+		taskType = environment.TaskTypeShell
+	}
 
 	if err := this.showRememberMe(sshSess, auth, sess, oldState); err != nil {
 		return fail(err)

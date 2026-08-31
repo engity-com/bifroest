@@ -16,12 +16,13 @@ import (
 )
 
 type local struct {
-	user              *user.User
-	remote            net.Remote
-	envVars           sys.EnvVars
-	flow              configuration.FlowName
-	session           session.Session
-	sessionsPublicKey ssh.PublicKey
+	user                *user.User
+	remote              net.Remote
+	envVars             sys.EnvVars
+	flow                configuration.FlowName
+	session             session.Session
+	sessionsPublicKey   ssh.PublicKey
+	authorizedKeyPolicy *AuthorizedKeyPolicy
 }
 
 func (this *local) Remote() net.Remote {
@@ -46,6 +47,10 @@ func (this *local) FindSession() session.Session {
 
 func (this *local) FindSessionsPublicKey() ssh.PublicKey {
 	return this.sessionsPublicKey
+}
+
+func (this *local) AuthorizedKeyPolicy() *AuthorizedKeyPolicy {
+	return this.authorizedKeyPolicy
 }
 
 func (this *local) GetField(name string, ce ContextEnabled) (any, bool, error) {
