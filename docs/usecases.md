@@ -163,6 +163,8 @@ Use Bifröst with multiple configured [flows](reference/flow.md). Each flow can 
 
 You simply want to use something else than [OpenSSH sshd](https://man.openbsd.org/sshd.8), Bifröst will do this, too. 😉 Just use << asset_link("contrib/configurations/sshd-dropin-replacement.yaml", "this configuration") >>.
 
+Bifröst supports the vast majority of common OpenSSH setups. Only a small number of specialized edge cases are not supported, including some [`authorized_keys` options](reference/data-type.md#authorized-keys) such as `no-touch-required`.
+
 
 ## More topics
 * [Configuration](reference/configuration.md)

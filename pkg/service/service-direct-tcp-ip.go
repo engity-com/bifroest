@@ -9,6 +9,7 @@ import (
 	glssh "github.com/gliderlabs/ssh"
 	gossh "golang.org/x/crypto/ssh"
 
+	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/net"
@@ -56,6 +57,11 @@ func (this *service) handleNewDirectTcpIp(_ *glssh.Server, _ *gossh.ServerConn, 
 		l.WithError(err).
 			Info("cannot parse client's forward data; rejecting...")
 		_ = newChan.Reject(gossh.ConnectionFailed, "error parsing forward data: "+err.Error())
+		return
+	}
+	if policy := authorization.AuthorizedKeyPolicyOf(auth); policy != nil && !policy.AllowsOpen(dest) {
+		l.Info("port forwarding requested by client was rejected by authorized key policy")
+		_ = newChan.Reject(gossh.Prohibited, "port forwarding is disabled by authorized key policy")
 		return
 	}
 
@@ -162,9 +168,13 @@ func (this *service) handleNewDirectTcpIp(_ *glssh.Server, _ *gossh.ServerConn, 
 	})
 }
 
-func (this *service) onReversePortForwardingRequested(_ glssh.Context, _ string, _ uint32) bool {
-	// TODO! Maybe more checks here in the future?
-	return true
+func (this *service) onReversePortForwardingRequested(ctx glssh.Context, host string, port uint32) bool {
+	auth, ok := ctx.Value(authorizationCtxKey).(authorization.Authorization)
+	if !ok {
+		return false
+	}
+	policy := authorization.AuthorizedKeyPolicyOf(auth)
+	return policy == nil || policy.AllowsListen(host, port)
 }
 
 func (this *service) reWrapUserFacingErrors(err error) *errors.Error {

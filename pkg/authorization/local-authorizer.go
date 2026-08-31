@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	log "github.com/echocat/slf4g"
 	"golang.org/x/crypto/ssh"
@@ -89,6 +90,7 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 		this.flow,
 		nil,
 		nil,
+		nil,
 	}
 
 	if ok, err := req.Validate(&candidate); err != nil {
@@ -96,6 +98,14 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	} else if !ok {
 		return Forbidden(req.Connection().Remote()), nil
 	}
+	policy, accepted, err := this.authorizedKeyPolicy(req, u)
+	if err != nil {
+		return fail(err)
+	}
+	if !accepted {
+		return Forbidden(req.Connection().Remote()), nil
+	}
+	candidate.authorizedKeyPolicy = policy
 
 	sess, err := req.Sessions().FindByPublicKey(req.Context(), req.RemotePublicKey(), (&session.FindOpts{}).WithPredicate(
 		session.IsFlow(this.flow),
@@ -103,11 +113,6 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 		session.IsRemoteName(req.Connection().Remote().User()),
 	))
 	if errors.Is(err, session.ErrNoSuchSession) {
-		if ok, err := this.isAuthorizedViaPublicKey(req, u); err != nil {
-			return fail(err)
-		} else if !ok {
-			return Forbidden(req.Connection().Remote()), nil
-		}
 		sess, err = this.ensureSessionFor(req, u)
 		if err != nil {
 			return fail(err)
@@ -124,11 +129,11 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	return &candidate, nil
 }
 
-func (this *LocalAuthorizer) isAuthorizedViaPublicKey(req PublicKeyRequest, u *user.User) (bool, error) {
-	fail := func(err error) (bool, error) {
-		return false, err
+func (this *LocalAuthorizer) authorizedKeyPolicy(req PublicKeyRequest, u *user.User) (*AuthorizedKeyPolicy, bool, error) {
+	fail := func(err error) (*AuthorizedKeyPolicy, bool, error) {
+		return nil, false, err
 	}
-	failf := func(msg string, args ...any) (bool, error) {
+	failf := func(msg string, args ...any) (*AuthorizedKeyPolicy, bool, error) {
 		return fail(errors.Newf(errors.System, msg, args...))
 	}
 
@@ -138,10 +143,12 @@ func (this *LocalAuthorizer) isAuthorizedViaPublicKey(req PublicKeyRequest, u *u
 	}
 	if len(files) == 0 {
 		req.Connection().Logger().Debug("local user does not has any authorized keys file")
-		return false, nil
+		return nil, false, nil
 	}
 
-	foundMatch, err := crypto.DoWithEachAuthorizedKey[bool](false, func(candidate ssh.PublicKey) (ok bool, canContinue bool, err error) {
+	foundMatch := false
+	var policy *AuthorizedKeyPolicy
+	_, err = crypto.DoWithEachAuthorizedKey[bool](false, func(candidate ssh.PublicKey, options []crypto.AuthorizedKeyOption) (ok bool, canContinue bool, err error) {
 		remote := req.RemotePublicKey()
 
 		if remote.Type() != candidate.Type() {
@@ -151,6 +158,15 @@ func (this *LocalAuthorizer) isAuthorizedViaPublicKey(req PublicKeyRequest, u *u
 			return false, true, nil
 		}
 
+		candidatePolicy, accepted, err := evaluateAuthorizedKeyOptions(options, req.Connection().Remote().Host(), time.Now())
+		if err != nil {
+			return false, false, err
+		}
+		if !accepted {
+			return false, true, nil
+		}
+		foundMatch = true
+		policy = candidatePolicy
 		return true, false, nil
 	}, files...)
 	if err != nil {
@@ -159,10 +175,10 @@ func (this *LocalAuthorizer) isAuthorizedViaPublicKey(req PublicKeyRequest, u *u
 
 	if !foundMatch {
 		req.Connection().Logger().Debug("presented public key does not match any authorized keys of local user")
-		return false, nil
+		return nil, false, nil
 	}
 
-	return true, nil
+	return policy, true, nil
 }
 
 type userEnabledRequest struct {
@@ -262,6 +278,7 @@ func (this *LocalAuthorizer) AuthorizePassword(req PasswordRequest) (Authorizati
 		this.flow,
 		nil,
 		nil,
+		nil,
 	}
 
 	if ok, err := req.Validate(&candidate); err != nil {
@@ -319,6 +336,7 @@ func (this *LocalAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Autho
 		req.Connection().Remote(),
 		ev,
 		this.flow,
+		nil,
 		nil,
 		nil,
 	}
@@ -429,6 +447,7 @@ func (this *LocalAuthorizer) RestoreFromSession(ctx context.Context, sess sessio
 		buf.EnvVars.Clone(),
 		this.flow.Clone(),
 		sess,
+		nil,
 		nil,
 	}, nil
 }

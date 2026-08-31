@@ -13,12 +13,13 @@ import (
 )
 
 type simple struct {
-	entry             *configuration.AuthorizationSimpleEntry
-	remote            net.Remote
-	envVars           sys.EnvVars
-	flow              configuration.FlowName
-	session           session.Session
-	sessionsPublicKey ssh.PublicKey
+	entry               *configuration.AuthorizationSimpleEntry
+	remote              net.Remote
+	envVars             sys.EnvVars
+	flow                configuration.FlowName
+	session             session.Session
+	sessionsPublicKey   ssh.PublicKey
+	authorizedKeyPolicy *AuthorizedKeyPolicy
 }
 
 func (this *simple) Remote() net.Remote {
@@ -43,6 +44,10 @@ func (this *simple) FindSession() session.Session {
 
 func (this *simple) FindSessionsPublicKey() ssh.PublicKey {
 	return this.sessionsPublicKey
+}
+
+func (this *simple) AuthorizedKeyPolicy() *AuthorizedKeyPolicy {
+	return this.authorizedKeyPolicy
 }
 
 func (this *simple) GetField(name string, ce ContextEnabled) (any, bool, error) {

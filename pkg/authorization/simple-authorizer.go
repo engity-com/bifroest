@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	log "github.com/echocat/slf4g"
 	"golang.org/x/crypto/ssh"
@@ -62,6 +63,14 @@ func (this *SimpleAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriz
 	if !accepted {
 		return Forbidden(req.Connection().Remote()), nil
 	}
+	policy, accepted, err := this.authorizedKeyPolicy(req, entry)
+	if err != nil {
+		return fail(err)
+	}
+	if !accepted {
+		return Forbidden(req.Connection().Remote()), nil
+	}
+	auth.authorizedKeyPolicy = policy
 
 	sess, err := req.Sessions().FindByPublicKey(req.Context(), req.RemotePublicKey(), (&session.FindOpts{}).WithPredicate(
 		session.IsFlow(this.flow),
@@ -69,11 +78,6 @@ func (this *SimpleAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriz
 		session.IsRemoteName(req.Connection().Remote().User()),
 	))
 	if errors.Is(err, session.ErrNoSuchSession) {
-		if ok, err := this.isAuthorizedViaPublicKey(req, entry); err != nil {
-			return fail(err)
-		} else if !ok {
-			return Forbidden(req.Connection().Remote()), nil
-		}
 		sess, err = this.ensureSessionFor(req, entry)
 		if err != nil {
 			return fail(err)
@@ -110,6 +114,7 @@ func (this *SimpleAuthorizer) lookupEntry(req Request) (entry *configuration.Aut
 		this.flow,
 		nil,
 		nil,
+		nil,
 	}
 
 	accepted, err = req.Validate(auth)
@@ -120,23 +125,35 @@ func (this *SimpleAuthorizer) lookupEntry(req Request) (entry *configuration.Aut
 	return entry, auth, accepted, nil
 }
 
-func (this *SimpleAuthorizer) isAuthorizedViaPublicKey(req PublicKeyRequest, entry *configuration.AuthorizationSimpleEntry) (bool, error) {
-	fail := func(err error) (bool, error) {
-		return false, err
+func (this *SimpleAuthorizer) authorizedKeyPolicy(req PublicKeyRequest, entry *configuration.AuthorizationSimpleEntry) (*AuthorizedKeyPolicy, bool, error) {
+	fail := func(err error) (*AuthorizedKeyPolicy, bool, error) {
+		return nil, false, err
 	}
-	failf := func(msg string, args ...any) (bool, error) {
+	failf := func(msg string, args ...any) (*AuthorizedKeyPolicy, bool, error) {
 		return fail(errors.Newf(errors.System, msg, args...))
 	}
 
 	foundMatch := false
+	var policy *AuthorizedKeyPolicy
+	evaluate := func(key ssh.PublicKey, options []crypto.AuthorizedKeyOption) (bool, error) {
+		if !bytes.Equal(req.RemotePublicKey().Marshal(), key.Marshal()) {
+			return true, nil
+		}
+		candidate, accepted, err := evaluateAuthorizedKeyOptions(options, req.Connection().Remote().Host(), time.Now())
+		if err != nil {
+			return false, err
+		}
+		if !accepted {
+			return true, nil
+		}
+		foundMatch = true
+		policy = candidate
+		return false, nil
+	}
 
 	if v := entry.AuthorizedKeysFile; !v.IsZero() {
-		if err := v.ForEach(func(_ int, key ssh.PublicKey, _ string, _ []crypto.AuthorizedKeyOption) (canContinue bool, err error) {
-			if bytes.Equal(req.RemotePublicKey().Marshal(), key.Marshal()) {
-				foundMatch = true
-				return false, nil
-			}
-			return true, nil
+		if err := v.ForEach(func(_ int, key ssh.PublicKey, _ string, options []crypto.AuthorizedKeyOption) (canContinue bool, err error) {
+			return evaluate(key, options)
 		}); err != nil {
 			return failf("cannot resolve authorized keys of user %q: %w", entry.Name, err)
 		}
@@ -144,12 +161,8 @@ func (this *SimpleAuthorizer) isAuthorizedViaPublicKey(req PublicKeyRequest, ent
 
 	if !foundMatch {
 		if v := entry.AuthorizedKeys; !v.IsZero() {
-			if err := v.ForEach(func(_ int, key ssh.PublicKey, _ string, _ []crypto.AuthorizedKeyOption) (canContinue bool, err error) {
-				if bytes.Equal(req.RemotePublicKey().Marshal(), key.Marshal()) {
-					foundMatch = true
-					return false, nil
-				}
-				return true, nil
+			if err := v.ForEach(func(_ int, key ssh.PublicKey, _ string, options []crypto.AuthorizedKeyOption) (canContinue bool, err error) {
+				return evaluate(key, options)
 			}); err != nil {
 				return failf("cannot resolve authorized keys of user %q: %w", entry.Name, err)
 			}
@@ -158,10 +171,10 @@ func (this *SimpleAuthorizer) isAuthorizedViaPublicKey(req PublicKeyRequest, ent
 
 	if !foundMatch {
 		req.Connection().Logger().Debug("presented public key does not match any authorized keys of simple user")
-		return false, nil
+		return nil, false, nil
 	}
 
-	return true, nil
+	return policy, true, nil
 }
 
 func (this *SimpleAuthorizer) ensureSessionFor(req Request, entry *configuration.AuthorizationSimpleEntry) (session.Session, error) {
@@ -335,6 +348,7 @@ func (this *SimpleAuthorizer) RestoreFromSession(ctx context.Context, sess sessi
 		buf.EnvVars.Clone(),
 		this.flow.Clone(),
 		sess,
+		nil,
 		nil,
 	}, nil
 }

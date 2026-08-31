@@ -158,6 +158,9 @@ func (this *service) onPtyRequest(ctx glssh.Context, pty glssh.Pty) bool {
 	if !ok {
 		return false
 	}
+	if policy := authorization.AuthorizedKeyPolicyOf(auth); policy != nil && !policy.PtyAllowed {
+		return false
+	}
 
 	conn := this.connection(ctx)
 	if conn == nil {

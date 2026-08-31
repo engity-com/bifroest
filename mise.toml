@@ -62,7 +62,7 @@ run = "go run ./cmd/build inspect-pr-action --log.colorMode=always"
 [settings]
 env_file = ".env"
 
-[alias]
+[tool_alias]
 golangci-lint = "aqua:golangci/golangci-lint"
 
 [env]

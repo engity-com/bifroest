@@ -14,11 +14,31 @@ A collection of simple data-types used within Bifröst. More complex ones are de
 
 These are usually files in the home directory of each user, located at `~/.ssh/authorized_keys`. These files are in the format:
 ```text
-<key-type> <encoded-public-key>[ <comment>]
+[<options> ]<key-type> <encoded-public-key>[ <comment>]
 ...
 ```
 
 They contain [SSH Public Keys](#ssh-public-key).
+
+Bifröst supports the following OpenSSH `authorized_keys` options:
+
+| Option | Effect |
+| - | - |
+| `command="..."` | Replaces shell, command, and subsystem requests with the configured command. The original command is available as `SSH_ORIGINAL_COMMAND`. |
+| `environment="NAME=value"` | Adds or replaces an environment variable for the session. May be specified more than once for different names. |
+| `expiry-time="..."` | Rejects the key after the configured OpenSSH-compatible timestamp. |
+| `from="..."` | Restricts the key to numeric IP addresses, CIDR networks, numeric wildcards, and negated numeric patterns. Hostname patterns are not supported. |
+| `restrict` | Disables PTY, port forwarding, and agent forwarding unless individually enabled again. |
+| `pty`, `no-pty` | Enables or disables PTY allocation. |
+| `port-forwarding`, `no-port-forwarding` | Enables or disables local, dynamic, and reverse port forwarding. |
+| `permitopen="host:port"` | Restricts local and dynamic port-forwarding destinations. May be specified more than once. |
+| `permitlisten="[host:]port"` | Restricts reverse port-forwarding listeners. May be specified more than once. |
+| `agent-forwarding`, `no-agent-forwarding` | Enables or disables access to a forwarded SSH agent. |
+
+Options not listed above are not supported. A key entry using an unsupported option, such as `cert-authority`, `principals`, `tunnel`, `user-rc`, `x11-forwarding`, `no-touch-required`, or `verify-required`, is rejected instead of being treated as unrestricted.
+
+!!! warning
+     Environment variables can change how commands and shells behave. Only configure `environment=` values that you trust, especially variables such as `PATH`, shell startup variables, or dynamic-loader settings.
 
 ### Examples
 ```text

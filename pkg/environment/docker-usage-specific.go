@@ -14,6 +14,7 @@ import (
 	log "github.com/echocat/slf4g"
 	glssh "github.com/gliderlabs/ssh"
 
+	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/errors"
@@ -82,7 +83,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		return failf("illegal task type: %v", t.TaskType())
 	}
 
-	if ssh.AgentRequested(sshSess) {
+	if ssh.AgentRequested(sshSess) && authorization.IsAgentForwardingAllowed(auth) {
 		ln, err := this.impSession.InitiateNamedPipe(t.Context(), t.Connection().Id(), "ssh-agent")
 		var re errors.RemoteError
 		if errors.As(err, &re) {
