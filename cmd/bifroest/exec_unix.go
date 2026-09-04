@@ -11,7 +11,7 @@ import (
 	"github.com/alecthomas/kingpin/v2"
 
 	"github.com/engity-com/bifroest/pkg/connection"
-	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 type execOpts struct {
@@ -37,12 +37,15 @@ func registerExecCmdFlags(cmd *kingpin.CmdClause, opts *execOpts) {
 }
 
 func enrichExecCmd(cmd *exec.Cmd, with *execOpts) error {
+	cmd.SysProcAttr.Setpgid = true
 	if plainUser := with.user; plainUser != "" {
 		cmd.SysProcAttr.Credential = &syscall.Credential{}
 
-		u, err := user.LookupId(plainUser)
-		var uuiErr *user.UnknownUserIdError
-		if errors.As(err, &uuiErr) {
+		var u *user.User
+		var err error
+		if _, numericErr := strconv.ParseUint(plainUser, 10, 32); numericErr == nil {
+			u, err = user.LookupId(plainUser)
+		} else {
 			u, err = user.Lookup(plainUser)
 		}
 		if err != nil {
@@ -55,9 +58,10 @@ func enrichExecCmd(cmd *exec.Cmd, with *execOpts) error {
 		}
 
 		if plainGroup := with.group; plainGroup != "" {
-			g, err := user.LookupGroupId(plainGroup)
-			var ugiErr *user.UnknownGroupIdError
-			if errors.As(err, &ugiErr) {
+			var g *user.Group
+			if _, numericErr := strconv.ParseUint(plainGroup, 10, 32); numericErr == nil {
+				g, err = user.LookupGroupId(plainGroup)
+			} else {
 				g, err = user.LookupGroup(plainGroup)
 			}
 			if err != nil {
@@ -68,8 +72,19 @@ func enrichExecCmd(cmd *exec.Cmd, with *execOpts) error {
 			} else {
 				cmd.SysProcAttr.Credential.Gid = uint32(v)
 			}
+		} else if v, err := strconv.ParseUint(u.Gid, 10, 32); err != nil {
+			return err
+		} else {
+			cmd.SysProcAttr.Credential.Gid = uint32(v)
 		}
 	}
 
 	return nil
+}
+
+func signalExecCmd(cmd *exec.Cmd, signal sys.Signal) error {
+	if cmd.Process == nil {
+		return nil
+	}
+	return syscall.Kill(-cmd.Process.Pid, signal.Native())
 }

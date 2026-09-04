@@ -131,7 +131,7 @@ func doExec(opts *execOpts) error {
 			}
 
 			if p := cmd.Process; p != nil {
-				_ = bss.SendToProcess(p)
+				_ = signalExecCmd(&cmd, bss)
 			} else {
 				switch bss {
 				case sys.SIGTERM, sys.SIGINT:
@@ -141,7 +141,23 @@ func doExec(opts *execOpts) error {
 		}
 	}()
 
-	err = cmd.Run()
+	if err = cmd.Start(); err != nil {
+		return fail(err)
+	}
+	if !opts.connectionId.IsZero() {
+		_ = goos.MkdirAll(opts.exitCodeByConnectionIdPath, 0700)
+		pidFn := filepath.Join(opts.exitCodeByConnectionIdPath, opts.connectionId.String()+".pid")
+		if err := goos.WriteFile(pidFn, []byte(strconv.Itoa(goos.Getpid())), 0600); err != nil {
+			log.WithError(err).
+				With("pid", goos.Getpid()).
+				With("storage", pidFn).
+				Warn("cannot register process")
+		} else {
+			defer func() { _ = goos.Remove(pidFn) }()
+		}
+	}
+
+	err = cmd.Wait()
 	var eErr *exec.ExitError
 	if errors.As(err, &eErr) {
 		return exit(eErr.ExitCode())

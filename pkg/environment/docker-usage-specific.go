@@ -105,6 +105,35 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		opts.ConsoleSize = &[2]uint{80, 40}
 	}
 	opts.Env = ev.Strings()
+	usesExecWrapper := this.repository.hostOs == sys.OsLinux
+	if usesExecWrapper {
+		command := opts.Cmd
+		if len(command) == 0 {
+			return failf("cannot execute empty command")
+		}
+		opts.Cmd = []string{
+			sys.BifroestBinaryFileLocation(this.repository.hostOs), "exec",
+			"-c", t.Connection().Id().String(),
+			"-p", command[0],
+			"-x",
+		}
+		if this.directory != "" {
+			opts.Cmd = append(opts.Cmd, "-d", this.directory)
+		}
+		for key, value := range ev {
+			opts.Cmd = append(opts.Cmd, "-e"+key+"="+value)
+		}
+		if user, group, _ := strings.Cut(this.user, ":"); user != "" {
+			opts.Cmd = append(opts.Cmd, "-u", user)
+			if group != "" {
+				opts.Cmd = append(opts.Cmd, "-g", group)
+			}
+		}
+		opts.Cmd = append(opts.Cmd, "--")
+		opts.Cmd = append(opts.Cmd, command...)
+		opts.User = ""
+		opts.WorkingDir = ""
+	}
 
 	e, err := apiClient.ContainerExecCreate(t.Context(), this.containerId, opts)
 	if err != nil {
@@ -139,7 +168,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		}()
 	}
 
-	ea, err := apiClient.ContainerExecAttach(t.Context(), execId, container.ExecAttachOptions{
+	ea, err := apiClient.ContainerExecAttach(context.WithoutCancel(t.Context()), execId, container.ExecAttachOptions{
 		Tty:         opts.Tty,
 		ConsoleSize: opts.ConsoleSize,
 	})
@@ -148,7 +177,8 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	}
 
 	signals := make(chan glssh.Signal, 1)
-	copyDone := make(chan error, 2)
+	outputDone := make(chan error, 1)
+	inputDone := make(chan error, 1)
 	var activeRoutines sync.WaitGroup
 	defer func() {
 		go func() {
@@ -167,25 +197,23 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 			_, cErr = stdcopy.StdCopy(sshSess, sshSess.Stderr(), ea.Reader)
 		}
 		if this.isRelevantError(cErr) {
-			copyDone <- cErr
+			outputDone <- cErr
 		} else {
-			copyDone <- nil
+			outputDone <- nil
 		}
 		l.Trace("finished copy output")
 	}()
 	activeRoutines.Add(1)
 	go func() {
 		defer activeRoutines.Done()
-		if _, err := io.Copy(ea.Conn, sshSess); this.isRelevantError(err) {
-			copyDone <- err
+		_, err := io.Copy(ea.Conn, sshSess)
+		_ = ea.CloseWrite()
+		if this.isRelevantError(err) {
+			inputDone <- err
 		} else {
-			copyDone <- nil
+			inputDone <- nil
 		}
 		l.Trace("finished copy input")
-	}()
-	go func() {
-		activeRoutines.Wait()
-		close(copyDone)
 	}()
 
 	finish := func() (int, error) {
@@ -196,7 +224,25 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		if ei.Running {
 			return -1, nil
 		}
+		if usesExecWrapper {
+			exitCode, err := this.impSession.GetConnectionExitCode(sshSess.Context(), t.Connection().Id())
+			if errors.Is(err, connection.ErrNotFound) {
+				return -1, nil
+			}
+			if err != nil {
+				return failf("cannot retrieve execution #%s exit code: %w", execId, err)
+			}
+			return exitCode, nil
+		}
 		return ei.ExitCode, nil
+	}
+	signalExec := func(ctx context.Context, sshSignal glssh.Signal) {
+		this.signal(ctx, l, t.Connection(), sshSignal)
+	}
+	signalExecDetached := func() {
+		ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancelFunc()
+		signalExec(ctx, glssh.SIGTERM)
 	}
 
 	sshSess.Signals(signals)
@@ -205,52 +251,43 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		select {
 		case s, ok := <-signals:
 			if ok {
-				this.signal(t.Context(), l, t.Connection(), s)
+				signalExec(t.Context(), s)
 			}
 		case <-t.Context().Done():
+			signalExecDetached()
 			ea.Close()
 			_ = ea.CloseWrite()
-			this.signalDetached(l, t.Connection())
 
 			return -2, rErr
-		case err, ok := <-copyDone:
-			if !ok {
-				for {
-					if ec, err := finish(); err != nil {
-						return -1, err
-					} else if ec >= 0 {
-						return ec, nil
-					}
-					select {
-					case <-t.Context().Done():
-						return -2, rErr
-					case <-time.After(100 * time.Millisecond):
-					}
-				}
-			}
-			ea.Close()
-			_ = ea.CloseWrite()
-
-			this.signalDetached(l, t.Connection())
-
-			if err != nil && rErr == nil {
+		case err := <-inputDone:
+			inputDone = nil
+			if err != nil {
+				signalExecDetached()
+				ea.Close()
 				return -1, err
 			}
-			if rErr == nil {
+		case err := <-outputDone:
+			outputDone = nil
+			ea.Close()
+			if err != nil {
+				signalExecDetached()
+				return -1, err
+			}
+			for {
 				if ec, err := finish(); err != nil {
 					return -1, err
 				} else if ec >= 0 {
 					return ec, nil
 				}
+				select {
+				case <-t.Context().Done():
+					signalExecDetached()
+					return -2, rErr
+				case <-time.After(100 * time.Millisecond):
+				}
 			}
 		}
 	}
-}
-
-func (this *docker) signalDetached(logger log.Logger, conn connection.Connection) {
-	ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancelFunc()
-	this.signal(ctx, logger, conn, glssh.SIGINT)
 }
 
 func (this *docker) signal(ctx context.Context, logger log.Logger, conn connection.Connection, sshSignal glssh.Signal) {

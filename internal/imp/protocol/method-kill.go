@@ -2,6 +2,9 @@ package protocol
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strconv"
 
 	log "github.com/echocat/slf4g"
 	"github.com/shirou/gopsutil/v4/process"
@@ -76,18 +79,27 @@ func (this *methodKillResponse) DecodeMsgPack(dec codec.MsgPackDecoder) (err err
 	return nil
 }
 
-func (this *imp) handleMethodKill(ctx context.Context, header *Header, _ log.Logger, conn codec.MsgPackConn) error {
+func (this *imp) handleMethodKill(ctx context.Context, header *Header, logger log.Logger, conn codec.MsgPackConn) error {
 	return handleFromServerSide(ctx, header, conn, func(req *methodKillRequest) methodKillResponse {
-		pid := req.pid
-		fail := func(err error) methodKillResponse {
+		fail := func(pid int, err error) methodKillResponse {
 			return methodKillResponse{errors.System.Newf("cannot kill process %d of %v with %v: %w", pid, header.ConnectionId, req.signal, err)}
 		}
 
-		if pid == 0 {
+		pids := []int{req.pid}
+		if req.pid == 0 {
+			pids = nil
+			pidFn := filepath.Join(this.ExitCodeByConnectionIdPath, header.ConnectionId.String()+".pid")
+			if plainPid, err := os.ReadFile(pidFn); err == nil {
+				if pid, err := strconv.Atoi(string(plainPid)); err == nil && pid > 0 {
+					pids = append(pids, pid)
+				}
+			}
+		}
+		if len(pids) == 0 {
 			expectedEnv := connection.EnvName + "=" + header.ConnectionId.String()
 			candidates, err := process.ProcessesWithContext(ctx)
 			if err != nil {
-				return fail(err)
+				return fail(0, err)
 			}
 			for _, candidate := range candidates {
 				envs, err := candidate.Environ()
@@ -96,21 +108,21 @@ func (this *imp) handleMethodKill(ctx context.Context, header *Header, _ log.Log
 				}
 				for _, env := range envs {
 					if env == expectedEnv {
-						pid = int(candidate.Pid)
+						pids = append(pids, int(candidate.Pid))
 						break
 					}
 				}
-				if pid != 0 {
-					break
-				}
 			}
 		}
-		if pid == 0 {
+		if len(pids) == 0 {
 			return methodKillResponse{ErrNoSuchProcess}
 		}
+		logger.With("pids", pids).Debug("sending signal to connection processes")
 
-		if err := this.kill(ctx, pid, req.signal); err != nil {
-			return fail(err)
+		for _, pid := range pids {
+			if err := this.kill(ctx, pid, req.signal); err != nil && !errors.Is(err, ErrNoSuchProcess) {
+				return fail(pid, err)
+			}
 		}
 
 		return methodKillResponse{}
