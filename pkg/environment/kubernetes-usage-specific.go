@@ -194,15 +194,28 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 	}()
 
 	finish := func() (int, error) {
-		exitCode, err := this.impSession.GetConnectionExitCode(t.Context(), t.Connection().Id())
-		if errors.Is(err, connection.ErrNotFound) {
-			l.Debug("it was not possible to find an exitCode for the current connection; will treat it as 0")
-			exitCode = 0
-		} else if err != nil {
-			l.WithError(err).Warn("it was not possible to retrieve the exitCode for the current connection; will treat it as 1")
-			exitCode = 1
+		deadline := time.NewTimer(5 * time.Second)
+		defer deadline.Stop()
+		var lastErr error
+		for {
+			exitCode, err := this.impSession.GetConnectionExitCode(t.Context(), t.Connection().Id())
+			if err == nil {
+				return exitCode, nil
+			}
+			lastErr = err
+			select {
+			case <-t.Context().Done():
+				return -1, t.Context().Err()
+			case <-deadline.C:
+				if errors.Is(lastErr, connection.ErrNotFound) {
+					l.Debug("it was not possible to find an exitCode for the current connection; will treat it as 0")
+					return 0, nil
+				}
+				l.WithError(lastErr).Warn("it was not possible to retrieve the exitCode for the current connection; will treat it as 1")
+				return 1, nil
+			case <-time.After(100 * time.Millisecond):
+			}
 		}
-		return exitCode, nil
 	}
 
 	sshSess.Signals(signals)
@@ -220,9 +233,8 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 		case err, ok := <-streamDone:
 			_ = sshSess.CloseWrite()
 
-			this.signalDetached(l, t.Connection())
-
 			if ok && err != nil && rErr == nil {
+				this.signalDetached(l, t.Connection())
 				return -1, err
 			}
 			if rErr == nil {
