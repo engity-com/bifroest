@@ -75,6 +75,7 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 		Stdout: sshSess,
 		Stderr: sshSess.Stderr(),
 	}
+	var releaseTerminalStdinEOF *io.PipeWriter
 
 	ev := sys.EnvVars{}
 	ev.AddAllOf(this.environ)
@@ -125,8 +126,13 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 	if ptyReq, winCh, isPty := sshSess.Pty(); isPty {
 		ev.Set("TERM", ptyReq.Term)
 		opts.TTY = true
+		opts.Stderr = false
 		streamOpts.Tty = true
+		streamOpts.Stderr = nil
 		streamOpts.TerminalSizeQueue = &terminalQueueSizeFromSsh{winCh}
+		terminalStdinEOF, releaseEOF := io.Pipe()
+		releaseTerminalStdinEOF = releaseEOF
+		streamOpts.Stdin = io.MultiReader(sshSess, terminalStdinEOF)
 	}
 
 	opts.Command = []string{sys.BifroestBinaryFileLocation(this.repository.conf.Os), "exec",
@@ -176,6 +182,9 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 	go func() {
 		defer activeRoutines.Done()
 		cErr := exec.StreamWithContext(t.Context(), streamOpts)
+		if releaseTerminalStdinEOF != nil {
+			_ = releaseTerminalStdinEOF.Close()
+		}
 		if this.isRelevantError(cErr) {
 			streamDone <- cErr
 		} else {
