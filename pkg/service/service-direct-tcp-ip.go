@@ -3,17 +3,17 @@ package service
 import (
 	"fmt"
 	"io"
+	"math"
 	"syscall"
 	"time"
 
-	glssh "github.com/gliderlabs/ssh"
+	glssh "github.com/engity-com/ssh-server-go"
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/net"
-	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 type localForwardChannelData struct {
@@ -29,40 +29,45 @@ func (this localForwardChannelData) dest() (net.HostPort, error) {
 	if err := buf.Host.Set(this.DestAddr); err != nil {
 		return net.HostPort{}, err
 	}
+	if this.DestPort > math.MaxUint16 {
+		return net.HostPort{}, fmt.Errorf("port out of range: %d", this.DestPort)
+	}
 	buf.Port = uint16(this.DestPort)
 	return buf, nil
 }
 
-func (this *service) handleNewDirectTcpIp(_ *glssh.Server, _ *gossh.ServerConn, newChan gossh.NewChannel, ctx glssh.Context) {
+func (this *service) handleNewDirectTcpIp(_ *glssh.Server, _ *gossh.ServerConn, newChan gossh.NewChannel, ctx glssh.Context) error {
 	conn := this.connection(ctx)
+	if conn == nil {
+		return nil
+	}
 	l := conn.logger
 
 	auth, _, _, err := this.resolveAuthorizationAndSession(ctx)
 	if err != nil {
 		l.WithError(err).
 			Error("cannot resolve active authorization and its session; rejecting...")
-		_ = newChan.Reject(gossh.ConnectionFailed, "cannot resolve authorization and its session")
-		return
+		if rejectErr := newChan.Reject(gossh.ConnectionFailed, "cannot resolve authorization and its session"); rejectErr != nil {
+			return rejectErr
+		}
+		return err
 	}
 
 	d := localForwardChannelData{}
 	if err := gossh.Unmarshal(newChan.ExtraData(), &d); err != nil {
 		l.WithError(err).
 			Info("cannot parse client's forward data; rejecting...")
-		_ = newChan.Reject(gossh.ConnectionFailed, "error parsing forward data: "+err.Error())
-		return
+		return newChan.Reject(gossh.ConnectionFailed, "error parsing forward data: "+err.Error())
 	}
 	dest, err := d.dest()
 	if err != nil {
 		l.WithError(err).
 			Info("cannot parse client's forward data; rejecting...")
-		_ = newChan.Reject(gossh.ConnectionFailed, "error parsing forward data: "+err.Error())
-		return
+		return newChan.Reject(gossh.ConnectionFailed, "error parsing forward data: "+err.Error())
 	}
 	if policy := authorization.AuthorizedKeyPolicyOf(auth); policy != nil && !policy.AllowsOpen(dest) {
 		l.Info("port forwarding requested by client was rejected by authorized key policy")
-		_ = newChan.Reject(gossh.Prohibited, "port forwarding is disabled by authorized key policy")
-		return
+		return newChan.Reject(gossh.Prohibited, "port forwarding is disabled by authorized key policy")
 	}
 
 	l = l.With("dest", dest)
@@ -80,20 +85,23 @@ func (this *service) handleNewDirectTcpIp(_ *glssh.Server, _ *gossh.ServerConn, 
 	if err != nil {
 		l.WithError(err).
 			Error("cannot ensure environment; rejecting...")
-		_ = newChan.Reject(gossh.Prohibited, "cannot ensure environment")
-		return
+		if rejectErr := newChan.Reject(gossh.Prohibited, "cannot ensure environment"); rejectErr != nil {
+			return rejectErr
+		}
+		return err
 	}
 	defer common.IgnoreCloseError(env)
 
 	if ok, err := env.IsPortForwardingAllowed(dest); err != nil {
 		l.WithError(err).
 			Error("cannot check if port forwarding is allowed; rejecting...")
-		_ = newChan.Reject(gossh.ConnectionFailed, "port forwarding is disabled")
-		return
+		if rejectErr := newChan.Reject(gossh.ConnectionFailed, "port forwarding is disabled"); rejectErr != nil {
+			return rejectErr
+		}
+		return err
 	} else if !ok {
 		l.Info("port forwarding requested by client was rejected")
-		_ = newChan.Reject(gossh.Prohibited, "port forwarding is disabled")
-		return
+		return newChan.Reject(gossh.Prohibited, "port forwarding is disabled")
 	}
 
 	dConn, err := env.NewDestinationConnection(ctx, dest)
@@ -112,18 +120,18 @@ func (this *service) handleNewDirectTcpIp(_ *glssh.Server, _ *gossh.ServerConn, 
 				Warn("cannot connect to port forwarding destination; rejecting...")
 			_ = newChan.Reject(gossh.ConnectionFailed, fmt.Sprintf("cannot connect to %v: internal error", dest))
 		}
-		return
+		return nil
 	}
 	if dConn == nil {
 		l.Info("connection rejected")
 		_ = newChan.Reject(gossh.ConnectionFailed, "rejected")
-		return
+		return nil
 	}
 	defer common.IgnoreCloseError(dConn)
 
 	sConn, reqs, err := newChan.Accept()
 	if err != nil {
-		return
+		return err
 	}
 	defer common.IgnoreCloseError(sConn)
 
@@ -136,7 +144,7 @@ func (this *service) handleNewDirectTcpIp(_ *glssh.Server, _ *gossh.ServerConn, 
 		return "destination -> source"
 	}
 
-	_ = sys.FullDuplexCopy(ctx, sConn, dConn, &sys.FullDuplexCopyOpts{
+	return glssh.FullDuplexCopy(ctx, sConn, dConn, &glssh.FullDuplexCopyOpts{
 		OnStart: func() {
 			l.Debug("port forwarding started")
 		},
@@ -156,25 +164,43 @@ func (this *service) handleNewDirectTcpIp(_ *glssh.Server, _ *gossh.ServerConn, 
 			}
 		},
 		OnStreamEnd: func(isL2r bool, err error) {
-			name := "source -> destination"
-			if isL2r {
-				_ = dConn.Close()
-			} else {
-				name = "destination -> source"
-				_ = sConn.Close()
-			}
-			l.WithError(err).Tracef("coping of %s done", name)
+			l.WithError(err).Tracef("copying of %s done", nameOf(isL2r))
 		},
 	})
 }
 
-func (this *service) onReversePortForwardingRequested(ctx glssh.Context, host string, port uint32) bool {
+func (this *service) onReversePortForwardingRequested(ctx glssh.Context, _ gossh.ConnMetadata, host string, port uint32) (bool, error) {
 	auth, ok := ctx.Value(authorizationCtxKey).(authorization.Authorization)
-	if !ok {
-		return false
+	if !ok || auth == nil {
+		return false, errors.Newf(errors.System, "no authorization resolved for reverse port forwarding request")
 	}
 	policy := authorization.AuthorizedKeyPolicyOf(auth)
-	return policy == nil || policy.AllowsListen(host, port)
+	if policy != nil && !policy.AllowsListen(host, port) {
+		return false, nil
+	}
+	if port > math.MaxUint16 {
+		return false, nil
+	}
+	var bind net.HostPort
+	if err := bind.Host.Set(host); err != nil {
+		return false, nil
+	}
+	bind.Port = uint16(port)
+	conn := this.connection(ctx)
+	if conn == nil {
+		return false, errors.Newf(errors.System, "no connection resolved for reverse port forwarding request")
+	}
+	req := environmentRequest{environmentContext{this, conn, auth}, nil}
+	env, err := this.environments.Ensure(&req)
+	if err != nil {
+		return false, errors.Newf(errors.System, "cannot ensure environment for reverse port forwarding: %w", err)
+	}
+	defer common.IgnoreCloseError(env)
+	allowed, err := env.IsPortForwardingAllowed(bind)
+	if err != nil {
+		return false, errors.Newf(errors.System, "cannot check if reverse port forwarding is allowed: %w", err)
+	}
+	return allowed, nil
 }
 
 func (this *service) reWrapUserFacingErrors(err error) *errors.Error {

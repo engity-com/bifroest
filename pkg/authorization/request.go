@@ -1,7 +1,7 @@
 package authorization
 
 import (
-	glssh "github.com/gliderlabs/ssh"
+	glssh "github.com/engity-com/ssh-server-go"
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/connection"

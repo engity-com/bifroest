@@ -3,7 +3,7 @@ package environment
 import (
 	"context"
 
-	glssh "github.com/gliderlabs/ssh"
+	glssh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/configuration"

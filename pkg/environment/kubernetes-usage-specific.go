@@ -11,7 +11,7 @@ import (
 	"time"
 
 	log "github.com/echocat/slf4g"
-	glssh "github.com/gliderlabs/ssh"
+	glssh "github.com/engity-com/ssh-server-go"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/remotecommand"
@@ -167,8 +167,8 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 	defer func() {
 		go func() {
 			activeRoutines.Wait()
-			defer close(signals)
-			defer close(streamDone)
+			close(signals)
+			close(streamDone)
 		}()
 	}()
 
@@ -197,6 +197,7 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 	}
 
 	sshSess.Signals(signals)
+	defer sshSess.Signals(nil)
 	for {
 		select {
 		case s, ok := <-signals:
@@ -204,7 +205,7 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 				this.signal(t.Context(), l, t.Connection(), s)
 			}
 		case <-t.Context().Done():
-			go this.signalDetached(l, t.Connection())
+			this.signalDetached(l, t.Connection())
 
 			return -2, rErr
 		case err, ok := <-streamDone:

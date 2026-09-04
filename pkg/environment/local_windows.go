@@ -9,7 +9,7 @@ import (
 	"syscall"
 
 	log "github.com/echocat/slf4g"
-	glssh "github.com/gliderlabs/ssh"
+	glssh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"

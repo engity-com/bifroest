@@ -9,7 +9,7 @@ import (
 	"time"
 
 	log "github.com/echocat/slf4g"
-	"github.com/gliderlabs/ssh"
+	"github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 )

@@ -1,23 +1,27 @@
 package service
 
 import (
+	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"fmt"
 	"io"
 	gonet "net"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	glssh "github.com/gliderlabs/ssh"
+	glssh "github.com/engity-com/ssh-server-go"
 	"github.com/stretchr/testify/require"
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/environment"
 	bnet "github.com/engity-com/bifroest/pkg/net"
@@ -120,6 +124,96 @@ func TestRestrictedAuthorizedKeyCanReenablePty(t *testing.T) {
 	require.NoError(t, sshSession.RequestPty("xterm", 24, 80, gossh.TerminalModes{}))
 }
 
+func TestMaxSessionsPerConnectionIsEnforced(t *testing.T) {
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{}, func(conf *configuration.Configuration) {
+		conf.Ssh.MaxSessionsPerConnection = 1
+		conf.Ssh.MaxChannelsPerConnection = 10
+		conf.Ssh.MaxChannels = 10
+	})
+	client := server.mustDial(t)
+	first, err := client.NewSession()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = first.Close() })
+
+	second, err := client.NewSession()
+	if second != nil {
+		_ = second.Close()
+	}
+	require.Error(t, err)
+}
+
+func TestMaxChannelsPerConnectionIsEnforced(t *testing.T) {
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{}, func(conf *configuration.Configuration) {
+		conf.Ssh.MaxSessionsPerConnection = 10
+		conf.Ssh.MaxChannelsPerConnection = 1
+		conf.Ssh.MaxChannels = 10
+	})
+	client := server.mustDial(t)
+	first, err := client.NewSession()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = first.Close() })
+
+	second, err := client.NewSession()
+	if second != nil {
+		_ = second.Close()
+	}
+	require.Error(t, err)
+}
+
+func TestMaxChannelsAcrossConnectionsIsEnforced(t *testing.T) {
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{}, func(conf *configuration.Configuration) {
+		conf.Ssh.MaxSessionsPerConnection = 10
+		conf.Ssh.MaxChannelsPerConnection = 10
+		conf.Ssh.MaxChannels = 1
+	})
+	firstClient := server.mustDial(t)
+	firstSession, err := firstClient.NewSession()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = firstSession.Close() })
+
+	secondClient := server.mustDial(t)
+	secondSession, err := secondClient.NewSession()
+	if secondSession != nil {
+		_ = secondSession.Close()
+	}
+	require.Error(t, err)
+}
+
+func TestDisabledMaxChannelsAllowsChannelsAcrossConnections(t *testing.T) {
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{}, func(conf *configuration.Configuration) {
+		conf.Ssh.MaxSessionsPerConnection = 10
+		conf.Ssh.MaxChannelsPerConnection = 10
+		conf.Ssh.MaxChannels = 0
+	})
+	firstClient := server.mustDial(t)
+	firstSession, err := firstClient.NewSession()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = firstSession.Close() })
+
+	secondClient := server.mustDial(t)
+	secondSession, err := secondClient.NewSession()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = secondSession.Close() })
+}
+
+func TestSessionRequestTimeoutClosesIdleSession(t *testing.T) {
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{}, func(conf *configuration.Configuration) {
+		conf.Ssh.SessionRequestTimeout = common.DurationOf(100 * time.Millisecond)
+	})
+	client := server.mustDial(t)
+	sshSession, err := client.NewSession()
+	require.NoError(t, err)
+
+	done := make(chan error, 1)
+	go func() { done <- sshSession.Wait() }()
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("idle SSH session was not closed after sessionRequestTimeout")
+	}
+}
+
 func TestRestrictedAuthorizedKeyRejectsAgentForwarding(t *testing.T) {
 	for _, options := range []string{"no-agent-forwarding", "restrict"} {
 		t.Run(options, func(t *testing.T) {
@@ -134,7 +228,7 @@ func TestRestrictedAuthorizedKeyRejectsAgentForwarding(t *testing.T) {
 			client := server.mustDial(t)
 			sshSession, err := client.NewSession()
 			require.NoError(t, err)
-			require.NoError(t, agent.RequestAgentForwarding(sshSession))
+			require.Error(t, agent.RequestAgentForwarding(sshSession))
 			output, err := sshSession.Output("check-agent-forwarding")
 			require.NoError(t, err)
 			require.Equal(t, "false", string(output))
@@ -218,13 +312,221 @@ func TestRestrictedAuthorizedKeyAllowsPermittedReversePortForwarding(t *testing.
 	require.NoError(t, listener.Close())
 }
 
+func TestEnvironmentRejectsReversePortForwarding(t *testing.T) {
+	server := newAuthorizedKeysTestServer(t, "", &authorizedKeysTestEnvironment{portForwardingAllowed: false})
+	client := server.mustDial(t)
+	listener, err := client.Listen("tcp", "127.0.0.1:0")
+	if listener != nil {
+		_ = listener.Close()
+	}
+	require.Error(t, err)
+}
+
+func TestMaxReverseForwardsPerConnectionIsEnforced(t *testing.T) {
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{portForwardingAllowed: true}, func(conf *configuration.Configuration) {
+		conf.Ssh.MaxReverseForwardsPerConnection = 1
+		conf.Ssh.MaxReverseForwards = 10
+	})
+	client := server.mustDial(t)
+	first, err := client.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = first.Close() })
+
+	second, err := client.Listen("tcp", "127.0.0.1:0")
+	if second != nil {
+		_ = second.Close()
+	}
+	require.Error(t, err)
+}
+
+func TestMaxReverseForwardsAcrossConnectionsIsEnforced(t *testing.T) {
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{portForwardingAllowed: true}, func(conf *configuration.Configuration) {
+		conf.Ssh.MaxReverseForwardsPerConnection = 10
+		conf.Ssh.MaxReverseForwards = 1
+	})
+	firstClient := server.mustDial(t)
+	first, err := firstClient.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = first.Close() })
+
+	secondClient := server.mustDial(t)
+	second, err := secondClient.Listen("tcp", "127.0.0.1:0")
+	if second != nil {
+		_ = second.Close()
+	}
+	require.Error(t, err)
+}
+
+func TestHandshakeTimeoutClosesUnauthenticatedConnection(t *testing.T) {
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{}, func(conf *configuration.Configuration) {
+		conf.Ssh.HandshakeTimeout = common.DurationOf(500 * time.Millisecond)
+	})
+	conn, err := gonet.Dial("tcp", server.address)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	reader := bufio.NewReader(conn)
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(500*time.Millisecond)))
+	banner, err := reader.ReadString('\n')
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(banner, "SSH-2.0-Engity-Bifroest_"))
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(100*time.Millisecond)))
+	_, err = reader.ReadByte()
+	require.ErrorIs(t, err, os.ErrDeadlineExceeded, "the connection must remain open before the server-side handshake timeout")
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	_, err = reader.ReadByte()
+	require.NotErrorIs(t, err, os.ErrDeadlineExceeded, "the server-side handshake timeout must close the connection")
+}
+
+func TestMaxStartupsDropsExcessUnauthenticatedConnection(t *testing.T) {
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{}, func(conf *configuration.Configuration) {
+		conf.Ssh.MaxStartupsStart = 2
+		conf.Ssh.MaxStartupsRate = 0
+		conf.Ssh.MaxStartupsFull = 2
+	})
+	first, err := gonet.Dial("tcp", server.address)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = first.Close() })
+	require.NoError(t, first.SetReadDeadline(time.Now().Add(time.Second)))
+	banner, err := bufio.NewReader(first).ReadString('\n')
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(banner, "SSH-2.0-Engity-Bifroest_"))
+
+	second, err := gonet.Dial("tcp", server.address)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = second.Close() })
+	require.NoError(t, second.SetReadDeadline(time.Now().Add(time.Second)))
+	banner, err = bufio.NewReader(second).ReadString('\n')
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(banner, "SSH-2.0-Engity-Bifroest_"))
+
+	third, err := gonet.Dial("tcp", server.address)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = third.Close() })
+	require.NoError(t, third.SetReadDeadline(time.Now().Add(time.Second)))
+	_, err = third.Read(make([]byte, 1))
+	require.Error(t, err)
+	require.NotErrorIs(t, err, os.ErrDeadlineExceeded)
+}
+
+func TestConnectionLifecycleWaitsForSessionHandlerDuringGracefulShutdown(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseHandler := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseHandler)
+	testEnvironment := &authorizedKeysTestEnvironment{
+		run: func(environment.Task) (int, error) {
+			close(started)
+			<-release
+			return 0, nil
+		},
+	}
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", testEnvironment, func(conf *configuration.Configuration) {
+		conf.Ssh.GracefulShutdownTimeout = common.DurationOf(500 * time.Millisecond)
+	})
+	client := server.mustDial(t)
+	sshSession, err := client.NewSession()
+	require.NoError(t, err)
+	runDone := make(chan error, 1)
+	go func() { runDone <- sshSession.Run("block") }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("SSH session handler did not start")
+	}
+
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- server.stop() }()
+	select {
+	case err := <-stopDone:
+		t.Fatalf("service resources closed before the session handler ended: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	releaseHandler()
+	require.NoError(t, client.Close())
+	select {
+	case err := <-stopDone:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("service did not finish after the session handler ended")
+	}
+	select {
+	case <-runDone:
+	case <-time.After(time.Second):
+		t.Fatal("SSH client session did not finish")
+	}
+}
+
+func TestConnectionLifecycleDrainsSessionHandlerAfterForcedShutdown(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseHandler := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseHandler)
+	testEnvironment := &authorizedKeysTestEnvironment{
+		run: func(environment.Task) (int, error) {
+			close(started)
+			<-release
+			return 0, nil
+		},
+	}
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", testEnvironment, func(conf *configuration.Configuration) {
+		conf.Ssh.GracefulShutdownTimeout = common.DurationOf(50 * time.Millisecond)
+	})
+	client := server.mustDial(t)
+	sshSession, err := client.NewSession()
+	require.NoError(t, err)
+	runDone := make(chan error, 1)
+	go func() { runDone <- sshSession.Run("block") }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("SSH session handler did not start")
+	}
+
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- server.stop() }()
+	select {
+	case err := <-stopDone:
+		t.Fatalf("service resources closed before the forced session handler ended: %v", err)
+	case <-time.After(70 * time.Millisecond):
+	}
+
+	releaseHandler()
+	select {
+	case err := <-stopDone:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("service did not finish after the forced session handler ended")
+	}
+	select {
+	case <-runDone:
+	case <-time.After(time.Second):
+		t.Fatal("SSH client session did not finish")
+	}
+}
+
 type authorizedKeysTestServer struct {
-	address  string
-	username string
-	signer   gossh.Signer
+	address     string
+	username    string
+	signer      gossh.Signer
+	service     *service
+	cancelServe context.CancelFunc
+	serveDone   <-chan error
+	stopOnce    sync.Once
+	stopped     chan struct{}
+	stopErr     error
 }
 
 func newAuthorizedKeysTestServer(t *testing.T, options string, testEnvironment *authorizedKeysTestEnvironment) *authorizedKeysTestServer {
+	return newAuthorizedKeysTestServerWithConfiguration(t, options, testEnvironment, nil)
+}
+
+func newAuthorizedKeysTestServerWithConfiguration(t *testing.T, options string, testEnvironment *authorizedKeysTestEnvironment, configure func(*configuration.Configuration)) *authorizedKeysTestServer {
 	t.Helper()
 	const username = "restricted-key-user"
 
@@ -262,6 +564,9 @@ flows:
       type: dummy
 `, filepath.ToSlash(filepath.Join(tempDir, "host-key")), filepath.ToSlash(filepath.Join(tempDir, "sessions")), username, username, publicKey)), "authorized-keys-restrictions-test.yaml")
 	require.NoError(t, err)
+	if configure != nil {
+		configure(&conf)
+	}
 
 	svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
 	require.NoError(t, err)
@@ -271,21 +576,43 @@ flows:
 	listener, err := gonet.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	serveDone := make(chan error, 1)
+	serveCtx, cancelServe := context.WithCancel(context.Background())
 	go func() {
-		serveDone <- svc.server.Serve(listener)
+		serveDone <- svc.server.Serve(serveCtx, listener)
 	}()
-	t.Cleanup(func() {
-		_ = svc.server.Close()
-		_ = listener.Close()
-		select {
-		case <-serveDone:
-		case <-time.After(5 * time.Second):
-			t.Error("SSH server did not stop")
-		}
-		require.NoError(t, svc.Close())
-	})
+	result := &authorizedKeysTestServer{
+		address:     listener.Addr().String(),
+		username:    username,
+		signer:      signer,
+		service:     svc,
+		cancelServe: cancelServe,
+		serveDone:   serveDone,
+		stopped:     make(chan struct{}),
+	}
+	t.Cleanup(func() { require.NoError(t, result.stop()) })
+	return result
+}
 
-	return &authorizedKeysTestServer{listener.Addr().String(), username, signer}
+func (this *authorizedKeysTestServer) stop() error {
+	this.stopOnce.Do(func() {
+		defer close(this.stopped)
+		gracefulShutdownTimeout := this.service.Configuration.Ssh.GracefulShutdownTimeout.Native()
+		this.service.connectionLifecycle.stop()
+		this.cancelServe()
+		select {
+		case <-this.serveDone:
+		case <-time.After(5 * time.Second):
+			this.stopErr = fmt.Errorf("SSH server did not stop")
+			return
+		}
+		if !this.service.connectionLifecycle.wait(gracefulShutdownTimeout) {
+			this.stopErr = fmt.Errorf("SSH connection handlers did not stop")
+			return
+		}
+		this.stopErr = this.service.Close()
+	})
+	<-this.stopped
+	return this.stopErr
 }
 
 func (this *authorizedKeysTestServer) dial() (*gossh.Client, error) {
@@ -301,7 +628,7 @@ func (this *authorizedKeysTestServer) mustDial(t *testing.T) *gossh.Client {
 	t.Helper()
 	client, err := this.dial()
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	t.Cleanup(func() { _ = client.Close() })
 	return client
 }
 

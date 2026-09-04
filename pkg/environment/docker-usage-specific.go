@@ -12,7 +12,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
 	log "github.com/echocat/slf4g"
-	glssh "github.com/gliderlabs/ssh"
+	glssh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
@@ -97,34 +97,46 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		}
 	}
 
-	var execId string
-	if ptyReq, winCh, isPty := sshSess.Pty(); isPty {
+	var winCh <-chan glssh.Window
+	if ptyReq, windows, isPty := sshSess.Pty(); isPty {
+		winCh = windows
 		ev.Set("TERM", ptyReq.Term)
-		go func() {
-			for {
-				win, ok := <-winCh
-				if !ok {
-					return
-				}
-				if execId != "" {
-					if err := apiClient.ContainerExecResize(sshSess.Context(), execId, container.ResizeOptions{
-						Height: uint(win.Height),
-						Width:  uint(win.Width),
-					}); err != nil {
-						l.WithError(err).Warn("cannot set window size; ignoring")
-					}
-				}
-			}
-		}()
 		opts.Tty = true
 		opts.ConsoleSize = &[2]uint{80, 40}
 	}
 	opts.Env = ev.Strings()
 
-	if e, err := apiClient.ContainerExecCreate(t.Context(), this.containerId, opts); err != nil {
+	e, err := apiClient.ContainerExecCreate(t.Context(), this.containerId, opts)
+	if err != nil {
 		return failf("cannot execute command: %w", err)
-	} else {
-		execId = e.ID
+	}
+	execId := e.ID
+	if winCh != nil {
+		resizeCtx, cancelResize := context.WithCancel(t.Context())
+		resizeDone := make(chan struct{})
+		go func() {
+			defer close(resizeDone)
+			for {
+				select {
+				case <-resizeCtx.Done():
+					return
+				case win, ok := <-winCh:
+					if !ok {
+						return
+					}
+					if err := apiClient.ContainerExecResize(resizeCtx, execId, container.ResizeOptions{
+						Height: uint(win.Height),
+						Width:  uint(win.Width),
+					}); err != nil && resizeCtx.Err() == nil {
+						l.WithError(err).Warn("cannot set window size; ignoring")
+					}
+				}
+			}
+		}()
+		defer func() {
+			cancelResize()
+			<-resizeDone
+		}()
 	}
 
 	ea, err := apiClient.ContainerExecAttach(t.Context(), execId, container.ExecAttachOptions{
@@ -141,8 +153,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	defer func() {
 		go func() {
 			activeRoutines.Wait()
-			defer close(signals)
-			defer close(copyDone)
+			close(signals)
 		}()
 	}()
 
@@ -172,6 +183,10 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		}
 		l.Trace("finished copy input")
 	}()
+	go func() {
+		activeRoutines.Wait()
+		close(copyDone)
+	}()
 
 	finish := func() (int, error) {
 		ei, iErr := apiClient.ContainerExecInspect(sshSess.Context(), execId)
@@ -185,6 +200,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	}
 
 	sshSess.Signals(signals)
+	defer sshSess.Signals(nil)
 	for {
 		select {
 		case s, ok := <-signals:
@@ -192,16 +208,32 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 				this.signal(t.Context(), l, t.Connection(), s)
 			}
 		case <-t.Context().Done():
-			go this.signalDetached(l, t.Connection())
+			ea.Close()
+			_ = ea.CloseWrite()
+			this.signalDetached(l, t.Connection())
 
 			return -2, rErr
 		case err, ok := <-copyDone:
+			if !ok {
+				for {
+					if ec, err := finish(); err != nil {
+						return -1, err
+					} else if ec >= 0 {
+						return ec, nil
+					}
+					select {
+					case <-t.Context().Done():
+						return -2, rErr
+					case <-time.After(100 * time.Millisecond):
+					}
+				}
+			}
 			ea.Close()
 			_ = ea.CloseWrite()
 
 			this.signalDetached(l, t.Connection())
 
-			if ok && err != nil && rErr == nil {
+			if err != nil && rErr == nil {
 				return -1, err
 			}
 			if rErr == nil {

@@ -1,7 +1,7 @@
 package session
 
 import (
-	glssh "github.com/gliderlabs/ssh"
+	glssh "github.com/engity-com/ssh-server-go"
 )
 
 type contextEnabled interface {

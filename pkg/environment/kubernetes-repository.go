@@ -16,7 +16,7 @@ import (
 	"github.com/docker/docker/errdefs"
 	"github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/level"
-	glssh "github.com/gliderlabs/ssh"
+	glssh "github.com/engity-com/ssh-server-go"
 	v1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

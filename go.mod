@@ -18,8 +18,8 @@ require (
 	github.com/docker/go-connections v0.8.1
 	github.com/echocat/slf4g v1.8.4
 	github.com/echocat/slf4g/native v1.8.4
+	github.com/engity-com/ssh-server-go v0.2.1
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/gliderlabs/ssh v0.3.8
 	github.com/go-delve/delve v1.27.1
 	github.com/google/go-containerregistry v0.22.0
 	github.com/google/go-github/v65 v65.0.0
@@ -34,14 +34,13 @@ require (
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/openwall/yescrypt-go v1.0.0
 	github.com/otiai10/copy v1.14.1
-	github.com/pires/go-proxyproto v0.15.0
 	github.com/pkg/sftp v1.13.11
 	github.com/shirou/gopsutil/v4 v4.26.8
 	github.com/stretchr/testify v1.12.1
 	github.com/tg123/go-htpasswd v1.2.5
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/xtaci/smux v1.5.57
-	golang.org/x/crypto v0.55.0
+	golang.org/x/crypto v0.56.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sys v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -108,6 +107,7 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/otiai10/mint v1.6.3 // indirect
+	github.com/pires/go-proxyproto v0.15.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20260805114148-88456608a4f6 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect

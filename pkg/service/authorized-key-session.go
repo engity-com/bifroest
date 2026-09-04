@@ -2,7 +2,7 @@ package service
 
 import (
 	"github.com/anmitsu/go-shlex"
-	glssh "github.com/gliderlabs/ssh"
+	glssh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/sys"

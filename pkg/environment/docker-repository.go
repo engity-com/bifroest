@@ -25,7 +25,7 @@ import (
 	"github.com/docker/go-connections/nat"
 	"github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/level"
-	glssh "github.com/gliderlabs/ssh"
+	glssh "github.com/engity-com/ssh-server-go"
 	mobymount "github.com/moby/moby/api/types/mount"
 
 	"github.com/engity-com/bifroest/pkg/alternatives"

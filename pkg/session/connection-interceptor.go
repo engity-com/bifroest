@@ -6,7 +6,7 @@ import (
 	"time"
 
 	log "github.com/echocat/slf4g"
-	glssh "github.com/gliderlabs/ssh"
+	glssh "github.com/engity-com/ssh-server-go"
 )
 
 type ConnectionInterceptor interface {

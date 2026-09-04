@@ -9,7 +9,7 @@ Defines the behavior of the SSH protocol for a user who is connecting to Bifrös
 
 <<property("addresses", array_ref("Net Address", "../data-type.md#net-address"), default=[":22"])>>
 To which address the service will bind and listen to.
-``
+
 <<property("keys", "Keys", "#keys")>>
 See [below](#keys).
 
@@ -17,22 +17,61 @@ See [below](#keys).
 See [below](#messages).
 
 <<property("idleTimeout", "Duration", "../data-type.md#duration", default="10m")>>
-For how long a connection can be idle before it will forcibly be closed. The client can send keep alive packages to extend the idle time. `0` means that the connection will never time out.
+For how long a connection can be idle before it will forcibly be closed. The client can send keep-alive packets to extend the idle time. `0` disables this timeout.
 
 <<property("maxTimeout", "Duration", "../data-type.md#duration", default=0)>>
-The maximum duration a connection can be open before it will be forcibly be closed, regardless whether there are actions or not. `0` means that the connection will never time out.
+The maximum duration a connection can be open before it will forcibly be closed, regardless of whether it is active. `0` disables this timeout.
+
+<<property("gracefulShutdownTimeout", "Duration", "../data-type.md#duration", default="30s")>>
+How long Bifröst waits for active SSH connections to finish after shutdown starts and the listeners have been closed. Remaining connections are forcibly closed after this duration. Bifröst then allows their handlers up to the same duration to finish cleanup before returning; shared resources remain open until cleanup is complete. `0` disables both waiting periods and closes connections immediately.
+
+<<property("handshakeTimeout", "Duration", "../data-type.md#duration", default="2m")>>
+The maximum duration from accepting a connection until successful SSH authentication. `0` disables this timeout.
+
+<<property("sessionRequestTimeout", "Duration", "../data-type.md#duration", default="30s")>>
+How long an accepted session channel may wait for its initial shell, exec, or subsystem request. `0` disables this timeout.
 
 <<property("maxAuthTries", "uint8", None, default=6)>>
-How many different authentication methods a client can use before the connection will be rejected.
+How many authentication attempts a client can make before the connection is rejected. `0` disables this limit.
 
-<<property("maxConnections", "uint8", None, default=255)>>
-The maximum amount of parallel connections on this service. Every additional connection beyond will be rejected.
+<<property("maxConnections", "uint32", None, default=255)>>
+The maximum number of parallel connections on this service. Every additional connection is rejected.
+
+<<property("maxStartupsStart", "uint16", None, default=10)>>
+The number of concurrent unauthenticated connections accepted before random early dropping starts. `0` starts the early-drop calculation with the first unauthenticated connection. This setting has no effect when `maxStartupsFull` is `0`.
+
+<<property("maxStartupsRate", "uint8", None, default=30)>>
+The initial probability, in percent, of dropping a new unauthenticated connection after `maxStartupsStart` is reached. It must be between `0` and `100`; the probability increases toward `100` as `maxStartupsFull` is approached.
+
+<<property("maxStartupsFull", "uint16", None, default=100)>>
+The hard limit for concurrent unauthenticated connections per SSH listener. When greater than `0`, it must be greater than or equal to `maxStartupsStart`. `0` disables the complete pre-authentication connection limit.
+
+<<property("maxSessionsPerConnection", "uint16", None, default=10)>>
+The maximum number of active SSH session channels per connection. `0` disables this limit.
+
+<<property("maxChannelsPerConnection", "uint16", None, default=64)>>
+The maximum number of active SSH channels of all supported types per connection. `0` disables this limit.
+
+<<property("maxReverseForwardsPerConnection", "uint16", None, default=16)>>
+The maximum number of active reverse-forward listeners per connection. `0` disables this limit.
+
+<<property("maxChannels", "uint16", None, default=64)>>
+The maximum number of active SSH channels across all connections handled by one SSH listener. `0` disables this limit.
+
+<<property("maxReverseForwards", "uint16", None, default=256)>>
+The maximum number of active reverse-forward listeners across all connections handled by one SSH listener. `0` disables this limit.
 
 <<property("proxyProtocol", "bool", None, default=false)>>
-If enabled Bifröst will support incoming connection the [PROXY protocol versions 1 and 2 format](https://www.haproxy.com/blog/use-the-proxy-protocol-to-preserve-a-clients-ip-address).
+If enabled, Bifröst supports incoming connections using [PROXY protocol versions 1 and 2](https://www.haproxy.com/blog/use-the-proxy-protocol-to-preserve-a-clients-ip-address).
+Only enable this when the SSH listener is exclusively reachable through trusted proxies. The current boolean configuration trusts the source addresses supplied by every peer that can reach the listener.
+
+OpenSSH Unix-socket forwarding (`direct-streamlocal@openssh.com` and `streamlocal-forward@openssh.com`) is not enabled. Bifröst currently has no cross-environment policy for socket paths, ownership, permissions, and cleanup.
 
 <<property("banner", "string", template_context="../context/connection.md", default='{{ `/etc/ssh/sshd-banner` | file `optional` | default `Transcend with Engity\'s Bifröst\n\n` }}')>>
 Banner which will be shown when the client connects to the server even before the first validation of authorizations or similar happens.
+
+<<property("preparationMessages", "Preparation Messages", "#preparationMessages")>>
+See [below](#preparationMessages).
 
 ## Examples
 
@@ -45,13 +84,22 @@ messages:
   # ...
 idleTimeout: 10m
 maxTimeout: 0
+gracefulShutdownTimeout: 30s
+handshakeTimeout: 2m
+sessionRequestTimeout: 30s
 maxAuthTries: 6
 maxConnections: 255
+maxStartupsStart: 10
+maxStartupsRate: 30
+maxStartupsFull: 100
+maxSessionsPerConnection: 10
+maxChannelsPerConnection: 64
+maxReverseForwardsPerConnection: 16
+maxChannels: 64
+maxReverseForwards: 256
+proxyProtocol: false
 banner: "Yeah!"
 ```
-
-<<property("preparationMessages", "Preparation Messages", "#preparationMessages")>>
-See [below](#preparationMessages).
 
 ## Keys
 
@@ -181,4 +229,3 @@ preparationMessages:
 | <<dist("linux")>> | <<dist("windows")>> |
 | - | - |
 | <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"windows")>> |
-

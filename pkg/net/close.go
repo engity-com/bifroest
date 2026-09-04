@@ -2,13 +2,11 @@ package net
 
 import (
 	gonet "net"
-
-	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 type CloseWriterConn interface {
 	gonet.Conn
-	sys.CloseWriter
+	CloseWrite() error
 }
 
 func AsCloseWriterConn(conn gonet.Conn) CloseWriterConn {

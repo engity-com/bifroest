@@ -5,6 +5,7 @@ import (
 	"time"
 
 	log "github.com/echocat/slf4g"
+	glssh "github.com/engity-com/ssh-server-go"
 	"github.com/vmihailenco/msgpack/v5"
 	"github.com/xtaci/smux"
 
@@ -169,7 +170,7 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 			}
 			defer common.IgnoreCloseError(muxConn)
 
-			if err := sys.FullDuplexCopy(ctx, pipeConn, muxConn, &sys.FullDuplexCopyOpts{
+			if err := glssh.FullDuplexCopy(ctx, pipeConn, muxConn, &glssh.FullDuplexCopyOpts{
 				OnStart: func() {
 					logger.Debug("named pipe started")
 				},

@@ -3,7 +3,7 @@ package environment
 import (
 	"fmt"
 
-	glssh "github.com/gliderlabs/ssh"
+	glssh "github.com/engity-com/ssh-server-go"
 )
 
 type TaskType uint8

@@ -1,7 +1,7 @@
 package service
 
 import (
-	glssh "github.com/gliderlabs/ssh"
+	glssh "github.com/engity-com/ssh-server-go"
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
@@ -9,20 +9,21 @@ import (
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
-func (this *service) handlePublicKey(ctx glssh.Context, key glssh.PublicKey) bool {
+func (this *service) handlePublicKey(ctx glssh.Context, _ gossh.ConnMetadata, key glssh.PublicKey) (bool, error) {
 	conn := this.connection(ctx)
+	if conn == nil {
+		return false, nil
+	}
 	l := conn.logger.
 		With("key", key.Type()+":"+gossh.FingerprintLegacyMD5(key))
 
 	keyTypeAllowed, err := this.Configuration.Ssh.Keys.KeyAllowed(key)
 	if err != nil {
-		l.WithError(err).
-			Error("cannot check key type")
-		return false
+		return false, errors.Newf(errors.System, "cannot check key type: %w", err)
 	}
 	if !keyTypeAllowed {
 		l.Debug("public key type forbidden")
-		return false
+		return false, nil
 	}
 
 	if _, ok := ctx.Value(handshakeKeyCtxKey).(glssh.PublicKey); !ok {
@@ -38,17 +39,14 @@ func (this *service) handlePublicKey(ctx glssh.Context, key glssh.PublicKey) boo
 	if err != nil {
 		if errors.IsType(err, errors.User) {
 			l.WithError(err).Debug("public key failed by user")
-			return false
+			return false, nil
 		}
-		if !this.isSilentError(err) {
-			l.WithError(err).Warn("was not able to resolve public key authorization request; treat as rejected")
-		}
-		return false
+		return false, errors.Newf(errors.System, "cannot resolve public key authorization request: %w", err)
 	}
 
 	if auth == nil || !auth.IsAuthorized() {
 		l.Debug("public key rejected")
-		return false
+		return false, nil
 	}
 
 	ctx.SetValue(authorizationCtxKey, auth)
@@ -56,11 +54,14 @@ func (this *service) handlePublicKey(ctx glssh.Context, key glssh.PublicKey) boo
 	ctx.SetValue(handshakeKeyCtxKey, nil)
 
 	l.Debug("public key accepted")
-	return true
+	return true, nil
 }
 
-func (this *service) handlePassword(ctx glssh.Context, password string) bool {
+func (this *service) handlePassword(ctx glssh.Context, _ gossh.ConnMetadata, password string) (bool, error) {
 	conn := this.connection(ctx)
+	if conn == nil {
+		return false, nil
+	}
 	l := conn.logger
 
 	auth, err := this.authorizer.AuthorizePassword(&passwordAuthorizeRequest{
@@ -73,26 +74,26 @@ func (this *service) handlePassword(ctx glssh.Context, password string) bool {
 	if err != nil {
 		if errors.IsType(err, errors.User) {
 			l.WithError(err).Debug("password failed by user")
-			return false
+			return false, nil
 		}
-		if !this.isSilentError(err) {
-			l.WithError(err).Warn("was not able to resolve password authorization request; treat as rejected")
-		}
-		return false
+		return false, errors.Newf(errors.System, "cannot resolve password authorization request: %w", err)
 	}
-	if !auth.IsAuthorized() {
+	if auth == nil || !auth.IsAuthorized() {
 		l.Debug("password rejected")
-		return false
+		return false, nil
 	}
 
 	ctx.SetValue(authorizationCtxKey, auth)
 
 	l.Debug("password accepted")
-	return true
+	return true, nil
 }
 
-func (this *service) handleKeyboardInteractiveChallenge(ctx glssh.Context, challenger gossh.KeyboardInteractiveChallenge) bool {
+func (this *service) handleKeyboardInteractiveChallenge(ctx glssh.Context, _ gossh.ConnMetadata, challenger gossh.KeyboardInteractiveChallenge) (bool, error) {
 	conn := this.connection(ctx)
+	if conn == nil {
+		return false, nil
+	}
 	l := conn.logger
 
 	auth, err := this.authorizer.AuthorizeInteractive(&interactiveAuthorizeRequest{
@@ -105,22 +106,19 @@ func (this *service) handleKeyboardInteractiveChallenge(ctx glssh.Context, chall
 	if err != nil {
 		if errors.IsType(err, errors.User) {
 			l.WithError(err).Debug("interactive failed by user")
-			return false
+			return false, nil
 		}
-		if !this.isSilentError(err) {
-			l.WithError(err).Warn("was not able to resolve interactive authorization request; treat as rejected")
-		}
-		return false
+		return false, errors.Newf(errors.System, "cannot resolve interactive authorization request: %w", err)
 	}
-	if !auth.IsAuthorized() {
+	if auth == nil || !auth.IsAuthorized() {
 		l.Debug("interactive rejected")
-		return false
+		return false, nil
 	}
 
 	ctx.SetValue(authorizationCtxKey, auth)
 
 	l.Debug("interactive accepted")
-	return true
+	return true, nil
 }
 
 func (this *service) resolveAuthorizationAndSession(ctx glssh.Context) (authorization.Authorization, session.Session, session.State, error) {
@@ -153,18 +151,18 @@ func (this *service) resolveAuthorizationAndSession(ctx glssh.Context) (authoriz
 	return auth, sess, oldState, nil
 }
 
-func (this *service) onPtyRequest(ctx glssh.Context, pty glssh.Pty) bool {
+func (this *service) onPtyRequest(ctx glssh.Context, _ glssh.Session, pty glssh.Pty) (bool, error) {
 	auth, ok := ctx.Value(authorizationCtxKey).(authorization.Authorization)
 	if !ok {
-		return false
+		return false, errors.Newf(errors.System, "no authorization resolved for PTY request")
 	}
 	if policy := authorization.AuthorizedKeyPolicyOf(auth); policy != nil && !policy.PtyAllowed {
-		return false
+		return false, nil
 	}
 
 	conn := this.connection(ctx)
 	if conn == nil {
-		return false
+		return false, errors.Newf(errors.System, "no connection resolved for PTY request")
 	}
 	logger := conn.Logger()
 
@@ -173,16 +171,23 @@ func (this *service) onPtyRequest(ctx glssh.Context, pty glssh.Pty) bool {
 		conn,
 		auth,
 	}, pty)
-	if this.isRelevantError(err) {
-		logger.WithError(err).Warn("cannot evaluate if PTY is allowed or not for request")
-		return false
+	if err != nil {
+		return false, errors.Newf(errors.System, "cannot evaluate if PTY is allowed for request: %w", err)
 	}
 
 	if !ok {
 		logger.Debug("PTY was requested but is forbidden")
-		return false
+		return false, nil
 	}
 
 	logger.Debug("PTY was requested and was permitted")
-	return true
+	return true, nil
+}
+
+func (this *service) onAgentForwardingRequested(ctx glssh.Context, _ glssh.Session) (bool, error) {
+	auth, ok := ctx.Value(authorizationCtxKey).(authorization.Authorization)
+	if !ok || auth == nil {
+		return false, errors.Newf(errors.System, "no authorization resolved for agent forwarding request")
+	}
+	return authorization.IsAgentForwardingAllowed(auth), nil
 }

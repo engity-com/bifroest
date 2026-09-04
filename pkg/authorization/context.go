@@ -1,6 +1,6 @@
 package authorization
 
-import glssh "github.com/gliderlabs/ssh"
+import glssh "github.com/engity-com/ssh-server-go"
 
 type ContextEnabled interface {
 	Context() glssh.Context

@@ -13,7 +13,7 @@ import (
 	"github.com/creack/pty"
 	log "github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/level"
-	glssh "github.com/gliderlabs/ssh"
+	glssh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
@@ -95,7 +95,9 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	}
 
 	var fPty, fTty *os.File
-	if ptyReq, winCh, isPty := sshSess.Pty(); isPty {
+	var winCh <-chan glssh.Window
+	if ptyReq, windows, isPty := sshSess.Pty(); isPty {
+		winCh = windows
 		var err error
 		fPty, fTty, err = pty.Open()
 		if err != nil {
@@ -111,17 +113,30 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		cmd.Stdout = fTty
 		cmd.Stdin = fTty
 
+	}
+	if winCh != nil {
+		resizeCtx, cancelResize := context.WithCancel(t.Context())
+		resizeDone := make(chan struct{})
 		go func() {
+			defer close(resizeDone)
 			for {
-				win, ok := <-winCh
-				if !ok {
+				select {
+				case <-resizeCtx.Done():
 					return
-				}
-				size := pty.Winsize{Rows: uint16(win.Height), Cols: uint16(win.Width)}
-				if err := pty.Setsize(fPty, &size); err != nil {
-					l.WithError(err).Warn("cannot set winsize; ignoring")
+				case win, ok := <-winCh:
+					if !ok {
+						return
+					}
+					size := pty.Winsize{Rows: uint16(win.Height), Cols: uint16(win.Width)}
+					if err := pty.Setsize(fPty, &size); err != nil {
+						l.WithError(err).Warn("cannot set winsize; ignoring")
+					}
 				}
 			}
+		}()
+		defer func() {
+			cancelResize()
+			<-resizeDone
 		}()
 	}
 	cmd.Env = ev.Strings()
@@ -177,6 +192,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	}()
 
 	sshSess.Signals(signals)
+	defer sshSess.Signals(nil)
 	defer this.kill(cmd, l)
 	for {
 		select {
