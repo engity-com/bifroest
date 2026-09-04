@@ -95,7 +95,7 @@ func (this *KubernetesRepository) new(ctx context.Context, pod *v1.Pod, logger l
 		if environ, err := result.impSession.GetEnvironment(ctx, connId); err == nil {
 			result.environ = environ
 			break
-		} else if errors.Is(err, io.EOF) ||
+		} else if sys.IsClosedError(err) ||
 			errors.Is(err, io.ErrUnexpectedEOF) ||
 			errors.Is(err, bkube.ErrEndpointNotFound) ||
 			errors.Is(err, spdystream.ErrWriteClosedStream) ||
