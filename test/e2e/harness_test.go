@@ -3,10 +3,12 @@
 package e2e_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -18,6 +20,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	gossh "golang.org/x/crypto/ssh"
 )
 
 const (
@@ -425,6 +429,248 @@ func (f *fixture) sshArgs(key, user string) []string {
 		"-o", "LogLevel=ERROR",
 		"-p", f.port,
 	}
+}
+
+func runBackendProtocolTests(t *testing.T, f *fixture, timeout time.Duration, ensureEchoServer func(*testing.T)) {
+	t.Helper()
+
+	t.Run("shell request without command", func(t *testing.T) {
+		client := f.newSSHClient(t, timeout)
+		session, err := client.NewSession()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close()
+		stdin, err := session.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var stdout, stderr bytes.Buffer
+		session.Stdout = &stdout
+		session.Stderr = &stderr
+		if err := session.Shell(); err != nil {
+			t.Fatalf("request shell: %v", err)
+		}
+		if _, err := io.WriteString(stdin, "printf 'shell-e2e\\n'\nexit\n"); err != nil {
+			t.Fatalf("write shell input: %v", err)
+		}
+		if err := stdin.Close(); err != nil {
+			t.Fatalf("half-close shell input: %v", err)
+		}
+		if err := session.Wait(); err != nil {
+			t.Fatalf("wait for shell: %v\nstderr:\n%s", err, stderr.String())
+		}
+		if stdout.String() != "shell-e2e\n" {
+			t.Fatalf("shell stdout: got %q, want %q", stdout.String(), "shell-e2e\n")
+		}
+	})
+
+	t.Run("PTY initial size and resize", func(t *testing.T) {
+		client := f.newSSHClient(t, timeout)
+		session, err := client.NewSession()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close()
+		stdout, err := session.StdoutPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var stderr bytes.Buffer
+		session.Stderr = &stderr
+		if err := session.RequestPty("xterm-256color", 33, 77, gossh.TerminalModes{}); err != nil {
+			t.Fatalf("request PTY: %v", err)
+		}
+		if err := session.Start("/usr/local/bin/e2e-helper pty-size 77 33"); err != nil {
+			t.Fatalf("start PTY helper: %v", err)
+		}
+		reader := bufio.NewReader(stdout)
+		if got := readProtocolLine(t, reader); got != "size=77x33" {
+			t.Fatalf("initial PTY size: got %q, want %q", got, "size=77x33")
+		}
+		if err := session.WindowChange(47, 101); err != nil {
+			t.Fatalf("resize PTY: %v", err)
+		}
+		if got := readProtocolLine(t, reader); got != "size=101x47" {
+			t.Fatalf("resized PTY size: got %q, want %q", got, "size=101x47")
+		}
+		if err := session.Wait(); err != nil {
+			t.Fatalf("wait for PTY helper: %v\nstderr:\n%s", err, stderr.String())
+		}
+	})
+
+	t.Run("SSH signal request", func(t *testing.T) {
+		client := f.newSSHClient(t, timeout)
+		session, err := client.NewSession()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close()
+		stdout, err := session.StdoutPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var stderr bytes.Buffer
+		session.Stderr = &stderr
+		if err := session.Start("/usr/local/bin/e2e-helper signal"); err != nil {
+			t.Fatal(err)
+		}
+		reader := bufio.NewReader(stdout)
+		if got := readProtocolLine(t, reader); got != "ready" {
+			t.Fatalf("signal helper readiness: got %q", got)
+		}
+		if err := session.Signal(gossh.SIGUSR1); err != nil {
+			t.Fatalf("send SSH signal request: %v", err)
+		}
+		if got := readProtocolLine(t, reader); got != "signal=user defined signal 1" {
+			t.Fatalf("captured signal: got %q", got)
+		}
+		if err := session.Wait(); err != nil {
+			t.Fatalf("wait for signal helper: %v\nstderr:\n%s", err, stderr.String())
+		}
+	})
+
+	t.Run("session stream half-close and backpressure", func(t *testing.T) {
+		const size = 4 * 1024 * 1024
+		client := f.newSSHClient(t, timeout)
+		session, err := client.NewSession()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close()
+		stdin, err := session.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		stdout, err := session.StdoutPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var stderr bytes.Buffer
+		session.Stderr = &stderr
+		if err := session.Start(fmt.Sprintf("/usr/local/bin/e2e-helper stream-duplex %d", size)); err != nil {
+			t.Fatal(err)
+		}
+		payload := streamPayload(size)
+		writeDone := make(chan error, 1)
+		go func() {
+			_, err := io.Copy(stdin, bytes.NewReader(payload))
+			if closeErr := stdin.Close(); err == nil {
+				err = closeErr
+			}
+			writeDone <- err
+		}()
+		output, readErr := io.ReadAll(stdout)
+		if err := <-writeDone; err != nil {
+			t.Fatalf("write and half-close session input: %v", err)
+		}
+		if readErr != nil {
+			t.Fatalf("read session output: %v", readErr)
+		}
+		if err := session.Wait(); err != nil {
+			t.Fatalf("wait for duplex helper: %v\nstderr:\n%s", err, stderr.String())
+		}
+		if len(output) != size+3 || !bytes.Equal(output[:size], payload) || string(output[size:]) != "ok\n" {
+			t.Fatalf("duplex output mismatch: got %d bytes, want %d payload bytes plus marker", len(output), size)
+		}
+	})
+
+	t.Run("forwarding half-close and backpressure", func(t *testing.T) {
+		const size = 4 * 1024 * 1024
+		ensureEchoServer(t)
+		client := f.newSSHClient(t, timeout)
+		var conn net.Conn
+		if err := poll(10*time.Second, func() error {
+			candidate, err := client.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", echoPort))
+			if err != nil {
+				return err
+			}
+			conn = candidate
+			return nil
+		}); err != nil {
+			t.Fatalf("open direct-tcpip channel: %v", err)
+		}
+		defer conn.Close()
+		closeWriter, ok := conn.(interface{ CloseWrite() error })
+		if !ok {
+			t.Fatal("forwarded connection does not support half-close")
+		}
+		payload := streamPayload(size)
+		writeDone := make(chan error, 1)
+		go func() {
+			_, err := io.Copy(conn, bytes.NewReader(payload))
+			writeDone <- err
+		}()
+		output := make([]byte, size)
+		_, readErr := io.ReadFull(conn, output)
+		if err := <-writeDone; err != nil {
+			t.Fatalf("write forwarding input: %v", err)
+		}
+		if readErr != nil {
+			t.Fatalf("read forwarding output: %v", readErr)
+		}
+		if err := closeWriter.CloseWrite(); err != nil {
+			t.Fatalf("half-close forwarding input: %v", err)
+		}
+		var extra [1]byte
+		if n, err := conn.Read(extra[:]); n != 0 || !errors.Is(err, io.EOF) {
+			t.Fatalf("expected forwarding EOF after half-close, got n=%d err=%v", n, err)
+		}
+		if !bytes.Equal(output, payload) {
+			t.Fatalf("forwarded payload mismatch: got %d bytes, want %d", len(output), len(payload))
+		}
+	})
+}
+
+func (f *fixture) newSSHClient(t *testing.T, timeout time.Duration) *gossh.Client {
+	t.Helper()
+	privateKey, err := os.ReadFile(f.clientKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := gossh.ParsePrivateKey(privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostKey, _, _, _, err := gossh.ParseAuthorizedKey(mustRead(f.hostKey + ".pub"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := net.JoinHostPort(f.host, f.port)
+	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+		_ = conn.Close()
+		t.Fatal(err)
+	}
+	sshConn, channels, requests, err := gossh.NewClientConn(conn, address, &gossh.ClientConfig{
+		User:            "e2e",
+		Auth:            []gossh.AuthMethod{gossh.PublicKeys(signer)},
+		HostKeyCallback: gossh.FixedHostKey(hostKey),
+	})
+	if err != nil {
+		_ = conn.Close()
+		t.Fatal(err)
+	}
+	client := gossh.NewClient(sshConn, channels, requests)
+	t.Cleanup(func() { _ = client.Close() })
+	return client
+}
+
+func readProtocolLine(t *testing.T, reader *bufio.Reader) string {
+	t.Helper()
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("read protocol line: %v", err)
+	}
+	return strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+}
+
+func streamPayload(size int) []byte {
+	seed := []byte("bifroest-e2e\x00\xff")
+	return bytes.Repeat(seed, size/len(seed)+1)[:size]
 }
 
 func (f *fixture) runtime(timeout time.Duration, args ...string) commandResult {

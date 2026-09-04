@@ -102,7 +102,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		winCh = windows
 		ev.Set("TERM", ptyReq.Term)
 		opts.Tty = true
-		opts.ConsoleSize = &[2]uint{80, 40}
+		opts.ConsoleSize = &[2]uint{uint(ptyReq.Window.Height), uint(ptyReq.Window.Width)}
 	}
 	opts.Env = ev.Strings()
 	usesExecWrapper := this.repository.hostOs == sys.OsLinux
@@ -174,6 +174,14 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	})
 	if err != nil {
 		return failf("cannot attach to execution #%v: %w", execId, err)
+	}
+	if opts.ConsoleSize != nil {
+		if err := apiClient.ContainerExecResize(t.Context(), execId, container.ResizeOptions{
+			Height: opts.ConsoleSize[0],
+			Width:  opts.ConsoleSize[1],
+		}); err != nil {
+			return failf("cannot set initial window size for execution #%v: %w", execId, err)
+		}
 	}
 
 	signals := make(chan glssh.Signal, 1)

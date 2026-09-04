@@ -117,6 +117,8 @@ func TestOpenSSHKubernetesEnvironment(t *testing.T) {
 		}
 	})
 
+	runBackendProtocolTests(t, k.fixture, 75*time.Second, k.ensurePodEchoServer)
+
 	t.Run("native SFTP lifecycle", func(t *testing.T) {
 		source := filepath.Join(t.TempDir(), "source.bin")
 		download := filepath.Join(t.TempDir(), "download.bin")

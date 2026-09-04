@@ -94,6 +94,10 @@ func TestOpenSSHLocalBackend(t *testing.T) {
 		}
 	})
 
+	runBackendProtocolTests(t, f, 30*time.Second, func(t *testing.T) {
+		ensureContainerEchoServer(t, f)
+	})
+
 	t.Run("native SFTP lifecycle", func(t *testing.T) {
 		source := filepath.Join(t.TempDir(), "source.bin")
 		download := filepath.Join(t.TempDir(), "download.bin")

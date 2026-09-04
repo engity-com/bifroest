@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	creackpty "github.com/creack/pty"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
@@ -51,6 +52,18 @@ func run(args []string) error {
 		os.Exit(23)
 	case "pty":
 		return pty()
+	case "pty-size":
+		if len(args) != 3 {
+			return errors.New("usage: pty-size <columns> <rows>")
+		}
+		return ptySize(args[1], args[2])
+	case "stream-duplex":
+		if len(args) != 2 {
+			return errors.New("usage: stream-duplex <bytes>")
+		}
+		return streamDuplex(args[1])
+	case "signal":
+		return captureSignal()
 	case "echo-server":
 		if len(args) != 3 {
 			return errors.New("usage: echo-server <tcp|unix> <address>")
@@ -117,6 +130,103 @@ func pty() error {
 	return nil
 }
 
+func ptySize(columnsArg, rowsArg string) error {
+	columns, err := strconv.ParseUint(columnsArg, 10, 16)
+	if err != nil || columns == 0 {
+		return fmt.Errorf("invalid PTY columns %q", columnsArg)
+	}
+	rows, err := strconv.ParseUint(rowsArg, 10, 16)
+	if err != nil || rows == 0 {
+		return fmt.Errorf("invalid PTY rows %q", rowsArg)
+	}
+	resized := make(chan os.Signal, 1)
+	signal.Notify(resized, syscall.SIGWINCH)
+	defer signal.Stop(resized)
+
+	deadline := time.Now().Add(2 * time.Second)
+	var initial creackpty.Winsize
+	for {
+		size, err := creackpty.GetsizeFull(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("get PTY size: %w", err)
+		}
+		initial = *size
+		if size.Cols == uint16(columns) && size.Rows == uint16(rows) {
+			break
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("initial PTY size is %dx%d, want %dx%d", size.Cols, size.Rows, columns, rows)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	printPtySize(initial)
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case <-resized:
+			current, err := creackpty.GetsizeFull(os.Stdin)
+			if err != nil {
+				return fmt.Errorf("get resized PTY size: %w", err)
+			}
+			if current.Cols != initial.Cols || current.Rows != initial.Rows {
+				printPtySize(*current)
+				return nil
+			}
+		case <-timer.C:
+			return errors.New("timed out waiting for PTY resize")
+		}
+	}
+}
+
+func printPtySize(size creackpty.Winsize) {
+	fmt.Printf("size=%dx%d\n", size.Cols, size.Rows)
+}
+
+func streamDuplex(sizeArg string) error {
+	size, err := parseSize(sizeArg)
+	if err != nil {
+		return err
+	}
+	payload := testPayload(size)
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(os.Stdout, bytes.NewReader(payload))
+		writeDone <- err
+	}()
+
+	input := make([]byte, size)
+	if _, err := io.ReadFull(os.Stdin, input); err != nil {
+		return fmt.Errorf("read input: %w", err)
+	}
+	if !bytes.Equal(input, payload) {
+		return errors.New("input payload mismatch")
+	}
+	var extra [1]byte
+	if n, err := os.Stdin.Read(extra[:]); n != 0 || !errors.Is(err, io.EOF) {
+		return fmt.Errorf("expected input EOF, got n=%d err=%v", n, err)
+	}
+	if err := <-writeDone; err != nil {
+		return fmt.Errorf("write output: %w", err)
+	}
+	fmt.Println("ok")
+	return nil
+}
+
+func captureSignal() error {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGUSR1)
+	defer signal.Stop(signals)
+	fmt.Println("ready")
+	select {
+	case received := <-signals:
+		fmt.Printf("signal=%s\n", received)
+		return nil
+	case <-time.After(5 * time.Second):
+		return errors.New("timed out waiting for SIGUSR1")
+	}
+}
+
 func echoServer(network, address string) error {
 	if network != "tcp" && network != "unix" {
 		return fmt.Errorf("unsupported network %q", network)
@@ -174,12 +284,11 @@ func echoClient(args []string) error {
 	}
 	defer conn.Close()
 
-	size, err := strconv.Atoi(sizeArg)
-	if err != nil || size < 1 || size > 8*1024*1024 {
-		return fmt.Errorf("invalid byte count %q", sizeArg)
+	size, err := parseSize(sizeArg)
+	if err != nil {
+		return err
 	}
-	seed := []byte("bifroest-e2e\x00\xff")
-	payload := bytes.Repeat(seed, size/len(seed)+1)[:size]
+	payload := testPayload(size)
 	if err := conn.SetDeadline(time.Now().Add(8 * time.Second)); err != nil {
 		return err
 	}
@@ -195,6 +304,19 @@ func echoClient(args []string) error {
 	}
 	fmt.Printf("ok %d\n", size)
 	return nil
+}
+
+func parseSize(value string) (int, error) {
+	size, err := strconv.Atoi(value)
+	if err != nil || size < 1 || size > 8*1024*1024 {
+		return 0, fmt.Errorf("invalid byte count %q", value)
+	}
+	return size, nil
+}
+
+func testPayload(size int) []byte {
+	seed := []byte("bifroest-e2e\x00\xff")
+	return bytes.Repeat(seed, size/len(seed)+1)[:size]
 }
 
 func dialSOCKS5(proxy, target string) (net.Conn, error) {
@@ -284,7 +406,8 @@ func agentKeys() error {
 		return fmt.Errorf("connect to forwarded agent: %w", err)
 	}
 	defer conn.Close()
-	keys, err := agent.NewClient(conn).List()
+	client := agent.NewClient(conn)
+	keys, err := client.List()
 	if err != nil {
 		return fmt.Errorf("list agent keys: %w", err)
 	}
@@ -295,6 +418,14 @@ func agentKeys() error {
 		publicKey, err := ssh.ParsePublicKey(key.Blob)
 		if err != nil {
 			return fmt.Errorf("parse agent key: %w", err)
+		}
+		challenge := []byte("bifroest-e2e-agent-signature")
+		signature, err := client.Sign(publicKey, challenge)
+		if err != nil {
+			return fmt.Errorf("sign with agent key: %w", err)
+		}
+		if err := publicKey.Verify(challenge, signature); err != nil {
+			return fmt.Errorf("verify agent signature: %w", err)
 		}
 		fmt.Print(string(ssh.MarshalAuthorizedKey(publicKey)))
 	}

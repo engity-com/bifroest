@@ -106,6 +106,10 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		defer common.IgnoreCloseError(fPty)
 		defer common.IgnoreCloseError(fTty)
 		ev.Set("TERM", ptyReq.Term)
+		initialSize := pty.Winsize{Rows: uint16(ptyReq.Window.Height), Cols: uint16(ptyReq.Window.Width)}
+		if err := pty.Setsize(fPty, &initialSize); err != nil {
+			return failf("cannot set initial pty size: %w", err)
+		}
 		if err := this.configureCmdForPty(cmd, fPty, fTty); err != nil {
 			return failf("cannot configure cmd for pty: %w", err)
 		}

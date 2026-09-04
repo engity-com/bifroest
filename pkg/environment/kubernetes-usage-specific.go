@@ -129,7 +129,10 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 		opts.Stderr = false
 		streamOpts.Tty = true
 		streamOpts.Stderr = nil
-		streamOpts.TerminalSizeQueue = &terminalQueueSizeFromSsh{winCh}
+		streamOpts.TerminalSizeQueue = &terminalQueueSizeFromSsh{
+			initial: &remotecommand.TerminalSize{Width: uint16(ptyReq.Window.Width), Height: uint16(ptyReq.Window.Height)},
+			changes: winCh,
+		}
 		terminalStdinEOF, releaseEOF := io.Pipe()
 		releaseTerminalStdinEOF = releaseEOF
 		streamOpts.Stdin = io.MultiReader(sshSess, terminalStdinEOF)
@@ -249,11 +252,17 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 }
 
 type terminalQueueSizeFromSsh struct {
-	c <-chan glssh.Window
+	initial *remotecommand.TerminalSize
+	changes <-chan glssh.Window
 }
 
 func (this *terminalQueueSizeFromSsh) Next() *remotecommand.TerminalSize {
-	win, ok := <-this.c
+	if this.initial != nil {
+		result := this.initial
+		this.initial = nil
+		return result
+	}
+	win, ok := <-this.changes
 	if !ok {
 		return nil
 	}
