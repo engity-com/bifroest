@@ -27,6 +27,25 @@ run = [
 depends = ["build:var"]
 run = 'go test -v -covermode atomic -coverprofile=var/profile.cov ./...'
 
+[tasks."test:e2e:local"]
+depends = ["build:var"]
+run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHLocalBackend$' ./test/e2e"
+
+[tasks."test:e2e:docker"]
+depends = ["build:var"]
+run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHDockerEnvironment$' ./test/e2e"
+
+[tasks."test:e2e:kubernetes"]
+depends = ["build:var"]
+run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHKubernetesEnvironment$' ./test/e2e"
+
+[tasks."test:e2e"]
+run = [
+    { task = "test:e2e:local" },
+    { task = "test:e2e:docker" },
+    { task = "test:e2e:kubernetes" }
+]
+
 [tasks."build"]
 run = [
     { task = "build:go" },

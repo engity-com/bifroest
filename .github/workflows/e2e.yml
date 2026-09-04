@@ -1,0 +1,167 @@
+name: End-to-End Tests
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  files-changed:
+    name: Detect file changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.changes.outputs.go }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Check for backend file changes
+        uses: dorny/paths-filter@v4
+        id: changes
+        with:
+          filters: .github/filters.yml
+
+  runtime:
+    name: ${{ matrix.suite }} with ${{ matrix.runtime }}
+    needs: files-changed
+    if: needs.files-changed.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - local
+          - docker
+        runtime:
+          - docker
+          - podman
+    env:
+      BIFROEST_E2E_RUNTIME: ${{ matrix.runtime }}
+      CGO_ENABLED: '0'
+    steps:
+      - name: Install Podman
+        if: matrix.runtime == 'podman'
+        run: sudo apt-get update && sudo apt-get install --yes podman
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Cache Go
+        uses: actions/cache@v6
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install MISE
+        uses: jdx/mise-action@v4
+
+      - name: Install dependencies
+        run: mise run install:go
+
+      - name: Run end-to-end suite
+        run: mise run test:e2e:${{ matrix.suite }}
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-${{ matrix.suite }}-${{ matrix.runtime }}
+          path: var/e2e/**/*
+          if-no-files-found: ignore
+          retention-days: 7
+
+  kind-docker:
+    name: kubernetes with kind and docker
+    needs: files-changed
+    if: needs.files-changed.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      BIFROEST_E2E_RUNTIME: docker
+      KIND_EXPERIMENTAL_PROVIDER: docker
+      CGO_ENABLED: '0'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Cache Go
+        uses: actions/cache@v6
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install MISE
+        uses: jdx/mise-action@v4
+
+      - name: Install dependencies
+        run: mise run install:go
+
+      - name: Run Kubernetes end-to-end suite
+        run: mise run test:e2e:kubernetes
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-kubernetes-docker
+          path: var/e2e/**/*
+          if-no-files-found: ignore
+          retention-days: 7
+
+  kind-podman:
+    name: kubernetes with kind and podman
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      BIFROEST_E2E_RUNTIME: podman
+      KIND_EXPERIMENTAL_PROVIDER: podman
+      CGO_ENABLED: '0'
+    steps:
+      - name: Install Podman
+        run: sudo apt-get update && sudo apt-get install --yes podman
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Cache Go
+        uses: actions/cache@v6
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install MISE
+        uses: jdx/mise-action@v4
+
+      - name: Install dependencies
+        run: mise run install:go
+
+      - name: Run Kubernetes end-to-end suite
+        run: mise run test:e2e:kubernetes
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-kubernetes-podman
+          path: var/e2e/**/*
+          if-no-files-found: ignore
+          retention-days: 7
