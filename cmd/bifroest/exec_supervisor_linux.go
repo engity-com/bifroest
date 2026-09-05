@@ -8,6 +8,7 @@ import (
 
 	"github.com/shirou/gopsutil/v4/process"
 	"golang.org/x/sys/unix"
+	"golang.org/x/term"
 )
 
 const execDescendantCleanupTimeout = 3 * time.Second
@@ -36,8 +37,14 @@ func newExecProcessSupervisor() (*execProcessSupervisor, error) {
 	return &execProcessSupervisor{previousSubreaper: previous, pidfdSupported: pidfdSupported}, nil
 }
 
-func (*execProcessSupervisor) Prepare(*exec.Cmd) error { return nil }
-func (*execProcessSupervisor) Attach(*exec.Cmd) error  { return nil }
+func (*execProcessSupervisor) Prepare(cmd *exec.Cmd) error {
+	if stdin, ok := cmd.Stdin.(*goos.File); ok && term.IsTerminal(int(stdin.Fd())) {
+		cmd.SysProcAttr.Foreground = true
+		cmd.SysProcAttr.Ctty = int(stdin.Fd())
+	}
+	return nil
+}
+func (*execProcessSupervisor) Attach(*exec.Cmd) error { return nil }
 
 func (this *execProcessSupervisor) Cleanup() (rErr error) {
 	defer func() {

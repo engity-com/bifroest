@@ -466,6 +466,40 @@ func runBackendProtocolTests(t *testing.T, f *fixture, timeout time.Duration, en
 		}
 	})
 
+	t.Run("interactive PTY shell accepts input", func(t *testing.T) {
+		client := f.newSSHClient(t, timeout)
+		session, err := client.NewSession()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close()
+		stdin, err := session.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var output bytes.Buffer
+		session.Stdout = &output
+		session.Stderr = &output
+		if err := session.RequestPty("xterm-256color", 33, 77, gossh.TerminalModes{}); err != nil {
+			t.Fatalf("request PTY: %v", err)
+		}
+		if err := session.Shell(); err != nil {
+			t.Fatalf("request shell: %v", err)
+		}
+		if _, err := io.WriteString(stdin, "printf 'interactive-pty-shell-e2e\\n'\nexit\n"); err != nil {
+			t.Fatalf("write shell input: %v", err)
+		}
+		if err := stdin.Close(); err != nil {
+			t.Fatalf("half-close shell input: %v", err)
+		}
+		if err := session.Wait(); err != nil {
+			t.Fatalf("wait for shell: %v\noutput:\n%s", err, output.String())
+		}
+		if !strings.Contains(output.String(), "interactive-pty-shell-e2e") {
+			t.Fatalf("shell output does not contain marker:\n%s", output.String())
+		}
+	})
+
 	t.Run("PTY initial size and resize", func(t *testing.T) {
 		client := f.newSSHClient(t, timeout)
 		session, err := client.NewSession()

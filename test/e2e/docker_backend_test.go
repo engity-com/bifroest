@@ -96,6 +96,15 @@ func TestOpenSSHDockerEnvironment(t *testing.T) {
 		}
 	})
 
+	t.Run("PTY fast exit preserves status", func(t *testing.T) {
+		for attempt := 1; attempt <= 10; attempt++ {
+			result := f.sshWithEnv(20*time.Second, nil, f.clientKey, "e2e", []string{"-tt"}, "/usr/local/bin/e2e-helper", "exit-after", "0", "23")
+			if code := exitCode(result.err); code != 23 {
+				t.Fatalf("attempt %d exit code: got %d, want 23 (error: %v)\nstdout:\n%s\nstderr:\n%s", attempt, code, result.err, result.stdout, result.stderr)
+			}
+		}
+	})
+
 	runContainerExecutionEnvironmentTest(t, f, 45*time.Second, "")
 
 	runBackendProtocolTests(t, f, 45*time.Second, func(t *testing.T) {

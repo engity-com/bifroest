@@ -194,6 +194,25 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 			return this.impSession.KillExecution(ctx, t.Connection().Id(), executionId, 0, sys.SIGKILL)
 		})
 	}
+
+	ea, err := attachDockerExecWithTimeout(t.Context(), dockerAttachTimeout, func(ctx context.Context) (types.HijackedResponse, error) {
+		return apiClient.ContainerExecAttach(ctx, execId, container.ExecAttachOptions{
+			Tty:         opts.Tty,
+			ConsoleSize: opts.ConsoleSize,
+		})
+	})
+	if err != nil {
+		cleanupExecution()
+		return failf("cannot attach to execution #%v: %w", execId, err)
+	}
+	if opts.ConsoleSize != nil {
+		if err := apiClient.ContainerExecResize(t.Context(), execId, container.ResizeOptions{
+			Height: opts.ConsoleSize[0],
+			Width:  opts.ConsoleSize[1],
+		}); err != nil && t.Context().Err() == nil {
+			l.WithError(err).Warn("cannot set initial window size; ignoring")
+		}
+	}
 	if winCh != nil {
 		resizeCtx, cancelResize := context.WithCancel(t.Context())
 		resizeDone := make(chan struct{})
@@ -220,27 +239,6 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 			cancelResize()
 			<-resizeDone
 		}()
-	}
-
-	ea, err := attachDockerExecWithTimeout(t.Context(), dockerAttachTimeout, func(ctx context.Context) (types.HijackedResponse, error) {
-		return apiClient.ContainerExecAttach(ctx, execId, container.ExecAttachOptions{
-			Tty:         opts.Tty,
-			ConsoleSize: opts.ConsoleSize,
-		})
-	})
-	if err != nil {
-		cleanupExecution()
-		return failf("cannot attach to execution #%v: %w", execId, err)
-	}
-	if opts.ConsoleSize != nil {
-		if err := apiClient.ContainerExecResize(t.Context(), execId, container.ResizeOptions{
-			Height: opts.ConsoleSize[0],
-			Width:  opts.ConsoleSize[1],
-		}); err != nil {
-			cleanupExecution()
-			ea.Close()
-			return failf("cannot set initial window size for execution #%v: %w", execId, err)
-		}
 	}
 
 	signals := make(chan essh.Signal, 1)

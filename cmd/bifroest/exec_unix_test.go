@@ -69,6 +69,27 @@ func TestDoExecStoresSignalExitCode(t *testing.T) {
 	require.Equal(t, "143", string(content))
 }
 
+func TestDoExecStoresResultWhenExecutableIsMissing(t *testing.T) {
+	directory := t.TempDir()
+	executionId := connection.MustNewId()
+	opts := execOpts{
+		storeExitCodeForConnectionId: true,
+		exitCodeByConnectionIdPath:   directory,
+		executionId:                  executionId,
+		workingDirectory:             directory,
+		environment:                  map[string]string{},
+		path:                         filepath.Join(directory, "missing"),
+		argv:                         []string{"missing"},
+	}
+
+	require.NoError(t, doExec(&opts))
+	stateDirectory := filepath.Join(directory, execution.StateDirectoryName)
+	content, err := goos.ReadFile(executionStatePath(stateDirectory, executionId, ""))
+	require.NoError(t, err)
+	require.Equal(t, "1", string(content))
+	require.NoFileExists(t, executionStatePath(stateDirectory, executionId, ".pid"))
+}
+
 func TestDoExecRejectsExitCodeStorageWithoutExecutionId(t *testing.T) {
 	err := doExec(&execOpts{storeExitCodeForConnectionId: true})
 	require.ErrorContains(t, err, "--executionId is required")
