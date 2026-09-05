@@ -12,7 +12,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-func (this *imp) kill(ctx context.Context, pid int, signal sys.Signal) error {
+func (this *imp) kill(ctx context.Context, pid int, signal sys.Signal, _ bool) error {
 	p, err := process.NewProcess(int32(pid))
 	if errors.Is(err, windows.ERROR_INVALID_PARAMETER) || errors.Is(err, process.ErrorProcessNotRunning) {
 		return ErrNoSuchProcess

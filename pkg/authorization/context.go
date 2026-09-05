@@ -1,9 +1,9 @@
 package authorization
 
-import glssh "github.com/engity-com/ssh-server-go"
+import essh "github.com/engity-com/ssh-server-go"
 
 type ContextEnabled interface {
-	Context() glssh.Context
+	Context() essh.Context
 }
 
 func getField(name string, ce ContextEnabled, of Authorization, def func() (any, bool, error)) (any, bool, error) {

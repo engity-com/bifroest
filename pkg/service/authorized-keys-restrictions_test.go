@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	glssh "github.com/engity-com/ssh-server-go"
+	essh "github.com/engity-com/ssh-server-go"
 	"github.com/stretchr/testify/require"
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -640,7 +640,7 @@ func (*authorizedKeysTestRepository) WillBeAccepted(environment.Context) (bool, 
 	return true, nil
 }
 
-func (*authorizedKeysTestRepository) DoesSupportPty(environment.Context, glssh.Pty) (bool, error) {
+func (*authorizedKeysTestRepository) DoesSupportPty(environment.Context, essh.Pty) (bool, error) {
 	return true, nil
 }
 

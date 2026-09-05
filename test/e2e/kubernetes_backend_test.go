@@ -117,6 +117,8 @@ func TestOpenSSHKubernetesEnvironment(t *testing.T) {
 		}
 	})
 
+	runContainerExecutionEnvironmentTest(t, k.fixture, 75*time.Second, "from-image")
+
 	runBackendProtocolTests(t, k.fixture, 75*time.Second, k.ensurePodEchoServer)
 
 	t.Run("native SFTP lifecycle", func(t *testing.T) {
@@ -543,9 +545,6 @@ func (k *kubernetesFixture) waitForRemoteProcess(process *runningProcess, pidFil
 }
 
 func (k *kubernetesFixture) cleanup() {
-	if k.bifroestProc != nil {
-		k.bifroestProc.stop()
-	}
 	if k.clusterCreated && k.t.Failed() {
 		logDir := filepath.Join(k.repoRoot, "var", "e2e", k.name+"-kind")
 		_ = os.MkdirAll(filepath.Dir(logDir), 0755)
@@ -556,6 +555,9 @@ func (k *kubernetesFixture) cleanup() {
 		if result.err != nil {
 			k.t.Logf("cannot export kind logs: %v\n%s", result.err, result.stderr)
 		}
+	}
+	if k.bifroestProc != nil {
+		k.bifroestProc.stop()
 	}
 	if k.clusterCreated {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)

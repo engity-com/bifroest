@@ -1,7 +1,7 @@
 package environment
 
 import (
-	glssh "github.com/engity-com/ssh-server-go"
+	essh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/connection"
@@ -9,6 +9,6 @@ import (
 
 type Context interface {
 	Connection() connection.Connection
-	Context() glssh.Context
+	Context() essh.Context
 	Authorization() authorization.Authorization
 }

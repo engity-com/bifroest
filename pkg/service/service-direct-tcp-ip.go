@@ -7,7 +7,7 @@ import (
 	"syscall"
 	"time"
 
-	glssh "github.com/engity-com/ssh-server-go"
+	essh "github.com/engity-com/ssh-server-go"
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
@@ -36,7 +36,7 @@ func (this localForwardChannelData) dest() (net.HostPort, error) {
 	return buf, nil
 }
 
-func (this *service) handleNewDirectTcpIp(_ *glssh.Server, _ *gossh.ServerConn, newChan gossh.NewChannel, ctx glssh.Context) error {
+func (this *service) handleNewDirectTcpIp(_ *essh.Server, _ *gossh.ServerConn, newChan gossh.NewChannel, ctx essh.Context) error {
 	conn := this.connection(ctx)
 	if conn == nil {
 		return nil
@@ -144,7 +144,7 @@ func (this *service) handleNewDirectTcpIp(_ *glssh.Server, _ *gossh.ServerConn, 
 		return "destination -> source"
 	}
 
-	return glssh.FullDuplexCopy(ctx, sConn, dConn, &glssh.FullDuplexCopyOpts{
+	return essh.FullDuplexCopy(ctx, sConn, dConn, &essh.FullDuplexCopyOpts{
 		OnStart: func() {
 			l.Debug("port forwarding started")
 		},
@@ -169,7 +169,7 @@ func (this *service) handleNewDirectTcpIp(_ *glssh.Server, _ *gossh.ServerConn, 
 	})
 }
 
-func (this *service) onReversePortForwardingRequested(ctx glssh.Context, _ gossh.ConnMetadata, host string, port uint32) (bool, error) {
+func (this *service) onReversePortForwardingRequested(ctx essh.Context, _ gossh.ConnMetadata, host string, port uint32) (bool, error) {
 	auth, ok := ctx.Value(authorizationCtxKey).(authorization.Authorization)
 	if !ok || auth == nil {
 		return false, errors.Newf(errors.System, "no authorization resolved for reverse port forwarding request")

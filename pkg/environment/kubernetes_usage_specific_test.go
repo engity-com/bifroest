@@ -5,14 +5,14 @@ package environment
 import (
 	"testing"
 
-	glssh "github.com/engity-com/ssh-server-go"
+	essh "github.com/engity-com/ssh-server-go"
 	"github.com/stretchr/testify/require"
 	"k8s.io/client-go/tools/remotecommand"
 )
 
 func TestTerminalQueueSizeFromSshReturnsInitialSizeBeforeChanges(t *testing.T) {
-	changes := make(chan glssh.Window, 1)
-	changes <- glssh.Window{Width: 101, Height: 47}
+	changes := make(chan essh.Window, 1)
+	changes <- essh.Window{Width: 101, Height: 47}
 	close(changes)
 	queue := terminalQueueSizeFromSsh{
 		initial: &remotecommand.TerminalSize{Width: 77, Height: 33},

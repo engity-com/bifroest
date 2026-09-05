@@ -8,7 +8,7 @@ import (
 	"fmt"
 
 	log "github.com/echocat/slf4g"
-	glssh "github.com/engity-com/ssh-server-go"
+	essh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -44,7 +44,7 @@ func NewLocalRepository(_ context.Context, flow configuration.FlowName, conf *co
 	return &result, nil
 }
 
-func (this *LocalRepository) DoesSupportPty(Context, glssh.Pty) (bool, error) {
+func (this *LocalRepository) DoesSupportPty(Context, essh.Pty) (bool, error) {
 	return false, nil
 }
 

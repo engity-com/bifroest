@@ -27,6 +27,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/execution"
 	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
@@ -129,11 +130,11 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 	go impCmd(ctx, wg.Done)
 
 	var dummyCmdPid atomic.Int64
-	var dummyCmdConnectionId connection.Id
+	var dummyCmdExecutionId execution.Id
 	if *roundtripTestWithKill {
-		dummyCmdConnectionId, err = connection.NewId()
+		dummyCmdExecutionId, err = execution.NewId()
 		require.NoError(t, err)
-		dummyCmd := prepareRoundtripDummyCmd(t, dummyCmdConnectionId)
+		dummyCmd := prepareRoundtripDummyCmd(t, dummyCmdExecutionId)
 		wg.Add(1)
 		go runCmd(ctx, t, dummyCmd, wg.Done, &dummyCmdPid)
 		common.SleepSilently(ctx, 100*time.Millisecond)
@@ -178,6 +179,10 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 	if *roundtripTestWithKill {
 		t.Run("kill", func(t *testing.T) {
 			testlog.Hook(t)
+			executionSession, ok := sess.(ExecutionSession)
+			require.True(t, ok)
+			connId, err := connection.NewId()
+			require.NoError(t, err)
 
 			target, err := process.NewProcess(int32(dummyCmdPid.Load()))
 			require.NoError(t, err)
@@ -185,7 +190,7 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 			require.NoError(t, err)
 			require.True(t, running)
 
-			require.NoError(t, sess.Kill(ctx, dummyCmdConnectionId, 0, sys.SIGTERM))
+			require.NoError(t, executionSession.KillExecution(ctx, connId, dummyCmdExecutionId, 0, sys.SIGTERM))
 
 			require.EventuallyWithT(t, func(t *assert.CollectT) {
 				running, err = target.IsRunning()
@@ -411,14 +416,14 @@ func prepareRoundtripImpCmd(t *testing.T, masterPublicKey crypto.PublicKey, sess
 	return cmd
 }
 
-func prepareRoundtripDummyCmd(t *testing.T, connectionId connection.Id) *exec.Cmd {
+func prepareRoundtripDummyCmd(t *testing.T, executionId execution.Id) *exec.Cmd {
 	ex, err := os.Executable()
 	require.NoError(t, err)
 
 	cmd := exec.Command(ex, "-test.run=^"+t.Name()+"$",
 		"--"+flagRoundtripTestDummyProcess,
 	)
-	cmd.Env = append(os.Environ(), connection.EnvName+"="+connectionId.String())
+	cmd.Env = append(os.Environ(), execution.EnvName+"="+executionId.String())
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

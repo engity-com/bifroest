@@ -2,19 +2,19 @@ package service
 
 import (
 	"github.com/anmitsu/go-shlex"
-	glssh "github.com/engity-com/ssh-server-go"
+	essh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 type authorizedKeySession struct {
-	glssh.Session
+	essh.Session
 	command     string
 	environment sys.EnvVars
 }
 
-func applyAuthorizedKeyPolicy(auth authorization.Authorization, session glssh.Session) (glssh.Session, bool) {
+func applyAuthorizedKeyPolicy(auth authorization.Authorization, session essh.Session) (essh.Session, bool) {
 	policy := authorization.AuthorizedKeyPolicyOf(auth)
 	if policy == nil {
 		return session, false

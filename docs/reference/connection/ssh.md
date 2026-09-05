@@ -23,7 +23,7 @@ For how long a connection can be idle before it will forcibly be closed. The cli
 The maximum duration a connection can be open before it will forcibly be closed, regardless of whether it is active. `0` disables this timeout.
 
 <<property("gracefulShutdownTimeout", "Duration", "../data-type.md#duration", default="30s")>>
-How long Bifröst waits for active SSH connections to finish after shutdown starts and the listeners have been closed. Remaining connections are forcibly closed after this duration. Bifröst then allows their handlers up to the same duration to finish cleanup before returning; shared resources remain open until cleanup is complete. `0` disables both waiting periods and closes connections immediately.
+How long Bifröst waits for active SSH connections and their handlers to finish after shutdown starts and the listeners have been closed. Remaining connections are forcibly closed when this single time budget expires. Shared resources remain open until their handlers have finished cleanup. `0` disables waiting and closes connections immediately.
 
 <<property("handshakeTimeout", "Duration", "../data-type.md#duration", default="2m")>>
 The maximum duration from accepting a connection until successful SSH authentication. `0` disables this timeout.

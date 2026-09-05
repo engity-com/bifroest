@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	glssh "github.com/engity-com/ssh-server-go"
+	essh "github.com/engity-com/ssh-server-go"
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
@@ -18,7 +18,7 @@ import (
 )
 
 type remote struct {
-	glssh.Context
+	essh.Context
 }
 
 func (this *remote) GetField(name string) (any, bool, error) {
@@ -58,7 +58,7 @@ func (this *authorizeRequest) GetField(name string) (any, bool, error) {
 	}
 }
 
-func (this *authorizeRequest) Context() glssh.Context {
+func (this *authorizeRequest) Context() essh.Context {
 	return this.connection.context
 }
 
@@ -165,7 +165,7 @@ func (this *environmentContext) GetField(name string) (any, bool, error) {
 	}
 }
 
-func (this *environmentContext) Context() glssh.Context {
+func (this *environmentContext) Context() essh.Context {
 	return this.connection.context
 }
 
@@ -294,7 +294,7 @@ func (this environmentRequestPreparationProgressError) GetField(name string) (an
 
 type environmentTask struct {
 	environmentContext
-	sshSession glssh.Session
+	sshSession essh.Session
 	taskType   environment.TaskType
 }
 
@@ -307,7 +307,7 @@ func (this *environmentTask) GetField(name string) (any, bool, error) {
 	}
 }
 
-func (this *environmentTask) SshSession() glssh.Session {
+func (this *environmentTask) SshSession() essh.Session {
 	return this.sshSession
 }
 
@@ -315,7 +315,7 @@ func (this *environmentTask) TaskType() environment.TaskType {
 	return this.taskType
 }
 
-func newRememberMeNotificationContext(ctx glssh.Context, auth authorization.Authorization, newSession bool, pub glssh.PublicKey) *rememberMeNotificationContext {
+func newRememberMeNotificationContext(ctx essh.Context, auth authorization.Authorization, newSession bool, pub essh.PublicKey) *rememberMeNotificationContext {
 	return &rememberMeNotificationContext{
 		ctx,
 		newSession,
@@ -325,17 +325,17 @@ func newRememberMeNotificationContext(ctx glssh.Context, auth authorization.Auth
 }
 
 type contextEnabled interface {
-	Context() glssh.Context
+	Context() essh.Context
 }
 
 type rememberMeNotificationContext struct {
-	context       glssh.Context
+	context       essh.Context
 	newSession    bool
 	authorization authorization.Authorization
-	key           glssh.PublicKey
+	key           essh.PublicKey
 }
 
-func (this *rememberMeNotificationContext) Context() glssh.Context {
+func (this *rememberMeNotificationContext) Context() essh.Context {
 	return this.context
 }
 
@@ -375,7 +375,7 @@ func (this *sessionContext) GetField(name string) (any, bool, error) {
 }
 
 type connectionContext struct {
-	Context glssh.Context
+	Context essh.Context
 }
 
 func (this *connectionContext) GetField(name string) (any, bool, error) {

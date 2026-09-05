@@ -3,27 +3,58 @@ package environment
 import (
 	"context"
 	"io"
+	gonet "net"
 	"os"
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
 	log "github.com/echocat/slf4g"
-	glssh "github.com/engity-com/ssh-server-go"
+	essh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/execution"
 	"github.com/engity-com/bifroest/pkg/imp"
 	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/ssh"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
+
+const (
+	dockerAttachTimeout        = 30 * time.Second
+	dockerExecutionExitTimeout = 5 * time.Second
+	dockerExecutionCleanupTime = 5 * time.Second
+	dockerWrapperPath          = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+)
+
+var dockerWrapperEnvironment = []string{
+	"PATH=" + dockerWrapperPath,
+	"GCONV_PATH=",
+	"GLIBC_TUNABLES=",
+	"LD_AUDIT=",
+	"LD_DEBUG_OUTPUT=",
+	"LD_LIBRARY_PATH=",
+	"LD_PRELOAD=",
+	"LD_PROFILE=",
+	"LOCPATH=",
+	"MALLOC_TRACE=",
+}
+
+func attachDockerExecWithTimeout(ctx context.Context, timeout time.Duration, attach func(context.Context) (types.HijackedResponse, error)) (types.HijackedResponse, error) {
+	attachCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	defer cancel()
+	return attach(attachCtx)
+}
 
 func (this *docker) Banner(req Request) (io.ReadCloser, error) {
 	b, err := this.repository.conf.Banner.Render(req)
@@ -52,6 +83,10 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	}
 	sshSess := t.SshSession()
 	l := t.Connection().Logger()
+	executionId, err := execution.NewId()
+	if err != nil {
+		return failf("cannot create execution ID: %w", err)
+	}
 
 	opts := container.ExecOptions{
 		User:         this.user,
@@ -69,6 +104,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	ev.Add(t.SshSession().Environ()...)
 	ev.Set(session.EnvName, sess.Id().String())
 	ev.Set(connection.EnvName, t.Connection().Id().String())
+	ev.Set(execution.EnvName, executionId.String())
 
 	switch t.TaskType() {
 	case TaskTypeShell:
@@ -84,7 +120,17 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	}
 
 	if ssh.AgentRequested(sshSess) && authorization.IsAgentForwardingAllowed(auth) {
-		ln, err := this.impSession.InitiateNamedPipe(t.Context(), t.Connection().Id(), "ssh-agent")
+		user, group, _ := strings.Cut(this.user, ":")
+		if user == "" {
+			user = "0"
+		}
+		var ln net.NamedPipe
+		var err error
+		if this.repository.hostOs == sys.OsLinux {
+			ln, err = this.impSession.InitiateNamedPipeForUser(t.Context(), t.Connection().Id(), "ssh-agent", user, group)
+		} else {
+			ln, err = this.impSession.InitiateNamedPipe(t.Context(), t.Connection().Id(), "ssh-agent")
+		}
 		var re errors.RemoteError
 		if errors.As(err, &re) {
 			l.WithError(err).Warn("it was not possible to initiate named pipe for agent; agent deactivated")
@@ -97,15 +143,15 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		}
 	}
 
-	var winCh <-chan glssh.Window
+	var winCh <-chan essh.Window
 	if ptyReq, windows, isPty := sshSess.Pty(); isPty {
 		winCh = windows
 		ev.Set("TERM", ptyReq.Term)
 		opts.Tty = true
 		opts.ConsoleSize = &[2]uint{uint(ptyReq.Window.Height), uint(ptyReq.Window.Width)}
 	}
-	opts.Env = ev.Strings()
-	usesExecWrapper := this.repository.hostOs == sys.OsLinux
+	usesExecWrapper := this.repository.hostOs == sys.OsLinux || this.repository.hostOs == sys.OsWindows
+	opts.Env = dockerExecEnvironment(usesExecWrapper, this.repository.hostOs, ev)
 	if usesExecWrapper {
 		command := opts.Cmd
 		if len(command) == 0 {
@@ -114,6 +160,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		opts.Cmd = []string{
 			sys.BifroestBinaryFileLocation(this.repository.hostOs), "exec",
 			"-c", t.Connection().Id().String(),
+			"--executionId", executionId.String(),
 			"-p", command[0],
 			"-x",
 		}
@@ -123,7 +170,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		for key, value := range ev {
 			opts.Cmd = append(opts.Cmd, "-e"+key+"="+value)
 		}
-		if user, group, _ := strings.Cut(this.user, ":"); user != "" {
+		if user, group, _ := strings.Cut(this.user, ":"); this.repository.hostOs == sys.OsLinux && user != "" {
 			opts.Cmd = append(opts.Cmd, "-u", user)
 			if group != "" {
 				opts.Cmd = append(opts.Cmd, "-g", group)
@@ -131,8 +178,10 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		}
 		opts.Cmd = append(opts.Cmd, "--")
 		opts.Cmd = append(opts.Cmd, command...)
-		opts.User = ""
-		opts.WorkingDir = ""
+		if this.repository.hostOs == sys.OsLinux {
+			opts.User = ""
+			opts.WorkingDir = ""
+		}
 	}
 
 	e, err := apiClient.ContainerExecCreate(t.Context(), this.containerId, opts)
@@ -140,6 +189,11 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		return failf("cannot execute command: %w", err)
 	}
 	execId := e.ID
+	cleanupExecution := func() {
+		scheduleDockerExecutionCleanup(l, executionId, func(ctx context.Context) error {
+			return this.impSession.KillExecution(ctx, t.Connection().Id(), executionId, 0, sys.SIGKILL)
+		})
+	}
 	if winCh != nil {
 		resizeCtx, cancelResize := context.WithCancel(t.Context())
 		resizeDone := make(chan struct{})
@@ -168,11 +222,14 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		}()
 	}
 
-	ea, err := apiClient.ContainerExecAttach(context.WithoutCancel(t.Context()), execId, container.ExecAttachOptions{
-		Tty:         opts.Tty,
-		ConsoleSize: opts.ConsoleSize,
+	ea, err := attachDockerExecWithTimeout(t.Context(), dockerAttachTimeout, func(ctx context.Context) (types.HijackedResponse, error) {
+		return apiClient.ContainerExecAttach(ctx, execId, container.ExecAttachOptions{
+			Tty:         opts.Tty,
+			ConsoleSize: opts.ConsoleSize,
+		})
 	})
 	if err != nil {
+		cleanupExecution()
 		return failf("cannot attach to execution #%v: %w", execId, err)
 	}
 	if opts.ConsoleSize != nil {
@@ -180,11 +237,13 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 			Height: opts.ConsoleSize[0],
 			Width:  opts.ConsoleSize[1],
 		}); err != nil {
+			cleanupExecution()
+			ea.Close()
 			return failf("cannot set initial window size for execution #%v: %w", execId, err)
 		}
 	}
 
-	signals := make(chan glssh.Signal, 1)
+	signals := make(chan essh.Signal, 1)
 	outputDone := make(chan error, 1)
 	inputDone := make(chan error, 1)
 	var activeRoutines sync.WaitGroup
@@ -224,8 +283,8 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		l.Trace("finished copy input")
 	}()
 
-	finish := func() (int, error) {
-		ei, iErr := apiClient.ContainerExecInspect(sshSess.Context(), execId)
+	finish := func(ctx context.Context) (int, error) {
+		ei, iErr := apiClient.ContainerExecInspect(ctx, execId)
 		if iErr != nil {
 			return failf("cannot inspect execution #%s: %w", execId, iErr)
 		}
@@ -233,7 +292,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 			return -1, nil
 		}
 		if usesExecWrapper {
-			exitCode, err := this.impSession.GetConnectionExitCode(sshSess.Context(), t.Connection().Id())
+			exitCode, err := this.impSession.GetExecutionExitCode(ctx, t.Connection().Id(), executionId)
 			if errors.Is(err, connection.ErrNotFound) {
 				return -1, nil
 			}
@@ -244,15 +303,9 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		}
 		return ei.ExitCode, nil
 	}
-	signalExec := func(ctx context.Context, sshSignal glssh.Signal) {
-		this.signal(ctx, l, t.Connection(), sshSignal)
+	signalExec := func(ctx context.Context, sshSignal essh.Signal) {
+		this.signal(ctx, l, t.Connection().Id(), executionId, sshSignal)
 	}
-	signalExecDetached := func() {
-		ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancelFunc()
-		signalExec(ctx, glssh.SIGTERM)
-	}
-
 	sshSess.Signals(signals)
 	defer sshSess.Signals(nil)
 	for {
@@ -262,7 +315,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 				signalExec(t.Context(), s)
 			}
 		case <-t.Context().Done():
-			signalExecDetached()
+			cleanupExecution()
 			ea.Close()
 			_ = ea.CloseWrite()
 
@@ -270,7 +323,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		case err := <-inputDone:
 			inputDone = nil
 			if err != nil {
-				signalExecDetached()
+				cleanupExecution()
 				ea.Close()
 				return -1, err
 			}
@@ -278,33 +331,114 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 			outputDone = nil
 			ea.Close()
 			if err != nil {
-				signalExecDetached()
+				cleanupExecution()
 				return -1, err
 			}
+			finishCtx, cancelFinish := context.WithTimeout(t.Context(), dockerExecutionExitTimeout)
+			defer cancelFinish()
+			poll := time.NewTicker(100 * time.Millisecond)
+			defer poll.Stop()
 			for {
-				if ec, err := finish(); err != nil {
-					return -1, err
+				if ec, err := finish(finishCtx); err != nil {
+					if finishCtx.Err() != nil {
+						cleanupExecution()
+						if t.Context().Err() == nil {
+							return failf("cannot retrieve execution #%s exit code after %s: %w", execId, dockerExecutionExitTimeout, err)
+						}
+						return -2, rErr
+					}
+					if !isRetryableDockerExecutionResultError(err) {
+						cleanupExecution()
+						return -1, err
+					}
 				} else if ec >= 0 {
+					cleanupCompletedExecution(l, executionId, func(ctx context.Context) error {
+						return this.impSession.KillExecution(ctx, t.Connection().Id(), executionId, 0, sys.SIGKILL)
+					})
 					return ec, nil
 				}
 				select {
-				case <-t.Context().Done():
-					signalExecDetached()
+				case <-finishCtx.Done():
+					cleanupExecution()
+					if t.Context().Err() == nil {
+						return failf("timed out after %s waiting for execution #%s exit code", dockerExecutionExitTimeout, execId)
+					}
 					return -2, rErr
-				case <-time.After(100 * time.Millisecond):
+				case <-poll.C:
 				}
 			}
 		}
 	}
 }
 
-func (this *docker) signal(ctx context.Context, logger log.Logger, conn connection.Connection, sshSignal glssh.Signal) {
-	var signal sys.Signal
-	if err := signal.Set(string(sshSignal)); err != nil {
-		signal = sys.SIGKILL
+func cleanupCompletedExecution(logger log.Logger, executionId execution.Id, kill func(context.Context) error) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := kill(ctx); err != nil && err.Error() != imp.ErrNoSuchProcess.Error() && !errors.Is(err, context.DeadlineExceeded) {
+			logger.WithError(err).With("executionId", executionId).Warn("cannot verify completed execution cleanup")
+		}
+	}()
+}
+
+func isRetryableDockerExecutionResultError(err error) bool {
+	return errdefs.IsUnavailable(err) || errdefs.IsSystem(err) || isRetryableTransportError(err)
+}
+
+func isRetryableTransportError(err error) bool {
+	if errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EPIPE) || sys.IsClosedError(err) {
+		return true
+	}
+	var networkError gonet.Error
+	return errors.As(err, &networkError) && (networkError.Timeout() || networkError.Temporary())
+}
+
+func dockerExecEnvironment(usesExecWrapper bool, hostOs sys.Os, environment sys.EnvVars) []string {
+	if usesExecWrapper && hostOs == sys.OsLinux {
+		return slices.Clone(dockerWrapperEnvironment)
+	}
+	if usesExecWrapper {
+		return nil
+	}
+	return environment.Strings()
+}
+
+func scheduleDockerExecutionCleanup(logger log.Logger, executionId execution.Id, kill func(context.Context) error) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), dockerExecutionCleanupTime)
+		defer cancel()
+		poll := time.NewTicker(100 * time.Millisecond)
+		defer poll.Stop()
+		for {
+			err := kill(ctx)
+			if err == nil {
+				return
+			}
+			if err.Error() != imp.ErrNoSuchProcess.Error() && !isRetryableTransportError(err) && !errors.Is(err, context.DeadlineExceeded) {
+				logger.WithError(err).
+					With("executionId", executionId).
+					Warn("cannot clean up execution")
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-poll.C:
+			}
+		}
+	}()
+}
+
+func (this *docker) signal(ctx context.Context, logger log.Logger, connectionId connection.Id, executionId execution.Id, sshSignal essh.Signal) {
+	signal, err := signalFromSsh(sshSignal)
+	if err != nil {
+		logger.WithError(err).
+			With("signal", sshSignal).
+			Warn("cannot send unknown signal to process")
+		return
 	}
 
-	if err := this.impSession.Kill(ctx, conn.Id(), 0, signal); (err != nil && err.Error() == imp.ErrNoSuchProcess.Error()) || errors.Is(err, context.DeadlineExceeded) {
+	if err := this.impSession.KillExecution(ctx, connectionId, executionId, 0, signal); (err != nil && err.Error() == imp.ErrNoSuchProcess.Error()) || errors.Is(err, context.DeadlineExceeded) {
 		// Ok.
 	} else if err != nil {
 		logger.WithError(err).

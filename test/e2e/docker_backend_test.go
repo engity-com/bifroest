@@ -96,6 +96,8 @@ func TestOpenSSHDockerEnvironment(t *testing.T) {
 		}
 	})
 
+	runContainerExecutionEnvironmentTest(t, f, 45*time.Second, "")
+
 	runBackendProtocolTests(t, f, 45*time.Second, func(t *testing.T) {
 		ensureContainerEchoServer(t, f)
 	})
@@ -417,10 +419,13 @@ func parseEnvironmentIDs(t *testing.T, output string) map[string]string {
 }
 
 const dockerEnvironmentContainerfile = `FROM ` + alpineImage + `
+ENV BIFROEST_IMAGE_VALUE=from-image BIFROEST_OVERRIDE_VALUE=from-image
 COPY e2e-helper /usr/local/bin/e2e-helper
 RUN addgroup -S -g 10001 e2e \
- && adduser -S -D -u 10001 -G e2e -h /home/e2e -s /bin/sh e2e \
- && chmod 0755 /usr/local/bin/e2e-helper
+	&& addgroup -S -g 10002 supplemental \
+	&& adduser -S -D -u 10001 -G e2e -h /home/e2e -s /bin/sh e2e \
+	&& addgroup e2e supplemental \
+	&& chmod 0755 /usr/local/bin/e2e-helper
 USER 10001:10001
 WORKDIR /home/e2e
 `
@@ -466,7 +471,6 @@ flows:
       networks:
         - %s
       directory: "/home/e2e"
-      user: "e2e"
       banner: '{{""}}'
       portForwardingAllowed: true
       impPublishHost: "127.0.0.1"

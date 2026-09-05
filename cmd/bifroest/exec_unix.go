@@ -4,13 +4,12 @@ package main
 
 import (
 	"os/exec"
-	"os/user"
-	"strconv"
 	"syscall"
 
 	"github.com/alecthomas/kingpin/v2"
 
 	"github.com/engity-com/bifroest/pkg/connection"
+	"github.com/engity-com/bifroest/pkg/execution"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -18,6 +17,7 @@ type execOpts struct {
 	storeExitCodeForConnectionId bool
 	exitCodeByConnectionIdPath   string
 	connectionId                 connection.Id
+	executionId                  execution.Id
 	workingDirectory             string
 	environment                  map[string]string
 	user, group                  string
@@ -38,44 +38,10 @@ func registerExecCmdFlags(cmd *kingpin.CmdClause, opts *execOpts) {
 
 func enrichExecCmd(cmd *exec.Cmd, with *execOpts) error {
 	cmd.SysProcAttr.Setpgid = true
-	if plainUser := with.user; plainUser != "" {
+	if plainUser, plainGroup := with.user, with.group; plainUser != "" || plainGroup != "" {
 		cmd.SysProcAttr.Credential = &syscall.Credential{}
-
-		var u *user.User
-		var err error
-		if _, numericErr := strconv.ParseUint(plainUser, 10, 32); numericErr == nil {
-			u, err = user.LookupId(plainUser)
-		} else {
-			u, err = user.Lookup(plainUser)
-		}
-		if err != nil {
+		if err := sys.EnrichCredentials(cmd.SysProcAttr.Credential, plainUser, plainGroup); err != nil {
 			return err
-		}
-		if v, err := strconv.ParseUint(u.Uid, 10, 32); err != nil {
-			return err
-		} else {
-			cmd.SysProcAttr.Credential.Uid = uint32(v)
-		}
-
-		if plainGroup := with.group; plainGroup != "" {
-			var g *user.Group
-			if _, numericErr := strconv.ParseUint(plainGroup, 10, 32); numericErr == nil {
-				g, err = user.LookupGroupId(plainGroup)
-			} else {
-				g, err = user.LookupGroup(plainGroup)
-			}
-			if err != nil {
-				return err
-			}
-			if v, err := strconv.ParseUint(g.Gid, 10, 32); err != nil {
-				return err
-			} else {
-				cmd.SysProcAttr.Credential.Gid = uint32(v)
-			}
-		} else if v, err := strconv.ParseUint(u.Gid, 10, 32); err != nil {
-			return err
-		} else {
-			cmd.SysProcAttr.Credential.Gid = uint32(v)
 		}
 	}
 
@@ -87,4 +53,11 @@ func signalExecCmd(cmd *exec.Cmd, signal sys.Signal) error {
 		return nil
 	}
 	return syscall.Kill(-cmd.Process.Pid, signal.Native())
+}
+
+func execExitCode(err *exec.ExitError) int {
+	if status, ok := err.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+		return 128 + int(status.Signal())
+	}
+	return err.ExitCode()
 }

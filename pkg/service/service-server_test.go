@@ -2,8 +2,11 @@ package service
 
 import (
 	"context"
+	goerrors "errors"
 	"testing"
+	"time"
 
+	essh "github.com/engity-com/ssh-server-go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -86,4 +89,18 @@ func TestPrepareServerUsesIntegratedProxyProtocol(t *testing.T) {
 func TestSshMaxAuthTriesMapsDisabledLimit(t *testing.T) {
 	require.Equal(t, -1, sshMaxAuthTries(0))
 	require.Equal(t, 6, sshMaxAuthTries(6))
+}
+
+func TestGracefulShutdownTimeoutIsNotAServiceFailure(t *testing.T) {
+	svc := Service{}
+	require.False(t, svc.isProblematicError(essh.ErrGracefulShutdownTimeout))
+	require.False(t, svc.isProblematicError(goerrors.Join(context.Canceled, essh.ErrGracefulShutdownTimeout)))
+	require.True(t, svc.isProblematicError(goerrors.Join(goerrors.New("listener failed"), essh.ErrGracefulShutdownTimeout)))
+}
+
+func TestRemainingGracefulShutdownTimeoutUsesOneBudget(t *testing.T) {
+	now := time.Unix(100, 0)
+	require.Equal(t, 20*time.Second, remainingGracefulShutdownTimeout(30*time.Second, now.Add(-10*time.Second), now))
+	require.Zero(t, remainingGracefulShutdownTimeout(30*time.Second, now.Add(-31*time.Second), now))
+	require.Zero(t, remainingGracefulShutdownTimeout(0, now, now))
 }

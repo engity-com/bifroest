@@ -11,7 +11,7 @@ import (
 
 	log "github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/fields"
-	glssh "github.com/engity-com/ssh-server-go"
+	essh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
 	bconn "github.com/engity-com/bifroest/pkg/connection"
@@ -20,12 +20,12 @@ import (
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
-func (this *service) onNewConnConnection(ctx glssh.Context, orig gonet.Conn) (gonet.Conn, error) {
+func (this *service) onNewConnConnection(ctx essh.Context, orig gonet.Conn) (gonet.Conn, error) {
 	logger := this.Service.logger().WithAll(map[string]any{
-		"local":      withLazyContextOrFieldExclude[gonet.Addr](ctx, glssh.ContextKeyLocalAddr),
-		"remoteUser": withLazyContextOrFieldExclude[string](ctx, glssh.ContextKeyUser),
-		"remote":     withLazyContextOrFieldExclude[gonet.Addr](ctx, glssh.ContextKeyRemoteAddr),
-		"ssh":        withLazyContextOrFieldExclude[string](ctx, glssh.ContextKeySessionID),
+		"local":      withLazyContextOrFieldExclude[gonet.Addr](ctx, essh.ContextKeyLocalAddr),
+		"remoteUser": withLazyContextOrFieldExclude[string](ctx, essh.ContextKeyUser),
+		"remote":     withLazyContextOrFieldExclude[gonet.Addr](ctx, essh.ContextKeyRemoteAddr),
+		"ssh":        withLazyContextOrFieldExclude[string](ctx, essh.ContextKeySessionID),
 		"session": fields.LazyFunc(func() any {
 			auth, ok := ctx.Value(authorizationCtxKey).(authorization.Authorization)
 			if !ok {
@@ -63,7 +63,7 @@ func (this *service) onNewConnConnection(ctx glssh.Context, orig gonet.Conn) (go
 	return wrapped, nil
 }
 
-func (this *service) newConnection(orig gonet.Conn, ctx glssh.Context, logger log.Logger) (gonet.Conn, error) {
+func (this *service) newConnection(orig gonet.Conn, ctx essh.Context, logger log.Logger) (gonet.Conn, error) {
 	for {
 		current := this.activeConnections.Load()
 		if current >= int64(this.Configuration.Ssh.MaxConnections) {
@@ -97,7 +97,7 @@ func (this *service) newConnection(orig gonet.Conn, ctx glssh.Context, logger lo
 	return result, nil
 }
 
-func (this *service) onDisconnected(ctx glssh.Context, _ gonet.Conn) error {
+func (this *service) onDisconnected(ctx essh.Context, _ gonet.Conn) error {
 	defer finishConnectionLifecycle(ctx)
 	if conn := this.connection(ctx); conn != nil {
 		conn.logger.
@@ -109,12 +109,12 @@ func (this *service) onDisconnected(ctx glssh.Context, _ gonet.Conn) error {
 	return nil
 }
 
-func (this *service) onConnectionFailed(ctx glssh.Context, _ gonet.Conn, _ error) error {
+func (this *service) onConnectionFailed(ctx essh.Context, _ gonet.Conn, _ error) error {
 	finishConnectionLifecycle(ctx)
 	return nil
 }
 
-func finishConnectionLifecycle(ctx glssh.Context) {
+func finishConnectionLifecycle(ctx essh.Context) {
 	if release, ok := ctx.Value(connectionLifecycleCtxKey).(func()); ok {
 		release()
 	}
@@ -123,7 +123,7 @@ func finishConnectionLifecycle(ctx glssh.Context) {
 type connection struct {
 	gonet.Conn
 	id      bconn.Id
-	context glssh.Context
+	context essh.Context
 	logger  log.Logger
 	service *service
 	created int64
@@ -190,7 +190,7 @@ func (this *connection) doWithInterceptor(consumer func(session.ConnectionInterc
 	return consumer(v)
 }
 
-func (this *connection) doWithInterceptorOnAction(op string, action func(session.ConnectionInterceptor, glssh.Context, log.Logger, gonet.Conn) (time.Time, session.ConnectionInterceptorResult, error)) error {
+func (this *connection) doWithInterceptorOnAction(op string, action func(session.ConnectionInterceptor, essh.Context, log.Logger, gonet.Conn) (time.Time, session.ConnectionInterceptorResult, error)) error {
 	var deadline time.Time
 	var t connectionTimeType
 	err := this.doWithInterceptor(func(v session.ConnectionInterceptor) error {

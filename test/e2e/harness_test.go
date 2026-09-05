@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -85,7 +86,7 @@ func newFixture(t *testing.T) (*fixture, error) {
 	}
 	tools := make(map[string]string)
 	for _, tool := range []string{"ssh", "sftp", "ssh-keygen", "ssh-agent", "ssh-add"} {
-		path, err := nativeOpenSSHTool(tool)
+		path, err := nativeOpenSSHTool(repoRoot, tool)
 		if err != nil {
 			return nil, err
 		}
@@ -132,8 +133,8 @@ func newLocalFixture(t *testing.T) (*fixture, error) {
 	return f, nil
 }
 
-func nativeOpenSSHTool(name string) (string, error) {
-	for _, candidate := range []string{name, name + ".exe"} {
+func nativeOpenSSHTool(repoRoot, name string) (string, error) {
+	for _, candidate := range []string{filepath.Join(repoRoot, "var", "openssh-native", "root", "usr", "bin", name), name, name + ".exe"} {
 		if path, err := exec.LookPath(candidate); err == nil {
 			return path, nil
 		}
@@ -485,14 +486,34 @@ func runBackendProtocolTests(t *testing.T, f *fixture, timeout time.Duration, en
 			t.Fatalf("start PTY helper: %v", err)
 		}
 		reader := bufio.NewReader(stdout)
-		if got := readProtocolLine(t, reader); got != "size=77x33" {
+		if got := readProtocolLineWithPrefix(t, reader, "size="); got != "size=77x33" {
 			t.Fatalf("initial PTY size: got %q, want %q", got, "size=77x33")
 		}
-		if err := session.WindowChange(47, 101); err != nil {
-			t.Fatalf("resize PTY: %v", err)
-		}
-		if got := readProtocolLine(t, reader); got != "size=101x47" {
+		resizeDone := make(chan struct{})
+		resizeErr := make(chan error, 1)
+		go func() {
+			ticker := time.NewTicker(100 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				if err := session.WindowChange(47, 101); err != nil {
+					resizeErr <- err
+					return
+				}
+				select {
+				case <-resizeDone:
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+		if got := readProtocolLineWithPrefix(t, reader, "size="); got != "size=101x47" {
 			t.Fatalf("resized PTY size: got %q, want %q", got, "size=101x47")
+		}
+		close(resizeDone)
+		select {
+		case err := <-resizeErr:
+			t.Fatalf("resize PTY: %v", err)
+		default:
 		}
 		if err := session.Wait(); err != nil {
 			t.Fatalf("wait for PTY helper: %v\nstderr:\n%s", err, stderr.String())
@@ -527,6 +548,85 @@ func runBackendProtocolTests(t *testing.T, f *fixture, timeout time.Duration, en
 		}
 		if err := session.Wait(); err != nil {
 			t.Fatalf("wait for signal helper: %v\nstderr:\n%s", err, stderr.String())
+		}
+	})
+
+	t.Run("parallel channels isolate exit status and signals", func(t *testing.T) {
+		client := f.newSSHClient(t, timeout)
+		warmup, err := client.NewSession()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if output, err := warmup.CombinedOutput("/usr/local/bin/e2e-helper ready"); err != nil {
+			t.Fatalf("warm environment before parallel channels: %v\n%s", err, output)
+		}
+
+		firstExit, err := client.NewSession()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer firstExit.Close()
+		secondExit, err := client.NewSession()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer secondExit.Close()
+		if err := firstExit.Start("/usr/local/bin/e2e-helper exit-after 300 17"); err != nil {
+			t.Fatal(err)
+		}
+		if err := secondExit.Start("/usr/local/bin/e2e-helper exit-after 100 29"); err != nil {
+			t.Fatal(err)
+		}
+		exitResults := make(chan int, 2)
+		go func() { exitResults <- sshExitCode(firstExit.Wait()) }()
+		go func() { exitResults <- sshExitCode(secondExit.Wait()) }()
+		seen := map[int]bool{<-exitResults: true, <-exitResults: true}
+		if !seen[17] || !seen[29] {
+			t.Fatalf("parallel channel exit codes: got %v, want 17 and 29", seen)
+		}
+
+		firstSignal, firstReader := startSignalIsolationSession(t, client, "first")
+		defer firstSignal.Close()
+		secondSignal, secondReader := startSignalIsolationSession(t, client, "second")
+		defer secondSignal.Close()
+		if got := readProtocolLine(t, firstReader); got != "ready=first" {
+			t.Fatalf("first signal helper readiness: got %q", got)
+		}
+		if got := readProtocolLine(t, secondReader); got != "ready=second" {
+			t.Fatalf("second signal helper readiness: got %q", got)
+		}
+		secondOutput := make(chan string, 1)
+		go func() {
+			line, _ := secondReader.ReadString('\n')
+			secondOutput <- strings.TrimSpace(line)
+		}()
+		if err := firstSignal.Signal(gossh.SIGUSR1); err != nil {
+			t.Fatalf("signal first channel: %v", err)
+		}
+		if got := readProtocolLine(t, firstReader); got != "signal=user defined signal 1 name=first" {
+			t.Fatalf("first captured signal: got %q", got)
+		}
+		select {
+		case got := <-secondOutput:
+			t.Fatalf("signal leaked to second channel before it was addressed: %q", got)
+		case <-time.After(300 * time.Millisecond):
+		}
+		if err := secondSignal.Signal(gossh.SIGUSR1); err != nil {
+			t.Fatalf("signal second channel: %v", err)
+		}
+		select {
+		case got := <-secondOutput:
+			if got != "signal=user defined signal 1 name=second" {
+				t.Fatalf("second captured signal: got %q", got)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for signal on second channel")
+		}
+		if err := firstSignal.Wait(); err != nil {
+			t.Fatalf("wait for first signal helper: %v", err)
+		}
+		if err := secondSignal.Wait(); err != nil {
+			t.Fatalf("wait for second signal helper: %v", err)
 		}
 	})
 
@@ -622,28 +722,177 @@ func runBackendProtocolTests(t *testing.T, f *fixture, timeout time.Duration, en
 	})
 }
 
-func (f *fixture) newSSHClient(t *testing.T, timeout time.Duration) *gossh.Client {
+func runContainerExecutionEnvironmentTest(t *testing.T, f *fixture, timeout time.Duration, expectedImageValue string) {
 	t.Helper()
-	privateKey, err := os.ReadFile(f.clientKey)
+	t.Run("environment isolation and supplementary groups", func(t *testing.T) {
+		client := f.newSSHClient(t, timeout)
+		session, err := client.NewSession()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close()
+		if err := session.Setenv("BIFROEST_OVERRIDE_VALUE", "from-session"); err != nil {
+			t.Fatalf("set session environment: %v", err)
+		}
+		output, err := session.CombinedOutput("/usr/local/bin/e2e-helper identity")
+		if err != nil {
+			t.Fatalf("inspect execution environment: %v\n%s", err, output)
+		}
+		values := make(map[string]string)
+		for _, line := range strings.FieldsFunc(string(output), func(r rune) bool { return r == '\n' || r == '\r' }) {
+			key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+			if !ok {
+				continue
+			}
+			values[key] = value
+		}
+		if got := values["BIFROEST_IMAGE_VALUE"]; got != expectedImageValue {
+			t.Fatalf("image environment: got %q, want %q", got, expectedImageValue)
+		}
+		if got := values["BIFROEST_OVERRIDE_VALUE"]; got != "from-session" {
+			t.Fatalf("session environment override: got %q, want %q", got, "from-session")
+		}
+		if got := values["uid"]; got != "10001" {
+			t.Fatalf("execution user: got UID %q, want %q", got, "10001")
+		}
+		groups := strings.Split(values["groups"], ",")
+		if !slices.Contains(groups, "10002") {
+			t.Fatalf("supplementary groups: got %v, expected group 10002", groups)
+		}
+	})
+
+	t.Run("SIGKILL reaches process group and reports exit status", func(t *testing.T) {
+		client := f.newSSHClient(t, timeout)
+		session, reader := startSignalIsolationSession(t, client, "kill")
+		defer session.Close()
+		if got := readProtocolLine(t, reader); got != "ready=kill" {
+			t.Fatalf("signal helper readiness: got %q", got)
+		}
+		if err := session.Signal(gossh.Signal("KILL")); err != nil {
+			t.Fatalf("send SIGKILL: %v", err)
+		}
+		if got := sshExitCode(session.Wait()); got != 137 {
+			t.Fatalf("SIGKILL exit status: got %d, want 137", got)
+		}
+	})
+
+	t.Run("SIGSTOP and SIGCONT reach process group", func(t *testing.T) {
+		client := f.newSSHClient(t, timeout)
+		session, err := client.NewSession()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close()
+		stdout, err := session.StdoutPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := session.Start("/usr/local/bin/e2e-helper stop-resume"); err != nil {
+			t.Fatal(err)
+		}
+		reader := bufio.NewReader(stdout)
+		if got := readProtocolLine(t, reader); got != "ready" {
+			t.Fatalf("stop/resume helper readiness: got %q", got)
+		}
+		if err := session.Signal(gossh.Signal("STOP")); err != nil {
+			t.Fatalf("send SIGSTOP: %v", err)
+		}
+		output := make(chan string, 1)
+		go func() {
+			line, _ := reader.ReadString('\n')
+			output <- strings.TrimSpace(line)
+		}()
+		select {
+		case got := <-output:
+			t.Fatalf("process produced output while stopped: %q", got)
+		case <-time.After(750 * time.Millisecond):
+		}
+		if err := session.Signal(gossh.Signal("CONT")); err != nil {
+			t.Fatalf("send SIGCONT: %v", err)
+		}
+		select {
+		case got := <-output:
+			if got != "resumed" {
+				t.Fatalf("output after SIGCONT: got %q, want %q", got, "resumed")
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for process after SIGCONT")
+		}
+		if err := session.Wait(); err != nil {
+			t.Fatalf("wait after SIGCONT: %v", err)
+		}
+	})
+}
+
+func startSignalIsolationSession(t *testing.T, client *gossh.Client, name string) (*gossh.Session, *bufio.Reader) {
+	t.Helper()
+	session, err := client.NewSession()
 	if err != nil {
 		t.Fatal(err)
+	}
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		_ = session.Close()
+		t.Fatal(err)
+	}
+	if err := session.Start("/usr/local/bin/e2e-helper signal-isolation " + name); err != nil {
+		_ = session.Close()
+		t.Fatal(err)
+	}
+	return session, bufio.NewReader(stdout)
+}
+
+func sshExitCode(err error) int {
+	var exitErr *gossh.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitStatus()
+	}
+	if err == nil {
+		return 0
+	}
+	return -1
+}
+
+func (f *fixture) newSSHClient(t *testing.T, timeout time.Duration) *gossh.Client {
+	t.Helper()
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		client, err := f.newSSHClientOnce(timeout)
+		if err == nil {
+			t.Cleanup(func() { _ = client.Close() })
+			return client
+		}
+		if !isTransientSSHDialError(err) {
+			t.Fatal(err)
+		}
+		lastErr = err
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatal(lastErr)
+	return nil
+}
+
+func (f *fixture) newSSHClientOnce(timeout time.Duration) (*gossh.Client, error) {
+	privateKey, err := os.ReadFile(f.clientKey)
+	if err != nil {
+		return nil, err
 	}
 	signer, err := gossh.ParsePrivateKey(privateKey)
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	hostKey, _, _, _, err := gossh.ParseAuthorizedKey(mustRead(f.hostKey + ".pub"))
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	address := net.JoinHostPort(f.host, f.port)
 	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
 		_ = conn.Close()
-		t.Fatal(err)
+		return nil, err
 	}
 	sshConn, channels, requests, err := gossh.NewClientConn(conn, address, &gossh.ClientConfig{
 		User:            "e2e",
@@ -652,11 +901,13 @@ func (f *fixture) newSSHClient(t *testing.T, timeout time.Duration) *gossh.Clien
 	})
 	if err != nil {
 		_ = conn.Close()
-		t.Fatal(err)
+		return nil, err
 	}
-	client := gossh.NewClient(sshConn, channels, requests)
-	t.Cleanup(func() { _ = client.Close() })
-	return client
+	return gossh.NewClient(sshConn, channels, requests), nil
+}
+
+func isTransientSSHDialError(err error) bool {
+	return errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNABORTED)
 }
 
 func readProtocolLine(t *testing.T, reader *bufio.Reader) string {
@@ -666,6 +917,22 @@ func readProtocolLine(t *testing.T, reader *bufio.Reader) string {
 		t.Fatalf("read protocol line: %v", err)
 	}
 	return strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+}
+
+func readProtocolLineWithPrefix(t *testing.T, reader *bufio.Reader, prefix string) string {
+	t.Helper()
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("read protocol line starting with %q: %v", prefix, err)
+		}
+		for _, candidate := range strings.FieldsFunc(line, func(r rune) bool { return r == '\n' || r == '\r' }) {
+			candidate = strings.TrimSpace(candidate)
+			if strings.HasPrefix(candidate, prefix) {
+				return candidate
+			}
+		}
+	}
 }
 
 func streamPayload(size int) []byte {
@@ -827,11 +1094,11 @@ func pollProcess(timeout time.Duration, process *runningProcess, check func() er
 }
 
 func (f *fixture) cleanup() {
-	if f.t.Failed() {
-		f.saveLogs()
-	}
 	if f.bifroestProc != nil {
 		f.bifroestProc.stop()
+	}
+	if f.t.Failed() {
+		f.saveLogs()
 	}
 	if f.runtimeCLI != "" {
 		ids, err := f.containerIDs()
@@ -861,6 +1128,9 @@ func (f *fixture) saveLogs() {
 	}
 	var content strings.Builder
 	if f.bifroestProc != nil {
+		if exited, err := f.bifroestProc.collect(); exited {
+			content.WriteString(fmt.Sprintf("--- bifroest process result ---\n%v\n", err))
+		}
 		content.WriteString("--- bifroest stdout ---\n")
 		content.WriteString(f.bifroestProc.stdout.String())
 		content.WriteString("\n--- bifroest stderr ---\n")

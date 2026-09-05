@@ -50,6 +50,11 @@ func run(args []string) error {
 		fmt.Fprintln(os.Stderr, "stderr-e2e")
 		time.Sleep(100 * time.Millisecond)
 		os.Exit(23)
+	case "exit-after":
+		if len(args) != 3 {
+			return errors.New("usage: exit-after <delay-ms> <exit-code>")
+		}
+		return exitAfter(args[1], args[2])
 	case "pty":
 		return pty()
 	case "pty-size":
@@ -64,6 +69,16 @@ func run(args []string) error {
 		return streamDuplex(args[1])
 	case "signal":
 		return captureSignal()
+	case "signal-isolation":
+		if len(args) != 2 {
+			return errors.New("usage: signal-isolation <name>")
+		}
+		return captureSignalFor(args[1])
+	case "stop-resume":
+		fmt.Println("ready")
+		time.Sleep(500 * time.Millisecond)
+		fmt.Println("resumed")
+		return nil
 	case "echo-server":
 		if len(args) != 3 {
 			return errors.New("usage: echo-server <tcp|unix> <address>")
@@ -110,7 +125,18 @@ func identity() error {
 		{"HOME", os.Getenv("HOME")},
 		{"USER", os.Getenv("USER")},
 		{"SHELL", os.Getenv("SHELL")},
+		{"BIFROEST_IMAGE_VALUE", os.Getenv("BIFROEST_IMAGE_VALUE")},
+		{"BIFROEST_OVERRIDE_VALUE", os.Getenv("BIFROEST_OVERRIDE_VALUE")},
 	}
+	groups, err := os.Getgroups()
+	if err != nil {
+		return fmt.Errorf("get supplementary groups: %w", err)
+	}
+	groupNames := make([]string, len(groups))
+	for i, group := range groups {
+		groupNames[i] = strconv.Itoa(group)
+	}
+	values = append(values, [2]string{"groups", strings.Join(groupNames, ",")})
 	for _, value := range values {
 		fmt.Printf("%s=%s\n", value[0], value[1])
 	}
@@ -214,17 +240,43 @@ func streamDuplex(sizeArg string) error {
 }
 
 func captureSignal() error {
+	return captureSignalFor("")
+}
+
+func captureSignalFor(name string) error {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGUSR1)
 	defer signal.Stop(signals)
-	fmt.Println("ready")
+	if name == "" {
+		fmt.Println("ready")
+	} else {
+		fmt.Printf("ready=%s\n", name)
+	}
 	select {
 	case received := <-signals:
-		fmt.Printf("signal=%s\n", received)
+		if name == "" {
+			fmt.Printf("signal=%s\n", received)
+		} else {
+			fmt.Printf("signal=%s name=%s\n", received, name)
+		}
 		return nil
 	case <-time.After(5 * time.Second):
 		return errors.New("timed out waiting for SIGUSR1")
 	}
+}
+
+func exitAfter(delayText, exitCodeText string) error {
+	delay, err := strconv.Atoi(delayText)
+	if err != nil || delay < 0 || delay > 10000 {
+		return fmt.Errorf("invalid delay %q", delayText)
+	}
+	exitCode, err := strconv.Atoi(exitCodeText)
+	if err != nil || exitCode < 0 || exitCode > 255 {
+		return fmt.Errorf("invalid exit code %q", exitCodeText)
+	}
+	time.Sleep(time.Duration(delay) * time.Millisecond)
+	os.Exit(exitCode)
+	return nil
 }
 
 func echoServer(network, address string) error {

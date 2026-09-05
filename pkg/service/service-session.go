@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 
-	glssh "github.com/engity-com/ssh-server-go"
+	essh "github.com/engity-com/ssh-server-go"
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/common"
@@ -12,19 +12,19 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
-func (this *service) handleNewSshSession(srv *glssh.Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx glssh.Context) error {
-	return glssh.DefaultSessionHandler(srv, conn, newChan, ctx)
+func (this *service) handleNewSshSession(srv *essh.Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx essh.Context) error {
+	return essh.DefaultSessionHandler(srv, conn, newChan, ctx)
 }
 
-func (this *service) handleSshShellSession(sess glssh.Session) error {
+func (this *service) handleSshShellSession(sess essh.Session) error {
 	return this.uncheckedExecuteSshSession(sess, environment.TaskTypeShell)
 }
 
-func (this *service) handleSshSftpSession(sess glssh.Session) error {
+func (this *service) handleSshSftpSession(sess essh.Session) error {
 	return this.uncheckedExecuteSshSession(sess, environment.TaskTypeSftp)
 }
 
-func (this *service) uncheckedExecuteSshSession(sshSess glssh.Session, taskType environment.TaskType) error {
+func (this *service) uncheckedExecuteSshSession(sshSess essh.Session, taskType environment.TaskType) error {
 	conn := this.connection(sshSess.Context())
 	l := conn.logger
 
@@ -39,7 +39,7 @@ func (this *service) uncheckedExecuteSshSession(sshSess glssh.Session, taskType 
 			if exitCode < 0 {
 				exitCode = 61
 			}
-			return glssh.NewSessionExitError(exitCode, "")
+			return essh.NewSessionExitError(exitCode, "")
 		}
 		le := l.WithError(err)
 		if errors.IsType(err, errors.User) {
@@ -53,15 +53,15 @@ func (this *service) uncheckedExecuteSshSession(sshSess glssh.Session, taskType 
 				exitCode = 63
 			}
 		}
-		return glssh.NewSessionExitError(exitCode, "")
+		return essh.NewSessionExitError(exitCode, "")
 	} else {
 		l.With("exitCode", exitCode).
 			Info("session ended")
-		return glssh.NewSessionExitError(exitCode, "")
+		return essh.NewSessionExitError(exitCode, "")
 	}
 }
 
-func (this *service) executeSession(sshSess glssh.Session, conn *connection, taskType environment.TaskType) (exitCode int, rErr error) {
+func (this *service) executeSession(sshSess essh.Session, conn *connection, taskType environment.TaskType) (exitCode int, rErr error) {
 	fail := func(err error) (int, error) {
 		return -1, err
 	}

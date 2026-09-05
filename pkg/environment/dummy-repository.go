@@ -3,7 +3,7 @@ package environment
 import (
 	"context"
 
-	glssh "github.com/engity-com/ssh-server-go"
+	essh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -32,7 +32,7 @@ func (this *DummyRepository) WillBeAccepted(_ Context) (bool, error) {
 	return true, nil
 }
 
-func (this *DummyRepository) DoesSupportPty(_ Context, _ glssh.Pty) (bool, error) {
+func (this *DummyRepository) DoesSupportPty(_ Context, _ essh.Pty) (bool, error) {
 	return true, nil
 }
 

@@ -8,6 +8,7 @@ import (
 	"github.com/alecthomas/kingpin/v2"
 
 	"github.com/engity-com/bifroest/pkg/connection"
+	"github.com/engity-com/bifroest/pkg/execution"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -15,6 +16,7 @@ type execOpts struct {
 	storeExitCodeForConnectionId bool
 	exitCodeByConnectionIdPath   string
 	connectionId                 connection.Id
+	executionId                  execution.Id
 	workingDirectory             string
 	environment                  map[string]string
 	path                         string
@@ -30,4 +32,8 @@ func enrichExecCmd(_ *exec.Cmd, _ *execOpts) error {
 
 func signalExecCmd(cmd *exec.Cmd, signal sys.Signal) error {
 	return signal.SendToProcess(cmd.Process)
+}
+
+func execExitCode(err *exec.ExitError) int {
+	return err.ExitCode()
 }

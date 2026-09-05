@@ -45,7 +45,7 @@ type kubernetes struct {
 
 	portForwardingAllowed bool
 
-	impSession imp.Session
+	impSession imp.ExecutionSession
 	environ    sys.EnvVars
 
 	owners atomic.Int32
@@ -78,8 +78,14 @@ func (this *KubernetesRepository) new(ctx context.Context, pod *v1.Pod, logger l
 		return failf("cannot parse pod: %w", err)
 	}
 	var err error
-	if result.impSession, err = this.imp.Open(ctx, result); err != nil {
+	openedSession, err := this.imp.Open(ctx, result)
+	if err != nil {
 		return failf("cannot open IMP session: %w", err)
+	}
+	var ok bool
+	if result.impSession, ok = openedSession.(imp.ExecutionSession); !ok {
+		_ = openedSession.Close()
+		return failf("IMP session does not support execution lifecycle")
 	}
 
 	connId, err := connection.NewId()

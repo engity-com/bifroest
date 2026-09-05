@@ -6,7 +6,7 @@ import (
 	"time"
 
 	log "github.com/echocat/slf4g"
-	glssh "github.com/engity-com/ssh-server-go"
+	essh "github.com/engity-com/ssh-server-go"
 	"github.com/vmihailenco/msgpack/v5"
 
 	"github.com/engity-com/bifroest/pkg/codec"
@@ -111,7 +111,7 @@ func (this *imp) handleMethodTcpForward(ctx context.Context, header *Header, log
 		return "destination -> source"
 	}
 
-	if err := glssh.FullDuplexCopy(ctx, target, conn, &glssh.FullDuplexCopyOpts{
+	if err := essh.FullDuplexCopy(ctx, target, conn, &essh.FullDuplexCopyOpts{
 		OnStart: func() {
 			logger.Debug("port forwarding started")
 		},

@@ -16,7 +16,7 @@ import (
 	"github.com/docker/docker/errdefs"
 	"github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/level"
-	glssh "github.com/engity-com/ssh-server-go"
+	essh "github.com/engity-com/ssh-server-go"
 	v1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -49,6 +49,7 @@ const (
 	KubernetesAnnotationPrefix                = KubernetesLabelPrefix
 	KubernetesAnnotationCreatedRemoteUser     = KubernetesAnnotationPrefix + "created-remote-user"
 	KubernetesAnnotationCreatedRemoteHost     = KubernetesAnnotationPrefix + "created-remote-host"
+	KubernetesAnnotationExecutionLifecycle    = KubernetesAnnotationPrefix + "execution-lifecycle"
 	KubernetesAnnotationShellCommand          = KubernetesAnnotationPrefix + "shellCommand"
 	KubernetesAnnotationExecCommand           = KubernetesAnnotationPrefix + "execCommand"
 	KubernetesAnnotationSftpCommand           = KubernetesAnnotationPrefix + "sftpCommand"
@@ -136,7 +137,7 @@ func (this *KubernetesRepository) WillBeAccepted(ctx Context) (ok bool, err erro
 	return ok, nil
 }
 
-func (this *KubernetesRepository) DoesSupportPty(Context, glssh.Pty) (bool, error) {
+func (this *KubernetesRepository) DoesSupportPty(Context, essh.Pty) (bool, error) {
 	return true, nil
 }
 
@@ -558,8 +559,9 @@ func (this *KubernetesRepository) resolvePodConfig(req Request, sess session.Ses
 	}
 
 	result.Annotations = map[string]string{
-		KubernetesAnnotationCreatedRemoteUser: remote.User(),
-		KubernetesAnnotationCreatedRemoteHost: remote.Host().String(),
+		KubernetesAnnotationCreatedRemoteUser:  remote.User(),
+		KubernetesAnnotationCreatedRemoteHost:  remote.Host().String(),
+		KubernetesAnnotationExecutionLifecycle: executionLifecycleCapability,
 	}
 	if result.Annotations[KubernetesAnnotationShellCommand], err = this.resolveEncodedShellCommand(req); err != nil {
 		return fail(err)
@@ -986,6 +988,18 @@ func (this *KubernetesRepository) findOrEnsureBySession(ctx context.Context, ses
 		instance := ip.(*kubernetes)
 		instance.owners.Add(1)
 		return instance, nil
+	}
+	if existing != nil && existing.Annotations[KubernetesAnnotationExecutionLifecycle] != executionLifecycleCapability {
+		if !opts.IsAutoCleanUpAllowed() {
+			return fail(errors.System.Newf("existing environment %s/%s does not support execution lifecycle; remove it explicitly before retrying", existing.Namespace, existing.Name))
+		}
+		if _, err := this.removePod(ctx, existing.Namespace, existing.Name, createUsing); err != nil {
+			return fail(err)
+		}
+		if createUsing == nil {
+			return fail(ErrNoSuchEnvironment)
+		}
+		existing = nil
 	}
 
 	if existing != nil && existing.Status.Phase != v1.PodPending && existing.Status.Phase != v1.PodRunning {

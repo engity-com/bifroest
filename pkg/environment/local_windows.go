@@ -9,14 +9,19 @@ import (
 	"syscall"
 
 	log "github.com/echocat/slf4g"
-	glssh "github.com/engity-com/ssh-server-go"
+	essh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/engity-com/bifroest/pkg/template"
 )
+
+func (this *local) newAgentNamedPipe() (net.NamedPipe, error) {
+	return net.NewNamedPipe("ssh-agent")
+}
 
 type local struct {
 	repository            *LocalRepository
@@ -120,7 +125,7 @@ func (this *local) getPathEnv() string {
 	return `C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem`
 }
 
-func (this *local) signal(cmd *exec.Cmd, logger log.Logger, signal glssh.Signal) {
+func (this *local) signal(cmd *exec.Cmd, logger log.Logger, signal essh.Signal) {
 	var sig sys.Signal
 	if err := sig.Set(string(signal)); err != nil {
 		sig = sys.SIGKILL

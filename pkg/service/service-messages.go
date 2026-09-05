@@ -3,7 +3,7 @@ package service
 import (
 	"io"
 
-	glssh "github.com/engity-com/ssh-server-go"
+	essh "github.com/engity-com/ssh-server-go"
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
@@ -11,7 +11,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
-func (this *service) handleBanner(ctx glssh.Context, _ gossh.ConnMetadata) (string, error) {
+func (this *service) handleBanner(ctx essh.Context, _ gossh.ConnMetadata) (string, error) {
 	if b, err := this.Configuration.Ssh.Banner.Render(&connectionContext{ctx}); err != nil {
 		return "", errors.Newf(errors.System, "cannot retrieve SSH banner: %w", err)
 	} else {
@@ -19,12 +19,12 @@ func (this *service) handleBanner(ctx glssh.Context, _ gossh.ConnMetadata) (stri
 	}
 }
 
-func (this *service) showRememberMe(sshSess glssh.Session, auth authorization.Authorization, _ session.Session, state session.State) error {
+func (this *service) showRememberMe(sshSess essh.Session, auth authorization.Authorization, _ session.Session, state session.State) error {
 	ctx := sshSess.Context()
 
 	pub := auth.FindSessionsPublicKey()
 	if pub == nil {
-		pub, _ = ctx.Value(handshakeKeyCtxKey).(glssh.PublicKey)
+		pub, _ = ctx.Value(handshakeKeyCtxKey).(essh.PublicKey)
 	}
 	if pub != nil {
 		if v := this.Configuration.Ssh.Keys.RememberMeNotification; !v.IsZero() {

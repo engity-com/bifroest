@@ -1,7 +1,7 @@
 package authorization
 
 import (
-	glssh "github.com/engity-com/ssh-server-go"
+	essh "github.com/engity-com/ssh-server-go"
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/connection"
@@ -11,7 +11,7 @@ import (
 type Request interface {
 	Sessions() session.Repository
 	Connection() connection.Connection
-	Context() glssh.Context
+	Context() essh.Context
 	Validate(Authorization) (bool, error)
 }
 

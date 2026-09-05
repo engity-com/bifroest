@@ -35,7 +35,7 @@ jobs:
   runtime:
     name: ${{ matrix.suite }} with ${{ matrix.runtime }}
     needs: files-changed
-    if: needs.files-changed.outputs.go == 'true'
+    if: always() && (github.event_name != 'pull_request' || needs.files-changed.outputs.go == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -84,10 +84,48 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  authorization:
+    name: htpasswd and OIDC authorization
+    needs: files-changed
+    if: always() && (github.event_name != 'pull_request' || needs.files-changed.outputs.go == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Cache Go
+        uses: actions/cache@v6
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install MISE
+        uses: jdx/mise-action@v4
+
+      - name: Install dependencies
+        run: mise run install:go
+
+      - name: Run authorization end-to-end suite
+        run: mise run test:e2e:authorization
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-authorization
+          path: var/e2e/**/*
+          if-no-files-found: ignore
+          retention-days: 7
+
   kind-docker:
     name: kubernetes with kind and docker
     needs: files-changed
-    if: needs.files-changed.outputs.go == 'true'
+    if: always() && (github.event_name != 'pull_request' || needs.files-changed.outputs.go == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:

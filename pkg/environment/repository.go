@@ -6,7 +6,7 @@ import (
 	"io"
 
 	log "github.com/echocat/slf4g"
-	glssh "github.com/engity-com/ssh-server-go"
+	essh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/session"
@@ -24,7 +24,7 @@ type Repository interface {
 
 	// DoesSupportPty will return true if the resulting Environment will support
 	// an PTY.
-	DoesSupportPty(Context, glssh.Pty) (bool, error)
+	DoesSupportPty(Context, essh.Pty) (bool, error)
 
 	// Ensure will create or return an environment that matches the given Request.
 	// If it is not acceptable to do this action with the provided Request

@@ -41,7 +41,7 @@ type docker struct {
 	portForwardingAllowed bool
 
 	impBinding net.HostPort
-	impSession imp.Session
+	impSession imp.ExecutionSession
 
 	owners atomic.Int32
 }
@@ -70,8 +70,14 @@ func (this *DockerRepository) new(ctx context.Context, container *types.Containe
 		return fail(err)
 	}
 	var err error
-	if result.impSession, err = this.imp.Open(ctx, result); err != nil {
+	openedSession, err := this.imp.Open(ctx, result)
+	if err != nil {
 		return fail(err)
+	}
+	var ok bool
+	if result.impSession, ok = openedSession.(imp.ExecutionSession); !ok {
+		_ = openedSession.Close()
+		return fail(errors.System.Newf("IMP session does not support execution lifecycle"))
 	}
 
 	connId, err := connection.NewId()
@@ -239,14 +245,10 @@ func (this *docker) resolveImpBinding(container *types.Container) (net.HostPort,
 		if candidate.Type != "tcp" {
 			continue
 		}
-		result := net.HostPort{Port: candidate.PublicPort}
-		if err := result.Host.Set(candidate.IP); err != nil {
-			return failf("cannot parse ip address where the host is bound to: %w", err)
-		}
-		if result.Host.IsZero() {
-			result.Host = iph.Clone()
-		}
-		return result, nil
+		return net.HostPort{
+			Host: iph.Clone(),
+			Port: candidate.PublicPort,
+		}, nil
 	}
 
 	return failf("container does not have any valid exposed port")

@@ -1,7 +1,7 @@
 package service
 
 import (
-	glssh "github.com/engity-com/ssh-server-go"
+	essh "github.com/engity-com/ssh-server-go"
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
@@ -9,7 +9,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
-func (this *service) handlePublicKey(ctx glssh.Context, _ gossh.ConnMetadata, key glssh.PublicKey) (bool, error) {
+func (this *service) handlePublicKey(ctx essh.Context, _ gossh.ConnMetadata, key essh.PublicKey) (bool, error) {
 	conn := this.connection(ctx)
 	if conn == nil {
 		return false, nil
@@ -26,7 +26,7 @@ func (this *service) handlePublicKey(ctx glssh.Context, _ gossh.ConnMetadata, ke
 		return false, nil
 	}
 
-	if _, ok := ctx.Value(handshakeKeyCtxKey).(glssh.PublicKey); !ok {
+	if _, ok := ctx.Value(handshakeKeyCtxKey).(essh.PublicKey); !ok {
 		ctx.SetValue(handshakeKeyCtxKey, key)
 	}
 
@@ -57,7 +57,7 @@ func (this *service) handlePublicKey(ctx glssh.Context, _ gossh.ConnMetadata, ke
 	return true, nil
 }
 
-func (this *service) handlePassword(ctx glssh.Context, _ gossh.ConnMetadata, password string) (bool, error) {
+func (this *service) handlePassword(ctx essh.Context, _ gossh.ConnMetadata, password string) (bool, error) {
 	conn := this.connection(ctx)
 	if conn == nil {
 		return false, nil
@@ -89,7 +89,7 @@ func (this *service) handlePassword(ctx glssh.Context, _ gossh.ConnMetadata, pas
 	return true, nil
 }
 
-func (this *service) handleKeyboardInteractiveChallenge(ctx glssh.Context, _ gossh.ConnMetadata, challenger gossh.KeyboardInteractiveChallenge) (bool, error) {
+func (this *service) handleKeyboardInteractiveChallenge(ctx essh.Context, _ gossh.ConnMetadata, challenger gossh.KeyboardInteractiveChallenge) (bool, error) {
 	conn := this.connection(ctx)
 	if conn == nil {
 		return false, nil
@@ -121,7 +121,7 @@ func (this *service) handleKeyboardInteractiveChallenge(ctx glssh.Context, _ gos
 	return true, nil
 }
 
-func (this *service) resolveAuthorizationAndSession(ctx glssh.Context) (authorization.Authorization, session.Session, session.State, error) {
+func (this *service) resolveAuthorizationAndSession(ctx essh.Context) (authorization.Authorization, session.Session, session.State, error) {
 	failf := func(t errors.Type, msg string, args ...any) (authorization.Authorization, session.Session, session.State, error) {
 		return nil, nil, 0, errors.Newf(t, msg, args...)
 	}
@@ -141,7 +141,7 @@ func (this *service) resolveAuthorizationAndSession(ctx glssh.Context) (authoriz
 		return failf(errors.System, "cannot update session sate: %w", err)
 	}
 	if oldState == session.StateNew {
-		if pub, _ := ctx.Value(handshakeKeyCtxKey).(glssh.PublicKey); pub != nil {
+		if pub, _ := ctx.Value(handshakeKeyCtxKey).(essh.PublicKey); pub != nil {
 			if err := sess.AddPublicKey(ctx, pub); err != nil {
 				return failf(errors.System, "cannot add public key to session: %w", err)
 			}
@@ -151,7 +151,7 @@ func (this *service) resolveAuthorizationAndSession(ctx glssh.Context) (authoriz
 	return auth, sess, oldState, nil
 }
 
-func (this *service) onPtyRequest(ctx glssh.Context, _ glssh.Session, pty glssh.Pty) (bool, error) {
+func (this *service) onPtyRequest(ctx essh.Context, _ essh.Session, pty essh.Pty) (bool, error) {
 	auth, ok := ctx.Value(authorizationCtxKey).(authorization.Authorization)
 	if !ok {
 		return false, errors.Newf(errors.System, "no authorization resolved for PTY request")
@@ -184,7 +184,7 @@ func (this *service) onPtyRequest(ctx glssh.Context, _ glssh.Session, pty glssh.
 	return true, nil
 }
 
-func (this *service) onAgentForwardingRequested(ctx glssh.Context, _ glssh.Session) (bool, error) {
+func (this *service) onAgentForwardingRequested(ctx essh.Context, _ essh.Session) (bool, error) {
 	auth, ok := ctx.Value(authorizationCtxKey).(authorization.Authorization)
 	if !ok || auth == nil {
 		return false, errors.Newf(errors.System, "no authorization resolved for agent forwarding request")
