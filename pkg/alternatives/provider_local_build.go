@@ -11,6 +11,7 @@ import (
 
 	"github.com/docker/docker/errdefs"
 	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/daemon"
 	"github.com/mr-tron/base58"
 
@@ -122,8 +123,13 @@ func (this *provider) FindOciImageFor(ctx context.Context, os sys.Os, arch sys.A
 		return fail(errors.System.Newf(msg, args...))
 	}
 	version := this.version.Version()
+	platform, err := v1.ParsePlatform(os.String() + "/" + arch.Oci())
+	if err != nil {
+		return fail(err)
+	}
 
-	tag, err := name.NewTag("local/bifroest:generic-" + version)
+	// An explicit registry keeps Docker, Podman and go-containerregistry from resolving the local name differently.
+	tag, err := name.NewTag("localhost/bifroest:generic-" + version)
 	if err != nil {
 		return fail(err)
 	}
@@ -143,8 +149,14 @@ func (this *provider) FindOciImageFor(ctx context.Context, os sys.Os, arch sys.A
 		// If it does exist ensure the containing hash of the binary is the same, otherwise we'll rebuild...
 		config, err := existing.ConfigFile()
 		if err == nil &&
+			config.OS == platform.OS &&
+			config.Architecture == platform.Architecture &&
+			config.Variant == platform.Variant &&
 			config.Config.Labels != nil &&
 			config.Config.Labels[AnnotationSourceBinaryHash] == thisBinaryHash {
+			if err := ensureInLocalStorage(ctx, tag, existing); err != nil {
+				return fail(err)
+			}
 			l.Debug("existing alternative oci image was returned")
 			return tag.String(), nil
 		}
@@ -188,7 +200,7 @@ func (this *provider) FindOciImageFor(ctx context.Context, os sys.Os, arch sys.A
 	}
 	defer common.KeepCloseError(&rErr, img)
 
-	if _, err := daemon.Write(tag, img, daemon.WithContext(ctx)); err != nil {
+	if err := writeToLocalStorage(ctx, tag, img); err != nil {
 		return fail(err)
 	}
 

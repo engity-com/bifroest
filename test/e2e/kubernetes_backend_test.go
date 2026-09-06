@@ -24,8 +24,6 @@ type kubernetesFixture struct {
 	clusterName    string
 	kubeconfig     string
 	namespace      string
-	initImage      string
-	initImageID    string
 	clusterCreated bool
 	environmentPod string
 }
@@ -309,7 +307,7 @@ func newKubernetesFixture(t *testing.T) (*kubernetesFixture, error) {
 	if k.kubectlTool, err = exec.LookPath("kubectl"); err != nil {
 		return k, errors.New("required tool \"kubectl\" is unavailable")
 	}
-	if err := f.prepareRuntime(false); err != nil {
+	if err := f.prepareRuntime(true); err != nil {
 		return k, err
 	}
 	if err := k.prepareCluster(); err != nil {
@@ -345,15 +343,6 @@ func (k *kubernetesFixture) prepareCluster() error {
 }
 
 func (k *kubernetesFixture) prepareImages() error {
-	version := fmt.Sprintf("e2e-%d", time.Now().UnixNano())
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
-	result := runCommand(ctx, k.repoRoot, []string{"CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64"}, k.goTool,
-		"build", "-trimpath", "-ldflags=-s -w -X main.version="+version, "-o", k.bifroest, "./cmd/bifroest")
-	cancel()
-	if result.err != nil {
-		return fmt.Errorf("build Kubernetes Bifroest binary: %w\n%s", result.err, result.stderr)
-	}
-
 	targetContext := filepath.Join(k.tempDir, "kubernetes-target-context")
 	if err := os.MkdirAll(targetContext, 0755); err != nil {
 		return err
@@ -368,44 +357,17 @@ func (k *kubernetesFixture) prepareImages() error {
 		return err
 	}
 
-	k.initImage = "ghcr.io/engity-com/bifroest:generic-" + version
-	initContext := filepath.Join(k.tempDir, "kubernetes-init-context")
-	if err := os.MkdirAll(initContext, 0755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(initContext, "Containerfile"), []byte(kubernetesInitContainerfile), 0644); err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(initContext, "bifroest"), mustRead(k.bifroest), 0755); err != nil {
-		return err
-	}
-	result = k.runtime(8*time.Minute, "build", "--platform=linux/amd64", "--tag", k.initImage, initContext)
+	imageArchive := filepath.Join(k.tempDir, "kubernetes-image.tar")
+	result := k.runtime(5*time.Minute, "save", "--output", imageArchive, k.imageName)
 	if result.err != nil {
-		return fmt.Errorf("build Kubernetes init image: %w\nstdout:\n%s\nstderr:\n%s", result.err, result.stdout, result.stderr)
+		return fmt.Errorf("export E2E image %s: %w\nstdout:\n%s\nstderr:\n%s", k.imageName, result.err, result.stdout, result.stderr)
 	}
-	result = k.runtime(20*time.Second, "image", "inspect", "--format", "{{.Id}}", k.initImage)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	result = runCommand(ctx, k.repoRoot, []string{"KIND_EXPERIMENTAL_PROVIDER=" + k.runtimeCLI}, k.kindTool,
+		"load", "image-archive", "--name", k.clusterName, imageArchive)
+	cancel()
 	if result.err != nil {
-		return fmt.Errorf("inspect Kubernetes init image: %w\n%s", result.err, result.stderr)
-	}
-	k.initImageID = strings.TrimSpace(result.stdout)
-	result = k.runtime(20*time.Second, "image", "inspect", "--format", "{{json .Config.Entrypoint}}", k.initImage)
-	if result.err != nil || !strings.Contains(result.stdout, "/usr/bin/bifroest") {
-		return fmt.Errorf("Kubernetes init image has no Bifroest entrypoint: %w\nstdout:\n%s\nstderr:\n%s", result.err, result.stdout, result.stderr)
-	}
-
-	for i, image := range []string{k.imageName, k.initImage} {
-		imageArchive := filepath.Join(k.tempDir, fmt.Sprintf("kubernetes-image-%d.tar", i))
-		result = k.runtime(5*time.Minute, "save", "--output", imageArchive, image)
-		if result.err != nil {
-			return fmt.Errorf("export E2E image %s: %w\nstdout:\n%s\nstderr:\n%s", image, result.err, result.stdout, result.stderr)
-		}
-		ctx, cancel = context.WithTimeout(context.Background(), 8*time.Minute)
-		result = runCommand(ctx, k.repoRoot, []string{"KIND_EXPERIMENTAL_PROVIDER=" + k.runtimeCLI}, k.kindTool,
-			"load", "image-archive", "--name", k.clusterName, imageArchive)
-		cancel()
-		if result.err != nil {
-			return fmt.Errorf("load E2E image %s into kind: %w\nstdout:\n%s\nstderr:\n%s", image, result.err, result.stdout, result.stderr)
-		}
+		return fmt.Errorf("load E2E image %s into kind: %w\nstdout:\n%s\nstderr:\n%s", k.imageName, result.err, result.stdout, result.stderr)
 	}
 	return nil
 }
@@ -459,11 +421,18 @@ func (k *kubernetesFixture) startBifroest(controllerKubeconfig string) error {
 		_ = listener.Close()
 		return err
 	}
-	pathEnv := "PATH=" + filepath.Dir(k.goTool) + string(os.PathListSeparator) + os.Getenv("PATH")
+	processEnv := []string{
+		"PATH=" + filepath.Dir(k.goTool) + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"CGO_ENABLED=0",
+		"KIND_EXPERIMENTAL_PROVIDER=" + k.runtimeCLI,
+	}
+	if k.runtimeHost != "" {
+		processEnv = append(processEnv, "DOCKER_HOST="+k.runtimeHost)
+	}
 	if err := listener.Close(); err != nil {
 		return err
 	}
-	k.bifroestProc, err = launchProcess(k.repoRoot, []string{pathEnv, "CGO_ENABLED=0"}, k.bifroest,
+	k.bifroestProc, err = launchProcess(k.repoRoot, processEnv, k.bifroest,
 		"run", "--configuration="+configurationPath, "--log.level=DEBUG")
 	if err != nil {
 		return fmt.Errorf("start host Bifroest: %w", err)
@@ -568,16 +537,8 @@ func (k *kubernetesFixture) cleanup() {
 			k.t.Logf("cannot delete kind cluster: %v\n%s", result.err, result.stderr)
 		}
 	}
-	if k.initImageID != "" {
-		_ = k.runtime(30*time.Second, "image", "rm", "--force", k.initImageID).err
-	}
+	_ = k.runtime(30*time.Second, "image", "rm", "--force", "localhost/bifroest:generic-"+k.bifroestVersion).err
 }
-
-const kubernetesInitContainerfile = `FROM ` + alpineImage + `
-COPY bifroest /usr/bin/bifroest
-RUN chmod 0755 /usr/bin/bifroest
-ENTRYPOINT ["/usr/bin/bifroest"]
-`
 
 const kubernetesRBAC = `apiVersion: v1
 kind: Namespace

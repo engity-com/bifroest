@@ -42,15 +42,16 @@ type fixture struct {
 	goTool   string
 	tools    map[string]string
 
-	clientKey  string
-	wrongKey   string
-	agentKey   string
-	hostKey    string
-	knownHosts string
-	helper     string
-	bifroest   string
-	host       string
-	port       string
+	clientKey       string
+	wrongKey        string
+	agentKey        string
+	hostKey         string
+	knownHosts      string
+	helper          string
+	bifroest        string
+	bifroestVersion string
+	host            string
+	port            string
 
 	runtimeCLI     string
 	runtimeHost    string
@@ -96,20 +97,21 @@ func newFixture(t *testing.T) (*fixture, error) {
 	tempDir := t.TempDir()
 	unique := fmt.Sprintf("bifroest-e2e-%d-%d", os.Getpid(), time.Now().UnixNano())
 	f := &fixture{
-		t:              t,
-		repoRoot:       repoRoot,
-		tempDir:        tempDir,
-		name:           unique,
-		goTool:         goTool,
-		imageName:      "localhost/" + unique + ":latest",
-		host:           "127.0.0.1",
-		clientKey:      filepath.Join(tempDir, "client_ed25519"),
-		wrongKey:       filepath.Join(tempDir, "wrong_ed25519"),
-		agentKey:       filepath.Join(tempDir, "agent_ed25519"),
-		hostKey:        filepath.Join(tempDir, "host_ed25519"),
-		knownHosts:     filepath.Join(tempDir, "known_hosts"),
-		sessionStorage: filepath.Join(tempDir, "sessions"),
-		tools:          tools,
+		t:               t,
+		repoRoot:        repoRoot,
+		tempDir:         tempDir,
+		name:            unique,
+		goTool:          goTool,
+		imageName:       "localhost/" + unique + ":latest",
+		bifroestVersion: "e2e-" + unique,
+		host:            "127.0.0.1",
+		clientKey:       filepath.Join(tempDir, "client_ed25519"),
+		wrongKey:        filepath.Join(tempDir, "wrong_ed25519"),
+		agentKey:        filepath.Join(tempDir, "agent_ed25519"),
+		hostKey:         filepath.Join(tempDir, "host_ed25519"),
+		knownHosts:      filepath.Join(tempDir, "known_hosts"),
+		sessionStorage:  filepath.Join(tempDir, "sessions"),
+		tools:           tools,
 	}
 	t.Cleanup(f.cleanup)
 	if err := f.prepareCommon(); err != nil {
@@ -241,12 +243,13 @@ func (f *fixture) prepareCommon() error {
 		output      string
 		packagePath string
 		tags        string
+		ldflags     string
 	}{
-		{f.bifroest, "./cmd/bifroest", "local_build"},
-		{f.helper, "./test/e2e/helper", "e2e"},
+		{f.bifroest, "./cmd/bifroest", "local_build,local_kind", "-s -w -X main.version=" + f.bifroestVersion},
+		{f.helper, "./test/e2e/helper", "e2e", "-s -w"},
 	} {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
-		args := []string{"build", "-tags", build.tags, "-trimpath", "-ldflags=-s -w", "-o", build.output, build.packagePath}
+		args := []string{"build", "-tags", build.tags, "-trimpath", "-ldflags=" + build.ldflags, "-o", build.output, build.packagePath}
 		result := runCommand(ctx, f.repoRoot, buildEnv, f.goTool, args...)
 		cancel()
 		if result.err != nil {

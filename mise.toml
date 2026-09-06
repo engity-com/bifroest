@@ -83,6 +83,12 @@ run = "go run ./cmd/build evaluate-environment --log.colorMode=always"
 hide = true
 run = "go run ./cmd/build inspect-pr-action --log.colorMode=always"
 
+[tasks."tools:kind:up"]
+run = "kind create cluster --name bifroest --wait 5m"
+
+[tasks."tools:kind:down"]
+run = "kind delete cluster --name bifroest"
+
 [settings]
 env_file = ".env"
 
@@ -91,3 +97,4 @@ golangci-lint = "aqua:golangci/golangci-lint"
 
 [env]
 _.python.venv = { path = ".pyvenv", create = true, uv_create_args = ['--seed'] }
+KIND_EXPERIMENTAL_PROVIDER = "podman"
