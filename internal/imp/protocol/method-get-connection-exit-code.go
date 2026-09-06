@@ -282,8 +282,8 @@ func cleanupExecutionResultsExcept(directory string, exceptions map[connection.I
 			raw, err := goos.ReadFile(path)
 			if err == nil {
 				activeExecution := false
-				if _, activeExecution = registeredProcess(raw, execution.EnvName+"="+executionId.String()); !activeExecution {
-					_, activeExecution = registeredProcess(raw, connection.EnvName+"="+executionId.String())
+				if activeExecution = registeredProcessMatches(raw, execution.EnvName+"="+executionId.String()); !activeExecution {
+					activeExecution = registeredProcessMatches(raw, connection.EnvName+"="+executionId.String())
 				}
 				if activeExecution {
 					continue

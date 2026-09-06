@@ -1,4 +1,4 @@
-//go:build local_kind
+//go:build local_build && local_kind
 
 package alternatives
 
@@ -45,7 +45,7 @@ func ensureInLocalStorage(ctx context.Context, tag name.Tag, img v1.Image) error
 	if err != nil {
 		return failf("cannot list clusters: %w", err)
 	}
-	clusterName, err := selectLocalKindCluster(clusters)
+	clusterName, err := selectLocalKindCluster(clusters, goos.Getenv("BIFROEST_LOCAL_KIND_CLUSTER"))
 	if err != nil {
 		return fail(err)
 	}
@@ -112,7 +112,15 @@ func ensureInLocalStorage(ctx context.Context, tag name.Tag, img v1.Image) error
 	return nil
 }
 
-func selectLocalKindCluster(clusters []string) (string, error) {
+func selectLocalKindCluster(clusters []string, requested string) (string, error) {
+	if requested != "" {
+		for _, candidate := range clusters {
+			if candidate == requested {
+				return requested, nil
+			}
+		}
+		return "", errors.System.Newf("requested cluster %q not found in %v", requested, clusters)
+	}
 	if len(clusters) != 1 {
 		return "", errors.System.Newf("expected exactly one cluster, got %d: %v", len(clusters), clusters)
 	}

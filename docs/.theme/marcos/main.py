@@ -193,7 +193,7 @@ support_matrix = SupportMatrix(
     editions_of(
         Os.linux, Arch.riscv64,
         True, True,
-        True, False
+        False, False
     ),
 
     editions_of(

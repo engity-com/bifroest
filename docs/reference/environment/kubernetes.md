@@ -251,6 +251,14 @@ This is useful to clean up old pods which are leftovers after you have changed t
 !!! warning
      If multiple Bifröst installations are using the same [config](#property-config)/cluster, this should be disabled. Otherwise, each instance is removing the pods of the other instance.
 
+## Execution lifecycle and upgrades
+
+Pods created by the current version carry the annotation `org.engity.bifroest/execution-lifecycle=execution-id-v1`. Bifröst uses a unique execution ID to route signals and exit statuses to the correct command and supervises the command's process tree inside the Pod.
+
+On Linux, execution-scoped signaling requires `pidfd_open` and `pidfd_send_signal` support. The container's seccomp policy must allow both system calls; Bifröst rejects the signal request rather than falling back to an unsafe numeric PID when they are unavailable.
+
+Pods from versions without this annotation cannot be reused by the current master. A normal login rejects such a Pod without deleting it. Housekeeping may remove it when disposing an expired session according to the configured cleanup policy. Back up Pod-local ephemeral data before manually or automatically removing old environments; persistent volumes retain their own lifecycle rules.
+
 ## Preparation Processes {: #preparationProcesses }
 
 If events about preparation processes are emitted by this environment, they are picked up by connections (like [SSH](../connection/ssh.md#preparationMessages)) and handled.

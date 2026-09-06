@@ -56,7 +56,7 @@ It does provide the following features:
 ### Windows {: #windows}
 
 #### Generic {: #windows-generic}
-The generic Windows distribution of Bifröst contains all supported features for Windows from Windows 7+ on. It does not even have any requirements on which other shared libraries need to be installed.
+The generic Windows distribution of Bifröst contains all supported features for Windows 10, Windows Server 2016, and later versions. It does not have any requirements on which other shared libraries need to be installed.
 
 #### Extended {: #windows-extended}
 Not available.

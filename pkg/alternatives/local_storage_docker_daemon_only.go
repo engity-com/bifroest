@@ -1,4 +1,4 @@
-//go:build !local_kind
+//go:build local_build && !local_kind
 
 package alternatives
 

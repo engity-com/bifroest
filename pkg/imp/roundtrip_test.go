@@ -48,7 +48,6 @@ var (
 	}
 	roundtripTestServiceAddress = net.HostPort{
 		Host: net.MustNewHost("localhost"),
-		Port: 45321,
 	}
 	roundtripTestSessionId session.Id
 
@@ -153,8 +152,12 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 		break
 	}
 
+	listener, err := gonet.Listen("tcp", roundtripTestServiceAddress.String())
+	require.NoError(t, err)
+	serviceAddress := roundtripTestServiceAddress
+	serviceAddress.Port = uint16(listener.Addr().(*gonet.TCPAddr).Port)
 	wg.Add(1)
-	go runRoundtripDummyService(t, ctx, wg.Done)
+	go runRoundtripDummyService(t, ctx, wg.Done, listener)
 
 	master, err := NewImp(ctx, masterKey)
 	require.NoError(t, err)
@@ -212,7 +215,7 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 				DialContext: func(ctx context.Context, network, addr string) (gonet.Conn, error) {
 					assert.Equal(t, network, "tcp")
 					assert.Equal(t, addr, "foo:80")
-					conn, err := sess.InitiateTcpForward(ctx, connId, roundtripTestServiceAddress)
+					conn, err := sess.InitiateTcpForward(ctx, connId, serviceAddress)
 					assert.NoError(t, err)
 					return conn, nil
 				},
@@ -353,13 +356,8 @@ func runRoundtripDummyProcess(_ *testing.T) {
 		Info("received signal")
 }
 
-func runRoundtripDummyService(t *testing.T, ctx context.Context, onDone func()) {
+func runRoundtripDummyService(t *testing.T, ctx context.Context, onDone func(), ln gonet.Listener) {
 	defer onDone()
-	ln, err := gonet.Listen("tcp", roundtripTestServiceAddress.String())
-	assert.NoError(t, err)
-	if t.Failed() {
-		return
-	}
 	defer common.IgnoreCloseError(ln)
 
 	srv := http.Server{
@@ -456,7 +454,7 @@ func runCmd(ctx context.Context, t *testing.T, cmd *exec.Cmd, onDone func(), pid
 		var ecErr *exec.ExitError
 		if errors.As(err, &ecErr) {
 			exitCode := ecErr.ExitCode()
-			if exitCode == 666 || exitCode == 154 {
+			if exitCode == 666 || exitCode == 154 || exitCode == 128+int(sys.SIGTERM) {
 				// Expected exit code.
 				return
 			}

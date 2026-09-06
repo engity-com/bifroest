@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"context"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -85,6 +86,14 @@ type methodKillResponse struct {
 	error error
 }
 
+type processTarget struct {
+	pid               int
+	processGroup      bool
+	expectedCreatedAt *int64
+	expectedEnv       string
+	groupExpectedEnv  string
+}
+
 func (this methodKillResponse) EncodeMsgpack(enc *msgpack.Encoder) error {
 	return this.EncodeMsgPack(enc)
 }
@@ -124,23 +133,40 @@ func (this *imp) killProcesses(ctx context.Context, header *Header, logger log.L
 	fail := func(pid int, err error) methodKillResponse {
 		return methodKillResponse{errors.System.Newf("cannot kill process %d of %v with %v: %w", pid, header.ConnectionId, signal, err)}
 	}
-
-	type target struct {
-		pid          int
-		processGroup bool
-	}
-	targets := []target{{pid: pid}}
-	targetPids := map[int]struct{}{pid: {}}
-	if pid != 0 && processGroup && !processHasEnvironment(pid, expectedEnv) {
+	if pid < 0 || int64(pid) > math.MaxInt32 {
 		return methodKillResponse{ErrNoSuchProcess}
 	}
+
+	var targets []processTarget
+	targetPids := make(map[int]struct{})
+	if pid != 0 {
+		target := processTarget{pid: pid, processGroup: processGroup}
+		if processGroup {
+			target.expectedEnv = expectedEnv
+			target.groupExpectedEnv = expectedEnv
+		}
+		targets = append(targets, target)
+		targetPids[pid] = struct{}{}
+	}
 	if pid == 0 {
-		targets = nil
 		pidFn := filepath.Join(stateDirectory, stateId.String()+".pid")
 		if plainPid, err := os.ReadFile(pidFn); err == nil {
-			if storedPid, ok := registeredProcess(plainPid, expectedEnv); ok {
-				targets = append(targets, target{pid: storedPid, processGroup: processGroup})
-				targetPids[storedPid] = struct{}{}
+			if storedPid, expectedCreatedAt, ok := registeredProcess(plainPid); ok {
+				target := processTarget{
+					pid:               storedPid,
+					processGroup:      processGroup,
+					expectedCreatedAt: expectedCreatedAt,
+					groupExpectedEnv:  expectedEnv,
+				}
+				if expectedCreatedAt == nil {
+					target.expectedEnv = expectedEnv
+				}
+				if target.matchesIdentity() {
+					targets = append(targets, target)
+					targetPids[storedPid] = struct{}{}
+				} else {
+					_ = os.Remove(pidFn)
+				}
 			} else {
 				_ = os.Remove(pidFn)
 			}
@@ -160,7 +186,12 @@ func (this *imp) killProcesses(ctx context.Context, header *Header, logger log.L
 				if env == expectedEnv {
 					pid := int(candidate.Pid)
 					if _, exists := targetPids[pid]; !exists {
-						targets = append(targets, target{pid: pid, processGroup: processGroup})
+						targets = append(targets, processTarget{
+							pid:              pid,
+							processGroup:     processGroup,
+							expectedEnv:      expectedEnv,
+							groupExpectedEnv: expectedEnv,
+						})
 						targetPids[pid] = struct{}{}
 					}
 					break
@@ -175,7 +206,7 @@ func (this *imp) killProcesses(ctx context.Context, header *Header, logger log.L
 
 	signaled := false
 	for _, target := range targets {
-		if err := this.kill(ctx, target.pid, signal, target.processGroup); err == nil {
+		if err := this.kill(ctx, target, signal); err == nil {
 			signaled = true
 		} else if !errors.Is(err, ErrNoSuchProcess) {
 			return fail(target.pid, err)
@@ -188,28 +219,49 @@ func (this *imp) killProcesses(ctx context.Context, header *Header, logger log.L
 	return methodKillResponse{}
 }
 
-func registeredProcess(raw []byte, legacyExpectedEnv string) (int, bool) {
+func registeredProcess(raw []byte) (int, *int64, bool) {
 	fields := strings.Fields(string(raw))
 	if len(fields) == 0 || len(fields) > 2 {
-		return 0, false
+		return 0, nil, false
 	}
 	pid, err := strconv.Atoi(fields[0])
 	if err != nil || pid <= 0 {
-		return 0, false
+		return 0, nil, false
 	}
 	if len(fields) == 1 {
-		return pid, processHasEnvironment(pid, legacyExpectedEnv)
+		return pid, nil, true
 	}
 	expectedCreatedAt, err := strconv.ParseInt(fields[1], 10, 64)
 	if err != nil {
-		return 0, false
+		return 0, nil, false
 	}
-	candidate, err := process.NewProcess(int32(pid))
-	if err != nil {
-		return 0, false
+	return pid, &expectedCreatedAt, true
+}
+
+func registeredProcessMatches(raw []byte, expectedEnv string) bool {
+	pid, expectedCreatedAt, ok := registeredProcess(raw)
+	target := processTarget{
+		pid:               pid,
+		expectedCreatedAt: expectedCreatedAt,
 	}
-	createdAt, err := candidate.CreateTime()
-	return pid, err == nil && createdAt == expectedCreatedAt
+	if expectedCreatedAt == nil {
+		target.expectedEnv = expectedEnv
+	}
+	return ok && target.matchesIdentity()
+}
+
+func (this processTarget) matchesIdentity() bool {
+	if this.expectedCreatedAt != nil {
+		candidate, err := process.NewProcess(int32(this.pid))
+		if err != nil {
+			return false
+		}
+		createdAt, err := candidate.CreateTime()
+		if err != nil || createdAt != *this.expectedCreatedAt {
+			return false
+		}
+	}
+	return this.expectedEnv == "" || processHasEnvironment(this.pid, this.expectedEnv)
 }
 
 func processHasEnvironment(pid int, expected string) bool {

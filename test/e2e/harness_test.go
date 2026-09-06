@@ -480,9 +480,12 @@ func runBackendProtocolTests(t *testing.T, f *fixture, timeout time.Duration, en
 		if err != nil {
 			t.Fatal(err)
 		}
-		var output bytes.Buffer
-		session.Stdout = &output
-		session.Stderr = &output
+		stdout, err := session.StdoutPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var stderr bytes.Buffer
+		session.Stderr = &stderr
 		if err := session.RequestPty("xterm-256color", 33, 77, gossh.TerminalModes{}); err != nil {
 			t.Fatalf("request PTY: %v", err)
 		}
@@ -495,11 +498,15 @@ func runBackendProtocolTests(t *testing.T, f *fixture, timeout time.Duration, en
 		if err := stdin.Close(); err != nil {
 			t.Fatalf("half-close shell input: %v", err)
 		}
-		if err := session.Wait(); err != nil {
-			t.Fatalf("wait for shell: %v\noutput:\n%s", err, output.String())
+		output, readErr := io.ReadAll(stdout)
+		if readErr != nil {
+			t.Fatalf("read shell output: %v", readErr)
 		}
-		if !strings.Contains(output.String(), "interactive-pty-shell-e2e") {
-			t.Fatalf("shell output does not contain marker:\n%s", output.String())
+		if err := session.Wait(); err != nil {
+			t.Fatalf("wait for shell: %v\nstderr:\n%s", err, stderr.String())
+		}
+		if !bytes.Contains(output, []byte("interactive-pty-shell-e2e")) {
+			t.Fatalf("shell output does not contain marker:\n%s", output)
 		}
 	})
 

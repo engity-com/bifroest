@@ -29,7 +29,7 @@ How long Bifröst waits for active SSH connections and their handlers to finish 
 The maximum duration from accepting a connection until successful SSH authentication. `0` disables this timeout.
 
 <<property("sessionRequestTimeout", "Duration", "../data-type.md#duration", default="30s")>>
-How long an accepted session channel may wait for its initial shell, exec, or subsystem request. `0` disables this timeout.
+How long an accepted session channel may wait for its initial shell, exec, or subsystem request. When the timeout expires, only the idle session channel is closed; the SSH connection and active sibling channels remain available. `0` disables this timeout.
 
 <<property("maxAuthTries", "uint8", None, default=6)>>
 How many authentication attempts a client can make before the connection is rejected. `0` disables this limit.
@@ -60,6 +60,11 @@ The maximum number of active SSH channels across all connections handled by one 
 
 <<property("maxReverseForwards", "uint16", None, default=256)>>
 The maximum number of active reverse-forward listeners across all connections handled by one SSH listener. `0` disables this limit.
+
+Listener-scoped limits are tracked independently for every entry in [`addresses`](#property-addresses). For example, two configured listen addresses can each serve up to `maxChannels` active channels and `maxReverseForwards` reverse-forward listeners. `maxConnections` is different: Bifröst enforces it across the complete service and all configured addresses.
+
+!!! note
+     A client must acknowledge a new `forwarded-tcpip` channel within one second. Otherwise only the affected forwarded connection fails; the SSH connection and unrelated active channels remain available.
 
 <<property("proxyProtocol", "bool", None, default=false)>>
 If enabled, Bifröst supports incoming connections using [PROXY protocol versions 1 and 2](https://www.haproxy.com/blog/use-the-proxy-protocol-to-preserve-a-clients-ip-address).

@@ -1,3 +1,5 @@
+//go:build local_build
+
 package alternatives
 
 import (

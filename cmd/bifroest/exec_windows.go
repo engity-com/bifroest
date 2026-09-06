@@ -31,6 +31,12 @@ func enrichExecCmd(_ *exec.Cmd, _ *execOpts) error {
 }
 
 func signalExecCmd(cmd *exec.Cmd, signal sys.Signal) error {
+	if cmd.Process == nil {
+		return nil
+	}
+	if signal == sys.SIGTERM || signal == sys.SIGKILL {
+		return cmd.Process.Kill()
+	}
 	return signal.SendToProcess(cmd.Process)
 }
 

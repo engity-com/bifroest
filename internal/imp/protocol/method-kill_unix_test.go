@@ -46,7 +46,7 @@ func TestKillProcessGroupReachesChild(t *testing.T) {
 		return err == nil
 	}, 2*time.Second, 10*time.Millisecond)
 
-	require.NoError(t, (&imp{}).kill(context.Background(), cmd.Process.Pid, sys.SIGKILL, true))
+	require.NoError(t, (&imp{}).kill(context.Background(), processTarget{pid: cmd.Process.Pid, processGroup: true}, sys.SIGKILL))
 	_ = cmd.Wait()
 	require.Eventually(t, func() bool {
 		err := syscall.Kill(childPid, 0)
@@ -58,17 +58,137 @@ func TestKillProcessGroupReachesChild(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond)
 }
 
+func TestKillProcessGroupUsingNonLeaderReachesSiblings(t *testing.T) {
+	directory := t.TempDir()
+	expectedEnv := "BIFROEST_TEST_EXECUTION=owned"
+	targetPidFile := filepath.Join(directory, "target.pid")
+	siblingPidFile := filepath.Join(directory, "sibling.pid")
+	cmd := exec.Command("/bin/sh", "-c", "sleep 30 & echo $! > \"$1\"; sleep 30 & echo $! > \"$2\"; wait", "sh", targetPidFile, siblingPidFile)
+	cmd.Env = append(os.Environ(), expectedEnv)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = cmd.Wait()
+	})
+
+	readPid := func(path string) int {
+		var pid int
+		require.Eventually(t, func() bool {
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return false
+			}
+			pid, err = strconv.Atoi(strings.TrimSpace(string(content)))
+			return err == nil
+		}, 2*time.Second, 10*time.Millisecond)
+		return pid
+	}
+	targetPid := readPid(targetPidFile)
+	siblingPid := readPid(siblingPidFile)
+	require.NotEqual(t, cmd.Process.Pid, targetPid)
+	require.Equal(t, cmd.Process.Pid, mustGetProcessGroup(t, targetPid))
+
+	require.NoError(t, (&imp{}).kill(context.Background(), processTarget{
+		pid:              targetPid,
+		processGroup:     true,
+		expectedEnv:      expectedEnv,
+		groupExpectedEnv: expectedEnv,
+	}, sys.SIGKILL))
+	_ = cmd.Wait()
+	require.Eventually(t, func() bool {
+		return processIsGoneOrZombie(targetPid) && processIsGoneOrZombie(siblingPid)
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestKillProcessGroupRejectsUnverifiedLeader(t *testing.T) {
+	directory := t.TempDir()
+	expectedEnv := "BIFROEST_TEST_EXECUTION=owned"
+	targetPidFile := filepath.Join(directory, "target.pid")
+	cmd := exec.Command("/bin/sh", "-c", "env BIFROEST_TEST_EXECUTION=owned sleep 30 & echo $! > \"$1\"; wait", "sh", targetPidFile)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = cmd.Wait()
+	})
+
+	var targetPid int
+	require.Eventually(t, func() bool {
+		content, err := os.ReadFile(targetPidFile)
+		if err != nil {
+			return false
+		}
+		targetPid, err = strconv.Atoi(strings.TrimSpace(string(content)))
+		return err == nil
+	}, 2*time.Second, 10*time.Millisecond)
+
+	err := (&imp{}).kill(context.Background(), processTarget{
+		pid:              targetPid,
+		processGroup:     true,
+		expectedEnv:      expectedEnv,
+		groupExpectedEnv: expectedEnv,
+	}, sys.SIGKILL)
+	require.ErrorIs(t, err, ErrNoSuchProcess)
+	require.NoError(t, syscall.Kill(cmd.Process.Pid, 0))
+	require.NoError(t, syscall.Kill(targetPid, 0))
+}
+
+func mustGetProcessGroup(t *testing.T, pid int) int {
+	t.Helper()
+	pgid, err := syscall.Getpgid(pid)
+	require.NoError(t, err)
+	return pgid
+}
+
+func processIsGoneOrZombie(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	if errors.Is(err, syscall.ESRCH) {
+		return true
+	}
+	status, readErr := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	return readErr == nil && len(strings.Fields(string(status))) >= 3 && strings.Fields(string(status))[2] == "Z"
+}
+
 func TestRegisteredProcessRejectsReusedPid(t *testing.T) {
 	p, err := process.NewProcess(int32(os.Getpid()))
 	require.NoError(t, err)
 	createdAt, err := p.CreateTime()
 	require.NoError(t, err)
 
-	pid, ok := registeredProcess([]byte(fmt.Sprintf("%d %d", os.Getpid(), createdAt)), "")
+	pid, expectedCreatedAt, ok := registeredProcess([]byte(fmt.Sprintf("%d %d", os.Getpid(), createdAt)))
 	require.True(t, ok)
 	require.Equal(t, os.Getpid(), pid)
-	_, ok = registeredProcess([]byte(fmt.Sprintf("%d %d", os.Getpid(), createdAt+1)), "")
-	require.False(t, ok)
+	require.NotNil(t, expectedCreatedAt)
+	require.Equal(t, createdAt, *expectedCreatedAt)
+	require.ErrorIs(t, (&imp{}).kill(context.Background(), processTarget{
+		pid:               pid,
+		expectedCreatedAt: ptr(createdAt + 1),
+	}, sys.Signal(0)), ErrNoSuchProcess)
+}
+
+func ptr[T any](value T) *T { return &value }
+
+func TestKillProcessesRejectsUnsafePid(t *testing.T) {
+	pids := []int{-1}
+	if strconv.IntSize > 32 {
+		tooLarge := int64(1) << 32
+		pids = append(pids, int(tooLarge))
+	}
+	for _, pid := range pids {
+		response := (&imp{}).killProcesses(
+			context.Background(),
+			&Header{ConnectionId: connection.MustNewId()},
+			log.GetLogger("test"),
+			t.TempDir(),
+			connection.MustNewId(),
+			"",
+			pid,
+			sys.SIGKILL,
+			false,
+		)
+		require.ErrorIs(t, response.error, ErrNoSuchProcess)
+	}
 }
 
 func TestHandleMethodKillFallsBackToExecutionProcessGroup(t *testing.T) {

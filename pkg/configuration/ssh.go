@@ -108,7 +108,7 @@ type Ssh struct {
 	// Defaults to DefaultSshMaxConnections.
 	MaxConnections uint32 `yaml:"maxConnections"`
 
-	// MaxStartupsStart defines how many unauthenticated connections are accepted before random early drop starts.
+	// MaxStartupsStart defines how many unauthenticated connections per listener are accepted before random early drop starts.
 	// Defaults to DefaultSshMaxStartupsStart.
 	MaxStartupsStart uint16 `yaml:"maxStartupsStart"`
 
@@ -132,11 +132,11 @@ type Ssh struct {
 	// 0 means no limitation at all. Defaults to DefaultSshMaxReverseForwardsPerConnection.
 	MaxReverseForwardsPerConnection uint16 `yaml:"maxReverseForwardsPerConnection"`
 
-	// MaxChannels defines the maximum amount of active channels across the SSH server.
+	// MaxChannels defines the maximum amount of active channels per SSH listener.
 	// 0 means no limitation at all. Defaults to DefaultSshMaxChannels.
 	MaxChannels uint16 `yaml:"maxChannels"`
 
-	// MaxReverseForwards defines the maximum amount of active reverse forwards across the SSH server.
+	// MaxReverseForwards defines the maximum amount of active reverse forwards per SSH listener.
 	// 0 means no limitation at all. Defaults to DefaultSshMaxReverseForwards.
 	MaxReverseForwards uint16 `yaml:"maxReverseForwards"`
 

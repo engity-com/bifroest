@@ -11,19 +11,22 @@ import (
 
 func TestSelectLocalKindCluster(t *testing.T) {
 	tests := []struct {
-		name     string
-		clusters []string
-		expected string
-		err      string
+		name      string
+		clusters  []string
+		requested string
+		expected  string
+		err       string
 	}{
 		{name: "none", err: "expected exactly one cluster, got 0"},
 		{name: "one", clusters: []string{"bifroest"}, expected: "bifroest"},
 		{name: "multiple", clusters: []string{"first", "second"}, err: "expected exactly one cluster, got 2"},
+		{name: "requested", clusters: []string{"first", "second"}, requested: "second", expected: "second"},
+		{name: "requested missing", clusters: []string{"first", "second"}, requested: "third", err: `requested cluster "third" not found`},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actual, err := selectLocalKindCluster(tt.clusters)
+			actual, err := selectLocalKindCluster(tt.clusters, tt.requested)
 			if tt.err != "" {
 				require.ErrorContains(t, err, tt.err)
 				assert.Empty(t, actual)

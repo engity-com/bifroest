@@ -424,6 +424,7 @@ func (k *kubernetesFixture) startBifroest(controllerKubeconfig string) error {
 	processEnv := []string{
 		"PATH=" + filepath.Dir(k.goTool) + string(os.PathListSeparator) + os.Getenv("PATH"),
 		"CGO_ENABLED=0",
+		"BIFROEST_LOCAL_KIND_CLUSTER=" + k.clusterName,
 		"KIND_EXPERIMENTAL_PROVIDER=" + k.runtimeCLI,
 	}
 	if k.runtimeHost != "" {

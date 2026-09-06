@@ -1,4 +1,4 @@
-//go:build unix
+//go:build unix && !linux
 
 package protocol
 
@@ -10,15 +10,26 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-func (this *imp) kill(_ context.Context, pid int, signal sys.Signal, processGroup bool) error {
-	if processGroup {
-		pgid, err := syscall.Getpgid(pid)
+func (this *imp) kill(_ context.Context, target processTarget, signal sys.Signal) error {
+	if !target.matchesIdentity() {
+		return ErrNoSuchProcess
+	}
+	pid := target.pid
+	if target.processGroup {
+		pgid, err := syscall.Getpgid(target.pid)
 		if errors.Is(err, syscall.ESRCH) {
 			return ErrNoSuchProcess
 		} else if err != nil {
 			return err
 		}
-		if pgid == pid {
+		ownPgid, err := syscall.Getpgid(0)
+		if err != nil {
+			return err
+		}
+		if pgid != ownPgid {
+			if pgid != target.pid {
+				return ErrNoSuchProcess
+			}
 			pid = -pgid
 		}
 	}

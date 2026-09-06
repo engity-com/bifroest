@@ -35,6 +35,10 @@ Client ID issued by your identity provider.
 <<property("clientSecret", "string", template_context="../context/core.md", id_prefix="device-auth-", heading=4, required=True)>>
 Secret for the corresponding [Client ID](#device-auth-property-clientId).
 
+The provider metadata must support client-secret authentication at the token endpoint. Bifröst prefers `client_secret_basic`, falls back to `client_secret_post` when explicitly advertised, and uses the OpenID Connect default `client_secret_basic` when `token_endpoint_auth_methods_supported` is omitted. Providers that advertise neither method are rejected.
+
+Redirects from the device-authorization and token endpoints are followed only when the destination has the same scheme and host as the configured endpoint. Cross-origin redirects are returned without being followed so that neither an Authorization header nor a `client_secret_post` request body can be forwarded to another origin.
+
 <<property("scopes", array_ref("string"), template_context="../context/core.md", id_prefix="device-auth-", heading=4, default=["openid","profile","email"])>>
 Scopes to request the token from the identity provider for.
 
