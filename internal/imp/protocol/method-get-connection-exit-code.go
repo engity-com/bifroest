@@ -103,6 +103,7 @@ func (this *imp) handleMethodGetExecutionExitCode(ctx context.Context, header *H
 	}
 	var executionId execution.Id
 	inFlight := false
+	acknowledged := false
 	var response methodGetConnectionExitCodeResponse
 	err := handleFromServerSide(ctx, header, conn, func(req *methodGetExecutionExitCodeRequest) methodGetConnectionExitCodeResponse {
 		executionId = req.executionId
@@ -112,7 +113,12 @@ func (this *imp) handleMethodGetExecutionExitCode(ctx context.Context, header *H
 		return response
 	})
 	if inFlight {
-		defer this.endExecutionResultDelivery(executionId)
+		path := filepath.Join(this.ExitCodeByConnectionIdPath, execution.StateDirectoryName, executionId.String())
+		defer func() {
+			if removeErr := this.endExecutionResultDelivery(executionId, acknowledged, path); removeErr != nil && !goos.IsNotExist(removeErr) {
+				logger.WithError(removeErr).With("path", path).Warn("cannot remove delivered execution result")
+			}
+		}()
 	}
 	if err != nil || !response.found || response.error != nil {
 		return err
@@ -120,45 +126,39 @@ func (this *imp) handleMethodGetExecutionExitCode(ctx context.Context, header *H
 	if err := conn.SetReadDeadline(time.Now().Add(executionResultAckTimeout)); err != nil {
 		return fail(err)
 	}
-	acknowledged, err := conn.DecodeBool()
+	acknowledged, err = conn.DecodeBool()
 	if err != nil {
 		return fail(err)
 	}
-	if acknowledged {
-		path := filepath.Join(this.ExitCodeByConnectionIdPath, execution.StateDirectoryName, executionId.String())
-		if removeErr := this.removeAcknowledgedExecutionResult(executionId, path); removeErr != nil && !goos.IsNotExist(removeErr) {
-			logger.WithError(removeErr).With("path", path).Warn("cannot remove delivered execution result")
-		}
-	}
 	return nil
-}
-
-func (this *imp) removeAcknowledgedExecutionResult(executionId execution.Id, path string) error {
-	this.executionResultCleanupMutex.Lock()
-	defer this.executionResultCleanupMutex.Unlock()
-	if this.executionResultsInFlight[executionId] > 1 {
-		return nil
-	}
-	return goos.Remove(path)
 }
 
 func (this *imp) beginExecutionResultDelivery(executionId execution.Id) {
 	this.executionResultCleanupMutex.Lock()
 	defer this.executionResultCleanupMutex.Unlock()
-	if this.executionResultsInFlight == nil {
-		this.executionResultsInFlight = make(map[connection.Id]int)
+	if this.executionResultDeliveries == nil {
+		this.executionResultDeliveries = make(map[connection.Id]executionResultDeliveryState)
 	}
-	this.executionResultsInFlight[executionId]++
+	state := this.executionResultDeliveries[executionId]
+	state.inFlight++
+	this.executionResultDeliveries[executionId] = state
 }
 
-func (this *imp) endExecutionResultDelivery(executionId execution.Id) {
+func (this *imp) endExecutionResultDelivery(executionId execution.Id, acknowledged bool, path string) error {
 	this.executionResultCleanupMutex.Lock()
 	defer this.executionResultCleanupMutex.Unlock()
-	if count := this.executionResultsInFlight[executionId]; count > 1 {
-		this.executionResultsInFlight[executionId] = count - 1
-	} else {
-		delete(this.executionResultsInFlight, executionId)
+	state := this.executionResultDeliveries[executionId]
+	state.acknowledged = state.acknowledged || acknowledged
+	state.inFlight--
+	if state.inFlight > 0 {
+		this.executionResultDeliveries[executionId] = state
+		return nil
 	}
+	delete(this.executionResultDeliveries, executionId)
+	if state.acknowledged {
+		return goos.Remove(path)
+	}
+	return nil
 }
 
 func (this *imp) getExecutionExitCode(executionId execution.Id) methodGetConnectionExitCodeResponse {
@@ -213,7 +213,7 @@ func (this *imp) cleanupStaleExecutionResults(directory string, except connectio
 func (this *imp) removeStaleExecutionResult(executionId connection.Id, path string) {
 	this.executionResultCleanupMutex.Lock()
 	defer this.executionResultCleanupMutex.Unlock()
-	if this.executionResultsInFlight[executionId] == 0 {
+	if this.executionResultDeliveries[executionId].inFlight == 0 {
 		_ = goos.Remove(path)
 	}
 }

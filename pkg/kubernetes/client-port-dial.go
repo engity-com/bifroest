@@ -66,7 +66,7 @@ func (this *client) dial(ctx context.Context, restClient rest.Interface, gvk sch
 		return fail(err)
 	}
 
-	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, "POST", req.URL())
+	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: contextRoundTripper{ctx: ctx, delegate: transport}}, "POST", req.URL())
 
 	success := false
 	rawConn, _, err := dialer.Dial(portforward.PortForwardProtocolV1Name)
@@ -124,6 +124,15 @@ func (this *client) dial(ctx context.Context, restClient rest.Interface, gvk sch
 
 	success = true
 	return result, nil
+}
+
+type contextRoundTripper struct {
+	ctx      context.Context
+	delegate http.RoundTripper
+}
+
+func (this contextRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return this.delegate.RoundTrip(req.WithContext(this.ctx))
 }
 
 type httpstreamConn struct {

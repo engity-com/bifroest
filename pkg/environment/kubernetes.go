@@ -51,6 +51,8 @@ type kubernetes struct {
 	owners atomic.Int32
 }
 
+const kubernetesImpReadinessTimeout = 10 * time.Second
+
 func (this *kubernetes) SessionId() session.Id {
 	return this.sessionId
 }
@@ -93,24 +95,48 @@ func (this *KubernetesRepository) new(ctx context.Context, pod *v1.Pod, logger l
 		return failf("cannot create new connection ID: %w", err)
 	}
 
-	for try := 1; try <= 200; try++ {
-		if err := ctx.Err(); err != nil {
-			return fail(err)
-		}
+	result.environ, err = waitForKubernetesImpEnvironment(ctx, logger, kubernetesImpReadinessTimeout, 200, 50*time.Millisecond, func(ctx context.Context) (sys.EnvVars, error) {
+		return result.impSession.GetEnvironment(ctx, connId)
+	})
+	if err != nil {
+		return failf("cannot get environment of created pod: %w", err)
+	}
 
-		if environ, err := result.impSession.GetEnvironment(ctx, connId); err == nil {
-			result.environ = environ
-			break
-		} else if sys.IsClosedError(err) ||
-			errors.Is(err, io.ErrUnexpectedEOF) ||
-			errors.Is(err, bkube.ErrEndpointNotFound) ||
-			errors.Is(err, spdystream.ErrWriteClosedStream) ||
-			errors.Is(err, spdystream.ErrReset) ||
-			errors.Is(err, spdystream.ErrTimeout) ||
-			errors.Is(err, spdystream.ErrInvalidStreamId) {
-			// try waiting...
-		} else {
-			return failf("cannot get environment of created pod: %w", err)
+	result.owners.Add(1)
+
+	return result, nil
+}
+
+func waitForKubernetesImpEnvironment(ctx context.Context, logger log.Logger, timeout time.Duration, maxAttempts int, retryDelay time.Duration, getEnvironment func(context.Context) (sys.EnvVars, error)) (sys.EnvVars, error) {
+	readinessCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	timeoutError := func(lastErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return errors.System.Newf("container's imp did not become ready within %s (last error: %v): %w", timeout, lastErr, context.DeadlineExceeded)
+	}
+	var lastErr error
+	for try := 1; try <= maxAttempts; try++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err := readinessCtx.Err(); err != nil {
+			return nil, timeoutError(lastErr)
+		}
+		environ, err := getEnvironment(readinessCtx)
+		if err == nil {
+			return environ, nil
+		}
+		lastErr = err
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err := readinessCtx.Err(); err != nil {
+			return nil, timeoutError(lastErr)
+		}
+		if !isKubernetesImpNotReadyError(err) {
+			return nil, err
 		}
 		l := logger.With("try", try)
 		if try <= 2 {
@@ -118,15 +144,23 @@ func (this *KubernetesRepository) new(ctx context.Context, pod *v1.Pod, logger l
 		} else if try%30 == 0 {
 			l.Info("still waiting for container's imp getting ready...")
 		}
-
-		if err := common.Sleep(ctx, 50*time.Millisecond); err != nil {
-			return fail(err)
+		if try < maxAttempts {
+			if err := common.Sleep(readinessCtx, retryDelay); err != nil {
+				return nil, timeoutError(lastErr)
+			}
 		}
 	}
+	return nil, errors.System.Newf("container's imp did not become ready after %d attempts: %w", maxAttempts, lastErr)
+}
 
-	result.owners.Add(1)
-
-	return result, nil
+func isKubernetesImpNotReadyError(err error) bool {
+	return sys.IsClosedError(err) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, bkube.ErrEndpointNotFound) ||
+		errors.Is(err, spdystream.ErrWriteClosedStream) ||
+		errors.Is(err, spdystream.ErrReset) ||
+		errors.Is(err, spdystream.ErrTimeout) ||
+		errors.Is(err, spdystream.ErrInvalidStreamId)
 }
 
 func (this *kubernetes) Dispose(ctx context.Context) (_ bool, rErr error) {

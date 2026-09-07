@@ -28,7 +28,7 @@ Bifröst is currently available for [Linux](#linux) and [Windows](#windows).
 
 #### Generic {: #linux-generic}
 
-The generic Linux distribution of Bifröst contains features that run on every Linux distribution, regardless of Ubuntu, Alpine, RedHat, ... It does not even have any requirements on which other shared libraries need to be installed. On the other hand, it lacks some features of the [extended version](#linux-extended).
+The generic Linux distribution of Bifröst requires kernel support for `PR_SET_CHILD_SUBREAPER`, which is available since Linux 3.4. The effective minimum kernel can be higher for newer architectures. The binary does not require other shared libraries to be installed, regardless of whether the distribution is Ubuntu, Alpine, RedHat, or another variant. On the other hand, it lacks some features of the [extended version](#linux-extended).
 
 #### Extended {: #linux-extended}
 

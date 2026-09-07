@@ -106,6 +106,35 @@ func TestGetExecutionExitCodeRemovesDeliveredResult(t *testing.T) {
 	require.NoFileExists(t, path)
 }
 
+func TestAcknowledgedExecutionResultIsRemovedAfterConcurrentDeliveriesEnd(t *testing.T) {
+	directory := t.TempDir()
+	executionId := connection.MustNewId()
+	path := filepath.Join(directory, executionId.String())
+	require.NoError(t, os.WriteFile(path, []byte("42"), 0600))
+	instance := &imp{}
+
+	instance.beginExecutionResultDelivery(executionId)
+	instance.beginExecutionResultDelivery(executionId)
+	require.NoError(t, instance.endExecutionResultDelivery(executionId, true, path))
+	require.FileExists(t, path)
+	require.NoError(t, instance.endExecutionResultDelivery(executionId, false, path))
+	require.NoFileExists(t, path)
+}
+
+func TestUnacknowledgedConcurrentExecutionResultIsRetained(t *testing.T) {
+	directory := t.TempDir()
+	executionId := connection.MustNewId()
+	path := filepath.Join(directory, executionId.String())
+	require.NoError(t, os.WriteFile(path, []byte("42"), 0600))
+	instance := &imp{}
+
+	instance.beginExecutionResultDelivery(executionId)
+	instance.beginExecutionResultDelivery(executionId)
+	require.NoError(t, instance.endExecutionResultDelivery(executionId, false, path))
+	require.NoError(t, instance.endExecutionResultDelivery(executionId, false, path))
+	require.FileExists(t, path)
+}
+
 func TestGetConnectionExitCodeKeepsLegacyWireBehavior(t *testing.T) {
 	directory := t.TempDir()
 	connectionId := connection.MustNewId()

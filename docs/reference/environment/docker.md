@@ -211,7 +211,7 @@ This is useful to clean up old containers which are leftovers after you have cha
 
 Docker containers created by the current version carry the label `org.engity.bifroest/execution-lifecycle=execution-id-v1`. Bifröst uses a unique execution ID to route signals and exit statuses to the correct command and supervises the command's process tree.
 
-On Linux, execution-scoped signaling requires `pidfd_open` and `pidfd_send_signal` support. The container's seccomp policy must allow both system calls; Bifröst rejects the signal request rather than falling back to an unsafe numeric PID when they are unavailable.
+On Linux, execution-scoped signaling requires Linux kernel 5.3 or later for `pidfd_open` and `pidfd_send_signal` support. The container's seccomp policy must allow both system calls; Bifröst rejects the signal request rather than falling back to an unsafe numeric PID when they are unavailable.
 
 Containers from versions without this label cannot be reused by the current master. A normal login rejects such a container without deleting it. Housekeeping may remove it when disposing an expired session according to the configured cleanup policy. Back up container-local data and anonymous volumes before manually or automatically removing old environments.
 

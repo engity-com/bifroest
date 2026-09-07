@@ -49,7 +49,7 @@ func TestKillWindowsUsesSignalExitCode(t *testing.T) {
 				pid:               cmd.Process.Pid,
 				expectedCreatedAt: &createdAt,
 				expectedEnv:       killWindowsHelper + "=" + readyFile,
-			}, signal))
+			}, signal, make(signaledProcessGroups)))
 
 			err = cmd.Wait()
 			var exitErr *exec.ExitError

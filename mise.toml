@@ -25,7 +25,10 @@ run = [
 
 [tasks."test:go"]
 depends = ["build:var"]
-run = 'go test -v -covermode atomic -coverprofile=var/profile.cov ./...'
+run = [
+    'go test -v -covermode atomic -coverprofile=var/profile.cov ./...',
+    'go test -v -tags=local_build,local_kind ./pkg/alternatives'
+]
 
 [tasks."test:e2e:local"]
 depends = ["build:var"]

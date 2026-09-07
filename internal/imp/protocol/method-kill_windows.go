@@ -11,7 +11,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-func (this *imp) kill(ctx context.Context, target processTarget, signal sys.Signal) error {
+func (this *imp) kill(ctx context.Context, target processTarget, signal sys.Signal, _ signaledProcessGroups) error {
 	switch signal {
 	case sys.SIGKILL, sys.SIGTERM:
 	default:

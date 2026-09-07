@@ -170,13 +170,6 @@ func doExec(opts *execOpts) error {
 		_ = supervisor.Cleanup()
 		return fail(err)
 	}
-	if err := supervisor.Attach(&cmd); err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		signal.Stop(sigs)
-		_ = supervisor.Cleanup()
-		return fail(err)
-	}
 	if !opts.executionId.IsZero() && !legacyState {
 		if err := registerStatePid(cmd.Process.Pid); err != nil {
 			_ = cmd.Process.Kill()
@@ -185,6 +178,17 @@ func doExec(opts *execOpts) error {
 			_ = supervisor.Cleanup()
 			return fail(err)
 		}
+	}
+	if err := supervisor.Attach(&cmd); err != nil {
+		_ = cmd.Process.Kill()
+		waitErr := cmd.Wait()
+		signal.Stop(sigs)
+		_ = supervisor.Cleanup()
+		var exitErr *exec.ExitError
+		if errors.As(waitErr, &exitErr) {
+			return exit(execExitCode(exitErr))
+		}
+		return fail(err)
 	}
 	signalDone := make(chan struct{})
 	signalHandlerDone := make(chan struct{})

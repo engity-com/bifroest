@@ -94,6 +94,8 @@ type processTarget struct {
 	groupExpectedEnv  string
 }
 
+type signaledProcessGroups map[int]struct{}
+
 func (this methodKillResponse) EncodeMsgpack(enc *msgpack.Encoder) error {
 	return this.EncodeMsgPack(enc)
 }
@@ -186,11 +188,16 @@ func (this *imp) killProcesses(ctx context.Context, header *Header, logger log.L
 				if env == expectedEnv {
 					pid := int(candidate.Pid)
 					if _, exists := targetPids[pid]; !exists {
+						createdAt, err := candidate.CreateTime()
+						if err != nil {
+							break
+						}
 						targets = append(targets, processTarget{
-							pid:              pid,
-							processGroup:     processGroup,
-							expectedEnv:      expectedEnv,
-							groupExpectedEnv: expectedEnv,
+							pid:               pid,
+							processGroup:      processGroup,
+							expectedCreatedAt: &createdAt,
+							expectedEnv:       expectedEnv,
+							groupExpectedEnv:  expectedEnv,
 						})
 						targetPids[pid] = struct{}{}
 					}
@@ -205,8 +212,9 @@ func (this *imp) killProcesses(ctx context.Context, header *Header, logger log.L
 	logger.With("targets", targets).Debug("sending signal to execution processes")
 
 	signaled := false
+	signaledGroups := make(signaledProcessGroups)
 	for _, target := range targets {
-		if err := this.kill(ctx, target, signal); err == nil {
+		if err := this.kill(ctx, target, signal, signaledGroups); err == nil {
 			signaled = true
 		} else if !errors.Is(err, ErrNoSuchProcess) {
 			return fail(target.pid, err)

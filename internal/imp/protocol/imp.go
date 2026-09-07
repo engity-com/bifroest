@@ -90,7 +90,12 @@ type imp struct {
 
 	executionResultCleanupMutex sync.Mutex
 	nextExecutionResultCleanup  time.Time
-	executionResultsInFlight    map[connection.Id]int
+	executionResultDeliveries   map[connection.Id]executionResultDeliveryState
+}
+
+type executionResultDeliveryState struct {
+	inFlight     int
+	acknowledged bool
 }
 
 func (this *imp) serve(ctx context.Context, ln gonet.Listener) error {

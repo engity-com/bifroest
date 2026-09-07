@@ -12,10 +12,42 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/engity-com/bifroest/pkg/connection"
+	"github.com/engity-com/bifroest/pkg/execution"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 const execSignalHelper = "BIFROEST_EXEC_SIGNAL_HELPER"
+
+func TestDoExecStoresResultForImmediatelyExitingProcess(t *testing.T) {
+	directory := t.TempDir()
+	command := goos.Getenv("ComSpec")
+	require.NotEmpty(t, command)
+
+	for range 10 {
+		executionId := connection.MustNewId()
+		opts := execOpts{
+			storeExitCodeForConnectionId: true,
+			exitCodeByConnectionIdPath:   directory,
+			executionId:                  executionId,
+			workingDirectory:             directory,
+			environment:                  map[string]string{},
+			path:                         command,
+			argv:                         []string{command, "/D", "/C", "exit 37"},
+		}
+
+		require.NoError(t, doExec(&opts))
+		stateDirectory := filepath.Join(directory, execution.StateDirectoryName)
+		content, err := goos.ReadFile(executionStatePath(stateDirectory, executionId, ""))
+		require.NoError(t, err)
+		require.Equal(t, "37", string(content))
+		require.NoFileExists(t, executionStatePath(stateDirectory, executionId, ".pid"))
+	}
+
+	matches, err := filepath.Glob(filepath.Join(directory, execution.StateDirectoryName, ".bifroest-execution-*"))
+	require.NoError(t, err)
+	require.Empty(t, matches)
+}
 
 func TestSignalExecCmdTerminatesProcessWithFailure(t *testing.T) {
 	if goos.Getenv(execSignalHelper) != "" {

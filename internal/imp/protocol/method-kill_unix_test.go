@@ -46,7 +46,7 @@ func TestKillProcessGroupReachesChild(t *testing.T) {
 		return err == nil
 	}, 2*time.Second, 10*time.Millisecond)
 
-	require.NoError(t, (&imp{}).kill(context.Background(), processTarget{pid: cmd.Process.Pid, processGroup: true}, sys.SIGKILL))
+	require.NoError(t, (&imp{}).kill(context.Background(), processTarget{pid: cmd.Process.Pid, processGroup: true}, sys.SIGKILL, make(signaledProcessGroups)))
 	_ = cmd.Wait()
 	require.Eventually(t, func() bool {
 		err := syscall.Kill(childPid, 0)
@@ -94,7 +94,7 @@ func TestKillProcessGroupUsingNonLeaderReachesSiblings(t *testing.T) {
 		processGroup:     true,
 		expectedEnv:      expectedEnv,
 		groupExpectedEnv: expectedEnv,
-	}, sys.SIGKILL))
+	}, sys.SIGKILL, make(signaledProcessGroups)))
 	_ = cmd.Wait()
 	require.Eventually(t, func() bool {
 		return processIsGoneOrZombie(targetPid) && processIsGoneOrZombie(siblingPid)
@@ -128,7 +128,7 @@ func TestKillProcessGroupRejectsUnverifiedLeader(t *testing.T) {
 		processGroup:     true,
 		expectedEnv:      expectedEnv,
 		groupExpectedEnv: expectedEnv,
-	}, sys.SIGKILL)
+	}, sys.SIGKILL, make(signaledProcessGroups))
 	require.ErrorIs(t, err, ErrNoSuchProcess)
 	require.NoError(t, syscall.Kill(cmd.Process.Pid, 0))
 	require.NoError(t, syscall.Kill(targetPid, 0))
@@ -164,7 +164,7 @@ func TestRegisteredProcessRejectsReusedPid(t *testing.T) {
 	require.ErrorIs(t, (&imp{}).kill(context.Background(), processTarget{
 		pid:               pid,
 		expectedCreatedAt: ptr(createdAt + 1),
-	}, sys.Signal(0)), ErrNoSuchProcess)
+	}, sys.Signal(0), make(signaledProcessGroups)), ErrNoSuchProcess)
 }
 
 func ptr[T any](value T) *T { return &value }

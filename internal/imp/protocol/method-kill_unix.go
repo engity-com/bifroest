@@ -10,7 +10,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-func (this *imp) kill(_ context.Context, target processTarget, signal sys.Signal) error {
+func (this *imp) kill(_ context.Context, target processTarget, signal sys.Signal, _ signaledProcessGroups) error {
 	if !target.matchesIdentity() {
 		return ErrNoSuchProcess
 	}
