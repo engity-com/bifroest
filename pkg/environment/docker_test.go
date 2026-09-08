@@ -83,3 +83,13 @@ func TestDockerResolveImpBindingUsesConfiguredPublishHost(t *testing.T) {
 	require.Equal(t, "127.0.0.1", actual.Host.String())
 	require.Equal(t, uint16(44807), actual.Port)
 }
+
+func TestDockerImpPortBindingLetsDaemonChooseHostInterfaceAndPort(t *testing.T) {
+	bindings := dockerImpPortBindings()
+	port := bindings["8683/tcp"]
+
+	require.Len(t, bindings, 1)
+	require.Len(t, port, 1)
+	require.Empty(t, port[0].HostIP)
+	require.Empty(t, port[0].HostPort)
+}

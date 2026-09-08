@@ -259,6 +259,23 @@ func TestKillProcessesDoesNotWaitAfterExecutionResultExists(t *testing.T) {
 	require.Less(t, time.Since(started), 500*time.Millisecond)
 }
 
+func TestKillProcessesDoesNotWaitAfterExecutionResultWasAcknowledged(t *testing.T) {
+	stateId := connection.MustNewId()
+	directory := t.TempDir()
+	instance := &imp{}
+	instance.executionResultCleanupMutex.Lock()
+	instance.rememberExecutionCompletionLocked(stateId, time.Now())
+	instance.executionResultCleanupMutex.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	started := time.Now()
+	response := instance.killProcesses(ctx, &Header{ConnectionId: connection.MustNewId()}, log.GetLogger("test"), directory, stateId, execution.EnvName+"="+stateId.String(), 0, sys.SIGKILL, false, true)
+
+	require.ErrorIs(t, response.error, ErrNoSuchProcess)
+	require.Less(t, time.Since(started), 500*time.Millisecond)
+}
+
 func TestKillProcessesHonorsContextWhileRegistrationIsPending(t *testing.T) {
 	stateId := connection.MustNewId()
 	directory := t.TempDir()

@@ -55,7 +55,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		return fail(err)
 	}
 
-	ev.Set(session.EnvName, sess.Id().String())
+	setReservedEnvironment(ev, localTargetOs, session.EnvName, sess.Id().String())
 
 	switch t.TaskType() {
 	case TaskTypeShell:

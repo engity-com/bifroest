@@ -3,7 +3,9 @@
 package main
 
 import (
+	goos "os"
 	"os/exec"
+	"syscall"
 
 	"github.com/alecthomas/kingpin/v2"
 
@@ -12,6 +14,10 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
+func execSignalsToForward() []goos.Signal {
+	return []goos.Signal{syscall.SIGINT, syscall.SIGTERM}
+}
+
 type execOpts struct {
 	storeExitCodeForConnectionId bool
 	exitCodeByConnectionIdPath   string
@@ -19,6 +25,7 @@ type execOpts struct {
 	executionId                  execution.Id
 	workingDirectory             string
 	environment                  map[string]string
+	encodedEnvironment           string
 	path                         string
 	argv                         []string
 }

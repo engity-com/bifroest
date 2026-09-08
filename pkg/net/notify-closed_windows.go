@@ -15,8 +15,8 @@ import (
 var (
 	modws232           = windows.NewLazySystemDLL("ws2_32.dll")
 	procWSAEventSelect = modws232.NewProc("WSAEventSelect")
-	procWSAResetEvent  = modws232.NewProc("WSAResetEvent")
 	procWSACreateEvent = modws232.NewProc("WSACreateEvent")
+	procWSACloseEvent  = modws232.NewProc("WSACloseEvent")
 )
 
 const (
@@ -39,7 +39,8 @@ func notifyClosed(rc syscall.RawConn, onClosed func(), onUnexpectedEnd func(erro
 			return
 		}
 		defer func() {
-			_ = wsaResetEvent(eventHandle)
+			_, _, _ = procWSAEventSelect.Call(fd, 0, 0)
+			_ = wsaCloseEvent(eventHandle)
 		}()
 
 		_, err = windows.WaitForSingleObject(eventHandle, windows.INFINITE)
@@ -73,8 +74,8 @@ func wsaCreateEvent() (windows.Handle, error) {
 	return 0, err
 }
 
-func wsaResetEvent(event windows.Handle) error {
-	if ret, _, err := procWSAResetEvent.Call(uintptr(event)); ret != 0 {
+func wsaCloseEvent(event windows.Handle) error {
+	if ret, _, err := procWSACloseEvent.Call(uintptr(event)); ret == 0 {
 		return err
 	}
 	return nil
@@ -90,5 +91,6 @@ func wsaEventSelect(fd windows.Handle, kind uint32) (windows.Handle, error) {
 	if sce, ok := err.(syscall.Errno); ok && sce == 0 {
 		return event, nil
 	}
+	_ = wsaCloseEvent(event)
 	return 0, err
 }

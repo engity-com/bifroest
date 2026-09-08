@@ -157,7 +157,7 @@ func (this *imp) killProcesses(ctx context.Context, header *Header, logger log.L
 		pidFn := filepath.Join(stateDirectory, stateId.String()+".pid")
 		resultFn := filepath.Join(stateDirectory, stateId.String())
 		plainPid, err := os.ReadFile(pidFn)
-		if waitForRegistration && (err == nil && isRegisteredStartingProcess(plainPid) || errors.Is(err, os.ErrNotExist) && !processWithEnvironmentExists(ctx, expectedEnv)) {
+		if waitForRegistration && !this.executionCompleted(stateId) && (err == nil && isRegisteredStartingProcess(plainPid) || errors.Is(err, os.ErrNotExist) && !processWithEnvironmentExists(ctx, expectedEnv)) {
 			plainPid, err = waitForRegisteredProcess(ctx, pidFn, resultFn, processRegistrationWaitTimeout)
 		}
 		if err != nil && !errors.Is(err, os.ErrNotExist) {

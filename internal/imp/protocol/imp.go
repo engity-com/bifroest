@@ -17,6 +17,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
+	bnet "github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
@@ -91,6 +92,7 @@ type imp struct {
 	executionResultCleanupMutex sync.Mutex
 	nextExecutionResultCleanup  time.Time
 	executionResultDeliveries   map[connection.Id]executionResultDeliveryState
+	completedExecutions         map[connection.Id]time.Time
 }
 
 type executionResultDeliveryState struct {
@@ -127,6 +129,11 @@ func (this *imp) serveConn(ctx context.Context, plainConn gonet.Conn) (rErr erro
 	}
 	conn := codec.NewMsgPackConn(plainConn)
 	defer common.KeepCloseError(&rErr, conn)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go bnet.NotifyClosed(plainConn, cancel, func(err error) {
+		this.logger().WithError(err).Warn("problems while watching for connection being closed; this could delay handler cancellation")
+	})
 
 	var header Header
 	if err := header.DecodeMsgPack(conn); err != nil {

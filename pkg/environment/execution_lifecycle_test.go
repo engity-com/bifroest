@@ -14,6 +14,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/execution"
 	"github.com/engity-com/bifroest/pkg/imp"
+	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -46,6 +47,28 @@ func TestSignalProcessFromSshSendsKnownSignal(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, sys.SIGTERM, actual)
+}
+
+func TestSetReservedEnvironmentCanonicalizesWindowsAliases(t *testing.T) {
+	environment := sys.EnvVars{
+		"bifroest_connection_id": "attacker",
+		"Bifroest_Execution_Id":  "attacker",
+		session.EnvName:          "attacker",
+		"bifroest_session_id":    "also-attacker",
+		"UNCHANGED":              "value",
+	}
+	setReservedEnvironment(&environment, sys.OsWindows,
+		connection.EnvName, "trusted-connection",
+		execution.EnvName, "trusted-execution",
+		session.EnvName, "trusted-session",
+	)
+
+	require.Equal(t, sys.EnvVars{
+		connection.EnvName: "trusted-connection",
+		execution.EnvName:  "trusted-execution",
+		session.EnvName:    "trusted-session",
+		"UNCHANGED":        "value",
+	}, environment)
 }
 
 func TestAttachDockerExecWithTimeoutBoundsApiSetup(t *testing.T) {
@@ -135,4 +158,36 @@ func TestRetryExecutionSignalStopsOnOtherErrors(t *testing.T) {
 	want := errors.New("signal failed")
 	err := retryExecutionSignal(context.Background(), func(context.Context) error { return want })
 	require.ErrorIs(t, err, want)
+}
+
+func TestCleanupKubernetesExecutionForcesAfterGracefulFailure(t *testing.T) {
+	var signals []sys.Signal
+	gracefulErr, forceErr := cleanupKubernetesExecution(context.Background(), 20*time.Millisecond, time.Millisecond, 20*time.Millisecond, sys.SIGINT, func(_ context.Context, signal sys.Signal) error {
+		signals = append(signals, signal)
+		if signal == sys.SIGINT {
+			return imp.ErrNoSuchProcess
+		}
+		return nil
+	})
+
+	require.ErrorIs(t, gracefulErr, context.DeadlineExceeded)
+	require.NoError(t, forceErr)
+	require.NotEmpty(t, signals)
+	require.Equal(t, sys.SIGKILL, signals[len(signals)-1])
+}
+
+func TestCleanupKubernetesExecutionForcesAfterPermanentGracefulError(t *testing.T) {
+	want := errors.New("graceful signal failed")
+	var signals []sys.Signal
+	gracefulErr, forceErr := cleanupKubernetesExecution(context.Background(), time.Second, time.Millisecond, time.Second, sys.SIGTERM, func(_ context.Context, signal sys.Signal) error {
+		signals = append(signals, signal)
+		if signal == sys.SIGTERM {
+			return want
+		}
+		return nil
+	})
+
+	require.ErrorIs(t, gracefulErr, want)
+	require.NoError(t, forceErr)
+	require.Equal(t, []sys.Signal{sys.SIGTERM, sys.SIGKILL}, signals)
 }

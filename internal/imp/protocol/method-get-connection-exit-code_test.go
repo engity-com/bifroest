@@ -119,6 +119,7 @@ func TestAcknowledgedExecutionResultIsRemovedAfterConcurrentDeliveriesEnd(t *tes
 	require.FileExists(t, path)
 	require.NoError(t, instance.endExecutionResultDelivery(executionId, false, path))
 	require.NoFileExists(t, path)
+	require.True(t, instance.executionCompleted(executionId))
 }
 
 func TestUnacknowledgedConcurrentExecutionResultIsRetained(t *testing.T) {
@@ -133,6 +134,7 @@ func TestUnacknowledgedConcurrentExecutionResultIsRetained(t *testing.T) {
 	require.NoError(t, instance.endExecutionResultDelivery(executionId, false, path))
 	require.NoError(t, instance.endExecutionResultDelivery(executionId, false, path))
 	require.FileExists(t, path)
+	require.False(t, instance.executionCompleted(executionId))
 }
 
 func TestGetConnectionExitCodeKeepsLegacyWireBehavior(t *testing.T) {

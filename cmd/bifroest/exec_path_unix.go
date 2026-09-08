@@ -10,6 +10,19 @@ import (
 	"strings"
 )
 
+func ensureExecPathEnvironment(environment map[string]string) {
+	if _, exists := environment["PATH"]; exists {
+		return
+	}
+	if path, exists := goos.LookupEnv("PATH"); exists {
+		environment["PATH"] = path
+	}
+}
+
+func setExecEnvironment(environment map[string]string, key, value string) {
+	environment[key] = value
+}
+
 func resolveExecPath(file, workingDirectory string, environment map[string]string) (string, error) {
 	if strings.ContainsRune(file, filepath.Separator) {
 		return exec.LookPath(resolveTargetPath(file, workingDirectory))

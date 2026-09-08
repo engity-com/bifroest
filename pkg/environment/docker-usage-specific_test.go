@@ -1,18 +1,35 @@
 package environment
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/engity-com/bifroest/pkg/execution"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-func TestDockerExecWrapperDoesNotReceiveTargetEnvironment(t *testing.T) {
+func TestDockerExecWrapperReceivesTargetEnvironmentOnlyAsEncodedPayload(t *testing.T) {
 	environment := sys.EnvVars{"LD_PRELOAD": "/tmp/attacker.so", "USER_VALUE": "secret"}
-	require.ElementsMatch(t, dockerWrapperEnvironment, dockerExecEnvironment(true, sys.OsLinux, environment))
-	require.Nil(t, dockerExecEnvironment(true, sys.OsWindows, environment))
-	require.ElementsMatch(t, []string{"LD_PRELOAD=/tmp/attacker.so", "USER_VALUE=secret"}, dockerExecEnvironment(false, sys.OsLinux, environment))
+	actual, err := dockerExecEnvironment(true, sys.OsLinux, environment)
+	require.NoError(t, err)
+	require.Len(t, actual, len(dockerWrapperEnvironment)+1)
+	require.ElementsMatch(t, dockerWrapperEnvironment, actual[:len(actual)-1])
+	encoded := strings.TrimPrefix(actual[len(actual)-1], execution.TargetEnvironmentEnvName+"=")
+	require.NotEqual(t, actual[len(actual)-1], encoded)
+	decoded, err := execution.DecodeTargetEnvironment(encoded)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string(environment), decoded)
+
+	actual, err = dockerExecEnvironment(true, sys.OsWindows, environment)
+	require.NoError(t, err)
+	require.Len(t, actual, 1)
+	require.NotContains(t, actual[0], "secret")
+
+	actual, err = dockerExecEnvironment(false, sys.OsLinux, environment)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"LD_PRELOAD=/tmp/attacker.so", "USER_VALUE=secret"}, actual)
 }
 
 func TestIsolatedDockerContainerEnvironmentClearsImageValues(t *testing.T) {

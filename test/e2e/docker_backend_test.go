@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	gossh "golang.org/x/crypto/ssh"
 )
 
 func TestOpenSSHDockerEnvironment(t *testing.T) {
@@ -267,6 +269,48 @@ func TestOpenSSHDockerEnvironment(t *testing.T) {
 		}); err != nil {
 			info := f.runtime(3*time.Second, "exec", f.containerID, "/usr/local/bin/e2e-helper", "process-info", pidFile)
 			t.Fatalf("%v\nprocess info:\n%s\n%s", err, info.stdout, info.stderr)
+		}
+	})
+
+	t.Run("target environment is absent from wrapper argv", func(t *testing.T) {
+		const secretName = "BIFROEST_E2E_ARGV_SECRET"
+		const secretValue = "target-environment-must-not-be-in-wrapper-argv"
+		pidFile := "/tmp/bifroest-e2e-argv.pid"
+		client := f.newSSHClient(t, 20*time.Second)
+		defer client.Close()
+		session, err := client.NewSession()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close()
+		if err := session.Setenv(secretName, secretValue); err != nil {
+			t.Fatalf("set target environment: %v", err)
+		}
+		if err := session.Start("/usr/local/bin/e2e-helper wait-for-stop " + pidFile); err != nil {
+			t.Fatalf("start remote process: %v", err)
+		}
+		if err := poll(5*time.Second, func() error {
+			result := f.runtime(3*time.Second, "exec", f.containerID, "/usr/local/bin/e2e-helper", "process-alive", pidFile)
+			if result.err != nil {
+				return fmt.Errorf("remote process is not ready: %w: %s", result.err, result.stderr)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		result := f.runtime(3*time.Second, "exec", f.containerID, "/usr/local/bin/e2e-helper", "process-command-lines")
+		if result.err != nil {
+			t.Fatalf("inspect process command lines: %v\n%s", result.err, result.stderr)
+		}
+		if strings.Contains(result.stdout, secretName) || strings.Contains(result.stdout, secretValue) {
+			t.Fatalf("target environment leaked into execution argv:\n%s", result.stdout)
+		}
+		if err := session.Signal(gossh.Signal("KILL")); err != nil {
+			t.Fatalf("stop remote process: %v", err)
+		}
+		if got := sshExitCode(session.Wait()); got != 137 {
+			t.Fatalf("remote process exit status: got %d, want 137", got)
 		}
 	})
 

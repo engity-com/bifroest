@@ -48,6 +48,42 @@ func TestDoExecUsesOnlyExplicitEnvironmentAndStoresExecutionResult(t *testing.T)
 	require.Empty(t, matches)
 }
 
+func TestExecSignalsToForwardExcludesRuntimeSignals(t *testing.T) {
+	signals := execSignalsToForward()
+
+	require.ElementsMatch(t, []goos.Signal{syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM}, signals)
+	require.NotContains(t, signals, syscall.SIGCHLD)
+	require.NotContains(t, signals, syscall.SIGURG)
+}
+
+func TestDoExecUsesWrapperPathWhenEncodedTargetPathIsMissing(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("PATH", directory)
+	command := filepath.Join(directory, "target-command")
+	require.NoError(t, goos.WriteFile(command, []byte("#!/bin/sh\ntest \"$TARGET_SECRET\" = encoded-value && test \"$OVERRIDE\" = explicit-value && test \"$PATH\" = \""+directory+"\"\n"), 0700))
+	encodedEnvironment, err := execution.EncodeTargetEnvironment(map[string]string{
+		"TARGET_SECRET": "encoded-value",
+		"OVERRIDE":      "encoded-value",
+	})
+	require.NoError(t, err)
+	executionId := connection.MustNewId()
+	opts := execOpts{
+		storeExitCodeForConnectionId: true,
+		exitCodeByConnectionIdPath:   directory,
+		executionId:                  executionId,
+		workingDirectory:             directory,
+		environment:                  map[string]string{"OVERRIDE": "explicit-value"},
+		encodedEnvironment:           encodedEnvironment,
+		path:                         "target-command",
+		argv:                         []string{"target-command"},
+	}
+
+	require.NoError(t, doExec(&opts))
+	content, err := goos.ReadFile(executionStatePath(filepath.Join(directory, execution.StateDirectoryName), executionId, ""))
+	require.NoError(t, err)
+	require.Equal(t, "0", string(content))
+}
+
 func TestDoExecStoresSignalExitCode(t *testing.T) {
 	directory := t.TempDir()
 	executionId := connection.MustNewId()

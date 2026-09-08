@@ -49,3 +49,11 @@ func signalProcessFromSsh(value essh.Signal, send func(sys.Signal) error) error 
 	}
 	return send(signal)
 }
+
+func setReservedEnvironment(environment *sys.EnvVars, targetOs sys.Os, values ...string) {
+	if targetOs == sys.OsWindows {
+		environment.SetCanonical(values...)
+		return
+	}
+	environment.Set(values...)
+}

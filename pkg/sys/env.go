@@ -39,6 +39,21 @@ func (this *EnvVars) Set(kOrV ...string) {
 	}
 }
 
+func (this *EnvVars) SetCanonical(kOrV ...string) {
+	if len(kOrV)%2 != 0 {
+		panic(fmt.Errorf("SetCanonical(..) should be called with an even number of arguments, but got: %d", len(kOrV)))
+	}
+	for i := 0; i < len(kOrV); i += 2 {
+		key := kOrV[i]
+		for existing := range *this {
+			if strings.EqualFold(existing, key) {
+				delete(*this, existing)
+			}
+		}
+		this.set(key, kOrV[i+1])
+	}
+}
+
 func (this *EnvVars) set(k, v string) {
 	if *this == nil {
 		*this = EnvVars{}

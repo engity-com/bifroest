@@ -94,6 +94,21 @@ func TestResolveExecPathUsesTargetPathCaseInsensitively(t *testing.T) {
 	require.Equal(t, executable, actual)
 }
 
+func TestSetExecEnvironmentCanonicalizesCaseAliases(t *testing.T) {
+	environment := map[string]string{
+		"bifroest_connection_id": "attacker",
+		"BiFrOeSt_CoNnEcTiOn_Id": "also-attacker",
+		"UNCHANGED":              "value",
+	}
+
+	setExecEnvironment(environment, connection.EnvName, "trusted")
+
+	require.Equal(t, map[string]string{
+		connection.EnvName: "trusted",
+		"UNCHANGED":        "value",
+	}, environment)
+}
+
 func TestResolveExecPathCanonicalizesDuplicatePathVariables(t *testing.T) {
 	directory := t.TempDir()
 	shadowDirectory := t.TempDir()

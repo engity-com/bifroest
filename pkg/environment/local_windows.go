@@ -19,6 +19,8 @@ import (
 	"github.com/engity-com/bifroest/pkg/template"
 )
 
+const localTargetOs = sys.OsWindows
+
 func (this *local) newAgentNamedPipe() (net.NamedPipe, error) {
 	return net.NewNamedPipe("ssh-agent")
 }

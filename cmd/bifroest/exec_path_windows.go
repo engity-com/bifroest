@@ -11,9 +11,32 @@ import (
 	"strings"
 )
 
+func ensureExecPathEnvironment(environment map[string]string) {
+	if _, exists := environmentValue(environment, "PATH"); !exists {
+		if path, exists := goos.LookupEnv("PATH"); exists {
+			environment["PATH"] = path
+		}
+	}
+	if _, exists := environmentValue(environment, "PATHEXT"); !exists {
+		if pathExt, exists := goos.LookupEnv("PATHEXT"); exists {
+			environment["PATHEXT"] = pathExt
+		}
+	}
+}
+
+func setExecEnvironment(environment map[string]string, key, value string) {
+	for existing := range environment {
+		if strings.EqualFold(existing, key) {
+			delete(environment, existing)
+		}
+	}
+	environment[key] = value
+}
+
 func resolveExecPath(file, workingDirectory string, environment map[string]string) (string, error) {
-	path := environmentValue(environment, "PATH")
-	extensions := executableExtensions(file, environmentValue(environment, "PATHEXT"))
+	path, _ := environmentValue(environment, "PATH")
+	pathExt, _ := environmentValue(environment, "PATHEXT")
+	extensions := executableExtensions(file, pathExt)
 	directories := filepath.SplitList(path)
 	if strings.ContainsAny(file, `:/\\`) {
 		directories = []string{""}
@@ -29,14 +52,14 @@ func resolveExecPath(file, workingDirectory string, environment map[string]strin
 	return "", fmt.Errorf("%s: %w", file, exec.ErrNotFound)
 }
 
-func environmentValue(environment map[string]string, name string) string {
+func environmentValue(environment map[string]string, name string) (string, bool) {
 	if value, ok := environment[name]; ok {
 		for key := range environment {
 			if key != name && strings.EqualFold(key, name) {
 				delete(environment, key)
 			}
 		}
-		return value
+		return value, true
 	}
 	var matches []string
 	for key := range environment {
@@ -45,7 +68,7 @@ func environmentValue(environment map[string]string, name string) string {
 		}
 	}
 	if len(matches) == 0 {
-		return ""
+		return "", false
 	}
 	sort.Strings(matches)
 	value := environment[matches[0]]
@@ -53,7 +76,7 @@ func environmentValue(environment map[string]string, name string) string {
 		delete(environment, key)
 	}
 	environment[name] = value
-	return value
+	return value, true
 }
 
 func executableExtensions(file, pathExt string) []string {

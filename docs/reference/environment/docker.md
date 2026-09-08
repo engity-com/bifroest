@@ -189,10 +189,10 @@ Will be displayed to the user upon connection to its environment.
 <<property("portForwardingAllowed", "bool", template_context="../context/authorization.md", default=True)>>
 If `true`, users are allowed to use SSH's port forwarding mechanism.
 
-<<property("impPublishHost", "string", template_context="../context/authorization.md")>>
-If this property is set, only the IMP port `9687` is published on this host in addition to being exposed on the container network. Other ports declared with the image's `EXPOSE` instruction are not published automatically.
+<<property("impPublishHost", "string")>>
+If this property is set, only the IMP port `8683` is published with a dynamically allocated host port in addition to being exposed on the container network. Other ports declared with the image's `EXPOSE` instruction are not published automatically.
 
-At this address Bifröst will then connect to the IMP process inside the container.
+At this address Bifröst will then connect to the published IMP port. The value is not passed to the Docker daemon as a host-interface binding; the daemon chooses the publish interface according to its own defaults. This property is static and does not support template evaluation.
 
 !!! warning
      To set this property makes only sense as long you have a firewall in place, which prevents external attackers to connect to the host ports, and you have no other choice. Usually Bifröst can connect via the container networks to IMP directly (see [`networks`](#property-networks)).

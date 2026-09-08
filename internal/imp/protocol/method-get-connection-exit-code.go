@@ -24,6 +24,8 @@ const (
 	executionResultCleanupInterval = time.Minute
 	executionResultMaxRetained     = 1024
 	executionResultAckTimeout      = 5 * time.Second
+	executionCompletionRetention   = 5 * time.Minute
+	executionCompletionMaxRetained = 4096
 )
 
 type methodGetExecutionExitCodeRequest struct {
@@ -149,6 +151,9 @@ func (this *imp) endExecutionResultDelivery(executionId execution.Id, acknowledg
 	defer this.executionResultCleanupMutex.Unlock()
 	state := this.executionResultDeliveries[executionId]
 	state.acknowledged = state.acknowledged || acknowledged
+	if acknowledged {
+		this.rememberExecutionCompletionLocked(executionId, time.Now())
+	}
 	state.inFlight--
 	if state.inFlight > 0 {
 		this.executionResultDeliveries[executionId] = state
@@ -159,6 +164,38 @@ func (this *imp) endExecutionResultDelivery(executionId execution.Id, acknowledg
 		return goos.Remove(path)
 	}
 	return nil
+}
+
+func (this *imp) rememberExecutionCompletionLocked(executionId execution.Id, now time.Time) {
+	if this.completedExecutions == nil {
+		this.completedExecutions = make(map[connection.Id]time.Time)
+	}
+	var oldestId connection.Id
+	var oldest time.Time
+	for currentId, completedAt := range this.completedExecutions {
+		if now.Sub(completedAt) > executionCompletionRetention {
+			delete(this.completedExecutions, currentId)
+			continue
+		}
+		if oldest.IsZero() || completedAt.Before(oldest) {
+			oldestId, oldest = currentId, completedAt
+		}
+	}
+	if len(this.completedExecutions) >= executionCompletionMaxRetained {
+		delete(this.completedExecutions, oldestId)
+	}
+	this.completedExecutions[executionId] = now
+}
+
+func (this *imp) executionCompleted(executionId execution.Id) bool {
+	this.executionResultCleanupMutex.Lock()
+	defer this.executionResultCleanupMutex.Unlock()
+	completedAt, ok := this.completedExecutions[executionId]
+	if ok && time.Since(completedAt) <= executionCompletionRetention {
+		return true
+	}
+	delete(this.completedExecutions, executionId)
+	return false
 }
 
 func (this *imp) getExecutionExitCode(executionId execution.Id) methodGetConnectionExitCodeResponse {

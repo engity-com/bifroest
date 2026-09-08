@@ -24,6 +24,7 @@ var _ = registerCommand(func(app *kingpin.Application) {
 	opts := execOpts{
 		workingDirectory:           workingDirectory(),
 		environment:                sys.EnvVars{},
+		encodedEnvironment:         goos.Getenv(execution.TargetEnvironmentEnvName),
 		exitCodeByConnectionIdPath: protocol.DefaultExitCodeByConnectionIdPath,
 	}
 
@@ -104,12 +105,22 @@ func doExec(opts *execOpts) error {
 			Error()
 		return exit(1)
 	}
+	if opts.encodedEnvironment != "" {
+		decoded, err := execution.DecodeTargetEnvironment(opts.encodedEnvironment)
+		if err != nil {
+			return fail(errors.System.Newf("cannot decode target environment: %w", err))
+		}
+		decodedEnvironment := sys.EnvVars(decoded)
+		decodedEnvironment.AddAllOf(opts.environment)
+		opts.environment = decodedEnvironment
+	}
+	ensureExecPathEnvironment(opts.environment)
 
 	if !opts.connectionId.IsZero() {
-		opts.environment[connection.EnvName] = opts.connectionId.String()
+		setExecEnvironment(opts.environment, connection.EnvName, opts.connectionId.String())
 	}
 	if !opts.executionId.IsZero() {
-		opts.environment[execution.EnvName] = opts.executionId.String()
+		setExecEnvironment(opts.environment, execution.EnvName, opts.executionId.String())
 	}
 	var pidFn string
 	registerStatePid := func(pid int) error {
@@ -172,7 +183,7 @@ func doExec(opts *execOpts) error {
 	}
 
 	sigs := make(chan goos.Signal, 16)
-	signal.Notify(sigs)
+	signal.Notify(sigs, execSignalsToForward()...)
 
 	if err = cmd.Start(); err != nil {
 		signal.Stop(sigs)

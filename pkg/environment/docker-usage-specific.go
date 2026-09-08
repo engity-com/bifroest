@@ -102,9 +102,11 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	}
 	ev.AddAllOf(t.Authorization().EnvVars())
 	ev.Add(t.SshSession().Environ()...)
-	ev.Set(session.EnvName, sess.Id().String())
-	ev.Set(connection.EnvName, t.Connection().Id().String())
-	ev.Set(execution.EnvName, executionId.String())
+	setReservedEnvironment(&ev, this.repository.hostOs,
+		session.EnvName, sess.Id().String(),
+		connection.EnvName, t.Connection().Id().String(),
+		execution.EnvName, executionId.String(),
+	)
 
 	switch t.TaskType() {
 	case TaskTypeShell:
@@ -151,7 +153,9 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		opts.ConsoleSize = &[2]uint{uint(ptyReq.Window.Height), uint(ptyReq.Window.Width)}
 	}
 	usesExecWrapper := this.repository.hostOs == sys.OsLinux || this.repository.hostOs == sys.OsWindows
-	opts.Env = dockerExecEnvironment(usesExecWrapper, this.repository.hostOs, ev)
+	if opts.Env, err = dockerExecEnvironment(usesExecWrapper, this.repository.hostOs, ev); err != nil {
+		return failf("cannot encode target environment: %w", err)
+	}
 	if usesExecWrapper {
 		command := opts.Cmd
 		if len(command) == 0 {
@@ -166,9 +170,6 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		}
 		if this.directory != "" {
 			opts.Cmd = append(opts.Cmd, "-d", this.directory)
-		}
-		for key, value := range ev {
-			opts.Cmd = append(opts.Cmd, "-e"+key+"="+value)
 		}
 		if user, group, _ := strings.Cut(this.user, ":"); this.repository.hostOs == sys.OsLinux && user != "" {
 			opts.Cmd = append(opts.Cmd, "-u", user)
@@ -391,14 +392,19 @@ func isRetryableTransportError(err error) bool {
 	return errors.As(err, &networkError) && (networkError.Timeout() || networkError.Temporary())
 }
 
-func dockerExecEnvironment(usesExecWrapper bool, hostOs sys.Os, environment sys.EnvVars) []string {
+func dockerExecEnvironment(usesExecWrapper bool, hostOs sys.Os, environment sys.EnvVars) ([]string, error) {
+	if !usesExecWrapper {
+		return environment.Strings(), nil
+	}
+	encoded, err := execution.EncodeTargetEnvironment(environment)
+	if err != nil {
+		return nil, err
+	}
+	targetEnvironment := execution.TargetEnvironmentEnvName + "=" + encoded
 	if usesExecWrapper && hostOs == sys.OsLinux {
-		return slices.Clone(dockerWrapperEnvironment)
+		return append(slices.Clone(dockerWrapperEnvironment), targetEnvironment), nil
 	}
-	if usesExecWrapper {
-		return nil
-	}
-	return environment.Strings()
+	return []string{targetEnvironment}, nil
 }
 
 func scheduleDockerExecutionCleanup(logger log.Logger, executionId execution.Id, kill func(context.Context) error) {

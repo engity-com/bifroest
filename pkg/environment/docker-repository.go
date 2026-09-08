@@ -434,11 +434,7 @@ func (this *DockerRepository) resolveHostConfig(req Request) (_ *container.HostC
 
 	result.AutoRemove = true
 	if !this.conf.ImpPublishHost.IsZero() {
-		result.PortBindings = nat.PortMap{
-			nat.Port(fmt.Sprintf("%d/tcp", imp.ServicePort)): {{
-				HostIP: this.conf.ImpPublishHost.String(),
-			}},
-		}
+		result.PortBindings = dockerImpPortBindings()
 	}
 	if result.Binds, err = this.conf.Volumes.Render(req); err != nil {
 		return failf("cannot evaluate volumes: %w", err)
@@ -496,6 +492,12 @@ func (this *DockerRepository) resolveHostConfig(req Request) (_ *container.HostC
 	}
 
 	return &result, nil
+}
+
+func dockerImpPortBindings() nat.PortMap {
+	return nat.PortMap{
+		nat.Port(fmt.Sprintf("%d/tcp", imp.ServicePort)): {{}},
+	}
 }
 
 func toDockerMount(value mobymount.Mount) mount.Mount {

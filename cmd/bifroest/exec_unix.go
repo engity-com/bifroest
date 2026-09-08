@@ -3,6 +3,7 @@
 package main
 
 import (
+	goos "os"
 	"os/exec"
 	"syscall"
 
@@ -13,6 +14,10 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
+func execSignalsToForward() []goos.Signal {
+	return []goos.Signal{syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM}
+}
+
 type execOpts struct {
 	storeExitCodeForConnectionId bool
 	exitCodeByConnectionIdPath   string
@@ -20,6 +25,7 @@ type execOpts struct {
 	executionId                  execution.Id
 	workingDirectory             string
 	environment                  map[string]string
+	encodedEnvironment           string
 	user, group                  string
 	path                         string
 	argv                         []string

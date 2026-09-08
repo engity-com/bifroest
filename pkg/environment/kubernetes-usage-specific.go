@@ -31,7 +31,9 @@ import (
 const (
 	kubernetesExecutionExitTimeout    = 5 * time.Second
 	kubernetesExecutionCleanupTimeout = 5 * time.Second
+	kubernetesExecutionCleanupStart   = 3 * time.Second
 	kubernetesExecutionCleanupGrace   = time.Second
+	kubernetesExecutionCleanupForce   = time.Second
 )
 
 func (this *kubernetes) Banner(req Request) (io.ReadCloser, error) {
@@ -95,9 +97,11 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 	}
 	ev.AddAllOf(t.Authorization().EnvVars())
 	ev.Add(t.SshSession().Environ()...)
-	ev.Set(session.EnvName, sess.Id().String())
-	ev.Set(connection.EnvName, t.Connection().Id().String())
-	ev.Set(execution.EnvName, executionId.String())
+	setReservedEnvironment(&ev, this.repository.conf.Os,
+		session.EnvName, sess.Id().String(),
+		connection.EnvName, t.Connection().Id().String(),
+		execution.EnvName, executionId.String(),
+	)
 
 	var path string
 	var command []string
@@ -316,29 +320,41 @@ func (this *kubernetes) signalDetached(logger log.Logger, connectionId connectio
 		if this.repository.conf.Os == sys.OsWindows {
 			gracefulSignal = sys.SIGTERM
 		}
-		registrationTimeout := kubernetesExecutionCleanupTimeout - kubernetesExecutionCleanupGrace
-		ctx, cancel := context.WithTimeout(context.Background(), registrationTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), kubernetesExecutionCleanupTimeout)
 		defer cancel()
-		if err := retryExecutionSignal(ctx, func(ctx context.Context) error {
-			return this.impSession.KillExecution(ctx, connectionId, executionId, 0, gracefulSignal)
-		}); err != nil {
-			if !errors.Is(err, context.DeadlineExceeded) {
-				logger.WithError(err).With("executionId", executionId).Warn("cannot interrupt execution during cleanup")
-			}
-			return
+		gracefulErr, forceErr := cleanupKubernetesExecution(ctx, kubernetesExecutionCleanupStart, kubernetesExecutionCleanupGrace, kubernetesExecutionCleanupForce, gracefulSignal, func(ctx context.Context, signal sys.Signal) error {
+			return this.impSession.KillExecution(ctx, connectionId, executionId, 0, signal)
+		})
+		if gracefulErr != nil && !errors.Is(gracefulErr, context.DeadlineExceeded) {
+			logger.WithError(gracefulErr).With("executionId", executionId).Warn("cannot interrupt execution during cleanup")
 		}
-		cancel()
-		timer := time.NewTimer(kubernetesExecutionCleanupGrace)
-		defer timer.Stop()
-		<-timer.C
-		killCtx, killCancel := context.WithTimeout(context.Background(), time.Second)
-		defer killCancel()
-		if err := retryExecutionSignal(killCtx, func(ctx context.Context) error {
-			return this.impSession.KillExecution(ctx, connectionId, executionId, 0, sys.SIGKILL)
-		}); err != nil && !errors.Is(err, context.DeadlineExceeded) {
-			logger.WithError(err).With("executionId", executionId).Warn("cannot terminate execution during cleanup")
+		if forceErr != nil && !errors.Is(forceErr, context.DeadlineExceeded) {
+			logger.WithError(forceErr).With("executionId", executionId).Warn("cannot terminate execution during cleanup")
 		}
 	}()
+}
+
+func cleanupKubernetesExecution(ctx context.Context, gracefulTimeout, gracePeriod, forceTimeout time.Duration, gracefulSignal sys.Signal, signal func(context.Context, sys.Signal) error) (gracefulErr, forceErr error) {
+	gracefulCtx, cancelGraceful := context.WithTimeout(ctx, gracefulTimeout)
+	gracefulErr = retryExecutionSignal(gracefulCtx, func(ctx context.Context) error {
+		return signal(ctx, gracefulSignal)
+	})
+	cancelGraceful()
+
+	grace := time.NewTimer(gracePeriod)
+	defer grace.Stop()
+	select {
+	case <-ctx.Done():
+		return gracefulErr, ctx.Err()
+	case <-grace.C:
+	}
+
+	forceCtx, cancelForce := context.WithTimeout(ctx, forceTimeout)
+	defer cancelForce()
+	forceErr = retryExecutionSignal(forceCtx, func(ctx context.Context) error {
+		return signal(ctx, sys.SIGKILL)
+	})
+	return gracefulErr, forceErr
 }
 
 func retryExecutionSignal(ctx context.Context, signal func(context.Context) error) error {

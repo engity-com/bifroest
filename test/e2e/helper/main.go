@@ -103,6 +103,8 @@ func run(args []string) error {
 			return errors.New("usage: process-info <pid-file>")
 		}
 		return processInfo(args[1])
+	case "process-command-lines":
+		return processCommandLines()
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
@@ -528,6 +530,24 @@ func processInfo(pidFile string) error {
 			continue
 		}
 		fmt.Printf("--- %s ---\n%s\n", name, strings.ReplaceAll(string(content), "\x00", "\n"))
+	}
+	return nil
+}
+
+func processCommandLines() error {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if _, err := strconv.Atoi(entry.Name()); err != nil {
+			continue
+		}
+		cmdline, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
+		if err != nil || len(cmdline) == 0 {
+			continue
+		}
+		fmt.Printf("pid=%s\n%s\n", entry.Name(), strings.ReplaceAll(string(cmdline), "\x00", "\n"))
 	}
 	return nil
 }
