@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	coidc "github.com/coreos/go-oidc/v3/oidc"
@@ -137,6 +138,29 @@ func (this roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error
 	return this(req)
 }
 
+func sameOrigin(left, right *url.URL) bool {
+	return strings.EqualFold(left.Scheme, right.Scheme) &&
+		strings.EqualFold(left.Hostname(), right.Hostname()) &&
+		effectiveOriginPort(left) == effectiveOriginPort(right)
+}
+
+func effectiveOriginPort(value *url.URL) string {
+	if port := value.Port(); port != "" {
+		if numeric, err := strconv.ParseUint(port, 10, 16); err == nil {
+			return strconv.FormatUint(numeric, 10)
+		}
+		return port
+	}
+	switch strings.ToLower(value.Scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
+}
+
 func withBasicClientAuthentication(ctx context.Context, endpoint, clientId, clientSecret string) (context.Context, error) {
 	target, err := url.Parse(endpoint)
 	if err != nil {
@@ -153,7 +177,7 @@ func withBasicClientAuthentication(ctx context.Context, endpoint, clientId, clie
 	}
 	copyOfClient.Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		copyOfRequest := req.Clone(req.Context())
-		if req.URL.Scheme == target.Scheme && req.URL.Host == target.Host {
+		if sameOrigin(req.URL, target) {
 			copyOfRequest.SetBasicAuth(url.QueryEscape(clientId), url.QueryEscape(clientSecret))
 		}
 		return transport.RoundTrip(copyOfRequest)
@@ -173,7 +197,7 @@ func withSameOriginRedirects(ctx context.Context, endpoint string) (context.Cont
 	copyOfClient := *client
 	previousCheck := copyOfClient.CheckRedirect
 	copyOfClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if req.URL.Scheme != target.Scheme || req.URL.Host != target.Host {
+		if !sameOrigin(req.URL, target) {
 			return http.ErrUseLastResponse
 		}
 		if previousCheck != nil {

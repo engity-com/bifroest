@@ -28,6 +28,26 @@ func TestSignalFromSshPreservesKnownSignal(t *testing.T) {
 	require.Equal(t, sys.SIGTERM, actual)
 }
 
+func TestSignalProcessFromSshDoesNotSendUnknownSignal(t *testing.T) {
+	called := false
+	err := signalProcessFromSsh(essh.Signal("definitely-unknown"), func(sys.Signal) error {
+		called = true
+		return nil
+	})
+	require.ErrorIs(t, err, sys.ErrUnknownSignal)
+	require.False(t, called)
+}
+
+func TestSignalProcessFromSshSendsKnownSignal(t *testing.T) {
+	var actual sys.Signal
+	err := signalProcessFromSsh(essh.SIGTERM, func(signal sys.Signal) error {
+		actual = signal
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, sys.SIGTERM, actual)
+}
+
 func TestAttachDockerExecWithTimeoutBoundsApiSetup(t *testing.T) {
 	started := time.Now()
 	_, err := attachDockerExecWithTimeout(context.Background(), 20*time.Millisecond, func(ctx context.Context) (types.HijackedResponse, error) {

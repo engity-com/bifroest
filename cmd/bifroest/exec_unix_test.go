@@ -90,6 +90,47 @@ func TestDoExecStoresResultWhenExecutableIsMissing(t *testing.T) {
 	require.NoFileExists(t, executionStatePath(stateDirectory, executionId, ".pid"))
 }
 
+func TestDoExecResolvesExecutableFromTargetPath(t *testing.T) {
+	directory := t.TempDir()
+	binDirectory := filepath.Join(directory, "bin")
+	require.NoError(t, goos.Mkdir(binDirectory, 0755))
+	executable := filepath.Join(binDirectory, "target-path-command")
+	require.NoError(t, goos.WriteFile(executable, []byte("#!/bin/sh\nexit 29\n"), 0755))
+	executionId := connection.MustNewId()
+	opts := execOpts{
+		storeExitCodeForConnectionId: true,
+		exitCodeByConnectionIdPath:   directory,
+		executionId:                  executionId,
+		workingDirectory:             directory,
+		environment:                  map[string]string{"PATH": binDirectory},
+		path:                         "target-path-command",
+		argv:                         []string{"target-path-command"},
+	}
+
+	require.NoError(t, doExec(&opts))
+	content, err := goos.ReadFile(executionStatePath(filepath.Join(directory, execution.StateDirectoryName), executionId, ""))
+	require.NoError(t, err)
+	require.Equal(t, "29", string(content))
+}
+
+func TestResolveExecPathWithRelativeWorkingDirectoryReturnsAbsolutePath(t *testing.T) {
+	root := t.TempDir()
+	workingDirectory := filepath.Join(root, "working")
+	binDirectory := filepath.Join(workingDirectory, "bin")
+	require.NoError(t, goos.MkdirAll(binDirectory, 0755))
+	executable := filepath.Join(binDirectory, "target-path-command")
+	require.NoError(t, goos.WriteFile(executable, []byte("#!/bin/sh\n"), 0755))
+	currentDirectory, err := goos.Getwd()
+	require.NoError(t, err)
+	relativeWorkingDirectory, err := filepath.Rel(currentDirectory, workingDirectory)
+	require.NoError(t, err)
+
+	actual, err := resolveExecPath("target-path-command", relativeWorkingDirectory, map[string]string{"PATH": "bin"})
+
+	require.NoError(t, err)
+	require.Equal(t, executable, actual)
+}
+
 func TestDoExecRejectsExitCodeStorageWithoutExecutionId(t *testing.T) {
 	err := doExec(&execOpts{storeExitCodeForConnectionId: true})
 	require.ErrorContains(t, err, "--executionId is required")

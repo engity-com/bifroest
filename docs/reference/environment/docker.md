@@ -73,7 +73,7 @@ This image needs to contain a valid [shell executable](#property-shellCommand).
 
 [`ENTRYPOINT`](https://docs.docker.com/reference/dockerfile/#entrypoint) and [`CMD`](https://docs.docker.com/reference/dockerfile/#cmd) settings of the image will be ignored.
 
-Image [`ENV`](https://docs.docker.com/reference/dockerfile/#env) values are also not inherited by SSH commands. Bifröst deliberately clears them before starting its privileged IMP and exec wrapper, then supplies only the environment assembled for the individual authorization and SSH execution. This prevents image-controlled loader variables such as `LD_PRELOAD` from affecting the privileged wrapper.
+On Linux, image [`ENV`](https://docs.docker.com/reference/dockerfile/#env) values are not inherited by SSH commands. Bifröst deliberately clears them before starting its privileged IMP and exec wrapper, then supplies only the environment assembled for the individual authorization and SSH execution. This prevents image-controlled loader variables such as `LD_PRELOAD` from affecting the privileged wrapper. Windows containers retain their image environment for IMP and wrapper startup; the SSH target command still receives only its explicitly assembled execution environment.
 
 <<property("imagePullPolicy", "Pull Policy", "../data-type.md#pull-policy", template_context="../context/authorization.md", default="ifAbsent")>>
 Defines what should happen if the container starts with the required image of the container.

@@ -143,7 +143,6 @@ func doExec(opts *execOpts) error {
 	cmd := exec.Cmd{
 		Dir:         opts.workingDirectory,
 		SysProcAttr: &syscall.SysProcAttr{},
-		Env:         (sys.EnvVars(opts.environment)).Strings(),
 		Stderr:      goos.Stderr,
 		Stdin:       goos.Stdin,
 		Stdout:      goos.Stdout,
@@ -155,9 +154,10 @@ func doExec(opts *execOpts) error {
 		cmd.Path = cmd.Args[0]
 	}
 	var err error
-	if cmd.Path, err = exec.LookPath(cmd.Path); err != nil {
+	if cmd.Path, err = resolveExecPath(cmd.Path, cmd.Dir, opts.environment); err != nil {
 		return fail(err)
 	}
+	cmd.Env = (sys.EnvVars(opts.environment)).Strings()
 
 	if err := enrichExecCmd(&cmd, opts); err != nil {
 		return fail(err)

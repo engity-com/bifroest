@@ -171,11 +171,11 @@ func newOIDCAuthorizationFixture(t *testing.T) (*oidcTestProvider, *fixture) {
 func newOIDCAuthorizationFixtureWithAuthMethod(t *testing.T, authMethod string) (*oidcTestProvider, *fixture) {
 	t.Helper()
 	provider := newOIDCTestProvider(t, authMethod)
-	t.Cleanup(func() { provider.assertNoErrors(t) })
 	f, err := newFixture(t)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { provider.assertNoErrors(t) })
 	authorization := fmt.Sprintf(`      type: oidcDeviceAuth
       issuer: %s
       clientId: %s

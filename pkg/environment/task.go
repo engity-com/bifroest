@@ -41,3 +41,11 @@ func signalFromSsh(value essh.Signal) (sys.Signal, error) {
 	}
 	return result, nil
 }
+
+func signalProcessFromSsh(value essh.Signal, send func(sys.Signal) error) error {
+	signal, err := signalFromSsh(value)
+	if err != nil {
+		return err
+	}
+	return send(signal)
+}

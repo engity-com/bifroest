@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/binary"
@@ -23,6 +24,35 @@ import (
 	bssh "github.com/engity-com/bifroest/pkg/ssh"
 	btemplate "github.com/engity-com/bifroest/pkg/template"
 )
+
+func TestCopyForwardedConnectionStopsOnlyWhenChannelCloses(t *testing.T) {
+	sshPeer, sshSide := gonet.Pipe()
+	destinationSide, destinationPeer := gonet.Pipe()
+	t.Cleanup(func() {
+		_ = sshPeer.Close()
+		_ = sshSide.Close()
+		_ = destinationSide.Close()
+		_ = destinationPeer.Close()
+	})
+	requests := make(chan *gossh.Request)
+	done := make(chan error, 1)
+	go func() {
+		done <- copyForwardedConnection(context.Background(), requests, sshSide, destinationSide, nil)
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("idle forwarding stopped before the SSH channel closed: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(requests)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("forwarding did not stop after the SSH channel closed")
+	}
+}
 
 func TestSdkMigrationPasswordAuthenticationDistinguishesRejectionFromSystemError(t *testing.T) {
 	testSdkMigrationAuthenticationFailure(t, gossh.Password("rejected-password"), func(authorizer *sdkMigrationAuthorizer, err error) {

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"math"
@@ -135,8 +136,6 @@ func (this *service) handleNewDirectTcpIp(_ *essh.Server, _ *gossh.ServerConn, n
 	}
 	defer common.IgnoreCloseError(sConn)
 
-	go gossh.DiscardRequests(reqs)
-
 	nameOf := func(isL2r bool) string {
 		if isL2r {
 			return "source -> destination"
@@ -144,7 +143,7 @@ func (this *service) handleNewDirectTcpIp(_ *essh.Server, _ *gossh.ServerConn, n
 		return "destination -> source"
 	}
 
-	return essh.FullDuplexCopy(ctx, sConn, dConn, &essh.FullDuplexCopyOpts{
+	return copyForwardedConnection(ctx, reqs, sConn, dConn, &essh.FullDuplexCopyOpts{
 		OnStart: func() {
 			l.Debug("port forwarding started")
 		},
@@ -167,6 +166,16 @@ func (this *service) handleNewDirectTcpIp(_ *essh.Server, _ *gossh.ServerConn, n
 			l.WithError(err).Tracef("copying of %s done", nameOf(isL2r))
 		},
 	})
+}
+
+func copyForwardedConnection(ctx context.Context, requests <-chan *gossh.Request, source, destination io.ReadWriteCloser, opts *essh.FullDuplexCopyOpts) error {
+	copyCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		gossh.DiscardRequests(requests)
+		cancel()
+	}()
+	return essh.FullDuplexCopy(copyCtx, source, destination, opts)
 }
 
 func (this *service) onReversePortForwardingRequested(ctx essh.Context, _ gossh.ConnMetadata, host string, port uint32) (bool, error) {

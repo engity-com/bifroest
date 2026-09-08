@@ -271,7 +271,7 @@ func (f *fixture) prepareRuntime(apiService bool) error {
 	if runtimeCLI == "podman" {
 		socket := filepath.Join(f.tempDir, "podman.sock")
 		f.runtimeHost = "unix://" + socket
-		f.runtimeService, err = launchProcess(f.repoRoot, nil, runtimeCLI, "system", "service", "--time=0", f.runtimeHost)
+		f.runtimeService, err = f.launchLoggedProcess("runtime-service", nil, runtimeCLI, "system", "service", "--time=0", f.runtimeHost)
 		if err != nil {
 			return fmt.Errorf("start Podman API service: %w", err)
 		}
@@ -1050,21 +1050,54 @@ type runningProcess struct {
 	done   chan struct{}
 	stdout bytes.Buffer
 	stderr bytes.Buffer
+	logs   []*os.File
 	mu     sync.Mutex
 	err    error
 }
 
 func launchProcess(dir string, env []string, name string, args ...string) (*runningProcess, error) {
+	return launchProcessWithLogs(dir, env, "", name, args...)
+}
+
+func (f *fixture) launchLoggedProcess(label string, env []string, name string, args ...string) (*runningProcess, error) {
+	prefix := filepath.Join(f.repoRoot, "var", "e2e", f.name+"-"+label)
+	return launchProcessWithLogs(f.repoRoot, env, prefix, name, args...)
+}
+
+func launchProcessWithLogs(dir string, env []string, logPrefix, name string, args ...string) (*runningProcess, error) {
 	p := &runningProcess{cmd: exec.Command(name, args...), done: make(chan struct{})}
 	p.cmd.Dir = dir
 	p.cmd.Env = append(os.Environ(), env...)
 	p.cmd.Stdout = &p.stdout
 	p.cmd.Stderr = &p.stderr
+	if logPrefix != "" {
+		if err := os.MkdirAll(filepath.Dir(logPrefix), 0755); err != nil {
+			return nil, err
+		}
+		stdout, err := os.Create(logPrefix + ".stdout.log")
+		if err != nil {
+			return nil, err
+		}
+		stderr, err := os.Create(logPrefix + ".stderr.log")
+		if err != nil {
+			_ = stdout.Close()
+			return nil, err
+		}
+		p.logs = []*os.File{stdout, stderr}
+		p.cmd.Stdout = io.MultiWriter(&p.stdout, stdout)
+		p.cmd.Stderr = io.MultiWriter(&p.stderr, stderr)
+	}
 	if err := p.cmd.Start(); err != nil {
+		for _, file := range p.logs {
+			_ = file.Close()
+		}
 		return nil, err
 	}
 	go func() {
 		err := p.cmd.Wait()
+		for _, file := range p.logs {
+			_ = file.Close()
+		}
 		p.mu.Lock()
 		p.err = err
 		p.mu.Unlock()
@@ -1162,6 +1195,12 @@ func (f *fixture) cleanup() {
 	if f.runtimeService != nil {
 		f.runtimeService.stop()
 	}
+	if !f.t.Failed() {
+		matches, _ := filepath.Glob(filepath.Join(f.repoRoot, "var", "e2e", f.name+"-*.log"))
+		for _, match := range matches {
+			_ = os.Remove(match)
+		}
+	}
 }
 
 func (f *fixture) saveLogs() {
@@ -1187,12 +1226,6 @@ func (f *fixture) saveLogs() {
 		content.WriteString(result.stdout)
 		content.WriteString("\n--- container " + id + " stderr ---\n")
 		content.WriteString(result.stderr)
-	}
-	if f.runtimeService != nil {
-		content.WriteString("\n--- runtime service stdout ---\n")
-		content.WriteString(f.runtimeService.stdout.String())
-		content.WriteString("\n--- runtime service stderr ---\n")
-		content.WriteString(f.runtimeService.stderr.String())
 	}
 	path := filepath.Join(logDir, f.name+".log")
 	if err := os.WriteFile(path, []byte(content.String()), 0644); err != nil {

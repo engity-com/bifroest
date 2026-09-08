@@ -62,6 +62,7 @@ func TestKillProcessesSignalsProcessGroupOnce(t *testing.T) {
 		0,
 		sys.SIGUSR1,
 		true,
+		true,
 	)
 	require.NoError(t, response.error)
 	require.Equal(t, 1, groupSignals)

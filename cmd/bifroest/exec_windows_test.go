@@ -79,3 +79,62 @@ func TestSignalExecCmdTerminatesProcessWithFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveExecPathUsesTargetPathCaseInsensitively(t *testing.T) {
+	directory := t.TempDir()
+	executable := filepath.Join(directory, "target-path-command.EXE")
+	require.NoError(t, goos.WriteFile(executable, nil, 0600))
+
+	actual, err := resolveExecPath("target-path-command", "", map[string]string{
+		"Path":    directory,
+		"PathExt": ".EXE",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, executable, actual)
+}
+
+func TestResolveExecPathCanonicalizesDuplicatePathVariables(t *testing.T) {
+	directory := t.TempDir()
+	shadowDirectory := t.TempDir()
+	executable := filepath.Join(directory, "target-path-command.EXE")
+	require.NoError(t, goos.WriteFile(executable, nil, 0600))
+	environment := map[string]string{
+		"PATH":    directory,
+		"Path":    shadowDirectory,
+		"PATHEXT": ".EXE",
+		"PathExt": ".CMD",
+	}
+
+	actual, err := resolveExecPath("target-path-command", "", environment)
+
+	require.NoError(t, err)
+	require.Equal(t, executable, actual)
+	require.Equal(t, directory, environment["PATH"])
+	require.Equal(t, ".EXE", environment["PATHEXT"])
+	require.NotContains(t, environment, "Path")
+	require.NotContains(t, environment, "PathExt")
+}
+
+func TestResolveExecPathPrefersPathExtOverExtensionlessFile(t *testing.T) {
+	directory := t.TempDir()
+	require.NoError(t, goos.WriteFile(filepath.Join(directory, "target-path-command"), nil, 0600))
+	executable := filepath.Join(directory, "target-path-command.EXE")
+	require.NoError(t, goos.WriteFile(executable, nil, 0600))
+
+	actual, err := resolveExecPath("target-path-command", "", map[string]string{"PATH": directory, "PATHEXT": ".EXE"})
+
+	require.NoError(t, err)
+	require.Equal(t, executable, actual)
+}
+
+func TestResolveExecPathAppendsNormalizedPathExtToDottedName(t *testing.T) {
+	directory := t.TempDir()
+	executable := filepath.Join(directory, "target-path-command.v1.EXE")
+	require.NoError(t, goos.WriteFile(executable, nil, 0600))
+
+	actual, err := resolveExecPath("target-path-command.v1", "", map[string]string{"PATH": directory, "PATHEXT": "EXE"})
+
+	require.NoError(t, err)
+	require.Equal(t, executable, actual)
+}

@@ -18,7 +18,7 @@ require (
 	github.com/docker/go-connections v0.8.1
 	github.com/echocat/slf4g v1.8.4
 	github.com/echocat/slf4g/native v1.8.4
-	github.com/engity-com/ssh-server-go v0.2.2
+	github.com/engity-com/ssh-server-go v0.2.3
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-delve/delve v1.27.1
 	github.com/google/go-containerregistry v0.22.0

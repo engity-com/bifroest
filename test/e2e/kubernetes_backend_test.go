@@ -327,6 +327,14 @@ func newKubernetesFixture(t *testing.T) (*kubernetesFixture, error) {
 }
 
 func (k *kubernetesFixture) prepareCluster() error {
+	logDir := filepath.Join(k.repoRoot, "var", "e2e")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(logDir, "kind-cluster"), []byte(k.clusterName), 0644); err != nil {
+		return err
+	}
+	k.clusterCreated = true
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	result := runCommand(ctx, k.repoRoot, []string{"KIND_EXPERIMENTAL_PROVIDER=" + k.runtimeCLI}, k.kindTool,
@@ -334,7 +342,6 @@ func (k *kubernetesFixture) prepareCluster() error {
 	if result.err != nil {
 		return fmt.Errorf("create kind cluster: %w\nstdout:\n%s\nstderr:\n%s", result.err, result.stdout, result.stderr)
 	}
-	k.clusterCreated = true
 	result = k.kubectl(2*time.Minute, "wait", "--for=condition=Ready", "node", "--all", "--timeout=2m")
 	if result.err != nil {
 		return fmt.Errorf("wait for kind nodes: %w\n%s", result.err, result.stderr)
@@ -433,7 +440,7 @@ func (k *kubernetesFixture) startBifroest(controllerKubeconfig string) error {
 	if err := listener.Close(); err != nil {
 		return err
 	}
-	k.bifroestProc, err = launchProcess(k.repoRoot, processEnv, k.bifroest,
+	k.bifroestProc, err = k.launchLoggedProcess("bifroest", processEnv, k.bifroest,
 		"run", "--configuration="+configurationPath, "--log.level=DEBUG")
 	if err != nil {
 		return fmt.Errorf("start host Bifroest: %w", err)
@@ -539,6 +546,9 @@ func (k *kubernetesFixture) cleanup() {
 		}
 	}
 	_ = k.runtime(30*time.Second, "image", "rm", "--force", "localhost/bifroest:generic-"+k.bifroestVersion).err
+	if !k.t.Failed() {
+		_ = os.Remove(filepath.Join(k.repoRoot, "var", "e2e", "kind-cluster"))
+	}
 }
 
 const kubernetesRBAC = `apiVersion: v1

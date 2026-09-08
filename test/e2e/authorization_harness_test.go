@@ -38,7 +38,7 @@ func startAuthorizationService(f *fixture, authorizationYAML string) error {
 		return fmt.Errorf("write authorization configuration: %w", err)
 	}
 
-	f.bifroestProc, err = launchProcess(f.repoRoot, nil, f.bifroest,
+	f.bifroestProc, err = f.launchLoggedProcess("bifroest", nil, f.bifroest,
 		"run", "--configuration="+configurationPath, "--log.level=DEBUG")
 	if err != nil {
 		return fmt.Errorf("start Bifroest: %w", err)

@@ -38,6 +38,31 @@ func TestOidcClientAuthStyle(t *testing.T) {
 	}
 }
 
+func TestSameOriginNormalizesHostAndDefaultPort(t *testing.T) {
+	tests := []struct {
+		name     string
+		left     string
+		right    string
+		expected bool
+	}{
+		{name: "identical", left: "https://idp.example/token", right: "https://idp.example/next", expected: true},
+		{name: "host case and explicit default port", left: "https://idp.example/token", right: "https://IDP.EXAMPLE:443/next", expected: true},
+		{name: "numeric port with leading zero", left: "https://idp.example:0443/token", right: "https://idp.example:443/next", expected: true},
+		{name: "different effective port", left: "https://idp.example/token", right: "https://idp.example:8443/next"},
+		{name: "different scheme", left: "https://idp.example/token", right: "http://idp.example/next"},
+		{name: "different host", left: "https://idp.example/token", right: "https://other.example/next"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			left, err := url.Parse(test.left)
+			require.NoError(t, err)
+			right, err := url.Parse(test.right)
+			require.NoError(t, err)
+			require.Equal(t, test.expected, sameOrigin(left, right))
+		})
+	}
+}
+
 func TestOidcClientSecretPostIsNotRedirectedAcrossOrigins(t *testing.T) {
 	destinationCalled := make(chan struct{}, 1)
 	destination := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {

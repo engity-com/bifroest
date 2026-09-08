@@ -21,11 +21,10 @@ import (
 )
 
 var (
-	ErrNoSuchProcess              = errors.System.Newf("no such process")
-	errProcessRegistrationPending = errors.System.Newf("process registration is still pending")
+	ErrNoSuchProcess = errors.System.Newf("no such process")
 )
 
-const processRegistrationWaitTimeout = time.Second
+const processRegistrationWaitTimeout = 5 * time.Second
 
 type methodKillExecutionRequest struct {
 	executionId execution.Id
@@ -124,18 +123,18 @@ func (this *methodKillResponse) DecodeMsgPack(dec codec.MsgPackDecoder) (err err
 
 func (this *imp) handleMethodKill(ctx context.Context, header *Header, logger log.Logger, conn codec.MsgPackConn) error {
 	return handleFromServerSide(ctx, header, conn, func(req *methodKillRequest) methodKillResponse {
-		return this.killProcesses(ctx, header, logger, this.ExitCodeByConnectionIdPath, header.ConnectionId, connection.EnvName+"="+header.ConnectionId.String(), req.pid, req.signal, req.pid == 0)
+		return this.killProcesses(ctx, header, logger, this.ExitCodeByConnectionIdPath, header.ConnectionId, connection.EnvName+"="+header.ConnectionId.String(), req.pid, req.signal, req.pid == 0, false)
 	})
 }
 
 func (this *imp) handleMethodKillExecution(ctx context.Context, header *Header, logger log.Logger, conn codec.MsgPackConn) error {
 	return handleFromServerSide(ctx, header, conn, func(req *methodKillExecutionRequest) methodKillResponse {
 		stateDirectory := filepath.Join(this.ExitCodeByConnectionIdPath, execution.StateDirectoryName)
-		return this.killProcesses(ctx, header, logger.With("execution", req.executionId), stateDirectory, req.executionId, execution.EnvName+"="+req.executionId.String(), req.pid, req.signal, true)
+		return this.killProcesses(ctx, header, logger.With("execution", req.executionId), stateDirectory, req.executionId, execution.EnvName+"="+req.executionId.String(), req.pid, req.signal, true, true)
 	})
 }
 
-func (this *imp) killProcesses(ctx context.Context, header *Header, logger log.Logger, stateDirectory string, stateId connection.Id, expectedEnv string, pid int, signal sys.Signal, processGroup bool) methodKillResponse {
+func (this *imp) killProcesses(ctx context.Context, header *Header, logger log.Logger, stateDirectory string, stateId connection.Id, expectedEnv string, pid int, signal sys.Signal, processGroup, waitForRegistration bool) methodKillResponse {
 	fail := func(pid int, err error) methodKillResponse {
 		return methodKillResponse{errors.System.Newf("cannot kill process %d of %v with %v: %w", pid, header.ConnectionId, signal, err)}
 	}
@@ -156,22 +155,10 @@ func (this *imp) killProcesses(ctx context.Context, header *Header, logger log.L
 	}
 	if pid == 0 {
 		pidFn := filepath.Join(stateDirectory, stateId.String()+".pid")
-		plainPid, err := waitForRegisteredProcess(ctx, pidFn)
-		if errors.Is(err, errProcessRegistrationPending) {
-			latest, latestErr := os.ReadFile(pidFn)
-			if latestErr == nil {
-				plainPid = latest
-			} else if !errors.Is(latestErr, os.ErrNotExist) {
-				return fail(0, latestErr)
-			}
-			if latestErr == nil && !isRegisteredStartingProcess(plainPid) {
-				err = nil
-			} else if latestErr == nil && registeredStartingProcessMatches(plainPid) {
-				return methodKillResponse{ErrNoSuchProcess}
-			} else {
-				_ = os.Remove(pidFn)
-				err = os.ErrNotExist
-			}
+		resultFn := filepath.Join(stateDirectory, stateId.String())
+		plainPid, err := os.ReadFile(pidFn)
+		if waitForRegistration && (err == nil && isRegisteredStartingProcess(plainPid) || errors.Is(err, os.ErrNotExist) && !processWithEnvironmentExists(ctx, expectedEnv)) {
+			plainPid, err = waitForRegisteredProcess(ctx, pidFn, resultFn, processRegistrationWaitTimeout)
 		}
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fail(0, err)
@@ -198,7 +185,7 @@ func (this *imp) killProcesses(ctx context.Context, header *Header, logger log.L
 			}
 		}
 	}
-	if len(targets) == 0 || processGroup {
+	if expectedEnv != "" && (len(targets) == 0 || processGroup) {
 		candidates, err := process.ProcessesWithContext(ctx)
 		if err != nil {
 			return fail(0, err)
@@ -251,21 +238,49 @@ func (this *imp) killProcesses(ctx context.Context, header *Header, logger log.L
 	return methodKillResponse{}
 }
 
-func waitForRegisteredProcess(ctx context.Context, pidFn string) ([]byte, error) {
+func processWithEnvironmentExists(ctx context.Context, expected string) bool {
+	if expected == "" {
+		return false
+	}
+	candidates, err := process.ProcessesWithContext(ctx)
+	if err != nil {
+		return false
+	}
+	for _, candidate := range candidates {
+		if processHasEnvironment(int(candidate.Pid), expected) {
+			return true
+		}
+	}
+	return false
+}
+
+func waitForRegisteredProcess(ctx context.Context, pidFn, resultFn string, timeout time.Duration) ([]byte, error) {
 	poll := time.NewTicker(10 * time.Millisecond)
 	defer poll.Stop()
-	timeout := time.NewTimer(processRegistrationWaitTimeout)
-	defer timeout.Stop()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	for {
 		raw, err := os.ReadFile(pidFn)
-		if err != nil || !isRegisteredStartingProcess(raw) {
+		if err == nil && !isRegisteredStartingProcess(raw) {
 			return raw, err
+		}
+		if err == nil && !registeredStartingProcessMatches(raw) {
+			_ = os.Remove(pidFn)
+			return nil, os.ErrNotExist
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		if _, resultErr := os.Stat(resultFn); resultErr == nil {
+			return nil, os.ErrNotExist
+		} else if !errors.Is(resultErr, os.ErrNotExist) {
+			return nil, resultErr
 		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-timeout.C:
-			return raw, errProcessRegistrationPending
+		case <-timer.C:
+			return nil, os.ErrNotExist
 		case <-poll.C:
 		}
 	}

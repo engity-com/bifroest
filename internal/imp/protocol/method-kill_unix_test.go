@@ -178,7 +178,7 @@ func TestKillProcessesWaitsForProcessRegistration(t *testing.T) {
 	registrationDone := make(chan error, 1)
 	go func() {
 		time.Sleep(50 * time.Millisecond)
-		registrationDone <- os.WriteFile(pidPath, []byte(identity), 0600)
+		registrationDone <- writeRegisteredProcessForTest(pidPath, identity)
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -193,6 +193,7 @@ func TestKillProcessesWaitsForProcessRegistration(t *testing.T) {
 		0,
 		sys.Signal(0),
 		false,
+		true,
 	)
 	require.NoError(t, response.error)
 	select {
@@ -201,6 +202,61 @@ func TestKillProcessesWaitsForProcessRegistration(t *testing.T) {
 	default:
 		t.Fatal("kill returned before process registration completed")
 	}
+}
+
+func TestKillProcessesWaitsLongerThanFormerRegistrationTimeout(t *testing.T) {
+	stateId := connection.MustNewId()
+	directory := t.TempDir()
+	pidPath := filepath.Join(directory, stateId.String()+".pid")
+	identity, err := processIdentityForTest(os.Getpid())
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(pidPath, []byte(execution.StateStartingMarker+" "+identity), 0600))
+
+	registrationDone := make(chan error, 1)
+	go func() {
+		time.Sleep(1100 * time.Millisecond)
+		registrationDone <- writeRegisteredProcessForTest(pidPath, identity)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	response := (&imp{}).killProcesses(ctx, &Header{ConnectionId: connection.MustNewId()}, log.GetLogger("test"), directory, stateId, "", 0, sys.Signal(0), false, true)
+	require.NoError(t, response.error)
+	require.NoError(t, <-registrationDone)
+}
+
+func TestKillProcessesWaitsForInitialRegistrationFile(t *testing.T) {
+	stateId := connection.MustNewId()
+	directory := t.TempDir()
+	pidPath := filepath.Join(directory, stateId.String()+".pid")
+	identity, err := processIdentityForTest(os.Getpid())
+	require.NoError(t, err)
+
+	registrationDone := make(chan error, 1)
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		registrationDone <- writeRegisteredProcessForTest(pidPath, identity)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	response := (&imp{}).killProcesses(ctx, &Header{ConnectionId: connection.MustNewId()}, log.GetLogger("test"), directory, stateId, "", 0, sys.Signal(0), false, true)
+	require.NoError(t, response.error)
+	require.NoError(t, <-registrationDone)
+}
+
+func TestKillProcessesDoesNotWaitAfterExecutionResultExists(t *testing.T) {
+	stateId := connection.MustNewId()
+	directory := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(directory, stateId.String()), []byte("0"), 0600))
+	expectedEnv := execution.EnvName + "=" + stateId.String()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	started := time.Now()
+	response := (&imp{}).killProcesses(ctx, &Header{ConnectionId: connection.MustNewId()}, log.GetLogger("test"), directory, stateId, expectedEnv, 0, sys.SIGKILL, false, true)
+	require.ErrorIs(t, response.error, ErrNoSuchProcess)
+	require.Less(t, time.Since(started), 500*time.Millisecond)
 }
 
 func TestKillProcessesHonorsContextWhileRegistrationIsPending(t *testing.T) {
@@ -222,8 +278,23 @@ func TestKillProcessesHonorsContextWhileRegistrationIsPending(t *testing.T) {
 		0,
 		sys.SIGKILL,
 		false,
+		true,
 	)
 	require.ErrorIs(t, response.error, context.DeadlineExceeded)
+}
+
+func TestWaitForRegisteredProcessStopsAfterSafetyTimeout(t *testing.T) {
+	directory := t.TempDir()
+	started := time.Now()
+
+	_, err := waitForRegisteredProcess(context.Background(), filepath.Join(directory, "missing.pid"), filepath.Join(directory, "missing-result"), 30*time.Millisecond)
+
+	require.ErrorIs(t, err, os.ErrNotExist)
+	require.Less(t, time.Since(started), time.Second)
+}
+
+func TestProcessRegistrationSafetyTimeout(t *testing.T) {
+	require.Equal(t, 5*time.Second, processRegistrationWaitTimeout)
 }
 
 func TestKillProcessesScansForExecutionAfterStartingWrapperExited(t *testing.T) {
@@ -251,6 +322,7 @@ func TestKillProcessesScansForExecutionAfterStartingWrapperExited(t *testing.T) 
 		0,
 		sys.SIGTERM,
 		true,
+		true,
 	)
 	require.NoError(t, response.error)
 	require.Error(t, cmd.Wait())
@@ -266,6 +338,14 @@ func processIdentityForTest(pid int) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%d %d", pid, createdAt), nil
+}
+
+func writeRegisteredProcessForTest(path, identity string) error {
+	temporary := path + ".next"
+	if err := os.WriteFile(temporary, []byte(identity), 0600); err != nil {
+		return err
+	}
+	return os.Rename(temporary, path)
 }
 
 func ptr[T any](value T) *T { return &value }
@@ -287,6 +367,7 @@ func TestKillProcessesRejectsUnsafePid(t *testing.T) {
 			pid,
 			sys.SIGKILL,
 			false,
+			true,
 		)
 		require.ErrorIs(t, response.error, ErrNoSuchProcess)
 	}

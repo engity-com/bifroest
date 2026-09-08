@@ -37,7 +37,7 @@ jobs:
     needs: files-changed
     if: always() && (github.event_name != 'pull_request' || needs.files-changed.outputs.go == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -75,6 +75,17 @@ jobs:
       - name: Run end-to-end suite
         run: mise run test:e2e:${{ matrix.suite }}
 
+      - name: Collect runtime diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p var/e2e/runtime-containers
+          timeout 30s "${BIFROEST_E2E_RUNTIME}" ps --all >var/e2e/runtime-containers/list.txt 2>&1 || true
+          while IFS= read -r id; do
+            [ -n "${id}" ] || continue
+            timeout 30s "${BIFROEST_E2E_RUNTIME}" logs "${id}" >"var/e2e/runtime-containers/${id}.log" 2>&1 || true
+          done < <(timeout 30s "${BIFROEST_E2E_RUNTIME}" ps --all --quiet 2>/dev/null)
+
       - name: Upload failure diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -89,7 +100,7 @@ jobs:
     needs: files-changed
     if: always() && (github.event_name != 'pull_request' || needs.files-changed.outputs.go == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     env:
       CGO_ENABLED: '0'
     steps:
@@ -127,7 +138,7 @@ jobs:
     needs: files-changed
     if: always() && (github.event_name != 'pull_request' || needs.files-changed.outputs.go == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     env:
       BIFROEST_E2E_RUNTIME: docker
       KIND_EXPERIMENTAL_PROVIDER: docker
@@ -153,6 +164,21 @@ jobs:
       - name: Run Kubernetes end-to-end suite
         run: mise run test:e2e:kubernetes
 
+      - name: Collect Kubernetes diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p var/e2e/runtime-containers
+          timeout 30s docker ps --all >var/e2e/runtime-containers/list.txt 2>&1 || true
+          while IFS= read -r id; do
+            [ -n "${id}" ] || continue
+            timeout 30s docker logs "${id}" >"var/e2e/runtime-containers/${id}.log" 2>&1 || true
+          done < <(timeout 30s docker ps --all --quiet 2>/dev/null)
+          if [ -s var/e2e/kind-cluster ]; then
+            cluster="$(<var/e2e/kind-cluster)"
+            timeout 5m kind export logs "var/e2e/${cluster}-kind" --name "${cluster}" || true
+          fi
+
       - name: Upload failure diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -166,7 +192,7 @@ jobs:
     name: kubernetes with kind and podman
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     env:
       BIFROEST_E2E_RUNTIME: podman
       KIND_EXPERIMENTAL_PROVIDER: podman
@@ -194,6 +220,21 @@ jobs:
 
       - name: Run Kubernetes end-to-end suite
         run: mise run test:e2e:kubernetes
+
+      - name: Collect Kubernetes diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p var/e2e/runtime-containers
+          timeout 30s podman ps --all >var/e2e/runtime-containers/list.txt 2>&1 || true
+          while IFS= read -r id; do
+            [ -n "${id}" ] || continue
+            timeout 30s podman logs "${id}" >"var/e2e/runtime-containers/${id}.log" 2>&1 || true
+          done < <(timeout 30s podman ps --all --quiet 2>/dev/null)
+          if [ -s var/e2e/kind-cluster ]; then
+            cluster="$(<var/e2e/kind-cluster)"
+            timeout 5m kind export logs "var/e2e/${cluster}-kind" --name "${cluster}" || true
+          fi
 
       - name: Upload failure diagnostics
         if: failure()

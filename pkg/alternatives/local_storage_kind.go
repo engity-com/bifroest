@@ -4,7 +4,10 @@ package alternatives
 
 import (
 	"context"
+	"io"
 	goos "os"
+	"os/exec"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -128,23 +131,41 @@ func selectLocalKindCluster(clusters []string, requested string) (string, error)
 }
 
 func newLocalKindProvider() (*cluster.Provider, error) {
+	provider, err := resolveLocalKindProvider(goos.Getenv("KIND_EXPERIMENTAL_PROVIDER"), localKindProviderAvailable)
+	if err != nil {
+		return nil, err
+	}
 	var option cluster.ProviderOption
-	switch provider := goos.Getenv("KIND_EXPERIMENTAL_PROVIDER"); provider {
-	case "":
-		detected, err := cluster.DetectNodeProvider()
-		if err != nil {
-			return nil, err
-		}
-		option = detected
+	switch provider {
 	case "docker":
 		option = cluster.ProviderWithDocker()
 	case "podman":
 		option = cluster.ProviderWithPodman()
-	case "nerdctl", "finch", "nerdctl.lima":
-		option = cluster.ProviderWithNerdctl(provider)
-	default:
-		return nil, errors.Config.Newf("unsupported KIND_EXPERIMENTAL_PROVIDER value %q", provider)
 	}
 
 	return cluster.NewProvider(option), nil
+}
+
+func resolveLocalKindProvider(provider string, available func(string) bool) (string, error) {
+	if provider == "" {
+		for _, candidate := range []string{"docker", "podman"} {
+			if available(candidate) {
+				return candidate, nil
+			}
+		}
+		return "", errors.Config.Newf("cannot detect an available Docker or Podman provider for local kind image storage")
+	}
+	if provider != "docker" && provider != "podman" {
+		return "", errors.Config.Newf("unsupported KIND_EXPERIMENTAL_PROVIDER value %q; local kind image storage requires a Docker-compatible Docker or Podman API", provider)
+	}
+	return provider, nil
+}
+
+func localKindProviderAvailable(provider string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, provider, "info")
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run() == nil
 }

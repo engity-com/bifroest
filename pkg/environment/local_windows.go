@@ -126,17 +126,15 @@ func (this *local) getPathEnv() string {
 }
 
 func (this *local) signal(cmd *exec.Cmd, logger log.Logger, signal essh.Signal) {
-	var sig sys.Signal
-	if err := sig.Set(string(signal)); err != nil {
-		sig = sys.SIGKILL
-	}
-
-	if err := cmd.Process.Signal(sig.Native()); errors.Is(err, os.ErrProcessDone) {
+	err := signalProcessFromSsh(signal, func(sig sys.Signal) error {
+		return cmd.Process.Signal(sig.Native())
+	})
+	if errors.Is(err, os.ErrProcessDone) {
 		// Ignored.
 	} else if err != nil {
 		logger.WithError(err).
 			With("pid", cmd.Process.Pid).
-			With("signal", sig).
+			With("signal", signal).
 			Warn("cannot send signal to process")
 	}
 }

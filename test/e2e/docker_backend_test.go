@@ -303,6 +303,10 @@ func newDockerEnvironmentFixture(t *testing.T) (*fixture, error) {
 	if err := f.prepareRuntime(true); err != nil {
 		return f, err
 	}
+	publicKey := strings.TrimSpace(string(mustRead(f.clientKey + ".pub")))
+	if err := os.WriteFile(f.clientKey+".pub", []byte(`environment="PATH=/opt/bifroest-target/bin:/usr/local/bin" `+publicKey+"\n"), 0600); err != nil {
+		return f, fmt.Errorf("add target PATH to authorized key: %w", err)
+	}
 	f.flowName = f.name
 	f.networkName = f.name + "-network"
 
@@ -376,7 +380,7 @@ func (f *fixture) startHostBifroest() error {
 	if err := listener.Close(); err != nil {
 		return err
 	}
-	f.bifroestProc, err = launchProcess(f.repoRoot, []string{pathEnv, "CGO_ENABLED=0"}, f.bifroest,
+	f.bifroestProc, err = f.launchLoggedProcess("bifroest", []string{pathEnv, "CGO_ENABLED=0"}, f.bifroest,
 		"run", "--configuration="+configurationPath, "--log.level=DEBUG")
 	if err != nil {
 		return fmt.Errorf("start host Bifroest: %w", err)
@@ -434,7 +438,11 @@ RUN addgroup -S -g 10001 e2e \
 	&& addgroup -S -g 10002 supplemental \
 	&& adduser -S -D -u 10001 -G e2e -h /home/e2e -s /bin/sh e2e \
 	&& addgroup e2e supplemental \
-	&& chmod 0755 /usr/local/bin/e2e-helper
+	&& chmod 0755 /usr/local/bin/e2e-helper \
+	&& mkdir -p /opt/bifroest-target/bin \
+	&& printf '#!/bin/sh\nexec /bin/sh "$@"\n' > /opt/bifroest-target/bin/target-sh \
+	&& chmod 0755 /opt/bifroest-target/bin/target-sh \
+	&& ln -s /usr/bin/bifroest /opt/bifroest-target/bin/target-bifroest
 USER 10001:10001
 WORKDIR /home/e2e
 `
@@ -477,6 +485,9 @@ flows:
       apiVersion: "1.41"
       image: %s
       imagePullPolicy: never
+      shellCommand: [target-sh]
+      execCommand: [target-sh, -c]
+      sftpCommand: [target-bifroest, sftp-server]
       networks:
         - %s
       directory: "/home/e2e"
