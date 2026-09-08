@@ -83,18 +83,16 @@ func TestExecProcessSupervisorLifecycle(t *testing.T) {
 	}
 }
 
-func TestExecProcessSupervisorAttachFallsBackToInheritedJob(t *testing.T) {
+func TestExecProcessSupervisorAttachRejectsInheritedJobWithoutNesting(t *testing.T) {
 	originalAssign := assignProcessToJobObject
 	originalClose := closeWindowsHandle
 	originalOpen := openWindowsProcess
 	originalResume := resumeExecProcess
-	originalIsInJob := isWindowsProcessInJob
 	t.Cleanup(func() {
 		openWindowsProcess = originalOpen
 		assignProcessToJobObject = originalAssign
 		closeWindowsHandle = originalClose
 		resumeExecProcess = originalResume
-		isWindowsProcessInJob = originalIsInJob
 	})
 
 	var closed []windows.Handle
@@ -104,49 +102,12 @@ func TestExecProcessSupervisorAttachFallsBackToInheritedJob(t *testing.T) {
 	assignProcessToJobObject = func(windows.Handle, windows.Handle) error {
 		return windows.ERROR_ACCESS_DENIED
 	}
-	isWindowsProcessInJob = func(windows.Handle) (bool, error) { return true, nil }
 	closeWindowsHandle = func(handle windows.Handle) error {
 		closed = append(closed, handle)
 		return nil
 	}
-	resumed := false
 	resumeExecProcess = func(uint32) error {
-		resumed = true
-		return nil
-	}
-
-	supervisor := &execProcessSupervisor{job: windows.Handle(42)}
-	cmd := &exec.Cmd{Process: &goos.Process{Pid: 123}}
-	require.NoError(t, supervisor.Attach(cmd))
-	require.True(t, resumed)
-	require.Zero(t, supervisor.job)
-	require.Contains(t, closed, windows.Handle(42))
-}
-
-func TestExecProcessSupervisorAttachRejectsAccessDeniedOutsideJob(t *testing.T) {
-	originalAssign := assignProcessToJobObject
-	originalClose := closeWindowsHandle
-	originalOpen := openWindowsProcess
-	originalResume := resumeExecProcess
-	originalIsInJob := isWindowsProcessInJob
-	t.Cleanup(func() {
-		openWindowsProcess = originalOpen
-		assignProcessToJobObject = originalAssign
-		closeWindowsHandle = originalClose
-		resumeExecProcess = originalResume
-		isWindowsProcessInJob = originalIsInJob
-	})
-
-	openWindowsProcess = func(uint32, bool, uint32) (windows.Handle, error) {
-		return windows.Handle(7), nil
-	}
-	assignProcessToJobObject = func(windows.Handle, windows.Handle) error {
-		return windows.ERROR_ACCESS_DENIED
-	}
-	isWindowsProcessInJob = func(windows.Handle) (bool, error) { return false, nil }
-	closeWindowsHandle = func(windows.Handle) error { return nil }
-	resumeExecProcess = func(uint32) error {
-		t.Fatal("must not resume a process whose Job assignment failed")
+		t.Fatal("must not resume a process without reliable descendant supervision")
 		return nil
 	}
 
@@ -154,6 +115,7 @@ func TestExecProcessSupervisorAttachRejectsAccessDeniedOutsideJob(t *testing.T) 
 	cmd := &exec.Cmd{Process: &goos.Process{Pid: 123}}
 	require.ErrorIs(t, supervisor.Attach(cmd), windows.ERROR_ACCESS_DENIED)
 	require.Equal(t, windows.Handle(42), supervisor.job)
+	require.Equal(t, []windows.Handle{7}, closed)
 }
 
 func TestExecProcessSupervisorAttachReturnsUnexpectedAssignmentError(t *testing.T) {

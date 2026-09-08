@@ -167,9 +167,9 @@ func (this *service) onPtyRequest(ctx essh.Context, _ essh.Session, pty essh.Pty
 	logger := conn.Logger()
 
 	ok, err := this.environments.DoesSupportPty(&environmentContext{
-		this,
-		conn,
-		auth,
+		service:       this,
+		connection:    conn,
+		authorization: auth,
 	}, pty)
 	if err != nil {
 		return false, errors.Newf(errors.System, "cannot evaluate if PTY is allowed for request: %w", err)

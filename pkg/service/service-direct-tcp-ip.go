@@ -190,7 +190,7 @@ func (this *service) onReversePortForwardingRequested(ctx essh.Context, _ gossh.
 	if conn == nil {
 		return false, errors.Newf(errors.System, "no connection resolved for reverse port forwarding request")
 	}
-	req := environmentRequest{environmentContext{this, conn, auth}, nil}
+	req := environmentRequest{environmentContext{service: this, connection: conn, authorization: auth}, nil}
 	env, err := this.environments.Ensure(&req)
 	if err != nil {
 		return false, errors.Newf(errors.System, "cannot ensure environment for reverse port forwarding: %w", err)

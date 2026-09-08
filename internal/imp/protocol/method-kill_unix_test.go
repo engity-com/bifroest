@@ -167,6 +167,107 @@ func TestRegisteredProcessRejectsReusedPid(t *testing.T) {
 	}, sys.Signal(0), make(signaledProcessGroups)), ErrNoSuchProcess)
 }
 
+func TestKillProcessesWaitsForProcessRegistration(t *testing.T) {
+	stateId := connection.MustNewId()
+	directory := t.TempDir()
+	pidPath := filepath.Join(directory, stateId.String()+".pid")
+	identity, err := processIdentityForTest(os.Getpid())
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(pidPath, []byte(execution.StateStartingMarker+" "+identity), 0600))
+
+	registrationDone := make(chan error, 1)
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		registrationDone <- os.WriteFile(pidPath, []byte(identity), 0600)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	response := (&imp{}).killProcesses(
+		ctx,
+		&Header{ConnectionId: connection.MustNewId()},
+		log.GetLogger("test"),
+		directory,
+		stateId,
+		"",
+		0,
+		sys.Signal(0),
+		false,
+	)
+	require.NoError(t, response.error)
+	select {
+	case err := <-registrationDone:
+		require.NoError(t, err)
+	default:
+		t.Fatal("kill returned before process registration completed")
+	}
+}
+
+func TestKillProcessesHonorsContextWhileRegistrationIsPending(t *testing.T) {
+	stateId := connection.MustNewId()
+	directory := t.TempDir()
+	identity, err := processIdentityForTest(os.Getpid())
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(directory, stateId.String()+".pid"), []byte(execution.StateStartingMarker+" "+identity), 0600))
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	response := (&imp{}).killProcesses(
+		ctx,
+		&Header{ConnectionId: connection.MustNewId()},
+		log.GetLogger("test"),
+		directory,
+		stateId,
+		"",
+		0,
+		sys.SIGKILL,
+		false,
+	)
+	require.ErrorIs(t, response.error, context.DeadlineExceeded)
+}
+
+func TestKillProcessesScansForExecutionAfterStartingWrapperExited(t *testing.T) {
+	executionId := connection.MustNewId()
+	directory := t.TempDir()
+	pidPath := filepath.Join(directory, executionId.String()+".pid")
+	require.NoError(t, os.WriteFile(pidPath, []byte(execution.StateStartingMarker+" 2147483647 1"), 0600))
+	expectedEnv := "BIFROEST_TEST_EXECUTION=stale-starting-wrapper"
+	cmd := exec.Command("/bin/sh", "-c", "sleep 30")
+	cmd.Env = append(os.Environ(), expectedEnv)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = cmd.Wait()
+	})
+
+	response := (&imp{}).killProcesses(
+		context.Background(),
+		&Header{ConnectionId: connection.MustNewId()},
+		log.GetLogger("test"),
+		directory,
+		executionId,
+		expectedEnv,
+		0,
+		sys.SIGTERM,
+		true,
+	)
+	require.NoError(t, response.error)
+	require.Error(t, cmd.Wait())
+}
+
+func processIdentityForTest(pid int) (string, error) {
+	p, err := process.NewProcess(int32(pid))
+	if err != nil {
+		return "", err
+	}
+	createdAt, err := p.CreateTime()
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%d %d", pid, createdAt), nil
+}
+
 func ptr[T any](value T) *T { return &value }
 
 func TestKillProcessesRejectsUnsafePid(t *testing.T) {

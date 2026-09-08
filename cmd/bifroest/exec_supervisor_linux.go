@@ -13,15 +13,17 @@ import (
 
 const execDescendantCleanupTimeout = 3 * time.Second
 
+var openExecPidfd = unix.PidfdOpen
+
 type execProcessSupervisor struct {
 	previousSubreaper int
 	pidfdSupported    bool
 }
 
 func newExecProcessSupervisor() (*execProcessSupervisor, error) {
-	pidfd, err := unix.PidfdOpen(goos.Getpid(), 0)
+	pidfd, err := openExecPidfd(goos.Getpid(), 0)
 	pidfdSupported := err == nil
-	if err != nil && err != unix.ENOSYS && err != unix.EPERM && err != unix.EINVAL {
+	if err != nil && err != unix.ENOSYS && err != unix.ENODEV && err != unix.EPERM && err != unix.EINVAL {
 		return nil, err
 	}
 	if pidfdSupported {
@@ -72,7 +74,7 @@ func (this *execProcessSupervisor) Cleanup() (rErr error) {
 			}
 			pidfd := -1
 			if this.pidfdSupported {
-				pidfd, err = unix.PidfdOpen(int(child.Pid), 0)
+				pidfd, err = openExecPidfd(int(child.Pid), 0)
 				if err != nil {
 					if err == unix.ESRCH {
 						continue

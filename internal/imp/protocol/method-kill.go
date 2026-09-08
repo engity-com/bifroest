@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	log "github.com/echocat/slf4g"
 	"github.com/shirou/gopsutil/v4/process"
@@ -20,8 +21,11 @@ import (
 )
 
 var (
-	ErrNoSuchProcess = errors.System.Newf("no such process")
+	ErrNoSuchProcess              = errors.System.Newf("no such process")
+	errProcessRegistrationPending = errors.System.Newf("process registration is still pending")
 )
+
+const processRegistrationWaitTimeout = time.Second
 
 type methodKillExecutionRequest struct {
 	executionId execution.Id
@@ -152,7 +156,27 @@ func (this *imp) killProcesses(ctx context.Context, header *Header, logger log.L
 	}
 	if pid == 0 {
 		pidFn := filepath.Join(stateDirectory, stateId.String()+".pid")
-		if plainPid, err := os.ReadFile(pidFn); err == nil {
+		plainPid, err := waitForRegisteredProcess(ctx, pidFn)
+		if errors.Is(err, errProcessRegistrationPending) {
+			latest, latestErr := os.ReadFile(pidFn)
+			if latestErr == nil {
+				plainPid = latest
+			} else if !errors.Is(latestErr, os.ErrNotExist) {
+				return fail(0, latestErr)
+			}
+			if latestErr == nil && !isRegisteredStartingProcess(plainPid) {
+				err = nil
+			} else if latestErr == nil && registeredStartingProcessMatches(plainPid) {
+				return methodKillResponse{ErrNoSuchProcess}
+			} else {
+				_ = os.Remove(pidFn)
+				err = os.ErrNotExist
+			}
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fail(0, err)
+		}
+		if err == nil {
 			if storedPid, expectedCreatedAt, ok := registeredProcess(plainPid); ok {
 				target := processTarget{
 					pid:               storedPid,
@@ -225,6 +249,40 @@ func (this *imp) killProcesses(ctx context.Context, header *Header, logger log.L
 	}
 
 	return methodKillResponse{}
+}
+
+func waitForRegisteredProcess(ctx context.Context, pidFn string) ([]byte, error) {
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
+	timeout := time.NewTimer(processRegistrationWaitTimeout)
+	defer timeout.Stop()
+	for {
+		raw, err := os.ReadFile(pidFn)
+		if err != nil || !isRegisteredStartingProcess(raw) {
+			return raw, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timeout.C:
+			return raw, errProcessRegistrationPending
+		case <-poll.C:
+		}
+	}
+}
+
+func isRegisteredStartingProcess(raw []byte) bool {
+	fields := strings.Fields(string(raw))
+	return len(fields) == 3 && fields[0] == execution.StateStartingMarker
+}
+
+func registeredStartingProcessMatches(raw []byte) bool {
+	fields := strings.Fields(string(raw))
+	if len(fields) != 3 || fields[0] != execution.StateStartingMarker {
+		return false
+	}
+	pid, expectedCreatedAt, ok := registeredProcess([]byte(strings.Join(fields[1:], " ")))
+	return ok && (processTarget{pid: pid, expectedCreatedAt: expectedCreatedAt}).matchesIdentity()
 }
 
 func registeredProcess(raw []byte) (int, *int64, bool) {

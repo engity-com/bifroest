@@ -179,6 +179,93 @@ func TestMaxChannelsAcrossConnectionsIsEnforced(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestClosedSessionCancelsTaskAndReleasesGlobalChannelSlot(t *testing.T) {
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	testEnvironment := &authorizedKeysTestEnvironment{run: func(task environment.Task) (int, error) {
+		if task.SshSession().RawCommand() != "block" {
+			return 0, nil
+		}
+		close(started)
+		<-task.Context().Done()
+		close(canceled)
+		return -1, task.Context().Err()
+	}}
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", testEnvironment, func(conf *configuration.Configuration) {
+		conf.Ssh.MaxSessionsPerConnection = 10
+		conf.Ssh.MaxChannelsPerConnection = 10
+		conf.Ssh.MaxChannels = 1
+	})
+	client := server.mustDial(t)
+	first, err := client.NewSession()
+	require.NoError(t, err)
+	require.NoError(t, first.Start("block"))
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("SSH session handler did not start")
+	}
+	require.NoError(t, first.Close())
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("closing the SSH session did not cancel its task")
+	}
+
+	var replacement *gossh.Session
+	require.Eventually(t, func() bool {
+		candidate, candidateErr := client.NewSession()
+		if candidateErr != nil {
+			return false
+		}
+		replacement = candidate
+		return true
+	}, 2*time.Second, 10*time.Millisecond, "global channel slot was not released")
+	require.NoError(t, replacement.Run("replacement"))
+}
+
+func TestSessionStdinHalfCloseDoesNotCancelTask(t *testing.T) {
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	testEnvironment := &authorizedKeysTestEnvironment{run: func(task environment.Task) (int, error) {
+		close(started)
+		select {
+		case <-task.Context().Done():
+			close(canceled)
+			return -1, task.Context().Err()
+		case <-release:
+			_, err := io.WriteString(task.SshSession(), "still-running")
+			return 0, err
+		}
+	}}
+	server := newAuthorizedKeysTestServer(t, "", testEnvironment)
+	client := server.mustDial(t)
+	sshSession, err := client.NewSession()
+	require.NoError(t, err)
+	stdin, err := sshSession.StdinPipe()
+	require.NoError(t, err)
+	var output strings.Builder
+	sshSession.Stdout = &output
+	require.NoError(t, sshSession.Start("half-close"))
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("SSH session handler did not start")
+	}
+	require.NoError(t, stdin.Close())
+	select {
+	case <-canceled:
+		t.Fatal("stdin half-close canceled the session task")
+	case <-time.After(100 * time.Millisecond):
+	}
+	releaseOnce.Do(func() { close(release) })
+	require.NoError(t, sshSession.Wait())
+	require.Equal(t, "still-running", output.String())
+}
+
 func TestDisabledMaxChannelsAllowsChannelsAcrossConnections(t *testing.T) {
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{}, func(conf *configuration.Configuration) {
 		conf.Ssh.MaxSessionsPerConnection = 10

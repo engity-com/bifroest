@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"io"
+	"time"
 
 	essh "github.com/engity-com/ssh-server-go"
 	gossh "golang.org/x/crypto/ssh"
@@ -13,7 +14,62 @@ import (
 )
 
 func (this *service) handleNewSshSession(srv *essh.Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx essh.Context) error {
-	return essh.DefaultSessionHandler(srv, conn, newChan, ctx)
+	plainContext, cancel := context.WithCancel(ctx)
+	sessionContext := &sshSessionContext{Context: ctx, plainContext: plainContext}
+	defer cancel()
+	return essh.DefaultSessionHandler(srv, conn, &sessionNewChannel{
+		NewChannel: newChan,
+		ctx:        plainContext,
+		cancel:     cancel,
+	}, sessionContext)
+}
+
+type sshSessionContext struct {
+	essh.Context
+	plainContext context.Context
+}
+
+func (this *sshSessionContext) Deadline() (time.Time, bool) { return this.plainContext.Deadline() }
+func (this *sshSessionContext) Done() <-chan struct{}       { return this.plainContext.Done() }
+func (this *sshSessionContext) Err() error                  { return this.plainContext.Err() }
+func (this *sshSessionContext) Value(key any) any           { return this.plainContext.Value(key) }
+
+type sessionNewChannel struct {
+	gossh.NewChannel
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+func (this *sessionNewChannel) Accept() (gossh.Channel, <-chan *gossh.Request, error) {
+	channel, requests, err := this.NewChannel.Accept()
+	if err != nil {
+		return nil, nil, err
+	}
+	forwarded := make(chan *gossh.Request)
+	go func() {
+		defer close(forwarded)
+		for {
+			select {
+			case request, ok := <-requests:
+				if !ok {
+					this.cancel()
+					return
+				}
+				select {
+				case forwarded <- request:
+				case <-this.ctx.Done():
+					for range requests {
+					}
+					return
+				}
+			case <-this.ctx.Done():
+				for range requests {
+				}
+				return
+			}
+		}
+	}()
+	return channel, forwarded, nil
 }
 
 func (this *service) handleSshShellSession(sess essh.Session) error {
@@ -84,9 +140,10 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 
 	req := environmentRequest{
 		environmentContext{
-			service:       this,
-			connection:    conn,
-			authorization: auth,
+			service:          this,
+			connection:       conn,
+			authorization:    auth,
+			executionContext: sshSess.Context(),
 		},
 		sshSess,
 	}

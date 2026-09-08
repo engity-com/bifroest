@@ -126,7 +126,16 @@ func doExec(opts *execOpts) error {
 		_ = goos.MkdirAll(stateDirectory, 0700)
 		pidFn = executionStatePath(stateDirectory, opts.executionId, ".pid")
 		defer func() { _ = goos.Remove(pidFn) }()
-		if err := registerStatePid(goos.Getpid()); err != nil {
+		var err error
+		if legacyState {
+			err = registerStatePid(goos.Getpid())
+		} else {
+			var identity string
+			if identity, err = processIdentity(goos.Getpid()); err == nil {
+				err = writeFileAtomically(pidFn, []byte(execution.StateStartingMarker+" "+identity))
+			}
+		}
+		if err != nil {
 			return fail(err)
 		}
 	}

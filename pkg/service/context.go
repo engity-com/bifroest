@@ -143,15 +143,16 @@ func (this *interactiveAuthorizeRequest) Prompt(message string, echo bool) (stri
 }
 
 type environmentContext struct {
-	service       *service
-	connection    *connection
-	authorization authorization.Authorization
+	service          *service
+	connection       *connection
+	authorization    authorization.Authorization
+	executionContext essh.Context
 }
 
 func (this *environmentContext) GetField(name string) (any, bool, error) {
 	switch name {
 	case "context":
-		return this.connection.context, true, nil
+		return this.Context(), true, nil
 	case "connection":
 		return this.connection, true, nil
 	case "remote":
@@ -166,6 +167,9 @@ func (this *environmentContext) GetField(name string) (any, bool, error) {
 }
 
 func (this *environmentContext) Context() essh.Context {
+	if this.executionContext != nil {
+		return this.executionContext
+	}
 	return this.connection.context
 }
 
