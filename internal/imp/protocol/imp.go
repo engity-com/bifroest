@@ -131,7 +131,7 @@ func (this *imp) serveConn(ctx context.Context, plainConn gonet.Conn) (rErr erro
 	defer common.KeepCloseError(&rErr, conn)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go bnet.NotifyClosed(plainConn, cancel, func(err error) {
+	go bnet.NotifyClosedContext(ctx, plainConn, cancel, func(err error) {
 		this.logger().WithError(err).Warn("problems while watching for connection being closed; this could delay handler cancellation")
 	})
 

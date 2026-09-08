@@ -9,11 +9,14 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -186,7 +189,11 @@ func newOIDCAuthorizationFixtureWithAuthMethod(t *testing.T, authMethod string) 
         - email
       retrieveIdToken: true
       retrieveUserInfo: true`, yamlString(provider.server.URL), yamlString(oidcClientID), yamlString(oidcClientSecret))
-	if err := startAuthorizationService(f, authorization); err != nil {
+	caCertificate := filepath.Join(f.tempDir, "oidc-ca.pem")
+	if err := os.WriteFile(caCertificate, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: provider.server.Certificate().Raw}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := startAuthorizationService(f, authorization, "SSL_CERT_FILE="+caCertificate); err != nil {
 		t.Fatal(err)
 	}
 	return provider, f
@@ -204,7 +211,7 @@ func newOIDCTestProvider(t *testing.T, authMethod string) *oidcTestProvider {
 		authMethod: authMethod,
 		devices:    make(map[string]*oidcDevice),
 	}
-	p.server = httptest.NewServer(http.HandlerFunc(p.serveHTTP))
+	p.server = httptest.NewTLSServer(http.HandlerFunc(p.serveHTTP))
 	t.Cleanup(p.server.Close)
 	return p
 }

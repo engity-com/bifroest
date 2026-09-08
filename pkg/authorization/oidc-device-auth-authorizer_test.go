@@ -2,6 +2,7 @@ package authorization
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,6 +11,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
+
+	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/template"
 )
 
 func TestOidcClientAuthStyle(t *testing.T) {
@@ -63,19 +67,76 @@ func TestSameOriginNormalizesHostAndDefaultPort(t *testing.T) {
 	}
 }
 
+func TestRequireOidcHttpsEndpoint(t *testing.T) {
+	require.NoError(t, requireOidcHttpsEndpoint("endpoint", "https://idp.example/device"))
+	require.NoError(t, requireOidcHttpsEndpoint("endpoint", "HTTPS://idp.example/device"))
+	for _, endpoint := range []string{"", "/device", "http://idp.example/device", "https:///device", "://invalid"} {
+		t.Run(endpoint, func(t *testing.T) {
+			require.Error(t, requireOidcHttpsEndpoint("endpoint", endpoint))
+		})
+	}
+}
+
+func TestNewOidcDeviceAuthRejectsHttpIssuerBeforeDiscovery(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+	defer server.Close()
+	conf := &configuration.AuthorizationOidcDeviceAuth{
+		Issuer:       template.MustNewUrl(server.URL),
+		ClientId:     template.MustNewString("client"),
+		ClientSecret: template.MustNewString("secret"),
+		Scopes:       template.MustNewStrings("openid"),
+	}
+
+	_, err := NewOidcDeviceAuth(context.Background(), "test", conf)
+	require.ErrorContains(t, err, "issuer must be an absolute HTTPS URL")
+	require.False(t, called)
+}
+
+func TestNewOidcDeviceAuthRejectsHttpDeviceEndpoint(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/.well-known/openid-configuration" {
+			t.Errorf("request path: got %q, want discovery endpoint", req.URL.Path)
+		}
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                                server.URL,
+			"authorization_endpoint":                server.URL + "/authorize",
+			"device_authorization_endpoint":         "http://idp.example/device",
+			"token_endpoint":                        server.URL + "/token",
+			"jwks_uri":                              server.URL + "/jwks",
+			"id_token_signing_alg_values_supported": []string{"RS256"},
+		}); err != nil {
+			t.Errorf("encode discovery response: %v", err)
+		}
+	}))
+	defer server.Close()
+	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, server.Client())
+	conf := &configuration.AuthorizationOidcDeviceAuth{
+		Issuer:       template.MustNewUrl(server.URL),
+		ClientId:     template.MustNewString("client"),
+		ClientSecret: template.MustNewString("secret"),
+		Scopes:       template.MustNewStrings("openid"),
+	}
+
+	_, err := NewOidcDeviceAuth(ctx, "test", conf)
+	require.ErrorContains(t, err, "device authorization endpoint must be an absolute HTTPS URL")
+}
+
 func TestOidcClientSecretPostIsNotRedirectedAcrossOrigins(t *testing.T) {
 	destinationCalled := make(chan struct{}, 1)
 	destination := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		destinationCalled <- struct{}{}
 	}))
 	defer destination.Close()
-	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Location", destination.URL)
 		w.WriteHeader(http.StatusTemporaryRedirect)
 	}))
 	defer source.Close()
 
-	ctx, err := withSameOriginRedirects(context.Background(), source.URL)
+	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, source.Client())
+	ctx, err := withSameOriginRedirects(ctx, source.URL)
 	require.NoError(t, err)
 	client := ctx.Value(oauth2.HTTPClient).(*http.Client)
 	response, err := client.Post(source.URL, "application/x-www-form-urlencoded", strings.NewReader("client_secret=must-not-leak"))
@@ -100,14 +161,15 @@ func TestOidcBasicClientAuthenticationEscapesCredentials(t *testing.T) {
 		basic    bool
 	}
 	actual := make(chan credentials, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		username, password, basic := req.BasicAuth()
 		actual <- credentials{username, password, basic}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
 
-	ctx, err := withBasicClientAuthentication(context.Background(), server.URL, clientId, clientSecret)
+	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, server.Client())
+	ctx, err := withBasicClientAuthentication(ctx, server.URL, clientId, clientSecret)
 	require.NoError(t, err)
 	client := ctx.Value(oauth2.HTTPClient).(*http.Client)
 	response, err := client.Get(server.URL)
@@ -117,4 +179,9 @@ func TestOidcBasicClientAuthenticationEscapesCredentials(t *testing.T) {
 	require.True(t, got.basic)
 	require.Equal(t, url.QueryEscape(clientId), got.username)
 	require.Equal(t, url.QueryEscape(clientSecret), got.password)
+}
+
+func TestOidcBasicClientAuthenticationRejectsHttpEndpoint(t *testing.T) {
+	_, err := withBasicClientAuthentication(context.Background(), "http://idp.example/device", "client", "secret")
+	require.ErrorContains(t, err, "must be an absolute HTTPS URL")
 }

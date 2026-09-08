@@ -14,7 +14,7 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 )
 
-func startAuthorizationService(f *fixture, authorizationYAML string) error {
+func startAuthorizationService(f *fixture, authorizationYAML string, environment ...string) error {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return fmt.Errorf("reserve SSH listen port: %w", err)
@@ -38,7 +38,7 @@ func startAuthorizationService(f *fixture, authorizationYAML string) error {
 		return fmt.Errorf("write authorization configuration: %w", err)
 	}
 
-	f.bifroestProc, err = f.launchLoggedProcess("bifroest", nil, f.bifroest,
+	f.bifroestProc, err = f.launchLoggedProcess("bifroest", environment, f.bifroest,
 		"run", "--configuration="+configurationPath, "--log.level=DEBUG")
 	if err != nil {
 		return fmt.Errorf("start Bifroest: %w", err)

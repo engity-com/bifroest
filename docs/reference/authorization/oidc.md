@@ -24,6 +24,8 @@ Has to be set to `oidcDeviceAuth` to enable the OIDC DeviceAuth authorization.
 <<property("issuer", "URL", "../data-type.md#url", template_context="../context/core.md", id_prefix="device-auth-", heading=4, required=True)>>
 The issuer is the URL identifier for the service which is issued by your identity provider.
 
+The issuer and its discovered device-authorization and token endpoints must use HTTPS. Bifröst rejects HTTP endpoints before transmitting client credentials. Private certificate authorities can be added to Bifröst's bundled trust store through the standard `SSL_CERT_FILE` environment variable.
+
 ##### Examples {: #device-auth-property-issuer-examples }
 * `https://login.microsoftonline.com/my-great-tenant-uuid/v2.0`
 * `https://accounts.google.com`

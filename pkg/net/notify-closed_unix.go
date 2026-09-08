@@ -3,14 +3,20 @@
 package net
 
 import (
+	"context"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-func notifyClosed(rc syscall.RawConn, onClosed func(), onUnexpectedEnd func(error)) {
+func notifyClosed(ctx context.Context, rc syscall.RawConn, onClosed func(), onUnexpectedEnd func(error)) {
+	if ctx.Err() != nil {
+		return
+	}
 	epFd, err := epollCreate()
 	if err != nil {
 		onUnexpectedEnd(errors.Network.Newf("failed to create epoll fd: %w", err))
@@ -20,24 +26,40 @@ func notifyClosed(rc syscall.RawConn, onClosed func(), onUnexpectedEnd func(erro
 		_ = unix.Close(epFd)
 	}()
 
+	var registrationErr error
 	if err := rc.Control(func(fd uintptr) {
-		if err := epollCtl(epFd, unix.EPOLL_CTL_ADD, int(fd), &unix.EpollEvent{
+		registrationErr = epollCtl(epFd, unix.EPOLL_CTL_ADD, int(fd), &unix.EpollEvent{
 			Events: unix.EPOLLHUP | unix.EPOLLRDHUP,
 			Fd:     int32(fd),
-		}); err != nil {
-			onUnexpectedEnd(errors.Network.Newf("failed to register fd for close notifications: %w", err))
+		})
+	}); err != nil {
+		if sys.IsClosedError(err) {
+			if ctx.Err() == nil {
+				onClosed()
+			}
 			return
 		}
+		onUnexpectedEnd(errors.Network.Newf("failed to register for close notifications: %w", err))
+		return
+	}
+	if registrationErr != nil {
+		onUnexpectedEnd(errors.Network.Newf("failed to register fd for close notifications: %w", registrationErr))
+		return
+	}
 
-		events := make([]unix.EpollEvent, 1)
-		if _, err := epollWait(epFd, events, -1); err != nil {
+	events := make([]unix.EpollEvent, 1)
+	for ctx.Err() == nil {
+		n, err := epollWait(epFd, events, int(notifyClosedPollInterval/time.Millisecond))
+		if err != nil {
 			onUnexpectedEnd(errors.Network.Newf("failed to wait for close notifications: %w", err))
 			return
 		}
-		onClosed()
-	}); err != nil {
-		onUnexpectedEnd(errors.Network.Newf("failed to register for close notifications: %w", err))
-		return
+		if n > 0 {
+			if ctx.Err() == nil {
+				onClosed()
+			}
+			return
+		}
 	}
 }
 

@@ -169,7 +169,7 @@ func (this *imp) handleNamedPipe(ctx context.Context, header *Header, logger log
 		return "destination -> source"
 	}
 
-	go net.NotifyClosed(conn, func() {
+	go net.NotifyClosedContext(ctx, conn, func() {
 		logger.Trace("client connection was closed")
 		_ = pipe.Close()
 	}, func(err error) {

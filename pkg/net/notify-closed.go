@@ -1,17 +1,28 @@
 package net
 
 import (
+	"context"
 	gonet "net"
 	"syscall"
+	"time"
 
 	"github.com/engity-com/bifroest/pkg/errors"
 )
+
+const notifyClosedPollInterval = 100 * time.Millisecond
 
 var (
 	ErrNotifyClosedUnsupported = errors.Network.Newf("notify closed is not supported for this connection")
 )
 
 func NotifyClosed(conn gonet.Conn, onClosed func(), onUnexpectedEnd func(error)) {
+	NotifyClosedContext(context.Background(), conn, onClosed, onUnexpectedEnd)
+}
+
+func NotifyClosedContext(ctx context.Context, conn gonet.Conn, onClosed func(), onUnexpectedEnd func(error)) {
+	if ctx == nil {
+		panic(errors.System.Newf("ctx is nil"))
+	}
 	if onClosed == nil {
 		panic(errors.System.Newf("onClosed is nil"))
 	}
@@ -43,5 +54,5 @@ func NotifyClosed(conn gonet.Conn, onClosed func(), onUnexpectedEnd func(error))
 		return
 	}
 
-	notifyClosed(rc, onClosed, onUnexpectedEnd)
+	notifyClosed(ctx, rc, onClosed, onUnexpectedEnd)
 }

@@ -3,8 +3,9 @@
 package net
 
 import (
-	"sync/atomic"
+	"context"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/windows"
 
@@ -23,45 +24,51 @@ const (
 	typeFdClose = 1 << 5
 )
 
-func notifyClosed(rc syscall.RawConn, onClosed func(), onUnexpectedEnd func(error)) {
-	var success atomic.Bool
-	fail := func(kind string, err error) {
-		if sys.IsClosedError(err) {
-			success.Store(true)
-		} else if err != nil {
-			onUnexpectedEnd(err)
-		}
+func notifyClosed(ctx context.Context, rc syscall.RawConn, onClosed func(), onUnexpectedEnd func(error)) {
+	if ctx.Err() != nil {
+		return
 	}
+	var eventHandle windows.Handle
+	var registrationErr error
 	if err := rc.Control(func(fd uintptr) {
-		eventHandle, err := wsaEventSelect(windows.Handle(fd), typeFdClose)
-		if err != nil {
-			fail("WSAEventSelect", err)
-			return
-		}
-		defer func() {
-			_, _, _ = procWSAEventSelect.Call(fd, 0, 0)
-			_ = wsaCloseEvent(eventHandle)
-		}()
-
-		_, err = windows.WaitForSingleObject(eventHandle, windows.INFINITE)
-		//goland:noinspection GoTypeAssertionOnErrors
-		if sce, ok := err.(syscall.Errno); ok && sce == 0 {
-			// Ok
-		} else if err != nil {
-			fail("WaitForSingleObject", err)
-			return
-		}
-		success.Store(true)
+		eventHandle, registrationErr = wsaEventSelect(windows.Handle(fd), typeFdClose)
 	}); sys.IsClosedError(err) {
-		success.Store(true)
-		onClosed()
+		if ctx.Err() == nil {
+			onClosed()
+		}
+		return
 	} else if err != nil {
 		onUnexpectedEnd(errors.Network.Newf("cannot execute control operations on connection %v", rc))
 		return
 	}
+	if registrationErr != nil {
+		onUnexpectedEnd(errors.Network.Newf("failed to register socket for close notifications: %w", registrationErr))
+		return
+	}
+	defer func() {
+		_ = rc.Control(func(fd uintptr) {
+			_, _, _ = procWSAEventSelect.Call(fd, 0, 0)
+		})
+		_ = wsaCloseEvent(eventHandle)
+	}()
 
-	if success.Load() {
-		onClosed()
+	for ctx.Err() == nil {
+		result, err := windows.WaitForSingleObject(eventHandle, uint32(notifyClosedPollInterval/time.Millisecond))
+		if err != nil {
+			onUnexpectedEnd(errors.Network.Newf("failed to wait for close notifications: %w", err))
+			return
+		}
+		switch result {
+		case windows.WAIT_OBJECT_0:
+			if ctx.Err() == nil {
+				onClosed()
+			}
+			return
+		case uint32(windows.WAIT_TIMEOUT):
+		default:
+			onUnexpectedEnd(errors.Network.Newf("waiting for close notifications returned unexpected result %d", result))
+			return
+		}
 	}
 }
 

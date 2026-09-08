@@ -54,6 +54,12 @@ func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *c
 	if err != nil {
 		return failf("cannot render issuer: %w", err)
 	}
+	if issuer == nil {
+		return failf("issuer is empty")
+	}
+	if err := requireOidcHttpsEndpoint("issuer", issuer.String()); err != nil {
+		return fail(err)
+	}
 
 	provider, err := coidc.NewProvider(ctx, issuer.String())
 	if err != nil {
@@ -89,6 +95,12 @@ func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *c
 	}
 	endpoint.AuthStyle, err = oidcClientAuthStyle(metadata.TokenEndpointAuthMethodsSupported)
 	if err != nil {
+		return fail(err)
+	}
+	if err := requireOidcHttpsEndpoint("token endpoint", endpoint.TokenURL); err != nil {
+		return fail(err)
+	}
+	if err := requireOidcHttpsEndpoint("device authorization endpoint", endpoint.DeviceAuthURL); err != nil {
 		return fail(err)
 	}
 
@@ -144,6 +156,17 @@ func sameOrigin(left, right *url.URL) bool {
 		effectiveOriginPort(left) == effectiveOriginPort(right)
 }
 
+func requireOidcHttpsEndpoint(name, raw string) error {
+	endpoint, err := url.Parse(raw)
+	if err != nil {
+		return errors.Config.Newf("%s is invalid: %w", name, err)
+	}
+	if !strings.EqualFold(endpoint.Scheme, "https") || endpoint.Host == "" {
+		return errors.Config.Newf("%s must be an absolute HTTPS URL", name)
+	}
+	return nil
+}
+
 func effectiveOriginPort(value *url.URL) string {
 	if port := value.Port(); port != "" {
 		if numeric, err := strconv.ParseUint(port, 10, 16); err == nil {
@@ -162,6 +185,9 @@ func effectiveOriginPort(value *url.URL) string {
 }
 
 func withBasicClientAuthentication(ctx context.Context, endpoint, clientId, clientSecret string) (context.Context, error) {
+	if err := requireOidcHttpsEndpoint("client authentication endpoint", endpoint); err != nil {
+		return nil, err
+	}
 	target, err := url.Parse(endpoint)
 	if err != nil {
 		return nil, err
@@ -186,6 +212,9 @@ func withBasicClientAuthentication(ctx context.Context, endpoint, clientId, clie
 }
 
 func withSameOriginRedirects(ctx context.Context, endpoint string) (context.Context, error) {
+	if err := requireOidcHttpsEndpoint("OAuth endpoint", endpoint); err != nil {
+		return nil, err
+	}
 	target, err := url.Parse(endpoint)
 	if err != nil {
 		return nil, err
