@@ -51,7 +51,7 @@ func (this *execProcessSupervisor) Attach(cmd *exec.Cmd) error {
 	if err != nil {
 		return err
 	}
-	defer closeWindowsHandle(process)
+	defer func() { _ = closeWindowsHandle(process) }()
 	if err := assignProcessToJobObject(this.job, process); err != nil {
 		return err
 	}
@@ -63,7 +63,7 @@ func resumeProcess(pid uint32) error {
 	if err != nil {
 		return err
 	}
-	defer windows.CloseHandle(snapshot)
+	defer func() { _ = windows.CloseHandle(snapshot) }()
 	entry := windows.ThreadEntry32{Size: uint32(unsafe.Sizeof(windows.ThreadEntry32{}))}
 	if err := windows.Thread32First(snapshot, &entry); err != nil {
 		return err

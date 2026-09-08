@@ -167,6 +167,13 @@ func TestRegisteredProcessRejectsReusedPid(t *testing.T) {
 	}, sys.Signal(0), make(signaledProcessGroups)), ErrNoSuchProcess)
 }
 
+func TestRegisteredProcessRejectsOutOfRangePid(t *testing.T) {
+	pid, expectedCreatedAt, ok := registeredProcess([]byte("2147483648 1"))
+	require.False(t, ok)
+	require.Zero(t, pid)
+	require.Nil(t, expectedCreatedAt)
+}
+
 func TestKillProcessesWaitsForProcessRegistration(t *testing.T) {
 	stateId := connection.MustNewId()
 	directory := t.TempDir()

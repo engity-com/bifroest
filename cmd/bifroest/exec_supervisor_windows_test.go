@@ -70,10 +70,10 @@ func TestExecProcessSupervisorLifecycle(t *testing.T) {
 
 	parent, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(cmd.Process.Pid))
 	require.NoError(t, err)
-	defer windows.CloseHandle(parent)
+	defer func() { _ = windows.CloseHandle(parent) }()
 	child, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(childPid))
 	require.NoError(t, err)
-	defer windows.CloseHandle(child)
+	defer func() { _ = windows.CloseHandle(child) }()
 
 	require.NoError(t, supervisor.Cleanup())
 	for _, process := range []windows.Handle{parent, child} {

@@ -31,7 +31,7 @@ func (this *imp) kill(ctx context.Context, target processTarget, signal sys.Sign
 	if err != nil {
 		return err
 	}
-	defer windows.CloseHandle(processHandle)
+	defer func() { _ = windows.CloseHandle(processHandle) }()
 	if !target.matchesIdentity() {
 		return ErrNoSuchProcess
 	}

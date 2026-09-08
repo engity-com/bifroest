@@ -370,7 +370,7 @@ func (f *fixture) prepareLocal() error {
 
 func (f *fixture) buildImage(contextDir string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
-	result := runCommand(ctx, f.repoRoot, nil, f.runtimeCLI, "build", "--platform=linux/amd64", "--tag", f.imageName, contextDir)
+	result := runCommand(ctx, f.repoRoot, nil, f.runtimeCLI, "build", "--file", filepath.Join(contextDir, "Containerfile"), "--platform=linux/amd64", "--tag", f.imageName, contextDir)
 	cancel()
 	if result.err != nil {
 		return fmt.Errorf("build container image: %w\nstdout:\n%s\nstderr:\n%s", result.err, result.stdout, result.stderr)

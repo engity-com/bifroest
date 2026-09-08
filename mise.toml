@@ -100,4 +100,3 @@ golangci-lint = "aqua:golangci/golangci-lint"
 
 [env]
 _.python.venv = { path = ".pyvenv", create = true, uv_create_args = ['--seed'] }
-KIND_EXPERIMENTAL_PROVIDER = "podman"

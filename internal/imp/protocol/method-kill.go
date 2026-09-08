@@ -305,10 +305,11 @@ func registeredProcess(raw []byte) (int, *int64, bool) {
 	if len(fields) == 0 || len(fields) > 2 {
 		return 0, nil, false
 	}
-	pid, err := strconv.Atoi(fields[0])
-	if err != nil || pid <= 0 {
+	parsedPid, err := strconv.ParseInt(fields[0], 10, 32)
+	if err != nil || parsedPid <= 0 {
 		return 0, nil, false
 	}
+	pid := int(parsedPid)
 	if len(fields) == 1 {
 		return pid, nil, true
 	}
@@ -332,6 +333,9 @@ func registeredProcessMatches(raw []byte, expectedEnv string) bool {
 }
 
 func (this processTarget) matchesIdentity() bool {
+	if this.pid <= 0 || int64(this.pid) > math.MaxInt32 {
+		return false
+	}
 	if this.expectedCreatedAt != nil {
 		candidate, err := process.NewProcess(int32(this.pid))
 		if err != nil {
@@ -346,6 +350,9 @@ func (this processTarget) matchesIdentity() bool {
 }
 
 func processHasEnvironment(pid int, expected string) bool {
+	if pid <= 0 || int64(pid) > math.MaxInt32 {
+		return false
+	}
 	candidate, err := process.NewProcess(int32(pid))
 	if err != nil {
 		return false
