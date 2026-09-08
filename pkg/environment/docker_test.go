@@ -34,6 +34,24 @@ func TestWaitForDockerImpRetriesConnectionRefused(t *testing.T) {
 	require.Equal(t, 2, attempts)
 }
 
+func TestWaitForDockerImpRetriesConnectionReset(t *testing.T) {
+	attempts := 0
+	err := waitForDockerImp(context.Background(), log.GetLogger("test"), time.Second, 0, func(context.Context) error {
+		attempts++
+		if attempts == 1 {
+			return &gonet.OpError{
+				Op:  "read",
+				Net: "tcp",
+				Err: syscall.ECONNRESET,
+			}
+		}
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 2, attempts)
+}
+
 func TestWaitForDockerImpStopsAtReadinessTimeout(t *testing.T) {
 	const timeout = 20 * time.Millisecond
 	started := time.Now()
