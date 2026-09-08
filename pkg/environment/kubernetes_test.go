@@ -29,6 +29,22 @@ func TestWaitForKubernetesImpEnvironmentRetriesTemporaryFailure(t *testing.T) {
 	require.Equal(t, 3, attempts)
 }
 
+func TestWaitForKubernetesImpEnvironmentRetriesRefusedPodEndpoint(t *testing.T) {
+	attempts := 0
+	expected := sys.EnvVars{"READY": "true"}
+	actual, err := waitForKubernetesImpEnvironment(context.Background(), log.GetLogger("test"), time.Second, 2, 0, func(context.Context) (sys.EnvVars, error) {
+		attempts++
+		if attempts == 1 {
+			return nil, fmt.Errorf("port forward failed: %w", bkube.ErrEndpointNotReady)
+		}
+		return expected, nil
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, expected, actual)
+	require.Equal(t, 2, attempts)
+}
+
 func TestWaitForKubernetesImpEnvironmentFailsAfterLastAttempt(t *testing.T) {
 	attempts := 0
 	actual, err := waitForKubernetesImpEnvironment(context.Background(), log.GetLogger("test"), time.Second, 2, 0, func(context.Context) (sys.EnvVars, error) {

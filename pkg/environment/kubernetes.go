@@ -157,6 +157,7 @@ func isKubernetesImpNotReadyError(err error) bool {
 	return sys.IsClosedError(err) ||
 		errors.Is(err, io.ErrUnexpectedEOF) ||
 		errors.Is(err, bkube.ErrEndpointNotFound) ||
+		errors.Is(err, bkube.ErrEndpointNotReady) ||
 		errors.Is(err, spdystream.ErrWriteClosedStream) ||
 		errors.Is(err, spdystream.ErrReset) ||
 		errors.Is(err, spdystream.ErrTimeout) ||

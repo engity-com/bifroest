@@ -25,6 +25,7 @@ import (
 var (
 	ErrPodNotFound      = fmt.Errorf("pod not found")
 	ErrEndpointNotFound = fmt.Errorf("endpoint not found")
+	ErrEndpointNotReady = fmt.Errorf("endpoint not ready")
 )
 
 func (this *client) DialPod(ctx context.Context, namespace, name, port string) (gonet.Conn, error) {
@@ -157,9 +158,17 @@ func (this *httpstreamConn) watchErr(ctx context.Context) {
 	if len(bs) > 0 {
 		select {
 		case <-ctx.Done():
-		case this.errCh <- errors.Network.Newf("error during read: %s", string(bs)):
+		case this.errCh <- portForwardStreamError(string(bs)):
 		}
 	}
+}
+
+func portForwardStreamError(message string) error {
+	message = strings.TrimSpace(message)
+	if strings.Contains(message, "failed to connect to localhost:") && strings.Contains(message, "connection refused") {
+		return errors.Network.Newf("error during read: %s: %w", message, ErrEndpointNotReady)
+	}
+	return errors.Network.Newf("error during read: %s", message)
 }
 
 func (this *httpstreamConn) Read(b []byte) (n int, err error) {
