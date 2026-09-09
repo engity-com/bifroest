@@ -3,7 +3,6 @@
 package authorization
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -27,8 +26,9 @@ var (
 )
 
 type LocalAuthorizer struct {
-	flow configuration.FlowName
-	conf *configuration.AuthorizationLocal
+	flow           configuration.FlowName
+	conf           *configuration.AuthorizationLocal
+	trustedUserCAs []ssh.PublicKey
 
 	Logger log.Logger
 
@@ -57,9 +57,17 @@ func NewLocal(ctx context.Context, flow configuration.FlowName, conf *configurat
 		conf:           conf,
 		userRepository: userRepository,
 	}
+	trustedUserCAs, err := loadTrustedUserCAs(&conf.UserCertificateAuthorityProperties)
+	if err != nil {
+		_ = userRepository.Close()
+		return failf("cannot load trusted user CAs: %w", err)
+	}
+	result.trustedUserCAs = trustedUserCAs
 
 	return &result, nil
 }
+
+func (*LocalAuthorizer) SupportsUserCertificates() {}
 
 func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authorization, error) {
 	fail := func(err error) (Authorization, error) {
@@ -69,7 +77,7 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 		return fail(fmt.Errorf(message, args...))
 	}
 
-	if len(this.conf.AuthorizedKeys) == 0 {
+	if len(this.conf.AuthorizedKeys) == 0 && len(this.trustedUserCAs) == 0 {
 		req.Connection().Logger().Debug("authorized keys disabled for local user")
 		return Forbidden(req.Connection().Remote()), nil
 	}
@@ -98,7 +106,7 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	} else if !ok {
 		return Forbidden(req.Connection().Remote()), nil
 	}
-	policy, accepted, err := this.authorizedKeyPolicy(req, u)
+	policy, accepted, isCertificate, err := this.authorizedKeyPolicy(req, u)
 	if err != nil {
 		return fail(err)
 	}
@@ -106,6 +114,18 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 		return Forbidden(req.Connection().Remote()), nil
 	}
 	candidate.authorizedKeyPolicy = policy
+
+	if isCertificate {
+		if !isPublicKeyVerified(req) {
+			return &candidate, nil
+		}
+		sess, err := this.ensureSessionFor(req, u)
+		if err != nil {
+			return fail(err)
+		}
+		candidate.session = sess
+		return &candidate, nil
+	}
 
 	sess, err := req.Sessions().FindByPublicKey(req.Context(), req.RemotePublicKey(), (&session.FindOpts{}).WithPredicate(
 		session.IsFlow(this.flow),
@@ -129,11 +149,11 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	return &candidate, nil
 }
 
-func (this *LocalAuthorizer) authorizedKeyPolicy(req PublicKeyRequest, u *user.User) (*AuthorizedKeyPolicy, bool, error) {
-	fail := func(err error) (*AuthorizedKeyPolicy, bool, error) {
-		return nil, false, err
+func (this *LocalAuthorizer) authorizedKeyPolicy(req PublicKeyRequest, u *user.User) (*AuthorizedKeyPolicy, bool, bool, error) {
+	fail := func(err error) (*AuthorizedKeyPolicy, bool, bool, error) {
+		return nil, false, false, err
 	}
-	failf := func(msg string, args ...any) (*AuthorizedKeyPolicy, bool, error) {
+	failf := func(msg string, args ...any) (*AuthorizedKeyPolicy, bool, bool, error) {
 		return fail(errors.Newf(errors.System, msg, args...))
 	}
 
@@ -141,44 +161,30 @@ func (this *LocalAuthorizer) authorizedKeyPolicy(req PublicKeyRequest, u *user.U
 	if err != nil {
 		return failf("cannot get authorized keys files of user: %w", err)
 	}
-	if len(files) == 0 {
+	if len(files) == 0 && len(this.trustedUserCAs) == 0 {
 		req.Connection().Logger().Debug("local user does not has any authorized keys file")
-		return nil, false, nil
+		return nil, false, false, nil
 	}
 
-	foundMatch := false
-	var policy *AuthorizedKeyPolicy
-	_, err = crypto.DoWithEachAuthorizedKey[bool](false, func(candidate ssh.PublicKey, options []crypto.AuthorizedKeyOption) (ok bool, canContinue bool, err error) {
-		remote := req.RemotePublicKey()
-
-		if remote.Type() != candidate.Type() {
-			return false, true, nil
-		}
-		if !bytes.Equal(remote.Marshal(), candidate.Marshal()) {
-			return false, true, nil
-		}
-
-		candidatePolicy, accepted, err := evaluateAuthorizedKeyOptions(options, req.Connection().Remote().Host(), time.Now())
-		if err != nil {
-			return false, false, err
-		}
-		if !accepted {
-			return false, true, nil
-		}
-		foundMatch = true
-		policy = candidatePolicy
-		return true, false, nil
-	}, files...)
+	policy, accepted, err := evaluatePublicKeyCredential(
+		req.RemotePublicKey(), req.Connection().Remote().User(), req.Connection().Remote().Host(), this.trustedUserCAs,
+		func(consumer func(ssh.PublicKey, []crypto.AuthorizedKeyOption) (bool, error)) error {
+			_, err := crypto.DoWithEachAuthorizedKey[bool](false, func(candidate ssh.PublicKey, options []crypto.AuthorizedKeyOption) (bool, bool, error) {
+				canContinue, err := consumer(candidate, options)
+				return !canContinue, canContinue, err
+			}, files...)
+			return err
+		}, time.Now())
 	if err != nil {
 		return fail(err)
 	}
 
-	if !foundMatch {
+	if !accepted {
 		req.Connection().Logger().Debug("presented public key does not match any authorized keys of local user")
-		return nil, false, nil
+		return nil, false, false, nil
 	}
-
-	return policy, true, nil
+	_, isCertificate := req.RemotePublicKey().(*ssh.Certificate)
+	return policy, true, isCertificate, nil
 }
 
 type userEnabledRequest struct {

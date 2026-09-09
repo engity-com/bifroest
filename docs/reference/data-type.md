@@ -34,8 +34,10 @@ Bifröst supports the following OpenSSH `authorized_keys` options:
 | `permitopen="host:port"` | Restricts local and dynamic port-forwarding destinations. May be specified more than once. |
 | `permitlisten="[host:]port"` | Restricts reverse port-forwarding listeners. May be specified more than once. |
 | `agent-forwarding`, `no-agent-forwarding` | Enables or disables access to a forwarded SSH agent. |
+| `cert-authority` | Treats the entry as a user certificate authority instead of a directly authorized key. Supported by the `simple` and `local` authorizations. |
+| `principals="name,..."` | Further restricts a `cert-authority` entry to certificates containing at least one listed principal. The requested SSH username must still be a certificate principal. |
 
-Options not listed above are not supported. A key entry using an unsupported option, such as `cert-authority`, `principals`, `tunnel`, `user-rc`, `x11-forwarding`, `no-touch-required`, or `verify-required`, is rejected instead of being treated as unrestricted.
+Options not listed above are not supported. A key entry using an unsupported option, such as `tunnel`, `user-rc`, `x11-forwarding`, `no-touch-required`, or `verify-required`, is rejected instead of being treated as unrestricted. `principals` without `cert-authority` is also rejected.
 
 !!! warning
      Environment variables can change how commands and shells behave. Only configure `environment=` values that you trust, especially variables such as `PATH`, shell startup variables, or dynamic-loader settings.
@@ -145,6 +147,15 @@ Can be one of:
 
 * `plain`
 * `bcrypt`
+
+## Public Keys
+
+A string containing one or more OpenSSH public-key lines. Empty lines and lines beginning with `#` are ignored. Unlike [Authorized Keys](#authorized-keys), these lines cannot contain options. Certificate-authority configuration also rejects certificate lines because each trust anchor must be a plain public key.
+
+```text
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... organization-user-ca
+ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQ... legacy-user-ca
+```
 
 ## Pull Policy
 Can be one of:

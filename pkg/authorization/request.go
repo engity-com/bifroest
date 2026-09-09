@@ -20,6 +20,15 @@ type PublicKeyRequest interface {
 	RemotePublicKey() gossh.PublicKey
 }
 
+type verifiedPublicKeyRequest interface {
+	PublicKeyVerified() bool
+}
+
+func isPublicKeyVerified(req PublicKeyRequest) bool {
+	verified, ok := req.(verifiedPublicKeyRequest)
+	return ok && verified.PublicKeyVerified()
+}
+
 type PasswordRequest interface {
 	Request
 	RemotePassword() string

@@ -1,7 +1,6 @@
 package authorization
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -22,8 +21,9 @@ var (
 )
 
 type SimpleAuthorizer struct {
-	flow configuration.FlowName
-	conf *configuration.AuthorizationSimple
+	flow           configuration.FlowName
+	conf           *configuration.AuthorizationSimple
+	trustedUserCAs []ssh.PublicKey
 
 	Logger log.Logger
 }
@@ -44,9 +44,16 @@ func NewSimple(_ context.Context, flow configuration.FlowName, conf *configurati
 		flow: flow,
 		conf: conf,
 	}
+	trustedUserCAs, err := loadTrustedUserCAs(&conf.UserCertificateAuthorityProperties)
+	if err != nil {
+		return failf("cannot load trusted user CAs: %w", err)
+	}
+	result.trustedUserCAs = trustedUserCAs
 
 	return &result, nil
 }
+
+func (*SimpleAuthorizer) SupportsUserCertificates() {}
 
 func (this *SimpleAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authorization, error) {
 	fail := func(err error) (Authorization, error) {
@@ -63,7 +70,7 @@ func (this *SimpleAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriz
 	if !accepted {
 		return Forbidden(req.Connection().Remote()), nil
 	}
-	policy, accepted, err := this.authorizedKeyPolicy(req, entry)
+	policy, accepted, isCertificate, err := this.authorizedKeyPolicy(req, entry)
 	if err != nil {
 		return fail(err)
 	}
@@ -71,6 +78,18 @@ func (this *SimpleAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriz
 		return Forbidden(req.Connection().Remote()), nil
 	}
 	auth.authorizedKeyPolicy = policy
+
+	if isCertificate {
+		if !isPublicKeyVerified(req) {
+			return auth, nil
+		}
+		sess, err := this.ensureSessionFor(req, entry)
+		if err != nil {
+			return fail(err)
+		}
+		auth.session = sess
+		return auth, nil
+	}
 
 	sess, err := req.Sessions().FindByPublicKey(req.Context(), req.RemotePublicKey(), (&session.FindOpts{}).WithPredicate(
 		session.IsFlow(this.flow),
@@ -125,56 +144,43 @@ func (this *SimpleAuthorizer) lookupEntry(req Request) (entry *configuration.Aut
 	return entry, auth, accepted, nil
 }
 
-func (this *SimpleAuthorizer) authorizedKeyPolicy(req PublicKeyRequest, entry *configuration.AuthorizationSimpleEntry) (*AuthorizedKeyPolicy, bool, error) {
-	fail := func(err error) (*AuthorizedKeyPolicy, bool, error) {
-		return nil, false, err
+func (this *SimpleAuthorizer) authorizedKeyPolicy(req PublicKeyRequest, entry *configuration.AuthorizationSimpleEntry) (*AuthorizedKeyPolicy, bool, bool, error) {
+	fail := func(err error) (*AuthorizedKeyPolicy, bool, bool, error) {
+		return nil, false, false, err
 	}
-	failf := func(msg string, args ...any) (*AuthorizedKeyPolicy, bool, error) {
+	failf := func(msg string, args ...any) (*AuthorizedKeyPolicy, bool, bool, error) {
 		return fail(errors.Newf(errors.System, msg, args...))
 	}
 
-	foundMatch := false
-	var policy *AuthorizedKeyPolicy
-	evaluate := func(key ssh.PublicKey, options []crypto.AuthorizedKeyOption) (bool, error) {
-		if !bytes.Equal(req.RemotePublicKey().Marshal(), key.Marshal()) {
-			return true, nil
-		}
-		candidate, accepted, err := evaluateAuthorizedKeyOptions(options, req.Connection().Remote().Host(), time.Now())
-		if err != nil {
-			return false, err
-		}
-		if !accepted {
-			return true, nil
-		}
-		foundMatch = true
-		policy = candidate
-		return false, nil
-	}
-
-	if v := entry.AuthorizedKeysFile; !v.IsZero() {
-		if err := v.ForEach(func(_ int, key ssh.PublicKey, _ string, options []crypto.AuthorizedKeyOption) (canContinue bool, err error) {
-			return evaluate(key, options)
-		}); err != nil {
-			return failf("cannot resolve authorized keys of user %q: %w", entry.Name, err)
-		}
-	}
-
-	if !foundMatch {
-		if v := entry.AuthorizedKeys; !v.IsZero() {
-			if err := v.ForEach(func(_ int, key ssh.PublicKey, _ string, options []crypto.AuthorizedKeyOption) (canContinue bool, err error) {
-				return evaluate(key, options)
-			}); err != nil {
-				return failf("cannot resolve authorized keys of user %q: %w", entry.Name, err)
+	policy, accepted, err := evaluatePublicKeyCredential(
+		req.RemotePublicKey(), req.Connection().Remote().User(), req.Connection().Remote().Host(), this.trustedUserCAs,
+		func(consumer func(ssh.PublicKey, []crypto.AuthorizedKeyOption) (bool, error)) error {
+			if v := entry.AuthorizedKeysFile; !v.IsZero() {
+				stopped := false
+				if err := v.ForEach(func(_ int, key ssh.PublicKey, _ string, options []crypto.AuthorizedKeyOption) (bool, error) {
+					canContinue, err := consumer(key, options)
+					stopped = !canContinue
+					return canContinue, err
+				}); err != nil {
+					return err
+				}
+				if stopped {
+					return nil
+				}
 			}
-		}
+			return entry.AuthorizedKeys.ForEach(func(_ int, key ssh.PublicKey, _ string, options []crypto.AuthorizedKeyOption) (bool, error) {
+				return consumer(key, options)
+			})
+		}, time.Now())
+	if err != nil {
+		return failf("cannot resolve authorized keys of user %q: %w", entry.Name, err)
 	}
-
-	if !foundMatch {
+	if !accepted {
 		req.Connection().Logger().Debug("presented public key does not match any authorized keys of simple user")
-		return nil, false, nil
+		return nil, false, false, nil
 	}
-
-	return policy, true, nil
+	_, isCertificate := req.RemotePublicKey().(*ssh.Certificate)
+	return policy, true, isCertificate, nil
 }
 
 func (this *SimpleAuthorizer) ensureSessionFor(req Request, entry *configuration.AuthorizationSimpleEntry) (session.Session, error) {

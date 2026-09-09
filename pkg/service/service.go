@@ -418,6 +418,19 @@ func (this *service) createNewServerConfig(ctx essh.Context, _ gonet.Conn, targe
 		Ciphers:      this.resolvedSshMessagesCiphers,
 		MACs:         this.resolvedSshMessagesAuthentications,
 	}
+	target.VerifiedPublicKeyCallback = func(_ gossh.ConnMetadata, key gossh.PublicKey, permissions *gossh.Permissions, _ string) (*gossh.Permissions, error) {
+		if _, isCertificate := key.(*gossh.Certificate); !isCertificate {
+			return permissions, nil
+		}
+		accepted, err := this.authorizePublicKey(ctx, key, true)
+		if err != nil {
+			return nil, err
+		}
+		if !accepted {
+			return nil, errors.User.Newf("user certificate rejected after public key verification")
+		}
+		return permissions, nil
+	}
 	return nil
 }
 

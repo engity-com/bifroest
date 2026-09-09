@@ -685,6 +685,11 @@ func newAuthorizedKeysTestServer(t *testing.T, options string, testEnvironment *
 func newAuthorizedKeysTestServerWithConfiguration(t *testing.T, options string, testEnvironment *authorizedKeysTestEnvironment, configure func(*configuration.Configuration)) *authorizedKeysTestServer {
 	t.Helper()
 	const username = "restricted-key-user"
+	return newAuthorizedKeysTestServerWithUsernameAndConfiguration(t, username, options, testEnvironment, configure)
+}
+
+func newAuthorizedKeysTestServerWithUsernameAndConfiguration(t *testing.T, username, options string, testEnvironment *authorizedKeysTestEnvironment, configure func(*configuration.Configuration)) *authorizedKeysTestServer {
+	t.Helper()
 
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)

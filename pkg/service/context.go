@@ -112,6 +112,7 @@ func (this *authorizeRequest) IsSessionCompatible(auth authorization.Authorizati
 type publicKeyAuthorizeRequest struct {
 	authorizeRequest
 	publicKey gossh.PublicKey
+	verified  bool
 }
 
 func (this *publicKeyAuthorizeRequest) GetField(name string) (any, bool, error) {
@@ -125,6 +126,10 @@ func (this *publicKeyAuthorizeRequest) GetField(name string) (any, bool, error) 
 
 func (this *publicKeyAuthorizeRequest) RemotePublicKey() gossh.PublicKey {
 	return this.publicKey
+}
+
+func (this *publicKeyAuthorizeRequest) PublicKeyVerified() bool {
+	return this.verified
 }
 
 type passwordAuthorizeRequest struct {

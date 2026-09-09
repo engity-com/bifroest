@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"reflect"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
@@ -31,7 +33,13 @@ type AuthorizerFacade struct {
 }
 
 func (this *AuthorizerFacade) AuthorizePublicKey(req PublicKeyRequest) (Authorization, error) {
+	_, isCertificate := req.RemotePublicKey().(*ssh.Certificate)
 	for _, candidate := range this.entries {
+		if isCertificate {
+			if _, supported := candidate.CloseableAuthorizer.(userCertificateAuthorizer); !supported {
+				continue
+			}
+		}
 		if ok, err := candidate.canHandle(req); err != nil {
 			return nil, fmt.Errorf("[%v] %w", candidate.flow, err)
 		} else if ok {

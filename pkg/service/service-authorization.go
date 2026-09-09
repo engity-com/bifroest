@@ -10,6 +10,10 @@ import (
 )
 
 func (this *service) handlePublicKey(ctx essh.Context, _ gossh.ConnMetadata, key essh.PublicKey) (bool, error) {
+	return this.authorizePublicKey(ctx, key, false)
+}
+
+func (this *service) authorizePublicKey(ctx essh.Context, key essh.PublicKey, verified bool) (bool, error) {
 	conn := this.connection(ctx)
 	if conn == nil {
 		return false, nil
@@ -26,8 +30,10 @@ func (this *service) handlePublicKey(ctx essh.Context, _ gossh.ConnMetadata, key
 		return false, nil
 	}
 
-	if _, ok := ctx.Value(handshakeKeyCtxKey).(essh.PublicKey); !ok {
-		ctx.SetValue(handshakeKeyCtxKey, key)
+	if _, isCertificate := key.(*gossh.Certificate); !isCertificate {
+		if _, ok := ctx.Value(handshakeKeyCtxKey).(essh.PublicKey); !ok {
+			ctx.SetValue(handshakeKeyCtxKey, key)
+		}
 	}
 
 	authReq := authorizeRequest{
@@ -35,7 +41,7 @@ func (this *service) handlePublicKey(ctx essh.Context, _ gossh.ConnMetadata, key
 		connection: conn,
 	}
 
-	auth, err := this.authorizer.AuthorizePublicKey(&publicKeyAuthorizeRequest{authReq, key})
+	auth, err := this.authorizer.AuthorizePublicKey(&publicKeyAuthorizeRequest{authReq, key, verified})
 	if err != nil {
 		if errors.IsType(err, errors.User) {
 			l.WithError(err).Debug("public key failed by user")
