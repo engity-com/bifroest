@@ -726,8 +726,10 @@ flows:
 
 	svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
 	require.NoError(t, err)
-	require.NoError(t, svc.environments.Close())
-	svc.environments = &authorizedKeysTestRepository{environment: testEnvironment}
+	if testEnvironment != nil {
+		require.NoError(t, svc.environments.Close())
+		svc.environments = &authorizedKeysTestRepository{environment: testEnvironment}
+	}
 
 	listener, err := gonet.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
