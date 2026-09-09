@@ -21,7 +21,7 @@ require (
 	github.com/engity-com/ssh-server-go v0.2.3
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-delve/delve v1.27.1
-	github.com/google/go-containerregistry v0.22.0
+	github.com/google/go-containerregistry v0.22.1
 	github.com/google/go-github/v65 v65.0.0
 	github.com/google/uuid v1.6.0
 	github.com/gwatts/rootcerts v0.0.0-20260801205809-d711a5bdf9bd
