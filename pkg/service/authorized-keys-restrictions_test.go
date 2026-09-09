@@ -409,6 +409,20 @@ func TestEnvironmentRejectsReversePortForwarding(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestEnvironmentReversePortForwardingPolicyOverridesDirectForwarding(t *testing.T) {
+	reverseAllowed := false
+	server := newAuthorizedKeysTestServer(t, "", &authorizedKeysTestEnvironment{
+		portForwardingAllowed:        true,
+		reversePortForwardingAllowed: &reverseAllowed,
+	})
+	client := server.mustDial(t)
+	listener, err := client.Listen("tcp", "127.0.0.1:0")
+	if listener != nil {
+		_ = listener.Close()
+	}
+	require.Error(t, err)
+}
+
 func TestMaxReverseForwardsPerConnectionIsEnforced(t *testing.T) {
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{portForwardingAllowed: true}, func(conf *configuration.Configuration) {
 		conf.Ssh.MaxReverseForwardsPerConnection = 1
@@ -748,8 +762,9 @@ func (*authorizedKeysTestRepository) Close() error {
 }
 
 type authorizedKeysTestEnvironment struct {
-	run                   func(environment.Task) (int, error)
-	portForwardingAllowed bool
+	run                          func(environment.Task) (int, error)
+	portForwardingAllowed        bool
+	reversePortForwardingAllowed *bool
 }
 
 func (*authorizedKeysTestEnvironment) Banner(environment.Request) (io.ReadCloser, error) {
@@ -765,6 +780,13 @@ func (this *authorizedKeysTestEnvironment) Run(task environment.Task) (int, erro
 
 func (this *authorizedKeysTestEnvironment) IsPortForwardingAllowed(bnet.HostPort) (bool, error) {
 	return this.portForwardingAllowed, nil
+}
+
+func (this *authorizedKeysTestEnvironment) IsReversePortForwardingAllowed(bnet.HostPort) (bool, error) {
+	if this.reversePortForwardingAllowed == nil {
+		return this.portForwardingAllowed, nil
+	}
+	return *this.reversePortForwardingAllowed, nil
 }
 
 func (*authorizedKeysTestEnvironment) NewDestinationConnection(context.Context, bnet.HostPort) (io.ReadWriteCloser, error) {

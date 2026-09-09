@@ -105,7 +105,7 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 						RetrieveIdToken:  DefaultAuthorizationOidcRetrieveIdToken,
 						RetrieveUserInfo: DefaultAuthorizationOidcRetrieveUserInfo,
 					}},
-					Environment: Environment{&EnvironmentLocal{
+					Environment: Environment{V: &EnvironmentLocal{
 						User: UserRequirementTemplate{
 							Name:        template.MustNewString("foo"),
 							DisplayName: template.MustNewString(""),

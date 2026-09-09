@@ -151,6 +151,7 @@ nav:
           - Docker: reference/environment/docker.md
           - Kubernetes: reference/environment/kubernetes.md
           - Local: reference/environment/local.md
+          - SSH: reference/environment/ssh.md
           - Dummy: reference/environment/dummy.md
       - Sessions:
           - reference/session/index.md

@@ -9,7 +9,8 @@ import (
 )
 
 type Environment struct {
-	V EnvironmentV
+	Variables EnvironmentVariables `yaml:"variables,omitempty"`
+	V         EnvironmentV         `yaml:"-"`
 }
 
 type EnvironmentV interface {
@@ -19,6 +20,10 @@ type EnvironmentV interface {
 	equaler
 	Types() []string
 	FeatureFlags() []string
+}
+
+type EnvironmentVariablesAware interface {
+	SupportsEnvironmentVariables() bool
 }
 
 var (
@@ -43,7 +48,7 @@ func RegisterEnvironmentV(factory EnvironmentVFactory) EnvironmentVFactory {
 
 func (this *Environment) SetDefaults() error {
 	*this = Environment{}
-	return nil
+	return this.Variables.SetDefaults()
 }
 
 func (this *Environment) Trim() error {
@@ -52,11 +57,23 @@ func (this *Environment) Trim() error {
 			return err
 		}
 	}
+	if err := this.Variables.Trim(); err != nil {
+		return fmt.Errorf("[variables] %w", err)
+	}
 	return this.Validate()
 }
 
 func (this *Environment) Validate() error {
+	if err := this.Variables.Validate(); err != nil {
+		return fmt.Errorf("[variables] %w", err)
+	}
 	if v := this.V; v != nil {
+		if !this.Variables.IsZero() {
+			support, ok := v.(EnvironmentVariablesAware)
+			if !ok || !support.SupportsEnvironmentVariables() {
+				return fmt.Errorf("[variables] not supported by environment type %q", v.Types()[0])
+			}
+		}
 		return v.Validate()
 	}
 	return fmt.Errorf("required but absent")
@@ -88,6 +105,13 @@ func (this *Environment) UnmarshalYAML(node *yaml.Node) error {
 	if err := node.Decode(this.V); err != nil {
 		return reportYamlRelatedErr(node, err)
 	}
+	var common struct {
+		Variables EnvironmentVariables `yaml:"variables,omitempty"`
+	}
+	if err := node.Decode(&common); err != nil {
+		return reportYamlRelatedErr(node, err)
+	}
+	this.Variables = common.Variables
 
 	return this.Trim()
 }
@@ -95,8 +119,10 @@ func (this *Environment) UnmarshalYAML(node *yaml.Node) error {
 func (this *Environment) MarshalYAML() (any, error) {
 	typeBuf := struct {
 		EnvironmentV `yaml:",inline"`
-		Type         string `yaml:"type,omitempty"`
+		Type         string               `yaml:"type,omitempty"`
+		Variables    EnvironmentVariables `yaml:"variables,omitempty"`
 	}{}
+	typeBuf.Variables = this.Variables
 
 	if this.V != nil {
 		typeBuf.Type = this.V.Types()[0]
@@ -121,6 +147,9 @@ func (this Environment) IsEqualTo(other any) bool {
 }
 
 func (this Environment) isEqualTo(other *Environment) bool {
+	if !isEqual(&this.Variables, &other.Variables) {
+		return false
+	}
 	if other.V == nil {
 		return this.V == nil
 	}

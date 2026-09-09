@@ -115,3 +115,5 @@ func (this EnvironmentLocal) Types() []string {
 func (this EnvironmentLocal) FeatureFlags() []string {
 	return []string{"local[pty,impersonate]"}
 }
+
+func (this EnvironmentLocal) SupportsEnvironmentVariables() bool { return true }

@@ -80,7 +80,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		}
 		defer common.IgnoreCloseError(ln)
 		go ssh.ForwardAgentConnections(ln, l, sshSess)
-		ev.Set(ssh.AuthSockEnvName, ln.Path())
+		setReservedEnvironment(ev, localTargetOs, ssh.AuthSockEnvName, ln.Path())
 	}
 
 	cmd.Stdin = sshSess
@@ -105,7 +105,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		}
 		defer common.IgnoreCloseError(fPty)
 		defer common.IgnoreCloseError(fTty)
-		ev.Set("TERM", ptyReq.Term)
+		setReservedEnvironment(ev, localTargetOs, "TERM", ptyReq.Term)
 		initialSize := pty.Winsize{Rows: uint16(ptyReq.Window.Height), Cols: uint16(ptyReq.Window.Width)}
 		if err := pty.Setsize(fPty, &initialSize); err != nil {
 			return failf("cannot set initial pty size: %w", err)

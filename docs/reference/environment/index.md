@@ -11,7 +11,8 @@ Bifröst executes user sessions within environments. These environments can eith
 1. `docker`: [Docker](docker.md) executes each user session inside a separate Docker container.
 2. `kubernetes`: [Kubernetes](kubernetes.md) executes each user session inside a separate POD in a defined cluster.
 3. `local`: [Local](local.md) executes on the host itself (same host on which Bifröst is running).
-4. `dummy`: [Dummy](dummy.md) for demonstration purposes, it simply prints a message and exists immediately.
+4. `ssh`: [SSH](ssh.md) connects to another SSH server and forwards sessions and direct TCP channels.
+5. `dummy`: [Dummy](dummy.md) for demonstration purposes, it simply prints a message and exists immediately.
 
 ## Examples
 
@@ -56,7 +57,16 @@ Bifröst executes user sessions within environments. These environments can eith
    shellCommand: [/bin/bash]
    execCommand: [/bin/bash, -c]
    ```
-6. Using [dummy environment](dummy.md) with a simple message:
+6. Using an [SSH environment](ssh.md):
+   ```yaml
+   type: ssh
+   address: target.example.org:22
+   user: service-user
+   knownHostsFile: /etc/engity/bifroest/known_hosts
+   identityFiles:
+     - /etc/engity/bifroest/id_target
+   ```
+7. Using [dummy environment](dummy.md) with a simple message:
    ```yaml
    type: dummy
    banner: "Hello, {{.authorization.idToken.name}}!\n"

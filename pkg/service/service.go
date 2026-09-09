@@ -260,7 +260,7 @@ func (this *Service) prepare() (svc *service, err error) {
 	if svc.authorizer, err = authorization.NewAuthorizerFacade(ctx, &this.Configuration.Flows); err != nil {
 		return fail(err)
 	}
-	if svc.environments, err = environment.NewRepositoryFacade(ctx, &this.Configuration.Flows, svc.alternatives, svc.imp); err != nil {
+	if svc.environments, err = environment.NewRepositoryFacadeWithHostKeys(ctx, &this.Configuration.Flows, svc.alternatives, svc.imp, hostSigners); err != nil {
 		return fail(err)
 	}
 	if err = svc.houseKeeper.init(svc); err != nil {

@@ -100,8 +100,9 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	if v, ok := os.LookupEnv("TZ"); ok {
 		ev.Set("TZ", v)
 	}
-	ev.AddAllOf(t.Authorization().EnvVars())
-	ev.Add(t.SshSession().Environ()...)
+	if err := applyTaskEnvironment(&ev, this.repository.hostOs, t); err != nil {
+		return fail(err)
+	}
 	setReservedEnvironment(&ev, this.repository.hostOs,
 		session.EnvName, sess.Id().String(),
 		connection.EnvName, t.Connection().Id().String(),
@@ -141,14 +142,14 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		} else {
 			defer common.IgnoreCloseError(ln)
 			go ssh.ForwardAgentConnections(ln, l, sshSess)
-			ev.Set(ssh.AuthSockEnvName, ln.Path())
+			setReservedEnvironment(&ev, this.repository.hostOs, ssh.AuthSockEnvName, ln.Path())
 		}
 	}
 
 	var winCh <-chan essh.Window
 	if ptyReq, windows, isPty := sshSess.Pty(); isPty {
 		winCh = windows
-		ev.Set("TERM", ptyReq.Term)
+		setReservedEnvironment(&ev, this.repository.hostOs, "TERM", ptyReq.Term)
 		opts.Tty = true
 		opts.ConsoleSize = &[2]uint{uint(ptyReq.Window.Height), uint(ptyReq.Window.Width)}
 	}

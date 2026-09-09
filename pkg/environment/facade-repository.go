@@ -10,18 +10,39 @@ import (
 	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/imp"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
 func NewRepositoryFacade(ctx context.Context, flows *configuration.Flows, ap alternatives.Provider, i imp.Imp) (*RepositoryFacade, error) {
+	return newRepositoryFacade(ctx, flows, ap, i)
+}
+
+func NewRepositoryFacadeWithHostKeys(ctx context.Context, flows *configuration.Flows, ap alternatives.Provider, i imp.Imp, hostKeys []crypto.PrivateKey) (*RepositoryFacade, error) {
+	ctx = context.WithValue(ctx, repositoryDependenciesContextKey{}, repositoryDependencies{hostKeys: hostKeys})
+	return newRepositoryFacade(ctx, flows, ap, i)
+}
+
+func newRepositoryFacade(ctx context.Context, flows *configuration.Flows, ap alternatives.Provider, i imp.Imp) (*RepositoryFacade, error) {
 	if flows == nil {
 		return &RepositoryFacade{}, nil
 	}
 
 	entries := make(map[configuration.FlowName]CloseableRepository, len(*flows))
+	success := false
+	defer func() {
+		if !success {
+			for _, entry := range entries {
+				_ = entry.Close()
+			}
+		}
+	}()
 	for _, flow := range *flows {
+		if _, exists := entries[flow.Name]; exists {
+			return nil, fmt.Errorf("duplicate flow name %q", flow.Name)
+		}
 		instance, err := newInstance(ctx, &flow, ap, i)
 		if err != nil {
 			return nil, err
@@ -29,6 +50,7 @@ func NewRepositoryFacade(ctx context.Context, flows *configuration.Flows, ap alt
 		entries[flow.Name] = instance
 	}
 
+	success = true
 	return &RepositoryFacade{entries}, nil
 }
 
@@ -126,4 +148,15 @@ func RegisterRepository[C any, R CloseableRepository](factory RepositoryFactory[
 	ct := reflect.TypeFor[C]()
 	configurationTypeToRepositoryFactory[ct] = factory
 	return factory
+}
+
+type repositoryDependenciesContextKey struct{}
+
+type repositoryDependencies struct {
+	hostKeys []crypto.PrivateKey
+}
+
+func repositoryDependenciesFrom(ctx context.Context) repositoryDependencies {
+	result, _ := ctx.Value(repositoryDependenciesContextKey{}).(repositoryDependencies)
+	return result
 }

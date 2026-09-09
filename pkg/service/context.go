@@ -319,6 +319,17 @@ func (this *environmentTask) TaskType() environment.TaskType {
 	return this.taskType
 }
 
+func (this *environmentTask) EnvironmentVariables() configuration.EnvironmentVariables {
+	flowName := this.Authorization().Flow()
+	for i := range this.service.Configuration.Flows {
+		flow := &this.service.Configuration.Flows[i]
+		if flow.Name == flowName {
+			return flow.Environment.Variables
+		}
+	}
+	return nil
+}
+
 func newRememberMeNotificationContext(ctx essh.Context, auth authorization.Authorization, newSession bool, pub essh.PublicKey) *rememberMeNotificationContext {
 	return &rememberMeNotificationContext{
 		ctx,

@@ -87,6 +87,12 @@ Can be one of:
 * `at-least-384-bits`
 * `at-least-521-bits`
 
+## Environment Variable Name {: #environment-variable-name }
+The name of an environment variable. It has to fulfill the portable ASCII pattern `[A-Za-z_][A-Za-z0-9_]*`.
+
+## Environment Variables {: #environment-variables }
+A map from [Environment Variable Name](#environment-variable-name) keys to string values. Values can use the template context documented by the property accepting this data type and cannot contain NUL characters.
+
 ## Flow Name
 Identifies flows. It has to fulfill the regular expression `[a-z][a-z0-9]+`.
 

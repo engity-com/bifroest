@@ -1,6 +1,8 @@
 package connection
 
 import (
+	"context"
+
 	log "github.com/echocat/slf4g"
 
 	"github.com/engity-com/bifroest/pkg/errors"
@@ -19,4 +21,11 @@ type Connection interface {
 	Id() Id
 	Remote() net.Remote
 	Logger() log.Logger
+}
+
+// LifetimeAware is implemented by connections that expose their complete
+// lifetime independently of individual channel or session contexts.
+type LifetimeAware interface {
+	Connection
+	Lifetime() context.Context
 }
