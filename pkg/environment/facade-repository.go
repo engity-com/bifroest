@@ -94,6 +94,36 @@ func (this *RepositoryFacade) FindBySession(ctx context.Context, sess session.Se
 	return candidate.FindBySession(ctx, sess, opts)
 }
 
+func (this *RepositoryFacade) IsSessionCompatible(ctx context.Context, sess session.Session) (bool, error) {
+	if sess == nil {
+		return false, nil
+	}
+	candidate, ok := this.entries[sess.Flow()]
+	if !ok {
+		return false, nil
+	}
+	checker, ok := candidate.(SessionCompatibilityChecker)
+	if !ok {
+		return true, nil
+	}
+	return checker.IsSessionCompatible(ctx, sess)
+}
+
+func (this *RepositoryFacade) IsSessionCompatibleWith(ctx Context, sess session.Session) (bool, error) {
+	if sess == nil {
+		return false, nil
+	}
+	candidate, ok := this.entries[sess.Flow()]
+	if !ok {
+		return false, nil
+	}
+	checker, ok := candidate.(ContextualSessionCompatibilityChecker)
+	if !ok {
+		return true, nil
+	}
+	return checker.IsSessionCompatibleWith(ctx, sess)
+}
+
 func (this *RepositoryFacade) Close() (rErr error) {
 	for _, entity := range this.entries {
 		//goland:noinspection GoDeferInLoop

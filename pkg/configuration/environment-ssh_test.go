@@ -116,6 +116,63 @@ func TestEnvironmentSshRejectsInvalidStaticValues(t *testing.T) {
 	}
 }
 
+func TestEnvironmentSshCertificateConfiguration(t *testing.T) {
+	var environment Environment
+	require.NoError(t, yaml.Unmarshal([]byte(`
+type: ssh
+address: target.example.org:22
+user: '{{ .session.created.remote.user }}'
+acceptAllHostKeys: true
+certificate:
+  identityFile: /var/lib/bifroest/target-key
+  authorityIdentityFile: /etc/bifroest/user-ca
+  validity: 24h
+  principals:
+    - '{{ .session.created.remote.user }}'
+  extensions:
+    permit-pty: ""
+    role@example.org: production
+`), &environment))
+
+	actual := environment.V.(*EnvironmentSsh)
+	require.NotNil(t, actual.Certificate)
+	require.Equal(t, 24*time.Hour, mustRenderDuration(t, actual.Certificate.Validity))
+	require.Equal(t, 30*time.Second, mustRenderDuration(t, actual.Certificate.ValidAfterSkew))
+	require.Equal(t, template.MustNewString("production"), actual.Certificate.Extensions["role@example.org"])
+
+	roundtrip, err := yaml.Marshal(actual)
+	require.NoError(t, err)
+	var restored EnvironmentSsh
+	require.NoError(t, yaml.Unmarshal(roundtrip, &restored))
+	require.True(t, actual.IsEqualTo(restored))
+}
+
+func TestEnvironmentSshRejectsInvalidCertificateConfiguration(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		certificate string
+		identity    string
+	}{
+		{name: "missing identity", certificate: "validity: 1h"},
+		{name: "templated identity", certificate: "identityFile: '{{ .session.id }}'\nvalidity: 1h"},
+		{name: "templated authority", certificate: "identityFile: target-key\nauthorityIdentityFile: '{{ .session.id }}'\nvalidity: 1h"},
+		{name: "missing validity", certificate: "identityFile: target-key"},
+		{name: "zero validity", certificate: "identityFile: target-key\nvalidity: 0s"},
+		{name: "negative skew", certificate: "identityFile: target-key\nvalidity: 1h\nvalidAfterSkew: -1s"},
+		{name: "empty principal", certificate: "identityFile: target-key\nvalidity: 1h\nprincipals: ['']"},
+		{name: "identity modes", identity: "identityFiles: [other-key]\n", certificate: "identityFile: target-key\nvalidity: 1h"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var environment Environment
+			plain := "type: ssh\naddress: target.example.org:22\nuser: alice\nacceptAllHostKeys: true\n" + test.identity + "certificate:\n"
+			for _, line := range strings.Split(test.certificate, "\n") {
+				plain += "  " + line + "\n"
+			}
+			require.Error(t, yaml.Unmarshal([]byte(plain), &environment))
+		})
+	}
+}
+
 func mustRenderDuration(t *testing.T, value interface {
 	Render(any) (time.Duration, error)
 }) time.Duration {

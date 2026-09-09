@@ -41,6 +41,29 @@ Disables target host-key verification. This cannot be combined with `knownHosts`
 <<property("identityFiles", "list of strings", template_context="../context/authorization.md")>>
 Private SSH keys offered to the target. Every configured file has to exist and contain an unencrypted private key. If the list is absent or empty, Bifröst offers all configured server host keys as client identities. An invalid explicit entry never activates this fallback.
 
+`identityFiles` and `certificate` are mutually exclusive. If neither is configured, the server-host-key fallback remains active.
+
+<<property("certificate", "SSH User Certificate")>>
+Enables a persistent OpenSSH user certificate for the target connection. Bifröst issues exactly one certificate for each persistent Bifröst session. Reconnecting and restarting Bifröst reuse the byte-identical certificate until its immutable validity boundary is reached.
+
+<<property("certificate.identityFile", "File Path", "../data-type.md#file-path", required=True)>>
+Static path to the private subject key used with the certificate. If the file does not exist when Bifröst starts, an Ed25519 key is generated. Existing unreadable, encrypted or invalid files cause startup to fail and are never overwritten. The private key is not copied into session storage.
+
+<<property("certificate.authorityIdentityFile", "File Path", "../data-type.md#file-path")>>
+Static path to the private OpenSSH user-CA key. If absent, the first configured Bifröst server host key signs new user certificates. An invalid explicit CA file never activates this fallback. Existing certificates remain bound to their original CA after a configured CA rotation.
+
+<<property("certificate.validity", "duration", required=True)>>
+Positive lifetime of a newly issued certificate. The first issuance persists `MaxValidUntil`, and reconnects, activity and later configuration increases never move that boundary. This lifetime is separate from the dynamic Bifröst session idle timeout.
+
+<<property("certificate.validAfterSkew", "duration", default="30s")>>
+Non-negative clock skew subtracted from the issuance time for the OpenSSH `ValidAfter` field.
+
+<<property("certificate.principals", "list of strings", template_context="../context/authorization.md")>>
+Additional OpenSSH principals. The rendered target `user` is always included and empty rendered principals are rejected.
+
+<<property("certificate.extensions", "map of strings", template_context="../context/authorization.md")>>
+OpenSSH certificate extensions and their values. Standard extensions such as `permit-pty`, `permit-port-forwarding` and `permit-agent-forwarding` are removed when the effective incoming authorization policy denies the corresponding capability. Names ending in `@bifroest.engity.org` are reserved for Bifröst metadata.
+
 <<property("connectTimeout", "duration", template_context="../context/authorization.md", default="10s")>>
 Maximum duration for TCP connection establishment and SSH handshake. `0` disables this timeout.
 
@@ -88,6 +111,30 @@ identityFiles:
 variables:
   LC_ALL: C.UTF-8
 ```
+
+## User certificate example
+
+```yaml
+type: ssh
+address: target.example.org:22
+user: '{{ .session.created.remote.user }}'
+knownHostsFile: /etc/engity/bifroest/known_hosts
+certificate:
+  identityFile: /var/lib/engity/bifroest/downstream-client
+  authorityIdentityFile: /etc/engity/bifroest/downstream-user-ca
+  validity: 24h
+  validAfterSkew: 30s
+  principals:
+    - '{{ .session.created.remote.user }}'
+  extensions:
+    permit-pty: ""
+    permit-port-forwarding: ""
+    permit-agent-forwarding: ""
+```
+
+The target OpenSSH server must trust the corresponding CA public key, commonly through `TrustedUserCAKeys`. Deploy a new CA public key to targets before changing `authorityIdentityFile`; keep the old public key trusted until all certificates issued by it have expired.
+
+Certificate metadata uses the reserved extensions `session-id@bifroest.engity.org`, `original-user@bifroest.engity.org`, `original-host@bifroest.engity.org`, `authorization-kind@bifroest.engity.org` and `evidence-v1@bifroest.engity.org`. The size-limited evidence document contains only allowlisted session identity, target and capability fields; passwords, OAuth tokens and unrestricted authorization data are never included. OpenSSH ignores unknown extensions unless a target-side integration evaluates them.
 
 ## Compatibility
 

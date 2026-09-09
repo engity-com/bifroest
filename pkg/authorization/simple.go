@@ -22,6 +22,8 @@ type simple struct {
 	authorizedKeyPolicy *AuthorizedKeyPolicy
 }
 
+func (*simple) AuthorizationKind() string { return "simple" }
+
 func (this *simple) Remote() net.Remote {
 	return this.remote
 }

@@ -103,6 +103,61 @@ func TestRestrictedAuthorizedKeyAllowsAuthenticationConditions(t *testing.T) {
 	}
 }
 
+func TestNewAuthorizationSessionDoesNotRequireEnvironmentCompatibility(t *testing.T) {
+	server := newAuthorizedKeysTestServer(t, "", &authorizedKeysTestEnvironment{})
+	repository := server.service.environments.(*authorizedKeysTestRepository)
+	repository.isSessionCompatible = func(environment.Context, session.Session) (bool, error) {
+		return false, nil
+	}
+
+	client, err := server.dial()
+	require.NoError(t, err)
+	require.NoError(t, client.Close())
+}
+
+func TestPublicKeyAuthenticationSkipsIncompatibleSession(t *testing.T) {
+	server := newAuthorizedKeysTestServer(t, "", &authorizedKeysTestEnvironment{})
+	ctx := context.Background()
+	remote := authorizedKeysTestRemote{user: server.username}
+	sessions := make([]session.Session, 2)
+	for i := range sessions {
+		var err error
+		sessions[i], err = server.service.sessions.Create(ctx, "restricted-key", remote, nil)
+		require.NoError(t, err)
+		require.NoError(t, sessions[i].AddPublicKey(ctx, server.signer.PublicKey()))
+		_, err = sessions[i].NotifyLastAccess(ctx, remote, session.StateAuthorized)
+		require.NoError(t, err)
+	}
+	var searchOrder []session.Id
+	require.NoError(t, server.service.sessions.FindAll(ctx, func(_ context.Context, candidate session.Session) (bool, error) {
+		searchOrder = append(searchOrder, candidate.Id())
+		return true, nil
+	}, nil))
+	require.Len(t, searchOrder, 2)
+	compatibleId := searchOrder[1]
+
+	repository := server.service.environments.(*authorizedKeysTestRepository)
+	var incompatibleChecked bool
+	repository.isSessionCompatible = func(ctx environment.Context, candidate session.Session) (bool, error) {
+		fieldContext := ctx.(interface {
+			GetField(string) (any, bool, error)
+		})
+		value, found, err := fieldContext.GetField("authorization")
+		require.NoError(t, err)
+		require.True(t, found)
+		candidateAuthorization := value.(authorization.Authorization)
+		require.Equal(t, candidate.Id(), candidateAuthorization.FindSession().Id())
+		compatible := candidate.Id() == compatibleId
+		incompatibleChecked = incompatibleChecked || !compatible
+		return compatible, nil
+	}
+
+	client, err := server.dial()
+	require.NoError(t, err)
+	require.NoError(t, client.Close())
+	require.True(t, incompatibleChecked)
+}
+
 func TestRestrictedAuthorizedKeyRejectsPty(t *testing.T) {
 	for _, options := range []string{"no-pty", "restrict"} {
 		t.Run(options, func(t *testing.T) {
@@ -734,8 +789,17 @@ func (this *authorizedKeysTestServer) mustDial(t *testing.T) *gossh.Client {
 }
 
 type authorizedKeysTestRepository struct {
-	environment *authorizedKeysTestEnvironment
+	environment         *authorizedKeysTestEnvironment
+	isSessionCompatible func(environment.Context, session.Session) (bool, error)
 }
+
+type authorizedKeysTestRemote struct {
+	user string
+}
+
+func (this authorizedKeysTestRemote) User() string   { return this.user }
+func (authorizedKeysTestRemote) Host() bnet.Host     { return bnet.Host{} }
+func (this authorizedKeysTestRemote) String() string { return this.user }
 
 func (*authorizedKeysTestRepository) WillBeAccepted(environment.Context) (bool, error) {
 	return true, nil
@@ -759,6 +823,13 @@ func (*authorizedKeysTestRepository) Cleanup(context.Context, *environment.Clean
 
 func (*authorizedKeysTestRepository) Close() error {
 	return nil
+}
+
+func (this *authorizedKeysTestRepository) IsSessionCompatibleWith(ctx environment.Context, sess session.Session) (bool, error) {
+	if this.isSessionCompatible == nil {
+		return true, nil
+	}
+	return this.isSessionCompatible(ctx, sess)
 }
 
 type authorizedKeysTestEnvironment struct {

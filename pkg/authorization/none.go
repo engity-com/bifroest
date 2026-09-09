@@ -20,6 +20,8 @@ type none struct {
 	sessionsPublicKey ssh.PublicKey
 }
 
+func (*none) AuthorizationKind() string { return "none" }
+
 func (this *none) Remote() net.Remote {
 	return this.remote
 }

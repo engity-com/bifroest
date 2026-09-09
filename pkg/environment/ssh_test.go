@@ -7,6 +7,9 @@ import (
 	"crypto/rand"
 	"io"
 	gonet "net"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -183,6 +186,161 @@ func TestSshEnvironmentCancellationDoesNotCloseSharedTransport(t *testing.T) {
 	require.Equal(t, int32(1), target.connections.Load())
 }
 
+func TestSshEnvironmentPersistsUserCertificateAcrossConnectionsAndCaRotation(t *testing.T) {
+	originalCa := newSshTestPrivateKey(t)
+	rotatedCa := newSshTestPrivateKey(t)
+	originalCaFingerprint := gossh.FingerprintSHA256(originalCa.ToSsh().PublicKey())
+	receivedCertificates := make(chan *gossh.Certificate, 2)
+	checker := gossh.CertChecker{
+		IsUserAuthority: func(key gossh.PublicKey) bool {
+			return gossh.FingerprintSHA256(key) == originalCaFingerprint
+		},
+	}
+	target := newSshTargetWithPublicKeyCallback(t, func(conn gossh.ConnMetadata, key gossh.PublicKey) (*gossh.Permissions, error) {
+		if certificate, ok := key.(*gossh.Certificate); ok {
+			receivedCertificates <- certificate
+		}
+		return checker.Authenticate(conn, key)
+	})
+	defer target.Close()
+
+	directory := t.TempDir()
+	subjectFile := filepath.Join(directory, "subject")
+	originalCaFile := filepath.Join(directory, "ca")
+	rotatedCaFile := filepath.Join(directory, "rotated-ca")
+	writeSshTestPrivateKey(t, originalCaFile, originalCa)
+	writeSshTestPrivateKey(t, rotatedCaFile, rotatedCa)
+
+	newConfiguration := func(authorityFile string) *configuration.EnvironmentSsh {
+		conf := &configuration.EnvironmentSsh{}
+		require.NoError(t, conf.SetDefaults())
+		conf.Address = template.MustNewString(target.Address())
+		conf.User = template.MustNewString("target-user")
+		conf.AcceptAllHostKeys = true
+		certificate := &configuration.EnvironmentSshCertificate{}
+		require.NoError(t, certificate.SetDefaults())
+		certificate.IdentityFile = template.MustNewString(subjectFile)
+		certificate.AuthorityIdentityFile = template.MustNewString(authorityFile)
+		certificate.Validity = template.DurationOf(time.Hour)
+		certificate.Extensions = configuration.EnvironmentSshCertificateExtensions{
+			"permit-pty":             template.MustNewString(""),
+			"audit-role@example.org": template.MustNewString("production"),
+		}
+		conf.Certificate = certificate
+		return conf
+	}
+
+	storedSession := &sshTestStoredSession{id: session.MustNewId()}
+	firstContext, cancelFirst := newSshTestContext()
+	defer cancelFirst()
+	firstTask := &sshTestTask{
+		context:       firstContext,
+		connection:    &sshTestConnection{id: connection.MustNewId(), context: firstContext},
+		authorization: &sshTestAuthorization{session: storedSession},
+		session:       newSshTestSession(firstContext, "true", nil),
+		taskType:      TaskTypeShell,
+	}
+	firstRepository, err := NewSshRepositoryWithHostKeys(context.Background(), "test", newConfiguration(originalCaFile), []crypto.PrivateKey{newSshTestPrivateKey(t)})
+	require.NoError(t, err)
+
+	const workers = 16
+	environments := make(chan *sshEnvironment, workers)
+	errorsFromEnsure := make(chan error, workers)
+	var wait sync.WaitGroup
+	for range workers {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			resolved, err := firstRepository.Ensure(firstTask)
+			if err != nil {
+				errorsFromEnsure <- err
+				return
+			}
+			environments <- resolved.(*sshEnvironment)
+		}()
+	}
+	wait.Wait()
+	close(environments)
+	close(errorsFromEnsure)
+	for err := range errorsFromEnsure {
+		require.NoError(t, err)
+	}
+	require.Equal(t, int32(1), storedSession.environmentTokenWrites.Load())
+	require.FileExists(t, subjectFile)
+	firstEnvironment := <-environments
+	firstTransport, err := firstRepository.transportFor(firstEnvironment)
+	require.NoError(t, err)
+	firstCertificate := <-receivedCertificates
+	require.EqualValues(t, gossh.UserCert, firstCertificate.CertType)
+	require.Equal(t, []string{"target-user"}, firstCertificate.ValidPrincipals)
+	require.Equal(t, storedSession.id.String(), firstCertificate.Extensions["session-id@bifroest.engity.org"])
+	require.Equal(t, "production", firstCertificate.Extensions["audit-role@example.org"])
+	evidence := firstCertificate.Extensions["evidence-v1@bifroest.engity.org"]
+	require.Contains(t, evidence, `"schema":"bifroest.authorization-evidence/v1"`)
+	require.NotContains(t, strings.ToLower(evidence), "password")
+	require.NotContains(t, strings.ToLower(evidence), "token")
+	require.Equal(t, originalCaFingerprint, gossh.FingerprintSHA256(firstCertificate.SignatureKey))
+	firstCertificateBytes := firstCertificate.Marshal()
+	storedToken, err := storedSession.EnvironmentToken(context.Background())
+	require.NoError(t, err)
+	require.NotEmpty(t, storedToken)
+	storedState, err := decodeSshUserCertificateState(storedToken)
+	require.NoError(t, err)
+	require.Equal(t, time.Hour, storedState.MaxValidUntil.Sub(storedState.IssuedAt))
+	compatible, err := firstRepository.IsSessionCompatible(context.Background(), storedSession)
+	require.NoError(t, err)
+	require.True(t, compatible)
+	_, err = firstRepository.validateUserCertificateState(storedState, storedSession, firstEnvironment.settings, storedState.MaxValidUntil)
+	require.ErrorContains(t, err, "expired")
+	require.NoError(t, firstTransport.Close())
+	require.NoError(t, firstRepository.Close())
+
+	secondContext, cancelSecond := newSshTestContext()
+	defer cancelSecond()
+	secondTask := &sshTestTask{
+		context:       secondContext,
+		connection:    &sshTestConnection{id: connection.MustNewId(), context: secondContext},
+		authorization: &sshTestAuthorization{session: storedSession},
+		session:       newSshTestSession(secondContext, "true", nil),
+		taskType:      TaskTypeShell,
+	}
+	rotatedConfiguration := newConfiguration(rotatedCaFile)
+	rotatedConfiguration.Certificate.Validity = template.DurationOf(48 * time.Hour)
+	secondRepository, err := NewSshRepositoryWithHostKeys(context.Background(), "test", rotatedConfiguration, []crypto.PrivateKey{newSshTestPrivateKey(t)})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, secondRepository.Close()) }()
+	compatible, err = secondRepository.IsSessionCompatible(context.Background(), storedSession)
+	require.NoError(t, err)
+	require.True(t, compatible)
+	resolved, err := secondRepository.Ensure(secondTask)
+	require.NoError(t, err)
+	_, err = secondRepository.transportFor(resolved.(*sshEnvironment))
+	require.NoError(t, err)
+	secondCertificate := <-receivedCertificates
+	require.Equal(t, firstCertificateBytes, secondCertificate.Marshal())
+	storedTokenAfterRestart, err := storedSession.EnvironmentToken(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, storedToken, storedTokenAfterRestart)
+	require.Equal(t, int32(1), storedSession.environmentTokenWrites.Load())
+	changedConfiguration := newConfiguration(rotatedCaFile)
+	delete(changedConfiguration.Certificate.Extensions, "audit-role@example.org")
+	changedRepository, err := NewSshRepositoryWithHostKeys(context.Background(), "test", changedConfiguration, []crypto.PrivateKey{newSshTestPrivateKey(t)})
+	require.NoError(t, err)
+	compatible, err = changedRepository.IsSessionCompatible(context.Background(), storedSession)
+	require.NoError(t, err)
+	require.False(t, compatible)
+	require.NoError(t, changedRepository.Close())
+
+	restoredEnvironment, err := secondRepository.FindBySession(context.Background(), storedSession, nil)
+	require.NoError(t, err)
+	disposed, err := restoredEnvironment.Dispose(context.Background())
+	require.NoError(t, err)
+	require.True(t, disposed)
+	remainingToken, err := storedSession.EnvironmentToken(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, remainingToken)
+}
+
 func TestSshPtyRequestsPreservePixelDimensions(t *testing.T) {
 	sender := &sshTestRequestSender{accepted: true}
 	pty := essh.Pty{
@@ -222,6 +380,94 @@ func TestNewSshRepositoryWithHostKeysRejectsNilKey(t *testing.T) {
 	conf := &configuration.EnvironmentSsh{AcceptAllHostKeys: true}
 	_, err := NewSshRepositoryWithHostKeys(context.Background(), "test", conf, []crypto.PrivateKey{nil})
 	require.ErrorContains(t, err, "nil SSH host key")
+}
+
+func TestSshCertificateUsesFirstHostKeyAsAuthorityFallback(t *testing.T) {
+	hostKey := newSshTestPrivateKey(t)
+	conf := newSshCertificateTestConfiguration(t, filepath.Join(t.TempDir(), "subject"), "")
+	repository, err := NewSshRepositoryWithHostKeys(context.Background(), "test", conf, []crypto.PrivateKey{hostKey, newSshTestPrivateKey(t)})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, repository.Close()) }()
+	require.Equal(t, gossh.FingerprintSHA256(hostKey.ToSsh().PublicKey()), repository.certificateKeys.authorityFingerprint)
+}
+
+func TestSshCertificateRejectsInvalidExistingKeys(t *testing.T) {
+	directory := t.TempDir()
+	hostKey := newSshTestPrivateKey(t)
+	for _, test := range []struct {
+		name      string
+		subject   string
+		authority string
+	}{
+		{name: "subject", subject: "invalid", authority: ""},
+		{name: "authority", subject: "", authority: "invalid"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subjectFile := filepath.Join(directory, test.name+"-subject")
+			authorityFile := ""
+			if test.subject != "" {
+				require.NoError(t, os.WriteFile(subjectFile, []byte(test.subject), 0600))
+			}
+			if test.authority != "" {
+				authorityFile = filepath.Join(directory, test.name+"-authority")
+				require.NoError(t, os.WriteFile(authorityFile, []byte(test.authority), 0600))
+			}
+			conf := newSshCertificateTestConfiguration(t, subjectFile, authorityFile)
+			_, err := NewSshRepositoryWithHostKeys(context.Background(), "test", conf, []crypto.PrivateKey{hostKey})
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestSshCertificateSessionCompatibilityUsesCurrentAuthorizationContext(t *testing.T) {
+	conf := newSshCertificateTestConfiguration(t, filepath.Join(t.TempDir(), "subject"), "")
+	conf.User = template.MustNewString("{{ .targetUser }}")
+	conf.Certificate.Principals = template.MustNewStrings("{{ .targetUser }}")
+	conf.Certificate.Extensions = configuration.EnvironmentSshCertificateExtensions{
+		"permit-port-forwarding": template.MustNewString(""),
+	}
+	repository, err := NewSshRepositoryWithHostKeys(context.Background(), "test", conf, []crypto.PrivateKey{newSshTestPrivateKey(t)})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, repository.Close()) }()
+
+	ctx, cancel := newSshTestContext()
+	defer cancel()
+	storedSession := &sshTestStoredSession{id: session.MustNewId()}
+	base := &sshTestTask{
+		context:       ctx,
+		connection:    &sshTestConnection{id: connection.MustNewId(), context: ctx},
+		authorization: &sshTestAuthorization{session: storedSession, kind: "simple"},
+		session:       newSshTestSession(ctx, "true", nil),
+		taskType:      TaskTypeShell,
+		targetUser:    "target-user",
+	}
+	_, err = repository.Ensure(base)
+	require.NoError(t, err)
+	compatible, err := repository.IsSessionCompatibleWith(base, storedSession)
+	require.NoError(t, err)
+	require.True(t, compatible)
+
+	changedUser := *base
+	changedUser.targetUser = "other-user"
+	compatible, err = repository.IsSessionCompatibleWith(&changedUser, storedSession)
+	require.NoError(t, err)
+	require.False(t, compatible)
+
+	changedKind := *base
+	changedKind.authorization = &sshTestAuthorization{session: storedSession, kind: "htpasswd"}
+	compatible, err = repository.IsSessionCompatibleWith(&changedKind, storedSession)
+	require.NoError(t, err)
+	require.False(t, compatible)
+
+	changedPolicy := *base
+	changedPolicy.authorization = &sshTestAuthorization{
+		session: storedSession,
+		kind:    "simple",
+		policy:  &authorization.AuthorizedKeyPolicy{PtyAllowed: true, PortForwardingAllowed: false, AgentForwardingAllowed: true},
+	}
+	compatible, err = repository.IsSessionCompatibleWith(&changedPolicy, storedSession)
+	require.NoError(t, err)
+	require.False(t, compatible)
 }
 
 func TestSshRepositoryRejectsEmptyRenderedAddress(t *testing.T) {
@@ -284,10 +530,14 @@ type sshTarget struct {
 }
 
 func newSshTarget(t *testing.T) *sshTarget {
+	return newSshTargetWithPublicKeyCallback(t, nil)
+}
+
+func newSshTargetWithPublicKeyCallback(t *testing.T, callback func(gossh.ConnMetadata, gossh.PublicKey) (*gossh.Permissions, error)) *sshTarget {
 	t.Helper()
 	listener, err := gonet.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	config := &gossh.ServerConfig{NoClientAuth: true}
+	config := &gossh.ServerConfig{NoClientAuth: callback == nil, PublicKeyCallback: callback}
 	config.AddHostKey(newSshTestSigner(t))
 	result := &sshTarget{
 		listener: listener, config: config, done: make(chan struct{}),
@@ -408,6 +658,29 @@ func newSshTestPrivateKey(t *testing.T) crypto.PrivateKey {
 
 func newSshTestSigner(t *testing.T) gossh.Signer { return newSshTestPrivateKey(t).ToSsh() }
 
+func writeSshTestPrivateKey(t *testing.T, path string, key crypto.PrivateKey) {
+	t.Helper()
+	var content bytes.Buffer
+	require.NoError(t, crypto.WriteSshPrivateKey(key, &content))
+	require.NoError(t, os.WriteFile(path, content.Bytes(), 0600))
+}
+
+func newSshCertificateTestConfiguration(t *testing.T, subjectFile, authorityFile string) *configuration.EnvironmentSsh {
+	t.Helper()
+	conf := &configuration.EnvironmentSsh{}
+	require.NoError(t, conf.SetDefaults())
+	conf.Address = template.MustNewString("target.example.org:22")
+	conf.User = template.MustNewString("target-user")
+	conf.AcceptAllHostKeys = true
+	certificate := &configuration.EnvironmentSshCertificate{}
+	require.NoError(t, certificate.SetDefaults())
+	certificate.IdentityFile = template.MustNewString(subjectFile)
+	certificate.AuthorityIdentityFile = template.MustNewString(authorityFile)
+	certificate.Validity = template.DurationOf(time.Hour)
+	conf.Certificate = certificate
+	return conf
+}
+
 type sshTestContext struct {
 	context.Context
 	sync.Mutex
@@ -456,21 +729,36 @@ func (this *sshTestConnection) Remote() bnet.Remote       { return sshTestRemote
 func (this *sshTestConnection) Logger() log.Logger        { return log.GetLogger("test.ssh-environment") }
 func (this *sshTestConnection) Lifetime() context.Context { return this.context }
 
-type sshTestStoredSession struct{ id session.Id }
+type sshTestStoredSession struct {
+	id                     session.Id
+	mutex                  sync.Mutex
+	environmentToken       []byte
+	environmentTokenWrites atomic.Int32
+}
 
 func (*sshTestStoredSession) Flow() configuration.FlowName                       { return "test" }
 func (this *sshTestStoredSession) Id() session.Id                                { return this.id }
 func (*sshTestStoredSession) Info(context.Context) (session.Info, error)         { return nil, nil }
 func (*sshTestStoredSession) AuthorizationToken(context.Context) ([]byte, error) { return nil, nil }
-func (*sshTestStoredSession) EnvironmentToken(context.Context) ([]byte, error)   { return nil, nil }
+func (this *sshTestStoredSession) EnvironmentToken(context.Context) ([]byte, error) {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	return append([]byte(nil), this.environmentToken...), nil
+}
 func (*sshTestStoredSession) HasPublicKey(context.Context, gossh.PublicKey) (bool, error) {
 	return false, nil
 }
 func (*sshTestStoredSession) ConnectionInterceptor(context.Context) (session.ConnectionInterceptor, error) {
 	return nil, nil
 }
-func (*sshTestStoredSession) SetAuthorizationToken(context.Context, []byte) error    { return nil }
-func (*sshTestStoredSession) SetEnvironmentToken(context.Context, []byte) error      { return nil }
+func (*sshTestStoredSession) SetAuthorizationToken(context.Context, []byte) error { return nil }
+func (this *sshTestStoredSession) SetEnvironmentToken(_ context.Context, value []byte) error {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	this.environmentToken = append([]byte(nil), value...)
+	this.environmentTokenWrites.Add(1)
+	return nil
+}
 func (*sshTestStoredSession) AddPublicKey(context.Context, gossh.PublicKey) error    { return nil }
 func (*sshTestStoredSession) DeletePublicKey(context.Context, gossh.PublicKey) error { return nil }
 func (*sshTestStoredSession) NotifyLastAccess(context.Context, bnet.Remote, session.State) (session.State, error) {
@@ -482,6 +770,8 @@ func (this *sshTestStoredSession) String() string                   { return thi
 type sshTestAuthorization struct {
 	session     session.Session
 	environment sys.EnvVars
+	kind        string
+	policy      *authorization.AuthorizedKeyPolicy
 }
 
 func (*sshTestAuthorization) IsAuthorized() bool                     { return true }
@@ -491,6 +781,10 @@ func (*sshTestAuthorization) Remote() bnet.Remote                    { return ss
 func (this *sshTestAuthorization) FindSession() session.Session      { return this.session }
 func (*sshTestAuthorization) FindSessionsPublicKey() gossh.PublicKey { return nil }
 func (*sshTestAuthorization) Dispose(context.Context) (bool, error)  { return false, nil }
+func (this *sshTestAuthorization) AuthorizationKind() string         { return this.kind }
+func (this *sshTestAuthorization) AuthorizedKeyPolicy() *authorization.AuthorizedKeyPolicy {
+	return this.policy
+}
 
 var _ authorization.Authorization = (*sshTestAuthorization)(nil)
 
@@ -501,6 +795,14 @@ type sshTestTask struct {
 	session              essh.Session
 	taskType             TaskType
 	environmentVariables configuration.EnvironmentVariables
+	targetUser           string
+}
+
+func (this *sshTestTask) GetField(name string) (any, bool, error) {
+	if name == "targetUser" {
+		return this.targetUser, true, nil
+	}
+	return nil, false, nil
 }
 
 func (this *sshTestTask) Connection() connection.Connection          { return this.connection }

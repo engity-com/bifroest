@@ -36,6 +36,9 @@ func (this FlowName) Validate() error {
 	if len(this) == 0 {
 		return fmt.Errorf("illegal flow key: empty")
 	}
+	if this == "." || this == ".." {
+		return fmt.Errorf("illegal flow key: %q", this)
+	}
 	for _, c := range string(this) {
 		if (c >= 'a' && 'z' >= c) ||
 			(c >= 'A' && 'Z' >= c) ||

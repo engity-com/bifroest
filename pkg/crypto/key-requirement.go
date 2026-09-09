@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"bytes"
 	"crypto/dsa"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -10,8 +11,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-
-	"github.com/engity-com/bifroest/pkg/common"
 )
 
 const (
@@ -39,15 +38,37 @@ func (this KeyRequirement) CreateFile(rand io.Reader, fn string) (PrivateKey, er
 		return nil, err
 	}
 
-	_ = os.MkdirAll(filepath.Dir(fn), 0700)
-	f, err := os.OpenFile(fn, os.O_CREATE|os.O_WRONLY, 0400)
+	var content bytes.Buffer
+	if err := WriteSshPrivateKey(pk, &content); err != nil {
+		return nil, fmt.Errorf("cannot encode new private key for %q: %w", fn, err)
+	}
+	parent := filepath.Dir(fn)
+	if err := os.MkdirAll(parent, 0700); err != nil {
+		return nil, fmt.Errorf("cannot create parent directory for private key %q: %w", fn, err)
+	}
+	f, err := os.CreateTemp(parent, "."+filepath.Base(fn)+".tmp-*")
 	if err != nil {
 		return nil, err
 	}
-	defer common.IgnoreCloseError(f)
-
-	if err := WriteSshPrivateKey(pk, f); err != nil {
+	temporary := f.Name()
+	defer os.Remove(temporary)
+	if err := f.Chmod(0400); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("cannot set mode of new private key %q: %w", fn, err)
+	}
+	if _, err := f.Write(content.Bytes()); err != nil {
+		_ = f.Close()
 		return nil, fmt.Errorf("cannot write new private key to %q: %w", fn, err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("cannot flush new private key for %q: %w", fn, err)
+	}
+	if err := f.Close(); err != nil {
+		return nil, fmt.Errorf("cannot close new private key for %q: %w", fn, err)
+	}
+	if err := installPrivateKeyFile(temporary, fn); err != nil {
+		return nil, fmt.Errorf("cannot install new private key at %q: %w", fn, err)
 	}
 
 	return pk, nil

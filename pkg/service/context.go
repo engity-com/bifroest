@@ -43,8 +43,9 @@ func (this *remote) String() string {
 }
 
 type authorizeRequest struct {
-	service    *service
-	connection *connection
+	service       *service
+	connection    *connection
+	authorization authorization.Authorization
 }
 
 func (this *authorizeRequest) GetField(name string) (any, bool, error) {
@@ -67,16 +68,45 @@ func (this *authorizeRequest) Connection() bconn.Connection {
 }
 
 func (this *authorizeRequest) Sessions() session.Repository {
-	return this.service.sessions
+	return &compatibleSessionRepository{
+		Repository:       this.service.sessions,
+		environments:     this.service.environments,
+		authorizeRequest: this,
+	}
 }
 
 func (this *authorizeRequest) Validate(auth authorization.Authorization) (bool, error) {
+	this.SetAuthorizationContext(auth)
 	ctx := environmentContext{
 		service:       this.service,
 		connection:    this.connection,
 		authorization: auth,
 	}
 	return this.service.environments.WillBeAccepted(&ctx)
+}
+
+func (this *authorizeRequest) SetAuthorizationContext(auth authorization.Authorization) {
+	this.authorization = auth
+}
+
+func (this *authorizeRequest) IsSessionCompatible(auth authorization.Authorization) (bool, error) {
+	sess := auth.FindSession()
+	if sess == nil {
+		return true, nil
+	}
+	info, err := sess.Info(this.Context())
+	if err != nil {
+		return false, err
+	}
+	if info != nil && info.State() == session.StateNew {
+		return true, nil
+	}
+	checker, ok := this.service.environments.(environment.ContextualSessionCompatibilityChecker)
+	if !ok {
+		return true, nil
+	}
+	ctx := &environmentContext{service: this.service, connection: this.connection, authorization: auth}
+	return checker.IsSessionCompatibleWith(ctx, sess)
 }
 
 type publicKeyAuthorizeRequest struct {

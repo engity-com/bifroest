@@ -32,8 +32,9 @@ type EnvironmentSsh struct {
 	KnownHostsFile    crypto.KnownHostsFile `yaml:"knownHostsFile,omitempty"`
 	AcceptAllHostKeys bool                  `yaml:"acceptAllHostKeys,omitempty"`
 
-	IdentityFiles  template.Strings  `yaml:"identityFiles,omitempty"`
-	ConnectTimeout template.Duration `yaml:"connectTimeout,omitempty"`
+	IdentityFiles  template.Strings           `yaml:"identityFiles,omitempty"`
+	Certificate    *EnvironmentSshCertificate `yaml:"certificate,omitempty"`
+	ConnectTimeout template.Duration          `yaml:"connectTimeout,omitempty"`
 
 	LoginAllowed          template.Bool   `yaml:"loginAllowed,omitempty"`
 	Banner                template.String `yaml:"banner,omitempty"`
@@ -49,6 +50,7 @@ func (this *EnvironmentSsh) SetDefaults() error {
 		noopSetDefault[EnvironmentSsh]("knownHostsFile"),
 		noopSetDefault[EnvironmentSsh]("acceptAllHostKeys"),
 		noopSetDefault[EnvironmentSsh]("identityFiles"),
+		noopSetDefault[EnvironmentSsh]("certificate"),
 		fixedDefault("connectTimeout", func(v *EnvironmentSsh) *template.Duration { return &v.ConnectTimeout }, DefaultEnvironmentSshConnectTimeout),
 		fixedDefault("loginAllowed", func(v *EnvironmentSsh) *template.Bool { return &v.LoginAllowed }, DefaultEnvironmentSshLoginAllowed),
 		fixedDefault("banner", func(v *EnvironmentSsh) *template.String { return &v.Banner }, DefaultEnvironmentSshBanner),
@@ -65,6 +67,7 @@ func (this *EnvironmentSsh) Trim() error {
 		func(v *EnvironmentSsh) (string, trimmer) { return "knownHostsFile", &v.KnownHostsFile },
 		noopTrim[EnvironmentSsh]("acceptAllHostKeys"),
 		noopTrim[EnvironmentSsh]("identityFiles"),
+		noopTrim[EnvironmentSsh]("certificate"),
 		noopTrim[EnvironmentSsh]("connectTimeout"),
 		noopTrim[EnvironmentSsh]("loginAllowed"),
 		noopTrim[EnvironmentSsh]("banner"),
@@ -73,6 +76,9 @@ func (this *EnvironmentSsh) Trim() error {
 }
 
 func (this *EnvironmentSsh) Validate() error {
+	if len(this.IdentityFiles) > 0 && this.Certificate != nil {
+		return fmt.Errorf("[identityFiles] cannot be combined with [certificate]")
+	}
 	if this.AcceptAllHostKeys && (!this.KnownHosts.IsZero() || !this.KnownHostsFile.IsZero()) {
 		return fmt.Errorf("[acceptAllHostKeys] cannot be combined with knownHosts or knownHostsFile")
 	}
@@ -109,6 +115,7 @@ func (this *EnvironmentSsh) Validate() error {
 		func(v *EnvironmentSsh) (string, validator) { return "knownHosts", &v.KnownHosts },
 		func(v *EnvironmentSsh) (string, validator) { return "knownHostsFile", &v.KnownHostsFile },
 		func(v *EnvironmentSsh) (string, validator) { return "identityFiles", &v.IdentityFiles },
+		func(v *EnvironmentSsh) (string, validator) { return "certificate", v.Certificate },
 		func(v *EnvironmentSsh) (string, validator) { return "connectTimeout", &v.ConnectTimeout },
 		func(v *EnvironmentSsh) (string, validator) { return "loginAllowed", &v.LoginAllowed },
 		func(v *EnvironmentSsh) (string, validator) { return "banner", &v.Banner },
@@ -142,6 +149,7 @@ func (this EnvironmentSsh) isEqualTo(other *EnvironmentSsh) bool {
 		isEqual(&this.KnownHostsFile, &other.KnownHostsFile) &&
 		this.AcceptAllHostKeys == other.AcceptAllHostKeys &&
 		isEqual(&this.IdentityFiles, &other.IdentityFiles) &&
+		isEqual(this.Certificate, other.Certificate) &&
 		isEqual(&this.ConnectTimeout, &other.ConnectTimeout) &&
 		isEqual(&this.LoginAllowed, &other.LoginAllowed) &&
 		isEqual(&this.Banner, &other.Banner) &&

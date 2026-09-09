@@ -15,6 +15,7 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/alternatives"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/crypto"
@@ -34,6 +35,7 @@ type sshResolvedSettings struct {
 	connectTimeout time.Duration
 	forwardAllowed bool
 	signers        []gossh.Signer
+	certificate    *sshCertificateSpec
 	cacheKey       string
 }
 
@@ -41,16 +43,25 @@ type SshRepository struct {
 	flow            configuration.FlowName
 	conf            *configuration.EnvironmentSsh
 	hostSigners     []gossh.Signer
+	certificateKeys *sshCertificateKeys
 	hostKeyCallback gossh.HostKeyCallback
 	context         context.Context
 	cancel          context.CancelFunc
 
 	Logger log.Logger
 
-	mutex      sync.Mutex
-	transports map[connection.Id]*sshTransport
-	attempts   map[connection.Id]*sshTransportAttempt
-	closed     bool
+	mutex        sync.Mutex
+	sessionLocks common.KeyedMutex[session.Id]
+	transports   map[connection.Id]*sshTransport
+	attempts     map[connection.Id]*sshTransportAttempt
+	closed       bool
+}
+
+func (this *SshRepository) logger() log.Logger {
+	if this.Logger != nil {
+		return this.Logger
+	}
+	return log.GetLogger("environment.ssh")
 }
 
 func NewSshRepository(ctx context.Context, flow configuration.FlowName, conf *configuration.EnvironmentSsh, _ alternatives.Provider, _ imp.Imp) (*SshRepository, error) {
@@ -84,11 +95,52 @@ func newSshRepository(ctx context.Context, flow configuration.FlowName, conf *co
 			return nil, fmt.Errorf("SSH host key at index %d has no signer", i)
 		}
 	}
+	var certificateKeys *sshCertificateKeys
+	if conf.Certificate != nil {
+		identityFile := strings.TrimSpace(conf.Certificate.IdentityFile.String())
+		if identityFile == "" || !conf.Certificate.IdentityFile.IsHardCoded() {
+			return nil, fmt.Errorf("SSH certificate identityFile has to be a static non-empty path")
+		}
+		subject, err := crypto.EnsureKeyFile(identityFile, &crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}, nil)
+		if err != nil {
+			return nil, fmt.Errorf("cannot ensure SSH certificate identity file %q: %w", identityFile, err)
+		}
+		subjectSigner := subject.ToSsh()
+		var authoritySigner gossh.Signer
+		authorityIdentityFile := strings.TrimSpace(conf.Certificate.AuthorityIdentityFile.String())
+		if authorityIdentityFile != "" {
+			if !conf.Certificate.AuthorityIdentityFile.IsHardCoded() {
+				return nil, fmt.Errorf("SSH certificate authorityIdentityFile has to be a static path")
+			}
+			raw, err := os.ReadFile(authorityIdentityFile)
+			if err != nil {
+				return nil, fmt.Errorf("cannot read SSH certificate authority identity file %q: %w", authorityIdentityFile, err)
+			}
+			authoritySigner, err = gossh.ParsePrivateKey(raw)
+			if err != nil {
+				return nil, fmt.Errorf("cannot parse SSH certificate authority identity file %q: %w", authorityIdentityFile, err)
+			}
+		} else {
+			if len(hostSigners) == 0 {
+				return nil, fmt.Errorf("no SSH host key is available as certificate authority fallback")
+			}
+			authoritySigner = hostSigners[0]
+		}
+		certificateKeys = &sshCertificateKeys{
+			subject:              subjectSigner,
+			subjectIdentityFile:  identityFile,
+			subjectFingerprint:   gossh.FingerprintSHA256(subjectSigner.PublicKey()),
+			authority:            authoritySigner,
+			authorityFingerprint: gossh.FingerprintSHA256(authoritySigner.PublicKey()),
+			configurationKey:     sshCertificateConfigurationKey(conf),
+		}
+	}
 	repositoryContext, cancel := context.WithCancel(ctx)
 	return &SshRepository{
 		flow:            flow,
 		conf:            conf,
 		hostSigners:     hostSigners,
+		certificateKeys: certificateKeys,
 		hostKeyCallback: hostKeyCallback,
 		context:         repositoryContext,
 		cancel:          cancel,
@@ -121,6 +173,14 @@ func (this *SshRepository) Ensure(req Request) (Environment, error) {
 	if err != nil {
 		return nil, err
 	}
+	if this.certificateKeys != nil {
+		signer, certificateKey, err := this.ensureUserCertificate(req.Context(), req, sess, settings)
+		if err != nil {
+			return nil, err
+		}
+		settings.signers = []gossh.Signer{signer}
+		settings.cacheKey += "\x00certificate\x00" + sess.Id().String() + "\x00" + certificateKey
+	}
 	lifetime, ok := connectionLifetime(req.Connection())
 	if !ok {
 		return nil, fmt.Errorf("SSH environment requires a connection with a lifetime context")
@@ -134,7 +194,7 @@ func (this *SshRepository) Ensure(req Request) (Environment, error) {
 	}, nil
 }
 
-func (this *SshRepository) resolveSettings(req Request) (*sshResolvedSettings, error) {
+func (this *SshRepository) resolveSettings(req Context) (*sshResolvedSettings, error) {
 	addressValue, err := this.conf.Address.Render(req)
 	if err != nil {
 		return nil, fmt.Errorf("cannot render SSH target address: %w", err)
@@ -171,7 +231,21 @@ func (this *SshRepository) resolveSettings(req Request) (*sshResolvedSettings, e
 
 	var signers []gossh.Signer
 	identityKey := "fallback"
-	if len(this.conf.IdentityFiles) > 0 {
+	if this.conf.Certificate != nil {
+		certificate, err := resolveSshCertificateSpec(this.conf.Certificate, req, &sshResolvedSettings{user: user, forwardAllowed: forwardAllowed})
+		if err != nil {
+			return nil, err
+		}
+		identityKey = "certificate\x00" + this.certificateKeys.subjectFingerprint
+		return &sshResolvedSettings{
+			address:        address,
+			user:           user,
+			connectTimeout: connectTimeout,
+			forwardAllowed: forwardAllowed,
+			certificate:    certificate,
+			cacheKey:       address.String() + "\x00" + user + "\x00" + connectTimeout.String() + "\x00" + identityKey,
+		}, nil
+	} else if len(this.conf.IdentityFiles) > 0 {
 		files, err := this.conf.IdentityFiles.Render(req)
 		if err != nil {
 			return nil, fmt.Errorf("cannot render SSH identity files: %w", err)
@@ -213,8 +287,25 @@ func (this *SshRepository) resolveSettings(req Request) (*sshResolvedSettings, e
 	}, nil
 }
 
-func (this *SshRepository) FindBySession(context.Context, session.Session, *FindOpts) (Environment, error) {
-	return nil, ErrNoSuchEnvironment
+func (this *SshRepository) FindBySession(ctx context.Context, sess session.Session, opts *FindOpts) (Environment, error) {
+	raw, err := sess.EnvironmentToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("cannot load SSH environment token: %w", err)
+	}
+	if len(raw) == 0 {
+		return nil, ErrNoSuchEnvironment
+	}
+	if _, err := decodeSshUserCertificateState(raw); err != nil {
+		if !opts.IsAutoCleanUpAllowed() {
+			return nil, err
+		}
+		if err := sess.SetEnvironmentToken(ctx, nil); err != nil {
+			return nil, fmt.Errorf("cannot remove broken SSH environment token: %w", err)
+		}
+		opts.GetLogger(this.logger).With("session", sess).Warn("removed broken SSH environment token")
+		return nil, ErrNoSuchEnvironment
+	}
+	return &sshEnvironment{repository: this, session: sess}, nil
 }
 
 func (this *SshRepository) Cleanup(context.Context, *CleanupOpts) error { return nil }

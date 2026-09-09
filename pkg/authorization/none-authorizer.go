@@ -57,6 +57,7 @@ func (this *NoneAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authorizat
 		nil,
 		nil,
 	}
+	setAuthorizationContext(req, auth)
 
 	sess, err := req.Sessions().FindByPublicKey(req.Context(), req.RemotePublicKey(), (&session.FindOpts{}).WithPredicate(
 		session.IsFlow(this.flow),

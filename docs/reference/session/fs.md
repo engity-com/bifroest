@@ -4,7 +4,7 @@ description: How to store Bifröst sessions on the local filesystem.
 
 # Filesystem session
 
-This variant of [session](index.md) is stored on the same local filesystem onb which also Bifröst is running.
+This variant of [session](index.md) is stored on the same local filesystem on which Bifröst is running.
 
 ## Properties
 
@@ -23,6 +23,8 @@ The maximum amount of parallel connections of one session. Each new connecting c
 <<property("storage", "File Path", "../data-type.md#file-path", default='<os specific>')>>
 Where the session information is stored locally.
 
+Only one Bifröst process can open a filesystem session repository at a time. A non-blocking operating-system lock is held for the repository lifetime; startup fails if another process already owns the same storage or if the lock state cannot be determined safely. Session state updates use atomic file replacement so a process interruption cannot expose a partially written token.
+
 The default value is different, depending on the platform Bifröst runs on:
 
 * Linux: `/var/lib/engity/bifroest/sessions`
@@ -36,4 +38,3 @@ All files/directories inside the session storage will be stored with this mode. 
 | <<dist("linux")>> | <<dist("windows")>> |
 | - | - |
 | <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"windows")>> |
-

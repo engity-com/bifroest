@@ -50,6 +50,11 @@ func (this *HtpasswdAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Author
 	failf := func(message string, args ...any) (Authorization, error) {
 		return fail(fmt.Errorf(message, args...))
 	}
+	auth := &htpasswd{
+		remote: req.Connection().Remote(),
+		flow:   this.flow,
+	}
+	setAuthorizationContext(req, auth)
 
 	sess, err := req.Sessions().FindByPublicKey(req.Context(), req.RemotePublicKey(), (&session.FindOpts{}).WithPredicate(
 		session.IsFlow(this.flow),
@@ -62,13 +67,8 @@ func (this *HtpasswdAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Author
 		return failf("cannot find session: %w", err)
 	}
 
-	auth := &htpasswd{
-		remote:            req.Connection().Remote(),
-		envVars:           nil,
-		flow:              this.flow,
-		session:           sess,
-		sessionsPublicKey: req.RemotePublicKey(),
-	}
+	auth.session = sess
+	auth.sessionsPublicKey = req.RemotePublicKey()
 
 	if accepted, err := req.Validate(auth); err != nil {
 		return nil, fmt.Errorf("cannot validate request: %w", err)

@@ -31,3 +31,13 @@ type InteractiveRequest interface {
 	SendError(string) error
 	Prompt(msg string, echoOn bool) (string, error)
 }
+
+type authorizationContextSetter interface {
+	SetAuthorizationContext(Authorization)
+}
+
+func setAuthorizationContext(req Request, auth Authorization) {
+	if setter, ok := req.(authorizationContextSetter); ok {
+		setter.SetAuthorizationContext(auth)
+	}
+}

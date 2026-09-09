@@ -1,13 +1,13 @@
 package session
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/net"
 )
 
@@ -50,18 +50,16 @@ func (this *fsLastAccessed) save() error {
 		return fmt.Errorf("cannot session's %v last access because cannot stat info: %w", this, err)
 	}
 
-	f, _, err := this.info.session.repository.openWrite(this.info.session.flow, this.info.session.id, FsFileLastAccessed, false)
+	var raw bytes.Buffer
+	if err := json.NewEncoder(&raw).Encode(this); err != nil {
+		return fmt.Errorf("cannot encode session %v: %w", this.info.session, err)
+	}
+	fn, err := this.info.session.repository.file(this.info.session.flow, this.info.session.id, FsFileLastAccessed)
 	if err != nil {
 		return err
 	}
-	defer common.IgnoreCloseError(f)
-
-	if err := json.NewEncoder(f).Encode(this); err != nil {
-		return fmt.Errorf("cannot encode session %v: %w", this.info.session, err)
-	}
-	now := time.Now()
-	if err := os.Chtimes(f.Name(), now, now); err != nil {
-		return fmt.Errorf("cannot change time of session's last access %v: %w", this, err)
+	if err := writeFsFileAtomically(fn, raw.Bytes(), os.FileMode(this.info.session.repository.conf.FileMode), os.FileMode(this.info.session.repository.dirFileMode())); err != nil {
+		return fmt.Errorf("cannot persist session's last access %v: %w", this, err)
 	}
 
 	return nil

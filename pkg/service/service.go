@@ -257,6 +257,12 @@ func (this *Service) prepare() (svc *service, err error) {
 	if svc.sessions, err = session.NewFacadeRepository(ctx, &this.Configuration.Session); err != nil {
 		return fail(err)
 	}
+	sessionRepositoryPrepared := false
+	defer func() {
+		if !sessionRepositoryPrepared {
+			_ = svc.sessions.Close()
+		}
+	}()
 	if svc.authorizer, err = authorization.NewAuthorizerFacade(ctx, &this.Configuration.Flows); err != nil {
 		return fail(err)
 	}
@@ -270,6 +276,7 @@ func (this *Service) prepare() (svc *service, err error) {
 		return fail(err)
 	}
 
+	sessionRepositoryPrepared = true
 	return svc, nil
 }
 

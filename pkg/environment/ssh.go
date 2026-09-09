@@ -509,7 +509,12 @@ func (this *sshDestinationConnection) CloseWrite() error {
 	return fmt.Errorf("SSH target connection does not support closing its write side")
 }
 
-func (this *sshEnvironment) Dispose(context.Context) (bool, error) { return false, nil }
+func (this *sshEnvironment) Dispose(ctx context.Context) (bool, error) {
+	if this.session == nil || this.repository == nil {
+		return false, nil
+	}
+	return this.repository.disposeUserCertificate(ctx, this.session)
+}
 
 func (this *sshEnvironment) Close() error { return nil }
 

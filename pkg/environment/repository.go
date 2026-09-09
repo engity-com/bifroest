@@ -48,6 +48,16 @@ type CloseableRepository interface {
 	io.Closer
 }
 
+// SessionCompatibilityChecker can prevent an existing session from being
+// selected when persisted environment credentials no longer match its flow.
+type SessionCompatibilityChecker interface {
+	IsSessionCompatible(context.Context, session.Session) (bool, error)
+}
+
+type ContextualSessionCompatibilityChecker interface {
+	IsSessionCompatibleWith(Context, session.Session) (bool, error)
+}
+
 // FindOpts adds some more hints what should happen when find methods of
 // Repository are executed.
 type FindOpts struct {
