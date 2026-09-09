@@ -273,7 +273,10 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	go func() {
 		defer activeRoutines.Done()
 		_, err := io.Copy(ea.Conn, sshSess)
-		_ = ea.CloseWrite()
+		// A Docker TTY uses one stream for both directions; half-closing it can discard pending output.
+		if !opts.Tty {
+			_ = ea.CloseWrite()
+		}
 		if this.isRelevantError(err) {
 			inputDone <- err
 		} else {
