@@ -9,7 +9,7 @@ import (
 	"time"
 
 	log "github.com/echocat/slf4g"
-	"github.com/gliderlabs/ssh"
+	essh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 )
@@ -94,11 +94,11 @@ func (this *fsConnectionInterceptorStack) close() error {
 	return nil
 }
 
-func (this *fsConnectionInterceptorStack) OnReadConnection(ssh.Context, log.Logger, gonet.Conn) (time.Time, ConnectionInterceptorResult, error) {
+func (this *fsConnectionInterceptorStack) OnReadConnection(essh.Context, log.Logger, gonet.Conn) (time.Time, ConnectionInterceptorResult, error) {
 	return this.onConnectionAction()
 }
 
-func (this *fsConnectionInterceptorStack) OnWriteConnection(ssh.Context, log.Logger, gonet.Conn) (time.Time, ConnectionInterceptorResult, error) {
+func (this *fsConnectionInterceptorStack) OnWriteConnection(essh.Context, log.Logger, gonet.Conn) (time.Time, ConnectionInterceptorResult, error) {
 	return this.onConnectionAction()
 }
 

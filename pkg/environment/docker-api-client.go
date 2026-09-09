@@ -68,7 +68,11 @@ func (this dockerConnectionReference) toApiClient() (_ *client.Client, err error
 		return nil, err
 	}
 
-	hostURL, err := client.ParseHostURL(client.DefaultDockerHost)
+	host := this.host
+	if host == "" {
+		host = client.DefaultDockerHost
+	}
+	hostURL, err := client.ParseHostURL(host)
 	if err != nil {
 		return fail(err)
 	}
@@ -82,10 +86,7 @@ func (this dockerConnectionReference) toApiClient() (_ *client.Client, err error
 		CheckRedirect: client.CheckRedirect,
 	}
 
-	clientOpts := []client.Opt{client.WithHTTPClient(&httpClient)}
-	if v := this.host; v != "" {
-		clientOpts = append(clientOpts, client.WithHost(v))
-	}
+	clientOpts := []client.Opt{client.WithHTTPClient(&httpClient), client.WithHost(host)}
 	if v := this.apiVersion; v != "" {
 		clientOpts = append(clientOpts, client.WithVersion(v))
 	}

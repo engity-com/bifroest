@@ -9,14 +9,21 @@ import (
 	"syscall"
 
 	log "github.com/echocat/slf4g"
-	glssh "github.com/gliderlabs/ssh"
+	essh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/engity-com/bifroest/pkg/template"
 )
+
+const localTargetOs = sys.OsWindows
+
+func (this *local) newAgentNamedPipe() (net.NamedPipe, error) {
+	return net.NewNamedPipe("ssh-agent")
+}
 
 type local struct {
 	repository            *LocalRepository
@@ -120,18 +127,16 @@ func (this *local) getPathEnv() string {
 	return `C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem`
 }
 
-func (this *local) signal(cmd *exec.Cmd, logger log.Logger, signal glssh.Signal) {
-	var sig sys.Signal
-	if err := sig.Set(string(signal)); err != nil {
-		sig = sys.SIGKILL
-	}
-
-	if err := cmd.Process.Signal(sig.Native()); errors.Is(err, os.ErrProcessDone) {
+func (this *local) signal(cmd *exec.Cmd, logger log.Logger, signal essh.Signal) {
+	err := signalProcessFromSsh(signal, func(sig sys.Signal) error {
+		return cmd.Process.Signal(sig.Native())
+	})
+	if errors.Is(err, os.ErrProcessDone) {
 		// Ignored.
 	} else if err != nil {
 		logger.WithError(err).
 			With("pid", cmd.Process.Pid).
-			With("signal", sig).
+			With("signal", signal).
 			Warn("cannot send signal to process")
 	}
 }

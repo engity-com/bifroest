@@ -25,6 +25,7 @@ import (
 var (
 	ErrPodNotFound      = fmt.Errorf("pod not found")
 	ErrEndpointNotFound = fmt.Errorf("endpoint not found")
+	ErrEndpointNotReady = fmt.Errorf("endpoint not ready")
 )
 
 func (this *client) DialPod(ctx context.Context, namespace, name, port string) (gonet.Conn, error) {
@@ -66,7 +67,7 @@ func (this *client) dial(ctx context.Context, restClient rest.Interface, gvk sch
 		return fail(err)
 	}
 
-	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, "POST", req.URL())
+	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: contextRoundTripper{ctx: ctx, delegate: transport}}, "POST", req.URL())
 
 	success := false
 	rawConn, _, err := dialer.Dial(portforward.PortForwardProtocolV1Name)
@@ -126,6 +127,15 @@ func (this *client) dial(ctx context.Context, restClient rest.Interface, gvk sch
 	return result, nil
 }
 
+type contextRoundTripper struct {
+	ctx      context.Context
+	delegate http.RoundTripper
+}
+
+func (this contextRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return this.delegate.RoundTrip(req.WithContext(this.ctx))
+}
+
 type httpstreamConn struct {
 	delegate       httpstream.Connection
 	errCh          chan error
@@ -148,9 +158,17 @@ func (this *httpstreamConn) watchErr(ctx context.Context) {
 	if len(bs) > 0 {
 		select {
 		case <-ctx.Done():
-		case this.errCh <- errors.Network.Newf("error during read: %s", string(bs)):
+		case this.errCh <- portForwardStreamError(string(bs)):
 		}
 	}
+}
+
+func portForwardStreamError(message string) error {
+	message = strings.TrimSpace(message)
+	if strings.Contains(message, "failed to connect to localhost:") && strings.Contains(message, "connection refused") {
+		return errors.Network.Newf("error during read: %s: %w", message, ErrEndpointNotReady)
+	}
+	return errors.Network.Newf("error during read: %s", message)
 }
 
 func (this *httpstreamConn) Read(b []byte) (n int, err error) {

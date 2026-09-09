@@ -63,8 +63,11 @@ func (this *Header) DecodeMsgPack(dec codec.MsgPackDecoder) (err error) {
 	return nil
 }
 
-func (this *Master) do(ctx context.Context, ref Ref, connectionId connection.Id, method Method, action func(*Header, codec.MsgPackConn) error) (rErr error) {
+func (this *Master) do(ctx context.Context, ref Ref, connectionId connection.Id, method Method, action func(*Header, codec.MsgPackConn) error) error {
 	fail := func(err error) error {
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
 		return err
 	}
 
@@ -72,7 +75,9 @@ func (this *Master) do(ctx context.Context, ref Ref, connectionId connection.Id,
 	if err != nil {
 		return fail(err)
 	}
-	defer common.KeepCloseError(&rErr, conn)
+	defer common.IgnoreCloseError(conn)
+	stopCloseOnCancellation := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopCloseOnCancellation()
 
 	header := Header{
 		Method:       method,

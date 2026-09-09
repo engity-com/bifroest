@@ -7,13 +7,17 @@ import (
 	gonet "net"
 	"net/http"
 	"strconv"
+	"sync"
+	"time"
 
 	log "github.com/echocat/slf4g"
 
 	"github.com/engity-com/bifroest/pkg/codec"
 	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
+	bnet "github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
@@ -57,13 +61,23 @@ func (this *Imp) Serve(ctx context.Context) error {
 	instance := &imp{
 		Imp: this,
 	}
+	serveCtx, cancelServe := context.WithCancel(ctx)
+	cleanupDone := make(chan struct{})
+	go func() {
+		defer close(cleanupDone)
+		instance.periodicallyCleanupExecutionResults(serveCtx)
+	}()
+	defer func() {
+		cancelServe()
+		<-cleanupDone
+	}()
 
 	go func() {
-		<-ctx.Done()
+		<-serveCtx.Done()
 		_ = tlsLn.Close()
 	}()
 
-	if err := instance.serve(ctx, tlsLn); err != nil {
+	if err := instance.serve(serveCtx, tlsLn); err != nil {
 		if !sys.IsClosedError(err) && !errors.Is(err, http.ErrServerClosed) {
 			return failf("problems while listening to rpc: %w", err)
 		}
@@ -74,6 +88,16 @@ func (this *Imp) Serve(ctx context.Context) error {
 
 type imp struct {
 	*Imp
+
+	executionResultCleanupMutex sync.Mutex
+	nextExecutionResultCleanup  time.Time
+	executionResultDeliveries   map[connection.Id]executionResultDeliveryState
+	completedExecutions         map[connection.Id]time.Time
+}
+
+type executionResultDeliveryState struct {
+	inFlight     int
+	acknowledged bool
 }
 
 func (this *imp) serve(ctx context.Context, ln gonet.Listener) error {
@@ -105,6 +129,11 @@ func (this *imp) serveConn(ctx context.Context, plainConn gonet.Conn) (rErr erro
 	}
 	conn := codec.NewMsgPackConn(plainConn)
 	defer common.KeepCloseError(&rErr, conn)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go bnet.NotifyClosedContext(ctx, plainConn, cancel, func(err error) {
+		this.logger().WithError(err).Warn("problems while watching for connection being closed; this could delay handler cancellation")
+	})
 
 	var header Header
 	if err := header.DecodeMsgPack(conn); err != nil {
@@ -127,10 +156,16 @@ func (this *imp) serveConn(ctx context.Context, plainConn gonet.Conn) (rErr erro
 		return done(this.handleMethodTcpForward(ctx, &header, l, conn))
 	case MethodNamedPipe:
 		return done(this.handleMethodNamedPipe(ctx, &header, l, conn))
+	case MethodNamedPipeForUser:
+		return done(this.handleMethodNamedPipeForUser(ctx, &header, l, conn))
 	case MethodGetConnectionExitCode:
 		return done(this.handleMethodGetConnectionExitCode(ctx, &header, l, conn))
 	case MethodGetEnvironment:
 		return done(this.handleMethodGetEnvironment(ctx, &header, l, conn))
+	case MethodKillExecution:
+		return done(this.handleMethodKillExecution(ctx, &header, l, conn))
+	case MethodGetExecutionExitCode:
+		return done(this.handleMethodGetExecutionExitCode(ctx, &header, l, conn))
 	default:
 		return fail(errors.Network.Newf("unsupported method %v", header.Method))
 	}

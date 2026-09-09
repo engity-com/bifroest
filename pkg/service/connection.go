@@ -5,12 +5,13 @@ import (
 	gonet "net"
 	"os"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	log "github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/fields"
-	glssh "github.com/gliderlabs/ssh"
+	essh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
 	bconn "github.com/engity-com/bifroest/pkg/connection"
@@ -19,31 +20,12 @@ import (
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
-type wrappedNetOpError struct {
-	*gonet.OpError
-}
-
-func (this wrappedNetOpError) Error() string {
-	if v := this.OpError; v != nil {
-		return v.Error()
-	}
-	return ""
-}
-
-func (this wrappedNetOpError) String() string {
-	return this.Error()
-}
-
-func (this wrappedNetOpError) Unwrap() error {
-	return this.OpError
-}
-
-func (this *service) onNewConnConnection(ctx glssh.Context, orig gonet.Conn) gonet.Conn {
+func (this *service) onNewConnConnection(ctx essh.Context, orig gonet.Conn) (gonet.Conn, error) {
 	logger := this.Service.logger().WithAll(map[string]any{
-		"local":      withLazyContextOrFieldExclude[gonet.Addr](ctx, glssh.ContextKeyLocalAddr),
-		"remoteUser": withLazyContextOrFieldExclude[string](ctx, glssh.ContextKeyUser),
-		"remote":     withLazyContextOrFieldExclude[gonet.Addr](ctx, glssh.ContextKeyRemoteAddr),
-		"ssh":        withLazyContextOrFieldExclude[string](ctx, glssh.ContextKeySessionID),
+		"local":      withLazyContextOrFieldExclude[gonet.Addr](ctx, essh.ContextKeyLocalAddr),
+		"remoteUser": withLazyContextOrFieldExclude[string](ctx, essh.ContextKeyUser),
+		"remote":     withLazyContextOrFieldExclude[gonet.Addr](ctx, essh.ContextKeyRemoteAddr),
+		"ssh":        withLazyContextOrFieldExclude[string](ctx, essh.ContextKeySessionID),
 		"session": fields.LazyFunc(func() any {
 			auth, ok := ctx.Value(authorizationCtxKey).(authorization.Authorization)
 			if !ok {
@@ -70,8 +52,7 @@ func (this *service) onNewConnConnection(ctx glssh.Context, orig gonet.Conn) gon
 
 	wrapped, err := this.newConnection(orig, ctx, logger)
 	if err != nil {
-		logger.WithError(err).Error("cannot create wrap new connection")
-		return nil
+		return nil, errors.Newf(errors.System, "cannot wrap new connection: %w", err)
 	}
 
 	if wrapped != nil {
@@ -79,10 +60,10 @@ func (this *service) onNewConnConnection(ctx glssh.Context, orig gonet.Conn) gon
 		ctx.SetValue(connectionCtxKey, wrapped)
 	}
 
-	return wrapped
+	return wrapped, nil
 }
 
-func (this *service) newConnection(orig gonet.Conn, ctx glssh.Context, logger log.Logger) (gonet.Conn, error) {
+func (this *service) newConnection(orig gonet.Conn, ctx essh.Context, logger log.Logger) (gonet.Conn, error) {
 	for {
 		current := this.activeConnections.Load()
 		if current >= int64(this.Configuration.Ssh.MaxConnections) {
@@ -99,6 +80,7 @@ func (this *service) newConnection(orig gonet.Conn, ctx glssh.Context, logger lo
 
 	id, err := bconn.NewId()
 	if err != nil {
+		this.activeConnections.Add(-1)
 		return nil, err
 	}
 
@@ -115,18 +97,45 @@ func (this *service) newConnection(orig gonet.Conn, ctx glssh.Context, logger lo
 	return result, nil
 }
 
+func (this *service) onDisconnected(ctx essh.Context, _ gonet.Conn) error {
+	defer finishConnectionLifecycle(ctx)
+	if conn := this.connection(ctx); conn != nil {
+		conn.logger.
+			With("read", conn.read.Load()).
+			With("written", conn.written.Load()).
+			With("duration", time.Since(time.UnixMilli(conn.created))).
+			Debug("connection ended")
+	}
+	return nil
+}
+
+func (this *service) onConnectionFailed(ctx essh.Context, _ gonet.Conn, _ error) error {
+	finishConnectionLifecycle(ctx)
+	return nil
+}
+
+func finishConnectionLifecycle(ctx essh.Context) {
+	if release, ok := ctx.Value(connectionLifecycleCtxKey).(func()); ok {
+		release()
+	}
+}
+
 type connection struct {
 	gonet.Conn
 	id      bconn.Id
-	context glssh.Context
+	context essh.Context
 	logger  log.Logger
 	service *service
 	created int64
 
-	interceptorP           atomic.Pointer[session.ConnectionInterceptor]
-	closed                 atomic.Bool
-	lastActivity           atomic.Int64
-	lastConnectionTimeType atomic.Uint32
+	interceptorP            atomic.Pointer[session.ConnectionInterceptor]
+	closed                  atomic.Bool
+	lastActivity            atomic.Int64
+	readConnectionTimeType  atomic.Uint32
+	writeConnectionTimeType atomic.Uint32
+	deadlineMutex           sync.Mutex
+	readDeadline            time.Time
+	writeDeadline           time.Time
 
 	read    atomic.Int64
 	written atomic.Int64
@@ -181,7 +190,7 @@ func (this *connection) doWithInterceptor(consumer func(session.ConnectionInterc
 	return consumer(v)
 }
 
-func (this *connection) doWithInterceptorOnAction(op string, action func(session.ConnectionInterceptor, glssh.Context, log.Logger, gonet.Conn) (time.Time, session.ConnectionInterceptorResult, error)) error {
+func (this *connection) doWithInterceptorOnAction(op string, action func(session.ConnectionInterceptor, essh.Context, log.Logger, gonet.Conn) (time.Time, session.ConnectionInterceptorResult, error)) error {
 	var deadline time.Time
 	var t connectionTimeType
 	err := this.doWithInterceptor(func(v session.ConnectionInterceptor) error {
@@ -232,30 +241,53 @@ func (this *connection) doWithInterceptorOnAction(op string, action func(session
 		}
 	}
 
-	if !deadline.IsZero() {
-		if time.Now().After(deadline) {
-			return doForceClose()
-		} else if err := this.Conn.SetDeadline(deadline); err != nil {
-			return err
-		}
+	deadline, err = this.applyEffectiveConnectionDeadlines(op, deadline, t)
+	if err != nil {
+		return err
+	}
+	if !deadline.IsZero() && time.Now().After(deadline) {
+		return doForceClose()
 	}
 
-	this.lastConnectionTimeType.Store(uint32(t))
 	this.lastActivity.Store(time.Now().UnixMilli())
 	return nil
+}
+
+func (this *connection) applyEffectiveConnectionDeadlines(op string, deadline time.Time, deadlineType connectionTimeType) (time.Time, error) {
+	this.deadlineMutex.Lock()
+	defer this.deadlineMutex.Unlock()
+	effective := func(libraryDeadline time.Time) (time.Time, connectionTimeType) {
+		if !libraryDeadline.IsZero() && (deadline.IsZero() || libraryDeadline.Before(deadline)) {
+			return libraryDeadline, connectionValidityResultNone
+		}
+		return deadline, deadlineType
+	}
+	readDeadline, readType := effective(this.readDeadline)
+	writeDeadline, writeType := effective(this.writeDeadline)
+	this.readConnectionTimeType.Store(uint32(readType))
+	this.writeConnectionTimeType.Store(uint32(writeType))
+	if err := this.Conn.SetReadDeadline(readDeadline); err != nil {
+		return time.Time{}, err
+	}
+	if err := this.Conn.SetWriteDeadline(writeDeadline); err != nil {
+		return time.Time{}, err
+	}
+	if op == "read" {
+		return readDeadline, nil
+	}
+	return writeDeadline, nil
 }
 
 func (this *connection) inspectIoError(err error) {
 	if err == nil {
 		return
 	}
-	var wnor wrappedNetOpError
-	if errors.As(err, &wnor) {
-		return
-		// We do not want to react to ourselves
-	}
 	if errors.Is(err, os.ErrDeadlineExceeded) {
-		t := connectionTimeType(this.lastConnectionTimeType.Load())
+		t := connectionTimeType(this.readConnectionTimeType.Load())
+		var opErr *gonet.OpError
+		if errors.As(err, &opErr) && opErr.Op == "write" {
+			t = connectionTimeType(this.writeConnectionTimeType.Load())
+		}
 		if t > 0 {
 			this.logger.
 				With("reason", t).
@@ -300,17 +332,26 @@ func (this *connection) Close() (rErr error) {
 	return this.Conn.Close()
 }
 
-func (this *connection) SetDeadline(time.Time) error {
-	// We'll ignore them, because this should be handled only by session.ConnectionInterceptor.
-	return nil
+func (this *connection) SetDeadline(v time.Time) error {
+	this.deadlineMutex.Lock()
+	defer this.deadlineMutex.Unlock()
+	this.readDeadline = v
+	this.writeDeadline = v
+	return this.Conn.SetDeadline(v)
 }
 
 func (this *connection) SetReadDeadline(v time.Time) error {
-	return this.SetDeadline(v)
+	this.deadlineMutex.Lock()
+	defer this.deadlineMutex.Unlock()
+	this.readDeadline = v
+	return this.Conn.SetReadDeadline(v)
 }
 
 func (this *connection) SetWriteDeadline(v time.Time) error {
-	return this.SetDeadline(v)
+	this.deadlineMutex.Lock()
+	defer this.deadlineMutex.Unlock()
+	this.writeDeadline = v
+	return this.Conn.SetWriteDeadline(v)
 }
 
 type connectionTimeType uint8

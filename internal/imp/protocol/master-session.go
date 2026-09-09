@@ -6,6 +6,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/execution"
 	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
@@ -33,11 +34,15 @@ func (this *MasterSession) InitiateTcpForward(ctx context.Context, connectionId 
 }
 
 func (this *MasterSession) InitiateNamedPipe(ctx context.Context, connectionId connection.Id, purpose net.Purpose) (net.NamedPipe, error) {
+	return this.InitiateNamedPipeForUser(ctx, connectionId, purpose, "", "")
+}
+
+func (this *MasterSession) InitiateNamedPipeForUser(ctx context.Context, connectionId connection.Id, purpose net.Purpose, user, group string) (net.NamedPipe, error) {
 	fail := func(err error) (net.NamedPipe, error) {
 		return nil, errors.Network.Newf("cannot named pipe for %v of %v: %w", connectionId, purpose, err)
 	}
 
-	result, err := this.parent.methodNamedPipe(ctx, this.ref, connectionId, purpose)
+	result, err := this.parent.methodNamedPipe(ctx, this.ref, connectionId, purpose, user, group)
 	if err != nil {
 		return fail(err)
 	}
@@ -65,10 +70,30 @@ func (this *MasterSession) GetConnectionExitCode(ctx context.Context, connection
 	return result, nil
 }
 
+func (this *MasterSession) GetExecutionExitCode(ctx context.Context, connectionId connection.Id, executionId execution.Id) (int, error) {
+	fail := func(err error) (int, error) {
+		return 0, errors.Network.Newf("cannot get execution exitCode for %v: %w", executionId, err)
+	}
+
+	result, err := this.parent.methodGetExecutionExitCode(ctx, this.ref, connectionId, executionId)
+	if errors.Is(err, connection.ErrNotFound) {
+		return 0, connection.ErrNotFound
+	}
+	if err != nil {
+		return fail(err)
+	}
+
+	return result, nil
+}
+
 func (this *MasterSession) GetEnvironment(ctx context.Context, connectionId connection.Id) (sys.EnvVars, error) {
 	return this.parent.methodGetEnvironment(ctx, this.ref, connectionId)
 }
 
 func (this *MasterSession) Kill(ctx context.Context, connectionId connection.Id, pid int, signal sys.Signal) error {
 	return this.parent.methodKill(ctx, this.ref, connectionId, pid, signal)
+}
+
+func (this *MasterSession) KillExecution(ctx context.Context, connectionId connection.Id, executionId execution.Id, pid int, signal sys.Signal) error {
+	return this.parent.methodKillExecution(ctx, this.ref, connectionId, executionId, pid, signal)
 }

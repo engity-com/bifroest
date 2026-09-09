@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	_ "embed"
 	"net/http"
+	"os"
 )
 
 var (
@@ -22,7 +23,18 @@ var (
 			return result
 		}
 		result := x509.NewCertPool()
-		result.AppendCertsFromPEM(raw)
+		if !result.AppendCertsFromPEM(raw) {
+			panic("cannot parse embedded CA certificates")
+		}
+		if customFile := os.Getenv("SSL_CERT_FILE"); customFile != "" {
+			custom, err := os.ReadFile(customFile)
+			if err != nil {
+				panic(err)
+			}
+			if !result.AppendCertsFromPEM(custom) {
+				panic("cannot parse CA certificates from SSL_CERT_FILE")
+			}
+		}
 		return result
 	}(caCertsRaw)
 )

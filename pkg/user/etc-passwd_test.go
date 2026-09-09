@@ -3,11 +3,56 @@
 package user
 
 import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/stretchr/testify/require"
 )
+
+func TestEtcPasswdEntriesPreserveDataBeyondScannerBuffer(t *testing.T) {
+	var content strings.Builder
+	for i := range 100 {
+		_, err := fmt.Fprintf(
+			&content,
+			"test%d:x:%d:1000:Test User %d with a sufficiently long display name:/home/test%d:/bin/sh\n",
+			i,
+			10000+i,
+			i,
+			i,
+		)
+		require.NoError(t, err)
+	}
+	require.Greater(t, content.Len(), 4096)
+
+	path := filepath.Join(t.TempDir(), "passwd")
+	require.NoError(t, os.WriteFile(path, []byte(content.String()), 0600))
+	source, err := os.Open(path)
+	require.NoError(t, err)
+
+	var entries etcColonEntries[etcPasswdEntry, *etcPasswdEntry]
+	require.NoError(t, entries.decode(etcPasswdColons, false, false, source))
+	require.NoError(t, source.Close())
+	require.Len(t, entries, 100)
+	for i, entry := range entries {
+		require.Equal(t, fmt.Sprintf("test%d", i), string(entry.entry.name))
+		require.Equal(t, fmt.Sprintf("Test User %d with a sufficiently long display name", i), string(entry.entry.geocs))
+	}
+
+	target, err := os.Create(filepath.Join(t.TempDir(), "encoded-passwd"))
+	require.NoError(t, err)
+	require.NoError(t, entries.encode(false, target))
+	_, err = target.Seek(0, io.SeekStart)
+	require.NoError(t, err)
+	actual, err := io.ReadAll(target)
+	require.NoError(t, err)
+	require.NoError(t, target.Close())
+	require.Equal(t, content.String(), string(actual))
+}
 
 func Test_etcPasswdEntry_decode(t *testing.T) {
 	testlog.Hook(t)

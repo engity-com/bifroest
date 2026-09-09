@@ -128,5 +128,8 @@ var (
 			}},
 			sys.OsWindows: {},
 		}},
+		sys.ArchRiscV64: {os: map[sys.Os]archOsDetails{
+			sys.OsLinux: {fromImage: fromDefaultLinux},
+		}},
 	}
 )

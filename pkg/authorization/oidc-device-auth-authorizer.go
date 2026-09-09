@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	coidc "github.com/coreos/go-oidc/v3/oidc"
@@ -51,6 +54,12 @@ func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *c
 	if err != nil {
 		return failf("cannot render issuer: %w", err)
 	}
+	if issuer == nil {
+		return failf("issuer is empty")
+	}
+	if err := requireOidcHttpsEndpoint("issuer", issuer.String()); err != nil {
+		return fail(err)
+	}
 
 	provider, err := coidc.NewProvider(ctx, issuer.String())
 	if err != nil {
@@ -77,6 +86,23 @@ func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *c
 		}
 		scopes = append(scopes, rawScope)
 	}
+	endpoint := provider.Endpoint()
+	var metadata struct {
+		TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported"`
+	}
+	if err := provider.Claims(&metadata); err != nil {
+		return failf("cannot evaluate OIDC provider metadata: %w", err)
+	}
+	endpoint.AuthStyle, err = oidcClientAuthStyle(metadata.TokenEndpointAuthMethodsSupported)
+	if err != nil {
+		return fail(err)
+	}
+	if err := requireOidcHttpsEndpoint("token endpoint", endpoint.TokenURL); err != nil {
+		return fail(err)
+	}
+	if err := requireOidcHttpsEndpoint("device authorization endpoint", endpoint.DeviceAuthURL); err != nil {
+		return fail(err)
+	}
 
 	result := OidcDeviceAuthAuthorizer{
 		flow: flow,
@@ -85,7 +111,7 @@ func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *c
 		oauth2Config: oauth2.Config{
 			ClientID:     clientId,
 			ClientSecret: clientSecret,
-			Endpoint:     provider.Endpoint(),
+			Endpoint:     endpoint,
 			Scopes:       scopes,
 		},
 		provider: provider,
@@ -98,6 +124,121 @@ func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *c
 }
 
 type noopContext struct{}
+
+func oidcClientAuthStyle(supported []string) (oauth2.AuthStyle, error) {
+	if len(supported) == 0 {
+		return oauth2.AuthStyleInHeader, nil
+	}
+	postSupported := false
+	for _, method := range supported {
+		switch method {
+		case "client_secret_basic":
+			return oauth2.AuthStyleInHeader, nil
+		case "client_secret_post":
+			postSupported = true
+		}
+	}
+	if postSupported {
+		return oauth2.AuthStyleInParams, nil
+	}
+	return oauth2.AuthStyleAutoDetect, errors.Config.Newf("OIDC provider does not support client_secret authentication")
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (this roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return this(req)
+}
+
+func sameOrigin(left, right *url.URL) bool {
+	return strings.EqualFold(left.Scheme, right.Scheme) &&
+		strings.EqualFold(left.Hostname(), right.Hostname()) &&
+		effectiveOriginPort(left) == effectiveOriginPort(right)
+}
+
+func requireOidcHttpsEndpoint(name, raw string) error {
+	endpoint, err := url.Parse(raw)
+	if err != nil {
+		return errors.Config.Newf("%s is invalid: %w", name, err)
+	}
+	if !strings.EqualFold(endpoint.Scheme, "https") || endpoint.Host == "" {
+		return errors.Config.Newf("%s must be an absolute HTTPS URL", name)
+	}
+	return nil
+}
+
+func effectiveOriginPort(value *url.URL) string {
+	if port := value.Port(); port != "" {
+		if numeric, err := strconv.ParseUint(port, 10, 16); err == nil {
+			return strconv.FormatUint(numeric, 10)
+		}
+		return port
+	}
+	switch strings.ToLower(value.Scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
+}
+
+func withBasicClientAuthentication(ctx context.Context, endpoint, clientId, clientSecret string) (context.Context, error) {
+	if err := requireOidcHttpsEndpoint("client authentication endpoint", endpoint); err != nil {
+		return nil, err
+	}
+	target, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	client, _ := ctx.Value(oauth2.HTTPClient).(*http.Client)
+	if client == nil {
+		client = http.DefaultClient
+	}
+	copyOfClient := *client
+	transport := copyOfClient.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	copyOfClient.Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		copyOfRequest := req.Clone(req.Context())
+		if sameOrigin(req.URL, target) {
+			copyOfRequest.SetBasicAuth(url.QueryEscape(clientId), url.QueryEscape(clientSecret))
+		}
+		return transport.RoundTrip(copyOfRequest)
+	})
+	return context.WithValue(ctx, oauth2.HTTPClient, &copyOfClient), nil
+}
+
+func withSameOriginRedirects(ctx context.Context, endpoint string) (context.Context, error) {
+	if err := requireOidcHttpsEndpoint("OAuth endpoint", endpoint); err != nil {
+		return nil, err
+	}
+	target, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	client, _ := ctx.Value(oauth2.HTTPClient).(*http.Client)
+	if client == nil {
+		client = http.DefaultClient
+	}
+	copyOfClient := *client
+	previousCheck := copyOfClient.CheckRedirect
+	copyOfClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if !sameOrigin(req.URL, target) {
+			return http.ErrUseLastResponse
+		}
+		if previousCheck != nil {
+			return previousCheck(req, via)
+		}
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		return nil
+	}
+	return context.WithValue(ctx, oauth2.HTTPClient, &copyOfClient), nil
+}
 
 func (this *OidcDeviceAuthAuthorizer) RestoreFromSession(ctx context.Context, sess session.Session, opts *RestoreOpts) (Authorization, error) {
 	fail := func(err error) (Authorization, error) {
@@ -362,7 +503,23 @@ func (this *OidcDeviceAuthAuthorizer) initiateDeviceAuth(ctx context.Context) (*
 		ctx = context.Background()
 	}
 
-	response, err := this.oauth2Config.DeviceAuth(ctx)
+	var (
+		options []oauth2.AuthCodeOption
+		err     error
+	)
+	ctx, err = withSameOriginRedirects(ctx, this.oauth2Config.Endpoint.DeviceAuthURL)
+	if err != nil {
+		return failf("cannot prepare device authorization redirect policy: %w", err)
+	}
+	if this.oauth2Config.Endpoint.AuthStyle == oauth2.AuthStyleInParams {
+		options = append(options, oauth2.SetAuthURLParam("client_secret", this.oauth2Config.ClientSecret))
+	} else {
+		ctx, err = withBasicClientAuthentication(ctx, this.oauth2Config.Endpoint.DeviceAuthURL, this.oauth2Config.ClientID, this.oauth2Config.ClientSecret)
+		if err != nil {
+			return failf("cannot prepare device client authentication: %w", err)
+		}
+	}
+	response, err := this.oauth2Config.DeviceAuth(ctx, options...)
 	if err != nil {
 		return failf("cannot initiate successful device auth: %w", err)
 	}
@@ -386,7 +543,11 @@ func (this *OidcDeviceAuthAuthorizer) retrieveDeviceAuthToken(ctx context.Contex
 		return failf(errors.System, "no device auth response provided")
 	}
 
-	response, err := this.oauth2Config.DeviceAccessToken(ctx, using, oauth2.SetAuthURLParam("client_secret", this.oauth2Config.ClientSecret))
+	ctx, err := withSameOriginRedirects(ctx, this.oauth2Config.Endpoint.TokenURL)
+	if err != nil {
+		return failf(errors.Network, "cannot prepare token endpoint redirect policy: %w", err)
+	}
+	response, err := this.oauth2Config.DeviceAccessToken(ctx, using)
 	if errors.Is(err, context.DeadlineExceeded) {
 		return failf(errors.User, "authorize of device timed out")
 	}

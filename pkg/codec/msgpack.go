@@ -203,6 +203,17 @@ func (this *msgPackConn) Write(b []byte) (int, error) {
 	return v.Write(b)
 }
 
+func (this *msgPackConn) CloseWrite() error {
+	v := this.conn
+	if v == nil {
+		return io.ErrClosedPipe
+	}
+	if closeWriter, ok := v.(interface{ CloseWrite() error }); ok {
+		return closeWriter.CloseWrite()
+	}
+	return this.Close()
+}
+
 func (this *msgPackConn) LocalAddr() gonet.Addr {
 	v := this.conn
 	if v == nil {

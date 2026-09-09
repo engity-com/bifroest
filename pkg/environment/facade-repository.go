@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"reflect"
 
-	glssh "github.com/gliderlabs/ssh"
+	essh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/common"
@@ -45,7 +45,7 @@ func (this *RepositoryFacade) WillBeAccepted(ctx Context) (bool, error) {
 	return candidate.WillBeAccepted(ctx)
 }
 
-func (this *RepositoryFacade) DoesSupportPty(ctx Context, pty glssh.Pty) (bool, error) {
+func (this *RepositoryFacade) DoesSupportPty(ctx Context, pty essh.Pty) (bool, error) {
 	flow := ctx.Authorization().Flow()
 	candidate, ok := this.entries[flow]
 	if !ok {

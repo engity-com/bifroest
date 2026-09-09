@@ -8,6 +8,7 @@ go: &go
   - 'cmd/**'
   - 'internal/**'
   - 'contrib/**'
+  - 'test/**'
   - '.github/**'
   - 'mise.toml'
   - '.tool-versions'

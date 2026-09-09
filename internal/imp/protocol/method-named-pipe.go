@@ -5,6 +5,7 @@ import (
 	"time"
 
 	log "github.com/echocat/slf4g"
+	essh "github.com/engity-com/ssh-server-go"
 	"github.com/vmihailenco/msgpack/v5"
 	"github.com/xtaci/smux"
 
@@ -46,6 +47,33 @@ func (this *methodNamedPipeRequest) DecodeMsgPack(dec codec.MsgPackDecoder) (err
 	return nil
 }
 
+type methodNamedPipeForUserRequest struct {
+	methodNamedPipeRequest
+	user  string
+	group string
+}
+
+func (this methodNamedPipeForUserRequest) EncodeMsgPack(enc codec.MsgPackEncoder) error {
+	if err := this.methodNamedPipeRequest.EncodeMsgPack(enc); err != nil {
+		return err
+	}
+	if err := enc.EncodeString(this.user); err != nil {
+		return err
+	}
+	return enc.EncodeString(this.group)
+}
+
+func (this *methodNamedPipeForUserRequest) DecodeMsgPack(dec codec.MsgPackDecoder) (err error) {
+	if err := this.methodNamedPipeRequest.DecodeMsgPack(dec); err != nil {
+		return err
+	}
+	if this.user, err = dec.DecodeString(); err != nil {
+		return err
+	}
+	this.group, err = dec.DecodeString()
+	return err
+}
+
 type methodNamedPipeResponse struct {
 	path  string
 	error error
@@ -80,6 +108,22 @@ func (this *methodNamedPipeResponse) DecodeMsgPack(dec codec.MsgPackDecoder) (er
 }
 
 func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logger log.Logger, conn codec.MsgPackConn) error {
+	var req methodNamedPipeRequest
+	if err := req.DecodeMsgPack(conn); err != nil {
+		return errors.Network.Newf("handling %v failed: cannot decode request: %w", header.Method, err)
+	}
+	return this.handleNamedPipe(ctx, header, logger, conn, req.purpose, "", "")
+}
+
+func (this *imp) handleMethodNamedPipeForUser(ctx context.Context, header *Header, logger log.Logger, conn codec.MsgPackConn) error {
+	var req methodNamedPipeForUserRequest
+	if err := req.DecodeMsgPack(conn); err != nil {
+		return errors.Network.Newf("handling %v failed: cannot decode request: %w", header.Method, err)
+	}
+	return this.handleNamedPipe(ctx, header, logger, conn, req.purpose, req.user, req.group)
+}
+
+func (this *imp) handleNamedPipe(ctx context.Context, header *Header, logger log.Logger, conn codec.MsgPackConn, purpose net.Purpose, user, group string) error {
 	failCore := func(err error) error {
 		return errors.Network.Newf("handling %v failed: %w", header.Method, err)
 	}
@@ -98,13 +142,9 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 		return nil
 	}
 
-	var req methodNamedPipeRequest
-	if err := req.DecodeMsgPack(conn); err != nil {
-		return failCoref("cannot decode request: %w", err)
-	}
-	logger = logger.With("purpose", req.purpose)
+	logger = logger.With("purpose", purpose)
 
-	pipe, err := net.NewNamedPipe(req.purpose)
+	pipe, err := net.NewNamedPipeForUser(purpose, user, group)
 	if err != nil {
 		return failConnectResponse(err)
 	}
@@ -129,7 +169,7 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 		return "destination -> source"
 	}
 
-	go net.NotifyClosed(conn, func() {
+	go net.NotifyClosedContext(ctx, conn, func() {
 		logger.Trace("client connection was closed")
 		_ = pipe.Close()
 	}, func(err error) {
@@ -169,7 +209,7 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 			}
 			defer common.IgnoreCloseError(muxConn)
 
-			if err := sys.FullDuplexCopy(ctx, pipeConn, muxConn, &sys.FullDuplexCopyOpts{
+			if err := essh.FullDuplexCopy(ctx, pipeConn, muxConn, &essh.FullDuplexCopyOpts{
 				OnStart: func() {
 					logger.Debug("named pipe started")
 				},
@@ -204,7 +244,7 @@ func (this *imp) handleMethodNamedPipe(ctx context.Context, header *Header, logg
 	}
 }
 
-func (this *Master) methodNamedPipe(ctx context.Context, ref Ref, connectionId connection.Id, purpose net.Purpose) (net.NamedPipe, error) {
+func (this *Master) methodNamedPipe(ctx context.Context, ref Ref, connectionId connection.Id, purpose net.Purpose, user, group string) (net.NamedPipe, error) {
 	fail := func(err error) (net.NamedPipe, error) {
 		return nil, errors.Network.Newf("handling %v failed: %w", MethodNamedPipe, err)
 	}
@@ -216,11 +256,19 @@ func (this *Master) methodNamedPipe(ctx context.Context, ref Ref, connectionId c
 	}
 	defer common.IgnoreCloseErrorIfFalse(&success, conn)
 
-	if err := (Header{MethodNamedPipe, connectionId}).EncodeMsgPack(conn); err != nil {
+	method := MethodNamedPipe
+	if user != "" || group != "" {
+		method = MethodNamedPipeForUser
+	}
+	if err := (Header{method, connectionId}).EncodeMsgPack(conn); err != nil {
 		return fail(err)
 	}
 
-	if err := (methodNamedPipeRequest{purpose}).EncodeMsgPack(conn); err != nil {
+	if method == MethodNamedPipeForUser {
+		if err := (methodNamedPipeForUserRequest{methodNamedPipeRequest: methodNamedPipeRequest{purpose: purpose}, user: user, group: group}).EncodeMsgPack(conn); err != nil {
+			return fail(err)
+		}
+	} else if err := (methodNamedPipeRequest{purpose: purpose}).EncodeMsgPack(conn); err != nil {
 		return fail(err)
 	}
 

@@ -2,17 +2,17 @@ package service
 
 import (
 	"context"
+	goerrors "errors"
 	"fmt"
 	gonet "net"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
+	"time"
 
 	log "github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/fields"
-	glssh "github.com/gliderlabs/ssh"
-	"github.com/pires/go-proxyproto"
+	essh "github.com/engity-com/ssh-server-go"
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/alternatives"
@@ -29,9 +29,10 @@ import (
 )
 
 var (
-	connectionCtxKey    = struct{ uint64 }{83439637}
-	authorizationCtxKey = struct{ uint64 }{10282643}
-	handshakeKeyCtxKey  = struct{ uint64 }{30072498}
+	connectionCtxKey          = struct{ uint64 }{83439637}
+	authorizationCtxKey       = struct{ uint64 }{10282643}
+	handshakeKeyCtxKey        = struct{ uint64 }{30072498}
+	connectionLifecycleCtxKey = struct{ uint64 }{23424012}
 )
 
 type Service struct {
@@ -43,6 +44,20 @@ type Service struct {
 
 func (this *Service) isProblematicError(err error) bool {
 	if err == nil {
+		return false
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, candidate := range joined.Unwrap() {
+			if this.isProblematicError(candidate) {
+				return true
+			}
+		}
+		return false
+	}
+	if wrapped := goerrors.Unwrap(err); wrapped != nil {
+		return this.isProblematicError(wrapped)
+	}
+	if errors.Is(err, essh.ErrGracefulShutdownTimeout) {
 		return false
 	}
 	if errors.Is(err, context.Canceled) {
@@ -73,23 +88,20 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 	if err != nil {
 		return err
 	}
-	defer common.KeepCloseError(&rErr, svc)
+	closeService := true
+	defer func() {
+		if closeService {
+			common.KeepCloseError(&rErr, svc)
+		}
+	}()
 
 	lns := make([]struct {
 		ln   gonet.Listener
 		addr bnet.Address
 	}, len(this.Configuration.Ssh.Addresses))
-	var lnMutex sync.Mutex
 	closeLns := func() {
-		lnMutex.Lock()
-		defer lnMutex.Unlock()
-
 		for _, ln := range lns {
 			if ln.ln != nil {
-				//goland:noinspection GoDeferInLoop
-				defer func(target *gonet.Listener) {
-					*target = nil
-				}(&ln.ln)
 				if err := ln.ln.Close(); this.isProblematicError(err) && rErr == nil {
 					rErr = err
 				}
@@ -109,51 +121,81 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 
 	this.logger().WithAll(sys.VersionToMap(this.Version)).Info("started")
 
-	done := make(chan error, len(lns))
-	var wg sync.WaitGroup
+	serveCtx, cancelServe := context.WithCancelCause(ctx)
+	defer cancelServe(nil)
+	gracefulShutdownTimeout := this.Configuration.Ssh.GracefulShutdownTimeout.Native()
+	var beginShutdownOnce sync.Once
+	var shutdownStartedAt time.Time
+	beginShutdown := func() {
+		beginShutdownOnce.Do(func() {
+			shutdownStartedAt = time.Now()
+			svc.connectionLifecycle.stop()
+		})
+	}
+	stopLifecycleWatch := context.AfterFunc(serveCtx, beginShutdown)
+	defer stopLifecycleWatch()
+	type serveResult struct {
+		address bnet.Address
+		err     error
+	}
+	done := make(chan serveResult, len(lns))
 	for _, ln := range lns {
-		wg.Add(1)
 		go func() {
-			defer wg.Done()
 			l := this.logger().With("address", ln.addr)
-
-			tln := ln.ln
-			if this.Configuration.Ssh.ProxyProtocol {
-				tln = &proxyproto.Listener{Listener: tln}
-			}
-
 			l.Info("listening...")
-			if err := svc.server.Serve(tln); this.isProblematicError(err) {
+			err := svc.server.Serve(serveCtx, ln.ln)
+			if this.isProblematicError(err) {
 				l.WithError(err).Error("listening... FAILED!")
-				done <- err
-				return
+			} else {
+				l.Info("listening... DONE!")
 			}
-			l.Info("listening... DONE!")
-			done <- nil
+			done <- serveResult{ln.addr, err}
 		}()
 	}
 
-	go func() {
-		for {
-			select {
-			case err, ok := <-done:
-				if !ok {
-					return
-				}
-				if this.isProblematicError(err) && rErr == nil {
-					rErr = err
-				}
-				closeLns()
-			case <-ctx.Done():
-				closeLns()
-			}
+	forcedShutdown := false
+	for i := 0; i < len(lns); i++ {
+		result := <-done
+		if i == 0 {
+			beginShutdown()
+			cancelServe(result.err)
 		}
-	}()
-	wg.Wait()
-
-	close(done)
+		forcedShutdown = forcedShutdown || goerrors.Is(result.err, essh.ErrGracefulShutdownTimeout)
+		if this.isProblematicError(result.err) {
+			rErr = goerrors.Join(rErr, fmt.Errorf("SSH listener %v failed: %w", result.address, result.err))
+		}
+	}
+	handlerDrainTimeout := remainingGracefulShutdownTimeout(gracefulShutdownTimeout, shutdownStartedAt, time.Now())
+	if forcedShutdown {
+		handlerDrainTimeout = 0
+	}
+	if !svc.connectionLifecycle.wait(handlerDrainTimeout) {
+		drainErr := fmt.Errorf("SSH connection handlers did not finish within the graceful shutdown timeout of %s", gracefulShutdownTimeout)
+		this.logger().WithError(drainErr).Warn("delaying service cleanup until SSH connection handlers finish")
+		if this.isProblematicError(context.Cause(serveCtx)) {
+			rErr = goerrors.Join(rErr, drainErr)
+		}
+		closeService = false
+		go func() {
+			svc.connectionLifecycle.waitUntilDrained()
+			if err := svc.Close(); err != nil {
+				this.logger().WithError(err).Error("cannot close service after SSH connection handlers finished")
+			}
+		}()
+	}
 
 	return
+}
+
+func remainingGracefulShutdownTimeout(total time.Duration, startedAt, now time.Time) time.Duration {
+	if total <= 0 || startedAt.IsZero() {
+		return total
+	}
+	remaining := total - now.Sub(startedAt)
+	if remaining <= 0 {
+		return 0
+	}
+	return remaining
 }
 
 func (this *Service) logger() log.Logger {
@@ -169,7 +211,7 @@ func (this *Service) prepare() (svc *service, err error) {
 	}
 
 	ctx := context.Background()
-	svc = &service{Service: this}
+	svc = &service{Service: this, connectionLifecycle: newConnectionLifecycle()}
 
 	svc.knownFlows = make(map[configuration.FlowName]struct{})
 	for _, flow := range this.Configuration.Flows {
@@ -232,10 +274,34 @@ func (this *Service) prepare() (svc *service, err error) {
 }
 
 func (this *Service) prepareServer(_ context.Context, svc *service, hostPrivateKeys []crypto.PrivateKey) (err error) {
-	svc.server.IdleTimeout = 0 // handled by service's connection
-	svc.server.MaxTimeout = 0  // handled by service's connection
+	sshConfig := &svc.Configuration.Ssh
+
+	svc.server.Logger = svc.Service.logger()
+	svc.server.RequireHostSigners = true
+	svc.server.RequireClientAuth = true
+	svc.server.HandshakeTimeout = new(sshConfig.HandshakeTimeout.Native())
+	svc.server.IdleTimeout = new(time.Duration(0)) // handled by service's connection
+	svc.server.MaxTimeout = new(time.Duration(0))  // handled by service's connection
+	svc.server.SessionRequestTimeout = new(sshConfig.SessionRequestTimeout.Native())
+	svc.server.MaxStartups = &essh.MaxStartupsConfig{
+		Start: int(sshConfig.MaxStartupsStart),
+		Rate:  int(sshConfig.MaxStartupsRate),
+		Full:  int(sshConfig.MaxStartupsFull),
+	}
+	svc.server.MaxSessionsPerConnection = new(int(sshConfig.MaxSessionsPerConnection))
+	svc.server.MaxChannelsPerConnection = new(int(sshConfig.MaxChannelsPerConnection))
+	svc.server.MaxReverseForwardsPerConnection = new(int(sshConfig.MaxReverseForwardsPerConnection))
+	svc.server.MaxConnections = new(0)
+	svc.server.MaxChannels = new(int(sshConfig.MaxChannels))
+	svc.server.MaxReverseForwards = new(int(sshConfig.MaxReverseForwards))
+	svc.server.GracefulShutdownHandler = essh.NewGracefulShutdownTimeoutHandler(sshConfig.GracefulShutdownTimeout.Native())
+	if sshConfig.ProxyProtocol {
+		svc.server.ProxyProtocol = new(essh.ProxyProtocolConfig)
+	}
 	svc.server.ServerConfigCallback = svc.createNewServerConfig
 	svc.server.ConnCallback = svc.onNewConnConnection
+	svc.server.ConnectionFailedCallback = svc.onConnectionFailed
+	svc.server.DisconnectCallback = svc.onDisconnected
 	svc.server.Handler = svc.handleSshShellSession
 	svc.server.PtyCallback = svc.onPtyRequest
 	svc.server.ReversePortForwardingCallback = svc.onReversePortForwardingRequested
@@ -243,18 +309,19 @@ func (this *Service) prepareServer(_ context.Context, svc *service, hostPrivateK
 	svc.server.PasswordHandler = svc.handlePassword
 	svc.server.KeyboardInteractiveHandler = svc.handleKeyboardInteractiveChallenge
 	svc.server.BannerHandler = svc.handleBanner
-	svc.server.RequestHandlers = map[string]glssh.RequestHandler{
+	svc.server.AgentForwardingCallback = svc.onAgentForwardingRequested
+	svc.server.RequestHandlers = map[string]essh.RequestHandler{
 		"tcpip-forward":        svc.forwardHandler.HandleSSHRequest,
 		"cancel-tcpip-forward": svc.forwardHandler.HandleSSHRequest,
 	}
-	svc.server.ChannelHandlers = map[string]glssh.ChannelHandler{
+	svc.server.ChannelHandlers = map[string]essh.ChannelHandler{
 		"session":      svc.handleNewSshSession,
 		"direct-tcpip": svc.handleNewDirectTcpIp,
 	}
-	svc.server.SubsystemHandlers = map[string]glssh.SubsystemHandler{
+	svc.server.SubsystemHandlers = map[string]essh.SubsystemHandler{
 		"sftp": svc.handleSshSftpSession,
 	}
-	svc.server.HostSigners = make([]glssh.Signer, len(hostPrivateKeys))
+	svc.server.HostSigners = make([]essh.Signer, len(hostPrivateKeys))
 	for i, v := range hostPrivateKeys {
 		svc.server.HostSigners[i] = v.ToSsh()
 	}
@@ -301,8 +368,8 @@ type service struct {
 	houseKeeper    houseKeeper
 	alternatives   alternatives.Provider
 	imp            imp.Imp
-	server         glssh.Server
-	forwardHandler glssh.ForwardedTCPHandler
+	server         essh.Server
+	forwardHandler essh.ForwardedTCPHandler
 
 	knownFlows map[configuration.FlowName]struct{}
 
@@ -310,10 +377,11 @@ type service struct {
 	resolvedSshMessagesAuthentications []string
 	resolvedSshMessagesCiphers         []string
 
-	activeConnections atomic.Int64
+	activeConnections   atomic.Int64
+	connectionLifecycle *connectionLifecycle
 }
 
-func withLazyContextOrFieldExclude[C any](ctx glssh.Context, ctxKey any) fields.Lazy {
+func withLazyContextOrFieldExclude[C any](ctx essh.Context, ctxKey any) fields.Lazy {
 	return fields.LazyFunc(func() any {
 		if v, ok := ctx.Value(ctxKey).(C); ok {
 			return v
@@ -322,38 +390,35 @@ func withLazyContextOrFieldExclude[C any](ctx glssh.Context, ctxKey any) fields.
 	})
 }
 
-func (this *service) connection(ctx glssh.Context) *connection {
+func (this *service) connection(ctx essh.Context) *connection {
 	if v, ok := ctx.Value(connectionCtxKey).(*connection); ok {
 		return v
 	}
 	return nil
 }
 
-func (this *service) logger(ctx glssh.Context) log.Logger {
-	if v := this.connection(ctx); v != nil {
-		return v.Logger()
+func (this *service) createNewServerConfig(ctx essh.Context, _ gonet.Conn, target *gossh.ServerConfig) error {
+	release, ok := this.connectionLifecycle.register()
+	if !ok {
+		return context.Canceled
 	}
-	return this.Service.logger()
-}
+	ctx.SetValue(connectionLifecycleCtxKey, release)
 
-func (this *service) isSilentError(err error) bool {
-	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
-}
-
-func (this *service) isRelevantError(err error) bool {
-	return err != nil && !errors.Is(err, syscall.EIO) && !sys.IsClosedError(err)
-}
-
-func (this *service) createNewServerConfig(glssh.Context) *gossh.ServerConfig {
-	return &gossh.ServerConfig{
-		ServerVersion: "SSH-2.0-Engity-Bifroest_" + this.Version.Version(),
-		MaxAuthTries:  int(this.Configuration.Ssh.MaxAuthTries),
-		Config: gossh.Config{
-			KeyExchanges: this.resolvedSshKeysExchanges,
-			Ciphers:      this.resolvedSshMessagesCiphers,
-			MACs:         this.resolvedSshMessagesAuthentications,
-		},
+	target.ServerVersion = "SSH-2.0-Engity-Bifroest_" + this.Version.Version()
+	target.MaxAuthTries = sshMaxAuthTries(this.Configuration.Ssh.MaxAuthTries)
+	target.Config = gossh.Config{
+		KeyExchanges: this.resolvedSshKeysExchanges,
+		Ciphers:      this.resolvedSshMessagesCiphers,
+		MACs:         this.resolvedSshMessagesAuthentications,
 	}
+	return nil
+}
+
+func sshMaxAuthTries(value uint8) int {
+	if value == 0 {
+		return -1
+	}
+	return int(value)
 }
 
 func (this *service) Close() (rErr error) {

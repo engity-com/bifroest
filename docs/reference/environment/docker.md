@@ -73,6 +73,8 @@ This image needs to contain a valid [shell executable](#property-shellCommand).
 
 [`ENTRYPOINT`](https://docs.docker.com/reference/dockerfile/#entrypoint) and [`CMD`](https://docs.docker.com/reference/dockerfile/#cmd) settings of the image will be ignored.
 
+On Linux, image [`ENV`](https://docs.docker.com/reference/dockerfile/#env) values are not inherited by SSH commands. Bifröst deliberately clears them before starting its privileged IMP and exec wrapper, then supplies only the environment assembled for the individual authorization and SSH execution. This prevents image-controlled loader variables such as `LD_PRELOAD` from affecting the privileged wrapper. Windows containers retain their image environment for IMP and wrapper startup; the SSH target command still receives only its explicitly assembled execution environment.
+
 <<property("imagePullPolicy", "Pull Policy", "../data-type.md#pull-policy", template_context="../context/authorization.md", default="ifAbsent")>>
 Defines what should happen if the container starts with the required image of the container.
 
@@ -168,6 +170,8 @@ Defines the user will run with inside the container.
 
 If not defined the value [`USER`](https://docs.docker.com/reference/dockerfile/#user) will be used. If this is absent it defaults to: `root`.
 
+Inside Linux containers, the IMP starts as root so that it can switch to this target identity. The SSH command itself runs as the selected target user and receives that user's supplementary groups when they can be resolved. Numeric UID/GID values do not require an `/etc/passwd` or `/etc/group` entry.
+
 <<property("banner", "string", template_context="../context/authorization.md", default="")>>
 Will be displayed to the user upon connection to its environment.
 
@@ -185,10 +189,10 @@ Will be displayed to the user upon connection to its environment.
 <<property("portForwardingAllowed", "bool", template_context="../context/authorization.md", default=True)>>
 If `true`, users are allowed to use SSH's port forwarding mechanism.
 
-<<property("impPublishHost", "string", template_context="../context/authorization.md")>>
-If this property is set, the port of the IMP process will be not just exposed on the container network, but also on this host.
+<<property("impPublishHost", "string")>>
+If this property is set, only the IMP port `8683` is published with a dynamically allocated host port in addition to being exposed on the container network. Other ports declared with the image's `EXPOSE` instruction are not published automatically.
 
-At this address Bifröst will then connect to the IMP process inside the container.
+At this address Bifröst will then connect to the published IMP port. The value is not passed to the Docker daemon as a host-interface binding; the daemon chooses the publish interface according to its own defaults. This property is static and does not support template evaluation.
 
 !!! warning
      To set this property makes only sense as long you have a firewall in place, which prevents external attackers to connect to the host ports, and you have no other choice. Usually Bifröst can connect via the container networks to IMP directly (see [`networks`](#property-networks)).
@@ -202,6 +206,16 @@ This is useful to clean up old containers which are leftovers after you have cha
 
 !!! warning
      If multiple Bifröst installations are using the same Docker host, this should be disabled. Otherwise, each instance is removing the container of the other instance.
+
+## Execution lifecycle and upgrades
+
+Docker containers created by the current version carry the label `org.engity.bifroest/execution-lifecycle=execution-id-v1`. Bifröst uses a unique execution ID to route signals and exit statuses to the correct command and supervises the command's process tree.
+
+On Windows, the command is resumed only after it has been assigned to Bifröst's kill-on-close Job Object. If restrictions on an inherited Job Object reject nested assignment, the command fails while still suspended rather than running without descendant-cleanup guarantees.
+
+On Linux, execution-scoped signaling requires Linux kernel 5.3 or later for `pidfd_open` and `pidfd_send_signal` support. The container's seccomp policy must allow both system calls; Bifröst rejects the signal request rather than falling back to an unsafe numeric PID when they are unavailable.
+
+Containers from versions without this label cannot be reused by the current master. A normal login rejects such a container without deleting it. Housekeeping may remove it when disposing an expired session according to the configured cleanup policy. Back up container-local data and anonymous volumes before manually or automatically removing old environments.
 
 ## Preparation Processes {: #preparationProcesses }
 

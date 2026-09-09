@@ -25,7 +25,7 @@ import (
 	"github.com/docker/go-connections/nat"
 	"github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/level"
-	glssh "github.com/gliderlabs/ssh"
+	essh "github.com/engity-com/ssh-server-go"
 	mobymount "github.com/moby/moby/api/types/mount"
 
 	"github.com/engity-com/bifroest/pkg/alternatives"
@@ -42,11 +42,12 @@ var (
 )
 
 const (
-	DockerLabelPrefix            = "org.engity.bifroest/"
-	DockerLabelFlow              = DockerLabelPrefix + "flow"
-	DockerLabelSessionId         = DockerLabelPrefix + "session-id"
-	DockerLabelCreatedRemoteUser = DockerLabelPrefix + "created-remote-user"
-	DockerLabelCreatedRemoteHost = DockerLabelPrefix + "created-remote-host"
+	DockerLabelPrefix             = "org.engity.bifroest/"
+	DockerLabelFlow               = DockerLabelPrefix + "flow"
+	DockerLabelSessionId          = DockerLabelPrefix + "session-id"
+	DockerLabelCreatedRemoteUser  = DockerLabelPrefix + "created-remote-user"
+	DockerLabelCreatedRemoteHost  = DockerLabelPrefix + "created-remote-host"
+	DockerLabelExecutionLifecycle = DockerLabelPrefix + "execution-lifecycle"
 
 	DockerLabelShellCommand          = DockerLabelPrefix + "shellCommand"
 	DockerLabelExecCommand           = DockerLabelPrefix + "execCommand"
@@ -139,7 +140,7 @@ func (this *DockerRepository) WillBeAccepted(ctx Context) (ok bool, err error) {
 	return ok, nil
 }
 
-func (this *DockerRepository) DoesSupportPty(Context, glssh.Pty) (bool, error) {
+func (this *DockerRepository) DoesSupportPty(Context, essh.Pty) (bool, error) {
 	return true, nil
 }
 
@@ -177,6 +178,8 @@ func (this *DockerRepository) createContainerBy(req Request, sess session.Sessio
 	if err != nil {
 		return fail(err)
 	}
+	imageRef := config.Image
+	configuredUser := config.Labels[DockerLabelUser]
 	hostConfig, err := this.resolveHostConfig(req)
 	if err != nil {
 		return fail(err)
@@ -187,15 +190,23 @@ func (this *DockerRepository) createContainerBy(req Request, sess session.Sessio
 	}
 
 	if this.conf.ImagePullPolicy == configuration.PullPolicyAlways {
-		if err := this.pullImage(req, config.Image); err != nil {
-			return failf(errors.System, "cannot pull container image %s: %w", config.Image, err)
+		if err := this.pullImage(req, imageRef); err != nil {
+			return failf(errors.System, "cannot pull container image %s: %w", imageRef, err)
 		}
+	}
+	if err := this.inheritDockerImageUser(req.Context(), config); err != nil && !this.isNoSuchImageError(err) {
+		return failf(errors.System, "cannot inspect container image %s: %w", imageRef, err)
 	}
 	success := false
 	cr, err := this.apiClient.ContainerCreate(req.Context(), config, hostConfig, networkingConfig, nil, "")
 	if this.isNoSuchImageError(err) && this.conf.ImagePullPolicy != configuration.PullPolicyAlways && this.conf.ImagePullPolicy != configuration.PullPolicyNever {
-		if err := this.pullImage(req, config.Image); err != nil {
-			return failf(errors.System, "cannot pull container image %s: %w", config.Image, err)
+		config.Image = imageRef
+		config.Labels[DockerLabelUser] = configuredUser
+		if err := this.pullImage(req, imageRef); err != nil {
+			return failf(errors.System, "cannot pull container image %s: %w", imageRef, err)
+		}
+		if err := this.inheritDockerImageUser(req.Context(), config); err != nil {
+			return failf(errors.System, "cannot inspect container image %s: %w", imageRef, err)
 		}
 		cr, err = this.apiClient.ContainerCreate(req.Context(), config, hostConfig, networkingConfig, nil, "")
 	}
@@ -227,6 +238,39 @@ func (this *DockerRepository) createContainerBy(req Request, sess session.Sessio
 	success = true
 	return c, nil
 
+}
+
+func (this *DockerRepository) inheritDockerImageUser(ctx context.Context, config *container.Config) error {
+	if this.hostOs != sys.OsLinux {
+		return nil
+	}
+	inspected, err := this.apiClient.ImageInspect(ctx, config.Image)
+	if err != nil {
+		return err
+	}
+	if inspected.Config != nil {
+		if config.Labels[DockerLabelUser] == "" {
+			config.Labels[DockerLabelUser] = inspected.Config.User
+		}
+		config.Env = isolatedDockerContainerEnvironment(inspected.Config.Env, config.Env)
+	}
+	if inspected.ID != "" {
+		config.Image = inspected.ID
+	}
+	return nil
+}
+
+func isolatedDockerContainerEnvironment(imageEnvironment, requiredEnvironment []string) []string {
+	result := sys.EnvVars{}
+	for _, entry := range imageEnvironment {
+		key, _, _ := strings.Cut(entry, "=")
+		if key != "" {
+			result.Set(key, "")
+		}
+	}
+	result.Set("PATH", dockerWrapperPath)
+	result.Add(requiredEnvironment...)
+	return result.Strings()
 }
 
 func (this *DockerRepository) pullImage(req Request, ref string) error {
@@ -261,10 +305,6 @@ func (this *DockerRepository) pullImage(req Request, ref string) error {
 		return fail(err)
 	}
 	defer common.IgnoreCloseError(rc)
-
-	if progress == nil {
-		return nil
-	}
 
 	l := req.Connection().Logger().
 		With("image", ref)
@@ -320,8 +360,9 @@ func (this *DockerRepository) resolveContainerConfig(req Request, sess session.S
 
 	remote := req.Connection().Remote()
 	result.Labels = map[string]string{
-		DockerLabelFlow:      this.flow.String(),
-		DockerLabelSessionId: sess.Id().String(),
+		DockerLabelFlow:               this.flow.String(),
+		DockerLabelSessionId:          sess.Id().String(),
+		DockerLabelExecutionLifecycle: executionLifecycleCapability,
 
 		DockerLabelCreatedRemoteUser: remote.User(),
 		DockerLabelCreatedRemoteHost: remote.Host().String(),
@@ -393,7 +434,7 @@ func (this *DockerRepository) resolveHostConfig(req Request) (_ *container.HostC
 
 	result.AutoRemove = true
 	if !this.conf.ImpPublishHost.IsZero() {
-		result.PublishAllPorts = true
+		result.PortBindings = dockerImpPortBindings()
 	}
 	if result.Binds, err = this.conf.Volumes.Render(req); err != nil {
 		return failf("cannot evaluate volumes: %w", err)
@@ -425,11 +466,6 @@ func (this *DockerRepository) resolveHostConfig(req Request) (_ *container.HostC
 		return failf("cannot evaluate dnsSearch: %w", err)
 	}
 
-	// result.PortBindings = nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", imp.ServicePort)): {{
-	// 	HostIP:   impBinding.Host.String(),
-	// 	HostPort: strconv.FormatUint(uint64(impBinding.Port), 10),
-	// }}}
-
 	impBinaryPath, err := this.alternatives.FindBinaryFor(req.Context(), this.hostOs, this.hostArch)
 	if err != nil {
 		return failf("cannot resolve imp binary path: %w", err)
@@ -456,6 +492,12 @@ func (this *DockerRepository) resolveHostConfig(req Request) (_ *container.HostC
 	}
 
 	return &result, nil
+}
+
+func dockerImpPortBindings() nat.PortMap {
+	return nat.PortMap{
+		nat.Port(fmt.Sprintf("%d/tcp", imp.ServicePort)): {{}},
+	}
 }
 
 func toDockerMount(value mobymount.Mount) mount.Mount {
@@ -663,6 +705,18 @@ func (this *DockerRepository) findOrEnsureBySession(ctx context.Context, sess se
 		instance.owners.Add(1)
 		return instance, nil
 	}
+	if c != nil && c.Labels[DockerLabelExecutionLifecycle] != executionLifecycleCapability {
+		if !opts.IsAutoCleanUpAllowed() {
+			return fail(errors.System.Newf("existing environment %s does not support execution lifecycle; remove it explicitly before retrying", c.ID))
+		}
+		if _, err := this.removeContainer(ctx, c.ID); err != nil {
+			return fail(err)
+		}
+		if createUsing == nil {
+			return fail(ErrNoSuchEnvironment)
+		}
+		c = nil
+	}
 
 	if c != nil && exitCode >= 0 {
 		if opts.IsAutoCleanUpAllowed() {
@@ -852,7 +906,9 @@ func (this *DockerRepository) isNoSuchImageError(err error) bool {
 		if err == nil {
 			return false
 		}
-		if msg := err.Error(); strings.HasPrefix(msg, "No such image:") {
+		if msg := err.Error(); strings.HasPrefix(msg, "No such image:") ||
+			strings.HasSuffix(msg, ": No such image") ||
+			strings.HasSuffix(msg, ": image not known") {
 			return true
 		}
 		ue, ok := err.(interface{ Unwrap() error })

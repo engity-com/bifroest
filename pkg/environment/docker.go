@@ -41,10 +41,15 @@ type docker struct {
 	portForwardingAllowed bool
 
 	impBinding net.HostPort
-	impSession imp.Session
+	impSession imp.ExecutionSession
 
 	owners atomic.Int32
 }
+
+const (
+	dockerImpReadinessTimeout    = 30 * time.Second
+	dockerImpReadinessRetryDelay = 500 * time.Millisecond
+)
 
 func (this *docker) SessionId() session.Id {
 	return this.sessionId
@@ -70,8 +75,14 @@ func (this *DockerRepository) new(ctx context.Context, container *types.Containe
 		return fail(err)
 	}
 	var err error
-	if result.impSession, err = this.imp.Open(ctx, result); err != nil {
+	openedSession, err := this.imp.Open(ctx, result)
+	if err != nil {
 		return fail(err)
+	}
+	var ok bool
+	if result.impSession, ok = openedSession.(imp.ExecutionSession); !ok {
+		_ = openedSession.Close()
+		return fail(errors.System.Newf("IMP session does not support execution lifecycle"))
 	}
 
 	connId, err := connection.NewId()
@@ -79,33 +90,71 @@ func (this *DockerRepository) new(ctx context.Context, container *types.Containe
 		return fail(err)
 	}
 
-	for try := 1; try <= 200; try++ {
+	if err := waitForDockerImp(ctx, logger, dockerImpReadinessTimeout, dockerImpReadinessRetryDelay, func(ctx context.Context) error {
+		return result.impSession.Ping(ctx, connId)
+	}); err != nil {
+		return fail(err)
+	}
+
+	result.owners.Add(1)
+
+	return result, nil
+}
+
+func waitForDockerImp(ctx context.Context, logger log.Logger, timeout, retryDelay time.Duration, ping func(context.Context) error) error {
+	readinessCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	var lastErr error
+	timeoutError := func() error {
 		if err := ctx.Err(); err != nil {
-			return fail(err)
+			return err
+		}
+		return errors.System.Newf("container's imp did not become ready within %s (last error: %v): %w", timeout, lastErr, context.DeadlineExceeded)
+	}
+
+	for try := 1; ; try++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := readinessCtx.Err(); err != nil {
+			return timeoutError()
 		}
 
-		if err := result.impSession.Ping(ctx, connId); err == nil {
-			break
-		} else if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-			// try waiting...
-		} else {
-			return fail(err)
+		lastErr = ping(readinessCtx)
+		if lastErr == nil {
+			return nil
 		}
-		l := logger.With("try", try)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := readinessCtx.Err(); err != nil {
+			return timeoutError()
+		}
+		if !isDockerImpNotReadyError(lastErr) {
+			return lastErr
+		}
+		l := logger.With("try", try).WithError(lastErr)
 		if try <= 2 {
 			l.Debug("waiting for container's imp getting ready...")
 		} else {
 			l.Info("still waiting for container's imp getting ready...")
 		}
 
-		if err := common.Sleep(ctx, 500*time.Millisecond); err != nil {
-			return fail(err)
+		if err := common.Sleep(readinessCtx, retryDelay); err != nil {
+			return timeoutError()
 		}
 	}
+}
 
-	result.owners.Add(1)
-
-	return result, nil
+func isDockerImpNotReadyError(err error) bool {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EHOSTUNREACH) ||
+		errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.ETIMEDOUT) {
+		return true
+	}
+	var netErr gonet.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 func (this *docker) Dispose(ctx context.Context) (_ bool, rErr error) {
@@ -239,14 +288,10 @@ func (this *docker) resolveImpBinding(container *types.Container) (net.HostPort,
 		if candidate.Type != "tcp" {
 			continue
 		}
-		result := net.HostPort{Port: candidate.PublicPort}
-		if err := result.Host.Set(candidate.IP); err != nil {
-			return failf("cannot parse ip address where the host is bound to: %w", err)
-		}
-		if result.Host.IsZero() {
-			result.Host = iph.Clone()
-		}
-		return result, nil
+		return net.HostPort{
+			Host: iph.Clone(),
+			Port: candidate.PublicPort,
+		}, nil
 	}
 
 	return failf("container does not have any valid exposed port")

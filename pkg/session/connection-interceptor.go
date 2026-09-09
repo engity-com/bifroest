@@ -6,14 +6,14 @@ import (
 	"time"
 
 	log "github.com/echocat/slf4g"
-	glssh "github.com/gliderlabs/ssh"
+	essh "github.com/engity-com/ssh-server-go"
 )
 
 type ConnectionInterceptor interface {
 	io.Closer
 
-	OnReadConnection(glssh.Context, log.Logger, gonet.Conn) (time.Time, ConnectionInterceptorResult, error)
-	OnWriteConnection(glssh.Context, log.Logger, gonet.Conn) (time.Time, ConnectionInterceptorResult, error)
+	OnReadConnection(essh.Context, log.Logger, gonet.Conn) (time.Time, ConnectionInterceptorResult, error)
+	OnWriteConnection(essh.Context, log.Logger, gonet.Conn) (time.Time, ConnectionInterceptorResult, error)
 }
 
 type ConnectionInterceptorResult uint8

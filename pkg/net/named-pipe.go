@@ -29,6 +29,20 @@ func NewNamedPipe(purpose Purpose) (NamedPipe, error) {
 	return NewNamedPipeWithId(purpose, id)
 }
 
+func NewNamedPipeForUser(purpose Purpose, user, group string) (result NamedPipe, err error) {
+	result, err = NewNamedPipe(purpose)
+	if err != nil {
+		return nil, err
+	}
+	success := false
+	defer common.IgnoreCloseErrorIfFalse(&success, result)
+	if err := setNamedPipeOwner(result.(*namedPipe), user, group); err != nil {
+		return nil, errors.Network.Newf("cannot set owner of named pipe for %s: %w", purpose, err)
+	}
+	success = true
+	return result, nil
+}
+
 func NewNamedPipeWithId(purpose Purpose, id string) (result NamedPipe, err error) {
 	fail := func(err error) (NamedPipe, error) {
 		return nil, errors.Network.Newf("cannot create named pipe for %s: %w", purpose, err)
@@ -69,7 +83,7 @@ func NewNamedPipeId() (string, error) {
 }
 
 func AsNamedPipe(ln gonet.Listener, path string) (NamedPipe, error) {
-	return &namedPipe{ln, path, false}, nil
+	return &namedPipe{Listener: ln, path: path}, nil
 }
 
 func ConnectToNamedPipe(ctx context.Context, path string) (gonet.Conn, error) {
@@ -87,6 +101,7 @@ type namedPipe struct {
 	gonet.Listener
 	path          string
 	deleteOnClose bool
+	dirToDelete   string
 }
 
 func (this *namedPipe) AcceptConn() (CloseWriterConn, error) {
@@ -106,10 +121,16 @@ func (this *namedPipe) Close() (rErr error) {
 		if !this.deleteOnClose {
 			return nil
 		}
+		var result error
 		if err := os.Remove(this.path); err != nil && !sys.IsNotExist(err) {
-			return err
+			result = err
 		}
-		return nil
+		if len(this.dirToDelete) > 0 {
+			if err := os.Remove(this.dirToDelete); err != nil && !sys.IsNotExist(err) && result == nil {
+				result = err
+			}
+		}
+		return result
 	})
 	return this.Listener.Close()
 }

@@ -249,7 +249,7 @@ In combination with [`deleteManagedUser`](#linux-dispose-property-deleteManagedU
 
 ## Windows
 
-The Windows variant is only supported by Windows 7+ based operating systems.
+The Windows variant is supported by Windows 10, Windows Server 2016, and later versions.
 
 !!! warning
      In contrast to the [Linux](#linux) version this variant **CANNOT** [impersonate](https://en.wiktionary.org/wiki/impersonate). As a consequence, each user session always executes as the user the Bifröst process itself runs with.

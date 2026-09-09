@@ -19,6 +19,9 @@ const (
 	MethodNamedPipe
 	MethodGetConnectionExitCode
 	MethodGetEnvironment
+	MethodKillExecution
+	MethodGetExecutionExitCode
+	MethodNamedPipeForUser
 )
 
 var (
@@ -82,6 +85,9 @@ var (
 		"namedPipe":             MethodNamedPipe,
 		"getConnectionExitCode": MethodGetConnectionExitCode,
 		"getEnvironment":        MethodGetEnvironment,
+		"killExecution":         MethodKillExecution,
+		"getExecutionExitCode":  MethodGetExecutionExitCode,
+		"namedPipeForUser":      MethodNamedPipeForUser,
 	}
 	protocolMethodToString = func(in map[string]Method) map[Method]string {
 		result := make(map[Method]string, len(in))

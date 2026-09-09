@@ -103,7 +103,7 @@ func (this *etcColonEntries[T, PT]) decode(expectedNumberOfColons int, allowBadN
 	var lineNum uint32
 	for rd.Scan() {
 		var entry etcColonEntry[T, PT]
-		if err := entry.decode(rd.Bytes(), expectedNumberOfColons, allowBadName, allowBadEntries); err != nil {
+		if err := entry.decode(bytes.Clone(rd.Bytes()), expectedNumberOfColons, allowBadName, allowBadEntries); err != nil {
 			return fmt.Errorf("cannot parse entry at %s:%d: %w", from.Name(), lineNum, err)
 		}
 		bufs = append(bufs, entry)

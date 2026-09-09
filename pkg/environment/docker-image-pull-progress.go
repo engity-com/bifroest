@@ -93,7 +93,7 @@ func handleImagePullProgress(reader io.Reader, target PreparationProgress, logge
 		}
 
 		progressCandidate := calculateProgress(layers)
-		if progressCandidate > progress {
+		if progressCandidate > progress && target != nil {
 			progress = progressCandidate
 			if err := target.Report(progress); err != nil {
 				return err
@@ -101,5 +101,8 @@ func handleImagePullProgress(reader io.Reader, target PreparationProgress, logge
 		}
 	}
 
-	return target.Done()
+	if target != nil {
+		return target.Done()
+	}
+	return nil
 }

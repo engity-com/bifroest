@@ -1,0 +1,246 @@
+name: End-to-End Tests
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  files-changed:
+    name: Detect file changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.changes.outputs.go }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Check for backend file changes
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
+        id: changes
+        with:
+          filters: .github/filters.yml
+
+  runtime:
+    name: ${{ matrix.suite }} with ${{ matrix.runtime }}
+    needs: files-changed
+    if: always() && (github.event_name != 'pull_request' || needs.files-changed.outputs.go == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - local
+          - docker
+        runtime:
+          - docker
+          - podman
+    env:
+      BIFROEST_E2E_RUNTIME: ${{ matrix.runtime }}
+      CGO_ENABLED: '0'
+    steps:
+      - name: Install Podman
+        if: matrix.runtime == 'podman'
+        run: sudo apt-get update && sudo apt-get install --yes podman
+
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Cache Go
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install MISE
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+
+      - name: Install dependencies
+        run: mise run install:go
+
+      - name: Run end-to-end suite
+        run: mise run test:e2e:${{ matrix.suite }}
+
+      - name: Collect runtime diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p var/e2e/runtime-containers
+          timeout 30s "${BIFROEST_E2E_RUNTIME}" ps --all >var/e2e/runtime-containers/list.txt 2>&1 || true
+          while IFS= read -r id; do
+            [ -n "${id}" ] || continue
+            timeout 30s "${BIFROEST_E2E_RUNTIME}" logs "${id}" >"var/e2e/runtime-containers/${id}.log" 2>&1 || true
+          done < <(timeout 30s "${BIFROEST_E2E_RUNTIME}" ps --all --quiet 2>/dev/null)
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-${{ matrix.suite }}-${{ matrix.runtime }}
+          path: var/e2e/**/*
+          if-no-files-found: ignore
+          retention-days: 7
+
+  authorization:
+    name: htpasswd and OIDC authorization
+    needs: files-changed
+    if: always() && (github.event_name != 'pull_request' || needs.files-changed.outputs.go == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Cache Go
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install MISE
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+
+      - name: Install dependencies
+        run: mise run install:go
+
+      - name: Run authorization end-to-end suite
+        run: mise run test:e2e:authorization
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-authorization
+          path: var/e2e/**/*
+          if-no-files-found: ignore
+          retention-days: 7
+
+  kind-docker:
+    name: kubernetes with kind and docker
+    needs: files-changed
+    if: always() && (github.event_name != 'pull_request' || needs.files-changed.outputs.go == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      BIFROEST_E2E_RUNTIME: docker
+      KIND_EXPERIMENTAL_PROVIDER: docker
+      CGO_ENABLED: '0'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Cache Go
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install MISE
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+
+      - name: Install dependencies
+        run: mise run install:go
+
+      - name: Run Kubernetes end-to-end suite
+        run: mise run test:e2e:kubernetes
+
+      - name: Collect Kubernetes diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p var/e2e/runtime-containers
+          timeout 30s docker ps --all >var/e2e/runtime-containers/list.txt 2>&1 || true
+          while IFS= read -r id; do
+            [ -n "${id}" ] || continue
+            timeout 30s docker logs "${id}" >"var/e2e/runtime-containers/${id}.log" 2>&1 || true
+          done < <(timeout 30s docker ps --all --quiet 2>/dev/null)
+          if [ -s var/e2e/kind-cluster ]; then
+            cluster="$(<var/e2e/kind-cluster)"
+            timeout 5m kind export logs "var/e2e/${cluster}-kind" --name "${cluster}" || true
+          fi
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-kubernetes-docker
+          path: var/e2e/**/*
+          if-no-files-found: ignore
+          retention-days: 7
+
+  kind-podman:
+    name: kubernetes with kind and podman
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      BIFROEST_E2E_RUNTIME: podman
+      KIND_EXPERIMENTAL_PROVIDER: podman
+      CGO_ENABLED: '0'
+    steps:
+      - name: Install Podman
+        run: sudo apt-get update && sudo apt-get install --yes podman
+
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Cache Go
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install MISE
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+
+      - name: Install dependencies
+        run: mise run install:go
+
+      - name: Run Kubernetes end-to-end suite
+        run: mise run test:e2e:kubernetes
+
+      - name: Collect Kubernetes diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p var/e2e/runtime-containers
+          timeout 30s podman ps --all >var/e2e/runtime-containers/list.txt 2>&1 || true
+          while IFS= read -r id; do
+            [ -n "${id}" ] || continue
+            timeout 30s podman logs "${id}" >"var/e2e/runtime-containers/${id}.log" 2>&1 || true
+          done < <(timeout 30s podman ps --all --quiet 2>/dev/null)
+          if [ -s var/e2e/kind-cluster ]; then
+            cluster="$(<var/e2e/kind-cluster)"
+            timeout 5m kind export logs "var/e2e/${cluster}-kind" --name "${cluster}" || true
+          fi
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-kubernetes-podman
+          path: var/e2e/**/*
+          if-no-files-found: ignore
+          retention-days: 7

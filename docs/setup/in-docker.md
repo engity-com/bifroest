@@ -15,7 +15,7 @@ Be sure Bifröst is supporting your Docker host, by checking the following matri
 !!! tip ""
      Cells express support in format of `<generic>`/`<extended>`. See our [documentation of distributions of Bifröst](distribution.md) to learn more.
 
-<<compatibility_matrix(packaging="archive")>>
+<<compatibility_matrix(packaging="image")>>
 
 In the majority of the cases you might run Linux or Windows on AMD64, which is supported.
 
@@ -69,7 +69,7 @@ In the majority of the cases you might run Linux or Windows on AMD64, which is s
     !!! note
          This guide assumes you're running a Linux host of Docker on Docker for Windows (default).
 
-         Bifröst also supports Windows Containers (Windows native). You just have to adjust the path below accordingly.
+         Bifröst also supports Windows Containers (Windows native). The image is based on Nano Server LTSC 2022, so Microsoft's host and container version compatibility rules apply. You also have to adjust the path below accordingly.
 
 2. Open a Powershell Terminal with Administrator privileges.
 

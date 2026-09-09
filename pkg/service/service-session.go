@@ -3,8 +3,9 @@ package service
 import (
 	"context"
 	"io"
+	"time"
 
-	glssh "github.com/gliderlabs/ssh"
+	essh "github.com/engity-com/ssh-server-go"
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/common"
@@ -12,28 +13,76 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
-func (this *service) handleNewSshSession(srv *glssh.Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx glssh.Context) {
-	glssh.DefaultSessionHandler(srv, conn, newChan, ctx)
+func (this *service) handleNewSshSession(srv *essh.Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx essh.Context) error {
+	plainContext, cancel := context.WithCancel(ctx)
+	sessionContext := &sshSessionContext{Context: ctx, plainContext: plainContext}
+	defer cancel()
+	return essh.DefaultSessionHandler(srv, conn, &sessionNewChannel{
+		NewChannel: newChan,
+		ctx:        plainContext,
+		cancel:     cancel,
+	}, sessionContext)
 }
 
-func (this *service) handleSshShellSession(sess glssh.Session) {
-	this.uncheckedExecuteSshSession(sess, environment.TaskTypeShell)
+type sshSessionContext struct {
+	essh.Context
+	plainContext context.Context
 }
 
-func (this *service) handleSshSftpSession(sess glssh.Session) {
-	this.uncheckedExecuteSshSession(sess, environment.TaskTypeSftp)
+func (this *sshSessionContext) Deadline() (time.Time, bool) { return this.plainContext.Deadline() }
+func (this *sshSessionContext) Done() <-chan struct{}       { return this.plainContext.Done() }
+func (this *sshSessionContext) Err() error                  { return this.plainContext.Err() }
+func (this *sshSessionContext) Value(key any) any           { return this.plainContext.Value(key) }
+
+type sessionNewChannel struct {
+	gossh.NewChannel
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
-func (this *service) uncheckedExecuteSshSession(sshSess glssh.Session, taskType environment.TaskType) {
-	conn := this.connection(sshSess.Context())
-	l := conn.logger
-
-	handled := false
-	defer func() {
-		if !handled {
-			l.Fatal("session ended unhandled; maybe there might be previous errors in the logs")
+func (this *sessionNewChannel) Accept() (gossh.Channel, <-chan *gossh.Request, error) {
+	channel, requests, err := this.NewChannel.Accept()
+	if err != nil {
+		return nil, nil, err
+	}
+	forwarded := make(chan *gossh.Request)
+	go func() {
+		defer close(forwarded)
+		for {
+			select {
+			case request, ok := <-requests:
+				if !ok {
+					this.cancel()
+					return
+				}
+				select {
+				case forwarded <- request:
+				case <-this.ctx.Done():
+					for range requests {
+					}
+					return
+				}
+			case <-this.ctx.Done():
+				for range requests {
+				}
+				return
+			}
 		}
 	}()
+	return channel, forwarded, nil
+}
+
+func (this *service) handleSshShellSession(sess essh.Session) error {
+	return this.uncheckedExecuteSshSession(sess, environment.TaskTypeShell)
+}
+
+func (this *service) handleSshSftpSession(sess essh.Session) error {
+	return this.uncheckedExecuteSshSession(sess, environment.TaskTypeSftp)
+}
+
+func (this *service) uncheckedExecuteSshSession(sshSess essh.Session, taskType environment.TaskType) error {
+	conn := this.connection(sshSess.Context())
+	l := conn.logger
 
 	l.With("type", taskType).
 		With("env", sshSess.Environ()).
@@ -46,9 +95,7 @@ func (this *service) uncheckedExecuteSshSession(sshSess glssh.Session, taskType 
 			if exitCode < 0 {
 				exitCode = 61
 			}
-			_ = sshSess.Exit(exitCode)
-			handled = true
-			return
+			return essh.NewSessionExitError(exitCode, "")
 		}
 		le := l.WithError(err)
 		if errors.IsType(err, errors.User) {
@@ -62,17 +109,15 @@ func (this *service) uncheckedExecuteSshSession(sshSess glssh.Session, taskType 
 				exitCode = 63
 			}
 		}
-		_ = sshSess.Exit(exitCode)
-		handled = true
+		return essh.NewSessionExitError(exitCode, "")
 	} else {
 		l.With("exitCode", exitCode).
 			Info("session ended")
-		_ = sshSess.Exit(exitCode)
-		handled = true
+		return essh.NewSessionExitError(exitCode, "")
 	}
 }
 
-func (this *service) executeSession(sshSess glssh.Session, conn *connection, taskType environment.TaskType) (exitCode int, rErr error) {
+func (this *service) executeSession(sshSess essh.Session, conn *connection, taskType environment.TaskType) (exitCode int, rErr error) {
 	fail := func(err error) (int, error) {
 		return -1, err
 	}
@@ -95,9 +140,10 @@ func (this *service) executeSession(sshSess glssh.Session, conn *connection, tas
 
 	req := environmentRequest{
 		environmentContext{
-			service:       this,
-			connection:    conn,
-			authorization: auth,
+			service:          this,
+			connection:       conn,
+			authorization:    auth,
+			executionContext: sshSess.Context(),
 		},
 		sshSess,
 	}

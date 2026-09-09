@@ -25,7 +25,34 @@ run = [
 
 [tasks."test:go"]
 depends = ["build:var"]
-run = 'go test -v -covermode atomic -coverprofile=var/profile.cov ./...'
+run = [
+    'go test -v -covermode atomic -coverprofile=var/profile.cov ./...',
+    'go test -v -tags=local_build,local_kind ./pkg/alternatives'
+]
+
+[tasks."test:e2e:local"]
+depends = ["build:var"]
+run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHLocalBackend$' ./test/e2e"
+
+[tasks."test:e2e:docker"]
+depends = ["build:var"]
+run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHDockerEnvironment$' ./test/e2e"
+
+[tasks."test:e2e:kubernetes"]
+depends = ["build:var"]
+run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHKubernetesEnvironment$' ./test/e2e"
+
+[tasks."test:e2e:authorization"]
+depends = ["build:var"]
+run = "go test -v -count=1 -tags=e2e -timeout=5m -run '^Test(HtpasswdAuthorization|OIDCDeviceAuthorization)$' ./test/e2e"
+
+[tasks."test:e2e"]
+run = [
+    { task = "test:e2e:authorization" },
+    { task = "test:e2e:local" },
+    { task = "test:e2e:docker" },
+    { task = "test:e2e:kubernetes" }
+]
 
 [tasks."build"]
 run = [
@@ -58,6 +85,12 @@ run = "go run ./cmd/build evaluate-environment --log.colorMode=always"
 [tasks."ci:inspect-pr-action"]
 hide = true
 run = "go run ./cmd/build inspect-pr-action --log.colorMode=always"
+
+[tasks."tools:kind:up"]
+run = "kind create cluster --name bifroest --wait 5m"
+
+[tasks."tools:kind:down"]
+run = "kind delete cluster --name bifroest"
 
 [settings]
 env_file = ".env"

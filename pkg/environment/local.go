@@ -13,7 +13,7 @@ import (
 	"github.com/creack/pty"
 	log "github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/level"
-	glssh "github.com/gliderlabs/ssh"
+	essh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
@@ -55,7 +55,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		return fail(err)
 	}
 
-	ev.Set(session.EnvName, sess.Id().String())
+	setReservedEnvironment(ev, localTargetOs, session.EnvName, sess.Id().String())
 
 	switch t.TaskType() {
 	case TaskTypeShell:
@@ -74,7 +74,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	}
 
 	if ssh.AgentRequested(sshSess) && authorization.IsAgentForwardingAllowed(auth) {
-		ln, err := net.NewNamedPipe("ssh-agent")
+		ln, err := this.newAgentNamedPipe()
 		if err != nil {
 			return failf("cannot listen to agent: %w", err)
 		}
@@ -95,7 +95,9 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	}
 
 	var fPty, fTty *os.File
-	if ptyReq, winCh, isPty := sshSess.Pty(); isPty {
+	var winCh <-chan essh.Window
+	if ptyReq, windows, isPty := sshSess.Pty(); isPty {
+		winCh = windows
 		var err error
 		fPty, fTty, err = pty.Open()
 		if err != nil {
@@ -104,6 +106,10 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		defer common.IgnoreCloseError(fPty)
 		defer common.IgnoreCloseError(fTty)
 		ev.Set("TERM", ptyReq.Term)
+		initialSize := pty.Winsize{Rows: uint16(ptyReq.Window.Height), Cols: uint16(ptyReq.Window.Width)}
+		if err := pty.Setsize(fPty, &initialSize); err != nil {
+			return failf("cannot set initial pty size: %w", err)
+		}
 		if err := this.configureCmdForPty(cmd, fPty, fTty); err != nil {
 			return failf("cannot configure cmd for pty: %w", err)
 		}
@@ -111,17 +117,30 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		cmd.Stdout = fTty
 		cmd.Stdin = fTty
 
+	}
+	if winCh != nil {
+		resizeCtx, cancelResize := context.WithCancel(t.Context())
+		resizeDone := make(chan struct{})
 		go func() {
+			defer close(resizeDone)
 			for {
-				win, ok := <-winCh
-				if !ok {
+				select {
+				case <-resizeCtx.Done():
 					return
-				}
-				size := pty.Winsize{Rows: uint16(win.Height), Cols: uint16(win.Width)}
-				if err := pty.Setsize(fPty, &size); err != nil {
-					l.WithError(err).Warn("cannot set winsize; ignoring")
+				case win, ok := <-winCh:
+					if !ok {
+						return
+					}
+					size := pty.Winsize{Rows: uint16(win.Height), Cols: uint16(win.Width)}
+					if err := pty.Setsize(fPty, &size); err != nil {
+						l.WithError(err).Warn("cannot set winsize; ignoring")
+					}
 				}
 			}
+		}()
+		defer func() {
+			cancelResize()
+			<-resizeDone
 		}()
 	}
 	cmd.Env = ev.Strings()
@@ -136,7 +155,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		exitCode int
 		err      error
 	}
-	signals := make(chan glssh.Signal, 1)
+	signals := make(chan essh.Signal, 1)
 	processDone := make(chan doneT, 1)
 	copyDone := make(chan error, 2)
 	var activeRoutines sync.WaitGroup
@@ -177,6 +196,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	}()
 
 	sshSess.Signals(signals)
+	defer sshSess.Signals(nil)
 	defer this.kill(cmd, l)
 	for {
 		select {
