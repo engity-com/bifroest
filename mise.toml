@@ -73,6 +73,16 @@ run_windows = [
     '''del var\doc\requirements.txt'''
 ]
 
+[tasks."serve:docs"]
+run = [
+    "mkdocs --color serve -c",
+    "rm -f var/doc/requirements.txt"
+]
+run_windows = [
+    'mkdocs --color serve -c',
+    '''del var\doc\requirements.txt'''
+]
+
 [tasks."build:var"]
 hide = true
 run = "mkdir -p var"
