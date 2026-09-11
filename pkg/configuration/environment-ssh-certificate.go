@@ -11,23 +11,28 @@ import (
 	"github.com/engity-com/bifroest/pkg/template"
 )
 
-var DefaultEnvironmentSshCertificateValidAfterSkew = template.DurationOf(30 * time.Second)
+var (
+	DefaultEnvironmentSshCertificateValidity       = template.DurationOf(15 * time.Minute)
+	DefaultEnvironmentSshCertificateValidAfterSkew = template.DurationOf(30 * time.Second)
+)
 
 type EnvironmentSshCertificate struct {
-	IdentityFile          template.String                     `yaml:"identityFile"`
+	IdentityFile          template.String                     `yaml:"identityFile,omitempty"`
 	AuthorityIdentityFile template.String                     `yaml:"authorityIdentityFile,omitempty"`
 	Validity              template.Duration                   `yaml:"validity"`
 	ValidAfterSkew        template.Duration                   `yaml:"validAfterSkew,omitempty"`
+	Audience              template.String                     `yaml:"audience,omitempty"`
 	Principals            template.Strings                    `yaml:"principals,omitempty"`
 	Extensions            EnvironmentSshCertificateExtensions `yaml:"extensions,omitempty"`
 }
 
 func (this *EnvironmentSshCertificate) SetDefaults() error {
 	return setDefaults(this,
-		noopSetDefault[EnvironmentSshCertificate]("identityFile"),
-		noopSetDefault[EnvironmentSshCertificate]("authorityIdentityFile"),
-		noopSetDefault[EnvironmentSshCertificate]("validity"),
+		fixedDefault("identityFile", func(v *EnvironmentSshCertificate) *template.String { return &v.IdentityFile }, DefaultCertificateIdentityFile),
+		fixedDefault("authorityIdentityFile", func(v *EnvironmentSshCertificate) *template.String { return &v.AuthorityIdentityFile }, DefaultCertificateAuthorityFile),
+		fixedDefault("validity", func(v *EnvironmentSshCertificate) *template.Duration { return &v.Validity }, DefaultEnvironmentSshCertificateValidity),
 		fixedDefault("validAfterSkew", func(v *EnvironmentSshCertificate) *template.Duration { return &v.ValidAfterSkew }, DefaultEnvironmentSshCertificateValidAfterSkew),
+		noopSetDefault[EnvironmentSshCertificate]("audience"),
 		noopSetDefault[EnvironmentSshCertificate]("principals"),
 		noopSetDefault[EnvironmentSshCertificate]("extensions"),
 	)
@@ -39,23 +44,18 @@ func (this *EnvironmentSshCertificate) Trim() error {
 		noopTrim[EnvironmentSshCertificate]("authorityIdentityFile"),
 		noopTrim[EnvironmentSshCertificate]("validity"),
 		noopTrim[EnvironmentSshCertificate]("validAfterSkew"),
+		noopTrim[EnvironmentSshCertificate]("audience"),
 		noopTrim[EnvironmentSshCertificate]("principals"),
 		noopTrim[EnvironmentSshCertificate]("extensions"),
 	)
 }
 
 func (this *EnvironmentSshCertificate) Validate() error {
-	if this.IdentityFile.IsZero() {
-		return fmt.Errorf("[identityFile] required but absent")
+	if this.IdentityFile.IsZero() || !this.IdentityFile.IsHardCoded() {
+		return fmt.Errorf("[identityFile] has to be a static non-empty path")
 	}
-	if !this.IdentityFile.IsHardCoded() {
-		return fmt.Errorf("[identityFile] has to be a static path")
-	}
-	if !this.AuthorityIdentityFile.IsZero() && !this.AuthorityIdentityFile.IsHardCoded() {
-		return fmt.Errorf("[authorityIdentityFile] has to be a static path")
-	}
-	if this.Validity.IsZero() {
-		return fmt.Errorf("[validity] required but absent")
+	if this.AuthorityIdentityFile.IsZero() || !this.AuthorityIdentityFile.IsHardCoded() {
+		return fmt.Errorf("[authorityIdentityFile] has to be a static non-empty path")
 	}
 	if this.Validity.IsHardCoded() {
 		value, _ := this.Validity.Render(nil)
@@ -81,6 +81,7 @@ func (this *EnvironmentSshCertificate) Validate() error {
 		},
 		func(v *EnvironmentSshCertificate) (string, validator) { return "validity", &v.Validity },
 		func(v *EnvironmentSshCertificate) (string, validator) { return "validAfterSkew", &v.ValidAfterSkew },
+		func(v *EnvironmentSshCertificate) (string, validator) { return "audience", &v.Audience },
 		func(v *EnvironmentSshCertificate) (string, validator) { return "principals", &v.Principals },
 		func(v *EnvironmentSshCertificate) (string, validator) { return "extensions", &v.Extensions },
 	)
@@ -109,6 +110,7 @@ func (this EnvironmentSshCertificate) isEqualTo(other *EnvironmentSshCertificate
 		isEqual(&this.AuthorityIdentityFile, &other.AuthorityIdentityFile) &&
 		isEqual(&this.Validity, &other.Validity) &&
 		isEqual(&this.ValidAfterSkew, &other.ValidAfterSkew) &&
+		isEqual(&this.Audience, &other.Audience) &&
 		isEqual(&this.Principals, &other.Principals) &&
 		isEqual(&this.Extensions, &other.Extensions)
 }

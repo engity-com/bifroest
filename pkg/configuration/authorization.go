@@ -93,19 +93,21 @@ func (this *Authorization) UnmarshalYAML(node *yaml.Node) error {
 }
 
 func (this *Authorization) MarshalYAML() (any, error) {
-	typeBuf := struct {
-		AuthorizationV `yaml:",inline"`
-		Type           string `yaml:"type,omitempty"`
-	}{
-		AuthorizationV: this.V,
+	if this.V == nil {
+		return struct{}{}, nil
 	}
-
-	if this.V != nil {
-		typeBuf.Type = this.V.Types()[0]
-		typeBuf.AuthorizationV = this.V
+	var result yaml.Node
+	if err := result.Encode(this.V); err != nil {
+		return nil, err
 	}
-
-	return typeBuf, nil
+	if result.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("authorization %T does not encode as a mapping", this.V)
+	}
+	result.Content = append([]*yaml.Node{
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "type"},
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: this.V.Types()[0]},
+	}, result.Content...)
+	return &result, nil
 }
 
 func (this Authorization) IsEqualTo(other any) bool {

@@ -8,7 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/engity-com/bifroest/pkg/crypto"
-	"github.com/engity-com/bifroest/pkg/net"
+	"github.com/engity-com/bifroest/pkg/ssh"
 	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/engity-com/bifroest/pkg/template"
 )
@@ -91,11 +91,7 @@ func (this *EnvironmentSsh) Validate() error {
 		}
 	}
 	if this.Address.IsHardCoded() {
-		var address net.HostPort
-		if err := address.Set(this.Address.String()); err != nil {
-			return fmt.Errorf("[address] %w", err)
-		}
-		if err := address.Validate(); err != nil {
+		if _, err := ssh.ParseAddress(this.Address.String()); err != nil {
 			return fmt.Errorf("[address] %w", err)
 		}
 	}

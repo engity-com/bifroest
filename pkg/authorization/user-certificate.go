@@ -135,6 +135,10 @@ func splitCertificateAuthorityOptions(options []crypto.AuthorizedKeyOption) (cer
 }
 
 func checkUserCertificate(certificate *ssh.Certificate, username string, allowedPrincipals []string, now time.Time) bool {
+	return checkUserCertificateWithCriticalOptions(certificate, username, allowedPrincipals, nil, now)
+}
+
+func checkUserCertificateWithCriticalOptions(certificate *ssh.Certificate, username string, allowedPrincipals, supportedCriticalOptions []string, now time.Time) bool {
 	if certificate == nil || certificate.CertType != ssh.UserCert || username == "" || len(certificate.ValidPrincipals) == 0 {
 		return false
 	}
@@ -153,8 +157,45 @@ func checkUserCertificate(certificate *ssh.Certificate, username string, allowed
 			return false
 		}
 	}
-	checker := ssh.CertChecker{Clock: func() time.Time { return now }}
+	checker := ssh.CertChecker{
+		SupportedCriticalOptions: supportedCriticalOptions,
+		Clock:                    func() time.Time { return now },
+	}
 	return checker.CheckCert(username, certificate) == nil
+}
+
+func evaluateBifroestUserCertificate(remote ssh.PublicKey, username string, trustedUserCAs []ssh.PublicKey, audiences []string, maxValidity time.Duration, now time.Time) (*AuthorizationEvidence, *AuthorizedKeyPolicy, bool, error) {
+	certificate, ok := remote.(*ssh.Certificate)
+	if !ok {
+		return nil, nil, false, nil
+	}
+	marker, exists := certificate.CriticalOptions[BifroestDelegationCriticalOption]
+	if !exists || marker != "" || len(certificate.CriticalOptions) != 1 {
+		return nil, nil, false, nil
+	}
+	trusted := false
+	for _, ca := range trustedUserCAs {
+		if publicKeysEqual(certificate.SignatureKey, ca) {
+			trusted = true
+			break
+		}
+	}
+	if !trusted || !checkUserCertificateWithCriticalOptions(certificate, username, nil, []string{BifroestDelegationCriticalOption}, now) {
+		return nil, nil, false, nil
+	}
+	raw, exists := certificate.Extensions[AuthorizationEvidenceExtension]
+	if !exists {
+		return nil, nil, false, nil
+	}
+	evidence, err := DecodeAuthorizationEvidence([]byte(raw))
+	if err != nil {
+		return nil, nil, false, err
+	}
+	policy, err := ValidateBifroestDelegationEvidence(evidence, certificate, username, audiences, maxValidity, now)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	return evidence, policy, true, nil
 }
 
 func authorizedKeyPolicyForCertificate(base *AuthorizedKeyPolicy, certificate *ssh.Certificate) (*AuthorizedKeyPolicy, error) {

@@ -52,9 +52,9 @@ func (this KeyRequirement) CreateFile(rand io.Reader, fn string) (PrivateKey, er
 	}
 	temporary := f.Name()
 	defer os.Remove(temporary)
-	if err := f.Chmod(0400); err != nil {
+	if err := preparePrivateKeyFile(f, temporary); err != nil {
 		_ = f.Close()
-		return nil, fmt.Errorf("cannot set mode of new private key %q: %w", fn, err)
+		return nil, fmt.Errorf("cannot protect new private key %q: %w", fn, err)
 	}
 	if _, err := f.Write(content.Bytes()); err != nil {
 		_ = f.Close()

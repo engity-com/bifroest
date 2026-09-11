@@ -18,6 +18,7 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
+	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/session"
@@ -71,7 +72,9 @@ func TestSshCertificateFullStack(t *testing.T) {
 	require.Equal(t, firstParts[1], secondParts[1])
 	require.Equal(t, firstCertificate.Marshal(), secondCertificate.Marshal())
 	require.Equal(t, []string{"target-user"}, firstCertificate.ValidPrincipals)
-	require.Equal(t, firstParts[1], firstCertificate.Extensions["session-id@bifroest.engity.org"])
+	evidence, err := authorization.DecodeAuthorizationEvidence([]byte(firstCertificate.Extensions[authorization.AuthorizationEvidenceExtension]))
+	require.NoError(t, err)
+	require.Equal(t, firstParts[1], evidence.LastHop().SessionId)
 	require.FileExists(t, subjectFile)
 }
 

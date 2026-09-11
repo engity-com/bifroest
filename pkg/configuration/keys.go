@@ -10,9 +10,11 @@ import (
 )
 
 var (
-	DefaultHostKeyLocations       = template.MustNewStrings(DefaultHostKeyLocation)
-	DefaultKeyExchanges           = ssh.DefaultKeyExchanges
-	DefaultRememberMeNotification = template.MustNewString("\nIf you return until {{.session.validUntil | format `dateTimeT`}} with the same public key ({{.key | fingerprint}}), you can seamlessly login again.\n\n")
+	DefaultHostKeyLocations         = template.MustNewStrings(DefaultHostKeyLocation)
+	DefaultCertificateIdentityFile  = template.MustNewString(DefaultCertificateIdentityFileLocation)
+	DefaultCertificateAuthorityFile = template.MustNewString(DefaultCertificateAuthorityFileLocation)
+	DefaultKeyExchanges             = ssh.DefaultKeyExchanges
+	DefaultRememberMeNotification   = template.MustNewString("\nIf you return until {{.session.validUntil | format `dateTimeT`}} with the same public key ({{.key | fingerprint}}), you can seamlessly login again.\n\n")
 )
 
 type Keys struct {

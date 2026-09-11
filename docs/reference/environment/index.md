@@ -60,7 +60,7 @@ Bifröst executes user sessions within environments. These environments can eith
 6. Using an [SSH environment](ssh.md):
    ```yaml
    type: ssh
-   address: target.example.org:22
+   address: target.example.org
    user: service-user
    knownHostsFile: /etc/engity/bifroest/known_hosts
    identityFiles:

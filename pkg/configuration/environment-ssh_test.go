@@ -103,7 +103,7 @@ func TestEnvironmentSshRejectsInvalidStaticValues(t *testing.T) {
 		name string
 		yaml string
 	}{
-		{name: "address", yaml: "address: missing-port\nuser: alice"},
+		{name: "address", yaml: "address: missing-port:\nuser: alice"},
 		{name: "empty-address-host", yaml: "address: :22\nuser: alice"},
 		{name: "user", yaml: "address: target.example.org:22\nuser: ''"},
 		{name: "identity", yaml: "address: target.example.org:22\nuser: alice\nidentityFiles: ['']"},
@@ -153,10 +153,10 @@ func TestEnvironmentSshRejectsInvalidCertificateConfiguration(t *testing.T) {
 		certificate string
 		identity    string
 	}{
-		{name: "missing identity", certificate: "validity: 1h"},
+		{name: "empty identity", certificate: "identityFile: ''\nvalidity: 1h"},
+		{name: "empty authority", certificate: "identityFile: target-key\nauthorityIdentityFile: ''\nvalidity: 1h"},
 		{name: "templated identity", certificate: "identityFile: '{{ .session.id }}'\nvalidity: 1h"},
 		{name: "templated authority", certificate: "identityFile: target-key\nauthorityIdentityFile: '{{ .session.id }}'\nvalidity: 1h"},
-		{name: "missing validity", certificate: "identityFile: target-key"},
 		{name: "zero validity", certificate: "identityFile: target-key\nvalidity: 0s"},
 		{name: "negative skew", certificate: "identityFile: target-key\nvalidity: 1h\nvalidAfterSkew: -1s"},
 		{name: "empty principal", certificate: "identityFile: target-key\nvalidity: 1h\nprincipals: ['']"},
@@ -171,6 +171,21 @@ func TestEnvironmentSshRejectsInvalidCertificateConfiguration(t *testing.T) {
 			require.Error(t, yaml.Unmarshal([]byte(plain), &environment))
 		})
 	}
+}
+
+func TestEnvironmentSshCertificateKeyDefaults(t *testing.T) {
+	var environment Environment
+	require.NoError(t, yaml.Unmarshal([]byte(`
+type: ssh
+address: target.example.org
+user: alice
+acceptAllHostKeys: true
+certificate: {}
+`), &environment))
+
+	actual := environment.V.(*EnvironmentSsh).Certificate
+	require.Equal(t, DefaultCertificateIdentityFile, actual.IdentityFile)
+	require.Equal(t, DefaultCertificateAuthorityFile, actual.AuthorityIdentityFile)
 }
 
 func mustRenderDuration(t *testing.T, value interface {

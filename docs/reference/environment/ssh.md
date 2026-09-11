@@ -18,7 +18,7 @@ Has to be set to `ssh` to enable the SSH environment.
 Defines environment variables sent to the target for commands, shells and SFTP. They override values received from the SSH client, `authorized_keys` and authorization. Bifröst-generated runtime variables take precedence. Variables are sent as best-effort SSH `env` requests; the target server decides which variables it accepts, commonly through OpenSSH `AcceptEnv`.
 
 <<property("address", "string", template_context="../context/authorization.md", required=True)>>
-Target address in `host:port` form. IPv6 addresses have to use `[address]:port` form.
+Target SSH address. The port defaults to `22`. DNS names, IPv4 addresses and IPv6 addresses can omit it; an explicit IPv6 port uses `[address]:port` form.
 
 <<property("user", "string", template_context="../context/authorization.md", required=True)>>
 User used to authenticate at the target SSH server.
@@ -66,17 +66,24 @@ Bifröst issues exactly one certificate for each persistent Bifröst session. Re
 
 ### Configuration {: #certificate-configuration}
 
-<<property("identityFile", "File Path", "../data-type.md#file-path", required=True, id_prefix="certificate-", heading=4)>>
-Static path to the private subject key used with the certificate. If the file does not exist when Bifröst starts, an Ed25519 key is generated. Existing unreadable, encrypted or invalid files cause startup to fail and are never overwritten. The private key is not copied into session storage.
+<<property("identityFile", "File Path", "../data-type.md#file-path", id_prefix="certificate-", heading=4)>>
+Static path to the private subject key used with the certificate. The default is `/etc/engity/bifroest/client-key` on Unix and `C:\ProgramData\Engity\Bifroest\client-key` on Windows. The default key is shared by all certificate-enabled flows of one Bifröst instance. If the file does not exist, an Ed25519 key is generated. Existing unreadable, encrypted or invalid files cause startup to fail and are never overwritten. The private key is not copied into session storage.
 
 <<property("authorityIdentityFile", "File Path", "../data-type.md#file-path", id_prefix="certificate-", heading=4)>>
-Static path to the private OpenSSH user-CA key. If absent, the first configured Bifröst server host key signs new user certificates. An invalid explicit CA file never activates this fallback. Existing certificates remain bound to their original CA after a configured CA rotation.
+Static path to the private SSH certificate-authority key. The default is `/etc/engity/bifroest/ca` on Unix and `C:\ProgramData\Engity\Bifroest\ca` on Windows. The default CA is shared by all certificate-enabled flows of one Bifröst instance. If the file does not exist, an Ed25519 key is generated. Existing unreadable, encrypted or invalid files cause startup to fail and are never overwritten. The server host key is never used as certificate authority. Existing certificates remain bound to their original CA after a configured CA rotation.
 
-<<property("validity", "duration", required=True, id_prefix="certificate-", heading=4)>>
+Bifröst does not create a `.pub` companion file for either private key. The CA public key is logged at every startup and can be exported for a specific flow with `bifroest key export ca`.
+
+<<property("validity", "duration", default="15m", id_prefix="certificate-", heading=4)>>
 Positive lifetime of a newly issued certificate. The first issuance persists `MaxValidUntil`, and reconnects, activity and later configuration increases never move that boundary. This lifetime is separate from the dynamic Bifröst session idle timeout.
+
+Certificate expiry does not disconnect an already authenticated downstream SSH transport, the incoming client connection or the Bifröst session. It only prevents the expired certificate from authenticating a new or re-established downstream SSH connection. Connection and session timeouts control their respective lifetimes independently.
 
 <<property("validAfterSkew", "duration", default="30s", id_prefix="certificate-", heading=4)>>
 Non-negative clock skew subtracted from the issuance time for the OpenSSH `ValidAfter` field.
+
+<<property("audience", "string", template_context="../context/authorization.md", id_prefix="certificate-", heading=4)>>
+Enables the Bifröst delegation profile and identifies the intended downstream authorization, normally its flow name. If absent, the certificate uses the interoperable audit profile. The two profiles are described [below](#certificate-profiles).
 
 <<property("principals", "list of strings", template_context="../context/authorization.md", id_prefix="certificate-", heading=4)>>
 Additional OpenSSH principals. The rendered target `user` is always included and empty rendered principals are rejected.
@@ -84,29 +91,15 @@ Additional OpenSSH principals. The rendered target `user` is always included and
 <<property("extensions", "map of strings", template_context="../context/authorization.md", id_prefix="certificate-", heading=4)>>
 OpenSSH certificate extensions and their values. Standard extensions such as `permit-pty`, `permit-port-forwarding` and `permit-agent-forwarding` are removed when the effective incoming authorization policy denies the corresponding capability. Names ending in `@bifroest.engity.org` are reserved for Bifröst metadata.
 
-### Example {: #certificate-example}
+Certificate metadata uses only the reserved `evidence-v1@bifroest.engity.org` extension. The size-limited evidence document contains allowlisted origin, hop, target and capability fields; passwords, OAuth tokens and unrestricted authorization data are never included.
 
-```yaml
-type: ssh
-address: target.example.org:22
-user: '{{ .session.created.remote.user }}'
-knownHostsFile: /etc/engity/bifroest/known_hosts
-certificate:
-  identityFile: /var/lib/engity/bifroest/downstream-client
-  authorityIdentityFile: /etc/engity/bifroest/downstream-user-ca
-  validity: 24h
-  validAfterSkew: 30s
-  principals:
-    - '{{ .session.created.remote.user }}'
-  extensions:
-    permit-pty: ""
-    permit-port-forwarding: ""
-    permit-agent-forwarding: ""
-```
+### Certificate profiles {: #certificate-profiles}
 
-The target OpenSSH server must trust the corresponding CA public key, commonly through `TrustedUserCAKeys`. Deploy a new CA public key to targets before changing `authorityIdentityFile`; keep the old public key trusted until all certificates issued by it have expired.
+Without `audience`, Bifröst issues an audit-profile certificate. Its evidence is a non-critical extension, so standard OpenSSH and Bifröst's `simple` and `local` authorizations can authenticate it while ignoring the metadata.
 
-Certificate metadata uses the reserved extensions `session-id@bifroest.engity.org`, `original-user@bifroest.engity.org`, `original-host@bifroest.engity.org`, `authorization-kind@bifroest.engity.org` and `evidence-v1@bifroest.engity.org`. The size-limited evidence document contains only allowlisted session identity, target and capability fields; passwords, OAuth tokens and unrestricted authorization data are never included. OpenSSH ignores unknown extensions unless a target-side integration evaluates them.
+With `audience`, Bifröst additionally sets the critical option `bifroest-delegation@bifroest.engity.org`. Standard OpenSSH and authorization types that do not understand this option reject the certificate. Only [`authorization.type: bifroest`](../authorization/bifroest.md) validates the signed evidence and accepts the delegation.
+
+When a `bifroest` authorization forwards to another SSH environment, the original identity and validated hop history are retained. The new hop cannot move `ValidAfter` earlier, extend `ValidBefore`, or restore a PTY, port-forwarding or agent-forwarding capability denied upstream. Because destination-specific `permitopen` and `permitlisten` rules are hop-local, their presence conservatively disables delegated port forwarding rather than broadening it downstream.
 
 ## Supported operations
 
@@ -128,11 +121,13 @@ Arbitrary subsystems and SSH break requests are not forwarded.
 !!! warning
      OpenSSH agent forwarding is scoped to an SSH connection rather than an individual session. After one permitted session enables forwarding, the target can access that source agent until the incoming SSH connection ends. Only enable agent forwarding for trusted targets.
 
-## Example
+## Examples
+
+### Private key authentication
 
 ```yaml
 type: ssh
-address: target.example.org:22
+address: target.example.org
 user: '{{ .session.created.remote.user }}'
 knownHosts: |
   target.example.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...
@@ -141,6 +136,64 @@ identityFiles:
 variables:
   LC_ALL: C.UTF-8
 ```
+
+### OpenSSH certificate authentication
+
+1. Import the running OpenSSH server's host key, then use this flow:
+    ```shell
+    bifroest key import host \
+      --knownHostsFile /etc/engity/bifroest/known_hosts \
+      --address internal.example.org \
+      --expectedFingerprint SHA256:...
+    ```
+
+    !!! warning
+         A plain password and `--expectedFingerprint unknown` are suitable only for testing. Verify production host-key fingerprints independently and use a password hash or another authorization.
+
+2. Configure Bifröst:
+    ```yaml title="/etc/engity/bifroest/configuration.yaml"
+    flows:
+      - name: openssh
+        authorization:
+          type: simple
+          entries:
+            - name: alice
+              password: plain:change-me
+        environment:
+          type: ssh
+          address: internal.example.org
+          user: alice
+          knownHostsFile: /etc/engity/bifroest/known_hosts
+          certificate:
+            extensions:
+              permit-pty: ""
+    ```
+
+    !!! note
+         The OpenSSH server needs a local `alice` account. Leave `audience` unset because OpenSSH does not understand Bifröst's delegation critical option.
+
+3. Export the CA and deploy the output as `/etc/ssh/bifroest-ca.pub` on the OpenSSH server:
+    ```shell
+    bifroest key export ca \
+      -c /etc/engity/bifroest/configuration.yaml \
+      openssh \
+      --output /tmp/ca.pub
+    ```
+
+4. Configure `sshd`:
+    ```text title="/etc/ssh/sshd_config.d/bifroest.conf"
+    PubkeyAuthentication yes
+    TrustedUserCAKeys /etc/ssh/bifroest-ca.pub
+    ```
+
+5. Restart `sshd`:
+    ```shell
+    systemctl restart sshd
+    ```
+
+### Bifröst delegation
+
+For Bifröst-to-Bifröst certificate delegation, see the [Bifröst authorization example](../authorization/bifroest.md#example-entry-gateway-to-target-gateway).
 
 ## Compatibility
 

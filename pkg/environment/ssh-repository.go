@@ -23,6 +23,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/imp"
 	bnet "github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
+	bfssh "github.com/engity-com/bifroest/pkg/ssh"
 )
 
 var _ = RegisterRepository(NewSshRepository)
@@ -97,35 +98,19 @@ func newSshRepository(ctx context.Context, flow configuration.FlowName, conf *co
 	}
 	var certificateKeys *sshCertificateKeys
 	if conf.Certificate != nil {
-		identityFile := strings.TrimSpace(conf.Certificate.IdentityFile.String())
-		if identityFile == "" || !conf.Certificate.IdentityFile.IsHardCoded() {
-			return nil, fmt.Errorf("SSH certificate identityFile has to be a static non-empty path")
-		}
-		subject, err := crypto.EnsureKeyFile(identityFile, &crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}, nil)
+		subject, identityFile, err := ensureSshCertificateIdentity(conf.Certificate)
 		if err != nil {
-			return nil, fmt.Errorf("cannot ensure SSH certificate identity file %q: %w", identityFile, err)
+			return nil, err
 		}
 		subjectSigner := subject.ToSsh()
-		var authoritySigner gossh.Signer
-		authorityIdentityFile := strings.TrimSpace(conf.Certificate.AuthorityIdentityFile.String())
-		if authorityIdentityFile != "" {
-			if !conf.Certificate.AuthorityIdentityFile.IsHardCoded() {
-				return nil, fmt.Errorf("SSH certificate authorityIdentityFile has to be a static path")
-			}
-			raw, err := os.ReadFile(authorityIdentityFile)
-			if err != nil {
-				return nil, fmt.Errorf("cannot read SSH certificate authority identity file %q: %w", authorityIdentityFile, err)
-			}
-			authoritySigner, err = gossh.ParsePrivateKey(raw)
-			if err != nil {
-				return nil, fmt.Errorf("cannot parse SSH certificate authority identity file %q: %w", authorityIdentityFile, err)
-			}
-		} else {
-			if len(hostSigners) == 0 {
-				return nil, fmt.Errorf("no SSH host key is available as certificate authority fallback")
-			}
-			authoritySigner = hostSigners[0]
+		authority, _, err := ensureSshCertificateAuthority(conf.Certificate)
+		if err != nil {
+			return nil, err
 		}
+		if err := ValidateSshCertificateAuthority(authority, hostKeys); err != nil {
+			return nil, err
+		}
+		authoritySigner := authority.ToSsh()
 		certificateKeys = &sshCertificateKeys{
 			subject:              subjectSigner,
 			subjectIdentityFile:  identityFile,
@@ -199,15 +184,9 @@ func (this *SshRepository) resolveSettings(req Context) (*sshResolvedSettings, e
 	if err != nil {
 		return nil, fmt.Errorf("cannot render SSH target address: %w", err)
 	}
-	var address bnet.HostPort
-	if err := address.Set(strings.TrimSpace(addressValue)); err != nil {
+	address, err := bfssh.ParseAddress(addressValue)
+	if err != nil {
 		return nil, fmt.Errorf("illegal rendered SSH target address %q: %w", addressValue, err)
-	}
-	if err := address.Validate(); err != nil {
-		return nil, fmt.Errorf("illegal rendered SSH target address %q: %w", addressValue, err)
-	}
-	if address.IsZero() {
-		return nil, fmt.Errorf("rendered SSH target address is empty")
 	}
 	user, err := this.conf.User.Render(req)
 	if err != nil {

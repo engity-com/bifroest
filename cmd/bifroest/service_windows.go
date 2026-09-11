@@ -48,11 +48,7 @@ var _ = registerCommand(func(app *kingpin.Application) {
 		return svc.registerFlagsAt(cmd)
 	}
 	withConfig := func(cmd *kingpin.CmdClause) *kingpin.CmdClause {
-		cmd.Flag("configuration", "Configuration which should be used to serve the service. Default: "+defaultConfigurationRef).
-			Short('c').
-			Default(defaultConfigurationRef).
-			PlaceHolder("<path>").
-			SetValue(&conf)
+		registerConfigurationFlag(cmd, &conf)
 		return common(cmd)
 	}
 

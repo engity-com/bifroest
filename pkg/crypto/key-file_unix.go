@@ -21,3 +21,5 @@ func installPrivateKeyFile(temporary, target string) error {
 	defer directory.Close()
 	return directory.Sync()
 }
+
+func preparePrivateKeyFile(file *os.File, _ string) error { return file.Chmod(0400) }

@@ -21,18 +21,13 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bnet "github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
+	bfssh "github.com/engity-com/bifroest/pkg/ssh"
 )
 
 const sshUserCertificateSchema = "bifroest.ssh-user-certificate/v1"
 
-const maxSshUserCertificateEvidenceSize = 4 * 1024
-
 var sshUserCertificateMetadataExtensions = map[string]struct{}{
-	"session-id@bifroest.engity.org":         {},
-	"original-user@bifroest.engity.org":      {},
-	"original-host@bifroest.engity.org":      {},
-	"authorization-kind@bifroest.engity.org": {},
-	"evidence-v1@bifroest.engity.org":        {},
+	authorization.AuthorizationEvidenceExtension: {},
 }
 
 type sshCertificateKeys struct {
@@ -50,6 +45,10 @@ type sshCertificateSpec struct {
 	principals        []string
 	extensions        map[string]string
 	authorizationKind string
+	audience          string
+	parentEvidence    *authorization.AuthorizationEvidence
+	parentDigest      string
+	maxValidBefore    time.Time
 }
 
 type sshUserCertificateState struct {
@@ -69,24 +68,13 @@ type sshUserCertificateState struct {
 	ValidBefore           time.Time         `json:"validBefore"`
 	Principals            []string          `json:"principals"`
 	Extensions            map[string]string `json:"extensions,omitempty"`
+	CriticalOptions       map[string]string `json:"criticalOptions,omitempty"`
 	Certificate           string            `json:"certificate"`
 	ConfigurationKey      string            `json:"configurationKey"`
 	AuthorizationKind     string            `json:"authorizationKind,omitempty"`
-}
-
-type sshUserCertificateEvidence struct {
-	Schema            string    `json:"schema"`
-	SessionId         string    `json:"sessionId"`
-	Flow              string    `json:"flow"`
-	CreatedAt         time.Time `json:"createdAt,omitempty"`
-	OriginalUser      string    `json:"originalUser,omitempty"`
-	OriginalHost      string    `json:"originalHost,omitempty"`
-	AuthorizationKind string    `json:"authorizationKind,omitempty"`
-	TargetUser        string    `json:"targetUser"`
-	Principals        []string  `json:"principals"`
-	PtyAllowed        bool      `json:"ptyAllowed"`
-	PortForwarding    bool      `json:"portForwardingAllowed"`
-	AgentForwarding   bool      `json:"agentForwardingAllowed"`
+	Audience              string            `json:"audience,omitempty"`
+	EvidenceDigest        string            `json:"evidenceDigest"`
+	ParentEvidenceDigest  string            `json:"parentEvidenceDigest,omitempty"`
 }
 
 func resolveSshCertificateSpec(conf *configuration.EnvironmentSshCertificate, req Context, settings *sshResolvedSettings) (*sshCertificateSpec, error) {
@@ -103,6 +91,17 @@ func resolveSshCertificateSpec(conf *configuration.EnvironmentSshCertificate, re
 	}
 	if validAfterSkew < 0 {
 		return nil, fmt.Errorf("rendered SSH certificate valid-after skew cannot be negative")
+	}
+	audience, err := conf.Audience.Render(req)
+	if err != nil {
+		return nil, fmt.Errorf("cannot render SSH certificate audience: %w", err)
+	}
+	audience = strings.TrimSpace(audience)
+	if !conf.Audience.IsZero() && audience == "" {
+		return nil, fmt.Errorf("rendered SSH certificate audience is empty")
+	}
+	if strings.IndexByte(audience, 0) >= 0 {
+		return nil, fmt.Errorf("rendered SSH certificate audience contains NUL")
 	}
 	principals, err := conf.Principals.Render(req)
 	if err != nil {
@@ -129,15 +128,33 @@ func resolveSshCertificateSpec(conf *configuration.EnvironmentSshCertificate, re
 	if err != nil {
 		return nil, fmt.Errorf("cannot render SSH certificate extensions: %w", err)
 	}
+	for _, name := range []string{"permit-pty", "permit-port-forwarding", "permit-agent-forwarding"} {
+		if value, exists := extensions[name]; exists && value != "" {
+			return nil, fmt.Errorf("rendered SSH certificate extension %q must have an empty value", name)
+		}
+	}
 	policy := authorization.AuthorizedKeyPolicyOf(req.Authorization())
 	if policy != nil && !policy.PtyAllowed {
 		delete(extensions, "permit-pty")
 	}
-	if !settings.forwardAllowed || policy != nil && !policy.PortForwardingAllowed {
+	if !settings.forwardAllowed || policy != nil && (!policy.PortForwardingAllowed || policy.HasPortForwardingDestinationRestrictions()) {
 		delete(extensions, "permit-port-forwarding")
 	}
 	if !authorization.IsAgentForwardingAllowed(req.Authorization()) {
 		delete(extensions, "permit-agent-forwarding")
+	}
+	parentEvidence := authorization.AuthorizationEvidenceOf(req.Authorization())
+	parentDigest := ""
+	var maxValidBefore time.Time
+	if parentEvidence != nil {
+		parentRaw, err := authorization.EncodeAuthorizationEvidence(parentEvidence)
+		if err != nil {
+			return nil, fmt.Errorf("cannot encode inherited authorization evidence: %w", err)
+		}
+		parentDigest = sshCertificateEvidenceDigest(parentRaw)
+		if last := parentEvidence.LastHop(); last != nil {
+			maxValidBefore = last.ValidBefore
+		}
 	}
 
 	return &sshCertificateSpec{
@@ -146,6 +163,10 @@ func resolveSshCertificateSpec(conf *configuration.EnvironmentSshCertificate, re
 		principals:        principals,
 		extensions:        extensions,
 		authorizationKind: authorization.KindOf(req.Authorization()),
+		audience:          audience,
+		parentEvidence:    parentEvidence,
+		parentDigest:      parentDigest,
+		maxValidBefore:    maxValidBefore,
 	}, nil
 }
 
@@ -206,7 +227,19 @@ func (this *SshRepository) issueUserCertificate(ctx context.Context, req Request
 		return nil, fmt.Errorf("rendered SSH certificate validity exceeds the supported time range")
 	}
 	validAfter := issuedAt.Add(-spec.validAfterSkew)
-	if validAfter.Unix() < 0 || maxValidUntil.Unix() < 0 {
+	validBefore := maxValidUntil
+	if parent := spec.parentEvidence.LastHop(); parent != nil {
+		if parent.ValidAfter.After(validAfter) {
+			validAfter = parent.ValidAfter.UTC().Truncate(time.Second)
+		}
+		if parent.ValidBefore.Before(validBefore) {
+			validBefore = parent.ValidBefore.UTC().Truncate(time.Second)
+		}
+	}
+	if !validBefore.After(issuedAt) {
+		return nil, fmt.Errorf("inherited authorization evidence expires before a new SSH certificate can be issued")
+	}
+	if validAfter.Unix() < 0 || validBefore.Unix() < 0 {
 		return nil, fmt.Errorf("SSH certificate validity is outside of the supported Unix time range")
 	}
 
@@ -215,51 +248,75 @@ func (this *SshRepository) issueUserCertificate(ctx context.Context, req Request
 		return nil, fmt.Errorf("cannot generate SSH certificate serial: %w", err)
 	}
 	keyId := "bifroest:" + this.flow.String() + ":" + sess.Id().String()
-	extensions := make(map[string]string, len(spec.extensions)+len(sshUserCertificateMetadataExtensions))
+	extensions := make(map[string]string, len(spec.extensions)+1)
 	for key, value := range spec.extensions {
 		extensions[key] = value
 	}
-	extensions["session-id@bifroest.engity.org"] = sess.Id().String()
 	authorizationKind := authorization.KindOf(req.Authorization())
-	if authorizationKind != "" {
-		extensions["authorization-kind@bifroest.engity.org"] = authorizationKind
+	if authorizationKind == "" {
+		return nil, fmt.Errorf("cannot issue SSH certificate without an authorization kind")
 	}
-	evidence := sshUserCertificateEvidence{
-		Schema:            "bifroest.authorization-evidence/v1",
-		SessionId:         sess.Id().String(),
-		Flow:              sess.Flow().String(),
-		AuthorizationKind: authorizationKind,
-		TargetUser:        settings.user,
-		Principals:        append([]string(nil), spec.principals...),
-	}
-	_, evidence.PtyAllowed = extensions["permit-pty"]
-	_, evidence.PortForwarding = extensions["permit-port-forwarding"]
-	_, evidence.AgentForwarding = extensions["permit-agent-forwarding"]
 	info, err := sess.Info(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("cannot load session information for SSH certificate: %w", err)
 	}
-	if info != nil {
-		created, err := info.Created(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("cannot load session creation information for SSH certificate: %w", err)
+	var evidence *authorization.AuthorizationEvidence
+	if spec.parentEvidence != nil {
+		evidence = spec.parentEvidence.Clone()
+	} else {
+		origin := req.Authorization().Remote()
+		if info != nil {
+			created, err := info.Created(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("cannot load session creation information for SSH certificate: %w", err)
+			}
+			if created != nil && created.Remote() != nil {
+				origin = created.Remote()
+			}
 		}
-		if created != nil && created.Remote() != nil {
-			evidence.CreatedAt = created.At()
-			evidence.OriginalUser = created.Remote().User()
-			evidence.OriginalHost = created.Remote().Host().String()
-			extensions["original-user@bifroest.engity.org"] = created.Remote().User()
-			extensions["original-host@bifroest.engity.org"] = created.Remote().Host().String()
+		if origin == nil {
+			return nil, fmt.Errorf("cannot issue SSH certificate without session origin")
+		}
+		evidence = &authorization.AuthorizationEvidence{
+			Schema: authorization.AuthorizationEvidenceSchema,
+			Origin: authorization.AuthorizationEvidenceOrigin{
+				User:              origin.User(),
+				Host:              origin.Host().String(),
+				AuthorizationKind: authorizationKind,
+			},
 		}
 	}
-	evidenceRaw, err := json.Marshal(evidence)
+	_, ptyAllowed := extensions["permit-pty"]
+	_, portForwardingAllowed := extensions["permit-port-forwarding"]
+	_, agentForwardingAllowed := extensions["permit-agent-forwarding"]
+	if err := evidence.Append(authorization.AuthorizationEvidenceHop{
+		CaFingerprint:          this.certificateKeys.authorityFingerprint,
+		SubjectKeyFingerprint:  this.certificateKeys.subjectFingerprint,
+		Serial:                 serial,
+		KeyId:                  keyId,
+		SessionId:              sess.Id().String(),
+		Flow:                   sess.Flow().String(),
+		AuthorizationKind:      authorizationKind,
+		Audience:               spec.audience,
+		TargetUser:             settings.user,
+		IssuedAt:               issuedAt,
+		ValidAfter:             validAfter,
+		ValidBefore:            validBefore,
+		PtyAllowed:             ptyAllowed,
+		PortForwardingAllowed:  portForwardingAllowed,
+		AgentForwardingAllowed: agentForwardingAllowed,
+	}); err != nil {
+		return nil, fmt.Errorf("cannot append SSH certificate authorization evidence: %w", err)
+	}
+	evidenceRaw, err := authorization.EncodeAuthorizationEvidence(evidence)
 	if err != nil {
 		return nil, fmt.Errorf("cannot encode SSH certificate evidence: %w", err)
 	}
-	if len(evidenceRaw) > maxSshUserCertificateEvidenceSize {
-		return nil, fmt.Errorf("SSH certificate evidence exceeds %d bytes", maxSshUserCertificateEvidenceSize)
+	extensions[authorization.AuthorizationEvidenceExtension] = string(evidenceRaw)
+	criticalOptions := map[string]string{}
+	if spec.audience != "" {
+		criticalOptions[authorization.BifroestDelegationCriticalOption] = ""
 	}
-	extensions["evidence-v1@bifroest.engity.org"] = string(evidenceRaw)
 
 	cert := &gossh.Certificate{
 		Nonce:           nil,
@@ -269,9 +326,10 @@ func (this *SshRepository) issueUserCertificate(ctx context.Context, req Request
 		KeyId:           keyId,
 		ValidPrincipals: append([]string(nil), spec.principals...),
 		ValidAfter:      uint64(validAfter.Unix()),
-		ValidBefore:     uint64(maxValidUntil.Unix()),
+		ValidBefore:     uint64(validBefore.Unix()),
 		Permissions: gossh.Permissions{
-			Extensions: extensions,
+			CriticalOptions: criticalOptions,
+			Extensions:      extensions,
 		},
 	}
 	if err := cert.SignCert(crand.Reader, this.certificateKeys.authority); err != nil {
@@ -292,12 +350,16 @@ func (this *SshRepository) issueUserCertificate(ctx context.Context, req Request
 		IssuedAt:              issuedAt,
 		ValidAfter:            validAfter,
 		MaxValidUntil:         maxValidUntil,
-		ValidBefore:           maxValidUntil,
+		ValidBefore:           validBefore,
 		Principals:            append([]string(nil), spec.principals...),
 		Extensions:            extensions,
+		CriticalOptions:       criticalOptions,
 		Certificate:           strings.TrimSpace(string(gossh.MarshalAuthorizedKey(cert))),
 		ConfigurationKey:      this.certificateKeys.configurationKey,
 		AuthorizationKind:     authorizationKind,
+		Audience:              spec.audience,
+		EvidenceDigest:        sshCertificateEvidenceDigest(evidenceRaw),
+		ParentEvidenceDigest:  spec.parentDigest,
 	}, nil
 }
 
@@ -334,8 +396,14 @@ func (this *SshRepository) validateUserCertificateState(state *sshUserCertificat
 	if state.SubjectKeyFingerprint != this.certificateKeys.subjectFingerprint {
 		return fail("subject key changed")
 	}
-	if !now.Before(state.MaxValidUntil) || !state.ValidBefore.Equal(state.MaxValidUntil) {
+	if !now.Before(state.ValidBefore) || state.ValidBefore.After(state.MaxValidUntil) {
 		return fail("certificate expired or has an invalid validity boundary")
+	}
+	if state.EvidenceDigest == "" || state.Audience != settings.certificate.audience || state.ParentEvidenceDigest != settings.certificate.parentDigest {
+		return fail("authorization evidence changed or is incomplete")
+	}
+	if !settings.certificate.maxValidBefore.IsZero() && state.ValidBefore.After(settings.certificate.maxValidBefore) {
+		return fail("certificate exceeds inherited validity")
 	}
 	if settings.certificate == nil || !slices.Equal(state.Principals, settings.certificate.principals) {
 		return fail("principals changed")
@@ -359,10 +427,53 @@ func (this *SshRepository) validateUserCertificateState(state *sshUserCertificat
 		!slices.Equal(cert.ValidPrincipals, state.Principals) {
 		return fail("certificate does not match its persisted metadata")
 	}
-	if len(cert.CriticalOptions) > 0 || !maps.Equal(cert.Extensions, state.Extensions) {
+	if !maps.Equal(cert.CriticalOptions, state.CriticalOptions) || !maps.Equal(cert.Extensions, state.Extensions) {
 		return fail("certificate permissions do not match their persisted metadata")
 	}
+	expectedCriticalOptions := map[string]string{}
+	if state.Audience != "" {
+		expectedCriticalOptions[authorization.BifroestDelegationCriticalOption] = ""
+	}
+	if !maps.Equal(state.CriticalOptions, expectedCriticalOptions) {
+		return fail("certificate delegation marker does not match its audience")
+	}
+	evidenceRaw, exists := cert.Extensions[authorization.AuthorizationEvidenceExtension]
+	if !exists || sshCertificateEvidenceDigest([]byte(evidenceRaw)) != state.EvidenceDigest {
+		return fail("certificate evidence does not match its persisted digest")
+	}
+	evidence, err := authorization.DecodeAuthorizationEvidence([]byte(evidenceRaw))
+	if err != nil {
+		return fail(err.Error())
+	}
+	last := evidence.LastHop()
+	expectedKeyId := "bifroest:" + sess.Flow().String() + ":" + sess.Id().String()
+	if last == nil || last.SessionId != sess.Id().String() || last.Flow != sess.Flow().String() ||
+		last.KeyId != expectedKeyId || last.AuthorizationKind != state.AuthorizationKind ||
+		last.Audience != state.Audience || !last.IssuedAt.Equal(state.IssuedAt) {
+		return fail("certificate evidence does not match its session metadata")
+	}
+	expectedParentDigest := ""
+	if len(evidence.Hops) > 1 {
+		parent := evidence.Clone()
+		parent.Hops = parent.Hops[:len(parent.Hops)-1]
+		parentRaw, err := authorization.EncodeAuthorizationEvidence(parent)
+		if err != nil {
+			return fail(err.Error())
+		}
+		expectedParentDigest = sshCertificateEvidenceDigest(parentRaw)
+	}
+	if state.ParentEvidenceDigest != expectedParentDigest {
+		return fail("certificate evidence does not match its parent digest")
+	}
+	if _, err := authorization.ValidateAuthorizationEvidenceCertificate(evidence, cert, settings.user, now); err != nil {
+		return fail(err.Error())
+	}
+	var supportedCriticalOptions []string
+	if state.Audience != "" {
+		supportedCriticalOptions = []string{authorization.BifroestDelegationCriticalOption}
+	}
 	checker := gossh.CertChecker{
+		SupportedCriticalOptions: supportedCriticalOptions,
 		IsUserAuthority: func(authority gossh.PublicKey) bool {
 			return gossh.FingerprintSHA256(authority) == state.CaFingerprint
 		},
@@ -428,6 +539,8 @@ func (this *SshRepository) IsSessionCompatible(ctx context.Context, sess session
 			principals:        append([]string(nil), state.Principals...),
 			extensions:        sshCertificateUserExtensions(state.Extensions),
 			authorizationKind: state.AuthorizationKind,
+			audience:          state.Audience,
+			parentDigest:      state.ParentEvidenceDigest,
 		},
 	}
 	_, err = this.validateUserCertificateState(state, sess, settings, time.Now())
@@ -495,7 +608,13 @@ func sshCertificateExtensionsEqual(stored, required map[string]string) bool {
 }
 
 func sshCertificateConfigurationKey(conf *configuration.EnvironmentSsh) string {
-	values := []string{"address=" + conf.Address.String(), "user=" + conf.User.String()}
+	address := conf.Address.String()
+	if conf.Address.IsHardCoded() {
+		if resolved, err := bfssh.ParseAddress(address); err == nil {
+			address = resolved.String()
+		}
+	}
+	values := []string{"address=" + address, "user=" + conf.User.String(), "audience=" + conf.Certificate.Audience.String()}
 	for i, principal := range conf.Certificate.Principals {
 		values = append(values, fmt.Sprintf("principal[%d]=%s", i, principal.String()))
 	}
@@ -508,5 +627,10 @@ func sshCertificateConfigurationKey(conf *configuration.EnvironmentSsh) string {
 		values = append(values, "extension="+key+"="+conf.Certificate.Extensions[key].String())
 	}
 	digest := sha256.Sum256([]byte(strings.Join(values, "\x00")))
+	return "SHA256:" + hex.EncodeToString(digest[:])
+}
+
+func sshCertificateEvidenceDigest(raw []byte) string {
+	digest := sha256.Sum256(raw)
 	return "SHA256:" + hex.EncodeToString(digest[:])
 }

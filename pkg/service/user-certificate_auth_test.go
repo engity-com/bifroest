@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	gossh "golang.org/x/crypto/ssh"
 
+	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/environment"
@@ -175,6 +176,178 @@ func TestBifroestCertificateChain(t *testing.T) {
 			testBifroestCertificateChain(t, trustPath)
 		})
 	}
+}
+
+func TestBifroestAuthorizationAcceptsDelegationCertificate(t *testing.T) {
+	_, authorityPrivate, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	authority, err := gossh.NewSignerFromKey(authorityPrivate)
+	require.NoError(t, err)
+
+	targetEnvironment := &authorizedKeysTestEnvironment{run: func(task environment.Task) (int, error) {
+		auth, ok := task.Authorization().(*authorization.BifroestAuthorization)
+		if !ok {
+			return 1, fmt.Errorf("unexpected authorization type %T", task.Authorization())
+		}
+		evidence := auth.AuthorizationEvidence()
+		_, err := fmt.Fprintf(task.SshSession(), "%s|%s|%d", evidence.Origin.User, evidence.LastHop().Audience, len(evidence.Hops))
+		return 0, err
+	}}
+	target := newAuthorizedKeysTestServerWithConfiguration(t, "", targetEnvironment, func(conf *configuration.Configuration) {
+		bifroest := &configuration.AuthorizationBifroest{}
+		require.NoError(t, bifroest.SetDefaults())
+		bifroest.TrustedUserCAs = crypto.PublicKeys(strings.TrimSpace(string(gossh.MarshalAuthorizedKey(authority.PublicKey()))))
+		conf.Flows[0].Authorization.V = bifroest
+	})
+
+	directory := t.TempDir()
+	authorityFile := filepath.Join(directory, "authority")
+	privateKey, err := gossh.MarshalPrivateKey(authorityPrivate, "Bifroest delegation test CA")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(authorityFile, pem.EncodeToMemory(privateKey), 0600))
+
+	proxy := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
+		sshEnvironment := &configuration.EnvironmentSsh{}
+		require.NoError(t, sshEnvironment.SetDefaults())
+		sshEnvironment.Address = template.MustNewString(target.address)
+		sshEnvironment.User = template.MustNewString(target.username)
+		sshEnvironment.AcceptAllHostKeys = true
+		certificate := &configuration.EnvironmentSshCertificate{}
+		require.NoError(t, certificate.SetDefaults())
+		certificate.IdentityFile = template.MustNewString(filepath.Join(directory, "subject"))
+		certificate.AuthorityIdentityFile = template.MustNewString(authorityFile)
+		certificate.Audience = template.MustNewString(conf.Flows[0].Name.String())
+		certificate.Extensions = configuration.EnvironmentSshCertificateExtensions{"permit-pty": template.MustNewString("")}
+		sshEnvironment.Certificate = certificate
+		conf.Flows[0].Environment.V = sshEnvironment
+	})
+
+	client := proxy.mustDial(t)
+	defer func() { require.NoError(t, client.Close()) }()
+	sshSession, err := client.NewSession()
+	require.NoError(t, err)
+	output, err := sshSession.Output("through-a")
+	require.NoError(t, err)
+	require.Equal(t, proxy.username+"|"+target.service.Configuration.Flows[0].Name.String()+"|1", string(output))
+}
+
+func TestSimpleAuthorizationRejectsDelegationProfileCertificate(t *testing.T) {
+	directory := t.TempDir()
+	authority, authorityFile := newBifroestDelegationTestCA(t, directory, "delegation")
+	target := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{}, func(conf *configuration.Configuration) {
+		simple := conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple)
+		simple.TrustedUserCAs = crypto.PublicKeys(strings.TrimSpace(string(gossh.MarshalAuthorizedKey(authority.PublicKey()))))
+		simple.Entries[0].AuthorizedKeys = ""
+	})
+	proxy := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
+		conf.Flows[0].Environment.V = newBifroestDelegationTestEnvironment(
+			t, target, filepath.Join(directory, "subject"), authorityFile,
+			configuration.EnvironmentSshCertificateExtensions{"permit-pty": template.MustNewString("")},
+		)
+	})
+
+	client := proxy.mustDial(t)
+	defer func() { require.NoError(t, client.Close()) }()
+	sshSession, err := client.NewSession()
+	require.NoError(t, err)
+	_, err = sshSession.Output("must-not-run")
+	require.Error(t, err)
+}
+
+func TestBifroestAuthorizationPropagatesEvidenceAcrossTwoHops(t *testing.T) {
+	directory := t.TempDir()
+	aToBCA, aToBCAFile := newBifroestDelegationTestCA(t, directory, "a-to-b")
+	bToCCA, bToCCAFile := newBifroestDelegationTestCA(t, directory, "b-to-c")
+
+	var received *authorization.AuthorizationEvidence
+	targetC := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{run: func(task environment.Task) (int, error) {
+		auth, ok := task.Authorization().(*authorization.BifroestAuthorization)
+		if !ok {
+			return 1, fmt.Errorf("unexpected authorization type %T", task.Authorization())
+		}
+		received = auth.AuthorizationEvidence()
+		_, err := fmt.Fprint(task.SshSession(), "bifroest-c")
+		return 0, err
+	}}, func(conf *configuration.Configuration) {
+		bifroest := &configuration.AuthorizationBifroest{}
+		require.NoError(t, bifroest.SetDefaults())
+		bifroest.TrustedUserCAs = crypto.PublicKeys(strings.TrimSpace(string(gossh.MarshalAuthorizedKey(bToCCA.PublicKey()))))
+		conf.Flows[0].Authorization.V = bifroest
+	})
+
+	proxyB := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
+		bifroest := &configuration.AuthorizationBifroest{}
+		require.NoError(t, bifroest.SetDefaults())
+		bifroest.TrustedUserCAs = crypto.PublicKeys(strings.TrimSpace(string(gossh.MarshalAuthorizedKey(aToBCA.PublicKey()))))
+		conf.Flows[0].Authorization.V = bifroest
+		conf.Flows[0].Environment.V = newBifroestDelegationTestEnvironment(
+			t, targetC, filepath.Join(directory, "b-to-c-subject"), bToCCAFile,
+			configuration.EnvironmentSshCertificateExtensions{
+				"permit-pty":             template.MustNewString(""),
+				"permit-port-forwarding": template.MustNewString(""),
+			},
+		)
+	})
+
+	proxyA := newAuthorizedKeysTestServerWithConfiguration(t, `permitopen="allowed.example:22"`, nil, func(conf *configuration.Configuration) {
+		conf.Flows[0].Environment.V = newBifroestDelegationTestEnvironment(
+			t, proxyB, filepath.Join(directory, "a-to-b-subject"), aToBCAFile,
+			configuration.EnvironmentSshCertificateExtensions{
+				"permit-pty":             template.MustNewString(""),
+				"permit-port-forwarding": template.MustNewString(""),
+			},
+		)
+	})
+
+	client := proxyA.mustDial(t)
+	defer func() { require.NoError(t, client.Close()) }()
+	sshSession, err := client.NewSession()
+	require.NoError(t, err)
+	output, err := sshSession.Output("through-two-hops")
+	require.NoError(t, err)
+	require.Equal(t, "bifroest-c", string(output))
+	require.NotNil(t, received)
+	require.Equal(t, proxyA.username, received.Origin.User)
+	require.Equal(t, "simple", received.Origin.AuthorizationKind)
+	require.Len(t, received.Hops, 2)
+	require.Equal(t, proxyB.service.Configuration.Flows[0].Name.String(), received.Hops[0].Audience)
+	require.Equal(t, targetC.service.Configuration.Flows[0].Name.String(), received.Hops[1].Audience)
+	require.Equal(t, "simple", received.Hops[0].AuthorizationKind)
+	require.Equal(t, "bifroest", received.Hops[1].AuthorizationKind)
+	require.False(t, received.Hops[0].PortForwardingAllowed)
+	require.True(t, received.Hops[1].PtyAllowed)
+	require.False(t, received.Hops[1].PortForwardingAllowed)
+	require.False(t, received.Hops[1].ValidBefore.After(received.Hops[0].ValidBefore))
+}
+
+func newBifroestDelegationTestCA(t *testing.T, directory, name string) (gossh.Signer, string) {
+	t.Helper()
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	signer, err := gossh.NewSignerFromKey(privateKey)
+	require.NoError(t, err)
+	encoded, err := gossh.MarshalPrivateKey(privateKey, name)
+	require.NoError(t, err)
+	filename := filepath.Join(directory, name+"-ca")
+	require.NoError(t, os.WriteFile(filename, pem.EncodeToMemory(encoded), 0600))
+	return signer, filename
+}
+
+func newBifroestDelegationTestEnvironment(t *testing.T, target *authorizedKeysTestServer, subjectFile, authorityFile string, extensions configuration.EnvironmentSshCertificateExtensions) *configuration.EnvironmentSsh {
+	t.Helper()
+	result := &configuration.EnvironmentSsh{}
+	require.NoError(t, result.SetDefaults())
+	result.Address = template.MustNewString(target.address)
+	result.User = template.MustNewString(target.username)
+	result.AcceptAllHostKeys = true
+	certificate := &configuration.EnvironmentSshCertificate{}
+	require.NoError(t, certificate.SetDefaults())
+	certificate.IdentityFile = template.MustNewString(subjectFile)
+	certificate.AuthorityIdentityFile = template.MustNewString(authorityFile)
+	certificate.Audience = template.MustNewString(target.service.Configuration.Flows[0].Name.String())
+	certificate.Extensions = extensions
+	result.Certificate = certificate
+	return result
 }
 
 func testBifroestCertificateChain(t *testing.T, trustPath string) {

@@ -26,11 +26,7 @@ func configureRunCmd(app *kingpin.Application) *kingpin.Application {
 		Action(func(*kingpin.ParseContext) error {
 			return doRun(conf, &ws)
 		})
-	cmd.Flag("configuration", "Configuration which should be used to serve the service. Default: "+defaultConfigurationRef).
-		Short('c').
-		Default(defaultConfigurationRef).
-		PlaceHolder("<path>").
-		SetValue(&conf)
+	registerConfigurationFlag(cmd, &conf)
 	ws.registerFlagsAt(cmd)
 	return app
 

@@ -144,6 +144,7 @@ nav:
           - Local: reference/authorization/local.md
           - OIDC: reference/authorization/oidc.md
           - Simple: reference/authorization/simple.md
+          - Bifröst: reference/authorization/bifroest.md
           - Htpasswd: reference/authorization/htpasswd.md
           - None: reference/authorization/none.md
       - Environments:

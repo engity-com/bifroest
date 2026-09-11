@@ -164,8 +164,14 @@ func EnsureKeyFile(fn string, reqOnAbsence *KeyRequirement, rand io.Reader) (Pri
 	if err != nil {
 		return nil, fmt.Errorf("cannot parse private key %q: %w", fn, err)
 	}
-
-	return PrivateKeyFromSdk(pk.(gocrypto.Signer))
+	switch value := pk.(type) {
+	case *dsa.PrivateKey:
+		return PrivateKeyFromSdk(&dsaPrivateKey{value})
+	case gocrypto.Signer:
+		return PrivateKeyFromSdk(value)
+	default:
+		return nil, fmt.Errorf("private key %q of type %T cannot be used as signer", fn, pk)
+	}
 }
 
 func WriteSshPrivateKey(pk PrivateKey, to io.Writer) error {

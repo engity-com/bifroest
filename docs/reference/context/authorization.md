@@ -10,11 +10,32 @@ There are more specialized variants of the authorization available, based on whi
 
 | Variant                        | Authorization                                     |
 |--------------------------------|---------------------------------------------------|
+| [Bifröst](#bifroest)           | [Bifröst delegation](../authorization/bifroest.md) |
 | [Htpasswd](#htpasswd)          | [Htpasswd](../authorization/htpasswd.md)          |
 | [Local](#local)                | [Local](../authorization/local.md)                |
 | [OpenID Connect (OIDC)](#oidc) | [OpenID Connect (OIDC)](../authorization/oidc.md) |
 | [Simple](#simple)              | [Simple](../authorization/simple.md)              |
 | [None](#none)                  | [None](../authorization/none.md)                  |
+
+## Bifröst {: #bifroest}
+
+Is the result of a successful certificate-based delegation from another [Bifröst authorization](../authorization/bifroest.md). The common authorization `remote` remains the immediately connected SSH peer; use `origin` for the unchanged original identity.
+
+### Properties
+
+<<property("origin", "object", id_prefix="bifroest-", heading=4)>>
+The original `user`, `host` and `authorizationKind` from the first Bifröst instance.
+
+<<property("peer", "object", id_prefix="bifroest-", heading=4)>>
+The final, immediately verified hop. It contains the CA and subject-key fingerprints, serial, key ID, upstream session ID and flow, authorization kind, audience, target user, validity boundaries, and effective capability booleans.
+
+<<property("hops", "list of objects", id_prefix="bifroest-", heading=4)>>
+The complete normalized delegation path. Each object has the same fields as `peer`. The list has at most eight entries.
+
+<<property("policy", "object", id_prefix="bifroest-", heading=4)>>
+The effective `ptyAllowed`, `portForwardingAllowed` and `agentForwardingAllowed` values after all hops.
+
+Passwords, tokens, unrestricted identity-provider claims and arbitrary environment maps are never included in this context.
 
 ## Htpasswd
 

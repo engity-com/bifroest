@@ -77,6 +77,10 @@ func (this *sessionCompatibilityAuthorization) AuthorizedKeyPolicy() *authorizat
 	return authorization.AuthorizedKeyPolicyOf(this.Authorization)
 }
 
+func (this *sessionCompatibilityAuthorization) AuthorizationEvidence() *authorization.AuthorizationEvidence {
+	return authorization.AuthorizationEvidenceOf(this.Authorization)
+}
+
 func (this *sessionCompatibilityAuthorization) GetField(name string, ctx authorization.ContextEnabled) (any, bool, error) {
 	if name == "session" {
 		info, err := this.session.Info(ctx.Context())
