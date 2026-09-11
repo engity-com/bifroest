@@ -18,8 +18,8 @@ var (
 	DefaultAuditlogJournalDirectory = defaultAuditlogJournalDirectory
 )
 
-// Auditlog defines the local audit journal. Remote targets are configured
-// separately because they replicate the journal rather than replace it.
+// Auditlog defines the authoritative local audit journal and optional remote
+// targets that replicate its immutable sealed segments.
 type Auditlog struct {
 	Name                    AuditlogName          `yaml:"name"`
 	Enabled                 bool                  `yaml:"enabled,omitempty"`
@@ -27,6 +27,7 @@ type Auditlog struct {
 	EncryptionPublicKey     crypto.PublicKeys     `yaml:"encryptionPublicKey,omitempty"`
 	EncryptionPublicKeyFile crypto.PublicKeysFile `yaml:"encryptionPublicKeyFile,omitempty"`
 	Journal                 AuditlogJournal       `yaml:"journal,omitempty"`
+	Targets                 AuditlogTargets       `yaml:"targets,omitempty"`
 }
 
 func (this *Auditlog) SetDefaults() error {
@@ -37,6 +38,7 @@ func (this *Auditlog) SetDefaults() error {
 		noopSetDefault[Auditlog]("encryptionPublicKey"),
 		noopSetDefault[Auditlog]("encryptionPublicKeyFile"),
 		func(v *Auditlog) (string, defaulter) { return "journal", &v.Journal },
+		func(v *Auditlog) (string, defaulter) { return "targets", &v.Targets },
 	)
 }
 
@@ -48,6 +50,7 @@ func (this *Auditlog) Trim() error {
 		func(v *Auditlog) (string, trimmer) { return "encryptionPublicKey", &v.EncryptionPublicKey },
 		func(v *Auditlog) (string, trimmer) { return "encryptionPublicKeyFile", &v.EncryptionPublicKeyFile },
 		func(v *Auditlog) (string, trimmer) { return "journal", &v.Journal },
+		func(v *Auditlog) (string, trimmer) { return "targets", &v.Targets },
 	)
 }
 
@@ -64,12 +67,13 @@ func (this *Auditlog) Validate() error {
 		},
 		noopValidate[Auditlog]("encryptionPublicKeyFile"),
 		func(v *Auditlog) (string, validator) { return "journal", &v.Journal },
+		func(v *Auditlog) (string, validator) { return "targets", &v.Targets },
 	)
 }
 
 func (this *Auditlog) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *Auditlog, node *yaml.Node) error {
-		if err := rejectUnknownAuditlogFields(node, "name", "enabled", "identityFile", "encryptionPublicKey", "encryptionPublicKeyFile", "journal"); err != nil {
+		if err := rejectUnknownAuditlogFields(node, "name", "enabled", "identityFile", "encryptionPublicKey", "encryptionPublicKeyFile", "journal", "targets"); err != nil {
 			return err
 		}
 		type raw Auditlog
@@ -97,7 +101,8 @@ func (this Auditlog) isEqualTo(other *Auditlog) bool {
 		this.IdentityFile == other.IdentityFile &&
 		this.EncryptionPublicKey.IsEqualTo(other.EncryptionPublicKey) &&
 		this.EncryptionPublicKeyFile.IsEqualTo(other.EncryptionPublicKeyFile) &&
-		isEqual(&this.Journal, &other.Journal)
+		isEqual(&this.Journal, &other.Journal) &&
+		isEqual(&this.Targets, &other.Targets)
 }
 
 type auditlogEncryptionPublicKeyValidator struct {

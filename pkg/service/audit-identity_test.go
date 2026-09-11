@@ -84,3 +84,15 @@ func TestAuditEncryptionRejectsStaticSshEnvironmentIdentity(t *testing.T) {
 	publicKey := crypto.PublicKeys(string(crypto.MarshalPublicKey(key.PublicKey())))
 	require.ErrorContains(t, audit.ValidateEncryptionRecipientDedicatedFrom(publicKey, serverKeys), "reuses a private key")
 }
+
+func TestRemoteAuditTargetsAreNotSilentlyIgnored(t *testing.T) {
+	auditlogs := configuration.Auditlogs{{
+		Name:    "security",
+		Enabled: true,
+		Targets: configuration.AuditlogTargets{{Name: "archive"}},
+	}}
+	require.ErrorContains(t, validateRemoteAuditTargetsAvailable(auditlogs), "remote audit delivery is not supported")
+
+	auditlogs[0].Enabled = false
+	require.NoError(t, validateRemoteAuditTargetsAvailable(auditlogs))
+}

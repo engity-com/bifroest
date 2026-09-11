@@ -216,6 +216,9 @@ func (this *Service) prepare() (svc *service, err error) {
 	if err := this.Configuration.Validate(); err != nil {
 		return fail(err)
 	}
+	if err := validateRemoteAuditTargetsAvailable(this.Configuration.Auditlogs); err != nil {
+		return fail(err)
+	}
 	if err := validateAuditlogRuntimePaths(this.Configuration.Auditlogs); err != nil {
 		return fail(err)
 	}
@@ -357,6 +360,15 @@ func (this *Service) prepare() (svc *service, err error) {
 	sessionRepositoryPrepared = true
 	auditRecordersPrepared = true
 	return svc, nil
+}
+
+func validateRemoteAuditTargetsAvailable(auditlogs configuration.Auditlogs) error {
+	for _, auditlog := range auditlogs {
+		if auditlog.Enabled && len(auditlog.Targets) > 0 {
+			return errors.Config.Newf("auditlog %q configures remote targets, but remote audit delivery is not supported by this build", auditlog.Name)
+		}
+	}
+	return nil
 }
 
 func (this *Service) prepareServer(_ context.Context, svc *service, hostPrivateKeys []crypto.PrivateKey) (err error) {
