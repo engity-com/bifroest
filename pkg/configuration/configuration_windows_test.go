@@ -48,13 +48,14 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
   environment:
     type: local`,
 			expected: Configuration{
-				Auditlog: Auditlog{
+				Auditlogs: Auditlogs{{
+					Name:         DefaultAuditlogName,
 					Enabled:      DefaultAuditlogEnabled,
 					IdentityFile: DefaultAuditlogIdentityFile,
 					Journal: AuditlogJournal{
 						Directory: DefaultAuditlogJournalDirectory,
 					},
-				},
+				}},
 				Ssh: Ssh{
 					Addresses: DefaultSshAddresses,
 					Keys: Keys{
@@ -103,7 +104,8 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 					FileMode:       DefaultSessionFsFileMode,
 				}},
 				Flows: []Flow{{
-					Name: "foo",
+					Name:     "foo",
+					Auditlog: DefaultAuditlogName,
 					Requirement: Requirement{
 						IncludedRequestingName: common.MustNewRegexp(""),
 						ExcludedRequestingName: common.MustNewRegexp(""),

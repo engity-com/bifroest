@@ -3,6 +3,7 @@
 package audit
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -77,4 +78,29 @@ func TestLocalJournalRejectsSymlinkedLockFile(t *testing.T) {
 
 	require.Nil(t, failed)
 	require.ErrorContains(t, err, "is not a regular file")
+}
+
+func TestLocalJournalRecoversInterruptedHardLinkPublication(t *testing.T) {
+	conf, identity := newJournalTestIdentity(t)
+	recorder, err := NewRecorder(&conf, identity)
+	require.NoError(t, err)
+	require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.before-publish-crash"}))
+	sealed := appendSealAndCrashCloseJournalTestRecorder(t, recorder)
+
+	activePath := journalTestActivePath(conf, identity)
+	require.NoError(t, os.Chmod(activePath, 0400))
+	targetPath := filepath.Join(producerJournalTestDirectory(conf, identity), sealedJournalFileName(sealed.sequence, sealed.segmentHash))
+	require.NoError(t, os.Link(activePath, targetPath))
+
+	recovered, err := NewRecorder(&conf, identity)
+	require.NoError(t, err)
+	activeInfo, err := os.Stat(activePath)
+	require.NoError(t, err)
+	targetInfo, err := os.Stat(targetPath)
+	require.NoError(t, err)
+	require.False(t, os.SameFile(activeInfo, targetInfo))
+	require.Equal(t, os.FileMode(0400), targetInfo.Mode().Perm())
+	require.Equal(t, uint64(2), recovered.(*localJournalRecorder).state.sequence)
+	require.Len(t, readJournalTestRecords(t, conf, identity), 1)
+	require.NoError(t, recovered.Close())
 }

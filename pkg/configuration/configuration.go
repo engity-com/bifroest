@@ -17,7 +17,7 @@ var (
 )
 
 type Configuration struct {
-	Auditlog Auditlog `yaml:"auditlog,omitempty"`
+	Auditlogs Auditlogs `yaml:"auditlog,omitempty"`
 
 	Ssh Ssh `yaml:"ssh"`
 
@@ -38,7 +38,7 @@ type Configuration struct {
 
 func (this *Configuration) SetDefaults() error {
 	return setDefaults(this,
-		func(v *Configuration) (string, defaulter) { return "auditlog", &v.Auditlog },
+		func(v *Configuration) (string, defaulter) { return "auditlog", &v.Auditlogs },
 		func(v *Configuration) (string, defaulter) { return "ssh", &v.Ssh },
 		func(v *Configuration) (string, defaulter) { return "session", &v.Session },
 		func(v *Configuration) (string, defaulter) { return "flows", &v.Flows },
@@ -50,7 +50,7 @@ func (this *Configuration) SetDefaults() error {
 
 func (this *Configuration) Trim() error {
 	return trim(this,
-		func(v *Configuration) (string, trimmer) { return "auditlog", &v.Auditlog },
+		func(v *Configuration) (string, trimmer) { return "auditlog", &v.Auditlogs },
 		func(v *Configuration) (string, trimmer) { return "ssh", &v.Ssh },
 		func(v *Configuration) (string, trimmer) { return "session", &v.Session },
 		func(v *Configuration) (string, trimmer) { return "flows", &v.Flows },
@@ -61,8 +61,8 @@ func (this *Configuration) Trim() error {
 }
 
 func (this *Configuration) Validate() error {
-	return validate(this,
-		func(v *Configuration) (string, validator) { return "auditlog", &v.Auditlog },
+	if err := validate(this,
+		func(v *Configuration) (string, validator) { return "auditlog", &v.Auditlogs },
 		func(v *Configuration) (string, validator) { return "ssh", &v.Ssh },
 		func(v *Configuration) (string, validator) { return "session", &v.Session },
 		func(v *Configuration) (string, validator) { return "flows", &v.Flows },
@@ -70,7 +70,23 @@ func (this *Configuration) Validate() error {
 		func(v *Configuration) (string, validator) { return "houseKeeping", &v.HouseKeeping },
 		func(v *Configuration) (string, validator) { return "alternatives", &v.Alternatives },
 		func(v *Configuration) (string, validator) { return "startMessage", &v.StartMessage },
-	)
+	); err != nil {
+		return err
+	}
+	return this.validateAuditlogReferences()
+}
+
+func (this *Configuration) validateAuditlogReferences() error {
+	configuredAuditlogs := make(map[AuditlogName]struct{}, len(this.Auditlogs))
+	for _, auditlog := range this.Auditlogs {
+		configuredAuditlogs[auditlog.Name] = struct{}{}
+	}
+	for index, flow := range this.Flows {
+		if _, exists := configuredAuditlogs[flow.Auditlog]; !exists {
+			return errors.Config.Newf("[flows][%d][auditlog] references unknown auditlog %q", index, flow.Auditlog)
+		}
+	}
+	return nil
 }
 
 func (this *Configuration) UnmarshalYAML(node *yaml.Node) error {
@@ -128,7 +144,7 @@ func (this Configuration) IsEqualTo(other any) bool {
 }
 
 func (this Configuration) isEqualTo(other *Configuration) bool {
-	return isEqual(&this.Auditlog, &other.Auditlog) &&
+	return isEqual(&this.Auditlogs, &other.Auditlogs) &&
 		isEqual(&this.Ssh, &other.Ssh) &&
 		isEqual(&this.Session, &other.Session) &&
 		isEqual(&this.Flows, &other.Flows) &&

@@ -4,7 +4,10 @@ import (
 	"context"
 	goerrors "errors"
 	"fmt"
+	"io/fs"
 	gonet "net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -210,11 +213,20 @@ func (this *Service) prepare() (svc *service, err error) {
 	fail := func(err error) (*service, error) {
 		return nil, fmt.Errorf("cannot prepare service: %w", err)
 	}
+	if err := this.Configuration.Validate(); err != nil {
+		return fail(err)
+	}
+	if err := validateAuditlogRuntimePaths(this.Configuration.Auditlogs); err != nil {
+		return fail(err)
+	}
 
 	ctx := context.Background()
-	svc = &service{Service: this, connectionLifecycle: newConnectionLifecycle()}
-	if svc.auditIdentity, err = audit.EnsureIdentity(&this.Configuration.Auditlog); err != nil {
-		return fail(err)
+	svc = &service{
+		Service:             this,
+		connectionLifecycle: newConnectionLifecycle(),
+		auditIdentities:     make(map[configuration.AuditlogName]*audit.Identity, len(this.Configuration.Auditlogs)),
+		auditRecorders:      make(map[configuration.AuditlogName]audit.Recorder, len(this.Configuration.Auditlogs)),
+		flowAuditRecorders:  make(map[configuration.FlowName]audit.Recorder, len(this.Configuration.Flows)),
 	}
 
 	svc.knownFlows = make(map[configuration.FlowName]struct{})
@@ -251,18 +263,35 @@ func (this *Service) prepare() (svc *service, err error) {
 	if err != nil {
 		return fail(err)
 	}
-	if err := svc.auditIdentity.ValidateDedicatedFrom(hostSigners); err != nil {
-		return fail(err)
-	}
-	if svc.auditRecorder, err = audit.NewRecorder(&this.Configuration.Auditlog, svc.auditIdentity); err != nil {
-		return fail(err)
-	}
-	auditRecorderPrepared := false
+	auditRecordersPrepared := false
 	defer func() {
-		if !auditRecorderPrepared {
-			_ = svc.auditRecorder.Close()
+		if !auditRecordersPrepared {
+			_ = svc.closeAuditRecorders()
 		}
 	}()
+	for index := range this.Configuration.Auditlogs {
+		auditlog := &this.Configuration.Auditlogs[index]
+		identity, identityErr := audit.EnsureIdentity(auditlog)
+		if identityErr != nil {
+			return fail(identityErr)
+		}
+		if identityErr := identity.ValidateDedicatedFrom(hostSigners); identityErr != nil {
+			return fail(identityErr)
+		}
+		if identityErr := validateDistinctAuditIdentity(svc.auditIdentities, auditlog.Name, identity); identityErr != nil {
+			return fail(identityErr)
+		}
+		recorder, recorderErr := audit.NewRecorder(auditlog, identity)
+		if recorderErr != nil {
+			return fail(recorderErr)
+		}
+		svc.auditIdentities[auditlog.Name] = identity
+		svc.auditRecorders[auditlog.Name] = recorder
+		svc.auditRecorderOrder = append(svc.auditRecorderOrder, recorder)
+	}
+	for _, flow := range this.Configuration.Flows {
+		svc.flowAuditRecorders[flow.Name] = svc.auditRecorders[flow.Auditlog]
+	}
 	if err := this.logCertificateAuthorities(hostSigners); err != nil {
 		return fail(err)
 	}
@@ -296,7 +325,7 @@ func (this *Service) prepare() (svc *service, err error) {
 	}
 
 	sessionRepositoryPrepared = true
-	auditRecorderPrepared = true
+	auditRecordersPrepared = true
 	return svc, nil
 }
 
@@ -434,16 +463,18 @@ func (this *Service) logCertificateAuthorities(hostKeys []crypto.PrivateKey) err
 type service struct {
 	*Service
 
-	auditIdentity  *audit.Identity
-	auditRecorder  audit.Recorder
-	sessions       session.CloseableRepository
-	authorizer     authorization.CloseableAuthorizer
-	environments   environment.CloseableRepository
-	houseKeeper    houseKeeper
-	alternatives   alternatives.Provider
-	imp            imp.Imp
-	server         essh.Server
-	forwardHandler essh.ForwardedTCPHandler
+	auditIdentities    map[configuration.AuditlogName]*audit.Identity
+	auditRecorders     map[configuration.AuditlogName]audit.Recorder
+	auditRecorderOrder []audit.Recorder
+	flowAuditRecorders map[configuration.FlowName]audit.Recorder
+	sessions           session.CloseableRepository
+	authorizer         authorization.CloseableAuthorizer
+	environments       environment.CloseableRepository
+	houseKeeper        houseKeeper
+	alternatives       alternatives.Provider
+	imp                imp.Imp
+	server             essh.Server
+	forwardHandler     essh.ForwardedTCPHandler
 
 	knownFlows map[configuration.FlowName]struct{}
 
@@ -509,7 +540,7 @@ func sshMaxAuthTries(value uint8) int {
 }
 
 func (this *service) Close() (rErr error) {
-	defer common.KeepCloseError(&rErr, this.auditRecorder)
+	defer func() { rErr = goerrors.Join(rErr, this.closeAuditRecorders()) }()
 	defer common.KeepCloseError(&rErr, this.alternatives)
 	defer common.KeepCloseError(&rErr, this.imp)
 	defer common.KeepCloseError(&rErr, this.sessions)
@@ -517,4 +548,97 @@ func (this *service) Close() (rErr error) {
 	defer common.KeepCloseError(&rErr, this.environments)
 	defer common.KeepCloseError(&rErr, &this.houseKeeper)
 	return nil
+}
+
+func (this *service) closeAuditRecorders() (result error) {
+	for _, recorder := range this.auditRecorderOrder {
+		result = goerrors.Join(result, recorder.Close())
+	}
+	return result
+}
+
+func validateDistinctAuditIdentity(existing map[configuration.AuditlogName]*audit.Identity, name configuration.AuditlogName, candidate *audit.Identity) error {
+	if candidate == nil {
+		return nil
+	}
+	for existingName, identity := range existing {
+		if identity != nil && identity.ProducerId() == candidate.ProducerId() {
+			return errors.Config.Newf("auditlogs %q and %q use the same signing identity", existingName, name)
+		}
+	}
+	return nil
+}
+
+func validateAuditlogRuntimePaths(auditlogs configuration.Auditlogs) error {
+	type resolvedAuditlog struct {
+		name         configuration.AuditlogName
+		identityFile string
+		journal      string
+	}
+	var resolved []resolvedAuditlog
+	for _, configured := range auditlogs {
+		if !configured.Enabled {
+			continue
+		}
+		identityFile, err := resolvePathThroughExistingParents(configured.IdentityFile)
+		if err != nil {
+			return errors.Config.Newf("cannot resolve identity file of auditlog %q: %w", configured.Name, err)
+		}
+		journal, err := resolvePathThroughExistingParents(configured.Journal.Directory)
+		if err != nil {
+			return errors.Config.Newf("cannot resolve journal directory of auditlog %q: %w", configured.Name, err)
+		}
+		resolved = append(resolved, resolvedAuditlog{configured.Name, identityFile, journal})
+	}
+	for leftIndex, left := range resolved {
+		for rightIndex := leftIndex + 1; rightIndex < len(resolved); rightIndex++ {
+			right := resolved[rightIndex]
+			if runtimePathContains(left.journal, right.journal) || runtimePathContains(right.journal, left.journal) {
+				return errors.Config.Newf("auditlog %q journal overlaps auditlog %q journal", left.name, right.name)
+			}
+			if runtimePathContains(left.identityFile, right.identityFile) || runtimePathContains(right.identityFile, left.identityFile) {
+				return errors.Config.Newf("auditlog %q identity file overlaps auditlog %q identity file", left.name, right.name)
+			}
+		}
+		for _, other := range resolved {
+			if runtimePathContains(left.identityFile, other.journal) || runtimePathContains(other.journal, left.identityFile) {
+				return errors.Config.Newf("auditlog %q identity file overlaps auditlog %q journal", left.name, other.name)
+			}
+		}
+	}
+	return nil
+}
+
+func resolvePathThroughExistingParents(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	current := filepath.Clean(absolute)
+	var missing []string
+	for {
+		if _, err := os.Lstat(current); err == nil {
+			canonical, err := filepath.EvalSymlinks(current)
+			if err != nil {
+				return "", err
+			}
+			for index := len(missing) - 1; index >= 0; index-- {
+				canonical = filepath.Join(canonical, missing[index])
+			}
+			return filepath.Clean(canonical), nil
+		} else if !goerrors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", errors.Config.Newf("cannot find an existing parent of %q", path)
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
+}
+
+func runtimePathContains(path, directory string) bool {
+	relative, err := filepath.Rel(directory, path)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }

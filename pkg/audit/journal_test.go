@@ -3,10 +3,11 @@ package audit
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
-	"hash/crc32"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -117,6 +118,12 @@ func TestLocalJournalRecoversIncompleteTail(t *testing.T) {
 		tail func([]byte) []byte
 	}{
 		{"length", func(frame []byte) []byte { return frame[:journalFrameLengthSize-1] }},
+		{"zero length", func([]byte) []byte { return make([]byte, journalFrameLengthSize) }},
+		{"oversized length", func([]byte) []byte {
+			length := make([]byte, journalFrameLengthSize)
+			binary.BigEndian.PutUint32(length, maxJournalRecordPayloadSize+1)
+			return length
+		}},
 		{"payload", func(frame []byte) []byte { return frame[:journalFrameLengthSize+10] }},
 		{"checksum", func(frame []byte) []byte { return frame[:len(frame)-1] }},
 	} {
@@ -125,23 +132,21 @@ func TestLocalJournalRecoversIncompleteTail(t *testing.T) {
 			recorder, err := NewRecorder(&conf, identity)
 			require.NoError(t, err)
 			require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.before-crash"}))
-			require.NoError(t, recorder.Close())
+			crashCloseJournalTestRecorder(t, recorder)
 			activePath := journalTestActivePath(conf, identity)
-			original, err := os.ReadFile(activePath)
+			incompleteFrame, err := encodeJournalFrame([]byte(`{"incomplete":true}`))
 			require.NoError(t, err)
 
 			file, err := os.OpenFile(activePath, os.O_WRONLY|os.O_APPEND, journalFileMode)
 			require.NoError(t, err)
-			_, err = file.Write(tc.tail(original))
+			_, err = file.Write(tc.tail(incompleteFrame))
 			require.NoError(t, err)
 			require.NoError(t, file.Sync())
 			require.NoError(t, file.Close())
 
 			recovered, err := NewRecorder(&conf, identity)
 			require.NoError(t, err)
-			after, err := os.Stat(activePath)
-			require.NoError(t, err)
-			require.Equal(t, int64(len(original)), after.Size())
+			require.Len(t, readJournalTestRecords(t, conf, identity), 1)
 			require.NoError(t, recovered.Record(context.Background(), Event{Name: "test.after-crash"}))
 			require.NoError(t, recovered.Close())
 			require.Len(t, readJournalTestRecords(t, conf, identity), 2)
@@ -154,7 +159,7 @@ func TestLocalJournalRejectsCompleteCorruption(t *testing.T) {
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
 	require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.corrupt"}))
-	require.NoError(t, recorder.Close())
+	crashCloseJournalTestRecorder(t, recorder)
 	activePath := journalTestActivePath(conf, identity)
 	raw, err := os.ReadFile(activePath)
 	require.NoError(t, err)
@@ -176,12 +181,14 @@ func TestLocalJournalRejectsCommittedRecordWithCorruptedSize(t *testing.T) {
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
 	require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.corrupt-size"}))
-	require.NoError(t, recorder.Close())
+	crashCloseJournalTestRecorder(t, recorder)
 	activePath := journalTestActivePath(conf, identity)
 	raw, err := os.ReadFile(activePath)
 	require.NoError(t, err)
-	payloadSize := binary.BigEndian.Uint32(raw[:journalFrameLengthSize])
-	binary.BigEndian.PutUint32(raw[:journalFrameLengthSize], payloadSize+1)
+	headerPayloadSize := int(binary.BigEndian.Uint32(raw[:journalFrameLengthSize]))
+	recordOffset := journalFrameLengthSize + headerPayloadSize + journalFrameChecksumSize + len(journalFrameCommitMarker)
+	payloadSize := binary.BigEndian.Uint32(raw[recordOffset : recordOffset+journalFrameLengthSize])
+	binary.BigEndian.PutUint32(raw[recordOffset:recordOffset+journalFrameLengthSize], payloadSize+1)
 	require.NoError(t, os.WriteFile(activePath, raw, journalFileMode))
 
 	failed, err := NewRecorder(&conf, identity)
@@ -198,7 +205,7 @@ func TestLocalJournalRejectsCorruptedCommitMarker(t *testing.T) {
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
 	require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.corrupt-commit"}))
-	require.NoError(t, recorder.Close())
+	crashCloseJournalTestRecorder(t, recorder)
 	activePath := journalTestActivePath(conf, identity)
 	raw, err := os.ReadFile(activePath)
 	require.NoError(t, err)
@@ -287,7 +294,7 @@ func TestLocalJournalPoisonsRecorderAfterWriteFailure(t *testing.T) {
 	local.file = readOnly
 
 	firstErr := recorder.Record(context.Background(), Event{Name: "test.write-fails"})
-	require.ErrorContains(t, firstErr, "cannot append audit record")
+	require.ErrorContains(t, firstErr, "cannot append audit journal frame")
 	secondErr := recorder.Record(context.Background(), Event{Name: "test.not-appended"})
 	require.EqualError(t, secondErr, firstErr.Error())
 	require.Error(t, recorder.Close())
@@ -307,23 +314,58 @@ func journalTestActivePath(conf configuration.Auditlog, identity *Identity) stri
 
 func readJournalTestRecords(t *testing.T, conf configuration.Auditlog, identity *Identity) []journalRecord {
 	t.Helper()
-	raw, err := os.ReadFile(journalTestActivePath(conf, identity))
+	directory := filepath.Join(conf.Journal.Directory, identity.ProducerId().String())
+	entries, err := os.ReadDir(directory)
 	require.NoError(t, err)
+	var paths []string
+	var active string
+	for _, entry := range entries {
+		path := filepath.Join(directory, entry.Name())
+		if entry.Name() == journalActiveFileName {
+			active = path
+		} else if _, _, ok := parseSealedJournalFileName(entry.Name()); ok {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+	if active != "" {
+		paths = append(paths, active)
+	}
 	var records []journalRecord
-	for len(raw) > 0 {
-		require.GreaterOrEqual(t, len(raw), journalFrameLengthSize+journalFrameChecksumSize+len(journalFrameCommitMarker))
-		payloadSize := int(binary.BigEndian.Uint32(raw[:journalFrameLengthSize]))
-		frameSize := journalFrameLengthSize + payloadSize + journalFrameChecksumSize + len(journalFrameCommitMarker)
-		require.GreaterOrEqual(t, len(raw), frameSize)
-		payload := raw[journalFrameLengthSize : journalFrameLengthSize+payloadSize]
-		checksumOffset := journalFrameLengthSize + payloadSize
-		expectedChecksum := binary.BigEndian.Uint32(raw[checksumOffset : checksumOffset+journalFrameChecksumSize])
-		require.Equal(t, expectedChecksum, crc32.Checksum(payload, journalChecksumTable))
-		require.Equal(t, journalFrameCommitMarker, string(raw[checksumOffset+journalFrameChecksumSize:frameSize]))
-		record, err := decodeJournalRecord(payload, identity.ProducerId())
+	var previousRecordHash journalHash
+	for _, path := range paths {
+		file, err := os.Open(path)
 		require.NoError(t, err)
-		records = append(records, record)
-		raw = raw[frameSize:]
+		info, err := file.Stat()
+		require.NoError(t, err)
+		for offset := int64(0); offset < info.Size(); {
+			payload, frameSize, incomplete, err := readJournalFrame(file, offset, info.Size())
+			require.NoError(t, err)
+			require.False(t, incomplete)
+			var envelope struct {
+				Schema string `json:"schema"`
+			}
+			require.NoError(t, json.Unmarshal(payload, &envelope))
+			if envelope.Schema == journalRecordSchema {
+				record, recordHash, err := decodeJournalRecord(payload, identity, previousRecordHash)
+				require.NoError(t, err)
+				records = append(records, record)
+				previousRecordHash = recordHash
+			}
+			offset += frameSize
+		}
+		require.NoError(t, file.Close())
 	}
 	return records
+}
+
+func crashCloseJournalTestRecorder(t *testing.T, recorder Recorder) {
+	t.Helper()
+	local := recorder.(*localJournalRecorder)
+	local.mutex.Lock()
+	defer local.mutex.Unlock()
+	require.NoError(t, local.file.Sync())
+	require.NoError(t, local.file.Close())
+	require.NoError(t, local.processLock.Close())
+	local.closed = true
 }

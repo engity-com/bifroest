@@ -17,8 +17,8 @@ bifroest run --configuration=/my/config.yaml
 
 ## Properties
 
-<<property("auditlog", "Audit log", "auditlog.md")>>
-Defines how Bifröst records security-relevant actions in a separate audit log.
+<<property("auditlog", array_ref("Audit log", "auditlog.md"))>>
+Defines named audit logs that flows can use for security-relevant actions. If omitted or empty, it contains one disabled audit log named `default`.
 
 <<property("ssh", "SSH", "connection/ssh.md")>>
 Defines how the SSH connections itself will behave.
@@ -26,7 +26,7 @@ Defines how the SSH connections itself will behave.
 <<property("session", "Session", "session/index.md")>>
 Defines where and how the sessions inside Bifröst are handled.
 
-<<property("flows", "Flow", "flow.md", required=True)>>
+<<property("auditlog", array_ref("Flow", "flow.md"), required=True)>>
 Defines which flows are evaluated for user sessions.
 
 <<property("housekeeping", "Housekeeping", "housekeeping.md")>>

@@ -1,6 +1,9 @@
 package audit
 
 import (
+	"crypto"
+	"crypto/ed25519"
+	"crypto/rand"
 	"io/fs"
 	"os"
 	"strings"
@@ -25,6 +28,15 @@ func NewIdentity(privateKey bfcrypto.PrivateKey) (*Identity, error) {
 		return nil, errors.System.Newf("nil audit identity key")
 	}
 	publicKey := privateKey.PublicKey()
+	if privateKey.Type() != gossh.KeyAlgoED25519 {
+		return nil, errors.Config.Newf("audit identity contains a %s key instead of Ed25519", privateKey.Type())
+	}
+	if !isEd25519PrivateKey(privateKey.ToSdk()) {
+		return nil, errors.System.Newf("audit identity does not expose an Ed25519 private key")
+	}
+	if _, ok := publicKey.ToSdk().(ed25519.PublicKey); !ok {
+		return nil, errors.System.Newf("audit identity does not expose an Ed25519 public key")
+	}
 	sshPublicKey := publicKey.ToSsh()
 	if sshPublicKey == nil {
 		return nil, errors.System.Newf("nil audit identity public key")
@@ -34,6 +46,45 @@ func NewIdentity(privateKey bfcrypto.PrivateKey) (*Identity, error) {
 		producerId:  newProducerId(publicKey.Marshal()),
 		fingerprint: gossh.FingerprintSHA256(sshPublicKey),
 	}, nil
+}
+
+func isEd25519PrivateKey(signer crypto.Signer) bool {
+	switch key := signer.(type) {
+	case ed25519.PrivateKey:
+		return len(key) == ed25519.PrivateKeySize
+	case *ed25519.PrivateKey:
+		return key != nil && len(*key) == ed25519.PrivateKeySize
+	default:
+		return false
+	}
+}
+
+func (this *Identity) sign(message []byte) ([]byte, error) {
+	if this == nil || this.privateKey == nil || this.privateKey.ToSdk() == nil {
+		return nil, errors.System.Newf("nil audit identity signer")
+	}
+	signature, err := this.privateKey.ToSdk().Sign(rand.Reader, message, crypto.Hash(0))
+	if err != nil {
+		return nil, errors.System.Newf("cannot sign audit data: %w", err)
+	}
+	if len(signature) != ed25519.SignatureSize {
+		return nil, errors.System.Newf("illegal audit signature length: %d", len(signature))
+	}
+	return signature, nil
+}
+
+func (this *Identity) verify(message, signature []byte) error {
+	if this == nil || this.privateKey == nil {
+		return errors.System.Newf("nil audit identity verifier")
+	}
+	publicKey, ok := this.privateKey.PublicKey().ToSdk().(ed25519.PublicKey)
+	if !ok || len(publicKey) != ed25519.PublicKeySize {
+		return errors.System.Newf("audit identity does not expose an Ed25519 public key")
+	}
+	if len(signature) != ed25519.SignatureSize || !ed25519.Verify(publicKey, message, signature) {
+		return errors.System.Newf("illegal audit signature")
+	}
+	return nil
 }
 
 // EnsureIdentity loads or creates the configured audit identity. A missing key
