@@ -35,6 +35,10 @@ The local journal is the authoritative, crash-safe source of the audit log. Remo
 <<property("directory", "File Path", "data-type.md#file-path", default="<os specific>", heading=4, id_prefix="journal-")>>
 Where the local audit journal and remote-delivery spool are stored. Bifröst manages this directory and its segment rotation; external log rotation tools must not modify it.
 
+Bifröst allows only one running process to own a journal and flushes every accepted record to durable storage. On startup, an incomplete trailing write is discarded safely; complete structural corruption prevents startup instead of being ignored.
+
+Bifröst holds an exclusive lock for the lifetime of the journal, so only one process can write a configured producer journal at a time. Each accepted record is flushed to stable storage before recording succeeds. On startup, an incomplete trailing write is discarded safely; complete malformed records cause startup to fail.
+
 The default value is different, depending on the platform Bifröst runs on:
 
 * Linux: `/var/lib/engity/bifroest/auditlog`

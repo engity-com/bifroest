@@ -11,6 +11,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	berrors "github.com/engity-com/bifroest/pkg/errors"
 )
 
 func TestEnsureIdentityDoesNothingWhenDisabled(t *testing.T) {
@@ -58,6 +59,19 @@ func TestEnsureIdentityCreatesKeyForEmptyJournal(t *testing.T) {
 	require.FileExists(t, conf.IdentityFile)
 }
 
+func TestEnsureIdentityIgnoresPersistentJournalLock(t *testing.T) {
+	directory := t.TempDir()
+	conf := auditIdentityTestConfiguration(directory, true)
+	require.NoError(t, os.MkdirAll(conf.Journal.Directory, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(conf.Journal.Directory, journalLockFileName), nil, 0600))
+
+	identity, err := EnsureIdentity(&conf)
+
+	require.NoError(t, err)
+	require.NotNil(t, identity)
+	require.FileExists(t, conf.IdentityFile)
+}
+
 func TestEnsureIdentityRejectsMissingKeyForExistingJournal(t *testing.T) {
 	directory := t.TempDir()
 	conf := auditIdentityTestConfiguration(directory, true)
@@ -68,6 +82,7 @@ func TestEnsureIdentityRejectsMissingKeyForExistingJournal(t *testing.T) {
 
 	require.Nil(t, identity)
 	require.ErrorContains(t, err, "is missing while journal")
+	require.True(t, berrors.Config.IsErr(err))
 	require.NoFileExists(t, conf.IdentityFile)
 }
 
@@ -81,6 +96,7 @@ func TestEnsureIdentityDoesNotReplaceInvalidKey(t *testing.T) {
 
 	require.Nil(t, identity)
 	require.Error(t, err)
+	require.True(t, berrors.Config.IsErr(err))
 	actual, readErr := os.ReadFile(conf.IdentityFile)
 	require.NoError(t, readErr)
 	require.Equal(t, expected, actual)
@@ -98,6 +114,7 @@ func TestEnsureIdentityDoesNotReplaceWrongKeyType(t *testing.T) {
 
 	require.Nil(t, identity)
 	require.ErrorContains(t, err, "instead of Ed25519")
+	require.True(t, berrors.Config.IsErr(err))
 	actual, readErr := os.ReadFile(conf.IdentityFile)
 	require.NoError(t, readErr)
 	require.Equal(t, expected, actual)
@@ -112,7 +129,9 @@ func TestIdentityRejectsReusedHostKey(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, identity.ValidateDedicatedFrom([]bfcrypto.PrivateKey{nil, other}))
-	require.ErrorContains(t, identity.ValidateDedicatedFrom([]bfcrypto.PrivateKey{privateKey}), "must not reuse")
+	err = identity.ValidateDedicatedFrom([]bfcrypto.PrivateKey{privateKey})
+	require.ErrorContains(t, err, "must not reuse")
+	require.True(t, berrors.Config.IsErr(err))
 }
 
 func TestProducerIdTextRoundTrip(t *testing.T) {
@@ -132,8 +151,12 @@ func TestProducerIdTextRoundTrip(t *testing.T) {
 	require.Equal(t, expected, actual)
 	require.Equal(t, string(raw), actual.String())
 
-	require.Error(t, actual.UnmarshalText([]byte("too-short")))
-	require.Error(t, actual.UnmarshalText([]byte("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz")))
+	err = actual.UnmarshalText([]byte("too-short"))
+	require.Error(t, err)
+	require.True(t, berrors.Config.IsErr(err))
+	err = actual.UnmarshalText([]byte("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"))
+	require.Error(t, err)
+	require.True(t, berrors.Config.IsErr(err))
 }
 
 func auditIdentityTestConfiguration(directory string, enabled bool) configuration.Auditlog {

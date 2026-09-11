@@ -254,6 +254,15 @@ func (this *Service) prepare() (svc *service, err error) {
 	if err := svc.auditIdentity.ValidateDedicatedFrom(hostSigners); err != nil {
 		return fail(err)
 	}
+	if svc.auditRecorder, err = audit.NewRecorder(&this.Configuration.Auditlog, svc.auditIdentity); err != nil {
+		return fail(err)
+	}
+	auditRecorderPrepared := false
+	defer func() {
+		if !auditRecorderPrepared {
+			_ = svc.auditRecorder.Close()
+		}
+	}()
 	if err := this.logCertificateAuthorities(hostSigners); err != nil {
 		return fail(err)
 	}
@@ -287,6 +296,7 @@ func (this *Service) prepare() (svc *service, err error) {
 	}
 
 	sessionRepositoryPrepared = true
+	auditRecorderPrepared = true
 	return svc, nil
 }
 
@@ -425,6 +435,7 @@ type service struct {
 	*Service
 
 	auditIdentity  *audit.Identity
+	auditRecorder  audit.Recorder
 	sessions       session.CloseableRepository
 	authorizer     authorization.CloseableAuthorizer
 	environments   environment.CloseableRepository
@@ -498,6 +509,7 @@ func sshMaxAuthTries(value uint8) int {
 }
 
 func (this *service) Close() (rErr error) {
+	defer common.KeepCloseError(&rErr, this.auditRecorder)
 	defer common.KeepCloseError(&rErr, this.alternatives)
 	defer common.KeepCloseError(&rErr, this.imp)
 	defer common.KeepCloseError(&rErr, this.sessions)

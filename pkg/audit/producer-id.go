@@ -3,7 +3,8 @@ package audit
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
+
+	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 // ProducerId identifies the audit producer independently from process and
@@ -28,11 +29,11 @@ func (this ProducerId) MarshalText() ([]byte, error) {
 
 func (this *ProducerId) UnmarshalText(text []byte) error {
 	if len(text) != hex.EncodedLen(len(this)) {
-		return fmt.Errorf("illegal audit producer ID length: %d", len(text))
+		return errors.Config.Newf("illegal audit producer ID length: %d", len(text))
 	}
 	var decoded ProducerId
 	if _, err := hex.Decode(decoded[:], text); err != nil {
-		return fmt.Errorf("illegal audit producer ID: %w", err)
+		return errors.Config.Newf("illegal audit producer ID: %w", err)
 	}
 	*this = decoded
 	return nil
