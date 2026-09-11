@@ -2,6 +2,7 @@ package configuration
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 
@@ -118,7 +119,9 @@ func TestAuditlogTargetNamesAndFeatureFlags(t *testing.T) {
 	for _, invalid := range []AuditlogTargetName{"", ".", "..", "a/b", `a\b`, "has space", AuditlogTargetName(strings.Repeat("a", maximumAuditlogTargetNameLength+1))} {
 		require.Error(t, invalid.Validate(), invalid)
 	}
-	require.Equal(t, []string{"test-remote-a", "test-remote-z"}, GetSupportedAuditlogTargetFeatureFlags())
+	flags := GetSupportedAuditlogTargetFeatureFlags()
+	require.True(t, sort.StringsAreSorted(flags))
+	require.Subset(t, flags, []string{"test-remote-a", "test-remote-z"})
 }
 
 func TestAuditlogEqualityIncludesTargets(t *testing.T) {

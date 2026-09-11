@@ -57,7 +57,7 @@ func NewFsRepository(_ context.Context, conf *configuration.SessionFs) (*FsRepos
 			return nil, fmt.Errorf("cannot inspect session storage %q: %w", storage, lstatErr)
 		}
 		canonicalParent, parentErr := filepath.EvalSymlinks(filepath.Dir(storage))
-		if parentErr != nil {
+		if parentErr != nil && !os.IsNotExist(parentErr) {
 			return nil, fmt.Errorf("cannot canonicalize parent directory of session storage %q: %w", storage, parentErr)
 		}
 		storage = filepath.Join(canonicalParent, filepath.Base(storage))
