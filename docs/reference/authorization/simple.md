@@ -12,17 +12,25 @@ Authorizes a user request via stored credentials.
 <<property("type", "Authorization Type", default="simple", required=True)>>
 Has to be set to `simple` to enable simple authorization.
 
+<<property("trustedUserCAs", "Public Keys", "../data-type.md#public-keys")>>
+OpenSSH public keys of certificate authorities that may sign user certificates for every entry in this authorization. The requested SSH username must be included in the certificate's principals.
+
+<<property("trustedUserCAsFile", ref("File Path", "../data-type.md#file-path", ref("Public Keys", "../data-type.md#public-keys")))>>
+Same as [`trustedUserCAs`](#property-trustedUserCAs), but loaded from one file when the authorization is initialized. Both properties can be used together. A configured file must exist and contain at least one valid public key.
+
 <<property("entries", array_ref("Entry", "#entry"))>>
 Each entry will be inspected to check if a remote user should be authorized.
 
 ## Entry
 
-Always one property of the following properties has to match in combination with [`name`](#entry-property-name):
+One of the following properties normally has to match in combination with [`name`](#entry-property-name):
 
 * [`authorizedKeys`](#entry-property-authorizedKeys)
 * [`authorizedKeysFile`](#entry-property-authorizedKeysFile)
 * [`password`](#entry-property-password)
 * [`passwordFile`](#entry-property-passwordFile)
+
+An entry containing only `name` can additionally be authenticated by a user certificate signed by [`trustedUserCAs`](#property-trustedUserCAs) or [`trustedUserCAsFile`](#property-trustedUserCAsFile).
 
 ### Properties {: #entry-properties }
 
@@ -33,6 +41,8 @@ Like: `ssh <name>@my-great-domain.tld` to match this entry.
 
 <<property("authorizedKeys", "Authorized Keys", "../data-type.md#authorized-keys", id_prefix="entry-", heading=4)>>
 Contains [SSH Public Keys](../data-type.md#ssh-public-key) in the format of classic [authorized keys](../data-type.md#authorized-keys).
+
+An entry with the `cert-authority` option treats its key as a user certificate authority for this simple entry. The optional `principals="..."` option restricts it further.
 
 <<property("authorizedKeysFile", ref("File Path", "../data-type.md#file-path", ref("Authorized Keys", "../data-type.md#authorized-keys")), id_prefix="entry-", heading=4)>>
 Similar to [`authorizedKeys`](#entry-property-authorizedKeys), but in a dedicated file.
@@ -71,8 +81,18 @@ This authorization will produce a context of type [Authorization Simple](../cont
    entries:
      - name: foo
        authorizedKeys: |
-         ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC80lm5FQbbyRUut6RwZJRbxTLO3W4f08ITDi9fA3+jx foo@foo.tld
+          ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC80lm5FQbbyRUut6RwZJRbxTLO3W4f08ITDi9fA3+jx foo@foo.tld
+    ```
+3. Using an OpenSSH user certificate authority:
+   ```yaml
+   type: simple
+   trustedUserCAs: |
+     ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOrganizationCA
+   entries:
+     - name: foo
    ```
+
+User certificates must be current, signed by the selected CA, have the requested SSH username as a principal, and contain no critical options. Missing `permit-pty`, `permit-port-forwarding`, or `permit-agent-forwarding` certificate extensions disable the corresponding capability. Authorized-key options can only restrict these capabilities further.
 
 ## Compatibility
 

@@ -16,57 +16,43 @@ type KeyedMutex[K comparable] struct {
 type Unlocker func()
 
 func (this *KeyedMutex[K]) Lock(key K) Unlocker {
-	return this.lockBy(key, func(instance *keyMutex[K]) Unlocker {
-		instance.numberOfHoldes.Add(1)
-		instance.mutex.Lock()
-		return instance.unlock
-	})
+	instance := this.acquire(key)
+	instance.mutex.Lock()
+	return instance.unlock
 }
 
 func (this *KeyedMutex[K]) RLock(key K) Unlocker {
-	return this.lockBy(key, func(instance *keyMutex[K]) Unlocker {
-		instance.numberOfHoldes.Add(1)
-		instance.mutex.RLock()
-		return instance.rUnlock
-	})
+	instance := this.acquire(key)
+	instance.mutex.RLock()
+	return instance.rUnlock
 }
 
-func (this *KeyedMutex[K]) lockBy(key K, instanceLocker func(*keyMutex[K]) Unlocker) Unlocker {
+func (this *KeyedMutex[K]) acquire(key K) *keyMutex[K] {
 	this.init.Do(func() {
 		this.keyToMutex = make(map[K]*keyMutex[K])
 	})
-	rLockActive := true
 	this.uberMutex.RLock()
-	uberRUnlock := func() {
-		if rLockActive {
-			this.uberMutex.RUnlock()
-		}
-		rLockActive = false
-	}
-	defer uberRUnlock()
-
 	instance, ok := this.keyToMutex[key]
 	if ok {
-		uberRUnlock()
-		return instanceLocker(instance)
+		instance.numberOfHoldes.Add(1)
+		this.uberMutex.RUnlock()
+		return instance
 	}
-	uberRUnlock()
+	this.uberMutex.RUnlock()
 
 	this.uberMutex.Lock()
 	defer this.uberMutex.Unlock()
 
 	instance, ok = this.keyToMutex[key]
-	if ok {
-		return instanceLocker(instance)
+	if !ok {
+		instance = &keyMutex[K]{
+			key:    key,
+			parent: this,
+		}
+		this.keyToMutex[key] = instance
 	}
-
-	instance = &keyMutex[K]{
-		key:    key,
-		parent: this,
-	}
-	this.keyToMutex[key] = instance
-
-	return instanceLocker(instance)
+	instance.numberOfHoldes.Add(1)
+	return instance
 }
 
 type keyMutex[K comparable] struct {
@@ -96,6 +82,7 @@ func (this *keyMutex[K]) afterUnlock() {
 	}
 	this.parent.uberMutex.Lock()
 	defer this.parent.uberMutex.Unlock()
-
-	delete(this.parent.keyToMutex, this.key)
+	if this.numberOfHoldes.Load() == 0 && this.parent.keyToMutex[this.key] == this {
+		delete(this.parent.keyToMutex, this.key)
+	}
 }

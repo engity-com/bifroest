@@ -1,6 +1,7 @@
 package configuration
 
 import (
+	gossh "golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v3"
 
 	"github.com/engity-com/bifroest/pkg/crypto"
@@ -9,9 +10,11 @@ import (
 )
 
 var (
-	DefaultHostKeyLocations       = template.MustNewStrings(DefaultHostKeyLocation)
-	DefaultKeyExchanges           = ssh.DefaultKeyExchanges
-	DefaultRememberMeNotification = template.MustNewString("\nIf you return until {{.session.validUntil | format `dateTimeT`}} with the same public key ({{.key | fingerprint}}), you can seamlessly login again.\n\n")
+	DefaultHostKeyLocations         = template.MustNewStrings(DefaultHostKeyLocation)
+	DefaultCertificateIdentityFile  = template.MustNewString(DefaultCertificateIdentityFileLocation)
+	DefaultCertificateAuthorityFile = template.MustNewString(DefaultCertificateAuthorityFileLocation)
+	DefaultKeyExchanges             = ssh.DefaultKeyExchanges
+	DefaultRememberMeNotification   = template.MustNewString("\nIf you return until {{.session.validUntil | format `dateTimeT`}} with the same public key ({{.key | fingerprint}}), you can seamlessly login again.\n\n")
 )
 
 type Keys struct {
@@ -94,6 +97,22 @@ func (this Keys) isEqualTo(other *Keys) bool {
 }
 
 func (this Keys) KeyAllowed(in any) (bool, error) {
+	if certificate, ok := in.(*gossh.Certificate); ok {
+		if certificate.Key == nil || certificate.SignatureKey == nil {
+			return false, nil
+		}
+		if _, nested := certificate.Key.(*gossh.Certificate); nested {
+			return false, nil
+		}
+		if _, nested := certificate.SignatureKey.(*gossh.Certificate); nested {
+			return false, nil
+		}
+		subjectAllowed, err := this.KeyAllowed(certificate.Key)
+		if err != nil || !subjectAllowed {
+			return subjectAllowed, err
+		}
+		return this.KeyAllowed(certificate.SignatureKey)
+	}
 	if ok, err := this.RsaRestriction.KeyAllowed(in); err != nil || ok {
 		return ok, err
 	}

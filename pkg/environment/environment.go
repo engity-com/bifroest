@@ -22,3 +22,9 @@ type Environment interface {
 	// Close can be safely called more than once.
 	Close() error
 }
+
+// ReversePortForwardingPolicy allows an environment to specialize reverse
+// forwarding independently from local and dynamic forwarding.
+type ReversePortForwardingPolicy interface {
+	IsReversePortForwardingAllowed(net.HostPort) (bool, error)
+}

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,8 +19,9 @@ type fsInfo struct {
 	VState State `json:"state"`
 
 	createdAt   time.Time
-	VRemoteUser string   `json:"remoteUser"`
-	VRemoteHost net.Host `json:"remoteHost"`
+	VCreatedAt  time.Time `json:"createdAt,omitempty"`
+	VRemoteUser string    `json:"remoteUser"`
+	VRemoteHost net.Host  `json:"remoteHost"`
 
 	created fsCreated
 }
@@ -87,7 +89,7 @@ func (this *fsInfo) ValidUntil(context.Context) (result time.Time, _ error) {
 		result = lat.Add(v)
 	}
 	if v := this.session.repository.conf.MaxTimeout.Native(); v > 0 {
-		byMax := lat.Add(v)
+		byMax := this.createdAt.Add(v)
 		if result.IsZero() || byMax.Before(result) {
 			result = byMax
 		}
@@ -128,20 +130,17 @@ func (this *fsInfo) LastAccessed(context.Context) (InfoLastAccessed, error) {
 }
 
 func (this *fsInfo) save() error {
-	f, _, err := this.session.repository.openWrite(this.session.flow, this.session.id, FsFileSession, false)
+	this.VCreatedAt = this.createdAt
+	var raw bytes.Buffer
+	if err := json.NewEncoder(&raw).Encode(this); err != nil {
+		return fmt.Errorf("cannot encode session %v: %w", this, err)
+	}
+	fn, err := this.session.repository.file(this.session.flow, this.session.id, FsFileSession)
 	if err != nil {
 		return err
 	}
-	defer common.IgnoreCloseError(f)
-
-	if err := json.NewEncoder(f).Encode(this); err != nil {
-		return fmt.Errorf("cannot encode session %v: %w", this, err)
+	if err := writeFsFileAtomically(fn, raw.Bytes(), os.FileMode(this.session.repository.conf.FileMode), os.FileMode(this.session.repository.dirFileMode())); err != nil {
+		return fmt.Errorf("cannot persist session %v: %w", this, err)
 	}
-
-	now := time.Now()
-	if err := os.Chtimes(f.Name(), now, now); err != nil {
-		return fmt.Errorf("cannot change time of session %v: %w", this, err)
-	}
-
 	return nil
 }

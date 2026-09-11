@@ -144,6 +144,7 @@ nav:
           - Local: reference/authorization/local.md
           - OIDC: reference/authorization/oidc.md
           - Simple: reference/authorization/simple.md
+          - Bifröst: reference/authorization/bifroest.md
           - Htpasswd: reference/authorization/htpasswd.md
           - None: reference/authorization/none.md
       - Environments:
@@ -151,6 +152,7 @@ nav:
           - Docker: reference/environment/docker.md
           - Kubernetes: reference/environment/kubernetes.md
           - Local: reference/environment/local.md
+          - SSH: reference/environment/ssh.md
           - Dummy: reference/environment/dummy.md
       - Sessions:
           - reference/session/index.md

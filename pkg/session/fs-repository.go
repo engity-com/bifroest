@@ -38,6 +38,41 @@ var (
 )
 
 func NewFsRepository(_ context.Context, conf *configuration.SessionFs) (*FsRepository, error) {
+	if conf == nil {
+		return nil, fmt.Errorf("nil configuration")
+	}
+	storage, err := filepath.Abs(conf.Storage)
+	if err != nil {
+		return nil, fmt.Errorf("cannot resolve session storage %q: %w", conf.Storage, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(storage), 0700); err != nil {
+		return nil, fmt.Errorf("cannot create parent directory of session storage %q: %w", storage, err)
+	}
+	if canonical, err := filepath.EvalSymlinks(storage); err == nil {
+		storage = canonical
+	} else if sys.IsNotExist(err) {
+		if info, lstatErr := os.Lstat(storage); lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("cannot canonicalize dangling session storage symlink %q", storage)
+		} else if lstatErr != nil && !sys.IsNotExist(lstatErr) {
+			return nil, fmt.Errorf("cannot inspect session storage %q: %w", storage, lstatErr)
+		}
+		canonicalParent, parentErr := filepath.EvalSymlinks(filepath.Dir(storage))
+		if parentErr != nil {
+			return nil, fmt.Errorf("cannot canonicalize parent directory of session storage %q: %w", storage, parentErr)
+		}
+		storage = filepath.Join(canonicalParent, filepath.Base(storage))
+	} else {
+		return nil, fmt.Errorf("cannot canonicalize session storage %q: %w", storage, err)
+	}
+	lockPath := filepath.Join(filepath.Dir(storage), "."+filepath.Base(storage)+".bifroest.lock")
+	_, statErr := os.Stat(lockPath)
+	lock, err := acquireFsRepositoryProcessLock(lockPath, os.FileMode(conf.FileMode))
+	if err != nil {
+		return nil, err
+	}
+	if statErr == nil {
+		log.GetLogger("sessions").With("path", lockPath).Warn("found existing unlocked session repository lock file; lock was taken over")
+	}
 	touchThreshold := defaultTouchThreshold
 	if v := conf.IdleTimeout.Native(); v > 0 {
 		touchThreshold = v
@@ -53,7 +88,9 @@ func NewFsRepository(_ context.Context, conf *configuration.SessionFs) (*FsRepos
 
 	result := FsRepository{
 		conf:           conf,
+		storage:        storage,
 		touchThreshold: touchThreshold,
+		processLock:    lock,
 	}
 
 	return &result, nil
@@ -62,13 +99,17 @@ func NewFsRepository(_ context.Context, conf *configuration.SessionFs) (*FsRepos
 type FsRepository struct {
 	Logger log.Logger
 
-	conf *configuration.SessionFs
+	conf    *configuration.SessionFs
+	storage string
 
 	touchThreshold time.Duration
 
 	connectionInterceptors fsConnectionInterceptors
 
-	mutex sync.RWMutex
+	mutex       sync.RWMutex
+	closeOnce   sync.Once
+	closeErr    error
+	processLock *fsRepositoryProcessLock
 }
 
 func (this *FsRepository) dir(flow configuration.FlowName, id Id) (string, error) {
@@ -80,7 +121,7 @@ func (this *FsRepository) dir(flow configuration.FlowName, id Id) (string, error
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(this.conf.Storage, string(fs), string(is)), nil
+	return filepath.Join(this.storage, string(fs), string(is)), nil
 }
 
 func (this *FsRepository) file(flow configuration.FlowName, id Id, kind string) (string, error) {
@@ -159,6 +200,16 @@ func (this *FsRepository) Create(ctx context.Context, flow configuration.FlowNam
 		return fail(err)
 	}
 	id := Id(vid)
+	dir, err := this.dir(flow, id)
+	if err != nil {
+		return fail(err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.RemoveAll(dir)
+		}
+	}()
 
 	var sess fs
 	sess.info.VState = StateNew
@@ -178,14 +229,45 @@ func (this *FsRepository) Create(ctx context.Context, flow configuration.FlowNam
 		}
 	}
 
+	committed = true
 	return &sess, nil
 }
 
 func (this *FsRepository) FindBy(ctx context.Context, flow configuration.FlowName, id Id, opts *FindOpts) (Session, error) {
-	this.mutex.RLock()
-	defer this.mutex.RUnlock()
+	return this.loadAndMatch(ctx, flow, id, opts, false)
+}
 
-	return this.findBy(ctx, flow, id, opts, false)
+func (this *FsRepository) loadAndMatch(ctx context.Context, flow configuration.FlowName, id Id, opts *FindOpts, expectedToExist bool) (*fs, error) {
+	this.mutex.RLock()
+	result, err := this.findBy(ctx, flow, id, nil, expectedToExist)
+	this.mutex.RUnlock()
+	if err != nil {
+		if !opts.IsAutoCleanUpAllowed() || errors.Is(err, ErrNoSuchSession) && !expectedToExist {
+			return nil, err
+		}
+		this.mutex.Lock()
+		dir, dirErr := this.dir(flow, id)
+		if dirErr == nil {
+			dirErr = os.RemoveAll(dir)
+		}
+		this.mutex.Unlock()
+		if dirErr != nil {
+			return nil, fmt.Errorf("cannot remove broken session %v/%v: %w", flow, id, dirErr)
+		}
+		opts.GetLogger(this.logger).Withf("session", "%v/%v", flow, id).WithError(err).Warn("found broken session; it was removed entirely")
+		return nil, ErrNoSuchSession
+	}
+	if opts.IsAutoCleanUpAllowed() {
+		this.mutex.Lock()
+		this.doAutoCleanUnexpectedFilesIfAllowed(ctx, result, opts)
+		this.mutex.Unlock()
+	}
+	if ok, err := opts.GetPredicates().Matches(ctx, result); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, ErrNoSuchSession
+	}
+	return result, nil
 }
 
 func (this *FsRepository) findBy(ctx context.Context, flow configuration.FlowName, id Id, opts *FindOpts, expectedToExist bool) (*fs, error) {
@@ -214,7 +296,11 @@ func (this *FsRepository) findBy(ctx context.Context, flow configuration.FlowNam
 	if err != nil {
 		return cleanUpIfAllowedAndFail(errors.Newf(errors.System, "cannot stat session file of %v/%v: %w", flow, id, err))
 	}
-	buf.info.createdAt = fi.ModTime()
+	if buf.info.VCreatedAt.IsZero() {
+		buf.info.createdAt = fi.ModTime()
+	} else {
+		buf.info.createdAt = buf.info.VCreatedAt
+	}
 	buf.init(this, flow, id)
 
 	this.doAutoCleanUnexpectedFilesIfAllowed(ctx, &buf, opts)
@@ -235,17 +321,15 @@ func (this *FsRepository) FindByPublicKey(ctx context.Context, key ssh.PublicKey
 
 	loadCandidate := func(flow configuration.FlowName, id Id) (*fs, error) {
 		this.mutex.RLock()
-		defer this.mutex.RUnlock()
-
 		ok, err := this.hasPublicKey(ctx, flow, id, key)
+		this.mutex.RUnlock()
 		if err != nil {
 			return nil, err
 		}
 		if !ok {
 			return nil, ErrNoSuchSession
 		}
-
-		return this.findBy(ctx, flow, id, opts, true)
+		return this.loadAndMatch(ctx, flow, id, opts, true)
 	}
 
 	var result Session
@@ -291,17 +375,15 @@ func (this *FsRepository) FindByAccessToken(ctx context.Context, t []byte, opts 
 
 	loadCandidate := func(flow configuration.FlowName, id Id) (*fs, error) {
 		this.mutex.RLock()
-		defer this.mutex.RUnlock()
-
 		ok, err := this.hasAccessToken(ctx, flow, id, t)
+		this.mutex.RUnlock()
 		if err != nil {
 			return nil, err
 		}
 		if !ok {
 			return nil, ErrNoSuchSession
 		}
-
-		return this.findBy(ctx, flow, id, opts, true)
+		return this.loadAndMatch(ctx, flow, id, opts, true)
 	}
 
 	var result Session
@@ -342,10 +424,7 @@ func (this *FsRepository) FindByAccessToken(ctx context.Context, t []byte, opts 
 
 func (this *FsRepository) FindAll(ctx context.Context, consumer Consumer, opts *FindOpts) error {
 	loadCandidate := func(flow configuration.FlowName, id Id) (*fs, error) {
-		this.mutex.RLock()
-		defer this.mutex.RUnlock()
-
-		return this.findBy(ctx, flow, id, opts, true)
+		return this.loadAndMatch(ctx, flow, id, opts, true)
 	}
 
 	canContinue := true
@@ -577,7 +656,12 @@ func (this *FsRepository) Delete(ctx context.Context, s Session) error {
 }
 
 func (this *FsRepository) Close() error {
-	return nil
+	this.closeOnce.Do(func() {
+		this.mutex.Lock()
+		defer this.mutex.Unlock()
+		this.closeErr = this.processLock.Close()
+	})
+	return this.closeErr
 }
 
 func (this *FsRepository) publicKeyKind(pub ssh.PublicKey) string {
@@ -586,7 +670,7 @@ func (this *FsRepository) publicKeyKind(pub ssh.PublicKey) string {
 }
 
 func (this *FsRepository) iterateFlows(ctx context.Context, consumer func(flow configuration.FlowName, path string) (canContinue bool, err error), opts *FindOpts) (rErr error) {
-	dirName := this.conf.Storage
+	dirName := this.storage
 	f, err := os.Open(dirName)
 	if sys.IsNotExist(err) {
 		return nil
@@ -633,7 +717,7 @@ func (this *FsRepository) iterateFlowDirs(ctx context.Context, flow configuratio
 		return err
 	}
 
-	dirName := filepath.Join(this.conf.Storage, string(fs))
+	dirName := filepath.Join(this.storage, string(fs))
 	var entries []os.DirEntry
 	defer func() {
 		if rErr == nil && len(entries) == 0 && opts.IsAutoCleanUpAllowed() {

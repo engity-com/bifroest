@@ -33,6 +33,9 @@ See the evaluation matrix of [`createIfAbsent`](#linux-property-createIfAbsent-e
 <<property("type", "Environment Type", default="local", required=True, id_prefix="linux-", heading=4)>>
 Has to be set to `local` to enable the local environment.
 
+<<property("variables", "Environment Variables", "../data-type.md#environment-variables", template_context="../context/authorization.md", id_prefix="linux-", heading=4)>>
+Defines environment variables for commands and shells. They override values received from the SSH client, `authorized_keys` and authorization. Bifröst-generated runtime and local account identity variables take precedence.
+
 <<property("loginAllowed", "bool", template_context="../context/authorization.md", default=True, id_prefix="linux-", heading=4)>>
 Has to be true (after being evaluated) that the user is allowed to use this environment.
 
@@ -203,6 +206,9 @@ Defines what happens if an environment is disposed.
 
    shell: "/bin/bash"
 
+   variables:
+     BIFROEST_ORIGINAL_USER: "{{.session.created.remote.user}}"
+
    ## Only allow login if the OIDC's groups has "my-great-group-uuid"
    ## ...and the tid (tenant ID) is "my-great-tenant-uuid"
    loginAllowed: |
@@ -261,6 +267,9 @@ The Windows variant is supported by Windows 10, Windows Server 2016, and later v
 <<property("type", "Environment Type", default="local", required=True, id_prefix="windows-", heading=4)>>
 Has to be set to `local` to enable the local environment.
 
+<<property("variables", "Environment Variables", "../data-type.md#environment-variables", template_context="../context/authorization.md", id_prefix="windows-", heading=4)>>
+Defines environment variables for commands and shells. Names are handled case-insensitively. They override values received from the SSH client, `authorized_keys` and authorization. Bifröst-generated runtime and local account identity variables take precedence.
+
 <<property("loginAllowed", "bool", template_context="../context/authorization.md", default=True, id_prefix="windows-", heading=4)>>
 Has to be true (after being evaluated) that the user is allowed to use this environment.
 
@@ -310,6 +319,9 @@ If `true`, users are allowed to use SSH's port forwarding mechanism.
    ## Use the PowerShell Core without banner as Shell
    shellCommand: ["pwsh.exe", "-NoLogo"]
    directory: "C:\\my\\home"
+
+   variables:
+     BIFROEST_ORIGINAL_USER: "{{.session.created.remote.user}}"
 
    ## Only allow login if the OIDC's groups has "my-great-group-uuid"
    ## ...and the tid (tenant ID) is "my-great-tenant-uuid"

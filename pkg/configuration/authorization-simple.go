@@ -11,23 +11,27 @@ var (
 )
 
 type AuthorizationSimple struct {
-	Entries AuthorizationSimpleEntries `yaml:"entries,omitempty"`
+	UserCertificateAuthorityProperties `yaml:",inline"`
+	Entries                            AuthorizationSimpleEntries `yaml:"entries,omitempty"`
 }
 
 func (this *AuthorizationSimple) SetDefaults() error {
 	return setDefaults(this,
+		func(v *AuthorizationSimple) (string, defaulter) { return "", &v.UserCertificateAuthorityProperties },
 		func(v *AuthorizationSimple) (string, defaulter) { return "entries", &v.Entries },
 	)
 }
 
 func (this *AuthorizationSimple) Trim() error {
 	return trim(this,
+		func(v *AuthorizationSimple) (string, trimmer) { return "", &v.UserCertificateAuthorityProperties },
 		func(v *AuthorizationSimple) (string, trimmer) { return "entries", &v.Entries },
 	)
 }
 
 func (this *AuthorizationSimple) Validate() error {
 	return validate(this,
+		func(v *AuthorizationSimple) (string, validator) { return "", &v.UserCertificateAuthorityProperties },
 		func(v *AuthorizationSimple) (string, validator) { return "entries", &v.Entries },
 	)
 }
@@ -54,7 +58,8 @@ func (this AuthorizationSimple) IsEqualTo(other any) bool {
 }
 
 func (this AuthorizationSimple) isEqualTo(other *AuthorizationSimple) bool {
-	return isEqual(&this.Entries, &other.Entries)
+	return isEqual(&this.UserCertificateAuthorityProperties, &other.UserCertificateAuthorityProperties) &&
+		isEqual(&this.Entries, &other.Entries)
 }
 
 func (this AuthorizationSimple) Types() []string {

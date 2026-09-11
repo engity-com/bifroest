@@ -103,6 +103,61 @@ func TestRestrictedAuthorizedKeyAllowsAuthenticationConditions(t *testing.T) {
 	}
 }
 
+func TestNewAuthorizationSessionDoesNotRequireEnvironmentCompatibility(t *testing.T) {
+	server := newAuthorizedKeysTestServer(t, "", &authorizedKeysTestEnvironment{})
+	repository := server.service.environments.(*authorizedKeysTestRepository)
+	repository.isSessionCompatible = func(environment.Context, session.Session) (bool, error) {
+		return false, nil
+	}
+
+	client, err := server.dial()
+	require.NoError(t, err)
+	require.NoError(t, client.Close())
+}
+
+func TestPublicKeyAuthenticationSkipsIncompatibleSession(t *testing.T) {
+	server := newAuthorizedKeysTestServer(t, "", &authorizedKeysTestEnvironment{})
+	ctx := context.Background()
+	remote := authorizedKeysTestRemote{user: server.username}
+	sessions := make([]session.Session, 2)
+	for i := range sessions {
+		var err error
+		sessions[i], err = server.service.sessions.Create(ctx, "restricted-key", remote, nil)
+		require.NoError(t, err)
+		require.NoError(t, sessions[i].AddPublicKey(ctx, server.signer.PublicKey()))
+		_, err = sessions[i].NotifyLastAccess(ctx, remote, session.StateAuthorized)
+		require.NoError(t, err)
+	}
+	var searchOrder []session.Id
+	require.NoError(t, server.service.sessions.FindAll(ctx, func(_ context.Context, candidate session.Session) (bool, error) {
+		searchOrder = append(searchOrder, candidate.Id())
+		return true, nil
+	}, nil))
+	require.Len(t, searchOrder, 2)
+	compatibleId := searchOrder[1]
+
+	repository := server.service.environments.(*authorizedKeysTestRepository)
+	var incompatibleChecked bool
+	repository.isSessionCompatible = func(ctx environment.Context, candidate session.Session) (bool, error) {
+		fieldContext := ctx.(interface {
+			GetField(string) (any, bool, error)
+		})
+		value, found, err := fieldContext.GetField("authorization")
+		require.NoError(t, err)
+		require.True(t, found)
+		candidateAuthorization := value.(authorization.Authorization)
+		require.Equal(t, candidate.Id(), candidateAuthorization.FindSession().Id())
+		compatible := candidate.Id() == compatibleId
+		incompatibleChecked = incompatibleChecked || !compatible
+		return compatible, nil
+	}
+
+	client, err := server.dial()
+	require.NoError(t, err)
+	require.NoError(t, client.Close())
+	require.True(t, incompatibleChecked)
+}
+
 func TestRestrictedAuthorizedKeyRejectsPty(t *testing.T) {
 	for _, options := range []string{"no-pty", "restrict"} {
 		t.Run(options, func(t *testing.T) {
@@ -409,6 +464,20 @@ func TestEnvironmentRejectsReversePortForwarding(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestEnvironmentReversePortForwardingPolicyOverridesDirectForwarding(t *testing.T) {
+	reverseAllowed := false
+	server := newAuthorizedKeysTestServer(t, "", &authorizedKeysTestEnvironment{
+		portForwardingAllowed:        true,
+		reversePortForwardingAllowed: &reverseAllowed,
+	})
+	client := server.mustDial(t)
+	listener, err := client.Listen("tcp", "127.0.0.1:0")
+	if listener != nil {
+		_ = listener.Close()
+	}
+	require.Error(t, err)
+}
+
 func TestMaxReverseForwardsPerConnectionIsEnforced(t *testing.T) {
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{portForwardingAllowed: true}, func(conf *configuration.Configuration) {
 		conf.Ssh.MaxReverseForwardsPerConnection = 1
@@ -616,6 +685,11 @@ func newAuthorizedKeysTestServer(t *testing.T, options string, testEnvironment *
 func newAuthorizedKeysTestServerWithConfiguration(t *testing.T, options string, testEnvironment *authorizedKeysTestEnvironment, configure func(*configuration.Configuration)) *authorizedKeysTestServer {
 	t.Helper()
 	const username = "restricted-key-user"
+	return newAuthorizedKeysTestServerWithUsernameAndConfiguration(t, username, options, testEnvironment, configure)
+}
+
+func newAuthorizedKeysTestServerWithUsernameAndConfiguration(t *testing.T, username, options string, testEnvironment *authorizedKeysTestEnvironment, configure func(*configuration.Configuration)) *authorizedKeysTestServer {
+	t.Helper()
 
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
@@ -657,8 +731,10 @@ flows:
 
 	svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
 	require.NoError(t, err)
-	require.NoError(t, svc.environments.Close())
-	svc.environments = &authorizedKeysTestRepository{environment: testEnvironment}
+	if testEnvironment != nil {
+		require.NoError(t, svc.environments.Close())
+		svc.environments = &authorizedKeysTestRepository{environment: testEnvironment}
+	}
 
 	listener, err := gonet.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -720,8 +796,17 @@ func (this *authorizedKeysTestServer) mustDial(t *testing.T) *gossh.Client {
 }
 
 type authorizedKeysTestRepository struct {
-	environment *authorizedKeysTestEnvironment
+	environment         *authorizedKeysTestEnvironment
+	isSessionCompatible func(environment.Context, session.Session) (bool, error)
 }
+
+type authorizedKeysTestRemote struct {
+	user string
+}
+
+func (this authorizedKeysTestRemote) User() string   { return this.user }
+func (authorizedKeysTestRemote) Host() bnet.Host     { return bnet.Host{} }
+func (this authorizedKeysTestRemote) String() string { return this.user }
 
 func (*authorizedKeysTestRepository) WillBeAccepted(environment.Context) (bool, error) {
 	return true, nil
@@ -747,9 +832,17 @@ func (*authorizedKeysTestRepository) Close() error {
 	return nil
 }
 
+func (this *authorizedKeysTestRepository) IsSessionCompatibleWith(ctx environment.Context, sess session.Session) (bool, error) {
+	if this.isSessionCompatible == nil {
+		return true, nil
+	}
+	return this.isSessionCompatible(ctx, sess)
+}
+
 type authorizedKeysTestEnvironment struct {
-	run                   func(environment.Task) (int, error)
-	portForwardingAllowed bool
+	run                          func(environment.Task) (int, error)
+	portForwardingAllowed        bool
+	reversePortForwardingAllowed *bool
 }
 
 func (*authorizedKeysTestEnvironment) Banner(environment.Request) (io.ReadCloser, error) {
@@ -765,6 +858,13 @@ func (this *authorizedKeysTestEnvironment) Run(task environment.Task) (int, erro
 
 func (this *authorizedKeysTestEnvironment) IsPortForwardingAllowed(bnet.HostPort) (bool, error) {
 	return this.portForwardingAllowed, nil
+}
+
+func (this *authorizedKeysTestEnvironment) IsReversePortForwardingAllowed(bnet.HostPort) (bool, error) {
+	if this.reversePortForwardingAllowed == nil {
+		return this.portForwardingAllowed, nil
+	}
+	return *this.reversePortForwardingAllowed, nil
 }
 
 func (*authorizedKeysTestEnvironment) NewDestinationConnection(context.Context, bnet.HostPort) (io.ReadWriteCloser, error) {

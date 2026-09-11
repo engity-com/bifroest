@@ -71,6 +71,20 @@ func TestSetReservedEnvironmentCanonicalizesWindowsAliases(t *testing.T) {
 	}, environment)
 }
 
+func TestAddEnvironmentLayerCanonicalizesEveryWindowsLayer(t *testing.T) {
+	environment := sys.EnvVars{"Path": "backend", "OTHER": "preserved"}
+	require.NoError(t, addEnvironmentLayer(&environment, sys.OsWindows, sys.EnvVars{"PATH": "client"}))
+	require.NoError(t, addEnvironmentLayer(&environment, sys.OsWindows, sys.EnvVars{"path": "authorization"}))
+
+	require.Equal(t, sys.EnvVars{"path": "authorization", "OTHER": "preserved"}, environment)
+}
+
+func TestAddEnvironmentLayerRejectsAmbiguousWindowsLayer(t *testing.T) {
+	environment := sys.EnvVars{}
+	err := addEnvironmentLayer(&environment, sys.OsWindows, sys.EnvVars{"Path": "one", "PATH": "two"})
+	require.ErrorContains(t, err, "ambiguous case-insensitive environment variables")
+}
+
 func TestAttachDockerExecWithTimeoutBoundsApiSetup(t *testing.T) {
 	started := time.Now()
 	_, err := attachDockerExecWithTimeout(context.Background(), 20*time.Millisecond, func(ctx context.Context) (types.HijackedResponse, error) {

@@ -39,6 +39,9 @@ Or to interact with resources inside the cluster itself (like connect to a datab
 <<property("type", "Environment Type", default="kubernetes", required=True)>>
 Has to be set to `kubernetes` to enable the Kubernetes environment.
 
+<<property("variables", "Environment Variables", "../data-type.md#environment-variables", template_context="../context/authorization.md")>>
+Defines environment variables for commands and shells in the Pod. They override image values and values received from the SSH client, `authorized_keys` and authorization. Bifröst-generated runtime variables take precedence.
+
 <<property("config", "Kubeconfig", "../data-type.md#kubeconfig", template_context="../context/core.md")>>
 Holds a [kubeconfig](https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/) (in YAML format) which defines the access to the desired Kubernetes cluster.
 
@@ -334,6 +337,9 @@ Namespace of the existing Pod. See [property namespace](#property-namespace) for
     ## because it does exist in the image
     shellCommand: [/bin/bash]
     execCommand: [/bin/bash, -c]
+
+    variables:
+      APPLICATION_ENV: production
 
     ## Only allow login if the OIDC's groups has "my-great-group-uuid"
     ## ...and the tid (tenant ID) is "my-great-tenant-uuid"

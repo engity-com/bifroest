@@ -114,3 +114,5 @@ func (this EnvironmentLocal) Types() []string {
 func (this EnvironmentLocal) FeatureFlags() []string {
 	return []string{"local"}
 }
+
+func (this EnvironmentLocal) SupportsEnvironmentVariables() bool { return true }

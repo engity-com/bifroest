@@ -16,6 +16,9 @@ In another use case you can set up a [Bastion/Jump host](../../usecases.md#basti
 <<property("type", "Environment Type", default="docker", required=True)>>
 Has to be set to `docker` to enable the docker environment.
 
+<<property("variables", "Environment Variables", "../data-type.md#environment-variables", template_context="../context/authorization.md")>>
+Defines environment variables for commands and shells in the container. They override image values and values received from the SSH client, `authorized_keys` and authorization. Bifröst-generated runtime variables take precedence.
+
 <<property("loginAllowed", "bool", template_context="../context/authorization.md", default=True)>>
 Has to be true (after being evaluated) that the user is allowed to use this environment.
 
@@ -247,6 +250,9 @@ Holds the tag of the image to be downloaded.
    ## because it does exist in the image
    shellCommand: [/bin/bash]
    execCommand: [/bin/bash, -c]
+
+   variables:
+     APPLICATION_ENV: production
 
    ## Only allow login if the OIDC's groups has "my-great-group-uuid"
    ## ...and the tid (tenant ID) is "my-great-tenant-uuid"

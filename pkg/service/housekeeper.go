@@ -20,6 +20,7 @@ type houseKeeper struct {
 	service       *service
 	closed        atomic.Bool
 	contextCancel context.CancelFunc
+	done          chan struct{}
 }
 
 func (this *houseKeeper) init(service *service) error {
@@ -39,7 +40,11 @@ func (this *houseKeeper) init(service *service) error {
 		nextRunIn = initialDelay.Native()
 	}
 
-	go this.loop(ctx, nextRunIn)
+	this.done = make(chan struct{})
+	go func() {
+		defer close(this.done)
+		this.loop(ctx, nextRunIn)
+	}()
 
 	success = true
 
@@ -161,15 +166,15 @@ func (this *houseKeeper) dispose(ctx context.Context, logger log.Logger, sess se
 		return false, errors.Newf(errors.System, "cannot dispose session %v: %w", sess, err)
 	}
 
+	sessionDisposed, err := sess.Dispose(ctx)
+	if err != nil {
+		return fail(err)
+	}
 	environmentDisposed, err := this.disposeEnvironment(ctx, logger, sess)
 	if err != nil {
 		return fail(err)
 	}
 	authorizationDisposed, err := this.disposeAuthorization(ctx, logger, sess)
-	if err != nil {
-		return fail(err)
-	}
-	sessionDisposed, err := sess.Dispose(ctx)
 	if err != nil {
 		return fail(err)
 	}
@@ -261,7 +266,12 @@ func (this *houseKeeper) Close() error {
 	if !this.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	this.contextCancel()
+	if this.contextCancel != nil {
+		this.contextCancel()
+	}
+	if this.done != nil {
+		<-this.done
+	}
 	return nil
 }
 

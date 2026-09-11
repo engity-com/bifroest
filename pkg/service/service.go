@@ -247,6 +247,9 @@ func (this *Service) prepare() (svc *service, err error) {
 	if err != nil {
 		return fail(err)
 	}
+	if err := this.logCertificateAuthorities(hostSigners); err != nil {
+		return fail(err)
+	}
 
 	if svc.alternatives, err = alternatives.NewProvider(ctx, this.Version, &this.Configuration.Alternatives); err != nil {
 		return fail(err)
@@ -257,10 +260,16 @@ func (this *Service) prepare() (svc *service, err error) {
 	if svc.sessions, err = session.NewFacadeRepository(ctx, &this.Configuration.Session); err != nil {
 		return fail(err)
 	}
+	sessionRepositoryPrepared := false
+	defer func() {
+		if !sessionRepositoryPrepared {
+			_ = svc.sessions.Close()
+		}
+	}()
 	if svc.authorizer, err = authorization.NewAuthorizerFacade(ctx, &this.Configuration.Flows); err != nil {
 		return fail(err)
 	}
-	if svc.environments, err = environment.NewRepositoryFacade(ctx, &this.Configuration.Flows, svc.alternatives, svc.imp); err != nil {
+	if svc.environments, err = environment.NewRepositoryFacadeWithHostKeys(ctx, &this.Configuration.Flows, svc.alternatives, svc.imp, hostSigners); err != nil {
 		return fail(err)
 	}
 	if err = svc.houseKeeper.init(svc); err != nil {
@@ -270,6 +279,7 @@ func (this *Service) prepare() (svc *service, err error) {
 		return fail(err)
 	}
 
+	sessionRepositoryPrepared = true
 	return svc, nil
 }
 
@@ -330,14 +340,27 @@ func (this *Service) prepareServer(_ context.Context, svc *service, hostPrivateK
 }
 
 func (this *Service) loadHostPrivateKeys() ([]crypto.PrivateKey, error) {
-	kc := &this.Configuration.Ssh.Keys
+	return EnsureHostPrivateKeys(&this.Configuration)
+}
+
+func EnsureHostPrivateKeys(conf *configuration.Configuration) ([]crypto.PrivateKey, error) {
+	result, _, err := EnsureHostPrivateKeysWithPaths(conf)
+	return result, err
+}
+
+func EnsureHostPrivateKeysWithPaths(conf *configuration.Configuration) ([]crypto.PrivateKey, []string, error) {
+	if conf == nil {
+		return nil, nil, fmt.Errorf("nil configuration")
+	}
+	kc := &conf.Ssh.Keys
 
 	hostKeys, err := kc.HostKeys.Render(noopContext{})
 	if err != nil {
-		return nil, errors.Config.Newf("cannot render hostKeys: %w", err)
+		return nil, nil, errors.Config.Newf("cannot render hostKeys: %w", err)
 	}
 
 	var result []crypto.PrivateKey
+	var resultPaths []string
 	for _, fn := range hostKeys {
 		if fn == "" {
 			continue
@@ -346,17 +369,49 @@ func (this *Service) loadHostPrivateKeys() ([]crypto.PrivateKey, error) {
 			Type: crypto.KeyTypeEd25519,
 		}, nil)
 		if err != nil {
-			return nil, fmt.Errorf("cannot ensure host key: %w", err)
+			return nil, nil, fmt.Errorf("cannot ensure host key: %w", err)
 		}
 
 		if ok, err := kc.KeyAllowed(pk); err != nil {
-			return nil, fmt.Errorf("cannot check if host key %q is allowed or not: %w", fn, err)
+			return nil, nil, fmt.Errorf("cannot check if host key %q is allowed or not: %w", fn, err)
 		} else if !ok {
-			return nil, fmt.Errorf("cannot check if host key %q is not allowed by restrictions: %w", fn, err)
+			return nil, nil, fmt.Errorf("cannot check if host key %q is not allowed by restrictions: %w", fn, err)
 		}
 		result = append(result, pk)
+		resultPaths = append(resultPaths, fn)
 	}
-	return result, nil
+	return result, resultPaths, nil
+}
+
+func (this *Service) logCertificateAuthorities(hostKeys []crypto.PrivateKey) error {
+	seen := make(map[string]struct{})
+	for i := range this.Configuration.Flows {
+		flow := &this.Configuration.Flows[i]
+		sshEnvironment, ok := flow.Environment.V.(*configuration.EnvironmentSsh)
+		if !ok || sshEnvironment.Certificate == nil {
+			continue
+		}
+		key, path, err := environment.EnsureSshCertificateAuthority(flow)
+		if err != nil {
+			return err
+		}
+		if err := environment.ValidateSshCertificateAuthority(key, hostKeys); err != nil {
+			return fmt.Errorf("flow %q: %w", flow.Name, err)
+		}
+		publicKey := key.PublicKey().ToSsh()
+		fingerprint := gossh.FingerprintSHA256(publicKey)
+		if _, exists := seen[fingerprint]; exists {
+			continue
+		}
+		seen[fingerprint] = struct{}{}
+		this.logger().
+			With("flow", flow.Name).
+			With("path", path).
+			With("fingerprint", fingerprint).
+			With("publicKey", strings.TrimSpace(string(gossh.MarshalAuthorizedKey(publicKey)))).
+			Info("SSH certificate authority available")
+	}
+	return nil
 }
 
 type service struct {
@@ -410,6 +465,19 @@ func (this *service) createNewServerConfig(ctx essh.Context, _ gonet.Conn, targe
 		KeyExchanges: this.resolvedSshKeysExchanges,
 		Ciphers:      this.resolvedSshMessagesCiphers,
 		MACs:         this.resolvedSshMessagesAuthentications,
+	}
+	target.VerifiedPublicKeyCallback = func(_ gossh.ConnMetadata, key gossh.PublicKey, permissions *gossh.Permissions, _ string) (*gossh.Permissions, error) {
+		if _, isCertificate := key.(*gossh.Certificate); !isCertificate {
+			return permissions, nil
+		}
+		accepted, err := this.authorizePublicKey(ctx, key, true)
+		if err != nil {
+			return nil, err
+		}
+		if !accepted {
+			return nil, errors.User.Newf("user certificate rejected after public key verification")
+		}
+		return permissions, nil
 	}
 	return nil
 }

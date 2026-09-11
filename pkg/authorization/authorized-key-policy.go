@@ -53,6 +53,10 @@ func (this *AuthorizedKeyPolicy) AllowsListen(host string, port uint32) bool {
 	return this.PortForwardingAllowed && matchesAuthorizedKeyHostPortPatterns(this.permitListen, host, port)
 }
 
+func (this *AuthorizedKeyPolicy) HasPortForwardingDestinationRestrictions() bool {
+	return this != nil && (len(this.permitOpen) > 0 || len(this.permitListen) > 0)
+}
+
 func evaluateAuthorizedKeyOptions(options []crypto.AuthorizedKeyOption, remote bnet.Host, now time.Time) (*AuthorizedKeyPolicy, bool, error) {
 	if len(options) == 0 {
 		return nil, true, nil

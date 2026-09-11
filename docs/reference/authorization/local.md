@@ -14,8 +14,16 @@ Authorizes a user request via the local user database of the host on which Bifr√
 <<property("type", "Authorization Type", default="local", required=True)>>
 Has to be set to `local` to enable the local authorization.
 
+<<property("trustedUserCAs", "Public Keys", "../data-type.md#public-keys")>>
+OpenSSH public keys of certificate authorities that may sign user certificates for existing local users. The requested SSH username must be included in the certificate's principals.
+
+<<property("trustedUserCAsFile", ref("File Path", "../data-type.md#file-path", ref("Public Keys", "../data-type.md#public-keys")))>>
+Same as [`trustedUserCAs`](#property-trustedUserCAs), but loaded from one file when the authorization is initialized. Both properties can be used together. A configured file must exist and contain at least one valid public key.
+
 <<property("authorizedKeys", array_ref("File Path", "../data-type.md#file-path", ref("Authorized Keys", "../data-type.md#authorized-keys")), template_context="../context/core.md", default=["{{.user.homeDir}}/.ssh/authorized_keys"])>>
 Contains files with the format of classic [authorized keys](../data-type.md#authorized-keys), in which Bifr√∂st will look for [SSH Public Keys](../data-type.md#ssh-public-key).
+
+An entry with the `cert-authority` option treats its key as a user certificate authority for that local user. The optional `principals="..."` option restricts it further. An empty `authorizedKeys` list does not disable certificate authentication through `trustedUserCAs` or `trustedUserCAsFile`.
 
 <<property("password", "Password", "#password")>>
 See [below](#password).
@@ -52,6 +60,15 @@ If `true`, the user is allowed to use empty passwords.
 This authorization will produce a context of type [Authorization Local](../context/authorization.md#local).
 
 ## Examples
+
+```yaml
+type: local
+trustedUserCAsFile: /etc/engity/bifroest/trusted-user-cas
+authorizedKeys:
+  - "{{.user.homeDir}}/.ssh/authorized_keys"
+```
+
+User certificates must be current, signed by the selected CA, have the requested SSH username as a principal, and contain no critical options. Missing `permit-pty`, `permit-port-forwarding`, or `permit-agent-forwarding` certificate extensions disable the corresponding capability. Authorized-key options can only restrict these capabilities further.
 
 ## Compatibility
 

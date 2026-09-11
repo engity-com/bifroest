@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/echocat/slf4g/sdk/testlog"
+	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/crypto"
@@ -14,6 +15,8 @@ import (
 
 func TestConfiguration_UnmarshalYAML(t *testing.T) {
 	testlog.Hook(t)
+	require.Equal(t, `C:\ProgramData\Engity\Bifroest\client-key`, DefaultCertificateIdentityFile.String())
+	require.Equal(t, `C:\ProgramData\Engity\Bifroest\ca`, DefaultCertificateAuthorityFile.String())
 
 	runUnmarshalYamlTests(t,
 		unmarshalYamlTestCase[Configuration]{
@@ -104,7 +107,7 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 						RetrieveIdToken:  DefaultAuthorizationOidcRetrieveIdToken,
 						RetrieveUserInfo: DefaultAuthorizationOidcRetrieveUserInfo,
 					}},
-					Environment: Environment{&EnvironmentLocal{
+					Environment: Environment{V: &EnvironmentLocal{
 						LoginAllowed:          DefaultEnvironmentLocalLoginAllowed,
 						Banner:                DefaultEnvironmentLocalBanner,
 						ShellCommand:          DefaultEnvironmentLocalShellCommand,

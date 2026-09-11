@@ -1,6 +1,8 @@
 package configuration
 
 import (
+	"fmt"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -100,11 +102,28 @@ func (this Flows) IsZero() bool {
 }
 
 func (this *Flows) Trim() error {
-	return trimSlice(this)
+	if err := trimSlice(this); err != nil {
+		return err
+	}
+	return this.validateUniqueNames()
 }
 
 func (this Flows) Validate() error {
+	if err := this.validateUniqueNames(); err != nil {
+		return err
+	}
 	return validateSlice(this)
+}
+
+func (this Flows) validateUniqueNames() error {
+	indices := make(map[FlowName]int, len(this))
+	for i, flow := range this {
+		if previous, exists := indices[flow.Name]; exists {
+			return fmt.Errorf("[%d][name] duplicates [%d][name] %q", i, previous, flow.Name)
+		}
+		indices[flow.Name] = i
+	}
+	return nil
 }
 
 func (this *Flows) UnmarshalYAML(node *yaml.Node) error {

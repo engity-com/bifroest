@@ -121,14 +121,22 @@ func (this *fs) setToken(_ context.Context, data []byte, kind, name string) (rEr
 		}
 		return nil
 	}
+	current, err := this.repository.findBy(context.Background(), this.flow, this.id, nil, false)
+	if err != nil {
+		return fmt.Errorf("cannot write session's %s token because current session state is unavailable: %w", name, err)
+	}
+	if current.info.VState == StateDisposed {
+		return fmt.Errorf("cannot write session's %s token because session %v is disposed", name, this)
+	}
 
-	f, fn, err := this.repository.openWrite(this.flow, this.id, kind, false)
+	if _, err := this.repository.stat(this.flow, this.id, FsFileSession); err != nil {
+		return fmt.Errorf("cannot write session's %s token because session info is unavailable: %w", name, err)
+	}
+	fn, err := this.repository.file(this.flow, this.id, kind)
 	if err != nil {
 		return err
 	}
-	defer common.KeepCloseError(&rErr, f)
-
-	if _, err := f.Write(data); err != nil {
+	if err := writeFsFileAtomically(fn, data, os.FileMode(this.repository.conf.FileMode), os.FileMode(this.repository.dirFileMode())); err != nil {
 		return fmt.Errorf("cannot write session's %s token file (%q) of %v: %w", name, fn, this, err)
 	}
 	return nil
@@ -156,10 +164,22 @@ func (this *fs) DeletePublicKey(ctx context.Context, pub ssh.PublicKey) error {
 }
 
 func (this *fs) NotifyLastAccess(_ context.Context, remote net.Remote, newState State) (State, error) {
+	this.repository.mutex.Lock()
+	defer this.repository.mutex.Unlock()
 	return this.notifyLastAccess(remote, newState)
 }
 
 func (this *fs) notifyLastAccess(remote net.Remote, newState State) (State, error) {
+	current, err := this.repository.findBy(context.Background(), this.flow, this.id, nil, false)
+	if err != nil {
+		return 0, fmt.Errorf("cannot load current state of session %v: %w", this, err)
+	}
+	if current.info.VState == StateDisposed {
+		return current.info.VState, fmt.Errorf("cannot notify last access of disposed session %v", this)
+	}
+	this.info.VState = current.info.VState
+	this.info.createdAt = current.info.createdAt
+	this.info.VCreatedAt = current.info.VCreatedAt
 	var buf fsLastAccessed
 	buf.at = time.Now().Truncate(time.Millisecond)
 	buf.VRemoteUser = remote.User()

@@ -20,6 +20,8 @@ type htpasswd struct {
 	sessionsPublicKey ssh.PublicKey
 }
 
+func (*htpasswd) AuthorizationKind() string { return "htpasswd" }
+
 func (this *htpasswd) Remote() net.Remote {
 	return this.remote
 }

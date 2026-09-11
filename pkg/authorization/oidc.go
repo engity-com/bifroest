@@ -25,6 +25,8 @@ type oidc struct {
 	sessionsPublicKey ssh.PublicKey
 }
 
+func (*oidc) AuthorizationKind() string { return "oidc-device-auth" }
+
 func (this *oidc) GetField(name string, ce ContextEnabled) (any, bool, error) {
 	return getField(name, ce, this, func() (any, bool, error) {
 		switch name {

@@ -10,8 +10,12 @@ import (
 
 type authorizedKeySession struct {
 	essh.Session
-	command     string
-	environment sys.EnvVars
+	command                  string
+	originalCommand          string
+	hasOriginalCommand       bool
+	environment              sys.EnvVars
+	clientEnvironment        []string
+	authorizedKeyEnvironment sys.EnvVars
 }
 
 func applyAuthorizedKeyPolicy(auth authorization.Authorization, session essh.Session) (essh.Session, bool) {
@@ -23,17 +27,24 @@ func applyAuthorizedKeyPolicy(auth authorization.Authorization, session essh.Ses
 	environment := sys.EnvVars{}
 	environment.Add(session.Environ()...)
 	environment.AddAllOf(policy.Environment)
-	command := session.RawCommand()
+	authorizedKeyEnvironment := policy.Environment.Clone()
+	originalCommand := session.RawCommand()
+	command := originalCommand
 	forced := policy.ForcedCommand != nil
 	if forced {
 		environment.Set("SSH_ORIGINAL_COMMAND", command)
+		authorizedKeyEnvironment.Set("SSH_ORIGINAL_COMMAND", command)
 		command = *policy.ForcedCommand
 	}
 
 	return &authorizedKeySession{
-		Session:     session,
-		command:     command,
-		environment: environment,
+		Session:                  session,
+		command:                  command,
+		originalCommand:          originalCommand,
+		hasOriginalCommand:       forced,
+		environment:              environment,
+		clientEnvironment:        session.Environ(),
+		authorizedKeyEnvironment: authorizedKeyEnvironment,
 	}, forced
 }
 
@@ -48,4 +59,16 @@ func (this *authorizedKeySession) Command() []string {
 
 func (this *authorizedKeySession) Environ() []string {
 	return this.environment.Strings()
+}
+
+func (this *authorizedKeySession) ClientEnvironment() []string {
+	return append([]string(nil), this.clientEnvironment...)
+}
+
+func (this *authorizedKeySession) AuthorizedKeyEnvironment() sys.EnvVars {
+	return this.authorizedKeyEnvironment.Clone()
+}
+
+func (this *authorizedKeySession) OriginalCommand() (string, bool) {
+	return this.originalCommand, this.hasOriginalCommand
 }

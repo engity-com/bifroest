@@ -18,13 +18,15 @@ var (
 )
 
 type AuthorizationLocal struct {
-	AuthorizedKeys template.Strings   `yaml:"authorizedKeys,omitempty"`
-	Password       PasswordProperties `yaml:"password,omitempty"`
-	PamService     string             `yaml:"pamService,omitempty"`
+	UserCertificateAuthorityProperties `yaml:",inline"`
+	AuthorizedKeys                     template.Strings   `yaml:"authorizedKeys,omitempty"`
+	Password                           PasswordProperties `yaml:"password,omitempty"`
+	PamService                         string             `yaml:"pamService,omitempty"`
 }
 
 func (this *AuthorizationLocal) SetDefaults() error {
 	return setDefaults(this,
+		func(v *AuthorizationLocal) (string, defaulter) { return "", &v.UserCertificateAuthorityProperties },
 		fixedDefault("authorizedKeys", func(v *AuthorizationLocal) *template.Strings { return &v.AuthorizedKeys }, DefaultAuthorizationLocalAuthorizedKeys),
 		func(v *AuthorizationLocal) (string, defaulter) { return "password", &v.Password },
 		fixedDefault("pamService", func(v *AuthorizationLocal) *string { return &v.PamService }, DefaultAuthorizationLocalPamService),
@@ -33,6 +35,7 @@ func (this *AuthorizationLocal) SetDefaults() error {
 
 func (this *AuthorizationLocal) Trim() error {
 	return trim(this,
+		func(v *AuthorizationLocal) (string, trimmer) { return "", &v.UserCertificateAuthorityProperties },
 		noopTrim[AuthorizationLocal]("authorizedKeys"),
 		func(v *AuthorizationLocal) (string, trimmer) { return "password", &v.Password },
 		func(v *AuthorizationLocal) (string, trimmer) { return "pamService", &stringTrimmer{&v.PamService} },
@@ -41,6 +44,7 @@ func (this *AuthorizationLocal) Trim() error {
 
 func (this *AuthorizationLocal) Validate() error {
 	return validate(this,
+		func(v *AuthorizationLocal) (string, validator) { return "", &v.UserCertificateAuthorityProperties },
 		func(v *AuthorizationLocal) (string, validator) { return "authorizedKeys", &v.AuthorizedKeys },
 		func(v *AuthorizationLocal) (string, validator) { return "password", &v.Password },
 		noopValidate[AuthorizationLocal]("pamService"),
@@ -69,7 +73,8 @@ func (this AuthorizationLocal) IsEqualTo(other any) bool {
 }
 
 func (this AuthorizationLocal) isEqualTo(other *AuthorizationLocal) bool {
-	return isEqual(&this.AuthorizedKeys, &other.AuthorizedKeys) &&
+	return isEqual(&this.UserCertificateAuthorityProperties, &other.UserCertificateAuthorityProperties) &&
+		isEqual(&this.AuthorizedKeys, &other.AuthorizedKeys) &&
 		isEqual(&this.Password, &other.Password) &&
 		this.PamService == other.PamService
 }

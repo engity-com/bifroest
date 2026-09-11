@@ -10,6 +10,10 @@ import (
 )
 
 func (this *service) handlePublicKey(ctx essh.Context, _ gossh.ConnMetadata, key essh.PublicKey) (bool, error) {
+	return this.authorizePublicKey(ctx, key, false)
+}
+
+func (this *service) authorizePublicKey(ctx essh.Context, key essh.PublicKey, verified bool) (bool, error) {
 	conn := this.connection(ctx)
 	if conn == nil {
 		return false, nil
@@ -26,8 +30,10 @@ func (this *service) handlePublicKey(ctx essh.Context, _ gossh.ConnMetadata, key
 		return false, nil
 	}
 
-	if _, ok := ctx.Value(handshakeKeyCtxKey).(essh.PublicKey); !ok {
-		ctx.SetValue(handshakeKeyCtxKey, key)
+	if _, isCertificate := key.(*gossh.Certificate); !isCertificate {
+		if _, ok := ctx.Value(handshakeKeyCtxKey).(essh.PublicKey); !ok {
+			ctx.SetValue(handshakeKeyCtxKey, key)
+		}
 	}
 
 	authReq := authorizeRequest{
@@ -35,7 +41,7 @@ func (this *service) handlePublicKey(ctx essh.Context, _ gossh.ConnMetadata, key
 		connection: conn,
 	}
 
-	auth, err := this.authorizer.AuthorizePublicKey(&publicKeyAuthorizeRequest{authReq, key})
+	auth, err := this.authorizer.AuthorizePublicKey(&publicKeyAuthorizeRequest{authReq, key, verified})
 	if err != nil {
 		if errors.IsType(err, errors.User) {
 			l.WithError(err).Debug("public key failed by user")
@@ -46,6 +52,12 @@ func (this *service) handlePublicKey(ctx essh.Context, _ gossh.ConnMetadata, key
 
 	if auth == nil || !auth.IsAuthorized() {
 		l.Debug("public key rejected")
+		return false, nil
+	}
+	if compatible, err := authReq.IsSessionCompatible(auth); err != nil {
+		return false, errors.Newf(errors.System, "cannot validate environment session compatibility: %w", err)
+	} else if !compatible {
+		l.Debug("public key session is incompatible with the current environment")
 		return false, nil
 	}
 
@@ -64,12 +76,10 @@ func (this *service) handlePassword(ctx essh.Context, _ gossh.ConnMetadata, pass
 	}
 	l := conn.logger
 
+	authReq := authorizeRequest{service: this, connection: conn}
 	auth, err := this.authorizer.AuthorizePassword(&passwordAuthorizeRequest{
-		authorizeRequest: authorizeRequest{
-			service:    this,
-			connection: conn,
-		},
-		password: password,
+		authorizeRequest: authReq,
+		password:         password,
 	})
 	if err != nil {
 		if errors.IsType(err, errors.User) {
@@ -80,6 +90,12 @@ func (this *service) handlePassword(ctx essh.Context, _ gossh.ConnMetadata, pass
 	}
 	if auth == nil || !auth.IsAuthorized() {
 		l.Debug("password rejected")
+		return false, nil
+	}
+	if compatible, err := authReq.IsSessionCompatible(auth); err != nil {
+		return false, errors.Newf(errors.System, "cannot validate environment session compatibility: %w", err)
+	} else if !compatible {
+		l.Debug("password session is incompatible with the current environment")
 		return false, nil
 	}
 
@@ -96,12 +112,10 @@ func (this *service) handleKeyboardInteractiveChallenge(ctx essh.Context, _ goss
 	}
 	l := conn.logger
 
+	authReq := authorizeRequest{service: this, connection: conn}
 	auth, err := this.authorizer.AuthorizeInteractive(&interactiveAuthorizeRequest{
-		authorizeRequest: authorizeRequest{
-			service:    this,
-			connection: conn,
-		},
-		challenger: challenger,
+		authorizeRequest: authReq,
+		challenger:       challenger,
 	})
 	if err != nil {
 		if errors.IsType(err, errors.User) {
@@ -112,6 +126,12 @@ func (this *service) handleKeyboardInteractiveChallenge(ctx essh.Context, _ goss
 	}
 	if auth == nil || !auth.IsAuthorized() {
 		l.Debug("interactive rejected")
+		return false, nil
+	}
+	if compatible, err := authReq.IsSessionCompatible(auth); err != nil {
+		return false, errors.Newf(errors.System, "cannot validate environment session compatibility: %w", err)
+	} else if !compatible {
+		l.Debug("interactive session is incompatible with the current environment")
 		return false, nil
 	}
 

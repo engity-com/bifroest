@@ -25,6 +25,8 @@ type local struct {
 	authorizedKeyPolicy *AuthorizedKeyPolicy
 }
 
+func (*local) AuthorizationKind() string { return "local" }
+
 func (this *local) Remote() net.Remote {
 	return this.remote
 }

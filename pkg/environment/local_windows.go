@@ -63,8 +63,9 @@ func (this *local) createCmdAndEnv(t Task) (*exec.Cmd, *sys.EnvVars, error) {
 	if v, ok := os.LookupEnv("TZ"); ok {
 		ev.Set("TZ", v)
 	}
-	ev.AddAllOf(t.Authorization().EnvVars())
-	ev.Add(t.SshSession().Environ()...)
+	if err := applyTaskEnvironment(&ev, localTargetOs, t); err != nil {
+		return nil, nil, err
+	}
 
 	return &cmd, &ev, nil
 }

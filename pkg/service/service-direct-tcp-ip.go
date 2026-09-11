@@ -13,6 +13,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/net"
 )
@@ -205,7 +206,12 @@ func (this *service) onReversePortForwardingRequested(ctx essh.Context, _ gossh.
 		return false, errors.Newf(errors.System, "cannot ensure environment for reverse port forwarding: %w", err)
 	}
 	defer common.IgnoreCloseError(env)
-	allowed, err := env.IsPortForwardingAllowed(bind)
+	var allowed bool
+	if policy, ok := env.(environment.ReversePortForwardingPolicy); ok {
+		allowed, err = policy.IsReversePortForwardingAllowed(bind)
+	} else {
+		allowed, err = env.IsPortForwardingAllowed(bind)
+	}
 	if err != nil {
 		return false, errors.Newf(errors.System, "cannot check if reverse port forwarding is allowed: %w", err)
 	}

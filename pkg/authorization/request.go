@@ -20,6 +20,15 @@ type PublicKeyRequest interface {
 	RemotePublicKey() gossh.PublicKey
 }
 
+type verifiedPublicKeyRequest interface {
+	PublicKeyVerified() bool
+}
+
+func isPublicKeyVerified(req PublicKeyRequest) bool {
+	verified, ok := req.(verifiedPublicKeyRequest)
+	return ok && verified.PublicKeyVerified()
+}
+
 type PasswordRequest interface {
 	Request
 	RemotePassword() string
@@ -30,4 +39,14 @@ type InteractiveRequest interface {
 	SendInfo(string) error
 	SendError(string) error
 	Prompt(msg string, echoOn bool) (string, error)
+}
+
+type authorizationContextSetter interface {
+	SetAuthorizationContext(Authorization)
+}
+
+func setAuthorizationContext(req Request, auth Authorization) {
+	if setter, ok := req.(authorizationContextSetter); ok {
+		setter.SetAuthorizationContext(auth)
+	}
 }

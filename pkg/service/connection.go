@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	gonet "net"
 	"os"
@@ -151,6 +152,10 @@ func (this *connection) Remote() net.Remote {
 
 func (this *connection) Logger() log.Logger {
 	return this.logger
+}
+
+func (this *connection) Lifetime() context.Context {
+	return this.context
 }
 
 func (this *connection) doWithInterceptor(consumer func(session.ConnectionInterceptor) error) error {

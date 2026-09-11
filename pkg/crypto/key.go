@@ -7,9 +7,10 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
-	"os"
+	"io/fs"
 
 	"github.com/mikesmitty/edkey"
 	"golang.org/x/crypto/ssh"
@@ -144,9 +145,16 @@ func (this *privateKeyWrapper) String() string {
 }
 
 func EnsureKeyFile(fn string, reqOnAbsence *KeyRequirement, rand io.Reader) (PrivateKey, error) {
-	raw, err := os.ReadFile(fn)
+	raw, err := readPrivateKeyFile(fn)
 	if sys.IsNotExist(err) {
-		return reqOnAbsence.CreateFile(rand, fn)
+		if reqOnAbsence == nil {
+			return nil, fmt.Errorf("private key %q does not exist", fn)
+		}
+		created, createErr := reqOnAbsence.CreateFile(rand, fn)
+		if errors.Is(createErr, fs.ErrExist) {
+			return EnsureKeyFile(fn, nil, rand)
+		}
+		return created, createErr
 	} else if err != nil {
 		return nil, fmt.Errorf("cannot read %q: %w", fn, err)
 	}
@@ -155,8 +163,14 @@ func EnsureKeyFile(fn string, reqOnAbsence *KeyRequirement, rand io.Reader) (Pri
 	if err != nil {
 		return nil, fmt.Errorf("cannot parse private key %q: %w", fn, err)
 	}
-
-	return PrivateKeyFromSdk(pk.(gocrypto.Signer))
+	switch value := pk.(type) {
+	case *dsa.PrivateKey:
+		return PrivateKeyFromSdk(&dsaPrivateKey{value})
+	case gocrypto.Signer:
+		return PrivateKeyFromSdk(value)
+	default:
+		return nil, fmt.Errorf("private key %q of type %T cannot be used as signer", fn, pk)
+	}
 }
 
 func WriteSshPrivateKey(pk PrivateKey, to io.Writer) error {

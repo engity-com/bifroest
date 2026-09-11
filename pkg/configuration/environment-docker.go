@@ -241,3 +241,5 @@ func (this EnvironmentDocker) Types() []string {
 func (this EnvironmentDocker) FeatureFlags() []string {
 	return []string{"docker"}
 }
+
+func (this EnvironmentDocker) SupportsEnvironmentVariables() bool { return true }

@@ -272,3 +272,5 @@ func (this EnvironmentKubernetes) Types() []string {
 func (this EnvironmentKubernetes) FeatureFlags() []string {
 	return []string{"kubernetes"}
 }
+
+func (this EnvironmentKubernetes) SupportsEnvironmentVariables() bool { return true }
