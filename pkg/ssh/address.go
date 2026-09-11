@@ -2,8 +2,9 @@ package ssh
 
 import (
 	"fmt"
-	gonet "net"
+	"net/netip"
 	"strings"
+	"unicode"
 
 	bnet "github.com/engity-com/bifroest/pkg/net"
 )
@@ -17,7 +18,7 @@ func ParseAddress(value string) (bnet.HostPort, error) {
 	if explicitErr == nil && !explicit.IsZero() {
 		if err := explicit.Validate(); err == nil {
 			hostValue := explicit.Host.String()
-			if gonet.ParseIP(hostValue) == nil && isUnsafeKnownHostName(hostValue) {
+			if !isSafeIPAddress(hostValue) && isUnsafeKnownHostName(hostValue) {
 				return bnet.HostPort{}, fmt.Errorf("illegal SSH address %q: host contains unsafe characters", value)
 			}
 			return explicit, nil
@@ -32,16 +33,16 @@ func ParseAddress(value string) (bnet.HostPort, error) {
 			return bnet.HostPort{}, fmt.Errorf("illegal SSH address %q: invalid brackets", value)
 		}
 		hostValue = value[1 : len(value)-1]
-		if gonet.ParseIP(hostValue) == nil {
+		if !isSafeIPAddress(hostValue) {
 			return bnet.HostPort{}, fmt.Errorf("illegal SSH address %q: brackets require an IPv6 address", value)
 		}
-	} else if strings.Contains(value, ":") && gonet.ParseIP(value) == nil {
+	} else if strings.Contains(value, ":") && !isSafeIPAddress(value) {
 		return bnet.HostPort{}, fmt.Errorf("illegal SSH address %q: %w", value, explicitErr)
 	}
 	if hostValue == "" {
 		return bnet.HostPort{}, fmt.Errorf("illegal SSH address %q: host is empty", value)
 	}
-	if gonet.ParseIP(hostValue) == nil && isUnsafeKnownHostName(hostValue) {
+	if !isSafeIPAddress(hostValue) && isUnsafeKnownHostName(hostValue) {
 		return bnet.HostPort{}, fmt.Errorf("illegal SSH address %q: host contains unsafe characters", value)
 	}
 	host, err := bnet.NewHost(hostValue)
@@ -56,13 +57,18 @@ func ParseAddress(value string) (bnet.HostPort, error) {
 }
 
 func isUnsafeKnownHostName(value string) bool {
-	if strings.ContainsAny(value, ",*!?[]|#") {
+	if strings.ContainsAny(value, ",*!?[]|#@") {
 		return true
 	}
 	for _, candidate := range value {
-		if candidate <= ' ' || candidate == 0x7f {
+		if unicode.IsSpace(candidate) || unicode.IsControl(candidate) {
 			return true
 		}
 	}
 	return false
+}
+
+func isSafeIPAddress(value string) bool {
+	address, err := netip.ParseAddr(value)
+	return err == nil && (address.Zone() == "" || !isUnsafeKnownHostName(address.Zone()))
 }

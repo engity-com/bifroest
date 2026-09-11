@@ -23,8 +23,6 @@ func installPrivateKeyFile(temporary, target string) error {
 	return syncPrivateKeyDirectory(filepath.Dir(target))
 }
 
-func preparePrivateKeyFile(file *os.File, _ string) error { return file.Chmod(0400) }
-
 func syncPrivateKeyDirectory(path string) error {
 	directory, err := os.Open(path)
 	if err != nil {

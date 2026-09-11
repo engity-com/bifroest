@@ -17,6 +17,9 @@ func TestParseAddress(t *testing.T) {
 		{value: "2001:db8::1", expected: "[2001:db8::1]:22"},
 		{value: "[2001:db8::1]", expected: "[2001:db8::1]:22"},
 		{value: "[2001:db8::1]:2222", expected: "[2001:db8::1]:2222"},
+		{value: "fe80::1%eth0", expected: "[fe80::1%eth0]:22"},
+		{value: "[fe80::1%eth0]", expected: "[fe80::1%eth0]:22"},
+		{value: "[fe80::1%eth0]:2222", expected: "[fe80::1%eth0]:2222"},
 	} {
 		t.Run(test.value, func(t *testing.T) {
 			actual, err := ParseAddress(test.value)
@@ -27,7 +30,7 @@ func TestParseAddress(t *testing.T) {
 }
 
 func TestParseAddressRejectsInvalidValues(t *testing.T) {
-	for _, value := range []string{"", ":22", "target.example.org:", "target.example.org:0", "target.example.org:65536", "[2001:db8::1", "[target.example.org]", "host-a,*.example.org", "host-a,*.example.org:22", "*.example.org", "*.example.org:22", "host example.org", "host example.org:22", "#comment", "#comment:22"} {
+	for _, value := range []string{"", ":22", "target.example.org:", "target.example.org:0", "target.example.org:65536", "[2001:db8::1", "[target.example.org]", "host-a,*.example.org", "host-a,*.example.org:22", "*.example.org", "*.example.org:22", "host example.org", "host example.org:22", "host\u00a0ssh-ed25519\u00a0AAAA", "host\u0085ssh-ed25519\u0085AAAA:22", "#comment", "#comment:22", "@revoked", "@revoked:22", "host@example.org", "host@example.org:22", "fe80::1%bad,zone", "[fe80::1%bad,zone]:22"} {
 		t.Run(value, func(t *testing.T) {
 			_, err := ParseAddress(value)
 			require.Error(t, err)

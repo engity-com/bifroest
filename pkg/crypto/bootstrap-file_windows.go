@@ -5,11 +5,11 @@ package crypto
 import "golang.org/x/sys/windows"
 
 func installBootstrapFile(temporary, target string, force bool) error {
-	from, err := windows.UTF16PtrFromString(temporary)
+	from, err := windowsPathPointer(temporary)
 	if err != nil {
 		return err
 	}
-	to, err := windows.UTF16PtrFromString(target)
+	to, err := windowsPathPointer(target)
 	if err != nil {
 		return err
 	}

@@ -3,6 +3,7 @@ package authorization
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -110,6 +111,9 @@ func TestAuthorizationEvidenceRejectsCapabilityExpansionAndCycles(t *testing.T) 
 	invalid = evidence.Clone()
 	invalid.Hops[0].CaFingerprint = "SHA256:not-a-fingerprint"
 	require.ErrorContains(t, invalid.Validate(), "caFingerprint")
+	invalid = evidence.Clone()
+	invalid.Hops[0].SubjectKeyFingerprint = nonCanonicalEvidenceTestFingerprint(t, invalid.Hops[0].SubjectKeyFingerprint)
+	require.ErrorContains(t, invalid.Validate(), "subjectKeyFingerprint")
 	extendedValidAfter := base
 	extendedValidAfter.SubjectKeyFingerprint = ssh.FingerprintSHA256(newEvidenceTestSigner(t).PublicKey())
 	extendedValidAfter.Serial = 4
@@ -119,6 +123,23 @@ func TestAuthorizationEvidenceRejectsCapabilityExpansionAndCycles(t *testing.T) 
 	extendedValidAfter.AuthorizationKind = "bifroest"
 	extendedValidAfter.ValidAfter = base.ValidAfter.Add(-time.Second)
 	require.ErrorContains(t, evidence.Append(extendedValidAfter), "valid-after")
+}
+
+func nonCanonicalEvidenceTestFingerprint(t *testing.T, fingerprint string) string {
+	t.Helper()
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+	encoded := strings.TrimPrefix(fingerprint, "SHA256:")
+	require.Len(t, encoded, 43)
+	last := strings.IndexByte(alphabet, encoded[len(encoded)-1])
+	require.GreaterOrEqual(t, last, 0)
+	alternative := alphabet[(last&^3)|1]
+	nonCanonical := encoded[:len(encoded)-1] + string(alternative)
+	canonicalRaw, err := base64.RawStdEncoding.DecodeString(encoded)
+	require.NoError(t, err)
+	nonCanonicalRaw, err := base64.RawStdEncoding.DecodeString(nonCanonical)
+	require.NoError(t, err)
+	require.Equal(t, canonicalRaw, nonCanonicalRaw)
+	return "SHA256:" + nonCanonical
 }
 
 func TestEvaluateBifroestUserCertificateRejectsInvalidDelegations(t *testing.T) {

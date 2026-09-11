@@ -418,8 +418,9 @@ func validateAuthorizationEvidenceFingerprint(value string) error {
 	if !strings.HasPrefix(value, prefix) {
 		return fmt.Errorf("expected an SHA256 fingerprint")
 	}
-	raw, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(value, prefix))
-	if err != nil || len(raw) != 32 {
+	encoded := strings.TrimPrefix(value, prefix)
+	raw, err := base64.RawStdEncoding.Strict().DecodeString(encoded)
+	if err != nil || len(raw) != 32 || base64.RawStdEncoding.EncodeToString(raw) != encoded {
 		return fmt.Errorf("expected an SHA256 fingerprint")
 	}
 	return nil
