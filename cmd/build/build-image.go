@@ -117,18 +117,6 @@ func (this *buildImage) createPart(ctx context.Context, binary *buildArtifact) (
 		Vendor:                this.vendor,
 	}
 
-	deps, err := this.dependencies.imagesFiles.downloadFilesFor(ctx, a.Os, a.Arch)
-	if err != nil {
-		return fail(err)
-	}
-	if len(deps) > 0 {
-		if buildRequest.Contents != nil {
-			buildRequest.Contents = common.JoinSeq2(buildRequest.Contents, common.Seq2ErrOf(deps.ToLayerItems()...))
-		} else {
-			buildRequest.Contents = common.Seq2ErrOf(deps.ToLayerItems()...)
-		}
-	}
-
 	if buildRequest.Annotations, err = this.createAnnotations(ctx, a.Edition, func(v version, rm *github.Repository, m map[string]string) error {
 		m[ImageAnnotationPlatform] = a.Platform.String()
 		return nil
