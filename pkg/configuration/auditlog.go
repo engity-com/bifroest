@@ -1,11 +1,15 @@
 package configuration
 
 import (
+	"crypto/rsa"
 	"fmt"
 	"path/filepath"
 	"strings"
 
+	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v3"
+
+	"github.com/engity-com/bifroest/pkg/crypto"
 )
 
 var (
@@ -17,10 +21,12 @@ var (
 // Auditlog defines the local audit journal. Remote targets are configured
 // separately because they replicate the journal rather than replace it.
 type Auditlog struct {
-	Name         AuditlogName    `yaml:"name"`
-	Enabled      bool            `yaml:"enabled,omitempty"`
-	IdentityFile string          `yaml:"identityFile,omitempty"`
-	Journal      AuditlogJournal `yaml:"journal,omitempty"`
+	Name                    AuditlogName          `yaml:"name"`
+	Enabled                 bool                  `yaml:"enabled,omitempty"`
+	IdentityFile            string                `yaml:"identityFile,omitempty"`
+	EncryptionPublicKey     crypto.PublicKeys     `yaml:"encryptionPublicKey,omitempty"`
+	EncryptionPublicKeyFile crypto.PublicKeysFile `yaml:"encryptionPublicKeyFile,omitempty"`
+	Journal                 AuditlogJournal       `yaml:"journal,omitempty"`
 }
 
 func (this *Auditlog) SetDefaults() error {
@@ -28,6 +34,8 @@ func (this *Auditlog) SetDefaults() error {
 		fixedDefault("name", func(v *Auditlog) *AuditlogName { return &v.Name }, DefaultAuditlogName),
 		fixedDefault("enabled", func(v *Auditlog) *bool { return &v.Enabled }, DefaultAuditlogEnabled),
 		fixedDefault("identityFile", func(v *Auditlog) *string { return &v.IdentityFile }, DefaultAuditlogIdentityFile),
+		noopSetDefault[Auditlog]("encryptionPublicKey"),
+		noopSetDefault[Auditlog]("encryptionPublicKeyFile"),
 		func(v *Auditlog) (string, defaulter) { return "journal", &v.Journal },
 	)
 }
@@ -37,22 +45,31 @@ func (this *Auditlog) Trim() error {
 		noopTrim[Auditlog]("name"),
 		noopTrim[Auditlog]("enabled"),
 		func(v *Auditlog) (string, trimmer) { return "identityFile", &stringTrimmer{&v.IdentityFile} },
+		func(v *Auditlog) (string, trimmer) { return "encryptionPublicKey", &v.EncryptionPublicKey },
+		func(v *Auditlog) (string, trimmer) { return "encryptionPublicKeyFile", &v.EncryptionPublicKeyFile },
 		func(v *Auditlog) (string, trimmer) { return "journal", &v.Journal },
 	)
 }
 
 func (this *Auditlog) Validate() error {
+	if !this.EncryptionPublicKey.IsZero() && !this.EncryptionPublicKeyFile.IsZero() {
+		return fmt.Errorf("[encryptionPublicKey] cannot be combined with [encryptionPublicKeyFile]")
+	}
 	return validate(this,
 		func(v *Auditlog) (string, validator) { return "name", &v.Name },
 		noopValidate[Auditlog]("enabled"),
 		notEmptyStringValidate("identityFile", func(v *Auditlog) *string { return &v.IdentityFile }),
+		func(v *Auditlog) (string, validator) {
+			return "encryptionPublicKey", &auditlogEncryptionPublicKeyValidator{v.EncryptionPublicKey}
+		},
+		noopValidate[Auditlog]("encryptionPublicKeyFile"),
 		func(v *Auditlog) (string, validator) { return "journal", &v.Journal },
 	)
 }
 
 func (this *Auditlog) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *Auditlog, node *yaml.Node) error {
-		if err := rejectUnknownAuditlogFields(node, "name", "enabled", "identityFile", "journal"); err != nil {
+		if err := rejectUnknownAuditlogFields(node, "name", "enabled", "identityFile", "encryptionPublicKey", "encryptionPublicKeyFile", "journal"); err != nil {
 			return err
 		}
 		type raw Auditlog
@@ -78,7 +95,46 @@ func (this Auditlog) isEqualTo(other *Auditlog) bool {
 	return this.Name == other.Name &&
 		this.Enabled == other.Enabled &&
 		this.IdentityFile == other.IdentityFile &&
+		this.EncryptionPublicKey.IsEqualTo(other.EncryptionPublicKey) &&
+		this.EncryptionPublicKeyFile.IsEqualTo(other.EncryptionPublicKeyFile) &&
 		isEqual(&this.Journal, &other.Journal)
+}
+
+type auditlogEncryptionPublicKeyValidator struct {
+	crypto.PublicKeys
+}
+
+func (this auditlogEncryptionPublicKeyValidator) Validate() error {
+	if this.IsZero() {
+		return nil
+	}
+	keys, err := this.Get()
+	if err != nil {
+		return err
+	}
+	return validateAuditlogEncryptionPublicKeys(keys)
+}
+
+func validateAuditlogEncryptionPublicKeys(keys []ssh.PublicKey) error {
+	if len(keys) != 1 {
+		return fmt.Errorf("exactly one SSH public key is required")
+	}
+	switch keys[0].Type() {
+	case ssh.KeyAlgoED25519:
+		return nil
+	case ssh.KeyAlgoRSA:
+		cryptoKey, ok := keys[0].(ssh.CryptoPublicKey)
+		if !ok {
+			return fmt.Errorf("SSH RSA public key cannot be used for encryption")
+		}
+		rsaKey, ok := cryptoKey.CryptoPublicKey().(*rsa.PublicKey)
+		if !ok || rsaKey.N.BitLen() < 2048 {
+			return fmt.Errorf("SSH RSA public key must contain at least 2048 bits")
+		}
+		return nil
+	default:
+		return fmt.Errorf("SSH public key type %q cannot be used for encryption", keys[0].Type())
+	}
 }
 
 type Auditlogs []Auditlog

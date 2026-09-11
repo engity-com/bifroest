@@ -5,7 +5,10 @@ import (
 	"strings"
 )
 
-const DefaultAuditlogName AuditlogName = "default"
+const (
+	DefaultAuditlogName       AuditlogName = "default"
+	maximumAuditlogNameLength int          = 128
+)
 
 type AuditlogName string
 
@@ -37,6 +40,9 @@ func (this *AuditlogName) Set(text string) error {
 func (this AuditlogName) Validate() error {
 	if len(this) == 0 || this == "." || this == ".." {
 		return fmt.Errorf("illegal auditlog name: %q", this)
+	}
+	if len(this) > maximumAuditlogNameLength {
+		return fmt.Errorf("auditlog name exceeds %d bytes", maximumAuditlogNameLength)
 	}
 	for _, character := range string(this) {
 		if (character >= 'a' && character <= 'z') ||

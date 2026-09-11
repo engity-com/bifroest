@@ -168,6 +168,13 @@ func (this *Identity) PublicKey() bfcrypto.PublicKey {
 	return this.privateKey.PublicKey()
 }
 
+func (this *Identity) journalPublicKey() []byte {
+	if this == nil || this.PublicKey() == nil {
+		return nil
+	}
+	return this.PublicKey().Marshal()
+}
+
 // ValidateDedicatedFrom rejects identities that reuse one of the SSH server's
 // host keys.
 func (this *Identity) ValidateDedicatedFrom(hostKeys []bfcrypto.PrivateKey) error {

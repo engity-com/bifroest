@@ -263,6 +263,13 @@ func (this *Service) prepare() (svc *service, err error) {
 	if err != nil {
 		return fail(err)
 	}
+	serverPrivateKeys := hostSigners
+	if hasEncryptedAuditlog(this.Configuration.Auditlogs) {
+		serverPrivateKeys, err = loadStaticPrivateKeysForAuditEncryption(this.Configuration.Flows, hostSigners)
+		if err != nil {
+			return fail(err)
+		}
+	}
 	auditRecordersPrepared := false
 	defer func() {
 		if !auditRecordersPrepared {
@@ -281,11 +288,34 @@ func (this *Service) prepare() (svc *service, err error) {
 		if identityErr := validateDistinctAuditIdentity(svc.auditIdentities, auditlog.Name, identity); identityErr != nil {
 			return fail(identityErr)
 		}
-		recorder, recorderErr := audit.NewRecorder(auditlog, identity)
+		svc.auditIdentities[auditlog.Name] = identity
+	}
+	auditIdentities := make([]*audit.Identity, 0, len(svc.auditIdentities))
+	for _, identity := range svc.auditIdentities {
+		auditIdentities = append(auditIdentities, identity)
+	}
+	for index := range this.Configuration.Auditlogs {
+		auditlog := &this.Configuration.Auditlogs[index]
+		identity := svc.auditIdentities[auditlog.Name]
+		recorderConfiguration := *auditlog
+		if auditlog.Enabled {
+			encryptionPublicKey, encryptionErr := audit.ResolveEncryptionPublicKey(auditlog.EncryptionPublicKey, auditlog.EncryptionPublicKeyFile)
+			if encryptionErr != nil {
+				return fail(encryptionErr)
+			}
+			if encryptionErr := audit.ValidateEncryptionRecipientDedicatedFrom(encryptionPublicKey, serverPrivateKeys); encryptionErr != nil {
+				return fail(encryptionErr)
+			}
+			if encryptionErr := audit.ValidateEncryptionRecipientDedicatedFromAuditIdentities(encryptionPublicKey, auditIdentities); encryptionErr != nil {
+				return fail(encryptionErr)
+			}
+			recorderConfiguration.EncryptionPublicKey = encryptionPublicKey
+			recorderConfiguration.EncryptionPublicKeyFile = ""
+		}
+		recorder, recorderErr := audit.NewRecorder(&recorderConfiguration, identity)
 		if recorderErr != nil {
 			return fail(recorderErr)
 		}
-		svc.auditIdentities[auditlog.Name] = identity
 		svc.auditRecorders[auditlog.Name] = recorder
 		svc.auditRecorderOrder = append(svc.auditRecorderOrder, recorder)
 	}
@@ -387,6 +417,50 @@ func (this *Service) prepareServer(_ context.Context, svc *service, hostPrivateK
 
 func (this *Service) loadHostPrivateKeys() ([]crypto.PrivateKey, error) {
 	return EnsureHostPrivateKeys(&this.Configuration)
+}
+
+func hasEncryptedAuditlog(auditlogs configuration.Auditlogs) bool {
+	for _, auditlog := range auditlogs {
+		if auditlog.Enabled && (!auditlog.EncryptionPublicKey.IsZero() || !auditlog.EncryptionPublicKeyFile.IsZero()) {
+			return true
+		}
+	}
+	return false
+}
+
+func loadStaticPrivateKeysForAuditEncryption(flows configuration.Flows, hostKeys []crypto.PrivateKey) ([]crypto.PrivateKey, error) {
+	result := append([]crypto.PrivateKey(nil), hostKeys...)
+	for index := range flows {
+		flow := &flows[index]
+		sshEnvironment, ok := flow.Environment.V.(*configuration.EnvironmentSsh)
+		if !ok {
+			continue
+		}
+		if sshEnvironment.Certificate != nil {
+			identity, _, err := environment.EnsureSshCertificateIdentity(flow)
+			if err != nil {
+				return nil, err
+			}
+			authority, _, err := environment.EnsureSshCertificateAuthority(flow)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, identity, authority)
+			continue
+		}
+		for _, configuredPath := range sshEnvironment.IdentityFiles {
+			if !configuredPath.IsHardCoded() {
+				continue
+			}
+			path := strings.TrimSpace(configuredPath.String())
+			key, err := crypto.EnsureKeyFile(path, nil, nil)
+			if err != nil {
+				return nil, fmt.Errorf("cannot load static SSH identity of flow %q: %w", flow.Name, err)
+			}
+			result = append(result, key)
+		}
+	}
+	return result, nil
 }
 
 func EnsureHostPrivateKeys(conf *configuration.Configuration) ([]crypto.PrivateKey, error) {

@@ -159,9 +159,17 @@ func EnsureKeyFile(fn string, reqOnAbsence *KeyRequirement, rand io.Reader) (Pri
 		return nil, fmt.Errorf("cannot read %q: %w", fn, err)
 	}
 
-	pk, err := ssh.ParseRawPrivateKey(raw)
+	pk, err := ParsePrivateKeyBytes(raw)
 	if err != nil {
 		return nil, fmt.Errorf("cannot parse private key %q: %w", fn, err)
+	}
+	return pk, nil
+}
+
+func ParsePrivateKeyBytes(raw []byte) (PrivateKey, error) {
+	pk, err := ssh.ParseRawPrivateKey(raw)
+	if err != nil {
+		return nil, err
 	}
 	switch value := pk.(type) {
 	case *dsa.PrivateKey:
@@ -169,7 +177,7 @@ func EnsureKeyFile(fn string, reqOnAbsence *KeyRequirement, rand io.Reader) (Pri
 	case gocrypto.Signer:
 		return PrivateKeyFromSdk(value)
 	default:
-		return nil, fmt.Errorf("private key %q of type %T cannot be used as signer", fn, pk)
+		return nil, fmt.Errorf("private key of type %T cannot be used as signer", pk)
 	}
 }
 

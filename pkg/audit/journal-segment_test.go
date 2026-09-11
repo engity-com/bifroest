@@ -3,6 +3,8 @@ package audit
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/binary"
 	"encoding/json"
 	"hash/crc32"
@@ -16,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/crypto"
 )
 
 func TestJournalRecordSignaturesAndHashChain(t *testing.T) {
@@ -50,6 +53,86 @@ func TestJournalRecordSignaturesAndHashChain(t *testing.T) {
 	require.NotEqual(t, firstPayload, tampered)
 	_, _, err = decodeJournalRecord(tampered, identity, journalHash{})
 	require.ErrorContains(t, err, "illegal audit signature")
+}
+
+func TestEncryptedJournalRecordIsIndependentAndAuthenticated(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	decryptionIdentity, publicKey := newJournalTestEncryptionKey(t)
+	encryptor, err := newJournalEventEncryptor(publicKey)
+	require.NoError(t, err)
+	decrypter, err := newJournalEventDecrypter([]crypto.PrivateKey{decryptionIdentity})
+	require.NoError(t, err)
+	id := uuid.New()
+	recordedAt := time.Now().UTC()
+
+	first, firstPayload, firstHash, err := newJournalRecord(identity, journalHash{}, Event{Name: "test.secret"}, id, recordedAt, encryptor)
+	require.NoError(t, err)
+	require.Equal(t, journalEncryptedRecordSchema, first.Schema)
+	require.NotContains(t, string(firstPayload), "test.secret")
+	decoded, decodedHash, err := decodeJournalRecord(firstPayload, identity, journalHash{}, decrypter)
+	require.NoError(t, err)
+	require.Equal(t, "test.secret", decoded.Event.Name)
+	require.Equal(t, firstHash, decodedHash)
+
+	_, secondPayload, _, err := newJournalRecord(identity, journalHash{}, Event{Name: "test.secret"}, uuid.New(), recordedAt, encryptor)
+	require.NoError(t, err)
+	require.NotEqual(t, firstPayload, secondPayload)
+	var firstEncrypted, secondEncrypted journalEncryptedRecord
+	require.NoError(t, json.Unmarshal(firstPayload, &firstEncrypted))
+	require.NoError(t, json.Unmarshal(secondPayload, &secondEncrypted))
+	require.NotEqual(t, firstEncrypted.EncryptedEvent.Ciphertext, secondEncrypted.EncryptedEvent.Ciphertext)
+
+	var tampered journalEncryptedRecord
+	require.NoError(t, json.Unmarshal(firstPayload, &tampered))
+	tampered.EncryptedEvent.Ciphertext[len(tampered.EncryptedEvent.Ciphertext)-1] ^= 1
+	tamperedPayload, err := json.Marshal(tampered)
+	require.NoError(t, err)
+	_, _, err = decodeJournalRecord(tamperedPayload, identity, journalHash{}, decrypter)
+	require.ErrorContains(t, err, "illegal audit signature")
+
+	unsigned, err := json.Marshal(tampered.journalEncryptedRecordContent)
+	require.NoError(t, err)
+	tampered.Signature, err = identity.sign(append([]byte(journalEncryptedRecordSignatureDomain), unsigned...))
+	require.NoError(t, err)
+	tamperedPayload, err = json.Marshal(tampered)
+	require.NoError(t, err)
+	_, _, err = decodeJournalRecord(tamperedPayload, identity, journalHash{}, decrypter)
+	require.Error(t, err)
+}
+
+func TestAuditEventEncryptionSupportsSshRsa(t *testing.T) {
+	private, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	key, err := crypto.PrivateKeyFromSdk(private)
+	require.NoError(t, err)
+	publicKey := crypto.PublicKeys(strings.TrimSpace(string(crypto.MarshalPublicKey(key.PublicKey()))))
+	encryptor, err := newJournalEventEncryptor(publicKey)
+	require.NoError(t, err)
+	decrypter, err := newJournalEventDecrypter([]crypto.PrivateKey{key})
+	require.NoError(t, err)
+
+	encrypted, err := encryptor.encrypt(Event{Name: "test.rsa"})
+	require.NoError(t, err)
+	decrypted, err := decrypter.decrypt(encrypted)
+	require.NoError(t, err)
+	require.Equal(t, "test.rsa", decrypted.Name)
+}
+
+func TestResolveEncryptionPublicKeyFile(t *testing.T) {
+	_, publicKey := newJournalTestEncryptionKey(t)
+	path := filepath.Join(t.TempDir(), "encryption.pub")
+	require.NoError(t, os.WriteFile(path, []byte(publicKey+"\n"), 0600))
+	resolved, err := ResolveEncryptionPublicKey("", crypto.PublicKeysFile(path))
+	require.NoError(t, err)
+	require.Equal(t, publicKey, resolved)
+
+	_, err = ResolveEncryptionPublicKey(publicKey, crypto.PublicKeysFile(path))
+	require.ErrorContains(t, err, "cannot be combined")
+	require.NoError(t, os.WriteFile(path, []byte(publicKey+"\n"+publicKey+"\n"), 0600))
+	_, err = ResolveEncryptionPublicKey("", crypto.PublicKeysFile(path))
+	require.ErrorContains(t, err, "exactly one SSH public key")
+	_, err = ResolveEncryptionPublicKey("", crypto.PublicKeysFile(filepath.Join(t.TempDir(), "missing.pub")))
+	require.ErrorContains(t, err, "cannot load")
 }
 
 func TestJournalSegmentMetadataSignatures(t *testing.T) {

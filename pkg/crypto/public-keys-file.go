@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
@@ -15,11 +16,29 @@ func (this PublicKeysFile) ForEach(consumer func(i int, key ssh.PublicKey, comme
 	if this.IsZero() {
 		return nil
 	}
-	f, err := os.Open(string(this))
+	path := string(this)
+	pathInfo, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !pathInfo.Mode().IsRegular() {
+		return fmt.Errorf("public keys file %q is not a regular file", path)
+	}
+	if pathInfo.Size() > MaxBootstrapInputSize {
+		return fmt.Errorf("public keys file %q exceeds %d bytes", path, MaxBootstrapInputSize)
+	}
+	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer common.IgnoreCloseError(f)
+	openInfo, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(pathInfo, openInfo) {
+		return fmt.Errorf("public keys file %q changed while opening", path)
+	}
 	return parsePublicKeys(f, consumer)
 }
 

@@ -42,7 +42,7 @@ type journalSegmentFile struct {
 	hash     journalHash
 }
 
-func recoverJournalSegments(producerDirectory, activePath string, identity *Identity, checkpointHash journalHash) (*os.File, journalSegmentState, error) {
+func recoverJournalSegments(producerDirectory, activePath string, identity *Identity, checkpointHash journalHash, expectedEncryptionRecipient string) (*os.File, journalSegmentState, error) {
 	segments, hasActive, err := inventoryJournalSegments(producerDirectory)
 	if err != nil {
 		return nil, journalSegmentState{}, err
@@ -56,7 +56,7 @@ func recoverJournalSegments(producerDirectory, activePath string, identity *Iden
 		if err != nil {
 			return nil, journalSegmentState{}, err
 		}
-		scanned, scanErr := scanJournalSegment(file, identity, segment.sequence, state.segmentHash, state.previousRecordHash, state.checkpointHash, state.checkpointSeen, false)
+		scanned, scanErr := scanJournalSegment(file, identity, segment.sequence, state.segmentHash, state.previousRecordHash, state.checkpointHash, state.checkpointSeen, false, expectedEncryptionRecipient, nil, nil)
 		closeErr := file.Close()
 		if scanErr != nil {
 			return nil, journalSegmentState{}, errors.System.Newf("cannot verify sealed audit segment %q: %w", segment.path, scanErr)
@@ -84,7 +84,7 @@ func recoverJournalSegments(producerDirectory, activePath string, identity *Iden
 	if err != nil {
 		return nil, journalSegmentState{}, err
 	}
-	active, err := scanJournalSegment(file, identity, nextSequence, state.segmentHash, state.previousRecordHash, state.checkpointHash, state.checkpointSeen, true)
+	active, err := scanJournalSegment(file, identity, nextSequence, state.segmentHash, state.previousRecordHash, state.checkpointHash, state.checkpointSeen, true, expectedEncryptionRecipient, nil, nil)
 	if err != nil {
 		_ = file.Close()
 		return nil, journalSegmentState{}, errors.System.Newf("cannot recover active audit segment %q: %w", activePath, err)
@@ -204,7 +204,7 @@ func finishPublishingSegment(activePath, producerDirectory string, state journal
 	return nil
 }
 
-func scanJournalSegment(file *os.File, identity *Identity, sequence uint64, previousSegmentHash, previousRecordHash, checkpointHash journalHash, checkpointSeen, recoverTail bool) (journalSegmentState, error) {
+func scanJournalSegment(file *os.File, identity journalIdentity, sequence uint64, previousSegmentHash, previousRecordHash, checkpointHash journalHash, checkpointSeen, recoverTail bool, expectedEncryptionRecipient string, decrypter *journalEventDecrypter, emit func(journalRecord, journalHash, uint64, int64) error) (journalSegmentState, error) {
 	info, err := file.Stat()
 	if err != nil {
 		return journalSegmentState{}, errors.System.Newf("cannot inspect audit segment: %w", err)
@@ -249,19 +249,27 @@ func scanJournalSegment(file *os.File, identity *Identity, sequence uint64, prev
 			}
 			state.header = true
 			state.contentBytes = frameSize
-		case journalRecordSchema:
+		case journalRecordSchema, journalEncryptedRecordSchema:
 			if !state.header || state.sealed {
 				return journalSegmentState{}, errors.System.Newf("audit record outside an open segment at offset %d", offset)
 			}
-			_, recordHash, err := decodeJournalRecord(payload, identity, state.previousRecordHash)
+			record, recordHash, err := decodeJournalRecord(payload, identity, state.previousRecordHash, decrypter)
 			if err != nil {
 				return journalSegmentState{}, err
+			}
+			if record.encryptionRecipient != expectedEncryptionRecipient {
+				return journalSegmentState{}, errors.Config.Newf("audit record encryption recipient %q does not match configured recipient %q", record.encryptionRecipient, expectedEncryptionRecipient)
 			}
 			state.previousRecordHash = recordHash
 			if recordHash == state.checkpointHash {
 				state.checkpointSeen = true
 			}
 			state.recordCount++
+			if emit != nil {
+				if err := emit(record, recordHash, state.recordCount, int64(len(payload))); err != nil {
+					return journalSegmentState{}, err
+				}
+			}
 			state.contentBytes = offset + frameSize
 		case journalSegmentSealSchema:
 			if !state.header || state.sealed || state.recordCount == 0 {

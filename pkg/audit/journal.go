@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
+	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
@@ -46,6 +47,7 @@ type localJournalRecorder struct {
 	lockPath    string
 	producerId  ProducerId
 	identity    *Identity
+	encryptor   *journalEventEncryptor
 	headPath    string
 	state       journalSegmentState
 	targetSize  int64
@@ -65,6 +67,21 @@ func NewRecorder(conf *configuration.Auditlog, identity *Identity) (Recorder, er
 	}
 	if identity == nil || identity.ProducerId().IsZero() {
 		return nil, errors.Config.Newf("nil audit identity")
+	}
+	encryptionPublicKey, err := ResolveEncryptionPublicKey(conf.EncryptionPublicKey, conf.EncryptionPublicKeyFile)
+	if err != nil {
+		return nil, err
+	}
+	if err := ValidateEncryptionRecipientDedicatedFrom(encryptionPublicKey, []bfcrypto.PrivateKey{identity.privateKey}); err != nil {
+		return nil, err
+	}
+	encryptor, err := newJournalEventEncryptor(encryptionPublicKey)
+	if err != nil {
+		return nil, err
+	}
+	encryptionRecipient := ""
+	if encryptor != nil {
+		encryptionRecipient = encryptor.recipientFingerprint
 	}
 
 	journalDirectory, err := canonicalJournalDirectory(strings.TrimSpace(conf.Journal.Directory))
@@ -101,7 +118,7 @@ func NewRecorder(conf *configuration.Auditlog, identity *Identity) (Recorder, er
 	if err != nil {
 		return nil, err
 	}
-	file, state, err := recoverJournalSegments(producerDirectory, activePath, identity, head.LastRecordHash)
+	file, state, err := recoverJournalSegments(producerDirectory, activePath, identity, head.LastRecordHash, encryptionRecipient)
 	if err != nil {
 		return nil, err
 	}
@@ -120,6 +137,7 @@ func NewRecorder(conf *configuration.Auditlog, identity *Identity) (Recorder, er
 		lockPath:    lockPath,
 		producerId:  identity.ProducerId(),
 		identity:    identity,
+		encryptor:   encryptor,
 		headPath:    filepath.Join(producerDirectory, journalHeadFileName),
 		state:       state,
 		targetSize:  defaultJournalSegmentTargetSize,
@@ -150,7 +168,7 @@ func (this *localJournalRecorder) Record(_ context.Context, event Event) error {
 	if err != nil {
 		return errors.System.Newf("cannot generate audit record ID: %w", err)
 	}
-	_, payload, recordHash, err := newJournalRecord(this.identity, this.state.previousRecordHash, event, id, time.Now().UTC())
+	_, payload, recordHash, err := newJournalRecord(this.identity, this.state.previousRecordHash, event, id, time.Now().UTC(), this.encryptor)
 	if err != nil {
 		return err
 	}

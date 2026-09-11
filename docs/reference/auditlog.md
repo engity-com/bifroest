@@ -28,6 +28,14 @@ The default value is different, depending on the platform Bifröst runs on:
 * Linux: `/etc/engity/bifroest/auditlog-key`
 * Windows: `C:\ProgramData\Engity\Bifroest\auditlog-key`
 
+<<property("encryptionPublicKey", "SSH Public Key", "data-type.md#ssh-public-key")>>
+Optional OpenSSH Ed25519 or RSA public key used to encrypt each audit event payload as an independent [age](https://age-encryption.org/) message. If neither this property nor `encryptionPublicKeyFile` is configured, event payloads are stored unencrypted. Structural metadata needed for recovery, signatures, hash chains, and segment verification remains visible, but the encrypted event is covered by the record signature and hash.
+
+Exactly one public key is accepted. Keep its private key outside the Bifröst server and supply it only to offline audit commands through `--decryptionIdentityFile`. The encryption key must differ from every private key available to the server. Bifröst rejects reuse of host keys, audit signing keys, and statically configured SSH environment keys; operators must ensure dynamically rendered identity paths cannot resolve to the encryption key. Changing, adding, or removing the encryption recipient for a journal containing records is rejected; key rotation requires preserving old decryption identities and is not yet supported.
+
+<<property("encryptionPublicKeyFile", ref("File Path", "data-type.md#file-path", ref("SSH Public Key", "data-type.md#ssh-public-key")))>>
+Loads the single encryption public key from an OpenSSH public-key file when the enabled auditlog is initialized. This is an alternative to [`encryptionPublicKey`](#property-encryptionPublicKey); the two properties cannot be combined. The file must exist and contain exactly one supported public key without authorized-key options or certificates.
+
 <<property("journal", "Journal", "#journal")>>
 See [below](#journal).
 
@@ -46,12 +54,16 @@ The journal rotates at approximately 16 MiB. Closed segments are signed, linked 
 
 On startup, Bifröst completes interrupted segment publication and discards only physically incomplete trailing frames. Invalid signatures, broken chains, loss of records behind the journal head, and complete malformed frames prevent startup instead of being ignored.
 
+Use [`bifroest audit verify`](cli.md#audit-journals) for read-only offline verification. The related `audit export` and `audit merge` commands produce JSON Lines only after complete verification; these derived outputs are not themselves signed journals.
+
 The default value is different, depending on the platform Bifröst runs on:
 
 * Linux: `/var/lib/engity/bifroest/auditlog`
 * Windows: `C:\ProgramData\Engity\Bifroest\auditlog`
 
-## Example
+## Examples
+
+### Basic audit logs
 
 ```yaml
 auditlog:
@@ -60,7 +72,41 @@ auditlog:
 
   - name: restricted
     enabled: true
-    identityFile: /etc/engity/bifroest/restricted-auditlog-key
+    identityFile: /etc/engity/bifroest/auditlog-key
     journal:
-      directory: /var/lib/engity/bifroest/restricted-auditlog
+      directory: /var/lib/engity/bifroest/auditlog
 ```
+
+### Encrypted audit events
+
+1. On a trusted audit workstation, generate a dedicated Ed25519 keypair:
+    ```shell
+    bifroest key generate \
+      --identityFile /etc/engity/bifroest/auditlog-encryption-key \
+      --publicFile /etc/engity/bifroest/auditlog-encryption-key.pub
+    ```
+2. Transfer only the public file to the Bifröst server and reference it from the configuration:
+    ```yaml title="/etc/engity/bifroest/configuration.yaml"
+    auditlog:
+      - name: restricted
+        enabled: true
+        encryptionPublicKeyFile: /etc/engity/bifroest/auditlog-encryption-key.pub
+        identityFile: /etc/engity/bifroest/auditlog-signing-key
+        journal:
+          directory: /var/lib/engity/bifroest/auditlog
+    ```
+3. Stop Bifröst, make the private decryption key temporarily available from protected storage, then verify and decrypt the journal:
+    ```shell
+    bifroest audit verify \
+      --configuration /etc/engity/bifroest/configuration.yaml \
+      --decryptionIdentityFile /etc/engity/bifroest/auditlog-encryption-key \
+      restricted
+
+    bifroest audit decrypt \
+      --configuration /etc/engity/bifroest/configuration.yaml \
+      --decryptionIdentityFile /etc/engity/bifroest/auditlog-encryption-key \
+      --output /tmp/restricted-audit.jsonl \
+      restricted
+    ```
+
+    `audit decrypt` verifies the complete journal before publishing plaintext JSON Lines. Protect the output like any other sensitive audit data.

@@ -74,7 +74,7 @@ func newJournalSegmentHeader(identity *Identity, sequence uint64, previousSegmen
 	return header, payload, nil
 }
 
-func decodeJournalSegmentHeader(payload []byte, identity *Identity, expectedSequence uint64, expectedSegmentHash, expectedRecordHash journalHash) (journalSegmentHeader, error) {
+func decodeJournalSegmentHeader(payload []byte, identity journalIdentity, expectedSequence uint64, expectedSegmentHash, expectedRecordHash journalHash) (journalSegmentHeader, error) {
 	var header journalSegmentHeader
 	if err := decodeCanonicalJournalPayload(payload, &header); err != nil {
 		return journalSegmentHeader{}, err
@@ -85,7 +85,7 @@ func decodeJournalSegmentHeader(payload []byte, identity *Identity, expectedSequ
 	if header.CreatedAt.IsZero() {
 		return journalSegmentHeader{}, errors.System.Newf("audit segment creation time is empty")
 	}
-	if header.ProducerId != identity.ProducerId() || !bytes.Equal(header.PublicKey, identity.PublicKey().Marshal()) {
+	if header.ProducerId != identity.ProducerId() || !bytes.Equal(header.PublicKey, identity.journalPublicKey()) {
 		return journalSegmentHeader{}, errors.Config.Newf("audit segment header belongs to a different identity")
 	}
 	if header.PreviousSegmentHash != expectedSegmentHash || header.PreviousRecordHash != expectedRecordHash {
@@ -128,7 +128,7 @@ func newJournalSegmentSeal(identity *Identity, sequence, recordCount, contentByt
 	return seal, payload, nil
 }
 
-func decodeJournalSegmentSeal(payload []byte, identity *Identity, state journalSegmentState, expectedContentHash journalHash) (journalSegmentSeal, error) {
+func decodeJournalSegmentSeal(payload []byte, identity journalIdentity, state journalSegmentState, expectedContentHash journalHash) (journalSegmentSeal, error) {
 	var seal journalSegmentSeal
 	if err := decodeCanonicalJournalPayload(payload, &seal); err != nil {
 		return journalSegmentSeal{}, err

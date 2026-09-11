@@ -10,6 +10,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/template"
 )
 
 func TestPrepareEnsuresAuditIdentity(t *testing.T) {
@@ -66,4 +67,20 @@ func TestValidateDistinctAuditIdentity(t *testing.T) {
 	existing := map[configuration.AuditlogName]*audit.Identity{"first": identity}
 	require.ErrorContains(t, validateDistinctAuditIdentity(existing, "second", identity), "same signing identity")
 	require.NoError(t, validateDistinctAuditIdentity(existing, "disabled", nil))
+}
+
+func TestAuditEncryptionRejectsStaticSshEnvironmentIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "environment-key")
+	key, err := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).CreateFile(nil, path)
+	require.NoError(t, err)
+	flows := configuration.Flows{{
+		Name: "ssh",
+		Environment: configuration.Environment{V: &configuration.EnvironmentSsh{
+			IdentityFiles: template.MustNewStrings(path),
+		}},
+	}}
+	serverKeys, err := loadStaticPrivateKeysForAuditEncryption(flows, nil)
+	require.NoError(t, err)
+	publicKey := crypto.PublicKeys(string(crypto.MarshalPublicKey(key.PublicKey())))
+	require.ErrorContains(t, audit.ValidateEncryptionRecipientDedicatedFrom(publicKey, serverKeys), "reuses a private key")
 }

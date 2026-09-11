@@ -30,6 +30,24 @@ func EnsureSshCertificateAuthority(flow *configuration.Flow) (crypto.PrivateKey,
 	return key, path, nil
 }
 
+func EnsureSshCertificateIdentity(flow *configuration.Flow) (crypto.PrivateKey, string, error) {
+	if flow == nil {
+		return nil, "", fmt.Errorf("nil flow")
+	}
+	conf, ok := flow.Environment.V.(*configuration.EnvironmentSsh)
+	if !ok {
+		return nil, "", fmt.Errorf("flow %q does not use an SSH environment", flow.Name)
+	}
+	if conf.Certificate == nil {
+		return nil, "", fmt.Errorf("flow %q does not configure an SSH certificate", flow.Name)
+	}
+	key, path, err := ensureSshCertificateKey(conf.Certificate.IdentityFile, "certificate identity")
+	if err != nil {
+		return nil, "", fmt.Errorf("cannot ensure SSH certificate identity for flow %q: %w", flow.Name, err)
+	}
+	return key, path, nil
+}
+
 func ValidateSshCertificateAuthority(authority crypto.PrivateKey, hostKeys []crypto.PrivateKey) error {
 	if authority == nil {
 		return fmt.Errorf("nil SSH certificate authority")

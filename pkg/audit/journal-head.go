@@ -53,12 +53,12 @@ func newJournalHead(identity *Identity, lastRecordHash journalHash) (journalHead
 	return head, payload, nil
 }
 
-func decodeJournalHead(payload []byte, identity *Identity) (journalHead, error) {
+func decodeJournalHead(payload []byte, identity journalIdentity) (journalHead, error) {
 	var head journalHead
 	if err := decodeCanonicalJournalPayload(payload, &head); err != nil {
 		return journalHead{}, err
 	}
-	if head.Schema != journalHeadSchema || head.ProducerId != identity.ProducerId() || !bytes.Equal(head.PublicKey, identity.PublicKey().Marshal()) {
+	if head.Schema != journalHeadSchema || head.ProducerId != identity.ProducerId() || !bytes.Equal(head.PublicKey, identity.journalPublicKey()) {
 		return journalHead{}, errors.Config.Newf("audit journal head belongs to a different identity")
 	}
 	unsigned, err := json.Marshal(head.journalHeadContent)

@@ -167,6 +167,102 @@ Expected OpenSSH SHA256 fingerprint, or `unknown`. It is required with `address`
 
 Both import commands lock concurrent merge operations and preserve existing valid entries. A supplied SHA256 fingerprint has to match every imported key, including keys that are already present; any mismatch leaves the destination unchanged.
 
+## Audit journals {: #audit-journals}
+
+Audit commands are strictly read-only with respect to identities and journals. They load the selected configured identity without creating a missing key and use its producer ID as the trust anchor. Stop the Bifröst service before running these commands so the journal remains stable throughout verification.
+
+Run them on quiescent storage whose journal and output parent directories are not writable by untrusted users. The verifier detects observed changes during a scan, but path-based filesystem APIs cannot provide one atomic snapshot across multiple journals or prevent a privileged actor from replacing paths concurrently.
+
+### Verify an audit journal
+
+Syntax: `bifroest audit verify [flags] <auditlogName>`
+
+Verifies the journal head, embedded Ed25519 keys, record signatures, record and segment hash chains, segment seals, file-name hashes, and the configured producer identity. Success produces no output and exits with status `0`.
+
+For an auditlog configured with `encryptionPublicKey` or `encryptionPublicKeyFile`, supply the matching private SSH key. Verification decrypts and authenticates every event payload in memory in addition to checking the journal structure.
+
+#### Flags {. #audit-verify-flags}
+
+Includes [all general flags](#general-flags).
+
+<<flag("configuration", "File Path", "data-type.md#file-path", id_prefix="audit-verify-", heading=5)>>
+Configuration to load. It uses the same platform default as `bifroest run`. Short form: `-c`.
+
+<<flag("decryptionIdentityFile", "File Path", "data-type.md#file-path", id_prefix="audit-verify-", heading=5)>>
+Private SSH key used to decrypt encrypted event payloads. Repeat the flag when verifying journals encrypted for different keys. The key is loaded read-only and is required when an encryption recipient is configured.
+
+### Decrypt an audit journal
+
+Syntax: `bifroest audit decrypt [flags] <auditlogName>`
+
+Decrypts and fully verifies the selected configured journal before writing plaintext JSON Lines. For an unencrypted journal this is equivalent to `audit export`. The command never modifies the source journal and never emits partial output after a verification or decryption failure.
+
+#### Flags {. #audit-decrypt-flags}
+
+Includes [all general flags](#general-flags).
+
+<<flag("configuration", "File Path", "data-type.md#file-path", id_prefix="audit-decrypt-", heading=5)>>
+Configuration to load. It uses the same platform default as `bifroest run`. Short form: `-c`.
+
+<<flag("decryptionIdentityFile", "File Path", "data-type.md#file-path", id_prefix="audit-decrypt-", heading=5)>>
+Private SSH key used to decrypt encrypted event payloads. Repeat the flag when needed. A matching key is required for an encrypted auditlog.
+
+<<flag("output", ref("File Path", "data-type.md#file-path"), default="-", id_prefix="audit-decrypt-", heading=5)>>
+Output file. `-` writes plaintext JSON Lines to stdout. Output paths inside the journal or equal to a signing identity, decryption identity, or referenced encryption public-key file are rejected.
+
+<<flag("force", "bool", default=False, id_prefix="audit-decrypt-", heading=5)>>
+Replace an existing output file.
+
+### Export an audit journal
+
+Syntax: `bifroest audit export [flags] <auditlogName>`
+
+Verifies the selected journal completely before writing its records as JSON Lines in their cryptographic chain order. Export uses bounded in-memory materialization and refuses histories exceeding its safety limit; `audit verify` remains available for larger journals without materializing records.
+
+Encrypted auditlogs require the matching `--decryptionIdentityFile`; exported event payloads are always plaintext.
+
+#### Flags {. #audit-export-flags}
+
+Includes [all general flags](#general-flags).
+
+<<flag("configuration", "File Path", "data-type.md#file-path", id_prefix="audit-export-", heading=5)>>
+Configuration to load. It uses the same platform default as `bifroest run`. Short form: `-c`.
+
+<<flag("decryptionIdentityFile", "File Path", "data-type.md#file-path", id_prefix="audit-export-", heading=5)>>
+Private SSH key used to decrypt encrypted event payloads. Repeat the flag when needed.
+
+<<flag("output", ref("File Path", "data-type.md#file-path"), default="-", id_prefix="audit-export-", heading=5)>>
+Output file. `-` writes JSON Lines to stdout. Output paths inside the journal or equal to its signing identity, a supplied decryption identity, or its referenced encryption public-key file are rejected.
+
+<<flag("force", "bool", default=False, id_prefix="audit-export-", heading=5)>>
+Replace an existing output file.
+
+### Merge audit journals
+
+Syntax: `bifroest audit merge [flags] <auditlogName>...`
+
+Verifies every selected journal before producing one deterministic JSON Lines stream. Records are ordered by their producer-signed timestamp and stable origin and chain-position tie-breakers. Timestamps are statements by their producers and are not an independently trusted clock. Like export, merge refuses inputs exceeding its bounded materialization safety limit.
+
+Plaintext and encrypted journals can be merged together. Supply every required private key by repeating `--decryptionIdentityFile`.
+
+#### Flags {. #audit-merge-flags}
+
+Includes [all general flags](#general-flags).
+
+<<flag("configuration", "File Path", "data-type.md#file-path", id_prefix="audit-merge-", heading=5)>>
+Configuration to load. It uses the same platform default as `bifroest run`. Short form: `-c`.
+
+<<flag("decryptionIdentityFile", "File Path", "data-type.md#file-path", id_prefix="audit-merge-", heading=5)>>
+Private SSH key used to decrypt encrypted event payloads. Repeat the flag for journals encrypted for different keys.
+
+<<flag("output", ref("File Path", "data-type.md#file-path"), default="-", id_prefix="audit-merge-", heading=5)>>
+Output file. `-` writes JSON Lines to stdout. Output paths inside any selected journal or equal to a signing identity, supplied decryption identity, or referenced encryption public-key file are rejected.
+
+<<flag("force", "bool", default=False, id_prefix="audit-merge-", heading=5)>>
+Replace an existing output file.
+
+Exports and merged streams are derived, unsigned representations. Preserve the original journal files as cryptographic evidence.
+
 ## Service management {. #service}
 
 !!! note

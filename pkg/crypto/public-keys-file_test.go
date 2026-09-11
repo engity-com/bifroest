@@ -27,5 +27,12 @@ func TestPublicKeysFile(t *testing.T) {
 	require.Error(t, PublicKeysFile(empty).Validate())
 	require.Error(t, PublicKeysFile(invalid).Validate())
 	require.Error(t, PublicKeysFile(filepath.Join(directory, "missing")).Validate())
+	require.ErrorContains(t, PublicKeysFile(directory).Validate(), "not a regular file")
+	oversized := filepath.Join(directory, "oversized")
+	file, err := os.Create(oversized)
+	require.NoError(t, err)
+	require.NoError(t, file.Truncate(MaxBootstrapInputSize+1))
+	require.NoError(t, file.Close())
+	require.ErrorContains(t, PublicKeysFile(oversized).Validate(), "exceeds")
 	require.NoError(t, PublicKeysFile("").Validate())
 }

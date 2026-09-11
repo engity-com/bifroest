@@ -1,10 +1,19 @@
 package configuration
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v3"
+
+	"github.com/engity-com/bifroest/pkg/crypto"
 )
 
 func TestAuditlog_UnmarshalYAML(t *testing.T) {
@@ -140,6 +149,46 @@ func TestAuditlogNameValidationAlsoAppliesProgrammatically(t *testing.T) {
 
 	flow := Flow{Name: "flow", Auditlog: "invalid/name"}
 	require.ErrorContains(t, flow.Validate(), "illegal auditlog name")
+	require.ErrorContains(t, AuditlogName(strings.Repeat("a", maximumAuditlogNameLength+1)).Validate(), "exceeds")
+}
+
+func TestAuditlogEncryptionPublicKey(t *testing.T) {
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	sshPublic, err := ssh.NewPublicKey(public)
+	require.NoError(t, err)
+	authorized := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPublic)))
+
+	var configured Auditlog
+	require.NoError(t, yaml.Unmarshal([]byte(fmt.Sprintf("enabled: true\nencryptionPublicKey: %s\n", authorized)), &configured))
+	require.Equal(t, crypto.PublicKeys(authorized), configured.EncryptionPublicKey)
+
+	var multiple Auditlog
+	err = yaml.Unmarshal([]byte(fmt.Sprintf("encryptionPublicKey: |\n  %s\n  %s\n", authorized, authorized)), &multiple)
+	require.ErrorContains(t, err, "exactly one SSH public key")
+
+	var invalid Auditlog
+	err = yaml.Unmarshal([]byte("encryptionPublicKey: not-a-key\n"), &invalid)
+	require.ErrorContains(t, err, "illegal public keys format")
+
+	publicKeyFile := filepath.Join(t.TempDir(), "audit-encryption.pub")
+	require.NoError(t, os.WriteFile(publicKeyFile, []byte(authorized+"\n"), 0600))
+	var fromFile Auditlog
+	require.NoError(t, yaml.Unmarshal([]byte(fmt.Sprintf("enabled: true\nencryptionPublicKeyFile: %s\n", publicKeyFile)), &fromFile))
+	require.Equal(t, crypto.PublicKeysFile(publicKeyFile), fromFile.EncryptionPublicKeyFile)
+	require.NoError(t, os.WriteFile(publicKeyFile, []byte(authorized+"\n"+authorized+"\n"), 0600))
+	var multipleFromFile Auditlog
+	require.NoError(t, yaml.Unmarshal([]byte(fmt.Sprintf("enabled: true\nencryptionPublicKeyFile: %s\n", publicKeyFile)), &multipleFromFile))
+	require.NoError(t, os.WriteFile(publicKeyFile, []byte(authorized+"\n"), 0600))
+
+	var combined Auditlog
+	err = yaml.Unmarshal([]byte(fmt.Sprintf("enabled: true\nencryptionPublicKey: %s\nencryptionPublicKeyFile: %s\n", authorized, publicKeyFile)), &combined)
+	require.ErrorContains(t, err, "cannot be combined")
+
+	var missingEnabled Auditlog
+	require.NoError(t, yaml.Unmarshal([]byte("enabled: true\nencryptionPublicKeyFile: missing.pub\n"), &missingEnabled))
+	var missingDisabled Auditlog
+	require.NoError(t, yaml.Unmarshal([]byte("encryptionPublicKeyFile: missing.pub\n"), &missingDisabled))
 }
 
 func TestConfigurationValidatesFlowAuditlogReferences(t *testing.T) {
