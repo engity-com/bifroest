@@ -17,6 +17,8 @@ var (
 )
 
 type Configuration struct {
+	Auditlog Auditlog `yaml:"auditlog,omitempty"`
+
 	Ssh Ssh `yaml:"ssh"`
 
 	// Session defines how new and existing sessions (a connection relates to) should be treated by the service.
@@ -36,6 +38,7 @@ type Configuration struct {
 
 func (this *Configuration) SetDefaults() error {
 	return setDefaults(this,
+		func(v *Configuration) (string, defaulter) { return "auditlog", &v.Auditlog },
 		func(v *Configuration) (string, defaulter) { return "ssh", &v.Ssh },
 		func(v *Configuration) (string, defaulter) { return "session", &v.Session },
 		func(v *Configuration) (string, defaulter) { return "flows", &v.Flows },
@@ -47,6 +50,7 @@ func (this *Configuration) SetDefaults() error {
 
 func (this *Configuration) Trim() error {
 	return trim(this,
+		func(v *Configuration) (string, trimmer) { return "auditlog", &v.Auditlog },
 		func(v *Configuration) (string, trimmer) { return "ssh", &v.Ssh },
 		func(v *Configuration) (string, trimmer) { return "session", &v.Session },
 		func(v *Configuration) (string, trimmer) { return "flows", &v.Flows },
@@ -58,6 +62,7 @@ func (this *Configuration) Trim() error {
 
 func (this *Configuration) Validate() error {
 	return validate(this,
+		func(v *Configuration) (string, validator) { return "auditlog", &v.Auditlog },
 		func(v *Configuration) (string, validator) { return "ssh", &v.Ssh },
 		func(v *Configuration) (string, validator) { return "session", &v.Session },
 		func(v *Configuration) (string, validator) { return "flows", &v.Flows },
@@ -123,7 +128,8 @@ func (this Configuration) IsEqualTo(other any) bool {
 }
 
 func (this Configuration) isEqualTo(other *Configuration) bool {
-	return isEqual(&this.Ssh, &other.Ssh) &&
+	return isEqual(&this.Auditlog, &other.Auditlog) &&
+		isEqual(&this.Ssh, &other.Ssh) &&
 		isEqual(&this.Session, &other.Session) &&
 		isEqual(&this.Flows, &other.Flows) &&
 		isEqual(&this.HouseKeeping, &other.HouseKeeping) &&

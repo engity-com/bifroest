@@ -135,6 +135,7 @@ nav:
   - Reference:
       - reference/index.md
       - reference/configuration.md
+      - Audit log: reference/auditlog.md
       - Connections:
           - reference/connection/index.md
           - SSH: reference/connection/ssh.md

@@ -17,6 +17,9 @@ bifroest run --configuration=/my/config.yaml
 
 ## Properties
 
+<<property("auditlog", "Audit log", "auditlog.md")>>
+Defines how Bifröst records security-relevant actions in a separate audit log.
+
 <<property("ssh", "SSH", "connection/ssh.md")>>
 Defines how the SSH connections itself will behave.
 
