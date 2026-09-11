@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"os"
 
 	"github.com/mikesmitty/edkey"
 	"golang.org/x/crypto/ssh"
@@ -146,7 +145,7 @@ func (this *privateKeyWrapper) String() string {
 }
 
 func EnsureKeyFile(fn string, reqOnAbsence *KeyRequirement, rand io.Reader) (PrivateKey, error) {
-	raw, err := os.ReadFile(fn)
+	raw, err := readPrivateKeyFile(fn)
 	if sys.IsNotExist(err) {
 		if reqOnAbsence == nil {
 			return nil, fmt.Errorf("private key %q does not exist", fn)

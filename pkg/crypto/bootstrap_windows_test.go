@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/stretchr/testify/require"
@@ -51,6 +52,41 @@ func TestBootstrapFileSupportsLongWindowsPath(t *testing.T) {
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, []byte("content\n"), raw)
+}
+
+func TestReadPrivateKeyFileRetriesTransientWindowsErrors(t *testing.T) {
+	for _, transient := range []error{windows.ERROR_SHARING_VIOLATION, windows.ERROR_LOCK_VIOLATION} {
+		attempts := 0
+		raw, err := readPrivateKeyFileUsing("identity", func(path string) ([]byte, error) {
+			require.Equal(t, "identity", path)
+			attempts++
+			if attempts == 1 {
+				return nil, transient
+			}
+			return []byte("private key"), nil
+		}, func(_ time.Duration) {})
+		require.NoError(t, err)
+		require.Equal(t, []byte("private key"), raw)
+		require.Equal(t, 2, attempts)
+	}
+}
+
+func TestReadPrivateKeyFileBoundsRetriesAndReturnsOtherErrorsImmediately(t *testing.T) {
+	attempts := 0
+	_, err := readPrivateKeyFileUsing("identity", func(string) ([]byte, error) {
+		attempts++
+		return nil, windows.ERROR_SHARING_VIOLATION
+	}, func(_ time.Duration) {})
+	require.ErrorIs(t, err, windows.ERROR_SHARING_VIOLATION)
+	require.Equal(t, 100, attempts)
+
+	attempts = 0
+	_, err = readPrivateKeyFileUsing("identity", func(string) ([]byte, error) {
+		attempts++
+		return nil, windows.ERROR_ACCESS_DENIED
+	}, func(_ time.Duration) {})
+	require.ErrorIs(t, err, windows.ERROR_ACCESS_DENIED)
+	require.Equal(t, 1, attempts)
 }
 
 func requireProtectedDACL(t *testing.T, path string) {
