@@ -1,0 +1,131 @@
+package audit
+
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"strings"
+
+	gossh "golang.org/x/crypto/ssh"
+
+	"github.com/engity-com/bifroest/pkg/configuration"
+	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+)
+
+var auditIdentityKeyRequirement = bfcrypto.KeyRequirement{Type: bfcrypto.KeyTypeEd25519}
+
+type Identity struct {
+	privateKey  bfcrypto.PrivateKey
+	producerId  ProducerId
+	fingerprint string
+}
+
+func NewIdentity(privateKey bfcrypto.PrivateKey) (*Identity, error) {
+	if privateKey == nil || privateKey.PublicKey() == nil || privateKey.ToSsh() == nil {
+		return nil, fmt.Errorf("nil audit identity key")
+	}
+	publicKey := privateKey.PublicKey()
+	sshPublicKey := publicKey.ToSsh()
+	if sshPublicKey == nil {
+		return nil, fmt.Errorf("nil audit identity public key")
+	}
+	return &Identity{
+		privateKey:  privateKey,
+		producerId:  newProducerId(publicKey.Marshal()),
+		fingerprint: gossh.FingerprintSHA256(sshPublicKey),
+	}, nil
+}
+
+// EnsureIdentity loads or creates the configured audit identity. A missing key
+// is only generated if no journal history exists that could belong to it.
+func EnsureIdentity(conf *configuration.Auditlog) (*Identity, error) {
+	if conf == nil {
+		return nil, fmt.Errorf("nil auditlog configuration")
+	}
+	if !conf.Enabled {
+		return nil, nil
+	}
+	identityFile := strings.TrimSpace(conf.IdentityFile)
+	if identityFile == "" {
+		return nil, fmt.Errorf("audit identity file is empty")
+	}
+	journalDirectory := strings.TrimSpace(conf.Journal.Directory)
+	if journalDirectory == "" {
+		return nil, fmt.Errorf("audit journal directory is empty")
+	}
+
+	if _, err := os.Stat(identityFile); errors.Is(err, fs.ErrNotExist) {
+		hasHistory, inspectErr := auditJournalHasHistory(journalDirectory)
+		if inspectErr != nil {
+			return nil, inspectErr
+		}
+		if hasHistory {
+			return nil, fmt.Errorf("audit identity file %q is missing while journal %q contains history", identityFile, journalDirectory)
+		}
+	} else if err != nil {
+		return nil, fmt.Errorf("cannot inspect audit identity file %q: %w", identityFile, err)
+	}
+
+	privateKey, err := bfcrypto.EnsureKeyFile(identityFile, &auditIdentityKeyRequirement, nil)
+	if err != nil {
+		return nil, fmt.Errorf("cannot ensure audit identity file %q: %w", identityFile, err)
+	}
+	if privateKey.Type() != gossh.KeyAlgoED25519 {
+		return nil, fmt.Errorf("audit identity file %q contains a %s key instead of Ed25519", identityFile, privateKey.Type())
+	}
+	identity, err := NewIdentity(privateKey)
+	if err != nil {
+		return nil, fmt.Errorf("cannot use audit identity file %q: %w", identityFile, err)
+	}
+	return identity, nil
+}
+
+func auditJournalHasHistory(directory string) (bool, error) {
+	entries, err := os.ReadDir(directory)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("cannot inspect audit journal %q: %w", directory, err)
+	}
+	return len(entries) > 0, nil
+}
+
+func (this *Identity) ProducerId() ProducerId {
+	if this == nil {
+		return ProducerId{}
+	}
+	return this.producerId
+}
+
+func (this *Identity) Fingerprint() string {
+	if this == nil {
+		return ""
+	}
+	return this.fingerprint
+}
+
+func (this *Identity) PublicKey() bfcrypto.PublicKey {
+	if this == nil || this.privateKey == nil {
+		return nil
+	}
+	return this.privateKey.PublicKey()
+}
+
+// ValidateDedicatedFrom rejects identities that reuse one of the SSH server's
+// host keys.
+func (this *Identity) ValidateDedicatedFrom(hostKeys []bfcrypto.PrivateKey) error {
+	if this == nil {
+		return nil
+	}
+	for _, hostKey := range hostKeys {
+		if hostKey == nil || hostKey.PublicKey() == nil {
+			continue
+		}
+		if this.privateKey.PublicKey().IsEqualTo(hostKey.PublicKey()) {
+			return fmt.Errorf("audit identity must not reuse an SSH server host key")
+		}
+	}
+	return nil
+}

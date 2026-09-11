@@ -16,6 +16,7 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/alternatives"
+	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -212,6 +213,9 @@ func (this *Service) prepare() (svc *service, err error) {
 
 	ctx := context.Background()
 	svc = &service{Service: this, connectionLifecycle: newConnectionLifecycle()}
+	if svc.auditIdentity, err = audit.EnsureIdentity(&this.Configuration.Auditlog); err != nil {
+		return fail(err)
+	}
 
 	svc.knownFlows = make(map[configuration.FlowName]struct{})
 	for _, flow := range this.Configuration.Flows {
@@ -245,6 +249,9 @@ func (this *Service) prepare() (svc *service, err error) {
 
 	hostSigners, err := this.loadHostPrivateKeys()
 	if err != nil {
+		return fail(err)
+	}
+	if err := svc.auditIdentity.ValidateDedicatedFrom(hostSigners); err != nil {
 		return fail(err)
 	}
 	if err := this.logCertificateAuthorities(hostSigners); err != nil {
@@ -417,6 +424,7 @@ func (this *Service) logCertificateAuthorities(hostKeys []crypto.PrivateKey) err
 type service struct {
 	*Service
 
+	auditIdentity  *audit.Identity
 	sessions       session.CloseableRepository
 	authorizer     authorization.CloseableAuthorizer
 	environments   environment.CloseableRepository

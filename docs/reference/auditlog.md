@@ -14,7 +14,9 @@ The audit log is disabled by default. While disabled, it does not create keys, d
 If `true`, Bifröst records security-relevant actions in the audit log.
 
 <<property("identityFile", "File Path", "data-type.md#file-path", default="<os specific>")>>
-Where the dedicated audit signing key is stored.
+Where the dedicated audit signing key is stored. If the file does not exist and the local journal does not contain history, an Ed25519 key will be created automatically.
+
+If the key is missing while journal history exists, Bifröst will refuse to start instead of silently creating a new audit identity. An existing invalid key will not be replaced.
 
 The default value is different, depending on the platform Bifröst runs on:
 
