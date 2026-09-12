@@ -99,6 +99,10 @@ func (this *buildImage) createPart(ctx context.Context, binary *buildArtifact) (
 	if bifroestTargetDirLocation == "" {
 		return failf("cannot find binary dir location for os: %v", a.Os)
 	}
+	licenseItems, err := releaseLicenseImageItems(".", a.Os)
+	if err != nil {
+		return fail(err)
+	}
 
 	buildRequest := images.BuildRequest{
 		From:                 from,
@@ -115,6 +119,7 @@ func (this *buildImage) createPart(ctx context.Context, binary *buildArtifact) (
 		AddSkeletonStructure:  true,
 		Time:                  a.time,
 		Vendor:                this.vendor,
+		Contents:              common.Seq2ErrOf(licenseItems...),
 	}
 
 	if buildRequest.Annotations, err = this.createAnnotations(ctx, a.Edition, func(v version, rm *github.Repository, m map[string]string) error {

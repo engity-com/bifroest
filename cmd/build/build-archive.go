@@ -21,7 +21,6 @@ func newBuildArchive(b *build) *buildArchive {
 
 		includedResources: []string{
 			"README.md",
-			"LICENSE",
 			"SECURITY.md",
 			"contrib/**/*",
 		},
@@ -74,6 +73,9 @@ func (this *buildArchive) create(ctx context.Context, binary *buildArtifact) (_ 
 	defer common.KeepCloseError(&rErr, baw)
 
 	if err := baw.addFile(binary.Platform.Os.AppendExtToFilename(this.prefix), binary.filepath, 0755); err != nil {
+		return fail(err)
+	}
+	if err := addReleaseLicensesToArchive(".", baw); err != nil {
 		return fail(err)
 	}
 	for _, res := range this.includedResources {

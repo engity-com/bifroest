@@ -4,6 +4,8 @@ go: &go
   - 'go.mod'
   - 'go.sum'
   - '.golangci.yml'
+  - 'LICENSE'
+  - 'LICENSES/**'
   - 'pkg/**'
   - 'cmd/**'
   - 'internal/**'
