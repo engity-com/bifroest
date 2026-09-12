@@ -21,4 +21,4 @@ Bifröst does have the following important entities:
 
 1. [Installation](../setup/index.md)
 2. [Configuration](configuration.md)
-3. [Command line interface (CLI)](cli.md)
+3. [Command line interface (CLI)](cli/index.md)

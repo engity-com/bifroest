@@ -22,8 +22,8 @@ For each configured flow, Bifröst will evaluate the following checks. If one of
     !!! warning
          Changing this value afterward means to break all existing sessions.
 
-<<property("auditlog", "Audit log Name", "auditlog.md", default="default")>>
-:   References the named audit log used by this flow. The referenced entry must exist under the root [auditlog](auditlog.md#property-name) list; a missing root list provides a disabled entry named `default`.
+<<property("auditlog", "Audit log Name", "auditlog/index.md", default="default")>>
+:   References the named audit log used by this flow. The referenced entry must exist under the root [auditlog](auditlog/index.md#property-name) list; a missing root list provides a disabled entry named `default`.
 
 <<property("requirement", "Requirement", "#requirement")>>
 :   See [Requirement](#requirement), below.
