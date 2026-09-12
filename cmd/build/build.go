@@ -34,7 +34,6 @@ func newBuild(b *base) *build {
 		editions:  sys.AllEditionVariants(),
 		testing:   false,
 
-		updateCaCerts:        true,
 		wslBuildDistribution: "",
 	}
 	result.binary = newBuildBinary(result)
@@ -60,7 +59,6 @@ type build struct {
 	editions  sys.Editions
 	testing   bool
 
-	updateCaCerts        bool
 	wslBuildDistribution string
 
 	timeP         atomic.Pointer[time.Time]
@@ -99,9 +97,6 @@ func (this *build) init(ctx context.Context, app *kingpin.Application) {
 			SetValue(&this.editions)
 		cmd.Flag("testing", "").
 			BoolVar(&this.testing)
-		cmd.Flag("updateCaCerts", "").
-			BoolVar(&this.updateCaCerts)
-
 		cmd.Flag("wslBuildDistribution", "").
 			PlaceHolder("<distroName>").
 			Default(this.wslBuildDistribution).
@@ -239,11 +234,6 @@ func (this *build) buildAll(ctx context.Context, forTesting bool) (artifacts bui
 		return nil, err
 	}
 
-	if this.updateCaCerts {
-		if err := this.dependencies.caCerts.generatePem(ctx); err != nil {
-			return nil, err
-		}
-	}
 	success := false
 	defer common.IgnoreCloseErrorIfFalse(&success, artifacts)
 

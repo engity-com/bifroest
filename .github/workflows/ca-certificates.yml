@@ -1,0 +1,57 @@
+name: CA Certificate Updates
+
+on:
+  schedule:
+    - cron: '43 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ca-certificate-updates
+  cancel-in-progress: true
+
+jobs:
+  update:
+    name: Check Mozilla CA certificates
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Cache Go
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install MISE
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+        with:
+          version: 2026.9.5
+          sha256: 32f644d8c291bb182f702c6d2b0dda9f8b01441e940d74d328aad5f08446b2fd
+
+      - name: Install Go dependencies
+        run: mise run install:go
+
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.CA_CERTIFICATES_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CA_CERTIFICATES_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Create CA certificate update pull request
+        env:
+          CA_CERTIFICATES_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: go run ./cmd/build ca-certs update-pr --log.colorMode=always
