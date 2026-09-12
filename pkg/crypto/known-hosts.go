@@ -20,6 +20,13 @@ func (this KnownHosts) Validate() error {
 	return validateKnownHosts([]byte(this))
 }
 
+func (this KnownHosts) ValidateSyntax() error {
+	if this.IsZero() {
+		return nil
+	}
+	return validateKnownHostsSyntax([]byte(this))
+}
+
 func (this KnownHosts) IsZero() bool {
 	return strings.TrimSpace(string(this)) == ""
 }
@@ -74,6 +81,29 @@ func (this KnownHostsFile) IsEqualTo(other any) bool {
 }
 
 func validateKnownHosts(raw []byte) error {
+	if err := validateKnownHostsSyntax(raw); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp("", "bifroest-known-hosts-validation-*")
+	if err != nil {
+		return fmt.Errorf("cannot create temporary known hosts validation file: %w", err)
+	}
+	name := f.Name()
+	defer func() { _ = os.Remove(name) }()
+	if _, err := f.Write(raw); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("cannot write temporary known hosts validation file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("cannot close temporary known hosts validation file: %w", err)
+	}
+	if _, err := knownhosts.New(name); err != nil {
+		return fmt.Errorf("illegal known hosts: %w", err)
+	}
+	return nil
+}
+
+func validateKnownHostsSyntax(raw []byte) error {
 	remaining := raw
 	found := false
 	for len(remaining) > 0 {
@@ -97,22 +127,6 @@ func validateKnownHosts(raw []byte) error {
 	}
 	if !found {
 		return fmt.Errorf("illegal or non-existent known hosts")
-	}
-	f, err := os.CreateTemp("", "bifroest-known-hosts-validation-*")
-	if err != nil {
-		return fmt.Errorf("cannot create temporary known hosts validation file: %w", err)
-	}
-	name := f.Name()
-	defer func() { _ = os.Remove(name) }()
-	if _, err := f.Write(raw); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("cannot write temporary known hosts validation file: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("cannot close temporary known hosts validation file: %w", err)
-	}
-	if _, err := knownhosts.New(name); err != nil {
-		return fmt.Errorf("illegal known hosts: %w", err)
 	}
 	return nil
 }

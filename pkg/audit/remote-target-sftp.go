@@ -1,0 +1,527 @@
+package audit
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
+	goerrors "errors"
+	"hash"
+	"io"
+	"net"
+	"os"
+	"path"
+	"strings"
+	"sync"
+	"time"
+
+	gosftp "github.com/pkg/sftp"
+	gossh "golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
+
+	"github.com/engity-com/bifroest/pkg/configuration"
+	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/errors"
+	bfssh "github.com/engity-com/bifroest/pkg/ssh"
+)
+
+const maximumSftpIdentityFileSize = 1 << 20
+
+var _ = RegisterRemoteTarget(
+	func() configuration.AuditlogTargetV { return &configuration.AuditlogTargetSftp{} },
+	newSftpRemoteTarget,
+)
+
+type sftpRemoteTarget struct {
+	mutex      sync.RWMutex
+	address    string
+	directory  string
+	sshConfig  *gossh.ClientConfig
+	dial       func(context.Context) (*sftpRemoteConnection, error)
+	closed     bool
+	closeError error
+}
+
+type sftpHostKeyError struct {
+	error
+}
+
+func newSftpRemoteTarget(ctx context.Context, _ RemoteTargetScope, conf *configuration.AuditlogTargetSftp) (RemoteTarget, error) {
+	if conf == nil {
+		return nil, errors.Config.Newf("nil SFTP audit target configuration")
+	}
+	if err := conf.Validate(); err != nil {
+		return nil, errors.Config.Newf("invalid SFTP audit target configuration: %w", err)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	values, err := conf.Render(nil)
+	if err != nil {
+		return nil, errors.Config.Newf("cannot render SFTP audit target configuration: %w", err)
+	}
+	address, err := bfssh.ParseAddress(conf.Address)
+	if err != nil {
+		return nil, errors.Config.Newf("cannot resolve SFTP audit target address: %w", err)
+	}
+	var hostKeyCallback gossh.HostKeyCallback
+	if conf.AcceptAllHostKeys {
+		hostKeyCallback = gossh.InsecureIgnoreHostKey()
+	} else {
+		hostKeyCallback, err = bfcrypto.NewKnownHostsCallback(conf.KnownHosts, conf.KnownHostsFile)
+		if err != nil {
+			return nil, errors.Config.Newf("cannot load SFTP host-key trust: %w", err)
+		}
+	}
+	trustedHostKeyCallback := hostKeyCallback
+	hostKeyCallback = func(hostname string, remote net.Addr, key gossh.PublicKey) error {
+		if err := trustedHostKeyCallback(hostname, remote, key); err != nil {
+			return sftpHostKeyError{err}
+		}
+		return nil
+	}
+
+	var auth []gossh.AuthMethod
+	if values.Password != "" {
+		auth = []gossh.AuthMethod{gossh.Password(values.Password)}
+	} else {
+		signers := make([]gossh.Signer, len(conf.IdentityFiles))
+		for index, identityFile := range conf.IdentityFiles {
+			key, loadErr := loadSftpIdentityFile(identityFile)
+			if loadErr != nil {
+				return nil, errors.Config.Newf("cannot load SFTP identity file [%d] %q: %w", index, identityFile, loadErr)
+			}
+			signers[index] = key.ToSsh()
+		}
+		auth = []gossh.AuthMethod{gossh.PublicKeys(signers...)}
+	}
+	target := &sftpRemoteTarget{
+		address:   address.String(),
+		directory: conf.Directory,
+		sshConfig: &gossh.ClientConfig{
+			User:            values.User,
+			Auth:            auth,
+			HostKeyCallback: hostKeyCallback,
+			ClientVersion:   "SSH-2.0-Bifroest",
+		},
+	}
+	target.dial = func(dialContext context.Context) (*sftpRemoteConnection, error) {
+		return dialSftpRemoteConnection(dialContext, target.address, values.ConnectTimeout, target.sshConfig)
+	}
+	return target, nil
+}
+
+func (this *sftpRemoteTarget) Publish(ctx context.Context, segment SealedSegment) error {
+	this.mutex.RLock()
+	defer this.mutex.RUnlock()
+	if this.closed {
+		return errors.System.Newf("SFTP audit target is closed")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	checksum, err := hashSftpSegment(ctx, segment.Content())
+	if err != nil {
+		return err
+	}
+	connection, err := this.dial(ctx)
+	if err != nil {
+		return classifySftpRemoteError(ctx, "connect to SFTP audit target", err)
+	}
+	stopWatcher := make(chan struct{})
+	watcherDone := make(chan struct{})
+	go func() {
+		defer close(watcherDone)
+		select {
+		case <-ctx.Done():
+			_ = connection.Close()
+		case <-stopWatcher:
+		}
+	}()
+	result := this.publishConnected(ctx, connection.client, segment, checksum)
+	close(stopWatcher)
+	<-watcherDone
+	closeErr := connection.Close()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return goerrors.Join(result, classifySftpRemoteError(ctx, "close SFTP audit target connection", closeErr))
+}
+
+func (this *sftpRemoteTarget) publishConnected(ctx context.Context, client *gosftp.Client, segment SealedSegment, checksum []byte) error {
+	if err := ensureSftpDirectory(client, this.directory, false); err != nil {
+		return err
+	}
+	producerDirectory := path.Join(this.directory, segment.ProducerId().String())
+	finalPath := path.Join(producerDirectory, segment.FileName())
+	exists, err := verifySftpObject(ctx, client, finalPath, segment.Size(), checksum, "existing audit segment")
+	if err != nil {
+		return err
+	}
+	if exists {
+		return ensureSftpDirectory(client, producerDirectory, true)
+	}
+	if version, supported := client.HasExtension("hardlink@openssh.com"); !supported || version != "1" {
+		return errors.Config.Newf("SFTP server does not support hardlink@openssh.com version 1")
+	}
+	if err := ensureSftpDirectory(client, producerDirectory, true); err != nil {
+		return err
+	}
+	temporaryPath, err := newSftpTemporaryPath(producerDirectory)
+	if err != nil {
+		return err
+	}
+	if err := putSftpTemporary(ctx, client, temporaryPath, segment); err != nil {
+		return goerrors.Join(err, cleanupSftpTemporary(ctx, client, temporaryPath))
+	}
+	exists, err = verifySftpObject(ctx, client, temporaryPath, segment.Size(), checksum, "temporary audit segment")
+	if err != nil {
+		return goerrors.Join(err, cleanupSftpTemporary(ctx, client, temporaryPath))
+	}
+	if !exists {
+		return goerrors.Join(errors.Network.Newf("temporary SFTP audit segment disappeared after upload"), cleanupSftpTemporary(ctx, client, temporaryPath))
+	}
+	linkErr := client.Link(temporaryPath, finalPath)
+	cleanupErr := cleanupSftpTemporary(ctx, client, temporaryPath)
+	if linkErr == nil {
+		return cleanupErr
+	}
+	exists, verifyErr := verifySftpObject(ctx, client, finalPath, segment.Size(), checksum, "existing audit segment")
+	if verifyErr != nil {
+		return goerrors.Join(verifyErr, cleanupErr)
+	}
+	if exists {
+		return cleanupErr
+	}
+	return goerrors.Join(classifySftpRemoteError(ctx, "publish audit segment with SFTP hardlink", linkErr), cleanupErr)
+}
+
+func hashSftpSegment(ctx context.Context, content io.Reader) ([]byte, error) {
+	if content == nil {
+		return nil, errors.System.Newf("nil sealed audit segment content")
+	}
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, contextReader{context: ctx, reader: content}); err != nil {
+		return nil, errors.System.Newf("cannot hash sealed audit segment for SFTP: %w", err)
+	}
+	return hasher.Sum(nil), nil
+}
+
+func ensureSftpDirectory(client *gosftp.Client, directory string, create bool) error {
+	info, err := client.Lstat(directory)
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return errors.Config.Newf("SFTP path %q is not a real directory", directory)
+		}
+		if create && info.Mode().Perm()&0o077 != 0 {
+			if err := client.Chmod(directory, 0o700); err != nil {
+				return classifySftpRemoteError(context.Background(), "protect SFTP producer directory", err)
+			}
+			protected, err := client.Lstat(directory)
+			if err != nil {
+				return classifySftpRemoteError(context.Background(), "inspect protected SFTP producer directory", err)
+			}
+			if protected.Mode()&os.ModeSymlink != 0 || !protected.IsDir() || protected.Mode().Perm()&0o077 != 0 {
+				return errors.Config.Newf("SFTP producer directory %q remains insecure after setting permissions", directory)
+			}
+		}
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return classifySftpRemoteError(context.Background(), "inspect SFTP directory", err)
+	}
+	if !create {
+		return errors.Config.Newf("SFTP base directory %q does not exist", directory)
+	}
+	if err := client.Mkdir(directory); err != nil {
+		if info, inspectErr := client.Lstat(directory); inspectErr == nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+			return ensureSftpDirectory(client, directory, true)
+		}
+		return classifySftpRemoteError(context.Background(), "create SFTP producer directory", err)
+	}
+	if err := client.Chmod(directory, 0o700); err != nil {
+		return classifySftpRemoteError(context.Background(), "protect SFTP producer directory", err)
+	}
+	return ensureSftpDirectory(client, directory, true)
+}
+
+func newSftpTemporaryPath(directory string) (string, error) {
+	var random [16]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return "", errors.System.Newf("cannot generate SFTP temporary object name: %w", err)
+	}
+	return path.Join(directory, ".bifroest-upload-"+hex.EncodeToString(random[:])+".tmp"), nil
+}
+
+func putSftpTemporary(ctx context.Context, client *gosftp.Client, temporaryPath string, segment SealedSegment) error {
+	file, err := client.OpenFile(temporaryPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+	if err != nil {
+		return classifySftpRemoteError(ctx, "create temporary SFTP audit segment", err)
+	}
+	if err := file.Chmod(0o600); err != nil {
+		return goerrors.Join(
+			classifySftpRemoteError(ctx, "protect temporary SFTP audit segment", err),
+			classifySftpRemoteError(ctx, "close temporary SFTP audit segment", file.Close()),
+		)
+	}
+	written, writeErr := io.Copy(file, contextReader{context: ctx, reader: segment.Content()})
+	closeErr := file.Close()
+	if writeErr != nil {
+		return goerrors.Join(classifySftpRemoteError(ctx, "upload temporary SFTP audit segment", writeErr), classifySftpRemoteError(ctx, "close temporary SFTP audit segment", closeErr))
+	}
+	if written != segment.Size() {
+		return goerrors.Join(errors.System.Newf("uploaded SFTP audit segment size is %d instead of %d", written, segment.Size()), classifySftpRemoteError(ctx, "close temporary SFTP audit segment", closeErr))
+	}
+	return classifySftpRemoteError(ctx, "close temporary SFTP audit segment", closeErr)
+}
+
+func verifySftpObject(ctx context.Context, client *gosftp.Client, objectPath string, size int64, expectedChecksum []byte, description string) (bool, error) {
+	info, err := client.Lstat(objectPath)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, classifySftpRemoteError(ctx, "inspect "+description, err)
+	}
+	conflict := func(message string, args ...any) error {
+		return errors.System.Newf("SFTP %s %q conflicts with local content: "+message, append([]any{description, objectPath}, args...)...)
+	}
+	if info.Mode() == 0 {
+		return false, conflict("does not expose file type and permission attributes")
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return false, conflict("is not a regular file")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return false, conflict("has insecure permissions %04o", info.Mode().Perm())
+	}
+	if info.Size() != size {
+		return false, conflict("size is %d instead of %d", info.Size(), size)
+	}
+	file, err := client.Open(objectPath)
+	if err != nil {
+		return false, classifySftpRemoteError(ctx, "read "+description, err)
+	}
+	hasher := sha256.New()
+	read, readErr := copySftpObject(ctx, hasher, file, size+1, description)
+	closeErr := file.Close()
+	if readErr != nil {
+		return false, goerrors.Join(readErr, classifySftpRemoteError(ctx, "close "+description, closeErr))
+	}
+	if read != size {
+		return false, goerrors.Join(conflict("size is %d instead of %d", read, size), classifySftpRemoteError(ctx, "close "+description, closeErr))
+	}
+	if subtle.ConstantTimeCompare(hasher.Sum(nil), expectedChecksum) != 1 {
+		return false, goerrors.Join(conflict("SHA-256 checksum differs"), classifySftpRemoteError(ctx, "close "+description, closeErr))
+	}
+	return true, classifySftpRemoteError(ctx, "close "+description, closeErr)
+}
+
+func copySftpObject(ctx context.Context, target hash.Hash, source io.Reader, limit int64, description string) (int64, error) {
+	read, err := io.Copy(target, contextReader{context: ctx, reader: io.LimitReader(source, limit)})
+	if err != nil {
+		return read, classifySftpRemoteError(ctx, "read "+description, err)
+	}
+	return read, nil
+}
+
+func cleanupSftpTemporary(ctx context.Context, client *gosftp.Client, temporaryPath string) error {
+	if ctx.Err() != nil {
+		return nil
+	}
+	err := client.Remove(temporaryPath)
+	if err == nil || os.IsNotExist(err) {
+		return nil
+	}
+	return classifySftpRemoteError(ctx, "remove temporary SFTP audit segment", err)
+}
+
+type sftpRemoteConnection struct {
+	sshClient  *gossh.Client
+	client     *gosftp.Client
+	closeOnce  sync.Once
+	closeError error
+}
+
+func dialSftpRemoteConnection(ctx context.Context, address string, timeout time.Duration, config *gossh.ClientConfig) (*sftpRemoteConnection, error) {
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	raw, err := (&net.Dialer{}).DialContext(ctx, "tcp", address)
+	if err != nil {
+		return nil, err
+	}
+	success := false
+	defer func() {
+		if !success {
+			_ = raw.Close()
+		}
+	}()
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := raw.SetDeadline(deadline); err != nil {
+			return nil, err
+		}
+	}
+	setupDone := make(chan struct{})
+	watcherDone := make(chan struct{})
+	go func() {
+		defer close(watcherDone)
+		select {
+		case <-ctx.Done():
+			_ = raw.Close()
+		case <-setupDone:
+		}
+	}()
+	clientConnection, channels, requests, err := gossh.NewClientConn(raw, address, config)
+	if err != nil {
+		close(setupDone)
+		<-watcherDone
+		return nil, err
+	}
+	sshClient := gossh.NewClient(clientConnection, channels, requests)
+	sftpClient, err := gosftp.NewClient(sshClient)
+	close(setupDone)
+	<-watcherDone
+	if err != nil {
+		_ = sshClient.Close()
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		_ = sshClient.Close()
+		_ = sftpClient.Close()
+		return nil, err
+	}
+	if err := raw.SetDeadline(time.Time{}); err != nil {
+		_ = sshClient.Close()
+		_ = sftpClient.Close()
+		return nil, err
+	}
+	success = true
+	return &sftpRemoteConnection{sshClient: sshClient, client: sftpClient}, nil
+}
+
+func (this *sftpRemoteConnection) Close() error {
+	if this == nil {
+		return nil
+	}
+	this.closeOnce.Do(func() {
+		var sftpErr, sshErr error
+		if this.sshClient != nil {
+			sshErr = this.sshClient.Close()
+		}
+		if this.client != nil {
+			sftpErr = this.client.Close()
+		}
+		if goerrors.Is(sftpErr, io.EOF) || goerrors.Is(sftpErr, net.ErrClosed) {
+			sftpErr = nil
+		}
+		if goerrors.Is(sshErr, io.EOF) || goerrors.Is(sshErr, net.ErrClosed) {
+			sshErr = nil
+		}
+		this.closeError = goerrors.Join(sftpErr, sshErr)
+	})
+	return this.closeError
+}
+
+func classifySftpRemoteError(ctx context.Context, operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if goerrors.Is(err, context.Canceled) || goerrors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	var hostKeyError sftpHostKeyError
+	var knownHostError *knownhosts.KeyError
+	var revokedError *knownhosts.RevokedError
+	if goerrors.As(err, &hostKeyError) || goerrors.As(err, &knownHostError) || goerrors.As(err, &revokedError) {
+		return errors.Config.Newf("cannot %s: %w", operation, err)
+	}
+	if strings.Contains(err.Error(), "unable to authenticate") || goerrors.Is(err, os.ErrPermission) || goerrors.Is(err, gosftp.ErrSSHFxPermissionDenied) {
+		return errors.Permission.Newf("cannot %s: %w", operation, err)
+	}
+	if goerrors.Is(err, gosftp.ErrSSHFxOpUnsupported) {
+		return errors.Config.Newf("cannot %s: %w", operation, err)
+	}
+	if goerrors.Is(err, gosftp.ErrSSHFxNoConnection) || goerrors.Is(err, gosftp.ErrSSHFxConnectionLost) ||
+		goerrors.Is(err, io.EOF) || goerrors.Is(err, io.ErrUnexpectedEOF) {
+		return errors.Network.Newf("cannot %s: %w", operation, err)
+	}
+	var networkError net.Error
+	if goerrors.As(err, &networkError) {
+		return errors.Network.Newf("cannot %s: %w", operation, err)
+	}
+	var statusError *gosftp.StatusError
+	if goerrors.As(err, &statusError) {
+		switch statusError.FxCode() {
+		case gosftp.ErrSSHFxPermissionDenied:
+			return errors.Permission.Newf("cannot %s: %w", operation, err)
+		case gosftp.ErrSSHFxOpUnsupported:
+			return errors.Config.Newf("cannot %s: %w", operation, err)
+		case gosftp.ErrSSHFxNoConnection, gosftp.ErrSSHFxConnectionLost:
+			return errors.Network.Newf("cannot %s: %w", operation, err)
+		}
+		return errors.Network.Newf("cannot %s: %w", operation, err)
+	}
+	return errors.System.Newf("cannot %s: %w", operation, err)
+}
+
+func (this *sftpRemoteTarget) Close() error {
+	if this == nil {
+		return nil
+	}
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if this.closed {
+		return this.closeError
+	}
+	this.closed = true
+	return this.closeError
+}
+
+func loadSftpIdentityFile(identityPath string) (bfcrypto.PrivateKey, error) {
+	pathInfo, err := os.Lstat(identityPath)
+	if err != nil {
+		return nil, err
+	}
+	if !pathInfo.Mode().IsRegular() {
+		return nil, goerrors.New("private key is not a regular file")
+	}
+	if pathInfo.Size() > maximumSftpIdentityFileSize {
+		return nil, errors.Config.Newf("private key exceeds %d bytes", maximumSftpIdentityFileSize)
+	}
+	if err := validateSftpIdentityFilePermissions(identityPath, pathInfo); err != nil {
+		return nil, err
+	}
+	file, err := os.Open(identityPath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	openInfo, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(pathInfo, openInfo) {
+		return nil, goerrors.New("private key changed while opening")
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, maximumSftpIdentityFileSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maximumSftpIdentityFileSize {
+		return nil, errors.Config.Newf("private key exceeds %d bytes", maximumSftpIdentityFileSize)
+	}
+	return bfcrypto.ParsePrivateKeyBytes(raw)
+}
