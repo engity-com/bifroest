@@ -4,14 +4,11 @@ description: Configure an SFTP remote target for sealed audit-log segments.
 
 # SFTP
 
-!!! warning
-     Remote delivery is not active in this build. See [Remote targets](index.md) for details.
-
 The SFTP target publishes sealed segments below an existing absolute directory. Bifröst creates one child directory per producer.
 
 New segments are uploaded under a random temporary name in the producer directory and read back and validated before an atomic hard link exposes them at their final name. Existing final files are accepted only when their exact size and SHA-256 checksum match and they grant no group or other permissions. Conflicting content is never overwritten.
 
-A compatible server must support version `1` of the SFTP `hardlink@openssh.com` extension and permission changes through both `SETSTAT` and `FSETSTAT`. Bifröst deliberately does not fall back to SFTP rename operations because overwrite and atomicity guarantees vary between servers. It opens temporary files exclusively, restricts them to mode `0600`, verifies that no group or other permissions remain, restricts producer directories to mode `0700`, and attempts to remove temporary files after detectable upload, verification, or publication failures. A process crash or canceled request can still leave a hidden `.bifroest-upload-*.tmp` file; stale-file retention and cleanup remain part of the remote-delivery coordinator.
+A compatible server must support version `1` of the SFTP `hardlink@openssh.com` extension and permission changes through both `SETSTAT` and `FSETSTAT`. Bifröst deliberately does not fall back to SFTP rename operations because overwrite and atomicity guarantees vary between servers. It opens temporary files exclusively, restricts them to mode `0600`, verifies that no group or other permissions remain, restricts producer directories to mode `0700`, and attempts to remove temporary files after detectable upload, verification, or publication failures. A process crash or cancellation during shutdown can still leave a hidden `.bifroest-upload-*.tmp` file; Bifröst does not currently list or automatically remove such stale remote files.
 
 Files use the path `<directory>/<producer-id>/<sealed-segment-file>`.
 

@@ -4,14 +4,11 @@ description: Configure a WebDAV remote target for sealed audit-log segments.
 
 # WebDAV
 
-!!! warning
-     Remote delivery is not active in this build. See [Remote targets](index.md) for details.
-
 The WebDAV target publishes sealed segments below a configured HTTPS collection. The collection itself must already exist. Bifröst creates one child collection per producer with `MKCOL`.
 
 New segments are uploaded under a random temporary name in the producer collection and read back and validated before a `MOVE` with `Overwrite: F` exposes them at their final name. Existing final objects are accepted only when their exact size and SHA-256 checksum match. Conflicting content is never overwritten.
 
-A compatible server must support `MKCOL`, conditional `PUT` with `If-None-Match: *`, `GET`, atomic same-collection `MOVE` with `Overwrite: F`, and `DELETE` for temporary-object cleanup. Bifröst does not follow redirects, perform application-level retries, or rely on ETags as content checksums. It attempts to delete the temporary object after detectable upload, verification, or publication failures. A process crash or canceled request can still leave a hidden `.bifroest-upload-*.tmp` object; stale-object retention and cleanup remain part of the remote-delivery coordinator.
+A compatible server must support `MKCOL`, conditional `PUT` with `If-None-Match: *`, `GET`, atomic same-collection `MOVE` with `Overwrite: F`, and `DELETE` for temporary-object cleanup. Bifröst does not follow redirects, perform target-level retries, or rely on ETags as content checksums; retries are controlled by the [delivery coordinator](index.md). It attempts to delete the temporary object after detectable upload, verification, or publication failures. A process crash or cancellation during shutdown can still leave a hidden `.bifroest-upload-*.tmp` object; Bifröst does not currently list or automatically remove such stale remote objects.
 
 Objects use the URL `<endpoint>/<producer-id>/<sealed-segment-file>`.
 

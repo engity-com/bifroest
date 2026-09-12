@@ -39,6 +39,8 @@ var (
 	connectionLifecycleCtxKey = struct{ uint64 }{23424012}
 )
 
+const remoteAuditDeliveryShutdownTimeout = 5 * time.Second
+
 type Service struct {
 	Configuration configuration.Configuration
 	Version       sys.Version
@@ -216,9 +218,6 @@ func (this *Service) prepare() (svc *service, err error) {
 	if err := this.Configuration.Validate(); err != nil {
 		return fail(err)
 	}
-	if err := validateRemoteAuditTargetsAvailable(this.Configuration.Auditlogs); err != nil {
-		return fail(err)
-	}
 	if err := validateAuditlogRuntimePaths(this.Configuration.Auditlogs); err != nil {
 		return fail(err)
 	}
@@ -229,6 +228,7 @@ func (this *Service) prepare() (svc *service, err error) {
 		connectionLifecycle: newConnectionLifecycle(),
 		auditIdentities:     make(map[configuration.AuditlogName]*audit.Identity, len(this.Configuration.Auditlogs)),
 		auditRecorders:      make(map[configuration.AuditlogName]audit.Recorder, len(this.Configuration.Auditlogs)),
+		auditDeliveries:     make(map[configuration.AuditlogName]*audit.RemoteDelivery, len(this.Configuration.Auditlogs)),
 		flowAuditRecorders:  make(map[configuration.FlowName]audit.Recorder, len(this.Configuration.Flows)),
 	}
 
@@ -276,7 +276,7 @@ func (this *Service) prepare() (svc *service, err error) {
 	auditRecordersPrepared := false
 	defer func() {
 		if !auditRecordersPrepared {
-			_ = svc.closeAuditRecorders()
+			_ = svc.closeAudit(false)
 		}
 	}()
 	for index := range this.Configuration.Auditlogs {
@@ -321,6 +321,14 @@ func (this *Service) prepare() (svc *service, err error) {
 		}
 		svc.auditRecorders[auditlog.Name] = recorder
 		svc.auditRecorderOrder = append(svc.auditRecorderOrder, recorder)
+		if auditlog.Enabled && len(auditlog.Targets) > 0 {
+			delivery, deliveryErr := audit.NewRemoteDelivery(ctx, auditlog, identity)
+			if deliveryErr != nil {
+				return fail(deliveryErr)
+			}
+			svc.auditDeliveries[auditlog.Name] = delivery
+			svc.auditDeliveryOrder = append(svc.auditDeliveryOrder, delivery)
+		}
 	}
 	for _, flow := range this.Configuration.Flows {
 		svc.flowAuditRecorders[flow.Name] = svc.auditRecorders[flow.Auditlog]
@@ -356,19 +364,15 @@ func (this *Service) prepare() (svc *service, err error) {
 	if err := this.prepareServer(ctx, svc, hostSigners); err != nil {
 		return fail(err)
 	}
+	for _, delivery := range svc.auditDeliveryOrder {
+		if err := delivery.Start(); err != nil {
+			return fail(err)
+		}
+	}
 
 	sessionRepositoryPrepared = true
 	auditRecordersPrepared = true
 	return svc, nil
-}
-
-func validateRemoteAuditTargetsAvailable(auditlogs configuration.Auditlogs) error {
-	for _, auditlog := range auditlogs {
-		if auditlog.Enabled && len(auditlog.Targets) > 0 {
-			return errors.Config.Newf("auditlog %q configures remote targets, but remote audit delivery is not supported by this build", auditlog.Name)
-		}
-	}
-	return nil
 }
 
 func (this *Service) prepareServer(_ context.Context, svc *service, hostPrivateKeys []crypto.PrivateKey) (err error) {
@@ -552,6 +556,8 @@ type service struct {
 	auditIdentities    map[configuration.AuditlogName]*audit.Identity
 	auditRecorders     map[configuration.AuditlogName]audit.Recorder
 	auditRecorderOrder []audit.Recorder
+	auditDeliveries    map[configuration.AuditlogName]*audit.RemoteDelivery
+	auditDeliveryOrder []*audit.RemoteDelivery
 	flowAuditRecorders map[configuration.FlowName]audit.Recorder
 	sessions           session.CloseableRepository
 	authorizer         authorization.CloseableAuthorizer
@@ -626,7 +632,7 @@ func sshMaxAuthTries(value uint8) int {
 }
 
 func (this *service) Close() (rErr error) {
-	defer func() { rErr = goerrors.Join(rErr, this.closeAuditRecorders()) }()
+	defer func() { rErr = goerrors.Join(rErr, this.closeAudit(true)) }()
 	defer common.KeepCloseError(&rErr, this.alternatives)
 	defer common.KeepCloseError(&rErr, this.imp)
 	defer common.KeepCloseError(&rErr, this.sessions)
@@ -634,6 +640,33 @@ func (this *service) Close() (rErr error) {
 	defer common.KeepCloseError(&rErr, this.environments)
 	defer common.KeepCloseError(&rErr, &this.houseKeeper)
 	return nil
+}
+
+func (this *service) closeAudit(flush bool) (result error) {
+	if flush {
+		for _, recorder := range this.auditRecorderOrder {
+			if sealable, ok := recorder.(audit.SealableRecorder); ok {
+				result = goerrors.Join(result, sealable.Seal())
+			}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), remoteAuditDeliveryShutdownTimeout)
+		var wait sync.WaitGroup
+		for _, delivery := range this.auditDeliveryOrder {
+			wait.Add(1)
+			go func() {
+				defer wait.Done()
+				if err := delivery.Flush(ctx); err != nil {
+					this.logger().WithError(err).Warn("cannot flush remote audit delivery while shutting down; segments remain local")
+				}
+			}()
+		}
+		wait.Wait()
+		cancel()
+	}
+	for _, delivery := range this.auditDeliveryOrder {
+		result = goerrors.Join(result, delivery.Close())
+	}
+	return goerrors.Join(result, this.closeAuditRecorders())
 }
 
 func (this *service) closeAuditRecorders() (result error) {

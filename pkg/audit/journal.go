@@ -227,12 +227,7 @@ func (this *localJournalRecorder) Close() error {
 	}
 	this.closed = true
 
-	this.closeErr = this.poisoned
-	if this.closeErr == nil && this.file != nil && this.state.recordCount > 0 {
-		if err := this.rotate(time.Now().UTC()); err != nil {
-			this.closeErr = err
-		}
-	}
+	this.closeErr = this.sealLocked()
 	if this.file != nil {
 		if err := this.file.Sync(); err != nil {
 			this.closeErr = goerrors.Join(this.closeErr, errors.System.Newf("cannot flush active audit journal while closing: %w", err))
@@ -243,6 +238,31 @@ func (this *localJournalRecorder) Close() error {
 	}
 	this.closeErr = goerrors.Join(this.closeErr, this.processLock.Close())
 	return this.closeErr
+}
+
+func (this *localJournalRecorder) Seal() error {
+	if this == nil {
+		return nil
+	}
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if this.closed {
+		return errJournalClosed
+	}
+	return this.sealLocked()
+}
+
+func (this *localJournalRecorder) sealLocked() error {
+	if this.poisoned != nil {
+		return this.poisoned
+	}
+	if this.file == nil || this.state.recordCount == 0 {
+		return nil
+	}
+	if err := this.rotate(time.Now().UTC()); err != nil {
+		return this.poison(err)
+	}
+	return nil
 }
 
 func validateAuditEvent(event Event) error {
@@ -423,6 +443,20 @@ func validateJournalRoot(directory string, producerId ProducerId) error {
 			}
 			if !info.Mode().IsRegular() {
 				return errors.Config.Newf("audit journal lock %q is not a regular file", lockPath)
+			}
+			continue
+		}
+		if entry.Name() == remoteDeliveryStateDirectoryName {
+			path := filepath.Join(directory, entry.Name())
+			info, err := os.Lstat(path)
+			if err != nil {
+				return errors.System.Newf("cannot inspect remote delivery state in %q: %w", directory, err)
+			}
+			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return errors.Config.Newf("remote delivery state %q is not a directory", path)
+			}
+			if err := secureJournalDirectory(path, info); err != nil {
+				return err
 			}
 			continue
 		}

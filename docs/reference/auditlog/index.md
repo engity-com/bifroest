@@ -49,7 +49,7 @@ The local journal is the authoritative, crash-safe source of the audit log. Remo
 ### Properties {: #journal-properties }
 
 <<property("directory", "File Path", "../data-type.md#file-path", default="<os specific>", heading=4, id_prefix="journal-")>>
-Where the local audit journal and remote-delivery spool are stored. Bifröst manages this directory and its segment rotation; external log rotation tools must not modify it.
+Where the local audit journal and signed remote-delivery cursors are stored. Bifröst manages this directory, its `.delivery` state, and segment rotation; external log rotation tools must not modify it.
 
 Bifröst holds an exclusive lock for the lifetime of the journal, so only one process can write a configured producer journal at a time. Each accepted record is signed with the dedicated Ed25519 identity, linked to the previous record, and flushed to stable storage before recording succeeds.
 

@@ -17,3 +17,7 @@ func (noopRecorder) Record(context.Context, Event) error {
 func (noopRecorder) Close() error {
 	return nil
 }
+
+func (noopRecorder) Seal() error {
+	return nil
+}

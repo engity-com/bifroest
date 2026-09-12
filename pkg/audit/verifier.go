@@ -187,6 +187,12 @@ func verifyJournalSource(ctx context.Context, source JournalSource, collectRecor
 			}
 			continue
 		}
+		if entry.Name() == remoteDeliveryStateDirectoryName {
+			if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+				return VerifiedJournal{}, nil, errors.Config.Newf("remote delivery state %q is not a directory", filepath.Join(source.Directory, entry.Name()))
+			}
+			continue
+		}
 		if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
 			return VerifiedJournal{}, nil, errors.Config.Newf("audit journal %q contains unsupported entry %q", source.Name, entry.Name())
 		}
@@ -485,6 +491,9 @@ func snapshotVerifierDirectory(directory string) ([]verifierDirectoryEntry, erro
 	}
 	result := make([]verifierDirectoryEntry, 0, len(entries))
 	for _, entry := range entries {
+		if entry.Name() == remoteDeliveryStateDirectoryName {
+			continue
+		}
 		info, err := os.Lstat(filepath.Join(directory, entry.Name()))
 		if err != nil {
 			return nil, errors.System.Newf("cannot inspect audit directory entry %q: %w", entry.Name(), err)

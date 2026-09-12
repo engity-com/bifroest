@@ -14,6 +14,7 @@ type features struct{}
 
 func (this *features) ForEach(consumer func(sys.VersionFeatureCategory)) {
 	consumer(&featureCategory{"authorization", configuration.GetSupportedAuthorizationFeatureFlags})
+	consumer(&featureCategory{"audit-target", configuration.GetSupportedAuditlogTargetFeatureFlags})
 	consumer(&featureCategory{"environment", configuration.GetSupportedEnvironmentFeatureFlags})
 	consumer(&featureCategory{"session", configuration.GetSupportedSessionFeatureFlags})
 	consumer(&featureCategory{"password-crypt", password.GetSupportedFeatureFlags})

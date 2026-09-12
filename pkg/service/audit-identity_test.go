@@ -1,6 +1,7 @@
 package service
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -85,14 +86,33 @@ func TestAuditEncryptionRejectsStaticSshEnvironmentIdentity(t *testing.T) {
 	require.ErrorContains(t, audit.ValidateEncryptionRecipientDedicatedFrom(publicKey, serverKeys), "reuses a private key")
 }
 
-func TestRemoteAuditTargetsAreNotSilentlyIgnored(t *testing.T) {
-	auditlogs := configuration.Auditlogs{{
-		Name:    "security",
-		Enabled: true,
-		Targets: configuration.AuditlogTargets{{Name: "archive"}},
-	}}
-	require.ErrorContains(t, validateRemoteAuditTargetsAvailable(auditlogs), "remote audit delivery is not supported")
+func TestPrepareActivatesRemoteAuditDelivery(t *testing.T) {
+	directory := t.TempDir()
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
+		auditlog := &conf.Auditlogs[0]
+		auditlog.Enabled = true
+		auditlog.IdentityFile = filepath.Join(directory, "auditlog-key")
+		auditlog.Journal.Directory = filepath.Join(directory, "auditlog")
+		auditlog.Targets = configuration.AuditlogTargets{{
+			Name: "archive",
+			V: &configuration.AuditlogTargetS3{
+				Bucket:          "audit-archive",
+				Region:          template.MustNewString("eu-central-1"),
+				Endpoint:        "https://127.0.0.1:1",
+				PathStyle:       true,
+				AccessKeyId:     template.MustNewString("access"),
+				SecretAccessKey: template.MustNewString("secret"),
+				SessionToken:    template.MustNewString(""),
+			},
+		}}
+	})
 
-	auditlogs[0].Enabled = false
-	require.NoError(t, validateRemoteAuditTargetsAvailable(auditlogs))
+	delivery := server.service.auditDeliveries[configuration.DefaultAuditlogName]
+	require.NotNil(t, delivery)
+	identity := server.service.auditIdentities[configuration.DefaultAuditlogName]
+	targetStateRoot := filepath.Join(directory, "auditlog", ".delivery", identity.ProducerId().String())
+	entries, err := os.ReadDir(targetStateRoot)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.True(t, entries[0].IsDir())
 }
