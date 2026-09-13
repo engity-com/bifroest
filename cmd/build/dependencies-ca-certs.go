@@ -64,10 +64,6 @@ func (this *dependenciesCaCerts) init(ctx context.Context, app *kingpin.Applicat
 		Action(func(*kingpin.ParseContext) error {
 			return this.update(ctx)
 		})
-	cmd.Command("update-pr", "Create a pull request if the effective CA certificates changed.").
-		Action(func(*kingpin.ParseContext) error {
-			return this.updatePr(ctx)
-		})
 }
 
 func (this *dependenciesCaCerts) update(ctx context.Context) error {
