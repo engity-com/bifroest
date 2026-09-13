@@ -176,12 +176,16 @@ func rejectWindowsReparsePoint(handle windows.Handle) error {
 	return nil
 }
 
-func verifyAuditOutputParent(parent windows.Handle, path string) error {
+func verifyAuditOutputParent(parent windows.Handle, path string) (rErr error) {
 	current, err := openAuditOutputParent(path)
 	if err != nil {
 		return fmt.Errorf("output parent changed after it was pinned: %w", err)
 	}
-	defer windows.CloseHandle(current)
+	defer func() {
+		if err := windows.CloseHandle(current); err != nil && rErr == nil {
+			rErr = fmt.Errorf("cannot close current output parent: %w", err)
+		}
+	}()
 	var pinnedInfo, currentInfo windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(parent, &pinnedInfo); err != nil {
 		return fmt.Errorf("cannot inspect pinned output parent: %w", err)
