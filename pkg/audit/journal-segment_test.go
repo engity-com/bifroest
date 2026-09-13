@@ -179,6 +179,72 @@ func TestJournalSegmentMetadataSignatures(t *testing.T) {
 	require.ErrorContains(t, err, "illegal audit signature")
 }
 
+func TestJournalSegmentScannerTransitionsThroughHeaderRecordAndSeal(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	recordedAt := time.Now().UTC()
+	_, headerPayload, err := newJournalSegmentHeader(identity, 1, journalHash{}, journalHash{}, recordedAt)
+	require.NoError(t, err)
+	headerFrame, err := encodeJournalFrame(headerPayload)
+	require.NoError(t, err)
+	_, recordPayload, recordHash, err := newJournalRecord(identity, journalHash{}, Event{Name: "test.transition"}, uuid.New(), recordedAt)
+	require.NoError(t, err)
+	recordFrame, err := encodeJournalFrame(recordPayload)
+	require.NoError(t, err)
+	content := append(append([]byte(nil), headerFrame...), recordFrame...)
+	_, sealPayload, err := newJournalSegmentSeal(
+		identity,
+		1,
+		1,
+		uint64(len(content)),
+		hashJournalBytes(journalSegmentContentHashDomain, content),
+		recordHash,
+		recordedAt,
+	)
+	require.NoError(t, err)
+	sealFrame, err := encodeJournalFrame(sealPayload)
+	require.NoError(t, err)
+	segment := append(append([]byte(nil), content...), sealFrame...)
+	path := filepath.Join(t.TempDir(), "scanner.journal")
+	require.NoError(t, os.WriteFile(path, segment, journalFileMode))
+	file, err := os.Open(path)
+	require.NoError(t, err)
+	defer file.Close()
+
+	var digest bytes.Buffer
+	scanner, err := newJournalSegmentScanner(file, journalSegmentScanOptions{
+		identity:       identity,
+		sequence:       1,
+		checkpointHash: recordHash,
+		digest:         &digest,
+	})
+	require.NoError(t, err)
+
+	complete, err := scanner.scanNextFrame()
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.True(t, scanner.state.header)
+	require.False(t, scanner.state.sealed)
+	require.Zero(t, scanner.state.recordCount)
+	require.False(t, scanner.state.checkpointSeen)
+	require.Equal(t, int64(len(headerFrame)), scanner.state.contentBytes)
+
+	complete, err = scanner.scanNextFrame()
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Equal(t, uint64(1), scanner.state.recordCount)
+	require.Equal(t, recordHash, scanner.state.previousRecordHash)
+	require.True(t, scanner.state.checkpointSeen)
+	require.Equal(t, int64(len(content)), scanner.state.contentBytes)
+
+	complete, err = scanner.scanNextFrame()
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.True(t, scanner.state.sealed)
+	require.Equal(t, int64(len(segment)), scanner.state.fileBytes)
+	require.Equal(t, hashJournalBytes(journalSegmentHashDomain, segment), scanner.state.segmentHash)
+	require.Equal(t, segment, digest.Bytes())
+}
+
 func TestJournalHeadSignature(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
 	lastRecordHash := hashJournalBytes(journalRecordHashDomain, []byte("record"))

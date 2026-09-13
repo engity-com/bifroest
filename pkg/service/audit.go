@@ -53,7 +53,7 @@ func (this *service) recordUnauthenticatedFlowAudit(ctx context.Context, flow co
 	return nil
 }
 
-func (this *service) authorizationAuditEvent(ctx essh.Context, auth authorization.Authorization, name string, domain audit.EventDomain) audit.Event {
+func (this *service) authorizationAuditEvent(ctx essh.Context, auth authorization.Authorization, name audit.EventName, domain audit.EventDomain) audit.Event {
 	event := audit.Event{
 		Name:              name,
 		Domain:            domain,

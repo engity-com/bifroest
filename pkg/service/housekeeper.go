@@ -149,12 +149,12 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 	if _, flowExists := this.service.knownFlows[sess.Flow()]; !flowExists {
 		this.rememberOrphanedFlow(sess.Flow())
 		event := audit.Event{
-			Name:      "housekeeping.orphaned-session.cleanup.skipped",
+			Name:      audit.EventNameHousekeepingOrphanedSessionCleanupSkipped,
 			Domain:    audit.EventDomainHousekeeping,
 			Outcome:   audit.EventOutcomeDenied,
 			Flow:      sess.Flow().String(),
 			SessionId: sess.Id().String(),
-			Reason:    "missing-flow",
+			Reason:    audit.EventReasonMissingFlow,
 		}
 		logger.Warn("session belongs to a missing flow; preserving it for operator recovery")
 		if this.hasEnabledAuditlog() {
@@ -168,13 +168,13 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 	if shouldBeDeleted, err := session.IsExpiredWithThreshold(this.service.Configuration.HouseKeeping.KeepExpiredFor.Native())(ctx, sess); err != nil {
 		return reportAndContinue(err)
 	} else if shouldBeDeleted {
-		_, disposeErr, disposeAuditErr := this.auditSessionAction(ctx, sess, "dispose", "retention-elapsed", func() (bool, error) {
+		_, disposeErr, disposeAuditErr := this.auditSessionAction(ctx, sess, audit.EventNameHousekeepingSessionDisposeStarted, audit.EventNameHousekeepingSessionDisposeCompleted, audit.EventReasonRetentionElapsed, func() (bool, error) {
 			return this.dispose(ctx, logger, sess)
 		})
 		if err := goerrors.Join(disposeErr, disposeAuditErr); err != nil {
 			return reportAndContinue(err)
 		}
-		_, deleteErr, deleteAuditErr := this.auditSessionAction(ctx, sess, "delete", "retention-elapsed", func() (bool, error) {
+		_, deleteErr, deleteAuditErr := this.auditSessionAction(ctx, sess, audit.EventNameHousekeepingSessionDeleteStarted, audit.EventNameHousekeepingSessionDeleteCompleted, audit.EventReasonRetentionElapsed, func() (bool, error) {
 			return true, this.service.sessions.Delete(ctx, sess)
 		})
 		if err := goerrors.Join(deleteErr, deleteAuditErr); err != nil {
@@ -185,7 +185,7 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 	} else if expired, err := session.IsExpired(ctx, sess); err != nil {
 		return reportAndContinue(err)
 	} else if expired {
-		disposed, actionErr, auditErr := this.auditSessionAction(ctx, sess, "dispose", "expired", func() (bool, error) {
+		disposed, actionErr, auditErr := this.auditSessionAction(ctx, sess, audit.EventNameHousekeepingSessionDisposeStarted, audit.EventNameHousekeepingSessionDisposeCompleted, audit.EventReasonExpired, func() (bool, error) {
 			return this.dispose(ctx, logger, sess)
 		})
 		if err := goerrors.Join(actionErr, auditErr); err != nil {
@@ -207,8 +207,7 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 	return true, nil
 }
 
-func (this *houseKeeper) auditSessionAction(ctx context.Context, sess session.Session, action, reason string, perform func() (bool, error)) (changed bool, actionErr, auditErr error) {
-	eventPrefix := "housekeeping.session."
+func (this *houseKeeper) auditSessionAction(ctx context.Context, sess session.Session, startedEventName, completedEventName audit.EventName, reason audit.EventReason, perform func() (bool, error)) (changed bool, actionErr, auditErr error) {
 	record := func(event audit.Event) error {
 		return this.service.recordFlowAudit(ctx, sess.Flow(), event)
 	}
@@ -218,7 +217,7 @@ func (this *houseKeeper) auditSessionAction(ctx context.Context, sess session.Se
 	}
 	startedAt := time.Now()
 	event := audit.Event{
-		Name:        eventPrefix + action + ".started",
+		Name:        startedEventName,
 		Domain:      audit.EventDomainHousekeeping,
 		Flow:        sess.Flow().String(),
 		SessionId:   sess.Id().String(),
@@ -230,7 +229,7 @@ func (this *houseKeeper) auditSessionAction(ctx context.Context, sess session.Se
 	}
 
 	changed, actionErr = perform()
-	event.Name = eventPrefix + action + ".completed"
+	event.Name = completedEventName
 	event.DurationMillis = common.P(time.Since(startedAt).Milliseconds())
 	if actionErr != nil {
 		event.Outcome = audit.EventOutcomeFailure

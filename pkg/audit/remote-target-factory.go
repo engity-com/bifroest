@@ -50,9 +50,10 @@ type remoteTargetFactory func(context.Context, RemoteTargetScope, configuration.
 
 var configurationTypeToRemoteTargetFactory = make(map[reflect.Type]remoteTargetFactory)
 
-// RegisterRemoteTarget binds a concrete target configuration to its runtime
-// implementation. Registrations are expected during package initialization.
-func RegisterRemoteTarget[C configuration.AuditlogTargetV](configurationFactory configuration.AuditlogTargetVFactory, factory RemoteTargetFactory[C]) RemoteTargetFactory[C] {
+// RegisterRemoteTarget is the normal public registration entry point for a
+// custom target. It binds its configuration codec and runtime implementation.
+// Registrations are expected during package initialization.
+func RegisterRemoteTarget[C configuration.AuditlogTargetV](configurationFactory configuration.AuditlogTargetCodecFactory, factory RemoteTargetFactory[C]) RemoteTargetFactory[C] {
 	registerRemoteTarget(configurationFactory, func(ctx context.Context, scope RemoteTargetScope, conf C) (RemoteTarget, time.Duration, remoteDeliveryDestinationFingerprint, error) {
 		target, settings, err := factory(ctx, scope, conf)
 		if err != nil {
@@ -70,12 +71,12 @@ func RegisterRemoteTarget[C configuration.AuditlogTargetV](configurationFactory 
 	return factory
 }
 
-func registerPreparedRemoteTarget[C configuration.AuditlogTargetV](configurationFactory configuration.AuditlogTargetVFactory, factory preparedRemoteTargetFactory[C]) preparedRemoteTargetFactory[C] {
+func registerPreparedRemoteTarget[C configuration.AuditlogTargetV](configurationFactory configuration.AuditlogTargetCodecFactory, factory preparedRemoteTargetFactory[C]) preparedRemoteTargetFactory[C] {
 	registerRemoteTarget(configurationFactory, factory)
 	return factory
 }
 
-func registerRemoteTarget[C configuration.AuditlogTargetV](configurationFactory configuration.AuditlogTargetVFactory, factory preparedRemoteTargetFactory[C]) {
+func registerRemoteTarget[C configuration.AuditlogTargetV](configurationFactory configuration.AuditlogTargetCodecFactory, factory preparedRemoteTargetFactory[C]) {
 	if configurationFactory == nil {
 		panic("nil remote audit target configuration factory")
 	}
@@ -93,7 +94,7 @@ func registerRemoteTarget[C configuration.AuditlogTargetV](configurationFactory 
 	if isNilRemoteValue(configured) || reflect.TypeOf(configured) != configurationType {
 		panic("remote audit target configuration factory does not produce " + configurationType.String())
 	}
-	configuration.RegisterAuditlogTargetV(configurationFactory)
+	configuration.RegisterAuditlogTargetCodec(configurationFactory)
 	configurationTypeToRemoteTargetFactory[configurationType] = func(ctx context.Context, scope RemoteTargetScope, raw configuration.AuditlogTargetV) (RemoteTarget, time.Duration, remoteDeliveryDestinationFingerprint, error) {
 		conf, ok := raw.(C)
 		if !ok {

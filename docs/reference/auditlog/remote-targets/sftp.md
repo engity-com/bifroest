@@ -39,7 +39,7 @@ Disables server host-key verification. This cannot be combined with `knownHosts`
      Setting `acceptAllHostKeys: true` makes the target connection vulnerable to on-path attacks.
 
 <<property("identityFiles", "list of File Paths", heading=3)>>
-One or more unencrypted OpenSSH or PEM private-key files, tried in order. Each file must be regular, owned by the Bifröst process user, and at most 1 MiB. On Unix, group and other permission bits must all be disabled. On Windows, the file must use a protected DACL granting access only to its owner and `SYSTEM`. Identity paths are static and do not support templates.
+One or more unencrypted OpenSSH or PEM private-key files, tried in order. Each file must be regular, owned by the Bifröst process user, and at most 1 MiB. On Unix, group and other permission bits must all be disabled. On Windows, the file must use a protected DACL granting access only to its owner and `SYSTEM`. Identity paths are static and do not support templates. Their keys must differ from every configured audit-encryption recipient.
 
 <<property("password", "string", default="", heading=3)>>
 The SSH password. This value supports Bifröst string templates without a context object. Prefer an environment variable or the `file` template function over storing it directly in YAML. Template results are used exactly as rendered and are not trimmed.
@@ -53,7 +53,7 @@ The maximum time allowed for TCP connection, SSH handshake, and SFTP session set
 
 Bifröst uploads each segment under a deterministic hidden temporary name, verifies it, and exposes it atomically through a hard link. Temporary files use mode `0600` and producer directories mode `0700`; existing final files are accepted only when permissions, size, and SHA-256 checksum match.
 
-Retries can resume a verified temporary file and remove it after publication. Conflicting content is never overwritten. The server must support `hardlink@openssh.com` version `1` plus permission changes through `SETSTAT` and `FSETSTAT`; rename is intentionally not used.
+Retries can resume a verified temporary file and remove it after publication. If an interrupted process leaves an invalid deterministic temporary file, Bifröst removes only that known file and retries the upload later. Conflicting final content is never overwritten. The server must support `hardlink@openssh.com` version `1` plus permission changes through `SETSTAT` and `FSETSTAT`; rename is intentionally not used.
 
 ## Permissions
 

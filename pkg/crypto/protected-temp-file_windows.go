@@ -13,6 +13,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 func createProtectedTempFile(parent, pattern string, _ os.FileMode) (*os.File, error) {
@@ -91,23 +93,9 @@ func protectedWindowsSecurityAttributes() (*windows.SecurityAttributes, error) {
 }
 
 func windowsPathPointer(path string) (*uint16, error) {
-	extended, err := windowsExtendedPath(path)
-	if err != nil {
-		return nil, err
-	}
-	return windows.UTF16PtrFromString(extended)
+	return sys.WindowsPathPointer(path)
 }
 
 func windowsExtendedPath(path string) (string, error) {
-	if strings.HasPrefix(path, `\\?\`) || strings.HasPrefix(path, `\\.\`) {
-		return path, nil
-	}
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	if strings.HasPrefix(absolute, `\\`) {
-		return `\\?\UNC\` + strings.TrimPrefix(absolute, `\\`), nil
-	}
-	return `\\?\` + absolute, nil
+	return sys.WindowsExtendedPath(path)
 }

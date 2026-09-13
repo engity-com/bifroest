@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -42,6 +43,18 @@ func (webdavRemoteNetworkError) Temporary() bool { return true }
 type webdavRemoteInterruptedReaderAt struct {
 	content []byte
 	passes  atomic.Int32
+}
+
+func TestWebdavTemporaryURLIsDeterministicAndFinalPathBound(t *testing.T) {
+	collectionURL, err := url.Parse("https://dav.example.invalid/audit/producer/")
+	require.NoError(t, err)
+	finalURL := appendWebdavURL(collectionURL, false, "segment.audit")
+	temporaryURL := webdavTemporaryURL(collectionURL, finalURL)
+
+	require.Equal(t, temporaryURL.String(), webdavTemporaryURL(collectionURL, finalURL).String())
+	require.NotEqual(t, temporaryURL.String(), webdavTemporaryURL(collectionURL, appendWebdavURL(collectionURL, false, "other.audit")).String())
+	require.Equal(t, collectionURL.Path, path.Dir(temporaryURL.Path)+"/")
+	require.Len(t, path.Base(temporaryURL.Path), 85)
 }
 
 func (this *webdavRemoteInterruptedReaderAt) ReadAt(target []byte, offset int64) (int, error) {
@@ -92,10 +105,15 @@ func TestWebdavRemoteTargetPublishesThroughVerifiedTemporaryObject(t *testing.T)
 			step++
 			return webdavRemoteResponse(http.StatusCreated, ""), nil
 		case 2:
-			require.Equal(t, http.MethodPut, request.Method)
+			require.Equal(t, http.MethodGet, request.Method)
 			require.Contains(t, request.URL.Path, producerPath+".bifroest-upload-")
 			require.True(t, strings.HasSuffix(request.URL.Path, ".tmp"))
 			temporaryURL = request.URL.String()
+			step++
+			return webdavRemoteResponse(http.StatusNotFound, ""), nil
+		case 3:
+			require.Equal(t, http.MethodPut, request.Method)
+			require.Equal(t, temporaryURL, request.URL.String())
 			require.Equal(t, "*", request.Header.Get("If-None-Match"))
 			require.Equal(t, "application/octet-stream", request.Header.Get("Content-Type"))
 			require.Equal(t, segment.Size(), request.ContentLength)
@@ -104,13 +122,13 @@ func TestWebdavRemoteTargetPublishesThroughVerifiedTemporaryObject(t *testing.T)
 			require.Equal(t, content, actual)
 			step++
 			return webdavRemoteResponse(http.StatusCreated, ""), nil
-		case 3:
+		case 4:
 			require.Equal(t, http.MethodGet, request.Method)
 			require.Equal(t, temporaryURL, request.URL.String())
 			require.Equal(t, "no-cache, no-store", request.Header.Get("Cache-Control"))
 			step++
 			return webdavRemoteResponse(http.StatusOK, string(content)), nil
-		case 4:
+		case 5:
 			require.Equal(t, webdavMethodMove, request.Method)
 			require.Equal(t, temporaryURL, request.URL.String())
 			require.Equal(t, finalURL, request.Header.Get("Destination"))
@@ -124,7 +142,7 @@ func TestWebdavRemoteTargetPublishesThroughVerifiedTemporaryObject(t *testing.T)
 	}}
 	target := newWebdavRemoteTestTarget(t, client, true)
 	require.NoError(t, target.Publish(context.Background(), segment))
-	require.Equal(t, 5, step)
+	require.Equal(t, 6, step)
 }
 
 func TestWebdavRemoteTargetCleansPartialUploadWithFreshBoundedContext(t *testing.T) {
@@ -139,11 +157,14 @@ func TestWebdavRemoteTargetCleansPartialUploadWithFreshBoundedContext(t *testing
 			return webdavRemoteResponse(http.StatusCreated, ""), nil
 		case 2:
 			step++
+			return webdavRemoteResponse(http.StatusNotFound, ""), nil
+		case 3:
+			step++
 			buffer := make([]byte, 4)
 			_, _ = request.Body.Read(buffer)
 			<-request.Context().Done()
 			return nil, request.Context().Err()
-		case 3:
+		case 4:
 			step++
 			require.Equal(t, http.MethodDelete, request.Method)
 			require.NoError(t, request.Context().Err())
@@ -161,7 +182,7 @@ func TestWebdavRemoteTargetCleansPartialUploadWithFreshBoundedContext(t *testing
 	defer cancel()
 	err := target.Publish(ctx, validRemoteTargetTestSegment())
 	require.ErrorIs(t, err, context.DeadlineExceeded)
-	require.Equal(t, 4, step)
+	require.Equal(t, 5, step)
 }
 
 func TestWebdavRemoteTargetAcceptsIdenticalExistingObject(t *testing.T) {
@@ -171,17 +192,21 @@ func TestWebdavRemoteTargetAcceptsIdenticalExistingObject(t *testing.T) {
 	body := &s3RemoteTestBody{Reader: strings.NewReader(string(content))}
 	var calls atomic.Int32
 	client := &webdavRemoteTestClient{do: func(request *http.Request) (*http.Response, error) {
-		calls.Add(1)
-		require.Equal(t, http.MethodGet, request.Method)
+		call := calls.Add(1)
 		require.Empty(t, request.Header.Get("Authorization"))
-		response := webdavRemoteResponse(http.StatusOK, "")
-		response.Body = body
-		response.ContentLength = int64(len(content))
-		return response, nil
+		if call == 1 {
+			require.Equal(t, http.MethodGet, request.Method)
+			response := webdavRemoteResponse(http.StatusOK, "")
+			response.Body = body
+			response.ContentLength = int64(len(content))
+			return response, nil
+		}
+		require.Equal(t, http.MethodDelete, request.Method)
+		return webdavRemoteResponse(http.StatusNotFound, ""), nil
 	}}
 	target := newWebdavRemoteTestTarget(t, client, false)
 	require.NoError(t, target.Publish(context.Background(), segment))
-	require.Equal(t, int32(1), calls.Load())
+	require.Equal(t, int32(2), calls.Load())
 	require.Equal(t, int32(1), body.closed.Load())
 }
 
@@ -208,15 +233,17 @@ func TestWebdavRemoteTargetResolvesMoveConflict(t *testing.T) {
 		case 2:
 			return webdavRemoteResponse(http.StatusMethodNotAllowed, ""), nil
 		case 3:
-			return webdavRemoteResponse(http.StatusCreated, ""), nil
+			return webdavRemoteResponse(http.StatusNotFound, ""), nil
 		case 4:
-			return webdavRemoteResponse(http.StatusOK, string(content)), nil
+			return webdavRemoteResponse(http.StatusCreated, ""), nil
 		case 5:
-			return webdavRemoteResponse(http.StatusPreconditionFailed, ""), nil
+			return webdavRemoteResponse(http.StatusOK, string(content)), nil
 		case 6:
+			return webdavRemoteResponse(http.StatusPreconditionFailed, ""), nil
+		case 7:
 			require.Equal(t, http.MethodDelete, request.Method)
 			return webdavRemoteResponse(http.StatusAccepted, ""), nil
-		case 7:
+		case 8:
 			require.Equal(t, http.MethodGet, request.Method)
 			require.Equal(t, "no-cache, no-store", request.Header.Get("Cache-Control"))
 			return webdavRemoteResponse(http.StatusOK, string(content)), nil
@@ -227,7 +254,7 @@ func TestWebdavRemoteTargetResolvesMoveConflict(t *testing.T) {
 	}}
 	target := newWebdavRemoteTestTarget(t, client, false)
 	require.NoError(t, target.Publish(context.Background(), segment))
-	require.Equal(t, 7, step)
+	require.Equal(t, 8, step)
 }
 
 func TestWebdavRemoteTargetRejectsInvalidMoveConflictState(t *testing.T) {
@@ -254,14 +281,16 @@ func TestWebdavRemoteTargetRejectsInvalidMoveConflictState(t *testing.T) {
 				case 2:
 					return webdavRemoteResponse(http.StatusCreated, ""), nil
 				case 3:
-					return webdavRemoteResponse(http.StatusCreated, ""), nil
+					return webdavRemoteResponse(http.StatusNotFound, ""), nil
 				case 4:
-					return webdavRemoteResponse(http.StatusOK, string(content)), nil
+					return webdavRemoteResponse(http.StatusCreated, ""), nil
 				case 5:
-					return webdavRemoteResponse(http.StatusPreconditionFailed, ""), nil
+					return webdavRemoteResponse(http.StatusOK, string(content)), nil
 				case 6:
-					return webdavRemoteResponse(http.StatusNoContent, ""), nil
+					return webdavRemoteResponse(http.StatusPreconditionFailed, ""), nil
 				case 7:
+					return webdavRemoteResponse(http.StatusNoContent, ""), nil
+				case 8:
 					return webdavRemoteResponse(test.status, test.body), nil
 				default:
 					t.Fatalf("unexpected request %d", step)
@@ -271,7 +300,7 @@ func TestWebdavRemoteTargetRejectsInvalidMoveConflictState(t *testing.T) {
 			target := newWebdavRemoteTestTarget(t, client, false)
 			err := target.Publish(context.Background(), segment)
 			require.True(t, test.errorType.IsErr(err), err)
-			require.Equal(t, 7, step)
+			require.Equal(t, 8, step)
 		})
 	}
 }
@@ -283,11 +312,15 @@ func TestWebdavRemoteTargetCleansUpInvalidTemporaryObject(t *testing.T) {
 		switch step {
 		case 1:
 			return webdavRemoteResponse(http.StatusNotFound, ""), nil
-		case 2, 3:
+		case 2:
 			return webdavRemoteResponse(http.StatusCreated, ""), nil
+		case 3:
+			return webdavRemoteResponse(http.StatusNotFound, ""), nil
 		case 4:
-			return webdavRemoteResponse(http.StatusOK, "different"), nil
+			return webdavRemoteResponse(http.StatusCreated, ""), nil
 		case 5:
+			return webdavRemoteResponse(http.StatusOK, "different"), nil
+		case 6:
 			require.Equal(t, http.MethodDelete, request.Method)
 			return webdavRemoteResponse(http.StatusNoContent, ""), nil
 		default:
@@ -297,8 +330,8 @@ func TestWebdavRemoteTargetCleansUpInvalidTemporaryObject(t *testing.T) {
 	}}
 	target := newWebdavRemoteTestTarget(t, client, false)
 	err := target.Publish(context.Background(), validRemoteTargetTestSegment())
-	require.True(t, bferrors.System.IsErr(err), err)
-	require.Equal(t, 5, step)
+	require.True(t, bferrors.Network.IsErr(err), err)
+	require.Equal(t, 6, step)
 }
 
 func TestWebdavRemoteTargetCleansUpFailedTemporaryUpload(t *testing.T) {
@@ -311,9 +344,11 @@ func TestWebdavRemoteTargetCleansUpFailedTemporaryUpload(t *testing.T) {
 		case 2:
 			return webdavRemoteResponse(http.StatusCreated, ""), nil
 		case 3:
+			return webdavRemoteResponse(http.StatusNotFound, ""), nil
+		case 4:
 			require.Equal(t, http.MethodPut, request.Method)
 			return webdavRemoteResponse(http.StatusInternalServerError, ""), nil
-		case 4:
+		case 5:
 			require.Equal(t, http.MethodDelete, request.Method)
 			return webdavRemoteResponse(http.StatusNoContent, ""), nil
 		default:
@@ -324,7 +359,7 @@ func TestWebdavRemoteTargetCleansUpFailedTemporaryUpload(t *testing.T) {
 	target := newWebdavRemoteTestTarget(t, client, false)
 	err := target.Publish(context.Background(), validRemoteTargetTestSegment())
 	require.True(t, bferrors.Network.IsErr(err), err)
-	require.Equal(t, 4, step)
+	require.Equal(t, 5, step)
 }
 
 func TestWebdavRemoteTargetCleansUpCreatedUploadWithResponseError(t *testing.T) {
@@ -337,11 +372,13 @@ func TestWebdavRemoteTargetCleansUpCreatedUploadWithResponseError(t *testing.T) 
 		case 2:
 			return webdavRemoteResponse(http.StatusCreated, ""), nil
 		case 3:
+			return webdavRemoteResponse(http.StatusNotFound, ""), nil
+		case 4:
 			require.Equal(t, http.MethodPut, request.Method)
 			response := webdavRemoteResponse(http.StatusCreated, "")
 			response.Body = &s3RemoteTestBody{Reader: strings.NewReader(""), closeErr: goerrors.New("response close failed")}
 			return response, nil
-		case 4:
+		case 5:
 			require.Equal(t, http.MethodDelete, request.Method)
 			return webdavRemoteResponse(http.StatusNoContent, ""), nil
 		default:
@@ -353,10 +390,14 @@ func TestWebdavRemoteTargetCleansUpCreatedUploadWithResponseError(t *testing.T) 
 	err := target.Publish(context.Background(), validRemoteTargetTestSegment())
 	require.True(t, bferrors.Network.IsErr(err), err)
 	require.ErrorContains(t, err, "response close failed")
-	require.Equal(t, 4, step)
+	require.Equal(t, 5, step)
 }
 
-func TestWebdavRemoteTargetPreservesPreexistingTemporaryObject(t *testing.T) {
+func TestWebdavRemoteTargetRetriesStoredPutAfterLostResponseAndFailedCleanup(t *testing.T) {
+	segment := validRemoteTargetTestSegment()
+	content, err := io.ReadAll(segment.Content())
+	require.NoError(t, err)
+	var temporaryURL string
 	step := 0
 	client := &webdavRemoteTestClient{do: func(request *http.Request) (*http.Response, error) {
 		step++
@@ -366,18 +407,91 @@ func TestWebdavRemoteTargetPreservesPreexistingTemporaryObject(t *testing.T) {
 		case 2:
 			return webdavRemoteResponse(http.StatusCreated, ""), nil
 		case 3:
+			temporaryURL = request.URL.String()
+			return webdavRemoteResponse(http.StatusNotFound, ""), nil
+		case 4:
 			require.Equal(t, http.MethodPut, request.Method)
-			return webdavRemoteResponse(http.StatusPreconditionFailed, ""), nil
+			require.Equal(t, temporaryURL, request.URL.String())
+			actual, readErr := io.ReadAll(request.Body)
+			require.NoError(t, readErr)
+			require.Equal(t, content, actual)
+			return nil, webdavRemoteNetworkError{}
+		case 5:
+			require.Equal(t, http.MethodDelete, request.Method)
+			require.Equal(t, temporaryURL, request.URL.String())
+			return nil, webdavRemoteNetworkError{}
+		case 6:
+			return webdavRemoteResponse(http.StatusNotFound, ""), nil
+		case 7:
+			return webdavRemoteResponse(http.StatusMethodNotAllowed, ""), nil
+		case 8:
+			require.Equal(t, http.MethodGet, request.Method)
+			require.Equal(t, temporaryURL, request.URL.String())
+			return webdavRemoteResponse(http.StatusOK, string(content)), nil
+		case 9:
+			require.Equal(t, webdavMethodMove, request.Method)
+			require.Equal(t, temporaryURL, request.URL.String())
+			return webdavRemoteResponse(http.StatusCreated, ""), nil
 		default:
-			t.Fatalf("unexpected cleanup request after a precondition failure")
+			t.Fatalf("unexpected request %d", step)
 			return nil, nil
 		}
 	}}
 	target := newWebdavRemoteTestTarget(t, client, false)
-	err := target.Publish(context.Background(), validRemoteTargetTestSegment())
+	err = target.Publish(context.Background(), segment)
 	require.True(t, bferrors.Network.IsErr(err), err)
-	require.ErrorContains(t, err, "already exists")
-	require.Equal(t, 3, step)
+	require.NoError(t, target.Publish(context.Background(), segment))
+	require.Equal(t, 9, step)
+}
+
+func TestWebdavRemoteTargetRemovesConflictingTemporaryBeforeLaterUpload(t *testing.T) {
+	segment := validRemoteTargetTestSegment()
+	content, err := io.ReadAll(segment.Content())
+	require.NoError(t, err)
+	var temporaryURL string
+	step := 0
+	client := &webdavRemoteTestClient{do: func(request *http.Request) (*http.Response, error) {
+		step++
+		switch step {
+		case 1, 5:
+			return webdavRemoteResponse(http.StatusNotFound, ""), nil
+		case 2:
+			return webdavRemoteResponse(http.StatusCreated, ""), nil
+		case 3:
+			temporaryURL = request.URL.String()
+			return webdavRemoteResponse(http.StatusOK, "conflicting"), nil
+		case 4:
+			require.Equal(t, http.MethodDelete, request.Method)
+			require.Equal(t, temporaryURL, request.URL.String())
+			return webdavRemoteResponse(http.StatusNoContent, ""), nil
+		case 6:
+			return webdavRemoteResponse(http.StatusMethodNotAllowed, ""), nil
+		case 7:
+			require.Equal(t, temporaryURL, request.URL.String())
+			return webdavRemoteResponse(http.StatusNotFound, ""), nil
+		case 8:
+			require.Equal(t, http.MethodPut, request.Method)
+			require.Equal(t, temporaryURL, request.URL.String())
+			actual, readErr := io.ReadAll(request.Body)
+			require.NoError(t, readErr)
+			require.Equal(t, content, actual)
+			return webdavRemoteResponse(http.StatusCreated, ""), nil
+		case 9:
+			return webdavRemoteResponse(http.StatusOK, string(content)), nil
+		case 10:
+			require.Equal(t, webdavMethodMove, request.Method)
+			return webdavRemoteResponse(http.StatusCreated, ""), nil
+		default:
+			t.Fatalf("unexpected request %d", step)
+			return nil, nil
+		}
+	}}
+	target := newWebdavRemoteTestTarget(t, client, false)
+	err = target.Publish(context.Background(), segment)
+	require.True(t, bferrors.Network.IsErr(err), err)
+	require.ErrorContains(t, err, "conflicts with local content")
+	require.NoError(t, target.Publish(context.Background(), segment))
+	require.Equal(t, 10, step)
 }
 
 func TestWebdavRemoteTargetPublishesAgainstEmbeddedWebdavServer(t *testing.T) {
@@ -405,7 +519,7 @@ func TestWebdavRemoteTargetPublishesAgainstEmbeddedWebdavServer(t *testing.T) {
 	err = target.Publish(context.Background(), segment)
 	require.ErrorContains(t, err, "conflicts with local content")
 	require.True(t, bferrors.System.IsErr(err))
-	require.Equal(t, int32(7), authenticatedRequests.Load())
+	require.Equal(t, int32(10), authenticatedRequests.Load())
 }
 
 func TestWebdavRemoteTargetConcurrentPublicationIsAtomicAgainstEmbeddedServer(t *testing.T) {
@@ -423,16 +537,11 @@ func TestWebdavRemoteTargetConcurrentPublicationIsAtomicAgainstEmbeddedServer(t 
 		}()
 	}
 	close(start)
-	succeeded := 0
 	for range 2 {
 		if publishErr := <-results; publishErr != nil {
 			require.True(t, bferrors.Network.IsErr(publishErr), publishErr)
-			require.ErrorContains(t, publishErr, "423")
-		} else {
-			succeeded++
 		}
 	}
-	require.Positive(t, succeeded)
 	require.NoError(t, target.Publish(context.Background(), segment))
 
 	finalPath := "/audit/" + segment.ProducerId().String() + "/" + segment.FileName()
@@ -592,10 +701,14 @@ func TestWebdavRemoteTargetContextAndClose(t *testing.T) {
 func TestWebdavRemoteTargetCloseWaitsForPublish(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
-	client := &webdavRemoteTestClient{do: func(*http.Request) (*http.Response, error) {
-		close(started)
-		<-release
-		return webdavRemoteResponse(http.StatusOK, "different"), nil
+	client := &webdavRemoteTestClient{do: func(request *http.Request) (*http.Response, error) {
+		if request.Method == http.MethodGet {
+			close(started)
+			<-release
+			return webdavRemoteResponse(http.StatusOK, "different"), nil
+		}
+		require.Equal(t, http.MethodDelete, request.Method)
+		return webdavRemoteResponse(http.StatusNotFound, ""), nil
 	}}
 	target := newWebdavRemoteTestTarget(t, client, false)
 	published := make(chan error, 1)

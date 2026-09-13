@@ -28,4 +28,6 @@ A signed cursor below `<journal-directory>/.delivery/` records the last confirme
 
 ## Custom targets
 
-Custom Go targets return `RemoteTargetSettings` with a stable, non-secret `DestinationIdentity` and a positive `PublishAttemptTimeout`. Their `Publish` method must honor context cancellation, and `Close` must unblock an active publication during shutdown.
+Custom Go targets normally register through `audit.RegisterRemoteTarget`, which binds their configuration codec and runtime factory together. `configuration.RegisterAuditlogTargetCodec` is only the low-level entry point for configuration codecs without runtime delivery support.
+
+Factories return `RemoteTargetSettings` with a stable, non-secret `DestinationIdentity` and a positive `PublishAttemptTimeout`. Their target's `Publish` method must honor context cancellation, and `Close` must unblock an active publication during shutdown.

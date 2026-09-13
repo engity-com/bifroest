@@ -60,7 +60,7 @@ func (this *service) authorizePublicKey(ctx essh.Context, key essh.PublicKey, ve
 	if compatible, err := authReq.IsSessionCompatible(auth); err != nil {
 		return false, errors.Newf(errors.System, "cannot validate environment session compatibility: %w", err)
 	} else if !compatible {
-		if err := this.recordAuthenticationCompleted(ctx, auth, audit.AuthenticationMethodPublicKey, audit.EventOutcomeDenied, "session-incompatible"); err != nil {
+		if err := this.recordAuthenticationCompleted(ctx, auth, audit.AuthenticationMethodPublicKey, audit.EventOutcomeDenied, audit.EventReasonSessionIncompatible); err != nil {
 			return false, err
 		}
 		l.Debug("public key session is incompatible with the current environment")
@@ -73,6 +73,28 @@ func (this *service) authorizePublicKey(ctx essh.Context, key essh.PublicKey, ve
 
 	l.Debug("public key accepted")
 	return true, nil
+}
+
+func (this *service) verifiedPublicKeyAuditCallback(ctx essh.Context) func(gossh.ConnMetadata, gossh.PublicKey, *gossh.Permissions, string) (*gossh.Permissions, error) {
+	return func(_ gossh.ConnMetadata, key gossh.PublicKey, permissions *gossh.Permissions, _ string) (*gossh.Permissions, error) {
+		if _, isCertificate := key.(*gossh.Certificate); isCertificate {
+			accepted, err := this.authorizePublicKey(ctx, key, true)
+			if err != nil {
+				return nil, err
+			}
+			if !accepted {
+				return nil, errors.User.Newf("user certificate rejected after public key verification")
+			}
+		}
+		auth, _ := ctx.Value(authorizationCtxKey).(authorization.Authorization)
+		if auth == nil {
+			return nil, errors.System.Newf("no authorization resolved after public key verification")
+		}
+		if err := this.recordAuthenticationCompleted(ctx, auth, audit.AuthenticationMethodPublicKey, audit.EventOutcomeSuccess, ""); err != nil {
+			return nil, err
+		}
+		return permissions, nil
+	}
 }
 
 func (this *service) handlePassword(ctx essh.Context, _ gossh.ConnMetadata, password string) (bool, error) {
@@ -101,7 +123,7 @@ func (this *service) handlePassword(ctx essh.Context, _ gossh.ConnMetadata, pass
 	if compatible, err := authReq.IsSessionCompatible(auth); err != nil {
 		return false, errors.Newf(errors.System, "cannot validate environment session compatibility: %w", err)
 	} else if !compatible {
-		if err := this.recordAuthenticationCompleted(ctx, auth, audit.AuthenticationMethodPassword, audit.EventOutcomeDenied, "session-incompatible"); err != nil {
+		if err := this.recordAuthenticationCompleted(ctx, auth, audit.AuthenticationMethodPassword, audit.EventOutcomeDenied, audit.EventReasonSessionIncompatible); err != nil {
 			return false, err
 		}
 		l.Debug("password session is incompatible with the current environment")
@@ -143,7 +165,7 @@ func (this *service) handleKeyboardInteractiveChallenge(ctx essh.Context, _ goss
 	if compatible, err := authReq.IsSessionCompatible(auth); err != nil {
 		return false, errors.Newf(errors.System, "cannot validate environment session compatibility: %w", err)
 	} else if !compatible {
-		if err := this.recordAuthenticationCompleted(ctx, auth, audit.AuthenticationMethodKeyboardInteractive, audit.EventOutcomeDenied, "session-incompatible"); err != nil {
+		if err := this.recordAuthenticationCompleted(ctx, auth, audit.AuthenticationMethodKeyboardInteractive, audit.EventOutcomeDenied, audit.EventReasonSessionIncompatible); err != nil {
 			return false, err
 		}
 		l.Debug("interactive session is incompatible with the current environment")
@@ -167,7 +189,7 @@ func (this *service) observeFlowAuthorization(ctx context.Context, observation a
 		outcome = audit.EventOutcomeDenied
 	}
 	event := audit.Event{
-		Name:                 "authentication.flow.evaluated",
+		Name:                 audit.EventNameAuthenticationFlowEvaluated,
 		Domain:               audit.EventDomainAuthentication,
 		Outcome:              outcome,
 		Flow:                 observation.Flow.String(),
@@ -193,9 +215,9 @@ func flowAuthorizationObservationIsUnauthenticated(observation authorization.Flo
 	return observation.Outcome != authorization.FlowAuthorizationOutcomeAccepted
 }
 
-func (this *service) recordAuthenticationCompleted(ctx essh.Context, auth authorization.Authorization, method audit.AuthenticationMethod, outcome audit.EventOutcome, reason string) error {
+func (this *service) recordAuthenticationCompleted(ctx essh.Context, auth authorization.Authorization, method audit.AuthenticationMethod, outcome audit.EventOutcome, reason audit.EventReason) error {
 	event := audit.Event{
-		Name:                 "authentication.completed",
+		Name:                 audit.EventNameAuthenticationCompleted,
 		Domain:               audit.EventDomainAuthentication,
 		Outcome:              outcome,
 		Flow:                 auth.Flow().String(),
@@ -248,9 +270,9 @@ func (this *service) onPtyRequest(ctx essh.Context, _ essh.Session, pty essh.Pty
 		return false, errors.Newf(errors.System, "no authorization resolved for PTY request")
 	}
 	if policy := authorization.AuthorizedKeyPolicyOf(auth); policy != nil && !policy.PtyAllowed {
-		event := this.authorizationAuditEvent(ctx, auth, "session.pty.decided", audit.EventDomainSession)
+		event := this.authorizationAuditEvent(ctx, auth, audit.EventNameSessionPtyDecided, audit.EventDomainSession)
 		event.Outcome = audit.EventOutcomeDenied
-		event.Reason = "authorized-key-policy"
+		event.Reason = audit.EventReasonAuthorizedKeyPolicy
 		if err := this.recordFlowAudit(ctx, auth.Flow(), event); err != nil {
 			return false, err
 		}
@@ -269,9 +291,9 @@ func (this *service) onPtyRequest(ctx essh.Context, _ essh.Session, pty essh.Pty
 		authorization: auth,
 	}, pty)
 	if err != nil {
-		event := this.authorizationAuditEvent(ctx, auth, "session.pty.decided", audit.EventDomainSession)
+		event := this.authorizationAuditEvent(ctx, auth, audit.EventNameSessionPtyDecided, audit.EventDomainSession)
 		event.Outcome = audit.EventOutcomeFailure
-		event.Reason = "environment-policy"
+		event.Reason = audit.EventReasonEnvironmentPolicy
 		event.ErrorCategory = auditErrorCategory(err)
 		if recordErr := this.recordFlowAudit(ctx, auth.Flow(), event); recordErr != nil {
 			return false, recordErr
@@ -280,9 +302,9 @@ func (this *service) onPtyRequest(ctx essh.Context, _ essh.Session, pty essh.Pty
 	}
 
 	if !ok {
-		event := this.authorizationAuditEvent(ctx, auth, "session.pty.decided", audit.EventDomainSession)
+		event := this.authorizationAuditEvent(ctx, auth, audit.EventNameSessionPtyDecided, audit.EventDomainSession)
 		event.Outcome = audit.EventOutcomeDenied
-		event.Reason = "environment-policy"
+		event.Reason = audit.EventReasonEnvironmentPolicy
 		if err := this.recordFlowAudit(ctx, auth.Flow(), event); err != nil {
 			return false, err
 		}
@@ -290,7 +312,7 @@ func (this *service) onPtyRequest(ctx essh.Context, _ essh.Session, pty essh.Pty
 		return false, nil
 	}
 
-	event := this.authorizationAuditEvent(ctx, auth, "session.pty.decided", audit.EventDomainSession)
+	event := this.authorizationAuditEvent(ctx, auth, audit.EventNameSessionPtyDecided, audit.EventDomainSession)
 	event.Outcome = audit.EventOutcomeSuccess
 	if err := this.recordFlowAudit(ctx, auth.Flow(), event); err != nil {
 		return false, err
@@ -305,12 +327,12 @@ func (this *service) onAgentForwardingRequested(ctx essh.Context, _ essh.Session
 		return false, errors.Newf(errors.System, "no authorization resolved for agent forwarding request")
 	}
 	allowed := authorization.IsAgentForwardingAllowed(auth)
-	event := this.authorizationAuditEvent(ctx, auth, "session.agent-forwarding.decided", audit.EventDomainSession)
+	event := this.authorizationAuditEvent(ctx, auth, audit.EventNameSessionAgentForwardingDecided, audit.EventDomainSession)
 	if allowed {
 		event.Outcome = audit.EventOutcomeSuccess
 	} else {
 		event.Outcome = audit.EventOutcomeDenied
-		event.Reason = "authorized-key-policy"
+		event.Reason = audit.EventReasonAuthorizedKeyPolicy
 	}
 	if err := this.recordFlowAudit(ctx, auth.Flow(), event); err != nil {
 		return false, err

@@ -136,7 +136,7 @@ func TestAuditExportAllowsMissingUnselectedJournal(t *testing.T) {
 		configuration: ref,
 		auditlog:      selected.Name,
 		output:        insideOtherJournal,
-	}, &bytes.Buffer{}), "must not be inside")
+	}, &bytes.Buffer{}), "must already exist")
 	require.NoDirExists(t, other.Journal.Directory)
 
 	output := filepath.Join(directory, "export.jsonl")

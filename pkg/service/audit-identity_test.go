@@ -1,8 +1,10 @@
 package service
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -187,6 +189,39 @@ func TestValidateRuntimePathsIgnoresDisabledAuditlogWithoutSideEffects(t *testin
 	require.NoDirExists(t, storage)
 }
 
+func TestValidateRuntimePathsRewritesSymlinkAliases(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	require.NoError(t, os.Mkdir(real, 0700))
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Skipf("cannot create directory symlink: %v", err)
+	}
+	sftp := &configuration.AuditlogTargetSftp{
+		KnownHostsFile: crypto.KnownHostsFile(filepath.Join(alias, "known-hosts")),
+		IdentityFiles:  []string{filepath.Join(alias, "sftp-key")},
+	}
+	conf := configuration.Configuration{
+		Auditlogs: configuration.Auditlogs{{
+			Name:                    "security",
+			Enabled:                 true,
+			IdentityFile:            filepath.Join(alias, "audit-key"),
+			EncryptionPublicKeyFile: crypto.PublicKeysFile(filepath.Join(alias, "encryption.pub")),
+			Journal:                 configuration.AuditlogJournal{Directory: filepath.Join(alias, "journal")},
+			Targets:                 configuration.AuditlogTargets{{Name: "archive", V: sftp}},
+		}},
+		Session: configuration.Session{V: &configuration.SessionFs{Storage: filepath.Join(alias, "sessions")}},
+	}
+
+	require.NoError(t, validateRuntimePaths(&conf))
+	require.Equal(t, filepath.Join(real, "audit-key"), conf.Auditlogs[0].IdentityFile)
+	require.Equal(t, filepath.Join(real, "journal"), conf.Auditlogs[0].Journal.Directory)
+	require.Equal(t, crypto.PublicKeysFile(filepath.Join(real, "encryption.pub")), conf.Auditlogs[0].EncryptionPublicKeyFile)
+	require.Equal(t, filepath.Join(real, "sessions"), conf.Session.V.(*configuration.SessionFs).Storage)
+	require.Equal(t, crypto.KnownHostsFile(filepath.Join(real, "known-hosts")), sftp.KnownHostsFile)
+	require.Equal(t, []string{filepath.Join(real, "sftp-key")}, sftp.IdentityFiles)
+}
+
 func TestAuditEncryptionRejectsStaticSshEnvironmentIdentity(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "environment-key")
 	key, err := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).CreateFile(nil, path)
@@ -201,6 +236,89 @@ func TestAuditEncryptionRejectsStaticSshEnvironmentIdentity(t *testing.T) {
 	require.NoError(t, err)
 	publicKey := crypto.PublicKeys(string(crypto.MarshalPublicKey(key.PublicKey())))
 	require.ErrorContains(t, audit.ValidateEncryptionRecipientDedicatedFrom(publicKey, serverKeys), "reuses a private key")
+}
+
+func TestPrepareAuditEncryptionValidatesSftpIdentityKeys(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		aliasIdentity bool
+		distinctKey   bool
+		expectError   bool
+	}{
+		{"same key", false, false, true},
+		{"hard-link alias", true, false, true},
+		{"different key", false, true, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			additionalIdentityPath := filepath.Join(root, "additional-sftp-key")
+			_, err := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).CreateFile(nil, additionalIdentityPath)
+			require.NoError(t, err)
+			identityPath := filepath.Join(root, "sftp-key")
+			identityKey, err := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).CreateFile(nil, identityPath)
+			require.NoError(t, err)
+			configuredIdentityPath := identityPath
+			if test.aliasIdentity {
+				configuredIdentityPath = filepath.Join(root, "sftp-key-alias")
+				require.NoError(t, os.Link(identityPath, configuredIdentityPath))
+			}
+			encryptionKey := identityKey
+			if test.distinctKey {
+				encryptionKey, err = (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).CreateFile(nil, filepath.Join(root, "offline-encryption-key"))
+				require.NoError(t, err)
+			}
+
+			conf := auditSftpDedicatednessTestConfiguration(t, root, []string{additionalIdentityPath, configuredIdentityPath},
+				crypto.PublicKeys(strings.TrimSpace(string(crypto.MarshalPublicKey(encryptionKey.PublicKey())))))
+			svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+			if test.expectError {
+				require.ErrorContains(t, err, "audit encryption recipient reuses a private key")
+				require.Nil(t, svc)
+				require.NoDirExists(t, filepath.Join(root, "journal"))
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, svc)
+			require.NoError(t, svc.Close())
+		})
+	}
+}
+
+func auditSftpDedicatednessTestConfiguration(t *testing.T, root string, sftpIdentities []string, encryptionKey crypto.PublicKeys) configuration.Configuration {
+	t.Helper()
+	var conf configuration.Configuration
+	err := conf.LoadFromYaml(strings.NewReader(fmt.Sprintf(`
+ssh:
+  addresses: ["127.0.0.1:0"]
+  keys:
+    hostKeys: ["%s"]
+  banner: ""
+session:
+  type: fs
+  storage: "%s"
+flows:
+  - name: test
+    authorization:
+      type: none
+    environment:
+      type: dummy
+`, filepath.ToSlash(filepath.Join(root, "host-key")), filepath.ToSlash(filepath.Join(root, "sessions")))), "audit-sftp-dedicatedness-test.yaml")
+	require.NoError(t, err)
+	require.Len(t, conf.Auditlogs, 1)
+	auditlog := &conf.Auditlogs[0]
+	auditlog.Enabled = true
+	auditlog.IdentityFile = filepath.Join(root, "audit-key")
+	auditlog.EncryptionPublicKey = encryptionKey
+	auditlog.Journal.Directory = filepath.Join(root, "journal")
+	sftp := &configuration.AuditlogTargetSftp{}
+	require.NoError(t, sftp.SetDefaults())
+	sftp.Address = "127.0.0.1:1"
+	sftp.User = template.MustNewString("archive")
+	sftp.Directory = "/archive"
+	sftp.AcceptAllHostKeys = true
+	sftp.IdentityFiles = sftpIdentities
+	auditlog.Targets = configuration.AuditlogTargets{{Name: "archive", V: sftp}}
+	return conf
 }
 
 func TestPrepareActivatesRemoteAuditDelivery(t *testing.T) {

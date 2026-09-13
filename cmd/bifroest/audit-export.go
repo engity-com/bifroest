@@ -15,6 +15,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 type auditExportOpts struct {
@@ -89,26 +90,32 @@ func doAuditExport(opts *auditExportOpts, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureAuditOutputSafe(output, conf); err != nil {
-		return err
-	}
-	if err := ensureBootstrapOutputIsNotPrivateKey(output, opts.decryptionIdentityFiles...); err != nil {
-		return err
-	}
-	return writeAuditOutput(output, opts.force, stdout, verification, audit.RecordOrderChain)
+	return writeAuditOutput(output, opts.force, stdout, verification, audit.RecordOrderChain, func() error {
+		if err := ensureAuditOutputSafe(output, conf); err != nil {
+			return err
+		}
+		return ensureBootstrapOutputIsNotPrivateKey(output, opts.decryptionIdentityFiles...)
+	})
 }
 
 func registerAuditOutputFlags(cmd *kingpin.CmdClause, output *string, force *bool) {
-	cmd.Flag("output", "Output file or - for stdout.").Default("-").PlaceHolder("<path|->").StringVar(output)
+	cmd.Flag("output", "Output file (its parent must exist) or - for stdout.").Default("-").PlaceHolder("<path|->").StringVar(output)
 	cmd.Flag("force", "Replace an existing output file.").BoolVar(force)
 }
 
-func writeAuditOutput(path string, force bool, stdout io.Writer, verification *audit.Verification, order audit.RecordOrder) error {
+func writeAuditOutput(path string, force bool, stdout io.Writer, verification *audit.Verification, order audit.RecordOrder, validate func() error) error {
 	var content boundedAuditOutput
 	if err := verification.ExportJSONLines(&content, order); err != nil {
 		return err
 	}
-	return writeBootstrapOutput(path, content.Bytes(), force, stdout)
+	if path == "-" {
+		_, err := stdout.Write(content.Bytes())
+		return err
+	}
+	if err := writeAuditOutputFile(path, content.Bytes(), force, validate); err != nil {
+		return fmt.Errorf("cannot install audit output at %q: %w", path, err)
+	}
+	return nil
 }
 
 func ensureAuditOutputSafe(output string, conf *configuration.Configuration) error {
@@ -121,7 +128,7 @@ func ensureAuditOutputSafe(output string, conf *configuration.Configuration) err
 	if conf == nil {
 		return fmt.Errorf("nil configuration")
 	}
-	absoluteOutput, err := resolveAuditOutputPath(output)
+	absoluteOutput, err := sys.CanonicalPath(output)
 	if err != nil {
 		return fmt.Errorf("cannot resolve output path %q: %w", output, err)
 	}
@@ -139,7 +146,7 @@ func ensureAuditOutputSafe(output string, conf *configuration.Configuration) err
 		if !configured.Enabled {
 			continue
 		}
-		absoluteJournal, err := resolveAuditOutputPath(configured.Journal.Directory)
+		absoluteJournal, err := sys.CanonicalPath(configured.Journal.Directory)
 		if err != nil {
 			return fmt.Errorf("cannot resolve journal path %q: %w", configured.Journal.Directory, err)
 		}
@@ -182,7 +189,7 @@ func ensureAuditOutputSafe(output string, conf *configuration.Configuration) err
 }
 
 func ensureAuditOutputOutsideDirectory(output, absoluteOutput, directory, description string) (string, error) {
-	absoluteDirectory, err := resolveAuditOutputPath(directory)
+	absoluteDirectory, err := sys.CanonicalPath(directory)
 	if err != nil {
 		return "", fmt.Errorf("cannot resolve %s path %q: %w", description, directory, err)
 	}
@@ -282,42 +289,21 @@ func auditOutputTraversesDirectory(output, directory string) (bool, error) {
 	}
 }
 
-func resolveAuditOutputPath(path string) (string, error) {
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	current := filepath.Clean(absolute)
-	var missing []string
-	for {
-		if _, err := goos.Lstat(current); err == nil {
-			canonical, err := filepath.EvalSymlinks(current)
-			if err != nil {
-				return "", err
-			}
-			for index := len(missing) - 1; index >= 0; index-- {
-				canonical = filepath.Join(canonical, missing[index])
-			}
-			return filepath.Clean(canonical), nil
-		} else if !goerrors.Is(err, fs.ErrNotExist) {
-			return "", err
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return "", fmt.Errorf("cannot find existing parent of %q", path)
-		}
-		missing = append(missing, filepath.Base(current))
-		current = parent
-	}
-}
-
 func canonicalAuditOutput(output string) (string, error) {
 	if output == "-" {
 		return output, nil
 	}
-	resolved, err := resolveAuditOutputPath(output)
+	resolved, err := sys.CanonicalPath(output)
 	if err != nil {
 		return "", fmt.Errorf("cannot resolve output path %q: %w", output, err)
+	}
+	parent := filepath.Dir(resolved)
+	info, err := goos.Stat(parent)
+	if err != nil {
+		return "", fmt.Errorf("output parent directory %q must already exist: %w", parent, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("output parent %q is not a directory", parent)
 	}
 	return resolved, nil
 }

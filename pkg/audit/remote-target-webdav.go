@@ -2,7 +2,6 @@ package audit
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -22,9 +21,12 @@ import (
 )
 
 const (
-	webdavMethodMkcol = "MKCOL"
-	webdavMethodMove  = "MOVE"
+	webdavMethodMkcol         = "MKCOL"
+	webdavMethodMove          = "MOVE"
+	webdavTemporaryNameDomain = "BIFROEST-AUDIT-WEBDAV-TEMPORARY/v1\x00"
 )
+
+var errWebdavTemporaryExists = goerrors.New("temporary WebDAV audit segment already exists")
 
 var _ = registerPreparedRemoteTarget(
 	func() configuration.AuditlogTargetV { return &configuration.AuditlogTargetWebdav{} },
@@ -45,6 +47,13 @@ type webdavRemoteTarget struct {
 	closed   bool
 	closeErr error
 }
+
+type webdavObjectConflictError struct {
+	cause error
+}
+
+func (this *webdavObjectConflictError) Error() string { return this.cause.Error() }
+func (this *webdavObjectConflictError) Unwrap() error { return this.cause }
 
 func newWebdavRemoteTarget(ctx context.Context, _ RemoteTargetScope, conf *configuration.AuditlogTargetWebdav) (RemoteTarget, error) {
 	target, _, _, err := prepareWebdavRemoteTarget(ctx, RemoteTargetScope{}, conf)
@@ -121,30 +130,50 @@ func (this *webdavRemoteTarget) Publish(ctx context.Context, segment SealedSegme
 	}
 	collectionURL := appendWebdavURL(this.endpoint, true, segment.ProducerId().String())
 	finalURL := appendWebdavURL(collectionURL, false, segment.FileName())
+	temporaryURL := webdavTemporaryURL(collectionURL, finalURL)
 	exists, err := this.verifyObject(ctx, finalURL, segment.Size(), checksum, "existing audit segment")
-	if err != nil || exists {
-		return err
-	}
-	if err := this.ensureCollection(ctx, collectionURL); err != nil {
-		return err
-	}
-	temporaryURL, err := newWebdavTemporaryURL(collectionURL)
 	if err != nil {
-		return err
-	}
-	cleanup, err := this.putTemporary(ctx, temporaryURL, segment)
-	if err != nil {
-		if cleanup {
+		var conflict *webdavObjectConflictError
+		if goerrors.As(err, &conflict) {
 			return goerrors.Join(err, this.cleanupTemporaryAfterFailure(ctx, temporaryURL))
 		}
 		return err
 	}
-	exists, err = this.verifyObject(ctx, temporaryURL, segment.Size(), checksum, "temporary audit segment")
-	if err != nil {
-		return goerrors.Join(err, this.cleanupTemporaryAfterFailure(ctx, temporaryURL))
+	if exists {
+		return this.cleanupTemporaryAfterFailure(ctx, temporaryURL)
 	}
-	if !exists {
-		return goerrors.Join(errors.Network.Newf("temporary WebDAV audit segment disappeared after upload"), this.cleanupTemporaryAfterFailure(ctx, temporaryURL))
+	if err := this.ensureCollection(ctx, collectionURL); err != nil {
+		return err
+	}
+	temporaryExists, err := this.verifyTemporary(ctx, temporaryURL, segment.Size(), checksum)
+	if err != nil {
+		return err
+	}
+	if !temporaryExists {
+		cleanup, uploadErr := this.putTemporary(ctx, temporaryURL, segment)
+		if uploadErr != nil {
+			if goerrors.Is(uploadErr, errWebdavTemporaryExists) {
+				temporaryExists, err = this.verifyTemporary(ctx, temporaryURL, segment.Size(), checksum)
+				if err != nil {
+					return goerrors.Join(uploadErr, err)
+				}
+				if !temporaryExists {
+					return uploadErr
+				}
+			} else if cleanup {
+				return goerrors.Join(uploadErr, this.cleanupTemporaryAfterFailure(ctx, temporaryURL))
+			} else {
+				return uploadErr
+			}
+		} else {
+			temporaryExists, err = this.verifyTemporary(ctx, temporaryURL, segment.Size(), checksum)
+			if err != nil {
+				return err
+			}
+			if !temporaryExists {
+				return goerrors.Join(errors.Network.Newf("temporary WebDAV audit segment disappeared after upload"), this.cleanupTemporaryAfterFailure(ctx, temporaryURL))
+			}
+		}
 	}
 	return this.moveTemporary(ctx, temporaryURL, finalURL, segment.Size(), checksum)
 }
@@ -176,12 +205,9 @@ func appendWebdavURL(base *url.URL, trailingSlash bool, components ...string) *u
 	return &result
 }
 
-func newWebdavTemporaryURL(collectionURL *url.URL) (*url.URL, error) {
-	var random [16]byte
-	if _, err := rand.Read(random[:]); err != nil {
-		return nil, errors.System.Newf("cannot generate WebDAV temporary object name: %w", err)
-	}
-	return appendWebdavURL(collectionURL, false, ".bifroest-upload-"+hex.EncodeToString(random[:])+".tmp"), nil
+func webdavTemporaryURL(collectionURL, finalURL *url.URL) *url.URL {
+	digest := sha256.Sum256(append([]byte(webdavTemporaryNameDomain), finalURL.String()...))
+	return appendWebdavURL(collectionURL, false, ".bifroest-upload-"+hex.EncodeToString(digest[:])+".tmp")
 }
 
 func (this *webdavRemoteTarget) newRequest(ctx context.Context, method string, target *url.URL, body io.Reader) (*http.Request, error) {
@@ -234,9 +260,19 @@ func (this *webdavRemoteTarget) putTemporary(ctx context.Context, temporaryURL *
 		return closeErr != nil, closeErr
 	}
 	if response.StatusCode == http.StatusPreconditionFailed {
-		return false, goerrors.Join(errors.Network.Newf("temporary WebDAV audit segment already exists"), closeErr)
+		return false, goerrors.Join(errors.Network.Newf("temporary WebDAV audit segment already exists: %w", errWebdavTemporaryExists), closeErr)
 	}
 	return true, goerrors.Join(classifyWebdavRemoteError(ctx, "upload temporary audit segment", response.StatusCode, nil), closeErr)
+}
+
+func (this *webdavRemoteTarget) verifyTemporary(ctx context.Context, temporaryURL *url.URL, size int64, checksum []byte) (bool, error) {
+	exists, err := this.verifyObject(ctx, temporaryURL, size, checksum, "temporary audit segment")
+	var conflict *webdavObjectConflictError
+	if err == nil || !goerrors.As(err, &conflict) {
+		return exists, err
+	}
+	retryErr := errors.Network.Newf("invalid temporary WebDAV audit segment was removed and must be uploaded again: %v", err)
+	return false, goerrors.Join(retryErr, this.cleanupTemporaryAfterFailure(ctx, temporaryURL))
 }
 
 func (this *webdavRemoteTarget) moveTemporary(ctx context.Context, temporaryURL, finalURL *url.URL, size int64, checksum []byte) error {
@@ -258,17 +294,16 @@ func (this *webdavRemoteTarget) moveTemporary(ctx context.Context, temporaryURL,
 		return closeErr
 	}
 	cleanupErr := this.cleanupTemporaryAfterFailure(ctx, temporaryURL)
-	if response.StatusCode != http.StatusPreconditionFailed {
-		return goerrors.Join(classifyWebdavRemoteError(ctx, "publish audit segment", response.StatusCode, nil), closeErr, cleanupErr)
-	}
+	moveErr := classifyWebdavRemoteError(ctx, "publish audit segment", response.StatusCode, nil)
 	exists, verifyErr := this.verifyObject(ctx, finalURL, size, checksum, "existing audit segment")
 	if verifyErr != nil {
-		return goerrors.Join(verifyErr, closeErr, cleanupErr)
+		return goerrors.Join(moveErr, verifyErr, closeErr, cleanupErr)
 	}
-	if !exists {
-		verifyErr = errors.Network.Newf("existing WebDAV audit segment disappeared after MOVE conflict")
+	if exists {
+		return goerrors.Join(closeErr, cleanupErr)
 	}
-	return goerrors.Join(verifyErr, closeErr, cleanupErr)
+	missingErr := errors.Network.Newf("existing WebDAV audit segment is absent after failed MOVE")
+	return goerrors.Join(moveErr, missingErr, closeErr, cleanupErr)
 }
 
 func (this *webdavRemoteTarget) verifyObject(ctx context.Context, objectURL *url.URL, size int64, expectedChecksum []byte, description string) (bool, error) {
@@ -298,7 +333,7 @@ func (this *webdavRemoteTarget) verifyObject(ctx context.Context, objectURL *url
 		return false, goerrors.Join(errors.Config.Newf("WebDAV returned unsupported content encoding %q for %s", encoding, description), closeWebdavResponse(response, "read "+description))
 	}
 	conflict := func(message string, args ...any) error {
-		return errors.System.Newf("WebDAV %s conflicts with local content: "+message, append([]any{description}, args...)...)
+		return &webdavObjectConflictError{cause: errors.System.Newf("WebDAV %s conflicts with local content: "+message, append([]any{description}, args...)...)}
 	}
 	if response.ContentLength >= 0 && response.ContentLength != size {
 		return false, goerrors.Join(conflict("size is %d instead of %d", response.ContentLength, size), closeWebdavResponse(response, "read "+description))

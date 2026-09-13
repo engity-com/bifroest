@@ -10,6 +10,7 @@ import (
 	"golang.org/x/sys/windows"
 
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 func secureJournalDirectory(path string, _ os.FileInfo) error {
@@ -29,7 +30,11 @@ func secureJournalPathWithAccess(path, access string) error {
 	if err != nil {
 		return err
 	}
-	existing, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	nativePath, err := sys.WindowsExtendedPath(path)
+	if err != nil {
+		return errors.System.Newf("cannot resolve native audit journal path %q: %w", path, err)
+	}
+	existing, err := windows.GetNamedSecurityInfo(nativePath, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
 	if err != nil {
 		return errors.System.Newf("cannot inspect owner of %q: %w", path, err)
 	}
@@ -51,7 +56,7 @@ func secureJournalPathWithAccess(path, access string) error {
 	if err != nil {
 		return errors.System.Newf("cannot create audit journal access-control list: %w", err)
 	}
-	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+	if err := windows.SetNamedSecurityInfo(nativePath, windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
 		nil, nil, dacl, nil); err != nil {
 		return errors.System.Newf("cannot protect audit journal path %q: %w", path, err)

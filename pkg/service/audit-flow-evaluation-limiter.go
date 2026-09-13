@@ -67,13 +67,39 @@ type unauthenticatedAuditAggregate struct {
 	announced      bool
 }
 
+type reservePhase uint8
+
+const (
+	reservePhaseInactive reservePhase = iota
+	reservePhaseMarkerPending
+	reservePhaseMonitoring
+)
+
 type unauthenticatedAuditReserve struct {
-	active    bool
-	announced bool
+	phase     reservePhase
 	pending   uint64
 	first     time.Time
 	last      time.Time
 	nextCheck time.Time
+}
+
+func (this *unauthenticatedAuditReserve) active() bool {
+	return this.phase != reservePhaseInactive
+}
+
+func (this *unauthenticatedAuditReserve) awaitMarker(nextCheck time.Time) {
+	this.phase = reservePhaseMarkerPending
+	this.nextCheck = nextCheck
+}
+
+func (this *unauthenticatedAuditReserve) monitor(nextCheck time.Time) {
+	this.phase = reservePhaseMonitoring
+	this.nextCheck = nextCheck
+}
+
+func (this *unauthenticatedAuditReserve) deactivate() {
+	this.phase = reservePhaseInactive
+	this.nextCheck = time.Time{}
 }
 
 type unauthenticatedAuditLog struct {
@@ -105,7 +131,7 @@ func (this *unauthenticatedAuditLimiter) Record(ctx context.Context, auditlog co
 	defer state.mutex.Unlock()
 	now := this.now()
 
-	if state.reserve.active {
+	if state.reserve.active() {
 		handled, err := this.handleReserved(ctx, state, now)
 		if err != nil || handled {
 			return err
@@ -185,7 +211,7 @@ func (this *unauthenticatedAuditLimiter) suppressRate(ctx context.Context, audit
 		state.announced = false
 	}
 	if !state.announced {
-		_, err := this.recordRateSummary(ctx, auditlog, unauthenticatedAuditSummary(outcome, "rate-limit", 1, now, now), now)
+		_, err := this.recordRateSummary(ctx, auditlog, unauthenticatedAuditSummary(outcome, audit.EventReasonRateLimit, 1, now, now), now)
 		if err != nil {
 			return err
 		}
@@ -215,7 +241,7 @@ func (this *unauthenticatedAuditLimiter) flushRate(ctx context.Context, auditlog
 	if state.pending == 0 {
 		return false, nil
 	}
-	enteredReserve, err := this.recordRateSummary(ctx, auditlog, unauthenticatedAuditSummary(outcome, "rate-limit", state.pending, state.first, state.last), now)
+	enteredReserve, err := this.recordRateSummary(ctx, auditlog, unauthenticatedAuditSummary(outcome, audit.EventReasonRateLimit, state.pending, state.first, state.last), now)
 	if err != nil {
 		return false, err
 	}
@@ -235,23 +261,21 @@ func (this *unauthenticatedAuditLimiter) recordRateSummary(ctx context.Context, 
 	if err := state.recorder.Record(ctx, event); err != nil {
 		return false, err
 	}
-	this.activateReserve(state, false, now)
+	state.reserve.awaitMarker(now.Add(this.interval))
 	return true, nil
 }
 
 func (this *unauthenticatedAuditLimiter) handleReserved(ctx context.Context, state *unauthenticatedAuditLog, now time.Time) (bool, error) {
 	reserved := &state.reserve
-	if !reserved.announced {
+	if reserved.phase == reservePhaseMarkerPending {
 		if !now.Before(reserved.nextCheck) {
-			reserved.active = false
-			reserved.nextCheck = time.Time{}
+			reserved.deactivate()
 			return false, nil
 		}
-		if err := state.recorder.Record(ctx, unauthenticatedAuditSummary("", "journal-reserve", 1, now, now)); err != nil {
+		if err := state.recorder.Record(ctx, unauthenticatedAuditSummary("", audit.EventReasonJournalReserve, 1, now, now)); err != nil {
 			return true, err
 		}
-		reserved.announced = true
-		reserved.nextCheck = now.Add(this.interval)
+		reserved.monitor(now.Add(this.interval))
 		return true, nil
 	}
 	if now.Before(reserved.nextCheck) {
@@ -259,7 +283,7 @@ func (this *unauthenticatedAuditLimiter) handleReserved(ctx context.Context, sta
 		return true, nil
 	}
 	if reserved.pending > 0 {
-		recorded, err := recordSuppressible(ctx, state.recorder, unauthenticatedAuditSummary("", "journal-reserve", reserved.pending, reserved.first, reserved.last))
+		recorded, err := recordSuppressible(ctx, state.recorder, unauthenticatedAuditSummary("", audit.EventReasonJournalReserve, reserved.pending, reserved.first, reserved.last))
 		if err != nil {
 			return true, err
 		}
@@ -270,28 +294,20 @@ func (this *unauthenticatedAuditLimiter) handleReserved(ctx context.Context, sta
 		}
 		clearUnauthenticatedAuditCount(&reserved.pending, &reserved.first, &reserved.last)
 	}
-	reserved.active = false
-	reserved.announced = false
-	reserved.nextCheck = time.Time{}
+	reserved.deactivate()
 	return false, nil
 }
 
 func (this *unauthenticatedAuditLimiter) enterReserve(ctx context.Context, state *unauthenticatedAuditLog, count uint64, at time.Time) error {
-	if state.reserve.active {
+	if state.reserve.active() {
 		addUnauthenticatedAuditCount(&state.reserve.pending, &state.reserve.first, &state.reserve.last, count, at)
 		return nil
 	}
-	if err := state.recorder.Record(ctx, unauthenticatedAuditSummary("", "journal-reserve", count, at, at)); err != nil {
+	if err := state.recorder.Record(ctx, unauthenticatedAuditSummary("", audit.EventReasonJournalReserve, count, at, at)); err != nil {
 		return err
 	}
-	this.activateReserve(state, true, at)
+	state.reserve.monitor(at.Add(this.interval))
 	return nil
-}
-
-func (this *unauthenticatedAuditLimiter) activateReserve(state *unauthenticatedAuditLog, announced bool, at time.Time) {
-	state.reserve.active = true
-	state.reserve.announced = announced
-	state.reserve.nextCheck = at.Add(this.interval)
 }
 
 func (this *unauthenticatedAuditLimiter) Flush(ctx context.Context) error {
@@ -327,7 +343,7 @@ func flushUnauthenticatedAuditLog(ctx context.Context, state *unauthenticatedAud
 		if aggregate.pending == 0 {
 			continue
 		}
-		event := unauthenticatedAuditSummary(outcome, "rate-limit", aggregate.pending, aggregate.first, aggregate.last)
+		event := unauthenticatedAuditSummary(outcome, audit.EventReasonRateLimit, aggregate.pending, aggregate.first, aggregate.last)
 		if err := state.recorder.Record(ctx, event); err != nil {
 			result = goerrors.Join(result, fmt.Errorf("cannot flush rate-limit aggregate for auditlog %q: %w", state.name, err))
 			continue
@@ -335,8 +351,8 @@ func flushUnauthenticatedAuditLog(ctx context.Context, state *unauthenticatedAud
 		clearUnauthenticatedAuditCount(&aggregate.pending, &aggregate.first, &aggregate.last)
 	}
 	reserved := &state.reserve
-	if reserved.active && reserved.pending > 0 {
-		event := unauthenticatedAuditSummary("", "journal-reserve", reserved.pending, reserved.first, reserved.last)
+	if reserved.active() && reserved.pending > 0 {
+		event := unauthenticatedAuditSummary("", audit.EventReasonJournalReserve, reserved.pending, reserved.first, reserved.last)
 		if err := state.recorder.Record(ctx, event); err != nil {
 			result = goerrors.Join(result, fmt.Errorf("cannot flush journal-reserve aggregate for auditlog %q: %w", state.name, err))
 		} else {
@@ -356,13 +372,13 @@ func recordSuppressible(ctx context.Context, recorder audit.Recorder, event audi
 	return true, nil
 }
 
-func unauthenticatedAuditSummary(outcome audit.EventOutcome, reason string, count uint64, first, last time.Time) audit.Event {
+func unauthenticatedAuditSummary(outcome audit.EventOutcome, reason audit.EventReason, count uint64, first, last time.Time) audit.Event {
 	duration := last.Sub(first).Milliseconds()
 	if duration < 0 {
 		duration = 0
 	}
 	return audit.Event{
-		Name:           "authentication.flow.evaluations-suppressed",
+		Name:           audit.EventNameAuthenticationFlowEvaluationsSuppressed,
 		Domain:         audit.EventDomainAuthentication,
 		Outcome:        outcome,
 		Reason:         reason,

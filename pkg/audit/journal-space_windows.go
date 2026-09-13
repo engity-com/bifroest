@@ -2,10 +2,14 @@
 
 package audit
 
-import "golang.org/x/sys/windows"
+import (
+	"golang.org/x/sys/windows"
+
+	"github.com/engity-com/bifroest/pkg/sys"
+)
 
 func availableJournalBytes(path string) (uint64, error) {
-	directory, err := windows.UTF16PtrFromString(path)
+	directory, err := sys.WindowsPathPointer(path)
 	if err != nil {
 		return 0, err
 	}

@@ -291,17 +291,17 @@ func TestRemoteDeliverySegmentReaderScansLargeBacklogOnceWithBoundedMemory(t *te
 	var force atomic.Bool
 	var confirmed uint64
 	for confirmed < lastSequence {
-		segment, file, exists, more, err := reader.Next(context.Background(), confirmed, observed, &force)
-		if err != nil {
-			require.NoError(t, err)
+		result := reader.Next(context.Background(), confirmed, observed, &force)
+		if result.err != nil {
+			require.NoError(t, result.err)
 		}
-		if !exists {
-			require.True(t, more)
+		if !result.exists {
+			require.True(t, result.more)
 			continue
 		}
-		require.Equal(t, confirmed+1, segment.Sequence())
-		require.NoError(t, file.Close())
-		confirmed = segment.Sequence()
+		require.Equal(t, confirmed+1, result.segment.Sequence())
+		require.NoError(t, result.file.Close())
+		confirmed = result.segment.Sequence()
 	}
 	require.Equal(t, uint64(1), reader.scanCount)
 	require.LessOrEqual(t, reader.maximumScanChunk, journalSegmentSortChunkSize)
@@ -330,17 +330,63 @@ func TestRemoteDeliverySegmentReaderAdvancesThroughBacklog(t *testing.T) {
 	var force atomic.Bool
 	var confirmed uint64
 	for confirmed < lastSequence {
-		segment, file, exists, more, err := reader.Next(context.Background(), confirmed, observed, &force)
-		require.NoError(t, err)
-		if !exists {
-			require.True(t, more)
+		result := reader.Next(context.Background(), confirmed, observed, &force)
+		require.NoError(t, result.err)
+		if !result.exists {
+			require.True(t, result.more)
 			continue
 		}
-		require.Equal(t, confirmed+1, segment.Sequence())
-		require.NoError(t, file.Close())
-		confirmed = segment.Sequence()
+		require.Equal(t, confirmed+1, result.segment.Sequence())
+		require.NoError(t, result.file.Close())
+		confirmed = result.segment.Sequence()
 	}
 	require.Equal(t, uint64(1), reader.scanCount)
+}
+
+func TestRemoteDeliverySegmentReaderTransitionsFromExhaustedToForcedRescan(t *testing.T) {
+	directory := t.TempDir()
+	reader := remoteDeliverySegmentReader{directory: directory, producerId: ProducerId{1}}
+	defer reader.Close()
+	observed := make(chan journalSegmentFile)
+	var force atomic.Bool
+
+	var result remoteDeliverySegmentResult
+	for attempt := 0; attempt < 8; attempt++ {
+		result = reader.Next(context.Background(), 0, observed, &force)
+		require.NoError(t, result.err)
+		if !result.more {
+			break
+		}
+	}
+	require.False(t, result.exists)
+	require.True(t, reader.exhausted)
+	require.Equal(t, uint64(1), reader.scanCount)
+
+	content := []byte("sealed segment")
+	hash := hashJournalBytes(journalSegmentHashDomain, content)
+	path := filepath.Join(directory, sealedJournalFileName(1, hash))
+	require.NoError(t, os.WriteFile(path, content, journalFileMode))
+	require.NoError(t, os.Chmod(path, 0o400))
+
+	result = reader.Next(context.Background(), 0, observed, &force)
+	require.NoError(t, result.err)
+	require.False(t, result.exists)
+	require.False(t, result.more)
+	require.Equal(t, uint64(1), reader.scanCount)
+
+	force.Store(true)
+	for attempt := 0; attempt < 8; attempt++ {
+		result = reader.Next(context.Background(), 0, observed, &force)
+		require.NoError(t, result.err)
+		if result.exists {
+			break
+		}
+		require.True(t, result.more)
+	}
+	require.True(t, result.exists)
+	require.Equal(t, uint64(1), result.segment.Sequence())
+	require.NoError(t, result.file.Close())
+	require.Equal(t, uint64(2), reader.scanCount)
 }
 
 func TestRemoteDeliverySegmentReaderPermanentlyRejectsDuplicatesAcrossBatches(t *testing.T) {
@@ -358,30 +404,28 @@ func TestRemoteDeliverySegmentReaderPermanentlyRejectsDuplicatesAcrossBatches(t 
 	observed := make(chan journalSegmentFile)
 	var force atomic.Bool
 
-	var file *os.File
-	var exists, more bool
-	var err error
+	var result remoteDeliverySegmentResult
 	for attempt := 0; attempt < 8; attempt++ {
-		_, file, exists, more, err = reader.Next(context.Background(), 0, observed, &force)
-		if err != nil {
+		result = reader.Next(context.Background(), 0, observed, &force)
+		if result.err != nil {
 			break
 		}
-		require.False(t, exists)
-		require.True(t, more)
+		require.False(t, result.exists)
+		require.True(t, result.more)
 	}
-	require.ErrorContains(t, err, "multiple local segments with sequence 1")
-	require.Nil(t, file)
-	require.False(t, exists)
-	require.False(t, more)
+	require.ErrorContains(t, result.err, "multiple local segments with sequence 1")
+	require.Nil(t, result.file)
+	require.False(t, result.exists)
+	require.False(t, result.more)
 	require.Nil(t, reader.scan)
 	require.Nil(t, reader.iterator)
 
 	force.Store(true)
-	_, file, exists, more, retryErr := reader.Next(context.Background(), 0, observed, &force)
-	require.EqualError(t, retryErr, err.Error())
-	require.Nil(t, file)
-	require.False(t, exists)
-	require.False(t, more)
+	retry := reader.Next(context.Background(), 0, observed, &force)
+	require.EqualError(t, retry.err, result.err.Error())
+	require.Nil(t, retry.file)
+	require.False(t, retry.exists)
+	require.False(t, retry.more)
 }
 
 func TestRemoteDeliverySegmentReaderPermanentlyRejectsGapBeyondCacheWindow(t *testing.T) {
@@ -398,27 +442,25 @@ func TestRemoteDeliverySegmentReaderPermanentlyRejectsGapBeyondCacheWindow(t *te
 	observed := make(chan journalSegmentFile)
 	var force atomic.Bool
 
-	var file *os.File
-	var exists, more bool
-	var err error
+	var result remoteDeliverySegmentResult
 	for attempt := 0; attempt < 10; attempt++ {
-		_, file, exists, more, err = reader.Next(context.Background(), 0, observed, &force)
-		if err != nil {
+		result = reader.Next(context.Background(), 0, observed, &force)
+		if result.err != nil {
 			break
 		}
-		require.Nil(t, file)
-		require.False(t, exists)
-		require.True(t, more)
+		require.Nil(t, result.file)
+		require.False(t, result.exists)
+		require.True(t, result.more)
 	}
-	require.ErrorContains(t, err, "missing local segment sequence 1")
-	require.ErrorContains(t, err, "later sequence 1025")
-	require.Nil(t, file)
-	require.False(t, exists)
-	require.False(t, more)
+	require.ErrorContains(t, result.err, "missing local segment sequence 1")
+	require.ErrorContains(t, result.err, "later sequence 1025")
+	require.Nil(t, result.file)
+	require.False(t, result.exists)
+	require.False(t, result.more)
 
 	force.Store(true)
-	_, _, _, _, retryErr := reader.Next(context.Background(), 0, observed, &force)
-	require.EqualError(t, retryErr, err.Error())
+	retry := reader.Next(context.Background(), 0, observed, &force)
+	require.EqualError(t, retry.err, result.err.Error())
 }
 
 func TestRemoteDeliverySegmentReaderDoesNotConfirmGapAcrossObservedChange(t *testing.T) {
@@ -450,11 +492,11 @@ func TestRemoteDeliverySegmentReaderDoesNotConfirmGapAcrossObservedChange(t *tes
 	defer reader.Close()
 	var force atomic.Bool
 	for attempt := 0; attempt < 16; attempt++ {
-		segment, file, exists, _, err := reader.Next(context.Background(), 0, observed, &force)
-		require.NoError(t, err)
-		if exists {
-			require.Equal(t, uint64(1), segment.Sequence())
-			require.NoError(t, file.Close())
+		result := reader.Next(context.Background(), 0, observed, &force)
+		require.NoError(t, result.err)
+		if result.exists {
+			require.Equal(t, uint64(1), result.segment.Sequence())
+			require.NoError(t, result.file.Close())
 			return
 		}
 	}
@@ -490,28 +532,25 @@ func TestRemoteDeliverySegmentReaderPreservesScanProgressAcrossTimeout(t *testin
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
 	defer cancel()
 	for {
-		_, _, _, _, err := reader.Next(ctx, 0, observed, &force)
-		if err != nil {
-			require.ErrorIs(t, err, context.DeadlineExceeded)
+		result := reader.Next(ctx, 0, observed, &force)
+		if result.err != nil {
+			require.ErrorIs(t, result.err, context.DeadlineExceeded)
 			break
 		}
 	}
 	require.Equal(t, uint64(1), reader.scanCount)
 
-	var segment SealedSegment
-	var file *os.File
+	var result remoteDeliverySegmentResult
 	for attempt := 0; attempt < 8; attempt++ {
-		var exists bool
-		var err error
-		segment, file, exists, _, err = reader.Next(context.Background(), 0, observed, &force)
-		require.NoError(t, err)
-		if exists {
+		result = reader.Next(context.Background(), 0, observed, &force)
+		require.NoError(t, result.err)
+		if result.exists {
 			break
 		}
 	}
-	require.Equal(t, uint64(1), segment.Sequence())
-	require.NotNil(t, file)
-	require.NoError(t, file.Close())
+	require.Equal(t, uint64(1), result.segment.Sequence())
+	require.NotNil(t, result.file)
+	require.NoError(t, result.file.Close())
 	require.Equal(t, uint64(1), reader.scanCount)
 }
 
@@ -527,26 +566,26 @@ func TestRemoteDeliverySegmentReaderInvalidatesFailedSegmentOpen(t *testing.T) {
 	observed := make(chan journalSegmentFile)
 	var force atomic.Bool
 	for {
-		_, _, _, more, err := reader.Next(context.Background(), 0, observed, &force)
-		if err != nil {
-			require.ErrorContains(t, err, "does not match hash")
+		result := reader.Next(context.Background(), 0, observed, &force)
+		if result.err != nil {
+			require.ErrorContains(t, result.err, "does not match hash")
 			break
 		}
-		require.True(t, more)
+		require.True(t, result.more)
 	}
 	require.NoError(t, os.Chmod(segmentPath, 0o600))
 	require.NoError(t, os.WriteFile(segmentPath, content, journalFileMode))
 	require.NoError(t, os.Chmod(segmentPath, 0o400))
 
 	for {
-		segment, file, exists, more, err := reader.Next(context.Background(), 0, observed, &force)
-		require.NoError(t, err)
-		if exists {
-			require.Equal(t, uint64(1), segment.Sequence())
-			require.NoError(t, file.Close())
+		result := reader.Next(context.Background(), 0, observed, &force)
+		require.NoError(t, result.err)
+		if result.exists {
+			require.Equal(t, uint64(1), result.segment.Sequence())
+			require.NoError(t, result.file.Close())
 			break
 		}
-		require.True(t, more)
+		require.True(t, result.more)
 	}
 	require.Equal(t, uint64(2), reader.scanCount)
 }
@@ -569,11 +608,11 @@ func TestRemoteDeliverySegmentReaderRebuildsAfterLiveAppendAtEOF(t *testing.T) {
 	var force atomic.Bool
 	next := func(confirmed uint64) SealedSegment {
 		for attempt := 0; attempt < 8; attempt++ {
-			segment, file, exists, _, err := reader.Next(context.Background(), confirmed, observed, &force)
-			require.NoError(t, err)
-			if exists {
-				require.NoError(t, file.Close())
-				return segment
+			result := reader.Next(context.Background(), confirmed, observed, &force)
+			require.NoError(t, result.err)
+			if result.exists {
+				require.NoError(t, result.file.Close())
+				return result.segment
 			}
 		}
 		t.Fatal("segment was not discovered")
@@ -599,11 +638,11 @@ func TestRemoteDeliverySegmentReaderDetectsDuplicateAddedAfterCursorProgress(t *
 	observed := make(chan journalSegmentFile, 2)
 	var force atomic.Bool
 	for {
-		segment, file, exists, _, err := reader.Next(context.Background(), 0, observed, &force)
-		require.NoError(t, err)
-		if exists {
-			require.Equal(t, uint64(1), segment.Sequence())
-			require.NoError(t, file.Close())
+		result := reader.Next(context.Background(), 0, observed, &force)
+		require.NoError(t, result.err)
+		if result.exists {
+			require.Equal(t, uint64(1), result.segment.Sequence())
+			require.NoError(t, result.file.Close())
 			break
 		}
 	}
@@ -614,14 +653,14 @@ func TestRemoteDeliverySegmentReaderDetectsDuplicateAddedAfterCursorProgress(t *
 	observed <- journalSegmentFile{name: duplicateName, sequence: 1, hash: journalHash{9}}
 	observed <- journalSegmentFile{name: secondName, sequence: 2, hash: hash}
 
-	var err error
+	var result remoteDeliverySegmentResult
 	for attempt := 0; attempt < 8; attempt++ {
-		_, _, _, _, err = reader.Next(context.Background(), 1, observed, &force)
-		if err != nil {
+		result = reader.Next(context.Background(), 1, observed, &force)
+		if result.err != nil {
 			break
 		}
 	}
-	require.ErrorContains(t, err, "multiple local segments with sequence 1")
+	require.ErrorContains(t, result.err, "multiple local segments with sequence 1")
 }
 
 func TestRemoteDeliveryFsnotifyWakeDoesNotInterruptFailureBackoff(t *testing.T) {

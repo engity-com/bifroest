@@ -93,6 +93,16 @@ func EncryptionRecipientFingerprint(publicKeys bfcrypto.PublicKeys) (string, err
 }
 
 func ValidateEncryptionRecipientDedicatedFrom(publicKeys bfcrypto.PublicKeys, privateKeys []bfcrypto.PrivateKey) error {
+	availablePublicKeys := make([]bfcrypto.PublicKey, 0, len(privateKeys))
+	for _, privateKey := range privateKeys {
+		if privateKey != nil {
+			availablePublicKeys = append(availablePublicKeys, privateKey.PublicKey())
+		}
+	}
+	return ValidateEncryptionRecipientDedicatedFromPublicKeys(publicKeys, availablePublicKeys)
+}
+
+func ValidateEncryptionRecipientDedicatedFromPublicKeys(publicKeys bfcrypto.PublicKeys, availablePublicKeys []bfcrypto.PublicKey) error {
 	if publicKeys.IsZero() {
 		return nil
 	}
@@ -103,8 +113,8 @@ func ValidateEncryptionRecipientDedicatedFrom(publicKeys bfcrypto.PublicKeys, pr
 	if len(keys) != 1 {
 		return errors.Config.Newf("exactly one audit encryption public key is required")
 	}
-	for _, privateKey := range privateKeys {
-		if privateKey != nil && privateKey.PublicKey() != nil && bytes.Equal(keys[0].Marshal(), privateKey.PublicKey().Marshal()) {
+	for _, availablePublicKey := range availablePublicKeys {
+		if availablePublicKey != nil && bytes.Equal(keys[0].Marshal(), availablePublicKey.Marshal()) {
 			return errors.Config.Newf("audit encryption recipient reuses a private key available to the Bifröst server")
 		}
 	}

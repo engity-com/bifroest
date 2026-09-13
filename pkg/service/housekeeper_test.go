@@ -37,8 +37,8 @@ func TestHouseKeeperFinalRetentionDeleteWaitsForSuccessfulAuthorizationDispose(t
 
 	events := recorder.eventsSnapshot()
 	require.Len(t, events, 2)
-	require.Equal(t, "housekeeping.session.dispose.started", events[0].Name)
-	require.Equal(t, "housekeeping.session.dispose.completed", events[1].Name)
+	require.Equal(t, audit.EventNameHousekeepingSessionDisposeStarted, events[0].Name)
+	require.Equal(t, audit.EventNameHousekeepingSessionDisposeCompleted, events[1].Name)
 	require.Equal(t, audit.EventOutcomeFailure, events[1].Outcome)
 	require.Equal(t, events[0].OperationId, events[1].OperationId)
 }
@@ -69,9 +69,9 @@ func TestHouseKeeperClearsPermanentlyUnusableAuthorizationBeforeRetentionDelete(
 
 	events := recorder.eventsSnapshot()
 	require.Len(t, events, 4)
-	require.Equal(t, "housekeeping.session.dispose.started", events[0].Name)
+	require.Equal(t, audit.EventNameHousekeepingSessionDisposeStarted, events[0].Name)
 	require.Equal(t, audit.EventOutcomeSuccess, events[1].Outcome)
-	require.Equal(t, "housekeeping.session.delete.started", events[2].Name)
+	require.Equal(t, audit.EventNameHousekeepingSessionDeleteStarted, events[2].Name)
 	require.Equal(t, audit.EventOutcomeSuccess, events[3].Outcome)
 }
 
@@ -140,7 +140,7 @@ func TestHouseKeeperInitialDisposeFailureDoesNotDeleteBeforeRetention(t *testing
 	require.Zero(t, repository.deleteCalls)
 	events := recorder.eventsSnapshot()
 	require.Len(t, events, 2)
-	require.Equal(t, "housekeeping.session.dispose.started", events[0].Name)
+	require.Equal(t, audit.EventNameHousekeepingSessionDisposeStarted, events[0].Name)
 	require.Equal(t, audit.EventOutcomeFailure, events[1].Outcome)
 }
 
@@ -216,10 +216,10 @@ func TestHouseKeeperFansOutRemovedFlowCleanupSkipToEveryEnabledAuditlog(t *testi
 	for _, recorder := range []*recordingAuditRecorder{first, second} {
 		events := recorder.eventsSnapshot()
 		require.Len(t, events, 1)
-		require.Equal(t, "housekeeping.orphaned-session.cleanup.skipped", events[0].Name)
+		require.Equal(t, audit.EventNameHousekeepingOrphanedSessionCleanupSkipped, events[0].Name)
 		require.Equal(t, "removed", events[0].Flow)
 		require.Equal(t, sess.id.String(), events[0].SessionId)
-		require.Equal(t, "missing-flow", events[0].Reason)
+		require.Equal(t, audit.EventReasonMissingFlow, events[0].Reason)
 		require.Equal(t, audit.EventOutcomeDenied, events[0].Outcome)
 		require.Empty(t, events[0].OperationId)
 	}
@@ -258,7 +258,7 @@ func TestHouseKeeperPreservesRemovedFlowWhenSkipAuditFails(t *testing.T) {
 	require.Equal(t, 1, valid.disposeCalls)
 	require.Len(t, working.eventsSnapshot(), 1)
 	require.Len(t, failing.eventsSnapshot(), 1)
-	require.Equal(t, "housekeeping.orphaned-session.cleanup.skipped", working.eventsSnapshot()[0].Name)
+	require.Equal(t, audit.EventNameHousekeepingOrphanedSessionCleanupSkipped, working.eventsSnapshot()[0].Name)
 }
 
 func TestHouseKeeperContinuesAfterCorruptSessionDiagnostic(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var _ = RegisterAuditlogTargetV(func() AuditlogTargetV {
+var _ = RegisterAuditlogTargetCodec(func() AuditlogTargetV {
 	return &testAuditlogTarget{}
 })
 

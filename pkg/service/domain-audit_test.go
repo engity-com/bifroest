@@ -64,24 +64,24 @@ func TestDomainAuditRecordsRuntimeTransitionsWithoutSensitiveValues(t *testing.T
 	require.NoError(t, client.Close())
 
 	require.Eventually(t, func() bool {
-		return recorder.hasEvent("connection.closed") && recorder.hasEvent("port-forwarding.direct.completed")
+		return recorder.hasEvent(audit.EventNameConnectionClosed) && recorder.hasEvent(audit.EventNamePortForwardingDirectCompleted)
 	}, time.Second, 10*time.Millisecond)
 	events := recorder.eventsSnapshot()
 
-	requireAuditEvent(t, events, "authentication.flow.evaluated", audit.EventOutcomeSuccess)
-	requireAuditEvent(t, events, "authentication.completed", audit.EventOutcomeSuccess)
-	requireAuditEvent(t, events, "session.pty.decided", audit.EventOutcomeSuccess)
-	requireAuditEvent(t, events, "session.agent-forwarding.decided", audit.EventOutcomeSuccess)
-	requireAuditEvent(t, events, "port-forwarding.direct.decided", audit.EventOutcomeSuccess)
-	directStarted := requireAuditEvent(t, events, "port-forwarding.direct.started", "")
-	directCompleted := requireAuditEvent(t, events, "port-forwarding.direct.completed", audit.EventOutcomeSuccess)
+	requireAuditEvent(t, events, audit.EventNameAuthenticationFlowEvaluated, audit.EventOutcomeSuccess)
+	requireAuditEvent(t, events, audit.EventNameAuthenticationCompleted, audit.EventOutcomeSuccess)
+	requireAuditEvent(t, events, audit.EventNameSessionPtyDecided, audit.EventOutcomeSuccess)
+	requireAuditEvent(t, events, audit.EventNameSessionAgentForwardingDecided, audit.EventOutcomeSuccess)
+	requireAuditEvent(t, events, audit.EventNamePortForwardingDirectDecided, audit.EventOutcomeSuccess)
+	directStarted := requireAuditEvent(t, events, audit.EventNamePortForwardingDirectStarted, "")
+	directCompleted := requireAuditEvent(t, events, audit.EventNamePortForwardingDirectCompleted, audit.EventOutcomeSuccess)
 	require.Equal(t, directStarted.OperationId, directCompleted.OperationId)
-	require.Empty(t, auditEventsNamed(events, "port-forwarding.direct.open-failed"))
-	requireAuditEvent(t, events, "port-forwarding.reverse.decided", audit.EventOutcomeSuccess)
-	requireAuditEvent(t, events, "connection.closed", "")
+	require.Empty(t, auditEventsNamed(events, audit.EventNamePortForwardingDirectOpenFailed))
+	requireAuditEvent(t, events, audit.EventNamePortForwardingReverseDecided, audit.EventOutcomeSuccess)
+	requireAuditEvent(t, events, audit.EventNameConnectionClosed, "")
 
-	startedTasks := auditEventsNamed(events, "session.task.started")
-	completedTasks := auditEventsNamed(events, "session.task.completed")
+	startedTasks := auditEventsNamed(events, audit.EventNameSessionTaskStarted)
+	completedTasks := auditEventsNamed(events, audit.EventNameSessionTaskCompleted)
 	require.Len(t, startedTasks, 2)
 	require.Len(t, completedTasks, 2)
 	require.ElementsMatch(t, []audit.SessionTask{audit.SessionTaskExec, audit.SessionTaskSftp}, []audit.SessionTask{startedTasks[0].SessionTask, startedTasks[1].SessionTask})
@@ -122,7 +122,7 @@ func TestDomainAuditDoesNotRecordForcedCommand(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, sshSession.Run(requestedCommand))
 
-	started := auditEventsNamed(recorder.eventsSnapshot(), "session.task.started")
+	started := auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameSessionTaskStarted)
 	require.Len(t, started, 1)
 	require.NotNil(t, started[0].ForcedCommand)
 	require.True(t, *started[0].ForcedCommand)
@@ -182,7 +182,7 @@ func TestDomainAuditRecordsEachEvaluatedFlowAndNotSkippedFlows(t *testing.T) {
 	client := server.mustDial(t)
 	require.NoError(t, client.Close())
 
-	evaluated := auditEventsNamed(recorder.eventsSnapshot(), "authentication.flow.evaluated")
+	evaluated := auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameAuthenticationFlowEvaluated)
 	require.Len(t, evaluated, 2)
 	require.Equal(t, "rejected", evaluated[0].Flow)
 	require.Equal(t, audit.EventOutcomeDenied, evaluated[0].Outcome)
@@ -221,16 +221,16 @@ func TestDomainAuditRecordsPublicKeySuccessOnlyAfterCertificateVerification(t *t
 		t.Fatal("client did not reach certificate signing")
 	}
 	beforeVerification := recorder.eventsSnapshot()
-	require.Len(t, auditEventsNamed(beforeVerification, "authentication.flow.evaluated"), 1)
-	require.Empty(t, auditEventsNamed(beforeVerification, "authentication.completed"))
+	require.Len(t, auditEventsNamed(beforeVerification, audit.EventNameAuthenticationFlowEvaluated), 1)
+	require.Empty(t, auditEventsNamed(beforeVerification, audit.EventNameAuthenticationCompleted))
 	close(blockingSigner.releaseSign)
 	require.NoError(t, <-dialDone)
 
-	evaluated := auditEventsNamed(recorder.eventsSnapshot(), "authentication.flow.evaluated")
+	evaluated := auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameAuthenticationFlowEvaluated)
 	require.Len(t, evaluated, 2)
 	require.Equal(t, audit.AuthenticationPhaseCandidate, evaluated[0].AuthenticationPhase)
 	require.Equal(t, audit.AuthenticationPhaseVerified, evaluated[1].AuthenticationPhase)
-	require.Len(t, auditEventsNamed(recorder.eventsSnapshot(), "authentication.completed"), 1)
+	require.Len(t, auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameAuthenticationCompleted), 1)
 }
 
 func TestDomainAuditClassifiesSessionFailureWithoutErrorText(t *testing.T) {
@@ -248,7 +248,7 @@ func TestDomainAuditClassifiesSessionFailureWithoutErrorText(t *testing.T) {
 	require.NoError(t, err)
 	require.Error(t, sshSession.Run("false"))
 
-	completed := auditEventsNamed(recorder.eventsSnapshot(), "session.task.completed")
+	completed := auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameSessionTaskCompleted)
 	require.Len(t, completed, 1)
 	require.Equal(t, audit.EventOutcomeFailure, completed[0].Outcome)
 	require.Equal(t, audit.ErrorCategorySystem, completed[0].ErrorCategory)
@@ -283,7 +283,7 @@ func TestDomainAuditClassifiesSessionCanceledWithoutEnvironmentError(t *testing.
 	require.NoError(t, sshSession.Close())
 	require.Error(t, <-runDone)
 	require.Eventually(t, func() bool {
-		completed := auditEventsNamed(recorder.eventsSnapshot(), "session.task.completed")
+		completed := auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameSessionTaskCompleted)
 		return len(completed) == 1 && completed[0].Outcome == audit.EventOutcomeCanceled
 	}, time.Second, 10*time.Millisecond)
 }
@@ -315,7 +315,7 @@ func (this *recordingAuditRecorder) eventsSnapshot() []audit.Event {
 	return append([]audit.Event(nil), this.events...)
 }
 
-func (this *recordingAuditRecorder) hasEvent(name string) bool {
+func (this *recordingAuditRecorder) hasEvent(name audit.EventName) bool {
 	for _, event := range this.eventsSnapshot() {
 		if event.Name == name {
 			return true
@@ -324,7 +324,7 @@ func (this *recordingAuditRecorder) hasEvent(name string) bool {
 	return false
 }
 
-func auditEventsNamed(events []audit.Event, name string) []audit.Event {
+func auditEventsNamed(events []audit.Event, name audit.EventName) []audit.Event {
 	var result []audit.Event
 	for _, event := range events {
 		if event.Name == name {
@@ -334,7 +334,7 @@ func auditEventsNamed(events []audit.Event, name string) []audit.Event {
 	return result
 }
 
-func requireAuditEvent(t *testing.T, events []audit.Event, name string, outcome audit.EventOutcome) audit.Event {
+func requireAuditEvent(t *testing.T, events []audit.Event, name audit.EventName, outcome audit.EventOutcome) audit.Event {
 	t.Helper()
 	for _, event := range events {
 		if event.Name == name && event.Outcome == outcome {

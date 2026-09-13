@@ -31,7 +31,7 @@ func TestAuditEventEncodingIncludesStructuredFields(t *testing.T) {
 	agentForwarding := false
 	forcedCommand := true
 	event := Event{
-		Name:                 "session.task.completed",
+		Name:                 EventNameSessionTaskCompleted,
 		Domain:               EventDomainSession,
 		Outcome:              EventOutcomeSuccess,
 		Flow:                 "main",
@@ -58,6 +58,25 @@ func TestAuditEventEncodingIncludesStructuredFields(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, `{"name":"session.task.completed","domain":"session","outcome":"success","flow":"main","connectionId":"34e34ab8-7457-4d88-a5e4-c57791775c3a","sessionId":"82d8fdda-4730-43b7-bfde-72733c217bde","operationId":"6d05798f-b877-4191-8aa0-4576a30411ad","authenticationMethod":"public-key","authenticationPhase":"verified","authorizationKind":"local","sessionTask":"shell","reason":"completed","errorCategory":"network","exitCode":0,"bytesRead":1,"bytesWritten":2,"durationMillis":3,"count":4,"pty":true,"agentForwarding":false,"forcedCommand":true}`, string(payload))
 	require.NoError(t, validateAuditEvent(event))
+}
+
+func TestKnownAuditEventNamesAreValidAndUnique(t *testing.T) {
+	seen := make(map[EventName]struct{}, len(knownEventNames))
+	for _, name := range knownEventNames {
+		require.NotContains(t, seen, name)
+		seen[name] = struct{}{}
+		require.NoError(t, validateAuditEvent(Event{Name: name}))
+		require.NoError(t, validateAuditToken("name", name))
+	}
+}
+
+func TestKnownAuditEventReasonsAreValidAndUnique(t *testing.T) {
+	seen := make(map[EventReason]struct{}, len(knownEventReasons))
+	for _, reason := range knownEventReasons {
+		require.NotContains(t, seen, reason)
+		seen[reason] = struct{}{}
+		require.NoError(t, validateAuditToken("reason", reason))
+	}
 }
 
 func TestAuditEventValidationRejectsInvalidStructuredFields(t *testing.T) {

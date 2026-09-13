@@ -491,7 +491,18 @@ func verifyJournalSegmentFile(segment *verifierSegmentFile, identity journalIden
 		sequence = state.sequence + 1
 	}
 	digestWriter := sha256.New()
-	scanned, scanErr := scanJournalSegment(file, identity, sequence, state.segmentHash, state.previousRecordHash, state.checkpointHash, state.checkpointSeen, false, expectedEncryptionRecipient, decrypter, emit, digestWriter)
+	scanned, scanErr := scanJournalSegment(file, journalSegmentScanOptions{
+		identity:                    identity,
+		sequence:                    sequence,
+		previousSegmentHash:         state.segmentHash,
+		previousRecordHash:          state.previousRecordHash,
+		checkpointHash:              state.checkpointHash,
+		checkpointSeen:              state.checkpointSeen,
+		expectedEncryptionRecipient: expectedEncryptionRecipient,
+		decrypter:                   decrypter,
+		emit:                        emit,
+		digest:                      digestWriter,
+	})
 	afterInfo, afterStatErr := file.Stat()
 	if scanErr != nil {
 		_ = file.Close()

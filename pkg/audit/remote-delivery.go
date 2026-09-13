@@ -104,6 +104,14 @@ type remoteDeliverySegmentReader struct {
 	maximumScanChunk int
 }
 
+type remoteDeliverySegmentResult struct {
+	segment SealedSegment
+	file    *os.File
+	exists  bool
+	more    bool
+	err     error
+}
+
 type remoteDeliverySegmentScan struct {
 	directory     string
 	directoryFile *os.File
@@ -366,75 +374,92 @@ func (this *remoteDeliveryWorker) run(ctx context.Context) {
 			return
 		}
 		if pending != nil {
-			cursor, err := writeRemoteDeliveryCursor(this.stateDirectory, this.identity, this.scope.Target, this.destinationFingerprint, pending.Sequence, pending.SegmentHash)
-			if err != nil {
+			if err := this.commitPendingCursor(*pending); err != nil {
 				failures++
 				if !this.waitAfterFailure(ctx, failures, pending.Sequence, err) {
 					return
 				}
 				continue
 			}
-			this.cursor = cursor
-			this.confirmed.Store(cursor.Sequence)
-			notifyRemoteDelivery(this.progress)
-			pending = nil
 			if failures > 0 {
-				this.logger.With("sequence", cursor.Sequence).Info("remote audit delivery recovered")
+				this.logger.With("sequence", pending.Sequence).Info("remote audit delivery recovered")
 			}
+			pending = nil
 			failures = 0
 			continue
 		}
 
-		attemptContext, cancelAttempt := context.WithTimeout(ctx, this.publishAttemptTimeout)
-		segment, file, exists, more, err := this.reader.Next(attemptContext, this.cursor.Sequence, this.observed, &this.forceRescan)
+		next, err := this.publishNext(ctx)
 		if err != nil {
-			cancelAttempt()
+			if ctx.Err() != nil {
+				return
+			}
 			failures++
 			if !this.waitAfterFailure(ctx, failures, this.cursor.Sequence+1, err) {
 				return
 			}
 			continue
 		}
-		if !exists {
-			cancelAttempt()
+		if next == nil {
 			failures = 0
-			if more {
-				continue
-			}
-			timedOut, ok := waitRemoteDeliveryIdle(ctx, this.wake, this.discoveryWake, this.options.idleDelay)
-			if !ok {
-				return
-			}
-			if timedOut {
-				this.forceRescan.Store(true)
-			}
 			continue
 		}
-
-		stopClosingFile := closeRemoteDeliveryFileOnCancellation(attemptContext, file)
-		publishErr := this.target.Publish(attemptContext, segment)
-		stopClosingFile()
-		cancelAttempt()
-		closeErr := file.Close()
-		if publishErr != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			publishErr = goerrors.Join(publishErr, this.reader.Invalidate())
-			failures++
-			if !this.waitAfterFailure(ctx, failures, segment.Sequence(), publishErr) {
-				return
-			}
-			continue
-		}
-		pending = &remoteDeliveryCursor{remoteDeliveryCursorContent: remoteDeliveryCursorContent{
-			Sequence:    segment.Sequence(),
-			SegmentHash: segment.Hash(),
-		}}
-		if closeErr != nil {
-			this.logger.WithError(closeErr).With("sequence", segment.Sequence()).Warn("cannot close delivered local audit segment")
-		}
+		pending = next
 	}
+}
+
+func (this *remoteDeliveryWorker) commitPendingCursor(pending remoteDeliveryCursor) error {
+	cursor, err := writeRemoteDeliveryCursor(this.stateDirectory, this.identity, this.scope.Target, this.destinationFingerprint, pending.Sequence, pending.SegmentHash)
+	if err != nil {
+		return err
+	}
+	this.cursor = cursor
+	this.confirmed.Store(cursor.Sequence)
+	notifyRemoteDelivery(this.progress)
+	return nil
+}
+
+func (this *remoteDeliveryWorker) publishNext(ctx context.Context) (*remoteDeliveryCursor, error) {
+	attemptContext, cancelAttempt := context.WithTimeout(ctx, this.publishAttemptTimeout)
+	result := this.reader.Next(attemptContext, this.cursor.Sequence, this.observed, &this.forceRescan)
+	if result.err != nil {
+		cancelAttempt()
+		return nil, result.err
+	}
+	if !result.exists {
+		cancelAttempt()
+		if result.more {
+			return nil, nil
+		}
+		timedOut, ok := waitRemoteDeliveryIdle(ctx, this.wake, this.discoveryWake, this.options.idleDelay)
+		if !ok {
+			return nil, ctx.Err()
+		}
+		if timedOut {
+			this.forceRescan.Store(true)
+		}
+		return nil, nil
+	}
+
+	stopClosingFile := closeRemoteDeliveryFileOnCancellation(attemptContext, result.file)
+	publishErr := this.target.Publish(attemptContext, result.segment)
+	stopClosingFile()
+	cancelAttempt()
+	closeErr := result.file.Close()
+	if publishErr != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, goerrors.Join(publishErr, this.reader.Invalidate())
+	}
+	pending := &remoteDeliveryCursor{remoteDeliveryCursorContent: remoteDeliveryCursorContent{
+		Sequence:    result.segment.Sequence(),
+		SegmentHash: result.segment.Hash(),
+	}}
+	if closeErr != nil {
+		this.logger.WithError(closeErr).With("sequence", result.segment.Sequence()).Warn("cannot close delivered local audit segment")
+	}
+	return pending, nil
 }
 
 func (this *remoteDeliveryWorker) waitAfterFailure(ctx context.Context, failures uint, sequence uint64, err error) bool {
@@ -575,56 +600,37 @@ func parseRemoteDeliveryDirectoryEntry(directory string, entry os.DirEntry) (jou
 	return journalSegmentFile{name: entry.Name(), path: filepath.Join(directory, entry.Name()), sequence: sequence, hash: hash}, nil
 }
 
-func (this *remoteDeliverySegmentReader) Next(ctx context.Context, confirmed uint64, observed <-chan journalSegmentFile, forceRescan *atomic.Bool) (SealedSegment, *os.File, bool, bool, error) {
+func (this *remoteDeliverySegmentReader) Next(ctx context.Context, confirmed uint64, observed <-chan journalSegmentFile, forceRescan *atomic.Bool) remoteDeliverySegmentResult {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if err := ctx.Err(); err != nil {
-		return SealedSegment{}, nil, false, false, err
+		return remoteDeliverySegmentResult{err: err}
 	}
 	if this.poisoned != nil {
-		return SealedSegment{}, nil, false, false, this.poisoned
+		return remoteDeliverySegmentResult{err: this.poisoned}
 	}
 	expected := confirmed + 1
 	if expected == 0 {
-		return SealedSegment{}, nil, false, false, errors.System.Newf("remote delivery sequence overflow after %d", confirmed)
+		return remoteDeliverySegmentResult{err: errors.System.Newf("remote delivery sequence overflow after %d", confirmed)}
 	}
 	if err := this.observeChanges(ctx, observed, forceRescan); err != nil {
-		return SealedSegment{}, nil, false, false, err
+		return remoteDeliverySegmentResult{err: err}
 	}
 
-	if this.iterator == nil {
-		if this.scan == nil && this.exhausted && !this.rescanPending {
-			this.gapVerification = false
-			return SealedSegment{}, nil, false, false, nil
-		}
-		if this.scan == nil {
-			if err := this.startScan(); err != nil {
-				return SealedSegment{}, nil, false, false, err
-			}
-			this.rescanPending = false
-		}
-		iterator, complete, err := this.scan.advance(ctx, this.scanEntryHook, &this.maximumScanChunk)
-		if err != nil {
-			if ctx.Err() == nil {
-				_ = this.discardScan()
-			}
-			return SealedSegment{}, nil, false, false, err
-		}
-		if !complete {
-			return SealedSegment{}, nil, false, true, nil
-		}
-		this.scan = nil
-		this.iterator = iterator
-		this.candidate = nil
-		this.exhausted = false
+	ready, err := this.ensureIterator(ctx)
+	if err != nil {
+		return remoteDeliverySegmentResult{err: err}
+	}
+	if !ready {
+		return remoteDeliverySegmentResult{more: this.scan != nil || this.rescanPending}
 	}
 
 	for {
 		if this.candidate == nil {
 			candidate, found, err := this.iterator.Next(ctx)
 			if err != nil {
-				return SealedSegment{}, nil, false, false, err
+				return remoteDeliverySegmentResult{err: err}
 			}
 			if !found {
 				return this.finishIteratorWithoutCandidate()
@@ -633,7 +639,7 @@ func (this *remoteDeliverySegmentReader) Next(ctx context.Context, confirmed uin
 		}
 		next, found, err := this.iterator.Next(ctx)
 		if err != nil {
-			return SealedSegment{}, nil, false, false, err
+			return remoteDeliverySegmentResult{err: err}
 		}
 		candidate := *this.candidate
 		this.candidate = nil
@@ -644,7 +650,7 @@ func (this *remoteDeliverySegmentReader) Next(ctx context.Context, confirmed uin
 			this.candidate = &next
 		} else {
 			if err := this.closeIterator(); err != nil {
-				return SealedSegment{}, nil, false, false, err
+				return remoteDeliverySegmentResult{err: err}
 			}
 			this.exhausted = true
 		}
@@ -656,17 +662,48 @@ func (this *remoteDeliverySegmentReader) Next(ctx context.Context, confirmed uin
 		}
 		if candidate.sequence > expected {
 			if err := this.observeChanges(ctx, observed, forceRescan); err != nil {
-				return SealedSegment{}, nil, false, false, err
+				return remoteDeliverySegmentResult{err: err}
 			}
 			return this.handleGap(expected, candidate.sequence)
 		}
 		this.gapVerification = false
 		segment, file, err := openRemoteDeliverySegment(ctx, this.producerId, candidate)
 		if err != nil {
-			return SealedSegment{}, nil, false, false, goerrors.Join(err, this.Invalidate())
+			return remoteDeliverySegmentResult{err: goerrors.Join(err, this.Invalidate())}
 		}
-		return segment, file, true, this.iterator != nil || this.rescanPending, nil
+		return remoteDeliverySegmentResult{segment: segment, file: file, exists: true, more: this.iterator != nil || this.rescanPending}
 	}
+}
+
+func (this *remoteDeliverySegmentReader) ensureIterator(ctx context.Context) (bool, error) {
+	if this.iterator != nil {
+		return true, nil
+	}
+	if this.scan == nil && this.exhausted && !this.rescanPending {
+		this.gapVerification = false
+		return false, nil
+	}
+	if this.scan == nil {
+		if err := this.startScan(); err != nil {
+			return false, err
+		}
+		this.rescanPending = false
+	}
+	iterator, complete, err := this.scan.advance(ctx, this.scanEntryHook, &this.maximumScanChunk)
+	if err != nil {
+		if ctx.Err() == nil {
+			_ = this.discardScan()
+		}
+		return false, err
+	}
+	if !complete {
+		return false, nil
+	}
+	this.scan = nil
+	this.iterator = iterator
+	this.candidate = nil
+	this.exhausted = false
+	return true, nil
 }
 
 func (this *remoteDeliverySegmentReader) observeChanges(ctx context.Context, observed <-chan journalSegmentFile, forceRescan *atomic.Bool) error {
@@ -771,46 +808,46 @@ func (this *remoteDeliverySegmentScan) advance(ctx context.Context, hook func(co
 	return nil, false, nil
 }
 
-func (this *remoteDeliverySegmentReader) finishIteratorWithoutCandidate() (SealedSegment, *os.File, bool, bool, error) {
+func (this *remoteDeliverySegmentReader) finishIteratorWithoutCandidate() remoteDeliverySegmentResult {
 	if this.iterator != nil {
 		if err := this.closeIterator(); err != nil {
-			return SealedSegment{}, nil, false, false, err
+			return remoteDeliverySegmentResult{err: err}
 		}
 	}
 	this.exhausted = true
 	this.gapVerification = false
 	if this.rescanPending {
-		return SealedSegment{}, nil, false, true, nil
+		return remoteDeliverySegmentResult{more: true}
 	}
-	return SealedSegment{}, nil, false, false, nil
+	return remoteDeliverySegmentResult{}
 }
 
-func (this *remoteDeliverySegmentReader) handleGap(expected, later uint64) (SealedSegment, *os.File, bool, bool, error) {
+func (this *remoteDeliverySegmentReader) handleGap(expected, later uint64) remoteDeliverySegmentResult {
 	changesDuringScan := this.rescanPending
 	if err := this.closeIterator(); err != nil {
-		return SealedSegment{}, nil, false, false, err
+		return remoteDeliverySegmentResult{err: err}
 	}
 	this.exhausted = false
 	this.rescanPending = true
 	if !this.gapVerification || changesDuringScan {
 		this.gapVerification = true
-		return SealedSegment{}, nil, false, true, nil
+		return remoteDeliverySegmentResult{more: true}
 	}
 	return this.poisonGap(expected, later)
 }
 
-func (this *remoteDeliverySegmentReader) poisonDuplicate(sequence uint64) (SealedSegment, *os.File, bool, bool, error) {
+func (this *remoteDeliverySegmentReader) poisonDuplicate(sequence uint64) remoteDeliverySegmentResult {
 	this.poisoned = errors.System.Newf("remote delivery found multiple local segments with sequence %d", sequence)
 	_ = this.Close()
 	this.exhausted = true
-	return SealedSegment{}, nil, false, false, this.poisoned
+	return remoteDeliverySegmentResult{err: this.poisoned}
 }
 
-func (this *remoteDeliverySegmentReader) poisonGap(expected, later uint64) (SealedSegment, *os.File, bool, bool, error) {
+func (this *remoteDeliverySegmentReader) poisonGap(expected, later uint64) remoteDeliverySegmentResult {
 	this.poisoned = errors.System.Newf("remote delivery is missing local segment sequence %d before later sequence %d", expected, later)
 	_ = this.Close()
 	this.exhausted = true
-	return SealedSegment{}, nil, false, false, this.poisoned
+	return remoteDeliverySegmentResult{err: this.poisoned}
 }
 
 func (this *remoteDeliverySegmentReader) closeIterator() error {

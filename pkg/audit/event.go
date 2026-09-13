@@ -1,5 +1,93 @@
 package audit
 
+type EventName = string
+
+const (
+	EventNameAuthenticationFlowEvaluated               = "authentication.flow.evaluated"
+	EventNameAuthenticationFlowEvaluationsSuppressed   = "authentication.flow.evaluations-suppressed"
+	EventNameAuthenticationCompleted                   = "authentication.completed"
+	EventNameSessionPtyDecided                         = "session.pty.decided"
+	EventNameSessionAgentForwardingDecided             = "session.agent-forwarding.decided"
+	EventNameSessionTaskStarted                        = "session.task.started"
+	EventNameSessionTaskCompleted                      = "session.task.completed"
+	EventNamePortForwardingDirectDecided               = "port-forwarding.direct.decided"
+	EventNamePortForwardingDirectOpenFailed            = "port-forwarding.direct.open-failed"
+	EventNamePortForwardingDirectStarted               = "port-forwarding.direct.started"
+	EventNamePortForwardingDirectCompleted             = "port-forwarding.direct.completed"
+	EventNamePortForwardingReverseDecided              = "port-forwarding.reverse.decided"
+	EventNameConnectionClosed                          = "connection.closed"
+	EventNameHousekeepingSessionDisposeStarted         = "housekeeping.session.dispose.started"
+	EventNameHousekeepingSessionDisposeCompleted       = "housekeeping.session.dispose.completed"
+	EventNameHousekeepingSessionDeleteStarted          = "housekeeping.session.delete.started"
+	EventNameHousekeepingSessionDeleteCompleted        = "housekeeping.session.delete.completed"
+	EventNameHousekeepingOrphanedSessionCleanupSkipped = "housekeeping.orphaned-session.cleanup.skipped"
+)
+
+var knownEventNames = [...]EventName{
+	EventNameAuthenticationFlowEvaluated,
+	EventNameAuthenticationFlowEvaluationsSuppressed,
+	EventNameAuthenticationCompleted,
+	EventNameSessionPtyDecided,
+	EventNameSessionAgentForwardingDecided,
+	EventNameSessionTaskStarted,
+	EventNameSessionTaskCompleted,
+	EventNamePortForwardingDirectDecided,
+	EventNamePortForwardingDirectOpenFailed,
+	EventNamePortForwardingDirectStarted,
+	EventNamePortForwardingDirectCompleted,
+	EventNamePortForwardingReverseDecided,
+	EventNameConnectionClosed,
+	EventNameHousekeepingSessionDisposeStarted,
+	EventNameHousekeepingSessionDisposeCompleted,
+	EventNameHousekeepingSessionDeleteStarted,
+	EventNameHousekeepingSessionDeleteCompleted,
+	EventNameHousekeepingOrphanedSessionCleanupSkipped,
+}
+
+type EventReason = string
+
+const (
+	EventReasonRateLimit           = "rate-limit"
+	EventReasonJournalReserve      = "journal-reserve"
+	EventReasonSessionIncompatible = "session-incompatible"
+	EventReasonAuthorizedKeyPolicy = "authorized-key-policy"
+	EventReasonEnvironmentPolicy   = "environment-policy"
+	EventReasonContextCanceled     = "context-canceled"
+	EventReasonDeadlineExceeded    = "deadline-exceeded"
+	EventReasonInvalidExitCode     = "invalid-exit-code"
+	EventReasonInvalidRequest      = "invalid-request"
+	EventReasonEnvironment         = "environment"
+	EventReasonDestinationConnect  = "destination-connect"
+	EventReasonDestinationRejected = "destination-rejected"
+	EventReasonChannelAccept       = "channel-accept"
+	EventReasonInvalidBind         = "invalid-bind"
+	EventReasonDisconnected        = "disconnected"
+	EventReasonMissingFlow         = "missing-flow"
+	EventReasonRetentionElapsed    = "retention-elapsed"
+	EventReasonExpired             = "expired"
+)
+
+var knownEventReasons = [...]EventReason{
+	EventReasonRateLimit,
+	EventReasonJournalReserve,
+	EventReasonSessionIncompatible,
+	EventReasonAuthorizedKeyPolicy,
+	EventReasonEnvironmentPolicy,
+	EventReasonContextCanceled,
+	EventReasonDeadlineExceeded,
+	EventReasonInvalidExitCode,
+	EventReasonInvalidRequest,
+	EventReasonEnvironment,
+	EventReasonDestinationConnect,
+	EventReasonDestinationRejected,
+	EventReasonChannelAccept,
+	EventReasonInvalidBind,
+	EventReasonDisconnected,
+	EventReasonMissingFlow,
+	EventReasonRetentionElapsed,
+	EventReasonExpired,
+}
+
 type EventDomain string
 
 const (
@@ -57,7 +145,7 @@ const (
 // Event is the domain payload accepted by a Recorder. The recorder adds common
 // metadata and the journal adds its persistence envelope.
 type Event struct {
-	Name                 string               `json:"name"`
+	Name                 EventName            `json:"name"`
 	Domain               EventDomain          `json:"domain,omitempty"`
 	Outcome              EventOutcome         `json:"outcome,omitempty"`
 	Flow                 string               `json:"flow,omitempty"`
@@ -68,7 +156,7 @@ type Event struct {
 	AuthenticationPhase  AuthenticationPhase  `json:"authenticationPhase,omitempty"`
 	AuthorizationKind    string               `json:"authorizationKind,omitempty"`
 	SessionTask          SessionTask          `json:"sessionTask,omitempty"`
-	Reason               string               `json:"reason,omitempty"`
+	Reason               EventReason          `json:"reason,omitempty"`
 	ErrorCategory        ErrorCategory        `json:"errorCategory,omitempty"`
 	ExitCode             *int                 `json:"exitCode,omitempty"`
 	BytesRead            *int64               `json:"bytesRead,omitempty"`

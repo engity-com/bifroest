@@ -30,9 +30,9 @@ Credential template results are not trimmed. Basic authentication forbids contro
 
 ## Publication
 
-Bifröst uploads each segment under a temporary name, verifies it through `GET`, and exposes it with `MOVE` and `Overwrite: F`. Existing objects are accepted only when size and SHA-256 checksum match; conflicting content is never overwritten.
+Bifröst uploads each segment under a deterministic temporary name derived from its final path, verifies it through `GET`, and exposes it with `MOVE` and `Overwrite: F`. Retries resume a matching temporary object; an invalid one is deleted by its exact name and uploaded again on a later attempt. Existing final objects are accepted only when size and SHA-256 checksum match, and their associated temporary object is cleaned up. Final content is never overwritten.
 
-Compatible servers must support `MKCOL`, conditional `PUT`, `GET`, atomic `MOVE`, and `DELETE`. Bifröst does not follow redirects or use ETags as checksums. It attempts cleanup after failures, but a process crash can leave a hidden `.bifroest-upload-*.tmp` object.
+Compatible servers must support `MKCOL`, conditional `PUT`, `GET`, atomic `MOVE`, and `DELETE`. Bifröst does not follow redirects, list collections, or use ETags as checksums. A hidden `.bifroest-upload-*.tmp` object left by an interrupted attempt is recovered by the next retry.
 
 ## Permissions
 

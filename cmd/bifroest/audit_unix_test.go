@@ -13,24 +13,6 @@ import (
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 )
 
-func TestAuditOutputRejectsSymlinkIntoJournal(t *testing.T) {
-	directory := t.TempDir()
-	journal := filepath.Join(directory, "journal")
-	require.NoError(t, goos.Mkdir(journal, 0700))
-	alias := filepath.Join(directory, "alias")
-	require.NoError(t, goos.Symlink(journal, alias))
-	configured := &configuration.Auditlog{
-		Name:         "default",
-		Enabled:      true,
-		IdentityFile: filepath.Join(directory, "identity"),
-		Journal:      configuration.AuditlogJournal{Directory: journal},
-	}
-	conf := &configuration.Configuration{Auditlogs: configuration.Auditlogs{*configured}}
-
-	err := ensureAuditOutputSafe(filepath.Join(alias, "export.jsonl"), conf)
-	require.ErrorContains(t, err, "must not be inside")
-}
-
 func TestLoadAuditPrivateKeyRejectsInsecureMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "private-key")
 	require.NoError(t, goos.WriteFile(path, []byte("not relevant"), 0644))

@@ -4,9 +4,7 @@ import (
 	"context"
 	goerrors "errors"
 	"fmt"
-	"io/fs"
 	gonet "net"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -226,12 +224,6 @@ func (this *Service) prepare() (svc *service, err error) {
 	svc = &service{
 		Service:             this,
 		connectionLifecycle: newConnectionLifecycle(),
-		auditIdentities:     make(map[configuration.AuditlogName]*audit.Identity, len(this.Configuration.Auditlogs)),
-		auditRecorders:      make(map[configuration.AuditlogName]audit.Recorder, len(this.Configuration.Auditlogs)),
-		auditDeliveries:     make(map[configuration.AuditlogName]*audit.RemoteDelivery, len(this.Configuration.Auditlogs)),
-		flowAuditRecorders:  make(map[configuration.FlowName]audit.Recorder, len(this.Configuration.Flows)),
-		flowAuditlogs:       make(map[configuration.FlowName]configuration.AuditlogName, len(this.Configuration.Flows)),
-		enabledAuditlogs:    make(map[configuration.AuditlogName]bool, len(this.Configuration.Auditlogs)),
 	}
 
 	svc.knownFlows = make(map[configuration.FlowName]struct{})
@@ -268,76 +260,15 @@ func (this *Service) prepare() (svc *service, err error) {
 	if err != nil {
 		return fail(err)
 	}
-	serverPrivateKeys := hostSigners
-	if hasEncryptedAuditlog(this.Configuration.Auditlogs) {
-		serverPrivateKeys, err = loadStaticPrivateKeysForAuditEncryption(this.Configuration.Flows, hostSigners)
-		if err != nil {
-			return fail(err)
+	auditOwnedByService := false
+	defer func(preparedService *service) {
+		if !auditOwnedByService {
+			_ = preparedService.closeAudit(false)
 		}
+	}(svc)
+	if err := this.prepareAudit(ctx, svc, hostSigners); err != nil {
+		return fail(err)
 	}
-	auditRecordersPrepared := false
-	defer func() {
-		if !auditRecordersPrepared {
-			_ = svc.closeAudit(false)
-		}
-	}()
-	for index := range this.Configuration.Auditlogs {
-		auditlog := &this.Configuration.Auditlogs[index]
-		svc.enabledAuditlogs[auditlog.Name] = auditlog.Enabled
-		identity, identityErr := audit.EnsureIdentity(auditlog)
-		if identityErr != nil {
-			return fail(identityErr)
-		}
-		if identityErr := identity.ValidateDedicatedFrom(hostSigners); identityErr != nil {
-			return fail(identityErr)
-		}
-		if identityErr := validateDistinctAuditIdentity(svc.auditIdentities, auditlog.Name, identity); identityErr != nil {
-			return fail(identityErr)
-		}
-		svc.auditIdentities[auditlog.Name] = identity
-	}
-	auditIdentities := make([]*audit.Identity, 0, len(svc.auditIdentities))
-	for _, identity := range svc.auditIdentities {
-		auditIdentities = append(auditIdentities, identity)
-	}
-	for index := range this.Configuration.Auditlogs {
-		auditlog := &this.Configuration.Auditlogs[index]
-		identity := svc.auditIdentities[auditlog.Name]
-		recorderConfiguration := *auditlog
-		if auditlog.Enabled {
-			encryptionPublicKey, encryptionErr := audit.ResolveEncryptionPublicKey(auditlog.EncryptionPublicKey, auditlog.EncryptionPublicKeyFile)
-			if encryptionErr != nil {
-				return fail(encryptionErr)
-			}
-			if encryptionErr := audit.ValidateEncryptionRecipientDedicatedFrom(encryptionPublicKey, serverPrivateKeys); encryptionErr != nil {
-				return fail(encryptionErr)
-			}
-			if encryptionErr := audit.ValidateEncryptionRecipientDedicatedFromAuditIdentities(encryptionPublicKey, auditIdentities); encryptionErr != nil {
-				return fail(encryptionErr)
-			}
-			recorderConfiguration.EncryptionPublicKey = encryptionPublicKey
-			recorderConfiguration.EncryptionPublicKeyFile = ""
-		}
-		recorder, recorderErr := audit.NewRecorder(&recorderConfiguration, identity)
-		if recorderErr != nil {
-			return fail(recorderErr)
-		}
-		svc.auditRecorders[auditlog.Name] = recorder
-		svc.auditRecorderOrder = append(svc.auditRecorderOrder, recorder)
-		if auditlog.Enabled && len(auditlog.Targets) > 0 {
-			delivery, deliveryErr := audit.NewRemoteDelivery(ctx, auditlog, identity)
-			if deliveryErr != nil {
-				return fail(deliveryErr)
-			}
-			svc.auditDeliveries[auditlog.Name] = delivery
-			svc.auditDeliveryOrder = append(svc.auditDeliveryOrder, delivery)
-		}
-	}
-	for _, flow := range this.Configuration.Flows {
-		svc.flowAuditRecorders[flow.Name] = svc.auditRecorders[flow.Auditlog]
-		svc.flowAuditlogs[flow.Name] = flow.Auditlog
-	}
-	svc.unauthenticatedAudit = newUnauthenticatedAuditLimiter(this.Configuration.Ssh.UnauthenticatedAudit)
 	if err := this.logCertificateAuthorities(hostSigners); err != nil {
 		return fail(err)
 	}
@@ -376,8 +307,99 @@ func (this *Service) prepare() (svc *service, err error) {
 	}
 
 	sessionRepositoryPrepared = true
-	auditRecordersPrepared = true
+	auditOwnedByService = true
 	return svc, nil
+}
+
+func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners []crypto.PrivateKey) (err error) {
+	svc.auditIdentities = make(map[configuration.AuditlogName]*audit.Identity, len(this.Configuration.Auditlogs))
+	svc.auditRecorders = make(map[configuration.AuditlogName]audit.Recorder, len(this.Configuration.Auditlogs))
+	svc.auditDeliveries = make(map[configuration.AuditlogName]*audit.RemoteDelivery, len(this.Configuration.Auditlogs))
+	svc.flowAuditRecorders = make(map[configuration.FlowName]audit.Recorder, len(this.Configuration.Flows))
+	svc.flowAuditlogs = make(map[configuration.FlowName]configuration.AuditlogName, len(this.Configuration.Flows))
+	svc.enabledAuditlogs = make(map[configuration.AuditlogName]bool, len(this.Configuration.Auditlogs))
+
+	serverPrivateKeys := hostSigners
+	var sftpIdentityPublicKeys []crypto.PublicKey
+	if hasEncryptedAuditlog(this.Configuration.Auditlogs) {
+		serverPrivateKeys, err = loadStaticPrivateKeysForAuditEncryption(this.Configuration.Flows, hostSigners)
+		if err != nil {
+			return err
+		}
+		sftpIdentityPublicKeys, err = loadStaticSftpIdentityPublicKeysForAuditEncryption(this.Configuration.Auditlogs)
+		if err != nil {
+			return err
+		}
+	}
+	for index := range this.Configuration.Auditlogs {
+		auditlog := &this.Configuration.Auditlogs[index]
+		svc.enabledAuditlogs[auditlog.Name] = auditlog.Enabled
+		identity, identityErr := audit.EnsureIdentity(auditlog)
+		if identityErr != nil {
+			return identityErr
+		}
+		if identityErr := identity.ValidateDedicatedFrom(hostSigners); identityErr != nil {
+			return identityErr
+		}
+		if identityErr := validateDistinctAuditIdentity(svc.auditIdentities, auditlog.Name, identity); identityErr != nil {
+			return identityErr
+		}
+		svc.auditIdentities[auditlog.Name] = identity
+	}
+	auditIdentities := make([]*audit.Identity, 0, len(svc.auditIdentities))
+	for _, identity := range svc.auditIdentities {
+		auditIdentities = append(auditIdentities, identity)
+	}
+	resolvedEncryptionPublicKeys := make(map[configuration.AuditlogName]crypto.PublicKeys, len(this.Configuration.Auditlogs))
+	for index := range this.Configuration.Auditlogs {
+		auditlog := &this.Configuration.Auditlogs[index]
+		if !auditlog.Enabled {
+			continue
+		}
+		encryptionPublicKey, encryptionErr := audit.ResolveEncryptionPublicKey(auditlog.EncryptionPublicKey, auditlog.EncryptionPublicKeyFile)
+		if encryptionErr != nil {
+			return encryptionErr
+		}
+		if encryptionErr := audit.ValidateEncryptionRecipientDedicatedFrom(encryptionPublicKey, serverPrivateKeys); encryptionErr != nil {
+			return encryptionErr
+		}
+		if encryptionErr := audit.ValidateEncryptionRecipientDedicatedFromPublicKeys(encryptionPublicKey, sftpIdentityPublicKeys); encryptionErr != nil {
+			return encryptionErr
+		}
+		if encryptionErr := audit.ValidateEncryptionRecipientDedicatedFromAuditIdentities(encryptionPublicKey, auditIdentities); encryptionErr != nil {
+			return encryptionErr
+		}
+		resolvedEncryptionPublicKeys[auditlog.Name] = encryptionPublicKey
+	}
+	for index := range this.Configuration.Auditlogs {
+		auditlog := &this.Configuration.Auditlogs[index]
+		identity := svc.auditIdentities[auditlog.Name]
+		recorderConfiguration := *auditlog
+		if auditlog.Enabled {
+			recorderConfiguration.EncryptionPublicKey = resolvedEncryptionPublicKeys[auditlog.Name]
+			recorderConfiguration.EncryptionPublicKeyFile = ""
+		}
+		recorder, recorderErr := audit.NewRecorder(&recorderConfiguration, identity)
+		if recorderErr != nil {
+			return recorderErr
+		}
+		svc.auditRecorders[auditlog.Name] = recorder
+		svc.auditRecorderOrder = append(svc.auditRecorderOrder, recorder)
+		if auditlog.Enabled && len(auditlog.Targets) > 0 {
+			delivery, deliveryErr := audit.NewRemoteDelivery(ctx, auditlog, identity)
+			if deliveryErr != nil {
+				return deliveryErr
+			}
+			svc.auditDeliveries[auditlog.Name] = delivery
+			svc.auditDeliveryOrder = append(svc.auditDeliveryOrder, delivery)
+		}
+	}
+	for _, flow := range this.Configuration.Flows {
+		svc.flowAuditRecorders[flow.Name] = svc.auditRecorders[flow.Auditlog]
+		svc.flowAuditlogs[flow.Name] = flow.Auditlog
+	}
+	svc.unauthenticatedAudit = newUnauthenticatedAuditLimiter(this.Configuration.Ssh.UnauthenticatedAudit)
+	return nil
 }
 
 func (this *Service) prepareServer(_ context.Context, svc *service, hostPrivateKeys []crypto.PrivateKey) (err error) {
@@ -479,6 +501,29 @@ func loadStaticPrivateKeysForAuditEncryption(flows configuration.Flows, hostKeys
 				return nil, fmt.Errorf("cannot load static SSH identity of flow %q: %w", flow.Name, err)
 			}
 			result = append(result, key)
+		}
+	}
+	return result, nil
+}
+
+func loadStaticSftpIdentityPublicKeysForAuditEncryption(auditlogs configuration.Auditlogs) ([]crypto.PublicKey, error) {
+	var result []crypto.PublicKey
+	for auditlogIndex := range auditlogs {
+		auditlog := &auditlogs[auditlogIndex]
+		if !auditlog.Enabled {
+			continue
+		}
+		for targetIndex := range auditlog.Targets {
+			target := &auditlog.Targets[targetIndex]
+			sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
+			if !ok || len(sftp.IdentityFiles) == 0 {
+				continue
+			}
+			keys, err := audit.LoadSftpIdentityPublicKeys(sftp.IdentityFiles)
+			if err != nil {
+				return nil, fmt.Errorf("cannot load static SFTP identities of target %q in auditlog %q: %w", target.Name, auditlog.Name, err)
+			}
+			result = append(result, keys...)
 		}
 	}
 	return result, nil
@@ -616,25 +661,7 @@ func (this *service) createNewServerConfig(ctx essh.Context, _ gonet.Conn, targe
 		Ciphers:      this.resolvedSshMessagesCiphers,
 		MACs:         this.resolvedSshMessagesAuthentications,
 	}
-	target.VerifiedPublicKeyCallback = func(_ gossh.ConnMetadata, key gossh.PublicKey, permissions *gossh.Permissions, _ string) (*gossh.Permissions, error) {
-		if _, isCertificate := key.(*gossh.Certificate); isCertificate {
-			accepted, err := this.authorizePublicKey(ctx, key, true)
-			if err != nil {
-				return nil, err
-			}
-			if !accepted {
-				return nil, errors.User.Newf("user certificate rejected after public key verification")
-			}
-		}
-		auth, _ := ctx.Value(authorizationCtxKey).(authorization.Authorization)
-		if auth == nil {
-			return nil, errors.System.Newf("no authorization resolved after public key verification")
-		}
-		if err := this.recordAuthenticationCompleted(ctx, auth, audit.AuthenticationMethodPublicKey, audit.EventOutcomeSuccess, ""); err != nil {
-			return nil, err
-		}
-		return permissions, nil
-	}
+	target.VerifiedPublicKeyCallback = this.verifiedPublicKeyAuditCallback(ctx)
 	return nil
 }
 
@@ -714,18 +741,21 @@ func validateAuditlogRuntimePaths(auditlogs configuration.Auditlogs) error {
 		journal      string
 	}
 	var resolved []resolvedAuditlog
-	for _, configured := range auditlogs {
+	for index := range auditlogs {
+		configured := &auditlogs[index]
 		if !configured.Enabled {
 			continue
 		}
-		identityFile, err := resolvePathThroughExistingParents(configured.IdentityFile)
+		identityFile, err := sys.CanonicalPath(configured.IdentityFile)
 		if err != nil {
 			return errors.Config.Newf("cannot resolve identity file of auditlog %q: %w", configured.Name, err)
 		}
-		journal, err := resolvePathThroughExistingParents(configured.Journal.Directory)
+		journal, err := sys.CanonicalPath(configured.Journal.Directory)
 		if err != nil {
 			return errors.Config.Newf("cannot resolve journal directory of auditlog %q: %w", configured.Name, err)
 		}
+		configured.IdentityFile = identityFile
+		configured.Journal.Directory = journal
 		resolved = append(resolved, resolvedAuditlog{configured.Name, identityFile, journal})
 	}
 	for leftIndex, left := range resolved {
@@ -751,96 +781,75 @@ func validateRuntimePaths(conf *configuration.Configuration) error {
 	if err := validateAuditlogRuntimePaths(conf.Auditlogs); err != nil {
 		return err
 	}
+	var storage string
 	sessionFs, ok := conf.Session.V.(*configuration.SessionFs)
-	if !ok {
-		return nil
+	if ok {
+		resolved, err := sys.CanonicalPath(sessionFs.Storage)
+		if err != nil {
+			return errors.Config.Newf("cannot resolve session storage: %w", err)
+		}
+		sessionFs.Storage = resolved
+		storage = resolved
 	}
-	storage, err := resolvePathThroughExistingParents(sessionFs.Storage)
-	if err != nil {
-		return errors.Config.Newf("cannot resolve session storage: %w", err)
-	}
-	for _, auditlog := range conf.Auditlogs {
+	for auditlogIndex := range conf.Auditlogs {
+		auditlog := &conf.Auditlogs[auditlogIndex]
 		if !auditlog.Enabled {
 			continue
 		}
-		paths := []struct {
-			value       string
-			description string
-		}{
-			{auditlog.IdentityFile, fmt.Sprintf("auditlog %q identity file", auditlog.Name)},
-			{auditlog.Journal.Directory, fmt.Sprintf("auditlog %q journal", auditlog.Name)},
+		if storage != "" {
+			if err := validateSessionStorageRuntimePath(storage, auditlog.IdentityFile, fmt.Sprintf("auditlog %q identity file", auditlog.Name)); err != nil {
+				return err
+			}
+			if err := validateSessionStorageRuntimePath(storage, auditlog.Journal.Directory, fmt.Sprintf("auditlog %q journal", auditlog.Name)); err != nil {
+				return err
+			}
 		}
 		if !auditlog.EncryptionPublicKeyFile.IsZero() {
-			paths = append(paths, struct {
-				value       string
-				description string
-			}{string(auditlog.EncryptionPublicKeyFile), fmt.Sprintf("auditlog %q encryption public key file", auditlog.Name)})
+			resolved, err := canonicalRuntimePathOutsideSessionStorage(storage, string(auditlog.EncryptionPublicKeyFile), fmt.Sprintf("auditlog %q encryption public key file", auditlog.Name))
+			if err != nil {
+				return err
+			}
+			auditlog.EncryptionPublicKeyFile = crypto.PublicKeysFile(resolved)
 		}
-		for _, target := range auditlog.Targets {
+		for targetIndex := range auditlog.Targets {
+			target := &auditlog.Targets[targetIndex]
 			sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
 			if !ok || sftp == nil {
 				continue
 			}
 			if !sftp.KnownHostsFile.IsZero() {
-				paths = append(paths, struct {
-					value       string
-					description string
-				}{string(sftp.KnownHostsFile), fmt.Sprintf("auditlog %q SFTP target %q known hosts file", auditlog.Name, target.Name)})
+				resolved, err := canonicalRuntimePathOutsideSessionStorage(storage, string(sftp.KnownHostsFile), fmt.Sprintf("auditlog %q SFTP target %q known hosts file", auditlog.Name, target.Name))
+				if err != nil {
+					return err
+				}
+				sftp.KnownHostsFile = crypto.KnownHostsFile(resolved)
 			}
 			for index, identityFile := range sftp.IdentityFiles {
-				paths = append(paths, struct {
-					value       string
-					description string
-				}{identityFile, fmt.Sprintf("auditlog %q SFTP target %q identity file [%d]", auditlog.Name, target.Name, index)})
-			}
-		}
-		for _, candidate := range paths {
-			if err := validateSessionStorageRuntimePath(storage, candidate.value, candidate.description); err != nil {
-				return err
+				resolved, err := canonicalRuntimePathOutsideSessionStorage(storage, identityFile, fmt.Sprintf("auditlog %q SFTP target %q identity file [%d]", auditlog.Name, target.Name, index))
+				if err != nil {
+					return err
+				}
+				sftp.IdentityFiles[index] = resolved
 			}
 		}
 	}
 	return nil
+}
+
+func canonicalRuntimePathOutsideSessionStorage(storage, candidate, description string) (string, error) {
+	resolved, err := sys.CanonicalPath(candidate)
+	if err != nil {
+		return "", errors.Config.Newf("cannot resolve %s: %w", description, err)
+	}
+	if storage != "" && (runtimePathContains(storage, resolved) || runtimePathContains(resolved, storage)) {
+		return "", errors.Config.Newf("session storage overlaps %s", description)
+	}
+	return resolved, nil
 }
 
 func validateSessionStorageRuntimePath(storage, candidate, description string) error {
-	resolved, err := resolvePathThroughExistingParents(candidate)
-	if err != nil {
-		return errors.Config.Newf("cannot resolve %s: %w", description, err)
-	}
-	if runtimePathContains(storage, resolved) || runtimePathContains(resolved, storage) {
-		return errors.Config.Newf("session storage overlaps %s", description)
-	}
-	return nil
-}
-
-func resolvePathThroughExistingParents(path string) (string, error) {
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	current := filepath.Clean(absolute)
-	var missing []string
-	for {
-		if _, err := os.Lstat(current); err == nil {
-			canonical, err := filepath.EvalSymlinks(current)
-			if err != nil {
-				return "", err
-			}
-			for index := len(missing) - 1; index >= 0; index-- {
-				canonical = filepath.Join(canonical, missing[index])
-			}
-			return filepath.Clean(canonical), nil
-		} else if !goerrors.Is(err, fs.ErrNotExist) {
-			return "", err
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return "", errors.Config.Newf("cannot find an existing parent of %q", path)
-		}
-		missing = append(missing, filepath.Base(current))
-		current = parent
-	}
+	_, err := canonicalRuntimePathOutsideSessionStorage(storage, candidate, description)
+	return err
 }
 
 func runtimePathContains(path, directory string) bool {

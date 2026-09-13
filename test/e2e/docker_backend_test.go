@@ -19,6 +19,8 @@ import (
 	"time"
 
 	gossh "golang.org/x/crypto/ssh"
+
+	"github.com/engity-com/bifroest/pkg/audit"
 )
 
 func TestOpenSSHDockerEnvironment(t *testing.T) {
@@ -411,37 +413,37 @@ func runDockerAuditE2E(t *testing.T, f *fixture, configurationPath string) {
 			t.Fatalf("event %q has flow %q, want %q", event.Name, event.Flow, f.flowName)
 		}
 		switch event.Name {
-		case "authentication.completed":
+		case audit.EventNameAuthenticationCompleted:
 			if event.Domain == "authentication" && event.Outcome == "success" && event.AuthenticationMethod == "public-key" &&
 				event.AuthorizationKind == "simple" && event.ConnectionId != "" && event.SessionId != "" {
 				authentication = true
 			}
-		case "session.pty.decided":
+		case audit.EventNameSessionPtyDecided:
 			pty = pty || event.Outcome == "success"
-		case "session.agent-forwarding.decided":
+		case audit.EventNameSessionAgentForwardingDecided:
 			agentForwarding = agentForwarding || event.Outcome == "success"
-		case "session.task.started":
+		case audit.EventNameSessionTaskStarted:
 			if event.OperationId == "" {
 				t.Fatalf("task start lacks operation ID: %#v", event)
 			}
 			taskStarts[event.OperationId] = event
-		case "session.task.completed":
+		case audit.EventNameSessionTaskCompleted:
 			taskCompletions[event.OperationId] = event
-		case "port-forwarding.direct.decided":
+		case audit.EventNamePortForwardingDirectDecided:
 			if event.Outcome == "success" {
 				directDecisions[event.OperationId] = event
 			}
-		case "port-forwarding.direct.started":
+		case audit.EventNamePortForwardingDirectStarted:
 			directStarts[event.OperationId] = event
-		case "port-forwarding.direct.completed":
+		case audit.EventNamePortForwardingDirectCompleted:
 			directCompletions[event.OperationId] = event
-		case "port-forwarding.reverse.decided":
+		case audit.EventNamePortForwardingReverseDecided:
 			reverseDecision = reverseDecision || event.Outcome == "success"
-		case "connection.closed":
+		case audit.EventNameConnectionClosed:
 			connectionClosed = connectionClosed || event.ConnectionId != ""
-		case "housekeeping.session.dispose.completed":
+		case audit.EventNameHousekeepingSessionDisposeCompleted:
 			housekeepingDispose = housekeepingDispose || event.Outcome == "success"
-		case "housekeeping.session.delete.completed":
+		case audit.EventNameHousekeepingSessionDeleteCompleted:
 			housekeepingDelete = housekeepingDelete || event.Outcome == "success"
 		}
 	}

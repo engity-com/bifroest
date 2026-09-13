@@ -64,15 +64,18 @@ type AuditlogTargetV interface {
 }
 
 var (
-	typeToAuditlogTargetFactory = make(map[string]AuditlogTargetVFactory)
+	typeToAuditlogTargetFactory = make(map[string]AuditlogTargetCodecFactory)
 	auditlogTargetVs            []AuditlogTargetV
 )
 
-type AuditlogTargetVFactory func() AuditlogTargetV
+type AuditlogTargetCodecFactory func() AuditlogTargetV
 
-// RegisterAuditlogTargetV registers a target configuration during package
-// initialization. Type aliases are case-insensitive and must be unique.
-func RegisterAuditlogTargetV(factory AuditlogTargetVFactory) AuditlogTargetVFactory {
+// RegisterAuditlogTargetCodec is the low-level entry point for configuration
+// codecs without runtime delivery support. Custom remote targets should normally
+// use audit.RegisterRemoteTarget, which registers both configuration and runtime
+// handling. Registrations happen during package initialization; type aliases are
+// case-insensitive and must be unique.
+func RegisterAuditlogTargetCodec(factory AuditlogTargetCodecFactory) AuditlogTargetCodecFactory {
 	if factory == nil {
 		panic("nil auditlog target configuration factory")
 	}

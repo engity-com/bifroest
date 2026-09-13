@@ -2,14 +2,18 @@
 
 package audit
 
-import "golang.org/x/sys/windows"
+import (
+	"golang.org/x/sys/windows"
+
+	"github.com/engity-com/bifroest/pkg/sys"
+)
 
 func publishJournalFile(source, target string) error {
-	from, err := windows.UTF16PtrFromString(source)
+	from, err := sys.WindowsPathPointer(source)
 	if err != nil {
 		return err
 	}
-	to, err := windows.UTF16PtrFromString(target)
+	to, err := sys.WindowsPathPointer(target)
 	if err != nil {
 		return err
 	}

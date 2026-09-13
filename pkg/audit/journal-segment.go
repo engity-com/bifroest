@@ -37,6 +37,28 @@ type journalSegmentState struct {
 	checkpointSeen      bool
 }
 
+type journalSegmentScanOptions struct {
+	identity                    journalIdentity
+	sequence                    uint64
+	previousSegmentHash         journalHash
+	previousRecordHash          journalHash
+	checkpointHash              journalHash
+	checkpointSeen              bool
+	recoverTail                 bool
+	expectedEncryptionRecipient string
+	decrypter                   *journalEventDecrypter
+	emit                        func(journalRecord, journalHash, uint64, int64) error
+	digest                      io.Writer
+}
+
+type journalSegmentScanner struct {
+	file    *os.File
+	options journalSegmentScanOptions
+	state   journalSegmentState
+	size    int64
+	offset  int64
+}
+
 type journalSegmentFile struct {
 	name     string
 	path     string
@@ -83,7 +105,15 @@ func recoverJournalSegmentsInWorkspace(producerDirectory, activePath string, ide
 		if err != nil {
 			return nil, journalSegmentState{}, closeInventory(err)
 		}
-		scanned, scanErr := scanJournalSegment(file, identity, segment.sequence, state.segmentHash, state.previousRecordHash, state.checkpointHash, state.checkpointSeen, false, expectedEncryptionRecipient, nil, nil, nil)
+		scanned, scanErr := scanJournalSegment(file, journalSegmentScanOptions{
+			identity:                    identity,
+			sequence:                    segment.sequence,
+			previousSegmentHash:         state.segmentHash,
+			previousRecordHash:          state.previousRecordHash,
+			checkpointHash:              state.checkpointHash,
+			checkpointSeen:              state.checkpointSeen,
+			expectedEncryptionRecipient: expectedEncryptionRecipient,
+		})
 		closeErr := file.Close()
 		if scanErr != nil {
 			return nil, journalSegmentState{}, closeInventory(errors.System.Newf("cannot verify sealed audit segment %q: %w", segment.path, scanErr))
@@ -114,7 +144,16 @@ func recoverJournalSegmentsInWorkspace(producerDirectory, activePath string, ide
 	if err != nil {
 		return nil, journalSegmentState{}, err
 	}
-	active, err := scanJournalSegment(file, identity, nextSequence, state.segmentHash, state.previousRecordHash, state.checkpointHash, state.checkpointSeen, true, expectedEncryptionRecipient, nil, nil, nil)
+	active, err := scanJournalSegment(file, journalSegmentScanOptions{
+		identity:                    identity,
+		sequence:                    nextSequence,
+		previousSegmentHash:         state.segmentHash,
+		previousRecordHash:          state.previousRecordHash,
+		checkpointHash:              state.checkpointHash,
+		checkpointSeen:              state.checkpointSeen,
+		recoverTail:                 true,
+		expectedEncryptionRecipient: expectedEncryptionRecipient,
+	})
 	if err != nil {
 		_ = file.Close()
 		return nil, journalSegmentState{}, errors.System.Newf("cannot recover active audit segment %q: %w", activePath, err)
@@ -234,115 +273,174 @@ func finishPublishingSegment(activePath, producerDirectory string, state journal
 	return nil
 }
 
-func scanJournalSegment(file *os.File, identity journalIdentity, sequence uint64, previousSegmentHash, previousRecordHash, checkpointHash journalHash, checkpointSeen, recoverTail bool, expectedEncryptionRecipient string, decrypter *journalEventDecrypter, emit func(journalRecord, journalHash, uint64, int64) error, digest io.Writer) (journalSegmentState, error) {
+func scanJournalSegment(file *os.File, options journalSegmentScanOptions) (journalSegmentState, error) {
+	scanner, err := newJournalSegmentScanner(file, options)
+	if err != nil {
+		return journalSegmentState{}, err
+	}
+	if err := scanner.scan(); err != nil {
+		return journalSegmentState{}, err
+	}
+	return scanner.state, nil
+}
+
+func newJournalSegmentScanner(file *os.File, options journalSegmentScanOptions) (*journalSegmentScanner, error) {
 	info, err := file.Stat()
 	if err != nil {
-		return journalSegmentState{}, errors.System.Newf("cannot inspect audit segment: %w", err)
+		return nil, errors.System.Newf("cannot inspect audit segment: %w", err)
 	}
-	state := journalSegmentState{
-		sequence:            sequence,
-		previousSegmentHash: previousSegmentHash,
-		previousRecordHash:  previousRecordHash,
-		fileBytes:           info.Size(),
-		checkpointHash:      checkpointHash,
-		checkpointSeen:      checkpointSeen,
-	}
-	offset := int64(0)
-	for offset < info.Size() {
-		payload, frame, frameSize, incomplete, err := readJournalFrameBytes(file, offset, info.Size())
+	return &journalSegmentScanner{
+		file:    file,
+		options: options,
+		size:    info.Size(),
+		state: journalSegmentState{
+			sequence:            options.sequence,
+			previousSegmentHash: options.previousSegmentHash,
+			previousRecordHash:  options.previousRecordHash,
+			fileBytes:           info.Size(),
+			checkpointHash:      options.checkpointHash,
+			checkpointSeen:      options.checkpointSeen,
+		},
+	}, nil
+}
+
+func (this *journalSegmentScanner) scan() error {
+	for this.offset < this.size {
+		complete, err := this.scanNextFrame()
 		if err != nil {
-			return journalSegmentState{}, err
+			return err
 		}
-		if incomplete {
-			if !recoverTail {
-				return journalSegmentState{}, errors.System.Newf("sealed audit segment has an incomplete frame at offset %d", offset)
-			}
-			if !state.checkpointSeen {
-				return journalSegmentState{}, errors.System.Newf("audit journal cannot discard an incomplete frame before its committed head %s", checkpointHash)
-			}
-			if err := truncateJournalTail(file, offset); err != nil {
-				return journalSegmentState{}, err
-			}
-			state.fileBytes = offset
-			return state, nil
+		if !complete {
+			return nil
 		}
-		var envelope struct {
-			Schema string `json:"schema"`
-		}
-		if err := json.Unmarshal(payload, &envelope); err != nil {
-			return journalSegmentState{}, errors.System.Newf("cannot identify audit frame at offset %d: %w", offset, err)
-		}
-		switch envelope.Schema {
-		case journalSegmentHeaderSchema:
-			if offset != 0 || state.header {
-				return journalSegmentState{}, errors.System.Newf("unexpected audit segment header at offset %d", offset)
-			}
-			if _, err := decodeJournalSegmentHeader(payload, identity, sequence, previousSegmentHash, previousRecordHash); err != nil {
-				return journalSegmentState{}, err
-			}
-			state.header = true
-			state.contentBytes = frameSize
-		case journalRecordSchema, journalEncryptedRecordSchema:
-			if !state.header || state.sealed {
-				return journalSegmentState{}, errors.System.Newf("audit record outside an open segment at offset %d", offset)
-			}
-			record, recordHash, err := decodeJournalRecord(payload, identity, state.previousRecordHash, decrypter)
-			if err != nil {
-				return journalSegmentState{}, err
-			}
-			if record.encryptionRecipient != expectedEncryptionRecipient {
-				return journalSegmentState{}, errors.Config.Newf("audit record encryption recipient %q does not match configured recipient %q", record.encryptionRecipient, expectedEncryptionRecipient)
-			}
-			state.previousRecordHash = recordHash
-			if recordHash == state.checkpointHash {
-				state.checkpointSeen = true
-			}
-			state.recordCount++
-			if emit != nil {
-				if err := emit(record, recordHash, state.recordCount, int64(len(payload))); err != nil {
-					return journalSegmentState{}, err
-				}
-			}
-			state.contentBytes = offset + frameSize
-		case journalSegmentSealSchema:
-			if !state.header || state.sealed || state.recordCount == 0 {
-				return journalSegmentState{}, errors.System.Newf("unexpected audit segment seal at offset %d", offset)
-			}
-			content, err := readJournalFilePrefix(file, state.contentBytes)
-			if err != nil {
-				return journalSegmentState{}, err
-			}
-			if _, err := decodeJournalSegmentSeal(payload, identity, state, hashJournalBytes(journalSegmentContentHashDomain, content)); err != nil {
-				return journalSegmentState{}, err
-			}
-			state.sealed = true
-			state.fileBytes = offset + frameSize
-			if state.fileBytes != info.Size() {
-				return journalSegmentState{}, errors.System.Newf("audit segment contains data after its seal")
-			}
-			full, err := readJournalFilePrefix(file, state.fileBytes)
-			if err != nil {
-				return journalSegmentState{}, err
-			}
-			state.segmentHash = hashJournalBytes(journalSegmentHashDomain, full)
-		default:
-			return journalSegmentState{}, errors.System.Newf("unsupported audit frame schema %q at offset %d", envelope.Schema, offset)
-		}
-		if digest != nil {
-			written, err := digest.Write(frame)
-			if err == nil && written != len(frame) {
-				err = io.ErrShortWrite
-			}
-			if err != nil {
-				return journalSegmentState{}, errors.System.Newf("cannot hash audit frame at offset %d: %w", offset, err)
-			}
-		}
-		offset += frameSize
 	}
-	if !state.header && info.Size() > 0 {
-		return journalSegmentState{}, errors.System.Newf("audit segment has no valid header")
+	if !this.state.header && this.size > 0 {
+		return errors.System.Newf("audit segment has no valid header")
 	}
-	return state, nil
+	return nil
+}
+
+func (this *journalSegmentScanner) scanNextFrame() (bool, error) {
+	payload, frame, frameSize, incomplete, err := readJournalFrameBytes(this.file, this.offset, this.size)
+	if err != nil {
+		return false, err
+	}
+	if incomplete {
+		return false, this.recoverIncompleteTail()
+	}
+	var envelope struct {
+		Schema string `json:"schema"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		return false, errors.System.Newf("cannot identify audit frame at offset %d: %w", this.offset, err)
+	}
+	switch envelope.Schema {
+	case journalSegmentHeaderSchema:
+		err = this.scanHeader(payload, frameSize)
+	case journalRecordSchema, journalEncryptedRecordSchema:
+		err = this.scanRecord(payload, frameSize)
+	case journalSegmentSealSchema:
+		err = this.scanSeal(payload, frameSize)
+	default:
+		err = errors.System.Newf("unsupported audit frame schema %q at offset %d", envelope.Schema, this.offset)
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := this.writeDigest(frame); err != nil {
+		return false, err
+	}
+	this.offset += frameSize
+	return true, nil
+}
+
+func (this *journalSegmentScanner) recoverIncompleteTail() error {
+	if !this.options.recoverTail {
+		return errors.System.Newf("sealed audit segment has an incomplete frame at offset %d", this.offset)
+	}
+	if !this.state.checkpointSeen {
+		return errors.System.Newf("audit journal cannot discard an incomplete frame before its committed head %s", this.options.checkpointHash)
+	}
+	if err := truncateJournalTail(this.file, this.offset); err != nil {
+		return err
+	}
+	this.state.fileBytes = this.offset
+	return nil
+}
+
+func (this *journalSegmentScanner) scanHeader(payload []byte, frameSize int64) error {
+	if this.offset != 0 || this.state.header {
+		return errors.System.Newf("unexpected audit segment header at offset %d", this.offset)
+	}
+	if _, err := decodeJournalSegmentHeader(payload, this.options.identity, this.options.sequence, this.options.previousSegmentHash, this.options.previousRecordHash); err != nil {
+		return err
+	}
+	this.state.header = true
+	this.state.contentBytes = frameSize
+	return nil
+}
+
+func (this *journalSegmentScanner) scanRecord(payload []byte, frameSize int64) error {
+	if !this.state.header || this.state.sealed {
+		return errors.System.Newf("audit record outside an open segment at offset %d", this.offset)
+	}
+	record, recordHash, err := decodeJournalRecord(payload, this.options.identity, this.state.previousRecordHash, this.options.decrypter)
+	if err != nil {
+		return err
+	}
+	if record.encryptionRecipient != this.options.expectedEncryptionRecipient {
+		return errors.Config.Newf("audit record encryption recipient %q does not match configured recipient %q", record.encryptionRecipient, this.options.expectedEncryptionRecipient)
+	}
+	this.state.previousRecordHash = recordHash
+	if recordHash == this.state.checkpointHash {
+		this.state.checkpointSeen = true
+	}
+	this.state.recordCount++
+	if this.options.emit != nil {
+		if err := this.options.emit(record, recordHash, this.state.recordCount, int64(len(payload))); err != nil {
+			return err
+		}
+	}
+	this.state.contentBytes = this.offset + frameSize
+	return nil
+}
+
+func (this *journalSegmentScanner) scanSeal(payload []byte, frameSize int64) error {
+	if !this.state.header || this.state.sealed || this.state.recordCount == 0 {
+		return errors.System.Newf("unexpected audit segment seal at offset %d", this.offset)
+	}
+	content, err := readJournalFilePrefix(this.file, this.state.contentBytes)
+	if err != nil {
+		return err
+	}
+	if _, err := decodeJournalSegmentSeal(payload, this.options.identity, this.state, hashJournalBytes(journalSegmentContentHashDomain, content)); err != nil {
+		return err
+	}
+	this.state.sealed = true
+	this.state.fileBytes = this.offset + frameSize
+	if this.state.fileBytes != this.size {
+		return errors.System.Newf("audit segment contains data after its seal")
+	}
+	full, err := readJournalFilePrefix(this.file, this.state.fileBytes)
+	if err != nil {
+		return err
+	}
+	this.state.segmentHash = hashJournalBytes(journalSegmentHashDomain, full)
+	return nil
+}
+
+func (this *journalSegmentScanner) writeDigest(frame []byte) error {
+	if this.options.digest == nil {
+		return nil
+	}
+	written, err := this.options.digest.Write(frame)
+	if err == nil && written != len(frame) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		return errors.System.Newf("cannot hash audit frame at offset %d: %w", this.offset, err)
+	}
+	return nil
 }
 
 func readJournalFrame(file *os.File, offset, size int64) ([]byte, int64, bool, error) {

@@ -122,6 +122,53 @@ func (this *service) uncheckedExecuteSshSession(sshSess essh.Session, taskType e
 	}
 }
 
+type sessionTaskAuditLifecycle struct {
+	service     *service
+	ctx         essh.Context
+	auth        authorization.Authorization
+	operationId string
+	task        audit.SessionTask
+	startedAt   time.Time
+}
+
+func (this *sessionTaskAuditLifecycle) start(hasPty, agentForwarding, forcedCommand bool) error {
+	this.startedAt = time.Now()
+	event := this.service.authorizationAuditEvent(this.ctx, this.auth, audit.EventNameSessionTaskStarted, audit.EventDomainSession)
+	event.OperationId = this.operationId
+	event.SessionTask = this.task
+	event.Pty = common.P(hasPty)
+	event.AgentForwarding = common.P(agentForwarding)
+	event.ForcedCommand = common.P(forcedCommand)
+	return this.service.recordFlowAudit(this.ctx, this.auth.Flow(), event)
+}
+
+func (this *sessionTaskAuditLifecycle) complete(exitCode int, taskErr error) error {
+	event := this.service.authorizationAuditEvent(this.ctx, this.auth, audit.EventNameSessionTaskCompleted, audit.EventDomainSession)
+	event.OperationId = this.operationId
+	event.SessionTask = this.task
+	event.DurationMillis = common.P(time.Since(this.startedAt).Milliseconds())
+	if exitCode >= 0 {
+		event.ExitCode = common.P(exitCode)
+	}
+	switch {
+	case taskErr == nil && exitCode < 0 && errors.Is(this.ctx.Err(), context.DeadlineExceeded), errors.Is(taskErr, context.DeadlineExceeded):
+		event.Outcome = audit.EventOutcomeCanceled
+		event.Reason = audit.EventReasonDeadlineExceeded
+	case taskErr == nil && exitCode < 0 && errors.Is(this.ctx.Err(), context.Canceled), errors.Is(taskErr, context.Canceled):
+		event.Outcome = audit.EventOutcomeCanceled
+		event.Reason = audit.EventReasonContextCanceled
+	case taskErr != nil:
+		event.Outcome = audit.EventOutcomeFailure
+		event.ErrorCategory = auditErrorCategory(taskErr)
+	case exitCode < 0:
+		event.Outcome = audit.EventOutcomeFailure
+		event.Reason = audit.EventReasonInvalidExitCode
+	default:
+		event.Outcome = audit.EventOutcomeSuccess
+	}
+	return this.service.recordFlowAudit(this.ctx, this.auth.Flow(), event)
+}
+
 func (this *service) executeSession(sshSess essh.Session, conn *connection, taskType environment.TaskType) (exitCode int, rErr error) {
 	fail := func(err error) (int, error) {
 		return -1, err
@@ -148,41 +195,18 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 		taskType = environment.TaskTypeShell
 	}
 	_, _, hasPty := sshSess.Pty()
-	startedAt := time.Now()
-	startedEvent := this.authorizationAuditEvent(sshSess.Context(), auth, "session.task.started", audit.EventDomainSession)
-	startedEvent.OperationId = operationId.String()
-	startedEvent.SessionTask = requestedTask
-	startedEvent.Pty = common.P(hasPty)
-	startedEvent.AgentForwarding = common.P(bssh.AgentRequested(sshSess))
-	startedEvent.ForcedCommand = common.P(forcedCommand)
-	if err := this.recordFlowAudit(sshSess.Context(), auth.Flow(), startedEvent); err != nil {
+	taskAudit := sessionTaskAuditLifecycle{
+		service:     this,
+		ctx:         sshSess.Context(),
+		auth:        auth,
+		operationId: operationId.String(),
+		task:        requestedTask,
+	}
+	if err := taskAudit.start(hasPty, bssh.AgentRequested(sshSess), forcedCommand); err != nil {
 		return fail(err)
 	}
 	defer func() {
-		event := this.authorizationAuditEvent(sshSess.Context(), auth, "session.task.completed", audit.EventDomainSession)
-		event.OperationId = operationId.String()
-		event.SessionTask = requestedTask
-		event.DurationMillis = common.P(time.Since(startedAt).Milliseconds())
-		if exitCode >= 0 {
-			event.ExitCode = common.P(exitCode)
-		}
-		switch {
-		case rErr == nil && exitCode < 0 && errors.Is(sshSess.Context().Err(), context.DeadlineExceeded), errors.Is(rErr, context.DeadlineExceeded):
-			event.Outcome = audit.EventOutcomeCanceled
-			event.Reason = "deadline-exceeded"
-		case rErr == nil && exitCode < 0 && errors.Is(sshSess.Context().Err(), context.Canceled), errors.Is(rErr, context.Canceled):
-			event.Outcome = audit.EventOutcomeCanceled
-			event.Reason = "context-canceled"
-		case rErr != nil:
-			event.Outcome = audit.EventOutcomeFailure
-			event.ErrorCategory = auditErrorCategory(rErr)
-		case exitCode < 0:
-			event.Outcome = audit.EventOutcomeFailure
-			event.Reason = "invalid-exit-code"
-		default:
-			event.Outcome = audit.EventOutcomeSuccess
-		}
-		if recordErr := this.recordFlowAudit(sshSess.Context(), auth.Flow(), event); recordErr != nil {
+		if recordErr := taskAudit.complete(exitCode, rErr); recordErr != nil {
 			rErr = goerrors.Join(rErr, recordErr)
 		}
 	}()

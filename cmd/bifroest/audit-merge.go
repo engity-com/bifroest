@@ -75,11 +75,10 @@ func doAuditMerge(opts *auditMergeOpts, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureAuditOutputSafe(output, conf); err != nil {
-		return err
-	}
-	if err := ensureBootstrapOutputIsNotPrivateKey(output, opts.decryptionIdentityFiles...); err != nil {
-		return err
-	}
-	return writeAuditOutput(output, opts.force, stdout, verification, audit.RecordOrderChronological)
+	return writeAuditOutput(output, opts.force, stdout, verification, audit.RecordOrderChronological, func() error {
+		if err := ensureAuditOutputSafe(output, conf); err != nil {
+			return err
+		}
+		return ensureBootstrapOutputIsNotPrivateKey(output, opts.decryptionIdentityFiles...)
+	})
 }

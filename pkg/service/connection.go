@@ -112,8 +112,8 @@ func (this *service) onDisconnected(ctx essh.Context, _ gonet.Conn) error {
 			Debug("connection ended")
 		auth, _ := ctx.Value(authorizationCtxKey).(authorization.Authorization)
 		if auth != nil {
-			event := this.authorizationAuditEvent(ctx, auth, "connection.closed", audit.EventDomainConnection)
-			event.Reason = "disconnected"
+			event := this.authorizationAuditEvent(ctx, auth, audit.EventNameConnectionClosed, audit.EventDomainConnection)
+			event.Reason = audit.EventReasonDisconnected
 			event.BytesRead = common.P(conn.read.Load())
 			event.BytesWritten = common.P(conn.written.Load())
 			event.DurationMillis = common.P(time.Since(conn.createdAt).Milliseconds())

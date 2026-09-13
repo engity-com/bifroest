@@ -23,7 +23,7 @@ func TestUnauthenticatedAuditLimiterBoundsPerSourceAndGlobally(t *testing.T) {
 	now := time.Unix(1_000, 0)
 	limiter := newTestUnauthenticatedAuditLimiter(now, 2, 3)
 	recorder := newLimiterTestRecorder(true)
-	event := audit.Event{Name: "authentication.flow.evaluated", Domain: audit.EventDomainAuthentication, Outcome: audit.EventOutcomeDenied}
+	event := audit.Event{Name: audit.EventNameAuthenticationFlowEvaluated, Domain: audit.EventDomainAuthentication, Outcome: audit.EventOutcomeDenied}
 
 	for range 3 {
 		require.NoError(t, limiter.Record(limiterTestContext("192.0.2.1"), "security", true, recorder, event))
@@ -34,13 +34,13 @@ func TestUnauthenticatedAuditLimiterBoundsPerSourceAndGlobally(t *testing.T) {
 	require.NoError(t, limiter.Flush(context.Background()))
 
 	events := recorder.eventsSnapshot()
-	require.Len(t, auditEventsNamed(events, "authentication.flow.evaluated"), 3)
-	summaries := auditEventsNamed(events, "authentication.flow.evaluations-suppressed")
+	require.Len(t, auditEventsNamed(events, audit.EventNameAuthenticationFlowEvaluated), 3)
+	summaries := auditEventsNamed(events, audit.EventNameAuthenticationFlowEvaluationsSuppressed)
 	require.Len(t, summaries, 2)
 	require.Equal(t, uint64(1), *summaries[0].Count)
 	require.Equal(t, uint64(1), *summaries[1].Count)
 	for _, summary := range summaries {
-		require.Equal(t, "rate-limit", summary.Reason)
+		require.Equal(t, audit.EventReasonRateLimit, summary.Reason)
 		require.Empty(t, summary.Flow)
 		require.Empty(t, summary.ConnectionId)
 	}
@@ -53,21 +53,21 @@ func TestUnauthenticatedAuditLimiterWritesFirstSuppressionImmediatelyAndBoundsSu
 	now := time.Unix(2_000, 0)
 	limiter := newTestUnauthenticatedAuditLimiter(now, 1, 1)
 	recorder := newLimiterTestRecorder(true)
-	event := audit.Event{Name: "authentication.flow.evaluated", Domain: audit.EventDomainAuthentication, Outcome: audit.EventOutcomeDenied}
+	event := audit.Event{Name: audit.EventNameAuthenticationFlowEvaluated, Domain: audit.EventDomainAuthentication, Outcome: audit.EventOutcomeDenied}
 	ctx := limiterTestContext("198.51.100.7")
 
 	require.NoError(t, limiter.Record(ctx, "security", true, recorder, event))
 	require.NoError(t, limiter.Record(ctx, "security", true, recorder, event))
-	summaries := auditEventsNamed(recorder.eventsSnapshot(), "authentication.flow.evaluations-suppressed")
+	summaries := auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameAuthenticationFlowEvaluationsSuppressed)
 	require.Len(t, summaries, 1)
 	require.Equal(t, uint64(1), *summaries[0].Count)
 
 	for range 100 {
 		require.NoError(t, limiter.Record(ctx, "security", true, recorder, event))
 	}
-	require.Len(t, auditEventsNamed(recorder.eventsSnapshot(), "authentication.flow.evaluations-suppressed"), 1)
+	require.Len(t, auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameAuthenticationFlowEvaluationsSuppressed), 1)
 	require.NoError(t, limiter.Flush(context.Background()))
-	summaries = auditEventsNamed(recorder.eventsSnapshot(), "authentication.flow.evaluations-suppressed")
+	summaries = auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameAuthenticationFlowEvaluationsSuppressed)
 	require.Len(t, summaries, 2)
 	require.Equal(t, uint64(100), *summaries[1].Count)
 }
@@ -77,13 +77,13 @@ func TestUnauthenticatedAuditLimiterReserveWritesOneMarkerAndRecovers(t *testing
 	limiter := newTestUnauthenticatedAuditLimiter(now, 1, 1)
 	limiter.now = func() time.Time { return now }
 	recorder := newLimiterTestRecorder(false)
-	event := audit.Event{Name: "authentication.flow.evaluated", Domain: audit.EventDomainAuthentication, Outcome: audit.EventOutcomeDenied}
+	event := audit.Event{Name: audit.EventNameAuthenticationFlowEvaluated, Domain: audit.EventDomainAuthentication, Outcome: audit.EventOutcomeDenied}
 	ctx := limiterTestContext("203.0.113.9")
 
 	require.NoError(t, limiter.Record(ctx, "security", true, recorder, event))
 	require.NoError(t, limiter.Record(ctx, "security", true, recorder, event))
 	require.Len(t, recorder.eventsSnapshot(), 1)
-	require.Equal(t, "journal-reserve", recorder.eventsSnapshot()[0].Reason)
+	require.Equal(t, audit.EventReasonJournalReserve, recorder.eventsSnapshot()[0].Reason)
 
 	now = now.Add(time.Minute)
 	require.NoError(t, limiter.Record(ctx, "security", true, recorder, event))
@@ -94,9 +94,46 @@ func TestUnauthenticatedAuditLimiterReserveWritesOneMarkerAndRecovers(t *testing
 	require.NoError(t, limiter.Record(ctx, "security", true, recorder, event))
 	events := recorder.eventsSnapshot()
 	require.Len(t, events, 3)
-	require.Equal(t, "journal-reserve", events[1].Reason)
+	require.Equal(t, audit.EventReasonJournalReserve, events[1].Reason)
 	require.Equal(t, uint64(2), *events[1].Count)
-	require.Equal(t, "authentication.flow.evaluated", events[2].Name)
+	require.Equal(t, audit.EventNameAuthenticationFlowEvaluated, events[2].Name)
+}
+
+func TestUnauthenticatedAuditReservePhaseTransitionsPreserveRecorderOrder(t *testing.T) {
+	now := time.Unix(3_500, 0)
+	limiter := newTestUnauthenticatedAuditLimiter(now, 1, 1)
+	recorder := newLimiterTestRecorder(false)
+	state := limiter.auditlog("security", recorder)
+	state.mutex.Lock()
+	defer state.mutex.Unlock()
+
+	enteredReserve, err := limiter.recordRateSummary(context.Background(), state, unauthenticatedAuditSummary(audit.EventOutcomeDenied, audit.EventReasonRateLimit, 1, now, now), now)
+	require.NoError(t, err)
+	require.True(t, enteredReserve)
+	require.Equal(t, reservePhaseMarkerPending, state.reserve.phase)
+	require.Equal(t, now.Add(time.Minute), state.reserve.nextCheck)
+	require.Equal(t, []string{"record"}, recorder.operationsSnapshot())
+
+	handled, err := limiter.handleReserved(context.Background(), state, now.Add(30*time.Second))
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Equal(t, reservePhaseMonitoring, state.reserve.phase)
+	require.Equal(t, now.Add(90*time.Second), state.reserve.nextCheck)
+	require.Equal(t, []string{"record", "record"}, recorder.operationsSnapshot())
+
+	handled, err = limiter.handleReserved(context.Background(), state, state.reserve.nextCheck)
+	require.NoError(t, err)
+	require.False(t, handled)
+	require.Equal(t, reservePhaseInactive, state.reserve.phase)
+	require.True(t, state.reserve.nextCheck.IsZero())
+	require.Equal(t, []string{"record", "record"}, recorder.operationsSnapshot())
+
+	state.reserve.awaitMarker(now.Add(2 * time.Minute))
+	handled, err = limiter.handleReserved(context.Background(), state, state.reserve.nextCheck)
+	require.NoError(t, err)
+	require.False(t, handled)
+	require.Equal(t, reservePhaseInactive, state.reserve.phase)
+	require.Equal(t, []string{"record", "record"}, recorder.operationsSnapshot())
 }
 
 func TestUnauthenticatedAuditLimiterBoundsSourceMapAndNormalizesAddresses(t *testing.T) {
@@ -110,7 +147,7 @@ func TestUnauthenticatedAuditLimiterBoundsSourceMapAndNormalizesAddresses(t *tes
 	now := time.Unix(4_000, 0)
 	limiter := newTestUnauthenticatedAuditLimiter(now, 1, ^uint16(0))
 	recorder := newLimiterTestRecorder(true)
-	event := audit.Event{Name: "authentication.flow.evaluated", Outcome: audit.EventOutcomeDenied}
+	event := audit.Event{Name: audit.EventNameAuthenticationFlowEvaluated, Outcome: audit.EventOutcomeDenied}
 	for index := 0; index <= maxUnauthenticatedAuditSources; index++ {
 		address := fmt.Sprintf("2001:db8:%x::1", index)
 		require.NoError(t, limiter.Record(limiterTestContext(address), "security", true, recorder, event))
@@ -122,7 +159,7 @@ func TestUnauthenticatedAuditLimiterIsRaceSafe(t *testing.T) {
 	now := time.Unix(5_000, 0)
 	limiter := newTestUnauthenticatedAuditLimiter(now, 4, 16)
 	recorder := newLimiterTestRecorder(true)
-	event := audit.Event{Name: "authentication.flow.evaluated", Outcome: audit.EventOutcomeDenied}
+	event := audit.Event{Name: audit.EventNameAuthenticationFlowEvaluated, Outcome: audit.EventOutcomeDenied}
 
 	var wait sync.WaitGroup
 	errs := make(chan error, 128)
@@ -146,7 +183,7 @@ func TestUnauthenticatedAuditLimiterDoesNotHoldGlobalMutexDuringRecorderIO(t *te
 	limiter := newTestUnauthenticatedAuditLimiter(now, 2, 2)
 	blocked := newBlockingLimiterTestRecorder()
 	fast := newLimiterTestRecorder(true)
-	event := audit.Event{Name: "authentication.flow.evaluated", Outcome: audit.EventOutcomeDenied}
+	event := audit.Event{Name: audit.EventNameAuthenticationFlowEvaluated, Outcome: audit.EventOutcomeDenied}
 
 	blockedDone := make(chan error, 1)
 	go func() {
@@ -178,7 +215,7 @@ func TestUnauthenticatedAuditLimiterConcurrentRecordsDoNotBypassRateOrDuplicateC
 	now := time.Unix(5_375, 0)
 	limiter := newTestUnauthenticatedAuditLimiter(now, 1, 64)
 	recorder := newLimiterTestRecorder(true)
-	event := audit.Event{Name: "authentication.flow.evaluated", Outcome: audit.EventOutcomeDenied}
+	event := audit.Event{Name: audit.EventNameAuthenticationFlowEvaluated, Outcome: audit.EventOutcomeDenied}
 
 	const attempts = 32
 	var wait sync.WaitGroup
@@ -198,10 +235,10 @@ func TestUnauthenticatedAuditLimiterConcurrentRecordsDoNotBypassRateOrDuplicateC
 	require.NoError(t, limiter.Flush(context.Background()))
 
 	events := recorder.eventsSnapshot()
-	require.Len(t, auditEventsNamed(events, "authentication.flow.evaluated"), 1)
+	require.Len(t, auditEventsNamed(events, audit.EventNameAuthenticationFlowEvaluated), 1)
 	var suppressed uint64
-	for _, summary := range auditEventsNamed(events, "authentication.flow.evaluations-suppressed") {
-		require.Equal(t, "rate-limit", summary.Reason)
+	for _, summary := range auditEventsNamed(events, audit.EventNameAuthenticationFlowEvaluationsSuppressed) {
+		require.Equal(t, audit.EventReasonRateLimit, summary.Reason)
 		suppressed += *summary.Count
 	}
 	require.Equal(t, uint64(attempts-1), suppressed)
@@ -212,7 +249,7 @@ func TestUnauthenticatedAuditLimiterKeepsRateClassificationWhenReserveStarts(t *
 	limiter := newTestUnauthenticatedAuditLimiter(now, 1, 1)
 	limiter.now = func() time.Time { return now }
 	recorder := newLimiterTestRecorder(true)
-	event := audit.Event{Name: "authentication.flow.evaluated", Outcome: audit.EventOutcomeDenied}
+	event := audit.Event{Name: audit.EventNameAuthenticationFlowEvaluated, Outcome: audit.EventOutcomeDenied}
 	ctx := limiterTestContext("192.0.2.41")
 
 	require.NoError(t, limiter.Record(ctx, "security", true, recorder, event))
@@ -229,12 +266,12 @@ func TestUnauthenticatedAuditLimiterKeepsRateClassificationWhenReserveStarts(t *
 	require.NoError(t, limiter.Flush(context.Background()))
 
 	var rateCount, reserveCount uint64
-	for _, summary := range auditEventsNamed(recorder.eventsSnapshot(), "authentication.flow.evaluations-suppressed") {
+	for _, summary := range auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameAuthenticationFlowEvaluationsSuppressed) {
 		switch summary.Reason {
-		case "rate-limit":
+		case audit.EventReasonRateLimit:
 			require.Equal(t, audit.EventOutcomeDenied, summary.Outcome)
 			rateCount += *summary.Count
-		case "journal-reserve":
+		case audit.EventReasonJournalReserve:
 			require.Empty(t, summary.Outcome)
 			reserveCount += *summary.Count
 		default:
@@ -261,20 +298,20 @@ func TestUnauthenticatedAuditLimiterFlushTriesEveryAuditlogAndRetainsFailures(t 
 	require.ErrorContains(t, err, "first journal failed")
 	require.ErrorContains(t, err, "b-failed")
 	require.ErrorContains(t, err, "second journal failed")
-	healthySummaries := auditEventsNamed(healthy.eventsSnapshot(), "authentication.flow.evaluations-suppressed")
+	healthySummaries := auditEventsNamed(healthy.eventsSnapshot(), audit.EventNameAuthenticationFlowEvaluationsSuppressed)
 	require.Len(t, healthySummaries, 1)
 	require.Equal(t, uint64(3), *healthySummaries[0].Count)
 
 	firstFailed.setRecordError(nil)
 	secondFailed.setRecordError(nil)
 	require.NoError(t, limiter.Flush(context.Background()))
-	firstSummaries := auditEventsNamed(firstFailed.eventsSnapshot(), "authentication.flow.evaluations-suppressed")
+	firstSummaries := auditEventsNamed(firstFailed.eventsSnapshot(), audit.EventNameAuthenticationFlowEvaluationsSuppressed)
 	require.Len(t, firstSummaries, 1)
 	require.Equal(t, uint64(2), *firstSummaries[0].Count)
-	secondSummaries := auditEventsNamed(secondFailed.eventsSnapshot(), "authentication.flow.evaluations-suppressed")
+	secondSummaries := auditEventsNamed(secondFailed.eventsSnapshot(), audit.EventNameAuthenticationFlowEvaluationsSuppressed)
 	require.Len(t, secondSummaries, 1)
 	require.Equal(t, uint64(4), *secondSummaries[0].Count)
-	require.Len(t, auditEventsNamed(healthy.eventsSnapshot(), "authentication.flow.evaluations-suppressed"), 1)
+	require.Len(t, auditEventsNamed(healthy.eventsSnapshot(), audit.EventNameAuthenticationFlowEvaluationsSuppressed), 1)
 }
 
 func TestUnauthenticatedAuditLimiterFlushUsesEmergencyReserveWithoutDuplicates(t *testing.T) {
@@ -288,9 +325,9 @@ func TestUnauthenticatedAuditLimiterFlushUsesEmergencyReserveWithoutDuplicates(t
 	recorder.setRecordError(nil)
 	require.NoError(t, limiter.Flush(context.Background()))
 	require.NoError(t, limiter.Flush(context.Background()))
-	summaries := auditEventsNamed(recorder.eventsSnapshot(), "authentication.flow.evaluations-suppressed")
+	summaries := auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameAuthenticationFlowEvaluationsSuppressed)
 	require.Len(t, summaries, 1)
-	require.Equal(t, "journal-reserve", summaries[0].Reason)
+	require.Equal(t, audit.EventReasonJournalReserve, summaries[0].Reason)
 	require.Equal(t, uint64(4), *summaries[0].Count)
 }
 
@@ -315,7 +352,7 @@ func TestExhaustedUnauthenticatedAuditLimitDoesNotBlockRequiredAudit(t *testing.
 
 	events := recorder.eventsSnapshot()
 	require.Equal(t, audit.EventOutcomeSuccess, events[len(events)-1].Outcome)
-	require.Equal(t, "authentication.flow.evaluated", events[len(events)-1].Name)
+	require.Equal(t, audit.EventNameAuthenticationFlowEvaluated, events[len(events)-1].Name)
 }
 
 func TestUnauthenticatedAuditRecorderFailureClosesOnlyCurrentConnection(t *testing.T) {
@@ -340,7 +377,7 @@ func TestUnauthenticatedAuditRecorderFailureClosesOnlyCurrentConnection(t *testi
 	secondContext.SetValue(connectionCtxKey, second)
 	svc.activeConnections.Store(2)
 
-	err := svc.recordUnauthenticatedFlowAudit(firstContext, flow, audit.Event{Name: "authentication.flow.evaluated", Outcome: audit.EventOutcomeDenied})
+	err := svc.recordUnauthenticatedFlowAudit(firstContext, flow, audit.Event{Name: audit.EventNameAuthenticationFlowEvaluated, Outcome: audit.EventOutcomeDenied})
 	require.Error(t, err)
 	require.True(t, first.closed.Load())
 	require.False(t, second.closed.Load())
@@ -374,7 +411,7 @@ func TestCloseAuditFlushesAggregatesBeforeSealing(t *testing.T) {
 	now := time.Unix(6_000, 0)
 	limiter := newTestUnauthenticatedAuditLimiter(now, 1, 1)
 	recorder := newLimiterTestRecorder(true)
-	event := audit.Event{Name: "authentication.flow.evaluated", Outcome: audit.EventOutcomeDenied}
+	event := audit.Event{Name: audit.EventNameAuthenticationFlowEvaluated, Outcome: audit.EventOutcomeDenied}
 	ctx := limiterTestContext("192.0.2.42")
 	require.NoError(t, limiter.Record(ctx, "security", true, recorder, event))
 	require.NoError(t, limiter.Record(ctx, "security", true, recorder, event))
@@ -440,7 +477,7 @@ func seedLimiterReserveAggregate(limiter *unauthenticatedAuditLimiter, name conf
 	state.mutex.Lock()
 	defer state.mutex.Unlock()
 	at := limiter.now()
-	state.reserve = unauthenticatedAuditReserve{active: true, announced: true, pending: count, first: at, last: at}
+	state.reserve = unauthenticatedAuditReserve{phase: reservePhaseMonitoring, pending: count, first: at, last: at}
 }
 
 type limiterRemoteContext struct {
