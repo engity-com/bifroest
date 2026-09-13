@@ -20,7 +20,7 @@ func TestLoadSftpIdentityFileValidatesWindowsPermissions(t *testing.T) {
 	_, err = loadSftpIdentityFile(name)
 	require.NoError(t, err)
 
-	owner, err := currentProcessOwnerSid()
+	owner, err := currentProcessUserSid()
 	require.NoError(t, err)
 	descriptor, err := windows.SecurityDescriptorFromString(fmt.Sprintf("D:P(A;;FR;;;WD)(A;;FR;;;%s)", owner.String()))
 	require.NoError(t, err)

@@ -5,7 +5,6 @@ package audit
 import (
 	"fmt"
 	"os"
-	"unsafe"
 
 	"golang.org/x/sys/windows"
 
@@ -30,7 +29,7 @@ func secureJournalPath(path string) error {
 }
 
 func secureJournalPathWithAccess(path, access string) error {
-	ownerSid, err := currentProcessOwnerSid()
+	ownerSid, err := currentProcessUserSid()
 	if err != nil {
 		return err
 	}
@@ -50,7 +49,7 @@ func secureJournalPathWithAccess(path, access string) error {
 		return errors.System.Newf("cannot resolve owner of %q: %w", path, err)
 	}
 	if owner == nil || !owner.Equals(ownerSid) {
-		return errors.Config.Newf("%q is not owned by the current process token owner", path)
+		return errors.Config.Newf("%q is not owned by the current process user", path)
 	}
 	descriptor, err := windows.SecurityDescriptorFromString(fmt.Sprintf("D:P(A;;%s;;;SY)(A;;%s;;;%s)", access, access, ownerSid.String()))
 	if err != nil {
@@ -108,27 +107,13 @@ func openSealedJournal(path string) (*os.File, error) {
 	return file, nil
 }
 
-type tokenOwner struct {
-	owner *windows.SID
-}
-
-func currentProcessOwnerSid() (*windows.SID, error) {
-	token := windows.GetCurrentProcessToken()
-	var required uint32
-	err := windows.GetTokenInformation(token, windows.TokenOwner, nil, 0, &required)
-	if err != nil && !errors.Is(err, windows.ERROR_INSUFFICIENT_BUFFER) {
-		return nil, errors.System.Newf("cannot determine current process token owner size: %w", err)
+func currentProcessUserSid() (*windows.SID, error) {
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return nil, errors.System.Newf("cannot read current process user: %w", err)
 	}
-	if required == 0 {
-		return nil, errors.System.Newf("current process token has no owner information")
+	if user == nil || user.User.Sid == nil {
+		return nil, errors.System.Newf("current process token has no user SID")
 	}
-	raw := make([]byte, required)
-	if err := windows.GetTokenInformation(token, windows.TokenOwner, &raw[0], uint32(len(raw)), &required); err != nil {
-		return nil, errors.System.Newf("cannot read current process token owner: %w", err)
-	}
-	owner := (*tokenOwner)(unsafe.Pointer(&raw[0])).owner
-	if owner == nil {
-		return nil, errors.System.Newf("current process token has no owner SID")
-	}
-	return owner, nil
+	return user.User.Sid, nil
 }

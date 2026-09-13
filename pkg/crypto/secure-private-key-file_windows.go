@@ -3,7 +3,6 @@
 package crypto
 
 import (
-	goerrors "errors"
 	"fmt"
 	"os"
 	"unsafe"
@@ -28,12 +27,12 @@ func validateSecurePrivateKeyFile(path string, file *os.File, _ os.FileInfo) err
 	if err != nil {
 		return fmt.Errorf("cannot determine owner of private key %q: %w", path, err)
 	}
-	processOwner, err := currentProcessOwnerSid()
+	processUser, err := currentProcessUserSid()
 	if err != nil {
 		return err
 	}
-	if owner == nil || !owner.Equals(processOwner) {
-		return fmt.Errorf("private key %q is not owned by the current process token owner", path)
+	if owner == nil || !owner.Equals(processUser) {
+		return fmt.Errorf("private key %q is not owned by the current process user", path)
 	}
 	control, _, err := descriptor.Control()
 	if err != nil {
@@ -69,34 +68,20 @@ func validateSecurePrivateKeyFile(path string, file *os.File, _ os.FileInfo) err
 			return fmt.Errorf("private key %q has unsupported access-control entry type %d", path, ace.Header.AceType)
 		}
 		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
-		if !sid.Equals(processOwner) && !sid.Equals(system) && !sid.Equals(ownerRights) {
+		if !sid.Equals(processUser) && !sid.Equals(system) && !sid.Equals(ownerRights) {
 			return fmt.Errorf("private key %q grants access to an identity other than its owner, OWNER RIGHTS, or SYSTEM", path)
 		}
 	}
 	return nil
 }
 
-type privateKeyTokenOwner struct {
-	owner *windows.SID
-}
-
-func currentProcessOwnerSid() (*windows.SID, error) {
-	token := windows.GetCurrentProcessToken()
-	var required uint32
-	err := windows.GetTokenInformation(token, windows.TokenOwner, nil, 0, &required)
-	if err != nil && !goerrors.Is(err, windows.ERROR_INSUFFICIENT_BUFFER) {
-		return nil, fmt.Errorf("cannot determine current process token owner size: %w", err)
+func currentProcessUserSid() (*windows.SID, error) {
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return nil, fmt.Errorf("cannot read current process user: %w", err)
 	}
-	if required == 0 {
-		return nil, fmt.Errorf("current process token has no owner information")
+	if user == nil || user.User.Sid == nil {
+		return nil, fmt.Errorf("current process token has no user SID")
 	}
-	raw := make([]byte, required)
-	if err := windows.GetTokenInformation(token, windows.TokenOwner, &raw[0], uint32(len(raw)), &required); err != nil {
-		return nil, fmt.Errorf("cannot read current process token owner: %w", err)
-	}
-	owner := (*privateKeyTokenOwner)(unsafe.Pointer(&raw[0])).owner
-	if owner == nil {
-		return nil, fmt.Errorf("current process token has no owner SID")
-	}
-	return owner, nil
+	return user.User.Sid, nil
 }
