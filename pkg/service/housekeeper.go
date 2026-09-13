@@ -2,12 +2,15 @@ package service
 
 import (
 	"context"
+	goerrors "errors"
 	"fmt"
 	"sync/atomic"
 	"time"
 
 	log "github.com/echocat/slf4g"
+	"github.com/google/uuid"
 
+	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -128,11 +131,15 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 	if shouldBeDeleted, err := session.IsExpiredWithThreshold(this.service.Configuration.HouseKeeping.KeepExpiredFor.Native())(ctx, sess); err != nil {
 		return reportAndContinue(err)
 	} else if shouldBeDeleted {
-		if _, err := this.dispose(ctx, logger, sess); err != nil {
+		if _, err := this.auditSessionAction(ctx, sess, "dispose", "retention-elapsed", func() (bool, error) {
+			return this.dispose(ctx, logger, sess)
+		}); err != nil {
 			return reportAndContinue(err)
 		}
 
-		if err := this.service.sessions.Delete(ctx, sess); err != nil {
+		if _, err := this.auditSessionAction(ctx, sess, "delete", "retention-elapsed", func() (bool, error) {
+			return true, this.service.sessions.Delete(ctx, sess)
+		}); err != nil {
 			return reportAndContinue(err)
 		}
 		logger.Info("session reached maximum age to be kept after being expired and was therefore deleted")
@@ -140,7 +147,9 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 	} else if expired, err := session.IsExpired(ctx, sess); err != nil {
 		return reportAndContinue(err)
 	} else if expired {
-		disposed, err := this.dispose(ctx, logger, sess)
+		disposed, err := this.auditSessionAction(ctx, sess, "dispose", "expired", func() (bool, error) {
+			return this.dispose(ctx, logger, sess)
+		})
 		if err != nil {
 			return reportAndContinue(err)
 		}
@@ -158,6 +167,37 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 	}
 
 	return true, nil
+}
+
+func (this *houseKeeper) auditSessionAction(ctx context.Context, sess session.Session, action, reason string, perform func() (bool, error)) (changed bool, rErr error) {
+	operationId, err := uuid.NewRandom()
+	if err != nil {
+		return false, errors.Newf(errors.System, "cannot generate housekeeping audit operation ID: %w", err)
+	}
+	startedAt := time.Now()
+	event := audit.Event{
+		Name:        "housekeeping.session." + action + ".started",
+		Domain:      audit.EventDomainHousekeeping,
+		Flow:        sess.Flow().String(),
+		SessionId:   sess.Id().String(),
+		OperationId: operationId.String(),
+		Reason:      reason,
+	}
+	if err := this.service.recordFlowAudit(ctx, sess.Flow(), event); err != nil {
+		return false, err
+	}
+
+	changed, actionErr := perform()
+	event.Name = "housekeeping.session." + action + ".completed"
+	event.DurationMillis = common.P(time.Since(startedAt).Milliseconds())
+	if actionErr != nil {
+		event.Outcome = audit.EventOutcomeFailure
+		event.ErrorCategory = auditErrorCategory(actionErr)
+	} else {
+		event.Outcome = audit.EventOutcomeSuccess
+	}
+	recordErr := this.service.recordFlowAudit(ctx, sess.Flow(), event)
+	return changed, goerrors.Join(actionErr, recordErr)
 }
 
 // dispose will dispose a given session.Session but NOT delete it.
@@ -208,10 +248,9 @@ func (this *houseKeeper) disposeEnvironment(ctx context.Context, logger log.Logg
 	return disposed, nil
 }
 func (this *houseKeeper) disposeAuthorization(ctx context.Context, logger log.Logger, sess session.Session) (bool, error) {
-	reportOnly := func(err error) (bool, error) {
-		logger.WithError(err).
-			Warn("cannot dispose authorization of session; skipping...")
-		return false, nil
+	fail := func(err error) (bool, error) {
+		logger.WithError(err).Warn("cannot dispose authorization of session")
+		return false, errors.Newf(errors.System, "cannot dispose authorization of session: %w", err)
 	}
 
 	auth, err := this.service.authorizer.RestoreFromSession(ctx, sess, &authorization.RestoreOpts{
@@ -223,12 +262,12 @@ func (this *houseKeeper) disposeAuthorization(ctx context.Context, logger log.Lo
 		return false, nil
 	}
 	if err != nil {
-		return reportOnly(err)
+		return fail(err)
 	}
 
 	disposed, err := auth.Dispose(ctx)
 	if err != nil {
-		return reportOnly(err)
+		return fail(err)
 	}
 
 	return disposed, nil

@@ -46,6 +46,8 @@ Optional destinations that receive complete sealed segments from the authoritati
 
 The local journal is the authoritative, crash-safe source of the audit log. Remote targets replicate sealed journal segments and do not replace local persistence.
 
+See [audit events](events.md) for the recorded security transitions, their structured fields, privacy guarantees, and failure behavior.
+
 ### Properties {: #journal-properties }
 
 <<property("directory", "File Path", "../data-type.md#file-path", default="<os specific>", heading=4, id_prefix="journal-")>>

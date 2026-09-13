@@ -268,6 +268,7 @@ func TestLocalJournalRejectsInvalidEventsWithoutWriting(t *testing.T) {
 	require.True(t, berrors.System.IsErr(err))
 	require.Error(t, recorder.Record(context.Background(), Event{Name: " whitespace"}))
 	require.Error(t, recorder.Record(context.Background(), Event{Name: strings.Repeat("x", maxAuditEventNameSize+1)}))
+	require.Error(t, recorder.Record(context.Background(), Event{Name: "test.invalid-domain", Domain: "invalid"}))
 	after, err := os.Stat(activePath)
 	require.NoError(t, err)
 	require.Equal(t, before.Size(), after.Size())

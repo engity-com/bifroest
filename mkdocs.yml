@@ -159,6 +159,7 @@ nav:
           - Filesystem: reference/session/fs.md
       - Audit log:
           - reference/auditlog/index.md
+          - Events: reference/auditlog/events.md
           - Remote targets:
               - reference/auditlog/remote-targets/index.md
               - S3: reference/auditlog/remote-targets/s3.md

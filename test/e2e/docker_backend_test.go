@@ -5,13 +5,16 @@ package e2e_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -44,7 +47,7 @@ func TestOpenSSHDockerEnvironment(t *testing.T) {
 	})
 
 	t.Run("exec stdout stderr and exit status", func(t *testing.T) {
-		result := f.ssh(3*time.Minute, f.clientKey, "e2e", nil, "/usr/local/bin/e2e-helper", "streams")
+		result := f.ssh(3*time.Minute, f.clientKey, "e2e", nil, "/usr/local/bin/e2e-helper", "streams", "audit-secret-command-argument")
 		if code := exitCode(result.err); code != 23 {
 			t.Fatalf("exit code: got %d, want 23 (error: %v)\nstdout:\n%s\nstderr:\n%s", code, result.err, result.stdout, result.stderr)
 		}
@@ -121,7 +124,7 @@ func TestOpenSSHDockerEnvironment(t *testing.T) {
 			t.Fatal(err)
 		}
 		batch := filepath.Join(t.TempDir(), "batch")
-		commands := fmt.Sprintf("put %s upload.tmp\nrename upload.tmp renamed.bin\nget renamed.bin %s\nrm renamed.bin\n", source, download)
+		commands := fmt.Sprintf("put %s audit-secret-upload.tmp\nrename audit-secret-upload.tmp audit-secret-renamed.bin\nget audit-secret-renamed.bin %s\nrm audit-secret-renamed.bin\n", source, download)
 		if err := os.WriteFile(batch, []byte(commands), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -314,7 +317,7 @@ func TestOpenSSHDockerEnvironment(t *testing.T) {
 		}
 	})
 
-	// This must remain final: the session and its only environment are expected to disappear.
+	// This must remain the final SSH-producing subtest: the session and its only environment are expected to disappear.
 	t.Run("session expiry cleans container", func(t *testing.T) {
 		if err := poll(45*time.Second, func() error {
 			ids, err := f.containerIDs()
@@ -336,6 +339,197 @@ func TestOpenSSHDockerEnvironment(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+
+	t.Run("audit journal verifies events and privacy", func(t *testing.T) {
+		runDockerAuditE2E(t, f, filepath.Join(f.tempDir, "docker-environment.yaml"))
+	})
+}
+
+type exportedAuditRecord struct {
+	Event exportedAuditEvent `json:"event"`
+}
+
+type exportedAuditEvent struct {
+	Name                 string `json:"name"`
+	Domain               string `json:"domain"`
+	Outcome              string `json:"outcome"`
+	Flow                 string `json:"flow"`
+	ConnectionId         string `json:"connectionId"`
+	SessionId            string `json:"sessionId"`
+	OperationId          string `json:"operationId"`
+	AuthenticationMethod string `json:"authenticationMethod"`
+	AuthorizationKind    string `json:"authorizationKind"`
+	SessionTask          string `json:"sessionTask"`
+	ExitCode             *int   `json:"exitCode"`
+	BytesRead            *int64 `json:"bytesRead"`
+	BytesWritten         *int64 `json:"bytesWritten"`
+	DurationMillis       *int64 `json:"durationMillis"`
+}
+
+func runDockerAuditE2E(t *testing.T, f *fixture, configurationPath string) {
+	t.Helper()
+	if f.bifroestProc == nil {
+		t.Fatal("Bifroest process is not running")
+	}
+	if exited, err := f.bifroestProc.collect(); exited {
+		t.Fatalf("Bifroest exited before audit verification: %v", err)
+	}
+	if err := f.bifroestProc.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("signal Bifroest: %v", err)
+	}
+	if err := f.bifroestProc.wait(10 * time.Second); err != nil {
+		t.Fatalf("wait for graceful Bifroest shutdown: %v\nstdout:\n%s\nstderr:\n%s", err, f.bifroestProc.stdout.String(), f.bifroestProc.stderr.String())
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	verify := runCommand(ctx, f.repoRoot, nil, f.bifroest, "audit", "verify", "--configuration="+configurationPath, "default")
+	cancel()
+	if verify.err != nil {
+		t.Fatalf("verify audit journal: %v\nstdout:\n%s\nstderr:\n%s", verify.err, verify.stdout, verify.stderr)
+	}
+
+	ctx, cancel = context.WithTimeout(context.Background(), 20*time.Second)
+	exported := runCommand(ctx, f.repoRoot, nil, f.bifroest, "audit", "export", "--configuration="+configurationPath, "--output=-", "default")
+	cancel()
+	if exported.err != nil {
+		t.Fatalf("export audit journal: %v\nstdout:\n%s\nstderr:\n%s", exported.err, exported.stdout, exported.stderr)
+	}
+	records := decodeExportedAuditRecords(t, exported.stdout)
+	if len(records) == 0 {
+		t.Fatal("audit export contains no records")
+	}
+
+	var authentication, pty, agentForwarding, reverseDecision, connectionClosed, housekeepingDispose, housekeepingDelete bool
+	taskStarts := make(map[string]exportedAuditEvent)
+	taskCompletions := make(map[string]exportedAuditEvent)
+	directDecisions := make(map[string]exportedAuditEvent)
+	directStarts := make(map[string]exportedAuditEvent)
+	directCompletions := make(map[string]exportedAuditEvent)
+	for _, record := range records {
+		event := record.Event
+		if event.Flow != "" && event.Flow != f.flowName {
+			t.Fatalf("event %q has flow %q, want %q", event.Name, event.Flow, f.flowName)
+		}
+		switch event.Name {
+		case "authentication.completed":
+			if event.Domain == "authentication" && event.Outcome == "success" && event.AuthenticationMethod == "public-key" &&
+				event.AuthorizationKind == "simple" && event.ConnectionId != "" && event.SessionId != "" {
+				authentication = true
+			}
+		case "session.pty.decided":
+			pty = pty || event.Outcome == "success"
+		case "session.agent-forwarding.decided":
+			agentForwarding = agentForwarding || event.Outcome == "success"
+		case "session.task.started":
+			if event.OperationId == "" {
+				t.Fatalf("task start lacks operation ID: %#v", event)
+			}
+			taskStarts[event.OperationId] = event
+		case "session.task.completed":
+			taskCompletions[event.OperationId] = event
+		case "port-forwarding.direct.decided":
+			if event.Outcome == "success" {
+				directDecisions[event.OperationId] = event
+			}
+		case "port-forwarding.direct.started":
+			directStarts[event.OperationId] = event
+		case "port-forwarding.direct.completed":
+			directCompletions[event.OperationId] = event
+		case "port-forwarding.reverse.decided":
+			reverseDecision = reverseDecision || event.Outcome == "success"
+		case "connection.closed":
+			connectionClosed = connectionClosed || event.ConnectionId != ""
+		case "housekeeping.session.dispose.completed":
+			housekeepingDispose = housekeepingDispose || event.Outcome == "success"
+		case "housekeeping.session.delete.completed":
+			housekeepingDelete = housekeepingDelete || event.Outcome == "success"
+		}
+	}
+
+	if !authentication || !pty || !agentForwarding || !reverseDecision || !connectionClosed || !housekeepingDispose || !housekeepingDelete {
+		t.Fatalf("missing audit transitions: authentication=%v pty=%v agent=%v reverse=%v connection=%v dispose=%v delete=%v",
+			authentication, pty, agentForwarding, reverseDecision, connectionClosed, housekeepingDispose, housekeepingDelete)
+	}
+	var execWithExpectedExit, sftpCompleted bool
+	for operationId, started := range taskStarts {
+		completed, ok := taskCompletions[operationId]
+		if !ok {
+			t.Fatalf("task %s (%s) has no completion", operationId, started.SessionTask)
+		}
+		if completed.Flow != started.Flow || completed.ConnectionId != started.ConnectionId || completed.SessionId != started.SessionId || completed.SessionTask != started.SessionTask {
+			t.Fatalf("task %s correlation mismatch: start=%#v completion=%#v", operationId, started, completed)
+		}
+		if completed.SessionTask == "exec" && completed.Outcome == "success" && completed.ExitCode != nil && *completed.ExitCode == 23 {
+			execWithExpectedExit = true
+		}
+		if completed.SessionTask == "sftp" && completed.Outcome == "success" {
+			sftpCompleted = true
+		}
+	}
+	if !execWithExpectedExit || !sftpCompleted {
+		t.Fatalf("missing completed task audit: exec=%v sftp=%v", execWithExpectedExit, sftpCompleted)
+	}
+	directTransferred := false
+	for operationId, completed := range directCompletions {
+		decision, decisionOk := directDecisions[operationId]
+		started, startedOk := directStarts[operationId]
+		if !decisionOk || !startedOk {
+			continue
+		}
+		if decision.ConnectionId != started.ConnectionId || started.ConnectionId != completed.ConnectionId ||
+			decision.SessionId != started.SessionId || started.SessionId != completed.SessionId {
+			t.Fatalf("direct forwarding %s correlation mismatch", operationId)
+		}
+		if completed.Outcome == "success" && completed.BytesRead != nil && *completed.BytesRead > 0 &&
+			completed.BytesWritten != nil && *completed.BytesWritten > 0 && completed.DurationMillis != nil {
+			directTransferred = true
+		}
+	}
+	if !directTransferred {
+		t.Fatal("no complete audited direct-forwarding transfer found")
+	}
+
+	privacyMarkers := []string{
+		"audit-secret-command-argument",
+		"BIFROEST_E2E_ARGV_SECRET",
+		"target-environment-must-not-be-in-wrapper-argv",
+		"audit-secret-upload.tmp",
+		"audit-secret-renamed.bin",
+		"docker-sftp-e2e",
+		"xterm-256color",
+		"127.0.0.1:31001",
+		publicKeyBlob(t, f.clientKey+".pub"),
+		publicKeyBlob(t, f.agentKey+".pub"),
+	}
+	for _, marker := range privacyMarkers {
+		if marker != "" && strings.Contains(exported.stdout, marker) {
+			t.Fatalf("audit export contains private marker %q", marker)
+		}
+	}
+}
+
+func decodeExportedAuditRecords(t *testing.T, payload string) []exportedAuditRecord {
+	t.Helper()
+	decoder := json.NewDecoder(strings.NewReader(payload))
+	var result []exportedAuditRecord
+	for {
+		var record exportedAuditRecord
+		if err := decoder.Decode(&record); errors.Is(err, io.EOF) {
+			return result
+		} else if err != nil {
+			t.Fatalf("decode audit export: %v\npayload:\n%s", err, payload)
+		}
+		result = append(result, record)
+	}
+}
+
+func publicKeyBlob(t *testing.T, path string) string {
+	t.Helper()
+	fields := strings.Fields(string(mustRead(path)))
+	if len(fields) < 2 {
+		t.Fatalf("public key file %s is malformed", path)
+	}
+	return fields[1]
 }
 
 func newDockerEnvironmentFixture(t *testing.T) (*fixture, error) {
@@ -402,6 +596,8 @@ func (f *fixture) startHostBifroest() error {
 	}
 	configurationPath := filepath.Join(f.tempDir, "docker-environment.yaml")
 	configuration := fmt.Sprintf(dockerEnvironmentConfiguration,
+		yamlString(filepath.Join(f.tempDir, "auditlog-key")),
+		yamlString(filepath.Join(f.tempDir, "auditlog")),
 		yamlString(net.JoinHostPort(f.host, f.port)),
 		yamlString(f.hostKey),
 		yamlString(f.sessionStorage),
@@ -497,6 +693,11 @@ housekeeping:
   initialDelay: 100ms
   autoRepair: true
   keepExpiredFor: 0s
+auditlog:
+  - enabled: true
+    identityFile: %s
+    journal:
+      directory: %s
 ssh:
   addresses:
     - %s

@@ -32,6 +32,7 @@ const (
 	journalFrameChecksumSize    = 4
 	maxJournalRecordPayloadSize = 64 * 1024
 	maxAuditEventNameSize       = 256
+	maxAuditEventTokenSize      = 256
 )
 
 var (
@@ -274,6 +275,108 @@ func validateAuditEvent(event Event) error {
 	}
 	if len(event.Name) > maxAuditEventNameSize {
 		return errors.System.Newf("audit event name exceeds %d bytes", maxAuditEventNameSize)
+	}
+	if event.Domain != "" && event.Domain != EventDomainAuthentication && event.Domain != EventDomainConnection &&
+		event.Domain != EventDomainHousekeeping && event.Domain != EventDomainPortForwarding && event.Domain != EventDomainSession {
+		return errors.System.Newf("unknown audit event domain %q", event.Domain)
+	}
+	if event.Outcome != "" && event.Outcome != EventOutcomeSuccess && event.Outcome != EventOutcomeDenied &&
+		event.Outcome != EventOutcomeFailure && event.Outcome != EventOutcomeCanceled {
+		return errors.System.Newf("unknown audit event outcome %q", event.Outcome)
+	}
+	if event.AuthenticationMethod != "" && event.AuthenticationMethod != AuthenticationMethodPublicKey &&
+		event.AuthenticationMethod != AuthenticationMethodPassword && event.AuthenticationMethod != AuthenticationMethodKeyboardInteractive {
+		return errors.System.Newf("unknown audit authentication method %q", event.AuthenticationMethod)
+	}
+	if event.AuthenticationPhase != "" && event.AuthenticationPhase != AuthenticationPhaseCandidate &&
+		event.AuthenticationPhase != AuthenticationPhaseVerified {
+		return errors.System.Newf("unknown audit authentication phase %q", event.AuthenticationPhase)
+	}
+	if event.SessionTask != "" && event.SessionTask != SessionTaskShell && event.SessionTask != SessionTaskExec && event.SessionTask != SessionTaskSftp {
+		return errors.System.Newf("unknown audit session task %q", event.SessionTask)
+	}
+	if event.ErrorCategory != "" && event.ErrorCategory != ErrorCategoryUnknown && event.ErrorCategory != ErrorCategorySystem &&
+		event.ErrorCategory != ErrorCategoryConfig && event.ErrorCategory != ErrorCategoryNetwork && event.ErrorCategory != ErrorCategoryUser &&
+		event.ErrorCategory != ErrorCategoryPermission && event.ErrorCategory != ErrorCategoryExpired {
+		return errors.System.Newf("unknown audit error category %q", event.ErrorCategory)
+	}
+	if err := validateAuditFlow(event.Flow); err != nil {
+		return err
+	}
+	for name, value := range map[string]string{
+		"authorization kind": event.AuthorizationKind,
+		"reason":             event.Reason,
+	} {
+		if err := validateAuditToken(name, value); err != nil {
+			return err
+		}
+	}
+	for name, value := range map[string]string{
+		"connection ID": event.ConnectionId,
+		"session ID":    event.SessionId,
+		"operation ID":  event.OperationId,
+	} {
+		if err := validateAuditUuid(name, value); err != nil {
+			return err
+		}
+	}
+	if event.ExitCode != nil && *event.ExitCode < 0 {
+		return errors.System.Newf("audit event exit code is negative")
+	}
+	for name, value := range map[string]*int64{
+		"bytes read":      event.BytesRead,
+		"bytes written":   event.BytesWritten,
+		"duration millis": event.DurationMillis,
+	} {
+		if value != nil && *value < 0 {
+			return errors.System.Newf("audit event %s is negative", name)
+		}
+	}
+	return nil
+}
+
+func validateAuditFlow(value string) error {
+	if value == "" {
+		return nil
+	}
+	if value == "." || value == ".." {
+		return errors.System.Newf("illegal audit event flow %q", value)
+	}
+	for _, candidate := range value {
+		if !isAuditTokenCharacter(candidate) {
+			return errors.System.Newf("illegal audit event flow %q", value)
+		}
+	}
+	return nil
+}
+
+func validateAuditToken(name, value string) error {
+	if value == "" {
+		return nil
+	}
+	if len(value) > maxAuditEventTokenSize {
+		return errors.System.Newf("audit event %s exceeds %d bytes", name, maxAuditEventTokenSize)
+	}
+	for _, candidate := range value {
+		if !isAuditTokenCharacter(candidate) {
+			return errors.System.Newf("illegal audit event %s %q", name, value)
+		}
+	}
+	return nil
+}
+
+func isAuditTokenCharacter(candidate rune) bool {
+	return candidate >= 'a' && candidate <= 'z' || candidate >= 'A' && candidate <= 'Z' ||
+		candidate >= '0' && candidate <= '9' || candidate == '-' || candidate == '.'
+}
+
+func validateAuditUuid(name, value string) error {
+	if value == "" {
+		return nil
+	}
+	parsed, err := uuid.Parse(value)
+	if err != nil || parsed == uuid.Nil || parsed.String() != value {
+		return errors.System.Newf("illegal audit event %s %q", name, value)
 	}
 	return nil
 }

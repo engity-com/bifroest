@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	goerrors "errors"
 	"fmt"
 	"io"
 	"math"
@@ -9,8 +10,10 @@ import (
 	"time"
 
 	essh "github.com/engity-com/ssh-server-go"
+	"github.com/google/uuid"
 	gossh "golang.org/x/crypto/ssh"
 
+	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/environment"
@@ -54,22 +57,49 @@ func (this *service) handleNewDirectTcpIp(_ *essh.Server, _ *gossh.ServerConn, n
 		}
 		return err
 	}
+	operationId, err := uuid.NewRandom()
+	if err != nil {
+		return errors.Newf(errors.System, "cannot generate port forwarding audit operation ID: %w", err)
+	}
+	recordDecision := func(outcome audit.EventOutcome, reason string, decisionErr error) error {
+		event := this.authorizationAuditEvent(ctx, auth, "port-forwarding.direct.decided", audit.EventDomainPortForwarding)
+		event.OperationId = operationId.String()
+		event.Outcome = outcome
+		event.Reason = reason
+		if decisionErr != nil {
+			event.ErrorCategory = auditErrorCategory(decisionErr)
+		}
+		return this.recordFlowAudit(ctx, auth.Flow(), event)
+	}
+	recordOpenFailure := func(outcome audit.EventOutcome, reason string, openErr error) error {
+		event := this.authorizationAuditEvent(ctx, auth, "port-forwarding.direct.open-failed", audit.EventDomainPortForwarding)
+		event.OperationId = operationId.String()
+		event.Outcome = outcome
+		event.Reason = reason
+		if openErr != nil {
+			event.ErrorCategory = auditErrorCategory(openErr)
+		}
+		return this.recordFlowAudit(ctx, auth.Flow(), event)
+	}
 
 	d := localForwardChannelData{}
 	if err := gossh.Unmarshal(newChan.ExtraData(), &d); err != nil {
 		l.WithError(err).
 			Info("cannot parse client's forward data; rejecting...")
-		return newChan.Reject(gossh.ConnectionFailed, "error parsing forward data: "+err.Error())
+		rejectErr := newChan.Reject(gossh.ConnectionFailed, "error parsing forward data: "+err.Error())
+		return goerrors.Join(rejectErr, recordDecision(audit.EventOutcomeFailure, "invalid-request", err))
 	}
 	dest, err := d.dest()
 	if err != nil {
 		l.WithError(err).
 			Info("cannot parse client's forward data; rejecting...")
-		return newChan.Reject(gossh.ConnectionFailed, "error parsing forward data: "+err.Error())
+		rejectErr := newChan.Reject(gossh.ConnectionFailed, "error parsing forward data: "+err.Error())
+		return goerrors.Join(rejectErr, recordDecision(audit.EventOutcomeFailure, "invalid-request", err))
 	}
 	if policy := authorization.AuthorizedKeyPolicyOf(auth); policy != nil && !policy.AllowsOpen(dest) {
 		l.Info("port forwarding requested by client was rejected by authorized key policy")
-		return newChan.Reject(gossh.Prohibited, "port forwarding is disabled by authorized key policy")
+		rejectErr := newChan.Reject(gossh.Prohibited, "port forwarding is disabled by authorized key policy")
+		return goerrors.Join(rejectErr, recordDecision(audit.EventOutcomeDenied, "authorized-key-policy", nil))
 	}
 
 	l = l.With("dest", dest)
@@ -87,23 +117,24 @@ func (this *service) handleNewDirectTcpIp(_ *essh.Server, _ *gossh.ServerConn, n
 	if err != nil {
 		l.WithError(err).
 			Error("cannot ensure environment; rejecting...")
-		if rejectErr := newChan.Reject(gossh.Prohibited, "cannot ensure environment"); rejectErr != nil {
-			return rejectErr
-		}
-		return err
+		rejectErr := newChan.Reject(gossh.Prohibited, "cannot ensure environment")
+		return goerrors.Join(err, rejectErr, recordDecision(audit.EventOutcomeFailure, "environment", err))
 	}
 	defer common.IgnoreCloseError(env)
 
 	if ok, err := env.IsPortForwardingAllowed(dest); err != nil {
 		l.WithError(err).
 			Error("cannot check if port forwarding is allowed; rejecting...")
-		if rejectErr := newChan.Reject(gossh.ConnectionFailed, "port forwarding is disabled"); rejectErr != nil {
-			return rejectErr
-		}
-		return err
+		rejectErr := newChan.Reject(gossh.ConnectionFailed, "port forwarding is disabled")
+		return goerrors.Join(err, rejectErr, recordDecision(audit.EventOutcomeFailure, "environment-policy", err))
 	} else if !ok {
 		l.Info("port forwarding requested by client was rejected")
-		return newChan.Reject(gossh.Prohibited, "port forwarding is disabled")
+		rejectErr := newChan.Reject(gossh.Prohibited, "port forwarding is disabled")
+		return goerrors.Join(rejectErr, recordDecision(audit.EventOutcomeDenied, "environment-policy", nil))
+	}
+	if err := recordDecision(audit.EventOutcomeSuccess, "", nil); err != nil {
+		_ = newChan.Reject(gossh.ConnectionFailed, "cannot record port forwarding decision")
+		return err
 	}
 
 	dConn, err := env.NewDestinationConnection(ctx, dest)
@@ -122,20 +153,25 @@ func (this *service) handleNewDirectTcpIp(_ *essh.Server, _ *gossh.ServerConn, n
 				Warn("cannot connect to port forwarding destination; rejecting...")
 			_ = newChan.Reject(gossh.ConnectionFailed, fmt.Sprintf("cannot connect to %v: internal error", dest))
 		}
-		return nil
+		return recordOpenFailure(audit.EventOutcomeFailure, "destination-connect", err)
 	}
 	if dConn == nil {
 		l.Info("connection rejected")
 		_ = newChan.Reject(gossh.ConnectionFailed, "rejected")
-		return nil
+		return recordOpenFailure(audit.EventOutcomeDenied, "destination-rejected", nil)
 	}
 	defer common.IgnoreCloseError(dConn)
 
 	sConn, reqs, err := newChan.Accept()
 	if err != nil {
-		return err
+		return goerrors.Join(err, recordOpenFailure(audit.EventOutcomeFailure, "channel-accept", err))
 	}
 	defer common.IgnoreCloseError(sConn)
+	startedEvent := this.authorizationAuditEvent(ctx, auth, "port-forwarding.direct.started", audit.EventDomainPortForwarding)
+	startedEvent.OperationId = operationId.String()
+	if err := this.recordFlowAudit(ctx, auth.Flow(), startedEvent); err != nil {
+		return err
+	}
 
 	nameOf := func(isL2r bool) string {
 		if isL2r {
@@ -144,7 +180,14 @@ func (this *service) handleNewDirectTcpIp(_ *essh.Server, _ *gossh.ServerConn, n
 		return "destination -> source"
 	}
 
-	return copyForwardedConnection(ctx, reqs, sConn, dConn, &essh.FullDuplexCopyOpts{
+	type forwardingCompletion struct {
+		s2d      int64
+		d2s      int64
+		duration time.Duration
+		err      error
+	}
+	completed := make(chan forwardingCompletion, 1)
+	copyErr := copyForwardedConnection(ctx, reqs, sConn, dConn, &essh.FullDuplexCopyOpts{
 		OnStart: func() {
 			l.Debug("port forwarding started")
 		},
@@ -162,11 +205,34 @@ func (this *service) handleNewDirectTcpIp(_ *essh.Server, _ *gossh.ServerConn, n
 			} else {
 				ld.Info("port forwarding finished")
 			}
+			completed <- forwardingCompletion{s2d: s2d, d2s: d2s, duration: duration, err: err}
 		},
 		OnStreamEnd: func(isL2r bool, err error) {
 			l.WithError(err).Tracef("copying of %s done", nameOf(isL2r))
 		},
 	})
+	completion := <-completed
+	streamErr := goerrors.Join(copyErr, completion.err)
+	event := this.authorizationAuditEvent(ctx, auth, "port-forwarding.direct.completed", audit.EventDomainPortForwarding)
+	event.OperationId = operationId.String()
+	event.BytesRead = common.P(completion.s2d)
+	event.BytesWritten = common.P(completion.d2s)
+	event.DurationMillis = common.P(completion.duration.Milliseconds())
+	switch {
+	case errors.Is(ctx.Err(), context.Canceled), errors.Is(streamErr, context.Canceled):
+		event.Outcome = audit.EventOutcomeCanceled
+		event.Reason = "context-canceled"
+	case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(streamErr, context.DeadlineExceeded):
+		event.Outcome = audit.EventOutcomeCanceled
+		event.Reason = "deadline-exceeded"
+	case streamErr != nil:
+		event.Outcome = audit.EventOutcomeFailure
+		event.ErrorCategory = auditErrorCategory(streamErr)
+	default:
+		event.Outcome = audit.EventOutcomeSuccess
+	}
+	auditErr := this.recordFlowAudit(ctx, auth.Flow(), event)
+	return goerrors.Join(copyErr, auditErr)
 }
 
 func copyForwardedConnection(ctx context.Context, requests <-chan *gossh.Request, source, destination io.ReadWriteCloser, opts *essh.FullDuplexCopyOpts) error {
@@ -184,16 +250,33 @@ func (this *service) onReversePortForwardingRequested(ctx essh.Context, _ gossh.
 	if !ok || auth == nil {
 		return false, errors.Newf(errors.System, "no authorization resolved for reverse port forwarding request")
 	}
+	operationId, err := uuid.NewRandom()
+	if err != nil {
+		return false, errors.Newf(errors.System, "cannot generate reverse port forwarding audit operation ID: %w", err)
+	}
+	recordDecision := func(allowed bool, outcome audit.EventOutcome, reason string, decisionErr error) (bool, error) {
+		event := this.authorizationAuditEvent(ctx, auth, "port-forwarding.reverse.decided", audit.EventDomainPortForwarding)
+		event.OperationId = operationId.String()
+		event.Outcome = outcome
+		event.Reason = reason
+		if decisionErr != nil {
+			event.ErrorCategory = auditErrorCategory(decisionErr)
+		}
+		if recordErr := this.recordFlowAudit(ctx, auth.Flow(), event); recordErr != nil {
+			return false, recordErr
+		}
+		return allowed, decisionErr
+	}
 	policy := authorization.AuthorizedKeyPolicyOf(auth)
 	if policy != nil && !policy.AllowsListen(host, port) {
-		return false, nil
+		return recordDecision(false, audit.EventOutcomeDenied, "authorized-key-policy", nil)
 	}
 	if port > math.MaxUint16 {
-		return false, nil
+		return recordDecision(false, audit.EventOutcomeDenied, "invalid-bind", nil)
 	}
 	var bind net.HostPort
 	if err := bind.Host.Set(host); err != nil {
-		return false, nil
+		return recordDecision(false, audit.EventOutcomeDenied, "invalid-bind", nil)
 	}
 	bind.Port = uint16(port)
 	conn := this.connection(ctx)
@@ -203,7 +286,8 @@ func (this *service) onReversePortForwardingRequested(ctx essh.Context, _ gossh.
 	req := environmentRequest{environmentContext{service: this, connection: conn, authorization: auth}, nil}
 	env, err := this.environments.Ensure(&req)
 	if err != nil {
-		return false, errors.Newf(errors.System, "cannot ensure environment for reverse port forwarding: %w", err)
+		wrapped := errors.Newf(errors.System, "cannot ensure environment for reverse port forwarding: %w", err)
+		return recordDecision(false, audit.EventOutcomeFailure, "environment", wrapped)
 	}
 	defer common.IgnoreCloseError(env)
 	var allowed bool
@@ -213,9 +297,13 @@ func (this *service) onReversePortForwardingRequested(ctx essh.Context, _ gossh.
 		allowed, err = env.IsPortForwardingAllowed(bind)
 	}
 	if err != nil {
-		return false, errors.Newf(errors.System, "cannot check if reverse port forwarding is allowed: %w", err)
+		wrapped := errors.Newf(errors.System, "cannot check if reverse port forwarding is allowed: %w", err)
+		return recordDecision(false, audit.EventOutcomeFailure, "environment-policy", wrapped)
 	}
-	return allowed, nil
+	if !allowed {
+		return recordDecision(false, audit.EventOutcomeDenied, "environment-policy", nil)
+	}
+	return recordDecision(true, audit.EventOutcomeSuccess, "", nil)
 }
 
 func (this *service) reWrapUserFacingErrors(err error) *errors.Error {

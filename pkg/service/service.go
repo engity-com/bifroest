@@ -352,7 +352,7 @@ func (this *Service) prepare() (svc *service, err error) {
 			_ = svc.sessions.Close()
 		}
 	}()
-	if svc.authorizer, err = authorization.NewAuthorizerFacade(ctx, &this.Configuration.Flows); err != nil {
+	if svc.authorizer, err = authorization.NewAuthorizerFacadeWithObserver(ctx, &this.Configuration.Flows, svc.observeFlowAuthorization); err != nil {
 		return fail(err)
 	}
 	if svc.environments, err = environment.NewRepositoryFacadeWithHostKeys(ctx, &this.Configuration.Flows, svc.alternatives, svc.imp, hostSigners); err != nil {
@@ -609,15 +609,21 @@ func (this *service) createNewServerConfig(ctx essh.Context, _ gonet.Conn, targe
 		MACs:         this.resolvedSshMessagesAuthentications,
 	}
 	target.VerifiedPublicKeyCallback = func(_ gossh.ConnMetadata, key gossh.PublicKey, permissions *gossh.Permissions, _ string) (*gossh.Permissions, error) {
-		if _, isCertificate := key.(*gossh.Certificate); !isCertificate {
-			return permissions, nil
+		if _, isCertificate := key.(*gossh.Certificate); isCertificate {
+			accepted, err := this.authorizePublicKey(ctx, key, true)
+			if err != nil {
+				return nil, err
+			}
+			if !accepted {
+				return nil, errors.User.Newf("user certificate rejected after public key verification")
+			}
 		}
-		accepted, err := this.authorizePublicKey(ctx, key, true)
-		if err != nil {
+		auth, _ := ctx.Value(authorizationCtxKey).(authorization.Authorization)
+		if auth == nil {
+			return nil, errors.System.Newf("no authorization resolved after public key verification")
+		}
+		if err := this.recordAuthenticationCompleted(ctx, auth, audit.AuthenticationMethodPublicKey, audit.EventOutcomeSuccess, ""); err != nil {
 			return nil, err
-		}
-		if !accepted {
-			return nil, errors.User.Newf("user certificate rejected after public key verification")
 		}
 		return permissions, nil
 	}

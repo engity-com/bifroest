@@ -30,6 +30,10 @@ run = [
     'go test -v -tags=local_build,local_kind ./pkg/alternatives'
 ]
 
+[tasks."test:go:race"]
+depends = ["build:var"]
+run = "go test -race ./..."
+
 [tasks."test:e2e:local"]
 depends = ["build:var"]
 run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHLocalBackend$' ./test/e2e"
