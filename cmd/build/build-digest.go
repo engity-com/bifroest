@@ -2,10 +2,10 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
-	"io"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/alecthomas/kingpin/v2"
@@ -58,19 +58,19 @@ func (this *buildDigest) create(_ context.Context, as buildArtifacts) (_ buildAr
 	}
 	defer common.KeepCloseError(&rErr, f)
 
-	for _, a := range as {
+	candidates := slices.Collect(as.filter(func(candidate *buildArtifact) bool {
+		return candidate.t.canBePublished() && candidate.filepath != ""
+	}))
+	slices.SortFunc(candidates, func(a, b *buildArtifact) int {
+		return strings.Compare(a.name(), b.name())
+	})
+	for _, a := range candidates {
 		if a.t.canBePublished() && a.filepath != "" {
-			sf, err := a.openFile()
+			digest, err := sha256File(a.filepath)
 			if err != nil {
 				return fail(err)
 			}
-
-			hash := sha256.New()
-			if _, err := io.Copy(hash, sf); err != nil {
-				return fail(err)
-			}
-
-			if _, err := fmt.Fprintf(f, "%x %s\n", hash.Sum(nil), filepath.Base(a.filepath)); err != nil {
+			if _, err := fmt.Fprintf(f, "%s  %s\n", strings.TrimPrefix(digest, "sha256:"), filepath.Base(a.filepath)); err != nil {
 				return fail(err)
 			}
 		}

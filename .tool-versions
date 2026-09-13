@@ -1,5 +1,7 @@
 golang        1.27.0
 golangci-lint v2.13.2
+go-licenses   2.0.1
+syft          1.51.1
 python        3.14
 docker-cli    29.7.2
 kind          0.33.0

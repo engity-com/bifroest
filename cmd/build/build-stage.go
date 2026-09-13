@@ -13,6 +13,7 @@ const (
 	buildStageBinary buildStage = iota
 	buildStageArchive
 	buildStageImage
+	buildStageSbom
 	buildStageDigest
 	buildStagePublish
 )
@@ -85,6 +86,7 @@ var (
 		buildStageBinary:  "binary",
 		buildStageArchive: "archive",
 		buildStageImage:   "image",
+		buildStageSbom:    "sbom",
 		buildStageDigest:  "digest",
 		buildStagePublish: "publish",
 	}

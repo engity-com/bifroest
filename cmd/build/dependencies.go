@@ -8,7 +8,8 @@ import (
 
 func newDependencies(b *base) *dependencies {
 	result := &dependencies{
-		base: b,
+		base:               b,
+		resolveImageDigest: resolveDependencyImageDigest,
 	}
 
 	result.caCerts = newDependenciesCaCerts(result)
@@ -19,9 +20,15 @@ func newDependencies(b *base) *dependencies {
 type dependencies struct {
 	base *base
 
-	caCerts *dependenciesCaCerts
+	caCerts            *dependenciesCaCerts
+	resolveImageDigest dependencyImageDigestResolver
 }
 
 func (this *dependencies) init(ctx context.Context, app *kingpin.Application) {
 	this.caCerts.init(ctx, app)
+	app.Command("dependencies", "Manage all automatically updated dependencies.").
+		Command("update-pr", "Create one pull request for all changed managed dependencies.").
+		Action(func(*kingpin.ParseContext) error {
+			return this.updatePr(ctx)
+		})
 }

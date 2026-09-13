@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	gos "os"
+	"slices"
 	"time"
 
 	"github.com/alecthomas/kingpin/v2"
@@ -21,7 +22,6 @@ func newBuildArchive(b *build) *buildArchive {
 
 		includedResources: []string{
 			"README.md",
-			"LICENSE",
 			"SECURITY.md",
 			"contrib/**/*",
 		},
@@ -76,6 +76,19 @@ func (this *buildArchive) create(ctx context.Context, binary *buildArtifact) (_ 
 	if err := baw.addFile(binary.Platform.Os.AppendExtToFilename(this.prefix), binary.filepath, 0755); err != nil {
 		return fail(err)
 	}
+	if err := addReleaseLicensesToArchive(".", baw); err != nil {
+		return fail(err)
+	}
+	if binary.thirdPartyNoticesFilepath == "" {
+		return fail(fmt.Errorf("binary has no third-party notices"))
+	}
+	if binary.thirdPartyLicenseInventory == nil {
+		return fail(fmt.Errorf("binary has no third-party license inventory"))
+	}
+	a.thirdPartyLicenseInventory = binary.thirdPartyLicenseInventory
+	if err := baw.addFile(thirdPartyNoticesFilename, binary.thirdPartyNoticesFilepath, 0644); err != nil {
+		return fail(err)
+	}
 	for _, res := range this.includedResources {
 		if err := this.addResource(res, baw); err != nil {
 			return fail(err)
@@ -101,6 +114,7 @@ func (this *buildArchive) addResource(src string, to buildArchiveWriter) error {
 	if err != nil {
 		return fail(err)
 	}
+	slices.Sort(candidates)
 
 	for _, candidate := range candidates {
 		fi, err := gos.Stat(candidate)

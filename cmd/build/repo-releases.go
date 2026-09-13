@@ -116,6 +116,9 @@ func (this *repoRelease) uploadAsset(ctx context.Context, name, mediaType, label
 		return fail(err)
 	}
 	defer common.IgnoreCloseError(f)
+	if err := this.deleteAssetsByName(ctx, name); err != nil {
+		return fail(err)
+	}
 
 	l := log.With("release", this).
 		With("name", name).
@@ -142,6 +145,28 @@ func (this *repoRelease) uploadAsset(ctx context.Context, name, mediaType, label
 	}
 
 	return &repoReleaseAsset{asset, this.parent}, nil
+}
+
+func (this *repoRelease) deleteAssetsByName(ctx context.Context, name string) error {
+	opts := github.ListOptions{PerPage: 100}
+	for {
+		assets, response, err := this.parent.client().Repositories.ListReleaseAssets(ctx, this.parent.owner.String(), this.parent.name.String(), this.GetID(), &opts)
+		if err != nil {
+			return fmt.Errorf("cannot list existing release assets: %w", err)
+		}
+		for _, asset := range assets {
+			if asset.GetName() != name {
+				continue
+			}
+			if _, err := this.parent.client().Repositories.DeleteReleaseAsset(ctx, this.parent.owner.String(), this.parent.name.String(), asset.GetID()); err != nil {
+				return fmt.Errorf("cannot delete existing release asset %q: %w", name, err)
+			}
+		}
+		if response.NextPage == 0 {
+			return nil
+		}
+		opts.Page = response.NextPage
+	}
 }
 
 type repoReleaseAsset struct {

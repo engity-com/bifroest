@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 2,
+  "allowedLicenses": [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT"
+  ],
+  "rejectedLicenses": [],
+  "manualReviewLicenses": [],
+  "unclassifiedLicenseDecision": "manual-review",
+  "canonicalComponents": [
+    {
+      "name": "github.com/moby/moby",
+      "modules": [
+        "github.com/docker/docker",
+        "github.com/moby/moby",
+        "github.com/moby/moby/api",
+        "github.com/moby/moby/client"
+      ]
+    }
+  ]
+}

@@ -55,3 +55,16 @@ jobs:
 
       - name: Lint Go
         run: mise run lint:go
+
+  reuse:
+    name: "REUSE lint"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install MISE
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+
+      - name: Lint licenses
+        run: mise run lint:reuse
