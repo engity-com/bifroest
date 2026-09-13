@@ -5,6 +5,7 @@ package audit
 import (
 	"fmt"
 	"os"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 
@@ -29,7 +30,11 @@ func secureJournalPath(path string) error {
 }
 
 func secureJournalPathWithAccess(path, access string) error {
-	ownerSid, err := currentProcessUserSid()
+	userSid, err := currentProcessUserSid()
+	if err != nil {
+		return err
+	}
+	ownerSid, err := currentProcessOwnerSid()
 	if err != nil {
 		return err
 	}
@@ -48,10 +53,10 @@ func secureJournalPathWithAccess(path, access string) error {
 	if err != nil {
 		return errors.System.Newf("cannot resolve owner of %q: %w", path, err)
 	}
-	if owner == nil || !owner.Equals(ownerSid) {
-		return errors.Config.Newf("%q is not owned by the current process user", path)
+	if owner == nil || (!owner.Equals(userSid) && !owner.Equals(ownerSid)) {
+		return errors.Config.Newf("%q is owned by %v instead of the current process user %s or token owner %s", path, owner, userSid, ownerSid)
 	}
-	descriptor, err := windows.SecurityDescriptorFromString(fmt.Sprintf("D:P(A;;%s;;;SY)(A;;%s;;;%s)", access, access, ownerSid.String()))
+	descriptor, err := windows.SecurityDescriptorFromString(fmt.Sprintf("D:P(A;;%s;;;SY)(A;;%s;;;%s)", access, access, userSid.String()))
 	if err != nil {
 		return errors.System.Newf("cannot create audit journal security descriptor: %w", err)
 	}
@@ -115,5 +120,38 @@ func currentProcessUserSid() (*windows.SID, error) {
 	if user == nil || user.User.Sid == nil {
 		return nil, errors.System.Newf("current process token has no user SID")
 	}
-	return user.User.Sid, nil
+	result, err := user.User.Sid.Copy()
+	if err != nil {
+		return nil, errors.System.Newf("cannot copy current process user SID: %w", err)
+	}
+	return result, nil
+}
+
+type tokenOwner struct {
+	owner *windows.SID
+}
+
+func currentProcessOwnerSid() (*windows.SID, error) {
+	token := windows.GetCurrentProcessToken()
+	var required uint32
+	err := windows.GetTokenInformation(token, windows.TokenOwner, nil, 0, &required)
+	if err != nil && !errors.Is(err, windows.ERROR_INSUFFICIENT_BUFFER) {
+		return nil, errors.System.Newf("cannot determine current process token owner size: %w", err)
+	}
+	if required == 0 {
+		return nil, errors.System.Newf("current process token has no owner information")
+	}
+	raw := make([]byte, required)
+	if err := windows.GetTokenInformation(token, windows.TokenOwner, &raw[0], uint32(len(raw)), &required); err != nil {
+		return nil, errors.System.Newf("cannot read current process token owner: %w", err)
+	}
+	owner := (*tokenOwner)(unsafe.Pointer(&raw[0])).owner
+	if owner == nil {
+		return nil, errors.System.Newf("current process token has no owner SID")
+	}
+	result, err := owner.Copy()
+	if err != nil {
+		return nil, errors.System.Newf("cannot copy current process token owner SID: %w", err)
+	}
+	return result, nil
 }
