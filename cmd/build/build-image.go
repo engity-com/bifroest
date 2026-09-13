@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/alecthomas/kingpin/v2"
@@ -259,9 +260,13 @@ func (this *buildImage) createdMerged(ctx context.Context, e sys.Edition, as bui
 	var adds []mutate.IndexAddendum
 	var refA *buildArtifact
 
-	for aa := range as.filter(func(candidate *buildArtifact) bool {
+	imageArtifacts := slices.Collect(as.filter(func(candidate *buildArtifact) bool {
 		return candidate.Edition == e && candidate.t == buildArtifactTypeImage
-	}) {
+	}))
+	slices.SortFunc(imageArtifacts, func(a, b *buildArtifact) int {
+		return strings.Compare(a.Platform.FilenamePrefix(this.prefix), b.Platform.FilenamePrefix(this.prefix))
+	})
+	for _, aa := range imageArtifacts {
 		fail := func(err error) (*buildArtifact, error) {
 			return nil, fmt.Errorf("cannot merge artifact %v: %w", aa, err)
 		}

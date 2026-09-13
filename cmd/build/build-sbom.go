@@ -37,6 +37,15 @@ type buildSbom struct {
 	*build
 }
 
+type buildArtifactSbom struct {
+	format           string
+	subjectType      buildArtifactType
+	subjectName      string
+	subjectMediaType string
+	subjectPlatform  string
+	subjectDigest    string
+}
+
 func (this *buildSbom) attach(_ *kingpin.CmdClause) {}
 
 func (this *buildSbom) create(ctx context.Context, artifacts buildArtifacts) (_ buildArtifacts, rErr error) {
@@ -60,13 +69,31 @@ func (this *buildSbom) createForArtifact(ctx context.Context, source *buildArtif
 		return nil, err
 	}
 	defer common.KeepError(&rErr, cleanup)
+	subjectMediaType := source.mediaType()
+	subjectPlatform := ""
+	if source.t == buildArtifactTypeImage {
+		mediaType, err := source.ociImage.MediaType()
+		if err != nil {
+			return nil, fmt.Errorf("cannot identify media type of SBOM source %v: %w", source, err)
+		}
+		subjectMediaType = string(mediaType)
+		config, err := source.ociImage.ConfigFile()
+		if err != nil {
+			return nil, fmt.Errorf("cannot identify platform of SBOM source %v: %w", source, err)
+		}
+		subjectPlatform = config.OS + "/" + config.Architecture
+		if config.Variant != "" {
+			subjectPlatform += "/" + config.Variant
+		}
+	}
 
 	outputs := []struct {
 		format string
+		name   string
 		suffix string
 	}{
-		{format: "spdx-json@2.3", suffix: ".spdx.json"},
-		{format: "cyclonedx-json@1.6", suffix: ".cdx.json"},
+		{format: "spdx-json@2.3", name: "spdx-2.3", suffix: ".spdx.json"},
+		{format: "cyclonedx-json@1.6", name: "cyclonedx-1.6", suffix: ".cdx.json"},
 	}
 	result := make(buildArtifacts, 0, len(outputs))
 	args := []string{
@@ -83,6 +110,14 @@ func (this *buildSbom) createForArtifact(ctx context.Context, source *buildArtif
 		artifact, err := this.newBuildFileArtifact(ctx, source.Platform, buildArtifactTypeSbom, sourceName+output.suffix)
 		if err != nil {
 			return nil, err
+		}
+		artifact.sbom = &buildArtifactSbom{
+			format:           output.name,
+			subjectType:      source.t,
+			subjectName:      sourceName,
+			subjectMediaType: subjectMediaType,
+			subjectPlatform:  subjectPlatform,
+			subjectDigest:    subjectDigest,
 		}
 		result = append(result, artifact)
 		args = append(args, "-o", output.format+"="+artifact.filepath)

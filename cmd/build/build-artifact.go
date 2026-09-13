@@ -24,6 +24,7 @@ type buildArtifact struct {
 	t                         buildArtifactType
 	filepath                  string
 	thirdPartyNoticesFilepath string
+	sbom                      *buildArtifactSbom
 	ociImage                  v1.Image
 	ociIndex                  v1.ImageIndex
 
@@ -37,8 +38,10 @@ func (this *buildArtifact) String() string {
 
 func (this *buildArtifact) mediaType() string {
 	switch this.t {
-	case buildArtifactTypeDigest:
+	case buildArtifactTypeNotice, buildArtifactTypeDigest:
 		return "text/plain; charset=utf-8"
+	case buildArtifactTypeManifest:
+		return "application/json"
 	case buildArtifactTypeArchive:
 		switch strings.ToLower(path.Ext(this.name())) {
 		case ".tgz":
@@ -92,6 +95,8 @@ const (
 	buildArtifactTypeImagePlatform
 	buildArtifactTypeImage
 	buildArtifactTypeSbom
+	buildArtifactTypeNotice
+	buildArtifactTypeManifest
 	buildArtifactTypeDigest
 )
 
@@ -105,7 +110,7 @@ func (this buildArtifactType) String() string {
 
 func (this buildArtifactType) canBePublished() bool {
 	switch this {
-	case buildArtifactTypeArchive, buildArtifactTypeSbom, buildArtifactTypeDigest:
+	case buildArtifactTypeArchive, buildArtifactTypeSbom, buildArtifactTypeNotice, buildArtifactTypeManifest, buildArtifactTypeDigest:
 		return true
 	default:
 		return false
@@ -119,6 +124,8 @@ var (
 		buildArtifactTypeImagePlatform: "imagePlatform",
 		buildArtifactTypeImage:         "image",
 		buildArtifactTypeSbom:          "sbom",
+		buildArtifactTypeNotice:        "notice",
+		buildArtifactTypeManifest:      "manifest",
 		buildArtifactTypeDigest:        "digest",
 	}
 )
@@ -153,14 +160,6 @@ func (this buildArtifacts) filter(predicate func(*buildArtifact) bool) iter.Seq[
 			}
 		}
 	}
-}
-
-func (this *buildArtifact) openFile() (*gos.File, error) {
-	if this.filepath == "" {
-		return nil, fmt.Errorf("cannot open file of non-file artifact: %v", this)
-	}
-
-	return gos.Open(this.filepath)
 }
 
 func (this *buildArtifact) createFile() (*gos.File, error) {

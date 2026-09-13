@@ -83,18 +83,18 @@ type thirdPartyComponent struct {
 	notices   map[string]thirdPartyNotice
 }
 
-func (this *buildBinary) createThirdPartyNotices(ctx context.Context, req bbin.BuildRequest, artifact *buildArtifact) (_ string, rErr error) {
+func (this *buildBinary) createThirdPartyNotices(ctx context.Context, req bbin.BuildRequest, artifact *buildArtifact, targetName string) (rErr error) {
 	policy, err := readThirdPartyLicensePolicy(thirdPartyLicensePolicyRaw)
 	if err != nil {
-		return "", err
+		return err
 	}
 	info, err := buildinfo.ReadFile(artifact.filepath)
 	if err != nil {
-		return "", fmt.Errorf("cannot inspect Go build information in %q: %w", artifact.filepath, err)
+		return fmt.Errorf("cannot inspect Go build information in %q: %w", artifact.filepath, err)
 	}
 	modules, err := thirdPartyModules(info, req.Platform, policy)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	var report bytes.Buffer
@@ -105,19 +105,19 @@ func (this *buildBinary) createThirdPartyNotices(ctx context.Context, req bbin.B
 		"--template="+goLicensesTemplate,
 		"./cmd/bifroest",
 	); err != nil {
-		return "", fmt.Errorf("cannot scan third-party Go licenses for %s: %w\n%s", req.Platform, err, reportWarnings.String())
+		return fmt.Errorf("cannot scan third-party Go licenses for %s: %w\n%s", req.Platform, err, reportWarnings.String())
 	}
 	if reportWarnings.Len() > 0 {
 		log.With("platform", req.Platform).With("warnings", strings.TrimSpace(reportWarnings.String())).Debug("go-licenses reported warnings")
 	}
 	records, err := parseThirdPartyLicenseRecords(report.Bytes())
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	temporaryDirectory, err := gos.MkdirTemp("", "bifroest-third-party-licenses-*")
 	if err != nil {
-		return "", fmt.Errorf("cannot create temporary third-party license directory: %w", err)
+		return fmt.Errorf("cannot create temporary third-party license directory: %w", err)
 	}
 	defer func() {
 		if err := gos.RemoveAll(temporaryDirectory); rErr == nil && err != nil {
@@ -132,7 +132,7 @@ func (this *buildBinary) createThirdPartyNotices(ctx context.Context, req bbin.B
 		"--save_path="+saveDirectory,
 		"./cmd/bifroest",
 	); err != nil {
-		return "", fmt.Errorf("cannot collect third-party Go notices for %s: %w\n%s", req.Platform, err, saveWarnings.String())
+		return fmt.Errorf("cannot collect third-party Go notices for %s: %w\n%s", req.Platform, err, saveWarnings.String())
 	}
 	if saveWarnings.Len() > 0 {
 		log.With("platform", req.Platform).With("warnings", strings.TrimSpace(saveWarnings.String())).Debug("go-licenses reported warnings while saving notices")
@@ -140,13 +140,12 @@ func (this *buildBinary) createThirdPartyNotices(ctx context.Context, req bbin.B
 
 	components, err := reconcileThirdPartyComponents(modules, records, saveDirectory, policy)
 	if err != nil {
-		return "", err
+		return err
 	}
-	target, err := gos.CreateTemp("", "bifroest-third-party-notices-*.txt")
+	target, err := gos.Create(targetName)
 	if err != nil {
-		return "", fmt.Errorf("cannot create third-party notices: %w", err)
+		return fmt.Errorf("cannot create third-party notices: %w", err)
 	}
-	targetName := target.Name()
 	success := false
 	defer func() {
 		if !success {
@@ -155,13 +154,13 @@ func (this *buildBinary) createThirdPartyNotices(ctx context.Context, req bbin.B
 	}()
 	if err := renderThirdPartyNotices(target, req.Platform, info, components); err != nil {
 		_ = target.Close()
-		return "", err
+		return err
 	}
 	if err := target.Close(); err != nil {
-		return "", fmt.Errorf("cannot close third-party notices %q: %w", targetName, err)
+		return fmt.Errorf("cannot close third-party notices %q: %w", targetName, err)
 	}
 	success = true
-	return targetName, nil
+	return nil
 }
 
 func runThirdPartyLicenseTool(ctx context.Context, req bbin.BuildRequest, stdout, stderr io.Writer, args ...string) error {

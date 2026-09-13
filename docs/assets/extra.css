@@ -264,16 +264,20 @@ footer .md-footer-meta.md-typeset ul.md-footer-links > li:last-child::after {
 }
 
 .md-typeset table thead th > .dist-edition-ref,
+.md-typeset table thead th.vertical ,
 .md-typeset table thead th > .else-ref {
-    writing-mode: vertical-lr;
+    writing-mode: sideways-lr;
 }
 
 .md-typeset table[data-kind=compatibility_matrix] th,
-.md-typeset table[data-kind=compatibility_matrix] td {
+.md-typeset table[data-kind=compliance_matrix] th,
+.md-typeset table[data-kind=compatibility_matrix] td,
+.md-typeset table[data-kind=compliance_matrix] td {
     padding: 0.75em 1em;
 }
 
-.md-typeset table[data-kind=compatibility_matrix] thead tr:first-child th:first-child {
+.md-typeset table[data-kind=compatibility_matrix] thead tr:first-child th:first-child,
+.md-typeset table[data-kind=compliance_matrix] thead tr:first-child th:first-child {
     vertical-align: bottom;
 }
 
@@ -283,5 +287,13 @@ footer .md-footer-meta.md-typeset ul.md-footer-links > li:last-child::after {
 }
 
 .md-typeset table[data-kind=compatibility_matrix] thead tr:last-child th {
+    padding-top: 0.5em;
+}
+
+.md-typeset table[data-kind=compliance_matrix] thead tr:first-child th:not([rowspan]) {
+    padding-bottom: 0;
+}
+
+.md-typeset table[data-kind=compliance_matrix] thead tr:last-child th {
     padding-top: 0.5em;
 }

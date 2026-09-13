@@ -18,16 +18,43 @@ jobs:
   release:
     name: "Release"
     runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.release-version.outputs.release_tag }}
+      version: ${{ steps.release-version.outputs.version }}
     permissions:
       contents: write
       packages: write
     container:
       image: ghcr.io/engity-com/build-images/build:debian12@sha256:f70a712f5b76894e976ba73c5c78642d60ae699cfd336b36426a7b772d5390bf
     steps:
+      - name: Resolve release version
+        id: release-version
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          case "${EVENT_NAME}" in
+            release) release_tag="${RELEASE_EVENT_TAG}" ;;
+            workflow_dispatch) release_tag="${VERSION_INPUT}" ;;
+            *) echo "Unsupported event: ${EVENT_NAME}" >&2; exit 1 ;;
+          esac
+          prerelease_identifier='(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)'
+          semver_re="^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-${prerelease_identifier}(\\.${prerelease_identifier})*)?$"
+          if [[ ! "${release_tag}" =~ ${semver_re} ]]; then
+            echo "Invalid release tag: ${release_tag}" >&2
+            exit 1
+          fi
+          echo "release_tag=${release_tag}" >> "${GITHUB_OUTPUT}"
+          echo "version=${release_tag#v}" >> "${GITHUB_OUTPUT}"
+
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          ref: ${{ steps.release-version.outputs.release_tag }}
 
       - name: Set reproducible build time
         run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "${GITHUB_ENV}"
@@ -60,10 +87,15 @@ jobs:
         run: mise run test:go
 
       - name: Build/Release
-        run: mise run build:go
+        env:
+          GITHUB_REF_NAME: ${{ steps.release-version.outputs.release_tag }}
+        run: |
+          export GITHUB_SHA="$(git rev-parse HEAD)"
+          mise run build:go
 
   documentation:
     name: "Documentation"
+    needs: release
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -73,6 +105,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: true
+          ref: ${{ needs.release.outputs.release_tag }}
 
       - name: Create temp repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -80,6 +113,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
           path: var/doc
+          ref: ${{ needs.release.outputs.release_tag }}
 
       - name: Setup Git
         working-directory: var/doc
@@ -105,23 +139,28 @@ jobs:
       - name: Install dependencies
         run: mise run install:docs
 
-      - name: Build
+      - name: Verify release assets
+        env:
+          RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
         run: |
-          VERSION_INPUT="${{ github.event.inputs.version }}"
-          VERSION_REF="${{ github.ref }}"
-          export VERSION=$(test -z "${VERSION_INPUT}" && echo $(echo "${VERSION_REF}" | sed -e "s#^refs/tags/##g" | sed -e "s#^v##g") || echo "${VERSION_INPUT}")
-          echo "Version: ${VERSION}"
+          set -euo pipefail
+          mkdir -p var/release
+          gh release download "${RELEASE_TAG}" --pattern bifroest-release-manifest.json --dir var/release
+          release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq .id)"
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" --jq '.[].name' > var/release/assets.txt
 
-          mise run build:docs
+      - name: Build
+        env:
+          RELEASE_ASSETS_FILE: var/release/assets.txt
+          RELEASE_MANIFEST_FILE: var/release/bifroest-release-manifest.json
+          VERSION: ${{ needs.release.outputs.version }}
+        run: mise run build:docs
 
       - name: Deploy
         working-directory: var/doc
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
         run: |
-          VERSION_INPUT="${{ github.event.inputs.version }}"
-          VERSION_REF="${{ github.ref }}"
-          export VERSION=$(test -z "${VERSION_INPUT}" && echo $(echo "${VERSION_REF}" | sed -e "s#^refs/tags/##g" | sed -e "s#^v##g") || echo "${VERSION_INPUT}")
-          echo "Version: ${VERSION}"
-
           git add -A
           git commit -m "Release v${VERSION}"
           git push --delete origin "docs/v${VERSION}" || true

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 	gos "os"
@@ -40,17 +41,19 @@ func newBuild(b *base) *build {
 	result.archive = newBuildArchive(result)
 	result.image = newBuildImage(result)
 	result.sbom = newBuildSbom(result)
+	result.releaseManifest = newBuildReleaseManifest(result)
 	result.digest = newBuildDigest(result)
 	return result
 }
 
 type build struct {
 	*base
-	binary  *buildBinary
-	archive *buildArchive
-	image   *buildImage
-	sbom    *buildSbom
-	digest  *buildDigest
+	binary          *buildBinary
+	archive         *buildArchive
+	image           *buildImage
+	sbom            *buildSbom
+	releaseManifest *buildReleaseManifest
+	digest          *buildDigest
 
 	vendor    string
 	dest      string
@@ -130,12 +133,19 @@ func (this *build) init(ctx context.Context, app *kingpin.Application) {
 
 func (this *build) allPlatforms(forTesting bool) iter.Seq[*bib.Platform] {
 	return func(yield func(*bib.Platform) bool) {
+		var platforms []*bib.Platform
 		for p := range bib.AllBinaryPlatforms(forTesting, this.assumedBuildOs(), this.assumedBuildArch()) {
 			if slices.Contains(this.oses, p.Os) &&
 				slices.Contains(this.archs, p.Arch) && slices.Contains(this.editions, p.Edition) {
-				if !yield(p) {
-					return
-				}
+				platforms = append(platforms, p)
+			}
+		}
+		slices.SortFunc(platforms, func(a, b *bib.Platform) int {
+			return strings.Compare(a.FilenamePrefix(this.prefix), b.FilenamePrefix(this.prefix))
+		})
+		for _, platform := range platforms {
+			if !yield(platform) {
+				return
 			}
 		}
 	}
@@ -266,6 +276,14 @@ func (this *build) buildAll(ctx context.Context, forTesting bool) (_ buildArtifa
 	}
 
 	if stages.contains(buildStageDigest) {
+		updated, err := this.releaseManifest.create(ctx, artifacts, stages.contains(buildStagePublish))
+		if err != nil {
+			return nil, err
+		}
+		artifacts = updated
+	}
+
+	if stages.contains(buildStageDigest) {
 		updated, err := this.digest.create(ctx, artifacts)
 		if err != nil {
 			return nil, err
@@ -301,12 +319,12 @@ func (this *build) buildSingle(ctx context.Context, p *bib.Platform) (_ buildArt
 
 	var ba *buildArtifact
 	if stages.contains(buildStageBinary) && p.IsBinarySupported(this.assumedBuildOs(), this.assumedBuildArch()) {
-		var err error
-		ba, err = this.binary.compile(ctx, p)
+		var notice *buildArtifact
+		ba, notice, err = this.binary.compile(ctx, p)
 		if err != nil {
 			return fail(err)
 		}
-		artifacts = append(artifacts, ba)
+		artifacts = append(artifacts, ba, notice)
 
 	} else {
 		l.With("stage", buildStageBinary).Info("build binary skipped")
@@ -341,18 +359,17 @@ func (this *build) publish(ctx context.Context, as buildArtifacts) error {
 		return fmt.Errorf("cannot publish: %w", err)
 	}
 
-	if err := this.image.publish(ctx, as); err != nil {
-		return fail(err)
-	}
-
 	release, err := this.repo.releases.findCurrent(ctx)
 	if err != nil {
 		return fail(err)
 	}
 
 	if release == nil {
-		log.Info("outside of release; publish artifacts skipped")
-		return nil
+		return fail(errors.New("GitHub release for current ref does not exist"))
+	}
+
+	if err := this.image.publish(ctx, as); err != nil {
+		return fail(err)
 	}
 
 	l := log.With("release", release)

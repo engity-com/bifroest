@@ -2,10 +2,12 @@ import html
 import json
 import os as pos
 import os.path as path
+import re
 from collections import OrderedDict
 from enum import Enum
 from pathlib import PurePath
 from typing import Sequence, List
+from urllib.parse import parse_qs, quote, urlparse
 
 from mkdocs.structure.files import File
 from mkdocs_macros.context import Files
@@ -207,6 +209,186 @@ support_matrix = SupportMatrix(
 )
 
 
+def load_release_manifest() -> dict:
+    filename = pos.getenv('RELEASE_MANIFEST_FILE')
+    if filename is None or filename.__len__() == 0:
+        return fallback_release_manifest()
+
+    with open(filename, 'r', encoding='utf-8') as source:
+        manifest = json.load(source)
+    if manifest.get('schemaVersion') != 1:
+        raise Exception(f"unsupported release manifest schema in {filename}")
+    if manifest.get('project') != repo:
+        raise Exception(f"release manifest project does not match {repo}")
+    if release != 'latest' and manifest.get('version') != release:
+        raise Exception(f"release manifest version {manifest.get('version')} does not match {release}")
+
+    assets = manifest.get('assets')
+    variants = manifest.get('variants')
+    if not isinstance(assets, list) or not isinstance(variants, list):
+        raise Exception("release manifest has no asset or variant inventory")
+    for key in ('manifestAsset', 'checksumAsset'):
+        name = manifest.get(key)
+        if not isinstance(name, str) or path.basename(name) != name:
+            raise Exception(f"release manifest has invalid {key}")
+    asset_names = set()
+    for asset in assets:
+        name = asset.get('name')
+        if not isinstance(name, str) or path.basename(name) != name or name in asset_names:
+            raise Exception(f"invalid or duplicate release asset name {name}")
+        asset_names.add(name)
+
+    referenced = set()
+    for variant in variants:
+        for key in ('archive', 'notice'):
+            if variant.get(key):
+                referenced.add(variant[key])
+        for subject in variant.get('sboms', {}).values():
+            for name in subject.values():
+                if name:
+                    referenced.add(name)
+    missing_inventory = referenced - asset_names
+    if missing_inventory:
+        raise Exception(f"release manifest references unknown assets: {sorted(missing_inventory)}")
+
+    expected_variants = set()
+    expected_images = set()
+    for o, by_os in support_matrix.entries.items():
+        for arch, by_arch in by_os.items():
+            for kind, edition in by_arch.items():
+                if edition.binary_supported:
+                    key = (o.value, arch.value, kind.value)
+                    expected_variants.add(key)
+                    if edition.image_supported:
+                        expected_images.add(key)
+    actual_variants = set()
+    actual_images = set()
+    for variant in variants:
+        key = (variant.get('os'), variant.get('architecture'), variant.get('edition'))
+        if key in actual_variants:
+            raise Exception(f"duplicate release variant {key}")
+        actual_variants.add(key)
+        if not variant.get('archive') or not variant.get('notice'):
+            raise Exception(f"release variant {key} has no archive or notice")
+        archive_sboms = variant.get('sboms', {}).get('archive', {})
+        if not archive_sboms.get('spdx') or not archive_sboms.get('cycloneDx'):
+            raise Exception(f"release variant {key} has incomplete archive SBOMs")
+        if variant.get('image') is not None:
+            actual_images.add(key)
+            image_sboms = variant.get('sboms', {}).get('image', {})
+            if not image_sboms.get('spdx') or not image_sboms.get('cycloneDx'):
+                raise Exception(f"release variant {key} has incomplete image SBOMs")
+    if actual_variants != expected_variants:
+        raise Exception("release variants do not match the documented support matrix")
+    if actual_images != expected_images:
+        raise Exception("release image variants do not match the documented support matrix")
+
+    inventory_filename = pos.getenv('RELEASE_ASSETS_FILE')
+    if inventory_filename is not None and inventory_filename.__len__() > 0:
+        with open(inventory_filename, 'r', encoding='utf-8') as source:
+            published = {line.strip() for line in source if line.strip().__len__() > 0}
+        expected = asset_names | {manifest['manifestAsset'], manifest['checksumAsset']}
+        missing_release_assets = expected - published
+        if missing_release_assets:
+            raise Exception(f"release is missing assets: {sorted(missing_release_assets)}")
+        unexpected_release_assets = published - expected
+        if unexpected_release_assets:
+            raise Exception(f"release has unexpected assets: {sorted(unexpected_release_assets)}")
+
+    return manifest
+
+
+def fallback_release_manifest() -> dict:
+    variants = []
+    version = raw_version[1:] if raw_version is not None and raw_version.startswith('v') else raw_version
+    for o, by_os in support_matrix.entries.items():
+        for arch, by_arch in by_os.items():
+            for kind, edition in by_arch.items():
+                if not edition.binary_supported:
+                    continue
+                prefix = f"bifroest-{o.value}-{arch.value}-{kind.value}"
+                archive = prefix + ('.zip' if o == Os.windows else '.tgz')
+                variant = {
+                    'os': o.value,
+                    'architecture': arch.value,
+                    'edition': kind.value,
+                    'archive': archive,
+                    'notice': prefix + '.third-party-notices.txt',
+                    'sboms': {
+                        'archive': {
+                            'spdx': archive + '.spdx.json',
+                            'cycloneDx': archive + '.cdx.json',
+                        }
+                    },
+                }
+                if edition.image_supported:
+                    image_name = f"bifroest-image-{o.value}-{arch.value}-{kind.value}"
+                    tag = kind.value if version is None or version.__len__() == 0 else f"{kind.value}-{version}"
+                    variant['sboms']['image'] = {
+                        'spdx': image_name + '.spdx.json',
+                        'cycloneDx': image_name + '.cdx.json',
+                    }
+                    variant['image'] = {'tag': f"{repo_container_uri}:{tag}"}
+                variants.append(variant)
+    return {
+        'schemaVersion': 1,
+        'project': repo,
+        'version': release,
+        'manifestAsset': 'bifroest-release-manifest.json',
+        'checksumAsset': 'bifroest-checksums.txt',
+        'assets': [],
+        'variants': variants,
+    }
+
+
+def resolve_container_image_reference(image: dict, registry: str) -> tuple[str, str | None]:
+    raw_tag = image.get('tag')
+    if raw_tag is not None and not isinstance(raw_tag, str):
+        raise Exception("release manifest has an invalid image tag")
+
+    target_tag = None
+    tagged_reference = None
+    embedded_digest = None
+    if raw_tag:
+        parsed = urlparse(raw_tag)
+        if parsed.scheme in ('http', 'https'):
+            tags = parse_qs(parsed.query).get('tag', [])
+            if tags:
+                target_tag = tags[0]
+        else:
+            tagged_reference, _, embedded_digest = raw_tag.partition('@')
+            last_slash = tagged_reference.rfind('/')
+            last_colon = tagged_reference.rfind(':')
+            if last_colon > last_slash:
+                target_tag = tagged_reference[last_colon + 1:]
+
+    if target_tag is not None and re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}', target_tag) is None:
+        raise Exception(f"release manifest has an invalid image tag {target_tag}")
+
+    digest = image.get('platformDigest') or image.get('indexDigest') or embedded_digest or None
+    digest_reference = image.get('platformReference') if image.get('platformDigest') else image.get('indexReference')
+    if digest is not None:
+        if not isinstance(digest, str) or re.fullmatch(r'sha256:[0-9a-f]{64}', digest) is None:
+            raise Exception(f"release manifest has an invalid image digest {digest}")
+
+    repository = registry
+    if digest_reference:
+        if not isinstance(digest_reference, str):
+            raise Exception("release manifest has an invalid image reference")
+        repository = digest_reference.partition('@')[0]
+    elif tagged_reference:
+        last_slash = tagged_reference.rfind('/')
+        last_colon = tagged_reference.rfind(':')
+        repository = tagged_reference[:last_colon] if last_colon > last_slash else tagged_reference
+
+    if not repository:
+        raise Exception("release manifest has no image registry")
+    reference = f"{repository}:{target_tag}" if target_tag else (tagged_reference or repository)
+    if digest:
+        reference = f"{reference.partition('@')[0]}@{digest}"
+    return reference, target_tag
+
+
 class TypeRefT:
     @property
     def title(self) -> str:
@@ -302,7 +484,7 @@ def define_env(env: MacrosPlugin):
 
         if default is not None:
             default_str = json.dumps(default, ensure_ascii=False)
-            default_str = default_str.replace("`", "\`")
+            default_str = default_str.replace("`", "\\`")
             if len(default_str) > 30:
                 result += f""" = :material-keyboard-return:\n///\n
 ```{{.json .property-description-default-block linenums=0}}
@@ -460,8 +642,9 @@ def define_env(env: MacrosPlugin):
         return f"{repo_container_uri}{f":{tag}" if tag is not None else ""}"
 
     @env.macro
-    def container_packages_url() -> str:
-        return f"{repo_http_url}/pkgs/container/bifroest"
+    def container_packages_url(tag: str | None = None) -> str:
+        result = f"{repo_http_url}/pkgs/container/bifroest"
+        return result if tag is None else f"{result}?tag={quote(tag, safe='')}"
 
     @env.macro
     def asset_url(file: str, raw: bool = False) -> str:
@@ -487,7 +670,72 @@ def define_env(env: MacrosPlugin):
 
     @env.macro
     def release_asset_url(asset: str, target: str = release) -> str:
-        return f"{repo_http_url}/releases/download/{target}/{asset}"
+        if target == "latest":
+            return f"{repo_http_url}/releases/latest/download/{quote(asset)}"
+        return f"{repo_http_url}/releases/download/{quote(target, safe='')}/{quote(asset)}"
+
+    @env.macro
+    def compliance_matrix() -> str:
+        manifest = load_release_manifest()
+
+        result = '<table markdown="1" data-kind="compliance_matrix"><thead markdown="1">'
+        result += ('<tr markdown="1">'
+                   '<th rowspan="2">Variant</th>'
+                   '<th rowspan="2" class="vertical">Notice</th>'
+                   '<th colspan="3">Archive</th>'
+                   '<th colspan="3">OCI</th>'
+                   '</tr>'
+                   )
+        result += ('<tr markdown="1">'
+                   '<th class="vertical">Download</th>'
+                   '<th class="vertical">SPDX</th>'
+                   '<th class="vertical">CycloneDX</th>'
+                   '<th class="vertical">Reference</th>'
+                   '<th class="vertical">SPDX</th>'
+                   '<th class="vertical">CycloneDX</th>'
+                   '</tr>'
+                   )
+        result += '</thead><tbody markdown="1">'
+
+        def asset(name: str | None, label: str) -> str:
+            if name is None or name.__len__() == 0:
+                return "-"
+            return f"[:octicons-download-24:{{. title='{f"{label}"}'}}]({release_asset_url(name)})"
+
+        for variant in manifest['variants']:
+            platform = f"`{variant['os']}/{variant['architecture']}/{variant['edition']}`"
+            sboms = variant.get('sboms', {})
+            archive_sboms = sboms.get('archive', {})
+            image_sboms = sboms.get('image', {})
+            image = variant.get('image')
+            image_cell = "-"
+            if image is not None:
+                full_reference, target_tag = resolve_container_image_reference(
+                    image, manifest.get('registry', repo_container_uri))
+                escaped_reference = html.escape(full_reference, quote=True)
+                target_url = html.escape(container_packages_url(target_tag), quote=True)
+                image_cell = (
+                    f'<a href="{target_url}" data-reference="{escaped_reference}" title="{escaped_reference}" '
+                    'onclick="if (!navigator.clipboard || !window.isSecureContext) return true; '
+                    'event.preventDefault(); try { navigator.clipboard.writeText(this.dataset.reference)'
+                    '.catch(function () { window.location.assign(this.href); }.bind(this)); } '
+                    'catch (_) { window.location.assign(this.href); } return false;">'
+                    ':octicons-copy-24:</a>'
+                )
+
+            result += ('<tr markdown="1">'
+                       f'<td markdown="1">{platform}</td>'
+                       f'<td markdown="1">{asset(variant.get('notice'), 'Notice')}</td>'
+                       f'<td markdown="1">{asset(variant.get('archive'), 'Archive')}</td>'
+                       f'<td markdown="1">{asset(archive_sboms.get('spdx'), 'SPDX')}</td>'
+                       f'<td markdown="1">{asset(archive_sboms.get('cycloneDx'), 'CycloneDX')}</td>'
+                       f'<td markdown="1">{image_cell}</td>'
+                       f'<td markdown="1">{asset(image_sboms.get('spdx'), 'SPDX')}</td>'
+                       f'<td markdown="1">{asset(image_sboms.get('cycloneDx'), 'CycloneDX')}</td>'
+                       '</tr>')
+
+        result += "</tbody></table>"
+        return result
 
     @env.macro
     def rel_file_path(in_path: str, start: str) -> str:
