@@ -88,14 +88,9 @@ func releaseLicenseImageItems(root string, targetOs sys.Os) ([]images.LayerItem,
 	}
 	result := make([]images.LayerItem, 0, len(licenses))
 	for _, license := range licenses {
-		var target string
-		switch targetOs {
-		case sys.OsLinux:
-			target = path.Join("/usr/share/licenses/bifroest", license.name)
-		case sys.OsWindows:
-			target = `C:\Program Files\Engity\Bifroest\` + strings.ReplaceAll(license.name, "/", `\`)
-		default:
-			return nil, fmt.Errorf("cannot resolve release license location for os %v", targetOs)
+		target, err := releaseLicenseImageTarget(license.name, targetOs)
+		if err != nil {
+			return nil, err
 		}
 		result = append(result, images.LayerItem{
 			SourceFile: license.source,
@@ -104,4 +99,15 @@ func releaseLicenseImageItems(root string, targetOs sys.Os) ([]images.LayerItem,
 		})
 	}
 	return result, nil
+}
+
+func releaseLicenseImageTarget(name string, targetOs sys.Os) (string, error) {
+	switch targetOs {
+	case sys.OsLinux:
+		return path.Join("/usr/share/licenses/bifroest", name), nil
+	case sys.OsWindows:
+		return `C:\Program Files\Engity\Bifroest\` + strings.ReplaceAll(name, "/", `\`), nil
+	default:
+		return "", fmt.Errorf("cannot resolve release license location for os %v", targetOs)
+	}
 }

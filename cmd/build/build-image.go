@@ -103,6 +103,18 @@ func (this *buildImage) createPart(ctx context.Context, binary *buildArtifact) (
 	if err != nil {
 		return fail(err)
 	}
+	if binary.thirdPartyNoticesFilepath == "" {
+		return failf("binary has no third-party notices")
+	}
+	thirdPartyNoticesTarget, err := releaseLicenseImageTarget(thirdPartyNoticesFilename, a.Os)
+	if err != nil {
+		return fail(err)
+	}
+	licenseItems = append(licenseItems, images.LayerItem{
+		SourceFile: binary.thirdPartyNoticesFilepath,
+		TargetFile: thirdPartyNoticesTarget,
+		Mode:       0644,
+	})
 
 	buildRequest := images.BuildRequest{
 		From:                 from,

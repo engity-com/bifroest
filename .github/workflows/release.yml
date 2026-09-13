@@ -18,13 +18,19 @@ jobs:
   release:
     name: "Release"
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
     container:
-      image: ghcr.io/engity-com/build-images/go
+      image: ghcr.io/engity-com/build-images/go@sha256:f1b13f925f03de6759dfc15be55810f144bf357d960bd87869285b951e427bd4
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+
+      - name: Set reproducible build time
+        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "${GITHUB_ENV}"
 
       - name: Cache Go
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6

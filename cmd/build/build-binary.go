@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	gos "os"
 	"time"
 
 	"github.com/alecthomas/kingpin/v2"
@@ -67,6 +69,18 @@ func (this *buildBinary) compile(ctx context.Context, p *bib.Platform) (*buildAr
 	if err := binary.Build(ctx, req); err != nil {
 		return fail(err)
 	}
+	thirdPartyNoticesFilepath, err := this.createThirdPartyNotices(ctx, req, a)
+	if err != nil {
+		return fail(err)
+	}
+	a.thirdPartyNoticesFilepath = thirdPartyNoticesFilepath
+	a.addCloser(func() error {
+		err := gos.Remove(thirdPartyNoticesFilepath)
+		if errors.Is(err, gos.ErrNotExist) {
+			return nil
+		}
+		return err
+	})
 
 	ld := l.With("duration", time.Since(start).Truncate(time.Millisecond))
 	if l.IsDebugEnabled() {

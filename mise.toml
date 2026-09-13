@@ -107,6 +107,8 @@ env_file = ".env"
 
 [tool_alias]
 golangci-lint = "aqua:golangci/golangci-lint"
+go-licenses = "go:github.com/google/go-licenses/v2"
+syft = "aqua:anchore/syft"
 
 [env]
 _.python.venv = { path = ".pyvenv", create = true, uv_create_args = ['--seed'] }

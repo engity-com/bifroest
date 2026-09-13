@@ -21,10 +21,11 @@ type buildArtifact struct {
 	*bbi.Platform
 	*buildContext
 
-	t        buildArtifactType
-	filepath string
-	ociImage v1.Image
-	ociIndex v1.ImageIndex
+	t                         buildArtifactType
+	filepath                  string
+	thirdPartyNoticesFilepath string
+	ociImage                  v1.Image
+	ociIndex                  v1.ImageIndex
 
 	onClose []buildArtifactCloser
 	lock    sync.Mutex
@@ -47,6 +48,14 @@ func (this *buildArtifact) mediaType() string {
 		default:
 			return "application/octet-stream"
 		}
+	case buildArtifactTypeSbom:
+		if strings.HasSuffix(this.name(), ".spdx.json") {
+			return "application/spdx+json"
+		}
+		if strings.HasSuffix(this.name(), ".cdx.json") {
+			return "application/vnd.cyclonedx+json; version=1.6"
+		}
+		return "application/json"
 	default:
 		return "application/octet-stream"
 	}
@@ -82,6 +91,7 @@ const (
 	buildArtifactTypeArchive
 	buildArtifactTypeImagePlatform
 	buildArtifactTypeImage
+	buildArtifactTypeSbom
 	buildArtifactTypeDigest
 )
 
@@ -95,7 +105,7 @@ func (this buildArtifactType) String() string {
 
 func (this buildArtifactType) canBePublished() bool {
 	switch this {
-	case buildArtifactTypeArchive, buildArtifactTypeDigest:
+	case buildArtifactTypeArchive, buildArtifactTypeSbom, buildArtifactTypeDigest:
 		return true
 	default:
 		return false
@@ -108,6 +118,7 @@ var (
 		buildArtifactTypeArchive:       "archive",
 		buildArtifactTypeImagePlatform: "imagePlatform",
 		buildArtifactTypeImage:         "image",
+		buildArtifactTypeSbom:          "sbom",
 		buildArtifactTypeDigest:        "digest",
 	}
 )
