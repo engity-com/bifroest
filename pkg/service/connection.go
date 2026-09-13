@@ -14,7 +14,9 @@ import (
 	"github.com/echocat/slf4g/fields"
 	essh "github.com/engity-com/ssh-server-go"
 
+	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/authorization"
+	"github.com/engity-com/bifroest/pkg/common"
 	bconn "github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/net"
@@ -85,14 +87,16 @@ func (this *service) newConnection(orig gonet.Conn, ctx essh.Context, logger log
 		return nil, err
 	}
 
-	now := time.Now().UnixMilli()
+	createdAt := time.Now()
+	now := createdAt.UnixMilli()
 	result := &connection{
-		Conn:    orig,
-		id:      id,
-		context: ctx,
-		logger:  logger,
-		service: this,
-		created: now,
+		Conn:      orig,
+		id:        id,
+		context:   ctx,
+		logger:    logger,
+		service:   this,
+		created:   now,
+		createdAt: createdAt,
 	}
 	result.lastActivity.Store(now)
 	return result, nil
@@ -104,8 +108,19 @@ func (this *service) onDisconnected(ctx essh.Context, _ gonet.Conn) error {
 		conn.logger.
 			With("read", conn.read.Load()).
 			With("written", conn.written.Load()).
-			With("duration", time.Since(time.UnixMilli(conn.created))).
+			With("duration", time.Since(conn.createdAt)).
 			Debug("connection ended")
+		auth, _ := ctx.Value(authorizationCtxKey).(authorization.Authorization)
+		if auth != nil {
+			event := this.authorizationAuditEvent(ctx, auth, audit.EventNameConnectionClosed, audit.EventDomainConnection)
+			event.Reason = audit.EventReasonDisconnected
+			event.BytesRead = common.P(conn.read.Load())
+			event.BytesWritten = common.P(conn.written.Load())
+			event.DurationMillis = common.P(time.Since(conn.createdAt).Milliseconds())
+			if err := this.recordFlowAudit(ctx, auth.Flow(), event); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -123,11 +138,12 @@ func finishConnectionLifecycle(ctx essh.Context) {
 
 type connection struct {
 	gonet.Conn
-	id      bconn.Id
-	context essh.Context
-	logger  log.Logger
-	service *service
-	created int64
+	id        bconn.Id
+	context   essh.Context
+	logger    log.Logger
+	service   *service
+	created   int64
+	createdAt time.Time
 
 	interceptorP            atomic.Pointer[session.ConnectionInterceptor]
 	closed                  atomic.Bool

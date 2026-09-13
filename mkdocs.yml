@@ -157,9 +157,39 @@ nav:
       - Sessions:
           - reference/session/index.md
           - Filesystem: reference/session/fs.md
-      - reference/housekeeping.md
-      - reference/alternatives.md
-      - reference/cli.md
+      - Audit log:
+          - reference/auditlog/index.md
+          - Events: reference/auditlog/events.md
+          - Remote targets:
+              - reference/auditlog/remote-targets/index.md
+              - S3: reference/auditlog/remote-targets/s3.md
+              - SFTP: reference/auditlog/remote-targets/sftp.md
+              - WebDAV: reference/auditlog/remote-targets/webdav.md
+      - Command line interface (CLI):
+          - reference/cli/index.md
+          - Run: reference/cli/run.md
+          - Keys:
+              - reference/cli/key/index.md
+              - Generate: reference/cli/key/generate.md
+              - Export public key: reference/cli/key/export/public.md
+              - Export certificate authority: reference/cli/key/export/ca.md
+              - Export host keys: reference/cli/key/export/host.md
+              - Import certificate authorities: reference/cli/key/import/ca.md
+              - Import host keys: reference/cli/key/import/host.md
+          - Audit:
+              - reference/cli/audit/index.md
+              - Verify: reference/cli/audit/verify.md
+              - Decrypt: reference/cli/audit/decrypt.md
+              - Export: reference/cli/audit/export.md
+              - Merge: reference/cli/audit/merge.md
+          - Windows service:
+              - reference/cli/service/index.md
+              - Install: reference/cli/service/install.md
+              - Remove: reference/cli/service/remove.md
+              - Start: reference/cli/service/start.md
+              - Stop: reference/cli/service/stop.md
+          - Version: reference/cli/version.md
+          - Help: reference/cli/help.md
       - Templating:
           - reference/templating/index.md
       - Context Objects:
@@ -179,6 +209,8 @@ nav:
           - Remote: reference/context/remote.md
           - Simple Entry: reference/context/simple-entry.md
       - reference/data-type.md
+      - reference/housekeeping.md
+      - reference/alternatives.md
   - Community:
       - Community: community/index.md
       - Issues: https://github.com/engity-com/bifroest/issues

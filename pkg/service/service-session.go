@@ -2,15 +2,20 @@ package service
 
 import (
 	"context"
+	goerrors "errors"
 	"io"
 	"time"
 
 	essh "github.com/engity-com/ssh-server-go"
+	"github.com/google/uuid"
 	gossh "golang.org/x/crypto/ssh"
 
+	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/errors"
+	bssh "github.com/engity-com/bifroest/pkg/ssh"
 )
 
 func (this *service) handleNewSshSession(srv *essh.Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx essh.Context) error {
@@ -117,6 +122,53 @@ func (this *service) uncheckedExecuteSshSession(sshSess essh.Session, taskType e
 	}
 }
 
+type sessionTaskAuditLifecycle struct {
+	service     *service
+	ctx         essh.Context
+	auth        authorization.Authorization
+	operationId string
+	task        audit.SessionTask
+	startedAt   time.Time
+}
+
+func (this *sessionTaskAuditLifecycle) start(hasPty, agentForwarding, forcedCommand bool) error {
+	this.startedAt = time.Now()
+	event := this.service.authorizationAuditEvent(this.ctx, this.auth, audit.EventNameSessionTaskStarted, audit.EventDomainSession)
+	event.OperationId = this.operationId
+	event.SessionTask = this.task
+	event.Pty = common.P(hasPty)
+	event.AgentForwarding = common.P(agentForwarding)
+	event.ForcedCommand = common.P(forcedCommand)
+	return this.service.recordFlowAudit(this.ctx, this.auth.Flow(), event)
+}
+
+func (this *sessionTaskAuditLifecycle) complete(exitCode int, taskErr error) error {
+	event := this.service.authorizationAuditEvent(this.ctx, this.auth, audit.EventNameSessionTaskCompleted, audit.EventDomainSession)
+	event.OperationId = this.operationId
+	event.SessionTask = this.task
+	event.DurationMillis = common.P(time.Since(this.startedAt).Milliseconds())
+	if exitCode >= 0 {
+		event.ExitCode = common.P(exitCode)
+	}
+	switch {
+	case taskErr == nil && exitCode < 0 && errors.Is(this.ctx.Err(), context.DeadlineExceeded), errors.Is(taskErr, context.DeadlineExceeded):
+		event.Outcome = audit.EventOutcomeCanceled
+		event.Reason = audit.EventReasonDeadlineExceeded
+	case taskErr == nil && exitCode < 0 && errors.Is(this.ctx.Err(), context.Canceled), errors.Is(taskErr, context.Canceled):
+		event.Outcome = audit.EventOutcomeCanceled
+		event.Reason = audit.EventReasonContextCanceled
+	case taskErr != nil:
+		event.Outcome = audit.EventOutcomeFailure
+		event.ErrorCategory = auditErrorCategory(taskErr)
+	case exitCode < 0:
+		event.Outcome = audit.EventOutcomeFailure
+		event.Reason = audit.EventReasonInvalidExitCode
+	default:
+		event.Outcome = audit.EventOutcomeSuccess
+	}
+	return this.service.recordFlowAudit(this.ctx, this.auth.Flow(), event)
+}
+
 func (this *service) executeSession(sshSess essh.Session, conn *connection, taskType environment.TaskType) (exitCode int, rErr error) {
 	fail := func(err error) (int, error) {
 		return -1, err
@@ -125,13 +177,42 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 		return fail(errors.Newf(t, msg, args...))
 	}
 
-	auth, sess, oldState, err := this.resolveAuthorizationAndSession(sshSess.Context())
-	if err != nil {
-		return fail(err)
+	auth, _ := sshSess.Context().Value(authorizationCtxKey).(authorization.Authorization)
+	if auth == nil {
+		return failf(errors.System, "no authorization resolved, but it should")
 	}
+	sess := auth.FindSession()
+	if sess == nil {
+		return failf(errors.System, "authorization resolved, but does not have a valid session")
+	}
+	operationId, err := uuid.NewRandom()
+	if err != nil {
+		return failf(errors.System, "cannot generate audit operation ID: %w", err)
+	}
+	requestedTask := auditSessionTask(taskType, sshSess.RawCommand() != "")
 	sshSess, forcedCommand := applyAuthorizedKeyPolicy(auth, sshSess)
 	if forcedCommand {
 		taskType = environment.TaskTypeShell
+	}
+	_, _, hasPty := sshSess.Pty()
+	taskAudit := sessionTaskAuditLifecycle{
+		service:     this,
+		ctx:         sshSess.Context(),
+		auth:        auth,
+		operationId: operationId.String(),
+		task:        requestedTask,
+	}
+	if err := taskAudit.start(hasPty, bssh.AgentRequested(sshSess), forcedCommand); err != nil {
+		return fail(err)
+	}
+	defer func() {
+		if recordErr := taskAudit.complete(exitCode, rErr); recordErr != nil {
+			rErr = goerrors.Join(rErr, recordErr)
+		}
+	}()
+	_, _, oldState, err := this.resolveAuthorizationAndSession(sshSess.Context())
+	if err != nil {
+		return fail(err)
 	}
 
 	if err := this.showRememberMe(sshSess, auth, sess, oldState); err != nil {
@@ -177,4 +258,14 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 	} else {
 		return exitCode, nil
 	}
+}
+
+func auditSessionTask(taskType environment.TaskType, command bool) audit.SessionTask {
+	if taskType == environment.TaskTypeSftp {
+		return audit.SessionTaskSftp
+	}
+	if command {
+		return audit.SessionTaskExec
+	}
+	return audit.SessionTaskShell
 }

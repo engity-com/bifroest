@@ -24,6 +24,9 @@ func Newf(t Type, msg string, args ...any) *Error {
 }
 
 func IsType(err error, t Type, otherT ...Type) bool {
+	if err == nil {
+		return false
+	}
 	var ee *Error
 	if errors.As(err, &ee) {
 		if ee.Type == t {
@@ -34,7 +37,17 @@ func IsType(err error, t Type, otherT ...Type) bool {
 				return true
 			}
 		}
-		return IsType(ee.Cause, t, otherT...)
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, candidate := range joined.Unwrap() {
+			if IsType(candidate, t, otherT...) {
+				return true
+			}
+		}
+		return false
+	}
+	if wrapped := errors.Unwrap(err); wrapped != nil {
+		return IsType(wrapped, t, otherT...)
 	}
 	return false
 }

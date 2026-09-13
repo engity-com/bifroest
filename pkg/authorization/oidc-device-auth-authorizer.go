@@ -3,11 +3,13 @@ package authorization
 import (
 	"context"
 	"encoding/json"
+	goerrors "errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	coidc "github.com/coreos/go-oidc/v3/oidc"
 	log "github.com/echocat/slf4g"
@@ -248,19 +250,6 @@ func (this *OidcDeviceAuthAuthorizer) RestoreFromSession(ctx context.Context, se
 		args = append([]any{sess}, args...)
 		return nil, errors.Newf(t, "cannot restore authorization from session %v: "+msg, args...)
 	}
-	cleanFromSessionOnly := func() (Authorization, error) {
-		if opts.IsAutoCleanUpAllowed() {
-			// Clear the stored token.
-			if err := sess.SetAuthorizationToken(ctx, nil); err != nil {
-				return failf(errors.System, "cannot clear existing authorization token of session after oidc access token seems to be expired: %w", err)
-			}
-			opts.GetLogger(this.logger).
-				With("session", sess).
-				Info("session's oidc access token seems to be expired; therefore according authorization token was removed from session")
-		}
-		return nil, ErrNoSuchAuthorization
-	}
-
 	if !sess.Flow().IsEqualTo(this.flow) {
 		return nil, ErrNoSuchAuthorization
 	}
@@ -276,13 +265,16 @@ func (this *OidcDeviceAuthAuthorizer) RestoreFromSession(ctx context.Context, se
 
 	var t oidcToken
 	if err := json.Unmarshal(tb, &t); err != nil {
-		return failf(errors.System, "cannot decode token of: %w", err)
+		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("cannot decode OIDC authorization token: %w", err))
+	}
+	if t.Token != nil && !t.Expiry.IsZero() && !time.Now().Before(t.Expiry) {
+		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("OIDC authorization token expired at %s", t.Expiry))
 	}
 
 	// TODO! Refresh the token
-	auth, err := this.finalizeAuth(ctx, this.logger(), &t, !opts.IsAutoCleanUpAllowed())
-	if errors.IsType(err, errors.Expired, errors.Permission) {
-		return cleanFromSessionOnly()
+	auth, err := this.finalizeAuth(ctx, this.logger(), &t, true)
+	if errors.IsType(err, errors.Expired) {
+		return nil, unusableAuthorizationToken(ctx, sess, opts, err)
 	}
 	if err != nil {
 		return fail(err)
@@ -591,7 +583,8 @@ func (this *OidcDeviceAuthAuthorizer) verifyToken(ctx context.Context, token *oi
 	}
 
 	idToken, err := this.verifier.Verify(ctx, token.IdToken)
-	if errors.Is(err, (*coidc.TokenExpiredError)(nil)) {
+	var expired *coidc.TokenExpiredError
+	if goerrors.As(err, &expired) {
 		return failf(errors.Expired, "cannot verify ID token: %w", err)
 	}
 	if err != nil {

@@ -115,7 +115,7 @@ func (this *BifroestAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Au
 	return Forbidden(req.Connection().Remote()), nil
 }
 
-func (this *BifroestAuthorizer) RestoreFromSession(ctx context.Context, sess session.Session, _ *RestoreOpts) (Authorization, error) {
+func (this *BifroestAuthorizer) RestoreFromSession(ctx context.Context, sess session.Session, opts *RestoreOpts) (Authorization, error) {
 	failf := func(msg string, args ...any) (Authorization, error) {
 		args = append([]any{sess}, args...)
 		return nil, errors.Newf(errors.System, "cannot restore authorization from session %v: "+msg, args...)
@@ -132,7 +132,7 @@ func (this *BifroestAuthorizer) RestoreFromSession(ctx context.Context, sess ses
 	}
 	token, err := decodeBifroestAuthorizationToken(raw)
 	if err != nil {
-		return failf("cannot decode token: %w", err)
+		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("cannot decode Bifroest authorization token: %w", err))
 	}
 	info, err := sess.Info(ctx)
 	if err != nil {
@@ -145,12 +145,15 @@ func (this *BifroestAuthorizer) RestoreFromSession(ctx context.Context, sess ses
 	last := token.Evidence.LastHop()
 	now := time.Now()
 	if last == nil || token.Evidence.Origin.AuthorizationKind == "none" || last.Audience == "" || !slices.Contains(this.audiences, last.Audience) ||
-		now.Before(last.ValidAfter) || !now.Before(last.ValidBefore) || last.IssuedAt.After(now.Add(maxAuthorizationEvidenceClockSkew)) ||
+		!now.Before(last.ValidBefore) ||
 		this.conf.MaxCertificateValidity.Native() <= 0 || last.ValidBefore.Sub(last.IssuedAt) > this.conf.MaxCertificateValidity.Native() {
-		return failf("persisted delegation evidence is no longer valid")
+		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("persisted delegation evidence is no longer valid for the configured flow"))
+	}
+	if now.Before(last.ValidAfter) || last.IssuedAt.After(now.Add(maxAuthorizationEvidenceClockSkew)) {
+		return failf("persisted delegation evidence is not currently valid")
 	}
 	if lastAccessed.Remote() == nil || last.TargetUser != lastAccessed.Remote().User() {
-		return failf("persisted delegation target does not match the session remote")
+		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("persisted delegation target does not match the session remote"))
 	}
 	policy := &AuthorizedKeyPolicy{
 		PtyAllowed:             token.Policy.PtyAllowed,

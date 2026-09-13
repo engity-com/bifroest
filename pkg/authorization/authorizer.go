@@ -3,6 +3,7 @@ package authorization
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 
 	log "github.com/echocat/slf4g"
@@ -12,7 +13,21 @@ import (
 
 var (
 	ErrNoSuchAuthorization = errors.New("no such authorization")
+	// ErrUnusableAuthorizationToken marks persisted local token data that cannot
+	// become restorable without changing that token or the running configuration.
+	ErrUnusableAuthorizationToken = errors.New("unusable persisted authorization token")
 )
+
+func unusableAuthorizationToken(ctx context.Context, sess session.Session, opts *RestoreOpts, cause error) error {
+	if !opts.IsAutoCleanUpAllowed() {
+		return fmt.Errorf("%w: %v", ErrUnusableAuthorizationToken, cause)
+	}
+	if err := sess.SetAuthorizationToken(ctx, nil); err != nil {
+		return fmt.Errorf("cannot remove unusable persisted authorization token: %w", err)
+	}
+	opts.GetLogger(nil).With("session", sess).Info("removed unusable persisted authorization token")
+	return ErrNoSuchAuthorization
+}
 
 type Authorizer interface {
 	AuthorizePublicKey(PublicKeyRequest) (Authorization, error)

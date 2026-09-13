@@ -295,19 +295,6 @@ func (this *SimpleAuthorizer) RestoreFromSession(ctx context.Context, sess sessi
 		args = append([]any{sess}, args...)
 		return nil, errors.Newf(t, "cannot restore authorization from session %v: "+msg, args...)
 	}
-	cleanFromSessionOnly := func() (Authorization, error) {
-		if opts.IsAutoCleanUpAllowed() {
-			// Clear the stored token.
-			if err := sess.SetAuthorizationToken(ctx, nil); err != nil {
-				return failf(errors.System, "cannot clear existing authorization token of session after user wasn't found: %w", err)
-			}
-			opts.GetLogger(this.logger).
-				With("session", sess).
-				Info("session's user does not longer exist; therefore according authorization token was removed from session")
-		}
-		return nil, ErrNoSuchAuthorization
-	}
-
 	if !sess.Flow().IsEqualTo(this.flow) {
 		return nil, ErrNoSuchAuthorization
 	}
@@ -323,7 +310,7 @@ func (this *SimpleAuthorizer) RestoreFromSession(ctx context.Context, sess sessi
 
 	var buf simpleToken
 	if err := json.Unmarshal(tb, &buf); err != nil {
-		return failf(errors.System, "cannot decode token of: %w", err)
+		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("cannot decode simple authorization token: %w", err))
 	}
 
 	var entry *configuration.AuthorizationSimpleEntry
@@ -336,7 +323,7 @@ func (this *SimpleAuthorizer) RestoreFromSession(ctx context.Context, sess sessi
 	}
 
 	if entry == nil {
-		return cleanFromSessionOnly()
+		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("simple authorization entry %q no longer exists", buf.User.Name))
 	}
 
 	si, err := sess.Info(ctx)
@@ -361,11 +348,4 @@ func (this *SimpleAuthorizer) RestoreFromSession(ctx context.Context, sess sessi
 
 func (this *SimpleAuthorizer) Close() error {
 	return nil
-}
-
-func (this *SimpleAuthorizer) logger() log.Logger {
-	if v := this.Logger; v != nil {
-		return v
-	}
-	return log.GetLogger("authorizer")
 }

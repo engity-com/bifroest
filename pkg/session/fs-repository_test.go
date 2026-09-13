@@ -60,6 +60,14 @@ func TestFsRepositoryRejectsDanglingStorageSymlink(t *testing.T) {
 	require.ErrorContains(t, err, "dangling")
 }
 
+func TestCanonicalizeFsRepositoryStorageRejectsMissingParent(t *testing.T) {
+	storage := filepath.Join(t.TempDir(), "missing", "sessions")
+
+	canonical, err := canonicalizeFsRepositoryStorage(storage)
+	require.ErrorContains(t, err, "cannot canonicalize parent directory")
+	require.Empty(t, canonical)
+}
+
 func TestFsRepositoryPersistsEnvironmentTokenAndCreatedAt(t *testing.T) {
 	conf := newFsRepositoryTestConfiguration(t)
 	conf.IdleTimeout.SetNative(0)
@@ -122,6 +130,139 @@ func TestFsRepositoryRejectsWritesThroughStaleDisposedSession(t *testing.T) {
 	info, err := restored.Info(ctx)
 	require.NoError(t, err)
 	require.Equal(t, StateDisposed, info.State())
+}
+
+func TestFsRepositoryDeleteRemovesEmptyFlowDirectory(t *testing.T) {
+	conf := newFsRepositoryTestConfiguration(t)
+	repository, err := NewFsRepository(context.Background(), conf)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, repository.Close()) }()
+	ctx := context.Background()
+	first, err := repository.Create(ctx, "test", fsRepositoryTestRemote{}, nil)
+	require.NoError(t, err)
+	second, err := repository.Create(ctx, "test", fsRepositoryTestRemote{}, nil)
+	require.NoError(t, err)
+	firstDirectory, err := repository.dir("test", first.Id())
+	require.NoError(t, err)
+	flowDirectory := filepath.Dir(firstDirectory)
+
+	require.NoError(t, repository.Delete(ctx, first))
+	require.DirExists(t, flowDirectory)
+	require.NoError(t, repository.Delete(ctx, second))
+	require.NoDirExists(t, flowDirectory)
+}
+
+func TestFsRepositoryFindAllReportsCorruptEntryAndContinues(t *testing.T) {
+	conf := newFsRepositoryTestConfiguration(t)
+	repository, err := NewFsRepository(context.Background(), conf)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, repository.Close()) }()
+	ctx := context.Background()
+	corruptId := MustNewId()
+	corruptDirectory, err := repository.dir("test", corruptId)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(corruptDirectory, 0700))
+	corruptSessionFile := filepath.Join(corruptDirectory, FsFileSession)
+	require.NoError(t, os.WriteFile(corruptSessionFile, []byte("not-json"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(corruptDirectory, FsFileEnvironmentToken), []byte(`{"containerId":"recover-me"}`), 0600))
+	valid, err := repository.Create(ctx, "test", fsRepositoryTestRemote{}, nil)
+	require.NoError(t, err)
+
+	var diagnostics []FindDiagnostic
+	var visited []Id
+	autoCleanup := false
+	err = repository.FindAll(ctx, func(_ context.Context, candidate Session) (bool, error) {
+		visited = append(visited, candidate.Id())
+		return true, nil
+	}, &FindOpts{
+		AutoCleanUpAllowed: &autoCleanup,
+		DiagnosticConsumer: func(_ context.Context, diagnostic FindDiagnostic) error {
+			diagnostics = append(diagnostics, diagnostic)
+			return nil
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, []Id{valid.Id()}, visited)
+	require.Len(t, diagnostics, 1)
+	require.Equal(t, configuration.FlowName("test"), diagnostics[0].Flow)
+	require.Equal(t, corruptId, diagnostics[0].Id)
+	require.Equal(t, corruptDirectory, diagnostics[0].Path)
+	require.ErrorContains(t, diagnostics[0], "cannot decode session")
+	require.FileExists(t, corruptSessionFile)
+	require.FileExists(t, filepath.Join(corruptDirectory, FsFileEnvironmentToken))
+}
+
+func TestFsRepositoryFindAllReportsSessionDirectoryWithoutMetadata(t *testing.T) {
+	conf := newFsRepositoryTestConfiguration(t)
+	repository, err := NewFsRepository(context.Background(), conf)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, repository.Close()) }()
+	missingId := MustNewId()
+	missingDirectory, err := repository.dir("test", missingId)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(missingDirectory, 0700))
+	environmentToken := filepath.Join(missingDirectory, FsFileEnvironmentToken)
+	require.NoError(t, os.WriteFile(environmentToken, []byte(`{"containerId":"recover-me"}`), 0600))
+	valid, err := repository.Create(context.Background(), "test", fsRepositoryTestRemote{}, nil)
+	require.NoError(t, err)
+
+	var diagnostic FindDiagnostic
+	var visited []Id
+	autoCleanup := false
+	err = repository.FindAll(context.Background(), func(_ context.Context, candidate Session) (bool, error) {
+		visited = append(visited, candidate.Id())
+		return true, nil
+	}, &FindOpts{
+		AutoCleanUpAllowed: &autoCleanup,
+		DiagnosticConsumer: func(_ context.Context, candidate FindDiagnostic) error {
+			diagnostic = candidate
+			return nil
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, []Id{valid.Id()}, visited)
+	require.Equal(t, missingId, diagnostic.Id)
+	require.ErrorIs(t, diagnostic, ErrCorruptSession)
+	require.FileExists(t, environmentToken)
+}
+
+func TestFsRepositoryFindAllRestrictsAutoCleanupPerFlow(t *testing.T) {
+	conf := newFsRepositoryTestConfiguration(t)
+	repository, err := NewFsRepository(context.Background(), conf)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, repository.Close()) }()
+	corruptFiles := make(map[configuration.FlowName]string)
+	for _, flow := range []configuration.FlowName{"current", "removed"} {
+		id := MustNewId()
+		directory, err := repository.dir(flow, id)
+		require.NoError(t, err)
+		require.NoError(t, os.MkdirAll(directory, 0700))
+		corruptFiles[flow] = filepath.Join(directory, FsFileSession)
+		require.NoError(t, os.WriteFile(corruptFiles[flow], []byte("not-json"), 0600))
+	}
+	autoCleanup := true
+	var diagnostics []FindDiagnostic
+
+	err = repository.FindAll(context.Background(), func(context.Context, Session) (bool, error) {
+		return true, nil
+	}, &FindOpts{
+		AutoCleanUpAllowed: &autoCleanup,
+		AutoCleanUpAllowedFor: func(_ context.Context, flow configuration.FlowName, _ Id) bool {
+			return flow == "current"
+		},
+		DiagnosticConsumer: func(_ context.Context, diagnostic FindDiagnostic) error {
+			diagnostics = append(diagnostics, diagnostic)
+			return nil
+		},
+	})
+
+	require.NoError(t, err)
+	require.NoFileExists(t, corruptFiles["current"])
+	require.FileExists(t, corruptFiles["removed"])
+	require.Len(t, diagnostics, 1)
+	require.Equal(t, configuration.FlowName("removed"), diagnostics[0].Flow)
 }
 
 func newFsRepositoryTestConfiguration(t *testing.T) *configuration.SessionFs {

@@ -15,6 +15,8 @@ import (
 
 func TestConfiguration_UnmarshalYAML(t *testing.T) {
 	testlog.Hook(t)
+	require.Equal(t, "/etc/engity/bifroest/auditlog-key", DefaultAuditlogIdentityFile)
+	require.Equal(t, "/var/lib/engity/bifroest/auditlog", DefaultAuditlogJournalDirectory)
 	require.Equal(t, "/etc/engity/bifroest/client-key", DefaultCertificateIdentityFile.String())
 	require.Equal(t, "/etc/engity/bifroest/ca", DefaultCertificateAuthorityFile.String())
 
@@ -47,6 +49,15 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
     type: local
     name: foo`,
 			expected: Configuration{
+				Auditlogs: Auditlogs{{
+					Name:         DefaultAuditlogName,
+					Enabled:      DefaultAuditlogEnabled,
+					IdentityFile: DefaultAuditlogIdentityFile,
+					Journal: AuditlogJournal{
+						Directory:        DefaultAuditlogJournalDirectory,
+						MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
+					},
+				}},
 				Ssh: Ssh{
 					Addresses: DefaultSshAddresses,
 					Keys: Keys{
@@ -77,7 +88,12 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 					MaxReverseForwardsPerConnection: DefaultSshMaxReverseForwardsPerConnection,
 					MaxChannels:                     DefaultSshMaxChannels,
 					MaxReverseForwards:              DefaultSshMaxReverseForwards,
-					Banner:                          DefaultSshBanner,
+					UnauthenticatedAudit: SshUnauthenticatedAudit{
+						Interval:       DefaultSshUnauthenticatedAuditInterval,
+						PerSourceLimit: DefaultSshUnauthenticatedAuditPerSourceLimit,
+						GlobalLimit:    DefaultSshUnauthenticatedAuditGlobalLimit,
+					},
+					Banner: DefaultSshBanner,
 					PreparationMessages: PreparationMessages{{
 						Id:     DefaultPreparationMessageId,
 						Flow:   DefaultPreparationMessageFlow,
@@ -95,7 +111,8 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 					FileMode:       DefaultSessionFsFileMode,
 				}},
 				Flows: []Flow{{
-					Name: "foo",
+					Name:     "foo",
+					Auditlog: DefaultAuditlogName,
 					Requirement: Requirement{
 						IncludedRequestingName: common.MustNewRegexp(""),
 						ExcludedRequestingName: common.MustNewRegexp(""),

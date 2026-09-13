@@ -101,6 +101,10 @@ jobs:
       - name: Test
         run: mise run test:go
 
+      - name: Test with race detector
+        if: matrix.os == 'ubuntu-latest'
+        run: mise run test:go:race
+
   package:
     name: Package
     needs: [ evaluate, files-changed ]

@@ -281,7 +281,7 @@ func WriteBootstrapFile(path string, data []byte, force bool) (rErr error) {
 	if err := os.MkdirAll(parent, 0700); err != nil {
 		return fmt.Errorf("cannot create parent directory for %q: %w", path, err)
 	}
-	temporary, err := createProtectedTempFile(parent, ".bifroest-bootstrap-*", 0600)
+	temporary, err := CreateProtectedTempFile(parent, ".bifroest-bootstrap-*", 0600)
 	if err != nil {
 		return fmt.Errorf("cannot create temporary file for %q: %w", path, err)
 	}

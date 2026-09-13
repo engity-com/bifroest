@@ -1,5 +1,5 @@
 ---
-description: >Technical contributions to Bifröst and corresponding guidelines.
+description: Technical contributions to Bifröst and corresponding guidelines.
 ---
 # Contributing Guidelines
 

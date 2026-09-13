@@ -22,6 +22,9 @@ type Flow struct {
 	// Name unique name within the while configuration which identifies the Flow.
 	Name FlowName `yaml:"name"`
 
+	// Auditlog references the audit log used by this flow.
+	Auditlog AuditlogName `yaml:"auditlog,omitempty"`
+
 	// Requirement represents all rules the connection has to meet to be able to be accepted by this flow.
 	Requirement Requirement `yaml:"requirement,omitempty"`
 
@@ -35,6 +38,7 @@ type Flow struct {
 func (this *Flow) SetDefaults() error {
 	return setDefaults(this,
 		noopSetDefault[Flow]("name"),
+		fixedDefault("auditlog", func(v *Flow) *AuditlogName { return &v.Auditlog }, DefaultAuditlogName),
 
 		func(v *Flow) (string, defaulter) { return "requirement", &v.Requirement },
 		func(v *Flow) (string, defaulter) { return "authorization", &v.Authorization },
@@ -45,6 +49,7 @@ func (this *Flow) SetDefaults() error {
 func (this *Flow) Trim() error {
 	return trim(this,
 		noopTrim[Flow]("name"),
+		noopTrim[Flow]("auditlog"),
 
 		func(v *Flow) (string, trimmer) { return "requirement", &v.Requirement },
 		func(v *Flow) (string, trimmer) { return "authorization", &v.Authorization },
@@ -55,6 +60,7 @@ func (this *Flow) Trim() error {
 func (this *Flow) Validate() error {
 	return validate(this,
 		notZeroValidate("name", func(v *Flow) *FlowName { return &v.Name }),
+		func(v *Flow) (string, validator) { return "auditlog", &v.Auditlog },
 
 		func(v *Flow) (string, validator) { return "requirement", &v.Requirement },
 		func(v *Flow) (string, validator) { return "authorization", &v.Authorization },
@@ -85,6 +91,7 @@ func (this Flow) IsEqualTo(other any) bool {
 
 func (this Flow) isEqualTo(other *Flow) bool {
 	return isEqual(&this.Name, &other.Name) &&
+		isEqual(&this.Auditlog, &other.Auditlog) &&
 		isEqual(&this.Requirement, &other.Requirement) &&
 		isEqual(&this.Authorization, &other.Authorization) &&
 		isEqual(&this.Environment, &other.Environment)

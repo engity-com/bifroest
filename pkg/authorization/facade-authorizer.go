@@ -14,8 +14,12 @@ import (
 )
 
 func NewAuthorizerFacade(ctx context.Context, flows *configuration.Flows) (*AuthorizerFacade, error) {
+	return NewAuthorizerFacadeWithObserver(ctx, flows, nil)
+}
+
+func NewAuthorizerFacadeWithObserver(ctx context.Context, flows *configuration.Flows, observer FlowAuthorizationObserver) (*AuthorizerFacade, error) {
 	if flows == nil {
-		return &AuthorizerFacade{}, nil
+		return &AuthorizerFacade{observer: observer}, nil
 	}
 
 	entries := make([]facaded, len(*flows))
@@ -25,15 +29,56 @@ func NewAuthorizerFacade(ctx context.Context, flows *configuration.Flows) (*Auth
 		}
 	}
 
-	return &AuthorizerFacade{entries}, nil
+	return &AuthorizerFacade{entries: entries, observer: observer}, nil
 }
 
 type AuthorizerFacade struct {
-	entries []facaded
+	entries  []facaded
+	observer FlowAuthorizationObserver
 }
+
+type FlowAuthorizationMethod string
+
+const (
+	FlowAuthorizationMethodPublicKey           FlowAuthorizationMethod = "public-key"
+	FlowAuthorizationMethodPassword            FlowAuthorizationMethod = "password"
+	FlowAuthorizationMethodKeyboardInteractive FlowAuthorizationMethod = "keyboard-interactive"
+)
+
+type FlowAuthorizationPhase string
+
+const (
+	FlowAuthorizationPhaseCandidate FlowAuthorizationPhase = "candidate"
+	FlowAuthorizationPhaseVerified  FlowAuthorizationPhase = "verified"
+)
+
+type FlowAuthorizationOutcome string
+
+const (
+	FlowAuthorizationOutcomeAccepted FlowAuthorizationOutcome = "accepted"
+	FlowAuthorizationOutcomeDenied   FlowAuthorizationOutcome = "denied"
+	FlowAuthorizationOutcomeFailed   FlowAuthorizationOutcome = "failed"
+)
+
+type FlowAuthorizationObservation struct {
+	Flow              configuration.FlowName
+	ConnectionId      string
+	SessionId         string
+	Method            FlowAuthorizationMethod
+	Phase             FlowAuthorizationPhase
+	Outcome           FlowAuthorizationOutcome
+	AuthorizationKind string
+	Err               error
+}
+
+type FlowAuthorizationObserver func(context.Context, FlowAuthorizationObservation) error
 
 func (this *AuthorizerFacade) AuthorizePublicKey(req PublicKeyRequest) (Authorization, error) {
 	_, isCertificate := req.RemotePublicKey().(*ssh.Certificate)
+	phase := FlowAuthorizationPhaseCandidate
+	if isPublicKeyVerified(req) {
+		phase = FlowAuthorizationPhaseVerified
+	}
 	for _, candidate := range this.entries {
 		if isCertificate {
 			if _, supported := candidate.CloseableAuthorizer.(userCertificateAuthorizer); !supported {
@@ -43,9 +88,15 @@ func (this *AuthorizerFacade) AuthorizePublicKey(req PublicKeyRequest) (Authoriz
 		if ok, err := candidate.canHandle(req); err != nil {
 			return nil, fmt.Errorf("[%v] %w", candidate.flow, err)
 		} else if ok {
-			if resp, err := candidate.AuthorizePublicKey(req); err != nil {
+			resp, err := candidate.AuthorizePublicKey(req)
+			resp, err = validateFlowAuthorizationResponse(candidate.flow, resp, err)
+			if observerErr := this.observe(req, candidate.flow, FlowAuthorizationMethodPublicKey, phase, resp, err); observerErr != nil {
+				return nil, fmt.Errorf("[%v] %w", candidate.flow, observerErr)
+			}
+			if err != nil {
 				return nil, fmt.Errorf("[%v] %w", candidate.flow, err)
-			} else if resp.IsAuthorized() {
+			}
+			if resp.IsAuthorized() {
 				return resp, nil
 			}
 		}
@@ -58,9 +109,15 @@ func (this *AuthorizerFacade) AuthorizePassword(req PasswordRequest) (Authorizat
 		if ok, err := candidate.canHandle(req); err != nil {
 			return nil, fmt.Errorf("[%v] %w", candidate.flow, err)
 		} else if ok {
-			if resp, err := candidate.AuthorizePassword(req); err != nil {
+			resp, err := candidate.AuthorizePassword(req)
+			resp, err = validateFlowAuthorizationResponse(candidate.flow, resp, err)
+			if observerErr := this.observe(req, candidate.flow, FlowAuthorizationMethodPassword, "", resp, err); observerErr != nil {
+				return nil, fmt.Errorf("[%v] %w", candidate.flow, observerErr)
+			}
+			if err != nil {
 				return nil, fmt.Errorf("[%v] %w", candidate.flow, err)
-			} else if resp.IsAuthorized() {
+			}
+			if resp.IsAuthorized() {
 				return resp, nil
 			}
 		}
@@ -73,14 +130,61 @@ func (this *AuthorizerFacade) AuthorizeInteractive(req InteractiveRequest) (Auth
 		if ok, err := candidate.canHandle(req); err != nil {
 			return nil, fmt.Errorf("[%v] %w", candidate.flow, err)
 		} else if ok {
-			if resp, err := candidate.AuthorizeInteractive(req); err != nil {
+			resp, err := candidate.AuthorizeInteractive(req)
+			resp, err = validateFlowAuthorizationResponse(candidate.flow, resp, err)
+			if observerErr := this.observe(req, candidate.flow, FlowAuthorizationMethodKeyboardInteractive, "", resp, err); observerErr != nil {
+				return nil, fmt.Errorf("[%v] %w", candidate.flow, observerErr)
+			}
+			if err != nil {
 				return nil, fmt.Errorf("[%v] %w", candidate.flow, err)
-			} else if resp.IsAuthorized() {
+			}
+			if resp.IsAuthorized() {
 				return resp, nil
 			}
 		}
 	}
 	return Forbidden(req.Connection().Remote()), nil
+}
+
+func validateFlowAuthorizationResponse(flow configuration.FlowName, auth Authorization, err error) (Authorization, error) {
+	if err != nil {
+		return auth, err
+	}
+	if auth == nil {
+		return nil, errors.System.Newf("authorization flow returned a nil response")
+	}
+	if auth.IsAuthorized() && auth.Flow() != flow {
+		return nil, errors.System.Newf("authorization flow returned response for flow %q", auth.Flow())
+	}
+	return auth, nil
+}
+
+func (this *AuthorizerFacade) observe(req Request, flow configuration.FlowName, method FlowAuthorizationMethod, phase FlowAuthorizationPhase, auth Authorization, authErr error) error {
+	if this.observer == nil {
+		return nil
+	}
+	observation := FlowAuthorizationObservation{
+		Flow:         flow,
+		ConnectionId: req.Connection().Id().String(),
+		Method:       method,
+		Phase:        phase,
+		Err:          authErr,
+	}
+	switch {
+	case authErr != nil:
+		observation.Outcome = FlowAuthorizationOutcomeFailed
+	case auth.IsAuthorized():
+		observation.Outcome = FlowAuthorizationOutcomeAccepted
+	default:
+		observation.Outcome = FlowAuthorizationOutcomeDenied
+	}
+	if auth != nil {
+		observation.AuthorizationKind = KindOf(auth)
+		if sess := auth.FindSession(); sess != nil {
+			observation.SessionId = sess.Id().String()
+		}
+	}
+	return this.observer(req.Context(), observation)
 }
 
 func (this *AuthorizerFacade) RestoreFromSession(ctx context.Context, sess session.Session, opts *RestoreOpts) (Authorization, error) {

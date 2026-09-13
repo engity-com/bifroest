@@ -390,19 +390,6 @@ func (this *LocalAuthorizer) RestoreFromSession(ctx context.Context, sess sessio
 		args = append([]any{sess}, args...)
 		return nil, errors.Newf(t, "cannot restore authorization from session %v: "+msg, args...)
 	}
-	cleanFromSessionOnly := func() (Authorization, error) {
-		if opts.IsAutoCleanUpAllowed() {
-			// Clear the stored token.
-			if err := sess.SetAuthorizationToken(ctx, nil); err != nil {
-				return failf(errors.System, "cannot clear existing authorization token of session after user wasn't found: %w", err)
-			}
-			opts.GetLogger(this.logger).
-				With("session", sess).
-				Info("session's user does not longer exist; therefore according authorization token was removed from session")
-		}
-		return nil, ErrNoSuchAuthorization
-	}
-
 	if !sess.Flow().IsEqualTo(this.flow) {
 		return nil, ErrNoSuchAuthorization
 	}
@@ -418,24 +405,24 @@ func (this *LocalAuthorizer) RestoreFromSession(ctx context.Context, sess sessio
 
 	var buf localToken
 	if err := json.Unmarshal(tb, &buf); err != nil {
-		return failf(errors.System, "cannot decode token of: %w", err)
+		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("cannot decode local authorization token: %w", err))
 	}
 
 	var u *user.User
 	if v := buf.User.Name; v != "" {
 		if u, err = this.userRepository.LookupByName(ctx, v); errors.Is(err, user.ErrNoSuchUser) {
-			return cleanFromSessionOnly()
+			return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("local user %q no longer exists", v))
 		} else if err != nil {
 			return failf(errors.System, "cannot lookup user by name %q: %w", v, err)
 		}
 	} else if v := buf.User.Uid; v != nil {
 		if u, err = this.userRepository.LookupById(ctx, *v); errors.Is(err, user.ErrNoSuchUser) {
-			return cleanFromSessionOnly()
+			return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("local user ID %v no longer exists", *v))
 		} else if err != nil {
 			return failf(errors.System, "cannot lookup user by id %v: %w", *v, err)
 		}
 	} else {
-		return nil, ErrNoSuchAuthorization
+		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("local authorization token contains no user reference"))
 	}
 
 	si, err := sess.Info(ctx)
@@ -487,11 +474,4 @@ func (this *LocalAuthorizer) checkPasswordValueViaRepository(req Request, reques
 	}
 
 	return requestedUsername, nil, true, nil
-}
-
-func (this *LocalAuthorizer) logger() log.Logger {
-	if v := this.Logger; v != nil {
-		return v
-	}
-	return log.GetLogger("authorizer")
 }

@@ -2,12 +2,15 @@ package service
 
 import (
 	"context"
+	goerrors "errors"
 	"fmt"
 	"sync/atomic"
 	"time"
 
 	log "github.com/echocat/slf4g"
+	"github.com/google/uuid"
 
+	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -21,6 +24,7 @@ type houseKeeper struct {
 	closed        atomic.Bool
 	contextCancel context.CancelFunc
 	done          chan struct{}
+	orphanedFlows map[configuration.FlowName]struct{}
 }
 
 func (this *houseKeeper) init(service *service) error {
@@ -96,6 +100,8 @@ func (this *houseKeeper) checkedRun(ctx context.Context) (nextRunIn time.Duratio
 }
 
 func (this *houseKeeper) run(logger log.Logger, ctx context.Context) error {
+	this.orphanedFlows = make(map[configuration.FlowName]struct{})
+	defer func() { this.orphanedFlows = nil }()
 	if err := this.inspectSessions(logger, ctx); err != nil {
 		return err
 	}
@@ -107,8 +113,24 @@ func (this *houseKeeper) run(logger log.Logger, ctx context.Context) error {
 
 func (this *houseKeeper) inspectSessions(logger log.Logger, ctx context.Context) error {
 	return this.service.sessions.FindAll(ctx, this.inspectSession, &session.FindOpts{
-		AutoCleanUpAllowed: common.P(this.service.Configuration.HouseKeeping.AutoRepair),
-		Logger:             logger,
+		AutoCleanUpAllowed: common.P(this.service.Configuration.HouseKeeping.AutoRepair && this.sessionAutoRepairAllowed()),
+		AutoCleanUpAllowedFor: func(_ context.Context, flow configuration.FlowName, _ session.Id) bool {
+			_, known := this.service.knownFlows[flow]
+			return known
+		},
+		Logger: logger,
+		DiagnosticConsumer: func(_ context.Context, diagnostic session.FindDiagnostic) error {
+			if _, known := this.service.knownFlows[diagnostic.Flow]; !known {
+				this.rememberOrphanedFlow(diagnostic.Flow)
+			}
+			logger.
+				With("flow", diagnostic.Flow).
+				With("sessionId", diagnostic.Id).
+				With("path", diagnostic.Path).
+				WithError(diagnostic.Err).
+				Warn("cannot inspect corrupt session entry; preserving it and continuing")
+			return nil
+		},
 	})
 }
 
@@ -124,15 +146,38 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 	}
 
 	logger.Debug("inspecting session...")
+	if _, flowExists := this.service.knownFlows[sess.Flow()]; !flowExists {
+		this.rememberOrphanedFlow(sess.Flow())
+		event := audit.Event{
+			Name:      audit.EventNameHousekeepingOrphanedSessionCleanupSkipped,
+			Domain:    audit.EventDomainHousekeeping,
+			Outcome:   audit.EventOutcomeDenied,
+			Flow:      sess.Flow().String(),
+			SessionId: sess.Id().String(),
+			Reason:    audit.EventReasonMissingFlow,
+		}
+		logger.Warn("session belongs to a missing flow; preserving it for operator recovery")
+		if this.hasEnabledAuditlog() {
+			if err := this.recordOrphanedSessionAudit(ctx, event); err != nil {
+				return reportAndContinue(err)
+			}
+		}
+		return true, nil
+	}
 
 	if shouldBeDeleted, err := session.IsExpiredWithThreshold(this.service.Configuration.HouseKeeping.KeepExpiredFor.Native())(ctx, sess); err != nil {
 		return reportAndContinue(err)
 	} else if shouldBeDeleted {
-		if _, err := this.dispose(ctx, logger, sess); err != nil {
+		_, disposeErr, disposeAuditErr := this.auditSessionAction(ctx, sess, audit.EventNameHousekeepingSessionDisposeStarted, audit.EventNameHousekeepingSessionDisposeCompleted, audit.EventReasonRetentionElapsed, func() (bool, error) {
+			return this.dispose(ctx, logger, sess)
+		})
+		if err := goerrors.Join(disposeErr, disposeAuditErr); err != nil {
 			return reportAndContinue(err)
 		}
-
-		if err := this.service.sessions.Delete(ctx, sess); err != nil {
+		_, deleteErr, deleteAuditErr := this.auditSessionAction(ctx, sess, audit.EventNameHousekeepingSessionDeleteStarted, audit.EventNameHousekeepingSessionDeleteCompleted, audit.EventReasonRetentionElapsed, func() (bool, error) {
+			return true, this.service.sessions.Delete(ctx, sess)
+		})
+		if err := goerrors.Join(deleteErr, deleteAuditErr); err != nil {
 			return reportAndContinue(err)
 		}
 		logger.Info("session reached maximum age to be kept after being expired and was therefore deleted")
@@ -140,8 +185,10 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 	} else if expired, err := session.IsExpired(ctx, sess); err != nil {
 		return reportAndContinue(err)
 	} else if expired {
-		disposed, err := this.dispose(ctx, logger, sess)
-		if err != nil {
+		disposed, actionErr, auditErr := this.auditSessionAction(ctx, sess, audit.EventNameHousekeepingSessionDisposeStarted, audit.EventNameHousekeepingSessionDisposeCompleted, audit.EventReasonExpired, func() (bool, error) {
+			return this.dispose(ctx, logger, sess)
+		})
+		if err := goerrors.Join(actionErr, auditErr); err != nil {
 			return reportAndContinue(err)
 		}
 		if disposed {
@@ -158,6 +205,76 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 	}
 
 	return true, nil
+}
+
+func (this *houseKeeper) auditSessionAction(ctx context.Context, sess session.Session, startedEventName, completedEventName audit.EventName, reason audit.EventReason, perform func() (bool, error)) (changed bool, actionErr, auditErr error) {
+	record := func(event audit.Event) error {
+		return this.service.recordFlowAudit(ctx, sess.Flow(), event)
+	}
+	operationId, err := uuid.NewRandom()
+	if err != nil {
+		return false, nil, errors.Newf(errors.System, "cannot generate housekeeping audit operation ID: %w", err)
+	}
+	startedAt := time.Now()
+	event := audit.Event{
+		Name:        startedEventName,
+		Domain:      audit.EventDomainHousekeeping,
+		Flow:        sess.Flow().String(),
+		SessionId:   sess.Id().String(),
+		OperationId: operationId.String(),
+		Reason:      reason,
+	}
+	if err := record(event); err != nil {
+		return false, nil, err
+	}
+
+	changed, actionErr = perform()
+	event.Name = completedEventName
+	event.DurationMillis = common.P(time.Since(startedAt).Milliseconds())
+	if actionErr != nil {
+		event.Outcome = audit.EventOutcomeFailure
+		event.ErrorCategory = auditErrorCategory(actionErr)
+	} else {
+		event.Outcome = audit.EventOutcomeSuccess
+	}
+	auditErr = record(event)
+	return
+}
+
+func (this *houseKeeper) hasEnabledAuditlog() bool {
+	for _, auditlog := range this.service.Configuration.Auditlogs {
+		if auditlog.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+func (this *houseKeeper) recordOrphanedSessionAudit(ctx context.Context, event audit.Event) error {
+	var result error
+	for _, auditlog := range this.service.Configuration.Auditlogs {
+		if !auditlog.Enabled {
+			continue
+		}
+		recorder := this.service.auditRecorders[auditlog.Name]
+		if recorder == nil {
+			result = goerrors.Join(result, errors.System.Newf("no audit recorder configured for enabled auditlog %q", auditlog.Name))
+			continue
+		}
+		if err := recorder.Record(ctx, event); err != nil {
+			result = goerrors.Join(result, errors.System.Newf("cannot record orphaned-session audit event %q to auditlog %q: %w", event.Name, auditlog.Name, err))
+		}
+	}
+	return result
+}
+
+func (this *houseKeeper) sessionAutoRepairAllowed() bool {
+	for _, auditlog := range this.service.Configuration.Auditlogs {
+		if auditlog.Enabled {
+			return false
+		}
+	}
+	return true
 }
 
 // dispose will dispose a given session.Session but NOT delete it.
@@ -208,27 +325,33 @@ func (this *houseKeeper) disposeEnvironment(ctx context.Context, logger log.Logg
 	return disposed, nil
 }
 func (this *houseKeeper) disposeAuthorization(ctx context.Context, logger log.Logger, sess session.Session) (bool, error) {
-	reportOnly := func(err error) (bool, error) {
-		logger.WithError(err).
-			Warn("cannot dispose authorization of session; skipping...")
-		return false, nil
+	fail := func(err error) (bool, error) {
+		logger.WithError(err).Warn("cannot dispose authorization of session")
+		return false, errors.Newf(errors.System, "cannot dispose authorization of session: %w", err)
 	}
 
 	auth, err := this.service.authorizer.RestoreFromSession(ctx, sess, &authorization.RestoreOpts{
-		AutoCleanUpAllowed: common.P(true),
+		AutoCleanUpAllowed: common.P(false),
 		Logger:             logger,
 	})
 	if errors.Is(err, authorization.ErrNoSuchAuthorization) {
 		// Ok, treat it as already disposed.
 		return false, nil
 	}
+	if errors.Is(err, authorization.ErrUnusableAuthorizationToken) {
+		if err := sess.SetAuthorizationToken(ctx, nil); err != nil {
+			return fail(err)
+		}
+		logger.WithError(err).Info("removed permanently unusable authorization token from session")
+		return true, nil
+	}
 	if err != nil {
-		return reportOnly(err)
+		return fail(err)
 	}
 
 	disposed, err := auth.Dispose(ctx)
 	if err != nil {
-		return reportOnly(err)
+		return fail(err)
 	}
 
 	return disposed, nil
@@ -244,13 +367,23 @@ func (this *houseKeeper) cleanup(logger log.Logger, ctx context.Context) error {
 
 func (this *houseKeeper) doesFlowExists(name configuration.FlowName) (bool, error) {
 	_, ok := this.service.knownFlows[name]
+	if !ok {
+		_, ok = this.orphanedFlows[name]
+	}
 	return ok, nil
+}
+
+func (this *houseKeeper) rememberOrphanedFlow(flow configuration.FlowName) {
+	if this.orphanedFlows == nil {
+		this.orphanedFlows = make(map[configuration.FlowName]struct{})
+	}
+	this.orphanedFlows[flow] = struct{}{}
 }
 
 func (this *houseKeeper) doesSessionExist(logger log.Logger) func(ctx context.Context, flow configuration.FlowName, sessionId session.Id) (bool, error) {
 	return func(ctx context.Context, flow configuration.FlowName, sessionId session.Id) (bool, error) {
 		_, err := this.service.sessions.FindBy(ctx, flow, sessionId, &session.FindOpts{
-			AutoCleanUpAllowed: common.P(true),
+			AutoCleanUpAllowed: common.P(this.service.Configuration.HouseKeeping.AutoRepair && this.sessionAutoRepairAllowed()),
 			Logger:             logger,
 		})
 		if errors.Is(err, session.ErrNoSuchSession) {

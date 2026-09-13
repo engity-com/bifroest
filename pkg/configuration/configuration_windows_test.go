@@ -15,6 +15,8 @@ import (
 
 func TestConfiguration_UnmarshalYAML(t *testing.T) {
 	testlog.Hook(t)
+	require.Equal(t, `C:\ProgramData\Engity\Bifroest\auditlog-key`, DefaultAuditlogIdentityFile)
+	require.Equal(t, `C:\ProgramData\Engity\Bifroest\auditlog`, DefaultAuditlogJournalDirectory)
 	require.Equal(t, `C:\ProgramData\Engity\Bifroest\client-key`, DefaultCertificateIdentityFile.String())
 	require.Equal(t, `C:\ProgramData\Engity\Bifroest\ca`, DefaultCertificateAuthorityFile.String())
 
@@ -46,6 +48,15 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
   environment:
     type: local`,
 			expected: Configuration{
+				Auditlogs: Auditlogs{{
+					Name:         DefaultAuditlogName,
+					Enabled:      DefaultAuditlogEnabled,
+					IdentityFile: DefaultAuditlogIdentityFile,
+					Journal: AuditlogJournal{
+						Directory:        DefaultAuditlogJournalDirectory,
+						MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
+					},
+				}},
 				Ssh: Ssh{
 					Addresses: DefaultSshAddresses,
 					Keys: Keys{
@@ -76,7 +87,12 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 					MaxReverseForwardsPerConnection: DefaultSshMaxReverseForwardsPerConnection,
 					MaxChannels:                     DefaultSshMaxChannels,
 					MaxReverseForwards:              DefaultSshMaxReverseForwards,
-					Banner:                          DefaultSshBanner,
+					UnauthenticatedAudit: SshUnauthenticatedAudit{
+						Interval:       DefaultSshUnauthenticatedAuditInterval,
+						PerSourceLimit: DefaultSshUnauthenticatedAuditPerSourceLimit,
+						GlobalLimit:    DefaultSshUnauthenticatedAuditGlobalLimit,
+					},
+					Banner: DefaultSshBanner,
 					PreparationMessages: PreparationMessages{{
 						Id:     DefaultPreparationMessageId,
 						Flow:   DefaultPreparationMessageFlow,
@@ -94,7 +110,8 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 					FileMode:       DefaultSessionFsFileMode,
 				}},
 				Flows: []Flow{{
-					Name: "foo",
+					Name:     "foo",
+					Auditlog: DefaultAuditlogName,
 					Requirement: Requirement{
 						IncludedRequestingName: common.MustNewRegexp(""),
 						ExcludedRequestingName: common.MustNewRegexp(""),
