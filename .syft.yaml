@@ -1,0 +1,23 @@
+check-for-app-update: false
+scope: squashed
+parallelism: 1
+enrich: []
+select-catalogers:
+  - "-file"
+
+format:
+  pretty: false
+
+file:
+  metadata:
+    selection: none
+
+golang:
+  search-local-mod-cache-licenses: false
+  search-local-vendor-licenses: false
+  search-remote-licenses: false
+  use-packages-lib: false
+
+cache:
+  dir: ""
+  ttl: 0

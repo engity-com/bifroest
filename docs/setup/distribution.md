@@ -15,6 +15,7 @@ On this page you'll find:
 2. [Packaging](#packaging)
     1. [Archives](#archive)
     2. [OCI/Docker Images](#image)
+    3. [Compliance Artifacts](#compliance)
 
 <div id="compatibility"></div>
 <<compatibility_matrix()>>
@@ -139,3 +140,22 @@ See the [container registry page](<< container_packages_url() >>) for all availa
 <<container_image_uri("latest")>>
 <<container_image_uri("extended")>>
 ```
+
+### Compliance Artifacts {: #compliance}
+
+Every release provides platform- and edition-specific third-party notices and
+SBOMs alongside its archives. Archive SBOMs describe the downloadable archive;
+OCI SBOMs describe the indicated platform image within the multi-platform OCI
+index. They are intentionally separate because their package inventories and
+subject digests can differ.
+
+The [release manifest](<<release_asset_url("bifroest-release-manifest.json")>>)
+relates every artifact to its platform, edition, media type and SHA-256 digest.
+Use [the checksum file](<<release_asset_url("bifroest-checksums.txt")>>) to verify
+all downloadable release assets.
+
+<<compliance_matrix()>>
+
+OCI entries link to the container package. The abbreviated digest identifies
+the immutable multi-platform index; the complete index and platform references
+are available in the release manifest.

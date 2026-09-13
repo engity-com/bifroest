@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 	gos "os"
@@ -34,22 +35,25 @@ func newBuild(b *base) *build {
 		editions:  sys.AllEditionVariants(),
 		testing:   false,
 
-		updateCaCerts:        true,
 		wslBuildDistribution: "",
 	}
 	result.binary = newBuildBinary(result)
 	result.archive = newBuildArchive(result)
 	result.image = newBuildImage(result)
+	result.sbom = newBuildSbom(result)
+	result.releaseManifest = newBuildReleaseManifest(result)
 	result.digest = newBuildDigest(result)
 	return result
 }
 
 type build struct {
 	*base
-	binary  *buildBinary
-	archive *buildArchive
-	image   *buildImage
-	digest  *buildDigest
+	binary          *buildBinary
+	archive         *buildArchive
+	image           *buildImage
+	sbom            *buildSbom
+	releaseManifest *buildReleaseManifest
+	digest          *buildDigest
 
 	vendor    string
 	dest      string
@@ -60,7 +64,6 @@ type build struct {
 	editions  sys.Editions
 	testing   bool
 
-	updateCaCerts        bool
 	wslBuildDistribution string
 
 	timeP         atomic.Pointer[time.Time]
@@ -99,9 +102,6 @@ func (this *build) init(ctx context.Context, app *kingpin.Application) {
 			SetValue(&this.editions)
 		cmd.Flag("testing", "").
 			BoolVar(&this.testing)
-		cmd.Flag("updateCaCerts", "").
-			BoolVar(&this.updateCaCerts)
-
 		cmd.Flag("wslBuildDistribution", "").
 			PlaceHolder("<distroName>").
 			Default(this.wslBuildDistribution).
@@ -110,6 +110,7 @@ func (this *build) init(ctx context.Context, app *kingpin.Application) {
 		this.binary.attach(cmd)
 		this.archive.attach(cmd)
 		this.image.attach(cmd)
+		this.sbom.attach(cmd)
 		this.digest.attach(cmd)
 	}
 
@@ -132,12 +133,19 @@ func (this *build) init(ctx context.Context, app *kingpin.Application) {
 
 func (this *build) allPlatforms(forTesting bool) iter.Seq[*bib.Platform] {
 	return func(yield func(*bib.Platform) bool) {
+		var platforms []*bib.Platform
 		for p := range bib.AllBinaryPlatforms(forTesting, this.assumedBuildOs(), this.assumedBuildArch()) {
 			if slices.Contains(this.oses, p.Os) &&
 				slices.Contains(this.archs, p.Arch) && slices.Contains(this.editions, p.Edition) {
-				if !yield(p) {
-					return
-				}
+				platforms = append(platforms, p)
+			}
+		}
+		slices.SortFunc(platforms, func(a, b *bib.Platform) int {
+			return strings.Compare(a.FilenamePrefix(this.prefix), b.FilenamePrefix(this.prefix))
+		})
+		for _, platform := range platforms {
+			if !yield(platform) {
+				return
 			}
 		}
 	}
@@ -233,19 +241,15 @@ func (this *build) evaluateEnvironment(ctx context.Context) error {
 	return nil
 }
 
-func (this *build) buildAll(ctx context.Context, forTesting bool) (artifacts buildArtifacts, _ error) {
+func (this *build) buildAll(ctx context.Context, forTesting bool) (_ buildArtifacts, _ error) {
 	stages, err := this.stages(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	if this.updateCaCerts {
-		if err := this.dependencies.caCerts.generatePem(ctx); err != nil {
-			return nil, err
-		}
-	}
 	success := false
-	defer common.IgnoreCloseErrorIfFalse(&success, artifacts)
+	var artifacts buildArtifacts
+	defer func() { common.IgnoreCloseErrorIfFalse(&success, artifacts) }()
 
 	for a := range this.allPlatforms(forTesting) {
 		vs, err := this.buildSingle(ctx, a)
@@ -255,20 +259,36 @@ func (this *build) buildAll(ctx context.Context, forTesting bool) (artifacts bui
 		artifacts = append(artifacts, vs...)
 	}
 
-	if stages.contains(buildStageImage) {
-		var err error
-		artifacts, err = this.image.merge(ctx, artifacts)
+	if stages.contains(buildStageSbom) {
+		updated, err := this.sbom.create(ctx, artifacts)
 		if err != nil {
 			return nil, err
 		}
+		artifacts = updated
+	}
+
+	if stages.contains(buildStageImage) {
+		updated, err := this.image.merge(ctx, artifacts)
+		if err != nil {
+			return nil, err
+		}
+		artifacts = updated
 	}
 
 	if stages.contains(buildStageDigest) {
-		var err error
-		artifacts, err = this.digest.create(ctx, artifacts)
+		updated, err := this.releaseManifest.create(ctx, artifacts, stages.contains(buildStagePublish))
 		if err != nil {
 			return nil, err
 		}
+		artifacts = updated
+	}
+
+	if stages.contains(buildStageDigest) {
+		updated, err := this.digest.create(ctx, artifacts)
+		if err != nil {
+			return nil, err
+		}
+		artifacts = updated
 	}
 
 	if stages.contains(buildStagePublish) {
@@ -281,7 +301,7 @@ func (this *build) buildAll(ctx context.Context, forTesting bool) (artifacts bui
 	return artifacts, nil
 }
 
-func (this *build) buildSingle(ctx context.Context, p *bib.Platform) (artifacts buildArtifacts, _ error) {
+func (this *build) buildSingle(ctx context.Context, p *bib.Platform) (_ buildArtifacts, _ error) {
 	fail := func(err error) ([]*buildArtifact, error) {
 		return nil, fmt.Errorf("cannot build %v: %w", *p, err)
 	}
@@ -294,16 +314,17 @@ func (this *build) buildSingle(ctx context.Context, p *bib.Platform) (artifacts 
 	l := log.With("platform", p)
 
 	success := false
-	common.IgnoreCloseErrorIfFalse(&success, artifacts)
+	var artifacts buildArtifacts
+	defer func() { common.IgnoreCloseErrorIfFalse(&success, artifacts) }()
 
 	var ba *buildArtifact
 	if stages.contains(buildStageBinary) && p.IsBinarySupported(this.assumedBuildOs(), this.assumedBuildArch()) {
-		var err error
-		ba, err = this.binary.compile(ctx, p)
+		var notice *buildArtifact
+		ba, notice, err = this.binary.compile(ctx, p)
 		if err != nil {
 			return fail(err)
 		}
-		artifacts = append(artifacts, ba)
+		artifacts = append(artifacts, ba, notice)
 
 	} else {
 		l.With("stage", buildStageBinary).Info("build binary skipped")
@@ -338,18 +359,17 @@ func (this *build) publish(ctx context.Context, as buildArtifacts) error {
 		return fmt.Errorf("cannot publish: %w", err)
 	}
 
-	if err := this.image.publish(ctx, as); err != nil {
-		return fail(err)
-	}
-
 	release, err := this.repo.releases.findCurrent(ctx)
 	if err != nil {
 		return fail(err)
 	}
 
 	if release == nil {
-		log.Info("outside of release; publish artifacts skipped")
-		return nil
+		return fail(errors.New("GitHub release for current ref does not exist"))
+	}
+
+	if err := this.image.publish(ctx, as); err != nil {
+		return fail(err)
 	}
 
 	l := log.With("release", release)
@@ -376,13 +396,26 @@ func (this *build) publish(ctx context.Context, as buildArtifacts) error {
 }
 
 func (this *build) time() time.Time {
+	result, err := this.resolveTime()
+	common.Must(err)
+	return result
+}
+
+func (this *build) resolveTime() (time.Time, error) {
 	for {
 		if v := this.timeP.Load(); v != nil {
-			return *v
+			return *v, nil
 		}
 		v := time.Now()
+		if raw := gos.Getenv("SOURCE_DATE_EPOCH"); raw != "" {
+			seconds, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil || seconds < 0 {
+				return time.Time{}, fmt.Errorf("invalid SOURCE_DATE_EPOCH %q", raw)
+			}
+			v = time.Unix(seconds, 0).UTC()
+		}
 		if this.timeP.CompareAndSwap(nil, &v) {
-			return v
+			return v, nil
 		}
 		runtime.Gosched()
 	}
@@ -402,10 +435,14 @@ func (this *build) getBuildContext(ctx context.Context) (*buildContext, error) {
 			return nil, err
 		}
 
+		buildTime, err := this.resolveTime()
+		if err != nil {
+			return nil, err
+		}
 		v := &buildContext{
 			this,
 			versions,
-			this.time(),
+			buildTime,
 			this.vendor,
 			revision,
 		}

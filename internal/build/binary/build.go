@@ -3,6 +3,7 @@ package binary
 import (
 	"context"
 	"fmt"
+	"io"
 	gos "os"
 	"os/exec"
 	"path/filepath"
@@ -33,13 +34,6 @@ type BuildRequest struct {
 }
 
 func Build(ctx context.Context, req BuildRequest) error {
-	fail := func(err error) error {
-		return err
-	}
-	failf := func(msg string, args ...any) error {
-		return fail(errors.System.Newf(msg, args...))
-	}
-
 	cFlags := ""
 	ldFlags := req.toLdFlags()
 	if !debug.IsEmbeddedDlvEnabled() {
@@ -49,21 +43,12 @@ func Build(ctx context.Context, req BuildRequest) error {
 		}
 	}
 
-	var buildEnvPath string
-
-	var err error
-	outputFilePath := req.TargetFile
-	if req.WslBuildDistribution != "" {
-		outputFilePath, err = translateToWslPath(outputFilePath)
-		if err != nil {
-			return fail(err)
-		}
+	outputFilePath, err := req.TargetPath(req.TargetFile)
+	if err != nil {
+		return err
 	}
-
-	env := sys.EnvVars{}
-	env.Add(gos.Environ()...)
-	program := "go"
 	args := []string{"build", "-o", outputFilePath}
+	args = append(args, "-trimpath", "-buildvcs=false")
 	if ldFlags != "" {
 		args = append(args, "-ldflags", ldFlags)
 	}
@@ -74,27 +59,43 @@ func Build(ctx context.Context, req BuildRequest) error {
 		args = append(args, "-tags", strings.Join(vs, " "))
 	}
 	args = append(args, "./cmd/bifroest")
+	return req.RunGo(ctx, gos.Stdout, gos.Stderr, args...)
+}
 
-	if req.WslBuildDistribution != "" {
+func (this BuildRequest) TargetPath(filename string) (string, error) {
+	if this.WslBuildDistribution == "" {
+		return filename, nil
+	}
+	return translateToWslPath(filename)
+}
+
+func (this BuildRequest) RunGo(ctx context.Context, stdout, stderr io.Writer, goArgs ...string) error {
+	var buildEnvPath string
+	goEnv := this.Environment()
+
+	program := "go"
+	args := goArgs
+	commandEnv := goEnv
+	if this.WslBuildDistribution != "" {
 		wd, err := gos.Getwd()
 		if err != nil {
-			return fail(err)
+			return err
 		}
 		wd, err = translateToWslPath(wd)
 		if err != nil {
-			return fail(err)
+			return err
 		}
 
 		f, err := gos.CreateTemp("", "bifroest-go-build-*.env")
 		if err != nil {
-			return fail(err)
+			return err
 		}
 		_ = f.Close()
 
 		buildEnvPath = f.Name()
 		wslBuildEnvPath, err := translateToWslPath(buildEnvPath)
 		if err != nil {
-			return fail(err)
+			return err
 		}
 
 		qargs := make([]string, len(args)+1)
@@ -104,9 +105,9 @@ func Build(ctx context.Context, req BuildRequest) error {
 		}
 
 		program = "wsl"
-		env = sys.EnvVars{}
+		commandEnv = nil
 		args = []string{
-			"-d", req.WslBuildDistribution,
+			"-d", this.WslBuildDistribution,
 			"--cd", wd,
 			"bash",
 			"-c", "source " + strconv.Quote(wslBuildEnvPath) + "; " + strings.Join(qargs, " "),
@@ -114,38 +115,48 @@ func Build(ctx context.Context, req BuildRequest) error {
 	}
 
 	cmd := exec.CommandContext(ctx, program, args...)
-	cmd.Stderr = gos.Stderr
-	cmd.Stdout = gos.Stdout
-	req.Platform.SetToEnv(req.assumedBuildOs(), req.assumedBuildArch(), env)
+	cmd.Stderr = stderr
+	cmd.Stdout = stdout
 
-	if req.WslBuildDistribution != "" {
+	if this.WslBuildDistribution != "" {
 		f, err := gos.OpenFile(buildEnvPath, gos.O_WRONLY|gos.O_TRUNC, 0)
 		if err != nil {
-			return fail(err)
+			return err
 		}
 		defer func() { _ = gos.Remove(f.Name()) }()
 		defer common.IgnoreCloseError(f)
 
-		for k, v := range env {
+		for k, v := range goEnv {
 			if _, err := fmt.Fprintf(f, "export %s=%q\n", k, v); err != nil {
-				return fail(err)
+				return err
 			}
 		}
 		if err := f.Close(); err != nil {
-			return fail(err)
+			return err
 		}
 	}
 
-	cmd.Env = env.Strings()
+	cmd.Env = commandEnv.Strings()
 
 	var eErr *exec.ExitError
 	if err := cmd.Run(); errors.As(err, &eErr) {
-		return failf("%v: build failed with %d", cmd, eErr.ExitCode())
+		return errors.System.Newf("%v: Go command failed with %d", cmd, eErr.ExitCode())
 	} else if err != nil {
-		return fail(err)
+		return err
 	}
 
 	return nil
+}
+
+func (this BuildRequest) Environment() sys.EnvVars {
+	result := sys.EnvVars{}
+	result.Add(gos.Environ()...)
+	result.SetCanonical("GOENV", "off", "GOFLAGS", "-mod=readonly", "GOWORK", "off")
+	this.Platform.SetToEnv(this.assumedBuildOs(), this.assumedBuildArch(), result)
+	if len(this.Tags) > 0 {
+		result.SetCanonical("GOFLAGS", "-mod=readonly -tags="+strings.Join(this.Tags, ","))
+	}
+	return result
 }
 
 func translateToWslPath(in string) (string, error) {

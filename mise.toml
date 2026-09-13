@@ -1,3 +1,7 @@
+[tools]
+uv = "0.12.13"
+"pipx:reuse" = { version = "6.2.0", extras = "chardet", uvx_args = "--python 3.14" }
+
 [tasks."install"]
 run = [
     { task = "install:go" },
@@ -12,11 +16,15 @@ run = "python -m pip install -r docs/requirements.txt"
 
 [tasks."lint"]
 run = [
-    { task = "lint:go" }
+    { task = "lint:go" },
+    { task = "lint:reuse" }
 ]
 
 [tasks."lint:go"]
 run = "golangci-lint run --color=always"
+
+[tasks."lint:reuse"]
+run = "reuse lint --lines"
 
 [tasks."test"]
 run = [
@@ -111,6 +119,8 @@ env_file = ".env"
 
 [tool_alias]
 golangci-lint = "aqua:golangci/golangci-lint"
+go-licenses = "go:github.com/google/go-licenses/v2"
+syft = "aqua:anchore/syft"
 
 [env]
 _.python.venv = { path = ".pyvenv", create = true, uv_create_args = ['--seed'] }

@@ -25,9 +25,9 @@ type buildBinary struct {
 
 func (this *buildBinary) attach(_ *kingpin.CmdClause) {}
 
-func (this *buildBinary) compile(ctx context.Context, p *bib.Platform) (*buildArtifact, error) {
-	fail := func(err error) (*buildArtifact, error) {
-		return nil, fmt.Errorf("cannot build %v: %w", *p, err)
+func (this *buildBinary) compile(ctx context.Context, p *bib.Platform) (*buildArtifact, *buildArtifact, error) {
+	fail := func(err error) (*buildArtifact, *buildArtifact, error) {
+		return nil, nil, fmt.Errorf("cannot build %v: %w", *p, err)
 	}
 
 	assumedBuildOs := this.assumedBuildOs()
@@ -67,6 +67,15 @@ func (this *buildBinary) compile(ctx context.Context, p *bib.Platform) (*buildAr
 	if err := binary.Build(ctx, req); err != nil {
 		return fail(err)
 	}
+	notice, err := this.newBuildFileArtifact(ctx, p, buildArtifactTypeNotice, p.FilenamePrefix(this.prefix)+".third-party-notices.txt")
+	if err != nil {
+		return fail(err)
+	}
+	defer common.IgnoreCloseErrorIfFalse(&success, notice)
+	if err := this.createThirdPartyNotices(ctx, req, a, notice.filepath); err != nil {
+		return fail(err)
+	}
+	a.thirdPartyNoticesFilepath = notice.filepath
 
 	ld := l.With("duration", time.Since(start).Truncate(time.Millisecond))
 	if l.IsDebugEnabled() {
@@ -76,5 +85,5 @@ func (this *buildBinary) compile(ctx context.Context, p *bib.Platform) (*buildAr
 	}
 
 	success = true
-	return a, nil
+	return a, notice, nil
 }

@@ -1,25 +1,38 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	gos "os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/alecthomas/kingpin/v2"
 	log "github.com/echocat/slf4g"
-	"github.com/gwatts/rootcerts/certparse"
+	"github.com/google/go-github/v65/github"
 
+	"github.com/engity-com/bifroest/internal/mozilla/certdata"
 	"github.com/engity-com/bifroest/pkg/common"
 )
 
 const (
-	certdataDownloadUrl = "https://hg.mozilla.org/releases/mozilla-release/raw-file/default/security/nss/lib/ckfw/builtins/certdata.txt"
+	caCertsSourceOwner      = "mozilla-firefox"
+	caCertsSourceRepo       = "firefox"
+	caCertsSourceRef        = "release"
+	caCertsSourcePath       = "security/nss/lib/ckfw/builtins/certdata.txt"
+	caCertsSourceMaxSize    = 5 * 1024 * 1024
+	caCertsGeneratorFormat  = "1"
+	caCertsHeaderFormatLine = "## Generator format: " + caCertsGeneratorFormat
 )
 
 var (
@@ -29,108 +42,551 @@ var (
 func newDependenciesCaCerts(b *dependencies) *dependenciesCaCerts {
 	return &dependenciesCaCerts{
 		dependencies: b,
-
-		sourceUrl:  certdataDownloadUrl,
-		targetFile: defaultCaCertsTargetFn,
+		targetFile:   defaultCaCertsTargetFn,
+		now:          time.Now,
 	}
 }
 
 type dependenciesCaCerts struct {
 	dependencies *dependencies
 
-	sourceUrl  string
 	targetFile string
+	now        func() time.Time
 }
 
 func (this *dependenciesCaCerts) init(ctx context.Context, app *kingpin.Application) {
-	cmd := app.Command("ca-certs", "")
-
-	app.Flag("caCertsUrl", "").
-		Default(this.sourceUrl).
-		StringVar(&this.sourceUrl)
-	app.Flag("caCertsTargetPemFile", "").
+	cmd := app.Command("ca-certs", "Manage the embedded Mozilla CA certificate bundle.")
+	cmd.Flag("targetPemFile", "Target PEM file or 'stdout'.").
 		Default(this.targetFile).
 		StringVar(&this.targetFile)
 
-	cmdPem := cmd.Command("pem", "")
-	cmdPem.Action(func(*kingpin.ParseContext) error {
-		return this.generatePem(ctx)
-	})
+	cmd.Command("update", "Update the embedded CA certificates if their effective set changed.").
+		Action(func(*kingpin.ParseContext) error {
+			return this.update(ctx)
+		})
 }
 
-func (this *dependenciesCaCerts) generatePem(ctx context.Context) (rErr error) {
-	var f *gos.File
+func (this *dependenciesCaCerts) update(ctx context.Context) error {
+	source, err := this.loadSource(ctx)
+	if err != nil {
+		return err
+	}
+	bundle, err := buildCaCertsBundle(ctx, source, this.now().UTC())
+	if err != nil {
+		return err
+	}
+
 	if this.targetFile == "stdout" {
-		f = gos.Stdout
-	} else {
-		var err error
-		if f, err = gos.OpenFile(this.targetFile, gos.O_CREATE|gos.O_WRONLY|gos.O_TRUNC, 0644); err != nil {
-			return err
-		}
-		defer common.KeepCloseError(&rErr, f)
+		return bundle.writeTo(gos.Stdout)
 	}
 
-	return this.generate(ctx, f)
+	existingRaw, err := gos.ReadFile(this.targetFile)
+	if err != nil && !errors.Is(err, gos.ErrNotExist) {
+		return fmt.Errorf("cannot read existing CA certificate bundle %s: %w", this.targetFile, err)
+	}
+	update, err := prepareCaCertsUpdate(existingRaw, bundle)
+	if err != nil {
+		return fmt.Errorf("cannot parse existing CA certificate bundle %s: %w", this.targetFile, err)
+	}
+
+	this.logComparison(source, update.existing, bundle, update.diff)
+	if !update.changed {
+		log.With("target", this.targetFile).Info("CA certificate bundle is already current")
+		return nil
+	}
+	if err := writeFileAtomically(this.targetFile, update.generated, 0644); err != nil {
+		return fmt.Errorf("cannot write CA certificate bundle %s: %w", this.targetFile, err)
+	}
+	log.With("target", this.targetFile).Info("CA certificate bundle updated")
+	return nil
 }
 
-func (this *dependenciesCaCerts) generate(ctx context.Context, to io.Writer) error {
-	fail := func(err error) error {
-		return fmt.Errorf("cannot generate ca-certs from %s: %w", this.sourceUrl, err)
-	}
-	failf := func(msg string, args ...any) error {
-		return fail(fmt.Errorf(msg, args...))
-	}
+type caCertsPreparedUpdate struct {
+	existing  []caCertificate
+	diff      caCertsDiff
+	generated []byte
+	changed   bool
+}
 
-	start := time.Now()
-	l := log.With("source", this.sourceUrl)
-
-	l.Debug("downloading ca-certs...")
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, this.sourceUrl, nil)
+func prepareCaCertsUpdate(existingRaw []byte, bundle *caCertsBundle) (*caCertsPreparedUpdate, error) {
+	existing, err := parsePemCertificates(existingRaw)
 	if err != nil {
-		return fail(err)
+		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fail(err)
+	diff := compareCaCertificates(existing, bundle.certificates, bundle.sourceStatus)
+	result := &caCertsPreparedUpdate{
+		existing: existing,
+		diff:     diff,
+		changed:  caCertsNeedUpdate(existingRaw, existing, diff, bundle),
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return failf("illegal response code: %d", resp.StatusCode)
+	if !result.changed {
+		return result, nil
 	}
-	defer common.IgnoreCloseError(resp.Body)
+	var generated bytes.Buffer
+	if err := bundle.writeTo(&generated); err != nil {
+		return nil, err
+	}
+	result.generated = generated.Bytes()
+	return result, nil
+}
 
-	certs, err := certparse.ReadTrustedCerts(resp.Body)
+func (this *dependenciesCaCerts) loadSource(ctx context.Context) (*caCertsSource, error) {
+	client := this.dependencies.base.repo.client()
+	commits, _, err := client.Repositories.ListCommits(ctx, caCertsSourceOwner, caCertsSourceRepo, &github.CommitsListOptions{
+		SHA:  caCertsSourceRef,
+		Path: caCertsSourcePath,
+		ListOptions: github.ListOptions{
+			PerPage: 1,
+		},
+	})
 	if err != nil {
-		return fail(err)
+		return nil, fmt.Errorf("cannot identify latest Mozilla certdata revision: %w", err)
 	}
-
-	for _, cert := range certs {
-		if err := ctx.Err(); err != nil {
-			return err
+	if len(commits) != 1 || commits[0].GetSHA() == "" {
+		return nil, fmt.Errorf("cannot identify latest Mozilla certdata revision: expected one commit, got %d", len(commits))
+	}
+	revision := commits[0].GetSHA()
+	download, response, err := client.Repositories.DownloadContents(ctx, caCertsSourceOwner, caCertsSourceRepo, caCertsSourcePath, &github.RepositoryContentGetOptions{
+		Ref: revision,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("cannot download Mozilla certdata at revision %s: %w", revision, err)
+	}
+	if response == nil || response.Response == nil || response.StatusCode < 200 || response.StatusCode >= 300 {
+		if download != nil {
+			common.IgnoreCloseError(download)
 		}
-		if (cert.Trust & certparse.ServerTrustedDelegator) == 0 {
+		if response == nil || response.Response == nil {
+			return nil, fmt.Errorf("cannot download Mozilla certdata at revision %s: missing HTTP response", revision)
+		}
+		return nil, fmt.Errorf("cannot download Mozilla certdata at revision %s: HTTP status %s", revision, response.Status)
+	}
+	if download == nil {
+		return nil, fmt.Errorf("cannot download Mozilla certdata at revision %s: empty response body", revision)
+	}
+	defer common.IgnoreCloseError(download)
+	raw, err := io.ReadAll(io.LimitReader(download, caCertsSourceMaxSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("cannot read Mozilla certdata at revision %s: %w", revision, err)
+	}
+	if len(raw) > caCertsSourceMaxSize {
+		return nil, fmt.Errorf("mozilla certdata at revision %s exceeds the maximum size of %d bytes", revision, caCertsSourceMaxSize)
+	}
+	if !bytes.Contains(raw, []byte("License, v. 2.0")) || !bytes.Contains(raw, []byte("mozilla.org/MPL/2.0/")) {
+		return nil, fmt.Errorf("mozilla certdata at revision %s does not contain the expected MPL-2.0 notice", revision)
+	}
+
+	commit := commits[0].GetCommit()
+	if commit == nil || commit.GetCommitter() == nil {
+		return nil, fmt.Errorf("mozilla certdata revision %s has no commit metadata", revision)
+	}
+	committedAt := commit.GetCommitter().GetDate().Time
+	if committedAt.IsZero() {
+		return nil, fmt.Errorf("mozilla certdata revision %s has no commit timestamp", revision)
+	}
+	return newCaCertsSource(revision, committedAt, raw), nil
+}
+
+func (this *dependenciesCaCerts) logComparison(source *caCertsSource, existing []caCertificate, generated *caCertsBundle, diff caCertsDiff) {
+	log.With("sourceRevision", source.revision).
+		With("sourceSha256", formatFingerprint(source.sha256)).
+		With("existingCertificates", len(existing)).
+		With("generatedCertificates", len(generated.certificates)).
+		With("existingStateSha256", formatFingerprint(caCertificatesStateHash(existing))).
+		With("generatedStateSha256", formatFingerprint(caCertificatesStateHash(generated.certificates))).
+		Info("CA certificate bundles compared")
+
+	for _, certificate := range diff.added {
+		log.With("label", certificate.label).
+			With("serial", formatSerial(certificate.certificate)).
+			With("sha256", formatFingerprint(certificate.fingerprint)).
+			Info("CA certificate added")
+	}
+	for _, removal := range diff.removed {
+		log.With("subject", removal.certificate.certificate.Subject.String()).
+			With("serial", formatSerial(removal.certificate.certificate)).
+			With("sha256", formatFingerprint(removal.certificate.fingerprint)).
+			With("reason", removal.reason).
+			Info("CA certificate removed")
+	}
+}
+
+type caCertsSource struct {
+	revision    string
+	url         string
+	committedAt time.Time
+	raw         []byte
+	sha256      [sha256.Size]byte
+}
+
+func newCaCertsSource(revision string, committedAt time.Time, raw []byte) *caCertsSource {
+	return &caCertsSource{
+		revision:    revision,
+		url:         fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s", caCertsSourceOwner, caCertsSourceRepo, revision, caCertsSourcePath),
+		committedAt: committedAt.UTC(),
+		raw:         raw,
+		sha256:      sha256.Sum256(raw),
+	}
+}
+
+type caCertificate struct {
+	label         string
+	certificate   *x509.Certificate
+	fingerprint   [sha256.Size]byte
+	distrustAfter *time.Time
+}
+
+func newCaCertificate(label string, der []byte) (caCertificate, error) {
+	certificate, err := x509.ParseCertificate(der)
+	if err != nil {
+		return caCertificate{}, err
+	}
+	return caCertificate{
+		label:       label,
+		certificate: certificate,
+		fingerprint: sha256.Sum256(der),
+	}, nil
+}
+
+type caCertsBundle struct {
+	source       *caCertsSource
+	evaluatedAt  time.Time
+	certificates []caCertificate
+	distrusted   []caCertificate
+	sourceStatus map[[sha256.Size]byte]string
+}
+
+func buildCaCertsBundle(ctx context.Context, source *caCertsSource, evaluatedAt time.Time) (*caCertsBundle, error) {
+	if source.committedAt.After(evaluatedAt) {
+		return nil, fmt.Errorf("source commit time %s is after policy observation time %s", source.committedAt.Format(time.RFC3339), evaluatedAt.Format(time.RFC3339))
+	}
+	parsed, err := certdata.ReadCertificates(bytes.NewReader(source.raw))
+	if err != nil {
+		return nil, fmt.Errorf("cannot parse Mozilla certdata at revision %s: %w", source.revision, err)
+	}
+	observedAt := evaluatedAt.UTC().Truncate(time.Second)
+	policyEffectiveAt := source.committedAt
+	for _, candidate := range parsed {
+		if candidate.ServerTrust == certdata.TrustTrustedDelegator && candidate.ServerDistrustAfter != nil &&
+			!candidate.ServerDistrustAfter.After(observedAt) && candidate.ServerDistrustAfter.After(policyEffectiveAt) {
+			policyEffectiveAt = candidate.ServerDistrustAfter.UTC()
+		}
+	}
+	result := &caCertsBundle{
+		source:       source,
+		evaluatedAt:  policyEffectiveAt.UTC().Truncate(time.Second),
+		sourceStatus: make(map[[sha256.Size]byte]string, len(parsed)),
+	}
+	for _, candidate := range parsed {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		fingerprint := sha256.Sum256(candidate.DER)
+		if _, exists := result.sourceStatus[fingerprint]; exists {
+			return nil, fmt.Errorf("mozilla certdata contains duplicate certificate %s", formatFingerprint(fingerprint))
+		}
+		if candidate.ServerTrust != certdata.TrustTrustedDelegator {
+			result.sourceStatus[fingerprint] = formatServerTrustReason(candidate.ServerTrust)
 			continue
 		}
 
-		log.With("subject", cert.Cert.Subject).
-			With("label", cert.Label).
-			With("serial", hex.EncodeToString(cert.Cert.SerialNumber.Bytes())).
-			Trace("ca cert added")
+		certificate, err := newCaCertificate(candidate.Label, candidate.DER)
+		if err != nil {
+			return nil, fmt.Errorf("cannot parse trusted Mozilla certificate %q: %w", candidate.Label, err)
+		}
+		if candidate.ServerDistrustAfter != nil && !candidate.ServerDistrustAfter.After(result.evaluatedAt) {
+			certificate.distrustAfter = candidate.ServerDistrustAfter
+			result.sourceStatus[fingerprint] = fmt.Sprintf("Mozilla server distrust effective since %s", candidate.ServerDistrustAfter.UTC().Format(time.RFC3339))
+			result.distrusted = append(result.distrusted, certificate)
+			continue
+		}
+		result.sourceStatus[fingerprint] = ""
+		result.certificates = append(result.certificates, certificate)
+	}
+	if len(result.certificates) == 0 {
+		return nil, fmt.Errorf("mozilla certdata at revision %s contains no trusted server certificates", source.revision)
+	}
 
-		if err := pem.Encode(to, &pem.Block{
-			Type:  "CERTIFICATE",
-			Bytes: cert.Data,
-		}); err != nil {
-			return fail(err)
+	sortCaCertificates(result.certificates)
+	sortCaCertificates(result.distrusted)
+	return result, nil
+}
+
+func formatServerTrustReason(trust certdata.Trust) string {
+	switch trust {
+	case certdata.TrustUnspecified:
+		return "not trusted by Mozilla for server authentication"
+	case certdata.TrustMustVerify:
+		return "Mozilla server trust requires external verification"
+	case certdata.TrustNotTrusted:
+		return "explicitly not trusted by Mozilla for server authentication"
+	default:
+		return fmt.Sprintf("unsupported Mozilla server trust %q", trust)
+	}
+}
+
+func sortCaCertificates(certificates []caCertificate) {
+	slices.SortFunc(certificates, compareCaCertificateOrder)
+}
+
+func compareCaCertificateOrder(a, b caCertificate) int {
+	if compared := a.certificate.SerialNumber.Cmp(b.certificate.SerialNumber); compared != 0 {
+		return compared
+	}
+	return bytes.Compare(a.fingerprint[:], b.fingerprint[:])
+}
+
+func parsePemCertificates(raw []byte) ([]caCertificate, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil, nil
+	}
+	expectedBlocks := bytes.Count(raw, []byte("-----BEGIN CERTIFICATE-----"))
+	remaining := raw
+	result := make([]caCertificate, 0, expectedBlocks)
+	seen := make(map[[sha256.Size]byte]struct{}, expectedBlocks)
+	for {
+		block, rest := pem.Decode(remaining)
+		if block == nil {
+			break
+		}
+		remaining = rest
+		if block.Type != "CERTIFICATE" {
+			return nil, fmt.Errorf("unexpected PEM block type %q", block.Type)
+		}
+		certificate, err := newCaCertificate("", block.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := seen[certificate.fingerprint]; exists {
+			return nil, fmt.Errorf("duplicate certificate %s", formatFingerprint(certificate.fingerprint))
+		}
+		seen[certificate.fingerprint] = struct{}{}
+		result = append(result, certificate)
+	}
+	if len(result) != expectedBlocks {
+		return nil, fmt.Errorf("decoded %d of %d certificate PEM blocks", len(result), expectedBlocks)
+	}
+	if len(result) == 0 {
+		return nil, errors.New("no certificate PEM blocks found")
+	}
+	sortCaCertificates(result)
+	return result, nil
+}
+
+type caCertsRemoval struct {
+	certificate caCertificate
+	reason      string
+}
+
+type caCertsDiff struct {
+	added   []caCertificate
+	removed []caCertsRemoval
+}
+
+func (this caCertsDiff) empty() bool {
+	return len(this.added) == 0 && len(this.removed) == 0
+}
+
+func compareCaCertificates(existing, generated []caCertificate, sourceStatus map[[sha256.Size]byte]string) caCertsDiff {
+	existingByFingerprint := make(map[[sha256.Size]byte]caCertificate, len(existing))
+	for _, certificate := range existing {
+		existingByFingerprint[certificate.fingerprint] = certificate
+	}
+	generatedByFingerprint := make(map[[sha256.Size]byte]caCertificate, len(generated))
+	for _, certificate := range generated {
+		generatedByFingerprint[certificate.fingerprint] = certificate
+	}
+
+	var result caCertsDiff
+	for fingerprint, certificate := range generatedByFingerprint {
+		if _, exists := existingByFingerprint[fingerprint]; !exists {
+			result.added = append(result.added, certificate)
 		}
 	}
-
-	l = l.With("duration", time.Since(start).Truncate(time.Millisecond))
-	if l.IsDebugEnabled() {
-		l.Info("downloading ca-certs... DONE!")
-	} else {
-		l.Info("ca-certs downloaded")
+	for fingerprint, certificate := range existingByFingerprint {
+		if _, exists := generatedByFingerprint[fingerprint]; exists {
+			continue
+		}
+		reason := "not present in the current Mozilla source"
+		if status, exists := sourceStatus[fingerprint]; exists && status != "" {
+			reason = status
+		}
+		result.removed = append(result.removed, caCertsRemoval{certificate: certificate, reason: reason})
 	}
+	sortCaCertificates(result.added)
+	slices.SortFunc(result.removed, func(a, b caCertsRemoval) int {
+		return compareCaCertificateOrder(a.certificate, b.certificate)
+	})
+	return result
+}
 
+func caCertsNeedUpdate(existingRaw []byte, existing []caCertificate, diff caCertsDiff, generated *caCertsBundle) bool {
+	return !diff.empty() || !caCertsHeaderIsCurrent(existingRaw, existing, generated)
+}
+
+func caCertsHeaderIsCurrent(raw []byte, certificates []caCertificate, generated *caCertsBundle) bool {
+	header, _, found := bytes.Cut(raw, []byte("-----BEGIN CERTIFICATE-----"))
+	if !found || !bytes.Contains(header, []byte("## This Source Code Form is subject to the terms of the Mozilla Public\n"+
+		"## License, v. 2.0. If a copy of the MPL was not distributed with this\n"+
+		"## file, You can obtain one at https://mozilla.org/MPL/2.0/.\n"+
+		"## SPDX-License-Identifier: MPL-2.0\n")) ||
+		!bytes.Contains(header, []byte("## Generated by github.com/engity-com/bifroest/cmd/build ca-certs update.\n")) {
+		return false
+	}
+	fields := make(map[string]string)
+	for line := range strings.SplitSeq(string(header), "\n") {
+		line = strings.TrimPrefix(line, "## ")
+		key, value, ok := strings.Cut(line, ": ")
+		if !ok {
+			continue
+		}
+		if _, exists := fields[key]; exists {
+			return false
+		}
+		fields[key] = value
+	}
+	if fields["Generator format"] != caCertsGeneratorFormat ||
+		fields["Source repository"] != "https://github.com/"+caCertsSourceOwner+"/"+caCertsSourceRepo ||
+		fields["Source ref"] != caCertsSourceRef {
+		return false
+	}
+	revision := fields["Source revision"]
+	if decoded, err := hex.DecodeString(revision); err != nil || len(revision) != 40 || len(decoded) != 20 {
+		return false
+	}
+	expectedURL := fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s", caCertsSourceOwner, caCertsSourceRepo, revision, caCertsSourcePath)
+	if fields["Source URL"] != expectedURL {
+		return false
+	}
+	decodedSourceHash, err := hex.DecodeString(fields["Source SHA-256"])
+	if err != nil || len(decodedSourceHash) != sha256.Size {
+		return false
+	}
+	committedAt, err := time.Parse(time.RFC3339, fields["Source committed at"])
+	if err != nil {
+		return false
+	}
+	evaluatedAt, err := time.Parse(time.RFC3339, fields["Policy evaluated at"])
+	if err != nil {
+		return false
+	}
+	headerSource := &caCertsSource{
+		revision:    revision,
+		url:         expectedURL,
+		committedAt: committedAt,
+	}
+	copy(headerSource.sha256[:], decodedSourceHash)
+	headerBundle := &caCertsBundle{source: headerSource, evaluatedAt: evaluatedAt}
+	if revision == generated.source.revision {
+		headerBundle = generated
+	}
+	var expectedHeader bytes.Buffer
+	if err := headerBundle.writeHeaderTo(&expectedHeader); err != nil || !bytes.Equal(header, expectedHeader.Bytes()) {
+		return false
+	}
+	payloadStart := bytes.Index(raw, []byte("-----BEGIN CERTIFICATE-----"))
+	if payloadStart < 0 {
+		return false
+	}
+	payload := raw[payloadStart:]
+	return bytes.Equal(payload, encodeCaCertificates(certificates))
+}
+
+func caCertificatesStateHash(certificates []caCertificate) [sha256.Size]byte {
+	digest := sha256.New()
+	var size [8]byte
+	for _, certificate := range certificates {
+		binary.BigEndian.PutUint64(size[:], uint64(len(certificate.certificate.Raw)))
+		_, _ = digest.Write(size[:])
+		_, _ = digest.Write(certificate.certificate.Raw)
+	}
+	var result [sha256.Size]byte
+	copy(result[:], digest.Sum(nil))
+	return result
+}
+
+func (this *caCertsBundle) writeTo(to io.Writer) error {
+	if err := this.writeHeaderTo(to); err != nil {
+		return err
+	}
+	_, err := to.Write(encodeCaCertificates(this.certificates))
+	return err
+}
+
+func (this *caCertsBundle) writeHeaderTo(to io.Writer) error {
+	if _, err := fmt.Fprintf(to, "##\n"+
+		"## This Source Code Form is subject to the terms of the Mozilla Public\n"+
+		"## License, v. 2.0. If a copy of the MPL was not distributed with this\n"+
+		"## file, You can obtain one at https://mozilla.org/MPL/2.0/.\n"+
+		"## SPDX-License-Identifier: MPL-2.0\n"+
+		"##\n"+
+		"## Generated by github.com/engity-com/bifroest/cmd/build ca-certs update.\n"+
+		"## Generator format: %s\n"+
+		"## Source repository: https://github.com/%s/%s\n"+
+		"## Source ref: %s\n"+
+		"## Source revision: %s\n"+
+		"## Source URL: %s\n"+
+		"## Source committed at: %s\n"+
+		"## Source SHA-256: %s\n"+
+		"## Policy evaluated at: %s\n"+
+		"##\n",
+		caCertsGeneratorFormat,
+		caCertsSourceOwner,
+		caCertsSourceRepo,
+		caCertsSourceRef,
+		this.source.revision,
+		this.source.url,
+		this.source.committedAt.Format(time.RFC3339),
+		formatFingerprint(this.source.sha256),
+		this.evaluatedAt.Format(time.RFC3339),
+	); err != nil {
+		return err
+	}
+	return nil
+}
+
+func encodeCaCertificates(certificates []caCertificate) []byte {
+	var result []byte
+	for _, certificate := range certificates {
+		result = append(result, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.certificate.Raw})...)
+	}
+	return result
+}
+
+func formatSerial(certificate *x509.Certificate) string {
+	return strings.ToUpper(certificate.SerialNumber.Text(16))
+}
+
+func formatFingerprint(fingerprint [sha256.Size]byte) string {
+	return strings.ToUpper(hex.EncodeToString(fingerprint[:]))
+}
+
+func writeFileAtomically(filename string, data []byte, mode gos.FileMode) (rErr error) {
+	temporary, err := gos.CreateTemp(filepath.Dir(filename), ".ca-certs-*.tmp")
+	if err != nil {
+		return err
+	}
+	temporaryName := temporary.Name()
+	defer func() {
+		common.IgnoreCloseError(temporary)
+		if rErr != nil {
+			_ = gos.Remove(temporaryName)
+		}
+	}()
+	if err := temporary.Chmod(mode); err != nil {
+		return err
+	}
+	if _, err := temporary.Write(data); err != nil {
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := replaceFileAtomically(temporaryName, filename); err != nil {
+		return err
+	}
 	return nil
 }

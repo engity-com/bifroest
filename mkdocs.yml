@@ -5,7 +5,7 @@ repo_url: https://github.com/engity-com/bifroest
 repo_name: engity-com/bifroest
 edit_uri: edit/main/docs/
 docs_dir: docs
-copyright: Copyright © 2024 <a href="https://engity.com">Engity GmbH</a>
+copyright: Copyright © 2024-2026 <a href="https://engity.com">Engity GmbH</a>
 strict: false
 
 plugins:

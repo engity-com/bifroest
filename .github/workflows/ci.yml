@@ -41,6 +41,7 @@ jobs:
       stage-binary: "${{ steps.refs.outputs.stage-binary }}"
       stage-archive: "${{ steps.refs.outputs.stage-archive }}"
       stage-image: "${{ steps.refs.outputs.stage-image }}"
+      stage-sbom: "${{ steps.refs.outputs.stage-sbom }}"
       stage-digest: "${{ steps.refs.outputs.stage-digest }}"
       stage-publish: "${{ steps.refs.outputs.stage-publish }}"
     steps:
@@ -110,12 +111,15 @@ jobs:
     if: needs.files-changed.outputs.go == 'true'
     runs-on: "ubuntu-latest"
     container:
-      image: ghcr.io/engity-com/build-images/go
+      image: ghcr.io/engity-com/build-images/build:debian12@sha256:f70a712f5b76894e976ba73c5c78642d60ae699cfd336b36426a7b772d5390bf
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+
+      - name: Set reproducible build time
+        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "${GITHUB_ENV}"
 
       - name: Cache Go
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6

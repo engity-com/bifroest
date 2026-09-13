@@ -24,8 +24,8 @@ const (
 	ImageMinimal = "minimal"
 	ImageScratch = "scratch"
 
-	fromMinimalLinux   = "alpine"
-	fromMinimalWindows = "mcr.microsoft.com/windows/nanoserver:ltsc2022"
+	fromMinimalLinux   = "docker.io/library/alpine:latest@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b"
+	fromMinimalWindows = "mcr.microsoft.com/windows/nanoserver:ltsc2022@sha256:8e17c72fbf586d21e7e5a4edf51d97d05ce2c095cbbd345246c69d151fb3ddb3"
 )
 
 var (
@@ -112,11 +112,7 @@ func Build(ctx context.Context, req BuildRequest) (Image, error) {
 		cfg.Author = ""
 	}
 	cfg.Created = v1.Time{Time: req.Time}
-	cfg.Architecture = platform.Architecture
-	cfg.OS = platform.OS
-	cfg.OSVersion = platform.OSVersion
-	cfg.OSFeatures = platform.OSFeatures
-	cfg.Variant = platform.Variant
+	applyPlatform(cfg, platform)
 	if v := req.Labels; v != nil {
 		cfg.Config.Labels = v
 	} else {
@@ -175,6 +171,20 @@ func Build(ctx context.Context, req BuildRequest) (Image, error) {
 	result.Image = img
 	success = true
 	return &result, nil
+}
+
+func applyPlatform(cfg *v1.ConfigFile, platform *v1.Platform) {
+	cfg.Architecture = platform.Architecture
+	cfg.OS = platform.OS
+	if platform.OSVersion != "" {
+		cfg.OSVersion = platform.OSVersion
+	}
+	if len(platform.OSFeatures) > 0 {
+		cfg.OSFeatures = platform.OSFeatures
+	}
+	if platform.Variant != "" {
+		cfg.Variant = platform.Variant
+	}
 }
 
 func collectBaseContents(req BuildRequest) (iter.Seq2[LayerItem, error], error) {
