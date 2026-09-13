@@ -5,20 +5,10 @@ package audit
 import (
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
-
-type sftpIdentityFileInfoWithOwner struct {
-	os.FileInfo
-	owner syscall.Stat_t
-}
-
-func (this sftpIdentityFileInfoWithOwner) Sys() any {
-	return &this.owner
-}
 
 func TestLoadSftpIdentityFileRejectsUnsafeFiles(t *testing.T) {
 	directory := t.TempDir()
@@ -63,16 +53,4 @@ func TestLoadSftpIdentityFileRejectsUnsafeFiles(t *testing.T) {
 			require.ErrorContains(t, err, test.errorSuffix)
 		})
 	}
-}
-
-func TestValidateSftpIdentityFilePermissionsRejectsDifferentOwner(t *testing.T) {
-	name := filepath.Join(t.TempDir(), "identity")
-	require.NoError(t, os.WriteFile(name, []byte("key"), 0o600))
-	info, err := os.Lstat(name)
-	require.NoError(t, err)
-	owner := *info.Sys().(*syscall.Stat_t)
-	owner.Uid = uint32(os.Geteuid() + 1)
-
-	err = validateSftpIdentityFilePermissions(name, sftpIdentityFileInfoWithOwner{FileInfo: info, owner: owner})
-	require.ErrorContains(t, err, "is owned by user")
 }

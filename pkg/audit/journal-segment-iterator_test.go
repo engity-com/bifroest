@@ -5,6 +5,7 @@ import (
 	goerrors "errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -24,12 +25,15 @@ func TestJournalSegmentInventorySortsWithBoundedTemporaryRuns(t *testing.T) {
 
 	inventory, err := newJournalSegmentInventory(context.Background(), directory, tempDirectory)
 	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, inventory.segments.Close()) })
 	runs, err := os.ReadDir(tempDirectory)
 	require.NoError(t, err)
 	require.Len(t, runs, 1)
 	info, err := runs[0].Info()
 	require.NoError(t, err)
-	require.Equal(t, os.FileMode(0600), info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		require.Equal(t, os.FileMode(0600), info.Mode().Perm())
+	}
 
 	for expected := uint64(1); expected <= uint64(count); expected++ {
 		segment, found, err := inventory.segments.Next(context.Background())
@@ -144,7 +148,9 @@ func TestRecorderRecoveryUsesJournalWorkspaceWithoutGlobalTemp(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	unusableTemporaryDirectory := filepath.Join(t.TempDir(), "not-a-directory")
 	require.NoError(t, os.WriteFile(unusableTemporaryDirectory, nil, 0600))
-	t.Setenv("TMPDIR", unusableTemporaryDirectory)
+	for _, variable := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(variable, unusableTemporaryDirectory)
+	}
 
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)

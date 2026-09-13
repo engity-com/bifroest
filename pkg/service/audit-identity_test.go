@@ -214,12 +214,14 @@ func TestValidateRuntimePathsRewritesSymlinkAliases(t *testing.T) {
 	}
 
 	require.NoError(t, validateRuntimePaths(&conf))
-	require.Equal(t, filepath.Join(real, "audit-key"), conf.Auditlogs[0].IdentityFile)
-	require.Equal(t, filepath.Join(real, "journal"), conf.Auditlogs[0].Journal.Directory)
-	require.Equal(t, crypto.PublicKeysFile(filepath.Join(real, "encryption.pub")), conf.Auditlogs[0].EncryptionPublicKeyFile)
-	require.Equal(t, filepath.Join(real, "sessions"), conf.Session.V.(*configuration.SessionFs).Storage)
-	require.Equal(t, crypto.KnownHostsFile(filepath.Join(real, "known-hosts")), sftp.KnownHostsFile)
-	require.Equal(t, []string{filepath.Join(real, "sftp-key")}, sftp.IdentityFiles)
+	canonicalReal, err := filepath.EvalSymlinks(real)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(canonicalReal, "audit-key"), conf.Auditlogs[0].IdentityFile)
+	require.Equal(t, filepath.Join(canonicalReal, "journal"), conf.Auditlogs[0].Journal.Directory)
+	require.Equal(t, crypto.PublicKeysFile(filepath.Join(canonicalReal, "encryption.pub")), conf.Auditlogs[0].EncryptionPublicKeyFile)
+	require.Equal(t, filepath.Join(canonicalReal, "sessions"), conf.Session.V.(*configuration.SessionFs).Storage)
+	require.Equal(t, crypto.KnownHostsFile(filepath.Join(canonicalReal, "known-hosts")), sftp.KnownHostsFile)
+	require.Equal(t, []string{filepath.Join(canonicalReal, "sftp-key")}, sftp.IdentityFiles)
 }
 
 func TestAuditEncryptionRejectsStaticSshEnvironmentIdentity(t *testing.T) {
@@ -243,11 +245,11 @@ func TestPrepareAuditEncryptionValidatesSftpIdentityKeys(t *testing.T) {
 		name          string
 		aliasIdentity bool
 		distinctKey   bool
-		expectError   bool
+		errorContains string
 	}{
-		{"same key", false, false, true},
-		{"hard-link alias", true, false, true},
-		{"different key", false, true, false},
+		{"same key", false, false, "audit encryption recipient reuses a private key"},
+		{"hard-link alias", true, false, "has 2 hard links instead of one"},
+		{"different key", false, true, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -271,8 +273,8 @@ func TestPrepareAuditEncryptionValidatesSftpIdentityKeys(t *testing.T) {
 			conf := auditSftpDedicatednessTestConfiguration(t, root, []string{additionalIdentityPath, configuredIdentityPath},
 				crypto.PublicKeys(strings.TrimSpace(string(crypto.MarshalPublicKey(encryptionKey.PublicKey())))))
 			svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
-			if test.expectError {
-				require.ErrorContains(t, err, "audit encryption recipient reuses a private key")
+			if test.errorContains != "" {
+				require.ErrorContains(t, err, test.errorContains)
 				require.Nil(t, svc)
 				require.NoDirExists(t, filepath.Join(root, "journal"))
 				return

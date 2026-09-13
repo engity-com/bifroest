@@ -573,7 +573,7 @@ func TestRemoteDeliverySegmentReaderInvalidatesFailedSegmentOpen(t *testing.T) {
 		}
 		require.True(t, result.more)
 	}
-	require.NoError(t, os.Chmod(segmentPath, 0o600))
+	require.NoError(t, makeActiveJournalWritable(segmentPath))
 	require.NoError(t, os.WriteFile(segmentPath, content, journalFileMode))
 	require.NoError(t, os.Chmod(segmentPath, 0o400))
 

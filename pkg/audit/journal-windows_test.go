@@ -37,3 +37,19 @@ func TestNativeJournalOperationsSupportLongWindowsPaths(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []byte("second"), raw)
 }
+
+func TestSealedJournalWindowsPermissionsPreventContentWritesAndAllowRemoval(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "segment.journal")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, journalFileMode)
+	require.NoError(t, err)
+	require.NoError(t, sealJournalFile(path, file))
+	require.NoError(t, file.Close())
+
+	writable, err := os.OpenFile(path, os.O_WRONLY, journalFileMode)
+	require.Error(t, err)
+	if writable != nil {
+		require.NoError(t, writable.Close())
+	}
+	require.NoError(t, os.Chmod(path, journalFileMode))
+	require.NoError(t, os.Remove(path))
+}

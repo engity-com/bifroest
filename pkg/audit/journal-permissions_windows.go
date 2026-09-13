@@ -13,6 +13,10 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
+// FILE_GENERIC_READ | DELETE | FILE_WRITE_ATTRIBUTES keeps segment contents
+// immutable while allowing Windows cleanup to clear read-only and unlink them.
+const sealedJournalWindowsAccess = "0x00130189"
+
 func secureJournalDirectory(path string, _ os.FileInfo) error {
 	return secureJournalPath(path)
 }
@@ -81,11 +85,11 @@ func sealJournalFile(path string, file *os.File) error {
 	if err := os.Chmod(path, 0400); err != nil {
 		return errors.System.Newf("cannot mark sealed audit segment read-only %q: %w", path, err)
 	}
-	return secureJournalPathWithAccess(path, "FR")
+	return secureJournalPathWithAccess(path, sealedJournalWindowsAccess)
 }
 
 func openSealedJournal(path string) (*os.File, error) {
-	if err := secureJournalPathWithAccess(path, "FR"); err != nil {
+	if err := secureJournalPathWithAccess(path, sealedJournalWindowsAccess); err != nil {
 		return nil, err
 	}
 	file, err := os.Open(path)

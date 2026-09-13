@@ -587,39 +587,7 @@ func (this *sftpRemoteTarget) Close() error {
 }
 
 func loadSftpIdentityFile(identityPath string) (bfcrypto.PrivateKey, error) {
-	pathInfo, err := os.Lstat(identityPath)
-	if err != nil {
-		return nil, err
-	}
-	if !pathInfo.Mode().IsRegular() {
-		return nil, goerrors.New("private key is not a regular file")
-	}
-	if pathInfo.Size() > maximumSftpIdentityFileSize {
-		return nil, errors.Config.Newf("private key exceeds %d bytes", maximumSftpIdentityFileSize)
-	}
-	if err := validateSftpIdentityFilePermissions(identityPath, pathInfo); err != nil {
-		return nil, err
-	}
-	file, err := os.Open(identityPath)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	openInfo, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !os.SameFile(pathInfo, openInfo) {
-		return nil, goerrors.New("private key changed while opening")
-	}
-	raw, err := io.ReadAll(io.LimitReader(file, maximumSftpIdentityFileSize+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(raw) > maximumSftpIdentityFileSize {
-		return nil, errors.Config.Newf("private key exceeds %d bytes", maximumSftpIdentityFileSize)
-	}
-	return bfcrypto.ParsePrivateKeyBytes(raw)
+	return bfcrypto.LoadSecurePrivateKeyFile(identityPath, maximumSftpIdentityFileSize)
 }
 
 func loadSftpIdentityFiles(identityFiles []string) ([]bfcrypto.PrivateKey, error) {

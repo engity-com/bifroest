@@ -616,7 +616,7 @@ func validateJournalRoot(directory string, producerId ProducerId) error {
 }
 
 func openActiveJournal(path string) (*os.File, error) {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR|os.O_APPEND, journalFileMode)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, journalFileMode)
 	if err == nil {
 		return prepareActiveJournal(path, file)
 	}
@@ -630,7 +630,7 @@ func openActiveJournal(path string) (*os.File, error) {
 	if !info.Mode().IsRegular() {
 		return nil, errors.Config.Newf("active audit journal %q is not a regular file", path)
 	}
-	file, err = os.OpenFile(path, os.O_RDWR|os.O_APPEND, journalFileMode)
+	file, err = os.OpenFile(path, os.O_RDWR, journalFileMode)
 	if err != nil {
 		return nil, errors.System.Newf("cannot open active audit journal %q: %w", path, err)
 	}
@@ -697,6 +697,10 @@ func prepareActiveJournal(path string, file *os.File) (*os.File, error) {
 	if err := syncJournalDirectory(filepath.Dir(path)); err != nil {
 		_ = file.Close()
 		return nil, errors.System.Newf("cannot flush audit producer directory %q: %w", filepath.Dir(path), err)
+	}
+	if _, err := file.Seek(0, io.SeekEnd); err != nil {
+		_ = file.Close()
+		return nil, errors.System.Newf("cannot seek to end of active audit journal %q: %w", path, err)
 	}
 	return file, nil
 }

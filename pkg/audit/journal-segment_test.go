@@ -334,6 +334,7 @@ func TestLocalJournalRejectsDeletedLatestSegment(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, hasActive)
 	require.Len(t, segments, 1)
+	require.NoError(t, makeActiveJournalWritable(segments[0].path))
 	require.NoError(t, os.Remove(segments[0].path))
 
 	failed, err := NewRecorder(&conf, identity)

@@ -4,21 +4,21 @@ package audit
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
+
+	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 )
 
-func TestValidateSftpIdentityFilePermissionsOnWindows(t *testing.T) {
+func TestLoadSftpIdentityFileValidatesWindowsPermissions(t *testing.T) {
 	name := filepath.Join(t.TempDir(), "identity")
-	require.NoError(t, os.WriteFile(name, []byte("key"), 0o600))
-	require.NoError(t, secureJournalPath(name))
-	info, err := os.Lstat(name)
+	_, err := (bfcrypto.KeyRequirement{Type: bfcrypto.KeyTypeEd25519}).CreateFile(nil, name)
 	require.NoError(t, err)
-	require.NoError(t, validateSftpIdentityFilePermissions(name, info))
+	_, err = loadSftpIdentityFile(name)
+	require.NoError(t, err)
 
 	owner, err := currentProcessOwnerSid()
 	require.NoError(t, err)
@@ -29,6 +29,6 @@ func TestValidateSftpIdentityFilePermissionsOnWindows(t *testing.T) {
 	require.NoError(t, windows.SetNamedSecurityInfo(name, windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
 		nil, nil, dacl, nil))
-	err = validateSftpIdentityFilePermissions(name, info)
-	require.ErrorContains(t, err, "identity other than its owner or SYSTEM")
+	_, err = loadSftpIdentityFile(name)
+	require.ErrorContains(t, err, "identity other than its owner, OWNER RIGHTS, or SYSTEM")
 }

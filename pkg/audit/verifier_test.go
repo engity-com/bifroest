@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -32,9 +33,11 @@ func TestVerifyJournalsUsesOnlyPublicJournalDataAndDoesNotMutate(t *testing.T) {
 	verification, err := VerifyJournals(context.Background(), []JournalSource{{Name: "default", Directory: conf.Journal.Directory}})
 	require.NoError(t, err)
 	require.Equal(t, before, snapshotJournalTestTree(t, conf.Journal.Directory))
+	canonicalDirectory, err := filepath.EvalSymlinks(conf.Journal.Directory)
+	require.NoError(t, err)
 	require.Equal(t, []VerifiedJournal{{
 		Name:          "default",
-		Directory:     conf.Journal.Directory,
+		Directory:     canonicalDirectory,
 		ProducerCount: 1,
 		SegmentCount:  2,
 		RecordCount:   2,
@@ -106,7 +109,9 @@ func TestVerifyJournalsFallsBackToJournalWorkspace(t *testing.T) {
 	require.NoError(t, recorder.Close())
 	unusableTemporaryDirectory := filepath.Join(t.TempDir(), "not-a-directory")
 	require.NoError(t, os.WriteFile(unusableTemporaryDirectory, nil, 0600))
-	t.Setenv("TMPDIR", unusableTemporaryDirectory)
+	for _, variable := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(variable, unusableTemporaryDirectory)
+	}
 
 	verification, err := VerifyJournals(context.Background(), []JournalSource{{Name: "fallback", Directory: conf.Journal.Directory}})
 	require.NoError(t, err)
@@ -115,7 +120,9 @@ func TestVerifyJournalsFallsBackToJournalWorkspace(t *testing.T) {
 	info, err := os.Stat(workRoot)
 	require.NoError(t, err)
 	require.True(t, info.IsDir())
-	require.Equal(t, os.FileMode(0700), info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		require.Equal(t, os.FileMode(0700), info.Mode().Perm())
+	}
 	entries, err := os.ReadDir(workRoot)
 	require.NoError(t, err)
 	require.Empty(t, entries)
@@ -156,9 +163,11 @@ func TestVerifyJournalsAcceptsMoreThanFormerSegmentLimit(t *testing.T) {
 
 	verification, err := VerifyJournals(context.Background(), []JournalSource{{Name: "long-lived", Directory: conf.Journal.Directory}})
 	require.NoError(t, err)
+	canonicalDirectory, err := filepath.EvalSymlinks(conf.Journal.Directory)
+	require.NoError(t, err)
 	require.Equal(t, []VerifiedJournal{{
 		Name:          "long-lived",
-		Directory:     conf.Journal.Directory,
+		Directory:     canonicalDirectory,
 		ProducerCount: 1,
 		SegmentCount:  segmentCount,
 		RecordCount:   segmentCount,
@@ -183,7 +192,7 @@ func TestVerifyJournalSourceDetectsMutationAfterProducerVerification(t *testing.
 		Name:      "mutating",
 		Directory: conf.Journal.Directory,
 	}, false, &verifierBudget{}, func(string) error {
-		require.NoError(t, os.Chmod(segments[0].path, journalFileMode))
+		require.NoError(t, makeActiveJournalWritable(segments[0].path))
 		file, err := os.OpenFile(segments[0].path, os.O_WRONLY|os.O_APPEND, journalFileMode)
 		require.NoError(t, err)
 		_, err = file.Write([]byte("changed"))

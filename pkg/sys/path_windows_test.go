@@ -4,6 +4,7 @@ package sys
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -35,5 +36,9 @@ func TestWindowsExtendedPathMakesRelativePathAbsolute(t *testing.T) {
 
 	actual, err := WindowsExtendedPath(`archive\journal`)
 	require.NoError(t, err)
-	require.Equal(t, `\\?\`+absolute, actual)
+	expected := `\\?\` + absolute
+	if strings.HasPrefix(absolute, `\\`) {
+		expected = `\\?\UNC\` + strings.TrimPrefix(absolute, `\\`)
+	}
+	require.Equal(t, expected, actual)
 }
