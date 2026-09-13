@@ -1,0 +1,67 @@
+version = 1
+
+[[annotations]]
+path = "**"
+precedence = "override"
+SPDX-FileCopyrightText = "2024-2026 Engity GmbH"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["internal/fmtsort/**", "internal/text/template/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "2009 The Go Authors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "cmd/build/third-party-licenses/BSD-3-Clause-Go-1.27.0.txt"
+precedence = "override"
+SPDX-FileCopyrightText = "2009 The Go Authors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "internal/text/template/patch.go"
+precedence = "override"
+SPDX-FileCopyrightText = "2024-2026 Engity GmbH"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "internal/text/template/patch_test.go"
+precedence = "override"
+SPDX-FileCopyrightText = ["2009 The Go Authors", "2024-2026 Engity GmbH"]
+SPDX-License-Identifier = "Apache-2.0 AND BSD-3-Clause"
+
+[[annotations]]
+path = "internal/mozilla/certdata/parse.go"
+precedence = "override"
+SPDX-FileCopyrightText = "2015 Gareth Watts"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "pkg/crypto/ca-certs.crt"
+precedence = "override"
+SPDX-FileCopyrightText = "Mozilla Foundation and contributors"
+SPDX-License-Identifier = "MPL-2.0"
+
+[[annotations]]
+path = "docs/.theme/partials/toc-item.html"
+precedence = "override"
+SPDX-FileCopyrightText = "2016-2024 Martin Donath <martin.donath@squidfunk.com>"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "CODE_OF_CONDUCT.md"
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "Contributor Covenant contributors <https://www.contributor-covenant.org/>",
+  "2024-2026 Engity GmbH",
+]
+SPDX-License-Identifier = "CC-BY-4.0"
+
+[[annotations]]
+path = "CLA.md"
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "Project Harmony contributors <https://www.harmonyagreements.org/>",
+  "2024-2026 Engity GmbH",
+]
+SPDX-License-Identifier = "CC-BY-3.0"

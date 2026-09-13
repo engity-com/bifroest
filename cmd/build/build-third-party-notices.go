@@ -31,6 +31,7 @@ const (
 	thirdPartyNoticesFormat   = "1"
 	goLicensesVersion         = "v2.0.1"
 	goToolchainVersion        = "go1.27.0"
+	modifiedGoSourcesVersion  = "go1.22.0"
 	goLicensesTemplate        = "cmd/build/third-party-notices.tpl"
 	projectModule             = "github.com/engity-com/bifroest"
 )
@@ -60,7 +61,18 @@ type thirdPartyModule struct {
 	matches   []string
 	component string
 	version   string
+	licenses  map[string]struct{}
 	seen      bool
+}
+
+type thirdPartyLicenseInventory struct {
+	modules []thirdPartyLicenseModule
+}
+
+type thirdPartyLicenseModule struct {
+	names             []string
+	version           string
+	licenseExpression string
 }
 
 type thirdPartyLicenseText struct {
@@ -159,6 +171,11 @@ func (this *buildBinary) createThirdPartyNotices(ctx context.Context, req bbin.B
 	if err := target.Close(); err != nil {
 		return fmt.Errorf("cannot close third-party notices %q: %w", targetName, err)
 	}
+	inventory, err := newThirdPartyLicenseInventory(modules)
+	if err != nil {
+		return err
+	}
+	artifact.thirdPartyLicenseInventory = inventory
 	success = true
 	return nil
 }
@@ -274,7 +291,7 @@ func thirdPartyModules(info *debug.BuildInfo, platform bib.Platform, policy thir
 		if effective.Path != dependency.Path {
 			matches = append(matches, effective.Path)
 		}
-		result = append(result, &thirdPartyModule{matches: matches, component: component, version: effective.Version})
+		result = append(result, &thirdPartyModule{matches: matches, component: component, version: effective.Version, licenses: make(map[string]struct{})})
 	}
 	return result, nil
 }
@@ -364,6 +381,10 @@ func reconcileThirdPartyComponents(modules []*thirdPartyModule, records []thirdP
 			return nil, fmt.Errorf("third-party library %q reports version %q instead of %q", record.Library, record.Version, module.version)
 		}
 		module.seen = true
+		if module.licenses == nil {
+			module.licenses = make(map[string]struct{})
+		}
+		module.licenses[record.License] = struct{}{}
 		component := componentFor(module)
 		component.libraries[canonicalLibraryName(record.Library)] = struct{}{}
 		hash := sha256.Sum256([]byte(record.Text))
@@ -426,6 +447,30 @@ func reconcileThirdPartyComponents(modules []*thirdPartyModule, records []thirdP
 	return result, nil
 }
 
+func newThirdPartyLicenseInventory(modules []*thirdPartyModule) (*thirdPartyLicenseInventory, error) {
+	result := &thirdPartyLicenseInventory{modules: make([]thirdPartyLicenseModule, 0, len(modules))}
+	for _, module := range modules {
+		licenses := sortedSet(module.licenses)
+		if len(licenses) == 0 {
+			return nil, fmt.Errorf("third-party module %q has no licenses", module.component)
+		}
+		names := slices.Clone(module.matches)
+		slices.Sort(names)
+		result.modules = append(result.modules, thirdPartyLicenseModule{
+			names:             names,
+			version:           module.version,
+			licenseExpression: strings.Join(licenses, " AND "),
+		})
+	}
+	slices.SortFunc(result.modules, func(a, b thirdPartyLicenseModule) int {
+		if compared := strings.Compare(strings.Join(a.names, "\x00"), strings.Join(b.names, "\x00")); compared != 0 {
+			return compared
+		}
+		return strings.Compare(a.version, b.version)
+	})
+	return result, nil
+}
+
 func matchThirdPartyModule(name string, modules []*thirdPartyModule) *thirdPartyModule {
 	var result *thirdPartyModule
 	matchedLength := -1
@@ -462,7 +507,7 @@ func renderThirdPartyNotices(target io.Writer, platform bib.Platform, info *debu
 	if err := write("Bifroest THIRD_PARTY_NOTICES\nFormat-Version: %s\nTarget: %s/%s/%s\nGo-Version: %s\nGenerator: github.com/google/go-licenses/v2 %s\n\n", thirdPartyNoticesFormat, platform.Os, platform.Arch, platform.Edition, info.GoVersion, goLicensesVersion); err != nil {
 		return err
 	}
-	if err := write("Bundled components not represented as external Go modules:\n- Go standard library %s; BSD-3-Clause; license: LICENSES/BSD-3-Clause-Go-1.27.0.txt\n- Modified Go standard library sources from go1.22.0; BSD-3-Clause; license: LICENSES/BSD-3-Clause.txt\n- Mozilla NSS CA certificate data; MPL-2.0; license: LICENSES/MPL-2.0.txt; provenance: pkg/crypto/ca-certs.crt\n\n", info.GoVersion); err != nil {
+	if err := write("Bundled components not represented as external Go modules:\n- Go standard library %s; BSD-3-Clause; license: LICENSES/BSD-3-Clause-Go-1.27.0.txt\n- Modified Go standard library sources from %s; BSD-3-Clause; license: LICENSES/BSD-3-Clause.txt\n- Mozilla NSS CA certificate data; MPL-2.0; license: LICENSES/MPL-2.0.txt; provenance: pkg/crypto/ca-certs.crt\n\n", info.GoVersion, modifiedGoSourcesVersion); err != nil {
 		return err
 	}
 	for _, component := range components {

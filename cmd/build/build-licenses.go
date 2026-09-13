@@ -64,6 +64,18 @@ func releaseLicenseFiles(root string) ([]releaseLicenseFile, error) {
 	if len(result) == 1 {
 		return nil, fmt.Errorf("release license directory %q contains no files", licenses)
 	}
+	goLicense := filepath.Join(root, "cmd", "build", "third-party-licenses", "BSD-3-Clause-Go-1.27.0.txt")
+	info, err = gos.Stat(goLicense)
+	if err != nil {
+		return nil, fmt.Errorf("cannot inspect Go standard library license %q: %w", goLicense, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("license for Go standard library %q is not a regular file", goLicense)
+	}
+	result = append(result, releaseLicenseFile{
+		source: goLicense,
+		name:   "LICENSES/BSD-3-Clause-Go-1.27.0.txt",
+	})
 	slices.SortFunc(result, func(a, b releaseLicenseFile) int { return strings.Compare(a.name, b.name) })
 	return result, nil
 }

@@ -107,6 +107,10 @@ func (this *buildImage) createPart(ctx context.Context, binary *buildArtifact) (
 	if binary.thirdPartyNoticesFilepath == "" {
 		return failf("binary has no third-party notices")
 	}
+	if binary.thirdPartyLicenseInventory == nil {
+		return failf("binary has no third-party license inventory")
+	}
+	a.thirdPartyLicenseInventory = binary.thirdPartyLicenseInventory
 	thirdPartyNoticesTarget, err := releaseLicenseImageTarget(thirdPartyNoticesFilename, a.Os)
 	if err != nil {
 		return fail(err)

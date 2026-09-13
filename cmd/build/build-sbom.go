@@ -64,6 +64,9 @@ func (this *buildSbom) create(ctx context.Context, artifacts buildArtifacts) (_ 
 }
 
 func (this *buildSbom) createForArtifact(ctx context.Context, source *buildArtifact) (_ buildArtifacts, rErr error) {
+	if source.thirdPartyLicenseInventory == nil {
+		return nil, fmt.Errorf("SBOM source %v has no third-party license inventory", source)
+	}
 	sourceReference, sourceName, subjectDigest, cleanup, err := this.sourceFor(source)
 	if err != nil {
 		return nil, err
@@ -138,7 +141,7 @@ func (this *buildSbom) createForArtifact(ctx context.Context, source *buildArtif
 		return nil, fmt.Errorf("cannot create SBOMs for %v: %w", source, err)
 	}
 	for _, artifact := range result {
-		if err := normalizeSbom(artifact.filepath, *source.Platform, source.t, sourceName, subjectDigest, source.time); err != nil {
+		if err := normalizeSbom(artifact.filepath, *source.Platform, source.t, sourceName, subjectDigest, source.time, source.thirdPartyLicenseInventory); err != nil {
 			return nil, err
 		}
 	}
@@ -199,7 +202,7 @@ func sha256File(filename string) (string, error) {
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func normalizeSbom(filename string, platform bib.Platform, artifactType buildArtifactType, subjectName, subjectDigest string, timestamp time.Time) error {
+func normalizeSbom(filename string, platform bib.Platform, artifactType buildArtifactType, subjectName, subjectDigest string, timestamp time.Time, licenseInventory ...*thirdPartyLicenseInventory) error {
 	raw, err := gos.ReadFile(filename)
 	if err != nil {
 		return fmt.Errorf("cannot read generated SBOM %q: %w", filename, err)
@@ -291,6 +294,11 @@ func normalizeSbom(filename string, platform bib.Platform, artifactType buildArt
 		}
 	} else {
 		return fmt.Errorf("cannot normalize unknown SBOM format %q", filename)
+	}
+	if len(licenseInventory) > 0 && licenseInventory[0] != nil {
+		if err := enrichSbomLicenses(document, format, subjectName, licenseInventory[0]); err != nil {
+			return fmt.Errorf("cannot enrich generated SBOM %q with licenses: %w", filename, err)
+		}
 	}
 	identity := fmt.Sprintf("%s|%s|%s|%s", artifactType, subjectName, subjectDigest, format)
 	if format == "spdx-json@2.3" {

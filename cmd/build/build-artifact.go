@@ -21,12 +21,13 @@ type buildArtifact struct {
 	*bbi.Platform
 	*buildContext
 
-	t                         buildArtifactType
-	filepath                  string
-	thirdPartyNoticesFilepath string
-	sbom                      *buildArtifactSbom
-	ociImage                  v1.Image
-	ociIndex                  v1.ImageIndex
+	t                          buildArtifactType
+	filepath                   string
+	thirdPartyNoticesFilepath  string
+	thirdPartyLicenseInventory *thirdPartyLicenseInventory
+	sbom                       *buildArtifactSbom
+	ociImage                   v1.Image
+	ociIndex                   v1.ImageIndex
 
 	onClose []buildArtifactCloser
 	lock    sync.Mutex

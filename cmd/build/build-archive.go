@@ -82,6 +82,10 @@ func (this *buildArchive) create(ctx context.Context, binary *buildArtifact) (_ 
 	if binary.thirdPartyNoticesFilepath == "" {
 		return fail(fmt.Errorf("binary has no third-party notices"))
 	}
+	if binary.thirdPartyLicenseInventory == nil {
+		return fail(fmt.Errorf("binary has no third-party license inventory"))
+	}
+	a.thirdPartyLicenseInventory = binary.thirdPartyLicenseInventory
 	if err := baw.addFile(thirdPartyNoticesFilename, binary.thirdPartyNoticesFilepath, 0644); err != nil {
 		return fail(err)
 	}

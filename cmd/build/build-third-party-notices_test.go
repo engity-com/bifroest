@@ -153,6 +153,9 @@ func TestReconcileThirdPartyComponentsCombinesLicenseNamesForSameText(t *testing
 	for _, license := range components[0].licenses {
 		require.Equal(t, []string{"Apache-2.0", "MIT"}, sortedSet(license.licenses))
 	}
+	inventory, err := newThirdPartyLicenseInventory(modules)
+	require.NoError(t, err)
+	require.Equal(t, "Apache-2.0 AND MIT", inventory.modules[0].licenseExpression)
 }
 
 func testWriteFile(t *testing.T, root, name, content string) {
