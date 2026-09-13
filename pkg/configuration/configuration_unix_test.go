@@ -54,7 +54,8 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 					Enabled:      DefaultAuditlogEnabled,
 					IdentityFile: DefaultAuditlogIdentityFile,
 					Journal: AuditlogJournal{
-						Directory: DefaultAuditlogJournalDirectory,
+						Directory:        DefaultAuditlogJournalDirectory,
+						MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
 					},
 				}},
 				Ssh: Ssh{
@@ -87,7 +88,12 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 					MaxReverseForwardsPerConnection: DefaultSshMaxReverseForwardsPerConnection,
 					MaxChannels:                     DefaultSshMaxChannels,
 					MaxReverseForwards:              DefaultSshMaxReverseForwards,
-					Banner:                          DefaultSshBanner,
+					UnauthenticatedAudit: SshUnauthenticatedAudit{
+						Interval:       DefaultSshUnauthenticatedAuditInterval,
+						PerSourceLimit: DefaultSshUnauthenticatedAuditPerSourceLimit,
+						GlobalLimit:    DefaultSshUnauthenticatedAuditGlobalLimit,
+					},
+					Banner: DefaultSshBanner,
 					PreparationMessages: PreparationMessages{{
 						Id:     DefaultPreparationMessageId,
 						Flow:   DefaultPreparationMessageFlow,

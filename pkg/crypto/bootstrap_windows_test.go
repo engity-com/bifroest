@@ -31,7 +31,7 @@ func TestBootstrapFileHasProtectedDACL(t *testing.T) {
 }
 
 func TestProtectedTempFileHasProtectedDACLWhileOpen(t *testing.T) {
-	file, err := createProtectedTempFile(t.TempDir(), ".protected-*", 0600)
+	file, err := CreateProtectedTempFile(t.TempDir(), ".protected-*", 0600)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, file.Close())

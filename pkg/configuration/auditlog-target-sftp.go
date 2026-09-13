@@ -19,19 +19,20 @@ const maximumAuditlogTargetSftpPasswordLength = 64 * 1024
 var DefaultAuditlogTargetSftpConnectTimeout = template.DurationOf(10 * time.Second)
 
 type AuditlogTargetSftp struct {
-	Address           string                `yaml:"address"`
-	User              template.String       `yaml:"user"`
-	Directory         string                `yaml:"directory"`
-	KnownHosts        crypto.KnownHosts     `yaml:"knownHosts,omitempty"`
-	KnownHostsFile    crypto.KnownHostsFile `yaml:"knownHostsFile,omitempty"`
-	AcceptAllHostKeys bool                  `yaml:"acceptAllHostKeys,omitempty"`
-	IdentityFiles     []string              `yaml:"identityFiles,omitempty"`
-	Password          template.String       `yaml:"password,omitempty"`
-	ConnectTimeout    template.Duration     `yaml:"connectTimeout,omitempty"`
+	Address               string                `yaml:"address"`
+	User                  template.String       `yaml:"user"`
+	Directory             string                `yaml:"directory"`
+	KnownHosts            crypto.KnownHosts     `yaml:"knownHosts,omitempty"`
+	KnownHostsFile        crypto.KnownHostsFile `yaml:"knownHostsFile,omitempty"`
+	AcceptAllHostKeys     bool                  `yaml:"acceptAllHostKeys,omitempty"`
+	IdentityFiles         []string              `yaml:"identityFiles,omitempty"`
+	Password              template.String       `yaml:"password,omitempty"`
+	ConnectTimeout        template.Duration     `yaml:"connectTimeout,omitempty"`
+	PublishAttemptTimeout template.Duration     `yaml:"publishAttemptTimeout,omitempty"`
 }
 
 func (this *AuditlogTargetSftp) SetDefaults() error {
-	*this = AuditlogTargetSftp{ConnectTimeout: DefaultAuditlogTargetSftpConnectTimeout}
+	*this = AuditlogTargetSftp{ConnectTimeout: DefaultAuditlogTargetSftpConnectTimeout, PublishAttemptTimeout: DefaultAuditlogTargetPublishAttemptTimeout}
 	return nil
 }
 
@@ -113,13 +114,17 @@ func (this *AuditlogTargetSftp) Validate() error {
 			return fmt.Errorf("[connectTimeout] cannot be negative")
 		}
 	}
+	if err := validateAuditlogTargetPublishAttemptTimeout(this.PublishAttemptTimeout); err != nil {
+		return fmt.Errorf("[publishAttemptTimeout] %w", err)
+	}
 	return nil
 }
 
 type AuditlogTargetSftpValues struct {
-	User           string
-	Password       string
-	ConnectTimeout time.Duration
+	User                  string
+	Password              string
+	ConnectTimeout        time.Duration
+	PublishAttemptTimeout time.Duration
 }
 
 func (this AuditlogTargetSftp) Render(data any) (result AuditlogTargetSftpValues, err error) {
@@ -155,6 +160,9 @@ func (this AuditlogTargetSftp) Render(data any) (result AuditlogTargetSftpValues
 	if result.ConnectTimeout < 0 {
 		return result, fmt.Errorf("[connectTimeout] cannot be negative after rendering")
 	}
+	if result.PublishAttemptTimeout, err = renderAuditlogTargetPublishAttemptTimeout(this.PublishAttemptTimeout, data); err != nil {
+		return result, fmt.Errorf("[publishAttemptTimeout] cannot render: %w", err)
+	}
 	return result, nil
 }
 
@@ -184,7 +192,7 @@ func validateAuditlogTargetSftpDirectory(value string) error {
 
 func (this *AuditlogTargetSftp) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *AuditlogTargetSftp, node *yaml.Node) error {
-		if err := rejectUnknownAuditlogFields(node, "address", "user", "directory", "knownHosts", "knownHostsFile", "acceptAllHostKeys", "identityFiles", "password", "connectTimeout"); err != nil {
+		if err := rejectUnknownAuditlogFields(node, "address", "user", "directory", "knownHosts", "knownHostsFile", "acceptAllHostKeys", "identityFiles", "password", "connectTimeout", "publishAttemptTimeout"); err != nil {
 			return err
 		}
 		type raw AuditlogTargetSftp
@@ -207,7 +215,9 @@ func (this AuditlogTargetSftp) isEqualTo(other *AuditlogTargetSftp) bool {
 	if this.Address != other.Address || !this.User.IsEqualTo(other.User) || this.Directory != other.Directory ||
 		!this.KnownHosts.IsEqualTo(other.KnownHosts) || !this.KnownHostsFile.IsEqualTo(other.KnownHostsFile) ||
 		this.AcceptAllHostKeys != other.AcceptAllHostKeys || !this.Password.IsEqualTo(other.Password) ||
-		!this.ConnectTimeout.IsEqualTo(other.ConnectTimeout) || len(this.IdentityFiles) != len(other.IdentityFiles) {
+		!this.ConnectTimeout.IsEqualTo(other.ConnectTimeout) ||
+		!effectiveAuditlogTargetPublishAttemptTimeout(this.PublishAttemptTimeout).IsEqualTo(effectiveAuditlogTargetPublishAttemptTimeout(other.PublishAttemptTimeout)) ||
+		len(this.IdentityFiles) != len(other.IdentityFiles) {
 		return false
 	}
 	for index := range this.IdentityFiles {

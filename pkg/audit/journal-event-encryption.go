@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"io"
+	"os"
 	"strings"
 
 	"filippo.io/age"
@@ -16,7 +17,10 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
-const journalEventEncryptionScheme = "age-ssh/v1"
+const (
+	journalEventEncryptionScheme   = "age-ssh/v1"
+	maxEncryptionPublicKeyFileSize = 4 << 20
+)
 
 type journalEncryptedEvent struct {
 	Scheme     string `json:"scheme"`
@@ -40,7 +44,7 @@ func ResolveEncryptionPublicKey(publicKey bfcrypto.PublicKeys, publicKeyFile bfc
 	if publicKeyFile.IsZero() {
 		return publicKey, nil
 	}
-	keys, err := publicKeyFile.Get()
+	keys, err := readEncryptionPublicKeyFile(string(publicKeyFile))
 	if err != nil {
 		return "", errors.Config.Newf("cannot load audit encryption public key file %q: %w", publicKeyFile, err)
 	}
@@ -48,6 +52,36 @@ func ResolveEncryptionPublicKey(publicKey bfcrypto.PublicKeys, publicKeyFile bfc
 		return "", errors.Config.Newf("audit encryption public key file %q must contain exactly one SSH public key", publicKeyFile)
 	}
 	return bfcrypto.PublicKeys(strings.TrimSpace(string(ssh.MarshalAuthorizedKey(keys[0])))), nil
+}
+
+func readEncryptionPublicKeyFile(path string) ([]ssh.PublicKey, error) {
+	pathInfo, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !pathInfo.Mode().IsRegular() {
+		return nil, errors.Config.Newf("public key file %q is not a regular file", path)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	openInfo, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(pathInfo, openInfo) {
+		return nil, errors.Config.Newf("public key file %q changed while opening", path)
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, maxEncryptionPublicKeyFileSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxEncryptionPublicKeyFileSize {
+		return nil, errors.Config.Newf("public key file %q exceeds %d bytes", path, maxEncryptionPublicKeyFileSize)
+	}
+	return bfcrypto.PublicKeys(strings.TrimSpace(string(raw))).Get()
 }
 
 func EncryptionRecipientFingerprint(publicKeys bfcrypto.PublicKeys) (string, error) {

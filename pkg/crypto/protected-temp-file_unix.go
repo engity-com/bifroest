@@ -18,3 +18,15 @@ func createProtectedTempFile(parent, pattern string, mode os.FileMode) (*os.File
 	}
 	return file, nil
 }
+
+func createProtectedTempDirectory(parent, pattern string) (string, error) {
+	path, err := os.MkdirTemp(parent, pattern)
+	if err != nil {
+		return "", err
+	}
+	if err := os.Chmod(path, 0700); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	return path, nil
+}

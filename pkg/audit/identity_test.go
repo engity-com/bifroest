@@ -102,6 +102,32 @@ func TestEnsureIdentityDoesNotReplaceInvalidKey(t *testing.T) {
 	require.Equal(t, expected, actual)
 }
 
+func TestEnsureIdentityRejectsNonRegularAndOversizedKeyFiles(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		prepare func(*testing.T, string)
+		error   string
+	}{
+		{"directory", func(t *testing.T, path string) { require.NoError(t, os.Mkdir(path, 0700)) }, "not a regular file"},
+		{"oversized", func(t *testing.T, path string) {
+			file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0600)
+			require.NoError(t, err)
+			require.NoError(t, file.Truncate(maxAuditIdentityFileSize+1))
+			require.NoError(t, file.Close())
+		}, "exceeds"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conf := auditIdentityTestConfiguration(t.TempDir(), true)
+			tc.prepare(t, conf.IdentityFile)
+
+			identity, err := EnsureIdentity(&conf)
+
+			require.Nil(t, identity)
+			require.ErrorContains(t, err, tc.error)
+		})
+	}
+}
+
 func TestEnsureIdentityDoesNotReplaceWrongKeyType(t *testing.T) {
 	directory := t.TempDir()
 	conf := auditIdentityTestConfiguration(directory, true)

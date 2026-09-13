@@ -303,7 +303,7 @@ func TestNewS3RemoteTargetUsesPerTargetCredentialsAndPinsEndpoint(t *testing.T) 
 	require.Equal(t, "first-secret", firstCredentials.SecretAccessKey)
 	require.Empty(t, firstCredentials.SessionToken)
 
-	conf.Endpoint = "https://configured.example.invalid"
+	conf.Endpoint = "HTTPS://CONFIGURED.EXAMPLE.INVALID:0443"
 	conf.AccessKeyId = template.MustNewString("second-access")
 	conf.SecretAccessKey = template.MustNewString("second-secret")
 	conf.SessionToken = template.MustNewString("second-token")
@@ -311,7 +311,7 @@ func TestNewS3RemoteTargetUsesPerTargetCredentialsAndPinsEndpoint(t *testing.T) 
 	require.NoError(t, err)
 	second := raw.(*s3RemoteTarget)
 	secondOptions := second.client.(*s3.Client).Options()
-	require.Equal(t, conf.Endpoint, aws.ToString(secondOptions.BaseEndpoint))
+	require.Equal(t, "https://configured.example.invalid", aws.ToString(secondOptions.BaseEndpoint))
 	require.Equal(t, 1, secondOptions.Retryer.MaxAttempts())
 	secondCredentials, err := secondOptions.Credentials.Retrieve(context.Background())
 	require.NoError(t, err)

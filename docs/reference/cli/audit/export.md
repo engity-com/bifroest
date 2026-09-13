@@ -26,8 +26,11 @@ Configuration to load. It uses the same platform default as `bifroest run`.
 <<flag("decryptionIdentityFile", "File Path", "../../data-type.md#file-path", id_prefix="audit-export-", heading=3)>>
 Private SSH key used to decrypt encrypted event payloads. Repeat the flag when needed.
 
+<<flag("expectedProducerId", "string", id_prefix="audit-export-", heading=3)>>
+External trust anchor in the form `<auditlogName>=<64-hex-producer-id>`. Repeat when needed. For a source with this flag, the configured signing private key is not opened and may be absent. The value must come from an independently trusted channel.
+
 <<flag("output", ref("File Path", "../../data-type.md#file-path"), default="-", id_prefix="audit-export-", heading=3)>>
-Output file. `-` writes JSON Lines to stdout. Output paths inside the journal or equal to its signing identity, a supplied decryption identity, or its referenced encryption public-key file are rejected.
+Output file. `-` writes JSON Lines to stdout. Output paths inside any enabled configured journal, or equal to the signing identity or referenced encryption public-key file of any enabled configured audit log, are rejected. Supplied decryption identities are also protected.
 
 <<flag("force", "bool", default=False, id_prefix="audit-export-", heading=3)>>
 Replaces an existing output file.

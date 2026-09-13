@@ -14,6 +14,10 @@ func (noopRecorder) Record(context.Context, Event) error {
 	return nil
 }
 
+func (noopRecorder) RecordSuppressible(context.Context, Event) (bool, error) {
+	return true, nil
+}
+
 func (noopRecorder) Close() error {
 	return nil
 }

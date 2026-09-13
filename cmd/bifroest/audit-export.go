@@ -23,6 +23,7 @@ type auditExportOpts struct {
 	output                  string
 	force                   bool
 	decryptionIdentityFiles []string
+	expectedProducerIds     []string
 }
 
 const maxAuditOutputSize = 128 << 20
@@ -50,6 +51,7 @@ func registerAuditExportCmd(parent *kingpin.CmdClause) {
 	registerConfigurationFlag(cmd, &opts.configuration)
 	registerAuditOutputFlags(cmd, &opts.output, &opts.force)
 	registerAuditDecryptionIdentityFlags(cmd, &opts.decryptionIdentityFiles)
+	registerAuditTrustAnchorFlags(cmd, &opts.expectedProducerIds)
 	cmd.Arg("auditlogName", "Configured auditlog to export.").Required().SetValue(&opts.auditlog)
 }
 
@@ -57,7 +59,8 @@ func doAuditExport(opts *auditExportOpts, stdout io.Writer) error {
 	if opts == nil {
 		return fmt.Errorf("nil options")
 	}
-	configured, err := findConfiguredAuditlog(opts.configuration.Get(), opts.auditlog)
+	conf := opts.configuration.Get()
+	configured, err := findConfiguredAuditlog(conf, opts.auditlog)
 	if err != nil {
 		return err
 	}
@@ -68,13 +71,17 @@ func doAuditExport(opts *auditExportOpts, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureAuditOutputSafe(output, []*configuration.Auditlog{configured}); err != nil {
+	if err := ensureAuditOutputSafe(output, conf); err != nil {
 		return err
 	}
 	if err := ensureBootstrapOutputIsNotPrivateKey(output, opts.decryptionIdentityFiles...); err != nil {
 		return err
 	}
-	source, err := configuredAuditJournalSource(configured, opts.decryptionIdentityFiles)
+	expectedProducerIds, err := parseAuditTrustAnchors(opts.expectedProducerIds, []*configuration.Auditlog{configured})
+	if err != nil {
+		return err
+	}
+	source, err := configuredAuditJournalSource(configured, opts.decryptionIdentityFiles, expectedProducerIds[configured.Name])
 	if err != nil {
 		return err
 	}
@@ -82,7 +89,7 @@ func doAuditExport(opts *auditExportOpts, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureAuditOutputSafe(output, []*configuration.Auditlog{configured}); err != nil {
+	if err := ensureAuditOutputSafe(output, conf); err != nil {
 		return err
 	}
 	if err := ensureBootstrapOutputIsNotPrivateKey(output, opts.decryptionIdentityFiles...); err != nil {
@@ -104,26 +111,35 @@ func writeAuditOutput(path string, force bool, stdout io.Writer, verification *a
 	return writeBootstrapOutput(path, content.Bytes(), force, stdout)
 }
 
-func ensureAuditOutputSafe(output string, auditlogs []*configuration.Auditlog) error {
+func ensureAuditOutputSafe(output string, conf *configuration.Configuration) error {
 	if output == "-" {
 		return nil
 	}
 	if output == "" {
 		return fmt.Errorf("output path is empty")
 	}
+	if conf == nil {
+		return fmt.Errorf("nil configuration")
+	}
 	absoluteOutput, err := resolveAuditOutputPath(output)
 	if err != nil {
 		return fmt.Errorf("cannot resolve output path %q: %w", output, err)
 	}
-	for _, configured := range auditlogs {
-		if configured == nil {
+	if sessionFs, ok := conf.Session.V.(*configuration.SessionFs); ok {
+		absoluteStorage, err := ensureAuditOutputOutsideDirectory(output, absoluteOutput, sessionFs.Storage, "session storage")
+		if err != nil {
+			return err
+		}
+		if err := ensureAuditOutputDoesNotAliasDirectoryFile(output, absoluteStorage, "session storage file"); err != nil {
+			return err
+		}
+	}
+	for index := range conf.Auditlogs {
+		configured := &conf.Auditlogs[index]
+		if !configured.Enabled {
 			continue
 		}
-		absoluteJournal, err := filepath.EvalSymlinks(configured.Journal.Directory)
-		if err != nil {
-			return fmt.Errorf("cannot resolve journal path %q: %w", configured.Journal.Directory, err)
-		}
-		absoluteJournal, err = filepath.Abs(absoluteJournal)
+		absoluteJournal, err := resolveAuditOutputPath(configured.Journal.Directory)
 		if err != nil {
 			return fmt.Errorf("cannot resolve journal path %q: %w", configured.Journal.Directory, err)
 		}
@@ -146,8 +162,76 @@ func ensureAuditOutputSafe(output string, auditlogs []*configuration.Auditlog) e
 				return err
 			}
 		}
+		for targetIndex := range configured.Targets {
+			target := &configured.Targets[targetIndex]
+			sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
+			if !ok {
+				continue
+			}
+			if !sftp.KnownHostsFile.IsZero() {
+				if err := ensureAuditOutputDoesNotReplaceFile(output, string(sftp.KnownHostsFile), "SFTP known-hosts file"); err != nil {
+					return err
+				}
+			}
+			if err := ensureBootstrapOutputIsNotPrivateKey(output, sftp.IdentityFiles...); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+func ensureAuditOutputOutsideDirectory(output, absoluteOutput, directory, description string) (string, error) {
+	absoluteDirectory, err := resolveAuditOutputPath(directory)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve %s path %q: %w", description, directory, err)
+	}
+	relative, err := filepath.Rel(absoluteDirectory, absoluteOutput)
+	if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("output %q must not be inside %s %q", output, description, directory)
+	}
+	inside, err := auditOutputTraversesDirectory(output, directory)
+	if err != nil {
+		return "", err
+	}
+	if inside {
+		return "", fmt.Errorf("output %q must not be inside %s %q", output, description, directory)
+	}
+	return absoluteDirectory, nil
+}
+
+func ensureAuditOutputDoesNotAliasDirectoryFile(output, directory, description string) error {
+	outputInfo, err := goos.Stat(output)
+	if goerrors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("cannot inspect output path %q: %w", output, err)
+	}
+	if _, err := goos.Stat(directory); goerrors.Is(err, fs.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("cannot inspect protected directory %q: %w", directory, err)
+	}
+	return filepath.WalkDir(directory, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("cannot inspect protected path %q: %w", path, walkErr)
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := goos.Stat(path)
+		if goerrors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("cannot inspect protected path %q: %w", path, err)
+		}
+		if goos.SameFile(outputInfo, info) {
+			return fmt.Errorf("output %q must not replace %s %q", output, description, path)
+		}
+		return nil
+	})
 }
 
 func ensureAuditOutputDoesNotReplaceFile(output, protected, description string) error {
@@ -172,6 +256,9 @@ func ensureAuditOutputDoesNotReplaceFile(output, protected, description string) 
 
 func auditOutputTraversesDirectory(output, directory string) (bool, error) {
 	directoryInfo, err := goos.Stat(directory)
+	if goerrors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
 	if err != nil {
 		return false, fmt.Errorf("cannot inspect journal path %q: %w", directory, err)
 	}

@@ -30,6 +30,29 @@ func (this *service) recordFlowAudit(ctx context.Context, flow configuration.Flo
 	return nil
 }
 
+func (this *service) recordUnauthenticatedFlowAudit(ctx context.Context, flow configuration.FlowName, event audit.Event) error {
+	fail := func(err error) error {
+		if sshContext, ok := ctx.(essh.Context); ok {
+			if conn := this.connection(sshContext); conn != nil {
+				_ = conn.Close()
+			}
+		}
+		return err
+	}
+	recorder := this.flowAuditRecorders[flow]
+	if recorder == nil {
+		return fail(errors.System.Newf("no audit recorder configured for flow %q", flow))
+	}
+	auditlog, ok := this.flowAuditlogs[flow]
+	if !ok {
+		return fail(errors.System.Newf("no auditlog configured for flow %q", flow))
+	}
+	if err := this.unauthenticatedAudit.Record(ctx, auditlog, this.enabledAuditlogs[auditlog], recorder, event); err != nil {
+		return fail(errors.System.Newf("cannot record unauthenticated audit event %q for flow %q: %w", event.Name, flow, err))
+	}
+	return nil
+}
+
 func (this *service) authorizationAuditEvent(ctx essh.Context, auth authorization.Authorization, name string, domain audit.EventDomain) audit.Event {
 	event := audit.Event{
 		Name:              name,

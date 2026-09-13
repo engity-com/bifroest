@@ -46,7 +46,7 @@ func (this KeyRequirement) CreateFile(rand io.Reader, fn string) (PrivateKey, er
 	if err := os.MkdirAll(parent, 0700); err != nil {
 		return nil, fmt.Errorf("cannot create parent directory for private key %q: %w", fn, err)
 	}
-	f, err := createProtectedTempFile(parent, ".bifroest-key-*", 0400)
+	f, err := CreateProtectedTempFile(parent, ".bifroest-key-*", 0400)
 	if err != nil {
 		return nil, err
 	}

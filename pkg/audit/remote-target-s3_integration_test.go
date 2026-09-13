@@ -175,14 +175,15 @@ func newEmbeddedS3RemoteTestTarget(t *testing.T, prefix string) (*s3RemoteTarget
 	require.NoError(t, err)
 
 	conf := &configuration.AuditlogTargetS3{
-		Bucket:          "audit-archive",
-		Region:          template.MustNewString("us-east-1"),
-		Prefix:          prefix,
-		Endpoint:        server.URL,
-		PathStyle:       true,
-		AccessKeyId:     template.MustNewString("access-key"),
-		SecretAccessKey: template.MustNewString("secret-key"),
-		SessionToken:    template.MustNewString("session-token"),
+		Bucket:              "audit-archive",
+		Region:              template.MustNewString("us-east-1"),
+		Prefix:              prefix,
+		Endpoint:            server.URL,
+		PathStyle:           true,
+		DestinationIdentity: "embedded-test-tenant",
+		AccessKeyId:         template.MustNewString("access-key"),
+		SecretAccessKey:     template.MustNewString("secret-key"),
+		SessionToken:        template.MustNewString("session-token"),
 	}
 	target, err := newS3RemoteTargetWithClient(conf, client, nil)
 	require.NoError(t, err)

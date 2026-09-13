@@ -2,10 +2,13 @@ package audit
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+
+	"github.com/engity-com/bifroest/pkg/configuration"
 )
 
 func TestLegacyAuditEventEncodingRemainsCanonical(t *testing.T) {
@@ -23,6 +26,7 @@ func TestAuditEventEncodingIncludesStructuredFields(t *testing.T) {
 	bytesRead := int64(1)
 	bytesWritten := int64(2)
 	duration := int64(3)
+	count := uint64(4)
 	pty := true
 	agentForwarding := false
 	forcedCommand := true
@@ -44,6 +48,7 @@ func TestAuditEventEncodingIncludesStructuredFields(t *testing.T) {
 		BytesRead:            &bytesRead,
 		BytesWritten:         &bytesWritten,
 		DurationMillis:       &duration,
+		Count:                &count,
 		Pty:                  &pty,
 		AgentForwarding:      &agentForwarding,
 		ForcedCommand:        &forcedCommand,
@@ -51,13 +56,14 @@ func TestAuditEventEncodingIncludesStructuredFields(t *testing.T) {
 
 	payload, err := json.Marshal(event)
 	require.NoError(t, err)
-	require.Equal(t, `{"name":"session.task.completed","domain":"session","outcome":"success","flow":"main","connectionId":"34e34ab8-7457-4d88-a5e4-c57791775c3a","sessionId":"82d8fdda-4730-43b7-bfde-72733c217bde","operationId":"6d05798f-b877-4191-8aa0-4576a30411ad","authenticationMethod":"public-key","authenticationPhase":"verified","authorizationKind":"local","sessionTask":"shell","reason":"completed","errorCategory":"network","exitCode":0,"bytesRead":1,"bytesWritten":2,"durationMillis":3,"pty":true,"agentForwarding":false,"forcedCommand":true}`, string(payload))
+	require.Equal(t, `{"name":"session.task.completed","domain":"session","outcome":"success","flow":"main","connectionId":"34e34ab8-7457-4d88-a5e4-c57791775c3a","sessionId":"82d8fdda-4730-43b7-bfde-72733c217bde","operationId":"6d05798f-b877-4191-8aa0-4576a30411ad","authenticationMethod":"public-key","authenticationPhase":"verified","authorizationKind":"local","sessionTask":"shell","reason":"completed","errorCategory":"network","exitCode":0,"bytesRead":1,"bytesWritten":2,"durationMillis":3,"count":4,"pty":true,"agentForwarding":false,"forcedCommand":true}`, string(payload))
 	require.NoError(t, validateAuditEvent(event))
 }
 
 func TestAuditEventValidationRejectsInvalidStructuredFields(t *testing.T) {
 	negativeInt := -1
 	negativeInt64 := int64(-1)
+	zeroUint64 := uint64(0)
 	validId := uuid.NewString()
 	tests := map[string]Event{
 		"domain":                {Name: "test.event", Domain: "other"},
@@ -78,6 +84,7 @@ func TestAuditEventValidationRejectsInvalidStructuredFields(t *testing.T) {
 		"bytes read":            {Name: "test.event", BytesRead: &negativeInt64},
 		"bytes written":         {Name: "test.event", BytesWritten: &negativeInt64},
 		"duration":              {Name: "test.event", DurationMillis: &negativeInt64},
+		"count":                 {Name: "test.event", Count: &zeroUint64},
 	}
 
 	for name, event := range tests {
@@ -87,4 +94,9 @@ func TestAuditEventValidationRejectsInvalidStructuredFields(t *testing.T) {
 	}
 
 	require.NoError(t, validateAuditEvent(Event{Name: "test.event", ConnectionId: validId, SessionId: validId, OperationId: validId}))
+}
+
+func TestAuditEventFlowEnforcesConfiguredByteLengthLimit(t *testing.T) {
+	require.NoError(t, validateAuditEvent(Event{Name: "test.event", Flow: strings.Repeat("a", configuration.MaxFlowNameBytes)}))
+	require.ErrorContains(t, validateAuditEvent(Event{Name: "test.event", Flow: strings.Repeat("a", configuration.MaxFlowNameBytes+1)}), "flow exceeds 255 bytes")
 }

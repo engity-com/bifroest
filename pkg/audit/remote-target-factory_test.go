@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -16,13 +17,30 @@ import (
 
 var _ = RegisterRemoteTarget(
 	func() configuration.AuditlogTargetV { return &remoteTargetTestConfiguration{} },
-	func(ctx context.Context, scope RemoteTargetScope, conf *remoteTargetTestConfiguration) (RemoteTarget, error) {
-		return conf.create(ctx, scope)
+	func(ctx context.Context, scope RemoteTargetScope, conf *remoteTargetTestConfiguration) (RemoteTarget, RemoteTargetSettings, error) {
+		target, err := conf.create(ctx, scope)
+		if conf.omitDestinationIdentity {
+			return target, RemoteTargetSettings{PublishAttemptTimeout: time.Minute}, err
+		}
+		identity := conf.destinationIdentity
+		if identity == "" {
+			identity = remoteTargetTestDestinationIdentity
+		}
+		timeout := conf.publishAttemptTimeout
+		if timeout == 0 {
+			timeout = time.Minute
+		}
+		return target, RemoteTargetSettings{DestinationIdentity: identity, PublishAttemptTimeout: timeout}, err
 	},
 )
 
+const remoteTargetTestDestinationIdentity RemoteTargetDestinationIdentity = "runtime-test-destination"
+
 type remoteTargetTestConfiguration struct {
-	create func(context.Context, RemoteTargetScope) (RemoteTarget, error)
+	create                  func(context.Context, RemoteTargetScope) (RemoteTarget, error)
+	destinationIdentity     RemoteTargetDestinationIdentity
+	publishAttemptTimeout   time.Duration
+	omitDestinationIdentity bool
 }
 
 func (this *remoteTargetTestConfiguration) SetDefaults() error { return nil }
@@ -138,6 +156,65 @@ func TestNewRemoteTargetRejectsInvalidFactories(t *testing.T) {
 	require.True(t, bferrors.Config.IsErr(err))
 }
 
+func TestNewRemoteTargetRequiresCustomDestinationIdentity(t *testing.T) {
+	closed := false
+	conf := configuration.AuditlogTarget{
+		Name: "archive",
+		V: &remoteTargetTestConfiguration{
+			omitDestinationIdentity: true,
+			create: func(context.Context, RemoteTargetScope) (RemoteTarget, error) {
+				return &remoteTargetTestInstance{close: func() error { closed = true; return nil }}, nil
+			},
+		},
+	}
+	target, err := NewRemoteTarget(context.Background(), "security", &conf)
+	require.Nil(t, target)
+	require.ErrorContains(t, err, "empty destination identity")
+	require.True(t, bferrors.Config.IsErr(err))
+	require.True(t, closed)
+}
+
+func TestNewRemoteTargetUsesCustomDestinationIdentityForFingerprint(t *testing.T) {
+	newEntry := func(identity RemoteTargetDestinationIdentity, timeout time.Duration) remoteTargetEntry {
+		conf := configuration.AuditlogTarget{
+			Name: "archive",
+			V: &remoteTargetTestConfiguration{
+				destinationIdentity:   identity,
+				publishAttemptTimeout: timeout,
+				create: func(context.Context, RemoteTargetScope) (RemoteTarget, error) {
+					return &remoteTargetTestInstance{}, nil
+				},
+			},
+		}
+		entry, err := newRemoteTargetEntry(context.Background(), "security", &conf)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, entry.target.Close()) })
+		return entry
+	}
+
+	first := newEntry("https://first.example.invalid/archive", 17*time.Second)
+	second := newEntry("https://second.example.invalid/archive", 17*time.Second)
+	rotatedTimeout := newEntry("https://first.example.invalid/archive", 30*time.Second)
+	require.Equal(t, 17*time.Second, first.publishAttemptTimeout)
+	require.NotEqual(t, first.destinationFingerprint, second.destinationFingerprint)
+	require.Equal(t, first.destinationFingerprint, rotatedTimeout.destinationFingerprint)
+}
+
+func TestNewRemoteTargetRequiresPositiveCustomPublishAttemptTimeout(t *testing.T) {
+	conf := configuration.AuditlogTarget{
+		Name: "archive",
+		V: &remoteTargetTestConfiguration{
+			publishAttemptTimeout: -time.Second,
+			create: func(context.Context, RemoteTargetScope) (RemoteTarget, error) {
+				return &remoteTargetTestInstance{}, nil
+			},
+		},
+	}
+	target, err := NewRemoteTarget(context.Background(), "security", &conf)
+	require.Nil(t, target)
+	require.ErrorContains(t, err, "non-positive publish-attempt timeout")
+}
+
 func TestRemoteTargetsLifecycleOrderAndIdempotence(t *testing.T) {
 	var mutex sync.Mutex
 	var events []string
@@ -194,8 +271,8 @@ func TestRegisterRemoteTargetRejectsInterfaceConfiguration(t *testing.T) {
 	require.Panics(t, func() {
 		RegisterRemoteTarget[configuration.AuditlogTargetV](
 			func() configuration.AuditlogTargetV { return &remoteTargetTestConfiguration{} },
-			func(context.Context, RemoteTargetScope, configuration.AuditlogTargetV) (RemoteTarget, error) {
-				return &remoteTargetTestInstance{}, nil
+			func(context.Context, RemoteTargetScope, configuration.AuditlogTargetV) (RemoteTarget, RemoteTargetSettings, error) {
+				return &remoteTargetTestInstance{}, RemoteTargetSettings{DestinationIdentity: "destination", PublishAttemptTimeout: time.Minute}, nil
 			},
 		)
 	})

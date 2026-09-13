@@ -16,7 +16,7 @@ Has to be set to `simple` to enable simple authorization.
 OpenSSH public keys of certificate authorities that may sign user certificates for every entry in this authorization. The requested SSH username must be included in the certificate's principals.
 
 <<property("trustedUserCAsFile", ref("File Path", "../data-type.md#file-path", ref("Public Keys", "../data-type.md#public-keys")))>>
-Same as [`trustedUserCAs`](#property-trustedUserCAs), but loaded from one file when the authorization is initialized. Both properties can be used together. A configured file must exist and contain at least one valid public key.
+Same as [`trustedUserCAs`](#property-trustedUserCAs), but loaded from one file when the authorization is initialized. Both properties can be used together. A configured file must exist, contain at least one valid public key, and be no larger than 4 MiB because its keys are materialized during startup.
 
 <<property("entries", array_ref("Entry", "#entry"))>>
 Each entry will be inspected to check if a remote user should be authorized.

@@ -16,7 +16,7 @@ Has to be set to `bifroest` to enable Bifröst delegation authorization.
 OpenSSH public keys of the immediately upstream Bifröst certificate authorities. At least this property or [`trustedUserCAsFile`](#property-trustedUserCAsFile) is required.
 
 <<property("trustedUserCAsFile", ref("File Path", "../data-type.md#file-path", ref("Public Keys", "../data-type.md#public-keys")))>>
-Same as [`trustedUserCAs`](#property-trustedUserCAs), but loaded from one file when the authorization is initialized. Both properties can be used together. A configured file must exist and contain at least one valid public key.
+Same as [`trustedUserCAs`](#property-trustedUserCAs), but loaded from one file when the authorization is initialized. Both properties can be used together. A configured file must exist, contain at least one valid public key, and be no larger than 4 MiB because its keys are materialized during startup.
 
 <<property("audiences", "list of strings")>>
 Accepted delegation audiences. If omitted, only the name of the local flow is accepted. An explicitly configured non-empty list replaces that default; an explicitly empty list is invalid.

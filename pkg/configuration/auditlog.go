@@ -13,9 +13,10 @@ import (
 )
 
 var (
-	DefaultAuditlogEnabled          = false
-	DefaultAuditlogIdentityFile     = defaultAuditlogIdentityFile
-	DefaultAuditlogJournalDirectory = defaultAuditlogJournalDirectory
+	DefaultAuditlogEnabled                 = false
+	DefaultAuditlogIdentityFile            = defaultAuditlogIdentityFile
+	DefaultAuditlogJournalDirectory        = defaultAuditlogJournalDirectory
+	DefaultAuditlogJournalMinimumFreeBytes = uint64(256 << 20)
 )
 
 // Auditlog defines the authoritative local audit journal and optional remote
@@ -267,30 +268,34 @@ func (this Auditlogs) isEqualTo(other *Auditlogs) bool {
 }
 
 type AuditlogJournal struct {
-	Directory string `yaml:"directory,omitempty"`
+	Directory        string `yaml:"directory,omitempty"`
+	MinimumFreeBytes uint64 `yaml:"minimumFreeBytes,omitempty"`
 }
 
 func (this *AuditlogJournal) SetDefaults() error {
 	return setDefaults(this,
 		fixedDefault("directory", func(v *AuditlogJournal) *string { return &v.Directory }, DefaultAuditlogJournalDirectory),
+		fixedDefault("minimumFreeBytes", func(v *AuditlogJournal) *uint64 { return &v.MinimumFreeBytes }, DefaultAuditlogJournalMinimumFreeBytes),
 	)
 }
 
 func (this *AuditlogJournal) Trim() error {
 	return trim(this,
 		func(v *AuditlogJournal) (string, trimmer) { return "directory", &stringTrimmer{&v.Directory} },
+		noopTrim[AuditlogJournal]("minimumFreeBytes"),
 	)
 }
 
 func (this *AuditlogJournal) Validate() error {
 	return validate(this,
 		notEmptyStringValidate("directory", func(v *AuditlogJournal) *string { return &v.Directory }),
+		noopValidate[AuditlogJournal]("minimumFreeBytes"),
 	)
 }
 
 func (this *AuditlogJournal) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *AuditlogJournal, node *yaml.Node) error {
-		if err := rejectUnknownAuditlogFields(node, "directory"); err != nil {
+		if err := rejectUnknownAuditlogFields(node, "directory", "minimumFreeBytes"); err != nil {
 			return err
 		}
 		type raw AuditlogJournal
@@ -304,9 +309,9 @@ func (this AuditlogJournal) IsEqualTo(other any) bool {
 	}
 	switch v := other.(type) {
 	case AuditlogJournal:
-		return this.Directory == v.Directory
+		return this.Directory == v.Directory && this.MinimumFreeBytes == v.MinimumFreeBytes
 	case *AuditlogJournal:
-		return v != nil && this.Directory == v.Directory
+		return v != nil && this.Directory == v.Directory && this.MinimumFreeBytes == v.MinimumFreeBytes
 	default:
 		return false
 	}

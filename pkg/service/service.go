@@ -218,7 +218,7 @@ func (this *Service) prepare() (svc *service, err error) {
 	if err := this.Configuration.Validate(); err != nil {
 		return fail(err)
 	}
-	if err := validateAuditlogRuntimePaths(this.Configuration.Auditlogs); err != nil {
+	if err := validateRuntimePaths(&this.Configuration); err != nil {
 		return fail(err)
 	}
 
@@ -230,6 +230,8 @@ func (this *Service) prepare() (svc *service, err error) {
 		auditRecorders:      make(map[configuration.AuditlogName]audit.Recorder, len(this.Configuration.Auditlogs)),
 		auditDeliveries:     make(map[configuration.AuditlogName]*audit.RemoteDelivery, len(this.Configuration.Auditlogs)),
 		flowAuditRecorders:  make(map[configuration.FlowName]audit.Recorder, len(this.Configuration.Flows)),
+		flowAuditlogs:       make(map[configuration.FlowName]configuration.AuditlogName, len(this.Configuration.Flows)),
+		enabledAuditlogs:    make(map[configuration.AuditlogName]bool, len(this.Configuration.Auditlogs)),
 	}
 
 	svc.knownFlows = make(map[configuration.FlowName]struct{})
@@ -281,6 +283,7 @@ func (this *Service) prepare() (svc *service, err error) {
 	}()
 	for index := range this.Configuration.Auditlogs {
 		auditlog := &this.Configuration.Auditlogs[index]
+		svc.enabledAuditlogs[auditlog.Name] = auditlog.Enabled
 		identity, identityErr := audit.EnsureIdentity(auditlog)
 		if identityErr != nil {
 			return fail(identityErr)
@@ -332,7 +335,9 @@ func (this *Service) prepare() (svc *service, err error) {
 	}
 	for _, flow := range this.Configuration.Flows {
 		svc.flowAuditRecorders[flow.Name] = svc.auditRecorders[flow.Auditlog]
+		svc.flowAuditlogs[flow.Name] = flow.Auditlog
 	}
+	svc.unauthenticatedAudit = newUnauthenticatedAuditLimiter(this.Configuration.Ssh.UnauthenticatedAudit)
 	if err := this.logCertificateAuthorities(hostSigners); err != nil {
 		return fail(err)
 	}
@@ -553,20 +558,23 @@ func (this *Service) logCertificateAuthorities(hostKeys []crypto.PrivateKey) err
 type service struct {
 	*Service
 
-	auditIdentities    map[configuration.AuditlogName]*audit.Identity
-	auditRecorders     map[configuration.AuditlogName]audit.Recorder
-	auditRecorderOrder []audit.Recorder
-	auditDeliveries    map[configuration.AuditlogName]*audit.RemoteDelivery
-	auditDeliveryOrder []*audit.RemoteDelivery
-	flowAuditRecorders map[configuration.FlowName]audit.Recorder
-	sessions           session.CloseableRepository
-	authorizer         authorization.CloseableAuthorizer
-	environments       environment.CloseableRepository
-	houseKeeper        houseKeeper
-	alternatives       alternatives.Provider
-	imp                imp.Imp
-	server             essh.Server
-	forwardHandler     essh.ForwardedTCPHandler
+	auditIdentities      map[configuration.AuditlogName]*audit.Identity
+	auditRecorders       map[configuration.AuditlogName]audit.Recorder
+	auditRecorderOrder   []audit.Recorder
+	auditDeliveries      map[configuration.AuditlogName]*audit.RemoteDelivery
+	auditDeliveryOrder   []*audit.RemoteDelivery
+	flowAuditRecorders   map[configuration.FlowName]audit.Recorder
+	flowAuditlogs        map[configuration.FlowName]configuration.AuditlogName
+	enabledAuditlogs     map[configuration.AuditlogName]bool
+	unauthenticatedAudit *unauthenticatedAuditLimiter
+	sessions             session.CloseableRepository
+	authorizer           authorization.CloseableAuthorizer
+	environments         environment.CloseableRepository
+	houseKeeper          houseKeeper
+	alternatives         alternatives.Provider
+	imp                  imp.Imp
+	server               essh.Server
+	forwardHandler       essh.ForwardedTCPHandler
 
 	knownFlows map[configuration.FlowName]struct{}
 
@@ -650,6 +658,11 @@ func (this *service) Close() (rErr error) {
 
 func (this *service) closeAudit(flush bool) (result error) {
 	if flush {
+		if this.unauthenticatedAudit != nil {
+			if err := this.unauthenticatedAudit.Flush(context.Background()); err != nil {
+				result = goerrors.Join(result, errors.System.Newf("cannot flush unauthenticated audit aggregates: %w", err))
+			}
+		}
 		for _, recorder := range this.auditRecorderOrder {
 			if sealable, ok := recorder.(audit.SealableRecorder); ok {
 				result = goerrors.Join(result, sealable.Seal())
@@ -730,6 +743,73 @@ func validateAuditlogRuntimePaths(auditlogs configuration.Auditlogs) error {
 				return errors.Config.Newf("auditlog %q identity file overlaps auditlog %q journal", left.name, other.name)
 			}
 		}
+	}
+	return nil
+}
+
+func validateRuntimePaths(conf *configuration.Configuration) error {
+	if err := validateAuditlogRuntimePaths(conf.Auditlogs); err != nil {
+		return err
+	}
+	sessionFs, ok := conf.Session.V.(*configuration.SessionFs)
+	if !ok {
+		return nil
+	}
+	storage, err := resolvePathThroughExistingParents(sessionFs.Storage)
+	if err != nil {
+		return errors.Config.Newf("cannot resolve session storage: %w", err)
+	}
+	for _, auditlog := range conf.Auditlogs {
+		if !auditlog.Enabled {
+			continue
+		}
+		paths := []struct {
+			value       string
+			description string
+		}{
+			{auditlog.IdentityFile, fmt.Sprintf("auditlog %q identity file", auditlog.Name)},
+			{auditlog.Journal.Directory, fmt.Sprintf("auditlog %q journal", auditlog.Name)},
+		}
+		if !auditlog.EncryptionPublicKeyFile.IsZero() {
+			paths = append(paths, struct {
+				value       string
+				description string
+			}{string(auditlog.EncryptionPublicKeyFile), fmt.Sprintf("auditlog %q encryption public key file", auditlog.Name)})
+		}
+		for _, target := range auditlog.Targets {
+			sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
+			if !ok || sftp == nil {
+				continue
+			}
+			if !sftp.KnownHostsFile.IsZero() {
+				paths = append(paths, struct {
+					value       string
+					description string
+				}{string(sftp.KnownHostsFile), fmt.Sprintf("auditlog %q SFTP target %q known hosts file", auditlog.Name, target.Name)})
+			}
+			for index, identityFile := range sftp.IdentityFiles {
+				paths = append(paths, struct {
+					value       string
+					description string
+				}{identityFile, fmt.Sprintf("auditlog %q SFTP target %q identity file [%d]", auditlog.Name, target.Name, index)})
+			}
+		}
+		for _, candidate := range paths {
+			if err := validateSessionStorageRuntimePath(storage, candidate.value, candidate.description); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateSessionStorageRuntimePath(storage, candidate, description string) error {
+	resolved, err := resolvePathThroughExistingParents(candidate)
+	if err != nil {
+		return errors.Config.Newf("cannot resolve %s: %w", description, err)
+	}
+	if runtimePathContains(storage, resolved) || runtimePathContains(resolved, storage) {
+		return errors.Config.Newf("session storage overlaps %s", description)
 	}
 	return nil
 }

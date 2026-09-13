@@ -4,7 +4,19 @@ description: Bifröst must carry out some clean-up tasks periodically to ensure 
 
 # Housekeeping
 
-Bifröst must carry out some clean-up tasks periodically to ensure no sessions and connections are dangling.
+Bifröst periodically removes expired sessions and resources that are no longer needed. Cleanup remains conservative when persisted state cannot be restored safely.
+
+## Cleanup guarantees
+
+Session storage is deleted only after the session, environment, and authorization were disposed successfully. Transient or unknown errors retain the session for a later retry. Permanently unusable local authorization tokens can be removed during an audited disposal.
+
+## Removed flows
+
+Sessions whose flow no longer exists are preserved because Bifröst can no longer interpret their environment and authorization tokens safely. Their resources are excluded from automatic orphan cleanup, and the skip is logged as [`housekeeping.orphaned-session.cleanup.skipped`](auditlog/events.md#housekeeping-orphaned-session-cleanup-skipped).
+
+## Corrupt sessions
+
+Without automatic repair, corrupt entries are preserved and reported individually. Automatic repair is limited to configured flows; one corrupt entry does not block other sessions or environment cleanup.
 
 ## Properties
 

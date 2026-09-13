@@ -48,21 +48,9 @@ func NewFsRepository(_ context.Context, conf *configuration.SessionFs) (*FsRepos
 	if err := os.MkdirAll(filepath.Dir(storage), 0700); err != nil {
 		return nil, fmt.Errorf("cannot create parent directory of session storage %q: %w", storage, err)
 	}
-	if canonical, err := filepath.EvalSymlinks(storage); err == nil {
-		storage = canonical
-	} else if sys.IsNotExist(err) {
-		if info, lstatErr := os.Lstat(storage); lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("cannot canonicalize dangling session storage symlink %q", storage)
-		} else if lstatErr != nil && !sys.IsNotExist(lstatErr) {
-			return nil, fmt.Errorf("cannot inspect session storage %q: %w", storage, lstatErr)
-		}
-		canonicalParent, parentErr := filepath.EvalSymlinks(filepath.Dir(storage))
-		if parentErr != nil && !os.IsNotExist(parentErr) {
-			return nil, fmt.Errorf("cannot canonicalize parent directory of session storage %q: %w", storage, parentErr)
-		}
-		storage = filepath.Join(canonicalParent, filepath.Base(storage))
-	} else {
-		return nil, fmt.Errorf("cannot canonicalize session storage %q: %w", storage, err)
+	storage, err = canonicalizeFsRepositoryStorage(storage)
+	if err != nil {
+		return nil, err
 	}
 	lockPath := filepath.Join(filepath.Dir(storage), "."+filepath.Base(storage)+".bifroest.lock")
 	_, statErr := os.Stat(lockPath)
@@ -94,6 +82,24 @@ func NewFsRepository(_ context.Context, conf *configuration.SessionFs) (*FsRepos
 	}
 
 	return &result, nil
+}
+
+func canonicalizeFsRepositoryStorage(storage string) (string, error) {
+	if canonical, err := filepath.EvalSymlinks(storage); err == nil {
+		return canonical, nil
+	} else if !sys.IsNotExist(err) {
+		return "", fmt.Errorf("cannot canonicalize session storage %q: %w", storage, err)
+	}
+	if info, err := os.Lstat(storage); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("cannot canonicalize dangling session storage symlink %q", storage)
+	} else if err != nil && !sys.IsNotExist(err) {
+		return "", fmt.Errorf("cannot inspect session storage %q: %w", storage, err)
+	}
+	canonicalParent, err := filepath.EvalSymlinks(filepath.Dir(storage))
+	if err != nil {
+		return "", fmt.Errorf("cannot canonicalize parent directory of session storage %q: %w", storage, err)
+	}
+	return filepath.Join(canonicalParent, filepath.Base(storage)), nil
 }
 
 type FsRepository struct {
@@ -242,7 +248,7 @@ func (this *FsRepository) loadAndMatch(ctx context.Context, flow configuration.F
 	result, err := this.findBy(ctx, flow, id, nil, expectedToExist)
 	this.mutex.RUnlock()
 	if err != nil {
-		if !opts.IsAutoCleanUpAllowed() || errors.Is(err, ErrNoSuchSession) && !expectedToExist {
+		if !opts.IsAutoCleanUpAllowedFor(ctx, flow, id) || errors.Is(err, ErrNoSuchSession) && !expectedToExist {
 			return nil, err
 		}
 		this.mutex.Lock()
@@ -257,7 +263,7 @@ func (this *FsRepository) loadAndMatch(ctx context.Context, flow configuration.F
 		opts.GetLogger(this.logger).Withf("session", "%v/%v", flow, id).WithError(err).Warn("found broken session; it was removed entirely")
 		return nil, ErrNoSuchSession
 	}
-	if opts.IsAutoCleanUpAllowed() {
+	if opts.IsAutoCleanUpAllowedFor(ctx, flow, id) {
 		this.mutex.Lock()
 		this.doAutoCleanUnexpectedFilesIfAllowed(ctx, result, opts)
 		this.mutex.Unlock()
@@ -281,6 +287,7 @@ func (this *FsRepository) findBy(ctx context.Context, flow configuration.FlowNam
 		if sys.IsNotExist(err) {
 			if expectedToExist {
 				this.doFindAutoCleanIfAllowed(ctx, flow, id, opts, "found broken session directory; it was removed entirely", err)
+				return nil, fmt.Errorf("%w: session metadata of %v/%v is missing", ErrCorruptSession, flow, id)
 			}
 			return nil, ErrNoSuchSession
 		}
@@ -290,11 +297,11 @@ func (this *FsRepository) findBy(ctx context.Context, flow configuration.FlowNam
 
 	var buf fs
 	if err := json.NewDecoder(f).Decode(&buf.info); err != nil {
-		return cleanUpIfAllowedAndFail(errors.Newf(errors.System, "cannot decode session %v/%v: %w", flow, id, err))
+		return cleanUpIfAllowedAndFail(errors.Newf(errors.System, "cannot decode session %v/%v: %w", flow, id, fmt.Errorf("%w: %v", ErrCorruptSession, err)))
 	}
 	fi, err := f.Stat()
 	if err != nil {
-		return cleanUpIfAllowedAndFail(errors.Newf(errors.System, "cannot stat session file of %v/%v: %w", flow, id, err))
+		return cleanUpIfAllowedAndFail(errors.Newf(errors.System, "cannot stat session file of %v/%v: %w", flow, id, fmt.Errorf("%w: %v", ErrCorruptSession, err)))
 	}
 	if buf.info.VCreatedAt.IsZero() {
 		buf.info.createdAt = fi.ModTime()
@@ -442,7 +449,14 @@ func (this *FsRepository) FindAll(ctx context.Context, consumer Consumer, opts *
 			if errors.Is(err, ErrNoSuchSession) {
 				return true, nil
 			} else if err != nil {
-				return false, err
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return false, ctxErr
+				}
+				diagnostic := FindDiagnostic{Flow: flow, Id: id, Path: path, Err: err}
+				if reportErr := opts.ReportDiagnostic(ctx, diagnostic); reportErr != nil {
+					return false, reportErr
+				}
+				return true, nil
 			}
 
 			canContinue, err = consumer(ctx, candidate)
@@ -475,6 +489,9 @@ func (this *FsRepository) deleteBy(ctx context.Context, flow configuration.FlowN
 	} else if err != nil {
 		return fmt.Errorf("cannot delete session %v/%v: %w", flow, id, err)
 	}
+	// Keep the storage root free of empty flow directories even when automatic
+	// repair is disabled. A concurrent session creation is serialized by mutex.
+	_ = os.Remove(filepath.Dir(dir))
 	return nil
 }
 
@@ -518,7 +535,7 @@ func (this *FsRepository) disposeBy(ctx context.Context, flow configuration.Flow
 }
 
 func (this *FsRepository) doFindAutoCleanIfAllowed(ctx context.Context, flow configuration.FlowName, id Id, opts *FindOpts, successMessage string, cause error) {
-	if opts.IsAutoCleanUpAllowed() {
+	if opts.IsAutoCleanUpAllowedFor(ctx, flow, id) {
 		logger := opts.GetLogger(this.logger).
 			Withf("sesion", "%v/%v", flow, id)
 		if err := this.deleteBy(ctx, flow, id); err != nil {
@@ -536,8 +553,8 @@ func (this *FsRepository) doFindAutoCleanIfAllowed(ctx context.Context, flow con
 	}
 }
 
-func (this *FsRepository) doAutoCleanUnexpectedFilesIfAllowed(_ context.Context, sess *fs, opts *FindOpts) {
-	if opts.IsAutoCleanUpAllowed() {
+func (this *FsRepository) doAutoCleanUnexpectedFilesIfAllowed(ctx context.Context, sess *fs, opts *FindOpts) {
+	if opts.IsAutoCleanUpAllowedFor(ctx, sess.flow, sess.id) {
 		logger := opts.GetLogger(this.logger).
 			With("session", sess)
 		if err := this.deleteUnexpectedFiles(logger, sess); err != nil {
@@ -604,8 +621,8 @@ func (this *FsRepository) deleteUnexpectedFiles(logger log.Logger, sess *fs) err
 	return nil
 }
 
-func (this *FsRepository) doFindAutoCleanFlowContentIfAllowed(_ context.Context, flow configuration.FlowName, fn string, opts *FindOpts, successMessage string, cause error) {
-	if opts.IsAutoCleanUpAllowed() {
+func (this *FsRepository) doFindAutoCleanFlowContentIfAllowed(ctx context.Context, flow configuration.FlowName, fn string, opts *FindOpts, successMessage string, cause error) {
+	if opts.IsAutoCleanUpAllowedFor(ctx, flow, Id{}) {
 		logger := opts.GetLogger(this.logger).
 			With("flow", flow).
 			With("path", fn)
@@ -720,7 +737,7 @@ func (this *FsRepository) iterateFlowDirs(ctx context.Context, flow configuratio
 	dirName := filepath.Join(this.storage, string(fs))
 	var entries []os.DirEntry
 	defer func() {
-		if rErr == nil && len(entries) == 0 && opts.IsAutoCleanUpAllowed() {
+		if rErr == nil && len(entries) == 0 && opts.IsAutoCleanUpAllowedFor(ctx, flow, Id{}) {
 			l := opts.GetLogger(this.logger).
 				With("path", dirName).
 				With("flow", flow)

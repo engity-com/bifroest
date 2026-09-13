@@ -18,6 +18,7 @@ type auditMergeOpts struct {
 	output                  string
 	force                   bool
 	decryptionIdentityFiles []string
+	expectedProducerIds     []string
 }
 
 func registerAuditMergeCmd(parent *kingpin.CmdClause) {
@@ -27,6 +28,7 @@ func registerAuditMergeCmd(parent *kingpin.CmdClause) {
 	registerConfigurationFlag(cmd, &opts.configuration)
 	registerAuditOutputFlags(cmd, &opts.output, &opts.force)
 	registerAuditDecryptionIdentityFlags(cmd, &opts.decryptionIdentityFiles)
+	registerAuditTrustAnchorFlags(cmd, &opts.expectedProducerIds)
 	cmd.Arg("auditlogName", "Configured auditlogs to merge.").Required().StringsVar(&opts.auditlogs)
 }
 
@@ -35,18 +37,25 @@ func doAuditMerge(opts *auditMergeOpts, stdout io.Writer) error {
 		return fmt.Errorf("nil options")
 	}
 	configured := make([]*configuration.Auditlog, 0, len(opts.auditlogs))
-	sources := make([]audit.JournalSource, 0, len(opts.auditlogs))
+	conf := opts.configuration.Get()
 	for _, rawName := range opts.auditlogs {
 		name := configuration.AuditlogName(rawName)
 		if err := name.Validate(); err != nil {
 			return err
 		}
-		selected, err := findConfiguredAuditlog(opts.configuration.Get(), name)
+		selected, err := findConfiguredAuditlog(conf, name)
 		if err != nil {
 			return err
 		}
 		configured = append(configured, selected)
-		source, err := configuredAuditJournalSource(selected, opts.decryptionIdentityFiles)
+	}
+	expectedProducerIds, err := parseAuditTrustAnchors(opts.expectedProducerIds, configured)
+	if err != nil {
+		return err
+	}
+	sources := make([]audit.JournalSource, 0, len(configured))
+	for _, selected := range configured {
+		source, err := configuredAuditJournalSource(selected, opts.decryptionIdentityFiles, expectedProducerIds[selected.Name])
 		if err != nil {
 			return err
 		}
@@ -56,7 +65,7 @@ func doAuditMerge(opts *auditMergeOpts, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureAuditOutputSafe(output, configured); err != nil {
+	if err := ensureAuditOutputSafe(output, conf); err != nil {
 		return err
 	}
 	if err := ensureBootstrapOutputIsNotPrivateKey(output, opts.decryptionIdentityFiles...); err != nil {
@@ -66,7 +75,7 @@ func doAuditMerge(opts *auditMergeOpts, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureAuditOutputSafe(output, configured); err != nil {
+	if err := ensureAuditOutputSafe(output, conf); err != nil {
 		return err
 	}
 	if err := ensureBootstrapOutputIsNotPrivateKey(output, opts.decryptionIdentityFiles...); err != nil {

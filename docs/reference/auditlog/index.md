@@ -21,7 +21,7 @@ Enabled audit logs must use distinct identity files and non-overlapping journal 
 <<property("identityFile", "File Path", "../data-type.md#file-path", default="<os specific>")>>
 Where the dedicated audit signing key is stored. If the file does not exist and the local journal does not contain history, an Ed25519 key will be created automatically.
 
-If the key is missing while journal history exists, Bifröst will refuse to start instead of silently creating a new audit identity. An existing invalid key will not be replaced.
+If history exists, a missing or invalid key prevents startup. Existing keys must be regular, at most 1 MiB, owned by the Bifröst user, and neither symlinked nor hard-linked. Unix keys require mode `0400` or `0600`; Windows keys require a protected DACL limited to the owner, `SYSTEM`, and optionally `OWNER RIGHTS`.
 
 The default value is different, depending on the platform Bifröst runs on:
 
@@ -48,23 +48,30 @@ The local journal is the authoritative, crash-safe source of the audit log. Remo
 
 See [audit events](events.md) for the recorded security transitions, their structured fields, privacy guarantees, and failure behavior.
 
+### Storage and recovery
+
+Bifröst signs and durably flushes every accepted record. Segments rotate at approximately 16 MiB and are linked through signed hashes; a signed head anchors the latest record.
+
+Startup repairs interrupted publication and incomplete trailing frames, but rejects invalid signatures, broken chains, and lost records. Large scans use private `.bifroest-work` directories, which can remain after an unclean process termination and may then be removed manually while Bifröst is stopped.
+
+Use [`bifroest audit verify`](../cli/audit/verify.md) for read-only verification. The `export` and `merge` commands produce JSON Lines only after complete verification; these outputs are not signed journals.
+
 ### Properties {: #journal-properties }
 
 <<property("directory", "File Path", "../data-type.md#file-path", default="<os specific>", heading=4, id_prefix="journal-")>>
-Where the local audit journal and signed remote-delivery cursors are stored. Bifröst manages this directory, its `.delivery` state, and segment rotation; external log rotation tools must not modify it.
-
-Bifröst holds an exclusive lock for the lifetime of the journal, so only one process can write a configured producer journal at a time. Each accepted record is signed with the dedicated Ed25519 identity, linked to the previous record, and flushed to stable storage before recording succeeds.
-
-The journal rotates at approximately 16 MiB. Closed segments are signed, linked to the previous segment, published under a content-hash-bound name, and made read-only. A separately signed journal head anchors the latest accepted record, including records in the active segment.
-
-On startup, Bifröst completes interrupted segment publication and discards only physically incomplete trailing frames. Invalid signatures, broken chains, loss of records behind the journal head, and complete malformed frames prevent startup instead of being ignored.
-
-Use [`bifroest audit verify`](../cli/audit/verify.md) for read-only offline verification. The related [`audit export`](../cli/audit/export.md) and [`audit merge`](../cli/audit/merge.md) commands produce JSON Lines only after complete verification; these derived outputs are not themselves signed journals.
+Where the journal, delivery cursors, and temporary work data are stored. Bifröst locks and manages this directory exclusively; external log rotation tools must not modify it.
 
 The default value is different, depending on the platform Bifröst runs on:
 
 * Linux: `/var/lib/engity/bifroest/auditlog`
 * Windows: `C:\ProgramData\Engity\Bifroest\auditlog`
+
+<<property("minimumFreeBytes", "uint64", None, default=268435456, heading=4, id_prefix="journal-")>>
+The minimum filesystem space reserved from suppressible, unauthenticated audit records. Bifröst also accounts conservatively for the next record and journal-head replacement before allowing such a write. A configured value of `0` uses the secure default of 256 MiB rather than disabling the reserve.
+
+Reaching this reserve suppresses only pre-authentication detail and aggregate records and emits one signed `journal-reserve` suppression marker while space is still reserved. A rate-limit aggregate that first detects the reserve keeps its original reason and outcome. Transition markers, that rate-limit aggregate, and final aggregate counts during orderly shutdown are bounded emergency writes that may consume the configured reserve. Failure of a final emergency write is returned as an incomplete audit flush while shutdown continues closing resources.
+
+Successful or verified authentication and all later security events continue to use the normal synchronous, fail-closed recorder. Consequently, exhausting this threshold cannot itself lock out legitimate authentication. Other processes writing to the same filesystem and authenticated clients are outside this reserve's threat boundary; a dedicated filesystem remains recommended.
 
 ## Examples
 
@@ -77,9 +84,10 @@ auditlog:
 
   - name: restricted
     enabled: true
-    identityFile: /etc/engity/bifroest/auditlog-key
+    identityFile: /etc/engity/bifroest/restricted-auditlog-key
     journal:
-      directory: /var/lib/engity/bifroest/auditlog
+      directory: /var/lib/engity/bifroest/restricted-auditlog
+      minimumFreeBytes: 268435456
 ```
 
 ### Encrypted audit events

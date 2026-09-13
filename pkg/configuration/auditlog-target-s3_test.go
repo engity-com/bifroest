@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -25,21 +26,25 @@ prefix: " production/bifroest "
 endpoint: " https://objects.example.invalid/ "
 pathStyle: true
 expectedBucketOwner: " 123456789012 "
+destinationIdentity: " tenant-production "
 accessKeyId: '{{ env "ARCHIVE_ACCESS_KEY_ID" }}'
 secretAccessKey: '{{ env "ARCHIVE_SECRET_ACCESS_KEY" }}'
 sessionToken: '{{ env "ARCHIVE_SESSION_TOKEN" }}'
+publishAttemptTimeout: 15s
 `), &actual))
 	require.Equal(t, configuration.AuditlogTargetName("archive"), actual.Name)
 	expected := configuration.AuditlogTargetS3{
-		Bucket:              "audit-archive",
-		Region:              template.MustNewString("eu-central-1"),
-		Prefix:              "production/bifroest",
-		Endpoint:            "https://objects.example.invalid",
-		PathStyle:           true,
-		ExpectedBucketOwner: "123456789012",
-		AccessKeyId:         template.MustNewString("{{ env \"ARCHIVE_ACCESS_KEY_ID\" }}"),
-		SecretAccessKey:     template.MustNewString("{{ env \"ARCHIVE_SECRET_ACCESS_KEY\" }}"),
-		SessionToken:        template.MustNewString("{{ env \"ARCHIVE_SESSION_TOKEN\" }}"),
+		Bucket:                "audit-archive",
+		Region:                template.MustNewString("eu-central-1"),
+		Prefix:                "production/bifroest",
+		Endpoint:              "https://objects.example.invalid",
+		PathStyle:             true,
+		ExpectedBucketOwner:   "123456789012",
+		DestinationIdentity:   "tenant-production",
+		AccessKeyId:           template.MustNewString("{{ env \"ARCHIVE_ACCESS_KEY_ID\" }}"),
+		SecretAccessKey:       template.MustNewString("{{ env \"ARCHIVE_SECRET_ACCESS_KEY\" }}"),
+		SessionToken:          template.MustNewString("{{ env \"ARCHIVE_SESSION_TOKEN\" }}"),
+		PublishAttemptTimeout: template.DurationOf(15 * time.Second),
 	}
 	require.True(t, expected.IsEqualTo(actual.V))
 
@@ -67,10 +72,11 @@ func TestAuditlogTargetS3EnvironmentDefaults(t *testing.T) {
 	values, err := conf.Render(nil)
 	require.NoError(t, err)
 	require.Equal(t, configuration.AuditlogTargetS3Values{
-		Region:          "eu-central-1",
-		AccessKeyId:     "modern-access",
-		SecretAccessKey: "modern-secret",
-		SessionToken:    "session",
+		Region:                "eu-central-1",
+		AccessKeyId:           "modern-access",
+		SecretAccessKey:       "modern-secret",
+		SessionToken:          "session",
+		PublishAttemptTimeout: 2 * time.Minute,
 	}, values)
 	encoded, err := yaml.Marshal(actual)
 	require.NoError(t, err)
@@ -160,6 +166,7 @@ func TestAuditlogTargetS3EqualityIncludesCredentialTemplates(t *testing.T) {
 		{"session-token", func(value *configuration.AuditlogTargetS3) {
 			value.SessionToken = template.MustNewString("other-token")
 		}},
+		{"destination-identity", func(value *configuration.AuditlogTargetS3) { value.DestinationIdentity = "other-tenant" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -237,13 +244,18 @@ func TestAuditlogTargetS3RejectsInvalidConfiguration(t *testing.T) {
 		{"endpoint-empty-port", "bucket: audit-archive\nregion: eu-central-1\nendpoint: 'https://objects.example.invalid:'", "empty port"},
 		{"endpoint-invalid-port", "bucket: audit-archive\nregion: eu-central-1\nendpoint: 'https://objects.example.invalid:65536'", "invalid port"},
 		{"endpoint-invalid-host", "bucket: audit-archive\nregion: eu-central-1\nendpoint: 'https://bad_host.example'", "invalid host"},
+		{"ambiguous-custom-endpoint", "bucket: audit-archive\nregion: eu-central-1\nendpoint: https://objects.example.invalid", "[destinationIdentity] or [expectedBucketOwner]"},
 		{"endpoint-empty-query", "bucket: audit-archive\nregion: eu-central-1\nendpoint: 'https://objects.example.invalid?'", "query"},
 		{"endpoint-empty-fragment", "bucket: audit-archive\nregion: eu-central-1\nendpoint: 'https://objects.example.invalid#'", "fragment"},
 		{"invalid-owner-length", "bucket: audit-archive\nregion: eu-central-1\nexpectedBucketOwner: '123'", "exactly 12 digits"},
 		{"invalid-owner-character", "bucket: audit-archive\nregion: eu-central-1\nexpectedBucketOwner: 12345678901x", "non-decimal"},
+		{"long-destination-identity", "bucket: audit-archive\nregion: eu-central-1\ndestinationIdentity: " + strings.Repeat("a", 257), "exceeds 256 bytes"},
+		{"control-in-destination-identity", "bucket: audit-archive\nregion: eu-central-1\ndestinationIdentity: \"tenant\\nother\"", "control character"},
 		{"empty-access-key", "bucket: audit-archive\nregion: eu-central-1\naccessKeyId: ''", "[accessKeyId] required"},
 		{"empty-secret-key", "bucket: audit-archive\nregion: eu-central-1\nsecretAccessKey: ''", "[secretAccessKey] required"},
 		{"mixed-default-credentials", "bucket: audit-archive\nregion: eu-central-1\naccessKeyId: custom", "must either both use their defaults or both be configured"},
+		{"zero-publish-timeout", "bucket: audit-archive\nregion: eu-central-1\npublishAttemptTimeout: 0s", "must be positive"},
+		{"negative-publish-timeout", "bucket: audit-archive\nregion: eu-central-1\npublishAttemptTimeout: -1s", "must be positive"},
 		{"unknown-field", "bucket: audit-archive\nregion: eu-central-1\nsecretKey: forbidden", "field secretKey not found"},
 	}
 	for _, test := range tests {
@@ -263,6 +275,29 @@ func TestAuditlogTargetS3AcceptsMaximumPrefix(t *testing.T) {
 
 func TestAuditlogTargetS3AcceptsIPv6Endpoint(t *testing.T) {
 	var actual configuration.AuditlogTarget
-	err := yaml.Unmarshal([]byte("name: archive\ntype: s3\nbucket: audit-archive\nregion: eu-central-1\nendpoint: https://[2001:db8::1]:9000\npathStyle: true\n"), &actual)
+	err := yaml.Unmarshal([]byte("name: archive\ntype: s3\nbucket: audit-archive\nregion: eu-central-1\nendpoint: https://[2001:db8::1]:9000\npathStyle: true\ndestinationIdentity: tenant-a\n"), &actual)
 	require.NoError(t, err)
+}
+
+func TestAuditlogTargetS3AcceptsUnambiguousDestinations(t *testing.T) {
+	for _, body := range []string{
+		"bucket: audit-archive\nregion: eu-central-1",
+		"bucket: audit-archive\nregion: eu-central-1\nendpoint: https://objects.example.invalid\ndestinationIdentity: tenant-a",
+		"bucket: audit-archive\nregion: eu-central-1\nendpoint: https://objects.example.invalid\nexpectedBucketOwner: '123456789012'",
+	} {
+		var actual configuration.AuditlogTarget
+		require.NoError(t, yaml.Unmarshal([]byte("name: archive\ntype: s3\n"+body+"\n"), &actual))
+	}
+}
+
+func TestAuditlogTargetS3RejectsNonCanonicalDestinationIdentity(t *testing.T) {
+	conf := configuration.AuditlogTargetS3{
+		Bucket:              "audit-archive",
+		Region:              template.MustNewString("eu-central-1"),
+		Endpoint:            "https://objects.example.invalid",
+		DestinationIdentity: " tenant-a ",
+		AccessKeyId:         template.MustNewString("access"),
+		SecretAccessKey:     template.MustNewString("secret"),
+	}
+	require.ErrorContains(t, conf.Validate(), "leading or trailing whitespace")
 }

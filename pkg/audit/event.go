@@ -74,6 +74,7 @@ type Event struct {
 	BytesRead            *int64               `json:"bytesRead,omitempty"`
 	BytesWritten         *int64               `json:"bytesWritten,omitempty"`
 	DurationMillis       *int64               `json:"durationMillis,omitempty"`
+	Count                *uint64              `json:"count,omitempty"`
 	Pty                  *bool                `json:"pty,omitempty"`
 	AgentForwarding      *bool                `json:"agentForwarding,omitempty"`
 	ForcedCommand        *bool                `json:"forcedCommand,omitempty"`

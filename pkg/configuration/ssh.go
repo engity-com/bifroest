@@ -60,6 +60,15 @@ var (
 	// DefaultSshMaxReverseForwards is the default setting for Ssh.MaxReverseForwards.
 	DefaultSshMaxReverseForwards = uint16(256)
 
+	// DefaultSshUnauthenticatedAuditInterval is the refill and aggregation interval for unauthenticated audit events.
+	DefaultSshUnauthenticatedAuditInterval = common.DurationOf(time.Minute)
+
+	// DefaultSshUnauthenticatedAuditPerSourceLimit is the token bucket size and refill per source and interval.
+	DefaultSshUnauthenticatedAuditPerSourceLimit = uint16(6)
+
+	// DefaultSshUnauthenticatedAuditGlobalLimit is the service-wide token bucket size and refill per interval.
+	DefaultSshUnauthenticatedAuditGlobalLimit = uint16(24)
+
 	DefaultProxyProtocol = false
 
 	// DefaultSshBanner is the default setting for Ssh.Banner.
@@ -140,6 +149,9 @@ type Ssh struct {
 	// 0 means no limitation at all. Defaults to DefaultSshMaxReverseForwards.
 	MaxReverseForwards uint16 `yaml:"maxReverseForwards"`
 
+	// UnauthenticatedAudit limits detailed audit records produced before authentication has been proven.
+	UnauthenticatedAudit SshUnauthenticatedAudit `yaml:"unauthenticatedAudit,omitempty"`
+
 	// ProxyProtocol defines if the proxy protocol should be respected.
 	ProxyProtocol bool `yaml:"proxyProtocol,omitempty"`
 
@@ -171,6 +183,7 @@ func (this *Ssh) SetDefaults() error {
 		fixedDefault("maxReverseForwardsPerConnection", func(v *Ssh) *uint16 { return &v.MaxReverseForwardsPerConnection }, DefaultSshMaxReverseForwardsPerConnection),
 		fixedDefault("maxChannels", func(v *Ssh) *uint16 { return &v.MaxChannels }, DefaultSshMaxChannels),
 		fixedDefault("maxReverseForwards", func(v *Ssh) *uint16 { return &v.MaxReverseForwards }, DefaultSshMaxReverseForwards),
+		func(v *Ssh) (string, defaulter) { return "unauthenticatedAudit", &v.UnauthenticatedAudit },
 		fixedDefault("proxyProtocol", func(v *Ssh) *bool { return &v.ProxyProtocol }, DefaultProxyProtocol),
 		fixedDefault("banner", func(v *Ssh) *template.String { return &v.Banner }, DefaultSshBanner),
 		func(v *Ssh) (string, defaulter) { return "preparationMessages", &v.PreparationMessages },
@@ -197,6 +210,7 @@ func (this *Ssh) Trim() error {
 		noopTrim[Ssh]("maxReverseForwardsPerConnection"),
 		noopTrim[Ssh]("maxChannels"),
 		noopTrim[Ssh]("maxReverseForwards"),
+		func(v *Ssh) (string, trimmer) { return "unauthenticatedAudit", &v.UnauthenticatedAudit },
 		noopTrim[Ssh]("proxyProtocol"),
 		noopTrim[Ssh]("banner"),
 		func(v *Ssh) (string, trimmer) { return "preparationMessages", &v.PreparationMessages },
@@ -243,6 +257,7 @@ func (this *Ssh) Validate() error {
 		noopValidate[Ssh]("maxReverseForwardsPerConnection"),
 		noopValidate[Ssh]("maxChannels"),
 		noopValidate[Ssh]("maxReverseForwards"),
+		func(v *Ssh) (string, validator) { return "unauthenticatedAudit", &v.UnauthenticatedAudit },
 		noopValidate[Ssh]("proxyProtocol"),
 		func(v *Ssh) (string, validator) { return "banner", &v.Banner },
 		func(v *Ssh) (string, validator) { return "preparationMessages", &v.PreparationMessages },
@@ -301,7 +316,91 @@ func (this Ssh) isEqualTo(other *Ssh) bool {
 		this.MaxReverseForwardsPerConnection == other.MaxReverseForwardsPerConnection &&
 		this.MaxChannels == other.MaxChannels &&
 		this.MaxReverseForwards == other.MaxReverseForwards &&
+		isEqual(&this.UnauthenticatedAudit, &other.UnauthenticatedAudit) &&
 		this.ProxyProtocol == other.ProxyProtocol &&
 		isEqual(&this.Banner, &other.Banner) &&
 		isEqual(&this.PreparationMessages, &other.PreparationMessages)
+}
+
+// SshUnauthenticatedAudit bounds detailed audit writes before a client has proven authentication.
+// Each limit is both the token bucket capacity and the number of tokens refilled over Interval.
+type SshUnauthenticatedAudit struct {
+	Interval       common.Duration `yaml:"interval"`
+	PerSourceLimit uint16          `yaml:"perSourceLimit"`
+	GlobalLimit    uint16          `yaml:"globalLimit"`
+}
+
+func (this *SshUnauthenticatedAudit) SetDefaults() error {
+	return setDefaults(this,
+		fixedDefault("interval", func(v *SshUnauthenticatedAudit) *common.Duration { return &v.Interval }, DefaultSshUnauthenticatedAuditInterval),
+		fixedDefault("perSourceLimit", func(v *SshUnauthenticatedAudit) *uint16 { return &v.PerSourceLimit }, DefaultSshUnauthenticatedAuditPerSourceLimit),
+		fixedDefault("globalLimit", func(v *SshUnauthenticatedAudit) *uint16 { return &v.GlobalLimit }, DefaultSshUnauthenticatedAuditGlobalLimit),
+	)
+}
+
+func (this *SshUnauthenticatedAudit) Trim() error {
+	return trim(this,
+		noopTrim[SshUnauthenticatedAudit]("interval"),
+		noopTrim[SshUnauthenticatedAudit]("perSourceLimit"),
+		noopTrim[SshUnauthenticatedAudit]("globalLimit"),
+	)
+}
+
+func (this *SshUnauthenticatedAudit) Validate() error {
+	return validate(this,
+		func(v *SshUnauthenticatedAudit) (string, validator) {
+			return "interval", validatorFunc(func() error {
+				if v.Interval.Native() <= 0 {
+					return fmt.Errorf("must be greater than 0")
+				}
+				return nil
+			})
+		},
+		func(v *SshUnauthenticatedAudit) (string, validator) {
+			return "perSourceLimit", validatorFunc(func() error {
+				if v.PerSourceLimit == 0 {
+					return fmt.Errorf("must be greater than 0")
+				}
+				return nil
+			})
+		},
+		func(v *SshUnauthenticatedAudit) (string, validator) {
+			return "globalLimit", validatorFunc(func() error {
+				if v.GlobalLimit < v.PerSourceLimit {
+					return fmt.Errorf("must be greater than or equal to perSourceLimit")
+				}
+				return nil
+			})
+		},
+	)
+}
+
+func (this *SshUnauthenticatedAudit) UnmarshalYAML(node *yaml.Node) error {
+	return unmarshalYAML(this, node, func(target *SshUnauthenticatedAudit, node *yaml.Node) error {
+		if err := rejectUnknownAuditlogFields(node, "interval", "perSourceLimit", "globalLimit"); err != nil {
+			return err
+		}
+		type raw SshUnauthenticatedAudit
+		return node.Decode((*raw)(target))
+	})
+}
+
+func (this SshUnauthenticatedAudit) IsEqualTo(other any) bool {
+	if other == nil {
+		return false
+	}
+	switch v := other.(type) {
+	case SshUnauthenticatedAudit:
+		return this.isEqualTo(&v)
+	case *SshUnauthenticatedAudit:
+		return v != nil && this.isEqualTo(v)
+	default:
+		return false
+	}
+}
+
+func (this SshUnauthenticatedAudit) isEqualTo(other *SshUnauthenticatedAudit) bool {
+	return this.Interval.IsEqualTo(other.Interval) &&
+		this.PerSourceLimit == other.PerSourceLimit &&
+		this.GlobalLimit == other.GlobalLimit
 }

@@ -7,6 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
+
+	"github.com/engity-com/bifroest/pkg/common"
 )
 
 func TestSsh_Defaults(t *testing.T) {
@@ -24,6 +26,35 @@ func TestSsh_Defaults(t *testing.T) {
 	assert.Equal(t, uint16(16), actual.MaxReverseForwardsPerConnection)
 	assert.Equal(t, uint16(64), actual.MaxChannels)
 	assert.Equal(t, uint16(256), actual.MaxReverseForwards)
+	assert.Equal(t, time.Minute, actual.UnauthenticatedAudit.Interval.Native())
+	assert.Equal(t, uint16(6), actual.UnauthenticatedAudit.PerSourceLimit)
+	assert.Equal(t, uint16(24), actual.UnauthenticatedAudit.GlobalLimit)
+}
+
+func TestSshUnauthenticatedAuditConfiguration(t *testing.T) {
+	var actual Ssh
+	require.NoError(t, yaml.Unmarshal([]byte(`
+unauthenticatedAudit:
+  interval: 30s
+  perSourceLimit: 3
+  globalLimit: 9
+`), &actual))
+	require.Equal(t, 30*time.Second, actual.UnauthenticatedAudit.Interval.Native())
+	require.Equal(t, uint16(3), actual.UnauthenticatedAudit.PerSourceLimit)
+	require.Equal(t, uint16(9), actual.UnauthenticatedAudit.GlobalLimit)
+	require.True(t, actual.UnauthenticatedAudit.IsEqualTo(SshUnauthenticatedAudit{
+		Interval: common.DurationOf(30 * time.Second), PerSourceLimit: 3, GlobalLimit: 9,
+	}))
+
+	for _, input := range []string{
+		"interval: 0",
+		"perSourceLimit: 0",
+		"perSourceLimit: 4\nglobalLimit: 3",
+		"unknown: true",
+	} {
+		var invalid SshUnauthenticatedAudit
+		require.Error(t, yaml.Unmarshal([]byte(input), &invalid), input)
+	}
 }
 
 func TestSsh_ExplicitZeroValues(t *testing.T) {

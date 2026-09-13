@@ -61,6 +61,9 @@ The maximum number of active SSH channels across all connections handled by one 
 <<property("maxReverseForwards", "uint16", None, default=256)>>
 The maximum number of active reverse-forward listeners across all connections handled by one SSH listener. `0` disables this limit.
 
+<<property("unauthenticatedAudit", "Unauthenticated audit", "#unauthenticated-audit")>>
+Controls how detailed audit records produced before a client has proven authentication are rate-limited. See [below](#unauthenticated-audit).
+
 Listener-scoped limits are tracked independently for every entry in [`addresses`](#property-addresses). For example, two configured listen addresses can each serve up to `maxChannels` active channels and `maxReverseForwards` reverse-forward listeners. `maxConnections` is different: Bifröst enforces it across the complete service and all configured addresses.
 
 !!! note
@@ -102,9 +105,32 @@ maxChannelsPerConnection: 64
 maxReverseForwardsPerConnection: 16
 maxChannels: 64
 maxReverseForwards: 256
+unauthenticatedAudit:
+  interval: 1m
+  perSourceLimit: 6
+  globalLimit: 24
 proxyProtocol: false
 banner: "Yeah!"
 ```
+
+## Unauthenticated audit {: #unauthenticated-audit }
+
+Unauthenticated flow evaluations can be triggered repeatedly by remote clients. Bifröst therefore limits only their detailed audit records; exhaustion of either bucket never rejects authentication. Accepted password and keyboard-interactive results and verified public-key results bypass these limits. A public-key `candidate` has not yet proved possession of the private key and remains limited even if a flow accepts it.
+
+### Configuration {: #unauthenticatedAudit-configuration }
+
+Suppressed details are represented by signed `authentication.flow.evaluations-suppressed` aggregate events. Aggregates contain counts but no source address. See [audit events](../auditlog/events.md#authenticationflowevaluations-suppressed) for their exact semantics.
+
+<<property("interval", "Duration", "../data-type.md#duration", default="1m", heading=4, id_prefix="unauthenticatedAudit-")>>
+The token refill and aggregate reporting interval. It must be greater than zero.
+
+<<property("perSourceLimit", "uint16", None, default=6, heading=4, id_prefix="unauthenticatedAudit-")>>
+Both the per-source token bucket capacity and the number of tokens refilled over one `interval`. It must be greater than zero. IPv4-mapped IPv6 addresses share their IPv4 bucket; IPv6 sources are grouped by `/64`.
+
+<<property("globalLimit", "uint16", None, default=24, heading=4, id_prefix="unauthenticatedAudit-")>>
+Both the service-wide token bucket capacity and the number of tokens refilled over one `interval`. It must be greater than or equal to `perSourceLimit`. This is the authoritative bound against distributed source addresses; the per-source bucket only preserves fairness.
+
+The effective remote address from the SSH context is used. With `proxyProtocol: true`, this is the source supplied by the trusted proxy. The source cache is bounded; rotating IPv6 prefixes or sending many PROXY source addresses cannot bypass the global bucket or grow memory without bound.
 
 ## Keys
 

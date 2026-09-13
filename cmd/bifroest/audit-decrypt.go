@@ -15,6 +15,7 @@ func registerAuditDecryptCmd(parent *kingpin.CmdClause) {
 	registerConfigurationFlag(cmd, &opts.configuration)
 	registerAuditOutputFlags(cmd, &opts.output, &opts.force)
 	registerAuditDecryptionIdentityFlags(cmd, &opts.decryptionIdentityFiles)
+	registerAuditTrustAnchorFlags(cmd, &opts.expectedProducerIds)
 	cmd.Arg("auditlogName", "Configured auditlog to decrypt.").Required().SetValue(&opts.auditlog)
 }
 

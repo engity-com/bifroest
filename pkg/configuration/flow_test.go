@@ -1,11 +1,17 @@
 package configuration
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
+
+func TestFlowNameEnforcesByteLengthLimit(t *testing.T) {
+	require.NoError(t, FlowName(strings.Repeat("a", MaxFlowNameBytes)).Validate())
+	require.ErrorContains(t, FlowName(strings.Repeat("a", MaxFlowNameBytes+1)).Validate(), "exceeds 255 bytes")
+}
 
 func TestFlowsRejectDuplicateNames(t *testing.T) {
 	flows := Flows{{Name: "duplicate"}, {Name: "duplicate"}}

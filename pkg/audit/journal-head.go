@@ -2,6 +2,7 @@ package audit
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"io/fs"
@@ -78,11 +79,11 @@ func loadOrCreateJournalHead(directory string, identity *Identity) (journalHead,
 	path := filepath.Join(directory, journalHeadFileName)
 	info, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		entries, readErr := os.ReadDir(directory)
+		hasEntries, readErr := journalDirectoryHasEntry(context.Background(), directory, func(os.DirEntry) bool { return true })
 		if readErr != nil {
 			return journalHead{}, errors.System.Newf("cannot inspect audit producer directory %q: %w", directory, readErr)
 		}
-		if len(entries) != 0 {
+		if hasEntries {
 			return journalHead{}, errors.Config.Newf("audit journal head is missing while producer directory %q contains history", directory)
 		}
 		head, _, createErr := newJournalHead(identity, journalHash{})

@@ -17,8 +17,8 @@ import (
 
 var _ = audit.RegisterRemoteTarget(
 	func() configuration.AuditlogTargetV { return &serviceRemoteDeliveryTestConfiguration{} },
-	func(_ context.Context, _ audit.RemoteTargetScope, conf *serviceRemoteDeliveryTestConfiguration) (audit.RemoteTarget, error) {
-		return conf.target, nil
+	func(_ context.Context, _ audit.RemoteTargetScope, conf *serviceRemoteDeliveryTestConfiguration) (audit.RemoteTarget, audit.RemoteTargetSettings, error) {
+		return conf.target, audit.RemoteTargetSettings{DestinationIdentity: "service-test-destination", PublishAttemptTimeout: time.Minute}, nil
 	},
 )
 

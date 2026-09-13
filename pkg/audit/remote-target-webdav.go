@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
@@ -25,9 +26,9 @@ const (
 	webdavMethodMove  = "MOVE"
 )
 
-var _ = RegisterRemoteTarget(
+var _ = registerPreparedRemoteTarget(
 	func() configuration.AuditlogTargetV { return &configuration.AuditlogTargetWebdav{} },
-	newWebdavRemoteTarget,
+	prepareWebdavRemoteTarget,
 )
 
 type webdavRemoteHTTPClient interface {
@@ -46,29 +47,36 @@ type webdavRemoteTarget struct {
 }
 
 func newWebdavRemoteTarget(ctx context.Context, _ RemoteTargetScope, conf *configuration.AuditlogTargetWebdav) (RemoteTarget, error) {
+	target, _, _, err := prepareWebdavRemoteTarget(ctx, RemoteTargetScope{}, conf)
+	return target, err
+}
+
+func prepareWebdavRemoteTarget(ctx context.Context, _ RemoteTargetScope, conf *configuration.AuditlogTargetWebdav) (RemoteTarget, time.Duration, remoteDeliveryDestinationFingerprint, error) {
 	if conf == nil {
-		return nil, errors.Config.Newf("nil WebDAV audit target configuration")
+		return nil, 0, remoteDeliveryDestinationFingerprint{}, errors.Config.Newf("nil WebDAV audit target configuration")
 	}
+	snapshot := *conf
+	conf = &snapshot
 	if err := conf.Validate(); err != nil {
-		return nil, errors.Config.Newf("invalid WebDAV audit target configuration: %w", err)
+		return nil, 0, remoteDeliveryDestinationFingerprint{}, errors.Config.Newf("invalid WebDAV audit target configuration: %w", err)
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, 0, remoteDeliveryDestinationFingerprint{}, err
 	}
 	values, err := conf.Render(nil)
 	if err != nil {
-		return nil, errors.Config.Newf("cannot render WebDAV audit target configuration: %w", err)
+		return nil, 0, remoteDeliveryDestinationFingerprint{}, errors.Config.Newf("cannot render WebDAV audit target configuration: %w", err)
 	}
-	endpoint, err := url.Parse(conf.Endpoint)
+	endpoint, err := normalizedWebdavRemoteEndpoint(conf.Endpoint)
 	if err != nil {
-		return nil, errors.Config.Newf("cannot parse WebDAV audit target endpoint: %w", err)
+		return nil, 0, remoteDeliveryDestinationFingerprint{}, err
 	}
-	if !strings.HasSuffix(endpoint.Path, "/") {
-		endpoint.Path += "/"
-		endpoint.RawPath = ""
+	timeout, fingerprint, err := webdavRemoteDeliveryTargetSettings(values, endpoint)
+	if err != nil {
+		return nil, 0, remoteDeliveryDestinationFingerprint{}, err
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	bfcrypto.AdjustHttpTransportWithCaCerts(transport)
@@ -78,7 +86,11 @@ func newWebdavRemoteTarget(ctx context.Context, _ RemoteTargetScope, conf *confi
 			return http.ErrUseLastResponse
 		},
 	}
-	return newWebdavRemoteTargetWithClient(endpoint, values, client, transport.CloseIdleConnections)
+	target, err := newWebdavRemoteTargetWithClient(endpoint, values, client, transport.CloseIdleConnections)
+	if err != nil {
+		transport.CloseIdleConnections()
+	}
+	return target, timeout, fingerprint, err
 }
 
 func newWebdavRemoteTargetWithClient(endpoint *url.URL, values configuration.AuditlogTargetWebdavValues, client webdavRemoteHTTPClient, close func()) (*webdavRemoteTarget, error) {
@@ -123,16 +135,16 @@ func (this *webdavRemoteTarget) Publish(ctx context.Context, segment SealedSegme
 	cleanup, err := this.putTemporary(ctx, temporaryURL, segment)
 	if err != nil {
 		if cleanup {
-			return goerrors.Join(err, this.cleanupTemporary(ctx, temporaryURL))
+			return goerrors.Join(err, this.cleanupTemporaryAfterFailure(ctx, temporaryURL))
 		}
 		return err
 	}
 	exists, err = this.verifyObject(ctx, temporaryURL, segment.Size(), checksum, "temporary audit segment")
 	if err != nil {
-		return goerrors.Join(err, this.cleanupTemporary(ctx, temporaryURL))
+		return goerrors.Join(err, this.cleanupTemporaryAfterFailure(ctx, temporaryURL))
 	}
 	if !exists {
-		return goerrors.Join(errors.Network.Newf("temporary WebDAV audit segment disappeared after upload"), this.cleanupTemporary(ctx, temporaryURL))
+		return goerrors.Join(errors.Network.Newf("temporary WebDAV audit segment disappeared after upload"), this.cleanupTemporaryAfterFailure(ctx, temporaryURL))
 	}
 	return this.moveTemporary(ctx, temporaryURL, finalURL, segment.Size(), checksum)
 }
@@ -236,16 +248,16 @@ func (this *webdavRemoteTarget) moveTemporary(ctx context.Context, temporaryURL,
 	request.Header.Set("Overwrite", "F")
 	response, err := this.client.Do(request)
 	if err != nil {
-		return goerrors.Join(classifyWebdavRemoteError(ctx, "publish audit segment", 0, err), this.cleanupTemporary(ctx, temporaryURL))
+		return goerrors.Join(classifyWebdavRemoteError(ctx, "publish audit segment", 0, err), this.cleanupTemporaryAfterFailure(ctx, temporaryURL))
 	}
 	if response == nil {
-		return goerrors.Join(errors.Network.Newf("WebDAV returned no response for publish audit segment"), this.cleanupTemporary(ctx, temporaryURL))
+		return goerrors.Join(errors.Network.Newf("WebDAV returned no response for publish audit segment"), this.cleanupTemporaryAfterFailure(ctx, temporaryURL))
 	}
 	closeErr := closeWebdavResponse(response, "publish audit segment")
 	if response.StatusCode == http.StatusCreated {
 		return closeErr
 	}
-	cleanupErr := this.cleanupTemporary(ctx, temporaryURL)
+	cleanupErr := this.cleanupTemporaryAfterFailure(ctx, temporaryURL)
 	if response.StatusCode != http.StatusPreconditionFailed {
 		return goerrors.Join(classifyWebdavRemoteError(ctx, "publish audit segment", response.StatusCode, nil), closeErr, cleanupErr)
 	}
@@ -334,6 +346,12 @@ func (this *webdavRemoteTarget) cleanupTemporary(ctx context.Context, temporaryU
 		return closeErr
 	}
 	return goerrors.Join(classifyWebdavRemoteError(ctx, "remove temporary audit segment", response.StatusCode, nil), closeErr)
+}
+
+func (this *webdavRemoteTarget) cleanupTemporaryAfterFailure(parent context.Context, temporaryURL *url.URL) error {
+	ctx, cancel := newRemoteTargetCleanupContext(parent)
+	defer cancel()
+	return this.cleanupTemporary(ctx, temporaryURL)
 }
 
 func closeWebdavResponse(response *http.Response, operation string) error {

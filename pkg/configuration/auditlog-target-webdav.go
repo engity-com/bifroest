@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	smithyhttp "github.com/aws/smithy-go/transport/http"
@@ -20,15 +21,17 @@ var (
 )
 
 type AuditlogTargetWebdav struct {
-	Endpoint string          `yaml:"endpoint"`
-	Username template.String `yaml:"username,omitempty"`
-	Password template.String `yaml:"password,omitempty"`
+	Endpoint              string            `yaml:"endpoint"`
+	Username              template.String   `yaml:"username,omitempty"`
+	Password              template.String   `yaml:"password,omitempty"`
+	PublishAttemptTimeout template.Duration `yaml:"publishAttemptTimeout,omitempty"`
 }
 
 func (this *AuditlogTargetWebdav) SetDefaults() error {
 	*this = AuditlogTargetWebdav{
-		Username: DefaultAuditlogTargetWebdavUsername,
-		Password: DefaultAuditlogTargetWebdavPassword,
+		Username:              DefaultAuditlogTargetWebdavUsername,
+		Password:              DefaultAuditlogTargetWebdavPassword,
+		PublishAttemptTimeout: DefaultAuditlogTargetPublishAttemptTimeout,
 	}
 	return nil
 }
@@ -54,15 +57,22 @@ func (this *AuditlogTargetWebdav) Validate() error {
 	if this.Username.IsZero() != this.Password.IsZero() {
 		return fmt.Errorf("[username] and [password] must either both be configured or both be omitted")
 	}
+	if err := validateAuditlogTargetPublishAttemptTimeout(this.PublishAttemptTimeout); err != nil {
+		return fmt.Errorf("[publishAttemptTimeout] %w", err)
+	}
 	return nil
 }
 
 type AuditlogTargetWebdavValues struct {
-	Username string
-	Password string
+	Username              string
+	Password              string
+	PublishAttemptTimeout time.Duration
 }
 
 func (this AuditlogTargetWebdav) Render(data any) (result AuditlogTargetWebdavValues, err error) {
+	if result.PublishAttemptTimeout, err = renderAuditlogTargetPublishAttemptTimeout(this.PublishAttemptTimeout, data); err != nil {
+		return result, fmt.Errorf("[publishAttemptTimeout] cannot render: %w", err)
+	}
 	if this.Username.IsZero() && this.Password.IsZero() {
 		return result, nil
 	}
@@ -102,7 +112,7 @@ func validateAuditlogTargetWebdavEndpoint(value string) error {
 	if err != nil {
 		return fmt.Errorf("cannot parse URL: %w", err)
 	}
-	if parsed.Scheme != "https" || parsed.Hostname() == "" {
+	if !strings.EqualFold(parsed.Scheme, "https") || parsed.Hostname() == "" {
 		return fmt.Errorf("must be an absolute HTTPS URL")
 	}
 	if strings.HasSuffix(parsed.Host, ":") {
@@ -153,7 +163,7 @@ func validateAuditlogTargetWebdavEndpoint(value string) error {
 
 func (this *AuditlogTargetWebdav) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *AuditlogTargetWebdav, node *yaml.Node) error {
-		if err := rejectUnknownAuditlogFields(node, "endpoint", "username", "password"); err != nil {
+		if err := rejectUnknownAuditlogFields(node, "endpoint", "username", "password", "publishAttemptTimeout"); err != nil {
 			return err
 		}
 		type raw AuditlogTargetWebdav
@@ -175,7 +185,8 @@ func (this AuditlogTargetWebdav) IsEqualTo(other any) bool {
 func (this AuditlogTargetWebdav) isEqualTo(other *AuditlogTargetWebdav) bool {
 	return this.Endpoint == other.Endpoint &&
 		this.Username.IsEqualTo(other.Username) &&
-		this.Password.IsEqualTo(other.Password)
+		this.Password.IsEqualTo(other.Password) &&
+		effectiveAuditlogTargetPublishAttemptTimeout(this.PublishAttemptTimeout).IsEqualTo(effectiveAuditlogTargetPublishAttemptTimeout(other.PublishAttemptTimeout))
 }
 
 func (this AuditlogTargetWebdav) Types() []string {

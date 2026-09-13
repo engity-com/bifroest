@@ -5,6 +5,7 @@ import (
 	goerrors "errors"
 	"io"
 	"net"
+	"path"
 	"testing"
 	"time"
 
@@ -57,6 +58,19 @@ func TestSftpRemoteTargetContextAndClose(t *testing.T) {
 	err := target.Publish(context.Background(), validRemoteTargetTestSegment())
 	require.ErrorContains(t, err, "closed")
 	require.True(t, bferrors.System.IsErr(err), err)
+}
+
+func TestSftpTemporaryPathIsDeterministicAndShorterThanFinalName(t *testing.T) {
+	segment := validRemoteTargetTestSegment()
+	directory := path.Join("/archive", segment.ProducerId().String())
+	finalPath := path.Join(directory, segment.FileName())
+	temporaryPath := sftpTemporaryPath(directory, finalPath)
+
+	require.Equal(t, temporaryPath, sftpTemporaryPath(directory, finalPath))
+	require.NotEqual(t, temporaryPath, sftpTemporaryPath(directory, finalPath+"-other"))
+	require.Equal(t, directory, path.Dir(temporaryPath))
+	require.Len(t, path.Base(temporaryPath), 85)
+	require.LessOrEqual(t, len(path.Base(temporaryPath)), len(path.Base(finalPath)))
 }
 
 func TestNewSftpRemoteTargetRejectsInvalidTrustWithoutConnecting(t *testing.T) {

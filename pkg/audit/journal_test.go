@@ -112,6 +112,38 @@ func TestLocalJournalSerializesConcurrentRecords(t *testing.T) {
 	require.Len(t, names, count)
 }
 
+func TestLocalJournalReserveOnlySuppressesSuppressibleRecords(t *testing.T) {
+	conf, identity := newJournalTestIdentity(t)
+	recorder, err := NewRecorder(&conf, identity)
+	require.NoError(t, err)
+	local := recorder.(*localJournalRecorder)
+	local.availableBytes = func(string) (uint64, error) { return 0, nil }
+
+	recorded, err := local.RecordSuppressible(context.Background(), Event{Name: "test.suppressed"})
+	require.NoError(t, err)
+	require.False(t, recorded)
+	require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.required"}))
+	require.NoError(t, recorder.Close())
+
+	records := readJournalTestRecords(t, conf, identity)
+	require.Len(t, records, 1)
+	require.Equal(t, "test.required", records[0].Event.Name)
+}
+
+func TestLocalJournalFreeSpaceFailureFailsClosedWithoutPoisoning(t *testing.T) {
+	conf, identity := newJournalTestIdentity(t)
+	recorder, err := NewRecorder(&conf, identity)
+	require.NoError(t, err)
+	local := recorder.(*localJournalRecorder)
+	local.availableBytes = func(string) (uint64, error) { return 0, fmt.Errorf("space unavailable") }
+
+	recorded, err := local.RecordSuppressible(context.Background(), Event{Name: "test.failed"})
+	require.False(t, recorded)
+	require.ErrorContains(t, err, "space unavailable")
+	require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.required"}))
+	require.NoError(t, recorder.Close())
+}
+
 func TestLocalJournalRecoversIncompleteTail(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -195,6 +227,30 @@ func TestLocalJournalRejectsCommittedRecordWithCorruptedSize(t *testing.T) {
 
 	require.Nil(t, failed)
 	require.ErrorContains(t, err, "corrupted size")
+	actual, readErr := os.ReadFile(activePath)
+	require.NoError(t, readErr)
+	require.Equal(t, raw, actual)
+}
+
+func TestLocalJournalDoesNotTruncateCorruptedCommittedRecordBeforePartialTail(t *testing.T) {
+	conf, identity := newJournalTestIdentity(t)
+	recorder, err := NewRecorder(&conf, identity)
+	require.NoError(t, err)
+	require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.committed"}))
+	crashCloseJournalTestRecorder(t, recorder)
+	activePath := journalTestActivePath(conf, identity)
+	raw, err := os.ReadFile(activePath)
+	require.NoError(t, err)
+	headerPayloadSize := int(binary.BigEndian.Uint32(raw[:journalFrameLengthSize]))
+	recordOffset := journalFrameLengthSize + headerPayloadSize + journalFrameChecksumSize + len(journalFrameCommitMarker)
+	binary.BigEndian.PutUint32(raw[recordOffset:recordOffset+journalFrameLengthSize], maxJournalRecordPayloadSize+1)
+	raw = append(raw, 0, 0, 1)
+	require.NoError(t, os.WriteFile(activePath, raw, journalFileMode))
+
+	failed, err := NewRecorder(&conf, identity)
+
+	require.Nil(t, failed)
+	require.ErrorContains(t, err, "before its committed head")
 	actual, readErr := os.ReadFile(activePath)
 	require.NoError(t, readErr)
 	require.Equal(t, raw, actual)

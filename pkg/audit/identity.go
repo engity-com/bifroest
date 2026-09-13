@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"context"
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -14,6 +15,8 @@ import (
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
 )
+
+const maxAuditIdentityFileSize = 1 << 20
 
 var auditIdentityKeyRequirement = bfcrypto.KeyRequirement{Type: bfcrypto.KeyTypeEd25519}
 
@@ -105,7 +108,7 @@ func EnsureIdentity(conf *configuration.Auditlog) (*Identity, error) {
 		return nil, errors.Config.Newf("audit journal directory is empty")
 	}
 
-	if _, err := os.Stat(identityFile); errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Lstat(identityFile); errors.Is(err, fs.ErrNotExist) {
 		hasHistory, inspectErr := auditJournalHasHistory(journalDirectory)
 		if inspectErr != nil {
 			return nil, inspectErr
@@ -113,13 +116,16 @@ func EnsureIdentity(conf *configuration.Auditlog) (*Identity, error) {
 		if hasHistory {
 			return nil, errors.Config.Newf("audit identity file %q is missing while journal %q contains history", identityFile, journalDirectory)
 		}
+		if _, createErr := auditIdentityKeyRequirement.CreateFile(nil, identityFile); createErr != nil && !errors.Is(createErr, fs.ErrExist) {
+			return nil, errors.Config.Newf("cannot create audit identity file %q: %w", identityFile, createErr)
+		}
 	} else if err != nil {
 		return nil, errors.System.Newf("cannot inspect audit identity file %q: %w", identityFile, err)
 	}
 
-	privateKey, err := bfcrypto.EnsureKeyFile(identityFile, &auditIdentityKeyRequirement, nil)
+	privateKey, err := loadAuditIdentityFile(identityFile)
 	if err != nil {
-		return nil, errors.Config.Newf("cannot ensure audit identity file %q: %w", identityFile, err)
+		return nil, errors.Config.Newf("cannot load audit identity file %q: %w", identityFile, err)
 	}
 	if privateKey.Type() != gossh.KeyAlgoED25519 {
 		return nil, errors.Config.Newf("audit identity file %q contains a %s key instead of Ed25519", identityFile, privateKey.Type())
@@ -131,20 +137,21 @@ func EnsureIdentity(conf *configuration.Auditlog) (*Identity, error) {
 	return identity, nil
 }
 
+func loadAuditIdentityFile(path string) (bfcrypto.PrivateKey, error) {
+	return bfcrypto.LoadSecurePrivateKeyFile(path, maxAuditIdentityFileSize)
+}
+
 func auditJournalHasHistory(directory string) (bool, error) {
-	entries, err := os.ReadDir(directory)
+	hasHistory, err := journalDirectoryHasEntry(context.Background(), directory, func(entry os.DirEntry) bool {
+		return entry.Name() != journalLockFileName && entry.Name() != journalWorkDirectoryName
+	})
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
 	}
 	if err != nil {
 		return false, errors.System.Newf("cannot inspect audit journal %q: %w", directory, err)
 	}
-	for _, entry := range entries {
-		if entry.Name() != journalLockFileName {
-			return true, nil
-		}
-	}
-	return false, nil
+	return hasHistory, nil
 }
 
 func (this *Identity) ProducerId() ProducerId {

@@ -7,6 +7,8 @@ import (
 
 type FlowName string
 
+const MaxFlowNameBytes = 255
+
 func (this FlowName) IsZero() bool {
 	return len(this) == 0
 }
@@ -35,6 +37,9 @@ func (this *FlowName) Set(text string) error {
 func (this FlowName) Validate() error {
 	if len(this) == 0 {
 		return fmt.Errorf("illegal flow key: empty")
+	}
+	if len(this) > MaxFlowNameBytes {
+		return fmt.Errorf("illegal flow key: exceeds %d bytes", MaxFlowNameBytes)
 	}
 	if this == "." || this == ".." {
 		return fmt.Errorf("illegal flow key: %q", this)

@@ -41,20 +41,22 @@ var (
 )
 
 type localJournalRecorder struct {
-	mutex       sync.Mutex
-	file        *os.File
-	processLock *journalProcessLock
-	activePath  string
-	lockPath    string
-	producerId  ProducerId
-	identity    *Identity
-	encryptor   *journalEventEncryptor
-	headPath    string
-	state       journalSegmentState
-	targetSize  int64
-	closed      bool
-	poisoned    error
-	closeErr    error
+	mutex            sync.Mutex
+	file             *os.File
+	processLock      *journalProcessLock
+	activePath       string
+	lockPath         string
+	producerId       ProducerId
+	identity         *Identity
+	encryptor        *journalEventEncryptor
+	headPath         string
+	state            journalSegmentState
+	targetSize       int64
+	minimumFreeBytes uint64
+	availableBytes   func(string) (uint64, error)
+	closed           bool
+	poisoned         error
+	closeErr         error
 }
 
 // NewRecorder creates the configured audit recorder. Disabled audit logging
@@ -130,69 +132,96 @@ func NewRecorder(conf *configuration.Auditlog, identity *Identity) (Recorder, er
 		}
 	}
 
+	minimumFreeBytes := conf.Journal.MinimumFreeBytes
+	if minimumFreeBytes == 0 {
+		minimumFreeBytes = configuration.DefaultAuditlogJournalMinimumFreeBytes
+	}
 	committed = true
 	return &localJournalRecorder{
-		file:        file,
-		processLock: processLock,
-		activePath:  activePath,
-		lockPath:    lockPath,
-		producerId:  identity.ProducerId(),
-		identity:    identity,
-		encryptor:   encryptor,
-		headPath:    filepath.Join(producerDirectory, journalHeadFileName),
-		state:       state,
-		targetSize:  defaultJournalSegmentTargetSize,
+		file:             file,
+		processLock:      processLock,
+		activePath:       activePath,
+		lockPath:         lockPath,
+		producerId:       identity.ProducerId(),
+		identity:         identity,
+		encryptor:        encryptor,
+		headPath:         filepath.Join(producerDirectory, journalHeadFileName),
+		state:            state,
+		targetSize:       defaultJournalSegmentTargetSize,
+		minimumFreeBytes: minimumFreeBytes,
+		availableBytes:   availableJournalBytes,
 	}, nil
 }
 
-func (this *localJournalRecorder) Record(_ context.Context, event Event) error {
+func (this *localJournalRecorder) Record(ctx context.Context, event Event) error {
+	_, err := this.record(ctx, event, false)
+	return err
+}
+
+func (this *localJournalRecorder) RecordSuppressible(ctx context.Context, event Event) (bool, error) {
+	return this.record(ctx, event, true)
+}
+
+func (this *localJournalRecorder) record(_ context.Context, event Event, suppressible bool) (bool, error) {
 	if err := validateAuditEvent(event); err != nil {
-		return err
+		return false, err
 	}
 
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 	if this.closed {
-		return errJournalClosed
+		return false, errJournalClosed
 	}
 	if this.poisoned != nil {
-		return this.poisoned
+		return false, this.poisoned
 	}
 	if err := validateLockedJournalPath(this.processLock, this.lockPath); err != nil {
-		return this.poison(err)
+		return false, this.poison(err)
 	}
 	if err := validateOpenJournalFile(this.activePath, this.file); err != nil {
-		return this.poison(err)
+		return false, this.poison(err)
 	}
 
 	id, err := uuid.NewRandom()
 	if err != nil {
-		return errors.System.Newf("cannot generate audit record ID: %w", err)
+		return false, errors.System.Newf("cannot generate audit record ID: %w", err)
 	}
 	_, payload, recordHash, err := newJournalRecord(this.identity, this.state.previousRecordHash, event, id, time.Now().UTC(), this.encryptor)
 	if err != nil {
-		return err
+		return false, err
 	}
 	frame, err := encodeJournalFrame(payload)
 	if err != nil {
-		return err
+		return false, err
+	}
+	if suppressible {
+		available, availableErr := this.availableBytes(filepath.Dir(this.activePath))
+		if availableErr != nil {
+			return false, errors.System.Newf("cannot determine free space for audit journal: %w", availableErr)
+		}
+		// Reserve enough for this frame and a maximum-sized replacement journal head.
+		required := this.minimumFreeBytes
+		additional := uint64(len(frame) + maxJournalRecordPayloadSize)
+		if required > ^uint64(0)-additional || available < required+additional {
+			return false, nil
+		}
 	}
 	if this.state.recordCount > 0 && this.state.contentBytes+int64(len(frame)) > this.targetSize {
 		if err := this.rotate(time.Now().UTC()); err != nil {
-			return this.poison(err)
+			return false, this.poison(err)
 		}
 	}
 	if err := writeCommittedJournalFrame(this.file, frame); err != nil {
-		return this.poison(err)
+		return false, this.poison(err)
 	}
 	this.state.previousRecordHash = recordHash
 	this.state.recordCount++
 	this.state.contentBytes += int64(len(frame))
 	this.state.fileBytes = this.state.contentBytes
 	if err := writeJournalHead(filepath.Dir(this.headPath), this.identity, recordHash); err != nil {
-		return this.poison(err)
+		return false, this.poison(err)
 	}
-	return nil
+	return true, nil
 }
 
 func (this *localJournalRecorder) rotate(at time.Time) error {
@@ -332,12 +361,18 @@ func validateAuditEvent(event Event) error {
 			return errors.System.Newf("audit event %s is negative", name)
 		}
 	}
+	if event.Count != nil && *event.Count == 0 {
+		return errors.System.Newf("audit event count is zero")
+	}
 	return nil
 }
 
 func validateAuditFlow(value string) error {
 	if value == "" {
 		return nil
+	}
+	if len(value) > configuration.MaxFlowNameBytes {
+		return errors.System.Newf("audit event flow exceeds %d bytes", configuration.MaxFlowNameBytes)
 	}
 	if value == "." || value == ".." {
 		return errors.System.Newf("illegal audit event flow %q", value)
@@ -532,12 +567,8 @@ func syncJournalDirectoryHierarchy(path string) error {
 }
 
 func validateJournalRoot(directory string, producerId ProducerId) error {
-	entries, err := os.ReadDir(directory)
-	if err != nil {
-		return errors.System.Newf("cannot inspect audit journal %q: %w", directory, err)
-	}
 	expected := producerId.String()
-	for _, entry := range entries {
+	return forEachJournalDirectoryEntry(context.Background(), directory, func(entry os.DirEntry) error {
 		if entry.Name() == journalLockFileName {
 			lockPath := filepath.Join(directory, entry.Name())
 			info, err := os.Lstat(lockPath)
@@ -547,7 +578,7 @@ func validateJournalRoot(directory string, producerId ProducerId) error {
 			if !info.Mode().IsRegular() {
 				return errors.Config.Newf("audit journal lock %q is not a regular file", lockPath)
 			}
-			continue
+			return nil
 		}
 		if entry.Name() == remoteDeliveryStateDirectoryName {
 			path := filepath.Join(directory, entry.Name())
@@ -561,13 +592,27 @@ func validateJournalRoot(directory string, producerId ProducerId) error {
 			if err := secureJournalDirectory(path, info); err != nil {
 				return err
 			}
-			continue
+			return nil
+		}
+		if entry.Name() == journalWorkDirectoryName {
+			path := filepath.Join(directory, entry.Name())
+			info, err := os.Lstat(path)
+			if err != nil {
+				return errors.System.Newf("cannot inspect audit work directory in %q: %w", directory, err)
+			}
+			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return errors.Config.Newf("audit work path %q is not a directory", path)
+			}
+			if err := secureJournalDirectory(path, info); err != nil {
+				return err
+			}
+			return nil
 		}
 		if entry.Name() != expected || !entry.IsDir() {
 			return errors.Config.Newf("audit journal %q contains unsupported entry %q for producer %s", directory, entry.Name(), producerId)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func openActiveJournal(path string) (*os.File, error) {

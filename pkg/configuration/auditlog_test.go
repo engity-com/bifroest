@@ -26,7 +26,8 @@ func TestAuditlog_UnmarshalYAML(t *testing.T) {
 				Enabled:      DefaultAuditlogEnabled,
 				IdentityFile: DefaultAuditlogIdentityFile,
 				Journal: AuditlogJournal{
-					Directory: DefaultAuditlogJournalDirectory,
+					Directory:        DefaultAuditlogJournalDirectory,
+					MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
 				},
 			},
 		},
@@ -43,7 +44,8 @@ journal:
 				Enabled:      true,
 				IdentityFile: "custom-audit-key",
 				Journal: AuditlogJournal{
-					Directory: "custom-journal",
+					Directory:        "custom-journal",
+					MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
 				},
 			},
 		},
@@ -81,7 +83,10 @@ func TestAuditlogsDefaultAndExplicitEntries(t *testing.T) {
 		Name:         DefaultAuditlogName,
 		Enabled:      false,
 		IdentityFile: DefaultAuditlogIdentityFile,
-		Journal:      AuditlogJournal{Directory: DefaultAuditlogJournalDirectory},
+		Journal: AuditlogJournal{
+			Directory:        DefaultAuditlogJournalDirectory,
+			MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
+		},
 	}}, absent)
 
 	var empty Auditlogs
@@ -100,6 +105,16 @@ func TestAuditlogsDefaultAndExplicitEntries(t *testing.T) {
 	require.Len(t, configured, 2)
 	require.Equal(t, AuditlogName("security"), configured[1].Name)
 	require.True(t, configured[1].Enabled)
+}
+
+func TestAuditlogJournalMinimumFreeBytes(t *testing.T) {
+	var configured AuditlogJournal
+	require.NoError(t, yaml.Unmarshal([]byte("directory: journal\nminimumFreeBytes: 1048576"), &configured))
+	require.Equal(t, uint64(1048576), configured.MinimumFreeBytes)
+	require.True(t, configured.IsEqualTo(AuditlogJournal{Directory: "journal", MinimumFreeBytes: 1048576}))
+
+	var unknown AuditlogJournal
+	require.ErrorContains(t, yaml.Unmarshal([]byte("unknown: true"), &unknown), "field unknown not found")
 }
 
 func TestAuditlogsRejectConflicts(t *testing.T) {

@@ -133,6 +133,14 @@ func TestResolveEncryptionPublicKeyFile(t *testing.T) {
 	require.ErrorContains(t, err, "exactly one SSH public key")
 	_, err = ResolveEncryptionPublicKey("", crypto.PublicKeysFile(filepath.Join(t.TempDir(), "missing.pub")))
 	require.ErrorContains(t, err, "cannot load")
+
+	oversized := filepath.Join(t.TempDir(), "oversized.pub")
+	file, err := os.Create(oversized)
+	require.NoError(t, err)
+	require.NoError(t, file.Truncate(maxEncryptionPublicKeyFileSize+1))
+	require.NoError(t, file.Close())
+	_, err = ResolveEncryptionPublicKey("", crypto.PublicKeysFile(oversized))
+	require.ErrorContains(t, err, "exceeds")
 }
 
 func TestJournalSegmentMetadataSignatures(t *testing.T) {
@@ -213,7 +221,7 @@ func TestLocalJournalRotatesAndRecoversSegmentChain(t *testing.T) {
 	require.NoError(t, recorder.Close())
 
 	directory := producerJournalTestDirectory(conf, identity)
-	segments, hasActive, err := inventoryJournalSegments(directory)
+	segments, hasActive, err := inventoryJournalTestSegments(directory)
 	require.NoError(t, err)
 	require.True(t, hasActive)
 	require.Len(t, segments, 2)
@@ -240,7 +248,7 @@ func TestLocalJournalPublishesCommittedSealDuringRecovery(t *testing.T) {
 
 	recovered, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
-	segments, hasActive, err := inventoryJournalSegments(producerJournalTestDirectory(conf, identity))
+	segments, hasActive, err := inventoryJournalTestSegments(producerJournalTestDirectory(conf, identity))
 	require.NoError(t, err)
 	require.True(t, hasActive)
 	require.Len(t, segments, 1)
@@ -256,7 +264,7 @@ func TestLocalJournalRejectsDeletedLatestSegment(t *testing.T) {
 	require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.must-not-disappear"}))
 	require.NoError(t, recorder.Close())
 
-	segments, hasActive, err := inventoryJournalSegments(producerJournalTestDirectory(conf, identity))
+	segments, hasActive, err := inventoryJournalTestSegments(producerJournalTestDirectory(conf, identity))
 	require.NoError(t, err)
 	require.True(t, hasActive)
 	require.Len(t, segments, 1)

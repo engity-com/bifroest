@@ -4,13 +4,7 @@ description: Configure an SFTP remote target for sealed audit-log segments.
 
 # SFTP
 
-The SFTP target publishes sealed segments below an existing absolute directory. Bifröst creates one child directory per producer.
-
-New segments are uploaded under a random temporary name in the producer directory and read back and validated before an atomic hard link exposes them at their final name. Existing final files are accepted only when their exact size and SHA-256 checksum match and they grant no group or other permissions. Conflicting content is never overwritten.
-
-A compatible server must support version `1` of the SFTP `hardlink@openssh.com` extension and permission changes through both `SETSTAT` and `FSETSTAT`. Bifröst deliberately does not fall back to SFTP rename operations because overwrite and atomicity guarantees vary between servers. It opens temporary files exclusively, restricts them to mode `0600`, verifies that no group or other permissions remain, restricts producer directories to mode `0700`, and attempts to remove temporary files after detectable upload, verification, or publication failures. A process crash or cancellation during shutdown can still leave a hidden `.bifroest-upload-*.tmp` file; Bifröst does not currently list or automatically remove such stale remote files.
-
-Files use the path `<directory>/<producer-id>/<sealed-segment-file>`.
+The SFTP target stores sealed segments below an existing absolute directory. Bifröst creates one child directory per producer and writes files as `<directory>/<producer-id>/<sealed-segment-file>`. The server must support the OpenSSH `hardlink@openssh.com` extension.
 
 ## Properties
 
@@ -19,6 +13,9 @@ The unique, path-safe name of this target within the audit log.
 
 <<property("type", "string", default="sftp", required=True, heading=3)>>
 Selects the SFTP target implementation. Type names are case-insensitive when read; Bifröst writes the canonical value `sftp`.
+
+<<property("publishAttemptTimeout", "duration", default="2m", heading=3)>>
+Maximum duration of one publication attempt, including local hashing, connection setup, upload, read-back verification, and hard-link publication. The value must be positive. Bifröst applies the deadline to the underlying SSH connection and closes that connection on cancellation. If a temporary file may have been created, a hard link succeeded, or the final file already exists, Bifröst opens one fresh connection and makes one deletion attempt with a separate context bounded to five seconds. A cleanup failure remains retryable; the deterministic name lets the next attempt find and remove the same temporary file.
 
 <<property("address", "string", required=True, heading=3)>>
 The SSH server as `host`, `host:port`, or `[IPv6-address]:port`. An omitted port defaults to `22`.
@@ -50,7 +47,13 @@ The SSH password. This value supports Bifröst string templates without a contex
 Exactly one authentication method is required: either `password` or at least one `identityFiles` entry.
 
 <<property("connectTimeout", "duration", default="10s", heading=3)>>
-The maximum time allowed for TCP connection, SSH handshake, and SFTP session setup. A value of zero disables this additional timeout; negative values are rejected. Publish operations additionally honor cancellation from the remote-delivery coordinator.
+The maximum time allowed for TCP connection, SSH handshake, and SFTP session setup. A value of zero disables this additional timeout; negative values are rejected. The earlier deadline of `connectTimeout` and `publishAttemptTimeout` applies during setup.
+
+## Publication
+
+Bifröst uploads each segment under a deterministic hidden temporary name, verifies it, and exposes it atomically through a hard link. Temporary files use mode `0600` and producer directories mode `0700`; existing final files are accepted only when permissions, size, and SHA-256 checksum match.
+
+Retries can resume a verified temporary file and remove it after publication. Conflicting content is never overwritten. The server must support `hardlink@openssh.com` version `1` plus permission changes through `SETSTAT` and `FSETSTAT`; rename is intentionally not used.
 
 ## Permissions
 

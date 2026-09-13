@@ -21,6 +21,7 @@ directory: /srv/bifroest/audit
 knownHosts: archive.example.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEokQdxJkk6AUaFTmkdh6cHfdmR7Q5F7bM2vCeVx1z9i
 password: '{{ env ` + "`SFTP_PASSWORD`" + ` }}'
 connectTimeout: 5s
+publishAttemptTimeout: 15s
 `
 	var actual configuration.AuditlogTarget
 	require.NoError(t, yaml.Unmarshal([]byte(raw), &actual))
@@ -30,6 +31,9 @@ connectTimeout: 5s
 	connectTimeout, err := value.ConnectTimeout.Render(nil)
 	require.NoError(t, err)
 	require.Equal(t, 5*time.Second, connectTimeout)
+	publishAttemptTimeout, err := value.PublishAttemptTimeout.Render(nil)
+	require.NoError(t, err)
+	require.Equal(t, 15*time.Second, publishAttemptTimeout)
 	require.Equal(t, []string{"sftp"}, value.FeatureFlags())
 
 	encoded, err := yaml.Marshal(actual)
@@ -56,6 +60,9 @@ identityFiles:
 	connectTimeout, err := value.ConnectTimeout.Render(nil)
 	require.NoError(t, err)
 	require.Equal(t, 10*time.Second, connectTimeout)
+	values, err := value.Render(nil)
+	require.NoError(t, err)
+	require.Equal(t, 2*time.Minute, values.PublishAttemptTimeout)
 }
 
 func TestAuditlogTargetSftpExplicitZeroTimeoutRoundtrip(t *testing.T) {
@@ -96,6 +103,7 @@ func TestAuditlogTargetSftpRejectsInvalidConfiguration(t *testing.T) {
 		{"duplicate-key", "acceptAllHostKeys: true\nidentityFiles: [key, key]", "duplicates"},
 		{"empty-timeout", "acceptAllHostKeys: true\npassword: secret\nconnectTimeout: ''", "cannot be empty"},
 		{"negative-timeout", "acceptAllHostKeys: true\npassword: secret\nconnectTimeout: -1s", "cannot be negative"},
+		{"zero-publish-timeout", "acceptAllHostKeys: true\npassword: secret\npublishAttemptTimeout: 0s", "must be positive"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -127,6 +127,43 @@ func TestWebdavRemoteTargetPublishesThroughVerifiedTemporaryObject(t *testing.T)
 	require.Equal(t, 5, step)
 }
 
+func TestWebdavRemoteTargetCleansPartialUploadWithFreshBoundedContext(t *testing.T) {
+	step := 0
+	client := &webdavRemoteTestClient{do: func(request *http.Request) (*http.Response, error) {
+		switch step {
+		case 0:
+			step++
+			return webdavRemoteResponse(http.StatusNotFound, ""), nil
+		case 1:
+			step++
+			return webdavRemoteResponse(http.StatusCreated, ""), nil
+		case 2:
+			step++
+			buffer := make([]byte, 4)
+			_, _ = request.Body.Read(buffer)
+			<-request.Context().Done()
+			return nil, request.Context().Err()
+		case 3:
+			step++
+			require.Equal(t, http.MethodDelete, request.Method)
+			require.NoError(t, request.Context().Err())
+			deadline, ok := request.Context().Deadline()
+			require.True(t, ok)
+			require.WithinDuration(t, time.Now().Add(remoteTargetCleanupTimeout), deadline, time.Second)
+			return webdavRemoteResponse(http.StatusNoContent, ""), nil
+		default:
+			t.Fatalf("unexpected request %s %s", request.Method, request.URL)
+			return nil, nil
+		}
+	}}
+	target := newWebdavRemoteTestTarget(t, client, false)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	err := target.Publish(ctx, validRemoteTargetTestSegment())
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Equal(t, 4, step)
+}
+
 func TestWebdavRemoteTargetAcceptsIdenticalExistingObject(t *testing.T) {
 	segment := validRemoteTargetTestSegment()
 	content, err := io.ReadAll(segment.Content())
@@ -483,7 +520,7 @@ func TestNewWebdavRemoteTargetRendersCredentialsAndRefusesRedirects(t *testing.T
 	t.Setenv("WEBDAV_TEST_USER", "archive-user")
 	t.Setenv("WEBDAV_TEST_PASSWORD", "archive-password")
 	conf := &configuration.AuditlogTargetWebdav{
-		Endpoint: "https://dav.example.invalid/audit/",
+		Endpoint: "HTTPS://DAV.EXAMPLE.INVALID:0443/audit/",
 		Username: template.MustNewString("{{ env `WEBDAV_TEST_USER` }}"),
 		Password: template.MustNewString("{{ env `WEBDAV_TEST_PASSWORD` }}"),
 	}
@@ -492,6 +529,7 @@ func TestNewWebdavRemoteTargetRendersCredentialsAndRefusesRedirects(t *testing.T
 	target := raw.(*webdavRemoteTarget)
 	require.Equal(t, "archive-user", target.username)
 	require.Equal(t, "archive-password", target.password)
+	require.Equal(t, "https://dav.example.invalid/audit/", target.endpoint.String())
 	require.Equal(t, "/audit/", target.endpoint.Path)
 	client := target.client.(*http.Client)
 	require.ErrorIs(t, client.CheckRedirect(&http.Request{}, nil), http.ErrUseLastResponse)

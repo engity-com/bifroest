@@ -5,9 +5,48 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/engity-com/bifroest/pkg/template"
 	"gopkg.in/yaml.v3"
 )
+
+var DefaultAuditlogTargetPublishAttemptTimeout = template.DurationOf(2 * time.Minute)
+
+func effectiveAuditlogTargetPublishAttemptTimeout(value template.Duration) template.Duration {
+	if value.IsZero() {
+		return DefaultAuditlogTargetPublishAttemptTimeout
+	}
+	return value
+}
+
+func validateAuditlogTargetPublishAttemptTimeout(value template.Duration) error {
+	value = effectiveAuditlogTargetPublishAttemptTimeout(value)
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	if value.IsHardCoded() {
+		rendered, err := value.Render(nil)
+		if err != nil {
+			return err
+		}
+		if rendered <= 0 {
+			return fmt.Errorf("must be positive")
+		}
+	}
+	return nil
+}
+
+func renderAuditlogTargetPublishAttemptTimeout(value template.Duration, data any) (time.Duration, error) {
+	rendered, err := effectiveAuditlogTargetPublishAttemptTimeout(value).Render(data)
+	if err != nil {
+		return 0, err
+	}
+	if rendered <= 0 {
+		return 0, fmt.Errorf("must be positive after rendering")
+	}
+	return rendered, nil
+}
 
 type AuditlogTarget struct {
 	Name AuditlogTargetName `yaml:"name"`

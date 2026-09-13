@@ -19,17 +19,44 @@ const (
 	remoteDeliveryStateDirectoryName = ".delivery"
 	remoteDeliveryCursorFileName     = "cursor.json"
 	remoteDeliveryCursorTempFileName = "cursor.tmp"
-	remoteDeliveryCursorSchema       = "bifroest.audit-remote-delivery-cursor/v1"
-	remoteDeliveryCursorSignDomain   = "BIFROEST-AUDIT-REMOTE-DELIVERY-CURSOR-SIGNATURE/v1\x00"
+	remoteDeliveryCursorSchema       = "bifroest.audit-remote-delivery-cursor/v2"
+	remoteDeliveryCursorSignDomain   = "BIFROEST-AUDIT-REMOTE-DELIVERY-CURSOR-SIGNATURE/v2\x00"
 )
 
+type remoteDeliveryDestinationFingerprint [sha256.Size]byte
+
+func (this remoteDeliveryDestinationFingerprint) String() string {
+	return hex.EncodeToString(this[:])
+}
+
+func (this remoteDeliveryDestinationFingerprint) IsZero() bool {
+	return this == remoteDeliveryDestinationFingerprint{}
+}
+
+func (this remoteDeliveryDestinationFingerprint) MarshalText() ([]byte, error) {
+	return []byte(this.String()), nil
+}
+
+func (this *remoteDeliveryDestinationFingerprint) UnmarshalText(text []byte) error {
+	if len(text) != hex.EncodedLen(len(this)) {
+		return errors.Config.Newf("illegal remote destination fingerprint length: %d", len(text))
+	}
+	var decoded remoteDeliveryDestinationFingerprint
+	if _, err := hex.Decode(decoded[:], text); err != nil {
+		return errors.Config.Newf("illegal remote destination fingerprint: %w", err)
+	}
+	*this = decoded
+	return nil
+}
+
 type remoteDeliveryCursorContent struct {
-	Schema      string                           `json:"schema"`
-	ProducerId  ProducerId                       `json:"producerId"`
-	Target      configuration.AuditlogTargetName `json:"target"`
-	Sequence    uint64                           `json:"sequence"`
-	SegmentHash SegmentHash                      `json:"segmentHash"`
-	PublicKey   []byte                           `json:"publicKey"`
+	Schema                 string                               `json:"schema"`
+	ProducerId             ProducerId                           `json:"producerId"`
+	Target                 configuration.AuditlogTargetName     `json:"target"`
+	DestinationFingerprint remoteDeliveryDestinationFingerprint `json:"destinationFingerprint"`
+	Sequence               uint64                               `json:"sequence"`
+	SegmentHash            SegmentHash                          `json:"segmentHash"`
+	PublicKey              []byte                               `json:"publicKey"`
 }
 
 type remoteDeliveryCursor struct {
@@ -37,7 +64,7 @@ type remoteDeliveryCursor struct {
 	Signature []byte `json:"signature"`
 }
 
-func newRemoteDeliveryCursor(identity *Identity, target configuration.AuditlogTargetName, sequence uint64, hash SegmentHash) (remoteDeliveryCursor, []byte, error) {
+func newRemoteDeliveryCursor(identity *Identity, target configuration.AuditlogTargetName, destinationFingerprint remoteDeliveryDestinationFingerprint, sequence uint64, hash SegmentHash) (remoteDeliveryCursor, []byte, error) {
 	if identity == nil || identity.ProducerId().IsZero() {
 		return remoteDeliveryCursor{}, nil, errors.Config.Newf("nil audit identity")
 	}
@@ -47,13 +74,17 @@ func newRemoteDeliveryCursor(identity *Identity, target configuration.AuditlogTa
 	if sequence == 0 || hash.IsZero() {
 		return remoteDeliveryCursor{}, nil, errors.System.Newf("remote delivery cursor requires a confirmed segment")
 	}
+	if destinationFingerprint.IsZero() {
+		return remoteDeliveryCursor{}, nil, errors.Config.Newf("remote delivery cursor requires a destination fingerprint")
+	}
 	content := remoteDeliveryCursorContent{
-		Schema:      remoteDeliveryCursorSchema,
-		ProducerId:  identity.ProducerId(),
-		Target:      target,
-		Sequence:    sequence,
-		SegmentHash: hash,
-		PublicKey:   identity.PublicKey().Marshal(),
+		Schema:                 remoteDeliveryCursorSchema,
+		ProducerId:             identity.ProducerId(),
+		Target:                 target,
+		DestinationFingerprint: destinationFingerprint,
+		Sequence:               sequence,
+		SegmentHash:            hash,
+		PublicKey:              identity.PublicKey().Marshal(),
 	}
 	unsigned, err := json.Marshal(content)
 	if err != nil {
@@ -71,13 +102,16 @@ func newRemoteDeliveryCursor(identity *Identity, target configuration.AuditlogTa
 	return cursor, payload, nil
 }
 
-func decodeRemoteDeliveryCursor(payload []byte, identity *Identity, target configuration.AuditlogTargetName) (remoteDeliveryCursor, error) {
+func decodeRemoteDeliveryCursor(payload []byte, identity *Identity, target configuration.AuditlogTargetName, destinationFingerprint remoteDeliveryDestinationFingerprint) (remoteDeliveryCursor, error) {
 	var cursor remoteDeliveryCursor
 	if err := decodeCanonicalJournalPayload(payload, &cursor); err != nil {
 		return remoteDeliveryCursor{}, errors.System.Newf("cannot decode remote delivery cursor: %w", err)
 	}
 	if identity == nil || cursor.Schema != remoteDeliveryCursorSchema || cursor.ProducerId != identity.ProducerId() || cursor.Target != target || !bytes.Equal(cursor.PublicKey, identity.journalPublicKey()) {
 		return remoteDeliveryCursor{}, errors.Config.Newf("remote delivery cursor belongs to a different producer or target")
+	}
+	if cursor.DestinationFingerprint != destinationFingerprint || destinationFingerprint.IsZero() {
+		return remoteDeliveryCursor{}, errors.Config.Newf("remote delivery cursor belongs to a different destination")
 	}
 	if cursor.Sequence == 0 || cursor.SegmentHash.IsZero() {
 		return remoteDeliveryCursor{}, errors.System.Newf("remote delivery cursor does not confirm a segment")
@@ -126,7 +160,7 @@ func prepareRemoteDeliveryState(journalDirectory string, producerId ProducerId) 
 	return producerDirectory, nil
 }
 
-func loadRemoteDeliveryCursor(producerStateDirectory string, identity *Identity, target configuration.AuditlogTargetName) (remoteDeliveryCursor, error) {
+func loadRemoteDeliveryCursor(producerStateDirectory string, identity *Identity, target configuration.AuditlogTargetName, destinationFingerprint remoteDeliveryDestinationFingerprint) (remoteDeliveryCursor, error) {
 	directory := filepath.Join(producerStateDirectory, remoteDeliveryTargetStateName(target))
 	if err := ensureJournalDirectory(directory, true); err != nil {
 		return remoteDeliveryCursor{}, errors.System.Newf("cannot prepare state for remote target %q: %w", target, err)
@@ -136,11 +170,11 @@ func loadRemoteDeliveryCursor(producerStateDirectory string, identity *Identity,
 	}
 	targetPath := filepath.Join(directory, remoteDeliveryCursorFileName)
 	temporaryPath := filepath.Join(directory, remoteDeliveryCursorTempFileName)
-	cursor, exists, err := readRemoteDeliveryCursor(targetPath, identity, target)
+	cursor, exists, err := readRemoteDeliveryCursor(targetPath, identity, target, destinationFingerprint)
 	if err != nil {
 		return remoteDeliveryCursor{}, err
 	}
-	temporary, temporaryExists, temporaryErr := readRemoteDeliveryCursor(temporaryPath, identity, target)
+	temporary, temporaryExists, temporaryErr := readRemoteDeliveryCursor(temporaryPath, identity, target, destinationFingerprint)
 	if temporaryErr != nil {
 		if removeErr := removeRemoteDeliveryCursorFile(temporaryPath, directory); removeErr != nil {
 			return remoteDeliveryCursor{}, goerrors.Join(temporaryErr, removeErr)
@@ -187,8 +221,8 @@ func isRemoteDeliveryTargetStateName(name string) bool {
 	return err == nil && hex.EncodeToString(decoded) == name
 }
 
-func writeRemoteDeliveryCursor(directory string, identity *Identity, target configuration.AuditlogTargetName, sequence uint64, hash SegmentHash) (remoteDeliveryCursor, error) {
-	cursor, payload, err := newRemoteDeliveryCursor(identity, target, sequence, hash)
+func writeRemoteDeliveryCursor(directory string, identity *Identity, target configuration.AuditlogTargetName, destinationFingerprint remoteDeliveryDestinationFingerprint, sequence uint64, hash SegmentHash) (remoteDeliveryCursor, error) {
+	cursor, payload, err := newRemoteDeliveryCursor(identity, target, destinationFingerprint, sequence, hash)
 	if err != nil {
 		return remoteDeliveryCursor{}, err
 	}
@@ -248,7 +282,7 @@ func validateRemoteDeliveryTargetState(directory string) error {
 	return nil
 }
 
-func readRemoteDeliveryCursor(path string, identity *Identity, target configuration.AuditlogTargetName) (remoteDeliveryCursor, bool, error) {
+func readRemoteDeliveryCursor(path string, identity *Identity, target configuration.AuditlogTargetName, destinationFingerprint remoteDeliveryDestinationFingerprint) (remoteDeliveryCursor, bool, error) {
 	pathInfo, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return remoteDeliveryCursor{}, false, nil
@@ -286,7 +320,7 @@ func readRemoteDeliveryCursor(path string, identity *Identity, target configurat
 	if len(payload) > maxJournalRecordPayloadSize {
 		return remoteDeliveryCursor{}, false, errors.System.Newf("remote delivery cursor %q exceeds %d bytes", path, maxJournalRecordPayloadSize)
 	}
-	cursor, err := decodeRemoteDeliveryCursor(payload, identity, target)
+	cursor, err := decodeRemoteDeliveryCursor(payload, identity, target, destinationFingerprint)
 	if err != nil {
 		return remoteDeliveryCursor{}, false, errors.System.Newf("cannot use remote delivery cursor %q: %w", path, err)
 	}

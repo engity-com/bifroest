@@ -180,7 +180,17 @@ func (this *service) observeFlowAuthorization(ctx context.Context, observation a
 	if observation.Err != nil {
 		event.ErrorCategory = auditErrorCategory(observation.Err)
 	}
+	if flowAuthorizationObservationIsUnauthenticated(observation) {
+		return this.recordUnauthenticatedFlowAudit(ctx, observation.Flow, event)
+	}
 	return this.recordFlowAudit(ctx, observation.Flow, event)
+}
+
+func flowAuthorizationObservationIsUnauthenticated(observation authorization.FlowAuthorizationObservation) bool {
+	if observation.Method == authorization.FlowAuthorizationMethodPublicKey {
+		return observation.Phase != authorization.FlowAuthorizationPhaseVerified
+	}
+	return observation.Outcome != authorization.FlowAuthorizationOutcomeAccepted
 }
 
 func (this *service) recordAuthenticationCompleted(ctx essh.Context, auth authorization.Authorization, method audit.AuthenticationMethod, outcome audit.EventOutcome, reason string) error {

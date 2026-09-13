@@ -28,6 +28,7 @@ Every event has a `name`. All other fields are optional and are present only whe
 | `exitCode` | Non-negative task exit code, including zero. |
 | `bytesRead`, `bytesWritten` | Aggregate transport byte counts in the direction documented for the event. |
 | `durationMillis` | Completed operation duration in milliseconds. |
+| `count` | Positive number of security-relevant occurrences represented by an aggregate event. |
 | `pty`, `agentForwarding`, `forcedCommand` | Boolean task properties without their request contents. |
 
 Events with the same `connectionId` belong to one SSH transport. Events with the same `sessionId` can span multiple SSH connections to one persistent Bifröst session. An `operationId` has meaning within the event lifecycle that created it and must be interpreted together with `name`.
@@ -51,6 +52,23 @@ Outcomes:
 * `failure`: evaluation failed for another reason.
 
 For public keys, `candidate` means that the key or certificate was evaluated before proof of private-key possession. User certificates are evaluated again with `verified` after their signature has been verified. An accepted candidate does not by itself mean that authentication succeeded.
+
+Unauthenticated evaluation details are subject to the bounded [SSH audit limits](../connection/ssh.md#unauthenticated-audit). This includes every public-key `candidate`, including accepted candidates, and denied or failed password and keyboard-interactive evaluations. Accepted password and keyboard-interactive results and every public-key `verified` result bypass these limits.
+
+#### `authentication.flow.evaluations-suppressed`
+
+A signed aggregate written when detailed unauthenticated `authentication.flow.evaluated` records are suppressed. It never changes the authentication result.
+
+Fields: `domain` is `authentication`; `reason`, `count`, and `durationMillis` describe the suppressed batch. For `rate-limit`, `outcome` identifies the common outcome represented by the batch. Aggregation can span flows that reference the same audit log, so `flow`, authentication method, connection IDs, and remote addresses are intentionally omitted. For `journal-reserve`, `outcome` is omitted because the batch can contain mixed outcomes.
+
+Reasons:
+
+* `rate-limit`: the per-source or service-wide token bucket had no detail token available.
+* `journal-reserve`: the configured minimum free filesystem space would have been crossed by a suppressible write.
+
+The first suppression in a rate-limited episode is written immediately with `count: 1`. Further suppressions are counted in memory and written at a bounded cadence or during orderly shutdown. If the reserve is reached while a `rate-limit` aggregate is pending, that aggregate retains its `rate-limit` reason and outcome and is written once using the emergency reserve; only later evaluations are counted as `journal-reserve`. A hard crash can lose only the not-yet-flushed count; the first signed event still proves that detail suppression began. While the journal reserve is active, Bifröst does not repeatedly consume the reserve for markers and periodically probes for recovery only when further unauthenticated evaluations arrive.
+
+During orderly shutdown, pending aggregate counts are final audit records and bypass `minimumFreeBytes`. These bounded emergency writes can consume the configured reserve. If any final aggregate cannot be recorded, shutdown still attempts every other audit log and resource cleanup but returns an error instead of reporting a complete audit flush.
 
 #### `authentication.completed`
 
@@ -204,7 +222,7 @@ Fields: `domain` is `housekeeping`; `flow`, `sessionId`, and `operationId` ident
 
 Written after the disposal attempt returns. Its `flow`, `sessionId`, `operationId`, and `reason` match the corresponding `housekeeping.session.dispose.started` event.
 
-Fields: `domain` is `housekeeping`; `durationMillis` measures the complete disposal attempt. `outcome` is `success` when all disposal operations completed, even if no remaining resource required a change. On `failure`, `errorCategory` classifies the error.
+Fields: `domain` is `housekeeping`; `durationMillis` measures the complete disposal attempt. `outcome` is `success` when all disposal operations completed, even if no remaining resource required a change. This can include removing a persisted authorization token that its configured authorizer safely classified as permanently unusable because of malformed local token data, removed local configuration, or a removed local user. On `failure`, `errorCategory` classifies the error. Transient, network, system, and unclassified restore failures are not converted into token removal.
 
 #### `housekeeping.session.delete.started`
 
@@ -218,11 +236,19 @@ Written after the persistent session deletion returns. Its `flow`, `sessionId`, 
 
 Fields: `domain` is `housekeeping`; `durationMillis` measures the deletion attempt. `outcome` is `success` only when deletion completed without an error. On `failure`, `errorCategory` classifies the error.
 
+#### `housekeeping.orphaned-session.cleanup.skipped` {: #housekeeping-orphaned-session-cleanup-skipped }
+
+Written when housekeeping encounters a persisted session whose flow is no longer present in the running configuration. The implementations needed to interpret and safely dispose its environment and authorization tokens are unavailable. Housekeeping therefore preserves the complete session, including expired or already disposed sessions beyond their retention period, for operator recovery. It does not read or modify either token, dispose the session or environment, or delete session storage.
+
+The original flow-to-audit-log assignment cannot be reconstructed safely, so the same event is written deterministically to every enabled audit log instead of being attributed to one replacement log. If no audit log is enabled, the safe skip is logged but no audit event can be written.
+
+Fields: `domain` is `housekeeping`; `flow` is the persisted, now-unknown flow name and does not assert ownership by any receiving audit log. `sessionId` identifies the preserved session, `reason` is `missing-flow`, and `outcome` is `denied` because destructive cleanup was not allowed. No `operationId`, token contents, environment details, or retention timestamps are included.
+
 ## Privacy
 
 Bifröst's built-in audit events never contain:
 
-* Passwords, keyboard-interactive answers, access tokens, private keys, or public-key material.
+* Passwords, keyboard-interactive answers, access or persisted authorization tokens, private keys, or public-key material.
 * Commands, arguments, original or forced command text, or environment values.
 * SFTP paths, file names, protocol payloads, or file contents.
 * Terminal types, dimensions, or modes.
@@ -236,6 +262,8 @@ Error events use only the documented reason codes and broad `errorCategory` valu
 
 For an enabled audit log, local recording is synchronous and fail-closed. If Bifröst cannot durably record an event before an allowed SSH action, the action is denied and only the causing SSH connection is closed. Bifröst does not retry the event in the service layer and does not shut down the complete service. A disabled audit log uses a no-op recorder and therefore has no recording-failure behavior.
 
-If recording a completion event fails after an action has already happened, the action cannot be rolled back. The handler reports the audit failure and closes the causing connection. A housekeeping start-record failure prevents that housekeeping action; housekeeping failures do not close unrelated SSH connections or stop the service.
+Bucket exhaustion and an intentionally preserved journal reserve are not recording failures: they replace only suppressible pre-authentication details with bounded signed aggregates. They never deny a successful authentication. Failure to inspect free space or to durably write a selected detail, suppression marker, or aggregate remains fail-closed for the causing connection.
+
+If recording a completion event fails after an action has already happened, the action cannot be rolled back. The handler reports the audit failure and closes the causing connection. A housekeeping start-record failure prevents that housekeeping action. Failure to write an orphaned-session skip event is reported after attempting every enabled audit log; the session remains untouched and housekeeping continues with later sessions. Housekeeping failures do not close unrelated SSH connections or stop the service.
 
 Remote-target delivery remains asynchronous. A remote outage does not change the result of local recording or an SSH action because the authoritative event remains in the local journal for later delivery.

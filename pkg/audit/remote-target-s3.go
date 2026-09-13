@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"path"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
@@ -24,9 +25,9 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
-var _ = RegisterRemoteTarget(
+var _ = registerPreparedRemoteTarget(
 	func() configuration.AuditlogTargetV { return &configuration.AuditlogTargetS3{} },
-	newS3RemoteTarget,
+	prepareS3RemoteTarget,
 )
 
 type s3RemoteAPI interface {
@@ -46,21 +47,36 @@ type s3RemoteTarget struct {
 }
 
 func newS3RemoteTarget(ctx context.Context, _ RemoteTargetScope, conf *configuration.AuditlogTargetS3) (RemoteTarget, error) {
+	target, _, _, err := prepareS3RemoteTarget(ctx, RemoteTargetScope{}, conf)
+	return target, err
+}
+
+func prepareS3RemoteTarget(ctx context.Context, _ RemoteTargetScope, conf *configuration.AuditlogTargetS3) (RemoteTarget, time.Duration, remoteDeliveryDestinationFingerprint, error) {
 	if conf == nil {
-		return nil, errors.Config.Newf("nil S3 audit target configuration")
+		return nil, 0, remoteDeliveryDestinationFingerprint{}, errors.Config.Newf("nil S3 audit target configuration")
 	}
+	snapshot := *conf
+	conf = &snapshot
 	if err := conf.Validate(); err != nil {
-		return nil, errors.Config.Newf("invalid S3 audit target configuration: %w", err)
+		return nil, 0, remoteDeliveryDestinationFingerprint{}, errors.Config.Newf("invalid S3 audit target configuration: %w", err)
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, 0, remoteDeliveryDestinationFingerprint{}, err
 	}
 	values, err := conf.Render(nil)
 	if err != nil {
-		return nil, errors.Config.Newf("cannot render S3 audit target configuration: %w", err)
+		return nil, 0, remoteDeliveryDestinationFingerprint{}, errors.Config.Newf("cannot render S3 audit target configuration: %w", err)
+	}
+	endpoint, err := normalizedS3RemoteEndpoint(conf.Endpoint)
+	if err != nil {
+		return nil, 0, remoteDeliveryDestinationFingerprint{}, err
+	}
+	timeout, fingerprint, err := s3RemoteDeliveryTargetSettings(conf, values, endpoint)
+	if err != nil {
+		return nil, 0, remoteDeliveryDestinationFingerprint{}, err
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	bfcrypto.AdjustHttpTransportWithCaCerts(transport)
@@ -80,12 +96,16 @@ func newS3RemoteTarget(ctx context.Context, _ RemoteTargetScope, conf *configura
 	}
 	client := s3.NewFromConfig(sdkConfig, func(options *s3.Options) {
 		options.BaseEndpoint = nil
-		if conf.Endpoint != "" {
-			options.BaseEndpoint = aws.String(conf.Endpoint)
+		if endpoint != "" {
+			options.BaseEndpoint = aws.String(endpoint)
 		}
 		options.UsePathStyle = conf.PathStyle
 	})
-	return newS3RemoteTargetWithClient(conf, client, transport.CloseIdleConnections)
+	target, err := newS3RemoteTargetWithClient(conf, client, transport.CloseIdleConnections)
+	if err != nil {
+		transport.CloseIdleConnections()
+	}
+	return target, timeout, fingerprint, err
 }
 
 func newS3RemoteTargetWithClient(conf *configuration.AuditlogTargetS3, client s3RemoteAPI, close func()) (*s3RemoteTarget, error) {

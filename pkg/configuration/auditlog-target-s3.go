@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	smithyhttp "github.com/aws/smithy-go/transport/http"
@@ -14,7 +15,10 @@ import (
 	"github.com/engity-com/bifroest/pkg/template"
 )
 
-const maximumAuditlogTargetS3PrefixLength = 857
+const (
+	maximumAuditlogTargetS3PrefixLength              = 857
+	maximumAuditlogTargetS3DestinationIdentityLength = 256
+)
 
 var (
 	DefaultAuditlogTargetS3Region          = template.MustNewString("{{ env `AWS_REGION` | default (env `AWS_DEFAULT_REGION`) }}")
@@ -24,25 +28,28 @@ var (
 )
 
 type AuditlogTargetS3 struct {
-	Bucket              string          `yaml:"bucket"`
-	Region              template.String `yaml:"region,omitempty"`
-	Prefix              string          `yaml:"prefix,omitempty"`
-	Endpoint            string          `yaml:"endpoint,omitempty"`
-	PathStyle           bool            `yaml:"pathStyle,omitempty"`
-	ExpectedBucketOwner string          `yaml:"expectedBucketOwner,omitempty"`
-	AccessKeyId         template.String `yaml:"accessKeyId,omitempty"`
-	SecretAccessKey     template.String `yaml:"secretAccessKey,omitempty"`
-	SessionToken        template.String `yaml:"sessionToken,omitempty"`
-	sessionTokenDefault bool
+	Bucket                string            `yaml:"bucket"`
+	Region                template.String   `yaml:"region,omitempty"`
+	Prefix                string            `yaml:"prefix,omitempty"`
+	Endpoint              string            `yaml:"endpoint,omitempty"`
+	PathStyle             bool              `yaml:"pathStyle,omitempty"`
+	ExpectedBucketOwner   string            `yaml:"expectedBucketOwner,omitempty"`
+	DestinationIdentity   string            `yaml:"destinationIdentity,omitempty"`
+	AccessKeyId           template.String   `yaml:"accessKeyId,omitempty"`
+	SecretAccessKey       template.String   `yaml:"secretAccessKey,omitempty"`
+	SessionToken          template.String   `yaml:"sessionToken,omitempty"`
+	PublishAttemptTimeout template.Duration `yaml:"publishAttemptTimeout,omitempty"`
+	sessionTokenDefault   bool
 }
 
 func (this *AuditlogTargetS3) SetDefaults() error {
 	*this = AuditlogTargetS3{
-		Region:              DefaultAuditlogTargetS3Region,
-		AccessKeyId:         DefaultAuditlogTargetS3AccessKeyId,
-		SecretAccessKey:     DefaultAuditlogTargetS3SecretAccessKey,
-		SessionToken:        DefaultAuditlogTargetS3SessionToken,
-		sessionTokenDefault: true,
+		Region:                DefaultAuditlogTargetS3Region,
+		AccessKeyId:           DefaultAuditlogTargetS3AccessKeyId,
+		SecretAccessKey:       DefaultAuditlogTargetS3SecretAccessKey,
+		SessionToken:          DefaultAuditlogTargetS3SessionToken,
+		PublishAttemptTimeout: DefaultAuditlogTargetPublishAttemptTimeout,
+		sessionTokenDefault:   true,
 	}
 	return nil
 }
@@ -53,6 +60,7 @@ func (this *AuditlogTargetS3) Trim() error {
 	this.Endpoint = strings.TrimSpace(this.Endpoint)
 	this.Endpoint = strings.TrimSuffix(this.Endpoint, "/")
 	this.ExpectedBucketOwner = strings.TrimSpace(this.ExpectedBucketOwner)
+	this.DestinationIdentity = strings.TrimSpace(this.DestinationIdentity)
 	return this.Validate()
 }
 
@@ -72,6 +80,12 @@ func (this *AuditlogTargetS3) Validate() error {
 	if err := validateAuditlogTargetS3ExpectedBucketOwner(this.ExpectedBucketOwner); err != nil {
 		return fmt.Errorf("[expectedBucketOwner] %w", err)
 	}
+	if err := validateAuditlogTargetS3DestinationIdentity(this.DestinationIdentity); err != nil {
+		return fmt.Errorf("[destinationIdentity] %w", err)
+	}
+	if this.Endpoint != "" && this.ExpectedBucketOwner == "" && this.DestinationIdentity == "" {
+		return fmt.Errorf("[destinationIdentity] or [expectedBucketOwner] is required when [endpoint] is configured")
+	}
 	if err := validateRequiredAuditlogTargetS3Template(this.AccessKeyId); err != nil {
 		return fmt.Errorf("[accessKeyId] %w", err)
 	}
@@ -85,6 +99,9 @@ func (this *AuditlogTargetS3) Validate() error {
 	}
 	if err := this.SessionToken.Validate(); err != nil {
 		return fmt.Errorf("[sessionToken] %w", err)
+	}
+	if err := validateAuditlogTargetPublishAttemptTimeout(this.PublishAttemptTimeout); err != nil {
+		return fmt.Errorf("[publishAttemptTimeout] %w", err)
 	}
 	return nil
 }
@@ -114,10 +131,11 @@ func validateRequiredAuditlogTargetS3Template(value template.String) error {
 }
 
 type AuditlogTargetS3Values struct {
-	Region          string
-	AccessKeyId     string
-	SecretAccessKey string
-	SessionToken    string
+	Region                string
+	AccessKeyId           string
+	SecretAccessKey       string
+	SessionToken          string
+	PublishAttemptTimeout time.Duration
 }
 
 func (this AuditlogTargetS3) Render(data any) (result AuditlogTargetS3Values, err error) {
@@ -127,6 +145,9 @@ func (this AuditlogTargetS3) Render(data any) (result AuditlogTargetS3Values, er
 	result.Region = strings.TrimSpace(result.Region)
 	if err = validateAuditlogTargetS3Region(result.Region); err != nil {
 		return result, fmt.Errorf("[region] %w", err)
+	}
+	if result.PublishAttemptTimeout, err = renderAuditlogTargetPublishAttemptTimeout(this.PublishAttemptTimeout, data); err != nil {
+		return result, fmt.Errorf("[publishAttemptTimeout] cannot render: %w", err)
 	}
 	if result.AccessKeyId, err = this.AccessKeyId.Render(data); err != nil {
 		return result, fmt.Errorf("[accessKeyId] cannot render: %w", err)
@@ -242,7 +263,7 @@ func validateAuditlogTargetS3Endpoint(value string) error {
 	if err != nil {
 		return fmt.Errorf("cannot parse URL: %w", err)
 	}
-	if parsed.Scheme != "https" || parsed.Hostname() == "" {
+	if !strings.EqualFold(parsed.Scheme, "https") || parsed.Hostname() == "" {
 		return fmt.Errorf("must be an absolute HTTPS URL")
 	}
 	if strings.HasSuffix(parsed.Host, ":") {
@@ -283,9 +304,30 @@ func validateAuditlogTargetS3ExpectedBucketOwner(value string) error {
 	return nil
 }
 
+func validateAuditlogTargetS3DestinationIdentity(value string) error {
+	if value == "" {
+		return nil
+	}
+	if strings.TrimSpace(value) != value {
+		return fmt.Errorf("must not have leading or trailing whitespace")
+	}
+	if !utf8.ValidString(value) {
+		return fmt.Errorf("is not valid UTF-8")
+	}
+	if len(value) > maximumAuditlogTargetS3DestinationIdentityLength {
+		return fmt.Errorf("exceeds %d bytes", maximumAuditlogTargetS3DestinationIdentityLength)
+	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return fmt.Errorf("contains a control character")
+		}
+	}
+	return nil
+}
+
 func (this *AuditlogTargetS3) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *AuditlogTargetS3, node *yaml.Node) error {
-		if err := rejectUnknownAuditlogFields(node, "bucket", "region", "prefix", "endpoint", "pathStyle", "expectedBucketOwner", "accessKeyId", "secretAccessKey", "sessionToken"); err != nil {
+		if err := rejectUnknownAuditlogFields(node, "bucket", "region", "prefix", "endpoint", "pathStyle", "expectedBucketOwner", "destinationIdentity", "accessKeyId", "secretAccessKey", "sessionToken", "publishAttemptTimeout"); err != nil {
 			return err
 		}
 		type raw AuditlogTargetS3
@@ -312,20 +354,23 @@ func auditlogTargetS3YAMLNodeIsNull(node *yaml.Node) bool {
 
 func (this AuditlogTargetS3) MarshalYAML() (any, error) {
 	type encoded struct {
-		Bucket              string          `yaml:"bucket"`
-		Region              template.String `yaml:"region,omitempty"`
-		Prefix              string          `yaml:"prefix,omitempty"`
-		Endpoint            string          `yaml:"endpoint,omitempty"`
-		PathStyle           bool            `yaml:"pathStyle,omitempty"`
-		ExpectedBucketOwner string          `yaml:"expectedBucketOwner,omitempty"`
-		AccessKeyId         template.String `yaml:"accessKeyId,omitempty"`
-		SecretAccessKey     template.String `yaml:"secretAccessKey,omitempty"`
-		SessionToken        *string         `yaml:"sessionToken,omitempty"`
+		Bucket                string            `yaml:"bucket"`
+		Region                template.String   `yaml:"region,omitempty"`
+		Prefix                string            `yaml:"prefix,omitempty"`
+		Endpoint              string            `yaml:"endpoint,omitempty"`
+		PathStyle             bool              `yaml:"pathStyle,omitempty"`
+		ExpectedBucketOwner   string            `yaml:"expectedBucketOwner,omitempty"`
+		DestinationIdentity   string            `yaml:"destinationIdentity,omitempty"`
+		AccessKeyId           template.String   `yaml:"accessKeyId,omitempty"`
+		SecretAccessKey       template.String   `yaml:"secretAccessKey,omitempty"`
+		SessionToken          *string           `yaml:"sessionToken,omitempty"`
+		PublishAttemptTimeout template.Duration `yaml:"publishAttemptTimeout,omitempty"`
 	}
 	result := encoded{
 		Bucket: this.Bucket, Region: this.Region, Prefix: this.Prefix, Endpoint: this.Endpoint,
-		PathStyle: this.PathStyle, ExpectedBucketOwner: this.ExpectedBucketOwner,
+		PathStyle: this.PathStyle, ExpectedBucketOwner: this.ExpectedBucketOwner, DestinationIdentity: this.DestinationIdentity,
 		AccessKeyId: this.AccessKeyId, SecretAccessKey: this.SecretAccessKey,
+		PublishAttemptTimeout: effectiveAuditlogTargetPublishAttemptTimeout(this.PublishAttemptTimeout),
 	}
 	if !this.usesDefaultSessionToken() {
 		sessionToken := this.SessionToken.String()
@@ -356,9 +401,11 @@ func (this AuditlogTargetS3) isEqualTo(other *AuditlogTargetS3) bool {
 		this.Endpoint == other.Endpoint &&
 		this.PathStyle == other.PathStyle &&
 		this.ExpectedBucketOwner == other.ExpectedBucketOwner &&
+		this.DestinationIdentity == other.DestinationIdentity &&
 		this.AccessKeyId.IsEqualTo(other.AccessKeyId) &&
 		this.SecretAccessKey.IsEqualTo(other.SecretAccessKey) &&
 		this.SessionToken.IsEqualTo(other.SessionToken) &&
+		effectiveAuditlogTargetPublishAttemptTimeout(this.PublishAttemptTimeout).IsEqualTo(effectiveAuditlogTargetPublishAttemptTimeout(other.PublishAttemptTimeout)) &&
 		this.usesDefaultSessionToken() == other.usesDefaultSessionToken()
 }
 

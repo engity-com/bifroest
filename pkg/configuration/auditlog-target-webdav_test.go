@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -21,11 +22,13 @@ type: Web-DAV
 endpoint: " https://dav.example.invalid/audit/ "
 username: '{{ env "AUDIT_WEBDAV_USERNAME" }}'
 password: '{{ env "AUDIT_WEBDAV_PASSWORD" }}'
+publishAttemptTimeout: 15s
 `), &actual))
 	expected := configuration.AuditlogTargetWebdav{
-		Endpoint: "https://dav.example.invalid/audit/",
-		Username: template.MustNewString("{{ env \"AUDIT_WEBDAV_USERNAME\" }}"),
-		Password: template.MustNewString("{{ env \"AUDIT_WEBDAV_PASSWORD\" }}"),
+		Endpoint:              "https://dav.example.invalid/audit/",
+		Username:              template.MustNewString("{{ env \"AUDIT_WEBDAV_USERNAME\" }}"),
+		Password:              template.MustNewString("{{ env \"AUDIT_WEBDAV_PASSWORD\" }}"),
+		PublishAttemptTimeout: template.DurationOf(15 * time.Second),
 	}
 	require.Equal(t, configuration.AuditlogTargetName("archive"), actual.Name)
 	require.True(t, expected.IsEqualTo(actual.V))
@@ -48,6 +51,7 @@ func TestAuditlogTargetWebdavAnonymousDefaults(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, values.Username)
 	require.Empty(t, values.Password)
+	require.Equal(t, 2*time.Minute, values.PublishAttemptTimeout)
 }
 
 func TestAuditlogTargetWebdavRendersCredentialsExactly(t *testing.T) {
@@ -111,6 +115,7 @@ func TestAuditlogTargetWebdavRejectsInvalidConfiguration(t *testing.T) {
 		{"endpoint-double-encoded-traversal", "endpoint: https://dav.example.invalid/audit/%252e%252e/other", "multiply encoded"},
 		{"username-only", "endpoint: https://dav.example.invalid/audit\nusername: user", "both be configured"},
 		{"password-only", "endpoint: https://dav.example.invalid/audit\npassword: secret", "both be configured"},
+		{"zero-publish-timeout", "endpoint: https://dav.example.invalid/audit\npublishAttemptTimeout: 0s", "must be positive"},
 		{"unknown-field", "endpoint: https://dav.example.invalid/audit\ntoken: secret", "field token not found"},
 	}
 	for _, test := range tests {

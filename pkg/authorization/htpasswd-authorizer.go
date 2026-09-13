@@ -202,7 +202,7 @@ func (this *HtpasswdAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Au
 	return auth, nil
 }
 
-func (this *HtpasswdAuthorizer) RestoreFromSession(ctx context.Context, sess session.Session, _ *RestoreOpts) (Authorization, error) {
+func (this *HtpasswdAuthorizer) RestoreFromSession(ctx context.Context, sess session.Session, opts *RestoreOpts) (Authorization, error) {
 	failf := func(t errors.Type, msg string, args ...any) (Authorization, error) {
 		args = append([]any{sess}, args...)
 		return nil, errors.Newf(t, "cannot restore authorization from session %v: "+msg, args...)
@@ -222,7 +222,7 @@ func (this *HtpasswdAuthorizer) RestoreFromSession(ctx context.Context, sess ses
 
 	var buf htpasswdToken
 	if err := json.Unmarshal(tb, &buf); err != nil {
-		return failf(errors.System, "cannot decode token of: %w", err)
+		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("cannot decode htpasswd authorization token: %w", err))
 	}
 
 	si, err := sess.Info(ctx)
