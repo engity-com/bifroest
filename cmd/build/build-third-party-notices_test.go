@@ -17,8 +17,36 @@ func TestReadThirdPartyLicensePolicy(t *testing.T) {
 	policy, err := readThirdPartyLicensePolicy(thirdPartyLicensePolicyRaw)
 
 	require.NoError(t, err)
-	require.Equal(t, 1, policy.SchemaVersion)
+	require.Equal(t, 2, policy.SchemaVersion)
+	require.Equal(t, thirdPartyLicenseAllowed, policy.licenseDecision("MIT"))
+	require.Equal(t, thirdPartyLicenseManualReview, policy.licenseDecision("GPL-3.0-only"))
 	require.Equal(t, "github.com/moby/moby", canonicalModuleMap(policy)["github.com/docker/docker"])
+}
+
+func TestReadThirdPartyLicensePolicyRejectsOverlappingDecisions(t *testing.T) {
+	_, err := readThirdPartyLicensePolicy([]byte(`{
+		"schemaVersion": 2,
+		"allowedLicenses": ["MIT"],
+		"rejectedLicenses": ["MIT"],
+		"manualReviewLicenses": [],
+		"unclassifiedLicenseDecision": "manual-review",
+		"canonicalComponents": []
+	}`))
+
+	require.ErrorContains(t, err, `license "MIT" is classified as both allowed and rejected`)
+}
+
+func TestReadThirdPartyLicensePolicyRequiresManualReviewByDefault(t *testing.T) {
+	_, err := readThirdPartyLicensePolicy([]byte(`{
+		"schemaVersion": 2,
+		"allowedLicenses": ["MIT"],
+		"rejectedLicenses": [],
+		"manualReviewLicenses": [],
+		"unclassifiedLicenseDecision": "allowed",
+		"canonicalComponents": []
+	}`))
+
+	require.ErrorContains(t, err, `must classify unlisted licenses as "manual-review"`)
 }
 
 func TestParseThirdPartyLicenseRecords(t *testing.T) {
@@ -85,6 +113,35 @@ func TestReconcileThirdPartyComponentsRejectsVersionMismatch(t *testing.T) {
 	_, err = reconcileThirdPartyComponents(modules, records, t.TempDir(), policy)
 
 	require.ErrorContains(t, err, "reports version")
+}
+
+func TestReconcileThirdPartyComponentsEnforcesLicenseDecision(t *testing.T) {
+	policy := thirdPartyLicensePolicy{
+		AllowedLicenses:             []string{"MIT"},
+		RejectedLicenses:            []string{"GPL-3.0-only"},
+		ManualReviewLicenses:        []string{"MPL-2.0"},
+		UnclassifiedLicenseDecision: string(thirdPartyLicenseManualReview),
+	}
+	modules := []*thirdPartyModule{{matches: []string{"example.com/library"}, component: "example.com/library", version: "v1.0.0"}}
+
+	tests := []struct {
+		name    string
+		license string
+		error   string
+	}{
+		{name: "rejected", license: "GPL-3.0-only", error: "is rejected by policy"},
+		{name: "explicit manual review", license: "MPL-2.0", error: "requires manual review"},
+		{name: "unclassified", license: "EPL-2.0", error: "requires manual review"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			records := []thirdPartyLicenseRecord{{Library: "example.com/library", Version: "v1.0.0", License: test.license, Text: "license\n"}}
+
+			_, err := reconcileThirdPartyComponents(modules, records, t.TempDir(), policy)
+
+			require.ErrorContains(t, err, test.error)
+		})
+	}
 }
 
 func TestThirdPartyModulesUsesReplacementAsCanonicalComponent(t *testing.T) {

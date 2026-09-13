@@ -40,10 +40,21 @@ const (
 var thirdPartyLicensePolicyRaw []byte
 
 type thirdPartyLicensePolicy struct {
-	SchemaVersion       int                            `json:"schemaVersion"`
-	AllowedLicenses     []string                       `json:"allowedLicenses"`
-	CanonicalComponents []thirdPartyCanonicalComponent `json:"canonicalComponents"`
+	SchemaVersion               int                            `json:"schemaVersion"`
+	AllowedLicenses             []string                       `json:"allowedLicenses"`
+	RejectedLicenses            []string                       `json:"rejectedLicenses"`
+	ManualReviewLicenses        []string                       `json:"manualReviewLicenses"`
+	UnclassifiedLicenseDecision string                         `json:"unclassifiedLicenseDecision"`
+	CanonicalComponents         []thirdPartyCanonicalComponent `json:"canonicalComponents"`
 }
+
+type thirdPartyLicenseDecision string
+
+const (
+	thirdPartyLicenseAllowed      thirdPartyLicenseDecision = "allowed"
+	thirdPartyLicenseRejected     thirdPartyLicenseDecision = "rejected"
+	thirdPartyLicenseManualReview thirdPartyLicenseDecision = "manual-review"
+)
 
 type thirdPartyCanonicalComponent struct {
 	Name    string   `json:"name"`
@@ -202,18 +213,31 @@ func readThirdPartyLicensePolicy(raw []byte) (thirdPartyLicensePolicy, error) {
 	if err := decoder.Decode(&result); err != nil {
 		return result, fmt.Errorf("cannot parse third-party license policy: %w", err)
 	}
-	if result.SchemaVersion != 1 {
+	if result.SchemaVersion != 2 {
 		return result, fmt.Errorf("unsupported third-party license policy schema version %d", result.SchemaVersion)
 	}
-	allowed := make(map[string]struct{}, len(result.AllowedLicenses))
-	for _, license := range result.AllowedLicenses {
-		if license == "" {
-			return result, fmt.Errorf("third-party license policy contains an empty license")
+	if result.UnclassifiedLicenseDecision != string(thirdPartyLicenseManualReview) {
+		return result, fmt.Errorf("third-party license policy must classify unlisted licenses as %q", thirdPartyLicenseManualReview)
+	}
+	classified := make(map[string]thirdPartyLicenseDecision)
+	licenseGroups := []struct {
+		licenses []string
+		decision thirdPartyLicenseDecision
+	}{
+		{result.AllowedLicenses, thirdPartyLicenseAllowed},
+		{result.RejectedLicenses, thirdPartyLicenseRejected},
+		{result.ManualReviewLicenses, thirdPartyLicenseManualReview},
+	}
+	for _, group := range licenseGroups {
+		for _, license := range group.licenses {
+			if license == "" {
+				return result, fmt.Errorf("third-party license policy contains an empty %s license", group.decision)
+			}
+			if existing, exists := classified[license]; exists {
+				return result, fmt.Errorf("third-party license %q is classified as both %s and %s", license, existing, group.decision)
+			}
+			classified[license] = group.decision
 		}
-		if _, exists := allowed[license]; exists {
-			return result, fmt.Errorf("third-party license policy contains duplicate license %q", license)
-		}
-		allowed[license] = struct{}{}
 	}
 	modules := make(map[string]string)
 	for _, component := range result.CanonicalComponents {
@@ -233,6 +257,25 @@ func readThirdPartyLicensePolicy(raw []byte) (thirdPartyLicensePolicy, error) {
 		}
 	}
 	return result, nil
+}
+
+func (this thirdPartyLicensePolicy) licenseDecision(license string) thirdPartyLicenseDecision {
+	for _, candidate := range this.AllowedLicenses {
+		if candidate == license {
+			return thirdPartyLicenseAllowed
+		}
+	}
+	for _, candidate := range this.RejectedLicenses {
+		if candidate == license {
+			return thirdPartyLicenseRejected
+		}
+	}
+	for _, candidate := range this.ManualReviewLicenses {
+		if candidate == license {
+			return thirdPartyLicenseManualReview
+		}
+	}
+	return thirdPartyLicenseDecision(this.UnclassifiedLicenseDecision)
 }
 
 func thirdPartyModules(info *debug.BuildInfo, platform bib.Platform, policy thirdPartyLicensePolicy) ([]*thirdPartyModule, error) {
@@ -343,10 +386,6 @@ func parseThirdPartyLicenseRecords(raw []byte) ([]thirdPartyLicenseRecord, error
 }
 
 func reconcileThirdPartyComponents(modules []*thirdPartyModule, records []thirdPartyLicenseRecord, savedDirectory string, policy thirdPartyLicensePolicy) ([]thirdPartyComponent, error) {
-	allowed := make(map[string]struct{}, len(policy.AllowedLicenses))
-	for _, license := range policy.AllowedLicenses {
-		allowed[license] = struct{}{}
-	}
 	components := make(map[string]*thirdPartyComponent)
 	componentFor := func(module *thirdPartyModule) *thirdPartyComponent {
 		result := components[module.component]
@@ -370,8 +409,14 @@ func reconcileThirdPartyComponents(modules []*thirdPartyModule, records []thirdP
 		if record.Library == "" || record.License == "" || record.Text == "" || strings.EqualFold(record.License, "unknown") {
 			return nil, fmt.Errorf("incomplete third-party license record for %q", record.Library)
 		}
-		if _, exists := allowed[record.License]; !exists {
-			return nil, fmt.Errorf("third-party license %q for %q is not allowed", record.License, record.Library)
+		switch policy.licenseDecision(record.License) {
+		case thirdPartyLicenseAllowed:
+		case thirdPartyLicenseRejected:
+			return nil, fmt.Errorf("third-party license %q for %q is rejected by policy", record.License, record.Library)
+		case thirdPartyLicenseManualReview:
+			return nil, fmt.Errorf("third-party license %q for %q requires manual review", record.License, record.Library)
+		default:
+			return nil, fmt.Errorf("third-party license %q for %q has an invalid policy decision", record.License, record.Library)
 		}
 		module := matchThirdPartyModule(record.Library, modules)
 		if module == nil {

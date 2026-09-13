@@ -80,6 +80,9 @@ jobs:
       - name: Git configure
         run: git config --global --add safe.directory $(pwd)
 
+      - name: Lint licenses
+        run: mise run lint:reuse
+
       - name: Install dependencies
         run: mise install:go
 

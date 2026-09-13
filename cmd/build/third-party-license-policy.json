@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "allowedLicenses": [
     "Apache-2.0",
     "BSD-2-Clause",
@@ -7,6 +7,9 @@
     "ISC",
     "MIT"
   ],
+  "rejectedLicenses": [],
+  "manualReviewLicenses": [],
+  "unclassifiedLicenseDecision": "manual-review",
   "canonicalComponents": [
     {
       "name": "github.com/moby/moby",
