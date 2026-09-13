@@ -3,9 +3,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -25,9 +25,15 @@ const (
 type dependencyImageDigestResolver func(context.Context, string) (string, error)
 
 type dependencyImageLocation struct {
-	path     string
-	pattern  *regexp.Regexp
-	expected int
+	path       string
+	references []string
+	expected   int
+}
+
+type dependencyImageReference struct {
+	start int
+	end   int
+	value string
 }
 
 type dependencyImage struct {
@@ -41,31 +47,31 @@ var dependencyImages = []dependencyImage{
 		name:   "Build environment image",
 		source: "ghcr.io/engity-com/build-images/build:debian12",
 		locations: []dependencyImageLocation{
-			{path: dependencyCiWorkflowPath, pattern: regexp.MustCompile(`ghcr\.io/engity-com/build-images/(?:go|build:debian12)@sha256:[0-9a-f]{64}`), expected: 1},
-			{path: dependencyReleaseWorkflowPath, pattern: regexp.MustCompile(`ghcr\.io/engity-com/build-images/(?:go|build:debian12)@sha256:[0-9a-f]{64}`), expected: 1},
+			{path: dependencyCiWorkflowPath, references: []string{"ghcr.io/engity-com/build-images/go", "ghcr.io/engity-com/build-images/build:debian12"}, expected: 1},
+			{path: dependencyReleaseWorkflowPath, references: []string{"ghcr.io/engity-com/build-images/go", "ghcr.io/engity-com/build-images/build:debian12"}, expected: 1},
 		},
 	},
 	{
 		name:   "Ubuntu 26.04 runtime base image",
 		source: "docker.io/library/ubuntu:26.04",
 		locations: []dependencyImageLocation{
-			{path: dependencyBuildArchPath, pattern: regexp.MustCompile(`docker\.io/library/ubuntu:26\.04@sha256:[0-9a-f]{64}`), expected: 1},
+			{path: dependencyBuildArchPath, references: []string{"docker.io/library/ubuntu:26.04"}, expected: 1},
 		},
 	},
 	{
 		name:   "Alpine runtime base image",
 		source: "docker.io/library/alpine:latest",
 		locations: []dependencyImageLocation{
-			{path: dependencyBuildImagesPath, pattern: regexp.MustCompile(`docker\.io/library/alpine:latest@sha256:[0-9a-f]{64}`), expected: 1},
-			{path: dependencyE2eHarnessPath, pattern: regexp.MustCompile(`docker\.io/library/alpine(?::latest)?@sha256:[0-9a-f]{64}`), expected: 1},
+			{path: dependencyBuildImagesPath, references: []string{"docker.io/library/alpine:latest"}, expected: 1},
+			{path: dependencyE2eHarnessPath, references: []string{"docker.io/library/alpine", "docker.io/library/alpine:latest"}, expected: 1},
 		},
 	},
 	{
 		name:   "Windows Nano Server runtime base image",
 		source: "mcr.microsoft.com/windows/nanoserver:ltsc2022",
 		locations: []dependencyImageLocation{
-			{path: dependencyBuildArchPath, pattern: regexp.MustCompile(`mcr\.microsoft\.com/windows/nanoserver:ltsc2022@sha256:[0-9a-f]{64}`), expected: 1},
-			{path: dependencyBuildImagesPath, pattern: regexp.MustCompile(`mcr\.microsoft\.com/windows/nanoserver:ltsc2022@sha256:[0-9a-f]{64}`), expected: 1},
+			{path: dependencyBuildArchPath, references: []string{"mcr.microsoft.com/windows/nanoserver:ltsc2022"}, expected: 1},
+			{path: dependencyBuildImagesPath, references: []string{"mcr.microsoft.com/windows/nanoserver:ltsc2022"}, expected: 1},
 		},
 	},
 }
@@ -105,16 +111,15 @@ func (this *dependencies) applyImageUpdates(ctx context.Context, files map[strin
 			if !exists {
 				return nil, fmt.Errorf("managed dependency file %q was not loaded", location.path)
 			}
-			matches := location.pattern.FindAll(content, -1)
+			matches := findDependencyImageReferences(content, location.references)
 			if len(matches) != location.expected {
 				return nil, fmt.Errorf("expected %d reference(s) for %s in %s, found %d", location.expected, image.source, location.path, len(matches))
 			}
 			for _, match := range matches {
-				previous := string(match)
-				previousSet[previous] = struct{}{}
-				changed = changed || previous != target
+				previousSet[match.value] = struct{}{}
+				changed = changed || match.value != target
 			}
-			files[location.path] = location.pattern.ReplaceAllLiteral(content, []byte(target))
+			files[location.path] = replaceDependencyImageReferences(content, matches, target)
 			paths = append(paths, location.path)
 		}
 		previous := make([]string, 0, len(previousSet))
@@ -133,4 +138,69 @@ func (this *dependencies) applyImageUpdates(ctx context.Context, files map[strin
 		})
 	}
 	return checks, nil
+}
+
+func findDependencyImageReferences(content []byte, references []string) []dependencyImageReference {
+	const digestPrefix = "@sha256:"
+	const digestLength = 64
+
+	var result []dependencyImageReference
+	for _, reference := range references {
+		marker := []byte(reference + digestPrefix)
+		for offset := 0; offset < len(content); {
+			relativeStart := bytes.Index(content[offset:], marker)
+			if relativeStart < 0 {
+				break
+			}
+			start := offset + relativeStart
+			end := start + len(marker) + digestLength
+			offset = start + 1
+			if end > len(content) ||
+				(start > 0 && isDependencyImageReferenceCharacter(content[start-1])) ||
+				(end < len(content) && isDependencyImageReferenceCharacter(content[end])) ||
+				!isLowerHex(content[end-digestLength:end]) {
+				continue
+			}
+			result = append(result, dependencyImageReference{start: start, end: end, value: string(content[start:end])})
+			offset = end
+		}
+	}
+	slices.SortFunc(result, func(a, b dependencyImageReference) int {
+		switch {
+		case a.start < b.start:
+			return -1
+		case a.start > b.start:
+			return 1
+		default:
+			return 0
+		}
+	})
+	return result
+}
+
+func replaceDependencyImageReferences(content []byte, references []dependencyImageReference, target string) []byte {
+	var result bytes.Buffer
+	previousEnd := 0
+	for _, reference := range references {
+		_, _ = result.Write(content[previousEnd:reference.start])
+		_, _ = result.WriteString(target)
+		previousEnd = reference.end
+	}
+	_, _ = result.Write(content[previousEnd:])
+	return result.Bytes()
+}
+
+func isDependencyImageReferenceCharacter(value byte) bool {
+	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9' || strings.ContainsRune("._:/@+-", rune(value))
+}
+
+func isLowerHex(value []byte) bool {
+	for _, current := range value {
+		if current < '0' || current > '9' {
+			if current < 'a' || current > 'f' {
+				return false
+			}
+		}
+	}
+	return true
 }

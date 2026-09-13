@@ -75,6 +75,32 @@ func TestApplyImageUpdatesFailsClosedWhenLocationDrifts(t *testing.T) {
 	require.ErrorContains(t, err, "expected 1 reference(s)")
 }
 
+func TestFindDependencyImageReferencesRequiresExactToken(t *testing.T) {
+	reference := "docker.io/library/alpine:latest"
+	digest := "sha256:" + strings.Repeat("a", 64)
+	valid := reference + "@" + digest
+	content := []byte(strings.Join([]string{
+		"evil.example/" + valid,
+		valid + "suffix",
+		valid,
+		reference + "@sha256:" + strings.Repeat("A", 64),
+	}, "\n"))
+
+	matches := findDependencyImageReferences(content, []string{reference})
+
+	require.Equal(t, []dependencyImageReference{{
+		start: len("evil.example/") + len(valid) + 1 + len(valid) + len("suffix") + 1,
+		end:   len("evil.example/") + len(valid) + 1 + len(valid) + len("suffix") + 1 + len(valid),
+		value: valid,
+	}}, matches)
+	require.Equal(t, strings.Join([]string{
+		"evil.example/" + valid,
+		valid + "suffix",
+		"replacement",
+		reference + "@sha256:" + strings.Repeat("A", 64),
+	}, "\n"), string(replaceDependencyImageReferences(content, matches, "replacement")))
+}
+
 func TestDependencyPullRequestBranchDependsOnEveryGeneratedFile(t *testing.T) {
 	first := dependencyPullRequestBranch("base", map[string][]byte{"a": []byte("first"), "b": []byte("second")})
 	reordered := dependencyPullRequestBranch("base", map[string][]byte{"b": []byte("second"), "a": []byte("first")})
@@ -399,7 +425,7 @@ func TestManagedDependencyPathsStayUnique(t *testing.T) {
 	var paths []string
 	for _, image := range dependencyImages {
 		for _, location := range image.locations {
-			paths = append(paths, location.path+"\x00"+location.pattern.String())
+			paths = append(paths, location.path+"\x00"+strings.Join(location.references, "\x00"))
 		}
 	}
 	sorted := slices.Clone(paths)
