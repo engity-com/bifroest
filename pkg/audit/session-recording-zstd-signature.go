@@ -3,6 +3,7 @@ package audit
 import (
 	"crypto/ed25519"
 	"encoding/binary"
+	"encoding/hex"
 
 	"github.com/google/uuid"
 
@@ -21,6 +22,26 @@ type SessionRecordingHash [32]byte
 
 func (this SessionRecordingHash) IsZero() bool {
 	return this == SessionRecordingHash{}
+}
+
+func (this SessionRecordingHash) String() string {
+	return hex.EncodeToString(this[:])
+}
+
+func (this SessionRecordingHash) MarshalText() ([]byte, error) {
+	return []byte(this.String()), nil
+}
+
+func (this *SessionRecordingHash) UnmarshalText(value []byte) error {
+	if len(value) != hex.EncodedLen(len(this)) {
+		return errors.Config.Newf("illegal session recording hash length: %d", len(value))
+	}
+	var decoded SessionRecordingHash
+	if _, err := hex.Decode(decoded[:], value); err != nil {
+		return errors.Config.Newf("illegal session recording hash: %w", err)
+	}
+	*this = decoded
+	return nil
 }
 
 type SessionRecordingZstdHeader struct {

@@ -167,6 +167,17 @@ func (this *CastZstdWriter) Checkpoint() (audit.SessionRecordingZstdHead, error)
 	})
 }
 
+func (this *CastZstdWriter) replaceOutput(output io.Writer) error {
+	if this == nil || this.sink == nil || output == nil {
+		return fmt.Errorf("invalid Cast Zstandard replacement output")
+	}
+	if this.sealed || this.sink.poisoned != nil || this.sink.buffer.Len() != 0 || this.sink.pendingGroup {
+		return fmt.Errorf("cast Zstandard writer cannot replace its output in the current state")
+	}
+	this.sink.output = output
+	return nil
+}
+
 func (this *CastZstdWriter) Seal(elapsed time.Duration, result CastResult, exitStatus *uint32) (CastZstdSummary, error) {
 	if this == nil || this.cast == nil || this.sink == nil {
 		return CastZstdSummary{}, fmt.Errorf("nil Cast Zstandard writer")
