@@ -1,11 +1,13 @@
 package recording
 
 import (
-	"errors"
+	goerrors "errors"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 const (
@@ -15,7 +17,7 @@ const (
 
 func canonicalLocalRecordingDirectory(path string) (string, error) {
 	if path == "" {
-		return "", errors.New("local recording directory is empty")
+		return "", errors.Config.Newf("local recording directory is empty")
 	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {
@@ -23,12 +25,12 @@ func canonicalLocalRecordingDirectory(path string) (string, error) {
 	}
 	if canonical, err := filepath.EvalSymlinks(absolute); err == nil {
 		return canonical, nil
-	} else if !errors.Is(err, fs.ErrNotExist) {
+	} else if !goerrors.Is(err, fs.ErrNotExist) {
 		return "", err
 	}
 	if info, err := os.Lstat(absolute); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return "", errors.New("local recording directory is a dangling symlink")
-	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", errors.Config.Newf("local recording directory is a dangling symlink")
+	} else if err != nil && !goerrors.Is(err, fs.ErrNotExist) {
 		return "", err
 	}
 	parent := filepath.Dir(absolute)
@@ -43,7 +45,7 @@ func canonicalLocalRecordingDirectory(path string) (string, error) {
 }
 
 func ensureLocalRecordingDirectory(path string) error {
-	if err := os.Mkdir(path, localRecordingDirectoryMode); err != nil && !errors.Is(err, fs.ErrExist) {
+	if err := os.Mkdir(path, localRecordingDirectoryMode); err != nil && !goerrors.Is(err, fs.ErrExist) {
 		return err
 	}
 	info, err := os.Lstat(path)
@@ -51,7 +53,7 @@ func ensureLocalRecordingDirectory(path string) error {
 		return err
 	}
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("local recording path is not a regular directory")
+		return errors.Config.Newf("local recording path is not a regular directory")
 	}
 	if err := secureLocalRecordingDirectory(path, info); err != nil {
 		return err
@@ -88,7 +90,7 @@ func openActiveLocalRecordingFile(path string) (*os.File, error) {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, errors.New("active local recording is not a regular file")
+		return nil, errors.Config.Newf("active local recording is not a regular file")
 	}
 	if err := makeActiveLocalRecordingWritable(path); err != nil {
 		return nil, err
@@ -122,7 +124,7 @@ func validateOpenLocalRecordingFile(path string, file *os.File) error {
 		return err
 	}
 	if !current.Mode().IsRegular() || !os.SameFile(opened, current) {
-		return errors.New("local recording path changed while opening the file")
+		return errors.System.Newf("local recording path changed while opening the file")
 	}
 	return nil
 }
@@ -176,7 +178,7 @@ func loadLocalRecordingHead(path string) ([]byte, error) {
 		return nil, closeErr
 	}
 	if len(payload) > maximumCastZstdHeadBytes {
-		return nil, errors.New("local recording head exceeds its size limit")
+		return nil, errors.System.Newf("local recording head exceeds its size limit")
 	}
 	return payload, nil
 }
@@ -184,14 +186,14 @@ func loadLocalRecordingHead(path string) ([]byte, error) {
 func discardLocalRecordingHeadTemporary(directory string) error {
 	path := filepath.Join(directory, localRecordingHeadTempFileName)
 	info, err := os.Lstat(path)
-	if errors.Is(err, fs.ErrNotExist) {
+	if goerrors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
 	if !info.Mode().IsRegular() {
-		return errors.New("temporary local recording head is not a regular file")
+		return errors.Config.Newf("temporary local recording head is not a regular file")
 	}
 	if err := os.Remove(path); err != nil {
 		return err
@@ -204,19 +206,19 @@ func prepareInterruptedLocalRecordingHead(directory string) error {
 	temporary := filepath.Join(directory, localRecordingHeadTempFileName)
 	if info, err := os.Lstat(head); err == nil {
 		if !info.Mode().IsRegular() {
-			return errors.New("local recording head is not a regular file")
+			return errors.Config.Newf("local recording head is not a regular file")
 		}
 		return discardLocalRecordingHeadTemporary(directory)
-	} else if !errors.Is(err, fs.ErrNotExist) {
+	} else if !goerrors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	if info, err := os.Lstat(temporary); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return errors.New("local recording head is missing")
+		if goerrors.Is(err, fs.ErrNotExist) {
+			return errors.Config.Newf("local recording head is missing")
 		}
 		return err
 	} else if !info.Mode().IsRegular() {
-		return errors.New("temporary local recording head is not a regular file")
+		return errors.Config.Newf("temporary local recording head is not a regular file")
 	}
 	payload, err := loadLocalRecordingHead(temporary)
 	if err != nil {

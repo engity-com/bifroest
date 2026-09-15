@@ -3,11 +3,11 @@ package recording
 import (
 	"crypto/sha256"
 	"encoding/binary"
-	"fmt"
 
 	"github.com/google/uuid"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 const (
@@ -50,7 +50,7 @@ type CastZstdSummary struct {
 
 func encodeCastZstdHeader(value audit.SessionRecordingZstdHeader) ([]byte, error) {
 	if len(value.PublicKey) != 51 || len(value.Signature) != 64 {
-		return nil, fmt.Errorf("illegal Cast Zstandard header identity size")
+		return nil, errors.System.Newf("illegal Cast Zstandard header identity size")
 	}
 	payload := make([]byte, castZstdHeaderPayloadSize)
 	payload[0] = value.FormatVersion
@@ -65,7 +65,7 @@ func encodeCastZstdHeader(value audit.SessionRecordingZstdHeader) ([]byte, error
 
 func decodeCastZstdHeader(payload []byte) (audit.SessionRecordingZstdHeader, error) {
 	if len(payload) != castZstdHeaderPayloadSize {
-		return audit.SessionRecordingZstdHeader{}, fmt.Errorf("cast Zstandard header payload has %d bytes instead of %d", len(payload), castZstdHeaderPayloadSize)
+		return audit.SessionRecordingZstdHeader{}, errors.System.Newf("cast Zstandard header payload has %d bytes instead of %d", len(payload), castZstdHeaderPayloadSize)
 	}
 	value := audit.SessionRecordingZstdHeader{
 		FormatVersion: payload[0],
@@ -81,7 +81,7 @@ func decodeCastZstdHeader(payload []byte) (audit.SessionRecordingZstdHeader, err
 
 func encodeCastZstdChunk(value audit.SessionRecordingZstdChunk) ([]byte, error) {
 	if len(value.Signature) != 64 {
-		return nil, fmt.Errorf("illegal Cast Zstandard chunk signature size")
+		return nil, errors.System.Newf("illegal Cast Zstandard chunk signature size")
 	}
 	payload := make([]byte, castZstdChunkPayloadSize)
 	payload[0] = value.FormatVersion
@@ -97,7 +97,7 @@ func encodeCastZstdChunk(value audit.SessionRecordingZstdChunk) ([]byte, error) 
 
 func decodeCastZstdChunk(payload []byte, recordingId uuid.UUID, producerId audit.ProducerId) (audit.SessionRecordingZstdChunk, error) {
 	if len(payload) != castZstdChunkPayloadSize {
-		return audit.SessionRecordingZstdChunk{}, fmt.Errorf("cast Zstandard chunk payload has %d bytes instead of %d", len(payload), castZstdChunkPayloadSize)
+		return audit.SessionRecordingZstdChunk{}, errors.System.Newf("cast Zstandard chunk payload has %d bytes instead of %d", len(payload), castZstdChunkPayloadSize)
 	}
 	value := audit.SessionRecordingZstdChunk{
 		FormatVersion:   payload[0],
@@ -116,7 +116,7 @@ func decodeCastZstdChunk(payload []byte, recordingId uuid.UUID, producerId audit
 
 func encodeCastZstdSeal(value audit.SessionRecordingZstdSeal) ([]byte, error) {
 	if len(value.Signature) != 64 {
-		return nil, fmt.Errorf("illegal Cast Zstandard seal signature size")
+		return nil, errors.System.Newf("illegal Cast Zstandard seal signature size")
 	}
 	payload := make([]byte, castZstdSealPayloadSize)
 	payload[0] = value.FormatVersion
@@ -135,7 +135,7 @@ func encodeCastZstdSeal(value audit.SessionRecordingZstdSeal) ([]byte, error) {
 
 func decodeCastZstdSeal(payload []byte, recordingId uuid.UUID, producerId audit.ProducerId) (audit.SessionRecordingZstdSeal, error) {
 	if len(payload) != castZstdSealPayloadSize {
-		return audit.SessionRecordingZstdSeal{}, fmt.Errorf("cast Zstandard seal payload has %d bytes instead of %d", len(payload), castZstdSealPayloadSize)
+		return audit.SessionRecordingZstdSeal{}, errors.System.Newf("cast Zstandard seal payload has %d bytes instead of %d", len(payload), castZstdSealPayloadSize)
 	}
 	value := audit.SessionRecordingZstdSeal{
 		FormatVersion: payload[0],
@@ -183,7 +183,7 @@ func castZstdStatus(status CastStatus) (uint8, error) {
 	case CastStatusIncomplete:
 		return 3, nil
 	default:
-		return 0, fmt.Errorf("illegal Cast Zstandard status %q", status)
+		return 0, errors.System.Newf("illegal Cast Zstandard status %q", status)
 	}
 }
 
@@ -196,6 +196,6 @@ func castStatusFromZstd(value uint8) (CastStatus, error) {
 	case 3:
 		return CastStatusIncomplete, nil
 	default:
-		return "", fmt.Errorf("illegal Cast Zstandard status %d", value)
+		return "", errors.System.Newf("illegal Cast Zstandard status %d", value)
 	}
 }

@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	bferrors "github.com/engity-com/bifroest/pkg/errors"
 )
 
 func TestAgeSshEd25519RoundTripAndAuthentication(t *testing.T) {
@@ -38,6 +40,15 @@ func TestAgeSshEd25519RoundTripAndAuthentication(t *testing.T) {
 		_, err = io.ReadAll(reader)
 	}
 	require.Error(t, err)
+	require.True(t, bferrors.System.IsErr(err))
+
+	otherSdkKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0xff}, ed25519.SeedSize))
+	otherKey, err := PrivateKeyFromSdk(otherSdkKey)
+	require.NoError(t, err)
+	otherIdentities, err := NewAgeSshIdentities([]PrivateKey{otherKey})
+	require.NoError(t, err)
+	_, err = otherIdentities.Decrypt(bytes.NewReader(first))
+	require.True(t, bferrors.Config.IsErr(err))
 }
 
 func TestAgeSshAcceptsPointerEd25519AndRsaIdentities(t *testing.T) {
@@ -64,10 +75,16 @@ func TestAgeSshAcceptsPointerEd25519AndRsaIdentities(t *testing.T) {
 func TestAgeSshRejectsNilValues(t *testing.T) {
 	_, err := NewAgeSshRecipient(nil)
 	require.Error(t, err)
+	require.True(t, bferrors.Config.IsErr(err))
 	_, err = NewAgeSshIdentities(nil)
 	require.Error(t, err)
+	require.True(t, bferrors.Config.IsErr(err))
 	_, err = NewAgeSshIdentities([]PrivateKey{nil})
 	require.Error(t, err)
+	require.True(t, bferrors.Config.IsErr(err))
+	var recipient *AgeSshRecipient
+	_, err = recipient.Encrypt(io.Discard)
+	require.True(t, bferrors.System.IsErr(err))
 }
 
 func encryptAgeSshTestMessage(t *testing.T, recipient *AgeSshRecipient, plaintext []byte) []byte {

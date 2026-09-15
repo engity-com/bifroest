@@ -3,7 +3,7 @@
 package recording
 
 import (
-	"errors"
+	goerrors "errors"
 	"fmt"
 	"os"
 	"sync"
@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
+	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -25,13 +26,13 @@ type localRecordingProcessLock struct {
 
 func acquireLocalRecordingProcessLock(path string) (*localRecordingProcessLock, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, localRecordingFileMode)
-	if errors.Is(err, os.ErrExist) {
+	if goerrors.Is(err, os.ErrExist) {
 		info, inspectErr := os.Lstat(path)
 		if inspectErr != nil {
 			return nil, inspectErr
 		}
 		if !info.Mode().IsRegular() {
-			return nil, errors.New("local recording lock is not a regular file")
+			return nil, errors.Config.Newf("local recording lock is not a regular file")
 		}
 		file, err = os.OpenFile(path, os.O_RDWR, localRecordingFileMode)
 	}
@@ -71,7 +72,7 @@ func (this *localRecordingProcessLock) Close() error {
 
 func validateLocalRecordingLock(lock *localRecordingProcessLock, path string) error {
 	if lock == nil || lock.file == nil {
-		return errors.New("local recording lock is closed")
+		return errors.System.Newf("local recording lock is closed")
 	}
 	return validateOpenLocalRecordingFile(path, lock.file)
 }
@@ -100,7 +101,7 @@ func openLocalRecordingHead(path string) (*os.File, error) {
 		return nil, err
 	}
 	if !pathInfo.Mode().IsRegular() {
-		return nil, errors.New("local recording head is not a regular file")
+		return nil, errors.Config.Newf("local recording head is not a regular file")
 	}
 	if err := secureLocalRecordingPath(path, "FRSD"); err != nil {
 		return nil, err
@@ -112,7 +113,7 @@ func openLocalRecordingHead(path string) (*os.File, error) {
 	info, err := file.Stat()
 	if err != nil || !os.SameFile(pathInfo, info) {
 		_ = file.Close()
-		return nil, errors.New("local recording head changed while opening")
+		return nil, errors.System.Newf("local recording head changed while opening")
 	}
 	if err := requireSingleLocalRecordingLink(file); err != nil {
 		_ = file.Close()
@@ -144,7 +145,7 @@ func openSealedLocalRecordingFile(path string) (*os.File, error) {
 		return nil, err
 	}
 	if !pathInfo.Mode().IsRegular() {
-		return nil, errors.New("sealed local recording is not a regular file")
+		return nil, errors.Config.Newf("sealed local recording is not a regular file")
 	}
 	if err := secureLocalRecordingPath(path, sealedLocalRecordingWindowsAccess); err != nil {
 		return nil, err
@@ -156,11 +157,11 @@ func openSealedLocalRecordingFile(path string) (*os.File, error) {
 	info, err := file.Stat()
 	if err != nil || !os.SameFile(pathInfo, info) {
 		_ = file.Close()
-		return nil, errors.New("sealed local recording changed while opening")
+		return nil, errors.System.Newf("sealed local recording changed while opening")
 	}
 	if info.Mode().Perm()&0200 != 0 {
 		_ = file.Close()
-		return nil, errors.New("sealed local recording is writable")
+		return nil, errors.Config.Newf("sealed local recording is writable")
 	}
 	if err := requireSingleLocalRecordingLink(file); err != nil {
 		_ = file.Close()
@@ -187,7 +188,7 @@ func secureLocalRecordingPath(path, access string) error {
 		return err
 	}
 	if owner == nil || (!owner.Equals(userSid) && !owner.Equals(ownerSid)) {
-		return errors.New("local recording path is owned by another user")
+		return errors.Config.Newf("local recording path is owned by another user")
 	}
 	descriptor, err := windows.SecurityDescriptorFromString(fmt.Sprintf("D:P(A;;%s;;;SY)(A;;%s;;;%s)", access, access, userSid.String()))
 	if err != nil {
@@ -203,7 +204,7 @@ func secureLocalRecordingPath(path, access string) error {
 func localRecordingProcessSids() (*windows.SID, *windows.SID, error) {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil || user == nil || user.User.Sid == nil {
-		return nil, nil, errors.New("cannot determine local recording process user")
+		return nil, nil, errors.System.Newf("cannot determine local recording process user")
 	}
 	userSid, err := user.User.Sid.Copy()
 	if err != nil {
@@ -212,11 +213,11 @@ func localRecordingProcessSids() (*windows.SID, *windows.SID, error) {
 	token := windows.GetCurrentProcessToken()
 	var required uint32
 	err = windows.GetTokenInformation(token, windows.TokenOwner, nil, 0, &required)
-	if err != nil && !errors.Is(err, windows.ERROR_INSUFFICIENT_BUFFER) {
+	if err != nil && !goerrors.Is(err, windows.ERROR_INSUFFICIENT_BUFFER) {
 		return nil, nil, err
 	}
 	if required == 0 {
-		return nil, nil, errors.New("local recording process has no owner information")
+		return nil, nil, errors.System.Newf("local recording process has no owner information")
 	}
 	raw := make([]byte, required)
 	if err := windows.GetTokenInformation(token, windows.TokenOwner, &raw[0], uint32(len(raw)), &required); err != nil {
@@ -224,7 +225,7 @@ func localRecordingProcessSids() (*windows.SID, *windows.SID, error) {
 	}
 	owner := (*localRecordingTokenOwner)(unsafe.Pointer(&raw[0])).owner
 	if owner == nil {
-		return nil, nil, errors.New("local recording process has no owner")
+		return nil, nil, errors.System.Newf("local recording process has no owner")
 	}
 	ownerSid, err := owner.Copy()
 	return userSid, ownerSid, err
@@ -240,7 +241,7 @@ func requireSingleLocalRecordingLink(file *os.File) error {
 		return err
 	}
 	if information.NumberOfLinks != 1 {
-		return errors.New("local recording file has multiple hard links")
+		return errors.Config.Newf("local recording file has multiple hard links")
 	}
 	return nil
 }
@@ -258,12 +259,12 @@ func publishLocalRecordingFile(source, target string) error {
 }
 
 func completeLocalRecordingPublishAlias(source, target string) (bool, error) {
-	if _, err := os.Lstat(source); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Lstat(source); err != nil && !goerrors.Is(err, os.ErrNotExist) {
 		return false, err
 	}
 	if info, err := os.Lstat(target); err == nil && !info.Mode().IsRegular() {
-		return false, errors.New("sealed recording target is not a regular file")
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, errors.Config.Newf("sealed recording target is not a regular file")
+	} else if err != nil && !goerrors.Is(err, os.ErrNotExist) {
 		return false, err
 	}
 	return false, nil

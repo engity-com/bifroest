@@ -2,11 +2,11 @@ package recording
 
 import (
 	"encoding/json"
-	"fmt"
 
 	"github.com/google/uuid"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 const (
@@ -37,24 +37,24 @@ func encodeCastZstdHead(value audit.SessionRecordingZstdHead) ([]byte, error) {
 		Signature:     value.Signature,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("cannot encode Cast Zstandard head: %w", err)
+		return nil, errors.System.Newf("cannot encode Cast Zstandard head: %w", err)
 	}
 	if len(payload) > maximumCastZstdHeadBytes {
-		return nil, fmt.Errorf("cast Zstandard head exceeds %d bytes", maximumCastZstdHeadBytes)
+		return nil, errors.System.Newf("cast Zstandard head exceeds %d bytes", maximumCastZstdHeadBytes)
 	}
 	return payload, nil
 }
 
 func decodeCastZstdHead(payload []byte) (audit.SessionRecordingZstdHead, error) {
 	if len(payload) == 0 || len(payload) > maximumCastZstdHeadBytes {
-		return audit.SessionRecordingZstdHead{}, fmt.Errorf("cast Zstandard head size is outside the supported range")
+		return audit.SessionRecordingZstdHead{}, errors.System.Newf("cast Zstandard head size is outside the supported range")
 	}
 	var wire castZstdHeadWire
 	if err := decodeCanonicalCastJSON(payload, &wire); err != nil {
-		return audit.SessionRecordingZstdHead{}, fmt.Errorf("illegal Cast Zstandard head: %w", err)
+		return audit.SessionRecordingZstdHead{}, errors.System.Newf("illegal Cast Zstandard head: %w", err)
 	}
 	if wire.Schema != castZstdHeadSchema {
-		return audit.SessionRecordingZstdHead{}, fmt.Errorf("unsupported Cast Zstandard head schema %q", wire.Schema)
+		return audit.SessionRecordingZstdHead{}, errors.System.Newf("unsupported Cast Zstandard head schema %q", wire.Schema)
 	}
 	return audit.SessionRecordingZstdHead{
 		FormatVersion: wire.FormatVersion,

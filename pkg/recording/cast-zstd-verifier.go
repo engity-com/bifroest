@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
-	"fmt"
 	"hash"
 	"io"
 
@@ -13,6 +12,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 const DefaultMaximumCastZstdBytes = int64(32 << 30)
@@ -72,23 +72,23 @@ func VerifyCastZstd(source io.ReaderAt, size int64, options CastZstdVerifyOption
 		AllowUntrusted:     options.AllowUntrusted,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("cannot verify Cast inside Zstandard container: %w", err)
+		return nil, errors.System.Newf("cannot verify Cast inside Zstandard container: %w", err)
 	}
 	if stream.seal == nil {
-		return nil, fmt.Errorf("cast Zstandard container has no final seal")
+		return nil, errors.System.Newf("cast Zstandard container has no final seal")
 	}
 	if cast.Metadata.RecordingId.String() != stream.header.RecordingId.String() || cast.Metadata.ProducerId != stream.header.ProducerId {
-		return nil, fmt.Errorf("cast identity does not match its Zstandard container")
+		return nil, errors.System.Newf("cast identity does not match its Zstandard container")
 	}
 	status, err := castStatusFromZstd(stream.seal.Status)
 	if err != nil {
 		return nil, err
 	}
 	if status != cast.Result.Status {
-		return nil, fmt.Errorf("cast status does not match its Zstandard seal")
+		return nil, errors.System.Newf("cast status does not match its Zstandard seal")
 	}
 	if !bytes.Equal(cast.Digest[:], stream.seal.CastContentDigest[:]) {
-		return nil, fmt.Errorf("cast digest does not match its Zstandard seal")
+		return nil, errors.System.Newf("cast digest does not match its Zstandard seal")
 	}
 	trusted := options.ExpectedProducerId != (audit.ProducerId{})
 	return &CastZstdVerification{
@@ -112,7 +112,7 @@ func VerifyCastZstd(source io.ReaderAt, size int64, options CastZstdVerifyOption
 // an immutable snapshot for both verification passes.
 func ExportCastZstd(source io.ReaderAt, size int64, output io.Writer, options CastZstdVerifyOptions) (*CastZstdVerification, error) {
 	if output == nil {
-		return nil, fmt.Errorf("nil Cast Zstandard export output")
+		return nil, errors.System.Newf("nil Cast Zstandard export output")
 	}
 	verification, err := VerifyCastZstd(source, size, options)
 	if err != nil {
@@ -124,14 +124,14 @@ func ExportCastZstd(source io.ReaderAt, size int64, output io.Writer, options Ca
 	}
 	defer stream.close()
 	if stream.header.RecordingId != [16]byte(verification.Summary.RecordingId) || stream.header.ProducerId != verification.Summary.ProducerId {
-		return nil, fmt.Errorf("cast Zstandard input changed between verification and export")
+		return nil, errors.System.Newf("cast Zstandard input changed between verification and export")
 	}
 	written, err := io.Copy(output, stream)
 	if err != nil {
-		return nil, fmt.Errorf("cannot export Cast Zstandard content: %w", err)
+		return nil, errors.System.Newf("cannot export Cast Zstandard content: %w", err)
 	}
 	if uint64(written) != verification.Summary.CastBytes || stream.seal == nil || stream.seal.CastStreamHash != verification.Summary.StreamHash {
-		return nil, fmt.Errorf("cast Zstandard input changed between verification and export")
+		return nil, errors.System.Newf("cast Zstandard input changed between verification and export")
 	}
 	return verification, nil
 }
@@ -142,21 +142,24 @@ func newCastZstdStream(source io.ReaderAt, size int64, options CastZstdVerifyOpt
 
 func newCastZstdStreamForRecovery(source io.ReaderAt, size int64, options CastZstdVerifyOptions, checkpoint *audit.SessionRecordingZstdHead, recovery bool) (*castZstdStream, error) {
 	if source == nil {
-		return nil, fmt.Errorf("nil Cast Zstandard input")
+		return nil, errors.System.Newf("nil Cast Zstandard input")
 	}
 	maximumContainerBytes := options.MaximumContainerBytes
 	if maximumContainerBytes == 0 {
 		maximumContainerBytes = DefaultMaximumCastZstdBytes
 	}
-	if maximumContainerBytes < 1 || size < 1 || size > maximumContainerBytes {
-		return nil, fmt.Errorf("cast Zstandard container size %d is outside the supported range", size)
+	if maximumContainerBytes < 1 {
+		return nil, errors.Config.Newf("maximum Cast Zstandard container size must be positive")
+	}
+	if size < 1 || size > maximumContainerBytes {
+		return nil, errors.System.Newf("cast Zstandard container size %d is outside the supported range", size)
 	}
 	if options.ExpectedProducerId == (audit.ProducerId{}) && !options.AllowUntrusted {
-		return nil, fmt.Errorf("expected producer ID is required unless untrusted verification is explicitly allowed")
+		return nil, errors.Config.Newf("expected producer ID is required unless untrusted verification is explicitly allowed")
 	}
 	maximumCastBytes := effectiveMaximumCastBytes(options.MaximumCastBytes)
 	if maximumCastBytes < 1 {
-		return nil, fmt.Errorf("maximum Cast size must be positive")
+		return nil, errors.Config.Newf("maximum Cast size must be positive")
 	}
 	maximumChunks := effectiveMaximumCastZstdChunks(options.MaximumChunks)
 	decoder, err := zstd.NewReader(nil,
@@ -166,7 +169,7 @@ func newCastZstdStreamForRecovery(source io.ReaderAt, size int64, options CastZs
 		zstd.WithDecodeAllCapLimit(true),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("cannot create Cast Zstandard decoder: %w", err)
+		return nil, errors.System.Newf("cannot create Cast Zstandard decoder: %w", err)
 	}
 	stream := &castZstdStream{
 		source:           source,
@@ -181,7 +184,7 @@ func newCastZstdStreamForRecovery(source io.ReaderAt, size int64, options CastZs
 	headerFrame, headerPayload, err := stream.readSkippableFrame(castZstdHeaderSkippableId, castZstdHeaderPayloadSize)
 	if err != nil {
 		decoder.Close()
-		return nil, fmt.Errorf("cannot read Cast Zstandard header: %w", err)
+		return nil, errors.System.Newf("cannot read Cast Zstandard header: %w", err)
 	}
 	header, err := decodeCastZstdHeader(headerPayload)
 	if err != nil {
@@ -190,7 +193,7 @@ func newCastZstdStreamForRecovery(source io.ReaderAt, size int64, options CastZs
 	}
 	if header.FormatVersion != castZstdFormatVersion || header.CastVersion != castVersion || header.Codec != castZstdCodec {
 		decoder.Close()
-		return nil, fmt.Errorf("unsupported Cast Zstandard header version or codec")
+		return nil, errors.System.Newf("unsupported Cast Zstandard header version or codec")
 	}
 	publicKey, err := audit.VerifySessionRecordingZstdHeader(header)
 	if err != nil {
@@ -199,7 +202,7 @@ func newCastZstdStreamForRecovery(source io.ReaderAt, size int64, options CastZs
 	}
 	if options.ExpectedProducerId != (audit.ProducerId{}) && header.ProducerId != options.ExpectedProducerId {
 		decoder.Close()
-		return nil, fmt.Errorf("cast Zstandard container belongs to producer %s instead of %s", header.ProducerId, options.ExpectedProducerId)
+		return nil, errors.System.Newf("cast Zstandard container belongs to producer %s instead of %s", header.ProducerId, options.ExpectedProducerId)
 	}
 	streamHasher := hashSessionRecordingWriter(castZstdStreamHashDomain)
 	headerUnitHash := hashSessionRecording(castZstdUnitHashDomain, headerFrame)
@@ -212,7 +215,7 @@ func newCastZstdStreamForRecovery(source io.ReaderAt, size int64, options CastZs
 	if checkpoint != nil {
 		if checkpoint.FormatVersion != castZstdFormatVersion || checkpoint.RecordingId != header.RecordingId || checkpoint.ProducerId != header.ProducerId {
 			decoder.Close()
-			return nil, fmt.Errorf("cast Zstandard checkpoint does not match its container")
+			return nil, errors.System.Newf("cast Zstandard checkpoint does not match its container")
 		}
 		if err := audit.VerifySessionRecordingZstdHead(publicKey, *checkpoint); err != nil {
 			decoder.Close()
@@ -234,7 +237,7 @@ func (this *castZstdStream) Read(target []byte) (int, error) {
 		this.pendingOffset = 0
 		if this.seal != nil {
 			if this.recovery && this.checkpoint != nil && !this.checkpointSeen {
-				return 0, fmt.Errorf("cast Zstandard container lost data behind its signed checkpoint")
+				return 0, errors.System.Newf("cast Zstandard container lost data behind its signed checkpoint")
 			}
 			return 0, io.EOF
 		}
@@ -262,7 +265,7 @@ func (this *castZstdStream) readNextUnit() error {
 			if this.recovery {
 				return this.finishRecoveryPrefix()
 			}
-			return fmt.Errorf("cast Zstandard container has no final seal")
+			return errors.System.Newf("cast Zstandard container has no final seal")
 		}
 		if err == io.ErrUnexpectedEOF && this.recovery {
 			return this.finishIncompleteTail(unitStart)
@@ -281,30 +284,30 @@ func (this *castZstdStream) readNextUnit() error {
 		}
 		return this.readSeal()
 	default:
-		return fmt.Errorf("unexpected Cast Zstandard unit magic 0x%08x at offset %d", magic, this.offset)
+		return errors.System.Newf("unexpected Cast Zstandard unit magic 0x%08x at offset %d", magic, this.offset)
 	}
 }
 
 func (this *castZstdStream) readChunk() error {
 	if this.chunkCount >= this.maximumChunks {
-		return fmt.Errorf("cast Zstandard container exceeds %d chunks", this.maximumChunks)
+		return errors.System.Newf("cast Zstandard container exceeds %d chunks", this.maximumChunks)
 	}
 	descriptor, payload, err := this.readSkippableFrame(castZstdChunkSkippableId, castZstdChunkPayloadSize)
 	if err != nil {
-		return fmt.Errorf("cannot read Cast Zstandard chunk %d: %w", this.chunkCount+1, err)
+		return errors.System.Newf("cannot read Cast Zstandard chunk %d: %w", this.chunkCount+1, err)
 	}
 	value, err := decodeCastZstdChunk(payload, this.header.RecordingId, this.header.ProducerId)
 	if err != nil {
 		return err
 	}
 	if value.FormatVersion != castZstdFormatVersion || value.Sequence != this.chunkCount+1 || value.PreviousUnitHash != this.previousUnitHash || value.PlaintextOffset != this.castBytes {
-		return fmt.Errorf("cast Zstandard chunk %d does not continue its chain", value.Sequence)
+		return errors.System.Newf("cast Zstandard chunk %d does not continue its chain", value.Sequence)
 	}
 	if value.PlaintextLength == 0 || value.PlaintextLength > MaximumCastZstdChunkSize || value.FrameLength == 0 || value.FrameLength > MaximumCastZstdFrameSize {
-		return fmt.Errorf("cast Zstandard chunk %d exceeds its limits", value.Sequence)
+		return errors.System.Newf("cast Zstandard chunk %d exceeds its limits", value.Sequence)
 	}
 	if uint64(value.PlaintextLength) > this.maximumCastBytes-this.castBytes {
-		return fmt.Errorf("cast Zstandard plaintext exceeds %d bytes", this.maximumCastBytes)
+		return errors.System.Newf("cast Zstandard plaintext exceeds %d bytes", this.maximumCastBytes)
 	}
 	if err := audit.VerifySessionRecordingZstdChunk(this.publicKey, value); err != nil {
 		return err
@@ -314,23 +317,23 @@ func (this *castZstdStream) readChunk() error {
 	}
 	frame, err := this.readBytes(int(value.FrameLength))
 	if err != nil {
-		return fmt.Errorf("cannot read Cast Zstandard frame %d: %w", value.Sequence, err)
+		return errors.System.Newf("cannot read Cast Zstandard frame %d: %w", value.Sequence, err)
 	}
 	if hashSessionRecording(castZstdFrameHashDomain, frame) != value.FrameHash {
-		return fmt.Errorf("cast Zstandard frame %d hash is invalid", value.Sequence)
+		return errors.System.Newf("cast Zstandard frame %d hash is invalid", value.Sequence)
 	}
 	if err := validateSingleCastZstdFrame(frame, value.PlaintextLength); err != nil {
-		return fmt.Errorf("illegal Cast Zstandard frame %d: %w", value.Sequence, err)
+		return errors.System.Newf("illegal Cast Zstandard frame %d: %w", value.Sequence, err)
 	}
 	plaintext, err := this.decoder.DecodeAll(frame, make([]byte, 0, int(value.PlaintextLength)))
 	if err != nil {
-		return fmt.Errorf("cannot decompress Cast Zstandard frame %d: %w", value.Sequence, err)
+		return errors.System.Newf("cannot decompress Cast Zstandard frame %d: %w", value.Sequence, err)
 	}
 	if len(plaintext) != int(value.PlaintextLength) {
-		return fmt.Errorf("cast Zstandard frame %d produced %d bytes instead of %d", value.Sequence, len(plaintext), value.PlaintextLength)
+		return errors.System.Newf("cast Zstandard frame %d produced %d bytes instead of %d", value.Sequence, len(plaintext), value.PlaintextLength)
 	}
 	if err := validateCastZstdChunkLines(plaintext, this.chunkCount == 0); err != nil {
-		return fmt.Errorf("illegal Cast Zstandard frame %d boundaries: %w", value.Sequence, err)
+		return errors.System.Newf("illegal Cast Zstandard frame %d boundaries: %w", value.Sequence, err)
 	}
 	this.previousUnitHash = hashSessionRecording(castZstdUnitHashDomain, descriptor, frame)
 	this.castBytes += uint64(len(plaintext))
@@ -339,7 +342,7 @@ func (this *castZstdStream) readChunk() error {
 	this.validEnd = this.offset
 	if this.checkpoint != nil && this.chunkCount == this.checkpoint.ChunkCount {
 		if this.checkpoint.PrefixBytes != uint64(this.offset) || this.checkpoint.LastUnitHash != this.previousUnitHash {
-			return fmt.Errorf("cast Zstandard container does not contain its signed checkpoint state")
+			return errors.System.Newf("cast Zstandard container does not contain its signed checkpoint state")
 		}
 		this.checkpointSeen = true
 	}
@@ -352,22 +355,22 @@ func (this *castZstdStream) readSeal() error {
 	prefixBytes := uint64(this.offset)
 	_, payload, err := this.readSkippableFrame(castZstdSealSkippableId, castZstdSealPayloadSize)
 	if err != nil {
-		return fmt.Errorf("cannot read Cast Zstandard seal: %w", err)
+		return errors.System.Newf("cannot read Cast Zstandard seal: %w", err)
 	}
 	if this.offset != this.size {
-		return fmt.Errorf("cast Zstandard container contains data after its final seal")
+		return errors.System.Newf("cast Zstandard container contains data after its final seal")
 	}
 	value, err := decodeCastZstdSeal(payload, this.header.RecordingId, this.header.ProducerId)
 	if err != nil {
 		return err
 	}
 	if value.FormatVersion != castZstdFormatVersion || value.ChunkCount != this.chunkCount || value.CastBytes != this.castBytes || value.ZstdBytes != this.zstdBytes || value.PrefixBytes != prefixBytes || value.HeaderUnitHash != this.headerUnitHash || value.LastChunkUnitHash != this.previousUnitHash {
-		return fmt.Errorf("cast Zstandard seal does not match its container")
+		return errors.System.Newf("cast Zstandard seal does not match its container")
 	}
 	var streamHash audit.SessionRecordingHash
 	copy(streamHash[:], this.streamHash.Sum(nil))
 	if value.CastStreamHash != streamHash {
-		return fmt.Errorf("cast Zstandard stream hash does not match its seal")
+		return errors.System.Newf("cast Zstandard stream hash does not match its seal")
 	}
 	if _, err := castStatusFromZstd(value.Status); err != nil {
 		return err
@@ -397,7 +400,7 @@ func (this *castZstdStream) ensureRecoveryUnitAvailable(unitStart int64, payload
 		return this.finishIncompleteTail(unitStart)
 	}
 	if binary.LittleEndian.Uint32(header[4:]) != uint32(payloadSize) {
-		return fmt.Errorf("cast Zstandard unit at offset %d has an illegal payload size", unitStart)
+		return errors.System.Newf("cast Zstandard unit at offset %d has an illegal payload size", unitStart)
 	}
 	if remaining < int64(8+payloadSize) {
 		return this.finishIncompleteTail(unitStart)
@@ -413,7 +416,7 @@ func (this *castZstdStream) finishIncompleteTail(unitStart int64) error {
 
 func (this *castZstdStream) finishRecoveryPrefix() error {
 	if this.checkpoint != nil && !this.checkpointSeen {
-		return fmt.Errorf("cast Zstandard container lost data behind its signed checkpoint")
+		return errors.System.Newf("cast Zstandard container lost data behind its signed checkpoint")
 	}
 	return io.EOF
 }
@@ -425,11 +428,11 @@ func (this *castZstdStream) readSkippableFrame(expectedId, expectedPayloadSize i
 	}
 	expectedMagic := zstdSkippableMagicBase | uint32(expectedId)
 	if binary.LittleEndian.Uint32(header) != expectedMagic {
-		return nil, nil, fmt.Errorf("unexpected skippable magic")
+		return nil, nil, errors.System.Newf("unexpected skippable magic")
 	}
 	payloadSize := binary.LittleEndian.Uint32(header[4:])
 	if payloadSize != uint32(expectedPayloadSize) {
-		return nil, nil, fmt.Errorf("skippable payload has %d bytes instead of %d", payloadSize, expectedPayloadSize)
+		return nil, nil, errors.System.Newf("skippable payload has %d bytes instead of %d", payloadSize, expectedPayloadSize)
 	}
 	payload, err := this.readBytes(expectedPayloadSize)
 	if err != nil {
@@ -486,28 +489,28 @@ func validateSingleCastZstdFrame(frame []byte, expectedPlaintext uint32) error {
 		return err
 	}
 	if length != len(frame) {
-		return fmt.Errorf("frame contains %d trailing bytes", len(frame)-length)
+		return errors.System.Newf("frame contains %d trailing bytes", len(frame)-length)
 	}
 	var header zstd.Header
 	if err := header.Decode(frame); err != nil {
 		return err
 	}
 	if header.Skippable || !header.HasCheckSum || header.DictionaryID != 0 || !header.HasFCS || header.FrameContentSize != uint64(expectedPlaintext) {
-		return fmt.Errorf("frame header has illegal checksum, dictionary, or content-size metadata")
+		return errors.System.Newf("frame header has illegal checksum, dictionary, or content-size metadata")
 	}
 	if !header.SingleSegment && (header.WindowSize == 0 || header.WindowSize > castZstdWindowSize) {
-		return fmt.Errorf("frame window %d exceeds %d", header.WindowSize, castZstdWindowSize)
+		return errors.System.Newf("frame window %d exceeds %d", header.WindowSize, castZstdWindowSize)
 	}
 	return nil
 }
 
 func scanZstdFrameLength(frame []byte) (int, error) {
 	if len(frame) < 5 || binary.LittleEndian.Uint32(frame) != 0xfd2fb528 {
-		return 0, fmt.Errorf("missing Zstandard frame magic")
+		return 0, errors.System.Newf("missing Zstandard frame magic")
 	}
 	descriptor := frame[4]
 	if descriptor&0x08 != 0 {
-		return 0, fmt.Errorf("zstandard frame descriptor uses its reserved bit")
+		return 0, errors.System.Newf("zstandard frame descriptor uses its reserved bit")
 	}
 	contentSizeFlag := descriptor >> 6
 	singleSegment := descriptor&0x20 != 0
@@ -526,7 +529,7 @@ func scanZstdFrameLength(frame []byte) (int, error) {
 	}
 	for blocks := 0; ; blocks++ {
 		if blocks >= maximumCastZstdBlocks {
-			return 0, fmt.Errorf("zstandard frame contains too many blocks")
+			return 0, errors.System.Newf("zstandard frame contains too many blocks")
 		}
 		if len(frame)-offset < 3 {
 			return 0, io.ErrUnexpectedEOF
@@ -537,7 +540,7 @@ func scanZstdFrameLength(frame []byte) (int, error) {
 		blockType := blockHeader >> 1 & 0x03
 		blockSize := int(blockHeader >> 3)
 		if blockType == 3 {
-			return 0, fmt.Errorf("zstandard frame contains a reserved block type")
+			return 0, errors.System.Newf("zstandard frame contains a reserved block type")
 		}
 		physicalSize := blockSize
 		if blockType == 1 {
@@ -562,11 +565,11 @@ func scanZstdFrameLength(frame []byte) (int, error) {
 
 func validateCastZstdChunkLines(plaintext []byte, initial bool) error {
 	if len(plaintext) == 0 || plaintext[len(plaintext)-1] != '\n' {
-		return fmt.Errorf("frame does not end at a complete Cast line")
+		return errors.System.Newf("frame does not end at a complete Cast line")
 	}
 	lines := bytes.Split(plaintext[:len(plaintext)-1], []byte{'\n'})
 	if initial && len(lines) < 2 {
-		return fmt.Errorf("initial frame does not contain Cast header and metadata")
+		return errors.System.Newf("initial frame does not contain Cast header and metadata")
 	}
 	pending := false
 	for _, line := range lines {
@@ -577,7 +580,7 @@ func validateCastZstdChunkLines(plaintext []byte, initial bool) error {
 		pending = bytes.HasPrefix(line, []byte(castEventCommentPrefix)) || bytes.HasPrefix(line, []byte(castResultCommentPrefix))
 	}
 	if pending {
-		return fmt.Errorf("frame ends inside an atomic Cast line group")
+		return errors.System.Newf("frame ends inside an atomic Cast line group")
 	}
 	return nil
 }

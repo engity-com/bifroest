@@ -3,7 +3,6 @@ package recording
 import (
 	"bytes"
 	"crypto/sha256"
-	"fmt"
 	"hash"
 	"io"
 	"math"
@@ -13,6 +12,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 type CastZstdWriter struct {
@@ -44,10 +44,10 @@ type castZstdSink struct {
 
 func NewCastZstdWriter(output io.Writer, identity *audit.Identity, header CastHeader, metadata CastMetadata, chunkSize int) (*CastZstdWriter, error) {
 	if output == nil {
-		return nil, fmt.Errorf("nil Cast Zstandard output")
+		return nil, errors.System.Newf("nil Cast Zstandard output")
 	}
 	if identity == nil || identity.PublicKey() == nil {
-		return nil, fmt.Errorf("nil Cast Zstandard signing identity")
+		return nil, errors.System.Newf("nil Cast Zstandard signing identity")
 	}
 	if err := validateCastHeader(header); err != nil {
 		return nil, err
@@ -56,13 +56,13 @@ func NewCastZstdWriter(output io.Writer, identity *audit.Identity, header CastHe
 		return nil, err
 	}
 	if metadata.ProducerId != identity.ProducerId() {
-		return nil, fmt.Errorf("recording producer ID does not match signing identity")
+		return nil, errors.Config.Newf("recording producer ID does not match signing identity")
 	}
 	if chunkSize == 0 {
 		chunkSize = DefaultCastZstdChunkSize
 	}
 	if chunkSize < 1 || chunkSize > MaximumCastZstdChunkSize {
-		return nil, fmt.Errorf("cast Zstandard chunk size must be between 1 and %d", MaximumCastZstdChunkSize)
+		return nil, errors.Config.Newf("cast Zstandard chunk size must be between 1 and %d", MaximumCastZstdChunkSize)
 	}
 	encoder, err := zstd.NewWriter(nil,
 		zstd.WithEncoderLevel(zstd.SpeedDefault),
@@ -72,7 +72,7 @@ func NewCastZstdWriter(output io.Writer, identity *audit.Identity, header CastHe
 		zstd.WithSingleSegment(true),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("cannot create Cast Zstandard encoder: %w", err)
+		return nil, errors.System.Newf("cannot create Cast Zstandard encoder: %w", err)
 	}
 	headerValue, err := identity.NewSessionRecordingZstdHeader(castZstdFormatVersion, castVersion, castZstdCodec, uuid.UUID(metadata.RecordingId))
 	if err != nil {
@@ -117,31 +117,31 @@ func NewCastZstdWriter(output io.Writer, identity *audit.Identity, header CastHe
 
 func (this *CastZstdWriter) WriteOutput(elapsed time.Duration, stream OutputStream, data []byte) error {
 	if this == nil || this.cast == nil {
-		return fmt.Errorf("nil Cast Zstandard writer")
+		return errors.System.Newf("nil Cast Zstandard writer")
 	}
 	return this.cast.WriteOutput(elapsed, stream, data)
 }
 
 func (this *CastZstdWriter) WriteResize(elapsed time.Duration, columns, rows uint32) error {
 	if this == nil || this.cast == nil {
-		return fmt.Errorf("nil Cast Zstandard writer")
+		return errors.System.Newf("nil Cast Zstandard writer")
 	}
 	return this.cast.WriteResize(elapsed, columns, rows)
 }
 
 func (this *CastZstdWriter) WriteMarker(elapsed time.Duration, label string) error {
 	if this == nil || this.cast == nil {
-		return fmt.Errorf("nil Cast Zstandard writer")
+		return errors.System.Newf("nil Cast Zstandard writer")
 	}
 	return this.cast.WriteMarker(elapsed, label)
 }
 
 func (this *CastZstdWriter) Flush() error {
 	if this == nil || this.sink == nil {
-		return fmt.Errorf("nil Cast Zstandard writer")
+		return errors.System.Newf("nil Cast Zstandard writer")
 	}
 	if this.sealed {
-		return fmt.Errorf("cast Zstandard writer is already sealed")
+		return errors.System.Newf("cast Zstandard writer is already sealed")
 	}
 	return this.sink.flush(false)
 }
@@ -150,10 +150,10 @@ func (this *CastZstdWriter) Flush() error {
 // caller must synchronize the container before atomically persisting the head.
 func (this *CastZstdWriter) Checkpoint() (audit.SessionRecordingZstdHead, error) {
 	if this == nil || this.sink == nil {
-		return audit.SessionRecordingZstdHead{}, fmt.Errorf("nil Cast Zstandard writer")
+		return audit.SessionRecordingZstdHead{}, errors.System.Newf("nil Cast Zstandard writer")
 	}
 	if this.sealed {
-		return audit.SessionRecordingZstdHead{}, fmt.Errorf("cast Zstandard writer is already sealed")
+		return audit.SessionRecordingZstdHead{}, errors.System.Newf("cast Zstandard writer is already sealed")
 	}
 	if err := this.sink.flush(false); err != nil {
 		return audit.SessionRecordingZstdHead{}, err
@@ -169,10 +169,10 @@ func (this *CastZstdWriter) Checkpoint() (audit.SessionRecordingZstdHead, error)
 
 func (this *CastZstdWriter) replaceOutput(output io.Writer) error {
 	if this == nil || this.sink == nil || output == nil {
-		return fmt.Errorf("invalid Cast Zstandard replacement output")
+		return errors.System.Newf("invalid Cast Zstandard replacement output")
 	}
 	if this.sealed || this.sink.poisoned != nil || this.sink.buffer.Len() != 0 || this.sink.pendingGroup {
-		return fmt.Errorf("cast Zstandard writer cannot replace its output in the current state")
+		return errors.System.Newf("cast Zstandard writer cannot replace its output in the current state")
 	}
 	this.sink.output = output
 	return nil
@@ -180,10 +180,10 @@ func (this *CastZstdWriter) replaceOutput(output io.Writer) error {
 
 func (this *CastZstdWriter) Seal(elapsed time.Duration, result CastResult, exitStatus *uint32) (CastZstdSummary, error) {
 	if this == nil || this.cast == nil || this.sink == nil {
-		return CastZstdSummary{}, fmt.Errorf("nil Cast Zstandard writer")
+		return CastZstdSummary{}, errors.System.Newf("nil Cast Zstandard writer")
 	}
 	if this.sealed {
-		return CastZstdSummary{}, fmt.Errorf("cast Zstandard writer is already sealed")
+		return CastZstdSummary{}, errors.System.Newf("cast Zstandard writer is already sealed")
 	}
 	digest, err := this.cast.Seal(elapsed, result, exitStatus)
 	if err != nil {
@@ -242,7 +242,7 @@ func (this *castZstdSink) Write(value []byte) (int, error) {
 		return 0, this.poisoned
 	}
 	if len(value) == 0 || value[len(value)-1] != '\n' || len(value) > MaximumCastLineBytes+1 {
-		return 0, this.poison(fmt.Errorf("cast Zstandard sink received an illegal Cast line"))
+		return 0, this.poison(errors.System.Newf("cast Zstandard sink received an illegal Cast line"))
 	}
 	isEventMetadata := bytes.HasPrefix(value, []byte(castEventCommentPrefix))
 	isResult := bytes.HasPrefix(value, []byte(castResultCommentPrefix))
@@ -280,18 +280,18 @@ func (this *castZstdSink) flush(final bool) error {
 		return nil
 	}
 	if this.pendingGroup {
-		return this.poison(fmt.Errorf("cast Zstandard stream ends inside an atomic line group"))
+		return this.poison(errors.System.Newf("cast Zstandard stream ends inside an atomic line group"))
 	}
 	if this.buffer.Len() == 0 {
 		return nil
 	}
 	if this.buffer.Len() > MaximumCastZstdChunkSize || this.buffer.Len() > math.MaxUint32 {
-		return this.poison(fmt.Errorf("cast Zstandard plaintext chunk exceeds %d bytes", MaximumCastZstdChunkSize))
+		return this.poison(errors.System.Newf("cast Zstandard plaintext chunk exceeds %d bytes", MaximumCastZstdChunkSize))
 	}
 	plaintext := this.buffer.Bytes()
 	frame := this.encoder.EncodeAll(plaintext, nil)
 	if len(frame) == 0 || len(frame) > MaximumCastZstdFrameSize || len(frame) > math.MaxUint32 {
-		return this.poison(fmt.Errorf("cast Zstandard frame exceeds %d bytes", MaximumCastZstdFrameSize))
+		return this.poison(errors.System.Newf("cast Zstandard frame exceeds %d bytes", MaximumCastZstdFrameSize))
 	}
 	frameHash := hashSessionRecording(castZstdFrameHashDomain, frame)
 	chunkValue, err := this.identity.NewSessionRecordingZstdChunk(audit.SessionRecordingZstdChunk{
@@ -336,10 +336,10 @@ func (this *castZstdSink) poison(err error) error {
 func writeCastZstdBytes(output io.Writer, value []byte) error {
 	written, err := output.Write(value)
 	if err != nil {
-		return fmt.Errorf("cannot write Cast Zstandard data: %w", err)
+		return errors.System.Newf("cannot write Cast Zstandard data: %w", err)
 	}
 	if written != len(value) {
-		return fmt.Errorf("cannot write Cast Zstandard data: %w", io.ErrShortWrite)
+		return errors.System.Newf("cannot write Cast Zstandard data: %w", io.ErrShortWrite)
 	}
 	return nil
 }

@@ -1,9 +1,9 @@
 package recording
 
 import (
-	"fmt"
-
 	"github.com/google/uuid"
+
+	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 type Id uuid.UUID
@@ -34,14 +34,14 @@ func (this Id) MarshalText() ([]byte, error) {
 func (this *Id) UnmarshalText(text []byte) error {
 	value, err := uuid.Parse(string(text))
 	if err != nil {
-		return fmt.Errorf("illegal recording ID: %w", err)
+		return errors.Config.Newf("illegal recording ID: %w", err)
 	}
 	decoded := Id(value)
 	if err := validateId(decoded); err != nil {
 		return err
 	}
 	if decoded.String() != string(text) {
-		return fmt.Errorf("recording ID is not canonical")
+		return errors.Config.Newf("recording ID is not canonical")
 	}
 	*this = decoded
 	return nil
@@ -50,7 +50,7 @@ func (this *Id) UnmarshalText(text []byte) error {
 func validateId(value Id) error {
 	raw := uuid.UUID(value)
 	if raw == uuid.Nil || raw.Version() != 4 || raw.Variant() != uuid.RFC4122 {
-		return fmt.Errorf("illegal recording ID %q", raw)
+		return errors.Config.Newf("illegal recording ID %q", raw)
 	}
 	return nil
 }
