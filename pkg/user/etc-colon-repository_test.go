@@ -16,6 +16,7 @@ import (
 	"github.com/echocat/slf4g/level"
 	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/echocat/slf4g/testing/recording"
+	"github.com/fsnotify/fsnotify"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -478,10 +479,77 @@ func Test_EtcColonRepository_Init_withNonExistingFilesButAllowedToCreate(t *test
 	}
 
 	actualErr := instance.Init(context.Background())
-	assert.NoError(t, actualErr)
+	require.NoError(t, actualErr)
+	t.Cleanup(func() {
+		assert.NoError(t, instance.Close())
+	})
 	assert.FileExists(t, dir.child("etc", "passwd"))
 	assert.FileExists(t, dir.child("etc", "group"))
 	assert.FileExists(t, dir.child("etc", "shadow"))
+}
+
+func TestEtcColonRepositoryCloseStopsWatcherAndAllowsReinitialization(t *testing.T) {
+	testlog.Hook(t)
+
+	dir := newTestDir(t)
+	passwdFile := dir.file("passwd").setContent("root:x:0:0:root:/root:/bin/sh")
+	groupFile := dir.file("group").setContent("root:x:0:")
+	shadowFile := dir.file("shadow").setContent("root:*:19722:10:100:50:200:20088:")
+	instance := EtcColonRepository{
+		PasswdFilename: passwdFile.name(),
+		GroupFilename:  groupFile.name(),
+		ShadowFilename: shadowFile.name(),
+	}
+	require.NoError(t, instance.Init(context.Background()))
+	t.Cleanup(func() {
+		assert.NoError(t, instance.Close())
+	})
+	firstWatcherDone := instance.watcherDone
+	require.NotNil(t, firstWatcherDone)
+
+	require.NoError(t, instance.Close())
+	select {
+	case <-firstWatcherDone:
+	default:
+		t.Fatal("watcher still running after Close")
+	}
+	require.Nil(t, instance.watcher)
+	require.Nil(t, instance.watcherStop)
+	require.Nil(t, instance.watcherDone)
+
+	require.NoError(t, instance.Init(context.Background()))
+	secondWatcherDone := instance.watcherDone
+	require.NotNil(t, secondWatcherDone)
+	require.NotEqual(t, firstWatcherDone, secondWatcherDone)
+	require.NoError(t, instance.Close())
+	select {
+	case <-secondWatcherDone:
+	default:
+		t.Fatal("reinitialized watcher still running after Close")
+	}
+	require.NoError(t, instance.Close())
+}
+
+func TestIsEtcColonRepositoryReloadEvent(t *testing.T) {
+	require.False(t, isEtcColonRepositoryReloadEvent(0))
+	require.False(t, isEtcColonRepositoryReloadEvent(fsnotify.Chmod))
+	require.True(t, isEtcColonRepositoryReloadEvent(fsnotify.Write))
+	require.True(t, isEtcColonRepositoryReloadEvent(fsnotify.Write|fsnotify.Chmod))
+	require.True(t, isEtcColonRepositoryReloadEvent(fsnotify.Remove|fsnotify.Chmod))
+}
+
+func TestEtcColonRepositoryHandlesMatchesGroupTemporaryFilename(t *testing.T) {
+	dir := newTestDir(t)
+	instance := EtcColonRepository{
+		PasswdFilename: dir.child("passwd"),
+		GroupFilename:  dir.child("group"),
+		ShadowFilename: dir.child("shadow"),
+	}
+	require.NoError(t, instance.handles.init(&instance))
+
+	matches, err := instance.handles.matchesFilename(instance.handles.group.tempFn)
+	require.NoError(t, err)
+	require.True(t, matches)
 }
 
 func Test_EtcColonRepository_onFsEvents(t *testing.T) {

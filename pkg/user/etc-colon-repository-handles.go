@@ -164,7 +164,7 @@ func (this *etcColonRepositoryHandles) matchesFilename(name string) (bool, error
 	if this.passwd.fn == name || this.passwd.tempFn == name {
 		return true, nil
 	}
-	if this.group.fn == name || this.shadow.tempFn == name {
+	if this.group.fn == name || this.group.tempFn == name {
 		return true, nil
 	}
 	if this.shadow.fn == name || this.shadow.tempFn == name {
