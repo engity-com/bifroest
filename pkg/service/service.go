@@ -261,10 +261,12 @@ func (this *Service) prepare() (svc *service, err error) {
 	if err != nil {
 		return fail(err)
 	}
-	auditOwnedByService := false
+	resourcesOwnedByService := false
 	defer func(preparedService *service) {
-		if !auditOwnedByService {
-			_ = preparedService.closeAudit(false)
+		if !resourcesOwnedByService {
+			recordingErr := preparedService.closeRecordingRepositories()
+			auditErr := preparedService.closeAudit(false)
+			err = goerrors.Join(err, recordingErr, auditErr)
 		}
 	}(svc)
 	if err := this.prepareAudit(ctx, svc, hostSigners); err != nil {
@@ -308,7 +310,7 @@ func (this *Service) prepare() (svc *service, err error) {
 	}
 
 	sessionRepositoryPrepared = true
-	auditOwnedByService = true
+	resourcesOwnedByService = true
 	return svc, nil
 }
 
@@ -316,6 +318,7 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	svc.auditIdentities = make(map[configuration.AuditlogName]*audit.Identity, len(this.Configuration.Auditlogs))
 	svc.auditRecorders = make(map[configuration.AuditlogName]audit.Recorder, len(this.Configuration.Auditlogs))
 	svc.auditDeliveries = make(map[configuration.AuditlogName]*audit.RemoteDelivery, len(this.Configuration.Auditlogs))
+	svc.recordingRepositories = make(map[configuration.AuditlogName]*sessionRecordingRepository, len(this.Configuration.Auditlogs))
 	svc.flowAuditRecorders = make(map[configuration.FlowName]audit.Recorder, len(this.Configuration.Flows))
 	svc.flowAuditlogs = make(map[configuration.FlowName]configuration.AuditlogName, len(this.Configuration.Flows))
 	svc.enabledAuditlogs = make(map[configuration.AuditlogName]bool, len(this.Configuration.Auditlogs))
@@ -371,6 +374,18 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 			return encryptionErr
 		}
 		resolvedEncryptionPublicKeys[auditlog.Name] = encryptionPublicKey
+	}
+	for index := range this.Configuration.Auditlogs {
+		auditlog := &this.Configuration.Auditlogs[index]
+		if !auditlog.Enabled || !auditlog.Recording.Enabled {
+			continue
+		}
+		repository, repositoryErr := newSessionRecordingRepository(ctx, auditlog.Recording.Directory, svc.auditIdentities[auditlog.Name], resolvedEncryptionPublicKeys[auditlog.Name])
+		if repositoryErr != nil {
+			return fmt.Errorf("cannot open Recording repository of auditlog %q: %w", auditlog.Name, repositoryErr)
+		}
+		svc.recordingRepositories[auditlog.Name] = repository
+		svc.recordingRepositoryOrder = append(svc.recordingRepositoryOrder, auditlog.Name)
 	}
 	for index := range this.Configuration.Auditlogs {
 		auditlog := &this.Configuration.Auditlogs[index]
@@ -619,23 +634,25 @@ func (this *Service) logCertificateAuthorities(hostKeys []crypto.PrivateKey) err
 type service struct {
 	*Service
 
-	auditIdentities      map[configuration.AuditlogName]*audit.Identity
-	auditRecorders       map[configuration.AuditlogName]audit.Recorder
-	auditRecorderOrder   []audit.Recorder
-	auditDeliveries      map[configuration.AuditlogName]*audit.RemoteDelivery
-	auditDeliveryOrder   []*audit.RemoteDelivery
-	flowAuditRecorders   map[configuration.FlowName]audit.Recorder
-	flowAuditlogs        map[configuration.FlowName]configuration.AuditlogName
-	enabledAuditlogs     map[configuration.AuditlogName]bool
-	unauthenticatedAudit *unauthenticatedAuditLimiter
-	sessions             session.CloseableRepository
-	authorizer           authorization.CloseableAuthorizer
-	environments         environment.CloseableRepository
-	houseKeeper          houseKeeper
-	alternatives         alternatives.Provider
-	imp                  imp.Imp
-	server               essh.Server
-	forwardHandler       essh.ForwardedTCPHandler
+	auditIdentities          map[configuration.AuditlogName]*audit.Identity
+	auditRecorders           map[configuration.AuditlogName]audit.Recorder
+	auditRecorderOrder       []audit.Recorder
+	auditDeliveries          map[configuration.AuditlogName]*audit.RemoteDelivery
+	auditDeliveryOrder       []*audit.RemoteDelivery
+	recordingRepositories    map[configuration.AuditlogName]*sessionRecordingRepository
+	recordingRepositoryOrder []configuration.AuditlogName
+	flowAuditRecorders       map[configuration.FlowName]audit.Recorder
+	flowAuditlogs            map[configuration.FlowName]configuration.AuditlogName
+	enabledAuditlogs         map[configuration.AuditlogName]bool
+	unauthenticatedAudit     *unauthenticatedAuditLimiter
+	sessions                 session.CloseableRepository
+	authorizer               authorization.CloseableAuthorizer
+	environments             environment.CloseableRepository
+	houseKeeper              houseKeeper
+	alternatives             alternatives.Provider
+	imp                      imp.Imp
+	server                   essh.Server
+	forwardHandler           essh.ForwardedTCPHandler
 
 	knownFlows map[configuration.FlowName]struct{}
 
@@ -690,6 +707,7 @@ func sshMaxAuthTries(value uint8) int {
 
 func (this *service) Close() (rErr error) {
 	defer func() { rErr = goerrors.Join(rErr, this.closeAudit(true)) }()
+	defer func() { rErr = goerrors.Join(rErr, this.closeRecordingRepositories()) }()
 	defer common.KeepCloseError(&rErr, this.alternatives)
 	defer common.KeepCloseError(&rErr, this.imp)
 	defer common.KeepCloseError(&rErr, this.sessions)
@@ -697,6 +715,15 @@ func (this *service) Close() (rErr error) {
 	defer common.KeepCloseError(&rErr, this.environments)
 	defer common.KeepCloseError(&rErr, &this.houseKeeper)
 	return nil
+}
+
+func (this *service) closeRecordingRepositories() (result error) {
+	for _, name := range this.recordingRepositoryOrder {
+		if err := this.recordingRepositories[name].Close(); err != nil {
+			result = goerrors.Join(result, fmt.Errorf("cannot close Recording repository of auditlog %q: %w", name, err))
+		}
+	}
+	return result
 }
 
 func (this *service) closeAudit(flush bool) (result error) {
