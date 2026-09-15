@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -95,7 +94,8 @@ type EtcColonRepository struct {
 
 	// OnUnhandledAsyncError will be called when in async contexts are errors
 	// appearing. By default, those errors are leading to a log message and
-	// that the whole application will exit with code 17.
+	// that the whole application will exit with code 17. The callback must not
+	// call Init or Close synchronously because it runs as part of the watcher lifecycle.
 	OnUnhandledAsyncError func(logger log.Logger, err error, detail string)
 
 	// FileSystemSyncThreshold ensures that only external changes are accepted
@@ -114,15 +114,20 @@ type EtcColonRepository struct {
 	idToGroup        idToEtcGroupRef
 	usernameToGroups nameToEtcGroupRefs
 
-	watcher *fsnotify.Watcher
+	watcher     *fsnotify.Watcher
+	watcherStop chan struct{}
+	watcherDone chan struct{}
 
-	handles     etcColonRepositoryHandles
-	mutex       sync.RWMutex
-	reloadTimer *time.Timer
+	handles        etcColonRepositoryHandles
+	mutex          sync.RWMutex
+	lifecycleMutex sync.Mutex
 }
 
 // Init will initialize this repository.
 func (this *EtcColonRepository) Init(ctx context.Context) error {
+	this.lifecycleMutex.Lock()
+	defer this.lifecycleMutex.Unlock()
+
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 
@@ -131,18 +136,6 @@ func (this *EtcColonRepository) Init(ctx context.Context) error {
 	}
 
 	success := false
-	{
-		var firstRunDone atomic.Bool
-		this.reloadTimer = time.AfterFunc(-1, func() {
-			// The first load we want to do manually to catch the error directly...
-			if firstRunDone.CompareAndSwap(false, true) {
-				return
-			}
-
-			this.onReloadTimer()
-		})
-	}
-
 	if err := this.handles.init(this); err != nil {
 		return err
 	}
@@ -158,8 +151,6 @@ func (this *EtcColonRepository) Init(ctx context.Context) error {
 	}
 	defer common.IgnoreErrorIfFalse(&success, watcher.Close)
 
-	go this.watchForChanges(watcher)
-
 	for v := range this.handles.getDirectories() {
 		this.logger().With("directory", v).Debug("watching changes within directory")
 		if err := watcher.Add(v); err != nil {
@@ -167,7 +158,22 @@ func (this *EtcColonRepository) Init(ctx context.Context) error {
 		}
 	}
 
+	// Refresh after registering the watcher so changes made during startup
+	// cannot leave the repository with a permanently stale snapshot.
+	if err := this.load(ctx); err != nil {
+		return err
+	}
+
+	watcherStop := make(chan struct{})
+	watcherDone := make(chan struct{})
+	reloadThreshold := this.FileSystemSyncThreshold
+	if reloadThreshold == 0 {
+		reloadThreshold = DefaultFileSystemSyncThreshold
+	}
 	this.watcher = watcher
+	this.watcherStop = watcherStop
+	this.watcherDone = watcherDone
+	go this.watchForChanges(watcher, watcherStop, watcherDone, reloadThreshold)
 	success = true
 	return nil
 }
@@ -1055,11 +1061,33 @@ func (this *EtcColonRepository) refToGroup(ref *etcGroupRef) *Group {
 }
 
 // Close disposes this repository after usage.
-func (this *EtcColonRepository) Close() error {
+func (this *EtcColonRepository) Close() (rErr error) {
+	this.lifecycleMutex.Lock()
+	defer this.lifecycleMutex.Unlock()
+
+	this.mutex.Lock()
+	watcher := this.watcher
+	watcherStop := this.watcherStop
+	watcherDone := this.watcherDone
+	this.watcher = nil
+	this.watcherStop = nil
+	this.watcherDone = nil
+	if watcherStop != nil {
+		close(watcherStop)
+	}
+	this.mutex.Unlock()
+
+	if watcher != nil {
+		common.KeepError(&rErr, watcher.Close)
+	}
+	if watcherDone != nil {
+		<-watcherDone
+	}
+
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
-
-	return this.handles.close()
+	common.KeepError(&rErr, this.handles.close)
+	return rErr
 }
 
 func (this *EtcColonRepository) onUnhandledAsyncError(logger log.Logger, err error, detail string) {
@@ -1088,27 +1116,14 @@ func (this *EtcColonRepository) onUnhandledAsyncError(logger log.Logger, err err
 	etcColonRepositoryExitFunc()
 }
 
-func (this *EtcColonRepository) scheduleReload(l log.Logger) {
-	this.mutex.RLock()
-	defer this.mutex.RUnlock()
-
-	l.Trace("schedule reload of repository")
-
-	this.reloadTimer.Stop()
-	if v := this.FileSystemSyncThreshold; v != 0 {
-		this.reloadTimer.Reset(v)
-	} else {
-		this.reloadTimer.Reset(DefaultFileSystemSyncThreshold)
-	}
-}
-
-func (this *EtcColonRepository) onReloadTimer() {
+func (this *EtcColonRepository) onReloadTimer(watcher *fsnotify.Watcher) error {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 
-	if err := this.load(context.Background()); err != nil {
-		this.onUnhandledAsyncError(this.logger(), err, "cannot reload repository")
+	if this.watcher != watcher {
+		return nil
 	}
+	return this.load(context.Background())
 }
 
 func (this *EtcColonRepository) load(_ context.Context) (rErr error) {
@@ -1257,9 +1272,40 @@ func (this *EtcColonRepository) getAllowBadLine() bool {
 	return DefaultAllowBadLine
 }
 
-func (this *EtcColonRepository) watchForChanges(watcher *fsnotify.Watcher) {
+func (this *EtcColonRepository) watchForChanges(watcher *fsnotify.Watcher, stop <-chan struct{}, done chan<- struct{}, reloadThreshold time.Duration) {
+	defer close(done)
+	var reloadTimer *time.Timer
+	var reload <-chan time.Time
+	defer func() {
+		if reloadTimer != nil {
+			reloadTimer.Stop()
+		}
+	}()
+	scheduleReload := func(l log.Logger) {
+		l.Trace("schedule reload of repository")
+		if reloadTimer == nil {
+			reloadTimer = time.NewTimer(reloadThreshold)
+		} else {
+			if !reloadTimer.Stop() {
+				select {
+				case <-reloadTimer.C:
+				default:
+				}
+			}
+			reloadTimer.Reset(reloadThreshold)
+		}
+		reload = reloadTimer.C
+	}
+
 	for {
 		select {
+		case <-stop:
+			return
+		case <-reload:
+			reload = nil
+			if err := this.onReloadTimer(watcher); err != nil {
+				this.onUnhandledAsyncError(this.logger(), err, "cannot reload repository")
+			}
 		case event, ok := <-watcher.Events:
 			if !ok {
 				return
@@ -1275,11 +1321,8 @@ func (this *EtcColonRepository) watchForChanges(watcher *fsnotify.Watcher) {
 			if !match {
 				continue
 			}
-			switch event.Op {
-			case fsnotify.Create, fsnotify.Write, fsnotify.Rename, fsnotify.Remove:
-				this.scheduleReload(l)
-			default:
-				// ignored
+			if isEtcColonRepositoryReloadEvent(event.Op) {
+				scheduleReload(l)
 			}
 		case err, ok := <-watcher.Errors:
 			if !ok {
@@ -1288,6 +1331,10 @@ func (this *EtcColonRepository) watchForChanges(watcher *fsnotify.Watcher) {
 			this.onUnhandledAsyncError(this.logger(), err, "error while handling file watcher events")
 		}
 	}
+}
+
+func isEtcColonRepositoryReloadEvent(op fsnotify.Op) bool {
+	return op&(fsnotify.Create|fsnotify.Write|fsnotify.Rename|fsnotify.Remove) != 0
 }
 
 func (this *EtcColonRepository) killAllOf(ctx context.Context, uid uint32) error {

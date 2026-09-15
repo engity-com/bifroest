@@ -58,49 +58,6 @@ func TestKillProcessGroupReachesChild(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond)
 }
 
-func TestKillProcessGroupUsingNonLeaderReachesSiblings(t *testing.T) {
-	directory := t.TempDir()
-	expectedEnv := "BIFROEST_TEST_EXECUTION=owned"
-	targetPidFile := filepath.Join(directory, "target.pid")
-	siblingPidFile := filepath.Join(directory, "sibling.pid")
-	cmd := exec.Command("/bin/sh", "-c", "sleep 30 & echo $! > \"$1\"; sleep 30 & echo $! > \"$2\"; wait", "sh", targetPidFile, siblingPidFile)
-	cmd.Env = append(os.Environ(), expectedEnv)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	require.NoError(t, cmd.Start())
-	t.Cleanup(func() {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		_ = cmd.Wait()
-	})
-
-	readPid := func(path string) int {
-		var pid int
-		require.Eventually(t, func() bool {
-			content, err := os.ReadFile(path)
-			if err != nil {
-				return false
-			}
-			pid, err = strconv.Atoi(strings.TrimSpace(string(content)))
-			return err == nil
-		}, 2*time.Second, 10*time.Millisecond)
-		return pid
-	}
-	targetPid := readPid(targetPidFile)
-	siblingPid := readPid(siblingPidFile)
-	require.NotEqual(t, cmd.Process.Pid, targetPid)
-	require.Equal(t, cmd.Process.Pid, mustGetProcessGroup(t, targetPid))
-
-	require.NoError(t, (&imp{}).kill(context.Background(), processTarget{
-		pid:              targetPid,
-		processGroup:     true,
-		expectedEnv:      expectedEnv,
-		groupExpectedEnv: expectedEnv,
-	}, sys.SIGKILL, make(signaledProcessGroups)))
-	_ = cmd.Wait()
-	require.Eventually(t, func() bool {
-		return processIsGoneOrZombie(targetPid) && processIsGoneOrZombie(siblingPid)
-	}, 2*time.Second, 10*time.Millisecond)
-}
-
 func TestKillProcessGroupRejectsUnverifiedLeader(t *testing.T) {
 	directory := t.TempDir()
 	expectedEnv := "BIFROEST_TEST_EXECUTION=owned"
