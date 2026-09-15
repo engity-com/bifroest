@@ -20,6 +20,10 @@ const maximumBECastCheckpointPaddingBytes = len(castCheckpointPaddingCommentPref
 const maximumBECastOutputEventLineBytes = 6*MaximumOutputEventBytes + 64
 const maximumBECastSealCastBytes = 4096
 
+// castBECastOpenCastState marks an open, valid Cast at a complete atomic line
+// boundary before any result or final signature has been emitted.
+const castBECastOpenCastState = 1
+
 type BECastWriter struct {
 	cast                 *CastWriter
 	sink                 *beCastSink
@@ -133,7 +137,7 @@ func NewBECastWriter(output io.Writer, identity *audit.Identity, recipient *cryp
 		return fail(err)
 	}
 	sink.cast = cast
-	if err := sink.flush(false, nil); err != nil {
+	if err := sink.flush(false, nil, 0); err != nil {
 		return fail(err)
 	}
 	return &BECastWriter{
@@ -173,7 +177,7 @@ func (this *BECastWriter) Flush() error {
 	if this.sealed {
 		return errors.System.Newf("BECast writer is already sealed")
 	}
-	return this.sink.flush(false, nil)
+	return this.sink.flush(false, nil, 0)
 }
 
 // Checkpoint flushes complete Cast line groups and returns a signed active
@@ -185,18 +189,21 @@ func (this *BECastWriter) Checkpoint() (audit.SessionRecordingBECastHead, error)
 	if this.sealed {
 		return audit.SessionRecordingBECastHead{}, errors.System.Newf("BECast writer is already sealed")
 	}
-	if err := this.sink.flush(false, nil); err != nil {
+	if err := this.sink.flush(false, nil, 0); err != nil {
 		return audit.SessionRecordingBECastHead{}, err
 	}
 	checkpoint := this.sink.lastCheckpoint
 	head, err := this.identity.NewSessionRecordingBECastHead(audit.SessionRecordingBECastHead{
-		FormatVersion:    castBECastFormatVersion,
-		RecordingId:      this.sink.recordingId,
-		ChunkCount:       this.sink.chunkCount,
-		PrefixBytes:      this.sink.prefixBytes,
-		LastUnitHash:     this.sink.previousUnitHash,
-		ContentHashState: audit.SessionRecordingHash(checkpoint.State),
-		ContentHashBytes: checkpoint.Bytes,
+		FormatVersion:        castBECastFormatVersion,
+		CastState:            castBECastOpenCastState,
+		RecordingId:          this.sink.recordingId,
+		StartedAtUnixSeconds: this.metadata.StartedAt.Unix(),
+		StartedAtNanoseconds: uint32(this.metadata.StartedAt.Nanosecond()),
+		ChunkCount:           this.sink.chunkCount,
+		PrefixBytes:          this.sink.prefixBytes,
+		LastUnitHash:         this.sink.previousUnitHash,
+		ContentHashState:     audit.SessionRecordingHash(checkpoint.State),
+		ContentHashBytes:     checkpoint.Bytes,
 	})
 	if err != nil {
 		return audit.SessionRecordingBECastHead{}, this.sink.poison(err)
@@ -228,7 +235,7 @@ func (this *BECastWriter) Seal(elapsed time.Duration, result CastResult, exitSta
 		return BECastSummary{}, errors.System.Newf("BECast writer is already sealed")
 	}
 	if this.sink.buffer.Len() > MaximumBECastChunkPlaintext-maximumBECastSealCastBytes {
-		if err := this.sink.flush(false, nil); err != nil {
+		if err := this.sink.flush(false, nil, 0); err != nil {
 			this.sink.encoder.Close()
 			return BECastSummary{}, err
 		}
@@ -244,13 +251,13 @@ func (this *BECastWriter) Seal(elapsed time.Duration, result CastResult, exitSta
 		}
 		return BECastSummary{}, err
 	}
-	if err := this.sink.flush(true, &digest); err != nil {
-		this.sink.encoder.Close()
-		return BECastSummary{}, err
-	}
 	status, err := castBECastStatus(result.Status)
 	if err != nil {
 		return BECastSummary{}, this.failSeal(err)
+	}
+	if err := this.sink.flush(true, &digest, status); err != nil {
+		this.sink.encoder.Close()
+		return BECastSummary{}, err
 	}
 	var castDigest audit.SessionRecordingHash
 	copy(castDigest[:], digest[:])
@@ -343,7 +350,7 @@ func (this *beCastSink) beforeContentLine(value []byte) error {
 		maximumGroupBytes += maximumBECastOutputEventLineBytes
 	}
 	if len(value) > remainingTarget || maximumGroupBytes > remainingMaximum {
-		return this.flush(false, nil)
+		return this.flush(false, nil, 0)
 	}
 	return nil
 }
@@ -355,10 +362,10 @@ func (this *beCastSink) afterContentLine([]byte) error {
 	if this.cast == nil || this.flushing || this.sealing || this.pendingGroup || this.buffer.Len() < this.chunkSize {
 		return nil
 	}
-	return this.flush(false, nil)
+	return this.flush(false, nil, 0)
 }
 
-func (this *beCastSink) flush(final bool, finalDigest *CastDigest) error {
+func (this *beCastSink) flush(final bool, finalDigest *CastDigest, finalStatus uint8) error {
 	if this.poisoned != nil {
 		return this.poisoned
 	}
@@ -371,7 +378,7 @@ func (this *beCastSink) flush(final bool, finalDigest *CastDigest) error {
 	if this.buffer.Len() == 0 {
 		return nil
 	}
-	if final != (finalDigest != nil) {
+	if final != (finalDigest != nil) || final != (finalStatus != 0) {
 		return this.poison(errors.System.Newf("BECast flush has an invalid final digest"))
 	}
 
@@ -430,6 +437,7 @@ func (this *beCastSink) flush(final bool, finalDigest *CastDigest) error {
 	ciphertextHash := hashBECastCiphertext(ciphertext.Bytes())
 	chunkValue, err := this.identity.NewSessionRecordingBECastChunk(audit.SessionRecordingBECastChunk{
 		FormatVersion:    castBECastFormatVersion,
+		FinalStatus:      finalStatus,
 		RecordingId:      this.recordingId,
 		Sequence:         this.chunkCount + 1,
 		PreviousUnitHash: this.previousUnitHash,

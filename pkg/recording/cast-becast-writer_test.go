@@ -42,6 +42,9 @@ func TestBECastWriterRoundTripCheckpointAndSeal(t *testing.T) {
 	initialHead, err := writer.Checkpoint()
 	require.NoError(t, err)
 	require.NoError(t, audit.VerifySessionRecordingBECastHead(publicKey, initialHead))
+	require.Equal(t, uint8(castBECastOpenCastState), initialHead.CastState)
+	require.Equal(t, metadata.StartedAt.Unix(), initialHead.StartedAtUnixSeconds)
+	require.Equal(t, uint32(metadata.StartedAt.Nanosecond()), initialHead.StartedAtNanoseconds)
 	require.Equal(t, initial.chunks[0].value.ContentHashState, initialHead.ContentHashState)
 	require.Equal(t, initial.chunks[0].value.ContentHashBytes, initialHead.ContentHashBytes)
 	require.NotZero(t, initialHead.ContentHashBytes)
@@ -91,9 +94,11 @@ func TestBECastWriterRoundTripCheckpointAndSeal(t *testing.T) {
 		ciphertextBytes += uint64(len(chunk.ciphertext))
 		previousHash = hashBECastUnit(chunk.unit)
 		if index == len(parsed.chunks)-1 {
+			require.Equal(t, uint8(1), chunk.value.FinalStatus)
 			require.Zero(t, chunk.value.ContentHashBytes)
 			require.Equal(t, audit.SessionRecordingHash(summary.Digest), chunk.value.ContentHashState)
 		} else {
+			require.Zero(t, chunk.value.FinalStatus)
 			require.NotZero(t, chunk.value.ContentHashBytes)
 			require.Zero(t, chunk.value.ContentHashBytes%64)
 		}

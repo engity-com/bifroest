@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"encoding/binary"
 	"strings"
 	"testing"
 
@@ -35,6 +36,17 @@ func TestSessionRecordingBECastChunkSignVerifyAndRejectTampering(t *testing.T) {
 	require.ErrorContains(t, VerifySessionRecordingBECastChunk(identity.PublicKey(), chunk), "illegal session recording signature")
 }
 
+func TestSessionRecordingBECastFinalStatusIsSigned(t *testing.T) {
+	identity := newSessionRecordingBECastTestIdentity(t)
+	chunk := validSessionRecordingBECastChunk()
+	chunk.ContentHashBytes = 0
+	chunk.FinalStatus = 1
+	signed, err := identity.NewSessionRecordingBECastChunk(chunk)
+	require.NoError(t, err)
+	signed.FinalStatus = 2
+	require.ErrorContains(t, VerifySessionRecordingBECastChunk(identity.PublicKey(), signed), "illegal session recording signature")
+}
+
 func TestSessionRecordingBECastSealSignVerifyAndRejectTampering(t *testing.T) {
 	identity := newSessionRecordingBECastTestIdentity(t)
 	seal, err := identity.NewSessionRecordingBECastSeal(validSessionRecordingBECastSeal())
@@ -55,6 +67,49 @@ func TestSessionRecordingBECastHeadSignVerifyAndRejectTampering(t *testing.T) {
 
 	head.PrefixBytes++
 	require.ErrorContains(t, VerifySessionRecordingBECastHead(identity.PublicKey(), head), "illegal session recording signature")
+}
+
+func TestSessionRecordingBECastHeadRecoveryMetadataIsSigned(t *testing.T) {
+	identity := newSessionRecordingBECastTestIdentity(t)
+	for name, mutate := range map[string]func(*SessionRecordingBECastHead){
+		"Cast state":        func(value *SessionRecordingBECastHead) { value.CastState++ },
+		"start seconds":     func(value *SessionRecordingBECastHead) { value.StartedAtUnixSeconds++ },
+		"start nanoseconds": func(value *SessionRecordingBECastHead) { value.StartedAtNanoseconds++ },
+	} {
+		t.Run(name, func(t *testing.T) {
+			head, err := identity.NewSessionRecordingBECastHead(validSessionRecordingBECastHead())
+			require.NoError(t, err)
+			mutate(&head)
+			require.ErrorContains(t, VerifySessionRecordingBECastHead(identity.PublicKey(), head), "illegal session recording signature")
+		})
+	}
+}
+
+func TestSessionRecordingBECastHeadMarshalsStartTimeBigEndian(t *testing.T) {
+	head := validSessionRecordingBECastHead()
+	head.StartedAtUnixSeconds = 0x0102030405060708
+	head.StartedAtNanoseconds = 0x11223344
+	unsigned := marshalSessionRecordingBECastHead(head)
+	require.Equal(t, uint64(0x0102030405060708), binary.BigEndian.Uint64(unsigned[50:58]))
+	require.Equal(t, uint32(0x11223344), binary.BigEndian.Uint32(unsigned[58:62]))
+}
+
+func TestSessionRecordingBECastHeadValidatesRecoveryMetadata(t *testing.T) {
+	identity := newSessionRecordingBECastTestIdentity(t)
+	head := validSessionRecordingBECastHead()
+	head.CastState = 0
+	_, err := identity.NewSessionRecordingBECastHead(head)
+	require.ErrorContains(t, err, "empty metadata")
+
+	head = validSessionRecordingBECastHead()
+	head.StartedAtNanoseconds = 1_000_000_000
+	_, err = identity.NewSessionRecordingBECastHead(head)
+	require.ErrorContains(t, err, "nanoseconds are outside")
+
+	head = validSessionRecordingBECastHead()
+	head.StartedAtUnixSeconds = 0
+	_, err = identity.NewSessionRecordingBECastHead(head)
+	require.NoError(t, err)
 }
 
 func TestSessionRecordingBECastHeaderRejectsInvalidRecipientFingerprint(t *testing.T) {
@@ -89,6 +144,7 @@ func TestSessionRecordingBECastFinalChunkContentHashSentinel(t *testing.T) {
 	identity := newSessionRecordingBECastTestIdentity(t)
 	chunk := validSessionRecordingBECastChunk()
 	chunk.ContentHashBytes = 0
+	chunk.FinalStatus = 1
 	signed, err := identity.NewSessionRecordingBECastChunk(chunk)
 	require.NoError(t, err)
 	require.NoError(t, VerifySessionRecordingBECastChunk(identity.PublicKey(), signed))
@@ -96,6 +152,20 @@ func TestSessionRecordingBECastFinalChunkContentHashSentinel(t *testing.T) {
 	chunk.ContentHashState = SessionRecordingHash{}
 	_, err = identity.NewSessionRecordingBECastChunk(chunk)
 	require.ErrorContains(t, err, "empty content hash sentinel")
+}
+
+func TestSessionRecordingBECastRejectsChunkStatusMismatch(t *testing.T) {
+	identity := newSessionRecordingBECastTestIdentity(t)
+	continuation := validSessionRecordingBECastChunk()
+	continuation.FinalStatus = 1
+	_, err := identity.NewSessionRecordingBECastChunk(continuation)
+	require.ErrorContains(t, err, "continuation chunk has final status")
+
+	final := validSessionRecordingBECastChunk()
+	final.ContentHashBytes = 0
+	final.FinalStatus = 4
+	_, err = identity.NewSessionRecordingBECastChunk(final)
+	require.ErrorContains(t, err, "invalid status")
 }
 
 func TestSessionRecordingBECastAcceptsOpaqueZeroContentHashState(t *testing.T) {
@@ -156,12 +226,15 @@ func validSessionRecordingBECastSeal() SessionRecordingBECastSeal {
 
 func validSessionRecordingBECastHead() SessionRecordingBECastHead {
 	return SessionRecordingBECastHead{
-		FormatVersion:    1,
-		RecordingId:      sessionRecordingBECastTestRecordingId(),
-		ChunkCount:       2,
-		PrefixBytes:      512,
-		LastUnitHash:     SessionRecordingHash{1},
-		ContentHashState: SessionRecordingHash{2},
-		ContentHashBytes: 128,
+		FormatVersion:        1,
+		CastState:            1,
+		RecordingId:          sessionRecordingBECastTestRecordingId(),
+		StartedAtUnixSeconds: 1789302896,
+		StartedAtNanoseconds: 123456789,
+		ChunkCount:           2,
+		PrefixBytes:          512,
+		LastUnitHash:         SessionRecordingHash{1},
+		ContentHashState:     SessionRecordingHash{2},
+		ContentHashBytes:     128,
 	}
 }

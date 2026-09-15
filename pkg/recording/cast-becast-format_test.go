@@ -32,6 +32,7 @@ func TestBECastChunkRoundTrip(t *testing.T) {
 	ciphertext := []byte{0x80, 0x01, 0x7f, 0xfe, 0x55}
 	chunk := audit.SessionRecordingBECastChunk{
 		FormatVersion:    castBECastFormatVersion,
+		FinalStatus:      2,
 		RecordingId:      recordingId,
 		ProducerId:       producerId,
 		Sequence:         17,
@@ -41,7 +42,6 @@ func TestBECastChunkRoundTrip(t *testing.T) {
 		CiphertextLength: uint32(len(ciphertext)),
 		CiphertextHash:   hashBECastCiphertext(ciphertext),
 		ContentHashState: beCastTestHash(65),
-		ContentHashBytes: 4096,
 		Signature:        beCastTestBytes(64, 97),
 	}
 	unit, err := encodeBECastChunk(chunk, ciphertext)
@@ -87,7 +87,7 @@ func TestBECastSealRoundTrip(t *testing.T) {
 func TestBECastWireConstantsAndBodySizes(t *testing.T) {
 	require.Equal(t, []byte{0x89, 'B', 'E', 'C', 'A', 'S', 'T', '\n'}, []byte(castBECastFileMagic))
 	require.Equal(t, 217, castBECastHeaderBodySize)
-	require.Equal(t, 193, castBECastChunkDescriptorSize)
+	require.Equal(t, 194, castBECastChunkDescriptorSize)
 	require.Equal(t, 226, castBECastSealBodySize)
 	require.Equal(t, 256<<10, DefaultBECastChunkPlaintextTarget)
 	require.Equal(t, MaximumCastLineBytes+1, MaximumBECastChunkPlaintext)
@@ -190,9 +190,9 @@ func TestBECastDecodeRejectsIllegalBodySizes(t *testing.T) {
 	require.ErrorContains(t, err, "fewer than descriptor size")
 
 	chunkBody := make([]byte, castBECastChunkDescriptorSize)
-	binary.BigEndian.PutUint32(chunkBody[53:], 1)
+	binary.BigEndian.PutUint32(chunkBody[54:], 1)
 	_, _, err = decodeBECastChunk(encodeBECastUnit(castBECastChunkUnitType, chunkBody), uuid.Nil, audit.ProducerId{})
-	require.ErrorContains(t, err, "body has 193 bytes instead of 194")
+	require.ErrorContains(t, err, "body has 194 bytes instead of 195")
 
 	_, err = decodeBECastSeal(encodeBECastUnit(castBECastSealUnitType, make([]byte, castBECastSealBodySize-1)), uuid.Nil, audit.ProducerId{})
 	require.ErrorContains(t, err, "seal body has 225 bytes instead of 226")
@@ -222,6 +222,27 @@ func TestBECastHeaderUnitGoldenHash(t *testing.T) {
 	require.NoError(t, err)
 	digest := sha256.Sum256(unit)
 	require.Equal(t, "c0c9b2cea53c9ba944f8324b3c9712c4206dea511ed41479c3a4e7e847686b03", hex.EncodeToString(digest[:]))
+}
+
+func TestBECastChunkUnitGoldenHash(t *testing.T) {
+	ciphertext := []byte{0x80, 0x01, 0x7f, 0xfe, 0x55}
+	unit, err := encodeBECastChunk(audit.SessionRecordingBECastChunk{
+		FormatVersion:    castBECastFormatVersion,
+		FinalStatus:      2,
+		RecordingId:      beCastTestRecordingId(),
+		ProducerId:       beCastTestProducerId(),
+		Sequence:         17,
+		PreviousUnitHash: beCastTestHash(1),
+		PlaintextOffset:  4096,
+		PlaintextLength:  512,
+		CiphertextLength: uint32(len(ciphertext)),
+		CiphertextHash:   hashBECastCiphertext(ciphertext),
+		ContentHashState: beCastTestHash(65),
+		Signature:        beCastTestBytes(64, 97),
+	}, ciphertext)
+	require.NoError(t, err)
+	digest := sha256.Sum256(unit)
+	require.Equal(t, "12269be5c8391839c29bf0de4fa09657f10a1e29d38d2410b0373a56769e8950", hex.EncodeToString(digest[:]))
 }
 
 func requireBECastUnitBodySize(t *testing.T, unit []byte, bodySize int) {

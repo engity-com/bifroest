@@ -235,7 +235,7 @@ func TestVerifyBECastRejectsUnitIntegrityAndSignatureCorruption(t *testing.T) {
 			refreshBECastTestCRC(value, chunkStart, chunkCRC)
 		},
 		"chunk signature": func(value []byte) {
-			value[chunkStart+castBECastUnitPrefixSize+129] ^= 1
+			value[chunkStart+castBECastUnitPrefixSize+130] ^= 1
 			refreshBECastTestCRC(value, chunkStart, chunkCRC)
 		},
 		"seal signature": func(value []byte) {
@@ -250,6 +250,9 @@ func TestVerifyBECastRejectsUnitIntegrityAndSignatureCorruption(t *testing.T) {
 			_, err := VerifyBECast(bytes.NewReader(container), int64(len(container)), options)
 			require.Error(t, err)
 			require.True(t, bferrors.System.IsErr(err))
+			if name == "chunk signature" {
+				require.ErrorContains(t, err, "illegal session recording signature")
+			}
 		})
 	}
 }
@@ -296,6 +299,7 @@ func TestVerifyBECastRejectsSignedChunkAndSealMismatches(t *testing.T) {
 
 	sealTests := map[string]func(*audit.SessionRecordingBECastSeal){
 		"status":                 func(value *audit.SessionRecordingBECastSeal) { value.Status = 99 },
+		"final status":           func(value *audit.SessionRecordingBECastSeal) { value.Status = 2 },
 		"chunk count":            func(value *audit.SessionRecordingBECastSeal) { value.ChunkCount++ },
 		"Cast bytes":             func(value *audit.SessionRecordingBECastSeal) { value.CastBytes++ },
 		"ciphertext bytes":       func(value *audit.SessionRecordingBECastSeal) { value.CiphertextBytes++ },
@@ -322,12 +326,14 @@ func TestVerifyBECastRejectsFinalSentinelViolations(t *testing.T) {
 	tests := map[string]func(int, *audit.SessionRecordingBECastChunk, *[]byte){
 		"continuation after final": func(index int, value *audit.SessionRecordingBECastChunk, _ *[]byte) {
 			if index == 0 {
+				value.FinalStatus = 1
 				value.ContentHashBytes = 0
 				value.ContentHashState[0] = 1
 			}
 		},
 		"seal without final": func(index int, value *audit.SessionRecordingBECastChunk, _ *[]byte) {
 			if index == len(parsed.chunks)-1 {
+				value.FinalStatus = 0
 				base := uint64(len(castContentHashDomain)) + value.PlaintextOffset
 				length := uint64(64) - base%64
 				value.PlaintextLength = uint32(length)

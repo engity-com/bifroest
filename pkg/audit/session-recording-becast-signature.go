@@ -32,6 +32,7 @@ type SessionRecordingBECastHeader struct {
 
 type SessionRecordingBECastChunk struct {
 	FormatVersion    uint8
+	FinalStatus      uint8
 	RecordingId      uuid.UUID
 	ProducerId       ProducerId
 	Sequence         uint64
@@ -62,15 +63,18 @@ type SessionRecordingBECastSeal struct {
 }
 
 type SessionRecordingBECastHead struct {
-	FormatVersion    uint8
-	RecordingId      uuid.UUID
-	ProducerId       ProducerId
-	ChunkCount       uint64
-	PrefixBytes      uint64
-	LastUnitHash     SessionRecordingHash
-	ContentHashState SessionRecordingHash
-	ContentHashBytes uint64
-	Signature        []byte
+	FormatVersion        uint8
+	CastState            uint8
+	RecordingId          uuid.UUID
+	ProducerId           ProducerId
+	StartedAtUnixSeconds int64
+	StartedAtNanoseconds uint32
+	ChunkCount           uint64
+	PrefixBytes          uint64
+	LastUnitHash         SessionRecordingHash
+	ContentHashState     SessionRecordingHash
+	ContentHashBytes     uint64
+	Signature            []byte
 }
 
 func (this *Identity) NewSessionRecordingBECastHeader(formatVersion, castVersion, codec, encryption uint8, recordingId uuid.UUID, recipientFingerprint string) (SessionRecordingBECastHeader, error) {
@@ -221,11 +225,20 @@ func validateSessionRecordingBECastChunk(value SessionRecordingBECastChunk) erro
 	if value.PlaintextLength == 0 || value.CiphertextLength == 0 {
 		return errors.System.Newf("session recording BECast chunk contains an empty ciphertext")
 	}
-	if value.ContentHashBytes == 0 && value.ContentHashState.IsZero() {
-		return errors.System.Newf("session recording BECast chunk contains an empty content hash sentinel")
-	}
-	if value.ContentHashBytes != 0 && value.ContentHashBytes%64 != 0 {
-		return errors.System.Newf("session recording BECast chunk content hash byte count is not aligned to 64 bytes")
+	if value.ContentHashBytes == 0 {
+		if value.ContentHashState.IsZero() {
+			return errors.System.Newf("session recording BECast chunk contains an empty content hash sentinel")
+		}
+		if value.FinalStatus < 1 || value.FinalStatus > 3 {
+			return errors.System.Newf("session recording BECast final chunk has an invalid status %d", value.FinalStatus)
+		}
+	} else {
+		if value.FinalStatus != 0 {
+			return errors.System.Newf("session recording BECast continuation chunk has final status %d", value.FinalStatus)
+		}
+		if value.ContentHashBytes%64 != 0 {
+			return errors.System.Newf("session recording BECast chunk content hash byte count is not aligned to 64 bytes")
+		}
 	}
 	return nil
 }
@@ -244,8 +257,11 @@ func validateSessionRecordingBECastSeal(value SessionRecordingBECastSeal) error 
 }
 
 func validateSessionRecordingBECastHead(value SessionRecordingBECastHead) error {
-	if value.FormatVersion == 0 || value.ProducerId.IsZero() || value.ChunkCount == 0 || value.PrefixBytes == 0 || value.LastUnitHash.IsZero() || value.ContentHashBytes == 0 {
+	if value.FormatVersion == 0 || value.CastState == 0 || value.ProducerId.IsZero() || value.ChunkCount == 0 || value.PrefixBytes == 0 || value.LastUnitHash.IsZero() || value.ContentHashBytes == 0 {
 		return errors.System.Newf("session recording BECast head contains empty metadata")
+	}
+	if value.StartedAtNanoseconds >= 1_000_000_000 {
+		return errors.System.Newf("session recording BECast head start nanoseconds are outside the supported range")
 	}
 	if err := validateSessionRecordingUuid(value.RecordingId); err != nil {
 		return err
@@ -278,18 +294,19 @@ func marshalSessionRecordingBECastHeader(value SessionRecordingBECastHeader) []b
 }
 
 func marshalSessionRecordingBECastChunk(value SessionRecordingBECastChunk) []byte {
-	result := make([]byte, 1+len(value.RecordingId)+len(value.ProducerId)+8+32+8+4+4+32+32+8)
+	result := make([]byte, 2+len(value.RecordingId)+len(value.ProducerId)+8+32+8+4+4+32+32+8)
 	result[0] = value.FormatVersion
-	copy(result[1:], value.RecordingId[:])
-	copy(result[17:], value.ProducerId[:])
-	binary.BigEndian.PutUint64(result[49:], value.Sequence)
-	copy(result[57:], value.PreviousUnitHash[:])
-	binary.BigEndian.PutUint64(result[89:], value.PlaintextOffset)
-	binary.BigEndian.PutUint32(result[97:], value.PlaintextLength)
-	binary.BigEndian.PutUint32(result[101:], value.CiphertextLength)
-	copy(result[105:], value.CiphertextHash[:])
-	copy(result[137:], value.ContentHashState[:])
-	binary.BigEndian.PutUint64(result[169:], value.ContentHashBytes)
+	result[1] = value.FinalStatus
+	copy(result[2:], value.RecordingId[:])
+	copy(result[18:], value.ProducerId[:])
+	binary.BigEndian.PutUint64(result[50:], value.Sequence)
+	copy(result[58:], value.PreviousUnitHash[:])
+	binary.BigEndian.PutUint64(result[90:], value.PlaintextOffset)
+	binary.BigEndian.PutUint32(result[98:], value.PlaintextLength)
+	binary.BigEndian.PutUint32(result[102:], value.CiphertextLength)
+	copy(result[106:], value.CiphertextHash[:])
+	copy(result[138:], value.ContentHashState[:])
+	binary.BigEndian.PutUint64(result[170:], value.ContentHashBytes)
 	return result
 }
 
@@ -311,14 +328,17 @@ func marshalSessionRecordingBECastSeal(value SessionRecordingBECastSeal) []byte 
 }
 
 func marshalSessionRecordingBECastHead(value SessionRecordingBECastHead) []byte {
-	result := make([]byte, 1+len(value.RecordingId)+len(value.ProducerId)+8+8+32+32+8)
+	result := make([]byte, 2+len(value.RecordingId)+len(value.ProducerId)+8+4+8+8+32+32+8)
 	result[0] = value.FormatVersion
-	copy(result[1:], value.RecordingId[:])
-	copy(result[17:], value.ProducerId[:])
-	binary.BigEndian.PutUint64(result[49:], value.ChunkCount)
-	binary.BigEndian.PutUint64(result[57:], value.PrefixBytes)
-	copy(result[65:], value.LastUnitHash[:])
-	copy(result[97:], value.ContentHashState[:])
-	binary.BigEndian.PutUint64(result[129:], value.ContentHashBytes)
+	result[1] = value.CastState
+	copy(result[2:], value.RecordingId[:])
+	copy(result[18:], value.ProducerId[:])
+	binary.BigEndian.PutUint64(result[50:], uint64(value.StartedAtUnixSeconds))
+	binary.BigEndian.PutUint32(result[58:], value.StartedAtNanoseconds)
+	binary.BigEndian.PutUint64(result[62:], value.ChunkCount)
+	binary.BigEndian.PutUint64(result[70:], value.PrefixBytes)
+	copy(result[78:], value.LastUnitHash[:])
+	copy(result[110:], value.ContentHashState[:])
+	binary.BigEndian.PutUint64(result[142:], value.ContentHashBytes)
 	return result
 }

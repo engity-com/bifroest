@@ -27,7 +27,7 @@ const (
 	castBECastUnitTrailerSize = 12
 
 	castBECastHeaderBodySize      = 217
-	castBECastChunkDescriptorSize = 193
+	castBECastChunkDescriptorSize = 194
 	castBECastSealBodySize        = 226
 
 	castBECastCiphertextHashDomain       = "BIFROEST-SESSION-RECORDING-BECAST-CIPHERTEXT-HASH/v1\x00"
@@ -105,15 +105,16 @@ func encodeBECastChunk(value audit.SessionRecordingBECastChunk, ciphertext []byt
 	}
 	body := make([]byte, castBECastChunkDescriptorSize+len(ciphertext))
 	body[0] = value.FormatVersion
-	binary.BigEndian.PutUint64(body[1:], value.Sequence)
-	copy(body[9:], value.PreviousUnitHash[:])
-	binary.BigEndian.PutUint64(body[41:], value.PlaintextOffset)
-	binary.BigEndian.PutUint32(body[49:], value.PlaintextLength)
-	binary.BigEndian.PutUint32(body[53:], value.CiphertextLength)
-	copy(body[57:], value.CiphertextHash[:])
-	copy(body[89:], value.ContentHashState[:])
-	binary.BigEndian.PutUint64(body[121:], value.ContentHashBytes)
-	copy(body[129:], value.Signature)
+	body[1] = value.FinalStatus
+	binary.BigEndian.PutUint64(body[2:], value.Sequence)
+	copy(body[10:], value.PreviousUnitHash[:])
+	binary.BigEndian.PutUint64(body[42:], value.PlaintextOffset)
+	binary.BigEndian.PutUint32(body[50:], value.PlaintextLength)
+	binary.BigEndian.PutUint32(body[54:], value.CiphertextLength)
+	copy(body[58:], value.CiphertextHash[:])
+	copy(body[90:], value.ContentHashState[:])
+	binary.BigEndian.PutUint64(body[122:], value.ContentHashBytes)
+	copy(body[130:], value.Signature)
 	copy(body[castBECastChunkDescriptorSize:], ciphertext)
 	return encodeBECastUnit(castBECastChunkUnitType, body), nil
 }
@@ -126,24 +127,25 @@ func decodeBECastChunk(unit []byte, recordingId uuid.UUID, producerId audit.Prod
 	if len(body) < castBECastChunkDescriptorSize {
 		return audit.SessionRecordingBECastChunk{}, nil, errors.System.Newf("BECast chunk body has %d bytes, fewer than descriptor size %d", len(body), castBECastChunkDescriptorSize)
 	}
-	ciphertextLength := binary.BigEndian.Uint32(body[53:])
+	ciphertextLength := binary.BigEndian.Uint32(body[54:])
 	if uint64(len(body)) != uint64(castBECastChunkDescriptorSize)+uint64(ciphertextLength) {
 		return audit.SessionRecordingBECastChunk{}, nil, errors.System.Newf("BECast chunk body has %d bytes instead of %d", len(body), uint64(castBECastChunkDescriptorSize)+uint64(ciphertextLength))
 	}
 	value := audit.SessionRecordingBECastChunk{
 		FormatVersion:    body[0],
+		FinalStatus:      body[1],
 		RecordingId:      recordingId,
 		ProducerId:       producerId,
-		Sequence:         binary.BigEndian.Uint64(body[1:]),
-		PlaintextOffset:  binary.BigEndian.Uint64(body[41:]),
-		PlaintextLength:  binary.BigEndian.Uint32(body[49:]),
+		Sequence:         binary.BigEndian.Uint64(body[2:]),
+		PlaintextOffset:  binary.BigEndian.Uint64(body[42:]),
+		PlaintextLength:  binary.BigEndian.Uint32(body[50:]),
 		CiphertextLength: ciphertextLength,
-		ContentHashBytes: binary.BigEndian.Uint64(body[121:]),
-		Signature:        append([]byte(nil), body[129:193]...),
+		ContentHashBytes: binary.BigEndian.Uint64(body[122:]),
+		Signature:        append([]byte(nil), body[130:194]...),
 	}
-	copy(value.PreviousUnitHash[:], body[9:41])
-	copy(value.CiphertextHash[:], body[57:89])
-	copy(value.ContentHashState[:], body[89:121])
+	copy(value.PreviousUnitHash[:], body[10:42])
+	copy(value.CiphertextHash[:], body[58:90])
+	copy(value.ContentHashState[:], body[90:122])
 	ciphertext := append([]byte(nil), body[castBECastChunkDescriptorSize:]...)
 	if value.CiphertextHash != hashBECastCiphertext(ciphertext) {
 		return audit.SessionRecordingBECastChunk{}, nil, errors.System.Newf("BECast chunk ciphertext hash mismatch")

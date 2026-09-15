@@ -63,6 +63,7 @@ type beCastScanner struct {
 	chunkCount           uint64
 	finalChunkSeen       bool
 	finalContentHash     audit.SessionRecordingHash
+	finalStatus          uint8
 	chunks               []beCastVerifiedChunk
 }
 
@@ -275,7 +276,11 @@ func (this *beCastScanner) readChunk() error {
 	if value.ContentHashBytes == 0 {
 		this.finalChunkSeen = true
 		this.finalContentHash = value.ContentHashState
+		this.finalStatus = value.FinalStatus
 	} else {
+		if value.FinalStatus != 0 {
+			return errors.System.Newf("BECast continuation chunk %d has final status %d", value.Sequence, value.FinalStatus)
+		}
 		expectedHashBytes, err := checkedBECastCount("content hash", uint64(len(castContentHashDomain)), nextCastBytes)
 		if err != nil {
 			return err
@@ -321,6 +326,9 @@ func (this *beCastScanner) readSeal() (audit.SessionRecordingBECastSeal, error) 
 	}
 	if value.CastContentDigest != this.finalContentHash {
 		return audit.SessionRecordingBECastSeal{}, errors.System.Newf("BECast final chunk content hash does not match its seal")
+	}
+	if value.Status != this.finalStatus {
+		return audit.SessionRecordingBECastSeal{}, errors.System.Newf("BECast seal status does not match its final chunk")
 	}
 	var streamHash audit.SessionRecordingHash
 	copy(streamHash[:], this.ciphertextStreamHash.Sum(nil))
