@@ -9,6 +9,7 @@ import (
 	"github.com/shirou/gopsutil/v4/process"
 	"golang.org/x/sys/unix"
 
+	"github.com/engity-com/bifroest/internal/processidentity"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
@@ -154,8 +155,8 @@ func signalPinnedProcessGroup(ctx context.Context, anchorPid, anchorPidfd, pgid 
 		return err
 	}
 	type member struct {
-		pid       int
-		createdAt int64
+		pid      int
+		identity string
 	}
 	members := make([]member, 0)
 	for _, candidate := range candidates {
@@ -167,11 +168,11 @@ func signalPinnedProcessGroup(ctx context.Context, anchorPid, anchorPidfd, pgid 
 		if err != nil || candidatePgid != pgid {
 			continue
 		}
-		createdAt, err := candidate.CreateTime()
+		identity, err := processidentity.Get(pid)
 		if err != nil {
 			continue
 		}
-		members = append(members, member{pid: pid, createdAt: createdAt})
+		members = append(members, member{pid: pid, identity: identity})
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -198,8 +199,8 @@ func signalPinnedProcessGroup(ctx context.Context, anchorPid, anchorPidfd, pgid 
 			}
 			continue
 		}
-		expectedCreatedAt := candidate.createdAt
-		if !(processTarget{pid: pid, expectedCreatedAt: &expectedCreatedAt}).matchesIdentity() {
+		expectedIdentity := candidate.identity
+		if !(processTarget{pid: pid, expectedIdentity: &expectedIdentity}).matchesIdentity() {
 			_ = unix.Close(candidatePidfd)
 			continue
 		}
@@ -257,7 +258,7 @@ func signalPinnedProcessGroup(ctx context.Context, anchorPid, anchorPidfd, pgid 
 }
 
 func (*imp) killWithoutPidfd(target processTarget, signal sys.Signal) error {
-	if target.processGroup || target.expectedCreatedAt != nil || target.expectedEnv != "" {
+	if target.processGroup || target.expectedIdentity != nil || target.expectedEnv != "" {
 		return errors.System.Newf("secure process signaling requires pidfd support")
 	}
 	if !target.matchesIdentity() {

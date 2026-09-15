@@ -112,13 +112,10 @@ func TestRemoteDeliveryRetriesTargetsIndependentlyAndRetainsSegments(t *testing.
 
 func TestRemoteDeliveryDoesNotRepublishAfterCursorWriteFailure(t *testing.T) {
 	conf, identity, _ := newRemoteDeliveryTestJournal(t, 1)
-	blocker := filepath.Join(conf.Journal.Directory, remoteDeliveryStateDirectoryName, identity.ProducerId().String(), remoteDeliveryTargetStateName("archive"), remoteDeliveryCursorTempFileName)
 	var calls atomic.Int32
 	published := make(chan struct{}, 1)
 	conf.Targets = configuration.AuditlogTargets{remoteDeliveryTestTarget("archive", func(context.Context, SealedSegment) error {
 		if calls.Add(1) == 1 {
-			require.NoError(t, os.Mkdir(blocker, journalDirectoryMode))
-			require.NoError(t, os.WriteFile(filepath.Join(blocker, "keep"), []byte("x"), journalFileMode))
 			published <- struct{}{}
 		}
 		return nil
@@ -128,15 +125,32 @@ func TestRemoteDeliveryDoesNotRepublishAfterCursorWriteFailure(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = delivery.Close() })
 	setRemoteDeliveryTestOptions(delivery)
+	var cursorWritable atomic.Bool
+	cursorAttempted := make(chan struct{}, 1)
+	delivery.workers[0].commitCursorHook = func() error {
+		if cursorWritable.Load() {
+			return nil
+		}
+		select {
+		case cursorAttempted <- struct{}{}:
+		default:
+		}
+		return goerrors.New("cursor unavailable")
+	}
 	require.NoError(t, delivery.Start())
 	select {
 	case <-published:
 	case <-time.After(time.Second):
 		t.Fatal("segment was not published")
 	}
+	select {
+	case <-cursorAttempted:
+	case <-time.After(time.Second):
+		t.Fatal("cursor write was not attempted")
+	}
 	time.Sleep(25 * time.Millisecond)
 	require.Equal(t, int32(1), calls.Load())
-	require.NoError(t, os.RemoveAll(blocker))
+	cursorWritable.Store(true)
 	require.Eventually(t, func() bool {
 		return remoteDeliveryTestCursorSequence(conf, identity, "archive") == 1
 	}, time.Second, time.Millisecond)

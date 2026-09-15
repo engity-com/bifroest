@@ -84,6 +84,7 @@ type remoteDeliveryWorker struct {
 	confirmed              atomic.Uint64
 	observed               chan journalSegmentFile
 	forceRescan            atomic.Bool
+	commitCursorHook       func() error
 	reader                 remoteDeliverySegmentReader
 }
 
@@ -409,6 +410,11 @@ func (this *remoteDeliveryWorker) run(ctx context.Context) {
 }
 
 func (this *remoteDeliveryWorker) commitPendingCursor(pending remoteDeliveryCursor) error {
+	if this.commitCursorHook != nil {
+		if err := this.commitCursorHook(); err != nil {
+			return err
+		}
+	}
 	cursor, err := writeRemoteDeliveryCursor(this.stateDirectory, this.identity, this.scope.Target, this.destinationFingerprint, pending.Sequence, pending.SegmentHash)
 	if err != nil {
 		return err

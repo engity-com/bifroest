@@ -4,9 +4,7 @@ package alternatives
 
 import (
 	"context"
-	"io"
 	goos "os"
-	"os/exec"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -164,8 +162,30 @@ func resolveLocalKindProvider(provider string, available func(string) bool) (str
 func localKindProviderAvailable(provider string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, provider, "info")
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	return cmd.Run() == nil
+	return probeLocalKindProvider(ctx, provider, runLocalKindProviderProbe)
+}
+
+func probeLocalKindProvider(ctx context.Context, provider string, run func(context.Context, string, ...string) error) bool {
+	attempts := 1
+	if provider == "podman" {
+		attempts++
+	}
+	for attempt := range attempts {
+		attemptCtx := ctx
+		var cancel context.CancelFunc = func() {}
+		if attemptsLeft := attempts - attempt; attemptsLeft > 1 {
+			if deadline, ok := ctx.Deadline(); ok {
+				attemptCtx, cancel = context.WithTimeout(ctx, time.Until(deadline)/time.Duration(attemptsLeft))
+			}
+		}
+		err := run(attemptCtx, provider, "ps", "--all", "--quiet")
+		cancel()
+		if err == nil {
+			return true
+		}
+		if ctx.Err() != nil {
+			return false
+		}
+	}
+	return false
 }
