@@ -32,6 +32,11 @@ func TestAgeSshEd25519RoundTripAndAuthentication(t *testing.T) {
 	require.NotEqual(t, first, second)
 	require.Equal(t, []byte("secret recording"), decryptAgeSshTestMessage(t, identities, first))
 	require.Equal(t, []byte("secret recording"), decryptAgeSshTestMessage(t, identities, second))
+	targeted, err := identities.DecryptForFingerprint(bytes.NewReader(first), recipient.Fingerprint())
+	require.NoError(t, err)
+	targetedPlaintext, err := io.ReadAll(targeted)
+	require.NoError(t, err)
+	require.Equal(t, []byte("secret recording"), targetedPlaintext)
 
 	tampered := append([]byte(nil), first...)
 	tampered[len(tampered)-1] ^= 1
@@ -49,6 +54,12 @@ func TestAgeSshEd25519RoundTripAndAuthentication(t *testing.T) {
 	require.NoError(t, err)
 	_, err = otherIdentities.Decrypt(bytes.NewReader(first))
 	require.True(t, bferrors.Config.IsErr(err))
+	_, err = otherIdentities.DecryptForFingerprint(bytes.NewReader(first), recipient.Fingerprint())
+	require.True(t, bferrors.Config.IsErr(err))
+	otherRecipient, err := NewAgeSshRecipient(otherKey.PublicKey().ToSsh())
+	require.NoError(t, err)
+	_, err = otherIdentities.DecryptForFingerprint(bytes.NewReader(first), otherRecipient.Fingerprint())
+	require.True(t, bferrors.System.IsErr(err))
 }
 
 func TestAgeSshAcceptsPointerEd25519AndRsaIdentities(t *testing.T) {

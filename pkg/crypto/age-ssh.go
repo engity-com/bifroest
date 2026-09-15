@@ -59,7 +59,8 @@ func (this *AgeSshRecipient) Encrypt(output io.Writer) (io.WriteCloser, error) {
 }
 
 type AgeSshIdentities struct {
-	identities []age.Identity
+	identities              []age.Identity
+	identitiesByFingerprint map[string]age.Identity
 }
 
 func NewAgeSshIdentities(keys []PrivateKey) (*AgeSshIdentities, error) {
@@ -67,6 +68,7 @@ func NewAgeSshIdentities(keys []PrivateKey) (*AgeSshIdentities, error) {
 		return nil, errors.Config.Newf("no age SSH identities")
 	}
 	identities := make([]age.Identity, 0, len(keys))
+	identitiesByFingerprint := make(map[string]age.Identity, len(keys))
 	for _, key := range keys {
 		if key == nil {
 			return nil, errors.Config.Newf("nil age SSH identity")
@@ -87,8 +89,29 @@ func NewAgeSshIdentities(keys []PrivateKey) (*AgeSshIdentities, error) {
 			return nil, errors.Config.Newf("%w", err)
 		}
 		identities = append(identities, identity)
+		identitiesByFingerprint[ssh.FingerprintSHA256(key.PublicKey().ToSsh())] = identity
 	}
-	return &AgeSshIdentities{identities: identities}, nil
+	return &AgeSshIdentities{identities: identities, identitiesByFingerprint: identitiesByFingerprint}, nil
+}
+
+// DecryptForFingerprint restricts decryption to the identity with the given
+// SSH fingerprint instead of trying every configured identity.
+func (this *AgeSshIdentities) DecryptForFingerprint(input io.Reader, fingerprint string) (io.Reader, error) {
+	if this == nil || len(this.identitiesByFingerprint) == 0 {
+		return nil, errors.System.Newf("no age SSH identities")
+	}
+	if input == nil {
+		return nil, errors.System.Newf("nil age ciphertext input")
+	}
+	identity, exists := this.identitiesByFingerprint[fingerprint]
+	if !exists {
+		return nil, errors.Config.Newf("age SSH identity fingerprint %s is not available", fingerprint)
+	}
+	reader, err := age.Decrypt(input, identity)
+	if err != nil {
+		return nil, errors.System.Newf("%w", err)
+	}
+	return ageSshDecryptReader{Reader: reader}, nil
 }
 
 func (this *AgeSshIdentities) Decrypt(input io.Reader) (io.Reader, error) {
