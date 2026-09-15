@@ -474,7 +474,7 @@ func rewriteBECastTestContainer(t *testing.T, original []byte, identity *audit.I
 	require.NoError(t, err)
 	result := append([]byte(castBECastFileMagic), headerUnit...)
 	previousHash := hashBECastUnit(headerUnit)
-	streamHash := hashSessionRecordingWriter(castBECastCiphertextStreamHashDomain)
+	streamHash := newDomainHasher(castBECastCiphertextStreamHashDomain)
 	var castBytes, ciphertextBytes uint64
 	for index, parsedChunk := range parsed.chunks {
 		value := parsedChunk.value

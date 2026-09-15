@@ -211,7 +211,6 @@ func (this *BECastWriter) Checkpoint() (audit.SessionRecordingBECastHead, error)
 	return head, nil
 }
 
-//nolint:unused // BECast recovery will replace the synchronized output at a checkpoint.
 func (this *BECastWriter) replaceOutput(output io.Writer) error {
 	if this == nil || this.sink == nil || output == nil {
 		return errors.System.Newf("invalid BECast replacement output")
@@ -220,6 +219,19 @@ func (this *BECastWriter) replaceOutput(output io.Writer) error {
 		return errors.System.Newf("BECast writer cannot replace its output in the current state")
 	}
 	this.sink.output = output
+	return nil
+}
+
+func (this *BECastWriter) repositoryFailure() error {
+	if this == nil {
+		return errors.System.Newf("nil BECast writer")
+	}
+	if this.cast != nil && this.cast.poisoned != nil {
+		return this.cast.poisoned
+	}
+	if this.sink != nil {
+		return this.sink.poisoned
+	}
 	return nil
 }
 

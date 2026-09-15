@@ -27,7 +27,7 @@ func TestBECastHeaderRoundTrip(t *testing.T) {
 }
 
 func TestBECastChunkRoundTrip(t *testing.T) {
-	recordingId := beCastTestRecordingId()
+	recordingId := beCastTestId()
 	producerId := beCastTestProducerId()
 	ciphertext := []byte{0x80, 0x01, 0x7f, 0xfe, 0x55}
 	chunk := audit.SessionRecordingBECastChunk{
@@ -58,7 +58,7 @@ func TestBECastChunkRoundTrip(t *testing.T) {
 }
 
 func TestBECastSealRoundTrip(t *testing.T) {
-	recordingId := beCastTestRecordingId()
+	recordingId := beCastTestId()
 	producerId := beCastTestProducerId()
 	seal := audit.SessionRecordingBECastSeal{
 		FormatVersion:        castBECastFormatVersion,
@@ -229,7 +229,7 @@ func TestBECastChunkUnitGoldenHash(t *testing.T) {
 	unit, err := encodeBECastChunk(audit.SessionRecordingBECastChunk{
 		FormatVersion:    castBECastFormatVersion,
 		FinalStatus:      2,
-		RecordingId:      beCastTestRecordingId(),
+		RecordingId:      beCastTestId(),
 		ProducerId:       beCastTestProducerId(),
 		Sequence:         17,
 		PreviousUnitHash: beCastTestHash(1),
@@ -257,7 +257,7 @@ func beCastTestHeader() audit.SessionRecordingBECastHeader {
 		CastVersion:          3,
 		Codec:                castBECastCodec,
 		Encryption:           castBECastEncryption,
-		RecordingId:          beCastTestRecordingId(),
+		RecordingId:          beCastTestId(),
 		ProducerId:           beCastTestProducerId(),
 		PublicKey:            beCastTestBytes(51, 32),
 		RecipientFingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
@@ -265,7 +265,7 @@ func beCastTestHeader() audit.SessionRecordingBECastHeader {
 	}
 }
 
-func beCastTestRecordingId() uuid.UUID {
+func beCastTestId() uuid.UUID {
 	return uuid.MustParse("fd70203b-ea19-4288-8ec2-577b623e92d0")
 }
 

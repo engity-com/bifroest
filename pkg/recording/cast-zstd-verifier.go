@@ -204,8 +204,8 @@ func newCastZstdStreamForRecovery(source io.ReaderAt, size int64, options CastZs
 		decoder.Close()
 		return nil, errors.System.Newf("cast Zstandard container belongs to producer %s instead of %s", header.ProducerId, options.ExpectedProducerId)
 	}
-	streamHasher := hashSessionRecordingWriter(castZstdStreamHashDomain)
-	headerUnitHash := hashSessionRecording(castZstdUnitHashDomain, headerFrame)
+	streamHasher := newDomainHasher(castZstdStreamHashDomain)
+	headerUnitHash := hashDomainValues(castZstdUnitHashDomain, headerFrame)
 	stream.header = header
 	stream.publicKey = publicKey
 	stream.headerUnitHash = headerUnitHash
@@ -319,7 +319,7 @@ func (this *castZstdStream) readChunk() error {
 	if err != nil {
 		return errors.System.Newf("cannot read Cast Zstandard frame %d: %w", value.Sequence, err)
 	}
-	if hashSessionRecording(castZstdFrameHashDomain, frame) != value.FrameHash {
+	if hashDomainValues(castZstdFrameHashDomain, frame) != value.FrameHash {
 		return errors.System.Newf("cast Zstandard frame %d hash is invalid", value.Sequence)
 	}
 	if err := validateSingleCastZstdFrame(frame, value.PlaintextLength); err != nil {
@@ -335,7 +335,7 @@ func (this *castZstdStream) readChunk() error {
 	if err := validateCastZstdChunkLines(plaintext, this.chunkCount == 0); err != nil {
 		return errors.System.Newf("illegal Cast Zstandard frame %d boundaries: %w", value.Sequence, err)
 	}
-	this.previousUnitHash = hashSessionRecording(castZstdUnitHashDomain, descriptor, frame)
+	this.previousUnitHash = hashDomainValues(castZstdUnitHashDomain, descriptor, frame)
 	this.castBytes += uint64(len(plaintext))
 	this.zstdBytes += uint64(len(frame))
 	this.chunkCount++
@@ -599,7 +599,7 @@ func effectiveMaximumCastZstdChunks(value uint64) uint64 {
 	return value
 }
 
-func hashSessionRecordingWriter(domain string) hash.Hash {
+func newDomainHasher(domain string) hash.Hash {
 	hasher := sha256.New()
 	_, _ = hasher.Write([]byte(domain))
 	return hasher

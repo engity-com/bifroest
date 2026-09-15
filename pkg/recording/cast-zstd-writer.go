@@ -90,7 +90,7 @@ func NewCastZstdWriter(output io.Writer, identity *audit.Identity, header CastHe
 	}
 	streamHasher := sha256.New()
 	_, _ = streamHasher.Write([]byte(castZstdStreamHashDomain))
-	headerHash := hashSessionRecording(castZstdUnitHashDomain, headerFrame)
+	headerHash := hashDomainValues(castZstdUnitHashDomain, headerFrame)
 	sink := &castZstdSink{
 		output:           output,
 		encoder:          encoder,
@@ -175,6 +175,19 @@ func (this *CastZstdWriter) replaceOutput(output io.Writer) error {
 		return errors.System.Newf("cast Zstandard writer cannot replace its output in the current state")
 	}
 	this.sink.output = output
+	return nil
+}
+
+func (this *CastZstdWriter) repositoryFailure() error {
+	if this == nil {
+		return errors.System.Newf("nil Cast Zstandard writer")
+	}
+	if this.cast != nil && this.cast.poisoned != nil {
+		return this.cast.poisoned
+	}
+	if this.sink != nil {
+		return this.sink.poisoned
+	}
 	return nil
 }
 
@@ -293,7 +306,7 @@ func (this *castZstdSink) flush(final bool) error {
 	if len(frame) == 0 || len(frame) > MaximumCastZstdFrameSize || len(frame) > math.MaxUint32 {
 		return this.poison(errors.System.Newf("cast Zstandard frame exceeds %d bytes", MaximumCastZstdFrameSize))
 	}
-	frameHash := hashSessionRecording(castZstdFrameHashDomain, frame)
+	frameHash := hashDomainValues(castZstdFrameHashDomain, frame)
 	chunkValue, err := this.identity.NewSessionRecordingZstdChunk(audit.SessionRecordingZstdChunk{
 		FormatVersion:    castZstdFormatVersion,
 		RecordingId:      this.recordingId,
@@ -317,7 +330,7 @@ func (this *castZstdSink) flush(final bool) error {
 	if err := writeCastZstdBytes(this.output, frame); err != nil {
 		return this.poison(err)
 	}
-	this.previousUnitHash = hashSessionRecording(castZstdUnitHashDomain, descriptor, frame)
+	this.previousUnitHash = hashDomainValues(castZstdUnitHashDomain, descriptor, frame)
 	this.prefixBytes += uint64(len(descriptor) + len(frame))
 	this.castBytes += uint64(len(plaintext))
 	this.zstdBytes += uint64(len(frame))

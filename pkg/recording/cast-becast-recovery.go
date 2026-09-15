@@ -40,7 +40,7 @@ type beCastRecoveryPlan struct {
 // existing chunks. The caller must hold an exclusive lock for file throughout
 // the call. The signed head establishes a minimum durable prefix; rollback
 // protection requires an external monotonic or append-only anchor for heads.
-func RecoverBECast(file CastZstdRecoveryFile, identity *audit.Identity, recipient *crypto.AgeSshRecipient, checkpoint audit.SessionRecordingBECastHead, recoveredAt time.Time, options BECastVerifyOptions) (*BECastRecoveryResult, error) {
+func RecoverBECast(file RecoveryFile, identity *audit.Identity, recipient *crypto.AgeSshRecipient, checkpoint audit.SessionRecordingBECastHead, recoveredAt time.Time, options BECastVerifyOptions) (*BECastRecoveryResult, error) {
 	if file == nil {
 		return nil, errors.System.Newf("nil BECast recovery file")
 	}
@@ -152,7 +152,7 @@ func scanActiveBECast(source io.ReaderAt, size int64, options BECastVerifyOption
 		maximumCastBytes:     uint64(maximumCastBytes),
 		maximumChunks:        maximumChunks,
 		context:              options.Context,
-		ciphertextStreamHash: hashSessionRecordingWriter(castBECastCiphertextStreamHashDomain),
+		ciphertextStreamHash: newDomainHasher(castBECastCiphertextStreamHashDomain),
 	}
 	magic, err := scanner.readBytes(len(castBECastFileMagic))
 	if err != nil {
@@ -277,7 +277,7 @@ func validatedBECastRecoveryResult(checkpoint audit.SessionRecordingBECastHead, 
 	if startedAt.Unix() != checkpoint.StartedAtUnixSeconds || startedAt.Nanosecond() != int(checkpoint.StartedAtNanoseconds) {
 		return CastResult{}, errors.System.Newf("BECast checkpoint has an invalid recording start time")
 	}
-	result := CastResult{Status: CastStatusIncomplete, EndedAt: recoveredAt, Reason: castZstdRecoveryReason}
+	result := CastResult{Status: CastStatusIncomplete, EndedAt: recoveredAt, Reason: startupRecoveryReason}
 	if err := validateCastResult(CastMetadata{StartedAt: startedAt}, result, false); err != nil {
 		return CastResult{}, errors.System.Newf("cannot create incomplete BECast recovery result: %w", err)
 	}
@@ -451,7 +451,7 @@ func encodeBECastRecoveryCiphertext(recipient *crypto.AgeSshRecipient, plaintext
 	return ciphertext.Bytes(), nil
 }
 
-func writeBECastRecoveryPlan(file CastZstdRecoveryFile, plan beCastRecoveryPlan) error {
+func writeBECastRecoveryPlan(file RecoveryFile, plan beCastRecoveryPlan) error {
 	if len(plan.chunk) > 0 {
 		if err := writeBECastBytes(file, plan.chunk); err != nil {
 			return err

@@ -206,7 +206,7 @@ func TestCastWriterSplitsLargeUtf8OutputOnRuneBoundaries(t *testing.T) {
 	require.Equal(t, uint64(2), verification.OutputEvents)
 }
 
-func TestRecordingIdRequiresCanonicalRandomUuid(t *testing.T) {
+func TestIdRequiresCanonicalRandomUuid(t *testing.T) {
 	var id Id
 	require.NoError(t, id.UnmarshalText([]byte("34e34ab8-7457-4d88-a5e4-c57791775c3a")))
 	require.Equal(t, "34e34ab8-7457-4d88-a5e4-c57791775c3a", id.String())

@@ -165,7 +165,7 @@ func TestCastZstdRecoveryFinalizesOpenContainerAndTruncatesPhysicalTail(t *testi
 	require.True(t, result.Truncated)
 	require.True(t, result.Finalized)
 	require.Equal(t, CastStatusIncomplete, result.Verification.Summary.Status)
-	require.Equal(t, castZstdRecoveryReason, result.Verification.Cast.Result.Reason)
+	require.Equal(t, startupRecoveryReason, result.Verification.Cast.Result.Reason)
 
 	again, err := RecoverCastZstd(file, identity, checkpoint, metadata.StartedAt.Add(3*time.Second), CastZstdVerifyOptions{})
 	require.NoError(t, err)
@@ -348,9 +348,9 @@ func encodeCastZstdTestContainer(t *testing.T, identity *audit.Identity, summary
 	headerFrame, err := encodeCastZstdHeader(header)
 	require.NoError(t, err)
 	result := append([]byte(nil), headerFrame...)
-	previousHash := hashSessionRecording(castZstdUnitHashDomain, headerFrame)
+	previousHash := hashDomainValues(castZstdUnitHashDomain, headerFrame)
 	headerHash := previousHash
-	streamHasher := hashSessionRecordingWriter(castZstdStreamHashDomain)
+	streamHasher := newDomainHasher(castZstdStreamHashDomain)
 	encoder, err := zstd.NewWriter(nil,
 		zstd.WithEncoderCRC(true),
 		zstd.WithEncoderConcurrency(1),
@@ -370,14 +370,14 @@ func encodeCastZstdTestContainer(t *testing.T, identity *audit.Identity, summary
 			PlaintextOffset:  castBytes,
 			PlaintextLength:  uint32(len(plaintext)),
 			FrameLength:      uint32(len(frame)),
-			FrameHash:        hashSessionRecording(castZstdFrameHashDomain, frame),
+			FrameHash:        hashDomainValues(castZstdFrameHashDomain, frame),
 		})
 		require.NoError(t, err)
 		descriptor, err := encodeCastZstdChunk(value)
 		require.NoError(t, err)
 		result = append(result, descriptor...)
 		result = append(result, frame...)
-		previousHash = hashSessionRecording(castZstdUnitHashDomain, descriptor, frame)
+		previousHash = hashDomainValues(castZstdUnitHashDomain, descriptor, frame)
 		castBytes += uint64(len(plaintext))
 		zstdBytes += uint64(len(frame))
 		_, _ = streamHasher.Write(plaintext)

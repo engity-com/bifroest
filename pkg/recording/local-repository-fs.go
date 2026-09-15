@@ -11,11 +11,11 @@ import (
 )
 
 const (
-	localRecordingDirectoryMode = 0700
-	localRecordingFileMode      = 0600
+	localDirectoryMode = 0700
+	localFileMode      = 0600
 )
 
-func canonicalLocalRecordingDirectory(path string) (string, error) {
+func canonicalLocalDirectory(path string) (string, error) {
 	if path == "" {
 		return "", errors.Config.Newf("local recording directory is empty")
 	}
@@ -34,7 +34,7 @@ func canonicalLocalRecordingDirectory(path string) (string, error) {
 		return "", err
 	}
 	parent := filepath.Dir(absolute)
-	if err := os.MkdirAll(parent, localRecordingDirectoryMode); err != nil {
+	if err := os.MkdirAll(parent, localDirectoryMode); err != nil {
 		return "", err
 	}
 	canonicalParent, err := filepath.EvalSymlinks(parent)
@@ -44,8 +44,8 @@ func canonicalLocalRecordingDirectory(path string) (string, error) {
 	return filepath.Join(canonicalParent, filepath.Base(absolute)), nil
 }
 
-func ensureLocalRecordingDirectory(path string) error {
-	if err := os.Mkdir(path, localRecordingDirectoryMode); err != nil && !goerrors.Is(err, fs.ErrExist) {
+func ensureLocalDirectory(path string) error {
+	if err := os.Mkdir(path, localDirectoryMode); err != nil && !goerrors.Is(err, fs.ErrExist) {
 		return err
 	}
 	info, err := os.Lstat(path)
@@ -55,25 +55,25 @@ func ensureLocalRecordingDirectory(path string) error {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.Config.Newf("local recording path is not a regular directory")
 	}
-	if err := secureLocalRecordingDirectory(path, info); err != nil {
+	if err := secureLocalDirectory(path, info); err != nil {
 		return err
 	}
-	if err := syncLocalRecordingDirectory(path); err != nil {
+	if err := syncLocalDirectory(path); err != nil {
 		return err
 	}
-	return syncLocalRecordingDirectory(filepath.Dir(path))
+	return syncLocalDirectory(filepath.Dir(path))
 }
 
-func createLocalRecordingFile(path string) (*os.File, error) {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, localRecordingFileMode)
+func createLocalFile(path string) (*os.File, error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, localFileMode)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateOpenLocalRecordingFile(path, file); err != nil {
+	if err := validateOpenLocalFile(path, file); err != nil {
 		_ = file.Close()
 		return nil, err
 	}
-	if err := secureLocalRecordingFile(path, file); err != nil {
+	if err := secureLocalFile(path, file); err != nil {
 		_ = file.Close()
 		return nil, err
 	}
@@ -84,7 +84,7 @@ func createLocalRecordingFile(path string) (*os.File, error) {
 	return file, nil
 }
 
-func openActiveLocalRecordingFile(path string) (*os.File, error) {
+func openActiveLocalFile(path string) (*os.File, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
@@ -92,18 +92,18 @@ func openActiveLocalRecordingFile(path string) (*os.File, error) {
 	if !info.Mode().IsRegular() {
 		return nil, errors.Config.Newf("active local recording is not a regular file")
 	}
-	if err := makeActiveLocalRecordingWritable(path); err != nil {
+	if err := makeActiveLocalWritable(path); err != nil {
 		return nil, err
 	}
-	file, err := os.OpenFile(path, os.O_RDWR, localRecordingFileMode)
+	file, err := os.OpenFile(path, os.O_RDWR, localFileMode)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateOpenLocalRecordingFile(path, file); err != nil {
+	if err := validateOpenLocalFile(path, file); err != nil {
 		_ = file.Close()
 		return nil, err
 	}
-	if err := secureLocalRecordingFile(path, file); err != nil {
+	if err := secureLocalFile(path, file); err != nil {
 		_ = file.Close()
 		return nil, err
 	}
@@ -114,7 +114,7 @@ func openActiveLocalRecordingFile(path string) (*os.File, error) {
 	return file, nil
 }
 
-func validateOpenLocalRecordingFile(path string, file *os.File) error {
+func validateOpenLocalFile(path string, file *os.File) error {
 	opened, err := file.Stat()
 	if err != nil {
 		return err
@@ -129,10 +129,10 @@ func validateOpenLocalRecordingFile(path string, file *os.File) error {
 	return nil
 }
 
-func writeLocalRecordingHead(directory string, value []byte) error {
-	temporary := filepath.Join(directory, localRecordingHeadTempFileName)
-	target := filepath.Join(directory, localRecordingHeadFileName)
-	file, err := createLocalRecordingFile(temporary)
+func writeLocalHead(directory string, value []byte) error {
+	temporary := filepath.Join(directory, localHeadTempFileName)
+	target := filepath.Join(directory, localHeadFileName)
+	file, err := createLocalFile(temporary)
 	if err != nil {
 		return err
 	}
@@ -150,26 +150,29 @@ func writeLocalRecordingHead(directory string, value []byte) error {
 		_ = file.Close()
 		return err
 	}
-	if err := protectLocalRecordingHead(temporary, file); err != nil {
+	if err := protectLocalHead(temporary, file); err != nil {
 		_ = file.Close()
 		return err
 	}
 	if err := file.Close(); err != nil {
 		return err
 	}
-	if err := replaceLocalRecordingFile(temporary, target); err != nil {
+	if err := replaceLocalFile(temporary, target); err != nil {
 		return err
 	}
 	removeTemporary = false
-	return syncLocalRecordingDirectory(directory)
+	return syncLocalDirectory(directory)
 }
 
-func loadLocalRecordingHead(path string) ([]byte, error) {
-	file, err := openLocalRecordingHead(path)
+func loadLocalHead(path string, maximumBytes int64) ([]byte, error) {
+	if maximumBytes < 1 {
+		return nil, errors.Config.Newf("local recording head size limit must be positive")
+	}
+	file, err := openLocalHead(path)
 	if err != nil {
 		return nil, err
 	}
-	payload, readErr := io.ReadAll(io.LimitReader(file, maximumCastZstdHeadBytes+1))
+	payload, readErr := io.ReadAll(io.LimitReader(file, maximumBytes+1))
 	closeErr := file.Close()
 	if readErr != nil {
 		return nil, readErr
@@ -177,14 +180,14 @@ func loadLocalRecordingHead(path string) ([]byte, error) {
 	if closeErr != nil {
 		return nil, closeErr
 	}
-	if len(payload) > maximumCastZstdHeadBytes {
-		return nil, errors.System.Newf("local recording head exceeds its size limit")
+	if int64(len(payload)) > maximumBytes {
+		return nil, errors.Config.Newf("local recording head exceeds its size limit")
 	}
 	return payload, nil
 }
 
-func discardLocalRecordingHeadTemporary(directory string) error {
-	path := filepath.Join(directory, localRecordingHeadTempFileName)
+func discardLocalHeadTemporary(directory string) error {
+	path := filepath.Join(directory, localHeadTempFileName)
 	info, err := os.Lstat(path)
 	if goerrors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -198,17 +201,27 @@ func discardLocalRecordingHeadTemporary(directory string) error {
 	if err := os.Remove(path); err != nil {
 		return err
 	}
-	return syncLocalRecordingDirectory(directory)
+	return syncLocalDirectory(directory)
 }
 
-func prepareInterruptedLocalRecordingHead(directory string) error {
-	head := filepath.Join(directory, localRecordingHeadFileName)
-	temporary := filepath.Join(directory, localRecordingHeadTempFileName)
+func prepareInterruptedLocalHead(directory string, maximumBytes int64, validate func([]byte) error) error {
+	if validate == nil {
+		return errors.Config.Newf("nil local recording head validator")
+	}
+	head := filepath.Join(directory, localHeadFileName)
+	temporary := filepath.Join(directory, localHeadTempFileName)
 	if info, err := os.Lstat(head); err == nil {
 		if !info.Mode().IsRegular() {
 			return errors.Config.Newf("local recording head is not a regular file")
 		}
-		return discardLocalRecordingHeadTemporary(directory)
+		payload, err := loadLocalHead(head, maximumBytes)
+		if err != nil {
+			return err
+		}
+		if err := validate(payload); err != nil {
+			return err
+		}
+		return discardLocalHeadTemporary(directory)
 	} else if !goerrors.Is(err, fs.ErrNotExist) {
 		return err
 	}
@@ -220,15 +233,15 @@ func prepareInterruptedLocalRecordingHead(directory string) error {
 	} else if !info.Mode().IsRegular() {
 		return errors.Config.Newf("temporary local recording head is not a regular file")
 	}
-	payload, err := loadLocalRecordingHead(temporary)
+	payload, err := loadLocalHead(temporary, maximumBytes)
 	if err != nil {
 		return err
 	}
-	if _, err := decodeCastZstdHead(payload); err != nil {
+	if err := validate(payload); err != nil {
 		return err
 	}
-	if err := replaceLocalRecordingFile(temporary, head); err != nil {
+	if err := replaceLocalFile(temporary, head); err != nil {
 		return err
 	}
-	return syncLocalRecordingDirectory(directory)
+	return syncLocalDirectory(directory)
 }

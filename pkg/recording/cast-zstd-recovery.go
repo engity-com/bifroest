@@ -14,16 +14,6 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
-const castZstdRecoveryReason = "startup-recovery"
-
-type CastZstdRecoveryFile interface {
-	io.ReaderAt
-	io.Writer
-	io.Seeker
-	Truncate(size int64) error
-	Sync() error
-}
-
 type CastZstdRecoveryResult struct {
 	Verification  *CastZstdVerification
 	AlreadySealed bool
@@ -33,7 +23,7 @@ type CastZstdRecoveryResult struct {
 
 // RecoverCastZstd repairs an active container and seals it. The caller must
 // hold an exclusive lock for file throughout the call.
-func RecoverCastZstd(file CastZstdRecoveryFile, identity *audit.Identity, checkpoint audit.SessionRecordingZstdHead, recoveredAt time.Time, options CastZstdVerifyOptions) (*CastZstdRecoveryResult, error) {
+func RecoverCastZstd(file RecoveryFile, identity *audit.Identity, checkpoint audit.SessionRecordingZstdHead, recoveredAt time.Time, options CastZstdVerifyOptions) (*CastZstdRecoveryResult, error) {
 	if file == nil {
 		return nil, errors.System.Newf("nil Cast Zstandard recovery file")
 	}
@@ -78,7 +68,7 @@ func RecoverCastZstd(file CastZstdRecoveryFile, identity *audit.Identity, checkp
 		result := CastResult{
 			Status:  CastStatusIncomplete,
 			EndedAt: recoveredAt.UTC(),
-			Reason:  castZstdRecoveryReason,
+			Reason:  startupRecoveryReason,
 		}
 		if err := validateCastResult(metadata, result, false); err != nil {
 			return nil, errors.System.Newf("cannot create incomplete Cast recovery result: %w", err)
@@ -284,7 +274,7 @@ func planRecoveredCastZstdSeal(identity *audit.Identity, scan *castZstdStream, c
 	return castZstdRecoveryPlan{chunk: chunk.Bytes(), seal: sealFrame}, nil
 }
 
-func writeCastZstdRecoveryPlan(file CastZstdRecoveryFile, plan castZstdRecoveryPlan) error {
+func writeCastZstdRecoveryPlan(file RecoveryFile, plan castZstdRecoveryPlan) error {
 	if len(plan.chunk) > 0 {
 		if err := writeCastZstdBytes(file, plan.chunk); err != nil {
 			return err

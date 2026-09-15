@@ -35,7 +35,7 @@ func TestBECastRecoveryFinalizesOpenContainerAndDecrypts(t *testing.T) {
 	verification, err := DecryptBECast(file, size, identities, &plaintext, BECastVerifyOptions{ExpectedProducerId: identity.ProducerId()})
 	require.NoError(t, err)
 	require.Equal(t, CastStatusIncomplete, verification.Cast.Result.Status)
-	require.Equal(t, castZstdRecoveryReason, verification.Cast.Result.Reason)
+	require.Equal(t, startupRecoveryReason, verification.Cast.Result.Reason)
 	require.Equal(t, metadata.RecordingId, verification.Cast.Metadata.RecordingId)
 	require.Equal(t, identity.ProducerId(), verification.Cast.Metadata.ProducerId)
 	require.Contains(t, plaintext.String(), "before crash")
@@ -345,7 +345,7 @@ func TestBECastRecoveryRejectsFinalSizeOverflow(t *testing.T) {
 		},
 		headerUnitHash:       audit.SessionRecordingHash{1},
 		previousUnitHash:     audit.SessionRecordingHash{2},
-		ciphertextStreamHash: hashSessionRecordingWriter(castBECastCiphertextStreamHashDomain),
+		ciphertextStreamHash: newDomainHasher(castBECastCiphertextStreamHashDomain),
 		castBytes:            1,
 		ciphertextBytes:      1,
 		chunkCount:           1,

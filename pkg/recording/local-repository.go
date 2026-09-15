@@ -17,18 +17,91 @@ import (
 )
 
 const (
-	localRecordingLockFileName        = ".bifroest-recording.lock"
-	localRecordingWorkDirectory       = ".bifroest-work"
-	localRecordingActiveDirectory     = "active"
-	localRecordingSealedDirectory     = "sealed"
-	localRecordingQuarantineDirectory = "quarantine"
-	localRecordingContentFileName     = "recording.cast.zst"
-	localRecordingHeadFileName        = "head.json"
-	localRecordingHeadTempFileName    = "head.tmp"
-	localRecordingSealedSuffix        = ".cast.zst"
+	localLockFileName        = ".bifroest-recording.lock"
+	localWorkDirectory       = ".bifroest-work"
+	localActiveDirectory     = "active"
+	localSealedDirectory     = "sealed"
+	localQuarantineDirectory = "quarantine"
+	localHeadFileName        = "head.json"
+	localHeadTempFileName    = "head.tmp"
 )
 
-type LocalCastZstdRepository struct {
+type localWriter[Head, Summary any] interface {
+	WriteOutput(time.Duration, OutputStream, []byte) error
+	WriteResize(time.Duration, uint32, uint32) error
+	WriteMarker(time.Duration, string) error
+	Checkpoint() (Head, error)
+	Seal(time.Duration, CastResult, *uint32) (Summary, error)
+	replaceOutput(io.Writer) error
+	repositoryFailure() error
+}
+
+type localFormat[Head, Summary any] interface {
+	contentFileName() string
+	sealedSuffix() string
+	maximumHeadBytes() int64
+	newWriter(io.Writer, CastHeader, CastMetadata, int) (localWriter[Head, Summary], error)
+	encodeHead(Head) ([]byte, error)
+	decodeHead([]byte) (Head, error)
+	headId(Head) Id
+	headProducerId(Head) audit.ProducerId
+	headPrefixBytes(Head) uint64
+	verifyActiveCheckpoint(*os.File, int64, Head, context.Context) error
+	verifyWorkCheckpoint(*os.File, int64, Head, context.Context) error
+	recover(RecoveryFile, Head, time.Time, context.Context) (localRecovery[Summary], error)
+	verifyPublished(*os.File, int64, *Head, context.Context) (Summary, error)
+	summaryId(Summary) Id
+}
+
+type localRecovery[Summary any] struct {
+	summary       Summary
+	truncated     bool
+	alreadySealed bool
+}
+
+type validatedLocalWork[Head any] struct {
+	head     Head
+	file     *os.File
+	fileInfo os.FileInfo
+}
+
+func (this *validatedLocalWork[Head]) close(cause error) error {
+	if this == nil || this.file == nil {
+		return cause
+	}
+	closeErr := this.file.Close()
+	this.file = nil
+	if closeErr != nil {
+		closeErr = errors.System.Newf("cannot close recording work content: %w", closeErr)
+	}
+	return stderrors.Join(cause, closeErr)
+}
+
+type invalidLocalArtifactError struct {
+	cause error
+}
+
+func (this *invalidLocalArtifactError) Error() string {
+	return this.cause.Error()
+}
+
+func (this *invalidLocalArtifactError) Unwrap() error {
+	return this.cause
+}
+
+func invalidLocalArtifact(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &invalidLocalArtifactError{cause: err}
+}
+
+func isInvalidLocalArtifact(err error) bool {
+	var target *invalidLocalArtifactError
+	return stderrors.As(err, &target)
+}
+
+type localRepository[Head, Summary any] struct {
 	mutex          sync.Mutex
 	directory      string
 	activePath     string
@@ -37,50 +110,50 @@ type LocalCastZstdRepository struct {
 	quarantinePath string
 	lockPath       string
 	identity       *audit.Identity
-	options        CastZstdVerifyOptions
-	processLock    *localRecordingProcessLock
-	active         map[Id]*ActiveCastZstd
-	recovered      []RecoveredCastZstd
+	format         localFormat[Head, Summary]
+	processLock    *localProcessLock
+	active         map[Id]*localActive[Head, Summary]
+	recovered      []localRecovery[Summary]
 	closed         bool
 	poisoned       error
 }
 
-type RecoveredCastZstd struct {
-	Summary       CastZstdSummary
-	Truncated     bool
-	AlreadySealed bool
-}
-
-type ActiveCastZstd struct {
+type localActive[Head, Summary any] struct {
 	mutex      sync.Mutex
-	repository *LocalCastZstdRepository
+	repository *localRepository[Head, Summary]
 	id         Id
 	directory  string
 	path       string
 	headPath   string
 	file       *os.File
-	writer     *CastZstdWriter
+	writer     localWriter[Head, Summary]
 	poisoned   error
 	closed     bool
 	sealed     bool
 }
 
-func NewLocalCastZstdRepository(ctx context.Context, directory string, identity *audit.Identity, options CastZstdVerifyOptions) (*LocalCastZstdRepository, error) {
+func newLocalRepository[Head, Summary any](ctx context.Context, directory string, identity *audit.Identity, format localFormat[Head, Summary]) (*localRepository[Head, Summary], error) {
 	if identity == nil || identity.PublicKey() == nil {
 		return nil, errors.Config.Newf("nil local recording identity")
+	}
+	if format == nil {
+		return nil, errors.Config.Newf("nil local recording format")
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	canonical, err := canonicalLocalRecordingDirectory(strings.TrimSpace(directory))
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	canonical, err := canonicalLocalDirectory(strings.TrimSpace(directory))
 	if err != nil {
 		return nil, errors.Config.Newf("cannot resolve local recording directory: %w", err)
 	}
-	if err := ensureLocalRecordingDirectory(canonical); err != nil {
+	if err := ensureLocalDirectory(canonical); err != nil {
 		return nil, errors.System.Newf("cannot prepare local recording directory %q: %w", canonical, err)
 	}
-	lockPath := filepath.Join(canonical, localRecordingLockFileName)
-	processLock, err := acquireLocalRecordingProcessLock(lockPath)
+	lockPath := filepath.Join(canonical, localLockFileName)
+	processLock, err := acquireLocalProcessLock(lockPath)
 	if err != nil {
 		return nil, errors.System.Newf("cannot lock local recording repository %q: %w", canonical, err)
 	}
@@ -90,33 +163,30 @@ func NewLocalCastZstdRepository(ctx context.Context, directory string, identity 
 			_ = processLock.Close()
 		}
 	}()
-	if err := validateLocalRecordingLock(processLock, lockPath); err != nil {
+	if err := validateLocalLock(processLock, lockPath); err != nil {
 		return nil, err
 	}
-	result := &LocalCastZstdRepository{
+	result := &localRepository[Head, Summary]{
 		directory:      canonical,
-		activePath:     filepath.Join(canonical, localRecordingActiveDirectory),
-		sealedPath:     filepath.Join(canonical, localRecordingSealedDirectory),
-		workPath:       filepath.Join(canonical, localRecordingWorkDirectory),
-		quarantinePath: filepath.Join(canonical, localRecordingQuarantineDirectory),
+		activePath:     filepath.Join(canonical, localActiveDirectory),
+		sealedPath:     filepath.Join(canonical, localSealedDirectory),
+		workPath:       filepath.Join(canonical, localWorkDirectory),
+		quarantinePath: filepath.Join(canonical, localQuarantineDirectory),
 		lockPath:       lockPath,
 		identity:       identity,
-		options:        options,
+		format:         format,
 		processLock:    processLock,
-		active:         make(map[Id]*ActiveCastZstd),
+		active:         make(map[Id]*localActive[Head, Summary]),
 	}
-	result.options.ExpectedProducerId = identity.ProducerId()
-	result.options.AllowUntrusted = false
-	result.options.Context = ctx
 	for _, path := range []string{result.activePath, result.sealedPath, result.workPath, result.quarantinePath} {
-		if err := ensureLocalRecordingDirectory(path); err != nil {
+		if err := ensureLocalDirectory(path); err != nil {
 			return nil, errors.System.Newf("cannot prepare local recording repository path %q: %w", path, err)
 		}
 	}
 	if err := result.validateRoot(); err != nil {
 		return nil, err
 	}
-	if err := result.recoverWorkDirectories(); err != nil {
+	if err := result.recoverWorkDirectories(ctx); err != nil {
 		return nil, err
 	}
 	if err := result.recoverActive(ctx); err != nil {
@@ -129,16 +199,16 @@ func NewLocalCastZstdRepository(ctx context.Context, directory string, identity 
 	return result, nil
 }
 
-func (this *LocalCastZstdRepository) StartupRecoveries() []RecoveredCastZstd {
+func (this *localRepository[Head, Summary]) startupRecoveries() []localRecovery[Summary] {
 	if this == nil {
 		return nil
 	}
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
-	return append([]RecoveredCastZstd(nil), this.recovered...)
+	return append([]localRecovery[Summary](nil), this.recovered...)
 }
 
-func (this *LocalCastZstdRepository) CreateActive(ctx context.Context, header CastHeader, metadata CastMetadata, chunkSize int) (*ActiveCastZstd, error) {
+func (this *localRepository[Head, Summary]) createActive(ctx context.Context, header CastHeader, metadata CastMetadata, chunkSize int) (*localActive[Head, Summary], error) {
 	if this == nil {
 		return nil, errors.System.Newf("nil local recording repository")
 	}
@@ -168,14 +238,14 @@ func (this *LocalCastZstdRepository) CreateActive(ctx context.Context, header Ca
 	if this.poisoned != nil {
 		return nil, this.poisoned
 	}
-	if err := validateLocalRecordingLock(this.processLock, this.lockPath); err != nil {
+	if err := validateLocalLock(this.processLock, this.lockPath); err != nil {
 		return nil, err
 	}
 	if _, exists := this.active[metadata.RecordingId]; exists {
 		return nil, errors.System.Newf("recording %s is already active", metadata.RecordingId)
 	}
 	activeDirectory := filepath.Join(this.activePath, metadata.RecordingId.String())
-	sealedPath := filepath.Join(this.sealedPath, metadata.RecordingId.String()+localRecordingSealedSuffix)
+	sealedPath := filepath.Join(this.sealedPath, metadata.RecordingId.String()+this.format.sealedSuffix())
 	workDirectory := filepath.Join(this.workPath, metadata.RecordingId.String()+".tmp")
 	for _, path := range []string{activeDirectory, sealedPath, workDirectory} {
 		if _, err := os.Lstat(path); err == nil {
@@ -184,7 +254,7 @@ func (this *LocalCastZstdRepository) CreateActive(ctx context.Context, header Ca
 			return nil, err
 		}
 	}
-	if err := ensureLocalRecordingDirectory(workDirectory); err != nil {
+	if err := ensureLocalDirectory(workDirectory); err != nil {
 		return nil, errors.System.Newf("cannot create recording staging directory: %w", err)
 	}
 	removeWork := true
@@ -193,8 +263,8 @@ func (this *LocalCastZstdRepository) CreateActive(ctx context.Context, header Ca
 			_ = os.RemoveAll(workDirectory)
 		}
 	}()
-	contentPath := filepath.Join(workDirectory, localRecordingContentFileName)
-	file, err := createLocalRecordingFile(contentPath)
+	contentPath := filepath.Join(workDirectory, this.format.contentFileName())
+	file, err := createLocalFile(contentPath)
 	if err != nil {
 		return nil, errors.System.Newf("cannot create active recording: %w", err)
 	}
@@ -204,7 +274,7 @@ func (this *LocalCastZstdRepository) CreateActive(ctx context.Context, header Ca
 			_ = file.Close()
 		}
 	}()
-	writer, err := NewCastZstdWriter(file, this.identity, header, metadata, chunkSize)
+	writer, err := this.format.newWriter(file, header, metadata, chunkSize)
 	if err != nil {
 		return nil, err
 	}
@@ -215,14 +285,14 @@ func (this *LocalCastZstdRepository) CreateActive(ctx context.Context, header Ca
 	if err := file.Sync(); err != nil {
 		return nil, errors.System.Newf("cannot synchronize initial recording: %w", err)
 	}
-	head, err := encodeCastZstdHead(checkpoint)
+	head, err := this.format.encodeHead(checkpoint)
 	if err != nil {
 		return nil, err
 	}
-	if err := writeLocalRecordingHead(workDirectory, head); err != nil {
+	if err := writeLocalHead(workDirectory, head); err != nil {
 		return nil, errors.System.Newf("cannot persist initial recording head: %w", err)
 	}
-	if err := syncLocalRecordingDirectory(workDirectory); err != nil {
+	if err := syncLocalDirectory(workDirectory); err != nil {
 		return nil, err
 	}
 	originalInfo, err := file.Stat()
@@ -233,44 +303,42 @@ func (this *LocalCastZstdRepository) CreateActive(ctx context.Context, header Ca
 		return nil, err
 	}
 	closeFile = false
-	if err := publishLocalRecordingDirectory(workDirectory, activeDirectory); err != nil {
+	if err := publishLocalDirectory(workDirectory, activeDirectory); err != nil {
 		return nil, errors.System.Newf("cannot publish active recording: %w", err)
 	}
 	removeWork = false
-	if err := syncLocalRecordingDirectory(this.activePath); err != nil {
+	if err := syncLocalDirectory(this.activePath); err != nil {
 		return nil, this.poisonLocked(err)
 	}
-	if err := syncLocalRecordingDirectory(this.workPath); err != nil {
+	if err := syncLocalDirectory(this.workPath); err != nil {
 		return nil, this.poisonLocked(err)
 	}
-	contentPath = filepath.Join(activeDirectory, localRecordingContentFileName)
-	file, err = openActiveLocalRecordingFile(contentPath)
+	contentPath = filepath.Join(activeDirectory, this.format.contentFileName())
+	file, err = openActiveLocalFile(contentPath)
 	if err != nil {
 		return nil, this.poisonLocked(err)
 	}
 	closeFile = true
 	reopenedInfo, err := file.Stat()
-	if err != nil || !os.SameFile(originalInfo, reopenedInfo) || reopenedInfo.Size() != int64(checkpoint.PrefixBytes) {
+	if err != nil || !os.SameFile(originalInfo, reopenedInfo) || reopenedInfo.Size() != int64(this.format.headPrefixBytes(checkpoint)) {
 		return nil, this.poisonLocked(errors.System.Newf("active recording changed while being published"))
 	}
-	verifyOptions := this.options
-	verifyOptions.Context = context.Background()
-	if err := verifyActiveCastZstdCheckpoint(file, reopenedInfo.Size(), verifyOptions, checkpoint); err != nil {
+	if err := this.format.verifyActiveCheckpoint(file, reopenedInfo.Size(), checkpoint, context.Background()); err != nil {
 		return nil, this.poisonLocked(err)
 	}
 	if err := writer.replaceOutput(file); err != nil {
 		return nil, this.poisonLocked(err)
 	}
-	active := &ActiveCastZstd{
+	active := &localActive[Head, Summary]{
 		repository: this,
 		id:         metadata.RecordingId,
 		directory:  activeDirectory,
 		path:       contentPath,
-		headPath:   filepath.Join(activeDirectory, localRecordingHeadFileName),
+		headPath:   filepath.Join(activeDirectory, localHeadFileName),
 		file:       file,
 		writer:     writer,
 	}
-	if err := validateOpenLocalRecordingFile(active.path, file); err != nil {
+	if err := validateOpenLocalFile(active.path, file); err != nil {
 		return nil, err
 	}
 	this.active[active.id] = active
@@ -278,7 +346,7 @@ func (this *LocalCastZstdRepository) CreateActive(ctx context.Context, header Ca
 	return active, nil
 }
 
-func (this *LocalCastZstdRepository) Close() error {
+func (this *localRepository[Head, Summary]) close() error {
 	if this == nil {
 		return nil
 	}
@@ -288,11 +356,11 @@ func (this *LocalCastZstdRepository) Close() error {
 		return nil
 	}
 	this.closed = true
-	active := make([]*ActiveCastZstd, 0, len(this.active))
+	active := make([]*localActive[Head, Summary], 0, len(this.active))
 	for _, current := range this.active {
 		active = append(active, current)
 	}
-	this.active = make(map[Id]*ActiveCastZstd)
+	this.active = make(map[Id]*localActive[Head, Summary])
 	this.mutex.Unlock()
 	result := this.poisoned
 	for _, current := range active {
@@ -302,19 +370,23 @@ func (this *LocalCastZstdRepository) Close() error {
 	return result
 }
 
-func (this *ActiveCastZstd) WriteOutput(elapsed time.Duration, stream OutputStream, data []byte) error {
-	return this.withWriter(func(writer *CastZstdWriter) error { return writer.WriteOutput(elapsed, stream, data) })
+func (this *localActive[Head, Summary]) writeOutput(elapsed time.Duration, stream OutputStream, data []byte) error {
+	return this.withWriter(func(writer localWriter[Head, Summary]) error {
+		return writer.WriteOutput(elapsed, stream, data)
+	})
 }
 
-func (this *ActiveCastZstd) WriteResize(elapsed time.Duration, columns, rows uint32) error {
-	return this.withWriter(func(writer *CastZstdWriter) error { return writer.WriteResize(elapsed, columns, rows) })
+func (this *localActive[Head, Summary]) writeResize(elapsed time.Duration, columns, rows uint32) error {
+	return this.withWriter(func(writer localWriter[Head, Summary]) error {
+		return writer.WriteResize(elapsed, columns, rows)
+	})
 }
 
-func (this *ActiveCastZstd) WriteMarker(elapsed time.Duration, label string) error {
-	return this.withWriter(func(writer *CastZstdWriter) error { return writer.WriteMarker(elapsed, label) })
+func (this *localActive[Head, Summary]) writeMarker(elapsed time.Duration, label string) error {
+	return this.withWriter(func(writer localWriter[Head, Summary]) error { return writer.WriteMarker(elapsed, label) })
 }
 
-func (this *ActiveCastZstd) Checkpoint() error {
+func (this *localActive[Head, Summary]) checkpoint() error {
 	if this == nil {
 		return errors.System.Newf("nil active recording")
 	}
@@ -323,76 +395,75 @@ func (this *ActiveCastZstd) Checkpoint() error {
 	return this.checkpointLocked()
 }
 
-func (this *ActiveCastZstd) Seal(elapsed time.Duration, result CastResult, exitStatus *uint32) (CastZstdSummary, error) {
+func (this *localActive[Head, Summary]) seal(elapsed time.Duration, result CastResult, exitStatus *uint32) (Summary, error) {
+	var zero Summary
 	if this == nil {
-		return CastZstdSummary{}, errors.System.Newf("nil active recording")
+		return zero, errors.System.Newf("nil active recording")
 	}
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 	if err := this.validateLocked(); err != nil {
-		return CastZstdSummary{}, err
+		return zero, err
 	}
 	summary, err := this.writer.Seal(elapsed, result, exitStatus)
 	if err != nil {
-		return CastZstdSummary{}, this.writerError(err)
+		return zero, this.writerError(err)
 	}
 	if err := this.file.Sync(); err != nil {
-		return CastZstdSummary{}, this.poison(errors.System.Newf("cannot synchronize sealed recording: %w", err))
+		return zero, this.poison(errors.System.Newf("cannot synchronize sealed recording: %w", err))
 	}
 	size, err := this.file.Seek(0, io.SeekEnd)
 	if err != nil {
-		return CastZstdSummary{}, this.poison(err)
+		return zero, this.poison(err)
 	}
-	options := this.repository.options
-	options.Context = context.Background()
-	if _, err := VerifyCastZstd(this.file, size, options); err != nil {
-		return CastZstdSummary{}, this.poison(errors.System.Newf("cannot verify sealed recording: %w", err))
+	if _, err := this.repository.format.verifyPublished(this.file, size, nil, context.Background()); err != nil {
+		return zero, this.poison(errors.System.Newf("cannot verify sealed recording: %w", err))
 	}
-	headPayload, err := loadLocalRecordingHead(this.headPath)
+	headPayload, err := loadLocalHead(this.headPath, this.repository.format.maximumHeadBytes())
 	if err != nil {
-		return CastZstdSummary{}, this.poison(err)
+		return zero, this.poison(err)
 	}
-	head, err := decodeCastZstdHead(headPayload)
+	head, err := this.repository.format.decodeHead(headPayload)
 	if err != nil {
-		return CastZstdSummary{}, this.poison(err)
+		return zero, this.poison(err)
 	}
-	if err := sealLocalRecordingFile(this.path, this.file); err != nil {
-		return CastZstdSummary{}, this.poison(err)
+	if err := sealLocalFile(this.path, this.file); err != nil {
+		return zero, this.poison(err)
 	}
 	sealedInfo, err := this.file.Stat()
 	if err != nil {
-		return CastZstdSummary{}, this.poison(err)
+		return zero, this.poison(err)
 	}
 	if err := this.file.Close(); err != nil {
-		return CastZstdSummary{}, this.poison(err)
+		return zero, this.poison(err)
 	}
 	this.closed = true
-	target := filepath.Join(this.repository.sealedPath, this.id.String()+localRecordingSealedSuffix)
-	if err := publishLocalRecordingFile(this.path, target); err != nil {
-		return CastZstdSummary{}, this.poison(errors.System.Newf("cannot publish sealed recording: %w", err))
+	target := filepath.Join(this.repository.sealedPath, this.id.String()+this.repository.format.sealedSuffix())
+	if err := publishLocalFile(this.path, target); err != nil {
+		return zero, this.poison(errors.System.Newf("cannot publish sealed recording: %w", err))
 	}
-	if _, err := verifyPublishedLocalRecording(target, sealedInfo, options, &head); err != nil {
-		return CastZstdSummary{}, this.poison(errors.System.Newf("cannot verify published recording: %w", err))
+	if _, err := this.repository.verifyPublished(target, sealedInfo, &head, context.Background()); err != nil {
+		return zero, this.poison(errors.System.Newf("cannot verify published recording: %w", err))
 	}
 	if err := os.Remove(this.headPath); err != nil {
-		return CastZstdSummary{}, this.poison(errors.System.Newf("cannot remove active recording head: %w", err))
+		return zero, this.poison(errors.System.Newf("cannot remove active recording head: %w", err))
 	}
 	if err := os.Remove(this.directory); err != nil {
-		return CastZstdSummary{}, this.poison(errors.System.Newf("cannot remove active recording directory: %w", err))
+		return zero, this.poison(errors.System.Newf("cannot remove active recording directory: %w", err))
 	}
-	if err := syncLocalRecordingDirectory(this.repository.activePath); err != nil {
-		return CastZstdSummary{}, this.poison(err)
+	if err := syncLocalDirectory(this.repository.activePath); err != nil {
+		return zero, this.poison(err)
 	}
 	this.sealed = true
 	this.repository.removeActive(this.id)
 	return summary, nil
 }
 
-func (this *ActiveCastZstd) Close() error {
+func (this *localActive[Head, Summary]) closeAndRemove() error {
 	return this.close(true)
 }
 
-func (this *ActiveCastZstd) close(remove bool) error {
+func (this *localActive[Head, Summary]) close(remove bool) error {
 	if this == nil {
 		return nil
 	}
@@ -413,7 +484,7 @@ func (this *ActiveCastZstd) close(remove bool) error {
 	return result
 }
 
-func (this *ActiveCastZstd) withWriter(action func(*CastZstdWriter) error) error {
+func (this *localActive[Head, Summary]) withWriter(action func(localWriter[Head, Summary]) error) error {
 	if this == nil {
 		return errors.System.Newf("nil active recording")
 	}
@@ -428,21 +499,21 @@ func (this *ActiveCastZstd) withWriter(action func(*CastZstdWriter) error) error
 	return nil
 }
 
-func (this *ActiveCastZstd) checkpointLocked() error {
+func (this *localActive[Head, Summary]) checkpointLocked() error {
 	if err := this.validateLocked(); err != nil {
 		return err
 	}
 	return this.persistCheckpointLocked()
 }
 
-func (this *ActiveCastZstd) checkpointForCloseLocked() error {
+func (this *localActive[Head, Summary]) checkpointForCloseLocked() error {
 	if err := this.validateStorageLocked(); err != nil {
 		return err
 	}
 	return this.persistCheckpointLocked()
 }
 
-func (this *ActiveCastZstd) persistCheckpointLocked() error {
+func (this *localActive[Head, Summary]) persistCheckpointLocked() error {
 	checkpoint, err := this.writer.Checkpoint()
 	if err != nil {
 		return this.poison(err)
@@ -450,66 +521,66 @@ func (this *ActiveCastZstd) persistCheckpointLocked() error {
 	if err := this.file.Sync(); err != nil {
 		return this.poison(errors.System.Newf("cannot synchronize active recording: %w", err))
 	}
-	payload, err := encodeCastZstdHead(checkpoint)
+	payload, err := this.repository.format.encodeHead(checkpoint)
 	if err != nil {
 		return this.poison(err)
 	}
-	if err := writeLocalRecordingHead(this.directory, payload); err != nil {
+	if err := writeLocalHead(this.directory, payload); err != nil {
 		return this.poison(errors.System.Newf("cannot persist active recording head: %w", err))
 	}
 	return nil
 }
 
-func (this *ActiveCastZstd) validateLocked() error {
+func (this *localActive[Head, Summary]) validateLocked() error {
 	if err := this.repository.failure(); err != nil {
 		return err
 	}
 	return this.validateStorageLocked()
 }
 
-func (this *ActiveCastZstd) validateStorageLocked() error {
+func (this *localActive[Head, Summary]) validateStorageLocked() error {
 	if this.closed {
 		return errors.System.Newf("active recording is closed")
 	}
 	if this.poisoned != nil {
 		return this.poisoned
 	}
-	if err := validateLocalRecordingLock(this.repository.processLock, this.repository.lockPath); err != nil {
+	if err := validateLocalLock(this.repository.processLock, this.repository.lockPath); err != nil {
 		return this.poison(err)
 	}
-	if err := validateOpenLocalRecordingFile(this.path, this.file); err != nil {
+	if err := validateOpenLocalFile(this.path, this.file); err != nil {
 		return this.poison(err)
 	}
 	return nil
 }
 
-func (this *ActiveCastZstd) poison(err error) error {
+func (this *localActive[Head, Summary]) poison(err error) error {
 	if this.poisoned == nil {
 		this.poisoned = err
 	}
 	return err
 }
 
-func (this *ActiveCastZstd) writerError(err error) error {
-	if this.writer != nil && ((this.writer.cast != nil && this.writer.cast.poisoned != nil) || (this.writer.sink != nil && this.writer.sink.poisoned != nil)) {
+func (this *localActive[Head, Summary]) writerError(err error) error {
+	if this.writer != nil && this.writer.repositoryFailure() != nil {
 		return this.poison(err)
 	}
 	return err
 }
 
-func (this *LocalCastZstdRepository) removeActive(id Id) {
+func (this *localRepository[Head, Summary]) removeActive(id Id) {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 	delete(this.active, id)
 }
 
-func (this *LocalCastZstdRepository) validateRoot() error {
+func (this *localRepository[Head, Summary]) validateRoot() error {
 	allowed := map[string]bool{
-		localRecordingLockFileName:        true,
-		localRecordingWorkDirectory:       true,
-		localRecordingQuarantineDirectory: true,
-		localRecordingActiveDirectory:     true,
-		localRecordingSealedDirectory:     true,
+		localLockFileName:        true,
+		localWorkDirectory:       true,
+		localQuarantineDirectory: true,
+		localActiveDirectory:     true,
+		localSealedDirectory:     true,
 	}
 	entries, err := os.ReadDir(this.directory)
 	if err != nil {
@@ -523,12 +594,17 @@ func (this *LocalCastZstdRepository) validateRoot() error {
 	return nil
 }
 
-func (this *LocalCastZstdRepository) recoverWorkDirectories() error {
+func (this *localRepository[Head, Summary]) recoverWorkDirectories(ctx context.Context) error {
 	entries, err := os.ReadDir(this.workPath)
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 		name := strings.TrimSuffix(entry.Name(), ".tmp")
 		var id Id
 		if name == entry.Name() || id.UnmarshalText([]byte(name)) != nil || !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
@@ -539,7 +615,7 @@ func (this *LocalCastZstdRepository) recoverWorkDirectories() error {
 		if err != nil {
 			return err
 		}
-		if err := secureLocalRecordingDirectory(path, info); err != nil {
+		if err := secureLocalDirectory(path, info); err != nil {
 			return err
 		}
 		children, err := os.ReadDir(path)
@@ -552,55 +628,198 @@ func (this *LocalCastZstdRepository) recoverWorkDirectories() error {
 			}
 			continue
 		}
-		if err := prepareInterruptedLocalRecordingHead(path); err != nil {
+		validated, err := this.validateWorkDirectory(ctx, id, path)
+		if err != nil {
+			if !isInvalidLocalArtifact(err) {
+				return err
+			}
 			quarantine := filepath.Join(this.quarantinePath, entry.Name())
 			if _, inspectErr := os.Lstat(quarantine); inspectErr == nil {
 				return errors.System.Newf("recording quarantine path already exists for %s", id)
 			} else if !stderrors.Is(inspectErr, fs.ErrNotExist) {
 				return inspectErr
 			}
-			if moveErr := publishLocalRecordingDirectory(path, quarantine); moveErr != nil {
+			if moveErr := publishLocalDirectory(path, quarantine); moveErr != nil {
 				return stderrors.Join(err, moveErr)
 			}
-			if syncErr := syncLocalRecordingDirectory(this.quarantinePath); syncErr != nil {
+			if syncErr := syncLocalDirectory(this.quarantinePath); syncErr != nil {
 				return syncErr
 			}
-			if syncErr := syncLocalRecordingDirectory(this.workPath); syncErr != nil {
+			if syncErr := syncLocalDirectory(this.workPath); syncErr != nil {
 				return syncErr
 			}
 			continue
 		}
 		activeDirectory := filepath.Join(this.activePath, id.String())
-		if _, err := os.Lstat(activeDirectory); err == nil {
-			return errors.System.Newf("recording work and active directories both exist for %s", id)
-		} else if !stderrors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-		if err := publishLocalRecordingDirectory(path, activeDirectory); err != nil {
-			return err
-		}
-		if err := syncLocalRecordingDirectory(this.activePath); err != nil {
-			return err
-		}
-		if err := syncLocalRecordingDirectory(this.workPath); err != nil {
+		if err := this.publishValidatedWork(ctx, path, activeDirectory, validated); err != nil {
 			return err
 		}
 	}
-	return syncLocalRecordingDirectory(this.workPath)
+	return syncLocalDirectory(this.workPath)
 }
 
-func (this *LocalCastZstdRepository) validateSealed() error {
+func (this *localRepository[Head, Summary]) validateWorkDirectory(ctx context.Context, id Id, directory string) (*validatedLocalWork[Head], error) {
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return nil, errors.System.Newf("cannot inspect recording work directory: %w", err)
+	}
+	if err := this.validateWorkDirectoryEntries(entries, true); err != nil {
+		return nil, err
+	}
+	head, err := this.prepareInterruptedWorkHead(directory)
+	if err != nil {
+		return nil, err
+	}
+	if this.format.headId(head) != id || this.format.headProducerId(head) != this.identity.ProducerId() {
+		return nil, invalidLocalArtifact(errors.System.Newf("recording work head identity does not match its directory"))
+	}
+	entries, err = os.ReadDir(directory)
+	if err != nil {
+		return nil, errors.System.Newf("cannot inspect recording work directory: %w", err)
+	}
+	if err := this.validateWorkDirectoryEntries(entries, false); err != nil {
+		return nil, err
+	}
+	contentPath := filepath.Join(directory, this.format.contentFileName())
+	file, err := openActiveLocalFile(contentPath)
+	if err != nil {
+		err = errors.System.Newf("cannot open recording work content: %w", err)
+		if errors.Config.IsErr(err) {
+			err = invalidLocalArtifact(err)
+		}
+		return nil, err
+	}
+	validated := &validatedLocalWork[Head]{head: head, file: file}
+	validated.fileInfo, err = file.Stat()
+	if err != nil {
+		return nil, validated.close(errors.System.Newf("cannot inspect recording work content: %w", err))
+	}
+	if err := this.format.verifyWorkCheckpoint(file, validated.fileInfo.Size(), head, ctx); err != nil {
+		return nil, validated.close(err)
+	}
+	return validated, nil
+}
+
+func (this *localRepository[Head, Summary]) publishValidatedWork(ctx context.Context, source, target string, validated *validatedLocalWork[Head]) (result error) {
+	defer func() {
+		result = validated.close(result)
+	}()
+	if _, err := os.Lstat(target); err == nil {
+		return errors.System.Newf("recording work and active directories both exist for %q", target)
+	} else if !stderrors.Is(err, fs.ErrNotExist) {
+		return errors.System.Newf("cannot inspect recording active path: %w", err)
+	}
+	if err := publishLocalDirectory(source, target); err != nil {
+		return errors.System.Newf("cannot publish recording work directory: %w", err)
+	}
+	if err := this.verifyPublishedWork(ctx, target, validated); err != nil {
+		return err
+	}
+	if err := syncLocalDirectory(this.activePath); err != nil {
+		return errors.System.Newf("cannot synchronize recording active directory: %w", err)
+	}
+	if err := syncLocalDirectory(this.workPath); err != nil {
+		return errors.System.Newf("cannot synchronize recording work directory: %w", err)
+	}
+	return nil
+}
+
+func (this *localRepository[Head, Summary]) verifyPublishedWork(ctx context.Context, directory string, validated *validatedLocalWork[Head]) (result error) {
+	if validated == nil || validated.file == nil || validated.fileInfo == nil {
+		return errors.System.Newf("nil validated recording work")
+	}
+	path := filepath.Join(directory, this.format.contentFileName())
+	file, err := openActiveLocalFile(path)
+	if err != nil {
+		return errors.System.Newf("cannot reopen published recording work content: %w", err)
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			result = stderrors.Join(result, errors.System.Newf("cannot close published recording work content: %w", closeErr))
+		}
+	}()
+	info, err := file.Stat()
+	if err != nil {
+		return errors.System.Newf("cannot inspect published recording work content: %w", err)
+	}
+	if !os.SameFile(validated.fileInfo, info) {
+		return errors.System.Newf("published recording work content does not match its validated source")
+	}
+	if info.Size() < 0 || uint64(info.Size()) != this.format.headPrefixBytes(validated.head) {
+		return errors.System.Newf("published recording work content does not match its checkpoint size")
+	}
+	if err := this.format.verifyActiveCheckpoint(file, info.Size(), validated.head, ctx); err != nil {
+		return errors.System.Newf("cannot verify published recording work checkpoint: %w", err)
+	}
+	return nil
+}
+
+func (this *localRepository[Head, Summary]) validateWorkDirectoryEntries(entries []os.DirEntry, allowTemporary bool) error {
+	minimum, maximum := 2, 2
+	if allowTemporary {
+		maximum = 3
+	}
+	if len(entries) < minimum || len(entries) > maximum {
+		return invalidLocalArtifact(errors.Config.Newf("recording work directory does not contain exactly its head and content"))
+	}
+	names := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() {
+			return invalidLocalArtifact(errors.Config.Newf("recording work directory entry %q is not a regular file", entry.Name()))
+		}
+		names[entry.Name()] = true
+	}
+	if !names[this.format.contentFileName()] || !names[localHeadFileName] && (!allowTemporary || !names[localHeadTempFileName]) {
+		return invalidLocalArtifact(errors.Config.Newf("recording work directory does not contain exactly its head and content"))
+	}
+	for name := range names {
+		if name != this.format.contentFileName() && name != localHeadFileName && (!allowTemporary || name != localHeadTempFileName) {
+			return invalidLocalArtifact(errors.Config.Newf("recording work directory contains unsupported entry %q", name))
+		}
+	}
+	return nil
+}
+
+func (this *localRepository[Head, Summary]) prepareInterruptedWorkHead(directory string) (Head, error) {
+	var result Head
+	err := prepareInterruptedLocalHead(directory, this.format.maximumHeadBytes(), func(payload []byte) error {
+		decoded, decodeErr := this.format.decodeHead(payload)
+		if decodeErr != nil {
+			return invalidLocalArtifact(decodeErr)
+		}
+		result = decoded
+		return nil
+	})
+	if err != nil && !isInvalidLocalArtifact(err) && errors.Config.IsErr(err) {
+		err = invalidLocalArtifact(err)
+	}
+	return result, err
+}
+
+func (this *localRepository[Head, Summary]) prepareInterruptedHead(directory string) (Head, error) {
+	var result Head
+	err := prepareInterruptedLocalHead(directory, this.format.maximumHeadBytes(), func(payload []byte) error {
+		decoded, decodeErr := this.format.decodeHead(payload)
+		if decodeErr == nil {
+			result = decoded
+		}
+		return decodeErr
+	})
+	return result, err
+}
+
+func (this *localRepository[Head, Summary]) validateSealed() error {
 	entries, err := os.ReadDir(this.sealedPath)
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
-		name := strings.TrimSuffix(entry.Name(), localRecordingSealedSuffix)
+		name := strings.TrimSuffix(entry.Name(), this.format.sealedSuffix())
 		var id Id
 		if name == entry.Name() || id.UnmarshalText([]byte(name)) != nil || !entry.Type().IsRegular() {
 			return errors.Config.Newf("sealed recording directory contains unsupported entry %q", entry.Name())
 		}
-		file, err := openSealedLocalRecordingFile(filepath.Join(this.sealedPath, entry.Name()))
+		file, err := openSealedLocalFile(filepath.Join(this.sealedPath, entry.Name()))
 		if err != nil {
 			return err
 		}
@@ -611,7 +830,7 @@ func (this *LocalCastZstdRepository) validateSealed() error {
 	return nil
 }
 
-func (this *LocalCastZstdRepository) recoverActive(ctx context.Context) error {
+func (this *localRepository[Head, Summary]) recoverActive(ctx context.Context) error {
 	entries, err := os.ReadDir(this.activePath)
 	if err != nil {
 		return err
@@ -628,36 +847,37 @@ func (this *LocalCastZstdRepository) recoverActive(ctx context.Context) error {
 		if id.UnmarshalText([]byte(entry.Name())) != nil || !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
 			return errors.Config.Newf("active recording directory contains unsupported entry %q", entry.Name())
 		}
-		if err := this.recoverActiveDirectory(id, filepath.Join(this.activePath, entry.Name())); err != nil {
+		if err := this.recoverActiveDirectory(ctx, id, filepath.Join(this.activePath, entry.Name())); err != nil {
 			result = stderrors.Join(result, errors.System.Newf("cannot recover recording %s: %w", id, err))
 		}
 	}
 	return result
 }
 
-func (this *LocalCastZstdRepository) recoverActiveDirectory(id Id, directory string) error {
+func (this *localRepository[Head, Summary]) recoverActiveDirectory(ctx context.Context, id Id, directory string) error {
 	info, err := os.Lstat(directory)
 	if err != nil {
 		return err
 	}
-	if err := secureLocalRecordingDirectory(directory, info); err != nil {
+	if err := secureLocalDirectory(directory, info); err != nil {
 		return err
 	}
-	if err := prepareInterruptedLocalRecordingHead(directory); err != nil {
-		return err
-	}
-	contentPath := filepath.Join(directory, localRecordingContentFileName)
-	headPath := filepath.Join(directory, localRecordingHeadFileName)
-	target := filepath.Join(this.sealedPath, id.String()+localRecordingSealedSuffix)
-	if aliased, err := completeLocalRecordingPublishAlias(contentPath, target); err != nil {
-		return err
-	} else if aliased {
-		return this.completePublishedRecovery(id, directory, headPath)
-	}
+	contentPath := filepath.Join(directory, this.format.contentFileName())
+	headPath := filepath.Join(directory, localHeadFileName)
+	target := filepath.Join(this.sealedPath, id.String()+this.format.sealedSuffix())
 	if _, err := os.Lstat(contentPath); stderrors.Is(err, fs.ErrNotExist) {
-		return this.completePublishedRecovery(id, directory, headPath)
+		return this.completePublishedRecovery(ctx, id, directory, headPath)
 	} else if err != nil {
 		return err
+	}
+	head, err := this.prepareInterruptedHead(directory)
+	if err != nil {
+		return err
+	}
+	if aliased, err := completeLocalPublishAlias(contentPath, target); err != nil {
+		return err
+	} else if aliased {
+		return this.completePublishedRecovery(ctx, id, directory, headPath)
 	}
 	entries, err := os.ReadDir(directory)
 	if err != nil {
@@ -666,27 +886,19 @@ func (this *LocalCastZstdRepository) recoverActiveDirectory(id Id, directory str
 	if len(entries) != 2 {
 		return errors.Config.Newf("active recording directory contains %d entries instead of two", len(entries))
 	}
-	headPayload, err := loadLocalRecordingHead(headPath)
-	if err != nil {
-		return err
-	}
-	head, err := decodeCastZstdHead(headPayload)
-	if err != nil {
-		return err
-	}
-	if Id(head.RecordingId) != id || head.ProducerId != this.identity.ProducerId() {
+	if this.format.headId(head) != id || this.format.headProducerId(head) != this.identity.ProducerId() {
 		return errors.System.Newf("active recording head identity does not match its directory")
 	}
-	file, err := openActiveLocalRecordingFile(contentPath)
+	file, err := openActiveLocalFile(contentPath)
 	if err != nil {
 		return err
 	}
-	result, recoveryErr := RecoverCastZstd(file, this.identity, head, time.Now().UTC(), this.options)
+	result, recoveryErr := this.format.recover(file, head, time.Now().UTC(), ctx)
 	if recoveryErr != nil {
 		_ = file.Close()
 		return recoveryErr
 	}
-	if err := sealLocalRecordingFile(contentPath, file); err != nil {
+	if err := sealLocalFile(contentPath, file); err != nil {
 		_ = file.Close()
 		return err
 	}
@@ -698,27 +910,23 @@ func (this *LocalCastZstdRepository) recoverActiveDirectory(id Id, directory str
 	if err := file.Close(); err != nil {
 		return err
 	}
-	if err := this.publishRecovered(id, directory, contentPath, headPath, sealedInfo, &head); err != nil {
+	if err := this.publishRecovered(ctx, id, directory, contentPath, headPath, sealedInfo, &head); err != nil {
 		return err
 	}
-	this.recovered = append(this.recovered, RecoveredCastZstd{
-		Summary:       result.Verification.Summary,
-		Truncated:     result.Truncated,
-		AlreadySealed: result.AlreadySealed,
-	})
+	this.recovered = append(this.recovered, result)
 	return nil
 }
 
-func (this *LocalCastZstdRepository) completePublishedRecovery(id Id, directory, headPath string) error {
+func (this *localRepository[Head, Summary]) completePublishedRecovery(ctx context.Context, id Id, directory, headPath string) error {
 	entries, err := os.ReadDir(directory)
 	if err != nil {
 		return err
 	}
-	if len(entries) > 1 || len(entries) == 1 && entries[0].Name() != localRecordingHeadFileName {
+	if len(entries) > 1 || len(entries) == 1 && entries[0].Name() != localHeadFileName {
 		return errors.Config.Newf("published recording cleanup directory contains unexpected entries")
 	}
-	target := filepath.Join(this.sealedPath, id.String()+localRecordingSealedSuffix)
-	file, err := openSealedLocalRecordingFile(target)
+	target := filepath.Join(this.sealedPath, id.String()+this.format.sealedSuffix())
+	file, err := openSealedLocalFile(target)
 	if err != nil {
 		return errors.System.Newf("active recording content is missing and sealed target is unavailable: %w", err)
 	}
@@ -727,14 +935,14 @@ func (this *LocalCastZstdRepository) completePublishedRecovery(id Id, directory,
 		_ = file.Close()
 		return err
 	}
-	var head *audit.SessionRecordingZstdHead
-	if headPayload, headErr := loadLocalRecordingHead(headPath); headErr == nil {
-		decoded, decodeErr := decodeCastZstdHead(headPayload)
+	var head *Head
+	if headPayload, headErr := loadLocalHead(headPath, this.format.maximumHeadBytes()); headErr == nil {
+		decoded, decodeErr := this.format.decodeHead(headPayload)
 		if decodeErr != nil {
 			_ = file.Close()
 			return decodeErr
 		}
-		if Id(decoded.RecordingId) != id || decoded.ProducerId != this.identity.ProducerId() {
+		if this.format.headId(decoded) != id || this.format.headProducerId(decoded) != this.identity.ProducerId() {
 			_ = file.Close()
 			return errors.System.Newf("published recording head identity does not match its directory")
 		}
@@ -743,7 +951,7 @@ func (this *LocalCastZstdRepository) completePublishedRecovery(id Id, directory,
 		_ = file.Close()
 		return errors.System.Newf("active recording content and head are inconsistent: %w", headErr)
 	}
-	verification, verifyErr := verifyPublishedCastZstd(file, info.Size(), this.options, head)
+	summary, verifyErr := this.format.verifyPublished(file, info.Size(), head, ctx)
 	closeErr := file.Close()
 	if verifyErr != nil {
 		return verifyErr
@@ -751,7 +959,7 @@ func (this *LocalCastZstdRepository) completePublishedRecovery(id Id, directory,
 	if closeErr != nil {
 		return closeErr
 	}
-	if verification.Summary.RecordingId != id {
+	if this.format.summaryId(summary) != id {
 		return errors.System.Newf("sealed recording identity does not match its active directory")
 	}
 	if err := os.Remove(headPath); err != nil && !stderrors.Is(err, fs.ErrNotExist) {
@@ -760,15 +968,15 @@ func (this *LocalCastZstdRepository) completePublishedRecovery(id Id, directory,
 	if err := os.Remove(directory); err != nil {
 		return err
 	}
-	return syncLocalRecordingDirectory(this.activePath)
+	return syncLocalDirectory(this.activePath)
 }
 
-func (this *LocalCastZstdRepository) publishRecovered(id Id, directory, contentPath, headPath string, sealedInfo os.FileInfo, head *audit.SessionRecordingZstdHead) error {
-	target := filepath.Join(this.sealedPath, id.String()+localRecordingSealedSuffix)
-	if err := publishLocalRecordingFile(contentPath, target); err != nil {
+func (this *localRepository[Head, Summary]) publishRecovered(ctx context.Context, id Id, directory, contentPath, headPath string, sealedInfo os.FileInfo, head *Head) error {
+	target := filepath.Join(this.sealedPath, id.String()+this.format.sealedSuffix())
+	if err := publishLocalFile(contentPath, target); err != nil {
 		return err
 	}
-	if _, err := verifyPublishedLocalRecording(target, sealedInfo, this.options, head); err != nil {
+	if _, err := this.verifyPublished(target, sealedInfo, head, ctx); err != nil {
 		return err
 	}
 	if err := os.Remove(headPath); err != nil {
@@ -777,66 +985,34 @@ func (this *LocalCastZstdRepository) publishRecovered(id Id, directory, contentP
 	if err := os.Remove(directory); err != nil {
 		return err
 	}
-	return syncLocalRecordingDirectory(this.activePath)
+	return syncLocalDirectory(this.activePath)
 }
 
-func verifyPublishedLocalRecording(path string, expected os.FileInfo, options CastZstdVerifyOptions, head *audit.SessionRecordingZstdHead) (*CastZstdVerification, error) {
-	file, err := openSealedLocalRecordingFile(path)
+func (this *localRepository[Head, Summary]) verifyPublished(path string, expected os.FileInfo, head *Head, ctx context.Context) (Summary, error) {
+	var zero Summary
+	file, err := openSealedLocalFile(path)
 	if err != nil {
-		return nil, err
+		return zero, err
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return nil, err
+		return zero, err
 	}
 	if !os.SameFile(expected, info) {
-		return nil, errors.System.Newf("published recording does not match its verified source")
+		return zero, errors.System.Newf("published recording does not match its verified source")
 	}
-	return verifyPublishedCastZstd(file, info.Size(), options, head)
+	return this.format.verifyPublished(file, info.Size(), head, ctx)
 }
 
-func verifyPublishedCastZstd(file *os.File, size int64, options CastZstdVerifyOptions, head *audit.SessionRecordingZstdHead) (*CastZstdVerification, error) {
-	if head != nil {
-		stream, err := newCastZstdStreamForRecovery(file, size, options, head, true)
-		if err != nil {
-			return nil, err
-		}
-		_, scanErr := io.Copy(io.Discard, stream)
-		stream.close()
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		if stream.seal == nil {
-			return nil, errors.System.Newf("published Cast Zstandard container has no seal")
-		}
-	}
-	return VerifyCastZstd(file, size, options)
-}
-
-func verifyActiveCastZstdCheckpoint(file *os.File, size int64, options CastZstdVerifyOptions, head audit.SessionRecordingZstdHead) error {
-	stream, err := newCastZstdStreamForRecovery(file, size, options, &head, true)
-	if err != nil {
-		return err
-	}
-	defer stream.close()
-	if _, err := io.Copy(io.Discard, stream); err != nil {
-		return err
-	}
-	if stream.seal != nil || stream.incompleteTail || stream.validEnd != size {
-		return errors.System.Newf("new active recording has an unexpected container state")
-	}
-	return nil
-}
-
-func (this *LocalCastZstdRepository) poisonLocked(err error) error {
+func (this *localRepository[Head, Summary]) poisonLocked(err error) error {
 	if this.poisoned == nil {
 		this.poisoned = err
 	}
 	return err
 }
 
-func (this *LocalCastZstdRepository) failure() error {
+func (this *localRepository[Head, Summary]) failure() error {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 	return this.poisoned

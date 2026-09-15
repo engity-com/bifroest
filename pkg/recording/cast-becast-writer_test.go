@@ -108,7 +108,7 @@ func TestBECastWriterRoundTripCheckpointAndSeal(t *testing.T) {
 	require.Equal(t, castBytes, parsed.seal.CastBytes)
 	require.Equal(t, ciphertextBytes, summary.CiphertextBytes)
 	require.Equal(t, ciphertextBytes, parsed.seal.CiphertextBytes)
-	require.Equal(t, hashSessionRecording(castBECastCiphertextStreamHashDomain, ciphertexts.Bytes()), summary.CiphertextStreamHash)
+	require.Equal(t, hashDomainValues(castBECastCiphertextStreamHashDomain, ciphertexts.Bytes()), summary.CiphertextStreamHash)
 	require.Equal(t, summary.CiphertextStreamHash, parsed.seal.CiphertextStreamHash)
 	require.Equal(t, audit.SessionRecordingHash(summary.Digest), parsed.seal.CastContentDigest)
 	require.False(t, bytes.Contains(container.Bytes(), secret))

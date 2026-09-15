@@ -163,7 +163,7 @@ func encodeZstdSkippableFrame(id int, payload []byte) []byte {
 	return result
 }
 
-func hashSessionRecording(domain string, values ...[]byte) audit.SessionRecordingHash {
+func hashDomainValues(domain string, values ...[]byte) audit.SessionRecordingHash {
 	hasher := sha256.New()
 	_, _ = hasher.Write([]byte(domain))
 	for _, value := range values {

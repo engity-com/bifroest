@@ -245,11 +245,11 @@ func decodeBECastUnit(unit []byte, expectedType uint8) ([]byte, error) {
 }
 
 func hashBECastCiphertext(ciphertext []byte) audit.SessionRecordingHash {
-	return hashSessionRecording(castBECastCiphertextHashDomain, ciphertext)
+	return hashDomainValues(castBECastCiphertextHashDomain, ciphertext)
 }
 
 func hashBECastUnit(unit []byte) audit.SessionRecordingHash {
-	return hashSessionRecording(castBECastUnitHashDomain, unit)
+	return hashDomainValues(castBECastUnitHashDomain, unit)
 }
 
 func castBECastStatus(status CastStatus) (uint8, error) {

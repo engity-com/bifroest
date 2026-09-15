@@ -15,17 +15,17 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-const sealedLocalRecordingWindowsAccess = "0x00130189"
+const sealedLocalWindowsAccess = "0x00130189"
 
-type localRecordingProcessLock struct {
+type localProcessLock struct {
 	file       *os.File
 	overlapped windows.Overlapped
 	once       sync.Once
 	err        error
 }
 
-func acquireLocalRecordingProcessLock(path string) (*localRecordingProcessLock, error) {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, localRecordingFileMode)
+func acquireLocalProcessLock(path string) (*localProcessLock, error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, localFileMode)
 	if goerrors.Is(err, os.ErrExist) {
 		info, inspectErr := os.Lstat(path)
 		if inspectErr != nil {
@@ -34,20 +34,20 @@ func acquireLocalRecordingProcessLock(path string) (*localRecordingProcessLock, 
 		if !info.Mode().IsRegular() {
 			return nil, errors.Config.Newf("local recording lock is not a regular file")
 		}
-		file, err = os.OpenFile(path, os.O_RDWR, localRecordingFileMode)
+		file, err = os.OpenFile(path, os.O_RDWR, localFileMode)
 	}
 	if err != nil {
 		return nil, err
 	}
-	if err := validateOpenLocalRecordingFile(path, file); err != nil {
+	if err := validateOpenLocalFile(path, file); err != nil {
 		_ = file.Close()
 		return nil, err
 	}
-	if err := secureLocalRecordingFile(path, file); err != nil {
+	if err := secureLocalFile(path, file); err != nil {
 		_ = file.Close()
 		return nil, err
 	}
-	result := &localRecordingProcessLock{file: file}
+	result := &localProcessLock{file: file}
 	if err := windows.LockFileEx(windows.Handle(file.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &result.overlapped); err != nil {
 		_ = file.Close()
 		return nil, err
@@ -55,7 +55,7 @@ func acquireLocalRecordingProcessLock(path string) (*localRecordingProcessLock, 
 	return result, nil
 }
 
-func (this *localRecordingProcessLock) Close() error {
+func (this *localProcessLock) Close() error {
 	if this == nil {
 		return nil
 	}
@@ -70,32 +70,32 @@ func (this *localRecordingProcessLock) Close() error {
 	return this.err
 }
 
-func validateLocalRecordingLock(lock *localRecordingProcessLock, path string) error {
+func validateLocalLock(lock *localProcessLock, path string) error {
 	if lock == nil || lock.file == nil {
 		return errors.System.Newf("local recording lock is closed")
 	}
-	return validateOpenLocalRecordingFile(path, lock.file)
+	return validateOpenLocalFile(path, lock.file)
 }
 
-func secureLocalRecordingDirectory(path string, _ os.FileInfo) error {
-	return secureLocalRecordingPath(path, "FA")
+func secureLocalDirectory(path string, _ os.FileInfo) error {
+	return secureLocalPath(path, "FA")
 }
 
-func secureLocalRecordingFile(path string, file *os.File) error {
-	if err := requireSingleLocalRecordingLink(file); err != nil {
+func secureLocalFile(path string, file *os.File) error {
+	if err := requireSingleHardLink(file); err != nil {
 		return err
 	}
-	return secureLocalRecordingPath(path, "FA")
+	return secureLocalPath(path, "FA")
 }
 
-func protectLocalRecordingHead(path string, file *os.File) error {
+func protectLocalHead(path string, file *os.File) error {
 	if err := file.Sync(); err != nil {
 		return err
 	}
-	return secureLocalRecordingPath(path, "FRSD")
+	return secureLocalPath(path, "FRSD")
 }
 
-func openLocalRecordingHead(path string) (*os.File, error) {
+func openLocalHead(path string) (*os.File, error) {
 	pathInfo, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
@@ -103,7 +103,7 @@ func openLocalRecordingHead(path string) (*os.File, error) {
 	if !pathInfo.Mode().IsRegular() {
 		return nil, errors.Config.Newf("local recording head is not a regular file")
 	}
-	if err := secureLocalRecordingPath(path, "FRSD"); err != nil {
+	if err := secureLocalPath(path, "FRSD"); err != nil {
 		return nil, err
 	}
 	file, err := os.Open(path)
@@ -115,31 +115,31 @@ func openLocalRecordingHead(path string) (*os.File, error) {
 		_ = file.Close()
 		return nil, errors.System.Newf("local recording head changed while opening")
 	}
-	if err := requireSingleLocalRecordingLink(file); err != nil {
+	if err := requireSingleHardLink(file); err != nil {
 		_ = file.Close()
 		return nil, err
 	}
 	return file, nil
 }
 
-func makeActiveLocalRecordingWritable(path string) error {
-	if err := secureLocalRecordingPath(path, "FA"); err != nil {
+func makeActiveLocalWritable(path string) error {
+	if err := secureLocalPath(path, "FA"); err != nil {
 		return err
 	}
-	return os.Chmod(path, localRecordingFileMode)
+	return os.Chmod(path, localFileMode)
 }
 
-func sealLocalRecordingFile(path string, file *os.File) error {
+func sealLocalFile(path string, file *os.File) error {
 	if err := file.Sync(); err != nil {
 		return err
 	}
 	if err := os.Chmod(path, 0400); err != nil {
 		return err
 	}
-	return secureLocalRecordingPath(path, sealedLocalRecordingWindowsAccess)
+	return secureLocalPath(path, sealedLocalWindowsAccess)
 }
 
-func openSealedLocalRecordingFile(path string) (*os.File, error) {
+func openSealedLocalFile(path string) (*os.File, error) {
 	pathInfo, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
@@ -147,7 +147,7 @@ func openSealedLocalRecordingFile(path string) (*os.File, error) {
 	if !pathInfo.Mode().IsRegular() {
 		return nil, errors.Config.Newf("sealed local recording is not a regular file")
 	}
-	if err := secureLocalRecordingPath(path, sealedLocalRecordingWindowsAccess); err != nil {
+	if err := secureLocalPath(path, sealedLocalWindowsAccess); err != nil {
 		return nil, err
 	}
 	file, err := os.Open(path)
@@ -163,15 +163,15 @@ func openSealedLocalRecordingFile(path string) (*os.File, error) {
 		_ = file.Close()
 		return nil, errors.Config.Newf("sealed local recording is writable")
 	}
-	if err := requireSingleLocalRecordingLink(file); err != nil {
+	if err := requireSingleHardLink(file); err != nil {
 		_ = file.Close()
 		return nil, err
 	}
 	return file, nil
 }
 
-func secureLocalRecordingPath(path, access string) error {
-	userSid, ownerSid, err := localRecordingProcessSids()
+func secureLocalPath(path, access string) error {
+	userSid, ownerSid, err := localProcessSIDs()
 	if err != nil {
 		return err
 	}
@@ -201,7 +201,7 @@ func secureLocalRecordingPath(path, access string) error {
 	return windows.SetNamedSecurityInfo(nativePath, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil)
 }
 
-func localRecordingProcessSids() (*windows.SID, *windows.SID, error) {
+func localProcessSIDs() (*windows.SID, *windows.SID, error) {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil || user == nil || user.User.Sid == nil {
 		return nil, nil, errors.System.Newf("cannot determine local recording process user")
@@ -223,7 +223,7 @@ func localRecordingProcessSids() (*windows.SID, *windows.SID, error) {
 	if err := windows.GetTokenInformation(token, windows.TokenOwner, &raw[0], uint32(len(raw)), &required); err != nil {
 		return nil, nil, err
 	}
-	owner := (*localRecordingTokenOwner)(unsafe.Pointer(&raw[0])).owner
+	owner := (*localTokenOwner)(unsafe.Pointer(&raw[0])).owner
 	if owner == nil {
 		return nil, nil, errors.System.Newf("local recording process has no owner")
 	}
@@ -231,11 +231,11 @@ func localRecordingProcessSids() (*windows.SID, *windows.SID, error) {
 	return userSid, ownerSid, err
 }
 
-type localRecordingTokenOwner struct {
+type localTokenOwner struct {
 	owner *windows.SID
 }
 
-func requireSingleLocalRecordingLink(file *os.File) error {
+func requireSingleHardLink(file *os.File) error {
 	var information windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(windows.Handle(file.Fd()), &information); err != nil {
 		return err
@@ -246,19 +246,19 @@ func requireSingleLocalRecordingLink(file *os.File) error {
 	return nil
 }
 
-func replaceLocalRecordingFile(source, target string) error {
-	return moveLocalRecordingFile(source, target, windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH)
+func replaceLocalFile(source, target string) error {
+	return moveLocalFile(source, target, windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH)
 }
 
-func publishLocalRecordingDirectory(source, target string) error {
-	return moveLocalRecordingFile(source, target, windows.MOVEFILE_WRITE_THROUGH)
+func publishLocalDirectory(source, target string) error {
+	return moveLocalFile(source, target, windows.MOVEFILE_WRITE_THROUGH)
 }
 
-func publishLocalRecordingFile(source, target string) error {
-	return moveLocalRecordingFile(source, target, windows.MOVEFILE_WRITE_THROUGH)
+func publishLocalFile(source, target string) error {
+	return moveLocalFile(source, target, windows.MOVEFILE_WRITE_THROUGH)
 }
 
-func completeLocalRecordingPublishAlias(source, target string) (bool, error) {
+func completeLocalPublishAlias(source, target string) (bool, error) {
 	if _, err := os.Lstat(source); err != nil && !goerrors.Is(err, os.ErrNotExist) {
 		return false, err
 	}
@@ -270,7 +270,7 @@ func completeLocalRecordingPublishAlias(source, target string) (bool, error) {
 	return false, nil
 }
 
-func moveLocalRecordingFile(source, target string, flags uint32) error {
+func moveLocalFile(source, target string, flags uint32) error {
 	from, err := sys.WindowsPathPointer(source)
 	if err != nil {
 		return err
@@ -282,6 +282,6 @@ func moveLocalRecordingFile(source, target string, flags uint32) error {
 	return windows.MoveFileEx(from, to, flags)
 }
 
-func syncLocalRecordingDirectory(string) error {
+func syncLocalDirectory(string) error {
 	return nil
 }

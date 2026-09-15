@@ -159,7 +159,7 @@ func verifyBECastManifest(source io.ReaderAt, size int64, options BECastVerifyOp
 		maximumCastBytes:     uint64(maximumCastBytes),
 		maximumChunks:        maximumChunks,
 		context:              options.Context,
-		ciphertextStreamHash: hashSessionRecordingWriter(castBECastCiphertextStreamHashDomain),
+		ciphertextStreamHash: newDomainHasher(castBECastCiphertextStreamHashDomain),
 	}
 	magic, err := scanner.readBytes(len(castBECastFileMagic))
 	if err != nil {
