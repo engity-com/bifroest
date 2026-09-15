@@ -169,6 +169,11 @@ func ensureAuditOutputSafe(output string, conf *configuration.Configuration) err
 				return err
 			}
 		}
+		if configured.Recording.Enabled {
+			if _, err := ensureAuditOutputOutsideDirectory(output, absoluteOutput, configured.Recording.Directory, fmt.Sprintf("auditlog %q recording directory", configured.Name)); err != nil {
+				return err
+			}
+		}
 		for targetIndex := range configured.Targets {
 			target := &configured.Targets[targetIndex]
 			sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
@@ -177,6 +182,23 @@ func ensureAuditOutputSafe(output string, conf *configuration.Configuration) err
 			}
 			if !sftp.KnownHostsFile.IsZero() {
 				if err := ensureAuditOutputDoesNotReplaceFile(output, string(sftp.KnownHostsFile), "SFTP known-hosts file"); err != nil {
+					return err
+				}
+			}
+			if err := ensureBootstrapOutputIsNotPrivateKey(output, sftp.IdentityFiles...); err != nil {
+				return err
+			}
+		}
+		if !configured.Recording.Enabled {
+			continue
+		}
+		for _, target := range configured.Recording.Targets.Configured() {
+			sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
+			if !ok {
+				continue
+			}
+			if !sftp.KnownHostsFile.IsZero() {
+				if err := ensureAuditOutputDoesNotReplaceFile(output, string(sftp.KnownHostsFile), "Recording SFTP known-hosts file"); err != nil {
 					return err
 				}
 			}

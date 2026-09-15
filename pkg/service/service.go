@@ -6,6 +6,7 @@ import (
 	"fmt"
 	gonet "net"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -525,6 +526,21 @@ func loadStaticSftpIdentityPublicKeysForAuditEncryption(auditlogs configuration.
 			}
 			result = append(result, keys...)
 		}
+		if !auditlog.Recording.Enabled {
+			continue
+		}
+		for targetIndex := range auditlog.Recording.Targets.Configured() {
+			target := &auditlog.Recording.Targets.Targets[targetIndex]
+			sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
+			if !ok || len(sftp.IdentityFiles) == 0 {
+				continue
+			}
+			keys, err := audit.LoadSftpIdentityPublicKeys(sftp.IdentityFiles)
+			if err != nil {
+				return nil, fmt.Errorf("cannot load static SFTP identities of Recording target %q in auditlog %q: %w", target.Name, auditlog.Name, err)
+			}
+			result = append(result, keys...)
+		}
 	}
 	return result, nil
 }
@@ -756,6 +772,13 @@ func validateAuditlogRuntimePaths(auditlogs configuration.Auditlogs) error {
 		}
 		configured.IdentityFile = identityFile
 		configured.Journal.Directory = journal
+		if configured.Recording.Enabled {
+			recording, err := sys.CanonicalPath(configured.Recording.Directory)
+			if err != nil {
+				return errors.Config.Newf("cannot resolve recording directory of auditlog %q: %w", configured.Name, err)
+			}
+			configured.Recording.Directory = recording
+		}
 		resolved = append(resolved, resolvedAuditlog{configured.Name, identityFile, journal})
 	}
 	for leftIndex, left := range resolved {
@@ -777,7 +800,118 @@ func validateAuditlogRuntimePaths(auditlogs configuration.Auditlogs) error {
 	return nil
 }
 
+func validateRecordingRuntimePathOverlaps(conf *configuration.Configuration, storage string) error {
+	for recordingIndex, recordingAuditlog := range conf.Auditlogs {
+		if !recordingAuditlog.Enabled || !recordingAuditlog.Recording.Enabled {
+			continue
+		}
+		recordingDirectory := recordingAuditlog.Recording.Directory
+		if storage != "" && runtimePathsOverlap(recordingDirectory, storage) {
+			return errors.Config.Newf("auditlog %q recording directory overlaps session storage", recordingAuditlog.Name)
+		}
+		for auditlogIndex, auditlog := range conf.Auditlogs {
+			if !auditlog.Enabled {
+				continue
+			}
+			if runtimePathsOverlap(recordingDirectory, auditlog.Journal.Directory) {
+				return errors.Config.Newf("auditlog %q recording directory overlaps auditlog %q journal", recordingAuditlog.Name, auditlog.Name)
+			}
+			if runtimePathsOverlap(recordingDirectory, auditlog.IdentityFile) {
+				return errors.Config.Newf("auditlog %q recording directory overlaps auditlog %q identity file", recordingAuditlog.Name, auditlog.Name)
+			}
+			if recordingIndex < auditlogIndex && auditlog.Recording.Enabled && runtimePathsOverlap(recordingDirectory, auditlog.Recording.Directory) {
+				return errors.Config.Newf("auditlog %q recording directory overlaps auditlog %q recording directory", recordingAuditlog.Name, auditlog.Name)
+			}
+			if !auditlog.EncryptionPublicKeyFile.IsZero() && runtimePathsOverlap(recordingDirectory, string(auditlog.EncryptionPublicKeyFile)) {
+				return errors.Config.Newf("auditlog %q recording directory overlaps auditlog %q encryption public key file", recordingAuditlog.Name, auditlog.Name)
+			}
+			for _, target := range auditlog.Targets {
+				sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
+				if !ok || sftp == nil {
+					continue
+				}
+				if !sftp.KnownHostsFile.IsZero() && runtimePathsOverlap(recordingDirectory, string(sftp.KnownHostsFile)) {
+					return errors.Config.Newf("auditlog %q recording directory overlaps auditlog %q SFTP target %q known hosts file", recordingAuditlog.Name, auditlog.Name, target.Name)
+				}
+				for index, identityFile := range sftp.IdentityFiles {
+					if runtimePathsOverlap(recordingDirectory, identityFile) {
+						return errors.Config.Newf("auditlog %q recording directory overlaps auditlog %q SFTP target %q identity file [%d]", recordingAuditlog.Name, auditlog.Name, target.Name, index)
+					}
+				}
+			}
+			if !auditlog.Recording.Enabled {
+				continue
+			}
+			for _, target := range auditlog.Recording.Targets.Configured() {
+				sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
+				if !ok || sftp == nil {
+					continue
+				}
+				if !sftp.KnownHostsFile.IsZero() && runtimePathsOverlap(recordingDirectory, string(sftp.KnownHostsFile)) {
+					return errors.Config.Newf("auditlog %q recording directory overlaps auditlog %q Recording SFTP target %q known hosts file", recordingAuditlog.Name, auditlog.Name, target.Name)
+				}
+				for index, identityFile := range sftp.IdentityFiles {
+					if runtimePathsOverlap(recordingDirectory, identityFile) {
+						return errors.Config.Newf("auditlog %q recording directory overlaps auditlog %q Recording SFTP target %q identity file [%d]", recordingAuditlog.Name, auditlog.Name, target.Name, index)
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func validateRuntimePaths(conf *configuration.Configuration) error {
+	candidate := cloneRuntimePathConfiguration(conf)
+	if err := validateRuntimePathCandidate(&candidate); err != nil {
+		return err
+	}
+	*conf = candidate
+	return nil
+}
+
+func cloneRuntimePathConfiguration(conf *configuration.Configuration) configuration.Configuration {
+	result := *conf
+	result.Auditlogs = slices.Clone(conf.Auditlogs)
+	for auditlogIndex := range result.Auditlogs {
+		result.Auditlogs[auditlogIndex].Targets = slices.Clone(conf.Auditlogs[auditlogIndex].Targets)
+		for targetIndex := range result.Auditlogs[auditlogIndex].Targets {
+			sftp, ok := conf.Auditlogs[auditlogIndex].Targets[targetIndex].V.(*configuration.AuditlogTargetSftp)
+			if !ok || sftp == nil {
+				continue
+			}
+			cloned := *sftp
+			cloned.IdentityFiles = slices.Clone(sftp.IdentityFiles)
+			result.Auditlogs[auditlogIndex].Targets[targetIndex].V = &cloned
+		}
+		configured := &conf.Auditlogs[auditlogIndex]
+		if !configured.Enabled || !configured.Recording.Enabled {
+			continue
+		}
+		configuredTargets := configured.Recording.Targets.Configured()
+		if len(configuredTargets) == 0 {
+			continue
+		}
+		resultTargets := &result.Auditlogs[auditlogIndex].Recording.Targets
+		resultTargets.Targets = slices.Clone(configuredTargets)
+		for targetIndex := range resultTargets.Targets {
+			sftp, ok := configuredTargets[targetIndex].V.(*configuration.AuditlogTargetSftp)
+			if !ok || sftp == nil {
+				continue
+			}
+			cloned := *sftp
+			cloned.IdentityFiles = slices.Clone(sftp.IdentityFiles)
+			resultTargets.Targets[targetIndex].V = &cloned
+		}
+	}
+	if sessionFs, ok := conf.Session.V.(*configuration.SessionFs); ok && sessionFs != nil {
+		cloned := *sessionFs
+		result.Session.V = &cloned
+	}
+	return result
+}
+
+func validateRuntimePathCandidate(conf *configuration.Configuration) error {
 	if err := validateAuditlogRuntimePaths(conf.Auditlogs); err != nil {
 		return err
 	}
@@ -832,8 +966,30 @@ func validateRuntimePaths(conf *configuration.Configuration) error {
 				sftp.IdentityFiles[index] = resolved
 			}
 		}
+		configuredRecordingTargets := auditlog.Recording.Targets.Configured()
+		for targetIndex := range configuredRecordingTargets {
+			target := &configuredRecordingTargets[targetIndex]
+			sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
+			if !auditlog.Recording.Enabled || !ok || sftp == nil {
+				continue
+			}
+			if !sftp.KnownHostsFile.IsZero() {
+				resolved, err := canonicalRuntimePathOutsideSessionStorage(storage, string(sftp.KnownHostsFile), fmt.Sprintf("auditlog %q Recording SFTP target %q known hosts file", auditlog.Name, target.Name))
+				if err != nil {
+					return err
+				}
+				sftp.KnownHostsFile = crypto.KnownHostsFile(resolved)
+			}
+			for index, identityFile := range sftp.IdentityFiles {
+				resolved, err := canonicalRuntimePathOutsideSessionStorage(storage, identityFile, fmt.Sprintf("auditlog %q Recording SFTP target %q identity file [%d]", auditlog.Name, target.Name, index))
+				if err != nil {
+					return err
+				}
+				sftp.IdentityFiles[index] = resolved
+			}
+		}
 	}
-	return nil
+	return validateRecordingRuntimePathOverlaps(conf, storage)
 }
 
 func canonicalRuntimePathOutsideSessionStorage(storage, candidate, description string) (string, error) {
@@ -855,4 +1011,8 @@ func validateSessionStorageRuntimePath(storage, candidate, description string) e
 func runtimePathContains(path, directory string) bool {
 	relative, err := filepath.Rel(directory, path)
 	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+}
+
+func runtimePathsOverlap(left, right string) bool {
+	return runtimePathContains(left, right) || runtimePathContains(right, left)
 }

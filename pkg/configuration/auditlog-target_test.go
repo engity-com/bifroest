@@ -16,6 +16,7 @@ var _ = RegisterAuditlogTargetCodec(func() AuditlogTargetV {
 
 type testAuditlogTarget struct {
 	Endpoint     string `yaml:"endpoint"`
+	Required     string `yaml:"required,omitempty"`
 	defaultCalls int    `yaml:"-"`
 }
 
@@ -27,6 +28,7 @@ func (this *testAuditlogTarget) SetDefaults() error {
 
 func (this *testAuditlogTarget) Trim() error {
 	this.Endpoint = strings.TrimSpace(this.Endpoint)
+	this.Required = strings.TrimSpace(this.Required)
 	return this.Validate()
 }
 
@@ -39,7 +41,7 @@ func (this *testAuditlogTarget) Validate() error {
 
 func (this *testAuditlogTarget) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *testAuditlogTarget, node *yaml.Node) error {
-		if err := rejectUnknownAuditlogFields(node, "endpoint"); err != nil {
+		if err := rejectUnknownAuditlogFields(node, "endpoint", "required"); err != nil {
 			return err
 		}
 		type raw testAuditlogTarget
@@ -50,9 +52,9 @@ func (this *testAuditlogTarget) UnmarshalYAML(node *yaml.Node) error {
 func (this testAuditlogTarget) IsEqualTo(other any) bool {
 	switch value := other.(type) {
 	case testAuditlogTarget:
-		return this.Endpoint == value.Endpoint
+		return this.Endpoint == value.Endpoint && this.Required == value.Required
 	case *testAuditlogTarget:
-		return value != nil && this.Endpoint == value.Endpoint
+		return value != nil && this.Endpoint == value.Endpoint && this.Required == value.Required
 	default:
 		return false
 	}
@@ -74,11 +76,12 @@ targets:
   - name: " archive "
     type: TEST-REMOTE-ALIAS
     endpoint: " https://archive.example.invalid/audit "
+    required: parent-codec-specific
   - name: backup
     type: test-remote
 `), &actual))
 	require.Equal(t, AuditlogTargets{
-		{Name: "archive", V: &testAuditlogTarget{Endpoint: "https://archive.example.invalid/audit", defaultCalls: 1}},
+		{Name: "archive", V: &testAuditlogTarget{Endpoint: "https://archive.example.invalid/audit", Required: "parent-codec-specific", defaultCalls: 1}},
 		{Name: "backup", V: &testAuditlogTarget{Endpoint: "default.example.invalid", defaultCalls: 1}},
 	}, actual.Targets)
 

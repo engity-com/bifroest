@@ -29,6 +29,7 @@ func TestAuditlog_UnmarshalYAML(t *testing.T) {
 					Directory:        DefaultAuditlogJournalDirectory,
 					MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
 				},
+				Recording: expectedDefaultAuditlogRecording(),
 			},
 		},
 		unmarshalYamlTestCase[Auditlog]{
@@ -47,6 +48,7 @@ journal:
 					Directory:        "custom-journal",
 					MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
 				},
+				Recording: expectedDefaultAuditlogRecording(),
 			},
 		},
 		unmarshalYamlTestCase[Auditlog]{
@@ -87,6 +89,7 @@ func TestAuditlogsDefaultAndExplicitEntries(t *testing.T) {
 			Directory:        DefaultAuditlogJournalDirectory,
 			MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
 		},
+		Recording: expectedDefaultAuditlogRecording(),
 	}}, absent)
 
 	var empty Auditlogs

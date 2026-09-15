@@ -201,6 +201,10 @@ func TestValidateRuntimePathsRewritesSymlinkAliases(t *testing.T) {
 		KnownHostsFile: crypto.KnownHostsFile(filepath.Join(alias, "known-hosts")),
 		IdentityFiles:  []string{filepath.Join(alias, "sftp-key")},
 	}
+	recordingSftp := &configuration.AuditlogTargetSftp{
+		KnownHostsFile: crypto.KnownHostsFile(filepath.Join(alias, "recording-known-hosts")),
+		IdentityFiles:  []string{filepath.Join(alias, "recording-sftp-key")},
+	}
 	conf := configuration.Configuration{
 		Auditlogs: configuration.Auditlogs{{
 			Name:                    "security",
@@ -208,7 +212,12 @@ func TestValidateRuntimePathsRewritesSymlinkAliases(t *testing.T) {
 			IdentityFile:            filepath.Join(alias, "audit-key"),
 			EncryptionPublicKeyFile: crypto.PublicKeysFile(filepath.Join(alias, "encryption.pub")),
 			Journal:                 configuration.AuditlogJournal{Directory: filepath.Join(alias, "journal")},
-			Targets:                 configuration.AuditlogTargets{{Name: "archive", V: sftp}},
+			Recording: configuration.AuditlogRecording{
+				Enabled:   true,
+				Directory: filepath.Join(alias, "recordings"),
+				Targets:   recordingSftpTargets(recordingSftp),
+			},
+			Targets: configuration.AuditlogTargets{{Name: "archive", V: sftp}},
 		}},
 		Session: configuration.Session{V: &configuration.SessionFs{Storage: filepath.Join(alias, "sessions")}},
 	}
@@ -218,10 +227,417 @@ func TestValidateRuntimePathsRewritesSymlinkAliases(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(canonicalReal, "audit-key"), conf.Auditlogs[0].IdentityFile)
 	require.Equal(t, filepath.Join(canonicalReal, "journal"), conf.Auditlogs[0].Journal.Directory)
+	require.Equal(t, filepath.Join(canonicalReal, "recordings"), conf.Auditlogs[0].Recording.Directory)
 	require.Equal(t, crypto.PublicKeysFile(filepath.Join(canonicalReal, "encryption.pub")), conf.Auditlogs[0].EncryptionPublicKeyFile)
 	require.Equal(t, filepath.Join(canonicalReal, "sessions"), conf.Session.V.(*configuration.SessionFs).Storage)
-	require.Equal(t, crypto.KnownHostsFile(filepath.Join(canonicalReal, "known-hosts")), sftp.KnownHostsFile)
-	require.Equal(t, []string{filepath.Join(canonicalReal, "sftp-key")}, sftp.IdentityFiles)
+	resolvedSftp := conf.Auditlogs[0].Targets[0].V.(*configuration.AuditlogTargetSftp)
+	require.Equal(t, crypto.KnownHostsFile(filepath.Join(canonicalReal, "known-hosts")), resolvedSftp.KnownHostsFile)
+	require.Equal(t, []string{filepath.Join(canonicalReal, "sftp-key")}, resolvedSftp.IdentityFiles)
+	resolvedRecordingSftp := conf.Auditlogs[0].Recording.Targets.Configured()[0].V.(*configuration.AuditlogTargetSftp)
+	require.Equal(t, crypto.KnownHostsFile(filepath.Join(canonicalReal, "recording-known-hosts")), resolvedRecordingSftp.KnownHostsFile)
+	require.Equal(t, []string{filepath.Join(canonicalReal, "recording-sftp-key")}, resolvedRecordingSftp.IdentityFiles)
+}
+
+func TestValidateRuntimePathsRejectsRecordingSymlinkOverlap(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	require.NoError(t, os.Mkdir(real, 0700))
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Skipf("cannot create directory symlink: %v", err)
+	}
+	conf := configuration.Configuration{
+		Auditlogs: configuration.Auditlogs{{
+			Name:         "security",
+			Enabled:      true,
+			IdentityFile: filepath.Join(real, "identity"),
+			Journal:      configuration.AuditlogJournal{Directory: filepath.Join(real, "journal")},
+			Recording: configuration.AuditlogRecording{
+				Enabled:   true,
+				Directory: filepath.Join(alias, "journal", "recordings"),
+			},
+		}},
+		Session: configuration.Session{V: &configuration.SessionFs{Storage: filepath.Join(real, "sessions")}},
+	}
+
+	require.ErrorContains(t, validateRuntimePaths(&conf), "recording directory overlaps auditlog \"security\" journal")
+}
+
+func TestValidateRuntimePathsRejectsRecordingSessionStorageSymlinkOverlap(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	require.NoError(t, os.Mkdir(real, 0700))
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Skipf("cannot create directory symlink: %v", err)
+	}
+	conf := configuration.Configuration{
+		Auditlogs: configuration.Auditlogs{{
+			Name:         "security",
+			Enabled:      true,
+			IdentityFile: filepath.Join(real, "identity"),
+			Journal:      configuration.AuditlogJournal{Directory: filepath.Join(real, "journal")},
+			Recording: configuration.AuditlogRecording{
+				Enabled:   true,
+				Directory: filepath.Join(alias, "storage", "recordings"),
+			},
+		}},
+		Session: configuration.Session{V: &configuration.SessionFs{Storage: filepath.Join(real, "storage")}},
+	}
+
+	require.ErrorContains(t, validateRuntimePaths(&conf), "recording directory overlaps session storage")
+}
+
+func TestValidateRuntimePathsRejectsRecordingTargetInputSymlinkOverlap(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	require.NoError(t, os.Mkdir(real, 0700))
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Skipf("cannot create directory symlink: %v", err)
+	}
+	sftp := &configuration.AuditlogTargetSftp{
+		KnownHostsFile: crypto.KnownHostsFile(filepath.Join(real, "recordings", "known_hosts")),
+	}
+	conf := configuration.Configuration{
+		Auditlogs: configuration.Auditlogs{{
+			Name:         "security",
+			Enabled:      true,
+			IdentityFile: filepath.Join(real, "identity"),
+			Journal:      configuration.AuditlogJournal{Directory: filepath.Join(real, "journal")},
+			Recording: configuration.AuditlogRecording{
+				Enabled:   true,
+				Directory: filepath.Join(alias, "recordings"),
+			},
+			Targets: configuration.AuditlogTargets{{Name: "archive", V: sftp}},
+		}},
+		Session: configuration.Session{V: &configuration.SessionFs{Storage: filepath.Join(real, "sessions")}},
+	}
+
+	require.ErrorContains(t, validateRuntimePaths(&conf), "recording directory overlaps auditlog \"security\" SFTP target \"archive\" known hosts file")
+}
+
+func TestValidateRuntimePathsRejectsCustomRecordingTargetCrossRootSymlinkOverlap(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	require.NoError(t, os.Mkdir(real, 0700))
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Skipf("cannot create directory symlink: %v", err)
+	}
+	recordingSftp := &configuration.AuditlogTargetSftp{
+		KnownHostsFile: crypto.KnownHostsFile(filepath.Join(real, "first-recordings", "known_hosts")),
+	}
+	conf := configuration.Configuration{
+		Auditlogs: configuration.Auditlogs{
+			{
+				Name:         "first",
+				Enabled:      true,
+				IdentityFile: filepath.Join(real, "first-identity"),
+				Journal:      configuration.AuditlogJournal{Directory: filepath.Join(real, "first-journal")},
+				Recording: configuration.AuditlogRecording{
+					Enabled:   true,
+					Directory: filepath.Join(alias, "first-recordings"),
+				},
+			},
+			{
+				Name:         "second",
+				Enabled:      true,
+				IdentityFile: filepath.Join(real, "second-identity"),
+				Journal:      configuration.AuditlogJournal{Directory: filepath.Join(real, "second-journal")},
+				Recording: configuration.AuditlogRecording{
+					Enabled:   true,
+					Directory: filepath.Join(alias, "second-recordings"),
+					Targets:   recordingSftpTargets(recordingSftp),
+				},
+			},
+		},
+	}
+
+	require.ErrorContains(t, validateRuntimePaths(&conf), "recording directory overlaps auditlog \"second\" Recording SFTP target \"recording-archive\" known hosts file")
+}
+
+func TestValidateRuntimePathsRejectsCustomRecordingTargetSessionStorageOverlap(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	require.NoError(t, os.Mkdir(real, 0700))
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Skipf("cannot create directory symlink: %v", err)
+	}
+	recordingSftp := &configuration.AuditlogTargetSftp{
+		IdentityFiles: []string{filepath.Join(alias, "sessions", "recording-key")},
+	}
+	conf := configuration.Configuration{
+		Auditlogs: configuration.Auditlogs{{
+			Name:         "security",
+			Enabled:      true,
+			IdentityFile: filepath.Join(real, "identity"),
+			Journal:      configuration.AuditlogJournal{Directory: filepath.Join(real, "journal")},
+			Recording: configuration.AuditlogRecording{
+				Enabled:   true,
+				Directory: filepath.Join(real, "recordings"),
+				Targets:   recordingSftpTargets(recordingSftp),
+			},
+		}},
+		Session: configuration.Session{V: &configuration.SessionFs{Storage: filepath.Join(real, "sessions")}},
+	}
+
+	require.ErrorContains(t, validateRuntimePaths(&conf), "session storage overlaps auditlog \"security\" Recording SFTP target \"recording-archive\" identity file [0]")
+}
+
+func TestValidateRuntimePathsRejectsCrossAuditlogRecordingCredentialSymlinkOverlaps(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	require.NoError(t, os.Mkdir(real, 0700))
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Skipf("cannot create directory symlink: %v", err)
+	}
+
+	for _, test := range []struct {
+		name      string
+		configure func(*configuration.Auditlog)
+		errorPart string
+	}{
+		{
+			"encryption public key file",
+			func(auditlog *configuration.Auditlog) {
+				auditlog.EncryptionPublicKeyFile = crypto.PublicKeysFile(filepath.Join(real, "recordings", "recipient.pub"))
+			},
+			"auditlog \"second\" encryption public key file",
+		},
+		{
+			"SFTP known hosts file",
+			func(auditlog *configuration.Auditlog) {
+				auditlog.Targets = configuration.AuditlogTargets{{
+					Name: "archive",
+					V: &configuration.AuditlogTargetSftp{
+						KnownHostsFile: crypto.KnownHostsFile(filepath.Join(real, "recordings", "known_hosts")),
+					},
+				}}
+			},
+			"auditlog \"second\" SFTP target \"archive\" known hosts file",
+		},
+		{
+			"SFTP identity file",
+			func(auditlog *configuration.Auditlog) {
+				auditlog.Targets = configuration.AuditlogTargets{{
+					Name: "archive",
+					V: &configuration.AuditlogTargetSftp{
+						IdentityFiles: []string{filepath.Join(real, "recordings", "identity")},
+					},
+				}}
+			},
+			"auditlog \"second\" SFTP target \"archive\" identity file [0]",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			first := configuration.Auditlog{
+				Name:         "first",
+				Enabled:      true,
+				IdentityFile: filepath.Join(real, "first-identity"),
+				Journal:      configuration.AuditlogJournal{Directory: filepath.Join(real, "first-journal")},
+				Recording: configuration.AuditlogRecording{
+					Enabled:   true,
+					Directory: filepath.Join(alias, "recordings"),
+				},
+			}
+			second := configuration.Auditlog{
+				Name:         "second",
+				Enabled:      true,
+				IdentityFile: filepath.Join(real, "second-identity"),
+				Journal:      configuration.AuditlogJournal{Directory: filepath.Join(real, "second-journal")},
+			}
+			test.configure(&second)
+			conf := configuration.Configuration{Auditlogs: configuration.Auditlogs{first, second}}
+
+			require.ErrorContains(t, validateRuntimePaths(&conf), test.errorPart)
+		})
+	}
+}
+
+func TestValidateRuntimePathsIsAtomicAfterLateRecordingOverlap(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	require.NoError(t, os.Mkdir(real, 0700))
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Skipf("cannot create directory symlink: %v", err)
+	}
+	sftp := &configuration.AuditlogTargetSftp{
+		KnownHostsFile: crypto.KnownHostsFile(filepath.Join(alias, "known_hosts")),
+		IdentityFiles:  []string{filepath.Join(alias, "recordings", "identity")},
+	}
+	recordingSftp := &configuration.AuditlogTargetSftp{
+		KnownHostsFile: crypto.KnownHostsFile(filepath.Join(alias, "recording-known-hosts")),
+		IdentityFiles:  []string{filepath.Join(alias, "recording-identity")},
+	}
+	conf := configuration.Configuration{
+		Auditlogs: configuration.Auditlogs{
+			{
+				Name:                    "first",
+				Enabled:                 true,
+				IdentityFile:            filepath.Join(alias, "first-identity"),
+				EncryptionPublicKeyFile: crypto.PublicKeysFile(filepath.Join(alias, "recipient.pub")),
+				Journal:                 configuration.AuditlogJournal{Directory: filepath.Join(alias, "first-journal")},
+				Recording: configuration.AuditlogRecording{
+					Enabled:   true,
+					Directory: filepath.Join(alias, "recordings"),
+					Targets:   recordingSftpTargets(recordingSftp),
+				},
+			},
+			{
+				Name:         "second",
+				Enabled:      true,
+				IdentityFile: filepath.Join(alias, "second-identity"),
+				Journal:      configuration.AuditlogJournal{Directory: filepath.Join(alias, "second-journal")},
+				Targets:      configuration.AuditlogTargets{{Name: "archive", V: sftp}},
+			},
+		},
+		Session: configuration.Session{V: &configuration.SessionFs{Storage: filepath.Join(alias, "sessions")}},
+	}
+
+	require.ErrorContains(t, validateRuntimePaths(&conf), "recording directory overlaps auditlog \"second\" SFTP target \"archive\" identity file")
+	require.Equal(t, filepath.Join(alias, "first-identity"), conf.Auditlogs[0].IdentityFile)
+	require.Equal(t, filepath.Join(alias, "first-journal"), conf.Auditlogs[0].Journal.Directory)
+	require.Equal(t, filepath.Join(alias, "recordings"), conf.Auditlogs[0].Recording.Directory)
+	require.Equal(t, crypto.PublicKeysFile(filepath.Join(alias, "recipient.pub")), conf.Auditlogs[0].EncryptionPublicKeyFile)
+	require.Equal(t, filepath.Join(alias, "sessions"), conf.Session.V.(*configuration.SessionFs).Storage)
+	require.Same(t, sftp, conf.Auditlogs[1].Targets[0].V)
+	require.Equal(t, crypto.KnownHostsFile(filepath.Join(alias, "known_hosts")), sftp.KnownHostsFile)
+	require.Equal(t, []string{filepath.Join(alias, "recordings", "identity")}, sftp.IdentityFiles)
+	require.Same(t, recordingSftp, conf.Auditlogs[0].Recording.Targets.Configured()[0].V)
+	require.Equal(t, crypto.KnownHostsFile(filepath.Join(alias, "recording-known-hosts")), recordingSftp.KnownHostsFile)
+	require.Equal(t, []string{filepath.Join(alias, "recording-identity")}, recordingSftp.IdentityFiles)
+}
+
+func TestValidateRuntimePathsIsAtomicAfterRecordingCanonicalizationFailure(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	require.NoError(t, os.Mkdir(real, 0700))
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Skipf("cannot create directory symlink: %v", err)
+	}
+	sftp := &configuration.AuditlogTargetSftp{
+		KnownHostsFile: crypto.KnownHostsFile(filepath.Join(alias, "known_hosts")),
+		IdentityFiles:  []string{filepath.Join(alias, "sftp-identity")},
+	}
+	recordingDirectory := filepath.Join(alias, "recordings") + "\x00"
+	conf := configuration.Configuration{
+		Auditlogs: configuration.Auditlogs{{
+			Name:         "security",
+			Enabled:      true,
+			IdentityFile: filepath.Join(alias, "identity"),
+			Journal:      configuration.AuditlogJournal{Directory: filepath.Join(alias, "journal")},
+			Recording: configuration.AuditlogRecording{
+				Enabled:   true,
+				Directory: recordingDirectory,
+			},
+			Targets: configuration.AuditlogTargets{{Name: "archive", V: sftp}},
+		}},
+		Session: configuration.Session{V: &configuration.SessionFs{Storage: filepath.Join(alias, "sessions")}},
+	}
+
+	require.ErrorContains(t, validateRuntimePaths(&conf), "cannot resolve recording directory")
+	require.Equal(t, filepath.Join(alias, "identity"), conf.Auditlogs[0].IdentityFile)
+	require.Equal(t, filepath.Join(alias, "journal"), conf.Auditlogs[0].Journal.Directory)
+	require.Equal(t, recordingDirectory, conf.Auditlogs[0].Recording.Directory)
+	require.Equal(t, filepath.Join(alias, "sessions"), conf.Session.V.(*configuration.SessionFs).Storage)
+	require.Same(t, sftp, conf.Auditlogs[0].Targets[0].V)
+	require.Equal(t, crypto.KnownHostsFile(filepath.Join(alias, "known_hosts")), sftp.KnownHostsFile)
+	require.Equal(t, []string{filepath.Join(alias, "sftp-identity")}, sftp.IdentityFiles)
+}
+
+func TestValidateRuntimePathsIsAtomicAfterCustomRecordingTargetFailure(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	require.NoError(t, os.Mkdir(real, 0700))
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Skipf("cannot create directory symlink: %v", err)
+	}
+	parentSftp := &configuration.AuditlogTargetSftp{
+		KnownHostsFile: crypto.KnownHostsFile(filepath.Join(alias, "parent-known-hosts")),
+		IdentityFiles:  []string{filepath.Join(alias, "parent-identity")},
+	}
+	recordingSftp := &configuration.AuditlogTargetSftp{
+		KnownHostsFile: crypto.KnownHostsFile(filepath.Join(alias, "recording-known-hosts")),
+		IdentityFiles:  []string{filepath.Join(alias, "recording-identity") + "\x00"},
+	}
+	conf := configuration.Configuration{
+		Auditlogs: configuration.Auditlogs{{
+			Name:                    "security",
+			Enabled:                 true,
+			IdentityFile:            filepath.Join(alias, "identity"),
+			EncryptionPublicKeyFile: crypto.PublicKeysFile(filepath.Join(alias, "recipient.pub")),
+			Journal:                 configuration.AuditlogJournal{Directory: filepath.Join(alias, "journal")},
+			Recording: configuration.AuditlogRecording{
+				Enabled:   true,
+				Directory: filepath.Join(alias, "recordings"),
+				Targets:   recordingSftpTargets(recordingSftp),
+			},
+			Targets: configuration.AuditlogTargets{{Name: "archive", V: parentSftp}},
+		}},
+		Session: configuration.Session{V: &configuration.SessionFs{Storage: filepath.Join(alias, "sessions")}},
+	}
+
+	require.ErrorContains(t, validateRuntimePaths(&conf), "cannot resolve auditlog \"security\" Recording SFTP target \"recording-archive\" identity file [0]")
+	require.Equal(t, filepath.Join(alias, "identity"), conf.Auditlogs[0].IdentityFile)
+	require.Equal(t, filepath.Join(alias, "journal"), conf.Auditlogs[0].Journal.Directory)
+	require.Equal(t, filepath.Join(alias, "recordings"), conf.Auditlogs[0].Recording.Directory)
+	require.Equal(t, crypto.PublicKeysFile(filepath.Join(alias, "recipient.pub")), conf.Auditlogs[0].EncryptionPublicKeyFile)
+	require.Equal(t, filepath.Join(alias, "sessions"), conf.Session.V.(*configuration.SessionFs).Storage)
+	require.Same(t, parentSftp, conf.Auditlogs[0].Targets[0].V)
+	require.Equal(t, crypto.KnownHostsFile(filepath.Join(alias, "parent-known-hosts")), parentSftp.KnownHostsFile)
+	require.Equal(t, []string{filepath.Join(alias, "parent-identity")}, parentSftp.IdentityFiles)
+	require.Same(t, recordingSftp, conf.Auditlogs[0].Recording.Targets.Configured()[0].V)
+	require.Equal(t, crypto.KnownHostsFile(filepath.Join(alias, "recording-known-hosts")), recordingSftp.KnownHostsFile)
+	require.Equal(t, []string{filepath.Join(alias, "recording-identity") + "\x00"}, recordingSftp.IdentityFiles)
+}
+
+func TestValidateRuntimePathsDoesNotCanonicalizeDisabledRecording(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	require.NoError(t, os.Mkdir(real, 0700))
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Skipf("cannot create directory symlink: %v", err)
+	}
+	recordingDirectory := filepath.Join(alias, "recordings")
+	recordingSftp := &configuration.AuditlogTargetSftp{
+		KnownHostsFile: crypto.KnownHostsFile(filepath.Join(alias, "recording-known-hosts") + "\x00"),
+		IdentityFiles:  []string{filepath.Join(alias, "recording-identity") + "\x00"},
+	}
+	conf := configuration.Configuration{
+		Auditlogs: configuration.Auditlogs{{
+			Name:         "security",
+			Enabled:      true,
+			IdentityFile: filepath.Join(alias, "identity"),
+			Journal:      configuration.AuditlogJournal{Directory: filepath.Join(alias, "journal")},
+			Recording: configuration.AuditlogRecording{
+				Enabled:   false,
+				Directory: recordingDirectory,
+				Targets:   recordingSftpTargets(recordingSftp),
+			},
+		}},
+		Session: configuration.Session{V: &configuration.SessionFs{Storage: filepath.Join(alias, "sessions")}},
+	}
+
+	require.NoError(t, validateRuntimePaths(&conf))
+	require.Equal(t, recordingDirectory, conf.Auditlogs[0].Recording.Directory)
+	require.Same(t, recordingSftp, conf.Auditlogs[0].Recording.Targets.Configured()[0].V)
+	require.Equal(t, crypto.KnownHostsFile(filepath.Join(alias, "recording-known-hosts")+"\x00"), recordingSftp.KnownHostsFile)
+	require.Equal(t, []string{filepath.Join(alias, "recording-identity") + "\x00"}, recordingSftp.IdentityFiles)
+	require.NoDirExists(t, recordingDirectory)
+}
+
+func recordingSftpTargets(sftp *configuration.AuditlogTargetSftp) configuration.AuditlogRecordingTargets {
+	return configuration.AuditlogRecordingTargets{
+		Mode:    configuration.AuditlogRecordingTargetsModeCustom,
+		Targets: configuration.AuditlogTargets{{Name: "recording-archive", V: sftp}},
+	}
 }
 
 func TestAuditEncryptionRejectsStaticSshEnvironmentIdentity(t *testing.T) {
@@ -245,11 +661,13 @@ func TestPrepareAuditEncryptionValidatesSftpIdentityKeys(t *testing.T) {
 		name          string
 		aliasIdentity bool
 		distinctKey   bool
+		customTarget  bool
 		errorContains string
 	}{
-		{"same key", false, false, "audit encryption recipient reuses a private key"},
-		{"hard-link alias", true, false, "has 2 hard links instead of one"},
-		{"different key", false, true, ""},
+		{"same key", false, false, false, "audit encryption recipient reuses a private key"},
+		{"same key in custom Recording target", false, false, true, "audit encryption recipient reuses a private key"},
+		{"hard-link alias", true, false, false, "has 2 hard links instead of one"},
+		{"different key", false, true, false, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -272,6 +690,17 @@ func TestPrepareAuditEncryptionValidatesSftpIdentityKeys(t *testing.T) {
 
 			conf := auditSftpDedicatednessTestConfiguration(t, root, []string{additionalIdentityPath, configuredIdentityPath},
 				crypto.PublicKeys(strings.TrimSpace(string(crypto.MarshalPublicKey(encryptionKey.PublicKey())))))
+			if test.customTarget {
+				auditlog := &conf.Auditlogs[0]
+				require.NoError(t, auditlog.Recording.SetDefaults())
+				auditlog.Recording.Enabled = true
+				auditlog.Recording.Directory = filepath.Join(root, "recordings")
+				auditlog.Recording.Targets = configuration.AuditlogRecordingTargets{
+					Mode:    configuration.AuditlogRecordingTargetsModeCustom,
+					Targets: auditlog.Targets,
+				}
+				auditlog.Targets = nil
+			}
 			svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
 			if test.errorContains != "" {
 				require.ErrorContains(t, err, test.errorContains)

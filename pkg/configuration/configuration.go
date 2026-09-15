@@ -73,7 +73,10 @@ func (this *Configuration) Validate() error {
 	); err != nil {
 		return err
 	}
-	return this.validateAuditlogReferences()
+	if err := this.validateAuditlogReferences(); err != nil {
+		return err
+	}
+	return this.validateRecordingSessionStoragePathOverlaps()
 }
 
 func (this *Configuration) validateAuditlogReferences() error {
@@ -84,6 +87,22 @@ func (this *Configuration) validateAuditlogReferences() error {
 	for index, flow := range this.Flows {
 		if _, exists := configuredAuditlogs[flow.Auditlog]; !exists {
 			return errors.Config.Newf("[flows][%d][auditlog] references unknown auditlog %q", index, flow.Auditlog)
+		}
+	}
+	return nil
+}
+
+func (this *Configuration) validateRecordingSessionStoragePathOverlaps() error {
+	sessionFs, ok := this.Session.V.(*SessionFs)
+	if !ok || sessionFs == nil || sessionFs.Storage == "" {
+		return nil
+	}
+	for index, auditlog := range this.Auditlogs {
+		if !auditlog.Enabled || !auditlog.Recording.Enabled {
+			continue
+		}
+		if pathsOverlap(auditlog.Recording.Directory, sessionFs.Storage) {
+			return errors.Config.Newf("[auditlog][%d][recording][directory] overlaps [session][storage]", index)
 		}
 	}
 	return nil
