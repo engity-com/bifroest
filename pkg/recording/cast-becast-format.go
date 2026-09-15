@@ -2,12 +2,12 @@ package recording
 
 import (
 	"encoding/binary"
-	"fmt"
 	"hash/crc32"
 
 	"github.com/google/uuid"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 const (
@@ -30,7 +30,9 @@ const (
 	castBECastChunkDescriptorSize = 193
 	castBECastSealBodySize        = 226
 
-	castBECastCiphertextHashDomain = "BIFROEST-SESSION-RECORDING-BECAST-CIPHERTEXT-HASH/v1\x00"
+	castBECastCiphertextHashDomain       = "BIFROEST-SESSION-RECORDING-BECAST-CIPHERTEXT-HASH/v1\x00"
+	castBECastUnitHashDomain             = "BIFROEST-SESSION-RECORDING-BECAST-UNIT-HASH/v1\x00"
+	castBECastCiphertextStreamHashDomain = "BIFROEST-SESSION-RECORDING-BECAST-CIPHERTEXT-STREAM-HASH/v1\x00"
 
 	DefaultBECastChunkPlaintextTarget = 256 << 10
 	MaximumBECastChunkPlaintext       = MaximumCastLineBytes + 1
@@ -55,7 +57,7 @@ type BECastSummary struct {
 
 func encodeBECastHeader(value audit.SessionRecordingBECastHeader) ([]byte, error) {
 	if len(value.PublicKey) != 51 || len(value.RecipientFingerprint) != 50 || len(value.Signature) != 64 {
-		return nil, fmt.Errorf("illegal BECast header identity size")
+		return nil, errors.System.Newf("illegal BECast header identity size")
 	}
 	body := make([]byte, castBECastHeaderBodySize)
 	body[0] = value.FormatVersion
@@ -76,7 +78,7 @@ func decodeBECastHeader(unit []byte) (audit.SessionRecordingBECastHeader, error)
 		return audit.SessionRecordingBECastHeader{}, err
 	}
 	if len(body) != castBECastHeaderBodySize {
-		return audit.SessionRecordingBECastHeader{}, fmt.Errorf("BECast header body has %d bytes instead of %d", len(body), castBECastHeaderBodySize)
+		return audit.SessionRecordingBECastHeader{}, errors.System.Newf("BECast header body has %d bytes instead of %d", len(body), castBECastHeaderBodySize)
 	}
 	return audit.SessionRecordingBECastHeader{
 		FormatVersion:        body[0],
@@ -93,13 +95,13 @@ func decodeBECastHeader(unit []byte) (audit.SessionRecordingBECastHeader, error)
 
 func encodeBECastChunk(value audit.SessionRecordingBECastChunk, ciphertext []byte) ([]byte, error) {
 	if len(value.Signature) != 64 {
-		return nil, fmt.Errorf("illegal BECast chunk signature size")
+		return nil, errors.System.Newf("illegal BECast chunk signature size")
 	}
 	if uint64(len(ciphertext)) != uint64(value.CiphertextLength) {
-		return nil, fmt.Errorf("BECast chunk ciphertext has %d bytes instead of %d", len(ciphertext), value.CiphertextLength)
+		return nil, errors.System.Newf("BECast chunk ciphertext has %d bytes instead of %d", len(ciphertext), value.CiphertextLength)
 	}
 	if value.CiphertextHash != hashBECastCiphertext(ciphertext) {
-		return nil, fmt.Errorf("BECast chunk ciphertext hash mismatch")
+		return nil, errors.System.Newf("BECast chunk ciphertext hash mismatch")
 	}
 	body := make([]byte, castBECastChunkDescriptorSize+len(ciphertext))
 	body[0] = value.FormatVersion
@@ -122,11 +124,11 @@ func decodeBECastChunk(unit []byte, recordingId uuid.UUID, producerId audit.Prod
 		return audit.SessionRecordingBECastChunk{}, nil, err
 	}
 	if len(body) < castBECastChunkDescriptorSize {
-		return audit.SessionRecordingBECastChunk{}, nil, fmt.Errorf("BECast chunk body has %d bytes, fewer than descriptor size %d", len(body), castBECastChunkDescriptorSize)
+		return audit.SessionRecordingBECastChunk{}, nil, errors.System.Newf("BECast chunk body has %d bytes, fewer than descriptor size %d", len(body), castBECastChunkDescriptorSize)
 	}
 	ciphertextLength := binary.BigEndian.Uint32(body[53:])
 	if uint64(len(body)) != uint64(castBECastChunkDescriptorSize)+uint64(ciphertextLength) {
-		return audit.SessionRecordingBECastChunk{}, nil, fmt.Errorf("BECast chunk body has %d bytes instead of %d", len(body), uint64(castBECastChunkDescriptorSize)+uint64(ciphertextLength))
+		return audit.SessionRecordingBECastChunk{}, nil, errors.System.Newf("BECast chunk body has %d bytes instead of %d", len(body), uint64(castBECastChunkDescriptorSize)+uint64(ciphertextLength))
 	}
 	value := audit.SessionRecordingBECastChunk{
 		FormatVersion:    body[0],
@@ -144,14 +146,14 @@ func decodeBECastChunk(unit []byte, recordingId uuid.UUID, producerId audit.Prod
 	copy(value.ContentHashState[:], body[89:121])
 	ciphertext := append([]byte(nil), body[castBECastChunkDescriptorSize:]...)
 	if value.CiphertextHash != hashBECastCiphertext(ciphertext) {
-		return audit.SessionRecordingBECastChunk{}, nil, fmt.Errorf("BECast chunk ciphertext hash mismatch")
+		return audit.SessionRecordingBECastChunk{}, nil, errors.System.Newf("BECast chunk ciphertext hash mismatch")
 	}
 	return value, ciphertext, nil
 }
 
 func encodeBECastSeal(value audit.SessionRecordingBECastSeal) ([]byte, error) {
 	if len(value.Signature) != 64 {
-		return nil, fmt.Errorf("illegal BECast seal signature size")
+		return nil, errors.System.Newf("illegal BECast seal signature size")
 	}
 	body := make([]byte, castBECastSealBodySize)
 	body[0] = value.FormatVersion
@@ -174,7 +176,7 @@ func decodeBECastSeal(unit []byte, recordingId uuid.UUID, producerId audit.Produ
 		return audit.SessionRecordingBECastSeal{}, err
 	}
 	if len(body) != castBECastSealBodySize {
-		return audit.SessionRecordingBECastSeal{}, fmt.Errorf("BECast seal body has %d bytes instead of %d", len(body), castBECastSealBodySize)
+		return audit.SessionRecordingBECastSeal{}, errors.System.Newf("BECast seal body has %d bytes instead of %d", len(body), castBECastSealBodySize)
 	}
 	value := audit.SessionRecordingBECastSeal{
 		FormatVersion:   body[0],
@@ -209,39 +211,43 @@ func encodeBECastUnit(unitType uint8, body []byte) []byte {
 func decodeBECastUnit(unit []byte, expectedType uint8) ([]byte, error) {
 	minimumSize := castBECastUnitPrefixSize + castBECastUnitTrailerSize
 	if len(unit) < minimumSize {
-		return nil, fmt.Errorf("BECast unit has %d bytes, fewer than minimum size %d", len(unit), minimumSize)
+		return nil, errors.System.Newf("BECast unit has %d bytes, fewer than minimum size %d", len(unit), minimumSize)
 	}
 	if string(unit[:4]) != castBECastUnitMagic {
-		return nil, fmt.Errorf("BECast unit magic mismatch")
+		return nil, errors.System.Newf("BECast unit magic mismatch")
 	}
 	if unit[4] != expectedType {
-		return nil, fmt.Errorf("BECast unit has type %d instead of %d", unit[4], expectedType)
+		return nil, errors.System.Newf("BECast unit has type %d instead of %d", unit[4], expectedType)
 	}
 	if unit[5] != 0 {
-		return nil, fmt.Errorf("BECast unit has non-zero flags")
+		return nil, errors.System.Newf("BECast unit has non-zero flags")
 	}
 	if binary.BigEndian.Uint16(unit[6:]) != 0 {
-		return nil, fmt.Errorf("BECast unit has non-zero reserved value")
+		return nil, errors.System.Newf("BECast unit has non-zero reserved value")
 	}
 	bodyLength := binary.BigEndian.Uint32(unit[8:])
 	expectedLength := uint64(castBECastUnitPrefixSize+castBECastUnitTrailerSize) + uint64(bodyLength)
 	if uint64(len(unit)) != expectedLength {
-		return nil, fmt.Errorf("BECast unit has %d bytes instead of declared size %d", len(unit), expectedLength)
+		return nil, errors.System.Newf("BECast unit has %d bytes instead of declared size %d", len(unit), expectedLength)
 	}
 	crcOffset := castBECastUnitPrefixSize + int(bodyLength)
 	if string(unit[crcOffset+4:]) != castBECastCommitMarker {
-		return nil, fmt.Errorf("BECast unit commit marker mismatch")
+		return nil, errors.System.Newf("BECast unit commit marker mismatch")
 	}
 	expectedCRC := binary.BigEndian.Uint32(unit[crcOffset:])
 	actualCRC := crc32.Checksum(unit[:crcOffset], castBECastCRC32CTable)
 	if actualCRC != expectedCRC {
-		return nil, fmt.Errorf("BECast unit CRC mismatch")
+		return nil, errors.System.Newf("BECast unit CRC mismatch")
 	}
 	return unit[castBECastUnitPrefixSize:crcOffset], nil
 }
 
 func hashBECastCiphertext(ciphertext []byte) audit.SessionRecordingHash {
 	return hashSessionRecording(castBECastCiphertextHashDomain, ciphertext)
+}
+
+func hashBECastUnit(unit []byte) audit.SessionRecordingHash {
+	return hashSessionRecording(castBECastUnitHashDomain, unit)
 }
 
 func castBECastStatus(status CastStatus) (uint8, error) {
@@ -253,7 +259,7 @@ func castBECastStatus(status CastStatus) (uint8, error) {
 	case CastStatusIncomplete:
 		return 3, nil
 	default:
-		return 0, fmt.Errorf("illegal BECast status %q", status)
+		return 0, errors.System.Newf("illegal BECast status %q", status)
 	}
 }
 
@@ -266,6 +272,6 @@ func castStatusFromBECast(value uint8) (CastStatus, error) {
 	case 3:
 		return CastStatusIncomplete, nil
 	default:
-		return "", fmt.Errorf("illegal BECast status %d", value)
+		return "", errors.System.Newf("illegal BECast status %d", value)
 	}
 }

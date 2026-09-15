@@ -16,6 +16,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/connection"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	bferrors "github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
@@ -122,6 +123,7 @@ func TestCastVerificationRequiresExplicitTrustMode(t *testing.T) {
 	content, _ := sealedCastTestContent(t)
 	_, err := VerifyCast(bytes.NewReader(content), CastVerifyOptions{})
 	require.ErrorContains(t, err, "expected producer ID is required")
+	require.True(t, bferrors.Config.IsErr(err))
 	verification, err := VerifyCast(bytes.NewReader(content), CastVerifyOptions{AllowUntrusted: true})
 	require.NoError(t, err)
 	require.False(t, verification.Trusted)
@@ -134,6 +136,7 @@ func TestCastVerificationEnforcesLineAndTotalSizeLimits(t *testing.T) {
 		AllowUntrusted: true,
 	})
 	require.ErrorContains(t, err, "line exceeds")
+	require.True(t, bferrors.System.IsErr(err))
 
 	content, _ := sealedCastTestContent(t)
 	_, err = VerifyCast(bytes.NewReader(content), CastVerifyOptions{
@@ -207,8 +210,12 @@ func TestRecordingIdRequiresCanonicalRandomUuid(t *testing.T) {
 	var id Id
 	require.NoError(t, id.UnmarshalText([]byte("34e34ab8-7457-4d88-a5e4-c57791775c3a")))
 	require.Equal(t, "34e34ab8-7457-4d88-a5e4-c57791775c3a", id.String())
-	require.ErrorContains(t, id.UnmarshalText([]byte("34E34AB8-7457-4D88-A5E4-C57791775C3A")), "canonical")
-	require.ErrorContains(t, id.UnmarshalText([]byte("0194c3c8-11b2-7a4c-a49a-7709891742fe")), "illegal")
+	err := id.UnmarshalText([]byte("34E34AB8-7457-4D88-A5E4-C57791775C3A"))
+	require.ErrorContains(t, err, "canonical")
+	require.True(t, bferrors.Config.IsErr(err))
+	err = id.UnmarshalText([]byte("0194c3c8-11b2-7a4c-a49a-7709891742fe"))
+	require.ErrorContains(t, err, "illegal")
+	require.True(t, bferrors.Config.IsErr(err))
 }
 
 func sealedCastTestContent(t *testing.T) ([]byte, *audit.Identity) {
@@ -344,7 +351,9 @@ func TestCastWriterIsPoisonedAfterShortWrite(t *testing.T) {
 	writer, err := NewCastWriter(output, identity, header, metadata)
 	require.NoError(t, err)
 	output.maximum = output.Len() + 5
-	require.ErrorIs(t, writer.WriteOutput(time.Millisecond, OutputStreamTerminal, []byte("too long")), io.ErrShortWrite)
+	err = writer.WriteOutput(time.Millisecond, OutputStreamTerminal, []byte("too long"))
+	require.ErrorIs(t, err, io.ErrShortWrite)
+	require.True(t, bferrors.System.IsErr(err))
 	written := output.Len()
 	require.ErrorIs(t, writer.WriteMarker(2*time.Millisecond, "ignored"), io.ErrShortWrite)
 	require.Equal(t, written, output.Len())

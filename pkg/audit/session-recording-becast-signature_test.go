@@ -85,6 +85,19 @@ func TestSessionRecordingBECastRejectsUnalignedContentHashBytes(t *testing.T) {
 	require.ErrorContains(t, err, "not aligned to 64 bytes")
 }
 
+func TestSessionRecordingBECastFinalChunkContentHashSentinel(t *testing.T) {
+	identity := newSessionRecordingBECastTestIdentity(t)
+	chunk := validSessionRecordingBECastChunk()
+	chunk.ContentHashBytes = 0
+	signed, err := identity.NewSessionRecordingBECastChunk(chunk)
+	require.NoError(t, err)
+	require.NoError(t, VerifySessionRecordingBECastChunk(identity.PublicKey(), signed))
+
+	chunk.ContentHashState = SessionRecordingHash{}
+	_, err = identity.NewSessionRecordingBECastChunk(chunk)
+	require.ErrorContains(t, err, "empty content hash sentinel")
+}
+
 func TestSessionRecordingBECastAcceptsOpaqueZeroContentHashState(t *testing.T) {
 	identity := newSessionRecordingBECastTestIdentity(t)
 	chunk := validSessionRecordingBECastChunk()

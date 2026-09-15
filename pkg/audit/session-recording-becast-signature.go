@@ -212,7 +212,7 @@ func validateSessionRecordingBECastHeader(value SessionRecordingBECastHeader) er
 }
 
 func validateSessionRecordingBECastChunk(value SessionRecordingBECastChunk) error {
-	if value.FormatVersion == 0 || value.Sequence == 0 || value.ProducerId.IsZero() || value.PreviousUnitHash.IsZero() || value.CiphertextHash.IsZero() || value.ContentHashBytes == 0 {
+	if value.FormatVersion == 0 || value.Sequence == 0 || value.ProducerId.IsZero() || value.PreviousUnitHash.IsZero() || value.CiphertextHash.IsZero() {
 		return errors.System.Newf("session recording BECast chunk contains empty metadata")
 	}
 	if err := validateSessionRecordingUuid(value.RecordingId); err != nil {
@@ -221,7 +221,10 @@ func validateSessionRecordingBECastChunk(value SessionRecordingBECastChunk) erro
 	if value.PlaintextLength == 0 || value.CiphertextLength == 0 {
 		return errors.System.Newf("session recording BECast chunk contains an empty ciphertext")
 	}
-	if value.ContentHashBytes%64 != 0 {
+	if value.ContentHashBytes == 0 && value.ContentHashState.IsZero() {
+		return errors.System.Newf("session recording BECast chunk contains an empty content hash sentinel")
+	}
+	if value.ContentHashBytes != 0 && value.ContentHashBytes%64 != 0 {
 		return errors.System.Newf("session recording BECast chunk content hash byte count is not aligned to 64 bytes")
 	}
 	return nil
