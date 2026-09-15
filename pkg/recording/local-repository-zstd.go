@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	localContentFileName = "recording.cast.zst"
-	localSealedSuffix    = ".cast.zst"
+	localCastZstdFormatKey       = "cast-zstd/v1"
+	localCastZstdContentFileName = "recording.cast.zst"
+	localCastZstdSealedSuffix    = ".cast.zst"
 )
 
 type LocalCastZstdRepository struct {
@@ -34,9 +35,8 @@ type localCastZstdFormat struct {
 	options  CastZstdVerifyOptions
 }
 
-type localCastZstdTrackingReaderAt struct {
-	source  io.ReaderAt
-	failure error
+func (this *localCastZstdFormat) key() string {
+	return localCastZstdFormatKey
 }
 
 func NewLocalCastZstdRepository(ctx context.Context, directory string, identity *audit.Identity, options CastZstdVerifyOptions) (*LocalCastZstdRepository, error) {
@@ -123,11 +123,11 @@ func (this *ActiveCastZstd) local() *localActive[audit.SessionRecordingZstdHead,
 }
 
 func (this *localCastZstdFormat) contentFileName() string {
-	return localContentFileName
+	return localCastZstdContentFileName
 }
 
 func (this *localCastZstdFormat) sealedSuffix() string {
-	return localSealedSuffix
+	return localCastZstdSealedSuffix
 }
 
 func (this *localCastZstdFormat) maximumHeadBytes() int64 {
@@ -158,6 +158,10 @@ func (this *localCastZstdFormat) headPrefixBytes(head audit.SessionRecordingZstd
 	return head.PrefixBytes
 }
 
+func (this *localCastZstdFormat) preflight(*os.File, int64, audit.SessionRecordingZstdHead, context.Context) error {
+	return nil
+}
+
 func (this *localCastZstdFormat) verifyActiveCheckpoint(file *os.File, size int64, head audit.SessionRecordingZstdHead, ctx context.Context) error {
 	if size < 0 || uint64(size) != head.PrefixBytes {
 		return errors.System.Newf("active Cast Zstandard container does not exactly match its signed checkpoint size")
@@ -185,7 +189,7 @@ func (this *localCastZstdFormat) verifyWorkCheckpointReader(source io.ReaderAt, 
 	if size < 0 || uint64(size) != head.PrefixBytes {
 		return invalidLocalArtifact(errors.System.Newf("active Cast Zstandard container does not exactly match its signed checkpoint size"))
 	}
-	reader := &localCastZstdTrackingReaderAt{source: source}
+	reader := &localTrackingReaderAt{source: source, size: size}
 	verifyErr := verifyActiveCastZstdCheckpoint(reader, size, head, options)
 	if err := ctx.Err(); err != nil {
 		return err
@@ -230,18 +234,6 @@ func verifyActiveCastZstdCheckpoint(source io.ReaderAt, size int64, head audit.S
 		return errors.System.Newf("new active recording has an unexpected container state")
 	}
 	return nil
-}
-
-func (this *localCastZstdTrackingReaderAt) ReadAt(target []byte, offset int64) (int, error) {
-	read, err := this.source.ReadAt(target, offset)
-	if this.failure == nil {
-		if err != nil {
-			this.failure = err
-		} else if read != len(target) {
-			this.failure = io.ErrUnexpectedEOF
-		}
-	}
-	return read, err
 }
 
 func (this *localCastZstdFormat) recover(file RecoveryFile, head audit.SessionRecordingZstdHead, recoveredAt time.Time, ctx context.Context) (localRecovery[CastZstdSummary], error) {

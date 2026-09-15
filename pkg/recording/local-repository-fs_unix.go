@@ -104,20 +104,20 @@ func validateLocalOwner(_ string, info os.FileInfo, requireSingleLink bool) erro
 	return nil
 }
 
-func protectLocalHead(_ string, file *os.File) error {
+func protectLocalReadOnlyFile(_ string, file *os.File) error {
 	if err := file.Chmod(0400); err != nil {
 		return err
 	}
 	return file.Sync()
 }
 
-func openLocalHead(path string) (*os.File, error) {
+func openProtectedLocalFile(path string) (*os.File, error) {
 	pathInfo, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
 	}
 	if !pathInfo.Mode().IsRegular() {
-		return nil, errors.Config.Newf("local recording head is not a regular file")
+		return nil, errors.Config.Newf("protected local recording file is not a regular file")
 	}
 	file, err := openLocalNoFollow(path)
 	if err != nil {
@@ -130,11 +130,86 @@ func openLocalHead(path string) (*os.File, error) {
 	}
 	if info.Mode().Perm() != 0400 {
 		_ = file.Close()
-		return nil, errors.Config.Newf("local recording head is not read-only")
+		return nil, errors.Config.Newf("protected local recording file is not read-only")
 	}
 	if !os.SameFile(pathInfo, info) {
 		_ = file.Close()
-		return nil, errors.System.Newf("local recording head changed while opening")
+		return nil, errors.System.Newf("protected local recording file changed while opening")
+	}
+	if err := validateLocalOwner(path, info, true); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return file, nil
+}
+
+func openReadOnlyLocalFile(path string) (*os.File, error) {
+	pathInfo, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !pathInfo.Mode().IsRegular() {
+		return nil, errors.Config.Newf("local recording file is not a regular file")
+	}
+	file, err := openLocalNoFollow(path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	current, err := os.Lstat(path)
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if info.Mode().Perm() != localFileMode && info.Mode().Perm() != 0400 {
+		_ = file.Close()
+		return nil, errors.Config.Newf("local recording file has unexpected permissions")
+	}
+	if !current.Mode().IsRegular() || !os.SameFile(pathInfo, info) || !os.SameFile(current, info) {
+		_ = file.Close()
+		return nil, errors.System.Newf("local recording file changed while opening")
+	}
+	if err := validateLocalOwner(path, info, true); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return file, nil
+}
+
+func openMutablePrivateLocalFile(path string) (*os.File, error) {
+	pathInfo, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !pathInfo.Mode().IsRegular() || pathInfo.Mode().Perm() != localFileMode {
+		return nil, errors.Config.Newf("mutable local recording file is not a private regular file")
+	}
+	descriptor, err := unix.Open(path, unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(descriptor), path)
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	current, err := os.Lstat(path)
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if !current.Mode().IsRegular() || !os.SameFile(pathInfo, info) || !os.SameFile(current, info) {
+		_ = file.Close()
+		return nil, errors.System.Newf("mutable local recording file changed while opening")
+	}
+	if info.Mode().Perm() != localFileMode {
+		_ = file.Close()
+		return nil, errors.Config.Newf("mutable local recording file is not private")
 	}
 	if err := validateLocalOwner(path, info, true); err != nil {
 		_ = file.Close()

@@ -235,6 +235,18 @@ func (this *BECastWriter) repositoryFailure() error {
 	return nil
 }
 
+func (this *BECastWriter) release() error {
+	if this == nil || this.sink == nil || this.sink.encoder == nil || this.sealed {
+		return nil
+	}
+	encoder := this.sink.encoder
+	this.sink.encoder = nil
+	if err := encoder.Close(); err != nil {
+		return errors.System.Newf("cannot close BECast Zstandard encoder: %w", err)
+	}
+	return nil
+}
+
 func (this *BECastWriter) Seal(elapsed time.Duration, result CastResult, exitStatus *uint32) (BECastSummary, error) {
 	if this == nil || this.cast == nil || this.sink == nil {
 		return BECastSummary{}, errors.System.Newf("nil BECast writer")

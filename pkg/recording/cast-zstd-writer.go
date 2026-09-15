@@ -191,6 +191,18 @@ func (this *CastZstdWriter) repositoryFailure() error {
 	return nil
 }
 
+func (this *CastZstdWriter) release() error {
+	if this == nil || this.sink == nil || this.sink.encoder == nil || this.sealed {
+		return nil
+	}
+	encoder := this.sink.encoder
+	this.sink.encoder = nil
+	if err := encoder.Close(); err != nil {
+		return errors.System.Newf("cannot close Cast Zstandard encoder: %w", err)
+	}
+	return nil
+}
+
 func (this *CastZstdWriter) Seal(elapsed time.Duration, result CastResult, exitStatus *uint32) (CastZstdSummary, error) {
 	if this == nil || this.cast == nil || this.sink == nil {
 		return CastZstdSummary{}, errors.System.Newf("nil Cast Zstandard writer")

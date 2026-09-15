@@ -88,20 +88,20 @@ func secureLocalFile(path string, file *os.File) error {
 	return secureLocalPath(path, "FA")
 }
 
-func protectLocalHead(path string, file *os.File) error {
+func protectLocalReadOnlyFile(path string, file *os.File) error {
 	if err := file.Sync(); err != nil {
 		return err
 	}
 	return secureLocalPath(path, "FRSD")
 }
 
-func openLocalHead(path string) (*os.File, error) {
+func openProtectedLocalFile(path string) (*os.File, error) {
 	pathInfo, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
 	}
 	if !pathInfo.Mode().IsRegular() {
-		return nil, errors.Config.Newf("local recording head is not a regular file")
+		return nil, errors.Config.Newf("protected local recording file is not a regular file")
 	}
 	if err := secureLocalPath(path, "FRSD"); err != nil {
 		return nil, err
@@ -113,13 +113,136 @@ func openLocalHead(path string) (*os.File, error) {
 	info, err := file.Stat()
 	if err != nil || !os.SameFile(pathInfo, info) {
 		_ = file.Close()
-		return nil, errors.System.Newf("local recording head changed while opening")
+		return nil, errors.System.Newf("protected local recording file changed while opening")
 	}
 	if err := requireSingleHardLink(file); err != nil {
 		_ = file.Close()
 		return nil, err
 	}
 	return file, nil
+}
+
+func openReadOnlyLocalFile(path string) (*os.File, error) {
+	pathInfo, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !pathInfo.Mode().IsRegular() {
+		return nil, errors.Config.Newf("local recording file is not a regular file")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	current, err := os.Lstat(path)
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || !current.Mode().IsRegular() || !os.SameFile(pathInfo, info) || !os.SameFile(current, info) {
+		_ = file.Close()
+		return nil, errors.System.Newf("local recording file changed while opening")
+	}
+	if err := requireSingleHardLink(file); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return file, nil
+}
+
+func openMutablePrivateLocalFile(path string) (*os.File, error) {
+	pathInfo, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !pathInfo.Mode().IsRegular() {
+		return nil, errors.Config.Newf("mutable local recording file is not a regular file")
+	}
+	file, err := os.OpenFile(path, os.O_RDWR, localFileMode)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	current, err := os.Lstat(path)
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || !current.Mode().IsRegular() || !os.SameFile(pathInfo, info) || !os.SameFile(current, info) {
+		_ = file.Close()
+		return nil, errors.System.Newf("mutable local recording file changed while opening")
+	}
+	if err := requireSingleHardLink(file); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if err := validatePrivateLocalFile(file); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return file, nil
+}
+
+func validatePrivateLocalFile(file *os.File) error {
+	descriptor, err := windows.GetSecurityInfo(windows.Handle(file.Fd()), windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return err
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil {
+		return err
+	}
+	userSid, ownerSid, err := localProcessSIDs()
+	if err != nil {
+		return err
+	}
+	if owner == nil || !owner.Equals(userSid) && !owner.Equals(ownerSid) {
+		return errors.Config.Newf("local recording file is owned by another user")
+	}
+	control, _, err := descriptor.Control()
+	if err != nil {
+		return err
+	}
+	if control&windows.SE_DACL_PROTECTED == 0 {
+		return errors.Config.Newf("local recording file does not have a protected access-control list")
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil {
+		return err
+	}
+	if dacl == nil {
+		return errors.Config.Newf("local recording file has an unrestricted access-control list")
+	}
+	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
+	if err != nil {
+		return err
+	}
+	for index := uint32(0); index < uint32(dacl.AceCount); index++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, index, &ace); err != nil {
+			return err
+		}
+		if ace.Header.AceType == windows.ACCESS_DENIED_ACE_TYPE {
+			continue
+		}
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
+			return errors.Config.Newf("local recording file has an unsupported access-control entry")
+		}
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		if !sid.Equals(userSid) && !sid.Equals(ownerSid) && !sid.Equals(system) {
+			return errors.Config.Newf("local recording file grants access to another identity")
+		}
+	}
+	return nil
 }
 
 func makeActiveLocalWritable(path string) error {

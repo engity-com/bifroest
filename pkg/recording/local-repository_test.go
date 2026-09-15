@@ -52,7 +52,7 @@ func TestLocalCastZstdRepositoryCreateCheckpointAndSeal(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, CastStatusCompleted, summary.Status)
 
-	sealedPath := filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+localSealedSuffix)
+	sealedPath := filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+localCastZstdSealedSuffix)
 	file, err := openSealedLocalFile(sealedPath)
 	require.NoError(t, err)
 	info, err := file.Stat()
@@ -84,7 +84,7 @@ func TestLocalCastZstdRepositoryRecoversClosedActive(t *testing.T) {
 	require.Equal(t, CastStatusIncomplete, recoveries[0].Summary.Status)
 	require.NoError(t, reopened.Close())
 
-	sealedPath := filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+localSealedSuffix)
+	sealedPath := filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+localCastZstdSealedSuffix)
 	file, err := openSealedLocalFile(sealedPath)
 	require.NoError(t, err)
 	info, err := file.Stat()
@@ -106,6 +106,277 @@ func TestLocalCastZstdRepositoryLockIsExclusive(t *testing.T) {
 	second, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{})
 	require.NoError(t, err)
 	require.NoError(t, second.Close())
+}
+
+func TestLocalRepositoryFormatMarkerReopensWithSameFormat(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "recordings")
+	identity, _, _ := castTestValues(t, true)
+	repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{})
+	require.NoError(t, err)
+	require.NoError(t, repository.Close())
+
+	payload, err := os.ReadFile(filepath.Join(root, localFormatFileName))
+	require.NoError(t, err)
+	require.Equal(t, localCastZstdFormatKey+"\n", string(payload))
+	reopened, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{})
+	require.NoError(t, err)
+	require.NoError(t, reopened.Close())
+}
+
+func TestLocalRepositoryMarkerlessNonemptyRootIsNotBound(t *testing.T) {
+	root := prepareUnboundLocalTestRoot(t)
+	legacy := filepath.Join(root, "legacy-recording.cast.zst")
+	require.NoError(t, os.WriteFile(legacy, []byte("legacy repository state"), localFileMode))
+	before, err := os.ReadFile(legacy)
+	require.NoError(t, err)
+	identity, _, _ := castTestValues(t, true)
+
+	_, err = NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{})
+	require.Error(t, err)
+	require.True(t, bferrors.Config.IsErr(err))
+	require.NoFileExists(t, filepath.Join(root, localFormatFileName))
+	require.NoFileExists(t, filepath.Join(root, localFormatTempFileName))
+	after, readErr := os.ReadFile(legacy)
+	require.NoError(t, readErr)
+	require.Equal(t, before, after)
+}
+
+func TestLocalRepositoryMarkerlessZstdRootRejectsBECastWithoutMutation(t *testing.T) {
+	root, identity, metadata := closedActiveLocalTestRepository(t)
+	require.NoError(t, os.Remove(filepath.Join(root, localFormatFileName)))
+	contentPath := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String(), localCastZstdContentFileName)
+	headPath := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String(), localHeadFileName)
+	contentBefore, err := os.ReadFile(contentPath)
+	require.NoError(t, err)
+	headBefore, err := os.ReadFile(headPath)
+	require.NoError(t, err)
+	recipient, _ := newBECastTestEncryption(t)
+
+	_, err = NewLocalBECastRepository(t.Context(), root, identity, recipient, BECastVerifyOptions{})
+	require.Error(t, err)
+	require.True(t, bferrors.Config.IsErr(err))
+	require.NoFileExists(t, filepath.Join(root, localFormatFileName))
+	require.NoFileExists(t, filepath.Join(root, localFormatTempFileName))
+	contentAfter, readErr := os.ReadFile(contentPath)
+	require.NoError(t, readErr)
+	headAfter, readErr := os.ReadFile(headPath)
+	require.NoError(t, readErr)
+	require.Equal(t, contentBefore, contentAfter)
+	require.Equal(t, headBefore, headAfter)
+}
+
+func TestLocalRepositoryFreshRootContainingOnlyLockCanBind(t *testing.T) {
+	root := prepareUnboundLocalTestRoot(t)
+	identity, _, _ := castTestValues(t, true)
+
+	repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{})
+	require.NoError(t, err)
+	require.NoError(t, repository.Close())
+	require.FileExists(t, filepath.Join(root, localFormatFileName))
+}
+
+func TestLocalRepositoryFormatMarkerRejectsCrossFormatOpen(t *testing.T) {
+	for _, first := range []string{"cast-zstd", "becast"} {
+		t.Run(first+"-first", func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "recordings")
+			identity, _, _ := castTestValues(t, true)
+			recipient, _ := newBECastTestEncryption(t)
+			if first == "cast-zstd" {
+				repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{})
+				require.NoError(t, err)
+				require.NoError(t, repository.Close())
+				_, err = NewLocalBECastRepository(t.Context(), root, identity, recipient, BECastVerifyOptions{})
+				require.Error(t, err)
+				require.True(t, bferrors.Config.IsErr(err))
+			} else {
+				repository, err := NewLocalBECastRepository(t.Context(), root, identity, recipient, BECastVerifyOptions{})
+				require.NoError(t, err)
+				require.NoError(t, repository.Close())
+				_, err = NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{})
+				require.Error(t, err)
+				require.True(t, bferrors.Config.IsErr(err))
+			}
+		})
+	}
+}
+
+func TestLocalRepositoryFormatMarkerRejectsMalformedContent(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "recordings")
+	identity, _, _ := castTestValues(t, true)
+	repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{})
+	require.NoError(t, err)
+	require.NoError(t, repository.Close())
+	marker := filepath.Join(root, localFormatFileName)
+	require.NoError(t, os.Remove(marker))
+	require.NoError(t, writeProtectedLocalFile(marker, []byte("cast-zstd/v1")))
+
+	_, err = NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{})
+	require.Error(t, err)
+	require.True(t, bferrors.Config.IsErr(err))
+	payload, readErr := os.ReadFile(marker)
+	require.NoError(t, readErr)
+	require.Equal(t, "cast-zstd/v1", string(payload))
+}
+
+func TestLocalRepositoryCompletesInterruptedFormatTemporary(t *testing.T) {
+	root := prepareUnboundLocalTestRoot(t)
+	identity, _, _ := castTestValues(t, true)
+	target := filepath.Join(root, localFormatFileName)
+	temporary := filepath.Join(root, localFormatTempFileName)
+	require.NoError(t, writeProtectedLocalFile(temporary, []byte(localCastZstdFormatKey+"\n")))
+
+	reopened, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{})
+	require.NoError(t, err)
+	require.NoError(t, reopened.Close())
+	require.FileExists(t, target)
+	require.NoFileExists(t, temporary)
+}
+
+func TestLocalRepositoryDoesNotBindValidFormatTemporaryAlongsideMarkerlessState(t *testing.T) {
+	root, identity, metadata := closedActiveLocalTestRepository(t)
+	target := filepath.Join(root, localFormatFileName)
+	temporary := filepath.Join(root, localFormatTempFileName)
+	require.NoError(t, os.Rename(target, temporary))
+	activeDirectory := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String())
+	contentPath := filepath.Join(activeDirectory, localCastZstdContentFileName)
+	headPath := filepath.Join(activeDirectory, localHeadFileName)
+	temporaryBefore, err := os.ReadFile(temporary)
+	require.NoError(t, err)
+	contentBefore, err := os.ReadFile(contentPath)
+	require.NoError(t, err)
+	headBefore, err := os.ReadFile(headPath)
+	require.NoError(t, err)
+
+	_, err = NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{})
+	require.Error(t, err)
+	require.True(t, bferrors.Config.IsErr(err))
+	require.NoFileExists(t, target)
+	temporaryAfter, readErr := os.ReadFile(temporary)
+	require.NoError(t, readErr)
+	contentAfter, readErr := os.ReadFile(contentPath)
+	require.NoError(t, readErr)
+	headAfter, readErr := os.ReadFile(headPath)
+	require.NoError(t, readErr)
+	require.Equal(t, temporaryBefore, temporaryAfter)
+	require.Equal(t, contentBefore, contentAfter)
+	require.Equal(t, headBefore, headAfter)
+}
+
+func TestLocalRepositoryProtectsAndPublishesWritableFormatTemporary(t *testing.T) {
+	root := prepareUnboundLocalTestRoot(t)
+	temporary := filepath.Join(root, localFormatTempFileName)
+	file, err := createLocalFile(temporary)
+	require.NoError(t, err)
+	_, err = file.Write([]byte(localCastZstdFormatKey + "\n"))
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+	identity, _, _ := castTestValues(t, true)
+
+	repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{})
+	require.NoError(t, err)
+	require.NoError(t, repository.Close())
+	require.NoFileExists(t, temporary)
+	payload, err := os.ReadFile(filepath.Join(root, localFormatFileName))
+	require.NoError(t, err)
+	require.Equal(t, localCastZstdFormatKey+"\n", string(payload))
+}
+
+func TestLocalRepositoryRetriesMalformedWritableFormatTemporary(t *testing.T) {
+	for _, current := range []struct {
+		name  string
+		value []byte
+	}{
+		{name: "empty"},
+		{name: "partial", value: []byte("cast-zstd/")},
+		{name: "malformed", value: []byte("not a key\n")},
+	} {
+		t.Run(current.name, func(t *testing.T) {
+			root := prepareUnboundLocalTestRoot(t)
+			temporary := filepath.Join(root, localFormatTempFileName)
+			file, err := createLocalFile(temporary)
+			require.NoError(t, err)
+			_, err = file.Write(current.value)
+			require.NoError(t, err)
+			require.NoError(t, file.Close())
+			identity, _, _ := castTestValues(t, true)
+
+			repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{})
+			require.NoError(t, err)
+			require.NoError(t, repository.Close())
+			require.NoFileExists(t, temporary)
+			payload, err := os.ReadFile(filepath.Join(root, localFormatFileName))
+			require.NoError(t, err)
+			require.Equal(t, localCastZstdFormatKey+"\n", string(payload))
+		})
+	}
+}
+
+func TestLocalRepositoryPreservesMalformedWritableFormatTemporaryAlongsideState(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "recordings")
+	identity, _, _ := castTestValues(t, true)
+	repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{})
+	require.NoError(t, err)
+	require.NoError(t, repository.Close())
+	require.NoError(t, os.Remove(filepath.Join(root, localFormatFileName)))
+	temporary := filepath.Join(root, localFormatTempFileName)
+	file, err := createLocalFile(temporary)
+	require.NoError(t, err)
+	value := []byte("partial")
+	_, err = file.Write(value)
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+
+	_, err = NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{})
+	require.Error(t, err)
+	require.True(t, bferrors.Config.IsErr(err))
+	require.NoFileExists(t, filepath.Join(root, localFormatFileName))
+	payload, readErr := os.ReadFile(temporary)
+	require.NoError(t, readErr)
+	require.Equal(t, value, payload)
+}
+
+func TestLocalRepositoryPreservesWritableTemporaryForDifferentFormat(t *testing.T) {
+	root := prepareUnboundLocalTestRoot(t)
+	temporary := filepath.Join(root, localFormatTempFileName)
+	file, err := createLocalFile(temporary)
+	require.NoError(t, err)
+	value := []byte(localBECastFormatKey + "\n")
+	_, err = file.Write(value)
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+	identity, _, _ := castTestValues(t, true)
+
+	_, err = NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{})
+	require.Error(t, err)
+	require.True(t, bferrors.Config.IsErr(err))
+	require.NoFileExists(t, filepath.Join(root, localFormatFileName))
+	payload, readErr := os.ReadFile(temporary)
+	require.NoError(t, readErr)
+	require.Equal(t, value, payload)
+	recipient, _ := newBECastTestEncryption(t)
+	repository, err := NewLocalBECastRepository(t.Context(), root, identity, recipient, BECastVerifyOptions{})
+	require.NoError(t, err)
+	require.NoError(t, repository.Close())
+	require.NoFileExists(t, temporary)
+	payload, readErr = os.ReadFile(filepath.Join(root, localFormatFileName))
+	require.NoError(t, readErr)
+	require.Equal(t, value, payload)
+}
+
+func TestLocalRepositoryFormatMarkerRejectsConflictingTemporary(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "recordings")
+	identity, _, _ := castTestValues(t, true)
+	repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{})
+	require.NoError(t, err)
+	require.NoError(t, repository.Close())
+	temporary := filepath.Join(root, localFormatTempFileName)
+	require.NoError(t, writeProtectedLocalFile(temporary, []byte(localCastZstdFormatKey+"\n")))
+
+	_, err = NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{})
+	require.Error(t, err)
+	require.True(t, bferrors.Config.IsErr(err))
+	_, inspectErr := os.Lstat(temporary)
+	require.NoError(t, inspectErr)
 }
 
 func TestLocalCastZstdRepositoryCanceledEmptyStartupDoesNotCreateRoot(t *testing.T) {
@@ -148,7 +419,7 @@ func TestLocalCastZstdRepositoryRecoversCommittedWorkDirectory(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 	_, err = os.Lstat(activeDirectory)
 	require.ErrorIs(t, err, os.ErrNotExist)
-	_, err = os.Lstat(filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+localSealedSuffix))
+	_, err = os.Lstat(filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+localCastZstdSealedSuffix))
 	require.NoError(t, err)
 }
 
@@ -168,7 +439,7 @@ func TestLocalCastZstdRepositoryRecoversCommittedWorkDirectoryWithHeadTemporary(
 	require.NoError(t, repository.Close())
 	_, err = os.Lstat(workDirectory)
 	require.ErrorIs(t, err, os.ErrNotExist)
-	_, err = os.Lstat(filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+localSealedSuffix))
+	_, err = os.Lstat(filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+localCastZstdSealedSuffix))
 	require.NoError(t, err)
 }
 
@@ -194,7 +465,7 @@ func TestLocalCastZstdRepositoryRestrictiveLimitsDoNotQuarantineValidWork(t *tes
 	root, identity, metadata := closedActiveLocalTestRepository(t)
 	activeDirectory := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String())
 	workDirectory := filepath.Join(root, localWorkDirectory, metadata.RecordingId.String()+".tmp")
-	contentPath := filepath.Join(activeDirectory, localContentFileName)
+	contentPath := filepath.Join(activeDirectory, localCastZstdContentFileName)
 	contentBefore, err := os.ReadFile(contentPath)
 	require.NoError(t, err)
 	require.NoError(t, os.Rename(activeDirectory, workDirectory))
@@ -362,7 +633,7 @@ func TestLocalCastZstdRepositoryQuarantinesInvalidCommittedWork(t *testing.T) {
 			require.ErrorIs(t, err, os.ErrNotExist)
 			_, err = os.Lstat(activeDirectory)
 			require.ErrorIs(t, err, os.ErrNotExist)
-			_, err = os.Lstat(filepath.Join(root, localQuarantineDirectory, metadata.RecordingId.String()+".tmp", localContentFileName))
+			_, err = os.Lstat(filepath.Join(root, localQuarantineDirectory, metadata.RecordingId.String()+".tmp", localCastZstdContentFileName))
 			require.NoError(t, err)
 		})
 	}
@@ -379,7 +650,7 @@ func TestLocalCastZstdRepositoryQuarantinesCommittedWorkWithInvalidHead(t *testi
 	require.NoError(t, err)
 	_, err = head.Write([]byte("not a recording head"))
 	require.NoError(t, err)
-	require.NoError(t, protectLocalHead(headPath, head))
+	require.NoError(t, protectLocalReadOnlyFile(headPath, head))
 	require.NoError(t, head.Close())
 
 	repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{})
@@ -404,7 +675,7 @@ func TestLocalCastZstdRepositoryQuarantinesCommittedWorkWithOversizedHead(t *tes
 	written, err := head.Write(make([]byte, maximumCastZstdHeadBytes+1))
 	require.NoError(t, err)
 	require.Equal(t, maximumCastZstdHeadBytes+1, written)
-	require.NoError(t, protectLocalHead(headPath, head))
+	require.NoError(t, protectLocalReadOnlyFile(headPath, head))
 	require.NoError(t, head.Close())
 
 	repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{})
@@ -425,7 +696,7 @@ func TestLocalCastZstdRepositoryQuarantinesUncommittedWork(t *testing.T) {
 	require.NoError(t, repository.Close())
 	work := filepath.Join(root, localWorkDirectory, metadata.RecordingId.String()+".tmp")
 	require.NoError(t, ensureLocalDirectory(work))
-	file, err := createLocalFile(filepath.Join(work, localContentFileName))
+	file, err := createLocalFile(filepath.Join(work, localCastZstdContentFileName))
 	require.NoError(t, err)
 	_, err = file.Write([]byte("partial"))
 	require.NoError(t, err)
@@ -436,7 +707,7 @@ func TestLocalCastZstdRepositoryQuarantinesUncommittedWork(t *testing.T) {
 	require.NoError(t, reopened.Close())
 	_, err = os.Lstat(work)
 	require.ErrorIs(t, err, os.ErrNotExist)
-	_, err = os.Lstat(filepath.Join(root, localQuarantineDirectory, metadata.RecordingId.String()+".tmp", localContentFileName))
+	_, err = os.Lstat(filepath.Join(root, localQuarantineDirectory, metadata.RecordingId.String()+".tmp", localCastZstdContentFileName))
 	require.NoError(t, err)
 }
 
@@ -461,7 +732,7 @@ func TestLocalCastZstdRepositoryCompletesPublishedWithEmptyActiveDirectory(t *te
 	require.NoError(t, reopened.Close())
 	_, err = os.Lstat(activeDirectory)
 	require.ErrorIs(t, err, os.ErrNotExist)
-	_, err = os.Lstat(filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+localSealedSuffix))
+	_, err = os.Lstat(filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+localCastZstdSealedSuffix))
 	require.NoError(t, err)
 }
 
@@ -479,7 +750,7 @@ func TestLocalCastZstdRepositoryRejectsMissingActiveContentWithoutSealedTarget(t
 	info, inspectErr := os.Lstat(activeDirectory)
 	require.NoError(t, inspectErr)
 	require.True(t, info.IsDir())
-	_, inspectErr = os.Lstat(filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+localSealedSuffix))
+	_, inspectErr = os.Lstat(filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+localCastZstdSealedSuffix))
 	require.ErrorIs(t, inspectErr, os.ErrNotExist)
 }
 
@@ -513,6 +784,39 @@ func TestLocalCastZstdRepositorySerializesConcurrentOutput(t *testing.T) {
 	require.NoError(t, reopened.Close())
 }
 
+func TestLocalActiveCloseReleasesWriterAfterCheckpointFailure(t *testing.T) {
+	root := t.TempDir()
+	lockPath := filepath.Join(root, localLockFileName)
+	processLock, err := acquireLocalProcessLock(lockPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, processLock.Close()) })
+	contentPath := filepath.Join(root, "recording.cast.zst")
+	file, err := createLocalFile(contentPath)
+	require.NoError(t, err)
+	writer := &failingCloseLocalWriter{}
+	active := &localActive[audit.SessionRecordingZstdHead, CastZstdSummary]{
+		repository: &localRepository[audit.SessionRecordingZstdHead, CastZstdSummary]{
+			processLock: processLock,
+			lockPath:    lockPath,
+		},
+		path:   contentPath,
+		file:   file,
+		writer: writer,
+	}
+
+	err = active.close(false)
+	require.ErrorIs(t, err, io.ErrClosedPipe)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	require.Equal(t, 1, writer.releaseCount)
+	_, writeErr := file.Write([]byte("closed"))
+	require.Error(t, writeErr)
+
+	err = active.close(false)
+	require.ErrorIs(t, err, io.ErrClosedPipe)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	require.Equal(t, 1, writer.releaseCount)
+}
+
 func closedActiveLocalTestRepository(t *testing.T) (string, *audit.Identity, CastMetadata) {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "recordings")
@@ -525,6 +829,16 @@ func closedActiveLocalTestRepository(t *testing.T) (string, *audit.Identity, Cas
 	require.NoError(t, active.Close())
 	require.NoError(t, repository.Close())
 	return root, identity, metadata
+}
+
+func prepareUnboundLocalTestRoot(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "recordings")
+	require.NoError(t, ensureLocalDirectory(root))
+	lock, err := createLocalFile(filepath.Join(root, localLockFileName))
+	require.NoError(t, err)
+	require.NoError(t, lock.Close())
+	return root
 }
 
 func replaceLocalTestHead(t *testing.T, directory string, mutate func(audit.SessionRecordingZstdHead) audit.SessionRecordingZstdHead) {
@@ -544,4 +858,31 @@ type localReadFailure struct{}
 
 func (localReadFailure) ReadAt([]byte, int64) (int, error) {
 	return 0, io.ErrClosedPipe
+}
+
+type failingCloseLocalWriter struct {
+	releaseCount int
+}
+
+func (*failingCloseLocalWriter) WriteOutput(time.Duration, OutputStream, []byte) error { return nil }
+
+func (*failingCloseLocalWriter) WriteResize(time.Duration, uint32, uint32) error { return nil }
+
+func (*failingCloseLocalWriter) WriteMarker(time.Duration, string) error { return nil }
+
+func (*failingCloseLocalWriter) Checkpoint() (audit.SessionRecordingZstdHead, error) {
+	return audit.SessionRecordingZstdHead{}, io.ErrClosedPipe
+}
+
+func (*failingCloseLocalWriter) Seal(time.Duration, CastResult, *uint32) (CastZstdSummary, error) {
+	return CastZstdSummary{}, nil
+}
+
+func (*failingCloseLocalWriter) replaceOutput(io.Writer) error { return nil }
+
+func (*failingCloseLocalWriter) repositoryFailure() error { return nil }
+
+func (this *failingCloseLocalWriter) release() error {
+	this.releaseCount++
+	return io.ErrUnexpectedEOF
 }

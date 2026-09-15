@@ -18,6 +18,8 @@ import (
 
 const (
 	localLockFileName        = ".bifroest-recording.lock"
+	localFormatFileName      = ".bifroest-recording-format"
+	localFormatTempFileName  = ".bifroest-recording-format.tmp"
 	localWorkDirectory       = ".bifroest-work"
 	localActiveDirectory     = "active"
 	localSealedDirectory     = "sealed"
@@ -34,9 +36,11 @@ type localWriter[Head, Summary any] interface {
 	Seal(time.Duration, CastResult, *uint32) (Summary, error)
 	replaceOutput(io.Writer) error
 	repositoryFailure() error
+	release() error
 }
 
 type localFormat[Head, Summary any] interface {
+	key() string
 	contentFileName() string
 	sealedSuffix() string
 	maximumHeadBytes() int64
@@ -46,6 +50,7 @@ type localFormat[Head, Summary any] interface {
 	headId(Head) Id
 	headProducerId(Head) audit.ProducerId
 	headPrefixBytes(Head) uint64
+	preflight(*os.File, int64, Head, context.Context) error
 	verifyActiveCheckpoint(*os.File, int64, Head, context.Context) error
 	verifyWorkCheckpoint(*os.File, int64, Head, context.Context) error
 	recover(RecoveryFile, Head, time.Time, context.Context) (localRecovery[Summary], error)
@@ -81,6 +86,12 @@ type invalidLocalArtifactError struct {
 	cause error
 }
 
+type localTrackingReaderAt struct {
+	source  io.ReaderAt
+	size    int64
+	failure error
+}
+
 func (this *invalidLocalArtifactError) Error() string {
 	return this.cause.Error()
 }
@@ -99,6 +110,19 @@ func invalidLocalArtifact(err error) error {
 func isInvalidLocalArtifact(err error) bool {
 	var target *invalidLocalArtifactError
 	return stderrors.As(err, &target)
+}
+
+func (this *localTrackingReaderAt) ReadAt(target []byte, offset int64) (int, error) {
+	read, err := this.source.ReadAt(target, offset)
+	withinSource := offset >= 0 && offset <= this.size && int64(len(target)) <= this.size-offset
+	if this.failure == nil && withinSource {
+		if err != nil {
+			this.failure = err
+		} else if read != len(target) {
+			this.failure = io.ErrUnexpectedEOF
+		}
+	}
+	return read, err
 }
 
 type localRepository[Head, Summary any] struct {
@@ -128,6 +152,7 @@ type localActive[Head, Summary any] struct {
 	file       *os.File
 	writer     localWriter[Head, Summary]
 	poisoned   error
+	closeErr   error
 	closed     bool
 	sealed     bool
 }
@@ -165,6 +190,9 @@ func newLocalRepository[Head, Summary any](ctx context.Context, directory string
 	}()
 	if err := validateLocalLock(processLock, lockPath); err != nil {
 		return nil, err
+	}
+	if err := bindLocalFormat(canonical, format.key()); err != nil {
+		return nil, errors.System.Newf("cannot bind local recording repository format: %w", err)
 	}
 	result := &localRepository[Head, Summary]{
 		directory:      canonical,
@@ -470,13 +498,22 @@ func (this *localActive[Head, Summary]) close(remove bool) error {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 	if this.closed {
+		if this.closeErr != nil {
+			return this.closeErr
+		}
 		return this.poisoned
 	}
 	result := this.poisoned
 	if this.poisoned == nil && !this.sealed {
 		result = this.checkpointForCloseLocked()
 	}
-	result = stderrors.Join(result, this.file.Close())
+	if this.writer != nil {
+		result = stderrors.Join(result, this.writer.release())
+	}
+	if this.file != nil {
+		result = stderrors.Join(result, this.file.Close())
+	}
+	this.closeErr = result
 	this.closed = true
 	if remove {
 		this.repository.removeActive(this.id)
@@ -577,6 +614,8 @@ func (this *localRepository[Head, Summary]) removeActive(id Id) {
 func (this *localRepository[Head, Summary]) validateRoot() error {
 	allowed := map[string]bool{
 		localLockFileName:        true,
+		localFormatFileName:      true,
+		localFormatTempFileName:  true,
 		localWorkDirectory:       true,
 		localQuarantineDirectory: true,
 		localActiveDirectory:     true,
@@ -681,6 +720,9 @@ func (this *localRepository[Head, Summary]) validateWorkDirectory(ctx context.Co
 		return nil, err
 	}
 	contentPath := filepath.Join(directory, this.format.contentFileName())
+	if err := this.preflightWorkContent(contentPath, head, ctx); err != nil {
+		return nil, err
+	}
 	file, err := openActiveLocalFile(contentPath)
 	if err != nil {
 		err = errors.System.Newf("cannot open recording work content: %w", err)
@@ -698,6 +740,26 @@ func (this *localRepository[Head, Summary]) validateWorkDirectory(ctx context.Co
 		return nil, validated.close(err)
 	}
 	return validated, nil
+}
+
+func (this *localRepository[Head, Summary]) preflightWorkContent(path string, head Head, ctx context.Context) (result error) {
+	file, err := openReadOnlyLocalFile(path)
+	if err != nil {
+		if errors.Config.IsErr(err) {
+			err = invalidLocalArtifact(err)
+		}
+		return errors.System.Newf("cannot safely open recording work content: %w", err)
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			result = stderrors.Join(result, errors.System.Newf("cannot close recording work preflight: %w", closeErr))
+		}
+	}()
+	info, err := file.Stat()
+	if err != nil {
+		return errors.System.Newf("cannot inspect recording work content: %w", err)
+	}
+	return this.format.preflight(file, info.Size(), head, ctx)
 }
 
 func (this *localRepository[Head, Summary]) publishValidatedWork(ctx context.Context, source, target string, validated *validatedLocalWork[Head]) (result error) {
@@ -874,10 +936,16 @@ func (this *localRepository[Head, Summary]) recoverActiveDirectory(ctx context.C
 	if err != nil {
 		return err
 	}
+	if this.format.headId(head) != id || this.format.headProducerId(head) != this.identity.ProducerId() {
+		return errors.System.Newf("active recording head identity does not match its directory")
+	}
 	if aliased, err := completeLocalPublishAlias(contentPath, target); err != nil {
 		return err
 	} else if aliased {
 		return this.completePublishedRecovery(ctx, id, directory, headPath)
+	}
+	if err := this.preflightActiveContent(contentPath, head, ctx); err != nil {
+		return err
 	}
 	entries, err := os.ReadDir(directory)
 	if err != nil {
@@ -885,9 +953,6 @@ func (this *localRepository[Head, Summary]) recoverActiveDirectory(ctx context.C
 	}
 	if len(entries) != 2 {
 		return errors.Config.Newf("active recording directory contains %d entries instead of two", len(entries))
-	}
-	if this.format.headId(head) != id || this.format.headProducerId(head) != this.identity.ProducerId() {
-		return errors.System.Newf("active recording head identity does not match its directory")
 	}
 	file, err := openActiveLocalFile(contentPath)
 	if err != nil {
@@ -915,6 +980,23 @@ func (this *localRepository[Head, Summary]) recoverActiveDirectory(ctx context.C
 	}
 	this.recovered = append(this.recovered, result)
 	return nil
+}
+
+func (this *localRepository[Head, Summary]) preflightActiveContent(path string, head Head, ctx context.Context) (result error) {
+	file, err := openReadOnlyLocalFile(path)
+	if err != nil {
+		return errors.System.Newf("cannot safely open active recording content: %w", err)
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			result = stderrors.Join(result, errors.System.Newf("cannot close active recording preflight: %w", closeErr))
+		}
+	}()
+	info, err := file.Stat()
+	if err != nil {
+		return errors.System.Newf("cannot inspect active recording content: %w", err)
+	}
+	return this.format.preflight(file, info.Size(), head, ctx)
 }
 
 func (this *localRepository[Head, Summary]) completePublishedRecovery(ctx context.Context, id Id, directory, headPath string) error {
