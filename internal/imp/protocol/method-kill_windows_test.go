@@ -8,6 +8,7 @@ import (
 	goos "os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -45,10 +46,11 @@ func TestKillWindowsUsesSignalExitCode(t *testing.T) {
 			require.NoError(t, err)
 			createdAt, err := candidate.CreateTime()
 			require.NoError(t, err)
+			identity := strconv.FormatInt(createdAt, 10)
 			require.NoError(t, (&imp{}).kill(context.Background(), processTarget{
-				pid:               cmd.Process.Pid,
-				expectedCreatedAt: &createdAt,
-				expectedEnv:       killWindowsHelper + "=" + readyFile,
+				pid:              cmd.Process.Pid,
+				expectedIdentity: &identity,
+				expectedEnv:      killWindowsHelper + "=" + readyFile,
 			}, signal, make(signaledProcessGroups)))
 
 			err = cmd.Wait()

@@ -11,9 +11,9 @@ import (
 
 	"github.com/alecthomas/kingpin/v2"
 	log "github.com/echocat/slf4g"
-	"github.com/shirou/gopsutil/v4/process"
 
 	"github.com/engity-com/bifroest/internal/imp/protocol"
+	"github.com/engity-com/bifroest/internal/processidentity"
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/execution"
@@ -252,15 +252,11 @@ func doExec(opts *execOpts) error {
 }
 
 func processIdentity(pid int) (string, error) {
-	p, err := process.NewProcess(int32(pid))
+	identity, err := processidentity.Get(pid)
 	if err != nil {
 		return "", err
 	}
-	createdAt, err := p.CreateTime()
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%d %d", pid, createdAt), nil
+	return fmt.Sprintf("%d %s", pid, identity), nil
 }
 
 func executionStatePath(directory string, executionId execution.Id, suffix string) string {

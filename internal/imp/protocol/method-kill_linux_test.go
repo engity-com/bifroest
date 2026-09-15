@@ -19,6 +19,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/engity-com/bifroest/pkg/connection"
+	"github.com/engity-com/bifroest/pkg/execution"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -58,6 +59,31 @@ func TestKillProcessGroupUsingNonLeaderReachesSiblings(t *testing.T) {
 			processIsGoneOrZombie(target.Process.Pid) &&
 			processIsGoneOrZombie(sibling.Process.Pid)
 	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestLegacyProcessIdentityRequiresEnvironment(t *testing.T) {
+	candidate, err := process.NewProcess(int32(os.Getpid()))
+	require.NoError(t, err)
+	createdAt, err := candidate.CreateTime()
+	require.NoError(t, err)
+	identity := strconv.FormatInt(createdAt, 10)
+
+	require.False(t, (processTarget{pid: os.Getpid(), expectedIdentity: &identity}).matchesIdentity())
+	require.True(t, (processTarget{
+		pid:              os.Getpid(),
+		expectedIdentity: &identity,
+		expectedEnv:      os.Environ()[0],
+	}).matchesIdentity())
+}
+
+func TestLegacyStartingProcessMatchesIdentity(t *testing.T) {
+	candidate, err := process.NewProcess(int32(os.Getpid()))
+	require.NoError(t, err)
+	createdAt, err := candidate.CreateTime()
+	require.NoError(t, err)
+	raw := []byte(execution.StateStartingMarker + " " + strconv.Itoa(os.Getpid()) + " " + strconv.FormatInt(createdAt, 10))
+
+	require.True(t, registeredStartingProcessMatches(raw))
 }
 
 func TestKillProcessesSignalsProcessGroupOnce(t *testing.T) {

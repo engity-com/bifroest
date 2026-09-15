@@ -3,7 +3,10 @@
 package alternatives
 
 import (
+	"context"
+	stderrors "errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -73,4 +76,49 @@ func TestResolveLocalKindProviderRejectsMissingSupportedProvider(t *testing.T) {
 
 	require.ErrorContains(t, err, "cannot detect an available Docker or Podman provider")
 	assert.Empty(t, actual)
+}
+
+func TestProbeLocalKindProviderRetriesPodmanOnce(t *testing.T) {
+	var calls [][]string
+	actual := probeLocalKindProvider(context.Background(), "podman", func(_ context.Context, name string, args ...string) error {
+		calls = append(calls, append([]string{name}, args...))
+		if len(calls) == 1 {
+			return stderrors.New("first start failed")
+		}
+		return nil
+	})
+
+	assert.True(t, actual)
+	assert.Equal(t, [][]string{
+		{"podman", "ps", "--all", "--quiet"},
+		{"podman", "ps", "--all", "--quiet"},
+	}, calls)
+}
+
+func TestProbeLocalKindProviderDoesNotRetryDocker(t *testing.T) {
+	var calls int
+	actual := probeLocalKindProvider(context.Background(), "docker", func(context.Context, string, ...string) error {
+		calls++
+		return stderrors.New("unavailable")
+	})
+
+	assert.False(t, actual)
+	assert.Equal(t, 1, calls)
+}
+
+func TestProbeLocalKindProviderReservesDeadlineForRetry(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	var calls int
+	actual := probeLocalKindProvider(ctx, "podman", func(ctx context.Context, _ string, _ ...string) error {
+		calls++
+		if calls == 1 {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		return nil
+	})
+
+	assert.True(t, actual)
+	assert.Equal(t, 2, calls)
 }
