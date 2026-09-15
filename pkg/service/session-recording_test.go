@@ -108,6 +108,82 @@ func TestPrepareRecordingOpensBECastWithoutZstdFallback(t *testing.T) {
 	})
 }
 
+func TestSessionRecordingRepositoryCreatesAndSealsActiveFormats(t *testing.T) {
+	tests := []struct {
+		name      string
+		encrypted bool
+		suffix    string
+	}{
+		{name: "Cast Zstandard", suffix: ".cast.zst"},
+		{name: "BECast", encrypted: true, suffix: ".becast"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			conf := sessionRecordingTestConfiguration(t, root)
+			identity, err := audit.EnsureIdentity(&conf.Auditlogs[0])
+			require.NoError(t, err)
+			var encryptionPublicKey bfcrypto.PublicKeys
+			if test.encrypted {
+				encryptionPublicKey = sessionRecordingEncryptionPublicKey(t)
+			}
+			repository, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording.Directory, identity, encryptionPublicKey)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, repository.Close()) })
+
+			startedAt := time.Now().UTC()
+			recordingId, err := recording.NewId()
+			require.NoError(t, err)
+			connectionId, err := bfconnection.NewId()
+			require.NoError(t, err)
+			sessionId, err := session.NewId()
+			require.NoError(t, err)
+			header := recording.CastHeader{
+				Version:   3,
+				Terminal:  recording.CastTerminal{Columns: 80, Rows: 24, Type: "xterm"},
+				Timestamp: startedAt.Unix(),
+			}
+			metadata := recording.CastMetadata{
+				RecordingId:  recordingId,
+				ConnectionId: connectionId,
+				SessionId:    sessionId,
+				OperationId:  uuid.New(),
+				Flow:         conf.Flows[0].Name,
+				Task:         audit.SessionTaskShell,
+				Pty:          true,
+				ProducerId:   identity.ProducerId(),
+				StartedAt:    startedAt,
+			}
+			active, err := repository.createActive(t.Context(), header, metadata, 300)
+			require.NoError(t, err)
+			require.NoError(t, active.WriteOutput(time.Second, recording.OutputStreamTerminal, []byte("adapter output\r\n")))
+			require.NoError(t, active.Checkpoint())
+			exitStatus := uint32(7)
+			require.NoError(t, active.Seal(2*time.Second, recording.CastResult{
+				Status:  recording.CastStatusCompleted,
+				EndedAt: startedAt.Add(2 * time.Second),
+			}, &exitStatus))
+			require.NoError(t, active.Close())
+
+			sealedPath := filepath.Join(conf.Auditlogs[0].Recording.Directory, "sealed", recordingId.String()+test.suffix)
+			file, err := os.Open(sealedPath)
+			require.NoError(t, err)
+			info, err := file.Stat()
+			require.NoError(t, err)
+			if test.encrypted {
+				verification, verifyErr := recording.VerifyBECast(file, info.Size(), recording.BECastVerifyOptions{ExpectedProducerId: identity.ProducerId()})
+				require.NoError(t, verifyErr)
+				require.Equal(t, recording.CastStatusCompleted, verification.Summary.Status)
+			} else {
+				verification, verifyErr := recording.VerifyCastZstd(file, info.Size(), recording.CastZstdVerifyOptions{ExpectedProducerId: identity.ProducerId()})
+				require.NoError(t, verifyErr)
+				require.Equal(t, recording.CastStatusCompleted, verification.Summary.Status)
+			}
+			require.NoError(t, file.Close())
+		})
+	}
+}
+
 func TestPrepareRecordingFailsClosedOnExistingRepositoryLockAndCanRetry(t *testing.T) {
 	root := t.TempDir()
 	conf := sessionRecordingTestConfiguration(t, root)

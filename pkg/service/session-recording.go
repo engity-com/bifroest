@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/crypto"
@@ -28,6 +29,13 @@ type sessionRecordingStartupRecovery struct {
 	status        recording.CastStatus
 	truncated     bool
 	alreadySealed bool
+}
+
+type activeSessionRecording struct {
+	recordingSink
+	checkpoint func() error
+	seal       func(time.Duration, recording.CastResult, *uint32) error
+	close      func() error
 }
 
 func newSessionRecordingRepository(ctx context.Context, directory string, identity *audit.Identity, encryptionPublicKey crypto.PublicKeys) (*sessionRecordingRepository, error) {
@@ -61,6 +69,65 @@ func newSessionRecordingRepository(ctx context.Context, directory string, identi
 		format: sessionRecordingRepositoryFormatBECast,
 		becast: repository,
 	}, nil
+}
+
+func (this *sessionRecordingRepository) createActive(ctx context.Context, header recording.CastHeader, metadata recording.CastMetadata, chunkSize int) (*activeSessionRecording, error) {
+	if this == nil {
+		return nil, errors.System.Newf("nil session Recording repository")
+	}
+	switch this.format {
+	case sessionRecordingRepositoryFormatCastZstd:
+		active, err := this.castZstd.CreateActive(ctx, header, metadata, chunkSize)
+		if err != nil {
+			return nil, err
+		}
+		return &activeSessionRecording{
+			recordingSink: active,
+			checkpoint:    active.Checkpoint,
+			seal: func(elapsed time.Duration, result recording.CastResult, exitStatus *uint32) error {
+				_, err := active.Seal(elapsed, result, exitStatus)
+				return err
+			},
+			close: active.Close,
+		}, nil
+	case sessionRecordingRepositoryFormatBECast:
+		active, err := this.becast.CreateActive(ctx, header, metadata, chunkSize)
+		if err != nil {
+			return nil, err
+		}
+		return &activeSessionRecording{
+			recordingSink: active,
+			checkpoint:    active.Checkpoint,
+			seal: func(elapsed time.Duration, result recording.CastResult, exitStatus *uint32) error {
+				_, err := active.Seal(elapsed, result, exitStatus)
+				return err
+			},
+			close: active.Close,
+		}, nil
+	default:
+		return nil, errors.System.Newf("illegal session Recording repository format %d", this.format)
+	}
+}
+
+func (this *activeSessionRecording) Checkpoint() error {
+	if this == nil || this.checkpoint == nil {
+		return errors.System.Newf("nil active session Recording")
+	}
+	return this.checkpoint()
+}
+
+func (this *activeSessionRecording) Seal(elapsed time.Duration, result recording.CastResult, exitStatus *uint32) error {
+	if this == nil || this.seal == nil {
+		return errors.System.Newf("nil active session Recording")
+	}
+	return this.seal(elapsed, result, exitStatus)
+}
+
+func (this *activeSessionRecording) Close() error {
+	if this == nil || this.close == nil {
+		return nil
+	}
+	return this.close()
 }
 
 func (this *sessionRecordingRepository) startupRecoveries() []sessionRecordingStartupRecovery {

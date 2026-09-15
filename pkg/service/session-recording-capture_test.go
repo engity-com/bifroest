@@ -599,6 +599,29 @@ func TestRecordedSessionResizeFailurePoisonsSession(t *testing.T) {
 	}
 }
 
+func TestRecordedSessionResizeFailureCallbackCanStopAndWait(t *testing.T) {
+	initial := essh.Window{Width: 80, Height: 24}
+	source := make(chan essh.Window, 1)
+	session := newCaptureTestSession(t.Context())
+	session.hasPty = true
+	session.pty.Window = initial
+	session.windows = source
+	recordCause := bferrors.System.Newf("resize storage failed")
+	sink := &captureTestSink{resizeErr: recordCause}
+	callbackDone := make(chan error, 1)
+	var wrapper *recordedSession
+	wrapper, err := newRecordedSession(session, sink, func() time.Duration { return time.Second }, func(error) {
+		callbackDone <- wrapper.stopAndWait()
+	})
+	require.NoError(t, err)
+	_, windows, _ := wrapper.Pty()
+	require.Equal(t, initial, <-windows)
+
+	source <- essh.Window{Width: 100, Height: 30}
+	require.ErrorIs(t, <-callbackDone, recordCause)
+	requireChannelClosed(t, windows)
+}
+
 func TestRecordedSessionOutputFailureClosesPtyProxy(t *testing.T) {
 	source := make(chan essh.Window)
 	session := newCaptureTestSession(t.Context())
@@ -612,6 +635,53 @@ func TestRecordedSessionOutputFailureClosesPtyProxy(t *testing.T) {
 	_, err := wrapper.Write([]byte("poison"))
 	require.Error(t, err)
 	requireChannelClosed(t, windows)
+}
+
+func TestRecordedSessionStopAndWaitClosesProxyAndBlocksFurtherWrites(t *testing.T) {
+	initial := essh.Window{Width: 80, Height: 24}
+	source := make(chan essh.Window)
+	session := newCaptureTestSession(t.Context())
+	session.hasPty = true
+	session.pty.Window = initial
+	session.windows = source
+	wrapper := requireRecordedSession(t, session, &captureTestSink{}, func(error) {})
+	_, windows, _ := wrapper.Pty()
+	require.Equal(t, initial, <-windows)
+
+	require.NoError(t, wrapper.stopAndWait())
+	require.NoError(t, wrapper.stopAndWait())
+	requireChannelClosed(t, windows)
+	n, err := wrapper.Write([]byte("blocked"))
+	require.Zero(t, n)
+	require.ErrorContains(t, err, "capture is stopped")
+	require.Zero(t, session.stdout.writeCalls.Load())
+}
+
+func TestRecordedSessionStopAndWaitDrainsActiveWrite(t *testing.T) {
+	session := newCaptureTestSession(t.Context())
+	writeEntered := make(chan struct{}, 1)
+	releaseWrite := make(chan struct{})
+	sink := &captureTestSink{outputEntered: writeEntered, releaseOutput: releaseWrite}
+	wrapper := requireRecordedSession(t, session, sink, func(error) {})
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := wrapper.Write([]byte("drained"))
+		writeDone <- err
+	}()
+	<-writeEntered
+	stopDone := make(chan error, 1)
+	stopStarted := make(chan struct{})
+	go func() {
+		close(stopStarted)
+		stopDone <- wrapper.stopAndWait()
+	}()
+	<-stopStarted
+	require.Never(t, func() bool { return len(stopDone) > 0 }, 20*time.Millisecond, time.Millisecond)
+
+	close(releaseWrite)
+	require.NoError(t, <-stopDone)
+	require.NoError(t, <-writeDone)
+	require.Equal(t, []byte("drained"), sink.outputEvents()[0].data)
 }
 
 func TestRecordedSessionPreservesOptionalEnvironmentSemantics(t *testing.T) {
@@ -698,13 +768,15 @@ type captureTestResize struct {
 }
 
 type captureTestSink struct {
-	mu        sync.Mutex
-	outputs   []captureTestOutput
-	resizes   []captureTestResize
-	order     []string
-	outputErr error
-	resizeErr error
-	changed   chan struct{}
+	mu            sync.Mutex
+	outputs       []captureTestOutput
+	resizes       []captureTestResize
+	order         []string
+	outputErr     error
+	resizeErr     error
+	changed       chan struct{}
+	outputEntered chan<- struct{}
+	releaseOutput <-chan struct{}
 }
 
 func (this *captureTestSink) WriteOutput(elapsed time.Duration, stream recording.OutputStream, data []byte) error {
@@ -712,6 +784,12 @@ func (this *captureTestSink) WriteOutput(elapsed time.Duration, stream recording
 	defer this.mu.Unlock()
 	this.outputs = append(this.outputs, captureTestOutput{elapsed: elapsed, stream: stream, data: append([]byte(nil), data...)})
 	this.order = append(this.order, "output")
+	if this.outputEntered != nil {
+		this.outputEntered <- struct{}{}
+	}
+	if this.releaseOutput != nil {
+		<-this.releaseOutput
+	}
 	return this.outputErr
 }
 

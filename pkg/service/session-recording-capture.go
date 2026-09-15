@@ -27,14 +27,18 @@ type recordedSession struct {
 	onFailure func(error)
 	stderr    *recordedSessionStderr
 
-	mu      sync.Mutex
-	failure error
-	failed  chan struct{}
-	pty     essh.Pty
-	windows <-chan essh.Window
-	hasPty  bool
-	columns uint32
-	rows    uint32
+	mu       sync.Mutex
+	failure  error
+	stopped  bool
+	failed   chan struct{}
+	stop     chan struct{}
+	done     chan struct{}
+	stopOnce sync.Once
+	pty      essh.Pty
+	windows  <-chan essh.Window
+	hasPty   bool
+	columns  uint32
+	rows     uint32
 }
 
 type recordedSessionStderr struct {
@@ -84,6 +88,8 @@ func newRecordedSession(session essh.Session, sink recordingSink, elapsed func()
 		elapsed:   elapsed,
 		onFailure: onFailure,
 		failed:    make(chan struct{}),
+		stop:      make(chan struct{}),
+		done:      make(chan struct{}),
 		pty:       clonePty(pty),
 		hasPty:    hasPty,
 		columns:   columns,
@@ -95,6 +101,8 @@ func newRecordedSession(session essh.Session, sink recordingSink, elapsed func()
 		windows <- pty.Window
 		result.windows = windows
 		go result.forwardWindows(sourceWindows, windows)
+	} else {
+		close(result.done)
 	}
 	return result, nil
 }
@@ -156,6 +164,10 @@ func (this *recordedSession) write(target io.Writer, stream recording.OutputStre
 		this.mu.Unlock()
 		return 0, failure
 	}
+	if this.stopped {
+		this.mu.Unlock()
+		return 0, errors.System.Newf("session Recording capture is stopped")
+	}
 
 	n, writeErr := target.Write(value)
 	if n < 0 || n > len(value) {
@@ -188,12 +200,16 @@ func (this *recordedSession) write(target io.Writer, stream recording.OutputStre
 	return n, goerrors.Join(writeErr, failure)
 }
 
-func (this *recordedSession) recordResize(window essh.Window) error {
+func (this *recordedSession) recordResize(window essh.Window) (error, bool) {
 	this.mu.Lock()
 	if this.failure != nil {
 		failure := this.failure
 		this.mu.Unlock()
-		return failure
+		return failure, false
+	}
+	if this.stopped {
+		this.mu.Unlock()
+		return errors.System.Newf("session Recording capture is stopped"), false
 	}
 	columns, recordErr := effectiveWindowDimension(this.columns, window.Width, "width")
 	var rows uint32
@@ -210,11 +226,20 @@ func (this *recordedSession) recordResize(window essh.Window) error {
 		this.columns = columns
 		this.rows = rows
 		this.mu.Unlock()
-		return nil
+		return nil, false
 	}
 	failure := this.poisonLocked("resize", recordErr)
 	this.mu.Unlock()
-	this.onFailure(failure)
+	return failure, true
+}
+
+func (this *recordedSession) stopAndWait() error {
+	this.mu.Lock()
+	this.stopped = true
+	failure := this.failure
+	this.mu.Unlock()
+	this.stopOnce.Do(func() { close(this.stop) })
+	<-this.done
 	return failure
 }
 
@@ -242,7 +267,14 @@ func (this *recordedSession) poisonLocked(event string, cause error) error {
 }
 
 func (this *recordedSession) forwardWindows(source <-chan essh.Window, target chan essh.Window) {
-	defer close(target)
+	var notifyFailure error
+	defer func() {
+		close(target)
+		close(this.done)
+		if notifyFailure != nil {
+			this.onFailure(notifyFailure)
+		}
+	}()
 	first := true
 	for {
 		select {
@@ -256,13 +288,18 @@ func (this *recordedSession) forwardWindows(source <-chan essh.Window, target ch
 					continue
 				}
 			}
-			if err := this.recordResize(window); err != nil {
+			if err, notify := this.recordResize(window); err != nil {
+				if notify {
+					notifyFailure = err
+				}
 				return
 			}
 			coalesceWindow(target, window)
 		case <-this.Context().Done():
 			return
 		case <-this.failed:
+			return
+		case <-this.stop:
 			return
 		}
 	}
