@@ -2,8 +2,6 @@ package recording
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"io"
 	"os"
 	"sync"
@@ -14,34 +12,7 @@ import (
 
 // ArtifactDigest identifies the exact bytes of a sealed recording container.
 // It is distinct from CastDigest, which identifies the canonical Cast content.
-type ArtifactDigest [sha256.Size]byte
-
-func (this ArtifactDigest) String() string {
-	return hex.EncodeToString(this[:])
-}
-
-func (this ArtifactDigest) IsZero() bool {
-	return this == ArtifactDigest{}
-}
-
-func (this ArtifactDigest) MarshalText() ([]byte, error) {
-	return []byte(this.String()), nil
-}
-
-func (this *ArtifactDigest) UnmarshalText(text []byte) error {
-	if len(text) != hex.EncodedLen(len(this)) {
-		return errors.Config.Newf("illegal recording artifact digest length: %d", len(text))
-	}
-	var decoded ArtifactDigest
-	if _, err := hex.Decode(decoded[:], text); err != nil {
-		return errors.Config.Newf("illegal recording artifact digest: %w", err)
-	}
-	if decoded.String() != string(text) {
-		return errors.Config.Newf("recording artifact digest is not canonical")
-	}
-	*this = decoded
-	return nil
-}
+type ArtifactDigest = audit.ArtifactDigest
 
 // LocalSealedArtifact is a signature-verified, read-only handle to one local recording.
 // ArtifactDigest describes the bytes observed while the handle was opened. Callers must
@@ -106,6 +77,20 @@ func (this *LocalSealedArtifact[Summary]) Reader() io.Reader {
 		return bytes.NewReader(nil)
 	}
 	return io.NewSectionReader(this, 0, this.size)
+}
+
+// RemoteArtifact adapts this open handle for synchronous remote publication.
+// The caller must keep the LocalSealedArtifact open until publication returns.
+func (this *LocalSealedArtifact[Summary]) RemoteArtifact() (audit.RemoteArtifact, error) {
+	if this == nil {
+		return audit.RemoteArtifact{}, errors.System.Newf("nil sealed recording artifact")
+	}
+	this.mutex.RLock()
+	defer this.mutex.RUnlock()
+	if this.file == nil {
+		return audit.RemoteArtifact{}, errors.System.Newf("sealed recording artifact is closed")
+	}
+	return audit.NewRemoteArtifact(this.producerId, this.fileName, this.artifactDigest, this.size, this)
 }
 
 func (this *LocalSealedArtifact[Summary]) ReadAt(target []byte, offset int64) (int, error) {

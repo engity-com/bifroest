@@ -88,6 +88,44 @@ func TestS3RemoteTargetPublishesConditionalSingleObject(t *testing.T) {
 	require.NoError(t, target.Publish(context.Background(), segment))
 }
 
+func TestS3RemoteTargetPublishesArtifactWithExpectedDigest(t *testing.T) {
+	artifact := validRemoteArtifactTest()
+	content, err := io.ReadAll(artifact.Content())
+	require.NoError(t, err)
+	client := &s3RemoteTestClient{put: func(_ context.Context, input *s3.PutObjectInput) (*s3.PutObjectOutput, error) {
+		require.Equal(t, "production/"+artifact.RemotePath(), aws.ToString(input.Key))
+		require.Equal(t, artifact.Size(), aws.ToInt64(input.ContentLength))
+		digest := artifact.Digest()
+		require.Equal(t, base64.StdEncoding.EncodeToString(digest[:]), aws.ToString(input.ChecksumSHA256))
+		actual, readErr := io.ReadAll(input.Body)
+		require.NoError(t, readErr)
+		require.Equal(t, content, actual)
+		return &s3.PutObjectOutput{}, nil
+	}}
+	target := newS3RemoteTestTarget(t, client, "production")
+	require.NoError(t, target.PublishArtifact(context.Background(), artifact))
+}
+
+func TestS3RemoteTargetRejectsOversizedArtifactKey(t *testing.T) {
+	content := []byte("artifact")
+	artifact, err := NewRemoteArtifact(
+		ProducerId{1},
+		strings.Repeat("a", maximumRemoteArtifactFileNameBytes),
+		ArtifactDigest(sha256.Sum256(content)),
+		int64(len(content)),
+		strings.NewReader(string(content)),
+	)
+	require.NoError(t, err)
+	client := &s3RemoteTestClient{put: func(context.Context, *s3.PutObjectInput) (*s3.PutObjectOutput, error) {
+		t.Fatal("oversized key must be rejected before PutObject")
+		return nil, nil
+	}}
+	target := newS3RemoteTestTarget(t, client, strings.Repeat("p", 857))
+	err = target.PublishArtifact(context.Background(), artifact)
+	require.ErrorContains(t, err, "exceeds 1024 bytes")
+	require.True(t, bferrors.Config.IsErr(err), err)
+}
+
 func TestS3RemoteTargetAcceptsIdenticalExistingObject(t *testing.T) {
 	for _, status := range []int{http.StatusConflict, http.StatusPreconditionFailed} {
 		t.Run(http.StatusText(status), func(t *testing.T) {

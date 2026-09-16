@@ -134,9 +134,14 @@ func newRemoteTargetEntry(ctx context.Context, auditlogName configuration.Auditl
 	if isNilRemoteValue(target) {
 		return remoteTargetEntry{}, errors.System.Newf("remote audit target %q of auditlog %q factory returned nil", conf.Name, auditlogName)
 	}
+	validatingTarget := &validatingRemoteTarget{target: target}
+	var wrapped RemoteTarget = validatingTarget
+	if artifactTarget, ok := target.(RemoteArtifactTarget); ok {
+		wrapped = &validatingRemoteArtifactTarget{validatingRemoteTarget: validatingTarget, artifactTarget: artifactTarget}
+	}
 	return remoteTargetEntry{
 		scope:                  scope,
-		target:                 &validatingRemoteTarget{target: target},
+		target:                 wrapped,
 		publishAttemptTimeout:  publishAttemptTimeout,
 		destinationFingerprint: destinationFingerprint,
 	}, nil
@@ -144,6 +149,11 @@ func newRemoteTargetEntry(ctx context.Context, auditlogName configuration.Auditl
 
 type validatingRemoteTarget struct {
 	target RemoteTarget
+}
+
+type validatingRemoteArtifactTarget struct {
+	*validatingRemoteTarget
+	artifactTarget RemoteArtifactTarget
 }
 
 func (this *validatingRemoteTarget) Publish(ctx context.Context, segment SealedSegment) error {
@@ -155,6 +165,13 @@ func (this *validatingRemoteTarget) Publish(ctx context.Context, segment SealedS
 
 func (this *validatingRemoteTarget) Close() error {
 	return this.target.Close()
+}
+
+func (this *validatingRemoteArtifactTarget) PublishArtifact(ctx context.Context, artifact RemoteArtifact) error {
+	if err := artifact.ValidateContext(ctx); err != nil {
+		return err
+	}
+	return this.artifactTarget.PublishArtifact(ctx, artifact)
 }
 
 type remoteTargetEntry struct {

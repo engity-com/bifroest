@@ -49,10 +49,13 @@ func TestWebdavTemporaryURLIsDeterministicAndFinalPathBound(t *testing.T) {
 	collectionURL, err := url.Parse("https://dav.example.invalid/audit/producer/")
 	require.NoError(t, err)
 	finalURL := appendWebdavURL(collectionURL, false, "segment.audit")
-	temporaryURL := webdavTemporaryURL(collectionURL, finalURL)
+	temporaryURL := webdavTemporaryURL(collectionURL, finalURL, nil)
 
-	require.Equal(t, temporaryURL.String(), webdavTemporaryURL(collectionURL, finalURL).String())
-	require.NotEqual(t, temporaryURL.String(), webdavTemporaryURL(collectionURL, appendWebdavURL(collectionURL, false, "other.audit")).String())
+	require.Equal(t, temporaryURL.String(), webdavTemporaryURL(collectionURL, finalURL, nil).String())
+	require.NotEqual(t, temporaryURL.String(), webdavTemporaryURL(collectionURL, appendWebdavURL(collectionURL, false, "other.audit"), nil).String())
+	artifactTemporaryURL := webdavTemporaryURL(collectionURL, finalURL, []byte("checksum"))
+	require.NotEqual(t, temporaryURL.String(), artifactTemporaryURL.String())
+	require.NotEqual(t, artifactTemporaryURL.String(), webdavTemporaryURL(collectionURL, finalURL, []byte("other-checksum")).String())
 	require.Equal(t, collectionURL.Path, path.Dir(temporaryURL.Path)+"/")
 	require.Len(t, path.Base(temporaryURL.Path), 85)
 }
@@ -520,6 +523,23 @@ func TestWebdavRemoteTargetPublishesAgainstEmbeddedWebdavServer(t *testing.T) {
 	require.ErrorContains(t, err, "conflicts with local content")
 	require.True(t, bferrors.System.IsErr(err))
 	require.Equal(t, int32(10), authenticatedRequests.Load())
+}
+
+func TestWebdavRemoteTargetPublishesArtifactAgainstEmbeddedServer(t *testing.T) {
+	target, fileSystem, _, _ := newEmbeddedWebdavRemoteTestTarget(t, false, false, nil)
+	artifact := validRemoteArtifactTest()
+	content, err := io.ReadAll(artifact.Content())
+	require.NoError(t, err)
+	finalPath := "/audit/" + artifact.ProducerId().String() + "/" + artifact.FileName()
+
+	require.NoError(t, target.PublishArtifact(context.Background(), artifact))
+	require.NoError(t, target.PublishArtifact(context.Background(), artifact))
+	require.Equal(t, content, readEmbeddedWebdavFile(t, fileSystem, finalPath))
+	require.Equal(t, []string{artifact.FileName()}, listEmbeddedWebdavDirectory(t, fileSystem, "/audit/"+artifact.ProducerId().String()))
+	err = target.PublishArtifact(context.Background(), conflictingRemoteArtifactTest(t, artifact))
+	require.ErrorContains(t, err, "conflicts with local content")
+	require.True(t, bferrors.System.IsErr(err), err)
+	require.Equal(t, content, readEmbeddedWebdavFile(t, fileSystem, finalPath))
 }
 
 func TestWebdavRemoteTargetConcurrentPublicationIsAtomicAgainstEmbeddedServer(t *testing.T) {
