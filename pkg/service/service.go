@@ -449,6 +449,7 @@ func (this *Service) prepareServer(_ context.Context, svc *service, hostPrivateK
 	svc.server.DisconnectCallback = svc.onDisconnected
 	svc.server.Handler = svc.handleSshShellSession
 	svc.server.PtyCallback = svc.onPtyRequest
+	svc.server.SessionRequestCallback = svc.onSessionRequest
 	svc.server.ReversePortForwardingCallback = svc.onReversePortForwardingRequested
 	svc.server.PublicKeyHandler = svc.handlePublicKey
 	svc.server.PasswordHandler = svc.handlePassword

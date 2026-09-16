@@ -4,6 +4,7 @@ import (
 	"context"
 	goerrors "errors"
 	"fmt"
+	"io"
 	"math"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/recording"
 	"github.com/engity-com/bifroest/pkg/session"
+	"github.com/engity-com/bifroest/pkg/template"
 )
 
 type sessionRecordingRepositoryFormat uint8
@@ -37,6 +39,7 @@ type sessionRecordingRepository struct {
 	chunkSize     int
 	flushInterval time.Duration
 	flushSize     uint64
+	notice        template.String
 }
 
 type sessionRecordingStartupRecovery struct {
@@ -77,6 +80,37 @@ type sessionRecordingLifecycle struct {
 	coordinator *sessionRecordingCoordinator
 	started     time.Time
 	startedAt   time.Time
+	metadata    recording.CastMetadata
+	notice      template.String
+}
+
+type sessionRecordingNoticeContext struct {
+	recording sessionRecordingNotice
+}
+
+type sessionRecordingNotice struct {
+	id        recording.Id
+	startedAt time.Time
+}
+
+func (this sessionRecordingNoticeContext) GetField(name string) (any, bool, error) {
+	switch name {
+	case "recording":
+		return this.recording, true, nil
+	default:
+		return nil, false, fmt.Errorf("unknown field %q", name)
+	}
+}
+
+func (this sessionRecordingNotice) GetField(name string) (any, bool, error) {
+	switch name {
+	case "id":
+		return this.id, true, nil
+	case "startedAt":
+		return this.startedAt, true, nil
+	default:
+		return nil, false, fmt.Errorf("unknown field %q", name)
+	}
 }
 
 type sessionRecordingFailure struct {
@@ -115,6 +149,7 @@ func newSessionRecordingRepository(ctx context.Context, configuration configurat
 		chunkSize:     int(configuration.ChunkSizeBytes),
 		flushInterval: configuration.FlushInterval.Native(),
 		flushSize:     configuration.FlushSizeBytes,
+		notice:        configuration.Notice,
 	}
 	if encryptionPublicKey.IsZero() {
 		repository, err := recording.NewLocalCastZstdRepository(ctx, configuration.Directory, identity, recording.CastZstdVerifyOptions{})
@@ -447,6 +482,8 @@ func (this *service) beginSessionRecording(sshSession essh.Session, pty recorded
 		coordinator: coordinator,
 		started:     started,
 		startedAt:   startedAt,
+		metadata:    metadata,
+		notice:      repository.notice,
 	}, nil
 }
 
@@ -468,6 +505,26 @@ func sessionRecordingTerminal(pty recordedSessionPty) (recording.CastTerminal, e
 		terminalType = pty.pty.Term
 	}
 	return recording.CastTerminal{Columns: columns, Rows: rows, Type: terminalType}, nil
+}
+
+func (this *sessionRecordingLifecycle) showNotice(sshSession essh.Session, interactive bool) error {
+	if this == nil || !interactive || !this.metadata.Pty || this.metadata.Task != audit.SessionTaskShell || this.notice.IsZero() {
+		return nil
+	}
+	notice, err := this.notice.Render(sessionRecordingNoticeContext{recording: sessionRecordingNotice{
+		id:        this.metadata.RecordingId,
+		startedAt: this.metadata.StartedAt,
+	}})
+	if err != nil {
+		return errors.System.Newf("cannot render session Recording notice: %w", err)
+	}
+	if len(notice) == 0 {
+		return nil
+	}
+	if _, err := io.WriteString(sshSession, notice); err != nil {
+		return errors.System.Newf("cannot send session Recording notice: %w", err)
+	}
+	return nil
 }
 
 func (this *sessionRecordingLifecycle) finish(exitCode int, taskErr error) error {

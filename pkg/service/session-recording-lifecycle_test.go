@@ -20,6 +20,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/environment"
 	bferrors "github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/recording"
+	"github.com/engity-com/bifroest/pkg/template"
 )
 
 func TestSessionRecordingCoordinatorCheckpointsBySizeAndStopsOnce(t *testing.T) {
@@ -86,12 +87,20 @@ func TestSessionRecordingFailureMarkerSurvivesJoinedCancellation(t *testing.T) {
 
 func TestExecuteSessionRecordingSealsShellAndExec(t *testing.T) {
 	tests := []struct {
-		name         string
-		pty          bool
-		expectedTask audit.SessionTask
+		name           string
+		pty            bool
+		exec           bool
+		malformedExec  bool
+		command        string
+		expectedTask   audit.SessionTask
+		expectedNotice bool
 	}{
-		{name: "shell with unspecified PTY dimensions", pty: true, expectedTask: audit.SessionTaskShell},
-		{name: "non-PTY exec", expectedTask: audit.SessionTaskExec},
+		{name: "shell with unspecified PTY dimensions", pty: true, expectedTask: audit.SessionTaskShell, expectedNotice: true},
+		{name: "PTY shell after malformed exec", pty: true, malformedExec: true, expectedTask: audit.SessionTaskShell, expectedNotice: true},
+		{name: "non-PTY shell", expectedTask: audit.SessionTaskShell},
+		{name: "PTY exec", pty: true, exec: true, command: "record-me", expectedTask: audit.SessionTaskExec},
+		{name: "PTY empty exec", pty: true, exec: true, expectedTask: audit.SessionTaskExec},
+		{name: "non-PTY exec", exec: true, command: "record-me", expectedTask: audit.SessionTaskExec},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -107,6 +116,7 @@ func TestExecuteSessionRecordingSealsShellAndExec(t *testing.T) {
 			}}
 			server := newAuthorizedKeysTestServerWithConfiguration(t, "", testEnvironment, func(conf *configuration.Configuration) {
 				enableSessionRecordingForLifecycleTest(conf, root)
+				conf.Auditlogs[0].Recording.Notice = template.MustNewString("NOTICE: {{.recording.id}}\n")
 			})
 			client := server.mustDial(t)
 			sshSession, err := client.NewSession()
@@ -116,10 +126,17 @@ func TestExecuteSessionRecordingSealsShellAndExec(t *testing.T) {
 			sshSession.Stderr = &stderr
 			if test.pty {
 				require.NoError(t, sshSession.RequestPty("xterm", 0, 0, nil))
+			}
+			if test.malformedExec {
+				accepted, requestErr := sshSession.SendRequest("exec", true, nil)
+				require.NoError(t, requestErr)
+				require.False(t, accepted)
+			}
+			if test.exec {
+				err = sshSession.Run(test.command)
+			} else {
 				require.NoError(t, sshSession.Shell())
 				err = sshSession.Wait()
-			} else {
-				err = sshSession.Run("record-me")
 			}
 			var exitErr *gossh.ExitError
 			require.ErrorAs(t, err, &exitErr)
@@ -132,9 +149,41 @@ func TestExecuteSessionRecordingSealsShellAndExec(t *testing.T) {
 			require.Equal(t, test.pty, verification.Cast.Metadata.Pty)
 			require.Equal(t, uint32(defaultSessionRecordingColumns), verification.Cast.Header.Terminal.Columns)
 			require.Equal(t, uint32(defaultSessionRecordingRows), verification.Cast.Header.Terminal.Rows)
-			require.Equal(t, uint64(2), verification.Cast.OutputEvents)
+			expectedOutputEvents := uint64(2)
+			if test.expectedNotice {
+				expectedOutputEvents++
+				notice := "NOTICE: " + verification.Cast.Metadata.RecordingId.String()
+				require.Contains(t, stdout.String(), notice)
+				require.Contains(t, exportOnlySessionRecording(t, server.service, root), notice)
+			} else {
+				require.NotContains(t, stdout.String(), "NOTICE:")
+			}
+			require.Equal(t, expectedOutputEvents, verification.Cast.OutputEvents)
 		})
 	}
+}
+
+func TestExecuteSessionRecordingNoticeRenderFailurePreventsEnvironmentRun(t *testing.T) {
+	root := t.TempDir()
+	var runCalled atomic.Bool
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{run: func(environment.Task) (int, error) {
+		runCalled.Store(true)
+		return 0, nil
+	}}, func(conf *configuration.Configuration) {
+		enableSessionRecordingForLifecycleTest(conf, root)
+		conf.Auditlogs[0].Recording.Notice = template.MustNewString("{{.unsupported}}")
+	})
+	client := server.mustDial(t)
+	sshSession, err := client.NewSession()
+	require.NoError(t, err)
+	require.NoError(t, sshSession.RequestPty("xterm", 24, 80, nil))
+	require.NoError(t, sshSession.Shell())
+	require.Error(t, sshSession.Wait())
+	require.False(t, runCalled.Load())
+
+	verification := verifyOnlySessionRecording(t, server.service, root)
+	require.Equal(t, recording.CastStatusIncomplete, verification.Cast.Result.Status)
+	require.Equal(t, "session-error", verification.Cast.Result.Reason)
 }
 
 func TestExecuteSessionRecordingExcludesSftp(t *testing.T) {
@@ -225,6 +274,26 @@ func verifyOnlySessionRecording(t *testing.T, service *service, root string) *re
 	})
 	require.NoError(t, err)
 	return verification
+}
+
+func exportOnlySessionRecording(t *testing.T, service *service, root string) string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(root, "recordings", "sealed"))
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	path := filepath.Join(root, "recordings", "sealed", entries[0].Name())
+	file, err := os.Open(path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, file.Close()) }()
+	info, err := file.Stat()
+	require.NoError(t, err)
+	auditlog := service.flowAuditlogs[service.Configuration.Flows[0].Name]
+	var output bytes.Buffer
+	_, err = recording.ExportCastZstd(file, info.Size(), &output, recording.CastZstdVerifyOptions{
+		ExpectedProducerId: service.auditIdentities[auditlog].ProducerId(),
+	})
+	require.NoError(t, err)
+	return output.String()
 }
 
 type coordinatorTestSink struct {
