@@ -200,6 +200,16 @@ func newSessionRecordingRepository(ctx context.Context, configuration configurat
 	return &base, nil
 }
 
+func sessionRecordingTargetConfigurations(auditlog *configuration.Auditlog) configuration.AuditlogTargets {
+	if auditlog == nil || auditlog.Recording.Targets.IsDisabled() {
+		return nil
+	}
+	if configured := auditlog.Recording.Targets.Configured(); configured != nil {
+		return configured
+	}
+	return auditlog.Targets
+}
+
 func (this *sessionRecordingRepository) createActive(ctx context.Context, header recording.CastHeader, metadata recording.CastMetadata, chunkSize int) (*activeSessionRecording, error) {
 	if this == nil {
 		return nil, errors.System.Newf("nil session Recording repository")

@@ -18,18 +18,23 @@ import (
 var _ = audit.RegisterRemoteTarget(
 	func() configuration.AuditlogTargetV { return &serviceRemoteDeliveryTestConfiguration{} },
 	func(_ context.Context, _ audit.RemoteTargetScope, conf *serviceRemoteDeliveryTestConfiguration) (audit.RemoteTarget, audit.RemoteTargetSettings, error) {
-		return conf.target, audit.RemoteTargetSettings{DestinationIdentity: "service-test-destination", PublishAttemptTimeout: time.Minute}, nil
+		target := conf.target
+		if conf.newTarget != nil {
+			target = conf.newTarget()
+		}
+		return target, audit.RemoteTargetSettings{DestinationIdentity: "service-test-destination", PublishAttemptTimeout: time.Minute}, nil
 	},
 )
 
 type serviceRemoteDeliveryTestConfiguration struct {
-	target audit.RemoteTarget
+	target    audit.RemoteTarget
+	newTarget func() audit.RemoteTarget
 }
 
 func (this *serviceRemoteDeliveryTestConfiguration) SetDefaults() error { return nil }
 func (this *serviceRemoteDeliveryTestConfiguration) Trim() error        { return this.Validate() }
 func (this *serviceRemoteDeliveryTestConfiguration) Validate() error {
-	if this == nil || this.target == nil {
+	if this == nil || this.target == nil && this.newTarget == nil {
 		return fmt.Errorf("missing service delivery test target")
 	}
 	return nil
@@ -47,6 +52,7 @@ func (*serviceRemoteDeliveryTestConfiguration) FeatureFlags() []string { return 
 type serviceRemoteDeliveryTestTarget struct {
 	published chan uint64
 	closed    atomic.Bool
+	closeErr  error
 }
 
 func (this *serviceRemoteDeliveryTestTarget) Publish(_ context.Context, segment audit.SealedSegment) error {
@@ -54,7 +60,21 @@ func (this *serviceRemoteDeliveryTestTarget) Publish(_ context.Context, segment 
 	return nil
 }
 
+func (this *serviceRemoteDeliveryTestTarget) PublishArtifact(context.Context, audit.RemoteArtifact) error {
+	return nil
+}
+
 func (this *serviceRemoteDeliveryTestTarget) Close() error {
+	this.closed.Store(true)
+	return this.closeErr
+}
+
+type serviceJournalOnlyTestTarget struct {
+	closed atomic.Bool
+}
+
+func (*serviceJournalOnlyTestTarget) Publish(context.Context, audit.SealedSegment) error { return nil }
+func (this *serviceJournalOnlyTestTarget) Close() error {
 	this.closed.Store(true)
 	return nil
 }

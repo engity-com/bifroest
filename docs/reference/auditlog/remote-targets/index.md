@@ -30,6 +30,6 @@ A signed cursor below `<journal-directory>/.delivery/` records the last confirme
 
 Custom Go targets normally register through `audit.RegisterRemoteTarget`, which binds their configuration codec and runtime factory together. `configuration.RegisterAuditlogTargetCodec` is only the low-level entry point for configuration codecs without runtime delivery support.
 
-Factories return `RemoteTargetSettings` with a stable, non-secret `DestinationIdentity` and a positive `PublishAttemptTimeout`. Their target's `Publish` method must honor context cancellation, and `Close` must unblock an active publication during shutdown.
+Factories return `RemoteTargetSettings` with a stable, non-secret `DestinationIdentity` and a positive `PublishAttemptTimeout`. A factory can be invoked separately for audit-log and inherited recording delivery, so every invocation must return an independently owned target. The target's `Publish` method must honor context cancellation, and `Close` must unblock an active publication during shutdown.
 
 Targets can additionally implement `audit.RemoteArtifactTarget` to accept byte-exact artifacts such as sealed session recordings. `PublishArtifact` must verify the supplied `ArtifactDigest`, preserve the same atomic and idempotent publication semantics as journal segments, and reject conflicting content at the same producer-relative file name. Existing custom targets that only implement `audit.RemoteTarget` remain journal-only.

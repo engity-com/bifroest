@@ -71,6 +71,113 @@ func TestPrepareRecordingOpensCastZstdRepository(t *testing.T) {
 	require.NoError(t, svc.Close())
 }
 
+func TestPrepareRecordingResolvesAndOwnsArtifactTargets(t *testing.T) {
+	tests := []struct {
+		name            string
+		configure       func(*configuration.Auditlog, *serviceRemoteDeliveryTestConfiguration)
+		expected        bool
+		expectedCreated int
+	}{
+		{
+			name: "inherit",
+			configure: func(auditlog *configuration.Auditlog, target *serviceRemoteDeliveryTestConfiguration) {
+				auditlog.Targets = configuration.AuditlogTargets{{Name: "archive", V: target}}
+			},
+			expected:        true,
+			expectedCreated: 2,
+		},
+		{
+			name: "disabled",
+			configure: func(auditlog *configuration.Auditlog, target *serviceRemoteDeliveryTestConfiguration) {
+				auditlog.Targets = configuration.AuditlogTargets{{Name: "archive", V: target}}
+				auditlog.Recording.Targets.Mode = configuration.AuditlogRecordingTargetsModeDisabled
+			},
+			expectedCreated: 1,
+		},
+		{
+			name: "custom",
+			configure: func(auditlog *configuration.Auditlog, target *serviceRemoteDeliveryTestConfiguration) {
+				auditlog.Recording.Targets.Mode = configuration.AuditlogRecordingTargetsModeCustom
+				auditlog.Recording.Targets.Targets = configuration.AuditlogTargets{{Name: "recordings", V: target}}
+			},
+			expected:        true,
+			expectedCreated: 1,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			conf := sessionRecordingTestConfiguration(t, root)
+			enableSessionRecording(&conf.Auditlogs[0])
+			var targets []*serviceRemoteDeliveryTestTarget
+			targetConfiguration := &serviceRemoteDeliveryTestConfiguration{newTarget: func() audit.RemoteTarget {
+				target := &serviceRemoteDeliveryTestTarget{published: make(chan uint64, 1)}
+				targets = append(targets, target)
+				return target
+			}}
+			test.configure(&conf.Auditlogs[0], targetConfiguration)
+
+			svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+			require.NoError(t, err)
+			_, exists := svc.recordingTargets[configuration.DefaultAuditlogName]
+			require.Equal(t, test.expected, exists)
+			require.Len(t, targets, test.expectedCreated)
+			require.NoError(t, svc.Close())
+			for _, target := range targets {
+				require.True(t, target.closed.Load())
+			}
+		})
+	}
+}
+
+func TestPrepareRecordingRejectsJournalOnlyTarget(t *testing.T) {
+	root := t.TempDir()
+	conf := sessionRecordingTestConfiguration(t, root)
+	enableSessionRecording(&conf.Auditlogs[0])
+	target := &serviceJournalOnlyTestTarget{}
+	conf.Auditlogs[0].Recording.Targets.Mode = configuration.AuditlogRecordingTargetsModeCustom
+	conf.Auditlogs[0].Recording.Targets.Targets = configuration.AuditlogTargets{{
+		Name: "recordings",
+		V:    &serviceRemoteDeliveryTestConfiguration{target: target},
+	}}
+
+	serviceDefinition := &Service{Configuration: conf, Version: serviceTestVersion{}}
+	svc, err := serviceDefinition.prepare()
+	require.Nil(t, svc)
+	require.ErrorContains(t, err, "does not support remote artifacts")
+	require.True(t, target.closed.Load())
+
+	serviceDefinition.Configuration.Auditlogs[0].Recording.Targets.Mode = configuration.AuditlogRecordingTargetsModeDisabled
+	serviceDefinition.Configuration.Auditlogs[0].Recording.Targets.Targets = nil
+	reopened, err := serviceDefinition.prepare()
+	require.NoError(t, err)
+	require.NoError(t, reopened.Close())
+}
+
+func TestServiceCloseAggregatesRecordingTargetFailureAndReleasesRepository(t *testing.T) {
+	root := t.TempDir()
+	conf := sessionRecordingTestConfiguration(t, root)
+	enableSessionRecording(&conf.Auditlogs[0])
+	target := &serviceRemoteDeliveryTestTarget{published: make(chan uint64, 1), closeErr: fmt.Errorf("injected Recording target close failure")}
+	conf.Auditlogs[0].Recording.Targets.Mode = configuration.AuditlogRecordingTargetsModeCustom
+	conf.Auditlogs[0].Recording.Targets.Targets = configuration.AuditlogTargets{{
+		Name: "recordings",
+		V:    &serviceRemoteDeliveryTestConfiguration{target: target},
+	}}
+	serviceDefinition := &Service{Configuration: conf, Version: serviceTestVersion{}}
+	svc, err := serviceDefinition.prepare()
+	require.NoError(t, err)
+	err = svc.Close()
+	require.ErrorContains(t, err, "injected Recording target close failure")
+	require.True(t, target.closed.Load())
+
+	serviceDefinition.Configuration.Auditlogs[0].Recording.Targets.Mode = configuration.AuditlogRecordingTargetsModeDisabled
+	serviceDefinition.Configuration.Auditlogs[0].Recording.Targets.Targets = nil
+	reopened, err := serviceDefinition.prepare()
+	require.NoError(t, err)
+	require.NoError(t, reopened.Close())
+}
+
 func TestPrepareRecordingRejectsExistingSpoolAboveLimitWithoutDeletingData(t *testing.T) {
 	root := t.TempDir()
 	conf := sessionRecordingTestConfiguration(t, root)
@@ -252,8 +359,8 @@ func TestServiceCloseReleasesRecordingLock(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, concurrent)
 	require.NoError(t, svc.Close())
-	require.NoError(t, svc.closeRecordingRepositories())
-	require.NoError(t, svc.closeRecordingRepositories())
+	require.NoError(t, svc.closeRecording())
+	require.NoError(t, svc.closeRecording())
 
 	reopened, err := serviceDefinition.prepare()
 	require.NoError(t, err)

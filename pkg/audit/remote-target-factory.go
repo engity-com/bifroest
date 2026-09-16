@@ -41,7 +41,9 @@ type RemoteTargetSettings struct {
 }
 
 // RemoteTargetFactory constructs a custom target and its effective settings.
-// DestinationIdentity must be non-empty and PublishAttemptTimeout positive.
+// Every invocation must return an independently owned target that can be closed
+// without affecting targets returned by other invocations. DestinationIdentity
+// must be non-empty and PublishAttemptTimeout positive.
 type RemoteTargetFactory[C configuration.AuditlogTargetV] func(context.Context, RemoteTargetScope, C) (RemoteTarget, RemoteTargetSettings, error)
 
 type preparedRemoteTargetFactory[C configuration.AuditlogTargetV] func(context.Context, RemoteTargetScope, C) (RemoteTarget, time.Duration, remoteDeliveryDestinationFingerprint, error)

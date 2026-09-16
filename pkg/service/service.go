@@ -264,7 +264,7 @@ func (this *Service) prepare() (svc *service, err error) {
 	resourcesOwnedByService := false
 	defer func(preparedService *service) {
 		if !resourcesOwnedByService {
-			recordingErr := preparedService.closeRecordingRepositories()
+			recordingErr := preparedService.closeRecording()
 			auditErr := preparedService.closeAudit(false)
 			err = goerrors.Join(err, recordingErr, auditErr)
 		}
@@ -319,6 +319,7 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	svc.auditRecorders = make(map[configuration.AuditlogName]audit.Recorder, len(this.Configuration.Auditlogs))
 	svc.auditDeliveries = make(map[configuration.AuditlogName]*audit.RemoteDelivery, len(this.Configuration.Auditlogs))
 	svc.recordingRepositories = make(map[configuration.AuditlogName]*sessionRecordingRepository, len(this.Configuration.Auditlogs))
+	svc.recordingTargets = make(map[configuration.AuditlogName]*audit.RemoteArtifactTargets, len(this.Configuration.Auditlogs))
 	svc.flowAuditRecorders = make(map[configuration.FlowName]audit.Recorder, len(this.Configuration.Flows))
 	svc.flowAuditlogs = make(map[configuration.FlowName]configuration.AuditlogName, len(this.Configuration.Flows))
 	svc.enabledAuditlogs = make(map[configuration.AuditlogName]bool, len(this.Configuration.Auditlogs))
@@ -386,6 +387,15 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 		}
 		svc.recordingRepositories[auditlog.Name] = repository
 		svc.recordingRepositoryOrder = append(svc.recordingRepositoryOrder, auditlog.Name)
+		targetConfigurations := sessionRecordingTargetConfigurations(auditlog)
+		if len(targetConfigurations) > 0 {
+			targets, targetErr := audit.NewRemoteArtifactTargets(ctx, auditlog.Name, targetConfigurations)
+			if targetErr != nil {
+				return fmt.Errorf("cannot prepare Recording targets of auditlog %q: %w", auditlog.Name, targetErr)
+			}
+			svc.recordingTargets[auditlog.Name] = targets
+			svc.recordingTargetOrder = append(svc.recordingTargetOrder, auditlog.Name)
+		}
 	}
 	for index := range this.Configuration.Auditlogs {
 		auditlog := &this.Configuration.Auditlogs[index]
@@ -642,6 +652,8 @@ type service struct {
 	auditDeliveryOrder       []*audit.RemoteDelivery
 	recordingRepositories    map[configuration.AuditlogName]*sessionRecordingRepository
 	recordingRepositoryOrder []configuration.AuditlogName
+	recordingTargets         map[configuration.AuditlogName]*audit.RemoteArtifactTargets
+	recordingTargetOrder     []configuration.AuditlogName
 	flowAuditRecorders       map[configuration.FlowName]audit.Recorder
 	flowAuditlogs            map[configuration.FlowName]configuration.AuditlogName
 	enabledAuditlogs         map[configuration.AuditlogName]bool
@@ -708,7 +720,7 @@ func sshMaxAuthTries(value uint8) int {
 
 func (this *service) Close() (rErr error) {
 	defer func() { rErr = goerrors.Join(rErr, this.closeAudit(true)) }()
-	defer func() { rErr = goerrors.Join(rErr, this.closeRecordingRepositories()) }()
+	defer func() { rErr = goerrors.Join(rErr, this.closeRecording()) }()
 	defer common.KeepCloseError(&rErr, this.alternatives)
 	defer common.KeepCloseError(&rErr, this.imp)
 	defer common.KeepCloseError(&rErr, this.sessions)
@@ -718,7 +730,13 @@ func (this *service) Close() (rErr error) {
 	return nil
 }
 
-func (this *service) closeRecordingRepositories() (result error) {
+func (this *service) closeRecording() (result error) {
+	for index := len(this.recordingTargetOrder) - 1; index >= 0; index-- {
+		name := this.recordingTargetOrder[index]
+		if err := this.recordingTargets[name].Close(); err != nil {
+			result = goerrors.Join(result, fmt.Errorf("cannot close Recording targets of auditlog %q: %w", name, err))
+		}
+	}
 	for _, name := range this.recordingRepositoryOrder {
 		if err := this.recordingRepositories[name].Close(); err != nil {
 			result = goerrors.Join(result, fmt.Errorf("cannot close Recording repository of auditlog %q: %w", name, err))
