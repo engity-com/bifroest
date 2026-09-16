@@ -2,6 +2,7 @@ package recording
 
 import (
 	"context"
+	"crypto/sha256"
 	stderrors "errors"
 	"io"
 	"io/fs"
@@ -139,6 +140,7 @@ type localRepository[Head, Summary any] struct {
 	processLock    *localProcessLock
 	active         map[Id]*localActive[Head, Summary]
 	recovered      []localRecovery[Summary]
+	operations     sync.WaitGroup
 	closed         bool
 	poisoned       error
 }
@@ -242,6 +244,170 @@ func (this *localRepository[Head, Summary]) startupRecoveries() []localRecovery[
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 	return append([]localRecovery[Summary](nil), this.recovered...)
+}
+
+func (this *localRepository[Head, Summary]) listSealed(ctx context.Context) ([]Id, error) {
+	if this == nil {
+		return nil, errors.System.Newf("nil local recording repository")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if this.closed {
+		return nil, errors.System.Newf("local recording repository is closed")
+	}
+	if this.poisoned != nil {
+		return nil, this.poisoned
+	}
+	if err := validateLocalLock(this.processLock, this.lockPath); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(this.sealedPath)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]Id, 0, len(entries))
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		id, err := localSealedEntryId(entry, this.format.sealedSuffix())
+		if err != nil {
+			return nil, err
+		}
+		file, err := openSealedLocalFile(filepath.Join(this.sealedPath, entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		if err := file.Close(); err != nil {
+			return nil, err
+		}
+		result = append(result, id)
+	}
+	return result, nil
+}
+
+func (this *localRepository[Head, Summary]) openSealed(ctx context.Context, id Id) (_ *LocalSealedArtifact[Summary], rErr error) {
+	if this == nil {
+		return nil, errors.System.Newf("nil local recording repository")
+	}
+	if err := validateId(id); err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	this.mutex.Lock()
+	if err := ctx.Err(); err != nil {
+		this.mutex.Unlock()
+		return nil, err
+	}
+	if this.closed {
+		this.mutex.Unlock()
+		return nil, errors.System.Newf("local recording repository is closed")
+	}
+	if this.poisoned != nil {
+		this.mutex.Unlock()
+		return nil, this.poisoned
+	}
+	if err := validateLocalLock(this.processLock, this.lockPath); err != nil {
+		this.mutex.Unlock()
+		return nil, err
+	}
+	fileName := id.String() + this.format.sealedSuffix()
+	path := filepath.Join(this.sealedPath, fileName)
+	file, err := openSealedLocalFile(path)
+	if err != nil {
+		this.mutex.Unlock()
+		return nil, err
+	}
+	this.operations.Add(1)
+	this.mutex.Unlock()
+	defer this.operations.Done()
+	keepOpen := false
+	defer func() {
+		if !keepOpen {
+			rErr = stderrors.Join(rErr, file.Close())
+		}
+	}()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() < 1 {
+		return nil, errors.Config.Newf("sealed recording artifact is empty")
+	}
+	summary, err := this.format.verifyPublished(file, info.Size(), nil, ctx)
+	if err != nil {
+		return nil, err
+	}
+	if this.format.summaryId(summary) != id {
+		return nil, errors.System.Newf("sealed recording identity does not match its file name")
+	}
+	digest, err := hashLocalSealedArtifact(ctx, file, info.Size())
+	if err != nil {
+		return nil, err
+	}
+	current, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if current.Size() != info.Size() || !os.SameFile(info, current) {
+		return nil, errors.System.Newf("sealed recording changed while being verified")
+	}
+	if err := validateOpenLocalFile(path, file); err != nil {
+		return nil, err
+	}
+	keepOpen = true
+	return &LocalSealedArtifact[Summary]{
+		file:           file,
+		recordingId:    id,
+		producerId:     this.identity.ProducerId(),
+		fileName:       fileName,
+		size:           info.Size(),
+		artifactDigest: digest,
+		summary:        summary,
+	}, nil
+}
+
+func hashLocalSealedArtifact(ctx context.Context, file *os.File, size int64) (ArtifactDigest, error) {
+	var result ArtifactDigest
+	hasher := sha256.New()
+	buffer := make([]byte, 128<<10)
+	for offset := int64(0); offset < size; {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		remaining := size - offset
+		current := buffer
+		if remaining < int64(len(current)) {
+			current = current[:remaining]
+		}
+		read, err := file.ReadAt(current, offset)
+		if err != nil {
+			return result, errors.System.Newf("cannot hash sealed recording artifact: %w", err)
+		}
+		if read != len(current) {
+			return result, errors.System.Newf("cannot hash sealed recording artifact: %w", io.ErrUnexpectedEOF)
+		}
+		if _, err := hasher.Write(current); err != nil {
+			return result, err
+		}
+		offset += int64(read)
+	}
+	copy(result[:], hasher.Sum(nil))
+	return result, nil
 }
 
 func (this *localRepository[Head, Summary]) createActive(ctx context.Context, header CastHeader, metadata CastMetadata, chunkSize int) (*localActive[Head, Summary], error) {
@@ -402,8 +568,24 @@ func (this *localRepository[Head, Summary]) close() error {
 	for _, current := range active {
 		result = stderrors.Join(result, current.close(false))
 	}
+	this.operations.Wait()
 	result = stderrors.Join(result, this.processLock.Close())
 	return result
+}
+
+func (this *localRepository[Head, Summary]) publishSealed(source, target string) error {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if this.closed {
+		return errors.System.Newf("local recording repository is closed")
+	}
+	if this.poisoned != nil {
+		return this.poisoned
+	}
+	if err := validateLocalLock(this.processLock, this.lockPath); err != nil {
+		return err
+	}
+	return publishLocalFile(source, target)
 }
 
 func (this *localActive[Head, Summary]) writeOutput(elapsed time.Duration, stream OutputStream, data []byte) error {
@@ -475,7 +657,7 @@ func (this *localActive[Head, Summary]) seal(elapsed time.Duration, result CastR
 	}
 	this.closed = true
 	target := filepath.Join(this.repository.sealedPath, this.id.String()+this.repository.format.sealedSuffix())
-	if err := publishLocalFile(this.path, target); err != nil {
+	if err := this.repository.publishSealed(this.path, target); err != nil {
 		return zero, this.poison(errors.System.Newf("cannot publish sealed recording: %w", err))
 	}
 	if _, err := this.repository.verifyPublished(target, sealedInfo, &head, context.Background()); err != nil {
@@ -884,10 +1066,8 @@ func (this *localRepository[Head, Summary]) validateSealed() error {
 		return err
 	}
 	for _, entry := range entries {
-		name := strings.TrimSuffix(entry.Name(), this.format.sealedSuffix())
-		var id Id
-		if name == entry.Name() || id.UnmarshalText([]byte(name)) != nil || !entry.Type().IsRegular() {
-			return errors.Config.Newf("sealed recording directory contains unsupported entry %q", entry.Name())
+		if _, err := localSealedEntryId(entry, this.format.sealedSuffix()); err != nil {
+			return err
 		}
 		file, err := openSealedLocalFile(filepath.Join(this.sealedPath, entry.Name()))
 		if err != nil {
@@ -898,6 +1078,15 @@ func (this *localRepository[Head, Summary]) validateSealed() error {
 		}
 	}
 	return nil
+}
+
+func localSealedEntryId(entry os.DirEntry, suffix string) (Id, error) {
+	name := strings.TrimSuffix(entry.Name(), suffix)
+	var id Id
+	if name == entry.Name() || id.UnmarshalText([]byte(name)) != nil || !entry.Type().IsRegular() {
+		return Id{}, errors.Config.Newf("sealed recording directory contains unsupported entry %q", entry.Name())
+	}
+	return id, nil
 }
 
 func (this *localRepository[Head, Summary]) recoverActive(ctx context.Context) error {

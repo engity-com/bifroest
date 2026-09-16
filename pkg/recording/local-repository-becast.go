@@ -75,6 +75,22 @@ func (this *LocalBECastRepository) StartupRecoveries() []RecoveredBECast {
 	return result
 }
 
+func (this *LocalBECastRepository) ListSealed(ctx context.Context) ([]Id, error) {
+	if this == nil {
+		return nil, errors.System.Newf("nil local BECast repository")
+	}
+	return this.repository.listSealed(ctx)
+}
+
+func (this *LocalBECastRepository) OpenSealed(ctx context.Context, id Id) (*LocalSealedArtifact[BECastSummary], error) {
+	if this == nil {
+		return nil, errors.System.Newf("nil local BECast repository")
+	}
+	// Authentication covers the signed outer container; opening does not require
+	// a recipient private key and therefore does not decrypt the inner Cast stream.
+	return this.repository.openSealed(ctx, id)
+}
+
 func (this *LocalBECastRepository) CreateActive(ctx context.Context, header CastHeader, metadata CastMetadata, chunkSize int) (*ActiveBECast, error) {
 	if this == nil {
 		return nil, errors.System.Newf("nil local recording repository")

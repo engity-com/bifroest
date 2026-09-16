@@ -73,6 +73,20 @@ func (this *LocalCastZstdRepository) StartupRecoveries() []RecoveredCastZstd {
 	return result
 }
 
+func (this *LocalCastZstdRepository) ListSealed(ctx context.Context) ([]Id, error) {
+	if this == nil {
+		return nil, errors.System.Newf("nil local Cast Zstandard repository")
+	}
+	return this.repository.listSealed(ctx)
+}
+
+func (this *LocalCastZstdRepository) OpenSealed(ctx context.Context, id Id) (*LocalSealedArtifact[CastZstdSummary], error) {
+	if this == nil {
+		return nil, errors.System.Newf("nil local Cast Zstandard repository")
+	}
+	return this.repository.openSealed(ctx, id)
+}
+
 func (this *LocalCastZstdRepository) CreateActive(ctx context.Context, header CastHeader, metadata CastMetadata, chunkSize int) (*ActiveCastZstd, error) {
 	if this == nil {
 		return nil, errors.System.Newf("nil local recording repository")
