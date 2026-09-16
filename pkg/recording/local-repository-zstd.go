@@ -40,6 +40,10 @@ func (this *localCastZstdFormat) key() string {
 }
 
 func NewLocalCastZstdRepository(ctx context.Context, directory string, identity *audit.Identity, options CastZstdVerifyOptions, repositoryOptions LocalRepositoryOptions) (*LocalCastZstdRepository, error) {
+	return NewLocalCastZstdRepositoryWithArtifactPreparer(ctx, directory, identity, options, repositoryOptions, nil)
+}
+
+func NewLocalCastZstdRepositoryWithArtifactPreparer(ctx context.Context, directory string, identity *audit.Identity, options CastZstdVerifyOptions, repositoryOptions LocalRepositoryOptions, prepareSealed SealedArtifactPreparer) (*LocalCastZstdRepository, error) {
 	if identity == nil || identity.PublicKey() == nil {
 		return nil, errors.Config.Newf("nil local recording identity")
 	}
@@ -50,7 +54,7 @@ func NewLocalCastZstdRepository(ctx context.Context, directory string, identity 
 	options.AllowUntrusted = false
 	options.Context = ctx
 	format := &localCastZstdFormat{identity: identity, options: options}
-	repository, err := newLocalRepository(ctx, directory, identity, format, repositoryOptions)
+	repository, err := newLocalRepository(ctx, directory, identity, format, repositoryOptions, prepareSealed)
 	if err != nil {
 		return nil, err
 	}

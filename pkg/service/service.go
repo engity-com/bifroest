@@ -381,21 +381,23 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 		if !auditlog.Enabled || !auditlog.Recording.Enabled {
 			continue
 		}
-		repository, repositoryErr := newSessionRecordingRepository(ctx, auditlog.Recording, svc.auditIdentities[auditlog.Name], resolvedEncryptionPublicKeys[auditlog.Name])
-		if repositoryErr != nil {
-			return fmt.Errorf("cannot open Recording repository of auditlog %q: %w", auditlog.Name, repositoryErr)
-		}
-		svc.recordingRepositories[auditlog.Name] = repository
-		svc.recordingRepositoryOrder = append(svc.recordingRepositoryOrder, auditlog.Name)
 		targetConfigurations := sessionRecordingTargetConfigurations(auditlog)
+		var targets *audit.RemoteArtifactTargets
 		if len(targetConfigurations) > 0 {
-			targets, targetErr := audit.NewRemoteArtifactTargets(ctx, auditlog.Name, targetConfigurations)
+			var targetErr error
+			targets, targetErr = audit.NewRemoteArtifactTargets(ctx, auditlog.Name, targetConfigurations)
 			if targetErr != nil {
 				return fmt.Errorf("cannot prepare Recording targets of auditlog %q: %w", auditlog.Name, targetErr)
 			}
 			svc.recordingTargets[auditlog.Name] = targets
 			svc.recordingTargetOrder = append(svc.recordingTargetOrder, auditlog.Name)
 		}
+		repository, repositoryErr := newSessionRecordingRepository(ctx, auditlog.Recording, svc.auditIdentities[auditlog.Name], resolvedEncryptionPublicKeys[auditlog.Name], auditlog.Name, targets)
+		if repositoryErr != nil {
+			return fmt.Errorf("cannot open Recording repository of auditlog %q: %w", auditlog.Name, repositoryErr)
+		}
+		svc.recordingRepositories[auditlog.Name] = repository
+		svc.recordingRepositoryOrder = append(svc.recordingRepositoryOrder, auditlog.Name)
 	}
 	for index := range this.Configuration.Auditlogs {
 		auditlog := &this.Configuration.Auditlogs[index]

@@ -20,6 +20,16 @@ import (
 
 var localRepositoryTestOptions = LocalRepositoryOptions{MaximumSpoolBytes: 1 << 60}
 
+type localSealedArtifactPreparerFunc func(context.Context, audit.RemoteArtifact, time.Time) error
+
+func (this localSealedArtifactPreparerFunc) Prepare(ctx context.Context, artifact audit.RemoteArtifact, sealedAt time.Time) error {
+	return this(ctx, artifact, sealedAt)
+}
+
+func (this localSealedArtifactPreparerFunc) Require(ctx context.Context, artifact audit.RemoteArtifact) error {
+	return this(ctx, artifact, time.Time{})
+}
+
 func TestCastZstdHeadCanonicalRoundTrip(t *testing.T) {
 	identity, header, metadata := castTestValues(t, true)
 	var output bytes.Buffer
@@ -65,6 +75,52 @@ func TestLocalCastZstdRepositoryCreateCheckpointAndSeal(t *testing.T) {
 	require.NoError(t, file.Close())
 	_, err = os.Stat(filepath.Join(root, localActiveDirectory, metadata.RecordingId.String()))
 	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestLocalRepositoryPreparesReceiptBeforePublishingSealedArtifact(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "recordings")
+	identity, header, metadata := castTestValues(t, true)
+	var prepared audit.RemoteArtifact
+	var sealedAt time.Time
+	options := localRepositoryTestOptions
+	prepareSealed := localSealedArtifactPreparerFunc(func(ctx context.Context, artifact audit.RemoteArtifact, at time.Time) error {
+		require.NoError(t, ctx.Err())
+		require.NoFileExists(t, filepath.Join(root, localSealedDirectory, artifact.FileName()))
+		require.NoError(t, artifact.ValidateContext(ctx))
+		prepared = artifact
+		sealedAt = at
+		return nil
+	})
+	repository, err := NewLocalCastZstdRepositoryWithArtifactPreparer(t.Context(), root, identity, CastZstdVerifyOptions{}, options, prepareSealed)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, repository.Close()) })
+	active, err := repository.CreateActive(t.Context(), header, metadata, 300)
+	require.NoError(t, err)
+	require.NoError(t, active.WriteOutput(time.Second, OutputStreamTerminal, []byte("receipt first\r\n")))
+	_, err = active.Seal(2*time.Second, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(2 * time.Second)}, sealedArtifactUint32(0))
+	require.NoError(t, err)
+	require.Equal(t, metadata.RecordingId.String()+localCastZstdSealedSuffix, prepared.FileName())
+	require.False(t, prepared.Digest().IsZero())
+	require.False(t, sealedAt.IsZero())
+	require.FileExists(t, filepath.Join(root, localSealedDirectory, prepared.FileName()))
+}
+
+func TestLocalRepositoryDoesNotPublishWhenReceiptPreparationFails(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "recordings")
+	identity, header, metadata := castTestValues(t, true)
+	options := localRepositoryTestOptions
+	prepareSealed := localSealedArtifactPreparerFunc(func(context.Context, audit.RemoteArtifact, time.Time) error {
+		return bferrors.System.Newf("injected receipt failure")
+	})
+	repository, err := NewLocalCastZstdRepositoryWithArtifactPreparer(t.Context(), root, identity, CastZstdVerifyOptions{}, options, prepareSealed)
+	require.NoError(t, err)
+	active, err := repository.CreateActive(t.Context(), header, metadata, 300)
+	require.NoError(t, err)
+	_, err = active.Seal(time.Second, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(time.Second)}, sealedArtifactUint32(0))
+	require.ErrorContains(t, err, "injected receipt failure")
+	require.NoFileExists(t, filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+localCastZstdSealedSuffix))
+	require.DirExists(t, filepath.Join(root, localActiveDirectory, metadata.RecordingId.String()))
+	require.Error(t, repository.Close())
 }
 
 func TestLocalCastZstdRepositoryRecoversClosedActive(t *testing.T) {

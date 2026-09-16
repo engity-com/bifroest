@@ -195,6 +195,19 @@ func TestLocalCastZstdRepositoryRejectsSealedSymlink(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestLocalRepositoryRejectsDeliveryStateSymlink(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "recordings")
+	identity, _, _ := castTestValues(t, true)
+	repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions)
+	require.NoError(t, err)
+	require.NoError(t, repository.Close())
+	require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(root, localDeliveryDirectory)))
+
+	_, err = NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions)
+	require.ErrorContains(t, err, "delivery state is not a regular directory")
+	require.True(t, errors.Config.IsErr(err))
+}
+
 func TestLocalCastZstdRepositoryQuarantinesWritableWorkHeadTemporary(t *testing.T) {
 	root, identity, metadata := closedActiveLocalTestRepository(t)
 	activeDirectory := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String())

@@ -27,6 +27,7 @@ const (
 	localQuarantineDirectory = "quarantine"
 	localHeadFileName        = "head.json"
 	localHeadTempFileName    = "head.tmp"
+	localDeliveryDirectory   = ".delivery"
 )
 
 type localWriter[Head, Summary any] interface {
@@ -57,6 +58,21 @@ type localFormat[Head, Summary any] interface {
 	recover(RecoveryFile, Head, time.Time, context.Context) (localRecovery[Summary], error)
 	verifyPublished(*os.File, int64, *Head, context.Context) (Summary, error)
 	summaryId(Summary) Id
+}
+
+type LocalRepositoryOptions struct {
+	MaximumSpoolBytes uint64
+}
+
+// SealedArtifactPreparer persists and validates metadata required by a sealed
+// artifact before publication and during crash recovery.
+type SealedArtifactPreparer interface {
+	Prepare(context.Context, audit.RemoteArtifact, time.Time) error
+	Require(context.Context, audit.RemoteArtifact) error
+}
+
+type SealedArtifactQuotaBinder interface {
+	BindSealedArtifactQuota(audit.RemoteArtifactReceiptQuota)
 }
 
 type localRecovery[Summary any] struct {
@@ -138,6 +154,7 @@ type localRepository[Head, Summary any] struct {
 	format         localFormat[Head, Summary]
 	quota          *localQuota
 	processLock    *localProcessLock
+	prepareSealed  SealedArtifactPreparer
 	active         map[Id]*localActive[Head, Summary]
 	recovered      []localRecovery[Summary]
 	operations     sync.WaitGroup
@@ -160,7 +177,7 @@ type localActive[Head, Summary any] struct {
 	sealed     bool
 }
 
-func newLocalRepository[Head, Summary any](ctx context.Context, directory string, identity *audit.Identity, format localFormat[Head, Summary], options LocalRepositoryOptions) (*localRepository[Head, Summary], error) {
+func newLocalRepository[Head, Summary any](ctx context.Context, directory string, identity *audit.Identity, format localFormat[Head, Summary], options LocalRepositoryOptions, prepareSealed SealedArtifactPreparer) (*localRepository[Head, Summary], error) {
 	if options.MaximumSpoolBytes < 1 {
 		return nil, errors.Config.Newf("maximum local recording spool bytes must be positive")
 	}
@@ -207,11 +224,15 @@ func newLocalRepository[Head, Summary any](ctx context.Context, directory string
 		identity:       identity,
 		format:         format,
 		processLock:    processLock,
+		prepareSealed:  prepareSealed,
 		active:         make(map[Id]*localActive[Head, Summary]),
 	}
-	result.quota, err = newLocalQuota(options.MaximumSpoolBytes, result.workPath, result.activePath, result.sealedPath, result.quarantinePath)
+	result.quota, err = newLocalQuota(options.MaximumSpoolBytes, result.workPath, result.activePath, result.sealedPath, result.quarantinePath, filepath.Join(canonical, localDeliveryDirectory))
 	if err != nil {
 		return nil, err
+	}
+	if binder, ok := prepareSealed.(SealedArtifactQuotaBinder); ok {
+		binder.BindSealedArtifactQuota(result.quota)
 	}
 	if err := bindLocalFormat(canonical, format.key()); err != nil {
 		return nil, errors.System.Newf("cannot bind local recording repository format: %w", err)
@@ -408,6 +429,39 @@ func hashLocalSealedArtifact(ctx context.Context, file *os.File, size int64) (Ar
 	}
 	copy(result[:], hasher.Sum(nil))
 	return result, nil
+}
+
+func (this *localRepository[Head, Summary]) prepareSealedReceipt(ctx context.Context, id Id, file *os.File, info os.FileInfo) error {
+	if this.prepareSealed == nil {
+		return nil
+	}
+	artifact, err := this.sealedRemoteArtifact(ctx, id, file, info)
+	if err != nil {
+		return err
+	}
+	return this.prepareSealed.Prepare(ctx, artifact, info.ModTime())
+}
+
+func (this *localRepository[Head, Summary]) requireSealedReceipt(ctx context.Context, id Id, file *os.File, info os.FileInfo) error {
+	if this.prepareSealed == nil {
+		return nil
+	}
+	artifact, err := this.sealedRemoteArtifact(ctx, id, file, info)
+	if err != nil {
+		return err
+	}
+	return this.prepareSealed.Require(ctx, artifact)
+}
+
+func (this *localRepository[Head, Summary]) sealedRemoteArtifact(ctx context.Context, id Id, file *os.File, info os.FileInfo) (audit.RemoteArtifact, error) {
+	if file == nil || info == nil || info.Size() < 1 {
+		return audit.RemoteArtifact{}, errors.System.Newf("nil sealed recording artifact")
+	}
+	digest, err := hashLocalSealedArtifact(ctx, file, info.Size())
+	if err != nil {
+		return audit.RemoteArtifact{}, err
+	}
+	return audit.NewRemoteArtifact(this.identity.ProducerId(), id.String()+this.format.sealedSuffix(), digest, info.Size(), file)
 }
 
 func (this *localRepository[Head, Summary]) createActive(ctx context.Context, header CastHeader, metadata CastMetadata, chunkSize int) (*localActive[Head, Summary], error) {
@@ -652,6 +706,9 @@ func (this *localActive[Head, Summary]) seal(elapsed time.Duration, result CastR
 	if err != nil {
 		return zero, this.poison(err)
 	}
+	if err := this.repository.prepareSealedReceipt(context.Background(), this.id, this.file, sealedInfo); err != nil {
+		return zero, this.poison(errors.System.Newf("cannot prepare sealed recording delivery receipt: %w", err))
+	}
 	if err := this.file.Close(); err != nil {
 		return zero, this.poison(err)
 	}
@@ -810,6 +867,7 @@ func (this *localRepository[Head, Summary]) validateRoot() error {
 		localQuarantineDirectory: true,
 		localActiveDirectory:     true,
 		localSealedDirectory:     true,
+		localDeliveryDirectory:   true,
 	}
 	entries, err := os.ReadDir(this.directory)
 	if err != nil {
@@ -818,6 +876,18 @@ func (this *localRepository[Head, Summary]) validateRoot() error {
 	for _, entry := range entries {
 		if !allowed[entry.Name()] {
 			return errors.Config.Newf("local recording repository contains unsupported entry %q", entry.Name())
+		}
+		if entry.Name() == localDeliveryDirectory {
+			if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+				return errors.Config.Newf("local recording delivery state is not a regular directory")
+			}
+			info, err := os.Lstat(filepath.Join(this.directory, entry.Name()))
+			if err != nil {
+				return err
+			}
+			if err := secureLocalDirectory(filepath.Join(this.directory, entry.Name()), info); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -1169,6 +1239,10 @@ func (this *localRepository[Head, Summary]) recoverActiveDirectory(ctx context.C
 		_ = file.Close()
 		return err
 	}
+	if err := this.prepareSealedReceipt(ctx, id, file, sealedInfo); err != nil {
+		_ = file.Close()
+		return errors.System.Newf("cannot prepare recovered recording delivery receipt: %w", err)
+	}
 	if err := file.Close(); err != nil {
 		return err
 	}
@@ -1231,15 +1305,20 @@ func (this *localRepository[Head, Summary]) completePublishedRecovery(ctx contex
 		return errors.System.Newf("active recording content and head are inconsistent: %w", headErr)
 	}
 	summary, verifyErr := this.format.verifyPublished(file, info.Size(), head, ctx)
-	closeErr := file.Close()
 	if verifyErr != nil {
+		_ = file.Close()
 		return verifyErr
 	}
-	if closeErr != nil {
-		return closeErr
-	}
 	if this.format.summaryId(summary) != id {
+		_ = file.Close()
 		return errors.System.Newf("sealed recording identity does not match its active directory")
+	}
+	if err := this.requireSealedReceipt(ctx, id, file, info); err != nil {
+		_ = file.Close()
+		return errors.System.Newf("cannot require published recording delivery receipt: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return err
 	}
 	if err := removeAccountedLocalFile(headPath, this.quota); err != nil && !stderrors.Is(err, fs.ErrNotExist) {
 		return err

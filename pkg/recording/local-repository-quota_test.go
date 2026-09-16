@@ -92,8 +92,8 @@ func TestLocalQuotaSerializesConcurrentReservations(t *testing.T) {
 func TestInventoryLocalFilesCountsAllSpoolAreas(t *testing.T) {
 	root := t.TempDir()
 	var expected uint64
-	paths := make([]string, 0, 4)
-	for index, name := range []string{localWorkDirectory, localActiveDirectory, localSealedDirectory, localQuarantineDirectory} {
+	paths := make([]string, 0, 5)
+	for index, name := range []string{localWorkDirectory, localActiveDirectory, localSealedDirectory, localQuarantineDirectory, localDeliveryDirectory} {
 		path := filepath.Join(root, name)
 		require.NoError(t, os.Mkdir(path, localDirectoryMode))
 		paths = append(paths, path)

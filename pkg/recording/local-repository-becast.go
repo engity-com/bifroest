@@ -39,6 +39,10 @@ type localBECastFormat struct {
 }
 
 func NewLocalBECastRepository(ctx context.Context, directory string, identity *audit.Identity, recipient *crypto.AgeSshRecipient, options BECastVerifyOptions, repositoryOptions LocalRepositoryOptions) (*LocalBECastRepository, error) {
+	return NewLocalBECastRepositoryWithArtifactPreparer(ctx, directory, identity, recipient, options, repositoryOptions, nil)
+}
+
+func NewLocalBECastRepositoryWithArtifactPreparer(ctx context.Context, directory string, identity *audit.Identity, recipient *crypto.AgeSshRecipient, options BECastVerifyOptions, repositoryOptions LocalRepositoryOptions, prepareSealed SealedArtifactPreparer) (*LocalBECastRepository, error) {
 	if identity == nil || identity.PublicKey() == nil {
 		return nil, errors.Config.Newf("nil local recording identity")
 	}
@@ -52,7 +56,7 @@ func NewLocalBECastRepository(ctx context.Context, directory string, identity *a
 	options.AllowUntrusted = false
 	options.Context = ctx
 	format := &localBECastFormat{identity: identity, recipient: recipient, options: options}
-	repository, err := newLocalRepository(ctx, directory, identity, format, repositoryOptions)
+	repository, err := newLocalRepository(ctx, directory, identity, format, repositoryOptions, prepareSealed)
 	if err != nil {
 		return nil, err
 	}

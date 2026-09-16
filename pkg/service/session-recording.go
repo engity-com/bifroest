@@ -35,11 +35,23 @@ type sessionRecordingRepository struct {
 	format        sessionRecordingRepositoryFormat
 	castZstd      *recording.LocalCastZstdRepository
 	becast        *recording.LocalBECastRepository
+	receipts      *audit.RemoteArtifactReceipts
 	producerId    audit.ProducerId
 	chunkSize     int
 	flushInterval time.Duration
 	flushSize     uint64
 	notice        template.String
+}
+
+type sessionRecordingReceiptProvider struct {
+	mutex     sync.Mutex
+	directory string
+	identity  *audit.Identity
+	auditlog  configuration.AuditlogName
+	targets   *audit.RemoteArtifactTargets
+	quota     audit.RemoteArtifactReceiptQuota
+	receipts  *audit.RemoteArtifactReceipts
+	err       error
 }
 
 type sessionRecordingStartupRecovery struct {
@@ -155,7 +167,7 @@ func isSessionRecordingFailure(err error) bool {
 	return goerrors.As(err, &target)
 }
 
-func newSessionRecordingRepository(ctx context.Context, configuration configuration.AuditlogRecording, identity *audit.Identity, encryptionPublicKey crypto.PublicKeys) (*sessionRecordingRepository, error) {
+func newSessionRecordingRepository(ctx context.Context, configuration configuration.AuditlogRecording, identity *audit.Identity, encryptionPublicKey crypto.PublicKeys, auditlogName configuration.AuditlogName, targets *audit.RemoteArtifactTargets) (*sessionRecordingRepository, error) {
 	if identity == nil {
 		return nil, errors.Config.Newf("nil session Recording identity")
 	}
@@ -169,14 +181,31 @@ func newSessionRecordingRepository(ctx context.Context, configuration configurat
 		flushSize:     configuration.FlushSizeBytes,
 		notice:        configuration.Notice,
 	}
-	repositoryOptions := recording.LocalRepositoryOptions{MaximumSpoolBytes: configuration.MaximumSpoolBytes}
+	receiptProvider := &sessionRecordingReceiptProvider{
+		directory: configuration.Directory,
+		identity:  identity,
+		auditlog:  auditlogName,
+		targets:   targets,
+	}
+	repositoryOptions := recording.LocalRepositoryOptions{
+		MaximumSpoolBytes: configuration.MaximumSpoolBytes,
+	}
+	prepareSealed := &sessionRecordingReceiptPreparer{provider: receiptProvider}
 	if encryptionPublicKey.IsZero() {
-		repository, err := recording.NewLocalCastZstdRepository(ctx, configuration.Directory, identity, recording.CastZstdVerifyOptions{}, repositoryOptions)
+		repository, err := recording.NewLocalCastZstdRepositoryWithArtifactPreparer(ctx, configuration.Directory, identity, recording.CastZstdVerifyOptions{}, repositoryOptions, prepareSealed)
 		if err != nil {
-			return nil, err
+			return nil, goerrors.Join(err, receiptProvider.close())
+		}
+		receipts, err := receiptProvider.get()
+		if err != nil {
+			return nil, goerrors.Join(err, repository.Close(), receiptProvider.close())
 		}
 		base.format = sessionRecordingRepositoryFormatCastZstd
 		base.castZstd = repository
+		base.receipts = receipts
+		if err := base.validateSealedReceipts(ctx); err != nil {
+			return nil, goerrors.Join(err, base.Close())
+		}
 		return &base, nil
 	}
 
@@ -191,13 +220,116 @@ func newSessionRecordingRepository(ctx context.Context, configuration configurat
 	if err != nil {
 		return nil, fmt.Errorf("cannot create Recording encryption recipient: %w", err)
 	}
-	repository, err := recording.NewLocalBECastRepository(ctx, configuration.Directory, identity, recipient, recording.BECastVerifyOptions{}, repositoryOptions)
+	repository, err := recording.NewLocalBECastRepositoryWithArtifactPreparer(ctx, configuration.Directory, identity, recipient, recording.BECastVerifyOptions{}, repositoryOptions, prepareSealed)
 	if err != nil {
-		return nil, err
+		return nil, goerrors.Join(err, receiptProvider.close())
+	}
+	receipts, err := receiptProvider.get()
+	if err != nil {
+		return nil, goerrors.Join(err, repository.Close(), receiptProvider.close())
 	}
 	base.format = sessionRecordingRepositoryFormatBECast
 	base.becast = repository
+	base.receipts = receipts
+	if err := base.validateSealedReceipts(ctx); err != nil {
+		return nil, goerrors.Join(err, base.Close())
+	}
 	return &base, nil
+}
+
+type sessionRecordingReceiptPreparer struct {
+	provider *sessionRecordingReceiptProvider
+}
+
+func (this *sessionRecordingReceiptPreparer) BindSealedArtifactQuota(quota audit.RemoteArtifactReceiptQuota) {
+	this.provider.setQuota(quota)
+}
+
+func (this *sessionRecordingReceiptPreparer) Prepare(ctx context.Context, artifact audit.RemoteArtifact, sealedAt time.Time) error {
+	receipts, err := this.provider.get()
+	if err != nil {
+		return err
+	}
+	return receipts.Prepare(ctx, artifact, sealedAt)
+}
+
+func (this *sessionRecordingReceiptPreparer) Require(ctx context.Context, artifact audit.RemoteArtifact) error {
+	receipts, err := this.provider.get()
+	if err != nil {
+		return err
+	}
+	return receipts.Require(ctx, artifact)
+}
+
+func (this *sessionRecordingReceiptProvider) setQuota(quota audit.RemoteArtifactReceiptQuota) {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	this.quota = quota
+}
+
+func (this *sessionRecordingReceiptProvider) get() (*audit.RemoteArtifactReceipts, error) {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if this.receipts == nil && this.err == nil {
+		this.receipts, this.err = audit.NewRemoteArtifactReceipts(this.directory, this.identity, this.auditlog, this.targets, this.quota)
+	}
+	return this.receipts, this.err
+}
+
+func (this *sessionRecordingReceiptProvider) close() error {
+	if this == nil {
+		return nil
+	}
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if this.receipts == nil {
+		return nil
+	}
+	return this.receipts.Close()
+}
+
+func (this *sessionRecordingRepository) validateSealedReceipts(ctx context.Context) error {
+	validate := func(artifact interface {
+		RemoteArtifact() (audit.RemoteArtifact, error)
+		Close() error
+	}) error {
+		remote, err := artifact.RemoteArtifact()
+		if err == nil {
+			err = this.receipts.Require(ctx, remote)
+		}
+		return goerrors.Join(err, artifact.Close())
+	}
+	switch this.format {
+	case sessionRecordingRepositoryFormatCastZstd:
+		ids, err := this.castZstd.ListSealed(ctx)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			artifact, err := this.castZstd.OpenSealed(ctx, id)
+			if err != nil {
+				return err
+			}
+			if err := validate(artifact); err != nil {
+				return err
+			}
+		}
+	case sessionRecordingRepositoryFormatBECast:
+		ids, err := this.becast.ListSealed(ctx)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			artifact, err := this.becast.OpenSealed(ctx, id)
+			if err != nil {
+				return err
+			}
+			if err := validate(artifact); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func sessionRecordingTargetConfigurations(auditlog *configuration.Auditlog) configuration.AuditlogTargets {
@@ -759,9 +891,9 @@ func (this *sessionRecordingRepository) Close() error {
 	}
 	switch this.format {
 	case sessionRecordingRepositoryFormatCastZstd:
-		return this.castZstd.Close()
+		return goerrors.Join(this.castZstd.Close(), this.receipts.Close())
 	case sessionRecordingRepositoryFormatBECast:
-		return this.becast.Close()
+		return goerrors.Join(this.becast.Close(), this.receipts.Close())
 	default:
 		return nil
 	}

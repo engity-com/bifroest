@@ -263,7 +263,7 @@ func TestSessionRecordingRepositoryCreatesAndSealsActiveFormats(t *testing.T) {
 			if test.encrypted {
 				encryptionPublicKey = sessionRecordingEncryptionPublicKey(t)
 			}
-			repository, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, encryptionPublicKey)
+			repository, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, encryptionPublicKey, conf.Auditlogs[0].Name, nil)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, repository.Close()) })
 
@@ -320,6 +320,13 @@ func TestSessionRecordingRepositoryCreatesAndSealsActiveFormats(t *testing.T) {
 				require.Equal(t, recording.CastStatusCompleted, verification.Summary.Status)
 			}
 			require.NoError(t, file.Close())
+			require.NoError(t, repository.Close())
+			require.NoError(t, os.RemoveAll(filepath.Join(conf.Auditlogs[0].Recording.Directory, ".delivery")))
+			require.NoError(t, os.Mkdir(filepath.Join(conf.Auditlogs[0].Recording.Directory, "active", recordingId.String()), 0o700))
+			missing, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, encryptionPublicKey, conf.Auditlogs[0].Name, nil)
+			require.Nil(t, missing)
+			require.ErrorContains(t, err, "delivery receipt")
+			require.ErrorContains(t, err, "is missing")
 		})
 	}
 }

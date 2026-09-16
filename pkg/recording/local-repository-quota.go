@@ -11,10 +11,6 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
-type LocalRepositoryOptions struct {
-	MaximumSpoolBytes uint64
-}
-
 type localQuota struct {
 	mutex   sync.Mutex
 	maximum uint64
@@ -97,6 +93,10 @@ func (this *localQuota) reserve(bytes uint64) error {
 	return nil
 }
 
+func (this *localQuota) Reserve(bytes uint64) error {
+	return this.reserve(bytes)
+}
+
 func (this *localQuota) release(bytes uint64) error {
 	if this == nil || bytes <= 0 {
 		return nil
@@ -125,6 +125,10 @@ func (this *localQuota) reconcile(reserved uint64, before, after int64) error {
 		return errors.System.Newf("local recording file grew beyond its reservation: %w", err)
 	}
 	return nil
+}
+
+func (this *localQuota) Reconcile(reserved uint64, before, after int64) error {
+	return this.reconcile(reserved, before, after)
 }
 
 type localQuotaFile struct {
