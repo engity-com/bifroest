@@ -52,9 +52,23 @@ type sessionRecordingStartupRecovery struct {
 type activeSessionRecording struct {
 	recordingSink
 	checkpoint func() error
-	seal       func(time.Duration, recording.CastResult, *uint32) error
+	seal       func(time.Duration, recording.CastResult, *uint32) (sessionRecordingSealSummary, error)
 	close      func() error
 }
+
+type sessionRecordingSealSummary struct {
+	recordingId recording.Id
+	status      recording.CastStatus
+	digest      recording.CastDigest
+}
+
+type sessionRecordingFailurePhase uint8
+
+const (
+	sessionRecordingFailurePhaseNone sessionRecordingFailurePhase = iota
+	sessionRecordingFailurePhaseCapture
+	sessionRecordingFailurePhaseSeal
+)
 
 type sessionRecordingCoordinator struct {
 	mu            sync.Mutex
@@ -67,6 +81,8 @@ type sessionRecordingCoordinator struct {
 	stopping      bool
 	stopped       bool
 	failure       error
+	stopSummary   sessionRecordingSealSummary
+	stopPhase     sessionRecordingFailurePhase
 	stopErr       error
 	onFailure     func(error)
 	stop          chan struct{}
@@ -76,6 +92,8 @@ type sessionRecordingCoordinator struct {
 }
 
 type sessionRecordingLifecycle struct {
+	service     *service
+	ctx         essh.Context
 	capture     *recordedSession
 	coordinator *sessionRecordingCoordinator
 	started     time.Time
@@ -195,9 +213,9 @@ func (this *sessionRecordingRepository) createActive(ctx context.Context, header
 		return &activeSessionRecording{
 			recordingSink: active,
 			checkpoint:    active.Checkpoint,
-			seal: func(elapsed time.Duration, result recording.CastResult, exitStatus *uint32) error {
-				_, err := active.Seal(elapsed, result, exitStatus)
-				return err
+			seal: func(elapsed time.Duration, result recording.CastResult, exitStatus *uint32) (sessionRecordingSealSummary, error) {
+				summary, err := active.Seal(elapsed, result, exitStatus)
+				return sessionRecordingSealSummary{recordingId: summary.RecordingId, status: summary.Status, digest: summary.Digest}, err
 			},
 			close: active.Close,
 		}, nil
@@ -209,9 +227,9 @@ func (this *sessionRecordingRepository) createActive(ctx context.Context, header
 		return &activeSessionRecording{
 			recordingSink: active,
 			checkpoint:    active.Checkpoint,
-			seal: func(elapsed time.Duration, result recording.CastResult, exitStatus *uint32) error {
-				_, err := active.Seal(elapsed, result, exitStatus)
-				return err
+			seal: func(elapsed time.Duration, result recording.CastResult, exitStatus *uint32) (sessionRecordingSealSummary, error) {
+				summary, err := active.Seal(elapsed, result, exitStatus)
+				return sessionRecordingSealSummary{recordingId: summary.RecordingId, status: summary.Status, digest: summary.Digest}, err
 			},
 			close: active.Close,
 		}, nil
@@ -227,9 +245,9 @@ func (this *activeSessionRecording) Checkpoint() error {
 	return this.checkpoint()
 }
 
-func (this *activeSessionRecording) Seal(elapsed time.Duration, result recording.CastResult, exitStatus *uint32) error {
+func (this *activeSessionRecording) Seal(elapsed time.Duration, result recording.CastResult, exitStatus *uint32) (sessionRecordingSealSummary, error) {
 	if this == nil || this.seal == nil {
-		return errors.System.Newf("nil active session Recording")
+		return sessionRecordingSealSummary{}, errors.System.Newf("nil active session Recording")
 	}
 	return this.seal(elapsed, result, exitStatus)
 }
@@ -314,21 +332,21 @@ func (this *sessionRecordingCoordinator) WriteResize(elapsed time.Duration, colu
 	return nil
 }
 
-func (this *sessionRecordingCoordinator) Stop(elapsed time.Duration, result recording.CastResult, exitStatus *uint32) error {
+func (this *sessionRecordingCoordinator) Stop(elapsed time.Duration, result recording.CastResult, exitStatus *uint32) (sessionRecordingSealSummary, sessionRecordingFailurePhase, error) {
 	this.mu.Lock()
 	if this.stopped {
-		result := this.stopErr
+		summary, phase, stopErr := this.stopSummary, this.stopPhase, this.stopErr
 		this.mu.Unlock()
-		return result
+		return summary, phase, stopErr
 	}
 	if this.stopping {
 		done := this.finalDone
 		this.mu.Unlock()
 		<-done
 		this.mu.Lock()
-		result := this.stopErr
+		summary, phase, stopErr := this.stopSummary, this.stopPhase, this.stopErr
 		this.mu.Unlock()
-		return result
+		return summary, phase, stopErr
 	}
 	this.stopping = true
 	this.stopOnce.Do(func() { close(this.stop) })
@@ -340,19 +358,31 @@ func (this *sessionRecordingCoordinator) Stop(elapsed time.Duration, result reco
 
 	this.mu.Lock()
 	finalErr := this.failure
+	phase := sessionRecordingFailurePhaseNone
+	if finalErr != nil {
+		phase = sessionRecordingFailurePhaseCapture
+	}
+	var summary sessionRecordingSealSummary
 	if finalErr == nil {
-		if err := this.active.Seal(elapsed, result, exitStatus); err != nil {
+		var err error
+		if summary, err = this.active.Seal(elapsed, result, exitStatus); err != nil {
 			finalErr = errors.System.Newf("cannot seal session Recording: %w", err)
+			phase = sessionRecordingFailurePhaseSeal
 		}
 	}
 	if err := this.active.Close(); err != nil {
+		if phase == sessionRecordingFailurePhaseNone {
+			phase = sessionRecordingFailurePhaseSeal
+		}
 		finalErr = goerrors.Join(finalErr, errors.System.Newf("cannot close active session Recording: %w", err))
 	}
+	this.stopSummary = summary
+	this.stopPhase = phase
 	this.stopErr = finalErr
 	this.stopped = true
 	close(this.finalDone)
 	this.mu.Unlock()
-	return finalErr
+	return summary, phase, finalErr
 }
 
 func (this *sessionRecordingCoordinator) runCheckpointTimer() {
@@ -425,21 +455,12 @@ func (this *service) beginSessionRecording(sshSession essh.Session, pty recorded
 	if storedSession == nil {
 		return nil, nil, errors.System.Newf("cannot start session Recording without a session")
 	}
-	terminal, err := sessionRecordingTerminal(pty)
-	if err != nil {
-		return nil, nil, err
-	}
 	recordingId, err := recording.NewId()
 	if err != nil {
 		return nil, nil, errors.System.Newf("cannot generate session Recording ID: %w", err)
 	}
 	started := time.Now()
 	startedAt := started.UTC()
-	header := recording.CastHeader{
-		Version:   recording.CastVersion,
-		Terminal:  terminal,
-		Timestamp: startedAt.Unix(),
-	}
 	metadata := recording.CastMetadata{
 		RecordingId:  recordingId,
 		ConnectionId: connection.Id(),
@@ -451,41 +472,83 @@ func (this *service) beginSessionRecording(sshSession essh.Session, pty recorded
 		ProducerId:   repository.producerId,
 		StartedAt:    startedAt,
 	}
+	terminal, err := sessionRecordingTerminal(pty)
+	if err != nil {
+		auditErr := this.recordSessionRecordingEvent(sshSession.Context(), metadata, audit.EventNameSessionRecordingFailed, audit.EventOutcomeFailure, audit.EventReasonRecordingCreate, err, 0, nil, nil)
+		return nil, nil, goerrors.Join(err, auditErr)
+	}
+	header := recording.CastHeader{
+		Version:   recording.CastVersion,
+		Terminal:  terminal,
+		Timestamp: startedAt.Unix(),
+	}
 	active, err := repository.createActive(sshSession.Context(), header, metadata, repository.chunkSize)
 	if err != nil {
-		return nil, nil, errors.System.Newf("cannot create active session Recording: %w", err)
+		createErr := errors.System.Newf("cannot create active session Recording: %w", err)
+		auditErr := this.recordSessionRecordingEvent(sshSession.Context(), metadata, audit.EventNameSessionRecordingFailed, audit.EventOutcomeFailure, audit.EventReasonRecordingCreate, createErr, 0, nil, nil)
+		return nil, nil, goerrors.Join(createErr, auditErr)
 	}
 	coordinator, err := newSessionRecordingCoordinator(active, repository.flushInterval, repository.flushSize)
 	if err != nil {
-		return nil, nil, goerrors.Join(err, active.Close())
+		startErr := goerrors.Join(err, active.Close())
+		auditErr := this.recordSessionRecordingEvent(sshSession.Context(), metadata, audit.EventNameSessionRecordingFailed, audit.EventOutcomeFailure, audit.EventReasonRecordingCreate, startErr, 0, nil, nil)
+		return nil, nil, goerrors.Join(startErr, auditErr)
 	}
 	var failureOnce sync.Once
 	onFailure := func(error) {
 		failureOnce.Do(func() { _ = sshSession.Close() })
 	}
 	if err := coordinator.Start(onFailure); err != nil {
-		return nil, nil, goerrors.Join(err, active.Close())
+		startErr := goerrors.Join(err, active.Close())
+		auditErr := this.recordSessionRecordingEvent(sshSession.Context(), metadata, audit.EventNameSessionRecordingFailed, audit.EventOutcomeFailure, audit.EventReasonRecordingCreate, startErr, 0, nil, nil)
+		return nil, nil, goerrors.Join(startErr, auditErr)
 	}
 	capture, err := newRecordedSessionWithPty(sshSession, pty, coordinator, func() time.Duration {
 		return time.Since(started)
 	}, onFailure)
 	if err != nil {
 		elapsed := time.Since(started)
-		stopErr := coordinator.Stop(elapsed, recording.CastResult{
+		result := recording.CastResult{
 			Status:  recording.CastStatusFailed,
 			EndedAt: startedAt.Add(elapsed),
 			Reason:  "capture-setup-failed",
-		}, nil)
-		return nil, nil, goerrors.Join(err, stopErr)
+		}
+		summary, _, stopErr := coordinator.Stop(elapsed, result, nil)
+		var digest *recording.CastDigest
+		if stopErr == nil {
+			digest = &summary.digest
+		}
+		auditErr := this.recordSessionRecordingEvent(sshSession.Context(), metadata, audit.EventNameSessionRecordingFailed, audit.EventOutcomeFailure, audit.EventReasonRecordingCapture, err, elapsed, digest, nil)
+		return nil, nil, goerrors.Join(err, stopErr, auditErr)
 	}
-	return capture, &sessionRecordingLifecycle{
+	lifecycle := &sessionRecordingLifecycle{
+		service:     this,
+		ctx:         sshSession.Context(),
 		capture:     capture,
 		coordinator: coordinator,
 		started:     started,
 		startedAt:   startedAt,
 		metadata:    metadata,
 		notice:      repository.notice,
-	}, nil
+	}
+	if err := this.recordSessionRecordingEvent(sshSession.Context(), metadata, audit.EventNameSessionRecordingStarted, "", "", nil, 0, nil, nil); err != nil {
+		captureErr := capture.stopAndWait()
+		elapsed := time.Since(started)
+		summary, _, stopErr := coordinator.Stop(elapsed, recording.CastResult{
+			Status:  recording.CastStatusFailed,
+			EndedAt: startedAt.Add(elapsed),
+			Reason:  "audit-start-failed",
+		}, nil)
+		var digest *recording.CastDigest
+		if stopErr == nil {
+			digest = &summary.digest
+		}
+		sshContext := sshSession.Context()
+		failedAuditContext := &sshSessionContext{Context: sshContext, plainContext: context.WithoutCancel(sshContext)}
+		failedAuditErr := this.recordSessionRecordingEvent(failedAuditContext, metadata, audit.EventNameSessionRecordingFailed, audit.EventOutcomeFailure, audit.EventReasonAuditWrite, err, elapsed, digest, nil)
+		return nil, nil, goerrors.Join(err, captureErr, stopErr, failedAuditErr)
+	}
+	return capture, lifecycle, nil
 }
 
 func sessionRecordingTerminal(pty recordedSessionPty) (recording.CastTerminal, error) {
@@ -536,10 +599,17 @@ func (this *sessionRecordingLifecycle) finish(exitCode int, taskErr error) error
 	elapsed := time.Since(this.started)
 	result := recording.CastResult{EndedAt: this.startedAt.Add(elapsed)}
 	var exitStatus *uint32
+	if exitCode >= 0 && uint64(exitCode) <= math.MaxUint32 {
+		status := uint32(exitCode)
+		exitStatus = &status
+	}
 	switch {
 	case captureErr != nil:
 		result.Status = recording.CastStatusFailed
 		result.Reason = "capture-failed"
+	case isInvalidSessionExitStatus(taskErr):
+		result.Status = recording.CastStatusIncomplete
+		result.Reason = "invalid-exit-status"
 	case taskErr != nil:
 		result.Status = recording.CastStatusIncomplete
 		result.Reason = "session-error"
@@ -548,10 +618,95 @@ func (this *sessionRecordingLifecycle) finish(exitCode int, taskErr error) error
 		result.Reason = "invalid-exit-status"
 	default:
 		result.Status = recording.CastStatusCompleted
-		status := uint32(exitCode)
-		exitStatus = &status
 	}
-	return goerrors.Join(captureErr, this.coordinator.Stop(elapsed, result, exitStatus))
+	summary, stopPhase, stopErr := this.coordinator.Stop(elapsed, result, exitStatus)
+	eventName := audit.EventNameSessionRecordingFailed
+	outcome := audit.EventOutcomeFailure
+	reason := audit.EventReasonRecordingSeal
+	eventErr := stopErr
+	var digest *recording.CastDigest
+	if stopErr == nil {
+		digest = &summary.digest
+	}
+	if captureErr != nil || stopPhase == sessionRecordingFailurePhaseCapture {
+		reason = audit.EventReasonRecordingCapture
+		eventErr = captureErr
+		if eventErr == nil {
+			eventErr = stopErr
+		}
+	} else if stopErr == nil {
+		switch result.Status {
+		case recording.CastStatusCompleted:
+			eventName = audit.EventNameSessionRecordingCompleted
+			outcome = audit.EventOutcomeSuccess
+			reason = ""
+			eventErr = nil
+		case recording.CastStatusIncomplete:
+			eventName = audit.EventNameSessionRecordingIncomplete
+			eventErr = taskErr
+			switch {
+			case goerrors.Is(taskErr, context.Canceled):
+				outcome = audit.EventOutcomeCanceled
+				reason = audit.EventReasonContextCanceled
+				eventErr = nil
+			case goerrors.Is(taskErr, context.DeadlineExceeded):
+				outcome = audit.EventOutcomeCanceled
+				reason = audit.EventReasonDeadlineExceeded
+				eventErr = nil
+			case result.Reason == "invalid-exit-status":
+				reason = audit.EventReasonInvalidExitCode
+				eventErr = nil
+			default:
+				reason = audit.EventReasonSessionError
+			}
+		case recording.CastStatusFailed:
+			reason = audit.EventReasonRecordingCapture
+			eventErr = captureErr
+		}
+	}
+	finalAuditContext := &sshSessionContext{Context: this.ctx, plainContext: context.WithoutCancel(this.ctx)}
+	auditErr := this.service.recordSessionRecordingEvent(finalAuditContext, this.metadata, eventName, outcome, reason, eventErr, elapsed, digest, exitStatus)
+	return goerrors.Join(captureErr, stopErr, auditErr)
+}
+
+func (this *service) recordSessionRecordingEvent(ctx context.Context, metadata recording.CastMetadata, name audit.EventName, outcome audit.EventOutcome, reason audit.EventReason, eventErr error, elapsed time.Duration, digest *recording.CastDigest, exitStatus *uint32) error {
+	event := sessionRecordingAuditEvent(metadata, name, outcome, reason, eventErr, elapsed, digest, exitStatus)
+	return this.recordFlowAudit(ctx, metadata.Flow, event)
+}
+
+func sessionRecordingAuditEvent(metadata recording.CastMetadata, name audit.EventName, outcome audit.EventOutcome, reason audit.EventReason, eventErr error, elapsed time.Duration, digest *recording.CastDigest, exitStatus *uint32) audit.Event {
+	event := audit.Event{
+		Name:          name,
+		Domain:        audit.EventDomainSession,
+		Outcome:       outcome,
+		Flow:          metadata.Flow.String(),
+		ConnectionId:  metadata.ConnectionId.String(),
+		SessionId:     metadata.SessionId.String(),
+		OperationId:   metadata.OperationId.String(),
+		RecordingId:   metadata.RecordingId.String(),
+		SessionTask:   metadata.Task,
+		Reason:        reason,
+		ErrorCategory: auditErrorCategory(eventErr),
+	}
+	if eventErr == nil {
+		event.ErrorCategory = ""
+	}
+	if name == audit.EventNameSessionRecordingStarted {
+		pty := metadata.Pty
+		event.Pty = &pty
+	}
+	if elapsed > 0 || name == audit.EventNameSessionRecordingCompleted || name == audit.EventNameSessionRecordingIncomplete {
+		durationMillis := elapsed.Milliseconds()
+		event.DurationMillis = &durationMillis
+	}
+	if digest != nil {
+		event.RecordingDigest = digest.String()
+	}
+	if exitStatus != nil {
+		exitCode := int(*exitStatus)
+		event.ExitCode = &exitCode
+	}
+	return event
 }
 
 func (this *sessionRecordingRepository) startupRecoveries() []sessionRecordingStartupRecovery {

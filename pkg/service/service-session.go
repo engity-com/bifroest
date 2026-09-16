@@ -181,6 +181,18 @@ type sessionTaskAuditLifecycle struct {
 	startedAt   time.Time
 }
 
+type invalidSessionExitStatusError struct {
+	cause error
+}
+
+func (this *invalidSessionExitStatusError) Error() string { return this.cause.Error() }
+func (this *invalidSessionExitStatusError) Unwrap() error { return this.cause }
+
+func isInvalidSessionExitStatus(err error) bool {
+	var target *invalidSessionExitStatusError
+	return goerrors.As(err, &target)
+}
+
 func (this *sessionTaskAuditLifecycle) start(hasPty, agentForwarding, forcedCommand bool) error {
 	this.startedAt = time.Now()
 	event := this.service.authorizationAuditEvent(this.ctx, this.auth, audit.EventNameSessionTaskStarted, audit.EventDomainSession)
@@ -268,7 +280,7 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 	}()
 	recorded, recordingLifecycle, err := this.beginSessionRecording(sshSess, ptySnapshot, conn, sess, operationId, auth.Flow(), requestedTask)
 	if err != nil {
-		return fail(err)
+		return fail(markSessionRecordingFailure(err))
 	}
 	if recorded != nil {
 		sshSess = recorded
@@ -333,10 +345,10 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 		if contextErr := sshSess.Context().Err(); contextErr != nil {
 			return exitCode, contextErr
 		}
-		return failf(errors.System, "environment returned invalid exit code %d", exitCode)
+		return fail(&invalidSessionExitStatusError{cause: errors.System.Newf("environment returned invalid exit code %d", exitCode)})
 	}
 	if uint64(exitCode) > math.MaxUint32 {
-		return failf(errors.System, "environment returned unsupported exit code %d", exitCode)
+		return fail(&invalidSessionExitStatusError{cause: errors.System.Newf("environment returned unsupported exit code %d", exitCode)})
 	}
 	return exitCode, nil
 }

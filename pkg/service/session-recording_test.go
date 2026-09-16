@@ -188,10 +188,14 @@ func TestSessionRecordingRepositoryCreatesAndSealsActiveFormats(t *testing.T) {
 			require.NoError(t, active.WriteOutput(time.Second, recording.OutputStreamTerminal, []byte("adapter output\r\n")))
 			require.NoError(t, active.Checkpoint())
 			exitStatus := uint32(7)
-			require.NoError(t, active.Seal(2*time.Second, recording.CastResult{
+			summary, err := active.Seal(2*time.Second, recording.CastResult{
 				Status:  recording.CastStatusCompleted,
 				EndedAt: startedAt.Add(2 * time.Second),
-			}, &exitStatus))
+			}, &exitStatus)
+			require.NoError(t, err)
+			require.Equal(t, recordingId, summary.recordingId)
+			require.Equal(t, recording.CastStatusCompleted, summary.status)
+			require.False(t, summary.digest.IsZero())
 			require.NoError(t, active.Close())
 
 			sealedPath := filepath.Join(conf.Auditlogs[0].Recording.Directory, "sealed", recordingId.String()+test.suffix)

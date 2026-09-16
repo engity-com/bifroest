@@ -841,6 +841,7 @@ func (this *authorizedKeysTestRepository) IsSessionCompatibleWith(ctx environmen
 
 type authorizedKeysTestEnvironment struct {
 	run                          func(environment.Task) (int, error)
+	close                        func() error
 	portForwardingAllowed        bool
 	reversePortForwardingAllowed *bool
 }
@@ -880,7 +881,10 @@ func (*authorizedKeysTestEnvironment) Dispose(context.Context) (bool, error) {
 	return false, nil
 }
 
-func (*authorizedKeysTestEnvironment) Close() error {
+func (this *authorizedKeysTestEnvironment) Close() error {
+	if this.close != nil {
+		return this.close()
+	}
 	return nil
 }
 

@@ -2,7 +2,9 @@ package audit
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	goerrors "errors"
 	"hash/crc32"
@@ -163,7 +165,7 @@ func (this *localJournalRecorder) RecordSuppressible(ctx context.Context, event 
 }
 
 func (this *localJournalRecorder) record(_ context.Context, event Event, suppressible bool) (bool, error) {
-	if err := validateAuditEvent(event); err != nil {
+	if err := validateAuditEventForWrite(event); err != nil {
 		return false, err
 	}
 
@@ -349,6 +351,12 @@ func validateAuditEvent(event Event) error {
 			return err
 		}
 	}
+	if err := validateAuditRecordingUuid(event.RecordingId); err != nil {
+		return err
+	}
+	if err := validateAuditRecordingDigest(event.RecordingDigest); err != nil {
+		return err
+	}
 	if event.ExitCode != nil && *event.ExitCode < 0 {
 		return errors.System.Newf("audit event exit code is negative")
 	}
@@ -363,6 +371,63 @@ func validateAuditEvent(event Event) error {
 	}
 	if event.Count != nil && *event.Count == 0 {
 		return errors.System.Newf("audit event count is zero")
+	}
+	return nil
+}
+
+func validateAuditEventForWrite(event Event) error {
+	if err := validateAuditEvent(event); err != nil {
+		return err
+	}
+	return validateSessionRecordingAuditEvent(event)
+}
+
+func validateSessionRecordingAuditEvent(event Event) error {
+	switch event.Name {
+	case EventNameSessionRecordingStarted, EventNameSessionRecordingCompleted, EventNameSessionRecordingIncomplete, EventNameSessionRecordingFailed:
+	default:
+		return nil
+	}
+	if event.Domain != EventDomainSession || event.Flow == "" || event.ConnectionId == "" || event.SessionId == "" || event.OperationId == "" || event.RecordingId == "" {
+		return errors.System.Newf("session recording audit event lacks required correlation fields")
+	}
+	if event.SessionTask != SessionTaskShell && event.SessionTask != SessionTaskExec {
+		return errors.System.Newf("session recording audit event has illegal task %q", event.SessionTask)
+	}
+	if event.AuthenticationMethod != "" || event.AuthenticationPhase != "" || event.AuthorizationKind != "" ||
+		event.BytesRead != nil || event.BytesWritten != nil || event.Count != nil || event.AgentForwarding != nil || event.ForcedCommand != nil {
+		return errors.System.Newf("session recording audit event has unrelated fields")
+	}
+	switch event.Name {
+	case EventNameSessionRecordingStarted:
+		if event.Outcome != "" || event.Reason != "" || event.ErrorCategory != "" || event.RecordingDigest != "" || event.Pty == nil || event.DurationMillis != nil || event.ExitCode != nil {
+			return errors.System.Newf("session recording started audit event has illegal lifecycle fields")
+		}
+	case EventNameSessionRecordingCompleted:
+		if event.Outcome != EventOutcomeSuccess || event.Reason != "" || event.ErrorCategory != "" || event.RecordingDigest == "" || event.Pty != nil || event.DurationMillis == nil || event.ExitCode == nil {
+			return errors.System.Newf("session recording completed audit event lacks required completion fields")
+		}
+	case EventNameSessionRecordingIncomplete:
+		if event.RecordingDigest == "" || event.Pty != nil || event.DurationMillis == nil {
+			return errors.System.Newf("session recording incomplete audit event lacks required completion fields")
+		}
+		valid := event.Outcome == EventOutcomeCanceled && event.ErrorCategory == "" &&
+			(event.Reason == EventReasonContextCanceled || event.Reason == EventReasonDeadlineExceeded) ||
+			event.Outcome == EventOutcomeFailure && event.ErrorCategory == "" && event.Reason == EventReasonInvalidExitCode ||
+			event.Outcome == EventOutcomeFailure && event.Reason == EventReasonSessionError && event.ErrorCategory != ""
+		if !valid {
+			return errors.System.Newf("session recording incomplete audit event has illegal outcome and reason")
+		}
+		if event.Reason == EventReasonInvalidExitCode && event.ExitCode != nil {
+			return errors.System.Newf("session recording invalid-exit audit event has an exit code")
+		}
+	case EventNameSessionRecordingFailed:
+		validReason := event.Reason == EventReasonRecordingCreate || event.Reason == EventReasonRecordingCapture || event.Reason == EventReasonRecordingSeal || event.Reason == EventReasonAuditWrite
+		startupFieldsInvalid := (event.Reason == EventReasonRecordingCreate || event.Reason == EventReasonAuditWrite) && event.ExitCode != nil
+		createFieldsInvalid := event.Reason == EventReasonRecordingCreate && (event.RecordingDigest != "" || event.DurationMillis != nil)
+		if event.Outcome != EventOutcomeFailure || !validReason || event.ErrorCategory == "" || event.Pty != nil || event.RecordingDigest != "" && event.DurationMillis == nil || startupFieldsInvalid || createFieldsInvalid {
+			return errors.System.Newf("session recording failed audit event lacks required failure fields")
+		}
 	}
 	return nil
 }
@@ -412,6 +477,31 @@ func validateAuditUuid(name, value string) error {
 	parsed, err := uuid.Parse(value)
 	if err != nil || parsed == uuid.Nil || parsed.String() != value {
 		return errors.System.Newf("illegal audit event %s %q", name, value)
+	}
+	return nil
+}
+
+func validateAuditRecordingUuid(value string) error {
+	if value == "" {
+		return nil
+	}
+	parsed, err := uuid.Parse(value)
+	if err != nil || parsed == uuid.Nil || parsed.Version() != 4 || parsed.Variant() != uuid.RFC4122 || parsed.String() != value {
+		return errors.System.Newf("illegal audit event recording ID %q", value)
+	}
+	return nil
+}
+
+func validateAuditRecordingDigest(value string) error {
+	if value == "" {
+		return nil
+	}
+	if len(value) != sha256.Size*2 {
+		return errors.System.Newf("illegal audit event recording digest %q", value)
+	}
+	decoded, err := hex.DecodeString(value)
+	if err != nil || hex.EncodeToString(decoded) != value {
+		return errors.System.Newf("illegal audit event recording digest %q", value)
 	}
 	return nil
 }

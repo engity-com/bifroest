@@ -289,15 +289,28 @@ func TestDomainAuditClassifiesSessionCanceledWithoutEnvironmentError(t *testing.
 }
 
 type recordingAuditRecorder struct {
-	mutex     sync.Mutex
-	events    []audit.Event
-	recordErr error
+	mutex          sync.Mutex
+	events         []audit.Event
+	recordErr      error
+	failName       audit.EventName
+	failBefore     bool
+	rejectCanceled bool
 }
 
-func (this *recordingAuditRecorder) Record(_ context.Context, event audit.Event) error {
+func (this *recordingAuditRecorder) Record(ctx context.Context, event audit.Event) error {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
+	if this.rejectCanceled && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	shouldFail := this.recordErr != nil && (this.failName == "" || this.failName == event.Name)
+	if shouldFail && this.failBefore {
+		return this.recordErr
+	}
 	this.events = append(this.events, event)
+	if !shouldFail {
+		return nil
+	}
 	return this.recordErr
 }
 
@@ -307,6 +320,30 @@ func (this *recordingAuditRecorder) setError(err error) {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 	this.recordErr = err
+	this.failName = ""
+	this.failBefore = false
+}
+
+func (this *recordingAuditRecorder) setErrorForName(name audit.EventName, err error) {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	this.recordErr = err
+	this.failName = name
+	this.failBefore = false
+}
+
+func (this *recordingAuditRecorder) setErrorBeforeRecordForName(name audit.EventName, err error) {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	this.recordErr = err
+	this.failName = name
+	this.failBefore = true
+}
+
+func (this *recordingAuditRecorder) setRejectCanceled(value bool) {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	this.rejectCanceled = value
 }
 
 func (this *recordingAuditRecorder) eventsSnapshot() []audit.Event {

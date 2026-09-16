@@ -5,8 +5,10 @@ import (
 	"context"
 	goerrors "errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -16,6 +18,7 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/environment"
 	bferrors "github.com/engity-com/bifroest/pkg/errors"
@@ -37,8 +40,13 @@ func TestSessionRecordingCoordinatorCheckpointsBySizeAndStopsOnce(t *testing.T) 
 	require.NoError(t, coordinator.WriteResize(3*time.Second, 100, 30))
 	exitStatus := uint32(7)
 	result := recording.CastResult{Status: recording.CastStatusCompleted, EndedAt: time.Now().UTC()}
-	require.NoError(t, coordinator.Stop(4*time.Second, result, &exitStatus))
-	require.NoError(t, coordinator.Stop(4*time.Second, result, &exitStatus))
+	firstSummary, firstPhase, err := coordinator.Stop(4*time.Second, result, &exitStatus)
+	require.NoError(t, err)
+	secondSummary, secondPhase, err := coordinator.Stop(4*time.Second, result, &exitStatus)
+	require.NoError(t, err)
+	require.Equal(t, firstSummary, secondSummary)
+	require.Equal(t, firstPhase, secondPhase)
+	require.Equal(t, sessionRecordingFailurePhaseNone, firstPhase)
 
 	require.Equal(t, 1, sink.seals)
 	require.Equal(t, 1, sink.closes)
@@ -62,17 +70,52 @@ func TestSessionRecordingCoordinatorIntervalFailureNotifiesAndSkipsSeal(t *testi
 	case <-time.After(time.Second):
 		t.Fatal("interval checkpoint did not fail")
 	}
-	stopErr := coordinator.Stop(time.Second, recording.CastResult{
+	_, phase, stopErr := coordinator.Stop(time.Second, recording.CastResult{
 		Status:  recording.CastStatusCompleted,
 		EndedAt: time.Now().UTC(),
 	}, commonUint32(0))
 	require.ErrorIs(t, stopErr, checkpointErr)
+	require.Equal(t, sessionRecordingFailurePhaseCapture, phase)
 	require.Zero(t, sink.seals)
 	require.Equal(t, 1, sink.closes)
 	select {
 	case unexpected := <-failures:
 		t.Fatalf("failure callback invoked more than once: %v", unexpected)
 	default:
+	}
+}
+
+func TestSessionRecordingCoordinatorClassifiesSealAndCloseFailures(t *testing.T) {
+	sealErr := bferrors.System.Newf("seal failed")
+	closeErr := bferrors.System.Newf("close failed")
+	for _, test := range []struct {
+		name     string
+		sealErr  error
+		closeErr error
+	}{
+		{name: "seal", sealErr: sealErr},
+		{name: "close", closeErr: closeErr},
+		{name: "seal and close", sealErr: sealErr, closeErr: closeErr},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			sink := &coordinatorTestSink{sealErr: test.sealErr, closeErr: test.closeErr}
+			coordinator, err := newSessionRecordingCoordinator(sink.active(), time.Hour, 1<<20)
+			require.NoError(t, err)
+			require.NoError(t, coordinator.Start(func(error) {}))
+			_, phase, stopErr := coordinator.Stop(time.Second, recording.CastResult{
+				Status:  recording.CastStatusCompleted,
+				EndedAt: time.Now().UTC(),
+			}, commonUint32(0))
+			require.Equal(t, sessionRecordingFailurePhaseSeal, phase)
+			if test.sealErr != nil {
+				require.ErrorIs(t, stopErr, test.sealErr)
+			}
+			if test.closeErr != nil {
+				require.ErrorIs(t, stopErr, test.closeErr)
+			}
+			require.Equal(t, 1, sink.seals)
+			require.Equal(t, 1, sink.closes)
+		})
 	}
 }
 
@@ -118,6 +161,9 @@ func TestExecuteSessionRecordingSealsShellAndExec(t *testing.T) {
 				enableSessionRecordingForLifecycleTest(conf, root)
 				conf.Auditlogs[0].Recording.Notice = template.MustNewString("NOTICE: {{.recording.id}}\n")
 			})
+			auditRecorder := &recordingAuditRecorder{}
+			flow := server.service.Configuration.Flows[0].Name
+			server.service.flowAuditRecorders[flow] = auditRecorder
 			client := server.mustDial(t)
 			sshSession, err := client.NewSession()
 			require.NoError(t, err)
@@ -159,6 +205,21 @@ func TestExecuteSessionRecordingSealsShellAndExec(t *testing.T) {
 				require.NotContains(t, stdout.String(), "NOTICE:")
 			}
 			require.Equal(t, expectedOutputEvents, verification.Cast.OutputEvents)
+
+			auditEvents := auditRecorder.eventsSnapshot()
+			startedEvents := auditEventsNamed(auditEvents, audit.EventNameSessionRecordingStarted)
+			completedEvents := auditEventsNamed(auditEvents, audit.EventNameSessionRecordingCompleted)
+			require.Len(t, startedEvents, 1)
+			require.Len(t, completedEvents, 1)
+			require.Empty(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingIncomplete))
+			require.Empty(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed))
+			requireSessionRecordingAuditCorrelation(t, verification, startedEvents[0], completedEvents[0])
+			require.Equal(t, audit.EventOutcomeSuccess, completedEvents[0].Outcome)
+			require.Equal(t, verification.Cast.Digest.String(), completedEvents[0].RecordingDigest)
+			require.Equal(t, 7, *completedEvents[0].ExitCode)
+			require.Less(t, auditEventIndex(t, auditEvents, audit.EventNameSessionTaskStarted), auditEventIndex(t, auditEvents, audit.EventNameSessionRecordingStarted))
+			require.Less(t, auditEventIndex(t, auditEvents, audit.EventNameSessionRecordingStarted), auditEventIndex(t, auditEvents, audit.EventNameSessionRecordingCompleted))
+			require.Less(t, auditEventIndex(t, auditEvents, audit.EventNameSessionRecordingCompleted), auditEventIndex(t, auditEvents, audit.EventNameSessionTaskCompleted))
 		})
 	}
 }
@@ -173,6 +234,9 @@ func TestExecuteSessionRecordingNoticeRenderFailurePreventsEnvironmentRun(t *tes
 		enableSessionRecordingForLifecycleTest(conf, root)
 		conf.Auditlogs[0].Recording.Notice = template.MustNewString("{{.unsupported}}")
 	})
+	auditRecorder := &recordingAuditRecorder{}
+	flow := server.service.Configuration.Flows[0].Name
+	server.service.flowAuditRecorders[flow] = auditRecorder
 	client := server.mustDial(t)
 	sshSession, err := client.NewSession()
 	require.NoError(t, err)
@@ -184,6 +248,15 @@ func TestExecuteSessionRecordingNoticeRenderFailurePreventsEnvironmentRun(t *tes
 	verification := verifyOnlySessionRecording(t, server.service, root)
 	require.Equal(t, recording.CastStatusIncomplete, verification.Cast.Result.Status)
 	require.Equal(t, "session-error", verification.Cast.Result.Reason)
+	startedEvents := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingStarted)
+	incompleteEvents := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingIncomplete)
+	require.Len(t, startedEvents, 1)
+	require.Len(t, incompleteEvents, 1)
+	requireSessionRecordingAuditCorrelation(t, verification, startedEvents[0], incompleteEvents[0])
+	require.Equal(t, audit.EventOutcomeFailure, incompleteEvents[0].Outcome)
+	require.Equal(t, audit.EventReasonSessionError, incompleteEvents[0].Reason)
+	require.Equal(t, audit.ErrorCategorySystem, incompleteEvents[0].ErrorCategory)
+	require.Equal(t, verification.Cast.Digest.String(), incompleteEvents[0].RecordingDigest)
 }
 
 func TestExecuteSessionRecordingExcludesSftp(t *testing.T) {
@@ -194,6 +267,9 @@ func TestExecuteSessionRecordingExcludesSftp(t *testing.T) {
 	}})
 	auditlog := server.service.flowAuditlogs[server.service.Configuration.Flows[0].Name]
 	server.service.recordingRepositories[auditlog] = &sessionRecordingRepository{}
+	auditRecorder := &recordingAuditRecorder{}
+	flow := server.service.Configuration.Flows[0].Name
+	server.service.flowAuditRecorders[flow] = auditRecorder
 	client := server.mustDial(t)
 	sshSession, err := client.NewSession()
 	require.NoError(t, err)
@@ -204,6 +280,10 @@ func TestExecuteSessionRecordingExcludesSftp(t *testing.T) {
 		t.Fatal("SFTP environment did not run")
 	}
 	_ = sshSession.Close()
+	require.Empty(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingStarted))
+	require.Empty(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingCompleted))
+	require.Empty(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingIncomplete))
+	require.Empty(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed))
 }
 
 func TestExecuteSessionRecordingCreateFailurePreventsEnvironmentRun(t *testing.T) {
@@ -214,11 +294,20 @@ func TestExecuteSessionRecordingCreateFailurePreventsEnvironmentRun(t *testing.T
 	}})
 	auditlog := server.service.flowAuditlogs[server.service.Configuration.Flows[0].Name]
 	server.service.recordingRepositories[auditlog] = &sessionRecordingRepository{}
+	auditRecorder := &recordingAuditRecorder{}
+	flow := server.service.Configuration.Flows[0].Name
+	server.service.flowAuditRecorders[flow] = auditRecorder
 	client := server.mustDial(t)
 	sshSession, err := client.NewSession()
 	require.NoError(t, err)
 	require.Error(t, sshSession.Run("must-not-run"))
 	require.False(t, runCalled.Load())
+	require.Empty(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingStarted))
+	failedEvents := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed)
+	require.Len(t, failedEvents, 1)
+	require.Equal(t, audit.EventReasonRecordingCreate, failedEvents[0].Reason)
+	require.Equal(t, audit.EventOutcomeFailure, failedEvents[0].Outcome)
+	require.Empty(t, failedEvents[0].RecordingDigest)
 }
 
 func TestExecuteSessionRecordingWriteFailureIsFailClosed(t *testing.T) {
@@ -236,6 +325,9 @@ func TestExecuteSessionRecordingWriteFailureIsFailClosed(t *testing.T) {
 	})
 	auditlog := server.service.flowAuditlogs[server.service.Configuration.Flows[0].Name]
 	repository = server.service.recordingRepositories[auditlog]
+	auditRecorder := &recordingAuditRecorder{}
+	flow := server.service.Configuration.Flows[0].Name
+	server.service.flowAuditRecorders[flow] = auditRecorder
 	client := server.mustDial(t)
 	sshSession, err := client.NewSession()
 	require.NoError(t, err)
@@ -246,6 +338,290 @@ func TestExecuteSessionRecordingWriteFailureIsFailClosed(t *testing.T) {
 	sealedEntries, err := os.ReadDir(filepath.Join(root, "recordings", "sealed"))
 	require.NoError(t, err)
 	require.Empty(t, sealedEntries)
+	require.Len(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingStarted), 1)
+	failedEvents := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed)
+	require.Len(t, failedEvents, 1)
+	require.Equal(t, audit.EventReasonRecordingCapture, failedEvents[0].Reason)
+	require.Equal(t, audit.EventOutcomeFailure, failedEvents[0].Outcome)
+	require.Equal(t, audit.ErrorCategorySystem, failedEvents[0].ErrorCategory)
+	require.Empty(t, failedEvents[0].RecordingDigest)
+}
+
+func TestExecuteSessionRecordingStartedAuditFailurePreventsEnvironmentRun(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		failBeforeRecord bool
+		expectedStarted  int
+	}{
+		{name: "before commit", failBeforeRecord: true},
+		{name: "after commit", expectedStarted: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			var runCalled atomic.Bool
+			server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{run: func(environment.Task) (int, error) {
+				runCalled.Store(true)
+				return 0, nil
+			}}, func(conf *configuration.Configuration) {
+				enableSessionRecordingForLifecycleTest(conf, root)
+			})
+			auditRecorder := &recordingAuditRecorder{}
+			auditRecorder.setRejectCanceled(true)
+			startedErr := goerrors.New("started audit failed")
+			if test.failBeforeRecord {
+				auditRecorder.setErrorBeforeRecordForName(audit.EventNameSessionRecordingStarted, startedErr)
+			} else {
+				auditRecorder.setErrorForName(audit.EventNameSessionRecordingStarted, startedErr)
+			}
+			flow := server.service.Configuration.Flows[0].Name
+			server.service.flowAuditRecorders[flow] = auditRecorder
+			client := server.mustDial(t)
+			sshSession, err := client.NewSession()
+			require.NoError(t, err)
+			require.Error(t, sshSession.Run("must-not-run"))
+			require.False(t, runCalled.Load())
+			require.Eventually(t, func() bool {
+				entries, readErr := os.ReadDir(filepath.Join(root, "recordings", "sealed"))
+				return readErr == nil && len(entries) == 1
+			}, time.Second, 10*time.Millisecond)
+
+			verification := verifyOnlySessionRecording(t, server.service, root)
+			require.Equal(t, recording.CastStatusFailed, verification.Cast.Result.Status)
+			require.Equal(t, "audit-start-failed", verification.Cast.Result.Reason)
+			require.Len(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingStarted), test.expectedStarted)
+			failedEvents := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed)
+			require.Len(t, failedEvents, 1)
+			require.Equal(t, audit.EventReasonAuditWrite, failedEvents[0].Reason)
+			require.Equal(t, audit.ErrorCategorySystem, failedEvents[0].ErrorCategory)
+			require.Equal(t, verification.Cast.Digest.String(), failedEvents[0].RecordingDigest)
+			require.Equal(t, verification.Cast.Metadata.RecordingId.String(), failedEvents[0].RecordingId)
+		})
+	}
+}
+
+func TestExecuteSessionRecordingCompletionAuditFailurePreservesCompletedArtifact(t *testing.T) {
+	root := t.TempDir()
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{}, func(conf *configuration.Configuration) {
+		enableSessionRecordingForLifecycleTest(conf, root)
+	})
+	auditRecorder := &recordingAuditRecorder{}
+	auditRecorder.setErrorForName(audit.EventNameSessionRecordingCompleted, goerrors.New("completion audit failed"))
+	flow := server.service.Configuration.Flows[0].Name
+	server.service.flowAuditRecorders[flow] = auditRecorder
+	client := server.mustDial(t)
+	sshSession, err := client.NewSession()
+	require.NoError(t, err)
+	require.Error(t, sshSession.Run("complete-before-audit-fails"))
+
+	verification := verifyOnlySessionRecording(t, server.service, root)
+	require.Equal(t, recording.CastStatusCompleted, verification.Cast.Result.Status)
+	require.Len(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingStarted), 1)
+	completedEvents := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingCompleted)
+	require.Len(t, completedEvents, 1)
+	require.Equal(t, verification.Cast.Digest.String(), completedEvents[0].RecordingDigest)
+	require.Empty(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed))
+}
+
+func TestExecuteSessionRecordingInvalidExitStatusIsIncomplete(t *testing.T) {
+	tests := []struct {
+		name     string
+		exitCode int
+	}{
+		{name: "negative", exitCode: -2},
+	}
+	if strconv.IntSize > 32 {
+		tests = append(tests, struct {
+			name     string
+			exitCode int
+		}{name: "above uint32", exitCode: int(uint64(math.MaxUint32) + 1)})
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{run: func(environment.Task) (int, error) {
+				return test.exitCode, nil
+			}}, func(conf *configuration.Configuration) {
+				enableSessionRecordingForLifecycleTest(conf, root)
+			})
+			auditRecorder := &recordingAuditRecorder{}
+			flow := server.service.Configuration.Flows[0].Name
+			server.service.flowAuditRecorders[flow] = auditRecorder
+			client := server.mustDial(t)
+			sshSession, err := client.NewSession()
+			require.NoError(t, err)
+			require.Error(t, sshSession.Run("invalid-exit"))
+
+			verification := verifyOnlySessionRecording(t, server.service, root)
+			require.Equal(t, recording.CastStatusIncomplete, verification.Cast.Result.Status)
+			require.Equal(t, "invalid-exit-status", verification.Cast.Result.Reason)
+			events := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingIncomplete)
+			require.Len(t, events, 1)
+			require.Equal(t, audit.EventReasonInvalidExitCode, events[0].Reason)
+			require.Equal(t, audit.EventOutcomeFailure, events[0].Outcome)
+			require.Empty(t, events[0].ErrorCategory)
+			require.Equal(t, verification.Cast.Digest.String(), events[0].RecordingDigest)
+		})
+	}
+}
+
+func TestExecuteSessionRecordingCancellationAuditsWithDetachedContext(t *testing.T) {
+	root := t.TempDir()
+	runStarted := make(chan struct{})
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{run: func(task environment.Task) (int, error) {
+		close(runStarted)
+		<-task.SshSession().Context().Done()
+		return -1, task.SshSession().Context().Err()
+	}}, func(conf *configuration.Configuration) {
+		enableSessionRecordingForLifecycleTest(conf, root)
+	})
+	auditRecorder := &recordingAuditRecorder{}
+	auditRecorder.setRejectCanceled(true)
+	flow := server.service.Configuration.Flows[0].Name
+	server.service.flowAuditRecorders[flow] = auditRecorder
+	client := server.mustDial(t)
+	sshSession, err := client.NewSession()
+	require.NoError(t, err)
+	require.NoError(t, sshSession.Start("cancel-recording"))
+	select {
+	case <-runStarted:
+	case <-time.After(time.Second):
+		t.Fatal("environment run did not start")
+	}
+	require.NoError(t, sshSession.Close())
+	require.Eventually(t, func() bool {
+		return len(auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingIncomplete)) == 1
+	}, time.Second, 10*time.Millisecond)
+
+	verification := verifyOnlySessionRecording(t, server.service, root)
+	require.Equal(t, recording.CastStatusIncomplete, verification.Cast.Result.Status)
+	events := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingIncomplete)
+	require.Len(t, events, 1)
+	require.Equal(t, audit.EventOutcomeCanceled, events[0].Outcome)
+	require.Equal(t, audit.EventReasonContextCanceled, events[0].Reason)
+	require.Empty(t, events[0].ErrorCategory)
+}
+
+func TestExecuteSessionRecordingDeadlineExceededIsIncomplete(t *testing.T) {
+	root := t.TempDir()
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{run: func(environment.Task) (int, error) {
+		return -1, context.DeadlineExceeded
+	}}, func(conf *configuration.Configuration) {
+		enableSessionRecordingForLifecycleTest(conf, root)
+	})
+	auditRecorder := &recordingAuditRecorder{}
+	flow := server.service.Configuration.Flows[0].Name
+	server.service.flowAuditRecorders[flow] = auditRecorder
+	client := server.mustDial(t)
+	sshSession, err := client.NewSession()
+	require.NoError(t, err)
+	require.Error(t, sshSession.Run("deadline-recording"))
+
+	verification := verifyOnlySessionRecording(t, server.service, root)
+	require.Equal(t, recording.CastStatusIncomplete, verification.Cast.Result.Status)
+	events := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingIncomplete)
+	require.Len(t, events, 1)
+	require.Equal(t, audit.EventOutcomeCanceled, events[0].Outcome)
+	require.Equal(t, audit.EventReasonDeadlineExceeded, events[0].Reason)
+	require.Empty(t, events[0].ErrorCategory)
+}
+
+func TestExecuteSessionRecordingIncompletePreservesValidExitStatus(t *testing.T) {
+	root := t.TempDir()
+	var closeCalls atomic.Int32
+	testEnvironment := &authorizedKeysTestEnvironment{
+		run: func(environment.Task) (int, error) { return 7, nil },
+		close: func() error {
+			if closeCalls.Add(1) == 1 {
+				return bferrors.System.Newf("environment close failed")
+			}
+			return nil
+		},
+	}
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", testEnvironment, func(conf *configuration.Configuration) {
+		enableSessionRecordingForLifecycleTest(conf, root)
+	})
+	auditRecorder := &recordingAuditRecorder{}
+	flow := server.service.Configuration.Flows[0].Name
+	server.service.flowAuditRecorders[flow] = auditRecorder
+	client := server.mustDial(t)
+	sshSession, err := client.NewSession()
+	require.NoError(t, err)
+	require.Error(t, sshSession.Run("close-failure"))
+
+	verification := verifyOnlySessionRecording(t, server.service, root)
+	require.Equal(t, recording.CastStatusIncomplete, verification.Cast.Result.Status)
+	require.NotNil(t, verification.Cast.ExitStatus)
+	require.Equal(t, uint32(7), *verification.Cast.ExitStatus)
+	events := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingIncomplete)
+	require.Len(t, events, 1)
+	require.Equal(t, audit.EventReasonSessionError, events[0].Reason)
+	require.NotNil(t, events[0].ExitCode)
+	require.Equal(t, 7, *events[0].ExitCode)
+}
+
+func TestExecuteSessionRecordingSealFailureAuditsSealFailure(t *testing.T) {
+	root := t.TempDir()
+	var repository *sessionRecordingRepository
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{run: func(environment.Task) (int, error) {
+		if err := repository.Close(); err != nil {
+			return -1, err
+		}
+		return 0, nil
+	}}, func(conf *configuration.Configuration) {
+		enableSessionRecordingForLifecycleTest(conf, root)
+	})
+	auditlog := server.service.flowAuditlogs[server.service.Configuration.Flows[0].Name]
+	repository = server.service.recordingRepositories[auditlog]
+	auditRecorder := &recordingAuditRecorder{}
+	flow := server.service.Configuration.Flows[0].Name
+	server.service.flowAuditRecorders[flow] = auditRecorder
+	client := server.mustDial(t)
+	sshSession, err := client.NewSession()
+	require.NoError(t, err)
+	require.Error(t, sshSession.Run("seal-failure"))
+
+	failedEvents := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed)
+	require.Len(t, failedEvents, 1)
+	require.Equal(t, audit.EventReasonRecordingSeal, failedEvents[0].Reason)
+	require.Equal(t, audit.EventOutcomeFailure, failedEvents[0].Outcome)
+	require.Equal(t, audit.ErrorCategorySystem, failedEvents[0].ErrorCategory)
+	require.Empty(t, failedEvents[0].RecordingDigest)
+}
+
+func TestExecuteSessionRecordingIntervalCheckpointFailureAuditsCaptureFailure(t *testing.T) {
+	root := t.TempDir()
+	var repository *sessionRecordingRepository
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{run: func(task environment.Task) (int, error) {
+		if _, err := task.SshSession().Write([]byte("dirty")); err != nil {
+			return -1, err
+		}
+		if err := repository.Close(); err != nil {
+			return -1, err
+		}
+		<-task.SshSession().Context().Done()
+		return -1, task.SshSession().Context().Err()
+	}}, func(conf *configuration.Configuration) {
+		enableSessionRecordingForLifecycleTest(conf, root)
+		conf.Auditlogs[0].Recording.FlushInterval = common.DurationOf(5 * time.Millisecond)
+	})
+	auditlog := server.service.flowAuditlogs[server.service.Configuration.Flows[0].Name]
+	repository = server.service.recordingRepositories[auditlog]
+	auditRecorder := &recordingAuditRecorder{}
+	flow := server.service.Configuration.Flows[0].Name
+	server.service.flowAuditRecorders[flow] = auditRecorder
+	client := server.mustDial(t)
+	sshSession, err := client.NewSession()
+	require.NoError(t, err)
+	require.Error(t, sshSession.Run("checkpoint-failure"))
+	require.Eventually(t, func() bool {
+		return len(auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed)) == 1
+	}, time.Second, 10*time.Millisecond)
+
+	failedEvents := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed)
+	require.Len(t, failedEvents, 1)
+	require.Equal(t, audit.EventReasonRecordingCapture, failedEvents[0].Reason)
+	require.Equal(t, audit.EventOutcomeFailure, failedEvents[0].Outcome)
+	require.Empty(t, failedEvents[0].RecordingDigest)
 }
 
 func enableSessionRecordingForLifecycleTest(conf *configuration.Configuration, root string) {
@@ -296,6 +672,37 @@ func exportOnlySessionRecording(t *testing.T, service *service, root string) str
 	return output.String()
 }
 
+func requireSessionRecordingAuditCorrelation(t *testing.T, verification *recording.CastZstdVerification, started, completed audit.Event) {
+	t.Helper()
+	metadata := verification.Cast.Metadata
+	require.Equal(t, metadata.RecordingId.String(), started.RecordingId)
+	require.Equal(t, started.RecordingId, completed.RecordingId)
+	require.Equal(t, metadata.ConnectionId.String(), started.ConnectionId)
+	require.Equal(t, started.ConnectionId, completed.ConnectionId)
+	require.Equal(t, metadata.SessionId.String(), started.SessionId)
+	require.Equal(t, started.SessionId, completed.SessionId)
+	require.Equal(t, metadata.OperationId.String(), started.OperationId)
+	require.Equal(t, started.OperationId, completed.OperationId)
+	require.Equal(t, metadata.Flow.String(), started.Flow)
+	require.Equal(t, started.Flow, completed.Flow)
+	require.Equal(t, metadata.Task, started.SessionTask)
+	require.Equal(t, started.SessionTask, completed.SessionTask)
+	require.NotNil(t, started.Pty)
+	require.Equal(t, metadata.Pty, *started.Pty)
+	require.NotNil(t, completed.DurationMillis)
+}
+
+func auditEventIndex(t *testing.T, events []audit.Event, name audit.EventName) int {
+	t.Helper()
+	for index, event := range events {
+		if event.Name == name {
+			return index
+		}
+	}
+	t.Fatalf("audit event %q not found", name)
+	return -1
+}
+
 type coordinatorTestSink struct {
 	mu            sync.Mutex
 	checkpoints   int
@@ -304,6 +711,7 @@ type coordinatorTestSink struct {
 	checkpointErr error
 	sealErr       error
 	closeErr      error
+	digest        recording.CastDigest
 	result        recording.CastResult
 	exitStatus    *uint32
 }
@@ -317,13 +725,13 @@ func (this *coordinatorTestSink) active() *activeSessionRecording {
 			this.checkpoints++
 			return this.checkpointErr
 		},
-		seal: func(_ time.Duration, result recording.CastResult, exitStatus *uint32) error {
+		seal: func(_ time.Duration, result recording.CastResult, exitStatus *uint32) (sessionRecordingSealSummary, error) {
 			this.mu.Lock()
 			defer this.mu.Unlock()
 			this.seals++
 			this.result = result
 			this.exitStatus = exitStatus
-			return this.sealErr
+			return sessionRecordingSealSummary{status: result.Status, digest: this.digest}, this.sealErr
 		},
 		close: func() error {
 			this.mu.Lock()

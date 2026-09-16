@@ -8,6 +8,10 @@ const (
 	EventNameAuthenticationCompleted                   = "authentication.completed"
 	EventNameSessionPtyDecided                         = "session.pty.decided"
 	EventNameSessionAgentForwardingDecided             = "session.agent-forwarding.decided"
+	EventNameSessionRecordingStarted                   = "session.recording.started"
+	EventNameSessionRecordingCompleted                 = "session.recording.completed"
+	EventNameSessionRecordingIncomplete                = "session.recording.incomplete"
+	EventNameSessionRecordingFailed                    = "session.recording.failed"
 	EventNameSessionTaskStarted                        = "session.task.started"
 	EventNameSessionTaskCompleted                      = "session.task.completed"
 	EventNamePortForwardingDirectDecided               = "port-forwarding.direct.decided"
@@ -29,6 +33,10 @@ var knownEventNames = [...]EventName{
 	EventNameAuthenticationCompleted,
 	EventNameSessionPtyDecided,
 	EventNameSessionAgentForwardingDecided,
+	EventNameSessionRecordingStarted,
+	EventNameSessionRecordingCompleted,
+	EventNameSessionRecordingIncomplete,
+	EventNameSessionRecordingFailed,
 	EventNameSessionTaskStarted,
 	EventNameSessionTaskCompleted,
 	EventNamePortForwardingDirectDecided,
@@ -65,6 +73,11 @@ const (
 	EventReasonMissingFlow         = "missing-flow"
 	EventReasonRetentionElapsed    = "retention-elapsed"
 	EventReasonExpired             = "expired"
+	EventReasonRecordingCreate     = "recording-create"
+	EventReasonRecordingCapture    = "recording-capture"
+	EventReasonRecordingSeal       = "recording-seal"
+	EventReasonAuditWrite          = "audit-write"
+	EventReasonSessionError        = "session-error"
 )
 
 var knownEventReasons = [...]EventReason{
@@ -86,6 +99,11 @@ var knownEventReasons = [...]EventReason{
 	EventReasonMissingFlow,
 	EventReasonRetentionElapsed,
 	EventReasonExpired,
+	EventReasonRecordingCreate,
+	EventReasonRecordingCapture,
+	EventReasonRecordingSeal,
+	EventReasonAuditWrite,
+	EventReasonSessionError,
 }
 
 type EventDomain string
@@ -152,6 +170,8 @@ type Event struct {
 	ConnectionId         string               `json:"connectionId,omitempty"`
 	SessionId            string               `json:"sessionId,omitempty"`
 	OperationId          string               `json:"operationId,omitempty"`
+	RecordingId          string               `json:"recordingId,omitempty"`
+	RecordingDigest      string               `json:"recordingDigest,omitempty"`
 	AuthenticationMethod AuthenticationMethod `json:"authenticationMethod,omitempty"`
 	AuthenticationPhase  AuthenticationPhase  `json:"authenticationPhase,omitempty"`
 	AuthorizationKind    string               `json:"authorizationKind,omitempty"`

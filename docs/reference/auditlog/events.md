@@ -19,6 +19,8 @@ Every event has a `name`. All other fields are optional and are present only whe
 | `connectionId` | UUID correlating events from one SSH connection. |
 | `sessionId` | UUID of the persistent Bifröst session, when one is available. |
 | `operationId` | UUID correlating the events belonging to one task, forwarding operation, or housekeeping action. |
+| `recordingId` | Canonical UUIDv4 identifying one session recording. |
+| `recordingDigest` | Lowercase SHA-256 digest of the canonical Cast content, cryptographically bound by the recording signature. It is not a hash of the outer `.cast.zst` or `.becast` container file. |
 | `authenticationMethod` | `public-key`, `password`, or `keyboard-interactive`. |
 | `authenticationPhase` | `candidate` before public-key possession is proven or `verified` after certificate-signature verification. |
 | `authorizationKind` | Authorization implementation that produced the result, for example `simple` or `local`. |
@@ -112,6 +114,33 @@ Outcomes and reasons:
 * `denied` with `authorized-key-policy`: the active authorized-key policy forbids agent forwarding.
 
 The event does not contain agent messages, keys, or socket paths.
+
+#### `session.recording.started`
+
+Written after the initial recording content and recovery head are durable, but before Bifröst writes the recording notice, environment banner, or target output. SFTP and direct forwarding never produce recording lifecycle events. If this audit event reports an error, target execution does not start, Bifröst finalizes the recording as failed, and best-effort writes `session.recording.failed` with reason `audit-write`. Because an audit backend can report an error after committing a record, both events can be present.
+
+Fields: `domain` is `session`; `flow`, `connectionId`, `sessionId`, `operationId`, `recordingId`, and `sessionTask` correlate the recording with its shell or exec task. `pty` records whether the session has a PTY. `outcome` is omitted.
+
+#### `session.recording.completed`
+
+Written only after a completed recording has been sealed, synchronized, verified, and atomically published. The correlation fields match `session.recording.started`. `outcome` is `success`; `durationMillis`, `exitCode`, and `recordingDigest` describe the immutable result. A failure to write this event does not alter the already published completed artifact, but the SSH operation still fails closed.
+
+#### `session.recording.incomplete`
+
+Written only after an incomplete recording has been sealed, synchronized, verified, and atomically published. The correlation fields are the same as for `session.recording.started`; `durationMillis` and `recordingDigest` describe the immutable result.
+
+Outcomes and reasons:
+
+* `canceled` with `context-canceled`: the SSH task context was canceled.
+* `canceled` with `deadline-exceeded`: the SSH task deadline expired.
+* `failure` with `invalid-exit-code`: execution returned no valid exit code.
+* `failure` with `session-error`: another task error prevented normal completion; `errorCategory` classifies it.
+
+If the Bifröst process terminates with an unsealed active recording, startup recovery seals and publishes that artifact as incomplete. Recovery does not synthesize an audit event because encrypted BECast metadata cannot be reconstructed without the external recipient's private key. A `session.recording.started` event without a final event therefore indicates either a process interruption or a failed final audit write. The signed artifact remains authoritative for its status and digest; it may already be completed or failed if the interruption happened after sealing.
+
+#### `session.recording.failed`
+
+Written when recording creation, capture, checkpointing, final publication, or the required start audit write fails. The correlation fields are the same as for `session.recording.started`. `outcome` is `failure`; `reason` is `recording-create`, `recording-capture`, `recording-seal`, or `audit-write`, and `errorCategory` classifies the error. `recordingDigest` is present only when a failed artifact was nevertheless sealed and published successfully. A create failure has no preceding `session.recording.started` event.
 
 #### `session.task.started`
 
