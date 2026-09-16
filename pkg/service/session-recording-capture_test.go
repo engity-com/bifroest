@@ -222,6 +222,24 @@ func TestRecordedSessionCapturesOutputStreamsAndSuccessfulBytes(t *testing.T) {
 		require.Equal(t, []byte("part"), events[0].data)
 	})
 
+	t.Run("ambiguous partial PTY transport write", func(t *testing.T) {
+		transportCause := goerrors.New("PTY transport write failed")
+		session := newCaptureTestSession(t.Context())
+		session.hasPty = true
+		session.stdout.write = func([]byte) (int, error) { return 1, transportCause }
+		sink := &captureTestSink{}
+		callback := make(chan error, 1)
+		wrapper := requireRecordedSession(t, session, sink, func(err error) { callback <- err })
+
+		n, err := wrapper.Write([]byte("\nX"))
+		require.Equal(t, 1, n)
+		require.ErrorIs(t, err, transportCause)
+		require.ErrorContains(t, err, "cannot determine normalized terminal bytes")
+		require.Empty(t, sink.outputEvents())
+		failure := <-callback
+		require.ErrorIs(t, err, failure)
+	})
+
 	t.Run("short write without transport error", func(t *testing.T) {
 		session := newCaptureTestSession(t.Context())
 		session.stdout.write = func([]byte) (int, error) { return 2, nil }
@@ -266,6 +284,27 @@ func TestRecordedSessionCapturesOutputStreamsAndSuccessfulBytes(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestRecordedSessionCapturesNormalizedPtyOutput(t *testing.T) {
+	session := newCaptureTestSession(t.Context())
+	session.hasPty = true
+	sink := &captureTestSink{}
+	wrapper := requireRecordedSession(t, session, sink, func(error) {})
+
+	value := []byte("first\nsecond\r\nthird\r")
+	n, err := wrapper.Write(value)
+	require.NoError(t, err)
+	require.Equal(t, len(value), n)
+	events := sink.outputEvents()
+	require.Len(t, events, 1)
+	require.Equal(t, []byte("first\r\nsecond\r\nthird\r"), events[0].data)
+
+	_, err = wrapper.Stderr().Write([]byte("stderr\n"))
+	require.NoError(t, err)
+	events = sink.outputEvents()
+	require.Len(t, events, 2)
+	require.Equal(t, []byte("stderr\n"), events[1].data)
 }
 
 func TestRecordedSessionRecordingFailurePoisonsOutput(t *testing.T) {

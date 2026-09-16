@@ -127,7 +127,7 @@ func TestSessionRecordingRepositoryCreatesAndSealsActiveFormats(t *testing.T) {
 			if test.encrypted {
 				encryptionPublicKey = sessionRecordingEncryptionPublicKey(t)
 			}
-			repository, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording.Directory, identity, encryptionPublicKey)
+			repository, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, encryptionPublicKey)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, repository.Close()) })
 

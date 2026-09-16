@@ -17,7 +17,8 @@ import (
 )
 
 const (
-	castVersion                = 3
+	CastVersion                = 3
+	castVersion                = CastVersion
 	castMetadataSchema         = "bifroest.asciicast-metadata/v1"
 	castEventMetadataSchema    = "bifroest.asciicast-event/v1"
 	castResultSchema           = "bifroest.asciicast-result/v1"
@@ -125,7 +126,7 @@ func (this *CastDigest) UnmarshalText(text []byte) error {
 }
 
 func validateCastHeader(header CastHeader) error {
-	if header.Version != castVersion {
+	if header.Version != CastVersion {
 		return errors.System.Newf("unsupported asciicast version %d", header.Version)
 	}
 	if header.Terminal.Columns == 0 || header.Terminal.Rows == 0 {

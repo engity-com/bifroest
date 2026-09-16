@@ -380,7 +380,7 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 		if !auditlog.Enabled || !auditlog.Recording.Enabled {
 			continue
 		}
-		repository, repositoryErr := newSessionRecordingRepository(ctx, auditlog.Recording.Directory, svc.auditIdentities[auditlog.Name], resolvedEncryptionPublicKeys[auditlog.Name])
+		repository, repositoryErr := newSessionRecordingRepository(ctx, auditlog.Recording, svc.auditIdentities[auditlog.Name], resolvedEncryptionPublicKeys[auditlog.Name])
 		if repositoryErr != nil {
 			return fmt.Errorf("cannot open Recording repository of auditlog %q: %w", auditlog.Name, repositoryErr)
 		}
