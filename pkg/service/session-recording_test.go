@@ -71,6 +71,33 @@ func TestPrepareRecordingOpensCastZstdRepository(t *testing.T) {
 	require.NoError(t, svc.Close())
 }
 
+func TestPrepareRecordingRejectsExistingSpoolAboveLimitWithoutDeletingData(t *testing.T) {
+	root := t.TempDir()
+	conf := sessionRecordingTestConfiguration(t, root)
+	enableSessionRecording(&conf.Auditlogs[0])
+	auditlog := &conf.Auditlogs[0]
+	identity, err := audit.EnsureIdentity(auditlog)
+	require.NoError(t, err)
+	repository, err := recording.NewLocalCastZstdRepository(t.Context(), auditlog.Recording.Directory, identity, recording.CastZstdVerifyOptions{}, recording.LocalRepositoryOptions{
+		MaximumSpoolBytes: auditlog.Recording.MaximumSpoolBytes,
+	})
+	require.NoError(t, err)
+	require.NoError(t, repository.Close())
+
+	auditlog.Recording.MaximumSpoolBytes = auditlog.Recording.FlushSizeBytes
+	payload := make([]byte, auditlog.Recording.MaximumSpoolBytes+1)
+	path := filepath.Join(auditlog.Recording.Directory, "quarantine", "preserve")
+	require.NoError(t, os.WriteFile(path, payload, 0o600))
+
+	svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+	require.ErrorContains(t, err, "exceeding its")
+	require.True(t, bferrors.Config.IsErr(err))
+	require.Nil(t, svc)
+	after, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
+	require.Equal(t, payload, after)
+}
+
 func TestPrepareRecordingOpensBECastWithoutZstdFallback(t *testing.T) {
 	t.Run("opens BECast", func(t *testing.T) {
 		root := t.TempDir()
@@ -95,7 +122,9 @@ func TestPrepareRecordingOpensBECastWithoutZstdFallback(t *testing.T) {
 		enableSessionRecording(&conf.Auditlogs[0])
 		identity, err := audit.EnsureIdentity(&conf.Auditlogs[0])
 		require.NoError(t, err)
-		zstdRepository, err := recording.NewLocalCastZstdRepository(context.Background(), conf.Auditlogs[0].Recording.Directory, identity, recording.CastZstdVerifyOptions{})
+		zstdRepository, err := recording.NewLocalCastZstdRepository(context.Background(), conf.Auditlogs[0].Recording.Directory, identity, recording.CastZstdVerifyOptions{}, recording.LocalRepositoryOptions{
+			MaximumSpoolBytes: conf.Auditlogs[0].Recording.MaximumSpoolBytes,
+		})
 		require.NoError(t, err)
 		require.NoError(t, zstdRepository.Close())
 		conf.Auditlogs[0].EncryptionPublicKey = sessionRecordingEncryptionPublicKey(t)
@@ -190,7 +219,9 @@ func TestPrepareRecordingFailsClosedOnExistingRepositoryLockAndCanRetry(t *testi
 	enableSessionRecording(&conf.Auditlogs[0])
 	identity, err := audit.EnsureIdentity(&conf.Auditlogs[0])
 	require.NoError(t, err)
-	locked, err := recording.NewLocalCastZstdRepository(context.Background(), conf.Auditlogs[0].Recording.Directory, identity, recording.CastZstdVerifyOptions{})
+	locked, err := recording.NewLocalCastZstdRepository(context.Background(), conf.Auditlogs[0].Recording.Directory, identity, recording.CastZstdVerifyOptions{}, recording.LocalRepositoryOptions{
+		MaximumSpoolBytes: conf.Auditlogs[0].Recording.MaximumSpoolBytes,
+	})
 	require.NoError(t, err)
 
 	serviceDefinition := &Service{Configuration: conf, Version: serviceTestVersion{}}
@@ -252,7 +283,9 @@ func TestPrepareRecordingLaterFailureReleasesEarlierRepositoryLock(t *testing.T)
 	conf.Auditlogs = append(conf.Auditlogs, second)
 	secondIdentity, err := audit.EnsureIdentity(&conf.Auditlogs[1])
 	require.NoError(t, err)
-	lockedSecond, err := recording.NewLocalCastZstdRepository(context.Background(), conf.Auditlogs[1].Recording.Directory, secondIdentity, recording.CastZstdVerifyOptions{})
+	lockedSecond, err := recording.NewLocalCastZstdRepository(context.Background(), conf.Auditlogs[1].Recording.Directory, secondIdentity, recording.CastZstdVerifyOptions{}, recording.LocalRepositoryOptions{
+		MaximumSpoolBytes: conf.Auditlogs[1].Recording.MaximumSpoolBytes,
+	})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, lockedSecond.Close()) }()
 
@@ -261,7 +294,9 @@ func TestPrepareRecordingLaterFailureReleasesEarlierRepositoryLock(t *testing.T)
 	require.Nil(t, svc)
 	firstIdentity, identityErr := audit.EnsureIdentity(&conf.Auditlogs[0])
 	require.NoError(t, identityErr)
-	firstRepository, openErr := recording.NewLocalCastZstdRepository(context.Background(), conf.Auditlogs[0].Recording.Directory, firstIdentity, recording.CastZstdVerifyOptions{})
+	firstRepository, openErr := recording.NewLocalCastZstdRepository(context.Background(), conf.Auditlogs[0].Recording.Directory, firstIdentity, recording.CastZstdVerifyOptions{}, recording.LocalRepositoryOptions{
+		MaximumSpoolBytes: conf.Auditlogs[0].Recording.MaximumSpoolBytes,
+	})
 	require.NoError(t, openErr, "the first repository lock must be released when the second open fails")
 	require.NoError(t, firstRepository.Close())
 }
@@ -272,7 +307,9 @@ func TestPrepareRecordingRecoversActiveCastZstdAsIncomplete(t *testing.T) {
 	enableSessionRecording(&conf.Auditlogs[0])
 	identity, err := audit.EnsureIdentity(&conf.Auditlogs[0])
 	require.NoError(t, err)
-	repository, err := recording.NewLocalCastZstdRepository(context.Background(), conf.Auditlogs[0].Recording.Directory, identity, recording.CastZstdVerifyOptions{})
+	repository, err := recording.NewLocalCastZstdRepository(context.Background(), conf.Auditlogs[0].Recording.Directory, identity, recording.CastZstdVerifyOptions{}, recording.LocalRepositoryOptions{
+		MaximumSpoolBytes: conf.Auditlogs[0].Recording.MaximumSpoolBytes,
+	})
 	require.NoError(t, err)
 	startedAt := time.Now().UTC().Truncate(time.Second)
 	recordingId, err := recording.NewId()

@@ -162,7 +162,7 @@ func validateOpenLocalFile(path string, file *os.File) error {
 	return nil
 }
 
-func writeLocalHead(directory string, value []byte) error {
+func writeLocalHead(directory string, value []byte, quota *localQuota) error {
 	temporary := filepath.Join(directory, localHeadTempFileName)
 	target := filepath.Join(directory, localHeadFileName)
 	file, err := createLocalFile(temporary)
@@ -172,10 +172,18 @@ func writeLocalHead(directory string, value []byte) error {
 	removeTemporary := true
 	defer func() {
 		if removeTemporary {
-			_ = os.Remove(temporary)
+			if quota == nil {
+				_ = os.Remove(temporary)
+			} else {
+				_ = removeAccountedLocalFile(temporary, quota)
+			}
 		}
 	}()
-	written, err := file.Write(value)
+	var output io.Writer = file
+	if quota != nil {
+		output = accountLocalFile(file, quota)
+	}
+	written, err := output.Write(value)
 	if err == nil && written != len(value) {
 		err = io.ErrShortWrite
 	}
@@ -190,8 +198,19 @@ func writeLocalHead(directory string, value []byte) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
+	var replacedSize int64
+	if info, inspectErr := os.Lstat(target); inspectErr == nil && info.Mode().IsRegular() {
+		replacedSize = info.Size()
+	} else if inspectErr != nil && !goerrors.Is(inspectErr, fs.ErrNotExist) {
+		return inspectErr
+	}
 	if err := replaceLocalFile(temporary, target); err != nil {
 		return err
+	}
+	if quota != nil {
+		if err := quota.release(uint64(replacedSize)); err != nil {
+			return err
+		}
 	}
 	removeTemporary = false
 	return syncLocalDirectory(directory)
@@ -406,7 +425,7 @@ func validateLocalFormatFile(path string, expected []byte) error {
 	return nil
 }
 
-func discardLocalHeadTemporary(directory string) error {
+func discardLocalHeadTemporary(directory string, quota *localQuota) error {
 	path := filepath.Join(directory, localHeadTempFileName)
 	info, err := os.Lstat(path)
 	if goerrors.Is(err, fs.ErrNotExist) {
@@ -418,13 +437,13 @@ func discardLocalHeadTemporary(directory string) error {
 	if !info.Mode().IsRegular() {
 		return errors.Config.Newf("temporary local recording head is not a regular file")
 	}
-	if err := os.Remove(path); err != nil {
+	if err := removeAccountedLocalFile(path, quota); err != nil {
 		return err
 	}
 	return syncLocalDirectory(directory)
 }
 
-func prepareInterruptedLocalHead(directory string, maximumBytes int64, validate func([]byte) error) error {
+func prepareInterruptedLocalHead(directory string, maximumBytes int64, quota *localQuota, validate func([]byte) error) error {
 	if validate == nil {
 		return errors.Config.Newf("nil local recording head validator")
 	}
@@ -441,7 +460,7 @@ func prepareInterruptedLocalHead(directory string, maximumBytes int64, validate 
 		if err := validate(payload); err != nil {
 			return err
 		}
-		return discardLocalHeadTemporary(directory)
+		return discardLocalHeadTemporary(directory, quota)
 	} else if !goerrors.Is(err, fs.ErrNotExist) {
 		return err
 	}

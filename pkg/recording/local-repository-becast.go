@@ -38,7 +38,7 @@ type localBECastFormat struct {
 	options   BECastVerifyOptions
 }
 
-func NewLocalBECastRepository(ctx context.Context, directory string, identity *audit.Identity, recipient *crypto.AgeSshRecipient, options BECastVerifyOptions) (*LocalBECastRepository, error) {
+func NewLocalBECastRepository(ctx context.Context, directory string, identity *audit.Identity, recipient *crypto.AgeSshRecipient, options BECastVerifyOptions, repositoryOptions LocalRepositoryOptions) (*LocalBECastRepository, error) {
 	if identity == nil || identity.PublicKey() == nil {
 		return nil, errors.Config.Newf("nil local recording identity")
 	}
@@ -52,7 +52,7 @@ func NewLocalBECastRepository(ctx context.Context, directory string, identity *a
 	options.AllowUntrusted = false
 	options.Context = ctx
 	format := &localBECastFormat{identity: identity, recipient: recipient, options: options}
-	repository, err := newLocalRepository(ctx, directory, identity, format)
+	repository, err := newLocalRepository(ctx, directory, identity, format, repositoryOptions)
 	if err != nil {
 		return nil, err
 	}

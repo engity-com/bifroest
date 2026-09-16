@@ -151,8 +151,9 @@ func newSessionRecordingRepository(ctx context.Context, configuration configurat
 		flushSize:     configuration.FlushSizeBytes,
 		notice:        configuration.Notice,
 	}
+	repositoryOptions := recording.LocalRepositoryOptions{MaximumSpoolBytes: configuration.MaximumSpoolBytes}
 	if encryptionPublicKey.IsZero() {
-		repository, err := recording.NewLocalCastZstdRepository(ctx, configuration.Directory, identity, recording.CastZstdVerifyOptions{})
+		repository, err := recording.NewLocalCastZstdRepository(ctx, configuration.Directory, identity, recording.CastZstdVerifyOptions{}, repositoryOptions)
 		if err != nil {
 			return nil, err
 		}
@@ -172,7 +173,7 @@ func newSessionRecordingRepository(ctx context.Context, configuration configurat
 	if err != nil {
 		return nil, fmt.Errorf("cannot create Recording encryption recipient: %w", err)
 	}
-	repository, err := recording.NewLocalBECastRepository(ctx, configuration.Directory, identity, recipient, recording.BECastVerifyOptions{})
+	repository, err := recording.NewLocalBECastRepository(ctx, configuration.Directory, identity, recipient, recording.BECastVerifyOptions{}, repositoryOptions)
 	if err != nil {
 		return nil, err
 	}

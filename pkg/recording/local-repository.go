@@ -135,6 +135,7 @@ type localRepository[Head, Summary any] struct {
 	lockPath       string
 	identity       *audit.Identity
 	format         localFormat[Head, Summary]
+	quota          *localQuota
 	processLock    *localProcessLock
 	active         map[Id]*localActive[Head, Summary]
 	recovered      []localRecovery[Summary]
@@ -157,7 +158,10 @@ type localActive[Head, Summary any] struct {
 	sealed     bool
 }
 
-func newLocalRepository[Head, Summary any](ctx context.Context, directory string, identity *audit.Identity, format localFormat[Head, Summary]) (*localRepository[Head, Summary], error) {
+func newLocalRepository[Head, Summary any](ctx context.Context, directory string, identity *audit.Identity, format localFormat[Head, Summary], options LocalRepositoryOptions) (*localRepository[Head, Summary], error) {
+	if options.MaximumSpoolBytes < 1 {
+		return nil, errors.Config.Newf("maximum local recording spool bytes must be positive")
+	}
 	if identity == nil || identity.PublicKey() == nil {
 		return nil, errors.Config.Newf("nil local recording identity")
 	}
@@ -191,9 +195,6 @@ func newLocalRepository[Head, Summary any](ctx context.Context, directory string
 	if err := validateLocalLock(processLock, lockPath); err != nil {
 		return nil, err
 	}
-	if err := bindLocalFormat(canonical, format.key()); err != nil {
-		return nil, errors.System.Newf("cannot bind local recording repository format: %w", err)
-	}
 	result := &localRepository[Head, Summary]{
 		directory:      canonical,
 		activePath:     filepath.Join(canonical, localActiveDirectory),
@@ -205,6 +206,13 @@ func newLocalRepository[Head, Summary any](ctx context.Context, directory string
 		format:         format,
 		processLock:    processLock,
 		active:         make(map[Id]*localActive[Head, Summary]),
+	}
+	result.quota, err = newLocalQuota(options.MaximumSpoolBytes, result.workPath, result.activePath, result.sealedPath, result.quarantinePath)
+	if err != nil {
+		return nil, err
+	}
+	if err := bindLocalFormat(canonical, format.key()); err != nil {
+		return nil, errors.System.Newf("cannot bind local recording repository format: %w", err)
 	}
 	for _, path := range []string{result.activePath, result.sealedPath, result.workPath, result.quarantinePath} {
 		if err := ensureLocalDirectory(path); err != nil {
@@ -288,7 +296,7 @@ func (this *localRepository[Head, Summary]) createActive(ctx context.Context, he
 	removeWork := true
 	defer func() {
 		if removeWork {
-			_ = os.RemoveAll(workDirectory)
+			_ = removeAccountedLocalTree(workDirectory, this.quota)
 		}
 	}()
 	contentPath := filepath.Join(workDirectory, this.format.contentFileName())
@@ -302,7 +310,7 @@ func (this *localRepository[Head, Summary]) createActive(ctx context.Context, he
 			_ = file.Close()
 		}
 	}()
-	writer, err := this.format.newWriter(file, header, metadata, chunkSize)
+	writer, err := this.format.newWriter(accountLocalFile(file, this.quota), header, metadata, chunkSize)
 	if err != nil {
 		return nil, err
 	}
@@ -317,7 +325,7 @@ func (this *localRepository[Head, Summary]) createActive(ctx context.Context, he
 	if err != nil {
 		return nil, err
 	}
-	if err := writeLocalHead(workDirectory, head); err != nil {
+	if err := writeLocalHead(workDirectory, head, this.quota); err != nil {
 		return nil, errors.System.Newf("cannot persist initial recording head: %w", err)
 	}
 	if err := syncLocalDirectory(workDirectory); err != nil {
@@ -354,7 +362,7 @@ func (this *localRepository[Head, Summary]) createActive(ctx context.Context, he
 	if err := this.format.verifyActiveCheckpoint(file, reopenedInfo.Size(), checkpoint, context.Background()); err != nil {
 		return nil, this.poisonLocked(err)
 	}
-	if err := writer.replaceOutput(file); err != nil {
+	if err := writer.replaceOutput(accountLocalFile(file, this.quota)); err != nil {
 		return nil, this.poisonLocked(err)
 	}
 	active := &localActive[Head, Summary]{
@@ -473,7 +481,7 @@ func (this *localActive[Head, Summary]) seal(elapsed time.Duration, result CastR
 	if _, err := this.repository.verifyPublished(target, sealedInfo, &head, context.Background()); err != nil {
 		return zero, this.poison(errors.System.Newf("cannot verify published recording: %w", err))
 	}
-	if err := os.Remove(this.headPath); err != nil {
+	if err := removeAccountedLocalFile(this.headPath, this.repository.quota); err != nil {
 		return zero, this.poison(errors.System.Newf("cannot remove active recording head: %w", err))
 	}
 	if err := os.Remove(this.directory); err != nil {
@@ -562,7 +570,7 @@ func (this *localActive[Head, Summary]) persistCheckpointLocked() error {
 	if err != nil {
 		return this.poison(err)
 	}
-	if err := writeLocalHead(this.directory, payload); err != nil {
+	if err := writeLocalHead(this.directory, payload, this.repository.quota); err != nil {
 		return this.poison(errors.System.Newf("cannot persist active recording head: %w", err))
 	}
 	return nil
@@ -844,7 +852,7 @@ func (this *localRepository[Head, Summary]) validateWorkDirectoryEntries(entries
 
 func (this *localRepository[Head, Summary]) prepareInterruptedWorkHead(directory string) (Head, error) {
 	var result Head
-	err := prepareInterruptedLocalHead(directory, this.format.maximumHeadBytes(), func(payload []byte) error {
+	err := prepareInterruptedLocalHead(directory, this.format.maximumHeadBytes(), this.quota, func(payload []byte) error {
 		decoded, decodeErr := this.format.decodeHead(payload)
 		if decodeErr != nil {
 			return invalidLocalArtifact(decodeErr)
@@ -860,7 +868,7 @@ func (this *localRepository[Head, Summary]) prepareInterruptedWorkHead(directory
 
 func (this *localRepository[Head, Summary]) prepareInterruptedHead(directory string) (Head, error) {
 	var result Head
-	err := prepareInterruptedLocalHead(directory, this.format.maximumHeadBytes(), func(payload []byte) error {
+	err := prepareInterruptedLocalHead(directory, this.format.maximumHeadBytes(), this.quota, func(payload []byte) error {
 		decoded, decodeErr := this.format.decodeHead(payload)
 		if decodeErr == nil {
 			result = decoded
@@ -958,7 +966,7 @@ func (this *localRepository[Head, Summary]) recoverActiveDirectory(ctx context.C
 	if err != nil {
 		return err
 	}
-	result, recoveryErr := this.format.recover(file, head, time.Now().UTC(), ctx)
+	result, recoveryErr := this.format.recover(accountLocalFile(file, this.quota), head, time.Now().UTC(), ctx)
 	if recoveryErr != nil {
 		_ = file.Close()
 		return recoveryErr
@@ -1044,7 +1052,7 @@ func (this *localRepository[Head, Summary]) completePublishedRecovery(ctx contex
 	if this.format.summaryId(summary) != id {
 		return errors.System.Newf("sealed recording identity does not match its active directory")
 	}
-	if err := os.Remove(headPath); err != nil && !stderrors.Is(err, fs.ErrNotExist) {
+	if err := removeAccountedLocalFile(headPath, this.quota); err != nil && !stderrors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	if err := os.Remove(directory); err != nil {
@@ -1061,7 +1069,7 @@ func (this *localRepository[Head, Summary]) publishRecovered(ctx context.Context
 	if _, err := this.verifyPublished(target, sealedInfo, head, ctx); err != nil {
 		return err
 	}
-	if err := os.Remove(headPath); err != nil {
+	if err := removeAccountedLocalFile(headPath, this.quota); err != nil {
 		return err
 	}
 	if err := os.Remove(directory); err != nil {

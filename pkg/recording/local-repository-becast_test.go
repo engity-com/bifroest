@@ -19,7 +19,7 @@ func TestLocalBECastRepositoryCreateCheckpointAndSeal(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "recordings")
 	identity, header, metadata := castTestValues(t, true)
 	recipient, identities := newBECastTestEncryption(t)
-	repository, err := NewLocalBECastRepository(t.Context(), root, identity, recipient, BECastVerifyOptions{})
+	repository, err := NewLocalBECastRepository(t.Context(), root, identity, recipient, BECastVerifyOptions{}, localRepositoryTestOptions)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, repository.Close()) })
 	active, err := repository.CreateActive(t.Context(), header, metadata, 300)
@@ -61,7 +61,7 @@ func TestLocalBECastRepositoryCreateCheckpointAndSeal(t *testing.T) {
 
 func TestLocalBECastRepositoryRecoversClosedActive(t *testing.T) {
 	root, identity, recipient, identities, metadata := closedActiveLocalBECastTestRepository(t)
-	reopened, err := NewLocalBECastRepository(t.Context(), root, identity, recipient, BECastVerifyOptions{})
+	reopened, err := NewLocalBECastRepository(t.Context(), root, identity, recipient, BECastVerifyOptions{}, localRepositoryTestOptions)
 	require.NoError(t, err)
 	recoveries := reopened.StartupRecoveries()
 	require.Len(t, recoveries, 1)
@@ -93,7 +93,7 @@ func TestLocalBECastRepositoryRecoversCommittedWorkDirectory(t *testing.T) {
 	workDirectory := filepath.Join(root, localWorkDirectory, metadata.RecordingId.String()+".tmp")
 	require.NoError(t, os.Rename(activeDirectory, workDirectory))
 
-	repository, err := NewLocalBECastRepository(t.Context(), root, identity, recipient, BECastVerifyOptions{})
+	repository, err := NewLocalBECastRepository(t.Context(), root, identity, recipient, BECastVerifyOptions{}, localRepositoryTestOptions)
 	require.NoError(t, err)
 	require.Len(t, repository.StartupRecoveries(), 1)
 	require.NoError(t, repository.Close())
@@ -113,7 +113,7 @@ func TestLocalBECastRepositoryWrongRecipientFailsWithoutMutation(t *testing.T) {
 	require.NoError(t, err)
 	wrongRecipient, _ := newBECastTestEncryptionWithByte(t, 0x71)
 
-	_, err = NewLocalBECastRepository(t.Context(), root, identity, wrongRecipient, BECastVerifyOptions{})
+	_, err = NewLocalBECastRepository(t.Context(), root, identity, wrongRecipient, BECastVerifyOptions{}, localRepositoryTestOptions)
 	require.ErrorContains(t, err, "recipient does not match")
 	contentAfter, readErr := os.ReadFile(contentPath)
 	require.NoError(t, readErr)
@@ -138,7 +138,7 @@ func TestLocalBECastRepositoryWrongRecipientLeavesCommittedWorkUnchanged(t *test
 	require.NoError(t, err)
 	wrongRecipient, _ := newBECastTestEncryptionWithByte(t, 0x71)
 
-	_, err = NewLocalBECastRepository(t.Context(), root, identity, wrongRecipient, BECastVerifyOptions{})
+	_, err = NewLocalBECastRepository(t.Context(), root, identity, wrongRecipient, BECastVerifyOptions{}, localRepositoryTestOptions)
 	require.ErrorContains(t, err, "recipient does not match")
 	require.True(t, bferrors.Config.IsErr(err))
 	require.DirExists(t, workDirectory)
@@ -156,7 +156,7 @@ func TestLocalBECastRepositoryAllowsRecipientChanges(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "recordings")
 	identity, header, metadata := castTestValues(t, true)
 	firstRecipient, _ := newBECastTestEncryption(t)
-	first, err := NewLocalBECastRepository(t.Context(), root, identity, firstRecipient, BECastVerifyOptions{})
+	first, err := NewLocalBECastRepository(t.Context(), root, identity, firstRecipient, BECastVerifyOptions{}, localRepositoryTestOptions)
 	require.NoError(t, err)
 	active, err := first.CreateActive(t.Context(), header, metadata, 300)
 	require.NoError(t, err)
@@ -166,7 +166,7 @@ func TestLocalBECastRepositoryAllowsRecipientChanges(t *testing.T) {
 	require.NoError(t, first.Close())
 
 	secondRecipient, _ := newBECastTestEncryptionWithByte(t, 0x71)
-	second, err := NewLocalBECastRepository(t.Context(), root, identity, secondRecipient, BECastVerifyOptions{})
+	second, err := NewLocalBECastRepository(t.Context(), root, identity, secondRecipient, BECastVerifyOptions{}, localRepositoryTestOptions)
 	require.NoError(t, err)
 	metadata.RecordingId, err = NewId()
 	require.NoError(t, err)
@@ -189,7 +189,7 @@ func TestLocalBECastRepositoryQuarantinesInvalidCommittedWork(t *testing.T) {
 		return head
 	})
 
-	repository, err := NewLocalBECastRepository(t.Context(), root, identity, recipient, BECastVerifyOptions{})
+	repository, err := NewLocalBECastRepository(t.Context(), root, identity, recipient, BECastVerifyOptions{}, localRepositoryTestOptions)
 	require.NoError(t, err)
 	require.Empty(t, repository.StartupRecoveries())
 	require.NoError(t, repository.Close())
@@ -210,7 +210,7 @@ func TestLocalBECastRepositoryRestrictiveLimitsDoNotQuarantineValidWork(t *testi
 		MaximumContainerBytes: 1,
 		MaximumCastBytes:      1,
 		MaximumChunks:         1,
-	})
+	}, localRepositoryTestOptions)
 	require.Error(t, err)
 	require.NoDirExists(t, workDirectory)
 	require.DirExists(t, activeDirectory)
@@ -351,7 +351,7 @@ func TestNewLocalBECastRepositoryRejectsNilDependencies(t *testing.T) {
 		{recipient: recipient},
 		{identity: identity},
 	} {
-		_, err := NewLocalBECastRepository(t.Context(), root, current.identity, current.recipient, BECastVerifyOptions{})
+		_, err := NewLocalBECastRepository(t.Context(), root, current.identity, current.recipient, BECastVerifyOptions{}, localRepositoryTestOptions)
 		require.Error(t, err)
 		require.True(t, bferrors.Config.IsErr(err))
 	}
@@ -362,7 +362,7 @@ func closedActiveLocalBECastTestRepository(t *testing.T) (string, *audit.Identit
 	root := filepath.Join(t.TempDir(), "recordings")
 	identity, header, metadata := castTestValues(t, true)
 	recipient, identities := newBECastTestEncryption(t)
-	repository, err := NewLocalBECastRepository(t.Context(), root, identity, recipient, BECastVerifyOptions{})
+	repository, err := NewLocalBECastRepository(t.Context(), root, identity, recipient, BECastVerifyOptions{}, localRepositoryTestOptions)
 	require.NoError(t, err)
 	active, err := repository.CreateActive(t.Context(), header, metadata, 300)
 	require.NoError(t, err)
@@ -382,5 +382,5 @@ func replaceLocalBECastTestHead(t *testing.T, directory string, mutate func(audi
 	payload, err = encodeBECastHead(mutate(head))
 	require.NoError(t, err)
 	require.NoError(t, os.Remove(path))
-	require.NoError(t, writeLocalHead(directory, payload))
+	require.NoError(t, writeLocalHead(directory, payload, nil))
 }
