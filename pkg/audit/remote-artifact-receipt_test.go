@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,7 +21,7 @@ import (
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 )
 
-func TestRemoteArtifactReceiptV1Golden(t *testing.T) {
+func TestRemoteArtifactReceiptV2Golden(t *testing.T) {
 	seed, err := hex.DecodeString("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
 	require.NoError(t, err)
 	privateKey, err := bfcrypto.PrivateKeyFromSdk(ed25519.NewKeyFromSeed(seed))
@@ -34,7 +35,8 @@ func TestRemoteArtifactReceiptV1Golden(t *testing.T) {
 	}}}
 	_, payload, err := newRemoteArtifactReceipt(identity, "security", artifact, time.Date(2026, 9, 16, 10, 11, 12, 123456789, time.UTC), targets)
 	require.NoError(t, err)
-	require.Equal(t, `{"schema":"bifroest.session-recording-remote-delivery-receipt/v1","producerId":"95b9aca00d322047048950d19cc5aece6fa757edd9104a5521446a168792b298","auditlog":"security","fileName":"6ba7b810-9dad-4d1f-80b4-00c04fd430c8.cast.zst","artifactDigest":"8f378e26270fb650fc2348c00c5eaa5eec5619701fcc9df7a37339c72a94f99e","size":17,"sealedAt":"2026-09-16T10:11:12.123456789Z","targets":[{"target":"archive","destinationFingerprint":"455f66aa923a6e606b41cc026d282910db49378997342add8b68a5fa8406569c"}],"publicKey":"AAAAC3NzaC1lZDI1NTE5AAAAIAOhB7/zzhC+HXDdGOdLwJln5NYwm6UNXx3chmQSVTG4","signature":"6meFVYNwugBc6Zb8EkNWaTg32mhkYIPjsZfamtgAWoXi8cgVRUelujK/lIZEqL4lSAO2HY5+uEGTTXhZ26tiCw=="}`, string(payload))
+	expected := fmt.Sprintf(`{"schema":"bifroest.session-recording-remote-delivery-receipt/v2","producerId":"95b9aca00d322047048950d19cc5aece6fa757edd9104a5521446a168792b298","auditlog":"security","fileName":"6ba7b810-9dad-4d1f-80b4-00c04fd430c8.cast.zst","artifactDigest":"8f378e26270fb650fc2348c00c5eaa5eec5619701fcc9df7a37339c72a94f99e","size":17,"sealedAt":"2026-09-16T10:11:12.123456789Z","targets":[{"target":"archive","destinationFingerprint":"455f66aa923a6e606b41cc026d282910db49378997342add8b68a5fa8406569c"}],"publicKey":"AAAAC3NzaC1lZDI1NTE5AAAAIAOhB7/zzhC+HXDdGOdLwJln5NYwm6UNXx3chmQSVTG4","statePadding":"%s","signature":"USkKoxu1wImQOjga1px9WFsz1IkIXp6ZN4c1hzS0Ab1ehU5UCd6Qq/Xe66Zz+jmeBO5amMjgolYpPqg9uf8gAA=="}`, strings.Repeat("0", remoteArtifactReceiptStateReserveBytes))
+	require.Equal(t, expected, string(payload))
 }
 
 func TestRemoteArtifactReceiptIsCanonicalSignedAndRetainedAfterAllTargets(t *testing.T) {
@@ -62,13 +64,15 @@ func TestRemoteArtifactReceiptIsCanonicalSignedAndRetainedAfterAllTargets(t *tes
 	decoded, _, changed, err := acknowledgeRemoteArtifactReceipt(identity, decoded, targets.entries[0], firstAt)
 	require.NoError(t, err)
 	require.True(t, changed)
+	decoded, _ = remoteArtifactReceiptTestMarkSuccessAudited(t, identity, decoded, 0, firstAt)
 	_, ready = decoded.retentionStartedAt()
 	require.False(t, ready)
 
 	secondAt := sealedAt.Add(2 * time.Minute)
-	decoded, payload, changed, err = acknowledgeRemoteArtifactReceipt(identity, decoded, targets.entries[1], secondAt)
+	decoded, _, changed, err = acknowledgeRemoteArtifactReceipt(identity, decoded, targets.entries[1], secondAt)
 	require.NoError(t, err)
 	require.True(t, changed)
+	decoded, payload = remoteArtifactReceiptTestMarkSuccessAudited(t, identity, decoded, 1, secondAt)
 	retentionStartedAt, ready := decoded.retentionStartedAt()
 	require.True(t, ready)
 	require.Equal(t, secondAt, retentionStartedAt)
@@ -104,6 +108,66 @@ func TestRemoteArtifactReceiptWithoutTargetsStartsRetentionAtSeal(t *testing.T) 
 	retentionStartedAt, ready := receipt.retentionStartedAt()
 	require.True(t, ready)
 	require.Equal(t, sealedAt, retentionStartedAt)
+}
+
+func TestRemoteArtifactReceiptPersistsDeliveryAuditOutboxAcrossRestart(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	root := t.TempDir()
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b821-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))
+	entry := remoteArtifactDeliveryTestEntry("archive", remoteArtifactDeliveryTestFingerprint("archive"), nil)
+	targets := remoteArtifactDeliveryTestTargets(entry)
+	store, err := newRemoteArtifactReceiptStore(root, identity, "security", nil)
+	require.NoError(t, err)
+	sealedAt := time.Now().UTC().Add(-time.Minute)
+	_, err = store.initialize(artifact, sealedAt, targets)
+	require.NoError(t, err)
+
+	failed, pending, err := store.beginDeliveryFailure(t.Context(), artifact.FileName(), entry, ErrorCategoryNetwork, sealedAt.Add(time.Second))
+	require.NoError(t, err)
+	require.True(t, pending)
+	require.Equal(t, RemoteArtifactDeliveryAuditFailed, failed.State)
+	require.Equal(t, ErrorCategoryNetwork, failed.ErrorCategory)
+	require.NotEmpty(t, failed.OperationId)
+	status, err := store.targetStatus(t.Context(), artifact.FileName(), entry)
+	require.NoError(t, err)
+	require.Equal(t, remoteArtifactReceiptTargetFailureAuditPending, status)
+
+	require.NoError(t, store.completeDeliveryAudit(t.Context(), failed, sealedAt.Add(2*time.Second)))
+	status, err = store.targetStatus(t.Context(), artifact.FileName(), entry)
+	require.NoError(t, err)
+	require.Equal(t, remoteArtifactReceiptTargetPending, status)
+	_, pending, err = store.beginDeliveryFailure(t.Context(), artifact.FileName(), entry, ErrorCategorySystem, sealedAt.Add(3*time.Second))
+	require.NoError(t, err)
+	require.False(t, pending)
+
+	acknowledgedAt := sealedAt.Add(4 * time.Second)
+	acknowledged, err := store.acknowledge(t.Context(), artifact, entry, acknowledgedAt)
+	require.NoError(t, err)
+	_, ready := acknowledged.retentionStartedAt()
+	require.False(t, ready)
+	status, err = store.targetStatus(t.Context(), artifact.FileName(), entry)
+	require.NoError(t, err)
+	require.Equal(t, remoteArtifactReceiptTargetSuccessAuditPending, status)
+	require.NoError(t, store.close())
+
+	restarted, err := newRemoteArtifactReceiptStore(root, identity, "security", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restarted.close()) })
+	succeeded, pending, err := restarted.pendingDeliveryAudit(t.Context(), artifact.FileName(), entry)
+	require.NoError(t, err)
+	require.True(t, pending)
+	require.Equal(t, RemoteArtifactDeliveryAuditSucceeded, succeeded.State)
+	require.Equal(t, failed.OperationId, succeeded.OperationId)
+	require.NoError(t, restarted.completeDeliveryAudit(t.Context(), succeeded, acknowledgedAt.Add(time.Second)))
+	status, err = restarted.targetStatus(t.Context(), artifact.FileName(), entry)
+	require.NoError(t, err)
+	require.Equal(t, remoteArtifactReceiptTargetAcknowledged, status)
+	completed, exists, err := restarted.load(artifact)
+	require.NoError(t, err)
+	require.True(t, exists)
+	retentionStartedAt, ready := completed.retentionStartedAt()
+	require.True(t, ready)
+	require.Equal(t, acknowledgedAt, retentionStartedAt)
 }
 
 func TestRemoteArtifactReceiptStoreRecoversOnlyMonotonicAcknowledgement(t *testing.T) {
@@ -151,6 +215,45 @@ func TestRemoteArtifactReceiptStoreRecoversOnlyMonotonicAcknowledgement(t *testi
 	_, conflictingPayload, err := signRemoteArtifactReceipt(identity, conflictingContent)
 	require.NoError(t, err)
 	require.NoError(t, writeRemoteArtifactReceiptTestFile(temporary, conflictingPayload))
+	_, _, err = store.load(artifact)
+	require.ErrorContains(t, err, "conflicts with its published receipt")
+}
+
+func TestRemoteArtifactReceiptStoreRecoversMonotonicDeliveryAuditState(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	root := t.TempDir()
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b822-9dad-4d1f-80b4-00c04fd430c8.becast", []byte("recording"))
+	entry := remoteArtifactDeliveryTestEntry("archive", remoteArtifactDeliveryTestFingerprint("archive"), nil)
+	store, err := newRemoteArtifactReceiptStore(root, identity, "security", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.close()) })
+	sealedAt := time.Now().UTC().Add(-time.Minute)
+	initial, err := store.initialize(artifact, sealedAt, remoteArtifactDeliveryTestTargets(entry))
+	require.NoError(t, err)
+
+	content := initial.remoteArtifactReceiptContent
+	content.Targets = append([]remoteArtifactReceiptTarget(nil), initial.Targets...)
+	content.Targets[0].AuditOperationId = "6d05798f-b877-4191-8aa0-4576a30411ad"
+	content.Targets[0].FailedAt = sealedAt.Add(time.Second).Format(time.RFC3339Nano)
+	content.Targets[0].FailureErrorCategory = ErrorCategoryNetwork
+	expected, payload, err := signRemoteArtifactReceipt(identity, content)
+	require.NoError(t, err)
+	directory := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName()))
+	temporary := filepath.Join(directory, remoteArtifactReceiptTempFileName)
+	require.NoError(t, writeRemoteArtifactReceiptTestFile(temporary, payload))
+	require.NoError(t, (&RemoteArtifactReceipts{store: store}).Recover(t.Context()))
+	recovered, exists, err := store.load(artifact)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, expected, recovered)
+	require.NoFileExists(t, temporary)
+
+	conflicting := recovered.remoteArtifactReceiptContent
+	conflicting.Targets = append([]remoteArtifactReceiptTarget(nil), recovered.Targets...)
+	conflicting.Targets[0].FailedAt = sealedAt.Add(2 * time.Second).Format(time.RFC3339Nano)
+	_, payload, err = signRemoteArtifactReceipt(identity, conflicting)
+	require.NoError(t, err)
+	require.NoError(t, writeRemoteArtifactReceiptTestFile(temporary, payload))
 	_, _, err = store.load(artifact)
 	require.ErrorContains(t, err, "conflicts with its published receipt")
 }
@@ -204,12 +307,14 @@ func TestRemoteArtifactReceiptRetentionRequiresEveryAcknowledgementAndRemovesSta
 	sealedAt := time.Date(2026, 9, 16, 14, 0, 0, 0, time.UTC)
 	require.NoError(t, receipts.Prepare(t.Context(), artifact, sealedAt))
 	require.NoError(t, receipts.Acknowledge(t.Context(), artifact, "first", sealedAt.Add(time.Minute)))
+	completeRemoteArtifactReceiptTestSuccess(t, store, artifact.FileName(), targets.entries[0], sealedAt.Add(time.Minute))
 	candidates, err := receipts.ListRetentionCandidates(t.Context(), sealedAt.Add(time.Hour))
 	require.NoError(t, err)
 	require.Empty(t, candidates)
 
 	acknowledgedAt := sealedAt.Add(2 * time.Minute)
 	require.NoError(t, receipts.Acknowledge(t.Context(), artifact, "second", acknowledgedAt))
+	completeRemoteArtifactReceiptTestSuccess(t, store, artifact.FileName(), targets.entries[1], acknowledgedAt)
 	candidates, err = receipts.ListRetentionCandidates(t.Context(), acknowledgedAt.Add(-time.Nanosecond))
 	require.NoError(t, err)
 	require.Empty(t, candidates)
@@ -255,7 +360,7 @@ func TestRemoteArtifactReceiptRetentionWithoutTargetsStartsWhenSealed(t *testing
 	require.Equal(t, sealedAt, candidates[0].RetentionStartedAt)
 }
 
-func TestRemoteArtifactReceiptsAcknowledgeAtStableQuotaLimit(t *testing.T) {
+func TestRemoteArtifactReceiptAuditTransitionsAtStableQuotaLimit(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
 	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b818-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))
 	targets := &RemoteArtifactTargets{entries: []remoteArtifactTargetEntry{{
@@ -269,15 +374,63 @@ func TestRemoteArtifactReceiptsAcknowledgeAtStableQuotaLimit(t *testing.T) {
 	sealedAt := time.Date(2026, 9, 16, 12, 45, 0, 0, time.UTC)
 	initial, err := store.initialize(artifact, sealedAt, targets)
 	require.NoError(t, err)
-	_, acknowledgedPayload, changed, err := acknowledgeRemoteArtifactReceipt(identity, initial, targets.entries[0], sealedAt.Add(time.Minute))
+	directory := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName()))
+	initialUsage, err := remoteArtifactReceiptStateUsage(directory)
 	require.NoError(t, err)
-	require.True(t, changed)
-	growth := uint64(len(acknowledgedPayload)) - quota.usage
-	quota.maximum = quota.usage + growth
+	require.Equal(t, quota.usage, uint64(initialUsage))
+	quota.maximum = quota.usage
 
-	_, err = store.acknowledge(t.Context(), artifact, targets.entries[0], sealedAt.Add(time.Minute))
+	assertStableUsage := func() {
+		t.Helper()
+		usage, err := remoteArtifactReceiptStateUsage(directory)
+		require.NoError(t, err)
+		require.Equal(t, initialUsage, usage)
+		require.Equal(t, quota.maximum, quota.usage)
+		require.Equal(t, quota.usage, quota.peak)
+	}
+
+	failed, pending, err := store.beginDeliveryFailure(t.Context(), artifact.FileName(), targets.entries[0], ErrorCategoryNetwork, sealedAt.Add(time.Minute))
 	require.NoError(t, err)
-	require.Equal(t, quota.maximum, quota.usage)
+	require.True(t, pending)
+	assertStableUsage()
+	require.NoError(t, store.completeDeliveryAudit(t.Context(), failed, sealedAt.Add(2*time.Minute)))
+	assertStableUsage()
+
+	_, err = store.acknowledge(t.Context(), artifact, targets.entries[0], sealedAt.Add(3*time.Minute))
+	require.NoError(t, err)
+	assertStableUsage()
+	succeeded, pending, err := store.pendingDeliveryAudit(t.Context(), artifact.FileName(), targets.entries[0])
+	require.NoError(t, err)
+	require.True(t, pending)
+	require.Equal(t, RemoteArtifactDeliveryAuditSucceeded, succeeded.State)
+	require.NoError(t, store.completeDeliveryAudit(t.Context(), succeeded, sealedAt.Add(4*time.Minute)))
+	assertStableUsage()
+
+	completed, exists, err := store.load(artifact)
+	require.NoError(t, err)
+	require.True(t, exists)
+	_, ready := completed.retentionStartedAt()
+	require.True(t, ready)
+	require.NotEqual(t, initial, completed)
+}
+
+func remoteArtifactReceiptTestMarkSuccessAudited(t *testing.T, identity *Identity, receipt remoteArtifactReceipt, index int, auditedAt time.Time) (remoteArtifactReceipt, []byte) {
+	t.Helper()
+	content := receipt.remoteArtifactReceiptContent
+	content.Targets = append([]remoteArtifactReceiptTarget(nil), receipt.Targets...)
+	content.Targets[index].SuccessAuditedAt = auditedAt.Format(time.RFC3339Nano)
+	updated, payload, err := signRemoteArtifactReceipt(identity, content)
+	require.NoError(t, err)
+	return updated, payload
+}
+
+func completeRemoteArtifactReceiptTestSuccess(t *testing.T, store *remoteArtifactReceiptStore, fileName string, entry remoteArtifactTargetEntry, auditedAt time.Time) {
+	t.Helper()
+	event, pending, err := store.pendingDeliveryAudit(t.Context(), fileName, entry)
+	require.NoError(t, err)
+	require.True(t, pending)
+	require.Equal(t, RemoteArtifactDeliveryAuditSucceeded, event.State)
+	require.NoError(t, store.completeDeliveryAudit(t.Context(), event, auditedAt))
 }
 
 func TestRemoteArtifactReceiptsRejectsReceiptBeyondQuota(t *testing.T) {

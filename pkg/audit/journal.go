@@ -326,10 +326,13 @@ func validateAuditEvent(event Event) error {
 	if event.SessionTask != "" && event.SessionTask != SessionTaskShell && event.SessionTask != SessionTaskExec && event.SessionTask != SessionTaskSftp {
 		return errors.System.Newf("unknown audit session task %q", event.SessionTask)
 	}
-	if event.ErrorCategory != "" && event.ErrorCategory != ErrorCategoryUnknown && event.ErrorCategory != ErrorCategorySystem &&
-		event.ErrorCategory != ErrorCategoryConfig && event.ErrorCategory != ErrorCategoryNetwork && event.ErrorCategory != ErrorCategoryUser &&
-		event.ErrorCategory != ErrorCategoryPermission && event.ErrorCategory != ErrorCategoryExpired {
+	if event.ErrorCategory != "" && !isErrorCategory(event.ErrorCategory) {
 		return errors.System.Newf("unknown audit error category %q", event.ErrorCategory)
+	}
+	if event.Target != "" {
+		if err := event.Target.Validate(); err != nil {
+			return errors.System.Newf("illegal audit event target: %w", err)
+		}
 	}
 	if err := validateAuditFlow(event.Flow); err != nil {
 		return err
@@ -379,7 +382,10 @@ func validateAuditEventForWrite(event Event) error {
 	if err := validateAuditEvent(event); err != nil {
 		return err
 	}
-	return validateSessionRecordingAuditEvent(event)
+	if err := validateSessionRecordingAuditEvent(event); err != nil {
+		return err
+	}
+	return validateSessionRecordingDeliveryAuditEvent(event)
 }
 
 func validateSessionRecordingAuditEvent(event Event) error {
@@ -395,7 +401,7 @@ func validateSessionRecordingAuditEvent(event Event) error {
 		return errors.System.Newf("session recording audit event has illegal task %q", event.SessionTask)
 	}
 	if event.AuthenticationMethod != "" || event.AuthenticationPhase != "" || event.AuthorizationKind != "" ||
-		event.BytesRead != nil || event.BytesWritten != nil || event.Count != nil || event.AgentForwarding != nil || event.ForcedCommand != nil {
+		event.Target != "" || event.BytesRead != nil || event.BytesWritten != nil || event.Count != nil || event.AgentForwarding != nil || event.ForcedCommand != nil {
 		return errors.System.Newf("session recording audit event has unrelated fields")
 	}
 	switch event.Name {
@@ -430,6 +436,36 @@ func validateSessionRecordingAuditEvent(event Event) error {
 		}
 	}
 	return nil
+}
+
+func validateSessionRecordingDeliveryAuditEvent(event Event) error {
+	switch event.Name {
+	case EventNameSessionRecordingDeliveryFailed, EventNameSessionRecordingDeliverySucceeded:
+	default:
+		return nil
+	}
+	if event.Domain != EventDomainSession || event.OperationId == "" || event.RecordingId == "" || event.Target == "" {
+		return errors.System.Newf("session recording delivery audit event lacks required correlation fields")
+	}
+	if event.Flow != "" || event.ConnectionId != "" || event.SessionId != "" || event.RecordingDigest != "" ||
+		event.AuthenticationMethod != "" || event.AuthenticationPhase != "" || event.AuthorizationKind != "" || event.SessionTask != "" ||
+		event.Reason != "" || event.ExitCode != nil || event.BytesRead != nil || event.BytesWritten != nil || event.DurationMillis != nil ||
+		event.Count != nil || event.Pty != nil || event.AgentForwarding != nil || event.ForcedCommand != nil {
+		return errors.System.Newf("session recording delivery audit event has unrelated fields")
+	}
+	if event.Name == EventNameSessionRecordingDeliveryFailed {
+		if event.Outcome != EventOutcomeFailure || event.ErrorCategory == "" {
+			return errors.System.Newf("session recording delivery failed audit event lacks required failure fields")
+		}
+	} else if event.Outcome != EventOutcomeSuccess || event.ErrorCategory != "" {
+		return errors.System.Newf("session recording delivery succeeded audit event has illegal outcome fields")
+	}
+	return nil
+}
+
+func isErrorCategory(value ErrorCategory) bool {
+	return value == ErrorCategoryUnknown || value == ErrorCategorySystem || value == ErrorCategoryConfig || value == ErrorCategoryNetwork ||
+		value == ErrorCategoryUser || value == ErrorCategoryPermission || value == ErrorCategoryExpired
 }
 
 func validateAuditFlow(value string) error {

@@ -41,6 +41,7 @@ type remoteArtifactDeliveryOptions struct {
 	newWatcher     func() (*fsnotify.Watcher, error)
 	addWatch       func(*fsnotify.Watcher, string) error
 	acknowledge    func(context.Context, *remoteArtifactReceiptStore, RemoteArtifact, remoteArtifactTargetEntry, time.Time) error
+	auditor        RemoteArtifactDeliveryAuditor
 }
 
 func defaultRemoteArtifactDeliveryOptions() remoteArtifactDeliveryOptions {
@@ -59,6 +60,26 @@ func defaultRemoteArtifactDeliveryOptions() remoteArtifactDeliveryOptions {
 			return err
 		},
 	}
+}
+
+type RemoteArtifactDeliveryAuditState string
+
+const (
+	RemoteArtifactDeliveryAuditFailed    RemoteArtifactDeliveryAuditState = "failed"
+	RemoteArtifactDeliveryAuditSucceeded RemoteArtifactDeliveryAuditState = "succeeded"
+)
+
+type RemoteArtifactDeliveryAuditEvent struct {
+	State                  RemoteArtifactDeliveryAuditState
+	Scope                  RemoteTargetScope
+	FileName               string
+	OperationId            string
+	ErrorCategory          ErrorCategory
+	destinationFingerprint remoteDeliveryDestinationFingerprint
+}
+
+type RemoteArtifactDeliveryAuditor interface {
+	RecordRemoteArtifactDelivery(context.Context, RemoteArtifactDeliveryAuditEvent) error
 }
 
 // RemoteArtifactDelivery owns one independent, sequential artifact delivery
@@ -94,11 +115,17 @@ type remoteArtifactDeliveryWorker struct {
 	discoveryWake chan struct{}
 	progress      chan<- struct{}
 	pending       *remoteArtifactDeliveryPending
+	auditPending  *remoteArtifactDeliveryAuditPending
 }
 
 type remoteArtifactDeliveryPending struct {
 	artifact       RemoteArtifact
 	acknowledgedAt time.Time
+}
+
+type remoteArtifactDeliveryAuditPending struct {
+	event    RemoteArtifactDeliveryAuditEvent
+	recorded bool
 }
 
 type remoteArtifactDeliveryFlushGoal struct {
@@ -109,8 +136,13 @@ type remoteArtifactDeliveryFlushGoal struct {
 // NewRemoteArtifactDelivery prepares asynchronous delivery for a sealed source.
 // The coordinator owns targets after a successful return, but does not own the
 // source or receipt store.
-func NewRemoteArtifactDelivery(ctx context.Context, sealedDirectory string, source RemoteArtifactSource, receipts *RemoteArtifactReceipts, targets *RemoteArtifactTargets) (*RemoteArtifactDelivery, error) {
-	return newRemoteArtifactDelivery(ctx, sealedDirectory, source, receipts, targets, defaultRemoteArtifactDeliveryOptions())
+func NewRemoteArtifactDelivery(ctx context.Context, sealedDirectory string, source RemoteArtifactSource, receipts *RemoteArtifactReceipts, targets *RemoteArtifactTargets, auditor RemoteArtifactDeliveryAuditor) (*RemoteArtifactDelivery, error) {
+	if isNilRemoteValue(auditor) {
+		return nil, errors.Config.Newf("nil remote artifact delivery auditor")
+	}
+	options := defaultRemoteArtifactDeliveryOptions()
+	options.auditor = auditor
+	return newRemoteArtifactDelivery(ctx, sealedDirectory, source, receipts, targets, options)
 }
 
 func newRemoteArtifactDelivery(ctx context.Context, sealedDirectory string, source RemoteArtifactSource, receipts *RemoteArtifactReceipts, targets *RemoteArtifactTargets, options remoteArtifactDeliveryOptions) (*RemoteArtifactDelivery, error) {
@@ -210,7 +242,7 @@ func validateRemoteArtifactDeliverySnapshots(ctx context.Context, source RemoteA
 			return err
 		}
 		for _, receiptTarget := range selected {
-			if receiptTarget.AcknowledgedAt != "" {
+			if receiptTarget.AcknowledgedAt != "" && receiptTarget.SuccessAuditedAt != "" {
 				continue
 			}
 			entry, exists := byTarget[receiptTarget.Target]
@@ -369,7 +401,7 @@ func (this *RemoteArtifactDelivery) flushGoals(ctx context.Context, workers []*r
 			return nil, err
 		}
 		for _, receiptTarget := range selected {
-			if receiptTarget.AcknowledgedAt != "" {
+			if receiptTarget.AcknowledgedAt != "" && receiptTarget.SuccessAuditedAt != "" {
 				continue
 			}
 			entry, exists := byTarget[receiptTarget.Target]
@@ -398,6 +430,18 @@ func (this *remoteArtifactDeliveryWorker) run(ctx context.Context) {
 				}
 				failures++
 				if !this.waitAfterFailure(ctx, failures, this.pending.artifact.FileName(), err) {
+					return
+				}
+				continue
+			}
+		}
+		if this.auditPending != nil {
+			if err := this.completeAuditPending(ctx); err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				failures++
+				if !this.waitAfterFailure(ctx, failures, this.auditPending.event.FileName, err) {
 					return
 				}
 				continue
@@ -446,29 +490,47 @@ func (this *remoteArtifactDeliveryWorker) deliver(ctx context.Context, name stri
 	if err != nil {
 		return err
 	}
+	if status == remoteArtifactReceiptTargetFailureAuditPending {
+		if err := this.resumePendingAudit(ctx, name); err != nil {
+			return err
+		}
+		status = remoteArtifactReceiptTargetPending
+	}
+	if status == remoteArtifactReceiptTargetSuccessAuditPending {
+		return this.resumePendingAudit(ctx, name)
+	}
 	if status != remoteArtifactReceiptTargetPending {
 		return nil
 	}
 	handle, err := this.source.OpenSealedArtifact(ctx, name)
 	if err != nil {
-		return errors.System.Newf("cannot open sealed remote artifact %q: %w", name, err)
+		return this.failDelivery(ctx, name, errors.System.Newf("cannot open sealed remote artifact %q: %w", name, err))
 	}
 	if isNilRemoteValue(handle) {
-		return errors.System.Newf("remote artifact source returned a nil handle for %q", name)
+		return this.failDelivery(ctx, name, errors.System.Newf("remote artifact source returned a nil handle for %q", name))
 	}
 	closeHandle := closeRemoteArtifactHandleOnCancellation(ctx, handle)
 	artifact, artifactErr := handle.RemoteArtifact()
 	if artifactErr != nil {
-		return goerrors.Join(errors.System.Newf("cannot obtain sealed remote artifact %q: %w", name, artifactErr), closeHandle())
+		return this.failDelivery(ctx, name, goerrors.Join(errors.System.Newf("cannot obtain sealed remote artifact %q: %w", name, artifactErr), closeHandle()))
 	}
 	if artifact.FileName() != name {
-		return goerrors.Join(errors.Config.Newf("remote artifact source opened %q as %q", name, artifact.FileName()), closeHandle())
+		return this.failDelivery(ctx, name, goerrors.Join(errors.Config.Newf("remote artifact source opened %q as %q", name, artifact.FileName()), closeHandle()))
 	}
 	status, err = this.receipts.targetStatusForArtifact(ctx, artifact, this.entry)
 	if err != nil {
 		return goerrors.Join(err, closeHandle())
 	}
+	if status == remoteArtifactReceiptTargetFailureAuditPending {
+		if err := this.resumePendingAudit(ctx, name); err != nil {
+			return goerrors.Join(err, closeHandle())
+		}
+		status = remoteArtifactReceiptTargetPending
+	}
 	if status != remoteArtifactReceiptTargetPending {
+		if status == remoteArtifactReceiptTargetSuccessAuditPending {
+			return goerrors.Join(this.resumePendingAudit(ctx, name), closeHandle())
+		}
 		return closeHandle()
 	}
 	publishTarget := this.entry.publishTarget
@@ -485,7 +547,7 @@ func (this *remoteArtifactDeliveryWorker) deliver(ctx context.Context, name stri
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return goerrors.Join(publishErr, closeErr)
+		return this.failDelivery(ctx, name, goerrors.Join(publishErr, closeErr))
 	}
 	this.pending = &remoteArtifactDeliveryPending{artifact: artifact, acknowledgedAt: time.Now().UTC()}
 	if closeErr != nil {
@@ -501,9 +563,98 @@ func (this *remoteArtifactDeliveryWorker) acknowledgePending(ctx context.Context
 	if err := this.options.acknowledge(ctx, this.receipts, this.pending.artifact, this.entry, this.pending.acknowledgedAt); err != nil {
 		return err
 	}
+	fileName := this.pending.artifact.FileName()
 	this.pending = nil
+	if this.options.auditor != nil {
+		if err := this.resumePendingAudit(ctx, fileName); err != nil {
+			return err
+		}
+	}
 	notifyRemoteDelivery(this.progress)
 	return nil
+}
+
+func (this *remoteArtifactDeliveryWorker) failDelivery(ctx context.Context, name string, deliveryErr error) error {
+	if this.options.auditor == nil || ctx.Err() != nil {
+		return deliveryErr
+	}
+	event, pending, err := this.receipts.beginDeliveryFailure(ctx, name, this.entry, remoteArtifactDeliveryErrorCategory(deliveryErr), time.Now().UTC())
+	if err != nil {
+		return goerrors.Join(deliveryErr, err)
+	}
+	if !pending {
+		return deliveryErr
+	}
+	this.auditPending = &remoteArtifactDeliveryAuditPending{event: event}
+	if err := this.completeAuditPending(ctx); err != nil {
+		return goerrors.Join(deliveryErr, err)
+	}
+	return deliveryErr
+}
+
+func (this *remoteArtifactDeliveryWorker) resumePendingAudit(ctx context.Context, name string) error {
+	if this.options.auditor == nil {
+		return errors.Config.Newf("remote artifact delivery audit for %q is pending without an auditor", name)
+	}
+	event, pending, err := this.receipts.pendingDeliveryAudit(ctx, name, this.entry)
+	if err != nil || !pending {
+		return err
+	}
+	this.auditPending = &remoteArtifactDeliveryAuditPending{event: event}
+	return this.completeAuditPending(ctx)
+}
+
+func (this *remoteArtifactDeliveryWorker) completeAuditPending(ctx context.Context) error {
+	if this.auditPending == nil {
+		return nil
+	}
+	if !this.auditPending.recorded {
+		if err := this.options.auditor.RecordRemoteArtifactDelivery(ctx, this.auditPending.event); err != nil {
+			return err
+		}
+		this.auditPending.recorded = true
+	}
+	if err := this.receipts.completeDeliveryAudit(ctx, this.auditPending.event, time.Now().UTC()); err != nil {
+		return err
+	}
+	this.auditPending = nil
+	notifyRemoteDelivery(this.progress)
+	return nil
+}
+
+func newRemoteArtifactDeliveryAuditEvent(receipt remoteArtifactReceipt, target remoteArtifactReceiptTarget, state RemoteArtifactDeliveryAuditState) RemoteArtifactDeliveryAuditEvent {
+	result := RemoteArtifactDeliveryAuditEvent{
+		State:                  state,
+		Scope:                  RemoteTargetScope{Auditlog: receipt.Auditlog, Target: target.Target},
+		FileName:               receipt.FileName,
+		OperationId:            target.AuditOperationId,
+		destinationFingerprint: target.DestinationFingerprint,
+	}
+	if state == RemoteArtifactDeliveryAuditFailed {
+		result.ErrorCategory = target.FailureErrorCategory
+	}
+	return result
+}
+
+func remoteArtifactDeliveryErrorCategory(err error) ErrorCategory {
+	switch {
+	case goerrors.Is(err, context.DeadlineExceeded):
+		return ErrorCategoryNetwork
+	case errors.IsType(err, errors.System):
+		return ErrorCategorySystem
+	case errors.IsType(err, errors.Config):
+		return ErrorCategoryConfig
+	case errors.IsType(err, errors.Network):
+		return ErrorCategoryNetwork
+	case errors.IsType(err, errors.User):
+		return ErrorCategoryUser
+	case errors.IsType(err, errors.Permission):
+		return ErrorCategoryPermission
+	case errors.IsType(err, errors.Expired):
+		return ErrorCategoryExpired
+	default:
+		return ErrorCategoryUnknown
+	}
 }
 
 func (this *remoteArtifactDeliveryWorker) waitAfterFailure(ctx context.Context, failures uint, name string, err error) bool {

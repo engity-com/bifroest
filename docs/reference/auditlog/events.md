@@ -21,6 +21,7 @@ Every event has a `name`. All other fields are optional and are present only whe
 | `operationId` | UUID correlating the events belonging to one task, forwarding operation, or housekeeping action. |
 | `recordingId` | Canonical UUIDv4 identifying one session recording. |
 | `recordingDigest` | Lowercase SHA-256 digest of the canonical Cast content, cryptographically bound by the recording signature. It is not a hash of the outer `.cast.zst` or `.becast` container file. |
+| `target` | Configured audit-log target name for a Recording delivery transition. It contains no destination address, credentials, or remote path. |
 | `authenticationMethod` | `public-key`, `password`, or `keyboard-interactive`. |
 | `authenticationPhase` | `candidate` before public-key possession is proven or `verified` after certificate-signature verification. |
 | `authorizationKind` | Authorization implementation that produced the result, for example `simple` or `local`. |
@@ -141,6 +142,18 @@ If the Bifröst process terminates with an unsealed active recording, startup re
 #### `session.recording.failed`
 
 Written when recording creation, capture, checkpointing, final publication, or the required start audit write fails. The correlation fields are the same as for `session.recording.started`. `outcome` is `failure`; `reason` is `recording-create`, `recording-capture`, `recording-seal`, or `audit-write`, and `errorCategory` classifies the error. `recordingDigest` is present only when a failed artifact was nevertheless sealed and published successfully. A create failure has no preceding `session.recording.started` event.
+
+#### `session.recording.delivery.failed`
+
+Written after the first failed remote-delivery attempt for one Recording and target. `domain` is `session`; `outcome` is `failure`; `recordingId`, `target`, and `operationId` identify the delivery episode; and `errorCategory` classifies the failure. Flow, Connection, Session, file-name, path, endpoint, and digest fields are intentionally omitted because they cannot all be reconstructed safely after restart and are not required to identify the retained artifact.
+
+The failure intent and operation ID are stored in the signed delivery receipt before the event is attempted. Further publication attempts are blocked until the event has been recorded and its durable receipt marker has been written. Later failures in the same delivery episode do not produce more events, including after restart.
+
+#### `session.recording.delivery.succeeded`
+
+Written after a target has accepted the exact artifact and its signed local acknowledgement is durable. `domain` is `session`; `outcome` is `success`; and `recordingId`, `target`, and `operationId` match the delivery episode and its optional `session.recording.delivery.failed` event. A direct success has no preceding failure event.
+
+The signed receipt retains an outbox marker until this event is recorded. Startup resumes a pending success event without publishing the artifact again. Flush and retention eligibility require the durable success-audit marker in addition to the target acknowledgement. A crash after an audit record commits but before its receipt marker commits can produce an at-least-once duplicate after restart; it cannot silently discard the pending transition.
 
 #### `session.task.started`
 
@@ -307,4 +320,4 @@ Bucket exhaustion and an intentionally preserved journal reserve are not recordi
 
 If recording a completion event fails after an action has already happened, the action cannot be rolled back. The handler reports the audit failure and closes the causing connection. A housekeeping start-record failure prevents that housekeeping action. Failure to write an orphaned-session skip event is reported after attempting every enabled audit log; the session remains untouched and housekeeping continues with later sessions. Housekeeping failures do not close unrelated SSH connections or stop the service.
 
-Remote-target delivery remains asynchronous. A remote outage does not change the result of local recording or an SSH action because the authoritative event remains in the local journal for later delivery.
+Remote-target delivery remains asynchronous. A remote outage does not change the result of local recording or an SSH action because the sealed artifact remains in the local spool for later delivery. Delivery-transition audit failures block further work for that Recording and target but do not close unrelated SSH connections or stop independent targets.

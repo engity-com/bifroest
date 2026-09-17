@@ -1,5 +1,7 @@
 package audit
 
+import "github.com/engity-com/bifroest/pkg/configuration"
+
 type EventName = string
 
 const (
@@ -12,6 +14,8 @@ const (
 	EventNameSessionRecordingCompleted                 = "session.recording.completed"
 	EventNameSessionRecordingIncomplete                = "session.recording.incomplete"
 	EventNameSessionRecordingFailed                    = "session.recording.failed"
+	EventNameSessionRecordingDeliveryFailed            = "session.recording.delivery.failed"
+	EventNameSessionRecordingDeliverySucceeded         = "session.recording.delivery.succeeded"
 	EventNameSessionTaskStarted                        = "session.task.started"
 	EventNameSessionTaskCompleted                      = "session.task.completed"
 	EventNamePortForwardingDirectDecided               = "port-forwarding.direct.decided"
@@ -39,6 +43,8 @@ var knownEventNames = [...]EventName{
 	EventNameSessionRecordingCompleted,
 	EventNameSessionRecordingIncomplete,
 	EventNameSessionRecordingFailed,
+	EventNameSessionRecordingDeliveryFailed,
+	EventNameSessionRecordingDeliverySucceeded,
 	EventNameSessionTaskStarted,
 	EventNameSessionTaskCompleted,
 	EventNamePortForwardingDirectDecided,
@@ -167,27 +173,28 @@ const (
 // Event is the domain payload accepted by a Recorder. The recorder adds common
 // metadata and the journal adds its persistence envelope.
 type Event struct {
-	Name                 EventName            `json:"name"`
-	Domain               EventDomain          `json:"domain,omitempty"`
-	Outcome              EventOutcome         `json:"outcome,omitempty"`
-	Flow                 string               `json:"flow,omitempty"`
-	ConnectionId         string               `json:"connectionId,omitempty"`
-	SessionId            string               `json:"sessionId,omitempty"`
-	OperationId          string               `json:"operationId,omitempty"`
-	RecordingId          string               `json:"recordingId,omitempty"`
-	RecordingDigest      string               `json:"recordingDigest,omitempty"`
-	AuthenticationMethod AuthenticationMethod `json:"authenticationMethod,omitempty"`
-	AuthenticationPhase  AuthenticationPhase  `json:"authenticationPhase,omitempty"`
-	AuthorizationKind    string               `json:"authorizationKind,omitempty"`
-	SessionTask          SessionTask          `json:"sessionTask,omitempty"`
-	Reason               EventReason          `json:"reason,omitempty"`
-	ErrorCategory        ErrorCategory        `json:"errorCategory,omitempty"`
-	ExitCode             *int                 `json:"exitCode,omitempty"`
-	BytesRead            *int64               `json:"bytesRead,omitempty"`
-	BytesWritten         *int64               `json:"bytesWritten,omitempty"`
-	DurationMillis       *int64               `json:"durationMillis,omitempty"`
-	Count                *uint64              `json:"count,omitempty"`
-	Pty                  *bool                `json:"pty,omitempty"`
-	AgentForwarding      *bool                `json:"agentForwarding,omitempty"`
-	ForcedCommand        *bool                `json:"forcedCommand,omitempty"`
+	Name                 EventName                        `json:"name"`
+	Domain               EventDomain                      `json:"domain,omitempty"`
+	Outcome              EventOutcome                     `json:"outcome,omitempty"`
+	Flow                 string                           `json:"flow,omitempty"`
+	ConnectionId         string                           `json:"connectionId,omitempty"`
+	SessionId            string                           `json:"sessionId,omitempty"`
+	OperationId          string                           `json:"operationId,omitempty"`
+	RecordingId          string                           `json:"recordingId,omitempty"`
+	RecordingDigest      string                           `json:"recordingDigest,omitempty"`
+	Target               configuration.AuditlogTargetName `json:"target,omitempty"`
+	AuthenticationMethod AuthenticationMethod             `json:"authenticationMethod,omitempty"`
+	AuthenticationPhase  AuthenticationPhase              `json:"authenticationPhase,omitempty"`
+	AuthorizationKind    string                           `json:"authorizationKind,omitempty"`
+	SessionTask          SessionTask                      `json:"sessionTask,omitempty"`
+	Reason               EventReason                      `json:"reason,omitempty"`
+	ErrorCategory        ErrorCategory                    `json:"errorCategory,omitempty"`
+	ExitCode             *int                             `json:"exitCode,omitempty"`
+	BytesRead            *int64                           `json:"bytesRead,omitempty"`
+	BytesWritten         *int64                           `json:"bytesWritten,omitempty"`
+	DurationMillis       *int64                           `json:"durationMillis,omitempty"`
+	Count                *uint64                          `json:"count,omitempty"`
+	Pty                  *bool                            `json:"pty,omitempty"`
+	AgentForwarding      *bool                            `json:"agentForwarding,omitempty"`
+	ForcedCommand        *bool                            `json:"forcedCommand,omitempty"`
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 func TestRemoteArtifactDeliveryPublishesInSortedOrderAndDoesNotRepublishAfterRestart(t *testing.T) {
@@ -138,8 +139,10 @@ func TestRemoteArtifactDeliveryDoesNotOpenAcknowledgedOrUnselectedArtifacts(t *t
 			}
 			receipts := newRemoteArtifactDeliveryTestReceipts(t, identity, []RemoteArtifact{artifact}, receiptTargets)
 			if test.acknowledgeFirst {
-				_, err := receipts.store.acknowledge(t.Context(), artifact, *test.receiptTarget, time.Now().UTC().Add(time.Minute))
+				acknowledgedAt := time.Now().UTC().Add(time.Minute)
+				_, err := receipts.store.acknowledge(t.Context(), artifact, *test.receiptTarget, acknowledgedAt)
 				require.NoError(t, err)
+				completeRemoteArtifactReceiptTestSuccess(t, receipts.store, artifact.FileName(), *test.receiptTarget, acknowledgedAt)
 			}
 			delivery := newRemoteArtifactDeliveryTestCoordinator(t, sealedDirectory, source, receipts, remoteArtifactDeliveryTestTargets(test.deliveryTarget), remoteArtifactDeliveryTestOptions())
 			require.NoError(t, delivery.Start())
@@ -324,6 +327,174 @@ func TestRemoteArtifactDeliveryRetriesOnlyAckAfterPersistenceFailure(t *testing.
 	remoteArtifactDeliveryTestFlush(t, delivery)
 	require.Equal(t, int32(1), publishCalls.Load())
 	require.Equal(t, int32(3), ackCalls.Load())
+	require.NoError(t, delivery.Close())
+}
+
+func TestRemoteArtifactDeliveryAuditsFailureOnceAndSuccessAfterAcknowledgement(t *testing.T) {
+	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "audit.cast.zst", []byte("audit"))
+	source.set(artifact)
+	fingerprint := remoteArtifactDeliveryTestFingerprint("archive")
+	entry := remoteArtifactDeliveryTestEntry("archive", fingerprint, nil)
+	receipts := newRemoteArtifactDeliveryTestReceipts(t, identity, []RemoteArtifact{artifact}, remoteArtifactDeliveryTestTargets(entry))
+	var publishCalls atomic.Int32
+	entry.target = &remoteArtifactDeliveryTestTarget{publish: func(context.Context, RemoteArtifact) error {
+		if publishCalls.Add(1) <= 3 {
+			return errors.Network.Newf("temporary network failure")
+		}
+		return nil
+	}}
+	auditor := &remoteArtifactDeliveryTestAuditor{}
+	options := remoteArtifactDeliveryTestOptions()
+	options.auditor = auditor
+	delivery := newRemoteArtifactDeliveryTestCoordinator(t, sealedDirectory, source, receipts, remoteArtifactDeliveryTestTargets(entry), options)
+	require.NoError(t, delivery.Start())
+	remoteArtifactDeliveryTestFlush(t, delivery)
+	require.Equal(t, int32(4), publishCalls.Load())
+	events := auditor.snapshot()
+	require.Len(t, events, 2)
+	require.Equal(t, RemoteArtifactDeliveryAuditFailed, events[0].State)
+	require.Equal(t, ErrorCategoryNetwork, events[0].ErrorCategory)
+	require.Equal(t, RemoteArtifactDeliveryAuditSucceeded, events[1].State)
+	require.Equal(t, events[0].OperationId, events[1].OperationId)
+	require.Equal(t, artifact.FileName(), events[1].FileName)
+	require.NoError(t, delivery.Close())
+}
+
+func TestRemoteArtifactDeliveryRecoversSuccessAuditWithoutRepublishing(t *testing.T) {
+	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "recover-audit.becast", []byte("audit"))
+	source.set(artifact)
+	fingerprint := remoteArtifactDeliveryTestFingerprint("archive")
+	entry := remoteArtifactDeliveryTestEntry("archive", fingerprint, nil)
+	targets := remoteArtifactDeliveryTestTargets(entry)
+	receipts := newRemoteArtifactDeliveryTestReceipts(t, identity, []RemoteArtifact{artifact}, targets)
+	_, err := receipts.store.acknowledge(t.Context(), artifact, entry, time.Now().UTC())
+	require.NoError(t, err)
+	var publishCalls atomic.Int32
+	entry.target = &remoteArtifactDeliveryTestTarget{publish: func(context.Context, RemoteArtifact) error {
+		publishCalls.Add(1)
+		return nil
+	}}
+	auditor := &remoteArtifactDeliveryTestAuditor{}
+	options := remoteArtifactDeliveryTestOptions()
+	options.auditor = auditor
+	delivery := newRemoteArtifactDeliveryTestCoordinator(t, sealedDirectory, source, receipts, remoteArtifactDeliveryTestTargets(entry), options)
+	require.NoError(t, delivery.Start())
+	remoteArtifactDeliveryTestFlush(t, delivery)
+	require.Zero(t, publishCalls.Load())
+	events := auditor.snapshot()
+	require.Len(t, events, 1)
+	require.Equal(t, RemoteArtifactDeliveryAuditSucceeded, events[0].State)
+	require.NoError(t, delivery.Close())
+
+	restartedAuditor := &remoteArtifactDeliveryTestAuditor{}
+	restartedOptions := remoteArtifactDeliveryTestOptions()
+	restartedOptions.auditor = restartedAuditor
+	restartedEntry := remoteArtifactDeliveryTestEntry("archive", fingerprint, func(context.Context, RemoteArtifact) error {
+		publishCalls.Add(1)
+		return nil
+	})
+	restarted := newRemoteArtifactDeliveryTestCoordinator(t, sealedDirectory, source, receipts, remoteArtifactDeliveryTestTargets(restartedEntry), restartedOptions)
+	require.NoError(t, restarted.Start())
+	remoteArtifactDeliveryTestFlush(t, restarted)
+	require.Zero(t, publishCalls.Load())
+	require.Empty(t, restartedAuditor.snapshot())
+	require.NoError(t, restarted.Close())
+}
+
+func TestRemoteArtifactDeliveryRecoversFailureAuditBeforePublishingInOrder(t *testing.T) {
+	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
+	artifacts := []RemoteArtifact{
+		newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "b.cast.zst", []byte("second")),
+		newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "a.cast.zst", []byte("first")),
+	}
+	source.set(artifacts...)
+	fingerprint := remoteArtifactDeliveryTestFingerprint("archive")
+	entry := remoteArtifactDeliveryTestEntry("archive", fingerprint, nil)
+	targets := remoteArtifactDeliveryTestTargets(entry)
+	receipts := newRemoteArtifactDeliveryTestReceipts(t, identity, artifacts, targets)
+	_, pending, err := receipts.store.beginDeliveryFailure(t.Context(), artifacts[1].FileName(), entry, ErrorCategoryNetwork, time.Now().UTC())
+	require.NoError(t, err)
+	require.True(t, pending)
+
+	var mutex sync.Mutex
+	var published []string
+	entry.target = &remoteArtifactDeliveryTestTarget{publish: func(_ context.Context, artifact RemoteArtifact) error {
+		mutex.Lock()
+		defer mutex.Unlock()
+		published = append(published, artifact.FileName())
+		return nil
+	}}
+	auditor := &remoteArtifactDeliveryTestAuditor{}
+	options := remoteArtifactDeliveryTestOptions()
+	options.auditor = auditor
+	delivery := newRemoteArtifactDeliveryTestCoordinator(t, sealedDirectory, source, receipts, remoteArtifactDeliveryTestTargets(entry), options)
+	require.NoError(t, delivery.Start())
+	remoteArtifactDeliveryTestFlush(t, delivery)
+	require.NoError(t, delivery.Close())
+
+	mutex.Lock()
+	require.Equal(t, []string{"a.cast.zst", "b.cast.zst"}, published)
+	mutex.Unlock()
+	events := auditor.snapshot()
+	require.Len(t, events, 3)
+	require.Equal(t, RemoteArtifactDeliveryAuditFailed, events[0].State)
+	require.Equal(t, artifacts[1].FileName(), events[0].FileName)
+	require.Equal(t, RemoteArtifactDeliveryAuditSucceeded, events[1].State)
+	require.Equal(t, artifacts[1].FileName(), events[1].FileName)
+}
+
+func TestRemoteArtifactDeliveryRetriesPendingAuditBeforeRepublishing(t *testing.T) {
+	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "audit-gate.cast.zst", []byte("audit"))
+	source.set(artifact)
+	fingerprint := remoteArtifactDeliveryTestFingerprint("archive")
+	entry := remoteArtifactDeliveryTestEntry("archive", fingerprint, nil)
+	receipts := newRemoteArtifactDeliveryTestReceipts(t, identity, []RemoteArtifact{artifact}, remoteArtifactDeliveryTestTargets(entry))
+	var publishCalls atomic.Int32
+	entry.target = &remoteArtifactDeliveryTestTarget{publish: func(context.Context, RemoteArtifact) error {
+		if publishCalls.Add(1) == 1 {
+			return errors.Network.Newf("temporary network failure")
+		}
+		return nil
+	}}
+	secondAuditAttempt := make(chan struct{})
+	releaseAudit := make(chan struct{})
+	var auditAttempts atomic.Int32
+	auditor := &remoteArtifactDeliveryTestAuditor{record: func(ctx context.Context, event RemoteArtifactDeliveryAuditEvent) error {
+		if event.State != RemoteArtifactDeliveryAuditFailed {
+			return nil
+		}
+		if auditAttempts.Add(1) == 1 {
+			return goerrors.New("injected audit failure")
+		}
+		close(secondAuditAttempt)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-releaseAudit:
+			return nil
+		}
+	}}
+	options := remoteArtifactDeliveryTestOptions()
+	options.auditor = auditor
+	delivery := newRemoteArtifactDeliveryTestCoordinator(t, sealedDirectory, source, receipts, remoteArtifactDeliveryTestTargets(entry), options)
+	require.NoError(t, delivery.Start())
+	select {
+	case <-secondAuditAttempt:
+	case <-time.After(time.Second):
+		t.Fatal("pending delivery audit was not retried")
+	}
+	require.Equal(t, int32(1), publishCalls.Load())
+	close(releaseAudit)
+	remoteArtifactDeliveryTestFlush(t, delivery)
+	require.Equal(t, int32(2), publishCalls.Load())
+	require.Equal(t, int32(2), auditAttempts.Load())
+	events := auditor.snapshot()
+	require.Len(t, events, 2)
+	require.Equal(t, RemoteArtifactDeliveryAuditFailed, events[0].State)
+	require.Equal(t, RemoteArtifactDeliveryAuditSucceeded, events[1].State)
 	require.NoError(t, delivery.Close())
 }
 
@@ -631,6 +802,33 @@ type remoteArtifactDeliveryTestTarget struct {
 	publish func(context.Context, RemoteArtifact) error
 }
 
+type remoteArtifactDeliveryTestAuditor struct {
+	mutex  sync.Mutex
+	events []RemoteArtifactDeliveryAuditEvent
+	record func(context.Context, RemoteArtifactDeliveryAuditEvent) error
+}
+
+func (this *remoteArtifactDeliveryTestAuditor) RecordRemoteArtifactDelivery(ctx context.Context, event RemoteArtifactDeliveryAuditEvent) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if this.record != nil {
+		if err := this.record(ctx, event); err != nil {
+			return err
+		}
+	}
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	this.events = append(this.events, event)
+	return nil
+}
+
+func (this *remoteArtifactDeliveryTestAuditor) snapshot() []RemoteArtifactDeliveryAuditEvent {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	return append([]RemoteArtifactDeliveryAuditEvent(nil), this.events...)
+}
+
 func (this *remoteArtifactDeliveryTestTarget) PublishArtifact(ctx context.Context, artifact RemoteArtifact) error {
 	if this.publish == nil {
 		return nil
@@ -676,6 +874,7 @@ func newRemoteArtifactDeliveryTestReceipts(t *testing.T, identity *Identity, art
 
 func remoteArtifactDeliveryTestOptions() remoteArtifactDeliveryOptions {
 	options := defaultRemoteArtifactDeliveryOptions()
+	options.auditor = &remoteArtifactDeliveryTestAuditor{}
 	options.idleDelay = time.Hour
 	options.initialBackoff = 2 * time.Millisecond
 	options.maximumBackoff = 5 * time.Millisecond

@@ -87,3 +87,47 @@ func auditErrorCategory(err error) audit.ErrorCategory {
 		return audit.ErrorCategoryUnknown
 	}
 }
+
+type sessionRecordingDeliveryAuditor struct {
+	service    *service
+	auditlog   configuration.AuditlogName
+	repository *sessionRecordingRepository
+}
+
+func (this *sessionRecordingDeliveryAuditor) RecordRemoteArtifactDelivery(ctx context.Context, transition audit.RemoteArtifactDeliveryAuditEvent) error {
+	if this == nil || this.service == nil || this.repository == nil {
+		return errors.System.Newf("nil session Recording delivery auditor")
+	}
+	if transition.Scope.Auditlog != this.auditlog {
+		return errors.Config.Newf("Recording delivery target %q belongs to auditlog %q instead of %q", transition.Scope.Target, transition.Scope.Auditlog, this.auditlog)
+	}
+	recordingId, err := this.repository.recordingIdFromArtifactName(transition.FileName)
+	if err != nil {
+		return err
+	}
+	event := audit.Event{
+		Domain:      audit.EventDomainSession,
+		OperationId: transition.OperationId,
+		RecordingId: recordingId.String(),
+		Target:      transition.Scope.Target,
+	}
+	switch transition.State {
+	case audit.RemoteArtifactDeliveryAuditFailed:
+		event.Name = audit.EventNameSessionRecordingDeliveryFailed
+		event.Outcome = audit.EventOutcomeFailure
+		event.ErrorCategory = transition.ErrorCategory
+	case audit.RemoteArtifactDeliveryAuditSucceeded:
+		event.Name = audit.EventNameSessionRecordingDeliverySucceeded
+		event.Outcome = audit.EventOutcomeSuccess
+	default:
+		return errors.Config.Newf("unknown session Recording delivery audit state %q", transition.State)
+	}
+	recorder := this.service.auditRecorders[this.auditlog]
+	if recorder == nil {
+		return errors.System.Newf("no audit recorder configured for Recording delivery of auditlog %q", this.auditlog)
+	}
+	if err := recorder.Record(ctx, event); err != nil {
+		return errors.System.Newf("cannot record Recording delivery audit event %q for auditlog %q: %w", event.Name, this.auditlog, err)
+	}
+	return nil
+}

@@ -12,7 +12,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
@@ -24,14 +27,20 @@ const (
 	remoteArtifactReceiptRetentionFileName  = "receipt.retention"
 	remoteArtifactReceiptRetentionTempName  = "receipt.retention.tmp"
 	remoteArtifactReceiptTempFileName       = "receipt.tmp"
-	remoteArtifactReceiptSchema             = "bifroest.session-recording-remote-delivery-receipt/v1"
-	remoteArtifactReceiptSignDomain         = "BIFROEST-SESSION-RECORDING-REMOTE-DELIVERY-RECEIPT-SIGNATURE/v1\x00"
+	remoteArtifactReceiptSchema             = "bifroest.session-recording-remote-delivery-receipt/v2"
+	remoteArtifactReceiptSignDomain         = "BIFROEST-SESSION-RECORDING-REMOTE-DELIVERY-RECEIPT-SIGNATURE/v2\x00"
+	remoteArtifactReceiptStateReserveBytes  = 320
 )
 
 type remoteArtifactReceiptTarget struct {
 	Target                 configuration.AuditlogTargetName     `json:"target"`
 	DestinationFingerprint remoteDeliveryDestinationFingerprint `json:"destinationFingerprint"`
 	AcknowledgedAt         string                               `json:"acknowledgedAt,omitempty"`
+	AuditOperationId       string                               `json:"auditOperationId,omitempty"`
+	FailedAt               string                               `json:"failedAt,omitempty"`
+	FailureErrorCategory   ErrorCategory                        `json:"failureErrorCategory,omitempty"`
+	FailureAuditedAt       string                               `json:"failureAuditedAt,omitempty"`
+	SuccessAuditedAt       string                               `json:"successAuditedAt,omitempty"`
 }
 
 type remoteArtifactReceiptContent struct {
@@ -44,6 +53,7 @@ type remoteArtifactReceiptContent struct {
 	SealedAt       string                        `json:"sealedAt"`
 	Targets        []remoteArtifactReceiptTarget `json:"targets"`
 	PublicKey      []byte                        `json:"publicKey"`
+	StatePadding   string                        `json:"statePadding"`
 }
 
 type remoteArtifactReceipt struct {
@@ -56,6 +66,8 @@ type remoteArtifactReceiptTargetStatus uint8
 const (
 	remoteArtifactReceiptTargetNotSelected remoteArtifactReceiptTargetStatus = iota
 	remoteArtifactReceiptTargetPending
+	remoteArtifactReceiptTargetFailureAuditPending
+	remoteArtifactReceiptTargetSuccessAuditPending
 	remoteArtifactReceiptTargetAcknowledged
 )
 
@@ -172,6 +184,11 @@ func signRemoteArtifactReceipt(identity *Identity, content remoteArtifactReceipt
 	if identity == nil || content.ProducerId != identity.ProducerId() || !bytes.Equal(content.PublicKey, identity.journalPublicKey()) {
 		return remoteArtifactReceipt{}, nil, errors.Config.Newf("remote artifact delivery receipt identity does not match its content")
 	}
+	var err error
+	content, err = normalizeRemoteArtifactReceiptStatePadding(content)
+	if err != nil {
+		return remoteArtifactReceipt{}, nil, err
+	}
 	if err := validateRemoteArtifactReceiptContent(content); err != nil {
 		return remoteArtifactReceipt{}, nil, err
 	}
@@ -233,16 +250,104 @@ func validateRemoteArtifactReceiptContent(content remoteArtifactReceiptContent) 
 		if target.DestinationFingerprint.IsZero() {
 			return errors.Config.Newf("remote artifact delivery receipt target %q has an empty destination fingerprint", target.Target)
 		}
-		if target.AcknowledgedAt == "" {
-			continue
+		if err := validateRemoteArtifactReceiptTargetAudit(target, sealedAt); err != nil {
+			return err
 		}
-		acknowledgedAt, err := parseRemoteArtifactReceiptTime(target.AcknowledgedAt)
+	}
+	normalized, err := normalizeRemoteArtifactReceiptStatePadding(content)
+	if err != nil {
+		return err
+	}
+	if normalized.StatePadding != content.StatePadding {
+		return errors.Config.Newf("remote artifact delivery receipt has invalid state padding")
+	}
+	return nil
+}
+
+func normalizeRemoteArtifactReceiptStatePadding(content remoteArtifactReceiptContent) (remoteArtifactReceiptContent, error) {
+	content.StatePadding = ""
+	baseline := content
+	baseline.Targets = append([]remoteArtifactReceiptTarget{}, content.Targets...)
+	for index := range baseline.Targets {
+		baseline.Targets[index].AcknowledgedAt = ""
+		baseline.Targets[index].AuditOperationId = ""
+		baseline.Targets[index].FailedAt = ""
+		baseline.Targets[index].FailureErrorCategory = ""
+		baseline.Targets[index].FailureAuditedAt = ""
+		baseline.Targets[index].SuccessAuditedAt = ""
+	}
+	baselinePayload, err := json.Marshal(baseline)
+	if err != nil {
+		return remoteArtifactReceiptContent{}, errors.System.Newf("cannot size initial remote artifact delivery receipt: %w", err)
+	}
+	currentPayload, err := json.Marshal(content)
+	if err != nil {
+		return remoteArtifactReceiptContent{}, errors.System.Newf("cannot size remote artifact delivery receipt state: %w", err)
+	}
+	reserve := len(content.Targets) * remoteArtifactReceiptStateReserveBytes
+	growth := len(currentPayload) - len(baselinePayload)
+	if growth < 0 || growth > reserve {
+		return remoteArtifactReceiptContent{}, errors.Config.Newf("remote artifact delivery receipt state exceeds its reserved size")
+	}
+	content.StatePadding = strings.Repeat("0", reserve-growth)
+	return content, nil
+}
+
+func validateRemoteArtifactReceiptTargetAudit(target remoteArtifactReceiptTarget, sealedAt time.Time) error {
+	operationId := target.AuditOperationId
+	if operationId != "" {
+		parsed, err := uuid.Parse(operationId)
+		if err != nil || parsed == uuid.Nil || parsed.String() != operationId {
+			return errors.Config.Newf("remote artifact delivery receipt target %q has an illegal audit operation ID", target.Target)
+		}
+	}
+	parseTime := func(name, value string) (time.Time, error) {
+		if value == "" {
+			return time.Time{}, nil
+		}
+		parsed, err := parseRemoteArtifactReceiptTime(value)
 		if err != nil {
-			return errors.Config.Newf("remote artifact delivery receipt target %q has an illegal acknowledgement time: %w", target.Target, err)
+			return time.Time{}, errors.Config.Newf("remote artifact delivery receipt target %q has an illegal %s time: %w", target.Target, name, err)
 		}
-		if acknowledgedAt.Before(sealedAt) {
-			return errors.Config.Newf("remote artifact delivery receipt target %q was acknowledged before the artifact was sealed", target.Target)
+		if parsed.Before(sealedAt) {
+			return time.Time{}, errors.Config.Newf("remote artifact delivery receipt target %q has a %s time before the artifact was sealed", target.Target, name)
 		}
+		return parsed, nil
+	}
+	acknowledgedAt, err := parseTime("acknowledgement", target.AcknowledgedAt)
+	if err != nil {
+		return err
+	}
+	failedAt, err := parseTime("failure", target.FailedAt)
+	if err != nil {
+		return err
+	}
+	failureAuditedAt, err := parseTime("failure audit", target.FailureAuditedAt)
+	if err != nil {
+		return err
+	}
+	successAuditedAt, err := parseTime("success audit", target.SuccessAuditedAt)
+	if err != nil {
+		return err
+	}
+	hasAuditState := target.FailedAt != "" || target.FailureErrorCategory != "" || target.FailureAuditedAt != "" || target.SuccessAuditedAt != ""
+	if hasAuditState && operationId == "" {
+		return errors.Config.Newf("remote artifact delivery receipt target %q has audit state without an operation ID", target.Target)
+	}
+	if (target.FailedAt == "") != (target.FailureErrorCategory == "") {
+		return errors.Config.Newf("remote artifact delivery receipt target %q has incomplete failure state", target.Target)
+	}
+	if target.FailureErrorCategory != "" && !isErrorCategory(target.FailureErrorCategory) {
+		return errors.Config.Newf("remote artifact delivery receipt target %q has an illegal failure error category", target.Target)
+	}
+	if target.FailureAuditedAt != "" && (target.FailedAt == "" || failureAuditedAt.Before(failedAt)) {
+		return errors.Config.Newf("remote artifact delivery receipt target %q has inconsistent failure audit state", target.Target)
+	}
+	if target.SuccessAuditedAt != "" && (target.AcknowledgedAt == "" || successAuditedAt.Before(acknowledgedAt)) {
+		return errors.Config.Newf("remote artifact delivery receipt target %q has inconsistent success audit state", target.Target)
+	}
+	if target.AcknowledgedAt != "" && operationId == "" {
+		return errors.Config.Newf("remote artifact delivery receipt target %q has an acknowledgement without an audit operation ID", target.Target)
 	}
 	return nil
 }
@@ -299,6 +404,9 @@ func acknowledgeRemoteArtifactReceipt(identity *Identity, receipt remoteArtifact
 	content := receipt.remoteArtifactReceiptContent
 	content.Targets = append([]remoteArtifactReceiptTarget(nil), receipt.Targets...)
 	content.Targets[index].AcknowledgedAt = canonicalAcknowledgedAt
+	if content.Targets[index].AuditOperationId == "" {
+		content.Targets[index].AuditOperationId = uuid.NewString()
+	}
 	updated, payload, err := signRemoteArtifactReceipt(identity, content)
 	return updated, payload, err == nil, err
 }
@@ -309,7 +417,7 @@ func (this remoteArtifactReceipt) retentionStartedAt() (time.Time, bool) {
 		return time.Time{}, false
 	}
 	for _, target := range this.Targets {
-		if target.AcknowledgedAt == "" {
+		if target.AcknowledgedAt == "" || target.SuccessAuditedAt == "" {
 			return time.Time{}, false
 		}
 		acknowledgedAt, err := parseRemoteArtifactReceiptTime(target.AcknowledgedAt)
@@ -825,15 +933,208 @@ func remoteArtifactReceiptStatus(receipt remoteArtifactReceipt, entry remoteArti
 		if entry.scope.Auditlog != receipt.Auditlog {
 			return remoteArtifactReceiptTargetNotSelected, errors.Config.Newf("remote artifact target %q belongs to a different auditlog", entry.scope.Target)
 		}
-		if target.AcknowledgedAt != "" {
-			return remoteArtifactReceiptTargetAcknowledged, nil
-		}
 		if entry.destinationFingerprint.IsZero() || target.DestinationFingerprint != entry.destinationFingerprint {
 			return remoteArtifactReceiptTargetNotSelected, errors.Config.Newf("remote artifact target %q uses a different destination than the delivery receipt", entry.scope.Target)
+		}
+		if target.FailedAt != "" && target.FailureAuditedAt == "" {
+			return remoteArtifactReceiptTargetFailureAuditPending, nil
+		}
+		if target.AcknowledgedAt != "" {
+			if target.SuccessAuditedAt == "" {
+				return remoteArtifactReceiptTargetSuccessAuditPending, nil
+			}
+			return remoteArtifactReceiptTargetAcknowledged, nil
 		}
 		return remoteArtifactReceiptTargetPending, nil
 	}
 	return remoteArtifactReceiptTargetNotSelected, nil
+}
+
+func (this *remoteArtifactReceiptStore) beginDeliveryFailure(ctx context.Context, fileName string, entry remoteArtifactTargetEntry, category ErrorCategory, failedAt time.Time) (RemoteArtifactDeliveryAuditEvent, bool, error) {
+	if this == nil {
+		return RemoteArtifactDeliveryAuditEvent{}, false, errors.System.Newf("nil remote artifact receipt store")
+	}
+	if !isErrorCategory(category) {
+		return RemoteArtifactDeliveryAuditEvent{}, false, errors.Config.Newf("illegal remote artifact delivery error category %q", category)
+	}
+	if err := this.lock(ctx); err != nil {
+		return RemoteArtifactDeliveryAuditEvent{}, false, err
+	}
+	defer this.unlock()
+	if this.closed {
+		return RemoteArtifactDeliveryAuditEvent{}, false, errors.System.Newf("remote artifact receipt store is closed")
+	}
+	receipt, exists, err := this.loadSnapshotLocked(fileName, nil)
+	if err != nil {
+		return RemoteArtifactDeliveryAuditEvent{}, false, err
+	}
+	if !exists {
+		return RemoteArtifactDeliveryAuditEvent{}, false, errors.Config.Newf("remote artifact delivery receipt for %q is missing", fileName)
+	}
+	index, err := remoteArtifactReceiptTargetIndex(receipt, entry)
+	if err != nil {
+		return RemoteArtifactDeliveryAuditEvent{}, false, err
+	}
+	target := receipt.Targets[index]
+	if target.AcknowledgedAt != "" || target.FailureAuditedAt != "" {
+		return RemoteArtifactDeliveryAuditEvent{}, false, nil
+	}
+	if target.FailedAt == "" {
+		sealedAt, err := parseRemoteArtifactReceiptTime(receipt.SealedAt)
+		if err != nil {
+			return RemoteArtifactDeliveryAuditEvent{}, false, err
+		}
+		if failedAt.Before(sealedAt) {
+			failedAt = sealedAt
+		}
+		canonicalFailedAt, err := canonicalRemoteArtifactReceiptTime(failedAt)
+		if err != nil {
+			return RemoteArtifactDeliveryAuditEvent{}, false, err
+		}
+		content := receipt.remoteArtifactReceiptContent
+		content.Targets = append([]remoteArtifactReceiptTarget(nil), receipt.Targets...)
+		if content.Targets[index].AuditOperationId == "" {
+			content.Targets[index].AuditOperationId = uuid.NewString()
+		}
+		content.Targets[index].FailedAt = canonicalFailedAt
+		content.Targets[index].FailureErrorCategory = category
+		receipt, err = this.replaceDeliveryReceiptLocked(fileName, content)
+		if err != nil {
+			return RemoteArtifactDeliveryAuditEvent{}, false, err
+		}
+		target = receipt.Targets[index]
+	}
+	return newRemoteArtifactDeliveryAuditEvent(receipt, target, RemoteArtifactDeliveryAuditFailed), true, nil
+}
+
+func (this *remoteArtifactReceiptStore) pendingDeliveryAudit(ctx context.Context, fileName string, entry remoteArtifactTargetEntry) (RemoteArtifactDeliveryAuditEvent, bool, error) {
+	if this == nil {
+		return RemoteArtifactDeliveryAuditEvent{}, false, errors.System.Newf("nil remote artifact receipt store")
+	}
+	if err := this.lock(ctx); err != nil {
+		return RemoteArtifactDeliveryAuditEvent{}, false, err
+	}
+	defer this.unlock()
+	if this.closed {
+		return RemoteArtifactDeliveryAuditEvent{}, false, errors.System.Newf("remote artifact receipt store is closed")
+	}
+	receipt, exists, err := this.loadSnapshotLocked(fileName, nil)
+	if err != nil {
+		return RemoteArtifactDeliveryAuditEvent{}, false, err
+	}
+	if !exists {
+		return RemoteArtifactDeliveryAuditEvent{}, false, errors.Config.Newf("remote artifact delivery receipt for %q is missing", fileName)
+	}
+	index, err := remoteArtifactReceiptTargetIndex(receipt, entry)
+	if err != nil {
+		return RemoteArtifactDeliveryAuditEvent{}, false, err
+	}
+	target := receipt.Targets[index]
+	switch {
+	case target.FailedAt != "" && target.FailureAuditedAt == "":
+		return newRemoteArtifactDeliveryAuditEvent(receipt, target, RemoteArtifactDeliveryAuditFailed), true, nil
+	case target.AcknowledgedAt != "" && target.AuditOperationId != "" && target.SuccessAuditedAt == "":
+		return newRemoteArtifactDeliveryAuditEvent(receipt, target, RemoteArtifactDeliveryAuditSucceeded), true, nil
+	default:
+		return RemoteArtifactDeliveryAuditEvent{}, false, nil
+	}
+}
+
+func (this *remoteArtifactReceiptStore) completeDeliveryAudit(ctx context.Context, event RemoteArtifactDeliveryAuditEvent, auditedAt time.Time) error {
+	if this == nil {
+		return errors.System.Newf("nil remote artifact receipt store")
+	}
+	if err := this.lock(ctx); err != nil {
+		return err
+	}
+	defer this.unlock()
+	if this.closed {
+		return errors.System.Newf("remote artifact receipt store is closed")
+	}
+	receipt, exists, err := this.loadSnapshotLocked(event.FileName, nil)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return errors.Config.Newf("remote artifact delivery receipt for %q is missing", event.FileName)
+	}
+	entry := remoteArtifactTargetEntry{scope: event.Scope, destinationFingerprint: event.destinationFingerprint}
+	index, err := remoteArtifactReceiptTargetIndex(receipt, entry)
+	if err != nil {
+		return err
+	}
+	target := receipt.Targets[index]
+	if target.AuditOperationId != event.OperationId {
+		return errors.Config.Newf("remote artifact delivery audit operation for target %q changed", event.Scope.Target)
+	}
+	var occurredAt time.Time
+	switch event.State {
+	case RemoteArtifactDeliveryAuditFailed:
+		if target.FailedAt == "" || target.FailureErrorCategory != event.ErrorCategory {
+			return errors.Config.Newf("remote artifact delivery failure audit for target %q does not match its receipt", event.Scope.Target)
+		}
+		if target.FailureAuditedAt != "" {
+			return nil
+		}
+		occurredAt, err = parseRemoteArtifactReceiptTime(target.FailedAt)
+	case RemoteArtifactDeliveryAuditSucceeded:
+		if target.AcknowledgedAt == "" {
+			return errors.Config.Newf("remote artifact delivery success audit for target %q precedes its acknowledgement", event.Scope.Target)
+		}
+		if target.SuccessAuditedAt != "" {
+			return nil
+		}
+		occurredAt, err = parseRemoteArtifactReceiptTime(target.AcknowledgedAt)
+	default:
+		return errors.Config.Newf("illegal remote artifact delivery audit state %q", event.State)
+	}
+	if err != nil {
+		return err
+	}
+	if auditedAt.Before(occurredAt) {
+		auditedAt = occurredAt
+	}
+	canonicalAuditedAt, err := canonicalRemoteArtifactReceiptTime(auditedAt)
+	if err != nil {
+		return err
+	}
+	content := receipt.remoteArtifactReceiptContent
+	content.Targets = append([]remoteArtifactReceiptTarget(nil), receipt.Targets...)
+	if event.State == RemoteArtifactDeliveryAuditFailed {
+		content.Targets[index].FailureAuditedAt = canonicalAuditedAt
+	} else {
+		content.Targets[index].SuccessAuditedAt = canonicalAuditedAt
+	}
+	_, err = this.replaceDeliveryReceiptLocked(event.FileName, content)
+	return err
+}
+
+func remoteArtifactReceiptTargetIndex(receipt remoteArtifactReceipt, entry remoteArtifactTargetEntry) (int, error) {
+	if entry.scope.Auditlog != receipt.Auditlog {
+		return -1, errors.Config.Newf("remote artifact target %q belongs to a different auditlog", entry.scope.Target)
+	}
+	for index, target := range receipt.Targets {
+		if target.Target != entry.scope.Target {
+			continue
+		}
+		if entry.destinationFingerprint.IsZero() || target.DestinationFingerprint != entry.destinationFingerprint {
+			return -1, errors.Config.Newf("remote artifact target %q uses a different destination than the delivery receipt", entry.scope.Target)
+		}
+		return index, nil
+	}
+	return -1, errors.Config.Newf("remote artifact target %q is not selected by the delivery receipt", entry.scope.Target)
+}
+
+func (this *remoteArtifactReceiptStore) replaceDeliveryReceiptLocked(fileName string, content remoteArtifactReceiptContent) (remoteArtifactReceipt, error) {
+	updated, payload, err := signRemoteArtifactReceipt(this.identity, content)
+	if err != nil {
+		return remoteArtifactReceipt{}, err
+	}
+	directory := filepath.Join(this.producerDirectory, remoteArtifactReceiptStateName(fileName))
+	if err := writeRemoteArtifactReceipt(directory, fileName, payload, this.quota); err != nil {
+		return remoteArtifactReceipt{}, err
+	}
+	return updated, nil
 }
 
 func (this *remoteArtifactReceiptStore) deliveryTargets(ctx context.Context, fileName string) ([]remoteArtifactReceiptTarget, error) {
@@ -1397,15 +1698,32 @@ func isRemoteArtifactReceiptSuccessor(current, next remoteArtifactReceipt) bool 
 	}
 	advanced := 0
 	for index := range current.Targets {
-		before := current.Targets[index].AcknowledgedAt
-		after := next.Targets[index].AcknowledgedAt
-		switch {
-		case before == after:
-		case before == "" && after != "":
-			advanced++
-		default:
+		if current.Targets[index] == next.Targets[index] {
+			continue
+		}
+		if !isRemoteArtifactReceiptTargetSuccessor(current.Targets[index], next.Targets[index]) {
+			return false
+		}
+		advanced++
+	}
+	return advanced == 1
+}
+
+func isRemoteArtifactReceiptTargetSuccessor(current, next remoteArtifactReceiptTarget) bool {
+	if current.Target != next.Target || current.DestinationFingerprint != next.DestinationFingerprint {
+		return false
+	}
+	for _, values := range [][2]string{
+		{current.AcknowledgedAt, next.AcknowledgedAt},
+		{current.AuditOperationId, next.AuditOperationId},
+		{current.FailedAt, next.FailedAt},
+		{string(current.FailureErrorCategory), string(next.FailureErrorCategory)},
+		{current.FailureAuditedAt, next.FailureAuditedAt},
+		{current.SuccessAuditedAt, next.SuccessAuditedAt},
+	} {
+		if values[0] != values[1] && (values[0] != "" || values[1] == "") {
 			return false
 		}
 	}
-	return advanced == 1
+	return true
 }

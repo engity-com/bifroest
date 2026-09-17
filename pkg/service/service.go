@@ -405,7 +405,8 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 		svc.recordingRepositories[auditlog.Name] = repository
 		svc.recordingRepositoryOrder = append(svc.recordingRepositoryOrder, auditlog.Name)
 		if targets != nil {
-			delivery, deliveryErr := audit.NewRemoteArtifactDelivery(ctx, filepath.Join(auditlog.Recording.Directory, "sealed"), repository, repository.receipts, targets)
+			auditor := &sessionRecordingDeliveryAuditor{service: svc, auditlog: auditlog.Name, repository: repository}
+			delivery, deliveryErr := audit.NewRemoteArtifactDelivery(ctx, filepath.Join(auditlog.Recording.Directory, "sealed"), repository, repository.receipts, targets, auditor)
 			if deliveryErr != nil {
 				return fmt.Errorf("cannot prepare Recording delivery of auditlog %q: %w", auditlog.Name, deliveryErr)
 			}

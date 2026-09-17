@@ -2,6 +2,7 @@ package audit
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -84,6 +85,46 @@ func TestSessionRecordingAuditEventEncoding(t *testing.T) {
 	require.NoError(t, validateAuditEventForWrite(event))
 }
 
+func TestSessionRecordingDeliveryAuditEventEncodingAndValidation(t *testing.T) {
+	base := Event{
+		Domain:      EventDomainSession,
+		OperationId: "6d05798f-b877-4191-8aa0-4576a30411ad",
+		RecordingId: "fd70203b-ea19-4288-8ec2-577b623e92d0",
+		Target:      "archive",
+	}
+	failed := base
+	failed.Name = EventNameSessionRecordingDeliveryFailed
+	failed.Outcome = EventOutcomeFailure
+	failed.ErrorCategory = ErrorCategoryNetwork
+	payload, err := json.Marshal(failed)
+	require.NoError(t, err)
+	require.Equal(t, `{"name":"session.recording.delivery.failed","domain":"session","outcome":"failure","operationId":"6d05798f-b877-4191-8aa0-4576a30411ad","recordingId":"fd70203b-ea19-4288-8ec2-577b623e92d0","target":"archive","errorCategory":"network"}`, string(payload))
+	require.NoError(t, validateAuditEventForWrite(failed))
+
+	succeeded := base
+	succeeded.Name = EventNameSessionRecordingDeliverySucceeded
+	succeeded.Outcome = EventOutcomeSuccess
+	require.NoError(t, validateAuditEventForWrite(succeeded))
+
+	invalid := []Event{
+		{Name: failed.Name, Domain: failed.Domain, Outcome: failed.Outcome, OperationId: failed.OperationId, RecordingId: failed.RecordingId, ErrorCategory: failed.ErrorCategory},
+		{Name: failed.Name, Domain: failed.Domain, Outcome: failed.Outcome, RecordingId: failed.RecordingId, Target: failed.Target, ErrorCategory: failed.ErrorCategory},
+		{Name: failed.Name, Domain: failed.Domain, Outcome: failed.Outcome, OperationId: failed.OperationId, Target: failed.Target, ErrorCategory: failed.ErrorCategory},
+		{Name: failed.Name, Domain: failed.Domain, Outcome: failed.Outcome, OperationId: failed.OperationId, RecordingId: failed.RecordingId, Target: failed.Target},
+		succeededWithError(succeeded),
+	}
+	for index, event := range invalid {
+		t.Run(fmt.Sprintf("invalid-%d", index), func(t *testing.T) {
+			require.Error(t, validateAuditEventForWrite(event))
+		})
+	}
+}
+
+func succeededWithError(event Event) Event {
+	event.ErrorCategory = ErrorCategorySystem
+	return event
+}
+
 func TestKnownAuditEventNamesAreValidAndUnique(t *testing.T) {
 	seen := make(map[EventName]struct{}, len(knownEventNames))
 	for _, name := range knownEventNames {
@@ -115,6 +156,7 @@ func TestAuditEventValidationRejectsInvalidStructuredFields(t *testing.T) {
 		"authentication phase":  {Name: "test.event", AuthenticationPhase: "other"},
 		"session task":          {Name: "test.event", SessionTask: "other"},
 		"error category":        {Name: "test.event", ErrorCategory: "other"},
+		"target":                {Name: "test.event", Target: "invalid/target"},
 		"flow":                  {Name: "test.event", Flow: "invalid/flow"},
 		"authorization kind":    {Name: "test.event", AuthorizationKind: "invalid kind"},
 		"reason":                {Name: "test.event", Reason: "invalid reason"},
