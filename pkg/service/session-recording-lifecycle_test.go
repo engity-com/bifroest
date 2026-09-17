@@ -286,6 +286,63 @@ func TestExecuteSessionRecordingExcludesSftp(t *testing.T) {
 	require.Empty(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed))
 }
 
+func TestExecuteSessionRecordingCapturesForcedCommandRequestedAsSftp(t *testing.T) {
+	root := t.TempDir()
+	type executedTask struct {
+		taskType environment.TaskType
+		command  string
+	}
+	executed := make(chan executedTask, 1)
+	server := newAuthorizedKeysTestServerWithConfiguration(t, `command="forced-command"`, &authorizedKeysTestEnvironment{run: func(task environment.Task) (int, error) {
+		executed <- executedTask{taskType: task.TaskType(), command: task.SshSession().RawCommand()}
+		return 0, nil
+	}}, func(conf *configuration.Configuration) {
+		enableSessionRecordingForLifecycleTest(conf, root)
+	})
+	auditRecorder := &recordingAuditRecorder{}
+	flow := server.service.Configuration.Flows[0].Name
+	server.service.flowAuditRecorders[flow] = auditRecorder
+	client := server.mustDial(t)
+	sshSession, err := client.NewSession()
+	require.NoError(t, err)
+	require.NoError(t, sshSession.RequestSubsystem("sftp"))
+
+	select {
+	case actual := <-executed:
+		require.Equal(t, executedTask{taskType: environment.TaskTypeShell, command: "forced-command"}, actual)
+	case <-time.After(time.Second):
+		t.Fatal("forced command did not run")
+	}
+	require.Eventually(t, func() bool {
+		entries, readErr := os.ReadDir(filepath.Join(root, "recordings", "sealed"))
+		return readErr == nil && len(entries) == 1
+	}, time.Second, 10*time.Millisecond)
+	verification := verifyOnlySessionRecording(t, server.service, root)
+	require.Equal(t, recording.CastStatusCompleted, verification.Cast.Result.Status)
+	require.Equal(t, audit.SessionTaskExec, verification.Cast.Metadata.Task)
+	require.Eventually(t, func() bool {
+		return len(auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionTaskCompleted)) == 1
+	}, time.Second, 10*time.Millisecond)
+	events := auditRecorder.eventsSnapshot()
+	taskStarted := auditEventsNamed(events, audit.EventNameSessionTaskStarted)
+	taskCompleted := auditEventsNamed(events, audit.EventNameSessionTaskCompleted)
+	recordingStarted := auditEventsNamed(events, audit.EventNameSessionRecordingStarted)
+	recordingCompleted := auditEventsNamed(events, audit.EventNameSessionRecordingCompleted)
+	require.Len(t, taskStarted, 1)
+	require.Len(t, taskCompleted, 1)
+	require.Len(t, recordingStarted, 1)
+	require.Len(t, recordingCompleted, 1)
+	require.Equal(t, audit.SessionTaskSftp, taskStarted[0].SessionTask)
+	require.Equal(t, audit.SessionTaskSftp, taskCompleted[0].SessionTask)
+	require.NotNil(t, taskStarted[0].ForcedCommand)
+	require.True(t, *taskStarted[0].ForcedCommand)
+	require.Equal(t, audit.SessionTaskExec, recordingStarted[0].SessionTask)
+	require.Equal(t, audit.SessionTaskExec, recordingCompleted[0].SessionTask)
+	requireSessionRecordingAuditCorrelation(t, verification, recordingStarted[0], recordingCompleted[0])
+	require.Equal(t, taskStarted[0].OperationId, taskCompleted[0].OperationId)
+	require.Equal(t, taskStarted[0].OperationId, recordingStarted[0].OperationId)
+}
+
 func TestExecuteSessionRecordingCreateFailurePreventsEnvironmentRun(t *testing.T) {
 	var runCalled atomic.Bool
 	server := newAuthorizedKeysTestServer(t, "", &authorizedKeysTestEnvironment{run: func(environment.Task) (int, error) {

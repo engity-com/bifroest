@@ -261,6 +261,7 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 	if forcedCommand {
 		taskType = environment.TaskTypeShell
 	}
+	recordingTask := auditSessionTask(taskType, executesCommand)
 	pty, windows, hasPty := sshSess.Pty()
 	ptySnapshot := recordedSessionPty{pty: pty, windows: windows, hasPty: hasPty}
 	taskAudit := sessionTaskAuditLifecycle{
@@ -278,7 +279,7 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 			rErr = goerrors.Join(rErr, recordErr)
 		}
 	}()
-	recorded, recordingLifecycle, err := this.beginSessionRecording(sshSess, ptySnapshot, conn, sess, operationId, auth.Flow(), requestedTask)
+	recorded, recordingLifecycle, err := this.beginSessionRecording(sshSess, ptySnapshot, conn, sess, operationId, auth.Flow(), recordingTask)
 	if err != nil {
 		return fail(markSessionRecordingFailure(err))
 	}
