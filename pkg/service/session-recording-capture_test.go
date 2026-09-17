@@ -195,12 +195,18 @@ func TestRecordedSessionCapturesOutputStreamsAndSuccessfulBytes(t *testing.T) {
 			return 3, transportCause
 		}
 		sink := &captureTestSink{}
-		wrapper := requireRecordedSession(t, session, sink, func(error) {})
+		callback := make(chan error, 1)
+		wrapper := requireRecordedSession(t, session, sink, func(err error) { callback <- err })
 
 		n, err := wrapper.Write([]byte("partial"))
 		require.Equal(t, 3, n)
 		require.ErrorIs(t, err, transportCause)
-		require.Equal(t, []byte("par"), sink.outputEvents()[0].data)
+		require.ErrorContains(t, err, "accepted 3 of 7 recorded bytes")
+		require.Equal(t, []byte("partial"), sink.outputEvents()[0].data)
+		require.Same(t, err, <-callback)
+		n, blockedErr := wrapper.Write([]byte("blocked"))
+		require.Zero(t, n)
+		require.Same(t, err, blockedErr)
 	})
 
 	t.Run("partial stderr transport write", func(t *testing.T) {
@@ -211,15 +217,18 @@ func TestRecordedSessionCapturesOutputStreamsAndSuccessfulBytes(t *testing.T) {
 			return 4, transportCause
 		}
 		sink := &captureTestSink{}
-		wrapper := requireRecordedSession(t, session, sink, func(error) {})
+		callback := make(chan error, 1)
+		wrapper := requireRecordedSession(t, session, sink, func(err error) { callback <- err })
 
 		n, err := wrapper.Stderr().Write([]byte("partial"))
 		require.Equal(t, 4, n)
 		require.ErrorIs(t, err, transportCause)
+		require.ErrorContains(t, err, "accepted 4 of 7 recorded bytes")
 		events := sink.outputEvents()
 		require.Len(t, events, 1)
 		require.Equal(t, recording.OutputStreamStderr, events[0].stream)
-		require.Equal(t, []byte("part"), events[0].data)
+		require.Equal(t, []byte("partial"), events[0].data)
+		require.Same(t, err, <-callback)
 	})
 
 	t.Run("ambiguous partial PTY transport write", func(t *testing.T) {
@@ -234,36 +243,67 @@ func TestRecordedSessionCapturesOutputStreamsAndSuccessfulBytes(t *testing.T) {
 		n, err := wrapper.Write([]byte("\nX"))
 		require.Equal(t, 1, n)
 		require.ErrorIs(t, err, transportCause)
-		require.ErrorContains(t, err, "cannot determine normalized terminal bytes")
-		require.Empty(t, sink.outputEvents())
+		require.ErrorContains(t, err, "accepted 1 of 2 recorded bytes")
+		require.Equal(t, []byte("\r\nX"), sink.outputEvents()[0].data)
 		failure := <-callback
-		require.ErrorIs(t, err, failure)
+		require.Same(t, err, failure)
 	})
 
 	t.Run("short write without transport error", func(t *testing.T) {
 		session := newCaptureTestSession(t.Context())
 		session.stdout.write = func([]byte) (int, error) { return 2, nil }
 		sink := &captureTestSink{}
-		wrapper := requireRecordedSession(t, session, sink, func(error) {})
+		callback := make(chan error, 1)
+		wrapper := requireRecordedSession(t, session, sink, func(err error) { callback <- err })
 
 		n, err := wrapper.Write([]byte("short"))
 		require.Equal(t, 2, n)
 		require.ErrorIs(t, err, io.ErrShortWrite)
-		require.Equal(t, []byte("sh"), sink.outputEvents()[0].data)
+		require.Equal(t, []byte("short"), sink.outputEvents()[0].data)
+		require.Same(t, err, <-callback)
+	})
+
+	t.Run("full transport write with error", func(t *testing.T) {
+		transportCause := goerrors.New("transport reported error after full write")
+		session := newCaptureTestSession(t.Context())
+		session.stdout.write = func(value []byte) (int, error) { return len(value), transportCause }
+		sink := &captureTestSink{}
+		var callbackCalls atomic.Int32
+		wrapper := requireRecordedSession(t, session, sink, func(error) { callbackCalls.Add(1) })
+
+		n, err := wrapper.Write([]byte("complete"))
+		require.Equal(t, 8, n)
+		require.Same(t, transportCause, err)
+		require.Equal(t, []byte("complete"), sink.outputEvents()[0].data)
+		require.Zero(t, callbackCalls.Load())
+	})
+
+	t.Run("empty write", func(t *testing.T) {
+		session := newCaptureTestSession(t.Context())
+		sink := &captureTestSink{}
+		wrapper := requireRecordedSession(t, session, sink, func(error) {})
+
+		n, err := wrapper.Write(nil)
+		require.Zero(t, n)
+		require.NoError(t, err)
+		require.Empty(t, sink.outputEvents())
+		require.Equal(t, int32(1), session.stdout.writeCalls.Load())
 	})
 
 	t.Run("invalid transport byte counts", func(t *testing.T) {
+		transportCause := goerrors.New("transport returned invalid byte count")
 		for _, test := range []struct {
-			name       string
-			transportN int
-			expectedN  int
+			name         string
+			transportN   int
+			transportErr error
+			expectedN    int
 		}{
 			{name: "negative", transportN: -1, expectedN: 0},
-			{name: "too large", transportN: 6, expectedN: 5},
+			{name: "too large with transport error", transportN: 6, transportErr: transportCause, expectedN: 5},
 		} {
 			t.Run(test.name, func(t *testing.T) {
 				session := newCaptureTestSession(t.Context())
-				session.stdout.write = func([]byte) (int, error) { return test.transportN, nil }
+				session.stdout.write = func([]byte) (int, error) { return test.transportN, test.transportErr }
 				sink := &captureTestSink{}
 				var callbackCalls atomic.Int32
 				var failure error
@@ -275,8 +315,12 @@ func TestRecordedSessionCapturesOutputStreamsAndSuccessfulBytes(t *testing.T) {
 				n, err := wrapper.Write([]byte("value"))
 				require.Equal(t, test.expectedN, n)
 				require.True(t, bferrors.System.IsErr(err))
-				require.Empty(t, sink.outputEvents())
+				require.Equal(t, []byte("value"), sink.outputEvents()[0].data)
 				require.Equal(t, int32(1), callbackCalls.Load())
+				if test.transportErr != nil {
+					require.ErrorIs(t, err, test.transportErr)
+					require.ErrorIs(t, failure, test.transportErr)
+				}
 				n, blockedErr := wrapper.Write([]byte("blocked"))
 				require.Zero(t, n)
 				require.ErrorIs(t, err, failure)
@@ -307,14 +351,35 @@ func TestRecordedSessionCapturesNormalizedPtyOutput(t *testing.T) {
 	require.Equal(t, []byte("stderr\n"), events[1].data)
 }
 
+func TestRecordedSessionNormalizesPtyOutputAcrossWrites(t *testing.T) {
+	session := newCaptureTestSession(t.Context())
+	session.hasPty = true
+	sink := &captureTestSink{}
+	wrapper := requireRecordedSession(t, session, sink, func(error) {})
+
+	_, err := wrapper.Write([]byte("first\r"))
+	require.NoError(t, err)
+	_, err = wrapper.Write([]byte("\nsecond\n"))
+	require.NoError(t, err)
+	_, err = wrapper.Write([]byte("third\r"))
+	require.NoError(t, err)
+	_, err = wrapper.Stderr().Write([]byte("stderr"))
+	require.NoError(t, err)
+	_, err = wrapper.Write([]byte("\nfourth"))
+	require.NoError(t, err)
+
+	events := sink.outputEvents()
+	require.Len(t, events, 5)
+	require.Equal(t, []byte("first\r"), events[0].data)
+	require.Equal(t, []byte("\nsecond\r\n"), events[1].data)
+	require.Equal(t, []byte("third\r"), events[2].data)
+	require.Equal(t, []byte("stderr"), events[3].data)
+	require.Equal(t, []byte("\r\nfourth"), events[4].data)
+}
+
 func TestRecordedSessionRecordingFailurePoisonsOutput(t *testing.T) {
-	transportCause := goerrors.New("transport failed after bytes")
 	recordCause := bferrors.Config.Newf("recording storage rejected output")
 	session := newCaptureTestSession(t.Context())
-	session.stdout.write = func(value []byte) (int, error) {
-		_, _ = session.stdout.writer.Write(value[:2])
-		return 2, transportCause
-	}
 	sink := &captureTestSink{outputErr: recordCause}
 	var callbackCalls atomic.Int32
 	var callbackErr error
@@ -329,8 +394,7 @@ func TestRecordedSessionRecordingFailurePoisonsOutput(t *testing.T) {
 	require.NoError(t, err)
 
 	n, err := wrapper.Write([]byte("first"))
-	require.Equal(t, 2, n)
-	require.ErrorIs(t, err, transportCause)
+	require.Zero(t, n)
 	require.ErrorIs(t, err, recordCause)
 	require.True(t, bferrors.Config.IsErr(err))
 	require.Equal(t, int32(1), callbackCalls.Load())
@@ -343,8 +407,9 @@ func TestRecordedSessionRecordingFailurePoisonsOutput(t *testing.T) {
 	n, err = wrapper.Write([]byte("blocked stdout"))
 	require.Zero(t, n)
 	require.Same(t, callbackErr, err)
-	require.Equal(t, int32(1), session.stdout.writeCalls.Load())
+	require.Zero(t, session.stdout.writeCalls.Load())
 	require.Zero(t, session.stderr.writeCalls.Load())
+	require.Empty(t, session.stdout.writer.Bytes())
 	require.Equal(t, int32(1), callbackCalls.Load())
 }
 
@@ -708,6 +773,7 @@ func TestRecordedSessionStopAndWaitDrainsActiveWrite(t *testing.T) {
 		writeDone <- err
 	}()
 	<-writeEntered
+	require.Zero(t, session.stdout.writeCalls.Load())
 	stopDone := make(chan error, 1)
 	stopStarted := make(chan struct{})
 	go func() {
@@ -720,6 +786,7 @@ func TestRecordedSessionStopAndWaitDrainsActiveWrite(t *testing.T) {
 	close(releaseWrite)
 	require.NoError(t, <-stopDone)
 	require.NoError(t, <-writeDone)
+	require.Equal(t, int32(1), session.stdout.writeCalls.Load())
 	require.Equal(t, []byte("drained"), sink.outputEvents()[0].data)
 }
 

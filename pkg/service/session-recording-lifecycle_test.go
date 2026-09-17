@@ -388,7 +388,10 @@ func TestExecuteSessionRecordingWriteFailureIsFailClosed(t *testing.T) {
 	client := server.mustDial(t)
 	sshSession, err := client.NewSession()
 	require.NoError(t, err)
+	var stdout bytes.Buffer
+	sshSession.Stdout = &stdout
 	require.Error(t, sshSession.Run("fail-closed"))
+	require.NotContains(t, stdout.String(), "cannot-persist")
 	activeEntries, err := os.ReadDir(filepath.Join(root, "recordings", "active"))
 	require.NoError(t, err)
 	require.Len(t, activeEntries, 1)

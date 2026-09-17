@@ -28,18 +28,19 @@ type recordedSession struct {
 	onFailure func(error)
 	stderr    *recordedSessionStderr
 
-	mu       sync.Mutex
-	failure  error
-	stopped  bool
-	failed   chan struct{}
-	stop     chan struct{}
-	done     chan struct{}
-	stopOnce sync.Once
-	pty      essh.Pty
-	windows  <-chan essh.Window
-	hasPty   bool
-	columns  uint32
-	rows     uint32
+	mu                              sync.Mutex
+	failure                         error
+	stopped                         bool
+	failed                          chan struct{}
+	stop                            chan struct{}
+	done                            chan struct{}
+	stopOnce                        sync.Once
+	pty                             essh.Pty
+	windows                         <-chan essh.Window
+	hasPty                          bool
+	columns                         uint32
+	rows                            uint32
+	terminalEndedWithCarriageReturn bool
 }
 
 type recordedSessionStderr struct {
@@ -191,6 +192,33 @@ func (this *recordedSession) write(target io.Writer, stream recording.OutputStre
 		return 0, errors.System.Newf("session Recording capture is stopped")
 	}
 
+	if len(value) == 0 {
+		n, writeErr := target.Write(value)
+		if n == 0 {
+			this.mu.Unlock()
+			return 0, writeErr
+		}
+		invalidCountErr := errors.System.Newf("SSH session writer returned invalid byte count %d for empty write", n)
+		failure := this.poisonLocked("output delivery", goerrors.Join(writeErr, invalidCountErr))
+		this.mu.Unlock()
+		this.onFailure(failure)
+		return 0, goerrors.Join(writeErr, failure)
+	}
+
+	recorded := value
+	if normalizeTerminal {
+		recorded = normalizeSessionTerminalOutput(recorded, this.terminalEndedWithCarriageReturn)
+	}
+	if recordErr := this.sink.WriteOutput(this.elapsed(), stream, recorded); recordErr != nil {
+		failure := this.poisonLocked("output", recordErr)
+		this.mu.Unlock()
+		this.onFailure(failure)
+		return 0, failure
+	}
+	if stream == recording.OutputStreamTerminal {
+		this.terminalEndedWithCarriageReturn = recorded[len(recorded)-1] == '\r'
+	}
+
 	n, writeErr := target.Write(value)
 	if n < 0 || n > len(value) {
 		invalidCount := n
@@ -199,42 +227,32 @@ func (this *recordedSession) write(target io.Writer, stream recording.OutputStre
 		} else {
 			n = len(value)
 		}
-		failure := this.poisonLocked("output", errors.System.Newf("SSH session writer returned invalid byte count %d for %d-byte write", invalidCount, len(value)))
+		invalidCountErr := errors.System.Newf("SSH session writer returned invalid byte count %d for %d-byte write", invalidCount, len(value))
+		failure := this.poisonLocked("output delivery", goerrors.Join(writeErr, invalidCountErr))
 		this.mu.Unlock()
 		this.onFailure(failure)
 		return n, goerrors.Join(writeErr, failure)
 	}
-	if n < len(value) && writeErr == nil {
+	if n == len(value) {
+		this.mu.Unlock()
+		return n, writeErr
+	}
+	if writeErr == nil {
 		writeErr = io.ErrShortWrite
 	}
-	if n <= 0 {
-		this.mu.Unlock()
-		return n, writeErr
-	}
-	recorded := value[:n]
-	if normalizeTerminal {
-		recorded = normalizeSessionTerminalOutput(recorded)
-		if (n != len(value) || writeErr != nil) && !bytes.Equal(recorded, value[:n]) {
-			failure := this.poisonLocked("output", errors.System.Newf("cannot determine normalized terminal bytes after a partial SSH session write"))
-			this.mu.Unlock()
-			this.onFailure(failure)
-			return n, goerrors.Join(writeErr, failure)
-		}
-	}
-	recordErr := this.sink.WriteOutput(this.elapsed(), stream, recorded)
-	if recordErr == nil {
-		this.mu.Unlock()
-		return n, writeErr
-	}
-	failure := this.poisonLocked("output", recordErr)
+	failure := this.poisonLocked("output delivery", errors.System.Newf("SSH session writer accepted %d of %d recorded bytes: %w", n, len(value), writeErr))
 	this.mu.Unlock()
 	this.onFailure(failure)
-	return n, goerrors.Join(writeErr, failure)
+	return n, failure
 }
 
-func normalizeSessionTerminalOutput(value []byte) []byte {
-	value = bytes.ReplaceAll(value, []byte{'\n'}, []byte{'\r', '\n'})
-	return bytes.ReplaceAll(value, []byte{'\r', '\r', '\n'}, []byte{'\r', '\n'})
+func normalizeSessionTerminalOutput(value []byte, precededByCarriageReturn bool) []byte {
+	normalized := bytes.ReplaceAll(value, []byte{'\n'}, []byte{'\r', '\n'})
+	normalized = bytes.ReplaceAll(normalized, []byte{'\r', '\r', '\n'}, []byte{'\r', '\n'})
+	if precededByCarriageReturn && value[0] == '\n' {
+		return normalized[1:]
+	}
+	return normalized
 }
 
 func (this *recordedSession) recordResize(window essh.Window) (error, bool) {
