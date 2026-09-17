@@ -1,6 +1,7 @@
 package recording
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sync"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/engity-com/bifroest/pkg/audit"
 	bferrors "github.com/engity-com/bifroest/pkg/errors"
 )
 
@@ -107,6 +109,84 @@ func TestInventoryLocalFilesCountsAllSpoolAreas(t *testing.T) {
 	usage, err := inventoryLocalFiles(paths...)
 	require.NoError(t, err)
 	require.Equal(t, expected, usage)
+}
+
+func TestLocalQuotaAllowsRecoverableReceiptTemporaryAboveLimit(t *testing.T) {
+	root := t.TempDir()
+	delivery := filepath.Join(root, localDeliveryDirectory)
+	state := filepath.Join(delivery, "producer", "artifact")
+	require.NoError(t, os.MkdirAll(state, localDirectoryMode))
+	require.NoError(t, os.WriteFile(filepath.Join(state, "receipt.json"), make([]byte, 8), localFileMode))
+	require.NoError(t, os.WriteFile(filepath.Join(state, "receipt.tmp"), make([]byte, 9), localFileMode))
+
+	quota, err := newLocalQuota(9, delivery)
+	require.NoError(t, err)
+	require.Equal(t, uint64(17), quota.usage)
+	require.ErrorContains(t, quota.reserve(1), "would be exceeded")
+	require.NoError(t, quota.reconcile(0, 17, 9))
+	require.Equal(t, uint64(9), quota.usage)
+}
+
+func TestLocalQuotaRejectsReceiptTemporaryWhoseRecoveredStateExceedsLimit(t *testing.T) {
+	root := t.TempDir()
+	delivery := filepath.Join(root, localDeliveryDirectory)
+	state := filepath.Join(delivery, "producer", "artifact")
+	require.NoError(t, os.MkdirAll(state, localDirectoryMode))
+	require.NoError(t, os.WriteFile(filepath.Join(state, "receipt.json"), make([]byte, 8), localFileMode))
+	require.NoError(t, os.WriteFile(filepath.Join(state, "receipt.tmp"), make([]byte, 9), localFileMode))
+
+	_, err := newLocalQuota(8, delivery)
+	require.ErrorContains(t, err, "exceeding its 8-byte limit")
+}
+
+func TestLocalRepositoryRecoversReceiptQuotaBeforeRecordingState(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "recordings")
+	identity, _, _ := castTestValues(t, true)
+	initial, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{}, LocalRepositoryOptions{MaximumSpoolBytes: 1 << 20})
+	require.NoError(t, err)
+	require.NoError(t, initial.Close())
+	delivery := filepath.Join(root, localDeliveryDirectory)
+	state := filepath.Join(delivery, "producer", "artifact")
+	require.NoError(t, os.MkdirAll(state, localDirectoryMode))
+	target := filepath.Join(state, "receipt.json")
+	require.NoError(t, os.WriteFile(target, make([]byte, 8), localFileMode))
+	require.NoError(t, os.WriteFile(filepath.Join(state, "receipt.tmp"), make([]byte, 9), localFileMode))
+	preparer := &localReceiptQuotaRecoveryTestPreparer{target: target}
+
+	repository, err := NewLocalCastZstdRepositoryWithArtifactPreparer(t.Context(), root, identity, CastZstdVerifyOptions{}, LocalRepositoryOptions{MaximumSpoolBytes: 9}, preparer)
+	require.NoError(t, err)
+	require.True(t, preparer.recovered)
+	require.Equal(t, uint64(9), repository.repository.quota.usage)
+	require.NoError(t, repository.Close())
+}
+
+type localReceiptQuotaRecoveryTestPreparer struct {
+	quota     *localQuota
+	target    string
+	recovered bool
+}
+
+func (this *localReceiptQuotaRecoveryTestPreparer) BindSealedArtifactQuota(quota audit.RemoteArtifactReceiptQuota) {
+	this.quota = quota.(*localQuota)
+}
+
+func (this *localReceiptQuotaRecoveryTestPreparer) RecoverSealedArtifactState(context.Context) error {
+	if err := os.Remove(this.target); err != nil {
+		return err
+	}
+	if err := os.Rename(filepath.Join(filepath.Dir(this.target), "receipt.tmp"), this.target); err != nil {
+		return err
+	}
+	this.recovered = true
+	return this.quota.reconcile(0, 17, 9)
+}
+
+func (*localReceiptQuotaRecoveryTestPreparer) Prepare(context.Context, audit.RemoteArtifact, time.Time) error {
+	return nil
+}
+
+func (*localReceiptQuotaRecoveryTestPreparer) Require(context.Context, audit.RemoteArtifact) error {
+	return nil
 }
 
 func TestLocalQuotaFileAccountsWritesAndSuccessfulTruncate(t *testing.T) {

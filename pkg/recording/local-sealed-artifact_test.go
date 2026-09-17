@@ -124,6 +124,12 @@ func TestLocalRepositorySealedArtifactAccessFailsClosed(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	_, err = repository.OpenSealed(canceled, metadata.RecordingId)
 	require.ErrorIs(t, err, context.Canceled)
+	repository.repository.mutex.Lock()
+	waiting, stopWaiting := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	_, err = repository.ListSealed(waiting)
+	stopWaiting()
+	repository.repository.mutex.Unlock()
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 
 	wrongId, err := NewId()
 	require.NoError(t, err)

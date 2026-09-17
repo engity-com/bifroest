@@ -264,7 +264,7 @@ func (this *Service) prepare() (svc *service, err error) {
 	resourcesOwnedByService := false
 	defer func(preparedService *service) {
 		if !resourcesOwnedByService {
-			recordingErr := preparedService.closeRecording()
+			recordingErr := preparedService.closeRecording(false)
 			auditErr := preparedService.closeAudit(false)
 			err = goerrors.Join(err, recordingErr, auditErr)
 		}
@@ -308,6 +308,11 @@ func (this *Service) prepare() (svc *service, err error) {
 			return fail(err)
 		}
 	}
+	for _, delivery := range svc.recordingDeliveryOrder {
+		if err := delivery.Start(); err != nil {
+			return fail(err)
+		}
+	}
 
 	sessionRepositoryPrepared = true
 	resourcesOwnedByService = true
@@ -320,6 +325,7 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	svc.auditDeliveries = make(map[configuration.AuditlogName]*audit.RemoteDelivery, len(this.Configuration.Auditlogs))
 	svc.recordingRepositories = make(map[configuration.AuditlogName]*sessionRecordingRepository, len(this.Configuration.Auditlogs))
 	svc.recordingTargets = make(map[configuration.AuditlogName]*audit.RemoteArtifactTargets, len(this.Configuration.Auditlogs))
+	svc.recordingDeliveries = make(map[configuration.AuditlogName]*audit.RemoteArtifactDelivery, len(this.Configuration.Auditlogs))
 	svc.flowAuditRecorders = make(map[configuration.FlowName]audit.Recorder, len(this.Configuration.Flows))
 	svc.flowAuditlogs = make(map[configuration.FlowName]configuration.AuditlogName, len(this.Configuration.Flows))
 	svc.enabledAuditlogs = make(map[configuration.AuditlogName]bool, len(this.Configuration.Auditlogs))
@@ -398,6 +404,14 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 		}
 		svc.recordingRepositories[auditlog.Name] = repository
 		svc.recordingRepositoryOrder = append(svc.recordingRepositoryOrder, auditlog.Name)
+		if targets != nil {
+			delivery, deliveryErr := audit.NewRemoteArtifactDelivery(ctx, filepath.Join(auditlog.Recording.Directory, "sealed"), repository, repository.receipts, targets)
+			if deliveryErr != nil {
+				return fmt.Errorf("cannot prepare Recording delivery of auditlog %q: %w", auditlog.Name, deliveryErr)
+			}
+			svc.recordingDeliveries[auditlog.Name] = delivery
+			svc.recordingDeliveryOrder = append(svc.recordingDeliveryOrder, delivery)
+		}
 	}
 	for index := range this.Configuration.Auditlogs {
 		auditlog := &this.Configuration.Auditlogs[index]
@@ -656,6 +670,8 @@ type service struct {
 	recordingRepositoryOrder []configuration.AuditlogName
 	recordingTargets         map[configuration.AuditlogName]*audit.RemoteArtifactTargets
 	recordingTargetOrder     []configuration.AuditlogName
+	recordingDeliveries      map[configuration.AuditlogName]*audit.RemoteArtifactDelivery
+	recordingDeliveryOrder   []*audit.RemoteArtifactDelivery
 	flowAuditRecorders       map[configuration.FlowName]audit.Recorder
 	flowAuditlogs            map[configuration.FlowName]configuration.AuditlogName
 	enabledAuditlogs         map[configuration.AuditlogName]bool
@@ -722,7 +738,7 @@ func sshMaxAuthTries(value uint8) int {
 
 func (this *service) Close() (rErr error) {
 	defer func() { rErr = goerrors.Join(rErr, this.closeAudit(true)) }()
-	defer func() { rErr = goerrors.Join(rErr, this.closeRecording()) }()
+	defer func() { rErr = goerrors.Join(rErr, this.closeRecording(true)) }()
 	defer common.KeepCloseError(&rErr, this.alternatives)
 	defer common.KeepCloseError(&rErr, this.imp)
 	defer common.KeepCloseError(&rErr, this.sessions)
@@ -732,9 +748,30 @@ func (this *service) Close() (rErr error) {
 	return nil
 }
 
-func (this *service) closeRecording() (result error) {
+func (this *service) closeRecording(flush bool) (result error) {
+	if flush && len(this.recordingDeliveryOrder) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), remoteAuditDeliveryShutdownTimeout)
+		var wait sync.WaitGroup
+		for _, delivery := range this.recordingDeliveryOrder {
+			wait.Add(1)
+			go func() {
+				defer wait.Done()
+				if err := delivery.Flush(ctx); err != nil {
+					this.logger().WithError(err).Warn("cannot flush remote Recording delivery while shutting down; artifacts remain local")
+				}
+			}()
+		}
+		wait.Wait()
+		cancel()
+	}
+	for _, delivery := range this.recordingDeliveryOrder {
+		result = goerrors.Join(result, delivery.Close())
+	}
 	for index := len(this.recordingTargetOrder) - 1; index >= 0; index-- {
 		name := this.recordingTargetOrder[index]
+		if this.recordingDeliveries[name] != nil {
+			continue
+		}
 		if err := this.recordingTargets[name].Close(); err != nil {
 			result = goerrors.Join(result, fmt.Errorf("cannot close Recording targets of auditlog %q: %w", name, err))
 		}

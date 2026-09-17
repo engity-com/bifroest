@@ -49,7 +49,7 @@ func TestRemoteArtifactReceiptIsCanonicalSignedAndRetainedAfterAllTargets(t *tes
 	receipt, payload, err := newRemoteArtifactReceipt(identity, "security", artifact, sealedAt, targets)
 	require.NoError(t, err)
 
-	decoded, err := decodeRemoteArtifactReceipt(payload, identity, "security", artifact)
+	decoded, err := decodeRemoteArtifactReceipt(payload, identity, "security", artifact.FileName())
 	require.NoError(t, err)
 	require.Equal(t, receipt, decoded)
 	require.Equal(t, sealedAt, mustParseRemoteArtifactReceiptTime(t, decoded.SealedAt))
@@ -90,9 +90,7 @@ func TestRemoteArtifactReceiptIsCanonicalSignedAndRetainedAfterAllTargets(t *tes
 	tampered.Size++
 	tamperedPayload, err := json.Marshal(tampered)
 	require.NoError(t, err)
-	_, err = decodeRemoteArtifactReceipt(tamperedPayload, identity, "security", RemoteArtifact{
-		producerId: artifact.ProducerId(), fileName: artifact.FileName(), digest: artifact.Digest(), size: artifact.Size() + 1, content: bytes.NewReader(append([]byte("sealed recording"), 0)),
-	})
+	_, err = decodeRemoteArtifactReceipt(tamperedPayload, identity, "security", artifact.FileName())
 	require.ErrorContains(t, err, "illegal audit signature")
 }
 
@@ -126,6 +124,10 @@ func TestRemoteArtifactReceiptStoreRecoversOnlyMonotonicAcknowledgement(t *testi
 	require.NoError(t, err)
 	require.True(t, exists)
 	require.Equal(t, initial, loaded)
+	wrongArtifact := artifact
+	wrongArtifact.digest[0]++
+	_, _, err = store.load(wrongArtifact)
+	require.ErrorContains(t, err, "different artifact")
 
 	acknowledgedAt := sealedAt.Add(time.Minute)
 	next, payload, changed, err := acknowledgeRemoteArtifactReceipt(identity, initial, targets.entries[0], acknowledgedAt)
@@ -135,6 +137,7 @@ func TestRemoteArtifactReceiptStoreRecoversOnlyMonotonicAcknowledgement(t *testi
 	temporary := filepath.Join(directory, remoteArtifactReceiptTempFileName)
 	require.NoError(t, writeRemoteArtifactReceiptTestFile(temporary, payload))
 
+	require.NoError(t, (&RemoteArtifactReceipts{store: store}).Recover(t.Context()))
 	recovered, exists, err := store.load(artifact)
 	require.NoError(t, err)
 	require.True(t, exists)
@@ -180,8 +183,33 @@ func TestRemoteArtifactReceiptsAcknowledgePersistsTarget(t *testing.T) {
 	usage, err = remoteArtifactReceiptStateUsage(directory)
 	require.NoError(t, err)
 	require.Equal(t, uint64(usage), quota.usage)
-	require.Greater(t, quota.peak, quota.usage)
+	require.Equal(t, quota.usage, quota.peak)
 	require.ErrorContains(t, receipts.Acknowledge(context.Background(), artifact, "missing", acknowledgedAt), "is not configured")
+}
+
+func TestRemoteArtifactReceiptsAcknowledgeAtStableQuotaLimit(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b818-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))
+	targets := &RemoteArtifactTargets{entries: []remoteArtifactTargetEntry{{
+		scope:                  RemoteTargetScope{Auditlog: "security", Target: "archive"},
+		destinationFingerprint: remoteDeliveryDestinationFingerprint(sha256.Sum256([]byte("destination"))),
+	}}}
+	quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
+	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", quota)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.close()) })
+	sealedAt := time.Date(2026, 9, 16, 12, 45, 0, 0, time.UTC)
+	initial, err := store.initialize(artifact, sealedAt, targets)
+	require.NoError(t, err)
+	_, acknowledgedPayload, changed, err := acknowledgeRemoteArtifactReceipt(identity, initial, targets.entries[0], sealedAt.Add(time.Minute))
+	require.NoError(t, err)
+	require.True(t, changed)
+	growth := uint64(len(acknowledgedPayload)) - quota.usage
+	quota.maximum = quota.usage + growth
+
+	_, err = store.acknowledge(t.Context(), artifact, targets.entries[0], sealedAt.Add(time.Minute))
+	require.NoError(t, err)
+	require.Equal(t, quota.maximum, quota.usage)
 }
 
 func TestRemoteArtifactReceiptsRejectsReceiptBeyondQuota(t *testing.T) {
@@ -210,6 +238,18 @@ func TestRemoteArtifactReceiptStoreRejectsIncompleteInitialTemporary(t *testing.
 	_, _, err = store.load(artifact)
 	require.ErrorContains(t, err, "cannot decode remote artifact delivery receipt")
 	require.FileExists(t, temporary)
+}
+
+func TestRemoteArtifactReceiptRecoveryIgnoresEmptyUnpublishedState(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.close()) })
+	state := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName("unpublished.cast.zst"))
+	require.NoError(t, ensureJournalDirectory(state, true))
+
+	require.NoError(t, (&RemoteArtifactReceipts{store: store}).Recover(t.Context()))
+	require.DirExists(t, state)
 }
 
 func TestRemoteArtifactReceiptStateNamesAvoidFilesystemAliases(t *testing.T) {

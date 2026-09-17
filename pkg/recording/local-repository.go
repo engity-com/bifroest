@@ -75,6 +75,12 @@ type SealedArtifactQuotaBinder interface {
 	BindSealedArtifactQuota(audit.RemoteArtifactReceiptQuota)
 }
 
+// SealedArtifactStateRecoverer repairs preparer-owned state before the local
+// repository recovers recordings that may require spool capacity.
+type SealedArtifactStateRecoverer interface {
+	RecoverSealedArtifactState(context.Context) error
+}
+
 type localRecovery[Summary any] struct {
 	summary       Summary
 	truncated     bool
@@ -143,7 +149,7 @@ func (this *localTrackingReaderAt) ReadAt(target []byte, offset int64) (int, err
 }
 
 type localRepository[Head, Summary any] struct {
-	mutex          sync.Mutex
+	mutex          localRepositoryMutex
 	directory      string
 	activePath     string
 	sealedPath     string
@@ -160,6 +166,38 @@ type localRepository[Head, Summary any] struct {
 	operations     sync.WaitGroup
 	closed         bool
 	poisoned       error
+}
+
+type localRepositoryMutex chan struct{}
+
+func newLocalRepositoryMutex() localRepositoryMutex {
+	result := make(localRepositoryMutex, 1)
+	result <- struct{}{}
+	return result
+}
+
+func (this localRepositoryMutex) Lock() {
+	<-this
+}
+
+func (this localRepositoryMutex) LockContext(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-this:
+	}
+	if err := ctx.Err(); err != nil {
+		this.Unlock()
+		return err
+	}
+	return nil
+}
+
+func (this localRepositoryMutex) Unlock() {
+	this <- struct{}{}
 }
 
 type localActive[Head, Summary any] struct {
@@ -215,6 +253,7 @@ func newLocalRepository[Head, Summary any](ctx context.Context, directory string
 		return nil, err
 	}
 	result := &localRepository[Head, Summary]{
+		mutex:          newLocalRepositoryMutex(),
 		directory:      canonical,
 		activePath:     filepath.Join(canonical, localActiveDirectory),
 		sealedPath:     filepath.Join(canonical, localSealedDirectory),
@@ -236,6 +275,11 @@ func newLocalRepository[Head, Summary any](ctx context.Context, directory string
 	}
 	if err := bindLocalFormat(canonical, format.key()); err != nil {
 		return nil, errors.System.Newf("cannot bind local recording repository format: %w", err)
+	}
+	if recoverer, ok := prepareSealed.(SealedArtifactStateRecoverer); ok {
+		if err := recoverer.RecoverSealedArtifactState(ctx); err != nil {
+			return nil, errors.System.Newf("cannot recover sealed artifact state: %w", err)
+		}
 	}
 	for _, path := range []string{result.activePath, result.sealedPath, result.workPath, result.quarantinePath} {
 		if err := ensureLocalDirectory(path); err != nil {
@@ -277,11 +321,10 @@ func (this *localRepository[Head, Summary]) listSealed(ctx context.Context) ([]I
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	this.mutex.Lock()
-	defer this.mutex.Unlock()
-	if err := ctx.Err(); err != nil {
+	if err := this.mutex.LockContext(ctx); err != nil {
 		return nil, err
 	}
+	defer this.mutex.Unlock()
 	if this.closed {
 		return nil, errors.System.Newf("local recording repository is closed")
 	}
@@ -329,9 +372,7 @@ func (this *localRepository[Head, Summary]) openSealed(ctx context.Context, id I
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	this.mutex.Lock()
-	if err := ctx.Err(); err != nil {
-		this.mutex.Unlock()
+	if err := this.mutex.LockContext(ctx); err != nil {
 		return nil, err
 	}
 	if this.closed {

@@ -366,8 +366,8 @@ func TestServiceCloseReleasesRecordingLock(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, concurrent)
 	require.NoError(t, svc.Close())
-	require.NoError(t, svc.closeRecording())
-	require.NoError(t, svc.closeRecording())
+	require.NoError(t, svc.closeRecording(false))
+	require.NoError(t, svc.closeRecording(false))
 
 	reopened, err := serviceDefinition.prepare()
 	require.NoError(t, err)

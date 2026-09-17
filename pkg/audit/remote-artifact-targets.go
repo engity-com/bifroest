@@ -12,6 +12,7 @@ import (
 type remoteArtifactTargetEntry struct {
 	scope                  RemoteTargetScope
 	target                 RemoteArtifactTarget
+	publishTarget          RemoteArtifactTarget
 	publishAttemptTimeout  time.Duration
 	destinationFingerprint remoteDeliveryDestinationFingerprint
 }
@@ -38,11 +39,19 @@ func NewRemoteArtifactTargets(ctx context.Context, auditlogName configuration.Au
 		result.entries = append(result.entries, remoteArtifactTargetEntry{
 			scope:                  entry.scope,
 			target:                 target,
+			publishTarget:          remoteArtifactPublishTarget(target),
 			publishAttemptTimeout:  entry.publishAttemptTimeout,
 			destinationFingerprint: entry.destinationFingerprint,
 		})
 	}
 	return result, nil
+}
+
+func remoteArtifactPublishTarget(target RemoteArtifactTarget) RemoteArtifactTarget {
+	if validating, ok := target.(*validatingRemoteArtifactTarget); ok && !isNilRemoteValue(validating.artifactTarget) {
+		return validating.artifactTarget
+	}
+	return target
 }
 
 func (this *RemoteArtifactTargets) Close() error {

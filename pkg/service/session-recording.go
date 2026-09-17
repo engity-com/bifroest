@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +30,8 @@ const (
 
 	defaultSessionRecordingColumns = 80
 	defaultSessionRecordingRows    = 24
+	sessionRecordingCastZstdSuffix = ".cast.zst"
+	sessionRecordingBECastSuffix   = ".becast"
 )
 
 type sessionRecordingRepository struct {
@@ -245,6 +248,14 @@ func (this *sessionRecordingReceiptPreparer) BindSealedArtifactQuota(quota audit
 	this.provider.setQuota(quota)
 }
 
+func (this *sessionRecordingReceiptPreparer) RecoverSealedArtifactState(ctx context.Context) error {
+	receipts, err := this.provider.get()
+	if err != nil {
+		return err
+	}
+	return receipts.Recover(ctx)
+}
+
 func (this *sessionRecordingReceiptPreparer) Prepare(ctx context.Context, artifact audit.RemoteArtifact, sealedAt time.Time) error {
 	receipts, err := this.provider.get()
 	if err != nil {
@@ -330,6 +341,59 @@ func (this *sessionRecordingRepository) validateSealedReceipts(ctx context.Conte
 		}
 	}
 	return nil
+}
+
+func (this *sessionRecordingRepository) ListSealedArtifactNames(ctx context.Context) ([]string, error) {
+	if this == nil {
+		return nil, errors.System.Newf("nil session Recording repository")
+	}
+	var ids []recording.Id
+	var suffix string
+	var err error
+	switch this.format {
+	case sessionRecordingRepositoryFormatCastZstd:
+		ids, err = this.castZstd.ListSealed(ctx)
+		suffix = sessionRecordingCastZstdSuffix
+	case sessionRecordingRepositoryFormatBECast:
+		ids, err = this.becast.ListSealed(ctx)
+		suffix = sessionRecordingBECastSuffix
+	default:
+		return nil, errors.System.Newf("unknown session Recording repository format")
+	}
+	if err != nil {
+		return nil, err
+	}
+	result := make([]string, len(ids))
+	for index, id := range ids {
+		result[index] = id.String() + suffix
+	}
+	return result, nil
+}
+
+func (this *sessionRecordingRepository) OpenSealedArtifact(ctx context.Context, name string) (audit.RemoteArtifactHandle, error) {
+	if this == nil {
+		return nil, errors.System.Newf("nil session Recording repository")
+	}
+	var suffix string
+	switch this.format {
+	case sessionRecordingRepositoryFormatCastZstd:
+		suffix = sessionRecordingCastZstdSuffix
+	case sessionRecordingRepositoryFormatBECast:
+		suffix = sessionRecordingBECastSuffix
+	default:
+		return nil, errors.System.Newf("unknown session Recording repository format")
+	}
+	if !strings.HasSuffix(name, suffix) {
+		return nil, errors.Config.Newf("sealed session Recording artifact %q does not match repository format", name)
+	}
+	var id recording.Id
+	if err := id.UnmarshalText([]byte(strings.TrimSuffix(name, suffix))); err != nil || id.String()+suffix != name {
+		return nil, errors.Config.Newf("illegal sealed session Recording artifact name %q", name)
+	}
+	if this.format == sessionRecordingRepositoryFormatCastZstd {
+		return this.castZstd.OpenSealed(ctx, id)
+	}
+	return this.becast.OpenSealed(ctx, id)
 }
 
 func sessionRecordingTargetConfigurations(auditlog *configuration.Auditlog) configuration.AuditlogTargets {
