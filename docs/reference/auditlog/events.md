@@ -265,6 +265,18 @@ Written after the persistent session deletion returns. Its `flow`, `sessionId`, 
 
 Fields: `domain` is `housekeeping`; `durationMillis` measures the deletion attempt. `outcome` is `success` only when deletion completed without an error. On `failure`, `errorCategory` classifies the error.
 
+#### `housekeeping.recording.delete.started`
+
+Written before housekeeping deletes a sealed session Recording whose configured retention period has elapsed. If this event cannot be recorded, deletion is not attempted.
+
+Fields: `domain` is `housekeeping`; `recordingId` and `operationId` identify the deletion attempt. `reason` is `retention-elapsed`. `outcome` is omitted. The event contains no Recording file name, path, digest, or content.
+
+#### `housekeeping.recording.delete.completed`
+
+Written after the Recording artifact and its signed delivery receipt have been processed. Its `recordingId`, `operationId`, and `reason` match the corresponding `housekeeping.recording.delete.started` event.
+
+Fields: `domain` is `housekeeping`; `durationMillis` measures the deletion attempt. `outcome` is `success` only when the artifact was durably removed before its receipt state, or when a previously removed artifact's remaining receipt state was successfully removed during retry. On `failure`, `errorCategory` classifies the error, and housekeeping preserves the receipt whenever artifact deletion did not complete.
+
 #### `housekeeping.orphaned-session.cleanup.skipped` {: #housekeeping-orphaned-session-cleanup-skipped }
 
 Written when housekeeping encounters a persisted session whose flow is no longer present in the running configuration. The implementations needed to interpret and safely dispose its environment and authorization tokens are unavailable. Housekeeping therefore preserves the complete session, including expired or already disposed sessions beyond their retention period, for operator recovery. It does not read or modify either token, dispose the session or environment, or delete session storage.

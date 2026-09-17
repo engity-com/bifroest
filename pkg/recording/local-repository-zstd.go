@@ -91,6 +91,13 @@ func (this *LocalCastZstdRepository) OpenSealed(ctx context.Context, id Id) (*Lo
 	return this.repository.openSealed(ctx, id)
 }
 
+func (this *LocalCastZstdRepository) DeleteSealed(ctx context.Context, id Id, expectedDigest ArtifactDigest, expectedSize int64) (bool, error) {
+	if this == nil {
+		return false, errors.System.Newf("nil local Cast Zstandard repository")
+	}
+	return this.repository.deleteSealed(ctx, id, expectedDigest, expectedSize)
+}
+
 func (this *LocalCastZstdRepository) CreateActive(ctx context.Context, header CastHeader, metadata CastMetadata, chunkSize int) (*ActiveCastZstd, error) {
 	if this == nil {
 		return nil, errors.System.Newf("nil local recording repository")

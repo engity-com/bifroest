@@ -20,6 +20,27 @@ type localProcessLock struct {
 	err  error
 }
 
+func removeLocalFile(path string) error {
+	return os.Remove(path)
+}
+
+func removeLocalRetentionTombstone(path string) (int64, bool, error) {
+	info, err := os.Lstat(path)
+	if goerrors.Is(err, os.ErrNotExist) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	if !info.Mode().IsRegular() || info.Size() < 0 {
+		return 0, false, errors.Config.Newf("local recording retention tombstone is invalid")
+	}
+	if err := removeLocalFileIfSame(path, info); err != nil {
+		return 0, false, err
+	}
+	return info.Size(), true, nil
+}
+
 func acquireLocalProcessLock(path string) (*localProcessLock, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, localFileMode)
 	if goerrors.Is(err, os.ErrExist) {

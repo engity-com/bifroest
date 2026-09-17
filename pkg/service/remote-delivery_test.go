@@ -1,8 +1,11 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -218,6 +221,237 @@ func TestServiceShutdownFlushesRecordingArtifacts(t *testing.T) {
 		t.Fatalf("acknowledged Recording artifact was republished as %q", republished)
 	default:
 	}
+}
+
+func TestHouseKeeperDeletesAcknowledgedRecordingAfterRetentionAndAudits(t *testing.T) {
+	for _, encrypted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("encrypted=%t", encrypted), func(t *testing.T) {
+			root := t.TempDir()
+			conf := sessionRecordingTestConfiguration(t, root)
+			enableSessionRecording(&conf.Auditlogs[0])
+			conf.Auditlogs[0].Recording.RetainFor.SetNative(time.Hour)
+			if encrypted {
+				conf.Auditlogs[0].EncryptionPublicKey = sessionRecordingEncryptionPublicKey(t)
+			}
+			target := &serviceRemoteDeliveryTestTarget{publishedArtifact: make(chan string, 1)}
+			conf.Auditlogs[0].Recording.Targets.Mode = configuration.AuditlogRecordingTargetsModeCustom
+			conf.Auditlogs[0].Recording.Targets.Targets = configuration.AuditlogTargets{{
+				Name: "recordings",
+				V:    &serviceRemoteDeliveryTestConfiguration{target: target},
+			}}
+			svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+			require.NoError(t, err)
+			defer func() { require.NoError(t, svc.Close()) }()
+			name := sealRemoteDeliveryTestRecording(t, svc, conf)
+			flushContext, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			require.NoError(t, svc.recordingDeliveries[configuration.DefaultAuditlogName].Flush(flushContext))
+			require.Equal(t, name, <-target.publishedArtifact)
+
+			repository := svc.recordingRepositories[configuration.DefaultAuditlogName]
+			id, err := repository.recordingIdFromArtifactName(name)
+			require.NoError(t, err)
+			originalRecorder := svc.auditRecorders[configuration.DefaultAuditlogName]
+			recorder := &recordingAuditRecorder{}
+			svc.auditRecorders[configuration.DefaultAuditlogName] = recorder
+			require.NoError(t, svc.houseKeeper.cleanupRecordings(svc.houseKeeper.logger(), t.Context(), time.Now().UTC().Add(2*time.Hour)))
+			svc.auditRecorders[configuration.DefaultAuditlogName] = originalRecorder
+
+			_, err = repository.OpenSealedArtifact(t.Context(), name)
+			require.ErrorIs(t, err, os.ErrNotExist)
+			candidates, err := repository.retentionCandidates(t.Context(), time.Now().UTC().Add(2*time.Hour))
+			require.NoError(t, err)
+			require.Empty(t, candidates)
+			events := recorder.eventsSnapshot()
+			require.Len(t, events, 2)
+			require.Equal(t, audit.EventNameHousekeepingRecordingDeleteStarted, events[0].Name)
+			require.Equal(t, audit.EventNameHousekeepingRecordingDeleteCompleted, events[1].Name)
+			require.Equal(t, id.String(), events[0].RecordingId)
+			require.Equal(t, events[0].OperationId, events[1].OperationId)
+			require.Equal(t, audit.EventReasonRetentionElapsed, events[0].Reason)
+			require.Equal(t, audit.EventOutcomeSuccess, events[1].Outcome)
+		})
+	}
+}
+
+func TestHouseKeeperPreservesRecordingWhenRetentionDisabled(t *testing.T) {
+	root := t.TempDir()
+	conf := sessionRecordingTestConfiguration(t, root)
+	enableSessionRecording(&conf.Auditlogs[0])
+	conf.Auditlogs[0].Recording.RetainFor.SetNative(0)
+	target := &serviceRemoteDeliveryTestTarget{publishedArtifact: make(chan string, 1)}
+	conf.Auditlogs[0].Recording.Targets.Mode = configuration.AuditlogRecordingTargetsModeCustom
+	conf.Auditlogs[0].Recording.Targets.Targets = configuration.AuditlogTargets{{
+		Name: "recordings",
+		V:    &serviceRemoteDeliveryTestConfiguration{target: target},
+	}}
+	svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+	require.NoError(t, err)
+	defer func() { require.NoError(t, svc.Close()) }()
+	name := sealRemoteDeliveryTestRecording(t, svc, conf)
+	flushContext, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, svc.recordingDeliveries[configuration.DefaultAuditlogName].Flush(flushContext))
+	require.Equal(t, name, <-target.publishedArtifact)
+	require.NoError(t, svc.houseKeeper.cleanupRecordings(svc.houseKeeper.logger(), t.Context(), time.Now().UTC().Add(100*365*24*time.Hour)))
+
+	repository := svc.recordingRepositories[configuration.DefaultAuditlogName]
+	artifact, err := repository.OpenSealedArtifact(t.Context(), name)
+	require.NoError(t, err)
+	require.NoError(t, artifact.Close())
+	candidates, err := repository.retentionCandidates(t.Context(), time.Now().UTC().Add(100*365*24*time.Hour))
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+}
+
+func TestHouseKeeperDeletesRecordingWithoutTargetsFromSealTime(t *testing.T) {
+	for _, encrypted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("encrypted=%t", encrypted), func(t *testing.T) {
+			root := t.TempDir()
+			conf := sessionRecordingTestConfiguration(t, root)
+			enableSessionRecording(&conf.Auditlogs[0])
+			conf.Auditlogs[0].Recording.RetainFor.SetNative(time.Hour)
+			if encrypted {
+				conf.Auditlogs[0].EncryptionPublicKey = sessionRecordingEncryptionPublicKey(t)
+			}
+			svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+			require.NoError(t, err)
+			defer func() { require.NoError(t, svc.Close()) }()
+			name := sealRemoteDeliveryTestRecording(t, svc, conf)
+			require.NoError(t, svc.houseKeeper.cleanupRecordings(svc.houseKeeper.logger(), t.Context(), time.Now().UTC().Add(2*time.Hour)))
+			_, err = svc.recordingRepositories[configuration.DefaultAuditlogName].OpenSealedArtifact(t.Context(), name)
+			require.ErrorIs(t, err, os.ErrNotExist)
+		})
+	}
+}
+
+func TestHouseKeeperPreservesUnacknowledgedRecording(t *testing.T) {
+	root := t.TempDir()
+	conf := sessionRecordingTestConfiguration(t, root)
+	enableSessionRecording(&conf.Auditlogs[0])
+	conf.Auditlogs[0].Recording.RetainFor.SetNative(time.Nanosecond)
+	gate := make(chan struct{})
+	target := &serviceRemoteDeliveryTestTarget{artifactStarted: make(chan struct{}, 1), artifactGate: gate}
+	conf.Auditlogs[0].Recording.Targets.Mode = configuration.AuditlogRecordingTargetsModeCustom
+	conf.Auditlogs[0].Recording.Targets.Targets = configuration.AuditlogTargets{{
+		Name: "recordings",
+		V:    &serviceRemoteDeliveryTestConfiguration{target: target},
+	}}
+	svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+	require.NoError(t, err)
+	name := sealRemoteDeliveryTestRecording(t, svc, conf)
+	select {
+	case <-target.artifactStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Recording delivery did not start")
+	}
+	require.NoError(t, svc.houseKeeper.cleanupRecordings(svc.houseKeeper.logger(), t.Context(), time.Now().UTC().Add(time.Hour)))
+	artifact, err := svc.recordingRepositories[configuration.DefaultAuditlogName].OpenSealedArtifact(t.Context(), name)
+	require.NoError(t, err)
+	require.NoError(t, artifact.Close())
+	close(gate)
+	require.NoError(t, svc.Close())
+}
+
+func TestServiceRestartAppliesRecordingRetentionBeforeDelivery(t *testing.T) {
+	root := t.TempDir()
+	conf := sessionRecordingTestConfiguration(t, root)
+	enableSessionRecording(&conf.Auditlogs[0])
+	conf.Auditlogs[0].Recording.RetainFor.SetNative(time.Nanosecond)
+	firstTarget := &serviceRemoteDeliveryTestTarget{publishedArtifact: make(chan string, 1)}
+	conf.Auditlogs[0].Recording.Targets.Mode = configuration.AuditlogRecordingTargetsModeCustom
+	conf.Auditlogs[0].Recording.Targets.Targets = configuration.AuditlogTargets{{
+		Name: "recordings",
+		V:    &serviceRemoteDeliveryTestConfiguration{target: firstTarget},
+	}}
+	first, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+	require.NoError(t, err)
+	name := sealRemoteDeliveryTestRecording(t, first, conf)
+	flushContext, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	require.NoError(t, first.recordingDeliveries[configuration.DefaultAuditlogName].Flush(flushContext))
+	cancel()
+	require.Equal(t, name, <-firstTarget.publishedArtifact)
+	require.NoError(t, first.Close())
+
+	restartedTarget := &serviceRemoteDeliveryTestTarget{publishedArtifact: make(chan string, 1)}
+	conf.Auditlogs[0].Recording.Targets.Targets[0].V = &serviceRemoteDeliveryTestConfiguration{target: restartedTarget}
+	restarted, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restarted.Close()) }()
+	_, err = restarted.recordingRepositories[configuration.DefaultAuditlogName].OpenSealedArtifact(t.Context(), name)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	require.Never(t, func() bool {
+		select {
+		case <-restartedTarget.publishedArtifact:
+			return true
+		default:
+			return false
+		}
+	}, 100*time.Millisecond, 10*time.Millisecond)
+}
+
+func TestHouseKeeperPreservesReceiptWhenArtifactWasNotPublished(t *testing.T) {
+	root := t.TempDir()
+	conf := sessionRecordingTestConfiguration(t, root)
+	enableSessionRecording(&conf.Auditlogs[0])
+	conf.Auditlogs[0].Recording.RetainFor.SetNative(time.Hour)
+	svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+	require.NoError(t, err)
+	defer func() { require.NoError(t, svc.Close()) }()
+	repository := svc.recordingRepositories[configuration.DefaultAuditlogName]
+	recordingId, err := recording.NewId()
+	require.NoError(t, err)
+	payload := []byte("receipt prepared before publication")
+	name := recordingId.String() + sessionRecordingCastZstdSuffix
+	remoteArtifact, err := audit.NewRemoteArtifact(repository.producerId, name, audit.ArtifactDigest(sha256.Sum256(payload)), int64(len(payload)), bytes.NewReader(payload))
+	require.NoError(t, err)
+	sealedAt := time.Now().UTC().Add(-2 * time.Hour)
+	require.NoError(t, repository.receipts.Prepare(t.Context(), remoteArtifact, sealedAt))
+	originalRecorder := svc.auditRecorders[configuration.DefaultAuditlogName]
+	recorder := &recordingAuditRecorder{}
+	svc.auditRecorders[configuration.DefaultAuditlogName] = recorder
+	require.NoError(t, svc.houseKeeper.cleanupRecordings(svc.houseKeeper.logger(), t.Context(), time.Now().UTC()))
+	svc.auditRecorders[configuration.DefaultAuditlogName] = originalRecorder
+
+	candidates, err := repository.retentionCandidates(t.Context(), time.Now().UTC())
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.False(t, candidates[0].receipt.DeletionStarted)
+	events := recorder.eventsSnapshot()
+	require.Len(t, events, 2)
+	require.Equal(t, audit.EventOutcomeFailure, events[1].Outcome)
+}
+
+func TestHouseKeeperResumesMarkedRecordingDeletionAfterRestart(t *testing.T) {
+	root := t.TempDir()
+	conf := sessionRecordingTestConfiguration(t, root)
+	enableSessionRecording(&conf.Auditlogs[0])
+	conf.Auditlogs[0].Recording.RetainFor.SetNative(time.Hour)
+	first, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+	require.NoError(t, err)
+	name := sealRemoteDeliveryTestRecording(t, first, conf)
+	repository := first.recordingRepositories[configuration.DefaultAuditlogName]
+	cutoff := time.Now().UTC().Add(2 * time.Hour)
+	candidates, err := repository.retentionCandidates(t.Context(), cutoff)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	artifact, err := repository.OpenSealedArtifact(t.Context(), name)
+	require.NoError(t, err)
+	require.NoError(t, artifact.Close())
+	require.NoError(t, repository.receipts.MarkRetentionDeleting(t.Context(), candidates[0].receipt, cutoff))
+	candidates[0].receipt.DeletionStarted = true
+	deleted, err := repository.castZstd.DeleteSealed(t.Context(), candidates[0].recordingId, candidates[0].receipt.ArtifactDigest, candidates[0].receipt.Size)
+	require.NoError(t, err)
+	require.True(t, deleted)
+	require.NoError(t, first.Close())
+
+	conf.Auditlogs[0].Recording.RetainFor.SetNative(0)
+	restarted, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restarted.Close()) }()
+	candidates, err = restarted.recordingRepositories[configuration.DefaultAuditlogName].retentionCandidates(t.Context(), time.Now().UTC().Add(time.Hour))
+	require.NoError(t, err)
+	require.Empty(t, candidates)
 }
 
 func sealRemoteDeliveryTestRecording(t *testing.T, svc *service, conf configuration.Configuration) string {

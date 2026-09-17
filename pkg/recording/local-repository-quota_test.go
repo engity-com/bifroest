@@ -127,6 +127,21 @@ func TestLocalQuotaAllowsRecoverableReceiptTemporaryAboveLimit(t *testing.T) {
 	require.Equal(t, uint64(9), quota.usage)
 }
 
+func TestLocalQuotaAllowsRecoverableRetentionReceiptTemporaryAboveLimit(t *testing.T) {
+	root := t.TempDir()
+	delivery := filepath.Join(root, localDeliveryDirectory)
+	state := filepath.Join(delivery, "producer", "artifact")
+	require.NoError(t, os.MkdirAll(state, localDirectoryMode))
+	require.NoError(t, os.WriteFile(filepath.Join(state, "receipt.retention"), make([]byte, 8), localFileMode))
+	require.NoError(t, os.WriteFile(filepath.Join(state, "receipt.retention.tmp"), make([]byte, 8), localFileMode))
+
+	quota, err := newLocalQuota(8, delivery)
+	require.NoError(t, err)
+	require.Equal(t, uint64(16), quota.usage)
+	require.NoError(t, quota.reconcile(0, 16, 8))
+	require.Equal(t, uint64(8), quota.usage)
+}
+
 func TestLocalQuotaRejectsReceiptTemporaryWhoseRecoveredStateExceedsLimit(t *testing.T) {
 	root := t.TempDir()
 	delivery := filepath.Join(root, localDeliveryDirectory)

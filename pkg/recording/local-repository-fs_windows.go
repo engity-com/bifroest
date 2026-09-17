@@ -24,6 +24,76 @@ type localProcessLock struct {
 	err        error
 }
 
+func removeLocalFile(path string) error {
+	if err := os.Chmod(path, localFileMode); err != nil {
+		return err
+	}
+	from, err := sys.WindowsPathPointer(path)
+	if err != nil {
+		return err
+	}
+	tombstone := path + localRetentionTombstone
+	to, err := sys.WindowsPathPointer(tombstone)
+	if err != nil {
+		return err
+	}
+	if err := windows.MoveFileEx(from, to, windows.MOVEFILE_WRITE_THROUGH); err != nil {
+		return goerrors.Join(err, os.Chmod(path, 0400))
+	}
+	_, destroyed, err := removeLocalRetentionTombstone(tombstone)
+	if destroyed {
+		return nil
+	}
+	return err
+}
+
+func removeLocalRetentionTombstone(path string) (int64, bool, error) {
+	pathInfo, err := os.Lstat(path)
+	if goerrors.Is(err, os.ErrNotExist) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	if !pathInfo.Mode().IsRegular() || pathInfo.Size() < 0 {
+		return 0, false, errors.Config.Newf("local recording retention tombstone is invalid")
+	}
+	if err := secureLocalPath(path, "FA"); err != nil {
+		return 0, false, err
+	}
+	if err := os.Chmod(path, localFileMode); err != nil {
+		return 0, false, err
+	}
+	file, err := os.OpenFile(path, os.O_RDWR, localFileMode)
+	if err != nil {
+		return 0, false, err
+	}
+	if err := validateOpenLocalFile(path, file); err != nil {
+		_ = file.Close()
+		return 0, false, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return 0, false, goerrors.Join(err, file.Close())
+	}
+	if !os.SameFile(pathInfo, info) {
+		return 0, false, goerrors.Join(errors.System.Newf("local recording retention tombstone changed while opening"), file.Close())
+	}
+	if err := file.Truncate(0); err != nil {
+		return 0, false, goerrors.Join(err, file.Close())
+	}
+	if err := file.Sync(); err != nil {
+		return 0, false, goerrors.Join(err, file.Close())
+	}
+	if err := file.Close(); err != nil {
+		return 0, false, err
+	}
+	if err := os.Remove(path); err != nil {
+		return info.Size(), true, err
+	}
+	return info.Size(), true, nil
+}
+
 func acquireLocalProcessLock(path string) (*localProcessLock, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, localFileMode)
 	if goerrors.Is(err, os.ErrExist) {

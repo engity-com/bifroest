@@ -46,6 +46,11 @@ type sessionRecordingRepository struct {
 	notice        template.String
 }
 
+type sessionRecordingRetentionCandidate struct {
+	recordingId recording.Id
+	receipt     audit.RemoteArtifactRetentionCandidate
+}
+
 type sessionRecordingReceiptProvider struct {
 	mutex     sync.Mutex
 	directory string
@@ -394,6 +399,88 @@ func (this *sessionRecordingRepository) OpenSealedArtifact(ctx context.Context, 
 		return this.castZstd.OpenSealed(ctx, id)
 	}
 	return this.becast.OpenSealed(ctx, id)
+}
+
+func (this *sessionRecordingRepository) retentionCandidates(ctx context.Context, cutoff time.Time) ([]sessionRecordingRetentionCandidate, error) {
+	if this == nil || this.receipts == nil {
+		return nil, errors.System.Newf("nil session Recording repository")
+	}
+	candidates, err := this.receipts.ListRetentionCandidates(ctx, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]sessionRecordingRetentionCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		id, err := this.recordingIdFromArtifactName(candidate.FileName)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, sessionRecordingRetentionCandidate{recordingId: id, receipt: candidate})
+	}
+	return result, nil
+}
+
+func (this *sessionRecordingRepository) deleteRetentionCandidate(ctx context.Context, candidate sessionRecordingRetentionCandidate, cutoff time.Time) (bool, error) {
+	if this == nil || this.receipts == nil {
+		return false, errors.System.Newf("nil session Recording repository")
+	}
+	if !candidate.receipt.DeletionStarted {
+		artifact, err := this.OpenSealedArtifact(ctx, candidate.receipt.FileName)
+		if err != nil {
+			return false, errors.System.Newf("cannot verify session Recording before retention deletion: %w", err)
+		}
+		remoteArtifact, err := artifact.RemoteArtifact()
+		if err != nil {
+			return false, goerrors.Join(err, artifact.Close())
+		}
+		if remoteArtifact.Digest() != candidate.receipt.ArtifactDigest || remoteArtifact.Size() != candidate.receipt.Size {
+			return false, goerrors.Join(errors.Config.Newf("sealed session Recording does not match its retention receipt"), artifact.Close())
+		}
+		if err := artifact.Close(); err != nil {
+			return false, err
+		}
+	}
+	if err := this.receipts.MarkRetentionDeleting(ctx, candidate.receipt, cutoff); err != nil {
+		return false, err
+	}
+	candidate.receipt.DeletionStarted = true
+	var deleted bool
+	var err error
+	switch this.format {
+	case sessionRecordingRepositoryFormatCastZstd:
+		deleted, err = this.castZstd.DeleteSealed(ctx, candidate.recordingId, candidate.receipt.ArtifactDigest, candidate.receipt.Size)
+	case sessionRecordingRepositoryFormatBECast:
+		deleted, err = this.becast.DeleteSealed(ctx, candidate.recordingId, candidate.receipt.ArtifactDigest, candidate.receipt.Size)
+	default:
+		return false, errors.System.Newf("unknown session Recording repository format")
+	}
+	if err != nil {
+		return deleted, err
+	}
+	if err := this.receipts.RemoveRetentionCandidate(ctx, candidate.receipt, cutoff); err != nil {
+		return deleted, err
+	}
+	return true, nil
+}
+
+func (this *sessionRecordingRepository) recordingIdFromArtifactName(name string) (recording.Id, error) {
+	var suffix string
+	switch this.format {
+	case sessionRecordingRepositoryFormatCastZstd:
+		suffix = sessionRecordingCastZstdSuffix
+	case sessionRecordingRepositoryFormatBECast:
+		suffix = sessionRecordingBECastSuffix
+	default:
+		return recording.Id{}, errors.System.Newf("unknown session Recording repository format")
+	}
+	if !strings.HasSuffix(name, suffix) {
+		return recording.Id{}, errors.Config.Newf("sealed session Recording artifact %q does not match repository format", name)
+	}
+	var id recording.Id
+	if err := id.UnmarshalText([]byte(strings.TrimSuffix(name, suffix))); err != nil || id.String()+suffix != name {
+		return recording.Id{}, errors.Config.Newf("illegal sealed session Recording artifact name %q", name)
+	}
+	return id, nil
 }
 
 func sessionRecordingTargetConfigurations(auditlog *configuration.Auditlog) configuration.AuditlogTargets {

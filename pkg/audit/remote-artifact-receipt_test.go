@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -185,6 +186,73 @@ func TestRemoteArtifactReceiptsAcknowledgePersistsTarget(t *testing.T) {
 	require.Equal(t, uint64(usage), quota.usage)
 	require.Equal(t, quota.usage, quota.peak)
 	require.ErrorContains(t, receipts.Acknowledge(context.Background(), artifact, "missing", acknowledgedAt), "is not configured")
+}
+
+func TestRemoteArtifactReceiptRetentionRequiresEveryAcknowledgementAndRemovesState(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	root := t.TempDir()
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b819-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))
+	targets := &RemoteArtifactTargets{entries: []remoteArtifactTargetEntry{
+		{scope: RemoteTargetScope{Auditlog: "security", Target: "first"}, destinationFingerprint: remoteDeliveryDestinationFingerprint(sha256.Sum256([]byte("first")))},
+		{scope: RemoteTargetScope{Auditlog: "security", Target: "second"}, destinationFingerprint: remoteDeliveryDestinationFingerprint(sha256.Sum256([]byte("second")))},
+	}}
+	quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
+	store, err := newRemoteArtifactReceiptStore(root, identity, "security", quota)
+	require.NoError(t, err)
+	receipts := &RemoteArtifactReceipts{store: store, targets: targets}
+	t.Cleanup(func() { require.NoError(t, receipts.Close()) })
+	sealedAt := time.Date(2026, 9, 16, 14, 0, 0, 0, time.UTC)
+	require.NoError(t, receipts.Prepare(t.Context(), artifact, sealedAt))
+	require.NoError(t, receipts.Acknowledge(t.Context(), artifact, "first", sealedAt.Add(time.Minute)))
+	candidates, err := receipts.ListRetentionCandidates(t.Context(), sealedAt.Add(time.Hour))
+	require.NoError(t, err)
+	require.Empty(t, candidates)
+
+	acknowledgedAt := sealedAt.Add(2 * time.Minute)
+	require.NoError(t, receipts.Acknowledge(t.Context(), artifact, "second", acknowledgedAt))
+	candidates, err = receipts.ListRetentionCandidates(t.Context(), acknowledgedAt.Add(-time.Nanosecond))
+	require.NoError(t, err)
+	require.Empty(t, candidates)
+	candidates, err = receipts.ListRetentionCandidates(t.Context(), acknowledgedAt)
+	require.NoError(t, err)
+	require.Equal(t, []RemoteArtifactRetentionCandidate{{
+		FileName:           artifact.FileName(),
+		ArtifactDigest:     artifact.Digest(),
+		Size:               artifact.Size(),
+		RetentionStartedAt: acknowledgedAt,
+	}}, candidates)
+
+	require.Error(t, receipts.RemoveRetentionCandidate(t.Context(), candidates[0], acknowledgedAt.Add(-time.Nanosecond)))
+	require.ErrorContains(t, receipts.RemoveRetentionCandidate(t.Context(), candidates[0], acknowledgedAt), "has not started")
+	forged := candidates[0]
+	forged.DeletionStarted = true
+	require.Error(t, receipts.MarkRetentionDeleting(t.Context(), forged, acknowledgedAt.Add(-time.Nanosecond)))
+	quota.maximum = quota.usage
+	require.NoError(t, receipts.MarkRetentionDeleting(t.Context(), candidates[0], acknowledgedAt))
+	candidates, err = receipts.ListRetentionCandidates(t.Context(), acknowledgedAt)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.True(t, candidates[0].DeletionStarted)
+	require.NoError(t, receipts.RemoveRetentionCandidate(t.Context(), candidates[0], acknowledgedAt))
+	require.Zero(t, quota.usage)
+	_, err = os.Stat(filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName())))
+	require.ErrorIs(t, err, fs.ErrNotExist)
+}
+
+func TestRemoteArtifactReceiptRetentionWithoutTargetsStartsWhenSealed(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b820-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))
+	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", &remoteArtifactReceiptTestQuota{maximum: 1 << 20})
+	require.NoError(t, err)
+	receipts := &RemoteArtifactReceipts{store: store, targets: &RemoteArtifactTargets{}}
+	t.Cleanup(func() { require.NoError(t, receipts.Close()) })
+	sealedAt := time.Date(2026, 9, 16, 14, 30, 0, 0, time.UTC)
+	require.NoError(t, receipts.Prepare(t.Context(), artifact, sealedAt))
+
+	candidates, err := receipts.ListRetentionCandidates(t.Context(), sealedAt)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, sealedAt, candidates[0].RetentionStartedAt)
 }
 
 func TestRemoteArtifactReceiptsAcknowledgeAtStableQuotaLimit(t *testing.T) {

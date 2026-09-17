@@ -24,6 +24,8 @@ const (
 	EventNameHousekeepingSessionDisposeCompleted       = "housekeeping.session.dispose.completed"
 	EventNameHousekeepingSessionDeleteStarted          = "housekeeping.session.delete.started"
 	EventNameHousekeepingSessionDeleteCompleted        = "housekeeping.session.delete.completed"
+	EventNameHousekeepingRecordingDeleteStarted        = "housekeeping.recording.delete.started"
+	EventNameHousekeepingRecordingDeleteCompleted      = "housekeeping.recording.delete.completed"
 	EventNameHousekeepingOrphanedSessionCleanupSkipped = "housekeeping.orphaned-session.cleanup.skipped"
 )
 
@@ -49,6 +51,8 @@ var knownEventNames = [...]EventName{
 	EventNameHousekeepingSessionDisposeCompleted,
 	EventNameHousekeepingSessionDeleteStarted,
 	EventNameHousekeepingSessionDeleteCompleted,
+	EventNameHousekeepingRecordingDeleteStarted,
+	EventNameHousekeepingRecordingDeleteCompleted,
 	EventNameHousekeepingOrphanedSessionCleanupSkipped,
 }
 

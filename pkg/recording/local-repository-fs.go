@@ -144,7 +144,7 @@ func removeLocalFileIfSame(path string, expected os.FileInfo) error {
 	if !current.Mode().IsRegular() || !os.SameFile(expected, current) {
 		return errors.System.Newf("local recording file changed before cleanup")
 	}
-	return os.Remove(path)
+	return removeLocalFile(path)
 }
 
 func validateOpenLocalFile(path string, file *os.File) error {

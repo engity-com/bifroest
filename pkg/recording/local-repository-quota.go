@@ -80,8 +80,17 @@ func inventoryLocalFilesWithReceiptRecovery(paths ...string) (uint64, uint64, er
 			}
 			seen = append(seen, info)
 			total += size
-			if filepath.Base(root) == localDeliveryDirectory && entry.Name() == "receipt.tmp" {
-				target, targetErr := os.Lstat(filepath.Join(filepath.Dir(path), "receipt.json"))
+			var replacedReceipt string
+			if filepath.Base(root) == localDeliveryDirectory {
+				switch entry.Name() {
+				case "receipt.tmp":
+					replacedReceipt = "receipt.json"
+				case "receipt.retention.tmp":
+					replacedReceipt = "receipt.retention"
+				}
+			}
+			if replacedReceipt != "" {
+				target, targetErr := os.Lstat(filepath.Join(filepath.Dir(path), replacedReceipt))
 				if targetErr == nil && target.Mode().IsRegular() && target.Size() >= 0 {
 					targetSize := uint64(target.Size())
 					if replacedReceiptBytes > math.MaxUint64-targetSize {

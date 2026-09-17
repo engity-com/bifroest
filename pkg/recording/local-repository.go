@@ -28,6 +28,7 @@ const (
 	localHeadFileName        = "head.json"
 	localHeadTempFileName    = "head.tmp"
 	localDeliveryDirectory   = ".delivery"
+	localRetentionTombstone  = ".retention"
 )
 
 type localWriter[Head, Summary any] interface {
@@ -162,6 +163,7 @@ type localRepository[Head, Summary any] struct {
 	processLock    *localProcessLock
 	prepareSealed  SealedArtifactPreparer
 	active         map[Id]*localActive[Head, Summary]
+	retentionQuota map[Id]uint64
 	recovered      []localRecovery[Summary]
 	operations     sync.WaitGroup
 	closed         bool
@@ -265,6 +267,7 @@ func newLocalRepository[Head, Summary any](ctx context.Context, directory string
 		processLock:    processLock,
 		prepareSealed:  prepareSealed,
 		active:         make(map[Id]*localActive[Head, Summary]),
+		retentionQuota: make(map[Id]uint64),
 	}
 	result.quota, err = newLocalQuota(options.MaximumSpoolBytes, result.workPath, result.activePath, result.sealedPath, result.quarantinePath, filepath.Join(canonical, localDeliveryDirectory))
 	if err != nil {
@@ -293,6 +296,9 @@ func newLocalRepository[Head, Summary any](ctx context.Context, directory string
 		return nil, err
 	}
 	if err := result.recoverActive(ctx); err != nil {
+		return nil, err
+	}
+	if err := result.cleanupRetentionTombstones(ctx); err != nil {
 		return nil, err
 	}
 	if err := result.validateSealed(); err != nil {
@@ -342,6 +348,11 @@ func (this *localRepository[Head, Summary]) listSealed(ctx context.Context) ([]I
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		if _, tombstone, err := localRetentionTombstoneId(entry.Name(), this.format.sealedSuffix()); err != nil {
+			return nil, err
+		} else if tombstone {
+			continue
 		}
 		id, err := localSealedEntryId(entry, this.format.sealedSuffix())
 		if err != nil {
@@ -441,6 +452,145 @@ func (this *localRepository[Head, Summary]) openSealed(ctx context.Context, id I
 		artifactDigest: digest,
 		summary:        summary,
 	}, nil
+}
+
+func (this *localRepository[Head, Summary]) deleteSealed(ctx context.Context, id Id, expectedDigest ArtifactDigest, expectedSize int64) (bool, error) {
+	if this == nil {
+		return false, errors.System.Newf("nil local recording repository")
+	}
+	if err := validateId(id); err != nil {
+		return false, err
+	}
+	if expectedDigest.IsZero() || expectedSize <= 0 {
+		return false, errors.Config.Newf("invalid sealed recording retention identity")
+	}
+	var info os.FileInfo
+	artifact, err := this.openSealed(ctx, id)
+	if err != nil && !stderrors.Is(err, fs.ErrNotExist) {
+		return false, err
+	}
+	if artifact != nil {
+		if artifact.ArtifactDigest() != expectedDigest || artifact.Size() != expectedSize {
+			return false, stderrors.Join(errors.Config.Newf("sealed recording does not match its retention receipt"), artifact.Close())
+		}
+		artifact.mutex.RLock()
+		info, err = artifact.file.Stat()
+		artifact.mutex.RUnlock()
+		if err != nil {
+			return false, stderrors.Join(err, artifact.Close())
+		}
+		if err := artifact.Close(); err != nil {
+			return false, err
+		}
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := this.mutex.LockContext(ctx); err != nil {
+		return false, err
+	}
+	defer this.mutex.Unlock()
+	if this.closed {
+		return false, errors.System.Newf("local recording repository is closed")
+	}
+	if this.poisoned != nil {
+		return false, this.poisoned
+	}
+	if err := validateLocalLock(this.processLock, this.lockPath); err != nil {
+		return false, err
+	}
+	if this.active[id] != nil {
+		return false, errors.System.Newf("sealed recording is still being finalized")
+	}
+	path := filepath.Join(this.sealedPath, id.String()+this.format.sealedSuffix())
+	current, err := os.Lstat(path)
+	if stderrors.Is(err, fs.ErrNotExist) {
+		tombstoneSize, tombstoneDestroyed, cleanupErr := removeLocalRetentionTombstone(path + localRetentionTombstone)
+		if err := syncLocalDirectory(this.sealedPath); err != nil {
+			return false, err
+		}
+		if tombstoneDestroyed && tombstoneSize > 0 {
+			if err := this.quota.release(uint64(tombstoneSize)); err != nil {
+				return false, err
+			}
+		}
+		if cleanupErr != nil {
+			return false, cleanupErr
+		}
+		pending := this.retentionQuota[id]
+		if pending == 0 {
+			return false, nil
+		}
+		if err := this.quota.release(pending); err != nil {
+			return false, err
+		}
+		delete(this.retentionQuota, id)
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if info == nil {
+		return false, errors.System.Newf("sealed recording appeared during retention cleanup")
+	}
+	if !current.Mode().IsRegular() || !os.SameFile(info, current) || current.Size() != expectedSize {
+		return false, errors.System.Newf("sealed recording changed before retention cleanup")
+	}
+	if err := removeLocalFileIfSame(path, info); err != nil {
+		return false, err
+	}
+	if this.retentionQuota == nil {
+		this.retentionQuota = make(map[Id]uint64)
+	}
+	this.retentionQuota[id] = uint64(current.Size())
+	if err := syncLocalDirectory(this.sealedPath); err != nil {
+		return true, err
+	}
+	if err := this.quota.release(this.retentionQuota[id]); err != nil {
+		return true, err
+	}
+	delete(this.retentionQuota, id)
+	return true, nil
+}
+
+func (this *localRepository[Head, Summary]) cleanupRetentionTombstones(ctx context.Context) error {
+	entries, err := os.ReadDir(this.sealedPath)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if _, tombstone, err := localRetentionTombstoneId(entry.Name(), this.format.sealedSuffix()); err != nil {
+			return err
+		} else if !tombstone {
+			continue
+		}
+		size, destroyed, cleanupErr := removeLocalRetentionTombstone(filepath.Join(this.sealedPath, entry.Name()))
+		if destroyed && size > 0 {
+			if err := this.quota.release(uint64(size)); err != nil {
+				return err
+			}
+		}
+		if cleanupErr != nil {
+			return cleanupErr
+		}
+	}
+	return syncLocalDirectory(this.sealedPath)
+}
+
+func localRetentionTombstoneId(name, sealedSuffix string) (Id, bool, error) {
+	var id Id
+	if !strings.HasSuffix(name, localRetentionTombstone) {
+		return id, false, nil
+	}
+	sealedName := strings.TrimSuffix(name, localRetentionTombstone)
+	idText := strings.TrimSuffix(sealedName, sealedSuffix)
+	if idText == sealedName || id.UnmarshalText([]byte(idText)) != nil || id.String()+sealedSuffix != sealedName {
+		return Id{}, false, errors.Config.Newf("recording sealed directory contains unsupported retention tombstone %q", name)
+	}
+	return id, true, nil
 }
 
 func hashLocalSealedArtifact(ctx context.Context, file *os.File, size int64) (ArtifactDigest, error) {

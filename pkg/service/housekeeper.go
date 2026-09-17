@@ -108,7 +108,76 @@ func (this *houseKeeper) run(logger log.Logger, ctx context.Context) error {
 	if err := this.cleanup(logger, ctx); err != nil {
 		return err
 	}
+	if err := this.cleanupRecordings(logger, ctx, time.Now().UTC()); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (this *houseKeeper) cleanupRecordings(logger log.Logger, ctx context.Context, now time.Time) error {
+	for index := range this.service.Configuration.Auditlogs {
+		auditlog := &this.service.Configuration.Auditlogs[index]
+		if !auditlog.Enabled || !auditlog.Recording.Enabled {
+			continue
+		}
+		repository := this.service.recordingRepositories[auditlog.Name]
+		if repository == nil {
+			return errors.System.Newf("no Recording repository configured for auditlog %q", auditlog.Name)
+		}
+		var cutoff time.Time
+		if !auditlog.Recording.RetainFor.IsZero() {
+			cutoff = now.Add(-auditlog.Recording.RetainFor.Native())
+		}
+		candidates, err := repository.retentionCandidates(ctx, cutoff)
+		if err != nil {
+			return errors.System.Newf("cannot inspect Recording retention of auditlog %q: %w", auditlog.Name, err)
+		}
+		for _, candidate := range candidates {
+			_, actionErr, auditErr := this.auditRecordingDeletion(ctx, auditlog.Name, candidate, func() (bool, error) {
+				return repository.deleteRetentionCandidate(ctx, candidate, cutoff)
+			})
+			if err := goerrors.Join(actionErr, auditErr); err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				logger.WithError(err).With("auditlog", auditlog.Name).With("recordingId", candidate.recordingId).Warn("cannot delete retained session Recording; preserving remaining local state")
+			}
+		}
+	}
+	return nil
+}
+
+func (this *houseKeeper) auditRecordingDeletion(ctx context.Context, auditlog configuration.AuditlogName, candidate sessionRecordingRetentionCandidate, perform func() (bool, error)) (changed bool, actionErr, auditErr error) {
+	recorder := this.service.auditRecorders[auditlog]
+	if recorder == nil {
+		return false, nil, errors.System.Newf("no audit recorder configured for auditlog %q", auditlog)
+	}
+	operationId, err := uuid.NewRandom()
+	if err != nil {
+		return false, nil, errors.System.Newf("cannot generate Recording retention operation ID: %w", err)
+	}
+	startedAt := time.Now()
+	event := audit.Event{
+		Name:        audit.EventNameHousekeepingRecordingDeleteStarted,
+		Domain:      audit.EventDomainHousekeeping,
+		OperationId: operationId.String(),
+		RecordingId: candidate.recordingId.String(),
+		Reason:      audit.EventReasonRetentionElapsed,
+	}
+	if err := recorder.Record(ctx, event); err != nil {
+		return false, nil, err
+	}
+	changed, actionErr = perform()
+	event.Name = audit.EventNameHousekeepingRecordingDeleteCompleted
+	event.DurationMillis = common.P(time.Since(startedAt).Milliseconds())
+	if actionErr != nil {
+		event.Outcome = audit.EventOutcomeFailure
+		event.ErrorCategory = auditErrorCategory(actionErr)
+	} else {
+		event.Outcome = audit.EventOutcomeSuccess
+	}
+	auditErr = recorder.Record(ctx, event)
+	return
 }
 
 func (this *houseKeeper) inspectSessions(logger log.Logger, ctx context.Context) error {
