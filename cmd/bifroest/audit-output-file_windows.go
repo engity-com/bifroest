@@ -21,7 +21,17 @@ const (
 	fileDeleteChild = 0x00000040
 )
 
-func writeAuditOutputFile(path string, data []byte, force bool, validate func() error) (rErr error) {
+func writeAuditOutputFile(path string, data []byte, force bool, validate func() error) error {
+	return writeProtectedOutputFile(path, force, validate, func(output *goos.File) error {
+		_, err := output.Write(data)
+		return err
+	})
+}
+
+func writeProtectedOutputFile(path string, force bool, validate func() error, produce func(*goos.File) error) (rErr error) {
+	if produce == nil {
+		return fmt.Errorf("nil output producer")
+	}
 	parentPath := filepath.Dir(path)
 	parent, err := openAuditOutputParent(parentPath)
 	if err != nil {
@@ -60,11 +70,19 @@ func writeAuditOutputFile(path string, data []byte, force bool, validate func() 
 			}
 		}
 	}()
-	if _, err := temporary.Write(data); err != nil {
-		return fmt.Errorf("cannot write private temporary output: %w", err)
+	if err := produce(temporary); err != nil {
+		return fmt.Errorf("cannot produce private temporary output: %w", err)
 	}
 	if err := temporary.Sync(); err != nil {
 		return fmt.Errorf("cannot flush private temporary output: %w", err)
+	}
+	if validate != nil {
+		if err := validate(); err != nil {
+			return err
+		}
+	}
+	if err := verifyAuditOutputParent(parent, parentPath); err != nil {
+		return err
 	}
 	if err := renameOpenWindowsFile(temporaryHandle, parent, filepath.Base(path), force); err != nil {
 		return fmt.Errorf("cannot atomically install output: %w", err)

@@ -7,7 +7,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func openRecordingInspectionFile(path string) (*stdos.File, error) {
+func openRecordingFile(path string) (*stdos.File, error) {
 	encoded, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return nil, err

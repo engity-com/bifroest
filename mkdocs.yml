@@ -185,6 +185,7 @@ nav:
           - Recording:
               - reference/cli/recording/index.md
               - Inspect: reference/cli/recording/inspect.md
+              - Export: reference/cli/recording/export.md
           - Windows service:
               - reference/cli/service/index.md
               - Install: reference/cli/service/install.md

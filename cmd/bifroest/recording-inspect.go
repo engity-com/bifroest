@@ -92,7 +92,7 @@ func doRecordingInspect(opts *recordingInspectOpts, stdout io.Writer) (rErr erro
 			return fmt.Errorf("--expectedProducerId must not be zero")
 		}
 	}
-	file, initial, err := openRecordingInspectionInput(opts.file)
+	file, initial, err := openRecordingInput(opts.file)
 	if err != nil {
 		return err
 	}
@@ -105,7 +105,7 @@ func doRecordingInspect(opts *recordingInspectOpts, stdout io.Writer) (rErr erro
 	if err != nil {
 		return fmt.Errorf("cannot inspect Recording %q: %w", opts.file, err)
 	}
-	if err := validateRecordingInspectionInput(opts.file, file, initial); err != nil {
+	if err := validateRecordingInput(opts.file, file, initial); err != nil {
 		return err
 	}
 	result, err := newRecordingInspectOutput(inspection, initial.Size())
@@ -124,9 +124,9 @@ func doRecordingInspect(opts *recordingInspectOpts, stdout io.Writer) (rErr erro
 	return nil
 }
 
-func openRecordingInspectionInput(path string) (*stdos.File, stdos.FileInfo, error) {
+func openRecordingInput(path string) (*stdos.File, stdos.FileInfo, error) {
 	if strings.TrimSpace(path) == "" || path == "-" {
-		return nil, nil, fmt.Errorf("recording inspection requires a file path")
+		return nil, nil, fmt.Errorf("recording command requires a file path")
 	}
 	initial, err := stdos.Lstat(path)
 	if err != nil {
@@ -135,7 +135,7 @@ func openRecordingInspectionInput(path string) (*stdos.File, stdos.FileInfo, err
 	if initial.Mode()&stdos.ModeSymlink != 0 || !initial.Mode().IsRegular() {
 		return nil, nil, fmt.Errorf("recording input %q must be a regular non-symlink file", path)
 	}
-	file, err := openRecordingInspectionFile(path)
+	file, err := openRecordingFile(path)
 	if err != nil {
 		return nil, nil, fmt.Errorf("cannot open Recording input %q: %w", path, err)
 	}
@@ -149,7 +149,7 @@ func openRecordingInspectionInput(path string) (*stdos.File, stdos.FileInfo, err
 	return file, initial, nil
 }
 
-func validateRecordingInspectionInput(path string, file *stdos.File, initial stdos.FileInfo) error {
+func validateRecordingInput(path string, file *stdos.File, initial stdos.FileInfo) error {
 	opened, err := file.Stat()
 	if err != nil {
 		return fmt.Errorf("cannot recheck Recording input %q: %w", path, err)
@@ -159,7 +159,7 @@ func validateRecordingInspectionInput(path string, file *stdos.File, initial std
 		return fmt.Errorf("cannot recheck Recording input %q: %w", path, err)
 	}
 	if current.Mode()&stdos.ModeSymlink != 0 || !current.Mode().IsRegular() || !stdos.SameFile(initial, opened) || !stdos.SameFile(initial, current) || opened.Size() != initial.Size() || current.Size() != initial.Size() || opened.Mode() != initial.Mode() || current.Mode() != initial.Mode() || !opened.ModTime().Equal(initial.ModTime()) || !current.ModTime().Equal(initial.ModTime()) {
-		return fmt.Errorf("recording input %q changed while being inspected", path)
+		return fmt.Errorf("recording input %q changed while being processed", path)
 	}
 	return nil
 }

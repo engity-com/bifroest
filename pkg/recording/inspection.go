@@ -47,9 +47,9 @@ func Inspect(source io.ReaderAt, size int64, options InspectOptions) (*Inspectio
 	if options.Context == nil {
 		options.Context = context.Background()
 	}
-	prefix := make([]byte, min(size, int64(len(castBECastFileMagic))))
-	if _, err := source.ReadAt(prefix, 0); err != nil {
-		return nil, errors.System.Newf("cannot identify Recording format: %w", err)
+	format, err := DetectFormat(source, size)
+	if err != nil {
+		return nil, err
 	}
 	common := CastVerifyOptions{
 		Context:            options.Context,
@@ -57,14 +57,14 @@ func Inspect(source io.ReaderAt, size int64, options InspectOptions) (*Inspectio
 		ExpectedProducerId: options.ExpectedProducerId,
 		AllowUntrusted:     options.AllowUntrusted,
 	}
-	if prefix[0] == '{' {
+	switch format {
+	case FormatCast:
 		cast, err := VerifyCast(io.NewSectionReader(source, 0, size), common)
 		if err != nil {
 			return nil, err
 		}
 		return &Inspection{Format: FormatCast, Cast: cast}, nil
-	}
-	if bytes.Equal(prefix, []byte(castBECastFileMagic)) {
+	case FormatBECast:
 		becast, err := VerifyBECast(source, size, BECastVerifyOptions{
 			ExpectedProducerId:    options.ExpectedProducerId,
 			AllowUntrusted:        options.AllowUntrusted,
@@ -77,8 +77,7 @@ func Inspect(source io.ReaderAt, size int64, options InspectOptions) (*Inspectio
 			return nil, err
 		}
 		return &Inspection{Format: FormatBECast, BECast: becast}, nil
-	}
-	if len(prefix) >= 4 && binary.LittleEndian.Uint32(prefix[:4]) == zstdSkippableMagicBase|uint32(castZstdHeaderSkippableId) {
+	case FormatCastZstd:
 		castZstd, err := VerifyCastZstd(source, size, CastZstdVerifyOptions{
 			Context:               options.Context,
 			MaximumContainerBytes: options.MaximumContainerBytes,
@@ -91,6 +90,31 @@ func Inspect(source io.ReaderAt, size int64, options InspectOptions) (*Inspectio
 			return nil, err
 		}
 		return &Inspection{Format: FormatCastZstd, Cast: castZstd.Cast, CastZstd: castZstd}, nil
+	default:
+		return nil, errors.Config.Newf("unsupported Recording format %q", format)
 	}
-	return nil, errors.Config.Newf("unsupported Recording format")
+}
+
+// DetectFormat identifies a Recording by its content without verifying it.
+func DetectFormat(source io.ReaderAt, size int64) (Format, error) {
+	if source == nil {
+		return "", errors.System.Newf("nil Recording format source")
+	}
+	if size < 1 {
+		return "", errors.Config.Newf("Recording format source is empty")
+	}
+	prefix := make([]byte, min(size, int64(len(castBECastFileMagic))))
+	if _, err := source.ReadAt(prefix, 0); err != nil {
+		return "", errors.System.Newf("cannot identify Recording format: %w", err)
+	}
+	switch {
+	case prefix[0] == '{':
+		return FormatCast, nil
+	case bytes.Equal(prefix, []byte(castBECastFileMagic)):
+		return FormatBECast, nil
+	case len(prefix) >= 4 && binary.LittleEndian.Uint32(prefix[:4]) == zstdSkippableMagicBase|uint32(castZstdHeaderSkippableId):
+		return FormatCastZstd, nil
+	default:
+		return "", errors.Config.Newf("unsupported Recording format")
+	}
 }
