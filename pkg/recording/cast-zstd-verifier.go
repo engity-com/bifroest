@@ -67,6 +67,7 @@ func VerifyCastZstd(source io.ReaderAt, size int64, options CastZstdVerifyOption
 	}
 	defer stream.close()
 	cast, err := VerifyCast(stream, CastVerifyOptions{
+		Context:            options.Context,
 		MaximumBytes:       effectiveMaximumCastBytes(options.MaximumCastBytes),
 		ExpectedProducerId: options.ExpectedProducerId,
 		AllowUntrusted:     options.AllowUntrusted,

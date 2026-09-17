@@ -3,6 +3,7 @@ package recording
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 )
 
 type CastVerifyOptions struct {
+	Context            context.Context
 	MaximumBytes       int64
 	ExpectedProducerId audit.ProducerId
 	AllowUntrusted     bool
@@ -54,10 +56,17 @@ func VerifyCast(input io.Reader, options CastVerifyOptions) (*CastVerification, 
 	if maximumBytes < 1 {
 		return nil, errors.Config.Newf("maximum cast size must be positive")
 	}
+	ctx := options.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	reader := bufio.NewReaderSize(input, 64<<10)
 	total := int64(0)
 	lineNumber := 0
 	readLine := func() ([]byte, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, errors.System.Newf("cast verification canceled: %w", err)
+		}
 		line, err := readCastLine(reader, &total, maximumBytes)
 		if err == nil {
 			lineNumber++

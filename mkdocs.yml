@@ -182,6 +182,9 @@ nav:
               - Decrypt: reference/cli/audit/decrypt.md
               - Export: reference/cli/audit/export.md
               - Merge: reference/cli/audit/merge.md
+          - Recording:
+              - reference/cli/recording/index.md
+              - Inspect: reference/cli/recording/inspect.md
           - Windows service:
               - reference/cli/service/index.md
               - Install: reference/cli/service/install.md

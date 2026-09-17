@@ -169,7 +169,7 @@ func verifyExistingRecoveryCast(file io.ReaderAt, size int64, options CastZstdVe
 		return nil, false
 	}
 	defer stream.close()
-	verification, err := VerifyCast(stream, CastVerifyOptions{MaximumBytes: effectiveMaximumCastBytes(options.MaximumCastBytes), ExpectedProducerId: options.ExpectedProducerId})
+	verification, err := VerifyCast(stream, CastVerifyOptions{Context: options.Context, MaximumBytes: effectiveMaximumCastBytes(options.MaximumCastBytes), ExpectedProducerId: options.ExpectedProducerId})
 	return verification, err == nil
 }
 
@@ -180,6 +180,7 @@ func verifyRecoveredCast(file io.ReaderAt, size int64, suffix []byte, options Ca
 	}
 	defer stream.close()
 	return VerifyCast(io.MultiReader(stream, bytes.NewReader(suffix)), CastVerifyOptions{
+		Context:            options.Context,
 		MaximumBytes:       effectiveMaximumCastBytes(options.MaximumCastBytes),
 		ExpectedProducerId: options.ExpectedProducerId,
 	})

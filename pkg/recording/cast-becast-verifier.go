@@ -96,6 +96,7 @@ func DecryptBECast(source io.ReaderAt, size int64, identities *bfcrypto.AgeSshId
 		return nil, err
 	}
 	cast, verifyErr := VerifyCast(stream, CastVerifyOptions{
+		Context:            options.Context,
 		MaximumBytes:       int64(manifest.verification.Summary.CastBytes),
 		ExpectedProducerId: options.ExpectedProducerId,
 		AllowUntrusted:     options.AllowUntrusted,
