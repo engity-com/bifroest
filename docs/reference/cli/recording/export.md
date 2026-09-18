@@ -60,3 +60,9 @@ bifroest recording export \
   --decryptionIdentityFile ./recording-identity \
   session.becast
 ```
+
+## External playback
+
+Bifröst does not download remote artifacts or include a player. Obtain the byte-exact sealed artifact, inspect it with the same independent trust anchor, and export it to a protected file before playback. BECast additionally requires the externally retained private key matching its signed recipient fingerprint.
+
+The resulting file is sensitive plaintext in asciicast v3 format. Use a player that supports asciicast v3 and unknown comment lines. See [Session recording](../../auditlog/recording.md#export-and-playback) for the complete operational workflow.

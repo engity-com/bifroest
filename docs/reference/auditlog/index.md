@@ -39,6 +39,9 @@ Loads the single encryption public key from an OpenSSH public-key file when the 
 <<property("journal", "Journal", "#journal")>>
 See [below](#journal).
 
+<<property("recording", "Session recording", "recording.md")>>
+Configures fail-closed shell and exec recording, local retention, and optional artifact delivery. Recording is disabled by default and requires this audit log to be enabled.
+
 <<property("targets", array_ref("Remote target", "remote-targets/index.md"))>>
 Optional destinations that receive complete sealed segments from the authoritative local journal. See [remote targets](remote-targets/index.md).
 
