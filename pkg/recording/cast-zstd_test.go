@@ -151,6 +151,19 @@ func TestCastZstdExportWritesNothingBeforeSuccessfulVerification(t *testing.T) {
 	require.Empty(t, output.Bytes())
 }
 
+func TestCastZstdExportRejectsExpansionBeyondDeclaredPlaintext(t *testing.T) {
+	const declaredPlaintext = uint32(256)
+	frame := zstdExpansionTestFrame(t, declaredPlaintext)
+	require.NoError(t, validateSingleCastZstdFrame(frame, declaredPlaintext))
+	container, identity := castZstdExpansionTestContainer(t, frame, declaredPlaintext)
+
+	var output bytes.Buffer
+	_, err := ExportCastZstd(bytes.NewReader(container), int64(len(container)), &output, CastZstdVerifyOptions{ExpectedProducerId: identity.ProducerId()})
+	require.ErrorContains(t, err, "cannot decompress Cast Zstandard frame")
+	require.ErrorIs(t, err, zstd.ErrDecoderSizeExceeded)
+	require.Empty(t, output.Bytes())
+}
+
 func TestCastZstdVerificationEnforcesSizeLimits(t *testing.T) {
 	container, cast, _, _ := sealedCastZstdTestContent(t, 300)
 	_, err := VerifyCastZstd(bytes.NewReader(container), int64(len(container)), CastZstdVerifyOptions{
@@ -633,6 +646,72 @@ func encodeCastZstdTestContainer(t *testing.T, identity *audit.Identity, summary
 	sealFrame, err := encodeCastZstdSeal(seal)
 	require.NoError(t, err)
 	return append(result, sealFrame...)
+}
+
+func castZstdExpansionTestContainer(t *testing.T, frame []byte, plaintextLength uint32) ([]byte, *audit.Identity) {
+	t.Helper()
+	identity, _, metadata := castTestValues(t, true)
+	recordingId := [16]byte(metadata.RecordingId)
+	header, err := identity.NewSessionRecordingZstdHeader(castZstdFormatVersion, castVersion, castZstdCodec, recordingId)
+	require.NoError(t, err)
+	headerFrame, err := encodeCastZstdHeader(header)
+	require.NoError(t, err)
+	headerHash := hashDomainValues(castZstdUnitHashDomain, headerFrame)
+	chunk, err := identity.NewSessionRecordingZstdChunk(audit.SessionRecordingZstdChunk{
+		FormatVersion:    castZstdFormatVersion,
+		RecordingId:      recordingId,
+		Sequence:         1,
+		PreviousUnitHash: headerHash,
+		PlaintextLength:  plaintextLength,
+		FrameLength:      uint32(len(frame)),
+		FrameHash:        hashDomainValues(castZstdFrameHashDomain, frame),
+	})
+	require.NoError(t, err)
+	descriptor, err := encodeCastZstdChunk(chunk)
+	require.NoError(t, err)
+	result := append(append(append([]byte(nil), headerFrame...), descriptor...), frame...)
+	lastChunkHash := hashDomainValues(castZstdUnitHashDomain, descriptor, frame)
+	digest := audit.SessionRecordingHash{1}
+	streamHash := audit.SessionRecordingHash{1}
+	seal, err := identity.NewSessionRecordingZstdSeal(audit.SessionRecordingZstdSeal{
+		FormatVersion:     castZstdFormatVersion,
+		RecordingId:       recordingId,
+		Status:            1,
+		ChunkCount:        1,
+		CastBytes:         uint64(plaintextLength),
+		ZstdBytes:         uint64(len(frame)),
+		PrefixBytes:       uint64(len(result)),
+		HeaderUnitHash:    headerHash,
+		LastChunkUnitHash: lastChunkHash,
+		CastContentDigest: digest,
+		CastStreamHash:    streamHash,
+	})
+	require.NoError(t, err)
+	sealFrame, err := encodeCastZstdSeal(seal)
+	require.NoError(t, err)
+	return append(result, sealFrame...), identity
+}
+
+func zstdExpansionTestFrame(t *testing.T, declaredPlaintext uint32) []byte {
+	t.Helper()
+	expanded := bytes.Repeat([]byte{'A'}, 128<<10)
+	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderCRC(true), zstd.WithEncoderConcurrency(1))
+	require.NoError(t, err)
+	encoded := encoder.EncodeAll(expanded, nil)
+	encoder.Close()
+	require.GreaterOrEqual(t, len(encoded), 4)
+
+	header := zstd.Header{
+		WindowSize:       uint64(len(expanded)),
+		HasFCS:           true,
+		FrameContentSize: uint64(declaredPlaintext),
+		HasCheckSum:      true,
+	}
+	frame, err := header.AppendTo(nil)
+	require.NoError(t, err)
+	blockHeader := uint32(len(expanded))<<3 | 1<<1 | 1
+	frame = append(frame, byte(blockHeader), byte(blockHeader>>8), byte(blockHeader>>16), expanded[0])
+	return append(frame, encoded[len(encoded)-4:]...)
 }
 
 type memoryRecoveryFile struct {

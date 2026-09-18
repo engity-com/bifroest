@@ -403,6 +403,34 @@ func TestDecryptBECastWritesNothingBeforeOuterAndInnerVerification(t *testing.T)
 	_ = assertBECastDecryptFailureWithoutOutput(t, invalidInnerContainer, fixture.identities, options)
 }
 
+func TestDecryptBECastRejectsExpansionBeyondDeclaredPlaintext(t *testing.T) {
+	fixture := newBECastVerifierFixture(t)
+	parsed := parseBECastTestContainer(t, fixture.container)
+	chunkIndex := 0
+	for index := range parsed.chunks {
+		if parsed.chunks[index].value.PlaintextLength > parsed.chunks[chunkIndex].value.PlaintextLength {
+			chunkIndex = index
+		}
+	}
+	plaintextLength := parsed.chunks[chunkIndex].value.PlaintextLength
+	require.GreaterOrEqual(t, plaintextLength, uint32(256))
+	frame := zstdExpansionTestFrame(t, plaintextLength)
+	require.NoError(t, validateSingleCastZstdFrame(frame, plaintextLength))
+	ciphertext := encryptBECastTestFrame(t, fixture.recipient, frame)
+	container := rewriteBECastTestContainer(t, fixture.container, fixture.identity, parsed.headerUnit, func(index int, _ *audit.SessionRecordingBECastChunk, value *[]byte) {
+		if index == chunkIndex {
+			*value = ciphertext
+		}
+	}, nil)
+	options := BECastVerifyOptions{ExpectedProducerId: fixture.identity.ProducerId()}
+
+	_, err := VerifyBECast(bytes.NewReader(container), int64(len(container)), options)
+	require.NoError(t, err)
+	err = assertBECastDecryptFailureWithoutOutput(t, container, fixture.identities, options)
+	require.ErrorContains(t, err, "cannot decompress BECast chunk")
+	require.ErrorIs(t, err, zstd.ErrDecoderSizeExceeded)
+}
+
 func TestDecryptBECastRejectsWrongRecipientAndFingerprintMismatch(t *testing.T) {
 	fixture := newBECastVerifierFixture(t)
 	otherRecipient, otherIdentities := newBECastVerifierEncryption(t, 0x73)
