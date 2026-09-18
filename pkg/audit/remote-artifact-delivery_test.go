@@ -57,6 +57,80 @@ func TestRemoteArtifactDeliveryPublishesInSortedOrderAndDoesNotRepublishAfterRes
 	require.NoError(t, restarted.Close())
 }
 
+func TestRemoteArtifactDeliveryKeepsOneArtifactInFlightPerTarget(t *testing.T) {
+	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
+	artifacts := []RemoteArtifact{
+		newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "c.cast.zst", []byte("third")),
+		newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "a.cast.zst", []byte("first")),
+		newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "b.cast.zst", []byte("second")),
+	}
+	source.set(artifacts...)
+	fingerprint := remoteArtifactDeliveryTestFingerprint("archive")
+	receiptTargets := remoteArtifactDeliveryTestTargets(remoteArtifactDeliveryTestEntry("archive", fingerprint, nil))
+	receipts := newRemoteArtifactDeliveryTestReceipts(t, identity, artifacts, receiptTargets)
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var releaseOnce sync.Once
+	var firstStartedOnce sync.Once
+	var mutex sync.Mutex
+	var published []string
+	var activePublishes, maximumActivePublishes int
+	target := remoteArtifactDeliveryTestEntry("archive", fingerprint, func(ctx context.Context, artifact RemoteArtifact) error {
+		mutex.Lock()
+		activePublishes++
+		if activePublishes > maximumActivePublishes {
+			maximumActivePublishes = activePublishes
+		}
+		published = append(published, artifact.FileName())
+		mutex.Unlock()
+		defer func() {
+			mutex.Lock()
+			activePublishes--
+			mutex.Unlock()
+		}()
+		if artifact.FileName() != "a.cast.zst" {
+			return nil
+		}
+		firstStartedOnce.Do(func() { close(firstStarted) })
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-releaseFirst:
+			return nil
+		}
+	})
+	delivery := newRemoteArtifactDeliveryTestCoordinator(t, sealedDirectory, source, receipts, remoteArtifactDeliveryTestTargets(target), remoteArtifactDeliveryTestOptions())
+	release := func() { releaseOnce.Do(func() { close(releaseFirst) }) }
+	t.Cleanup(func() {
+		release()
+		_ = delivery.Close()
+	})
+	require.NoError(t, delivery.Start())
+	select {
+	case <-firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first artifact did not start")
+	}
+	for range 100 {
+		delivery.notifyDiscovery()
+	}
+	require.Equal(t, 1, cap(delivery.workers[0].discoveryWake))
+	require.Equal(t, 1, len(delivery.workers[0].discoveryWake))
+	require.Equal(t, int32(1), source.openCalls.Load())
+
+	release()
+	remoteArtifactDeliveryTestFlush(t, delivery)
+	require.NoError(t, delivery.Close())
+	mutex.Lock()
+	actualPublished := append([]string(nil), published...)
+	actualMaximumActivePublishes := maximumActivePublishes
+	mutex.Unlock()
+	require.Equal(t, []string{"a.cast.zst", "b.cast.zst", "c.cast.zst"}, actualPublished)
+	require.Equal(t, 1, actualMaximumActivePublishes)
+	require.Equal(t, int32(len(artifacts)), source.openCalls.Load())
+	require.Equal(t, int32(len(artifacts)), source.closed.Load())
+}
+
 func TestRemoteArtifactDeliveryUsesReceiptTargetSnapshot(t *testing.T) {
 	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
 	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "snapshot.becast", []byte("snapshot"))
