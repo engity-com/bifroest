@@ -302,6 +302,23 @@ func (f *fixture) prepareRuntime(apiService bool) error {
 }
 
 func (f *fixture) prepareLocal() error {
+	return f.prepareLocalImage(localContainerfile, localConfiguration, nil, true)
+}
+
+func (f *fixture) prepareLocalRecording(auditIdentity string) error {
+	extraFiles := map[string]struct {
+		content []byte
+		mode    os.FileMode
+	}{
+		"audit_identity": {mustRead(auditIdentity), 0400},
+	}
+	return f.prepareLocalImage(localRecordingContainerfile, localRecordingConfiguration, extraFiles, false)
+}
+
+func (f *fixture) prepareLocalImage(containerfile, configuration string, extraFiles map[string]struct {
+	content []byte
+	mode    os.FileMode
+}, waitForSSH bool) error {
 	contextDir := filepath.Join(f.tempDir, "local-context")
 	if err := os.MkdirAll(contextDir, 0755); err != nil {
 		return err
@@ -310,12 +327,18 @@ func (f *fixture) prepareLocal() error {
 		content []byte
 		mode    os.FileMode
 	}{
-		"Containerfile":        {[]byte(localContainerfile), 0644},
+		"Containerfile":        {[]byte(containerfile), 0644},
 		"bifroest":             {mustRead(f.bifroest), 0755},
 		"e2e-helper":           {mustRead(f.helper), 0755},
-		"configuration.yaml":   {[]byte(localConfiguration), 0644},
+		"configuration.yaml":   {[]byte(configuration), 0644},
 		"ssh_host_ed25519_key": {mustRead(f.hostKey), 0600},
 		"authorized_keys":      {mustRead(f.clientKey + ".pub"), 0644},
+	}
+	for name, file := range extraFiles {
+		if _, exists := files[name]; exists {
+			return fmt.Errorf("duplicate local container context file %s", name)
+		}
+		files[name] = file
 	}
 	for name, file := range files {
 		if err := os.WriteFile(filepath.Join(contextDir, name), file.content, file.mode); err != nil {
@@ -352,6 +375,29 @@ func (f *fixture) prepareLocal() error {
 	}
 	if err := f.writeKnownHosts(); err != nil {
 		return err
+	}
+	if !waitForSSH {
+		if err := poll(25*time.Second, func() error {
+			connection, err := net.DialTimeout("tcp", net.JoinHostPort(f.host, f.port), time.Second)
+			if err != nil {
+				return err
+			}
+			defer connection.Close()
+			if err := connection.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+				return err
+			}
+			identification, err := bufio.NewReader(io.LimitReader(connection, 256)).ReadString('\n')
+			if err != nil {
+				return err
+			}
+			if !strings.HasPrefix(identification, "SSH-") {
+				return fmt.Errorf("unexpected SSH identification %q", identification)
+			}
+			return nil
+		}); err != nil {
+			return fmt.Errorf("wait for local-backend SSH readiness: %w", err)
+		}
+		return nil
 	}
 	if err := poll(25*time.Second, func() error {
 		result := f.ssh(5*time.Second, f.clientKey, "e2e", nil, "/usr/local/bin/e2e-helper", "ready")
@@ -1279,6 +1325,27 @@ USER 0:10001
 ENTRYPOINT ["/bin/sh", "-c", "umask 002 && exec /usr/local/bin/bifroest run --configuration=/etc/bifroest/configuration.yaml"]
 `
 
+const localRecordingContainerfile = `FROM ` + alpineImage + `
+COPY bifroest /usr/local/bin/bifroest
+COPY e2e-helper /usr/local/bin/e2e-helper
+COPY configuration.yaml /etc/bifroest/configuration.yaml
+COPY audit_identity /etc/bifroest/audit_identity
+COPY ssh_host_ed25519_key /etc/bifroest/ssh_host_ed25519_key
+COPY authorized_keys /home/e2e/.ssh/authorized_keys
+RUN addgroup -S -g 10001 e2e \
+ && adduser -S -D -H -u 10001 -G e2e -h /home/e2e -s /bin/sh e2e \
+ && mkdir -p /home/e2e /var/lib/bifroest/sessions \
+ && chown -R 10001:10001 /home/e2e \
+ && chmod 0700 /home/e2e/.ssh \
+ && chmod 0400 /etc/bifroest/audit_identity \
+ && chmod 0600 /home/e2e/.ssh/authorized_keys /etc/bifroest/ssh_host_ed25519_key \
+ && chmod 0755 /usr/local/bin/bifroest /usr/local/bin/e2e-helper \
+ && chmod 0700 /var/lib/bifroest/sessions
+EXPOSE 2222
+USER 0:10001
+ENTRYPOINT ["/bin/sh", "-c", "umask 002 && exec /usr/local/bin/bifroest run --configuration=/etc/bifroest/configuration.yaml"]
+`
+
 const localConfiguration = `startMessage: '{{""}}'
 ssh:
   addresses:
@@ -1315,6 +1382,58 @@ flows:
       name: "e2e"
       banner: '{{""}}'
       portForwardingAllowed: true
+`
+
+const localRecordingConfiguration = `startMessage: '{{""}}'
+ssh:
+  addresses:
+    - "0.0.0.0:2222"
+  keys:
+    hostKeys:
+      - "/etc/bifroest/ssh_host_ed25519_key"
+    rememberMeNotification: '{{""}}'
+  banner: '{{""}}'
+  idleTimeout: 30s
+  maxTimeout: 2m
+  gracefulShutdownTimeout: 3s
+  handshakeTimeout: 5s
+  sessionRequestTimeout: 5s
+session:
+  type: fs
+  storage: "/var/lib/bifroest/sessions"
+  idleTimeout: 2m
+  maxTimeout: 5m
+  maxConnections: 4
+auditlog:
+  - name: default
+    enabled: true
+    identityFile: "/etc/bifroest/audit_identity"
+    journal:
+      directory: "/var/lib/bifroest/auditlog"
+      minimumFreeBytes: 1048576
+    recording:
+      enabled: true
+      directory: "/var/lib/bifroest/recordings"
+      maximumSpoolBytes: 16777216
+      retainFor: 1h
+      targets: false
+flows:
+  - name: local
+    auditlog: default
+    authorization:
+      type: local
+      authorizedKeys:
+        - "/home/e2e/.ssh/authorized_keys"
+      password:
+        allowed: false
+        interactiveAllowed: false
+        emptyAllowed: false
+      pamService: ""
+    environment:
+      type: local
+      name: "e2e"
+      banner: '{{""}}'
+      portForwardingAllowed: false
 `
 
 func yamlString(value string) string {
