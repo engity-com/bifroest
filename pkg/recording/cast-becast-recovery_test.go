@@ -94,18 +94,25 @@ func TestBECastRecoveryTruncatesOnlyPhysicalPartialTail(t *testing.T) {
 }
 
 func TestBECastRecoveryPreservesFinalChunkAndAddsSeal(t *testing.T) {
-	for _, status := range []CastStatus{CastStatusCompleted, CastStatusFailed} {
-		t.Run(string(status), func(t *testing.T) {
+	for _, test := range []struct {
+		status CastStatus
+		reason string
+	}{
+		{status: CastStatusCompleted},
+		{status: CastStatusFailed, reason: "recording-capture"},
+		{status: CastStatusIncomplete, reason: "canceled"},
+	} {
+		t.Run(string(test.status), func(t *testing.T) {
 			file, identity, recipient, identities, metadata, writer := newBECastRecoveryTestWriter(t)
 			require.NoError(t, writer.WriteOutput(time.Second, OutputStreamTerminal, []byte("finished\r\n")))
 			checkpoint, err := writer.Checkpoint()
 			require.NoError(t, err)
 			var exitStatus *uint32
-			if status == CastStatusCompleted {
+			if test.status == CastStatusCompleted {
 				value := uint32(0)
 				exitStatus = &value
 			}
-			_, err = writer.Seal(2*time.Second, CastResult{Status: status, EndedAt: metadata.StartedAt.Add(2 * time.Second)}, exitStatus)
+			_, err = writer.Seal(2*time.Second, CastResult{Status: test.status, EndedAt: metadata.StartedAt.Add(2 * time.Second), Reason: test.reason}, exitStatus)
 			require.NoError(t, err)
 			sealed := beCastRecoveryFileBytes(t, file)
 			parsed := parseBECastTestContainer(t, sealed)
@@ -121,16 +128,107 @@ func TestBECastRecoveryPreservesFinalChunkAndAddsSeal(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, result.Finalized)
 			require.False(t, result.Truncated)
-			require.Equal(t, status, result.Verification.Summary.Status)
+			require.Equal(t, test.status, result.Verification.Summary.Status)
 			recovered := beCastRecoveryFileBytes(t, file)
 			require.True(t, bytes.HasPrefix(recovered, prefix))
 
 			var plaintext bytes.Buffer
 			verification, err := DecryptBECast(file, int64(len(recovered)), identities, &plaintext, BECastVerifyOptions{ExpectedProducerId: identity.ProducerId()})
 			require.NoError(t, err)
-			require.Equal(t, status, verification.Cast.Result.Status)
-			require.Empty(t, verification.Cast.Result.Reason)
+			require.Equal(t, test.status, verification.Cast.Result.Status)
+			require.Equal(t, test.reason, verification.Cast.Result.Reason)
 		})
+	}
+}
+
+func TestBECastRecoveryHandlesEveryPostCheckpointCrashPosition(t *testing.T) {
+	file, identity, recipient, identities, metadata, writer := newBECastRecoveryTestWriter(t)
+	require.NoError(t, writer.WriteOutput(time.Second, OutputStreamTerminal, []byte("durable\r\n")))
+	checkpoint, err := writer.Checkpoint()
+	require.NoError(t, err)
+	require.NoError(t, file.Sync())
+	require.NoError(t, writer.WriteOutput(2*time.Second, OutputStreamTerminal, []byte("after checkpoint\r\n")))
+	continuation, err := writer.Checkpoint()
+	require.NoError(t, err)
+	exitStatus := uint32(0)
+	_, err = writer.Seal(3*time.Second, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(3 * time.Second)}, &exitStatus)
+	require.NoError(t, err)
+	require.NoError(t, file.Sync())
+
+	container := beCastRecoveryFileBytes(t, file)
+	parsed := parseBECastTestContainer(t, container)
+	checkpointEnd := int(checkpoint.PrefixBytes)
+	continuationEnd := int(continuation.PrefixBytes)
+	sealStart := parsed.sealOffset
+	require.Less(t, checkpointEnd, continuationEnd)
+	require.Less(t, continuationEnd, sealStart)
+	unitEnds := map[int]bool{checkpointEnd: true}
+	for _, chunk := range parsed.chunks {
+		if chunk.endOffset >= checkpointEnd {
+			unitEnds[chunk.endOffset] = true
+		}
+	}
+	unitEnds[len(container)] = true
+	require.True(t, unitEnds[continuationEnd])
+	require.True(t, unitEnds[sealStart])
+
+	for cut := checkpointEnd; cut <= len(container); cut++ {
+		crashFile := &memoryRecoveryFile{content: append([]byte(nil), container[:cut]...), offset: int64(cut)}
+
+		result, err := RecoverBECast(crashFile, identity, recipient, checkpoint, metadata.StartedAt.Add(4*time.Second), BECastVerifyOptions{})
+		require.NoErrorf(t, err, "cut %d", cut)
+		if cut == len(container) {
+			require.Truef(t, result.AlreadySealed, "cut %d", cut)
+			require.Falsef(t, result.Finalized, "cut %d", cut)
+		} else {
+			require.Falsef(t, result.AlreadySealed, "cut %d", cut)
+			require.Truef(t, result.Finalized, "cut %d", cut)
+		}
+		require.Equalf(t, !unitEnds[cut], result.Truncated, "cut %d", cut)
+		if cut >= sealStart {
+			require.Equalf(t, CastStatusCompleted, result.Verification.Summary.Status, "cut %d", cut)
+		} else {
+			require.Equalf(t, CastStatusIncomplete, result.Verification.Summary.Status, "cut %d", cut)
+		}
+
+		preservedEnd := checkpointEnd
+		for unitEnd := range unitEnds {
+			if unitEnd <= cut && unitEnd <= sealStart && unitEnd > preservedEnd {
+				preservedEnd = unitEnd
+			}
+		}
+		if cut == len(container) {
+			preservedEnd = len(container)
+		}
+		recovered := append([]byte(nil), crashFile.content...)
+		require.GreaterOrEqualf(t, len(recovered), preservedEnd, "cut %d", cut)
+		require.Equalf(t, container[:preservedEnd], recovered[:preservedEnd], "preserved prefix at cut %d", cut)
+		if unitEnds[cut] {
+			var plaintext bytes.Buffer
+			verification, err := DecryptBECast(crashFile, int64(len(crashFile.content)), identities, &plaintext, BECastVerifyOptions{ExpectedProducerId: identity.ProducerId()})
+			require.NoErrorf(t, err, "decrypt recovered boundary at cut %d", cut)
+			require.Containsf(t, plaintext.String(), "durable", "cut %d", cut)
+			expectedOutputEvents := uint64(1)
+			if cut >= continuationEnd {
+				expectedOutputEvents = 2
+				require.Containsf(t, plaintext.String(), "after checkpoint", "cut %d", cut)
+			} else {
+				require.NotContainsf(t, plaintext.String(), "after checkpoint", "cut %d", cut)
+			}
+			require.Equalf(t, expectedOutputEvents, verification.Cast.OutputEvents, "cut %d", cut)
+			if cut >= sealStart {
+				require.Equalf(t, CastStatusCompleted, verification.Cast.Result.Status, "cut %d", cut)
+				require.Emptyf(t, verification.Cast.Result.Reason, "cut %d", cut)
+			} else {
+				require.Equalf(t, CastStatusIncomplete, verification.Cast.Result.Status, "cut %d", cut)
+				require.Equalf(t, startupRecoveryReason, verification.Cast.Result.Reason, "cut %d", cut)
+			}
+
+			again, err := RecoverBECast(crashFile, identity, recipient, checkpoint, metadata.StartedAt.Add(5*time.Second), BECastVerifyOptions{})
+			require.NoErrorf(t, err, "second recovery at cut %d", cut)
+			require.Truef(t, again.AlreadySealed, "second recovery at cut %d", cut)
+			require.Equalf(t, recovered, crashFile.content, "second recovery at cut %d", cut)
+		}
 	}
 }
 

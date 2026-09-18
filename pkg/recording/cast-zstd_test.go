@@ -285,7 +285,7 @@ func TestCastZstdRecoveryHandlesEveryPostCheckpointCrashPosition(t *testing.T) {
 	require.True(t, unitEnds[len(container)])
 
 	for cut := checkpointEnd; cut <= len(container); cut++ {
-		crashFile := &castZstdMemoryRecoveryFile{content: append([]byte(nil), container[:cut]...), offset: int64(cut)}
+		crashFile := &memoryRecoveryFile{content: append([]byte(nil), container[:cut]...), offset: int64(cut)}
 
 		result, err := RecoverCastZstd(crashFile, identity, checkpoint, metadata.StartedAt.Add(4*time.Second), CastZstdVerifyOptions{})
 		require.NoErrorf(t, err, "cut %d", cut)
@@ -566,12 +566,12 @@ func encodeCastZstdTestContainer(t *testing.T, identity *audit.Identity, summary
 	return append(result, sealFrame...)
 }
 
-type castZstdMemoryRecoveryFile struct {
+type memoryRecoveryFile struct {
 	content []byte
 	offset  int64
 }
 
-func (this *castZstdMemoryRecoveryFile) ReadAt(target []byte, offset int64) (int, error) {
+func (this *memoryRecoveryFile) ReadAt(target []byte, offset int64) (int, error) {
 	if offset < 0 {
 		return 0, fmt.Errorf("negative read offset %d", offset)
 	}
@@ -585,7 +585,7 @@ func (this *castZstdMemoryRecoveryFile) ReadAt(target []byte, offset int64) (int
 	return read, nil
 }
 
-func (this *castZstdMemoryRecoveryFile) Write(value []byte) (int, error) {
+func (this *memoryRecoveryFile) Write(value []byte) (int, error) {
 	if this.offset < 0 {
 		return 0, fmt.Errorf("negative write offset %d", this.offset)
 	}
@@ -598,7 +598,7 @@ func (this *castZstdMemoryRecoveryFile) Write(value []byte) (int, error) {
 	return len(value), nil
 }
 
-func (this *castZstdMemoryRecoveryFile) Seek(offset int64, whence int) (int64, error) {
+func (this *memoryRecoveryFile) Seek(offset int64, whence int) (int64, error) {
 	var base int64
 	switch whence {
 	case io.SeekStart:
@@ -617,7 +617,7 @@ func (this *castZstdMemoryRecoveryFile) Seek(offset int64, whence int) (int64, e
 	return next, nil
 }
 
-func (this *castZstdMemoryRecoveryFile) Truncate(size int64) error {
+func (this *memoryRecoveryFile) Truncate(size int64) error {
 	if size < 0 {
 		return fmt.Errorf("negative truncate size %d", size)
 	}
@@ -629,6 +629,6 @@ func (this *castZstdMemoryRecoveryFile) Truncate(size int64) error {
 	return nil
 }
 
-func (this *castZstdMemoryRecoveryFile) Sync() error {
+func (this *memoryRecoveryFile) Sync() error {
 	return nil
 }
