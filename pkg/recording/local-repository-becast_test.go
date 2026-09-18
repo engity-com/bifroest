@@ -102,6 +102,85 @@ func TestLocalBECastRepositoryRecoversCommittedWorkDirectory(t *testing.T) {
 	require.FileExists(t, filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+localBECastSealedSuffix))
 }
 
+func TestLocalBECastRepositoryRecoversInterruptedHeadReplacement(t *testing.T) {
+	for _, temporary := range []struct {
+		name      string
+		payload   func([]byte) []byte
+		protected bool
+	}{
+		{name: "before temporary creation"},
+		{name: "partial temporary", payload: func(value []byte) []byte { return value[:len(value)/2] }},
+		{name: "complete temporary", payload: func(value []byte) []byte { return value }, protected: true},
+	} {
+		t.Run(temporary.name, func(t *testing.T) {
+			root, identity, recipient, identities, metadata, oldHead, latestHead, _ := localBECastHeadReplacementFixture(t)
+			activeDirectory := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String())
+			replaceLocalTestHeadPayload(t, activeDirectory, oldHead)
+			var temporaryPayload []byte
+			if temporary.payload != nil {
+				temporaryPayload = temporary.payload(latestHead)
+				writeLocalTestHeadTemporary(t, activeDirectory, temporaryPayload, temporary.protected)
+			}
+			var selectedHead []byte
+			err := prepareInterruptedLocalHead(activeDirectory, maximumCastBECastHeadBytes, nil, func(payload []byte) error {
+				selectedHead = append([]byte(nil), payload...)
+				_, decodeErr := decodeBECastHead(payload)
+				return decodeErr
+			})
+			require.NoError(t, err)
+			require.Equal(t, oldHead, selectedHead)
+			if temporaryPayload != nil {
+				writeLocalTestHeadTemporary(t, activeDirectory, temporaryPayload, temporary.protected)
+			}
+
+			repository, err := NewLocalBECastRepository(t.Context(), root, identity, recipient, BECastVerifyOptions{}, localRepositoryTestOptions)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = repository.Close() })
+			recoveries := repository.StartupRecoveries()
+			require.Len(t, recoveries, 1)
+			require.False(t, recoveries[0].Truncated)
+			require.False(t, recoveries[0].AlreadySealed)
+			requireLocalTestQuotaMatchesFiles(t, root, repository.repository.quota)
+			require.NoFileExists(t, filepath.Join(activeDirectory, localHeadTempFileName))
+
+			sealedPath := filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+localBECastSealedSuffix)
+			sealed, err := openSealedLocalFile(sealedPath)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = sealed.Close() })
+			info, err := sealed.Stat()
+			require.NoError(t, err)
+			var cast bytes.Buffer
+			verification, err := DecryptBECast(sealed, info.Size(), identities, &cast, BECastVerifyOptions{ExpectedProducerId: identity.ProducerId()})
+			require.NoError(t, err)
+			require.Equal(t, CastStatusIncomplete, verification.Summary.Status)
+			require.Equal(t, startupRecoveryReason, verification.Cast.Result.Reason)
+			require.Equal(t, uint64(1), verification.Cast.OutputEvents)
+			require.Contains(t, cast.String(), "content after old head")
+			require.NoError(t, sealed.Close())
+			require.NoError(t, repository.Close())
+		})
+	}
+}
+
+func TestLocalBECastRepositoryRejectsHeadAheadOfContent(t *testing.T) {
+	root, identity, recipient, _, metadata, _, latestHead, oldPrefix := localBECastHeadReplacementFixture(t)
+	activeDirectory := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String())
+	contentPath := filepath.Join(activeDirectory, localBECastContentFileName)
+	require.NoError(t, os.Truncate(contentPath, int64(oldPrefix)))
+	contentBefore, err := os.ReadFile(contentPath)
+	require.NoError(t, err)
+
+	_, err = NewLocalBECastRepository(t.Context(), root, identity, recipient, BECastVerifyOptions{}, localRepositoryTestOptions)
+	require.ErrorContains(t, err, "lost data behind its signed checkpoint")
+	contentAfter, readErr := os.ReadFile(contentPath)
+	require.NoError(t, readErr)
+	require.Equal(t, contentBefore, contentAfter)
+	headAfter, readErr := os.ReadFile(filepath.Join(activeDirectory, localHeadFileName))
+	require.NoError(t, readErr)
+	require.Equal(t, latestHead, headAfter)
+	require.NoFileExists(t, filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+localBECastSealedSuffix))
+}
+
 func TestLocalBECastRepositoryWrongRecipientFailsWithoutMutation(t *testing.T) {
 	root, identity, _, _, metadata := closedActiveLocalBECastTestRepository(t)
 	activeDirectory := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String())
@@ -369,6 +448,33 @@ func closedActiveLocalBECastTestRepository(t *testing.T) (string, *audit.Identit
 	require.NoError(t, active.Close())
 	require.NoError(t, repository.Close())
 	return root, identity, recipient, identities, metadata
+}
+
+func localBECastHeadReplacementFixture(t *testing.T) (string, *audit.Identity, *crypto.AgeSshRecipient, *crypto.AgeSshIdentities, CastMetadata, []byte, []byte, uint64) {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "recordings")
+	identity, header, metadata := castTestValues(t, true)
+	recipient, identities := newBECastTestEncryption(t)
+	repository, err := NewLocalBECastRepository(t.Context(), root, identity, recipient, BECastVerifyOptions{}, localRepositoryTestOptions)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = repository.Close() })
+	active, err := repository.CreateActive(t.Context(), header, metadata, 300)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = active.Close() })
+	activeDirectory := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String())
+	headPath := filepath.Join(activeDirectory, localHeadFileName)
+	oldHead, err := os.ReadFile(headPath)
+	require.NoError(t, err)
+	oldCheckpoint, err := decodeBECastHead(oldHead)
+	require.NoError(t, err)
+	require.NoError(t, active.WriteOutput(time.Second, OutputStreamTerminal, []byte("content after old head\r\n")))
+	require.NoError(t, active.Checkpoint())
+	require.NoError(t, active.Close())
+	require.NoError(t, repository.Close())
+	latestHead, err := os.ReadFile(headPath)
+	require.NoError(t, err)
+	require.NotEqual(t, oldHead, latestHead)
+	return root, identity, recipient, identities, metadata, oldHead, latestHead, oldCheckpoint.PrefixBytes
 }
 
 func replaceLocalBECastTestHead(t *testing.T, directory string, mutate func(audit.SessionRecordingBECastHead) audit.SessionRecordingBECastHead) {

@@ -463,6 +463,85 @@ func TestLocalCastZstdRepositoryRecoversPublishedHeadTemporary(t *testing.T) {
 	require.NoError(t, repository.Close())
 }
 
+func TestLocalCastZstdRepositoryRecoversInterruptedHeadReplacement(t *testing.T) {
+	for _, temporary := range []struct {
+		name      string
+		payload   func([]byte) []byte
+		protected bool
+	}{
+		{name: "before temporary creation"},
+		{name: "partial temporary", payload: func(value []byte) []byte { return value[:len(value)/2] }},
+		{name: "complete temporary", payload: func(value []byte) []byte { return value }, protected: true},
+	} {
+		t.Run(temporary.name, func(t *testing.T) {
+			root, identity, metadata, oldHead, latestHead, _ := localCastZstdHeadReplacementFixture(t)
+			activeDirectory := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String())
+			replaceLocalTestHeadPayload(t, activeDirectory, oldHead)
+			var temporaryPayload []byte
+			if temporary.payload != nil {
+				temporaryPayload = temporary.payload(latestHead)
+				writeLocalTestHeadTemporary(t, activeDirectory, temporaryPayload, temporary.protected)
+			}
+			var selectedHead []byte
+			err := prepareInterruptedLocalHead(activeDirectory, maximumCastZstdHeadBytes, nil, func(payload []byte) error {
+				selectedHead = append([]byte(nil), payload...)
+				_, decodeErr := decodeCastZstdHead(payload)
+				return decodeErr
+			})
+			require.NoError(t, err)
+			require.Equal(t, oldHead, selectedHead)
+			if temporaryPayload != nil {
+				writeLocalTestHeadTemporary(t, activeDirectory, temporaryPayload, temporary.protected)
+			}
+
+			repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = repository.Close() })
+			recoveries := repository.StartupRecoveries()
+			require.Len(t, recoveries, 1)
+			require.False(t, recoveries[0].Truncated)
+			require.False(t, recoveries[0].AlreadySealed)
+			requireLocalTestQuotaMatchesFiles(t, root, repository.repository.quota)
+			require.NoFileExists(t, filepath.Join(activeDirectory, localHeadTempFileName))
+
+			sealedPath := filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+localCastZstdSealedSuffix)
+			sealed, err := openSealedLocalFile(sealedPath)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = sealed.Close() })
+			info, err := sealed.Stat()
+			require.NoError(t, err)
+			var cast bytes.Buffer
+			verification, err := ExportCastZstd(sealed, info.Size(), &cast, CastZstdVerifyOptions{ExpectedProducerId: identity.ProducerId()})
+			require.NoError(t, err)
+			require.Equal(t, CastStatusIncomplete, verification.Summary.Status)
+			require.Equal(t, startupRecoveryReason, verification.Cast.Result.Reason)
+			require.Equal(t, uint64(1), verification.Cast.OutputEvents)
+			require.Contains(t, cast.String(), "content after old head")
+			require.NoError(t, sealed.Close())
+			require.NoError(t, repository.Close())
+		})
+	}
+}
+
+func TestLocalCastZstdRepositoryRejectsHeadAheadOfContent(t *testing.T) {
+	root, identity, metadata, _, latestHead, oldPrefix := localCastZstdHeadReplacementFixture(t)
+	activeDirectory := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String())
+	contentPath := filepath.Join(activeDirectory, localCastZstdContentFileName)
+	require.NoError(t, os.Truncate(contentPath, int64(oldPrefix)))
+	contentBefore, err := os.ReadFile(contentPath)
+	require.NoError(t, err)
+
+	_, err = NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions)
+	require.ErrorContains(t, err, "lost data behind its signed checkpoint")
+	contentAfter, readErr := os.ReadFile(contentPath)
+	require.NoError(t, readErr)
+	require.Equal(t, contentBefore, contentAfter)
+	headAfter, readErr := os.ReadFile(filepath.Join(activeDirectory, localHeadFileName))
+	require.NoError(t, readErr)
+	require.Equal(t, latestHead, headAfter)
+	require.NoFileExists(t, filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+localCastZstdSealedSuffix))
+}
+
 func TestLocalCastZstdRepositoryRecoversCommittedWorkDirectory(t *testing.T) {
 	root, identity, metadata := closedActiveLocalTestRepository(t)
 	activeDirectory := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String())
@@ -887,6 +966,67 @@ func closedActiveLocalTestRepository(t *testing.T) (string, *audit.Identity, Cas
 	require.NoError(t, active.Close())
 	require.NoError(t, repository.Close())
 	return root, identity, metadata
+}
+
+func localCastZstdHeadReplacementFixture(t *testing.T) (string, *audit.Identity, CastMetadata, []byte, []byte, uint64) {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "recordings")
+	identity, header, metadata := castTestValues(t, true)
+	repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = repository.Close() })
+	active, err := repository.CreateActive(t.Context(), header, metadata, 300)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = active.Close() })
+	activeDirectory := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String())
+	headPath := filepath.Join(activeDirectory, localHeadFileName)
+	oldHead, err := os.ReadFile(headPath)
+	require.NoError(t, err)
+	oldCheckpoint, err := decodeCastZstdHead(oldHead)
+	require.NoError(t, err)
+	require.NoError(t, active.WriteOutput(time.Second, OutputStreamTerminal, []byte("content after old head\r\n")))
+	require.NoError(t, active.Checkpoint())
+	require.NoError(t, active.Close())
+	require.NoError(t, repository.Close())
+	latestHead, err := os.ReadFile(headPath)
+	require.NoError(t, err)
+	require.NotEqual(t, oldHead, latestHead)
+	return root, identity, metadata, oldHead, latestHead, oldCheckpoint.PrefixBytes
+}
+
+func replaceLocalTestHeadPayload(t *testing.T, directory string, payload []byte) {
+	t.Helper()
+	require.NoError(t, os.Remove(filepath.Join(directory, localHeadFileName)))
+	require.NoError(t, writeLocalHead(directory, payload, nil))
+}
+
+func writeLocalTestHeadTemporary(t *testing.T, directory string, payload []byte, protected bool) {
+	t.Helper()
+	path := filepath.Join(directory, localHeadTempFileName)
+	if protected {
+		require.NoError(t, writeProtectedLocalFile(path, payload))
+		return
+	}
+	file, err := createLocalFile(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = file.Close() })
+	written, err := file.Write(payload)
+	require.NoError(t, err)
+	require.Equal(t, len(payload), written)
+	require.NoError(t, file.Close())
+}
+
+func requireLocalTestQuotaMatchesFiles(t *testing.T, root string, quota *localQuota) {
+	t.Helper()
+	usage, err := inventoryLocalFiles(
+		filepath.Join(root, localWorkDirectory),
+		filepath.Join(root, localActiveDirectory),
+		filepath.Join(root, localSealedDirectory),
+		filepath.Join(root, localQuarantineDirectory),
+		filepath.Join(root, localDeliveryDirectory),
+	)
+	require.NoError(t, err)
+	require.Equal(t, usage, quota.usage)
 }
 
 func prepareUnboundLocalTestRoot(t *testing.T) string {
