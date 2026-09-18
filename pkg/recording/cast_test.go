@@ -5,6 +5,8 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"io"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +58,94 @@ func TestCastV3GoldenAndVerification(t *testing.T) {
 	require.Equal(t, digest, verification.Digest)
 	require.Equal(t, identity.Fingerprint(), verification.Fingerprint)
 	require.True(t, verification.Trusted)
+}
+
+func TestCastV3OfficialAsciinemaCompatibility(t *testing.T) {
+	asciinema := os.Getenv("ASCIINEMA")
+	if asciinema == "" {
+		t.Skip("ASCIINEMA is not configured")
+	}
+	identity, header, metadata := castTestValues(t, true)
+	var cast bytes.Buffer
+	writer, err := NewCastWriter(&cast, identity, header, metadata)
+	require.NoError(t, err)
+	require.NoError(t, writer.WriteOutput(100*time.Millisecond, OutputStreamTerminal, []byte("Welcome\r\n")))
+	require.NoError(t, writer.WriteOutput(200*time.Millisecond, OutputStreamTerminal, []byte{0xff, '\r', '\n'}))
+	require.NoError(t, writer.WriteResize(300*time.Millisecond, 132, 43))
+	require.NoError(t, writer.WriteMarker(400*time.Millisecond, "ready"))
+	exitStatus := uint32(0)
+	_, err = writer.Seal(500*time.Millisecond, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(500 * time.Millisecond)}, &exitStatus)
+	require.NoError(t, err)
+
+	convert := func(source []byte, format string) []byte {
+		t.Helper()
+		command := exec.Command(asciinema, "--quiet", "convert", "--output-format", format, "-", "-")
+		command.Stdin = bytes.NewReader(source)
+		for _, environment := range os.Environ() {
+			if strings.HasPrefix(environment, "GITHUB_TOKEN=") || strings.HasPrefix(environment, "MISE_GITHUB_TOKEN=") {
+				continue
+			}
+			command.Env = append(command.Env, environment)
+		}
+		var stdout, stderr bytes.Buffer
+		command.Stdout = &stdout
+		command.Stderr = &stderr
+		err := command.Run()
+		require.NoErrorf(t, err, "asciinema convert failed: %s", stderr.String())
+		return stdout.Bytes()
+	}
+
+	converted := convert(cast.Bytes(), "asciicast-v3")
+	require.Contains(t, string(converted), `"o", "Welcome\r\n"`)
+	require.Contains(t, string(converted), `"r", "132x43"`)
+	require.Contains(t, string(converted), `"m", "ready"`)
+	require.Contains(t, string(converted), `"x", "0"`)
+	require.Equal(t, "Welcome\n�\n", string(convert(cast.Bytes(), "txt")))
+
+	identity, header, metadata = castTestValues(t, true)
+	header.Terminal.Columns = MaximumCastTerminalDimension
+	header.Terminal.Rows = MaximumCastTerminalDimension
+	var boundaryCast bytes.Buffer
+	writer, err = NewCastWriter(&boundaryCast, identity, header, metadata)
+	require.NoError(t, err)
+	require.NoError(t, writer.WriteResize(time.Millisecond, MaximumCastTerminalDimension, MaximumCastTerminalDimension))
+	exitStatus = MaximumCastExitStatus
+	_, err = writer.Seal(2*time.Millisecond, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(2 * time.Millisecond)}, &exitStatus)
+	require.NoError(t, err)
+
+	boundaryConverted := convert(boundaryCast.Bytes(), "asciicast-v3")
+	require.Contains(t, string(boundaryConverted), `"cols":65535`)
+	require.Contains(t, string(boundaryConverted), `"rows":65535`)
+	require.Contains(t, string(boundaryConverted), `"r", "65535x65535"`)
+	require.Contains(t, string(boundaryConverted), `"x", "2147483647"`)
+}
+
+func TestCastEnforcesOfficialAsciinemaNumericRanges(t *testing.T) {
+	identity, header, metadata := castTestValues(t, true)
+	header.Terminal.Columns = MaximumCastTerminalDimension + 1
+	_, err := NewCastWriter(io.Discard, identity, header, metadata)
+	require.ErrorContains(t, err, "terminal dimensions exceed")
+
+	identity, header, metadata = castTestValues(t, true)
+	var output bytes.Buffer
+	writer, err := NewCastWriter(&output, identity, header, metadata)
+	require.NoError(t, err)
+	before := append([]byte(nil), output.Bytes()...)
+	require.ErrorContains(t, writer.WriteResize(time.Millisecond, MaximumCastTerminalDimension+1, 24), "terminal dimensions exceed")
+	require.Equal(t, before, output.Bytes())
+
+	exitStatus := MaximumCastExitStatus + 1
+	_, err = writer.Seal(time.Millisecond, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(time.Millisecond)}, &exitStatus)
+	require.ErrorContains(t, err, "exit status exceeds")
+	require.Equal(t, before, output.Bytes())
+
+	require.NoError(t, validateResizeEvent("65535x65535"))
+	require.ErrorContains(t, validateResizeEvent("65536x24"), "illegal resize event")
+	status, err := parseExitStatus("2147483647")
+	require.NoError(t, err)
+	require.Equal(t, MaximumCastExitStatus, status)
+	_, err = parseExitStatus("2147483648")
+	require.ErrorContains(t, err, "illegal exit status")
 }
 
 func TestCastTimingRoundingDoesNotAccumulateDrift(t *testing.T) {

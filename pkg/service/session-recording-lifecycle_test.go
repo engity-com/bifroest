@@ -5,7 +5,6 @@ import (
 	"context"
 	goerrors "errors"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -490,10 +489,11 @@ func TestExecuteSessionRecordingInvalidExitStatusIsIncomplete(t *testing.T) {
 		{name: "negative", exitCode: -2},
 	}
 	if strconv.IntSize > 32 {
+		tooLarge := uint64(recording.MaximumCastExitStatus) + 1
 		tests = append(tests, struct {
 			name     string
 			exitCode int
-		}{name: "above uint32", exitCode: int(uint64(math.MaxUint32) + 1)})
+		}{name: "above asciinema range", exitCode: int(tooLarge)})
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

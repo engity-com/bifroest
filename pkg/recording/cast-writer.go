@@ -103,6 +103,9 @@ func (this *CastWriter) WriteResize(elapsed time.Duration, columns, rows uint32)
 	if columns == 0 || rows == 0 {
 		return errors.System.Newf("terminal dimensions must be positive")
 	}
+	if columns > MaximumCastTerminalDimension || rows > MaximumCastTerminalDimension {
+		return errors.System.Newf("terminal dimensions exceed %d", MaximumCastTerminalDimension)
+	}
 	return this.writeEvent(elapsed, "r", fmt.Sprintf("%dx%d", columns, rows))
 }
 
@@ -134,6 +137,9 @@ func (this *CastWriter) Seal(elapsed time.Duration, result CastResult, exitStatu
 	}
 	if result.Status == CastStatusCompleted && !result.EndedAt.Equal(this.metadata.StartedAt.Add(elapsed)) {
 		return CastDigest{}, errors.System.Newf("completed recording end time does not match its elapsed duration")
+	}
+	if exitStatus != nil && *exitStatus > MaximumCastExitStatus {
+		return CastDigest{}, errors.System.Newf("exit status exceeds %d", MaximumCastExitStatus)
 	}
 	if exitStatus != nil {
 		if err := this.writeEvent(elapsed, "x", fmt.Sprintf("%d", *exitStatus)); err != nil {

@@ -406,8 +406,8 @@ func validateResizeEvent(data string) error {
 	if !ok {
 		return errors.System.Newf("illegal resize event %q", data)
 	}
-	columns, columnsErr := strconv.ParseUint(columnsText, 10, 32)
-	rows, rowsErr := strconv.ParseUint(rowsText, 10, 32)
+	columns, columnsErr := strconv.ParseUint(columnsText, 10, 16)
+	rows, rowsErr := strconv.ParseUint(rowsText, 10, 16)
 	if columnsErr != nil || rowsErr != nil || columns == 0 || rows == 0 || fmt.Sprintf("%dx%d", columns, rows) != data {
 		return errors.System.Newf("illegal resize event %q", data)
 	}

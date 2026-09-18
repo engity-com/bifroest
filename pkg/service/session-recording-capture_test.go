@@ -5,9 +5,7 @@ import (
 	"context"
 	goerrors "errors"
 	"io"
-	"math"
 	"net"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -67,13 +65,7 @@ func TestRecordedSessionRejectsInvalidInitialPtyDimensions(t *testing.T) {
 	}{
 		{name: "negative width", window: essh.Window{Width: -1, Height: 24}},
 		{name: "negative height", window: essh.Window{Width: 80, Height: -1}},
-	}
-	if strconv.IntSize > 32 {
-		tooLarge := uint64(math.MaxUint32) + 1
-		tests = append(tests, struct {
-			name   string
-			window essh.Window
-		}{name: "width exceeds uint32", window: essh.Window{Width: int(tooLarge), Height: 24}})
+		{name: "width exceeds asciinema range", window: essh.Window{Width: int(recording.MaximumCastTerminalDimension) + 1, Height: 24}},
 	}
 
 	for _, test := range tests {
@@ -581,13 +573,7 @@ func TestRecordedSessionRejectsInvalidWindowDimensions(t *testing.T) {
 	}{
 		{name: "negative width", window: essh.Window{Width: -1, Height: 24}},
 		{name: "negative height", window: essh.Window{Width: 80, Height: -1}},
-	}
-	if strconv.IntSize > 32 {
-		tooLarge := uint64(math.MaxUint32) + 1
-		tests = append(tests, struct {
-			name   string
-			window essh.Window
-		}{name: "width exceeds uint32", window: essh.Window{Width: int(tooLarge), Height: 24}})
+		{name: "width exceeds asciinema range", window: essh.Window{Width: int(recording.MaximumCastTerminalDimension) + 1, Height: 24}},
 	}
 
 	for _, test := range tests {

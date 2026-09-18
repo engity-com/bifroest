@@ -892,7 +892,7 @@ func (this *sessionRecordingLifecycle) finish(exitCode int, taskErr error) error
 	elapsed := time.Since(this.started)
 	result := recording.CastResult{EndedAt: this.startedAt.Add(elapsed)}
 	var exitStatus *uint32
-	if exitCode >= 0 && uint64(exitCode) <= math.MaxUint32 {
+	if exitCode >= 0 && uint64(exitCode) <= uint64(recording.MaximumCastExitStatus) {
 		status := uint32(exitCode)
 		exitStatus = &status
 	}
@@ -906,7 +906,7 @@ func (this *sessionRecordingLifecycle) finish(exitCode int, taskErr error) error
 	case taskErr != nil:
 		result.Status = recording.CastStatusIncomplete
 		result.Reason = "session-error"
-	case exitCode < 0 || uint64(exitCode) > math.MaxUint32:
+	case exitCode < 0 || uint64(exitCode) > uint64(recording.MaximumCastExitStatus):
 		result.Status = recording.CastStatusIncomplete
 		result.Reason = "invalid-exit-status"
 	default:

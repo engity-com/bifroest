@@ -31,6 +31,9 @@ const (
 	MaximumCastLineBytes    = 1 << 20
 	MaximumOutputEventBytes = 64 << 10
 	DefaultMaximumCastBytes = int64(16 << 30)
+
+	MaximumCastTerminalDimension = uint32(1<<16 - 1)
+	MaximumCastExitStatus        = uint32(1<<31 - 1)
 )
 
 type recordingWriterLimits struct {
@@ -163,6 +166,9 @@ func validateCastHeader(header CastHeader) error {
 	if header.Terminal.Columns == 0 || header.Terminal.Rows == 0 {
 		return errors.System.Newf("terminal dimensions must be positive")
 	}
+	if header.Terminal.Columns > MaximumCastTerminalDimension || header.Terminal.Rows > MaximumCastTerminalDimension {
+		return errors.System.Newf("terminal dimensions exceed %d", MaximumCastTerminalDimension)
+	}
 	if len(header.Terminal.Type) > 255 {
 		return errors.System.Newf("terminal type exceeds 255 bytes")
 	}
@@ -245,7 +251,7 @@ func validateCastResult(metadata CastMetadata, result CastResult, hasExitStatus 
 }
 
 func parseExitStatus(value string) (uint32, error) {
-	status, err := strconv.ParseUint(value, 10, 32)
+	status, err := strconv.ParseUint(value, 10, 31)
 	if err != nil || strconv.FormatUint(status, 10) != value {
 		return 0, errors.System.Newf("illegal exit status %q", value)
 	}

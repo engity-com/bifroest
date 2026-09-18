@@ -4,7 +4,6 @@ import (
 	"bytes"
 	goerrors "errors"
 	"io"
-	"math"
 	"reflect"
 	"sync"
 	"time"
@@ -299,14 +298,14 @@ func (this *recordedSession) stopAndWait() error {
 }
 
 func initialWindowDimension(value int, name string) (uint32, error) {
-	if value < 0 || uint64(value) > math.MaxUint32 {
+	if value < 0 || uint64(value) > uint64(recording.MaximumCastTerminalDimension) {
 		return 0, errors.System.Newf("invalid initial terminal %s %d", name, value)
 	}
 	return uint32(value), nil
 }
 
 func effectiveWindowDimension(current uint32, value int, name string) (uint32, error) {
-	if value < 0 || uint64(value) > math.MaxUint32 {
+	if value < 0 || uint64(value) > uint64(recording.MaximumCastTerminalDimension) {
 		return 0, errors.System.Newf("invalid terminal %s %d", name, value)
 	}
 	if value == 0 {
