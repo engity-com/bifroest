@@ -224,38 +224,108 @@ func TestRemoteArtifactReceiptStoreRecoversMonotonicDeliveryAuditState(t *testin
 	root := t.TempDir()
 	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b822-9dad-4d1f-80b4-00c04fd430c8.becast", []byte("recording"))
 	entry := remoteArtifactDeliveryTestEntry("archive", remoteArtifactDeliveryTestFingerprint("archive"), nil)
-	store, err := newRemoteArtifactReceiptStore(root, identity, "security", nil)
+	targets := remoteArtifactDeliveryTestTargets(entry)
+	quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
+	store, err := newRemoteArtifactReceiptStore(root, identity, "security", quota)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.close()) })
-	sealedAt := time.Now().UTC().Add(-time.Minute)
-	initial, err := store.initialize(artifact, sealedAt, remoteArtifactDeliveryTestTargets(entry))
+	sealedAt := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
+	initial, payload, err := newRemoteArtifactReceipt(identity, "security", artifact, sealedAt, targets)
 	require.NoError(t, err)
+	directory := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName()))
+	target := filepath.Join(directory, remoteArtifactReceiptFileName)
+	temporary := filepath.Join(directory, remoteArtifactReceiptTempFileName)
+	require.NoFileExists(t, target)
+	initial = recoverRemoteArtifactReceiptTestTemporary(t, store, artifact, initial, payload)
+	status, err := store.targetStatus(t.Context(), artifact.FileName(), entry)
+	require.NoError(t, err)
+	require.Equal(t, remoteArtifactReceiptTargetPending, status)
 
 	content := initial.remoteArtifactReceiptContent
 	content.Targets = append([]remoteArtifactReceiptTarget(nil), initial.Targets...)
-	content.Targets[0].AuditOperationId = "6d05798f-b877-4191-8aa0-4576a30411ad"
-	content.Targets[0].FailedAt = sealedAt.Add(time.Second).Format(time.RFC3339Nano)
+	operationId := "6d05798f-b877-4191-8aa0-4576a30411ad"
+	failedAt := sealedAt.Add(time.Second)
+	content.Targets[0].AuditOperationId = operationId
+	content.Targets[0].FailedAt = failedAt.Format(time.RFC3339Nano)
 	content.Targets[0].FailureErrorCategory = ErrorCategoryNetwork
-	expected, payload, err := signRemoteArtifactReceipt(identity, content)
+	failurePending, payload, err := signRemoteArtifactReceipt(identity, content)
 	require.NoError(t, err)
-	directory := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName()))
-	temporary := filepath.Join(directory, remoteArtifactReceiptTempFileName)
-	require.NoError(t, writeRemoteArtifactReceiptTestFile(temporary, payload))
-	require.NoError(t, (&RemoteArtifactReceipts{store: store}).Recover(t.Context()))
-	recovered, exists, err := store.load(artifact)
+	failurePending = recoverRemoteArtifactReceiptTestTemporary(t, store, artifact, failurePending, payload)
+	status, err = store.targetStatus(t.Context(), artifact.FileName(), entry)
 	require.NoError(t, err)
-	require.True(t, exists)
-	require.Equal(t, expected, recovered)
-	require.NoFileExists(t, temporary)
+	require.Equal(t, remoteArtifactReceiptTargetFailureAuditPending, status)
+	failed, pending, err := store.pendingDeliveryAudit(t.Context(), artifact.FileName(), entry)
+	require.NoError(t, err)
+	require.True(t, pending)
+	require.Equal(t, RemoteArtifactDeliveryAuditFailed, failed.State)
+	require.Equal(t, operationId, failed.OperationId)
+	require.Equal(t, ErrorCategoryNetwork, failed.ErrorCategory)
 
-	conflicting := recovered.remoteArtifactReceiptContent
-	conflicting.Targets = append([]remoteArtifactReceiptTarget(nil), recovered.Targets...)
-	conflicting.Targets[0].FailedAt = sealedAt.Add(2 * time.Second).Format(time.RFC3339Nano)
-	_, payload, err = signRemoteArtifactReceipt(identity, conflicting)
+	content = failurePending.remoteArtifactReceiptContent
+	content.Targets = append([]remoteArtifactReceiptTarget(nil), failurePending.Targets...)
+	failureAuditedAt := sealedAt.Add(2 * time.Second)
+	content.Targets[0].FailureAuditedAt = failureAuditedAt.Format(time.RFC3339Nano)
+	failureCompleted, payload, err := signRemoteArtifactReceipt(identity, content)
 	require.NoError(t, err)
-	require.NoError(t, writeRemoteArtifactReceiptTestFile(temporary, payload))
+	failureCompleted = recoverRemoteArtifactReceiptTestTemporary(t, store, artifact, failureCompleted, payload)
+	require.Equal(t, operationId, failureCompleted.Targets[0].AuditOperationId)
+	require.Equal(t, failedAt.Format(time.RFC3339Nano), failureCompleted.Targets[0].FailedAt)
+	require.Equal(t, ErrorCategoryNetwork, failureCompleted.Targets[0].FailureErrorCategory)
+	require.Equal(t, failureAuditedAt.Format(time.RFC3339Nano), failureCompleted.Targets[0].FailureAuditedAt)
+	status, err = store.targetStatus(t.Context(), artifact.FileName(), entry)
+	require.NoError(t, err)
+	require.Equal(t, remoteArtifactReceiptTargetPending, status)
+	_, pending, err = store.pendingDeliveryAudit(t.Context(), artifact.FileName(), entry)
+	require.NoError(t, err)
+	require.False(t, pending)
+
+	acknowledgedAt := sealedAt.Add(3 * time.Second)
+	successPending, payload, changed, err := acknowledgeRemoteArtifactReceipt(identity, failureCompleted, entry, acknowledgedAt)
+	require.NoError(t, err)
+	require.True(t, changed)
+	successPending = recoverRemoteArtifactReceiptTestTemporary(t, store, artifact, successPending, payload)
+	require.Equal(t, operationId, successPending.Targets[0].AuditOperationId)
+	require.Equal(t, failureCompleted.Targets[0].FailedAt, successPending.Targets[0].FailedAt)
+	require.Equal(t, failureCompleted.Targets[0].FailureAuditedAt, successPending.Targets[0].FailureAuditedAt)
+	require.Equal(t, acknowledgedAt.Format(time.RFC3339Nano), successPending.Targets[0].AcknowledgedAt)
+	require.Empty(t, successPending.Targets[0].SuccessAuditedAt)
+	status, err = store.targetStatus(t.Context(), artifact.FileName(), entry)
+	require.NoError(t, err)
+	require.Equal(t, remoteArtifactReceiptTargetSuccessAuditPending, status)
+	succeeded, pending, err := store.pendingDeliveryAudit(t.Context(), artifact.FileName(), entry)
+	require.NoError(t, err)
+	require.True(t, pending)
+	require.Equal(t, RemoteArtifactDeliveryAuditSucceeded, succeeded.State)
+	require.Equal(t, operationId, succeeded.OperationId)
+
+	successAuditedAt := sealedAt.Add(4 * time.Second)
+	successCompleted, successPayload := remoteArtifactReceiptTestMarkSuccessAudited(t, identity, successPending, 0, successAuditedAt)
+	successCompleted = recoverRemoteArtifactReceiptTestTemporary(t, store, artifact, successCompleted, successPayload)
+	status, err = store.targetStatus(t.Context(), artifact.FileName(), entry)
+	require.NoError(t, err)
+	require.Equal(t, remoteArtifactReceiptTargetAcknowledged, status)
+	_, pending, err = store.pendingDeliveryAudit(t.Context(), artifact.FileName(), entry)
+	require.NoError(t, err)
+	require.False(t, pending)
+	retentionStartedAt, ready := successCompleted.retentionStartedAt()
+	require.True(t, ready)
+	require.Equal(t, acknowledgedAt, retentionStartedAt)
+
+	conflicting := successCompleted.remoteArtifactReceiptContent
+	conflicting.Targets = append([]remoteArtifactReceiptTarget(nil), successCompleted.Targets...)
+	conflicting.Targets[0].FailureErrorCategory = ErrorCategorySystem
+	_, conflictingPayload, err := signRemoteArtifactReceipt(identity, conflicting)
+	require.NoError(t, err)
+	targetInfo, err := os.Lstat(target)
+	require.NoError(t, err)
+	require.NoError(t, writeRemoteArtifactReceiptTestFile(temporary, conflictingPayload))
 	_, _, err = store.load(artifact)
 	require.ErrorContains(t, err, "conflicts with its published receipt")
+	require.Equal(t, successPayload, remoteArtifactReceiptTestReadFile(t, target))
+	afterTargetInfo, statErr := os.Lstat(target)
+	require.NoError(t, statErr)
+	require.True(t, os.SameFile(targetInfo, afterTargetInfo))
+	require.Equal(t, conflictingPayload, remoteArtifactReceiptTestReadFile(t, temporary))
 }
 
 func TestRemoteArtifactReceiptsAcknowledgePersistsTarget(t *testing.T) {
@@ -422,6 +492,44 @@ func remoteArtifactReceiptTestMarkSuccessAudited(t *testing.T, identity *Identit
 	updated, payload, err := signRemoteArtifactReceipt(identity, content)
 	require.NoError(t, err)
 	return updated, payload
+}
+
+func recoverRemoteArtifactReceiptTestTemporary(t *testing.T, store *remoteArtifactReceiptStore, artifact RemoteArtifact, expected remoteArtifactReceipt, payload []byte) remoteArtifactReceipt {
+	t.Helper()
+	directory := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName()))
+	require.NoError(t, ensureJournalDirectory(directory, true))
+	temporary := filepath.Join(directory, remoteArtifactReceiptTempFileName)
+	target := filepath.Join(directory, remoteArtifactReceiptFileName)
+	require.NoFileExists(t, temporary)
+	require.NoError(t, writeRemoteArtifactReceiptTestFile(temporary, payload))
+	require.FileExists(t, temporary)
+	before, err := remoteArtifactReceiptStateUsage(directory)
+	require.NoError(t, err)
+	if quota, ok := store.quota.(*remoteArtifactReceiptTestQuota); ok {
+		quota.usage = uint64(before)
+		quota.peak = max(quota.peak, quota.usage)
+	}
+
+	require.NoError(t, (&RemoteArtifactReceipts{store: store}).Recover(t.Context()))
+	require.NoFileExists(t, temporary)
+	require.FileExists(t, target)
+	after, err := remoteArtifactReceiptStateUsage(directory)
+	require.NoError(t, err)
+	if quota, ok := store.quota.(*remoteArtifactReceiptTestQuota); ok {
+		require.Equal(t, uint64(after), quota.usage)
+	}
+	recovered, exists, err := store.load(artifact)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, expected, recovered)
+	return recovered
+}
+
+func remoteArtifactReceiptTestReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	payload, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return payload
 }
 
 func completeRemoteArtifactReceiptTestSuccess(t *testing.T, store *remoteArtifactReceiptStore, fileName string, entry remoteArtifactTargetEntry, auditedAt time.Time) {
