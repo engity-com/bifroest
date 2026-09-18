@@ -60,21 +60,7 @@ func TestBECastChunkRoundTrip(t *testing.T) {
 func TestBECastSealRoundTrip(t *testing.T) {
 	recordingId := beCastTestId()
 	producerId := beCastTestProducerId()
-	seal := audit.SessionRecordingBECastSeal{
-		FormatVersion:        castBECastFormatVersion,
-		RecordingId:          recordingId,
-		ProducerId:           producerId,
-		Status:               1,
-		ChunkCount:           17,
-		CastBytes:            8192,
-		CiphertextBytes:      9216,
-		PrefixBytes:          4096,
-		HeaderUnitHash:       beCastTestHash(1),
-		LastChunkUnitHash:    beCastTestHash(33),
-		CastContentDigest:    beCastTestHash(65),
-		CiphertextStreamHash: beCastTestHash(97),
-		Signature:            beCastTestBytes(64, 129),
-	}
+	seal := beCastTestSeal()
 	unit, err := encodeBECastSeal(seal)
 	require.NoError(t, err)
 	requireBECastUnitBodySize(t, unit, castBECastSealBodySize)
@@ -244,6 +230,13 @@ func TestBECastChunkUnitGoldenHash(t *testing.T) {
 	require.Equal(t, "12269be5c8391839c29bf0de4fa09657f10a1e29d38d2410b0373a56769e8950", hex.EncodeToString(digest[:]))
 }
 
+func TestBECastSealUnitGoldenHash(t *testing.T) {
+	unit, err := encodeBECastSeal(beCastTestSeal())
+	require.NoError(t, err)
+	digest := sha256.Sum256(unit)
+	require.Equal(t, "c6fb52d78acdaed9b7da9b53f33bd8a1569861be98191c8afaba62d8f49b40f1", hex.EncodeToString(digest[:]))
+}
+
 func requireBECastUnitBodySize(t *testing.T, unit []byte, bodySize int) {
 	t.Helper()
 	require.Len(t, unit, castBECastUnitPrefixSize+bodySize+castBECastUnitTrailerSize)
@@ -261,6 +254,24 @@ func beCastTestHeader() audit.SessionRecordingBECastHeader {
 		PublicKey:            beCastTestBytes(51, 32),
 		RecipientFingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 		Signature:            beCastTestBytes(64, 96),
+	}
+}
+
+func beCastTestSeal() audit.SessionRecordingBECastSeal {
+	return audit.SessionRecordingBECastSeal{
+		FormatVersion:        castBECastFormatVersion,
+		RecordingId:          beCastTestId(),
+		ProducerId:           beCastTestProducerId(),
+		Status:               2,
+		ChunkCount:           17,
+		CastBytes:            8192,
+		CiphertextBytes:      9216,
+		PrefixBytes:          4096,
+		HeaderUnitHash:       beCastTestHash(1),
+		LastChunkUnitHash:    beCastTestHash(33),
+		CastContentDigest:    beCastTestHash(65),
+		CiphertextStreamHash: beCastTestHash(97),
+		Signature:            beCastTestBytes(64, 129),
 	}
 }
 
