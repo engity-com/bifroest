@@ -328,6 +328,107 @@ func TestRemoteArtifactReceiptStoreRecoversMonotonicDeliveryAuditState(t *testin
 	require.Equal(t, conflictingPayload, remoteArtifactReceiptTestReadFile(t, temporary))
 }
 
+func TestRemoteArtifactReceiptStoreRecoversRetentionTemporary(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		published bool
+		conflict  bool
+	}{
+		{name: "temporary only"},
+		{name: "identical published", published: true},
+		{name: "conflicting published", published: true, conflict: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, identity := newJournalTestIdentity(t)
+			root := t.TempDir()
+			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b823-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))
+			sealedAt := time.Date(2026, 9, 16, 13, 0, 0, 0, time.UTC)
+			receipt, payload, err := newRemoteArtifactReceipt(identity, "security", artifact, sealedAt, nil)
+			require.NoError(t, err)
+			quota := &remoteArtifactReceiptTestQuota{maximum: uint64(len(payload))}
+			store, err := newRemoteArtifactReceiptStore(root, identity, "security", quota)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, store.close()) })
+			receipts := &RemoteArtifactReceipts{store: store}
+			directory := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName()))
+			require.NoError(t, ensureJournalDirectory(directory, true))
+			publishedPath := filepath.Join(directory, remoteArtifactReceiptRetentionFileName)
+			temporaryPath := filepath.Join(directory, remoteArtifactReceiptRetentionTempName)
+			if test.published {
+				require.NoError(t, writeRemoteArtifactReceiptTestFile(publishedPath, payload))
+			}
+			temporaryPayload := payload
+			if test.conflict {
+				content := receipt.remoteArtifactReceiptContent
+				content.SealedAt = sealedAt.Add(time.Second).Format(time.RFC3339Nano)
+				_, temporaryPayload, err = signRemoteArtifactReceipt(identity, content)
+				require.NoError(t, err)
+			}
+			require.NoError(t, writeRemoteArtifactReceiptTestFile(temporaryPath, temporaryPayload))
+			before, err := remoteArtifactReceiptStateUsage(directory)
+			require.NoError(t, err)
+			quota.usage = uint64(before)
+			quota.peak = quota.usage
+			temporaryInfo, err := os.Lstat(temporaryPath)
+			require.NoError(t, err)
+			var publishedInfo os.FileInfo
+			if test.published {
+				publishedInfo, err = os.Lstat(publishedPath)
+				require.NoError(t, err)
+			}
+			requireConflictUnchanged := func() {
+				require.Equal(t, payload, remoteArtifactReceiptTestReadFile(t, publishedPath))
+				afterPublishedInfo, statErr := os.Lstat(publishedPath)
+				require.NoError(t, statErr)
+				require.True(t, os.SameFile(publishedInfo, afterPublishedInfo))
+				require.Equal(t, temporaryPayload, remoteArtifactReceiptTestReadFile(t, temporaryPath))
+				afterTemporaryInfo, statErr := os.Lstat(temporaryPath)
+				require.NoError(t, statErr)
+				require.True(t, os.SameFile(temporaryInfo, afterTemporaryInfo))
+				after, usageErr := remoteArtifactReceiptStateUsage(directory)
+				require.NoError(t, usageErr)
+				require.Equal(t, before, after)
+				require.Equal(t, uint64(before), quota.usage)
+				require.Equal(t, uint64(before), quota.peak)
+			}
+
+			recoverErr := receipts.Recover(t.Context())
+			if test.conflict {
+				require.ErrorContains(t, recoverErr, "conflicts with its published receipt")
+				requireConflictUnchanged()
+				_, candidateErr := receipts.ListRetentionCandidates(t.Context(), sealedAt)
+				require.ErrorContains(t, candidateErr, "conflicts with its published receipt")
+				requireConflictUnchanged()
+				return
+			}
+
+			require.NoError(t, recoverErr)
+			require.NoFileExists(t, temporaryPath)
+			require.Equal(t, payload, remoteArtifactReceiptTestReadFile(t, publishedPath))
+			afterPublishedInfo, err := os.Lstat(publishedPath)
+			require.NoError(t, err)
+			if test.published {
+				require.True(t, os.SameFile(publishedInfo, afterPublishedInfo))
+			} else {
+				require.True(t, os.SameFile(temporaryInfo, afterPublishedInfo))
+			}
+			after, err := remoteArtifactReceiptStateUsage(directory)
+			require.NoError(t, err)
+			require.Equal(t, uint64(after), quota.usage)
+			candidates, err := receipts.ListRetentionCandidates(t.Context(), sealedAt)
+			require.NoError(t, err)
+			require.Equal(t, []RemoteArtifactRetentionCandidate{{
+				FileName:           artifact.FileName(),
+				ArtifactDigest:     artifact.Digest(),
+				Size:               artifact.Size(),
+				RetentionStartedAt: sealedAt,
+				DeletionStarted:    true,
+			}}, candidates)
+			require.Equal(t, uint64(before), quota.peak)
+		})
+	}
+}
+
 func TestRemoteArtifactReceiptsAcknowledgePersistsTarget(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
 	root := t.TempDir()
@@ -679,7 +780,7 @@ type remoteArtifactReceiptTestQuota struct {
 }
 
 func (this *remoteArtifactReceiptTestQuota) Reserve(bytes uint64) error {
-	if bytes > this.maximum-this.usage {
+	if this.usage > this.maximum || bytes > this.maximum-this.usage {
 		return fmt.Errorf("quota exceeded")
 	}
 	this.usage += bytes
