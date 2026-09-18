@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"math"
 	"os"
@@ -207,25 +208,127 @@ func TestCastZstdRecoveryFinalizesOpenContainerAndTruncatesPhysicalTail(t *testi
 	require.True(t, again.AlreadySealed)
 }
 
-func TestCastZstdRecoveryCompletesSealWithoutChangingCompletedCast(t *testing.T) {
+func TestCastZstdRecoveryCompletesSealWithoutChangingFinalCast(t *testing.T) {
+	for _, test := range []struct {
+		status     CastStatus
+		reason     string
+		exitStatus *uint32
+	}{
+		{status: CastStatusCompleted, exitStatus: func() *uint32 { value := uint32(0); return &value }()},
+		{status: CastStatusFailed, reason: "recording-capture"},
+		{status: CastStatusIncomplete, reason: "canceled"},
+	} {
+		t.Run(string(test.status), func(t *testing.T) {
+			file, identity, metadata, writer := newCastZstdRecoveryTestWriter(t)
+			require.NoError(t, writer.WriteOutput(time.Second, OutputStreamTerminal, []byte("final\r\n")))
+			checkpoint, err := writer.Checkpoint()
+			require.NoError(t, err)
+			_, err = writer.Seal(2*time.Second, CastResult{Status: test.status, EndedAt: metadata.StartedAt.Add(2 * time.Second), Reason: test.reason}, test.exitStatus)
+			require.NoError(t, err)
+			size, err := file.Seek(0, io.SeekEnd)
+			require.NoError(t, err)
+			require.NoError(t, file.Truncate(size-10))
+			require.NoError(t, file.Sync())
+
+			result, err := RecoverCastZstd(file, identity, checkpoint, metadata.StartedAt.Add(3*time.Second), CastZstdVerifyOptions{})
+			require.NoError(t, err)
+			require.True(t, result.Truncated)
+			require.True(t, result.Finalized)
+			require.Equal(t, test.status, result.Verification.Summary.Status)
+			require.Equal(t, test.reason, result.Verification.Cast.Result.Reason)
+		})
+	}
+}
+
+func TestCastZstdRecoveryHandlesEveryPostCheckpointCrashPosition(t *testing.T) {
 	file, identity, metadata, writer := newCastZstdRecoveryTestWriter(t)
-	require.NoError(t, writer.WriteOutput(time.Second, OutputStreamTerminal, []byte("completed\r\n")))
+	require.NoError(t, writer.WriteOutput(time.Second, OutputStreamTerminal, []byte("durable\r\n")))
 	checkpoint, err := writer.Checkpoint()
 	require.NoError(t, err)
+	require.NoError(t, file.Sync())
+	require.NoError(t, writer.WriteOutput(2*time.Second, OutputStreamTerminal, []byte("after checkpoint\r\n")))
+	continuation, err := writer.Checkpoint()
+	require.NoError(t, err)
 	exitStatus := uint32(0)
-	_, err = writer.Seal(2*time.Second, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(2 * time.Second)}, &exitStatus)
+	_, err = writer.Seal(3*time.Second, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(3 * time.Second)}, &exitStatus)
 	require.NoError(t, err)
-	size, err := file.Seek(0, io.SeekEnd)
-	require.NoError(t, err)
-	require.NoError(t, file.Truncate(size-10))
 	require.NoError(t, file.Sync())
 
-	result, err := RecoverCastZstd(file, identity, checkpoint, metadata.StartedAt.Add(3*time.Second), CastZstdVerifyOptions{})
+	containerSize, err := file.Seek(0, io.SeekEnd)
 	require.NoError(t, err)
-	require.True(t, result.Truncated)
-	require.True(t, result.Finalized)
-	require.Equal(t, CastStatusCompleted, result.Verification.Summary.Status)
-	require.Empty(t, result.Verification.Cast.Result.Reason)
+	container := make([]byte, containerSize)
+	_, err = file.ReadAt(container, 0)
+	require.NoError(t, err)
+	checkpointEnd := int(checkpoint.PrefixBytes)
+	continuationEnd := int(continuation.PrefixBytes)
+	sealStart := len(container) - castZstdSealFrameSize
+	require.Less(t, checkpointEnd, continuationEnd)
+	require.Less(t, continuationEnd, sealStart)
+	unitEnds := map[int]bool{checkpointEnd: true}
+	for offset := checkpointEnd; offset < len(container); {
+		require.GreaterOrEqual(t, len(container)-offset, 8)
+		switch binary.LittleEndian.Uint32(container[offset:]) {
+		case zstdSkippableMagicBase | uint32(castZstdChunkSkippableId):
+			require.GreaterOrEqual(t, len(container)-offset, 8+castZstdChunkPayloadSize)
+			frameSize := int(binary.BigEndian.Uint32(container[offset+8+53:]))
+			offset += 8 + castZstdChunkPayloadSize + frameSize
+		case zstdSkippableMagicBase | uint32(castZstdSealSkippableId):
+			offset += castZstdSealFrameSize
+		default:
+			require.FailNowf(t, "unexpected unit", "offset %d", offset)
+		}
+		require.LessOrEqual(t, offset, len(container))
+		unitEnds[offset] = true
+	}
+	require.True(t, unitEnds[continuationEnd])
+	require.True(t, unitEnds[sealStart])
+	require.True(t, unitEnds[len(container)])
+
+	for cut := checkpointEnd; cut <= len(container); cut++ {
+		crashFile := &castZstdMemoryRecoveryFile{content: append([]byte(nil), container[:cut]...), offset: int64(cut)}
+
+		result, err := RecoverCastZstd(crashFile, identity, checkpoint, metadata.StartedAt.Add(4*time.Second), CastZstdVerifyOptions{})
+		require.NoErrorf(t, err, "cut %d", cut)
+		if cut == len(container) {
+			require.Truef(t, result.AlreadySealed, "cut %d", cut)
+			require.Falsef(t, result.Finalized, "cut %d", cut)
+		} else {
+			require.Falsef(t, result.AlreadySealed, "cut %d", cut)
+			require.Truef(t, result.Finalized, "cut %d", cut)
+		}
+		require.Equalf(t, !unitEnds[cut], result.Truncated, "cut %d", cut)
+		if cut >= sealStart {
+			require.Equalf(t, CastStatusCompleted, result.Verification.Summary.Status, "cut %d", cut)
+			require.Emptyf(t, result.Verification.Cast.Result.Reason, "cut %d", cut)
+		} else {
+			require.Equalf(t, CastStatusIncomplete, result.Verification.Summary.Status, "cut %d", cut)
+			require.Equalf(t, startupRecoveryReason, result.Verification.Cast.Result.Reason, "cut %d", cut)
+		}
+		expectedOutputEvents := uint64(1)
+		if cut >= continuationEnd {
+			expectedOutputEvents = 2
+		}
+		require.Equalf(t, expectedOutputEvents, result.Verification.Cast.OutputEvents, "cut %d", cut)
+
+		preservedEnd := checkpointEnd
+		for unitEnd := range unitEnds {
+			if unitEnd <= cut && unitEnd <= sealStart && unitEnd > preservedEnd {
+				preservedEnd = unitEnd
+			}
+		}
+		if cut == len(container) {
+			preservedEnd = len(container)
+		}
+		recovered := append([]byte(nil), crashFile.content...)
+		require.GreaterOrEqualf(t, len(recovered), preservedEnd, "cut %d", cut)
+		require.Equalf(t, container[:preservedEnd], recovered[:preservedEnd], "preserved prefix at cut %d", cut)
+		if unitEnds[cut] {
+			again, err := RecoverCastZstd(crashFile, identity, checkpoint, metadata.StartedAt.Add(5*time.Second), CastZstdVerifyOptions{})
+			require.NoErrorf(t, err, "second recovery at cut %d", cut)
+			require.Truef(t, again.AlreadySealed, "second recovery at cut %d", cut)
+			require.Equalf(t, recovered, crashFile.content, "second recovery at cut %d", cut)
+		}
+	}
 }
 
 func TestCastZstdRecoveryRejectsFinalSizeOverflow(t *testing.T) {
@@ -461,4 +564,71 @@ func encodeCastZstdTestContainer(t *testing.T, identity *audit.Identity, summary
 	sealFrame, err := encodeCastZstdSeal(seal)
 	require.NoError(t, err)
 	return append(result, sealFrame...)
+}
+
+type castZstdMemoryRecoveryFile struct {
+	content []byte
+	offset  int64
+}
+
+func (this *castZstdMemoryRecoveryFile) ReadAt(target []byte, offset int64) (int, error) {
+	if offset < 0 {
+		return 0, fmt.Errorf("negative read offset %d", offset)
+	}
+	if offset >= int64(len(this.content)) {
+		return 0, io.EOF
+	}
+	read := copy(target, this.content[offset:])
+	if read != len(target) {
+		return read, io.EOF
+	}
+	return read, nil
+}
+
+func (this *castZstdMemoryRecoveryFile) Write(value []byte) (int, error) {
+	if this.offset < 0 {
+		return 0, fmt.Errorf("negative write offset %d", this.offset)
+	}
+	end := this.offset + int64(len(value))
+	if end > int64(len(this.content)) {
+		this.content = append(this.content, make([]byte, int(end)-len(this.content))...)
+	}
+	copy(this.content[this.offset:end], value)
+	this.offset = end
+	return len(value), nil
+}
+
+func (this *castZstdMemoryRecoveryFile) Seek(offset int64, whence int) (int64, error) {
+	var base int64
+	switch whence {
+	case io.SeekStart:
+	case io.SeekCurrent:
+		base = this.offset
+	case io.SeekEnd:
+		base = int64(len(this.content))
+	default:
+		return 0, fmt.Errorf("illegal seek whence %d", whence)
+	}
+	next := base + offset
+	if next < 0 {
+		return 0, fmt.Errorf("negative seek offset %d", next)
+	}
+	this.offset = next
+	return next, nil
+}
+
+func (this *castZstdMemoryRecoveryFile) Truncate(size int64) error {
+	if size < 0 {
+		return fmt.Errorf("negative truncate size %d", size)
+	}
+	if size <= int64(len(this.content)) {
+		this.content = this.content[:size]
+	} else {
+		this.content = append(this.content, make([]byte, int(size)-len(this.content))...)
+	}
+	return nil
+}
+
+func (this *castZstdMemoryRecoveryFile) Sync() error {
+	return nil
 }
