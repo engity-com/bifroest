@@ -21,18 +21,18 @@ const (
 	castZstdHeaderPayloadSize = 166
 	castZstdChunkPayloadSize  = 153
 	castZstdSealPayloadSize   = 226
+	castZstdSealFrameSize     = 8 + castZstdSealPayloadSize
 
 	castZstdFrameHashDomain  = "BIFROEST-SESSION-RECORDING-ZSTD-FRAME-HASH/v1\x00"
 	castZstdUnitHashDomain   = "BIFROEST-SESSION-RECORDING-ZSTD-UNIT-HASH/v1\x00"
 	castZstdStreamHashDomain = "BIFROEST-SESSION-RECORDING-ZSTD-CAST-STREAM-HASH/v1\x00"
 
-	DefaultCastZstdChunkSize            = 256 << 10
-	MaximumCastZstdChunkSize            = MaximumCastLineBytes + 1
-	MaximumCastZstdFrameSize            = 2 << 20
-	DefaultMaximumCastZstdChunks        = 1 << 18
-	DefaultMaximumCastZstdRecoveryBytes = int64(1 << 30)
-	castZstdWindowSize                  = 2 << 20
-	maximumCastZstdBlocks               = 16
+	DefaultCastZstdChunkSize     = 256 << 10
+	MaximumCastZstdChunkSize     = MaximumCastLineBytes + 1
+	MaximumCastZstdFrameSize     = 2 << 20
+	DefaultMaximumCastZstdChunks = 1 << 18
+	castZstdWindowSize           = 2 << 20
+	maximumCastZstdBlocks        = 16
 )
 
 const zstdSkippableMagicBase = uint32(0x184d2a50)

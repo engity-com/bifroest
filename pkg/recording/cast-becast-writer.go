@@ -40,6 +40,7 @@ type beCastSink struct {
 	identity         *audit.Identity
 	recordingId      uuid.UUID
 	chunkSize        int
+	limits           recordingWriterLimits
 	buffer           bytes.Buffer
 	ciphertextStream hash.Hash
 	prefixBytes      uint64
@@ -58,6 +59,10 @@ type beCastSink struct {
 }
 
 func NewBECastWriter(output io.Writer, identity *audit.Identity, recipient *crypto.AgeSshRecipient, header CastHeader, metadata CastMetadata, chunkSize int) (*BECastWriter, error) {
+	return newBECastWriter(output, identity, recipient, header, metadata, chunkSize, BECastVerifyOptions{})
+}
+
+func newBECastWriter(output io.Writer, identity *audit.Identity, recipient *crypto.AgeSshRecipient, header CastHeader, metadata CastMetadata, chunkSize int, options BECastVerifyOptions) (*BECastWriter, error) {
 	if output == nil {
 		return nil, errors.System.Newf("nil BECast output")
 	}
@@ -84,6 +89,10 @@ func NewBECastWriter(output io.Writer, identity *audit.Identity, recipient *cryp
 	}
 	if chunkSize < 1 || chunkSize > MaximumBECastChunkPlaintext {
 		return nil, errors.Config.Newf("BECast plaintext chunk target must be between 1 and %d", MaximumBECastChunkPlaintext)
+	}
+	limits, err := newRecordingWriterLimits(options.MaximumContainerBytes, options.MaximumCastBytes, options.MaximumChunks, DefaultMaximumBECastBytes, DefaultMaximumBECastChunks)
+	if err != nil {
+		return nil, err
 	}
 
 	encoder, err := zstd.NewWriter(nil,
@@ -112,6 +121,9 @@ func NewBECastWriter(output io.Writer, identity *audit.Identity, recipient *cryp
 	prefix := make([]byte, 0, len(castBECastFileMagic)+len(headerUnit))
 	prefix = append(prefix, castBECastFileMagic...)
 	prefix = append(prefix, headerUnit...)
+	if recordingCountExceedsLimit(0, uint64(len(prefix)), castBECastSealUnitSize, limits.maximumContainerBytes) {
+		return fail(errors.Config.Newf("maximum BECast container size cannot contain the header and seal"))
+	}
 	if err := writeBECastBytes(output, prefix); err != nil {
 		return fail(err)
 	}
@@ -126,6 +138,7 @@ func NewBECastWriter(output io.Writer, identity *audit.Identity, recipient *cryp
 		identity:         identity,
 		recordingId:      uuid.UUID(metadata.RecordingId),
 		chunkSize:        chunkSize,
+		limits:           limits,
 		ciphertextStream: streamHasher,
 		prefixBytes:      uint64(len(prefix)),
 		headerUnitHash:   headerHash,
@@ -307,6 +320,9 @@ func (this *BECastWriter) Seal(elapsed time.Duration, result CastResult, exitSta
 	if err != nil {
 		return BECastSummary{}, this.failSeal(err)
 	}
+	if recordingCountExceedsLimit(this.sink.prefixBytes, uint64(len(sealUnit)), 0, this.sink.limits.maximumContainerBytes) {
+		return BECastSummary{}, this.failSeal(errors.System.Newf("BECast container exceeds maximum size"))
+	}
 	if err := writeBECastBytes(this.sink.output, sealUnit); err != nil {
 		return BECastSummary{}, this.failSeal(err)
 	}
@@ -338,6 +354,12 @@ func (this *beCastSink) Write(value []byte) (int, error) {
 	}
 	if len(value) == 0 || value[len(value)-1] != '\n' || len(value) > MaximumCastLineBytes+1 {
 		return 0, this.poison(errors.System.Newf("BECast sink received an illegal Cast line"))
+	}
+	if this.buffer.Len() == 0 && this.chunkCount >= this.limits.maximumChunks {
+		return 0, this.poison(errors.System.Newf("BECast chunk count exceeds maximum"))
+	}
+	if recordingCountExceedsLimit(this.castBytes, uint64(this.buffer.Len())+uint64(len(value)), 0, this.limits.maximumCastBytes) {
+		return 0, this.poison(errors.System.Newf("BECast Cast size exceeds maximum"))
 	}
 	if this.buffer.Len() > MaximumBECastChunkPlaintext-len(value) {
 		return 0, this.poison(errors.System.Newf("BECast plaintext chunk exceeds %d bytes", MaximumBECastChunkPlaintext))
@@ -402,6 +424,9 @@ func (this *beCastSink) flush(final bool, finalDigest *CastDigest, finalStatus u
 	if this.buffer.Len() == 0 {
 		return nil
 	}
+	if this.chunkCount >= this.limits.maximumChunks {
+		return this.poison(errors.System.Newf("BECast chunk count exceeds maximum"))
+	}
 	if final != (finalDigest != nil) || final != (finalStatus != 0) {
 		return this.poison(errors.System.Newf("BECast flush has an invalid final digest"))
 	}
@@ -420,6 +445,9 @@ func (this *beCastSink) flush(final bool, finalDigest *CastDigest, finalStatus u
 	}
 	if this.buffer.Len() > MaximumBECastChunkPlaintext || this.buffer.Len() > math.MaxUint32 {
 		return this.poison(errors.System.Newf("BECast plaintext chunk exceeds %d bytes", MaximumBECastChunkPlaintext))
+	}
+	if recordingCountExceedsLimit(this.castBytes, uint64(this.buffer.Len()), 0, this.limits.maximumCastBytes) {
+		return this.poison(errors.System.Newf("BECast Cast size exceeds maximum"))
 	}
 	plaintext := this.buffer.Bytes()
 	frame := this.encoder.EncodeAll(plaintext, nil)
@@ -478,6 +506,9 @@ func (this *beCastSink) flush(final bool, finalDigest *CastDigest, finalStatus u
 	unit, err := encodeBECastChunk(chunkValue, ciphertext.Bytes())
 	if err != nil {
 		return this.poison(err)
+	}
+	if recordingCountExceedsLimit(this.prefixBytes, uint64(len(unit)), castBECastSealUnitSize, this.limits.maximumContainerBytes) {
+		return this.poison(errors.System.Newf("BECast container exceeds maximum size"))
 	}
 	nextPrefixBytes, err := checkedBECastCount("prefix", this.prefixBytes, uint64(len(unit)))
 	if err != nil {

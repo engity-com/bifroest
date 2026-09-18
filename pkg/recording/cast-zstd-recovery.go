@@ -35,9 +35,6 @@ func RecoverCastZstd(file RecoveryFile, identity *audit.Identity, checkpoint aud
 	}
 	options.ExpectedProducerId = identity.ProducerId()
 	options.AllowUntrusted = false
-	if options.MaximumCastBytes == 0 {
-		options.MaximumCastBytes = DefaultMaximumCastZstdRecoveryBytes
-	}
 	size, err := file.Seek(0, io.SeekEnd)
 	if err != nil {
 		return nil, errors.System.Newf("cannot determine Cast Zstandard recovery size: %w", err)
@@ -206,6 +203,10 @@ func planRecoveredCastZstdSeal(identity *audit.Identity, scan *castZstdStream, c
 		return castZstdRecoveryPlan{}, errors.System.Newf("cannot create recovery Zstandard encoder: %w", err)
 	}
 	defer encoder.Close()
+	limits, err := newRecordingWriterLimits(options.MaximumContainerBytes, options.MaximumCastBytes, options.MaximumChunks, DefaultMaximumCastZstdBytes, DefaultMaximumCastZstdChunks)
+	if err != nil {
+		return castZstdRecoveryPlan{}, err
+	}
 	var chunk bytes.Buffer
 	sink := &castZstdSink{
 		output:           &chunk,
@@ -213,6 +214,7 @@ func planRecoveredCastZstdSeal(identity *audit.Identity, scan *castZstdStream, c
 		identity:         identity,
 		recordingId:      scan.header.RecordingId,
 		chunkSize:        DefaultCastZstdChunkSize,
+		limits:           limits,
 		streamHash:       scan.streamHash,
 		prefixBytes:      uint64(scan.validEnd),
 		castBytes:        scan.castBytes,
@@ -264,13 +266,9 @@ func planRecoveredCastZstdSeal(identity *audit.Identity, scan *castZstdStream, c
 	if err != nil {
 		return castZstdRecoveryPlan{}, err
 	}
-	maximumContainerBytes := options.MaximumContainerBytes
-	if maximumContainerBytes == 0 {
-		maximumContainerBytes = DefaultMaximumCastZstdBytes
-	}
-	finalSize := scan.validEnd + int64(chunk.Len()+len(sealFrame))
-	if finalSize > maximumContainerBytes {
-		return castZstdRecoveryPlan{}, errors.System.Newf("recovered Cast Zstandard container would exceed %d bytes", maximumContainerBytes)
+	appendedBytes := uint64(chunk.Len()) + uint64(len(sealFrame))
+	if scan.validEnd < 0 || recordingCountExceedsLimit(uint64(scan.validEnd), appendedBytes, 0, limits.maximumContainerBytes) {
+		return castZstdRecoveryPlan{}, errors.System.Newf("recovered Cast Zstandard container would exceed %d bytes", limits.maximumContainerBytes)
 	}
 	return castZstdRecoveryPlan{chunk: chunk.Bytes(), seal: sealFrame}, nil
 }

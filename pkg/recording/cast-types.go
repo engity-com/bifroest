@@ -33,6 +33,37 @@ const (
 	DefaultMaximumCastBytes = int64(16 << 30)
 )
 
+type recordingWriterLimits struct {
+	maximumContainerBytes uint64
+	maximumCastBytes      uint64
+	maximumChunks         uint64
+}
+
+func newRecordingWriterLimits(maximumContainerBytes, maximumCastBytes int64, maximumChunks uint64, defaultMaximumContainerBytes int64, defaultMaximumChunks uint64) (recordingWriterLimits, error) {
+	if maximumContainerBytes == 0 {
+		maximumContainerBytes = defaultMaximumContainerBytes
+	}
+	if maximumContainerBytes < 1 {
+		return recordingWriterLimits{}, errors.Config.Newf("maximum Recording container size must be positive")
+	}
+	maximumCastBytes = effectiveMaximumCastBytes(maximumCastBytes)
+	if maximumCastBytes < 1 {
+		return recordingWriterLimits{}, errors.Config.Newf("maximum Cast size must be positive")
+	}
+	if maximumChunks == 0 {
+		maximumChunks = defaultMaximumChunks
+	}
+	return recordingWriterLimits{
+		maximumContainerBytes: uint64(maximumContainerBytes),
+		maximumCastBytes:      uint64(maximumCastBytes),
+		maximumChunks:         maximumChunks,
+	}, nil
+}
+
+func recordingCountExceedsLimit(current, increment, reserve, maximum uint64) bool {
+	return current > maximum || increment > maximum-current || reserve > maximum-current-increment
+}
+
 type CastTerminal struct {
 	Columns uint32 `json:"cols"`
 	Rows    uint32 `json:"rows"`

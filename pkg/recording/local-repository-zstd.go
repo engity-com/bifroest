@@ -160,7 +160,7 @@ func (this *localCastZstdFormat) maximumHeadBytes() int64 {
 }
 
 func (this *localCastZstdFormat) newWriter(output io.Writer, header CastHeader, metadata CastMetadata, chunkSize int) (localWriter[audit.SessionRecordingZstdHead, CastZstdSummary], error) {
-	return NewCastZstdWriter(output, this.identity, header, metadata, chunkSize)
+	return newCastZstdWriter(output, this.identity, header, metadata, chunkSize, this.options)
 }
 
 func (this *localCastZstdFormat) encodeHead(head audit.SessionRecordingZstdHead) ([]byte, error) {

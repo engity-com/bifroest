@@ -29,6 +29,7 @@ const (
 	castBECastHeaderBodySize      = 217
 	castBECastChunkDescriptorSize = 194
 	castBECastSealBodySize        = 226
+	castBECastSealUnitSize        = castBECastUnitPrefixSize + castBECastSealBodySize + castBECastUnitTrailerSize
 
 	castBECastCiphertextHashDomain       = "BIFROEST-SESSION-RECORDING-BECAST-CIPHERTEXT-HASH/v1\x00"
 	castBECastUnitHashDomain             = "BIFROEST-SESSION-RECORDING-BECAST-UNIT-HASH/v1\x00"
@@ -38,7 +39,6 @@ const (
 	MaximumBECastChunkPlaintext       = MaximumCastLineBytes + 1
 	MaximumBECastCiphertext           = 2 << 20
 	DefaultMaximumBECastChunks        = 1 << 18
-	DefaultMaximumBECastRecoveryBytes = int64(1 << 30)
 )
 
 var castBECastCRC32CTable = crc32.MakeTable(crc32.Castagnoli)

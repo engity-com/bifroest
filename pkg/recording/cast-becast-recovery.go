@@ -59,7 +59,7 @@ func RecoverBECast(file RecoveryFile, identity *audit.Identity, recipient *crypt
 	options.ExpectedProducerId = identity.ProducerId()
 	options.AllowUntrusted = false
 	if options.MaximumContainerBytes == 0 {
-		options.MaximumContainerBytes = DefaultMaximumBECastRecoveryBytes
+		options.MaximumContainerBytes = DefaultMaximumBECastBytes
 	}
 	if options.MaximumContainerBytes < 1 {
 		return nil, errors.Config.Newf("maximum BECast recovery container size must be positive")

@@ -94,7 +94,6 @@ func TestBECastWireConstantsAndBodySizes(t *testing.T) {
 	require.Equal(t, 2<<20, MaximumBECastCiphertext)
 	require.Equal(t, 1<<18, DefaultMaximumBECastChunks)
 	require.Equal(t, int64(32<<30), DefaultMaximumBECastBytes)
-	require.Equal(t, int64(1<<30), DefaultMaximumBECastRecoveryBytes)
 }
 
 func TestBECastEncodeRejectsIllegalFixedLengths(t *testing.T) {

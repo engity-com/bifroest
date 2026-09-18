@@ -292,7 +292,6 @@ func TestLocalBECastPublishedScanOptionsUseVerificationLimit(t *testing.T) {
 	options, err := (&localBECastFormat{}).scanOptions(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, DefaultMaximumBECastBytes, options.MaximumContainerBytes)
-	require.NotEqual(t, DefaultMaximumBECastRecoveryBytes, options.MaximumContainerBytes)
 }
 
 func TestLocalBECastRecoveryOptionsUseRepositoryDefaultLimit(t *testing.T) {

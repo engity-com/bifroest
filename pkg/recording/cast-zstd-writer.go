@@ -29,6 +29,7 @@ type castZstdSink struct {
 	identity         *audit.Identity
 	recordingId      uuid.UUID
 	chunkSize        int
+	limits           recordingWriterLimits
 	buffer           bytes.Buffer
 	streamHash       hash.Hash
 	prefixBytes      uint64
@@ -43,6 +44,10 @@ type castZstdSink struct {
 }
 
 func NewCastZstdWriter(output io.Writer, identity *audit.Identity, header CastHeader, metadata CastMetadata, chunkSize int) (*CastZstdWriter, error) {
+	return newCastZstdWriter(output, identity, header, metadata, chunkSize, CastZstdVerifyOptions{})
+}
+
+func newCastZstdWriter(output io.Writer, identity *audit.Identity, header CastHeader, metadata CastMetadata, chunkSize int, options CastZstdVerifyOptions) (*CastZstdWriter, error) {
 	if output == nil {
 		return nil, errors.System.Newf("nil Cast Zstandard output")
 	}
@@ -64,6 +69,10 @@ func NewCastZstdWriter(output io.Writer, identity *audit.Identity, header CastHe
 	if chunkSize < 1 || chunkSize > MaximumCastZstdChunkSize {
 		return nil, errors.Config.Newf("cast Zstandard chunk size must be between 1 and %d", MaximumCastZstdChunkSize)
 	}
+	limits, err := newRecordingWriterLimits(options.MaximumContainerBytes, options.MaximumCastBytes, options.MaximumChunks, DefaultMaximumCastZstdBytes, DefaultMaximumCastZstdChunks)
+	if err != nil {
+		return nil, err
+	}
 	encoder, err := zstd.NewWriter(nil,
 		zstd.WithEncoderLevel(zstd.SpeedDefault),
 		zstd.WithEncoderCRC(true),
@@ -84,6 +93,10 @@ func NewCastZstdWriter(output io.Writer, identity *audit.Identity, header CastHe
 		encoder.Close()
 		return nil, err
 	}
+	if recordingCountExceedsLimit(0, uint64(len(headerFrame)), castZstdSealFrameSize, limits.maximumContainerBytes) {
+		encoder.Close()
+		return nil, errors.Config.Newf("maximum Cast Zstandard container size cannot contain the header and seal")
+	}
 	if err := writeCastZstdBytes(output, headerFrame); err != nil {
 		encoder.Close()
 		return nil, err
@@ -97,6 +110,7 @@ func NewCastZstdWriter(output io.Writer, identity *audit.Identity, header CastHe
 		identity:         identity,
 		recordingId:      uuid.UUID(metadata.RecordingId),
 		chunkSize:        chunkSize,
+		limits:           limits,
 		streamHash:       streamHasher,
 		prefixBytes:      uint64(len(headerFrame)),
 		headerUnitHash:   headerHash,
@@ -245,6 +259,9 @@ func (this *CastZstdWriter) Seal(elapsed time.Duration, result CastResult, exitS
 	if err != nil {
 		return CastZstdSummary{}, err
 	}
+	if recordingCountExceedsLimit(this.sink.prefixBytes, uint64(len(sealFrame)), 0, this.sink.limits.maximumContainerBytes) {
+		return CastZstdSummary{}, this.sink.poison(errors.System.Newf("Cast Zstandard container exceeds maximum size"))
+	}
 	if err := writeCastZstdBytes(this.sink.output, sealFrame); err != nil {
 		return CastZstdSummary{}, this.sink.poison(err)
 	}
@@ -268,6 +285,12 @@ func (this *castZstdSink) Write(value []byte) (int, error) {
 	}
 	if len(value) == 0 || value[len(value)-1] != '\n' || len(value) > MaximumCastLineBytes+1 {
 		return 0, this.poison(errors.System.Newf("cast Zstandard sink received an illegal Cast line"))
+	}
+	if this.buffer.Len() == 0 && this.chunkCount >= this.limits.maximumChunks {
+		return 0, this.poison(errors.System.Newf("Cast Zstandard chunk count exceeds maximum"))
+	}
+	if recordingCountExceedsLimit(this.castBytes, uint64(this.buffer.Len())+uint64(len(value)), 0, this.limits.maximumCastBytes) {
+		return 0, this.poison(errors.System.Newf("Cast Zstandard Cast size exceeds maximum"))
 	}
 	isEventMetadata := bytes.HasPrefix(value, []byte(castEventCommentPrefix))
 	isResult := bytes.HasPrefix(value, []byte(castResultCommentPrefix))
@@ -310,6 +333,12 @@ func (this *castZstdSink) flush(final bool) error {
 	if this.buffer.Len() == 0 {
 		return nil
 	}
+	if this.chunkCount >= this.limits.maximumChunks {
+		return this.poison(errors.System.Newf("Cast Zstandard chunk count exceeds maximum"))
+	}
+	if recordingCountExceedsLimit(this.castBytes, uint64(this.buffer.Len()), 0, this.limits.maximumCastBytes) {
+		return this.poison(errors.System.Newf("Cast Zstandard Cast size exceeds maximum"))
+	}
 	if this.buffer.Len() > MaximumCastZstdChunkSize || this.buffer.Len() > math.MaxUint32 {
 		return this.poison(errors.System.Newf("cast Zstandard plaintext chunk exceeds %d bytes", MaximumCastZstdChunkSize))
 	}
@@ -335,6 +364,10 @@ func (this *castZstdSink) flush(final bool) error {
 	descriptor, err := encodeCastZstdChunk(chunkValue)
 	if err != nil {
 		return this.poison(err)
+	}
+	unitSize := uint64(len(descriptor)) + uint64(len(frame))
+	if recordingCountExceedsLimit(this.prefixBytes, unitSize, castZstdSealFrameSize, this.limits.maximumContainerBytes) {
+		return this.poison(errors.System.Newf("Cast Zstandard container exceeds maximum size"))
 	}
 	if err := writeCastZstdBytes(this.output, descriptor); err != nil {
 		return this.poison(err)

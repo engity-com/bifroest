@@ -6,10 +6,12 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"io"
+	"math"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/klauspost/compress/zstd"
 	"github.com/stretchr/testify/require"
 
@@ -58,6 +60,39 @@ func TestCastZstdWriterCommitsInitialMetadataChunkDuringConstruction(t *testing.
 	exitStatus := uint32(0)
 	_, err = writer.Seal(time.Millisecond, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(time.Millisecond)}, &exitStatus)
 	require.NoError(t, err)
+}
+
+func TestCastZstdWriterEnforcesVerifierLimits(t *testing.T) {
+	identity, header, metadata := castTestValues(t, true)
+	var baselineOutput bytes.Buffer
+	baseline, err := NewCastZstdWriter(&baselineOutput, identity, header, metadata, 1)
+	require.NoError(t, err)
+	initialCastBytes := baseline.sink.castBytes
+	initialPrefixBytes := baseline.sink.prefixBytes
+	require.NoError(t, baseline.release())
+
+	for _, current := range []struct {
+		name    string
+		options CastZstdVerifyOptions
+		message string
+	}{
+		{name: "chunks", options: CastZstdVerifyOptions{MaximumChunks: 1}, message: "chunk count exceeds maximum"},
+		{name: "Cast bytes", options: CastZstdVerifyOptions{MaximumCastBytes: int64(initialCastBytes)}, message: "Cast size exceeds maximum"},
+		{name: "container bytes", options: CastZstdVerifyOptions{MaximumContainerBytes: int64(initialPrefixBytes + castZstdSealFrameSize)}, message: "container exceeds maximum size"},
+	} {
+		t.Run(current.name, func(t *testing.T) {
+			var output bytes.Buffer
+			writer, err := newCastZstdWriter(&output, identity, header, metadata, 1, current.options)
+			require.NoError(t, err)
+			initialContainerBytes := output.Len()
+
+			err = writer.WriteOutput(time.Millisecond, OutputStreamTerminal, []byte("blocked"))
+			require.ErrorContains(t, err, current.message)
+			require.Equal(t, initialContainerBytes, output.Len())
+			require.ErrorContains(t, writer.repositoryFailure(), current.message)
+			require.NoError(t, writer.release())
+		})
+	}
 }
 
 func TestCastZstdKeepsRelatedCastLinesInOneFrame(t *testing.T) {
@@ -191,6 +226,27 @@ func TestCastZstdRecoveryCompletesSealWithoutChangingCompletedCast(t *testing.T)
 	require.True(t, result.Finalized)
 	require.Equal(t, CastStatusCompleted, result.Verification.Summary.Status)
 	require.Empty(t, result.Verification.Cast.Result.Reason)
+}
+
+func TestCastZstdRecoveryRejectsFinalSizeOverflow(t *testing.T) {
+	identity, _, metadata := castTestValues(t, true)
+	scan := &castZstdStream{
+		header:           audit.SessionRecordingZstdHeader{RecordingId: uuid.UUID(metadata.RecordingId)},
+		headerUnitHash:   audit.SessionRecordingHash{1},
+		previousUnitHash: audit.SessionRecordingHash{2},
+		streamHash:       newDomainHasher(castZstdStreamHashDomain),
+		validEnd:         math.MaxInt64,
+		castBytes:        1,
+		zstdBytes:        1,
+		chunkCount:       1,
+	}
+	cast := &CastVerification{
+		Result: CastResult{Status: CastStatusCompleted},
+		Digest: CastDigest{3},
+	}
+
+	_, err := planRecoveredCastZstdSeal(identity, scan, cast, nil, CastZstdVerifyOptions{MaximumContainerBytes: math.MaxInt64})
+	require.ErrorContains(t, err, "would exceed")
 }
 
 func TestCastZstdRecoveryRejectsDataLossBehindCheckpoint(t *testing.T) {

@@ -168,7 +168,7 @@ func (this *localBECastFormat) maximumHeadBytes() int64 {
 }
 
 func (this *localBECastFormat) newWriter(output io.Writer, header CastHeader, metadata CastMetadata, chunkSize int) (localWriter[audit.SessionRecordingBECastHead, BECastSummary], error) {
-	return NewBECastWriter(output, this.identity, this.recipient, header, metadata, chunkSize)
+	return newBECastWriter(output, this.identity, this.recipient, header, metadata, chunkSize, this.options)
 }
 
 func (this *localBECastFormat) encodeHead(head audit.SessionRecordingBECastHead) ([]byte, error) {

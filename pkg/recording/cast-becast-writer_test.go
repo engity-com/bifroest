@@ -224,6 +224,40 @@ func TestBECastWriterRejectsNilAndInvalidArguments(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestBECastWriterEnforcesVerifierLimits(t *testing.T) {
+	identity, header, metadata := castTestValues(t, true)
+	recipient, _ := newBECastTestEncryption(t)
+	var baselineOutput bytes.Buffer
+	baseline, err := NewBECastWriter(&baselineOutput, identity, recipient, header, metadata, 1)
+	require.NoError(t, err)
+	initialCastBytes := baseline.sink.castBytes
+	initialPrefixBytes := baseline.sink.prefixBytes
+	require.NoError(t, baseline.release())
+
+	for _, current := range []struct {
+		name    string
+		options BECastVerifyOptions
+		message string
+	}{
+		{name: "chunks", options: BECastVerifyOptions{MaximumChunks: 1}, message: "chunk count exceeds maximum"},
+		{name: "Cast bytes", options: BECastVerifyOptions{MaximumCastBytes: int64(initialCastBytes)}, message: "Cast size exceeds maximum"},
+		{name: "container bytes", options: BECastVerifyOptions{MaximumContainerBytes: int64(initialPrefixBytes + castBECastSealUnitSize)}, message: "container exceeds maximum size"},
+	} {
+		t.Run(current.name, func(t *testing.T) {
+			var output bytes.Buffer
+			writer, err := newBECastWriter(&output, identity, recipient, header, metadata, 1, current.options)
+			require.NoError(t, err)
+			initialContainerBytes := output.Len()
+
+			err = writer.WriteOutput(time.Millisecond, OutputStreamTerminal, []byte("blocked"))
+			require.ErrorContains(t, err, current.message)
+			require.Equal(t, initialContainerBytes, output.Len())
+			require.ErrorContains(t, writer.repositoryFailure(), current.message)
+			require.NoError(t, writer.release())
+		})
+	}
+}
+
 func TestBECastWriterIsPoisonedAfterShortWrite(t *testing.T) {
 	identity, header, metadata := castTestValues(t, true)
 	recipient, _ := newBECastTestEncryption(t)
