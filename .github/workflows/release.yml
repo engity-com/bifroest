@@ -25,7 +25,7 @@ jobs:
       contents: write
       packages: write
     container:
-      image: ghcr.io/engity-com/build-images/build:debian12@sha256:f70a712f5b76894e976ba73c5c78642d60ae699cfd336b36426a7b772d5390bf
+      image: ghcr.io/engity-com/build-images/build:debian12@sha256:8a9bdbd37882695f8335136b7a63fb36984b0b8d9a91a02311dd07793ff6342c
     steps:
       - name: Resolve release version
         id: release-version
