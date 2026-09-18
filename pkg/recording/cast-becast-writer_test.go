@@ -346,7 +346,7 @@ func decryptBECastTestChunk(t *testing.T, identities *bfcrypto.AgeSshIdentities,
 
 func newBECastTestEncryption(t *testing.T) (*bfcrypto.AgeSshRecipient, *bfcrypto.AgeSshIdentities) {
 	t.Helper()
-	seed := bytes.Repeat([]byte{0x42}, ed25519.SeedSize)
+	seed := bytes.Repeat([]byte{recordingFormatVectorBECastRecipientSeedByte}, ed25519.SeedSize)
 	privateKey, err := bfcrypto.PrivateKeyFromSdk(ed25519.NewKeyFromSeed(seed))
 	require.NoError(t, err)
 	recipient, err := bfcrypto.NewAgeSshRecipient(privateKey.PublicKey().ToSsh())

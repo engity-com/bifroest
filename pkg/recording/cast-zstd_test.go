@@ -2,9 +2,7 @@ package recording
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"math"
@@ -20,10 +18,10 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 )
 
-func TestCastZstdV1GoldenHash(t *testing.T) {
-	container, _, _, _ := sealedCastZstdTestContent(t, 300)
-	digest := sha256.Sum256(container)
-	require.Equal(t, "aa6b6376f21b09d5f0d08f0fcb9d2c63a16201b111d0e5c75c596ce0a4ee4c23", hex.EncodeToString(digest[:]))
+func TestCastZstdV1GoldenVector(t *testing.T) {
+	container, cast, _, _ := sealedCastZstdTestContent(t, 300)
+	require.Equal(t, recordingFormatVector(t, "cast-zstd-v1.cast.zst"), container)
+	require.Equal(t, recordingFormatVector(t, "cast-zstd-v1.cast"), cast)
 }
 
 func TestCastZstdRoundTripAndStandardDecoderCompatibility(t *testing.T) {

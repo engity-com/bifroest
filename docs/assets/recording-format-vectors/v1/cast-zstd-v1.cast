@@ -1,0 +1,9 @@
+{"version":3,"term":{"cols":120,"rows":40,"type":"xterm-256color"},"timestamp":1789302896}
+# bifroest:metadata:v1 {"schema":"bifroest.asciicast-metadata/v1","recordingId":"34e34ab8-7457-4d88-a5e4-c57791775c3a","connectionId":"82d8fdda-4730-43b7-bfde-72733c217bde","sessionId":"6d05798f-b877-4191-8aa0-4576a30411ad","operationId":"f73ac7c7-ae47-4a6e-878d-e81237773130","flow":"production","task":"shell","pty":true,"producerId":"95b9aca00d322047048950d19cc5aece6fa757edd9104a5521446a168792b298","startedAt":"2026-09-13T12:34:56.123456789Z"}
+[0.248,"o","Welcome to production\r\n"]
+# bifroest:event:v1 {"schema":"bifroest.asciicast-event/v1","sequence":2,"stream":"terminal","raw":"/wA="}
+[0.252,"o","�\u0000"]
+[0.501,"r","132x43"]
+[1.103,"x","0"]
+# bifroest:result:v1 {"schema":"bifroest.asciicast-result/v1","status":"completed","endedAt":"2026-09-13T12:34:58.227456789Z"}
+# bifroest:signature:v1 {"schema":"bifroest.asciicast-signature/v1","recordingId":"34e34ab8-7457-4d88-a5e4-c57791775c3a","producerId":"95b9aca00d322047048950d19cc5aece6fa757edd9104a5521446a168792b298","digest":"10af167cfa00d491c54fa90e40e25b5bf4ec48da8316c7537e64724b7b0ae274","publicKey":"AAAAC3NzaC1lZDI1NTE5AAAAIAOhB7/zzhC+HXDdGOdLwJln5NYwm6UNXx3chmQSVTG4","signature":"YzngQPQ7C3cUuwwZfXvnMBKx75VcLb8C++q2zIED8Ekqvs0P9u1cwC/jvYGs421NvOhPzdMEqCkL4pnsC78cCg=="}

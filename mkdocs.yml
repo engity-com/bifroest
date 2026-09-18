@@ -160,6 +160,7 @@ nav:
       - Audit log:
           - reference/auditlog/index.md
           - Session recording: reference/auditlog/recording.md
+          - Recording format vectors: reference/auditlog/recording-format-vectors.md
           - Events: reference/auditlog/events.md
           - Remote targets:
               - reference/auditlog/remote-targets/index.md

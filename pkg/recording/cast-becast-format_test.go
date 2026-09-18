@@ -1,9 +1,7 @@
 package recording
 
 import (
-	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"testing"
 
 	"github.com/google/uuid"
@@ -29,21 +27,7 @@ func TestBECastHeaderRoundTrip(t *testing.T) {
 func TestBECastChunkRoundTrip(t *testing.T) {
 	recordingId := beCastTestId()
 	producerId := beCastTestProducerId()
-	ciphertext := []byte{0x80, 0x01, 0x7f, 0xfe, 0x55}
-	chunk := audit.SessionRecordingBECastChunk{
-		FormatVersion:    castBECastFormatVersion,
-		FinalStatus:      2,
-		RecordingId:      recordingId,
-		ProducerId:       producerId,
-		Sequence:         17,
-		PreviousUnitHash: beCastTestHash(1),
-		PlaintextOffset:  4096,
-		PlaintextLength:  512,
-		CiphertextLength: uint32(len(ciphertext)),
-		CiphertextHash:   hashBECastCiphertext(ciphertext),
-		ContentHashState: beCastTestHash(65),
-		Signature:        beCastTestBytes(64, 97),
-	}
+	chunk, ciphertext := beCastGoldenChunk()
 	unit, err := encodeBECastChunk(chunk, ciphertext)
 	require.NoError(t, err)
 	requireBECastUnitBodySize(t, unit, castBECastChunkDescriptorSize+len(ciphertext))
@@ -202,39 +186,23 @@ func TestBECastStatusConversions(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestBECastHeaderUnitGoldenHash(t *testing.T) {
+func TestBECastHeaderUnitGoldenVector(t *testing.T) {
 	unit, err := encodeBECastHeader(beCastTestHeader())
 	require.NoError(t, err)
-	digest := sha256.Sum256(unit)
-	require.Equal(t, "c0c9b2cea53c9ba944f8324b3c9712c4206dea511ed41479c3a4e7e847686b03", hex.EncodeToString(digest[:]))
+	require.Equal(t, recordingFormatVector(t, "becast-header.unit"), unit)
 }
 
-func TestBECastChunkUnitGoldenHash(t *testing.T) {
-	ciphertext := []byte{0x80, 0x01, 0x7f, 0xfe, 0x55}
-	unit, err := encodeBECastChunk(audit.SessionRecordingBECastChunk{
-		FormatVersion:    castBECastFormatVersion,
-		FinalStatus:      2,
-		RecordingId:      beCastTestId(),
-		ProducerId:       beCastTestProducerId(),
-		Sequence:         17,
-		PreviousUnitHash: beCastTestHash(1),
-		PlaintextOffset:  4096,
-		PlaintextLength:  512,
-		CiphertextLength: uint32(len(ciphertext)),
-		CiphertextHash:   hashBECastCiphertext(ciphertext),
-		ContentHashState: beCastTestHash(65),
-		Signature:        beCastTestBytes(64, 97),
-	}, ciphertext)
+func TestBECastChunkUnitGoldenVector(t *testing.T) {
+	chunk, ciphertext := beCastGoldenChunk()
+	unit, err := encodeBECastChunk(chunk, ciphertext)
 	require.NoError(t, err)
-	digest := sha256.Sum256(unit)
-	require.Equal(t, "12269be5c8391839c29bf0de4fa09657f10a1e29d38d2410b0373a56769e8950", hex.EncodeToString(digest[:]))
+	require.Equal(t, recordingFormatVector(t, "becast-chunk.unit"), unit)
 }
 
-func TestBECastSealUnitGoldenHash(t *testing.T) {
+func TestBECastSealUnitGoldenVector(t *testing.T) {
 	unit, err := encodeBECastSeal(beCastTestSeal())
 	require.NoError(t, err)
-	digest := sha256.Sum256(unit)
-	require.Equal(t, "c6fb52d78acdaed9b7da9b53f33bd8a1569861be98191c8afaba62d8f49b40f1", hex.EncodeToString(digest[:]))
+	require.Equal(t, recordingFormatVector(t, "becast-seal.unit"), unit)
 }
 
 func requireBECastUnitBodySize(t *testing.T, unit []byte, bodySize int) {
@@ -273,6 +241,24 @@ func beCastTestSeal() audit.SessionRecordingBECastSeal {
 		CiphertextStreamHash: beCastTestHash(97),
 		Signature:            beCastTestBytes(64, 129),
 	}
+}
+
+func beCastGoldenChunk() (audit.SessionRecordingBECastChunk, []byte) {
+	ciphertext := []byte{0x80, 0x01, 0x7f, 0xfe, 0x55}
+	return audit.SessionRecordingBECastChunk{
+		FormatVersion:    castBECastFormatVersion,
+		FinalStatus:      2,
+		RecordingId:      beCastTestId(),
+		ProducerId:       beCastTestProducerId(),
+		Sequence:         17,
+		PreviousUnitHash: beCastTestHash(1),
+		PlaintextOffset:  4096,
+		PlaintextLength:  512,
+		CiphertextLength: uint32(len(ciphertext)),
+		CiphertextHash:   hashBECastCiphertext(ciphertext),
+		ContentHashState: beCastTestHash(65),
+		Signature:        beCastTestBytes(64, 97),
+	}, ciphertext
 }
 
 func beCastTestId() uuid.UUID {

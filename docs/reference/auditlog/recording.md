@@ -79,6 +79,8 @@ The parent audit log supplies both the recording signing identity and the option
 * Without `encryptionPublicKey` or `encryptionPublicKeyFile`, Bifröst stores signed, compressed `.cast.zst` artifacts.
 * With an encryption recipient, Bifröst stores signed `.becast` artifacts whose compressed chunks are independently encrypted with age.
 
+The versioned [recording format vectors](recording-format-vectors.md) publish byte-exact examples for plain Cast, Cast Zstandard, complete BECast, and each deterministic BECast unit.
+
 The local repository is permanently marked with its container format. Enabling, disabling, or adding audit encryption in a way that changes an existing repository between `.cast.zst` and `.becast` is rejected and requires a new empty recording directory. The parent audit journal separately binds its encryption recipient, so every recipient change requires a new empty journal directory or a new audit log. A BECast-to-BECast recipient change can reuse its recording directory only after no active recording still needs recovery with the old recipient. Preserve the old journal, sealed recordings, and decryption identities for their required retention periods.
 
 The audit signing identity must remain available to continue writing and recovering its repository. Existing sealed artifacts embed the corresponding public key and remain cryptographically self-verifiable, but producer trust still requires an independently retained producer ID.

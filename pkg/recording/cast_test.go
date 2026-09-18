@@ -23,6 +23,24 @@ import (
 )
 
 func TestCastV3GoldenAndVerification(t *testing.T) {
+	content, identity, metadata, digest, exitStatus := castV3GoldenTestContent(t)
+	require.Equal(t, recordingFormatVector(t, "cast-v3.cast"), content)
+	verification, err := VerifyCast(bytes.NewReader(content), CastVerifyOptions{ExpectedProducerId: identity.ProducerId()})
+	require.NoError(t, err)
+	require.Equal(t, metadata, verification.Metadata)
+	require.Equal(t, CastStatusCompleted, verification.Result.Status)
+	require.Equal(t, uint64(4), verification.EventCount)
+	require.Equal(t, uint64(1), verification.OutputEvents)
+	require.Equal(t, uint64(1), verification.ResizeEvents)
+	require.Equal(t, uint64(1), verification.MarkerEvents)
+	require.Equal(t, exitStatus, *verification.ExitStatus)
+	require.Equal(t, digest, verification.Digest)
+	require.Equal(t, identity.Fingerprint(), verification.Fingerprint)
+	require.True(t, verification.Trusted)
+}
+
+func castV3GoldenTestContent(t *testing.T) ([]byte, *audit.Identity, CastMetadata, CastDigest, uint32) {
+	t.Helper()
 	identity, header, metadata := castTestValues(t, true)
 	var output bytes.Buffer
 	writer, err := NewCastWriter(&output, identity, header, metadata)
@@ -36,28 +54,7 @@ func TestCastV3GoldenAndVerification(t *testing.T) {
 		EndedAt: metadata.StartedAt.Add(2104 * time.Millisecond),
 	}, &exitStatus)
 	require.NoError(t, err)
-
-	require.Equal(t, `{"version":3,"term":{"cols":120,"rows":40,"type":"xterm-256color"},"timestamp":1789302896}
-# bifroest:metadata:v1 {"schema":"bifroest.asciicast-metadata/v1","recordingId":"34e34ab8-7457-4d88-a5e4-c57791775c3a","connectionId":"82d8fdda-4730-43b7-bfde-72733c217bde","sessionId":"6d05798f-b877-4191-8aa0-4576a30411ad","operationId":"f73ac7c7-ae47-4a6e-878d-e81237773130","flow":"production","task":"shell","pty":true,"producerId":"95b9aca00d322047048950d19cc5aece6fa757edd9104a5521446a168792b298","startedAt":"2026-09-13T12:34:56.123456789Z"}
-[0.248,"o","Welcome to production\r\n"]
-[0.753,"r","132x43"]
-[0.019,"m","ready"]
-[1.084,"x","0"]
-# bifroest:result:v1 {"schema":"bifroest.asciicast-result/v1","status":"completed","endedAt":"2026-09-13T12:34:58.227456789Z"}
-# bifroest:signature:v1 {"schema":"bifroest.asciicast-signature/v1","recordingId":"34e34ab8-7457-4d88-a5e4-c57791775c3a","producerId":"95b9aca00d322047048950d19cc5aece6fa757edd9104a5521446a168792b298","digest":"72d864c0a1b0ec5809002ae28b288be4fc3b021e4b4b69730a98345928d7c7fe","publicKey":"AAAAC3NzaC1lZDI1NTE5AAAAIAOhB7/zzhC+HXDdGOdLwJln5NYwm6UNXx3chmQSVTG4","signature":"CeO1Pd4kYQL8j2+bQiEElsDATwNUAXBWMDVx7VNXDkcQyiXM27eAsU86oC5FtjvNYD2u7i6xibyAgZg3BpikCQ=="}
-`, output.String())
-	verification, err := VerifyCast(bytes.NewReader(output.Bytes()), CastVerifyOptions{ExpectedProducerId: identity.ProducerId()})
-	require.NoError(t, err)
-	require.Equal(t, metadata, verification.Metadata)
-	require.Equal(t, CastStatusCompleted, verification.Result.Status)
-	require.Equal(t, uint64(4), verification.EventCount)
-	require.Equal(t, uint64(1), verification.OutputEvents)
-	require.Equal(t, uint64(1), verification.ResizeEvents)
-	require.Equal(t, uint64(1), verification.MarkerEvents)
-	require.Equal(t, exitStatus, *verification.ExitStatus)
-	require.Equal(t, digest, verification.Digest)
-	require.Equal(t, identity.Fingerprint(), verification.Fingerprint)
-	require.True(t, verification.Trusted)
+	return output.Bytes(), identity, metadata, digest, exitStatus
 }
 
 func TestCastV3OfficialAsciinemaCompatibility(t *testing.T) {
@@ -323,7 +320,7 @@ func sealedCastTestContent(t *testing.T) ([]byte, *audit.Identity) {
 
 func castTestValues(t *testing.T, pty bool) (*audit.Identity, CastHeader, CastMetadata) {
 	t.Helper()
-	return castTestValuesWithSeed(t, pty, "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+	return castTestValuesWithSeed(t, pty, recordingFormatVectorSigningSeedHex)
 }
 
 func castTestValuesWithSeed(t *testing.T, pty bool, encodedSeed string) (*audit.Identity, CastHeader, CastMetadata) {
