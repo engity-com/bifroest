@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"sort"
 	"testing"
 	"time"
 
@@ -331,6 +332,74 @@ func TestCastZstdRecoveryHandlesEveryPostCheckpointCrashPosition(t *testing.T) {
 	}
 }
 
+func TestCastZstdRecoveryHandlesCrashDuringRecovery(t *testing.T) {
+	file, identity, metadata, writer := newCastZstdRecoveryTestWriter(t)
+	require.NoError(t, writer.WriteOutput(time.Second, OutputStreamTerminal, []byte("durable\r\n")))
+	checkpoint, err := writer.Checkpoint()
+	require.NoError(t, err)
+	require.NoError(t, file.Sync())
+	original := make([]byte, checkpoint.PrefixBytes)
+	_, err = file.ReadAt(original, 0)
+	require.NoError(t, err)
+
+	firstRecoveredAt := metadata.StartedAt.Add(2 * time.Second)
+	first := &memoryRecoveryFile{content: append([]byte(nil), original...), offset: int64(len(original))}
+	firstResult, err := RecoverCastZstd(first, identity, checkpoint, firstRecoveredAt, CastZstdVerifyOptions{})
+	require.NoError(t, err)
+	require.True(t, firstResult.Finalized)
+	recovered := append([]byte(nil), first.content...)
+	chunkStart := len(original)
+	sealStart := len(recovered) - castZstdSealFrameSize
+	descriptorEnd := chunkStart + 8 + castZstdChunkPayloadSize
+	require.Less(t, descriptorEnd, sealStart)
+	cuts := sortedUniqueRecoveryOffsets(
+		chunkStart,
+		chunkStart+1,
+		chunkStart+7,
+		chunkStart+8,
+		descriptorEnd-1,
+		descriptorEnd,
+		descriptorEnd+(sealStart-descriptorEnd)/2,
+		sealStart-1,
+		sealStart,
+		sealStart+1,
+		sealStart+7,
+		sealStart+8,
+		len(recovered)-1,
+		len(recovered),
+	)
+	secondRecoveredAt := metadata.StartedAt.Add(3 * time.Second)
+	for _, cut := range cuts {
+		crashFile := &memoryRecoveryFile{content: append([]byte(nil), recovered[:cut]...), offset: int64(cut)}
+		result, err := RecoverCastZstd(crashFile, identity, checkpoint, secondRecoveredAt, CastZstdVerifyOptions{})
+		require.NoErrorf(t, err, "cut %d", cut)
+		require.Equalf(t, CastStatusIncomplete, result.Verification.Summary.Status, "cut %d", cut)
+		require.Equalf(t, startupRecoveryReason, result.Verification.Cast.Result.Reason, "cut %d", cut)
+		require.Equalf(t, uint64(1), result.Verification.Cast.OutputEvents, "cut %d", cut)
+		expectedEndedAt := secondRecoveredAt
+		if cut >= sealStart {
+			expectedEndedAt = firstRecoveredAt
+		}
+		require.Equalf(t, expectedEndedAt, result.Verification.Cast.Result.EndedAt, "cut %d", cut)
+		exactBoundary := cut == chunkStart || cut == sealStart || cut == len(recovered)
+		require.Equalf(t, !exactBoundary, result.Truncated, "cut %d", cut)
+
+		preservedEnd := chunkStart
+		if cut >= sealStart {
+			preservedEnd = sealStart
+		}
+		if cut == len(recovered) {
+			preservedEnd = len(recovered)
+		}
+		require.Equalf(t, recovered[:preservedEnd], crashFile.content[:preservedEnd], "preserved prefix at cut %d", cut)
+		sealed := append([]byte(nil), crashFile.content...)
+		again, err := RecoverCastZstd(crashFile, identity, checkpoint, metadata.StartedAt.Add(4*time.Second), CastZstdVerifyOptions{})
+		require.NoErrorf(t, err, "second recovery at cut %d", cut)
+		require.Truef(t, again.AlreadySealed, "second recovery at cut %d", cut)
+		require.Equalf(t, sealed, crashFile.content, "second recovery at cut %d", cut)
+	}
+}
+
 func TestCastZstdRecoveryRejectsFinalSizeOverflow(t *testing.T) {
 	identity, _, metadata := castTestValues(t, true)
 	scan := &castZstdStream{
@@ -631,4 +700,17 @@ func (this *memoryRecoveryFile) Truncate(size int64) error {
 
 func (this *memoryRecoveryFile) Sync() error {
 	return nil
+}
+
+func sortedUniqueRecoveryOffsets(values ...int) []int {
+	unique := make(map[int]struct{}, len(values))
+	for _, value := range values {
+		unique[value] = struct{}{}
+	}
+	result := make([]int, 0, len(unique))
+	for value := range unique {
+		result = append(result, value)
+	}
+	sort.Ints(result)
+	return result
 }

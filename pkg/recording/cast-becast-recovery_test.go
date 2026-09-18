@@ -232,6 +232,89 @@ func TestBECastRecoveryHandlesEveryPostCheckpointCrashPosition(t *testing.T) {
 	}
 }
 
+func TestBECastRecoveryHandlesCrashDuringRecovery(t *testing.T) {
+	file, identity, recipient, identities, metadata, writer := newBECastRecoveryTestWriter(t)
+	require.NoError(t, writer.WriteOutput(time.Second, OutputStreamTerminal, []byte("durable\r\n")))
+	checkpoint, err := writer.Checkpoint()
+	require.NoError(t, err)
+	require.NoError(t, file.Sync())
+	original := make([]byte, checkpoint.PrefixBytes)
+	_, err = file.ReadAt(original, 0)
+	require.NoError(t, err)
+
+	firstRecoveredAt := metadata.StartedAt.Add(2 * time.Second)
+	first := &memoryRecoveryFile{content: append([]byte(nil), original...), offset: int64(len(original))}
+	firstResult, err := RecoverBECast(first, identity, recipient, checkpoint, firstRecoveredAt, BECastVerifyOptions{})
+	require.NoError(t, err)
+	require.True(t, firstResult.Finalized)
+	recovered := append([]byte(nil), first.content...)
+	parsed := parseBECastTestContainer(t, recovered)
+	chunkStart := len(original)
+	sealStart := parsed.sealOffset
+	require.NotEmpty(t, parsed.chunks)
+	recoveryChunk := parsed.chunks[len(parsed.chunks)-1]
+	require.Equal(t, sealStart, recoveryChunk.endOffset)
+	ciphertextStart := chunkStart + castBECastUnitPrefixSize + castBECastChunkDescriptorSize
+	ciphertextEnd := sealStart - castBECastUnitTrailerSize
+	require.Less(t, ciphertextStart, ciphertextEnd)
+	cuts := sortedUniqueRecoveryOffsets(
+		chunkStart,
+		chunkStart+1,
+		chunkStart+castBECastUnitPrefixSize-1,
+		chunkStart+castBECastUnitPrefixSize,
+		ciphertextStart-1,
+		ciphertextStart,
+		ciphertextStart+(ciphertextEnd-ciphertextStart)/2,
+		ciphertextEnd-1,
+		ciphertextEnd,
+		sealStart-8,
+		sealStart-1,
+		sealStart,
+		sealStart+1,
+		sealStart+castBECastUnitPrefixSize-1,
+		sealStart+castBECastUnitPrefixSize,
+		len(recovered)-castBECastUnitTrailerSize,
+		len(recovered)-8,
+		len(recovered)-1,
+		len(recovered),
+	)
+	secondRecoveredAt := metadata.StartedAt.Add(3 * time.Second)
+	for _, cut := range cuts {
+		crashFile := &memoryRecoveryFile{content: append([]byte(nil), recovered[:cut]...), offset: int64(cut)}
+		result, err := RecoverBECast(crashFile, identity, recipient, checkpoint, secondRecoveredAt, BECastVerifyOptions{})
+		require.NoErrorf(t, err, "cut %d", cut)
+		require.Equalf(t, CastStatusIncomplete, result.Verification.Summary.Status, "cut %d", cut)
+		exactBoundary := cut == chunkStart || cut == sealStart || cut == len(recovered)
+		require.Equalf(t, !exactBoundary, result.Truncated, "cut %d", cut)
+
+		preservedEnd := chunkStart
+		if cut >= sealStart {
+			preservedEnd = sealStart
+		}
+		if cut == len(recovered) {
+			preservedEnd = len(recovered)
+		}
+		require.Equalf(t, recovered[:preservedEnd], crashFile.content[:preservedEnd], "preserved prefix at cut %d", cut)
+		var plaintext bytes.Buffer
+		verification, err := DecryptBECast(crashFile, int64(len(crashFile.content)), identities, &plaintext, BECastVerifyOptions{ExpectedProducerId: identity.ProducerId()})
+		require.NoErrorf(t, err, "decrypt recovered cut %d", cut)
+		require.Equalf(t, uint64(1), verification.Cast.OutputEvents, "cut %d", cut)
+		require.Containsf(t, plaintext.String(), "durable", "cut %d", cut)
+		require.Equalf(t, startupRecoveryReason, verification.Cast.Result.Reason, "cut %d", cut)
+		expectedEndedAt := secondRecoveredAt
+		if cut >= sealStart {
+			expectedEndedAt = firstRecoveredAt
+		}
+		require.Equalf(t, expectedEndedAt, verification.Cast.Result.EndedAt, "cut %d", cut)
+
+		sealed := append([]byte(nil), crashFile.content...)
+		again, err := RecoverBECast(crashFile, identity, recipient, checkpoint, metadata.StartedAt.Add(4*time.Second), BECastVerifyOptions{})
+		require.NoErrorf(t, err, "second recovery at cut %d", cut)
+		require.Truef(t, again.AlreadySealed, "second recovery at cut %d", cut)
+		require.Equalf(t, sealed, crashFile.content, "second recovery at cut %d", cut)
+	}
+}
+
 func TestBECastRecoveryAlreadySealedIsIdempotent(t *testing.T) {
 	file, identity, recipient, _, metadata, writer := newBECastRecoveryTestWriter(t)
 	checkpoint, err := writer.Checkpoint()
