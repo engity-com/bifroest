@@ -18,7 +18,7 @@ func TestRecordingSnapshotWindowsDeniesSecondWriter(t *testing.T) {
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, snapshot.Close())
-		require.NoError(t, stdos.Remove(snapshot.Name()))
+		require.NoFileExists(t, snapshot.Name())
 	}()
 
 	second, err := stdos.OpenFile(snapshot.Name(), stdos.O_WRONLY, 0)

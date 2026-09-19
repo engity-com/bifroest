@@ -61,12 +61,7 @@ func doRecordingExport(opts *recordingExportOpts, stdout io.Writer) (rErr error)
 	if err != nil {
 		return fmt.Errorf("cannot snapshot Recording %q: %w", opts.file, err)
 	}
-	defer func() {
-		rErr = goerrors.Join(rErr, snapshot.Close())
-		if err := stdos.Remove(snapshot.Name()); err != nil && !goerrors.Is(err, stdos.ErrNotExist) {
-			rErr = goerrors.Join(rErr, err)
-		}
-	}()
+	defer func() { rErr = goerrors.Join(rErr, snapshot.Close()) }()
 	if err := validateRecordingInput(opts.file, input, initial); err != nil {
 		return err
 	}

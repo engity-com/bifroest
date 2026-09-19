@@ -46,6 +46,9 @@ func snapshotRecordingInput(input *stdos.File, size int64) (_ *stdos.File, rErr 
 	if err := snapshot.Sync(); err != nil {
 		return nil, err
 	}
+	if err := deleteOpenWindowsFile(windows.Handle(snapshot.Fd())); err != nil {
+		return nil, err
+	}
 	return snapshot, nil
 }
 

@@ -23,7 +23,7 @@ The input must be a regular, non-symlink file and must remain the same file with
 Includes [all general flags](../index.md#general-flags).
 
 <<flag("expectedProducerId", "string", id_prefix="recording-export-", heading=3)>>
-External trust anchor containing exactly 64 hexadecimal characters. Obtain this value through an independently trusted channel. A producer ID or public key embedded in the artifact is not a trust anchor.
+External trust anchor containing exactly 64 hexadecimal characters. Obtain this value through an independently trusted channel. It is the lowercase hexadecimal SHA-256 digest of the RFC 4253 binary SSH public-key blob, which is the decoded Base64 field of the provisioned OpenSSH public-key line. A producer ID or public key embedded in the artifact is not a trust anchor.
 
 Either this flag or `--allowUntrusted` is required.
 

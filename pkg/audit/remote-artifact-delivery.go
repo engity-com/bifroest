@@ -170,7 +170,7 @@ func newRemoteArtifactDelivery(ctx context.Context, sealedDirectory string, sour
 			return nil, errors.Config.Newf("remote artifact target %q is incomplete", entry.scope.Target)
 		}
 	}
-	if err := validateRemoteArtifactDeliverySnapshots(ctx, source, receipts.store, targets.entries); err != nil {
+	if err := receipts.ValidateDeliveryTargets(ctx, source, targets); err != nil {
 		return nil, err
 	}
 	newWatcher := options.newWatcher
@@ -225,6 +225,22 @@ func newRemoteArtifactDelivery(ctx context.Context, sealedDirectory string, sour
 		})
 	}
 	return result, nil
+}
+
+// ValidateDeliveryTargets rejects configuration changes that would strand a
+// sealed artifact with an outstanding delivery or audit obligation.
+func (this *RemoteArtifactReceipts) ValidateDeliveryTargets(ctx context.Context, source RemoteArtifactSource, targets *RemoteArtifactTargets) error {
+	if this == nil || this.store == nil {
+		return errors.Config.Newf("nil remote artifact receipts")
+	}
+	if isNilRemoteValue(source) {
+		return errors.Config.Newf("nil remote artifact source")
+	}
+	var entries []remoteArtifactTargetEntry
+	if targets != nil {
+		entries = targets.entries
+	}
+	return validateRemoteArtifactDeliverySnapshots(ctx, source, this.store, entries)
 }
 
 func validateRemoteArtifactDeliverySnapshots(ctx context.Context, source RemoteArtifactSource, receipts *remoteArtifactReceiptStore, entries []remoteArtifactTargetEntry) error {

@@ -325,6 +325,33 @@ func TestHouseKeeperDeletesRecordingWithoutTargetsFromSealTime(t *testing.T) {
 	}
 }
 
+func TestServiceRestartRejectsRemovedOutstandingRecordingTarget(t *testing.T) {
+	root := t.TempDir()
+	conf := sessionRecordingTestConfiguration(t, root)
+	enableSessionRecording(&conf.Auditlogs[0])
+	target := &serviceRemoteDeliveryTestTarget{artifactStarted: make(chan struct{}, 1), artifactGate: make(chan struct{})}
+	conf.Auditlogs[0].Recording.Targets.Mode = configuration.AuditlogRecordingTargetsModeCustom
+	conf.Auditlogs[0].Recording.Targets.Targets = configuration.AuditlogTargets{{
+		Name: "recordings",
+		V:    &serviceRemoteDeliveryTestConfiguration{target: target},
+	}}
+	first, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+	require.NoError(t, err)
+	name := sealRemoteDeliveryTestRecording(t, first, conf)
+	select {
+	case <-target.artifactStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Recording delivery did not start")
+	}
+	require.NoError(t, first.Close())
+
+	conf.Auditlogs[0].Recording.Targets.Mode = configuration.AuditlogRecordingTargetsModeDisabled
+	conf.Auditlogs[0].Recording.Targets.Targets = nil
+	restarted, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+	require.Nil(t, restarted)
+	require.ErrorContains(t, err, fmt.Sprintf("remote artifact %q selects unconfigured target %q", name, "recordings"))
+}
+
 func TestHouseKeeperPreservesUnacknowledgedRecording(t *testing.T) {
 	root := t.TempDir()
 	conf := sessionRecordingTestConfiguration(t, root)

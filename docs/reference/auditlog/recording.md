@@ -67,6 +67,8 @@ Selects remote destinations for sealed recordings:
 
 Every selected recording target is required. Built-in targets accept recording artifacts; a custom target must implement artifact delivery in addition to audit-segment delivery.
 
+Changing or removing a target is rejected at startup while a sealed Recording still has an outstanding delivery or delivery-audit obligation for that target. Fully deliver and audit existing artifacts before changing their destination. Disabling Recording entirely does not open or drain its repository, so settle outstanding delivery and retention work before disabling it.
+
 ## Compression
 
 <<property("level", "string", None, default="default", heading=3, id_prefix="compression-")>>
@@ -83,7 +85,7 @@ The versioned [recording format vectors](recording-format-vectors.md) publish by
 
 The local repository is permanently marked with its container format. Enabling, disabling, or adding audit encryption in a way that changes an existing repository between `.cast.zst` and `.becast` is rejected and requires a new empty recording directory. The parent audit journal separately binds its encryption recipient, so every recipient change requires a new empty journal directory or a new audit log. A BECast-to-BECast recipient change can reuse its recording directory only after no active recording still needs recovery with the old recipient. Preserve the old journal, sealed recordings, and decryption identities for their required retention periods.
 
-The audit signing identity must remain available to continue writing and recovering its repository. Existing sealed artifacts embed the corresponding public key and remain cryptographically self-verifiable, but producer trust still requires an independently retained producer ID.
+The audit signing identity must remain available to continue writing and recovering its repository. Existing sealed artifacts embed the corresponding public key and remain cryptographically self-verifiable, but producer trust still requires an independently retained producer ID. The producer ID is the lowercase hexadecimal SHA-256 digest of the RFC 4253 binary SSH public-key blob, which is the decoded Base64 field of an OpenSSH public-key line. Generate and retain the public key and producer ID during trusted identity provisioning, before distributing any Recording artifact.
 
 Bifröst receives only the encryption public key. Keep the matching private key outside the Bifröst server and preserve every identity needed for retained BECast artifacts. Losing that private key makes their captured content permanently unavailable.
 

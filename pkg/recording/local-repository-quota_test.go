@@ -119,7 +119,7 @@ func TestLocalQuotaAllowsRecoverableReceiptTemporaryAboveLimit(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(state, "receipt.json"), make([]byte, 8), localFileMode))
 	require.NoError(t, os.WriteFile(filepath.Join(state, "receipt.tmp"), make([]byte, 9), localFileMode))
 
-	quota, err := newLocalQuota(9, delivery)
+	quota, err := newLocalQuotaWithReceiptRecovery(9, true, delivery)
 	require.NoError(t, err)
 	require.Equal(t, uint64(17), quota.usage)
 	require.ErrorContains(t, quota.reserve(1), "would be exceeded")
@@ -135,7 +135,7 @@ func TestLocalQuotaAllowsRecoverableRetentionReceiptTemporaryAboveLimit(t *testi
 	require.NoError(t, os.WriteFile(filepath.Join(state, "receipt.retention"), make([]byte, 8), localFileMode))
 	require.NoError(t, os.WriteFile(filepath.Join(state, "receipt.retention.tmp"), make([]byte, 8), localFileMode))
 
-	quota, err := newLocalQuota(8, delivery)
+	quota, err := newLocalQuotaWithReceiptRecovery(8, true, delivery)
 	require.NoError(t, err)
 	require.Equal(t, uint64(16), quota.usage)
 	require.NoError(t, quota.reconcile(0, 16, 8))
@@ -150,8 +150,32 @@ func TestLocalQuotaRejectsReceiptTemporaryWhoseRecoveredStateExceedsLimit(t *tes
 	require.NoError(t, os.WriteFile(filepath.Join(state, "receipt.json"), make([]byte, 8), localFileMode))
 	require.NoError(t, os.WriteFile(filepath.Join(state, "receipt.tmp"), make([]byte, 9), localFileMode))
 
-	_, err := newLocalQuota(8, delivery)
+	_, err := newLocalQuotaWithReceiptRecovery(8, true, delivery)
 	require.ErrorContains(t, err, "exceeding its 8-byte limit")
+}
+
+func TestLocalQuotaRejectsRecoverableReceiptTemporaryWithoutRecoverer(t *testing.T) {
+	root := t.TempDir()
+	delivery := filepath.Join(root, localDeliveryDirectory)
+	state := filepath.Join(delivery, "producer", "artifact")
+	require.NoError(t, os.MkdirAll(state, localDirectoryMode))
+	require.NoError(t, os.WriteFile(filepath.Join(state, "receipt.json"), make([]byte, 8), localFileMode))
+	require.NoError(t, os.WriteFile(filepath.Join(state, "receipt.tmp"), make([]byte, 9), localFileMode))
+
+	_, err := newLocalQuota(9, delivery)
+	require.ErrorContains(t, err, "exceeding its 9-byte limit")
+}
+
+func TestInventoryLocalFilesCountsHardLinksOnce(t *testing.T) {
+	root := t.TempDir()
+	first := filepath.Join(root, "first")
+	second := filepath.Join(root, "second")
+	require.NoError(t, os.WriteFile(first, make([]byte, 7), localFileMode))
+	require.NoError(t, os.Link(first, second))
+
+	usage, err := inventoryLocalFiles(root)
+	require.NoError(t, err)
+	require.Equal(t, uint64(7), usage)
 }
 
 func TestLocalRepositoryRecoversReceiptQuotaBeforeRecordingState(t *testing.T) {

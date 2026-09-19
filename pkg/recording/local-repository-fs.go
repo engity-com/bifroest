@@ -245,6 +245,9 @@ func bindLocalFormat(directory, key string) error {
 	}
 	temporary := filepath.Join(directory, localFormatTempFileName)
 	target := filepath.Join(directory, localFormatFileName)
+	if _, _, err := removeLocalRetentionTombstone(temporary + localRetentionTombstone); err != nil {
+		return errors.System.Newf("cannot recover local format temporary cleanup: %w", err)
+	}
 	if _, err := completeLocalPublishAlias(temporary, target); err != nil {
 		return errors.System.Newf("cannot complete local format publication: %w", err)
 	}

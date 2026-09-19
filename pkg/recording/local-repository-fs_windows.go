@@ -79,6 +79,9 @@ func removeLocalRetentionTombstone(path string) (int64, bool, error) {
 	if !os.SameFile(pathInfo, info) {
 		return 0, false, goerrors.Join(errors.System.Newf("local recording retention tombstone changed while opening"), file.Close())
 	}
+	if err := requireSingleHardLink(file); err != nil {
+		return 0, false, goerrors.Join(err, file.Close())
+	}
 	if err := file.Truncate(0); err != nil {
 		return 0, false, goerrors.Join(err, file.Close())
 	}

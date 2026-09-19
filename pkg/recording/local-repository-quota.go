@@ -18,6 +18,10 @@ type localQuota struct {
 }
 
 func newLocalQuota(maximum uint64, paths ...string) (*localQuota, error) {
+	return newLocalQuotaWithReceiptRecovery(maximum, false, paths...)
+}
+
+func newLocalQuotaWithReceiptRecovery(maximum uint64, allowReceiptRecovery bool, paths ...string) (*localQuota, error) {
 	if maximum < 1 {
 		return nil, errors.Config.Newf("maximum local recording spool bytes must be positive")
 	}
@@ -25,7 +29,7 @@ func newLocalQuota(maximum uint64, paths ...string) (*localQuota, error) {
 	if err != nil {
 		return nil, errors.System.Newf("cannot inventory local recording spool: %w", err)
 	}
-	if usage > maximum && recoveredUsage > maximum {
+	if usage > maximum && (!allowReceiptRecovery || recoveredUsage > maximum) {
 		return nil, errors.Config.Newf("local recording spool uses %d bytes, exceeding its %d-byte limit", usage, maximum)
 	}
 	return &localQuota{maximum: maximum, usage: usage}, nil
@@ -39,7 +43,7 @@ func inventoryLocalFiles(paths ...string) (uint64, error) {
 func inventoryLocalFilesWithReceiptRecovery(paths ...string) (uint64, uint64, error) {
 	var total uint64
 	var replacedReceiptBytes uint64
-	var seen []os.FileInfo
+	seen := make(map[localInventoryFileIdentity]struct{})
 	for _, root := range paths {
 		if _, err := os.Lstat(root); stderrors.Is(err, fs.ErrNotExist) {
 			continue
@@ -66,10 +70,12 @@ func inventoryLocalFilesWithReceiptRecovery(paths ...string) (uint64, uint64, er
 			if !info.Mode().IsRegular() {
 				return nil
 			}
-			for _, previous := range seen {
-				if os.SameFile(previous, info) {
-					return nil
-				}
+			identity, err := inventoryLocalFileIdentity(path, info)
+			if err != nil {
+				return err
+			}
+			if _, exists := seen[identity]; exists {
+				return nil
 			}
 			if info.Size() < 0 {
 				return errors.System.Newf("local recording file has a negative size")
@@ -78,7 +84,7 @@ func inventoryLocalFilesWithReceiptRecovery(paths ...string) (uint64, uint64, er
 			if total > math.MaxUint64-size {
 				return errors.System.Newf("local recording spool size overflows uint64")
 			}
-			seen = append(seen, info)
+			seen[identity] = struct{}{}
 			total += size
 			var replacedReceipt string
 			if filepath.Base(root) == localDeliveryDirectory {

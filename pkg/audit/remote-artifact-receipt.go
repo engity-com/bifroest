@@ -933,6 +933,9 @@ func remoteArtifactReceiptStatus(receipt remoteArtifactReceipt, entry remoteArti
 		if entry.scope.Auditlog != receipt.Auditlog {
 			return remoteArtifactReceiptTargetNotSelected, errors.Config.Newf("remote artifact target %q belongs to a different auditlog", entry.scope.Target)
 		}
+		if target.AcknowledgedAt != "" && target.SuccessAuditedAt != "" {
+			return remoteArtifactReceiptTargetAcknowledged, nil
+		}
 		if entry.destinationFingerprint.IsZero() || target.DestinationFingerprint != entry.destinationFingerprint {
 			return remoteArtifactReceiptTargetNotSelected, errors.Config.Newf("remote artifact target %q uses a different destination than the delivery receipt", entry.scope.Target)
 		}
@@ -940,10 +943,7 @@ func remoteArtifactReceiptStatus(receipt remoteArtifactReceipt, entry remoteArti
 			return remoteArtifactReceiptTargetFailureAuditPending, nil
 		}
 		if target.AcknowledgedAt != "" {
-			if target.SuccessAuditedAt == "" {
-				return remoteArtifactReceiptTargetSuccessAuditPending, nil
-			}
-			return remoteArtifactReceiptTargetAcknowledged, nil
+			return remoteArtifactReceiptTargetSuccessAuditPending, nil
 		}
 		return remoteArtifactReceiptTargetPending, nil
 	}

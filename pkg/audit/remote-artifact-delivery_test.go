@@ -228,6 +228,35 @@ func TestRemoteArtifactDeliveryDoesNotOpenAcknowledgedOrUnselectedArtifacts(t *t
 	}
 }
 
+func TestRemoteArtifactDeliveryChangedTargetSkipsAcknowledgedArtifactAndDeliversNewArtifact(t *testing.T) {
+	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
+	oldArtifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "a-old.cast.zst", []byte("old"))
+	newArtifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "z-new.cast.zst", []byte("new"))
+	source.set(oldArtifact, newArtifact)
+	oldEntry := remoteArtifactDeliveryTestEntry("archive", remoteArtifactDeliveryTestFingerprint("old"), nil)
+	newDelivered := make(chan string, 1)
+	newEntry := remoteArtifactDeliveryTestEntry("archive", remoteArtifactDeliveryTestFingerprint("new"), func(_ context.Context, artifact RemoteArtifact) error {
+		newDelivered <- artifact.FileName()
+		return nil
+	})
+	oldTargets := remoteArtifactDeliveryTestTargets(oldEntry)
+	newTargets := remoteArtifactDeliveryTestTargets(newEntry)
+	receipts := newRemoteArtifactDeliveryTestReceipts(t, identity, []RemoteArtifact{oldArtifact}, oldTargets)
+	acknowledgedAt := time.Now().UTC().Add(time.Minute)
+	_, err := receipts.store.acknowledge(t.Context(), oldArtifact, oldEntry, acknowledgedAt)
+	require.NoError(t, err)
+	completeRemoteArtifactReceiptTestSuccess(t, receipts.store, oldArtifact.FileName(), oldEntry, acknowledgedAt)
+	_, err = receipts.store.initialize(newArtifact, time.Now().UTC(), newTargets)
+	require.NoError(t, err)
+	receipts.targets = newTargets
+
+	delivery := newRemoteArtifactDeliveryTestCoordinator(t, sealedDirectory, source, receipts, newTargets, remoteArtifactDeliveryTestOptions())
+	require.NoError(t, delivery.Start())
+	remoteArtifactDeliveryTestFlush(t, delivery)
+	require.Equal(t, newArtifact.FileName(), <-newDelivered)
+	require.Equal(t, int32(1), source.openCalls.Load())
+}
+
 func TestRemoteArtifactDeliveryRetriesTargetsIndependentlyWithFreshTimeouts(t *testing.T) {
 	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
 	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "retry.cast.zst", []byte("retry"))

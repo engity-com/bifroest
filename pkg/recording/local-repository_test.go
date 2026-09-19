@@ -30,6 +30,16 @@ func (this localSealedArtifactPreparerFunc) Require(ctx context.Context, artifac
 	return this(ctx, artifact, time.Time{})
 }
 
+func TestBindLocalFormatRecoversInterruptedTemporaryCleanup(t *testing.T) {
+	root := t.TempDir()
+	tombstone := filepath.Join(root, localFormatTempFileName+localRetentionTombstone)
+	require.NoError(t, os.WriteFile(tombstone, []byte("malformed"), localFileMode))
+
+	require.NoError(t, bindLocalFormat(root, "cast-zstd/v1"))
+	require.NoFileExists(t, tombstone)
+	require.FileExists(t, filepath.Join(root, localFormatFileName))
+}
+
 func TestCastZstdHeadCanonicalRoundTrip(t *testing.T) {
 	identity, header, metadata := castTestValues(t, true)
 	var output bytes.Buffer

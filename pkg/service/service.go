@@ -402,6 +402,11 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 		if repositoryErr != nil {
 			return fmt.Errorf("cannot open Recording repository of auditlog %q: %w", auditlog.Name, repositoryErr)
 		}
+		if targets == nil {
+			if validateErr := repository.receipts.ValidateDeliveryTargets(ctx, repository, nil); validateErr != nil {
+				return fmt.Errorf("cannot validate Recording delivery of auditlog %q: %w", auditlog.Name, goerrors.Join(validateErr, repository.Close()))
+			}
+		}
 		svc.recordingRepositories[auditlog.Name] = repository
 		svc.recordingRepositoryOrder = append(svc.recordingRepositoryOrder, auditlog.Name)
 		if targets != nil {

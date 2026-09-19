@@ -269,7 +269,8 @@ func newLocalRepository[Head, Summary any](ctx context.Context, directory string
 		active:         make(map[Id]*localActive[Head, Summary]),
 		retentionQuota: make(map[Id]uint64),
 	}
-	result.quota, err = newLocalQuota(options.MaximumSpoolBytes, result.workPath, result.activePath, result.sealedPath, result.quarantinePath, filepath.Join(canonical, localDeliveryDirectory))
+	recoverer, canRecoverSealedState := prepareSealed.(SealedArtifactStateRecoverer)
+	result.quota, err = newLocalQuotaWithReceiptRecovery(options.MaximumSpoolBytes, canRecoverSealedState, result.workPath, result.activePath, result.sealedPath, result.quarantinePath, filepath.Join(canonical, localDeliveryDirectory))
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +280,7 @@ func newLocalRepository[Head, Summary any](ctx context.Context, directory string
 	if err := bindLocalFormat(canonical, format.key()); err != nil {
 		return nil, errors.System.Newf("cannot bind local recording repository format: %w", err)
 	}
-	if recoverer, ok := prepareSealed.(SealedArtifactStateRecoverer); ok {
+	if canRecoverSealedState {
 		if err := recoverer.RecoverSealedArtifactState(ctx); err != nil {
 			return nil, errors.System.Newf("cannot recover sealed artifact state: %w", err)
 		}
