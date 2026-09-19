@@ -30,7 +30,7 @@ require (
 	github.com/google/go-github/v65 v65.0.0
 	github.com/google/uuid v1.6.0
 	github.com/johannesboyne/gofakes3 v1.2.0
-	github.com/mattn/go-zglob v0.0.6
+	github.com/mattn/go-zglob v0.0.8
 	github.com/mikesmitty/edkey v0.0.0-20170222072505-3356ea4e686a
 	github.com/moby/moby/api v1.56.0
 	github.com/moby/spdystream v0.5.1
