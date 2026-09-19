@@ -205,13 +205,14 @@ func TestExecuteSessionRecordingSealsShellAndExec(t *testing.T) {
 			}
 			require.Equal(t, expectedOutputEvents, verification.Cast.OutputEvents)
 
+			requireAuditEventsNamedEventually(t, auditRecorder, audit.EventNameSessionTaskCompleted, 1)
 			auditEvents := auditRecorder.eventsSnapshot()
 			startedEvents := auditEventsNamed(auditEvents, audit.EventNameSessionRecordingStarted)
 			completedEvents := auditEventsNamed(auditEvents, audit.EventNameSessionRecordingCompleted)
 			require.Len(t, startedEvents, 1)
 			require.Len(t, completedEvents, 1)
-			require.Empty(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingIncomplete))
-			require.Empty(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed))
+			require.Empty(t, auditEventsNamed(auditEvents, audit.EventNameSessionRecordingIncomplete))
+			require.Empty(t, auditEventsNamed(auditEvents, audit.EventNameSessionRecordingFailed))
 			requireSessionRecordingAuditCorrelation(t, verification, startedEvents[0], completedEvents[0])
 			require.Equal(t, audit.EventOutcomeSuccess, completedEvents[0].Outcome)
 			require.Equal(t, verification.Cast.Digest.String(), completedEvents[0].RecordingDigest)
@@ -247,8 +248,8 @@ func TestExecuteSessionRecordingNoticeRenderFailurePreventsEnvironmentRun(t *tes
 	verification := verifyOnlySessionRecording(t, server.service, root)
 	require.Equal(t, recording.CastStatusIncomplete, verification.Cast.Result.Status)
 	require.Equal(t, "session-error", verification.Cast.Result.Reason)
+	incompleteEvents := requireAuditEventsNamedEventually(t, auditRecorder, audit.EventNameSessionRecordingIncomplete, 1)
 	startedEvents := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingStarted)
-	incompleteEvents := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingIncomplete)
 	require.Len(t, startedEvents, 1)
 	require.Len(t, incompleteEvents, 1)
 	requireSessionRecordingAuditCorrelation(t, verification, startedEvents[0], incompleteEvents[0])
@@ -319,9 +320,7 @@ func TestExecuteSessionRecordingCapturesForcedCommandRequestedAsSftp(t *testing.
 	verification := verifyOnlySessionRecording(t, server.service, root)
 	require.Equal(t, recording.CastStatusCompleted, verification.Cast.Result.Status)
 	require.Equal(t, audit.SessionTaskExec, verification.Cast.Metadata.Task)
-	require.Eventually(t, func() bool {
-		return len(auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionTaskCompleted)) == 1
-	}, time.Second, 10*time.Millisecond)
+	requireAuditEventsNamedEventually(t, auditRecorder, audit.EventNameSessionTaskCompleted, 1)
 	events := auditRecorder.eventsSnapshot()
 	taskStarted := auditEventsNamed(events, audit.EventNameSessionTaskStarted)
 	taskCompleted := auditEventsNamed(events, audit.EventNameSessionTaskCompleted)
@@ -358,8 +357,8 @@ func TestExecuteSessionRecordingCreateFailurePreventsEnvironmentRun(t *testing.T
 	require.NoError(t, err)
 	require.Error(t, sshSession.Run("must-not-run"))
 	require.False(t, runCalled.Load())
+	failedEvents := requireAuditEventsNamedEventually(t, auditRecorder, audit.EventNameSessionRecordingFailed, 1)
 	require.Empty(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingStarted))
-	failedEvents := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed)
 	require.Len(t, failedEvents, 1)
 	require.Equal(t, audit.EventReasonRecordingCreate, failedEvents[0].Reason)
 	require.Equal(t, audit.EventOutcomeFailure, failedEvents[0].Outcome)
@@ -390,6 +389,7 @@ func TestExecuteSessionRecordingWriteFailureIsFailClosed(t *testing.T) {
 	var stdout bytes.Buffer
 	sshSession.Stdout = &stdout
 	require.Error(t, sshSession.Run("fail-closed"))
+	failedEvents := requireAuditEventsNamedEventually(t, auditRecorder, audit.EventNameSessionRecordingFailed, 1)
 	require.NotContains(t, stdout.String(), "cannot-persist")
 	activeEntries, err := os.ReadDir(filepath.Join(root, "recordings", "active"))
 	require.NoError(t, err)
@@ -398,7 +398,6 @@ func TestExecuteSessionRecordingWriteFailureIsFailClosed(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, sealedEntries)
 	require.Len(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingStarted), 1)
-	failedEvents := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed)
 	require.Len(t, failedEvents, 1)
 	require.Equal(t, audit.EventReasonRecordingCapture, failedEvents[0].Reason)
 	require.Equal(t, audit.EventOutcomeFailure, failedEvents[0].Outcome)
@@ -447,11 +446,8 @@ func TestExecuteSessionRecordingStartedAuditFailurePreventsEnvironmentRun(t *tes
 			verification := verifyOnlySessionRecording(t, server.service, root)
 			require.Equal(t, recording.CastStatusFailed, verification.Cast.Result.Status)
 			require.Equal(t, "audit-start-failed", verification.Cast.Result.Reason)
-			require.Eventually(t, func() bool {
-				return len(auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed)) == 1
-			}, time.Second, 10*time.Millisecond)
+			failedEvents := requireAuditEventsNamedEventually(t, auditRecorder, audit.EventNameSessionRecordingFailed, 1)
 			require.Len(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingStarted), test.expectedStarted)
-			failedEvents := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed)
 			require.Len(t, failedEvents, 1)
 			require.Equal(t, audit.EventReasonAuditWrite, failedEvents[0].Reason)
 			require.Equal(t, audit.ErrorCategorySystem, failedEvents[0].ErrorCategory)
@@ -477,8 +473,8 @@ func TestExecuteSessionRecordingCompletionAuditFailurePreservesCompletedArtifact
 
 	verification := verifyOnlySessionRecording(t, server.service, root)
 	require.Equal(t, recording.CastStatusCompleted, verification.Cast.Result.Status)
+	completedEvents := requireAuditEventsNamedEventually(t, auditRecorder, audit.EventNameSessionRecordingCompleted, 1)
 	require.Len(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingStarted), 1)
-	completedEvents := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingCompleted)
 	require.Len(t, completedEvents, 1)
 	require.Equal(t, verification.Cast.Digest.String(), completedEvents[0].RecordingDigest)
 	require.Empty(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed))
@@ -517,7 +513,7 @@ func TestExecuteSessionRecordingInvalidExitStatusIsIncomplete(t *testing.T) {
 			verification := verifyOnlySessionRecording(t, server.service, root)
 			require.Equal(t, recording.CastStatusIncomplete, verification.Cast.Result.Status)
 			require.Equal(t, "invalid-exit-status", verification.Cast.Result.Reason)
-			events := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingIncomplete)
+			events := requireAuditEventsNamedEventually(t, auditRecorder, audit.EventNameSessionRecordingIncomplete, 1)
 			require.Len(t, events, 1)
 			require.Equal(t, audit.EventReasonInvalidExitCode, events[0].Reason)
 			require.Equal(t, audit.EventOutcomeFailure, events[0].Outcome)
@@ -551,13 +547,9 @@ func TestExecuteSessionRecordingCancellationAuditsWithDetachedContext(t *testing
 		t.Fatal("environment run did not start")
 	}
 	require.NoError(t, sshSession.Close())
-	require.Eventually(t, func() bool {
-		return len(auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingIncomplete)) == 1
-	}, time.Second, 10*time.Millisecond)
-
+	events := requireAuditEventsNamedEventually(t, auditRecorder, audit.EventNameSessionRecordingIncomplete, 1)
 	verification := verifyOnlySessionRecording(t, server.service, root)
 	require.Equal(t, recording.CastStatusIncomplete, verification.Cast.Result.Status)
-	events := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingIncomplete)
 	require.Len(t, events, 1)
 	require.Equal(t, audit.EventOutcomeCanceled, events[0].Outcome)
 	require.Equal(t, audit.EventReasonContextCanceled, events[0].Reason)
@@ -581,7 +573,7 @@ func TestExecuteSessionRecordingDeadlineExceededIsIncomplete(t *testing.T) {
 
 	verification := verifyOnlySessionRecording(t, server.service, root)
 	require.Equal(t, recording.CastStatusIncomplete, verification.Cast.Result.Status)
-	events := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingIncomplete)
+	events := requireAuditEventsNamedEventually(t, auditRecorder, audit.EventNameSessionRecordingIncomplete, 1)
 	require.Len(t, events, 1)
 	require.Equal(t, audit.EventOutcomeCanceled, events[0].Outcome)
 	require.Equal(t, audit.EventReasonDeadlineExceeded, events[0].Reason)
@@ -615,7 +607,7 @@ func TestExecuteSessionRecordingIncompletePreservesValidExitStatus(t *testing.T)
 	require.Equal(t, recording.CastStatusIncomplete, verification.Cast.Result.Status)
 	require.NotNil(t, verification.Cast.ExitStatus)
 	require.Equal(t, uint32(7), *verification.Cast.ExitStatus)
-	events := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingIncomplete)
+	events := requireAuditEventsNamedEventually(t, auditRecorder, audit.EventNameSessionRecordingIncomplete, 1)
 	require.Len(t, events, 1)
 	require.Equal(t, audit.EventReasonSessionError, events[0].Reason)
 	require.NotNil(t, events[0].ExitCode)
@@ -643,7 +635,7 @@ func TestExecuteSessionRecordingSealFailureAuditsSealFailure(t *testing.T) {
 	require.NoError(t, err)
 	require.Error(t, sshSession.Run("seal-failure"))
 
-	failedEvents := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed)
+	failedEvents := requireAuditEventsNamedEventually(t, auditRecorder, audit.EventNameSessionRecordingFailed, 1)
 	require.Len(t, failedEvents, 1)
 	require.Equal(t, audit.EventReasonRecordingSeal, failedEvents[0].Reason)
 	require.Equal(t, audit.EventOutcomeFailure, failedEvents[0].Outcome)
@@ -676,15 +668,21 @@ func TestExecuteSessionRecordingIntervalCheckpointFailureAuditsCaptureFailure(t 
 	sshSession, err := client.NewSession()
 	require.NoError(t, err)
 	require.Error(t, sshSession.Run("checkpoint-failure"))
-	require.Eventually(t, func() bool {
-		return len(auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed)) == 1
-	}, time.Second, 10*time.Millisecond)
-
-	failedEvents := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed)
+	failedEvents := requireAuditEventsNamedEventually(t, auditRecorder, audit.EventNameSessionRecordingFailed, 1)
 	require.Len(t, failedEvents, 1)
 	require.Equal(t, audit.EventReasonRecordingCapture, failedEvents[0].Reason)
 	require.Equal(t, audit.EventOutcomeFailure, failedEvents[0].Outcome)
 	require.Empty(t, failedEvents[0].RecordingDigest)
+}
+
+func requireAuditEventsNamedEventually(t *testing.T, recorder *recordingAuditRecorder, name audit.EventName, count int) []audit.Event {
+	t.Helper()
+	var events []audit.Event
+	require.Eventually(t, func() bool {
+		events = auditEventsNamed(recorder.eventsSnapshot(), name)
+		return len(events) == count
+	}, time.Second, 10*time.Millisecond)
+	return events
 }
 
 func enableSessionRecordingForLifecycleTest(conf *configuration.Configuration, root string) {
