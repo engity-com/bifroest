@@ -369,7 +369,17 @@ func TestRemoteArtifactReceiptStoreRecoversRetentionTemporary(t *testing.T) {
 			require.NoError(t, err)
 			quota.usage = uint64(before)
 			quota.peak = quota.usage
-			temporaryInfo, err := os.Lstat(temporaryPath)
+			temporaryInfo, err := func() (os.FileInfo, error) {
+				temporaryFile, openErr := os.Open(temporaryPath)
+				if openErr != nil {
+					return nil, openErr
+				}
+				info, statErr := temporaryFile.Stat()
+				if closeErr := temporaryFile.Close(); statErr == nil {
+					statErr = closeErr
+				}
+				return info, statErr
+			}()
 			require.NoError(t, err)
 			var publishedInfo os.FileInfo
 			if test.published {

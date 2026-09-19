@@ -447,6 +447,9 @@ func TestExecuteSessionRecordingStartedAuditFailurePreventsEnvironmentRun(t *tes
 			verification := verifyOnlySessionRecording(t, server.service, root)
 			require.Equal(t, recording.CastStatusFailed, verification.Cast.Result.Status)
 			require.Equal(t, "audit-start-failed", verification.Cast.Result.Reason)
+			require.Eventually(t, func() bool {
+				return len(auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed)) == 1
+			}, time.Second, 10*time.Millisecond)
 			require.Len(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingStarted), test.expectedStarted)
 			failedEvents := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed)
 			require.Len(t, failedEvents, 1)

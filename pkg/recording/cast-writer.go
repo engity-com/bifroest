@@ -253,7 +253,7 @@ func (this *CastWriter) writeContentLine(line []byte) error {
 	if err := this.write(complete); err != nil {
 		return err
 	}
-	_, _ = this.digest.Write(complete) // lgtm[go/weak-sensitive-data-hashing] SHA-256 provides signed format integrity, not password hashing.
+	_, _ = this.digest.Write(complete)
 	if this.afterContentLine != nil {
 		if err := this.afterContentLine(complete); err != nil {
 			return this.poison(err)

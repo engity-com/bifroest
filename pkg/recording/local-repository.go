@@ -1223,6 +1223,9 @@ func (this *localRepository[Head, Summary]) publishValidatedWork(ctx context.Con
 	} else if !stderrors.Is(err, fs.ErrNotExist) {
 		return errors.System.Newf("cannot inspect recording active path: %w", err)
 	}
+	if err := validated.close(nil); err != nil {
+		return err
+	}
 	if err := publishLocalDirectory(source, target); err != nil {
 		return errors.System.Newf("cannot publish recording work directory: %w", err)
 	}
@@ -1239,7 +1242,7 @@ func (this *localRepository[Head, Summary]) publishValidatedWork(ctx context.Con
 }
 
 func (this *localRepository[Head, Summary]) verifyPublishedWork(ctx context.Context, directory string, validated *validatedLocalWork[Head]) (result error) {
-	if validated == nil || validated.file == nil || validated.fileInfo == nil {
+	if validated == nil || validated.fileInfo == nil {
 		return errors.System.Newf("nil validated recording work")
 	}
 	path := filepath.Join(directory, this.format.contentFileName())

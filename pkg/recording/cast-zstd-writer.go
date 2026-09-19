@@ -303,7 +303,7 @@ func (this *castZstdSink) Write(value []byte) (int, error) {
 	if _, err := this.buffer.Write(value); err != nil {
 		return 0, this.poison(err)
 	}
-	_, _ = this.streamHash.Write(value) // lgtm[go/weak-sensitive-data-hashing] SHA-256 provides format integrity, not password hashing.
+	_, _ = this.streamHash.Write(value)
 	if this.initialLines > 0 {
 		this.initialLines--
 		this.pendingGroup = this.initialLines > 0

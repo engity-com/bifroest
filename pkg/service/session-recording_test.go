@@ -380,7 +380,7 @@ func TestPrepareRecordingFailsClosedOnWrongFormatMarker(t *testing.T) {
 	enableSessionRecording(&conf.Auditlogs[0])
 	recordingRoot := conf.Auditlogs[0].Recording.Directory
 	require.NoError(t, os.Mkdir(recordingRoot, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(recordingRoot, sessionRecordingFormatMarker), []byte("unknown/v1\n"), 0o400))
+	require.NoError(t, os.WriteFile(filepath.Join(recordingRoot, sessionRecordingFormatMarker), []byte("unknown/v1\n"), 0o600))
 
 	svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
 	require.ErrorContains(t, err, "cannot open Recording repository of auditlog \"default\"")
