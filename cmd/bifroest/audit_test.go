@@ -100,16 +100,36 @@ func TestAuditOutputProtectsSessionStorageAndSftpFiles(t *testing.T) {
 	directory := t.TempDir()
 	sessionStorage := filepath.Join(directory, "sessions")
 	require.NoError(t, goos.Mkdir(sessionStorage, 0700))
+	recordingDirectory := filepath.Join(directory, "recordings")
+	require.NoError(t, goos.Mkdir(recordingDirectory, 0700))
 	knownHosts := filepath.Join(directory, "known-hosts")
 	identity := filepath.Join(directory, "archive-key")
+	recordingKnownHosts := filepath.Join(directory, "recording-known-hosts")
+	recordingIdentity := filepath.Join(directory, "recording-archive-key")
 	require.NoError(t, goos.WriteFile(knownHosts, []byte("host key"), 0600))
 	require.NoError(t, goos.WriteFile(identity, []byte("private key"), 0600))
+	require.NoError(t, goos.WriteFile(recordingKnownHosts, []byte("host key"), 0600))
+	require.NoError(t, goos.WriteFile(recordingIdentity, []byte("private key"), 0600))
 	conf := &configuration.Configuration{
 		Session: configuration.Session{V: &configuration.SessionFs{Storage: sessionStorage}},
 		Auditlogs: configuration.Auditlogs{{
 			Name:    "security",
 			Enabled: true,
 			Journal: configuration.AuditlogJournal{Directory: filepath.Join(directory, "journal")},
+			Recording: configuration.AuditlogRecording{
+				Enabled:   true,
+				Directory: recordingDirectory,
+				Targets: configuration.AuditlogRecordingTargets{
+					Mode: configuration.AuditlogRecordingTargetsModeCustom,
+					Targets: configuration.AuditlogTargets{{
+						Name: "recording-archive",
+						V: &configuration.AuditlogTargetSftp{
+							KnownHostsFile: bfcrypto.KnownHostsFile(recordingKnownHosts),
+							IdentityFiles:  []string{recordingIdentity},
+						},
+					}},
+				},
+			},
 			Targets: configuration.AuditlogTargets{{
 				Name: "archive",
 				V: &configuration.AuditlogTargetSftp{
@@ -121,8 +141,15 @@ func TestAuditOutputProtectsSessionStorageAndSftpFiles(t *testing.T) {
 	}
 
 	require.ErrorContains(t, ensureAuditOutputSafe(filepath.Join(sessionStorage, "export.jsonl"), conf), "must not be inside session storage")
+	require.ErrorContains(t, ensureAuditOutputSafe(filepath.Join(recordingDirectory, "export.jsonl"), conf), "must not be inside auditlog \"security\" recording directory")
 	require.ErrorContains(t, ensureAuditOutputSafe(knownHosts, conf), "must not replace SFTP known-hosts file")
 	require.ErrorContains(t, ensureAuditOutputSafe(identity, conf), "must not replace private key")
+	require.ErrorContains(t, ensureAuditOutputSafe(recordingKnownHosts, conf), "must not replace Recording SFTP known-hosts file")
+	require.ErrorContains(t, ensureAuditOutputSafe(recordingIdentity, conf), "must not replace private key")
+
+	conf.Auditlogs[0].Recording.Enabled = false
+	require.NoError(t, ensureAuditOutputSafe(recordingKnownHosts, conf))
+	require.NoError(t, ensureAuditOutputSafe(recordingIdentity, conf))
 }
 
 func TestAuditExportAllowsMissingUnselectedJournal(t *testing.T) {

@@ -70,6 +70,10 @@ jobs:
     name: Tests
     needs: [ evaluate, files-changed ]
     if: needs.files-changed.outputs.go == 'true'
+    env:
+      GITHUB_TOKEN: ""
+    permissions:
+      contents: read
     strategy:
       matrix:
         os: [ ubuntu-latest, windows-latest ]
@@ -83,6 +87,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Cache Go
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -98,11 +103,30 @@ jobs:
       - name: Install dependencies
         run: mise run install:go
 
+      - name: Install asciinema compatibility tool
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        env:
+          MISE_GITHUB_TOKEN: ""
+          ASCIINEMA_VERSION: 3.2.1
+          ASCIINEMA_SHA256: bec9781bc8f297a9d3d74ff60205599507f2abba1183578b8b2f22be4c999214
+        run: |
+          curl --fail --location --silent --show-error \
+            --output "$RUNNER_TEMP/asciinema" \
+            "https://github.com/asciinema/asciinema/releases/download/v${ASCIINEMA_VERSION}/asciinema-x86_64-unknown-linux-musl"
+          printf '%s  %s\n' "$ASCIINEMA_SHA256" "$RUNNER_TEMP/asciinema" | sha256sum --check -
+          chmod 0755 "$RUNNER_TEMP/asciinema"
+          test "$("$RUNNER_TEMP/asciinema" --version)" = "asciinema ${ASCIINEMA_VERSION}"
+          echo "ASCIINEMA=$RUNNER_TEMP/asciinema" >> "$GITHUB_ENV"
+
       - name: Test
+        env:
+          MISE_GITHUB_TOKEN: ""
         run: mise run test:go
 
       - name: Test with race detector
         if: matrix.os == 'ubuntu-latest'
+        env:
+          MISE_GITHUB_TOKEN: ""
         run: mise run test:go:race
 
   package:

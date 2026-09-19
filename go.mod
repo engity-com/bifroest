@@ -30,6 +30,7 @@ require (
 	github.com/google/go-github/v65 v65.0.0
 	github.com/google/uuid v1.6.0
 	github.com/johannesboyne/gofakes3 v1.2.0
+	github.com/klauspost/compress v1.19.2
 	github.com/mattn/go-zglob v0.0.6
 	github.com/mikesmitty/edkey v0.0.0-20170222072505-3356ea4e686a
 	github.com/moby/moby/api v1.56.0
@@ -113,7 +114,6 @@ require (
 	github.com/huandu/xstrings v1.5.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260802145828-341c2f0c90b5 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

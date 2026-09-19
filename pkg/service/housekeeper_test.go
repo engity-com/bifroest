@@ -13,6 +13,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/recording"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
@@ -352,6 +353,26 @@ func TestHouseKeeperRestrictsSessionAutoRepairToKnownFlows(t *testing.T) {
 	require.NoError(t, hk.inspectSessions(nil, context.Background()))
 	require.True(t, repository.findAllOpts.IsAutoCleanUpAllowedFor(context.Background(), "current", session.MustNewId()))
 	require.False(t, repository.findAllOpts.IsAutoCleanUpAllowedFor(context.Background(), "removed", session.MustNewId()))
+}
+
+func TestHouseKeeperDoesNotDeleteRecordingWhenStartAuditFails(t *testing.T) {
+	hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, nil)
+	recorder := &recordingAuditRecorder{}
+	recorder.setErrorBeforeRecordForName(audit.EventNameHousekeepingRecordingDeleteStarted, goerrors.New("journal unavailable"))
+	hk.service.auditRecorders["security"] = recorder
+	recordingId, err := recording.NewId()
+	require.NoError(t, err)
+	performed := false
+
+	changed, actionErr, auditErr := hk.auditRecordingDeletion(t.Context(), "security", sessionRecordingRetentionCandidate{recordingId: recordingId}, func() (bool, error) {
+		performed = true
+		return true, nil
+	})
+	require.False(t, changed)
+	require.NoError(t, actionErr)
+	require.ErrorContains(t, auditErr, "journal unavailable")
+	require.False(t, performed)
+	require.Empty(t, recorder.eventsSnapshot())
 }
 
 func newHouseKeeperForTest(repository *houseKeeperTestSessionRepository, authorizer *houseKeeperTestAuthorizer) *houseKeeper {

@@ -11,7 +11,17 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func writeAuditOutputFile(path string, data []byte, force bool, validate func() error) (rErr error) {
+func writeAuditOutputFile(path string, data []byte, force bool, validate func() error) error {
+	return writeProtectedOutputFile(path, force, validate, func(output *goos.File) error {
+		_, err := output.Write(data)
+		return err
+	})
+}
+
+func writeProtectedOutputFile(path string, force bool, validate func() error, produce func(*goos.File) error) (rErr error) {
+	if produce == nil {
+		return fmt.Errorf("nil output producer")
+	}
 	parentPath := filepath.Dir(path)
 	parent, err := openAuditOutputParent(parentPath)
 	if err != nil {
@@ -49,11 +59,19 @@ func writeAuditOutputFile(path string, data []byte, force bool, validate func() 
 			_ = unix.Unlinkat(int(parent.Fd()), temporaryName, 0)
 		}
 	}()
-	if _, err := temporary.Write(data); err != nil {
-		return fmt.Errorf("cannot write private temporary output: %w", err)
+	if err := produce(temporary); err != nil {
+		return fmt.Errorf("cannot produce private temporary output: %w", err)
 	}
 	if err := temporary.Sync(); err != nil {
 		return fmt.Errorf("cannot flush private temporary output: %w", err)
+	}
+	if validate != nil {
+		if err := validate(); err != nil {
+			return err
+		}
+	}
+	if err := verifyAuditOutputParent(parent, parentPath); err != nil {
+		return err
 	}
 	if err := installAuditOutputFile(int(parent.Fd()), temporaryName, filepath.Base(path), force); err != nil {
 		return err
@@ -116,7 +134,7 @@ func createAuditOutputTemporary(parent *goos.File) (string, *goos.File, error) {
 		if err != nil {
 			return "", nil, err
 		}
-		handle, err := unix.Openat(int(parent.Fd()), name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0600)
+		handle, err := unix.Openat(int(parent.Fd()), name, unix.O_RDWR|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0600)
 		if err == unix.EEXIST {
 			continue
 		}

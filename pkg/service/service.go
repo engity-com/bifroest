@@ -6,6 +6,7 @@ import (
 	"fmt"
 	gonet "net"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -260,10 +261,12 @@ func (this *Service) prepare() (svc *service, err error) {
 	if err != nil {
 		return fail(err)
 	}
-	auditOwnedByService := false
+	resourcesOwnedByService := false
 	defer func(preparedService *service) {
-		if !auditOwnedByService {
-			_ = preparedService.closeAudit(false)
+		if !resourcesOwnedByService {
+			recordingErr := preparedService.closeRecording(false)
+			auditErr := preparedService.closeAudit(false)
+			err = goerrors.Join(err, recordingErr, auditErr)
 		}
 	}(svc)
 	if err := this.prepareAudit(ctx, svc, hostSigners); err != nil {
@@ -305,9 +308,14 @@ func (this *Service) prepare() (svc *service, err error) {
 			return fail(err)
 		}
 	}
+	for _, delivery := range svc.recordingDeliveryOrder {
+		if err := delivery.Start(); err != nil {
+			return fail(err)
+		}
+	}
 
 	sessionRepositoryPrepared = true
-	auditOwnedByService = true
+	resourcesOwnedByService = true
 	return svc, nil
 }
 
@@ -315,6 +323,9 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	svc.auditIdentities = make(map[configuration.AuditlogName]*audit.Identity, len(this.Configuration.Auditlogs))
 	svc.auditRecorders = make(map[configuration.AuditlogName]audit.Recorder, len(this.Configuration.Auditlogs))
 	svc.auditDeliveries = make(map[configuration.AuditlogName]*audit.RemoteDelivery, len(this.Configuration.Auditlogs))
+	svc.recordingRepositories = make(map[configuration.AuditlogName]*sessionRecordingRepository, len(this.Configuration.Auditlogs))
+	svc.recordingTargets = make(map[configuration.AuditlogName]*audit.RemoteArtifactTargets, len(this.Configuration.Auditlogs))
+	svc.recordingDeliveries = make(map[configuration.AuditlogName]*audit.RemoteArtifactDelivery, len(this.Configuration.Auditlogs))
 	svc.flowAuditRecorders = make(map[configuration.FlowName]audit.Recorder, len(this.Configuration.Flows))
 	svc.flowAuditlogs = make(map[configuration.FlowName]configuration.AuditlogName, len(this.Configuration.Flows))
 	svc.enabledAuditlogs = make(map[configuration.AuditlogName]bool, len(this.Configuration.Auditlogs))
@@ -370,6 +381,43 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 			return encryptionErr
 		}
 		resolvedEncryptionPublicKeys[auditlog.Name] = encryptionPublicKey
+	}
+	for index := range this.Configuration.Auditlogs {
+		auditlog := &this.Configuration.Auditlogs[index]
+		if !auditlog.Enabled || !auditlog.Recording.Enabled {
+			continue
+		}
+		targetConfigurations := sessionRecordingTargetConfigurations(auditlog)
+		var targets *audit.RemoteArtifactTargets
+		if len(targetConfigurations) > 0 {
+			var targetErr error
+			targets, targetErr = audit.NewRemoteArtifactTargets(ctx, auditlog.Name, targetConfigurations)
+			if targetErr != nil {
+				return fmt.Errorf("cannot prepare Recording targets of auditlog %q: %w", auditlog.Name, targetErr)
+			}
+			svc.recordingTargets[auditlog.Name] = targets
+			svc.recordingTargetOrder = append(svc.recordingTargetOrder, auditlog.Name)
+		}
+		repository, repositoryErr := newSessionRecordingRepository(ctx, auditlog.Recording, svc.auditIdentities[auditlog.Name], resolvedEncryptionPublicKeys[auditlog.Name], auditlog.Name, targets)
+		if repositoryErr != nil {
+			return fmt.Errorf("cannot open Recording repository of auditlog %q: %w", auditlog.Name, repositoryErr)
+		}
+		if targets == nil {
+			if validateErr := repository.receipts.ValidateDeliveryTargets(ctx, repository, nil); validateErr != nil {
+				return fmt.Errorf("cannot validate Recording delivery of auditlog %q: %w", auditlog.Name, goerrors.Join(validateErr, repository.Close()))
+			}
+		}
+		svc.recordingRepositories[auditlog.Name] = repository
+		svc.recordingRepositoryOrder = append(svc.recordingRepositoryOrder, auditlog.Name)
+		if targets != nil {
+			auditor := &sessionRecordingDeliveryAuditor{service: svc, auditlog: auditlog.Name, repository: repository}
+			delivery, deliveryErr := audit.NewRemoteArtifactDelivery(ctx, filepath.Join(auditlog.Recording.Directory, "sealed"), repository, repository.receipts, targets, auditor)
+			if deliveryErr != nil {
+				return fmt.Errorf("cannot prepare Recording delivery of auditlog %q: %w", auditlog.Name, deliveryErr)
+			}
+			svc.recordingDeliveries[auditlog.Name] = delivery
+			svc.recordingDeliveryOrder = append(svc.recordingDeliveryOrder, delivery)
+		}
 	}
 	for index := range this.Configuration.Auditlogs {
 		auditlog := &this.Configuration.Auditlogs[index]
@@ -433,6 +481,7 @@ func (this *Service) prepareServer(_ context.Context, svc *service, hostPrivateK
 	svc.server.DisconnectCallback = svc.onDisconnected
 	svc.server.Handler = svc.handleSshShellSession
 	svc.server.PtyCallback = svc.onPtyRequest
+	svc.server.SessionRequestCallback = svc.onSessionRequest
 	svc.server.ReversePortForwardingCallback = svc.onReversePortForwardingRequested
 	svc.server.PublicKeyHandler = svc.handlePublicKey
 	svc.server.PasswordHandler = svc.handlePassword
@@ -525,6 +574,21 @@ func loadStaticSftpIdentityPublicKeysForAuditEncryption(auditlogs configuration.
 			}
 			result = append(result, keys...)
 		}
+		if !auditlog.Recording.Enabled {
+			continue
+		}
+		for targetIndex := range auditlog.Recording.Targets.Configured() {
+			target := &auditlog.Recording.Targets.Targets[targetIndex]
+			sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
+			if !ok || len(sftp.IdentityFiles) == 0 {
+				continue
+			}
+			keys, err := audit.LoadSftpIdentityPublicKeys(sftp.IdentityFiles)
+			if err != nil {
+				return nil, fmt.Errorf("cannot load static SFTP identities of Recording target %q in auditlog %q: %w", target.Name, auditlog.Name, err)
+			}
+			result = append(result, keys...)
+		}
 	}
 	return result, nil
 }
@@ -603,23 +667,29 @@ func (this *Service) logCertificateAuthorities(hostKeys []crypto.PrivateKey) err
 type service struct {
 	*Service
 
-	auditIdentities      map[configuration.AuditlogName]*audit.Identity
-	auditRecorders       map[configuration.AuditlogName]audit.Recorder
-	auditRecorderOrder   []audit.Recorder
-	auditDeliveries      map[configuration.AuditlogName]*audit.RemoteDelivery
-	auditDeliveryOrder   []*audit.RemoteDelivery
-	flowAuditRecorders   map[configuration.FlowName]audit.Recorder
-	flowAuditlogs        map[configuration.FlowName]configuration.AuditlogName
-	enabledAuditlogs     map[configuration.AuditlogName]bool
-	unauthenticatedAudit *unauthenticatedAuditLimiter
-	sessions             session.CloseableRepository
-	authorizer           authorization.CloseableAuthorizer
-	environments         environment.CloseableRepository
-	houseKeeper          houseKeeper
-	alternatives         alternatives.Provider
-	imp                  imp.Imp
-	server               essh.Server
-	forwardHandler       essh.ForwardedTCPHandler
+	auditIdentities          map[configuration.AuditlogName]*audit.Identity
+	auditRecorders           map[configuration.AuditlogName]audit.Recorder
+	auditRecorderOrder       []audit.Recorder
+	auditDeliveries          map[configuration.AuditlogName]*audit.RemoteDelivery
+	auditDeliveryOrder       []*audit.RemoteDelivery
+	recordingRepositories    map[configuration.AuditlogName]*sessionRecordingRepository
+	recordingRepositoryOrder []configuration.AuditlogName
+	recordingTargets         map[configuration.AuditlogName]*audit.RemoteArtifactTargets
+	recordingTargetOrder     []configuration.AuditlogName
+	recordingDeliveries      map[configuration.AuditlogName]*audit.RemoteArtifactDelivery
+	recordingDeliveryOrder   []*audit.RemoteArtifactDelivery
+	flowAuditRecorders       map[configuration.FlowName]audit.Recorder
+	flowAuditlogs            map[configuration.FlowName]configuration.AuditlogName
+	enabledAuditlogs         map[configuration.AuditlogName]bool
+	unauthenticatedAudit     *unauthenticatedAuditLimiter
+	sessions                 session.CloseableRepository
+	authorizer               authorization.CloseableAuthorizer
+	environments             environment.CloseableRepository
+	houseKeeper              houseKeeper
+	alternatives             alternatives.Provider
+	imp                      imp.Imp
+	server                   essh.Server
+	forwardHandler           essh.ForwardedTCPHandler
 
 	knownFlows map[configuration.FlowName]struct{}
 
@@ -674,6 +744,7 @@ func sshMaxAuthTries(value uint8) int {
 
 func (this *service) Close() (rErr error) {
 	defer func() { rErr = goerrors.Join(rErr, this.closeAudit(true)) }()
+	defer func() { rErr = goerrors.Join(rErr, this.closeRecording(true)) }()
 	defer common.KeepCloseError(&rErr, this.alternatives)
 	defer common.KeepCloseError(&rErr, this.imp)
 	defer common.KeepCloseError(&rErr, this.sessions)
@@ -681,6 +752,42 @@ func (this *service) Close() (rErr error) {
 	defer common.KeepCloseError(&rErr, this.environments)
 	defer common.KeepCloseError(&rErr, &this.houseKeeper)
 	return nil
+}
+
+func (this *service) closeRecording(flush bool) (result error) {
+	if flush && len(this.recordingDeliveryOrder) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), remoteAuditDeliveryShutdownTimeout)
+		var wait sync.WaitGroup
+		for _, delivery := range this.recordingDeliveryOrder {
+			wait.Add(1)
+			go func() {
+				defer wait.Done()
+				if err := delivery.Flush(ctx); err != nil {
+					this.logger().WithError(err).Warn("cannot flush remote Recording delivery while shutting down; artifacts remain local")
+				}
+			}()
+		}
+		wait.Wait()
+		cancel()
+	}
+	for _, delivery := range this.recordingDeliveryOrder {
+		result = goerrors.Join(result, delivery.Close())
+	}
+	for index := len(this.recordingTargetOrder) - 1; index >= 0; index-- {
+		name := this.recordingTargetOrder[index]
+		if this.recordingDeliveries[name] != nil {
+			continue
+		}
+		if err := this.recordingTargets[name].Close(); err != nil {
+			result = goerrors.Join(result, fmt.Errorf("cannot close Recording targets of auditlog %q: %w", name, err))
+		}
+	}
+	for _, name := range this.recordingRepositoryOrder {
+		if err := this.recordingRepositories[name].Close(); err != nil {
+			result = goerrors.Join(result, fmt.Errorf("cannot close Recording repository of auditlog %q: %w", name, err))
+		}
+	}
+	return result
 }
 
 func (this *service) closeAudit(flush bool) (result error) {
@@ -756,6 +863,13 @@ func validateAuditlogRuntimePaths(auditlogs configuration.Auditlogs) error {
 		}
 		configured.IdentityFile = identityFile
 		configured.Journal.Directory = journal
+		if configured.Recording.Enabled {
+			recording, err := sys.CanonicalPath(configured.Recording.Directory)
+			if err != nil {
+				return errors.Config.Newf("cannot resolve recording directory of auditlog %q: %w", configured.Name, err)
+			}
+			configured.Recording.Directory = recording
+		}
 		resolved = append(resolved, resolvedAuditlog{configured.Name, identityFile, journal})
 	}
 	for leftIndex, left := range resolved {
@@ -777,7 +891,118 @@ func validateAuditlogRuntimePaths(auditlogs configuration.Auditlogs) error {
 	return nil
 }
 
+func validateRecordingRuntimePathOverlaps(conf *configuration.Configuration, storage string) error {
+	for recordingIndex, recordingAuditlog := range conf.Auditlogs {
+		if !recordingAuditlog.Enabled || !recordingAuditlog.Recording.Enabled {
+			continue
+		}
+		recordingDirectory := recordingAuditlog.Recording.Directory
+		if storage != "" && runtimePathsOverlap(recordingDirectory, storage) {
+			return errors.Config.Newf("auditlog %q recording directory overlaps session storage", recordingAuditlog.Name)
+		}
+		for auditlogIndex, auditlog := range conf.Auditlogs {
+			if !auditlog.Enabled {
+				continue
+			}
+			if runtimePathsOverlap(recordingDirectory, auditlog.Journal.Directory) {
+				return errors.Config.Newf("auditlog %q recording directory overlaps auditlog %q journal", recordingAuditlog.Name, auditlog.Name)
+			}
+			if runtimePathsOverlap(recordingDirectory, auditlog.IdentityFile) {
+				return errors.Config.Newf("auditlog %q recording directory overlaps auditlog %q identity file", recordingAuditlog.Name, auditlog.Name)
+			}
+			if recordingIndex < auditlogIndex && auditlog.Recording.Enabled && runtimePathsOverlap(recordingDirectory, auditlog.Recording.Directory) {
+				return errors.Config.Newf("auditlog %q recording directory overlaps auditlog %q recording directory", recordingAuditlog.Name, auditlog.Name)
+			}
+			if !auditlog.EncryptionPublicKeyFile.IsZero() && runtimePathsOverlap(recordingDirectory, string(auditlog.EncryptionPublicKeyFile)) {
+				return errors.Config.Newf("auditlog %q recording directory overlaps auditlog %q encryption public key file", recordingAuditlog.Name, auditlog.Name)
+			}
+			for _, target := range auditlog.Targets {
+				sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
+				if !ok || sftp == nil {
+					continue
+				}
+				if !sftp.KnownHostsFile.IsZero() && runtimePathsOverlap(recordingDirectory, string(sftp.KnownHostsFile)) {
+					return errors.Config.Newf("auditlog %q recording directory overlaps auditlog %q SFTP target %q known hosts file", recordingAuditlog.Name, auditlog.Name, target.Name)
+				}
+				for index, identityFile := range sftp.IdentityFiles {
+					if runtimePathsOverlap(recordingDirectory, identityFile) {
+						return errors.Config.Newf("auditlog %q recording directory overlaps auditlog %q SFTP target %q identity file [%d]", recordingAuditlog.Name, auditlog.Name, target.Name, index)
+					}
+				}
+			}
+			if !auditlog.Recording.Enabled {
+				continue
+			}
+			for _, target := range auditlog.Recording.Targets.Configured() {
+				sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
+				if !ok || sftp == nil {
+					continue
+				}
+				if !sftp.KnownHostsFile.IsZero() && runtimePathsOverlap(recordingDirectory, string(sftp.KnownHostsFile)) {
+					return errors.Config.Newf("auditlog %q recording directory overlaps auditlog %q Recording SFTP target %q known hosts file", recordingAuditlog.Name, auditlog.Name, target.Name)
+				}
+				for index, identityFile := range sftp.IdentityFiles {
+					if runtimePathsOverlap(recordingDirectory, identityFile) {
+						return errors.Config.Newf("auditlog %q recording directory overlaps auditlog %q Recording SFTP target %q identity file [%d]", recordingAuditlog.Name, auditlog.Name, target.Name, index)
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func validateRuntimePaths(conf *configuration.Configuration) error {
+	candidate := cloneRuntimePathConfiguration(conf)
+	if err := validateRuntimePathCandidate(&candidate); err != nil {
+		return err
+	}
+	*conf = candidate
+	return nil
+}
+
+func cloneRuntimePathConfiguration(conf *configuration.Configuration) configuration.Configuration {
+	result := *conf
+	result.Auditlogs = slices.Clone(conf.Auditlogs)
+	for auditlogIndex := range result.Auditlogs {
+		result.Auditlogs[auditlogIndex].Targets = slices.Clone(conf.Auditlogs[auditlogIndex].Targets)
+		for targetIndex := range result.Auditlogs[auditlogIndex].Targets {
+			sftp, ok := conf.Auditlogs[auditlogIndex].Targets[targetIndex].V.(*configuration.AuditlogTargetSftp)
+			if !ok || sftp == nil {
+				continue
+			}
+			cloned := *sftp
+			cloned.IdentityFiles = slices.Clone(sftp.IdentityFiles)
+			result.Auditlogs[auditlogIndex].Targets[targetIndex].V = &cloned
+		}
+		configured := &conf.Auditlogs[auditlogIndex]
+		if !configured.Enabled || !configured.Recording.Enabled {
+			continue
+		}
+		configuredTargets := configured.Recording.Targets.Configured()
+		if len(configuredTargets) == 0 {
+			continue
+		}
+		resultTargets := &result.Auditlogs[auditlogIndex].Recording.Targets
+		resultTargets.Targets = slices.Clone(configuredTargets)
+		for targetIndex := range resultTargets.Targets {
+			sftp, ok := configuredTargets[targetIndex].V.(*configuration.AuditlogTargetSftp)
+			if !ok || sftp == nil {
+				continue
+			}
+			cloned := *sftp
+			cloned.IdentityFiles = slices.Clone(sftp.IdentityFiles)
+			resultTargets.Targets[targetIndex].V = &cloned
+		}
+	}
+	if sessionFs, ok := conf.Session.V.(*configuration.SessionFs); ok && sessionFs != nil {
+		cloned := *sessionFs
+		result.Session.V = &cloned
+	}
+	return result
+}
+
+func validateRuntimePathCandidate(conf *configuration.Configuration) error {
 	if err := validateAuditlogRuntimePaths(conf.Auditlogs); err != nil {
 		return err
 	}
@@ -832,8 +1057,30 @@ func validateRuntimePaths(conf *configuration.Configuration) error {
 				sftp.IdentityFiles[index] = resolved
 			}
 		}
+		configuredRecordingTargets := auditlog.Recording.Targets.Configured()
+		for targetIndex := range configuredRecordingTargets {
+			target := &configuredRecordingTargets[targetIndex]
+			sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
+			if !auditlog.Recording.Enabled || !ok || sftp == nil {
+				continue
+			}
+			if !sftp.KnownHostsFile.IsZero() {
+				resolved, err := canonicalRuntimePathOutsideSessionStorage(storage, string(sftp.KnownHostsFile), fmt.Sprintf("auditlog %q Recording SFTP target %q known hosts file", auditlog.Name, target.Name))
+				if err != nil {
+					return err
+				}
+				sftp.KnownHostsFile = crypto.KnownHostsFile(resolved)
+			}
+			for index, identityFile := range sftp.IdentityFiles {
+				resolved, err := canonicalRuntimePathOutsideSessionStorage(storage, identityFile, fmt.Sprintf("auditlog %q Recording SFTP target %q identity file [%d]", auditlog.Name, target.Name, index))
+				if err != nil {
+					return err
+				}
+				sftp.IdentityFiles[index] = resolved
+			}
+		}
 	}
-	return nil
+	return validateRecordingRuntimePathOverlaps(conf, storage)
 }
 
 func canonicalRuntimePathOutsideSessionStorage(storage, candidate, description string) (string, error) {
@@ -855,4 +1102,8 @@ func validateSessionStorageRuntimePath(storage, candidate, description string) e
 func runtimePathContains(path, directory string) bool {
 	relative, err := filepath.Rel(directory, path)
 	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+}
+
+func runtimePathsOverlap(left, right string) bool {
+	return runtimePathContains(left, right) || runtimePathContains(right, left)
 }

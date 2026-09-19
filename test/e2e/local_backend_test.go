@@ -290,6 +290,61 @@ func TestOpenSSHLocalBackend(t *testing.T) {
 	})
 }
 
+func TestOpenSSHLocalSessionRecording(t *testing.T) {
+	f, err := newFixture(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.prepareRuntime(false); errors.Is(err, errNoRuntime) {
+		t.Skip(err)
+	} else if err != nil {
+		t.Fatal(err)
+	}
+
+	auditIdentity := filepath.Join(f.tempDir, "audit_identity")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	result := runCommand(ctx, f.repoRoot, nil, f.bifroest, "key", "generate", "--identityFile", auditIdentity)
+	cancel()
+	if result.err != nil {
+		t.Fatalf("generate audit identity: %v\nstderr:\n%s", result.err, result.stderr)
+	}
+	producerID := recordingProducerID(t, auditIdentity)
+
+	if err := f.prepareLocalRecording(auditIdentity); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("runtime=%s container=%s port=%s producer=%s", f.runtimeCLI, f.containerID, f.port, producerID)
+
+	result = f.ssh(10*time.Second, f.clientKey, "e2e", nil, "/usr/local/bin/e2e-helper", "streams")
+	if code := exitCode(result.err); code != 23 {
+		t.Fatalf("recorded command exit code: got %d, want 23 (error: %v)\nstderr:\n%s", code, result.err, result.stderr)
+	}
+	if result.stdout != "stdout-e2e\n" || result.stderr != "stderr-e2e\n" {
+		t.Fatalf("recorded command output: stdout=%q stderr=%q", result.stdout, result.stderr)
+	}
+
+	result = f.runtime(5*time.Second, "exec", f.containerID, "/bin/sh", "-c", "find /var/lib/bifroest/recordings/sealed -maxdepth 1 -type f -name '*.cast.zst' -print")
+	if result.err != nil {
+		t.Fatalf("locate sealed recording: %v\nstderr:\n%s", result.err, result.stderr)
+	}
+	artifacts := strings.Fields(result.stdout)
+	if len(artifacts) != 1 {
+		t.Fatalf("sealed recordings: got %d, want 1: %q", len(artifacts), result.stdout)
+	}
+
+	result = f.runtime(12*time.Second, "stop", "--time", "5", f.containerID)
+	if result.err != nil {
+		t.Fatalf("stop recording container: %v\nstderr:\n%s", result.err, result.stderr)
+	}
+	artifact := filepath.Join(f.tempDir, "session.cast.zst")
+	result = f.runtime(10*time.Second, "cp", f.containerID+":"+artifacts[0], artifact)
+	if result.err != nil {
+		t.Fatalf("copy sealed recording: %v\nstderr:\n%s", result.err, result.stderr)
+	}
+
+	verifySessionRecordingArtifact(t, f, artifact, producerID)
+}
+
 func ensureContainerEchoServer(t *testing.T, f *fixture) {
 	t.Helper()
 	result := f.runtime(5*time.Second, "exec", "--detach", f.containerID, "/usr/local/bin/e2e-helper", "echo-server", "tcp", fmt.Sprintf("127.0.0.1:%d", echoPort))

@@ -12,6 +12,7 @@ Bifröst is available through the `bifroest` executable. Commands perform server
 * [`bifroest version`](version.md) prints version and build information.
 * [`bifroest key`](key/index.md) groups commands for generating and exchanging SSH trust material.
 * [`bifroest audit`](audit/index.md) groups commands for verifying and exporting audit journals.
+* [`bifroest recording`](recording/index.md) groups commands for inspecting session Recording artifacts.
 * [`bifroest service`](service/index.md) manages the Bifröst Windows service.
 * [`bifroest help`](help.md) shows help for the CLI or a selected command.
 

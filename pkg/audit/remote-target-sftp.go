@@ -138,6 +138,21 @@ func prepareSftpRemoteTarget(ctx context.Context, _ RemoteTargetScope, conf *con
 }
 
 func (this *sftpRemoteTarget) Publish(ctx context.Context, segment SealedSegment) error {
+	return this.publish(ctx, segment, nil)
+}
+
+func (this *sftpRemoteTarget) PublishArtifact(ctx context.Context, artifact RemoteArtifact) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := artifact.validateMetadata(ctx); err != nil {
+		return err
+	}
+	digest := artifact.Digest()
+	return this.publish(ctx, artifact, digest[:])
+}
+
+func (this *sftpRemoteTarget) publish(ctx context.Context, object remotePublishObject, expectedChecksum []byte) error {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 	if this.closed {
@@ -149,9 +164,13 @@ func (this *sftpRemoteTarget) Publish(ctx context.Context, segment SealedSegment
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	checksum, err := hashSftpSegment(ctx, segment.Content())
-	if err != nil {
-		return err
+	checksum := expectedChecksum
+	if checksum == nil {
+		var err error
+		checksum, err = hashSftpSegment(ctx, object.Content())
+		if err != nil {
+			return err
+		}
 	}
 	connection, err := this.dial(ctx)
 	if err != nil {
@@ -165,7 +184,7 @@ func (this *sftpRemoteTarget) Publish(ctx context.Context, segment SealedSegment
 		}
 	}
 	stopAbort := context.AfterFunc(ctx, func() { _ = connection.abort() })
-	result := this.publishConnected(ctx, connection.client, segment, checksum)
+	result := this.publishConnected(ctx, connection.client, object, checksum, expectedChecksum)
 	closeErr := connection.Close()
 	stopAbort()
 	if ctx.Err() != nil {
@@ -174,14 +193,14 @@ func (this *sftpRemoteTarget) Publish(ctx context.Context, segment SealedSegment
 	return goerrors.Join(result, classifySftpRemoteError(ctx, "close SFTP audit target connection", closeErr))
 }
 
-func (this *sftpRemoteTarget) publishConnected(ctx context.Context, client *gosftp.Client, segment SealedSegment, checksum []byte) error {
+func (this *sftpRemoteTarget) publishConnected(ctx context.Context, client *gosftp.Client, object remotePublishObject, checksum, temporaryChecksum []byte) error {
 	if err := ensureSftpDirectory(ctx, client, this.directory, false); err != nil {
 		return err
 	}
-	producerDirectory := path.Join(this.directory, segment.ProducerId().String())
-	finalPath := path.Join(producerDirectory, segment.FileName())
-	temporaryPath := sftpTemporaryPath(producerDirectory, finalPath)
-	exists, err := verifySftpObject(ctx, client, finalPath, segment.Size(), checksum, "existing audit segment")
+	producerDirectory := path.Join(this.directory, object.ProducerId().String())
+	finalPath := path.Join(producerDirectory, object.FileName())
+	temporaryPath := sftpTemporaryPath(producerDirectory, finalPath, temporaryChecksum)
+	exists, err := verifySftpObject(ctx, client, finalPath, object.Size(), checksum, "existing audit segment")
 	if err != nil {
 		return err
 	}
@@ -194,17 +213,17 @@ func (this *sftpRemoteTarget) publishConnected(ctx context.Context, client *gosf
 	if err := ensureSftpDirectory(ctx, client, producerDirectory, true); err != nil {
 		return err
 	}
-	temporaryExists, err := this.verifyTemporary(ctx, client, temporaryPath, segment.Size(), checksum)
+	temporaryExists, err := this.verifyTemporary(ctx, client, temporaryPath, object.Size(), checksum)
 	if err != nil {
 		return err
 	}
 	if !temporaryExists {
-		created, uploadErr := putSftpTemporary(ctx, client, temporaryPath, segment)
+		created, uploadErr := putSftpTemporary(ctx, client, temporaryPath, object)
 		if uploadErr != nil {
 			if created {
 				return goerrors.Join(uploadErr, this.cleanupTemporaryAfterFailure(ctx, temporaryPath))
 			}
-			temporaryExists, err = this.verifyTemporary(ctx, client, temporaryPath, segment.Size(), checksum)
+			temporaryExists, err = this.verifyTemporary(ctx, client, temporaryPath, object.Size(), checksum)
 			if err != nil {
 				return goerrors.Join(uploadErr, err)
 			}
@@ -212,7 +231,7 @@ func (this *sftpRemoteTarget) publishConnected(ctx context.Context, client *gosf
 				return uploadErr
 			}
 		} else {
-			temporaryExists, err = this.verifyTemporary(ctx, client, temporaryPath, segment.Size(), checksum)
+			temporaryExists, err = this.verifyTemporary(ctx, client, temporaryPath, object.Size(), checksum)
 			if err != nil {
 				return err
 			}
@@ -225,7 +244,7 @@ func (this *sftpRemoteTarget) publishConnected(ctx context.Context, client *gosf
 	if linkErr == nil {
 		return this.cleanupTemporaryAfterFailure(ctx, temporaryPath)
 	}
-	exists, verifyErr := verifySftpObject(ctx, client, finalPath, segment.Size(), checksum, "existing audit segment")
+	exists, verifyErr := verifySftpObject(ctx, client, finalPath, object.Size(), checksum, "existing audit segment")
 	cleanupErr := this.cleanupTemporaryAfterFailure(ctx, temporaryPath)
 	if verifyErr != nil {
 		return goerrors.Join(verifyErr, cleanupErr)
@@ -295,12 +314,20 @@ func ensureSftpDirectory(ctx context.Context, client *gosftp.Client, directory s
 	return ensureSftpDirectory(ctx, client, directory, true)
 }
 
-func sftpTemporaryPath(directory, finalPath string) string {
-	digest := sha256.Sum256(append([]byte(sftpTemporaryNameDomain), finalPath...))
-	return path.Join(directory, ".bifroest-upload-"+hex.EncodeToString(digest[:])+".tmp")
+func sftpTemporaryPath(directory, finalPath string, checksum []byte) string {
+	if checksum == nil {
+		digest := sha256.Sum256(append([]byte(sftpTemporaryNameDomain), finalPath...))
+		return path.Join(directory, ".bifroest-upload-"+hex.EncodeToString(digest[:])+".tmp")
+	}
+	hasher := sha256.New()
+	_, _ = hasher.Write([]byte(sftpTemporaryNameDomain))
+	_, _ = hasher.Write([]byte(finalPath))
+	_, _ = hasher.Write([]byte{0})
+	_, _ = hasher.Write(checksum)
+	return path.Join(directory, ".bifroest-upload-"+hex.EncodeToString(hasher.Sum(nil))+".tmp")
 }
 
-func putSftpTemporary(ctx context.Context, client *gosftp.Client, temporaryPath string, segment SealedSegment) (bool, error) {
+func putSftpTemporary(ctx context.Context, client *gosftp.Client, temporaryPath string, object remotePublishObject) (bool, error) {
 	file, err := client.OpenFile(temporaryPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
 	if err != nil {
 		return false, classifySftpRemoteError(ctx, "create temporary SFTP audit segment", err)
@@ -311,13 +338,13 @@ func putSftpTemporary(ctx context.Context, client *gosftp.Client, temporaryPath 
 			classifySftpRemoteError(ctx, "close temporary SFTP audit segment", file.Close()),
 		)
 	}
-	written, writeErr := io.Copy(file, contextReader{context: ctx, reader: segment.Content()})
+	written, writeErr := io.Copy(file, contextReader{context: ctx, reader: object.Content()})
 	closeErr := file.Close()
 	if writeErr != nil {
 		return true, goerrors.Join(classifySftpRemoteError(ctx, "upload temporary SFTP audit segment", writeErr), classifySftpRemoteError(ctx, "close temporary SFTP audit segment", closeErr))
 	}
-	if written != segment.Size() {
-		return true, goerrors.Join(errors.System.Newf("uploaded SFTP audit segment size is %d instead of %d", written, segment.Size()), classifySftpRemoteError(ctx, "close temporary SFTP audit segment", closeErr))
+	if written != object.Size() {
+		return true, goerrors.Join(errors.System.Newf("uploaded SFTP audit segment size is %d instead of %d", written, object.Size()), classifySftpRemoteError(ctx, "close temporary SFTP audit segment", closeErr))
 	}
 	return true, classifySftpRemoteError(ctx, "close temporary SFTP audit segment", closeErr)
 }

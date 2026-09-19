@@ -7,6 +7,8 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
+	goerrors "errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -449,7 +451,27 @@ func writeVerifierTestSegments(t *testing.T, directory string, identity *Identit
 		segment := append(content, sealFrame...)
 		segmentHash := hashJournalBytes(journalSegmentHashDomain, segment)
 		path := filepath.Join(directory, sealedJournalFileName(sequence, segmentHash))
-		require.NoError(t, os.WriteFile(path, segment, 0400))
+		err = func() (result error) {
+			file, openErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, journalFileMode)
+			if openErr != nil {
+				return openErr
+			}
+			defer func() {
+				result = goerrors.Join(result, file.Close())
+			}()
+			if err := secureJournalFile(path, file); err != nil {
+				return err
+			}
+			written, err := file.Write(segment)
+			if err != nil {
+				return err
+			}
+			if written != len(segment) {
+				return io.ErrShortWrite
+			}
+			return sealJournalFile(path, file)
+		}()
+		require.NoError(t, err)
 		previousSegmentHash = segmentHash
 		previousRecordHash = recordHash
 	}

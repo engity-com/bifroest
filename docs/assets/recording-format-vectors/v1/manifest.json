@@ -1,0 +1,71 @@
+{
+  "schema": "bifroest.recording-format-vectors/v1",
+  "signingSeedHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "becastRecipientSeedHex": "4242424242424242424242424242424242424242424242424242424242424242",
+  "artifacts": [
+    {
+      "path": "cast-v3.cast",
+      "format": "asciicast/v3",
+      "description": "Deterministic signed plain Cast",
+      "bytes": 1228,
+      "sha256": "7b727219a9cbb7a99944099e91da7c933ec6db54669efbf1c9c65d5fb5ef24cc",
+      "reproducible": true
+    },
+    {
+      "path": "cast-zstd-v1.cast",
+      "format": "asciicast/v3",
+      "description": "Plain Cast exported from the Cast Zstandard vector",
+      "bytes": 1339,
+      "sha256": "a098583c0f9ad98f0dc6e6993e035bb81ad728e07c492f093ff1cf95c04d9d30",
+      "reproducible": true
+    },
+    {
+      "path": "cast-zstd-v1.cast.zst",
+      "format": "cast-zstd/v1",
+      "description": "Deterministic signed Cast Zstandard container",
+      "bytes": 1900,
+      "sha256": "aa6b6376f21b09d5f0d08f0fcb9d2c63a16201b111d0e5c75c596ce0a4ee4c23",
+      "reproducible": true
+    },
+    {
+      "path": "becast-v1.cast",
+      "format": "asciicast/v3",
+      "description": "Plain Cast decrypted from the BECast vector",
+      "bytes": 2044,
+      "sha256": "18095ae299c592605854dedaa1d95407db3a93dfbad7bce0522925c4d83188bd",
+      "reproducible": true
+    },
+    {
+      "path": "becast-v1.becast",
+      "format": "becast/v1",
+      "description": "Frozen signed BECast decoder vector with randomized age ciphertext",
+      "bytes": 2741,
+      "sha256": "b41a9237139ea13212c0a6b7b730568e8d004c9824d0540a8eef60e0223b9739",
+      "reproducible": false
+    },
+    {
+      "path": "becast-header.unit",
+      "format": "becast/v1-header-unit",
+      "description": "Deterministic synthetic BECast header encoding vector",
+      "bytes": 241,
+      "sha256": "c0c9b2cea53c9ba944f8324b3c9712c4206dea511ed41479c3a4e7e847686b03",
+      "reproducible": true
+    },
+    {
+      "path": "becast-chunk.unit",
+      "format": "becast/v1-chunk-unit",
+      "description": "Deterministic synthetic BECast chunk encoding vector",
+      "bytes": 223,
+      "sha256": "12269be5c8391839c29bf0de4fa09657f10a1e29d38d2410b0373a56769e8950",
+      "reproducible": true
+    },
+    {
+      "path": "becast-seal.unit",
+      "format": "becast/v1-seal-unit",
+      "description": "Deterministic synthetic BECast seal encoding vector",
+      "bytes": 250,
+      "sha256": "c6fb52d78acdaed9b7da9b53f33bd8a1569861be98191c8afaba62d8f49b40f1",
+      "reproducible": true
+    }
+  ]
+}

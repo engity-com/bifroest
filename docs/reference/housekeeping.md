@@ -10,6 +10,8 @@ Bifröst periodically removes expired sessions and resources that are no longer 
 
 Session storage is deleted only after the session, environment, and authorization were disposed successfully. Transient or unknown errors retain the session for a later retry. Permanently unusable local authorization tokens can be removed during an audited disposal.
 
+Sealed session Recordings become eligible only after their retention period and every selected target's durable acknowledgement and success-audit marker. Housekeeping verifies and marks the signed receipt before deleting the artifact, then removes the receipt state. An interruption resumes this order without recreating deleted content. See [Recording remote delivery and retention](auditlog/remote-targets/index.md#delivery-behavior) and the [`housekeeping.recording.delete.*` events](auditlog/events.md#housekeepingrecordingdeletestarted).
+
 ## Removed flows
 
 Sessions whose flow no longer exists are preserved because Bifröst can no longer interpret their environment and authorization tokens safely. Their resources are excluded from automatic orphan cleanup, and the skip is logged as [`housekeeping.orphaned-session.cleanup.skipped`](auditlog/events.md#housekeeping-orphaned-session-cleanup-skipped).

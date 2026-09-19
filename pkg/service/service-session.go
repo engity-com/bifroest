@@ -4,6 +4,8 @@ import (
 	"context"
 	goerrors "errors"
 	"io"
+	"math"
+	"sync/atomic"
 	"time"
 
 	essh "github.com/engity-com/ssh-server-go"
@@ -19,7 +21,8 @@ import (
 )
 
 func (this *service) handleNewSshSession(srv *essh.Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx essh.Context) error {
-	plainContext, cancel := context.WithCancel(ctx)
+	request := &sshSessionRequest{}
+	plainContext, cancel := context.WithCancel(context.WithValue(ctx, sshSessionRequestContextKey{}, request))
 	sessionContext := &sshSessionContext{Context: ctx, plainContext: plainContext}
 	defer cancel()
 	return essh.DefaultSessionHandler(srv, conn, &sessionNewChannel{
@@ -27,6 +30,52 @@ func (this *service) handleNewSshSession(srv *essh.Server, conn *gossh.ServerCon
 		ctx:        plainContext,
 		cancel:     cancel,
 	}, sessionContext)
+}
+
+type sshSessionRequestKind uint32
+
+const (
+	sshSessionRequestUnknown sshSessionRequestKind = iota
+	sshSessionRequestShell
+	sshSessionRequestExec
+)
+
+type sshSessionRequestContextKey struct{}
+
+type sshSessionRequest struct {
+	kind atomic.Uint32
+}
+
+func (this *sshSessionRequest) record(requestType string) {
+	var kind sshSessionRequestKind
+	switch requestType {
+	case "shell":
+		kind = sshSessionRequestShell
+	case "exec":
+		kind = sshSessionRequestExec
+	default:
+		return
+	}
+	this.kind.CompareAndSwap(uint32(sshSessionRequestUnknown), uint32(kind))
+}
+
+func (this *service) onSessionRequest(sshSession essh.Session, requestType string) (bool, error) {
+	if request, ok := sshSession.Context().Value(sshSessionRequestContextKey{}).(*sshSessionRequest); ok {
+		request.record(requestType)
+	}
+	return true, nil
+}
+
+func sessionRequestedExec(sshSession essh.Session) bool {
+	if request, ok := sshSession.Context().Value(sshSessionRequestContextKey{}).(*sshSessionRequest); ok {
+		switch sshSessionRequestKind(request.kind.Load()) {
+		case sshSessionRequestShell:
+			return false
+		case sshSessionRequestExec:
+			return true
+		}
+	}
+	return sshSession.RawCommand() != ""
 }
 
 type sshSessionContext struct {
@@ -95,7 +144,8 @@ func (this *service) uncheckedExecuteSshSession(sshSess essh.Session, taskType e
 		Info("new remote session")
 
 	if exitCode, err := this.executeSession(sshSess, conn, taskType); err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		recordingFailure := isSessionRecordingFailure(err)
+		if !recordingFailure && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 			l.Info("session ended unexpectedly; maybe timeout")
 			if exitCode < 0 {
 				exitCode = 61
@@ -103,7 +153,7 @@ func (this *service) uncheckedExecuteSshSession(sshSess essh.Session, taskType e
 			return essh.NewSessionExitError(exitCode, "")
 		}
 		le := l.WithError(err)
-		if errors.IsType(err, errors.User) {
+		if !recordingFailure && errors.IsType(err, errors.User) {
 			le.Warn("cannot execute session")
 			if exitCode < 0 {
 				exitCode = 62
@@ -131,6 +181,18 @@ type sessionTaskAuditLifecycle struct {
 	startedAt   time.Time
 }
 
+type invalidSessionExitStatusError struct {
+	cause error
+}
+
+func (this *invalidSessionExitStatusError) Error() string { return this.cause.Error() }
+func (this *invalidSessionExitStatusError) Unwrap() error { return this.cause }
+
+func isInvalidSessionExitStatus(err error) bool {
+	var target *invalidSessionExitStatusError
+	return goerrors.As(err, &target)
+}
+
 func (this *sessionTaskAuditLifecycle) start(hasPty, agentForwarding, forcedCommand bool) error {
 	this.startedAt = time.Now()
 	event := this.service.authorizationAuditEvent(this.ctx, this.auth, audit.EventNameSessionTaskStarted, audit.EventDomainSession)
@@ -151,6 +213,9 @@ func (this *sessionTaskAuditLifecycle) complete(exitCode int, taskErr error) err
 		event.ExitCode = common.P(exitCode)
 	}
 	switch {
+	case isSessionRecordingFailure(taskErr):
+		event.Outcome = audit.EventOutcomeFailure
+		event.ErrorCategory = auditErrorCategory(taskErr)
 	case taskErr == nil && exitCode < 0 && errors.Is(this.ctx.Err(), context.DeadlineExceeded), errors.Is(taskErr, context.DeadlineExceeded):
 		event.Outcome = audit.EventOutcomeCanceled
 		event.Reason = audit.EventReasonDeadlineExceeded
@@ -189,12 +254,16 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 	if err != nil {
 		return failf(errors.System, "cannot generate audit operation ID: %w", err)
 	}
-	requestedTask := auditSessionTask(taskType, sshSess.RawCommand() != "")
+	requestedExec := sessionRequestedExec(sshSess)
+	requestedTask := auditSessionTask(taskType, requestedExec)
 	sshSess, forcedCommand := applyAuthorizedKeyPolicy(auth, sshSess)
+	executesCommand := requestedExec || forcedCommand
 	if forcedCommand {
 		taskType = environment.TaskTypeShell
 	}
-	_, _, hasPty := sshSess.Pty()
+	recordingTask := auditSessionTask(taskType, executesCommand)
+	pty, windows, hasPty := sshSess.Pty()
+	ptySnapshot := recordedSessionPty{pty: pty, windows: windows, hasPty: hasPty}
 	taskAudit := sessionTaskAuditLifecycle{
 		service:     this,
 		ctx:         sshSess.Context(),
@@ -210,6 +279,22 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 			rErr = goerrors.Join(rErr, recordErr)
 		}
 	}()
+	recorded, recordingLifecycle, err := this.beginSessionRecording(sshSess, ptySnapshot, conn, sess, operationId, auth.Flow(), recordingTask)
+	if err != nil {
+		return fail(markSessionRecordingFailure(err))
+	}
+	if recorded != nil {
+		sshSess = recorded
+		defer func() {
+			if recordingErr := recordingLifecycle.finish(exitCode, rErr); recordingErr != nil {
+				exitCode = -1
+				rErr = goerrors.Join(rErr, markSessionRecordingFailure(recordingErr))
+			}
+		}()
+		if err := recordingLifecycle.showNotice(sshSess, !executesCommand); err != nil {
+			return fail(err)
+		}
+	}
 	_, _, oldState, err := this.resolveAuthorizationAndSession(sshSess.Context())
 	if err != nil {
 		return fail(err)
@@ -235,7 +320,7 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 	}
 	defer common.KeepCloseError(&rErr, env)
 
-	if len(sshSess.RawCommand()) == 0 && taskType == environment.TaskTypeShell {
+	if !executesCommand && taskType == environment.TaskTypeShell {
 		banner, err := env.Banner(&req)
 		if err != nil {
 			return failf(errors.System, "cannot render banner: %w", err)
@@ -253,11 +338,20 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 		sshSession:         sshSess,
 		taskType:           taskType,
 	}
-	if exitCode, err := env.Run(&t); err != nil {
+	exitCode, err = env.Run(&t)
+	if err != nil {
 		return failf(errors.System, "run of environment failed: %w", err)
-	} else {
-		return exitCode, nil
 	}
+	if exitCode < 0 {
+		if contextErr := sshSess.Context().Err(); contextErr != nil {
+			return exitCode, contextErr
+		}
+		return fail(&invalidSessionExitStatusError{cause: errors.System.Newf("environment returned invalid exit code %d", exitCode)})
+	}
+	if uint64(exitCode) > math.MaxUint32 {
+		return fail(&invalidSessionExitStatusError{cause: errors.System.Newf("environment returned unsupported exit code %d", exitCode)})
+	}
+	return exitCode, nil
 }
 
 func auditSessionTask(taskType environment.TaskType, command bool) audit.SessionTask {

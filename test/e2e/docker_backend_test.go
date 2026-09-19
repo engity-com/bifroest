@@ -347,6 +347,36 @@ func TestOpenSSHDockerEnvironment(t *testing.T) {
 	})
 }
 
+func TestOpenSSHDockerEnvironmentSessionRecording(t *testing.T) {
+	f, err := newDockerEnvironmentRecordingFixture(t)
+	if errors.Is(err, errNoRuntime) {
+		t.Skip(err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	producerID := f.recordingProducerID
+	t.Logf("runtime=%s host=%s network=%s port=%s producer=%s", f.runtimeCLI, f.runtimeHost, f.networkID, f.port, producerID)
+
+	result := f.ssh(3*time.Minute, f.clientKey, "e2e", nil, "/usr/local/bin/e2e-helper", "streams")
+	if code := exitCode(result.err); code != 23 {
+		t.Fatalf("recorded command exit code: got %d, want 23 (error: %v)\nstdout:\n%s\nstderr:\n%s", code, result.err, result.stdout, result.stderr)
+	}
+	if result.stdout != "stdout-e2e\n" || result.stderr != "stderr-e2e\n" {
+		t.Fatalf("recorded command output: stdout=%q stderr=%q", result.stdout, result.stderr)
+	}
+	if err := f.waitForEnvironmentContainer(); err != nil {
+		t.Fatal(err)
+	}
+
+	artifact := sealedSessionRecordingArtifact(t, filepath.Join(f.tempDir, "recordings"))
+	stopHostBifroest(t, f)
+	if finalArtifact := sealedSessionRecordingArtifact(t, filepath.Join(f.tempDir, "recordings")); finalArtifact != artifact {
+		t.Fatalf("sealed recording changed during shutdown: before=%q after=%q", artifact, finalArtifact)
+	}
+	verifySessionRecordingArtifact(t, f, artifact, producerID)
+}
+
 type exportedAuditRecord struct {
 	Event exportedAuditEvent `json:"event"`
 }
@@ -536,6 +566,16 @@ func publicKeyBlob(t *testing.T, path string) string {
 
 func newDockerEnvironmentFixture(t *testing.T) (*fixture, error) {
 	t.Helper()
+	return newDockerEnvironmentFixtureWithRecording(t, false)
+}
+
+func newDockerEnvironmentRecordingFixture(t *testing.T) (*fixture, error) {
+	t.Helper()
+	return newDockerEnvironmentFixtureWithRecording(t, true)
+}
+
+func newDockerEnvironmentFixtureWithRecording(t *testing.T, recording bool) (*fixture, error) {
+	t.Helper()
 	f, err := newFixture(t)
 	if err != nil {
 		return f, err
@@ -578,13 +618,22 @@ func newDockerEnvironmentFixture(t *testing.T) (*fixture, error) {
 	if err := f.buildImage(contextDir); err != nil {
 		return f, err
 	}
-	if err := f.startHostBifroest(); err != nil {
+	if recording {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		result := runCommand(ctx, f.repoRoot, nil, f.bifroest, "key", "generate", "--identityFile", filepath.Join(f.tempDir, "auditlog-key"))
+		cancel()
+		if result.err != nil {
+			return f, fmt.Errorf("generate audit identity: %w\n%s", result.err, result.stderr)
+		}
+		f.recordingProducerID = recordingProducerID(t, filepath.Join(f.tempDir, "auditlog-key"))
+	}
+	if err := f.startHostBifroest(recording); err != nil {
 		return f, err
 	}
 	return f, nil
 }
 
-func (f *fixture) startHostBifroest() error {
+func (f *fixture) startHostBifroest(recording bool) error {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return fmt.Errorf("reserve SSH listen port: %w", err)
@@ -597,9 +646,20 @@ func (f *fixture) startHostBifroest() error {
 		return err
 	}
 	configurationPath := filepath.Join(f.tempDir, "docker-environment.yaml")
+	recordingConfiguration := ""
+	if recording {
+		recordingConfiguration = fmt.Sprintf(`    recording:
+      enabled: true
+      directory: %s
+      maximumSpoolBytes: 16777216
+      retainFor: 1h
+      targets: false
+`, yamlString(filepath.Join(f.tempDir, "recordings")))
+	}
 	configuration := fmt.Sprintf(dockerEnvironmentConfiguration,
 		yamlString(filepath.Join(f.tempDir, "auditlog-key")),
 		yamlString(filepath.Join(f.tempDir, "auditlog")),
+		recordingConfiguration,
 		yamlString(net.JoinHostPort(f.host, f.port)),
 		yamlString(f.hostKey),
 		yamlString(f.sessionStorage),
@@ -628,11 +688,7 @@ func (f *fixture) startHostBifroest() error {
 		return fmt.Errorf("start host Bifroest: %w", err)
 	}
 	if err := pollProcess(20*time.Second, f.bifroestProc, func() error {
-		conn, err := net.DialTimeout("tcp", net.JoinHostPort(f.host, f.port), 500*time.Millisecond)
-		if err != nil {
-			return err
-		}
-		return conn.Close()
+		return probeSSHIdentification(f.host, f.port)
 	}); err != nil {
 		return fmt.Errorf("wait for host Bifroest: %w", err)
 	}
@@ -700,6 +756,7 @@ auditlog:
     identityFile: %s
     journal:
       directory: %s
+%s
 ssh:
   addresses:
     - %s

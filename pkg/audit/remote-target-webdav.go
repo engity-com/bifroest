@@ -116,6 +116,21 @@ func newWebdavRemoteTargetWithClient(endpoint *url.URL, values configuration.Aud
 }
 
 func (this *webdavRemoteTarget) Publish(ctx context.Context, segment SealedSegment) error {
+	return this.publish(ctx, segment, nil)
+}
+
+func (this *webdavRemoteTarget) PublishArtifact(ctx context.Context, artifact RemoteArtifact) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := artifact.validateMetadata(ctx); err != nil {
+		return err
+	}
+	digest := artifact.Digest()
+	return this.publish(ctx, artifact, digest[:])
+}
+
+func (this *webdavRemoteTarget) publish(ctx context.Context, object remotePublishObject, expectedChecksum []byte) error {
 	this.mutex.RLock()
 	defer this.mutex.RUnlock()
 	if this.closed {
@@ -124,14 +139,18 @@ func (this *webdavRemoteTarget) Publish(ctx context.Context, segment SealedSegme
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	checksum, err := hashWebdavSegment(ctx, segment.Content())
-	if err != nil {
-		return err
+	checksum := expectedChecksum
+	if checksum == nil {
+		var err error
+		checksum, err = hashWebdavSegment(ctx, object.Content())
+		if err != nil {
+			return err
+		}
 	}
-	collectionURL := appendWebdavURL(this.endpoint, true, segment.ProducerId().String())
-	finalURL := appendWebdavURL(collectionURL, false, segment.FileName())
-	temporaryURL := webdavTemporaryURL(collectionURL, finalURL)
-	exists, err := this.verifyObject(ctx, finalURL, segment.Size(), checksum, "existing audit segment")
+	collectionURL := appendWebdavURL(this.endpoint, true, object.ProducerId().String())
+	finalURL := appendWebdavURL(collectionURL, false, object.FileName())
+	temporaryURL := webdavTemporaryURL(collectionURL, finalURL, expectedChecksum)
+	exists, err := this.verifyObject(ctx, finalURL, object.Size(), checksum, "existing audit segment")
 	if err != nil {
 		var conflict *webdavObjectConflictError
 		if goerrors.As(err, &conflict) {
@@ -145,15 +164,15 @@ func (this *webdavRemoteTarget) Publish(ctx context.Context, segment SealedSegme
 	if err := this.ensureCollection(ctx, collectionURL); err != nil {
 		return err
 	}
-	temporaryExists, err := this.verifyTemporary(ctx, temporaryURL, segment.Size(), checksum)
+	temporaryExists, err := this.verifyTemporary(ctx, temporaryURL, object.Size(), checksum)
 	if err != nil {
 		return err
 	}
 	if !temporaryExists {
-		cleanup, uploadErr := this.putTemporary(ctx, temporaryURL, segment)
+		cleanup, uploadErr := this.putTemporary(ctx, temporaryURL, object)
 		if uploadErr != nil {
 			if goerrors.Is(uploadErr, errWebdavTemporaryExists) {
-				temporaryExists, err = this.verifyTemporary(ctx, temporaryURL, segment.Size(), checksum)
+				temporaryExists, err = this.verifyTemporary(ctx, temporaryURL, object.Size(), checksum)
 				if err != nil {
 					return goerrors.Join(uploadErr, err)
 				}
@@ -166,7 +185,7 @@ func (this *webdavRemoteTarget) Publish(ctx context.Context, segment SealedSegme
 				return uploadErr
 			}
 		} else {
-			temporaryExists, err = this.verifyTemporary(ctx, temporaryURL, segment.Size(), checksum)
+			temporaryExists, err = this.verifyTemporary(ctx, temporaryURL, object.Size(), checksum)
 			if err != nil {
 				return err
 			}
@@ -175,7 +194,7 @@ func (this *webdavRemoteTarget) Publish(ctx context.Context, segment SealedSegme
 			}
 		}
 	}
-	return this.moveTemporary(ctx, temporaryURL, finalURL, segment.Size(), checksum)
+	return this.moveTemporary(ctx, temporaryURL, finalURL, object.Size(), checksum)
 }
 
 func hashWebdavSegment(ctx context.Context, content io.Reader) ([]byte, error) {
@@ -205,9 +224,17 @@ func appendWebdavURL(base *url.URL, trailingSlash bool, components ...string) *u
 	return &result
 }
 
-func webdavTemporaryURL(collectionURL, finalURL *url.URL) *url.URL {
-	digest := sha256.Sum256(append([]byte(webdavTemporaryNameDomain), finalURL.String()...))
-	return appendWebdavURL(collectionURL, false, ".bifroest-upload-"+hex.EncodeToString(digest[:])+".tmp")
+func webdavTemporaryURL(collectionURL, finalURL *url.URL, checksum []byte) *url.URL {
+	if checksum == nil {
+		digest := sha256.Sum256(append([]byte(webdavTemporaryNameDomain), finalURL.String()...))
+		return appendWebdavURL(collectionURL, false, ".bifroest-upload-"+hex.EncodeToString(digest[:])+".tmp")
+	}
+	hasher := sha256.New()
+	_, _ = hasher.Write([]byte(webdavTemporaryNameDomain))
+	_, _ = hasher.Write([]byte(finalURL.String()))
+	_, _ = hasher.Write([]byte{0})
+	_, _ = hasher.Write(checksum)
+	return appendWebdavURL(collectionURL, false, ".bifroest-upload-"+hex.EncodeToString(hasher.Sum(nil))+".tmp")
 }
 
 func (this *webdavRemoteTarget) newRequest(ctx context.Context, method string, target *url.URL, body io.Reader) (*http.Request, error) {
@@ -240,12 +267,12 @@ func (this *webdavRemoteTarget) ensureCollection(ctx context.Context, collection
 	return goerrors.Join(classifyWebdavRemoteError(ctx, "create audit segment collection", response.StatusCode, nil), closeErr)
 }
 
-func (this *webdavRemoteTarget) putTemporary(ctx context.Context, temporaryURL *url.URL, segment SealedSegment) (bool, error) {
-	request, err := this.newRequest(ctx, http.MethodPut, temporaryURL, segment.Content())
+func (this *webdavRemoteTarget) putTemporary(ctx context.Context, temporaryURL *url.URL, object remotePublishObject) (bool, error) {
+	request, err := this.newRequest(ctx, http.MethodPut, temporaryURL, object.Content())
 	if err != nil {
 		return false, err
 	}
-	request.ContentLength = segment.Size()
+	request.ContentLength = object.Size()
 	request.Header.Set("Content-Type", "application/octet-stream")
 	request.Header.Set("If-None-Match", "*")
 	response, err := this.client.Do(request)

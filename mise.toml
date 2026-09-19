@@ -44,15 +44,19 @@ run = "go test -race ./..."
 
 [tasks."test:e2e:local"]
 depends = ["build:var"]
-run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHLocalBackend$' ./test/e2e"
+run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHLocal(Backend|SessionRecording)$' ./test/e2e"
 
 [tasks."test:e2e:docker"]
 depends = ["build:var"]
-run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHDockerEnvironment$' ./test/e2e"
+run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHDockerEnvironment(SessionRecording)?$' ./test/e2e"
+
+[tasks."test:e2e:ssh"]
+depends = ["build:var"]
+run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHSSHEnvironmentSessionRecording$' ./test/e2e"
 
 [tasks."test:e2e:kubernetes"]
 depends = ["build:var"]
-run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHKubernetesEnvironment$' ./test/e2e"
+run = "go test -v -count=1 -failfast -tags=e2e -timeout=30m -run '^TestOpenSSHKubernetesEnvironment(SessionRecording)?$' ./test/e2e"
 
 [tasks."test:e2e:authorization"]
 depends = ["build:var"]
@@ -63,6 +67,7 @@ run = [
     { task = "test:e2e:authorization" },
     { task = "test:e2e:local" },
     { task = "test:e2e:docker" },
+    { task = "test:e2e:ssh" },
     { task = "test:e2e:kubernetes" }
 ]
 

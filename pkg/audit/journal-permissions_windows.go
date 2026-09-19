@@ -21,8 +21,25 @@ func secureJournalDirectory(path string, _ os.FileInfo) error {
 	return secureJournalPath(path)
 }
 
-func secureJournalFile(path string, _ *os.File) error {
+func secureJournalFile(path string, file *os.File) error {
+	if file == nil {
+		return errors.System.Newf("cannot inspect nil audit journal file %q", path)
+	}
+	if err := requireSingleJournalHardLink(path, file); err != nil {
+		return err
+	}
 	return secureJournalPath(path)
+}
+
+func requireSingleJournalHardLink(path string, file *os.File) error {
+	var information windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(windows.Handle(file.Fd()), &information); err != nil {
+		return errors.System.Newf("cannot inspect link count of audit journal file %q: %w", path, err)
+	}
+	if information.NumberOfLinks != 1 {
+		return errors.Config.Newf("audit journal file %q has %d hard links instead of one", path, information.NumberOfLinks)
+	}
+	return nil
 }
 
 func secureJournalPath(path string) error {
@@ -83,6 +100,9 @@ func makeActiveJournalWritable(path string) error {
 }
 
 func sealJournalFile(path string, file *os.File) error {
+	if err := requireSingleJournalHardLink(path, file); err != nil {
+		return err
+	}
 	if err := file.Sync(); err != nil {
 		return errors.System.Newf("cannot flush sealed audit segment %q: %w", path, err)
 	}
@@ -93,12 +113,17 @@ func sealJournalFile(path string, file *os.File) error {
 }
 
 func openSealedJournal(path string) (*os.File, error) {
-	if err := secureJournalPathWithAccess(path, sealedJournalWindowsAccess); err != nil {
-		return nil, err
-	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, errors.System.Newf("cannot open sealed audit segment %q: %w", path, err)
+	}
+	if err := requireSingleJournalHardLink(path, file); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if err := secureJournalPathWithAccess(path, sealedJournalWindowsAccess); err != nil {
+		_ = file.Close()
+		return nil, err
 	}
 	info, err := file.Stat()
 	if err != nil {
@@ -108,6 +133,14 @@ func openSealedJournal(path string) (*os.File, error) {
 	if info.Mode().Perm()&0200 != 0 {
 		_ = file.Close()
 		return nil, errors.Config.Newf("sealed audit segment %q is writable", path)
+	}
+	pathInfo, err := os.Lstat(path)
+	if err != nil || !pathInfo.Mode().IsRegular() || !os.SameFile(info, pathInfo) {
+		_ = file.Close()
+		if err != nil {
+			return nil, errors.System.Newf("cannot inspect sealed audit segment path %q: %w", path, err)
+		}
+		return nil, errors.System.Newf("sealed audit segment %q changed while opening", path)
 	}
 	return file, nil
 }

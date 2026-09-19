@@ -28,6 +28,7 @@ type Auditlog struct {
 	EncryptionPublicKey     crypto.PublicKeys     `yaml:"encryptionPublicKey,omitempty"`
 	EncryptionPublicKeyFile crypto.PublicKeysFile `yaml:"encryptionPublicKeyFile,omitempty"`
 	Journal                 AuditlogJournal       `yaml:"journal,omitempty"`
+	Recording               AuditlogRecording     `yaml:"recording,omitempty"`
 	Targets                 AuditlogTargets       `yaml:"targets,omitempty"`
 }
 
@@ -39,6 +40,7 @@ func (this *Auditlog) SetDefaults() error {
 		noopSetDefault[Auditlog]("encryptionPublicKey"),
 		noopSetDefault[Auditlog]("encryptionPublicKeyFile"),
 		func(v *Auditlog) (string, defaulter) { return "journal", &v.Journal },
+		func(v *Auditlog) (string, defaulter) { return "recording", &v.Recording },
 		func(v *Auditlog) (string, defaulter) { return "targets", &v.Targets },
 	)
 }
@@ -51,6 +53,7 @@ func (this *Auditlog) Trim() error {
 		func(v *Auditlog) (string, trimmer) { return "encryptionPublicKey", &v.EncryptionPublicKey },
 		func(v *Auditlog) (string, trimmer) { return "encryptionPublicKeyFile", &v.EncryptionPublicKeyFile },
 		func(v *Auditlog) (string, trimmer) { return "journal", &v.Journal },
+		func(v *Auditlog) (string, trimmer) { return "recording", &v.Recording },
 		func(v *Auditlog) (string, trimmer) { return "targets", &v.Targets },
 	)
 }
@@ -59,7 +62,7 @@ func (this *Auditlog) Validate() error {
 	if !this.EncryptionPublicKey.IsZero() && !this.EncryptionPublicKeyFile.IsZero() {
 		return fmt.Errorf("[encryptionPublicKey] cannot be combined with [encryptionPublicKeyFile]")
 	}
-	return validate(this,
+	if err := validate(this,
 		func(v *Auditlog) (string, validator) { return "name", &v.Name },
 		noopValidate[Auditlog]("enabled"),
 		notEmptyStringValidate("identityFile", func(v *Auditlog) *string { return &v.IdentityFile }),
@@ -68,13 +71,20 @@ func (this *Auditlog) Validate() error {
 		},
 		noopValidate[Auditlog]("encryptionPublicKeyFile"),
 		func(v *Auditlog) (string, validator) { return "journal", &v.Journal },
+		func(v *Auditlog) (string, validator) { return "recording", &v.Recording },
 		func(v *Auditlog) (string, validator) { return "targets", &v.Targets },
-	)
+	); err != nil {
+		return err
+	}
+	if this.Recording.Enabled && !this.Enabled {
+		return fmt.Errorf("[recording][enabled] requires [enabled] to be true")
+	}
+	return nil
 }
 
 func (this *Auditlog) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *Auditlog, node *yaml.Node) error {
-		if err := rejectUnknownAuditlogFields(node, "name", "enabled", "identityFile", "encryptionPublicKey", "encryptionPublicKeyFile", "journal", "targets"); err != nil {
+		if err := rejectUnknownAuditlogFields(node, "name", "enabled", "identityFile", "encryptionPublicKey", "encryptionPublicKeyFile", "journal", "recording", "targets"); err != nil {
 			return err
 		}
 		type raw Auditlog
@@ -103,6 +113,7 @@ func (this Auditlog) isEqualTo(other *Auditlog) bool {
 		this.EncryptionPublicKey.IsEqualTo(other.EncryptionPublicKey) &&
 		this.EncryptionPublicKeyFile.IsEqualTo(other.EncryptionPublicKeyFile) &&
 		isEqual(&this.Journal, &other.Journal) &&
+		isEqual(&this.Recording, &other.Recording) &&
 		isEqual(&this.Targets, &other.Targets)
 }
 
@@ -209,7 +220,65 @@ func (this Auditlogs) Validate() error {
 			}
 		}
 	}
+	for recordingIndex, recordingAuditlog := range this {
+		if !recordingAuditlog.Enabled || !recordingAuditlog.Recording.Enabled {
+			continue
+		}
+		recordingDirectory := recordingAuditlog.Recording.Directory
+		for auditlogIndex, auditlog := range this {
+			if !auditlog.Enabled {
+				continue
+			}
+			if pathsOverlap(recordingDirectory, auditlog.Journal.Directory) {
+				return fmt.Errorf("[%d][recording][directory] overlaps enabled auditlog [%d][journal][directory]", recordingIndex, auditlogIndex)
+			}
+			if pathsOverlap(recordingDirectory, auditlog.IdentityFile) {
+				return fmt.Errorf("[%d][recording][directory] overlaps enabled auditlog [%d][identityFile]", recordingIndex, auditlogIndex)
+			}
+			if recordingIndex < auditlogIndex && auditlog.Recording.Enabled && pathsOverlap(recordingDirectory, auditlog.Recording.Directory) {
+				return fmt.Errorf("[%d][recording][directory] overlaps enabled auditlog [%d][recording][directory]", auditlogIndex, recordingIndex)
+			}
+			if !auditlog.EncryptionPublicKeyFile.IsZero() && pathsOverlap(recordingDirectory, string(auditlog.EncryptionPublicKeyFile)) {
+				return fmt.Errorf("[%d][recording][directory] overlaps enabled auditlog [%d][encryptionPublicKeyFile]", recordingIndex, auditlogIndex)
+			}
+			for targetIndex, target := range auditlog.Targets {
+				sftp, ok := target.V.(*AuditlogTargetSftp)
+				if !ok || sftp == nil {
+					continue
+				}
+				if !sftp.KnownHostsFile.IsZero() && pathsOverlap(recordingDirectory, string(sftp.KnownHostsFile)) {
+					return fmt.Errorf("[%d][recording][directory] overlaps enabled auditlog [%d][targets][%d][knownHostsFile]", recordingIndex, auditlogIndex, targetIndex)
+				}
+				for identityIndex, identityFile := range sftp.IdentityFiles {
+					if pathsOverlap(recordingDirectory, identityFile) {
+						return fmt.Errorf("[%d][recording][directory] overlaps enabled auditlog [%d][targets][%d][identityFiles][%d]", recordingIndex, auditlogIndex, targetIndex, identityIndex)
+					}
+				}
+			}
+			if !auditlog.Recording.Enabled {
+				continue
+			}
+			for targetIndex, target := range auditlog.Recording.Targets.Configured() {
+				sftp, ok := target.V.(*AuditlogTargetSftp)
+				if !ok || sftp == nil {
+					continue
+				}
+				if !sftp.KnownHostsFile.IsZero() && pathsOverlap(recordingDirectory, string(sftp.KnownHostsFile)) {
+					return fmt.Errorf("[%d][recording][directory] overlaps enabled auditlog [%d][recording][targets][%d][knownHostsFile]", recordingIndex, auditlogIndex, targetIndex)
+				}
+				for identityIndex, identityFile := range sftp.IdentityFiles {
+					if pathsOverlap(recordingDirectory, identityFile) {
+						return fmt.Errorf("[%d][recording][directory] overlaps enabled auditlog [%d][recording][targets][%d][identityFiles][%d]", recordingIndex, auditlogIndex, targetIndex, identityIndex)
+					}
+				}
+			}
+		}
+	}
 	return nil
+}
+
+func pathsOverlap(left, right string) bool {
+	return pathContains(left, right) || pathContains(right, left)
 }
 
 func pathContains(path, directory string) bool {

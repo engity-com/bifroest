@@ -19,6 +19,9 @@ Every event has a `name`. All other fields are optional and are present only whe
 | `connectionId` | UUID correlating events from one SSH connection. |
 | `sessionId` | UUID of the persistent Bifröst session, when one is available. |
 | `operationId` | UUID correlating the events belonging to one task, forwarding operation, or housekeeping action. |
+| `recordingId` | Canonical UUIDv4 identifying one session recording. |
+| `recordingDigest` | Lowercase SHA-256 digest of the canonical Cast content, cryptographically bound by the recording signature. It is not a hash of the outer `.cast.zst` or `.becast` container file. |
+| `target` | Configured audit-log target name for a Recording delivery transition. It contains no destination address, credentials, or remote path. |
 | `authenticationMethod` | `public-key`, `password`, or `keyboard-interactive`. |
 | `authenticationPhase` | `candidate` before public-key possession is proven or `verified` after certificate-signature verification. |
 | `authorizationKind` | Authorization implementation that produced the result, for example `simple` or `local`. |
@@ -112,6 +115,45 @@ Outcomes and reasons:
 * `denied` with `authorized-key-policy`: the active authorized-key policy forbids agent forwarding.
 
 The event does not contain agent messages, keys, or socket paths.
+
+#### `session.recording.started`
+
+Written after the initial recording content and recovery head are durable, but before Bifröst writes the recording notice, environment banner, or target output. SFTP and direct forwarding never produce recording lifecycle events. If this audit event reports an error, target execution does not start, Bifröst finalizes the recording as failed, and best-effort writes `session.recording.failed` with reason `audit-write`. Because an audit backend can report an error after committing a record, both events can be present.
+
+Fields: `domain` is `session`; `flow`, `connectionId`, `sessionId`, `operationId`, `recordingId`, and `sessionTask` correlate the recording with its shell or exec task. `pty` records whether the session has a PTY. `outcome` is omitted.
+
+#### `session.recording.completed`
+
+Written only after a completed recording has been sealed, synchronized, verified, and atomically published. The correlation fields match `session.recording.started`. `outcome` is `success`; `durationMillis`, `exitCode`, and `recordingDigest` describe the immutable result. A failure to write this event does not alter the already published completed artifact, but the SSH operation still fails closed.
+
+#### `session.recording.incomplete`
+
+Written only after an incomplete recording has been sealed, synchronized, verified, and atomically published. The correlation fields are the same as for `session.recording.started`; `durationMillis` and `recordingDigest` describe the immutable result.
+
+Outcomes and reasons:
+
+* `canceled` with `context-canceled`: the SSH task context was canceled.
+* `canceled` with `deadline-exceeded`: the SSH task deadline expired.
+* `failure` with `invalid-exit-code`: execution returned no valid exit code.
+* `failure` with `session-error`: another task error prevented normal completion; `errorCategory` classifies it.
+
+If the Bifröst process terminates with an unsealed active recording, startup recovery seals and publishes that artifact as incomplete. Recovery does not synthesize an audit event because encrypted BECast metadata cannot be reconstructed without the external recipient's private key. A `session.recording.started` event without a final event therefore indicates either a process interruption or a failed final audit write. The signed artifact remains authoritative for its status and digest; it may already be completed or failed if the interruption happened after sealing.
+
+#### `session.recording.failed`
+
+Written when recording creation, capture, checkpointing, final publication, or the required start audit write fails. The correlation fields are the same as for `session.recording.started`. `outcome` is `failure`; `reason` is `recording-create`, `recording-capture`, `recording-seal`, or `audit-write`, and `errorCategory` classifies the error. `recordingDigest` is present only when a failed artifact was nevertheless sealed and published successfully. A create failure has no preceding `session.recording.started` event.
+
+#### `session.recording.delivery.failed`
+
+Written after the first failed remote-delivery attempt for one Recording and target. `domain` is `session`; `outcome` is `failure`; `recordingId`, `target`, and `operationId` identify the delivery episode; and `errorCategory` classifies the failure. Flow, Connection, Session, file-name, path, endpoint, and digest fields are intentionally omitted because they cannot all be reconstructed safely after restart and are not required to identify the retained artifact.
+
+The failure intent and operation ID are stored in the signed delivery receipt before the event is attempted. Further publication attempts are blocked until the event has been recorded and its durable receipt marker has been written. Later failures in the same delivery episode do not produce more events, including after restart.
+
+#### `session.recording.delivery.succeeded`
+
+Written after a target has accepted the exact artifact and its signed local acknowledgement is durable. `domain` is `session`; `outcome` is `success`; and `recordingId`, `target`, and `operationId` match the delivery episode and its optional `session.recording.delivery.failed` event. A direct success has no preceding failure event.
+
+The signed receipt retains an outbox marker until this event is recorded. Startup resumes a pending success event without publishing the artifact again. Flush and retention eligibility require the durable success-audit marker in addition to the target acknowledgement. A crash after an audit record commits but before its receipt marker commits can produce an at-least-once duplicate after restart; it cannot silently discard the pending transition.
 
 #### `session.task.started`
 
@@ -236,6 +278,18 @@ Written after the persistent session deletion returns. Its `flow`, `sessionId`, 
 
 Fields: `domain` is `housekeeping`; `durationMillis` measures the deletion attempt. `outcome` is `success` only when deletion completed without an error. On `failure`, `errorCategory` classifies the error.
 
+#### `housekeeping.recording.delete.started`
+
+Written before housekeeping deletes a sealed session Recording whose configured retention period has elapsed. If this event cannot be recorded, deletion is not attempted.
+
+Fields: `domain` is `housekeeping`; `recordingId` and `operationId` identify the deletion attempt. `reason` is `retention-elapsed`. `outcome` is omitted. The event contains no Recording file name, path, digest, or content.
+
+#### `housekeeping.recording.delete.completed`
+
+Written after the Recording artifact and its signed delivery receipt have been processed. Its `recordingId`, `operationId`, and `reason` match the corresponding `housekeeping.recording.delete.started` event.
+
+Fields: `domain` is `housekeeping`; `durationMillis` measures the deletion attempt. `outcome` is `success` only when the artifact was durably removed before its receipt state, or when a previously removed artifact's remaining receipt state was successfully removed during retry. On `failure`, `errorCategory` classifies the error, and housekeeping preserves the receipt whenever artifact deletion did not complete.
+
 #### `housekeeping.orphaned-session.cleanup.skipped` {: #housekeeping-orphaned-session-cleanup-skipped }
 
 Written when housekeeping encounters a persisted session whose flow is no longer present in the running configuration. The implementations needed to interpret and safely dispose its environment and authorization tokens are unavailable. Housekeeping therefore preserves the complete session, including expired or already disposed sessions beyond their retention period, for operator recovery. It does not read or modify either token, dispose the session or environment, or delete session storage.
@@ -266,4 +320,4 @@ Bucket exhaustion and an intentionally preserved journal reserve are not recordi
 
 If recording a completion event fails after an action has already happened, the action cannot be rolled back. The handler reports the audit failure and closes the causing connection. A housekeeping start-record failure prevents that housekeeping action. Failure to write an orphaned-session skip event is reported after attempting every enabled audit log; the session remains untouched and housekeeping continues with later sessions. Housekeeping failures do not close unrelated SSH connections or stop the service.
 
-Remote-target delivery remains asynchronous. A remote outage does not change the result of local recording or an SSH action because the authoritative event remains in the local journal for later delivery.
+Remote-target delivery remains asynchronous. A remote outage does not change the result of local recording or an SSH action because the sealed artifact remains in the local spool for later delivery. Delivery-transition audit failures block further work for that Recording and target but do not close unrelated SSH connections or stop independent targets.
