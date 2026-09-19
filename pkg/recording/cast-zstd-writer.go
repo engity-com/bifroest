@@ -303,7 +303,7 @@ func (this *castZstdSink) Write(value []byte) (int, error) {
 	if _, err := this.buffer.Write(value); err != nil {
 		return 0, this.poison(err)
 	}
-	_, _ = this.streamHash.Write(value)
+	_, _ = this.streamHash.Write(value) // lgtm[go/weak-sensitive-data-hashing] SHA-256 provides format integrity, not password hashing.
 	if this.initialLines > 0 {
 		this.initialLines--
 		this.pendingGroup = this.initialLines > 0
@@ -339,12 +339,12 @@ func (this *castZstdSink) flush(final bool) error {
 	if recordingCountExceedsLimit(this.castBytes, uint64(this.buffer.Len()), 0, this.limits.maximumCastBytes) {
 		return this.poison(errors.System.Newf("Cast Zstandard Cast size exceeds maximum"))
 	}
-	if this.buffer.Len() > MaximumCastZstdChunkSize || this.buffer.Len() > math.MaxUint32 {
+	if this.buffer.Len() > MaximumCastZstdChunkSize || uint64(this.buffer.Len()) > math.MaxUint32 {
 		return this.poison(errors.System.Newf("cast Zstandard plaintext chunk exceeds %d bytes", MaximumCastZstdChunkSize))
 	}
 	plaintext := this.buffer.Bytes()
 	frame := this.encoder.EncodeAll(plaintext, nil)
-	if len(frame) == 0 || len(frame) > MaximumCastZstdFrameSize || len(frame) > math.MaxUint32 {
+	if len(frame) == 0 || len(frame) > MaximumCastZstdFrameSize || uint64(len(frame)) > math.MaxUint32 {
 		return this.poison(errors.System.Newf("cast Zstandard frame exceeds %d bytes", MaximumCastZstdFrameSize))
 	}
 	frameHash := hashDomainValues(castZstdFrameHashDomain, frame)

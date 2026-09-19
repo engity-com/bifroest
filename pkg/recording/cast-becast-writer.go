@@ -443,7 +443,7 @@ func (this *beCastSink) flush(final bool, finalDigest *CastDigest, finalStatus u
 			return this.poison(err)
 		}
 	}
-	if this.buffer.Len() > MaximumBECastChunkPlaintext || this.buffer.Len() > math.MaxUint32 {
+	if this.buffer.Len() > MaximumBECastChunkPlaintext || uint64(this.buffer.Len()) > math.MaxUint32 {
 		return this.poison(errors.System.Newf("BECast plaintext chunk exceeds %d bytes", MaximumBECastChunkPlaintext))
 	}
 	if recordingCountExceedsLimit(this.castBytes, uint64(this.buffer.Len()), 0, this.limits.maximumCastBytes) {
@@ -451,7 +451,7 @@ func (this *beCastSink) flush(final bool, finalDigest *CastDigest, finalStatus u
 	}
 	plaintext := this.buffer.Bytes()
 	frame := this.encoder.EncodeAll(plaintext, nil)
-	if len(frame) == 0 || len(frame) > MaximumBECastCiphertext || len(frame) > math.MaxUint32 {
+	if len(frame) == 0 || len(frame) > MaximumBECastCiphertext || uint64(len(frame)) > math.MaxUint32 {
 		return this.poison(errors.System.Newf("BECast compressed frame exceeds %d bytes", MaximumBECastCiphertext))
 	}
 
@@ -471,7 +471,7 @@ func (this *beCastSink) flush(final bool, finalDigest *CastDigest, finalStatus u
 	if closeErr != nil {
 		return this.poison(errors.System.Newf("cannot finish BECast chunk encryption: %w", closeErr))
 	}
-	if ciphertext.Len() == 0 || ciphertext.Len() > MaximumBECastCiphertext || ciphertext.Len() > math.MaxUint32 {
+	if ciphertext.Len() == 0 || ciphertext.Len() > MaximumBECastCiphertext || uint64(ciphertext.Len()) > math.MaxUint32 {
 		return this.poison(errors.System.Newf("BECast ciphertext exceeds %d bytes", MaximumBECastCiphertext))
 	}
 	if this.chunkCount == math.MaxUint64 {

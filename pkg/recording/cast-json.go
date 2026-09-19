@@ -8,7 +8,7 @@ import (
 const lowerHex = "0123456789abcdef"
 
 func marshalCastEventString(value string) []byte {
-	result := make([]byte, 0, len(value)+2)
+	result := make([]byte, 0, len(value))
 	result = append(result, '"')
 	for _, character := range value {
 		switch character {

@@ -324,7 +324,7 @@ func planRecoveredBECast(identity *audit.Identity, recipient *crypto.AgeSshRecip
 		}
 		suffix := append(append(resultLine, []byte(castSignatureCommentPrefix)...), signaturePayload...)
 		suffix = append(suffix, '\n')
-		if len(suffix) == 0 || len(suffix) > MaximumBECastChunkPlaintext || len(suffix) > math.MaxUint32 {
+		if len(suffix) == 0 || len(suffix) > MaximumBECastChunkPlaintext || uint64(len(suffix)) > math.MaxUint32 {
 			return beCastRecoveryPlan{}, errors.System.Newf("recovered BECast final plaintext exceeds %d bytes", MaximumBECastChunkPlaintext)
 		}
 		if uint64(len(suffix)) > uint64(effectiveMaximumCastBytes(options.MaximumCastBytes))-castBytes {
@@ -426,7 +426,7 @@ func encodeBECastRecoveryCiphertext(recipient *crypto.AgeSshRecipient, plaintext
 	}
 	frame := encoder.EncodeAll(plaintext, nil)
 	encoder.Close()
-	if len(frame) == 0 || len(frame) > MaximumBECastCiphertext || len(frame) > math.MaxUint32 {
+	if len(frame) == 0 || len(frame) > MaximumBECastCiphertext || uint64(len(frame)) > math.MaxUint32 {
 		return nil, errors.System.Newf("BECast recovery compressed frame exceeds %d bytes", MaximumBECastCiphertext)
 	}
 	var ciphertext bytes.Buffer
@@ -445,7 +445,7 @@ func encodeBECastRecoveryCiphertext(recipient *crypto.AgeSshRecipient, plaintext
 	if closeErr != nil {
 		return nil, errors.System.Newf("cannot finish BECast recovery encryption: %w", closeErr)
 	}
-	if ciphertext.Len() == 0 || ciphertext.Len() > MaximumBECastCiphertext || ciphertext.Len() > math.MaxUint32 {
+	if ciphertext.Len() == 0 || ciphertext.Len() > MaximumBECastCiphertext || uint64(ciphertext.Len()) > math.MaxUint32 {
 		return nil, errors.System.Newf("BECast recovery ciphertext exceeds %d bytes", MaximumBECastCiphertext)
 	}
 	return ciphertext.Bytes(), nil

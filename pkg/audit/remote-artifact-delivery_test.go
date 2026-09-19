@@ -956,10 +956,11 @@ func (this *remoteArtifactDeliveryTestSource) ListSealedArtifactNames(ctx contex
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	this.listCalls.Add(1)
 	this.mutex.Lock()
-	defer this.mutex.Unlock()
-	return append([]string(nil), this.names...), nil
+	names := append([]string(nil), this.names...)
+	this.mutex.Unlock()
+	this.listCalls.Add(1)
+	return names, nil
 }
 
 func (this *remoteArtifactDeliveryTestSource) OpenSealedArtifact(ctx context.Context, name string) (RemoteArtifactHandle, error) {
