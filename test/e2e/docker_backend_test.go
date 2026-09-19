@@ -355,7 +355,7 @@ func TestOpenSSHDockerEnvironmentSessionRecording(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	producerID := recordingProducerID(t, filepath.Join(f.tempDir, "auditlog-key"))
+	producerID := f.recordingProducerID
 	t.Logf("runtime=%s host=%s network=%s port=%s producer=%s", f.runtimeCLI, f.runtimeHost, f.networkID, f.port, producerID)
 
 	result := f.ssh(3*time.Minute, f.clientKey, "e2e", nil, "/usr/local/bin/e2e-helper", "streams")
@@ -369,37 +369,10 @@ func TestOpenSSHDockerEnvironmentSessionRecording(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var artifact string
-	if err := poll(5*time.Second, func() error {
-		entries, err := os.ReadDir(filepath.Join(f.tempDir, "recordings", "sealed"))
-		if err != nil {
-			return err
-		}
-		artifacts := make([]string, 0, len(entries))
-		for _, entry := range entries {
-			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".cast.zst") {
-				artifacts = append(artifacts, entry.Name())
-			}
-		}
-		if len(artifacts) != 1 {
-			return fmt.Errorf("got %d sealed recordings, want one: %v", len(artifacts), artifacts)
-		}
-		artifact = filepath.Join(f.tempDir, "recordings", "sealed", artifacts[0])
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if f.bifroestProc == nil {
-		t.Fatal("Bifroest process is not running")
-	}
-	if exited, err := f.bifroestProc.collect(); exited {
-		t.Fatalf("Bifroest exited before recording verification: %v", err)
-	}
-	if err := f.bifroestProc.cmd.Process.Signal(syscall.SIGTERM); err != nil {
-		t.Fatalf("signal Bifroest: %v", err)
-	}
-	if err := f.bifroestProc.wait(10 * time.Second); err != nil {
-		t.Fatalf("wait for graceful Bifroest shutdown: %v\nstdout:\n%s\nstderr:\n%s", err, f.bifroestProc.stdout.String(), f.bifroestProc.stderr.String())
+	artifact := sealedSessionRecordingArtifact(t, filepath.Join(f.tempDir, "recordings"))
+	stopHostBifroest(t, f)
+	if finalArtifact := sealedSessionRecordingArtifact(t, filepath.Join(f.tempDir, "recordings")); finalArtifact != artifact {
+		t.Fatalf("sealed recording changed during shutdown: before=%q after=%q", artifact, finalArtifact)
 	}
 	verifySessionRecordingArtifact(t, f, artifact, producerID)
 }
@@ -652,6 +625,7 @@ func newDockerEnvironmentFixtureWithRecording(t *testing.T, recording bool) (*fi
 		if result.err != nil {
 			return f, fmt.Errorf("generate audit identity: %w\n%s", result.err, result.stderr)
 		}
+		f.recordingProducerID = recordingProducerID(t, filepath.Join(f.tempDir, "auditlog-key"))
 	}
 	if err := f.startHostBifroest(recording); err != nil {
 		return f, err
@@ -714,11 +688,7 @@ func (f *fixture) startHostBifroest(recording bool) error {
 		return fmt.Errorf("start host Bifroest: %w", err)
 	}
 	if err := pollProcess(20*time.Second, f.bifroestProc, func() error {
-		conn, err := net.DialTimeout("tcp", net.JoinHostPort(f.host, f.port), 500*time.Millisecond)
-		if err != nil {
-			return err
-		}
-		return conn.Close()
+		return probeSSHIdentification(f.host, f.port)
 	}); err != nil {
 		return fmt.Errorf("wait for host Bifroest: %w", err)
 	}

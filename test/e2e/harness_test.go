@@ -53,17 +53,18 @@ type fixture struct {
 	host            string
 	port            string
 
-	runtimeCLI     string
-	runtimeHost    string
-	runtimeService *runningProcess
-	imageName      string
-	imageID        string
-	containerID    string
-	networkName    string
-	networkID      string
-	flowName       string
-	bifroestProc   *runningProcess
-	sessionStorage string
+	runtimeCLI          string
+	runtimeHost         string
+	runtimeService      *runningProcess
+	imageName           string
+	imageID             string
+	containerID         string
+	networkName         string
+	networkID           string
+	flowName            string
+	bifroestProc        *runningProcess
+	sessionStorage      string
+	recordingProducerID string
 }
 
 type commandResult struct {
@@ -378,22 +379,7 @@ func (f *fixture) prepareLocalImage(containerfile, configuration string, extraFi
 	}
 	if !waitForSSH {
 		if err := poll(25*time.Second, func() error {
-			connection, err := net.DialTimeout("tcp", net.JoinHostPort(f.host, f.port), time.Second)
-			if err != nil {
-				return err
-			}
-			defer connection.Close()
-			if err := connection.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
-				return err
-			}
-			identification, err := bufio.NewReader(io.LimitReader(connection, 256)).ReadString('\n')
-			if err != nil {
-				return err
-			}
-			if !strings.HasPrefix(identification, "SSH-") {
-				return fmt.Errorf("unexpected SSH identification %q", identification)
-			}
-			return nil
+			return probeSSHIdentification(f.host, f.port)
 		}); err != nil {
 			return fmt.Errorf("wait for local-backend SSH readiness: %w", err)
 		}
@@ -410,6 +396,25 @@ func (f *fixture) prepareLocalImage(containerfile, configuration string, extraFi
 		return nil
 	}); err != nil {
 		return fmt.Errorf("wait for local-backend SSH readiness: %w", err)
+	}
+	return nil
+}
+
+func probeSSHIdentification(host, port string) error {
+	connection, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), time.Second)
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+	if err := connection.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		return err
+	}
+	identification, err := bufio.NewReader(io.LimitReader(connection, 256)).ReadString('\n')
+	if err != nil {
+		return err
+	}
+	if !strings.HasPrefix(identification, "SSH-") {
+		return fmt.Errorf("unexpected SSH identification %q", identification)
 	}
 	return nil
 }

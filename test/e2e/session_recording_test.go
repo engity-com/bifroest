@@ -6,9 +6,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -27,6 +29,48 @@ func recordingProducerID(t *testing.T, identityPath string) string {
 		t.Fatal(err)
 	}
 	return identity.ProducerId().String()
+}
+
+func sealedSessionRecordingArtifact(t *testing.T, recordingDirectory string) string {
+	t.Helper()
+	var artifact string
+	if err := poll(5*time.Second, func() error {
+		sealedDirectory := filepath.Join(recordingDirectory, "sealed")
+		entries, err := os.ReadDir(sealedDirectory)
+		if err != nil {
+			return err
+		}
+		artifacts := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".cast.zst") {
+				artifacts = append(artifacts, entry.Name())
+			}
+		}
+		if len(artifacts) != 1 {
+			return fmt.Errorf("got %d sealed recordings, want one: %v", len(artifacts), artifacts)
+		}
+		artifact = filepath.Join(sealedDirectory, artifacts[0])
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return artifact
+}
+
+func stopHostBifroest(t *testing.T, f *fixture) {
+	t.Helper()
+	if f.bifroestProc == nil {
+		t.Fatal("Bifroest process is not running")
+	}
+	if exited, err := f.bifroestProc.collect(); exited {
+		t.Fatalf("Bifroest exited before recording verification: %v", err)
+	}
+	if err := f.bifroestProc.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("signal Bifroest: %v", err)
+	}
+	if err := f.bifroestProc.wait(10 * time.Second); err != nil {
+		t.Fatalf("wait for graceful Bifroest shutdown: %v\nstdout:\n%s\nstderr:\n%s", err, f.bifroestProc.stdout.String(), f.bifroestProc.stderr.String())
+	}
 }
 
 func verifySessionRecordingArtifact(t *testing.T, f *fixture, artifact, producerID string) {
