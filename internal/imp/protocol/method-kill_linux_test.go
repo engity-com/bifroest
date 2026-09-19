@@ -19,10 +19,72 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/engity-com/bifroest/pkg/connection"
+	"github.com/engity-com/bifroest/pkg/execution"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 const boundedPidfdsHelper = "BIFROEST_BOUNDED_PIDFDS_HELPER"
+
+func TestKillProcessGroupUsingNonLeaderReachesSiblings(t *testing.T) {
+	expectedEnv := "BIFROEST_TEST_EXECUTION=owned"
+	start := func(pgid int) *exec.Cmd {
+		cmd := exec.Command("sleep", "30")
+		cmd.Env = append(os.Environ(), expectedEnv)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: pgid}
+		require.NoError(t, cmd.Start())
+		t.Cleanup(func() {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		})
+		return cmd
+	}
+
+	leader := start(0)
+	target := start(leader.Process.Pid)
+	sibling := start(leader.Process.Pid)
+	require.Equal(t, leader.Process.Pid, mustGetProcessGroup(t, leader.Process.Pid))
+	require.Equal(t, leader.Process.Pid, mustGetProcessGroup(t, target.Process.Pid))
+	require.Equal(t, leader.Process.Pid, mustGetProcessGroup(t, sibling.Process.Pid))
+	require.True(t, processHasEnvironment(leader.Process.Pid, expectedEnv))
+	require.True(t, processHasEnvironment(target.Process.Pid, expectedEnv))
+
+	require.NoError(t, (&imp{}).kill(context.Background(), processTarget{
+		pid:              target.Process.Pid,
+		processGroup:     true,
+		expectedEnv:      expectedEnv,
+		groupExpectedEnv: expectedEnv,
+	}, sys.SIGKILL, make(signaledProcessGroups)))
+	require.Eventually(t, func() bool {
+		return processIsGoneOrZombie(leader.Process.Pid) &&
+			processIsGoneOrZombie(target.Process.Pid) &&
+			processIsGoneOrZombie(sibling.Process.Pid)
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestLegacyProcessIdentityRequiresEnvironment(t *testing.T) {
+	candidate, err := process.NewProcess(int32(os.Getpid()))
+	require.NoError(t, err)
+	createdAt, err := candidate.CreateTime()
+	require.NoError(t, err)
+	identity := strconv.FormatInt(createdAt, 10)
+
+	require.False(t, (processTarget{pid: os.Getpid(), expectedIdentity: &identity}).matchesIdentity())
+	require.True(t, (processTarget{
+		pid:              os.Getpid(),
+		expectedIdentity: &identity,
+		expectedEnv:      os.Environ()[0],
+	}).matchesIdentity())
+}
+
+func TestLegacyStartingProcessMatchesIdentity(t *testing.T) {
+	candidate, err := process.NewProcess(int32(os.Getpid()))
+	require.NoError(t, err)
+	createdAt, err := candidate.CreateTime()
+	require.NoError(t, err)
+	raw := []byte(execution.StateStartingMarker + " " + strconv.Itoa(os.Getpid()) + " " + strconv.FormatInt(createdAt, 10))
+
+	require.True(t, registeredStartingProcessMatches(raw))
+}
 
 func TestKillProcessesSignalsProcessGroupOnce(t *testing.T) {
 	directory := t.TempDir()

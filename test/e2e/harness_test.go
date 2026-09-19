@@ -26,10 +26,11 @@ import (
 )
 
 const (
-	alpineImage = "docker.io/library/alpine:latest@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b"
-	echoPort    = 31001
-	reversePort = 31002
-	flowLabel   = "org.engity.bifroest/flow"
+	alpineImage         = "docker.io/library/alpine:latest@sha256:5b02b42e375f7426f8d65c3af331ca05d9878f9989230354504e0b9dfd431f60"
+	echoPort            = 31001
+	reversePort         = 31002
+	flowLabel           = "org.engity.bifroest/flow"
+	runtimeProbeTimeout = 15 * time.Second
 )
 
 var errNoRuntime = errors.New("neither a working Docker daemon nor Podman is available")
@@ -188,27 +189,65 @@ func selectRuntime() (string, error) {
 	if requested != "auto" && requested != "docker" && requested != "podman" {
 		return "", fmt.Errorf("BIFROEST_E2E_RUNTIME must be auto, docker, or podman; got %q", requested)
 	}
-	check := func(name string) bool {
-		if _, err := exec.LookPath(name); err != nil {
-			return false
+	check := func(name string) commandResult {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			return commandResult{err: err}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), runtimeProbeTimeout)
 		defer cancel()
-		return exec.CommandContext(ctx, name, "info").Run() == nil
+		return probeRuntime(ctx, path)
 	}
 	if requested != "auto" {
-		if !check(requested) {
-			return "", fmt.Errorf("requested runtime %q is not installed or not functional", requested)
+		result := check(requested)
+		if result.err != nil {
+			if stderr := strings.TrimSpace(result.stderr); stderr != "" {
+				return "", fmt.Errorf("requested runtime %q is not installed or not functional: %w\nstderr:\n%s", requested, result.err, stderr)
+			}
+			return "", fmt.Errorf("requested runtime %q is not installed or not functional: %w", requested, result.err)
 		}
 		return requested, nil
 	}
-	if check("docker") {
+	if check("docker").err == nil {
 		return "docker", nil
 	}
-	if check("podman") {
+	if check("podman").err == nil {
 		return "podman", nil
 	}
 	return "", errNoRuntime
+}
+
+func probeRuntime(ctx context.Context, name string) commandResult {
+	attempts := 1
+	if strings.TrimSuffix(filepath.Base(name), filepath.Ext(name)) == "podman" {
+		attempts++
+	}
+	var result commandResult
+	var diagnostics []string
+	for attempt := range attempts {
+		attemptCtx := ctx
+		var cancel context.CancelFunc = func() {}
+		if attemptsLeft := attempts - attempt; attemptsLeft > 1 {
+			if deadline, ok := ctx.Deadline(); ok {
+				attemptCtx, cancel = context.WithTimeout(ctx, time.Until(deadline)/time.Duration(attemptsLeft))
+			}
+		}
+		result = runCommand(attemptCtx, "", nil, name, "ps", "--all", "--quiet")
+		cancel()
+		if result.err == nil {
+			return result
+		}
+		if stderr := strings.TrimSpace(result.stderr); stderr != "" {
+			diagnostics = append(diagnostics, fmt.Sprintf("attempt %d: %s", attempt+1, stderr))
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	if len(diagnostics) > 0 {
+		result.stderr = strings.Join(diagnostics, "\n")
+	}
+	return result
 }
 
 func (f *fixture) prepareCommon() error {
@@ -279,7 +318,7 @@ func (f *fixture) prepareRuntime(apiService bool) error {
 		if err := pollProcess(15*time.Second, f.runtimeService, func() error {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			result := runCommand(ctx, f.repoRoot, nil, runtimeCLI, "--url", f.runtimeHost, "info")
+			result := runCommand(ctx, f.repoRoot, nil, runtimeCLI, "--url", f.runtimeHost, "ps", "--all", "--quiet")
 			if result.err != nil {
 				return fmt.Errorf("%w: %s", result.err, strings.TrimSpace(result.stderr))
 			}
@@ -1065,10 +1104,15 @@ func runCommand(ctx context.Context, dir string, extraEnv []string, name string,
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), extraEnv...)
+	configureCommandCancellation(cmd)
+	cmd.WaitDelay = time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err := cmd.Run()
+	err := cmd.Start()
+	if err == nil {
+		err = waitAndCleanupCommand(cmd)
+	}
 	if ctx.Err() != nil {
 		err = fmt.Errorf("%w: %v", ctx.Err(), err)
 	}

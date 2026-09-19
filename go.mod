@@ -12,8 +12,8 @@ require (
 	github.com/alecthomas/kingpin/v2 v2.4.0
 	github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be
 	github.com/aws/aws-sdk-go-v2 v1.47.0
-	github.com/aws/aws-sdk-go-v2/credentials v1.20.4
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.0
+	github.com/aws/aws-sdk-go-v2/credentials v1.20.5
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.1
 	github.com/aws/smithy-go v1.28.1
 	github.com/containerd/errdefs v1.0.0
 	github.com/coreos/go-oidc/v3 v3.21.0
@@ -23,9 +23,9 @@ require (
 	github.com/docker/go-connections v0.8.1
 	github.com/echocat/slf4g v1.8.4
 	github.com/echocat/slf4g/native v1.8.4
-	github.com/engity-com/ssh-server-go v0.2.3
+	github.com/engity-com/ssh-server-go v0.2.4
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/go-delve/delve v1.27.1
+	github.com/go-delve/delve v1.27.2
 	github.com/google/go-containerregistry v0.22.1
 	github.com/google/go-github/v65 v65.0.0
 	github.com/google/uuid v1.6.0
@@ -47,7 +47,7 @@ require (
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/xtaci/smux v1.5.57
 	golang.org/x/crypto v0.57.0
-	golang.org/x/net v0.58.0
+	golang.org/x/net v0.59.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0

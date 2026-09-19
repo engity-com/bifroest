@@ -57,6 +57,10 @@ func TestDomainAuditRecordsRuntimeTransitionsWithoutSensitiveValues(t *testing.T
 	forwarded, err := client.Dial("tcp", "127.0.0.1:22")
 	require.NoError(t, err)
 	require.NoError(t, forwarded.Close())
+	require.Eventually(t, func() bool {
+		completed := auditEventsNamed(recorder.eventsSnapshot(), audit.EventNamePortForwardingDirectCompleted)
+		return len(completed) == 1 && completed[0].Outcome == audit.EventOutcomeSuccess
+	}, time.Second, 10*time.Millisecond)
 
 	listener, err := client.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -64,7 +68,7 @@ func TestDomainAuditRecordsRuntimeTransitionsWithoutSensitiveValues(t *testing.T
 	require.NoError(t, client.Close())
 
 	require.Eventually(t, func() bool {
-		return recorder.hasEvent(audit.EventNameConnectionClosed) && recorder.hasEvent(audit.EventNamePortForwardingDirectCompleted)
+		return recorder.hasEvent(audit.EventNameConnectionClosed)
 	}, time.Second, 10*time.Millisecond)
 	events := recorder.eventsSnapshot()
 

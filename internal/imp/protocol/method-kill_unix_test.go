@@ -5,7 +5,6 @@ package protocol
 import (
 	"context"
 	"errors"
-	"fmt"
 	gonet "net"
 	"os"
 	"os/exec"
@@ -17,9 +16,9 @@ import (
 	"time"
 
 	log "github.com/echocat/slf4g"
-	"github.com/shirou/gopsutil/v4/process"
 	"github.com/stretchr/testify/require"
 
+	"github.com/engity-com/bifroest/internal/processidentity"
 	"github.com/engity-com/bifroest/pkg/codec"
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/execution"
@@ -55,49 +54,6 @@ func TestKillProcessGroupReachesChild(t *testing.T) {
 		}
 		status, readErr := os.ReadFile("/proc/" + strconv.Itoa(childPid) + "/stat")
 		return readErr == nil && len(strings.Fields(string(status))) >= 3 && strings.Fields(string(status))[2] == "Z"
-	}, 2*time.Second, 10*time.Millisecond)
-}
-
-func TestKillProcessGroupUsingNonLeaderReachesSiblings(t *testing.T) {
-	directory := t.TempDir()
-	expectedEnv := "BIFROEST_TEST_EXECUTION=owned"
-	targetPidFile := filepath.Join(directory, "target.pid")
-	siblingPidFile := filepath.Join(directory, "sibling.pid")
-	cmd := exec.Command("/bin/sh", "-c", "sleep 30 & echo $! > \"$1\"; sleep 30 & echo $! > \"$2\"; wait", "sh", targetPidFile, siblingPidFile)
-	cmd.Env = append(os.Environ(), expectedEnv)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	require.NoError(t, cmd.Start())
-	t.Cleanup(func() {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		_ = cmd.Wait()
-	})
-
-	readPid := func(path string) int {
-		var pid int
-		require.Eventually(t, func() bool {
-			content, err := os.ReadFile(path)
-			if err != nil {
-				return false
-			}
-			pid, err = strconv.Atoi(strings.TrimSpace(string(content)))
-			return err == nil
-		}, 2*time.Second, 10*time.Millisecond)
-		return pid
-	}
-	targetPid := readPid(targetPidFile)
-	siblingPid := readPid(siblingPidFile)
-	require.NotEqual(t, cmd.Process.Pid, targetPid)
-	require.Equal(t, cmd.Process.Pid, mustGetProcessGroup(t, targetPid))
-
-	require.NoError(t, (&imp{}).kill(context.Background(), processTarget{
-		pid:              targetPid,
-		processGroup:     true,
-		expectedEnv:      expectedEnv,
-		groupExpectedEnv: expectedEnv,
-	}, sys.SIGKILL, make(signaledProcessGroups)))
-	_ = cmd.Wait()
-	require.Eventually(t, func() bool {
-		return processIsGoneOrZombie(targetPid) && processIsGoneOrZombie(siblingPid)
 	}, 2*time.Second, 10*time.Millisecond)
 }
 
@@ -151,27 +107,35 @@ func processIsGoneOrZombie(pid int) bool {
 }
 
 func TestRegisteredProcessRejectsReusedPid(t *testing.T) {
-	p, err := process.NewProcess(int32(os.Getpid()))
-	require.NoError(t, err)
-	createdAt, err := p.CreateTime()
+	identity, err := processidentity.Get(os.Getpid())
 	require.NoError(t, err)
 
-	pid, expectedCreatedAt, ok := registeredProcess([]byte(fmt.Sprintf("%d %d", os.Getpid(), createdAt)))
+	pid, expectedIdentity, ok := registeredProcess([]byte(strconv.Itoa(os.Getpid()) + " " + identity))
 	require.True(t, ok)
 	require.Equal(t, os.Getpid(), pid)
-	require.NotNil(t, expectedCreatedAt)
-	require.Equal(t, createdAt, *expectedCreatedAt)
+	require.NotNil(t, expectedIdentity)
+	require.Equal(t, identity, *expectedIdentity)
 	require.ErrorIs(t, (&imp{}).kill(context.Background(), processTarget{
-		pid:               pid,
-		expectedCreatedAt: ptr(createdAt + 1),
+		pid:              pid,
+		expectedIdentity: ptr(identity + "0"),
 	}, sys.Signal(0), make(signaledProcessGroups)), ErrNoSuchProcess)
 }
 
+func TestRegisteredProcessAcceptsCurrentPidWithoutEnvironment(t *testing.T) {
+	identity, err := processidentity.Get(os.Getpid())
+	require.NoError(t, err)
+
+	require.NoError(t, (&imp{}).kill(context.Background(), processTarget{
+		pid:              os.Getpid(),
+		expectedIdentity: &identity,
+	}, sys.Signal(0), make(signaledProcessGroups)))
+}
+
 func TestRegisteredProcessRejectsOutOfRangePid(t *testing.T) {
-	pid, expectedCreatedAt, ok := registeredProcess([]byte("2147483648 1"))
+	pid, expectedIdentity, ok := registeredProcess([]byte("2147483648 1"))
 	require.False(t, ok)
 	require.Zero(t, pid)
-	require.Nil(t, expectedCreatedAt)
+	require.Nil(t, expectedIdentity)
 }
 
 func TestKillProcessesWaitsForProcessRegistration(t *testing.T) {
@@ -353,15 +317,11 @@ func TestKillProcessesScansForExecutionAfterStartingWrapperExited(t *testing.T) 
 }
 
 func processIdentityForTest(pid int) (string, error) {
-	p, err := process.NewProcess(int32(pid))
+	identity, err := processidentity.Get(pid)
 	if err != nil {
 		return "", err
 	}
-	createdAt, err := p.CreateTime()
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%d %d", pid, createdAt), nil
+	return strconv.Itoa(pid) + " " + identity, nil
 }
 
 func writeRegisteredProcessForTest(path, identity string) error {

@@ -9,6 +9,8 @@ import (
 	"github.com/shirou/gopsutil/v4/process"
 	"golang.org/x/sys/unix"
 	"golang.org/x/term"
+
+	"github.com/engity-com/bifroest/internal/processidentity"
 )
 
 const execDescendantCleanupTimeout = 3 * time.Second
@@ -68,7 +70,7 @@ func (this *execProcessSupervisor) Cleanup() (rErr error) {
 			return nil
 		}
 		for _, child := range children {
-			expectedCreatedAt, err := child.CreateTime()
+			expectedIdentity, err := processidentity.Get(int(child.Pid))
 			if err != nil {
 				continue
 			}
@@ -89,9 +91,9 @@ func (this *execProcessSupervisor) Cleanup() (rErr error) {
 				}
 				continue
 			}
-			currentCreatedAt, createdAtErr := current.CreateTime()
+			currentIdentity, identityErr := processidentity.Get(int(current.Pid))
 			parentPid, parentErr := current.Ppid()
-			if createdAtErr != nil || parentErr != nil || currentCreatedAt != expectedCreatedAt || parentPid != int32(goos.Getpid()) {
+			if identityErr != nil || parentErr != nil || currentIdentity != expectedIdentity || parentPid != int32(goos.Getpid()) {
 				if pidfd >= 0 {
 					_ = unix.Close(pidfd)
 				}

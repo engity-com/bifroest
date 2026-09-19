@@ -1,14 +1,14 @@
 babel==2.18.0
 backrefs==8.0
 bracex==3.0.1
-certifi==2026.2.25
+certifi==2026.7.22
 charset-normalizer==3.4.7
 click==8.5.0
 colorama==0.4.6
 ghp-import==2.1.0
 hjson==3.1.0
 idna==3.19
-importlib_metadata==8.7.0
+importlib_metadata==9.0.1
 importlib_resources==7.1.0
 Jinja2==3.1.6
 Markdown==3.10.3
@@ -26,8 +26,8 @@ packaging==26.0
 paginate==0.5.7
 pathspec==1.1.1
 platformdirs==4.11.5
-Pygments==2.19.2
-pymdown-extensions==11.0.1
+Pygments==2.21.0
+pymdown-extensions==11.0.2
 pyparsing==3.3.2
 python-dateutil==2.9.0.post0
 PyYAML==6.0.3
@@ -39,5 +39,5 @@ termcolor==3.3.0
 urllib3==2.7.0
 verspec==0.1.0
 watchdog==6.0.0
-wcmatch==11.0
+wcmatch==11.0.1
 zipp==4.1.0

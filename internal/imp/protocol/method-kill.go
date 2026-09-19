@@ -13,6 +13,7 @@ import (
 	"github.com/shirou/gopsutil/v4/process"
 	"github.com/vmihailenco/msgpack/v5"
 
+	"github.com/engity-com/bifroest/internal/processidentity"
 	"github.com/engity-com/bifroest/pkg/codec"
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/errors"
@@ -90,11 +91,11 @@ type methodKillResponse struct {
 }
 
 type processTarget struct {
-	pid               int
-	processGroup      bool
-	expectedCreatedAt *int64
-	expectedEnv       string
-	groupExpectedEnv  string
+	pid              int
+	processGroup     bool
+	expectedIdentity *string
+	expectedEnv      string
+	groupExpectedEnv string
 }
 
 type signaledProcessGroups map[int]struct{}
@@ -164,14 +165,14 @@ func (this *imp) killProcesses(ctx context.Context, header *Header, logger log.L
 			return fail(0, err)
 		}
 		if err == nil {
-			if storedPid, expectedCreatedAt, ok := registeredProcess(plainPid); ok {
+			if storedPid, expectedIdentity, ok := registeredProcess(plainPid); ok {
 				target := processTarget{
-					pid:               storedPid,
-					processGroup:      processGroup,
-					expectedCreatedAt: expectedCreatedAt,
-					groupExpectedEnv:  expectedEnv,
+					pid:              storedPid,
+					processGroup:     processGroup,
+					expectedIdentity: expectedIdentity,
+					groupExpectedEnv: expectedEnv,
 				}
-				if expectedCreatedAt == nil {
+				if expectedIdentity == nil || processidentity.RequiresEnvironment(*expectedIdentity) {
 					target.expectedEnv = expectedEnv
 				}
 				if target.matchesIdentity() {
@@ -199,16 +200,16 @@ func (this *imp) killProcesses(ctx context.Context, header *Header, logger log.L
 				if env == expectedEnv {
 					pid := int(candidate.Pid)
 					if _, exists := targetPids[pid]; !exists {
-						createdAt, err := candidate.CreateTime()
+						identity, err := processidentity.Get(pid)
 						if err != nil {
 							break
 						}
 						targets = append(targets, processTarget{
-							pid:               pid,
-							processGroup:      processGroup,
-							expectedCreatedAt: &createdAt,
-							expectedEnv:       expectedEnv,
-							groupExpectedEnv:  expectedEnv,
+							pid:              pid,
+							processGroup:     processGroup,
+							expectedIdentity: &identity,
+							expectedEnv:      expectedEnv,
+							groupExpectedEnv: expectedEnv,
 						})
 						targetPids[pid] = struct{}{}
 					}
@@ -296,11 +297,18 @@ func registeredStartingProcessMatches(raw []byte) bool {
 	if len(fields) != 3 || fields[0] != execution.StateStartingMarker {
 		return false
 	}
-	pid, expectedCreatedAt, ok := registeredProcess([]byte(strings.Join(fields[1:], " ")))
-	return ok && (processTarget{pid: pid, expectedCreatedAt: expectedCreatedAt}).matchesIdentity()
+	pid, expectedIdentity, ok := registeredProcess([]byte(strings.Join(fields[1:], " ")))
+	if !ok {
+		return false
+	}
+	if expectedIdentity != nil && processidentity.RequiresEnvironment(*expectedIdentity) {
+		matches, err := processidentity.Matches(pid, *expectedIdentity)
+		return err == nil && matches
+	}
+	return (processTarget{pid: pid, expectedIdentity: expectedIdentity}).matchesIdentity()
 }
 
-func registeredProcess(raw []byte) (int, *int64, bool) {
+func registeredProcess(raw []byte) (int, *string, bool) {
 	fields := strings.Fields(string(raw))
 	if len(fields) == 0 || len(fields) > 2 {
 		return 0, nil, false
@@ -313,20 +321,17 @@ func registeredProcess(raw []byte) (int, *int64, bool) {
 	if len(fields) == 1 {
 		return pid, nil, true
 	}
-	expectedCreatedAt, err := strconv.ParseInt(fields[1], 10, 64)
-	if err != nil {
-		return 0, nil, false
-	}
-	return pid, &expectedCreatedAt, true
+	expectedIdentity := fields[1]
+	return pid, &expectedIdentity, true
 }
 
 func registeredProcessMatches(raw []byte, expectedEnv string) bool {
-	pid, expectedCreatedAt, ok := registeredProcess(raw)
+	pid, expectedIdentity, ok := registeredProcess(raw)
 	target := processTarget{
-		pid:               pid,
-		expectedCreatedAt: expectedCreatedAt,
+		pid:              pid,
+		expectedIdentity: expectedIdentity,
 	}
-	if expectedCreatedAt == nil {
+	if expectedIdentity == nil || processidentity.RequiresEnvironment(*expectedIdentity) {
 		target.expectedEnv = expectedEnv
 	}
 	return ok && target.matchesIdentity()
@@ -336,13 +341,12 @@ func (this processTarget) matchesIdentity() bool {
 	if this.pid <= 0 || int64(this.pid) > math.MaxInt32 {
 		return false
 	}
-	if this.expectedCreatedAt != nil {
-		candidate, err := process.NewProcess(int32(this.pid))
-		if err != nil {
+	if this.expectedIdentity != nil {
+		if processidentity.RequiresEnvironment(*this.expectedIdentity) && this.expectedEnv == "" {
 			return false
 		}
-		createdAt, err := candidate.CreateTime()
-		if err != nil || createdAt != *this.expectedCreatedAt {
+		matches, err := processidentity.Matches(this.pid, *this.expectedIdentity)
+		if err != nil || !matches {
 			return false
 		}
 	}
