@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -641,6 +642,113 @@ func TestWriteRemoteArtifactReceiptReconcilesReservationAfterCreateFailure(t *te
 	require.Equal(t, uint64(len(payload)), quota.peak)
 	require.Zero(t, quota.usage)
 	require.Equal(t, 1, quota.reconciles)
+}
+
+func TestWriteRemoteArtifactReceiptRecoversFromPersistenceFailures(t *testing.T) {
+	tests := []struct {
+		name              string
+		replacementStored bool
+		inject            func(*testing.T, *remoteArtifactReceiptWriteOperations, error)
+	}{
+		{
+			name: "write",
+			inject: func(_ *testing.T, operations *remoteArtifactReceiptWriteOperations, injected error) {
+				operations.write = func(*os.File, []byte) (int, error) { return 0, injected }
+			},
+		},
+		{
+			name: "short write",
+			inject: func(_ *testing.T, operations *remoteArtifactReceiptWriteOperations, _ error) {
+				operations.write = func(file *os.File, value []byte) (int, error) { return file.Write(value[:1]) }
+			},
+		},
+		{
+			name: "file sync",
+			inject: func(_ *testing.T, operations *remoteArtifactReceiptWriteOperations, injected error) {
+				operations.sync = func(*os.File) error { return injected }
+			},
+		},
+		{
+			name: "close",
+			inject: func(t *testing.T, operations *remoteArtifactReceiptWriteOperations, injected error) {
+				operations.close = func(file *os.File) error {
+					require.NoError(t, file.Close())
+					return injected
+				}
+			},
+		},
+		{
+			name: "replace",
+			inject: func(_ *testing.T, operations *remoteArtifactReceiptWriteOperations, injected error) {
+				operations.replace = func(string, string) error { return injected }
+			},
+		},
+		{
+			name:              "replace after publication",
+			replacementStored: true,
+			inject: func(t *testing.T, operations *remoteArtifactReceiptWriteOperations, injected error) {
+				replace := operations.replace
+				operations.replace = func(source, target string) error {
+					require.NoError(t, replace(source, target))
+					return injected
+				}
+			},
+		},
+		{
+			name:              "directory sync",
+			replacementStored: true,
+			inject: func(_ *testing.T, operations *remoteArtifactReceiptWriteOperations, injected error) {
+				operations.syncDirectory = func(string) error { return injected }
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			directory := t.TempDir()
+			target := filepath.Join(directory, remoteArtifactReceiptFileName)
+			temporary := filepath.Join(directory, remoteArtifactReceiptTempFileName)
+			initialPayload := []byte("first receipt")
+			replacementPayload := []byte("next receipt!")
+			quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
+			require.NoError(t, writeRemoteArtifactReceipt(directory, "recording.cast.zst", initialPayload, quota))
+			initialUsage := quota.usage
+
+			operations := defaultRemoteArtifactReceiptWriteOperations()
+			injected := fmt.Errorf("injected %s failure", test.name)
+			test.inject(t, &operations, injected)
+			closeFile := operations.close
+			closed := false
+			operations.close = func(file *os.File) error {
+				closed = true
+				return closeFile(file)
+			}
+			err := writeRemoteArtifactReceiptWithOperations(directory, "recording.cast.zst", replacementPayload, quota, operations)
+			if test.name == "short write" {
+				require.ErrorIs(t, err, io.ErrShortWrite)
+			} else {
+				require.ErrorContains(t, err, injected.Error())
+			}
+			require.True(t, closed)
+			require.NoFileExists(t, temporary)
+			usage, usageErr := remoteArtifactReceiptStateUsage(directory)
+			require.NoError(t, usageErr)
+			require.Equal(t, initialUsage, uint64(usage))
+			require.Equal(t, initialUsage, quota.usage)
+			require.Equal(t, initialUsage+uint64(len(replacementPayload)), quota.peak)
+			require.Equal(t, 2, quota.reconciles)
+			if test.replacementStored {
+				require.Equal(t, replacementPayload, remoteArtifactReceiptTestReadFile(t, target))
+			} else {
+				require.Equal(t, initialPayload, remoteArtifactReceiptTestReadFile(t, target))
+			}
+
+			require.NoError(t, writeRemoteArtifactReceipt(directory, "recording.cast.zst", replacementPayload, quota))
+			require.Equal(t, replacementPayload, remoteArtifactReceiptTestReadFile(t, target))
+			require.NoFileExists(t, temporary)
+			require.Equal(t, initialUsage, quota.usage)
+			require.Equal(t, 3, quota.reconciles)
+		})
+	}
 }
 
 func remoteArtifactReceiptTestMarkSuccessAudited(t *testing.T, identity *Identity, receipt remoteArtifactReceipt, index int, auditedAt time.Time) (remoteArtifactReceipt, []byte) {

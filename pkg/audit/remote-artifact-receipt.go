@@ -87,6 +87,14 @@ type RemoteArtifactReceiptQuota interface {
 	Reconcile(uint64, int64, int64) error
 }
 
+type remoteArtifactReceiptWriteOperations struct {
+	write         func(*os.File, []byte) (int, error)
+	sync          func(*os.File) error
+	close         func(*os.File) error
+	replace       func(string, string) error
+	syncDirectory func(string) error
+}
+
 // RemoteArtifactReceipts owns the durable delivery receipts for one Recording
 // repository. Prepare must complete before the sealed artifact is published.
 type RemoteArtifactReceipts struct {
@@ -1526,7 +1534,21 @@ func readRemoteArtifactReceiptPayload(path string) ([]byte, bool, error) {
 	return payload, true, nil
 }
 
-func writeRemoteArtifactReceipt(directory, fileName string, payload []byte, quota RemoteArtifactReceiptQuota) (result error) {
+func writeRemoteArtifactReceipt(directory, fileName string, payload []byte, quota RemoteArtifactReceiptQuota) error {
+	return writeRemoteArtifactReceiptWithOperations(directory, fileName, payload, quota, defaultRemoteArtifactReceiptWriteOperations())
+}
+
+func defaultRemoteArtifactReceiptWriteOperations() remoteArtifactReceiptWriteOperations {
+	return remoteArtifactReceiptWriteOperations{
+		write:         func(file *os.File, value []byte) (int, error) { return file.Write(value) },
+		sync:          func(file *os.File) error { return file.Sync() },
+		close:         func(file *os.File) error { return file.Close() },
+		replace:       replaceJournalFile,
+		syncDirectory: syncJournalDirectory,
+	}
+}
+
+func writeRemoteArtifactReceiptWithOperations(directory, fileName string, payload []byte, quota RemoteArtifactReceiptQuota, operations remoteArtifactReceiptWriteOperations) (result error) {
 	before, err := remoteArtifactReceiptStateUsage(directory)
 	if err != nil {
 		return err
@@ -1563,14 +1585,14 @@ func writeRemoteArtifactReceipt(directory, fileName string, payload []byte, quot
 		_ = file.Close()
 		return err
 	}
-	written, err := file.Write(payload)
+	written, err := operations.write(file, payload)
 	if err == nil && written != len(payload) {
 		err = io.ErrShortWrite
 	}
 	if err == nil {
-		err = file.Sync()
+		err = operations.sync(file)
 	}
-	closeErr := file.Close()
+	closeErr := operations.close(file)
 	if err != nil {
 		return errors.System.Newf("cannot write remote artifact delivery receipt for %q: %w", fileName, err)
 	}
@@ -1578,11 +1600,11 @@ func writeRemoteArtifactReceipt(directory, fileName string, payload []byte, quot
 		return errors.System.Newf("cannot close remote artifact delivery receipt for %q: %w", fileName, closeErr)
 	}
 	target := filepath.Join(directory, remoteArtifactReceiptFileName)
-	if err := replaceJournalFile(temporary, target); err != nil {
+	if err := operations.replace(temporary, target); err != nil {
 		return errors.System.Newf("cannot publish remote artifact delivery receipt for %q: %w", fileName, err)
 	}
 	removeTemporary = false
-	if err := syncJournalDirectory(directory); err != nil {
+	if err := operations.syncDirectory(directory); err != nil {
 		return errors.System.Newf("cannot flush remote artifact delivery receipt for %q: %w", fileName, err)
 	}
 	return nil
