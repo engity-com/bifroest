@@ -287,6 +287,9 @@ func newLocalRepository[Head, Summary any](ctx context.Context, directory string
 		if err := recoverer.RecoverSealedArtifactState(ctx); err != nil {
 			return nil, errors.System.Newf("cannot recover sealed artifact state: %w", err)
 		}
+		if err := result.quota.validateMaximum(); err != nil {
+			return nil, err
+		}
 	}
 	for _, path := range []string{result.activePath, result.sealedPath, result.workPath, result.quarantinePath} {
 		if err := ensureLocalDirectory(path); err != nil {

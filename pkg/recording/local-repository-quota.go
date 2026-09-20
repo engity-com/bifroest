@@ -42,7 +42,7 @@ func inventoryLocalFiles(paths ...string) (uint64, error) {
 
 func inventoryLocalFilesWithReceiptRecovery(paths ...string) (uint64, uint64, error) {
 	var total uint64
-	var replacedReceiptBytes uint64
+	var recoverableReceiptBytes uint64
 	seen := make(map[localInventoryFileIdentity]struct{})
 	for _, root := range paths {
 		if _, err := os.Lstat(root); stderrors.Is(err, fs.ErrNotExist) {
@@ -93,19 +93,26 @@ func inventoryLocalFilesWithReceiptRecovery(paths ...string) (uint64, uint64, er
 					replacedReceipt = "receipt.json"
 				case "receipt.retention.tmp":
 					replacedReceipt = "receipt.retention"
+				case "receipt.tmp.cleanup", "receipt.retention.tmp.cleanup":
+					if recoverableReceiptBytes > math.MaxUint64-size {
+						return errors.System.Newf("local recording receipt recovery size overflows uint64")
+					}
+					recoverableReceiptBytes += size
 				}
 			}
 			if replacedReceipt != "" {
+				recoverable := size
 				target, targetErr := os.Lstat(filepath.Join(filepath.Dir(path), replacedReceipt))
 				if targetErr == nil && target.Mode().IsRegular() && target.Size() >= 0 {
 					targetSize := uint64(target.Size())
-					if replacedReceiptBytes > math.MaxUint64-targetSize {
-						return errors.System.Newf("local recording receipt recovery size overflows uint64")
-					}
-					replacedReceiptBytes += targetSize
+					recoverable = max(recoverable, targetSize)
 				} else if targetErr != nil && !stderrors.Is(targetErr, fs.ErrNotExist) {
 					return targetErr
 				}
+				if recoverableReceiptBytes > math.MaxUint64-recoverable {
+					return errors.System.Newf("local recording receipt recovery size overflows uint64")
+				}
+				recoverableReceiptBytes += recoverable
 			}
 			return nil
 		})
@@ -113,10 +120,19 @@ func inventoryLocalFilesWithReceiptRecovery(paths ...string) (uint64, uint64, er
 			return 0, 0, err
 		}
 	}
-	if replacedReceiptBytes > total {
+	if recoverableReceiptBytes > total {
 		return 0, 0, errors.System.Newf("local recording receipt recovery size exceeds spool usage")
 	}
-	return total, total - replacedReceiptBytes, nil
+	return total, total - recoverableReceiptBytes, nil
+}
+
+func (this *localQuota) validateMaximum() error {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if this.usage > this.maximum {
+		return errors.Config.Newf("local recording spool uses %d bytes, exceeding its %d-byte limit", this.usage, this.maximum)
+	}
+	return nil
 }
 
 func (this *localQuota) reserve(bytes uint64) error {

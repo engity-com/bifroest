@@ -20,6 +20,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	bferrors "github.com/engity-com/bifroest/pkg/errors"
 )
 
 func TestRemoteArtifactReceiptV2Golden(t *testing.T) {
@@ -751,6 +752,188 @@ func TestWriteRemoteArtifactReceiptRecoversFromPersistenceFailures(t *testing.T)
 	}
 }
 
+func TestRestoreRemoteArtifactReceiptCleansPersistenceFailures(t *testing.T) {
+	tests := []struct {
+		name              string
+		replacementStored bool
+		inject            func(*testing.T, *remoteArtifactReceiptWriteOperations, error)
+	}{
+		{
+			name: "write",
+			inject: func(_ *testing.T, operations *remoteArtifactReceiptWriteOperations, injected error) {
+				operations.write = func(*os.File, []byte) (int, error) { return 0, injected }
+			},
+		},
+		{
+			name: "short write",
+			inject: func(_ *testing.T, operations *remoteArtifactReceiptWriteOperations, _ error) {
+				operations.write = func(file *os.File, value []byte) (int, error) { return file.Write(value[:1]) }
+			},
+		},
+		{
+			name: "file sync",
+			inject: func(_ *testing.T, operations *remoteArtifactReceiptWriteOperations, injected error) {
+				operations.sync = func(*os.File) error { return injected }
+			},
+		},
+		{
+			name: "close",
+			inject: func(t *testing.T, operations *remoteArtifactReceiptWriteOperations, injected error) {
+				operations.close = func(file *os.File) error {
+					require.NoError(t, file.Close())
+					return injected
+				}
+			},
+		},
+		{
+			name: "replace",
+			inject: func(_ *testing.T, operations *remoteArtifactReceiptWriteOperations, injected error) {
+				operations.replace = func(string, string) error { return injected }
+			},
+		},
+		{
+			name:              "replace after publication",
+			replacementStored: true,
+			inject: func(t *testing.T, operations *remoteArtifactReceiptWriteOperations, injected error) {
+				replace := operations.replace
+				operations.replace = func(source, target string) error {
+					require.NoError(t, replace(source, target))
+					return injected
+				}
+			},
+		},
+		{
+			name:              "directory sync",
+			replacementStored: true,
+			inject: func(_ *testing.T, operations *remoteArtifactReceiptWriteOperations, injected error) {
+				operations.syncDirectory = func(string) error { return injected }
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			directory := t.TempDir()
+			target := filepath.Join(directory, remoteArtifactReceiptRetentionFileName)
+			temporary := filepath.Join(directory, remoteArtifactReceiptRetentionTempName)
+			payload := []byte("retention receipt")
+			operations := defaultRemoteArtifactReceiptWriteOperations()
+			injected := fmt.Errorf("injected %s failure", test.name)
+			test.inject(t, &operations, injected)
+			closeFile := operations.close
+			closed := false
+			operations.close = func(file *os.File) error {
+				closed = true
+				return closeFile(file)
+			}
+
+			err := restoreRemoteArtifactReceiptFileWithOperations(target, directory, payload, operations)
+			if test.name == "short write" {
+				require.ErrorIs(t, err, io.ErrShortWrite)
+			} else {
+				require.ErrorContains(t, err, injected.Error())
+			}
+			require.True(t, closed)
+			require.NoFileExists(t, temporary)
+			if test.replacementStored {
+				require.Equal(t, payload, remoteArtifactReceiptTestReadFile(t, target))
+			} else {
+				require.NoFileExists(t, target)
+			}
+
+			require.NoError(t, restoreRemoteArtifactReceiptFile(target, directory, payload))
+			require.NoFileExists(t, temporary)
+			require.Equal(t, payload, remoteArtifactReceiptTestReadFile(t, target))
+		})
+	}
+}
+
+func TestReceiptTemporaryCleanupJoinsWriteAndCloseFailures(t *testing.T) {
+	for _, restore := range []bool{false, true} {
+		name := "write"
+		if restore {
+			name = "restore"
+		}
+		t.Run(name, func(t *testing.T) {
+			directory := t.TempDir()
+			writeErr := fmt.Errorf("injected write failure")
+			closeErr := fmt.Errorf("injected close failure")
+			operations := defaultRemoteArtifactReceiptWriteOperations()
+			operations.write = func(*os.File, []byte) (int, error) { return 0, writeErr }
+			operations.close = func(file *os.File) error {
+				require.NoError(t, file.Close())
+				return closeErr
+			}
+			var err error
+			if restore {
+				err = restoreRemoteArtifactReceiptFileWithOperations(filepath.Join(directory, remoteArtifactReceiptRetentionFileName), directory, []byte("receipt"), operations)
+			} else {
+				err = writeRemoteArtifactReceiptWithOperations(directory, "recording.cast.zst", []byte("receipt"), nil, operations)
+			}
+			require.ErrorIs(t, err, writeErr)
+			require.ErrorIs(t, err, closeErr)
+			require.NoFileExists(t, filepath.Join(directory, remoteArtifactReceiptTempFileName))
+			require.NoFileExists(t, filepath.Join(directory, remoteArtifactReceiptRetentionTempName))
+		})
+	}
+}
+
+func TestRestoreRemoteArtifactReceiptCleansUncertainCreateFailure(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "receipt")
+	require.NoError(t, os.Mkdir(directory, journalDirectoryMode))
+	require.NoError(t, os.Remove(directory))
+
+	err := restoreRemoteArtifactReceiptFile(filepath.Join(directory, remoteArtifactReceiptRetentionFileName), directory, []byte("receipt"))
+	require.ErrorContains(t, err, "cannot create temporary")
+	require.NoFileExists(t, filepath.Join(directory, remoteArtifactReceiptRetentionTempName))
+}
+
+func TestMutateRemoteArtifactReceiptStateReconcilesFailedMutation(t *testing.T) {
+	directory := t.TempDir()
+	temporary := filepath.Join(directory, remoteArtifactReceiptTempFileName)
+	require.NoError(t, writeRemoteArtifactReceiptTestFile(temporary, []byte("receipt")))
+	quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20, usage: uint64(len("receipt"))}
+	injected := fmt.Errorf("injected mutation failure")
+
+	err := mutateRemoteArtifactReceiptState(directory, quota, func() error {
+		require.NoError(t, os.Remove(temporary))
+		return injected
+	})
+	require.ErrorIs(t, err, injected)
+	require.Zero(t, quota.usage)
+}
+
+func TestRemoteArtifactReceiptReconcilesFailedRestoreState(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		remaining bool
+	}{
+		{name: "empty"},
+		{name: "restored", remaining: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, identity := newJournalTestIdentity(t)
+			quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20, usage: 17}
+			store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", quota)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, store.close()) })
+			directory := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName("recording.cast.zst"))
+			require.NoError(t, ensureJournalDirectory(directory, true))
+			if test.remaining {
+				require.NoError(t, writeRemoteArtifactReceiptTestFile(filepath.Join(directory, remoteArtifactReceiptRetentionFileName), make([]byte, 17)))
+			}
+
+			require.NoError(t, store.reconcileFailedRemoteArtifactReceiptRestore(directory, 17))
+			if test.remaining {
+				require.DirExists(t, directory)
+				require.Equal(t, uint64(17), quota.usage)
+			} else {
+				require.NoDirExists(t, directory)
+				require.Zero(t, quota.usage)
+			}
+		})
+	}
+}
+
 func remoteArtifactReceiptTestMarkSuccessAudited(t *testing.T, identity *Identity, receipt remoteArtifactReceipt, index int, auditedAt time.Time) (remoteArtifactReceipt, []byte) {
 	t.Helper()
 	content := receipt.remoteArtifactReceiptContent
@@ -819,21 +1002,160 @@ func TestRemoteArtifactReceiptsRejectsReceiptBeyondQuota(t *testing.T) {
 	require.ErrorContains(t, err, "quota exceeded")
 }
 
-func TestRemoteArtifactReceiptStoreRejectsIncompleteInitialTemporary(t *testing.T) {
+func TestRemoteArtifactReceiptStoreRemovesIncompleteTemporaries(t *testing.T) {
+	for _, name := range []string{remoteArtifactReceiptTempFileName, remoteArtifactReceiptRetentionTempName} {
+		t.Run(name, func(t *testing.T) {
+			_, identity := newJournalTestIdentity(t)
+			root := t.TempDir()
+			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b813-9dad-4d1f-80b4-00c04fd430c8.becast", []byte("recording"))
+			store, err := newRemoteArtifactReceiptStore(root, identity, "security", nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, store.close()) })
+			directory := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName()))
+			require.NoError(t, ensureJournalDirectory(directory, true))
+			temporary := filepath.Join(directory, name)
+			require.NoError(t, writeRemoteArtifactReceiptTestFile(temporary, []byte("{")))
+
+			_, _, err = store.load(artifact)
+			require.ErrorContains(t, err, "cannot decode remote artifact delivery receipt")
+			require.NoFileExists(t, temporary)
+			_, exists, err := store.load(artifact)
+			require.NoError(t, err)
+			require.False(t, exists)
+		})
+	}
+}
+
+func TestRemoteArtifactReceiptScansRemoveMalformedOnlyTemporaries(t *testing.T) {
+	for _, temporaryName := range []string{remoteArtifactReceiptTempFileName, remoteArtifactReceiptRetentionTempName} {
+		for _, operation := range []string{"recover", "list"} {
+			t.Run(temporaryName+"/"+operation, func(t *testing.T) {
+				_, identity := newJournalTestIdentity(t)
+				store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", nil)
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, store.close()) })
+				state := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName("unpublished.cast.zst"))
+				require.NoError(t, ensureJournalDirectory(state, true))
+				temporary := filepath.Join(state, temporaryName)
+				require.NoError(t, writeRemoteArtifactReceiptTestFile(temporary, []byte("{")))
+				receipts := &RemoteArtifactReceipts{store: store}
+				run := func() error {
+					if operation == "recover" {
+						return receipts.Recover(t.Context())
+					}
+					_, err := receipts.ListRetentionCandidates(t.Context(), time.Now().UTC())
+					return err
+				}
+
+				require.ErrorContains(t, run(), "cannot identify remote artifact delivery receipt")
+				require.NoFileExists(t, temporary)
+				require.NoError(t, run())
+			})
+		}
+	}
+}
+
+func TestRemoteArtifactReceiptRecoveryRemovesOversizedTemporary(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
-	root := t.TempDir()
+	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.close()) })
+	state := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName("unpublished.cast.zst"))
+	require.NoError(t, ensureJournalDirectory(state, true))
+	temporary := filepath.Join(state, remoteArtifactReceiptTempFileName)
+	require.NoError(t, writeRemoteArtifactReceiptTestFile(temporary, make([]byte, maxJournalRecordPayloadSize+1)))
+	receipts := &RemoteArtifactReceipts{store: store}
+
+	recoverErr := receipts.Recover(t.Context())
+	require.ErrorContains(t, recoverErr, "exceeds")
+	require.True(t, bferrors.System.IsErr(recoverErr))
+	require.NoFileExists(t, temporary)
+	require.NoError(t, receipts.Recover(t.Context()))
+}
+
+func TestRemoteArtifactReceiptValidationFailurePreservesRecoverableTemporary(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
 	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b813-9dad-4d1f-80b4-00c04fd430c8.becast", []byte("recording"))
-	store, err := newRemoteArtifactReceiptStore(root, identity, "security", nil)
+	receipt, payload, err := newRemoteArtifactReceipt(identity, "security", artifact, time.Now().UTC(), nil)
+	require.NoError(t, err)
+	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.close()) })
 	directory := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName()))
 	require.NoError(t, ensureJournalDirectory(directory, true))
 	temporary := filepath.Join(directory, remoteArtifactReceiptTempFileName)
-	require.NoError(t, writeRemoteArtifactReceiptTestFile(temporary, []byte("{")))
+	require.NoError(t, writeRemoteArtifactReceiptTestFile(temporary, payload))
+	alias := filepath.Join(t.TempDir(), "receipt-alias")
+	require.NoError(t, os.Link(temporary, alias))
 
 	_, _, err = store.load(artifact)
-	require.ErrorContains(t, err, "cannot decode remote artifact delivery receipt")
+	require.ErrorContains(t, err, "hard links")
 	require.FileExists(t, temporary)
+	require.NoError(t, os.Remove(alias))
+	recovered, exists, err := store.load(artifact)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, receipt, recovered)
+	require.NoFileExists(t, temporary)
+}
+
+func TestRemoteArtifactReceiptRecoveryRemovesCleanupTombstones(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
+	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", quota)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.close()) })
+	state := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName("unpublished.cast.zst"))
+	require.NoError(t, ensureJournalDirectory(state, true))
+	for index, name := range []string{remoteArtifactReceiptTempFileName, remoteArtifactReceiptRetentionTempName} {
+		path := filepath.Join(state, name+remoteArtifactReceiptCleanupSuffix)
+		payload := []byte("cleanup")
+		if index == 1 {
+			payload = make([]byte, maxJournalRecordPayloadSize+1)
+		}
+		require.NoError(t, writeRemoteArtifactReceiptTestFile(path, payload))
+		quota.usage += uint64(len(payload))
+	}
+
+	require.NoError(t, (&RemoteArtifactReceipts{store: store}).Recover(t.Context()))
+	require.NoFileExists(t, filepath.Join(state, remoteArtifactReceiptTempFileName+remoteArtifactReceiptCleanupSuffix))
+	require.NoFileExists(t, filepath.Join(state, remoteArtifactReceiptRetentionTempName+remoteArtifactReceiptCleanupSuffix))
+	require.Zero(t, quota.usage)
+}
+
+func TestRemoteArtifactReceiptRecoveryRejectsNonRegularCleanupTombstone(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.close()) })
+	state := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName("unpublished.cast.zst"))
+	require.NoError(t, ensureJournalDirectory(state, true))
+	tombstone := filepath.Join(state, remoteArtifactReceiptTempFileName+remoteArtifactReceiptCleanupSuffix)
+	require.NoError(t, os.Mkdir(tombstone, journalDirectoryMode))
+
+	err = (&RemoteArtifactReceipts{store: store}).Recover(t.Context())
+	require.ErrorContains(t, err, "is not a regular file")
+	require.DirExists(t, tombstone)
+}
+
+func TestRemoteArtifactReceiptRecoveryRejectsLinkedCleanupTombstone(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.close()) })
+	state := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName("unpublished.cast.zst"))
+	require.NoError(t, ensureJournalDirectory(state, true))
+	tombstone := filepath.Join(state, remoteArtifactReceiptTempFileName+remoteArtifactReceiptCleanupSuffix)
+	require.NoError(t, writeRemoteArtifactReceiptTestFile(tombstone, []byte("cleanup")))
+	alias := filepath.Join(t.TempDir(), "cleanup-alias")
+	require.NoError(t, os.Link(tombstone, alias))
+
+	err = (&RemoteArtifactReceipts{store: store}).Recover(t.Context())
+	require.ErrorContains(t, err, "hard links")
+	require.FileExists(t, tombstone)
+	require.NoError(t, os.Remove(alias))
+	require.NoError(t, (&RemoteArtifactReceipts{store: store}).Recover(t.Context()))
+	require.NoFileExists(t, tombstone)
 }
 
 func TestRemoteArtifactReceiptRecoveryIgnoresEmptyUnpublishedState(t *testing.T) {

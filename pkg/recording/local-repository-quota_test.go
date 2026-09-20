@@ -249,7 +249,7 @@ func TestLocalQuotaAllowsRecoverableRetentionReceiptTemporaryAboveLimit(t *testi
 	require.Equal(t, uint64(8), quota.usage)
 }
 
-func TestLocalQuotaRejectsReceiptTemporaryWhoseRecoveredStateExceedsLimit(t *testing.T) {
+func TestLocalQuotaRequiresReceiptRecoveryToReachLimit(t *testing.T) {
 	root := t.TempDir()
 	delivery := filepath.Join(root, localDeliveryDirectory)
 	state := filepath.Join(delivery, "producer", "artifact")
@@ -257,8 +257,10 @@ func TestLocalQuotaRejectsReceiptTemporaryWhoseRecoveredStateExceedsLimit(t *tes
 	require.NoError(t, os.WriteFile(filepath.Join(state, "receipt.json"), make([]byte, 8), localFileMode))
 	require.NoError(t, os.WriteFile(filepath.Join(state, "receipt.tmp"), make([]byte, 9), localFileMode))
 
-	_, err := newLocalQuotaWithReceiptRecovery(8, true, delivery)
-	require.ErrorContains(t, err, "exceeding its 8-byte limit")
+	quota, err := newLocalQuotaWithReceiptRecovery(8, true, delivery)
+	require.NoError(t, err)
+	require.Equal(t, uint64(17), quota.usage)
+	require.ErrorContains(t, quota.validateMaximum(), "exceeding its 8-byte limit")
 }
 
 func TestLocalQuotaRejectsRecoverableReceiptTemporaryWithoutRecoverer(t *testing.T) {
@@ -271,6 +273,72 @@ func TestLocalQuotaRejectsRecoverableReceiptTemporaryWithoutRecoverer(t *testing
 
 	_, err := newLocalQuota(9, delivery)
 	require.ErrorContains(t, err, "exceeding its 9-byte limit")
+}
+
+func TestLocalRepositoryValidatesQuotaAfterReceiptCleanupRecovery(t *testing.T) {
+	for _, cleanup := range []bool{true, false} {
+		name := "cleanup"
+		if !cleanup {
+			name = "still over limit"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "recordings")
+			identity, _, _ := castTestValues(t, true)
+			initial, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions)
+			require.NoError(t, err)
+			require.NoError(t, initial.Close())
+			state := filepath.Join(root, localDeliveryDirectory, "producer", "artifact")
+			require.NoError(t, os.MkdirAll(state, localDirectoryMode))
+			marker := filepath.Join(state, "receipt.tmp.cleanup")
+			require.NoError(t, os.WriteFile(marker, make([]byte, 9), localFileMode))
+			preparer := &localReceiptCleanupRecoveryTestPreparer{path: marker, cleanup: cleanup}
+
+			repository, err := NewLocalCastZstdRepositoryWithArtifactPreparer(t.Context(), root, identity, CastZstdVerifyOptions{}, LocalRepositoryOptions{MaximumSpoolBytes: 1}, preparer)
+			if !cleanup {
+				require.ErrorContains(t, err, "exceeding its 1-byte limit")
+				require.True(t, preparer.recovered)
+				return
+			}
+			require.NoError(t, err)
+			require.True(t, preparer.recovered)
+			require.Zero(t, repository.repository.quota.usage)
+			require.NoError(t, repository.Close())
+		})
+	}
+}
+
+type localReceiptCleanupRecoveryTestPreparer struct {
+	quota     *localQuota
+	path      string
+	cleanup   bool
+	recovered bool
+}
+
+func (this *localReceiptCleanupRecoveryTestPreparer) BindSealedArtifactQuota(quota audit.RemoteArtifactReceiptQuota) {
+	this.quota = quota.(*localQuota)
+}
+
+func (this *localReceiptCleanupRecoveryTestPreparer) RecoverSealedArtifactState(context.Context) error {
+	this.recovered = true
+	if !this.cleanup {
+		return nil
+	}
+	info, err := os.Lstat(this.path)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(this.path); err != nil {
+		return err
+	}
+	return this.quota.reconcile(0, info.Size(), 0)
+}
+
+func (*localReceiptCleanupRecoveryTestPreparer) Prepare(context.Context, audit.RemoteArtifact, time.Time) error {
+	return nil
+}
+
+func (*localReceiptCleanupRecoveryTestPreparer) Require(context.Context, audit.RemoteArtifact) error {
+	return nil
 }
 
 func TestInventoryLocalFilesCountsHardLinksOnce(t *testing.T) {
