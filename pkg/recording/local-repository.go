@@ -27,6 +27,9 @@ const (
 	localQuarantineDirectory = "quarantine"
 	localHeadFileName        = "head.json"
 	localHeadTempFileName    = "head.tmp"
+	localRecoveryReserveName = "recovery.reserve"
+	// Recovery only appends a fixed result, signature, container descriptor, and seal.
+	localRecoveryReserveSize = int64(64 << 10)
 	localDeliveryDirectory   = ".delivery"
 	localRetentionTombstone  = ".retention"
 )
@@ -722,6 +725,9 @@ func (this *localRepository[Head, Summary]) createActive(ctx context.Context, he
 			_ = file.Close()
 		}
 	}()
+	if err := createLocalRecoveryReserve(workDirectory, this.quota); err != nil {
+		return nil, errors.System.Newf("cannot reserve active recording recovery capacity: %w", err)
+	}
 	writer, err := this.format.newWriter(accountLocalFile(file, this.quota), header, metadata, chunkSize)
 	if err != nil {
 		return nil, err
@@ -792,6 +798,84 @@ func (this *localRepository[Head, Summary]) createActive(ctx context.Context, he
 	this.active[active.id] = active
 	closeFile = false
 	return active, nil
+}
+
+func createLocalRecoveryReserve(directory string, quota *localQuota) (result error) {
+	path := filepath.Join(directory, localRecoveryReserveName)
+	file, err := createLocalFile(path)
+	if err != nil {
+		return err
+	}
+	remove := true
+	defer func() {
+		if file != nil {
+			result = stderrors.Join(result, file.Close())
+		}
+		if remove {
+			result = stderrors.Join(result, removeAccountedLocalFile(path, quota))
+		}
+	}()
+	reserved := make([]byte, localRecoveryReserveSize)
+	written, err := accountLocalFile(file, quota).Write(reserved)
+	if err != nil {
+		return err
+	}
+	if written != len(reserved) {
+		return io.ErrShortWrite
+	}
+	if err := protectLocalReadOnlyFile(path, file); err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	file = nil
+	if err := syncLocalDirectory(directory); err != nil {
+		return err
+	}
+	remove = false
+	return nil
+}
+
+func activateLocalRecoveryReserve(path string, output *localQuotaFile) error {
+	if output == nil {
+		return errors.System.Newf("nil local recording quota output")
+	}
+	file, err := openProtectedLocalFile(path)
+	if stderrors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return stderrors.Join(err, file.Close())
+	}
+	if info.Size() != localRecoveryReserveSize {
+		return stderrors.Join(errors.Config.Newf("local recording recovery reserve has %d bytes instead of %d", info.Size(), localRecoveryReserveSize), file.Close())
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := removeLocalFileIfSame(path, info); err != nil {
+		return err
+	}
+	if err := output.adoptReservedBytes(uint64(info.Size())); err != nil {
+		return err
+	}
+	return syncLocalDirectory(filepath.Dir(path))
+}
+
+func recoverLocalRecoveryReserveTombstone(directory string, quota *localQuota) error {
+	path := filepath.Join(directory, localRecoveryReserveName+localRetentionTombstone)
+	bytes, destroyed, removeErr := removeLocalRetentionTombstone(path)
+	if !destroyed {
+		return removeErr
+	}
+	releaseErr := quota.release(uint64(bytes))
+	syncErr := syncLocalDirectory(directory)
+	return stderrors.Join(removeErr, releaseErr, syncErr)
 }
 
 func (this *localRepository[Head, Summary]) close() error {
@@ -912,6 +996,9 @@ func (this *localActive[Head, Summary]) seal(elapsed time.Duration, result CastR
 	if _, err := this.repository.verifyPublished(target, sealedInfo, &head, context.Background()); err != nil {
 		return zero, this.poison(errors.System.Newf("cannot verify published recording: %w", err))
 	}
+	if err := removeAccountedLocalFile(filepath.Join(this.directory, localRecoveryReserveName), this.repository.quota); err != nil {
+		return zero, this.poison(errors.System.Newf("cannot remove active recording recovery reserve: %w", err))
+	}
 	if err := removeAccountedLocalFile(this.headPath, this.repository.quota); err != nil {
 		return zero, this.poison(errors.System.Newf("cannot remove active recording head: %w", err))
 	}
@@ -944,7 +1031,7 @@ func (this *localActive[Head, Summary]) close(remove bool) error {
 	}
 	result := this.poisoned
 	if this.poisoned == nil && !this.sealed {
-		result = this.checkpointForCloseLocked()
+		result = stderrors.Join(result, this.checkpointForCloseLocked())
 	}
 	if this.writer != nil {
 		result = stderrors.Join(result, this.writer.release())
@@ -1272,12 +1359,12 @@ func (this *localRepository[Head, Summary]) verifyPublishedWork(ctx context.Cont
 }
 
 func (this *localRepository[Head, Summary]) validateWorkDirectoryEntries(entries []os.DirEntry, allowTemporary bool) error {
-	minimum, maximum := 2, 2
+	minimum, maximum := 3, 3
 	if allowTemporary {
-		maximum = 3
+		maximum = 4
 	}
 	if len(entries) < minimum || len(entries) > maximum {
-		return invalidLocalArtifact(errors.Config.Newf("recording work directory does not contain exactly its head and content"))
+		return invalidLocalArtifact(errors.Config.Newf("recording work directory does not contain exactly its head, content, and recovery reserve"))
 	}
 	names := make(map[string]bool, len(entries))
 	for _, entry := range entries {
@@ -1286,12 +1373,34 @@ func (this *localRepository[Head, Summary]) validateWorkDirectoryEntries(entries
 		}
 		names[entry.Name()] = true
 	}
-	if !names[this.format.contentFileName()] || !names[localHeadFileName] && (!allowTemporary || !names[localHeadTempFileName]) {
-		return invalidLocalArtifact(errors.Config.Newf("recording work directory does not contain exactly its head and content"))
+	if !names[this.format.contentFileName()] || !names[localRecoveryReserveName] || !names[localHeadFileName] && (!allowTemporary || !names[localHeadTempFileName]) {
+		return invalidLocalArtifact(errors.Config.Newf("recording work directory does not contain exactly its head, content, and recovery reserve"))
 	}
 	for name := range names {
-		if name != this.format.contentFileName() && name != localHeadFileName && (!allowTemporary || name != localHeadTempFileName) {
+		if name != this.format.contentFileName() && name != localRecoveryReserveName && name != localHeadFileName && (!allowTemporary || name != localHeadTempFileName) {
 			return invalidLocalArtifact(errors.Config.Newf("recording work directory contains unsupported entry %q", name))
+		}
+	}
+	return nil
+}
+
+func (this *localRepository[Head, Summary]) validateActiveDirectoryEntries(entries []os.DirEntry) error {
+	if len(entries) < 2 || len(entries) > 3 {
+		return errors.Config.Newf("active recording directory does not contain exactly its head, content, and optional recovery reserve")
+	}
+	names := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() {
+			return errors.Config.Newf("active recording directory entry %q is not a regular file", entry.Name())
+		}
+		names[entry.Name()] = true
+	}
+	if !names[this.format.contentFileName()] || !names[localHeadFileName] {
+		return errors.Config.Newf("active recording directory does not contain exactly its head, content, and optional recovery reserve")
+	}
+	for name := range names {
+		if name != this.format.contentFileName() && name != localHeadFileName && name != localRecoveryReserveName {
+			return errors.Config.Newf("active recording directory contains unsupported entry %q", name)
 		}
 	}
 	return nil
@@ -1386,6 +1495,9 @@ func (this *localRepository[Head, Summary]) recoverActiveDirectory(ctx context.C
 	if err := secureLocalDirectory(directory, info); err != nil {
 		return err
 	}
+	if err := recoverLocalRecoveryReserveTombstone(directory, this.quota); err != nil {
+		return errors.System.Newf("cannot recover recording recovery reserve cleanup: %w", err)
+	}
 	contentPath := filepath.Join(directory, this.format.contentFileName())
 	headPath := filepath.Join(directory, localHeadFileName)
 	target := filepath.Join(this.sealedPath, id.String()+this.format.sealedSuffix())
@@ -1413,17 +1525,27 @@ func (this *localRepository[Head, Summary]) recoverActiveDirectory(ctx context.C
 	if err != nil {
 		return err
 	}
-	if len(entries) != 2 {
-		return errors.Config.Newf("active recording directory contains %d entries instead of two", len(entries))
+	if err := this.validateActiveDirectoryEntries(entries); err != nil {
+		return err
 	}
 	file, err := openActiveLocalFile(contentPath)
 	if err != nil {
 		return err
 	}
-	result, recoveryErr := this.format.recover(accountLocalFile(file, this.quota), head, time.Now().UTC(), ctx)
+	output := accountLocalFile(file, this.quota)
+	if err := activateLocalRecoveryReserve(filepath.Join(directory, localRecoveryReserveName), output); err != nil {
+		_ = file.Close()
+		return errors.System.Newf("cannot activate recording recovery capacity: %w", err)
+	}
+	result, recoveryErr := this.format.recover(output, head, time.Now().UTC(), ctx)
+	releaseErr := output.releaseReservedBytes()
 	if recoveryErr != nil {
 		_ = file.Close()
-		return recoveryErr
+		return stderrors.Join(recoveryErr, releaseErr)
+	}
+	if releaseErr != nil {
+		_ = file.Close()
+		return releaseErr
 	}
 	if err := sealLocalFile(contentPath, file); err != nil {
 		_ = file.Close()
@@ -1470,8 +1592,15 @@ func (this *localRepository[Head, Summary]) completePublishedRecovery(ctx contex
 	if err != nil {
 		return err
 	}
-	if len(entries) > 1 || len(entries) == 1 && entries[0].Name() != localHeadFileName {
+	if len(entries) > 2 {
 		return errors.Config.Newf("published recording cleanup directory contains unexpected entries")
+	}
+	hasHead := false
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || entry.Name() != localHeadFileName && entry.Name() != localRecoveryReserveName {
+			return errors.Config.Newf("published recording cleanup directory contains unexpected entries")
+		}
+		hasHead = hasHead || entry.Name() == localHeadFileName
 	}
 	target := filepath.Join(this.sealedPath, id.String()+this.format.sealedSuffix())
 	file, err := openSealedLocalFile(target)
@@ -1495,7 +1624,7 @@ func (this *localRepository[Head, Summary]) completePublishedRecovery(ctx contex
 			return errors.System.Newf("published recording head identity does not match its directory")
 		}
 		head = &decoded
-	} else if len(entries) != 0 {
+	} else if hasHead {
 		_ = file.Close()
 		return errors.System.Newf("active recording content and head are inconsistent: %w", headErr)
 	}
@@ -1516,6 +1645,10 @@ func (this *localRepository[Head, Summary]) completePublishedRecovery(ctx contex
 		return err
 	}
 	if err := removeAccountedLocalFile(headPath, this.quota); err != nil && !stderrors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	reservePath := filepath.Join(directory, localRecoveryReserveName)
+	if err := removeAccountedLocalFile(reservePath, this.quota); err != nil && !stderrors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	if err := os.Remove(directory); err != nil {

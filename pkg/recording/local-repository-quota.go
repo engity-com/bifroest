@@ -169,12 +169,72 @@ func (this *localQuota) Reconcile(reserved uint64, before, after int64) error {
 
 type localQuotaFile struct {
 	*os.File
-	quota *localQuota
-	mutex sync.Mutex
+	quota     *localQuota
+	mutex     sync.Mutex
+	reserved  uint64
+	uncertain bool
 }
 
 func accountLocalFile(file *os.File, quota *localQuota) *localQuotaFile {
 	return &localQuotaFile{File: file, quota: quota}
+}
+
+func (this *localQuotaFile) adoptReservedBytes(bytes uint64) error {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if this.uncertain {
+		return errors.System.Newf("local recording quota usage is uncertain")
+	}
+	if bytes > math.MaxUint64-this.reserved {
+		return errors.System.Newf("local recording recovery reservation overflows uint64")
+	}
+	this.reserved += bytes
+	return nil
+}
+
+func (this *localQuotaFile) releaseReservedBytes() error {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if this.uncertain {
+		return errors.System.Newf("local recording quota usage is uncertain")
+	}
+	if err := this.quota.release(this.reserved); err != nil {
+		return err
+	}
+	this.reserved = 0
+	return nil
+}
+
+func (this *localQuotaFile) reserveGrowth(growth uint64) (uint64, error) {
+	if this.uncertain {
+		return 0, errors.System.Newf("local recording quota usage is uncertain")
+	}
+	reserved := min(growth, this.reserved)
+	quotaBytes := growth - reserved
+	if err := this.quota.reserve(quotaBytes); err != nil {
+		return 0, err
+	}
+	return quotaBytes, nil
+}
+
+func (this *localQuotaFile) reconcileGrowth(quotaBytes uint64, before, after int64) error {
+	if before < 0 || after < 0 {
+		return errors.System.Newf("local recording file has a negative size")
+	}
+	if after < before {
+		return this.quota.release(quotaBytes + uint64(before-after))
+	}
+	growth := uint64(after - before)
+	reserved := min(growth, this.reserved)
+	this.reserved -= reserved
+	quotaGrowth := growth - reserved
+	if quotaGrowth <= quotaBytes {
+		return this.quota.release(quotaBytes - quotaGrowth)
+	}
+	if err := this.quota.reserve(quotaGrowth - quotaBytes); err != nil {
+		return errors.System.Newf("local recording file grew beyond its reservation: %w", err)
+	}
+	return nil
 }
 
 func (this *localQuotaFile) Write(value []byte) (int, error) {
@@ -184,24 +244,35 @@ func (this *localQuotaFile) Write(value []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	offset, err := this.Seek(0, 1)
+	offset, err := this.File.Seek(0, 1)
 	if err != nil {
 		return 0, err
 	}
 	if offset < 0 || int64(len(value)) > math.MaxInt64-offset {
 		return 0, errors.System.Newf("local recording write size overflows int64")
 	}
-	reserved := uint64(max(int64(0), offset+int64(len(value))-before.Size()))
-	if err := this.quota.reserve(reserved); err != nil {
+	growth := uint64(max(int64(0), offset+int64(len(value))-before.Size()))
+	quotaBytes, err := this.reserveGrowth(growth)
+	if err != nil {
 		return 0, err
 	}
 	written, writeErr := this.File.Write(value)
 	after, statErr := this.Stat()
 	if statErr != nil {
+		this.uncertain = true
 		return written, stderrors.Join(writeErr, statErr)
 	}
-	reconcileErr := this.quota.reconcile(reserved, before.Size(), after.Size())
+	reconcileErr := this.reconcileGrowth(quotaBytes, before.Size(), after.Size())
+	if reconcileErr != nil {
+		this.uncertain = true
+	}
 	return written, stderrors.Join(writeErr, reconcileErr)
+}
+
+func (this *localQuotaFile) Seek(offset int64, whence int) (int64, error) {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	return this.File.Seek(offset, whence)
 }
 
 func (this *localQuotaFile) Truncate(size int64) error {
@@ -214,16 +285,22 @@ func (this *localQuotaFile) Truncate(size int64) error {
 	if err != nil {
 		return err
 	}
-	reserved := uint64(max(int64(0), size-before.Size()))
-	if err := this.quota.reserve(reserved); err != nil {
+	growth := uint64(max(int64(0), size-before.Size()))
+	quotaBytes, err := this.reserveGrowth(growth)
+	if err != nil {
 		return err
 	}
 	truncateErr := this.File.Truncate(size)
 	after, statErr := this.Stat()
 	if statErr != nil {
+		this.uncertain = true
 		return stderrors.Join(truncateErr, statErr)
 	}
-	return stderrors.Join(truncateErr, this.quota.reconcile(reserved, before.Size(), after.Size()))
+	reconcileErr := this.reconcileGrowth(quotaBytes, before.Size(), after.Size())
+	if reconcileErr != nil {
+		this.uncertain = true
+	}
+	return stderrors.Join(truncateErr, reconcileErr)
 }
 
 func removeAccountedLocalFile(path string, quota *localQuota) error {

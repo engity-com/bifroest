@@ -65,6 +65,113 @@ func TestLocalRepositoryAdmissionAllowsExactInitialSizeAndRejectsOneByteLess(t *
 	require.NoError(t, rejected.Close())
 }
 
+func TestLocalRepositoriesRecoverAtExactSpoolLimit(t *testing.T) {
+	t.Run("zstd", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "recordings")
+		identity, header, metadata := castTestValues(t, true)
+		repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions)
+		require.NoError(t, err)
+		active, err := repository.CreateActive(t.Context(), header, metadata, 300)
+		require.NoError(t, err)
+		require.NoError(t, active.WriteOutput(time.Second, OutputStreamTerminal, []byte("recover at exact quota\r\n")))
+		require.NoError(t, active.Close())
+		maximum := repository.repository.quota.usage
+		require.NoError(t, repository.Close())
+
+		restarted, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{}, LocalRepositoryOptions{MaximumSpoolBytes: maximum})
+		require.NoError(t, err)
+		require.Len(t, restarted.StartupRecoveries(), 1)
+		require.LessOrEqual(t, restarted.repository.quota.usage, maximum)
+		requireLocalTestQuotaMatchesFiles(t, root, restarted.repository.quota)
+		require.NoError(t, restarted.Close())
+	})
+
+	t.Run("becast", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "recordings")
+		identity, header, metadata := castTestValues(t, true)
+		recipient, _ := newBECastTestEncryption(t)
+		repository, err := NewLocalBECastRepository(t.Context(), root, identity, recipient, BECastVerifyOptions{}, localRepositoryTestOptions)
+		require.NoError(t, err)
+		active, err := repository.CreateActive(t.Context(), header, metadata, 300)
+		require.NoError(t, err)
+		require.NoError(t, active.WriteOutput(time.Second, OutputStreamTerminal, []byte("recover encrypted at exact quota\r\n")))
+		require.NoError(t, active.Close())
+		maximum := repository.repository.quota.usage
+		require.NoError(t, repository.Close())
+
+		restarted, err := NewLocalBECastRepository(t.Context(), root, identity, recipient, BECastVerifyOptions{}, LocalRepositoryOptions{MaximumSpoolBytes: maximum})
+		require.NoError(t, err)
+		require.Len(t, restarted.StartupRecoveries(), 1)
+		require.LessOrEqual(t, restarted.repository.quota.usage, maximum)
+		requireLocalTestQuotaMatchesFiles(t, root, restarted.repository.quota)
+		require.NoError(t, restarted.Close())
+	})
+}
+
+func TestLocalRepositoryRecoversAfterReserveActivationCrash(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "recordings")
+	identity, header, metadata := castTestValues(t, true)
+	repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions)
+	require.NoError(t, err)
+	active, err := repository.CreateActive(t.Context(), header, metadata, 300)
+	require.NoError(t, err)
+	require.NoError(t, active.WriteOutput(time.Second, OutputStreamTerminal, []byte("crash after reserve activation\r\n")))
+	require.NoError(t, active.Close())
+	maximum := repository.repository.quota.usage
+	activeDirectory := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String())
+	content, err := openActiveLocalFile(filepath.Join(activeDirectory, localCastZstdContentFileName))
+	require.NoError(t, err)
+	output := accountLocalFile(content, repository.repository.quota)
+	require.NoError(t, activateLocalRecoveryReserve(filepath.Join(activeDirectory, localRecoveryReserveName), output))
+	require.NoFileExists(t, filepath.Join(activeDirectory, localRecoveryReserveName))
+	require.NoError(t, content.Close())
+	require.NoError(t, repository.Close())
+
+	restarted, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{}, LocalRepositoryOptions{MaximumSpoolBytes: maximum})
+	require.NoError(t, err)
+	require.Len(t, restarted.StartupRecoveries(), 1)
+	require.LessOrEqual(t, restarted.repository.quota.usage, maximum)
+	requireLocalTestQuotaMatchesFiles(t, root, restarted.repository.quota)
+	require.NoError(t, restarted.Close())
+}
+
+func TestLocalRepositoryRecoversInterruptedReserveCleanup(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "recordings")
+	identity, header, metadata := castTestValues(t, true)
+	repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions)
+	require.NoError(t, err)
+	active, err := repository.CreateActive(t.Context(), header, metadata, 300)
+	require.NoError(t, err)
+	require.NoError(t, active.Close())
+	maximum := repository.repository.quota.usage
+	require.NoError(t, repository.Close())
+	activeDirectory := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String())
+	reservePath := filepath.Join(activeDirectory, localRecoveryReserveName)
+	require.NoError(t, os.Rename(reservePath, reservePath+localRetentionTombstone))
+
+	restarted, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{}, LocalRepositoryOptions{MaximumSpoolBytes: maximum})
+	require.NoError(t, err)
+	require.Len(t, restarted.StartupRecoveries(), 1)
+	requireLocalTestQuotaMatchesFiles(t, root, restarted.repository.quota)
+	require.NoError(t, restarted.Close())
+}
+
+func TestLocalRepositoryInvalidSealPreservesRecoveryReserve(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "recordings")
+	identity, header, metadata := castTestValues(t, true)
+	repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions)
+	require.NoError(t, err)
+	active, err := repository.CreateActive(t.Context(), header, metadata, 300)
+	require.NoError(t, err)
+	_, err = active.Seal(0, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(-time.Second)}, nil)
+	require.Error(t, err)
+	reservePath := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String(), localRecoveryReserveName)
+	require.FileExists(t, reservePath)
+	require.NoError(t, active.WriteOutput(time.Second, OutputStreamTerminal, []byte("still active\r\n")))
+	require.NoError(t, active.Close())
+	require.NoError(t, repository.Close())
+}
+
 func TestLocalQuotaSerializesConcurrentReservations(t *testing.T) {
 	quota, err := newLocalQuota(1)
 	require.NoError(t, err)
@@ -254,6 +361,27 @@ func TestLocalQuotaFileAccountsWritesAndSuccessfulTruncate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 7, written)
 	require.Equal(t, uint64(12), quota.usage)
+}
+
+func TestLocalQuotaFileConsumesReservedBytesAtTheHardLimit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "recording")
+	require.NoError(t, os.WriteFile(path, make([]byte, 7), localFileMode))
+	file, err := os.OpenFile(path, os.O_RDWR, localFileMode)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, file.Close()) })
+	quota := &localQuota{maximum: 10, usage: 10}
+	accounted := accountLocalFile(file, quota)
+	require.NoError(t, accounted.adoptReservedBytes(3))
+	_, err = accounted.Seek(0, 2)
+	require.NoError(t, err)
+	written, err := accounted.Write([]byte{1, 2, 3})
+	require.NoError(t, err)
+	require.Equal(t, 3, written)
+	require.Equal(t, uint64(10), quota.usage)
+	require.Zero(t, accounted.reserved)
+	written, err = accounted.Write([]byte{4})
+	require.Zero(t, written)
+	require.ErrorContains(t, err, "would be exceeded")
 }
 
 func TestLocalRepositoryStartupOverLimitPreservesData(t *testing.T) {

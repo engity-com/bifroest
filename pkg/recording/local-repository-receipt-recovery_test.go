@@ -32,6 +32,8 @@ func TestLocalCastZstdRepositoryRecoversAfterDurableReceiptBeforePublication(t *
 	activeDirectory := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String())
 	headInfo, err := os.Lstat(filepath.Join(activeDirectory, localHeadFileName))
 	require.NoError(t, err)
+	reserveInfo, err := os.Lstat(filepath.Join(activeDirectory, localRecoveryReserveName))
+	require.NoError(t, err)
 
 	_, err = active.Seal(2*time.Second, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(2 * time.Second)}, sealedArtifactUint32(0))
 	require.ErrorIs(t, err, crashErr)
@@ -81,7 +83,7 @@ func TestLocalCastZstdRepositoryRecoversAfterDurableReceiptBeforePublication(t *
 	require.Equal(t, preparedSize, remote.Size())
 	require.NoError(t, restartedPreparer.Require(t.Context(), remote))
 	requireLocalTestQuotaMatchesFiles(t, root, restarted.repository.quota)
-	require.Equal(t, crashUsage-uint64(headInfo.Size()), restarted.repository.quota.usage)
+	require.Equal(t, crashUsage-uint64(headInfo.Size())-uint64(reserveInfo.Size()), restarted.repository.quota.usage)
 	localDurableReceiptTestRequireUnchanged(t, receiptPath, receiptBefore, receiptInfoBefore)
 }
 
@@ -103,6 +105,8 @@ func TestLocalBECastRepositoryRecoversAfterDurableReceiptBeforePublication(t *te
 	require.NoError(t, active.Checkpoint())
 	activeDirectory := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String())
 	headInfo, err := os.Lstat(filepath.Join(activeDirectory, localHeadFileName))
+	require.NoError(t, err)
+	reserveInfo, err := os.Lstat(filepath.Join(activeDirectory, localRecoveryReserveName))
 	require.NoError(t, err)
 
 	_, err = active.Seal(2*time.Second, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(2 * time.Second)}, sealedArtifactUint32(0))
@@ -153,7 +157,7 @@ func TestLocalBECastRepositoryRecoversAfterDurableReceiptBeforePublication(t *te
 	require.Equal(t, preparedSize, remote.Size())
 	require.NoError(t, restartedPreparer.Require(t.Context(), remote))
 	requireLocalTestQuotaMatchesFiles(t, root, restarted.repository.quota)
-	require.Equal(t, crashUsage-uint64(headInfo.Size()), restarted.repository.quota.usage)
+	require.Equal(t, crashUsage-uint64(headInfo.Size())-uint64(reserveInfo.Size()), restarted.repository.quota.usage)
 	localDurableReceiptTestRequireUnchanged(t, receiptPath, receiptBefore, receiptInfoBefore)
 }
 
