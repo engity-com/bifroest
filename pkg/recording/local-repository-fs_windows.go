@@ -25,8 +25,29 @@ type localProcessLock struct {
 }
 
 func removeLocalFile(path string) error {
-	if err := os.Chmod(path, localFileMode); err != nil {
+	info, err := os.Lstat(path)
+	if err != nil {
 		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.Config.Newf("local recording path is not a regular file")
+	}
+	changedMode := info.Mode().Perm()&0200 == 0
+	if changedMode {
+		if err := setLocalFileMode(path, localFileMode); err != nil {
+			return err
+		}
+	} else {
+		file, err := openLocalMetadataPath(path, false, false)
+		if err != nil {
+			return err
+		}
+		if err := validateLocalMetadataHandle(path, file, info, true); err != nil {
+			return goerrors.Join(err, file.Close())
+		}
+		if err := file.Close(); err != nil {
+			return err
+		}
 	}
 	from, err := sys.WindowsPathPointer(path)
 	if err != nil {
@@ -38,7 +59,10 @@ func removeLocalFile(path string) error {
 		return err
 	}
 	if err := windows.MoveFileEx(from, to, windows.MOVEFILE_WRITE_THROUGH); err != nil {
-		return goerrors.Join(err, os.Chmod(path, 0400))
+		if changedMode {
+			return goerrors.Join(err, setLocalFileMode(path, 0400))
+		}
+		return err
 	}
 	_, destroyed, err := removeLocalRetentionTombstone(tombstone)
 	if destroyed {
@@ -58,10 +82,7 @@ func removeLocalRetentionTombstone(path string) (int64, bool, error) {
 	if !pathInfo.Mode().IsRegular() || pathInfo.Size() < 0 {
 		return 0, false, errors.Config.Newf("local recording retention tombstone is invalid")
 	}
-	if err := secureLocalPath(path, "FA"); err != nil {
-		return 0, false, err
-	}
-	if err := os.Chmod(path, localFileMode); err != nil {
+	if err := setLocalFileMetadata(path, "FA", localFileMode); err != nil {
 		return 0, false, err
 	}
 	file, err := os.OpenFile(path, os.O_RDWR, localFileMode)
@@ -155,17 +176,14 @@ func secureLocalDirectory(path string, _ os.FileInfo) error {
 }
 
 func secureLocalFile(path string, file *os.File) error {
-	if err := requireSingleHardLink(file); err != nil {
-		return err
-	}
-	return secureLocalPath(path, "FA")
+	return secureLocalFileWithAccess(path, file, "FA")
 }
 
 func protectLocalReadOnlyFile(path string, file *os.File) error {
 	if err := file.Sync(); err != nil {
 		return err
 	}
-	return secureLocalPath(path, "FRSD")
+	return secureLocalFileWithAccess(path, file, "FRSD")
 }
 
 func openProtectedLocalFile(path string) (*os.File, error) {
@@ -176,9 +194,6 @@ func openProtectedLocalFile(path string) (*os.File, error) {
 	if !pathInfo.Mode().IsRegular() {
 		return nil, errors.Config.Newf("protected local recording file is not a regular file")
 	}
-	if err := secureLocalPath(path, "FRSD"); err != nil {
-		return nil, err
-	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -188,7 +203,7 @@ func openProtectedLocalFile(path string) (*os.File, error) {
 		_ = file.Close()
 		return nil, errors.System.Newf("protected local recording file changed while opening")
 	}
-	if err := requireSingleHardLink(file); err != nil {
+	if err := secureLocalFileWithAccess(path, file, "FRSD"); err != nil {
 		_ = file.Close()
 		return nil, err
 	}
@@ -319,20 +334,20 @@ func validatePrivateLocalFile(file *os.File) error {
 }
 
 func makeActiveLocalWritable(path string) error {
-	if err := secureLocalPath(path, "FA"); err != nil {
-		return err
-	}
-	return os.Chmod(path, localFileMode)
+	return setLocalFileMetadata(path, "FA", localFileMode)
 }
 
 func sealLocalFile(path string, file *os.File) error {
+	if err := requireSingleHardLink(file); err != nil {
+		return err
+	}
 	if err := file.Sync(); err != nil {
 		return err
 	}
-	if err := os.Chmod(path, 0400); err != nil {
+	if err := secureLocalFileWithAccess(path, file, sealedLocalWindowsAccess); err != nil {
 		return err
 	}
-	return secureLocalPath(path, sealedLocalWindowsAccess)
+	return file.Chmod(0400)
 }
 
 func openSealedLocalFile(path string) (*os.File, error) {
@@ -343,9 +358,6 @@ func openSealedLocalFile(path string) (*os.File, error) {
 	if !pathInfo.Mode().IsRegular() {
 		return nil, errors.Config.Newf("sealed local recording is not a regular file")
 	}
-	if err := secureLocalPath(path, sealedLocalWindowsAccess); err != nil {
-		return nil, err
-	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -355,27 +367,137 @@ func openSealedLocalFile(path string) (*os.File, error) {
 		_ = file.Close()
 		return nil, errors.System.Newf("sealed local recording changed while opening")
 	}
+	if err := secureLocalFileWithAccess(path, file, sealedLocalWindowsAccess); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
 	if info.Mode().Perm()&0200 != 0 {
 		_ = file.Close()
 		return nil, errors.Config.Newf("sealed local recording is writable")
 	}
-	if err := requireSingleHardLink(file); err != nil {
-		_ = file.Close()
-		return nil, err
-	}
 	return file, nil
 }
 
-func secureLocalPath(path, access string) error {
+func secureLocalPath(path, access string) (result error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	regular := info.Mode().IsRegular()
+	if !regular && (!info.IsDir() || info.Mode()&os.ModeSymlink != 0) {
+		return errors.Config.Newf("local recording path is neither a regular file nor directory")
+	}
+	file, err := openLocalMetadataPath(path, !regular, false)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		result = goerrors.Join(result, file.Close())
+	}()
+	return secureLocalMetadataHandle(path, file, info, regular, access)
+}
+
+func openLocalMetadataPath(path string, directory, writeAttributes bool) (*os.File, error) {
+	nativePath, err := sys.WindowsPathPointer(path)
+	if err != nil {
+		return nil, err
+	}
+	access := uint32(windows.READ_CONTROL | windows.WRITE_DAC | windows.FILE_READ_ATTRIBUTES)
+	if writeAttributes {
+		access |= windows.FILE_WRITE_ATTRIBUTES
+	}
+	flags := uint32(windows.FILE_FLAG_OPEN_REPARSE_POINT)
+	if directory {
+		flags |= windows.FILE_FLAG_BACKUP_SEMANTICS
+	}
+	handle, err := windows.CreateFile(
+		nativePath,
+		access,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		nil,
+		windows.OPEN_EXISTING,
+		flags,
+		0,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(handle), path), nil
+}
+
+func setLocalFileMetadata(path, access string, mode os.FileMode) error {
+	expected, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !expected.Mode().IsRegular() {
+		return errors.Config.Newf("local recording path is not a regular file")
+	}
+	security, err := openLocalMetadataPath(path, false, false)
+	if err != nil {
+		return err
+	}
+	if err := secureLocalMetadataHandle(path, security, expected, true, access); err != nil {
+		return goerrors.Join(err, security.Close())
+	}
+	file, err := openLocalMetadataPath(path, false, true)
+	if err != nil {
+		return goerrors.Join(err, security.Close())
+	}
+	if err := validateLocalMetadataHandle(path, file, expected, true); err != nil {
+		return goerrors.Join(err, file.Close(), security.Close())
+	}
+	return goerrors.Join(file.Chmod(mode), file.Close(), security.Close())
+}
+
+func setLocalFileMode(path string, mode os.FileMode) error {
+	expected, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !expected.Mode().IsRegular() {
+		return errors.Config.Newf("local recording path is not a regular file")
+	}
+	file, err := openLocalMetadataPath(path, false, true)
+	if err != nil {
+		return err
+	}
+	if err := validateLocalMetadataHandle(path, file, expected, true); err != nil {
+		return goerrors.Join(err, file.Close())
+	}
+	return goerrors.Join(file.Chmod(mode), file.Close())
+}
+
+func secureLocalFileWithAccess(path string, file *os.File, access string) error {
+	if file == nil {
+		return errors.System.Newf("cannot secure nil local recording file")
+	}
+	if err := validateOpenLocalFile(path, file); err != nil {
+		return err
+	}
+	if err := requireSingleHardLink(file); err != nil {
+		return err
+	}
+	expected, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	metadata, err := openLocalMetadataPath(path, false, false)
+	if err != nil {
+		return err
+	}
+	return goerrors.Join(secureLocalMetadataHandle(path, metadata, expected, true, access), metadata.Close())
+}
+
+func secureLocalMetadataHandle(path string, file *os.File, expected os.FileInfo, regular bool, access string) error {
+	if err := validateLocalMetadataHandle(path, file, expected, regular); err != nil {
+		return err
+	}
 	userSid, ownerSid, err := localProcessSIDs()
 	if err != nil {
 		return err
 	}
-	nativePath, err := sys.WindowsExtendedPath(path)
-	if err != nil {
-		return err
-	}
-	existing, err := windows.GetNamedSecurityInfo(nativePath, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	existing, err := windows.GetSecurityInfo(windows.Handle(file.Fd()), windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
 	if err != nil {
 		return err
 	}
@@ -394,7 +516,32 @@ func secureLocalPath(path, access string) error {
 	if err != nil {
 		return err
 	}
-	return windows.SetNamedSecurityInfo(nativePath, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil)
+	return windows.SetSecurityInfo(windows.Handle(file.Fd()), windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil)
+}
+
+func validateLocalMetadataHandle(path string, file *os.File, expected os.FileInfo, regular bool) error {
+	opened, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	current, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if regular {
+		if !opened.Mode().IsRegular() || !current.Mode().IsRegular() {
+			return errors.System.Newf("local recording path changed while opening metadata")
+		}
+	} else if !opened.IsDir() || !current.IsDir() || current.Mode()&os.ModeSymlink != 0 {
+		return errors.System.Newf("local recording directory changed while opening metadata")
+	}
+	if expected == nil || !os.SameFile(expected, opened) || !os.SameFile(current, opened) {
+		return errors.System.Newf("local recording path changed while opening metadata")
+	}
+	if regular {
+		return requireSingleHardLink(file)
+	}
+	return nil
 }
 
 func localProcessSIDs() (*windows.SID, *windows.SID, error) {
