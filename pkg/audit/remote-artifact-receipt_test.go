@@ -609,6 +609,7 @@ func TestWriteRemoteArtifactReceiptReservesReplacementHeadroom(t *testing.T) {
 	initialUsage := quota.usage
 	require.Equal(t, uint64(len(initialPayload)), initialUsage)
 	require.Equal(t, initialPayload, remoteArtifactReceiptTestReadFile(t, target))
+	require.Equal(t, 1, quota.reconciles)
 
 	quota.maximum = initialUsage + uint64(len(replacementPayload)) - 1
 	err := writeRemoteArtifactReceipt(directory, fileName, replacementPayload, quota)
@@ -617,6 +618,7 @@ func TestWriteRemoteArtifactReceiptReservesReplacementHeadroom(t *testing.T) {
 	require.NoFileExists(t, temporary)
 	require.Equal(t, initialUsage, quota.usage)
 	require.Equal(t, initialUsage, quota.peak)
+	require.Equal(t, 1, quota.reconciles)
 
 	quota.maximum++
 	require.NoError(t, writeRemoteArtifactReceipt(directory, fileName, replacementPayload, quota))
@@ -624,6 +626,21 @@ func TestWriteRemoteArtifactReceiptReservesReplacementHeadroom(t *testing.T) {
 	require.NoFileExists(t, temporary)
 	require.Equal(t, initialUsage, quota.usage)
 	require.Equal(t, quota.maximum, quota.peak)
+	require.Equal(t, 2, quota.reconciles)
+}
+
+func TestWriteRemoteArtifactReceiptReconcilesReservationAfterCreateFailure(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "receipt")
+	require.NoError(t, os.Mkdir(directory, journalDirectoryMode))
+	payload := []byte("receipt")
+	quota := &remoteArtifactReceiptTestQuota{maximum: uint64(len(payload))}
+	quota.onReserve = func() { require.NoError(t, os.Remove(directory)) }
+
+	err := writeRemoteArtifactReceipt(directory, "recording.cast.zst", payload, quota)
+	require.ErrorContains(t, err, "cannot create temporary")
+	require.Equal(t, uint64(len(payload)), quota.peak)
+	require.Zero(t, quota.usage)
+	require.Equal(t, 1, quota.reconciles)
 }
 
 func remoteArtifactReceiptTestMarkSuccessAudited(t *testing.T, identity *Identity, receipt remoteArtifactReceipt, index int, auditedAt time.Time) (remoteArtifactReceipt, []byte) {
@@ -815,9 +832,11 @@ func writeRemoteArtifactReceiptTestFile(path string, content []byte) error {
 }
 
 type remoteArtifactReceiptTestQuota struct {
-	maximum uint64
-	usage   uint64
-	peak    uint64
+	maximum    uint64
+	usage      uint64
+	peak       uint64
+	reconciles int
+	onReserve  func()
 }
 
 func (this *remoteArtifactReceiptTestQuota) Reserve(bytes uint64) error {
@@ -826,10 +845,14 @@ func (this *remoteArtifactReceiptTestQuota) Reserve(bytes uint64) error {
 	}
 	this.usage += bytes
 	this.peak = max(this.peak, this.usage)
+	if this.onReserve != nil {
+		this.onReserve()
+	}
 	return nil
 }
 
 func (this *remoteArtifactReceiptTestQuota) Reconcile(reserved uint64, before, after int64) error {
+	this.reconciles++
 	if after >= before {
 		this.usage -= reserved - uint64(after-before)
 	} else {
