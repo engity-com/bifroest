@@ -1531,10 +1531,7 @@ func writeRemoteArtifactReceipt(directory, fileName string, payload []byte, quot
 	if err != nil {
 		return err
 	}
-	reserved := uint64(0)
-	if int64(len(payload)) > before {
-		reserved = uint64(int64(len(payload)) - before)
-	}
+	reserved := uint64(len(payload))
 	if quota != nil {
 		if err := quota.Reserve(reserved); err != nil {
 			return err

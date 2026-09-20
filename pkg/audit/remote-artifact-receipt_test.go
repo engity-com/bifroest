@@ -468,7 +468,7 @@ func TestRemoteArtifactReceiptsAcknowledgePersistsTarget(t *testing.T) {
 	usage, err = remoteArtifactReceiptStateUsage(directory)
 	require.NoError(t, err)
 	require.Equal(t, uint64(usage), quota.usage)
-	require.Equal(t, quota.usage, quota.peak)
+	require.Equal(t, quota.usage*2, quota.peak)
 	require.ErrorContains(t, receipts.Acknowledge(context.Background(), artifact, "missing", acknowledgedAt), "is not configured")
 }
 
@@ -541,7 +541,7 @@ func TestRemoteArtifactReceiptRetentionWithoutTargetsStartsWhenSealed(t *testing
 	require.Equal(t, sealedAt, candidates[0].RetentionStartedAt)
 }
 
-func TestRemoteArtifactReceiptAuditTransitionsAtStableQuotaLimit(t *testing.T) {
+func TestRemoteArtifactReceiptAuditTransitionsWithReplacementHeadroom(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
 	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b818-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))
 	targets := &RemoteArtifactTargets{entries: []remoteArtifactTargetEntry{{
@@ -559,15 +559,15 @@ func TestRemoteArtifactReceiptAuditTransitionsAtStableQuotaLimit(t *testing.T) {
 	initialUsage, err := remoteArtifactReceiptStateUsage(directory)
 	require.NoError(t, err)
 	require.Equal(t, quota.usage, uint64(initialUsage))
-	quota.maximum = quota.usage
+	quota.maximum = quota.usage + uint64(initialUsage)
 
 	assertStableUsage := func() {
 		t.Helper()
 		usage, err := remoteArtifactReceiptStateUsage(directory)
 		require.NoError(t, err)
 		require.Equal(t, initialUsage, usage)
-		require.Equal(t, quota.maximum, quota.usage)
-		require.Equal(t, quota.usage, quota.peak)
+		require.Equal(t, uint64(initialUsage), quota.usage)
+		require.Equal(t, quota.maximum, quota.peak)
 	}
 
 	failed, pending, err := store.beginDeliveryFailure(t.Context(), artifact.FileName(), targets.entries[0], ErrorCategoryNetwork, sealedAt.Add(time.Minute))
@@ -593,6 +593,37 @@ func TestRemoteArtifactReceiptAuditTransitionsAtStableQuotaLimit(t *testing.T) {
 	_, ready := completed.retentionStartedAt()
 	require.True(t, ready)
 	require.NotEqual(t, initial, completed)
+}
+
+func TestWriteRemoteArtifactReceiptReservesReplacementHeadroom(t *testing.T) {
+	directory := t.TempDir()
+	fileName := "recording.cast.zst"
+	target := filepath.Join(directory, remoteArtifactReceiptFileName)
+	temporary := filepath.Join(directory, remoteArtifactReceiptTempFileName)
+	initialPayload := []byte("first receipt")
+	replacementPayload := []byte("next receipt!")
+	require.Len(t, replacementPayload, len(initialPayload))
+	quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
+
+	require.NoError(t, writeRemoteArtifactReceipt(directory, fileName, initialPayload, quota))
+	initialUsage := quota.usage
+	require.Equal(t, uint64(len(initialPayload)), initialUsage)
+	require.Equal(t, initialPayload, remoteArtifactReceiptTestReadFile(t, target))
+
+	quota.maximum = initialUsage + uint64(len(replacementPayload)) - 1
+	err := writeRemoteArtifactReceipt(directory, fileName, replacementPayload, quota)
+	require.ErrorContains(t, err, "quota exceeded")
+	require.Equal(t, initialPayload, remoteArtifactReceiptTestReadFile(t, target))
+	require.NoFileExists(t, temporary)
+	require.Equal(t, initialUsage, quota.usage)
+	require.Equal(t, initialUsage, quota.peak)
+
+	quota.maximum++
+	require.NoError(t, writeRemoteArtifactReceipt(directory, fileName, replacementPayload, quota))
+	require.Equal(t, replacementPayload, remoteArtifactReceiptTestReadFile(t, target))
+	require.NoFileExists(t, temporary)
+	require.Equal(t, initialUsage, quota.usage)
+	require.Equal(t, quota.maximum, quota.peak)
 }
 
 func remoteArtifactReceiptTestMarkSuccessAudited(t *testing.T, identity *Identity, receipt remoteArtifactReceipt, index int, auditedAt time.Time) (remoteArtifactReceipt, []byte) {
