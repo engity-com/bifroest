@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	bferrors "github.com/engity-com/bifroest/pkg/errors"
 )
 
 func TestInspectDetectsAndVerifiesRecordingFormats(t *testing.T) {
@@ -58,4 +60,25 @@ func TestInspectRejectsUnsupportedAndUntrustedRecordings(t *testing.T) {
 	cancel()
 	_, err = Inspect(bytes.NewReader(cast), int64(len(cast)), InspectOptions{Context: canceled, AllowUntrusted: true})
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestInspectEnforcesPlainCastContainerLimit(t *testing.T) {
+	_, cast, _, _ := sealedCastZstdTestContent(t, 300)
+	size := int64(len(cast))
+
+	inspection, err := Inspect(bytes.NewReader(cast), size, InspectOptions{MaximumContainerBytes: size, AllowUntrusted: true})
+	require.NoError(t, err)
+	require.Equal(t, FormatCast, inspection.Format)
+
+	_, err = Inspect(bytes.NewReader(cast), size, InspectOptions{MaximumContainerBytes: size - 1, AllowUntrusted: true})
+	require.ErrorContains(t, err, "outside the supported range")
+	require.True(t, bferrors.System.IsErr(err))
+
+	_, err = Inspect(bytes.NewReader(cast), size, InspectOptions{MaximumContainerBytes: -1, AllowUntrusted: true})
+	require.ErrorContains(t, err, "must be positive")
+	require.True(t, bferrors.Config.IsErr(err))
+
+	_, err = Inspect(bytes.NewReader(cast), DefaultMaximumCastBytes+1, InspectOptions{AllowUntrusted: true})
+	require.ErrorContains(t, err, "outside the supported range")
+	require.True(t, bferrors.System.IsErr(err))
 }

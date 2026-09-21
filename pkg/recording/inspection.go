@@ -59,6 +59,16 @@ func Inspect(source io.ReaderAt, size int64, options InspectOptions) (*Inspectio
 	}
 	switch format {
 	case FormatCast:
+		maximumContainerBytes := options.MaximumContainerBytes
+		if maximumContainerBytes == 0 {
+			maximumContainerBytes = DefaultMaximumCastBytes
+		}
+		if maximumContainerBytes < 1 {
+			return nil, errors.Config.Newf("maximum Cast container size must be positive")
+		}
+		if size > maximumContainerBytes {
+			return nil, errors.System.Newf("Cast container size %d is outside the supported range", size)
+		}
 		cast, err := VerifyCast(io.NewSectionReader(source, 0, size), common)
 		if err != nil {
 			return nil, err
