@@ -1439,6 +1439,10 @@ func (this *remoteArtifactReceiptStore) readTemporaryLocked(directory, path, fil
 }
 
 func prepareRemoteArtifactReceiptState(recordingDirectory string, producerId ProducerId) (string, *journalProcessLock, error) {
+	return prepareRemoteArtifactReceiptStateWithLock(recordingDirectory, producerId, acquireJournalProcessLock)
+}
+
+func prepareRemoteArtifactReceiptStateWithLock(recordingDirectory string, producerId ProducerId, acquireLock func(string, os.FileMode) (*journalProcessLock, error)) (string, *journalProcessLock, error) {
 	if producerId.IsZero() {
 		return "", nil, errors.Config.Newf("remote artifact delivery receipt producer ID is empty")
 	}
@@ -1454,7 +1458,8 @@ func prepareRemoteArtifactReceiptState(recordingDirectory string, producerId Pro
 	if err := ensureRemoteArtifactReceiptDirectory(root); err != nil {
 		return "", nil, errors.System.Newf("cannot prepare remote artifact delivery receipt directory %q: %w", root, err)
 	}
-	stateLock, err := acquireJournalProcessLock(filepath.Join(root, journalLockFileName), journalFileMode)
+	lockPath := filepath.Join(root, journalLockFileName)
+	stateLock, err := acquireLock(lockPath, journalFileMode)
 	if err != nil {
 		return "", nil, errors.System.Newf("cannot lock remote artifact delivery receipt state %q: %w", root, err)
 	}
@@ -1464,6 +1469,9 @@ func prepareRemoteArtifactReceiptState(recordingDirectory string, producerId Pro
 			_ = stateLock.Close()
 		}
 	}()
+	if err := validateLockedJournalPath(stateLock, lockPath); err != nil {
+		return "", nil, err
+	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return "", nil, errors.System.Newf("cannot inspect remote artifact delivery receipt directory %q: %w", root, err)

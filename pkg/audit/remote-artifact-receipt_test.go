@@ -1244,6 +1244,27 @@ func TestRemoteArtifactReceiptStoreLockIsExclusive(t *testing.T) {
 	require.NoError(t, second.close())
 }
 
+func TestPrepareRemoteArtifactReceiptStateRejectsReplacedLockPath(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	recordingDirectory := t.TempDir()
+	otherLockPath := filepath.Join(t.TempDir(), "other.lock")
+
+	producerDirectory, stateLock, err := prepareRemoteArtifactReceiptStateWithLock(recordingDirectory, identity.ProducerId(), func(requestedPath string, mode os.FileMode) (*journalProcessLock, error) {
+		if err := os.WriteFile(requestedPath, nil, mode); err != nil {
+			return nil, err
+		}
+		return acquireJournalProcessLock(otherLockPath, mode)
+	})
+	require.ErrorContains(t, err, "no longer identifies the locked file")
+	require.Empty(t, producerDirectory)
+	require.Nil(t, stateLock)
+	require.NoDirExists(t, filepath.Join(recordingDirectory, remoteArtifactReceiptStateDirectoryName, identity.ProducerId().String()))
+
+	reacquired, err := acquireJournalProcessLock(otherLockPath, journalFileMode)
+	require.NoError(t, err)
+	require.NoError(t, reacquired.Close())
+}
+
 func TestRemoteArtifactReceiptKeepsSelectionAcrossConfigurationChanges(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
 	root := t.TempDir()
