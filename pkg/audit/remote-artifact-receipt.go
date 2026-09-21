@@ -89,15 +89,16 @@ const (
 )
 
 type remoteArtifactReceiptStore struct {
-	mutex             chan struct{}
-	producerDirectory string
-	identity          *Identity
-	auditlog          configuration.AuditlogName
-	quota             RemoteArtifactReceiptQuota
-	newUUID           remoteArtifactReceiptUUIDGenerator
-	stateLock         *journalProcessLock
-	closed            bool
-	closeErr          error
+	mutex                 chan struct{}
+	retentionRemovalMutex chan struct{}
+	producerDirectory     string
+	identity              *Identity
+	auditlog              configuration.AuditlogName
+	quota                 RemoteArtifactReceiptQuota
+	newUUID               remoteArtifactReceiptUUIDGenerator
+	stateLock             *journalProcessLock
+	closed                bool
+	closeErr              error
 }
 
 type RemoteArtifactReceiptQuota interface {
@@ -548,7 +549,9 @@ func newRemoteArtifactReceiptStore(recordingDirectory string, identity *Identity
 	}
 	mutex := make(chan struct{}, 1)
 	mutex <- struct{}{}
-	return &remoteArtifactReceiptStore{mutex: mutex, producerDirectory: producerDirectory, identity: identity, auditlog: auditlog, quota: ensureRemoteArtifactReceiptQuotaInvalidation(quota), newUUID: uuid.NewRandom, stateLock: stateLock}, nil
+	retentionRemovalMutex := make(chan struct{}, 1)
+	retentionRemovalMutex <- struct{}{}
+	return &remoteArtifactReceiptStore{mutex: mutex, retentionRemovalMutex: retentionRemovalMutex, producerDirectory: producerDirectory, identity: identity, auditlog: auditlog, quota: ensureRemoteArtifactReceiptQuotaInvalidation(quota), newUUID: uuid.NewRandom, stateLock: stateLock}, nil
 }
 
 func NewRemoteArtifactReceipts(recordingDirectory string, identity *Identity, auditlog configuration.AuditlogName, targets *RemoteArtifactTargets, quota RemoteArtifactReceiptQuota) (*RemoteArtifactReceipts, error) {
@@ -882,6 +885,10 @@ func (this *remoteArtifactReceiptStore) removeRetentionCandidate(ctx context.Con
 	if err := validateRemoteArtifactRetentionCandidate(candidate, cutoff); err != nil {
 		return err
 	}
+	if err := this.lockRetentionRemoval(ctx); err != nil {
+		return err
+	}
+	defer this.unlockRetentionRemoval()
 	if err := this.lock(ctx); err != nil {
 		return err
 	}
@@ -1342,6 +1349,26 @@ func (this *remoteArtifactReceiptStore) lock(ctx context.Context) error {
 
 func (this *remoteArtifactReceiptStore) unlock() {
 	this.mutex <- struct{}{}
+}
+
+func (this *remoteArtifactReceiptStore) lockRetentionRemoval(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-this.retentionRemovalMutex:
+	}
+	if err := ctx.Err(); err != nil {
+		this.unlockRetentionRemoval()
+		return err
+	}
+	return nil
+}
+
+func (this *remoteArtifactReceiptStore) unlockRetentionRemoval() {
+	this.retentionRemovalMutex <- struct{}{}
 }
 
 func (this *remoteArtifactReceiptStore) loadLocked(artifact RemoteArtifact) (remoteArtifactReceipt, bool, error) {

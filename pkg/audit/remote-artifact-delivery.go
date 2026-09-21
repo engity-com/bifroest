@@ -369,6 +369,22 @@ func (this *RemoteArtifactDelivery) Flush(ctx context.Context) error {
 	}
 	workers := append([]*remoteArtifactDeliveryWorker(nil), this.workers...)
 	this.mutex.Unlock()
+	retentionContext, cancelRetention := context.WithCancel(ctx)
+	stopRetentionCancellation := context.AfterFunc(this.context, cancelRetention)
+	retentionErr := this.receipts.store.lockRetentionRemoval(retentionContext)
+	stopRetentionCancellation()
+	cancelRetention()
+	if retentionErr != nil {
+		if this.context.Err() != nil {
+			return errors.System.Newf("remote artifact delivery stopped before flush")
+		}
+		return retentionErr
+	}
+	if this.context.Err() != nil {
+		this.receipts.store.unlockRetentionRemoval()
+		return errors.System.Newf("remote artifact delivery stopped before flush")
+	}
+	defer this.receipts.store.unlockRetentionRemoval()
 	goals, err := this.flushGoals(ctx, workers)
 	if err != nil {
 		return err

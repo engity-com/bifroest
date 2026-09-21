@@ -404,6 +404,103 @@ func TestRemoteArtifactDeliveryFlushDeadlineDoesNotWaitForReceiptLock(t *testing
 	require.NoError(t, delivery.Close())
 }
 
+func TestRemoteArtifactDeliveryFlushPinsCompletedReceiptAgainstRetentionRemoval(t *testing.T) {
+	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "retention.cast.zst", []byte("retention"))
+	source.set(artifact)
+	fingerprint := remoteArtifactDeliveryTestFingerprint("archive")
+	entry := remoteArtifactDeliveryTestEntry("archive", fingerprint, nil)
+	receiptTargets := remoteArtifactDeliveryTestTargets(entry)
+	receipts := newRemoteArtifactDeliveryTestReceipts(t, identity, []RemoteArtifact{artifact}, receiptTargets)
+	completedAt := time.Now().UTC()
+	_, err := receipts.store.acknowledge(t.Context(), artifact, entry, completedAt)
+	require.NoError(t, err)
+	completeRemoteArtifactReceiptTestSuccess(t, receipts.store, artifact.FileName(), entry, completedAt)
+	candidates, err := receipts.ListRetentionCandidates(t.Context(), completedAt)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.NoError(t, receipts.MarkRetentionDeleting(t.Context(), candidates[0], completedAt))
+	candidates, err = receipts.ListRetentionCandidates(t.Context(), completedAt)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.True(t, candidates[0].DeletionStarted)
+
+	delivery := newRemoteArtifactDeliveryTestCoordinator(t, sealedDirectory, source, receipts, receiptTargets, remoteArtifactDeliveryTestOptions())
+	delivery.mutex.Lock()
+	delivery.started = true
+	delivery.mutex.Unlock()
+	listed := make(chan struct{})
+	releaseList := make(chan struct{})
+	source.afterList = func(ctx context.Context) error {
+		close(listed)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-releaseList:
+			return nil
+		}
+	}
+
+	flushed := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		flushed <- delivery.Flush(ctx)
+	}()
+	select {
+	case <-listed:
+	case <-time.After(time.Second):
+		t.Fatal("flush did not capture the artifact names")
+	}
+	source.set()
+
+	removeCtx, cancelRemove := context.WithTimeout(t.Context(), 30*time.Millisecond)
+	defer cancelRemove()
+	err = receipts.RemoveRetentionCandidate(removeCtx, candidates[0], completedAt)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+
+	close(releaseList)
+	select {
+	case err := <-flushed:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("flush did not complete after the receipt was acknowledged")
+	}
+	require.NoError(t, receipts.RemoveRetentionCandidate(t.Context(), candidates[0], completedAt))
+	require.NoError(t, delivery.Close())
+}
+
+func TestRemoteArtifactDeliveryCloseCancelsFlushWaitingForRetentionRemoval(t *testing.T) {
+	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
+	fingerprint := remoteArtifactDeliveryTestFingerprint("archive")
+	targets := remoteArtifactDeliveryTestTargets(remoteArtifactDeliveryTestEntry("archive", fingerprint, nil))
+	receipts := newRemoteArtifactDeliveryTestReceipts(t, identity, nil, targets)
+	delivery := newRemoteArtifactDeliveryTestCoordinator(t, sealedDirectory, source, receipts, targets, remoteArtifactDeliveryTestOptions())
+	delivery.mutex.Lock()
+	delivery.started = true
+	delivery.mutex.Unlock()
+	require.NoError(t, receipts.store.lockRetentionRemoval(t.Context()))
+	retentionLocked := true
+	defer func() {
+		if retentionLocked {
+			receipts.store.unlockRetentionRemoval()
+		}
+	}()
+
+	flushed := make(chan error, 1)
+	go func() { flushed <- delivery.Flush(context.Background()) }()
+	require.Eventually(t, func() bool { return len(delivery.flushLock) == 0 }, time.Second, time.Millisecond)
+	require.NoError(t, delivery.Close())
+	select {
+	case err := <-flushed:
+		require.ErrorContains(t, err, "stopped before flush")
+	case <-time.After(time.Second):
+		t.Fatal("close did not cancel the flush waiting for retention removal")
+	}
+	receipts.store.unlockRetentionRemoval()
+	retentionLocked = false
+}
+
 func TestRemoteArtifactDeliveryRetriesOnlyAckAfterPersistenceFailure(t *testing.T) {
 	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
 	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "ack.cast.zst", []byte("ack"))
@@ -928,6 +1025,7 @@ type remoteArtifactDeliveryTestSource struct {
 	mutex     sync.Mutex
 	names     []string
 	artifacts map[string]RemoteArtifact
+	afterList func(context.Context) error
 	listCalls atomic.Int32
 	openCalls atomic.Int32
 	openDelay time.Duration
@@ -958,8 +1056,14 @@ func (this *remoteArtifactDeliveryTestSource) ListSealedArtifactNames(ctx contex
 	}
 	this.mutex.Lock()
 	names := append([]string(nil), this.names...)
+	afterList := this.afterList
 	this.mutex.Unlock()
 	this.listCalls.Add(1)
+	if afterList != nil {
+		if err := afterList(ctx); err != nil {
+			return nil, err
+		}
+	}
 	return names, nil
 }
 
