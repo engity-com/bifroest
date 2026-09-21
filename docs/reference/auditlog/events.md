@@ -282,13 +282,13 @@ Fields: `domain` is `housekeeping`; `durationMillis` measures the deletion attem
 
 Written before housekeeping deletes a sealed session Recording whose configured retention period has elapsed. If this event cannot be recorded, deletion is not attempted.
 
-Fields: `domain` is `housekeeping`; `recordingId` and `operationId` identify the deletion attempt. `reason` is `retention-elapsed`. `outcome` is omitted. The event contains no Recording file name, path, digest, or content.
+Fields: `domain` is `housekeeping`; `recordingId` and `operationId` identify the logical deletion operation. The operation ID is stable across crash recovery, so this event may be repeated before the durable completion marker exists. `reason` is `retention-elapsed`. `outcome` is omitted. The event contains no Recording file name, path, digest, or content.
 
 #### `housekeeping.recording.delete.completed`
 
-Written after the Recording artifact and its signed delivery receipt have been processed. Its `recordingId`, `operationId`, and `reason` match the corresponding `housekeeping.recording.delete.started` event.
+Written after the Recording artifact has been removed and its signed delivery receipt has entered a durable completion-pending state. The receipt is removed only after this event succeeds. If the recorder reports an ambiguous failure, or final receipt cleanup fails while the completion marker remains, housekeeping retries the same completion event without repeating the destructive action. Its `recordingId`, `operationId`, and `reason` match the corresponding `housekeeping.recording.delete.started` event.
 
-Fields: `domain` is `housekeeping`; `durationMillis` measures the deletion attempt. `outcome` is `success` only when the artifact was durably removed before its receipt state, or when a previously removed artifact's remaining receipt state was successfully removed during retry. On `failure`, `errorCategory` classifies the error, and housekeeping preserves the receipt whenever artifact deletion did not complete.
+Fields: `domain` is `housekeeping`; `durationMillis` is `0` so the durably reconstructable event remains identical across retries. `outcome` is `success` when the artifact was removed and the receipt reached completion-pending state. On `failure`, `durationMillis` measures the failed deletion attempt, `errorCategory` classifies the error, and housekeeping preserves the receipt for retry.
 
 #### `housekeeping.orphaned-session.cleanup.skipped` {: #housekeeping-orphaned-session-cleanup-skipped }
 

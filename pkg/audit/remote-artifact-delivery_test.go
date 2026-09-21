@@ -424,6 +424,8 @@ func TestRemoteArtifactDeliveryFlushPinsCompletedReceiptAgainstRetentionRemoval(
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
 	require.True(t, candidates[0].DeletionStarted)
+	candidates[0], err = receipts.MarkRetentionCompleted(t.Context(), candidates[0], completedAt)
+	require.NoError(t, err)
 
 	delivery := newRemoteArtifactDeliveryTestCoordinator(t, sealedDirectory, source, receipts, receiptTargets, remoteArtifactDeliveryTestOptions())
 	delivery.mutex.Lock()

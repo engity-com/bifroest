@@ -420,28 +420,28 @@ func (this *sessionRecordingRepository) retentionCandidates(ctx context.Context,
 	return result, nil
 }
 
-func (this *sessionRecordingRepository) deleteRetentionCandidate(ctx context.Context, candidate sessionRecordingRetentionCandidate, cutoff time.Time) (bool, error) {
+func (this *sessionRecordingRepository) deleteRetentionCandidate(ctx context.Context, candidate sessionRecordingRetentionCandidate, cutoff time.Time) (bool, sessionRecordingRetentionCandidate, error) {
 	if this == nil || this.receipts == nil {
-		return false, errors.System.Newf("nil session Recording repository")
+		return false, candidate, errors.System.Newf("nil session Recording repository")
 	}
 	if !candidate.receipt.DeletionStarted {
 		artifact, err := this.OpenSealedArtifact(ctx, candidate.receipt.FileName)
 		if err != nil {
-			return false, errors.System.Newf("cannot verify session Recording before retention deletion: %w", err)
+			return false, candidate, errors.System.Newf("cannot verify session Recording before retention deletion: %w", err)
 		}
 		remoteArtifact, err := artifact.RemoteArtifact()
 		if err != nil {
-			return false, goerrors.Join(err, artifact.Close())
+			return false, candidate, goerrors.Join(err, artifact.Close())
 		}
 		if remoteArtifact.Digest() != candidate.receipt.ArtifactDigest || remoteArtifact.Size() != candidate.receipt.Size {
-			return false, goerrors.Join(errors.Config.Newf("sealed session Recording does not match its retention receipt"), artifact.Close())
+			return false, candidate, goerrors.Join(errors.Config.Newf("sealed session Recording does not match its retention receipt"), artifact.Close())
 		}
 		if err := artifact.Close(); err != nil {
-			return false, err
+			return false, candidate, err
 		}
 	}
 	if err := this.receipts.MarkRetentionDeleting(ctx, candidate.receipt, cutoff); err != nil {
-		return false, err
+		return false, candidate, err
 	}
 	candidate.receipt.DeletionStarted = true
 	var deleted bool
@@ -452,15 +452,26 @@ func (this *sessionRecordingRepository) deleteRetentionCandidate(ctx context.Con
 	case sessionRecordingRepositoryFormatBECast:
 		deleted, err = this.becast.DeleteSealed(ctx, candidate.recordingId, candidate.receipt.ArtifactDigest, candidate.receipt.Size)
 	default:
-		return false, errors.System.Newf("unknown session Recording repository format")
+		return false, candidate, errors.System.Newf("unknown session Recording repository format")
 	}
 	if err != nil {
-		return deleted, err
+		return deleted, candidate, err
 	}
-	if err := this.receipts.RemoveRetentionCandidate(ctx, candidate.receipt, cutoff); err != nil {
-		return deleted, err
+	completed, err := this.receipts.MarkRetentionCompleted(ctx, candidate.receipt, cutoff)
+	if completed.CompletionPending {
+		candidate.receipt = completed
 	}
-	return true, nil
+	if err != nil {
+		return deleted, candidate, err
+	}
+	return true, candidate, nil
+}
+
+func (this *sessionRecordingRepository) completeRetentionCandidate(ctx context.Context, candidate sessionRecordingRetentionCandidate, cutoff time.Time) error {
+	if this == nil || this.receipts == nil {
+		return errors.System.Newf("nil session Recording repository")
+	}
+	return this.receipts.RemoveRetentionCandidate(ctx, candidate.receipt, cutoff)
 }
 
 func (this *sessionRecordingRepository) recordingIdFromArtifactName(name string) (recording.Id, error) {

@@ -483,6 +483,7 @@ func TestRemoteArtifactReceiptStoreRecoversRetentionTemporary(t *testing.T) {
 				Size:               artifact.Size(),
 				RetentionStartedAt: sealedAt,
 				DeletionStarted:    true,
+				AuditOperationId:   remoteArtifactRetentionOperationId(receipt),
 			}}, candidates)
 			require.Equal(t, uint64(before), quota.peak)
 		})
@@ -551,11 +552,15 @@ func TestRemoteArtifactReceiptRetentionRequiresEveryAcknowledgementAndRemovesSta
 	require.Empty(t, candidates)
 	candidates, err = receipts.ListRetentionCandidates(t.Context(), acknowledgedAt)
 	require.NoError(t, err)
+	receipt, exists, err := store.load(artifact)
+	require.NoError(t, err)
+	require.True(t, exists)
 	require.Equal(t, []RemoteArtifactRetentionCandidate{{
 		FileName:           artifact.FileName(),
 		ArtifactDigest:     artifact.Digest(),
 		Size:               artifact.Size(),
 		RetentionStartedAt: acknowledgedAt,
+		AuditOperationId:   remoteArtifactRetentionOperationId(receipt),
 	}}, candidates)
 
 	require.Error(t, receipts.RemoveRetentionCandidate(t.Context(), candidates[0], acknowledgedAt.Add(-time.Nanosecond)))
@@ -569,10 +574,55 @@ func TestRemoteArtifactReceiptRetentionRequiresEveryAcknowledgementAndRemovesSta
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
 	require.True(t, candidates[0].DeletionStarted)
+	operationId := candidates[0].AuditOperationId
+	usageBeforeCompletion := quota.usage
+	completed, err := receipts.MarkRetentionCompleted(t.Context(), candidates[0], acknowledgedAt)
+	require.NoError(t, err)
+	require.True(t, completed.CompletionPending)
+	require.Equal(t, operationId, completed.AuditOperationId)
+	require.Equal(t, usageBeforeCompletion, quota.usage)
+	directory := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName()))
+	require.NoFileExists(t, filepath.Join(directory, remoteArtifactReceiptRetentionFileName))
+	require.FileExists(t, filepath.Join(directory, remoteArtifactReceiptCompletedFileName))
+	candidates, err = receipts.ListRetentionCandidates(t.Context(), acknowledgedAt)
+	require.NoError(t, err)
+	require.Equal(t, []RemoteArtifactRetentionCandidate{completed}, candidates)
 	require.NoError(t, receipts.RemoveRetentionCandidate(t.Context(), candidates[0], acknowledgedAt))
 	require.Zero(t, quota.usage)
-	_, err = os.Stat(filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName())))
+	_, err = os.Stat(directory)
 	require.ErrorIs(t, err, fs.ErrNotExist)
+}
+
+func TestRemoteArtifactRetentionCompletionSurvivesRestart(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	root := t.TempDir()
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b823-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))
+	sealedAt := time.Date(2026, 9, 16, 15, 0, 0, 0, time.UTC)
+	store, err := newRemoteArtifactReceiptStore(root, identity, "security", nil)
+	require.NoError(t, err)
+	receipts := &RemoteArtifactReceipts{store: store, targets: &RemoteArtifactTargets{}}
+	require.NoError(t, receipts.Prepare(t.Context(), artifact, sealedAt))
+	candidates, err := receipts.ListRetentionCandidates(t.Context(), sealedAt)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.NoError(t, receipts.MarkRetentionDeleting(t.Context(), candidates[0], sealedAt))
+	candidates, err = receipts.ListRetentionCandidates(t.Context(), sealedAt)
+	require.NoError(t, err)
+	completed, err := receipts.MarkRetentionCompleted(t.Context(), candidates[0], sealedAt)
+	require.NoError(t, err)
+	directory := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName()))
+	require.NoError(t, receipts.Close())
+
+	restartedStore, err := newRemoteArtifactReceiptStore(root, identity, "security", nil)
+	require.NoError(t, err)
+	restarted := &RemoteArtifactReceipts{store: restartedStore, targets: &RemoteArtifactTargets{}}
+	t.Cleanup(func() { require.NoError(t, restarted.Close()) })
+	require.NoError(t, restarted.Recover(t.Context()))
+	candidates, err = restarted.ListRetentionCandidates(t.Context(), time.Time{})
+	require.NoError(t, err)
+	require.Equal(t, []RemoteArtifactRetentionCandidate{completed}, candidates)
+	require.NoError(t, restarted.RemoveRetentionCandidate(t.Context(), candidates[0], time.Time{}))
+	require.NoDirExists(t, directory)
 }
 
 func TestRemoteArtifactReceiptRetentionWithoutTargetsStartsWhenSealed(t *testing.T) {
@@ -1285,7 +1335,7 @@ func TestRemoteArtifactReceiptRecoveryRejectsLinkedCleanupTombstone(t *testing.T
 	require.NoFileExists(t, tombstone)
 }
 
-func TestRemoteArtifactReceiptRecoveryIgnoresEmptyUnpublishedState(t *testing.T) {
+func TestRemoteArtifactReceiptRecoveryRemovesEmptyUnpublishedState(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
 	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", nil)
 	require.NoError(t, err)
@@ -1294,7 +1344,7 @@ func TestRemoteArtifactReceiptRecoveryIgnoresEmptyUnpublishedState(t *testing.T)
 	require.NoError(t, ensureJournalDirectory(state, true))
 
 	require.NoError(t, (&RemoteArtifactReceipts{store: store}).Recover(t.Context()))
-	require.DirExists(t, state)
+	require.NoDirExists(t, state)
 }
 
 func TestRemoteArtifactReceiptStateNamesAvoidFilesystemAliases(t *testing.T) {

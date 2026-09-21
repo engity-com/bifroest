@@ -133,8 +133,10 @@ func (this *houseKeeper) cleanupRecordings(logger log.Logger, ctx context.Contex
 			return errors.System.Newf("cannot inspect Recording retention of auditlog %q: %w", auditlog.Name, err)
 		}
 		for _, candidate := range candidates {
-			_, actionErr, auditErr := this.auditRecordingDeletion(ctx, auditlog.Name, candidate, func() (bool, error) {
+			_, actionErr, auditErr := this.auditRecordingDeletion(ctx, auditlog.Name, candidate, func() (bool, sessionRecordingRetentionCandidate, error) {
 				return repository.deleteRetentionCandidate(ctx, candidate, cutoff)
+			}, func(completed sessionRecordingRetentionCandidate) error {
+				return repository.completeRetentionCandidate(ctx, completed, cutoff)
 			})
 			if err := goerrors.Join(actionErr, auditErr); err != nil {
 				if ctx.Err() != nil {
@@ -147,37 +149,69 @@ func (this *houseKeeper) cleanupRecordings(logger log.Logger, ctx context.Contex
 	return nil
 }
 
-func (this *houseKeeper) auditRecordingDeletion(ctx context.Context, auditlog configuration.AuditlogName, candidate sessionRecordingRetentionCandidate, perform func() (bool, error)) (changed bool, actionErr, auditErr error) {
+func (this *houseKeeper) auditRecordingDeletion(ctx context.Context, auditlog configuration.AuditlogName, candidate sessionRecordingRetentionCandidate, perform func() (bool, sessionRecordingRetentionCandidate, error), complete func(sessionRecordingRetentionCandidate) error) (changed bool, actionErr, auditErr error) {
 	recorder := this.service.auditRecorders[auditlog]
 	if recorder == nil {
 		return false, nil, errors.System.Newf("no audit recorder configured for auditlog %q", auditlog)
 	}
-	operationId, err := uuid.NewRandom()
-	if err != nil {
-		return false, nil, errors.System.Newf("cannot generate Recording retention operation ID: %w", err)
+	if candidate.receipt.CompletionPending {
+		event := recordingRetentionCompletionEvent(candidate)
+		if auditErr = recorder.Record(ctx, event); auditErr == nil {
+			actionErr = complete(candidate)
+		}
+		return
 	}
 	startedAt := time.Now()
 	event := audit.Event{
 		Name:        audit.EventNameHousekeepingRecordingDeleteStarted,
 		Domain:      audit.EventDomainHousekeeping,
-		OperationId: operationId.String(),
+		OperationId: candidate.receipt.AuditOperationId,
 		RecordingId: candidate.recordingId.String(),
 		Reason:      audit.EventReasonRetentionElapsed,
 	}
 	if err := recorder.Record(ctx, event); err != nil {
 		return false, nil, err
 	}
-	changed, actionErr = perform()
+	var completed sessionRecordingRetentionCandidate
+	changed, completed, actionErr = perform()
 	event.Name = audit.EventNameHousekeepingRecordingDeleteCompleted
-	event.DurationMillis = common.P(time.Since(startedAt).Milliseconds())
-	if actionErr != nil {
+	completionPending := completed.receipt.CompletionPending && completed.receipt.AuditOperationId == candidate.receipt.AuditOperationId
+	if completionPending && actionErr != nil {
+		// The completion rename is visible but was not durably synced. A later
+		// scan resolves whether the old or new marker survived before auditing.
+		return
+	}
+	if completionPending {
+		event = recordingRetentionCompletionEvent(completed)
+	} else if actionErr != nil {
+		event.DurationMillis = common.P(time.Since(startedAt).Milliseconds())
 		event.Outcome = audit.EventOutcomeFailure
 		event.ErrorCategory = auditErrorCategory(actionErr)
 	} else {
-		event.Outcome = audit.EventOutcomeSuccess
+		actionErr = errors.System.Newf("Recording retention completion was not persisted")
+		event.DurationMillis = common.P(time.Since(startedAt).Milliseconds())
+		event.Outcome = audit.EventOutcomeFailure
+		event.ErrorCategory = auditErrorCategory(actionErr)
 	}
 	auditErr = recorder.Record(ctx, event)
+	if completionPending && auditErr == nil {
+		actionErr = goerrors.Join(actionErr, complete(completed))
+	}
 	return
+}
+
+func recordingRetentionCompletionEvent(candidate sessionRecordingRetentionCandidate) audit.Event {
+	// The durable completion marker contains no mutable metadata, so retries emit
+	// an equivalent event without consuming additional spool quota.
+	return audit.Event{
+		Name:           audit.EventNameHousekeepingRecordingDeleteCompleted,
+		Domain:         audit.EventDomainHousekeeping,
+		OperationId:    candidate.receipt.AuditOperationId,
+		RecordingId:    candidate.recordingId.String(),
+		Reason:         audit.EventReasonRetentionElapsed,
+		Outcome:        audit.EventOutcomeSuccess,
+		DurationMillis: common.P(int64(0)),
+	}
 }
 
 func (this *houseKeeper) inspectSessions(logger log.Logger, ctx context.Context) error {

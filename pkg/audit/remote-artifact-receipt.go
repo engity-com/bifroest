@@ -26,11 +26,13 @@ const (
 	remoteArtifactReceiptStateDirectoryName = ".delivery"
 	remoteArtifactReceiptFileName           = "receipt.json"
 	remoteArtifactReceiptRetentionFileName  = "receipt.retention"
+	remoteArtifactReceiptCompletedFileName  = "receipt.retention.completed"
 	remoteArtifactReceiptRetentionTempName  = "receipt.retention.tmp"
 	remoteArtifactReceiptTempFileName       = "receipt.tmp"
 	remoteArtifactReceiptCleanupSuffix      = ".cleanup"
 	remoteArtifactReceiptSchema             = "bifroest.session-recording-remote-delivery-receipt/v2"
 	remoteArtifactReceiptSignDomain         = "BIFROEST-SESSION-RECORDING-REMOTE-DELIVERY-RECEIPT-SIGNATURE/v2\x00"
+	remoteArtifactRetentionOperationDomain  = "BIFROEST-SESSION-RECORDING-RETENTION-OPERATION/v1\x00"
 	remoteArtifactReceiptStateReserveBytes  = 320
 )
 
@@ -178,6 +180,8 @@ type RemoteArtifactRetentionCandidate struct {
 	Size               int64
 	RetentionStartedAt time.Time
 	DeletionStarted    bool
+	CompletionPending  bool
+	AuditOperationId   string
 }
 
 func newRemoteArtifactReceipt(identity *Identity, auditlog configuration.AuditlogName, artifact RemoteArtifact, sealedAt time.Time, targets *RemoteArtifactTargets) (remoteArtifactReceipt, []byte, error) {
@@ -285,6 +289,11 @@ func signRemoteArtifactReceipt(identity *Identity, content remoteArtifactReceipt
 		return remoteArtifactReceipt{}, nil, errors.Config.Newf("remote artifact delivery receipt exceeds %d bytes", maxJournalRecordPayloadSize)
 	}
 	return receipt, payload, nil
+}
+
+func remoteArtifactRetentionOperationId(receipt remoteArtifactReceipt) string {
+	payload := append([]byte(remoteArtifactRetentionOperationDomain), receipt.Signature...)
+	return uuid.NewSHA1(uuid.NameSpaceOID, payload).String()
 }
 
 func validateRemoteArtifactReceiptIdentity(identity *Identity, auditlog configuration.AuditlogName, artifact RemoteArtifact) error {
@@ -626,8 +635,18 @@ func (this *RemoteArtifactReceipts) MarkRetentionDeleting(ctx context.Context, c
 	return this.store.markRetentionDeleting(ctx, candidate, cutoff)
 }
 
+// MarkRetentionCompleted durably marks the completion audit as pending before
+// the retention receipt can be removed.
+func (this *RemoteArtifactReceipts) MarkRetentionCompleted(ctx context.Context, candidate RemoteArtifactRetentionCandidate, cutoff time.Time) (RemoteArtifactRetentionCandidate, error) {
+	if this == nil || this.store == nil {
+		return RemoteArtifactRetentionCandidate{}, errors.System.Newf("nil remote artifact receipts")
+	}
+	return this.store.markRetentionCompleted(ctx, candidate, cutoff)
+}
+
 // RemoveRetentionCandidate removes the durable receipt after its artifact has
-// already been removed. The signed receipt is revalidated under the store lock.
+// already been removed and its completion audit has succeeded. The signed
+// receipt is revalidated under the store lock.
 func (this *RemoteArtifactReceipts) RemoveRetentionCandidate(ctx context.Context, candidate RemoteArtifactRetentionCandidate, cutoff time.Time) error {
 	if this == nil || this.store == nil {
 		return errors.System.Newf("nil remote artifact receipts")
@@ -762,19 +781,27 @@ func (this *remoteArtifactReceiptStore) recover(ctx context.Context) error {
 		if err := cleanupMalformedRemoteArtifactReceiptTemporaries(directory, this.quota); err != nil {
 			return err
 		}
+		if err := validateRemoteArtifactReceiptState(directory); err != nil {
+			return err
+		}
 		fileName, exists, err := remoteArtifactReceiptStateFileName(directory)
 		if err != nil {
 			return err
 		}
 		if !exists {
+			if err := removeEmptyRemoteArtifactReceiptState(directory, this.producerDirectory); err != nil {
+				return err
+			}
 			continue
 		}
 		if remoteArtifactReceiptStateName(fileName) != entry.Name() {
 			return errors.Config.Newf("remote artifact delivery receipt state %q does not match its artifact", directory)
 		}
-		if _, exists, err := this.loadSnapshotLocked(fileName, nil); err != nil {
+		_, receiptExists, err := this.loadSnapshotLocked(fileName, nil)
+		if err != nil {
 			return err
-		} else if !exists {
+		}
+		if !receiptExists {
 			return errors.Config.Newf("remote artifact delivery receipt for %q is missing", fileName)
 		}
 	}
@@ -817,15 +844,31 @@ func (this *remoteArtifactReceiptStore) listRetentionCandidates(ctx context.Cont
 		if !ready || !deletionStarted && (cutoff.IsZero() || startedAt.After(cutoff)) {
 			continue
 		}
-		result = append(result, RemoteArtifactRetentionCandidate{
-			FileName:           receipt.FileName,
-			ArtifactDigest:     receipt.ArtifactDigest,
-			Size:               receipt.Size,
-			RetentionStartedAt: startedAt,
-			DeletionStarted:    deletionStarted,
-		})
+		completionPending, err := remoteArtifactReceiptRetentionCompleted(directory)
+		if err != nil {
+			return nil, err
+		}
+		if completionPending {
+			if err := syncJournalDirectory(directory); err != nil {
+				return nil, errors.System.Newf("cannot flush remote artifact %q retention completion marker: %w", fileName, err)
+			}
+		}
+		result = append(result, remoteArtifactRetentionCandidate(receipt, deletionStarted, completionPending))
 	}
 	return result, nil
+}
+
+func remoteArtifactRetentionCandidate(receipt remoteArtifactReceipt, deletionStarted, completionPending bool) RemoteArtifactRetentionCandidate {
+	startedAt, _ := receipt.retentionStartedAt()
+	return RemoteArtifactRetentionCandidate{
+		FileName:           receipt.FileName,
+		ArtifactDigest:     receipt.ArtifactDigest,
+		Size:               receipt.Size,
+		RetentionStartedAt: startedAt,
+		DeletionStarted:    deletionStarted,
+		CompletionPending:  completionPending,
+		AuditOperationId:   remoteArtifactRetentionOperationId(receipt),
+	}
 }
 
 func (this *remoteArtifactReceiptStore) markRetentionDeleting(ctx context.Context, candidate RemoteArtifactRetentionCandidate, cutoff time.Time) error {
@@ -878,6 +921,61 @@ func (this *remoteArtifactReceiptStore) markRetentionDeleting(ctx context.Contex
 	return nil
 }
 
+func (this *remoteArtifactReceiptStore) markRetentionCompleted(ctx context.Context, candidate RemoteArtifactRetentionCandidate, cutoff time.Time) (RemoteArtifactRetentionCandidate, error) {
+	if this == nil {
+		return RemoteArtifactRetentionCandidate{}, errors.System.Newf("nil remote artifact receipt store")
+	}
+	if err := validateRemoteArtifactRetentionCandidate(candidate, cutoff); err != nil {
+		return RemoteArtifactRetentionCandidate{}, err
+	}
+	if err := this.lock(ctx); err != nil {
+		return RemoteArtifactRetentionCandidate{}, err
+	}
+	defer this.unlock()
+	if this.closed {
+		return RemoteArtifactRetentionCandidate{}, errors.System.Newf("remote artifact receipt store is closed")
+	}
+	receipt, exists, err := this.loadSnapshotLocked(candidate.FileName, nil)
+	if err != nil {
+		return RemoteArtifactRetentionCandidate{}, err
+	}
+	if !exists {
+		return RemoteArtifactRetentionCandidate{}, errors.Config.Newf("remote artifact delivery receipt for %q is missing", candidate.FileName)
+	}
+	if err := validateRemoteArtifactRetentionReceipt(receipt, candidate, cutoff); err != nil {
+		return RemoteArtifactRetentionCandidate{}, err
+	}
+	if candidate.AuditOperationId != remoteArtifactRetentionOperationId(receipt) {
+		return RemoteArtifactRetentionCandidate{}, errors.Config.Newf("remote artifact %q retention operation changed", candidate.FileName)
+	}
+	directory := filepath.Join(this.producerDirectory, remoteArtifactReceiptStateName(candidate.FileName))
+	deletionStarted, err := remoteArtifactReceiptRetentionDeleting(directory)
+	if err != nil {
+		return RemoteArtifactRetentionCandidate{}, err
+	}
+	if !candidate.DeletionStarted || !deletionStarted {
+		return RemoteArtifactRetentionCandidate{}, errors.Config.Newf("remote artifact %q has not started retention deletion", candidate.FileName)
+	}
+	completionPending, err := remoteArtifactReceiptRetentionCompleted(directory)
+	if err != nil {
+		return RemoteArtifactRetentionCandidate{}, err
+	}
+	if completionPending {
+		if err := syncJournalDirectory(directory); err != nil {
+			return RemoteArtifactRetentionCandidate{}, errors.System.Newf("cannot flush remote artifact %q retention completion marker: %w", candidate.FileName, err)
+		}
+		return remoteArtifactRetentionCandidate(receipt, true, true), nil
+	}
+	if err := replaceJournalFile(filepath.Join(directory, remoteArtifactReceiptRetentionFileName), filepath.Join(directory, remoteArtifactReceiptCompletedFileName)); err != nil {
+		return RemoteArtifactRetentionCandidate{}, errors.System.Newf("cannot mark remote artifact %q retention deletion completed: %w", candidate.FileName, err)
+	}
+	completed := remoteArtifactRetentionCandidate(receipt, true, true)
+	if err := syncJournalDirectory(directory); err != nil {
+		return completed, errors.System.Newf("cannot flush remote artifact %q retention completion marker: %w", candidate.FileName, err)
+	}
+	return completed, nil
+}
+
 func (this *remoteArtifactReceiptStore) removeRetentionCandidate(ctx context.Context, candidate RemoteArtifactRetentionCandidate, cutoff time.Time) error {
 	if this == nil {
 		return errors.System.Newf("nil remote artifact receipt store")
@@ -896,51 +994,46 @@ func (this *remoteArtifactReceiptStore) removeRetentionCandidate(ctx context.Con
 	if this.closed {
 		return errors.System.Newf("remote artifact receipt store is closed")
 	}
-	receipt, exists, err := this.loadSnapshotLocked(candidate.FileName, nil)
+	directory := filepath.Join(this.producerDirectory, remoteArtifactReceiptStateName(candidate.FileName))
+	receipt, receiptExists, err := this.loadSnapshotLocked(candidate.FileName, nil)
 	if err != nil {
 		return err
 	}
-	if !exists {
+	if !receiptExists {
 		return nil
 	}
 	if err := validateRemoteArtifactRetentionReceipt(receipt, candidate, cutoff); err != nil {
 		return err
 	}
-	directory := filepath.Join(this.producerDirectory, remoteArtifactReceiptStateName(candidate.FileName))
+	if candidate.AuditOperationId != remoteArtifactRetentionOperationId(receipt) {
+		return errors.Config.Newf("remote artifact %q retention operation changed", candidate.FileName)
+	}
 	deletionStarted, err := remoteArtifactReceiptRetentionDeleting(directory)
+	if err != nil {
+		return err
+	}
+	completionPending, err := remoteArtifactReceiptRetentionCompleted(directory)
 	if err != nil {
 		return err
 	}
 	if !candidate.DeletionStarted || !deletionStarted {
 		return errors.Config.Newf("remote artifact %q has not started retention deletion", candidate.FileName)
 	}
-	payload, err := json.Marshal(receipt)
-	if err != nil {
-		return errors.System.Newf("cannot encode remote artifact delivery receipt for retention cleanup: %w", err)
+	if !candidate.CompletionPending || !completionPending {
+		return errors.Config.Newf("remote artifact %q retention completion is not pending", candidate.FileName)
 	}
-	before, err := remoteArtifactReceiptStateUsage(directory)
-	if err != nil {
+	if err := mutateRemoteArtifactReceiptState(directory, this.quota, func() error {
+		return removeRemoteArtifactReceiptFile(filepath.Join(directory, remoteArtifactReceiptCompletedFileName), directory)
+	}); err != nil {
 		return err
 	}
-	path := filepath.Join(directory, remoteArtifactReceiptRetentionFileName)
-	if err := removeRemoteArtifactReceiptFile(path, directory); err != nil {
-		restoreErr := restoreRemoteArtifactReceiptFile(path, directory, payload)
-		if restoreErr == nil {
-			return err
-		}
-		return goerrors.Join(err, restoreErr, this.reconcileFailedRemoteArtifactReceiptRestore(directory, before))
-	}
-	var quotaErr error
-	if this.quota != nil {
-		quotaErr = this.quota.Reconcile(0, before, 0)
-	}
 	if err := os.Remove(directory); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return goerrors.Join(quotaErr, errors.System.Newf("cannot remove remote artifact delivery receipt state %q: %w", directory, err))
+		return errors.System.Newf("cannot remove remote artifact delivery receipt state %q: %w", directory, err)
 	}
 	if err := syncJournalDirectory(this.producerDirectory); err != nil {
-		return goerrors.Join(quotaErr, errors.System.Newf("cannot flush remote artifact delivery receipt cleanup: %w", err))
+		return errors.System.Newf("cannot flush remote artifact delivery receipt cleanup: %w", err)
 	}
-	return quotaErr
+	return nil
 }
 
 func (this *remoteArtifactReceiptStore) reconcileFailedRemoteArtifactReceiptRestore(directory string, before int64) error {
@@ -975,6 +1068,10 @@ func validateRemoteArtifactRetentionCandidate(candidate RemoteArtifactRetentionC
 	if err := validateRemoteArtifactFileName(candidate.FileName); err != nil || candidate.ArtifactDigest.IsZero() || candidate.Size <= 0 || candidate.RetentionStartedAt.IsZero() {
 		return errors.Config.Newf("invalid remote artifact retention candidate")
 	}
+	operationId, err := uuid.Parse(candidate.AuditOperationId)
+	if err != nil || operationId == uuid.Nil || operationId.String() != candidate.AuditOperationId || candidate.CompletionPending && !candidate.DeletionStarted {
+		return errors.Config.Newf("invalid remote artifact retention candidate completion")
+	}
 	return nil
 }
 
@@ -1008,11 +1105,17 @@ func (this *remoteArtifactReceiptStore) stateFileNamesLocked(ctx context.Context
 		if err := cleanupMalformedRemoteArtifactReceiptTemporaries(directory, this.quota); err != nil {
 			return nil, err
 		}
+		if err := validateRemoteArtifactReceiptState(directory); err != nil {
+			return nil, err
+		}
 		fileName, exists, err := remoteArtifactReceiptStateFileName(directory)
 		if err != nil {
 			return nil, err
 		}
 		if !exists {
+			if err := removeEmptyRemoteArtifactReceiptState(directory, this.producerDirectory); err != nil {
+				return nil, err
+			}
 			continue
 		}
 		if remoteArtifactReceiptStateName(fileName) != entry.Name() {
@@ -1398,6 +1501,7 @@ func (this *remoteArtifactReceiptStore) loadSnapshotLocked(fileName string, bind
 	}
 	targetPath := filepath.Join(directory, remoteArtifactReceiptFileName)
 	retentionPath := filepath.Join(directory, remoteArtifactReceiptRetentionFileName)
+	completedPath := filepath.Join(directory, remoteArtifactReceiptCompletedFileName)
 	temporaryPath := filepath.Join(directory, remoteArtifactReceiptTempFileName)
 	receipt, payload, exists, err := readRemoteArtifactReceipt(targetPath, this.identity, this.auditlog, fileName)
 	if err != nil {
@@ -1407,7 +1511,11 @@ func (this *remoteArtifactReceiptStore) loadSnapshotLocked(fileName string, bind
 	if err != nil {
 		return remoteArtifactReceipt{}, false, err
 	}
-	if exists && retentionExists {
+	completedReceipt, completedPayload, completedExists, err := readRemoteArtifactReceipt(completedPath, this.identity, this.auditlog, fileName)
+	if err != nil {
+		return remoteArtifactReceipt{}, false, err
+	}
+	if exists && retentionExists || exists && completedExists || retentionExists && completedExists {
 		return remoteArtifactReceipt{}, false, errors.Config.Newf("remote artifact delivery receipt for %q has conflicting retention state", fileName)
 	}
 	retentionTemporaryPath := filepath.Join(directory, remoteArtifactReceiptRetentionTempName)
@@ -1421,10 +1529,12 @@ func (this *remoteArtifactReceiptStore) loadSnapshotLocked(fileName string, bind
 		}
 	}
 	if retentionTemporaryExists {
-		if exists || retentionExists {
+		if exists || retentionExists || completedExists {
 			publishedPayload := payload
 			if retentionExists {
 				publishedPayload = retentionPayload
+			} else if completedExists {
+				publishedPayload = completedPayload
 			}
 			if !bytes.Equal(publishedPayload, retentionTemporaryPayload) {
 				return remoteArtifactReceipt{}, false, errors.System.Newf("temporary remote artifact retention receipt for %q conflicts with its published receipt", fileName)
@@ -1449,6 +1559,9 @@ func (this *remoteArtifactReceiptStore) loadSnapshotLocked(fileName string, bind
 	if retentionExists {
 		targetPath = retentionPath
 		receipt, payload, exists = retentionReceipt, retentionPayload, true
+	} else if completedExists {
+		targetPath = completedPath
+		receipt, payload, exists = completedReceipt, completedPayload, true
 	}
 	if exists && bind != nil {
 		if err := bind(receipt); err != nil {
@@ -1623,16 +1736,27 @@ func validateRemoteArtifactReceiptState(directory string) error {
 	if err != nil {
 		return errors.System.Newf("cannot inspect remote artifact delivery receipt state %q: %w", directory, err)
 	}
-	regular, retention := false, false
+	regular, retention, completed := false, false, false
 	for _, entry := range entries {
-		if (entry.Name() != remoteArtifactReceiptFileName && entry.Name() != remoteArtifactReceiptRetentionFileName && entry.Name() != remoteArtifactReceiptRetentionTempName && entry.Name() != remoteArtifactReceiptTempFileName && entry.Name() != remoteArtifactReceiptRetentionTempName+remoteArtifactReceiptCleanupSuffix && entry.Name() != remoteArtifactReceiptTempFileName+remoteArtifactReceiptCleanupSuffix) || !entry.Type().IsRegular() {
+		if (entry.Name() != remoteArtifactReceiptFileName && entry.Name() != remoteArtifactReceiptRetentionFileName && entry.Name() != remoteArtifactReceiptCompletedFileName && entry.Name() != remoteArtifactReceiptRetentionTempName && entry.Name() != remoteArtifactReceiptTempFileName && entry.Name() != remoteArtifactReceiptRetentionTempName+remoteArtifactReceiptCleanupSuffix && entry.Name() != remoteArtifactReceiptTempFileName+remoteArtifactReceiptCleanupSuffix) || !entry.Type().IsRegular() {
 			return errors.Config.Newf("remote artifact delivery receipt state %q contains unsupported entry %q", directory, entry.Name())
 		}
 		regular = regular || entry.Name() == remoteArtifactReceiptFileName
 		retention = retention || entry.Name() == remoteArtifactReceiptRetentionFileName
+		completed = completed || entry.Name() == remoteArtifactReceiptCompletedFileName
 	}
-	if regular && retention {
+	if regular && retention || regular && completed || retention && completed {
 		return errors.Config.Newf("remote artifact delivery receipt state %q has conflicting retention state", directory)
+	}
+	return nil
+}
+
+func removeEmptyRemoteArtifactReceiptState(directory, parent string) error {
+	if err := os.Remove(directory); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return errors.System.Newf("cannot remove empty remote artifact delivery receipt state %q: %w", directory, err)
+	}
+	if err := syncJournalDirectory(parent); err != nil {
+		return errors.System.Newf("cannot flush empty remote artifact delivery receipt cleanup: %w", err)
 	}
 	return nil
 }
@@ -1650,7 +1774,7 @@ func readRemoteArtifactReceipt(path string, identity *Identity, auditlog configu
 }
 
 func remoteArtifactReceiptStateFileName(directory string) (string, bool, error) {
-	for _, name := range []string{remoteArtifactReceiptFileName, remoteArtifactReceiptRetentionFileName, remoteArtifactReceiptRetentionTempName, remoteArtifactReceiptTempFileName} {
+	for _, name := range []string{remoteArtifactReceiptFileName, remoteArtifactReceiptRetentionFileName, remoteArtifactReceiptCompletedFileName, remoteArtifactReceiptRetentionTempName, remoteArtifactReceiptTempFileName} {
 		path := filepath.Join(directory, name)
 		payload, exists, err := readRemoteArtifactReceiptPayload(path)
 		if err != nil {
@@ -1712,16 +1836,28 @@ func cleanupMalformedRemoteArtifactReceiptTemporaries(directory string, quota Re
 }
 
 func remoteArtifactReceiptRetentionDeleting(directory string) (bool, error) {
-	path := filepath.Join(directory, remoteArtifactReceiptRetentionFileName)
+	deleting, err := remoteArtifactReceiptStateFileExists(directory, remoteArtifactReceiptRetentionFileName)
+	if err != nil || deleting {
+		return deleting, err
+	}
+	return remoteArtifactReceiptRetentionCompleted(directory)
+}
+
+func remoteArtifactReceiptRetentionCompleted(directory string) (bool, error) {
+	return remoteArtifactReceiptStateFileExists(directory, remoteArtifactReceiptCompletedFileName)
+}
+
+func remoteArtifactReceiptStateFileExists(directory, name string) (bool, error) {
+	path := filepath.Join(directory, name)
 	info, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
 	}
 	if err != nil {
-		return false, errors.System.Newf("cannot inspect remote artifact retention deletion marker %q: %w", path, err)
+		return false, errors.System.Newf("cannot inspect remote artifact receipt state %q: %w", path, err)
 	}
 	if !info.Mode().IsRegular() {
-		return false, errors.Config.Newf("remote artifact retention deletion marker %q is not a regular file", path)
+		return false, errors.Config.Newf("remote artifact receipt state %q is not a regular file", path)
 	}
 	return true, nil
 }
@@ -1875,7 +2011,7 @@ func invalidateRemoteArtifactReceiptQuota(quota RemoteArtifactReceiptQuota, caus
 
 func remoteArtifactReceiptStateUsage(directory string) (int64, error) {
 	var result int64
-	for _, name := range []string{remoteArtifactReceiptFileName, remoteArtifactReceiptRetentionFileName, remoteArtifactReceiptRetentionTempName, remoteArtifactReceiptTempFileName, remoteArtifactReceiptRetentionTempName + remoteArtifactReceiptCleanupSuffix, remoteArtifactReceiptTempFileName + remoteArtifactReceiptCleanupSuffix} {
+	for _, name := range []string{remoteArtifactReceiptFileName, remoteArtifactReceiptRetentionFileName, remoteArtifactReceiptCompletedFileName, remoteArtifactReceiptRetentionTempName, remoteArtifactReceiptTempFileName, remoteArtifactReceiptRetentionTempName + remoteArtifactReceiptCleanupSuffix, remoteArtifactReceiptTempFileName + remoteArtifactReceiptCleanupSuffix} {
 		info, err := os.Lstat(filepath.Join(directory, name))
 		if errors.Is(err, fs.ErrNotExist) {
 			continue

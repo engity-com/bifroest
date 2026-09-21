@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	goerrors "errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -364,15 +365,131 @@ func TestHouseKeeperDoesNotDeleteRecordingWhenStartAuditFails(t *testing.T) {
 	require.NoError(t, err)
 	performed := false
 
-	changed, actionErr, auditErr := hk.auditRecordingDeletion(t.Context(), "security", sessionRecordingRetentionCandidate{recordingId: recordingId}, func() (bool, error) {
+	changed, actionErr, auditErr := hk.auditRecordingDeletion(t.Context(), "security", sessionRecordingRetentionCandidate{recordingId: recordingId, receipt: audit.RemoteArtifactRetentionCandidate{AuditOperationId: "6ba7b821-9dad-4d1f-80b4-00c04fd430c8"}}, func() (bool, sessionRecordingRetentionCandidate, error) {
 		performed = true
-		return true, nil
-	})
+		return true, sessionRecordingRetentionCandidate{}, nil
+	}, func(sessionRecordingRetentionCandidate) error { return nil })
 	require.False(t, changed)
 	require.NoError(t, actionErr)
 	require.ErrorContains(t, auditErr, "journal unavailable")
 	require.False(t, performed)
 	require.Empty(t, recorder.eventsSnapshot())
+}
+
+func TestHouseKeeperRetriesPersistedRecordingRetentionCompletionWithoutRepeatingAction(t *testing.T) {
+	for _, accepted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("accepted=%t", accepted), func(t *testing.T) {
+			hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, nil)
+			recorder := &recordingAuditRecorder{}
+			injected := goerrors.New("completion audit unavailable")
+			if accepted {
+				recorder.setErrorForName(audit.EventNameHousekeepingRecordingDeleteCompleted, injected)
+			} else {
+				recorder.setErrorBeforeRecordForName(audit.EventNameHousekeepingRecordingDeleteCompleted, injected)
+			}
+			hk.service.auditRecorders["security"] = recorder
+			recordingId, err := recording.NewId()
+			require.NoError(t, err)
+			operationId := "6ba7b822-9dad-4d1f-80b4-00c04fd430c8"
+			candidate := sessionRecordingRetentionCandidate{recordingId: recordingId, receipt: audit.RemoteArtifactRetentionCandidate{AuditOperationId: operationId}}
+			actionCalls, completionCalls := 0, 0
+			var persisted sessionRecordingRetentionCandidate
+
+			_, actionErr, auditErr := hk.auditRecordingDeletion(t.Context(), "security", candidate, func() (bool, sessionRecordingRetentionCandidate, error) {
+				actionCalls++
+				persisted = candidate
+				persisted.receipt.CompletionPending = true
+				return true, persisted, nil
+			}, func(sessionRecordingRetentionCandidate) error {
+				completionCalls++
+				return nil
+			})
+			require.NoError(t, actionErr)
+			require.ErrorIs(t, auditErr, injected)
+			require.Equal(t, 1, actionCalls)
+			require.Zero(t, completionCalls)
+
+			recorder.setError(nil)
+			_, actionErr, auditErr = hk.auditRecordingDeletion(t.Context(), "security", persisted, func() (bool, sessionRecordingRetentionCandidate, error) {
+				actionCalls++
+				return false, sessionRecordingRetentionCandidate{}, goerrors.New("action repeated")
+			}, func(completed sessionRecordingRetentionCandidate) error {
+				completionCalls++
+				require.Equal(t, persisted, completed)
+				return nil
+			})
+			require.NoError(t, actionErr)
+			require.NoError(t, auditErr)
+			require.Equal(t, 1, actionCalls)
+			require.Equal(t, 1, completionCalls)
+
+			events := recorder.eventsSnapshot()
+			expectedEvents := 2
+			if accepted {
+				expectedEvents = 3
+			}
+			require.Len(t, events, expectedEvents)
+			started := events[0]
+			completed := events[len(events)-1]
+			require.Equal(t, audit.EventNameHousekeepingRecordingDeleteStarted, started.Name)
+			require.Equal(t, audit.EventNameHousekeepingRecordingDeleteCompleted, completed.Name)
+			require.Equal(t, started.OperationId, completed.OperationId)
+			require.Equal(t, recordingId.String(), completed.RecordingId)
+			require.Equal(t, int64(0), *completed.DurationMillis)
+			if accepted {
+				require.Equal(t, events[1], events[2])
+			}
+		})
+	}
+}
+
+func TestHouseKeeperAuditsPersistedRecordingRetentionCompletionAfterMarkerSyncError(t *testing.T) {
+	hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, nil)
+	recorder := &recordingAuditRecorder{}
+	hk.service.auditRecorders["security"] = recorder
+	recordingId, err := recording.NewId()
+	require.NoError(t, err)
+	operationId := "6ba7b823-9dad-4d1f-80b4-00c04fd430c8"
+	candidate := sessionRecordingRetentionCandidate{recordingId: recordingId, receipt: audit.RemoteArtifactRetentionCandidate{AuditOperationId: operationId}}
+	injected := goerrors.New("completion marker sync failed")
+	completionCalls := 0
+
+	changed, actionErr, auditErr := hk.auditRecordingDeletion(t.Context(), "security", candidate, func() (bool, sessionRecordingRetentionCandidate, error) {
+		completed := candidate
+		completed.receipt.CompletionPending = true
+		completed.receipt.DeletionStarted = true
+		return true, completed, injected
+	}, func(completed sessionRecordingRetentionCandidate) error {
+		completionCalls++
+		require.True(t, completed.receipt.CompletionPending)
+		return nil
+	})
+	require.True(t, changed)
+	require.ErrorIs(t, actionErr, injected)
+	require.NoError(t, auditErr)
+	require.Zero(t, completionCalls)
+	events := recorder.eventsSnapshot()
+	require.Len(t, events, 1)
+	require.Equal(t, audit.EventNameHousekeepingRecordingDeleteStarted, events[0].Name)
+
+	completed := candidate
+	completed.receipt.CompletionPending = true
+	completed.receipt.DeletionStarted = true
+	_, actionErr, auditErr = hk.auditRecordingDeletion(t.Context(), "security", completed, func() (bool, sessionRecordingRetentionCandidate, error) {
+		return false, sessionRecordingRetentionCandidate{}, goerrors.New("action repeated")
+	}, func(sessionRecordingRetentionCandidate) error {
+		completionCalls++
+		return nil
+	})
+	require.NoError(t, actionErr)
+	require.NoError(t, auditErr)
+	require.Equal(t, 1, completionCalls)
+	events = recorder.eventsSnapshot()
+	require.Len(t, events, 2)
+	require.Equal(t, audit.EventNameHousekeepingRecordingDeleteCompleted, events[1].Name)
+	require.Equal(t, operationId, events[1].OperationId)
+	require.Equal(t, audit.EventOutcomeSuccess, events[1].Outcome)
+	require.Equal(t, int64(0), *events[1].DurationMillis)
 }
 
 func newHouseKeeperForTest(repository *houseKeeperTestSessionRepository, authorizer *houseKeeperTestAuthorizer) *houseKeeper {
