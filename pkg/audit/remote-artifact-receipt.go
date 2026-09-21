@@ -77,6 +77,8 @@ func (this *oversizedRemoteArtifactReceiptError) Unwrap() error {
 
 type remoteArtifactReceiptTargetStatus uint8
 
+type remoteArtifactReceiptUUIDGenerator func() (uuid.UUID, error)
+
 const (
 	remoteArtifactReceiptTargetNotSelected remoteArtifactReceiptTargetStatus = iota
 	remoteArtifactReceiptTargetPending
@@ -91,6 +93,7 @@ type remoteArtifactReceiptStore struct {
 	identity          *Identity
 	auditlog          configuration.AuditlogName
 	quota             RemoteArtifactReceiptQuota
+	newUUID           remoteArtifactReceiptUUIDGenerator
 	stateLock         *journalProcessLock
 	closed            bool
 	closeErr          error
@@ -391,7 +394,7 @@ func snapshotRemoteArtifactReceiptTargets(auditlog configuration.AuditlogName, t
 	return result, nil
 }
 
-func acknowledgeRemoteArtifactReceipt(identity *Identity, receipt remoteArtifactReceipt, entry remoteArtifactTargetEntry, acknowledgedAt time.Time) (remoteArtifactReceipt, []byte, bool, error) {
+func acknowledgeRemoteArtifactReceipt(identity *Identity, receipt remoteArtifactReceipt, entry remoteArtifactTargetEntry, acknowledgedAt time.Time, newUUID remoteArtifactReceiptUUIDGenerator) (remoteArtifactReceipt, []byte, bool, error) {
 	if entry.scope.Auditlog != receipt.Auditlog {
 		return remoteArtifactReceipt{}, nil, false, errors.Config.Newf("remote artifact target %q belongs to a different auditlog", entry.scope.Target)
 	}
@@ -427,10 +430,21 @@ func acknowledgeRemoteArtifactReceipt(identity *Identity, receipt remoteArtifact
 	content.Targets = append([]remoteArtifactReceiptTarget(nil), receipt.Targets...)
 	content.Targets[index].AcknowledgedAt = canonicalAcknowledgedAt
 	if content.Targets[index].AuditOperationId == "" {
-		content.Targets[index].AuditOperationId = uuid.NewString()
+		content.Targets[index].AuditOperationId, err = newRemoteArtifactDeliveryAuditOperationId(newUUID)
+		if err != nil {
+			return remoteArtifactReceipt{}, nil, false, err
+		}
 	}
 	updated, payload, err := signRemoteArtifactReceipt(identity, content)
 	return updated, payload, err == nil, err
+}
+
+func newRemoteArtifactDeliveryAuditOperationId(newUUID remoteArtifactReceiptUUIDGenerator) (string, error) {
+	value, err := newUUID()
+	if err != nil {
+		return "", errors.System.Newf("cannot generate remote artifact delivery audit operation ID: %w", err)
+	}
+	return value.String(), nil
 }
 
 func (this remoteArtifactReceipt) retentionStartedAt() (time.Time, bool) {
@@ -484,7 +498,7 @@ func newRemoteArtifactReceiptStore(recordingDirectory string, identity *Identity
 	}
 	mutex := make(chan struct{}, 1)
 	mutex <- struct{}{}
-	return &remoteArtifactReceiptStore{mutex: mutex, producerDirectory: producerDirectory, identity: identity, auditlog: auditlog, quota: quota, stateLock: stateLock}, nil
+	return &remoteArtifactReceiptStore{mutex: mutex, producerDirectory: producerDirectory, identity: identity, auditlog: auditlog, quota: quota, newUUID: uuid.NewRandom, stateLock: stateLock}, nil
 }
 
 func NewRemoteArtifactReceipts(recordingDirectory string, identity *Identity, auditlog configuration.AuditlogName, targets *RemoteArtifactTargets, quota RemoteArtifactReceiptQuota) (*RemoteArtifactReceipts, error) {
@@ -1059,7 +1073,10 @@ func (this *remoteArtifactReceiptStore) beginDeliveryFailure(ctx context.Context
 		content := receipt.remoteArtifactReceiptContent
 		content.Targets = append([]remoteArtifactReceiptTarget(nil), receipt.Targets...)
 		if content.Targets[index].AuditOperationId == "" {
-			content.Targets[index].AuditOperationId = uuid.NewString()
+			content.Targets[index].AuditOperationId, err = newRemoteArtifactDeliveryAuditOperationId(this.newUUID)
+			if err != nil {
+				return RemoteArtifactDeliveryAuditEvent{}, false, err
+			}
 		}
 		content.Targets[index].FailedAt = canonicalFailedAt
 		content.Targets[index].FailureErrorCategory = category
@@ -1241,7 +1258,7 @@ func (this *remoteArtifactReceiptStore) acknowledge(ctx context.Context, artifac
 	if !exists {
 		return remoteArtifactReceipt{}, errors.System.Newf("remote artifact delivery receipt for %q is missing", artifact.FileName())
 	}
-	updated, payload, changed, err := acknowledgeRemoteArtifactReceipt(this.identity, receipt, entry, acknowledgedAt)
+	updated, payload, changed, err := acknowledgeRemoteArtifactReceipt(this.identity, receipt, entry, acknowledgedAt, this.newUUID)
 	if err != nil || !changed {
 		return updated, err
 	}

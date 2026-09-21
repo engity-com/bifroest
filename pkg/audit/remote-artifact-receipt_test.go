@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -63,7 +64,7 @@ func TestRemoteArtifactReceiptIsCanonicalSignedAndRetainedAfterAllTargets(t *tes
 	require.False(t, ready)
 
 	firstAt := sealedAt.Add(time.Minute)
-	decoded, _, changed, err := acknowledgeRemoteArtifactReceipt(identity, decoded, targets.entries[0], firstAt)
+	decoded, _, changed, err := acknowledgeRemoteArtifactReceipt(identity, decoded, targets.entries[0], firstAt, uuid.NewRandom)
 	require.NoError(t, err)
 	require.True(t, changed)
 	decoded, _ = remoteArtifactReceiptTestMarkSuccessAudited(t, identity, decoded, 0, firstAt)
@@ -71,7 +72,7 @@ func TestRemoteArtifactReceiptIsCanonicalSignedAndRetainedAfterAllTargets(t *tes
 	require.False(t, ready)
 
 	secondAt := sealedAt.Add(2 * time.Minute)
-	decoded, _, changed, err = acknowledgeRemoteArtifactReceipt(identity, decoded, targets.entries[1], secondAt)
+	decoded, _, changed, err = acknowledgeRemoteArtifactReceipt(identity, decoded, targets.entries[1], secondAt, uuid.NewRandom)
 	require.NoError(t, err)
 	require.True(t, changed)
 	decoded, payload = remoteArtifactReceiptTestMarkSuccessAudited(t, identity, decoded, 1, secondAt)
@@ -79,7 +80,7 @@ func TestRemoteArtifactReceiptIsCanonicalSignedAndRetainedAfterAllTargets(t *tes
 	require.True(t, ready)
 	require.Equal(t, secondAt, retentionStartedAt)
 
-	unchanged, samePayload, changed, err := acknowledgeRemoteArtifactReceipt(identity, decoded, targets.entries[1], secondAt.Add(time.Hour))
+	unchanged, samePayload, changed, err := acknowledgeRemoteArtifactReceipt(identity, decoded, targets.entries[1], secondAt.Add(time.Hour), uuid.NewRandom)
 	require.NoError(t, err)
 	require.False(t, changed)
 	require.Equal(t, decoded, unchanged)
@@ -89,7 +90,7 @@ func TestRemoteArtifactReceiptIsCanonicalSignedAndRetainedAfterAllTargets(t *tes
 	_, _, _, err = acknowledgeRemoteArtifactReceipt(identity, decoded, remoteArtifactTargetEntry{
 		scope:                  targets.entries[0].scope,
 		destinationFingerprint: otherFingerprint,
-	}, secondAt)
+	}, secondAt, uuid.NewRandom)
 	require.ErrorContains(t, err, "different destination")
 
 	var tampered remoteArtifactReceipt
@@ -172,6 +173,53 @@ func TestRemoteArtifactReceiptPersistsDeliveryAuditOutboxAcrossRestart(t *testin
 	require.Equal(t, acknowledgedAt, retentionStartedAt)
 }
 
+func TestRemoteArtifactReceiptPropagatesAuditOperationIdGenerationFailures(t *testing.T) {
+	for _, operation := range []string{"acknowledge", "failure"} {
+		t.Run(operation, func(t *testing.T) {
+			_, identity := newJournalTestIdentity(t)
+			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b824-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))
+			entry := remoteArtifactDeliveryTestEntry("archive", remoteArtifactDeliveryTestFingerprint("archive"), nil)
+			store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, store.close()) })
+			sealedAt := time.Now().UTC().Add(-time.Minute)
+			initial, err := store.initialize(artifact, sealedAt, remoteArtifactDeliveryTestTargets(entry))
+			require.NoError(t, err)
+			injected := fmt.Errorf("injected UUID generation failure")
+			store.newUUID = func() (uuid.UUID, error) { return uuid.Nil, injected }
+
+			if operation == "acknowledge" {
+				_, err = store.acknowledge(t.Context(), artifact, entry, sealedAt.Add(time.Second))
+			} else {
+				var pending bool
+				_, pending, err = store.beginDeliveryFailure(t.Context(), artifact.FileName(), entry, ErrorCategoryNetwork, sealedAt.Add(time.Second))
+				require.False(t, pending)
+			}
+			require.ErrorIs(t, err, injected)
+			require.True(t, bferrors.System.IsErr(err))
+			require.ErrorContains(t, err, "cannot generate remote artifact delivery audit operation ID")
+			unchanged, exists, loadErr := store.load(artifact)
+			require.NoError(t, loadErr)
+			require.True(t, exists)
+			require.Equal(t, initial, unchanged)
+
+			store.newUUID = uuid.NewRandom
+			if operation == "acknowledge" {
+				updated, retryErr := store.acknowledge(t.Context(), artifact, entry, sealedAt.Add(time.Second))
+				require.NoError(t, retryErr)
+				require.NotEmpty(t, updated.Targets[0].AcknowledgedAt)
+				require.NotEmpty(t, updated.Targets[0].AuditOperationId)
+			} else {
+				event, pending, retryErr := store.beginDeliveryFailure(t.Context(), artifact.FileName(), entry, ErrorCategoryNetwork, sealedAt.Add(time.Second))
+				require.NoError(t, retryErr)
+				require.True(t, pending)
+				require.Equal(t, RemoteArtifactDeliveryAuditFailed, event.State)
+				require.NotEmpty(t, event.OperationId)
+			}
+		})
+	}
+}
+
 func TestRemoteArtifactReceiptStoreRecoversOnlyMonotonicAcknowledgement(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
 	root := t.TempDir()
@@ -197,7 +245,7 @@ func TestRemoteArtifactReceiptStoreRecoversOnlyMonotonicAcknowledgement(t *testi
 	require.ErrorContains(t, err, "different artifact")
 
 	acknowledgedAt := sealedAt.Add(time.Minute)
-	next, payload, changed, err := acknowledgeRemoteArtifactReceipt(identity, initial, targets.entries[0], acknowledgedAt)
+	next, payload, changed, err := acknowledgeRemoteArtifactReceipt(identity, initial, targets.entries[0], acknowledgedAt, uuid.NewRandom)
 	require.NoError(t, err)
 	require.True(t, changed)
 	directory := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName()))
@@ -282,7 +330,7 @@ func TestRemoteArtifactReceiptStoreRecoversMonotonicDeliveryAuditState(t *testin
 	require.False(t, pending)
 
 	acknowledgedAt := sealedAt.Add(3 * time.Second)
-	successPending, payload, changed, err := acknowledgeRemoteArtifactReceipt(identity, failureCompleted, entry, acknowledgedAt)
+	successPending, payload, changed, err := acknowledgeRemoteArtifactReceipt(identity, failureCompleted, entry, acknowledgedAt, uuid.NewRandom)
 	require.NoError(t, err)
 	require.True(t, changed)
 	successPending = recoverRemoteArtifactReceiptTestTemporary(t, store, artifact, successPending, payload)
