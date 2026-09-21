@@ -290,11 +290,17 @@ func TestSessionRecordingRepositoryCreatesAndSealsActiveFormats(t *testing.T) {
 				ProducerId:   identity.ProducerId(),
 				StartedAt:    startedAt,
 			}
+			fileName, err := repository.artifactName(recordingId)
+			require.NoError(t, err)
+			startedEvent := sessionRecordingAuditEvent(metadata, audit.EventNameSessionRecordingStarted, "", "", nil, 0, nil, nil)
+			require.NoError(t, repository.receipts.BeginLifecycle(t.Context(), fileName, startedAt, startedEvent))
 			active, err := repository.createActive(t.Context(), header, metadata, 300)
 			require.NoError(t, err)
 			require.NoError(t, active.WriteOutput(time.Second, recording.OutputStreamTerminal, []byte("adapter output\r\n")))
 			require.NoError(t, active.Checkpoint())
 			exitStatus := uint32(7)
+			terminalEvent := sessionRecordingAuditEvent(metadata, audit.EventNameSessionRecordingCompleted, audit.EventOutcomeSuccess, "", nil, 2*time.Second, nil, &exitStatus)
+			require.NoError(t, repository.receipts.StageLifecycle(t.Context(), fileName, terminalEvent))
 			summary, err := active.Seal(2*time.Second, recording.CastResult{
 				Status:  recording.CastStatusCompleted,
 				EndedAt: startedAt.Add(2 * time.Second),
@@ -425,9 +431,7 @@ func TestPrepareRecordingRecoversActiveCastZstdAsIncomplete(t *testing.T) {
 	enableSessionRecording(&conf.Auditlogs[0])
 	identity, err := audit.EnsureIdentity(&conf.Auditlogs[0])
 	require.NoError(t, err)
-	repository, err := recording.NewLocalCastZstdRepository(context.Background(), conf.Auditlogs[0].Recording.Directory, identity, recording.CastZstdVerifyOptions{}, recording.LocalRepositoryOptions{
-		MaximumSpoolBytes: conf.Auditlogs[0].Recording.MaximumSpoolBytes,
-	})
+	repository, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, bfcrypto.PublicKeys(""), conf.Auditlogs[0].Name, nil)
 	require.NoError(t, err)
 	startedAt := time.Now().UTC().Truncate(time.Second)
 	recordingId, err := recording.NewId()
@@ -452,7 +456,11 @@ func TestPrepareRecordingRecoversActiveCastZstdAsIncomplete(t *testing.T) {
 		ProducerId:   identity.ProducerId(),
 		StartedAt:    startedAt,
 	}
-	active, err := repository.CreateActive(context.Background(), header, metadata, 300)
+	fileName, err := repository.artifactName(recordingId)
+	require.NoError(t, err)
+	startedEvent := sessionRecordingAuditEvent(metadata, audit.EventNameSessionRecordingStarted, "", "", nil, 0, nil, nil)
+	require.NoError(t, repository.receipts.BeginLifecycle(t.Context(), fileName, startedAt, startedEvent))
+	active, err := repository.createActive(context.Background(), header, metadata, 300)
 	require.NoError(t, err)
 	require.NoError(t, active.WriteOutput(time.Second, recording.OutputStreamTerminal, []byte("interrupted\r\n")))
 	require.NoError(t, repository.Close())
@@ -465,6 +473,91 @@ func TestPrepareRecordingRecoversActiveCastZstdAsIncomplete(t *testing.T) {
 	require.Equal(t, recording.CastStatusIncomplete, recoveries[0].status)
 	require.False(t, recoveries[0].alreadySealed)
 	require.NoError(t, svc.Close())
+}
+
+func TestSessionRecordingLifecycleStartupRecoveryCreatesIncompleteEvent(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		encrypted bool
+	}{
+		{name: "Cast Zstandard"},
+		{name: "BECast without recipient private key", encrypted: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			conf := sessionRecordingTestConfiguration(t, root)
+			enableSessionRecording(&conf.Auditlogs[0])
+			identity, err := audit.EnsureIdentity(&conf.Auditlogs[0])
+			require.NoError(t, err)
+			var encryptionPublicKey bfcrypto.PublicKeys
+			if test.encrypted {
+				encryptionPublicKey = sessionRecordingEncryptionPublicKey(t)
+			}
+			repository, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, encryptionPublicKey, conf.Auditlogs[0].Name, nil)
+			require.NoError(t, err)
+			startedAt := time.Now().UTC().Add(-time.Second)
+			recordingId, err := recording.NewId()
+			require.NoError(t, err)
+			connectionId, err := bfconnection.NewId()
+			require.NoError(t, err)
+			sessionId, err := session.NewId()
+			require.NoError(t, err)
+			metadata := recording.CastMetadata{
+				RecordingId:  recordingId,
+				ConnectionId: connectionId,
+				SessionId:    sessionId,
+				OperationId:  uuid.New(),
+				Flow:         conf.Flows[0].Name,
+				Task:         audit.SessionTaskShell,
+				Pty:          true,
+				ProducerId:   identity.ProducerId(),
+				StartedAt:    startedAt,
+			}
+			fileName, err := repository.artifactName(recordingId)
+			require.NoError(t, err)
+			startedEvent := sessionRecordingAuditEvent(metadata, audit.EventNameSessionRecordingStarted, "", "", nil, 0, nil, nil)
+			require.NoError(t, repository.receipts.BeginLifecycle(t.Context(), fileName, startedAt, startedEvent))
+			active, err := repository.createActive(t.Context(), recording.CastHeader{
+				Version:   recording.CastVersion,
+				Terminal:  recording.CastTerminal{Columns: 80, Rows: 24, Type: "xterm"},
+				Timestamp: startedAt.Unix(),
+			}, metadata, 300)
+			require.NoError(t, err)
+			require.NoError(t, active.WriteOutput(time.Second, recording.OutputStreamTerminal, []byte("interrupted\r\n")))
+			stagedEvent := sessionRecordingAuditEvent(metadata, audit.EventNameSessionRecordingCompleted, audit.EventOutcomeSuccess, "", nil, time.Second, nil, commonUint32(0))
+			require.NoError(t, repository.receipts.StageLifecycle(t.Context(), fileName, stagedEvent))
+			require.NoError(t, repository.Close())
+
+			restarted, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, encryptionPublicKey, conf.Auditlogs[0].Name, nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, restarted.Close()) })
+			recoveries := restarted.startupRecoveries()
+			require.Len(t, recoveries, 1)
+			require.Equal(t, recording.CastStatusIncomplete, recoveries[0].status)
+			require.False(t, recoveries[0].alreadySealed)
+			pending, err := restarted.receipts.PendingLifecycle(t.Context())
+			require.NoError(t, err)
+			require.Len(t, pending, 1)
+			event := pending[0].Event
+			require.Equal(t, audit.EventNameSessionRecordingIncomplete, event.Name)
+			require.Equal(t, audit.EventOutcomeFailure, event.Outcome)
+			require.Equal(t, audit.EventReasonStartupRecovery, event.Reason)
+			require.Equal(t, metadata.Flow.String(), event.Flow)
+			require.Equal(t, metadata.ConnectionId.String(), event.ConnectionId)
+			require.Equal(t, metadata.SessionId.String(), event.SessionId)
+			require.Equal(t, metadata.OperationId.String(), event.OperationId)
+			require.Equal(t, metadata.RecordingId.String(), event.RecordingId)
+			require.NotNil(t, event.DurationMillis)
+			artifact, err := restarted.OpenSealedArtifact(t.Context(), fileName)
+			require.NoError(t, err)
+			remote, err := artifact.RemoteArtifact()
+			require.NoError(t, err)
+			require.Equal(t, remote.Digest(), pending[0].ArtifactDigest)
+			require.Equal(t, recoveries[0].digest.String(), event.RecordingDigest)
+			require.NotEqual(t, remote.Digest().String(), event.RecordingDigest)
+			require.NoError(t, artifact.Close())
+		})
+	}
 }
 
 func sessionRecordingTestConfiguration(t *testing.T, root string) configuration.Configuration {

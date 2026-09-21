@@ -84,6 +84,13 @@ func (this *LocalCastZstdRepository) ListSealed(ctx context.Context) ([]Id, erro
 	return this.repository.listSealed(ctx)
 }
 
+func (this *LocalCastZstdRepository) RecordingStateExists(id Id) (bool, error) {
+	if this == nil {
+		return false, errors.System.Newf("nil local Cast Zstandard repository")
+	}
+	return this.repository.recordingStateExists(id)
+}
+
 func (this *LocalCastZstdRepository) OpenSealed(ctx context.Context, id Id) (*LocalSealedArtifact[CastZstdSummary], error) {
 	if this == nil {
 		return nil, errors.System.Newf("nil local Cast Zstandard repository")
@@ -301,4 +308,8 @@ func (this *localCastZstdFormat) verifyPublished(file *os.File, size int64, head
 
 func (this *localCastZstdFormat) summaryId(summary CastZstdSummary) Id {
 	return summary.RecordingId
+}
+
+func (this *localCastZstdFormat) summaryDigest(summary CastZstdSummary) CastDigest {
+	return summary.Digest
 }

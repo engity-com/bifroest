@@ -442,6 +442,9 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 			svc.auditDeliveryOrder = append(svc.auditDeliveryOrder, delivery)
 		}
 	}
+	if err := svc.replaySessionRecordingLifecycles(ctx); err != nil {
+		return err
+	}
 	for _, flow := range this.Configuration.Flows {
 		svc.flowAuditRecorders[flow.Name] = svc.auditRecorders[flow.Auditlog]
 		svc.flowAuditlogs[flow.Name] = flow.Auditlog

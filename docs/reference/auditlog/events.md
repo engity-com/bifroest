@@ -124,7 +124,7 @@ Fields: `domain` is `session`; `flow`, `connectionId`, `sessionId`, `operationId
 
 #### `session.recording.completed`
 
-Written only after a completed recording has been sealed, synchronized, verified, and atomically published. The correlation fields match `session.recording.started`. `outcome` is `success`; `durationMillis`, `exitCode`, and `recordingDigest` describe the immutable result. A failure to write this event does not alter the already published completed artifact, but the SSH operation still fails closed.
+Written only after a completed recording has been sealed, synchronized, verified, and atomically published. The correlation fields match `session.recording.started`. `outcome` is `success`; `durationMillis`, `exitCode`, and `recordingDigest` describe the immutable result. A signed local outbox binds the event to both the canonical Cast digest in `recordingDigest` and the outer artifact digest in a non-replayable prepared state before publication. Atomic publication and verification promote the event to pending; only pending events are replayed at startup. A failure to write this event does not alter the already published completed artifact, but the SSH operation still fails closed.
 
 #### `session.recording.incomplete`
 
@@ -136,8 +136,9 @@ Outcomes and reasons:
 * `canceled` with `deadline-exceeded`: the SSH task deadline expired.
 * `failure` with `invalid-exit-code`: execution returned no valid exit code.
 * `failure` with `session-error`: another task error prevented normal completion; `errorCategory` classifies it.
+* `failure` with `startup-recovery`: startup recovered an active recording that had not completed sealing before the previous process stopped.
 
-If the Bifröst process terminates with an unsealed active recording, startup recovery seals and publishes that artifact as incomplete. Recovery does not synthesize an audit event because encrypted BECast metadata cannot be reconstructed without the external recipient's private key. A `session.recording.started` event without a final event therefore indicates either a process interruption or a failed final audit write. The signed artifact remains authoritative for its status and digest; it may already be completed or failed if the interruption happened after sealing.
+If the Bifröst process terminates with an unsealed active recording, startup recovery seals and publishes that artifact as incomplete. Correlation data persisted in the signed lifecycle intent allows recovery to finalize this event without decrypting BECast content. If sealing had already made a terminal event and receipt durable, recovery preserves that event instead of replacing it. A prepared event is not replayable until recovery has published and verified its artifact. Pending terminal events are replayed at least once during startup: a crash or ambiguous error after the audit journal commits but before outbox completion can produce an identical duplicate, but cannot silently lose the transition.
 
 #### `session.recording.failed`
 

@@ -88,6 +88,7 @@ const (
 	EventReasonRecordingSeal       = "recording-seal"
 	EventReasonAuditWrite          = "audit-write"
 	EventReasonSessionError        = "session-error"
+	EventReasonStartupRecovery     = "startup-recovery"
 )
 
 var knownEventReasons = [...]EventReason{
@@ -114,6 +115,7 @@ var knownEventReasons = [...]EventReason{
 	EventReasonRecordingSeal,
 	EventReasonAuditWrite,
 	EventReasonSessionError,
+	EventReasonStartupRecovery,
 }
 
 type EventDomain string

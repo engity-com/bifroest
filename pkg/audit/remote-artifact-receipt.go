@@ -584,8 +584,54 @@ func (this *RemoteArtifactReceipts) Prepare(ctx context.Context, artifact Remote
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	_, err := this.store.initializeContext(ctx, artifact, sealedAt, this.targets)
-	return err
+	if err := this.store.lock(ctx); err != nil {
+		return err
+	}
+	defer this.store.unlock()
+	if this.store.closed {
+		return errors.System.Newf("remote artifact receipt store is closed")
+	}
+	if _, exists, err := this.store.loadLifecycleLocked(artifact.FileName(), nil); err != nil {
+		return err
+	} else if exists {
+		return errors.Config.Newf("session Recording lifecycle state for %q requires lifecycle-aware artifact preparation", artifact.FileName())
+	}
+	if _, err := this.store.initializeLocked(artifact, sealedAt, this.targets); err != nil {
+		return err
+	}
+	return nil
+}
+
+// PrepareLifecycle persists the receipt and binds a pending terminal event to
+// both the outer artifact and the canonical Cast content digest.
+func (this *RemoteArtifactReceipts) PrepareLifecycle(ctx context.Context, artifact RemoteArtifact, sealedAt time.Time, recordingDigest string, interrupted bool) error {
+	if this == nil || this.store == nil {
+		return errors.System.Newf("nil remote artifact receipts")
+	}
+	if recordingDigest == "" {
+		return errors.Config.Newf("session Recording lifecycle Cast digest is empty")
+	}
+	if err := validateAuditRecordingDigest(recordingDigest); err != nil {
+		return err
+	}
+	if err := this.store.lock(ctx); err != nil {
+		return err
+	}
+	defer this.store.unlock()
+	if this.store.closed {
+		return errors.System.Newf("remote artifact receipt store is closed")
+	}
+	_, lifecycleExists, err := this.store.loadLifecycleLocked(artifact.FileName(), nil)
+	if err != nil {
+		return err
+	}
+	if !lifecycleExists {
+		return errors.Config.Newf("session Recording lifecycle state for %q is missing", artifact.FileName())
+	}
+	if _, err := this.store.initializeLocked(artifact, sealedAt, this.targets); err != nil {
+		return err
+	}
+	return this.store.finalizeLifecycleLocked(artifact, sealedAt, recordingDigest, interrupted)
 }
 
 func (this *RemoteArtifactReceipts) Require(ctx context.Context, artifact RemoteArtifact) error {
@@ -695,6 +741,10 @@ func (this *remoteArtifactReceiptStore) initializeContext(ctx context.Context, a
 	if this.closed {
 		return remoteArtifactReceipt{}, errors.System.Newf("remote artifact receipt store is closed")
 	}
+	return this.initializeLocked(artifact, sealedAt, targets)
+}
+
+func (this *remoteArtifactReceiptStore) initializeLocked(artifact RemoteArtifact, sealedAt time.Time, targets *RemoteArtifactTargets) (remoteArtifactReceipt, error) {
 	existing, exists, err := this.loadLocked(artifact)
 	if err != nil {
 		return remoteArtifactReceipt{}, err
@@ -802,7 +852,19 @@ func (this *remoteArtifactReceiptStore) recover(ctx context.Context) error {
 			return err
 		}
 		if !receiptExists {
-			return errors.Config.Newf("remote artifact delivery receipt for %q is missing", fileName)
+			if _, lifecycleExists, lifecycleErr := this.loadLifecycleLocked(fileName, nil); lifecycleErr != nil {
+				return lifecycleErr
+			} else if !lifecycleExists {
+				return errors.Config.Newf("remote artifact delivery receipt for %q is missing", fileName)
+			}
+			continue
+		}
+		receipt, _, err := this.loadSnapshotLocked(fileName, nil)
+		if err != nil {
+			return err
+		}
+		if _, _, err := this.loadLifecycleLocked(fileName, &receipt); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -833,9 +895,19 @@ func (this *remoteArtifactReceiptStore) listRetentionCandidates(ctx context.Cont
 			return nil, err
 		}
 		if !exists {
+			if _, lifecycleExists, lifecycleErr := this.loadLifecycleLocked(fileName, nil); lifecycleErr != nil {
+				return nil, lifecycleErr
+			} else if lifecycleExists {
+				continue
+			}
 			return nil, errors.Config.Newf("remote artifact delivery receipt for %q is missing", fileName)
 		}
 		directory := filepath.Join(this.producerDirectory, remoteArtifactReceiptStateName(fileName))
+		if _, lifecycleExists, err := this.loadLifecycleLocked(fileName, &receipt); err != nil {
+			return nil, err
+		} else if lifecycleExists {
+			continue
+		}
 		deletionStarted, err := remoteArtifactReceiptRetentionDeleting(directory)
 		if err != nil {
 			return nil, err
@@ -891,6 +963,11 @@ func (this *remoteArtifactReceiptStore) markRetentionDeleting(ctx context.Contex
 	}
 	if !exists {
 		return errors.Config.Newf("remote artifact delivery receipt for %q is missing", candidate.FileName)
+	}
+	if _, lifecycleExists, err := this.loadLifecycleLocked(candidate.FileName, &receipt); err != nil {
+		return err
+	} else if lifecycleExists {
+		return errors.Config.Newf("remote artifact %q has an unfinished session Recording lifecycle", candidate.FileName)
 	}
 	directory := filepath.Join(this.producerDirectory, remoteArtifactReceiptStateName(candidate.FileName))
 	deletionStarted, err := remoteArtifactReceiptRetentionDeleting(directory)
@@ -1738,7 +1815,7 @@ func validateRemoteArtifactReceiptState(directory string) error {
 	}
 	regular, retention, completed := false, false, false
 	for _, entry := range entries {
-		if (entry.Name() != remoteArtifactReceiptFileName && entry.Name() != remoteArtifactReceiptRetentionFileName && entry.Name() != remoteArtifactReceiptCompletedFileName && entry.Name() != remoteArtifactReceiptRetentionTempName && entry.Name() != remoteArtifactReceiptTempFileName && entry.Name() != remoteArtifactReceiptRetentionTempName+remoteArtifactReceiptCleanupSuffix && entry.Name() != remoteArtifactReceiptTempFileName+remoteArtifactReceiptCleanupSuffix) || !entry.Type().IsRegular() {
+		if (entry.Name() != remoteArtifactReceiptFileName && entry.Name() != remoteArtifactReceiptRetentionFileName && entry.Name() != remoteArtifactReceiptCompletedFileName && entry.Name() != remoteArtifactReceiptRetentionTempName && entry.Name() != remoteArtifactReceiptTempFileName && entry.Name() != remoteArtifactLifecycleFileName && entry.Name() != remoteArtifactLifecycleTempName && entry.Name() != remoteArtifactReceiptRetentionTempName+remoteArtifactReceiptCleanupSuffix && entry.Name() != remoteArtifactReceiptTempFileName+remoteArtifactReceiptCleanupSuffix && entry.Name() != remoteArtifactLifecycleTempName+remoteArtifactReceiptCleanupSuffix) || !entry.Type().IsRegular() {
 			return errors.Config.Newf("remote artifact delivery receipt state %q contains unsupported entry %q", directory, entry.Name())
 		}
 		regular = regular || entry.Name() == remoteArtifactReceiptFileName
@@ -1774,7 +1851,7 @@ func readRemoteArtifactReceipt(path string, identity *Identity, auditlog configu
 }
 
 func remoteArtifactReceiptStateFileName(directory string) (string, bool, error) {
-	for _, name := range []string{remoteArtifactReceiptFileName, remoteArtifactReceiptRetentionFileName, remoteArtifactReceiptCompletedFileName, remoteArtifactReceiptRetentionTempName, remoteArtifactReceiptTempFileName} {
+	for _, name := range []string{remoteArtifactReceiptFileName, remoteArtifactReceiptRetentionFileName, remoteArtifactReceiptCompletedFileName, remoteArtifactReceiptRetentionTempName, remoteArtifactReceiptTempFileName, remoteArtifactLifecycleFileName, remoteArtifactLifecycleTempName} {
 		path := filepath.Join(directory, name)
 		payload, exists, err := readRemoteArtifactReceiptPayload(path)
 		if err != nil {
@@ -1799,7 +1876,7 @@ func remoteArtifactReceiptStateFileName(directory string) (string, bool, error) 
 
 func cleanupMalformedRemoteArtifactReceiptTemporaries(directory string, quota RemoteArtifactReceiptQuota) error {
 	var result error
-	for _, name := range []string{remoteArtifactReceiptRetentionTempName, remoteArtifactReceiptTempFileName} {
+	for _, name := range []string{remoteArtifactReceiptRetentionTempName, remoteArtifactReceiptTempFileName, remoteArtifactLifecycleTempName} {
 		path := filepath.Join(directory, name)
 		payload, exists, err := readRemoteArtifactReceiptPayload(path)
 		if err != nil {
@@ -2011,7 +2088,7 @@ func invalidateRemoteArtifactReceiptQuota(quota RemoteArtifactReceiptQuota, caus
 
 func remoteArtifactReceiptStateUsage(directory string) (int64, error) {
 	var result int64
-	for _, name := range []string{remoteArtifactReceiptFileName, remoteArtifactReceiptRetentionFileName, remoteArtifactReceiptCompletedFileName, remoteArtifactReceiptRetentionTempName, remoteArtifactReceiptTempFileName, remoteArtifactReceiptRetentionTempName + remoteArtifactReceiptCleanupSuffix, remoteArtifactReceiptTempFileName + remoteArtifactReceiptCleanupSuffix} {
+	for _, name := range []string{remoteArtifactReceiptFileName, remoteArtifactReceiptRetentionFileName, remoteArtifactReceiptCompletedFileName, remoteArtifactReceiptRetentionTempName, remoteArtifactReceiptTempFileName, remoteArtifactLifecycleFileName, remoteArtifactLifecycleTempName, remoteArtifactReceiptRetentionTempName + remoteArtifactReceiptCleanupSuffix, remoteArtifactReceiptTempFileName + remoteArtifactReceiptCleanupSuffix, remoteArtifactLifecycleTempName + remoteArtifactReceiptCleanupSuffix} {
 		info, err := os.Lstat(filepath.Join(directory, name))
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -2059,7 +2136,7 @@ func cleanupRemoteArtifactReceiptFile(path, directory string) error {
 func cleanupRemoteArtifactReceiptTombstones(directory string) error {
 	removed := false
 	var result error
-	for _, name := range []string{remoteArtifactReceiptRetentionTempName, remoteArtifactReceiptTempFileName} {
+	for _, name := range []string{remoteArtifactReceiptRetentionTempName, remoteArtifactReceiptTempFileName, remoteArtifactLifecycleTempName} {
 		path := filepath.Join(directory, name+remoteArtifactReceiptCleanupSuffix)
 		exists, err := validateRemoteArtifactReceiptCleanupMarker(path)
 		if err != nil {

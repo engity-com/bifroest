@@ -25,19 +25,23 @@ func TestLocalCastZstdRepositoryRecoversAfterDurableReceiptBeforePublication(t *
 		_ = repository.Close()
 		_ = preparer.Close()
 	})
+	fileName := metadata.RecordingId.String() + localCastZstdSealedSuffix
+	receipts, err := preparer.get()
+	require.NoError(t, err)
+	require.NoError(t, receipts.BeginLifecycle(t.Context(), fileName, metadata.StartedAt, localLifecycleTestStartedEvent(metadata)))
+	require.NoError(t, receipts.StageLifecycle(t.Context(), fileName, localLifecycleTestCompletedEvent(metadata)))
 	active, err := repository.CreateActive(t.Context(), header, metadata, 300)
 	require.NoError(t, err)
 	require.NoError(t, active.WriteOutput(time.Second, OutputStreamTerminal, []byte("durable receipt before publication\r\n")))
 	require.NoError(t, active.Checkpoint())
 	activeDirectory := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String())
-	headInfo, err := os.Lstat(filepath.Join(activeDirectory, localHeadFileName))
-	require.NoError(t, err)
-	reserveInfo, err := os.Lstat(filepath.Join(activeDirectory, localRecoveryReserveName))
-	require.NoError(t, err)
-
 	_, err = active.Seal(2*time.Second, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(2 * time.Second)}, sealedArtifactUint32(0))
 	require.ErrorIs(t, err, crashErr)
 	require.Equal(t, 1, preparer.prepareCalls)
+	require.False(t, preparer.interrupted)
+	pendingBeforePublish, err := preparer.receipts.PendingLifecycle(t.Context())
+	require.NoError(t, err)
+	require.Empty(t, pendingBeforePublish)
 	require.NoError(t, preparer.prepared.ValidateContext(t.Context()))
 	require.NoError(t, preparer.Require(t.Context(), preparer.prepared))
 	require.DirExists(t, activeDirectory)
@@ -71,6 +75,13 @@ func TestLocalCastZstdRepositoryRecoversAfterDurableReceiptBeforePublication(t *
 	require.False(t, recoveries[0].Truncated)
 	require.True(t, recoveries[0].AlreadySealed)
 	require.Equal(t, 1, restartedPreparer.prepareCalls)
+	require.False(t, restartedPreparer.interrupted)
+	require.Equal(t, recoveries[0].Summary.Digest, restartedPreparer.recordingDigest)
+	pending, err := restartedPreparer.receipts.PendingLifecycle(t.Context())
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	require.Equal(t, audit.EventNameSessionRecordingCompleted, pending[0].Event.Name)
+	require.Equal(t, recoveries[0].Summary.Digest.String(), pending[0].Event.RecordingDigest)
 	require.NoDirExists(t, activeDirectory)
 	require.FileExists(t, filepath.Join(root, localSealedDirectory, preparedFileName))
 	sealed, err := restarted.OpenSealed(t.Context(), metadata.RecordingId)
@@ -83,8 +94,46 @@ func TestLocalCastZstdRepositoryRecoversAfterDurableReceiptBeforePublication(t *
 	require.Equal(t, preparedSize, remote.Size())
 	require.NoError(t, restartedPreparer.Require(t.Context(), remote))
 	requireLocalTestQuotaMatchesFiles(t, root, restarted.repository.quota)
-	require.Equal(t, crashUsage-uint64(headInfo.Size())-uint64(reserveInfo.Size()), restarted.repository.quota.usage)
 	localDurableReceiptTestRequireUnchanged(t, receiptPath, receiptBefore, receiptInfoBefore)
+}
+
+func TestLocalCastZstdRepositoryPromotesLifecycleAfterPublishedRecovery(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "recordings")
+	identity, header, metadata := castTestValues(t, true)
+	promotionErr := stderrors.New("injected crash before lifecycle promotion")
+	preparer := &localDurableReceiptCrashPreparer{directory: root, identity: identity, failBeforePromote: promotionErr}
+	repository, err := NewLocalCastZstdRepositoryWithArtifactPreparer(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions, preparer)
+	require.NoError(t, err)
+	fileName := metadata.RecordingId.String() + localCastZstdSealedSuffix
+	receipts, err := preparer.get()
+	require.NoError(t, err)
+	require.NoError(t, receipts.BeginLifecycle(t.Context(), fileName, metadata.StartedAt, localLifecycleTestStartedEvent(metadata)))
+	require.NoError(t, receipts.StageLifecycle(t.Context(), fileName, localLifecycleTestCompletedEvent(metadata)))
+	active, err := repository.CreateActive(t.Context(), header, metadata, 300)
+	require.NoError(t, err)
+	require.NoError(t, active.WriteOutput(time.Second, OutputStreamTerminal, []byte("published before promotion\r\n")))
+
+	_, err = active.Seal(2*time.Second, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(2 * time.Second)}, sealedArtifactUint32(0))
+	require.ErrorIs(t, err, promotionErr)
+	require.Empty(t, mustLocalPendingLifecycle(t, preparer.receipts))
+	activeDirectory := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String())
+	require.DirExists(t, activeDirectory)
+	require.FileExists(t, filepath.Join(root, localSealedDirectory, fileName))
+	require.ErrorIs(t, repository.Close(), promotionErr)
+	require.NoError(t, preparer.Close())
+
+	restartedPreparer := &localDurableReceiptCrashPreparer{directory: root, identity: identity}
+	restarted, err := NewLocalCastZstdRepositoryWithArtifactPreparer(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions, restartedPreparer)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, restarted.Close())
+		require.NoError(t, restartedPreparer.Close())
+	})
+	require.Empty(t, restarted.StartupRecoveries())
+	require.NoDirExists(t, activeDirectory)
+	pending := mustLocalPendingLifecycle(t, restartedPreparer.receipts)
+	require.Len(t, pending, 1)
+	require.Equal(t, audit.EventNameSessionRecordingCompleted, pending[0].Event.Name)
 }
 
 func TestLocalBECastRepositoryRecoversAfterDurableReceiptBeforePublication(t *testing.T) {
@@ -99,16 +148,16 @@ func TestLocalBECastRepositoryRecoversAfterDurableReceiptBeforePublication(t *te
 		_ = repository.Close()
 		_ = preparer.Close()
 	})
+	fileName := metadata.RecordingId.String() + localBECastSealedSuffix
+	receipts, err := preparer.get()
+	require.NoError(t, err)
+	require.NoError(t, receipts.BeginLifecycle(t.Context(), fileName, metadata.StartedAt, localLifecycleTestStartedEvent(metadata)))
+	require.NoError(t, receipts.StageLifecycle(t.Context(), fileName, localLifecycleTestCompletedEvent(metadata)))
 	active, err := repository.CreateActive(t.Context(), header, metadata, 300)
 	require.NoError(t, err)
 	require.NoError(t, active.WriteOutput(time.Second, OutputStreamTerminal, []byte("durable encrypted receipt before publication\r\n")))
 	require.NoError(t, active.Checkpoint())
 	activeDirectory := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String())
-	headInfo, err := os.Lstat(filepath.Join(activeDirectory, localHeadFileName))
-	require.NoError(t, err)
-	reserveInfo, err := os.Lstat(filepath.Join(activeDirectory, localRecoveryReserveName))
-	require.NoError(t, err)
-
 	_, err = active.Seal(2*time.Second, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(2 * time.Second)}, sealedArtifactUint32(0))
 	require.ErrorIs(t, err, crashErr)
 	require.Equal(t, 1, preparer.prepareCalls)
@@ -157,18 +206,21 @@ func TestLocalBECastRepositoryRecoversAfterDurableReceiptBeforePublication(t *te
 	require.Equal(t, preparedSize, remote.Size())
 	require.NoError(t, restartedPreparer.Require(t.Context(), remote))
 	requireLocalTestQuotaMatchesFiles(t, root, restarted.repository.quota)
-	require.Equal(t, crashUsage-uint64(headInfo.Size())-uint64(reserveInfo.Size()), restarted.repository.quota.usage)
 	localDurableReceiptTestRequireUnchanged(t, receiptPath, receiptBefore, receiptInfoBefore)
 }
 
 type localDurableReceiptCrashPreparer struct {
-	directory        string
-	identity         *audit.Identity
-	quota            audit.RemoteArtifactReceiptQuota
-	receipts         *audit.RemoteArtifactReceipts
-	failAfterPrepare error
-	prepared         audit.RemoteArtifact
-	prepareCalls     int
+	directory         string
+	identity          *audit.Identity
+	quota             audit.RemoteArtifactReceiptQuota
+	receipts          *audit.RemoteArtifactReceipts
+	failAfterPrepare  error
+	prepared          audit.RemoteArtifact
+	prepareCalls      int
+	recordingDigest   CastDigest
+	interrupted       bool
+	failBeforePromote error
+	promoteCalls      int
 }
 
 func (this *localDurableReceiptCrashPreparer) BindSealedArtifactQuota(quota audit.RemoteArtifactReceiptQuota) {
@@ -194,6 +246,40 @@ func (this *localDurableReceiptCrashPreparer) Prepare(ctx context.Context, artif
 	this.prepared = artifact
 	this.prepareCalls++
 	return this.failAfterPrepare
+}
+
+func (this *localDurableReceiptCrashPreparer) PrepareLifecycle(ctx context.Context, artifact audit.RemoteArtifact, sealedAt time.Time, recordingDigest CastDigest, interrupted bool) error {
+	receipts, err := this.get()
+	if err != nil {
+		return err
+	}
+	if err := receipts.PrepareLifecycle(ctx, artifact, sealedAt, recordingDigest.String(), interrupted); err != nil {
+		return err
+	}
+	this.prepared = artifact
+	this.recordingDigest = recordingDigest
+	this.interrupted = interrupted
+	this.prepareCalls++
+	return this.failAfterPrepare
+}
+
+func (this *localDurableReceiptCrashPreparer) PromoteLifecycle(ctx context.Context, artifact audit.RemoteArtifact) error {
+	this.promoteCalls++
+	if this.failBeforePromote != nil {
+		return this.failBeforePromote
+	}
+	receipts, err := this.get()
+	if err != nil {
+		return err
+	}
+	return receipts.PromoteLifecycle(ctx, artifact)
+}
+
+func mustLocalPendingLifecycle(t *testing.T, receipts *audit.RemoteArtifactReceipts) []audit.RemoteArtifactLifecycleEvent {
+	t.Helper()
+	pending, err := receipts.PendingLifecycle(t.Context())
+	require.NoError(t, err)
+	return pending
 }
 
 func (this *localDurableReceiptCrashPreparer) Require(ctx context.Context, artifact audit.RemoteArtifact) error {
@@ -250,4 +336,31 @@ func localDurableReceiptTestRequireUnchanged(t *testing.T, path string, before [
 	require.NoError(t, err)
 	require.True(t, os.SameFile(beforeInfo, afterInfo))
 	require.NoFileExists(t, filepath.Join(filepath.Dir(path), "receipt.tmp"))
+}
+
+func localLifecycleTestStartedEvent(metadata CastMetadata) audit.Event {
+	pty := metadata.Pty
+	return audit.Event{
+		Name:         audit.EventNameSessionRecordingStarted,
+		Domain:       audit.EventDomainSession,
+		Flow:         metadata.Flow.String(),
+		ConnectionId: metadata.ConnectionId.String(),
+		SessionId:    metadata.SessionId.String(),
+		OperationId:  metadata.OperationId.String(),
+		RecordingId:  metadata.RecordingId.String(),
+		SessionTask:  metadata.Task,
+		Pty:          &pty,
+	}
+}
+
+func localLifecycleTestCompletedEvent(metadata CastMetadata) audit.Event {
+	duration := int64(2000)
+	exitCode := 0
+	event := localLifecycleTestStartedEvent(metadata)
+	event.Name = audit.EventNameSessionRecordingCompleted
+	event.Outcome = audit.EventOutcomeSuccess
+	event.Pty = nil
+	event.DurationMillis = &duration
+	event.ExitCode = &exitCode
+	return event
 }

@@ -521,17 +521,28 @@ func sealRemoteDeliveryTestRecording(t *testing.T, svc *service, conf configurat
 	sessionId, err := session.NewId()
 	require.NoError(t, err)
 	startedAt := time.Now().UTC().Truncate(time.Second)
-	active, err := repository.createActive(t.Context(), recording.CastHeader{
-		Version: 3, Terminal: recording.CastTerminal{Columns: 80, Rows: 24}, Timestamp: startedAt.Unix(),
-	}, recording.CastMetadata{
+	metadata := recording.CastMetadata{
 		RecordingId: recordingId, ConnectionId: connectionId, SessionId: sessionId, OperationId: uuid.New(),
 		Flow: conf.Flows[0].Name, Task: audit.SessionTaskExec, ProducerId: repository.producerId, StartedAt: startedAt,
-	}, 300)
+	}
+	fileName, err := repository.artifactName(recordingId)
+	require.NoError(t, err)
+	startedEvent := sessionRecordingAuditEvent(metadata, audit.EventNameSessionRecordingStarted, "", "", nil, 0, nil, nil)
+	require.NoError(t, repository.receipts.BeginLifecycle(t.Context(), fileName, startedAt, startedEvent))
+	active, err := repository.createActive(t.Context(), recording.CastHeader{
+		Version: 3, Terminal: recording.CastTerminal{Columns: 80, Rows: 24}, Timestamp: startedAt.Unix(),
+	}, metadata, 300)
 	require.NoError(t, err)
 	require.NoError(t, active.WriteOutput(time.Second, recording.OutputStreamStdout, []byte("delivered\n")))
 	exitStatus := uint32(0)
+	terminalEvent := sessionRecordingAuditEvent(metadata, audit.EventNameSessionRecordingCompleted, audit.EventOutcomeSuccess, "", nil, 2*time.Second, nil, &exitStatus)
+	require.NoError(t, repository.receipts.StageLifecycle(t.Context(), fileName, terminalEvent))
 	_, err = active.seal(2*time.Second, recording.CastResult{Status: recording.CastStatusCompleted, EndedAt: startedAt.Add(2 * time.Second)}, &exitStatus)
 	require.NoError(t, err)
+	pending, err := repository.receipts.PendingLifecycle(t.Context())
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	require.NoError(t, repository.receipts.CompleteLifecycle(t.Context(), pending[0]))
 	require.NoError(t, active.close())
 	suffix := sessionRecordingCastZstdSuffix
 	if repository.format == sessionRecordingRepositoryFormatBECast {

@@ -420,6 +420,7 @@ func validateSessionRecordingAuditEvent(event Event) error {
 		valid := event.Outcome == EventOutcomeCanceled && event.ErrorCategory == "" &&
 			(event.Reason == EventReasonContextCanceled || event.Reason == EventReasonDeadlineExceeded) ||
 			event.Outcome == EventOutcomeFailure && event.ErrorCategory == "" && event.Reason == EventReasonInvalidExitCode ||
+			event.Outcome == EventOutcomeFailure && event.ErrorCategory == "" && event.Reason == EventReasonStartupRecovery && event.ExitCode == nil ||
 			event.Outcome == EventOutcomeFailure && event.Reason == EventReasonSessionError && event.ErrorCategory != ""
 		if !valid {
 			return errors.System.Newf("session recording incomplete audit event has illegal outcome and reason")

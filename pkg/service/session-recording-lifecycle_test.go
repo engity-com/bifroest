@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	goerrors "errors"
 	"fmt"
 	"os"
@@ -127,6 +128,82 @@ func TestSessionRecordingFailureMarkerSurvivesJoinedCancellation(t *testing.T) {
 	require.True(t, bferrors.System.IsErr(joined))
 }
 
+func TestSessionRecordingStopFailurePreservesPreparedLifecycle(t *testing.T) {
+	for _, promoted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("promoted=%t", promoted), func(t *testing.T) {
+			root := t.TempDir()
+			auditlog := configuration.Auditlog{
+				Name:         "security",
+				Enabled:      true,
+				IdentityFile: filepath.Join(root, "identity"),
+				Journal:      configuration.AuditlogJournal{Directory: filepath.Join(root, "journal")},
+			}
+			identity, err := audit.EnsureIdentity(&auditlog)
+			require.NoError(t, err)
+			require.NoError(t, os.Mkdir(filepath.Join(root, "recordings"), 0o700))
+			receipts, err := audit.NewRemoteArtifactReceipts(filepath.Join(root, "recordings"), identity, auditlog.Name, nil, sessionRecordingLifecycleTestQuota{})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, receipts.Close()) })
+			repository := &sessionRecordingRepository{format: sessionRecordingRepositoryFormatCastZstd, receipts: receipts}
+			recordingId, err := recording.NewId()
+			require.NoError(t, err)
+			fileName, err := repository.artifactName(recordingId)
+			require.NoError(t, err)
+			pty := true
+			started := audit.Event{
+				Name:         audit.EventNameSessionRecordingStarted,
+				Domain:       audit.EventDomainSession,
+				Flow:         "recording-test",
+				ConnectionId: "6ba7b842-9dad-4d1f-80b4-00c04fd430c8",
+				SessionId:    "6ba7b843-9dad-4d1f-80b4-00c04fd430c8",
+				OperationId:  "6ba7b844-9dad-4d1f-80b4-00c04fd430c8",
+				RecordingId:  recordingId.String(),
+				SessionTask:  audit.SessionTaskShell,
+				Pty:          &pty,
+			}
+			startedAt := time.Now().UTC()
+			require.NoError(t, receipts.BeginLifecycle(t.Context(), fileName, startedAt, started))
+			duration := int64(1000)
+			exitCode := 0
+			terminal := started
+			terminal.Name = audit.EventNameSessionRecordingCompleted
+			terminal.Outcome = audit.EventOutcomeSuccess
+			terminal.Pty = nil
+			terminal.DurationMillis = &duration
+			terminal.ExitCode = &exitCode
+			require.NoError(t, receipts.StageLifecycle(t.Context(), fileName, terminal))
+			content := []byte("outer artifact")
+			artifactDigest := audit.ArtifactDigest(sha256.Sum256(content))
+			artifact, err := audit.NewRemoteArtifact(identity.ProducerId(), fileName, artifactDigest, int64(len(content)), bytes.NewReader(content))
+			require.NoError(t, err)
+			castDigest := recording.CastDigest(sha256.Sum256([]byte("canonical Cast")))
+			require.NoError(t, receipts.PrepareLifecycle(t.Context(), artifact, startedAt.Add(time.Second), castDigest.String(), false))
+			expectedPending := 0
+			if promoted {
+				require.NoError(t, receipts.PromoteLifecycle(t.Context(), artifact))
+				expectedPending = 1
+			}
+			pendingBefore, err := receipts.PendingLifecycle(t.Context())
+			require.NoError(t, err)
+			require.Len(t, pendingBefore, expectedPending)
+
+			recorder := &recordingAuditRecorder{}
+			flow := configuration.FlowName(started.Flow)
+			svc := &service{flowAuditRecorders: map[configuration.FlowName]audit.Recorder{flow: recorder}}
+			failure := terminal
+			failure.Name = audit.EventNameSessionRecordingFailed
+			failure.Outcome = audit.EventOutcomeFailure
+			failure.Reason = audit.EventReasonRecordingSeal
+			failure.ExitCode = nil
+			require.NoError(t, svc.recordSessionRecordingStopFailure(t.Context(), t.Context(), repository, recordingId, flow, failure, true, sessionRecordingFailurePhaseSeal))
+			require.Empty(t, recorder.eventsSnapshot())
+			pendingAfter, err := receipts.PendingLifecycle(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, pendingBefore, pendingAfter)
+		})
+	}
+}
+
 func TestExecuteSessionRecordingSealsShellAndExec(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -215,7 +292,7 @@ func TestExecuteSessionRecordingSealsShellAndExec(t *testing.T) {
 			require.Empty(t, auditEventsNamed(auditEvents, audit.EventNameSessionRecordingFailed))
 			requireSessionRecordingAuditCorrelation(t, verification, startedEvents[0], completedEvents[0])
 			require.Equal(t, audit.EventOutcomeSuccess, completedEvents[0].Outcome)
-			require.Equal(t, verification.Cast.Digest.String(), completedEvents[0].RecordingDigest)
+			require.Equal(t, sessionRecordingCastDigest(t, server.service, root), completedEvents[0].RecordingDigest)
 			require.Equal(t, 7, *completedEvents[0].ExitCode)
 			require.Less(t, auditEventIndex(t, auditEvents, audit.EventNameSessionTaskStarted), auditEventIndex(t, auditEvents, audit.EventNameSessionRecordingStarted))
 			require.Less(t, auditEventIndex(t, auditEvents, audit.EventNameSessionRecordingStarted), auditEventIndex(t, auditEvents, audit.EventNameSessionRecordingCompleted))
@@ -256,7 +333,7 @@ func TestExecuteSessionRecordingNoticeRenderFailurePreventsEnvironmentRun(t *tes
 	require.Equal(t, audit.EventOutcomeFailure, incompleteEvents[0].Outcome)
 	require.Equal(t, audit.EventReasonSessionError, incompleteEvents[0].Reason)
 	require.Equal(t, audit.ErrorCategorySystem, incompleteEvents[0].ErrorCategory)
-	require.Equal(t, verification.Cast.Digest.String(), incompleteEvents[0].RecordingDigest)
+	require.Equal(t, sessionRecordingCastDigest(t, server.service, root), incompleteEvents[0].RecordingDigest)
 }
 
 func TestExecuteSessionRecordingExcludesSftp(t *testing.T) {
@@ -451,33 +528,69 @@ func TestExecuteSessionRecordingStartedAuditFailurePreventsEnvironmentRun(t *tes
 			require.Len(t, failedEvents, 1)
 			require.Equal(t, audit.EventReasonAuditWrite, failedEvents[0].Reason)
 			require.Equal(t, audit.ErrorCategorySystem, failedEvents[0].ErrorCategory)
-			require.Equal(t, verification.Cast.Digest.String(), failedEvents[0].RecordingDigest)
+			require.Equal(t, sessionRecordingCastDigest(t, server.service, root), failedEvents[0].RecordingDigest)
 			require.Equal(t, verification.Cast.Metadata.RecordingId.String(), failedEvents[0].RecordingId)
 		})
 	}
 }
 
 func TestExecuteSessionRecordingCompletionAuditFailurePreservesCompletedArtifact(t *testing.T) {
-	root := t.TempDir()
-	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{}, func(conf *configuration.Configuration) {
-		enableSessionRecordingForLifecycleTest(conf, root)
-	})
-	auditRecorder := &recordingAuditRecorder{}
-	auditRecorder.setErrorForName(audit.EventNameSessionRecordingCompleted, goerrors.New("completion audit failed"))
-	flow := server.service.Configuration.Flows[0].Name
-	server.service.flowAuditRecorders[flow] = auditRecorder
-	client := server.mustDial(t)
-	sshSession, err := client.NewSession()
-	require.NoError(t, err)
-	require.Error(t, sshSession.Run("complete-before-audit-fails"))
+	for _, test := range []struct {
+		name       string
+		failBefore bool
+		before     int
+		after      int
+	}{
+		{name: "before commit", failBefore: true, after: 1},
+		{name: "after commit", before: 1, after: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{}, func(conf *configuration.Configuration) {
+				enableSessionRecordingForLifecycleTest(conf, root)
+			})
+			auditRecorder := &recordingAuditRecorder{}
+			injected := goerrors.New("completion audit failed")
+			if test.failBefore {
+				auditRecorder.setErrorBeforeRecordForName(audit.EventNameSessionRecordingCompleted, injected)
+			} else {
+				auditRecorder.setErrorForName(audit.EventNameSessionRecordingCompleted, injected)
+			}
+			flow := server.service.Configuration.Flows[0].Name
+			server.service.flowAuditRecorders[flow] = auditRecorder
+			client := server.mustDial(t)
+			sshSession, err := client.NewSession()
+			require.NoError(t, err)
+			require.Error(t, sshSession.Run("complete-before-audit-fails"))
 
-	verification := verifyOnlySessionRecording(t, server.service, root)
-	require.Equal(t, recording.CastStatusCompleted, verification.Cast.Result.Status)
-	completedEvents := requireAuditEventsNamedEventually(t, auditRecorder, audit.EventNameSessionRecordingCompleted, 1)
-	require.Len(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingStarted), 1)
-	require.Len(t, completedEvents, 1)
-	require.Equal(t, verification.Cast.Digest.String(), completedEvents[0].RecordingDigest)
-	require.Empty(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed))
+			verification := verifyOnlySessionRecording(t, server.service, root)
+			require.Equal(t, recording.CastStatusCompleted, verification.Cast.Result.Status)
+			before := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingCompleted)
+			require.Len(t, before, test.before)
+			auditlog := server.service.flowAuditlogs[flow]
+			pending, err := server.service.recordingRepositories[auditlog].receipts.PendingLifecycle(t.Context())
+			require.NoError(t, err)
+			require.Len(t, pending, 1)
+			expected := pending[0].Event
+			require.NoError(t, server.service.recordingRepositories[auditlog].Close())
+			restarted, err := newSessionRecordingRepository(t.Context(), server.service.Configuration.Auditlogs[0].Recording, server.service.auditIdentities[auditlog], server.service.Configuration.Auditlogs[0].EncryptionPublicKey, auditlog, server.service.recordingTargets[auditlog])
+			require.NoError(t, err)
+			server.service.recordingRepositories[auditlog] = restarted
+			auditRecorder.setError(nil)
+			server.service.auditRecorders[auditlog] = auditRecorder
+			require.NoError(t, server.service.replaySessionRecordingLifecycles(t.Context()))
+			completedEvents := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingCompleted)
+			require.Len(t, completedEvents, test.after)
+			for _, event := range completedEvents {
+				require.Equal(t, expected, event)
+			}
+			require.Equal(t, sessionRecordingCastDigest(t, server.service, root), expected.RecordingDigest)
+			pending, err = server.service.recordingRepositories[auditlog].receipts.PendingLifecycle(t.Context())
+			require.NoError(t, err)
+			require.Empty(t, pending)
+			require.Empty(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed))
+		})
+	}
 }
 
 func TestExecuteSessionRecordingInvalidExitStatusIsIncomplete(t *testing.T) {
@@ -518,7 +631,7 @@ func TestExecuteSessionRecordingInvalidExitStatusIsIncomplete(t *testing.T) {
 			require.Equal(t, audit.EventReasonInvalidExitCode, events[0].Reason)
 			require.Equal(t, audit.EventOutcomeFailure, events[0].Outcome)
 			require.Empty(t, events[0].ErrorCategory)
-			require.Equal(t, verification.Cast.Digest.String(), events[0].RecordingDigest)
+			require.Equal(t, sessionRecordingCastDigest(t, server.service, root), events[0].RecordingDigest)
 		})
 	}
 }
@@ -713,6 +826,11 @@ func verifyOnlySessionRecording(t *testing.T, service *service, root string) *re
 	return verification
 }
 
+func sessionRecordingCastDigest(t *testing.T, service *service, root string) string {
+	t.Helper()
+	return verifyOnlySessionRecording(t, service, root).Summary.Digest.String()
+}
+
 func exportOnlySessionRecording(t *testing.T, service *service, root string) string {
 	t.Helper()
 	entries, err := os.ReadDir(filepath.Join(root, "recordings", "sealed"))
@@ -814,3 +932,8 @@ func (*coordinatorTestSink) WriteResize(time.Duration, uint32, uint32) error {
 func commonUint32(value uint32) *uint32 { return &value }
 
 var _ recordingSink = (*coordinatorTestSink)(nil)
+
+type sessionRecordingLifecycleTestQuota struct{}
+
+func (sessionRecordingLifecycleTestQuota) Reserve(uint64) error                 { return nil }
+func (sessionRecordingLifecycleTestQuota) Reconcile(uint64, int64, int64) error { return nil }

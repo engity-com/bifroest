@@ -86,6 +86,13 @@ func (this *LocalBECastRepository) ListSealed(ctx context.Context) ([]Id, error)
 	return this.repository.listSealed(ctx)
 }
 
+func (this *LocalBECastRepository) RecordingStateExists(id Id) (bool, error) {
+	if this == nil {
+		return false, errors.System.Newf("nil local BECast repository")
+	}
+	return this.repository.recordingStateExists(id)
+}
+
 func (this *LocalBECastRepository) OpenSealed(ctx context.Context, id Id) (*LocalSealedArtifact[BECastSummary], error) {
 	if this == nil {
 		return nil, errors.System.Newf("nil local BECast repository")
@@ -378,4 +385,8 @@ func (this *localBECastFormat) verifyPublished(file *os.File, size int64, head *
 
 func (this *localBECastFormat) summaryId(summary BECastSummary) Id {
 	return summary.RecordingId
+}
+
+func (this *localBECastFormat) summaryDigest(summary BECastSummary) CastDigest {
+	return summary.Digest
 }

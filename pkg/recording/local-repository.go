@@ -62,6 +62,7 @@ type localFormat[Head, Summary any] interface {
 	recover(RecoveryFile, Head, time.Time, context.Context) (localRecovery[Summary], error)
 	verifyPublished(*os.File, int64, *Head, context.Context) (Summary, error)
 	summaryId(Summary) Id
+	summaryDigest(Summary) CastDigest
 }
 
 type LocalRepositoryOptions struct {
@@ -83,6 +84,15 @@ type SealedArtifactQuotaBinder interface {
 // repository recovers recordings that may require spool capacity.
 type SealedArtifactStateRecoverer interface {
 	RecoverSealedArtifactState(context.Context) error
+}
+
+type SealedArtifactLifecyclePreparer interface {
+	PrepareLifecycle(context.Context, audit.RemoteArtifact, time.Time, CastDigest, bool) error
+	PromoteLifecycle(context.Context, audit.RemoteArtifact) error
+}
+
+type SealedArtifactStateCleaner interface {
+	CleanupOrphanedSealedArtifactState(context.Context) error
 }
 
 type localRecovery[Summary any] struct {
@@ -304,6 +314,11 @@ func newLocalRepository[Head, Summary any](ctx context.Context, directory string
 	}
 	if err := result.recoverActive(ctx); err != nil {
 		return nil, err
+	}
+	if cleaner, ok := prepareSealed.(SealedArtifactStateCleaner); ok {
+		if err := cleaner.CleanupOrphanedSealedArtifactState(ctx); err != nil {
+			return nil, errors.System.Newf("cannot clean orphaned sealed artifact state: %w", err)
+		}
 	}
 	if err := result.cleanupRetentionTombstones(ctx); err != nil {
 		return nil, err
@@ -629,13 +644,30 @@ func hashLocalSealedArtifact(ctx context.Context, file *os.File, size int64) (Ar
 	return result, nil
 }
 
-func (this *localRepository[Head, Summary]) prepareSealedReceipt(ctx context.Context, id Id, file *os.File, info os.FileInfo) error {
+func (this *localRepository[Head, Summary]) prepareSealedReceipt(ctx context.Context, id Id, file *os.File, info os.FileInfo, summary Summary) error {
 	if this.prepareSealed == nil {
 		return nil
 	}
 	artifact, err := this.sealedRemoteArtifact(ctx, id, file, info)
 	if err != nil {
 		return err
+	}
+	if preparer, ok := this.prepareSealed.(SealedArtifactLifecyclePreparer); ok {
+		return preparer.PrepareLifecycle(ctx, artifact, info.ModTime(), this.format.summaryDigest(summary), false)
+	}
+	return this.prepareSealed.Prepare(ctx, artifact, info.ModTime())
+}
+
+func (this *localRepository[Head, Summary]) prepareRecoveredSealedReceipt(ctx context.Context, id Id, file *os.File, info os.FileInfo, recovery localRecovery[Summary]) error {
+	if this.prepareSealed == nil {
+		return nil
+	}
+	artifact, err := this.sealedRemoteArtifact(ctx, id, file, info)
+	if err != nil {
+		return err
+	}
+	if preparer, ok := this.prepareSealed.(SealedArtifactLifecyclePreparer); ok {
+		return preparer.PrepareLifecycle(ctx, artifact, info.ModTime(), this.format.summaryDigest(recovery.summary), !recovery.alreadySealed)
 	}
 	return this.prepareSealed.Prepare(ctx, artifact, info.ModTime())
 }
@@ -649,6 +681,37 @@ func (this *localRepository[Head, Summary]) requireSealedReceipt(ctx context.Con
 		return err
 	}
 	return this.prepareSealed.Require(ctx, artifact)
+}
+
+func (this *localRepository[Head, Summary]) promoteSealedLifecycle(ctx context.Context, id Id, file *os.File, info os.FileInfo) error {
+	preparer, ok := this.prepareSealed.(SealedArtifactLifecyclePreparer)
+	if !ok {
+		return nil
+	}
+	artifact, err := this.sealedRemoteArtifact(ctx, id, file, info)
+	if err != nil {
+		return err
+	}
+	return preparer.PromoteLifecycle(ctx, artifact)
+}
+
+func (this *localRepository[Head, Summary]) promotePublishedLifecycle(ctx context.Context, id Id, path string, expected os.FileInfo) (result error) {
+	if _, ok := this.prepareSealed.(SealedArtifactLifecyclePreparer); !ok {
+		return nil
+	}
+	file, err := openSealedLocalFile(path)
+	if err != nil {
+		return err
+	}
+	defer func() { result = stderrors.Join(result, file.Close()) }()
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(expected, info) {
+		return errors.System.Newf("published recording does not match its prepared source")
+	}
+	return this.promoteSealedLifecycle(ctx, id, file, info)
 }
 
 func (this *localRepository[Head, Summary]) sealedRemoteArtifact(ctx context.Context, id Id, file *os.File, info os.FileInfo) (audit.RemoteArtifact, error) {
@@ -985,7 +1048,7 @@ func (this *localActive[Head, Summary]) seal(elapsed time.Duration, result CastR
 	if err != nil {
 		return zero, this.poison(err)
 	}
-	if err := this.repository.prepareSealedReceipt(context.Background(), this.id, this.file, sealedInfo); err != nil {
+	if err := this.repository.prepareSealedReceipt(context.Background(), this.id, this.file, sealedInfo, summary); err != nil {
 		return zero, this.poison(errors.System.Newf("cannot prepare sealed recording delivery receipt: %w", err))
 	}
 	if err := this.file.Close(); err != nil {
@@ -998,6 +1061,9 @@ func (this *localActive[Head, Summary]) seal(elapsed time.Duration, result CastR
 	}
 	if _, err := this.repository.verifyPublished(target, sealedInfo, &head, context.Background()); err != nil {
 		return zero, this.poison(errors.System.Newf("cannot verify published recording: %w", err))
+	}
+	if err := this.repository.promotePublishedLifecycle(context.Background(), this.id, target, sealedInfo); err != nil {
+		return zero, this.poison(errors.System.Newf("cannot promote published recording lifecycle: %w", err))
 	}
 	if err := removeAccountedLocalFile(filepath.Join(this.directory, localRecoveryReserveName), this.repository.quota); err != nil {
 		return zero, this.poison(errors.System.Newf("cannot remove active recording recovery reserve: %w", err))
@@ -1559,7 +1625,7 @@ func (this *localRepository[Head, Summary]) recoverActiveDirectory(ctx context.C
 		_ = file.Close()
 		return err
 	}
-	if err := this.prepareSealedReceipt(ctx, id, file, sealedInfo); err != nil {
+	if err := this.prepareRecoveredSealedReceipt(ctx, id, file, sealedInfo, result); err != nil {
 		_ = file.Close()
 		return errors.System.Newf("cannot prepare recovered recording delivery receipt: %w", err)
 	}
@@ -1571,6 +1637,32 @@ func (this *localRepository[Head, Summary]) recoverActiveDirectory(ctx context.C
 	}
 	this.recovered = append(this.recovered, result)
 	return nil
+}
+
+func (this *localRepository[Head, Summary]) recordingStateExists(id Id) (bool, error) {
+	if this == nil {
+		return false, errors.System.Newf("nil local recording repository")
+	}
+	if err := validateId(id); err != nil {
+		return false, err
+	}
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if this.closed {
+		return false, errors.System.Newf("local recording repository is closed")
+	}
+	for _, path := range []string{
+		filepath.Join(this.workPath, id.String()+".tmp"),
+		filepath.Join(this.activePath, id.String()),
+		filepath.Join(this.sealedPath, id.String()+this.format.sealedSuffix()),
+	} {
+		if _, err := os.Lstat(path); err == nil {
+			return true, nil
+		} else if !stderrors.Is(err, fs.ErrNotExist) {
+			return false, err
+		}
+	}
+	return false, nil
 }
 
 func (this *localRepository[Head, Summary]) preflightActiveContent(path string, head Head, ctx context.Context) (result error) {
@@ -1644,6 +1736,10 @@ func (this *localRepository[Head, Summary]) completePublishedRecovery(ctx contex
 		_ = file.Close()
 		return errors.System.Newf("cannot require published recording delivery receipt: %w", err)
 	}
+	if err := this.promoteSealedLifecycle(ctx, id, file, info); err != nil {
+		_ = file.Close()
+		return errors.System.Newf("cannot promote published recording lifecycle: %w", err)
+	}
 	if err := file.Close(); err != nil {
 		return err
 	}
@@ -1667,6 +1763,9 @@ func (this *localRepository[Head, Summary]) publishRecovered(ctx context.Context
 	}
 	if _, err := this.verifyPublished(target, sealedInfo, head, ctx); err != nil {
 		return err
+	}
+	if err := this.promotePublishedLifecycle(ctx, id, target, sealedInfo); err != nil {
+		return errors.System.Newf("cannot promote published recording lifecycle: %w", err)
 	}
 	if err := removeAccountedLocalFile(headPath, this.quota); err != nil {
 		return err
