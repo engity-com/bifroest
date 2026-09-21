@@ -950,6 +950,85 @@ func TestMutateRemoteArtifactReceiptStateReconcilesFailedMutation(t *testing.T) 
 	require.Zero(t, quota.usage)
 }
 
+func TestWriteRemoteArtifactReceiptInvalidatesQuotaAfterFinalInventoryFailure(t *testing.T) {
+	directory := t.TempDir()
+	payload := []byte("receipt")
+	quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
+	injected := fmt.Errorf("injected final inventory failure")
+	operations := defaultRemoteArtifactReceiptWriteOperations()
+	stateUsage := operations.stateUsage
+	usageCalls := 0
+	operations.stateUsage = func(directory string) (int64, error) {
+		usageCalls++
+		if usageCalls == 2 {
+			return 0, injected
+		}
+		return stateUsage(directory)
+	}
+
+	err := writeRemoteArtifactReceiptWithOperations(directory, "recording.cast.zst", payload, quota, operations)
+	require.ErrorIs(t, err, injected)
+	require.ErrorIs(t, quota.invalidated, injected)
+	require.Equal(t, uint64(len(payload)), quota.usage)
+	require.Zero(t, quota.reconciles)
+	require.ErrorIs(t, quota.Reserve(0), injected)
+	require.FileExists(t, filepath.Join(directory, remoteArtifactReceiptFileName))
+}
+
+func TestRemoteArtifactReceiptQuotaAdapterInvalidatesLegacyImplementation(t *testing.T) {
+	legacy := &remoteArtifactReceiptLegacyTestQuota{maximum: 10}
+	quota := ensureRemoteArtifactReceiptQuotaInvalidation(legacy)
+	require.NoError(t, quota.Reserve(4))
+	injected := fmt.Errorf("injected inventory failure")
+	invalidateRemoteArtifactReceiptQuota(quota, injected)
+
+	require.ErrorIs(t, quota.Reserve(1), injected)
+	require.ErrorIs(t, quota.Reconcile(0, 4, 4), injected)
+	require.Equal(t, uint64(4), legacy.usage)
+}
+
+func TestRemoteArtifactReceiptQuotaAdapterPropagatesInvalidation(t *testing.T) {
+	underlying := &remoteArtifactReceiptTestQuota{maximum: 10}
+	quota := ensureRemoteArtifactReceiptQuotaInvalidation(underlying)
+	injected := fmt.Errorf("injected inventory failure")
+	invalidateRemoteArtifactReceiptQuota(quota, injected)
+
+	require.ErrorIs(t, underlying.invalidated, injected)
+	require.ErrorIs(t, quota.Reserve(0), injected)
+}
+
+func TestMutateRemoteArtifactReceiptStateInvalidatesQuotaAfterFinalInventoryFailure(t *testing.T) {
+	directory := t.TempDir()
+	quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
+	injected := fmt.Errorf("injected final inventory failure")
+	usageCalls := 0
+	stateUsage := func(string) (int64, error) {
+		usageCalls++
+		if usageCalls == 2 {
+			return 0, injected
+		}
+		return 0, nil
+	}
+
+	err := mutateRemoteArtifactReceiptStateWithStateUsage(directory, quota, func() error { return nil }, stateUsage)
+	require.ErrorIs(t, err, injected)
+	require.ErrorIs(t, quota.invalidated, injected)
+	require.ErrorIs(t, quota.Reserve(0), quota.invalidated)
+}
+
+func TestReconcileFailedRemoteArtifactReceiptRestoreInvalidatesQuotaAfterFinalInventoryFailure(t *testing.T) {
+	quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
+	store := &remoteArtifactReceiptStore{quota: quota}
+	injected := fmt.Errorf("injected final inventory failure")
+
+	err := store.reconcileFailedRemoteArtifactReceiptRestoreWithStateUsage(t.TempDir(), 0, func(string) (int64, error) {
+		return 0, injected
+	})
+	require.ErrorIs(t, err, injected)
+	require.ErrorIs(t, quota.invalidated, injected)
+	require.ErrorIs(t, quota.Reserve(0), quota.invalidated)
+}
+
 func TestRemoteArtifactReceiptReconcilesFailedRestoreState(t *testing.T) {
 	for _, test := range []struct {
 		name      string
@@ -1003,7 +1082,7 @@ func recoverRemoteArtifactReceiptTestTemporary(t *testing.T, store *remoteArtifa
 	require.FileExists(t, temporary)
 	before, err := remoteArtifactReceiptStateUsage(directory)
 	require.NoError(t, err)
-	if quota, ok := store.quota.(*remoteArtifactReceiptTestQuota); ok {
+	if quota, ok := unwrapRemoteArtifactReceiptTestQuota(store.quota); ok {
 		quota.usage = uint64(before)
 		quota.peak = max(quota.peak, quota.usage)
 	}
@@ -1013,7 +1092,7 @@ func recoverRemoteArtifactReceiptTestTemporary(t *testing.T, store *remoteArtifa
 	require.FileExists(t, target)
 	after, err := remoteArtifactReceiptStateUsage(directory)
 	require.NoError(t, err)
-	if quota, ok := store.quota.(*remoteArtifactReceiptTestQuota); ok {
+	if quota, ok := unwrapRemoteArtifactReceiptTestQuota(store.quota); ok {
 		require.Equal(t, uint64(after), quota.usage)
 	}
 	recovered, exists, err := store.load(artifact)
@@ -1331,14 +1410,18 @@ func writeRemoteArtifactReceiptTestFile(path string, content []byte) error {
 }
 
 type remoteArtifactReceiptTestQuota struct {
-	maximum    uint64
-	usage      uint64
-	peak       uint64
-	reconciles int
-	onReserve  func()
+	maximum     uint64
+	usage       uint64
+	peak        uint64
+	reconciles  int
+	onReserve   func()
+	invalidated error
 }
 
 func (this *remoteArtifactReceiptTestQuota) Reserve(bytes uint64) error {
+	if this.invalidated != nil {
+		return this.invalidated
+	}
 	if this.usage > this.maximum || bytes > this.maximum-this.usage {
 		return fmt.Errorf("quota exceeded")
 	}
@@ -1351,7 +1434,49 @@ func (this *remoteArtifactReceiptTestQuota) Reserve(bytes uint64) error {
 }
 
 func (this *remoteArtifactReceiptTestQuota) Reconcile(reserved uint64, before, after int64) error {
+	if this.invalidated != nil {
+		return this.invalidated
+	}
 	this.reconciles++
+	if after >= before {
+		this.usage -= reserved - uint64(after-before)
+	} else {
+		this.usage -= reserved + uint64(before-after)
+	}
+	return nil
+}
+
+func (this *remoteArtifactReceiptTestQuota) Invalidate(cause error) {
+	if this.invalidated == nil {
+		this.invalidated = cause
+	}
+}
+
+func unwrapRemoteArtifactReceiptTestQuota(quota RemoteArtifactReceiptQuota) (*remoteArtifactReceiptTestQuota, bool) {
+	switch quota := quota.(type) {
+	case *remoteArtifactReceiptTestQuota:
+		return quota, true
+	case *invalidatableRemoteArtifactReceiptQuota:
+		return unwrapRemoteArtifactReceiptTestQuota(quota.quota)
+	default:
+		return nil, false
+	}
+}
+
+type remoteArtifactReceiptLegacyTestQuota struct {
+	maximum uint64
+	usage   uint64
+}
+
+func (this *remoteArtifactReceiptLegacyTestQuota) Reserve(bytes uint64) error {
+	if this.usage > this.maximum || bytes > this.maximum-this.usage {
+		return fmt.Errorf("quota exceeded")
+	}
+	this.usage += bytes
+	return nil
+}
+
+func (this *remoteArtifactReceiptLegacyTestQuota) Reconcile(reserved uint64, before, after int64) error {
 	if after >= before {
 		this.usage -= reserved - uint64(after-before)
 	} else {

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -104,12 +105,61 @@ type RemoteArtifactReceiptQuota interface {
 	Reconcile(uint64, int64, int64) error
 }
 
+type remoteArtifactReceiptQuotaInvalidator interface{ Invalidate(error) }
+
+type invalidatableRemoteArtifactReceiptQuota struct {
+	mutex    sync.Mutex
+	quota    RemoteArtifactReceiptQuota
+	poisoned error
+}
+
+func (this *invalidatableRemoteArtifactReceiptQuota) Reserve(bytes uint64) error {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if this.poisoned != nil {
+		return this.poisoned
+	}
+	return this.quota.Reserve(bytes)
+}
+
+func (this *invalidatableRemoteArtifactReceiptQuota) Reconcile(reserved uint64, before, after int64) error {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if this.poisoned != nil {
+		return this.poisoned
+	}
+	return this.quota.Reconcile(reserved, before, after)
+}
+
+func (this *invalidatableRemoteArtifactReceiptQuota) Invalidate(cause error) {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if this.poisoned != nil {
+		return
+	}
+	if cause == nil {
+		cause = errors.System.Newf("unknown remote artifact receipt quota failure")
+	}
+	this.poisoned = errors.System.Newf("remote artifact receipt quota usage is uncertain: %w", cause)
+	if invalidator, ok := this.quota.(remoteArtifactReceiptQuotaInvalidator); ok {
+		invalidator.Invalidate(cause)
+	}
+}
+
+func ensureRemoteArtifactReceiptQuotaInvalidation(quota RemoteArtifactReceiptQuota) RemoteArtifactReceiptQuota {
+	if quota == nil {
+		return nil
+	}
+	return &invalidatableRemoteArtifactReceiptQuota{quota: quota}
+}
+
 type remoteArtifactReceiptWriteOperations struct {
 	write         func(*os.File, []byte) (int, error)
 	sync          func(*os.File) error
 	close         func(*os.File) error
 	replace       func(string, string) error
 	syncDirectory func(string) error
+	stateUsage    func(string) (int64, error)
 }
 
 // RemoteArtifactReceipts owns the durable delivery receipts for one Recording
@@ -498,7 +548,7 @@ func newRemoteArtifactReceiptStore(recordingDirectory string, identity *Identity
 	}
 	mutex := make(chan struct{}, 1)
 	mutex <- struct{}{}
-	return &remoteArtifactReceiptStore{mutex: mutex, producerDirectory: producerDirectory, identity: identity, auditlog: auditlog, quota: quota, newUUID: uuid.NewRandom, stateLock: stateLock}, nil
+	return &remoteArtifactReceiptStore{mutex: mutex, producerDirectory: producerDirectory, identity: identity, auditlog: auditlog, quota: ensureRemoteArtifactReceiptQuotaInvalidation(quota), newUUID: uuid.NewRandom, stateLock: stateLock}, nil
 }
 
 func NewRemoteArtifactReceipts(recordingDirectory string, identity *Identity, auditlog configuration.AuditlogName, targets *RemoteArtifactTargets, quota RemoteArtifactReceiptQuota) (*RemoteArtifactReceipts, error) {
@@ -887,8 +937,13 @@ func (this *remoteArtifactReceiptStore) removeRetentionCandidate(ctx context.Con
 }
 
 func (this *remoteArtifactReceiptStore) reconcileFailedRemoteArtifactReceiptRestore(directory string, before int64) error {
-	after, usageErr := remoteArtifactReceiptStateUsage(directory)
+	return this.reconcileFailedRemoteArtifactReceiptRestoreWithStateUsage(directory, before, remoteArtifactReceiptStateUsage)
+}
+
+func (this *remoteArtifactReceiptStore) reconcileFailedRemoteArtifactReceiptRestoreWithStateUsage(directory string, before int64, stateUsage func(string) (int64, error)) error {
+	after, usageErr := stateUsage(directory)
 	if usageErr != nil {
+		invalidateRemoteArtifactReceiptQuota(this.quota, usageErr)
 		return usageErr
 	}
 	var quotaErr error
@@ -1696,11 +1751,12 @@ func defaultRemoteArtifactReceiptWriteOperations() remoteArtifactReceiptWriteOpe
 		close:         func(file *os.File) error { return file.Close() },
 		replace:       replaceJournalFile,
 		syncDirectory: syncJournalDirectory,
+		stateUsage:    remoteArtifactReceiptStateUsage,
 	}
 }
 
 func writeRemoteArtifactReceiptWithOperations(directory, fileName string, payload []byte, quota RemoteArtifactReceiptQuota, operations remoteArtifactReceiptWriteOperations) (result error) {
-	before, err := remoteArtifactReceiptStateUsage(directory)
+	before, err := operations.stateUsage(directory)
 	if err != nil {
 		return err
 	}
@@ -1710,8 +1766,9 @@ func writeRemoteArtifactReceiptWithOperations(directory, fileName string, payloa
 			return err
 		}
 		defer func() {
-			after, usageErr := remoteArtifactReceiptStateUsage(directory)
+			after, usageErr := operations.stateUsage(directory)
 			if usageErr != nil {
+				invalidateRemoteArtifactReceiptQuota(quota, usageErr)
 				result = goerrors.Join(result, usageErr)
 				return
 			}
@@ -1763,19 +1820,30 @@ func writeRemoteArtifactReceiptWithOperations(directory, fileName string, payloa
 }
 
 func mutateRemoteArtifactReceiptState(directory string, quota RemoteArtifactReceiptQuota, mutate func() error) (result error) {
+	return mutateRemoteArtifactReceiptStateWithStateUsage(directory, quota, mutate, remoteArtifactReceiptStateUsage)
+}
+
+func mutateRemoteArtifactReceiptStateWithStateUsage(directory string, quota RemoteArtifactReceiptQuota, mutate func() error, stateUsage func(string) (int64, error)) (result error) {
 	if quota == nil {
 		return mutate()
 	}
-	before, err := remoteArtifactReceiptStateUsage(directory)
+	before, err := stateUsage(directory)
 	if err != nil {
 		return err
 	}
 	result = mutate()
-	after, usageErr := remoteArtifactReceiptStateUsage(directory)
+	after, usageErr := stateUsage(directory)
 	if usageErr != nil {
+		invalidateRemoteArtifactReceiptQuota(quota, usageErr)
 		return goerrors.Join(result, usageErr)
 	}
 	return goerrors.Join(result, quota.Reconcile(0, before, after))
+}
+
+func invalidateRemoteArtifactReceiptQuota(quota RemoteArtifactReceiptQuota, cause error) {
+	if invalidator, ok := quota.(remoteArtifactReceiptQuotaInvalidator); ok {
+		invalidator.Invalidate(cause)
+	}
 }
 
 func remoteArtifactReceiptStateUsage(directory string) (int64, error) {

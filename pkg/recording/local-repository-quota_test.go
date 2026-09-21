@@ -2,6 +2,7 @@ package recording
 
 import (
 	"context"
+	stderrors "errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -31,6 +32,60 @@ func TestLocalQuotaAllowsExactLimitAndRejectsGrowthBeyondIt(t *testing.T) {
 	require.NoError(t, quota.reserve(10))
 	require.ErrorContains(t, quota.reserve(1), "would be exceeded")
 	require.Equal(t, uint64(10), quota.usage)
+}
+
+func TestLocalQuotaInvalidationIsSticky(t *testing.T) {
+	quota, err := newLocalQuota(10)
+	require.NoError(t, err)
+	require.NoError(t, quota.reserve(4))
+	injected := stderrors.New("injected inventory failure")
+	quota.Invalidate(injected)
+
+	operations := map[string]func() error{
+		"validate":  quota.validateMaximum,
+		"reserve":   func() error { return quota.reserve(1) },
+		"release":   func() error { return quota.release(1) },
+		"reconcile": func() error { return quota.reconcile(0, 4, 4) },
+	}
+	for name, operation := range operations {
+		t.Run(name, func(t *testing.T) {
+			err := operation()
+			require.ErrorIs(t, err, injected)
+			require.True(t, bferrors.System.IsErr(err))
+		})
+	}
+	require.Equal(t, uint64(4), quota.usage)
+
+	second := stderrors.New("later failure")
+	quota.Invalidate(second)
+	err = quota.reserve(0)
+	require.ErrorIs(t, err, injected)
+	require.NotErrorIs(t, err, second)
+}
+
+func TestLocalQuotaReconciliationFailureInvalidatesQuota(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		maximum  uint64
+		usage    uint64
+		reserved uint64
+		before   int64
+		after    int64
+		want     string
+	}{
+		{name: "underflow", maximum: 10, usage: 4, reserved: 5, before: 4, after: 4, want: "underflow"},
+		{name: "growth beyond limit", maximum: 5, usage: 4, before: 4, after: 6, want: "grew beyond its reservation"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			quota := &localQuota{maximum: test.maximum, usage: test.usage}
+
+			err := quota.reconcile(test.reserved, test.before, test.after)
+			require.ErrorContains(t, err, test.want)
+			require.True(t, bferrors.System.IsErr(err))
+			require.Equal(t, test.usage, quota.usage)
+			require.EqualError(t, quota.reserve(0), err.Error())
+		})
+	}
 }
 
 func TestLocalRepositoryAdmissionAllowsExactInitialSizeAndRejectsOneByteLess(t *testing.T) {

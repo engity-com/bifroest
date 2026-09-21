@@ -12,9 +12,10 @@ import (
 )
 
 type localQuota struct {
-	mutex   sync.Mutex
-	maximum uint64
-	usage   uint64
+	mutex    sync.Mutex
+	maximum  uint64
+	usage    uint64
+	poisoned error
 }
 
 func newLocalQuota(maximum uint64, paths ...string) (*localQuota, error) {
@@ -129,6 +130,9 @@ func inventoryLocalFilesWithReceiptRecovery(paths ...string) (uint64, uint64, er
 func (this *localQuota) validateMaximum() error {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
+	if this.poisoned != nil {
+		return this.poisoned
+	}
 	if this.usage > this.maximum {
 		return errors.Config.Newf("local recording spool uses %d bytes, exceeding its %d-byte limit", this.usage, this.maximum)
 	}
@@ -138,6 +142,9 @@ func (this *localQuota) validateMaximum() error {
 func (this *localQuota) reserve(bytes uint64) error {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
+	if this.poisoned != nil {
+		return this.poisoned
+	}
 	if this.usage > this.maximum || bytes > this.maximum-this.usage {
 		return errors.System.Newf("local recording spool limit of %d bytes would be exceeded", this.maximum)
 	}
@@ -150,37 +157,81 @@ func (this *localQuota) Reserve(bytes uint64) error {
 }
 
 func (this *localQuota) release(bytes uint64) error {
-	if this == nil || bytes <= 0 {
+	if this == nil {
 		return nil
 	}
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
+	if this.poisoned != nil {
+		return this.poisoned
+	}
+	if bytes == 0 {
+		return nil
+	}
 	if bytes > this.usage {
-		return errors.System.Newf("local recording spool accounting underflow")
+		return this.poisonLocked(errors.System.Newf("local recording spool accounting underflow"))
 	}
 	this.usage -= bytes
 	return nil
 }
 
 func (this *localQuota) reconcile(reserved uint64, before, after int64) error {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if this.poisoned != nil {
+		return this.poisoned
+	}
 	if before < 0 || after < 0 {
-		return errors.System.Newf("local recording file has a negative size")
+		return this.poisonLocked(errors.System.Newf("local recording file has a negative size"))
 	}
 	if after < before {
-		return this.release(reserved + uint64(before-after))
+		shrink := uint64(before - after)
+		if reserved > math.MaxUint64-shrink {
+			return this.poisonLocked(errors.System.Newf("local recording spool reconciliation overflows uint64"))
+		}
+		return this.releaseLocked(reserved + shrink)
 	}
 	growth := uint64(after - before)
 	if growth <= reserved {
-		return this.release(reserved - growth)
+		return this.releaseLocked(reserved - growth)
 	}
-	if err := this.reserve(growth - reserved); err != nil {
-		return errors.System.Newf("local recording file grew beyond its reservation: %w", err)
+	additional := growth - reserved
+	if this.usage > this.maximum || additional > this.maximum-this.usage {
+		return this.poisonLocked(errors.System.Newf("local recording file grew beyond its reservation and the local recording spool limit of %d bytes", this.maximum))
 	}
+	this.usage += additional
 	return nil
 }
 
 func (this *localQuota) Reconcile(reserved uint64, before, after int64) error {
 	return this.reconcile(reserved, before, after)
+}
+
+func (this *localQuota) Invalidate(cause error) {
+	if this == nil {
+		return
+	}
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	_ = this.poisonLocked(cause)
+}
+
+func (this *localQuota) releaseLocked(bytes uint64) error {
+	if bytes > this.usage {
+		return this.poisonLocked(errors.System.Newf("local recording spool accounting underflow"))
+	}
+	this.usage -= bytes
+	return nil
+}
+
+func (this *localQuota) poisonLocked(cause error) error {
+	if this.poisoned == nil {
+		if cause == nil {
+			cause = errors.System.Newf("unknown local recording quota failure")
+		}
+		this.poisoned = errors.System.Newf("local recording quota usage is uncertain: %w", cause)
+	}
+	return this.poisoned
 }
 
 type localQuotaFile struct {
@@ -276,11 +327,13 @@ func (this *localQuotaFile) Write(value []byte) (int, error) {
 	after, statErr := this.Stat()
 	if statErr != nil {
 		this.uncertain = true
+		this.quota.Invalidate(statErr)
 		return written, stderrors.Join(writeErr, statErr)
 	}
 	reconcileErr := this.reconcileGrowth(quotaBytes, before.Size(), after.Size())
 	if reconcileErr != nil {
 		this.uncertain = true
+		this.quota.Invalidate(reconcileErr)
 	}
 	return written, stderrors.Join(writeErr, reconcileErr)
 }
@@ -310,11 +363,13 @@ func (this *localQuotaFile) Truncate(size int64) error {
 	after, statErr := this.Stat()
 	if statErr != nil {
 		this.uncertain = true
+		this.quota.Invalidate(statErr)
 		return stderrors.Join(truncateErr, statErr)
 	}
 	reconcileErr := this.reconcileGrowth(quotaBytes, before.Size(), after.Size())
 	if reconcileErr != nil {
 		this.uncertain = true
+		this.quota.Invalidate(reconcileErr)
 	}
 	return stderrors.Join(truncateErr, reconcileErr)
 }
@@ -339,5 +394,7 @@ func removeAccountedLocalTree(path string, quota *localQuota) error {
 	if removeErr == nil && inventoryErr == nil {
 		return quota.release(usage)
 	}
-	return stderrors.Join(inventoryErr, removeErr)
+	err := stderrors.Join(inventoryErr, removeErr)
+	quota.Invalidate(err)
+	return err
 }
