@@ -102,27 +102,35 @@ func (this *houseKeeper) checkedRun(ctx context.Context) (nextRunIn time.Duratio
 func (this *houseKeeper) run(logger log.Logger, ctx context.Context) error {
 	this.orphanedFlows = make(map[configuration.FlowName]struct{})
 	defer func() { this.orphanedFlows = nil }()
-	if err := this.inspectSessions(logger, ctx); err != nil {
-		return err
+	inspectionErr := this.inspectSessions(logger, ctx)
+	if err := ctx.Err(); err != nil {
+		return goerrors.Join(inspectionErr, err)
 	}
-	if err := this.cleanup(logger, ctx); err != nil {
-		return err
+	result := inspectionErr
+	if inspectionErr == nil {
+		result = goerrors.Join(result, this.cleanup(logger, ctx))
+		if err := ctx.Err(); err != nil {
+			return goerrors.Join(result, err)
+		}
 	}
-	if err := this.cleanupRecordings(logger, ctx, time.Now().UTC()); err != nil {
-		return err
-	}
-	return nil
+	recordingErr := this.cleanupRecordings(logger, ctx, time.Now().UTC())
+	return goerrors.Join(result, recordingErr)
 }
 
 func (this *houseKeeper) cleanupRecordings(logger log.Logger, ctx context.Context, now time.Time) error {
+	var result error
 	for index := range this.service.Configuration.Auditlogs {
+		if err := ctx.Err(); err != nil {
+			return goerrors.Join(result, err)
+		}
 		auditlog := &this.service.Configuration.Auditlogs[index]
 		if !auditlog.Enabled || !auditlog.Recording.Enabled {
 			continue
 		}
 		repository := this.service.recordingRepositories[auditlog.Name]
 		if repository == nil {
-			return errors.System.Newf("no Recording repository configured for auditlog %q", auditlog.Name)
+			result = goerrors.Join(result, errors.System.Newf("no Recording repository configured for auditlog %q", auditlog.Name))
+			continue
 		}
 		var cutoff time.Time
 		if !auditlog.Recording.RetainFor.IsZero() {
@@ -130,9 +138,16 @@ func (this *houseKeeper) cleanupRecordings(logger log.Logger, ctx context.Contex
 		}
 		candidates, err := repository.retentionCandidates(ctx, cutoff)
 		if err != nil {
-			return errors.System.Newf("cannot inspect Recording retention of auditlog %q: %w", auditlog.Name, err)
+			if ctx.Err() != nil {
+				return goerrors.Join(result, ctx.Err())
+			}
+			result = goerrors.Join(result, errors.System.Newf("cannot inspect Recording retention of auditlog %q: %w", auditlog.Name, err))
+			continue
 		}
 		for _, candidate := range candidates {
+			if err := ctx.Err(); err != nil {
+				return goerrors.Join(result, err)
+			}
 			_, actionErr, auditErr := this.auditRecordingDeletion(ctx, auditlog.Name, candidate, func() (bool, sessionRecordingRetentionCandidate, error) {
 				return repository.deleteRetentionCandidate(ctx, candidate, cutoff)
 			}, func(completed sessionRecordingRetentionCandidate) error {
@@ -140,13 +155,13 @@ func (this *houseKeeper) cleanupRecordings(logger log.Logger, ctx context.Contex
 			})
 			if err := goerrors.Join(actionErr, auditErr); err != nil {
 				if ctx.Err() != nil {
-					return ctx.Err()
+					return goerrors.Join(result, err, ctx.Err())
 				}
 				logger.WithError(err).With("auditlog", auditlog.Name).With("recordingId", candidate.recordingId).Warn("cannot delete retained session Recording; preserving remaining local state")
 			}
 		}
 	}
-	return nil
+	return result
 }
 
 func (this *houseKeeper) auditRecordingDeletion(ctx context.Context, auditlog configuration.AuditlogName, candidate sessionRecordingRetentionCandidate, perform func() (bool, sessionRecordingRetentionCandidate, error), complete func(sessionRecordingRetentionCandidate) error) (changed bool, actionErr, auditErr error) {

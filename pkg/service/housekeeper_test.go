@@ -286,6 +286,48 @@ func TestHouseKeeperContinuesAfterCorruptSessionDiagnostic(t *testing.T) {
 	require.False(t, *repository.findAllOpts.AutoCleanUpAllowed)
 }
 
+func TestHouseKeeperRunsRecordingRetentionAfterSessionInspectionFailure(t *testing.T) {
+	injected := goerrors.New("session inventory unavailable")
+	repository := &houseKeeperTestSessionRepository{findAll: func(context.Context, session.Consumer, *session.FindOpts) error {
+		return injected
+	}}
+	hk := newHouseKeeperForTest(repository, nil)
+	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "recordings", Enabled: true, Recording: configuration.AuditlogRecording{Enabled: true}}}
+
+	err := hk.run(hk.logger(), t.Context())
+	require.ErrorIs(t, err, injected)
+	require.ErrorContains(t, err, "no Recording repository configured for auditlog \"recordings\"")
+	require.Zero(t, hk.service.environments.(*houseKeeperTestEnvironmentRepository).cleanupCalls)
+}
+
+func TestHouseKeeperRunsRecordingRetentionAfterEnvironmentCleanupFailure(t *testing.T) {
+	injected := goerrors.New("environment cleanup unavailable")
+	hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, nil)
+	environments := hk.service.environments.(*houseKeeperTestEnvironmentRepository)
+	environments.cleanupErr = injected
+	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "recordings", Enabled: true, Recording: configuration.AuditlogRecording{Enabled: true}}}
+
+	err := hk.run(hk.logger(), t.Context())
+	require.ErrorIs(t, err, injected)
+	require.ErrorContains(t, err, "no Recording repository configured for auditlog \"recordings\"")
+	require.Equal(t, 1, environments.cleanupCalls)
+}
+
+func TestHouseKeeperIsolatesRecordingRetentionStoreFailuresByAuditlog(t *testing.T) {
+	hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, nil)
+	hk.service.Configuration.Auditlogs = configuration.Auditlogs{
+		{Name: "first", Enabled: true, Recording: configuration.AuditlogRecording{Enabled: true}},
+		{Name: "second", Enabled: true, Recording: configuration.AuditlogRecording{Enabled: true}},
+	}
+	hk.service.recordingRepositories = map[configuration.AuditlogName]*sessionRecordingRepository{
+		"first": {},
+	}
+
+	err := hk.cleanupRecordings(hk.logger(), t.Context(), time.Now().UTC())
+	require.ErrorContains(t, err, "cannot inspect Recording retention of auditlog \"first\"")
+	require.ErrorContains(t, err, "no Recording repository configured for auditlog \"second\"")
+}
+
 func TestHouseKeeperPreservesEnvironmentResourcesOfRemovedFlow(t *testing.T) {
 	orphaned := &houseKeeperTestSession{
 		flow:               "removed",
@@ -614,6 +656,7 @@ type houseKeeperTestEnvironmentRepository struct {
 	environment.CloseableRepository
 	findCalls         int
 	cleanupCalls      int
+	cleanupErr        error
 	cleanupCheckFlow  configuration.FlowName
 	cleanupFlowExists bool
 }
@@ -625,6 +668,9 @@ func (this *houseKeeperTestEnvironmentRepository) FindBySession(context.Context,
 
 func (this *houseKeeperTestEnvironmentRepository) Cleanup(_ context.Context, opts *environment.CleanupOpts) error {
 	this.cleanupCalls++
+	if this.cleanupErr != nil {
+		return this.cleanupErr
+	}
 	if !this.cleanupCheckFlow.IsZero() {
 		exists, err := opts.HasFlowOfName(this.cleanupCheckFlow)
 		if err != nil {

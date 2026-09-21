@@ -274,6 +274,36 @@ func TestHouseKeeperDeletesAcknowledgedRecordingAfterRetentionAndAudits(t *testi
 	}
 }
 
+func TestHouseKeeperContinuesRecordingRetentionAfterEarlierAuditlogStoreFailure(t *testing.T) {
+	root := t.TempDir()
+	conf := sessionRecordingTestConfiguration(t, root)
+	enableSessionRecording(&conf.Auditlogs[0])
+	conf.Auditlogs[0].Recording.RetainFor.SetNative(time.Hour)
+	working := conf.Auditlogs[0]
+	broken := working
+	broken.Name = "broken"
+	broken.IdentityFile = filepath.Join(root, "audit-broken", "identity")
+	broken.Journal.Directory = filepath.Join(root, "audit-broken", "journal")
+	broken.Recording.Directory = filepath.Join(root, "recording-broken")
+	conf.Auditlogs = configuration.Auditlogs{broken, working}
+
+	svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+	require.NoError(t, err)
+	brokenRepository := svc.recordingRepositories["broken"]
+	brokenReceipts := brokenRepository.receipts
+	brokenRepository.receipts = nil
+	t.Cleanup(func() {
+		brokenRepository.receipts = brokenReceipts
+		require.NoError(t, svc.Close())
+	})
+	name := sealRemoteDeliveryTestRecording(t, svc, conf)
+
+	err = svc.houseKeeper.cleanupRecordings(svc.houseKeeper.logger(), t.Context(), time.Now().UTC().Add(2*time.Hour))
+	require.ErrorContains(t, err, "cannot inspect Recording retention of auditlog \"broken\"")
+	_, err = svc.recordingRepositories[configuration.DefaultAuditlogName].OpenSealedArtifact(t.Context(), name)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
 func TestHouseKeeperPreservesRecordingWhenRetentionDisabled(t *testing.T) {
 	root := t.TempDir()
 	conf := sessionRecordingTestConfiguration(t, root)
