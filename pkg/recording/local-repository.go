@@ -250,13 +250,17 @@ func newLocalRepository[Head, Summary any](ctx context.Context, directory string
 	if err != nil {
 		return nil, errors.Config.Newf("cannot resolve local recording directory: %w", err)
 	}
+	formatProtection, err := prepareLocalFormatProtection(filepath.Join(canonical, localFormatFileName))
+	if err != nil {
+		return nil, errors.System.Newf("cannot inspect existing local recording format marker: %w", err)
+	}
 	if err := ensureLocalDirectory(canonical); err != nil {
-		return nil, errors.System.Newf("cannot prepare local recording directory %q: %w", canonical, err)
+		return nil, errors.System.Newf("cannot prepare local recording directory %q: %w", canonical, stderrors.Join(err, formatProtection.close()))
 	}
 	lockPath := filepath.Join(canonical, localLockFileName)
 	processLock, err := acquireLocalProcessLock(lockPath)
 	if err != nil {
-		return nil, errors.System.Newf("cannot lock local recording repository %q: %w", canonical, err)
+		return nil, errors.System.Newf("cannot lock local recording repository %q: %w", canonical, stderrors.Join(err, formatProtection.close()))
 	}
 	committed := false
 	defer func() {
@@ -265,7 +269,10 @@ func newLocalRepository[Head, Summary any](ctx context.Context, directory string
 		}
 	}()
 	if err := validateLocalLock(processLock, lockPath); err != nil {
-		return nil, err
+		return nil, stderrors.Join(err, formatProtection.close())
+	}
+	if err := formatProtection.protect(processLock); err != nil {
+		return nil, errors.System.Newf("cannot protect existing local recording format marker: %w", err)
 	}
 	result := &localRepository[Head, Summary]{
 		mutex:          newLocalRepositoryMutex(),

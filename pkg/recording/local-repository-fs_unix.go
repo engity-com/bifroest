@@ -20,6 +20,8 @@ type localProcessLock struct {
 	err  error
 }
 
+type pendingLocalFormatProtection struct{}
+
 func removeLocalFile(path string) error {
 	return os.Remove(path)
 }
@@ -130,6 +132,18 @@ func protectLocalReadOnlyFile(_ string, file *os.File) error {
 		return err
 	}
 	return file.Sync()
+}
+
+func prepareLocalFormatProtection(string) (*pendingLocalFormatProtection, error) {
+	return &pendingLocalFormatProtection{}, nil
+}
+
+func (*pendingLocalFormatProtection) protect(*localProcessLock) error {
+	return nil
+}
+
+func (*pendingLocalFormatProtection) close() error {
+	return nil
 }
 
 func openProtectedLocalFile(path string) (*os.File, error) {

@@ -6,6 +6,7 @@ import (
 	goerrors "errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"unsafe"
 
@@ -22,6 +23,10 @@ type localProcessLock struct {
 	overlapped windows.Overlapped
 	once       sync.Once
 	err        error
+}
+
+type pendingLocalFormatProtection struct {
+	file *os.File
 }
 
 func removeLocalFile(path string) error {
@@ -184,6 +189,62 @@ func protectLocalReadOnlyFile(path string, file *os.File) error {
 		return err
 	}
 	return secureLocalFileWithAccess(path, file, "FRSD")
+}
+
+func prepareLocalFormatProtection(path string) (*pendingLocalFormatProtection, error) {
+	expected, err := os.Lstat(path)
+	if goerrors.Is(err, os.ErrNotExist) {
+		return &pendingLocalFormatProtection{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !expected.Mode().IsRegular() {
+		return nil, errors.Config.Newf("protected local recording file is not a regular file")
+	}
+	file, err := openLocalMetadataPath(path, false, false)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateLocalMetadataHandle(path, file, expected, true); err != nil {
+		return nil, goerrors.Join(err, file.Close())
+	}
+	return &pendingLocalFormatProtection{file: file}, nil
+}
+
+func (this *pendingLocalFormatProtection) protect(lock *localProcessLock) error {
+	if this == nil || this.file == nil {
+		return nil
+	}
+	file := this.file
+	this.file = nil
+	if lock == nil || lock.file == nil {
+		return goerrors.Join(errors.System.Newf("cannot protect local recording format marker without repository lock"), file.Close())
+	}
+	formatPath, err := finalLocalPath(file)
+	if err != nil {
+		return goerrors.Join(err, file.Close())
+	}
+	lockPath, err := finalLocalPath(lock.file)
+	if err != nil {
+		return goerrors.Join(err, file.Close())
+	}
+	if filepath.Dir(formatPath) != filepath.Dir(lockPath) {
+		return goerrors.Join(errors.System.Newf("local recording format marker changed repository while securing metadata"), file.Close())
+	}
+	if err := securePinnedLocalMetadataHandle(file, "FRSD"); err != nil {
+		return goerrors.Join(err, file.Close())
+	}
+	return file.Close()
+}
+
+func (this *pendingLocalFormatProtection) close() error {
+	if this == nil || this.file == nil {
+		return nil
+	}
+	file := this.file
+	this.file = nil
+	return file.Close()
 }
 
 func openProtectedLocalFile(path string) (*os.File, error) {
@@ -524,6 +585,39 @@ func secureLocalMetadataHandle(path string, file *os.File, expected os.FileInfo,
 	if err := validateLocalMetadataHandle(path, file, expected, regular); err != nil {
 		return err
 	}
+	return secureValidatedLocalMetadataHandle(file, access)
+}
+
+func securePinnedLocalMetadataHandle(file *os.File, access string) error {
+	opened, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if !opened.Mode().IsRegular() {
+		return errors.System.Newf("local recording format marker changed while securing metadata")
+	}
+	if err := requireSingleHardLink(file); err != nil {
+		return err
+	}
+	return secureValidatedLocalMetadataHandle(file, access)
+}
+
+func finalLocalPath(file *os.File) (string, error) {
+	size := uint32(256)
+	for {
+		buffer := make([]uint16, size)
+		length, err := windows.GetFinalPathNameByHandle(windows.Handle(file.Fd()), &buffer[0], size, 0)
+		if err != nil {
+			return "", err
+		}
+		if length < size {
+			return windows.UTF16ToString(buffer[:length]), nil
+		}
+		size = length + 1
+	}
+}
+
+func secureValidatedLocalMetadataHandle(file *os.File, access string) error {
 	userSid, ownerSid, err := localProcessSIDs()
 	if err != nil {
 		return err

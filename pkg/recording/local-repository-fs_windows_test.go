@@ -49,6 +49,24 @@ func TestLocalMetadataHandleSupportsValidation(t *testing.T) {
 	require.NoError(t, validateLocalMetadataHandle(path, file, expected, true))
 }
 
+func TestProtectPinnedLocalFormatAfterDirectorySecurity(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "recordings")
+	require.NoError(t, os.Mkdir(root, localDirectoryMode))
+	path := filepath.Join(root, localFormatFileName)
+	require.NoError(t, os.WriteFile(path, []byte("unknown/v1\n"), localFileMode))
+
+	protection, err := prepareLocalFormatProtection(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, protection.close()) })
+	require.NoError(t, ensureLocalDirectory(root))
+	lock, err := acquireLocalProcessLock(filepath.Join(root, localLockFileName))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, lock.Close()) })
+	require.NoError(t, protection.protect(lock))
+	err = bindLocalFormat(root, "cast-zstd/v1")
+	require.ErrorContains(t, err, "different or malformed format")
+}
+
 func TestSealLocalFileRejectsHardLinkBeforeChangingMetadata(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "recording.cast.zst")
