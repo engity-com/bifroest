@@ -593,6 +593,7 @@ func TestRecordedSessionRejectsInvalidWindowDimensions(t *testing.T) {
 			source <- test.window
 			failure := <-callback
 			require.ErrorContains(t, failure, "invalid terminal")
+			require.True(t, isInvalidSessionRecordingRequest(failure))
 			require.Empty(t, sink.resizeEvents())
 			requireChannelClosed(t, windows)
 		})

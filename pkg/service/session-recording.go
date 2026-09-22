@@ -957,6 +957,9 @@ func (this *service) beginSessionRecording(sshSession essh.Session, pty recorded
 		if resultErr == nil {
 			return
 		}
+		if isInvalidSessionRecordingRequest(resultErr) {
+			return
+		}
 		if this.handleAuditlogFailure(auditlog, "session Recording", resultErr) == nil {
 			recorded = nil
 			lifecycle = nil
@@ -1030,6 +1033,10 @@ func (this *service) beginSessionRecording(sshSession essh.Session, pty recorded
 	}
 	var failureOnce sync.Once
 	onFailure := func(err error) {
+		if isInvalidSessionRecordingRequest(err) {
+			failureOnce.Do(func() { _ = sshSession.Close() })
+			return
+		}
 		if this.handleAuditlogFailure(auditlog, "session Recording", err) == nil {
 			return
 		}
@@ -1117,18 +1124,22 @@ func sessionRecordingTerminal(pty recordedSessionPty) (recording.CastTerminal, e
 	terminalType := ""
 	if pty.hasPty {
 		if requested, dimensionErr := initialWindowDimension(pty.pty.Window.Width, "width"); dimensionErr != nil {
-			return recording.CastTerminal{}, dimensionErr
+			return recording.CastTerminal{}, invalidSessionRecordingRequest(dimensionErr)
 		} else if requested != 0 {
 			columns = requested
 		}
 		if requested, dimensionErr := initialWindowDimension(pty.pty.Window.Height, "height"); dimensionErr != nil {
-			return recording.CastTerminal{}, dimensionErr
+			return recording.CastTerminal{}, invalidSessionRecordingRequest(dimensionErr)
 		} else if requested != 0 {
 			rows = requested
 		}
 		terminalType = pty.pty.Term
 	}
-	return recording.CastTerminal{Columns: columns, Rows: rows, Type: terminalType}, nil
+	terminal := recording.CastTerminal{Columns: columns, Rows: rows, Type: terminalType}
+	if err := terminal.Validate(); err != nil {
+		return recording.CastTerminal{}, invalidSessionRecordingRequest(err)
+	}
+	return terminal, nil
 }
 
 func (this *sessionRecordingLifecycle) showNotice(sshSession essh.Session, interactive bool) error {

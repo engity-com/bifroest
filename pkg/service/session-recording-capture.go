@@ -47,6 +47,30 @@ type recordedSessionStderr struct {
 	stream  io.ReadWriter
 }
 
+type invalidSessionRecordingRequestError struct {
+	cause error
+}
+
+func (this *invalidSessionRecordingRequestError) Error() string {
+	return this.cause.Error()
+}
+
+func (this *invalidSessionRecordingRequestError) Unwrap() error {
+	return this.cause
+}
+
+func invalidSessionRecordingRequest(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &invalidSessionRecordingRequestError{cause: err}
+}
+
+func isInvalidSessionRecordingRequest(err error) bool {
+	var target *invalidSessionRecordingRequestError
+	return goerrors.As(err, &target)
+}
+
 type layeredSessionEnvironment interface {
 	ClientEnvironment() []string
 	AuthorizedKeyEnvironment() sys.EnvVars
@@ -270,6 +294,7 @@ func (this *recordedSession) recordResize(window essh.Window) (error, bool) {
 	if recordErr == nil {
 		rows, recordErr = effectiveWindowDimension(this.rows, window.Height, "height")
 	}
+	invalidRequest := recordErr != nil
 	if recordErr == nil && (columns == 0 || rows == 0) {
 		recordErr = errors.System.Newf("effective terminal dimensions must be positive")
 	}
@@ -281,6 +306,9 @@ func (this *recordedSession) recordResize(window essh.Window) (error, bool) {
 		this.rows = rows
 		this.mu.Unlock()
 		return nil, false
+	}
+	if invalidRequest {
+		recordErr = invalidSessionRecordingRequest(recordErr)
 	}
 	failure := this.poisonLocked("resize", recordErr)
 	this.mu.Unlock()

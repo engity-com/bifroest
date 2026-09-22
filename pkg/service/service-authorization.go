@@ -8,6 +8,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/authorization"
+	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
 )
@@ -284,6 +285,16 @@ func (this *service) onPtyRequest(ctx essh.Context, _ essh.Session, pty essh.Pty
 		return false, errors.Newf(errors.System, "no connection resolved for PTY request")
 	}
 	logger := conn.Logger()
+	if err := this.validateSessionRecordingPty(auth.Flow(), pty); err != nil {
+		event := this.authorizationAuditEvent(ctx, auth, audit.EventNameSessionPtyDecided, audit.EventDomainSession)
+		event.Outcome = audit.EventOutcomeDenied
+		event.Reason = audit.EventReasonInvalidRequest
+		if recordErr := this.recordFlowAudit(ctx, auth.Flow(), event); recordErr != nil {
+			return false, recordErr
+		}
+		logger.Debug("PTY request is not recordable")
+		return false, nil
+	}
 
 	ok, err := this.environments.DoesSupportPty(&environmentContext{
 		service:       this,
@@ -319,6 +330,15 @@ func (this *service) onPtyRequest(ctx essh.Context, _ essh.Session, pty essh.Pty
 	}
 	logger.Debug("PTY was requested and was permitted")
 	return true, nil
+}
+
+func (this *service) validateSessionRecordingPty(flow configuration.FlowName, pty essh.Pty) error {
+	auditlog, ok := this.flowAuditlogs[flow]
+	if !ok || this.auditlogDisabled(auditlog) || this.recordingRepositories[auditlog] == nil {
+		return nil
+	}
+	_, err := sessionRecordingTerminal(recordedSessionPty{pty: pty, hasPty: true})
+	return err
 }
 
 func (this *service) onAgentForwardingRequested(ctx essh.Context, _ essh.Session) (bool, error) {

@@ -99,6 +99,7 @@ Outcomes and reasons:
 * `success`: both authorized-key and environment policies permit the request.
 * `denied` with `authorized-key-policy`: the active authorized-key policy forbids PTY allocation.
 * `denied` with `environment-policy`: the environment does not support or permit the requested PTY.
+* `denied` with `invalid-request`: session recording cannot represent the requested terminal type or dimensions.
 * `failure` with `environment-policy`: evaluation of the environment policy failed; `errorCategory` classifies the failure.
 
 The event does not contain the terminal type, terminal dimensions, or terminal modes.

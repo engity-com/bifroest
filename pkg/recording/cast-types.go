@@ -73,6 +73,27 @@ type CastTerminal struct {
 	Type    string `json:"type,omitempty"`
 }
 
+func (this CastTerminal) Validate() error {
+	if this.Columns == 0 || this.Rows == 0 {
+		return errors.System.Newf("terminal dimensions must be positive")
+	}
+	if this.Columns > MaximumCastTerminalDimension || this.Rows > MaximumCastTerminalDimension {
+		return errors.System.Newf("terminal dimensions exceed %d", MaximumCastTerminalDimension)
+	}
+	if len(this.Type) > 255 {
+		return errors.System.Newf("terminal type exceeds 255 bytes")
+	}
+	if !utf8.ValidString(this.Type) {
+		return errors.System.Newf("terminal type is not valid UTF-8")
+	}
+	for _, character := range this.Type {
+		if mustEscapeCastCodePoint(character) {
+			return errors.System.Newf("terminal type contains a control character")
+		}
+	}
+	return nil
+}
+
 type CastHeader struct {
 	Version   int          `json:"version"`
 	Terminal  CastTerminal `json:"term"`
@@ -163,22 +184,8 @@ func validateCastHeader(header CastHeader) error {
 	if header.Version != CastVersion {
 		return errors.System.Newf("unsupported asciicast version %d", header.Version)
 	}
-	if header.Terminal.Columns == 0 || header.Terminal.Rows == 0 {
-		return errors.System.Newf("terminal dimensions must be positive")
-	}
-	if header.Terminal.Columns > MaximumCastTerminalDimension || header.Terminal.Rows > MaximumCastTerminalDimension {
-		return errors.System.Newf("terminal dimensions exceed %d", MaximumCastTerminalDimension)
-	}
-	if len(header.Terminal.Type) > 255 {
-		return errors.System.Newf("terminal type exceeds 255 bytes")
-	}
-	if !utf8.ValidString(header.Terminal.Type) {
-		return errors.System.Newf("terminal type is not valid UTF-8")
-	}
-	for _, character := range header.Terminal.Type {
-		if mustEscapeCastCodePoint(character) {
-			return errors.System.Newf("terminal type contains a control character")
-		}
+	if err := header.Terminal.Validate(); err != nil {
+		return err
 	}
 	if header.Timestamp <= 0 {
 		return errors.System.Newf("cast timestamp must be positive")

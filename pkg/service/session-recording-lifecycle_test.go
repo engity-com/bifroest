@@ -301,6 +301,99 @@ func TestExecuteSessionRecordingSealsShellAndExec(t *testing.T) {
 	}
 }
 
+func TestSessionRecordingRejectsInvalidPtyWithoutDisablingBestEffortAuditlog(t *testing.T) {
+	tests := []struct {
+		name     string
+		terminal string
+		height   int
+		width    int
+	}{
+		{name: "width exceeds Cast range", terminal: "xterm", height: 24, width: int(recording.MaximumCastTerminalDimension) + 1},
+		{name: "height exceeds Cast range", terminal: "xterm", height: int(recording.MaximumCastTerminalDimension) + 1, width: 80},
+		{name: "terminal type exceeds Cast range", terminal: string(bytes.Repeat([]byte{'x'}, 256)), height: 24, width: 80},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{run: func(task environment.Task) (int, error) {
+				_, err := task.SshSession().Write([]byte("recorded"))
+				return 0, err
+			}}, func(conf *configuration.Configuration) {
+				enableSessionRecordingForLifecycleTest(conf, root)
+				conf.Auditlogs[0].FailurePolicy = configuration.AuditlogFailurePolicyBestEffort
+			})
+			auditRecorder := &recordingAuditRecorder{}
+			flow := server.service.Configuration.Flows[0].Name
+			auditlog := server.service.flowAuditlogs[flow]
+			server.service.flowAuditRecorders[flow] = auditRecorder
+			client := server.mustDial(t)
+
+			invalid, err := client.NewSession()
+			require.NoError(t, err)
+			require.Error(t, invalid.RequestPty(test.terminal, test.height, test.width, nil))
+			require.NoError(t, invalid.Close())
+			require.False(t, server.service.auditlogDisabled(auditlog))
+			ptyEvents := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionPtyDecided)
+			require.Len(t, ptyEvents, 1)
+			require.Equal(t, audit.EventOutcomeDenied, ptyEvents[0].Outcome)
+			require.Equal(t, audit.EventReasonInvalidRequest, ptyEvents[0].Reason)
+
+			healthy, err := client.NewSession()
+			require.NoError(t, err)
+			require.NoError(t, healthy.RequestPty("xterm", 24, 80, nil))
+			require.NoError(t, healthy.Run("record-after-invalid-pty"))
+			require.False(t, server.service.auditlogDisabled(auditlog))
+			verification := verifyOnlySessionRecording(t, server.service, root)
+			require.Equal(t, recording.CastStatusCompleted, verification.Cast.Result.Status)
+		})
+	}
+}
+
+func TestSessionRecordingRejectsInvalidResizeWithoutDisablingBestEffortAuditlog(t *testing.T) {
+	root := t.TempDir()
+	firstRunStarted := make(chan struct{})
+	var runs atomic.Int32
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{run: func(task environment.Task) (int, error) {
+		if runs.Add(1) == 1 {
+			close(firstRunStarted)
+			<-task.SshSession().Context().Done()
+			return -1, task.SshSession().Context().Err()
+		}
+		_, err := task.SshSession().Write([]byte("recorded"))
+		return 0, err
+	}}, func(conf *configuration.Configuration) {
+		enableSessionRecordingForLifecycleTest(conf, root)
+		conf.Auditlogs[0].FailurePolicy = configuration.AuditlogFailurePolicyBestEffort
+	})
+	auditRecorder := &recordingAuditRecorder{}
+	flow := server.service.Configuration.Flows[0].Name
+	auditlog := server.service.flowAuditlogs[flow]
+	server.service.flowAuditRecorders[flow] = auditRecorder
+	client := server.mustDial(t)
+
+	invalid, err := client.NewSession()
+	require.NoError(t, err)
+	require.NoError(t, invalid.RequestPty("xterm", 24, 80, nil))
+	require.NoError(t, invalid.Start("invalid-resize"))
+	select {
+	case <-firstRunStarted:
+	case <-time.After(time.Second):
+		t.Fatal("environment run did not start")
+	}
+	require.NoError(t, invalid.WindowChange(24, int(recording.MaximumCastTerminalDimension)+1))
+	require.Error(t, invalid.Wait())
+	require.False(t, server.service.auditlogDisabled(auditlog))
+
+	healthy, err := client.NewSession()
+	require.NoError(t, err)
+	require.NoError(t, healthy.RequestPty("xterm", 24, 80, nil))
+	require.NoError(t, healthy.Run("record-after-invalid-resize"))
+	require.False(t, server.service.auditlogDisabled(auditlog))
+	requireAuditEventsNamedEventually(t, auditRecorder, audit.EventNameSessionRecordingCompleted, 1)
+	requireAuditEventsNamedEventually(t, auditRecorder, audit.EventNameSessionRecordingFailed, 1)
+}
+
 func TestExecuteSessionRecordingNoticeRenderFailurePreventsEnvironmentRun(t *testing.T) {
 	root := t.TempDir()
 	var runCalled atomic.Bool
