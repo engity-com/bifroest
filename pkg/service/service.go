@@ -286,11 +286,11 @@ func (this *Service) prepare() (svc *service, err error) {
 		return fail(err)
 	}
 	sessionRepositoryPrepared := false
-	defer func() {
+	defer func(preparedService *service) {
 		if !sessionRepositoryPrepared {
-			_ = svc.sessions.Close()
+			_ = preparedService.sessions.Close()
 		}
-	}()
+	}(svc)
 	if svc.authorizer, err = authorization.NewAuthorizerFacadeWithObserver(ctx, &this.Configuration.Flows, svc.observeFlowAuthorization); err != nil {
 		return fail(err)
 	}
@@ -346,6 +346,7 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 
 	serverPrivateKeys := hostSigners
 	sftpIdentityPublicKeysByAuditlog := make(map[configuration.AuditlogName][]crypto.PublicKey, len(this.Configuration.Auditlogs))
+	var failedSftpIdentityPublicKeys []crypto.PublicKey
 	if hasEncryptedAuditlog(this.Configuration.Auditlogs) {
 		serverPrivateKeys, err = loadStaticPrivateKeysForAuditEncryption(this.Configuration.Flows, hostSigners)
 		if err != nil {
@@ -358,6 +359,7 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 			}
 			keys, identityErr := loadStaticSftpIdentityPublicKeysForAuditEncryption(auditlog)
 			if identityErr != nil {
+				failedSftpIdentityPublicKeys = append(failedSftpIdentityPublicKeys, keys...)
 				if err := svc.handleAuditlogFailure(auditlog.Name, "SFTP identities", identityErr); err != nil {
 					return err
 				}
@@ -396,7 +398,7 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	for _, identity := range svc.auditIdentities {
 		auditIdentities = append(auditIdentities, identity)
 	}
-	var sftpIdentityPublicKeys []crypto.PublicKey
+	sftpIdentityPublicKeys := failedSftpIdentityPublicKeys
 	for auditlog, keys := range sftpIdentityPublicKeysByAuditlog {
 		if !svc.auditlogDisabled(auditlog) {
 			sftpIdentityPublicKeys = append(sftpIdentityPublicKeys, keys...)
@@ -653,6 +655,7 @@ func loadStaticPrivateKeysForAuditEncryption(flows configuration.Flows, hostKeys
 
 func loadStaticSftpIdentityPublicKeysForAuditEncryption(auditlog *configuration.Auditlog) ([]crypto.PublicKey, error) {
 	var result []crypto.PublicKey
+	var resultErr error
 	for targetIndex := range auditlog.Targets {
 		target := &auditlog.Targets[targetIndex]
 		sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
@@ -660,13 +663,13 @@ func loadStaticSftpIdentityPublicKeysForAuditEncryption(auditlog *configuration.
 			continue
 		}
 		keys, err := audit.LoadSftpIdentityPublicKeys(sftp.IdentityFiles)
-		if err != nil {
-			return nil, fmt.Errorf("cannot load static SFTP identities of target %q in auditlog %q: %w", target.Name, auditlog.Name, err)
-		}
 		result = append(result, keys...)
+		if err != nil {
+			resultErr = goerrors.Join(resultErr, fmt.Errorf("cannot load static SFTP identities of target %q in auditlog %q: %w", target.Name, auditlog.Name, err))
+		}
 	}
 	if !auditlog.Recording.Enabled {
-		return result, nil
+		return result, resultErr
 	}
 	for targetIndex := range auditlog.Recording.Targets.Configured() {
 		target := &auditlog.Recording.Targets.Targets[targetIndex]
@@ -675,12 +678,12 @@ func loadStaticSftpIdentityPublicKeysForAuditEncryption(auditlog *configuration.
 			continue
 		}
 		keys, err := audit.LoadSftpIdentityPublicKeys(sftp.IdentityFiles)
-		if err != nil {
-			return nil, fmt.Errorf("cannot load static SFTP identities of Recording target %q in auditlog %q: %w", target.Name, auditlog.Name, err)
-		}
 		result = append(result, keys...)
+		if err != nil {
+			resultErr = goerrors.Join(resultErr, fmt.Errorf("cannot load static SFTP identities of Recording target %q in auditlog %q: %w", target.Name, auditlog.Name, err))
+		}
 	}
-	return result, nil
+	return result, resultErr
 }
 
 func EnsureHostPrivateKeys(conf *configuration.Configuration) ([]crypto.PrivateKey, error) {

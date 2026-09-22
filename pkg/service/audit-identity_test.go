@@ -825,6 +825,73 @@ func TestPrepareAuditEncryptionValidatesSftpIdentityKeysAcrossAuditlogs(t *testi
 	require.Nil(t, svc)
 }
 
+func TestPrepareAuditEncryptionRetainsSftpIdentityKeysAcrossBestEffortFailures(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		configure func(*testing.T, *configuration.Auditlog, string, string)
+	}{
+		{name: "key before error", configure: func(t *testing.T, auditlog *configuration.Auditlog, key, missing string) {
+			auditlog.Targets = configuration.AuditlogTargets{{Name: "archive", V: newAuditSftpDedicatednessTarget(t, []string{key, missing})}}
+		}},
+		{name: "key after error", configure: func(t *testing.T, auditlog *configuration.Auditlog, key, missing string) {
+			auditlog.Targets = configuration.AuditlogTargets{{Name: "archive", V: newAuditSftpDedicatednessTarget(t, []string{missing, key})}}
+		}},
+		{name: "key in later audit target", configure: func(t *testing.T, auditlog *configuration.Auditlog, key, missing string) {
+			auditlog.Targets = configuration.AuditlogTargets{
+				{Name: "broken", V: newAuditSftpDedicatednessTarget(t, []string{missing})},
+				{Name: "archive", V: newAuditSftpDedicatednessTarget(t, []string{key})},
+			}
+		}},
+		{name: "key in later Recording target", configure: func(t *testing.T, auditlog *configuration.Auditlog, key, missing string) {
+			auditlog.Targets = configuration.AuditlogTargets{{Name: "broken", V: newAuditSftpDedicatednessTarget(t, []string{missing})}}
+			require.NoError(t, auditlog.Recording.SetDefaults())
+			auditlog.Recording.Enabled = true
+			auditlog.Recording.Directory = filepath.Join(filepath.Dir(key), "secondary-recordings")
+			auditlog.Recording.Targets = configuration.AuditlogRecordingTargets{
+				Mode: configuration.AuditlogRecordingTargetsModeCustom,
+				Targets: configuration.AuditlogTargets{
+					{Name: "archive", V: newAuditSftpDedicatednessTarget(t, []string{key})},
+				},
+			}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			sftpIdentityPath := filepath.Join(root, "secondary-sftp-key")
+			sftpIdentity, err := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).CreateFile(nil, sftpIdentityPath)
+			require.NoError(t, err)
+			conf := auditSftpDedicatednessTestConfiguration(t, root, nil,
+				crypto.PublicKeys(strings.TrimSpace(string(crypto.MarshalPublicKey(sftpIdentity.PublicKey())))))
+			conf.Auditlogs[0].Targets = nil
+			secondary := configuration.Auditlog{
+				Name:          "secondary",
+				Enabled:       true,
+				FailurePolicy: configuration.AuditlogFailurePolicyBestEffort,
+				IdentityFile:  filepath.Join(root, "secondary-audit-key"),
+				Journal:       configuration.AuditlogJournal{Directory: filepath.Join(root, "secondary-journal")},
+			}
+			test.configure(t, &secondary, sftpIdentityPath, filepath.Join(root, "missing-secondary-sftp-key"))
+			conf.Auditlogs = append(conf.Auditlogs, secondary)
+
+			svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+			require.ErrorContains(t, err, "audit encryption recipient reuses a private key")
+			require.Nil(t, svc)
+		})
+	}
+}
+
+func newAuditSftpDedicatednessTarget(t *testing.T, identityFiles []string) *configuration.AuditlogTargetSftp {
+	t.Helper()
+	result := &configuration.AuditlogTargetSftp{}
+	require.NoError(t, result.SetDefaults())
+	result.Address = "127.0.0.1:1"
+	result.User = template.MustNewString("archive")
+	result.Directory = "/archive"
+	result.AcceptAllHostKeys = true
+	result.IdentityFiles = identityFiles
+	return result
+}
+
 func auditSftpDedicatednessTestConfiguration(t *testing.T, root string, sftpIdentities []string, encryptionKey crypto.PublicKeys) configuration.Configuration {
 	t.Helper()
 	var conf configuration.Configuration

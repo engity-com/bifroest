@@ -618,27 +618,27 @@ func loadSftpIdentityFile(identityPath string) (bfcrypto.PrivateKey, error) {
 }
 
 func loadSftpIdentityFiles(identityFiles []string) ([]bfcrypto.PrivateKey, error) {
-	result := make([]bfcrypto.PrivateKey, len(identityFiles))
+	result := make([]bfcrypto.PrivateKey, 0, len(identityFiles))
+	var resultErr error
 	for index, identityFile := range identityFiles {
 		key, err := loadSftpIdentityFile(identityFile)
 		if err != nil {
-			return nil, errors.Config.Newf("cannot load SFTP identity file [%d] %q: %w", index, identityFile, err)
+			resultErr = goerrors.Join(resultErr, errors.Config.Newf("cannot load SFTP identity file [%d] %q: %w", index, identityFile, err))
+			continue
 		}
-		result[index] = key
+		result = append(result, key)
 	}
-	return result, nil
+	return result, resultErr
 }
 
 // LoadSftpIdentityPublicKeys securely loads SFTP private identity files and
 // returns only the public portions needed for key-dedicatedness validation.
+// If loading fails, it returns every key it could load as well.
 func LoadSftpIdentityPublicKeys(identityFiles []string) ([]bfcrypto.PublicKey, error) {
 	privateKeys, err := loadSftpIdentityFiles(identityFiles)
-	if err != nil {
-		return nil, err
-	}
 	result := make([]bfcrypto.PublicKey, len(privateKeys))
 	for index, privateKey := range privateKeys {
 		result[index] = privateKey.PublicKey()
 	}
-	return result, nil
+	return result, err
 }
