@@ -433,7 +433,7 @@ func openLocalMetadataPath(path string, directory, writeAttributes bool) (*os.Fi
 	if err != nil {
 		return nil, err
 	}
-	access := uint32(windows.READ_CONTROL | windows.WRITE_DAC)
+	access := uint32(windows.READ_CONTROL | windows.WRITE_DAC | windows.FILE_READ_ATTRIBUTES)
 	if writeAttributes {
 		access |= windows.FILE_WRITE_ATTRIBUTES
 	}

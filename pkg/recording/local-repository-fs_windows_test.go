@@ -37,6 +37,18 @@ func TestBindLocalFormatRejectsHardLinkedCleanupTombstone(t *testing.T) {
 	require.Equal(t, beforeDACL, localWindowsDACL(t, external))
 }
 
+func TestLocalMetadataHandleSupportsValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata")
+	require.NoError(t, os.WriteFile(path, []byte("metadata"), localFileMode))
+	expected, err := os.Lstat(path)
+	require.NoError(t, err)
+	file, err := openLocalMetadataPath(path, false, false)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, file.Close()) })
+
+	require.NoError(t, validateLocalMetadataHandle(path, file, expected, true))
+}
+
 func TestSealLocalFileRejectsHardLinkBeforeChangingMetadata(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "recording.cast.zst")
