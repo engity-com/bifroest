@@ -136,14 +136,14 @@ func (this *bestEffortSessionRecordingSink) WriteOutput(elapsed time.Duration, s
 	if this.service.auditlogDisabled(this.auditlog) {
 		return nil
 	}
-	return this.service.handleAuditlogFailure(this.auditlog, "session Recording", this.delegate.WriteOutput(elapsed, stream, data))
+	return this.service.handleRecordingFailure(this.auditlog, "session Recording", this.delegate.WriteOutput(elapsed, stream, data))
 }
 
 func (this *bestEffortSessionRecordingSink) WriteResize(elapsed time.Duration, columns, rows uint32) error {
 	if this.service.auditlogDisabled(this.auditlog) {
 		return nil
 	}
-	return this.service.handleAuditlogFailure(this.auditlog, "session Recording", this.delegate.WriteResize(elapsed, columns, rows))
+	return this.service.handleRecordingFailure(this.auditlog, "session Recording", this.delegate.WriteResize(elapsed, columns, rows))
 }
 
 type sessionRecordingNoticeContext struct {
@@ -651,24 +651,24 @@ func (this *service) replaySessionRecordingLifecycles(ctx context.Context) error
 		}
 		repository := this.recordingRepositories[auditlog]
 		if repository == nil {
-			result = goerrors.Join(result, this.handleAuditlogFailure(auditlog, "session Recording recovery", errors.System.Newf("no session Recording repository configured for auditlog %q", auditlog)))
+			result = goerrors.Join(result, this.handleRecordingFailure(auditlog, "session Recording recovery", errors.System.Newf("no session Recording repository configured for auditlog %q", auditlog)))
 			continue
 		}
 		pending, err := repository.receipts.PendingLifecycle(ctx)
 		if err != nil {
 			failure := errors.System.Newf("cannot inspect terminal session Recording lifecycle events for auditlog %q: %w", auditlog, err)
-			result = goerrors.Join(result, this.handleAuditlogFailure(auditlog, "session Recording recovery", failure))
+			result = goerrors.Join(result, this.handleRecordingFailure(auditlog, "session Recording recovery", failure))
 			continue
 		}
 		recorder := this.auditRecorders[auditlog]
 		if recorder == nil {
-			result = goerrors.Join(result, this.handleAuditlogFailure(auditlog, "session Recording recovery", errors.System.Newf("no audit recorder configured for auditlog %q", auditlog)))
+			result = goerrors.Join(result, this.handleRecordingFailure(auditlog, "session Recording recovery", errors.System.Newf("no audit recorder configured for auditlog %q", auditlog)))
 			continue
 		}
 		for _, event := range pending {
 			if err := recorder.Record(ctx, event.Event); err != nil {
 				failure := errors.System.Newf("cannot replay terminal session Recording lifecycle event %q for auditlog %q: %w", event.Event.Name, auditlog, err)
-				result = goerrors.Join(result, this.handleAuditlogFailure(auditlog, "session Recording recovery", failure))
+				result = goerrors.Join(result, this.handleRecordingFailure(auditlog, "session Recording recovery", failure))
 				continue
 			}
 			if this.auditlogDisabled(auditlog) {
@@ -676,7 +676,7 @@ func (this *service) replaySessionRecordingLifecycles(ctx context.Context) error
 			}
 			if err := repository.receipts.CompleteLifecycle(ctx, event); err != nil {
 				failure := errors.System.Newf("cannot complete terminal session Recording lifecycle event %q for auditlog %q: %w", event.Event.Name, auditlog, err)
-				result = goerrors.Join(result, this.handleAuditlogFailure(auditlog, "session Recording recovery", failure))
+				result = goerrors.Join(result, this.handleRecordingFailure(auditlog, "session Recording recovery", failure))
 			}
 		}
 	}
@@ -960,7 +960,7 @@ func (this *service) beginSessionRecording(sshSession essh.Session, pty recorded
 		if isInvalidSessionRecordingRequest(resultErr) {
 			return
 		}
-		if this.handleAuditlogFailure(auditlog, "session Recording", resultErr) == nil {
+		if this.handleRecordingFailure(auditlog, "session Recording", resultErr) == nil {
 			recorded = nil
 			lifecycle = nil
 			resultErr = nil
@@ -1037,7 +1037,7 @@ func (this *service) beginSessionRecording(sshSession essh.Session, pty recorded
 			failureOnce.Do(func() { _ = sshSession.Close() })
 			return
 		}
-		if this.handleAuditlogFailure(auditlog, "session Recording", err) == nil {
+		if this.handleRecordingFailure(auditlog, "session Recording", err) == nil {
 			return
 		}
 		failureOnce.Do(func() { _ = sshSession.Close() })
@@ -1206,12 +1206,12 @@ func (this *sessionRecordingLifecycle) finish(exitCode int, taskErr error) error
 	finalAuditContext := &sshSessionContext{Context: this.ctx, plainContext: lifecycleContext}
 	if stopErr == nil {
 		auditErr := this.service.recordPendingSessionRecordingLifecycle(finalAuditContext, lifecycleContext, this.repository, this.metadata.RecordingId)
-		recordingErr := this.service.handleAuditlogFailure(this.auditlog, "session Recording", auditErr)
+		recordingErr := this.service.handleRecordingFailure(this.auditlog, "session Recording", auditErr)
 		return goerrors.Join(captureErr, recordingErr)
 	}
 	event := sessionRecordingTerminalAuditEvent(this.metadata, result, taskErr, captureErr, stopErr, stopPhase, elapsed, exitStatus)
 	auditErr := this.service.recordSessionRecordingStopFailure(finalAuditContext, lifecycleContext, this.repository, this.metadata.RecordingId, this.metadata.Flow, event, staged, stopPhase)
-	recordingErr := this.service.handleAuditlogFailure(this.auditlog, "session Recording", goerrors.Join(stopErr, auditErr))
+	recordingErr := this.service.handleRecordingFailure(this.auditlog, "session Recording", goerrors.Join(stopErr, auditErr))
 	return goerrors.Join(captureErr, recordingErr)
 }
 
@@ -1336,13 +1336,27 @@ func (this *sessionRecordingRepository) startupRecoveries() []sessionRecordingSt
 }
 
 func (this *sessionRecordingRepository) Close() error {
+	return this.close(false)
+}
+
+func (this *sessionRecordingRepository) CloseAfterAcceptedFailure() error {
+	return this.close(true)
+}
+
+func (this *sessionRecordingRepository) close(ignoreAcceptedFailure bool) error {
 	if this == nil {
 		return nil
 	}
 	switch this.format {
 	case sessionRecordingRepositoryFormatCastZstd:
+		if ignoreAcceptedFailure {
+			return goerrors.Join(this.castZstd.CloseAfterAcceptedFailure(), this.receipts.Close())
+		}
 		return goerrors.Join(this.castZstd.Close(), this.receipts.Close())
 	case sessionRecordingRepositoryFormatBECast:
+		if ignoreAcceptedFailure {
+			return goerrors.Join(this.becast.CloseAfterAcceptedFailure(), this.receipts.Close())
+		}
 		return goerrors.Join(this.becast.Close(), this.receipts.Close())
 	default:
 		return nil

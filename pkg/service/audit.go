@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"sync"
 
 	essh "github.com/engity-com/ssh-server-go"
 
@@ -84,43 +85,76 @@ func (this *service) handleAuditlogFailure(name configuration.AuditlogName, comp
 	return nil
 }
 
+func (this *service) handleRecordingFailure(name configuration.AuditlogName, component string, err error) error {
+	result := this.handleAuditlogFailure(name, component, err)
+	if err != nil && result == nil {
+		if state := this.auditlogStates[name]; state != nil {
+			state.recordingFailed.Store(true)
+		}
+	}
+	return result
+}
+
 type failurePolicyAuditRecorder struct {
 	service  *service
 	auditlog configuration.AuditlogName
 	delegate audit.Recorder
+	mutex    sync.Mutex
+	failed   bool
 }
 
 func (this *failurePolicyAuditRecorder) Record(ctx context.Context, event audit.Event) error {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
 	if this.service.auditlogDisabled(this.auditlog) {
 		return nil
 	}
-	return this.service.handleAuditlogFailure(this.auditlog, "journal", this.delegate.Record(ctx, event))
+	return this.handleFailure(this.delegate.Record(ctx, event))
 }
 
 func (this *failurePolicyAuditRecorder) RecordSuppressible(ctx context.Context, event audit.Event) (bool, error) {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
 	if this.service.auditlogDisabled(this.auditlog) {
 		return true, nil
 	}
 	if recorder, ok := this.delegate.(audit.SuppressibleRecorder); ok {
 		recorded, err := recorder.RecordSuppressible(ctx, event)
-		return recorded, this.service.handleAuditlogFailure(this.auditlog, "journal", err)
+		return recorded, this.handleFailure(err)
 	}
-	err := this.Record(ctx, event)
+	err := this.handleFailure(this.delegate.Record(ctx, event))
 	return err == nil, err
 }
 
 func (this *failurePolicyAuditRecorder) Seal() error {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
 	if this.service.auditlogDisabled(this.auditlog) {
 		return nil
 	}
 	if recorder, ok := this.delegate.(audit.SealableRecorder); ok {
-		return this.service.handleAuditlogFailure(this.auditlog, "journal", recorder.Seal())
+		return this.handleFailure(recorder.Seal())
 	}
 	return nil
 }
 
 func (this *failurePolicyAuditRecorder) Close() error {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if this.failed {
+		if closer, ok := this.delegate.(interface{ CloseAfterAcceptedFailure() error }); ok {
+			return closer.CloseAfterAcceptedFailure()
+		}
+	}
 	return this.delegate.Close()
+}
+
+func (this *failurePolicyAuditRecorder) handleFailure(err error) error {
+	result := this.service.handleAuditlogFailure(this.auditlog, "journal", err)
+	if err != nil && result == nil {
+		this.failed = true
+	}
+	return result
 }
 
 func (this *service) authorizationAuditEvent(ctx essh.Context, auth authorization.Authorization, name audit.EventName, domain audit.EventDomain) audit.Event {

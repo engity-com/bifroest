@@ -133,6 +133,42 @@ func TestLocalRepositoryDoesNotPublishWhenReceiptPreparationFails(t *testing.T) 
 	require.Error(t, repository.Close())
 }
 
+func TestLocalRepositoryCloseAfterAcceptedFailureOmitsOnlyExistingPoison(t *testing.T) {
+	t.Run("existing poison", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "recordings")
+		identity, header, metadata := castTestValues(t, true)
+		accepted := bferrors.System.Newf("injected receipt failure")
+		repository, err := NewLocalCastZstdRepositoryWithArtifactPreparer(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions,
+			localSealedArtifactPreparerFunc(func(context.Context, audit.RemoteArtifact, time.Time) error { return accepted }))
+		require.NoError(t, err)
+		active, err := repository.CreateActive(t.Context(), header, metadata, 300)
+		require.NoError(t, err)
+		_, err = active.Seal(time.Second, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(time.Second)}, sealedArtifactUint32(0))
+		require.ErrorIs(t, err, accepted)
+
+		closeErr := repository.CloseAfterAcceptedFailure()
+		require.NotErrorIs(t, closeErr, accepted)
+	})
+
+	t.Run("new cleanup failure", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "recordings")
+		identity, header, metadata := castTestValues(t, true)
+		repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions)
+		require.NoError(t, err)
+		active, err := repository.CreateActive(t.Context(), header, metadata, 300)
+		require.NoError(t, err)
+		accepted := bferrors.System.Newf("accepted recording failure")
+		active.active.poisoned = accepted
+		require.NoError(t, active.active.file.Close())
+
+		closeErr := repository.CloseAfterAcceptedFailure()
+		require.Error(t, closeErr)
+		require.NotErrorIs(t, closeErr, accepted)
+		require.EqualError(t, repository.CloseAfterAcceptedFailure(), closeErr.Error())
+		require.ErrorIs(t, repository.Close(), accepted)
+	})
+}
+
 func TestLocalCastZstdRepositoryRecoversClosedActive(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "recordings")
 	identity, header, metadata := castTestValues(t, true)

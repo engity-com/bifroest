@@ -163,24 +163,27 @@ func (this *localTrackingReaderAt) ReadAt(target []byte, offset int64) (int, err
 }
 
 type localRepository[Head, Summary any] struct {
-	mutex          localRepositoryMutex
-	directory      string
-	activePath     string
-	sealedPath     string
-	workPath       string
-	quarantinePath string
-	lockPath       string
-	identity       *audit.Identity
-	format         localFormat[Head, Summary]
-	quota          *localQuota
-	processLock    *localProcessLock
-	prepareSealed  SealedArtifactPreparer
-	active         map[Id]*localActive[Head, Summary]
-	retentionQuota map[Id]uint64
-	recovered      []localRecovery[Summary]
-	operations     sync.WaitGroup
-	closed         bool
-	poisoned       error
+	mutex           localRepositoryMutex
+	directory       string
+	activePath      string
+	sealedPath      string
+	workPath        string
+	quarantinePath  string
+	lockPath        string
+	identity        *audit.Identity
+	format          localFormat[Head, Summary]
+	quota           *localQuota
+	processLock     *localProcessLock
+	prepareSealed   SealedArtifactPreparer
+	active          map[Id]*localActive[Head, Summary]
+	retentionQuota  map[Id]uint64
+	recovered       []localRecovery[Summary]
+	operations      sync.WaitGroup
+	closed          bool
+	poisoned        error
+	closeDone       chan struct{}
+	closeErr        error
+	closeCleanupErr error
 }
 
 type localRepositoryMutex chan struct{}
@@ -216,18 +219,19 @@ func (this localRepositoryMutex) Unlock() {
 }
 
 type localActive[Head, Summary any] struct {
-	mutex      sync.Mutex
-	repository *localRepository[Head, Summary]
-	id         Id
-	directory  string
-	path       string
-	headPath   string
-	file       *os.File
-	writer     localWriter[Head, Summary]
-	poisoned   error
-	closeErr   error
-	closed     bool
-	sealed     bool
+	mutex           sync.Mutex
+	repository      *localRepository[Head, Summary]
+	id              Id
+	directory       string
+	path            string
+	headPath        string
+	file            *os.File
+	writer          localWriter[Head, Summary]
+	poisoned        error
+	closeErr        error
+	closeCleanupErr error
+	closed          bool
+	sealed          bool
 }
 
 func newLocalRepository[Head, Summary any](ctx context.Context, directory string, identity *audit.Identity, format localFormat[Head, Summary], options LocalRepositoryOptions, prepareSealed SealedArtifactPreparer) (*localRepository[Head, Summary], error) {
@@ -938,28 +942,52 @@ func recoverLocalRecoveryReserveTombstone(directory string, quota *localQuota) e
 	return stderrors.Join(removeErr, releaseErr, syncErr)
 }
 
-func (this *localRepository[Head, Summary]) close() error {
+func (this *localRepository[Head, Summary]) close(ignoreAcceptedFailure bool) error {
 	if this == nil {
 		return nil
 	}
 	this.mutex.Lock()
 	if this.closed {
+		done := this.closeDone
 		this.mutex.Unlock()
-		return nil
+		if done != nil {
+			<-done
+		}
+		this.mutex.Lock()
+		defer this.mutex.Unlock()
+		if ignoreAcceptedFailure {
+			return this.closeCleanupErr
+		}
+		return this.closeErr
 	}
 	this.closed = true
+	this.closeDone = make(chan struct{})
+	done := this.closeDone
 	active := make([]*localActive[Head, Summary], 0, len(this.active))
 	for _, current := range this.active {
 		active = append(active, current)
 	}
 	this.active = make(map[Id]*localActive[Head, Summary])
+	knownFailure := this.poisoned
 	this.mutex.Unlock()
-	result := this.poisoned
+	result := knownFailure
+	var cleanupErr error
 	for _, current := range active {
-		result = stderrors.Join(result, current.close(false))
+		result = stderrors.Join(result, current.closeForRepository(false))
+		cleanupErr = stderrors.Join(cleanupErr, current.closeForRepository(true))
 	}
 	this.operations.Wait()
-	result = stderrors.Join(result, this.processLock.Close())
+	lockErr := this.processLock.Close()
+	result = stderrors.Join(result, lockErr)
+	cleanupErr = stderrors.Join(cleanupErr, lockErr)
+	this.mutex.Lock()
+	this.closeErr = result
+	this.closeCleanupErr = cleanupErr
+	close(done)
+	this.mutex.Unlock()
+	if ignoreAcceptedFailure {
+		return cleanupErr
+	}
 	return result
 }
 
@@ -1081,33 +1109,47 @@ func (this *localActive[Head, Summary]) closeAndRemove() error {
 }
 
 func (this *localActive[Head, Summary]) close(remove bool) error {
+	return this.closeInternal(remove, false)
+}
+
+func (this *localActive[Head, Summary]) closeForRepository(ignoreAcceptedFailure bool) error {
+	return this.closeInternal(false, ignoreAcceptedFailure)
+}
+
+func (this *localActive[Head, Summary]) closeInternal(remove, ignoreAcceptedFailure bool) error {
 	if this == nil {
 		return nil
 	}
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 	if this.closed {
+		if ignoreAcceptedFailure {
+			return this.closeCleanupErr
+		}
 		if this.closeErr != nil {
 			return this.closeErr
 		}
 		return this.poisoned
 	}
-	result := this.poisoned
-	if this.poisoned == nil && !this.sealed {
-		result = stderrors.Join(result, this.checkpointForCloseLocked())
+	knownFailure := this.poisoned
+	if knownFailure == nil && !this.sealed {
+		this.closeCleanupErr = stderrors.Join(this.closeCleanupErr, this.checkpointForCloseLocked())
 	}
 	if this.writer != nil {
-		result = stderrors.Join(result, this.writer.release())
+		this.closeCleanupErr = stderrors.Join(this.closeCleanupErr, this.writer.release())
 	}
 	if this.file != nil {
-		result = stderrors.Join(result, this.file.Close())
+		this.closeCleanupErr = stderrors.Join(this.closeCleanupErr, this.file.Close())
 	}
-	this.closeErr = result
+	this.closeErr = stderrors.Join(knownFailure, this.closeCleanupErr)
 	this.closed = true
 	if remove {
 		this.repository.removeActive(this.id)
 	}
-	return result
+	if ignoreAcceptedFailure {
+		return this.closeCleanupErr
+	}
+	return this.closeErr
 }
 
 func (this *localActive[Head, Summary]) withWriter(action func(localWriter[Head, Summary]) error) error {

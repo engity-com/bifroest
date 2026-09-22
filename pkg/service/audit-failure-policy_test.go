@@ -43,8 +43,46 @@ func TestFailurePolicyAuditRecorderBestEffortDisablesAuditlog(t *testing.T) {
 
 	require.NoError(t, recorder.Record(t.Context(), audit.Event{Name: "test.failure"}))
 	require.True(t, svc.auditlogDisabled("security"))
+	require.False(t, svc.auditlogStates["security"].recordingFailed.Load())
 	require.NoError(t, recorder.Record(t.Context(), audit.Event{Name: "test.ignored"}))
 	require.Len(t, delegate.eventsSnapshot(), 1)
+}
+
+func TestFailurePolicyAuditRecorderClosePreservesNewCleanupFailure(t *testing.T) {
+	accepted := goerrors.New("journal unavailable")
+	cleanup := goerrors.New("journal close failed")
+	delegate := &failurePolicyCloseTestRecorder{recordErr: accepted, closeAfterErr: cleanup}
+	svc := &service{
+		Service: &Service{},
+		auditlogStates: map[configuration.AuditlogName]*auditlogRuntimeState{
+			"security": {policy: configuration.AuditlogFailurePolicyBestEffort},
+		},
+	}
+	recorder := &failurePolicyAuditRecorder{service: svc, auditlog: "security", delegate: delegate}
+
+	require.NoError(t, recorder.Record(t.Context(), audit.Event{Name: "test.failure"}))
+	closeErr := recorder.Close()
+	require.ErrorIs(t, closeErr, cleanup)
+	require.NotErrorIs(t, closeErr, accepted)
+	require.Equal(t, 1, delegate.closeAfterCalls)
+	require.Zero(t, delegate.closeCalls)
+}
+
+func TestFailurePolicyAuditRecorderClosePreservesFailureWhenJournalDidNotFail(t *testing.T) {
+	cleanup := goerrors.New("journal close failed")
+	delegate := &failurePolicyCloseTestRecorder{closeErr: cleanup}
+	svc := &service{
+		Service: &Service{},
+		auditlogStates: map[configuration.AuditlogName]*auditlogRuntimeState{
+			"security": {policy: configuration.AuditlogFailurePolicyBestEffort},
+		},
+	}
+	svc.auditlogStates["security"].disabled.Store(true)
+	recorder := &failurePolicyAuditRecorder{service: svc, auditlog: "security", delegate: delegate}
+
+	require.ErrorIs(t, recorder.Close(), cleanup)
+	require.Equal(t, 1, delegate.closeCalls)
+	require.Zero(t, delegate.closeAfterCalls)
 }
 
 func TestBestEffortSessionRecordingSinkDisablesAfterFailure(t *testing.T) {
@@ -60,7 +98,42 @@ func TestBestEffortSessionRecordingSinkDisablesAfterFailure(t *testing.T) {
 	require.NoError(t, sink.WriteOutput(time.Second, recording.OutputStreamTerminal, []byte("first")))
 	require.NoError(t, sink.WriteOutput(2*time.Second, recording.OutputStreamTerminal, []byte("second")))
 	require.True(t, svc.auditlogDisabled("security"))
+	require.True(t, svc.auditlogStates["security"].recordingFailed.Load())
 	require.Equal(t, 1, delegate.calls)
+}
+
+func TestFailurePolicyAuditRecorderCloseWaitsForAcceptedFailure(t *testing.T) {
+	accepted := goerrors.New("journal unavailable")
+	started := make(chan struct{})
+	release := make(chan struct{})
+	delegate := &failurePolicyCloseTestRecorder{
+		recordErr:     accepted,
+		closeAfterErr: nil,
+		recordStarted: started,
+		recordRelease: release,
+	}
+	svc := &service{
+		Service: &Service{},
+		auditlogStates: map[configuration.AuditlogName]*auditlogRuntimeState{
+			"security": {policy: configuration.AuditlogFailurePolicyBestEffort},
+		},
+	}
+	recorder := &failurePolicyAuditRecorder{service: svc, auditlog: "security", delegate: delegate}
+	recordDone := make(chan error, 1)
+	go func() { recordDone <- recorder.Record(t.Context(), audit.Event{Name: "test.failure"}) }()
+	<-started
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- recorder.Close() }()
+	select {
+	case err := <-closeDone:
+		t.Fatalf("Close returned before the in-flight Record: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	require.NoError(t, <-recordDone)
+	require.NoError(t, <-closeDone)
+	require.Equal(t, 1, delegate.closeAfterCalls)
+	require.Zero(t, delegate.closeCalls)
 }
 
 func TestBestEffortAuditFailurePreservesRecordingRetentionState(t *testing.T) {
@@ -120,6 +193,34 @@ func TestPrepareBestEffortDisablesAuditlogWithUnavailableJournal(t *testing.T) {
 type failurePolicyRecordingSink struct {
 	calls int
 	err   error
+}
+
+type failurePolicyCloseTestRecorder struct {
+	recordErr       error
+	closeErr        error
+	closeAfterErr   error
+	closeCalls      int
+	closeAfterCalls int
+	recordStarted   chan struct{}
+	recordRelease   <-chan struct{}
+}
+
+func (this *failurePolicyCloseTestRecorder) Record(context.Context, audit.Event) error {
+	if this.recordStarted != nil {
+		close(this.recordStarted)
+		<-this.recordRelease
+	}
+	return this.recordErr
+}
+
+func (this *failurePolicyCloseTestRecorder) Close() error {
+	this.closeCalls++
+	return this.closeErr
+}
+
+func (this *failurePolicyCloseTestRecorder) CloseAfterAcceptedFailure() error {
+	this.closeAfterCalls++
+	return this.closeAfterErr
 }
 
 func (this *failurePolicyRecordingSink) WriteOutput(time.Duration, recording.OutputStream, []byte) error {

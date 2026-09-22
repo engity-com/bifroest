@@ -357,6 +357,39 @@ func TestLocalJournalPoisonsRecorderAfterWriteFailure(t *testing.T) {
 	require.Error(t, recorder.Close())
 }
 
+func TestLocalJournalCloseAfterAcceptedFailureOmitsOnlyExistingPoison(t *testing.T) {
+	t.Run("existing poison", func(t *testing.T) {
+		conf, identity := newJournalTestIdentity(t)
+		recorder, err := NewRecorder(&conf, identity)
+		require.NoError(t, err)
+		local := recorder.(*localJournalRecorder)
+		readOnly, err := os.Open(local.activePath)
+		require.NoError(t, err)
+		require.NoError(t, local.file.Close())
+		local.file = readOnly
+
+		accepted := recorder.Record(context.Background(), Event{Name: "test.write-fails"})
+		require.Error(t, accepted)
+		closeErr := local.CloseAfterAcceptedFailure()
+		require.NotErrorIs(t, closeErr, accepted)
+	})
+
+	t.Run("new cleanup failure", func(t *testing.T) {
+		conf, identity := newJournalTestIdentity(t)
+		recorder, err := NewRecorder(&conf, identity)
+		require.NoError(t, err)
+		local := recorder.(*localJournalRecorder)
+		require.NoError(t, local.file.Close())
+
+		accepted := recorder.Record(context.Background(), Event{Name: "test.write-fails"})
+		require.Error(t, accepted)
+		require.NoError(t, local.processLock.file.Close())
+		closeErr := local.CloseAfterAcceptedFailure()
+		require.Error(t, closeErr)
+		require.NotErrorIs(t, closeErr, accepted)
+	})
+}
+
 func newJournalTestIdentity(t *testing.T) (configuration.Auditlog, *Identity) {
 	t.Helper()
 	conf := auditIdentityTestConfiguration(t.TempDir(), true)

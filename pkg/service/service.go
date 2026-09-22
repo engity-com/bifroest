@@ -793,9 +793,10 @@ type service struct {
 }
 
 type auditlogRuntimeState struct {
-	policy   configuration.AuditlogFailurePolicy
-	disabled atomic.Bool
-	logOnce  sync.Once
+	policy          configuration.AuditlogFailurePolicy
+	disabled        atomic.Bool
+	recordingFailed atomic.Bool
+	logOnce         sync.Once
 }
 
 func withLazyContextOrFieldExclude[C any](ctx essh.Context, ctxKey any) fields.Lazy {
@@ -880,7 +881,15 @@ func (this *service) closeRecording(flush bool) (result error) {
 		}
 	}
 	for _, name := range this.recordingRepositoryOrder {
-		if err := this.recordingRepositories[name].Close(); err != nil {
+		repository := this.recordingRepositories[name]
+		var err error
+		state := this.auditlogStates[name]
+		if state != nil && state.recordingFailed.Load() {
+			err = repository.CloseAfterAcceptedFailure()
+		} else {
+			err = repository.Close()
+		}
+		if err != nil {
 			result = goerrors.Join(result, fmt.Errorf("cannot close Recording repository of auditlog %q: %w", name, err))
 		}
 	}

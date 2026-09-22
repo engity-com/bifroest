@@ -130,7 +130,7 @@ func (this *houseKeeper) cleanupRecordings(logger log.Logger, ctx context.Contex
 		repository := this.service.recordingRepositories[auditlog.Name]
 		if repository == nil {
 			failure := errors.System.Newf("no Recording repository configured for auditlog %q", auditlog.Name)
-			result = goerrors.Join(result, this.service.handleAuditlogFailure(auditlog.Name, "Recording retention", failure))
+			result = goerrors.Join(result, this.service.handleRecordingFailure(auditlog.Name, "Recording retention", failure))
 			continue
 		}
 		var cutoff time.Time
@@ -143,7 +143,7 @@ func (this *houseKeeper) cleanupRecordings(logger log.Logger, ctx context.Contex
 				return goerrors.Join(result, ctx.Err())
 			}
 			failure := errors.System.Newf("cannot inspect Recording retention of auditlog %q: %w", auditlog.Name, err)
-			result = goerrors.Join(result, this.service.handleAuditlogFailure(auditlog.Name, "Recording retention", failure))
+			result = goerrors.Join(result, this.service.handleRecordingFailure(auditlog.Name, "Recording retention", failure))
 			continue
 		}
 		for _, candidate := range candidates {
@@ -159,7 +159,7 @@ func (this *houseKeeper) cleanupRecordings(logger log.Logger, ctx context.Contex
 				if ctx.Err() != nil {
 					return goerrors.Join(result, err, ctx.Err())
 				}
-				if policyErr := this.service.handleAuditlogFailure(auditlog.Name, "Recording retention", err); policyErr != nil {
+				if policyErr := this.service.handleRecordingFailure(auditlog.Name, "Recording retention", err); policyErr != nil {
 					logger.WithError(policyErr).With("auditlog", auditlog.Name).With("recordingId", candidate.recordingId).Warn("cannot delete retained session Recording; preserving remaining local state")
 				}
 				if this.service.auditlogDisabled(auditlog.Name) {

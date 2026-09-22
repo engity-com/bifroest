@@ -59,6 +59,7 @@ type localJournalRecorder struct {
 	closed           bool
 	poisoned         error
 	closeErr         error
+	closeCleanupErr  error
 }
 
 // NewRecorder creates the configured audit recorder. Disabled audit logging
@@ -249,26 +250,57 @@ func (this *localJournalRecorder) poison(err error) error {
 }
 
 func (this *localJournalRecorder) Close() error {
+	return this.close(false)
+}
+
+func (this *localJournalRecorder) CloseAfterAcceptedFailure() error {
+	return this.close(true)
+}
+
+func (this *localJournalRecorder) close(ignoreAcceptedFailure bool) error {
 	if this == nil {
 		return nil
 	}
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 	if this.closed {
+		if ignoreAcceptedFailure {
+			return this.closeCleanupErr
+		}
 		return this.closeErr
 	}
 	this.closed = true
 
-	this.closeErr = this.sealLocked()
-	if this.file != nil {
-		if err := this.file.Sync(); err != nil {
-			this.closeErr = goerrors.Join(this.closeErr, errors.System.Newf("cannot flush active audit journal while closing: %w", err))
-		}
-		if err := this.file.Close(); err != nil {
-			this.closeErr = goerrors.Join(this.closeErr, errors.System.Newf("cannot close active audit journal: %w", err))
+	knownFailure := this.poisoned
+	sealErr := this.sealLocked()
+	if knownFailure == nil {
+		this.closeCleanupErr = sealErr
+	}
+	this.closeErr = sealErr
+	file := this.file
+	if file != nil {
+		if _, err := file.Stat(); goerrors.Is(err, os.ErrClosed) {
+			file = nil
 		}
 	}
-	this.closeErr = goerrors.Join(this.closeErr, this.processLock.Close())
+	if file != nil {
+		if err := file.Sync(); err != nil {
+			flushErr := errors.System.Newf("cannot flush active audit journal while closing: %w", err)
+			this.closeErr = goerrors.Join(this.closeErr, flushErr)
+			this.closeCleanupErr = goerrors.Join(this.closeCleanupErr, flushErr)
+		}
+		if err := file.Close(); err != nil {
+			fileErr := errors.System.Newf("cannot close active audit journal: %w", err)
+			this.closeErr = goerrors.Join(this.closeErr, fileErr)
+			this.closeCleanupErr = goerrors.Join(this.closeCleanupErr, fileErr)
+		}
+	}
+	lockErr := this.processLock.Close()
+	this.closeErr = goerrors.Join(this.closeErr, lockErr)
+	this.closeCleanupErr = goerrors.Join(this.closeCleanupErr, lockErr)
+	if ignoreAcceptedFailure {
+		return this.closeCleanupErr
+	}
 	return this.closeErr
 }
 

@@ -158,6 +158,7 @@ func TestServiceCloseAggregatesRecordingTargetFailureAndReleasesRepository(t *te
 	root := t.TempDir()
 	conf := sessionRecordingTestConfiguration(t, root)
 	enableSessionRecording(&conf.Auditlogs[0])
+	conf.Auditlogs[0].FailurePolicy = configuration.AuditlogFailurePolicyBestEffort
 	target := &serviceRemoteDeliveryTestTarget{published: make(chan uint64, 1), closeErr: fmt.Errorf("injected Recording target close failure")}
 	conf.Auditlogs[0].Recording.Targets.Mode = configuration.AuditlogRecordingTargetsModeCustom
 	conf.Auditlogs[0].Recording.Targets.Targets = configuration.AuditlogTargets{{
@@ -167,6 +168,7 @@ func TestServiceCloseAggregatesRecordingTargetFailureAndReleasesRepository(t *te
 	serviceDefinition := &Service{Configuration: conf, Version: serviceTestVersion{}}
 	svc, err := serviceDefinition.prepare()
 	require.NoError(t, err)
+	svc.auditlogStates[configuration.DefaultAuditlogName].disabled.Store(true)
 	err = svc.Close()
 	require.ErrorContains(t, err, "injected Recording target close failure")
 	require.True(t, target.closed.Load())

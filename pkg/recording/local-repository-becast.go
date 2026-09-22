@@ -124,7 +124,14 @@ func (this *LocalBECastRepository) Close() error {
 	if this == nil {
 		return nil
 	}
-	return this.repository.close()
+	return this.repository.close(false)
+}
+
+func (this *LocalBECastRepository) CloseAfterAcceptedFailure() error {
+	if this == nil {
+		return nil
+	}
+	return this.repository.close(true)
 }
 
 func (this *ActiveBECast) WriteOutput(elapsed time.Duration, stream OutputStream, data []byte) error {

@@ -120,7 +120,14 @@ func (this *LocalCastZstdRepository) Close() error {
 	if this == nil {
 		return nil
 	}
-	return this.repository.close()
+	return this.repository.close(false)
+}
+
+func (this *LocalCastZstdRepository) CloseAfterAcceptedFailure() error {
+	if this == nil {
+		return nil
+	}
+	return this.repository.close(true)
 }
 
 func (this *ActiveCastZstd) WriteOutput(elapsed time.Duration, stream OutputStream, data []byte) error {
