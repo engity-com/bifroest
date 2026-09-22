@@ -166,12 +166,10 @@ func isNilDependency(value any) bool {
 
 func (this *recordedSession) Write(value []byte) (int, error) {
 	stream := recording.OutputStreamStdout
-	normalizeTerminal := false
 	if this.hasPty {
 		stream = recording.OutputStreamTerminal
-		normalizeTerminal = true
 	}
-	return this.write(this.Session, stream, normalizeTerminal, value)
+	return this.write(this.Session, stream, value)
 }
 
 func (this *recordedSession) Stderr() io.ReadWriter {
@@ -203,7 +201,7 @@ func (this *recordedSession) OriginalCommand() (string, bool) {
 	return "", false
 }
 
-func (this *recordedSession) write(target io.Writer, stream recording.OutputStream, normalizeTerminal bool, value []byte) (int, error) {
+func (this *recordedSession) write(target io.Writer, stream recording.OutputStream, value []byte) (int, error) {
 	this.mu.Lock()
 	if this.failure != nil {
 		failure := this.failure
@@ -229,7 +227,7 @@ func (this *recordedSession) write(target io.Writer, stream recording.OutputStre
 	}
 
 	recorded := value
-	if normalizeTerminal {
+	if stream == recording.OutputStreamTerminal {
 		recorded = normalizeSessionTerminalOutput(recorded, this.terminalEndedWithCarriageReturn)
 	}
 	if recordErr := this.sink.WriteOutput(this.elapsed(), stream, recorded); recordErr != nil {
@@ -396,7 +394,7 @@ func (this *recordedSessionStderr) Write(value []byte) (int, error) {
 	if this.session.hasPty {
 		stream = recording.OutputStreamTerminal
 	}
-	return this.session.write(this.stream, stream, false, value)
+	return this.session.write(this.stream, stream, value)
 }
 
 func clonePty(value essh.Pty) essh.Pty {

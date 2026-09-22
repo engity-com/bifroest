@@ -151,15 +151,15 @@ func TestRecordedSessionCapturesOutputStreamsAndSuccessfulBytes(t *testing.T) {
 		sink := &captureTestSink{}
 		wrapper := requireRecordedSession(t, session, sink, func(error) {})
 
-		n, err := wrapper.Write([]byte("stdout"))
+		n, err := wrapper.Write([]byte("stdout\n"))
 		require.NoError(t, err)
-		require.Equal(t, 6, n)
-		n, err = wrapper.Stderr().Write([]byte("stderr"))
+		require.Equal(t, 7, n)
+		n, err = wrapper.Stderr().Write([]byte("stderr\n"))
 		require.NoError(t, err)
-		require.Equal(t, 6, n)
+		require.Equal(t, 7, n)
 		require.Equal(t, []captureTestOutput{
-			{elapsed: time.Millisecond, stream: recording.OutputStreamStdout, data: []byte("stdout")},
-			{elapsed: 2 * time.Millisecond, stream: recording.OutputStreamStderr, data: []byte("stderr")},
+			{elapsed: time.Millisecond, stream: recording.OutputStreamStdout, data: []byte("stdout\n")},
+			{elapsed: 2 * time.Millisecond, stream: recording.OutputStreamStderr, data: []byte("stderr\n")},
 		}, sink.outputEvents())
 	})
 
@@ -239,6 +239,26 @@ func TestRecordedSessionCapturesOutputStreamsAndSuccessfulBytes(t *testing.T) {
 		require.Equal(t, []byte("\r\nX"), sink.outputEvents()[0].data)
 		failure := <-callback
 		require.Same(t, err, failure)
+	})
+
+	t.Run("ambiguous partial PTY stderr transport write", func(t *testing.T) {
+		transportCause := goerrors.New("PTY stderr transport write failed")
+		session := newCaptureTestSession(t.Context())
+		session.hasPty = true
+		session.stderr.write = func([]byte) (int, error) { return 1, transportCause }
+		sink := &captureTestSink{}
+		callback := make(chan error, 1)
+		wrapper := requireRecordedSession(t, session, sink, func(err error) { callback <- err })
+
+		n, err := wrapper.Stderr().Write([]byte("\nX"))
+		require.Equal(t, 1, n)
+		require.ErrorIs(t, err, transportCause)
+		require.ErrorContains(t, err, "accepted 1 of 2 recorded bytes")
+		events := sink.outputEvents()
+		require.Len(t, events, 1)
+		require.Equal(t, recording.OutputStreamTerminal, events[0].stream)
+		require.Equal(t, []byte("\r\nX"), events[0].data)
+		require.Same(t, err, <-callback)
 	})
 
 	t.Run("short write without transport error", func(t *testing.T) {
@@ -340,7 +360,10 @@ func TestRecordedSessionCapturesNormalizedPtyOutput(t *testing.T) {
 	require.NoError(t, err)
 	events = sink.outputEvents()
 	require.Len(t, events, 2)
-	require.Equal(t, []byte("stderr\n"), events[1].data)
+	require.Equal(t, recording.OutputStreamTerminal, events[1].stream)
+	require.Equal(t, []byte("stderr\r\n"), events[1].data)
+	require.Equal(t, value, session.stdout.writer.Bytes())
+	require.Equal(t, []byte("stderr\n"), session.stderr.writer.Bytes())
 }
 
 func TestRecordedSessionNormalizesPtyOutputAcrossWrites(t *testing.T) {
@@ -351,22 +374,22 @@ func TestRecordedSessionNormalizesPtyOutputAcrossWrites(t *testing.T) {
 
 	_, err := wrapper.Write([]byte("first\r"))
 	require.NoError(t, err)
-	_, err = wrapper.Write([]byte("\nsecond\n"))
+	_, err = wrapper.Stderr().Write([]byte("\nsecond\r"))
 	require.NoError(t, err)
-	_, err = wrapper.Write([]byte("third\r"))
+	_, err = wrapper.Write([]byte("\nthird\n"))
 	require.NoError(t, err)
-	_, err = wrapper.Stderr().Write([]byte("stderr"))
-	require.NoError(t, err)
-	_, err = wrapper.Write([]byte("\nfourth"))
+	_, err = wrapper.Stderr().Write([]byte("fourth\n"))
 	require.NoError(t, err)
 
 	events := sink.outputEvents()
-	require.Len(t, events, 5)
+	require.Len(t, events, 4)
 	require.Equal(t, []byte("first\r"), events[0].data)
-	require.Equal(t, []byte("\nsecond\r\n"), events[1].data)
-	require.Equal(t, []byte("third\r"), events[2].data)
-	require.Equal(t, []byte("stderr"), events[3].data)
-	require.Equal(t, []byte("\r\nfourth"), events[4].data)
+	require.Equal(t, []byte("\nsecond\r"), events[1].data)
+	require.Equal(t, []byte("\nthird\r\n"), events[2].data)
+	require.Equal(t, []byte("fourth\r\n"), events[3].data)
+	for _, event := range events {
+		require.Equal(t, recording.OutputStreamTerminal, event.stream)
+	}
 }
 
 func TestRecordedSessionRecordingFailurePoisonsOutput(t *testing.T) {
