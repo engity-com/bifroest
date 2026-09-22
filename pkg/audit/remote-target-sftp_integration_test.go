@@ -55,6 +55,7 @@ type sftpInterruptedReaderAt struct {
 type sftpTimedOutUploadReaderAt struct {
 	content []byte
 	context context.Context
+	cancel  context.CancelCauseFunc
 	passes  atomic.Int32
 }
 
@@ -66,8 +67,9 @@ func (this *sftpTimedOutUploadReaderAt) ReadAt(target []byte, offset int64) (int
 	if pass >= 2 {
 		limit := int64(len(this.content) / 2)
 		if offset >= limit {
+			this.cancel(context.DeadlineExceeded)
 			<-this.context.Done()
-			return 0, this.context.Err()
+			return 0, context.Cause(this.context)
 		}
 		if offset+int64(len(target)) > limit {
 			target = target[:limit-offset]
@@ -215,9 +217,9 @@ func TestSftpRemoteTargetCleansTimedOutPartialUploadWithFreshConnection(t *testi
 	segment := validRemoteTargetTestSegment()
 	content, err := io.ReadAll(segment.Content())
 	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	segment.content = &sftpTimedOutUploadReaderAt{content: content, context: ctx}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(context.Canceled)
+	segment.content = &sftpTimedOutUploadReaderAt{content: content, context: ctx, cancel: cancel}
 
 	err = target.Publish(ctx, segment)
 	require.ErrorIs(t, err, context.DeadlineExceeded)

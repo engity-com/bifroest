@@ -188,7 +188,7 @@ func (this *sftpRemoteTarget) publish(ctx context.Context, object remotePublishO
 	closeErr := connection.Close()
 	stopAbort()
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return context.Cause(ctx)
 	}
 	return goerrors.Join(result, classifySftpRemoteError(ctx, "close SFTP audit target connection", closeErr))
 }
