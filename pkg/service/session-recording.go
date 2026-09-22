@@ -613,21 +613,21 @@ func (this *sessionRecordingRepository) pendingLifecycle(ctx context.Context, id
 	return pending, nil
 }
 
-func (this *service) recordPendingSessionRecordingLifecycle(ctx context.Context, repository *sessionRecordingRepository, id recording.Id) error {
+func (this *service) recordPendingSessionRecordingLifecycle(auditContext, lifecycleContext context.Context, repository *sessionRecordingRepository, id recording.Id) error {
 	if repository == nil {
 		return errors.System.Newf("nil session Recording repository")
 	}
-	pending, err := repository.pendingLifecycle(ctx, id)
+	pending, err := repository.pendingLifecycle(lifecycleContext, id)
 	if err != nil {
 		return err
 	}
-	if err := this.recordFlowAudit(ctx, configuration.FlowName(pending.Event.Flow), pending.Event); err != nil {
+	if err := this.recordFlowAudit(auditContext, configuration.FlowName(pending.Event.Flow), pending.Event); err != nil {
 		return err
 	}
 	if auditlog, ok := this.flowAuditlogs[configuration.FlowName(pending.Event.Flow)]; ok && this.auditlogDisabled(auditlog) {
 		return nil
 	}
-	return repository.receipts.CompleteLifecycle(ctx, pending)
+	return repository.receipts.CompleteLifecycle(lifecycleContext, pending)
 }
 
 func (this *service) recordSessionRecordingStopFailure(auditContext, lifecycleContext context.Context, repository *sessionRecordingRepository, id recording.Id, flow configuration.FlowName, event audit.Event, staged bool, phase sessionRecordingFailurePhase) error {
@@ -1069,11 +1069,12 @@ func (this *service) beginSessionRecording(sshSession essh.Session, pty recorded
 			staged = stageErr == nil
 			return stageErr
 		})
+		auditContext := &sshSessionContext{Context: sshSession.Context(), plainContext: lifecycleContext}
 		var auditErr error
 		if stopErr == nil {
-			auditErr = this.recordPendingSessionRecordingLifecycle(lifecycleContext, repository, recordingId)
+			auditErr = this.recordPendingSessionRecordingLifecycle(auditContext, lifecycleContext, repository, recordingId)
 		} else {
-			auditErr = this.recordSessionRecordingStopFailure(sshSession.Context(), lifecycleContext, repository, recordingId, metadata.Flow, event, staged, stopPhase)
+			auditErr = this.recordSessionRecordingStopFailure(auditContext, lifecycleContext, repository, recordingId, metadata.Flow, event, staged, stopPhase)
 		}
 		return nil, nil, goerrors.Join(err, stopErr, auditErr)
 	}
@@ -1106,11 +1107,11 @@ func (this *service) beginSessionRecording(sshSession essh.Session, pty recorded
 			return stageErr
 		})
 		sshContext := sshSession.Context()
+		failedAuditContext := &sshSessionContext{Context: sshContext, plainContext: lifecycleContext}
 		var failedAuditErr error
 		if stopErr == nil {
-			failedAuditErr = this.recordPendingSessionRecordingLifecycle(lifecycleContext, repository, recordingId)
+			failedAuditErr = this.recordPendingSessionRecordingLifecycle(failedAuditContext, lifecycleContext, repository, recordingId)
 		} else {
-			failedAuditContext := &sshSessionContext{Context: sshContext, plainContext: context.WithoutCancel(sshContext)}
 			failedAuditErr = this.recordSessionRecordingStopFailure(failedAuditContext, lifecycleContext, repository, recordingId, metadata.Flow, failedEvent, staged, stopPhase)
 		}
 		return nil, nil, goerrors.Join(err, captureErr, stopErr, failedAuditErr)
@@ -1195,20 +1196,21 @@ func (this *sessionRecordingLifecycle) finish(exitCode int, taskErr error) error
 	}
 	var stagedEvent audit.Event
 	staged := false
+	lifecycleContext := context.WithoutCancel(this.ctx)
 	_, stopPhase, stopErr := this.coordinator.stopPrepared(elapsed, result, exitStatus, func(coordinatorErr error, phase sessionRecordingFailurePhase) error {
 		stagedEvent = sessionRecordingTerminalAuditEvent(this.metadata, result, taskErr, captureErr, coordinatorErr, phase, elapsed, exitStatus)
-		stageErr := this.repository.stageLifecycle(context.WithoutCancel(this.ctx), this.metadata.RecordingId, stagedEvent)
+		stageErr := this.repository.stageLifecycle(lifecycleContext, this.metadata.RecordingId, stagedEvent)
 		staged = stageErr == nil
 		return stageErr
 	})
+	finalAuditContext := &sshSessionContext{Context: this.ctx, plainContext: lifecycleContext}
 	if stopErr == nil {
-		auditErr := this.service.recordPendingSessionRecordingLifecycle(context.WithoutCancel(this.ctx), this.repository, this.metadata.RecordingId)
+		auditErr := this.service.recordPendingSessionRecordingLifecycle(finalAuditContext, lifecycleContext, this.repository, this.metadata.RecordingId)
 		recordingErr := this.service.handleAuditlogFailure(this.auditlog, "session Recording", auditErr)
 		return goerrors.Join(captureErr, recordingErr)
 	}
 	event := sessionRecordingTerminalAuditEvent(this.metadata, result, taskErr, captureErr, stopErr, stopPhase, elapsed, exitStatus)
-	finalAuditContext := &sshSessionContext{Context: this.ctx, plainContext: context.WithoutCancel(this.ctx)}
-	auditErr := this.service.recordSessionRecordingStopFailure(finalAuditContext, context.WithoutCancel(this.ctx), this.repository, this.metadata.RecordingId, this.metadata.Flow, event, staged, stopPhase)
+	auditErr := this.service.recordSessionRecordingStopFailure(finalAuditContext, lifecycleContext, this.repository, this.metadata.RecordingId, this.metadata.Flow, event, staged, stopPhase)
 	recordingErr := this.service.handleAuditlogFailure(this.auditlog, "session Recording", goerrors.Join(stopErr, auditErr))
 	return goerrors.Join(captureErr, recordingErr)
 }

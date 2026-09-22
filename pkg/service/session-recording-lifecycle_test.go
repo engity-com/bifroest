@@ -678,10 +678,16 @@ func TestExecuteSessionRecordingCompletionAuditFailurePreservesCompletedArtifact
 			}
 			flow := server.service.Configuration.Flows[0].Name
 			server.service.flowAuditRecorders[flow] = auditRecorder
+			healthyClient := server.mustDial(t)
 			client := server.mustDial(t)
 			sshSession, err := client.NewSession()
 			require.NoError(t, err)
 			require.Error(t, sshSession.Run("complete-before-audit-fails"))
+			_, err = client.NewSession()
+			require.Error(t, err)
+			healthySession, err := healthyClient.NewSession()
+			require.NoError(t, err)
+			require.NoError(t, healthySession.Close())
 
 			verification := verifyOnlySessionRecording(t, server.service, root)
 			require.Equal(t, recording.CastStatusCompleted, verification.Cast.Result.Status)
@@ -711,6 +717,33 @@ func TestExecuteSessionRecordingCompletionAuditFailurePreservesCompletedArtifact
 			require.Empty(t, auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed))
 		})
 	}
+}
+
+func TestExecuteSessionRecordingCompletionAuditFailureBestEffortKeepsConnection(t *testing.T) {
+	root := t.TempDir()
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{}, func(conf *configuration.Configuration) {
+		enableSessionRecordingForLifecycleTest(conf, root)
+		conf.Auditlogs[0].FailurePolicy = configuration.AuditlogFailurePolicyBestEffort
+	})
+	delegate := &recordingAuditRecorder{}
+	delegate.setErrorBeforeRecordForName(audit.EventNameSessionRecordingCompleted, goerrors.New("completion audit failed"))
+	flow := server.service.Configuration.Flows[0].Name
+	auditlog := server.service.flowAuditlogs[flow]
+	server.service.flowAuditRecorders[flow] = &failurePolicyAuditRecorder{
+		service:  server.service,
+		auditlog: auditlog,
+		delegate: delegate,
+	}
+	client := server.mustDial(t)
+	sshSession, err := client.NewSession()
+	require.NoError(t, err)
+
+	require.NoError(t, sshSession.Run("complete-before-audit-fails"))
+	require.True(t, server.service.auditlogDisabled(auditlog))
+
+	healthy, err := client.NewSession()
+	require.NoError(t, err)
+	require.NoError(t, healthy.Run("still-alive"))
 }
 
 func TestExecuteSessionRecordingInvalidExitStatusIsIncomplete(t *testing.T) {
