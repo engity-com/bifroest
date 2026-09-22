@@ -194,8 +194,19 @@ func openProtectedLocalFile(path string) (*os.File, error) {
 	if !pathInfo.Mode().IsRegular() {
 		return nil, errors.Config.Newf("protected local recording file is not a regular file")
 	}
-	file, err := os.Open(path)
+	metadata, err := openLocalMetadataPath(path, false, false)
 	if err != nil {
+		return nil, err
+	}
+	if err := secureLocalMetadataHandle(path, metadata, pathInfo, true, "FRSD"); err != nil {
+		return nil, goerrors.Join(err, metadata.Close())
+	}
+	file, err := openProtectedLocalData(path)
+	if err != nil {
+		return nil, goerrors.Join(err, metadata.Close())
+	}
+	if err := metadata.Close(); err != nil {
+		_ = file.Close()
 		return nil, err
 	}
 	info, err := file.Stat()
@@ -208,6 +219,26 @@ func openProtectedLocalFile(path string) (*os.File, error) {
 		return nil, err
 	}
 	return file, nil
+}
+
+func openProtectedLocalData(path string) (*os.File, error) {
+	nativePath, err := sys.WindowsPathPointer(path)
+	if err != nil {
+		return nil, err
+	}
+	handle, err := windows.CreateFile(
+		nativePath,
+		windows.GENERIC_READ,
+		windows.FILE_SHARE_READ,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_OPEN_REPARSE_POINT,
+		0,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(handle), path), nil
 }
 
 func openReadOnlyLocalFile(path string) (*os.File, error) {
@@ -402,7 +433,7 @@ func openLocalMetadataPath(path string, directory, writeAttributes bool) (*os.Fi
 	if err != nil {
 		return nil, err
 	}
-	access := uint32(windows.READ_CONTROL | windows.WRITE_DAC | windows.FILE_READ_ATTRIBUTES)
+	access := uint32(windows.READ_CONTROL | windows.WRITE_DAC)
 	if writeAttributes {
 		access |= windows.FILE_WRITE_ATTRIBUTES
 	}
