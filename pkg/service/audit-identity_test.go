@@ -715,6 +715,116 @@ func TestPrepareAuditEncryptionValidatesSftpIdentityKeys(t *testing.T) {
 	}
 }
 
+func TestPrepareAuditEncryptionAppliesFailurePolicyToSftpIdentityErrors(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		bestEffort   bool
+		customTarget bool
+	}{
+		{name: "strict audit target"},
+		{name: "best-effort audit target", bestEffort: true},
+		{name: "strict Recording target", customTarget: true},
+		{name: "best-effort Recording target", bestEffort: true, customTarget: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			encryptionKey, err := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).CreateFile(nil, filepath.Join(root, "offline-encryption-key"))
+			require.NoError(t, err)
+			conf := auditSftpDedicatednessTestConfiguration(t, root, []string{filepath.Join(root, "missing-sftp-key")},
+				crypto.PublicKeys(strings.TrimSpace(string(crypto.MarshalPublicKey(encryptionKey.PublicKey())))))
+			auditlog := &conf.Auditlogs[0]
+			if test.bestEffort {
+				auditlog.FailurePolicy = configuration.AuditlogFailurePolicyBestEffort
+			}
+			if test.customTarget {
+				require.NoError(t, auditlog.Recording.SetDefaults())
+				auditlog.Recording.Enabled = true
+				auditlog.Recording.Directory = filepath.Join(root, "recordings")
+				auditlog.Recording.Targets = configuration.AuditlogRecordingTargets{
+					Mode:    configuration.AuditlogRecordingTargetsModeCustom,
+					Targets: auditlog.Targets,
+				}
+				auditlog.Targets = nil
+			}
+
+			svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+			if !test.bestEffort {
+				require.ErrorContains(t, err, "cannot load static SFTP identities")
+				require.Nil(t, svc)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, svc)
+			require.True(t, svc.auditlogDisabled(auditlog.Name))
+			require.Nil(t, svc.auditIdentities[auditlog.Name])
+			require.NoError(t, svc.Close())
+		})
+	}
+}
+
+func TestPrepareAuditEncryptionIsolatesBestEffortSftpIdentityErrors(t *testing.T) {
+	root := t.TempDir()
+	encryptionKey, err := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).CreateFile(nil, filepath.Join(root, "offline-encryption-key"))
+	require.NoError(t, err)
+	conf := auditSftpDedicatednessTestConfiguration(t, root, nil,
+		crypto.PublicKeys(strings.TrimSpace(string(crypto.MarshalPublicKey(encryptionKey.PublicKey())))))
+	conf.Auditlogs[0].Targets = nil
+
+	sftp := &configuration.AuditlogTargetSftp{}
+	require.NoError(t, sftp.SetDefaults())
+	sftp.Address = "127.0.0.1:1"
+	sftp.User = template.MustNewString("archive")
+	sftp.Directory = "/archive"
+	sftp.AcceptAllHostKeys = true
+	sftp.IdentityFiles = []string{filepath.Join(root, "missing-secondary-sftp-key")}
+	conf.Auditlogs = append(conf.Auditlogs, configuration.Auditlog{
+		Name:          "secondary",
+		Enabled:       true,
+		FailurePolicy: configuration.AuditlogFailurePolicyBestEffort,
+		IdentityFile:  filepath.Join(root, "secondary-audit-key"),
+		Journal:       configuration.AuditlogJournal{Directory: filepath.Join(root, "secondary-journal")},
+		Targets:       configuration.AuditlogTargets{{Name: "archive", V: sftp}},
+	})
+
+	svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+	require.NoError(t, err)
+	require.NotNil(t, svc)
+	require.False(t, svc.auditlogDisabled(conf.Auditlogs[0].Name))
+	require.NotNil(t, svc.auditIdentities[conf.Auditlogs[0].Name])
+	require.True(t, svc.auditlogDisabled("secondary"))
+	require.Nil(t, svc.auditIdentities["secondary"])
+	require.NoError(t, svc.Close())
+}
+
+func TestPrepareAuditEncryptionValidatesSftpIdentityKeysAcrossAuditlogs(t *testing.T) {
+	root := t.TempDir()
+	sftpIdentityPath := filepath.Join(root, "secondary-sftp-key")
+	sftpIdentity, err := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).CreateFile(nil, sftpIdentityPath)
+	require.NoError(t, err)
+	conf := auditSftpDedicatednessTestConfiguration(t, root, nil,
+		crypto.PublicKeys(strings.TrimSpace(string(crypto.MarshalPublicKey(sftpIdentity.PublicKey())))))
+	conf.Auditlogs[0].Targets = nil
+
+	sftp := &configuration.AuditlogTargetSftp{}
+	require.NoError(t, sftp.SetDefaults())
+	sftp.Address = "127.0.0.1:1"
+	sftp.User = template.MustNewString("archive")
+	sftp.Directory = "/archive"
+	sftp.AcceptAllHostKeys = true
+	sftp.IdentityFiles = []string{sftpIdentityPath}
+	conf.Auditlogs = append(conf.Auditlogs, configuration.Auditlog{
+		Name:         "secondary",
+		Enabled:      true,
+		IdentityFile: filepath.Join(root, "secondary-audit-key"),
+		Journal:      configuration.AuditlogJournal{Directory: filepath.Join(root, "secondary-journal")},
+		Targets:      configuration.AuditlogTargets{{Name: "archive", V: sftp}},
+	})
+
+	svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+	require.ErrorContains(t, err, "audit encryption recipient reuses a private key")
+	require.Nil(t, svc)
+}
+
 func auditSftpDedicatednessTestConfiguration(t *testing.T, root string, sftpIdentities []string, encryptionKey crypto.PublicKeys) configuration.Configuration {
 	t.Helper()
 	var conf configuration.Configuration

@@ -345,19 +345,32 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	}
 
 	serverPrivateKeys := hostSigners
-	var sftpIdentityPublicKeys []crypto.PublicKey
+	sftpIdentityPublicKeysByAuditlog := make(map[configuration.AuditlogName][]crypto.PublicKey, len(this.Configuration.Auditlogs))
 	if hasEncryptedAuditlog(this.Configuration.Auditlogs) {
 		serverPrivateKeys, err = loadStaticPrivateKeysForAuditEncryption(this.Configuration.Flows, hostSigners)
 		if err != nil {
 			return err
 		}
-		sftpIdentityPublicKeys, err = loadStaticSftpIdentityPublicKeysForAuditEncryption(this.Configuration.Auditlogs)
-		if err != nil {
-			return err
+		for index := range this.Configuration.Auditlogs {
+			auditlog := &this.Configuration.Auditlogs[index]
+			if !auditlog.Enabled {
+				continue
+			}
+			keys, identityErr := loadStaticSftpIdentityPublicKeysForAuditEncryption(auditlog)
+			if identityErr != nil {
+				if err := svc.handleAuditlogFailure(auditlog.Name, "SFTP identities", identityErr); err != nil {
+					return err
+				}
+				continue
+			}
+			sftpIdentityPublicKeysByAuditlog[auditlog.Name] = keys
 		}
 	}
 	for index := range this.Configuration.Auditlogs {
 		auditlog := &this.Configuration.Auditlogs[index]
+		if svc.auditlogDisabled(auditlog.Name) {
+			continue
+		}
 		identity, identityErr := audit.EnsureIdentity(auditlog)
 		if identityErr != nil {
 			if err := svc.handleAuditlogFailure(auditlog.Name, "identity", identityErr); err != nil {
@@ -382,6 +395,12 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	auditIdentities := make([]*audit.Identity, 0, len(svc.auditIdentities))
 	for _, identity := range svc.auditIdentities {
 		auditIdentities = append(auditIdentities, identity)
+	}
+	var sftpIdentityPublicKeys []crypto.PublicKey
+	for auditlog, keys := range sftpIdentityPublicKeysByAuditlog {
+		if !svc.auditlogDisabled(auditlog) {
+			sftpIdentityPublicKeys = append(sftpIdentityPublicKeys, keys...)
+		}
 	}
 	resolvedEncryptionPublicKeys := make(map[configuration.AuditlogName]crypto.PublicKeys, len(this.Configuration.Auditlogs))
 	for index := range this.Configuration.Auditlogs {
@@ -632,40 +651,34 @@ func loadStaticPrivateKeysForAuditEncryption(flows configuration.Flows, hostKeys
 	return result, nil
 }
 
-func loadStaticSftpIdentityPublicKeysForAuditEncryption(auditlogs configuration.Auditlogs) ([]crypto.PublicKey, error) {
+func loadStaticSftpIdentityPublicKeysForAuditEncryption(auditlog *configuration.Auditlog) ([]crypto.PublicKey, error) {
 	var result []crypto.PublicKey
-	for auditlogIndex := range auditlogs {
-		auditlog := &auditlogs[auditlogIndex]
-		if !auditlog.Enabled {
+	for targetIndex := range auditlog.Targets {
+		target := &auditlog.Targets[targetIndex]
+		sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
+		if !ok || len(sftp.IdentityFiles) == 0 {
 			continue
 		}
-		for targetIndex := range auditlog.Targets {
-			target := &auditlog.Targets[targetIndex]
-			sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
-			if !ok || len(sftp.IdentityFiles) == 0 {
-				continue
-			}
-			keys, err := audit.LoadSftpIdentityPublicKeys(sftp.IdentityFiles)
-			if err != nil {
-				return nil, fmt.Errorf("cannot load static SFTP identities of target %q in auditlog %q: %w", target.Name, auditlog.Name, err)
-			}
-			result = append(result, keys...)
+		keys, err := audit.LoadSftpIdentityPublicKeys(sftp.IdentityFiles)
+		if err != nil {
+			return nil, fmt.Errorf("cannot load static SFTP identities of target %q in auditlog %q: %w", target.Name, auditlog.Name, err)
 		}
-		if !auditlog.Recording.Enabled {
+		result = append(result, keys...)
+	}
+	if !auditlog.Recording.Enabled {
+		return result, nil
+	}
+	for targetIndex := range auditlog.Recording.Targets.Configured() {
+		target := &auditlog.Recording.Targets.Targets[targetIndex]
+		sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
+		if !ok || len(sftp.IdentityFiles) == 0 {
 			continue
 		}
-		for targetIndex := range auditlog.Recording.Targets.Configured() {
-			target := &auditlog.Recording.Targets.Targets[targetIndex]
-			sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
-			if !ok || len(sftp.IdentityFiles) == 0 {
-				continue
-			}
-			keys, err := audit.LoadSftpIdentityPublicKeys(sftp.IdentityFiles)
-			if err != nil {
-				return nil, fmt.Errorf("cannot load static SFTP identities of Recording target %q in auditlog %q: %w", target.Name, auditlog.Name, err)
-			}
-			result = append(result, keys...)
+		keys, err := audit.LoadSftpIdentityPublicKeys(sftp.IdentityFiles)
+		if err != nil {
+			return nil, fmt.Errorf("cannot load static SFTP identities of Recording target %q in auditlog %q: %w", target.Name, auditlog.Name, err)
 		}
+		result = append(result, keys...)
 	}
 	return result, nil
 }
