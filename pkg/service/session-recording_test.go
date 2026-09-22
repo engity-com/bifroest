@@ -390,7 +390,7 @@ func TestPrepareRecordingFailsClosedOnWrongFormatMarker(t *testing.T) {
 
 	svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
 	require.ErrorContains(t, err, "cannot open Recording repository of auditlog \"default\"")
-	require.True(t, bferrors.Config.IsErr(err))
+	require.True(t, bferrors.Config.IsErr(err), "unexpected error type: %v", err)
 	require.Nil(t, svc)
 	requireRecordingFormat(t, recordingRoot, "unknown/v1\n")
 }
