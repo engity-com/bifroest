@@ -50,6 +50,21 @@ func TestBECastRecoveryFinalizesOpenContainerAndDecrypts(t *testing.T) {
 	require.Equal(t, finalChunk.FinalStatus, parsed.seal.Status)
 }
 
+func TestBECastRecoveryClampsEndTimeToRecordingStart(t *testing.T) {
+	file, identity, recipient, identities, metadata, writer := newBECastRecoveryTestWriter(t)
+	checkpoint, err := writer.Checkpoint()
+	require.NoError(t, err)
+	require.NoError(t, file.Sync())
+
+	result, err := RecoverBECast(file, identity, recipient, checkpoint, metadata.StartedAt.Add(-time.Nanosecond), BECastVerifyOptions{})
+	require.NoError(t, err)
+	require.True(t, result.Finalized)
+	var plaintext bytes.Buffer
+	verification, err := DecryptBECast(file, beCastRecoveryFileSize(t, file), identities, &plaintext, BECastVerifyOptions{ExpectedProducerId: identity.ProducerId()})
+	require.NoError(t, err)
+	require.Equal(t, metadata.StartedAt, verification.Cast.Result.EndedAt)
+}
+
 func TestBECastRecoverySupportsYear2300Checkpoint(t *testing.T) {
 	identity, header, metadata := castTestValues(t, true)
 	startedAt := time.Date(2300, time.January, 2, 3, 4, 5, 987654321, time.UTC)
@@ -480,7 +495,6 @@ func TestBECastRecoveryRejectsLimitsAndInvalidTimeWithoutMutation(t *testing.T) 
 	}{
 		{name: "zero time", config: true},
 		{name: "non UTC", recovered: metadata.StartedAt.In(time.FixedZone("UTC+1", 3600)), config: true},
-		{name: "before signed start", recovered: metadata.StartedAt.Add(-time.Nanosecond)},
 		{name: "excessive duration", recovered: metadata.StartedAt.Add(maximumEventElapsed + time.Nanosecond)},
 		{name: "chunk limit", recovered: metadata.StartedAt.Add(time.Second), options: BECastVerifyOptions{MaximumChunks: checkpoint.ChunkCount}},
 		{name: "container limit", recovered: metadata.StartedAt.Add(time.Second), options: BECastVerifyOptions{MaximumContainerBytes: int64(len(before))}},

@@ -220,6 +220,18 @@ func TestCastZstdRecoveryFinalizesOpenContainerAndTruncatesPhysicalTail(t *testi
 	require.True(t, again.AlreadySealed)
 }
 
+func TestCastZstdRecoveryClampsEndTimeToRecordingStart(t *testing.T) {
+	file, identity, metadata, writer := newCastZstdRecoveryTestWriter(t)
+	checkpoint, err := writer.Checkpoint()
+	require.NoError(t, err)
+	require.NoError(t, file.Sync())
+
+	result, err := RecoverCastZstd(file, identity, checkpoint, metadata.StartedAt.Add(-time.Nanosecond), CastZstdVerifyOptions{})
+	require.NoError(t, err)
+	require.True(t, result.Finalized)
+	require.Equal(t, metadata.StartedAt, result.Verification.Cast.Result.EndedAt)
+}
+
 func TestCastZstdRecoveryCompletesSealWithoutChangingFinalCast(t *testing.T) {
 	for _, test := range []struct {
 		status     CastStatus

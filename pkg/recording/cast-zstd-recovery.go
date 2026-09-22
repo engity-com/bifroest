@@ -62,9 +62,13 @@ func RecoverCastZstd(file RecoveryFile, identity *audit.Identity, checkpoint aud
 	castVerification, complete := verifyExistingRecoveryCast(file, size, options, checkpoint)
 	var suffix []byte
 	if !complete {
+		endedAt := recoveredAt.UTC()
+		if !recoveredAt.IsZero() && endedAt.Before(metadata.StartedAt) {
+			endedAt = metadata.StartedAt
+		}
 		result := CastResult{
 			Status:  CastStatusIncomplete,
-			EndedAt: recoveredAt.UTC(),
+			EndedAt: endedAt,
 			Reason:  startupRecoveryReason,
 		}
 		if err := validateCastResult(metadata, result, false); err != nil {

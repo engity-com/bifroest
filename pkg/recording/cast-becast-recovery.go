@@ -277,6 +277,9 @@ func validatedBECastRecoveryResult(checkpoint audit.SessionRecordingBECastHead, 
 	if startedAt.Unix() != checkpoint.StartedAtUnixSeconds || startedAt.Nanosecond() != int(checkpoint.StartedAtNanoseconds) {
 		return CastResult{}, errors.System.Newf("BECast checkpoint has an invalid recording start time")
 	}
+	if recoveredAt.Before(startedAt) {
+		recoveredAt = startedAt
+	}
 	result := CastResult{Status: CastStatusIncomplete, EndedAt: recoveredAt, Reason: startupRecoveryReason}
 	if err := validateCastResult(CastMetadata{StartedAt: startedAt}, result, false); err != nil {
 		return CastResult{}, errors.System.Newf("cannot create incomplete BECast recovery result: %w", err)
