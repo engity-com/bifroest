@@ -3,11 +3,13 @@ package recording
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
 	"os"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,6 +108,69 @@ func TestCastZstdKeepsRelatedCastLinesInOneFrame(t *testing.T) {
 		require.False(t, bytes.HasPrefix(last, []byte(castEventCommentPrefix)), "event metadata split from its event")
 		require.False(t, bytes.HasPrefix(last, []byte(castResultCommentPrefix)), "result split from its signature")
 	}
+}
+
+func TestCastZstdWriterPlansOutputGroupAtPlaintextLimit(t *testing.T) {
+	identity, header, metadata := castTestValues(t, false)
+	var container bytes.Buffer
+	writer, err := NewCastZstdWriter(&container, identity, header, metadata, MaximumCastZstdChunkSize)
+	require.NoError(t, err)
+	for writer.sink.buffer.Len() <= MaximumCastZstdChunkSize-(128<<10) {
+		require.NoError(t, writer.WriteMarker(0, strings.Repeat("m", 4096)))
+	}
+	chunkCount := writer.sink.chunkCount
+
+	require.NoError(t, writer.WriteOutput(time.Second, OutputStreamStderr, bytes.Repeat([]byte{0}, MaximumOutputEventBytes)))
+	require.Equal(t, chunkCount+1, writer.sink.chunkCount)
+	exitStatus := uint32(0)
+	_, err = writer.Seal(2*time.Second, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(2 * time.Second)}, &exitStatus)
+	require.NoError(t, err)
+	_, err = VerifyCastZstd(bytes.NewReader(container.Bytes()), int64(container.Len()), CastZstdVerifyOptions{ExpectedProducerId: identity.ProducerId()})
+	require.NoError(t, err)
+	for _, chunk := range decodeCastZstdTestChunks(t, container.Bytes()) {
+		require.LessOrEqual(t, len(chunk), MaximumCastZstdChunkSize)
+		lines := bytes.Split(bytes.TrimSuffix(chunk, []byte{'\n'}), []byte{'\n'})
+		require.False(t, bytes.HasPrefix(lines[len(lines)-1], []byte(castEventCommentPrefix)))
+	}
+}
+
+func TestCastZstdWriterPlansSealGroupAtPlaintextLimit(t *testing.T) {
+	identity, header, metadata := castTestValues(t, true)
+	var container bytes.Buffer
+	writer, err := NewCastZstdWriter(&container, identity, header, metadata, MaximumCastZstdChunkSize)
+	require.NoError(t, err)
+	result := CastResult{Status: CastStatusFailed, EndedAt: metadata.StartedAt, Reason: "connection-lost"}
+	payload, err := json.Marshal(castResultWire{Schema: castResultSchema, CastResult: result})
+	require.NoError(t, err)
+	resultLineBytes := len(castResultCommentPrefix) + len(payload) + 1
+	fillCastZstdTestBuffer(t, writer, MaximumCastZstdChunkSize-resultLineBytes-1)
+	chunkCount := writer.sink.chunkCount
+
+	_, err = writer.Seal(0, result, nil)
+	require.NoError(t, err)
+	require.Equal(t, chunkCount+2, writer.sink.chunkCount)
+	_, err = VerifyCastZstd(bytes.NewReader(container.Bytes()), int64(container.Len()), CastZstdVerifyOptions{ExpectedProducerId: identity.ProducerId()})
+	require.NoError(t, err)
+	chunks := decodeCastZstdTestChunks(t, container.Bytes())
+	require.True(t, bytes.HasPrefix(chunks[len(chunks)-1], []byte(castResultCommentPrefix)))
+	require.Contains(t, string(chunks[len(chunks)-1]), "\n"+castSignatureCommentPrefix)
+}
+
+func TestCastZstdWriterAtomicGroupPlanningBoundsCoverMaximumLines(t *testing.T) {
+	identity, header, metadata := castTestValues(t, false)
+	var output bytes.Buffer
+	writer, err := NewCastWriter(&output, identity, header, metadata)
+	require.NoError(t, err)
+	output.Reset()
+	require.NoError(t, writer.WriteOutput(0, OutputStreamStdout, bytes.Repeat([]byte{0}, MaximumOutputEventBytes)))
+	require.LessOrEqual(t, output.Len(), maximumCastOutputEventLineBytes)
+
+	writer, err = NewCastWriter(&output, identity, header, metadata)
+	require.NoError(t, err)
+	output.Reset()
+	_, err = writer.Seal(0, CastResult{Status: CastStatusFailed, EndedAt: metadata.StartedAt, Reason: strings.Repeat("<", 255)}, nil)
+	require.NoError(t, err)
+	require.LessOrEqual(t, output.Len(), maximumCastSealGroupBytes)
 }
 
 func TestCastZstdVerificationRejectsTamperingTruncationAndTrailingData(t *testing.T) {
@@ -590,6 +655,22 @@ func decodeCastZstdTestChunks(t *testing.T, container []byte) [][]byte {
 	}
 	require.Equal(t, zstdSkippableMagicBase|uint32(castZstdSealSkippableId), binary.LittleEndian.Uint32(container[offset:]))
 	return result
+}
+
+func fillCastZstdTestBuffer(t *testing.T, writer *CastZstdWriter, target int) {
+	t.Helper()
+	const markerLineOverhead = len("[0.000,\"m\",\"\"]\n")
+	for writer.sink.buffer.Len() < target {
+		remaining := target - writer.sink.buffer.Len()
+		require.GreaterOrEqual(t, remaining, markerLineOverhead)
+		labelBytes := min(remaining-markerLineOverhead, 4096)
+		leftover := remaining - markerLineOverhead - labelBytes
+		if leftover > 0 && leftover < markerLineOverhead {
+			labelBytes -= markerLineOverhead - leftover
+		}
+		require.NoError(t, writer.WriteMarker(0, strings.Repeat("m", labelBytes)))
+	}
+	require.Equal(t, target, writer.sink.buffer.Len())
 }
 
 func encodeCastZstdTestContainer(t *testing.T, identity *audit.Identity, summary CastZstdSummary, chunks [][]byte) []byte {

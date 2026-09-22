@@ -28,9 +28,11 @@ const (
 	castResultCommentPrefix    = "# bifroest:result:v1 "
 	castSignatureCommentPrefix = "# bifroest:signature:v1 "
 
-	MaximumCastLineBytes    = 1 << 20
-	MaximumOutputEventBytes = 64 << 10
-	DefaultMaximumCastBytes = int64(16 << 30)
+	MaximumCastLineBytes            = 1 << 20
+	MaximumOutputEventBytes         = 64 << 10
+	DefaultMaximumCastBytes         = int64(16 << 30)
+	maximumCastOutputEventLineBytes = 6*MaximumOutputEventBytes + 64
+	maximumCastSealGroupBytes       = 4096
 
 	MaximumCastTerminalDimension = uint32(1<<16 - 1)
 	MaximumCastExitStatus        = uint32(1<<31 - 1)

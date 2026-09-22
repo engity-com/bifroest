@@ -17,8 +17,6 @@ import (
 )
 
 const maximumBECastCheckpointPaddingBytes = len(castCheckpointPaddingCommentPrefix) + sha256.BlockSize
-const maximumBECastOutputEventLineBytes = 6*MaximumOutputEventBytes + 64
-const maximumBECastSealCastBytes = 4096
 
 // castBECastOpenCastState marks an open, valid Cast at a complete atomic line
 // boundary before any result or final signature has been emitted.
@@ -271,7 +269,7 @@ func (this *BECastWriter) Seal(elapsed time.Duration, result CastResult, exitSta
 	if this.sealed {
 		return BECastSummary{}, errors.System.Newf("BECast writer is already sealed")
 	}
-	if this.sink.buffer.Len() > MaximumBECastChunkPlaintext-maximumBECastSealCastBytes {
+	if this.sink.buffer.Len() > MaximumBECastChunkPlaintext-maximumCastSealGroupBytes {
 		if err := this.sink.flush(false, nil, 0); err != nil {
 			this.sink.encoder.Close()
 			return BECastSummary{}, err
@@ -393,7 +391,7 @@ func (this *beCastSink) beforeContentLine(value []byte) error {
 	remainingMaximum := MaximumBECastChunkPlaintext - maximumBECastCheckpointPaddingBytes - this.buffer.Len()
 	maximumGroupBytes := len(value)
 	if bytes.HasPrefix(value, []byte(castEventCommentPrefix)) {
-		maximumGroupBytes += maximumBECastOutputEventLineBytes
+		maximumGroupBytes += maximumCastOutputEventLineBytes
 	}
 	if len(value) > remainingTarget || maximumGroupBytes > remainingMaximum {
 		return this.flush(false, nil, 0)

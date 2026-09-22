@@ -295,10 +295,24 @@ func (this *castZstdSink) Write(value []byte) (int, error) {
 	isEventMetadata := bytes.HasPrefix(value, []byte(castEventCommentPrefix))
 	isResult := bytes.HasPrefix(value, []byte(castResultCommentPrefix))
 	continuation := this.pendingGroup
-	if !continuation && this.buffer.Len() > 0 && this.buffer.Len()+len(value) > this.chunkSize {
+	maximumGroupBytes := len(value)
+	if isEventMetadata {
+		maximumGroupBytes += maximumCastOutputEventLineBytes
+	} else if isResult && maximumGroupBytes < maximumCastSealGroupBytes {
+		maximumGroupBytes = maximumCastSealGroupBytes
+	}
+	if maximumGroupBytes > MaximumCastZstdChunkSize {
+		return 0, this.poison(errors.System.Newf("cast Zstandard atomic line group exceeds %d bytes", MaximumCastZstdChunkSize))
+	}
+	requiresFlush := !continuation && this.buffer.Len() > 0 &&
+		(this.buffer.Len()+len(value) > this.chunkSize || this.buffer.Len() > MaximumCastZstdChunkSize-maximumGroupBytes)
+	if requiresFlush {
 		if err := this.flush(false); err != nil {
 			return 0, err
 		}
+	}
+	if this.buffer.Len() > MaximumCastZstdChunkSize-len(value) {
+		return 0, this.poison(errors.System.Newf("cast Zstandard plaintext chunk exceeds %d bytes", MaximumCastZstdChunkSize))
 	}
 	if _, err := this.buffer.Write(value); err != nil {
 		return 0, this.poison(err)
