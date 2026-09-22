@@ -3,25 +3,16 @@
 package audit
 
 import (
+	goerrors "errors"
+	"io/fs"
 	"os"
-	"path/filepath"
-
-	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 func publishJournalFile(source, target string) error {
-	if err := os.Link(source, target); err != nil {
-		if errors.Is(err, os.ErrExist) {
-			sourceInfo, sourceErr := os.Stat(source)
-			targetInfo, targetErr := os.Stat(target)
-			if sourceErr == nil && targetErr == nil && os.SameFile(sourceInfo, targetInfo) {
-				return os.Remove(source)
-			}
-		}
+	if _, err := os.Stat(target); err == nil {
+		return fs.ErrExist
+	} else if !goerrors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	if err := syncJournalDirectory(filepath.Dir(source)); err != nil {
-		return err
-	}
-	return os.Remove(source)
+	return os.Rename(source, target)
 }

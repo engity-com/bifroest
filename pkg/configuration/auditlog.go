@@ -14,6 +14,7 @@ import (
 
 var (
 	DefaultAuditlogEnabled                 = false
+	DefaultAuditlogFailurePolicy           = AuditlogFailurePolicyStrict
 	DefaultAuditlogIdentityFile            = defaultAuditlogIdentityFile
 	DefaultAuditlogJournalDirectory        = defaultAuditlogJournalDirectory
 	DefaultAuditlogJournalMinimumFreeBytes = uint64(256 << 20)
@@ -24,6 +25,7 @@ var (
 type Auditlog struct {
 	Name                    AuditlogName          `yaml:"name"`
 	Enabled                 bool                  `yaml:"enabled,omitempty"`
+	FailurePolicy           AuditlogFailurePolicy `yaml:"failurePolicy,omitempty"`
 	IdentityFile            string                `yaml:"identityFile,omitempty"`
 	EncryptionPublicKey     crypto.PublicKeys     `yaml:"encryptionPublicKey,omitempty"`
 	EncryptionPublicKeyFile crypto.PublicKeysFile `yaml:"encryptionPublicKeyFile,omitempty"`
@@ -36,6 +38,7 @@ func (this *Auditlog) SetDefaults() error {
 	return setDefaults(this,
 		fixedDefault("name", func(v *Auditlog) *AuditlogName { return &v.Name }, DefaultAuditlogName),
 		fixedDefault("enabled", func(v *Auditlog) *bool { return &v.Enabled }, DefaultAuditlogEnabled),
+		fixedDefault("failurePolicy", func(v *Auditlog) *AuditlogFailurePolicy { return &v.FailurePolicy }, DefaultAuditlogFailurePolicy),
 		fixedDefault("identityFile", func(v *Auditlog) *string { return &v.IdentityFile }, DefaultAuditlogIdentityFile),
 		noopSetDefault[Auditlog]("encryptionPublicKey"),
 		noopSetDefault[Auditlog]("encryptionPublicKeyFile"),
@@ -49,6 +52,7 @@ func (this *Auditlog) Trim() error {
 	return trim(this,
 		noopTrim[Auditlog]("name"),
 		noopTrim[Auditlog]("enabled"),
+		noopTrim[Auditlog]("failurePolicy"),
 		func(v *Auditlog) (string, trimmer) { return "identityFile", &stringTrimmer{&v.IdentityFile} },
 		func(v *Auditlog) (string, trimmer) { return "encryptionPublicKey", &v.EncryptionPublicKey },
 		func(v *Auditlog) (string, trimmer) { return "encryptionPublicKeyFile", &v.EncryptionPublicKeyFile },
@@ -65,6 +69,7 @@ func (this *Auditlog) Validate() error {
 	if err := validate(this,
 		func(v *Auditlog) (string, validator) { return "name", &v.Name },
 		noopValidate[Auditlog]("enabled"),
+		func(v *Auditlog) (string, validator) { return "failurePolicy", &v.FailurePolicy },
 		notEmptyStringValidate("identityFile", func(v *Auditlog) *string { return &v.IdentityFile }),
 		func(v *Auditlog) (string, validator) {
 			return "encryptionPublicKey", &auditlogEncryptionPublicKeyValidator{v.EncryptionPublicKey}
@@ -84,7 +89,7 @@ func (this *Auditlog) Validate() error {
 
 func (this *Auditlog) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *Auditlog, node *yaml.Node) error {
-		if err := rejectUnknownAuditlogFields(node, "name", "enabled", "identityFile", "encryptionPublicKey", "encryptionPublicKeyFile", "journal", "recording", "targets"); err != nil {
+		if err := rejectUnknownAuditlogFields(node, "name", "enabled", "failurePolicy", "identityFile", "encryptionPublicKey", "encryptionPublicKeyFile", "journal", "recording", "targets"); err != nil {
 			return err
 		}
 		type raw Auditlog
@@ -109,6 +114,7 @@ func (this Auditlog) IsEqualTo(other any) bool {
 func (this Auditlog) isEqualTo(other *Auditlog) bool {
 	return this.Name == other.Name &&
 		this.Enabled == other.Enabled &&
+		this.FailurePolicy.IsEqualTo(other.FailurePolicy) &&
 		this.IdentityFile == other.IdentityFile &&
 		this.EncryptionPublicKey.IsEqualTo(other.EncryptionPublicKey) &&
 		this.EncryptionPublicKeyFile.IsEqualTo(other.EncryptionPublicKeyFile) &&

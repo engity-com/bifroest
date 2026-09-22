@@ -124,12 +124,13 @@ func (this *houseKeeper) cleanupRecordings(logger log.Logger, ctx context.Contex
 			return goerrors.Join(result, err)
 		}
 		auditlog := &this.service.Configuration.Auditlogs[index]
-		if !auditlog.Enabled || !auditlog.Recording.Enabled {
+		if !auditlog.Enabled || !auditlog.Recording.Enabled || this.service.auditlogDisabled(auditlog.Name) {
 			continue
 		}
 		repository := this.service.recordingRepositories[auditlog.Name]
 		if repository == nil {
-			result = goerrors.Join(result, errors.System.Newf("no Recording repository configured for auditlog %q", auditlog.Name))
+			failure := errors.System.Newf("no Recording repository configured for auditlog %q", auditlog.Name)
+			result = goerrors.Join(result, this.service.handleAuditlogFailure(auditlog.Name, "Recording retention", failure))
 			continue
 		}
 		var cutoff time.Time
@@ -141,7 +142,8 @@ func (this *houseKeeper) cleanupRecordings(logger log.Logger, ctx context.Contex
 			if ctx.Err() != nil {
 				return goerrors.Join(result, ctx.Err())
 			}
-			result = goerrors.Join(result, errors.System.Newf("cannot inspect Recording retention of auditlog %q: %w", auditlog.Name, err))
+			failure := errors.System.Newf("cannot inspect Recording retention of auditlog %q: %w", auditlog.Name, err)
+			result = goerrors.Join(result, this.service.handleAuditlogFailure(auditlog.Name, "Recording retention", failure))
 			continue
 		}
 		for _, candidate := range candidates {
@@ -157,7 +159,12 @@ func (this *houseKeeper) cleanupRecordings(logger log.Logger, ctx context.Contex
 				if ctx.Err() != nil {
 					return goerrors.Join(result, err, ctx.Err())
 				}
-				logger.WithError(err).With("auditlog", auditlog.Name).With("recordingId", candidate.recordingId).Warn("cannot delete retained session Recording; preserving remaining local state")
+				if policyErr := this.service.handleAuditlogFailure(auditlog.Name, "Recording retention", err); policyErr != nil {
+					logger.WithError(policyErr).With("auditlog", auditlog.Name).With("recordingId", candidate.recordingId).Warn("cannot delete retained session Recording; preserving remaining local state")
+				}
+				if this.service.auditlogDisabled(auditlog.Name) {
+					break
+				}
 			}
 		}
 	}
@@ -172,7 +179,9 @@ func (this *houseKeeper) auditRecordingDeletion(ctx context.Context, auditlog co
 	if candidate.receipt.CompletionPending {
 		event := recordingRetentionCompletionEvent(candidate)
 		if auditErr = recorder.Record(ctx, event); auditErr == nil {
-			actionErr = complete(candidate)
+			if !this.service.auditlogDisabled(auditlog) {
+				actionErr = complete(candidate)
+			}
 		}
 		return
 	}
@@ -186,6 +195,9 @@ func (this *houseKeeper) auditRecordingDeletion(ctx context.Context, auditlog co
 	}
 	if err := recorder.Record(ctx, event); err != nil {
 		return false, nil, err
+	}
+	if this.service.auditlogDisabled(auditlog) {
+		return false, nil, nil
 	}
 	var completed sessionRecordingRetentionCandidate
 	changed, completed, actionErr = perform()
@@ -209,7 +221,7 @@ func (this *houseKeeper) auditRecordingDeletion(ctx context.Context, auditlog co
 		event.ErrorCategory = auditErrorCategory(actionErr)
 	}
 	auditErr = recorder.Record(ctx, event)
-	if completionPending && auditErr == nil {
+	if completionPending && auditErr == nil && !this.service.auditlogDisabled(auditlog) {
 		actionErr = goerrors.Join(actionErr, complete(completed))
 	}
 	return
@@ -361,7 +373,7 @@ func (this *houseKeeper) auditSessionAction(ctx context.Context, sess session.Se
 
 func (this *houseKeeper) hasEnabledAuditlog() bool {
 	for _, auditlog := range this.service.Configuration.Auditlogs {
-		if auditlog.Enabled {
+		if auditlog.Enabled && !this.service.auditlogDisabled(auditlog.Name) {
 			return true
 		}
 	}
@@ -371,7 +383,7 @@ func (this *houseKeeper) hasEnabledAuditlog() bool {
 func (this *houseKeeper) recordOrphanedSessionAudit(ctx context.Context, event audit.Event) error {
 	var result error
 	for _, auditlog := range this.service.Configuration.Auditlogs {
-		if !auditlog.Enabled {
+		if !auditlog.Enabled || this.service.auditlogDisabled(auditlog.Name) {
 			continue
 		}
 		recorder := this.service.auditRecorders[auditlog.Name]
@@ -388,7 +400,7 @@ func (this *houseKeeper) recordOrphanedSessionAudit(ctx context.Context, event a
 
 func (this *houseKeeper) sessionAutoRepairAllowed() bool {
 	for _, auditlog := range this.service.Configuration.Auditlogs {
-		if auditlog.Enabled {
+		if auditlog.Enabled && !this.service.auditlogDisabled(auditlog.Name) {
 			return false
 		}
 	}

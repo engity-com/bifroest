@@ -22,9 +22,10 @@ func TestAuditlog_UnmarshalYAML(t *testing.T) {
 			name: "defaults",
 			yaml: `{}`,
 			expected: Auditlog{
-				Name:         DefaultAuditlogName,
-				Enabled:      DefaultAuditlogEnabled,
-				IdentityFile: DefaultAuditlogIdentityFile,
+				Name:          DefaultAuditlogName,
+				Enabled:       DefaultAuditlogEnabled,
+				FailurePolicy: DefaultAuditlogFailurePolicy,
+				IdentityFile:  DefaultAuditlogIdentityFile,
 				Journal: AuditlogJournal{
 					Directory:        DefaultAuditlogJournalDirectory,
 					MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
@@ -37,13 +38,15 @@ func TestAuditlog_UnmarshalYAML(t *testing.T) {
 			yaml: `
 enabled: true
 name: security
+failurePolicy: bestEffort
 identityFile: "  custom-audit-key  "
 journal:
   directory: "  custom-journal  "`,
 			expected: Auditlog{
-				Name:         "security",
-				Enabled:      true,
-				IdentityFile: "custom-audit-key",
+				Name:          "security",
+				Enabled:       true,
+				FailurePolicy: AuditlogFailurePolicyBestEffort,
+				IdentityFile:  "custom-audit-key",
 				Journal: AuditlogJournal{
 					Directory:        "custom-journal",
 					MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
@@ -82,9 +85,10 @@ func TestAuditlogsDefaultAndExplicitEntries(t *testing.T) {
 	var absent Auditlogs
 	require.NoError(t, absent.SetDefaults())
 	require.Equal(t, Auditlogs{{
-		Name:         DefaultAuditlogName,
-		Enabled:      false,
-		IdentityFile: DefaultAuditlogIdentityFile,
+		Name:          DefaultAuditlogName,
+		Enabled:       false,
+		FailurePolicy: DefaultAuditlogFailurePolicy,
+		IdentityFile:  DefaultAuditlogIdentityFile,
 		Journal: AuditlogJournal{
 			Directory:        DefaultAuditlogJournalDirectory,
 			MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,

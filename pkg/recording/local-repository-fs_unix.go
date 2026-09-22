@@ -4,10 +4,10 @@ package recording
 
 import (
 	goerrors "errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 
 	"golang.org/x/sys/unix"
 
@@ -20,15 +20,13 @@ type localProcessLock struct {
 	err  error
 }
 
-type pendingLocalFormatProtection struct{}
-
 func removeLocalFile(path string) error {
 	return os.Remove(path)
 }
 
 func removeLocalRetentionTombstone(path string) (int64, bool, error) {
-	info, err := os.Lstat(path)
-	if goerrors.Is(err, os.ErrNotExist) {
+	info, err := os.Stat(path)
+	if goerrors.Is(err, fs.ErrNotExist) {
 		return 0, false, nil
 	}
 	if err != nil {
@@ -37,33 +35,15 @@ func removeLocalRetentionTombstone(path string) (int64, bool, error) {
 	if !info.Mode().IsRegular() || info.Size() < 0 {
 		return 0, false, errors.Config.Newf("local recording retention tombstone is invalid")
 	}
-	if err := removeLocalFileIfSame(path, info); err != nil {
+	if err := os.Remove(path); err != nil {
 		return 0, false, err
 	}
 	return info.Size(), true, nil
 }
 
 func acquireLocalProcessLock(path string) (*localProcessLock, error) {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, localFileMode)
-	if goerrors.Is(err, os.ErrExist) {
-		info, inspectErr := os.Lstat(path)
-		if inspectErr != nil {
-			return nil, inspectErr
-		}
-		if !info.Mode().IsRegular() {
-			return nil, errors.Config.Newf("local recording lock is not a regular file")
-		}
-		file, err = os.OpenFile(path, os.O_RDWR, localFileMode)
-	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, localFileMode)
 	if err != nil {
-		return nil, err
-	}
-	if err := validateOpenLocalFile(path, file); err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	if err := secureLocalFile(path, file); err != nil {
-		_ = file.Close()
 		return nil, err
 	}
 	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
@@ -78,6 +58,9 @@ func (this *localProcessLock) Close() error {
 		return nil
 	}
 	this.once.Do(func() {
+		if this.file == nil {
+			return
+		}
 		if err := unix.Flock(int(this.file.Fd()), unix.LOCK_UN); err != nil {
 			this.err = err
 		}
@@ -88,236 +71,70 @@ func (this *localProcessLock) Close() error {
 	return this.err
 }
 
-func validateLocalLock(lock *localProcessLock, path string) error {
+func validateLocalLock(lock *localProcessLock, _ string) error {
 	if lock == nil || lock.file == nil {
 		return errors.System.Newf("local recording lock is closed")
 	}
-	return validateOpenLocalFile(path, lock.file)
+	return nil
 }
 
-func secureLocalDirectory(path string, info os.FileInfo) error {
-	if !info.IsDir() || info.Mode().Perm() != localDirectoryMode {
-		return errors.Config.Newf("local recording directory has insecure permissions")
+func secureLocalDirectory(_ string, info os.FileInfo) error {
+	if !info.IsDir() {
+		return errors.Config.Newf("local recording path is not a directory")
 	}
-	return validateLocalOwner(path, info, false)
+	return nil
 }
 
-func secureLocalFile(path string, file *os.File) error {
+func secureLocalFile(_ string, file *os.File) error {
 	info, err := file.Stat()
 	if err != nil {
 		return err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm() != localFileMode {
-		return errors.Config.Newf("local recording file has insecure permissions")
-	}
-	return validateLocalOwner(path, info, true)
-}
-
-func validateLocalOwner(_ string, info os.FileInfo, requireSingleLink bool) error {
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return errors.System.Newf("cannot determine local recording owner")
-	}
-	if stat.Uid != uint32(os.Geteuid()) {
-		return errors.Config.Newf("local recording path is owned by another user")
-	}
-	if requireSingleLink && stat.Nlink != 1 {
-		return errors.Config.Newf("local recording file has multiple hard links")
+	if !info.Mode().IsRegular() {
+		return errors.Config.Newf("local recording path is not a regular file")
 	}
 	return nil
 }
 
 func protectLocalReadOnlyFile(_ string, file *os.File) error {
-	if err := file.Chmod(0400); err != nil {
-		return err
-	}
 	return file.Sync()
 }
 
-func prepareLocalFormatProtection(string) (*pendingLocalFormatProtection, error) {
-	return &pendingLocalFormatProtection{}, nil
-}
-
-func (*pendingLocalFormatProtection) protect(*localProcessLock) error {
-	return nil
-}
-
-func (*pendingLocalFormatProtection) close() error {
-	return nil
-}
-
 func openProtectedLocalFile(path string) (*os.File, error) {
-	pathInfo, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if !pathInfo.Mode().IsRegular() {
-		return nil, errors.Config.Newf("protected local recording file is not a regular file")
-	}
-	file, err := openLocalNoFollow(path)
-	if err != nil {
-		return nil, err
-	}
-	info, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	if info.Mode().Perm() != 0400 {
-		_ = file.Close()
-		return nil, errors.Config.Newf("protected local recording file is not read-only")
-	}
-	if !os.SameFile(pathInfo, info) {
-		_ = file.Close()
-		return nil, errors.System.Newf("protected local recording file changed while opening")
-	}
-	if err := validateLocalOwner(path, info, true); err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	return file, nil
+	return openRegularLocalFile(path, os.O_RDONLY)
 }
 
 func openReadOnlyLocalFile(path string) (*os.File, error) {
-	pathInfo, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if !pathInfo.Mode().IsRegular() {
-		return nil, errors.Config.Newf("local recording file is not a regular file")
-	}
-	file, err := openLocalNoFollow(path)
-	if err != nil {
-		return nil, err
-	}
-	info, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	current, err := os.Lstat(path)
-	if err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	if info.Mode().Perm() != localFileMode && info.Mode().Perm() != 0400 {
-		_ = file.Close()
-		return nil, errors.Config.Newf("local recording file has unexpected permissions")
-	}
-	if !current.Mode().IsRegular() || !os.SameFile(pathInfo, info) || !os.SameFile(current, info) {
-		_ = file.Close()
-		return nil, errors.System.Newf("local recording file changed while opening")
-	}
-	if err := validateLocalOwner(path, info, true); err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	return file, nil
+	return openRegularLocalFile(path, os.O_RDONLY)
 }
 
 func openMutablePrivateLocalFile(path string) (*os.File, error) {
-	pathInfo, err := os.Lstat(path)
+	return openRegularLocalFile(path, os.O_RDWR)
+}
+
+func openRegularLocalFile(path string, flag int) (*os.File, error) {
+	file, err := os.OpenFile(path, flag, localFileMode)
 	if err != nil {
 		return nil, err
 	}
-	if !pathInfo.Mode().IsRegular() || pathInfo.Mode().Perm() != localFileMode {
-		return nil, errors.Config.Newf("mutable local recording file is not a private regular file")
-	}
-	descriptor, err := unix.Open(path, unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, err
-	}
-	file := os.NewFile(uintptr(descriptor), path)
 	info, err := file.Stat()
 	if err != nil {
 		_ = file.Close()
 		return nil, err
 	}
-	current, err := os.Lstat(path)
-	if err != nil {
+	if !info.Mode().IsRegular() {
 		_ = file.Close()
-		return nil, err
-	}
-	if !current.Mode().IsRegular() || !os.SameFile(pathInfo, info) || !os.SameFile(current, info) {
-		_ = file.Close()
-		return nil, errors.System.Newf("mutable local recording file changed while opening")
-	}
-	if info.Mode().Perm() != localFileMode {
-		_ = file.Close()
-		return nil, errors.Config.Newf("mutable local recording file is not private")
-	}
-	if err := validateLocalOwner(path, info, true); err != nil {
-		_ = file.Close()
-		return nil, err
+		return nil, errors.Config.Newf("local recording path is not a regular file")
 	}
 	return file, nil
 }
 
-func makeActiveLocalWritable(path string) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() {
-		return errors.Config.Newf("active local recording is not a regular file")
-	}
-	if err := validateLocalOwner(path, info, true); err != nil {
-		return err
-	}
-	if info.Mode().Perm() == localFileMode {
-		return nil
-	}
-	if info.Mode().Perm() != 0400 {
-		return errors.Config.Newf("active local recording has unexpected permissions")
-	}
-	return os.Chmod(path, localFileMode)
-}
-
 func sealLocalFile(_ string, file *os.File) error {
-	if err := file.Chmod(0400); err != nil {
-		return err
-	}
 	return file.Sync()
 }
 
 func openSealedLocalFile(path string) (*os.File, error) {
-	pathInfo, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if !pathInfo.Mode().IsRegular() {
-		return nil, errors.Config.Newf("sealed local recording is not a regular file")
-	}
-	file, err := openLocalNoFollow(path)
-	if err != nil {
-		return nil, err
-	}
-	info, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	if info.Mode().Perm() != 0400 {
-		_ = file.Close()
-		return nil, errors.Config.Newf("sealed local recording is not read-only")
-	}
-	if !os.SameFile(pathInfo, info) {
-		_ = file.Close()
-		return nil, errors.System.Newf("sealed local recording changed while opening")
-	}
-	if err := validateLocalOwner(path, info, true); err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	return file, nil
-}
-
-func openLocalNoFollow(path string) (*os.File, error) {
-	descriptor, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, err
-	}
-	return os.NewFile(uintptr(descriptor), path), nil
+	return openRegularLocalFile(path, os.O_RDONLY)
 }
 
 func replaceLocalFile(source, target string) error {
@@ -325,85 +142,29 @@ func replaceLocalFile(source, target string) error {
 }
 
 func publishLocalDirectory(source, target string) error {
-	return os.Rename(source, target)
+	return renameLocalNoReplace(source, target)
 }
 
 func publishLocalFile(source, target string) error {
-	sourceInfo, err := os.Lstat(source)
-	if err != nil {
+	return renameLocalNoReplace(source, target)
+}
+
+func renameLocalNoReplace(source, target string) error {
+	if _, err := os.Stat(target); err == nil {
+		return fs.ErrExist
+	} else if !goerrors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	if !sourceInfo.Mode().IsRegular() || hardLinkCount(sourceInfo) != 1 {
-		return errors.Config.Newf("active recording has an unsafe link count")
-	}
-	if err := os.Link(source, target); err != nil {
-		if goerrors.Is(err, os.ErrExist) {
-			sourceInfo, sourceErr := os.Lstat(source)
-			targetInfo, targetErr := os.Lstat(target)
-			if sourceErr == nil && targetErr == nil && sourceInfo.Mode().IsRegular() && targetInfo.Mode().IsRegular() && os.SameFile(sourceInfo, targetInfo) {
-				if err := syncLocalDirectory(filepath.Dir(target)); err != nil {
-					return err
-				}
-				if err := os.Remove(source); err != nil {
-					return err
-				}
-				return syncLocalDirectory(filepath.Dir(source))
-			}
-		}
+	if err := os.Rename(source, target); err != nil {
 		return err
-	}
-	linkedSource, sourceErr := os.Lstat(source)
-	linkedTarget, targetErr := os.Lstat(target)
-	if sourceErr != nil || targetErr != nil || !linkedSource.Mode().IsRegular() || !linkedTarget.Mode().IsRegular() || !os.SameFile(linkedSource, linkedTarget) || hardLinkCount(linkedSource) != 2 || hardLinkCount(linkedTarget) != 2 {
-		return errors.System.Newf("recording publish did not create the expected hard-link pair")
 	}
 	if err := syncLocalDirectory(filepath.Dir(target)); err != nil {
 		return err
 	}
-	if err := os.Remove(source); err != nil {
-		return err
+	if sourceDirectory := filepath.Dir(source); sourceDirectory != filepath.Dir(target) {
+		return syncLocalDirectory(sourceDirectory)
 	}
-	return syncLocalDirectory(filepath.Dir(source))
-}
-
-func completeLocalPublishAlias(source, target string) (bool, error) {
-	sourceInfo, sourceErr := os.Lstat(source)
-	targetInfo, targetErr := os.Lstat(target)
-	if goerrors.Is(sourceErr, os.ErrNotExist) || goerrors.Is(targetErr, os.ErrNotExist) {
-		return false, nil
-	}
-	if sourceErr != nil {
-		return false, sourceErr
-	}
-	if targetErr != nil {
-		return false, targetErr
-	}
-	if !sourceInfo.Mode().IsRegular() || !targetInfo.Mode().IsRegular() {
-		return false, errors.Config.Newf("recording publish path is not a regular file")
-	}
-	if !os.SameFile(sourceInfo, targetInfo) {
-		return false, nil
-	}
-	if hardLinkCount(sourceInfo) != 2 || hardLinkCount(targetInfo) != 2 {
-		return false, errors.Config.Newf("interrupted recording publish has an unsafe link count")
-	}
-	if err := syncLocalDirectory(filepath.Dir(target)); err != nil {
-		return false, err
-	}
-	if err := os.Remove(source); err != nil {
-		return false, err
-	}
-	if err := syncLocalDirectory(filepath.Dir(source)); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func hardLinkCount(info os.FileInfo) uint64 {
-	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-		return uint64(stat.Nlink)
-	}
-	return 0
+	return nil
 }
 
 func syncLocalDirectory(path string) error {
@@ -411,6 +172,5 @@ func syncLocalDirectory(path string) error {
 	if err != nil {
 		return err
 	}
-	defer directory.Close()
-	return directory.Sync()
+	return goerrors.Join(directory.Sync(), directory.Close())
 }

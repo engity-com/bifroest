@@ -18,6 +18,14 @@ If `true`, Bifröst records security-relevant actions in the audit log.
 
 Enabled audit logs must use distinct identity files and non-overlapping journal directories. Identity files must be outside every enabled journal directory.
 
+<<property("failurePolicy", "string", default="strict")>>
+Controls what happens when this audit log or its session-recording repository fails:
+
+* `strict` preserves fail-closed behavior. Initialization errors prevent startup, and runtime persistence errors abort the affected operation.
+* `bestEffort` logs the first failure prominently, disables the complete audit log including session recording for the remainder of the process, and lets the service continue. It does not retry or automatically re-enable local persistence; restart Bifröst after correcting the cause.
+
+Only `strict` and `bestEffort` are accepted. Remote-delivery outages continue to use their documented asynchronous retry behavior and do not by themselves disable the local audit log.
+
 <<property("identityFile", "File Path", "../data-type.md#file-path", default="<os specific>")>>
 Where the dedicated audit signing key is stored. If the file does not exist and the local journal does not contain history, an Ed25519 key will be created automatically.
 
@@ -49,13 +57,15 @@ Optional destinations that receive complete sealed segments from the authoritati
 
 The local journal is the authoritative, crash-safe source of the audit log. Remote targets replicate sealed journal segments and do not replace local persistence.
 
+The configured local filesystem is part of Bifröst's trusted operating environment. Bifröst exclusively locks and manages its journal paths, but does not use owners, ACLs, link checks, or protection against concurrent external mutation as a security boundary. Use an access-controlled local filesystem and do not modify managed paths while Bifröst is running. Cryptographic signatures, hash chains, size limits, quotas, structural layout validation, and crash recovery remain enforced; links and other unsupported entries in managed repository locations can still be rejected as malformed state.
+
 See [audit events](events.md) for the recorded security transitions, their structured fields, privacy guarantees, and failure behavior.
 
 ### Storage and recovery
 
 Bifröst signs and durably flushes every accepted record. Segments rotate at approximately 16 MiB and are linked through signed hashes; a signed head anchors the latest record.
 
-Startup repairs interrupted publication and incomplete trailing frames, but rejects invalid signatures, broken chains, and lost records. Large scans use private `.bifroest-work` directories, which can remain after an unclean process termination and may then be removed manually while Bifröst is stopped.
+Startup repairs interrupted publication and incomplete trailing frames, but rejects invalid signatures, broken chains, and lost records. Large scans use managed `.bifroest-work` directories, which can remain after an unclean process termination and may then be removed manually while Bifröst is stopped.
 
 Use [`bifroest audit verify`](../cli/audit/verify.md) for read-only verification. The `export` and `merge` commands produce JSON Lines only after complete verification; these outputs are not signed journals.
 
@@ -84,9 +94,11 @@ Successful or verified authentication and all later security events continue to 
 auditlog:
   - # name: default -> 'default' is the default name
     enabled: true
+    # failurePolicy: strict -> fail-closed is the default
 
   - name: restricted
     enabled: true
+    failurePolicy: bestEffort
     identityFile: /etc/engity/bifroest/restricted-auditlog-key
     journal:
       directory: /var/lib/engity/bifroest/restricted-auditlog

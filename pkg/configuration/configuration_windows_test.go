@@ -50,9 +50,10 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
     type: local`,
 			expected: Configuration{
 				Auditlogs: Auditlogs{{
-					Name:         DefaultAuditlogName,
-					Enabled:      DefaultAuditlogEnabled,
-					IdentityFile: DefaultAuditlogIdentityFile,
+					Name:          DefaultAuditlogName,
+					Enabled:       DefaultAuditlogEnabled,
+					FailurePolicy: DefaultAuditlogFailurePolicy,
+					IdentityFile:  DefaultAuditlogIdentityFile,
 					Journal: AuditlogJournal{
 						Directory:        DefaultAuditlogJournalDirectory,
 						MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,

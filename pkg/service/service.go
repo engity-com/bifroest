@@ -303,14 +303,22 @@ func (this *Service) prepare() (svc *service, err error) {
 	if err := this.prepareServer(ctx, svc, hostSigners); err != nil {
 		return fail(err)
 	}
-	for _, delivery := range svc.auditDeliveryOrder {
-		if err := delivery.Start(); err != nil {
-			return fail(err)
+	for _, auditlog := range this.Configuration.Auditlogs {
+		if delivery := svc.auditDeliveries[auditlog.Name]; delivery != nil && !svc.auditlogDisabled(auditlog.Name) {
+			if startErr := delivery.Start(); startErr != nil {
+				if err := svc.handleAuditlogFailure(auditlog.Name, "remote delivery", startErr); err != nil {
+					return fail(err)
+				}
+			}
 		}
 	}
-	for _, delivery := range svc.recordingDeliveryOrder {
-		if err := delivery.Start(); err != nil {
-			return fail(err)
+	for _, auditlog := range this.Configuration.Auditlogs {
+		if delivery := svc.recordingDeliveries[auditlog.Name]; delivery != nil && !svc.auditlogDisabled(auditlog.Name) {
+			if startErr := delivery.Start(); startErr != nil {
+				if err := svc.handleAuditlogFailure(auditlog.Name, "Recording delivery", startErr); err != nil {
+					return fail(err)
+				}
+			}
 		}
 	}
 
@@ -329,6 +337,12 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	svc.flowAuditRecorders = make(map[configuration.FlowName]audit.Recorder, len(this.Configuration.Flows))
 	svc.flowAuditlogs = make(map[configuration.FlowName]configuration.AuditlogName, len(this.Configuration.Flows))
 	svc.enabledAuditlogs = make(map[configuration.AuditlogName]bool, len(this.Configuration.Auditlogs))
+	svc.auditlogStates = make(map[configuration.AuditlogName]*auditlogRuntimeState, len(this.Configuration.Auditlogs))
+	for index := range this.Configuration.Auditlogs {
+		auditlog := &this.Configuration.Auditlogs[index]
+		svc.enabledAuditlogs[auditlog.Name] = auditlog.Enabled
+		svc.auditlogStates[auditlog.Name] = &auditlogRuntimeState{policy: auditlog.FailurePolicy}
+	}
 
 	serverPrivateKeys := hostSigners
 	var sftpIdentityPublicKeys []crypto.PublicKey
@@ -344,16 +358,24 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	}
 	for index := range this.Configuration.Auditlogs {
 		auditlog := &this.Configuration.Auditlogs[index]
-		svc.enabledAuditlogs[auditlog.Name] = auditlog.Enabled
 		identity, identityErr := audit.EnsureIdentity(auditlog)
 		if identityErr != nil {
-			return identityErr
+			if err := svc.handleAuditlogFailure(auditlog.Name, "identity", identityErr); err != nil {
+				return err
+			}
+			continue
 		}
 		if identityErr := identity.ValidateDedicatedFrom(hostSigners); identityErr != nil {
-			return identityErr
+			if err := svc.handleAuditlogFailure(auditlog.Name, "identity", identityErr); err != nil {
+				return err
+			}
+			continue
 		}
 		if identityErr := validateDistinctAuditIdentity(svc.auditIdentities, auditlog.Name, identity); identityErr != nil {
-			return identityErr
+			if err := svc.handleAuditlogFailure(auditlog.Name, "identity", identityErr); err != nil {
+				return err
+			}
+			continue
 		}
 		svc.auditIdentities[auditlog.Name] = identity
 	}
@@ -364,27 +386,39 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	resolvedEncryptionPublicKeys := make(map[configuration.AuditlogName]crypto.PublicKeys, len(this.Configuration.Auditlogs))
 	for index := range this.Configuration.Auditlogs {
 		auditlog := &this.Configuration.Auditlogs[index]
-		if !auditlog.Enabled {
+		if !auditlog.Enabled || svc.auditlogDisabled(auditlog.Name) {
 			continue
 		}
 		encryptionPublicKey, encryptionErr := audit.ResolveEncryptionPublicKey(auditlog.EncryptionPublicKey, auditlog.EncryptionPublicKeyFile)
 		if encryptionErr != nil {
-			return encryptionErr
+			if err := svc.handleAuditlogFailure(auditlog.Name, "encryption", encryptionErr); err != nil {
+				return err
+			}
+			continue
 		}
 		if encryptionErr := audit.ValidateEncryptionRecipientDedicatedFrom(encryptionPublicKey, serverPrivateKeys); encryptionErr != nil {
-			return encryptionErr
+			if err := svc.handleAuditlogFailure(auditlog.Name, "encryption", encryptionErr); err != nil {
+				return err
+			}
+			continue
 		}
 		if encryptionErr := audit.ValidateEncryptionRecipientDedicatedFromPublicKeys(encryptionPublicKey, sftpIdentityPublicKeys); encryptionErr != nil {
-			return encryptionErr
+			if err := svc.handleAuditlogFailure(auditlog.Name, "encryption", encryptionErr); err != nil {
+				return err
+			}
+			continue
 		}
 		if encryptionErr := audit.ValidateEncryptionRecipientDedicatedFromAuditIdentities(encryptionPublicKey, auditIdentities); encryptionErr != nil {
-			return encryptionErr
+			if err := svc.handleAuditlogFailure(auditlog.Name, "encryption", encryptionErr); err != nil {
+				return err
+			}
+			continue
 		}
 		resolvedEncryptionPublicKeys[auditlog.Name] = encryptionPublicKey
 	}
 	for index := range this.Configuration.Auditlogs {
 		auditlog := &this.Configuration.Auditlogs[index]
-		if !auditlog.Enabled || !auditlog.Recording.Enabled {
+		if !auditlog.Enabled || !auditlog.Recording.Enabled || svc.auditlogDisabled(auditlog.Name) {
 			continue
 		}
 		targetConfigurations := sessionRecordingTargetConfigurations(auditlog)
@@ -393,34 +427,61 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 			var targetErr error
 			targets, targetErr = audit.NewRemoteArtifactTargets(ctx, auditlog.Name, targetConfigurations)
 			if targetErr != nil {
-				return fmt.Errorf("cannot prepare Recording targets of auditlog %q: %w", auditlog.Name, targetErr)
+				failure := fmt.Errorf("cannot prepare Recording targets of auditlog %q: %w", auditlog.Name, targetErr)
+				if err := svc.handleAuditlogFailure(auditlog.Name, "recording targets", failure); err != nil {
+					return err
+				}
+				continue
 			}
-			svc.recordingTargets[auditlog.Name] = targets
-			svc.recordingTargetOrder = append(svc.recordingTargetOrder, auditlog.Name)
 		}
 		repository, repositoryErr := newSessionRecordingRepository(ctx, auditlog.Recording, svc.auditIdentities[auditlog.Name], resolvedEncryptionPublicKeys[auditlog.Name], auditlog.Name, targets)
 		if repositoryErr != nil {
-			return fmt.Errorf("cannot open Recording repository of auditlog %q: %w", auditlog.Name, repositoryErr)
+			failure := fmt.Errorf("cannot open Recording repository of auditlog %q: %w", auditlog.Name, repositoryErr)
+			if targets != nil {
+				failure = goerrors.Join(failure, targets.Close())
+			}
+			if err := svc.handleAuditlogFailure(auditlog.Name, "recording repository", failure); err != nil {
+				return err
+			}
+			continue
 		}
 		if targets == nil {
 			if validateErr := repository.receipts.ValidateDeliveryTargets(ctx, repository, nil); validateErr != nil {
-				return fmt.Errorf("cannot validate Recording delivery of auditlog %q: %w", auditlog.Name, goerrors.Join(validateErr, repository.Close()))
+				failure := fmt.Errorf("cannot validate Recording delivery of auditlog %q: %w", auditlog.Name, goerrors.Join(validateErr, repository.Close()))
+				if err := svc.handleAuditlogFailure(auditlog.Name, "recording delivery", failure); err != nil {
+					return err
+				}
+				continue
+			}
+		}
+		var delivery *audit.RemoteArtifactDelivery
+		if targets != nil {
+			auditor := &sessionRecordingDeliveryAuditor{service: svc, auditlog: auditlog.Name, repository: repository}
+			var deliveryErr error
+			delivery, deliveryErr = audit.NewRemoteArtifactDelivery(ctx, filepath.Join(auditlog.Recording.Directory, "sealed"), repository, repository.receipts, targets, auditor)
+			if deliveryErr != nil {
+				failure := fmt.Errorf("cannot prepare Recording delivery of auditlog %q: %w", auditlog.Name, goerrors.Join(deliveryErr, repository.Close(), targets.Close()))
+				if err := svc.handleAuditlogFailure(auditlog.Name, "recording delivery", failure); err != nil {
+					return err
+				}
+				continue
 			}
 		}
 		svc.recordingRepositories[auditlog.Name] = repository
 		svc.recordingRepositoryOrder = append(svc.recordingRepositoryOrder, auditlog.Name)
 		if targets != nil {
-			auditor := &sessionRecordingDeliveryAuditor{service: svc, auditlog: auditlog.Name, repository: repository}
-			delivery, deliveryErr := audit.NewRemoteArtifactDelivery(ctx, filepath.Join(auditlog.Recording.Directory, "sealed"), repository, repository.receipts, targets, auditor)
-			if deliveryErr != nil {
-				return fmt.Errorf("cannot prepare Recording delivery of auditlog %q: %w", auditlog.Name, deliveryErr)
-			}
+			svc.recordingTargets[auditlog.Name] = targets
+			svc.recordingTargetOrder = append(svc.recordingTargetOrder, auditlog.Name)
 			svc.recordingDeliveries[auditlog.Name] = delivery
 			svc.recordingDeliveryOrder = append(svc.recordingDeliveryOrder, delivery)
 		}
 	}
 	for index := range this.Configuration.Auditlogs {
 		auditlog := &this.Configuration.Auditlogs[index]
+		if svc.auditlogDisabled(auditlog.Name) {
+			svc.auditRecorders[auditlog.Name] = audit.NewNoopRecorder()
+			continue
+		}
 		identity := svc.auditIdentities[auditlog.Name]
 		recorderConfiguration := *auditlog
 		if auditlog.Enabled {
@@ -429,18 +490,31 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 		}
 		recorder, recorderErr := audit.NewRecorder(&recorderConfiguration, identity)
 		if recorderErr != nil {
-			return recorderErr
+			if err := svc.handleAuditlogFailure(auditlog.Name, "journal", recorderErr); err != nil {
+				return err
+			}
+			svc.auditRecorders[auditlog.Name] = audit.NewNoopRecorder()
+			continue
 		}
-		svc.auditRecorders[auditlog.Name] = recorder
-		svc.auditRecorderOrder = append(svc.auditRecorderOrder, recorder)
+		policyRecorder := audit.Recorder(recorder)
+		if auditlog.FailurePolicy == configuration.AuditlogFailurePolicyBestEffort {
+			policyRecorder = &failurePolicyAuditRecorder{service: svc, auditlog: auditlog.Name, delegate: recorder}
+		}
 		if auditlog.Enabled && len(auditlog.Targets) > 0 {
 			delivery, deliveryErr := audit.NewRemoteDelivery(ctx, auditlog, identity)
 			if deliveryErr != nil {
-				return deliveryErr
+				failure := goerrors.Join(deliveryErr, policyRecorder.Close())
+				if err := svc.handleAuditlogFailure(auditlog.Name, "remote delivery", failure); err != nil {
+					return err
+				}
+				svc.auditRecorders[auditlog.Name] = audit.NewNoopRecorder()
+				continue
 			}
 			svc.auditDeliveries[auditlog.Name] = delivery
 			svc.auditDeliveryOrder = append(svc.auditDeliveryOrder, delivery)
 		}
+		svc.auditRecorders[auditlog.Name] = policyRecorder
+		svc.auditRecorderOrder = append(svc.auditRecorderOrder, policyRecorder)
 	}
 	if err := svc.replaySessionRecordingLifecycles(ctx); err != nil {
 		return err
@@ -684,6 +758,7 @@ type service struct {
 	flowAuditRecorders       map[configuration.FlowName]audit.Recorder
 	flowAuditlogs            map[configuration.FlowName]configuration.AuditlogName
 	enabledAuditlogs         map[configuration.AuditlogName]bool
+	auditlogStates           map[configuration.AuditlogName]*auditlogRuntimeState
 	unauthenticatedAudit     *unauthenticatedAuditLimiter
 	sessions                 session.CloseableRepository
 	authorizer               authorization.CloseableAuthorizer
@@ -702,6 +777,12 @@ type service struct {
 
 	activeConnections   atomic.Int64
 	connectionLifecycle *connectionLifecycle
+}
+
+type auditlogRuntimeState struct {
+	policy   configuration.AuditlogFailurePolicy
+	disabled atomic.Bool
+	logOnce  sync.Once
 }
 
 func withLazyContextOrFieldExclude[C any](ctx essh.Context, ctxKey any) fields.Lazy {

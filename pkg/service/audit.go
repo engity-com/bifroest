@@ -21,6 +21,10 @@ func (this *service) recordFlowAudit(ctx context.Context, flow configuration.Flo
 		return err
 	}
 	recorder := this.flowAuditRecorders[flow]
+	auditlog, configured := this.flowAuditlogs[flow]
+	if configured && this.auditlogDisabled(auditlog) {
+		return nil
+	}
 	if recorder == nil {
 		return fail(errors.System.Newf("no audit recorder configured for flow %q", flow))
 	}
@@ -47,10 +51,76 @@ func (this *service) recordUnauthenticatedFlowAudit(ctx context.Context, flow co
 	if !ok {
 		return fail(errors.System.Newf("no auditlog configured for flow %q", flow))
 	}
+	if this.auditlogDisabled(auditlog) {
+		return nil
+	}
 	if err := this.unauthenticatedAudit.Record(ctx, auditlog, this.enabledAuditlogs[auditlog], recorder, event); err != nil {
 		return fail(errors.System.Newf("cannot record unauthenticated audit event %q for flow %q: %w", event.Name, flow, err))
 	}
 	return nil
+}
+
+func (this *service) auditlogDisabled(name configuration.AuditlogName) bool {
+	state := this.auditlogStates[name]
+	return state != nil && state.disabled.Load()
+}
+
+func (this *service) handleAuditlogFailure(name configuration.AuditlogName, component string, err error) error {
+	if err == nil {
+		return nil
+	}
+	state := this.auditlogStates[name]
+	if state == nil || state.policy == configuration.AuditlogFailurePolicyStrict {
+		return err
+	}
+	state.disabled.Store(true)
+	state.logOnce.Do(func() {
+		this.logger().
+			With("auditlog", name).
+			With("component", component).
+			WithError(err).
+			Error("auditlog failed and was disabled by best-effort failure policy")
+	})
+	return nil
+}
+
+type failurePolicyAuditRecorder struct {
+	service  *service
+	auditlog configuration.AuditlogName
+	delegate audit.Recorder
+}
+
+func (this *failurePolicyAuditRecorder) Record(ctx context.Context, event audit.Event) error {
+	if this.service.auditlogDisabled(this.auditlog) {
+		return nil
+	}
+	return this.service.handleAuditlogFailure(this.auditlog, "journal", this.delegate.Record(ctx, event))
+}
+
+func (this *failurePolicyAuditRecorder) RecordSuppressible(ctx context.Context, event audit.Event) (bool, error) {
+	if this.service.auditlogDisabled(this.auditlog) {
+		return true, nil
+	}
+	if recorder, ok := this.delegate.(audit.SuppressibleRecorder); ok {
+		recorded, err := recorder.RecordSuppressible(ctx, event)
+		return recorded, this.service.handleAuditlogFailure(this.auditlog, "journal", err)
+	}
+	err := this.Record(ctx, event)
+	return err == nil, err
+}
+
+func (this *failurePolicyAuditRecorder) Seal() error {
+	if this.service.auditlogDisabled(this.auditlog) {
+		return nil
+	}
+	if recorder, ok := this.delegate.(audit.SealableRecorder); ok {
+		return this.service.handleAuditlogFailure(this.auditlog, "journal", recorder.Seal())
+	}
+	return nil
+}
+
+func (this *failurePolicyAuditRecorder) Close() error {
+	return this.delegate.Close()
 }
 
 func (this *service) authorizationAuditEvent(ctx essh.Context, auth authorization.Authorization, name audit.EventName, domain audit.EventDomain) audit.Event {
@@ -128,6 +198,9 @@ func (this *sessionRecordingDeliveryAuditor) RecordRemoteArtifactDelivery(ctx co
 	}
 	if err := recorder.Record(ctx, event); err != nil {
 		return errors.System.Newf("cannot record Recording delivery audit event %q for auditlog %q: %w", event.Name, this.auditlog, err)
+	}
+	if this.service.auditlogDisabled(this.auditlog) {
+		return errors.System.Newf("auditlog %q was disabled before the Recording delivery audit event was committed", this.auditlog)
 	}
 	return nil
 }

@@ -3,113 +3,38 @@
 package audit
 
 import (
-	"fmt"
 	"os"
-	"unsafe"
-
-	"golang.org/x/sys/windows"
 
 	"github.com/engity-com/bifroest/pkg/errors"
-	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-// FILE_GENERIC_READ | DELETE | FILE_WRITE_ATTRIBUTES keeps segment contents
-// immutable while allowing Windows cleanup to clear read-only and unlink them.
-const sealedJournalWindowsAccess = "0x00130189"
-
-func secureJournalDirectory(path string, _ os.FileInfo) error {
-	return secureJournalPath(path)
+func secureJournalDirectory(path string, info os.FileInfo) error {
+	if !info.IsDir() {
+		return errors.Config.Newf("%q is not a directory", path)
+	}
+	return nil
 }
 
 func secureJournalFile(path string, file *os.File) error {
-	if file == nil {
-		return errors.System.Newf("cannot inspect nil audit journal file %q", path)
+	info, err := file.Stat()
+	if err != nil {
+		return errors.System.Newf("cannot inspect audit journal path %q: %w", path, err)
 	}
-	if err := requireSingleJournalHardLink(path, file); err != nil {
-		return err
-	}
-	return secureJournalPath(path)
-}
-
-func requireSingleJournalHardLink(path string, file *os.File) error {
-	var information windows.ByHandleFileInformation
-	if err := windows.GetFileInformationByHandle(windows.Handle(file.Fd()), &information); err != nil {
-		return errors.System.Newf("cannot inspect link count of audit journal file %q: %w", path, err)
-	}
-	if information.NumberOfLinks != 1 {
-		return errors.Config.Newf("audit journal file %q has %d hard links instead of one", path, information.NumberOfLinks)
+	if !info.Mode().IsRegular() {
+		return errors.Config.Newf("%q is not a regular file", path)
 	}
 	return nil
 }
 
-func secureJournalPath(path string) error {
-	return secureJournalPathWithAccess(path, "FA")
-}
-
-func secureJournalPathWithAccess(path, access string) error {
-	userSid, err := currentProcessUserSid()
-	if err != nil {
-		return err
-	}
-	ownerSid, err := currentProcessOwnerSid()
-	if err != nil {
-		return err
-	}
-	nativePath, err := sys.WindowsExtendedPath(path)
-	if err != nil {
-		return errors.System.Newf("cannot resolve native audit journal path %q: %w", path, err)
-	}
-	existing, err := windows.GetNamedSecurityInfo(nativePath, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
-	if err != nil {
-		return errors.System.Newf("cannot inspect owner of %q: %w", path, err)
-	}
-	if existing == nil {
-		return errors.Config.Newf("%q has no security descriptor", path)
-	}
-	owner, _, err := existing.Owner()
-	if err != nil {
-		return errors.System.Newf("cannot resolve owner of %q: %w", path, err)
-	}
-	if owner == nil || (!owner.Equals(userSid) && !owner.Equals(ownerSid)) {
-		return errors.Config.Newf("%q is owned by %v instead of the current process user %s or token owner %s", path, owner, userSid, ownerSid)
-	}
-	descriptor, err := windows.SecurityDescriptorFromString(fmt.Sprintf("D:P(A;;%s;;;SY)(A;;%s;;;%s)", access, access, userSid.String()))
-	if err != nil {
-		return errors.System.Newf("cannot create audit journal security descriptor: %w", err)
-	}
-	dacl, _, err := descriptor.DACL()
-	if err != nil {
-		return errors.System.Newf("cannot create audit journal access-control list: %w", err)
-	}
-	if err := windows.SetNamedSecurityInfo(nativePath, windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil, nil, dacl, nil); err != nil {
-		return errors.System.Newf("cannot protect audit journal path %q: %w", path, err)
-	}
-	return nil
-}
-
-func makeActiveJournalWritable(path string) error {
-	if err := secureJournalPath(path); err != nil {
-		return err
-	}
-	if err := os.Chmod(path, journalFileMode); err != nil {
-		return errors.System.Newf("cannot make active audit segment writable %q: %w", path, err)
-	}
+func makeActiveJournalWritable(string) error {
 	return nil
 }
 
 func sealJournalFile(path string, file *os.File) error {
-	if err := requireSingleJournalHardLink(path, file); err != nil {
-		return err
-	}
 	if err := file.Sync(); err != nil {
 		return errors.System.Newf("cannot flush sealed audit segment %q: %w", path, err)
 	}
-	if err := os.Chmod(path, 0400); err != nil {
-		return errors.System.Newf("cannot mark sealed audit segment read-only %q: %w", path, err)
-	}
-	return secureJournalPathWithAccess(path, sealedJournalWindowsAccess)
+	return nil
 }
 
 func openSealedJournal(path string) (*os.File, error) {
@@ -117,74 +42,9 @@ func openSealedJournal(path string) (*os.File, error) {
 	if err != nil {
 		return nil, errors.System.Newf("cannot open sealed audit segment %q: %w", path, err)
 	}
-	if err := requireSingleJournalHardLink(path, file); err != nil {
+	if err := secureJournalFile(path, file); err != nil {
 		_ = file.Close()
 		return nil, err
-	}
-	if err := secureJournalPathWithAccess(path, sealedJournalWindowsAccess); err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	info, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return nil, errors.System.Newf("cannot inspect sealed audit segment %q: %w", path, err)
-	}
-	if info.Mode().Perm()&0200 != 0 {
-		_ = file.Close()
-		return nil, errors.Config.Newf("sealed audit segment %q is writable", path)
-	}
-	pathInfo, err := os.Lstat(path)
-	if err != nil || !pathInfo.Mode().IsRegular() || !os.SameFile(info, pathInfo) {
-		_ = file.Close()
-		if err != nil {
-			return nil, errors.System.Newf("cannot inspect sealed audit segment path %q: %w", path, err)
-		}
-		return nil, errors.System.Newf("sealed audit segment %q changed while opening", path)
 	}
 	return file, nil
-}
-
-func currentProcessUserSid() (*windows.SID, error) {
-	user, err := windows.GetCurrentProcessToken().GetTokenUser()
-	if err != nil {
-		return nil, errors.System.Newf("cannot read current process user: %w", err)
-	}
-	if user == nil || user.User.Sid == nil {
-		return nil, errors.System.Newf("current process token has no user SID")
-	}
-	result, err := user.User.Sid.Copy()
-	if err != nil {
-		return nil, errors.System.Newf("cannot copy current process user SID: %w", err)
-	}
-	return result, nil
-}
-
-type tokenOwner struct {
-	owner *windows.SID
-}
-
-func currentProcessOwnerSid() (*windows.SID, error) {
-	token := windows.GetCurrentProcessToken()
-	var required uint32
-	err := windows.GetTokenInformation(token, windows.TokenOwner, nil, 0, &required)
-	if err != nil && !errors.Is(err, windows.ERROR_INSUFFICIENT_BUFFER) {
-		return nil, errors.System.Newf("cannot determine current process token owner size: %w", err)
-	}
-	if required == 0 {
-		return nil, errors.System.Newf("current process token has no owner information")
-	}
-	raw := make([]byte, required)
-	if err := windows.GetTokenInformation(token, windows.TokenOwner, &raw[0], uint32(len(raw)), &required); err != nil {
-		return nil, errors.System.Newf("cannot read current process token owner: %w", err)
-	}
-	owner := (*tokenOwner)(unsafe.Pointer(&raw[0])).owner
-	if owner == nil {
-		return nil, errors.System.Newf("current process token has no owner SID")
-	}
-	result, err := owner.Copy()
-	if err != nil {
-		return nil, errors.System.Newf("cannot copy current process token owner SID: %w", err)
-	}
-	return result, nil
 }

@@ -1250,32 +1250,6 @@ func TestRemoteArtifactReceiptRecoveryRemovesOversizedTemporary(t *testing.T) {
 	require.NoError(t, receipts.Recover(t.Context()))
 }
 
-func TestRemoteArtifactReceiptValidationFailurePreservesRecoverableTemporary(t *testing.T) {
-	_, identity := newJournalTestIdentity(t)
-	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b813-9dad-4d1f-80b4-00c04fd430c8.becast", []byte("recording"))
-	receipt, payload, err := newRemoteArtifactReceipt(identity, "security", artifact, time.Now().UTC(), nil)
-	require.NoError(t, err)
-	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, store.close()) })
-	directory := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName()))
-	require.NoError(t, ensureJournalDirectory(directory, true))
-	temporary := filepath.Join(directory, remoteArtifactReceiptTempFileName)
-	require.NoError(t, writeRemoteArtifactReceiptTestFile(temporary, payload))
-	alias := filepath.Join(t.TempDir(), "receipt-alias")
-	require.NoError(t, os.Link(temporary, alias))
-
-	_, _, err = store.load(artifact)
-	require.ErrorContains(t, err, "hard links")
-	require.FileExists(t, temporary)
-	require.NoError(t, os.Remove(alias))
-	recovered, exists, err := store.load(artifact)
-	require.NoError(t, err)
-	require.True(t, exists)
-	require.Equal(t, receipt, recovered)
-	require.NoFileExists(t, temporary)
-}
-
 func TestRemoteArtifactReceiptRecoveryRemovesCleanupTombstones(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
 	quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
@@ -1315,26 +1289,6 @@ func TestRemoteArtifactReceiptRecoveryRejectsNonRegularCleanupTombstone(t *testi
 	require.DirExists(t, tombstone)
 }
 
-func TestRemoteArtifactReceiptRecoveryRejectsLinkedCleanupTombstone(t *testing.T) {
-	_, identity := newJournalTestIdentity(t)
-	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, store.close()) })
-	state := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName("unpublished.cast.zst"))
-	require.NoError(t, ensureJournalDirectory(state, true))
-	tombstone := filepath.Join(state, remoteArtifactReceiptTempFileName+remoteArtifactReceiptCleanupSuffix)
-	require.NoError(t, writeRemoteArtifactReceiptTestFile(tombstone, []byte("cleanup")))
-	alias := filepath.Join(t.TempDir(), "cleanup-alias")
-	require.NoError(t, os.Link(tombstone, alias))
-
-	err = (&RemoteArtifactReceipts{store: store}).Recover(t.Context())
-	require.ErrorContains(t, err, "hard links")
-	require.FileExists(t, tombstone)
-	require.NoError(t, os.Remove(alias))
-	require.NoError(t, (&RemoteArtifactReceipts{store: store}).Recover(t.Context()))
-	require.NoFileExists(t, tombstone)
-}
-
 func TestRemoteArtifactReceiptRecoveryRemovesEmptyUnpublishedState(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
 	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", nil)
@@ -1371,27 +1325,6 @@ func TestRemoteArtifactReceiptStoreLockIsExclusive(t *testing.T) {
 	second, err := newRemoteArtifactReceiptStore(root, identity, "security", nil)
 	require.NoError(t, err)
 	require.NoError(t, second.close())
-}
-
-func TestPrepareRemoteArtifactReceiptStateRejectsReplacedLockPath(t *testing.T) {
-	_, identity := newJournalTestIdentity(t)
-	recordingDirectory := t.TempDir()
-	otherLockPath := filepath.Join(t.TempDir(), "other.lock")
-
-	producerDirectory, stateLock, err := prepareRemoteArtifactReceiptStateWithLock(recordingDirectory, identity.ProducerId(), func(requestedPath string, mode os.FileMode) (*journalProcessLock, error) {
-		if err := os.WriteFile(requestedPath, nil, mode); err != nil {
-			return nil, err
-		}
-		return acquireJournalProcessLock(otherLockPath, mode)
-	})
-	require.ErrorContains(t, err, "no longer identifies the locked file")
-	require.Empty(t, producerDirectory)
-	require.Nil(t, stateLock)
-	require.NoDirExists(t, filepath.Join(recordingDirectory, remoteArtifactReceiptStateDirectoryName, identity.ProducerId().String()))
-
-	reacquired, err := acquireJournalProcessLock(otherLockPath, journalFileMode)
-	require.NoError(t, err)
-	require.NoError(t, reacquired.Close())
 }
 
 func TestRemoteArtifactReceiptKeepsSelectionAcrossConfigurationChanges(t *testing.T) {

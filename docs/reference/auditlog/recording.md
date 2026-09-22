@@ -16,7 +16,7 @@ Standard input and raw keyboard input are never recorded as separate input event
 
 The signed Cast is a terminal-playback representation, not a packet capture. PTY line endings are normalized for terminal playback, event times are rounded to milliseconds, and invalid UTF-8 is represented safely in standard player output while the original bytes remain in Bifröst metadata. These transformations preserve useful playback and verification but do not reproduce the original transport byte stream or scheduling exactly.
 
-Recording is fail-closed for the affected SSH operation. If Bifröst cannot create, durably checkpoint, or seal the local recording, it closes that operation instead of continuing without a complete recording. A remote-target outage does not immediately interrupt the operation because delivery is asynchronous, but retained artifacts continue to consume the local spool.
+With the parent audit log's default `failurePolicy: strict`, recording is fail-closed for the affected SSH operation. If Bifröst cannot create, durably checkpoint, or seal the local recording, it closes that operation instead of continuing without a complete recording. With `failurePolicy: bestEffort`, the failure disables the complete parent audit log and recording repository until restart while the SSH operation continues without further recording. A remote-target outage does not immediately interrupt the operation because delivery is asynchronous, but retained artifacts continue to consume the local spool.
 
 ## Properties
 
@@ -24,7 +24,7 @@ Recording is fail-closed for the affected SSH operation. If Bifröst cannot crea
 Enables session recording for flows that reference this audit log. The parent audit log must also be enabled.
 
 <<property("directory", "File Path", "../data-type.md#file-path", default="<os specific>")>>
-The exclusively managed local recording repository. Do not modify it while Bifröst is running or apply an external rotation tool to it.
+The exclusively managed local recording repository. Its filesystem is trusted: Bifröst does not use owners, ACLs, link checks, or protection against concurrent external mutation as a security boundary. Structural layout validation can still reject links and other unsupported entries as malformed repository state. Place it on an access-controlled local filesystem, do not modify it while Bifröst is running, and do not apply an external rotation tool to it.
 
 The default depends on the operating system:
 
@@ -98,7 +98,7 @@ The repository contains these managed areas:
 | `active/` | Recordings currently being written and their signed recovery heads. |
 | `sealed/` | Immutable `.cast.zst` or `.becast` artifacts ready for inspection and delivery. |
 | `quarantine/` | Interrupted work that could not be accepted safely. |
-| `.bifroest-work/` | Private publication and recovery work directories. |
+| `.bifroest-work/` | Durable publication and recovery work directories. |
 | `.delivery/` | Signed remote-delivery receipts and audit-outbox state. |
 | `.bifroest-recording-format` | Persistent repository-format binding. |
 | `.bifroest-recording.lock` | Exclusive repository lock. |
@@ -107,7 +107,7 @@ Temporary format markers, signed heads, and retention tombstones can also appear
 
 At startup, Bifröst completes interrupted publication and verifies active recordings before opening listeners. Recoverable physical tails are truncated to the last durable boundary, and interrupted active recordings are sealed as `incomplete` with reason `startup-recovery`. Correlation data in the signed lifecycle outbox permits the terminal event to be finalized even for BECast without the recipient private key. Before publication, the outbox binds the event and receipt in a non-replayable `prepared` state. Only successful atomic publication and verification promote it to `pending`. Startup alone replays pending events at least once, so an interruption after audit-journal commit but before outbox completion can produce an identical duplicate.
 
-Invalid, not-yet-accepted work directories are moved to `quarantine/` when they can be isolated safely, after which startup continues. Integrity failures in accepted active or sealed state, unsafe rollback behind a signed checkpoint, and repository state that cannot be isolated fail startup closed. Bifröst has no manual recording-repair command. Preserve the repository unchanged for investigation and use [`recording inspect`](../cli/recording/inspect.md) only on sealed artifact copies or safely obtained remote artifacts.
+Invalid, not-yet-accepted work directories are moved to `quarantine/` when they can be isolated, after which startup continues. Integrity failures in accepted active or sealed state, rollback behind a signed checkpoint, and repository state that cannot be isolated follow the parent audit log's failure policy. Bifröst has no manual recording-repair command. Preserve the repository unchanged for investigation and use [`recording inspect`](../cli/recording/inspect.md) only on sealed artifact copies or safely obtained remote artifacts.
 
 ## Remote delivery and retention
 

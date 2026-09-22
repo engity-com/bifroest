@@ -20,8 +20,9 @@ func TestLoadSftpIdentityFileValidatesWindowsPermissions(t *testing.T) {
 	_, err = loadSftpIdentityFile(name)
 	require.NoError(t, err)
 
-	owner, err := currentProcessUserSid()
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	require.NoError(t, err)
+	owner := user.User.Sid
 	descriptor, err := windows.SecurityDescriptorFromString(fmt.Sprintf("D:P(A;;FR;;;WD)(A;;FR;;;%s)", owner.String()))
 	require.NoError(t, err)
 	dacl, _, err := descriptor.DACL()

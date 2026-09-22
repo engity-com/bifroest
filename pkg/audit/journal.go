@@ -620,11 +620,6 @@ func canonicalJournalDirectory(path string) (string, error) {
 	} else if !sys.IsNotExist(err) {
 		return "", errors.Config.Newf("cannot canonicalize audit journal directory %q: %w", absolute, err)
 	}
-	if info, err := os.Lstat(absolute); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return "", errors.Config.Newf("cannot canonicalize dangling audit journal symlink %q", absolute)
-	} else if err != nil && !sys.IsNotExist(err) {
-		return "", errors.System.Newf("cannot inspect audit journal directory %q: %w", absolute, err)
-	}
 	canonicalParent, err := filepath.EvalSymlinks(parent)
 	if err != nil {
 		return "", errors.Config.Newf("cannot canonicalize parent of audit journal directory %q: %w", absolute, err)
@@ -743,21 +738,7 @@ func validateJournalRoot(directory string, producerId ProducerId) error {
 }
 
 func openActiveJournal(path string) (*os.File, error) {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, journalFileMode)
-	if err == nil {
-		return prepareActiveJournal(path, file)
-	}
-	if !errors.Is(err, fs.ErrExist) {
-		return nil, errors.System.Newf("cannot create active audit journal %q: %w", path, err)
-	}
-	info, lstatErr := os.Lstat(path)
-	if lstatErr != nil {
-		return nil, errors.System.Newf("cannot inspect active audit journal %q: %w", path, lstatErr)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, errors.Config.Newf("active audit journal %q is not a regular file", path)
-	}
-	file, err = os.OpenFile(path, os.O_RDWR, journalFileMode)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, journalFileMode)
 	if err != nil {
 		return nil, errors.System.Newf("cannot open active audit journal %q: %w", path, err)
 	}
@@ -765,21 +746,7 @@ func openActiveJournal(path string) (*os.File, error) {
 }
 
 func openJournalLockFile(path string, mode os.FileMode) (*os.File, error) {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, mode)
-	if err == nil {
-		return prepareJournalLockFile(path, file)
-	}
-	if !errors.Is(err, fs.ErrExist) {
-		return nil, err
-	}
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, errors.Config.Newf("audit journal lock %q is not a regular file", path)
-	}
-	file, err = os.OpenFile(path, os.O_RDWR, mode)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, mode)
 	if err != nil {
 		return nil, err
 	}
@@ -787,20 +754,6 @@ func openJournalLockFile(path string, mode os.FileMode) (*os.File, error) {
 }
 
 func prepareJournalLockFile(path string, file *os.File) (*os.File, error) {
-	openedInfo, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	pathInfo, err := os.Lstat(path)
-	if err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	if !pathInfo.Mode().IsRegular() || !os.SameFile(openedInfo, pathInfo) {
-		_ = file.Close()
-		return nil, errors.System.Newf("audit journal lock path %q changed while opening the file", path)
-	}
 	if err := secureJournalFile(path, file); err != nil {
 		_ = file.Close()
 		return nil, err
@@ -833,31 +786,22 @@ func prepareActiveJournal(path string, file *os.File) (*os.File, error) {
 }
 
 func validateOpenJournalFile(path string, file *os.File) error {
-	openedInfo, err := file.Stat()
+	if file == nil {
+		return errors.System.Newf("active audit journal %q is closed", path)
+	}
+	info, err := file.Stat()
 	if err != nil {
 		return errors.System.Newf("cannot inspect open active audit journal %q: %w", path, err)
 	}
-	pathInfo, err := os.Lstat(path)
-	if err != nil {
-		return errors.System.Newf("cannot inspect active audit journal path %q: %w", path, err)
-	}
-	if !pathInfo.Mode().IsRegular() || !os.SameFile(openedInfo, pathInfo) {
-		return errors.System.Newf("active audit journal path %q changed while opening the file", path)
+	if !info.Mode().IsRegular() {
+		return errors.Config.Newf("active audit journal %q is not a regular file", path)
 	}
 	return nil
 }
 
 func validateLockedJournalPath(processLock *journalProcessLock, path string) error {
-	lockedInfo, err := processLock.file.Stat()
-	if err != nil {
-		return errors.System.Newf("cannot inspect locked audit journal path %q: %w", path, err)
-	}
-	pathInfo, err := os.Lstat(path)
-	if err != nil {
-		return errors.System.Newf("cannot inspect audit journal lock path %q: %w", path, err)
-	}
-	if !pathInfo.Mode().IsRegular() || !os.SameFile(lockedInfo, pathInfo) {
-		return errors.System.Newf("audit journal lock path %q no longer identifies the locked file", path)
+	if processLock == nil || processLock.file == nil {
+		return errors.System.Newf("audit journal lock %q is closed", path)
 	}
 	return nil
 }

@@ -482,6 +482,33 @@ func TestExecuteSessionRecordingWriteFailureIsFailClosed(t *testing.T) {
 	require.Empty(t, failedEvents[0].RecordingDigest)
 }
 
+func TestExecuteSessionRecordingWriteFailureBestEffortContinues(t *testing.T) {
+	root := t.TempDir()
+	var repository *sessionRecordingRepository
+	testEnvironment := &authorizedKeysTestEnvironment{run: func(task environment.Task) (int, error) {
+		if err := repository.Close(); err != nil {
+			return -1, fmt.Errorf("cannot close test Recording repository: %w", err)
+		}
+		_, err := task.SshSession().Write([]byte("cannot-persist"))
+		return 0, err
+	}}
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", testEnvironment, func(conf *configuration.Configuration) {
+		enableSessionRecordingForLifecycleTest(conf, root)
+		conf.Auditlogs[0].FailurePolicy = configuration.AuditlogFailurePolicyBestEffort
+	})
+	auditlog := server.service.flowAuditlogs[server.service.Configuration.Flows[0].Name]
+	repository = server.service.recordingRepositories[auditlog]
+	client := server.mustDial(t)
+	sshSession, err := client.NewSession()
+	require.NoError(t, err)
+	var stdout bytes.Buffer
+	sshSession.Stdout = &stdout
+
+	require.NoError(t, sshSession.Run("best-effort"))
+	require.Equal(t, "cannot-persist", stdout.String())
+	require.True(t, server.service.auditlogDisabled(auditlog))
+}
+
 func TestExecuteSessionRecordingStartedAuditFailurePreventsEnvironmentRun(t *testing.T) {
 	for _, test := range []struct {
 		name             string

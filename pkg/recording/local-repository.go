@@ -250,17 +250,13 @@ func newLocalRepository[Head, Summary any](ctx context.Context, directory string
 	if err != nil {
 		return nil, errors.Config.Newf("cannot resolve local recording directory: %w", err)
 	}
-	formatProtection, err := prepareLocalFormatProtection(filepath.Join(canonical, localFormatFileName))
-	if err != nil {
-		return nil, errors.System.Newf("cannot inspect existing local recording format marker: %w", err)
-	}
 	if err := ensureLocalDirectory(canonical); err != nil {
-		return nil, errors.System.Newf("cannot prepare local recording directory %q: %w", canonical, stderrors.Join(err, formatProtection.close()))
+		return nil, errors.System.Newf("cannot prepare local recording directory %q: %w", canonical, err)
 	}
 	lockPath := filepath.Join(canonical, localLockFileName)
 	processLock, err := acquireLocalProcessLock(lockPath)
 	if err != nil {
-		return nil, errors.System.Newf("cannot lock local recording repository %q: %w", canonical, stderrors.Join(err, formatProtection.close()))
+		return nil, errors.System.Newf("cannot lock local recording repository %q: %w", canonical, err)
 	}
 	committed := false
 	defer func() {
@@ -269,10 +265,7 @@ func newLocalRepository[Head, Summary any](ctx context.Context, directory string
 		}
 	}()
 	if err := validateLocalLock(processLock, lockPath); err != nil {
-		return nil, stderrors.Join(err, formatProtection.close())
-	}
-	if err := formatProtection.protect(processLock); err != nil {
-		return nil, errors.System.Newf("cannot protect existing local recording format marker: %w", err)
+		return nil, err
 	}
 	result := &localRepository[Head, Summary]{
 		mutex:          newLocalRepositoryMutex(),
@@ -467,9 +460,6 @@ func (this *localRepository[Head, Summary]) openSealed(ctx context.Context, id I
 	}
 	if current.Size() != info.Size() || !os.SameFile(info, current) {
 		return nil, errors.System.Newf("sealed recording changed while being verified")
-	}
-	if err := validateOpenLocalFile(path, file); err != nil {
-		return nil, err
 	}
 	keepOpen = true
 	return &LocalSealedArtifact[Summary]{
@@ -865,9 +855,6 @@ func (this *localRepository[Head, Summary]) createActive(ctx context.Context, he
 		file:       file,
 		writer:     writer,
 	}
-	if err := validateOpenLocalFile(active.path, file); err != nil {
-		return nil, err
-	}
 	this.active[active.id] = active
 	closeFile = false
 	return active, nil
@@ -1185,9 +1172,6 @@ func (this *localActive[Head, Summary]) validateStorageLocked() error {
 		return this.poisoned
 	}
 	if err := validateLocalLock(this.repository.processLock, this.repository.lockPath); err != nil {
-		return this.poison(err)
-	}
-	if err := validateOpenLocalFile(this.path, this.file); err != nil {
 		return this.poison(err)
 	}
 	return nil
@@ -1576,7 +1560,6 @@ func (this *localRepository[Head, Summary]) recoverActiveDirectory(ctx context.C
 	}
 	contentPath := filepath.Join(directory, this.format.contentFileName())
 	headPath := filepath.Join(directory, localHeadFileName)
-	target := filepath.Join(this.sealedPath, id.String()+this.format.sealedSuffix())
 	if _, err := os.Lstat(contentPath); stderrors.Is(err, fs.ErrNotExist) {
 		return this.completePublishedRecovery(ctx, id, directory, headPath)
 	} else if err != nil {
@@ -1588,11 +1571,6 @@ func (this *localRepository[Head, Summary]) recoverActiveDirectory(ctx context.C
 	}
 	if this.format.headId(head) != id || this.format.headProducerId(head) != this.identity.ProducerId() {
 		return errors.System.Newf("active recording head identity does not match its directory")
-	}
-	if aliased, err := completeLocalPublishAlias(contentPath, target); err != nil {
-		return err
-	} else if aliased {
-		return this.completePublishedRecovery(ctx, id, directory, headPath)
 	}
 	if err := this.preflightActiveContent(contentPath, head, ctx); err != nil {
 		return err

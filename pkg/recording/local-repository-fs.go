@@ -25,16 +25,6 @@ func canonicalLocalDirectory(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if canonical, err := filepath.EvalSymlinks(absolute); err == nil {
-		return canonical, nil
-	} else if !goerrors.Is(err, fs.ErrNotExist) {
-		return "", err
-	}
-	if info, err := os.Lstat(absolute); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return "", errors.Config.Newf("local recording directory is a dangling symlink")
-	} else if err != nil && !goerrors.Is(err, fs.ErrNotExist) {
-		return "", err
-	}
 	parent := filepath.Dir(absolute)
 	if err := os.MkdirAll(parent, localDirectoryMode); err != nil {
 		return "", err
@@ -47,14 +37,14 @@ func canonicalLocalDirectory(path string) (string, error) {
 }
 
 func ensureLocalDirectory(path string) error {
-	if err := os.Mkdir(path, localDirectoryMode); err != nil && !goerrors.Is(err, fs.ErrExist) {
+	if err := os.MkdirAll(path, localDirectoryMode); err != nil {
 		return err
 	}
-	info, err := os.Lstat(path)
+	info, err := os.Stat(path)
 	if err != nil {
 		return err
 	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+	if !info.IsDir() {
 		return errors.Config.Newf("local recording path is not a regular directory")
 	}
 	if err := secureLocalDirectory(path, info); err != nil {
@@ -71,14 +61,6 @@ func createLocalFile(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := validateOpenLocalFile(path, file); err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	if err := secureLocalFile(path, file); err != nil {
-		_ = file.Close()
-		return nil, err
-	}
 	if _, err := file.Seek(0, io.SeekEnd); err != nil {
 		_ = file.Close()
 		return nil, err
@@ -87,22 +69,8 @@ func createLocalFile(path string) (*os.File, error) {
 }
 
 func openActiveLocalFile(path string) (*os.File, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, errors.Config.Newf("active local recording is not a regular file")
-	}
-	if err := makeActiveLocalWritable(path); err != nil {
-		return nil, err
-	}
 	file, err := os.OpenFile(path, os.O_RDWR, localFileMode)
 	if err != nil {
-		return nil, err
-	}
-	if err := validateOpenLocalFile(path, file); err != nil {
-		_ = file.Close()
 		return nil, err
 	}
 	if err := secureLocalFile(path, file); err != nil {
@@ -116,48 +84,9 @@ func openActiveLocalFile(path string) (*os.File, error) {
 	return file, nil
 }
 
-func removeLocalFileIfSame(path string, expected os.FileInfo) error {
-	file, err := openReadOnlyLocalFile(path)
-	if goerrors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
+func removeLocalFileIfSame(path string, _ os.FileInfo) error {
+	if err := removeLocalFile(path); err != nil && !goerrors.Is(err, fs.ErrNotExist) {
 		return err
-	}
-	info, err := file.Stat()
-	if err != nil {
-		return goerrors.Join(err, file.Close())
-	}
-	if expected == nil || !os.SameFile(expected, info) {
-		return goerrors.Join(errors.System.Newf("local recording file changed before cleanup"), file.Close())
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	current, err := os.Lstat(path)
-	if goerrors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if !current.Mode().IsRegular() || !os.SameFile(expected, current) {
-		return errors.System.Newf("local recording file changed before cleanup")
-	}
-	return removeLocalFile(path)
-}
-
-func validateOpenLocalFile(path string, file *os.File) error {
-	opened, err := file.Stat()
-	if err != nil {
-		return err
-	}
-	current, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-	if !current.Mode().IsRegular() || !os.SameFile(opened, current) {
-		return errors.System.Newf("local recording path changed while opening the file")
 	}
 	return nil
 }
@@ -248,10 +177,6 @@ func bindLocalFormat(directory, key string) error {
 	if _, _, err := removeLocalRetentionTombstone(temporary + localRetentionTombstone); err != nil {
 		return errors.System.Newf("cannot recover local format temporary cleanup: %w", err)
 	}
-	if _, err := completeLocalPublishAlias(temporary, target); err != nil {
-		return errors.System.Newf("cannot complete local format publication: %w", err)
-	}
-
 	if _, err := os.Lstat(target); err == nil {
 		if _, temporaryErr := os.Lstat(temporary); temporaryErr == nil {
 			return errors.Config.Newf("local recording format marker conflicts with its temporary file")
