@@ -13,6 +13,7 @@ import (
 
 type fsRepositoryProcessLock struct {
 	file *os.File
+	path string
 	once sync.Once
 	err  error
 }
@@ -29,7 +30,19 @@ func acquireFsRepositoryProcessLock(path string, mode os.FileMode) (*fsRepositor
 		}
 		return nil, fmt.Errorf("cannot determine lock state of session repository %q: %w", path, err)
 	}
-	return &fsRepositoryProcessLock{file: file}, nil
+	return &fsRepositoryProcessLock{file: file, path: path}, nil
+}
+
+func sameFsRepositoryProcessLockFile(file *os.File, path string) (bool, error) {
+	openInfo, err := file.Stat()
+	if err != nil {
+		return false, err
+	}
+	pathInfo, err := os.Lstat(path)
+	if err != nil {
+		return false, err
+	}
+	return pathInfo.Mode().IsRegular() && os.SameFile(openInfo, pathInfo), nil
 }
 
 func (this *fsRepositoryProcessLock) Close() error {
@@ -37,11 +50,12 @@ func (this *fsRepositoryProcessLock) Close() error {
 		return nil
 	}
 	this.once.Do(func() {
+		this.err = removeFsRepositoryProcessLock(this, this.path)
 		if err := unix.Flock(int(this.file.Fd()), unix.LOCK_UN); err != nil {
-			this.err = err
+			this.err = errors.Join(this.err, err)
 		}
-		if err := this.file.Close(); err != nil && this.err == nil {
-			this.err = err
+		if err := this.file.Close(); err != nil {
+			this.err = errors.Join(this.err, err)
 		}
 	})
 	return this.err

@@ -167,6 +167,10 @@ func newRemoteDelivery(ctx context.Context, conf *configuration.Auditlog, identi
 	if err != nil {
 		return nil, errors.System.Newf("cannot lock remote delivery state %q: %w", stateLockPath, err)
 	}
+	if err := validateLockedJournalPath(stateLock, stateLockPath); err != nil {
+		_ = stateLock.Close()
+		return nil, err
+	}
 	stateLockCommitted := false
 	defer func() {
 		if !stateLockCommitted {

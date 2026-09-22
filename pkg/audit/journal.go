@@ -835,5 +835,25 @@ func validateLockedJournalPath(processLock *journalProcessLock, path string) err
 	if processLock == nil || processLock.file == nil {
 		return errors.System.Newf("audit journal lock %q is closed", path)
 	}
+	same, err := sameJournalProcessLockFile(processLock.file, path)
+	if err != nil {
+		return errors.System.Newf("cannot inspect audit journal lock path %q: %w", path, err)
+	}
+	if !same {
+		return errors.System.Newf("audit journal lock path %q no longer refers to the acquired lock", path)
+	}
+	return nil
+}
+
+func removeJournalProcessLock(processLock *journalProcessLock, path string) error {
+	if err := validateLockedJournalPath(processLock, path); err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		return errors.System.Newf("cannot remove audit journal lock %q: %w", path, err)
+	}
+	if err := syncJournalDirectory(filepath.Dir(path)); err != nil {
+		return errors.System.Newf("cannot synchronize audit journal lock directory %q: %w", filepath.Dir(path), err)
+	}
 	return nil
 }

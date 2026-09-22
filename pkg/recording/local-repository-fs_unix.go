@@ -16,6 +16,7 @@ import (
 
 type localProcessLock struct {
 	file *os.File
+	path string
 	once sync.Once
 	err  error
 }
@@ -50,7 +51,19 @@ func acquireLocalProcessLock(path string) (*localProcessLock, error) {
 		_ = file.Close()
 		return nil, err
 	}
-	return &localProcessLock{file: file}, nil
+	return &localProcessLock{file: file, path: path}, nil
+}
+
+func sameLocalProcessLockFile(file *os.File, path string) (bool, error) {
+	openInfo, err := file.Stat()
+	if err != nil {
+		return false, err
+	}
+	pathInfo, err := os.Lstat(path)
+	if err != nil {
+		return false, err
+	}
+	return pathInfo.Mode().IsRegular() && os.SameFile(openInfo, pathInfo), nil
 }
 
 func (this *localProcessLock) Close() error {
@@ -61,21 +74,15 @@ func (this *localProcessLock) Close() error {
 		if this.file == nil {
 			return
 		}
+		this.err = removeLocalProcessLock(this, this.path)
 		if err := unix.Flock(int(this.file.Fd()), unix.LOCK_UN); err != nil {
-			this.err = err
+			this.err = goerrors.Join(this.err, err)
 		}
-		if err := this.file.Close(); err != nil && this.err == nil {
-			this.err = err
+		if err := this.file.Close(); err != nil {
+			this.err = goerrors.Join(this.err, err)
 		}
 	})
 	return this.err
-}
-
-func validateLocalLock(lock *localProcessLock, _ string) error {
-	if lock == nil || lock.file == nil {
-		return errors.System.Newf("local recording lock is closed")
-	}
-	return nil
 }
 
 func secureLocalDirectory(_ string, info os.FileInfo) error {

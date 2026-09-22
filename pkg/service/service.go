@@ -146,7 +146,7 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 	done := make(chan serveResult, len(lns))
 	for _, ln := range lns {
 		go func() {
-			l := this.logger().With("address", ln.addr)
+			l := this.logger().With("address", ln.ln.Addr())
 			l.Info("listening...")
 			err := svc.server.Serve(serveCtx, ln.ln)
 			if this.isProblematicError(err) {

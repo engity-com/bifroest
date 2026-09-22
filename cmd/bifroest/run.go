@@ -23,26 +23,23 @@ func doRunDefault(conf configuration.Ref) error {
 		Version:       versionV,
 	}
 
-	fail := func(err error) error {
-		log.Error(err)
-		goos.Exit(1)
-		return nil
-	}
-
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	defer cancelFunc()
 
 	sigs := make(chan goos.Signal, 1)
-	defer close(sigs)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigs)
 	go func() {
-		sig := <-sigs
-		log.With("signal", sig).Info("received signal")
-		cancelFunc()
+		select {
+		case sig := <-sigs:
+			log.With("signal", sig).Info("received signal")
+			cancelFunc()
+		case <-ctx.Done():
+		}
 	}()
 
 	if err := svc.Run(ctx); err != nil {
-		return fail(err)
+		return err
 	}
 
 	return nil

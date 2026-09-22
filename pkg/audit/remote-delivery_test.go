@@ -945,13 +945,21 @@ func TestRemoteDeliveryFlushCanCancelWhileSerialized(t *testing.T) {
 func TestRemoteDeliveryLocksItsCursorState(t *testing.T) {
 	conf, identity, _ := newRemoteDeliveryTestJournal(t, 1)
 	conf.Targets = configuration.AuditlogTargets{remoteDeliveryTestTarget("archive", nil)}
+	lockPath := filepath.Join(conf.Journal.Directory, remoteDeliveryStateDirectoryName, journalLockFileName)
 	first, err := NewRemoteDelivery(context.Background(), &conf, identity)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = first.Close() })
+	require.FileExists(t, lockPath)
 	second, err := NewRemoteDelivery(context.Background(), &conf, identity)
 	require.Nil(t, second)
 	require.ErrorContains(t, err, "cannot lock remote delivery state")
 	require.NoError(t, first.Close())
+	require.NoFileExists(t, lockPath)
+
+	reopened, err := NewRemoteDelivery(context.Background(), &conf, identity)
+	require.NoError(t, err)
+	require.NoError(t, reopened.Close())
+	require.NoFileExists(t, lockPath)
 }
 
 func TestRemoteDeliveryBackoffIsBounded(t *testing.T) {

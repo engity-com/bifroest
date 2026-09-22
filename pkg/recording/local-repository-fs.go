@@ -56,6 +56,33 @@ func ensureLocalDirectory(path string) error {
 	return syncLocalDirectory(filepath.Dir(path))
 }
 
+func validateLocalLock(lock *localProcessLock, path string) error {
+	if lock == nil || lock.file == nil {
+		return errors.System.Newf("local recording lock %q is closed", path)
+	}
+	same, err := sameLocalProcessLockFile(lock.file, path)
+	if err != nil {
+		return errors.System.Newf("cannot inspect local recording lock path %q: %w", path, err)
+	}
+	if !same {
+		return errors.System.Newf("local recording lock path %q no longer refers to the acquired lock", path)
+	}
+	return nil
+}
+
+func removeLocalProcessLock(lock *localProcessLock, path string) error {
+	if err := validateLocalLock(lock, path); err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		return errors.System.Newf("cannot remove local recording lock %q: %w", path, err)
+	}
+	if err := syncLocalDirectory(filepath.Dir(path)); err != nil {
+		return errors.System.Newf("cannot synchronize local recording lock directory %q: %w", filepath.Dir(path), err)
+	}
+	return nil
+}
+
 func createLocalFile(path string) (*os.File, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, localFileMode)
 	if err != nil {

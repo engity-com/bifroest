@@ -53,9 +53,13 @@ func NewFsRepository(_ context.Context, conf *configuration.SessionFs) (*FsRepos
 		return nil, err
 	}
 	lockPath := filepath.Join(filepath.Dir(storage), "."+filepath.Base(storage)+".bifroest.lock")
-	_, statErr := os.Stat(lockPath)
+	_, statErr := os.Lstat(lockPath)
 	lock, err := acquireFsRepositoryProcessLock(lockPath, os.FileMode(conf.FileMode))
 	if err != nil {
+		return nil, err
+	}
+	if err := validateFsRepositoryProcessLock(lock, lockPath); err != nil {
+		_ = lock.Close()
 		return nil, err
 	}
 	if statErr == nil {
@@ -679,6 +683,33 @@ func (this *FsRepository) Close() error {
 		this.closeErr = this.processLock.Close()
 	})
 	return this.closeErr
+}
+
+func validateFsRepositoryProcessLock(lock *fsRepositoryProcessLock, path string) error {
+	if lock == nil || lock.file == nil {
+		return fmt.Errorf("session repository lock %q is closed", path)
+	}
+	same, err := sameFsRepositoryProcessLockFile(lock.file, path)
+	if err != nil {
+		return fmt.Errorf("cannot inspect session repository lock path %q: %w", path, err)
+	}
+	if !same {
+		return fmt.Errorf("session repository lock path %q no longer refers to the acquired lock", path)
+	}
+	return nil
+}
+
+func removeFsRepositoryProcessLock(lock *fsRepositoryProcessLock, path string) error {
+	if err := validateFsRepositoryProcessLock(lock, path); err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("cannot remove session repository lock %q: %w", path, err)
+	}
+	if err := syncFsDirectory(filepath.Dir(path)); err != nil {
+		return fmt.Errorf("cannot synchronize session repository lock directory %q: %w", filepath.Dir(path), err)
+	}
+	return nil
 }
 
 func (this *FsRepository) publicKeyKind(pub ssh.PublicKey) string {
