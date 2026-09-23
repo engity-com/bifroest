@@ -1,0 +1,260 @@
+---
+description: Design contract for the planned native audit and recording containers.
+---
+
+# Native format contract (design; not implemented)
+
+This document fixes the format and disclosure boundaries before implementation.
+It does not describe files emitted by the current server. The byte-level format
+specification and published vectors will complete this contract as part of the
+format implementation. No released format needs to be migrated.
+
+## Families and names
+
+| Stored data | Clear | Encrypted | File magic | Version |
+| --- | --- | --- | --- | --- |
+| Audit segment | `.baudit` | `.beaudit` | `\x89BAUDIT\n` (8 bytes) | 1 |
+| Session recording | `.bcast` | `.becast` | `\x89BCAST\n` (7 bytes) | 1 |
+
+The header contains a signed encryption mode: `0` (none) or `1` (age SSH).
+Both suffixes in a family use the same magic and CBOR schemas. Readers identify
+the family, version, and encryption mode from the content, not from the suffix.
+Managed repositories additionally require the canonical suffix matching the
+signed mode. Unsupported versions, modes, or suffix/mode combinations fail
+closed. Encryption does not replace the producer's Ed25519 signature.
+
+Audit files live below `<journal>/<producer-id>/`: `active.baudit` or
+`active.beaudit`, `head.cbor`, and
+`segment-<20-digit-sequence>-<64-hex-segment-hash>.baudit` or `.beaudit`.
+Recording work and active files use `recording.bcast` or `recording.becast`
+inside their existing per-recording directories, with a signed `head.cbor`;
+published files are `sealed/<canonical-uuid-v4>.bcast` or `.becast`.
+Remote targets copy sealed files byte for byte under
+`<producer-id>/<sealed-file-name>`. The producer ID remains the 32-byte SHA-256
+of the SSH signing public-key blob, rendered as 64 lowercase hex characters.
+Recording IDs remain UUIDv4 values, rendered canonically in file names. A
+suffix, embedded key, or embedded producer ID is not an external trust anchor.
+
+## Envelope and bounds
+
+After the magic, each unit has the following framing, in order:
+
+```text
+type:u8 | payload-length:u32-big-endian | commit-state:u8
+deterministic-CBOR-payload | crc32c:u32-big-endian | "BFCOMMIT" (8 ASCII bytes)
+```
+
+CRC32C (Castagnoli) covers the type, length, and exact CBOR payload bytes,
+excluding the commit-state byte. That byte is `0` until the complete body and
+trailer have been durably synced; then it is overwritten with `1` and synced
+again. A partial header or state `0` is an uncommitted tail even when its
+body is physically complete; it may be discarded only beyond the signed head
+checkpoint. State `1` requires the complete declared length,
+marker, CRC, and canonical payload. Other state values are invalid. Bytes
+inside a payload that happen to spell `BFCOMMIT` are never evidence of a
+committed unit. This in-place commit requires a writable non-append-only file
+handle and a single serialized writer. An append or sync failure poisons that
+writer: another append is forbidden until recovery has reconciled the file
+against the signed checkpoint. The format-specific writer and its failure
+injection tests are part of the audit/recording writer milestones, not the
+shared unit decoder.
+Types `1`, `2`, and `3` are header, audit record/recording chunk, and seal.
+Other types are invalid. Each payload is exactly
+one deterministic CBOR map with unsigned integer field keys. Integer widths,
+timestamp representation (`[signed Unix seconds, unsigned nanoseconds]`),
+byte-string lengths, and the meaning of absent versus null fields must be
+fixed in the byte-level specification. Reject duplicate/unknown keys, tags or
+indefinite lengths not defined by that specification, trailing CBOR values,
+and any decoded value that does not re-encode to identical canonical bytes.
+CBOR is the only structured encoding in the native containers; Zstd and age
+transform CBOR byte strings, not JSON or embedded Cast lines.
+
+## CBOR wire keys (version 1)
+
+All top-level units are maps with the following unsigned integer keys. Only
+explicitly optional fields may be absent; a CBOR `null` is not an alternative
+to absence. Timestamps are two-element arrays `[signed Unix seconds,
+nanoseconds (0..999999999)]` with nanosecond precision. UUIDs, 32-byte hashes,
+and signatures are CBOR byte strings, not integer arrays or tagged values.
+The signing public key uses its binary SSH wire encoding. Integer keys and
+types are implemented by the separate `pkg/audit/native-wire.go` and
+`pkg/recording/native-wire.go` schemas and the strict `pkg/nativeformat`
+codec. These key assignments must be kept stable when the code is integrated.
+
+| Audit unit | Keys |
+| --- | --- |
+| Header | `1` version, `2` encryption, `3` producer ID, `4` public key, `5` sequence, `6` previous segment hash, `7` previous record hash, `8` creation time, `9` optional recipient fingerprint, `10` signature |
+| Record | `1` UUIDv4, `2` recorded time, `3` previous record hash, `4` public event map, `5` stored private bytes, `6` signature |
+| Public event | `1` name, `2` optional domain, `3` optional outcome |
+| Seal | `1` sequence, `2` record count, `3` content bytes, `4` content hash, `5` last record hash, `6` seal time, `7` signature |
+
+The confidential audit event map uses keys `1` flow, `2` connection ID,
+`3` session ID, `4` operation ID, `5` recording ID, `6` recording digest,
+`7` target, `8` authentication method, `9` authentication phase,
+`10` authorization kind, `11` session task, `12` reason, `13` error category,
+`14` exit code, `15` bytes read, `16` bytes written, `17` duration in
+milliseconds, `18` count, `19` PTY, `20` agent forwarding, and
+`21` forced command. All fields in this map are optional; an empty event
+still has a complete, encoded empty map.
+
+| Recording unit | Keys |
+| --- | --- |
+| Header | `1` version, `2` encryption, `3` recording ID, `4` producer ID, `5` public key, `6` start time, `7` optional recipient fingerprint, `8` signature |
+| Chunk | `1` sequence, `2` previous unit hash, `3` decoded length, `4` stored bytes, `5` stored-byte hash, `6` Cast hash state, `7` Cast hash byte count, `8` signature |
+| Seal | `1` status, `2` chunk count, `3` last unit hash, `4` content hash, `5` Cast digest, `6` Cast signature, `7` Cast bytes, `8` end time, `9` signature |
+
+The native recording-event schema inside decoded chunks will be specified
+with the recording writer and recovery rules. It contains CBOR events, not
+embedded asciicast lines. The signed `head.cbor` recovery-state schemas are
+specified alongside their atomic replacement and validation rules.
+
+An audit record commits independently: write and sync its framed body, then
+set and sync its commit-state byte, then atomically replace and sync the signed
+head. Header, seal, and public audit-event CBOR maps are limited to 4 KiB each.
+The private audit-event CBOR map is limited to 64 KiB before
+compression/encryption, and the complete stored record CBOR payload to 128 KiB
+(excluding the 18 framing bytes).
+Audit segments target approximately 16 MiB
+and have a 17 MiB verification limit. A recording chunk contains at most 2 MiB
+of decoded CBOR and its complete stored CBOR payload is at most 4 MiB (including
+the map and signature, but excluding framing). The default target remains
+256 KiB. Existing configured total-artifact and decoded-Cast quotas continue
+to apply separately. Readers enforce both encoded and decoded limits before
+allocating or publishing data. Zstd may use raw blocks inside its frames; the
+format does not define an unwrapped raw-CBOR record variant.
+
+Audit records compress one event each; recording chunks compress complete
+groups of native recording events. For encrypted files, compression precedes
+independent age encryption of the confidential CBOR bytes. Public CBOR fields
+and private bytes are signed together, including codec and recipient identity.
+Do not attempt to compress ciphertext. Header and seal are small, uncompressed
+CBOR units. A signed, separately persisted head is recovery state, not an
+alternative source of event data. Only uncommitted tails beyond
+the last accepted checkpoint may be truncated; a committed invalid unit fails
+verification.
+
+Each encrypted audit log has exactly one dedicated age SSH recipient. The
+server has its public key but must not have the matching private key. Reject
+reuse of any signing, host, static SSH environment, or SFTP target key whose
+private key is available to the server, across all configured audit logs and
+recordings. Dynamically rendered key paths must be kept disjoint by the
+operator. Only offline verification and explicit sensitive export use the
+private decryption identity. Do not weaken this separation when unifying the
+four container formats.
+
+## Audit identity and chain
+
+The audit header binds format version, encryption mode, producer ID, signing
+public key, segment sequence, previous segment hash, previous record hash,
+creation time, and (for age) recipient fingerprint. Each record binds a new
+UUIDv4, timestamp, previous record hash, public event fields, and the stored
+private event bytes. The seal binds sequence, record count, content byte count,
+content hash, last record hash, and seal time. All three carry Ed25519
+signatures over domain-separated, deterministic CBOR excluding their own
+signature field.
+
+The record hash is SHA-256 over domain plus the exact signed CBOR record. The
+seal's content hash covers the exact physical file bytes from the magic
+through the last committed record, excluding the seal. The segment hash covers
+the entire sealed physical file, including its seal, and is bound by its
+canonical file name and the next header. The signed audit head binds the last
+accepted record hash. These are distinct domains, also distinct from the
+recording and current JSON-journal domains:
+
+```text
+BIFROEST-BAUDIT-HEADER-SIGNATURE/v1\x00
+BIFROEST-BAUDIT-RECORD-SIGNATURE/v1\x00
+BIFROEST-BAUDIT-SEAL-SIGNATURE/v1\x00
+BIFROEST-BAUDIT-HEAD-SIGNATURE/v1\x00
+BIFROEST-BAUDIT-RECORD-HASH/v1\x00
+BIFROEST-BAUDIT-CONTENT-HASH/v1\x00
+BIFROEST-BAUDIT-SEGMENT-HASH/v1\x00
+```
+
+Signatures and hashes verify the public metadata and committed private bytes
+without a decryption key. Full semantic validation of encrypted private data
+also requires the matching private age key. Producer identity needs an
+independently trusted expected producer ID. Detecting deletion of a valid
+suffix of a remote history additionally requires an independently retained
+expected chain tip; a signed head stored beside a mutable journal cannot by
+itself rule out rollback of both.
+
+## Public and confidential audit fields
+
+The public part of every event contains `name` and, when present, `domain` and
+`outcome`. The signed record contains the timestamp, record ID, predecessor
+hash, and signature; its signed enclosing header contains producer identity,
+segment sequence, encryption mode, and recipient fingerprint where applicable.
+The record and segment hashes are calculated from those signed bytes. Record IDs
+identify only that record; they are not connection/session correlation IDs.
+The default JSONL event contains only `name`, `domain`, and `outcome` when
+present. Its separate export envelope contains `auditlog`, `producerId`,
+`segmentSequence`, `segmentRecordIndex`, `id`, `recordedAt`, `previousHash`,
+and `hash`. Signing key, signature, encryption mode, and recipient fingerprint
+remain inspectable in the native artifact but MUST NOT appear in default JSONL
+lines. Do not treat a redacted JSONL line as an independently signed record.
+
+The confidential part contains **every other** current `Event` field:
+`flow`, `connectionId`, `sessionId`, `operationId`, `recordingId`,
+`recordingDigest`, `target`, `authenticationMethod`, `authenticationPhase`,
+`authorizationKind`, `sessionTask`, `reason`, `errorCategory`, `exitCode`,
+`bytesRead`, `bytesWritten`, `durationMillis`, `count`, `pty`,
+`agentForwarding`, and `forcedCommand`. New fields default to confidential
+until explicitly classified and documented. Audit event values still follow
+their established type and validation rules; do not infer a closed set of
+names or reasons merely from the current lists of constants.
+
+The confidential event map is CBOR-encoded and Zstd-compressed for every
+record, including an empty map. In `.beaudit` it is also age-encrypted per
+record; in `.baudit` the compressed map is unencrypted. The visible and stored
+parts are jointly signed, so a redacted export can never be substituted for
+the signed original. `audit export` and `audit merge` omit the confidential
+fields by default **even for `.baudit`**; `--with-sensitive` includes them
+only after full verification and, for `.beaudit`, decryption. Redaction is not
+access control: `.baudit` contains the private map in plaintext after
+decompression. Even public metadata such as exact times and outcomes may be
+correlated and must not be published to an unprotected destination.
+
+## Recording identity and chain
+
+The recording header binds version, mode, recording ID, producer ID, public
+key, start time, and any recipient fingerprint. Signed outer chunk descriptors
+bind sequence, previous unit hash, stored payload hash, decoded byte count,
+and the continuation information required by encrypted offline recovery.
+The seal binds status, counts, the last unit hash, the content digest, and the
+pre-established signature of the exact canonical `.cast` export. Use distinct
+Ed25519 domains and hashes for header, chunk, seal, head, and unit chaining;
+do not reuse the audit domains:
+
+```text
+BIFROEST-BCAST-HEADER-SIGNATURE/v1\x00
+BIFROEST-BCAST-CHUNK-SIGNATURE/v1\x00
+BIFROEST-BCAST-SEAL-SIGNATURE/v1\x00
+BIFROEST-BCAST-HEAD-SIGNATURE/v1\x00
+BIFROEST-BCAST-UNIT-HASH/v1\x00
+BIFROEST-BCAST-CONTENT-HASH/v1\x00
+```
+
+The standalone Cast keeps its existing `bifroest.asciicast-signature/v1`
+schema and the domains `BIFROEST-ASCIICAST-CONTENT-HASH/v1\x00` and
+`BIFROEST-ASCIICAST-SIGNATURE/v1\x00`. Its digest hashes the exact canonical
+Asciicast v3 bytes, including LF, through the result line but excluding the
+final signature comment. Its Ed25519 signature covers the domain plus the
+canonical JSON signature content (`schema`, `recordingId`, `producerId`,
+lowercase hex `digest`, and binary SSH `publicKey` as Base64). The native seal
+stores that signature and digest; no JSON or Cast line is stored inside the
+native recording. Offline export must reproduce and verify those same bytes
+without access to the server's signing key.
+
+Terminal bytes, stdout/stderr identity, resize dimensions, markers, and
+other Cast event content remain inside native CBOR chunks. `.becast` encrypts
+these chunks; `.bcast` stores them unencrypted after Zstd compression. The
+outer metadata necessarily reveals at least recording identity, timing,
+status, sizes, and recipient identity. Outer verification without decryption
+does not claim that encrypted inner Cast content is semantically valid.
+Offline recovery of `.becast` must remain possible without the recipient's
+private key by using signed continuation state, without inventing terminal
+output. A valid `.cast` export is reconstructed deterministically, checked
+against the sealed digest and signature, and never emitted without explicit
+`--with-sensitive`. It is the only Asciicast representation; no `.cast` or
+`.jsonl` is generated automatically on disk or at remote targets.
