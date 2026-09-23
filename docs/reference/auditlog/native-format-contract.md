@@ -127,7 +127,15 @@ Audit records compress one event each; recording chunks compress complete
 groups of native recording events. For encrypted files, compression precedes
 independent age encryption of the confidential CBOR bytes. Public CBOR fields
 and private bytes are signed together, including codec and recipient identity.
-Do not attempt to compress ciphertext. Header and seal are small, uncompressed
+Each unit has exactly one independently decodable Zstd frame with a content
+checksum, declared decoded size, no dictionary, and a maximum 2 MiB window.
+The decoder rejects concatenated frames and trailing bytes and limits both
+the stored and decoded lengths. The Zstd encoder may choose a raw block for
+small inputs; this still carries a valid frame header and checksum. Each
+encrypted unit is its own age message. The reader must authenticate the
+message through EOF before accepting the decoded CBOR; a mismatched recipient
+fingerprint, truncated ciphertext, or trailing age data is invalid. Do not
+attempt to compress ciphertext. Header and seal are small, uncompressed
 CBOR units. A signed, separately persisted head is recovery state, not an
 alternative source of event data. Only uncommitted tails beyond
 the last accepted checkpoint may be truncated; a committed invalid unit fails
