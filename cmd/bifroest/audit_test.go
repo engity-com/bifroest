@@ -31,6 +31,20 @@ func TestAuditVerifyAndExportConfiguredJournal(t *testing.T) {
 	require.NoError(t, json.Unmarshal(bytes.TrimSpace(output.Bytes()), &record))
 	require.Equal(t, "default", record.Auditlog)
 	require.Equal(t, "test.export", record.Event.Name)
+	require.Equal(t, audit.EventDomainSession, record.Event.Domain)
+	require.Equal(t, audit.EventOutcomeSuccess, record.Event.Outcome)
+	require.NotContains(t, output.String(), "confidential-flow")
+	require.NotContains(t, output.String(), "internal-detail")
+	require.Empty(t, record.Event.Flow)
+	var publicLine map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(output.Bytes()), &publicLine))
+	require.Len(t, publicLine, 9)
+	for _, field := range []string{"auditlog", "producerId", "segmentSequence", "segmentRecordIndex", "id", "recordedAt", "event", "previousHash", "hash"} {
+		require.Contains(t, publicLine, field)
+	}
+	var publicEvent map[string]string
+	require.NoError(t, json.Unmarshal(publicLine["event"], &publicEvent))
+	require.Equal(t, map[string]string{"name": "test.export", "domain": "session", "outcome": "success"}, publicEvent)
 	require.FileExists(t, configured.IdentityFile)
 
 	require.NoError(t, goos.Remove(configured.IdentityFile))
@@ -54,6 +68,13 @@ func TestAuditMergeIsChronologicalAndOutputIsProtected(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(lines[1]), &secondRecord))
 	require.Equal(t, "test.first", firstRecord.Event.Name)
 	require.Equal(t, "test.second", secondRecord.Event.Name)
+	require.NotContains(t, output.String(), "confidential-flow")
+	opts.withSensitive = true
+	output.Reset()
+	require.NoError(t, doAuditMerge(&opts, &output))
+	require.Contains(t, output.String(), "confidential-flow-first")
+	require.Contains(t, output.String(), "confidential-flow-second")
+	opts.withSensitive = false
 
 	outputPath := filepath.Join(directory, "merged.jsonl")
 	opts.output = outputPath
@@ -193,26 +214,40 @@ func TestAuditCommandsDecryptEncryptedJournal(t *testing.T) {
 	require.NoError(t, doAuditVerify(&verifyOpts))
 	verifyOpts.decryptionIdentityFiles = []string{privateKey}
 	require.NoError(t, doAuditVerify(&verifyOpts))
+	wrongKey := filepath.Join(directory, "wrong-decryption-key")
+	require.NoError(t, doKeyGenerate(wrongKey, filepath.Join(directory, "wrong-decryption-key.pub")))
+	verifyOpts.decryptionIdentityFiles = []string{wrongKey}
+	require.Error(t, doAuditVerify(&verifyOpts))
 
 	exportOpts := auditExportOpts{configuration: ref, auditlog: "encrypted", output: "-", decryptionIdentityFiles: []string{privateKey}}
 	var exported bytes.Buffer
 	require.NoError(t, doAuditExport(&exportOpts, &exported))
 	require.Contains(t, exported.String(), `"name":"test.secret"`)
+	require.NotContains(t, exported.String(), "confidential-flow")
 	exportOpts.decryptionIdentityFiles = nil
 	exported.Reset()
 	require.NoError(t, doAuditExport(&exportOpts, &exported))
 	require.Contains(t, exported.String(), `"name":"test.secret"`)
+	require.NotContains(t, exported.String(), "confidential-flow")
+	redactedExport := exported.String()
 	exportOpts.withSensitive = true
 	exported.Reset()
 	require.ErrorContains(t, doAuditExport(&exportOpts, &exported), "decryption identity")
 	require.Empty(t, exported.String())
 	exportOpts.decryptionIdentityFiles = []string{privateKey}
 	require.NoError(t, doAuditExport(&exportOpts, &exported))
+	require.Contains(t, exported.String(), "confidential-flow-encrypted")
 	exportOpts.withSensitive = false
 
 	var decrypted bytes.Buffer
 	require.NoError(t, doAuditDecrypt(&exportOpts, &decrypted))
-	require.Equal(t, exported.String(), decrypted.String())
+	require.Equal(t, redactedExport, decrypted.String())
+	require.NotContains(t, decrypted.String(), "confidential-flow")
+	exportOpts.withSensitive = true
+	decrypted.Reset()
+	require.NoError(t, doAuditDecrypt(&exportOpts, &decrypted))
+	require.Contains(t, decrypted.String(), "confidential-flow-encrypted")
+	exportOpts.withSensitive = false
 
 	mergeOpts := auditMergeOpts{
 		configuration:           ref,
@@ -224,6 +259,16 @@ func TestAuditCommandsDecryptEncryptedJournal(t *testing.T) {
 	require.NoError(t, doAuditMerge(&mergeOpts, &merged))
 	require.Contains(t, merged.String(), `"name":"test.secret"`)
 	require.Contains(t, merged.String(), `"name":"test.plain"`)
+	require.NotContains(t, merged.String(), "confidential-flow")
+	mergeOpts.withSensitive = true
+	merged.Reset()
+	require.NoError(t, doAuditMerge(&mergeOpts, &merged))
+	require.Contains(t, merged.String(), "confidential-flow-encrypted")
+	require.Contains(t, merged.String(), "confidential-flow-plain")
+	mergeOpts.decryptionIdentityFiles = []string{wrongKey}
+	merged.Reset()
+	require.Error(t, doAuditMerge(&mergeOpts, &merged))
+	require.Empty(t, merged.String())
 
 	exportOpts.output = publicKey
 	exportOpts.force = true
@@ -232,6 +277,53 @@ func TestAuditCommandsDecryptEncryptedJournal(t *testing.T) {
 	exportOpts.output = privateKey
 	exportOpts.force = true
 	require.ErrorContains(t, doAuditExport(&exportOpts, &bytes.Buffer{}), "must not replace private key")
+}
+
+func TestAuditExportsDoNotPublishBeforeAllSourcesVerify(t *testing.T) {
+	directory := t.TempDir()
+	first := createAuditCliTestJournal(t, directory, "first", "test.first")
+	second := createAuditCliTestJournal(t, directory, "second", "test.second")
+	ref := writeAuditCliTestConfiguration(t, directory, first, second)
+	producer := filepath.Join(second.Journal.Directory, auditCliTestProducerId(t, second.IdentityFile).String())
+	entries, err := goos.ReadDir(producer)
+	require.NoError(t, err)
+	var segmentPath string
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "segment-") {
+			segmentPath = filepath.Join(producer, entry.Name())
+			break
+		}
+	}
+	require.NotEmpty(t, segmentPath)
+	segment, err := goos.ReadFile(segmentPath)
+	require.NoError(t, err)
+	segment[len(segment)-1] ^= 1
+	require.NoError(t, goos.Chmod(segmentPath, 0600))
+	require.NoError(t, goos.WriteFile(segmentPath, segment, 0600))
+
+	output := filepath.Join(directory, "protected.jsonl")
+	require.NoError(t, goos.WriteFile(output, []byte("untouched"), 0600))
+	for name, run := range map[string]func(string, *bytes.Buffer) error{
+		"export": func(path string, target *bytes.Buffer) error {
+			return doAuditExport(&auditExportOpts{configuration: ref, auditlog: "second", output: path, force: true, withSensitive: true}, target)
+		},
+		"decrypt": func(path string, target *bytes.Buffer) error {
+			return doAuditDecrypt(&auditExportOpts{configuration: ref, auditlog: "second", output: path, force: true, withSensitive: true}, target)
+		},
+		"merge": func(path string, target *bytes.Buffer) error {
+			return doAuditMerge(&auditMergeOpts{configuration: ref, auditlogs: []string{"first", "second"}, output: path, force: true, withSensitive: true}, target)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			require.Error(t, run("-", &stdout))
+			require.Empty(t, stdout.String())
+			require.Error(t, run(output, &bytes.Buffer{}))
+			content, err := goos.ReadFile(output)
+			require.NoError(t, err)
+			require.Equal(t, "untouched", string(content))
+		})
+	}
 }
 
 func TestBoundedAuditOutputRejectsOversizedWrite(t *testing.T) {
@@ -394,7 +486,10 @@ func createAuditCliTestJournalWithEncryption(t *testing.T, parent, name, eventNa
 	require.NoError(t, err)
 	recorder, err := audit.NewRecorder(&configured, identity)
 	require.NoError(t, err)
-	require.NoError(t, recorder.Record(context.Background(), audit.Event{Name: eventName}))
+	require.NoError(t, recorder.Record(context.Background(), audit.Event{
+		Name: eventName, Domain: audit.EventDomainSession, Outcome: audit.EventOutcomeSuccess,
+		Flow: "confidential-flow-" + name, Reason: "internal-detail",
+	}))
 	require.NoError(t, recorder.Close())
 	return configured
 }

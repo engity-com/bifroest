@@ -65,7 +65,7 @@ See [audit events](events.md) for the recorded security transitions, their struc
 
 Bifröst signs and durably flushes every accepted record. Native `.baudit` and `.beaudit` segments rotate at approximately 16 MiB and are linked through signed hashes; a signed `head.cbor` anchors the latest record. See the [native format contract](native-format-contract.md) for the public/private field boundary and container layout.
 
-Startup repairs interrupted publication and uncommitted tails past the signed checkpoint, but rejects invalid committed units, signatures, broken chains, and lost records. Large scans use managed `.bifroest-work` directories, which can remain after an unclean process termination and may then be removed manually while Bifröst is stopped.
+Startup repairs interrupted publication and uncommitted tails past the signed checkpoint, but rejects invalid committed units, signatures, broken chains, and lost records. Large recorder-recovery scans use managed `.bifroest-work` directories, which can remain after an unclean process termination and may then be removed manually while Bifröst is stopped. Read-only verification instead uses the operating system's temporary directory for large scans.
 
 Use [`bifroest audit verify`](../cli/audit/verify.md) for read-only verification. The `export` and `merge` commands produce redacted JSON Lines by default only after verification; `--with-sensitive` explicitly includes the private fields and requires a decryption identity for `.beaudit`. These outputs are not signed journals.
 

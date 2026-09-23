@@ -95,10 +95,6 @@ type verifierFileSnapshot struct {
 // revalidates the selected journal tree. It does not lock live journals, so a
 // writer may change a file after that file's final revalidation.
 func VerifyJournalIntegrity(ctx context.Context, sources []JournalSource) error {
-	sources = append([]JournalSource(nil), sources...)
-	for i := range sources {
-		sources[i].WithSensitive = false
-	}
 	_, err := verifyNativeJournals(ctx, sources, false)
 	return err
 }

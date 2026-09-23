@@ -19,21 +19,6 @@ func newRecorderJournalSegmentWorkspace(journalDirectory string) (*journalSegmen
 	return newJournalSegmentWorkspaceInJournal(journalDirectory)
 }
 
-func newVerifierJournalSegmentWorkspace(journalDirectory string) (*journalSegmentWorkspace, error) {
-	workspace, temporaryErr := newJournalSegmentWorkspace(os.TempDir())
-	if temporaryErr == nil {
-		return workspace, nil
-	}
-	workspace, journalErr := newJournalSegmentWorkspaceInJournal(journalDirectory)
-	if journalErr != nil {
-		return nil, goerrors.Join(
-			errors.System.Newf("cannot create audit verification workspace in global temporary directory: %w", temporaryErr),
-			errors.System.Newf("cannot create fallback audit verification workspace in journal: %w", journalErr),
-		)
-	}
-	return workspace, nil
-}
-
 func newJournalSegmentWorkspaceInJournal(journalDirectory string) (*journalSegmentWorkspace, error) {
 	root := filepath.Join(journalDirectory, journalWorkDirectoryName)
 	if err := ensureJournalDirectory(root, true); err != nil {

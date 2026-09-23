@@ -28,8 +28,8 @@ func verifyNativeJournals(ctx context.Context, sources []JournalSource, collect 
 	budget := &verifierBudget{}
 	names := map[string]bool{}
 	var directories []os.FileInfo
+	prepared := make([]JournalSource, 0, len(sources))
 	for _, source := range sources {
-		result.withSensitive = result.withSensitive && source.WithSensitive
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -56,7 +56,15 @@ func verifyNativeJournals(ctx context.Context, sources []JournalSource, collect 
 		}
 		directories = append(directories, info)
 		source.Directory = path
-		journal, records, err := verifyNativeJournal(ctx, source, collect, budget)
+		prepared = append(prepared, source)
+	}
+	selectedDirectories := make([]string, len(prepared))
+	for index, source := range prepared {
+		selectedDirectories[index] = source.Directory
+	}
+	for _, source := range prepared {
+		result.withSensitive = result.withSensitive && source.WithSensitive
+		journal, records, err := verifyNativeJournal(ctx, source, collect, budget, selectedDirectories)
 		if err != nil {
 			return nil, err
 		}
@@ -66,38 +74,7 @@ func verifyNativeJournals(ctx context.Context, sources []JournalSource, collect 
 	return result, nil
 }
 
-func verifyNativeJournal(ctx context.Context, source JournalSource, collect bool, budget *verifierBudget) (result VerifiedJournal, output []VerifiedRecord, resultErr error) {
-	workRoot := filepath.Join(source.Directory, journalWorkDirectoryName)
-	_, previousErr := os.Lstat(workRoot)
-	if previousErr != nil && !goerrors.Is(previousErr, os.ErrNotExist) {
-		return VerifiedJournal{}, nil, previousErr
-	}
-	workspace, err := newVerifierJournalSegmentWorkspace(source.Directory)
-	if err != nil {
-		return VerifiedJournal{}, nil, err
-	}
-	var createdRoot os.FileInfo
-	if previousErr != nil && filepath.Dir(workspace.path) == workRoot {
-		createdRoot, err = os.Lstat(workRoot)
-		if err != nil {
-			return VerifiedJournal{}, nil, goerrors.Join(err, workspace.Close())
-		}
-	}
-	defer func() {
-		closeErr := workspace.Close()
-		if createdRoot != nil && closeErr == nil {
-			current, err := os.Lstat(workRoot)
-			if err != nil || !os.SameFile(createdRoot, current) {
-				closeErr = fmt.Errorf("native audit work directory changed: %v", err)
-			} else {
-				closeErr = os.Remove(workRoot) // Only removes the empty directory created by this call.
-			}
-		}
-		if closeErr != nil {
-			result, output = VerifiedJournal{}, nil
-			resultErr = goerrors.Join(resultErr, closeErr)
-		}
-	}()
+func verifyNativeJournal(ctx context.Context, source JournalSource, collect bool, budget *verifierBudget, selectedDirectories []string) (VerifiedJournal, []VerifiedRecord, error) {
 	rootBefore, err := snapshotVerifierDirectory(ctx, source.Directory)
 	if err != nil {
 		return VerifiedJournal{}, nil, err
@@ -124,7 +101,7 @@ func verifyNativeJournal(ctx context.Context, source JournalSource, collect bool
 			return errors.System.Newf("audit journal %q contains producer %s instead of expected producer %s", source.Name, id, source.ExpectedProducerId)
 		}
 		before := budget.records
-		found, count, snapshot, err := verifyNativeProducer(ctx, source, filepath.Join(source.Directory, name), id, collect, budget, workspace.path)
+		found, count, snapshot, err := verifyNativeProducer(ctx, source, filepath.Join(source.Directory, name), id, collect, budget, selectedDirectories)
 		if err != nil {
 			return err
 		}
@@ -158,7 +135,7 @@ func verifyNativeJournal(ctx context.Context, source JournalSource, collect bool
 	return journal, records, nil
 }
 
-func verifyNativeProducer(ctx context.Context, source JournalSource, directory string, id ProducerId, collect bool, budget *verifierBudget, workspace string) (result []VerifiedRecord, segmentCount uint64, snapshot verifierDirectorySnapshot, resultErr error) {
+func verifyNativeProducer(ctx context.Context, source JournalSource, directory string, id ProducerId, collect bool, budget *verifierBudget, selectedDirectories []string) (result []VerifiedRecord, segmentCount uint64, snapshot verifierDirectorySnapshot, resultErr error) {
 	headPath := filepath.Join(directory, nativeHeadFileName)
 	headBytes, headSnapshot, err := readVerifierFile(headPath, nativeformat.MaxMetadataPayload)
 	if err != nil {
@@ -189,7 +166,7 @@ func verifyNativeProducer(ctx context.Context, source JournalSource, directory s
 		activeName = nativeActiveEncrypted
 	}
 	inventory, err := newNativeSegmentInventory(ctx, directory, activeName, encrypted, nil, func() (*journalSegmentWorkspace, error) {
-		return newJournalSegmentWorkspace(workspace)
+		return newNativeVerifierWorkspace(selectedDirectories)
 	})
 	if err != nil {
 		return nil, 0, verifierDirectorySnapshot{}, errors.System.Newf("invalid native audit inventory %q: %v", directory, err)
@@ -299,6 +276,36 @@ func verifyNativeProducer(ctx context.Context, source JournalSource, directory s
 		return nil, 0, verifierDirectorySnapshot{}, fmt.Errorf("native producer %s changed during verification", id)
 	}
 	return records, count, after, nil
+}
+
+func newNativeVerifierWorkspace(selectedDirectories []string) (*journalSegmentWorkspace, error) {
+	temporary, err := filepath.EvalSymlinks(os.TempDir())
+	if err != nil {
+		return nil, fmt.Errorf("cannot resolve audit verification temporary directory: %w", err)
+	}
+	temporary, err = filepath.Abs(temporary)
+	if err != nil {
+		return nil, err
+	}
+	for _, journal := range selectedDirectories {
+		journalInfo, err := os.Stat(journal)
+		if err != nil {
+			return nil, err
+		}
+		for parent := temporary; ; parent = filepath.Dir(parent) {
+			parentInfo, err := os.Stat(parent)
+			if err != nil {
+				return nil, err
+			}
+			if os.SameFile(journalInfo, parentInfo) {
+				return nil, fmt.Errorf("audit verification temporary directory %q is inside selected journal %q", temporary, journal)
+			}
+			if filepath.Dir(parent) == parent {
+				break
+			}
+		}
+	}
+	return newJournalSegmentWorkspace(temporary)
 }
 
 func verifyNativeSegment(ctx context.Context, data []byte, identity journalIdentity, source JournalSource, identities *bfcrypto.AgeSshIdentities, seq uint64, previousSegment, previousRecord journalHash, budget *verifierBudget, collect bool) ([]VerifiedRecord, journalHash, journalHash, bool, error) {

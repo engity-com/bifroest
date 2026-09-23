@@ -217,7 +217,7 @@ func decodeNativeAuditRecord(payload []byte, identity journalIdentity, previousH
 		if err != nil {
 			return nativeAuditRecord{}, Event{}, journalHash{}, err
 		}
-		if err := validateAuditEvent(full); err != nil {
+		if err := validateAuditEventForWrite(full); err != nil {
 			return nativeAuditRecord{}, Event{}, journalHash{}, err
 		}
 		if withSensitive {

@@ -2,6 +2,7 @@ package audit
 
 import (
 	"bytes"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -42,6 +43,19 @@ func nativeTestEvent() Event {
 		AuthorizationKind: "policy", SessionTask: SessionTaskExec, Reason: "reason", ErrorCategory: ErrorCategorySystem,
 		ExitCode: new(int), BytesRead: new(int64), BytesWritten: new(int64), DurationMillis: new(int64),
 		Count: new(uint64), Pty: new(bool), AgentForwarding: new(bool), ForcedCommand: new(bool),
+	}
+}
+
+func TestNativeAuditEventFieldsAreClassified(t *testing.T) {
+	event := reflect.TypeOf(Event{})
+	public := reflect.TypeOf(nativeAuditPublicEvent{})
+	private := reflect.TypeOf(nativeAuditPrivateEvent{})
+	require.Equal(t, event.NumField(), public.NumField()+private.NumField())
+	for index := range event.NumField() {
+		field := event.Field(index)
+		_, exposed := public.FieldByName(field.Name)
+		_, protected := private.FieldByName(field.Name)
+		require.NotEqual(t, exposed, protected, "audit field %s must be classified exactly once", field.Name)
 	}
 }
 
@@ -155,6 +169,46 @@ func TestNativeAuditClearRecordValidatesPrivateWithoutExport(t *testing.T) {
 	require.Nil(t, redacted.Pty)
 	_, _, _, err = decodeNativeAuditRecord(payload, identity, journalHash{}, "SHA256:pretend", nil, false)
 	require.Error(t, err, "cleartext cannot be accepted as an encrypted record without a key")
+}
+
+func TestNativeAuditVerifierRejectsSemanticallyInvalidRecordingEvent(t *testing.T) {
+	identity := nativeTestIdentity(t)
+	private, err := nativeformat.Marshal(nativeAuditPrivateEvent{}, nativeformat.MaxAuditEventPayload)
+	require.NoError(t, err)
+	for _, name := range []string{EventNameSessionRecordingCompleted, EventNameSessionRecordingDeliverySucceeded} {
+		for _, encrypted := range []bool{false, true} {
+			t.Run(name+map[bool]string{false: "/clear", true: "/encrypted"}[encrypted], func(t *testing.T) {
+				var recipient *bfcrypto.AgeSshRecipient
+				var identities *bfcrypto.AgeSshIdentities
+				fingerprint := ""
+				if encrypted {
+					recipient, identities = nativeTestRecipient(t)
+					fingerprint = recipient.Fingerprint()
+				}
+				stored, err := nativeformat.EncodeStoredPayload(private, recipient, nativeAuditPayloadLimits)
+				require.NoError(t, err)
+				r := nativeAuditRecord{
+					Id: [16]byte(uuid.New()), RecordedAt: nativeformat.TimestampOf(time.Now()),
+					PublicEvent:    nativeAuditPublicEvent{Name: name, Domain: string(EventDomainSession), Outcome: string(EventOutcomeSuccess)},
+					PrivatePayload: stored,
+				}
+				unsigned, err := nativeformat.Marshal(nativeAuditRecordFields(r), nativeformat.MaxAuditRecordPayload)
+				require.NoError(t, err)
+				r.Signature, err = identity.sign(append([]byte(nativeAuditRecordSignatureDomain), unsigned...))
+				require.NoError(t, err)
+				payload, err := nativeformat.Marshal(r, nativeformat.MaxAuditRecordPayload)
+				require.NoError(t, err)
+				_, _, _, err = decodeNativeAuditRecord(payload, identity, journalHash{}, fingerprint, identities, true)
+				require.ErrorContains(t, err, "lacks required")
+				_, _, _, err = decodeNativeAuditRecord(payload, identity, journalHash{}, fingerprint, nil, false)
+				if encrypted {
+					require.NoError(t, err, "outer-only verification cannot claim private semantics")
+				} else {
+					require.ErrorContains(t, err, "lacks required")
+				}
+			})
+		}
+	}
 }
 
 func TestNativeAuditRecordRejectsMalformedInputs(t *testing.T) {

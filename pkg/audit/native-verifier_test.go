@@ -57,15 +57,18 @@ func TestNativeVerifierRedactsByDefaultAndRequiresOptInForPrivateData(t *testing
 
 			source.WithSensitive = true
 			if encrypted {
+				require.ErrorContains(t, VerifyJournalIntegrity(context.Background(), []JournalSource{source}), "decryption identity")
 				_, err := VerifyJournals(context.Background(), []JournalSource{source})
 				require.ErrorContains(t, err, "decryption identity")
 				wrong, err := auditIdentityKeyRequirement.GenerateKey(nil)
 				require.NoError(t, err)
 				source.DecryptionIdentities = []bfcrypto.PrivateKey{wrong}
+				require.Error(t, VerifyJournalIntegrity(context.Background(), []JournalSource{source}))
 				_, err = VerifyJournals(context.Background(), []JournalSource{source})
 				require.Error(t, err)
 				source.DecryptionIdentities = []bfcrypto.PrivateKey{key}
 			}
+			require.NoError(t, VerifyJournalIntegrity(context.Background(), []JournalSource{source}))
 			verified, err = VerifyJournals(context.Background(), []JournalSource{source})
 			require.NoError(t, err)
 			require.Equal(t, event.Flow, verified.Records()[0].Event.Flow)
@@ -146,28 +149,87 @@ func TestNativeExportRedactsPrivateFieldsUnlessVerifiedForSensitiveOutput(t *tes
 	require.Contains(t, output.String(), "private-flow")
 }
 
-func TestNativeVerifierChecksSortedRunsAndLocalWorkspaceFallback(t *testing.T) {
+func TestNativeVerifierUsesOnlyExternalWorkspaceForLargeJournals(t *testing.T) {
 	for _, encrypted := range []bool{false, true} {
 		t.Run(map[bool]string{false: "clear", true: "encrypted"}[encrypted], func(t *testing.T) {
 			conf, id := nativeRecorderTestConfig(t, encrypted)
 			r := nativeTestOpen(t, &conf, id)
 			nativeTestWriteSealedChain(t, r, journalSegmentSortChunkSize+1)
 			source := JournalSource{Name: "native", Directory: conf.Journal.Directory, ExpectedProducerId: id.ProducerId(), ExpectedEncryptionRecipient: r.fingerprint}
-			if encrypted {
-				unusable := filepath.Join(t.TempDir(), "not-a-directory")
-				require.NoError(t, os.WriteFile(unusable, nil, 0600))
-				for _, variable := range []string{"TMPDIR", "TMP", "TEMP"} {
-					t.Setenv(variable, unusable)
-				}
-			}
 			require.NoError(t, VerifyJournalIntegrity(context.Background(), []JournalSource{source}))
 			verification, err := VerifyJournals(context.Background(), []JournalSource{source})
 			require.NoError(t, err)
 			require.EqualValues(t, journalSegmentSortChunkSize+1, verification.Journals[0].RecordCount)
 			require.Len(t, verification.Records(), journalSegmentSortChunkSize+1)
 			if encrypted {
+				unusable := filepath.Join(t.TempDir(), "not-a-directory")
+				require.NoError(t, os.WriteFile(unusable, nil, 0600))
+				for _, variable := range []string{"TMPDIR", "TMP", "TEMP"} {
+					t.Setenv(variable, unusable)
+				}
+				before := snapshotJournalTestTree(t, conf.Journal.Directory)
+				require.ErrorContains(t, VerifyJournalIntegrity(context.Background(), []JournalSource{source}), "workspace")
+				verification, err = VerifyJournals(context.Background(), []JournalSource{source})
+				require.ErrorContains(t, err, "workspace")
+				require.Nil(t, verification)
+				require.Equal(t, before, snapshotJournalTestTree(t, conf.Journal.Directory))
 				require.NoDirExists(t, filepath.Join(conf.Journal.Directory, journalWorkDirectoryName))
 			}
+		})
+	}
+}
+
+func TestNativeVerifierNeedsNoWorkspaceAtInMemoryLimit(t *testing.T) {
+	conf, id := nativeRecorderTestConfig(t, false)
+	r := nativeTestOpen(t, &conf, id)
+	nativeTestWriteSealedChain(t, r, journalSegmentSortChunkSize)
+	unusable := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(unusable, nil, 0600))
+	for _, variable := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(variable, unusable)
+	}
+	source := JournalSource{Name: "native", Directory: conf.Journal.Directory, ExpectedProducerId: id.ProducerId()}
+	require.NoError(t, VerifyJournalIntegrity(context.Background(), []JournalSource{source}))
+	verification, err := VerifyJournals(context.Background(), []JournalSource{source})
+	require.NoError(t, err)
+	require.EqualValues(t, journalSegmentSortChunkSize, verification.Journals[0].RecordCount)
+	require.NoDirExists(t, filepath.Join(conf.Journal.Directory, journalWorkDirectoryName))
+}
+
+func TestNativeVerifierRejectsTempDirectoriesInsideSelectedJournals(t *testing.T) {
+	conf, id := nativeRecorderTestConfig(t, false)
+	r := nativeTestOpen(t, &conf, id)
+	nativeTestWriteSealedChain(t, r, journalSegmentSortChunkSize+1)
+	otherConf, otherId := nativeRecorderTestConfig(t, false)
+	other := nativeTestOpen(t, &otherConf, otherId)
+	require.NoError(t, other.Record(context.Background(), Event{Name: "test.other"}))
+	type testCase struct {
+		name      string
+		temporary string
+		sources   []JournalSource
+	}
+	tests := []testCase{
+		{"journal root", conf.Journal.Directory, []JournalSource{{Name: "first", Directory: conf.Journal.Directory}}},
+		{"producer directory", r.headDirectory, []JournalSource{{Name: "first", Directory: conf.Journal.Directory}}},
+		{"later source", otherConf.Journal.Directory, []JournalSource{{Name: "first", Directory: conf.Journal.Directory}, {Name: "second", Directory: otherConf.Journal.Directory}}},
+	}
+	alias := filepath.Join(t.TempDir(), "journal-alias")
+	if err := os.Symlink(conf.Journal.Directory, alias); err == nil {
+		tests = append(tests, testCase{"symlink alias", alias, []JournalSource{{Name: "first", Directory: conf.Journal.Directory}}})
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for _, variable := range []string{"TMPDIR", "TMP", "TEMP"} {
+				t.Setenv(variable, test.temporary)
+			}
+			beforeFirst := snapshotJournalTestTree(t, conf.Journal.Directory)
+			beforeSecond := snapshotJournalTestTree(t, otherConf.Journal.Directory)
+			require.ErrorContains(t, VerifyJournalIntegrity(context.Background(), test.sources), "inside selected journal")
+			verification, err := VerifyJournals(context.Background(), test.sources)
+			require.ErrorContains(t, err, "inside selected journal")
+			require.Nil(t, verification)
+			require.Equal(t, beforeFirst, snapshotJournalTestTree(t, conf.Journal.Directory))
+			require.Equal(t, beforeSecond, snapshotJournalTestTree(t, otherConf.Journal.Directory))
 		})
 	}
 }

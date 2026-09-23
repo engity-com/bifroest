@@ -132,7 +132,7 @@ func journalDirectoryHasEntry(ctx context.Context, directory string, include fun
 
 func (this *journalSegmentSorter) add(ctx context.Context, segment journalSegmentFile) error {
 	this.chunk = append(this.chunk, segment)
-	if len(this.chunk) < journalSegmentSortChunkSize {
+	if len(this.chunk) <= journalSegmentSortChunkSize {
 		return nil
 	}
 	return this.flush(ctx)
@@ -166,7 +166,7 @@ func (this *journalSegmentSorter) resume(ctx context.Context) error {
 	if err := this.resumePendingRun(ctx); err != nil {
 		return err
 	}
-	if len(this.chunk) >= journalSegmentSortChunkSize {
+	if len(this.chunk) > journalSegmentSortChunkSize {
 		return this.flush(ctx)
 	}
 	return nil
