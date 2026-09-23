@@ -2,15 +2,12 @@ package audit
 
 import (
 	"context"
-	goerrors "errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
-	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 )
 
 func TestJournalSegmentInventorySortsWithBoundedTemporaryRuns(t *testing.T) {
@@ -144,7 +141,71 @@ func TestJournalSegmentSorterResumesCanceledFinalMerge(t *testing.T) {
 	require.Empty(t, runs)
 }
 
-func TestRecorderRecoveryUsesJournalWorkspaceWithoutGlobalTemp(t *testing.T) {
+func TestNativeSegmentRunPreservesModeAcrossSpill(t *testing.T) {
+	for _, encrypted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "clear", true: "encrypted"}[encrypted], func(t *testing.T) {
+			directory, workspace := t.TempDir(), t.TempDir()
+			for seq := journalSegmentSortChunkSize + 1; seq > 0; seq-- {
+				name := nativeSegmentName(uint64(seq), journalHash{byte(seq), byte(seq >> 8)}, encrypted)
+				require.NoError(t, os.WriteFile(filepath.Join(directory, name), nil, 0600))
+			}
+			inventory, err := newNativeSegmentInventory(context.Background(), directory, nativeActiveClear, encrypted, nil, func() (*journalSegmentWorkspace, error) {
+				return newJournalSegmentWorkspace(workspace)
+			})
+			require.NoError(t, err)
+			require.NotEmpty(t, inventory.segments.runPath)
+			for expected := uint64(1); expected <= journalSegmentSortChunkSize+1; expected++ {
+				segment, found, err := inventory.segments.Next(context.Background())
+				require.NoError(t, err)
+				require.True(t, found)
+				require.Equal(t, nativeSegmentName(expected, segment.hash, encrypted), segment.name)
+				require.Equal(t, filepath.Join(directory, segment.name), segment.path)
+				require.Equal(t, expected, segment.sequence)
+			}
+			require.NoError(t, inventory.segments.Close())
+			runs, err := os.ReadDir(workspace)
+			require.NoError(t, err)
+			require.Empty(t, runs)
+		})
+	}
+}
+
+func TestNativeSegmentInventoryCleansCanceledSpillAndPreservesUnknownFile(t *testing.T) {
+	directory, workspace := t.TempDir(), t.TempDir()
+	for seq := 1; seq <= journalSegmentSortChunkSize+1; seq++ {
+		name := nativeSegmentName(uint64(seq), journalHash{byte(seq), byte(seq >> 8)}, false)
+		require.NoError(t, os.WriteFile(filepath.Join(directory, name), nil, 0600))
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	seen := 0
+	_, err := newSortedJournalSegmentIteratorWithWorkspace(ctx, directory, func() (*journalSegmentWorkspace, error) {
+		return newJournalSegmentWorkspace(workspace)
+	}, func(entry os.DirEntry) (*journalSegmentFile, error) {
+		seen++
+		if seen > journalSegmentSortChunkSize {
+			cancel()
+		}
+		seq, hash, ok := parseNativeSegmentName(entry.Name(), false)
+		require.True(t, ok)
+		return &journalSegmentFile{name: entry.Name(), sequence: seq, hash: hash}, nil
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	runs, err := os.ReadDir(workspace)
+	require.NoError(t, err)
+	require.Empty(t, runs)
+	unknown := filepath.Join(directory, "unknown-user-file")
+	require.NoError(t, os.WriteFile(unknown, []byte("keep"), 0600))
+	_, err = newNativeSegmentInventory(context.Background(), directory, nativeActiveClear, false, nil, func() (*journalSegmentWorkspace, error) {
+		return newJournalSegmentWorkspace(workspace)
+	})
+	require.Error(t, err)
+	require.FileExists(t, unknown)
+	runs, err = os.ReadDir(workspace)
+	require.NoError(t, err)
+	require.Empty(t, runs)
+}
+
+func TestNativeRecorderRecoveryDoesNotRequireGlobalTemp(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	unusableTemporaryDirectory := filepath.Join(t.TempDir(), "not-a-directory")
 	require.NoError(t, os.WriteFile(unusableTemporaryDirectory, nil, 0600))
@@ -155,31 +216,11 @@ func TestRecorderRecoveryUsesJournalWorkspaceWithoutGlobalTemp(t *testing.T) {
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
 	require.NoError(t, recorder.Close())
-	workRoot := filepath.Join(conf.Journal.Directory, journalWorkDirectoryName)
-	entries, err := os.ReadDir(workRoot)
+	producer := producerJournalTestDirectory(conf, identity)
+	entries, err := os.ReadDir(producer)
 	require.NoError(t, err)
-	require.Empty(t, entries)
-}
-
-func inventoryJournalTestSegments(directory string) ([]journalSegmentFile, bool, error) {
-	workspace, err := bfcrypto.CreateProtectedTempDirectory(os.TempDir(), ".bifroest-audit-test-*")
-	if err != nil {
-		return nil, false, err
-	}
-	inventory, err := newJournalSegmentInventory(context.Background(), directory, workspace)
-	if err != nil {
-		return nil, false, goerrors.Join(err, os.Remove(workspace))
-	}
-	var segments []journalSegmentFile
-	for {
-		segment, found, err := inventory.segments.Next(context.Background())
-		if err != nil {
-			return nil, false, goerrors.Join(err, inventory.segments.Close(), os.Remove(workspace))
-		}
-		if !found {
-			break
-		}
-		segments = append(segments, segment)
-	}
-	return segments, inventory.hasActive, goerrors.Join(inventory.segments.Close(), os.Remove(workspace))
+	require.Len(t, entries, 2)
+	require.FileExists(t, filepath.Join(producer, nativeHeadFileName))
+	require.FileExists(t, filepath.Join(producer, nativeActiveClear))
+	require.NoDirExists(t, filepath.Join(conf.Journal.Directory, journalWorkDirectoryName))
 }

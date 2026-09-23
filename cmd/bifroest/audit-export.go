@@ -25,6 +25,7 @@ type auditExportOpts struct {
 	force                   bool
 	decryptionIdentityFiles []string
 	expectedProducerIds     []string
+	withSensitive           bool
 }
 
 const maxAuditOutputSize = 128 << 20
@@ -53,6 +54,7 @@ func registerAuditExportCmd(parent *kingpin.CmdClause) {
 	registerAuditOutputFlags(cmd, &opts.output, &opts.force)
 	registerAuditDecryptionIdentityFlags(cmd, &opts.decryptionIdentityFiles)
 	registerAuditTrustAnchorFlags(cmd, &opts.expectedProducerIds)
+	registerAuditSensitiveFlag(cmd, &opts.withSensitive)
 	cmd.Arg("auditlogName", "Configured auditlog to export.").Required().SetValue(&opts.auditlog)
 }
 
@@ -86,6 +88,7 @@ func doAuditExport(opts *auditExportOpts, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	source.WithSensitive = opts.withSensitive
 	verification, err := audit.VerifyJournals(context.Background(), []audit.JournalSource{source})
 	if err != nil {
 		return err
@@ -96,6 +99,10 @@ func doAuditExport(opts *auditExportOpts, stdout io.Writer) error {
 		}
 		return ensureBootstrapOutputIsNotPrivateKey(output, opts.decryptionIdentityFiles...)
 	})
+}
+
+func registerAuditSensitiveFlag(cmd *kingpin.CmdClause, target *bool) {
+	cmd.Flag("with-sensitive", "Include private event fields; encrypted journals require a matching decryption identity.").BoolVar(target)
 }
 
 func registerAuditOutputFlags(cmd *kingpin.CmdClause, output *string, force *bool) {
@@ -109,7 +116,10 @@ func writeAuditOutput(path string, force bool, stdout io.Writer, verification *a
 		return err
 	}
 	if path == "-" {
-		_, err := stdout.Write(content.Bytes())
+		written, err := stdout.Write(content.Bytes())
+		if err == nil && written != content.Len() {
+			return io.ErrShortWrite
+		}
 		return err
 	}
 	if err := writeAuditOutputFile(path, content.Bytes(), force, validate); err != nil {

@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/nativeformat"
 )
 
 const (
@@ -73,6 +75,7 @@ type remoteDeliveryWorker struct {
 	producerDirectory      string
 	stateDirectory         string
 	identity               *Identity
+	encrypted              bool
 	destinationFingerprint remoteDeliveryDestinationFingerprint
 	publishAttemptTimeout  time.Duration
 	cursor                 remoteDeliveryCursor
@@ -91,6 +94,8 @@ type remoteDeliveryWorker struct {
 type remoteDeliverySegmentReader struct {
 	directory        string
 	producerId       ProducerId
+	identity         *Identity
+	encrypted        bool
 	iterator         *sortedJournalSegmentIterator
 	scan             *remoteDeliverySegmentScan
 	candidate        *journalSegmentFile
@@ -115,6 +120,7 @@ type remoteDeliverySegmentResult struct {
 
 type remoteDeliverySegmentScan struct {
 	directory     string
+	encrypted     bool
 	directoryFile *os.File
 	sorter        *journalSegmentSorter
 	entries       []os.DirEntry
@@ -158,6 +164,14 @@ func newRemoteDelivery(ctx context.Context, conf *configuration.Auditlog, identi
 		return nil, err
 	}
 	producerDirectory := filepath.Join(journalDirectory, identity.ProducerId().String())
+	keys, err := ResolveEncryptionPublicKey(conf.EncryptionPublicKey, conf.EncryptionPublicKeyFile)
+	if err != nil {
+		return nil, err
+	}
+	encrypted := !keys.IsZero()
+	if err := inspectRemoteDeliveryDirectory(producerDirectory, encrypted, func(journalSegmentFile) {}); err != nil {
+		return nil, err
+	}
 	producerStateDirectory, err := prepareRemoteDeliveryState(journalDirectory, identity.ProducerId())
 	if err != nil {
 		return nil, err
@@ -223,7 +237,7 @@ func newRemoteDelivery(ctx context.Context, conf *configuration.Auditlog, identi
 			}
 			return nil, err
 		}
-		if err := validateRemoteDeliveryCursor(cursor, producerDirectory, entry.scope.Target); err != nil {
+		if err := validateRemoteDeliveryCursor(cursor, producerDirectory, entry.scope.Target, encrypted); err != nil {
 			cancel()
 			if watcher != nil {
 				_ = watcher.Close()
@@ -237,6 +251,7 @@ func newRemoteDelivery(ctx context.Context, conf *configuration.Auditlog, identi
 			producerDirectory:      producerDirectory,
 			stateDirectory:         targetStateDirectory,
 			identity:               identity,
+			encrypted:              encrypted,
 			destinationFingerprint: entry.destinationFingerprint,
 			publishAttemptTimeout:  entry.publishAttemptTimeout,
 			cursor:                 cursor,
@@ -251,6 +266,8 @@ func newRemoteDelivery(ctx context.Context, conf *configuration.Auditlog, identi
 			reader: remoteDeliverySegmentReader{
 				directory:  producerDirectory,
 				producerId: identity.ProducerId(),
+				identity:   identity,
+				encrypted:  encrypted,
 			},
 		}
 		worker.confirmed.Store(cursor.Sequence)
@@ -339,9 +356,14 @@ func (this *RemoteDelivery) Flush(ctx context.Context) error {
 	if len(workers) == 0 {
 		return nil
 	}
-	wanted, err := remoteDeliveryTailSequence(workers[0].producerDirectory)
+	wanted, err := remoteDeliveryTailSequence(workers[0].producerDirectory, workers[0].encrypted)
 	if err != nil {
 		return err
+	}
+	for _, worker := range workers {
+		if wanted < worker.confirmed.Load() {
+			return errors.System.Newf("remote delivery is missing locally confirmed segments for target %q", worker.scope.Target)
+		}
 	}
 	if wanted == 0 {
 		return nil
@@ -511,9 +533,9 @@ func (this *RemoteDelivery) watch(ctx context.Context) {
 				continue
 			}
 			name := filepath.Base(event.Name)
-			sequence, hash, valid := parseSealedJournalFileName(name)
+			sequence, hash, valid := parseNativeSegmentName(name, this.workers[0].encrypted)
 			if !valid {
-				if name != journalActiveFileName && name != journalHeadFileName && name != journalHeadTempFileName {
+				if name != nativeActiveClear && name != nativeActiveEncrypted && name != nativeHeadFileName && !strings.HasPrefix(name, ".head-cbor-") {
 					for _, worker := range this.workers {
 						worker.requestDiscoveryRescan()
 					}
@@ -544,27 +566,53 @@ func (this *remoteDeliveryWorker) observe(candidate journalSegmentFile) {
 	notifyRemoteDelivery(this.discoveryWake)
 }
 
-func validateRemoteDeliveryCursor(cursor remoteDeliveryCursor, directory string, target configuration.AuditlogTargetName) error {
-	matches := 0
-	hashMatches := false
-	err := inspectRemoteDeliveryDirectory(directory, func(candidate journalSegmentFile) {
-		if candidate.sequence == cursor.Sequence {
-			matches++
-			hashMatches = hashMatches || SegmentHash(candidate.hash) == cursor.SegmentHash
+func validateRemoteDeliveryCursor(cursor remoteDeliveryCursor, directory string, target configuration.AuditlogTargetName, encrypted bool) (result error) {
+	if cursor.Sequence == 0 {
+		return inspectRemoteDeliveryDirectory(directory, encrypted, func(journalSegmentFile) {})
+	}
+	ctx := context.Background()
+	iterator, err := newSortedJournalSegmentIterator(ctx, directory, os.TempDir(), func(entry os.DirEntry) (*journalSegmentFile, error) {
+		candidate, err := parseRemoteDeliveryDirectoryEntry(directory, entry, encrypted)
+		if err != nil || candidate.sequence == 0 {
+			return nil, err
 		}
+		return &candidate, nil
 	})
 	if err != nil {
 		return err
 	}
-	if cursor.Sequence == 0 || matches == 1 && hashMatches {
+	defer func() { result = goerrors.Join(result, iterator.Close()) }()
+	expected := uint64(1)
+	confirmed := false
+	for {
+		candidate, found, err := iterator.Next(ctx)
+		if err != nil {
+			return err
+		}
+		if !found || candidate.sequence > cursor.Sequence {
+			break
+		}
+		if confirmed || candidate.sequence != expected {
+			return errors.System.Newf("remote delivery cursor for target %q confirms missing or duplicate local segment %d", target, expected)
+		}
+		if candidate.sequence == cursor.Sequence {
+			if SegmentHash(candidate.hash) != cursor.SegmentHash {
+				break
+			}
+			confirmed = true
+		} else {
+			expected++
+		}
+	}
+	if confirmed {
 		return nil
 	}
 	return errors.System.Newf("remote delivery cursor for target %q conflicts with or confirms missing local segment %d", target, cursor.Sequence)
 }
 
-func remoteDeliveryTailSequence(directory string) (uint64, error) {
+func remoteDeliveryTailSequence(directory string, encrypted bool) (uint64, error) {
 	var result uint64
-	err := inspectRemoteDeliveryDirectory(directory, func(candidate journalSegmentFile) {
+	err := inspectRemoteDeliveryDirectory(directory, encrypted, func(candidate journalSegmentFile) {
 		if candidate.sequence > result {
 			result = candidate.sequence
 		}
@@ -572,7 +620,7 @@ func remoteDeliveryTailSequence(directory string) (uint64, error) {
 	return result, err
 }
 
-func inspectRemoteDeliveryDirectory(directory string, accept func(journalSegmentFile)) error {
+func inspectRemoteDeliveryDirectory(directory string, encrypted bool, accept func(journalSegmentFile)) error {
 	file, err := os.Open(directory)
 	if err != nil {
 		return errors.System.Newf("cannot inspect audit producer directory %q for delivery: %w", directory, err)
@@ -581,7 +629,7 @@ func inspectRemoteDeliveryDirectory(directory string, accept func(journalSegment
 	for {
 		entries, readErr := file.ReadDir(remoteDeliveryDirectoryReadBatch)
 		for _, entry := range entries {
-			candidate, parseErr := parseRemoteDeliveryDirectoryEntry(directory, entry)
+			candidate, parseErr := parseRemoteDeliveryDirectoryEntry(directory, entry, encrypted)
 			if parseErr != nil {
 				return parseErr
 			}
@@ -598,12 +646,19 @@ func inspectRemoteDeliveryDirectory(directory string, accept func(journalSegment
 	}
 }
 
-func parseRemoteDeliveryDirectoryEntry(directory string, entry os.DirEntry) (journalSegmentFile, error) {
+func parseRemoteDeliveryDirectoryEntry(directory string, entry os.DirEntry, encrypted bool) (journalSegmentFile, error) {
 	switch entry.Name() {
-	case journalActiveFileName, journalHeadFileName, journalHeadTempFileName:
-		return journalSegmentFile{}, nil
+	case nativeHeadFileName:
+		if entry.Type().IsRegular() {
+			return journalSegmentFile{}, nil
+		}
 	}
-	sequence, hash, ok := parseSealedJournalFileName(entry.Name())
+	if entry.Name() == nativeActiveClear && !encrypted || entry.Name() == nativeActiveEncrypted && encrypted || strings.HasPrefix(entry.Name(), ".head-cbor-") {
+		if entry.Type().IsRegular() {
+			return journalSegmentFile{}, nil
+		}
+	}
+	sequence, hash, ok := parseNativeSegmentName(entry.Name(), encrypted)
 	if !ok || !entry.Type().IsRegular() {
 		return journalSegmentFile{}, errors.Config.Newf("audit producer directory %q contains unsupported delivery entry %q", directory, entry.Name())
 	}
@@ -677,7 +732,9 @@ func (this *remoteDeliverySegmentReader) Next(ctx context.Context, confirmed uin
 			return this.handleGap(expected, candidate.sequence)
 		}
 		this.gapVerification = false
-		segment, file, err := openRemoteDeliverySegment(ctx, this.producerId, candidate)
+		candidate.name = nativeSegmentName(candidate.sequence, candidate.hash, this.encrypted)
+		candidate.path = filepath.Join(this.directory, candidate.name)
+		segment, file, err := openRemoteDeliverySegment(ctx, this.identity, this.producerId, candidate, this.encrypted)
 		if err != nil {
 			return remoteDeliverySegmentResult{err: goerrors.Join(err, this.Invalidate())}
 		}
@@ -746,6 +803,7 @@ func (this *remoteDeliverySegmentReader) startScan() error {
 	}
 	this.scan = &remoteDeliverySegmentScan{
 		directory:     this.directory,
+		encrypted:     this.encrypted,
 		directoryFile: file,
 		readBatchSize: readBatchSize,
 		sorter: &journalSegmentSorter{
@@ -769,7 +827,7 @@ func (this *remoteDeliverySegmentScan) advance(ctx context.Context, hook func(co
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
-		candidate, err := parseRemoteDeliveryDirectoryEntry(this.directory, this.entries[this.entryIndex])
+		candidate, err := parseRemoteDeliveryDirectoryEntry(this.directory, this.entries[this.entryIndex], this.encrypted)
 		if err != nil {
 			return nil, false, err
 		}
@@ -900,11 +958,11 @@ func (this *remoteDeliverySegmentScan) Close() error {
 	return goerrors.Join(closeErr, this.sorter.cleanup())
 }
 
-func openRemoteDeliverySegment(ctx context.Context, producerId ProducerId, candidate journalSegmentFile) (SealedSegment, *os.File, error) {
+func openRemoteDeliverySegment(ctx context.Context, identity *Identity, producerId ProducerId, candidate journalSegmentFile, encrypted bool) (SealedSegment, *os.File, error) {
 	if err := ctx.Err(); err != nil {
 		return SealedSegment{}, nil, err
 	}
-	file, err := openSealedJournal(candidate.path)
+	file, err := nativeOpenRegular(candidate.path)
 	if err != nil {
 		return SealedSegment{}, nil, err
 	}
@@ -915,11 +973,38 @@ func openRemoteDeliverySegment(ctx context.Context, producerId ProducerId, candi
 		_ = file.Close()
 		return SealedSegment{}, nil, errors.System.Newf("cannot inspect sealed audit segment %q for delivery: %w", candidate.path, err)
 	}
+	if info.Size() <= int64(len(nativeformat.AuditMagic)) || info.Size() > nativeMaxSize {
+		_ = file.Close()
+		return SealedSegment{}, nil, errors.System.Newf("invalid native audit segment size: %s", candidate.path)
+	}
+	if identity != nil {
+		magic := make([]byte, len(nativeformat.AuditMagic))
+		if _, err := file.ReadAt(magic, 0); err != nil || string(magic) != nativeformat.AuditMagic {
+			_ = file.Close()
+			return SealedSegment{}, nil, errors.System.Newf("invalid native audit segment magic: %s: %v", candidate.path, err)
+		}
+		unit, _, tail, err := nativeformat.ReadUnitAt(file, int64(len(magic)), info.Size(), nativeformat.MaxAuditRecordPayload)
+		if err != nil || tail || unit.Type != nativeformat.HeaderUnit {
+			_ = file.Close()
+			return SealedSegment{}, nil, errors.System.Newf("invalid native audit segment header: %s: %v", candidate.path, err)
+		}
+		header, err := nativeformat.Unmarshal[nativeAuditHeader](unit.Payload, nativeformat.MaxMetadataPayload)
+		if err != nil || (header.Recipient != "") != encrypted {
+			_ = file.Close()
+			return SealedSegment{}, nil, errors.System.Newf("invalid native audit segment mode or header: %s: %v", candidate.path, err)
+		}
+		scanned, err := nativeScan(file, identity, candidate.sequence, journalHash(header.PreviousSegmentHash), journalHash(header.PreviousRecordHash), journalHash{}, true, header.Recipient, false)
+		if err != nil || !scanned.sealed || scanned.segmentHash != candidate.hash {
+			_ = file.Close()
+			return SealedSegment{}, nil, errors.System.Newf("invalid sealed native audit segment %q (scan: %v, expected hash: %s, actual hash: %s)", candidate.path, err, candidate.hash, scanned.segmentHash)
+		}
+	}
 	segment, err := newSealedSegmentContext(ctx, producerId, candidate.sequence, SegmentHash(candidate.hash), info.Size(), file)
 	if err != nil {
 		_ = file.Close()
 		return SealedSegment{}, nil, err
 	}
+	segment.encrypted = encrypted
 	return segment, file, nil
 }
 

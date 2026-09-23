@@ -6,7 +6,7 @@ description: Verify and merge multiple Bifröst audit journals.
 
 Verifies every selected journal before producing one deterministic JSON Lines stream. Records are ordered by their producer-signed timestamp and stable origin and chain-position tie-breakers. Timestamps are statements by their producers and are not an independently trusted clock. Merge refuses inputs exceeding its bounded materialization safety limit.
 
-Plaintext and encrypted journals can be merged together. Supply every required private key by repeating `--decryptionIdentityFile`.
+Clear and encrypted journals can be merged together. The default JSON Lines output contains only public fields. To include private fields, supply `--with-sensitive` and the decryption identities for every encrypted source.
 
 ## Syntax
 
@@ -24,7 +24,10 @@ Includes [all general flags](../index.md#general-flags).
 Configuration to load. It uses the same platform default as `bifroest run`.
 
 <<flag("decryptionIdentityFile", "File Path", "../../data-type.md#file-path", id_prefix="audit-merge-", heading=3)>>
-Private SSH key used to decrypt encrypted event payloads. Repeat the flag for journals encrypted for different keys.
+Private SSH key required with `--with-sensitive` for encrypted event fields. Repeat for sources encrypted for different keys.
+
+<<flag("with-sensitive", "bool", default=False, id_prefix="audit-merge-", heading=3)>>
+Explicitly include confidential event fields in the merged JSON Lines stream. The output is plaintext and must be protected.
 
 <<flag("expectedProducerId", "string", id_prefix="audit-merge-", heading=3)>>
 External trust anchor in the form `<auditlogName>=<64-hex-producer-id>`. Repeat for selected sources whose configured signing private keys must not be opened or are absent. Every mapping must name a selected source, and the values must come from independently trusted channels.

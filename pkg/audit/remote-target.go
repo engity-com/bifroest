@@ -53,7 +53,7 @@ func (this *SegmentHash) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// SealedSegment describes one immutable, locally verified journal segment.
+// SealedSegment describes one immutable, locally verified native audit segment.
 // Content returns a fresh view positioned at offset zero. Targets must not
 // retain or close that view and must publish synchronously before returning.
 type SealedSegment struct {
@@ -62,6 +62,7 @@ type SealedSegment struct {
 	hash       SegmentHash
 	size       int64
 	content    io.ReaderAt
+	encrypted  bool
 }
 
 func (this SealedSegment) Validate() error {
@@ -91,7 +92,7 @@ func (this SealedSegment) ValidateContext(ctx context.Context) error {
 		return errors.System.Newf("sealed audit segment content is nil")
 	}
 	hasher := sha256.New()
-	_, _ = hasher.Write([]byte(journalSegmentHashDomain))
+	_, _ = hasher.Write([]byte(nativeAuditSegmentHashDomain))
 	written, err := io.Copy(hasher, contextReader{context: ctx, reader: io.NewSectionReader(this.content, 0, this.size)})
 	if err != nil {
 		return errors.System.Newf("cannot hash sealed audit segment content: %w", err)
@@ -154,7 +155,7 @@ func (this SealedSegment) Content() io.ReadSeeker {
 }
 
 func (this SealedSegment) FileName() string {
-	return sealedJournalFileName(this.sequence, journalHash(this.hash))
+	return nativeSegmentName(this.sequence, journalHash(this.hash), this.encrypted)
 }
 
 func (this SealedSegment) RemotePath() string {

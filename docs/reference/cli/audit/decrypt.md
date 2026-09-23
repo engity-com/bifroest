@@ -4,7 +4,7 @@ description: Alias for exporting a verified Bifröst audit journal.
 
 # `bifroest audit decrypt`
 
-`audit decrypt` is an alias and convenience name for [`audit export`](export.md). Both commands have identical behavior for encrypted and unencrypted journals.
+`audit decrypt` is an alias for [`audit export`](export.md) and follows the same safe defaults. It does **not** reveal confidential fields unless `--with-sensitive` is explicitly supplied; for `.beaudit`, that flag also requires the matching decryption identity.
 
 ## Syntax
 

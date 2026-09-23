@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/alecthomas/kingpin/v2"
-	"golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -76,19 +75,12 @@ func configuredAuditJournalSource(configured *configuration.Auditlog, decryption
 		return audit.JournalSource{}, fmt.Errorf("cannot use encryption public key of auditlog %q: %w", configured.Name, err)
 	}
 	decryptionIdentities := make([]bfcrypto.PrivateKey, 0, len(decryptionIdentityFiles))
-	matchingDecryptionIdentity := false
 	for _, path := range decryptionIdentityFiles {
 		key, err := loadAuditPrivateKey(path)
 		if err != nil {
 			return audit.JournalSource{}, fmt.Errorf("cannot load audit decryption identity %q: %w", path, err)
 		}
 		decryptionIdentities = append(decryptionIdentities, key)
-		if encryptionRecipient != "" && ssh.FingerprintSHA256(key.PublicKey().ToSsh()) == encryptionRecipient {
-			matchingDecryptionIdentity = true
-		}
-	}
-	if encryptionRecipient != "" && !matchingDecryptionIdentity {
-		return audit.JournalSource{}, fmt.Errorf("auditlog %q requires a matching --decryptionIdentityFile", configured.Name)
 	}
 	return audit.JournalSource{
 		Name:                        configured.Name.String(),

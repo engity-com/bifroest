@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestLocalJournalLocksCanonicalDirectory(t *testing.T) {
+func TestNativeJournalLocksCanonicalDirectory(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	require.NoError(t, os.MkdirAll(conf.Journal.Directory, journalDirectoryMode))
 	alias := filepath.Join(filepath.Dir(conf.Journal.Directory), "journal-alias")
@@ -26,7 +26,7 @@ func TestLocalJournalLocksCanonicalDirectory(t *testing.T) {
 	require.NoError(t, first.Close())
 }
 
-func TestLocalJournalUsesRestrictiveModes(t *testing.T) {
+func TestNativeJournalUsesRestrictiveModes(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)

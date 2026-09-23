@@ -19,8 +19,8 @@ const (
 	remoteDeliveryStateDirectoryName = ".delivery"
 	remoteDeliveryCursorFileName     = "cursor.json"
 	remoteDeliveryCursorTempFileName = "cursor.tmp"
-	remoteDeliveryCursorSchema       = "bifroest.audit-remote-delivery-cursor/v2"
-	remoteDeliveryCursorSignDomain   = "BIFROEST-AUDIT-REMOTE-DELIVERY-CURSOR-SIGNATURE/v2\x00"
+	remoteDeliveryCursorSchema       = "bifroest.audit-native-remote-delivery-cursor/v1"
+	remoteDeliveryCursorSignDomain   = "BIFROEST-BAUDIT-REMOTE-DELIVERY-CURSOR-SIGNATURE/v1\x00"
 )
 
 type remoteDeliveryDestinationFingerprint [sha256.Size]byte

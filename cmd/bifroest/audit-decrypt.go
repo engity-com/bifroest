@@ -16,6 +16,7 @@ func registerAuditDecryptCmd(parent *kingpin.CmdClause) {
 	registerAuditOutputFlags(cmd, &opts.output, &opts.force)
 	registerAuditDecryptionIdentityFlags(cmd, &opts.decryptionIdentityFiles)
 	registerAuditTrustAnchorFlags(cmd, &opts.expectedProducerIds)
+	registerAuditSensitiveFlag(cmd, &opts.withSensitive)
 	cmd.Arg("auditlogName", "Configured auditlog to export.").Required().SetValue(&opts.auditlog)
 }
 

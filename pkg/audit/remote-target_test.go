@@ -20,7 +20,7 @@ func TestSealedSegmentMetadataAndRemotePath(t *testing.T) {
 	require.Equal(t, ProducerId{1}, segment.ProducerId())
 	require.Equal(t, uint64(42), segment.Sequence())
 	require.Equal(t, int64(len("sealed segment")), segment.Size())
-	require.Equal(t, "segment-00000000000000000042-"+segment.Hash().String()+".journal", segment.FileName())
+	require.Equal(t, "segment-00000000000000000042-"+segment.Hash().String()+".baudit", segment.FileName())
 	require.Equal(t, segment.ProducerId().String()+"/"+segment.FileName(), segment.RemotePath())
 	require.NotContains(t, segment.RemotePath(), `\`)
 	first, err := io.ReadAll(segment.Content())
@@ -28,6 +28,17 @@ func TestSealedSegmentMetadataAndRemotePath(t *testing.T) {
 	second, err := io.ReadAll(segment.Content())
 	require.NoError(t, err)
 	require.Equal(t, first, second)
+}
+
+func TestSealedSegmentEncryptedRemotePath(t *testing.T) {
+	segment := validRemoteTargetTestSegment()
+	segment.encrypted = true
+	require.NoError(t, segment.Validate())
+	require.Equal(t, nativeSegmentName(42, journalHash(segment.Hash()), true), segment.FileName())
+	require.Equal(t, segment.ProducerId().String()+"/"+segment.FileName(), segment.RemotePath())
+	legacyHash := SegmentHash(hashJournalBytes(journalSegmentHashDomain, []byte("sealed segment")))
+	segment.hash = legacyHash
+	require.ErrorContains(t, segment.Validate(), "does not match hash")
 }
 
 func TestSealedSegmentValidation(t *testing.T) {
@@ -220,7 +231,7 @@ func TestSealedSegmentValidationHonorsContextWhileHashing(t *testing.T) {
 	segment := SealedSegment{
 		producerId: ProducerId{1},
 		sequence:   1,
-		hash:       SegmentHash(hashJournalBytes(journalSegmentHashDomain, content)),
+		hash:       SegmentHash(hashNativeAuditSegment(content)),
 		size:       int64(len(content)),
 		content:    &slowRemoteTargetTestReaderAt{content: content},
 	}
@@ -253,7 +264,7 @@ func validRemoteTargetTestSegment() SealedSegment {
 	segment, err := newSealedSegment(
 		ProducerId{1},
 		42,
-		SegmentHash(hashJournalBytes(journalSegmentHashDomain, content)),
+		SegmentHash(hashNativeAuditSegment(content)),
 		int64(len(content)),
 		bytes.NewReader(content),
 	)

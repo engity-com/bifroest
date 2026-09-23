@@ -4,7 +4,7 @@ description: Replicate sealed Bifröst audit-log segments to remote storage.
 
 # Remote targets
 
-Remote targets copy sealed audit-log segments to external storage. The local journal remains the authoritative source and keeps all segments after successful delivery.
+Remote targets copy sealed `.baudit` or `.beaudit` audit-log segments byte for byte to external storage under `<producer-id>/<segment-file-name>`. The local journal remains the authoritative source and keeps all segments after successful delivery. Neither a JSONL export nor a decrypted recording is created remotely.
 
 ## Available targets
 

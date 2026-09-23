@@ -1,8 +1,10 @@
 package audit
 
 import (
+	"bytes"
 	"context"
 	goerrors "errors"
+	"io"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -46,11 +48,11 @@ func TestRemoteDeliveryPublishesInOrderAndDoesNotResend(t *testing.T) {
 	for _, segment := range segments {
 		require.FileExists(t, segment.path)
 	}
-	require.NoError(t, VerifyJournalIntegrity(context.Background(), []JournalSource{{
-		Name:               conf.Name.String(),
-		Directory:          conf.Journal.Directory,
-		ExpectedProducerId: identity.ProducerId(),
-	}}))
+	for _, segment := range segments {
+		content, err := os.ReadFile(segment.path)
+		require.NoError(t, err)
+		require.Equal(t, segment.hash, hashNativeAuditSegment(content))
+	}
 
 	var resent atomic.Int32
 	conf.Targets = configuration.AuditlogTargets{remoteDeliveryTestTarget("archive", func(context.Context, SealedSegment) error {
@@ -65,6 +67,117 @@ func TestRemoteDeliveryPublishesInOrderAndDoesNotResend(t *testing.T) {
 	time.Sleep(25 * time.Millisecond)
 	require.Zero(t, resent.Load())
 	require.NoError(t, restarted.Close())
+}
+
+func TestRemoteDeliveryPublishesNativeBytesAndEncryptedName(t *testing.T) {
+	for _, encrypted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "clear", true: "encrypted"}[encrypted], func(t *testing.T) {
+			conf, identity := nativeRecorderTestConfig(t, encrypted)
+			conf.Name = "security"
+			recorder := nativeTestOpen(t, &conf, identity)
+			require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.native-delivery"}))
+			require.NoError(t, recorder.Seal())
+			require.NoError(t, recorder.Close())
+			entries, _, _, err := nativeInventory(filepath.Join(conf.Journal.Directory, identity.ProducerId().String()),
+				map[bool]string{false: nativeActiveClear, true: nativeActiveEncrypted}[encrypted], encrypted)
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+			original, err := os.ReadFile(entries[0].path)
+			require.NoError(t, err)
+			conf.Targets = configuration.AuditlogTargets{remoteDeliveryTestTarget("archive", func(_ context.Context, segment SealedSegment) error {
+				require.Equal(t, filepath.Base(entries[0].path), segment.FileName())
+				require.Equal(t, identity.ProducerId().String()+"/"+segment.FileName(), segment.RemotePath())
+				require.Equal(t, SegmentHash(hashNativeAuditSegment(original)), segment.Hash())
+				content, err := io.ReadAll(segment.Content())
+				require.NoError(t, err)
+				require.True(t, bytes.Equal(original, content))
+				return nil
+			})}
+			delivery, err := NewRemoteDelivery(context.Background(), &conf, identity)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = delivery.Close() })
+			setRemoteDeliveryTestOptions(delivery)
+			require.NoError(t, delivery.Start())
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			require.NoError(t, delivery.Flush(ctx))
+			require.Equal(t, uint64(1), remoteDeliveryTestCursorSequence(conf, identity, "archive"))
+			require.NoError(t, delivery.Close())
+			restarted := nativeTestOpen(t, &conf, identity)
+			require.NoError(t, restarted.Close())
+		})
+	}
+}
+
+func TestRemoteDeliveryRejectsOldLocalDataAndMissingConfirmedHistory(t *testing.T) {
+	conf, identity, segments := newRemoteDeliveryTestJournal(t, 2)
+	conf.Targets = configuration.AuditlogTargets{remoteDeliveryTestTarget("archive", nil)}
+	state, err := prepareRemoteDeliveryState(conf.Journal.Directory, identity.ProducerId())
+	require.NoError(t, err)
+	_, fingerprint, err := customRemoteDeliveryTargetSettings(conf.Targets[0].V, RemoteTargetSettings{
+		DestinationIdentity: remoteTargetTestDestinationIdentity, PublishAttemptTimeout: time.Minute,
+	})
+	require.NoError(t, err)
+	_, err = loadRemoteDeliveryCursor(state, identity, "archive", fingerprint)
+	require.NoError(t, err)
+	_, err = writeRemoteDeliveryCursor(filepath.Join(state, remoteDeliveryTargetStateName("archive")), identity, "archive", fingerprint, 2, SegmentHash(segments[1].hash))
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(segments[0].path))
+	delivery, err := NewRemoteDelivery(context.Background(), &conf, identity)
+	require.Nil(t, delivery)
+	require.ErrorContains(t, err, "missing or duplicate local segment")
+
+	old := filepath.Join(filepath.Dir(segments[1].path), sealedJournalFileName(1, journalHash{1}))
+	require.NoError(t, os.WriteFile(old, []byte("old format"), journalFileMode))
+	delivery, err = NewRemoteDelivery(context.Background(), &conf, identity)
+	require.Nil(t, delivery)
+	require.ErrorContains(t, err, "unsupported delivery entry")
+	require.FileExists(t, old)
+}
+
+func TestRemoteDeliveryCursorCannotHideGapWithDuplicate(t *testing.T) {
+	conf, identity, segments := newRemoteDeliveryTestJournal(t, 3)
+	conf.Targets = configuration.AuditlogTargets{remoteDeliveryTestTarget("archive", nil)}
+	state, err := prepareRemoteDeliveryState(conf.Journal.Directory, identity.ProducerId())
+	require.NoError(t, err)
+	_, fingerprint, err := customRemoteDeliveryTargetSettings(conf.Targets[0].V, RemoteTargetSettings{
+		DestinationIdentity: remoteTargetTestDestinationIdentity, PublishAttemptTimeout: time.Minute,
+	})
+	require.NoError(t, err)
+	_, err = loadRemoteDeliveryCursor(state, identity, "archive", fingerprint)
+	require.NoError(t, err)
+	_, err = writeRemoteDeliveryCursor(filepath.Join(state, remoteDeliveryTargetStateName("archive")), identity, "archive", fingerprint, 3, SegmentHash(segments[2].hash))
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(segments[1].path))
+	duplicate := filepath.Join(filepath.Dir(segments[0].path), nativeSegmentName(1, journalHash{9}, false))
+	require.NoError(t, os.WriteFile(duplicate, []byte("duplicate"), journalFileMode))
+	delivery, err := NewRemoteDelivery(context.Background(), &conf, identity)
+	require.Nil(t, delivery)
+	require.ErrorContains(t, err, "missing or duplicate local segment")
+}
+
+func TestRemoteDeliveryRejectsUnsealedAndAlteredNativeSegment(t *testing.T) {
+	_, identity, segments := newRemoteDeliveryTestJournal(t, 1)
+	content, err := os.ReadFile(segments[0].path)
+	require.NoError(t, err)
+	old := segments[0].path
+	wrongHash := hashNativeAuditSegment(content[:len(content)-1])
+	wrongPath := filepath.Join(filepath.Dir(old), nativeSegmentName(1, wrongHash, false))
+	require.NoError(t, os.Rename(old, wrongPath))
+	require.NoError(t, os.WriteFile(wrongPath, content[:len(content)-1], journalFileMode))
+	candidate := journalSegmentFile{path: wrongPath, sequence: 1, hash: wrongHash}
+	_, file, err := openRemoteDeliverySegment(context.Background(), identity, identity.ProducerId(), candidate, false)
+	require.Nil(t, file)
+	require.ErrorContains(t, err, "invalid sealed native audit segment")
+
+	require.NoError(t, os.Rename(wrongPath, old))
+	content[len(content)-1] ^= 1
+	require.NoError(t, os.WriteFile(old, content, journalFileMode))
+	candidate = segments[0]
+	_, file, err = openRemoteDeliverySegment(context.Background(), identity, identity.ProducerId(), candidate, false)
+	require.Nil(t, file)
+	require.Error(t, err)
+	require.FileExists(t, old)
 }
 
 func TestRemoteDeliveryRetriesTargetsIndependentlyAndRetainsSegments(t *testing.T) {
@@ -258,7 +371,7 @@ func TestRemoteDeliveryTimesOutEachPublishAttemptIndependently(t *testing.T) {
 func TestRemoteDeliveryWakesForNewSegmentWithoutIdlePolling(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	conf.Name = "security"
-	recorder, err := NewRecorder(&conf, identity)
+	recorder, err := newNativeRecorder(&conf, identity)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recorder.Close() })
 	published := make(chan uint64, 1)
@@ -287,10 +400,10 @@ func TestRemoteDeliverySegmentReaderScansLargeBacklogOnceWithBoundedMemory(t *te
 	directory := t.TempDir()
 	tempDirectory := t.TempDir()
 	content := []byte("sealed segment")
-	hash := hashJournalBytes(journalSegmentHashDomain, content)
+	hash := hashNativeAuditSegment(content)
 	lastSequence := uint64(journalSegmentSortChunkSize + 17)
 	for sequence := uint64(1); sequence <= lastSequence; sequence++ {
-		name := sealedJournalFileName(sequence, hash)
+		name := nativeSegmentName(sequence, hash, false)
 		segmentPath := filepath.Join(directory, name)
 		require.NoError(t, os.WriteFile(segmentPath, content, journalFileMode))
 		require.NoError(t, os.Chmod(segmentPath, 0o400))
@@ -327,10 +440,10 @@ func TestRemoteDeliverySegmentReaderScansLargeBacklogOnceWithBoundedMemory(t *te
 func TestRemoteDeliverySegmentReaderAdvancesThroughBacklog(t *testing.T) {
 	directory := t.TempDir()
 	content := []byte("sealed segment")
-	hash := hashJournalBytes(journalSegmentHashDomain, content)
+	hash := hashNativeAuditSegment(content)
 	lastSequence := uint64(257)
 	for sequence := uint64(1); sequence <= lastSequence; sequence++ {
-		name := sealedJournalFileName(sequence, hash)
+		name := nativeSegmentName(sequence, hash, false)
 		segmentPath := filepath.Join(directory, name)
 		require.NoError(t, os.WriteFile(segmentPath, content, journalFileMode))
 		require.NoError(t, os.Chmod(segmentPath, 0o400))
@@ -377,8 +490,8 @@ func TestRemoteDeliverySegmentReaderTransitionsFromExhaustedToForcedRescan(t *te
 	require.Equal(t, uint64(1), reader.scanCount)
 
 	content := []byte("sealed segment")
-	hash := hashJournalBytes(journalSegmentHashDomain, content)
-	path := filepath.Join(directory, sealedJournalFileName(1, hash))
+	hash := hashNativeAuditSegment(content)
+	path := filepath.Join(directory, nativeSegmentName(1, hash, false))
 	require.NoError(t, os.WriteFile(path, content, journalFileMode))
 	require.NoError(t, os.Chmod(path, 0o400))
 
@@ -405,8 +518,8 @@ func TestRemoteDeliverySegmentReaderTransitionsFromExhaustedToForcedRescan(t *te
 
 func TestRemoteDeliverySegmentReaderPermanentlyRejectsDuplicatesAcrossBatches(t *testing.T) {
 	directory := t.TempDir()
-	first := sealedJournalFileName(1, journalHash{1})
-	second := sealedJournalFileName(1, journalHash{2})
+	first := nativeSegmentName(1, journalHash{1}, false)
+	second := nativeSegmentName(1, journalHash{2}, false)
 	require.NoError(t, os.WriteFile(filepath.Join(directory, first), []byte("first"), journalFileMode))
 	require.NoError(t, os.WriteFile(filepath.Join(directory, second), []byte("second"), journalFileMode))
 	reader := remoteDeliverySegmentReader{
@@ -445,7 +558,7 @@ func TestRemoteDeliverySegmentReaderPermanentlyRejectsDuplicatesAcrossBatches(t 
 func TestRemoteDeliverySegmentReaderPermanentlyRejectsGapBeyondCacheWindow(t *testing.T) {
 	directory := t.TempDir()
 	sequence := uint64(journalSegmentSortChunkSize + 1)
-	name := sealedJournalFileName(sequence, journalHash{1})
+	name := nativeSegmentName(sequence, journalHash{1}, false)
 	require.NoError(t, os.WriteFile(filepath.Join(directory, name), []byte("later"), journalFileMode))
 	reader := remoteDeliverySegmentReader{
 		directory:     directory,
@@ -480,9 +593,9 @@ func TestRemoteDeliverySegmentReaderPermanentlyRejectsGapBeyondCacheWindow(t *te
 func TestRemoteDeliverySegmentReaderDoesNotConfirmGapAcrossObservedChange(t *testing.T) {
 	directory := t.TempDir()
 	content := []byte("sealed segment")
-	hash := hashJournalBytes(journalSegmentHashDomain, content)
+	hash := hashNativeAuditSegment(content)
 	writeSegment := func(sequence uint64) journalSegmentFile {
-		name := sealedJournalFileName(sequence, hash)
+		name := nativeSegmentName(sequence, hash, false)
 		path := filepath.Join(directory, name)
 		require.NoError(t, os.WriteFile(path, content, journalFileMode))
 		require.NoError(t, os.Chmod(path, 0o400))
@@ -520,9 +633,9 @@ func TestRemoteDeliverySegmentReaderDoesNotConfirmGapAcrossObservedChange(t *tes
 func TestRemoteDeliverySegmentReaderPreservesScanProgressAcrossTimeout(t *testing.T) {
 	directory := t.TempDir()
 	content := []byte("sealed segment")
-	hash := hashJournalBytes(journalSegmentHashDomain, content)
+	hash := hashNativeAuditSegment(content)
 	for sequence := uint64(1); sequence <= 2; sequence++ {
-		path := filepath.Join(directory, sealedJournalFileName(sequence, hash))
+		path := filepath.Join(directory, nativeSegmentName(sequence, hash, false))
 		require.NoError(t, os.WriteFile(path, content, journalFileMode))
 		require.NoError(t, os.Chmod(path, 0o400))
 	}
@@ -571,8 +684,8 @@ func TestRemoteDeliverySegmentReaderPreservesScanProgressAcrossTimeout(t *testin
 func TestRemoteDeliverySegmentReaderInvalidatesFailedSegmentOpen(t *testing.T) {
 	directory := t.TempDir()
 	content := []byte("sealed segment")
-	hash := hashJournalBytes(journalSegmentHashDomain, content)
-	segmentPath := filepath.Join(directory, sealedJournalFileName(1, hash))
+	hash := hashNativeAuditSegment(content)
+	segmentPath := filepath.Join(directory, nativeSegmentName(1, hash, false))
 	require.NoError(t, os.WriteFile(segmentPath, []byte("broken segment"), journalFileMode))
 	require.NoError(t, os.Chmod(segmentPath, 0o400))
 	reader := remoteDeliverySegmentReader{directory: directory, producerId: ProducerId{1}}
@@ -607,9 +720,9 @@ func TestRemoteDeliverySegmentReaderInvalidatesFailedSegmentOpen(t *testing.T) {
 func TestRemoteDeliverySegmentReaderRebuildsAfterLiveAppendAtEOF(t *testing.T) {
 	directory := t.TempDir()
 	content := []byte("sealed segment")
-	hash := hashJournalBytes(journalSegmentHashDomain, content)
+	hash := hashNativeAuditSegment(content)
 	writeSegment := func(sequence uint64) journalSegmentFile {
-		name := sealedJournalFileName(sequence, hash)
+		name := nativeSegmentName(sequence, hash, false)
 		path := filepath.Join(directory, name)
 		require.NoError(t, os.WriteFile(path, content, journalFileMode))
 		require.NoError(t, os.Chmod(path, 0o400))
@@ -642,8 +755,8 @@ func TestRemoteDeliverySegmentReaderRebuildsAfterLiveAppendAtEOF(t *testing.T) {
 func TestRemoteDeliverySegmentReaderDetectsDuplicateAddedAfterCursorProgress(t *testing.T) {
 	directory := t.TempDir()
 	content := []byte("sealed segment")
-	hash := hashJournalBytes(journalSegmentHashDomain, content)
-	firstName := sealedJournalFileName(1, hash)
+	hash := hashNativeAuditSegment(content)
+	firstName := nativeSegmentName(1, hash, false)
 	firstPath := filepath.Join(directory, firstName)
 	require.NoError(t, os.WriteFile(firstPath, content, journalFileMode))
 	require.NoError(t, os.Chmod(firstPath, 0o400))
@@ -660,9 +773,9 @@ func TestRemoteDeliverySegmentReaderDetectsDuplicateAddedAfterCursorProgress(t *
 			break
 		}
 	}
-	duplicateName := sealedJournalFileName(1, journalHash{9})
+	duplicateName := nativeSegmentName(1, journalHash{9}, false)
 	require.NoError(t, os.WriteFile(filepath.Join(directory, duplicateName), []byte("mutated"), journalFileMode))
-	secondName := sealedJournalFileName(2, hash)
+	secondName := nativeSegmentName(2, hash, false)
 	require.NoError(t, os.WriteFile(filepath.Join(directory, secondName), content, journalFileMode))
 	observed <- journalSegmentFile{name: duplicateName, sequence: 1, hash: journalHash{9}}
 	observed <- journalSegmentFile{name: secondName, sequence: 2, hash: hash}
@@ -761,7 +874,7 @@ func TestRemoteDeliveryFallsBackToPeriodicPollingWithoutFsnotify(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			conf, identity := newJournalTestIdentity(t)
 			conf.Name = "security"
-			recorder, err := NewRecorder(&conf, identity)
+			recorder, err := newNativeRecorder(&conf, identity)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = recorder.Close() })
 			published := make(chan uint64, 1)
@@ -833,7 +946,7 @@ func TestRemoteDeliveryDestinationChangeFailsClosedButCredentialRotationContinue
 func TestRemoteDeliveryFlushPublishesCurrentJournalTail(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	conf.Name = "security"
-	recorder, err := NewRecorder(&conf, identity)
+	recorder, err := newNativeRecorder(&conf, identity)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recorder.Close() })
 	published := make(chan uint64, 1)
@@ -863,7 +976,7 @@ func TestRemoteDeliveryFlushPublishesCurrentJournalTail(t *testing.T) {
 func TestRemoteDeliverySerializesConcurrentFlushes(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	conf.Name = "security"
-	recorder, err := NewRecorder(&conf, identity)
+	recorder, err := newNativeRecorder(&conf, identity)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recorder.Close() })
 	release := make(chan struct{})
@@ -906,7 +1019,7 @@ func TestRemoteDeliverySerializesConcurrentFlushes(t *testing.T) {
 func TestRemoteDeliveryFlushCanCancelWhileSerialized(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	conf.Name = "security"
-	recorder, err := NewRecorder(&conf, identity)
+	recorder, err := newNativeRecorder(&conf, identity)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recorder.Close() })
 	release := make(chan struct{})
@@ -950,6 +1063,7 @@ func TestRemoteDeliveryLocksItsCursorState(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = first.Close() })
 	require.FileExists(t, lockPath)
+	require.NoDirExists(t, conf.Journal.Directory+remoteDeliveryStateDirectoryName)
 	second, err := NewRemoteDelivery(context.Background(), &conf, identity)
 	require.Nil(t, second)
 	require.ErrorContains(t, err, "cannot lock remote delivery state")
@@ -984,16 +1098,20 @@ func newRemoteDeliveryTestJournal(t *testing.T, count int) (configuration.Auditl
 	t.Helper()
 	conf, identity := newJournalTestIdentity(t)
 	conf.Name = "security"
-	recorder, err := NewRecorder(&conf, identity)
+	recorder, err := newNativeRecorder(&conf, identity)
 	require.NoError(t, err)
-	local := recorder.(*localJournalRecorder)
-	local.targetSize = local.state.contentBytes + 1
 	for index := range count {
 		require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.delivery." + leftPadUint(uint64(index+1), 2)}))
+		require.NoError(t, recorder.(SealableRecorder).Seal())
 	}
 	require.NoError(t, recorder.Close())
-	segments, _, err := inventoryJournalTestSegments(producerJournalTestDirectory(conf, identity))
+	directory := filepath.Join(conf.Journal.Directory, identity.ProducerId().String())
+	entries, _, _, err := nativeInventory(directory, nativeActiveClear, false)
 	require.NoError(t, err)
+	segments := make([]journalSegmentFile, 0, len(entries))
+	for _, entry := range entries {
+		segments = append(segments, journalSegmentFile{path: entry.path, sequence: entry.seq, hash: entry.hash})
+	}
 	require.Len(t, segments, count)
 	return conf, identity, segments
 }

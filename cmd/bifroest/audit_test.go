@@ -190,7 +190,7 @@ func TestAuditCommandsDecryptEncryptedJournal(t *testing.T) {
 	ref := writeAuditCliTestConfiguration(t, directory, configured, plain)
 
 	verifyOpts := auditVerifyOpts{configuration: ref, auditlog: "encrypted"}
-	require.ErrorContains(t, doAuditVerify(&verifyOpts), "requires a matching")
+	require.NoError(t, doAuditVerify(&verifyOpts))
 	verifyOpts.decryptionIdentityFiles = []string{privateKey}
 	require.NoError(t, doAuditVerify(&verifyOpts))
 
@@ -198,6 +198,17 @@ func TestAuditCommandsDecryptEncryptedJournal(t *testing.T) {
 	var exported bytes.Buffer
 	require.NoError(t, doAuditExport(&exportOpts, &exported))
 	require.Contains(t, exported.String(), `"name":"test.secret"`)
+	exportOpts.decryptionIdentityFiles = nil
+	exported.Reset()
+	require.NoError(t, doAuditExport(&exportOpts, &exported))
+	require.Contains(t, exported.String(), `"name":"test.secret"`)
+	exportOpts.withSensitive = true
+	exported.Reset()
+	require.ErrorContains(t, doAuditExport(&exportOpts, &exported), "decryption identity")
+	require.Empty(t, exported.String())
+	exportOpts.decryptionIdentityFiles = []string{privateKey}
+	require.NoError(t, doAuditExport(&exportOpts, &exported))
+	exportOpts.withSensitive = false
 
 	var decrypted bytes.Buffer
 	require.NoError(t, doAuditDecrypt(&exportOpts, &decrypted))
@@ -328,6 +339,23 @@ func TestAuditTrustAnchorsRejectMalformedDuplicateAndZeroValues(t *testing.T) {
 		_, err := parseAuditTrustAnchors(values, selected)
 		require.Error(t, err)
 	}
+}
+
+func TestAuditNativeSourceAllowsOuterVerificationWithoutDecryptionKey(t *testing.T) {
+	directory := t.TempDir()
+	privateKey := filepath.Join(directory, "encryption-key")
+	publicKey := filepath.Join(directory, "encryption-key.pub")
+	require.NoError(t, doKeyGenerate(privateKey, publicKey))
+	public, err := goos.ReadFile(publicKey)
+	require.NoError(t, err)
+	configured := createAuditCliTestJournalWithEncryption(t, directory, "encrypted", "test.secret", bfcrypto.PublicKeys(strings.TrimSpace(string(public))))
+	producerId := auditCliTestProducerId(t, configured.IdentityFile)
+	require.NoError(t, goos.Remove(configured.IdentityFile))
+	source, err := configuredAuditJournalSource(&configured, nil, producerId)
+	require.NoError(t, err)
+	require.Equal(t, producerId, source.ExpectedProducerId)
+	require.NotEmpty(t, source.ExpectedEncryptionRecipient)
+	require.Empty(t, source.DecryptionIdentities)
 }
 
 func TestAuditExportAndDecryptRejectDisabledBeforeOutputAccess(t *testing.T) {

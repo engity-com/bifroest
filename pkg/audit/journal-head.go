@@ -2,12 +2,7 @@ package audit
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
-	"io"
-	"io/fs"
-	"os"
-	"path/filepath"
 
 	"github.com/engity-com/bifroest/pkg/errors"
 )
@@ -70,115 +65,4 @@ func decodeJournalHead(payload []byte, identity journalIdentity) (journalHead, e
 		return journalHead{}, err
 	}
 	return head, nil
-}
-
-func loadOrCreateJournalHead(directory string, identity *Identity) (journalHead, error) {
-	if err := discardInterruptedJournalHead(directory); err != nil {
-		return journalHead{}, err
-	}
-	path := filepath.Join(directory, journalHeadFileName)
-	info, err := os.Lstat(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		hasEntries, readErr := journalDirectoryHasEntry(context.Background(), directory, func(os.DirEntry) bool { return true })
-		if readErr != nil {
-			return journalHead{}, errors.System.Newf("cannot inspect audit producer directory %q: %w", directory, readErr)
-		}
-		if hasEntries {
-			return journalHead{}, errors.Config.Newf("audit journal head is missing while producer directory %q contains history", directory)
-		}
-		head, _, createErr := newJournalHead(identity, journalHash{})
-		if createErr != nil {
-			return journalHead{}, createErr
-		}
-		if createErr := writeJournalHead(directory, identity, head.LastRecordHash); createErr != nil {
-			return journalHead{}, createErr
-		}
-		return head, nil
-	}
-	if err != nil {
-		return journalHead{}, errors.System.Newf("cannot inspect audit journal head %q: %w", path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return journalHead{}, errors.Config.Newf("audit journal head %q is not a regular file", path)
-	}
-	file, err := openJournalHead(path)
-	if err != nil {
-		return journalHead{}, err
-	}
-	payload, readErr := io.ReadAll(io.LimitReader(file, maxJournalRecordPayloadSize+1))
-	closeErr := file.Close()
-	if readErr != nil {
-		return journalHead{}, errors.System.Newf("cannot read audit journal head %q: %w", path, readErr)
-	}
-	if closeErr != nil {
-		return journalHead{}, errors.System.Newf("cannot close audit journal head %q: %w", path, closeErr)
-	}
-	if len(payload) > maxJournalRecordPayloadSize {
-		return journalHead{}, errors.System.Newf("audit journal head exceeds %d bytes", maxJournalRecordPayloadSize)
-	}
-	return decodeJournalHead(payload, identity)
-}
-
-func writeJournalHead(directory string, identity *Identity, lastRecordHash journalHash) error {
-	_, payload, err := newJournalHead(identity, lastRecordHash)
-	if err != nil {
-		return err
-	}
-	temporary := filepath.Join(directory, journalHeadTempFileName)
-	target := filepath.Join(directory, journalHeadFileName)
-	file, err := os.OpenFile(temporary, os.O_CREATE|os.O_EXCL|os.O_RDWR, journalFileMode)
-	if err != nil {
-		return errors.System.Newf("cannot create temporary audit journal head %q: %w", temporary, err)
-	}
-	removeTemporary := true
-	defer func() {
-		if removeTemporary {
-			_ = os.Remove(temporary)
-		}
-	}()
-	if err := secureJournalFile(temporary, file); err != nil {
-		_ = file.Close()
-		return err
-	}
-	written, err := file.Write(payload)
-	if err == nil && written != len(payload) {
-		err = io.ErrShortWrite
-	}
-	if err != nil {
-		_ = file.Close()
-		return errors.System.Newf("cannot write audit journal head: %w", err)
-	}
-	if err := protectJournalHead(temporary, file); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return errors.System.Newf("cannot close audit journal head: %w", err)
-	}
-	if err := replaceJournalFile(temporary, target); err != nil {
-		return errors.System.Newf("cannot publish audit journal head: %w", err)
-	}
-	removeTemporary = false
-	if err := syncJournalDirectory(directory); err != nil {
-		return errors.System.Newf("cannot flush audit journal head: %w", err)
-	}
-	return nil
-}
-
-func discardInterruptedJournalHead(directory string) error {
-	path := filepath.Join(directory, journalHeadTempFileName)
-	info, err := os.Lstat(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return errors.System.Newf("cannot inspect temporary audit journal head %q: %w", path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return errors.Config.Newf("temporary audit journal head %q is not a regular file", path)
-	}
-	if err := os.Remove(path); err != nil {
-		return errors.System.Newf("cannot discard temporary audit journal head %q: %w", path, err)
-	}
-	return syncJournalDirectory(directory)
 }

@@ -19,7 +19,7 @@ For file output, `export`, `decrypt`, and `merge` reject paths that could replac
 ## Commands
 
 * [`bifroest audit verify`](verify.md) verifies a journal without producing output.
-* [`bifroest audit decrypt`](decrypt.md) verifies and decrypts a journal to JSON Lines.
+* [`bifroest audit decrypt`](decrypt.md) is an alias for the redacted-by-default JSON Lines export; `--with-sensitive` explicitly enables decrypted private fields.
 * [`bifroest audit export`](export.md) verifies and exports a journal to JSON Lines.
 * [`bifroest audit merge`](merge.md) verifies and chronologically merges multiple journals.
 

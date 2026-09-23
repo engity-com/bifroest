@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/engity-com/bifroest/pkg/errors"
 )
@@ -66,224 +65,6 @@ type journalSegmentFile struct {
 	hash     journalHash
 }
 
-func recoverJournalSegments(producerDirectory, activePath string, identity *Identity, checkpointHash journalHash, expectedEncryptionRecipient string) (*os.File, journalSegmentState, error) {
-	workspace, err := newRecorderJournalSegmentWorkspace(filepath.Dir(producerDirectory))
-	if err != nil {
-		return nil, journalSegmentState{}, err
-	}
-	file, state, recoverErr := recoverJournalSegmentsInWorkspace(producerDirectory, activePath, identity, checkpointHash, expectedEncryptionRecipient, workspace.path)
-	if closeErr := workspace.Close(); closeErr != nil {
-		if file != nil {
-			_ = file.Close()
-		}
-		return nil, journalSegmentState{}, goerrors.Join(recoverErr, closeErr)
-	}
-	return file, state, recoverErr
-}
-
-func recoverJournalSegmentsInWorkspace(producerDirectory, activePath string, identity *Identity, checkpointHash journalHash, expectedEncryptionRecipient, workspace string) (*os.File, journalSegmentState, error) {
-	inventory, err := newJournalSegmentInventory(context.Background(), producerDirectory, workspace)
-	if err != nil {
-		return nil, journalSegmentState{}, err
-	}
-	closeInventory := func(cause error) error {
-		return goerrors.Join(cause, inventory.segments.Close())
-	}
-	state := journalSegmentState{checkpointHash: checkpointHash, checkpointSeen: checkpointHash.IsZero()}
-	for {
-		segment, found, err := inventory.segments.Next(context.Background())
-		if err != nil {
-			return nil, journalSegmentState{}, closeInventory(err)
-		}
-		if !found {
-			break
-		}
-		if segment.sequence != state.sequence+1 {
-			return nil, journalSegmentState{}, closeInventory(errors.System.Newf("audit segment sequence jumps from %d to %d", state.sequence, segment.sequence))
-		}
-		file, err := openSealedJournal(segment.path)
-		if err != nil {
-			return nil, journalSegmentState{}, closeInventory(err)
-		}
-		scanned, scanErr := scanJournalSegment(file, journalSegmentScanOptions{
-			identity:                    identity,
-			sequence:                    segment.sequence,
-			previousSegmentHash:         state.segmentHash,
-			previousRecordHash:          state.previousRecordHash,
-			checkpointHash:              state.checkpointHash,
-			checkpointSeen:              state.checkpointSeen,
-			expectedEncryptionRecipient: expectedEncryptionRecipient,
-		})
-		closeErr := file.Close()
-		if scanErr != nil {
-			return nil, journalSegmentState{}, closeInventory(errors.System.Newf("cannot verify sealed audit segment %q: %w", segment.path, scanErr))
-		}
-		if closeErr != nil {
-			return nil, journalSegmentState{}, closeInventory(errors.System.Newf("cannot close sealed audit segment %q: %w", segment.path, closeErr))
-		}
-		if !scanned.sealed || scanned.segmentHash != segment.hash {
-			return nil, journalSegmentState{}, closeInventory(errors.System.Newf("sealed audit segment %q does not match its file name", segment.path))
-		}
-		state = scanned
-	}
-	if err := inventory.segments.Close(); err != nil {
-		return nil, journalSegmentState{}, err
-	}
-
-	nextSequence := state.sequence + 1
-	if !inventory.hasActive {
-		if !state.checkpointSeen {
-			return nil, journalSegmentState{}, errors.System.Newf("audit journal does not contain its committed head %s", checkpointHash)
-		}
-		return createActiveJournal(activePath, identity, nextSequence, state.segmentHash, state.previousRecordHash)
-	}
-	if err := makeActiveJournalWritable(activePath); err != nil {
-		return nil, journalSegmentState{}, err
-	}
-	file, err := openActiveJournal(activePath)
-	if err != nil {
-		return nil, journalSegmentState{}, err
-	}
-	active, err := scanJournalSegment(file, journalSegmentScanOptions{
-		identity:                    identity,
-		sequence:                    nextSequence,
-		previousSegmentHash:         state.segmentHash,
-		previousRecordHash:          state.previousRecordHash,
-		checkpointHash:              state.checkpointHash,
-		checkpointSeen:              state.checkpointSeen,
-		recoverTail:                 true,
-		expectedEncryptionRecipient: expectedEncryptionRecipient,
-	})
-	if err != nil {
-		_ = file.Close()
-		return nil, journalSegmentState{}, errors.System.Newf("cannot recover active audit segment %q: %w", activePath, err)
-	}
-	if !active.checkpointSeen {
-		_ = file.Close()
-		return nil, journalSegmentState{}, errors.System.Newf("audit journal does not contain its committed head %s", checkpointHash)
-	}
-	if !active.header {
-		_ = file.Close()
-		if err := os.Remove(activePath); err != nil {
-			return nil, journalSegmentState{}, errors.System.Newf("cannot remove empty interrupted audit segment %q: %w", activePath, err)
-		}
-		if err := syncJournalDirectory(producerDirectory); err != nil {
-			return nil, journalSegmentState{}, errors.System.Newf("cannot flush removal of interrupted audit segment: %w", err)
-		}
-		return createActiveJournal(activePath, identity, nextSequence, state.segmentHash, state.previousRecordHash)
-	}
-	if active.sealed {
-		if err := sealJournalFile(activePath, file); err != nil {
-			_ = file.Close()
-			return nil, journalSegmentState{}, err
-		}
-		if err := file.Close(); err != nil {
-			return nil, journalSegmentState{}, errors.System.Newf("cannot close recovered sealed audit segment: %w", err)
-		}
-		if err := finishPublishingSegment(activePath, producerDirectory, active); err != nil {
-			return nil, journalSegmentState{}, err
-		}
-		return createActiveJournal(activePath, identity, active.sequence+1, active.segmentHash, active.previousRecordHash)
-	}
-	if active.recordCount > 0 {
-		sealed, err := sealActiveJournal(file, activePath, producerDirectory, identity, active, time.Now().UTC())
-		if err != nil {
-			return nil, journalSegmentState{}, err
-		}
-		return createActiveJournal(activePath, identity, sealed.sequence+1, sealed.segmentHash, sealed.previousRecordHash)
-	}
-	return file, active, nil
-}
-
-func createActiveJournal(path string, identity *Identity, sequence uint64, previousSegmentHash, previousRecordHash journalHash) (*os.File, journalSegmentState, error) {
-	file, err := openActiveJournal(path)
-	if err != nil {
-		return nil, journalSegmentState{}, err
-	}
-	header, payload, err := newJournalSegmentHeader(identity, sequence, previousSegmentHash, previousRecordHash, time.Now().UTC())
-	if err != nil {
-		_ = file.Close()
-		return nil, journalSegmentState{}, err
-	}
-	_ = header
-	frame, err := encodeJournalFrame(payload)
-	if err != nil {
-		_ = file.Close()
-		return nil, journalSegmentState{}, err
-	}
-	if err := writeCommittedJournalFrame(file, frame); err != nil {
-		_ = file.Close()
-		return nil, journalSegmentState{}, err
-	}
-	return file, journalSegmentState{
-		sequence:            sequence,
-		previousSegmentHash: previousSegmentHash,
-		previousRecordHash:  previousRecordHash,
-		contentBytes:        int64(len(frame)),
-		fileBytes:           int64(len(frame)),
-		header:              true,
-		checkpointSeen:      true,
-	}, nil
-}
-
-func sealActiveJournal(file *os.File, activePath, producerDirectory string, identity *Identity, state journalSegmentState, sealedAt time.Time) (journalSegmentState, error) {
-	content, err := readJournalFilePrefix(file, state.contentBytes)
-	if err != nil {
-		return journalSegmentState{}, err
-	}
-	contentHash := hashJournalBytes(journalSegmentContentHashDomain, content)
-	_, payload, err := newJournalSegmentSeal(identity, state.sequence, state.recordCount, uint64(state.contentBytes), contentHash, state.previousRecordHash, sealedAt)
-	if err != nil {
-		return journalSegmentState{}, err
-	}
-	frame, err := encodeJournalFrame(payload)
-	if err != nil {
-		return journalSegmentState{}, err
-	}
-	if err := writeCommittedJournalFrame(file, frame); err != nil {
-		return journalSegmentState{}, err
-	}
-	state.fileBytes = state.contentBytes + int64(len(frame))
-	full, err := readJournalFilePrefix(file, state.fileBytes)
-	if err != nil {
-		return journalSegmentState{}, err
-	}
-	state.segmentHash = hashJournalBytes(journalSegmentHashDomain, full)
-	state.sealed = true
-	if err := sealJournalFile(activePath, file); err != nil {
-		return journalSegmentState{}, err
-	}
-	if err := file.Close(); err != nil {
-		return journalSegmentState{}, errors.System.Newf("cannot close sealed audit segment: %w", err)
-	}
-	if err := finishPublishingSegment(activePath, producerDirectory, state); err != nil {
-		return journalSegmentState{}, err
-	}
-	return state, nil
-}
-
-func finishPublishingSegment(activePath, producerDirectory string, state journalSegmentState) error {
-	target := filepath.Join(producerDirectory, sealedJournalFileName(state.sequence, state.segmentHash))
-	if err := publishJournalFile(activePath, target); err != nil {
-		return errors.System.Newf("cannot publish sealed audit segment %q: %w", target, err)
-	}
-	if err := syncJournalDirectory(producerDirectory); err != nil {
-		return errors.System.Newf("cannot flush published audit segment %q: %w", target, err)
-	}
-	return nil
-}
-
-func scanJournalSegment(file *os.File, options journalSegmentScanOptions) (journalSegmentState, error) {
-	scanner, err := newJournalSegmentScanner(file, options)
-	if err != nil {
-		return journalSegmentState{}, err
-	}
-	if err := scanner.scan(); err != nil {
-		return journalSegmentState{}, err
-	}
-	return scanner.state, nil
-}
-
 func newJournalSegmentScanner(file *os.File, options journalSegmentScanOptions) (*journalSegmentScanner, error) {
 	info, err := file.Stat()
 	if err != nil {
@@ -302,22 +83,6 @@ func newJournalSegmentScanner(file *os.File, options journalSegmentScanOptions) 
 			checkpointSeen:      options.checkpointSeen,
 		},
 	}, nil
-}
-
-func (this *journalSegmentScanner) scan() error {
-	for this.offset < this.size {
-		complete, err := this.scanNextFrame()
-		if err != nil {
-			return err
-		}
-		if !complete {
-			return nil
-		}
-	}
-	if !this.state.header && this.size > 0 {
-		return errors.System.Newf("audit segment has no valid header")
-	}
-	return nil
 }
 
 func (this *journalSegmentScanner) scanNextFrame() (bool, error) {
@@ -441,11 +206,6 @@ func (this *journalSegmentScanner) writeDigest(frame []byte) error {
 		return errors.System.Newf("cannot hash audit frame at offset %d: %w", this.offset, err)
 	}
 	return nil
-}
-
-func readJournalFrame(file *os.File, offset, size int64) ([]byte, int64, bool, error) {
-	payload, _, frameSize, incomplete, err := readJournalFrameBytes(file, offset, size)
-	return payload, frameSize, incomplete, err
 }
 
 func readJournalFrameBytes(file *os.File, offset, size int64) ([]byte, []byte, int64, bool, error) {

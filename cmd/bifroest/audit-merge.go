@@ -19,6 +19,7 @@ type auditMergeOpts struct {
 	force                   bool
 	decryptionIdentityFiles []string
 	expectedProducerIds     []string
+	withSensitive           bool
 }
 
 func registerAuditMergeCmd(parent *kingpin.CmdClause) {
@@ -29,6 +30,7 @@ func registerAuditMergeCmd(parent *kingpin.CmdClause) {
 	registerAuditOutputFlags(cmd, &opts.output, &opts.force)
 	registerAuditDecryptionIdentityFlags(cmd, &opts.decryptionIdentityFiles)
 	registerAuditTrustAnchorFlags(cmd, &opts.expectedProducerIds)
+	registerAuditSensitiveFlag(cmd, &opts.withSensitive)
 	cmd.Arg("auditlogName", "Configured auditlogs to merge.").Required().StringsVar(&opts.auditlogs)
 }
 
@@ -59,6 +61,7 @@ func doAuditMerge(opts *auditMergeOpts, stdout io.Writer) error {
 		if err != nil {
 			return err
 		}
+		source.WithSensitive = opts.withSensitive
 		sources = append(sources, source)
 	}
 	output, err := canonicalAuditOutput(opts.output)

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
@@ -18,7 +19,7 @@ import (
 const (
 	journalDirectoryReadBatch   = 128
 	journalSegmentSortChunkSize = 1_024
-	journalSegmentRunRecordSize = 8 + sha256.Size
+	journalSegmentRunRecordSize = 8 + sha256.Size + 1
 )
 
 type sortedJournalSegmentIterator struct {
@@ -27,6 +28,7 @@ type sortedJournalSegmentIterator struct {
 	index     int
 	run       *os.File
 	runPath   string
+	workspace *journalSegmentWorkspace
 }
 
 type journalSegmentSorter struct {
@@ -38,16 +40,27 @@ type journalSegmentSorter struct {
 	finishRun     string
 	finishLevel   int
 	cleanupPaths  []string
+	workspace     *journalSegmentWorkspace
+	newWorkspace  func() (*journalSegmentWorkspace, error)
 }
 
 func newSortedJournalSegmentIterator(ctx context.Context, directory, tempDirectory string, classify func(os.DirEntry) (*journalSegmentFile, error)) (*sortedJournalSegmentIterator, error) {
 	if tempDirectory == "" {
 		return nil, errors.System.Newf("private audit segment workspace is empty")
 	}
+	return buildSortedJournalSegmentIterator(ctx, directory, tempDirectory, nil, classify)
+}
+
+func newSortedJournalSegmentIteratorWithWorkspace(ctx context.Context, directory string, workspace func() (*journalSegmentWorkspace, error), classify func(os.DirEntry) (*journalSegmentFile, error)) (*sortedJournalSegmentIterator, error) {
+	return buildSortedJournalSegmentIterator(ctx, directory, "", workspace, classify)
+}
+
+func buildSortedJournalSegmentIterator(ctx context.Context, directory, tempDirectory string, workspace func() (*journalSegmentWorkspace, error), classify func(os.DirEntry) (*journalSegmentFile, error)) (*sortedJournalSegmentIterator, error) {
 	sorter := &journalSegmentSorter{
 		directory:     directory,
 		tempDirectory: tempDirectory,
 		chunk:         make([]journalSegmentFile, 0, journalSegmentSortChunkSize),
+		newWorkspace:  workspace,
 	}
 	err := forEachJournalDirectoryEntry(ctx, directory, func(entry os.DirEntry) error {
 		segment, err := classify(entry)
@@ -63,6 +76,7 @@ func newSortedJournalSegmentIterator(ctx context.Context, directory, tempDirecto
 	if err != nil {
 		return nil, goerrors.Join(err, sorter.cleanup())
 	}
+	iterator.workspace = sorter.workspace
 	return iterator, nil
 }
 
@@ -127,6 +141,14 @@ func (this *journalSegmentSorter) add(ctx context.Context, segment journalSegmen
 func (this *journalSegmentSorter) flush(ctx context.Context) error {
 	if len(this.chunk) == 0 {
 		return nil
+	}
+	if this.newWorkspace != nil && this.workspace == nil {
+		workspace, err := this.newWorkspace()
+		if err != nil {
+			return err
+		}
+		this.workspace = workspace
+		this.tempDirectory = workspace.path
 	}
 	sort.Slice(this.chunk, func(left, right int) bool {
 		return journalSegmentLess(this.chunk[left], this.chunk[right])
@@ -242,6 +264,8 @@ func (this *journalSegmentSorter) cleanup() error {
 		result = goerrors.Join(result, removeJournalSegmentRun(path))
 	}
 	this.cleanupPaths = nil
+	result = goerrors.Join(result, this.workspace.Close())
+	this.workspace = nil
 	return result
 }
 
@@ -288,6 +312,8 @@ func (this *sortedJournalSegmentIterator) Close() error {
 		result = goerrors.Join(result, removeJournalSegmentRun(this.runPath))
 		this.runPath = ""
 	}
+	result = goerrors.Join(result, this.workspace.Close())
+	this.workspace = nil
 	return result
 }
 
@@ -379,6 +405,15 @@ func writeJournalSegmentRunRecord(writer io.Writer, segment journalSegmentFile) 
 	var raw [journalSegmentRunRecordSize]byte
 	binary.BigEndian.PutUint64(raw[:8], segment.sequence)
 	copy(raw[8:], segment.hash[:])
+	switch {
+	case strings.HasSuffix(segment.name, ".baudit"):
+		raw[len(raw)-1] = 1
+	case strings.HasSuffix(segment.name, ".beaudit"):
+		raw[len(raw)-1] = 2
+	case segment.name == "" || strings.HasSuffix(segment.name, ".journal"):
+	default:
+		return errors.System.Newf("unsupported temporary audit segment name %q", segment.name)
+	}
 	written, err := writer.Write(raw[:])
 	if err == nil && written != len(raw) {
 		err = io.ErrShortWrite
@@ -400,8 +435,18 @@ func readJournalSegmentRunRecord(reader io.Reader, directory string) (journalSeg
 		return journalSegmentFile{}, false, errors.System.Newf("temporary audit segment run contains sequence zero")
 	}
 	var hash journalHash
-	copy(hash[:], raw[8:])
-	name := sealedJournalFileName(sequence, hash)
+	copy(hash[:], raw[8:8+sha256.Size])
+	var name string
+	switch raw[len(raw)-1] {
+	case 0:
+		name = sealedJournalFileName(sequence, hash)
+	case 1:
+		name = nativeSegmentName(sequence, hash, false)
+	case 2:
+		name = nativeSegmentName(sequence, hash, true)
+	default:
+		return journalSegmentFile{}, false, errors.System.Newf("temporary audit segment run contains invalid mode")
+	}
 	return journalSegmentFile{name: name, path: filepath.Join(directory, name), sequence: sequence, hash: hash}, true, nil
 }
 

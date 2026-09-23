@@ -159,6 +159,7 @@ nav:
           - Filesystem: reference/session/fs.md
       - Audit log:
           - reference/auditlog/index.md
+          - Native audit format: reference/auditlog/native-format-contract.md
           - Session recording: reference/auditlog/recording.md
           - Recording format vectors: reference/auditlog/recording-format-vectors.md
           - Events: reference/auditlog/events.md

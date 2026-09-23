@@ -1,13 +1,14 @@
 ---
-description: Design contract for the planned native audit and recording containers.
+description: Native audit format contract and planned recording container design.
 ---
 
-# Native format contract (design; not implemented)
+# Native format contract
 
-This document fixes the format and disclosure boundaries before implementation.
-It does not describe files emitted by the current server. The byte-level format
-specification and published vectors will complete this contract as part of the
-format implementation. No released format needs to be migrated.
+The `.baudit` and `.beaudit` audit containers described here are emitted by
+the current server. `.bcast` and the new CBOR-based `.becast` recording formats
+remain a design for the recording milestone; the server currently still emits
+`.cast.zst` or the existing `.becast` recording format. Published byte-level
+vectors and the completed recording specification follow in later milestones.
 
 ## Families and names
 
