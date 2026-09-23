@@ -4,12 +4,14 @@ import (
 	"context"
 	goerrors "errors"
 	"fmt"
+	"io"
 	gonet "net"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	log "github.com/echocat/slf4g"
@@ -574,6 +576,7 @@ func (this *Service) prepareServer(_ context.Context, svc *service, hostPrivateK
 		svc.server.ProxyProtocol = new(essh.ProxyProtocolConfig)
 	}
 	svc.server.ServerConfigCallback = svc.createNewServerConfig
+	svc.server.ErrorHandler = svc.handleSshError
 	svc.server.ConnCallback = svc.onNewConnConnection
 	svc.server.ConnectionFailedCallback = svc.onConnectionFailed
 	svc.server.DisconnectCallback = svc.onDisconnected
@@ -603,6 +606,43 @@ func (this *Service) prepareServer(_ context.Context, svc *service, hostPrivateK
 	}
 
 	return nil
+}
+
+func (this *service) handleSshError(
+	ctx context.Context,
+	scope essh.ErrorScope,
+	operation essh.ErrorOperation,
+	err error,
+	respond essh.ErrorResponder,
+	next essh.ErrorHandler,
+) (bool, error) {
+	if scope == essh.ErrorScopeConnection && operation == essh.ErrorOperationHandshake && isExpectedSshHandshakeEnd(err) {
+		this.logger().
+			WithError(err).
+			With("scope", scope.String()).
+			With("operation", operation.String()).
+			Debug("SSH connection ended during handshake")
+		return false, nil
+	}
+	return next(ctx, scope, operation, err, respond, next)
+}
+
+func isExpectedSshHandshakeEnd(err error) bool {
+	if goerrors.Is(err, errInteractiveClientDisconnect) {
+		return true
+	}
+	if errors.IsType(err, errors.System) {
+		return false
+	}
+	if isSshTransportDisconnect(err) {
+		return true
+	}
+	var authErr *gossh.ServerAuthError
+	return goerrors.As(err, &authErr) && authErr != nil && len(authErr.Errors) == 1 && goerrors.Is(authErr.Errors[0], gossh.ErrNoAuth)
+}
+
+func isSshTransportDisconnect(err error) bool {
+	return sys.IsClosedError(err) || goerrors.Is(err, io.ErrUnexpectedEOF) || goerrors.Is(err, syscall.ECONNRESET)
 }
 
 func (this *Service) loadHostPrivateKeys() ([]crypto.PrivateKey, error) {

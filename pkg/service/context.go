@@ -1,6 +1,7 @@
 package service
 
 import (
+	goerrors "errors"
 	"fmt"
 	"io"
 
@@ -16,6 +17,8 @@ import (
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/template"
 )
+
+var errInteractiveClientDisconnect = goerrors.New("SSH client disconnected during keyboard-interactive authentication")
 
 type remote struct {
 	essh.Context
@@ -161,20 +164,30 @@ func (this *interactiveAuthorizeRequest) GetField(name string) (any, bool, error
 
 func (this *interactiveAuthorizeRequest) SendInfo(message string) error {
 	_, err := this.challenger("", message, nil, nil)
-	return err
+	return markInteractiveClientDisconnect(err)
 }
 
 func (this *interactiveAuthorizeRequest) SendError(message string) error {
 	_, err := this.challenger("", "Error: "+message, nil, nil)
-	return err
+	return markInteractiveClientDisconnect(err)
 }
 
 func (this *interactiveAuthorizeRequest) Prompt(message string, echo bool) (string, error) {
 	resp, err := this.challenger("", "", []string{message}, []bool{echo})
-	if resp == nil {
-		return "", io.ErrUnexpectedEOF
+	if err != nil {
+		return "", markInteractiveClientDisconnect(err)
 	}
-	return resp[0], err
+	if len(resp) == 0 {
+		return "", fmt.Errorf("keyboard-interactive challenger returned no answer")
+	}
+	return resp[0], nil
+}
+
+func markInteractiveClientDisconnect(err error) error {
+	if isSshTransportDisconnect(err) {
+		return fmt.Errorf("%w: %w", errInteractiveClientDisconnect, err)
+	}
+	return err
 }
 
 type environmentContext struct {
