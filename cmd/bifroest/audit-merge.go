@@ -56,8 +56,12 @@ func doAuditMerge(opts *auditMergeOpts, stdout io.Writer) error {
 		return err
 	}
 	sources := make([]audit.JournalSource, 0, len(configured))
+	identities := opts.decryptionIdentityFiles
+	if !opts.withSensitive {
+		identities = nil
+	}
 	for _, selected := range configured {
-		source, err := configuredAuditJournalSource(selected, opts.decryptionIdentityFiles, expectedProducerIds[selected.Name])
+		source, err := configuredAuditJournalSource(selected, identities, expectedProducerIds[selected.Name])
 		if err != nil {
 			return err
 		}
@@ -68,20 +72,15 @@ func doAuditMerge(opts *auditMergeOpts, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureAuditOutputSafe(output, conf); err != nil {
-		return err
+	validate := func() error {
+		return ensureAuditDestinationSafe(output, stdout, opts.configuration.GetFilename(), conf, opts.decryptionIdentityFiles)
 	}
-	if err := ensureBootstrapOutputIsNotPrivateKey(output, opts.decryptionIdentityFiles...); err != nil {
+	if err := validate(); err != nil {
 		return err
 	}
 	verification, err := audit.VerifyJournals(context.Background(), sources)
 	if err != nil {
 		return err
 	}
-	return writeAuditOutput(output, opts.force, stdout, verification, audit.RecordOrderChronological, func() error {
-		if err := ensureAuditOutputSafe(output, conf); err != nil {
-			return err
-		}
-		return ensureBootstrapOutputIsNotPrivateKey(output, opts.decryptionIdentityFiles...)
-	})
+	return writeAuditOutput(output, opts.force, stdout, verification, audit.RecordOrderChronological, validate)
 }

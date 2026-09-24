@@ -105,6 +105,9 @@ func doRecordingInspect(opts *recordingInspectOpts, stdout io.Writer) (rErr erro
 	if err := validateRecordingInput(opts.file, file, initial); err != nil {
 		return err
 	}
+	if err := ensureRecordingStandardOutputSafe(stdout, file, nil); err != nil {
+		return err
+	}
 	result, err := newRecordingInspectOutput(inspection, initial.Size())
 	if err != nil {
 		return err
@@ -118,7 +121,7 @@ func doRecordingInspect(opts *recordingInspectOpts, stdout io.Writer) (rErr erro
 	if _, err := stdout.Write(encoded.Bytes()); err != nil {
 		return fmt.Errorf("cannot write Recording inspection: %w", err)
 	}
-	return nil
+	return validateRecordingInput(opts.file, file, initial)
 }
 
 func openRecordingInput(path string) (*stdos.File, stdos.FileInfo, error) {

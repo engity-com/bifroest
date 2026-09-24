@@ -25,8 +25,9 @@ import (
 )
 
 const (
-	maximumSftpIdentityFileSize = 1 << 20
-	sftpTemporaryNameDomain     = "BIFROEST-AUDIT-SFTP-TEMPORARY/v1\x00"
+	maximumSftpIdentityFileSize   = 1 << 20
+	maximumSftpKnownHostsFileSize = 16 << 20
+	sftpTemporaryNameDomain       = "BIFROEST-AUDIT-SFTP-TEMPORARY/v1\x00"
 )
 
 var _ = registerPreparedRemoteTarget(
@@ -52,6 +53,68 @@ type sftpHostKeyError struct {
 
 type sftpObjectConflictError struct {
 	cause error
+}
+
+type sftpRemoteHostKeyTrust struct {
+	file []byte
+}
+
+func loadSftpRemoteHostKeyTrust(conf *configuration.AuditlogTargetSftp) (sftpRemoteHostKeyTrust, error) {
+	if conf.AcceptAllHostKeys || conf.KnownHostsFile.IsZero() {
+		return sftpRemoteHostKeyTrust{}, nil
+	}
+	path := string(conf.KnownHostsFile)
+	info, err := os.Stat(path)
+	if err != nil {
+		return sftpRemoteHostKeyTrust{}, errors.Config.Newf("cannot inspect SFTP host-key trust: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return sftpRemoteHostKeyTrust{}, errors.Config.Newf("SFTP known hosts file must be regular")
+	}
+	if info.Size() > maximumSftpKnownHostsFileSize {
+		return sftpRemoteHostKeyTrust{}, errors.Config.Newf("SFTP known hosts file exceeds %d bytes", maximumSftpKnownHostsFileSize)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return sftpRemoteHostKeyTrust{}, errors.Config.Newf("cannot load SFTP host-key trust: %w", err)
+	}
+	opened, err := file.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		_ = file.Close()
+		return sftpRemoteHostKeyTrust{}, errors.Config.Newf("SFTP known hosts file changed while opening: %v", err)
+	}
+	content, readErr := io.ReadAll(io.LimitReader(file, maximumSftpKnownHostsFileSize+1))
+	closeErr := file.Close()
+	if readErr != nil || closeErr != nil {
+		return sftpRemoteHostKeyTrust{}, errors.Config.Newf("cannot read SFTP host-key trust: %w", goerrors.Join(readErr, closeErr))
+	}
+	if len(content) > maximumSftpKnownHostsFileSize {
+		return sftpRemoteHostKeyTrust{}, errors.Config.Newf("SFTP known hosts file exceeds %d bytes", maximumSftpKnownHostsFileSize)
+	}
+	return sftpRemoteHostKeyTrust{file: content}, nil
+}
+
+func sftpRemoteHostKeyCallback(conf *configuration.AuditlogTargetSftp, trust sftpRemoteHostKeyTrust) (gossh.HostKeyCallback, error) {
+	if conf.AcceptAllHostKeys {
+		return gossh.InsecureIgnoreHostKey(), nil
+	}
+	if conf.KnownHostsFile.IsZero() {
+		return bfcrypto.NewKnownHostsCallback(conf.KnownHosts, "")
+	}
+	// The private temporary file gives the parser the same bytes that were fingerprinted.
+	file, err := os.CreateTemp("", "bifroest-sftp-known-hosts-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(file.Name())
+	if _, err := file.Write(trust.file); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if err := file.Close(); err != nil {
+		return nil, err
+	}
+	return bfcrypto.NewKnownHostsCallback(conf.KnownHosts, bfcrypto.KnownHostsFile(file.Name()))
 }
 
 func (this *sftpObjectConflictError) Error() string { return this.cause.Error() }
@@ -86,18 +149,17 @@ func prepareSftpRemoteTarget(ctx context.Context, _ RemoteTargetScope, conf *con
 	if err != nil {
 		return nil, 0, remoteDeliveryDestinationFingerprint{}, err
 	}
-	timeout, fingerprint, err := sftpRemoteDeliveryTargetSettings(conf, values, address)
+	trust, err := loadSftpRemoteHostKeyTrust(conf)
 	if err != nil {
 		return nil, 0, remoteDeliveryDestinationFingerprint{}, err
 	}
-	var hostKeyCallback gossh.HostKeyCallback
-	if conf.AcceptAllHostKeys {
-		hostKeyCallback = gossh.InsecureIgnoreHostKey()
-	} else {
-		hostKeyCallback, err = bfcrypto.NewKnownHostsCallback(conf.KnownHosts, conf.KnownHostsFile)
-		if err != nil {
-			return nil, 0, remoteDeliveryDestinationFingerprint{}, errors.Config.Newf("cannot load SFTP host-key trust: %w", err)
-		}
+	timeout, fingerprint, err := sftpRemoteDeliveryTargetSettings(conf, values, address, trust)
+	if err != nil {
+		return nil, 0, remoteDeliveryDestinationFingerprint{}, err
+	}
+	hostKeyCallback, err := sftpRemoteHostKeyCallback(conf, trust)
+	if err != nil {
+		return nil, 0, remoteDeliveryDestinationFingerprint{}, errors.Config.Newf("cannot load SFTP host-key trust: %w", err)
 	}
 	trustedHostKeyCallback := hostKeyCallback
 	hostKeyCallback = func(hostname string, remote net.Addr, key gossh.PublicKey) error {

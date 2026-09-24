@@ -54,6 +54,25 @@ func TestRecordingInspectVerifiesCastAndReportsTrust(t *testing.T) {
 	}
 }
 
+func TestRecordingInspectDoesNotAppendToItsInput(t *testing.T) {
+	fixture := newRecordingExportTestFixture(t)
+	for _, path := range []string{fixture.castPath, fixture.nativeClearPath, fixture.nativeEncryptedPath} {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			before, err := stdos.ReadFile(path)
+			require.NoError(t, err)
+			output, err := stdos.OpenFile(path, stdos.O_WRONLY|stdos.O_APPEND, 0)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = output.Close() })
+			err = doRecordingInspect(&recordingInspectOpts{file: path, expectedProducerId: fixture.identity.ProducerId().String()}, output)
+			require.Error(t, err)
+			require.NoError(t, output.Close())
+			after, err := stdos.ReadFile(path)
+			require.NoError(t, err)
+			require.Equal(t, before, after)
+		})
+	}
+}
+
 func TestRecordingInspectReportsContainerFormatsWithoutContent(t *testing.T) {
 	for _, test := range []struct {
 		name              string

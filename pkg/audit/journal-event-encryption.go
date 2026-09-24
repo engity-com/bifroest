@@ -9,6 +9,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
 )
@@ -44,8 +45,8 @@ func ResolveEncryptionPublicKey(publicKey bfcrypto.PublicKeys, publicKeyFile bfc
 	if err != nil {
 		return "", errors.Config.Newf("cannot load audit encryption public key file %q: %w", publicKeyFile, err)
 	}
-	if len(keys) != 1 {
-		return "", errors.Config.Newf("audit encryption public key file %q must contain exactly one SSH public key", publicKeyFile)
+	if err := configuration.ValidateAuditlogEncryptionPublicKeys(keys); err != nil {
+		return "", errors.Config.Newf("invalid audit encryption public key file %q: %w", publicKeyFile, err)
 	}
 	return bfcrypto.PublicKeys(strings.TrimSpace(string(ssh.MarshalAuthorizedKey(keys[0])))), nil
 }

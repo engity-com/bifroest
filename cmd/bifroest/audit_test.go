@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	goos "os"
 	"path/filepath"
 	"strings"
@@ -114,6 +115,155 @@ func TestAuditOutputsProtectEveryEnabledConfiguredAuditlog(t *testing.T) {
 			require.ErrorContains(t, command(output), "must not be inside")
 			require.NoFileExists(t, output)
 		})
+	}
+}
+
+func TestAuditCommandsDoNotReplaceConfiguration(t *testing.T) {
+	directory := t.TempDir()
+	configured := createAuditCliTestJournal(t, directory, "selected", "test.selected")
+	ref := writeAuditCliTestConfiguration(t, directory, configured)
+	configPath := ref.GetFilename()
+	original, err := goos.ReadFile(configPath)
+	require.NoError(t, err)
+	commands := map[string]func(string) error{
+		"export": func(path string) error {
+			return doAuditExport(&auditExportOpts{configuration: ref, auditlog: configured.Name, output: path, force: true}, io.Discard)
+		},
+		"decrypt": func(path string) error {
+			return doAuditDecrypt(&auditExportOpts{configuration: ref, auditlog: configured.Name, output: path, force: true}, io.Discard)
+		},
+		"merge": func(path string) error {
+			return doAuditMerge(&auditMergeOpts{configuration: ref, auditlogs: []string{string(configured.Name)}, output: path, force: true}, io.Discard)
+		},
+	}
+	for name, createAlias := range map[string]func(string) error{
+		"direct":   func(string) error { return nil },
+		"symlink":  func(path string) error { return goos.Symlink(configPath, path) },
+		"hardlink": func(path string) error { return goos.Link(configPath, path) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := configPath
+			if name != "direct" {
+				path = filepath.Join(directory, name+"-config.yaml")
+				if err := createAlias(path); err != nil {
+					t.Skipf("cannot create %s on this filesystem: %v", name, err)
+				}
+			}
+			for commandName, command := range commands {
+				t.Run(commandName, func(t *testing.T) {
+					require.ErrorContains(t, command(path), "must not replace configuration file")
+					content, err := goos.ReadFile(configPath)
+					require.NoError(t, err)
+					require.Equal(t, original, content)
+					aliasContent, err := goos.ReadFile(path)
+					require.NoError(t, err)
+					require.Equal(t, original, aliasContent)
+				})
+			}
+		})
+	}
+}
+
+func TestAuditCommandsRejectProtectedStandardOutputFiles(t *testing.T) {
+	directory := t.TempDir()
+	selected := createAuditCliTestJournal(t, directory, "selected", "test.selected")
+	other := createAuditCliTestJournal(t, directory, "other", "test.other")
+	ref := writeAuditCliTestConfiguration(t, directory, selected, other)
+	ageKey := filepath.Join(directory, "age-key")
+	require.NoError(t, doKeyGenerate(ageKey, filepath.Join(directory, "age-key.pub")))
+	for _, path := range []string{selected.IdentityFile, other.IdentityFile, ageKey} {
+		require.NoError(t, goos.Chmod(path, 0600))
+	}
+	producer := filepath.Join(selected.Journal.Directory, auditCliTestProducerId(t, selected.IdentityFile).String())
+	entries, err := goos.ReadDir(producer)
+	require.NoError(t, err)
+	var segment string
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "segment-") {
+			segment = filepath.Join(producer, entry.Name())
+			break
+		}
+	}
+	require.NotEmpty(t, segment)
+	segmentAlias := filepath.Join(directory, "segment-alias")
+	otherProducer := filepath.Join(other.Journal.Directory, auditCliTestProducerId(t, other.IdentityFile).String())
+	paths := map[string]string{
+		"configuration": ref.GetFilename(),
+		"signing key":   selected.IdentityFile,
+		"other key":     other.IdentityFile,
+		"age key":       ageKey,
+		"head":          filepath.Join(producer, "head.cbor"),
+		"segment":       segment,
+		"other head":    filepath.Join(otherProducer, "head.cbor"),
+	}
+	if err := goos.Link(segment, segmentAlias); err == nil {
+		paths["segment hardlink"] = segmentAlias
+	}
+	for _, path := range []string{paths["head"], paths["segment"], paths["other head"]} {
+		require.NoError(t, goos.Chmod(path, 0600))
+	}
+	commands := map[string]func(io.Writer) error{
+		"export": func(stdout io.Writer) error {
+			return doAuditExport(&auditExportOpts{configuration: ref, auditlog: selected.Name, output: "-", decryptionIdentityFiles: []string{ageKey}}, stdout)
+		},
+		"decrypt": func(stdout io.Writer) error {
+			return doAuditDecrypt(&auditExportOpts{configuration: ref, auditlog: selected.Name, output: "-", decryptionIdentityFiles: []string{ageKey}}, stdout)
+		},
+		"merge": func(stdout io.Writer) error {
+			return doAuditMerge(&auditMergeOpts{configuration: ref, auditlogs: []string{string(selected.Name)}, output: "-", decryptionIdentityFiles: []string{ageKey}}, stdout)
+		},
+	}
+	for pathName, path := range paths {
+		t.Run(pathName, func(t *testing.T) {
+			original, err := goos.ReadFile(path)
+			require.NoError(t, err)
+			for commandName, command := range commands {
+				t.Run(commandName, func(t *testing.T) {
+					stdout, err := goos.OpenFile(path, goos.O_WRONLY|goos.O_APPEND, 0)
+					require.NoError(t, err)
+					commandErr := command(stdout)
+					require.NoError(t, stdout.Close())
+					require.ErrorContains(t, commandErr, "must not replace")
+					content, err := goos.ReadFile(path)
+					require.NoError(t, err)
+					require.Equal(t, original, content)
+				})
+			}
+		})
+	}
+	for commandName, command := range commands {
+		t.Run("pipe "+commandName, func(t *testing.T) {
+			reader, writer, err := goos.Pipe()
+			require.NoError(t, err)
+			require.NoError(t, command(writer))
+			require.NoError(t, writer.Close())
+			content, err := io.ReadAll(reader)
+			require.NoError(t, err)
+			require.NoError(t, reader.Close())
+			require.Contains(t, string(content), `"name":"test.selected"`)
+		})
+	}
+	if _, err := goos.Stat(segmentAlias); err == nil {
+		original, err := goos.ReadFile(segment)
+		require.NoError(t, err)
+		for commandName, command := range map[string]func() error{
+			"export": func() error {
+				return doAuditExport(&auditExportOpts{configuration: ref, auditlog: selected.Name, output: segmentAlias, force: true}, io.Discard)
+			},
+			"decrypt": func() error {
+				return doAuditDecrypt(&auditExportOpts{configuration: ref, auditlog: selected.Name, output: segmentAlias, force: true}, io.Discard)
+			},
+			"merge": func() error {
+				return doAuditMerge(&auditMergeOpts{configuration: ref, auditlogs: []string{string(selected.Name)}, output: segmentAlias, force: true}, io.Discard)
+			},
+		} {
+			t.Run("output hardlink "+commandName, func(t *testing.T) {
+				require.ErrorContains(t, command(), "must not replace journal file")
+				content, err := goos.ReadFile(segment)
+				require.NoError(t, err)
+				require.Equal(t, original, content)
+			})
+		}
 	}
 }
 
@@ -230,6 +380,12 @@ func TestAuditCommandsDecryptEncryptedJournal(t *testing.T) {
 	require.Contains(t, exported.String(), `"name":"test.secret"`)
 	require.NotContains(t, exported.String(), "confidential-flow")
 	redactedExport := exported.String()
+	for _, unusedIdentity := range []string{wrongKey, filepath.Join(directory, "missing-decryption-key")} {
+		exportOpts.decryptionIdentityFiles = []string{unusedIdentity}
+		exported.Reset()
+		require.NoError(t, doAuditExport(&exportOpts, &exported))
+		require.Equal(t, redactedExport, exported.String())
+	}
 	exportOpts.withSensitive = true
 	exported.Reset()
 	require.ErrorContains(t, doAuditExport(&exportOpts, &exported), "decryption identity")
@@ -243,6 +399,11 @@ func TestAuditCommandsDecryptEncryptedJournal(t *testing.T) {
 	require.NoError(t, doAuditDecrypt(&exportOpts, &decrypted))
 	require.Equal(t, redactedExport, decrypted.String())
 	require.NotContains(t, decrypted.String(), "confidential-flow")
+	exportOpts.decryptionIdentityFiles = []string{filepath.Join(directory, "missing-decryption-key")}
+	decrypted.Reset()
+	require.NoError(t, doAuditDecrypt(&exportOpts, &decrypted))
+	require.Equal(t, redactedExport, decrypted.String())
+	exportOpts.decryptionIdentityFiles = []string{privateKey}
 	exportOpts.withSensitive = true
 	decrypted.Reset()
 	require.NoError(t, doAuditDecrypt(&exportOpts, &decrypted))
@@ -260,6 +421,12 @@ func TestAuditCommandsDecryptEncryptedJournal(t *testing.T) {
 	require.Contains(t, merged.String(), `"name":"test.secret"`)
 	require.Contains(t, merged.String(), `"name":"test.plain"`)
 	require.NotContains(t, merged.String(), "confidential-flow")
+	mergeOpts.decryptionIdentityFiles = []string{filepath.Join(directory, "missing-decryption-key")}
+	merged.Reset()
+	require.NoError(t, doAuditMerge(&mergeOpts, &merged))
+	require.Contains(t, merged.String(), `"name":"test.secret"`)
+	require.NotContains(t, merged.String(), "confidential-flow")
+	mergeOpts.decryptionIdentityFiles = []string{privateKey}
 	mergeOpts.withSensitive = true
 	merged.Reset()
 	require.NoError(t, doAuditMerge(&mergeOpts, &merged))

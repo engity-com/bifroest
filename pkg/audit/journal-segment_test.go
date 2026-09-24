@@ -3,6 +3,8 @@ package audit
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
@@ -140,6 +143,50 @@ func TestResolveEncryptionPublicKeyFile(t *testing.T) {
 	require.NoError(t, file.Close())
 	_, err = ResolveEncryptionPublicKey("", crypto.PublicKeysFile(oversized))
 	require.ErrorContains(t, err, "exceeds")
+}
+
+func TestResolveEncryptionPublicKeyFileEnforcesRecipientPolicyBeforeJournalWrites(t *testing.T) {
+	weakRSA, err := rsa.GenerateKey(rand.Reader, 1024)
+	require.NoError(t, err)
+	strongRSA, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	ecdsaKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name      string
+		key       any
+		wantError string
+	}{
+		{"rsa-1024", &weakRSA.PublicKey, "at least 2048 bits"},
+		{"ecdsa", &ecdsaKey.PublicKey, "cannot be used for encryption"},
+		{"rsa-2048", &strongRSA.PublicKey, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sshKey, err := ssh.NewPublicKey(tc.key)
+			require.NoError(t, err)
+			publicKey := crypto.PublicKeys(strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshKey))))
+			path := filepath.Join(t.TempDir(), "encryption.pub")
+			require.NoError(t, os.WriteFile(path, []byte(publicKey+"\n"), 0600))
+
+			resolved, err := ResolveEncryptionPublicKey("", crypto.PublicKeysFile(path))
+			if tc.wantError == "" {
+				require.NoError(t, err)
+				require.Equal(t, publicKey, resolved)
+				return
+			}
+			require.Empty(t, resolved)
+			require.ErrorContains(t, err, tc.wantError)
+
+			conf, identity := newJournalTestIdentity(t)
+			conf.EncryptionPublicKeyFile = crypto.PublicKeysFile(path)
+			require.NoDirExists(t, conf.Journal.Directory)
+			recorder, err := NewRecorder(&conf, identity)
+			require.Nil(t, recorder)
+			require.ErrorContains(t, err, tc.wantError)
+			require.NoDirExists(t, conf.Journal.Directory)
+		})
+	}
 }
 
 func TestJournalSegmentMetadataSignatures(t *testing.T) {

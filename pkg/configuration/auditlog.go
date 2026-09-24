@@ -135,10 +135,11 @@ func (this auditlogEncryptionPublicKeyValidator) Validate() error {
 	if err != nil {
 		return err
 	}
-	return validateAuditlogEncryptionPublicKeys(keys)
+	return ValidateAuditlogEncryptionPublicKeys(keys)
 }
 
-func validateAuditlogEncryptionPublicKeys(keys []ssh.PublicKey) error {
+// ValidateAuditlogEncryptionPublicKeys enforces the audit age recipient key policy.
+func ValidateAuditlogEncryptionPublicKeys(keys []ssh.PublicKey) error {
 	if len(keys) != 1 {
 		return fmt.Errorf("exactly one SSH public key is required")
 	}

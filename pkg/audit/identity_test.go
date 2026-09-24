@@ -86,6 +86,70 @@ func TestEnsureIdentityRejectsMissingKeyForExistingJournal(t *testing.T) {
 	require.NoFileExists(t, conf.IdentityFile)
 }
 
+func TestEnsureIdentityRejectsMissingKeyForRecordingState(t *testing.T) {
+	for _, journalExists := range []bool{false, true} {
+		for _, recordingEnabled := range []bool{false, true} {
+			t.Run(map[bool]string{false: "missing journal", true: "empty journal"}[journalExists]+map[bool]string{false: "/disabled Recording", true: "/enabled Recording"}[recordingEnabled], func(t *testing.T) {
+				root := t.TempDir()
+				conf := auditIdentityTestConfiguration(root, true)
+				conf.Recording.Enabled = recordingEnabled
+				conf.Recording.Directory = filepath.Join(root, "recordings")
+				if journalExists {
+					require.NoError(t, os.Mkdir(conf.Journal.Directory, 0700))
+				}
+				require.NoError(t, os.Mkdir(conf.Recording.Directory, 0700))
+				state := filepath.Join(conf.Recording.Directory, "sealed")
+				require.NoError(t, os.Mkdir(state, 0700))
+
+				identity, err := EnsureIdentity(&conf)
+				require.Nil(t, identity)
+				require.ErrorContains(t, err, "Recording directory")
+				require.True(t, berrors.Config.IsErr(err))
+				require.NoFileExists(t, conf.IdentityFile)
+				require.DirExists(t, state)
+			})
+		}
+	}
+}
+
+func TestLoadExistingIdentityPublicKeyIsReadOnly(t *testing.T) {
+	root := t.TempDir()
+	missing := filepath.Join(root, "missing")
+	key, err := LoadExistingIdentityPublicKey(missing)
+	require.NoError(t, err)
+	require.Nil(t, key)
+	require.NoFileExists(t, missing)
+
+	path := filepath.Join(root, "disabled-key")
+	privateKey, err := auditIdentityKeyRequirement.CreateFile(nil, path)
+	require.NoError(t, err)
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	key, err = LoadExistingIdentityPublicKey(path)
+	require.NoError(t, err)
+	require.True(t, key.IsEqualTo(privateKey.PublicKey()))
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+
+	invalid := filepath.Join(root, "invalid")
+	require.NoError(t, os.WriteFile(invalid, []byte("not a key"), 0600))
+	key, err = LoadExistingIdentityPublicKey(invalid)
+	require.Nil(t, key)
+	require.ErrorContains(t, err, "cannot load audit identity file")
+}
+
+func TestEnsureIdentityAllowsEmptyRecordingDirectory(t *testing.T) {
+	conf := auditIdentityTestConfiguration(t.TempDir(), true)
+	conf.Recording.Enabled = true
+	conf.Recording.Directory = filepath.Join(filepath.Dir(conf.IdentityFile), "recordings")
+	require.NoError(t, os.Mkdir(conf.Recording.Directory, 0700))
+
+	identity, err := EnsureIdentity(&conf)
+	require.NoError(t, err)
+	require.NotNil(t, identity)
+}
+
 func TestEnsureIdentityDoesNotReplaceInvalidKey(t *testing.T) {
 	directory := t.TempDir()
 	conf := auditIdentityTestConfiguration(directory, true)
@@ -157,6 +221,20 @@ func TestIdentityRejectsReusedHostKey(t *testing.T) {
 	require.NoError(t, identity.ValidateDedicatedFrom([]bfcrypto.PrivateKey{nil, other}))
 	err = identity.ValidateDedicatedFrom([]bfcrypto.PrivateKey{privateKey})
 	require.ErrorContains(t, err, "must not reuse")
+	require.True(t, berrors.Config.IsErr(err))
+}
+
+func TestIdentityRejectsReusedSftpPublicKey(t *testing.T) {
+	key, err := auditIdentityKeyRequirement.GenerateKey(nil)
+	require.NoError(t, err)
+	identity, err := NewIdentity(key)
+	require.NoError(t, err)
+	other, err := auditIdentityKeyRequirement.GenerateKey(nil)
+	require.NoError(t, err)
+
+	require.NoError(t, identity.ValidateDedicatedFromPublicKeys([]bfcrypto.PublicKey{nil, other.PublicKey()}))
+	err = identity.ValidateDedicatedFromPublicKeys([]bfcrypto.PublicKey{key.PublicKey()})
+	require.ErrorContains(t, err, "SFTP target identity")
 	require.True(t, berrors.Config.IsErr(err))
 }
 

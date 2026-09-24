@@ -30,7 +30,7 @@ The existing absolute POSIX path on the SFTP server. Empty and relative path com
 Inline OpenSSH `known_hosts` entries used to verify the server host key.
 
 <<property("knownHostsFile", "File Path", "../../data-type.md#file-path", heading=3)>>
-An explicit OpenSSH `known_hosts` file used to verify the server host key. Bifröst never implicitly reads user or system `known_hosts` files. `knownHosts` and `knownHostsFile` can be used together.
+An explicit OpenSSH `known_hosts` file used to verify the server host key (maximum 16 MiB). Bifröst never implicitly reads user or system `known_hosts` files. `knownHosts` and `knownHostsFile` can be used together. The file is snapshotted during target preparation; changing it requires restarting the target to take effect.
 
 <<property("acceptAllHostKeys", "bool", default=False, heading=3)>>
 Disables server host-key verification. This cannot be combined with `knownHosts` or `knownHostsFile` and should only be used in controlled test environments.
@@ -38,8 +38,12 @@ Disables server host-key verification. This cannot be combined with `knownHosts`
 !!! warning
      Setting `acceptAllHostKeys: true` makes the target connection vulnerable to on-path attacks.
 
+The delivery identity includes the effective inline `knownHosts` content, the bytes of `knownHostsFile` (not its path), and the `acceptAllHostKeys` mode. Moving a file without changing its contents preserves delivery state; changing trusted entries or disabling verification under the same target name rejects an existing cursor or outstanding recording receipt. Use a new target name to deliver the full local history to a replacement server. SSH passwords and private-key identities are not part of this identity and can be rotated.
+
+This fingerprint differs from the earlier, unreleased SFTP target format even when the configuration has not changed. Existing development cursors and outstanding recording receipts are not migrated or rewritten; settle their delivery obligations with the previous build or start with a new empty repository and retain the old artifacts separately. Merely renaming a target does not discharge pending receipts in an existing repository.
+
 <<property("identityFiles", "list of File Paths", heading=3)>>
-One or more unencrypted OpenSSH or PEM private-key files, tried in order. Each file must be regular, owned by the Bifröst process user, and at most 1 MiB. On Unix, group and other permission bits must all be disabled. On Windows, the file must use a protected DACL granting access only to its owner and `SYSTEM`. Identity paths are static and do not support templates. Their keys must differ from every configured audit-encryption recipient.
+One or more unencrypted OpenSSH or PEM private-key files, tried in order. Each file must be regular, owned by the Bifröst process user, and at most 1 MiB. On Unix, group and other permission bits must all be disabled. On Windows, the file must use a protected DACL granting access only to its owner and `SYSTEM`. Identity paths are static and do not support templates. Their keys must differ from every configured audit-signing identity and audit-encryption recipient.
 
 <<property("password", "string", default="", heading=3)>>
 The SSH password. This value supports Bifröst string templates without a context object. Prefer an environment variable or the `file` template function over storing it directly in YAML. Template results are used exactly as rendered and are not trimmed.

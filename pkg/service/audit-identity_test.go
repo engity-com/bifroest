@@ -38,6 +38,43 @@ func TestPrepareEnsuresAuditIdentity(t *testing.T) {
 	require.Equal(t, identity.PublicKey().Marshal(), privateKey.PublicKey().Marshal())
 }
 
+func TestPrepareDoesNotReplaceMissingIdentityForRecordingState(t *testing.T) {
+	for _, bestEffort := range []bool{false, true} {
+		for _, recordingEnabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("bestEffort=%t/recordingEnabled=%t", bestEffort, recordingEnabled), func(t *testing.T) {
+				root := t.TempDir()
+				conf := auditSftpDedicatednessTestConfiguration(t, root, nil, "")
+				conf.Auditlogs[0].Targets = nil
+				auditlog := &conf.Auditlogs[0]
+				auditlog.Recording.Enabled = recordingEnabled
+				auditlog.Recording.Directory = filepath.Join(root, "recordings")
+				if bestEffort {
+					auditlog.FailurePolicy = configuration.AuditlogFailurePolicyBestEffort
+				}
+				require.NoError(t, os.Mkdir(auditlog.Journal.Directory, 0700))
+				require.NoError(t, os.Mkdir(auditlog.Recording.Directory, 0700))
+				state := filepath.Join(auditlog.Recording.Directory, "sealed")
+				require.NoError(t, os.Mkdir(state, 0700))
+				marker := filepath.Join(auditlog.Recording.Directory, ".format")
+				require.NoError(t, os.WriteFile(marker, []byte("existing"), 0600))
+
+				svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+				if bestEffort {
+					require.NoError(t, err)
+					require.True(t, svc.auditlogDisabled(auditlog.Name))
+					require.NoError(t, svc.Close())
+				} else {
+					require.Nil(t, svc)
+					require.ErrorContains(t, err, "Recording directory")
+				}
+				require.NoFileExists(t, auditlog.IdentityFile)
+				require.DirExists(t, state)
+				require.FileExists(t, marker)
+			})
+		}
+	}
+}
+
 func TestPrepareResolvesNamedFlowAuditlog(t *testing.T) {
 	directory := t.TempDir()
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
@@ -654,6 +691,383 @@ func TestAuditEncryptionRejectsStaticSshEnvironmentIdentity(t *testing.T) {
 	require.NoError(t, err)
 	publicKey := crypto.PublicKeys(string(crypto.MarshalPublicKey(key.PublicKey())))
 	require.ErrorContains(t, audit.ValidateEncryptionRecipientDedicatedFrom(publicKey, serverKeys), "reuses a private key")
+}
+
+func TestPrepareRejectsCopiedAuditSigningKeyInSshOrSftp(t *testing.T) {
+	for _, encrypted := range []bool{false, true} {
+		for _, source := range []string{"host", "ssh", "certificate identity", "certificate authority", "sftp", "recording sftp"} {
+			t.Run(fmt.Sprintf("encrypted=%t/%s", encrypted, source), func(t *testing.T) {
+				root := t.TempDir()
+				conf := auditSftpDedicatednessTestConfiguration(t, root, nil, "")
+				conf.Auditlogs[0].Targets = nil
+				signingPath := conf.Auditlogs[0].IdentityFile
+				_, err := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).CreateFile(nil, signingPath)
+				require.NoError(t, err)
+				copyPath := filepath.Join(root, "copied-key")
+				contents, err := os.ReadFile(signingPath)
+				require.NoError(t, err)
+				writeCopiedAuditTestKey(t, copyPath, contents)
+				if encrypted {
+					recipient, createErr := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).CreateFile(nil, filepath.Join(root, "recipient"))
+					require.NoError(t, createErr)
+					conf.Auditlogs[0].EncryptionPublicKey = crypto.PublicKeys(strings.TrimSpace(string(crypto.MarshalPublicKey(recipient.PublicKey()))))
+				}
+				switch source {
+				case "host":
+					conf.Ssh.Keys.HostKeys = template.MustNewStrings(copyPath)
+				case "ssh":
+					conf.Flows[0].Environment.V = &configuration.EnvironmentSsh{
+						Address: template.MustNewString("127.0.0.1:22"), User: template.MustNewString("user"),
+						AcceptAllHostKeys: true, IdentityFiles: template.MustNewStrings(copyPath),
+					}
+				case "certificate identity", "certificate authority":
+					certificate := &configuration.EnvironmentSshCertificate{
+						IdentityFile:          template.MustNewString(filepath.Join(root, "certificate-identity")),
+						AuthorityIdentityFile: template.MustNewString(filepath.Join(root, "certificate-authority")),
+						Validity:              configuration.DefaultEnvironmentSshCertificateValidity,
+					}
+					if source == "certificate identity" {
+						certificate.IdentityFile = template.MustNewString(copyPath)
+					} else {
+						certificate.AuthorityIdentityFile = template.MustNewString(copyPath)
+					}
+					conf.Flows[0].Environment.V = &configuration.EnvironmentSsh{
+						Address: template.MustNewString("127.0.0.1:22"), User: template.MustNewString("user"),
+						AcceptAllHostKeys: true, Certificate: certificate,
+					}
+				case "sftp", "recording sftp":
+					target := configuration.AuditlogTargets{{Name: "archive", V: newAuditSftpDedicatednessTarget(t, []string{copyPath})}}
+					if source == "sftp" {
+						conf.Auditlogs[0].Targets = target
+					} else {
+						conf.Auditlogs[0].Recording.Enabled = true
+						conf.Auditlogs[0].Recording.Directory = filepath.Join(root, "recordings")
+						conf.Auditlogs[0].Recording.Targets = configuration.AuditlogRecordingTargets{Mode: configuration.AuditlogRecordingTargetsModeCustom, Targets: target}
+					}
+				}
+				if ssh, ok := conf.Flows[0].Environment.V.(*configuration.EnvironmentSsh); ok {
+					require.NoError(t, ssh.SetDefaults())
+				}
+				svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+				require.Nil(t, svc)
+				require.ErrorContains(t, err, "audit identity must not reuse")
+				require.NoDirExists(t, conf.Auditlogs[0].Journal.Directory)
+			})
+		}
+	}
+}
+
+func TestPrepareAuditSigningKeyCollisionAppliesFailurePolicy(t *testing.T) {
+	for _, bestEffort := range []bool{false, true} {
+		t.Run(fmt.Sprintf("bestEffort=%t", bestEffort), func(t *testing.T) {
+			root := t.TempDir()
+			conf := auditSftpDedicatednessTestConfiguration(t, root, nil, "")
+			conf.Auditlogs[0].Targets = nil
+			_, err := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).CreateFile(nil, conf.Auditlogs[0].IdentityFile)
+			require.NoError(t, err)
+			contents, err := os.ReadFile(conf.Auditlogs[0].IdentityFile)
+			require.NoError(t, err)
+			copyPath := filepath.Join(root, "copy")
+			writeCopiedAuditTestKey(t, copyPath, contents)
+			conf.Auditlogs[0].Targets = configuration.AuditlogTargets{{Name: "archive", V: newAuditSftpDedicatednessTarget(t, []string{copyPath})}}
+			if bestEffort {
+				conf.Auditlogs[0].FailurePolicy = configuration.AuditlogFailurePolicyBestEffort
+			}
+			svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+			if !bestEffort {
+				require.Nil(t, svc)
+				require.ErrorContains(t, err, "audit identity must not reuse")
+				return
+			}
+			require.NoError(t, err)
+			require.True(t, svc.auditlogDisabled(conf.Auditlogs[0].Name))
+			require.Nil(t, svc.auditIdentities[conf.Auditlogs[0].Name])
+			require.NoError(t, svc.Close())
+		})
+	}
+}
+
+func TestPrepareRejectsExistingDisabledAuditIdentityReuse(t *testing.T) {
+	for _, disabledBy := range []string{"configuration", "bestEffort SFTP failure"} {
+		for _, reusedBy := range []string{"signing", "encryption"} {
+			t.Run(disabledBy+"/"+reusedBy, func(t *testing.T) {
+				root := t.TempDir()
+				conf := auditSftpDedicatednessTestConfiguration(t, root, nil, "")
+				conf.Auditlogs[0].Targets = nil
+				source := conf.Auditlogs[0].IdentityFile
+				if reusedBy == "encryption" {
+					source = filepath.Join(root, "offline-encryption-key")
+				}
+				key, err := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).CreateFile(nil, source)
+				require.NoError(t, err)
+				if reusedBy == "encryption" {
+					conf.Auditlogs[0].EncryptionPublicKey = crypto.PublicKeys(strings.TrimSpace(string(crypto.MarshalPublicKey(key.PublicKey()))))
+				}
+				contents, err := os.ReadFile(source)
+				require.NoError(t, err)
+				otherPath := filepath.Join(root, "disabled-signing-key")
+				writeCopiedAuditTestKey(t, otherPath, contents)
+				other := configuration.Auditlog{
+					Name: "other", IdentityFile: otherPath,
+					Journal: configuration.AuditlogJournal{Directory: filepath.Join(root, "other-journal")},
+				}
+				if disabledBy == "bestEffort SFTP failure" {
+					other.Enabled = true
+					other.FailurePolicy = configuration.AuditlogFailurePolicyBestEffort
+					other.Targets = configuration.AuditlogTargets{{Name: "archive", V: newAuditSftpDedicatednessTarget(t, []string{filepath.Join(root, "missing-sftp-key")})}}
+				}
+				conf.Auditlogs = append(conf.Auditlogs, other)
+
+				svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+				require.Nil(t, svc)
+				if reusedBy == "signing" {
+					require.ErrorContains(t, err, "same signing identity")
+				} else {
+					require.ErrorContains(t, err, "audit encryption recipient reuses a private key")
+				}
+				after, err := os.ReadFile(otherPath)
+				require.NoError(t, err)
+				require.Equal(t, contents, after)
+				require.NoDirExists(t, other.Journal.Directory)
+			})
+		}
+	}
+}
+
+func TestPrepareReadOnlyDisabledAuditIdentityChecks(t *testing.T) {
+	for _, bestEffort := range []bool{false, true} {
+		for _, existing := range []bool{false, true} {
+			t.Run(fmt.Sprintf("bestEffort=%t/existing=%t", bestEffort, existing), func(t *testing.T) {
+				root := t.TempDir()
+				conf := auditSftpDedicatednessTestConfiguration(t, root, nil, "")
+				conf.Auditlogs[0].Targets = nil
+				other := configuration.Auditlog{
+					Name: "other", IdentityFile: filepath.Join(root, "disabled-key"),
+					Journal: configuration.AuditlogJournal{Directory: filepath.Join(root, "other-journal")},
+				}
+				if bestEffort {
+					other.Enabled = true
+					other.FailurePolicy = configuration.AuditlogFailurePolicyBestEffort
+					other.Targets = configuration.AuditlogTargets{{Name: "archive", V: newAuditSftpDedicatednessTarget(t, []string{filepath.Join(root, "missing-sftp-key")})}}
+				}
+				if existing {
+					writeCopiedAuditTestKey(t, other.IdentityFile, []byte("unreadable private key"))
+				}
+				conf.Auditlogs = append(conf.Auditlogs, other)
+
+				svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+				if existing {
+					require.Nil(t, svc)
+					require.ErrorContains(t, err, "cannot verify identity of auditlog \"other\"")
+					require.FileExists(t, other.IdentityFile)
+				} else {
+					require.NoError(t, err)
+					require.NotNil(t, svc)
+					require.NoError(t, svc.Close())
+					require.NoFileExists(t, other.IdentityFile)
+				}
+				require.NoDirExists(t, other.Journal.Directory)
+			})
+		}
+	}
+}
+
+func TestPrepareChecksDisabledSftpIdentityFilesReadOnly(t *testing.T) {
+	for _, placement := range []string{"disabled audit target", "disabled audit Recording target", "disabled Recording target"} {
+		for _, keyCase := range []string{"signing copy", "recipient copy", "missing", "missing shared signing path", "missing then signing copy", "malformed"} {
+			t.Run(placement+"/"+keyCase, func(t *testing.T) {
+				root := t.TempDir()
+				conf := auditSftpDedicatednessTestConfiguration(t, root, nil, "")
+				conf.Auditlogs[0].Targets = nil
+				path := filepath.Join(root, "disabled-sftp-key")
+				var original []byte
+				switch keyCase {
+				case "missing shared signing path":
+					path = conf.Auditlogs[0].IdentityFile
+				case "signing copy", "recipient copy", "missing then signing copy":
+					source := conf.Auditlogs[0].IdentityFile
+					if keyCase == "recipient copy" {
+						source = filepath.Join(root, "offline-recipient")
+					}
+					key, err := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).CreateFile(nil, source)
+					require.NoError(t, err)
+					if keyCase == "recipient copy" {
+						conf.Auditlogs[0].EncryptionPublicKey = crypto.PublicKeys(strings.TrimSpace(string(crypto.MarshalPublicKey(key.PublicKey()))))
+					}
+					original, err = os.ReadFile(source)
+					require.NoError(t, err)
+					writeCopiedAuditTestKey(t, path, original)
+				case "malformed":
+					original = []byte("invalid private key")
+					writeCopiedAuditTestKey(t, path, original)
+				}
+				identityFiles := []string{path}
+				if keyCase == "missing then signing copy" {
+					identityFiles = append([]string{filepath.Join(root, "missing-sftp-key")}, identityFiles...)
+				}
+				target := newAuditSftpDedicatednessTarget(t, identityFiles)
+				other := configuration.Auditlog{
+					Name: "disabled", IdentityFile: filepath.Join(root, "disabled-audit-key"),
+					Journal: configuration.AuditlogJournal{Directory: filepath.Join(root, "disabled-journal")},
+				}
+				switch placement {
+				case "disabled audit target":
+					other.Targets = configuration.AuditlogTargets{{Name: "archive", V: target}}
+					conf.Auditlogs = append(conf.Auditlogs, other)
+				case "disabled audit Recording target":
+					require.NoError(t, other.Recording.SetDefaults())
+					other.Recording.Directory = filepath.Join(root, "disabled-recordings")
+					other.Recording.Targets = recordingSftpTargets(target)
+					conf.Auditlogs = append(conf.Auditlogs, other)
+				case "disabled Recording target":
+					conf.Auditlogs[0].Recording.Enabled = false
+					conf.Auditlogs[0].Recording.Directory = filepath.Join(root, "recordings")
+					conf.Auditlogs[0].Recording.Targets = recordingSftpTargets(target)
+				}
+
+				svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+				switch keyCase {
+				case "signing copy", "missing then signing copy":
+					require.Nil(t, svc)
+					require.ErrorContains(t, err, "audit identity must not reuse an SFTP target identity key")
+				case "recipient copy":
+					require.Nil(t, svc)
+					require.ErrorContains(t, err, "audit encryption recipient reuses a private key")
+				case "malformed":
+					require.Nil(t, svc)
+					require.ErrorContains(t, err, "cannot load static SFTP identities of")
+				case "missing":
+					require.NoError(t, err)
+					require.NotNil(t, svc)
+					require.Nil(t, svc.auditDeliveries[other.Name])
+					require.Nil(t, svc.recordingTargets[other.Name])
+					require.Nil(t, svc.recordingRepositories[other.Name])
+					require.Nil(t, svc.recordingTargets[conf.Auditlogs[0].Name])
+					require.NoError(t, svc.Close())
+					require.NoFileExists(t, path)
+				case "missing shared signing path":
+					require.Nil(t, svc)
+					require.ErrorContains(t, err, "overlaps auditlog")
+					require.NoFileExists(t, path)
+				}
+				if keyCase != "missing" && keyCase != "missing shared signing path" {
+					after, readErr := os.ReadFile(path)
+					require.NoError(t, readErr)
+					require.Equal(t, original, after)
+				}
+				if keyCase == "missing then signing copy" {
+					require.NoFileExists(t, identityFiles[0])
+				}
+				if placement != "disabled Recording target" {
+					require.NoFileExists(t, other.IdentityFile)
+					require.NoDirExists(t, other.Journal.Directory)
+				}
+			})
+		}
+	}
+}
+
+func TestPrepareRejectsSigningKeyReusedByOtherAuditlogSftpTarget(t *testing.T) {
+	root := t.TempDir()
+	conf := auditSftpDedicatednessTestConfiguration(t, root, nil, "")
+	conf.Auditlogs[0].Targets = nil
+	_, err := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).CreateFile(nil, conf.Auditlogs[0].IdentityFile)
+	require.NoError(t, err)
+	contents, err := os.ReadFile(conf.Auditlogs[0].IdentityFile)
+	require.NoError(t, err)
+	copyPath := filepath.Join(root, "other-target-key")
+	writeCopiedAuditTestKey(t, copyPath, contents)
+	conf.Auditlogs = append(conf.Auditlogs, configuration.Auditlog{
+		Name: "other", Enabled: true,
+		IdentityFile: filepath.Join(root, "other-signing-key"),
+		Journal:      configuration.AuditlogJournal{Directory: filepath.Join(root, "other-journal")},
+		Targets:      configuration.AuditlogTargets{{Name: "archive", V: newAuditSftpDedicatednessTarget(t, []string{copyPath})}},
+	})
+
+	svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+	require.Nil(t, svc)
+	require.ErrorContains(t, err, "audit identity must not reuse an SFTP target identity key")
+	require.NoDirExists(t, conf.Auditlogs[0].Journal.Directory)
+}
+
+func TestPrepareRejectsHostKeySymlinkIntoEmptyJournalBeforeCreation(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	require.NoError(t, os.Mkdir(real, 0700))
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Skipf("cannot create directory symlink: %v", err)
+	}
+	conf := auditSftpDedicatednessTestConfiguration(t, root, nil, "")
+	conf.Auditlogs[0].Targets = nil
+	conf.Auditlogs[0].Journal.Directory = filepath.Join(real, "journal")
+	require.NoError(t, os.Mkdir(conf.Auditlogs[0].Journal.Directory, 0700))
+	keyPath := filepath.Join(alias, "journal", "host-key")
+	conf.Ssh.Keys.HostKeys = template.MustNewStrings(keyPath)
+
+	svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+	require.Nil(t, svc)
+	require.ErrorContains(t, err, "SSH host key overlaps auditlog")
+	require.NoFileExists(t, keyPath)
+	require.NoFileExists(t, conf.Auditlogs[0].IdentityFile)
+}
+
+func TestPrepareRejectsStaticKeyPathsBeforeCreation(t *testing.T) {
+	for _, source := range []string{"host", "ssh", "certificate identity", "certificate authority"} {
+		for _, destination := range []string{"journal", "recording", "session", "identity"} {
+			t.Run(source+"/"+destination, func(t *testing.T) {
+				root := t.TempDir()
+				conf := auditSftpDedicatednessTestConfiguration(t, root, nil, "")
+				conf.Auditlogs[0].Targets = nil
+				conf.Auditlogs[0].Recording.Enabled = true
+				conf.Auditlogs[0].Recording.Directory = filepath.Join(root, "recordings")
+				var path string
+				switch destination {
+				case "journal":
+					path = filepath.Join(conf.Auditlogs[0].Journal.Directory, "key")
+				case "recording":
+					path = filepath.Join(conf.Auditlogs[0].Recording.Directory, "key")
+				case "session":
+					path = filepath.Join(conf.Session.V.(*configuration.SessionFs).Storage, "key")
+				case "identity":
+					path = conf.Auditlogs[0].IdentityFile
+				}
+				switch source {
+				case "host":
+					conf.Ssh.Keys.HostKeys = template.MustNewStrings(path)
+				case "ssh":
+					conf.Flows[0].Environment.V = &configuration.EnvironmentSsh{Address: template.MustNewString("127.0.0.1:22"), User: template.MustNewString("user"), AcceptAllHostKeys: true, IdentityFiles: template.MustNewStrings(path)}
+				case "certificate identity", "certificate authority":
+					certificate := &configuration.EnvironmentSshCertificate{IdentityFile: template.MustNewString(filepath.Join(root, "subject")), AuthorityIdentityFile: template.MustNewString(filepath.Join(root, "authority")), Validity: configuration.DefaultEnvironmentSshCertificateValidity}
+					if source == "certificate identity" {
+						certificate.IdentityFile = template.MustNewString(path)
+					} else {
+						certificate.AuthorityIdentityFile = template.MustNewString(path)
+					}
+					conf.Flows[0].Environment.V = &configuration.EnvironmentSsh{Address: template.MustNewString("127.0.0.1:22"), User: template.MustNewString("user"), AcceptAllHostKeys: true, Certificate: certificate}
+				}
+				if ssh, ok := conf.Flows[0].Environment.V.(*configuration.EnvironmentSsh); ok {
+					require.NoError(t, ssh.SetDefaults())
+				}
+				svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+				require.Nil(t, svc)
+				require.ErrorContains(t, err, "overlaps")
+				require.NoFileExists(t, path)
+				require.NoFileExists(t, conf.Auditlogs[0].IdentityFile)
+			})
+		}
+	}
+}
+
+func writeCopiedAuditTestKey(t *testing.T, path string, contents []byte) {
+	t.Helper()
+	file, err := crypto.CreateProtectedTempFile(filepath.Dir(path), ".audit-test-key-*", 0600)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.Remove(file.Name()) })
+	_, err = file.Write(contents)
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+	require.NoError(t, os.Rename(file.Name(), path))
 }
 
 func TestPrepareAuditEncryptionValidatesSftpIdentityKeys(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"strings"
+	"syscall"
 
 	gossh "golang.org/x/crypto/ssh"
 
@@ -91,7 +92,7 @@ func (this *Identity) verify(message, signature []byte) error {
 }
 
 // EnsureIdentity loads or creates the configured audit identity. A missing key
-// is only generated if no journal history exists that could belong to it.
+// is only generated if neither journal nor Recording state could belong to it.
 func EnsureIdentity(conf *configuration.Auditlog) (*Identity, error) {
 	if conf == nil {
 		return nil, errors.Config.Newf("nil auditlog configuration")
@@ -116,6 +117,24 @@ func EnsureIdentity(conf *configuration.Auditlog) (*Identity, error) {
 		if hasHistory {
 			return nil, errors.Config.Newf("audit identity file %q is missing while journal %q contains history", identityFile, journalDirectory)
 		}
+		recordingDirectory := strings.TrimSpace(conf.Recording.Directory)
+		if conf.Recording.Enabled && recordingDirectory == "" {
+			return nil, errors.Config.Newf("audit Recording directory is empty")
+		}
+		if recordingDirectory != "" {
+			// Defaults can share this path across auditlogs: fail closed rather than
+			// assign existing Recording state to a newly generated signing key.
+			hasState, inspectErr := journalDirectoryHasEntry(context.Background(), recordingDirectory, func(os.DirEntry) bool { return true })
+			if inspectErr != nil && !errors.Is(inspectErr, fs.ErrNotExist) {
+				// A disabled Recording path below a regular file cannot contain spool state.
+				if conf.Recording.Enabled || !errors.Is(inspectErr, syscall.ENOTDIR) {
+					return nil, errors.System.Newf("cannot inspect audit Recording directory %q: %w", recordingDirectory, inspectErr)
+				}
+			}
+			if hasState {
+				return nil, errors.Config.Newf("audit identity file %q is missing while Recording directory %q contains state", identityFile, recordingDirectory)
+			}
+		}
 		if _, createErr := auditIdentityKeyRequirement.CreateFile(nil, identityFile); createErr != nil && !errors.Is(createErr, fs.ErrExist) {
 			return nil, errors.Config.Newf("cannot create audit identity file %q: %w", identityFile, createErr)
 		}
@@ -139,6 +158,21 @@ func EnsureIdentity(conf *configuration.Auditlog) (*Identity, error) {
 
 func loadAuditIdentityFile(path string) (bfcrypto.PrivateKey, error) {
 	return bfcrypto.LoadSecurePrivateKeyFile(path, maxAuditIdentityFileSize)
+}
+
+// LoadExistingIdentityPublicKey reads an existing private key without creating
+// one. Missing files are allowed; unreadable or invalid files are not.
+func LoadExistingIdentityPublicKey(path string) (bfcrypto.PublicKey, error) {
+	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, errors.Config.Newf("cannot inspect audit identity file %q: %w", path, err)
+	}
+	key, err := loadAuditIdentityFile(path)
+	if err != nil {
+		return nil, errors.Config.Newf("cannot load audit identity file %q: %w", path, err)
+	}
+	return key.PublicKey(), nil
 }
 
 func auditJournalHasHistory(directory string) (bool, error) {
@@ -182,18 +216,30 @@ func (this *Identity) journalPublicKey() []byte {
 	return this.PublicKey().Marshal()
 }
 
-// ValidateDedicatedFrom rejects identities that reuse one of the SSH server's
-// host keys.
-func (this *Identity) ValidateDedicatedFrom(hostKeys []bfcrypto.PrivateKey) error {
+// ValidateDedicatedFrom rejects identities that reuse an SSH private key.
+func (this *Identity) ValidateDedicatedFrom(privateKeys []bfcrypto.PrivateKey) error {
 	if this == nil {
 		return nil
 	}
-	for _, hostKey := range hostKeys {
-		if hostKey == nil || hostKey.PublicKey() == nil {
+	for _, key := range privateKeys {
+		if key == nil || key.PublicKey() == nil {
 			continue
 		}
-		if this.privateKey.PublicKey().IsEqualTo(hostKey.PublicKey()) {
-			return errors.Config.Newf("audit identity must not reuse an SSH server host key")
+		if this.privateKey.PublicKey().IsEqualTo(key.PublicKey()) {
+			return errors.Config.Newf("audit identity must not reuse an SSH private key (including server host keys)")
+		}
+	}
+	return nil
+}
+
+// ValidateDedicatedFromPublicKeys rejects identities reused by SFTP targets.
+func (this *Identity) ValidateDedicatedFromPublicKeys(publicKeys []bfcrypto.PublicKey) error {
+	if this == nil {
+		return nil
+	}
+	for _, key := range publicKeys {
+		if key != nil && this.PublicKey().IsEqualTo(key) {
+			return errors.Config.Newf("audit identity must not reuse an SFTP target identity key")
 		}
 	}
 	return nil

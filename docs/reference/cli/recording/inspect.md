@@ -7,6 +7,7 @@ description: Verify and inspect a Bifröst session Recording artifact.
 Verifies a sealed native `.bcast` or CBOR `.becast` session Recording and writes one JSON object to standard output. Legacy `.cast`, `.cast.zst`, and binary `.becast` are also supported. Format detection uses the file magic, not the extension; the old and new `.becast` formats have different magic bytes. A failed verification produces no JSON output.
 
 The input must be a regular, non-symlink file and must remain the same file with unchanged size, mode, and modification time throughout inspection. Standard input is deliberately unsupported.
+When stdout is a regular file, it must not refer to the inspected Recording. A shell redirection using `>` can truncate a file before Bifröst starts and cannot be prevented by the command.
 
 For native clear `.bcast`, `verificationScope` is `full`: the command verifies the signed envelope and reconstructs and verifies the complete Cast. Legacy `.cast` and `.cast.zst` also have `full` scope and include a `cast` object with event counts only, not session metadata or reasons. For encrypted native or legacy `.becast`, `verificationScope` is `outer`: only the signed envelope is checked, without decrypting the event content. `claimedStatus` and `claimedCastDigest` are signed outer-seal claims, **not** verified inner-Cast results; `status`, `castDigest`, and `cast` are omitted. Use `recording export` with a matching private identity for full verification. No event payloads are emitted by inspect.
 

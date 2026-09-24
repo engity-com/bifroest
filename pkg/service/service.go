@@ -5,7 +5,9 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
+	"io/fs"
 	gonet "net"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -344,45 +346,60 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 		auditlog := &this.Configuration.Auditlogs[index]
 		svc.enabledAuditlogs[auditlog.Name] = auditlog.Enabled
 		svc.auditlogStates[auditlog.Name] = &auditlogRuntimeState{policy: auditlog.FailurePolicy}
+		svc.auditIdentities[auditlog.Name] = nil
 	}
 
 	serverPrivateKeys := hostSigners
-	sftpIdentityPublicKeysByAuditlog := make(map[configuration.AuditlogName][]crypto.PublicKey, len(this.Configuration.Auditlogs))
-	var failedSftpIdentityPublicKeys []crypto.PublicKey
-	if hasEncryptedAuditlog(this.Configuration.Auditlogs) {
+	if slices.ContainsFunc(this.Configuration.Auditlogs, func(a configuration.Auditlog) bool { return a.Enabled }) {
 		serverPrivateKeys, err = loadStaticPrivateKeysForAuditEncryption(this.Configuration.Flows, hostSigners)
 		if err != nil {
 			return err
 		}
-		for index := range this.Configuration.Auditlogs {
-			auditlog := &this.Configuration.Auditlogs[index]
-			if !auditlog.Enabled {
-				continue
-			}
-			keys, identityErr := loadStaticSftpIdentityPublicKeysForAuditEncryption(auditlog)
-			if identityErr != nil {
-				failedSftpIdentityPublicKeys = append(failedSftpIdentityPublicKeys, keys...)
-				if err := svc.handleAuditlogFailure(auditlog.Name, "SFTP identities", identityErr); err != nil {
-					return err
-				}
-				continue
-			}
-			sftpIdentityPublicKeysByAuditlog[auditlog.Name] = keys
-		}
 	}
+	sftpIdentityPublicKeysByAuditlog := make(map[configuration.AuditlogName][]crypto.PublicKey, len(this.Configuration.Auditlogs))
+	var failedSftpIdentityPublicKeys []crypto.PublicKey
 	for index := range this.Configuration.Auditlogs {
 		auditlog := &this.Configuration.Auditlogs[index]
-		if svc.auditlogDisabled(auditlog.Name) {
+		if !auditlog.Enabled {
+			continue
+		}
+		keys, identityErr := loadStaticSftpIdentityPublicKeysForAuditEncryption(auditlog)
+		if identityErr != nil {
+			failedSftpIdentityPublicKeys = append(failedSftpIdentityPublicKeys, keys...)
+			if err := svc.handleAuditlogFailure(auditlog.Name, "SFTP identities", identityErr); err != nil {
+				return err
+			}
+			continue
+		}
+		sftpIdentityPublicKeysByAuditlog[auditlog.Name] = keys
+	}
+	var disabledSftpIdentityPublicKeys []crypto.PublicKey
+	for index := range this.Configuration.Auditlogs {
+		auditlog := &this.Configuration.Auditlogs[index]
+		keys, loadErr := loadExistingDisabledSftpIdentityPublicKeys(auditlog, this.Configuration.Auditlogs)
+		if loadErr != nil {
+			return loadErr
+		}
+		disabledSftpIdentityPublicKeys = append(disabledSftpIdentityPublicKeys, keys...)
+	}
+	availableAuditIdentityKeys := make(map[configuration.AuditlogName]crypto.PublicKey, len(this.Configuration.Auditlogs))
+	for index := range this.Configuration.Auditlogs {
+		auditlog := &this.Configuration.Auditlogs[index]
+		if !auditlog.Enabled || svc.auditlogDisabled(auditlog.Name) {
 			continue
 		}
 		identity, identityErr := audit.EnsureIdentity(auditlog)
 		if identityErr != nil {
+			if auditlog.Recording.Enabled {
+				identityErr = fmt.Errorf("cannot open Recording repository of auditlog %q: %w", auditlog.Name, identityErr)
+			}
 			if err := svc.handleAuditlogFailure(auditlog.Name, "identity", identityErr); err != nil {
 				return err
 			}
 			continue
 		}
-		if identityErr := identity.ValidateDedicatedFrom(hostSigners); identityErr != nil {
+		availableAuditIdentityKeys[auditlog.Name] = identity.PublicKey()
+		if identityErr := identity.ValidateDedicatedFrom(serverPrivateKeys); identityErr != nil {
 			if err := svc.handleAuditlogFailure(auditlog.Name, "identity", identityErr); err != nil {
 				return err
 			}
@@ -396,15 +413,52 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 		}
 		svc.auditIdentities[auditlog.Name] = identity
 	}
-	auditIdentities := make([]*audit.Identity, 0, len(svc.auditIdentities))
-	for _, identity := range svc.auditIdentities {
-		auditIdentities = append(auditIdentities, identity)
-	}
-	sftpIdentityPublicKeys := failedSftpIdentityPublicKeys
-	for auditlog, keys := range sftpIdentityPublicKeysByAuditlog {
-		if !svc.auditlogDisabled(auditlog) {
-			sftpIdentityPublicKeys = append(sftpIdentityPublicKeys, keys...)
+	for index := range this.Configuration.Auditlogs {
+		auditlog := &this.Configuration.Auditlogs[index]
+		if availableAuditIdentityKeys[auditlog.Name] != nil || (auditlog.Enabled && !svc.auditlogDisabled(auditlog.Name)) {
+			continue
 		}
+		key, loadErr := audit.LoadExistingIdentityPublicKey(auditlog.IdentityFile)
+		if loadErr != nil {
+			return fmt.Errorf("cannot verify identity of auditlog %q: %w", auditlog.Name, loadErr)
+		}
+		if key != nil {
+			availableAuditIdentityKeys[auditlog.Name] = key
+		}
+	}
+	sftpIdentityPublicKeys := append(failedSftpIdentityPublicKeys, disabledSftpIdentityPublicKeys...)
+	for _, keys := range sftpIdentityPublicKeysByAuditlog {
+		sftpIdentityPublicKeys = append(sftpIdentityPublicKeys, keys...)
+	}
+	for index := range this.Configuration.Auditlogs {
+		auditlog := &this.Configuration.Auditlogs[index]
+		identity := svc.auditIdentities[auditlog.Name]
+		if identity == nil || svc.auditlogDisabled(auditlog.Name) {
+			continue
+		}
+		for otherName, key := range availableAuditIdentityKeys {
+			if otherName != auditlog.Name && identity.PublicKey().IsEqualTo(key) {
+				identityErr := errors.Config.Newf("auditlogs %q and %q use the same signing identity", auditlog.Name, otherName)
+				if err := svc.handleAuditlogFailure(auditlog.Name, "identity", identityErr); err != nil {
+					return err
+				}
+				delete(svc.auditIdentities, auditlog.Name)
+				break
+			}
+		}
+		if svc.auditlogDisabled(auditlog.Name) {
+			continue
+		}
+		if identityErr := identity.ValidateDedicatedFromPublicKeys(sftpIdentityPublicKeys); identityErr != nil {
+			if err := svc.handleAuditlogFailure(auditlog.Name, "identity", identityErr); err != nil {
+				return err
+			}
+			delete(svc.auditIdentities, auditlog.Name)
+		}
+	}
+	auditIdentityPublicKeys := make([]crypto.PublicKey, 0, len(availableAuditIdentityKeys))
+	for _, key := range availableAuditIdentityKeys {
+		auditIdentityPublicKeys = append(auditIdentityPublicKeys, key)
 	}
 	resolvedEncryptionPublicKeys := make(map[configuration.AuditlogName]crypto.PublicKeys, len(this.Configuration.Auditlogs))
 	for index := range this.Configuration.Auditlogs {
@@ -431,7 +485,7 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 			}
 			continue
 		}
-		if encryptionErr := audit.ValidateEncryptionRecipientDedicatedFromAuditIdentities(encryptionPublicKey, auditIdentities); encryptionErr != nil {
+		if encryptionErr := audit.ValidateEncryptionRecipientDedicatedFromPublicKeys(encryptionPublicKey, auditIdentityPublicKeys); encryptionErr != nil {
 			if err := svc.handleAuditlogFailure(auditlog.Name, "encryption", encryptionErr); err != nil {
 				return err
 			}
@@ -649,15 +703,6 @@ func (this *Service) loadHostPrivateKeys() ([]crypto.PrivateKey, error) {
 	return EnsureHostPrivateKeys(&this.Configuration)
 }
 
-func hasEncryptedAuditlog(auditlogs configuration.Auditlogs) bool {
-	for _, auditlog := range auditlogs {
-		if auditlog.Enabled && (!auditlog.EncryptionPublicKey.IsZero() || !auditlog.EncryptionPublicKeyFile.IsZero()) {
-			return true
-		}
-	}
-	return false
-}
-
 func loadStaticPrivateKeysForAuditEncryption(flows configuration.Flows, hostKeys []crypto.PrivateKey) ([]crypto.PrivateKey, error) {
 	result := append([]crypto.PrivateKey(nil), hostKeys...)
 	for index := range flows {
@@ -722,6 +767,55 @@ func loadStaticSftpIdentityPublicKeysForAuditEncryption(auditlog *configuration.
 		if err != nil {
 			resultErr = goerrors.Join(resultErr, fmt.Errorf("cannot load static SFTP identities of Recording target %q in auditlog %q: %w", target.Name, auditlog.Name, err))
 		}
+	}
+	return result, resultErr
+}
+
+func loadExistingDisabledSftpIdentityPublicKeys(auditlog *configuration.Auditlog, auditlogs configuration.Auditlogs) ([]crypto.PublicKey, error) {
+	var result []crypto.PublicKey
+	var resultErr error
+	loadTargets := func(targets configuration.AuditlogTargets, kind string) {
+		for _, target := range targets {
+			sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
+			if !ok || sftp == nil {
+				continue
+			}
+			for _, path := range sftp.IdentityFiles {
+				resolved, err := sys.CanonicalPath(path)
+				if err != nil {
+					resultErr = goerrors.Join(resultErr, fmt.Errorf("cannot resolve static SFTP identity file %q of %s %q in auditlog %q: %w", path, kind, target.Name, auditlog.Name, err))
+					continue
+				}
+				overlaps := false
+				for _, other := range auditlogs {
+					if other.Enabled && runtimePathsOverlap(resolved, other.IdentityFile) {
+						resultErr = goerrors.Join(resultErr, errors.Config.Newf("auditlog %q %s %q static SFTP identity file %q overlaps auditlog %q identity file", auditlog.Name, kind, target.Name, path, other.Name))
+						overlaps = true
+						break
+					}
+				}
+				if overlaps {
+					continue
+				}
+				if _, err := os.Lstat(path); goerrors.Is(err, fs.ErrNotExist) {
+					continue
+				} else if err != nil {
+					resultErr = goerrors.Join(resultErr, fmt.Errorf("cannot inspect static SFTP identity file %q of %s %q in auditlog %q: %w", path, kind, target.Name, auditlog.Name, err))
+					continue
+				}
+				keys, err := audit.LoadSftpIdentityPublicKeys([]string{path})
+				result = append(result, keys...)
+				if err != nil {
+					resultErr = goerrors.Join(resultErr, fmt.Errorf("cannot load static SFTP identities of %s %q in auditlog %q: %w", kind, target.Name, auditlog.Name, err))
+				}
+			}
+		}
+	}
+	if !auditlog.Enabled {
+		loadTargets(auditlog.Targets, "target")
+	}
+	if !auditlog.Enabled || !auditlog.Recording.Enabled {
+		loadTargets(auditlog.Recording.Targets.Configured(), "Recording target")
 	}
 	return result, resultErr
 }
@@ -1229,7 +1323,76 @@ func validateRuntimePathCandidate(conf *configuration.Configuration) error {
 			}
 		}
 	}
-	return validateRecordingRuntimePathOverlaps(conf, storage)
+	if err := validateRecordingRuntimePathOverlaps(conf, storage); err != nil {
+		return err
+	}
+	return validateStaticKeyRuntimePaths(conf, storage)
+}
+
+func validateStaticKeyRuntimePaths(conf *configuration.Configuration, storage string) error {
+	check := func(path, description string) error {
+		resolved, err := sys.CanonicalPath(path)
+		if err != nil {
+			return errors.Config.Newf("cannot resolve %s: %w", description, err)
+		}
+		if storage != "" && runtimePathsOverlap(resolved, storage) {
+			return errors.Config.Newf("%s overlaps session storage", description)
+		}
+		for _, auditlog := range conf.Auditlogs {
+			if !auditlog.Enabled {
+				continue
+			}
+			if runtimePathsOverlap(resolved, auditlog.IdentityFile) {
+				return errors.Config.Newf("%s overlaps auditlog %q identity file", description, auditlog.Name)
+			}
+			if runtimePathsOverlap(resolved, auditlog.Journal.Directory) {
+				return errors.Config.Newf("%s overlaps auditlog %q journal", description, auditlog.Name)
+			}
+			if auditlog.Recording.Enabled && runtimePathsOverlap(resolved, auditlog.Recording.Directory) {
+				return errors.Config.Newf("%s overlaps auditlog %q recording directory", description, auditlog.Name)
+			}
+		}
+		return nil
+	}
+	hostKeys, err := conf.Ssh.Keys.HostKeys.Render(noopContext{})
+	if err != nil {
+		return errors.Config.Newf("cannot render hostKeys: %w", err)
+	}
+	for _, path := range hostKeys {
+		if path != "" {
+			if err := check(path, "SSH host key"); err != nil {
+				return err
+			}
+		}
+	}
+	for _, flow := range conf.Flows {
+		sshEnvironment, ok := flow.Environment.V.(*configuration.EnvironmentSsh)
+		if !ok || sshEnvironment == nil {
+			continue
+		}
+		if certificate := sshEnvironment.Certificate; certificate != nil {
+			for _, path := range []struct {
+				value       string
+				description string
+			}{
+				{certificate.IdentityFile.String(), fmt.Sprintf("flow %q SSH certificate identity file", flow.Name)},
+				{certificate.AuthorityIdentityFile.String(), fmt.Sprintf("flow %q SSH certificate authority file", flow.Name)},
+			} {
+				if err := check(strings.TrimSpace(path.value), path.description); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		for _, path := range sshEnvironment.IdentityFiles {
+			if path.IsHardCoded() {
+				if err := check(strings.TrimSpace(path.String()), fmt.Sprintf("flow %q static SSH identity file", flow.Name)); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func canonicalRuntimePathOutsideSessionStorage(storage, candidate, description string) (string, error) {

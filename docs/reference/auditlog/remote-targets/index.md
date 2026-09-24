@@ -24,7 +24,7 @@ During shutdown, Bifröst seals a non-empty active segment and gives targets up 
 
 ## Delivery identity
 
-A signed cursor below `<journal-directory>/.delivery/` records the last confirmed segment and binds it to the target name and effective destination. Credential and timeout rotation keeps the cursor, while changing the endpoint, namespace, bucket, prefix, directory, or destination user under the same name fails closed. Use a new target name when a replacement destination must receive the complete local history.
+A signed cursor below `<journal-directory>/.delivery/` records the last confirmed segment and binds it to the target name and effective destination. Credential and timeout rotation keeps the cursor, while changing the endpoint, namespace, bucket, prefix, directory, destination user, or SFTP host-key trust under the same name fails closed. For SFTP, trust is bound to the inline entries and file contents, not the known-hosts file path; switching to `acceptAllHostKeys` also changes the destination identity. Use a new target name when a replacement destination must receive the complete local history.
 
 Before delivering the next segment, Bifröst verifies its signed predecessor segment and record hashes against the confirmed chain. On restart it reconstructs that chain from locally retained segments, verifies the cursor against its tip, and checks a signed temporary cursor before promoting it. Removing a confirmed local segment makes delivery fail closed; the cursor alone cannot reconstruct the missing last-record hash or prove that a remote copy still exists.
 

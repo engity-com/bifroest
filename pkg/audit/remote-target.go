@@ -205,7 +205,11 @@ func remoteDeliveryTargetSettings(conf configuration.AuditlogTargetV) (time.Dura
 		if err != nil {
 			return 0, remoteDeliveryDestinationFingerprint{}, err
 		}
-		return sftpRemoteDeliveryTargetSettings(value, values, address)
+		trust, err := loadSftpRemoteHostKeyTrust(value)
+		if err != nil {
+			return 0, remoteDeliveryDestinationFingerprint{}, err
+		}
+		return sftpRemoteDeliveryTargetSettings(value, values, address, trust)
 	default:
 		return 0, remoteDeliveryDestinationFingerprint{}, errors.Config.Newf("custom remote target configuration %T requires an explicit destination identity from its factory", conf)
 	}
@@ -252,13 +256,16 @@ func webdavRemoteDeliveryTargetSettings(values configuration.AuditlogTargetWebda
 	return newRemoteDeliveryTargetSettings(values.PublishAttemptTimeout, destination)
 }
 
-func sftpRemoteDeliveryTargetSettings(conf *configuration.AuditlogTargetSftp, values configuration.AuditlogTargetSftpValues, address string) (time.Duration, remoteDeliveryDestinationFingerprint, error) {
+func sftpRemoteDeliveryTargetSettings(conf *configuration.AuditlogTargetSftp, values configuration.AuditlogTargetSftpValues, address string, trust sftpRemoteHostKeyTrust) (time.Duration, remoteDeliveryDestinationFingerprint, error) {
 	destination := struct {
-		Type      string `json:"type"`
-		Address   string `json:"address"`
-		Directory string `json:"directory"`
-		Username  string `json:"username"`
-	}{"sftp", address, conf.Directory, values.User}
+		Type              string `json:"type"`
+		Address           string `json:"address"`
+		Directory         string `json:"directory"`
+		Username          string `json:"username"`
+		AcceptAllHostKeys bool   `json:"acceptAllHostKeys"`
+		KnownHosts        string `json:"knownHosts"`
+		KnownHostsFile    []byte `json:"knownHostsFile"`
+	}{"sftp", address, conf.Directory, values.User, conf.AcceptAllHostKeys, string(conf.KnownHosts), trust.file}
 	return newRemoteDeliveryTargetSettings(values.PublishAttemptTimeout, destination)
 }
 
