@@ -44,7 +44,7 @@ run = "go test -race ./..."
 
 [tasks."test:e2e:local"]
 depends = ["build:var"]
-run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHLocal(Backend|SessionRecording)$' ./test/e2e"
+run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHLocal(Backend|SessionRecording|EncryptedSessionRecordingPTY)$' ./test/e2e"
 
 [tasks."test:e2e:docker"]
 depends = ["build:var"]

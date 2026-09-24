@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -16,6 +17,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/engity-com/bifroest/pkg/audit"
+	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/recording"
 )
 
 func TestOpenSSHLocalBackend(t *testing.T) {
@@ -343,6 +348,161 @@ func TestOpenSSHLocalSessionRecording(t *testing.T) {
 	}
 
 	verifySessionRecordingArtifact(t, f, artifact, producerID)
+}
+
+func TestOpenSSHLocalEncryptedSessionRecordingPTY(t *testing.T) {
+	f, err := newFixture(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.prepareRuntime(false); errors.Is(err, errNoRuntime) {
+		t.Skip(err)
+	} else if err != nil {
+		t.Fatal(err)
+	}
+
+	auditIdentity := filepath.Join(f.tempDir, "audit_identity")
+	recipientIdentity := filepath.Join(f.tempDir, "recording_recipient")
+	for _, path := range []string{auditIdentity, recipientIdentity} {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		result := runCommand(ctx, f.repoRoot, nil, f.bifroest, "key", "generate", "--identityFile", path, "--publicFile", path+".pub")
+		cancel()
+		if result.err != nil {
+			t.Fatalf("generate test identity %q: %v\nstderr:\n%s", path, result.err, result.stderr)
+		}
+	}
+	producerID := recordingProducerID(t, auditIdentity)
+	recipientKey, err := bfcrypto.LoadSecurePrivateKeyFile(recipientIdentity, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipient, err := bfcrypto.NewAgeSshRecipient(recipientKey.PublicKey().ToSsh())
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchor := "    identityFile: \"/etc/bifroest/audit_identity\"\n"
+	if strings.Count(localRecordingConfiguration, anchor) != 1 {
+		t.Fatal("local Recording configuration identity anchor is not unique")
+	}
+	encryptedConfiguration := strings.Replace(localRecordingConfiguration, anchor,
+		anchor+"    encryptionPublicKey: "+yamlString(strings.TrimSpace(string(mustRead(recipientIdentity+".pub"))))+"\n", 1)
+	extraFiles := map[string]struct {
+		content []byte
+		mode    os.FileMode
+	}{"audit_identity": {mustRead(auditIdentity), 0400}}
+	if err := f.prepareLocalImage(localRecordingContainerfile, encryptedConfiguration, extraFiles, false); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("runtime=%s container=%s port=%s producer=%s", f.runtimeCLI, f.containerID, f.port, producerID)
+
+	result := f.sshWithEnv(10*time.Second, []string{"TERM=xterm-256color"}, f.clientKey, "e2e", []string{"-tt"}, "/usr/local/bin/e2e-helper", "pty")
+	if result.err != nil || strings.ReplaceAll(strings.TrimSpace(result.stdout), "\r", "") != "pty=true term=xterm-256color" {
+		t.Fatalf("recorded PTY command: error=%v stdout=%q stderr=%q", result.err, result.stdout, result.stderr)
+	}
+	result = f.runtime(5*time.Second, "exec", f.containerID, "/bin/sh", "-c", "find /var/lib/bifroest/recordings/sealed -maxdepth 1 -type f -print")
+	if result.err != nil {
+		t.Fatalf("locate sealed Recording: %v\nstderr:\n%s", result.err, result.stderr)
+	}
+	artifacts := strings.Fields(result.stdout)
+	if len(artifacts) != 1 || !strings.HasSuffix(artifacts[0], ".becast") {
+		t.Fatalf("sealed Recordings: want exactly one encrypted native artifact, got %q", result.stdout)
+	}
+	result = f.runtime(12*time.Second, "stop", "--time", "5", f.containerID)
+	if result.err != nil {
+		t.Fatalf("stop Recording container: %v\nstderr:\n%s", result.err, result.stderr)
+	}
+	artifact := filepath.Join(f.tempDir, "session.becast")
+	result = f.runtime(10*time.Second, "cp", f.containerID+":"+artifacts[0], artifact)
+	if result.err != nil {
+		t.Fatalf("copy sealed Recording: %v\nstderr:\n%s", result.err, result.stderr)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	wrongProducerID := strings.Repeat("f", 64)
+	if producerID == wrongProducerID {
+		wrongProducerID = strings.Repeat("e", 64)
+	}
+	result = runCommand(ctx, f.repoRoot, nil, f.bifroest, "recording", "inspect", "--expectedProducerId", wrongProducerID, artifact)
+	cancel()
+	if result.err == nil || result.stdout != "" {
+		t.Fatalf("inspection with wrong producer did not fail closed: error=%v stdout=%q", result.err, result.stdout)
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+	result = runCommand(ctx, f.repoRoot, nil, f.bifroest, "recording", "inspect", "--expectedProducerId", producerID, artifact)
+	cancel()
+	if result.err != nil {
+		t.Fatalf("inspect encrypted Recording: %v\nstderr:\n%s", result.err, result.stderr)
+	}
+	var inspection struct {
+		Format               string `json:"format"`
+		VerificationScope    string `json:"verificationScope"`
+		ProducerID           string `json:"producerId"`
+		Encrypted            bool   `json:"encrypted"`
+		RecipientFingerprint string `json:"recipientFingerprint"`
+		ClaimedStatus        string `json:"claimedStatus"`
+		ClaimedCastDigest    string `json:"claimedCastDigest"`
+		Status               string `json:"status"`
+		CastDigest           string `json:"castDigest"`
+		Signature            struct {
+			Valid   bool `json:"valid"`
+			Trusted bool `json:"trusted"`
+		} `json:"signature"`
+	}
+	if err := json.Unmarshal([]byte(result.stdout), &inspection); err != nil {
+		t.Fatalf("decode Recording inspection: %v\noutput:\n%s", err, result.stdout)
+	}
+	if inspection.Format != "becast-cbor/v1" || inspection.VerificationScope != "outer" || inspection.ProducerID != producerID ||
+		!inspection.Encrypted || inspection.RecipientFingerprint != recipient.Fingerprint() || inspection.ClaimedStatus != "completed" ||
+		inspection.ClaimedCastDigest == "" || inspection.Status != "" || inspection.CastDigest != "" || !inspection.Signature.Valid || !inspection.Signature.Trusted {
+		t.Fatalf("unexpected encrypted Recording inspection: %+v", inspection)
+	}
+
+	exported := filepath.Join(f.tempDir, "session.cast")
+	for _, extra := range [][]string{nil, {"--decryptionIdentityFile", f.wrongKey}} {
+		args := []string{"recording", "export", "--with-sensitive", "--expectedProducerId", producerID, "--output", exported}
+		args = append(args, extra...)
+		args = append(args, artifact)
+		ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+		result = runCommand(ctx, f.repoRoot, nil, f.bifroest, args...)
+		cancel()
+		if result.err == nil || result.stdout != "" {
+			t.Fatalf("encrypted export without matching identity did not fail closed: error=%v stdout=%q", result.err, result.stdout)
+		}
+		if _, err := os.Lstat(exported); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("failed export created plaintext file: %v", err)
+		}
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+	result = runCommand(ctx, f.repoRoot, nil, f.bifroest, "recording", "export", "--with-sensitive", "--expectedProducerId", producerID,
+		"--decryptionIdentityFile", recipientIdentity, "--output", exported, artifact)
+	cancel()
+	if result.err != nil {
+		t.Fatalf("export encrypted Recording: %v\nstderr:\n%s", result.err, result.stderr)
+	}
+	cast, err := os.ReadFile(exported)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var producer audit.ProducerId
+	if err := producer.Set(producerID); err != nil {
+		t.Fatal(err)
+	}
+	verified, err := recording.VerifyCast(bytes.NewReader(cast), recording.CastVerifyOptions{ExpectedProducerId: producer})
+	if err != nil {
+		t.Fatalf("verify exported Cast: %v", err)
+	}
+	if !verified.Metadata.Pty || verified.Metadata.Task != audit.SessionTaskExec || verified.Result.Status != recording.CastStatusCompleted ||
+		verified.ExitStatus == nil || *verified.ExitStatus != 0 || verified.OutputEvents == 0 ||
+		verified.Digest.String() != inspection.ClaimedCastDigest || !bytes.Contains(cast, []byte("pty=true term=xterm-256color")) {
+		t.Fatalf("unexpected verified PTY Cast: metadata=%+v result=%+v digest=%s", verified.Metadata, verified.Result, verified.Digest)
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+	result = runCommand(ctx, f.repoRoot, nil, f.bifroest, "recording", "inspect", "--expectedProducerId", producerID, exported)
+	cancel()
+	if result.err != nil || !strings.Contains(result.stdout, `"verificationScope":"full"`) ||
+		!strings.Contains(result.stdout, `"castDigest":"`+verified.Digest.String()+`"`) {
+		t.Fatalf("independent signed Cast inspection: error=%v stdout=%q stderr=%q", result.err, result.stdout, result.stderr)
+	}
 }
 
 func ensureContainerEchoServer(t *testing.T, f *fixture) {

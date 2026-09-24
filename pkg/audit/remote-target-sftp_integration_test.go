@@ -143,6 +143,23 @@ func TestSftpRemoteTargetPublishesAgainstEmbeddedSftpServer(t *testing.T) {
 	}
 }
 
+func TestSftpRemoteTargetPublishesNativeAuditVector(t *testing.T) {
+	for _, encrypted := range []bool{false, true} {
+		name := "clear"
+		if encrypted {
+			name = "encrypted"
+		}
+		t.Run(name, func(t *testing.T) {
+			server := newEmbeddedSftpServer(t)
+			target := newEmbeddedSftpRemoteTarget(t, server, "public-key")
+			segment, vector, fingerprint := nativeRemoteTestSegment(t, encrypted)
+			require.NoError(t, target.Publish(context.Background(), segment))
+			finalPath := filepath.Join(server.root, "archive", segment.ProducerId().String(), segment.FileName())
+			verifyRetrievedNativeRemoteTestSegment(t, segment, vector, fingerprint, mustReadFile(t, finalPath))
+		})
+	}
+}
+
 func TestSftpRemoteTargetPublishesArtifactAgainstEmbeddedServer(t *testing.T) {
 	server := newEmbeddedSftpServer(t)
 	target := newEmbeddedSftpRemoteTarget(t, server, "public-key")

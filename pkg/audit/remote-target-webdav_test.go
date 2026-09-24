@@ -525,6 +525,22 @@ func TestWebdavRemoteTargetPublishesAgainstEmbeddedWebdavServer(t *testing.T) {
 	require.Equal(t, int32(10), authenticatedRequests.Load())
 }
 
+func TestWebdavRemoteTargetPublishesNativeAuditVector(t *testing.T) {
+	for _, encrypted := range []bool{false, true} {
+		name := "clear"
+		if encrypted {
+			name = "encrypted"
+		}
+		t.Run(name, func(t *testing.T) {
+			target, fileSystem, _, _ := newEmbeddedWebdavRemoteTestTarget(t, false, false, nil)
+			segment, vector, fingerprint := nativeRemoteTestSegment(t, encrypted)
+			require.NoError(t, target.Publish(context.Background(), segment))
+			finalPath := "/audit/" + segment.RemotePath()
+			verifyRetrievedNativeRemoteTestSegment(t, segment, vector, fingerprint, readEmbeddedWebdavFile(t, fileSystem, finalPath))
+		})
+	}
+}
+
 func TestWebdavRemoteTargetPublishesArtifactAgainstEmbeddedServer(t *testing.T) {
 	target, fileSystem, _, _ := newEmbeddedWebdavRemoteTestTarget(t, false, false, nil)
 	artifact := validRemoteArtifactTest()

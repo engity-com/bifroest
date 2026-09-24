@@ -426,9 +426,38 @@ func runDockerAuditE2E(t *testing.T, f *fixture, configurationPath string) {
 	if exported.err != nil {
 		t.Fatalf("export audit journal: %v\nstdout:\n%s\nstderr:\n%s", exported.err, exported.stdout, exported.stderr)
 	}
+	redacted := exported.stdout
+	redactedRecords := decodeExportedAuditRecords(t, redacted)
+	if len(redactedRecords) == 0 {
+		t.Fatal("redacted audit export contains no records")
+	}
+	for _, line := range strings.Split(strings.TrimSpace(redacted), "\n") {
+		var record struct {
+			Event map[string]json.RawMessage `json:"event"`
+		}
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("decode redacted audit event: %v", err)
+		}
+		for field := range record.Event {
+			switch field {
+			case "name", "domain", "outcome":
+			default:
+				t.Fatalf("default audit export exposed private event field %q", field)
+			}
+		}
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), 20*time.Second)
+	exported = runCommand(ctx, f.repoRoot, nil, f.bifroest, "audit", "export", "--configuration="+configurationPath, "--with-sensitive", "--output=-", "default")
+	cancel()
+	if exported.err != nil {
+		t.Fatalf("export sensitive audit journal: %v\nstdout:\n%s\nstderr:\n%s", exported.err, exported.stdout, exported.stderr)
+	}
 	records := decodeExportedAuditRecords(t, exported.stdout)
 	if len(records) == 0 {
 		t.Fatal("audit export contains no records")
+	}
+	if len(records) != len(redactedRecords) {
+		t.Fatalf("redacted audit export has %d records, sensitive export has %d", len(redactedRecords), len(records))
 	}
 
 	var authentication, pty, agentForwarding, reverseDecision, connectionClosed, housekeepingDispose, housekeepingDelete bool
@@ -534,7 +563,7 @@ func runDockerAuditE2E(t *testing.T, f *fixture, configurationPath string) {
 		publicKeyBlob(t, f.agentKey+".pub"),
 	}
 	for _, marker := range privacyMarkers {
-		if marker != "" && strings.Contains(exported.stdout, marker) {
+		if marker != "" && strings.Contains(redacted, marker) {
 			t.Fatalf("audit export contains private marker %q", marker)
 		}
 	}
