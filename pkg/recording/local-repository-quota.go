@@ -95,7 +95,9 @@ func inventoryLocalFilesWithReceiptRecovery(paths ...string) (uint64, uint64, er
 					replacedReceipt = "receipt.json"
 				case "receipt.retention.tmp":
 					replacedReceipt = "receipt.retention"
-				case "receipt.tmp.cleanup", "receipt.retention.tmp.cleanup":
+				case "receipt.lifecycle.tmp":
+					replacedReceipt = "receipt.lifecycle"
+				case "receipt.tmp.cleanup", "receipt.retention.tmp.cleanup", "receipt.lifecycle.tmp.cleanup":
 					if recoverableReceiptBytes > math.MaxUint64-size {
 						return errors.System.Newf("local recording receipt recovery size overflows uint64")
 					}

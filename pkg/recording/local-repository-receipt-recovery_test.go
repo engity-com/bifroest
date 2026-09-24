@@ -407,6 +407,161 @@ func TestLocalNativeRecordingRepositoryPromotesLifecycleAfterPublishedRecovery(t
 	}
 }
 
+func TestLocalNativeRepositoryRecoversSignedLifecycleTemporaryBelowPhysicalQuota(t *testing.T) {
+	for _, tc := range []struct {
+		name, suffix string
+		encrypted    bool
+	}{
+		{name: "clear", suffix: ".bcast"},
+		{name: "encrypted", suffix: ".becast", encrypted: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "recordings")
+			identity, header, metadata := castTestValues(t, true)
+			var recipient *bfcrypto.AgeSshRecipient
+			if tc.encrypted {
+				recipient, _ = newBECastTestEncryption(t)
+			}
+			crashErr := stderrors.New("injected crash after durable receipt")
+			preparer := &localDurableReceiptCrashPreparer{directory: root, identity: identity, failAfterPrepare: crashErr}
+			repository, err := NewLocalNativeRecordingRepositoryWithArtifactPreparer(t.Context(), root, identity, recipient, NativeRecordingVerifyOptions{}, localRepositoryTestOptions, preparer)
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				_ = repository.Close()
+				_ = preparer.Close()
+			})
+			fileName := metadata.RecordingId.String() + tc.suffix
+			receipts, err := preparer.get()
+			require.NoError(t, err)
+			require.NoError(t, receipts.BeginLifecycle(t.Context(), fileName, metadata.StartedAt, localLifecycleTestStartedEvent(metadata)))
+			require.NoError(t, receipts.StageLifecycle(t.Context(), fileName, localLifecycleTestCompletedEvent(metadata)))
+			active, err := repository.CreateActive(t.Context(), header, metadata, 300)
+			require.NoError(t, err)
+			require.NoError(t, active.WriteOutput(time.Second, OutputStreamTerminal, []byte("signed lifecycle successor survives restart\r\n")))
+			_, err = active.Seal(2*time.Second, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(2 * time.Second)}, sealedArtifactUint32(0))
+			require.ErrorIs(t, err, crashErr)
+			require.NoError(t, preparer.Require(t.Context(), preparer.prepared))
+			activePath := filepath.Join(root, localActiveDirectory, metadata.RecordingId.String(), "recording"+tc.suffix)
+			artifactBefore, err := os.ReadFile(activePath)
+			require.NoError(t, err)
+			matches, err := filepath.Glob(filepath.Join(root, localDeliveryDirectory, identity.ProducerId().String(), "*", "receipt.lifecycle"))
+			require.NoError(t, err)
+			require.Len(t, matches, 1)
+			target := matches[0]
+			prepared, err := os.ReadFile(target)
+			require.NoError(t, err)
+			// Produce the successor through the real receipt store, then rewind only its publication.
+			require.NoError(t, receipts.PromoteLifecycle(t.Context(), preparer.prepared))
+			successor, err := os.ReadFile(target)
+			require.NoError(t, err)
+			require.NotEqual(t, prepared, successor)
+			require.NotEqual(t, len(prepared), len(successor))
+			require.ErrorIs(t, repository.Close(), crashErr)
+			require.NoError(t, preparer.Close())
+			require.NoError(t, os.WriteFile(target, prepared, localFileMode))
+			temporary := target + ".tmp"
+			require.NoError(t, os.WriteFile(temporary, successor, localFileMode))
+			paths := []string{
+				filepath.Join(root, localWorkDirectory), filepath.Join(root, localActiveDirectory),
+				filepath.Join(root, localSealedDirectory), filepath.Join(root, localQuarantineDirectory),
+				filepath.Join(root, localDeliveryDirectory),
+			}
+			physical, recovered, err := inventoryLocalFilesWithReceiptRecovery(paths...)
+			require.NoError(t, err)
+			require.Greater(t, physical, recovered)
+			require.Equal(t, physical-uint64(max(len(prepared), len(successor))), recovered)
+			require.Greater(t, recovered, uint64(0))
+			initial, err := newLocalQuotaWithReceiptRecovery(recovered, true, paths...)
+			require.NoError(t, err)
+			require.Equal(t, physical, initial.usage)
+			require.ErrorContains(t, initial.reserve(0), "would be exceeded")
+
+			restartedPreparer := &localDurableReceiptCrashPreparer{directory: root, identity: identity}
+			restarted, err := NewLocalNativeRecordingRepositoryWithArtifactPreparer(t.Context(), root, identity, recipient, NativeRecordingVerifyOptions{}, LocalRepositoryOptions{MaximumSpoolBytes: recovered}, restartedPreparer)
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				_ = restarted.Close()
+				_ = restartedPreparer.Close()
+			})
+			require.NoFileExists(t, temporary)
+			require.Equal(t, successor, localDurableReceiptTestRead(t, target))
+			pending := mustLocalPendingLifecycle(t, restartedPreparer.receipts)
+			require.Len(t, pending, 1)
+			require.Equal(t, audit.EventNameSessionRecordingCompleted, pending[0].Event.Name)
+			require.Equal(t, preparer.recordingDigest.String(), pending[0].Event.RecordingDigest)
+			require.Len(t, restarted.StartupRecoveries(), 1)
+			require.True(t, restarted.StartupRecoveries()[0].AlreadySealed)
+			sealed, err := restarted.OpenSealed(t.Context(), metadata.RecordingId)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = sealed.Close() })
+			remote, err := sealed.RemoteArtifact()
+			require.NoError(t, err)
+			require.NoError(t, restartedPreparer.Require(t.Context(), remote))
+			require.Equal(t, preparer.prepared.Digest(), remote.Digest())
+			artifactAfter, err := os.ReadFile(filepath.Join(root, localSealedDirectory, fileName))
+			require.NoError(t, err)
+			require.Equal(t, artifactBefore, artifactAfter)
+			require.LessOrEqual(t, restarted.repository.quota.usage, recovered)
+			requireLocalTestQuotaMatchesFiles(t, root, restarted.repository.quota)
+		})
+	}
+}
+
+func TestLocalNativeRepositoryLifecycleTemporaryCleanupAndInvalidRecovery(t *testing.T) {
+	for _, tc := range []struct {
+		name, temporary string
+		invalid         bool
+	}{
+		{name: "cleanup marker", temporary: "receipt.lifecycle.tmp.cleanup"},
+		{name: "invalid temporary", temporary: "receipt.lifecycle.tmp", invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "recordings")
+			identity, _, metadata := castTestValues(t, true)
+			preparer := &localDurableReceiptCrashPreparer{directory: root, identity: identity}
+			initial, err := NewLocalNativeRecordingRepositoryWithArtifactPreparer(t.Context(), root, identity, nil, NativeRecordingVerifyOptions{}, localRepositoryTestOptions, preparer)
+			require.NoError(t, err)
+			receipts, err := preparer.get()
+			require.NoError(t, err)
+			require.NoError(t, receipts.BeginLifecycle(t.Context(), metadata.RecordingId.String()+".bcast", metadata.StartedAt, localLifecycleTestStartedEvent(metadata)))
+			matches, err := filepath.Glob(filepath.Join(root, localDeliveryDirectory, identity.ProducerId().String(), "*", "receipt.lifecycle"))
+			require.NoError(t, err)
+			require.Len(t, matches, 1)
+			target := matches[0]
+			signed, err := os.ReadFile(target)
+			require.NoError(t, err)
+			require.NoError(t, initial.Close())
+			require.NoError(t, preparer.Close())
+			temporary := filepath.Join(filepath.Dir(target), tc.temporary)
+			require.NoError(t, os.WriteFile(temporary, []byte("incomplete lifecycle write"), localFileMode))
+			delivery := filepath.Join(root, localDeliveryDirectory)
+			physical, recovered, err := inventoryLocalFilesWithReceiptRecovery(delivery)
+			require.NoError(t, err)
+			require.Equal(t, uint64(len(signed)+len("incomplete lifecycle write")), physical)
+			if tc.invalid {
+				require.Equal(t, uint64(len("incomplete lifecycle write")), recovered)
+			} else {
+				require.Equal(t, uint64(len(signed)), recovered)
+			}
+			restartedPreparer := &localDurableReceiptCrashPreparer{directory: root, identity: identity}
+			restarted, err := NewLocalNativeRecordingRepositoryWithArtifactPreparer(t.Context(), root, identity, nil, NativeRecordingVerifyOptions{}, LocalRepositoryOptions{MaximumSpoolBytes: uint64(len(signed))}, restartedPreparer)
+			if tc.invalid {
+				require.ErrorContains(t, err, "cannot identify remote artifact delivery receipt")
+				require.Nil(t, restarted)
+				require.NoError(t, restartedPreparer.Close())
+			} else {
+				require.NoError(t, err)
+				require.NoFileExists(t, temporary)
+				require.Equal(t, uint64(len(signed)), restarted.repository.quota.usage)
+				requireLocalTestQuotaMatchesFiles(t, root, restarted.repository.quota)
+				require.NoError(t, restarted.Close())
+				require.NoError(t, restartedPreparer.Close())
+			}
+			require.Equal(t, signed, localDurableReceiptTestRead(t, target))
+		})
+	}
+}
+
 type localDurableReceiptCrashPreparer struct {
 	directory         string
 	identity          *audit.Identity

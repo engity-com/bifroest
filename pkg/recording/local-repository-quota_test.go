@@ -294,6 +294,43 @@ func TestLocalQuotaAllowsRecoverableRetentionReceiptTemporaryAboveLimit(t *testi
 	require.Equal(t, uint64(8), quota.usage)
 }
 
+func TestLocalQuotaAllowsLifecycleSuccessorAtExactRecoveredLimit(t *testing.T) {
+	for _, sizes := range []struct {
+		name                 string
+		published, temporary int
+	}{
+		{name: "larger successor", published: 8, temporary: 13},
+		{name: "smaller successor", published: 13, temporary: 8},
+	} {
+		t.Run(sizes.name, func(t *testing.T) {
+			delivery := filepath.Join(t.TempDir(), localDeliveryDirectory)
+			state := filepath.Join(delivery, "producer", "artifact")
+			require.NoError(t, os.MkdirAll(state, localDirectoryMode))
+			target := filepath.Join(state, "receipt.lifecycle")
+			temporary := filepath.Join(state, "receipt.lifecycle.tmp")
+			require.NoError(t, os.WriteFile(target, make([]byte, sizes.published), localFileMode))
+			require.NoError(t, os.WriteFile(temporary, make([]byte, sizes.temporary), localFileMode))
+			maximum := uint64(sizes.temporary)
+			physical := uint64(sizes.published + sizes.temporary)
+			usage, recovered, err := inventoryLocalFilesWithReceiptRecovery(delivery)
+			require.NoError(t, err)
+			require.Equal(t, physical, usage)
+			require.Equal(t, uint64(min(sizes.published, sizes.temporary)), recovered)
+
+			_, err = newLocalQuota(maximum, delivery)
+			require.ErrorContains(t, err, "exceeding")
+			_, err = newLocalQuotaWithReceiptRecovery(recovered-1, true, delivery)
+			require.ErrorContains(t, err, "exceeding")
+			quota, err := newLocalQuotaWithReceiptRecovery(maximum, true, delivery)
+			require.NoError(t, err)
+			require.Equal(t, physical, quota.usage)
+			require.ErrorContains(t, quota.reserve(0), "would be exceeded")
+			require.ErrorContains(t, quota.validateMaximum(), "exceeding")
+			require.Equal(t, physical, quota.usage)
+		})
+	}
+}
+
 func TestLocalQuotaRequiresReceiptRecoveryToReachLimit(t *testing.T) {
 	root := t.TempDir()
 	delivery := filepath.Join(root, localDeliveryDirectory)
@@ -348,6 +385,28 @@ func TestLocalRepositoryValidatesQuotaAfterReceiptCleanupRecovery(t *testing.T) 
 			require.True(t, preparer.recovered)
 			require.Zero(t, repository.repository.quota.usage)
 			require.NoError(t, repository.Close())
+		})
+	}
+}
+
+func TestLocalRepositoryRejectsUnrecoveredLifecycleTemporaryAfterQuotaValidation(t *testing.T) {
+	for _, name := range []string{"receipt.lifecycle.tmp", "receipt.lifecycle.tmp.cleanup"} {
+		t.Run(name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "recordings")
+			identity, _, _ := castTestValues(t, true)
+			initial, err := NewLocalNativeRecordingRepository(t.Context(), root, identity, nil, NativeRecordingVerifyOptions{}, localRepositoryTestOptions)
+			require.NoError(t, err)
+			require.NoError(t, initial.Close())
+			state := filepath.Join(root, localDeliveryDirectory, "producer", "artifact")
+			require.NoError(t, os.MkdirAll(state, localDirectoryMode))
+			path := filepath.Join(state, name)
+			require.NoError(t, os.WriteFile(path, make([]byte, 9), localFileMode))
+			preparer := &localReceiptCleanupRecoveryTestPreparer{path: path}
+
+			_, err = NewLocalNativeRecordingRepositoryWithArtifactPreparer(t.Context(), root, identity, nil, NativeRecordingVerifyOptions{}, LocalRepositoryOptions{MaximumSpoolBytes: 1}, preparer)
+			require.ErrorContains(t, err, "exceeding its 1-byte limit")
+			require.True(t, preparer.recovered)
+			require.FileExists(t, path)
 		})
 	}
 }
