@@ -9,7 +9,7 @@ Verifies a sealed native `.bcast` or CBOR `.becast` session Recording and writes
 The input must be a regular, non-symlink file and must remain the same file with unchanged size, mode, and modification time throughout inspection. Standard input is deliberately unsupported.
 When stdout is a regular file, it must not refer to the inspected Recording. A shell redirection using `>` can truncate a file before Bifröst starts and cannot be prevented by the command.
 
-For native clear `.bcast`, `verificationScope` is `full`: the command verifies the signed envelope and reconstructs and verifies the complete Cast. Legacy `.cast` and `.cast.zst` also have `full` scope and include a `cast` object with event counts only, not session metadata or reasons. For encrypted native or legacy `.becast`, `verificationScope` is `outer`: only the signed envelope is checked, without decrypting the event content. `claimedStatus` and `claimedCastDigest` are signed outer-seal claims, **not** verified inner-Cast results; `status`, `castDigest`, and `cast` are omitted. Use `recording export` with a matching private identity for full verification. No event payloads are emitted by inspect.
+For native clear `.bcast`, `verificationScope` is `full`: the command verifies the signed envelope and reconstructs and verifies the complete Cast without a private key. Legacy `.cast` and `.cast.zst` also have `full` scope and include a `cast` object with event counts only, not session metadata or reasons. For encrypted native or legacy `.becast`, `verificationScope` is `outer`: only the signed envelope is checked, without a decryption key or decrypted event content. `claimedStatus` and `claimedCastDigest` are signed outer-seal claims, **not** verified inner-Cast results; `status`, `castDigest`, and `cast` are omitted. Use [`recording export`](export.md) with a matching private identity for full verification, then inspect the exported `.cast` independently and compare its fully verified `castDigest` with the original `claimedCastDigest`. No event payloads are emitted by inspect, but its public metadata still needs protection.
 
 ## Syntax
 
@@ -34,10 +34,12 @@ The output schema is `bifroest.session-recording-inspection/v1`. `signature.vali
 
 ## Example
 
-Verify a Recording against an independently obtained producer ID:
+Verify a copied sealed encrypted Recording against an independently obtained producer ID, without a decryption key:
 
 ```shell
 bifroest recording inspect \
-  --expectedProducerId 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
-  session.bcast
+  --expectedProducerId "<producer-id>" \
+  session.becast
 ```
+
+Replace `<producer-id>` with the independently provisioned 64-hex value; it is a placeholder, not a working trust anchor. An encrypted result has `verificationScope: "outer"`, not a verified inner status or digest. After [full export](export.md#examples), inspect `session.cast` with the same flag: that independent inspection has `verificationScope: "full"` and a verified `castDigest`. For `.bcast`, inspecting the sealed original already gives a fully verified `castDigest`. See the [operational workflow](../../auditlog/recording.md#export-and-playback), [byte contract](../../auditlog/native-format-contract.md#recording-identity-and-chain), and [format vectors](../../auditlog/recording-format-vectors.md).

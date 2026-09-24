@@ -4,7 +4,9 @@ description: Replicate sealed Bifröst audit-log segments to remote storage.
 
 # Remote targets
 
-Remote targets copy sealed `.baudit` or `.beaudit` audit-log segments byte for byte to external storage under `<producer-id>/<segment-file-name>`. The local journal remains the authoritative source and keeps all segments after successful delivery. Neither a JSONL export nor a decrypted recording is created remotely.
+Remote targets copy sealed `.baudit` or `.beaudit` audit-log segments byte for byte to external storage under `<producer-id>/<segment-file-name>`. Selected Recording targets copy sealed `.bcast` or `.becast` artifacts under `<producer-id>/<recording-uuid>.<suffix>` in the same way. The local journal remains the authoritative source and keeps all segments after successful delivery. Neither a JSONL export nor a decrypted `.cast` is created remotely. Clear `.baudit` and `.bcast` originals still contain confidential content after decompression; even encrypted originals expose signed public metadata. Apply access controls and independent retention policies at every remote destination.
+
+For example, an S3 target with bucket `company-bifroest-audit` and prefix `bifroest-auditlog` stores a sealed encrypted audit segment at `s3://company-bifroest-audit/bifroest-auditlog/<producer-id>/segment-00000000000000000001-<segment-hash>.beaudit`. Replace both angle-bracket placeholders with the actual producer ID and segment hash; a remote file name alone does not establish trust. Copy the object byte for byte when preserving remote evidence. A remote target does **not** receive the local `head.cbor` or active file: the [audit CLI](../../cli/audit/index.md) cannot verify that single downloaded segment as a complete journal. Retain a separately trusted chain tip to detect a missing suffix, and preserve the complete local journal for CLI verification.
 
 ## Available targets
 

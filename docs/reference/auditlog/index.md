@@ -37,7 +37,7 @@ The default value is different, depending on the platform Bifröst runs on:
 * Windows: `C:\ProgramData\Engity\Bifroest\auditlog-key`
 
 <<property("encryptionPublicKey", "SSH Public Key", "../data-type.md#ssh-public-key")>>
-Optional OpenSSH Ed25519 or RSA public key used to encrypt each event's confidential CBOR fields as an independent [age](https://age-encryption.org/) message. Without a recipient, Bifröst writes `.baudit`; with one, it writes `.beaudit`. The event name, domain, outcome, timestamp and verification metadata remain visible and signed in either format. Flow names, correlation IDs and the other [confidential event fields](native-format-contract.md#public-and-confidential-audit-fields) are compressed and encrypted only in `.beaudit`. Both formats contain these private fields in their original files, so restrict storage access regardless of extension.
+Optional OpenSSH Ed25519 or RSA public key used to encrypt each event's confidential CBOR fields as an independent [age](https://age-encryption.org/) message. Without a recipient, Bifröst writes clear `.baudit`; with one, it writes encrypted `.beaudit`. Only the event name, domain, and outcome (when present) are public event fields. The timestamp, record ID, chain and producer information belong to the separate signed envelope and remain visible in either format. Flow names, correlation IDs and the other [confidential event fields](native-format-contract.md#public-and-confidential-audit-fields) are compressed in both formats and additionally encrypted in `.beaudit`. `.baudit` contains the private fields in clear form after decompression; restrict access to both formats and their metadata.
 
 Exactly one public key is accepted. Keep its private key outside the Bifröst server and supply it only to offline audit commands through `--decryptionIdentityFile`. The encryption key must differ from every private key available to the server. Bifröst rejects reuse of host keys, audit signing keys, statically configured SSH environment keys, and SFTP remote-target identity keys; operators must ensure dynamically rendered identity paths cannot resolve to the encryption key. Changing, adding, or removing the encryption recipient for a journal containing records is rejected; key rotation requires preserving old decryption identities and is not yet supported.
 
@@ -63,11 +63,13 @@ See [audit events](events.md) for the recorded security transitions, their struc
 
 ### Storage and recovery
 
-Bifröst signs and durably flushes every accepted record. Native `.baudit` and `.beaudit` segments rotate at approximately 16 MiB and are linked through signed hashes; a signed `head.cbor` anchors the latest record. See the [native format contract](native-format-contract.md) for the public/private field boundary and container layout.
+Bifröst signs and durably flushes every accepted record. Native `.baudit` and `.beaudit` segments rotate at approximately 16 MiB and are linked through signed hashes; a signed `head.cbor` anchors the latest record under `<journal-directory>/<producer-id>/`. See the [native format contract](native-format-contract.md) for the public/private field boundary and container layout and the [audit format vectors](audit-format-vectors.md) for signed clear and encrypted examples.
 
 Startup repairs interrupted publication and uncommitted tails past the signed checkpoint, but rejects invalid committed units, signatures, broken chains, and lost records. Large recorder-recovery scans use managed `.bifroest-work` directories, which can remain after an unclean process termination and may then be removed manually while Bifröst is stopped. Read-only verification instead uses the operating system's temporary directory for large scans.
 
-Use [`bifroest audit verify`](../cli/audit/verify.md) for read-only verification. The `export` and `merge` commands produce redacted JSON Lines by default only after verification; `--with-sensitive` explicitly includes the private fields and requires a decryption identity for `.beaudit`. These outputs are not signed journals.
+Use [`bifroest audit verify`](../cli/audit/verify.md) for read-only verification of a complete stopped journal. The `export` and `merge` commands produce redacted JSON Lines by default only after verification; `--with-sensitive` explicitly includes the private fields and requires a decryption identity for `.beaudit`. Public envelope metadata such as timestamps and outcomes can still be sensitive. JSON Lines are unsigned views, not replacements for the signed original files.
+
+S3, SFTP, and WebDAV targets deliver only sealed segments, not `head.cbor`, an active segment, or a complete journal tree. Audit CLI commands take a configured auditlog name and require the signed head; they do not verify a standalone remote segment. For remote-only evidence, retain an independently trusted expected chain tip to detect deletion of a valid suffix; a mutable copy of the head alone does not prevent rollback.
 
 ### Properties {: #journal-properties }
 
@@ -107,42 +109,58 @@ auditlog:
 
 ### Encrypted audit events
 
-1. On a trusted audit workstation, generate a dedicated Ed25519 keypair:
+1. On a trusted **offline workstation**, generate a dedicated age-recipient Ed25519 keypair. Keep the private file there; it must never be available to the server:
     ```shell
     bifroest key generate \
-      --identityFile /etc/engity/bifroest/auditlog-key \
-      --publicFile /etc/engity/bifroest/auditlog-key.pub
+      --identityFile /srv/audit-keys/recipient-key \
+      --publicFile /srv/audit-keys/recipient-key.pub
     ```
-2. Transfer only the public file to the Bifröst server and reference it from the configuration:
-    ```yaml title="/etc/engity/bifroest/configuration.yaml"
+2. Transfer **only** `recipient-key.pub` to the server as `/etc/engity/bifroest/audit-recipient.pub`. Configure a **separate** server-side signing identity (created on first start only if the journal and configured Recording repository contain no history); never use the recipient identity as the signing identity:
+    ```yaml title="Server: /etc/engity/bifroest/configuration.yaml"
     auditlog:
       - name: my-auditlog
         enabled: true
-        encryptionPublicKeyFile: /etc/engity/bifroest/auditlog-key.pub
+        encryptionPublicKeyFile: /etc/engity/bifroest/audit-recipient.pub
         identityFile: /etc/engity/bifroest/auditlog-signing-key
         journal:
           directory: /var/lib/engity/bifroest/auditlog
     ```
-3. Ensure Bifröst is **NOT** running.
+3. Stop Bifröst, then make an access-controlled offline copy of the **entire** journal root, preserving `<root>/<producer-id>/` with `head.cbor`, all sealed segments, and `active.beaudit` (if present). Do not substitute the remote S3/SFTP/WebDAV segment collection. Copy the same public recipient file to the workstation. Configure the copied root there, with an intentionally **nonexistent** signing `identityFile` outside the journal; the server's signing private key is not needed:
+    ```yaml title="Offline workstation: /srv/audit-evidence/configuration.yaml"
+    auditlog:
+      - name: my-auditlog
+        enabled: true
+        encryptionPublicKeyFile: /srv/audit-keys/recipient-key.pub
+        identityFile: /srv/audit-keys/absent-server-signing-key
+        journal:
+          directory: /srv/audit-evidence/auditlog
+    ```
+4. Provision `MY_AUDITLOG_PRODUCER_ID` with the server signing public key's **64-hex-character** SHA-256 producer ID through an independently trusted channel (for example, an authenticated provisioning record). Do not derive it from the journal or its container. The variable must already be set to that trusted value before running these commands on the offline workstation:
+    ```shell
+    bifroest audit verify \
+      --configuration /srv/audit-evidence/configuration.yaml \
+      --expectedProducerId "my-auditlog=${MY_AUDITLOG_PRODUCER_ID}" \
+      my-auditlog
 
-4. Now you can do the following things:
+    bifroest audit export \
+      --configuration /srv/audit-evidence/configuration.yaml \
+      --expectedProducerId "my-auditlog=${MY_AUDITLOG_PRODUCER_ID}" \
+      --output /srv/audit-output/redacted.jsonl \
+      my-auditlog
 
-    1. Verify the journal:
-       ```shell
-       bifroest audit verify \
-         --configuration /etc/engity/bifroest/configuration.yaml \
-          my-auditlog
-       ```
+    bifroest audit verify \
+      --configuration /srv/audit-evidence/configuration.yaml \
+      --expectedProducerId "my-auditlog=${MY_AUDITLOG_PRODUCER_ID}" \
+      --decryptionIdentityFile /srv/audit-keys/recipient-key \
+      my-auditlog
 
-    2. Decrypt the journal:
-       ```shell
-       bifroest audit decrypt \
-         --configuration /etc/engity/bifroest/configuration.yaml \
-          --with-sensitive \
-          --decryptionIdentityFile /etc/engity/bifroest/auditlog-key \
-         --output /tmp/restricted-audit.jsonl \
-         my-auditlog
-       ```
+    bifroest audit decrypt \
+      --configuration /srv/audit-evidence/configuration.yaml \
+      --expectedProducerId "my-auditlog=${MY_AUDITLOG_PRODUCER_ID}" \
+      --with-sensitive \
+      --decryptionIdentityFile /srv/audit-keys/recipient-key \
+      --output /srv/audit-output/sensitive.jsonl \
+      my-auditlog
+    ```
 
-        !!! note
-            `audit decrypt` is an alias for `audit export`; without `--with-sensitive` it also writes only redacted JSON Lines. A sensitive export verifies and decrypts the private fields before publishing plaintext. Protect the output like any other sensitive audit data.
+    The first verify checks the encrypted outer chain without the private recipient key; the second also validates decrypted private fields. `audit decrypt` is an alias for `audit export`: without `--with-sensitive`, both write redacted JSON Lines. Protect even redacted output, and protect sensitive output as plaintext; output parent directories must already exist and must be outside the configured journal.

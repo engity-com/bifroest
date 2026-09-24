@@ -6,7 +6,7 @@ description: Verify and export a Bifröst session Recording as asciicast v3.
 
 Verifies a sealed native `.bcast` or CBOR `.becast` session Recording and exports its exact signed asciicast v3 stream. Legacy `.cast`, `.cast.zst`, and binary `.becast` remain readable. Format detection uses magic bytes rather than the file extension; old and new `.becast` have different magic. Compressed native chunks are reconstructed into a Cast, and encrypted `.becast` additionally requires a matching SSH private key.
 
-The exported Cast contains captured terminal, standard-output, and standard-error content and can contain secrets displayed by programs. Protect the output according to its sensitivity.
+The exported Cast contains captured terminal, standard-output, and standard-error content and can contain secrets displayed by programs. It is **never redacted**, unlike redacted-by-default audit JSONL exports. Protect the output according to its sensitivity; even the original encrypted container exposes public metadata. Bifröst does not automatically create plaintext `.cast` or `.jsonl` files.
 
 `--with-sensitive` is mandatory before the input is opened for **every** format. The input must be a regular, non-symlink file and must remain the same file with unchanged size, mode, and modification time while Bifröst creates a private byte-exact snapshot. Verification and export use only that snapshot, preventing later input changes from altering the exported bytes. An encrypted snapshot remains encrypted; stdout export does not create a decrypted temporary file. Standard input is deliberately unsupported.
 
@@ -46,29 +46,32 @@ Atomically replaces an existing named output. This never permits replacing the R
 
 ## Examples
 
-Export a trusted compressed Recording to a private Cast file:
+Export a trusted clear `.bcast` to a private Cast file without a decryption key:
 
 ```shell
 bifroest recording export \
-  --expectedProducerId 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  --expectedProducerId "<producer-id>" \
   --with-sensitive \
   --output session.cast \
   session.bcast
 ```
 
-Decrypt a trusted BECast to standard output:
+Decrypt and fully verify a trusted `.becast` using the offline age SSH private identity, then independently verify the exported Cast:
 
 ```shell
 bifroest recording export \
-  --expectedProducerId 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
   --with-sensitive \
-  --decryptionIdentityFile ./recording-identity \
+  --expectedProducerId "<producer-id>" \
+  --decryptionIdentityFile /secure/offline/recording-identity \
+  --output session.cast \
   session.becast
+bifroest recording inspect --expectedProducerId "<producer-id>" session.cast
 ```
+
+Replace `<producer-id>` with the independently provisioned 64-hex value; it is a placeholder, not a working trust anchor. The decryption identity is distinct from the audit signing key and must stay offline. Before export, `inspect` on the encrypted original reports only `verificationScope: "outer"` and `claimedCastDigest`. After successful export, `inspect` on `session.cast` reports `verificationScope: "full"` and a verified `castDigest`; compare the two digests. The encrypted export fully verifies the inner Cast against the signed seal before publishing plaintext. Clear `.bcast` likewise produces a fully verified Cast, without a decryption identity.
 
 ## External playback
 
-Bifröst does not download remote artifacts or include a player. Obtain the byte-exact sealed artifact, inspect it with the same independent trust anchor, and export it to a protected file before playback. BECast additionally requires the externally retained private key matching its signed recipient fingerprint.
+Bifröst does not download remote artifacts or include a player. Copy the byte-exact sealed artifact from `recording.directory/sealed/<recording-uuid>.<suffix>` or download the remote `<producer-id>/<recording-uuid>.<suffix>` object, inspect it with the independent trust anchor, and export it to a protected file before playback. BECast additionally requires the externally retained private key matching its signed recipient fingerprint.
 
-The resulting file is sensitive plaintext in asciicast v3 format. Use a player that supports asciicast v3 and unknown comment lines. See [Session recording](../../auditlog/recording.md#export-and-playback) for the complete operational workflow.
-For native `.bcast` and CBOR `.becast`, the [canonical byte-level representation](../../auditlog/native-format-contract.md#canonical-standalone-cast) and signature are bound by the native container. Every exported signed Cast can be verified independently against the same producer ID.
+The resulting file is sensitive plaintext in asciicast v3 format. Use a player that supports asciicast v3 and unknown comment lines. See [Session recording](../../auditlog/recording.md#export-and-playback) for the complete operational workflow and the [recording format vectors](../../auditlog/recording-format-vectors.md) for test artifacts. For native `.bcast` and CBOR `.becast`, the [canonical byte-level representation](../../auditlog/native-format-contract.md#canonical-standalone-cast) and signature are bound by the native container. Every exported signed Cast can be verified independently against the same producer ID.

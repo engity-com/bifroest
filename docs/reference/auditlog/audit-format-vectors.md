@@ -4,7 +4,7 @@ description: Download signed native audit format version 1 reference vectors.
 
 # Native audit format vectors
 
-These are **audit journal**, not session recording, vectors. Version 1 includes a complete sealed clear `.baudit` and a complete sealed age-encrypted `.beaudit`, with separate signed `head.cbor` checkpoints. The signing and age-recipient seeds in the manifest are **public test data** and must never be used to protect production data. The age recipient key is distinct from the producer signing key.
+These are **audit journal**, not session recording, vectors. Version 1 includes a complete sealed clear `.baudit` and a complete sealed age-encrypted `.beaudit`, with separate signed `head.cbor` checkpoints. The signing and age-recipient seeds in the manifest are **public test data** and must never be used to protect production data. The age recipient key is distinct from the producer signing key. For operational verification, see the [audit CLI](../cli/audit/index.md) and [encrypted offline example](index.md#encrypted-audit-events); CLI commands require a configured journal root with a signed head, not a bare downloaded segment.
 
 ## Downloads
 
@@ -28,7 +28,7 @@ These are **audit journal**, not session recording, vectors. Version 1 includes 
 
 All `.unit` files are **real signed CBOR units**, not synthetic bodies: each is an exact framed excerpt from its corresponding complete `.baudit` or `.beaudit` (each records file contains two adjacent units). The encrypted header declares mode `1` and recipient `SHA256:ZsrOVCtcb1bouzun0GIHz5vL5oCjVhVIQ3jfIBIgZ8g`; its framed bytes are independently deterministic. The encrypted record and seal excerpts depend on the frozen ciphertext. Both segment types start with `\x89BAUDIT\n` (8 bytes); each subsequent unit is `type:u8 | length:u32be | commit-state:u8 | deterministic-CBOR | crc32c:u32be | BFCOMMIT`. The CRC32C excludes the commit-state byte. Types 1, 2, 3 denote header, record, seal. The separate head is *raw CBOR*, not a framed unit. See the [native format contract](native-format-contract.md) for field keys and validation rules.
 
-The fixtures contain two fixed UUIDv4 record IDs, `34e34ab8-7457-4d88-a5e4-c57791775c3a` and `6d05798f-b877-4191-8aa0-4576a30411ad`, recorded on `2026-09-13T12:34:56.123456789Z` and `2026-09-13T12:35:01.987654321Z`. The public event fields are `custom.authentication` / `authentication` / `success` and `custom.session` / `session` / `denied`. With sensitive output, the first also has flow `fixture-flow`, connection ID, public-key authentication method and verified phase; the second has the same flow, session ID, exec task and `authorized-key-policy` reason. Redacted JSONL excludes all of these private fields, even for the clear segment.
+The fixtures contain two fixed UUIDv4 record IDs, `34e34ab8-7457-4d88-a5e4-c57791775c3a` and `6d05798f-b877-4191-8aa0-4576a30411ad`, recorded on `2026-09-13T12:34:56.123456789Z` and `2026-09-13T12:35:01.987654321Z`. The public event fields are `custom.authentication` / `authentication` / `success` and `custom.session` / `session` / `denied`; record IDs, timestamps, and hashes belong to the separate export envelope. With sensitive output, the first also has flow `fixture-flow`, connection ID, public-key authentication method and verified phase; the second has the same flow, session ID, exec task and `authorized-key-policy` reason. Redacted JSONL excludes all of these private fields, even for the clear segment. Public envelope metadata can still be sensitive.
 
 ## Known values
 

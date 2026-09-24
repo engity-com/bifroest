@@ -12,7 +12,7 @@ Each recording represents one SSH channel execution. It has its own Recording ID
 
 Bifröst records PTY output and terminal resize events. For non-PTY shell and exec tasks, it records stdout and stderr while preserving their stream identity and order. SFTP payloads and forwarding payloads, including direct, reverse, and agent forwarding, are not terminal recordings. An SFTP request replaced by an authorized-key forced command is recorded as the `exec` task that actually runs.
 
-Standard input and raw keyboard input are never recorded as separate input events. Commands typed into an echoing PTY can nevertheless appear in the recorded terminal output. Input entered while terminal echo is disabled, such as a password prompt, is not captured through stdin, but programs can still expose secrets in their own output. Treat every recording and exported Cast as sensitive data.
+Standard input and raw keyboard input are never recorded as separate input events. Commands typed into an echoing PTY can nevertheless appear in the recorded terminal output. Input entered while terminal echo is disabled, such as a password prompt, is not captured through stdin, but programs can still expose secrets in their own output. Treat every recording and exported Cast as sensitive data. Public container metadata, including recording identity, timing, sizes, status claims, and recipient identity, also requires access control even when event content is encrypted.
 
 The signed Cast is a terminal-playback representation, not a packet capture. PTY line endings are normalized for terminal playback, event times are rounded to milliseconds, and invalid UTF-8 is represented safely in standard player output while the original bytes remain in Bifröst metadata. These transformations preserve useful playback and verification but do not reproduce the original transport byte stream or scheduling exactly.
 
@@ -51,7 +51,7 @@ Maximum total size of the managed local spool, defaulting to 100 GiB. Active and
 The value must be at least `chunkSizeBytes` and `flushSizeBytes`. At startup, Bifröst first reconciles recoverable temporary receipt replacements left by a crash. If the resulting managed usage still exceeds the limit, Bifröst refuses to start without deleting data. If an active operation cannot reserve additional capacity, that operation fails closed.
 
 <<property("retainFor", "Duration", "../data-type.md#duration", default="720h")>>
-How long an eligible sealed recording remains in the local repository. The value cannot be negative. `0s` prevents new automatic deletions. See [retention](#remote-delivery-and-retention) for when the period begins.
+How long an eligible sealed recording remains in the local repository. The value cannot be negative. `0s` prevents *new* automatic deletions, but a deletion already durably marked as started still completes after restart or reconfiguration. See [retention](#remote-delivery-and-retention) for when the period begins.
 
 <<property("notice", ref("String", "../templating/index.md#string"), default="")>>
 Optional Go template written before an interactive PTY shell starts. Bifröst adds no newline. The template can access `{{.recording.id}}` and `{{.recording.startedAt}}`.
@@ -81,14 +81,15 @@ The parent audit log supplies both the recording signing identity and the option
 * Without `encryptionPublicKey` or `encryptionPublicKeyFile`, Bifröst stores signed, compressed native `.bcast` artifacts.
 * With an encryption recipient, Bifröst stores signed CBOR `.becast` artifacts whose compressed event groups are independently encrypted with age.
 
-Both native formats use the `\x89BCAST\n` magic and framed, committed canonical CBOR units. They bind a signed producer, hash chain, Cast digest, and final seal. The clear format is fully verifiable without a private key; encrypted inspection checks only the signed outer envelope. The [recording format vectors](recording-format-vectors.md) include native CBOR and separately labeled legacy `.cast`, `.cast.zst`, and binary `.becast` examples.
+Both native formats use the `\x89BCAST\n` magic and framed, committed canonical CBOR units. They bind a signed producer, hash chain, Cast digest, and final seal. The clear format is fully verifiable without a private key; encrypted inspection checks only the signed outer envelope. See the [native byte contract](native-format-contract.md#families-and-names) and [recording format vectors](recording-format-vectors.md) for native CBOR and separately labeled legacy `.cast`, `.cast.zst`, and binary `.becast` examples. Bifröst does not automatically create plaintext `.cast` or `.jsonl` files, locally or remotely.
 
-The local repository is permanently marked with its container format (`bcast/v1` or `becast-cbor/v1`). Directories marked with the earlier `cast-zstd/v1` or `becast/v1` formats are not migrated: configure a new empty recording directory before upgrading a server that has used those formats, and preserve the old data separately for its retention period. Changing between clear and encrypted formats also requires a new empty recording directory. The parent audit journal separately binds its encryption recipient, so every recipient change requires a new empty journal directory or a new audit log. A recipient change can reuse an encrypted recording directory only after no active recording still needs recovery with the old recipient; already sealed recordings keep their original signed recipient. Preserve the old journal, sealed recordings, and decryption identities for their required retention periods.
+The local repository is permanently marked with its container format (`bcast/v1` or `becast-cbor/v1`). A nonempty, unbound recording directory without a valid format marker fails closed; it is not migrated, and operators must not create or edit a marker to make it start. Directories marked with the earlier `cast-zstd/v1` or `becast/v1` formats are not migrated: configure a new empty recording directory before upgrading a server that has used those formats, and preserve the old data separately for its retention period. Changing between clear and encrypted formats also requires a new empty recording directory. The parent audit journal separately binds its encryption recipient, so every recipient change requires a new empty journal directory or a new audit log. A recipient change can reuse an encrypted recording directory only after no active recording still needs recovery with the old recipient; already sealed recordings keep their original signed recipient. Preserve the old journal, sealed recordings, and decryption identities for their required retention periods.
 
 The audit signing identity must remain available to continue writing and recovering its repository. Existing sealed artifacts embed the corresponding public key and remain cryptographically self-verifiable, but producer trust still requires an independently retained producer ID. The producer ID is the lowercase hexadecimal SHA-256 digest of the RFC 4253 binary SSH public-key blob, which is the decoded Base64 field of an OpenSSH public-key line. Generate and retain the public key and producer ID during trusted identity provisioning, before distributing any Recording artifact.
+
 If the signing key is lost, Bifröst will not generate a replacement while the configured Recording directory still contains state, even when Recording is temporarily disabled. Restore the original key or configure a new empty journal and Recording repository while preserving the old evidence.
 
-Bifröst receives only the encryption public key. Keep the matching private key outside the Bifröst server and preserve every identity needed for retained BECast artifacts. Losing that private key makes their captured content permanently unavailable.
+Bifröst receives only the age encryption public key. Keep the matching private SSH decryption identity offline, separate from the audit signing key, and preserve every identity needed for retained BECast artifacts. Losing that private key makes their captured content permanently unavailable.
 
 ## Storage and recovery
 
@@ -114,20 +115,40 @@ Invalid, not-yet-accepted work directories are moved to `quarantine/` when they 
 
 Before local publication, Bifröst creates a signed receipt binding the immutable artifact to the selected target names and destinations. Delivery then runs asynchronously with retries. Configuration changes cannot silently redirect a pending artifact under an existing target name. See [remote-target delivery behavior](remote-targets/index.md#delivery-behavior) for acknowledgement and audit-outbox details.
 
-For recordings with selected targets, `retainFor` begins at the latest durable target acknowledgement, and every selected success event must also be durably marked. Without targets, it begins when the recording is sealed. Housekeeping verifies the artifact and receipt before deleting local state and emits [retention audit events](events.md#housekeepingrecordingdeletestarted).
+For recordings with selected targets, `retainFor` begins at the latest durable target acknowledgement, and every selected success event must also be durably marked. Without targets, it begins when the recording is sealed. Housekeeping verifies the artifact and receipt before deleting local state and emits [retention audit events](events.md#housekeepingrecordingdeletestarted). Setting `retainFor: 0s` later stops new deletion starts; it cannot cancel a deletion already durably marked as started.
 
 Retention applies only to the local recording repository. Bifröst does not delete remote copies; configure lifecycle and retention rules independently at every remote destination.
 
 ## Export and playback
 
-Bifröst does not list, download, or play recordings. Obtain the byte-exact sealed artifact from `sealed/` or a configured remote target, then:
+Bifröst does not list, download, or play recordings. Obtain a byte-exact copy of the sealed `.bcast` or `.becast` artifact, not an audit JSONL export or a decrypted Cast. For the example below, replace `<recording-uuid>` with the canonical UUIDv4 recording ID and `<producer-id>` with the independently provisioned 64-hex producer ID. These angle-bracket values are placeholders, **not** working trust anchors; never derive the expected ID solely from the artifact being inspected. Use either source:
 
-1. Run [`bifroest recording inspect`](../cli/recording/inspect.md) with an independently obtained producer ID.
-2. Run [`bifroest recording export`](../cli/recording/export.md) with `--with-sensitive`, the same trust anchor and, for encrypted BECast, the matching private decryption identity. Export performs full Cast verification before output; encrypted inspect alone does not.
-3. Protect the exported `.cast` file as sensitive plaintext.
-4. Open it with a player that supports asciicast v3 and unknown comment lines.
+```shell
+cp -- "/var/lib/engity/bifroest/recordings/sealed/<recording-uuid>.becast" ./session.becast
+```
 
-Verification must precede playback. Bifröst-specific metadata and signatures are represented as asciicast comments, while the exported event stream remains standard asciicast v3.
+Or download the same sealed bytes from the inherited S3 target at `s3://company-bifroest-audit/production/<producer-id>/<recording-uuid>.becast` with an external S3 client (for example, the AWS CLI):
+
+```shell
+aws s3 cp "s3://company-bifroest-audit/production/<producer-id>/<recording-uuid>.becast" ./session.becast
+```
+
+The producer-relative target key is `<producer-id>/<recording-uuid>.becast`; `production/` is the configured S3 prefix. For a clear recording, use the `.bcast` suffix at either source and keep that suffix on the copied input. Protect the original and copy; even encrypted artifacts expose public metadata.
+
+On a trusted offline workstation with the independent producer ID and, for encrypted artifacts, the private age SSH identity (not the audit signing key), verify and export:
+
+```shell
+bifroest recording inspect --expectedProducerId "<producer-id>" session.becast
+bifroest recording export \
+  --with-sensitive \
+  --expectedProducerId "<producer-id>" \
+  --decryptionIdentityFile /secure/offline/recording-identity \
+  --output session.cast \
+  session.becast
+bifroest recording inspect --expectedProducerId "<producer-id>" session.cast
+```
+
+The first encrypted inspection needs no decryption key: `verificationScope: "outer"` verifies the signed envelope, but `claimedStatus` and `claimedCastDigest` are **not** verified inner-Cast results. Export decrypts and fully verifies the signed Cast before publishing plaintext. The final inspection independently fully verifies `session.cast` (`verificationScope: "full"`); compare its `castDigest` to the original inspection's `claimedCastDigest` for encrypted `.becast` (a signed outer claim), or to the original `castDigest` for clear `.bcast`. A successful export verifies the inner digest against the signed seal; matching digests alone are not a substitute for verification. Clear `.bcast` needs no `--decryptionIdentityFile`, but still requires `--with-sensitive` and a trust anchor for export. Recording export is **never redacted**, unlike redacted-by-default audit JSONL export. Protect `session.cast` as sensitive plaintext, and only then open it with a player supporting asciicast v3 and unknown comment lines. Bifröst-specific metadata and signatures are represented as asciicast comments; see the [canonical standalone Cast bytes](native-format-contract.md#canonical-standalone-cast).
 
 ## Example
 
@@ -144,6 +165,8 @@ auditlog:
     recording:
       enabled: true
       directory: /var/lib/engity/bifroest/recordings
+      retainFor: 720h
+      targets: inherit
       notice: "This SSH session is recorded as {{.recording.id}}.\n"
     targets:
       - name: recording-archive
@@ -153,6 +176,6 @@ auditlog:
         expectedBucketOwner: "123456789012"
 ```
 
-Add the fragment to a complete configuration and explicitly assign the named audit log to every flow that should be recorded with `auditlog: security`. The encryption-public-key file must exist on the Bifröst server, and the S3 target requires its normal region and credential sources.
+Add the fragment to a complete configuration and explicitly assign the named audit log to every flow that should be recorded with `auditlog: security`. Provision the offline private age identity separately from `/etc/engity/bifroest/audit-signing-key`; only its public-key file belongs on the Bifröst server. The S3 target requires its normal region and credential sources.
 
 Set `recording.targets: false` when audit segments should still be replicated but recording artifacts must remain local. To use a separate destination, replace `inherit` with a nonempty list of complete [remote-target configurations](remote-targets/index.md).

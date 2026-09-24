@@ -4,9 +4,9 @@ description: Inspect and export Bifröst session Recording artifacts.
 
 # `bifroest recording`
 
-Recording commands verify sealed session Recording artifacts without changing them. `inspect` emits only metadata, while `export` deliberately emits the captured terminal, standard-output, and standard-error content as a signed asciicast v3 stream.
+Recording commands verify sealed session Recording artifacts without changing them. Copy the original `.bcast` or `.becast` bytes from the local repository's `sealed/<recording-uuid>.<suffix>` or download them from a remote target under `<producer-id>/<recording-uuid>.<suffix>`. Bifröst does not list or download artifacts and does not automatically create plaintext `.cast` or `.jsonl` copies. See the [end-to-end workflow](../../auditlog/recording.md#export-and-playback), [native byte contract](../../auditlog/native-format-contract.md#families-and-names), and [format vectors](../../auditlog/recording-format-vectors.md).
 
-An embedded signing key proves that an artifact is internally consistent, not who produced it. Supply an independently obtained producer ID when producer identity must be trusted.
+An embedded signing key proves that an artifact is internally consistent, not who produced it. Supply an independently obtained 64-hex producer ID with `--expectedProducerId` when producer identity must be trusted. `inspect` emits metadata only; encrypted `.becast` receives outer verification without a key. `export --with-sensitive` produces the complete, **never redacted** signed asciicast v3 stream. It needs the offline age SSH decryption identity for `.becast`, but not for clear `.bcast`. Protect the plaintext export and the public metadata in the original artifact even if an unrelated audit JSONL export is redacted.
 
 ## Commands
 

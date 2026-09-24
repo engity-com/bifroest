@@ -4,9 +4,9 @@ description: Verify a Bifröst audit journal.
 
 # `bifroest audit verify`
 
-Verifies the signed `head.cbor`, embedded Ed25519 keys, record signatures, record and segment hash chains, segment seals, file-name hashes, and the configured producer identity. Success produces no output and exits with status `0`.
+Verifies the signed `head.cbor`, embedded Ed25519 keys, record signatures, record and segment hash chains, segment seals, file-name hashes, and the expected producer identity of a complete configured journal. Success produces no output and exits with status `0`. A sealed segment alone (for example from a remote target) is not an accepted input.
 
-For `.beaudit`, the outer signatures and encrypted bytes can be verified without a private decryption key. Supply a matching private SSH key to additionally authenticate and validate the confidential event fields in memory. Outer-only verification does not prove that the private fields can be decrypted.
+For `.beaudit`, the outer signatures and encrypted bytes can be verified without a private decryption key. Supply a matching private SSH key with `--decryptionIdentityFile` to additionally authenticate and validate the confidential event fields in memory. Outer-only verification does not prove that the private fields can be decrypted. For clear `.baudit`, verification includes the private fields without a decryption key.
 
 ## Syntax
 
@@ -14,7 +14,7 @@ For `.beaudit`, the outer signatures and encrypted bytes can be verified without
 
 ## Arguments
 
-`auditlogName` selects one configured audit log.
+`auditlogName` selects one configured audit log by name, not a journal or segment path. Copy its whole stopped journal, including signed `head.cbor`, for offline use.
 
 ## Flags {: #audit-verify-flags }
 
@@ -31,11 +31,11 @@ External trust anchor in the form `<auditlogName>=<producer-id>`, where the prod
 
 ## Example
 
-Verify without granting access to the production signing private key:
+Set `DEFAULT_PRODUCER_ID` to the actual 64-hex signing producer ID obtained through an independently trusted provisioning channel, **not** from the journal or a container. With that variable already set, verify without granting access to the production signing private key:
 
 ```shell
 bifroest audit verify \
-  --expectedProducerId default=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  --expectedProducerId "default=${DEFAULT_PRODUCER_ID}" \
   default
 ```
 
