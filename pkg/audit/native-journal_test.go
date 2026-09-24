@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -91,6 +92,100 @@ func TestNativeRecorderRecoversTailAndAdoptsCommittedAfterOldHead(t *testing.T) 
 	require.NoError(t, err)
 	require.Equal(t, second, head)
 	require.NoError(t, r.Close())
+}
+
+func TestNativeRecorderRejectsCompleteStateZeroRecordBeforeCommittedRecord(t *testing.T) {
+	conf, id := nativeRecorderTestConfig(t, false)
+	r := nativeTestOpen(t, &conf, id)
+	require.NoError(t, r.Record(context.Background(), Event{Name: "test.confirmed"}))
+	path := r.activePath
+	checkpoint := r.state.lastRecord
+	_, payload, nextHash, err := newNativeAuditRecord(id, checkpoint, Event{Name: "test.uncommitted"}, uuid.New(), time.Now(), nil)
+	require.NoError(t, err)
+	stateZero, err := nativeformat.EncodeUnit(nativeformat.ContentUnit, payload, nativeformat.MaxAuditRecordPayload)
+	require.NoError(t, err)
+	stateZero[5] = 0
+	_, payload, _, err = newNativeAuditRecord(id, nextHash, Event{Name: "test.later"}, uuid.New(), time.Now(), nil)
+	require.NoError(t, err)
+	committed, err := nativeformat.EncodeUnit(nativeformat.ContentUnit, payload, nativeformat.MaxAuditRecordPayload)
+	require.NoError(t, err)
+	data, err := nativeReadFile(r.file)
+	require.NoError(t, err)
+	data = append(data, stateZero...)
+	data = append(data, committed...)
+	require.NoError(t, r.file.Close())
+	require.NoError(t, os.WriteFile(path, data, journalFileMode))
+	require.NoError(t, r.lock.Close())
+	_, err = newNativeRecorder(&conf, id)
+	require.Error(t, err)
+	preserved, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, data, preserved, "rejected records must not be truncated")
+	head, err := readNativeHead(r.headDirectory, id)
+	require.NoError(t, err)
+	require.Equal(t, checkpoint, head)
+}
+
+func TestNativeRecorderRejectsStateZeroLengthSwallowingCommittedRecord(t *testing.T) {
+	conf, id := nativeRecorderTestConfig(t, false)
+	r := nativeTestOpen(t, &conf, id)
+	require.NoError(t, r.Record(context.Background(), Event{Name: "test.confirmed"}))
+	path := r.activePath
+	checkpoint := r.state.lastRecord
+	_, payload, nextHash, err := newNativeAuditRecord(id, checkpoint, Event{Name: "test.uncommitted"}, uuid.New(), time.Now(), nil)
+	require.NoError(t, err)
+	first, err := nativeformat.EncodeUnit(nativeformat.ContentUnit, payload, nativeformat.MaxAuditRecordPayload)
+	require.NoError(t, err)
+	first[5] = 0
+	_, payload, _, err = newNativeAuditRecord(id, nextHash, Event{Name: "test.later"}, uuid.New(), time.Now(), nil)
+	require.NoError(t, err)
+	second, err := nativeformat.EncodeUnit(nativeformat.ContentUnit, payload, nativeformat.MaxAuditRecordPayload)
+	require.NoError(t, err)
+	data, err := nativeReadFile(r.file)
+	require.NoError(t, err)
+	offset := len(data)
+	data = append(data, first...)
+	data = append(data, second...)
+	binary.BigEndian.PutUint32(data[offset+1:offset+5], uint32(len(first)+len(second)))
+	require.NoError(t, r.file.Close())
+	require.NoError(t, os.WriteFile(path, data, journalFileMode))
+	require.NoError(t, r.lock.Close())
+	_, err = newNativeRecorder(&conf, id)
+	require.Error(t, err)
+	preserved, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, data, preserved)
+	head, err := readNativeHead(r.headDirectory, id)
+	require.NoError(t, err)
+	require.Equal(t, checkpoint, head)
+}
+
+func TestNativeRecorderRejectsCorruptCommittedRecordAfterShortHeader(t *testing.T) {
+	conf, id := nativeRecorderTestConfig(t, false)
+	r := nativeTestOpen(t, &conf, id)
+	require.NoError(t, r.Record(context.Background(), Event{Name: "test.confirmed"}))
+	require.NoError(t, r.Seal())
+	path := r.activePath
+	data, err := nativeReadFile(r.file)
+	require.NoError(t, err)
+	offset := len(nativeformat.AuditMagic)
+	data = data[:offset+6]
+	data[offset+5] = 0
+	binary.BigEndian.PutUint32(data[offset+1:offset+5], 4096)
+	_, payload, _, err := newNativeAuditRecord(id, r.state.lastRecord, Event{Name: "test.corrupt"}, uuid.New(), time.Now(), nil)
+	require.NoError(t, err)
+	frame, err := nativeformat.EncodeUnit(nativeformat.ContentUnit, payload, nativeformat.MaxAuditRecordPayload)
+	require.NoError(t, err)
+	frame[6] ^= 1 // CRC is invalid, but the state-1 prefix and trailer survive.
+	data = append(data, frame...)
+	require.NoError(t, r.file.Close())
+	require.NoError(t, os.WriteFile(path, data, journalFileMode))
+	require.NoError(t, r.lock.Close())
+	_, err = newNativeRecorder(&conf, id)
+	require.Error(t, err)
+	preserved, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, data, preserved)
 }
 
 func TestNativeRecorderPoisonAndAcceptedCleanup(t *testing.T) {
@@ -240,7 +335,7 @@ func TestNativeRecorderDoesNotRemoveAliasedHeadTemp(t *testing.T) {
 
 func TestNativeRecorderRecoversInterruptedActiveCreation(t *testing.T) {
 	for _, afterRotation := range []bool{false, true} {
-		for _, stage := range []string{"empty", "partial-magic", "magic", "header-prefix-1", "header-prefix-3", "header-prefix-5", "header-state0", "header-body", "header-before-last-body-byte", "header-before-crc", "header-before-last-crc-byte", "header-before-last-commit-byte", "state0-header"} {
+		for _, stage := range []string{"empty", "partial-magic", "magic", "header-prefix-1", "header-prefix-3", "header-prefix-5", "header-prefix-5-zero", "header-prefix-6-zero", "header-state0", "header-body", "header-before-last-body-byte", "header-before-crc", "header-before-last-crc-byte", "header-before-last-commit-byte", "state0-header"} {
 			t.Run(map[bool]string{true: "rotated/", false: "initial/"}[afterRotation]+stage, func(t *testing.T) {
 				conf, id := nativeRecorderTestConfig(t, false)
 				r := nativeTestOpen(t, &conf, id)
@@ -261,6 +356,12 @@ func TestNativeRecorderRecoversInterruptedActiveCreation(t *testing.T) {
 				case "header-prefix-1", "header-prefix-3", "header-prefix-5":
 					prefix := map[string]int{"header-prefix-1": 1, "header-prefix-3": 3, "header-prefix-5": 5}[stage]
 					data = data[:len(nativeformat.AuditMagic)+prefix]
+				case "header-prefix-5-zero":
+					data = data[:len(nativeformat.AuditMagic)+5]
+					clear(data[len(nativeformat.AuditMagic)+1:])
+				case "header-prefix-6-zero":
+					data = data[:len(nativeformat.AuditMagic)+6]
+					clear(data[len(nativeformat.AuditMagic)+1:])
 				case "header-state0", "header-body", "header-before-last-body-byte", "header-before-crc", "header-before-last-crc-byte", "header-before-last-commit-byte":
 					offset := len(nativeformat.AuditMagic)
 					bodyEnd := offset + 6 + int(binary.BigEndian.Uint32(data[offset+1:offset+5]))
@@ -359,6 +460,30 @@ func TestNativeRecorderDoesNotDiscardUnverifiedActiveStart(t *testing.T) {
 			require.Equal(t, data, preserved)
 		})
 	}
+}
+
+func TestNativeRecorderRecoversInterruptedHeaderWithMarkerInPayload(t *testing.T) {
+	id := nativeTestIdentity(t)
+	fingerprint := "SHA256:" + strings.Repeat("BFCOMMIT", 5) + "AAA"
+	_, payload, err := newNativeAuditHeader(id, 1, journalHash{}, journalHash{}, time.Now().UTC(), fingerprint)
+	require.NoError(t, err)
+	frame, err := nativeformat.EncodeUnit(nativeformat.HeaderUnit, payload, nativeformat.MaxMetadataPayload)
+	require.NoError(t, err)
+	marker := bytes.Index(frame[:len(frame)-len(nativeformat.CommitMarker)], []byte(nativeformat.CommitMarker))
+	require.Greater(t, marker, 6)
+	data := append([]byte(nativeformat.AuditMagic), frame[:marker+len(nativeformat.CommitMarker)]...)
+	data[len(nativeformat.AuditMagic)+5] = 0
+	directory := t.TempDir()
+	file, err := os.OpenFile(filepath.Join(directory, "active.beaudit"), os.O_CREATE|os.O_EXCL|os.O_RDWR, journalFileMode)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, file.Close()) })
+	_, err = file.Write(data)
+	require.NoError(t, err)
+	require.NoError(t, file.Sync())
+	require.NoError(t, nativeRecoverActiveStart(file, directory, id, 1, journalHash{}, journalHash{}, fingerprint))
+	actual, err := os.ReadFile(file.Name())
+	require.NoError(t, err)
+	require.Equal(t, []byte(nativeformat.AuditMagic), actual)
 }
 
 func TestNativeRecorderDoesNotDiscardHeaderBeforeActiveCheckpoint(t *testing.T) {

@@ -287,6 +287,13 @@ func newLocalRepository[Head, Summary any](ctx context.Context, directory string
 		active:         make(map[Id]*localActive[Head, Summary]),
 		retentionQuota: make(map[Id]uint64),
 	}
+	for _, path := range []string{result.activePath, result.sealedPath, result.workPath, result.quarantinePath, filepath.Join(canonical, localDeliveryDirectory)} {
+		if err := validateLocalDirectory(path); stderrors.Is(err, fs.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return nil, errors.Config.Newf("invalid local recording repository path %q: %w", path, err)
+		}
+	}
 	recoverer, canRecoverSealedState := prepareSealed.(SealedArtifactStateRecoverer)
 	result.quota, err = newLocalQuotaWithReceiptRecovery(options.MaximumSpoolBytes, canRecoverSealedState, result.workPath, result.activePath, result.sealedPath, result.quarantinePath, filepath.Join(canonical, localDeliveryDirectory))
 	if err != nil {
@@ -1260,14 +1267,7 @@ func (this *localRepository[Head, Summary]) validateRoot() error {
 			return errors.Config.Newf("local recording repository contains unsupported entry %q", entry.Name())
 		}
 		if entry.Name() == localDeliveryDirectory {
-			if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
-				return errors.Config.Newf("local recording delivery state is not a regular directory")
-			}
-			info, err := os.Lstat(filepath.Join(this.directory, entry.Name()))
-			if err != nil {
-				return err
-			}
-			if err := secureLocalDirectory(filepath.Join(this.directory, entry.Name()), info); err != nil {
+			if err := validateLocalDirectory(filepath.Join(this.directory, entry.Name())); err != nil {
 				return err
 			}
 		}

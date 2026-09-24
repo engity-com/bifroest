@@ -40,20 +40,24 @@ func ensureLocalDirectory(path string) error {
 	if err := os.MkdirAll(path, localDirectoryMode); err != nil {
 		return err
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() {
-		return errors.Config.Newf("local recording path is not a regular directory")
-	}
-	if err := secureLocalDirectory(path, info); err != nil {
+	if err := validateLocalDirectory(path); err != nil {
 		return err
 	}
 	if err := syncLocalDirectory(path); err != nil {
 		return err
 	}
 	return syncLocalDirectory(filepath.Dir(path))
+}
+
+func validateLocalDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.Config.Newf("local recording path is not a regular directory")
+	}
+	return secureLocalDirectory(path, info)
 }
 
 func validateLocalLock(lock *localProcessLock, path string) error {

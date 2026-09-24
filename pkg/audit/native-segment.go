@@ -225,7 +225,7 @@ func nativeRecoverActiveStart(f *os.File, directory string, identity *Identity, 
 	if len(fragment) < 6 {
 		var size [4]byte
 		copy(size[:], fragment[1:])
-		if binary.BigEndian.Uint32(size[:]) > nativeformat.MaxMetadataPayload || len(fragment) == 5 && binary.BigEndian.Uint32(size[:]) == 0 {
+		if binary.BigEndian.Uint32(size[:]) > nativeformat.MaxMetadataPayload {
 			return fmt.Errorf("invalid interrupted native header length")
 		}
 	} else {
@@ -233,44 +233,56 @@ func nativeRecoverActiveStart(f *os.File, directory string, identity *Identity, 
 			return nil // Committed (or invalid) state must be checked by the scanner.
 		}
 		length := binary.BigEndian.Uint32(fragment[1:5])
-		if length == 0 || length > nativeformat.MaxMetadataPayload {
-			return fmt.Errorf("invalid interrupted native header length")
-		}
-		declared := int64(6) + int64(length) + 4 + int64(len(nativeformat.CommitMarker))
-		if int64(len(fragment)) >= declared {
-			// A complete state-0 unit must verify as-is; extra bytes may be records.
-			if int64(len(fragment)) > declared {
-				return fmt.Errorf("data follows interrupted native header")
+		if length != 0 || len(fragment) > 6 {
+			if length == 0 || length > nativeformat.MaxMetadataPayload {
+				return fmt.Errorf("invalid interrupted native header length")
 			}
-			committed := bytes.Clone(data)
-			committed[len(magic)+5] = 1
-			unit, end, tail, err := nativeformat.ReadUnitAt(bytes.NewReader(committed), offset, int64(len(committed)), nativeformat.MaxMetadataPayload)
-			if err != nil || tail || end != int64(len(data)) || unit.Type != nativeformat.HeaderUnit {
-				return fmt.Errorf("cannot verify interrupted native header: %v", err)
+			declared := int64(6) + int64(length) + 4 + int64(len(nativeformat.CommitMarker))
+			if int64(len(fragment)) >= declared {
+				// A complete state-0 unit must verify as-is; extra bytes may be records.
+				if int64(len(fragment)) > declared {
+					return fmt.Errorf("data follows interrupted native header")
+				}
+				committed := bytes.Clone(data)
+				committed[len(magic)+5] = 1
+				unit, end, tail, err := nativeformat.ReadUnitAt(bytes.NewReader(committed), offset, int64(len(committed)), nativeformat.MaxMetadataPayload)
+				if err != nil || tail || end != int64(len(data)) || unit.Type != nativeformat.HeaderUnit {
+					return fmt.Errorf("cannot verify interrupted native header: %v", err)
+				}
+				if _, err := decodeNativeAuditHeader(unit.Payload, identity, seq, previousSegment, previousRecord, recipient); err != nil {
+					return err
+				}
+				if err := checkOpen(); err != nil {
+					return err
+				}
+				n, err := f.WriteAt([]byte{1}, offset+5)
+				if err != nil {
+					return err
+				}
+				if n != 1 {
+					return io.ErrShortWrite
+				}
+				if err := f.Sync(); err != nil {
+					return err
+				}
+				return syncJournalDirectory(directory)
 			}
-			if _, err := decodeNativeAuditHeader(unit.Payload, identity, seq, previousSegment, previousRecord, recipient); err != nil {
-				return err
-			}
-			if err := checkOpen(); err != nil {
-				return err
-			}
-			n, err := f.WriteAt([]byte{1}, offset+5)
-			if err != nil {
-				return err
-			}
-			if n != 1 {
-				return io.ErrShortWrite
-			}
-			if err := f.Sync(); err != nil {
-				return err
-			}
-			return syncJournalDirectory(directory)
 		}
 	}
-	// Even inside the declared size, a complete committed record would carry
-	// this marker. Its presence makes the purported header fragment ambiguous.
-	if bytes.Contains(fragment, []byte(nativeformat.CommitMarker)) {
-		return fmt.Errorf("commit marker inside interrupted native header")
+	// Inspect only the possible header footprint, not the entire segment.
+	// A candidate with a damaged CRC still makes truncation unsafe.
+	searchEnd := len(fragment)
+	if searchEnd > nativeformat.MaxMetadataPayload+18 {
+		searchEnd = nativeformat.MaxMetadataPayload + 18
+	}
+	if searchEnd >= 6 {
+		found, err := nativeformat.HasCommittedUnitWithin(bytes.NewReader(fragment), 6, int64(searchEnd), int64(len(fragment)), nativeformat.MaxAuditRecordPayload)
+		if err != nil {
+			return err
+		}
+		if found {
+			return fmt.Errorf("committed unit inside interrupted native header")
+		}
 	}
 	if err := checkOpen(); err != nil {
 		return err

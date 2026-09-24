@@ -263,7 +263,23 @@ func (f *localNativeRecordingFormat) preflight(file *os.File, size int64, head [
 	if _, err := VerifyNativeRecordingHead(head, unit.Payload); err != nil {
 		return invalidLocalArtifact(err)
 	}
-	return nil
+	startedAt, err := header.StartedAt.Time()
+	if err != nil {
+		return invalidLocalArtifact(err)
+	}
+	options := f.options
+	options.Context = ctx
+	// Head-temp cleanup is a separate, earlier trust boundary in the repository;
+	// this scan protects the content before recovery reserve or recording mutation.
+	view := &localNativeReadOnlyPrefix{io.NewSectionReader(file, 0, size)}
+	_, err = RecoverNativeRecording(view, f.identity, f.recipient, head, startedAt, options)
+	if err == nil || stderrors.Is(err, errNativeCheckpointValidated) {
+		return nil
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return invalidLocalArtifact(err)
 }
 
 func (f *localNativeRecordingFormat) maximumContainerBytes() int64 {

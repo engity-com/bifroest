@@ -46,17 +46,21 @@ deterministic-CBOR-payload | crc32c:u32-big-endian | "BFCOMMIT" (8 ASCII bytes)
 CRC32C (Castagnoli) covers the type, length, and exact CBOR payload bytes,
 excluding the commit-state byte. That byte is `0` until the complete body and
 trailer have been durably synced; then it is overwritten with `1` and synced
-again. A partial header or state `0` is an uncommitted tail even when its
-body is physically complete; it may be discarded only beyond the signed head
-checkpoint. State `1` requires the complete declared length,
-marker, CRC, and canonical payload. Other state values are invalid. Bytes
-inside a payload that happen to spell `BFCOMMIT` are never evidence of a
-committed unit. This in-place commit requires a writable non-append-only file
-handle and a single serialized writer. An append or sync failure poisons that
-writer: another append is forbidden until recovery has reconciled the file
-against the signed checkpoint. The format-specific writer and its failure
-injection tests are part of the audit/recording writer milestones, not the
-shared unit decoder.
+again. A partial header or state `0` is an uncommitted tail only beyond the
+signed head checkpoint. A physically complete state-0 unit must still have
+valid framing, CRC, and canonical CBOR; bytes after its declared boundary
+make it invalid. Before truncating a physically incomplete state-0 unit,
+recovery also rejects a plausible complete committed unit within its bounded
+declared footprint, even if that unit's CRC is damaged. Such overlapping
+binary data is ambiguous and fails closed. State `1` requires the complete
+declared length, marker, CRC, and canonical payload. Other state values are
+invalid. Bytes inside a payload that happen to spell `BFCOMMIT` alone are
+never evidence of a committed unit. This in-place commit requires a writable
+non-append-only file handle and a single serialized writer. An append or sync
+failure poisons that writer: another append is forbidden until recovery has
+reconciled the file against the signed checkpoint. The format-specific writers
+and their failure-injection tests enforce this protocol; the shared decoder
+distinguishes the resulting physical states.
 Types `1`, `2`, and `3` are header, audit record/recording chunk, and seal.
 Other types are invalid. Each payload is exactly
 one deterministic CBOR map with unsigned integer field keys. Integer widths,

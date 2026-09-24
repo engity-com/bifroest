@@ -2,6 +2,7 @@ package recording
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
 	"os"
@@ -89,6 +90,54 @@ func TestNativeRecordingRecoveryWithoutHeadOnlySealsCommittedFinal(t *testing.T)
 	require.ErrorContains(t, err, "uncommitted native tail")
 }
 
+func TestNativeRecordingRecoveryRejectsCompleteStateZeroChunkBeforeCommittedChunk(t *testing.T) {
+	for _, encrypted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "clear", true: "encrypted"}[encrypted], func(t *testing.T) {
+			fixture := newNativeRecoveryFixture(t, encrypted)
+			stateZero := bytes.Clone(fixture.container[fixture.headEnd:fixture.continuationEnd])
+			stateZero[5] = 0
+			data := append(bytes.Clone(fixture.container[:fixture.headEnd]), stateZero...)
+			data = append(data, fixture.container[fixture.continuationEnd:fixture.finalEnd]...)
+			file := nativeRecoveryTestFile(t, data)
+			options := NativeRecordingVerifyOptions{ExpectedProducerId: fixture.identity.ProducerId()}
+			result, err := RecoverNativeRecording(file, fixture.identity, fixture.recipient, fixture.head, fixture.started.Add(2*time.Second), options)
+			require.Error(t, err)
+			require.Nil(t, result)
+			length, err := file.Seek(0, io.SeekEnd)
+			require.NoError(t, err)
+			require.Equal(t, int64(len(data)), length, "rejected chunks must not be truncated")
+			preserved, err := io.ReadAll(io.NewSectionReader(file, 0, length))
+			require.NoError(t, err)
+			require.Equal(t, data, preserved)
+		})
+	}
+}
+
+func TestNativeRecordingRecoveryRejectsLengthSwallowingCommittedChunk(t *testing.T) {
+	for _, encrypted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "clear", true: "encrypted"}[encrypted], func(t *testing.T) {
+			fixture := newNativeRecoveryFixture(t, encrypted)
+			first := bytes.Clone(fixture.container[fixture.headEnd:fixture.continuationEnd])
+			first[5] = 0
+			second := fixture.container[fixture.continuationEnd:fixture.finalEnd]
+			data := append(bytes.Clone(fixture.container[:fixture.headEnd]), first...)
+			data = append(data, second...)
+			binary.BigEndian.PutUint32(data[fixture.headEnd+1:fixture.headEnd+5], uint32(len(first)+len(second)))
+			file := nativeRecoveryTestFile(t, data)
+			options := NativeRecordingVerifyOptions{ExpectedProducerId: fixture.identity.ProducerId()}
+			result, err := RecoverNativeRecording(file, fixture.identity, fixture.recipient, fixture.head, fixture.started.Add(2*time.Second), options)
+			require.Error(t, err)
+			require.Nil(t, result)
+			length, err := file.Seek(0, io.SeekEnd)
+			require.NoError(t, err)
+			require.Equal(t, int64(len(data)), length)
+			preserved, err := io.ReadAll(io.NewSectionReader(file, 0, length))
+			require.NoError(t, err)
+			require.Equal(t, data, preserved)
+		})
+	}
+}
+
 func TestNativeRecordingRecoveryClampsClockSkewToSignedElapsed(t *testing.T) {
 	for _, encrypted := range []bool{false, true} {
 		fixture := newNativeRecoveryFixture(t, encrypted)
@@ -173,6 +222,7 @@ func TestNativeRecordingRecoveryCrashMatrix(t *testing.T) {
 			{"committed final without seal", bytes.Clone(fixture.container[:fixture.finalEnd]), false, false, true, false},
 			{"already sealed", bytes.Clone(fixture.container), true, false, true, false},
 			{"lost checkpoint", bytes.Clone(fixture.container[:fixture.headEnd-1]), false, false, false, true},
+			{"committed truncated chunk", bytes.Clone(fixture.container[:fixture.continuationEnd-1]), false, false, false, true},
 		}
 		uncommittedSeal := bytes.Clone(fixture.container[fixture.finalEnd:])
 		uncommittedSeal[5] = 0
@@ -284,6 +334,38 @@ func TestNativeRecordingRecoveryCrashMatrix(t *testing.T) {
 			actual, err := io.ReadAll(io.NewSectionReader(file, 0, int64(len(before))))
 			require.NoError(t, err)
 			require.Equal(t, before, actual)
+		})
+	}
+}
+
+func TestNativeRecordingRecoveryRejectsSignedHeadThatDoesNotMatchPrefix(t *testing.T) {
+	fixture := newNativeRecoveryFixture(t, true)
+	original, err := nativeformat.Unmarshal[NativeRecordingHead](fixture.head, nativeformat.MaxMetadataPayload)
+	require.NoError(t, err)
+	signer, err := NewNativeRecordingSigner(fixture.identity)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name   string
+		change func(*NativeRecordingHead)
+	}{
+		{"last unit hash", func(head *NativeRecordingHead) { head.LastUnitHash[0] ^= 1 }},
+		{"Cast hash state", func(head *NativeRecordingHead) { head.CastHashState[0] ^= 1 }},
+		{"Cast hash bytes", func(head *NativeRecordingHead) { head.CastHashBytes += 64 }},
+		{"chunk count", func(head *NativeRecordingHead) { head.ChunkCount++ }},
+		{"prefix bytes", func(head *NativeRecordingHead) { head.PrefixBytes++ }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			head := original
+			tc.change(&head)
+			payload, err := signer.Head(head)
+			require.NoError(t, err)
+			input := bytes.Clone(fixture.container[:fixture.continuationEnd])
+			file := nativeRecoveryTestFile(t, input)
+			_, err = RecoverNativeRecording(file, fixture.identity, fixture.recipient, payload, fixture.started.Add(time.Second), NativeRecordingVerifyOptions{ExpectedProducerId: fixture.identity.ProducerId()})
+			require.Error(t, err)
+			actual, err := os.ReadFile(file.Name())
+			require.NoError(t, err)
+			require.Equal(t, input, actual)
 		})
 	}
 }
