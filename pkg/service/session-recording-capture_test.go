@@ -22,8 +22,7 @@ import (
 
 var (
 	_ essh.Session  = (*recordedSession)(nil)
-	_ recordingSink = (*recording.ActiveCastZstd)(nil)
-	_ recordingSink = (*recording.ActiveBECast)(nil)
+	_ recordingSink = (*recording.ActiveNativeRecording)(nil)
 )
 
 func TestRecordedSessionRejectsNilDependencies(t *testing.T) {

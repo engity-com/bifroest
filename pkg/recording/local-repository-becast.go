@@ -173,6 +173,8 @@ func (this *localBECastFormat) contentFileName() string {
 	return localBECastContentFileName
 }
 
+func (this *localBECastFormat) headFileName() string { return localHeadFileName }
+
 func (this *localBECastFormat) sealedSuffix() string {
 	return localBECastSealedSuffix
 }

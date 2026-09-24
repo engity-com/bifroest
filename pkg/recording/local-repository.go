@@ -48,6 +48,7 @@ type localWriter[Head, Summary any] interface {
 type localFormat[Head, Summary any] interface {
 	key() string
 	contentFileName() string
+	headFileName() string
 	sealedSuffix() string
 	maximumHeadBytes() int64
 	newWriter(io.Writer, CastHeader, CastMetadata, int) (localWriter[Head, Summary], error)
@@ -810,7 +811,7 @@ func (this *localRepository[Head, Summary]) createActive(ctx context.Context, he
 	if err != nil {
 		return nil, err
 	}
-	if err := writeLocalHead(workDirectory, head, this.quota); err != nil {
+	if err := writeLocalHeadNamed(workDirectory, this.format.headFileName(), head, this.quota); err != nil {
 		return nil, errors.System.Newf("cannot persist initial recording head: %w", err)
 	}
 	if err := syncLocalDirectory(workDirectory); err != nil {
@@ -855,7 +856,7 @@ func (this *localRepository[Head, Summary]) createActive(ctx context.Context, he
 		id:         metadata.RecordingId,
 		directory:  activeDirectory,
 		path:       contentPath,
-		headPath:   filepath.Join(activeDirectory, localHeadFileName),
+		headPath:   filepath.Join(activeDirectory, this.format.headFileName()),
 		file:       file,
 		writer:     writer,
 	}
@@ -1193,7 +1194,7 @@ func (this *localActive[Head, Summary]) persistCheckpointLocked() error {
 	if err != nil {
 		return this.poison(err)
 	}
-	if err := writeLocalHead(this.directory, payload, this.repository.quota); err != nil {
+	if err := writeLocalHeadNamed(this.directory, this.repository.format.headFileName(), payload, this.repository.quota); err != nil {
 		return this.poison(errors.System.Newf("cannot persist active recording head: %w", err))
 	}
 	return nil
@@ -1475,11 +1476,11 @@ func (this *localRepository[Head, Summary]) validateWorkDirectoryEntries(entries
 		}
 		names[entry.Name()] = true
 	}
-	if !names[this.format.contentFileName()] || !names[localRecoveryReserveName] || !names[localHeadFileName] && (!allowTemporary || !names[localHeadTempFileName]) {
+	if !names[this.format.contentFileName()] || !names[localRecoveryReserveName] || !names[this.format.headFileName()] && (!allowTemporary || !names[localHeadTempFileName]) {
 		return invalidLocalArtifact(errors.Config.Newf("recording work directory does not contain exactly its head, content, and recovery reserve"))
 	}
 	for name := range names {
-		if name != this.format.contentFileName() && name != localRecoveryReserveName && name != localHeadFileName && (!allowTemporary || name != localHeadTempFileName) {
+		if name != this.format.contentFileName() && name != localRecoveryReserveName && name != this.format.headFileName() && (!allowTemporary || name != localHeadTempFileName) {
 			return invalidLocalArtifact(errors.Config.Newf("recording work directory contains unsupported entry %q", name))
 		}
 	}
@@ -1497,11 +1498,11 @@ func (this *localRepository[Head, Summary]) validateActiveDirectoryEntries(entri
 		}
 		names[entry.Name()] = true
 	}
-	if !names[this.format.contentFileName()] || !names[localHeadFileName] {
+	if !names[this.format.contentFileName()] || !names[this.format.headFileName()] {
 		return errors.Config.Newf("active recording directory does not contain exactly its head, content, and optional recovery reserve")
 	}
 	for name := range names {
-		if name != this.format.contentFileName() && name != localHeadFileName && name != localRecoveryReserveName {
+		if name != this.format.contentFileName() && name != this.format.headFileName() && name != localRecoveryReserveName {
 			return errors.Config.Newf("active recording directory contains unsupported entry %q", name)
 		}
 	}
@@ -1510,7 +1511,7 @@ func (this *localRepository[Head, Summary]) validateActiveDirectoryEntries(entri
 
 func (this *localRepository[Head, Summary]) prepareInterruptedWorkHead(directory string) (Head, error) {
 	var result Head
-	err := prepareInterruptedLocalHead(directory, this.format.maximumHeadBytes(), this.quota, func(payload []byte) error {
+	err := prepareInterruptedLocalHeadNamed(directory, this.format.headFileName(), this.format.maximumHeadBytes(), this.quota, func(payload []byte) error {
 		decoded, decodeErr := this.format.decodeHead(payload)
 		if decodeErr != nil {
 			return invalidLocalArtifact(decodeErr)
@@ -1526,7 +1527,7 @@ func (this *localRepository[Head, Summary]) prepareInterruptedWorkHead(directory
 
 func (this *localRepository[Head, Summary]) prepareInterruptedHead(directory string) (Head, error) {
 	var result Head
-	err := prepareInterruptedLocalHead(directory, this.format.maximumHeadBytes(), this.quota, func(payload []byte) error {
+	err := prepareInterruptedLocalHeadNamed(directory, this.format.headFileName(), this.format.maximumHeadBytes(), this.quota, func(payload []byte) error {
 		decoded, decodeErr := this.format.decodeHead(payload)
 		if decodeErr == nil {
 			result = decoded
@@ -1601,7 +1602,7 @@ func (this *localRepository[Head, Summary]) recoverActiveDirectory(ctx context.C
 		return errors.System.Newf("cannot recover recording recovery reserve cleanup: %w", err)
 	}
 	contentPath := filepath.Join(directory, this.format.contentFileName())
-	headPath := filepath.Join(directory, localHeadFileName)
+	headPath := filepath.Join(directory, this.format.headFileName())
 	if _, err := os.Lstat(contentPath); stderrors.Is(err, fs.ErrNotExist) {
 		return this.completePublishedRecovery(ctx, id, directory, headPath)
 	} else if err != nil {
@@ -1642,6 +1643,15 @@ func (this *localRepository[Head, Summary]) recoverActiveDirectory(ctx context.C
 	if releaseErr != nil {
 		_ = file.Close()
 		return releaseErr
+	}
+	size, err := file.Seek(0, io.SeekEnd)
+	if err != nil {
+		_ = file.Close()
+		return err
+	}
+	if _, err := this.format.verifyPublished(file, size, &head, ctx); err != nil {
+		_ = file.Close()
+		return errors.System.Newf("cannot verify recovered recording before publication: %w", err)
 	}
 	if err := sealLocalFile(contentPath, file); err != nil {
 		_ = file.Close()
@@ -1719,10 +1729,10 @@ func (this *localRepository[Head, Summary]) completePublishedRecovery(ctx contex
 	}
 	hasHead := false
 	for _, entry := range entries {
-		if !entry.Type().IsRegular() || entry.Name() != localHeadFileName && entry.Name() != localRecoveryReserveName {
+		if !entry.Type().IsRegular() || entry.Name() != this.format.headFileName() && entry.Name() != localRecoveryReserveName {
 			return errors.Config.Newf("published recording cleanup directory contains unexpected entries")
 		}
-		hasHead = hasHead || entry.Name() == localHeadFileName
+		hasHead = hasHead || entry.Name() == this.format.headFileName()
 	}
 	target := filepath.Join(this.sealedPath, id.String()+this.format.sealedSuffix())
 	file, err := openSealedLocalFile(target)

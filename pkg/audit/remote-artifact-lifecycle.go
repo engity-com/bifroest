@@ -519,7 +519,7 @@ func validateRemoteArtifactLifecycleContent(content remoteArtifactLifecycleConte
 	if _, err := parseRemoteArtifactReceiptTime(content.StartedAt); err != nil {
 		return errors.Config.Newf("session Recording lifecycle state has an illegal start time: %w", err)
 	}
-	recordingId := strings.TrimSuffix(strings.TrimSuffix(content.FileName, ".cast.zst"), ".becast")
+	recordingId := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(content.FileName, ".cast.zst"), ".bcast"), ".becast")
 	if recordingId == content.FileName || content.Event.RecordingId != recordingId {
 		return errors.Config.Newf("session Recording lifecycle event does not match its artifact name")
 	}

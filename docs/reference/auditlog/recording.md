@@ -78,12 +78,12 @@ Compression profile for chunked Zstandard encoding. `default` is currently the o
 
 The parent audit log supplies both the recording signing identity and the optional encryption recipient:
 
-* Without `encryptionPublicKey` or `encryptionPublicKeyFile`, Bifröst stores signed, compressed `.cast.zst` artifacts.
-* With an encryption recipient, Bifröst stores signed `.becast` artifacts whose compressed chunks are independently encrypted with age.
+* Without `encryptionPublicKey` or `encryptionPublicKeyFile`, Bifröst stores signed, compressed native `.bcast` artifacts.
+* With an encryption recipient, Bifröst stores signed CBOR `.becast` artifacts whose compressed event groups are independently encrypted with age.
 
-The versioned [recording format vectors](recording-format-vectors.md) publish byte-exact examples for plain Cast, Cast Zstandard, complete BECast, and each deterministic BECast unit.
+Both native formats use the `\x89BCAST\n` magic and framed, committed canonical CBOR units. They bind a signed producer, hash chain, Cast digest, and final seal. The clear format is fully verifiable without a private key; encrypted inspection checks only the signed outer envelope. The [recording format vectors](recording-format-vectors.md) currently cover only legacy `.cast`, `.cast.zst`, and binary `.becast`, not native CBOR containers.
 
-The local repository is permanently marked with its container format. Enabling, disabling, or adding audit encryption in a way that changes an existing repository between `.cast.zst` and `.becast` is rejected and requires a new empty recording directory. The parent audit journal separately binds its encryption recipient, so every recipient change requires a new empty journal directory or a new audit log. A BECast-to-BECast recipient change can reuse its recording directory only after no active recording still needs recovery with the old recipient. Preserve the old journal, sealed recordings, and decryption identities for their required retention periods.
+The local repository is permanently marked with its container format (`bcast/v1` or `becast-cbor/v1`). Directories marked with the earlier `cast-zstd/v1` or `becast/v1` formats are not migrated: configure a new empty recording directory before upgrading a server that has used those formats, and preserve the old data separately for its retention period. Changing between clear and encrypted formats also requires a new empty recording directory. The parent audit journal separately binds its encryption recipient, so every recipient change requires a new empty journal directory or a new audit log. A recipient change can reuse an encrypted recording directory only after no active recording still needs recovery with the old recipient; already sealed recordings keep their original signed recipient. Preserve the old journal, sealed recordings, and decryption identities for their required retention periods.
 
 The audit signing identity must remain available to continue writing and recovering its repository. Existing sealed artifacts embed the corresponding public key and remain cryptographically self-verifiable, but producer trust still requires an independently retained producer ID. The producer ID is the lowercase hexadecimal SHA-256 digest of the RFC 4253 binary SSH public-key blob, which is the decoded Base64 field of an OpenSSH public-key line. Generate and retain the public key and producer ID during trusted identity provisioning, before distributing any Recording artifact.
 
@@ -96,7 +96,7 @@ The repository contains these managed areas:
 | Path | Purpose |
 | --- | --- |
 | `active/` | Recordings currently being written and their signed recovery heads. |
-| `sealed/` | Immutable `.cast.zst` or `.becast` artifacts ready for inspection and delivery. |
+| `sealed/` | Immutable native `.bcast` or CBOR `.becast` artifacts ready for inspection and delivery. |
 | `quarantine/` | Interrupted work that could not be accepted safely. |
 | `.bifroest-work/` | Durable publication and recovery work directories. |
 | `.delivery/` | Signed remote-delivery receipts and audit-outbox state. |
@@ -122,7 +122,7 @@ Retention applies only to the local recording repository. Bifröst does not dele
 Bifröst does not list, download, or play recordings. Obtain the byte-exact sealed artifact from `sealed/` or a configured remote target, then:
 
 1. Run [`bifroest recording inspect`](../cli/recording/inspect.md) with an independently obtained producer ID.
-2. Run [`bifroest recording export`](../cli/recording/export.md) with the same trust anchor and, for BECast, the matching private decryption identity.
+2. Run [`bifroest recording export`](../cli/recording/export.md) with `--with-sensitive`, the same trust anchor and, for encrypted BECast, the matching private decryption identity. Export performs full Cast verification before output; encrypted inspect alone does not.
 3. Protect the exported `.cast` file as sensitive plaintext.
 4. Open it with a player that supports asciicast v3 and unknown comment lines.
 

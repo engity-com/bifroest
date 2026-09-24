@@ -120,6 +120,26 @@ func (this *CastWriter) WriteMarker(elapsed time.Duration, label string) error {
 }
 
 func (this *CastWriter) Seal(elapsed time.Duration, result CastResult, exitStatus *uint32) (CastDigest, error) {
+	digest, err := this.sealContent(elapsed, result, exitStatus)
+	if err != nil {
+		return CastDigest{}, err
+	}
+	signature, err := this.identity.NewSessionRecordingCastSignature(this.metadata.RecordingId.String(), digest.String())
+	if err != nil {
+		return CastDigest{}, this.poison(err)
+	}
+	payload, err := json.Marshal(signature)
+	if err != nil {
+		return CastDigest{}, this.poison(errors.System.Newf("cannot encode cast signature: %w", err))
+	}
+	if err := this.writeRawLine(append([]byte(castSignatureCommentPrefix), payload...)); err != nil {
+		return CastDigest{}, err
+	}
+	this.sealed = true
+	return digest, nil
+}
+
+func (this *CastWriter) sealContent(elapsed time.Duration, result CastResult, exitStatus *uint32) (CastDigest, error) {
 	if this == nil {
 		return CastDigest{}, errors.System.Newf("nil cast writer")
 	}
@@ -152,18 +172,6 @@ func (this *CastWriter) Seal(elapsed time.Duration, result CastResult, exitStatu
 
 	var digest CastDigest
 	copy(digest[:], this.digest.Sum(nil))
-	signature, err := this.identity.NewSessionRecordingCastSignature(this.metadata.RecordingId.String(), digest.String())
-	if err != nil {
-		return CastDigest{}, this.poison(err)
-	}
-	payload, err := json.Marshal(signature)
-	if err != nil {
-		return CastDigest{}, this.poison(errors.System.Newf("cannot encode cast signature: %w", err))
-	}
-	if err := this.writeRawLine(append([]byte(castSignatureCommentPrefix), payload...)); err != nil {
-		return CastDigest{}, err
-	}
-	this.sealed = true
 	return digest, nil
 }
 

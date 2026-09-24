@@ -1,14 +1,12 @@
 ---
-description: Native audit format contract and planned recording container design.
+description: Native audit and recording container format contract.
 ---
 
 # Native format contract
 
-The `.baudit` and `.beaudit` audit containers described here are emitted by
-the current server. `.bcast` and the new CBOR-based `.becast` recording formats
-remain a design for the recording milestone; the server currently still emits
-`.cast.zst` or the existing `.becast` recording format. Published byte-level
-vectors and the completed recording specification follow in later milestones.
+The server emits `.baudit` and `.beaudit` audit containers and `.bcast` and
+CBOR-based `.becast` recording containers. Published byte-level recording
+vectors will follow in a later milestone.
 
 ## Families and names
 
@@ -101,13 +99,73 @@ still has a complete, encoded empty map.
 | Recording unit | Keys |
 | --- | --- |
 | Header | `1` version, `2` encryption, `3` recording ID, `4` producer ID, `5` public key, `6` start time, `7` optional recipient fingerprint, `8` signature |
-| Chunk | `1` sequence, `2` previous unit hash, `3` decoded length, `4` stored bytes, `5` stored-byte hash, `6` Cast hash state, `7` Cast hash byte count, `8` signature |
+| Chunk | `1` sequence, `2` previous unit hash, `3` decoded length, `4` stored bytes, `5` stored-byte hash, `6` Cast hash state, `7` Cast hash byte count, `8` signature, `9` optional final status, `10` optional final Cast digest, `11` optional final Cast signature, `12` optional final Cast byte count, `13` optional final end time, `14` optional continuation last event elapsed nanoseconds |
 | Seal | `1` status, `2` chunk count, `3` last unit hash, `4` content hash, `5` Cast digest, `6` Cast signature, `7` Cast bytes, `8` end time, `9` signature |
 
-The native recording-event schema inside decoded chunks will be specified
-with the recording writer and recovery rules. It contains CBOR events, not
-embedded asciicast lines. The signed `head.cbor` recovery-state schemas are
-specified alongside their atomic replacement and validation rules.
+Decoded recording chunks are canonical CBOR maps `{1: 1, 2: [event maps...]}`.
+The event array is nonempty (at most 4096 events). Every event has unsigned
+integer key `1` for its kind. Kind `1` (setup) has key `2` Cast header map
+(`1` version=3, `2` columns, `3` rows, optional `4` terminal type, `5` Unix
+timestamp seconds) and key `3` Cast metadata map (`1` recording UUID bytes,
+`2` connection UUID bytes, `3` session UUID bytes, `4` operation UUID bytes,
+`5` flow, `6` task, `7` PTY boolean, `8` producer hash bytes, `9` start
+timestamp). Kind `2` (output) has `2` absolute elapsed nanoseconds, `3`
+stream (`1` terminal, `2` stdout, `3` stderr), `4` raw bytes (1..65536).
+Kind `3` (resize) has `2` elapsed nanoseconds, `3` columns, `4` rows. Kind
+`4` (marker) has `2` elapsed nanoseconds and `3` label. Kind `5` (padding
+checkpoint) has no other keys; it regenerates exactly the CastWriter SHA-256
+alignment comment, never an embedded Cast line. Kind `6` (result) has `2`
+elapsed nanoseconds, `3` result map (`1` status: completed=1, failed=2,
+incomplete=3; `2` end timestamp, optional `3` reason), and optional `4`
+exit code. Timestamps use the standard native timestamp array. Optional
+empty text fields are omitted; null, unknown keys, and JSON/Asciicast lines
+as event encodings are forbidden. Setup occurs once first, result once last;
+the same CastWriter validations and byte rendering apply across chunks.
+
+Continuation chunks have no keys `9`..`13`; they require key `14` for the
+last actual event's absolute elapsed nanoseconds (zero is allowed). Keys `6`
+and `7` contain a real, block-aligned SHA-256 state and byte count of the
+reconstructed Cast content including its hash domain. Final chunks omit key
+`14` and instead set `7` to zero and `6` to
+the final Cast digest; they include **all** keys `9`..`13`. The signed final
+chunk thus binds status, digest, standalone Cast signature, exact Cast byte
+count, and end time even if the seal has not yet been committed. A seal must
+match its final chunk. The signed `head.cbor` recovery state requires an exact
+durable-prefix comparison. The standalone recovery core verifies this checkpoint
+and every committed successor without a private decryption key. It reuses a
+committed final chunk's signed end time when writing a missing seal. Otherwise
+it appends a new encrypted or clear CBOR incomplete-result chunk by resuming
+the last signed, block-aligned Cast SHA-256 state; the result has no exit event
+and uses the last signed event elapsed time rather than inventing terminal
+output or timing. Only uncommitted tails after the checkpoint
+may be truncated. Recovery requires an exclusively locked, writable `WriteAt`
+file; its core performs body-Sync and commit-byte-Sync, while the caller must
+sync the directory after publication. An empty regular read/write file opened
+without `O_APPEND` can use `NativeDurableRecordingOutput`: it writes and syncs
+the magic, then writes each complete signed unit with commit-state 0, syncs,
+sets state 1 with `WriteAt`, and syncs again. Its byte counts and content hashes
+cover the final state-1 frames. Failure poisons the sink; a caller must not
+retry an append without recovery. Passing a bare `*os.File` to the writer is
+rejected. The ordinary in-memory `io.Writer` path is NOT a durable recording
+writer. The local repository adapter supplies the lock, quota, signed-head
+replacement, and directory sync. No external rollback anchor is provided.
+If the head was not yet persisted, recovery may only seal an otherwise
+complete chain ending in a committed signed final chunk with no uncommitted
+tail; a continuation without head fails closed rather than dropping events.
+
+The offline FullVerify/Export API requires the **same immutable** `io.ReaderAt`
+snapshot across all passes. It verifies the outer container, then streams
+independently authenticated/decompressed CBOR groups (at most 2 MiB decoded
+each) through a stateful renderer into a pipe consumed by the Cast verifier.
+It checks every signed Cast continuation, final digest/signature, result, and
+exact Cast byte count before writing any export bytes. Export re-reads the
+same immutable snapshot in a second bounded pass; no full Cast or aggregate
+group history is buffered and no sensitive temporary plaintext file is made.
+Configured container, chunk and Cast limits (up to 16 GiB Cast) still apply.
+If the destination fails mid-write, it may contain a partial *verified* Cast;
+atomic export-file publication is the caller's responsibility. The standalone
+`RenderNativeRecordingCast` returning `[]byte` remains an in-memory helper,
+not the large-artifact export path.
 
 An audit record commits independently: write and sync its framed body, then
 set and sync its commit-state byte, then atomically replace and sync the signed
@@ -263,7 +321,8 @@ status, sizes, and recipient identity. Outer verification without decryption
 does not claim that encrypted inner Cast content is semantically valid.
 Offline recovery of `.becast` must remain possible without the recipient's
 private key by using signed continuation state, without inventing terminal
-output. A valid `.cast` export is reconstructed deterministically, checked
+output or overriding a final chunk's completed status. A valid `.cast` export
+is reconstructed deterministically, checked
 against the sealed digest and signature, and never emitted without explicit
 `--with-sensitive`. It is the only Asciicast representation; no `.cast` or
 `.jsonl` is generated automatically on disk or at remote targets.

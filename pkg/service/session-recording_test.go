@@ -54,7 +54,7 @@ func TestPrepareRecordingDisabledIgnoresUnusableNestedDirectory(t *testing.T) {
 	require.NoError(t, svc.Close())
 }
 
-func TestPrepareRecordingOpensCastZstdRepository(t *testing.T) {
+func TestPrepareRecordingOpensNativeBCastRepository(t *testing.T) {
 	root := t.TempDir()
 	conf := sessionRecordingTestConfiguration(t, root)
 	enableSessionRecording(&conf.Auditlogs[0])
@@ -63,11 +63,10 @@ func TestPrepareRecordingOpensCastZstdRepository(t *testing.T) {
 	require.NoError(t, err)
 	repository := svc.recordingRepositories[configuration.DefaultAuditlogName]
 	require.NotNil(t, repository)
-	require.Equal(t, sessionRecordingRepositoryFormatCastZstd, repository.format)
-	require.NotNil(t, repository.castZstd)
-	require.Nil(t, repository.becast)
+	require.Equal(t, sessionRecordingRepositoryFormatBCast, repository.format)
+	require.NotNil(t, repository.native)
 	require.Equal(t, []configuration.AuditlogName{configuration.DefaultAuditlogName}, svc.recordingRepositoryOrder)
-	requireRecordingFormat(t, conf.Auditlogs[0].Recording.Directory, "cast-zstd/v1\n")
+	requireRecordingFormat(t, conf.Auditlogs[0].Recording.Directory, "bcast/v1\n")
 	require.NoError(t, svc.Close())
 }
 
@@ -187,7 +186,7 @@ func TestPrepareRecordingRejectsExistingSpoolAboveLimitWithoutDeletingData(t *te
 	auditlog := &conf.Auditlogs[0]
 	identity, err := audit.EnsureIdentity(auditlog)
 	require.NoError(t, err)
-	repository, err := recording.NewLocalCastZstdRepository(t.Context(), auditlog.Recording.Directory, identity, recording.CastZstdVerifyOptions{}, recording.LocalRepositoryOptions{
+	repository, err := recording.NewLocalNativeRecordingRepository(t.Context(), auditlog.Recording.Directory, identity, nil, recording.NativeRecordingVerifyOptions{}, recording.LocalRepositoryOptions{
 		MaximumSpoolBytes: auditlog.Recording.MaximumSpoolBytes,
 	})
 	require.NoError(t, err)
@@ -207,8 +206,8 @@ func TestPrepareRecordingRejectsExistingSpoolAboveLimitWithoutDeletingData(t *te
 	require.Equal(t, payload, after)
 }
 
-func TestPrepareRecordingOpensBECastWithoutZstdFallback(t *testing.T) {
-	t.Run("opens BECast", func(t *testing.T) {
+func TestPrepareRecordingOpensEncryptedNativeWithoutLegacyFallback(t *testing.T) {
+	t.Run("opens encrypted native", func(t *testing.T) {
 		root := t.TempDir()
 		conf := sessionRecordingTestConfiguration(t, root)
 		enableSessionRecording(&conf.Auditlogs[0])
@@ -219,9 +218,8 @@ func TestPrepareRecordingOpensBECastWithoutZstdFallback(t *testing.T) {
 		repository := svc.recordingRepositories[configuration.DefaultAuditlogName]
 		require.NotNil(t, repository)
 		require.Equal(t, sessionRecordingRepositoryFormatBECast, repository.format)
-		require.Nil(t, repository.castZstd)
-		require.NotNil(t, repository.becast)
-		requireRecordingFormat(t, conf.Auditlogs[0].Recording.Directory, "becast/v1\n")
+		require.NotNil(t, repository.native)
+		requireRecordingFormat(t, conf.Auditlogs[0].Recording.Directory, "becast-cbor/v1\n")
 		require.NoError(t, svc.Close())
 	})
 
@@ -252,7 +250,7 @@ func TestSessionRecordingRepositoryCreatesAndSealsActiveFormats(t *testing.T) {
 		encrypted bool
 		suffix    string
 	}{
-		{name: "Cast Zstandard", suffix: ".cast.zst"},
+		{name: "BCast", suffix: ".bcast"},
 		{name: "BECast", encrypted: true, suffix: ".becast"},
 	}
 	for _, test := range tests {
@@ -296,10 +294,17 @@ func TestSessionRecordingRepositoryCreatesAndSealsActiveFormats(t *testing.T) {
 			require.NoError(t, err)
 			startedEvent := sessionRecordingAuditEvent(metadata, audit.EventNameSessionRecordingStarted, "", "", nil, 0, nil, nil)
 			require.NoError(t, repository.receipts.BeginLifecycle(t.Context(), fileName, startedAt, startedEvent))
+			exists, err := repository.recordingStateExists(recordingId)
+			require.NoError(t, err)
+			require.False(t, exists)
 			active, err := repository.createActive(t.Context(), header, metadata, 300)
 			require.NoError(t, err)
+			exists, err = repository.recordingStateExists(recordingId)
+			require.NoError(t, err)
+			require.True(t, exists)
 			require.NoError(t, active.WriteOutput(time.Second, recording.OutputStreamTerminal, []byte("adapter output\r\n")))
 			require.NoError(t, active.Checkpoint())
+			require.FileExists(t, filepath.Join(conf.Auditlogs[0].Recording.Directory, "active", recordingId.String(), "head.cbor"))
 			exitStatus := uint32(7)
 			terminalEvent := sessionRecordingAuditEvent(metadata, audit.EventNameSessionRecordingCompleted, audit.EventOutcomeSuccess, "", nil, 2*time.Second, nil, &exitStatus)
 			require.NoError(t, repository.receipts.StageLifecycle(t.Context(), fileName, terminalEvent))
@@ -312,20 +317,37 @@ func TestSessionRecordingRepositoryCreatesAndSealsActiveFormats(t *testing.T) {
 			require.Equal(t, recording.CastStatusCompleted, summary.status)
 			require.False(t, summary.digest.IsZero())
 			require.NoError(t, active.Close())
+			names, err := repository.ListSealedArtifactNames(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, []string{fileName}, names)
+			artifact, err := repository.OpenSealedArtifact(t.Context(), fileName)
+			require.NoError(t, err)
+			remote, err := artifact.RemoteArtifact()
+			require.NoError(t, err)
+			require.Equal(t, fileName, remote.FileName())
+			require.NoError(t, artifact.Close())
+			_, err = repository.OpenSealedArtifact(t.Context(), recordingId.String()+".cast.zst")
+			require.ErrorContains(t, err, "does not match repository format")
 
 			sealedPath := filepath.Join(conf.Auditlogs[0].Recording.Directory, "sealed", recordingId.String()+test.suffix)
 			file, err := os.Open(sealedPath)
 			require.NoError(t, err)
 			info, err := file.Stat()
 			require.NoError(t, err)
+			var verification *recording.NativeRecordingVerification
 			if test.encrypted {
-				verification, verifyErr := recording.VerifyBECast(file, info.Size(), recording.BECastVerifyOptions{ExpectedProducerId: identity.ProducerId()})
-				require.NoError(t, verifyErr)
-				require.Equal(t, recording.CastStatusCompleted, verification.Summary.Status)
+				verification, err = recording.VerifyNativeRecordingOuter(file, info.Size(), recording.NativeRecordingVerifyOptions{ExpectedProducerId: identity.ProducerId()})
 			} else {
-				verification, verifyErr := recording.VerifyCastZstd(file, info.Size(), recording.CastZstdVerifyOptions{ExpectedProducerId: identity.ProducerId()})
-				require.NoError(t, verifyErr)
-				require.Equal(t, recording.CastStatusCompleted, verification.Summary.Status)
+				verification, err = recording.VerifyNativeRecordingFull(file, info.Size(), nil, recording.NativeRecordingVerifyOptions{ExpectedProducerId: identity.ProducerId()})
+			}
+			require.NoError(t, err)
+			require.Equal(t, summary.digest, recording.CastDigest(verification.Seal.CastDigest))
+			require.Equal(t, recordingId, recording.Id(verification.Header.RecordingId))
+			if test.encrypted {
+				require.Equal(t, uint8(1), verification.Header.Encryption)
+				require.NotEmpty(t, verification.Header.Recipient)
+			} else {
+				require.Equal(t, uint8(0), verification.Header.Encryption)
 			}
 			require.NoError(t, file.Close())
 			require.NoError(t, repository.Close())
@@ -345,7 +367,7 @@ func TestPrepareRecordingFailsClosedOnExistingRepositoryLockAndCanRetry(t *testi
 	enableSessionRecording(&conf.Auditlogs[0])
 	identity, err := audit.EnsureIdentity(&conf.Auditlogs[0])
 	require.NoError(t, err)
-	locked, err := recording.NewLocalCastZstdRepository(context.Background(), conf.Auditlogs[0].Recording.Directory, identity, recording.CastZstdVerifyOptions{}, recording.LocalRepositoryOptions{
+	locked, err := recording.NewLocalNativeRecordingRepository(context.Background(), conf.Auditlogs[0].Recording.Directory, identity, nil, recording.NativeRecordingVerifyOptions{}, recording.LocalRepositoryOptions{
 		MaximumSpoolBytes: conf.Auditlogs[0].Recording.MaximumSpoolBytes,
 	})
 	require.NoError(t, err)
@@ -409,7 +431,7 @@ func TestPrepareRecordingLaterFailureReleasesEarlierRepositoryLock(t *testing.T)
 	conf.Auditlogs = append(conf.Auditlogs, second)
 	secondIdentity, err := audit.EnsureIdentity(&conf.Auditlogs[1])
 	require.NoError(t, err)
-	lockedSecond, err := recording.NewLocalCastZstdRepository(context.Background(), conf.Auditlogs[1].Recording.Directory, secondIdentity, recording.CastZstdVerifyOptions{}, recording.LocalRepositoryOptions{
+	lockedSecond, err := recording.NewLocalNativeRecordingRepository(context.Background(), conf.Auditlogs[1].Recording.Directory, secondIdentity, nil, recording.NativeRecordingVerifyOptions{}, recording.LocalRepositoryOptions{
 		MaximumSpoolBytes: conf.Auditlogs[1].Recording.MaximumSpoolBytes,
 	})
 	require.NoError(t, err)
@@ -420,14 +442,14 @@ func TestPrepareRecordingLaterFailureReleasesEarlierRepositoryLock(t *testing.T)
 	require.Nil(t, svc)
 	firstIdentity, identityErr := audit.EnsureIdentity(&conf.Auditlogs[0])
 	require.NoError(t, identityErr)
-	firstRepository, openErr := recording.NewLocalCastZstdRepository(context.Background(), conf.Auditlogs[0].Recording.Directory, firstIdentity, recording.CastZstdVerifyOptions{}, recording.LocalRepositoryOptions{
+	firstRepository, openErr := recording.NewLocalNativeRecordingRepository(context.Background(), conf.Auditlogs[0].Recording.Directory, firstIdentity, nil, recording.NativeRecordingVerifyOptions{}, recording.LocalRepositoryOptions{
 		MaximumSpoolBytes: conf.Auditlogs[0].Recording.MaximumSpoolBytes,
 	})
 	require.NoError(t, openErr, "the first repository lock must be released when the second open fails")
 	require.NoError(t, firstRepository.Close())
 }
 
-func TestPrepareRecordingRecoversActiveCastZstdAsIncomplete(t *testing.T) {
+func TestPrepareRecordingRecoversActiveBCastAsIncomplete(t *testing.T) {
 	root := t.TempDir()
 	conf := sessionRecordingTestConfiguration(t, root)
 	enableSessionRecording(&conf.Auditlogs[0])
@@ -482,7 +504,7 @@ func TestSessionRecordingLifecycleStartupRecoveryCreatesIncompleteEvent(t *testi
 		name      string
 		encrypted bool
 	}{
-		{name: "Cast Zstandard"},
+		{name: "BCast"},
 		{name: "BECast without recipient private key", encrypted: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {

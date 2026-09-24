@@ -25,19 +25,18 @@ import (
 type sessionRecordingRepositoryFormat uint8
 
 const (
-	sessionRecordingRepositoryFormatCastZstd sessionRecordingRepositoryFormat = iota + 1
+	sessionRecordingRepositoryFormatBCast sessionRecordingRepositoryFormat = iota + 1
 	sessionRecordingRepositoryFormatBECast
 
 	defaultSessionRecordingColumns = 80
 	defaultSessionRecordingRows    = 24
-	sessionRecordingCastZstdSuffix = ".cast.zst"
+	sessionRecordingBCastSuffix    = ".bcast"
 	sessionRecordingBECastSuffix   = ".becast"
 )
 
 type sessionRecordingRepository struct {
 	format        sessionRecordingRepositoryFormat
-	castZstd      *recording.LocalCastZstdRepository
-	becast        *recording.LocalBECastRepository
+	native        *recording.LocalNativeRecordingRepository
 	receipts      *audit.RemoteArtifactReceipts
 	auditlog      configuration.AuditlogName
 	producerId    audit.ProducerId
@@ -224,36 +223,23 @@ func newSessionRecordingRepository(ctx context.Context, configuration configurat
 		MaximumSpoolBytes: configuration.MaximumSpoolBytes,
 	}
 	prepareSealed := &sessionRecordingReceiptPreparer{provider: receiptProvider}
-	if encryptionPublicKey.IsZero() {
-		repository, err := recording.NewLocalCastZstdRepositoryWithArtifactPreparer(ctx, configuration.Directory, identity, recording.CastZstdVerifyOptions{}, repositoryOptions, prepareSealed)
+	base.format = sessionRecordingRepositoryFormatBCast
+	var recipient *crypto.AgeSshRecipient
+	if !encryptionPublicKey.IsZero() {
+		keys, err := encryptionPublicKey.Get()
 		if err != nil {
-			return nil, goerrors.Join(err, receiptProvider.close())
+			return nil, fmt.Errorf("cannot parse Recording encryption public key: %w", err)
 		}
-		receipts, err := receiptProvider.get()
+		if len(keys) != 1 {
+			return nil, errors.Config.Newf("Recording encryption requires exactly one SSH public key")
+		}
+		recipient, err = crypto.NewAgeSshRecipient(keys[0])
 		if err != nil {
-			return nil, goerrors.Join(err, repository.Close(), receiptProvider.close())
+			return nil, fmt.Errorf("cannot create Recording encryption recipient: %w", err)
 		}
-		base.format = sessionRecordingRepositoryFormatCastZstd
-		base.castZstd = repository
-		base.receipts = receipts
-		if err := base.validateSealedReceipts(ctx); err != nil {
-			return nil, goerrors.Join(err, base.Close())
-		}
-		return &base, nil
+		base.format = sessionRecordingRepositoryFormatBECast
 	}
-
-	keys, err := encryptionPublicKey.Get()
-	if err != nil {
-		return nil, fmt.Errorf("cannot parse Recording encryption public key: %w", err)
-	}
-	if len(keys) != 1 {
-		return nil, errors.Config.Newf("Recording encryption requires exactly one SSH public key")
-	}
-	recipient, err := crypto.NewAgeSshRecipient(keys[0])
-	if err != nil {
-		return nil, fmt.Errorf("cannot create Recording encryption recipient: %w", err)
-	}
-	repository, err := recording.NewLocalBECastRepositoryWithArtifactPreparer(ctx, configuration.Directory, identity, recipient, recording.BECastVerifyOptions{}, repositoryOptions, prepareSealed)
+	repository, err := recording.NewLocalNativeRecordingRepositoryWithArtifactPreparer(ctx, configuration.Directory, identity, recipient, recording.NativeRecordingVerifyOptions{}, repositoryOptions, prepareSealed)
 	if err != nil {
 		return nil, goerrors.Join(err, receiptProvider.close())
 	}
@@ -261,8 +247,7 @@ func newSessionRecordingRepository(ctx context.Context, configuration configurat
 	if err != nil {
 		return nil, goerrors.Join(err, repository.Close(), receiptProvider.close())
 	}
-	base.format = sessionRecordingRepositoryFormatBECast
-	base.becast = repository
+	base.native = repository
 	base.receipts = receipts
 	if err := base.validateSealedReceipts(ctx); err != nil {
 		return nil, goerrors.Join(err, base.Close())
@@ -364,34 +349,17 @@ func (this *sessionRecordingRepository) validateSealedReceipts(ctx context.Conte
 		}
 		return goerrors.Join(err, artifact.Close())
 	}
-	switch this.format {
-	case sessionRecordingRepositoryFormatCastZstd:
-		ids, err := this.castZstd.ListSealed(ctx)
+	ids, err := this.native.ListSealed(ctx)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		artifact, err := this.native.OpenSealed(ctx, id)
 		if err != nil {
 			return err
 		}
-		for _, id := range ids {
-			artifact, err := this.castZstd.OpenSealed(ctx, id)
-			if err != nil {
-				return err
-			}
-			if err := validate(artifact); err != nil {
-				return err
-			}
-		}
-	case sessionRecordingRepositoryFormatBECast:
-		ids, err := this.becast.ListSealed(ctx)
-		if err != nil {
+		if err := validate(artifact); err != nil {
 			return err
-		}
-		for _, id := range ids {
-			artifact, err := this.becast.OpenSealed(ctx, id)
-			if err != nil {
-				return err
-			}
-			if err := validate(artifact); err != nil {
-				return err
-			}
 		}
 	}
 	return nil
@@ -401,25 +369,16 @@ func (this *sessionRecordingRepository) ListSealedArtifactNames(ctx context.Cont
 	if this == nil {
 		return nil, errors.System.Newf("nil session Recording repository")
 	}
-	var ids []recording.Id
-	var suffix string
-	var err error
-	switch this.format {
-	case sessionRecordingRepositoryFormatCastZstd:
-		ids, err = this.castZstd.ListSealed(ctx)
-		suffix = sessionRecordingCastZstdSuffix
-	case sessionRecordingRepositoryFormatBECast:
-		ids, err = this.becast.ListSealed(ctx)
-		suffix = sessionRecordingBECastSuffix
-	default:
-		return nil, errors.System.Newf("unknown session Recording repository format")
-	}
+	ids, err := this.native.ListSealed(ctx)
 	if err != nil {
 		return nil, err
 	}
 	result := make([]string, len(ids))
 	for index, id := range ids {
-		result[index] = id.String() + suffix
+		result[index], err = this.artifactName(id)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return result, nil
 }
@@ -428,26 +387,11 @@ func (this *sessionRecordingRepository) OpenSealedArtifact(ctx context.Context, 
 	if this == nil {
 		return nil, errors.System.Newf("nil session Recording repository")
 	}
-	var suffix string
-	switch this.format {
-	case sessionRecordingRepositoryFormatCastZstd:
-		suffix = sessionRecordingCastZstdSuffix
-	case sessionRecordingRepositoryFormatBECast:
-		suffix = sessionRecordingBECastSuffix
-	default:
-		return nil, errors.System.Newf("unknown session Recording repository format")
+	id, err := this.recordingIdFromArtifactName(name)
+	if err != nil {
+		return nil, err
 	}
-	if !strings.HasSuffix(name, suffix) {
-		return nil, errors.Config.Newf("sealed session Recording artifact %q does not match repository format", name)
-	}
-	var id recording.Id
-	if err := id.UnmarshalText([]byte(strings.TrimSuffix(name, suffix))); err != nil || id.String()+suffix != name {
-		return nil, errors.Config.Newf("illegal sealed session Recording artifact name %q", name)
-	}
-	if this.format == sessionRecordingRepositoryFormatCastZstd {
-		return this.castZstd.OpenSealed(ctx, id)
-	}
-	return this.becast.OpenSealed(ctx, id)
+	return this.native.OpenSealed(ctx, id)
 }
 
 func (this *sessionRecordingRepository) retentionCandidates(ctx context.Context, cutoff time.Time) ([]sessionRecordingRetentionCandidate, error) {
@@ -493,16 +437,7 @@ func (this *sessionRecordingRepository) deleteRetentionCandidate(ctx context.Con
 		return false, candidate, err
 	}
 	candidate.receipt.DeletionStarted = true
-	var deleted bool
-	var err error
-	switch this.format {
-	case sessionRecordingRepositoryFormatCastZstd:
-		deleted, err = this.castZstd.DeleteSealed(ctx, candidate.recordingId, candidate.receipt.ArtifactDigest, candidate.receipt.Size)
-	case sessionRecordingRepositoryFormatBECast:
-		deleted, err = this.becast.DeleteSealed(ctx, candidate.recordingId, candidate.receipt.ArtifactDigest, candidate.receipt.Size)
-	default:
-		return false, candidate, errors.System.Newf("unknown session Recording repository format")
-	}
+	deleted, err := this.native.DeleteSealed(ctx, candidate.recordingId, candidate.receipt.ArtifactDigest, candidate.receipt.Size)
 	if err != nil {
 		return deleted, candidate, err
 	}
@@ -526,8 +461,8 @@ func (this *sessionRecordingRepository) completeRetentionCandidate(ctx context.C
 func (this *sessionRecordingRepository) recordingIdFromArtifactName(name string) (recording.Id, error) {
 	var suffix string
 	switch this.format {
-	case sessionRecordingRepositoryFormatCastZstd:
-		suffix = sessionRecordingCastZstdSuffix
+	case sessionRecordingRepositoryFormatBCast:
+		suffix = sessionRecordingBCastSuffix
 	case sessionRecordingRepositoryFormatBECast:
 		suffix = sessionRecordingBECastSuffix
 	default:
@@ -545,8 +480,8 @@ func (this *sessionRecordingRepository) recordingIdFromArtifactName(name string)
 
 func (this *sessionRecordingRepository) artifactName(id recording.Id) (string, error) {
 	switch this.format {
-	case sessionRecordingRepositoryFormatCastZstd:
-		return id.String() + sessionRecordingCastZstdSuffix, nil
+	case sessionRecordingRepositoryFormatBCast:
+		return id.String() + sessionRecordingBCastSuffix, nil
 	case sessionRecordingRepositoryFormatBECast:
 		return id.String() + sessionRecordingBECastSuffix, nil
 	default:
@@ -555,14 +490,7 @@ func (this *sessionRecordingRepository) artifactName(id recording.Id) (string, e
 }
 
 func (this *sessionRecordingRepository) recordingStateExists(id recording.Id) (bool, error) {
-	switch this.format {
-	case sessionRecordingRepositoryFormatCastZstd:
-		return this.castZstd.RecordingStateExists(id)
-	case sessionRecordingRepositoryFormatBECast:
-		return this.becast.RecordingStateExists(id)
-	default:
-		return false, errors.System.Newf("unknown session Recording repository format")
-	}
+	return this.native.RecordingStateExists(id)
 }
 
 func (this *sessionRecordingRepository) stageLifecycle(ctx context.Context, id recording.Id, event audit.Event) error {
@@ -697,38 +625,19 @@ func (this *sessionRecordingRepository) createActive(ctx context.Context, header
 	if this == nil {
 		return nil, errors.System.Newf("nil session Recording repository")
 	}
-	switch this.format {
-	case sessionRecordingRepositoryFormatCastZstd:
-		active, err := this.castZstd.CreateActive(ctx, header, metadata, chunkSize)
-		if err != nil {
-			return nil, err
-		}
-		return &activeSessionRecording{
-			recordingSink: active,
-			checkpoint:    active.Checkpoint,
-			seal: func(elapsed time.Duration, result recording.CastResult, exitStatus *uint32) (sessionRecordingSealSummary, error) {
-				summary, err := active.Seal(elapsed, result, exitStatus)
-				return sessionRecordingSealSummary{recordingId: summary.RecordingId, status: summary.Status, digest: summary.Digest}, err
-			},
-			close: active.Close,
-		}, nil
-	case sessionRecordingRepositoryFormatBECast:
-		active, err := this.becast.CreateActive(ctx, header, metadata, chunkSize)
-		if err != nil {
-			return nil, err
-		}
-		return &activeSessionRecording{
-			recordingSink: active,
-			checkpoint:    active.Checkpoint,
-			seal: func(elapsed time.Duration, result recording.CastResult, exitStatus *uint32) (sessionRecordingSealSummary, error) {
-				summary, err := active.Seal(elapsed, result, exitStatus)
-				return sessionRecordingSealSummary{recordingId: summary.RecordingId, status: summary.Status, digest: summary.Digest}, err
-			},
-			close: active.Close,
-		}, nil
-	default:
-		return nil, errors.System.Newf("illegal session Recording repository format %d", this.format)
+	active, err := this.native.CreateActive(ctx, header, metadata, chunkSize)
+	if err != nil {
+		return nil, err
 	}
+	return &activeSessionRecording{
+		recordingSink: active,
+		checkpoint:    active.Checkpoint,
+		seal: func(elapsed time.Duration, result recording.CastResult, exitStatus *uint32) (sessionRecordingSealSummary, error) {
+			summary, err := active.Seal(elapsed, result, exitStatus)
+			return sessionRecordingSealSummary{recordingId: summary.RecordingId, status: summary.Status, digest: summary.Digest}, err
+		},
+		close: active.Close,
+	}, nil
 }
 
 func (this *activeSessionRecording) Checkpoint() error {
@@ -1303,36 +1212,18 @@ func (this *sessionRecordingRepository) startupRecoveries() []sessionRecordingSt
 	if this == nil {
 		return nil
 	}
-	switch this.format {
-	case sessionRecordingRepositoryFormatCastZstd:
-		recoveries := this.castZstd.StartupRecoveries()
-		result := make([]sessionRecordingStartupRecovery, len(recoveries))
-		for index, recovery := range recoveries {
-			result[index] = sessionRecordingStartupRecovery{
-				recordingId:   recovery.Summary.RecordingId,
-				status:        recovery.Summary.Status,
-				digest:        recovery.Summary.Digest,
-				truncated:     recovery.Truncated,
-				alreadySealed: recovery.AlreadySealed,
-			}
+	recoveries := this.native.StartupRecoveries()
+	result := make([]sessionRecordingStartupRecovery, len(recoveries))
+	for index, recovery := range recoveries {
+		result[index] = sessionRecordingStartupRecovery{
+			recordingId:   recovery.Summary.RecordingId,
+			status:        recovery.Summary.Status,
+			digest:        recovery.Summary.Digest,
+			truncated:     recovery.Truncated,
+			alreadySealed: recovery.AlreadySealed,
 		}
-		return result
-	case sessionRecordingRepositoryFormatBECast:
-		recoveries := this.becast.StartupRecoveries()
-		result := make([]sessionRecordingStartupRecovery, len(recoveries))
-		for index, recovery := range recoveries {
-			result[index] = sessionRecordingStartupRecovery{
-				recordingId:   recovery.Summary.RecordingId,
-				status:        recovery.Summary.Status,
-				digest:        recovery.Summary.Digest,
-				truncated:     recovery.Truncated,
-				alreadySealed: recovery.AlreadySealed,
-			}
-		}
-		return result
-	default:
-		return nil
 	}
+	return result
 }
 
 func (this *sessionRecordingRepository) Close() error {
@@ -1347,18 +1238,8 @@ func (this *sessionRecordingRepository) close(ignoreAcceptedFailure bool) error 
 	if this == nil {
 		return nil
 	}
-	switch this.format {
-	case sessionRecordingRepositoryFormatCastZstd:
-		if ignoreAcceptedFailure {
-			return goerrors.Join(this.castZstd.CloseAfterAcceptedFailure(), this.receipts.Close())
-		}
-		return goerrors.Join(this.castZstd.Close(), this.receipts.Close())
-	case sessionRecordingRepositoryFormatBECast:
-		if ignoreAcceptedFailure {
-			return goerrors.Join(this.becast.CloseAfterAcceptedFailure(), this.receipts.Close())
-		}
-		return goerrors.Join(this.becast.Close(), this.receipts.Close())
-	default:
-		return nil
+	if ignoreAcceptedFailure {
+		return goerrors.Join(this.native.CloseAfterAcceptedFailure(), this.receipts.Close())
 	}
+	return goerrors.Join(this.native.Close(), this.receipts.Close())
 }

@@ -144,7 +144,7 @@ func TestSessionRecordingStopFailurePreservesPreparedLifecycle(t *testing.T) {
 			receipts, err := audit.NewRemoteArtifactReceipts(filepath.Join(root, "recordings"), identity, auditlog.Name, nil, sessionRecordingLifecycleTestQuota{})
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, receipts.Close()) })
-			repository := &sessionRecordingRepository{format: sessionRecordingRepositoryFormatCastZstd, receipts: receipts}
+			repository := &sessionRecordingRepository{format: sessionRecordingRepositoryFormatBCast, receipts: receipts}
 			recordingId, err := recording.NewId()
 			require.NoError(t, err)
 			fileName, err := repository.artifactName(recordingId)
@@ -960,11 +960,17 @@ func enableSessionRecordingForLifecycleTest(conf *configuration.Configuration, r
 	auditlog.Recording.Directory = filepath.Join(root, "recordings")
 }
 
-func verifyOnlySessionRecording(t *testing.T, service *service, root string) *recording.CastZstdVerification {
+type sessionRecordingTestVerification struct {
+	Cast    *recording.CastVerification
+	Summary recording.NativeRecordingSummary
+}
+
+func verifyOnlySessionRecording(t *testing.T, service *service, root string) *sessionRecordingTestVerification {
 	t.Helper()
 	entries, err := os.ReadDir(filepath.Join(root, "recordings", "sealed"))
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
+	require.Equal(t, ".bcast", filepath.Ext(entries[0].Name()))
 	path := filepath.Join(root, "recordings", "sealed", entries[0].Name())
 	file, err := os.Open(path)
 	require.NoError(t, err)
@@ -972,11 +978,19 @@ func verifyOnlySessionRecording(t *testing.T, service *service, root string) *re
 	info, err := file.Stat()
 	require.NoError(t, err)
 	auditlog := service.flowAuditlogs[service.Configuration.Flows[0].Name]
-	verification, err := recording.VerifyCastZstd(file, info.Size(), recording.CastZstdVerifyOptions{
+	var output bytes.Buffer
+	verification, err := recording.ExportNativeRecordingCast(file, info.Size(), nil, &output, recording.NativeRecordingVerifyOptions{
 		ExpectedProducerId: service.auditIdentities[auditlog].ProducerId(),
 	})
 	require.NoError(t, err)
-	return verification
+	cast, err := recording.VerifyCast(bytes.NewReader(output.Bytes()), recording.CastVerifyOptions{
+		ExpectedProducerId: service.auditIdentities[auditlog].ProducerId(),
+	})
+	require.NoError(t, err)
+	require.Equal(t, cast.Digest, recording.CastDigest(verification.Seal.CastDigest))
+	return &sessionRecordingTestVerification{Cast: cast, Summary: recording.NativeRecordingSummary{
+		RecordingId: recording.Id(verification.Header.RecordingId), Status: cast.Result.Status, Digest: cast.Digest,
+	}}
 }
 
 func sessionRecordingCastDigest(t *testing.T, service *service, root string) string {
@@ -997,14 +1011,14 @@ func exportOnlySessionRecording(t *testing.T, service *service, root string) str
 	require.NoError(t, err)
 	auditlog := service.flowAuditlogs[service.Configuration.Flows[0].Name]
 	var output bytes.Buffer
-	_, err = recording.ExportCastZstd(file, info.Size(), &output, recording.CastZstdVerifyOptions{
+	_, err = recording.ExportNativeRecordingCast(file, info.Size(), nil, &output, recording.NativeRecordingVerifyOptions{
 		ExpectedProducerId: service.auditIdentities[auditlog].ProducerId(),
 	})
 	require.NoError(t, err)
 	return output.String()
 }
 
-func requireSessionRecordingAuditCorrelation(t *testing.T, verification *recording.CastZstdVerification, started, completed audit.Event) {
+func requireSessionRecordingAuditCorrelation(t *testing.T, verification *sessionRecordingTestVerification, started, completed audit.Event) {
 	t.Helper()
 	metadata := verification.Cast.Metadata
 	require.Equal(t, metadata.RecordingId.String(), started.RecordingId)

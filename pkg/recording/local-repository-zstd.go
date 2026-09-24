@@ -165,6 +165,8 @@ func (this *localCastZstdFormat) contentFileName() string {
 	return localCastZstdContentFileName
 }
 
+func (this *localCastZstdFormat) headFileName() string { return localHeadFileName }
+
 func (this *localCastZstdFormat) sealedSuffix() string {
 	return localCastZstdSealedSuffix
 }

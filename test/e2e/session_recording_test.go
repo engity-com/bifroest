@@ -16,6 +16,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/recording"
 )
 
 func recordingProducerID(t *testing.T, identityPath string) string {
@@ -42,7 +43,7 @@ func sealedSessionRecordingArtifact(t *testing.T, recordingDirectory string) str
 		}
 		artifacts := make([]string, 0, len(entries))
 		for _, entry := range entries {
-			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".cast.zst") {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".bcast") {
 				artifacts = append(artifacts, entry.Name())
 			}
 		}
@@ -102,27 +103,23 @@ func verifySessionRecordingArtifact(t *testing.T, f *fixture, artifact, producer
 			Valid   bool `json:"valid"`
 			Trusted bool `json:"trusted"`
 		} `json:"signature"`
-		Cast *struct {
-			ExitStatus   *uint32 `json:"exitStatus"`
-			OutputEvents uint64  `json:"outputEvents"`
-		} `json:"cast"`
 	}
 	if err := json.Unmarshal([]byte(result.stdout), &inspection); err != nil {
 		t.Fatalf("decode recording inspection: %v\noutput:\n%s", err, result.stdout)
 	}
-	if inspection.Schema != "bifroest.session-recording-inspection/v1" || inspection.Format != "cast-zstd/v1" || inspection.VerificationScope != "full" {
+	if inspection.Schema != "bifroest.session-recording-inspection/v1" || inspection.Format != "bcast/v1" || inspection.VerificationScope != "full" {
 		t.Fatalf("unexpected recording inspection: schema=%q format=%q scope=%q", inspection.Schema, inspection.Format, inspection.VerificationScope)
 	}
 	if inspection.ProducerID != producerID || !inspection.Signature.Valid || !inspection.Signature.Trusted {
 		t.Fatalf("untrusted recording inspection: producer=%q valid=%v trusted=%v", inspection.ProducerID, inspection.Signature.Valid, inspection.Signature.Trusted)
 	}
-	if inspection.Status != "completed" || inspection.Cast == nil || inspection.Cast.ExitStatus == nil || *inspection.Cast.ExitStatus != 23 || inspection.Cast.OutputEvents == 0 {
-		t.Fatalf("unexpected recorded result: status=%q cast=%+v", inspection.Status, inspection.Cast)
+	if inspection.Status != "completed" {
+		t.Fatalf("unexpected recorded status: %q", inspection.Status)
 	}
 
 	exported := filepath.Join(t.TempDir(), "session.cast")
 	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
-	result = runCommand(ctx, f.repoRoot, nil, f.bifroest, "recording", "export", "--expectedProducerId", producerID, "--output", exported, artifact)
+	result = runCommand(ctx, f.repoRoot, nil, f.bifroest, "recording", "export", "--with-sensitive", "--expectedProducerId", producerID, "--output", exported, artifact)
 	cancel()
 	if result.err != nil {
 		t.Fatalf("export sealed recording: %v\nstderr:\n%s", result.err, result.stderr)
@@ -130,6 +127,17 @@ func verifySessionRecordingArtifact(t *testing.T, f *fixture, artifact, producer
 	cast, err := os.ReadFile(exported)
 	if err != nil {
 		t.Fatal(err)
+	}
+	var producer audit.ProducerId
+	if err := producer.Set(producerID); err != nil {
+		t.Fatal(err)
+	}
+	verified, err := recording.VerifyCast(bytes.NewReader(cast), recording.CastVerifyOptions{ExpectedProducerId: producer})
+	if err != nil {
+		t.Fatalf("verify exported Cast: %v", err)
+	}
+	if verified.Result.Status != recording.CastStatusCompleted || verified.ExitStatus == nil || *verified.ExitStatus != 23 || verified.OutputEvents == 0 {
+		t.Fatalf("unexpected exported Cast result: status=%q exitStatus=%v outputEvents=%d", verified.Result.Status, verified.ExitStatus, verified.OutputEvents)
 	}
 	for _, expected := range [][]byte{[]byte("stdout-e2e"), []byte("stderr-e2e")} {
 		if !bytes.Contains(cast, expected) {

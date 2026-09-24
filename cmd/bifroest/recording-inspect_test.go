@@ -46,6 +46,10 @@ func TestRecordingInspectVerifiesCastAndReportsTrust(t *testing.T) {
 			require.NotNil(t, result.Cast)
 			require.Equal(t, uint64(1), result.Cast.OutputEvents)
 			require.NotContains(t, stdout.String(), "sensitive terminal output")
+			require.NotContains(t, stdout.String(), "connectionId")
+			require.NotContains(t, stdout.String(), "sessionId")
+			require.NotContains(t, stdout.String(), "operationId")
+			require.NotContains(t, stdout.String(), "reason")
 		})
 	}
 }
@@ -73,8 +77,71 @@ func TestRecordingInspectReportsContainerFormatsWithoutContent(t *testing.T) {
 			require.Equal(t, test.verificationScope, result.VerificationScope)
 			require.Equal(t, test.cast, result.Cast != nil)
 			require.Positive(t, result.ChunkCount)
+			if test.encrypted {
+				require.Empty(t, result.Status)
+				require.Empty(t, result.CastDigest)
+				require.NotEmpty(t, result.ClaimedCastDigest)
+			}
 			require.NotContains(t, stdout.String(), "sensitive terminal output")
 		})
+	}
+}
+
+func TestRecordingInspectNativeVerificationScopes(t *testing.T) {
+	fixture := newRecordingExportTestFixture(t)
+	for _, test := range []struct {
+		name, path string
+		format     recording.Format
+		scope      string
+	}{
+		{"clear", fixture.nativeClearPath, recording.FormatBcast, "full"},
+		{"encrypted", fixture.nativeEncryptedPath, recording.FormatBECastCBOR, "outer"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			require.NoError(t, doRecordingInspect(&recordingInspectOpts{file: test.path, expectedProducerId: fixture.identity.ProducerId().String()}, &stdout))
+			var result recordingInspectOutput
+			require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
+			require.Equal(t, test.format, result.Format)
+			require.Equal(t, test.scope, result.VerificationScope)
+			require.True(t, result.Signature.Trusted)
+			require.True(t, result.Compressed)
+			require.Equal(t, test.scope == "outer", result.Encrypted)
+			require.Positive(t, result.CastBytes)
+			require.Positive(t, result.ChunkCount)
+			require.Nil(t, result.Cast)
+			require.NotContains(t, stdout.String(), "sensitive terminal output")
+			if test.scope == "outer" {
+				require.NotContains(t, stdout.String(), `"castDigest":`)
+				require.NotContains(t, stdout.String(), `"status":`)
+				require.Empty(t, result.CastDigest)
+				require.Empty(t, result.Status)
+				require.NotEmpty(t, result.ClaimedCastDigest)
+				require.Equal(t, recording.CastStatusCompleted, result.ClaimedStatus)
+				require.NotEmpty(t, result.RecipientFingerprint)
+			} else {
+				require.NotEmpty(t, result.CastDigest)
+				require.Equal(t, recording.CastStatusCompleted, result.Status)
+				require.Empty(t, result.ClaimedCastDigest)
+			}
+		})
+	}
+}
+
+func TestRecordingInspectNativeRejectsCorruptionAndWrongProducer(t *testing.T) {
+	fixture := newRecordingExportTestFixture(t)
+	for _, path := range []string{fixture.nativeClearPath, fixture.nativeEncryptedPath} {
+		var stdout bytes.Buffer
+		err := doRecordingInspect(&recordingInspectOpts{file: path, expectedProducerId: newRecordingExportTestIdentity(t).ProducerId().String()}, &stdout)
+		require.ErrorContains(t, err, "producer mismatch")
+		require.Empty(t, stdout.Bytes())
+		contents, err := stdos.ReadFile(path)
+		require.NoError(t, err)
+		contents[len(contents)/2] ^= 1
+		require.NoError(t, stdos.WriteFile(path, contents, 0600))
+		err = doRecordingInspect(&recordingInspectOpts{file: path}, &stdout)
+		require.Error(t, err)
+		require.Empty(t, stdout.Bytes())
 	}
 }
 

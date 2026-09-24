@@ -119,8 +119,12 @@ func removeLocalFileIfSame(path string, _ os.FileInfo) error {
 }
 
 func writeLocalHead(directory string, value []byte, quota *localQuota) error {
+	return writeLocalHeadNamed(directory, localHeadFileName, value, quota)
+}
+
+func writeLocalHeadNamed(directory, headName string, value []byte, quota *localQuota) error {
 	temporary := filepath.Join(directory, localHeadTempFileName)
-	target := filepath.Join(directory, localHeadFileName)
+	target := filepath.Join(directory, headName)
 	file, err := createLocalFile(temporary)
 	if err != nil {
 		return err
@@ -399,10 +403,14 @@ func discardLocalHeadTemporary(directory string, quota *localQuota) error {
 }
 
 func prepareInterruptedLocalHead(directory string, maximumBytes int64, quota *localQuota, validate func([]byte) error) error {
+	return prepareInterruptedLocalHeadNamed(directory, localHeadFileName, maximumBytes, quota, validate)
+}
+
+func prepareInterruptedLocalHeadNamed(directory, headName string, maximumBytes int64, quota *localQuota, validate func([]byte) error) error {
 	if validate == nil {
 		return errors.Config.Newf("nil local recording head validator")
 	}
-	head := filepath.Join(directory, localHeadFileName)
+	head := filepath.Join(directory, headName)
 	temporary := filepath.Join(directory, localHeadTempFileName)
 	if info, err := os.Lstat(head); err == nil {
 		if !info.Mode().IsRegular() {

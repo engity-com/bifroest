@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	stdos "os"
+	"reflect"
 
 	"github.com/alecthomas/kingpin/v2"
 
@@ -18,6 +19,7 @@ type recordingExportOpts struct {
 	file                    string
 	output                  string
 	force                   bool
+	withSensitive           bool
 	expectedProducerId      string
 	allowUntrusted          bool
 	decryptionIdentityFiles []string
@@ -28,6 +30,8 @@ func registerRecordingExportCmd(parent *kingpin.CmdClause) {
 	cmd := parent.Command("export", "Verify and export a session Recording as asciicast v3.").
 		Action(func(*kingpin.ParseContext) error { return doRecordingExport(&opts, stdos.Stdout) })
 	registerAuditOutputFlags(cmd, &opts.output, &opts.force)
+	cmd.Flag("with-sensitive", "Explicitly authorize exporting sensitive Recording content.").
+		BoolVar(&opts.withSensitive)
 	cmd.Flag("expectedProducerId", "Trusted producer ID containing exactly 64 hexadecimal characters.").
 		PlaceHolder("<producer-id>").
 		StringVar(&opts.expectedProducerId)
@@ -36,7 +40,7 @@ func registerRecordingExportCmd(parent *kingpin.CmdClause) {
 	cmd.Flag("decryptionIdentityFile", "Private SSH key for decrypting BECast; repeat for multiple keys.").
 		PlaceHolder("<path>").
 		StringsVar(&opts.decryptionIdentityFiles)
-	cmd.Arg("file", "Sealed .cast, .cast.zst, or .becast Recording artifact.").
+	cmd.Arg("file", "Sealed .bcast or .becast Recording artifact (legacy .cast and .cast.zst also supported).").
 		Required().
 		StringVar(&opts.file)
 }
@@ -44,6 +48,9 @@ func registerRecordingExportCmd(parent *kingpin.CmdClause) {
 func doRecordingExport(opts *recordingExportOpts, stdout io.Writer) (rErr error) {
 	if opts == nil {
 		return fmt.Errorf("nil options")
+	}
+	if !opts.withSensitive {
+		return fmt.Errorf("recording export requires --with-sensitive")
 	}
 	if stdout == nil {
 		return fmt.Errorf("nil stdout")
@@ -73,6 +80,18 @@ func doRecordingExport(opts *recordingExportOpts, stdout io.Writer) (rErr error)
 	inspection, err := recording.Inspect(snapshot, initial.Size(), inspectOptions)
 	if err != nil {
 		return fmt.Errorf("cannot verify Recording %q before export: %w", opts.file, err)
+	}
+	if inspection.Format == recording.FormatBECastCBOR {
+		identities, err := loadRecordingDecryptionIdentities(opts.decryptionIdentityFiles)
+		if err != nil {
+			return err
+		}
+		if _, err := recording.VerifyNativeRecordingFull(snapshot, initial.Size(), identities, recording.NativeRecordingVerifyOptions{
+			Context: inspectOptions.Context, ExpectedProducerId: inspectOptions.ExpectedProducerId,
+			AllowUntrusted: inspectOptions.AllowUntrusted,
+		}); err != nil {
+			return fmt.Errorf("cannot fully verify encrypted Recording before export: %w", err)
+		}
 	}
 	requestedOutput := opts.output
 	if requestedOutput == "" {
@@ -155,7 +174,7 @@ func validateRecordingSnapshotSize(input io.ReaderAt, size int64) error {
 	switch format {
 	case recording.FormatCastZstd:
 		maximum = recording.DefaultMaximumCastZstdBytes
-	case recording.FormatBECast:
+	case recording.FormatBECast, recording.FormatBcast, recording.FormatBECastCBOR:
 		maximum = recording.DefaultMaximumBECastBytes
 	}
 	if size > maximum {
@@ -189,6 +208,29 @@ func exportRecordingPayload(source io.ReaderAt, size int64, output io.Writer, in
 		return fmt.Errorf("nil Recording export input")
 	}
 	switch inspection.Format {
+	case recording.FormatBcast, recording.FormatBECastCBOR:
+		if inspection.Native == nil {
+			return fmt.Errorf("recording inspection has no native result")
+		}
+		var identities *bfcrypto.AgeSshIdentities
+		if inspection.Format == recording.FormatBECastCBOR {
+			var err error
+			identities, err = loadRecordingDecryptionIdentities(identityFiles)
+			if err != nil {
+				return err
+			}
+		}
+		verified, err := recording.ExportNativeRecordingCast(source, size, identities, output, recording.NativeRecordingVerifyOptions{
+			Context: inspectOptions.Context, MaximumContainerBytes: inspectOptions.MaximumContainerBytes,
+			MaximumCastBytes: inspectOptions.MaximumCastBytes, MaximumChunks: inspectOptions.MaximumChunks,
+			ExpectedProducerId: inspectOptions.ExpectedProducerId, AllowUntrusted: inspectOptions.AllowUntrusted,
+		})
+		if err != nil {
+			return fmt.Errorf("cannot export native Recording: %w", err)
+		}
+		if !reflect.DeepEqual(verified, inspection.Native) {
+			return fmt.Errorf("recording input changed between inspection and native export")
+		}
 	case recording.FormatCast:
 		if inspection.Cast == nil {
 			return fmt.Errorf("recording inspection has no Cast result")
@@ -248,7 +290,7 @@ func exportRecordingPayload(source io.ReaderAt, size int64, output io.Writer, in
 
 func loadRecordingDecryptionIdentities(paths []string) (*bfcrypto.AgeSshIdentities, error) {
 	if len(paths) == 0 {
-		return nil, fmt.Errorf("BECast export requires at least one --decryptionIdentityFile")
+		return nil, fmt.Errorf("encrypted Recording export requires at least one --decryptionIdentityFile")
 	}
 	keys := make([]bfcrypto.PrivateKey, 0, len(paths))
 	for _, path := range paths {

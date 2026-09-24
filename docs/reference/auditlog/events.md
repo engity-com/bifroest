@@ -20,7 +20,7 @@ Every event has a `name`. All other fields are optional and are present only whe
 | `sessionId` | UUID of the persistent Bifröst session, when one is available. |
 | `operationId` | UUID correlating the events belonging to one task, forwarding operation, or housekeeping action. |
 | `recordingId` | Canonical UUIDv4 identifying one session recording. |
-| `recordingDigest` | Lowercase SHA-256 digest of the canonical Cast content, cryptographically bound by the recording signature. It is not a hash of the outer `.cast.zst` or `.becast` container file. |
+| `recordingDigest` | Lowercase SHA-256 digest of the canonical signed Cast content, cryptographically bound by the recording seal. It is not a hash of the outer native `.bcast` or `.becast` container file. |
 | `target` | Configured audit-log target name for a Recording delivery transition. It contains no destination address, credentials, or remote path. |
 | `authenticationMethod` | `public-key`, `password`, or `keyboard-interactive`. |
 | `authenticationPhase` | `candidate` before public-key possession is proven or `verified` after certificate-signature verification. |

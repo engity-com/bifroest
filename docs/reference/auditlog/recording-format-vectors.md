@@ -1,12 +1,12 @@
 ---
-description: Download byte-exact reference vectors for Bifröst session recording formats.
+description: Download byte-exact reference vectors for earlier Bifröst session recording formats.
 ---
 
 # Recording format vectors
 
-These version 1 vectors publish byte-exact examples of the Recording formats emitted and accepted by Bifröst. They are documentation and compatibility fixtures, not private recordings. Their signing and encryption seeds are public test values and must never be used in production.
+These version 1 vectors cover the earlier `.cast.zst` and binary `.becast` containers and a signed `.cast` export. The server now emits native CBOR `.bcast` or CBOR `.becast` instead; their byte-exact vectors will be published separately. The fixtures below remain decoder and compatibility tests, not examples of the newly emitted native wire format or private recordings. Their signing and encryption seeds are public test values and must never be used in production.
 
-The Go test suite regenerates every deterministic vector through the production encoders, compares the resulting bytes with these files, verifies the complete BECast fixture, decrypts it with the published test identity, and validates every size and SHA-256 value in the manifest. A change to deterministic encoder bytes therefore requires an explicit, reviewable vector update.
+The Go test suite regenerates the deterministic legacy vectors through the retained encoders, compares the resulting bytes with these files, verifies the complete legacy BECast fixture, decrypts it with the published test identity, and validates every size and SHA-256 value in the manifest. A change to deterministic encoder bytes therefore requires an explicit, reviewable vector update.
 
 ## Downloads
 
@@ -36,7 +36,7 @@ The manifest is the canonical index:
 --8<-- "docs/assets/recording-format-vectors/v1/cast-v3.cast"
 ```
 
-## Cast Zstandard
+## Legacy Cast Zstandard
 
 `cast-zstd-v1.cast.zst` consists of independently committed units:
 
@@ -48,7 +48,7 @@ The header binds the Recording and producer identities. Each chunk descriptor bi
 
 The vector uses the production `default` compression profile, CRC-enabled single-segment frames, one encoder worker, a 2 MiB window limit, and a deliberately small 300-byte chunk target to expose multiple committed chunks.
 
-## BECast
+## Legacy Binary BECast
 
 A BECast file starts with the eight bytes `89 42 45 43 41 53 54 0a`, or `\x89BECAST\n`, followed by header, chunk, and seal units. Every unit contains:
 

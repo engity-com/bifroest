@@ -8,14 +8,17 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/nativeformat"
 )
 
 type Format string
 
 const (
-	FormatCast     Format = "cast/v3"
-	FormatCastZstd Format = "cast-zstd/v1"
-	FormatBECast   Format = "becast/v1"
+	FormatCast       Format = "cast/v3"
+	FormatCastZstd   Format = "cast-zstd/v1"
+	FormatBECast     Format = "becast/v1"
+	FormatBcast      Format = "bcast/v1"
+	FormatBECastCBOR Format = "becast-cbor/v1"
 )
 
 type InspectOptions struct {
@@ -32,11 +35,12 @@ type Inspection struct {
 	Cast     *CastVerification
 	CastZstd *CastZstdVerification
 	BECast   *BECastVerification
+	Native   *NativeRecordingVerification
 }
 
 // Inspect verifies one Recording artifact and identifies its format.
-// Encrypted BECast content is not decrypted; only its signed outer container is
-// inspected.
+// Encrypted native and legacy BECast content is not decrypted; only its signed
+// outer container is inspected. Clear native content is fully verified.
 func Inspect(source io.ReaderAt, size int64, options InspectOptions) (*Inspection, error) {
 	if source == nil {
 		return nil, errors.System.Newf("nil Recording inspection source")
@@ -58,6 +62,25 @@ func Inspect(source io.ReaderAt, size int64, options InspectOptions) (*Inspectio
 		AllowUntrusted:     options.AllowUntrusted,
 	}
 	switch format {
+	case FormatBcast, FormatBECastCBOR:
+		nativeOptions := NativeRecordingVerifyOptions{
+			Context: options.Context, MaximumContainerBytes: options.MaximumContainerBytes,
+			MaximumCastBytes: options.MaximumCastBytes, MaximumChunks: options.MaximumChunks,
+			ExpectedProducerId: options.ExpectedProducerId, AllowUntrusted: options.AllowUntrusted,
+		}
+		var native *NativeRecordingVerification
+		if format == FormatBcast {
+			native, err = VerifyNativeRecordingFull(source, size, nil, nativeOptions)
+		} else {
+			native, err = VerifyNativeRecordingOuter(source, size, nativeOptions)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if (native.Header.Encryption == 1) != (format == FormatBECastCBOR) {
+			return nil, errors.Config.Newf("native Recording format does not match encryption mode")
+		}
+		return &Inspection{Format: format, Native: native}, nil
 	case FormatCast:
 		maximumContainerBytes := options.MaximumContainerBytes
 		if maximumContainerBytes == 0 {
@@ -118,6 +141,19 @@ func DetectFormat(source io.ReaderAt, size int64) (Format, error) {
 		return "", errors.System.Newf("cannot identify Recording format: %w", err)
 	}
 	switch {
+	case len(prefix) >= len(nativeformat.RecordingMagic) && bytes.Equal(prefix[:len(nativeformat.RecordingMagic)], []byte(nativeformat.RecordingMagic)):
+		unit, _, tail, err := nativeformat.ReadUnitAt(source, int64(len(nativeformat.RecordingMagic)), size, nativeformat.MaxMetadataPayload)
+		if err != nil || tail || unit.Type != nativeformat.HeaderUnit {
+			return "", errors.Config.Newf("invalid native Recording header: %v", err)
+		}
+		header, _, err := verifyNativeRecordingHeader(unit.Payload)
+		if err != nil {
+			return "", err
+		}
+		if header.Encryption == 1 {
+			return FormatBECastCBOR, nil
+		}
+		return FormatBcast, nil
 	case prefix[0] == '{':
 		return FormatCast, nil
 	case bytes.Equal(prefix, []byte(castBECastFileMagic)):

@@ -18,19 +18,35 @@ type nativeRecordingHeader struct {
 }
 
 type nativeRecordingChunk struct {
-	Sequence         uint64   `cbor:"1,keyasint"`
-	PreviousUnitHash [32]byte `cbor:"2,keyasint"`
-	DecodedLength    uint32   `cbor:"3,keyasint"`
-	StoredPayload    []byte   `cbor:"4,keyasint"`
-	StoredHash       [32]byte `cbor:"5,keyasint"`
-	CastHashState    [32]byte `cbor:"6,keyasint"`
-	CastHashBytes    uint64   `cbor:"7,keyasint"`
-	Signature        []byte   `cbor:"8,keyasint"`
+	Sequence         uint64                  `cbor:"1,keyasint"`
+	PreviousUnitHash [32]byte                `cbor:"2,keyasint"`
+	DecodedLength    uint32                  `cbor:"3,keyasint"`
+	StoredPayload    []byte                  `cbor:"4,keyasint"`
+	StoredHash       [32]byte                `cbor:"5,keyasint"`
+	CastHashState    [32]byte                `cbor:"6,keyasint"`
+	CastHashBytes    uint64                  `cbor:"7,keyasint"`
+	Signature        []byte                  `cbor:"8,keyasint"`
+	FinalStatus      uint8                   `cbor:"9,keyasint,omitempty"`
+	CastDigest       *[32]byte               `cbor:"10,keyasint,omitempty"`
+	CastSignature    []byte                  `cbor:"11,keyasint,omitempty"`
+	CastBytes        *uint64                 `cbor:"12,keyasint,omitempty"`
+	EndedAt          *nativeformat.Timestamp `cbor:"13,keyasint,omitempty"`
+	LastElapsedNanos *uint64                 `cbor:"14,keyasint,omitempty"`
 }
 
 func (this nativeRecordingChunk) ValidateNativeWire() error {
 	if this.DecodedLength == 0 || this.DecodedLength > nativeformat.MaxRecordingDecodedChunk {
 		return fmt.Errorf("native recording chunk has invalid decoded length %d", this.DecodedLength)
+	}
+	if this.CastHashBytes == 0 {
+		if this.FinalStatus < 1 || this.FinalStatus > 3 || this.CastDigest == nil || this.CastHashState != *this.CastDigest || len(this.CastSignature) != 64 || this.CastBytes == nil || *this.CastBytes == 0 || this.EndedAt == nil || this.LastElapsedNanos != nil {
+			return fmt.Errorf("native recording final chunk has invalid signed Cast commitment")
+		}
+		if ended, err := this.EndedAt.Time(); err != nil || ended.IsZero() {
+			return fmt.Errorf("native recording final chunk has invalid end time")
+		}
+	} else if this.CastHashBytes%64 != 0 || this.FinalStatus != 0 || this.CastDigest != nil || len(this.CastSignature) != 0 || this.CastBytes != nil || this.EndedAt != nil || this.LastElapsedNanos == nil || *this.LastElapsedNanos > uint64(maximumEventElapsed) {
+		return fmt.Errorf("native recording continuation chunk contains final data or invalid Cast hash state")
 	}
 	return nil
 }

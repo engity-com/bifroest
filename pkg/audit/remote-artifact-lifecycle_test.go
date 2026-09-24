@@ -19,7 +19,7 @@ func TestRemoteArtifactLifecycleOutboxBindsArtifactAndBlocksRetention(t *testing
 	require.NoError(t, err)
 	receipts := &RemoteArtifactReceipts{store: store, targets: &RemoteArtifactTargets{}}
 	t.Cleanup(func() { require.NoError(t, receipts.Close()) })
-	fileName := "6ba7b830-9dad-4d1f-80b4-00c04fd430c8.cast.zst"
+	fileName := "6ba7b830-9dad-4d1f-80b4-00c04fd430c8.bcast"
 	startedAt := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
 	started := remoteArtifactLifecycleTestStartedEvent(fileName)
 	require.NoError(t, receipts.BeginLifecycle(t.Context(), fileName, startedAt, started))
@@ -80,7 +80,7 @@ func TestRemoteArtifactLifecycleRejectsTamperingAndAcceptsLegacyReceipt(t *testi
 	receipts := &RemoteArtifactReceipts{store: store, targets: &RemoteArtifactTargets{}}
 	t.Cleanup(func() { require.NoError(t, receipts.Close()) })
 
-	legacy := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b831-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("legacy"))
+	legacy := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b831-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("legacy"))
 	sealedAt := time.Date(2026, 9, 21, 11, 0, 0, 0, time.UTC)
 	require.NoError(t, receipts.Prepare(t.Context(), legacy, sealedAt))
 	require.Empty(t, mustPendingRemoteArtifactLifecycle(t, receipts))
@@ -88,7 +88,7 @@ func TestRemoteArtifactLifecycleRejectsTamperingAndAcceptsLegacyReceipt(t *testi
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
 
-	fileName := "6ba7b832-9dad-4d1f-80b4-00c04fd430c8.cast.zst"
+	fileName := "6ba7b832-9dad-4d1f-80b4-00c04fd430c8.bcast"
 	started := remoteArtifactLifecycleTestStartedEvent(fileName)
 	require.NoError(t, receipts.BeginLifecycle(t.Context(), fileName, sealedAt, started))
 	directory := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName(fileName))
@@ -151,7 +151,7 @@ func TestRemoteArtifactLifecycleRecoversPreparedPromotionSuccessor(t *testing.T)
 	store, err := newRemoteArtifactReceiptStore(root, identity, "security", quota)
 	require.NoError(t, err)
 	receipts := &RemoteArtifactReceipts{store: store, targets: &RemoteArtifactTargets{}}
-	fileName := "6ba7b846-9dad-4d1f-80b4-00c04fd430c8.cast.zst"
+	fileName := "6ba7b846-9dad-4d1f-80b4-00c04fd430c8.bcast"
 	startedAt := time.Date(2026, 9, 21, 12, 30, 0, 0, time.UTC)
 	started := remoteArtifactLifecycleTestStartedEvent(fileName)
 	require.NoError(t, receipts.BeginLifecycle(t.Context(), fileName, startedAt, started))
@@ -191,7 +191,7 @@ func TestRemoteArtifactLifecycleCleansOrphanedPreCreateIntent(t *testing.T) {
 	require.NoError(t, err)
 	receipts := &RemoteArtifactReceipts{store: store}
 	t.Cleanup(func() { require.NoError(t, receipts.Close()) })
-	fileName := "6ba7b837-9dad-4d1f-80b4-00c04fd430c8.cast.zst"
+	fileName := "6ba7b837-9dad-4d1f-80b4-00c04fd430c8.bcast"
 	require.NoError(t, receipts.BeginLifecycle(t.Context(), fileName, time.Now().UTC(), remoteArtifactLifecycleTestStartedEvent(fileName)))
 	directory := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName(fileName))
 	require.DirExists(t, directory)
@@ -205,7 +205,7 @@ func TestRemoteArtifactLifecycleRecoveryOverwritesStagedTerminalEvent(t *testing
 	require.NoError(t, err)
 	receipts := &RemoteArtifactReceipts{store: store, targets: &RemoteArtifactTargets{}}
 	t.Cleanup(func() { require.NoError(t, receipts.Close()) })
-	fileName := "6ba7b838-9dad-4d1f-80b4-00c04fd430c8.cast.zst"
+	fileName := "6ba7b838-9dad-4d1f-80b4-00c04fd430c8.bcast"
 	startedAt := time.Date(2026, 9, 21, 13, 0, 0, 0, time.UTC)
 	started := remoteArtifactLifecycleTestStartedEvent(fileName)
 	require.NoError(t, receipts.BeginLifecycle(t.Context(), fileName, startedAt, started))
@@ -236,7 +236,7 @@ func TestRemoteArtifactLifecycleRejectsDiscardAndCleanupOfNonIntentState(t *test
 	require.NoError(t, err)
 	receipts := &RemoteArtifactReceipts{store: store}
 	t.Cleanup(func() { require.NoError(t, receipts.Close()) })
-	fileName := "6ba7b839-9dad-4d1f-80b4-00c04fd430c8.cast.zst"
+	fileName := "6ba7b839-9dad-4d1f-80b4-00c04fd430c8.bcast"
 	started := remoteArtifactLifecycleTestStartedEvent(fileName)
 	require.NoError(t, receipts.BeginLifecycle(t.Context(), fileName, time.Now().UTC(), started))
 	require.NoError(t, receipts.StageLifecycle(t.Context(), fileName, remoteArtifactLifecycleTestCompletedEvent(started)))
@@ -255,7 +255,7 @@ func TestRemoteArtifactLifecycleCleanupRejectsPendingStateWithoutReceipt(t *test
 	require.NoError(t, err)
 	receipts := &RemoteArtifactReceipts{store: store, targets: &RemoteArtifactTargets{}}
 	t.Cleanup(func() { require.NoError(t, receipts.Close()) })
-	fileName := "6ba7b841-9dad-4d1f-80b4-00c04fd430c8.cast.zst"
+	fileName := "6ba7b841-9dad-4d1f-80b4-00c04fd430c8.bcast"
 	startedAt := time.Now().UTC()
 	started := remoteArtifactLifecycleTestStartedEvent(fileName)
 	require.NoError(t, receipts.BeginLifecycle(t.Context(), fileName, startedAt, started))
@@ -275,7 +275,7 @@ func TestRemoteArtifactLifecycleOperationsRejectClosedStore(t *testing.T) {
 	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", &remoteArtifactReceiptTestQuota{maximum: 1 << 20})
 	require.NoError(t, err)
 	receipts := &RemoteArtifactReceipts{store: store, targets: &RemoteArtifactTargets{}}
-	fileName := "6ba7b840-9dad-4d1f-80b4-00c04fd430c8.cast.zst"
+	fileName := "6ba7b840-9dad-4d1f-80b4-00c04fd430c8.bcast"
 	startedAt := time.Now().UTC()
 	started := remoteArtifactLifecycleTestStartedEvent(fileName)
 	require.NoError(t, receipts.BeginLifecycle(t.Context(), fileName, startedAt, started))
@@ -297,13 +297,23 @@ func TestRemoteArtifactLifecyclePrepareRequiresMarkerBeforeReceipt(t *testing.T)
 	require.NoError(t, err)
 	receipts := &RemoteArtifactReceipts{store: store, targets: &RemoteArtifactTargets{}}
 	t.Cleanup(func() { require.NoError(t, receipts.Close()) })
-	fileName := "6ba7b845-9dad-4d1f-80b4-00c04fd430c8.cast.zst"
+	fileName := "6ba7b845-9dad-4d1f-80b4-00c04fd430c8.bcast"
 	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), fileName, []byte("missing lifecycle"))
 
 	require.ErrorContains(t, receipts.PrepareLifecycle(t.Context(), artifact, time.Now().UTC(), strings.Repeat("e", 64), false), "lifecycle state")
 	_, exists, err := store.load(artifact)
 	require.NoError(t, err)
 	require.False(t, exists)
+}
+
+func TestRemoteArtifactLifecycleAcceptsLegacyRecordingSuffix(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", &remoteArtifactReceiptTestQuota{maximum: 1 << 20})
+	require.NoError(t, err)
+	receipts := &RemoteArtifactReceipts{store: store}
+	t.Cleanup(func() { require.NoError(t, receipts.Close()) })
+	fileName := "6ba7b847-9dad-4d1f-80b4-00c04fd430c8.cast.zst"
+	require.NoError(t, receipts.BeginLifecycle(t.Context(), fileName, time.Now().UTC(), remoteArtifactLifecycleTestStartedEvent(fileName)))
 }
 
 func remoteArtifactLifecycleTestStartedEvent(fileName string) Event {

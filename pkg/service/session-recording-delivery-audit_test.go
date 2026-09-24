@@ -15,11 +15,11 @@ func TestSessionRecordingDeliveryAuditorRecordsPersistentTransitions(t *testing.
 	auditor := &sessionRecordingDeliveryAuditor{
 		service:    svc,
 		auditlog:   "security",
-		repository: &sessionRecordingRepository{format: sessionRecordingRepositoryFormatCastZstd},
+		repository: &sessionRecordingRepository{format: sessionRecordingRepositoryFormatBCast},
 	}
 	base := audit.RemoteArtifactDeliveryAuditEvent{
 		Scope:       audit.RemoteTargetScope{Auditlog: "security", Target: "archive"},
-		FileName:    "fd70203b-ea19-4288-8ec2-577b623e92d0.cast.zst",
+		FileName:    "fd70203b-ea19-4288-8ec2-577b623e92d0.bcast",
 		OperationId: "6d05798f-b877-4191-8aa0-4576a30411ad",
 	}
 	failed := base

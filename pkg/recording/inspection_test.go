@@ -82,3 +82,46 @@ func TestInspectEnforcesPlainCastContainerLimit(t *testing.T) {
 	require.ErrorContains(t, err, "outside the supported range")
 	require.True(t, bferrors.System.IsErr(err))
 }
+
+func TestInspectNativeModesAndMagic(t *testing.T) {
+	identity, header, metadata := castTestValues(t, true)
+	recipient, _ := newBECastTestEncryption(t)
+	for _, test := range []struct {
+		name      string
+		recipient bool
+		format    Format
+	}{
+		{"clear", false, FormatBcast},
+		{"encrypted", true, FormatBECastCBOR},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var container bytes.Buffer
+			var writerRecipient = recipient
+			if !test.recipient {
+				writerRecipient = nil
+			}
+			writer, err := NewNativeRecordingWriter(&container, identity, writerRecipient, header, metadata, 300, NativeRecordingWriterLimits{})
+			require.NoError(t, err)
+			require.NoError(t, writer.WriteOutput(time.Millisecond, OutputStreamTerminal, []byte("private output")))
+			exit := uint32(0)
+			_, err = writer.Seal(time.Second, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(time.Second)}, &exit)
+			require.NoError(t, err)
+			contents := container.Bytes()
+			format, err := DetectFormat(bytes.NewReader(contents), int64(len(contents)))
+			require.NoError(t, err)
+			require.Equal(t, test.format, format)
+			inspection, err := Inspect(bytes.NewReader(contents), int64(len(contents)), InspectOptions{ExpectedProducerId: identity.ProducerId()})
+			require.NoError(t, err)
+			require.Equal(t, test.format, inspection.Format)
+			require.NotNil(t, inspection.Native)
+			require.True(t, inspection.Native.Trusted)
+			require.Nil(t, inspection.Cast)
+			_, err = Inspect(bytes.NewReader(contents), int64(len(contents)), InspectOptions{ExpectedProducerId: identity.ProducerId(), MaximumContainerBytes: int64(len(contents) - 1)})
+			require.Error(t, err)
+			corrupt := bytes.Clone(contents)
+			corrupt[len(corrupt)-1] ^= 1
+			_, err = Inspect(bytes.NewReader(corrupt), int64(len(corrupt)), InspectOptions{AllowUntrusted: true})
+			require.Error(t, err)
+		})
+	}
+}

@@ -34,8 +34,10 @@ type recordingInspectOutput struct {
 	Signature            recordingInspectSignature `json:"signature"`
 	RecordingId          string                    `json:"recordingId"`
 	ProducerId           string                    `json:"producerId"`
-	Status               recording.CastStatus      `json:"status"`
-	CastDigest           string                    `json:"castDigest"`
+	Status               recording.CastStatus      `json:"status,omitempty"`
+	CastDigest           string                    `json:"castDigest,omitempty"`
+	ClaimedStatus        recording.CastStatus      `json:"claimedStatus,omitempty"`
+	ClaimedCastDigest    string                    `json:"claimedCastDigest,omitempty"`
 	ChunkCount           uint64                    `json:"chunkCount,omitempty"`
 	CastBytes            uint64                    `json:"castBytes"`
 	ZstdBytes            uint64                    `json:"zstdBytes,omitempty"`
@@ -52,15 +54,10 @@ type recordingInspectSignature struct {
 }
 
 type recordingInspectCast struct {
-	Header       recording.CastHeader   `json:"header"`
-	Metadata     recording.CastMetadata `json:"metadata"`
-	Result       recording.CastResult   `json:"result"`
-	ExitStatus   *uint32                `json:"exitStatus"`
-	EventCount   uint64                 `json:"eventCount"`
-	OutputEvents uint64                 `json:"outputEvents"`
-	ResizeEvents uint64                 `json:"resizeEvents"`
-	MarkerEvents uint64                 `json:"markerEvents"`
-	Digest       string                 `json:"digest"`
+	EventCount   uint64 `json:"eventCount"`
+	OutputEvents uint64 `json:"outputEvents"`
+	ResizeEvents uint64 `json:"resizeEvents"`
+	MarkerEvents uint64 `json:"markerEvents"`
 }
 
 func registerRecordingInspectCmd(parent *kingpin.CmdClause) {
@@ -70,7 +67,7 @@ func registerRecordingInspectCmd(parent *kingpin.CmdClause) {
 	cmd.Flag("expectedProducerId", "Trusted producer ID containing exactly 64 hexadecimal characters.").
 		PlaceHolder("<producer-id>").
 		StringVar(&opts.expectedProducerId)
-	cmd.Arg("file", "Sealed .cast, .cast.zst, or .becast Recording artifact.").
+	cmd.Arg("file", "Sealed .bcast or .becast Recording artifact (legacy .cast and .cast.zst also supported).").
 		Required().
 		StringVar(&opts.file)
 }
@@ -170,6 +167,43 @@ func newRecordingInspectOutput(inspection *recording.Inspection, size int64) (*r
 	}
 	result := &recordingInspectOutput{Schema: recordingInspectionSchema, Format: inspection.Format, ContainerBytes: size}
 	switch inspection.Format {
+	case recording.FormatBcast, recording.FormatBECastCBOR:
+		if inspection.Native == nil {
+			return nil, fmt.Errorf("recording inspection has no native result")
+		}
+		native := inspection.Native
+		publicKey, err := ssh.ParsePublicKey(native.Header.PublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("cannot inspect native Recording signing key: %w", err)
+		}
+		var status recording.CastStatus
+		switch native.Seal.Status {
+		case 1:
+			status = recording.CastStatusCompleted
+		case 2:
+			status = recording.CastStatusFailed
+		case 3:
+			status = recording.CastStatusIncomplete
+		default:
+			return nil, fmt.Errorf("invalid native Recording status")
+		}
+		result.Compressed = true
+		result.Encrypted = native.Header.Encryption == 1
+		result.Signature = recordingInspectSignature{Valid: true, Trusted: native.Trusted, Fingerprint: ssh.FingerprintSHA256(publicKey)}
+		result.RecordingId = recording.Id(native.Header.RecordingId).String()
+		result.ProducerId = audit.ProducerId(native.Header.ProducerId).String()
+		result.ChunkCount = native.Seal.ChunkCount
+		result.CastBytes = native.Seal.CastBytes
+		if result.Encrypted {
+			result.VerificationScope = "outer"
+			result.ClaimedStatus = status
+			result.ClaimedCastDigest = recording.CastDigest(native.Seal.CastDigest).String()
+			result.RecipientFingerprint = native.Header.Recipient
+		} else {
+			result.VerificationScope = "full"
+			result.Status = status
+			result.CastDigest = recording.CastDigest(native.Seal.CastDigest).String()
+		}
 	case recording.FormatCast:
 		if inspection.Cast == nil {
 			return nil, fmt.Errorf("recording inspection has no Cast result")
@@ -214,8 +248,8 @@ func newRecordingInspectOutput(inspection *recording.Inspection, size int64) (*r
 		result.Signature = recordingInspectSignature{Valid: true, Trusted: inspection.BECast.Trusted, Fingerprint: ssh.FingerprintSHA256(publicKey)}
 		result.RecordingId = summary.RecordingId.String()
 		result.ProducerId = summary.ProducerId.String()
-		result.Status = summary.Status
-		result.CastDigest = summary.Digest.String()
+		result.ClaimedStatus = summary.Status
+		result.ClaimedCastDigest = summary.Digest.String()
 		result.ChunkCount = summary.ChunkCount
 		result.CastBytes = summary.CastBytes
 		result.CiphertextBytes = summary.CiphertextBytes
@@ -229,14 +263,9 @@ func newRecordingInspectOutput(inspection *recording.Inspection, size int64) (*r
 
 func newRecordingInspectCast(verification *recording.CastVerification) *recordingInspectCast {
 	return &recordingInspectCast{
-		Header:       verification.Header,
-		Metadata:     verification.Metadata,
-		Result:       verification.Result,
-		ExitStatus:   verification.ExitStatus,
 		EventCount:   verification.EventCount,
 		OutputEvents: verification.OutputEvents,
 		ResizeEvents: verification.ResizeEvents,
 		MarkerEvents: verification.MarkerEvents,
-		Digest:       verification.Digest.String(),
 	}
 }

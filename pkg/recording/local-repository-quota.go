@@ -2,6 +2,7 @@ package recording
 
 import (
 	stderrors "errors"
+	"io"
 	"io/fs"
 	"math"
 	"os"
@@ -334,6 +335,41 @@ func (this *localQuotaFile) Write(value []byte) (int, error) {
 	if reconcileErr != nil {
 		this.uncertain = true
 		this.quota.Invalidate(reconcileErr)
+	}
+	return written, stderrors.Join(writeErr, reconcileErr)
+}
+
+// WriteAt accounts only file growth, including short writes and state-byte
+// rewrites during the native two-sync commit protocol.
+func (this *localQuotaFile) WriteAt(value []byte, offset int64) (int, error) {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if offset < 0 || int64(len(value)) > math.MaxInt64-offset {
+		return 0, errors.System.Newf("local recording write offset overflows int64")
+	}
+	before, err := this.Stat()
+	if err != nil {
+		return 0, err
+	}
+	growth := uint64(max(int64(0), offset+int64(len(value))-before.Size()))
+	quotaBytes, err := this.reserveGrowth(growth)
+	if err != nil {
+		return 0, err
+	}
+	written, writeErr := this.File.WriteAt(value, offset)
+	after, statErr := this.Stat()
+	if statErr != nil {
+		this.uncertain = true
+		this.quota.Invalidate(statErr)
+		return written, stderrors.Join(writeErr, statErr)
+	}
+	reconcileErr := this.reconcileGrowth(quotaBytes, before.Size(), after.Size())
+	if reconcileErr != nil {
+		this.uncertain = true
+		this.quota.Invalidate(reconcileErr)
+	}
+	if writeErr == nil && written != len(value) {
+		writeErr = io.ErrShortWrite
 	}
 	return written, stderrors.Join(writeErr, reconcileErr)
 }

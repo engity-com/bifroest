@@ -323,7 +323,7 @@ func TestOpenSSHLocalSessionRecording(t *testing.T) {
 		t.Fatalf("recorded command output: stdout=%q stderr=%q", result.stdout, result.stderr)
 	}
 
-	result = f.runtime(5*time.Second, "exec", f.containerID, "/bin/sh", "-c", "find /var/lib/bifroest/recordings/sealed -maxdepth 1 -type f -name '*.cast.zst' -print")
+	result = f.runtime(5*time.Second, "exec", f.containerID, "/bin/sh", "-c", "find /var/lib/bifroest/recordings/sealed -maxdepth 1 -type f -name '*.bcast' -print")
 	if result.err != nil {
 		t.Fatalf("locate sealed recording: %v\nstderr:\n%s", result.err, result.stderr)
 	}
@@ -336,7 +336,7 @@ func TestOpenSSHLocalSessionRecording(t *testing.T) {
 	if result.err != nil {
 		t.Fatalf("stop recording container: %v\nstderr:\n%s", result.err, result.stderr)
 	}
-	artifact := filepath.Join(f.tempDir, "session.cast.zst")
+	artifact := filepath.Join(f.tempDir, "session.bcast")
 	result = f.runtime(10*time.Second, "cp", f.containerID+":"+artifacts[0], artifact)
 	if result.err != nil {
 		t.Fatalf("copy sealed recording: %v\nstderr:\n%s", result.err, result.stderr)

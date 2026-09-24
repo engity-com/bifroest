@@ -15,8 +15,21 @@ func TestRecordingExportRemovesSnapshotAfterVerificationFailure(t *testing.T) {
 	input := filepath.Join(t.TempDir(), "invalid.cast")
 	require.NoError(t, stdos.WriteFile(input, []byte("{\n"), 0600))
 
-	err := doRecordingExport(&recordingExportOpts{file: input, allowUntrusted: true}, &bytes.Buffer{})
+	err := doRecordingExport(&recordingExportOpts{file: input, allowUntrusted: true, withSensitive: true}, &bytes.Buffer{})
 	require.Error(t, err)
+	entries, readErr := stdos.ReadDir(snapshotDirectory)
+	require.NoError(t, readErr)
+	require.Empty(t, entries)
+}
+
+func TestRecordingExportRemovesNativeSnapshotAfterDecryptionFailure(t *testing.T) {
+	fixture := newRecordingExportTestFixture(t)
+	snapshotDirectory := t.TempDir()
+	setRecordingSnapshotTestDirectory(t, snapshotDirectory)
+	err := doRecordingExport(&recordingExportOpts{
+		file: fixture.nativeEncryptedPath, expectedProducerId: fixture.identity.ProducerId().String(), withSensitive: true,
+	}, &bytes.Buffer{})
+	require.ErrorContains(t, err, "requires at least one --decryptionIdentityFile")
 	entries, readErr := stdos.ReadDir(snapshotDirectory)
 	require.NoError(t, readErr)
 	require.Empty(t, entries)

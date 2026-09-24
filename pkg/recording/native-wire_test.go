@@ -33,7 +33,7 @@ func TestNativeRecordingWireSchemas(t *testing.T) {
 	chunk := nativeRecordingChunk{
 		Sequence: 1, PreviousUnitHash: [32]byte{4}, DecodedLength: 3,
 		StoredPayload: []byte{5, 6, 7}, StoredHash: [32]byte{8},
-		CastHashState: [32]byte{9}, CastHashBytes: 128, Signature: bytes.Repeat([]byte{10}, 64),
+		CastHashState: [32]byte{9}, CastHashBytes: 128, Signature: bytes.Repeat([]byte{10}, 64), LastElapsedNanos: new(uint64),
 	}
 	chunkBytes, err := nativeformat.Marshal(chunk, nativeformat.MaxRecordingChunkPayload)
 	require.NoError(t, err)
@@ -45,7 +45,7 @@ func TestNativeRecordingWireSchemas(t *testing.T) {
 	require.Error(t, err)
 	badChunkBytes, err := nativeformat.Marshal(map[uint64]any{
 		1: uint64(1), 2: [32]byte{}, 3: uint64(nativeformat.MaxRecordingDecodedChunk + 1),
-		4: []byte{5, 6, 7}, 5: [32]byte{}, 6: [32]byte{}, 7: uint64(128), 8: bytes.Repeat([]byte{10}, 64),
+		4: []byte{5, 6, 7}, 5: [32]byte{}, 6: [32]byte{}, 7: uint64(128), 8: bytes.Repeat([]byte{10}, 64), 14: uint64(0),
 	}, nativeformat.MaxRecordingChunkPayload)
 	require.NoError(t, err)
 	_, err = nativeformat.Unmarshal[nativeRecordingChunk](badChunkBytes, nativeformat.MaxRecordingChunkPayload)

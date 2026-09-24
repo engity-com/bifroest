@@ -31,11 +31,13 @@ func TestRecordingExportWritesExactCastForEveryFormat(t *testing.T) {
 		{name: "cast", path: fixture.castPath, expected: fixture.cast},
 		{name: "cast-zstd", path: fixture.castZstdPath, expected: fixture.cast},
 		{name: "becast", path: fixture.beCastPath, identities: []string{fixture.identityPath}, expected: fixture.beCastCast},
+		{name: "bcast", path: fixture.nativeClearPath, expected: fixture.nativeCast},
+		{name: "becast-cbor", path: fixture.nativeEncryptedPath, identities: []string{fixture.identityPath}, expected: fixture.nativeCast},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var stdout bytes.Buffer
 			err := doRecordingExport(&recordingExportOpts{
-				file: test.path, expectedProducerId: fixture.identity.ProducerId().String(), decryptionIdentityFiles: test.identities,
+				file: test.path, expectedProducerId: fixture.identity.ProducerId().String(), decryptionIdentityFiles: test.identities, withSensitive: true,
 			}, &stdout)
 			require.NoError(t, err)
 			require.Equal(t, test.expected, stdout.Bytes())
@@ -43,18 +45,32 @@ func TestRecordingExportWritesExactCastForEveryFormat(t *testing.T) {
 	}
 }
 
+func TestRecordingExportRequiresSensitiveConsentBeforeAccessingInput(t *testing.T) {
+	for _, name := range []string{"missing.cast", "missing.cast.zst", "missing.bcast", "missing.becast"} {
+		t.Run(name, func(t *testing.T) {
+			output := filepath.Join(t.TempDir(), "export.cast")
+			var stdout bytes.Buffer
+			err := doRecordingExport(&recordingExportOpts{file: filepath.Join(t.TempDir(), name), output: output, allowUntrusted: true}, &stdout)
+			require.ErrorContains(t, err, "--with-sensitive")
+			require.Empty(t, stdout.Bytes())
+			_, err = stdos.Stat(output)
+			require.ErrorIs(t, err, stdos.ErrNotExist)
+		})
+	}
+}
+
 func TestRecordingExportRequiresExplicitTrustDecision(t *testing.T) {
 	fixture := newRecordingExportTestFixture(t)
 	var stdout bytes.Buffer
-	require.ErrorContains(t, doRecordingExport(&recordingExportOpts{file: fixture.castPath}, &stdout), "--expectedProducerId is required")
+	require.ErrorContains(t, doRecordingExport(&recordingExportOpts{file: fixture.castPath, withSensitive: true}, &stdout), "--expectedProducerId is required")
 	require.Empty(t, stdout.Bytes())
 
-	require.NoError(t, doRecordingExport(&recordingExportOpts{file: fixture.castPath, allowUntrusted: true}, &stdout))
+	require.NoError(t, doRecordingExport(&recordingExportOpts{file: fixture.castPath, allowUntrusted: true, withSensitive: true}, &stdout))
 	require.Equal(t, fixture.cast, stdout.Bytes())
 	stdout.Reset()
 
 	err := doRecordingExport(&recordingExportOpts{
-		file: fixture.castPath, expectedProducerId: fixture.identity.ProducerId().String(), allowUntrusted: true,
+		file: fixture.castPath, expectedProducerId: fixture.identity.ProducerId().String(), allowUntrusted: true, withSensitive: true,
 	}, &stdout)
 	require.ErrorContains(t, err, "mutually exclusive")
 	require.Empty(t, stdout.Bytes())
@@ -70,19 +86,22 @@ func TestRecordingExportProducesNoOutputOnVerificationOrDecryptionFailure(t *tes
 	}{
 		{
 			name: "wrong-producer",
-			opts: recordingExportOpts{file: fixture.castPath, expectedProducerId: newRecordingExportTestIdentity(t).ProducerId().String()},
+			opts: recordingExportOpts{file: fixture.castPath, expectedProducerId: newRecordingExportTestIdentity(t).ProducerId().String(), withSensitive: true},
 			want: "instead of",
 		},
 		{
 			name: "missing-decryption-identity",
-			opts: recordingExportOpts{file: fixture.beCastPath, expectedProducerId: fixture.identity.ProducerId().String()},
+			opts: recordingExportOpts{file: fixture.beCastPath, expectedProducerId: fixture.identity.ProducerId().String(), withSensitive: true},
 			want: "requires at least one",
 		},
 		{
 			name: "wrong-decryption-identity",
-			opts: recordingExportOpts{file: fixture.beCastPath, expectedProducerId: fixture.identity.ProducerId().String(), decryptionIdentityFiles: []string{otherIdentityPath}},
+			opts: recordingExportOpts{file: fixture.beCastPath, expectedProducerId: fixture.identity.ProducerId().String(), decryptionIdentityFiles: []string{otherIdentityPath}, withSensitive: true},
 			want: "is not available",
 		},
+		{name: "native-missing-identity", opts: recordingExportOpts{file: fixture.nativeEncryptedPath, expectedProducerId: fixture.identity.ProducerId().String(), withSensitive: true}, want: "requires at least one"},
+		{name: "native-wrong-identity", opts: recordingExportOpts{file: fixture.nativeEncryptedPath, expectedProducerId: fixture.identity.ProducerId().String(), decryptionIdentityFiles: []string{otherIdentityPath}, withSensitive: true}, want: "cannot fully verify"},
+		{name: "native-wrong-producer", opts: recordingExportOpts{file: fixture.nativeClearPath, expectedProducerId: newRecordingExportTestIdentity(t).ProducerId().String(), withSensitive: true}, want: "producer mismatch"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var stdout bytes.Buffer
@@ -95,9 +114,24 @@ func TestRecordingExportProducesNoOutputOnVerificationOrDecryptionFailure(t *tes
 	tampered := filepath.Join(t.TempDir(), "tampered.cast")
 	require.NoError(t, stdos.WriteFile(tampered, append(append([]byte(nil), fixture.cast...), []byte("trailing data\n")...), 0600))
 	var stdout bytes.Buffer
-	err := doRecordingExport(&recordingExportOpts{file: tampered, allowUntrusted: true}, &stdout)
+	err := doRecordingExport(&recordingExportOpts{file: tampered, allowUntrusted: true, withSensitive: true}, &stdout)
 	require.Error(t, err)
 	require.Empty(t, stdout.Bytes())
+}
+
+func TestRecordingExportNativeFailureDoesNotReplaceOutput(t *testing.T) {
+	fixture := newRecordingExportTestFixture(t)
+	contents, err := stdos.ReadFile(fixture.nativeEncryptedPath)
+	require.NoError(t, err)
+	contents[len(contents)/2] ^= 1
+	require.NoError(t, stdos.WriteFile(fixture.nativeEncryptedPath, contents, 0600))
+	output := filepath.Join(t.TempDir(), "export.cast")
+	require.NoError(t, stdos.WriteFile(output, []byte("keep"), 0600))
+	err = doRecordingExport(&recordingExportOpts{file: fixture.nativeEncryptedPath, output: output, force: true, withSensitive: true, expectedProducerId: fixture.identity.ProducerId().String(), decryptionIdentityFiles: []string{fixture.identityPath}}, &bytes.Buffer{})
+	require.Error(t, err)
+	actual, err := stdos.ReadFile(output)
+	require.NoError(t, err)
+	require.Equal(t, "keep", string(actual))
 }
 
 func TestRecordingExportSnapshotIsIndependentOfLaterInputMutation(t *testing.T) {
@@ -127,6 +161,16 @@ func TestRecordingExportRejectsOversizedCastBeforeSnapshot(t *testing.T) {
 	require.ErrorContains(t, err, "exceeds")
 }
 
+func TestRecordingExportRejectsOversizedNativeBeforeSnapshot(t *testing.T) {
+	fixture := newRecordingExportTestFixture(t)
+	for _, path := range []string{fixture.nativeClearPath, fixture.nativeEncryptedPath} {
+		contents, err := stdos.ReadFile(path)
+		require.NoError(t, err)
+		err = validateRecordingSnapshotSize(bytes.NewReader(contents), recording.DefaultMaximumBECastBytes+1)
+		require.ErrorContains(t, err, "exceeds")
+	}
+}
+
 type recordingExportCastPrefix struct{}
 
 func (recordingExportCastPrefix) ReadAt(target []byte, _ int64) (int, error) {
@@ -138,7 +182,7 @@ func (recordingExportCastPrefix) ReadAt(target []byte, _ int64) (int, error) {
 func TestRecordingExportInstallsPrivateOutputWithoutClobbering(t *testing.T) {
 	fixture := newRecordingExportTestFixture(t)
 	output := filepath.Join(t.TempDir(), "export.cast")
-	opts := recordingExportOpts{file: fixture.castZstdPath, output: output, expectedProducerId: fixture.identity.ProducerId().String()}
+	opts := recordingExportOpts{file: fixture.castZstdPath, output: output, expectedProducerId: fixture.identity.ProducerId().String(), withSensitive: true}
 	require.NoError(t, doRecordingExport(&opts, &bytes.Buffer{}))
 	raw, err := stdos.ReadFile(output)
 	require.NoError(t, err)
@@ -159,12 +203,33 @@ func TestRecordingExportInstallsPrivateOutputWithoutClobbering(t *testing.T) {
 	require.Equal(t, fixture.cast, raw)
 }
 
+func TestRecordingExportNativeEncryptedInstallsPrivateOutput(t *testing.T) {
+	fixture := newRecordingExportTestFixture(t)
+	output := filepath.Join(t.TempDir(), "export.cast")
+	opts := recordingExportOpts{file: fixture.nativeEncryptedPath, output: output, withSensitive: true, expectedProducerId: fixture.identity.ProducerId().String(), decryptionIdentityFiles: []string{fixture.identityPath}}
+	require.NoError(t, doRecordingExport(&opts, &bytes.Buffer{}))
+	actual, err := stdos.ReadFile(output)
+	require.NoError(t, err)
+	require.Equal(t, fixture.nativeCast, actual)
+	info, err := stdos.Stat(output)
+	require.NoError(t, err)
+	requireAuditOutputPrivate(t, output, info)
+	keyBefore, err := stdos.ReadFile(fixture.identityPath)
+	require.NoError(t, err)
+	opts.output = fixture.identityPath
+	opts.force = true
+	require.ErrorContains(t, doRecordingExport(&opts, &bytes.Buffer{}), "must not replace private key")
+	keyAfter, err := stdos.ReadFile(fixture.identityPath)
+	require.NoError(t, err)
+	require.Equal(t, keyBefore, keyAfter)
+}
+
 func TestRecordingExportNeverReplacesInputOrDecryptionIdentity(t *testing.T) {
 	fixture := newRecordingExportTestFixture(t)
 	inputBefore, err := stdos.ReadFile(fixture.castPath)
 	require.NoError(t, err)
 	err = doRecordingExport(&recordingExportOpts{
-		file: fixture.castPath, output: fixture.castPath, force: true, allowUntrusted: true,
+		file: fixture.castPath, output: fixture.castPath, force: true, allowUntrusted: true, withSensitive: true,
 	}, &bytes.Buffer{})
 	require.ErrorContains(t, err, "must not replace Recording input")
 	inputAfter, err := stdos.ReadFile(fixture.castPath)
@@ -174,7 +239,7 @@ func TestRecordingExportNeverReplacesInputOrDecryptionIdentity(t *testing.T) {
 	keyBefore, err := stdos.ReadFile(fixture.identityPath)
 	require.NoError(t, err)
 	err = doRecordingExport(&recordingExportOpts{
-		file: fixture.beCastPath, output: fixture.identityPath, force: true, allowUntrusted: true,
+		file: fixture.beCastPath, output: fixture.identityPath, force: true, allowUntrusted: true, withSensitive: true,
 		decryptionIdentityFiles: []string{fixture.identityPath},
 	}, &bytes.Buffer{})
 	require.ErrorContains(t, err, "must not replace private key")
@@ -189,7 +254,7 @@ func TestRecordingExportNeverWritesStandardOutputToInputOrDecryptionIdentity(t *
 	require.NoError(t, err)
 	inputOutput, err := stdos.OpenFile(fixture.castPath, stdos.O_WRONLY|stdos.O_APPEND, 0)
 	require.NoError(t, err)
-	err = doRecordingExport(&recordingExportOpts{file: fixture.castPath, allowUntrusted: true}, inputOutput)
+	err = doRecordingExport(&recordingExportOpts{file: fixture.castPath, allowUntrusted: true, withSensitive: true}, inputOutput)
 	require.Error(t, err)
 	require.NoError(t, inputOutput.Close())
 	inputAfter, err := stdos.ReadFile(fixture.castPath)
@@ -201,7 +266,7 @@ func TestRecordingExportNeverWritesStandardOutputToInputOrDecryptionIdentity(t *
 	keyOutput, err := stdos.OpenFile(fixture.identityPath, stdos.O_WRONLY|stdos.O_APPEND, 0)
 	require.NoError(t, err)
 	err = doRecordingExport(&recordingExportOpts{
-		file: fixture.beCastPath, allowUntrusted: true, decryptionIdentityFiles: []string{fixture.identityPath},
+		file: fixture.beCastPath, allowUntrusted: true, decryptionIdentityFiles: []string{fixture.identityPath}, withSensitive: true,
 	}, keyOutput)
 	require.Error(t, err)
 	require.NoError(t, keyOutput.Close())
@@ -212,7 +277,7 @@ func TestRecordingExportNeverWritesStandardOutputToInputOrDecryptionIdentity(t *
 
 func TestRecordingExportReportsStdoutFailureAfterVerification(t *testing.T) {
 	fixture := newRecordingExportTestFixture(t)
-	err := doRecordingExport(&recordingExportOpts{file: fixture.castPath, allowUntrusted: true}, recordingExportErrorWriter{})
+	err := doRecordingExport(&recordingExportOpts{file: fixture.castPath, allowUntrusted: true, withSensitive: true}, recordingExportErrorWriter{})
 	require.ErrorContains(t, err, "injected write failure")
 }
 
@@ -223,13 +288,16 @@ func (recordingExportErrorWriter) Write([]byte) (int, error) {
 }
 
 type recordingExportTestFixture struct {
-	castPath     string
-	castZstdPath string
-	beCastPath   string
-	identityPath string
-	cast         []byte
-	beCastCast   []byte
-	identity     *audit.Identity
+	castPath            string
+	castZstdPath        string
+	beCastPath          string
+	nativeClearPath     string
+	nativeEncryptedPath string
+	nativeCast          []byte
+	identityPath        string
+	cast                []byte
+	beCastCast          []byte
+	identity            *audit.Identity
 }
 
 func newRecordingExportTestFixture(t *testing.T) recordingExportTestFixture {
@@ -281,6 +349,30 @@ func newRecordingExportTestFixture(t *testing.T) recordingExportTestFixture {
 		beCastPath: filepath.Join(root, "encrypted.data"), cast: append([]byte(nil), cast.Bytes()...), identity: identity,
 		beCastCast:   append([]byte(nil), beCastCast.Bytes()...),
 		identityPath: writeRecordingExportTestPrivateKey(t, encryptionPrivate),
+	}
+	for _, encrypted := range []bool{false, true} {
+		var nativeRecipient *bfcrypto.AgeSshRecipient
+		path := filepath.Join(root, "native.bcast")
+		if encrypted {
+			nativeRecipient = recipient
+			path = filepath.Join(root, "native.becast")
+		}
+		var container bytes.Buffer
+		nativeWriter, err := recording.NewNativeRecordingWriter(&container, identity, nativeRecipient, header, metadata, 300, recording.NativeRecordingWriterLimits{})
+		require.NoError(t, err)
+		writeOutput(nativeWriter)
+		_, err = nativeWriter.Seal(2*time.Second, result, &exitStatus)
+		require.NoError(t, err)
+		require.NoError(t, stdos.WriteFile(path, container.Bytes(), 0600))
+		if encrypted {
+			fixture.nativeEncryptedPath = path
+		} else {
+			fixture.nativeClearPath = path
+			var expected bytes.Buffer
+			_, err = recording.ExportNativeRecordingCast(bytes.NewReader(container.Bytes()), int64(container.Len()), nil, &expected, recording.NativeRecordingVerifyOptions{ExpectedProducerId: identity.ProducerId()})
+			require.NoError(t, err)
+			fixture.nativeCast = expected.Bytes()
+		}
 	}
 	require.NoError(t, stdos.WriteFile(fixture.castPath, cast.Bytes(), 0600))
 	require.NoError(t, stdos.WriteFile(fixture.castZstdPath, castZstd.Bytes(), 0600))

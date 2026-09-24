@@ -459,7 +459,7 @@ func TestHouseKeeperPreservesReceiptWhenArtifactWasNotPublished(t *testing.T) {
 	recordingId, err := recording.NewId()
 	require.NoError(t, err)
 	payload := []byte("receipt prepared before publication")
-	name := recordingId.String() + sessionRecordingCastZstdSuffix
+	name := recordingId.String() + sessionRecordingBCastSuffix
 	remoteArtifact, err := audit.NewRemoteArtifact(repository.producerId, name, audit.ArtifactDigest(sha256.Sum256(payload)), int64(len(payload)), bytes.NewReader(payload))
 	require.NoError(t, err)
 	sealedAt := time.Now().UTC().Add(-2 * time.Hour)
@@ -497,7 +497,7 @@ func TestHouseKeeperResumesMarkedRecordingDeletionAfterRestart(t *testing.T) {
 	require.NoError(t, artifact.Close())
 	require.NoError(t, repository.receipts.MarkRetentionDeleting(t.Context(), candidates[0].receipt, cutoff))
 	candidates[0].receipt.DeletionStarted = true
-	deleted, err := repository.castZstd.DeleteSealed(t.Context(), candidates[0].recordingId, candidates[0].receipt.ArtifactDigest, candidates[0].receipt.Size)
+	deleted, err := repository.native.DeleteSealed(t.Context(), candidates[0].recordingId, candidates[0].receipt.ArtifactDigest, candidates[0].receipt.Size)
 	require.NoError(t, err)
 	require.True(t, deleted)
 	require.NoError(t, first.Close())
@@ -544,9 +544,5 @@ func sealRemoteDeliveryTestRecording(t *testing.T, svc *service, conf configurat
 	require.Len(t, pending, 1)
 	require.NoError(t, repository.receipts.CompleteLifecycle(t.Context(), pending[0]))
 	require.NoError(t, active.close())
-	suffix := sessionRecordingCastZstdSuffix
-	if repository.format == sessionRecordingRepositoryFormatBECast {
-		suffix = sessionRecordingBECastSuffix
-	}
-	return recordingId.String() + suffix
+	return fileName
 }
