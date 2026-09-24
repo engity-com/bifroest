@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -18,6 +20,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfconnection "github.com/engity-com/bifroest/pkg/connection"
+	"github.com/engity-com/bifroest/pkg/nativeformat"
 	"github.com/engity-com/bifroest/pkg/recording"
 	"github.com/engity-com/bifroest/pkg/session"
 )
@@ -59,11 +62,19 @@ func (*serviceRemoteDeliveryTestConfiguration) FeatureFlags() []string { return 
 type serviceRemoteDeliveryTestTarget struct {
 	published         chan uint64
 	publishedArtifact chan string
+	artifactContent   chan serviceRemoteDeliveryPublishedArtifact
 	artifactStarted   chan struct{}
 	artifactGate      <-chan struct{}
 	artifactFailures  atomic.Int32
 	closed            atomic.Bool
 	closeErr          error
+}
+
+type serviceRemoteDeliveryPublishedArtifact struct {
+	path    string
+	digest  audit.ArtifactDigest
+	size    int64
+	content []byte
 }
 
 func (this *serviceRemoteDeliveryTestTarget) Publish(_ context.Context, segment audit.SealedSegment) error {
@@ -86,6 +97,17 @@ func (this *serviceRemoteDeliveryTestTarget) PublishArtifact(ctx context.Context
 	if this.artifactGate != nil {
 		select {
 		case <-this.artifactGate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if this.artifactContent != nil {
+		content, err := io.ReadAll(artifact.Content())
+		if err != nil {
+			return err
+		}
+		select {
+		case this.artifactContent <- serviceRemoteDeliveryPublishedArtifact{artifact.RemotePath(), artifact.Digest(), artifact.Size(), content}:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -150,7 +172,7 @@ func TestServiceDeliversSealedRecordingArtifacts(t *testing.T) {
 			if encrypted {
 				conf.Auditlogs[0].EncryptionPublicKey = sessionRecordingEncryptionPublicKey(t)
 			}
-			target := &serviceRemoteDeliveryTestTarget{publishedArtifact: make(chan string, 1)}
+			target := &serviceRemoteDeliveryTestTarget{artifactContent: make(chan serviceRemoteDeliveryPublishedArtifact, 1)}
 			conf.Auditlogs[0].Recording.Targets.Mode = configuration.AuditlogRecordingTargetsModeCustom
 			conf.Auditlogs[0].Recording.Targets.Targets = configuration.AuditlogTargets{{
 				Name: "recordings",
@@ -165,7 +187,35 @@ func TestServiceDeliversSealedRecordingArtifacts(t *testing.T) {
 			flushContext, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			require.NoError(t, svc.recordingDeliveries[configuration.DefaultAuditlogName].Flush(flushContext))
-			require.Equal(t, name, <-target.publishedArtifact)
+			published := <-target.artifactContent
+			repository := svc.recordingRepositories[configuration.DefaultAuditlogName]
+			suffix := sessionRecordingBCastSuffix
+			if encrypted {
+				suffix = sessionRecordingBECastSuffix
+			}
+			id, err := repository.recordingIdFromArtifactName(name)
+			require.NoError(t, err)
+			require.Equal(t, id.String()+suffix, name)
+			require.Equal(t, path.Join(repository.producerId.String(), id.String()+suffix), published.path)
+			sealedDirectory := filepath.Join(conf.Auditlogs[0].Recording.Directory, "sealed")
+			local, err := os.ReadFile(filepath.Join(sealedDirectory, name))
+			require.NoError(t, err)
+			require.Equal(t, local, published.content)
+			require.Equal(t, int64(len(local)), published.size)
+			require.True(t, bytes.HasPrefix(published.content, []byte(nativeformat.RecordingMagic)))
+			var candidates []sessionRecordingRetentionCandidate
+			require.Eventually(t, func() bool {
+				candidates, err = repository.retentionCandidates(t.Context(), time.Now().UTC().Add(time.Hour))
+				return err == nil && len(candidates) == 1
+			}, 5*time.Second, 10*time.Millisecond)
+			require.Equal(t, name, candidates[0].receipt.FileName)
+			require.Equal(t, audit.ArtifactDigest(sha256.Sum256(published.content)), published.digest)
+			require.Equal(t, candidates[0].receipt.ArtifactDigest, published.digest)
+			require.Equal(t, candidates[0].receipt.Size, published.size)
+			entries, err := os.ReadDir(sealedDirectory)
+			require.NoError(t, err)
+			require.Len(t, entries, 1, "delivery must not generate .cast or .jsonl artifacts")
+			require.Equal(t, name, entries[0].Name())
 		})
 	}
 }
@@ -177,6 +227,7 @@ func TestServiceShutdownFlushesRecordingArtifacts(t *testing.T) {
 	gate := make(chan struct{})
 	target := &serviceRemoteDeliveryTestTarget{
 		publishedArtifact: make(chan string, 1),
+		artifactContent:   make(chan serviceRemoteDeliveryPublishedArtifact, 1),
 		artifactStarted:   make(chan struct{}, 2),
 		artifactGate:      gate,
 	}
@@ -209,6 +260,11 @@ func TestServiceShutdownFlushesRecordingArtifacts(t *testing.T) {
 	close(gate)
 	require.NoError(t, <-closed)
 	require.Equal(t, name, <-target.publishedArtifact)
+	content := <-target.artifactContent
+	local, err := os.ReadFile(filepath.Join(conf.Auditlogs[0].Recording.Directory, "sealed", name))
+	require.NoError(t, err)
+	require.Equal(t, local, content.content)
+	require.Equal(t, path.Join(svc.recordingRepositories[configuration.DefaultAuditlogName].producerId.String(), name), content.path)
 	require.True(t, target.closed.Load())
 
 	restartedTarget := &serviceRemoteDeliveryTestTarget{publishedArtifact: make(chan string, 1)}
@@ -221,6 +277,102 @@ func TestServiceShutdownFlushesRecordingArtifacts(t *testing.T) {
 		t.Fatalf("acknowledged Recording artifact was republished as %q", republished)
 	default:
 	}
+}
+
+func TestHouseKeeperWaitsForAllRecordingTargetsAndSuccessAudits(t *testing.T) {
+	root := t.TempDir()
+	conf := sessionRecordingTestConfiguration(t, root)
+	enableSessionRecording(&conf.Auditlogs[0])
+	conf.Auditlogs[0].Recording.RetainFor.SetNative(time.Hour)
+	gate := make(chan struct{})
+	firstTarget := &serviceRemoteDeliveryTestTarget{publishedArtifact: make(chan string, 1)}
+	secondTarget := &serviceRemoteDeliveryTestTarget{
+		publishedArtifact: make(chan string, 1), artifactStarted: make(chan struct{}, 1), artifactGate: gate,
+	}
+	conf.Auditlogs[0].Recording.Targets.Mode = configuration.AuditlogRecordingTargetsModeCustom
+	conf.Auditlogs[0].Recording.Targets.Targets = configuration.AuditlogTargets{
+		{Name: "first", V: &serviceRemoteDeliveryTestConfiguration{target: firstTarget}},
+		{Name: "second", V: &serviceRemoteDeliveryTestConfiguration{target: secondTarget}},
+	}
+	svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+	require.NoError(t, err)
+	defer func() {
+		select {
+		case <-gate:
+		default:
+			close(gate)
+		}
+		require.NoError(t, svc.Close())
+	}()
+	recorder := &recordingAuditRecorder{}
+	svc.auditRecorders[configuration.DefaultAuditlogName] = recorder
+	name := sealRemoteDeliveryTestRecording(t, svc, conf)
+	repository := svc.recordingRepositories[configuration.DefaultAuditlogName]
+	select {
+	case published := <-firstTarget.publishedArtifact:
+		require.Equal(t, name, published)
+	case <-time.After(5 * time.Second):
+		t.Fatal("first Recording target was not published")
+	}
+	select {
+	case <-secondTarget.artifactStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("second Recording target did not start")
+	}
+	require.Eventually(t, func() bool {
+		for _, event := range auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameSessionRecordingDeliverySucceeded) {
+			if event.Target == "first" {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 10*time.Millisecond)
+	cutoff := time.Now().UTC().Add(2 * time.Hour)
+	require.NoError(t, svc.houseKeeper.cleanupRecordings(svc.houseKeeper.logger(), t.Context(), cutoff))
+	artifact, err := repository.OpenSealedArtifact(t.Context(), name)
+	require.NoError(t, err)
+	require.NoError(t, artifact.Close())
+	candidates, err := repository.retentionCandidates(t.Context(), cutoff)
+	require.NoError(t, err)
+	require.Empty(t, candidates)
+	require.Empty(t, auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameHousekeepingRecordingDeleteStarted))
+
+	recorder.setErrorForName(audit.EventNameSessionRecordingDeliverySucceeded, fmt.Errorf("injected success audit failure"))
+	close(gate)
+	select {
+	case published := <-secondTarget.publishedArtifact:
+		require.Equal(t, name, published)
+	case <-time.After(5 * time.Second):
+		t.Fatal("second Recording target was not published")
+	}
+	require.Eventually(t, func() bool {
+		for _, event := range auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameSessionRecordingDeliverySucceeded) {
+			if event.Target == "second" {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 10*time.Millisecond)
+	require.NoError(t, svc.houseKeeper.cleanupRecordings(svc.houseKeeper.logger(), t.Context(), cutoff))
+	artifact, err = repository.OpenSealedArtifact(t.Context(), name)
+	require.NoError(t, err)
+	require.NoError(t, artifact.Close())
+	candidates, err = repository.retentionCandidates(t.Context(), cutoff)
+	require.NoError(t, err)
+	require.Empty(t, candidates, "acknowledgements without successful delivery audits must block retention")
+
+	recorder.setError(nil)
+	flushContext, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, svc.recordingDeliveries[configuration.DefaultAuditlogName].Flush(flushContext))
+	require.Eventually(t, func() bool {
+		candidates, err = repository.retentionCandidates(t.Context(), cutoff)
+		return err == nil && len(candidates) == 1
+	}, 5*time.Second, 10*time.Millisecond)
+	require.NoError(t, svc.houseKeeper.cleanupRecordings(svc.houseKeeper.logger(), t.Context(), cutoff))
+	_, err = repository.OpenSealedArtifact(t.Context(), name)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	require.Len(t, auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameHousekeepingRecordingDeleteCompleted), 1)
 }
 
 func TestHouseKeeperDeletesAcknowledgedRecordingAfterRetentionAndAudits(t *testing.T) {

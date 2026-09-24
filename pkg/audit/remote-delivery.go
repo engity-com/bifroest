@@ -79,6 +79,7 @@ type remoteDeliveryWorker struct {
 	destinationFingerprint remoteDeliveryDestinationFingerprint
 	publishAttemptTimeout  time.Duration
 	cursor                 remoteDeliveryCursor
+	lastRecord             journalHash
 	options                remoteDeliveryOptions
 	logger                 log.Logger
 	wake                   chan struct{}
@@ -96,6 +97,8 @@ type remoteDeliverySegmentReader struct {
 	producerId       ProducerId
 	identity         *Identity
 	encrypted        bool
+	previousSegment  journalHash
+	previousRecord   journalHash
 	iterator         *sortedJournalSegmentIterator
 	scan             *remoteDeliverySegmentScan
 	candidate        *journalSegmentFile
@@ -111,11 +114,17 @@ type remoteDeliverySegmentReader struct {
 }
 
 type remoteDeliverySegmentResult struct {
-	segment SealedSegment
-	file    *os.File
-	exists  bool
-	more    bool
-	err     error
+	segment    SealedSegment
+	file       *os.File
+	lastRecord journalHash
+	exists     bool
+	more       bool
+	err        error
+}
+
+type remoteDeliveryPending struct {
+	cursor     remoteDeliveryCursor
+	lastRecord journalHash
 }
 
 type remoteDeliverySegmentScan struct {
@@ -229,6 +238,44 @@ func newRemoteDelivery(ctx context.Context, conf *configuration.Auditlog, identi
 	result.flushLock <- struct{}{}
 	for index, entry := range targets.entries {
 		targetStateDirectory := filepath.Join(producerStateDirectory, remoteDeliveryTargetStateName(entry.scope.Target))
+		if err := ensureJournalDirectory(targetStateDirectory, true); err != nil {
+			cancel()
+			if watcher != nil {
+				_ = watcher.Close()
+			}
+			return nil, err
+		}
+		if err := validateRemoteDeliveryTargetState(targetStateDirectory); err != nil {
+			cancel()
+			if watcher != nil {
+				_ = watcher.Close()
+			}
+			return nil, err
+		}
+		// Validate both signed bindings before the loader can promote cursor.tmp.
+		var stored [2]remoteDeliveryCursor
+		var storedExists [2]bool
+		stored[0], storedExists[0], err = readRemoteDeliveryCursor(filepath.Join(targetStateDirectory, remoteDeliveryCursorFileName), identity, entry.scope.Target, entry.destinationFingerprint)
+		if err == nil {
+			var temporaryErr error
+			stored[1], storedExists[1], temporaryErr = readRemoteDeliveryCursor(filepath.Join(targetStateDirectory, remoteDeliveryCursorTempFileName), identity, entry.scope.Target, entry.destinationFingerprint)
+			if temporaryErr != nil {
+				stored[1] = remoteDeliveryCursor{} // The loader discards invalid temporary files.
+				storedExists[1] = false
+			}
+		}
+		var recordTips [2]journalHash
+		if err == nil {
+			recordTips, err = validateRemoteDeliveryCursors(ctx, stored, producerDirectory, entry.scope.Target, encrypted, identity,
+				func() (*journalSegmentWorkspace, error) { return newJournalSegmentWorkspaceInJournal(journalDirectory) })
+		}
+		if err != nil {
+			cancel()
+			if watcher != nil {
+				_ = watcher.Close()
+			}
+			return nil, err
+		}
 		cursor, err := loadRemoteDeliveryCursor(producerStateDirectory, identity, entry.scope.Target, entry.destinationFingerprint)
 		if err != nil {
 			cancel()
@@ -237,12 +284,21 @@ func newRemoteDelivery(ctx context.Context, conf *configuration.Auditlog, identi
 			}
 			return nil, err
 		}
-		if err := validateRemoteDeliveryCursor(cursor, producerDirectory, entry.scope.Target, encrypted); err != nil {
+		var lastRecord journalHash
+		validated := cursor.Sequence == 0 && !storedExists[0] && !storedExists[1]
+		for i, candidate := range stored {
+			if storedExists[i] && cursor.Sequence == candidate.Sequence && cursor.SegmentHash == candidate.SegmentHash {
+				lastRecord = recordTips[i]
+				validated = true
+				break
+			}
+		}
+		if !validated {
 			cancel()
 			if watcher != nil {
 				_ = watcher.Close()
 			}
-			return nil, err
+			return nil, errors.System.Newf("loaded remote delivery cursor for target %q differs from validated local chain", entry.scope.Target)
 		}
 		observed := make(chan journalSegmentFile, remoteDeliveryObservedSegmentBuffer)
 		worker := &remoteDeliveryWorker{
@@ -255,6 +311,7 @@ func newRemoteDelivery(ctx context.Context, conf *configuration.Auditlog, identi
 			destinationFingerprint: entry.destinationFingerprint,
 			publishAttemptTimeout:  entry.publishAttemptTimeout,
 			cursor:                 cursor,
+			lastRecord:             lastRecord,
 			options:                options,
 			logger: log.GetLogger("audit.remote-delivery").
 				With("auditlog", conf.Name).
@@ -264,10 +321,12 @@ func newRemoteDelivery(ctx context.Context, conf *configuration.Auditlog, identi
 			progress:      result.progress,
 			observed:      observed,
 			reader: remoteDeliverySegmentReader{
-				directory:  producerDirectory,
-				producerId: identity.ProducerId(),
-				identity:   identity,
-				encrypted:  encrypted,
+				directory:       producerDirectory,
+				producerId:      identity.ProducerId(),
+				identity:        identity,
+				encrypted:       encrypted,
+				previousSegment: journalHash(cursor.SegmentHash),
+				previousRecord:  lastRecord,
 			},
 		}
 		worker.confirmed.Store(cursor.Sequence)
@@ -394,23 +453,26 @@ func (this *RemoteDelivery) Flush(ctx context.Context) error {
 
 func (this *remoteDeliveryWorker) run(ctx context.Context) {
 	defer this.reader.Close()
-	var pending *remoteDeliveryCursor
+	var pending *remoteDeliveryPending
 	failures := uint(0)
 	for {
 		if err := ctx.Err(); err != nil {
 			return
 		}
 		if pending != nil {
-			if err := this.commitPendingCursor(*pending); err != nil {
+			if err := this.commitPendingCursor(pending.cursor); err != nil {
 				failures++
-				if !this.waitAfterFailure(ctx, failures, pending.Sequence, err) {
+				if !this.waitAfterFailure(ctx, failures, pending.cursor.Sequence, err) {
 					return
 				}
 				continue
 			}
 			if failures > 0 {
-				this.logger.With("sequence", pending.Sequence).Info("remote audit delivery recovered")
+				this.logger.With("sequence", pending.cursor.Sequence).Info("remote audit delivery recovered")
 			}
+			this.lastRecord = pending.lastRecord
+			this.reader.previousSegment = journalHash(pending.cursor.SegmentHash)
+			this.reader.previousRecord = this.lastRecord
 			pending = nil
 			failures = 0
 			continue
@@ -451,7 +513,7 @@ func (this *remoteDeliveryWorker) commitPendingCursor(pending remoteDeliveryCurs
 	return nil
 }
 
-func (this *remoteDeliveryWorker) publishNext(ctx context.Context) (*remoteDeliveryCursor, error) {
+func (this *remoteDeliveryWorker) publishNext(ctx context.Context) (*remoteDeliveryPending, error) {
 	attemptContext, cancelAttempt := context.WithTimeout(ctx, this.publishAttemptTimeout)
 	result := this.reader.Next(attemptContext, this.cursor.Sequence, this.observed, &this.forceRescan)
 	if result.err != nil {
@@ -484,10 +546,10 @@ func (this *remoteDeliveryWorker) publishNext(ctx context.Context) (*remoteDeliv
 		}
 		return nil, goerrors.Join(publishErr, this.reader.Invalidate())
 	}
-	pending := &remoteDeliveryCursor{remoteDeliveryCursorContent: remoteDeliveryCursorContent{
+	pending := &remoteDeliveryPending{cursor: remoteDeliveryCursor{remoteDeliveryCursorContent: remoteDeliveryCursorContent{
 		Sequence:    result.segment.Sequence(),
 		SegmentHash: result.segment.Hash(),
-	}}
+	}}, lastRecord: result.lastRecord}
 	if closeErr != nil {
 		this.logger.WithError(closeErr).With("sequence", result.segment.Sequence()).Warn("cannot close delivered local audit segment")
 	}
@@ -566,12 +628,15 @@ func (this *remoteDeliveryWorker) observe(candidate journalSegmentFile) {
 	notifyRemoteDelivery(this.discoveryWake)
 }
 
-func validateRemoteDeliveryCursor(cursor remoteDeliveryCursor, directory string, target configuration.AuditlogTargetName, encrypted bool) (result error) {
-	if cursor.Sequence == 0 {
-		return inspectRemoteDeliveryDirectory(directory, encrypted, func(journalSegmentFile) {})
+func validateRemoteDeliveryCursors(ctx context.Context, cursors [2]remoteDeliveryCursor, directory string, target configuration.AuditlogTargetName, encrypted bool, identity *Identity, workspace func() (*journalSegmentWorkspace, error)) (records [2]journalHash, result error) {
+	maximum := cursors[0].Sequence
+	if cursors[1].Sequence > maximum {
+		maximum = cursors[1].Sequence
 	}
-	ctx := context.Background()
-	iterator, err := newSortedJournalSegmentIterator(ctx, directory, os.TempDir(), func(entry os.DirEntry) (*journalSegmentFile, error) {
+	if maximum == 0 {
+		return records, ctx.Err()
+	}
+	iterator, err := newSortedJournalSegmentIteratorWithWorkspace(ctx, directory, workspace, func(entry os.DirEntry) (*journalSegmentFile, error) {
 		candidate, err := parseRemoteDeliveryDirectoryEntry(directory, entry, encrypted)
 		if err != nil || candidate.sequence == 0 {
 			return nil, err
@@ -579,35 +644,63 @@ func validateRemoteDeliveryCursor(cursor remoteDeliveryCursor, directory string,
 		return &candidate, nil
 	})
 	if err != nil {
-		return err
+		return records, err
 	}
 	defer func() { result = goerrors.Join(result, iterator.Close()) }()
 	expected := uint64(1)
-	confirmed := false
+	var previousSegment journalHash
+	var lastRecord journalHash
+	var pending *journalSegmentFile
 	for {
-		candidate, found, err := iterator.Next(ctx)
-		if err != nil {
-			return err
+		var candidate journalSegmentFile
+		found := pending != nil
+		if found {
+			candidate, pending = *pending, nil
+		} else {
+			var err error
+			candidate, found, err = iterator.Next(ctx)
+			if err != nil {
+				return records, err
+			}
 		}
-		if !found || candidate.sequence > cursor.Sequence {
+		if !found || candidate.sequence > maximum {
 			break
 		}
-		if confirmed || candidate.sequence != expected {
-			return errors.System.Newf("remote delivery cursor for target %q confirms missing or duplicate local segment %d", target, expected)
+		if candidate.sequence != expected {
+			return records, errors.System.Newf("remote delivery cursor for target %q confirms missing or duplicate local segment %d", target, expected)
 		}
-		if candidate.sequence == cursor.Sequence {
-			if SegmentHash(candidate.hash) != cursor.SegmentHash {
-				break
+		next, nextFound, err := iterator.Next(ctx)
+		if err != nil {
+			return records, err
+		}
+		if nextFound {
+			if next.sequence == expected {
+				return records, errors.System.Newf("remote delivery cursor for target %q confirms missing or duplicate local segment %d", target, expected)
 			}
-			confirmed = true
-		} else {
-			expected++
+			pending = &next
 		}
+		segment, file, tip, err := openRemoteDeliverySegment(ctx, identity, identity.ProducerId(), candidate, encrypted, previousSegment, lastRecord)
+		if err != nil {
+			return records, errors.System.Newf("remote delivery cursor for target %q confirms invalid local segment %d: %w", target, expected, err)
+		}
+		if err := file.Close(); err != nil {
+			return records, err
+		}
+		previousSegment, lastRecord = journalHash(segment.Hash()), tip
+		for i, cursor := range cursors {
+			if expected == cursor.Sequence {
+				if segment.Hash() != cursor.SegmentHash {
+					return records, errors.System.Newf("remote delivery cursor for target %q conflicts with or confirms missing local segment %d", target, cursor.Sequence)
+				}
+				records[i] = lastRecord
+			}
+		}
+		if expected == maximum {
+			return records, nil
+		}
+		expected++
 	}
-	if confirmed {
-		return nil
-	}
-	return errors.System.Newf("remote delivery cursor for target %q conflicts with or confirms missing local segment %d", target, cursor.Sequence)
+	return records, errors.System.Newf("remote delivery cursor for target %q conflicts with or confirms missing local segment %d", target, maximum)
 }
 
 func remoteDeliveryTailSequence(directory string, encrypted bool) (uint64, error) {
@@ -734,11 +827,11 @@ func (this *remoteDeliverySegmentReader) Next(ctx context.Context, confirmed uin
 		this.gapVerification = false
 		candidate.name = nativeSegmentName(candidate.sequence, candidate.hash, this.encrypted)
 		candidate.path = filepath.Join(this.directory, candidate.name)
-		segment, file, err := openRemoteDeliverySegment(ctx, this.identity, this.producerId, candidate, this.encrypted)
+		segment, file, tip, err := openRemoteDeliverySegment(ctx, this.identity, this.producerId, candidate, this.encrypted, this.previousSegment, this.previousRecord)
 		if err != nil {
 			return remoteDeliverySegmentResult{err: goerrors.Join(err, this.Invalidate())}
 		}
-		return remoteDeliverySegmentResult{segment: segment, file: file, exists: true, more: this.iterator != nil || this.rescanPending}
+		return remoteDeliverySegmentResult{segment: segment, file: file, lastRecord: tip, exists: true, more: this.iterator != nil || this.rescanPending}
 	}
 }
 
@@ -813,7 +906,9 @@ func (this *remoteDeliverySegmentReader) startScan() error {
 		},
 	}
 	if this.scan.sorter.tempDirectory == "" {
-		this.scan.sorter.tempDirectory = os.TempDir()
+		this.scan.sorter.newWorkspace = func() (*journalSegmentWorkspace, error) {
+			return newJournalSegmentWorkspaceInJournal(filepath.Dir(this.directory))
+		}
 	}
 	this.scanCount++
 	return nil
@@ -862,6 +957,8 @@ func (this *remoteDeliverySegmentScan) advance(ctx context.Context, hook func(co
 		if err != nil {
 			return nil, false, err
 		}
+		iterator.workspace = this.sorter.workspace
+		this.sorter.workspace = nil
 		return iterator, true, nil
 	}
 	if err := ctx.Err(); err != nil {
@@ -958,54 +1055,56 @@ func (this *remoteDeliverySegmentScan) Close() error {
 	return goerrors.Join(closeErr, this.sorter.cleanup())
 }
 
-func openRemoteDeliverySegment(ctx context.Context, identity *Identity, producerId ProducerId, candidate journalSegmentFile, encrypted bool) (SealedSegment, *os.File, error) {
+func openRemoteDeliverySegment(ctx context.Context, identity *Identity, producerId ProducerId, candidate journalSegmentFile, encrypted bool, previousSegment, previousRecord journalHash) (SealedSegment, *os.File, journalHash, error) {
 	if err := ctx.Err(); err != nil {
-		return SealedSegment{}, nil, err
+		return SealedSegment{}, nil, journalHash{}, err
 	}
 	file, err := nativeOpenRegular(candidate.path)
 	if err != nil {
-		return SealedSegment{}, nil, err
+		return SealedSegment{}, nil, journalHash{}, err
 	}
 	stopClosingFile := closeRemoteDeliveryFileOnCancellation(ctx, file)
 	defer stopClosingFile()
 	info, err := file.Stat()
 	if err != nil {
 		_ = file.Close()
-		return SealedSegment{}, nil, errors.System.Newf("cannot inspect sealed audit segment %q for delivery: %w", candidate.path, err)
+		return SealedSegment{}, nil, journalHash{}, errors.System.Newf("cannot inspect sealed audit segment %q for delivery: %w", candidate.path, err)
 	}
 	if info.Size() <= int64(len(nativeformat.AuditMagic)) || info.Size() > nativeMaxSize {
 		_ = file.Close()
-		return SealedSegment{}, nil, errors.System.Newf("invalid native audit segment size: %s", candidate.path)
+		return SealedSegment{}, nil, journalHash{}, errors.System.Newf("invalid native audit segment size: %s", candidate.path)
 	}
+	var lastRecord journalHash
 	if identity != nil {
 		magic := make([]byte, len(nativeformat.AuditMagic))
 		if _, err := file.ReadAt(magic, 0); err != nil || string(magic) != nativeformat.AuditMagic {
 			_ = file.Close()
-			return SealedSegment{}, nil, errors.System.Newf("invalid native audit segment magic: %s: %v", candidate.path, err)
+			return SealedSegment{}, nil, journalHash{}, errors.System.Newf("invalid native audit segment magic: %s: %v", candidate.path, err)
 		}
 		unit, _, tail, err := nativeformat.ReadUnitAt(file, int64(len(magic)), info.Size(), nativeformat.MaxAuditRecordPayload)
 		if err != nil || tail || unit.Type != nativeformat.HeaderUnit {
 			_ = file.Close()
-			return SealedSegment{}, nil, errors.System.Newf("invalid native audit segment header: %s: %v", candidate.path, err)
+			return SealedSegment{}, nil, journalHash{}, errors.System.Newf("invalid native audit segment header: %s: %v", candidate.path, err)
 		}
 		header, err := nativeformat.Unmarshal[nativeAuditHeader](unit.Payload, nativeformat.MaxMetadataPayload)
 		if err != nil || (header.Recipient != "") != encrypted {
 			_ = file.Close()
-			return SealedSegment{}, nil, errors.System.Newf("invalid native audit segment mode or header: %s: %v", candidate.path, err)
+			return SealedSegment{}, nil, journalHash{}, errors.System.Newf("invalid native audit segment mode or header: %s: %v", candidate.path, err)
 		}
-		scanned, err := nativeScan(file, identity, candidate.sequence, journalHash(header.PreviousSegmentHash), journalHash(header.PreviousRecordHash), journalHash{}, true, header.Recipient, false)
+		scanned, err := nativeScan(file, identity, candidate.sequence, previousSegment, previousRecord, journalHash{}, true, header.Recipient, false)
 		if err != nil || !scanned.sealed || scanned.segmentHash != candidate.hash {
 			_ = file.Close()
-			return SealedSegment{}, nil, errors.System.Newf("invalid sealed native audit segment %q (scan: %v, expected hash: %s, actual hash: %s)", candidate.path, err, candidate.hash, scanned.segmentHash)
+			return SealedSegment{}, nil, journalHash{}, errors.System.Newf("invalid sealed native audit segment %q (scan: %v, expected hash: %s, actual hash: %s)", candidate.path, err, candidate.hash, scanned.segmentHash)
 		}
+		lastRecord = scanned.lastRecord
 	}
 	segment, err := newSealedSegmentContext(ctx, producerId, candidate.sequence, SegmentHash(candidate.hash), info.Size(), file)
 	if err != nil {
 		_ = file.Close()
-		return SealedSegment{}, nil, err
+		return SealedSegment{}, nil, journalHash{}, err
 	}
 	segment.encrypted = encrypted
-	return segment, file, nil
+	return segment, file, lastRecord, nil
 }
 
 func closeRemoteDeliveryFileOnCancellation(ctx context.Context, file *os.File) func() {

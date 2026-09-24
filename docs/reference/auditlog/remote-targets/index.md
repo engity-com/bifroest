@@ -26,6 +26,8 @@ During shutdown, Bifröst seals a non-empty active segment and gives targets up 
 
 A signed cursor below `<journal-directory>/.delivery/` records the last confirmed segment and binds it to the target name and effective destination. Credential and timeout rotation keeps the cursor, while changing the endpoint, namespace, bucket, prefix, directory, or destination user under the same name fails closed. Use a new target name when a replacement destination must receive the complete local history.
 
+Before delivering the next segment, Bifröst verifies its signed predecessor segment and record hashes against the confirmed chain. On restart it reconstructs that chain from locally retained segments, verifies the cursor against its tip, and checks a signed temporary cursor before promoting it. Removing a confirmed local segment makes delivery fail closed; the cursor alone cannot reconstruct the missing last-record hash or prove that a remote copy still exists.
+
 ## Custom targets
 
 Custom Go targets normally register through `audit.RegisterRemoteTarget`, which binds their configuration codec and runtime factory together. `configuration.RegisterAuditlogTargetCodec` is only the low-level entry point for configuration codecs without runtime delivery support.
@@ -33,6 +35,8 @@ Custom Go targets normally register through `audit.RegisterRemoteTarget`, which 
 Factories return `RemoteTargetSettings` with a stable, non-secret `DestinationIdentity` and a positive `PublishAttemptTimeout`. A factory can be invoked separately for audit-log and inherited recording delivery, so every invocation must return an independently owned target. The target's `Publish` method must honor context cancellation, and `Close` must unblock an active publication during shutdown.
 
 Targets can additionally implement `audit.RemoteArtifactTarget` to accept byte-exact artifacts such as sealed session recordings. `PublishArtifact` must verify the supplied `ArtifactDigest`, preserve the same atomic and idempotent publication semantics as journal segments, and reject conflicting content at the same producer-relative file name. Existing custom targets that only implement `audit.RemoteTarget` remain journal-only.
+
+The delivery worker checks the local artifact bytes against their signed receipt before calling `PublishArtifact`; custom targets remain responsible for the integrity of the bytes they actually store and for rejecting a different remote object at the same path.
 
 Before a sealed session recording is published locally, Bifröst stores a signed delivery receipt below the Recording repository's `.delivery` directory. The receipt binds the exact artifact digest and size to the selected target names and effective destination fingerprints. This snapshot remains authoritative for that artifact when targets are later added, removed, reordered, or reconfigured; an existing sealed artifact without its matching receipt is rejected fail-closed during service startup. The receipt also contains the persistent outbox state for [`session.recording.delivery.failed` and `session.recording.delivery.succeeded`](../events.md#sessionrecordingdeliveryfailed). Receipt files count toward the Recording repository's `maximumSpoolBytes` limit. Every state transition atomically replaces its receipt, so the old and temporary copies can coexist briefly; quota admission accounts for the durable replacement size, while a temporary copy left by a crash is fully inventoried and recovered before further spool growth is admitted.
 

@@ -1773,6 +1773,17 @@ func (this *localRepository[Head, Summary]) completePublishedRecovery(ctx contex
 		_ = file.Close()
 		return errors.System.Newf("cannot require published recording delivery receipt: %w", err)
 	}
+	// The published artifact and its receipt are already verified. The reserve
+	// is no longer needed for sealing and funds the durable lifecycle update.
+	reservePath := filepath.Join(directory, localRecoveryReserveName)
+	if err := removeAccountedLocalFile(reservePath, this.quota); err != nil && !stderrors.Is(err, fs.ErrNotExist) {
+		_ = file.Close()
+		return err
+	}
+	if err := syncLocalDirectory(directory); err != nil {
+		_ = file.Close()
+		return errors.System.Newf("cannot synchronize released recording recovery reserve: %w", err)
+	}
 	if err := this.promoteSealedLifecycle(ctx, id, file, info); err != nil {
 		_ = file.Close()
 		return errors.System.Newf("cannot promote published recording lifecycle: %w", err)
@@ -1781,10 +1792,6 @@ func (this *localRepository[Head, Summary]) completePublishedRecovery(ctx contex
 		return err
 	}
 	if err := removeAccountedLocalFile(headPath, this.quota); err != nil && !stderrors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	reservePath := filepath.Join(directory, localRecoveryReserveName)
-	if err := removeAccountedLocalFile(reservePath, this.quota); err != nil && !stderrors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	if err := os.Remove(directory); err != nil {

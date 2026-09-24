@@ -565,13 +565,15 @@ func (this *remoteArtifactDeliveryWorker) deliver(ctx context.Context, name stri
 		}
 		return closeHandle()
 	}
-	publishTarget := this.entry.publishTarget
-	if isNilRemoteValue(publishTarget) {
-		publishTarget = this.entry.target
-	}
 	attemptContext, cancelAttempt := context.WithTimeout(ctx, this.entry.publishAttemptTimeout)
 	stopAttemptClose := context.AfterFunc(attemptContext, func() { _ = closeHandle() })
-	publishErr := publishTarget.PublishArtifact(attemptContext, artifact)
+	var publishErr error
+	if _, wrapped := this.entry.target.(*validatingRemoteArtifactTarget); !wrapped {
+		publishErr = artifact.ValidateContext(attemptContext)
+	}
+	if publishErr == nil {
+		publishErr = this.entry.target.PublishArtifact(attemptContext, artifact)
+	}
 	stopAttemptClose()
 	cancelAttempt()
 	closeErr := closeHandle()
