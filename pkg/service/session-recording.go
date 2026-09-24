@@ -353,13 +353,28 @@ func (this *sessionRecordingRepository) validateSealedReceipts(ctx context.Conte
 	if err != nil {
 		return err
 	}
+	sealed := make(map[string]struct{}, len(ids))
 	for _, id := range ids {
+		name, err := this.artifactName(id)
+		if err != nil {
+			return err
+		}
+		sealed[name] = struct{}{}
 		artifact, err := this.native.OpenSealed(ctx, id)
 		if err != nil {
 			return err
 		}
 		if err := validate(artifact); err != nil {
 			return err
+		}
+	}
+	receipts, err := this.receipts.ListSigned(ctx)
+	if err != nil {
+		return err
+	}
+	for _, receipt := range receipts {
+		if _, exists := sealed[receipt.FileName]; !exists && !receipt.RetentionDeletionStarted {
+			return errors.Config.Newf("sealed session Recording artifact %q is missing despite its delivery receipt", receipt.FileName)
 		}
 	}
 	return nil

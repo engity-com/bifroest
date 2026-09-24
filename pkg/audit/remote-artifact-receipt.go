@@ -172,6 +172,13 @@ type RemoteArtifactReceipts struct {
 	targets *RemoteArtifactTargets
 }
 
+// RemoteArtifactSignedReceipt identifies a validated receipt and whether its
+// durable retention deletion marker permits the artifact to be absent.
+type RemoteArtifactSignedReceipt struct {
+	FileName                 string
+	RetentionDeletionStarted bool
+}
+
 // RemoteArtifactRetentionCandidate identifies a fully acknowledged artifact
 // whose signed receipt permits retention cleanup.
 type RemoteArtifactRetentionCandidate struct {
@@ -663,6 +670,14 @@ func (this *RemoteArtifactReceipts) Recover(ctx context.Context) error {
 	return this.store.recover(ctx)
 }
 
+// ListSigned returns validated receipt names for comparison with published artifacts.
+func (this *RemoteArtifactReceipts) ListSigned(ctx context.Context) ([]RemoteArtifactSignedReceipt, error) {
+	if this == nil || this.store == nil {
+		return nil, errors.System.Newf("nil remote artifact receipts")
+	}
+	return this.store.listSigned(ctx)
+}
+
 // ListRetentionCandidates returns fully acknowledged artifacts whose retention
 // start is at or before the supplied cutoff.
 func (this *RemoteArtifactReceipts) ListRetentionCandidates(ctx context.Context, cutoff time.Time) ([]RemoteArtifactRetentionCandidate, error) {
@@ -868,6 +883,55 @@ func (this *remoteArtifactReceiptStore) recover(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (this *remoteArtifactReceiptStore) listSigned(ctx context.Context) ([]RemoteArtifactSignedReceipt, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := this.lock(ctx); err != nil {
+		return nil, err
+	}
+	defer this.unlock()
+	if this.closed {
+		return nil, errors.System.Newf("remote artifact receipt store is closed")
+	}
+	fileNames, err := this.stateFileNamesLocked(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]RemoteArtifactSignedReceipt, 0, len(fileNames))
+	for _, fileName := range fileNames {
+		receipt, exists, err := this.loadSnapshotLocked(fileName, nil)
+		if err != nil {
+			return nil, err
+		}
+		var bound *remoteArtifactReceipt
+		if exists {
+			bound = &receipt
+		}
+		lifecycle, lifecycleExists, err := this.loadLifecycleLocked(fileName, bound)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			if lifecycleExists && (lifecycle.State == remoteArtifactLifecycleStateIntent || lifecycle.State == remoteArtifactLifecycleStateStaged) {
+				continue
+			}
+			return nil, errors.Config.Newf("remote artifact delivery receipt for %q is missing", fileName)
+		}
+		directory := filepath.Join(this.producerDirectory, remoteArtifactReceiptStateName(fileName))
+		deletionStarted, err := remoteArtifactReceiptRetentionDeleting(directory)
+		if err != nil {
+			return nil, err
+		}
+		// A prepared lifecycle has not proven publication, even if its receipt exists.
+		if lifecycleExists && lifecycle.State == remoteArtifactLifecycleStatePrepared {
+			deletionStarted = false
+		}
+		result = append(result, RemoteArtifactSignedReceipt{FileName: fileName, RetentionDeletionStarted: deletionStarted})
+	}
+	return result, nil
 }
 
 func (this *remoteArtifactReceiptStore) listRetentionCandidates(ctx context.Context, cutoff time.Time) ([]RemoteArtifactRetentionCandidate, error) {

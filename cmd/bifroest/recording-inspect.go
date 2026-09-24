@@ -22,6 +22,7 @@ const recordingInspectionSchema = "bifroest.session-recording-inspection/v1"
 type recordingInspectOpts struct {
 	file               string
 	expectedProducerId string
+	beforeWrite        func() // Test hook for changes after inspection and before output.
 }
 
 type recordingInspectOutput struct {
@@ -118,10 +119,16 @@ func doRecordingInspect(opts *recordingInspectOpts, stdout io.Writer) (rErr erro
 	if err := encoder.Encode(result); err != nil {
 		return fmt.Errorf("cannot encode Recording inspection: %w", err)
 	}
+	if opts.beforeWrite != nil {
+		opts.beforeWrite()
+	}
+	if err := validateRecordingInput(opts.file, file, initial); err != nil {
+		return err
+	}
 	if _, err := stdout.Write(encoded.Bytes()); err != nil {
 		return fmt.Errorf("cannot write Recording inspection: %w", err)
 	}
-	return validateRecordingInput(opts.file, file, initial)
+	return nil
 }
 
 func openRecordingInput(path string) (*stdos.File, stdos.FileInfo, error) {

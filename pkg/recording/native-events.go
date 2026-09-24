@@ -432,6 +432,11 @@ func (r *nativeCastRenderer) consumeGroup(events []NativeCastEvent) error {
 	if r.groups > r.seal.ChunkCount {
 		return fmt.Errorf("native Cast has more event groups than its seal")
 	}
+	for i, event := range events {
+		if (event.Kind == NativeEventPaddingCheckpoint) != (r.groups < r.seal.ChunkCount && i == len(events)-1) {
+			return fmt.Errorf("native recording group has invalid padding checkpoint")
+		}
+	}
 	for _, event := range events {
 		if r.finished {
 			return fmt.Errorf("native recording event follows result")

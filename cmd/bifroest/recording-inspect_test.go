@@ -177,6 +177,19 @@ func TestRecordingInspectProducesNoOutputOnVerificationFailure(t *testing.T) {
 	require.Empty(t, stdout.Bytes())
 }
 
+func TestRecordingInspectProducesNoOutputOnInputMutationAfterInspect(t *testing.T) {
+	path, _ := writeRecordingInspectTestCast(t)
+	var stdout bytes.Buffer
+	opts := &recordingInspectOpts{file: path, beforeWrite: func() {
+		info, err := stdos.Stat(path)
+		require.NoError(t, err)
+		require.NoError(t, stdos.Chtimes(path, info.ModTime(), info.ModTime().Add(time.Hour)))
+	}}
+	err := doRecordingInspect(opts, &stdout)
+	require.ErrorContains(t, err, "changed while being processed")
+	require.Empty(t, stdout.Bytes())
+}
+
 func TestRecordingInspectRejectsUnsafeAndUnsupportedInputs(t *testing.T) {
 	root := t.TempDir()
 	var stdout bytes.Buffer

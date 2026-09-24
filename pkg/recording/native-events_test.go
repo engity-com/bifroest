@@ -53,6 +53,36 @@ func TestNativeCastRendererMatchesCastWriter(t *testing.T) {
 			actual, err := RenderNativeRecordingCast([][]byte{first, second}, signedHeader, seal, int64(expected.Len()))
 			require.NoError(t, err)
 			require.Equal(t, expected.Bytes(), actual)
+			for _, tc := range []struct {
+				name   string
+				index  int
+				events []NativeCastEvent
+			}{
+				{"nonfinal without padding", 0, events[:len(events)-1]},
+				{"nonfinal misplaced padding", 0, append(append([]NativeCastEvent(nil), events[:len(events)-2]...), events[len(events)-1], events[len(events)-2])},
+				{"nonfinal duplicate padding", 0, append(append([]NativeCastEvent(nil), events...), NativeCastEvent{Kind: NativeEventPaddingCheckpoint})},
+				{"final leading padding", 1, []NativeCastEvent{{Kind: NativeEventPaddingCheckpoint}, {Kind: NativeEventResult, Elapsed: time.Second, Result: result, ExitStatus: &exit}}},
+				{"final trailing padding", 1, []NativeCastEvent{{Kind: NativeEventResult, Elapsed: time.Second, Result: result, ExitStatus: &exit}, {Kind: NativeEventPaddingCheckpoint}}},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					bad, err := EncodeNativeRecordingEvents(tc.events)
+					require.NoError(t, err)
+					groups := [][]byte{first, second}
+					groups[tc.index] = bad
+					actual, err := RenderNativeRecordingCast(groups, signedHeader, seal, int64(expected.Len()))
+					require.ErrorContains(t, err, "invalid padding checkpoint")
+					require.Nil(t, actual)
+					if tc.index == 0 {
+						var output bytes.Buffer
+						renderer, err := newNativeCastRenderer(&output, signedHeader, seal, int64(expected.Len()))
+						require.NoError(t, err)
+						decoded, err := decodeNativeRecordingEvents(bad)
+						require.NoError(t, err)
+						require.ErrorContains(t, renderer.consumeGroup(decoded), "invalid padding checkpoint")
+						require.Zero(t, output.Len())
+					}
+				})
+			}
 			for _, invalid := range [][]NativeCastEvent{
 				{events[1], events[0]},
 				{events[0], events[0]},
@@ -145,6 +175,9 @@ func TestNativeCastRendererPreservesUTF8OutputSplit(t *testing.T) {
 		events = append(events, NativeCastEvent{Kind: NativeEventOutput, Elapsed: 321 * time.Millisecond, Stream: OutputStreamTerminal, Data: data[offset:end]})
 		offset = end
 	}
+	events = append(events, NativeCastEvent{Kind: NativeEventPaddingCheckpoint})
+	_, err = padCastForSha256Checkpoint(writer)
+	require.NoError(t, err)
 	group, err := EncodeNativeRecordingEvents(events)
 	require.NoError(t, err)
 	result := CastResult{Status: CastStatusFailed, EndedAt: metadata.StartedAt.Add(time.Second), Reason: "failed"}

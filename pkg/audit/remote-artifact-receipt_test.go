@@ -641,6 +641,75 @@ func TestRemoteArtifactReceiptRetentionWithoutTargetsStartsWhenSealed(t *testing
 	require.Equal(t, sealedAt, candidates[0].RetentionStartedAt)
 }
 
+func TestRemoteArtifactReceiptsListSignedRequiresDurableRetentionMarker(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", nil)
+	require.NoError(t, err)
+	receipts := &RemoteArtifactReceipts{store: store, targets: &RemoteArtifactTargets{}}
+	t.Cleanup(func() { require.NoError(t, receipts.Close()) })
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b825-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("recording"))
+	sealedAt := time.Now().UTC().Add(-time.Minute)
+	require.NoError(t, receipts.Prepare(t.Context(), artifact, sealedAt))
+	want := []RemoteArtifactSignedReceipt{{FileName: artifact.FileName()}}
+	listed, err := receipts.ListSigned(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, want, listed) // No targets makes retention eligible, not started.
+
+	candidates, err := receipts.ListRetentionCandidates(t.Context(), sealedAt)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.NoError(t, receipts.MarkRetentionDeleting(t.Context(), candidates[0], sealedAt))
+	want[0].RetentionDeletionStarted = true
+	listed, err = receipts.ListSigned(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, want, listed)
+	candidates, err = receipts.ListRetentionCandidates(t.Context(), sealedAt)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	_, err = receipts.MarkRetentionCompleted(t.Context(), candidates[0], sealedAt)
+	require.NoError(t, err)
+	listed, err = receipts.ListSigned(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, want, listed)
+}
+
+func TestRemoteArtifactReceiptsListSignedDoesNotTreatAcknowledgementAsDeletion(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", nil)
+	require.NoError(t, err)
+	targets := remoteArtifactDeliveryTestTargets(remoteArtifactDeliveryTestEntry("archive", remoteArtifactDeliveryTestFingerprint("archive"), nil))
+	receipts := &RemoteArtifactReceipts{store: store, targets: targets}
+	t.Cleanup(func() { require.NoError(t, receipts.Close()) })
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b827-9dad-4d1f-80b4-00c04fd430c8.becast", []byte("recording"))
+	sealedAt := time.Now().UTC().Add(-time.Minute)
+	require.NoError(t, receipts.Prepare(t.Context(), artifact, sealedAt))
+	require.NoError(t, receipts.Acknowledge(t.Context(), artifact, "archive", sealedAt.Add(time.Second)))
+	listed, err := receipts.ListSigned(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, []RemoteArtifactSignedReceipt{{FileName: artifact.FileName()}}, listed)
+}
+
+func TestRemoteArtifactReceiptsListSignedRejectsMissingReceipt(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", nil)
+	require.NoError(t, err)
+	receipts := &RemoteArtifactReceipts{store: store, targets: &RemoteArtifactTargets{}}
+	t.Cleanup(func() { require.NoError(t, receipts.Close()) })
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b826-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("recording"))
+	started := remoteArtifactLifecycleTestStartedEvent(artifact.FileName())
+	sealing := time.Now().UTC()
+	require.NoError(t, receipts.BeginLifecycle(t.Context(), artifact.FileName(), sealing, started))
+	require.NoError(t, receipts.StageLifecycle(t.Context(), artifact.FileName(), remoteArtifactLifecycleTestCompletedEvent(started)))
+	require.NoError(t, receipts.PrepareLifecycle(t.Context(), artifact, sealing, strings.Repeat("a", 64), false))
+	listed, err := receipts.ListSigned(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, []RemoteArtifactSignedReceipt{{FileName: artifact.FileName()}}, listed)
+	directory := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName()))
+	require.NoError(t, os.Remove(filepath.Join(directory, remoteArtifactReceiptFileName)))
+	_, err = receipts.ListSigned(t.Context())
+	require.ErrorContains(t, err, "delivery receipt for \""+artifact.FileName()+"\" is missing")
+}
+
 func TestRemoteArtifactReceiptAuditTransitionsWithReplacementHeadroom(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
 	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b818-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))

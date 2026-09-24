@@ -361,6 +361,79 @@ func TestSessionRecordingRepositoryCreatesAndSealsActiveFormats(t *testing.T) {
 	}
 }
 
+func TestSessionRecordingStartupRejectsMissingSealedArtifactWithReceipt(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		encrypted        bool
+		retentionStarted bool
+	}{
+		{name: "BCast missing without retention"},
+		{name: "BECast missing without retention", encrypted: true},
+		{name: "BCast missing after retention started", retentionStarted: true},
+		{name: "BECast missing after retention started", encrypted: true, retentionStarted: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			conf := sessionRecordingTestConfiguration(t, t.TempDir())
+			identity, err := audit.EnsureIdentity(&conf.Auditlogs[0])
+			require.NoError(t, err)
+			var encryptionPublicKey bfcrypto.PublicKeys
+			if test.encrypted {
+				encryptionPublicKey = sessionRecordingEncryptionPublicKey(t)
+			}
+			repository, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, encryptionPublicKey, conf.Auditlogs[0].Name, nil)
+			require.NoError(t, err)
+			startedAt := time.Now().UTC()
+			recordingId, err := recording.NewId()
+			require.NoError(t, err)
+			connectionId, err := bfconnection.NewId()
+			require.NoError(t, err)
+			sessionId, err := session.NewId()
+			require.NoError(t, err)
+			metadata := recording.CastMetadata{
+				RecordingId: recordingId, ConnectionId: connectionId, SessionId: sessionId,
+				OperationId: uuid.New(), Flow: conf.Flows[0].Name, Task: audit.SessionTaskShell,
+				Pty: true, ProducerId: identity.ProducerId(), StartedAt: startedAt,
+			}
+			name, err := repository.artifactName(recordingId)
+			require.NoError(t, err)
+			require.NoError(t, repository.receipts.BeginLifecycle(t.Context(), name, startedAt, sessionRecordingAuditEvent(metadata, audit.EventNameSessionRecordingStarted, "", "", nil, 0, nil, nil)))
+			active, err := repository.createActive(t.Context(), recording.CastHeader{
+				Version: recording.CastVersion, Terminal: recording.CastTerminal{Columns: 80, Rows: 24, Type: "xterm"}, Timestamp: startedAt.Unix(),
+			}, metadata, 300)
+			require.NoError(t, err)
+			require.NoError(t, active.WriteOutput(time.Second, recording.OutputStreamTerminal, []byte("recorded\r\n")))
+			require.NoError(t, repository.receipts.StageLifecycle(t.Context(), name, sessionRecordingAuditEvent(metadata, audit.EventNameSessionRecordingCompleted, audit.EventOutcomeSuccess, "", nil, time.Second, nil, commonUint32(0))))
+			_, err = active.Seal(time.Second, recording.CastResult{Status: recording.CastStatusCompleted, EndedAt: startedAt.Add(time.Second)}, commonUint32(0))
+			require.NoError(t, err)
+			require.NoError(t, active.Close())
+			if test.retentionStarted {
+				pending, err := repository.receipts.PendingLifecycle(t.Context())
+				require.NoError(t, err)
+				require.Len(t, pending, 1)
+				require.NoError(t, repository.receipts.CompleteLifecycle(t.Context(), pending[0]))
+				candidates, err := repository.receipts.ListRetentionCandidates(t.Context(), startedAt.Add(time.Minute))
+				require.NoError(t, err)
+				require.Len(t, candidates, 1)
+				require.NoError(t, repository.receipts.MarkRetentionDeleting(t.Context(), candidates[0], startedAt.Add(time.Minute)))
+			}
+			require.NoError(t, repository.Close())
+			sealedPath := filepath.Join(conf.Auditlogs[0].Recording.Directory, "sealed", name)
+			require.NoError(t, os.Remove(sealedPath))
+
+			restarted, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, encryptionPublicKey, conf.Auditlogs[0].Name, nil)
+			if test.retentionStarted {
+				require.NoError(t, err)
+				require.NoError(t, restarted.Close())
+			} else {
+				require.Nil(t, restarted)
+				require.ErrorContains(t, err, name)
+				require.ErrorContains(t, err, "is missing despite its delivery receipt")
+				require.DirExists(t, filepath.Join(conf.Auditlogs[0].Recording.Directory, ".delivery", identity.ProducerId().String()))
+			}
+		})
+	}
+}
+
 func TestPrepareRecordingFailsClosedOnExistingRepositoryLockAndCanRetry(t *testing.T) {
 	root := t.TempDir()
 	conf := sessionRecordingTestConfiguration(t, root)
