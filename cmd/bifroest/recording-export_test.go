@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/pem"
 	goerrors "errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/nativeformat"
 	"github.com/engity-com/bifroest/pkg/recording"
 )
 
@@ -134,6 +136,21 @@ func TestRecordingExportNativeFailureDoesNotReplaceOutput(t *testing.T) {
 	require.Equal(t, "keep", string(actual))
 }
 
+func TestRecordingExportNativeDecryptionFailureDoesNotReplaceOutput(t *testing.T) {
+	fixture := newRecordingExportTestFixture(t)
+	wrongKey := writeRecordingExportTestPrivateKey(t, ed25519.NewKeyFromSeed(bytes.Repeat([]byte{42}, ed25519.SeedSize)))
+	output := filepath.Join(t.TempDir(), "export.cast")
+	require.NoError(t, stdos.WriteFile(output, []byte("keep"), 0600))
+	err := doRecordingExport(&recordingExportOpts{
+		file: fixture.nativeEncryptedPath, output: output, force: true, withSensitive: true,
+		expectedProducerId: fixture.identity.ProducerId().String(), decryptionIdentityFiles: []string{wrongKey},
+	}, &bytes.Buffer{})
+	require.ErrorContains(t, err, "cannot fully verify")
+	actual, err := stdos.ReadFile(output)
+	require.NoError(t, err)
+	require.Equal(t, "keep", string(actual))
+}
+
 func TestRecordingExportSnapshotIsIndependentOfLaterInputMutation(t *testing.T) {
 	fixture := newRecordingExportTestFixture(t)
 	input, info, err := openRecordingInput(fixture.castPath)
@@ -222,6 +239,190 @@ func TestRecordingExportNativeEncryptedInstallsPrivateOutput(t *testing.T) {
 	keyAfter, err := stdos.ReadFile(fixture.identityPath)
 	require.NoError(t, err)
 	require.Equal(t, keyBefore, keyAfter)
+}
+
+func TestRecordingExportNativeCastVerifiesIndependently(t *testing.T) {
+	fixture := newRecordingExportTestFixture(t)
+	for _, test := range []struct {
+		name       string
+		path       string
+		identities []string
+	}{
+		{name: "clear", path: fixture.nativeClearPath},
+		{name: "encrypted", path: fixture.nativeEncryptedPath, identities: []string{fixture.identityPath}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			output := filepath.Join(t.TempDir(), "signed.cast")
+			err := doRecordingExport(&recordingExportOpts{
+				file: test.path, output: output, expectedProducerId: fixture.identity.ProducerId().String(),
+				decryptionIdentityFiles: test.identities, withSensitive: true,
+			}, &bytes.Buffer{})
+			require.NoError(t, err)
+			castBytes, err := stdos.ReadFile(output)
+			require.NoError(t, err)
+			cast, err := recording.VerifyCast(bytes.NewReader(castBytes), recording.CastVerifyOptions{ExpectedProducerId: fixture.identity.ProducerId()})
+			require.NoError(t, err)
+			container, err := stdos.ReadFile(test.path)
+			require.NoError(t, err)
+			verified, err := recording.VerifyNativeRecordingOuter(bytes.NewReader(container), int64(len(container)), recording.NativeRecordingVerifyOptions{ExpectedProducerId: fixture.identity.ProducerId()})
+			require.NoError(t, err)
+			require.Equal(t, recording.CastDigest(verified.Seal.CastDigest), cast.Digest)
+			require.Equal(t, verified.Seal.CastBytes, uint64(len(castBytes)))
+			info, err := stdos.Stat(output)
+			require.NoError(t, err)
+			requireAuditOutputPrivate(t, output, info)
+		})
+	}
+}
+
+func TestRecordingExportRejectsCorruptLastNativeChunkWithoutOutput(t *testing.T) {
+	for _, encrypted := range []bool{false, true} {
+		name := "clear"
+		if encrypted {
+			name = "encrypted"
+		}
+		t.Run(name, func(t *testing.T) {
+			fixture := newRecordingExportTestFixture(t)
+			path := fixture.nativeClearPath
+			identities := []string(nil)
+			if encrypted {
+				path, identities = fixture.nativeEncryptedPath, []string{fixture.identityPath}
+			}
+			container, err := stdos.ReadFile(path)
+			require.NoError(t, err)
+			reader := bytes.NewReader(container)
+			offset := int64(len(nativeformat.RecordingMagic))
+			var lastChunkOffset int64
+			var chunkCount int
+			for {
+				unit, next, tail, err := nativeformat.ReadUnitAt(reader, offset, int64(len(container)), nativeformat.MaxRecordingChunkPayload)
+				require.NoError(t, err)
+				require.False(t, tail)
+				if unit.Type == nativeformat.SealUnit {
+					break
+				}
+				if unit.Type == nativeformat.ContentUnit {
+					lastChunkOffset = offset
+					chunkCount++
+				}
+				offset = next
+			}
+			require.Positive(t, lastChunkOffset)
+			require.Greater(t, chunkCount, 1, "the corrupted chunk must follow an earlier valid chunk")
+			container[lastChunkOffset+6] ^= 1 // Corrupt the final data unit, not its header or an earlier chunk.
+			require.NoError(t, stdos.WriteFile(path, container, 0600))
+			options := recordingExportOpts{file: path, expectedProducerId: fixture.identity.ProducerId().String(), decryptionIdentityFiles: identities, withSensitive: true}
+			var stdout bytes.Buffer
+			require.Error(t, doRecordingExport(&options, &stdout))
+			require.Empty(t, stdout.Bytes())
+			options.output = filepath.Join(t.TempDir(), "preserved.cast")
+			require.NoError(t, stdos.WriteFile(options.output, []byte("preserved"), 0600))
+			options.force = true
+			require.Error(t, doRecordingExport(&options, &stdout))
+			actual, err := stdos.ReadFile(options.output)
+			require.NoError(t, err)
+			require.Equal(t, "preserved", string(actual))
+		})
+	}
+}
+
+func TestRecordingExportRejectsSignedInvalidLastNativeEventWithoutOutput(t *testing.T) {
+	for _, encrypted := range []bool{false, true} {
+		name := "clear"
+		if encrypted {
+			name = "encrypted"
+		}
+		t.Run(name, func(t *testing.T) {
+			fixture := newRecordingExportTestFixture(t)
+			path := fixture.nativeClearPath
+			identityFiles := []string(nil)
+			var recipient *bfcrypto.AgeSshRecipient
+			var identities *bfcrypto.AgeSshIdentities
+			if encrypted {
+				path, identityFiles = fixture.nativeEncryptedPath, []string{fixture.identityPath}
+				key, err := loadAuditPrivateKey(fixture.identityPath)
+				require.NoError(t, err)
+				recipient, err = bfcrypto.NewAgeSshRecipient(key.PublicKey().ToSsh())
+				require.NoError(t, err)
+				identities, err = bfcrypto.NewAgeSshIdentities([]bfcrypto.PrivateKey{key})
+				require.NoError(t, err)
+			}
+			container, err := stdos.ReadFile(path)
+			require.NoError(t, err)
+			verifyOptions := recording.NativeRecordingVerifyOptions{ExpectedProducerId: fixture.identity.ProducerId()}
+			original, err := recording.VerifyNativeRecordingOuter(bytes.NewReader(container), int64(len(container)), verifyOptions)
+			require.NoError(t, err)
+			reader := bytes.NewReader(container)
+			offset := int64(len(nativeformat.RecordingMagic))
+			var lastOffset, sealOffset int64
+			var lastChunk recording.NativeRecordingChunk
+			for {
+				unit, next, tail, err := nativeformat.ReadUnitAt(reader, offset, int64(len(container)), nativeformat.MaxRecordingChunkPayload)
+				require.NoError(t, err)
+				require.False(t, tail)
+				if unit.Type == nativeformat.SealUnit {
+					sealOffset = offset
+					break
+				}
+				if unit.Type == nativeformat.ContentUnit {
+					lastOffset = offset
+					lastChunk, err = nativeformat.Unmarshal[recording.NativeRecordingChunk](unit.Payload, nativeformat.MaxRecordingChunkPayload)
+					require.NoError(t, err)
+				}
+				offset = next
+			}
+			require.Positive(t, lastOffset)
+			require.Greater(t, lastChunk.Sequence, uint64(1))
+			decoded, err := nativeformat.DecodeStoredPayload(lastChunk.StoredPayload, identities, original.Header.Recipient, nativeformat.PayloadLimits{MaxDecoded: nativeformat.MaxRecordingDecodedChunk, MaxStored: nativeformat.MaxRecordingChunkPayload})
+			require.NoError(t, err)
+			group, err := nativeformat.Unmarshal[map[uint64]any](decoded, nativeformat.MaxRecordingDecodedChunk)
+			require.NoError(t, err)
+			events, ok := group[2].([]any)
+			require.True(t, ok)
+			result, ok := events[len(events)-1].(map[any]any)
+			require.True(t, ok)
+			result[uint64(2)] = uint64(10*365*24*time.Hour + time.Nanosecond) // Valid CBOR, invalid Cast event duration.
+			decoded, err = nativeformat.Marshal(group, nativeformat.MaxRecordingDecodedChunk)
+			require.NoError(t, err)
+			stored, err := nativeformat.EncodeStoredPayload(decoded, recipient, nativeformat.PayloadLimits{MaxDecoded: nativeformat.MaxRecordingDecodedChunk, MaxStored: nativeformat.MaxRecordingChunkPayload})
+			require.NoError(t, err)
+			lastChunk.DecodedLength = uint32(len(decoded))
+			lastChunk.StoredPayload = stored
+			lastChunk.StoredHash = sha256.Sum256(stored)
+			signer, err := recording.NewNativeRecordingSigner(fixture.identity)
+			require.NoError(t, err)
+			payload, err := signer.Chunk(lastChunk)
+			require.NoError(t, err)
+			frame, err := nativeformat.EncodeUnit(nativeformat.ContentUnit, payload, nativeformat.MaxRecordingChunkPayload)
+			require.NoError(t, err)
+			prefix := append(bytes.Clone(container[:lastOffset]), frame...)
+			seal := original.Seal
+			seal.LastUnitHash = sha256.Sum256(append([]byte("BIFROEST-BCAST-UNIT-HASH/v1\x00"), frame...))
+			seal.ContentHash = sha256.Sum256(append([]byte("BIFROEST-BCAST-CONTENT-HASH/v1\x00"), prefix...))
+			payload, err = signer.Seal(seal, recording.Id(original.Header.RecordingId))
+			require.NoError(t, err)
+			sealFrame, err := nativeformat.EncodeUnit(nativeformat.SealUnit, payload, nativeformat.MaxMetadataPayload)
+			require.NoError(t, err)
+			require.Greater(t, sealOffset, lastOffset)
+			forged := append(prefix, sealFrame...)
+			_, err = recording.VerifyNativeRecordingOuter(bytes.NewReader(forged), int64(len(forged)), verifyOptions)
+			require.NoError(t, err, "outer signatures and hashes remain valid")
+			_, err = recording.VerifyNativeRecordingFull(bytes.NewReader(forged), int64(len(forged)), identities, verifyOptions)
+			require.Error(t, err, "the inner event must fail full verification")
+			require.NoError(t, stdos.WriteFile(path, forged, 0600))
+			opts := recordingExportOpts{file: path, expectedProducerId: fixture.identity.ProducerId().String(), decryptionIdentityFiles: identityFiles, withSensitive: true}
+			var stdout bytes.Buffer
+			require.Error(t, doRecordingExport(&opts, &stdout))
+			require.Empty(t, stdout.Bytes())
+			opts.output = filepath.Join(t.TempDir(), "preserved.cast")
+			require.NoError(t, stdos.WriteFile(opts.output, []byte("preserved"), 0600))
+			opts.force = true
+			require.Error(t, doRecordingExport(&opts, &stdout))
+			actual, err := stdos.ReadFile(opts.output)
+			require.NoError(t, err)
+			require.Equal(t, "preserved", string(actual))
+		})
+	}
 }
 
 func TestRecordingExportNeverReplacesInputOrDecryptionIdentity(t *testing.T) {
@@ -361,6 +562,8 @@ func newRecordingExportTestFixture(t *testing.T) recordingExportTestFixture {
 		nativeWriter, err := recording.NewNativeRecordingWriter(&container, identity, nativeRecipient, header, metadata, 300, recording.NativeRecordingWriterLimits{})
 		require.NoError(t, err)
 		writeOutput(nativeWriter)
+		_, err = nativeWriter.Checkpoint()
+		require.NoError(t, err)
 		_, err = nativeWriter.Seal(2*time.Second, result, &exitStatus)
 		require.NoError(t, err)
 		require.NoError(t, stdos.WriteFile(path, container.Bytes(), 0600))

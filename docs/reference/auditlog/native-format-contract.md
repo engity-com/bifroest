@@ -313,6 +313,57 @@ stores that signature and digest; no JSON or Cast line is stored inside the
 native recording. Offline export must reproduce and verify those same bytes
 without access to the server's signing key.
 
+### Canonical standalone Cast
+
+The native writer and offline exporter use the same asciicast v3 rendering
+rules. Every line ends in one LF byte (`0a`); there is no BOM, CRLF, extra
+whitespace, or automatic plaintext file. The first line is compact JSON with
+fields in this order: `version` (3), `term` (`cols`, `rows`, optional `type`),
+and `timestamp` (Unix seconds). The second line starts with the literal
+`# bifroest:metadata:v1 ` and compact JSON with `schema`, `recordingId`,
+`connectionId`, `sessionId`, `operationId`, `flow`, `task`, `pty`, `producerId`,
+and `startedAt`, in that order. Timestamps in these comments use Go's JSON
+encoding of UTC `time.Time` (RFC 3339 with the necessary fractional digits).
+UUIDs and the producer ID use canonical lowercase text. Comment objects use
+the established Go JSON encoding of the fixed-field structs, including JSON
+escaping of HTML characters, U+2028, and U+2029.
+
+Output is divided into events of at most 65,536 raw bytes; a split does not
+divide a valid multibyte UTF-8 rune when a complete rune fits within the
+limit. For stderr, or for an event containing invalid UTF-8, immediately
+before its `o` event emit `# bifroest:event:v1 ` followed by compact JSON
+fields `schema`, `sequence`, `stream` and, only for invalid UTF-8, `raw`.
+`raw` is the original bytes encoded as JSON Base64; the displayed event string
+replaces each maximal contiguous run of invalid UTF-8 bytes with one U+FFFD
+(the `strings.ToValidUTF8` rule). The sequence counts all events, not only
+output events. The event line has the exact shape
+`[seconds.mmm,"code",json-string]`, without spaces. Codes `o`, `r`, `m`, and
+`x` denote output, resize (`colsxrows`), marker, and decimal exit status.
+Absolute event time is rounded to the nearest millisecond, with half a
+millisecond rounded up; the line contains the difference from the previously
+rounded event. Strings escape quotes, backslashes, standard JSON controls,
+non-printing Unicode and U+2028/U+2029, using lowercase hex in `\u` escapes
+and UTF-16 surrogate pairs where necessary. They do not use comment JSON's
+HTML escaping.
+
+Every nonfinal native chunk ends with a logical padding event. Only the Cast
+renderer emits its line: `# becast-checkpoint-padding:v1 `, zero or more ASCII
+`0` bytes, then LF. Choose the number of zeros from `0..63` so that the Cast
+SHA-256 input byte count, including its domain prefix, becomes divisible by
+64. The native chunk stores no Cast or JSON line. An optional `x` exit event
+precedes `# bifroest:result:v1 ` plus compact JSON fields `schema`, `status`,
+`endedAt`, and optional `reason`. The domain-separated SHA-256 digest includes
+all lines from the header through this result line, with each LF, but not the
+signature line. The final line is `# bifroest:signature:v1 ` followed by
+compact JSON fields `schema`, `recordingId`, `producerId`, `digest`,
+`publicKey`, and `signature`, then LF. `digest` is lowercase hex; `publicKey`
+is the Base64-encoded binary SSH public key, and `signature` is Base64 of the
+Ed25519 signature over the specified domain and the compact JSON of the
+preceding five fields. The signed native final chunk and seal already bind
+this digest and signature. `VerifyCast` accepts some non-canonical standalone
+Cast header/event spellings, but native export **always** produces the bytes
+defined here; parser tolerance does not alter the signed native export.
+
 Terminal bytes, stdout/stderr identity, resize dimensions, markers, and
 other Cast event content remain inside native CBOR chunks. `.becast` encrypts
 these chunks; `.bcast` stores them unencrypted after Zstd compression. The

@@ -71,3 +71,4 @@ bifroest recording export \
 Bifröst does not download remote artifacts or include a player. Obtain the byte-exact sealed artifact, inspect it with the same independent trust anchor, and export it to a protected file before playback. BECast additionally requires the externally retained private key matching its signed recipient fingerprint.
 
 The resulting file is sensitive plaintext in asciicast v3 format. Use a player that supports asciicast v3 and unknown comment lines. See [Session recording](../../auditlog/recording.md#export-and-playback) for the complete operational workflow.
+For native `.bcast` and CBOR `.becast`, the [canonical byte-level representation](../../auditlog/native-format-contract.md#canonical-standalone-cast) and signature are bound by the native container. Every exported signed Cast can be verified independently against the same producer ID.
