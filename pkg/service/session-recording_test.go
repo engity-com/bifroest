@@ -206,7 +206,7 @@ func TestPrepareRecordingRejectsExistingSpoolAboveLimitWithoutDeletingData(t *te
 	require.Equal(t, payload, after)
 }
 
-func TestPrepareRecordingOpensEncryptedNativeWithoutLegacyFallback(t *testing.T) {
+func TestPrepareRecordingOpensEncryptedNativeAndRejectsForeignFormat(t *testing.T) {
 	t.Run("opens encrypted native", func(t *testing.T) {
 		root := t.TempDir()
 		conf := sessionRecordingTestConfiguration(t, root)
@@ -223,24 +223,19 @@ func TestPrepareRecordingOpensEncryptedNativeWithoutLegacyFallback(t *testing.T)
 		require.NoError(t, svc.Close())
 	})
 
-	t.Run("rejects an existing Zstd repository", func(t *testing.T) {
+	t.Run("rejects a foreign format marker", func(t *testing.T) {
 		root := t.TempDir()
 		conf := sessionRecordingTestConfiguration(t, root)
 		enableSessionRecording(&conf.Auditlogs[0])
-		identity, err := audit.EnsureIdentity(&conf.Auditlogs[0])
-		require.NoError(t, err)
-		zstdRepository, err := recording.NewLocalCastZstdRepository(context.Background(), conf.Auditlogs[0].Recording.Directory, identity, recording.CastZstdVerifyOptions{}, recording.LocalRepositoryOptions{
-			MaximumSpoolBytes: conf.Auditlogs[0].Recording.MaximumSpoolBytes,
-		})
-		require.NoError(t, err)
-		require.NoError(t, zstdRepository.Close())
+		require.NoError(t, os.MkdirAll(conf.Auditlogs[0].Recording.Directory, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(conf.Auditlogs[0].Recording.Directory, sessionRecordingFormatMarker), []byte("foreign/v1\n"), 0o600))
 		conf.Auditlogs[0].EncryptionPublicKey = sessionRecordingEncryptionPublicKey(t)
 
 		svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
 		require.ErrorContains(t, err, "cannot open Recording repository of auditlog \"default\"")
 		require.True(t, bferrors.Config.IsErr(err))
 		require.Nil(t, svc)
-		requireRecordingFormat(t, conf.Auditlogs[0].Recording.Directory, "cast-zstd/v1\n")
+		requireRecordingFormat(t, conf.Auditlogs[0].Recording.Directory, "foreign/v1\n")
 	})
 }
 

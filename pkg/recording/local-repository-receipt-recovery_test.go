@@ -16,18 +16,18 @@ import (
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 )
 
-func TestLocalCastZstdRepositoryRecoversAfterDurableReceiptBeforePublication(t *testing.T) {
+func TestLocalNativeRepositoryRecoversAfterDurableReceiptBeforePublicationWithReceiptSnapshot(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "recordings")
 	identity, header, metadata := castTestValues(t, true)
 	crashErr := stderrors.New("injected crash after durable receipt")
 	preparer := &localDurableReceiptCrashPreparer{directory: root, identity: identity, failAfterPrepare: crashErr}
-	repository, err := NewLocalCastZstdRepositoryWithArtifactPreparer(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions, preparer)
+	repository, err := NewLocalNativeRecordingRepositoryWithArtifactPreparer(t.Context(), root, identity, nil, NativeRecordingVerifyOptions{}, localRepositoryTestOptions, preparer)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_ = repository.Close()
 		_ = preparer.Close()
 	})
-	fileName := metadata.RecordingId.String() + localCastZstdSealedSuffix
+	fileName := metadata.RecordingId.String() + ".bcast"
 	receipts, err := preparer.get()
 	require.NoError(t, err)
 	require.NoError(t, receipts.BeginLifecycle(t.Context(), fileName, metadata.StartedAt, localLifecycleTestStartedEvent(metadata)))
@@ -47,7 +47,7 @@ func TestLocalCastZstdRepositoryRecoversAfterDurableReceiptBeforePublication(t *
 	require.NoError(t, preparer.prepared.ValidateContext(t.Context()))
 	require.NoError(t, preparer.Require(t.Context(), preparer.prepared))
 	require.DirExists(t, activeDirectory)
-	require.FileExists(t, filepath.Join(activeDirectory, localCastZstdContentFileName))
+	require.FileExists(t, filepath.Join(activeDirectory, "recording.bcast"))
 	require.NoFileExists(t, filepath.Join(root, localSealedDirectory, preparer.prepared.FileName()))
 	require.NoDirExists(t, filepath.Join(root, localWorkDirectory, metadata.RecordingId.String()+".tmp"))
 	requireLocalTestQuotaMatchesFiles(t, root, repository.repository.quota)
@@ -64,7 +64,7 @@ func TestLocalCastZstdRepositoryRecoversAfterDurableReceiptBeforePublication(t *
 	require.Equal(t, receiptBefore, localDurableReceiptTestRead(t, receiptPath))
 
 	restartedPreparer := &localDurableReceiptCrashPreparer{directory: root, identity: identity}
-	restarted, err := NewLocalCastZstdRepositoryWithArtifactPreparer(t.Context(), root, identity, CastZstdVerifyOptions{}, LocalRepositoryOptions{MaximumSpoolBytes: crashUsage}, restartedPreparer)
+	restarted, err := NewLocalNativeRecordingRepositoryWithArtifactPreparer(t.Context(), root, identity, nil, NativeRecordingVerifyOptions{}, LocalRepositoryOptions{MaximumSpoolBytes: crashUsage}, restartedPreparer)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_ = restarted.Close()
@@ -99,14 +99,14 @@ func TestLocalCastZstdRepositoryRecoversAfterDurableReceiptBeforePublication(t *
 	localDurableReceiptTestRequireUnchanged(t, receiptPath, receiptBefore, receiptInfoBefore)
 }
 
-func TestLocalCastZstdRepositoryPromotesLifecycleAfterPublishedRecovery(t *testing.T) {
+func TestLocalNativeRepositoryPromotesLifecycleAfterPublishedRecoveryWithReceiptSnapshot(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "recordings")
 	identity, header, metadata := castTestValues(t, true)
 	promotionErr := stderrors.New("injected crash before lifecycle promotion")
 	preparer := &localDurableReceiptCrashPreparer{directory: root, identity: identity, failBeforePromote: promotionErr}
-	repository, err := NewLocalCastZstdRepositoryWithArtifactPreparer(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions, preparer)
+	repository, err := NewLocalNativeRecordingRepositoryWithArtifactPreparer(t.Context(), root, identity, nil, NativeRecordingVerifyOptions{}, localRepositoryTestOptions, preparer)
 	require.NoError(t, err)
-	fileName := metadata.RecordingId.String() + localCastZstdSealedSuffix
+	fileName := metadata.RecordingId.String() + ".bcast"
 	receipts, err := preparer.get()
 	require.NoError(t, err)
 	require.NoError(t, receipts.BeginLifecycle(t.Context(), fileName, metadata.StartedAt, localLifecycleTestStartedEvent(metadata)))
@@ -125,7 +125,7 @@ func TestLocalCastZstdRepositoryPromotesLifecycleAfterPublishedRecovery(t *testi
 	require.NoError(t, preparer.Close())
 
 	restartedPreparer := &localDurableReceiptCrashPreparer{directory: root, identity: identity}
-	restarted, err := NewLocalCastZstdRepositoryWithArtifactPreparer(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions, restartedPreparer)
+	restarted, err := NewLocalNativeRecordingRepositoryWithArtifactPreparer(t.Context(), root, identity, nil, NativeRecordingVerifyOptions{}, localRepositoryTestOptions, restartedPreparer)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, restarted.Close())
@@ -138,19 +138,19 @@ func TestLocalCastZstdRepositoryPromotesLifecycleAfterPublishedRecovery(t *testi
 	require.Equal(t, audit.EventNameSessionRecordingCompleted, pending[0].Event.Name)
 }
 
-func TestLocalBECastRepositoryRecoversAfterDurableReceiptBeforePublication(t *testing.T) {
+func TestLocalNativeEncryptedRepositoryRecoversAfterDurableReceiptBeforePublicationWithReceiptSnapshot(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "recordings")
 	identity, header, metadata := castTestValues(t, true)
 	recipient, _ := newBECastTestEncryption(t)
 	crashErr := stderrors.New("injected crash after durable receipt")
 	preparer := &localDurableReceiptCrashPreparer{directory: root, identity: identity, failAfterPrepare: crashErr}
-	repository, err := NewLocalBECastRepositoryWithArtifactPreparer(t.Context(), root, identity, recipient, BECastVerifyOptions{}, localRepositoryTestOptions, preparer)
+	repository, err := NewLocalNativeRecordingRepositoryWithArtifactPreparer(t.Context(), root, identity, recipient, NativeRecordingVerifyOptions{}, localRepositoryTestOptions, preparer)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_ = repository.Close()
 		_ = preparer.Close()
 	})
-	fileName := metadata.RecordingId.String() + localBECastSealedSuffix
+	fileName := metadata.RecordingId.String() + ".becast"
 	receipts, err := preparer.get()
 	require.NoError(t, err)
 	require.NoError(t, receipts.BeginLifecycle(t.Context(), fileName, metadata.StartedAt, localLifecycleTestStartedEvent(metadata)))
@@ -166,7 +166,7 @@ func TestLocalBECastRepositoryRecoversAfterDurableReceiptBeforePublication(t *te
 	require.NoError(t, preparer.prepared.ValidateContext(t.Context()))
 	require.NoError(t, preparer.Require(t.Context(), preparer.prepared))
 	require.DirExists(t, activeDirectory)
-	require.FileExists(t, filepath.Join(activeDirectory, localBECastContentFileName))
+	require.FileExists(t, filepath.Join(activeDirectory, "recording.becast"))
 	require.NoFileExists(t, filepath.Join(root, localSealedDirectory, preparer.prepared.FileName()))
 	require.NoDirExists(t, filepath.Join(root, localWorkDirectory, metadata.RecordingId.String()+".tmp"))
 	requireLocalTestQuotaMatchesFiles(t, root, repository.repository.quota)
@@ -183,7 +183,7 @@ func TestLocalBECastRepositoryRecoversAfterDurableReceiptBeforePublication(t *te
 	require.Equal(t, receiptBefore, localDurableReceiptTestRead(t, receiptPath))
 
 	restartedPreparer := &localDurableReceiptCrashPreparer{directory: root, identity: identity}
-	restarted, err := NewLocalBECastRepositoryWithArtifactPreparer(t.Context(), root, identity, recipient, BECastVerifyOptions{}, LocalRepositoryOptions{MaximumSpoolBytes: crashUsage}, restartedPreparer)
+	restarted, err := NewLocalNativeRecordingRepositoryWithArtifactPreparer(t.Context(), root, identity, recipient, NativeRecordingVerifyOptions{}, LocalRepositoryOptions{MaximumSpoolBytes: crashUsage}, restartedPreparer)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_ = restarted.Close()

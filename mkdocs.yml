@@ -159,10 +159,7 @@ nav:
           - Filesystem: reference/session/fs.md
       - Audit log:
           - reference/auditlog/index.md
-          - Native audit format: reference/auditlog/native-format-contract.md
-          - Native audit format vectors: reference/auditlog/audit-format-vectors.md
           - Session recording: reference/auditlog/recording.md
-          - Recording format vectors: reference/auditlog/recording-format-vectors.md
           - Events: reference/auditlog/events.md
           - Remote targets:
               - reference/auditlog/remote-targets/index.md
@@ -219,6 +216,14 @@ nav:
       - reference/data-type.md
       - reference/housekeeping.md
       - reference/alternatives.md
+  - File formats:
+      - formats/index.md
+      - Native container rules: formats/container.md
+      - Native audit: formats/audit.md
+      - Native recording: formats/recording.md
+      - Signed Cast export: formats/cast.md
+      - Audit vectors: formats/audit-vectors.md
+      - Recording vectors: formats/recording-vectors.md
   - Community:
       - Community: community/index.md
       - Issues: https://github.com/engity-com/bifroest/issues

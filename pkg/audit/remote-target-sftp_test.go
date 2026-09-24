@@ -205,7 +205,7 @@ func TestSftpRemoteTrustChangeRejectsCursorAndOutstandingReceipt(t *testing.T) {
 		require.NoError(t, err)
 		return targets
 	}
-	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "recording.cast.zst", []byte("sealed recording"))
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "recording.bcast", []byte("sealed recording"))
 	root := t.TempDir()
 	targets := newTargets()
 	receipts, err := NewRemoteArtifactReceipts(root, identity, conf.Name, targets, &remoteArtifactReceiptTestQuota{maximum: 1 << 20})

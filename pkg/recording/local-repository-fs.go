@@ -122,10 +122,6 @@ func removeLocalFileIfSame(path string, _ os.FileInfo) error {
 	return nil
 }
 
-func writeLocalHead(directory string, value []byte, quota *localQuota) error {
-	return writeLocalHeadNamed(directory, localHeadFileName, value, quota)
-}
-
 func writeLocalHeadNamed(directory, headName string, value []byte, quota *localQuota) error {
 	temporary := filepath.Join(directory, localHeadTempFileName)
 	target := filepath.Join(directory, headName)
@@ -404,10 +400,6 @@ func discardLocalHeadTemporary(directory string, quota *localQuota) error {
 		return err
 	}
 	return syncLocalDirectory(directory)
-}
-
-func prepareInterruptedLocalHead(directory string, maximumBytes int64, quota *localQuota, validate func([]byte) error) error {
-	return prepareInterruptedLocalHeadNamed(directory, localHeadFileName, maximumBytes, quota, validate)
 }
 
 func prepareInterruptedLocalHeadNamed(directory, headName string, maximumBytes int64, quota *localQuota, validate func([]byte) error) error {

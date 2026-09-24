@@ -10,6 +10,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/nativeformat"
 )
 
@@ -42,13 +43,13 @@ func RecoverNativeRecording(file NativeRecoveryFile, identity *audit.Identity, r
 	options.AllowUntrusted = false
 	maximum := options.MaximumContainerBytes
 	if maximum == 0 {
-		maximum = DefaultMaximumBECastBytes
+		maximum = DefaultMaximumNativeRecordingBytes
 	}
 	castMaximum := effectiveMaximumCastBytes(options.MaximumCastBytes)
 	if maximum < 1 || castMaximum < 1 {
 		return nil, fmt.Errorf("invalid native recovery limits")
 	}
-	maxChunks := effectiveMaximumBECastChunks(options.MaximumChunks)
+	maxChunks := effectiveMaximumNativeRecordingChunks(options.MaximumChunks)
 	size, err := file.Seek(0, io.SeekEnd)
 	if err != nil || size < int64(len(nativeformat.RecordingMagic))+18 || size > maximum {
 		return nil, fmt.Errorf("invalid native recovery file size: %v", err)
@@ -342,4 +343,12 @@ func commitNativeRecoveryUnit(file NativeRecoveryFile, offset int64, committed [
 		return io.ErrShortWrite
 	}
 	return file.Sync()
+}
+
+func encodeCastRecoveryResultLine(result CastResult) ([]byte, error) {
+	payload, err := json.Marshal(castResultWire{Schema: castResultSchema, CastResult: result})
+	if err != nil {
+		return nil, errors.System.Newf("cannot encode recovered Cast result: %w", err)
+	}
+	return append(append([]byte(castResultCommentPrefix), payload...), '\n'), nil
 }

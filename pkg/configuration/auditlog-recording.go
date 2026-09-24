@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	// MaximumAuditlogRecordingChunkSizeBytes matches the current BECast
-	// plaintext chunk limit without coupling configuration to pkg/recording.
+	// MaximumAuditlogRecordingChunkSizeBytes caps the configured native group
+	// target below its 2 MiB decoded limit without importing pkg/recording.
 	MaximumAuditlogRecordingChunkSizeBytes uint64 = 1_048_577
 
 	AuditlogRecordingCompressionLevelDefault AuditlogRecordingCompressionLevel = "default"

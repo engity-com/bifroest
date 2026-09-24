@@ -4,7 +4,7 @@ description: Verify and export a Bifröst session Recording as asciicast v3.
 
 # `bifroest recording export`
 
-Verifies a sealed native `.bcast` or CBOR `.becast` session Recording and exports its exact signed asciicast v3 stream. Legacy `.cast`, `.cast.zst`, and binary `.becast` remain readable. Format detection uses magic bytes rather than the file extension; old and new `.becast` have different magic. Compressed native chunks are reconstructed into a Cast, and encrypted `.becast` additionally requires a matching SSH private key.
+Verifies a sealed `.bcast` or `.becast` session Recording and exports its exact signed asciicast v3 stream. It also accepts a standalone signed `.cast` for verified copying. Format detection uses the content, not the file extension; unsupported formats fail closed. Compressed native chunks are reconstructed into a Cast, and encrypted `.becast` additionally requires a matching SSH private key.
 
 The exported Cast contains captured terminal, standard-output, and standard-error content and can contain secrets displayed by programs. It is **never redacted**, unlike redacted-by-default audit JSONL exports. Protect the output according to its sensitivity; even the original encrypted container exposes public metadata. Bifröst does not automatically create plaintext `.cast` or `.jsonl` files.
 
@@ -34,7 +34,7 @@ Explicitly authorizes access to sensitive recording content. Required even for c
 Explicitly permits export after verifying only the artifact's cryptographic self-consistency. This does not establish who created the Recording and cannot be combined with `--expectedProducerId`.
 
 <<flag("decryptionIdentityFile", "File Path", "../../data-type.md#file-path", id_prefix="recording-export-", heading=3)>>
-Protected SSH private-key file used to decrypt encrypted `.becast`. Repeat the flag to provide multiple keys. Bifröst selects only the identity whose public-key fingerprint matches the signed recipient fingerprint. Ed25519 and RSA keys are supported. Clear `.bcast`, `.cast`, and `.cast.zst` inputs do not require this flag.
+Protected SSH private-key file used to decrypt encrypted `.becast`. Repeat the flag to provide multiple keys. Bifröst selects only the identity whose public-key fingerprint matches the signed recipient fingerprint. Ed25519 and RSA keys are supported. Clear `.bcast` and signed `.cast` inputs do not require this flag.
 
 <<flag("output", ref("File Path", "../../data-type.md#file-path"), default="-", id_prefix="recording-export-", heading=3)>>
 Output file or `-` for standard output. The output parent directory must already exist. Standard output contains only Cast bytes; diagnostics and errors are written to standard error. Bifröst fully verifies native recordings (including decrypted event semantics) before emitting plaintext. Encrypted native input is preverified before opening an output file.
@@ -74,4 +74,4 @@ Replace `<producer-id>` with the independently provisioned 64-hex value; it is a
 
 Bifröst does not download remote artifacts or include a player. Copy the byte-exact sealed artifact from `recording.directory/sealed/<recording-uuid>.<suffix>` or download the remote `<producer-id>/<recording-uuid>.<suffix>` object, inspect it with the independent trust anchor, and export it to a protected file before playback. BECast additionally requires the externally retained private key matching its signed recipient fingerprint.
 
-The resulting file is sensitive plaintext in asciicast v3 format. Use a player that supports asciicast v3 and unknown comment lines. See [Session recording](../../auditlog/recording.md#export-and-playback) for the complete operational workflow and the [recording format vectors](../../auditlog/recording-format-vectors.md) for test artifacts. For native `.bcast` and CBOR `.becast`, the [canonical byte-level representation](../../auditlog/native-format-contract.md#canonical-standalone-cast) and signature are bound by the native container. Every exported signed Cast can be verified independently against the same producer ID.
+The resulting file is sensitive plaintext in asciicast v3 format. Use a player that supports asciicast v3 and unknown comment lines. See [Session recording](../../auditlog/recording.md#export-and-playback) for the complete operational workflow and the [native recording vectors](../../../formats/recording-vectors.md) for test artifacts. For native `.bcast` and CBOR `.becast`, the [canonical byte-level representation](../../../formats/cast.md#canonical-standalone-cast) and signature are bound by the native container. Every exported signed Cast can be verified independently against the same producer ID.

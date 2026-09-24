@@ -41,9 +41,6 @@ type recordingInspectOutput struct {
 	ClaimedCastDigest    string                    `json:"claimedCastDigest,omitempty"`
 	ChunkCount           uint64                    `json:"chunkCount,omitempty"`
 	CastBytes            uint64                    `json:"castBytes"`
-	ZstdBytes            uint64                    `json:"zstdBytes,omitempty"`
-	CiphertextBytes      uint64                    `json:"ciphertextBytes,omitempty"`
-	StreamHash           string                    `json:"streamHash,omitempty"`
 	RecipientFingerprint string                    `json:"recipientFingerprint,omitempty"`
 	Cast                 *recordingInspectCast     `json:"cast,omitempty"`
 }
@@ -68,7 +65,7 @@ func registerRecordingInspectCmd(parent *kingpin.CmdClause) {
 	cmd.Flag("expectedProducerId", "Trusted producer ID containing exactly 64 hexadecimal characters.").
 		PlaceHolder("<producer-id>").
 		StringVar(&opts.expectedProducerId)
-	cmd.Arg("file", "Sealed .bcast or .becast Recording artifact (legacy .cast and .cast.zst also supported).").
+	cmd.Arg("file", "Sealed .bcast or .becast Recording artifact, or signed standalone .cast.").
 		Required().
 		StringVar(&opts.file)
 }
@@ -226,45 +223,6 @@ func newRecordingInspectOutput(inspection *recording.Inspection, size int64) (*r
 		result.CastDigest = inspection.Cast.Digest.String()
 		result.CastBytes = uint64(size)
 		result.Cast = newRecordingInspectCast(inspection.Cast)
-	case recording.FormatCastZstd:
-		if inspection.CastZstd == nil || inspection.Cast == nil {
-			return nil, fmt.Errorf("recording inspection has no Cast Zstandard result")
-		}
-		summary := inspection.CastZstd.Summary
-		result.Compressed = true
-		result.VerificationScope = "full"
-		result.Signature = recordingInspectSignature{Valid: true, Trusted: inspection.CastZstd.Trusted, Fingerprint: inspection.CastZstd.Fingerprint}
-		result.RecordingId = summary.RecordingId.String()
-		result.ProducerId = summary.ProducerId.String()
-		result.Status = summary.Status
-		result.CastDigest = summary.Digest.String()
-		result.ChunkCount = summary.ChunkCount
-		result.CastBytes = summary.CastBytes
-		result.ZstdBytes = summary.ZstdBytes
-		result.StreamHash = summary.StreamHash.String()
-		result.Cast = newRecordingInspectCast(inspection.Cast)
-	case recording.FormatBECast:
-		if inspection.BECast == nil {
-			return nil, fmt.Errorf("recording inspection has no BECast result")
-		}
-		publicKey, err := ssh.ParsePublicKey(inspection.BECast.Header.PublicKey)
-		if err != nil {
-			return nil, fmt.Errorf("cannot inspect BECast signing key: %w", err)
-		}
-		summary := inspection.BECast.Summary
-		result.Encrypted = true
-		result.Compressed = true
-		result.VerificationScope = "outer"
-		result.Signature = recordingInspectSignature{Valid: true, Trusted: inspection.BECast.Trusted, Fingerprint: ssh.FingerprintSHA256(publicKey)}
-		result.RecordingId = summary.RecordingId.String()
-		result.ProducerId = summary.ProducerId.String()
-		result.ClaimedStatus = summary.Status
-		result.ClaimedCastDigest = summary.Digest.String()
-		result.ChunkCount = summary.ChunkCount
-		result.CastBytes = summary.CastBytes
-		result.CiphertextBytes = summary.CiphertextBytes
-		result.StreamHash = summary.CiphertextStreamHash.String()
-		result.RecipientFingerprint = summary.RecipientFingerprint
 	default:
 		return nil, fmt.Errorf("unsupported Recording inspection format %q", inspection.Format)
 	}

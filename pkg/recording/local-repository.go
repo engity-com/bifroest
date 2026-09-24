@@ -124,12 +124,6 @@ type invalidLocalArtifactError struct {
 	cause error
 }
 
-type localTrackingReaderAt struct {
-	source  io.ReaderAt
-	size    int64
-	failure error
-}
-
 func (this *invalidLocalArtifactError) Error() string {
 	return this.cause.Error()
 }
@@ -148,19 +142,6 @@ func invalidLocalArtifact(err error) error {
 func isInvalidLocalArtifact(err error) bool {
 	var target *invalidLocalArtifactError
 	return stderrors.As(err, &target)
-}
-
-func (this *localTrackingReaderAt) ReadAt(target []byte, offset int64) (int, error) {
-	read, err := this.source.ReadAt(target, offset)
-	withinSource := offset >= 0 && offset <= this.size && int64(len(target)) <= this.size-offset
-	if this.failure == nil && withinSource {
-		if err != nil {
-			this.failure = err
-		} else if read != len(target) {
-			this.failure = io.ErrUnexpectedEOF
-		}
-	}
-	return read, err
 }
 
 type localRepository[Head, Summary any] struct {

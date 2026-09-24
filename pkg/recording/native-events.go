@@ -346,7 +346,7 @@ func decodeNativeRecordingEvents(payload []byte) ([]NativeCastEvent, error) {
 				if err != nil || status < 1 || status > 3 {
 					return nil, fmt.Errorf("invalid native result status")
 				}
-				e.Result.Status, _ = castStatusFromBECast(uint8(status))
+				e.Result.Status, _ = castStatusFromNativeRecording(uint8(status))
 				e.Result.EndedAt, err = nativeTimestamp(r[uint64(2)])
 				if err != nil {
 					return nil, err
@@ -471,7 +471,7 @@ func (r *nativeCastRenderer) consumeGroup(events []NativeCastEvent) error {
 		case NativeEventPaddingCheckpoint:
 			_, err = padCastForSha256Checkpoint(r.writer)
 		case NativeEventResult:
-			status, statusErr := castStatusFromBECast(r.seal.Status)
+			status, statusErr := castStatusFromNativeRecording(r.seal.Status)
 			if statusErr != nil || status != event.Result.Status || nativeformat.TimestampOf(event.Result.EndedAt) != r.seal.EndedAt {
 				return fmt.Errorf("native result does not match signed seal")
 			}
@@ -512,7 +512,7 @@ func (r *nativeCastRenderer) finish() error {
 // before returning any bytes. The caller must first verify the outer container
 // and supply its authenticated header/seal and independently decoded groups.
 func RenderNativeRecordingCast(groups [][]byte, header NativeRecordingHeader, seal NativeRecordingSeal, maximumCastBytes int64) ([]byte, error) {
-	if len(groups) == 0 || uint64(len(groups)) > DefaultMaximumBECastChunks || uint64(len(groups)) != seal.ChunkCount {
+	if len(groups) == 0 || uint64(len(groups)) > DefaultMaximumNativeRecordingChunks || uint64(len(groups)) != seal.ChunkCount {
 		return nil, fmt.Errorf("invalid native Cast limits or event groups")
 	}
 	output := &nativeCastBuffer{maximum: maximumCastBytes}

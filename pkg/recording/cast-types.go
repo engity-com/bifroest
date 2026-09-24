@@ -65,6 +65,13 @@ func newRecordingWriterLimits(maximumContainerBytes, maximumCastBytes int64, max
 	}, nil
 }
 
+func effectiveMaximumCastBytes(value int64) int64 {
+	if value == 0 {
+		return DefaultMaximumCastBytes
+	}
+	return value
+}
+
 func recordingCountExceedsLimit(current, increment, reserve, maximum uint64) bool {
 	return current > maximum || increment > maximum-current || reserve > maximum-current-increment
 }

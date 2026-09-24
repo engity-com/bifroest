@@ -306,14 +306,18 @@ func TestRemoteArtifactLifecyclePrepareRequiresMarkerBeforeReceipt(t *testing.T)
 	require.False(t, exists)
 }
 
-func TestRemoteArtifactLifecycleAcceptsLegacyRecordingSuffix(t *testing.T) {
+func TestRemoteArtifactLifecycleRejectsUnreleasedSuffixAndInvalidRecordingId(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
 	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", &remoteArtifactReceiptTestQuota{maximum: 1 << 20})
 	require.NoError(t, err)
 	receipts := &RemoteArtifactReceipts{store: store}
 	t.Cleanup(func() { require.NoError(t, receipts.Close()) })
 	fileName := "6ba7b847-9dad-4d1f-80b4-00c04fd430c8.cast.zst"
-	require.NoError(t, receipts.BeginLifecycle(t.Context(), fileName, time.Now().UTC(), remoteArtifactLifecycleTestStartedEvent(fileName)))
+	require.ErrorContains(t, receipts.BeginLifecycle(t.Context(), fileName, time.Now().UTC(), remoteArtifactLifecycleTestStartedEvent(fileName)), "does not match its artifact name")
+	fileName = "invalid-id.bcast"
+	started := remoteArtifactLifecycleTestStartedEvent("6ba7b847-9dad-4d1f-80b4-00c04fd430c8.bcast")
+	started.RecordingId = "invalid-id"
+	require.ErrorContains(t, receipts.BeginLifecycle(t.Context(), fileName, time.Now().UTC(), started), "illegal audit event recording ID")
 }
 
 func remoteArtifactLifecycleTestStartedEvent(fileName string) Event {

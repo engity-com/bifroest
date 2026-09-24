@@ -63,7 +63,7 @@ func TestRemoteArtifactDeliveryValidatesLocalBytesBeforeAnyTargetCall(t *testing
 		t.Run(name, func(t *testing.T) {
 			identity, directory, source := newRemoteArtifactDeliveryTestSource(t)
 			content := []byte("sealed recording")
-			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "recording.cast.zst", content)
+			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "recording.bcast", content)
 			var calls atomic.Int32
 			var remoteConflict atomic.Bool
 			remoteConflict.Store(true)

@@ -286,7 +286,7 @@ func (f *localNativeRecordingFormat) maximumContainerBytes() int64 {
 	if f.options.MaximumContainerBytes > 0 {
 		return f.options.MaximumContainerBytes
 	}
-	return DefaultMaximumBECastBytes
+	return DefaultMaximumNativeRecordingBytes
 }
 
 var errNativeCheckpointValidated = stderrors.New("native checkpoint validated before mutation")
@@ -361,7 +361,7 @@ func (f *localNativeRecordingFormat) recover(file RecoveryFile, head []byte, at 
 	if f.recipient == nil && verification.Header.Encryption != 0 || f.recipient != nil && (verification.Header.Encryption != 1 || verification.Header.Recipient != f.recipient.Fingerprint()) {
 		return localRecovery[NativeRecordingSummary]{}, errors.Config.Newf("recovered native recording encryption mismatch")
 	}
-	status, err := castStatusFromBECast(verification.Seal.Status)
+	status, err := castStatusFromNativeRecording(verification.Seal.Status)
 	if err != nil {
 		return localRecovery[NativeRecordingSummary]{}, err
 	}
@@ -403,7 +403,7 @@ func (f *localNativeRecordingFormat) verifyPublished(file *os.File, size int64, 
 			return NativeRecordingSummary{}, err
 		}
 	}
-	status, err := castStatusFromBECast(verification.Seal.Status)
+	status, err := castStatusFromNativeRecording(verification.Seal.Status)
 	if err != nil {
 		return NativeRecordingSummary{}, err
 	}

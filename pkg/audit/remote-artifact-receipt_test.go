@@ -31,20 +31,20 @@ func TestRemoteArtifactReceiptV2Golden(t *testing.T) {
 	require.NoError(t, err)
 	identity, err := NewIdentity(privateKey)
 	require.NoError(t, err)
-	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b810-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("sealed recording\n"))
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b810-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("sealed recording\n"))
 	fingerprint := remoteDeliveryDestinationFingerprint(sha256.Sum256([]byte("archive destination")))
 	targets := &RemoteArtifactTargets{entries: []remoteArtifactTargetEntry{{
 		scope: RemoteTargetScope{Auditlog: "security", Target: "archive"}, destinationFingerprint: fingerprint,
 	}}}
 	_, payload, err := newRemoteArtifactReceipt(identity, "security", artifact, time.Date(2026, 9, 16, 10, 11, 12, 123456789, time.UTC), targets)
 	require.NoError(t, err)
-	expected := fmt.Sprintf(`{"schema":"bifroest.session-recording-remote-delivery-receipt/v2","producerId":"95b9aca00d322047048950d19cc5aece6fa757edd9104a5521446a168792b298","auditlog":"security","fileName":"6ba7b810-9dad-4d1f-80b4-00c04fd430c8.cast.zst","artifactDigest":"8f378e26270fb650fc2348c00c5eaa5eec5619701fcc9df7a37339c72a94f99e","size":17,"sealedAt":"2026-09-16T10:11:12.123456789Z","targets":[{"target":"archive","destinationFingerprint":"455f66aa923a6e606b41cc026d282910db49378997342add8b68a5fa8406569c"}],"publicKey":"AAAAC3NzaC1lZDI1NTE5AAAAIAOhB7/zzhC+HXDdGOdLwJln5NYwm6UNXx3chmQSVTG4","statePadding":"%s","signature":"USkKoxu1wImQOjga1px9WFsz1IkIXp6ZN4c1hzS0Ab1ehU5UCd6Qq/Xe66Zz+jmeBO5amMjgolYpPqg9uf8gAA=="}`, strings.Repeat("0", remoteArtifactReceiptStateReserveBytes))
+	expected := fmt.Sprintf(`{"schema":"bifroest.session-recording-remote-delivery-receipt/v2","producerId":"95b9aca00d322047048950d19cc5aece6fa757edd9104a5521446a168792b298","auditlog":"security","fileName":"6ba7b810-9dad-4d1f-80b4-00c04fd430c8.bcast","artifactDigest":"8f378e26270fb650fc2348c00c5eaa5eec5619701fcc9df7a37339c72a94f99e","size":17,"sealedAt":"2026-09-16T10:11:12.123456789Z","targets":[{"target":"archive","destinationFingerprint":"455f66aa923a6e606b41cc026d282910db49378997342add8b68a5fa8406569c"}],"publicKey":"AAAAC3NzaC1lZDI1NTE5AAAAIAOhB7/zzhC+HXDdGOdLwJln5NYwm6UNXx3chmQSVTG4","statePadding":"%s","signature":"YpZyd/aIH+JwnV4Oqc6Qwku2aAVF7+wUZ3XEk9w/rmpQhVO9cBnpJO85PfutW+vZbDbCjfj9Jg25JrSiJbB6CQ=="}`, strings.Repeat("0", remoteArtifactReceiptStateReserveBytes))
 	require.Equal(t, expected, string(payload))
 }
 
 func TestRemoteArtifactReceiptIsCanonicalSignedAndRetainedAfterAllTargets(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
-	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b810-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("sealed recording"))
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b810-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("sealed recording"))
 	firstFingerprint := remoteDeliveryDestinationFingerprint(sha256.Sum256([]byte("first destination")))
 	secondFingerprint := remoteDeliveryDestinationFingerprint(sha256.Sum256([]byte("second destination")))
 	targets := &RemoteArtifactTargets{entries: []remoteArtifactTargetEntry{
@@ -116,7 +116,7 @@ func TestRemoteArtifactReceiptWithoutTargetsStartsRetentionAtSeal(t *testing.T) 
 func TestRemoteArtifactReceiptPersistsDeliveryAuditOutboxAcrossRestart(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
 	root := t.TempDir()
-	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b821-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b821-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("recording"))
 	entry := remoteArtifactDeliveryTestEntry("archive", remoteArtifactDeliveryTestFingerprint("archive"), nil)
 	targets := remoteArtifactDeliveryTestTargets(entry)
 	store, err := newRemoteArtifactReceiptStore(root, identity, "security", nil)
@@ -177,7 +177,7 @@ func TestRemoteArtifactReceiptPropagatesAuditOperationIdGenerationFailures(t *te
 	for _, operation := range []string{"acknowledge", "failure"} {
 		t.Run(operation, func(t *testing.T) {
 			_, identity := newJournalTestIdentity(t)
-			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b824-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))
+			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b824-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("recording"))
 			entry := remoteArtifactDeliveryTestEntry("archive", remoteArtifactDeliveryTestFingerprint("archive"), nil)
 			store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", nil)
 			require.NoError(t, err)
@@ -223,7 +223,7 @@ func TestRemoteArtifactReceiptPropagatesAuditOperationIdGenerationFailures(t *te
 func TestRemoteArtifactReceiptStoreRecoversOnlyMonotonicAcknowledgement(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
 	root := t.TempDir()
-	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b812-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b812-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("recording"))
 	fingerprint := remoteDeliveryDestinationFingerprint(sha256.Sum256([]byte("destination")))
 	targets := &RemoteArtifactTargets{entries: []remoteArtifactTargetEntry{{
 		scope: RemoteTargetScope{Auditlog: "security", Target: "archive"}, destinationFingerprint: fingerprint,
@@ -391,7 +391,7 @@ func TestRemoteArtifactReceiptStoreRecoversRetentionTemporary(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			_, identity := newJournalTestIdentity(t)
 			root := t.TempDir()
-			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b823-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))
+			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b823-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("recording"))
 			sealedAt := time.Date(2026, 9, 16, 13, 0, 0, 0, time.UTC)
 			receipt, payload, err := newRemoteArtifactReceipt(identity, "security", artifact, sealedAt, nil)
 			require.NoError(t, err)
@@ -493,7 +493,7 @@ func TestRemoteArtifactReceiptStoreRecoversRetentionTemporary(t *testing.T) {
 func TestRemoteArtifactReceiptsAcknowledgePersistsTarget(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
 	root := t.TempDir()
-	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b816-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b816-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("recording"))
 	targets := &RemoteArtifactTargets{entries: []remoteArtifactTargetEntry{{
 		scope:                  RemoteTargetScope{Auditlog: "security", Target: "archive"},
 		destinationFingerprint: remoteDeliveryDestinationFingerprint(sha256.Sum256([]byte("destination"))),
@@ -526,7 +526,7 @@ func TestRemoteArtifactReceiptsAcknowledgePersistsTarget(t *testing.T) {
 func TestRemoteArtifactReceiptRetentionRequiresEveryAcknowledgementAndRemovesState(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
 	root := t.TempDir()
-	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b819-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b819-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("recording"))
 	targets := &RemoteArtifactTargets{entries: []remoteArtifactTargetEntry{
 		{scope: RemoteTargetScope{Auditlog: "security", Target: "first"}, destinationFingerprint: remoteDeliveryDestinationFingerprint(sha256.Sum256([]byte("first")))},
 		{scope: RemoteTargetScope{Auditlog: "security", Target: "second"}, destinationFingerprint: remoteDeliveryDestinationFingerprint(sha256.Sum256([]byte("second")))},
@@ -596,7 +596,7 @@ func TestRemoteArtifactReceiptRetentionRequiresEveryAcknowledgementAndRemovesSta
 func TestRemoteArtifactRetentionCompletionSurvivesRestart(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
 	root := t.TempDir()
-	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b823-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b823-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("recording"))
 	sealedAt := time.Date(2026, 9, 16, 15, 0, 0, 0, time.UTC)
 	store, err := newRemoteArtifactReceiptStore(root, identity, "security", nil)
 	require.NoError(t, err)
@@ -627,7 +627,7 @@ func TestRemoteArtifactRetentionCompletionSurvivesRestart(t *testing.T) {
 
 func TestRemoteArtifactReceiptRetentionWithoutTargetsStartsWhenSealed(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
-	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b820-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b820-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("recording"))
 	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", &remoteArtifactReceiptTestQuota{maximum: 1 << 20})
 	require.NoError(t, err)
 	receipts := &RemoteArtifactReceipts{store: store, targets: &RemoteArtifactTargets{}}
@@ -712,7 +712,7 @@ func TestRemoteArtifactReceiptsListSignedRejectsMissingReceipt(t *testing.T) {
 
 func TestRemoteArtifactReceiptAuditTransitionsWithReplacementHeadroom(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
-	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b818-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b818-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("recording"))
 	targets := &RemoteArtifactTargets{entries: []remoteArtifactTargetEntry{{
 		scope:                  RemoteTargetScope{Auditlog: "security", Target: "archive"},
 		destinationFingerprint: remoteDeliveryDestinationFingerprint(sha256.Sum256([]byte("destination"))),
@@ -766,7 +766,7 @@ func TestRemoteArtifactReceiptAuditTransitionsWithReplacementHeadroom(t *testing
 
 func TestWriteRemoteArtifactReceiptReservesReplacementHeadroom(t *testing.T) {
 	directory := t.TempDir()
-	fileName := "recording.cast.zst"
+	fileName := "recording.bcast"
 	target := filepath.Join(directory, remoteArtifactReceiptFileName)
 	temporary := filepath.Join(directory, remoteArtifactReceiptTempFileName)
 	initialPayload := []byte("first receipt")
@@ -805,7 +805,7 @@ func TestWriteRemoteArtifactReceiptReconcilesReservationAfterCreateFailure(t *te
 	quota := &remoteArtifactReceiptTestQuota{maximum: uint64(len(payload))}
 	quota.onReserve = func() { require.NoError(t, os.Remove(directory)) }
 
-	err := writeRemoteArtifactReceipt(directory, "recording.cast.zst", payload, quota)
+	err := writeRemoteArtifactReceipt(directory, "recording.bcast", payload, quota)
 	require.ErrorContains(t, err, "cannot create temporary")
 	require.Equal(t, uint64(len(payload)), quota.peak)
 	require.Zero(t, quota.usage)
@@ -878,7 +878,7 @@ func TestWriteRemoteArtifactReceiptRecoversFromPersistenceFailures(t *testing.T)
 			initialPayload := []byte("first receipt")
 			replacementPayload := []byte("next receipt!")
 			quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
-			require.NoError(t, writeRemoteArtifactReceipt(directory, "recording.cast.zst", initialPayload, quota))
+			require.NoError(t, writeRemoteArtifactReceipt(directory, "recording.bcast", initialPayload, quota))
 			initialUsage := quota.usage
 
 			operations := defaultRemoteArtifactReceiptWriteOperations()
@@ -890,7 +890,7 @@ func TestWriteRemoteArtifactReceiptRecoversFromPersistenceFailures(t *testing.T)
 				closed = true
 				return closeFile(file)
 			}
-			err := writeRemoteArtifactReceiptWithOperations(directory, "recording.cast.zst", replacementPayload, quota, operations)
+			err := writeRemoteArtifactReceiptWithOperations(directory, "recording.bcast", replacementPayload, quota, operations)
 			if test.name == "short write" {
 				require.ErrorIs(t, err, io.ErrShortWrite)
 			} else {
@@ -910,7 +910,7 @@ func TestWriteRemoteArtifactReceiptRecoversFromPersistenceFailures(t *testing.T)
 				require.Equal(t, initialPayload, remoteArtifactReceiptTestReadFile(t, target))
 			}
 
-			require.NoError(t, writeRemoteArtifactReceipt(directory, "recording.cast.zst", replacementPayload, quota))
+			require.NoError(t, writeRemoteArtifactReceipt(directory, "recording.bcast", replacementPayload, quota))
 			require.Equal(t, replacementPayload, remoteArtifactReceiptTestReadFile(t, target))
 			require.NoFileExists(t, temporary)
 			require.Equal(t, initialUsage, quota.usage)
@@ -1034,7 +1034,7 @@ func TestReceiptTemporaryCleanupJoinsWriteAndCloseFailures(t *testing.T) {
 			if restore {
 				err = restoreRemoteArtifactReceiptFileWithOperations(filepath.Join(directory, remoteArtifactReceiptRetentionFileName), directory, []byte("receipt"), operations)
 			} else {
-				err = writeRemoteArtifactReceiptWithOperations(directory, "recording.cast.zst", []byte("receipt"), nil, operations)
+				err = writeRemoteArtifactReceiptWithOperations(directory, "recording.bcast", []byte("receipt"), nil, operations)
 			}
 			require.ErrorIs(t, err, writeErr)
 			require.ErrorIs(t, err, closeErr)
@@ -1085,7 +1085,7 @@ func TestWriteRemoteArtifactReceiptInvalidatesQuotaAfterFinalInventoryFailure(t 
 		return stateUsage(directory)
 	}
 
-	err := writeRemoteArtifactReceiptWithOperations(directory, "recording.cast.zst", payload, quota, operations)
+	err := writeRemoteArtifactReceiptWithOperations(directory, "recording.bcast", payload, quota, operations)
 	require.ErrorIs(t, err, injected)
 	require.ErrorIs(t, quota.invalidated, injected)
 	require.Equal(t, uint64(len(payload)), quota.usage)
@@ -1162,7 +1162,7 @@ func TestRemoteArtifactReceiptReconcilesFailedRestoreState(t *testing.T) {
 			store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", quota)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, store.close()) })
-			directory := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName("recording.cast.zst"))
+			directory := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName("recording.bcast"))
 			require.NoError(t, ensureJournalDirectory(directory, true))
 			if test.remaining {
 				require.NoError(t, writeRemoteArtifactReceiptTestFile(filepath.Join(directory, remoteArtifactReceiptRetentionFileName), make([]byte, 17)))
@@ -1239,7 +1239,7 @@ func completeRemoteArtifactReceiptTestSuccess(t *testing.T, store *remoteArtifac
 
 func TestRemoteArtifactReceiptsRejectsReceiptBeyondQuota(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
-	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b817-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b817-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("recording"))
 	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", &remoteArtifactReceiptTestQuota{maximum: 1})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.close()) })
@@ -1280,7 +1280,7 @@ func TestRemoteArtifactReceiptScansRemoveMalformedOnlyTemporaries(t *testing.T) 
 				store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", nil)
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, store.close()) })
-				state := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName("unpublished.cast.zst"))
+				state := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName("unpublished.bcast"))
 				require.NoError(t, ensureJournalDirectory(state, true))
 				temporary := filepath.Join(state, temporaryName)
 				require.NoError(t, writeRemoteArtifactReceiptTestFile(temporary, []byte("{")))
@@ -1306,7 +1306,7 @@ func TestRemoteArtifactReceiptRecoveryRemovesOversizedTemporary(t *testing.T) {
 	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.close()) })
-	state := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName("unpublished.cast.zst"))
+	state := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName("unpublished.bcast"))
 	require.NoError(t, ensureJournalDirectory(state, true))
 	temporary := filepath.Join(state, remoteArtifactReceiptTempFileName)
 	require.NoError(t, writeRemoteArtifactReceiptTestFile(temporary, make([]byte, maxJournalRecordPayloadSize+1)))
@@ -1325,7 +1325,7 @@ func TestRemoteArtifactReceiptRecoveryRemovesCleanupTombstones(t *testing.T) {
 	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", quota)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.close()) })
-	state := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName("unpublished.cast.zst"))
+	state := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName("unpublished.bcast"))
 	require.NoError(t, ensureJournalDirectory(state, true))
 	for index, name := range []string{remoteArtifactReceiptTempFileName, remoteArtifactReceiptRetentionTempName} {
 		path := filepath.Join(state, name+remoteArtifactReceiptCleanupSuffix)
@@ -1348,7 +1348,7 @@ func TestRemoteArtifactReceiptRecoveryRejectsNonRegularCleanupTombstone(t *testi
 	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.close()) })
-	state := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName("unpublished.cast.zst"))
+	state := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName("unpublished.bcast"))
 	require.NoError(t, ensureJournalDirectory(state, true))
 	tombstone := filepath.Join(state, remoteArtifactReceiptTempFileName+remoteArtifactReceiptCleanupSuffix)
 	require.NoError(t, os.Mkdir(tombstone, journalDirectoryMode))
@@ -1363,7 +1363,7 @@ func TestRemoteArtifactReceiptRecoveryRemovesEmptyUnpublishedState(t *testing.T)
 	store, err := newRemoteArtifactReceiptStore(t.TempDir(), identity, "security", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.close()) })
-	state := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName("unpublished.cast.zst"))
+	state := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName("unpublished.bcast"))
 	require.NoError(t, ensureJournalDirectory(state, true))
 
 	require.NoError(t, (&RemoteArtifactReceipts{store: store}).Recover(t.Context()))
@@ -1371,8 +1371,8 @@ func TestRemoteArtifactReceiptRecoveryRemovesEmptyUnpublishedState(t *testing.T)
 }
 
 func TestRemoteArtifactReceiptStateNamesAvoidFilesystemAliases(t *testing.T) {
-	lower := remoteArtifactReceiptStateName("recording.cast.zst")
-	upper := remoteArtifactReceiptStateName("RECORDING.cast.zst")
+	lower := remoteArtifactReceiptStateName("recording.bcast")
+	upper := remoteArtifactReceiptStateName("RECORDING.bcast")
 	require.NotEqual(t, lower, upper)
 	require.Len(t, lower, 64)
 	require.True(t, isRemoteArtifactReceiptStateName(lower))
@@ -1388,7 +1388,7 @@ func TestRemoteArtifactReceiptStoreLockIsExclusive(t *testing.T) {
 	_, err = newRemoteArtifactReceiptStore(root, identity, "security", nil)
 	require.ErrorContains(t, err, "already locked")
 	require.NoError(t, first.close())
-	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b815-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b815-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("recording"))
 	_, err = first.initialize(artifact, time.Now().UTC(), nil)
 	require.ErrorContains(t, err, "closed")
 	second, err := newRemoteArtifactReceiptStore(root, identity, "security", nil)
@@ -1399,7 +1399,7 @@ func TestRemoteArtifactReceiptStoreLockIsExclusive(t *testing.T) {
 func TestRemoteArtifactReceiptKeepsSelectionAcrossConfigurationChanges(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
 	root := t.TempDir()
-	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b814-9dad-4d1f-80b4-00c04fd430c8.cast.zst", []byte("recording"))
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b814-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("recording"))
 	firstFingerprint := remoteDeliveryDestinationFingerprint(sha256.Sum256([]byte("first")))
 	secondFingerprint := remoteDeliveryDestinationFingerprint(sha256.Sum256([]byte("second")))
 	originalTargets := &RemoteArtifactTargets{entries: []remoteArtifactTargetEntry{{

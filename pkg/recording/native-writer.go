@@ -91,14 +91,14 @@ func NewNativeRecordingWriter(output io.Writer, identity *audit.Identity, recipi
 	if chunkTarget < 1 || chunkTarget > nativeformat.MaxRecordingDecodedChunk {
 		return nil, fmt.Errorf("invalid native recording chunk target")
 	}
-	limits, err := newRecordingWriterLimits(options.MaximumContainerBytes, options.MaximumCastBytes, options.MaximumChunks, DefaultMaximumBECastBytes, DefaultMaximumBECastChunks)
+	limits, err := newRecordingWriterLimits(options.MaximumContainerBytes, options.MaximumCastBytes, options.MaximumChunks, DefaultMaximumNativeRecordingBytes, DefaultMaximumNativeRecordingChunks)
 	if err != nil {
 		return nil, err
 	}
 	if limits.maximumCastBytes > uint64(DefaultMaximumCastBytes) {
 		return nil, fmt.Errorf("native recording Cast limit exceeds renderer maximum")
 	}
-	if limits.maximumChunks > DefaultMaximumBECastChunks {
+	if limits.maximumChunks > DefaultMaximumNativeRecordingChunks {
 		return nil, fmt.Errorf("native recording chunk limit exceeds renderer maximum")
 	}
 	signer, err := NewNativeRecordingSigner(identity)

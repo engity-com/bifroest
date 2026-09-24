@@ -16,7 +16,7 @@ func TestRemoteArtifactMetadataContentAndValidation(t *testing.T) {
 	artifact := validRemoteArtifactTest()
 	require.NoError(t, artifact.Validate())
 	require.Equal(t, ProducerId{1}, artifact.ProducerId())
-	require.Equal(t, "recording.cast.zst", artifact.FileName())
+	require.Equal(t, "recording.bcast", artifact.FileName())
 	require.Equal(t, artifact.ProducerId().String()+"/"+artifact.FileName(), artifact.RemotePath())
 	require.Equal(t, int64(len("sealed recording")), artifact.Size())
 	first, err := io.ReadAll(artifact.Content())
@@ -32,6 +32,10 @@ func TestRemoteArtifactMetadataContentAndValidation(t *testing.T) {
 	require.NoError(t, decoded.UnmarshalText(encoded))
 	require.Equal(t, artifact.Digest(), decoded)
 	require.Error(t, decoded.UnmarshalText([]byte(strings.ToUpper(strings.Repeat("ab", sha256.Size)))))
+	content := []byte("ordinary artifact")
+	ordinary, err := NewRemoteArtifact(ProducerId{1}, "notes.txt", ArtifactDigest(sha256.Sum256(content)), int64(len(content)), bytes.NewReader(content))
+	require.NoError(t, err)
+	require.NoError(t, ordinary.Validate())
 }
 
 func TestRemoteArtifactRejectsInvalidMetadata(t *testing.T) {
@@ -47,17 +51,17 @@ func TestRemoteArtifactRejectsInvalidMetadata(t *testing.T) {
 		content  io.ReaderAt
 		err      string
 	}{
-		{"producer", ProducerId{}, "recording.cast.zst", digest, int64(len(content)), bytes.NewReader(content), "producer ID"},
+		{"producer", ProducerId{}, "recording.bcast", digest, int64(len(content)), bytes.NewReader(content), "producer ID"},
 		{"empty-name", ProducerId{1}, "", digest, int64(len(content)), bytes.NewReader(content), "file name"},
-		{"slash", ProducerId{1}, "nested/recording.cast.zst", digest, int64(len(content)), bytes.NewReader(content), "file name"},
-		{"backslash", ProducerId{1}, `nested\recording.cast.zst`, digest, int64(len(content)), bytes.NewReader(content), "file name"},
+		{"slash", ProducerId{1}, "nested/recording.bcast", digest, int64(len(content)), bytes.NewReader(content), "file name"},
+		{"backslash", ProducerId{1}, `nested\recording.bcast`, digest, int64(len(content)), bytes.NewReader(content), "file name"},
 		{"leading-dot", ProducerId{1}, ".recording", digest, int64(len(content)), bytes.NewReader(content), "file name"},
 		{"space", ProducerId{1}, "recording cast.zst", digest, int64(len(content)), bytes.NewReader(content), "file name"},
 		{"long-name", ProducerId{1}, strings.Repeat("a", maximumRemoteArtifactFileNameBytes+1), digest, int64(len(content)), bytes.NewReader(content), "file name"},
-		{"digest", ProducerId{1}, "recording.cast.zst", ArtifactDigest{}, int64(len(content)), bytes.NewReader(content), "digest"},
-		{"size", ProducerId{1}, "recording.cast.zst", digest, 0, bytes.NewReader(content), "size"},
-		{"content", ProducerId{1}, "recording.cast.zst", digest, int64(len(content)), nil, "content"},
-		{"typed-nil", ProducerId{1}, "recording.cast.zst", digest, int64(len(content)), nilReader, "content"},
+		{"digest", ProducerId{1}, "recording.bcast", ArtifactDigest{}, int64(len(content)), bytes.NewReader(content), "digest"},
+		{"size", ProducerId{1}, "recording.bcast", digest, 0, bytes.NewReader(content), "size"},
+		{"content", ProducerId{1}, "recording.bcast", digest, int64(len(content)), nil, "content"},
+		{"typed-nil", ProducerId{1}, "recording.bcast", digest, int64(len(content)), nilReader, "content"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -83,7 +87,7 @@ func TestRemoteArtifactRejectsInvalidContent(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			artifact, err := NewRemoteArtifact(ProducerId{1}, "recording.cast.zst", test.digest, test.size, bytes.NewReader(test.content))
+			artifact, err := NewRemoteArtifact(ProducerId{1}, "recording.bcast", test.digest, test.size, bytes.NewReader(test.content))
 			require.NoError(t, err)
 			require.ErrorContains(t, artifact.Validate(), test.err)
 		})
@@ -94,7 +98,7 @@ func TestRemoteArtifactValidationHonorsContext(t *testing.T) {
 	content := []byte("sealed recording")
 	artifact, err := NewRemoteArtifact(
 		ProducerId{1},
-		"recording.cast.zst",
+		"recording.bcast",
 		ArtifactDigest(sha256.Sum256(content)),
 		int64(len(content)),
 		&slowRemoteTargetTestReaderAt{content: content},
@@ -110,7 +114,7 @@ func validRemoteArtifactTest() RemoteArtifact {
 	content := []byte("sealed recording")
 	result, err := NewRemoteArtifact(
 		ProducerId{1},
-		"recording.cast.zst",
+		"recording.bcast",
 		ArtifactDigest(sha256.Sum256(content)),
 		int64(len(content)),
 		bytes.NewReader(content),

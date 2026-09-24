@@ -14,10 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestLocalCastZstdRepositoryListsAndOpensSealedArtifacts(t *testing.T) {
+func TestLocalNativeRepositoryListsAndOpensSealedArtifacts(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "recordings")
 	identity, header, metadata := castTestValues(t, true)
-	repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions)
+	repository, err := NewLocalNativeRecordingRepository(t.Context(), root, identity, nil, NativeRecordingVerifyOptions{}, localRepositoryTestOptions)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, repository.Close()) })
 
@@ -45,7 +45,7 @@ func TestLocalCastZstdRepositoryListsAndOpensSealedArtifacts(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, metadata.RecordingId, artifact.RecordingId())
 	require.Equal(t, identity.ProducerId(), artifact.ProducerId())
-	require.Equal(t, metadata.RecordingId.String()+localCastZstdSealedSuffix, artifact.FileName())
+	require.Equal(t, metadata.RecordingId.String()+".bcast", artifact.FileName())
 	require.Positive(t, artifact.Size())
 	require.Equal(t, CastStatusCompleted, artifact.Summary().Status)
 	require.False(t, artifact.ArtifactDigest().IsZero())
@@ -82,11 +82,11 @@ func TestLocalCastZstdRepositoryListsAndOpensSealedArtifacts(t *testing.T) {
 	require.NoError(t, second.Close())
 }
 
-func TestLocalBECastRepositoryListsAndOpensSealedArtifacts(t *testing.T) {
+func TestLocalNativeEncryptedRepositoryListsAndOpensSealedArtifacts(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "recordings")
 	identity, header, metadata := castTestValues(t, true)
 	recipient, _ := newBECastTestEncryption(t)
-	repository, err := NewLocalBECastRepository(t.Context(), root, identity, recipient, BECastVerifyOptions{}, localRepositoryTestOptions)
+	repository, err := NewLocalNativeRecordingRepository(t.Context(), root, identity, recipient, NativeRecordingVerifyOptions{}, localRepositoryTestOptions)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, repository.Close()) })
 	active, err := repository.CreateActive(t.Context(), header, metadata, 300)
@@ -101,17 +101,17 @@ func TestLocalBECastRepositoryListsAndOpensSealedArtifacts(t *testing.T) {
 	artifact, err := repository.OpenSealed(t.Context(), metadata.RecordingId)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, artifact.Close()) }()
-	require.Equal(t, metadata.RecordingId.String()+localBECastSealedSuffix, artifact.FileName())
+	require.Equal(t, metadata.RecordingId.String()+".becast", artifact.FileName())
 	require.Equal(t, summary, artifact.Summary())
 	payload, err := io.ReadAll(artifact.Reader())
 	require.NoError(t, err)
 	require.Equal(t, ArtifactDigest(sha256.Sum256(payload)), artifact.ArtifactDigest())
 }
 
-func TestLocalCastZstdRepositoryDeletesOnlyMatchingSealedArtifactAndReleasesQuota(t *testing.T) {
+func TestLocalNativeRepositoryDeletesOnlyMatchingSealedArtifactAndReleasesQuota(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "recordings")
 	identity, header, metadata := castTestValues(t, true)
-	repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions)
+	repository, err := NewLocalNativeRecordingRepository(t.Context(), root, identity, nil, NativeRecordingVerifyOptions{}, localRepositoryTestOptions)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, repository.Close()) })
 	active, err := repository.CreateActive(t.Context(), header, metadata, 300)
@@ -129,7 +129,7 @@ func TestLocalCastZstdRepositoryDeletesOnlyMatchingSealedArtifactAndReleasesQuot
 	deleted, err := repository.DeleteSealed(t.Context(), metadata.RecordingId, wrongDigest, size)
 	require.ErrorContains(t, err, "does not match")
 	require.False(t, deleted)
-	require.FileExists(t, filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+localCastZstdSealedSuffix))
+	require.FileExists(t, filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+".bcast"))
 
 	deleted, err = repository.DeleteSealed(t.Context(), metadata.RecordingId, digest, size)
 	require.NoError(t, err)
@@ -142,10 +142,10 @@ func TestLocalCastZstdRepositoryDeletesOnlyMatchingSealedArtifactAndReleasesQuot
 	require.False(t, deleted)
 }
 
-func TestLocalCastZstdRepositoryRecoversRetentionTombstone(t *testing.T) {
+func TestLocalNativeRepositoryRecoversRetentionTombstone(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "recordings")
 	identity, header, metadata := castTestValues(t, true)
-	repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions)
+	repository, err := NewLocalNativeRecordingRepository(t.Context(), root, identity, nil, NativeRecordingVerifyOptions{}, localRepositoryTestOptions)
 	require.NoError(t, err)
 	active, err := repository.CreateActive(t.Context(), header, metadata, 300)
 	require.NoError(t, err)
@@ -153,11 +153,11 @@ func TestLocalCastZstdRepositoryRecoversRetentionTombstone(t *testing.T) {
 	_, err = active.Seal(2*time.Second, CastResult{Status: CastStatusCompleted, EndedAt: metadata.StartedAt.Add(2 * time.Second)}, sealedArtifactUint32(0))
 	require.NoError(t, err)
 	require.NoError(t, repository.Close())
-	sealed := filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+localCastZstdSealedSuffix)
+	sealed := filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+".bcast")
 	tombstone := sealed + localRetentionTombstone
 	require.NoError(t, os.Rename(sealed, tombstone))
 
-	reopened, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions)
+	reopened, err := NewLocalNativeRecordingRepository(t.Context(), root, identity, nil, NativeRecordingVerifyOptions{}, localRepositoryTestOptions)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, reopened.Close()) }()
 	require.NoFileExists(t, tombstone)
@@ -170,7 +170,7 @@ func TestLocalCastZstdRepositoryRecoversRetentionTombstone(t *testing.T) {
 func TestLocalRepositorySealedArtifactAccessFailsClosed(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "recordings")
 	identity, header, metadata := castTestValues(t, true)
-	repository, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions)
+	repository, err := NewLocalNativeRecordingRepository(t.Context(), root, identity, nil, NativeRecordingVerifyOptions{}, localRepositoryTestOptions)
 	require.NoError(t, err)
 	active, err := repository.CreateActive(t.Context(), header, metadata, 300)
 	require.NoError(t, err)
@@ -192,8 +192,8 @@ func TestLocalRepositorySealedArtifactAccessFailsClosed(t *testing.T) {
 
 	wrongId, err := NewId()
 	require.NoError(t, err)
-	originalPath := filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+localCastZstdSealedSuffix)
-	wrongPath := filepath.Join(root, localSealedDirectory, wrongId.String()+localCastZstdSealedSuffix)
+	originalPath := filepath.Join(root, localSealedDirectory, metadata.RecordingId.String()+".bcast")
+	wrongPath := filepath.Join(root, localSealedDirectory, wrongId.String()+".bcast")
 	require.NoError(t, os.Rename(originalPath, wrongPath))
 	_, err = repository.OpenSealed(t.Context(), wrongId)
 	require.ErrorContains(t, err, "does not match its file name")
@@ -204,5 +204,3 @@ func TestLocalRepositorySealedArtifactAccessFailsClosed(t *testing.T) {
 	_, err = repository.OpenSealed(t.Context(), metadata.RecordingId)
 	require.ErrorContains(t, err, "closed")
 }
-
-func sealedArtifactUint32(value uint32) *uint32 { return &value }

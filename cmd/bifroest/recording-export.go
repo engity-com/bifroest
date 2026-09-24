@@ -37,10 +37,10 @@ func registerRecordingExportCmd(parent *kingpin.CmdClause) {
 		StringVar(&opts.expectedProducerId)
 	cmd.Flag("allowUntrusted", "Export a cryptographically valid self-signed Recording without trusting its producer identity.").
 		BoolVar(&opts.allowUntrusted)
-	cmd.Flag("decryptionIdentityFile", "Private SSH key for decrypting BECast; repeat for multiple keys.").
+	cmd.Flag("decryptionIdentityFile", "Private SSH key for decrypting .becast; repeat for multiple keys.").
 		PlaceHolder("<path>").
 		StringsVar(&opts.decryptionIdentityFiles)
-	cmd.Arg("file", "Sealed .bcast or .becast Recording artifact (legacy .cast and .cast.zst also supported).").
+	cmd.Arg("file", "Sealed .bcast or .becast Recording artifact, or signed standalone .cast.").
 		Required().
 		StringVar(&opts.file)
 }
@@ -170,12 +170,14 @@ func validateRecordingSnapshotSize(input io.ReaderAt, size int64) error {
 	if err != nil {
 		return err
 	}
-	maximum := recording.DefaultMaximumCastBytes
+	var maximum int64
 	switch format {
-	case recording.FormatCastZstd:
-		maximum = recording.DefaultMaximumCastZstdBytes
-	case recording.FormatBECast, recording.FormatBcast, recording.FormatBECastCBOR:
-		maximum = recording.DefaultMaximumBECastBytes
+	case recording.FormatCast:
+		maximum = recording.DefaultMaximumCastBytes
+	case recording.FormatBcast, recording.FormatBECastCBOR:
+		maximum = recording.DefaultMaximumNativeRecordingBytes
+	default:
+		return fmt.Errorf("unsupported Recording format %q", format)
 	}
 	if size > maximum {
 		return fmt.Errorf("recording input size %d exceeds the %d-byte limit for %s", size, maximum, format)
@@ -241,46 +243,6 @@ func exportRecordingPayload(source io.ReaderAt, size int64, output io.Writer, in
 		}
 		if written != size {
 			return fmt.Errorf("recording input changed while exporting Cast")
-		}
-	case recording.FormatCastZstd:
-		if inspection.CastZstd == nil {
-			return fmt.Errorf("recording inspection has no Cast Zstandard result")
-		}
-		verification, err := recording.ExportCastZstd(source, size, output, recording.CastZstdVerifyOptions{
-			Context:               inspectOptions.Context,
-			MaximumContainerBytes: inspectOptions.MaximumContainerBytes,
-			MaximumCastBytes:      inspectOptions.MaximumCastBytes,
-			MaximumChunks:         inspectOptions.MaximumChunks,
-			ExpectedProducerId:    inspectOptions.ExpectedProducerId,
-			AllowUntrusted:        inspectOptions.AllowUntrusted,
-		})
-		if err != nil {
-			return fmt.Errorf("cannot export Cast Zstandard Recording: %w", err)
-		}
-		if verification.Summary != inspection.CastZstd.Summary || verification.Fingerprint != inspection.CastZstd.Fingerprint || verification.Trusted != inspection.CastZstd.Trusted {
-			return fmt.Errorf("recording input changed between inspection and Cast Zstandard export")
-		}
-	case recording.FormatBECast:
-		if inspection.BECast == nil {
-			return fmt.Errorf("recording inspection has no BECast result")
-		}
-		identities, err := loadRecordingDecryptionIdentities(identityFiles)
-		if err != nil {
-			return err
-		}
-		verification, err := recording.DecryptBECast(source, size, identities, output, recording.BECastVerifyOptions{
-			Context:               inspectOptions.Context,
-			MaximumContainerBytes: inspectOptions.MaximumContainerBytes,
-			MaximumCastBytes:      inspectOptions.MaximumCastBytes,
-			MaximumChunks:         inspectOptions.MaximumChunks,
-			ExpectedProducerId:    inspectOptions.ExpectedProducerId,
-			AllowUntrusted:        inspectOptions.AllowUntrusted,
-		})
-		if err != nil {
-			return fmt.Errorf("cannot decrypt BECast Recording: %w", err)
-		}
-		if verification.Summary != inspection.BECast.Summary || verification.Trusted != inspection.BECast.Trusted {
-			return fmt.Errorf("recording input changed between inspection and BECast export")
 		}
 	default:
 		return fmt.Errorf("unsupported Recording format %q", inspection.Format)

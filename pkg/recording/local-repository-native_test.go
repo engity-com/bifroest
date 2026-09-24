@@ -120,10 +120,9 @@ func TestLocalNativeRecordingRepositoryRecovery(t *testing.T) {
 func TestLocalNativeRecordingRepositoryRejectsOtherFormats(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "recordings")
 	identity, _, _ := castTestValues(t, true)
-	legacy, err := NewLocalCastZstdRepository(t.Context(), root, identity, CastZstdVerifyOptions{}, localRepositoryTestOptions)
-	require.NoError(t, err)
-	require.NoError(t, legacy.Close())
-	_, err = NewLocalNativeRecordingRepository(t.Context(), root, identity, nil, NativeRecordingVerifyOptions{}, localRepositoryTestOptions)
+	require.NoError(t, os.Mkdir(root, localDirectoryMode))
+	require.NoError(t, writeProtectedLocalFile(filepath.Join(root, localFormatFileName), []byte("foreign/v1\n")))
+	_, err := NewLocalNativeRecordingRepository(t.Context(), root, identity, nil, NativeRecordingVerifyOptions{}, localRepositoryTestOptions)
 	require.ErrorContains(t, err, "different or malformed format")
 
 	other := filepath.Join(t.TempDir(), "recordings")
@@ -133,6 +132,23 @@ func TestLocalNativeRecordingRepositoryRejectsOtherFormats(t *testing.T) {
 	recipient, _ := newBECastTestEncryption(t)
 	_, err = NewLocalNativeRecordingRepository(t.Context(), other, identity, recipient, NativeRecordingVerifyOptions{}, localRepositoryTestOptions)
 	require.ErrorContains(t, err, "different or malformed format")
+}
+
+var localRepositoryTestOptions = LocalRepositoryOptions{MaximumSpoolBytes: 1 << 60}
+
+func sealedArtifactUint32(value uint32) *uint32 { return &value }
+
+func requireLocalTestQuotaMatchesFiles(t *testing.T, root string, quota *localQuota) {
+	t.Helper()
+	usage, err := inventoryLocalFiles(
+		filepath.Join(root, localWorkDirectory),
+		filepath.Join(root, localActiveDirectory),
+		filepath.Join(root, localSealedDirectory),
+		filepath.Join(root, localQuarantineDirectory),
+		filepath.Join(root, localDeliveryDirectory),
+	)
+	require.NoError(t, err)
+	require.Equal(t, usage, quota.usage)
 }
 
 func TestLocalNativeRecordingRepositoryQuota(t *testing.T) {

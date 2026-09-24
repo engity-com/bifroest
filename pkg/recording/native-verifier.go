@@ -27,10 +27,34 @@ type NativeRecordingVerification struct {
 	Trusted bool
 }
 
-const nativeRecordingAgePrefix = "age-encryption.org/v1\n"
+const (
+	nativeRecordingAgePrefix            = "age-encryption.org/v1\n"
+	DefaultMaximumNativeRecordingBytes  = int64(32 << 30)
+	DefaultMaximumNativeRecordingChunks = 1 << 18
+)
+
+func effectiveMaximumNativeRecordingChunks(value uint64) uint64 {
+	if value == 0 {
+		return DefaultMaximumNativeRecordingChunks
+	}
+	return value
+}
+
+func castStatusFromNativeRecording(value uint8) (CastStatus, error) {
+	switch value {
+	case 1:
+		return CastStatusCompleted, nil
+	case 2:
+		return CastStatusFailed, nil
+	case 3:
+		return CastStatusIncomplete, nil
+	default:
+		return "", fmt.Errorf("illegal native recording status %d", value)
+	}
+}
 
 func validateNativeRecordingSeal(s nativeRecordingSeal, h nativeRecordingHeader) error {
-	status, err := castStatusFromBECast(s.Status)
+	status, err := castStatusFromNativeRecording(s.Status)
 	if err != nil || status == "" || s.ChunkCount == 0 || s.CastBytes == 0 {
 		return fmt.Errorf("invalid native recording seal status or counts")
 	}
@@ -64,7 +88,7 @@ func VerifyNativeRecordingOuter(source io.ReaderAt, size int64, options NativeRe
 	}
 	maximum := options.MaximumContainerBytes
 	if maximum == 0 {
-		maximum = DefaultMaximumBECastBytes
+		maximum = DefaultMaximumNativeRecordingBytes
 	}
 	castMaximum := effectiveMaximumCastBytes(options.MaximumCastBytes)
 	if maximum < 1 || castMaximum < 1 || size > maximum {
@@ -73,7 +97,7 @@ func VerifyNativeRecordingOuter(source io.ReaderAt, size int64, options NativeRe
 	if options.ExpectedProducerId.IsZero() && !options.AllowUntrusted {
 		return nil, fmt.Errorf("native recording requires a trusted expected producer")
 	}
-	maxChunks := effectiveMaximumBECastChunks(options.MaximumChunks)
+	maxChunks := effectiveMaximumNativeRecordingChunks(options.MaximumChunks)
 	var magic [len(nativeformat.RecordingMagic)]byte
 	if _, err := source.ReadAt(magic[:], 0); err != nil || string(magic[:]) != nativeformat.RecordingMagic {
 		return nil, fmt.Errorf("invalid native recording magic: %v", err)
@@ -227,7 +251,7 @@ func VerifyNativeRecordingHead(payload, headerPayload []byte) (NativeRecordingHe
 func VerifyNativeRecordingCheckpoint(source io.ReaderAt, size int64, headPayload []byte, identity *audit.Identity, options NativeRecordingVerifyOptions) error {
 	maximum := options.MaximumContainerBytes
 	if maximum == 0 {
-		maximum = DefaultMaximumBECastBytes
+		maximum = DefaultMaximumNativeRecordingBytes
 	}
 	castMaximum := effectiveMaximumCastBytes(options.MaximumCastBytes)
 	if source == nil || identity == nil || identity.PublicKey() == nil || size < int64(len(nativeformat.RecordingMagic))+18 || size > maximum || maximum < 1 || castMaximum < 1 {
@@ -250,7 +274,7 @@ func VerifyNativeRecordingCheckpoint(source io.ReaderAt, size int64, headPayload
 	if err != nil {
 		return err
 	}
-	if head.PrefixBytes > uint64(size) || head.PrefixBytes <= uint64(next) || head.ChunkCount > effectiveMaximumBECastChunks(options.MaximumChunks) {
+	if head.PrefixBytes > uint64(size) || head.PrefixBytes <= uint64(next) || head.ChunkCount > effectiveMaximumNativeRecordingChunks(options.MaximumChunks) {
 		return fmt.Errorf("native checkpoint prefix or chunk count exceeds limits")
 	}
 	previous, err := hashNativeRecordingUnit(source, offset, next)

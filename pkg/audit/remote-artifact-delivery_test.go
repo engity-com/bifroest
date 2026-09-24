@@ -20,8 +20,8 @@ import (
 func TestRemoteArtifactDeliveryPublishesInSortedOrderAndDoesNotRepublishAfterRestart(t *testing.T) {
 	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
 	artifacts := []RemoteArtifact{
-		newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "b.cast.zst", []byte("second")),
-		newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "a.cast.zst", []byte("first")),
+		newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "b.bcast", []byte("second")),
+		newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "a.bcast", []byte("first")),
 	}
 	source.set(artifacts...)
 	fingerprint := remoteArtifactDeliveryTestFingerprint("archive")
@@ -42,7 +42,7 @@ func TestRemoteArtifactDeliveryPublishesInSortedOrderAndDoesNotRepublishAfterRes
 	remoteArtifactDeliveryTestFlush(t, delivery)
 	require.NoError(t, delivery.Close())
 	mutex.Lock()
-	require.Equal(t, []string{"a.cast.zst", "b.cast.zst"}, published)
+	require.Equal(t, []string{"a.bcast", "b.bcast"}, published)
 	mutex.Unlock()
 
 	var republished atomic.Int32
@@ -60,9 +60,9 @@ func TestRemoteArtifactDeliveryPublishesInSortedOrderAndDoesNotRepublishAfterRes
 func TestRemoteArtifactDeliveryKeepsOneArtifactInFlightPerTarget(t *testing.T) {
 	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
 	artifacts := []RemoteArtifact{
-		newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "c.cast.zst", []byte("third")),
-		newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "a.cast.zst", []byte("first")),
-		newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "b.cast.zst", []byte("second")),
+		newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "c.bcast", []byte("third")),
+		newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "a.bcast", []byte("first")),
+		newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "b.bcast", []byte("second")),
 	}
 	source.set(artifacts...)
 	fingerprint := remoteArtifactDeliveryTestFingerprint("archive")
@@ -88,7 +88,7 @@ func TestRemoteArtifactDeliveryKeepsOneArtifactInFlightPerTarget(t *testing.T) {
 			activePublishes--
 			mutex.Unlock()
 		}()
-		if artifact.FileName() != "a.cast.zst" {
+		if artifact.FileName() != "a.bcast" {
 			return nil
 		}
 		firstStartedOnce.Do(func() { close(firstStarted) })
@@ -125,7 +125,7 @@ func TestRemoteArtifactDeliveryKeepsOneArtifactInFlightPerTarget(t *testing.T) {
 	actualPublished := append([]string(nil), published...)
 	actualMaximumActivePublishes := maximumActivePublishes
 	mutex.Unlock()
-	require.Equal(t, []string{"a.cast.zst", "b.cast.zst", "c.cast.zst"}, actualPublished)
+	require.Equal(t, []string{"a.bcast", "b.bcast", "c.bcast"}, actualPublished)
 	require.Equal(t, 1, actualMaximumActivePublishes)
 	require.Equal(t, int32(len(artifacts)), source.openCalls.Load())
 	require.Equal(t, int32(len(artifacts)), source.closed.Load())
@@ -171,7 +171,7 @@ func TestRemoteArtifactDeliveryRejectsPendingRemovedOrChangedTargetAtStartup(t *
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
-			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "destination.cast.zst", []byte("destination"))
+			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "destination.bcast", []byte("destination"))
 			source.set(artifact)
 			receiptTargets := remoteArtifactDeliveryTestTargets(remoteArtifactDeliveryTestEntry("archive", remoteArtifactDeliveryTestFingerprint("old"), nil))
 			receipts := newRemoteArtifactDeliveryTestReceipts(t, identity, []RemoteArtifact{artifact}, receiptTargets)
@@ -205,7 +205,7 @@ func TestRemoteArtifactDeliveryDoesNotOpenAcknowledgedOrUnselectedArtifacts(t *t
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
-			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "skip.cast.zst", []byte("skip"))
+			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "skip.bcast", []byte("skip"))
 			source.set(artifact)
 			var receiptTargets *RemoteArtifactTargets
 			if test.receiptTarget != nil {
@@ -230,8 +230,8 @@ func TestRemoteArtifactDeliveryDoesNotOpenAcknowledgedOrUnselectedArtifacts(t *t
 
 func TestRemoteArtifactDeliveryChangedTargetSkipsAcknowledgedArtifactAndDeliversNewArtifact(t *testing.T) {
 	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
-	oldArtifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "a-old.cast.zst", []byte("old"))
-	newArtifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "z-new.cast.zst", []byte("new"))
+	oldArtifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "a-old.bcast", []byte("old"))
+	newArtifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "z-new.bcast", []byte("new"))
 	source.set(oldArtifact, newArtifact)
 	oldEntry := remoteArtifactDeliveryTestEntry("archive", remoteArtifactDeliveryTestFingerprint("old"), nil)
 	newDelivered := make(chan string, 1)
@@ -259,7 +259,7 @@ func TestRemoteArtifactDeliveryChangedTargetSkipsAcknowledgedArtifactAndDelivers
 
 func TestRemoteArtifactDeliveryRetriesTargetsIndependentlyWithFreshTimeouts(t *testing.T) {
 	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
-	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "retry.cast.zst", []byte("retry"))
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "retry.bcast", []byte("retry"))
 	source.set(artifact)
 	slowFingerprint := remoteArtifactDeliveryTestFingerprint("slow")
 	healthyFingerprint := remoteArtifactDeliveryTestFingerprint("healthy")
@@ -315,7 +315,7 @@ func TestRemoteArtifactDeliveryRetriesTargetsIndependentlyWithFreshTimeouts(t *t
 
 func TestRemoteArtifactDeliveryOpensBeforeStartingFreshPublishTimeout(t *testing.T) {
 	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
-	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "slow-open.cast.zst", []byte("slow-open"))
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "slow-open.bcast", []byte("slow-open"))
 	source.set(artifact)
 	attemptTimeout := 80 * time.Millisecond
 	source.openDelay = attemptTimeout + attemptTimeout/2
@@ -344,7 +344,7 @@ func TestRemoteArtifactDeliveryOpensBeforeStartingFreshPublishTimeout(t *testing
 func TestRemoteArtifactDeliveryPublishTimeoutClosesBlockedArtifactHandle(t *testing.T) {
 	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
 	reader := &remoteArtifactDeliveryBlockingReader{started: make(chan struct{}), closed: make(chan struct{})}
-	artifact, err := NewRemoteArtifact(identity.ProducerId(), "blocked.cast.zst", ArtifactDigest(sha256.Sum256([]byte("blocked"))), 1, reader)
+	artifact, err := NewRemoteArtifact(identity.ProducerId(), "blocked.bcast", ArtifactDigest(sha256.Sum256([]byte("blocked"))), 1, reader)
 	require.NoError(t, err)
 	source.set(artifact)
 	source.newHandle = func(artifact RemoteArtifact) RemoteArtifactHandle {
@@ -379,7 +379,7 @@ func TestRemoteArtifactDeliveryPublishTimeoutClosesBlockedArtifactHandle(t *test
 
 func TestRemoteArtifactDeliveryFlushDeadlineDoesNotWaitForReceiptLock(t *testing.T) {
 	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
-	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "locked.cast.zst", []byte("locked"))
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "locked.bcast", []byte("locked"))
 	source.set(artifact)
 	fingerprint := remoteArtifactDeliveryTestFingerprint("archive")
 	receiptTargets := remoteArtifactDeliveryTestTargets(remoteArtifactDeliveryTestEntry("archive", fingerprint, nil))
@@ -406,7 +406,7 @@ func TestRemoteArtifactDeliveryFlushDeadlineDoesNotWaitForReceiptLock(t *testing
 
 func TestRemoteArtifactDeliveryFlushPinsCompletedReceiptAgainstRetentionRemoval(t *testing.T) {
 	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
-	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "retention.cast.zst", []byte("retention"))
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "retention.bcast", []byte("retention"))
 	source.set(artifact)
 	fingerprint := remoteArtifactDeliveryTestFingerprint("archive")
 	entry := remoteArtifactDeliveryTestEntry("archive", fingerprint, nil)
@@ -505,7 +505,7 @@ func TestRemoteArtifactDeliveryCloseCancelsFlushWaitingForRetentionRemoval(t *te
 
 func TestRemoteArtifactDeliveryRetriesOnlyAckAfterPersistenceFailure(t *testing.T) {
 	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
-	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "ack.cast.zst", []byte("ack"))
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "ack.bcast", []byte("ack"))
 	source.set(artifact)
 	fingerprint := remoteArtifactDeliveryTestFingerprint("archive")
 	receiptTargets := remoteArtifactDeliveryTestTargets(remoteArtifactDeliveryTestEntry("archive", fingerprint, nil))
@@ -534,7 +534,7 @@ func TestRemoteArtifactDeliveryRetriesOnlyAckAfterPersistenceFailure(t *testing.
 
 func TestRemoteArtifactDeliveryAuditsFailureOnceAndSuccessAfterAcknowledgement(t *testing.T) {
 	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
-	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "audit.cast.zst", []byte("audit"))
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "audit.bcast", []byte("audit"))
 	source.set(artifact)
 	fingerprint := remoteArtifactDeliveryTestFingerprint("archive")
 	entry := remoteArtifactDeliveryTestEntry("archive", fingerprint, nil)
@@ -616,7 +616,7 @@ func TestRemoteArtifactDeliveryRepeatsAcceptedAuditAfterRestart(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
-			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "accepted-audit.cast.zst", []byte("audit"))
+			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "accepted-audit.bcast", []byte("audit"))
 			source.set(artifact)
 			fingerprint := remoteArtifactDeliveryTestFingerprint("archive")
 			receiptEntry := remoteArtifactDeliveryTestEntry("archive", fingerprint, nil)
@@ -735,8 +735,8 @@ func TestRemoteArtifactDeliveryRepeatsAcceptedAuditAfterRestart(t *testing.T) {
 func TestRemoteArtifactDeliveryRecoversFailureAuditBeforePublishingInOrder(t *testing.T) {
 	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
 	artifacts := []RemoteArtifact{
-		newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "b.cast.zst", []byte("second")),
-		newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "a.cast.zst", []byte("first")),
+		newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "b.bcast", []byte("second")),
+		newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "a.bcast", []byte("first")),
 	}
 	source.set(artifacts...)
 	fingerprint := remoteArtifactDeliveryTestFingerprint("archive")
@@ -764,7 +764,7 @@ func TestRemoteArtifactDeliveryRecoversFailureAuditBeforePublishingInOrder(t *te
 	require.NoError(t, delivery.Close())
 
 	mutex.Lock()
-	require.Equal(t, []string{"a.cast.zst", "b.cast.zst"}, published)
+	require.Equal(t, []string{"a.bcast", "b.bcast"}, published)
 	mutex.Unlock()
 	events := auditor.snapshot()
 	require.Len(t, events, 3)
@@ -776,7 +776,7 @@ func TestRemoteArtifactDeliveryRecoversFailureAuditBeforePublishingInOrder(t *te
 
 func TestRemoteArtifactDeliveryRetriesPendingAuditBeforeRepublishing(t *testing.T) {
 	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
-	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "audit-gate.cast.zst", []byte("audit"))
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "audit-gate.bcast", []byte("audit"))
 	source.set(artifact)
 	fingerprint := remoteArtifactDeliveryTestFingerprint("archive")
 	entry := remoteArtifactDeliveryTestEntry("archive", fingerprint, nil)
@@ -829,8 +829,8 @@ func TestRemoteArtifactDeliveryRetriesPendingAuditBeforeRepublishing(t *testing.
 
 func TestRemoteArtifactDeliveryFlushCapturesVisibleNames(t *testing.T) {
 	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
-	first := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "first.cast.zst", []byte("first"))
-	second := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "second.cast.zst", []byte("second"))
+	first := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "first.bcast", []byte("first"))
+	second := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "second.bcast", []byte("second"))
 	source.set(first)
 	fingerprint := remoteArtifactDeliveryTestFingerprint("archive")
 	receiptTargets := remoteArtifactDeliveryTestTargets(remoteArtifactDeliveryTestEntry("archive", fingerprint, nil))
@@ -962,7 +962,7 @@ func TestRemoteArtifactDeliveryDiscoversWithWatcherAndSafetyScan(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
-			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "discovered.cast.zst", []byte("discovered"))
+			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "discovered.bcast", []byte("discovered"))
 			fingerprint := remoteArtifactDeliveryTestFingerprint("archive")
 			receiptTargets := remoteArtifactDeliveryTestTargets(remoteArtifactDeliveryTestEntry("archive", fingerprint, nil))
 			receipts := newRemoteArtifactDeliveryTestReceipts(t, identity, nil, receiptTargets)
@@ -995,7 +995,7 @@ func TestRemoteArtifactDeliveryDiscoversWithWatcherAndSafetyScan(t *testing.T) {
 
 func TestRemoteArtifactDeliveryRejectsInvalidAndDuplicateSourceNames(t *testing.T) {
 	source := &remoteArtifactDeliveryTestSource{}
-	for _, names := range [][]string{{"valid.cast.zst", "valid.cast.zst"}, {"../invalid"}} {
+	for _, names := range [][]string{{"valid.bcast", "valid.bcast"}, {"../invalid"}} {
 		source.names = names
 		_, err := listRemoteArtifactSourceNames(t.Context(), source)
 		require.Error(t, err)

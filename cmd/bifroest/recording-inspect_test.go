@@ -73,39 +73,6 @@ func TestRecordingInspectDoesNotAppendToItsInput(t *testing.T) {
 	}
 }
 
-func TestRecordingInspectReportsContainerFormatsWithoutContent(t *testing.T) {
-	for _, test := range []struct {
-		name              string
-		write             func(*testing.T) string
-		format            recording.Format
-		encrypted         bool
-		verificationScope string
-		cast              bool
-	}{
-		{name: "cast-zstd", write: writeRecordingInspectTestCastZstd, format: recording.FormatCastZstd, verificationScope: "full", cast: true},
-		{name: "becast", write: writeRecordingInspectTestBECast, format: recording.FormatBECast, encrypted: true, verificationScope: "outer"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			var stdout bytes.Buffer
-			require.NoError(t, doRecordingInspect(&recordingInspectOpts{file: test.write(t)}, &stdout))
-			var result recordingInspectOutput
-			require.NoError(t, json.Unmarshal(stdout.Bytes(), &result))
-			require.Equal(t, test.format, result.Format)
-			require.True(t, result.Compressed)
-			require.Equal(t, test.encrypted, result.Encrypted)
-			require.Equal(t, test.verificationScope, result.VerificationScope)
-			require.Equal(t, test.cast, result.Cast != nil)
-			require.Positive(t, result.ChunkCount)
-			if test.encrypted {
-				require.Empty(t, result.Status)
-				require.Empty(t, result.CastDigest)
-				require.NotEmpty(t, result.ClaimedCastDigest)
-			}
-			require.NotContains(t, stdout.String(), "sensitive terminal output")
-		})
-	}
-}
-
 func TestRecordingInspectNativeVerificationScopes(t *testing.T) {
 	fixture := newRecordingExportTestFixture(t)
 	for _, test := range []struct {
@@ -177,6 +144,24 @@ func TestRecordingInspectProducesNoOutputOnVerificationFailure(t *testing.T) {
 	require.Empty(t, stdout.Bytes())
 }
 
+func TestRecordingInspectRejectsLegacyMagicWithoutOutput(t *testing.T) {
+	for _, test := range []struct {
+		name, file string
+		magic      []byte
+	}{
+		{"binary-becast", "recording.becast", []byte("\x89BECAST\n")},
+		{"cast-zstd", "recording.cast.zst", []byte{0x58, 0x2a, 0x4d, 0x18}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), test.file)
+			require.NoError(t, stdos.WriteFile(path, test.magic, 0600))
+			var stdout bytes.Buffer
+			require.ErrorContains(t, doRecordingInspect(&recordingInspectOpts{file: path}, &stdout), "unsupported Recording format")
+			require.Empty(t, stdout.Bytes())
+		})
+	}
+}
+
 func TestRecordingInspectProducesNoOutputOnInputMutationAfterInspect(t *testing.T) {
 	path, _ := writeRecordingInspectTestCast(t)
 	var stdout bytes.Buffer
@@ -242,42 +227,6 @@ func writeRecordingInspectTestCast(t *testing.T) (string, *audit.Identity) {
 	path := filepath.Join(t.TempDir(), metadata.RecordingId.String()+".cast")
 	require.NoError(t, stdos.WriteFile(path, content.Bytes(), 0600))
 	return path, identity
-}
-
-func writeRecordingInspectTestCastZstd(t *testing.T) string {
-	t.Helper()
-	identity, header, metadata := newRecordingInspectTestValues(t)
-	var content bytes.Buffer
-	writer, err := recording.NewCastZstdWriter(&content, identity, header, metadata, 300)
-	require.NoError(t, err)
-	require.NoError(t, writer.WriteOutput(time.Second, recording.OutputStreamStdout, []byte("sensitive terminal output\n")))
-	exitStatus := uint32(0)
-	_, err = writer.Seal(2*time.Second, recording.CastResult{Status: recording.CastStatusCompleted, EndedAt: metadata.StartedAt.Add(2 * time.Second)}, &exitStatus)
-	require.NoError(t, err)
-	path := filepath.Join(t.TempDir(), metadata.RecordingId.String()+".cast.zst")
-	require.NoError(t, stdos.WriteFile(path, content.Bytes(), 0600))
-	return path
-}
-
-func writeRecordingInspectTestBECast(t *testing.T) string {
-	t.Helper()
-	identity, header, metadata := newRecordingInspectTestValues(t)
-	_, encryptionPrivate, err := ed25519.GenerateKey(nil)
-	require.NoError(t, err)
-	encryptionKey, err := bfcrypto.PrivateKeyFromSdk(encryptionPrivate)
-	require.NoError(t, err)
-	recipient, err := bfcrypto.NewAgeSshRecipient(encryptionKey.PublicKey().ToSsh())
-	require.NoError(t, err)
-	var content bytes.Buffer
-	writer, err := recording.NewBECastWriter(&content, identity, recipient, header, metadata, 300)
-	require.NoError(t, err)
-	require.NoError(t, writer.WriteOutput(time.Second, recording.OutputStreamStdout, []byte("sensitive terminal output\n")))
-	exitStatus := uint32(0)
-	_, err = writer.Seal(2*time.Second, recording.CastResult{Status: recording.CastStatusCompleted, EndedAt: metadata.StartedAt.Add(2 * time.Second)}, &exitStatus)
-	require.NoError(t, err)
-	path := filepath.Join(t.TempDir(), metadata.RecordingId.String()+".becast")
-	require.NoError(t, stdos.WriteFile(path, content.Bytes(), 0600))
-	return path
 }
 
 func newRecordingInspectTestValues(t *testing.T) (*audit.Identity, recording.CastHeader, recording.CastMetadata) {

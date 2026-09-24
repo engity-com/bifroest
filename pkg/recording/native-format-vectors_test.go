@@ -2,6 +2,7 @@ package recording
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -26,6 +27,23 @@ var generateNativeRecordingAgeVector = flag.Bool("generate-native-recording-age-
 const nativeRecordingVectorSchema = "bifroest.native-recording-format-vectors/v1"
 
 var nativeRecordingAgeUnitNames = [...]string{"becast-header.unit", "becast-continuation.unit", "becast-final.unit", "becast-seal.unit"}
+
+func newBECastTestEncryption(t *testing.T) (*bfcrypto.AgeSshRecipient, *bfcrypto.AgeSshIdentities) {
+	t.Helper()
+	return newBECastTestEncryptionWithByte(t, recordingFormatVectorBECastRecipientSeedByte)
+}
+
+func newBECastTestEncryptionWithByte(t *testing.T, value byte) (*bfcrypto.AgeSshRecipient, *bfcrypto.AgeSshIdentities) {
+	t.Helper()
+	seed := bytes.Repeat([]byte{value}, ed25519.SeedSize)
+	privateKey, err := bfcrypto.PrivateKeyFromSdk(ed25519.NewKeyFromSeed(seed))
+	require.NoError(t, err)
+	recipient, err := bfcrypto.NewAgeSshRecipient(privateKey.PublicKey().ToSsh())
+	require.NoError(t, err)
+	identities, err := bfcrypto.NewAgeSshIdentities([]bfcrypto.PrivateKey{privateKey})
+	require.NoError(t, err)
+	return recipient, identities
+}
 
 type nativeRecordingVectorManifest struct {
 	Schema                 string                          `json:"schema"`

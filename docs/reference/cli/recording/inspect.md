@@ -4,12 +4,12 @@ description: Verify and inspect a Bifröst session Recording artifact.
 
 # `bifroest recording inspect`
 
-Verifies a sealed native `.bcast` or CBOR `.becast` session Recording and writes one JSON object to standard output. Legacy `.cast`, `.cast.zst`, and binary `.becast` are also supported. Format detection uses the file magic, not the extension; the old and new `.becast` formats have different magic bytes. A failed verification produces no JSON output.
+Verifies a sealed `.bcast` or `.becast` session Recording and writes one JSON object to standard output. It also accepts a signed `.cast` export for independent verification. Format detection uses the file content, not the extension; unsupported formats fail closed. A failed verification produces no JSON output.
 
 The input must be a regular, non-symlink file and must remain the same file with unchanged size, mode, and modification time throughout inspection. Standard input is deliberately unsupported.
 When stdout is a regular file, it must not refer to the inspected Recording. A shell redirection using `>` can truncate a file before Bifröst starts and cannot be prevented by the command.
 
-For native clear `.bcast`, `verificationScope` is `full`: the command verifies the signed envelope and reconstructs and verifies the complete Cast without a private key. Legacy `.cast` and `.cast.zst` also have `full` scope and include a `cast` object with event counts only, not session metadata or reasons. For encrypted native or legacy `.becast`, `verificationScope` is `outer`: only the signed envelope is checked, without a decryption key or decrypted event content. `claimedStatus` and `claimedCastDigest` are signed outer-seal claims, **not** verified inner-Cast results; `status`, `castDigest`, and `cast` are omitted. Use [`recording export`](export.md) with a matching private identity for full verification, then inspect the exported `.cast` independently and compare its fully verified `castDigest` with the original `claimedCastDigest`. No event payloads are emitted by inspect, but its public metadata still needs protection.
+For clear `.bcast`, `verificationScope` is `full`: the command verifies the signed envelope and reconstructs and verifies the complete Cast without a private key. A signed `.cast` also has `full` scope and includes a `cast` object with event counts only, not session metadata or reasons. For encrypted `.becast`, `verificationScope` is `outer`: only the signed envelope is checked, without a decryption key or decrypted event content. `claimedStatus` and `claimedCastDigest` are signed outer-seal claims, **not** verified inner-Cast results; `status`, `castDigest`, and `cast` are omitted. Use [`recording export`](export.md) with a matching private identity for full verification, then inspect the exported `.cast` independently and compare its fully verified `castDigest` with the original `claimedCastDigest`. No event payloads are emitted by inspect, but its public metadata still needs protection.
 
 ## Syntax
 
@@ -30,7 +30,7 @@ When this flag is present, a producer mismatch fails inspection and `signature.t
 
 ## Output
 
-The output schema is `bifroest.session-recording-inspection/v1`. `signature.valid` is always `true` in emitted output because invalid signatures fail before output is generated. `signature.trusted` is true only with a matching independently supplied producer ID. Native format values are `bcast/v1` and `becast-cbor/v1`; legacy values remain distinct. `castDigest` identifies fully verified signed Cast content only. Native containers report chunk count and claimed Cast size, but no ciphertext byte count or stream hash; those fields are reported only where the legacy format provides them.
+The output schema is `bifroest.session-recording-inspection/v1`. `signature.valid` is always `true` in emitted output because invalid signatures fail before output is generated. `signature.trusted` is true only with a matching independently supplied producer ID. Format values are `bcast/v1`, `becast-cbor/v1`, and `cast/v3` for standalone signed exports. `castDigest` identifies fully verified signed Cast content only; native containers also report chunk count and claimed Cast size.
 
 ## Example
 
@@ -42,4 +42,4 @@ bifroest recording inspect \
   session.becast
 ```
 
-Replace `<producer-id>` with the independently provisioned 64-hex value; it is a placeholder, not a working trust anchor. An encrypted result has `verificationScope: "outer"`, not a verified inner status or digest. After [full export](export.md#examples), inspect `session.cast` with the same flag: that independent inspection has `verificationScope: "full"` and a verified `castDigest`. For `.bcast`, inspecting the sealed original already gives a fully verified `castDigest`. See the [operational workflow](../../auditlog/recording.md#export-and-playback), [byte contract](../../auditlog/native-format-contract.md#recording-identity-and-chain), and [format vectors](../../auditlog/recording-format-vectors.md).
+Replace `<producer-id>` with the independently provisioned 64-hex value; it is a placeholder, not a working trust anchor. An encrypted result has `verificationScope: "outer"`, not a verified inner status or digest. After [full export](export.md#examples), inspect `session.cast` with the same flag: that independent inspection has `verificationScope: "full"` and a verified `castDigest`. For `.bcast`, inspecting the sealed original already gives a fully verified `castDigest`. See the [operational workflow](../../auditlog/recording.md#export-and-playback), [recording format](../../../formats/recording.md#recording-identity-and-chain), and [native vectors](../../../formats/recording-vectors.md).
