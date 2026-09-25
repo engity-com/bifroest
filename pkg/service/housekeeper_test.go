@@ -583,6 +583,7 @@ type houseKeeperTestSession struct {
 	disposeCalls               int
 	authorizationToken         []byte
 	authorizationTokenCalls    int
+	authorizationTokenError    error
 	setAuthorizationTokenCalls int
 	setAuthorizationTokenError error
 	environmentToken           []byte
@@ -608,6 +609,9 @@ func (this *houseKeeperTestSession) Dispose(context.Context) (bool, error) {
 }
 func (this *houseKeeperTestSession) AuthorizationToken(context.Context) ([]byte, error) {
 	this.authorizationTokenCalls++
+	if this.authorizationTokenError != nil {
+		return nil, this.authorizationTokenError
+	}
 	return append([]byte(nil), this.authorizationToken...), nil
 }
 func (this *houseKeeperTestSession) SetAuthorizationToken(_ context.Context, value []byte) error {

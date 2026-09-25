@@ -126,6 +126,41 @@ func TestOidcRestoreClassifiesExpiredPersistedTokenAsUnusable(t *testing.T) {
 	require.Empty(t, withCleanup.token)
 }
 
+func TestOidcRestoreClassifiesMissingRequiredTokensAsUnusable(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  []byte
+		conf *configuration.AuthorizationOidcDeviceAuth
+	}{
+		{name: "no token", raw: []byte(`{}`)},
+		{name: "absent access token", raw: []byte(`{"token_type":"Bearer"}`)},
+		{name: "empty access token", raw: []byte(`{"access_token":""}`)},
+		{name: "missing required ID token", raw: []byte(`{"access_token":"valid"}`), conf: &configuration.AuthorizationOidcDeviceAuth{RetrieveIdToken: true}},
+	} {
+		for _, autoCleanup := range []bool{false, true} {
+			name := tc.name + "/no cleanup"
+			if autoCleanup {
+				name = tc.name + "/auto cleanup"
+			}
+			t.Run(name, func(t *testing.T) {
+				authorizer := &OidcDeviceAuthAuthorizer{flow: "flow", conf: tc.conf}
+				sess := &authorizationRestoreTestSession{flow: "flow", token: append([]byte(nil), tc.raw...)}
+				_, err := authorizer.RestoreFromSession(context.Background(), sess, &RestoreOpts{AutoCleanUpAllowed: &autoCleanup})
+				if autoCleanup {
+					require.ErrorIs(t, err, ErrNoSuchAuthorization)
+					require.NotErrorIs(t, err, ErrUnusableAuthorizationToken)
+					require.Equal(t, 1, sess.setTokenCalls)
+					require.Empty(t, sess.token)
+				} else {
+					require.ErrorIs(t, err, ErrUnusableAuthorizationToken)
+					require.Zero(t, sess.setTokenCalls)
+					require.Equal(t, tc.raw, sess.token)
+				}
+			})
+		}
+	}
+}
+
 func TestOidcRestoreClassifiesExpiredIdTokenAsUnusable(t *testing.T) {
 	const (
 		issuer   = "https://issuer.example"
@@ -198,6 +233,60 @@ func TestOidcRestoreDoesNotClassifyVerifierFailureAsUnusable(t *testing.T) {
 	require.NotErrorIs(t, err, ErrNoSuchAuthorization)
 	require.Zero(t, sess.setTokenCalls)
 	require.Equal(t, raw, sess.token)
+}
+
+func TestOidcRestoreKeepsTokenOnKeySetFailure(t *testing.T) {
+	const (
+		issuer   = "https://issuer.example"
+		clientId = "client"
+	)
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "signature", err: errors.New("failed to verify id token signature")},
+		{name: "transient JWKS", err: errors.New("JWKS temporarily unavailable")},
+	} {
+		for _, expiry := range []struct {
+			name string
+			at   time.Time
+		}{
+			{name: "past ID token expiry", at: now.Add(-time.Minute)},
+			{name: "future ID token expiry", at: now.Add(time.Hour)},
+		} {
+			for _, autoCleanup := range []bool{false, true} {
+				name := tc.name + "/" + expiry.name + "/no cleanup"
+				if autoCleanup {
+					name = tc.name + "/" + expiry.name + "/auto cleanup"
+				}
+				t.Run(name, func(t *testing.T) {
+					idToken, _ := oidcRestoreTestIdToken(t, issuer, clientId, expiry.at)
+					verifier := coidc.NewVerifier(issuer, oidcRestoreTestKeySet{err: tc.err}, &coidc.Config{
+						ClientID: clientId,
+						Now:      func() time.Time { return now },
+					})
+					raw, err := json.Marshal(oidcToken{
+						Token:   &oauth2.Token{AccessToken: "still-valid", Expiry: now.Add(time.Hour)},
+						IdToken: idToken,
+					})
+					require.NoError(t, err)
+					authorizer := &OidcDeviceAuthAuthorizer{
+						flow:     "flow",
+						conf:     &configuration.AuthorizationOidcDeviceAuth{RetrieveIdToken: true},
+						verifier: verifier,
+					}
+					sess := &authorizationRestoreTestSession{flow: "flow", token: raw}
+					_, err = authorizer.RestoreFromSession(context.Background(), sess, &RestoreOpts{AutoCleanUpAllowed: &autoCleanup})
+					require.ErrorContains(t, err, tc.err.Error())
+					require.NotErrorIs(t, err, ErrUnusableAuthorizationToken)
+					require.NotErrorIs(t, err, ErrNoSuchAuthorization)
+					require.Zero(t, sess.setTokenCalls)
+					require.Equal(t, raw, sess.token)
+				})
+			}
+		}
+	}
 }
 
 type oidcRestoreTestKeySet struct {

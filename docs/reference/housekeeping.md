@@ -10,6 +10,8 @@ Bifröst periodically removes expired sessions and resources that are no longer 
 
 Session storage is deleted only after the session, environment, and authorization were disposed successfully. Transient or unknown errors retain the session for a later retry. Permanently unusable local authorization tokens can be removed during an audited disposal.
 
+For an OIDC flow whose session retention period has already elapsed, disposal means removing the locally stored token. Bifröst does not need to revalidate that token with the provider before deletion; a temporary provider outage cannot indefinitely retain an otherwise expired session. A session with a known `ValidUntil` remains stored until that time plus `keepExpiredFor`, even if already disposed. Storage failures still prevent deletion. Audit failures prevent it under `failurePolicy: strict`; `bestEffort` may instead disable the audit log and continue. OIDC disposal does not revoke tokens at the provider.
+
 Sealed session Recordings become eligible only after their retention period and every selected target's durable acknowledgement and success-audit marker. Housekeeping verifies and marks the signed receipt before deleting the artifact, then removes the receipt state. An interruption resumes this order without recreating deleted content. See [Recording remote delivery and retention](auditlog/remote-targets/index.md#delivery-behavior) and the [`housekeeping.recording.delete.*` events](auditlog/events.md#housekeepingrecordingdeletestarted).
 
 ## Removed flows

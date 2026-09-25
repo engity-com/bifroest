@@ -267,7 +267,13 @@ func (this *OidcDeviceAuthAuthorizer) RestoreFromSession(ctx context.Context, se
 	if err := json.Unmarshal(tb, &t); err != nil {
 		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("cannot decode OIDC authorization token: %w", err))
 	}
-	if t.Token != nil && !t.Expiry.IsZero() && !time.Now().Before(t.Expiry) {
+	if t.Token == nil || t.AccessToken == "" {
+		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("OIDC authorization token has no access token"))
+	}
+	if this.conf != nil && this.conf.RetrieveIdToken && t.IdToken == "" {
+		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("OIDC authorization token has no required ID token"))
+	}
+	if !t.Expiry.IsZero() && !time.Now().Before(t.Expiry) {
 		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("OIDC authorization token expired at %s", t.Expiry))
 	}
 
