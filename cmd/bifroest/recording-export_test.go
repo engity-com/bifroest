@@ -100,6 +100,73 @@ func TestRecordingExportRequiresExplicitTrustDecision(t *testing.T) {
 	require.Empty(t, stdout.Bytes())
 }
 
+func TestRecordingExportTrustsOnlyConfiguredLocalSealedArtifacts(t *testing.T) {
+	fixture := newRecordingExportTestFixture(t)
+	root := t.TempDir()
+	sealed := filepath.Join(root, "recordings", "sealed")
+	require.NoError(t, stdos.MkdirAll(sealed, 0700))
+	file := filepath.Join(sealed, fixture.recordingId.String()+".bcast")
+	content, err := stdos.ReadFile(fixture.nativeClearPath)
+	require.NoError(t, err)
+	require.NoError(t, stdos.WriteFile(file, content, 0600))
+	configurationPath := filepath.Join(root, "configuration.yaml")
+	writeConfiguration := func(identityFile string, recordingEnabled bool) {
+		t.Helper()
+		raw := fmt.Sprintf("auditlog:\n  - enabled: true\n    identityFile: %q\n    directory: %q\n    recording:\n      enabled: %t\n      directory: %q\nflows:\n  - name: flow\n    authorization:\n      type: simple\n    environment:\n      type: dummy\n",
+			filepath.ToSlash(identityFile), filepath.ToSlash(filepath.Join(root, "journal")), recordingEnabled, filepath.ToSlash(filepath.Join(root, "recordings")))
+		require.NoError(t, stdos.WriteFile(configurationPath, []byte(raw), 0600))
+	}
+	writeConfiguration(fixture.signingIdentityPath, true)
+	signingKeyBefore, err := stdos.ReadFile(fixture.signingIdentityPath)
+	require.NoError(t, err)
+	opts := recordingExportOpts{file: file, auditlog: "default", configuration: configurationPath, withSensitive: true}
+	var output bytes.Buffer
+	require.NoError(t, doRecordingExport(&opts, &output))
+	require.Equal(t, fixture.nativeCast, output.Bytes())
+
+	for _, test := range []struct {
+		name   string
+		change func()
+		want   string
+	}{
+		{"outside-repository", func() { opts.file = fixture.nativeClearPath }, "sealed directory"},
+		{"noncanonical-name", func() {
+			other := filepath.Join(sealed, "renamed.bcast")
+			require.NoError(t, stdos.WriteFile(other, content, 0600))
+			opts.file = other
+		}, "canonical sealed"},
+		{"standalone-cast", func() {
+			other := filepath.Join(sealed, fixture.recordingId.String()+".cast")
+			cast, err := stdos.ReadFile(fixture.castPath)
+			require.NoError(t, err)
+			require.NoError(t, stdos.WriteFile(other, cast, 0600))
+			opts.file = other
+		}, "native sealed"},
+		{"conflicting-producer", func() { opts.expectedProducerId = fixture.identity.ProducerId().String() }, "cannot be combined"},
+		{"untrusted", func() { opts.allowUntrusted = true }, "cannot be combined"},
+		{"configuration-without-auditlog", func() { opts.auditlog = "" }, "requires --auditlog"},
+		{"disabled-recording", func() { writeConfiguration(fixture.signingIdentityPath, false) }, "not enabled"},
+		{"wrong-signing-identity", func() {
+			writeConfiguration(writeRecordingExportTestPrivateKey(t, ed25519.NewKeyFromSeed(bytes.Repeat([]byte{44}, ed25519.SeedSize))), true)
+		}, "producer"},
+		{"signing-key-output", func() { opts.output, opts.force = fixture.signingIdentityPath, true }, "private key"},
+		{"configuration-output", func() { opts.output, opts.force = configurationPath, true }, "configuration"},
+		{"repository-output", func() { opts.output = filepath.Join(sealed, "session.cast") }, "recording"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			opts = recordingExportOpts{file: file, auditlog: "default", configuration: configurationPath, withSensitive: true}
+			writeConfiguration(fixture.signingIdentityPath, true)
+			test.change()
+			output.Reset()
+			require.ErrorContains(t, doRecordingExport(&opts, &output), test.want)
+			require.Empty(t, output.Bytes())
+			signingKeyAfter, err := stdos.ReadFile(fixture.signingIdentityPath)
+			require.NoError(t, err)
+			require.Equal(t, signingKeyBefore, signingKeyAfter)
+		})
+	}
+}
+
 func TestRecordingExportProducesNoOutputOnVerificationOrDecryptionFailure(t *testing.T) {
 	fixture := newRecordingExportTestFixture(t)
 	otherIdentityPath := writeRecordingExportTestPrivateKey(t, ed25519.NewKeyFromSeed(bytes.Repeat([]byte{42}, ed25519.SeedSize)))
@@ -517,13 +584,15 @@ type recordingExportTestFixture struct {
 	nativeEncryptedPath string
 	nativeCast          []byte
 	identityPath        string
+	signingIdentityPath string
 	cast                []byte
 	identity            *audit.Identity
+	recordingId         recording.Id
 }
 
 func newRecordingExportTestFixture(t *testing.T) recordingExportTestFixture {
 	t.Helper()
-	identity, header, metadata := newRecordingInspectTestValues(t)
+	identity, header, metadata, signingPrivate := newRecordingInspectTestValues(t)
 	writeOutput := func(writer interface {
 		WriteOutput(time.Duration, recording.OutputStream, []byte) error
 	}) {
@@ -548,7 +617,9 @@ func newRecordingExportTestFixture(t *testing.T) recordingExportTestFixture {
 	root := t.TempDir()
 	fixture := recordingExportTestFixture{
 		castPath: filepath.Join(root, "recording.data"), cast: append([]byte(nil), cast.Bytes()...), identity: identity,
-		identityPath: writeRecordingExportTestPrivateKey(t, encryptionPrivate),
+		identityPath:        writeRecordingExportTestPrivateKey(t, encryptionPrivate),
+		signingIdentityPath: writeRecordingExportTestPrivateKey(t, signingPrivate),
+		recordingId:         metadata.RecordingId,
 	}
 	for _, encrypted := range []bool{false, true} {
 		var nativeRecipient *bfcrypto.AgeSshRecipient

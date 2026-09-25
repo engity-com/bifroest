@@ -309,8 +309,16 @@ func newNativeVerifierWorkspace(selectedDirectories []string) (*journalSegmentWo
 }
 
 func verifyNativeSegment(ctx context.Context, data []byte, identity journalIdentity, source JournalSource, identities *bfcrypto.AgeSshIdentities, seq uint64, previousSegment, previousRecord journalHash, budget *verifierBudget, collect bool) ([]VerifiedRecord, journalHash, journalHash, bool, error) {
+	records, segment, last, sealed, _, err := verifyNativeSegmentUntil(ctx, data, identity, source, identities, seq, previousSegment, previousRecord, budget, collect, nil, false, false)
+	return records, segment, last, sealed, err
+}
+
+// Active may stop at the checkpoint; a published segment must also validate
+// every following unit, its seal and its physical hash without exporting or
+// charging records beyond the captured checkpoint.
+func verifyNativeSegmentUntil(ctx context.Context, data []byte, identity journalIdentity, source JournalSource, identities *bfcrypto.AgeSshIdentities, seq uint64, previousSegment, previousRecord journalHash, budget *verifierBudget, collect bool, stop *journalHash, published, reached bool) ([]VerifiedRecord, journalHash, journalHash, bool, bool, error) {
 	if !bytes.HasPrefix(data, []byte(nativeformat.AuditMagic)) {
-		return nil, journalHash{}, journalHash{}, false, fmt.Errorf("invalid native audit magic")
+		return nil, journalHash{}, journalHash{}, false, false, fmt.Errorf("invalid native audit magic")
 	}
 	var records []VerifiedRecord
 	var count uint64
@@ -322,72 +330,91 @@ func verifyNativeSegment(ctx context.Context, data []byte, identity journalIdent
 	var segmentHash journalHash
 	for offset < int64(len(data)) {
 		if err := ctx.Err(); err != nil {
-			return nil, journalHash{}, journalHash{}, false, err
+			return nil, journalHash{}, journalHash{}, false, false, err
 		}
 		unit, next, tail, err := nativeformat.ReadUnitAt(bytes.NewReader(data), offset, int64(len(data)), nativeformat.MaxAuditRecordPayload)
 		if err != nil || tail {
-			return nil, journalHash{}, journalHash{}, false, fmt.Errorf("invalid or uncommitted native audit unit: %v", err)
+			return nil, journalHash{}, journalHash{}, false, false, fmt.Errorf("invalid or uncommitted native audit unit: %v", err)
 		}
 		switch unit.Type {
 		case nativeformat.HeaderUnit:
 			if header || offset != int64(len(nativeformat.AuditMagic)) || len(unit.Payload) > nativeformat.MaxMetadataPayload {
-				return nil, journalHash{}, journalHash{}, false, fmt.Errorf("unexpected native audit header")
+				return nil, journalHash{}, journalHash{}, false, false, fmt.Errorf("unexpected native audit header")
 			}
 			candidate, err := nativeformat.Unmarshal[nativeAuditHeader](unit.Payload, nativeformat.MaxMetadataPayload)
 			if err != nil {
-				return nil, journalHash{}, journalHash{}, false, err
+				return nil, journalHash{}, journalHash{}, false, false, err
 			}
 			recipient = candidate.Recipient
 			if recipient != source.ExpectedEncryptionRecipient {
-				return nil, journalHash{}, journalHash{}, false, fmt.Errorf("native audit encryption recipient differs from configured recipient")
+				return nil, journalHash{}, journalHash{}, false, false, fmt.Errorf("native audit encryption recipient differs from configured recipient")
 			}
 			if _, err := decodeNativeAuditHeader(unit.Payload, identity, seq, previousSegment, previousRecord, recipient); err != nil {
-				return nil, journalHash{}, journalHash{}, false, err
+				return nil, journalHash{}, journalHash{}, false, false, err
 			}
 			if source.WithSensitive && recipient != "" && identities == nil {
-				return nil, journalHash{}, journalHash{}, false, fmt.Errorf("encrypted audit records require a matching decryption identity")
+				return nil, journalHash{}, journalHash{}, false, false, fmt.Errorf("encrypted audit records require a matching decryption identity")
 			}
 			header = true
 			contentEnd = next
+			if stop != nil && stop.IsZero() && previousRecord.IsZero() && seq == 1 {
+				reached = true
+				if !published {
+					return records, journalHash{}, last, false, true, nil
+				}
+			}
 		case nativeformat.ContentUnit:
 			if !header || sealed || count == math.MaxUint64 {
-				return nil, journalHash{}, journalHash{}, false, fmt.Errorf("unexpected native audit record")
+				return nil, journalHash{}, journalHash{}, false, false, fmt.Errorf("unexpected native audit record")
 			}
-			r, event, hash, err := decodeNativeAuditRecord(unit.Payload, identity, last, recipient, identities, source.WithSensitive || len(source.DecryptionIdentities) > 0)
+			decodeIdentities := identities
+			withSensitive := source.WithSensitive || len(source.DecryptionIdentities) > 0
+			if reached {
+				decodeIdentities, withSensitive = nil, false
+			}
+			r, event, hash, err := decodeNativeAuditRecord(unit.Payload, identity, last, recipient, decodeIdentities, withSensitive)
 			if err != nil {
-				return nil, journalHash{}, journalHash{}, false, err
+				return nil, journalHash{}, journalHash{}, false, false, err
 			}
 			if !source.WithSensitive {
 				event = Event{Name: event.Name, Domain: event.Domain, Outcome: event.Outcome}
 			}
-			if err := budget.consume(int64(len(unit.Payload)), collect); err != nil {
-				return nil, journalHash{}, journalHash{}, false, err
-			}
-			if collect {
-				at, _ := r.RecordedAt.Time()
-				records = append(records, VerifiedRecord{Auditlog: source.Name, ProducerId: identity.ProducerId(), SegmentSequence: seq, SegmentRecordIndex: count, Id: uuid.UUID(r.Id), RecordedAt: at.UTC(), Event: event, PreviousHash: last.String(), Hash: hash.String()})
+			if !reached {
+				if err := budget.consume(int64(len(unit.Payload)), collect); err != nil {
+					return nil, journalHash{}, journalHash{}, false, false, err
+				}
+				if collect {
+					at, _ := r.RecordedAt.Time()
+					records = append(records, VerifiedRecord{Auditlog: source.Name, ProducerId: identity.ProducerId(), SegmentSequence: seq, SegmentRecordIndex: count, Id: uuid.UUID(r.Id), RecordedAt: at.UTC(), Event: event, PreviousHash: last.String(), Hash: hash.String()})
+				}
 			}
 			count++
 			last = hash
 			contentEnd = next
+			if stop != nil && last == *stop {
+				reached = true
+				if !published {
+					return records, journalHash{}, last, false, true, nil
+				}
+			}
 		case nativeformat.SealUnit:
 			if !header || sealed || count == 0 || next != int64(len(data)) || len(unit.Payload) > nativeformat.MaxMetadataPayload || contentEnd != offset {
-				return nil, journalHash{}, journalHash{}, false, fmt.Errorf("unexpected native audit seal")
+				return nil, journalHash{}, journalHash{}, false, false, fmt.Errorf("unexpected native audit seal")
 			}
 			if _, err := decodeNativeAuditSeal(unit.Payload, identity, seq, count, uint64(offset), hashNativeAuditContent(data[:offset]), last); err != nil {
-				return nil, journalHash{}, journalHash{}, false, err
+				return nil, journalHash{}, journalHash{}, false, false, err
 			}
 			sealed = true
 			segmentHash = hashNativeAuditSegment(data)
 		default:
-			return nil, journalHash{}, journalHash{}, false, fmt.Errorf("unexpected native audit unit")
+			return nil, journalHash{}, journalHash{}, false, false, fmt.Errorf("unexpected native audit unit")
 		}
 		offset = next
 	}
 	if !header {
-		return nil, journalHash{}, journalHash{}, false, fmt.Errorf("missing native audit header")
+		return nil, journalHash{}, journalHash{}, false, false, fmt.Errorf("missing native audit header")
 	}
-	return records, segmentHash, last, sealed, nil
+	return records, segmentHash, last, sealed, reached, nil
 }
 
 func snapshotNativeProducerContent(ctx context.Context, directory string) (verifierDirectorySnapshot, error) {

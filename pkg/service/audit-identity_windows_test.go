@@ -23,7 +23,7 @@ func TestValidateRuntimePathsRejectsWindowsSftpIdentityInsideSessionStorage(t *t
 			Name:         "security",
 			Enabled:      true,
 			IdentityFile: filepath.Join(root, "identity"),
-			Journal:      configuration.AuditlogJournal{Directory: filepath.Join(root, "journal")},
+			Directory:    filepath.Join(root, "journal"),
 			Targets: configuration.AuditlogTargets{{
 				Name: "archive",
 				V: &configuration.AuditlogTargetSftp{
@@ -53,7 +53,7 @@ func TestValidateRuntimePathsRejectsWindowsHostKeyJunctionIntoJournal(t *testing
 	conf := configuration.Configuration{
 		Auditlogs: configuration.Auditlogs{{
 			Name: "security", Enabled: true, IdentityFile: filepath.Join(root, "audit-identity"),
-			Journal: configuration.AuditlogJournal{Directory: journal},
+			Directory: journal,
 		}},
 	}
 	conf.Ssh.Keys.HostKeys = template.MustNewStrings(keyPath)

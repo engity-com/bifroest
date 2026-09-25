@@ -179,6 +179,7 @@ nav:
               - Import host keys: reference/cli/key/import/host.md
           - Audit:
               - reference/cli/audit/index.md
+              - Producer ID: reference/cli/audit/producer-id.md
               - Verify: reference/cli/audit/verify.md
               - Decrypt: reference/cli/audit/decrypt.md
               - Export: reference/cli/audit/export.md

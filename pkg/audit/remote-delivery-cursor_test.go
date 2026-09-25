@@ -46,7 +46,7 @@ func TestRemoteDeliveryCursorIsCanonicalSignedAndScoped(t *testing.T) {
 	_, err = decodeRemoteDeliveryCursor(tamperedPayload, identity, "archive", otherFingerprint)
 	require.ErrorContains(t, err, "illegal audit signature")
 
-	stateDirectory, err := prepareRemoteDeliveryState(conf.Journal.Directory, identity.ProducerId())
+	stateDirectory, err := prepareRemoteDeliveryState(conf.Directory, identity.ProducerId())
 	require.NoError(t, err)
 	targetDirectory := filepath.Join(stateDirectory, remoteDeliveryTargetStateName(configuration.AuditlogTargetName("archive")))
 	_, err = loadRemoteDeliveryCursor(stateDirectory, identity, "archive", fingerprint)
@@ -72,7 +72,7 @@ func TestRemoteDeliveryCursorRejectsSignedLegacySchema(t *testing.T) {
 	require.NoError(t, err)
 	_, err = decodeRemoteDeliveryCursor(payload, identity, "archive", fingerprint)
 	require.ErrorContains(t, err, "different producer or target")
-	stateDirectory, err := prepareRemoteDeliveryState(conf.Journal.Directory, identity.ProducerId())
+	stateDirectory, err := prepareRemoteDeliveryState(conf.Directory, identity.ProducerId())
 	require.NoError(t, err)
 	_, err = loadRemoteDeliveryCursor(stateDirectory, identity, "archive", fingerprint)
 	require.NoError(t, err)
@@ -98,7 +98,7 @@ func TestRemoteDeliveryTargetStateNamesAvoidFilesystemAliases(t *testing.T) {
 func TestRemoteDeliveryRecoversCompleteTemporaryCursor(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	fingerprint := remoteDeliveryDestinationFingerprint(sha256.Sum256([]byte("destination")))
-	stateDirectory, err := prepareRemoteDeliveryState(conf.Journal.Directory, identity.ProducerId())
+	stateDirectory, err := prepareRemoteDeliveryState(conf.Directory, identity.ProducerId())
 	require.NoError(t, err)
 	_, err = loadRemoteDeliveryCursor(stateDirectory, identity, "archive", fingerprint)
 	require.NoError(t, err)

@@ -131,7 +131,7 @@ func TestAuditlogEqualityIncludesTargets(t *testing.T) {
 	left := Auditlog{
 		Name:         "log",
 		IdentityFile: "identity",
-		Journal:      AuditlogJournal{Directory: "journal"},
+		Directory:    "journal",
 		Targets:      AuditlogTargets{{Name: "archive", V: &testAuditlogTarget{Endpoint: "one"}}},
 	}
 	right := left

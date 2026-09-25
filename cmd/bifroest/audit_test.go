@@ -84,7 +84,7 @@ func TestAuditMergeIsChronologicalAndOutputIsProtected(t *testing.T) {
 	opts.force = true
 	require.NoError(t, doAuditMerge(&opts, &bytes.Buffer{}))
 
-	opts.output = filepath.Join(first.Journal.Directory, "must-not-overwrite.jsonl")
+	opts.output = filepath.Join(first.Directory, "must-not-overwrite.jsonl")
 	require.ErrorContains(t, doAuditMerge(&opts, &bytes.Buffer{}), "must not be inside")
 }
 
@@ -111,7 +111,7 @@ func TestAuditOutputsProtectEveryEnabledConfiguredAuditlog(t *testing.T) {
 			require.FileExists(t, other.IdentityFile)
 		})
 		t.Run(name+" rejects other journal", func(t *testing.T) {
-			output := filepath.Join(other.Journal.Directory, name+".jsonl")
+			output := filepath.Join(other.Directory, name+".jsonl")
 			require.ErrorContains(t, command(output), "must not be inside")
 			require.NoFileExists(t, output)
 		})
@@ -174,7 +174,7 @@ func TestAuditCommandsRejectProtectedStandardOutputFiles(t *testing.T) {
 	for _, path := range []string{selected.IdentityFile, other.IdentityFile, ageKey} {
 		require.NoError(t, goos.Chmod(path, 0600))
 	}
-	producer := filepath.Join(selected.Journal.Directory, auditCliTestProducerId(t, selected.IdentityFile).String())
+	producer := filepath.Join(selected.Directory, auditCliTestProducerId(t, selected.IdentityFile).String())
 	entries, err := goos.ReadDir(producer)
 	require.NoError(t, err)
 	var segment string
@@ -186,7 +186,7 @@ func TestAuditCommandsRejectProtectedStandardOutputFiles(t *testing.T) {
 	}
 	require.NotEmpty(t, segment)
 	segmentAlias := filepath.Join(directory, "segment-alias")
-	otherProducer := filepath.Join(other.Journal.Directory, auditCliTestProducerId(t, other.IdentityFile).String())
+	otherProducer := filepath.Join(other.Directory, auditCliTestProducerId(t, other.IdentityFile).String())
 	paths := map[string]string{
 		"configuration": ref.GetFilename(),
 		"signing key":   selected.IdentityFile,
@@ -284,9 +284,9 @@ func TestAuditOutputProtectsSessionStorageAndSftpFiles(t *testing.T) {
 	conf := &configuration.Configuration{
 		Session: configuration.Session{V: &configuration.SessionFs{Storage: sessionStorage}},
 		Auditlogs: configuration.Auditlogs{{
-			Name:    "security",
-			Enabled: true,
-			Journal: configuration.AuditlogJournal{Directory: filepath.Join(directory, "journal")},
+			Name:      "security",
+			Enabled:   true,
+			Directory: filepath.Join(directory, "journal"),
 			Recording: configuration.AuditlogRecording{
 				Enabled:   true,
 				Directory: recordingDirectory,
@@ -328,14 +328,14 @@ func TestAuditExportAllowsMissingUnselectedJournal(t *testing.T) {
 	selected := createAuditCliTestJournal(t, directory, "selected", "test.selected")
 	other := createAuditCliTestJournal(t, directory, "other", "test.other")
 	ref := writeAuditCliTestConfiguration(t, directory, selected, other)
-	require.NoError(t, goos.RemoveAll(other.Journal.Directory))
-	insideOtherJournal := filepath.Join(other.Journal.Directory, "export.jsonl")
+	require.NoError(t, goos.RemoveAll(other.Directory))
+	insideOtherJournal := filepath.Join(other.Directory, "export.jsonl")
 	require.ErrorContains(t, doAuditExport(&auditExportOpts{
 		configuration: ref,
 		auditlog:      selected.Name,
 		output:        insideOtherJournal,
 	}, &bytes.Buffer{}), "must already exist")
-	require.NoDirExists(t, other.Journal.Directory)
+	require.NoDirExists(t, other.Directory)
 
 	output := filepath.Join(directory, "export.jsonl")
 
@@ -446,12 +446,129 @@ func TestAuditCommandsDecryptEncryptedJournal(t *testing.T) {
 	require.ErrorContains(t, doAuditExport(&exportOpts, &bytes.Buffer{}), "must not replace private key")
 }
 
+func TestAuditExportOfflineWithoutConfiguration(t *testing.T) {
+	directory := t.TempDir()
+	privateKey := filepath.Join(directory, "recipient")
+	publicKey := filepath.Join(directory, "recipient.pub")
+	require.NoError(t, doKeyGenerate(privateKey, publicKey))
+	public, err := goos.ReadFile(publicKey)
+	require.NoError(t, err)
+	wrongKey := filepath.Join(directory, "wrong-recipient")
+	require.NoError(t, doKeyGenerate(wrongKey, filepath.Join(directory, "wrong-recipient.pub")))
+	configured := createAuditCliTestJournalWithEncryption(t, directory, "default", "test.offline", bfcrypto.PublicKeys(strings.TrimSpace(string(public))))
+	producerId := auditCliTestProducerId(t, configured.IdentityFile)
+	require.NoError(t, goos.Remove(configured.IdentityFile))
+	opts := auditExportOpts{
+		auditlog: "default", output: "-", journalDirectory: configured.Directory,
+		expectedProducerIds: []string{"default=" + producerId.String()},
+		withSensitive:       true, decryptionIdentityFiles: []string{privateKey},
+	}
+	var output bytes.Buffer
+	require.NoError(t, doAuditExport(&opts, &output))
+	require.Contains(t, output.String(), "confidential-flow-default")
+
+	opts.withSensitive = false
+	opts.decryptionIdentityFiles = nil
+	opts.encryptionPublicKeyFile = publicKey
+	output.Reset()
+	require.NoError(t, doAuditDecrypt(&opts, &output))
+	require.Contains(t, output.String(), `"name":"test.offline"`)
+	require.NotContains(t, output.String(), "confidential-flow")
+
+	for _, test := range []struct {
+		name   string
+		change func()
+		want   string
+	}{
+		{"missing-trust-anchor", func() { opts.expectedProducerIds = nil }, "requires --expectedProducerId"},
+		{"wrong-producer", func() { opts.expectedProducerIds = []string{"default=" + strings.Repeat("1", 64)} }, "expected producer"},
+		{"no-recipient", func() { opts.encryptionPublicKeyFile = "" }, "unsupported native audit entry"},
+		{"missing-decryption-key", func() { opts.withSensitive, opts.decryptionIdentityFiles = true, nil }, "decryption identity"},
+		{"wrong-decryption-key", func() {
+			opts.encryptionPublicKeyFile = ""
+			opts.withSensitive = true
+			opts.decryptionIdentityFiles = []string{wrongKey}
+		}, "recipient differs"},
+		{"configuration-conflict", func() { opts.configurationPath = "unreadable.yaml" }, "cannot be combined"},
+		{"output-inside-journal", func() {
+			opts.output, opts.force = filepath.Join(configured.Directory, producerId.String(), "head.cbor"), true
+		}, "journal"},
+		{"recipient-key-output", func() { opts.output, opts.force = publicKey, true }, "encryption public key"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			opts = auditExportOpts{
+				auditlog: "default", output: "-", journalDirectory: configured.Directory,
+				expectedProducerIds:     []string{"default=" + producerId.String()},
+				encryptionPublicKeyFile: publicKey,
+			}
+			test.change()
+			output.Reset()
+			require.ErrorContains(t, doAuditExport(&opts, &output), test.want)
+			require.Empty(t, output.Bytes())
+		})
+	}
+}
+
+func TestAuditExportOfflineClearWithoutConfiguration(t *testing.T) {
+	directory := t.TempDir()
+	configured := createAuditCliTestJournal(t, directory, "default", "test.clear-offline")
+	producerId := auditCliTestProducerId(t, configured.IdentityFile)
+	require.NoError(t, goos.Remove(configured.IdentityFile))
+	opts := auditExportOpts{
+		auditlog: "default", output: "-", journalDirectory: configured.Directory,
+		expectedProducerIds: []string{"default=" + producerId.String()}, withSensitive: true,
+	}
+	var output bytes.Buffer
+	require.NoError(t, doAuditExport(&opts, &output))
+	require.Contains(t, output.String(), "confidential-flow-default")
+}
+
+func TestAuditCommandsReadLiveCommittedCheckpoint(t *testing.T) {
+	directory := t.TempDir()
+	configured := configuration.Auditlog{
+		Name: "default", Enabled: true,
+		IdentityFile: filepath.Join(directory, "signing-key"),
+		Directory:    filepath.Join(directory, "journal"),
+	}
+	identity, err := audit.EnsureIdentity(&configured)
+	require.NoError(t, err)
+	recorder, err := audit.NewRecorder(&configured, identity)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, recorder.Close()) })
+	other := configuration.Auditlog{
+		Name: "other", Enabled: true,
+		IdentityFile: filepath.Join(directory, "other-signing-key"),
+		Directory:    filepath.Join(directory, "other-journal"),
+	}
+	otherIdentity, err := audit.EnsureIdentity(&other)
+	require.NoError(t, err)
+	otherRecorder, err := audit.NewRecorder(&other, otherIdentity)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, otherRecorder.Close()) })
+	ref := writeAuditCliTestConfiguration(t, directory, configured, other)
+	for _, name := range []string{"test.first", "test.second"} {
+		require.NoError(t, recorder.Record(t.Context(), audit.Event{Name: name, Flow: "private"}))
+		require.NoError(t, otherRecorder.Record(t.Context(), audit.Event{Name: "other." + name}))
+		opts := auditExportOpts{configuration: ref, auditlog: "default", output: "-"}
+		var output bytes.Buffer
+		require.NoError(t, doAuditExport(&opts, &output))
+		require.Contains(t, output.String(), `"name":"`+name+`"`)
+		require.NotContains(t, output.String(), "private")
+		require.NoError(t, doAuditVerify(&auditVerifyOpts{configuration: ref, auditlog: "default"}))
+		output.Reset()
+		require.NoError(t, doAuditMerge(&auditMergeOpts{configuration: ref, auditlogs: []string{"default", "other"}, output: "-"}, &output))
+		require.Contains(t, output.String(), `"name":"other.`+name+`"`)
+		require.NoError(t, recorder.(audit.SealableRecorder).Seal())
+		require.NoError(t, otherRecorder.(audit.SealableRecorder).Seal())
+	}
+}
+
 func TestAuditExportsDoNotPublishBeforeAllSourcesVerify(t *testing.T) {
 	directory := t.TempDir()
 	first := createAuditCliTestJournal(t, directory, "first", "test.first")
 	second := createAuditCliTestJournal(t, directory, "second", "test.second")
 	ref := writeAuditCliTestConfiguration(t, directory, first, second)
-	producer := filepath.Join(second.Journal.Directory, auditCliTestProducerId(t, second.IdentityFile).String())
+	producer := filepath.Join(second.Directory, auditCliTestProducerId(t, second.IdentityFile).String())
 	entries, err := goos.ReadDir(producer)
 	require.NoError(t, err)
 	var segmentPath string
@@ -586,6 +703,20 @@ func TestAuditCommandsUseExplicitProducerTrustAnchorsWithoutSigningKeys(t *testi
 	}), "unselected auditlog")
 }
 
+func TestAuditProducerIdUsesConfiguredSigningIdentity(t *testing.T) {
+	directory := t.TempDir()
+	configured := createAuditCliTestJournal(t, directory, "default", "test.producer")
+	ref := writeAuditCliTestConfiguration(t, directory, configured)
+	var output bytes.Buffer
+	require.NoError(t, doAuditProducerId(&auditProducerIdOpts{configuration: ref, auditlog: "default"}, &output))
+	require.Equal(t, auditCliTestProducerId(t, configured.IdentityFile).String()+"\n", output.String())
+
+	require.NoError(t, goos.Remove(configured.IdentityFile))
+	output.Reset()
+	require.ErrorContains(t, doAuditProducerId(&auditProducerIdOpts{configuration: ref, auditlog: "default"}, &output), "cannot load identity")
+	require.Empty(t, output.String())
+}
+
 func TestAuditTrustAnchorsRejectMalformedDuplicateAndZeroValues(t *testing.T) {
 	selected := []*configuration.Auditlog{{Name: "default"}}
 	zero := strings.Repeat("0", 64)
@@ -625,7 +756,7 @@ func TestAuditExportAndDecryptRejectDisabledBeforeOutputAccess(t *testing.T) {
 		Name:                    "disabled",
 		IdentityFile:            filepath.Join(directory, "missing-signing-key"),
 		EncryptionPublicKeyFile: bfcrypto.PublicKeysFile(filepath.Join(directory, "missing-encryption-key.pub")),
-		Journal:                 configuration.AuditlogJournal{Directory: filepath.Join(directory, "missing-journal")},
+		Directory:               filepath.Join(directory, "missing-journal"),
 	}}
 	opts := auditExportOpts{configuration: ref, auditlog: "disabled", output: output, force: true}
 	require.ErrorContains(t, doAuditExport(&opts, &bytes.Buffer{}), "is disabled")
@@ -645,9 +776,7 @@ func createAuditCliTestJournalWithEncryption(t *testing.T, parent, name, eventNa
 		Enabled:             true,
 		IdentityFile:        filepath.Join(parent, name+"-key"),
 		EncryptionPublicKey: encryptionPublicKey,
-		Journal: configuration.AuditlogJournal{
-			Directory: filepath.Join(parent, name+"-journal"),
-		},
+		Directory:           filepath.Join(parent, name+"-journal"),
 	}
 	identity, err := audit.EnsureIdentity(&configured)
 	require.NoError(t, err)
@@ -675,10 +804,10 @@ func writeAuditCliTestConfiguration(t *testing.T, directory string, auditlogs ..
 	var raw strings.Builder
 	raw.WriteString("auditlog:\n")
 	for _, configured := range auditlogs {
-		_, _ = fmt.Fprintf(&raw, "  - name: %s\n    enabled: true\n    identityFile: %s\n    journal:\n      directory: %s\n",
+		_, _ = fmt.Fprintf(&raw, "  - name: %s\n    enabled: true\n    identityFile: %s\n    directory: %s\n",
 			configured.Name,
 			filepath.ToSlash(configured.IdentityFile),
-			filepath.ToSlash(configured.Journal.Directory),
+			filepath.ToSlash(configured.Directory),
 		)
 		if !configured.EncryptionPublicKey.IsZero() {
 			_, _ = fmt.Fprintf(&raw, "    encryptionPublicKey: %q\n", string(configured.EncryptionPublicKey))

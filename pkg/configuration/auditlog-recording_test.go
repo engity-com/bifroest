@@ -155,7 +155,7 @@ func TestAuditlogRecordingProgrammaticZeroValue(t *testing.T) {
 		Name:         "security",
 		Enabled:      true,
 		IdentityFile: "identity",
-		Journal:      AuditlogJournal{Directory: "journal"},
+		Directory:    "journal",
 	}
 	require.NoError(t, auditlog.Validate())
 	require.NoError(t, Auditlogs{auditlog}.Validate())
@@ -371,7 +371,7 @@ func TestAuditlogRecordingStaticPathOverlaps(t *testing.T) {
 			Name:         AuditlogName(name),
 			Enabled:      true,
 			IdentityFile: filepath.Join(root, name+"-identity"),
-			Journal:      AuditlogJournal{Directory: filepath.Join(root, name+"-journal")},
+			Directory:    filepath.Join(root, name+"-journal"),
 			Recording:    recording,
 		}
 	}
@@ -383,8 +383,8 @@ func TestAuditlogRecordingStaticPathOverlaps(t *testing.T) {
 	})
 	t.Run("every journal", func(t *testing.T) {
 		first, second := newAuditlog("first"), newAuditlog("second")
-		second.Journal.Directory = filepath.Join(first.Recording.Directory, "journal")
-		require.ErrorContains(t, Auditlogs{first, second}.Validate(), "[0][recording][directory] overlaps enabled auditlog [1][journal][directory]")
+		second.Directory = filepath.Join(first.Recording.Directory, "journal")
+		require.ErrorContains(t, Auditlogs{first, second}.Validate(), "[0][recording][directory] overlaps enabled auditlog [1][directory]")
 	})
 	t.Run("every identity", func(t *testing.T) {
 		first, second := newAuditlog("first"), newAuditlog("second")
@@ -429,7 +429,7 @@ func TestAuditlogRecordingStaticPathOverlaps(t *testing.T) {
 	t.Run("disabled recording", func(t *testing.T) {
 		auditlog := newAuditlog("first")
 		auditlog.Recording.Enabled = false
-		auditlog.Recording.Directory = auditlog.Journal.Directory
+		auditlog.Recording.Directory = auditlog.Directory
 		sftp := validRecordingPathSftpTarget(t, root)
 		sftp.IdentityFiles = []string{filepath.Join(root, "first-journal", "identity")}
 		auditlog.Recording.Targets = customRecordingPathTargets(sftp)
@@ -473,7 +473,7 @@ flows:
 	root := t.TempDir()
 	conf.Auditlogs[0].Enabled = true
 	conf.Auditlogs[0].IdentityFile = filepath.Join(root, "identity")
-	conf.Auditlogs[0].Journal.Directory = filepath.Join(root, "journal")
+	conf.Auditlogs[0].Directory = filepath.Join(root, "journal")
 	conf.Auditlogs[0].Recording.Enabled = true
 	conf.Auditlogs[0].Recording.Directory = filepath.Join(root, "storage", "recordings")
 	conf.Session.V.(*SessionFs).Storage = filepath.Join(root, "storage")

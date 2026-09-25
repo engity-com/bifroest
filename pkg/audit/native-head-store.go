@@ -204,7 +204,7 @@ func writeNativeHead(directory string, identity *Identity, expected *journalHash
 			return fmt.Errorf("native audit head appeared before publication: %v", err)
 		}
 	}
-	if err := replaceJournalFile(path, target); err != nil {
+	if err := replaceNativeHeadFile(path, target); err != nil {
 		return err
 	}
 	return syncJournalDirectory(directory)

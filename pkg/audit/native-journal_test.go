@@ -583,7 +583,7 @@ func TestNativeRecorderSuppressibleAndLegacyEntry(t *testing.T) {
 	require.NoError(t, r.Close())
 	_, err = newNativeRecorder(&conf, id)
 	require.Error(t, err)
-	require.FileExists(t, filepath.Join(filepath.Join(conf.Journal.Directory, id.ProducerId().String()), "head.json"))
+	require.FileExists(t, filepath.Join(filepath.Join(conf.Directory, id.ProducerId().String()), "head.json"))
 }
 
 func TestNativeRecorderStrictCloseReportsPoison(t *testing.T) {
@@ -688,7 +688,7 @@ func TestNativeRecorderRecoveryAcrossSortedRuns(t *testing.T) {
 			r = nativeTestOpen(t, &conf, id)
 			require.EqualValues(t, journalSegmentSortChunkSize+2, r.state.seq)
 			require.NoError(t, r.Close())
-			work := filepath.Join(conf.Journal.Directory, journalWorkDirectoryName)
+			work := filepath.Join(conf.Directory, journalWorkDirectoryName)
 			entries, err := os.ReadDir(work)
 			require.NoError(t, err)
 			require.Empty(t, entries)

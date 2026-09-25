@@ -136,7 +136,7 @@ func TestSessionRecordingStopFailurePreservesPreparedLifecycle(t *testing.T) {
 				Name:         "security",
 				Enabled:      true,
 				IdentityFile: filepath.Join(root, "identity"),
-				Journal:      configuration.AuditlogJournal{Directory: filepath.Join(root, "journal")},
+				Directory:    filepath.Join(root, "journal"),
 			}
 			identity, err := audit.EnsureIdentity(&auditlog)
 			require.NoError(t, err)
@@ -955,7 +955,7 @@ func enableSessionRecordingForLifecycleTest(conf *configuration.Configuration, r
 	auditlog := &conf.Auditlogs[0]
 	auditlog.Enabled = true
 	auditlog.IdentityFile = filepath.Join(root, "audit", "identity")
-	auditlog.Journal.Directory = filepath.Join(root, "audit", "journal")
+	auditlog.Directory = filepath.Join(root, "audit", "journal")
 	auditlog.Recording.Enabled = true
 	auditlog.Recording.Directory = filepath.Join(root, "recordings")
 }

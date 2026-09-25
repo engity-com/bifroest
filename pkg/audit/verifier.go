@@ -302,7 +302,7 @@ func snapshotVerifierPath(path string) (verifierFileSnapshot, error) {
 	if !pathInfo.Mode().IsRegular() && !pathInfo.IsDir() {
 		return verifierFileSnapshot{}, errors.Config.Newf("audit path %q is neither a regular file nor a directory", path)
 	}
-	file, err := os.Open(path)
+	file, err := openVerifierPath(path)
 	if err != nil {
 		return verifierFileSnapshot{}, errors.System.Newf("cannot open audit path %q: %w", path, err)
 	}
@@ -333,7 +333,7 @@ func openVerifierFile(path string) (*os.File, error) {
 	if !pathInfo.Mode().IsRegular() {
 		return nil, errors.Config.Newf("audit file %q is not a regular file", path)
 	}
-	file, err := os.Open(path)
+	file, err := openVerifierPath(path)
 	if err != nil {
 		return nil, errors.System.Newf("cannot open audit file %q: %w", path, err)
 	}

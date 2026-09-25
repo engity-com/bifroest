@@ -1457,9 +1457,8 @@ auditlog:
   - name: default
     enabled: true
     identityFile: "/etc/bifroest/audit_identity"
-    journal:
-      directory: "/var/lib/bifroest/auditlog"
-      minimumFreeBytes: 1048576
+    directory: "/var/lib/bifroest/auditlog"
+    minimumFreeBytes: 1048576
     recording:
       enabled: true
       directory: "/var/lib/bifroest/recordings"

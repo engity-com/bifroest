@@ -192,7 +192,7 @@ func TestSftpRemoteTrustChangeRejectsCursorAndOutstandingReceipt(t *testing.T) {
 	conf.Targets = configuration.AuditlogTargets{{Name: "archive", V: sftpConf}}
 	_, fingerprint, err := remoteDeliveryTargetSettings(sftpConf)
 	require.NoError(t, err)
-	state, err := prepareRemoteDeliveryState(conf.Journal.Directory, identity.ProducerId())
+	state, err := prepareRemoteDeliveryState(conf.Directory, identity.ProducerId())
 	require.NoError(t, err)
 	targetState := filepath.Join(state, remoteDeliveryTargetStateName("archive"))
 	require.NoError(t, ensureJournalDirectory(targetState, true))

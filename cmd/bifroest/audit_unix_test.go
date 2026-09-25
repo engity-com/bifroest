@@ -46,7 +46,7 @@ func TestAuditOutputRejectsEncryptionPublicKeyAliases(t *testing.T) {
 		Enabled:                 true,
 		IdentityFile:            filepath.Join(directory, "identity"),
 		EncryptionPublicKeyFile: bfcrypto.PublicKeysFile(publicKey),
-		Journal:                 configuration.AuditlogJournal{Directory: journal},
+		Directory:               journal,
 	}
 	conf := &configuration.Configuration{Auditlogs: configuration.Auditlogs{*configured}}
 	symlink := filepath.Join(directory, "public-symlink")

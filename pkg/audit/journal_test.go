@@ -32,7 +32,7 @@ func TestNewRecorderDoesNothingWhenDisabled(t *testing.T) {
 	require.NoError(t, recorder.Record(context.Background(), Event{}))
 	require.NoError(t, recorder.Close())
 	require.NoFileExists(t, conf.IdentityFile)
-	require.NoDirExists(t, conf.Journal.Directory)
+	require.NoDirExists(t, conf.Directory)
 }
 
 func TestNewRecorderRejectsMissingInputs(t *testing.T) {
@@ -286,7 +286,7 @@ func TestNativeJournalRejectsDifferentProducer(t *testing.T) {
 
 	require.Nil(t, failed)
 	require.ErrorContains(t, err, "invalid native audit root entry")
-	require.NoDirExists(t, filepath.Join(conf.Journal.Directory, otherIdentity.ProducerId().String()))
+	require.NoDirExists(t, filepath.Join(conf.Directory, otherIdentity.ProducerId().String()))
 }
 
 func TestNativeJournalLocksExclusiveWriter(t *testing.T) {
@@ -393,12 +393,12 @@ func newJournalTestIdentity(t *testing.T) (configuration.Auditlog, *Identity) {
 }
 
 func journalTestActivePath(conf configuration.Auditlog, identity *Identity) string {
-	return filepath.Join(conf.Journal.Directory, identity.ProducerId().String(), nativeActiveClear)
+	return filepath.Join(conf.Directory, identity.ProducerId().String(), nativeActiveClear)
 }
 
 func readJournalTestRecords(t *testing.T, conf configuration.Auditlog, identity *Identity) []VerifiedRecord {
 	t.Helper()
-	source := JournalSource{Name: "test", Directory: conf.Journal.Directory, ExpectedProducerId: identity.ProducerId(), WithSensitive: true}
+	source := JournalSource{Name: "test", Directory: conf.Directory, ExpectedProducerId: identity.ProducerId(), WithSensitive: true}
 	if !conf.EncryptionPublicKey.IsZero() || conf.EncryptionPublicKeyFile != "" {
 		t.Fatal("encrypted test records need explicit decryption identities")
 	}

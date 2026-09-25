@@ -34,7 +34,11 @@ Every event has a `name`. All other fields are optional and are present only whe
 | `count` | Positive number of security-relevant occurrences represented by an aggregate event. |
 | `pty`, `agentForwarding`, `forcedCommand` | Boolean task properties without their request contents. |
 
-This table describes the complete logical event, **not** the public fields of a native container. Only `name` and optional `domain` and `outcome` appear in the public event map. The record ID and time remain visible in its signed envelope; `flow`, `reason`, `target`, correlation IDs, and all other event fields belong to the compressed private map, encrypted only in `.beaudit`. The default JSONL export omits that map even for clear `.baudit`; its separate provenance envelope still contains identifying metadata. JSONL is an unsigned derived view. Protect the original container and even a redacted export from unnecessary access.
+The table describes the **complete logical event**, not what an observer can read from its native container:
+
+* Public event fields: `name`, optional `domain` and `outcome`. Record ID and time remain visible in the signed envelope.
+* Private map: `flow`, `reason`, `target`, correlation IDs and all other event fields. It is compressed in `.baudit` and additionally encrypted in `.beaudit`.
+* Default JSONL omits the private map even for `.baudit`, but still exposes identifying provenance. JSONL is **unsigned**; protect it and the original evidence.
 
 Events with the same `connectionId` belong to one SSH transport. Events with the same `sessionId` can span multiple SSH connections to one persistent Bifröst session. An `operationId` has meaning within the event lifecycle that created it and must be interpreted together with `name`.
 
@@ -71,9 +75,9 @@ Reasons:
 * `rate-limit`: the per-source or service-wide token bucket had no detail token available.
 * `journal-reserve`: the configured minimum free filesystem space would have been crossed by a suppressible write.
 
-The first suppression in a rate-limited episode is written immediately with `count: 1`. Further suppressions are counted in memory and written at a bounded cadence or during orderly shutdown. If the reserve is reached while a `rate-limit` aggregate is pending, that aggregate retains its `rate-limit` reason and outcome and is written once using the emergency reserve; only later evaluations are counted as `journal-reserve`. A hard crash can lose only the not-yet-flushed count; the first signed event still proves that detail suppression began. While the journal reserve is active, Bifröst does not repeatedly consume the reserve for markers and periodically probes for recovery only when further unauthenticated evaluations arrive.
-
-During orderly shutdown, pending aggregate counts are final audit records and bypass `minimumFreeBytes`. These bounded emergency writes can consume the configured reserve. If any final aggregate cannot be recorded, shutdown still attempts every other audit log and resource cleanup but returns an error instead of reporting a complete audit flush.
+* The first rate-limited suppression is signed immediately with `count: 1`. Later counts are aggregated in memory and flushed periodically or at orderly shutdown. A hard crash can lose **only unflushed counts**, not the first signed marker.
+* If the journal reserve is reached while a `rate-limit` aggregate is pending, that aggregate keeps its reason and outcome and uses the emergency reserve. Only later suppressed evaluations count as `journal-reserve`. While the reserve is active, recovery is probed when new unauthenticated evaluations arrive; markers do not repeatedly consume it.
+* Final aggregates during orderly shutdown bypass `minimumFreeBytes` as bounded emergency writes. If one fails, Bifröst still closes other resources but reports an incomplete audit flush.
 
 #### `authentication.completed`
 
@@ -121,13 +125,17 @@ The event does not contain agent messages, keys, or socket paths.
 
 #### `session.recording.started`
 
-Written after the initial recording content and recovery head are durable, but before Bifröst writes the recording notice, environment banner, or target output. SFTP and direct forwarding never produce recording lifecycle events. If this audit event reports an error, target execution does not start, Bifröst finalizes the recording as failed, and best-effort writes `session.recording.failed` with reason `audit-write`. Because an audit backend can report an error after committing a record, both events can be present.
+Written after the first recording content and recovery head are durable, **before** notice, banner or target output. SFTP and direct forwarding do not produce recording lifecycle events.
+
+If the audit write reports an error, target execution does not start. Bifröst finalizes the recording as failed and attempts `session.recording.failed` with reason `audit-write`. Both events can exist if the backend committed before reporting an error.
 
 Fields: `domain` is `session`; `flow`, `connectionId`, `sessionId`, `operationId`, `recordingId`, and `sessionTask` correlate the recording with its shell or exec task. `pty` records whether the session has a PTY. `outcome` is omitted.
 
 #### `session.recording.completed`
 
-Written only after a completed recording has been sealed, synchronized, verified, and atomically published. The correlation fields match `session.recording.started`. `outcome` is `success`; `durationMillis`, `exitCode`, and `recordingDigest` describe the immutable result. A signed local outbox binds the event to both the canonical Cast digest in `recordingDigest` and the outer artifact digest in a non-replayable prepared state before publication. Atomic publication and verification promote the event to pending; only pending events are replayed at startup. A failure to write this event does not alter the already published completed artifact, but the SSH operation still fails closed.
+Written only after a completed recording is sealed, synchronized, verified and atomically published. Correlation fields match `session.recording.started`; `outcome: success`, `durationMillis`, `exitCode` and `recordingDigest` describe the immutable result.
+
+The signed outbox binds the Cast and outer artifact digests **before** publication in a non-replayable `prepared` state. Verified publication promotes it to `pending`; only then can startup replay the event. An audit-write failure leaves the sealed artifact intact but fails the SSH operation closed.
 
 #### `session.recording.incomplete`
 
@@ -141,15 +149,22 @@ Outcomes and reasons:
 * `failure` with `session-error`: another task error prevented normal completion; `errorCategory` classifies it.
 * `failure` with `startup-recovery`: startup recovered an active recording that had not completed sealing before the previous process stopped.
 
-If the Bifröst process terminates with an unsealed active recording, startup recovery seals and publishes that artifact as incomplete. Correlation data persisted in the signed lifecycle intent allows recovery to finalize this event without decrypting BECast content. If sealing had already made a terminal event and receipt durable, recovery preserves that event instead of replacing it. A prepared event is not replayable until recovery has published and verified its artifact. Pending terminal events are replayed at least once during startup: a crash or ambiguous error after the audit journal commits but before outbox completion can produce an identical duplicate, but cannot silently lose the transition.
+Startup recovery seals unfinished recordings as incomplete. The signed lifecycle intent holds correlation data needed to finish BECast **without** its private decryption key.
+
+* Already durable terminal events and receipts are preserved, not replaced.
+* `prepared` is not replayable until its artifact is published and verified.
+* `pending` is replayed at least once. A crash after audit commit can duplicate the **same** event, but cannot silently lose it.
 
 #### `session.recording.failed`
 
-Written when recording creation, capture, checkpointing, final publication, or the required start audit write fails. The correlation fields are the same as for `session.recording.started`. `outcome` is `failure`; `reason` is `recording-create`, `recording-capture`, `recording-seal`, or `audit-write`, and `errorCategory` classifies the error. `recordingDigest` is present only when a failed artifact was nevertheless sealed and published successfully. A create failure has no preceding `session.recording.started` event.
+Written when recording creation, capture, checkpointing, publication or the required start audit write fails. Correlation fields match `session.recording.started`; `outcome: failure` and `errorCategory` classify the result.
+
+* `reason`: `recording-create`, `recording-capture`, `recording-seal` or `audit-write`.
+* `recordingDigest` appears only if a failed artifact was still sealed and published. A create failure has no preceding `session.recording.started` event.
 
 #### `session.recording.delivery.failed`
 
-Written after the first failed remote-delivery attempt for one Recording and target. `domain` is `session`; `outcome` is `failure`; `recordingId`, `target`, and `operationId` identify the delivery episode; and `errorCategory` classifies the failure. Flow, Connection, Session, file-name, path, endpoint, and digest fields are intentionally omitted because they cannot all be reconstructed safely after restart and are not required to identify the retained artifact.
+Written after the first failed attempt for a Recording and target. `domain: session`, `outcome: failure`, `recordingId`, `target` and `operationId` identify the episode; `errorCategory` classifies it. Flow, connection, session, paths, endpoint and digest are omitted: they are unnecessary here and not all safely recoverable after restart.
 
 The failure intent and operation ID are stored in the signed delivery receipt before the event is attempted. Further publication attempts are blocked until the event has been recorded and its durable receipt marker has been written. Later failures in the same delivery episode do not produce more events, including after restart.
 
@@ -157,7 +172,7 @@ The failure intent and operation ID are stored in the signed delivery receipt be
 
 Written after a target has accepted the exact artifact and its signed local acknowledgement is durable. `domain` is `session`; `outcome` is `success`; and `recordingId`, `target`, and `operationId` match the delivery episode and its optional `session.recording.delivery.failed` event. A direct success has no preceding failure event.
 
-The signed receipt retains an outbox marker until this event is recorded. Startup resumes a pending success event without publishing the artifact again. Flush and retention eligibility require the durable success-audit marker in addition to the target acknowledgement. A crash after an audit record commits but before its receipt marker commits can produce an at-least-once duplicate after restart; it cannot silently discard the pending transition.
+The signed receipt keeps the success event pending until it is recorded. Startup replays it **without republishing** the artifact. Flush and retention require both the target acknowledgement and durable success-audit marker. A crash between audit and marker commits can replay an identical event, not silently discard it.
 
 #### `session.task.started`
 
@@ -252,7 +267,10 @@ Reverse listener creation and individual reverse-forwarded streams are managed b
 
 Written when an authenticated SSH connection ends. A pre-authentication connection cannot be assigned to one flow audit log and therefore produces no `connection.closed` event.
 
-Fields: `domain` is `connection`; `flow`, `connectionId`, `sessionId`, and `authorizationKind` identify the connection. `reason` is `disconnected`. On the wrapped SSH transport, `bytesRead` counts bytes from the SSH client to Bifröst and `bytesWritten` counts bytes from Bifröst to the SSH client. `durationMillis` measures the complete connection lifetime. `outcome` is omitted because the available disconnect callback does not provide a reliable success or failure result.
+Fields: `domain: connection`; `flow`, `connectionId`, `sessionId`, `authorizationKind` and `reason: disconnected` identify the connection. `durationMillis` covers its full lifetime.
+
+* `bytesRead`: SSH client to Bifröst; `bytesWritten`: Bifröst to SSH client, measured at the wrapped SSH transport.
+* No `outcome`: the disconnect callback cannot reliably distinguish success from failure.
 
 ### Housekeeping
 
@@ -268,7 +286,9 @@ Fields: `domain` is `housekeeping`; `flow`, `sessionId`, and `operationId` ident
 
 Written after the disposal attempt returns. Its `flow`, `sessionId`, `operationId`, and `reason` match the corresponding `housekeeping.session.dispose.started` event.
 
-Fields: `domain` is `housekeeping`; `durationMillis` measures the complete disposal attempt. `outcome` is `success` when all disposal operations completed, even if no remaining resource required a change. This can include removing a persisted authorization token that its configured authorizer safely classified as permanently unusable because of malformed local token data, removed local configuration, or a removed local user. On `failure`, `errorCategory` classifies the error. Transient, network, system, and unclassified restore failures are not converted into token removal.
+Fields: `domain: housekeeping`; `durationMillis` measures the attempt. `outcome: success` means disposal completed, even if nothing needed changing. `failure` has an `errorCategory`.
+
+A persisted token may be removed only when its authorizer safely classifies it as **permanently unusable** (malformed local data, removed configuration or user). Transient, network, system or unclassified restore failures do **not** authorize removal.
 
 #### `housekeeping.session.delete.started`
 
@@ -290,17 +310,16 @@ Fields: `domain` is `housekeeping`; `recordingId` and `operationId` identify the
 
 #### `housekeeping.recording.delete.completed`
 
-Written after the Recording artifact has been removed and its signed delivery receipt has entered a durable completion-pending state. The receipt is removed only after this event succeeds. If the recorder reports an ambiguous failure, or final receipt cleanup fails while the completion marker remains, housekeeping retries the same completion event without repeating the destructive action. Its `recordingId`, `operationId`, and `reason` match the corresponding `housekeeping.recording.delete.started` event.
+Written after the artifact is removed and its signed receipt reaches durable `completion-pending`. The receipt itself is removed **only after this event succeeds**. An ambiguous audit result or failed final cleanup retries the same event, not the deletion. `recordingId`, `operationId` and `reason` match the start event.
 
-Fields: `domain` is `housekeeping`; `durationMillis` is `0` so the durably reconstructable event remains identical across retries. `outcome` is `success` when the artifact was removed and the receipt reached completion-pending state. On `failure`, `durationMillis` measures the failed deletion attempt, `errorCategory` classifies the error, and housekeeping preserves the receipt for retry.
+Fields: `domain: housekeeping`. On success, `durationMillis: 0` keeps retries identical. On failure, `durationMillis` measures the failed attempt, `errorCategory` classifies it and the receipt remains for retry.
 
 #### `housekeeping.orphaned-session.cleanup.skipped` {: #housekeeping-orphaned-session-cleanup-skipped }
 
-Written when housekeeping encounters a persisted session whose flow is no longer present in the running configuration. The implementations needed to interpret and safely dispose its environment and authorization tokens are unavailable. Housekeeping therefore preserves the complete session, including expired or already disposed sessions beyond their retention period, for operator recovery. It does not read or modify either token, dispose the session or environment, or delete session storage.
+If a persisted session's flow is missing, housekeeping cannot safely interpret its environment or authorization tokens. It **preserves the whole session** for operator recovery, even past retention; it neither reads tokens nor disposes or deletes that session.
 
-The original flow-to-audit-log assignment cannot be reconstructed safely, so the same event is written deterministically to every enabled audit log instead of being attributed to one replacement log. If no audit log is enabled, the safe skip is logged but no audit event can be written.
-
-Fields: `domain` is `housekeeping`; `flow` is the persisted, now-unknown flow name and does not assert ownership by any receiving audit log. `sessionId` identifies the preserved session, `reason` is `missing-flow`, and `outcome` is `denied` because destructive cleanup was not allowed. No `operationId`, token contents, environment details, or retention timestamps are included.
+* The original audit-log assignment is unknown. The identical skip event goes to **every enabled audit log**, never a guessed replacement; without enabled logs, only a normal log entry is possible.
+* Fields: `domain: housekeeping`; `flow` is the unknown original flow, `sessionId` the preserved session, `reason: missing-flow`, `outcome: denied`. No operation ID, token contents, environment details or retention timestamps are emitted.
 
 ## Privacy
 
@@ -314,14 +333,21 @@ Bifröst's built-in audit events never contain:
 * Raw errors, wrapped causes, or formatted error messages.
 * Direct-forwarding destinations, reverse bind addresses, or client-claimed origin addresses.
 
-Error events use only the documented reason codes and broad `errorCategory` values. With `.beaudit`, Bifröst encrypts the confidential event fields in audit segments; event name, domain, outcome, timestamp, and verification metadata remain visible and signed. With `.baudit`, confidential fields are stored unencrypted but are still omitted from the default JSONL export. The separate [local Recording lifecycle outbox](recording.md#storage-and-recovery) retains some private event fields as signed, unencrypted JSON until completion. Operators must protect the local repositories, their backups, original containers, and any sensitive exports. See [public and confidential audit fields](../../formats/audit.md#public-and-confidential-audit-fields) for the container boundary.
+Error events expose only documented reason codes and broad `errorCategory` values:
+
+* `.beaudit` encrypts private event fields in segments; name, domain, outcome, time and verification metadata remain visible and signed.
+* `.baudit` stores private fields in clear form, but the default JSONL export still omits them.
+* The [local Recording lifecycle outbox](recording.md#storage-and-recovery) can store private event fields as **signed, unencrypted JSON** until completion.
+
+Protect local repositories, backups, containers and exports. See the [exact container boundary](../../formats/audit.md#public-and-confidential-audit-fields).
 
 ## Audit-event persistence failures
 
-With `failurePolicy: strict`, local audit-event persistence is synchronous and fail-closed. If Bifröst cannot durably record an event before an allowed SSH action, the action is denied and only the causing SSH connection is closed. Bifröst does not retry the event in the service layer or shut down the complete service. With `failurePolicy: bestEffort`, the first local failure instead disables the complete audit log, including session recording, until restart; the affected SSH operation may continue without further recording. A disabled audit log uses a no-op recorder. See [failure policy](index.md#property-failurePolicy) and [session-recording failures](recording.md#captured-data-and-privacy) for the distinct consequences.
+* **`strict`:** local writes are synchronous. A failed pre-action write denies that action and closes **only its SSH connection**; the service does not retry the event or shut down.
+* **`bestEffort`:** the first local failure disables the whole audit log and its recording until restart. The SSH operation may continue without further audit writes.
+* **Suppression is not a write failure:** token-bucket exhaustion or the journal reserve replaces only suppressible pre-authentication details with bounded signed aggregates. Successful authentication is not denied. Under `strict`, failure to inspect free space or write a chosen detail, marker or aggregate still closes the causing connection.
+* **After-action failure:** a completed action cannot be undone. `strict` reports the failure and closes its connection; `bestEffort` disables the audit log.
+* **Housekeeping:** a failed start-event write prevents its session action under `strict`. Under `bestEffort`, housekeeping may proceed without start/completion events. Failed missing-flow skip audits never cause the orphaned session to be modified; housekeeping continues with later sessions. Unrelated SSH connections and the service remain running.
+* **Remote delivery:** outages leave sealed artifacts in the local spool for retry. Failed delivery-transition audits pause only that Recording and target, not other connections or targets.
 
-Bucket exhaustion and an intentionally preserved journal reserve are not local persistence failures: they replace only suppressible pre-authentication details with bounded signed aggregates. They never deny a successful authentication. Under `strict`, failure to inspect free space or to durably write a selected detail, suppression marker, or aggregate remains fail-closed for the causing connection.
-
-If persisting a completion event fails after an action has already happened, the action cannot be rolled back. Under `strict`, the handler reports the audit failure and closes the causing connection; under `bestEffort`, the audit log is disabled for the rest of the process. A failed housekeeping start-event write prevents the associated session action under `strict`. Under `bestEffort`, the failure is logged and disables that audit log, but session housekeeping can continue without its start and completion events. A failed orphaned-session skip-event write is reported if the recorder returns an error; `bestEffort` can instead absorb that error after logging and disabling its audit log. The orphaned session remains untouched, and housekeeping continues with later sessions. Housekeeping failures do not close unrelated SSH connections or stop the service.
-
-Remote-target delivery remains asynchronous. A remote outage does not change the result of local recording or an SSH action because the sealed artifact remains in the local spool for later delivery. Delivery-transition audit failures block further work for that Recording and target but do not close unrelated SSH connections or stop independent targets.
+See [failure policy](index.md#property-failurePolicy) and [session-recording failures](recording.md#captured-data-and-privacy).

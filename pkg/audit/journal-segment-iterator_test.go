@@ -222,5 +222,5 @@ func TestNativeRecorderRecoveryDoesNotRequireGlobalTemp(t *testing.T) {
 	require.Len(t, entries, 2)
 	require.FileExists(t, filepath.Join(producer, nativeHeadFileName))
 	require.FileExists(t, filepath.Join(producer, nativeActiveClear))
-	require.NoDirExists(t, filepath.Join(conf.Journal.Directory, journalWorkDirectoryName))
+	require.NoDirExists(t, filepath.Join(conf.Directory, journalWorkDirectoryName))
 }

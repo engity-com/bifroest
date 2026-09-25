@@ -216,7 +216,7 @@ func (recordingInspectErrorWriter) Write([]byte) (int, error) {
 
 func writeRecordingInspectTestCast(t *testing.T) (string, *audit.Identity) {
 	t.Helper()
-	identity, header, metadata := newRecordingInspectTestValues(t)
+	identity, header, metadata, _ := newRecordingInspectTestValues(t)
 	var content bytes.Buffer
 	writer, err := recording.NewCastWriter(&content, identity, header, metadata)
 	require.NoError(t, err)
@@ -229,7 +229,7 @@ func writeRecordingInspectTestCast(t *testing.T) (string, *audit.Identity) {
 	return path, identity
 }
 
-func newRecordingInspectTestValues(t *testing.T) (*audit.Identity, recording.CastHeader, recording.CastMetadata) {
+func newRecordingInspectTestValues(t *testing.T) (*audit.Identity, recording.CastHeader, recording.CastMetadata, ed25519.PrivateKey) {
 	t.Helper()
 	_, private, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err)
@@ -251,5 +251,5 @@ func newRecordingInspectTestValues(t *testing.T) (*audit.Identity, recording.Cas
 	header := recording.CastHeader{
 		Version: recording.CastVersion, Terminal: recording.CastTerminal{Columns: 80, Rows: 24}, Timestamp: startedAt.Unix(),
 	}
-	return identity, header, metadata
+	return identity, header, metadata, private
 }

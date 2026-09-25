@@ -104,7 +104,7 @@ func EnsureIdentity(conf *configuration.Auditlog) (*Identity, error) {
 	if identityFile == "" {
 		return nil, errors.Config.Newf("audit identity file is empty")
 	}
-	journalDirectory := strings.TrimSpace(conf.Journal.Directory)
+	journalDirectory := strings.TrimSpace(conf.Directory)
 	if journalDirectory == "" {
 		return nil, errors.Config.Newf("audit journal directory is empty")
 	}

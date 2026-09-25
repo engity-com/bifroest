@@ -117,7 +117,7 @@ func TestNativeAuditPhysicalUnitRegressionMatrix(t *testing.T) {
 					require.Nil(t, verified, "failed verification must not expose records for plaintext export")
 					if test.restart {
 						conf := auditIdentityTestConfiguration(root, true)
-						conf.Journal.Directory = root
+						conf.Directory = root
 						if encrypted {
 							conf.EncryptionPublicKey = bfcrypto.PublicKeys(string(ssh.MarshalAuthorizedKey(recipientKey.PublicKey().ToSsh())))
 						}

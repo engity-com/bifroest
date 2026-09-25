@@ -29,7 +29,8 @@ type Auditlog struct {
 	IdentityFile            string                `yaml:"identityFile,omitempty"`
 	EncryptionPublicKey     crypto.PublicKeys     `yaml:"encryptionPublicKey,omitempty"`
 	EncryptionPublicKeyFile crypto.PublicKeysFile `yaml:"encryptionPublicKeyFile,omitempty"`
-	Journal                 AuditlogJournal       `yaml:"journal,omitempty"`
+	Directory               string                `yaml:"directory,omitempty"`
+	MinimumFreeBytes        uint64                `yaml:"minimumFreeBytes,omitempty"`
 	Recording               AuditlogRecording     `yaml:"recording,omitempty"`
 	Targets                 AuditlogTargets       `yaml:"targets,omitempty"`
 }
@@ -42,7 +43,8 @@ func (this *Auditlog) SetDefaults() error {
 		fixedDefault("identityFile", func(v *Auditlog) *string { return &v.IdentityFile }, DefaultAuditlogIdentityFile),
 		noopSetDefault[Auditlog]("encryptionPublicKey"),
 		noopSetDefault[Auditlog]("encryptionPublicKeyFile"),
-		func(v *Auditlog) (string, defaulter) { return "journal", &v.Journal },
+		fixedDefault("directory", func(v *Auditlog) *string { return &v.Directory }, DefaultAuditlogJournalDirectory),
+		fixedDefault("minimumFreeBytes", func(v *Auditlog) *uint64 { return &v.MinimumFreeBytes }, DefaultAuditlogJournalMinimumFreeBytes),
 		func(v *Auditlog) (string, defaulter) { return "recording", &v.Recording },
 		func(v *Auditlog) (string, defaulter) { return "targets", &v.Targets },
 	)
@@ -56,7 +58,8 @@ func (this *Auditlog) Trim() error {
 		func(v *Auditlog) (string, trimmer) { return "identityFile", &stringTrimmer{&v.IdentityFile} },
 		func(v *Auditlog) (string, trimmer) { return "encryptionPublicKey", &v.EncryptionPublicKey },
 		func(v *Auditlog) (string, trimmer) { return "encryptionPublicKeyFile", &v.EncryptionPublicKeyFile },
-		func(v *Auditlog) (string, trimmer) { return "journal", &v.Journal },
+		func(v *Auditlog) (string, trimmer) { return "directory", &stringTrimmer{&v.Directory} },
+		noopTrim[Auditlog]("minimumFreeBytes"),
 		func(v *Auditlog) (string, trimmer) { return "recording", &v.Recording },
 		func(v *Auditlog) (string, trimmer) { return "targets", &v.Targets },
 	)
@@ -75,7 +78,8 @@ func (this *Auditlog) Validate() error {
 			return "encryptionPublicKey", &auditlogEncryptionPublicKeyValidator{v.EncryptionPublicKey}
 		},
 		noopValidate[Auditlog]("encryptionPublicKeyFile"),
-		func(v *Auditlog) (string, validator) { return "journal", &v.Journal },
+		notEmptyStringValidate("directory", func(v *Auditlog) *string { return &v.Directory }),
+		noopValidate[Auditlog]("minimumFreeBytes"),
 		func(v *Auditlog) (string, validator) { return "recording", &v.Recording },
 		func(v *Auditlog) (string, validator) { return "targets", &v.Targets },
 	); err != nil {
@@ -89,7 +93,7 @@ func (this *Auditlog) Validate() error {
 
 func (this *Auditlog) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *Auditlog, node *yaml.Node) error {
-		if err := rejectUnknownAuditlogFields(node, "name", "enabled", "failurePolicy", "identityFile", "encryptionPublicKey", "encryptionPublicKeyFile", "journal", "recording", "targets"); err != nil {
+		if err := rejectUnknownAuditlogFields(node, "name", "enabled", "failurePolicy", "identityFile", "encryptionPublicKey", "encryptionPublicKeyFile", "directory", "minimumFreeBytes", "recording", "targets"); err != nil {
 			return err
 		}
 		type raw Auditlog
@@ -118,7 +122,8 @@ func (this Auditlog) isEqualTo(other *Auditlog) bool {
 		this.IdentityFile == other.IdentityFile &&
 		this.EncryptionPublicKey.IsEqualTo(other.EncryptionPublicKey) &&
 		this.EncryptionPublicKeyFile.IsEqualTo(other.EncryptionPublicKeyFile) &&
-		isEqual(&this.Journal, &other.Journal) &&
+		this.Directory == other.Directory &&
+		this.MinimumFreeBytes == other.MinimumFreeBytes &&
 		isEqual(&this.Recording, &other.Recording) &&
 		isEqual(&this.Targets, &other.Targets)
 }
@@ -200,10 +205,10 @@ func (this Auditlogs) Validate() error {
 			return fmt.Errorf("[%d][identityFile] duplicates enabled auditlog [%d][identityFile] %q", index, previous, auditlog.IdentityFile)
 		}
 		identityFiles[auditlog.IdentityFile] = index
-		if previous, exists := journalDirectories[auditlog.Journal.Directory]; exists {
-			return fmt.Errorf("[%d][journal][directory] duplicates enabled auditlog [%d][journal][directory] %q", index, previous, auditlog.Journal.Directory)
+		if previous, exists := journalDirectories[auditlog.Directory]; exists {
+			return fmt.Errorf("[%d][directory] duplicates enabled auditlog [%d][directory] %q", index, previous, auditlog.Directory)
 		}
-		journalDirectories[auditlog.Journal.Directory] = index
+		journalDirectories[auditlog.Directory] = index
 	}
 	for leftIndex, left := range this {
 		if !left.Enabled {
@@ -213,14 +218,14 @@ func (this Auditlogs) Validate() error {
 			if !right.Enabled {
 				continue
 			}
-			if leftIndex < rightIndex && (pathContains(left.Journal.Directory, right.Journal.Directory) || pathContains(right.Journal.Directory, left.Journal.Directory)) {
-				return fmt.Errorf("[%d][journal][directory] overlaps enabled auditlog [%d][journal][directory]", rightIndex, leftIndex)
+			if leftIndex < rightIndex && (pathContains(left.Directory, right.Directory) || pathContains(right.Directory, left.Directory)) {
+				return fmt.Errorf("[%d][directory] overlaps enabled auditlog [%d][directory]", rightIndex, leftIndex)
 			}
-			if pathContains(left.IdentityFile, right.Journal.Directory) {
-				return fmt.Errorf("[%d][identityFile] is located inside enabled auditlog [%d][journal][directory]", leftIndex, rightIndex)
+			if pathContains(left.IdentityFile, right.Directory) {
+				return fmt.Errorf("[%d][identityFile] is located inside enabled auditlog [%d][directory]", leftIndex, rightIndex)
 			}
-			if pathContains(right.Journal.Directory, left.IdentityFile) {
-				return fmt.Errorf("[%d][journal][directory] is located below enabled auditlog [%d][identityFile]", rightIndex, leftIndex)
+			if pathContains(right.Directory, left.IdentityFile) {
+				return fmt.Errorf("[%d][directory] is located below enabled auditlog [%d][identityFile]", rightIndex, leftIndex)
 			}
 			if leftIndex < rightIndex && (pathContains(left.IdentityFile, right.IdentityFile) || pathContains(right.IdentityFile, left.IdentityFile)) {
 				return fmt.Errorf("[%d][identityFile] overlaps enabled auditlog [%d][identityFile]", rightIndex, leftIndex)
@@ -236,8 +241,8 @@ func (this Auditlogs) Validate() error {
 			if !auditlog.Enabled {
 				continue
 			}
-			if pathsOverlap(recordingDirectory, auditlog.Journal.Directory) {
-				return fmt.Errorf("[%d][recording][directory] overlaps enabled auditlog [%d][journal][directory]", recordingIndex, auditlogIndex)
+			if pathsOverlap(recordingDirectory, auditlog.Directory) {
+				return fmt.Errorf("[%d][recording][directory] overlaps enabled auditlog [%d][directory]", recordingIndex, auditlogIndex)
 			}
 			if pathsOverlap(recordingDirectory, auditlog.IdentityFile) {
 				return fmt.Errorf("[%d][recording][directory] overlaps enabled auditlog [%d][identityFile]", recordingIndex, auditlogIndex)
@@ -341,56 +346,6 @@ func (this Auditlogs) isEqualTo(other *Auditlogs) bool {
 		}
 	}
 	return true
-}
-
-type AuditlogJournal struct {
-	Directory        string `yaml:"directory,omitempty"`
-	MinimumFreeBytes uint64 `yaml:"minimumFreeBytes,omitempty"`
-}
-
-func (this *AuditlogJournal) SetDefaults() error {
-	return setDefaults(this,
-		fixedDefault("directory", func(v *AuditlogJournal) *string { return &v.Directory }, DefaultAuditlogJournalDirectory),
-		fixedDefault("minimumFreeBytes", func(v *AuditlogJournal) *uint64 { return &v.MinimumFreeBytes }, DefaultAuditlogJournalMinimumFreeBytes),
-	)
-}
-
-func (this *AuditlogJournal) Trim() error {
-	return trim(this,
-		func(v *AuditlogJournal) (string, trimmer) { return "directory", &stringTrimmer{&v.Directory} },
-		noopTrim[AuditlogJournal]("minimumFreeBytes"),
-	)
-}
-
-func (this *AuditlogJournal) Validate() error {
-	return validate(this,
-		notEmptyStringValidate("directory", func(v *AuditlogJournal) *string { return &v.Directory }),
-		noopValidate[AuditlogJournal]("minimumFreeBytes"),
-	)
-}
-
-func (this *AuditlogJournal) UnmarshalYAML(node *yaml.Node) error {
-	return unmarshalYAML(this, node, func(target *AuditlogJournal, node *yaml.Node) error {
-		if err := rejectUnknownAuditlogFields(node, "directory", "minimumFreeBytes"); err != nil {
-			return err
-		}
-		type raw AuditlogJournal
-		return node.Decode((*raw)(target))
-	})
-}
-
-func (this AuditlogJournal) IsEqualTo(other any) bool {
-	if other == nil {
-		return false
-	}
-	switch v := other.(type) {
-	case AuditlogJournal:
-		return this.Directory == v.Directory && this.MinimumFreeBytes == v.MinimumFreeBytes
-	case *AuditlogJournal:
-		return v != nil && this.Directory == v.Directory && this.MinimumFreeBytes == v.MinimumFreeBytes
-	default:
-		return false
-	}
 }
 
 func rejectUnknownAuditlogFields(node *yaml.Node, known ...string) error {

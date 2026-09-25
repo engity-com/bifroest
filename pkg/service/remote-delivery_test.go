@@ -144,7 +144,7 @@ func TestServiceShutdownSealsAndFlushesAuditTail(t *testing.T) {
 		auditlog := &conf.Auditlogs[0]
 		auditlog.Enabled = true
 		auditlog.IdentityFile = filepath.Join(directory, "auditlog-key")
-		auditlog.Journal.Directory = filepath.Join(directory, "auditlog")
+		auditlog.Directory = filepath.Join(directory, "auditlog")
 		auditlog.Targets = configuration.AuditlogTargets{{
 			Name: "archive",
 			V:    &serviceRemoteDeliveryTestConfiguration{target: target},
@@ -435,7 +435,7 @@ func TestHouseKeeperContinuesRecordingRetentionAfterEarlierAuditlogStoreFailure(
 	broken := working
 	broken.Name = "broken"
 	broken.IdentityFile = filepath.Join(root, "audit-broken", "identity")
-	broken.Journal.Directory = filepath.Join(root, "audit-broken", "journal")
+	broken.Directory = filepath.Join(root, "audit-broken", "journal")
 	broken.Recording.Directory = filepath.Join(root, "recording-broken")
 	conf.Auditlogs = configuration.Auditlogs{broken, working}
 

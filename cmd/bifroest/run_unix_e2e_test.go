@@ -154,7 +154,7 @@ flows:
 	auditlog := &result.Get().Auditlogs[0]
 	auditlog.Enabled = true
 	auditlog.IdentityFile = filepath.Join(root, "audit-identity")
-	auditlog.Journal.Directory = filepath.Join(root, "journal")
+	auditlog.Directory = filepath.Join(root, "journal")
 	auditlog.Recording.Enabled = true
 	auditlog.Recording.Directory = filepath.Join(root, "recordings")
 	return result

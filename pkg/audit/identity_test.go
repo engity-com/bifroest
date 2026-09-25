@@ -23,7 +23,7 @@ func TestEnsureIdentityDoesNothingWhenDisabled(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, identity)
 	require.NoFileExists(t, conf.IdentityFile)
-	require.NoDirExists(t, conf.Journal.Directory)
+	require.NoDirExists(t, conf.Directory)
 }
 
 func TestEnsureIdentityCreatesAndReusesDedicatedKey(t *testing.T) {
@@ -37,10 +37,10 @@ func TestEnsureIdentityCreatesAndReusesDedicatedKey(t *testing.T) {
 	require.Equal(t, gossh.KeyAlgoED25519, first.PublicKey().Type())
 	require.Equal(t, gossh.FingerprintSHA256(first.PublicKey().ToSsh()), first.Fingerprint())
 	require.FileExists(t, conf.IdentityFile)
-	require.NoDirExists(t, conf.Journal.Directory)
+	require.NoDirExists(t, conf.Directory)
 
-	require.NoError(t, os.MkdirAll(conf.Journal.Directory, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(conf.Journal.Directory, "existing-segment"), []byte("history"), 0600))
+	require.NoError(t, os.MkdirAll(conf.Directory, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(conf.Directory, "existing-segment"), []byte("history"), 0600))
 	second, err := EnsureIdentity(&conf)
 	require.NoError(t, err)
 	require.Equal(t, first.ProducerId(), second.ProducerId())
@@ -50,7 +50,7 @@ func TestEnsureIdentityCreatesAndReusesDedicatedKey(t *testing.T) {
 func TestEnsureIdentityCreatesKeyForEmptyJournal(t *testing.T) {
 	directory := t.TempDir()
 	conf := auditIdentityTestConfiguration(directory, true)
-	require.NoError(t, os.MkdirAll(conf.Journal.Directory, 0700))
+	require.NoError(t, os.MkdirAll(conf.Directory, 0700))
 
 	identity, err := EnsureIdentity(&conf)
 
@@ -62,8 +62,8 @@ func TestEnsureIdentityCreatesKeyForEmptyJournal(t *testing.T) {
 func TestEnsureIdentityIgnoresPersistentJournalLock(t *testing.T) {
 	directory := t.TempDir()
 	conf := auditIdentityTestConfiguration(directory, true)
-	require.NoError(t, os.MkdirAll(conf.Journal.Directory, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(conf.Journal.Directory, journalLockFileName), nil, 0600))
+	require.NoError(t, os.MkdirAll(conf.Directory, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(conf.Directory, journalLockFileName), nil, 0600))
 
 	identity, err := EnsureIdentity(&conf)
 
@@ -75,8 +75,8 @@ func TestEnsureIdentityIgnoresPersistentJournalLock(t *testing.T) {
 func TestEnsureIdentityRejectsMissingKeyForExistingJournal(t *testing.T) {
 	directory := t.TempDir()
 	conf := auditIdentityTestConfiguration(directory, true)
-	require.NoError(t, os.MkdirAll(conf.Journal.Directory, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(conf.Journal.Directory, "existing-segment"), []byte("history"), 0600))
+	require.NoError(t, os.MkdirAll(conf.Directory, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(conf.Directory, "existing-segment"), []byte("history"), 0600))
 
 	identity, err := EnsureIdentity(&conf)
 
@@ -95,7 +95,7 @@ func TestEnsureIdentityRejectsMissingKeyForRecordingState(t *testing.T) {
 				conf.Recording.Enabled = recordingEnabled
 				conf.Recording.Directory = filepath.Join(root, "recordings")
 				if journalExists {
-					require.NoError(t, os.Mkdir(conf.Journal.Directory, 0700))
+					require.NoError(t, os.Mkdir(conf.Directory, 0700))
 				}
 				require.NoError(t, os.Mkdir(conf.Recording.Directory, 0700))
 				state := filepath.Join(conf.Recording.Directory, "sealed")
@@ -267,8 +267,6 @@ func auditIdentityTestConfiguration(directory string, enabled bool) configuratio
 	return configuration.Auditlog{
 		Enabled:      enabled,
 		IdentityFile: filepath.Join(directory, "auditlog-key"),
-		Journal: configuration.AuditlogJournal{
-			Directory: filepath.Join(directory, "journal"),
-		},
+		Directory:    filepath.Join(directory, "journal"),
 	}
 }

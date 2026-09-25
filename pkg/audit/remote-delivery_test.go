@@ -81,7 +81,7 @@ func TestRemoteDeliveryPublishesNativeBytesAndEncryptedName(t *testing.T) {
 			require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.native-delivery"}))
 			require.NoError(t, recorder.Seal())
 			require.NoError(t, recorder.Close())
-			entries, _, _, err := nativeInventory(filepath.Join(conf.Journal.Directory, identity.ProducerId().String()),
+			entries, _, _, err := nativeInventory(filepath.Join(conf.Directory, identity.ProducerId().String()),
 				map[bool]string{false: nativeActiveClear, true: nativeActiveEncrypted}[encrypted], encrypted)
 			require.NoError(t, err)
 			require.Len(t, entries, 1)
@@ -115,7 +115,7 @@ func TestRemoteDeliveryPublishesNativeBytesAndEncryptedName(t *testing.T) {
 func TestRemoteDeliveryRejectsOldLocalDataAndMissingConfirmedHistory(t *testing.T) {
 	conf, identity, segments := newRemoteDeliveryTestJournal(t, 2)
 	conf.Targets = configuration.AuditlogTargets{remoteDeliveryTestTarget("archive", nil)}
-	state, err := prepareRemoteDeliveryState(conf.Journal.Directory, identity.ProducerId())
+	state, err := prepareRemoteDeliveryState(conf.Directory, identity.ProducerId())
 	require.NoError(t, err)
 	_, fingerprint, err := customRemoteDeliveryTargetSettings(conf.Targets[0].V, RemoteTargetSettings{
 		DestinationIdentity: remoteTargetTestDestinationIdentity, PublishAttemptTimeout: time.Minute,
@@ -141,7 +141,7 @@ func TestRemoteDeliveryRejectsOldLocalDataAndMissingConfirmedHistory(t *testing.
 func TestRemoteDeliveryCursorCannotHideGapWithDuplicate(t *testing.T) {
 	conf, identity, segments := newRemoteDeliveryTestJournal(t, 3)
 	conf.Targets = configuration.AuditlogTargets{remoteDeliveryTestTarget("archive", nil)}
-	state, err := prepareRemoteDeliveryState(conf.Journal.Directory, identity.ProducerId())
+	state, err := prepareRemoteDeliveryState(conf.Directory, identity.ProducerId())
 	require.NoError(t, err)
 	_, fingerprint, err := customRemoteDeliveryTargetSettings(conf.Targets[0].V, RemoteTargetSettings{
 		DestinationIdentity: remoteTargetTestDestinationIdentity, PublishAttemptTimeout: time.Minute,
@@ -244,7 +244,7 @@ func TestRemoteDeliveryRejectsSignedForkInCursorAndTemporaryRecovery(t *testing.
 				t.Error("invalid local chain was published")
 				return nil
 			})}
-			state, err := prepareRemoteDeliveryState(conf.Journal.Directory, identity.ProducerId())
+			state, err := prepareRemoteDeliveryState(conf.Directory, identity.ProducerId())
 			require.NoError(t, err)
 			_, destination, err := customRemoteDeliveryTargetSettings(conf.Targets[0].V, RemoteTargetSettings{
 				DestinationIdentity: remoteTargetTestDestinationIdentity, PublishAttemptTimeout: time.Minute,
@@ -288,7 +288,7 @@ func TestRemoteDeliveryRejectsCursorHashMismatch(t *testing.T) {
 		t.Error("cursor with mismatched hash was published")
 		return nil
 	})}
-	state, err := prepareRemoteDeliveryState(conf.Journal.Directory, identity.ProducerId())
+	state, err := prepareRemoteDeliveryState(conf.Directory, identity.ProducerId())
 	require.NoError(t, err)
 	_, destination, err := customRemoteDeliveryTargetSettings(conf.Targets[0].V, RemoteTargetSettings{
 		DestinationIdentity: remoteTargetTestDestinationIdentity, PublishAttemptTimeout: time.Minute,
@@ -321,7 +321,7 @@ func TestRemoteDeliveryValidatesBothCursorsInOneScanAndKeepsSortRunsOutOfProduce
 				require.NoError(t, os.WriteFile(filepath.Join(producerDirectory, name), []byte("later"), journalFileMode))
 			}
 			conf.Targets = configuration.AuditlogTargets{remoteDeliveryTestTarget("archive", nil)}
-			state, err := prepareRemoteDeliveryState(conf.Journal.Directory, identity.ProducerId())
+			state, err := prepareRemoteDeliveryState(conf.Directory, identity.ProducerId())
 			require.NoError(t, err)
 			_, destination, err := customRemoteDeliveryTargetSettings(conf.Targets[0].V, RemoteTargetSettings{
 				DestinationIdentity: remoteTargetTestDestinationIdentity, PublishAttemptTimeout: time.Minute,
@@ -338,7 +338,7 @@ func TestRemoteDeliveryValidatesBothCursorsInOneScanAndKeepsSortRunsOutOfProduce
 			var workspaces int
 			records, err := validateRemoteDeliveryCursors(context.Background(), [2]remoteDeliveryCursor{current, temporary}, producerDirectory, "archive", false, identity, func() (*journalSegmentWorkspace, error) {
 				workspaces++
-				return newJournalSegmentWorkspaceInJournal(conf.Journal.Directory)
+				return newJournalSegmentWorkspaceInJournal(conf.Directory)
 			})
 			require.NoError(t, err)
 			require.Equal(t, 1, workspaces)
@@ -373,7 +373,7 @@ func TestRemoteDeliveryValidatesBothCursorsInOneScanAndKeepsSortRunsOutOfProduce
 func TestRemoteDeliveryStartupUsesCallerContextForCursorScan(t *testing.T) {
 	conf, identity, segments := newRemoteDeliveryTestJournal(t, 1)
 	conf.Targets = configuration.AuditlogTargets{remoteDeliveryTestTarget("archive", nil)}
-	state, err := prepareRemoteDeliveryState(conf.Journal.Directory, identity.ProducerId())
+	state, err := prepareRemoteDeliveryState(conf.Directory, identity.ProducerId())
 	require.NoError(t, err)
 	_, destination, err := customRemoteDeliveryTargetSettings(conf.Targets[0].V, RemoteTargetSettings{
 		DestinationIdentity: remoteTargetTestDestinationIdentity, PublishAttemptTimeout: time.Minute,
@@ -393,7 +393,7 @@ func TestRemoteDeliveryStartupUsesCallerContextForCursorScan(t *testing.T) {
 func TestRemoteDeliveryStartupDiscardsInvalidTemporarySignature(t *testing.T) {
 	conf, identity, segments := newRemoteDeliveryTestJournal(t, 1)
 	conf.Targets = configuration.AuditlogTargets{remoteDeliveryTestTarget("archive", nil)}
-	state, err := prepareRemoteDeliveryState(conf.Journal.Directory, identity.ProducerId())
+	state, err := prepareRemoteDeliveryState(conf.Directory, identity.ProducerId())
 	require.NoError(t, err)
 	_, destination, err := customRemoteDeliveryTargetSettings(conf.Targets[0].V, RemoteTargetSettings{
 		DestinationIdentity: remoteTargetTestDestinationIdentity, PublishAttemptTimeout: time.Minute,
@@ -424,7 +424,7 @@ func TestRemoteDeliveryUsesReconstructedRecordTipAfterRestart(t *testing.T) {
 		calls.Add(1)
 		return nil
 	})}
-	state, err := prepareRemoteDeliveryState(conf.Journal.Directory, identity.ProducerId())
+	state, err := prepareRemoteDeliveryState(conf.Directory, identity.ProducerId())
 	require.NoError(t, err)
 	_, destination, err := customRemoteDeliveryTargetSettings(conf.Targets[0].V, RemoteTargetSettings{
 		DestinationIdentity: remoteTargetTestDestinationIdentity, PublishAttemptTimeout: time.Minute,
@@ -467,7 +467,7 @@ func remoteDeliveryForkJournal(t *testing.T, encrypted bool, count int) (configu
 		require.NoError(t, recorder.Seal())
 	}
 	require.NoError(t, recorder.Close())
-	entries, _, _, err := nativeInventory(filepath.Join(conf.Journal.Directory, identity.ProducerId().String()),
+	entries, _, _, err := nativeInventory(filepath.Join(conf.Directory, identity.ProducerId().String()),
 		map[bool]string{false: nativeActiveClear, true: nativeActiveEncrypted}[encrypted], encrypted)
 	require.NoError(t, err)
 	segments := make([]journalSegmentFile, 0, len(entries))
@@ -1361,7 +1361,7 @@ func TestRemoteDeliveryDestinationChangeFailsClosedButCredentialRotationContinue
 	conf.Targets = configuration.AuditlogTargets{target}
 	_, fingerprint, err := remoteDeliveryTargetSettings(target.V)
 	require.NoError(t, err)
-	stateDirectory, err := prepareRemoteDeliveryState(conf.Journal.Directory, identity.ProducerId())
+	stateDirectory, err := prepareRemoteDeliveryState(conf.Directory, identity.ProducerId())
 	require.NoError(t, err)
 	_, err = loadRemoteDeliveryCursor(stateDirectory, identity, target.Name, fingerprint)
 	require.NoError(t, err)
@@ -1499,12 +1499,12 @@ func TestRemoteDeliveryFlushCanCancelWhileSerialized(t *testing.T) {
 func TestRemoteDeliveryLocksItsCursorState(t *testing.T) {
 	conf, identity, _ := newRemoteDeliveryTestJournal(t, 1)
 	conf.Targets = configuration.AuditlogTargets{remoteDeliveryTestTarget("archive", nil)}
-	lockPath := filepath.Join(conf.Journal.Directory, remoteDeliveryStateDirectoryName, journalLockFileName)
+	lockPath := filepath.Join(conf.Directory, remoteDeliveryStateDirectoryName, journalLockFileName)
 	first, err := NewRemoteDelivery(context.Background(), &conf, identity)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = first.Close() })
 	require.FileExists(t, lockPath)
-	require.NoDirExists(t, conf.Journal.Directory+remoteDeliveryStateDirectoryName)
+	require.NoDirExists(t, conf.Directory+remoteDeliveryStateDirectoryName)
 	second, err := NewRemoteDelivery(context.Background(), &conf, identity)
 	require.Nil(t, second)
 	require.ErrorContains(t, err, "cannot lock remote delivery state")
@@ -1546,7 +1546,7 @@ func newRemoteDeliveryTestJournal(t *testing.T, count int) (configuration.Auditl
 		require.NoError(t, recorder.(SealableRecorder).Seal())
 	}
 	require.NoError(t, recorder.Close())
-	directory := filepath.Join(conf.Journal.Directory, identity.ProducerId().String())
+	directory := filepath.Join(conf.Directory, identity.ProducerId().String())
 	entries, _, _, err := nativeInventory(directory, nativeActiveClear, false)
 	require.NoError(t, err)
 	segments := make([]journalSegmentFile, 0, len(entries))
@@ -1579,7 +1579,7 @@ func setRemoteDeliveryTestOptions(delivery *RemoteDelivery) {
 }
 
 func remoteDeliveryTestCursorSequence(conf configuration.Auditlog, identity *Identity, target configuration.AuditlogTargetName) uint64 {
-	path := filepath.Join(conf.Journal.Directory, remoteDeliveryStateDirectoryName, identity.ProducerId().String(), remoteDeliveryTargetStateName(target), remoteDeliveryCursorFileName)
+	path := filepath.Join(conf.Directory, remoteDeliveryStateDirectoryName, identity.ProducerId().String(), remoteDeliveryTargetStateName(target), remoteDeliveryCursorFileName)
 	payload, err := os.ReadFile(path)
 	if err != nil {
 		return 0

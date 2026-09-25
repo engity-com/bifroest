@@ -4,7 +4,7 @@ description: Verify and export a Bifröst audit journal.
 
 # `bifroest audit export`
 
-Verifies the selected complete journal, including its signed head, before writing its records as JSON Lines in cryptographic chain order. By default the event contains only `name`, `domain`, and `outcome` when present; timestamps, record IDs, and chain provenance appear in a separate envelope. This applies to both clear `.baudit` and encrypted `.beaudit`. Even redacted metadata may be sensitive; protect the output. Export uses bounded in-memory materialization and refuses output exceeding 128 MiB; `audit verify` remains available for larger journals without materializing records.
+Verifies the signed committed journal state before writing JSON Lines in chain order. Bifröst can keep writing; later records are not included. The default view includes only `name`, optional `domain` and `outcome`, plus envelope metadata such as time and record ID. This applies to clear `.baudit` and encrypted `.beaudit`. Protect even redacted output. Export has bounded in-memory limits (including a 128 MiB output cap); use `audit verify` without materializing records for larger journals.
 
 Use `--with-sensitive` to include confidential event fields. For `.beaudit`, this also requires the matching `--decryptionIdentityFile` and verifies the decrypted content. A redacted export of `.beaudit` needs no decryption identity. JSON Lines are an unsigned view, not a substitute for the original container.
 
@@ -14,14 +14,20 @@ Use `--with-sensitive` to include confidential event fields. For `.beaudit`, thi
 
 ## Arguments
 
-`auditlogName` selects one configured audit log by name, not a segment path. Remote sealed segments alone lack the signed head and cannot be exported with this command.
+`auditlogName` selects one configured audit log by name, or labels the source supplied by `--journalDirectory`. It is not a segment path. Remote sealed segments alone lack the signed head and cannot be exported with this command.
 
 ## Flags {: #audit-export-flags }
 
 Includes [all general flags](../index.md#general-flags).
 
 <<flag("configuration", "File Path", "../../data-type.md#file-path", aliases=["c"], id_prefix="audit-export-", heading=3)>>
-Configuration to load. It uses the same platform default as `bifroest run`.
+Optional configuration to load. Without this flag, local export uses the same platform default as `bifroest run` and its configured signing key as producer trust. Cannot be combined with `--journalDirectory`; offline export needs no configuration file.
+
+<<flag("journalDirectory", "File Path", "../../data-type.md#file-path", id_prefix="audit-export-", heading=3)>>
+Complete journal root to read without a configuration file or signing private key. Requires `--expectedProducerId` from an independent trust source, such as [`audit producer-id`](producer-id.md) run on the Bifröst host. A downloaded sealed segment alone is not a complete journal.
+
+<<flag("encryptionPublicKeyFile", "File Path", "../../data-type.md#file-path", id_prefix="audit-export-", heading=3)>>
+Expected encryption recipient for `--journalDirectory` when reading a redacted encrypted journal without a private key, or when supplying multiple decryption identities. For a sensitive export with one `--decryptionIdentityFile`, the recipient is derived from that identity instead. Not used with the configured local journal.
 
 <<flag("decryptionIdentityFile", "File Path", "../../data-type.md#file-path", id_prefix="audit-export-", heading=3)>>
 Private SSH key required together with `--with-sensitive` for encrypted event fields. Repeat the flag when needed. Without `--with-sensitive`, supplied decryption identities are not loaded or used for the redacted export.
@@ -30,7 +36,7 @@ Private SSH key required together with `--with-sensitive` for encrypted event fi
 Explicitly include confidential event fields in the JSON Lines output. This does not make the output encrypted; protect the destination accordingly.
 
 <<flag("expectedProducerId", "string", id_prefix="audit-export-", heading=3)>>
-External trust anchor in the form `<auditlogName>=<64-hex-producer-id>`. Repeat when needed. For a source with this flag, the configured signing private key is not opened and may be absent. The value must come from an independently trusted channel.
+Optional external trust anchor in the form `<auditlogName>=<64-hex-producer-id>`. Repeat when needed. On the server, omit it to trust the configured signing key. With `--journalDirectory`, it is required. Obtain the ID from the server's [`audit producer-id`](producer-id.md) command and retain it through an independently trusted channel. An ID copied from the journal is not a trust anchor.
 
 <<flag("output", ref("File Path", "../../data-type.md#file-path"), default="-", id_prefix="audit-export-", heading=3)>>
 Output file. `-` writes JSON Lines to stdout. The output file's immediate parent directory must already exist; the command does not create missing output directories. The parent is opened without following links where the platform supports it and remains pinned through the final safety check and atomic installation. Output paths inside any enabled configured journal or enabled recording repository, or aliasing a journal file, the loaded configuration file, a signing identity or a referenced encryption public-key file are rejected. Supplied decryption identities are also protected. When stdout is a regular file, the command rejects descriptors pointing to protected files, including journal heads and segments; normal pipes remain supported. Shell redirection with `>` can truncate a file before the command starts, so do not redirect stdout to protected files.

@@ -81,7 +81,7 @@ func buildSortedJournalSegmentIterator(ctx context.Context, directory, tempDirec
 }
 
 func forEachJournalDirectoryEntry(ctx context.Context, directory string, consumer func(os.DirEntry) error) error {
-	file, err := os.Open(directory)
+	file, err := openVerifierPath(directory)
 	if err != nil {
 		return errors.System.Newf("cannot inspect audit directory %q: %w", directory, err)
 	}

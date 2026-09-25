@@ -494,7 +494,7 @@ func TestPrepareRecordingLaterFailureReleasesEarlierRepositoryLock(t *testing.T)
 	second := conf.Auditlogs[0]
 	second.Name = "second"
 	second.IdentityFile = filepath.Join(root, "audit-second", "identity")
-	second.Journal.Directory = filepath.Join(root, "audit-second", "journal")
+	second.Directory = filepath.Join(root, "audit-second", "journal")
 	second.Recording.Directory = filepath.Join(root, "recording-second")
 	conf.Auditlogs = append(conf.Auditlogs, second)
 	secondIdentity, err := audit.EnsureIdentity(&conf.Auditlogs[1])
@@ -675,7 +675,7 @@ flows:
 	auditlog := &conf.Auditlogs[0]
 	auditlog.Enabled = true
 	auditlog.IdentityFile = filepath.Join(root, "audit", "identity")
-	auditlog.Journal.Directory = filepath.Join(root, "audit", "journal")
+	auditlog.Directory = filepath.Join(root, "audit", "journal")
 	auditlog.Recording.Directory = filepath.Join(root, "recording-storage")
 	return conf
 }

@@ -51,15 +51,13 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
     name: foo`,
 			expected: Configuration{
 				Auditlogs: Auditlogs{{
-					Name:          DefaultAuditlogName,
-					Enabled:       DefaultAuditlogEnabled,
-					FailurePolicy: DefaultAuditlogFailurePolicy,
-					IdentityFile:  DefaultAuditlogIdentityFile,
-					Journal: AuditlogJournal{
-						Directory:        DefaultAuditlogJournalDirectory,
-						MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
-					},
-					Recording: expectedDefaultAuditlogRecording(),
+					Name:             DefaultAuditlogName,
+					Enabled:          DefaultAuditlogEnabled,
+					FailurePolicy:    DefaultAuditlogFailurePolicy,
+					IdentityFile:     DefaultAuditlogIdentityFile,
+					Directory:        DefaultAuditlogJournalDirectory,
+					MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
+					Recording:        expectedDefaultAuditlogRecording(),
 				}},
 				Ssh: Ssh{
 					Addresses: DefaultSshAddresses,

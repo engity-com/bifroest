@@ -470,9 +470,8 @@ func (k *kubernetesFixture) startBifroest(controllerKubeconfig string, recording
   - name: default
     enabled: true
     identityFile: %s
-    journal:
-      directory: %s
-      minimumFreeBytes: 1048576
+    directory: %s
+    minimumFreeBytes: 1048576
     recording:
       enabled: true
       directory: %s

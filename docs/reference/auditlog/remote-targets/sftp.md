@@ -15,7 +15,7 @@ The unique, path-safe name of this target within the audit log.
 Selects the SFTP target implementation. Type names are case-insensitive when read; Bifröst writes the canonical value `sftp`.
 
 <<property("publishAttemptTimeout", "duration", default="2m", heading=3)>>
-Maximum duration of one publication attempt, including local hashing, connection setup, upload, read-back verification, and hard-link publication. The value must be positive. Bifröst applies the deadline to the underlying SSH connection and closes that connection on cancellation. If a temporary file may have been created, a hard link succeeded, or the final file already exists, Bifröst opens one fresh connection and makes one deletion attempt with a separate context bounded to five seconds. A cleanup failure remains retryable; the deterministic name lets the next attempt find and remove the same temporary file.
+Positive deadline for hashing, connection, upload, read-back check and hard-link publication. On cancellation Bifröst closes the SSH connection. If an upload or link may have happened, it opens one fresh connection for **one cleanup attempt**, separately limited to five seconds. Failed cleanup remains retryable by deterministic temporary-file name.
 
 <<property("address", "string", required=True, heading=3)>>
 The SSH server as `host`, `host:port`, or `[IPv6-address]:port`. An omitted port defaults to `22`.
@@ -30,7 +30,7 @@ The existing absolute POSIX path on the SFTP server. Empty and relative path com
 Inline OpenSSH `known_hosts` entries used to verify the server host key.
 
 <<property("knownHostsFile", "File Path", "../../data-type.md#file-path", heading=3)>>
-An explicit OpenSSH `known_hosts` file used to verify the server host key (maximum 16 MiB). Bifröst never implicitly reads user or system `known_hosts` files. `knownHosts` and `knownHostsFile` can be used together. The file is snapshotted during target preparation; changing it requires restarting the target to take effect.
+Explicit OpenSSH `known_hosts` file (maximum 16 MiB). Bifröst never reads user or system files implicitly. It can be combined with `knownHosts`; changes require a target restart.
 
 <<property("acceptAllHostKeys", "bool", default=False, heading=3)>>
 Disables server host-key verification. This cannot be combined with `knownHosts` or `knownHostsFile` and should only be used in controlled test environments.
@@ -38,12 +38,11 @@ Disables server host-key verification. This cannot be combined with `knownHosts`
 !!! warning
      Setting `acceptAllHostKeys: true` makes the target connection vulnerable to on-path attacks.
 
-The delivery identity includes the effective inline `knownHosts` content, the bytes of `knownHostsFile` (not its path), and the `acceptAllHostKeys` mode. Moving a file without changing its contents preserves delivery state; changing trusted entries or disabling verification under the same target name rejects an existing cursor or outstanding recording receipt. Use a new target name to deliver the full local history to a replacement server. SSH passwords and private-key identities are not part of this identity and can be rotated.
-
-This fingerprint differs from the earlier, unreleased SFTP target format even when the configuration has not changed. Existing development cursors and outstanding recording receipts are not migrated or rewritten; settle their delivery obligations with the previous build or start with a new empty repository and retain the old artifacts separately. Merely renaming a target does not discharge pending receipts in an existing repository.
-
 <<property("identityFiles", "list of File Paths", heading=3)>>
-One or more unencrypted OpenSSH or PEM private-key files, tried in order. Each file must be regular, owned by the Bifröst process user, and at most 1 MiB. On Unix, group and other permission bits must all be disabled. On Windows, the file must use a protected DACL granting access only to its owner and `SYSTEM`. Identity paths are static and do not support templates. Their keys must differ from every configured audit-signing identity and audit-encryption recipient.
+One or more unencrypted OpenSSH or PEM private keys, tried in order. Paths are static, not templates; keys must differ from audit signing and encryption keys. Files must be regular, owned by the Bifröst user and at most 1 MiB:
+
+* Unix: no group or other access.
+* Windows: protected DACL allowing only the owner and `SYSTEM`.
 
 <<property("password", "string", default="", heading=3)>>
 The SSH password. This value supports Bifröst string templates without a context object. Prefer an environment variable or the `file` template function over storing it directly in YAML. Template results are used exactly as rendered and are not trimmed.
@@ -51,17 +50,23 @@ The SSH password. This value supports Bifröst string templates without a contex
 Exactly one authentication method is required: either `password` or at least one `identityFiles` entry.
 
 <<property("connectTimeout", "duration", default="10s", heading=3)>>
-The maximum time allowed for TCP connection, SSH handshake, and SFTP session setup. A value of zero disables this additional timeout; negative values are rejected. The earlier deadline of `connectTimeout` and `publishAttemptTimeout` applies during setup.
+TCP, SSH and SFTP setup timeout. `0s` disables this **additional** limit; negative values are rejected. The earlier of this and `publishAttemptTimeout` wins.
+
+## Delivery identity
+
+Host-key trust binds to inline `knownHosts` **entries**, `knownHostsFile` **contents** (not its path), and the `acceptAllHostKeys` setting. Changing trust under the same target name rejects an existing cursor or outstanding Recording receipt. Moving an unchanged file does not; SSH credentials may rotate without changing the destination identity.
+
+This fingerprint differs from the earlier unreleased format. Existing development cursors and pending receipts are not migrated. Settle them with the previous build or use a new empty repository while retaining old artifacts; merely renaming a target does not discharge pending receipts.
 
 ## Publication
 
-Bifröst uploads each segment under a deterministic hidden temporary name, verifies it, and exposes it atomically through a hard link. Temporary files use mode `0600` and producer directories mode `0700`; existing final files are accepted only when permissions, size, and SHA-256 checksum match.
-
-Retries can resume a verified temporary file and remove it after publication. If an interrupted process leaves an invalid deterministic temporary file, Bifröst removes only that known file and retries the upload later. Conflicting final content is never overwritten. The server must support `hardlink@openssh.com` version `1` plus permission changes through `SETSTAT` and `FSETSTAT`; rename is intentionally not used.
+* Upload to a deterministic hidden temporary name, verify its bytes, then publish with `hardlink@openssh.com` version `1`. **No rename or overwrite.** The server must also support permission changes via `SETSTAT` and `FSETSTAT`.
+* Producer directories use mode `0700`, temporary files `0600`. An existing final file is accepted only if permissions, size and SHA-256 match.
+* Retries reuse a verified temporary file. Only an invalid temporary file with the known deterministic name is removed before a later retry; conflicting final content is never replaced.
 
 ## Permissions
 
-The SFTP account needs permission to inspect the configured directory, create producer directories, change producer-directory and temporary-file modes, and exclusively create, write, read, hard-link, and delete temporary files below them. It does not need permission to list directories, overwrite final files, rename files, or delete final files. Restrict the account to the configured directory whenever the server supports path-scoped authorization.
+The SFTP account needs to inspect the root; create producer directories; set directory and temporary-file modes; and exclusively create, write, read, hard-link and delete temporary files. It does **not** need listing, final-file deletion, overwrite or rename permissions. Restrict it to the configured directory where possible.
 
 ## Example
 

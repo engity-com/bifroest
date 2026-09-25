@@ -1100,12 +1100,12 @@ func validateAuditlogRuntimePaths(auditlogs configuration.Auditlogs) error {
 		if err != nil {
 			return errors.Config.Newf("cannot resolve identity file of auditlog %q: %w", configured.Name, err)
 		}
-		journal, err := sys.CanonicalPath(configured.Journal.Directory)
+		journal, err := sys.CanonicalPath(configured.Directory)
 		if err != nil {
 			return errors.Config.Newf("cannot resolve journal directory of auditlog %q: %w", configured.Name, err)
 		}
 		configured.IdentityFile = identityFile
-		configured.Journal.Directory = journal
+		configured.Directory = journal
 		if configured.Recording.Enabled {
 			recording, err := sys.CanonicalPath(configured.Recording.Directory)
 			if err != nil {
@@ -1147,7 +1147,7 @@ func validateRecordingRuntimePathOverlaps(conf *configuration.Configuration, sto
 			if !auditlog.Enabled {
 				continue
 			}
-			if runtimePathsOverlap(recordingDirectory, auditlog.Journal.Directory) {
+			if runtimePathsOverlap(recordingDirectory, auditlog.Directory) {
 				return errors.Config.Newf("auditlog %q recording directory overlaps auditlog %q journal", recordingAuditlog.Name, auditlog.Name)
 			}
 			if runtimePathsOverlap(recordingDirectory, auditlog.IdentityFile) {
@@ -1268,7 +1268,7 @@ func validateRuntimePathCandidate(conf *configuration.Configuration) error {
 			if err := validateSessionStorageRuntimePath(storage, auditlog.IdentityFile, fmt.Sprintf("auditlog %q identity file", auditlog.Name)); err != nil {
 				return err
 			}
-			if err := validateSessionStorageRuntimePath(storage, auditlog.Journal.Directory, fmt.Sprintf("auditlog %q journal", auditlog.Name)); err != nil {
+			if err := validateSessionStorageRuntimePath(storage, auditlog.Directory, fmt.Sprintf("auditlog %q journal", auditlog.Name)); err != nil {
 				return err
 			}
 		}
@@ -1345,7 +1345,7 @@ func validateStaticKeyRuntimePaths(conf *configuration.Configuration, storage st
 			if runtimePathsOverlap(resolved, auditlog.IdentityFile) {
 				return errors.Config.Newf("%s overlaps auditlog %q identity file", description, auditlog.Name)
 			}
-			if runtimePathsOverlap(resolved, auditlog.Journal.Directory) {
+			if runtimePathsOverlap(resolved, auditlog.Directory) {
 				return errors.Config.Newf("%s overlaps auditlog %q journal", description, auditlog.Name)
 			}
 			if auditlog.Recording.Enabled && runtimePathsOverlap(resolved, auditlog.Recording.Directory) {

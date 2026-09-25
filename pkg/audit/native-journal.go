@@ -59,7 +59,7 @@ func newNativeRecorder(conf *configuration.Auditlog, identity *Identity) (Record
 			return nil, err
 		}
 	}
-	root, err := canonicalJournalDirectory(strings.TrimSpace(conf.Journal.Directory))
+	root, err := canonicalJournalDirectory(strings.TrimSpace(conf.Directory))
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +121,7 @@ func newNativeRecorder(conf *configuration.Auditlog, identity *Identity) (Record
 	if err != nil {
 		return nil, err
 	}
-	minimum := conf.Journal.MinimumFreeBytes
+	minimum := conf.MinimumFreeBytes
 	if minimum == 0 {
 		minimum = configuration.DefaultAuditlogJournalMinimumFreeBytes
 	}

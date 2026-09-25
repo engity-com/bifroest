@@ -8,13 +8,15 @@ Audit commands never create or replace identities and do not alter journal evide
 
 For least-privilege offline verification, `--expectedProducerId <auditlogName>=<producer-id>` supplies an external trust anchor for one selected source. The producer ID is the 64-hex-character SHA-256 identity of the signing public key. Record it through an independently trusted provisioning channel; do not take it from the journal currently being verified or extract it automatically from a container. Repeat the flag for multiple selected sources. When a source has an explicit expected producer ID, its configured signing private key is not opened and may be absent. Without this flag, the configured private key remains mandatory, so there is no trust-anchor-less mode.
 
-Stop the Bifröst service before running these commands so the journal remains stable throughout verification.
+On the Bifröst host, [`bifroest audit producer-id`](producer-id.md) prints this ID from the configured signing private key without reading the journal. Preserve that value through a trusted channel before using it as an offline trust anchor. Locally, `audit verify` and `audit export` already load the platform's default configuration and use its signing identity; neither `--configuration` nor `--expectedProducerId` is needed unless selecting a different configuration or working without the signing key.
 
-Commands select configured auditlog **names**, not segment paths. For offline use, copy the complete stopped local journal root, including `<root>/<producer-id>/head.cbor`, all sealed segments, and any active segment, and point an offline configuration at that root and the corresponding encryption public-key file. The signed head is required. The server's signing private key need not be copied when `--expectedProducerId` is provided for each source; keep any age recipient private key solely on the offline workstation. See the [encrypted audit example](../../auditlog/index.md#encrypted-audit-events).
+`audit verify`, `audit export`, `audit decrypt` and `audit merge` can read while Bifröst keeps writing. They check a signed committed state without pausing the service; a simultaneous rotation can cause a safe failure that can be retried. `audit producer-id` reads only the signing identity.
+
+Commands select auditlog **names**, not segment paths. For offline export, copy the complete stopped local journal root, including `<root>/<producer-id>/head.cbor`, all sealed segments, and any active segment. Supply `--journalDirectory` and an independently trusted `--expectedProducerId` to `audit export` or `audit decrypt` instead of creating an offline configuration. The signed head is required. The server's signing private key must not be copied; keep any age recipient private key solely on the offline workstation. `audit verify` and `audit merge` still use configured sources. See the [encrypted audit example](../../auditlog/index.md#encrypted-audit-events).
 
 S3, SFTP, and WebDAV targets deliver only sealed segments, not the head or a complete journal. There is no audit CLI command to verify a remote segment in isolation. Retain an independently trusted expected chain tip for remote-only evidence to detect suffix deletion or rollback.
 
-Run them on quiescent storage whose journal and output parent directories are not writable by untrusted users. The verifier detects observed changes during a scan, but path-based filesystem APIs cannot provide one atomic snapshot across multiple journals or prevent a privileged actor from replacing paths concurrently.
+Protect journal and output paths from untrusted writers. A command verifies each source up to its captured signed head; writes after that are excluded. A merge of several journals is **not** an atomic cross-journal snapshot. Detecting rollback of a valid signed head still needs an independently retained chain tip.
 
 Large verifications write bounded sorting runs to a private per-operation directory in the operating system's temporary directory; small journals need no workspace. If temporary storage is unavailable or resolves inside any selected journal when sorting is needed, verification fails instead of writing inside journal evidence. Normal success, cancellation, and detectable errors remove the operation directory. An ungraceful termination such as `SIGKILL` can leave it behind; after confirming that no audit command is using it, an operator may remove the stale temporary directory manually. Recorder startup recovery separately uses managed `<journal-directory>/.bifroest-work` directories.
 
@@ -22,6 +24,7 @@ For file output, `export`, `decrypt`, and `merge` reject paths that could replac
 
 ## Commands
 
+* [`bifroest audit producer-id`](producer-id.md) prints the producer ID from a configured local signing identity.
 * [`bifroest audit verify`](verify.md) verifies a journal without producing output.
 * [`bifroest audit decrypt`](decrypt.md) is an alias for the redacted-by-default JSON Lines export; `--with-sensitive` explicitly enables decrypted private fields.
 * [`bifroest audit export`](export.md) verifies and exports a journal to JSON Lines.

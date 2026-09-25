@@ -78,7 +78,7 @@ func doAuditMerge(opts *auditMergeOpts, stdout io.Writer) error {
 	if err := validate(); err != nil {
 		return err
 	}
-	verification, err := audit.VerifyJournals(context.Background(), sources)
+	verification, err := audit.VerifyLiveJournals(context.Background(), sources)
 	if err != nil {
 		return err
 	}

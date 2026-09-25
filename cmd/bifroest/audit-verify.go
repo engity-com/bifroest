@@ -45,7 +45,7 @@ func doAuditVerify(opts *auditVerifyOpts) error {
 	if err != nil {
 		return err
 	}
-	return audit.VerifyJournalIntegrity(context.Background(), []audit.JournalSource{source})
+	return audit.VerifyLiveJournalIntegrity(context.Background(), []audit.JournalSource{source})
 }
 
 func configuredAuditJournalSource(configured *configuration.Auditlog, decryptionIdentityFiles []string, expectedProducerId audit.ProducerId) (audit.JournalSource, error) {
@@ -84,7 +84,7 @@ func configuredAuditJournalSource(configured *configuration.Auditlog, decryption
 	}
 	return audit.JournalSource{
 		Name:                        configured.Name.String(),
-		Directory:                   configured.Journal.Directory,
+		Directory:                   configured.Directory,
 		ExpectedProducerId:          expectedProducerId,
 		ExpectedEncryptionRecipient: encryptionRecipient,
 		DecryptionIdentities:        decryptionIdentities,

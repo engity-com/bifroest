@@ -4,9 +4,14 @@ description: Replicate sealed Bifröst audit-log segments to remote storage.
 
 # Remote targets
 
-Remote targets copy sealed `.baudit` or `.beaudit` audit-log segments byte for byte to external storage under `<producer-id>/<segment-file-name>`. Selected Recording targets copy sealed `.bcast` or `.becast` artifacts under `<producer-id>/<recording-uuid>.<suffix>` in the same way. The local journal remains the authoritative source and keeps all segments after successful delivery. Neither a JSONL export nor a decrypted `.cast` is created remotely. Clear `.baudit` and `.bcast` originals still contain confidential content after decompression; even encrypted originals expose signed public metadata. Apply access controls and independent retention policies at every remote destination.
+Remote targets copy **sealed originals**, not exports:
 
-For example, an S3 target with bucket `company-bifroest-audit` and prefix `bifroest-auditlog` stores a sealed encrypted audit segment at `s3://company-bifroest-audit/bifroest-auditlog/<producer-id>/segment-00000000000000000001-<segment-hash>.beaudit`. Replace both angle-bracket placeholders with the actual producer ID and segment hash; a remote file name alone does not establish trust. Copy the object byte for byte when preserving remote evidence. A remote target does **not** receive the local `head.cbor` or active file: the [audit CLI](../../cli/audit/index.md) cannot verify that single downloaded segment as a complete journal. Retain a separately trusted chain tip to detect a missing suffix, and preserve the complete local journal for CLI verification.
+* Audit segments: `.baudit` or `.beaudit` under `<producer-id>/<segment-file-name>`.
+* Selected session recordings: `.bcast` or `.becast` under `<producer-id>/<recording-uuid>.<suffix>`.
+
+The local journal remains authoritative and retains its segments. Remote targets never receive `head.cbor`, the active segment, JSONL or a decrypted Cast. A downloaded segment alone is **not** a complete journal for the [audit CLI](../../cli/audit/index.md). Keep the complete local journal for verification and an independently trusted chain tip to detect missing remote history.
+
+Clear originals contain confidential content after decompression; encrypted originals expose signed public metadata. Protect every destination and configure its retention independently.
 
 ## Available targets
 
@@ -18,32 +23,51 @@ Each target needs a unique `name` within its audit log and selects an implementa
 
 ## Delivery behavior
 
-Bifröst delivers segments in sequence with one independent worker per target. Failures do not block audit recording or other targets; they are retried with exponential backoff and a fresh timeout.
-
-New segments are discovered through filesystem notifications and a periodic safety scan. If notifications are unavailable, Bifröst continues with bounded polling and logs a warning.
-
-During shutdown, Bifröst seals a non-empty active segment and gives targets up to five seconds to catch up. Undelivered segments remain local and continue after the next start.
+* Each target has an independent worker. Segments are delivered in order; failures retry with backoff and a fresh timeout without blocking local audit writes or other targets.
+* Filesystem notifications trigger delivery, backed by a periodic scan. If notifications fail, polling continues with a warning.
+* On shutdown, Bifröst seals a non-empty active segment and allows up to five seconds for delivery. Undelivered segments remain local for the next start.
 
 ## Delivery identity
 
-A signed cursor below `<journal-directory>/.delivery/` records the last confirmed segment and binds it to the target name and effective destination. Credential and timeout rotation keeps the cursor, while changing the endpoint, namespace, bucket, prefix, directory, destination user, or SFTP host-key trust under the same name fails closed. For SFTP, trust is bound to the inline entries and file contents, not the known-hosts file path; switching to `acceptAllHostKeys` also changes the destination identity. Use a new target name when a replacement destination must receive the complete local history.
+A signed cursor under `<auditlog-directory>/.delivery/` binds the last confirmed segment to its target name and effective destination:
 
-Before delivering the next segment, Bifröst verifies its signed predecessor segment and record hashes against the confirmed chain. On restart it reconstructs that chain from locally retained segments, verifies the cursor against its tip, and checks a signed temporary cursor before promoting it. Removing a confirmed local segment makes delivery fail closed; the cursor alone cannot reconstruct the missing last-record hash or prove that a remote copy still exists.
+* Credentials and timeouts can rotate without resetting it. Changing the endpoint, namespace, bucket, prefix, directory, destination user or SFTP host-key trust under the same name fails closed. Use a new target name to deliver the full history to a replacement destination.
+* For SFTP, host-key trust depends on the `knownHosts` entries or **contents** of `knownHostsFile`, not its path. Switching to `acceptAllHostKeys` also changes the destination identity.
+* Before the next delivery and again after restart, Bifröst reconstructs and verifies the predecessor chain against the cursor. Removing a confirmed local segment fails closed: a cursor alone cannot reconstruct the chain or prove a remote copy still exists.
 
-## Custom targets
+## Recording receipts
 
-Custom Go targets normally register through `audit.RegisterRemoteTarget`, which binds their configuration codec and runtime factory together. `configuration.RegisterAuditlogTargetCodec` is only the low-level entry point for configuration codecs without runtime delivery support.
+Before publishing a sealed recording locally, Bifröst stores a signed receipt under its repository's `.delivery/`. It permanently binds the artifact's digest and size to the **selected targets and destination fingerprints at sealing time**. Later target changes cannot redirect that artifact.
 
-Factories return `RemoteTargetSettings` with a stable, non-secret `DestinationIdentity` and a positive `PublishAttemptTimeout`. A factory can be invoked separately for audit-log and inherited recording delivery, so every invocation must return an independently owned target. The target's `Publish` method must honor context cancellation, and `Close` must unblock an active publication during shutdown.
+At startup:
 
-Targets can additionally implement `audit.RemoteArtifactTarget` to accept byte-exact artifacts such as sealed session recordings. `PublishArtifact` must verify the supplied `ArtifactDigest`, preserve the same atomic and idempotent publication semantics as journal segments, and reject conflicting content at the same producer-relative file name. Existing custom targets that only implement `audit.RemoteTarget` remain journal-only.
+* A sealed artifact without its matching receipt fails closed.
+* A receipt without its artifact fails closed, unless durable retention deletion already began.
+* If both receipt and artifact disappear, detection requires an independent inventory.
 
-The delivery worker checks the local artifact bytes against their signed receipt before calling `PublishArtifact`; custom targets remain responsible for the integrity of the bytes they actually store and for rejecting a different remote object at the same path.
+Receipts also hold the audit outbox for [`session.recording.delivery.failed` and `session.recording.delivery.succeeded`](../events.md#sessionrecordingdeliveryfailed). They count toward `maximumSpoolBytes`. Each state update atomically replaces a receipt; temporary copies left by a crash are inventoried and recovered before further spool growth is admitted.
 
-Before a sealed session recording is published locally, Bifröst stores a signed delivery receipt below the Recording repository's `.delivery` directory. The receipt binds the exact artifact digest and size to the selected target names and effective destination fingerprints. This snapshot remains authoritative for that artifact when targets are later added, removed, reordered, or reconfigured; an existing sealed artifact without its matching receipt is rejected fail-closed during service startup. After recovery, a receipt without its sealed artifact also prevents startup, except when durable retention deletion has already begun. A receipt and artifact removed together cannot be detected without an independent inventory. The receipt also contains the persistent outbox state for [`session.recording.delivery.failed` and `session.recording.delivery.succeeded`](../events.md#sessionrecordingdeliveryfailed). Receipt files count toward the Recording repository's `maximumSpoolBytes` limit. Every state transition atomically replaces its receipt, so the old and temporary copies can coexist briefly; quota admission accounts for the durable replacement size, while a temporary copy left by a crash is fully inventoried and recovered before further spool growth is admitted.
+## Recording delivery
 
-Sealed recordings are delivered asynchronously by one sequential worker per selected target. Workers use filesystem notifications with a periodic safety scan, retry failures with exponential backoff and jitter, and persist a signed acknowledgement only after successful publication. The first failure in one Recording-target episode is persisted and audited before another publication attempt; retries do not flood the audit journal. A successful publication whose acknowledgement could not yet be persisted is not repeated by the running process. After the acknowledgement becomes durable, its pending success event is recovered and written before delivery is considered complete. During restart, publication remains at-least-once and targets must therefore preserve their idempotent conflict-detection contract.
+* One sequential worker per selected target retries asynchronously with backoff and jitter; notifications have a periodic safety scan.
+* The first failure in an episode is durably recorded and audited **before another attempt**. Retries do not flood the journal.
+* A successful publication needs a durable signed acknowledgement **and** success audit event. If acknowledgement persistence fails, the running worker does not immediately republish; **restart can repeat publication**.
+* After a durable acknowledgement, startup replays a pending success event **without republishing**. Targets must reject conflicting bytes and support idempotent retries.
+* Changing or removing a target with an outstanding delivery or audit obligation fails at startup. A fully acknowledged and audited historical target does not block changes.
+* Shutdown allows up to five seconds for acknowledgements and audit events; unfinished work remains in the local spool for restart.
 
-An incomplete receipt whose target was removed or whose effective destination changed makes service preparation fail closed. Historical targets with both a durable acknowledgement and success-audit marker do not block later configuration changes. During shutdown, Bifröst gives Recording delivery up to five seconds to finish the acknowledgement and audit outbox for artifacts visible at the start of the flush; incomplete artifacts stay in the local spool and resume after restart.
+## Recording retention
 
-Local Recording cleanup is controlled by `recording.retainFor`, which defaults to `720h`. A value of `0s` prevents new automatic deletions; cleanup that was already durably marked as started still completes after restart or reconfiguration. For an artifact with selected targets, the retention period starts at the latest durable target acknowledgement; every selected target must also have its success event durably marked before the artifact is eligible. If no target was selected, retention starts when the artifact was sealed. Housekeeping verifies the signed receipt and artifact identity, durably marks the deletion, deletes the artifact first, and removes its receipt state only afterwards. Any verification, deletion, or audit-start failure preserves the remaining local state for a later retry. Audit-log journal segments are not affected by Recording retention and remain local.
+`recording.retainFor` defaults to 30 days. It starts at sealing without targets, or at the **latest durable target acknowledgement** with targets. Every selected target's success event must also be durably marked before deletion.
+
+Housekeeping verifies the signed receipt and artifact, marks deletion durably, deletes the local artifact **before** the receipt, and retries later if verification, deletion or audit-start fails. `retainFor: 0s` stops new deletions, not one already begun. Remote copies and local audit-log segments are never deleted by Recording retention.
+
+## Example
+
+An S3 target with bucket `company-bifroest-audit` and prefix `bifroest-auditlog` stores a sealed segment at:
+
+```text
+s3://company-bifroest-audit/bifroest-auditlog/<producer-id>/segment-00000000000000000001-<segment-hash>.beaudit
+```
+
+The placeholders are not trust anchors. Preserve the exact bytes; the remote file name alone cannot establish producer identity.

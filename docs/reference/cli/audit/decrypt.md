@@ -4,7 +4,7 @@ description: Alias for exporting a verified Bifröst audit journal.
 
 # `bifroest audit decrypt`
 
-`audit decrypt` is an alias for [`audit export`](export.md) and follows the same safe defaults. It verifies the complete configured journal and its signed head, not a standalone segment. It does **not** reveal confidential fields unless `--with-sensitive` is explicitly supplied; for encrypted `.beaudit`, that flag also requires the matching private age recipient key via `--decryptionIdentityFile`. Without the flag, supplied decryption identities are not loaded. Clear `.baudit` needs no decryption key but still requires `--with-sensitive` for private fields. The JSON Lines result is unsigned and must be protected.
+`audit decrypt` is an alias for [`audit export`](export.md) and can read while Bifröst writes. It never accepts a standalone segment. Confidential fields still require `--with-sensitive` and, for `.beaudit`, the matching offline age identity via `--decryptionIdentityFile`. Without `--with-sensitive`, supplied decryption identities are not loaded. The JSONL result is unsigned and must be protected.
 
 ## Syntax
 

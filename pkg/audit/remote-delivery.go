@@ -168,7 +168,7 @@ func newRemoteDelivery(ctx context.Context, conf *configuration.Auditlog, identi
 	if targets == nil || len(targets.entries) != len(conf.Targets) {
 		return nil, errors.System.Newf("remote delivery target set does not match configuration")
 	}
-	journalDirectory, err := canonicalJournalDirectory(conf.Journal.Directory)
+	journalDirectory, err := canonicalJournalDirectory(conf.Directory)
 	if err != nil {
 		return nil, err
 	}

@@ -783,8 +783,7 @@ housekeeping:
 auditlog:
   - enabled: true
     identityFile: %s
-    journal:
-      directory: %s
+    directory: %s
 %s
 ssh:
   addresses:

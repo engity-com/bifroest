@@ -183,7 +183,7 @@ func TestPrepareBestEffortDisablesAuditlogWithUnavailableJournal(t *testing.T) {
 		conf.Auditlogs[0].Enabled = true
 		conf.Auditlogs[0].FailurePolicy = configuration.AuditlogFailurePolicyBestEffort
 		conf.Auditlogs[0].IdentityFile = filepath.Join(directory, "identity")
-		conf.Auditlogs[0].Journal.Directory = journal
+		conf.Auditlogs[0].Directory = journal
 	})
 
 	require.True(t, server.service.auditlogDisabled(configuration.DefaultAuditlogName))

@@ -8,7 +8,7 @@ Verifies a sealed `.bcast` or `.becast` session Recording and exports its exact 
 
 The exported Cast contains captured terminal, standard-output, and standard-error content and can contain secrets displayed by programs. It is **never redacted**, unlike redacted-by-default audit JSONL exports. Protect the output according to its sensitivity; even the original encrypted container exposes public metadata. Bifröst does not automatically create plaintext `.cast` or `.jsonl` files.
 
-`--with-sensitive` is mandatory before the input is opened for **every** format. The input must be a regular, non-symlink file and must remain the same file with unchanged size, mode, and modification time while Bifröst creates a private byte-exact snapshot. Verification and export use only that snapshot, preventing later input changes from altering the exported bytes. An encrypted snapshot remains encrypted; stdout export does not create a decrypted temporary file. Standard input is deliberately unsupported.
+`--with-sensitive` is mandatory before the input is opened for **every** format. The input must be a regular, non-symlink file and must remain the same file with unchanged size, mode, and modification time while Bifröst creates a private byte-exact snapshot. Verification and export use only that snapshot, preventing later input changes from altering the exported bytes. An encrypted snapshot remains encrypted; stdout export does not create a decrypted temporary file. Standard input is deliberately unsupported. Unlike `audit export`, this command does not load a configuration unless `--auditlog` selects a local Recording repository.
 
 ## Syntax
 
@@ -25,13 +25,19 @@ Includes [all general flags](../index.md#general-flags).
 <<flag("expectedProducerId", "string", id_prefix="recording-export-", heading=3)>>
 External trust anchor containing exactly 64 hexadecimal characters. Obtain this value through an independently trusted channel. It is the lowercase hexadecimal SHA-256 digest of the RFC 4253 binary SSH public-key blob, which is the decoded Base64 field of the provisioned OpenSSH public-key line. A producer ID or public key embedded in the artifact is not a trust anchor.
 
-Either this flag or `--allowUntrusted` is required.
+Use this flag for standalone or downloaded artifacts. Alternatively, `--auditlog` derives the expected ID from a configured local signing identity, but only for files in that audit log's enabled Recording repository under `sealed/`. `--expectedProducerId`, `--allowUntrusted`, and `--auditlog` are mutually exclusive.
+
+<<flag("auditlog", "Audit log Name", "../../auditlog/index.md", id_prefix="recording-export-", heading=3)>>
+Selects an enabled local Recording repository and uses its signing identity as the producer trust anchor. Only a file directly under its configured `recording.directory/sealed/` is accepted. This cannot be used to trust a downloaded or separately copied artifact; use `--expectedProducerId` for those.
+
+<<flag("configuration", "File Path", "../../data-type.md#file-path", id_prefix="recording-export-", heading=3)>>
+Optional path for `--auditlog`; when omitted, Bifröst loads the platform's default configuration. Without `--auditlog`, this flag is not accepted and no configuration is loaded.
 
 <<flag("with-sensitive", "bool", default=False, id_prefix="recording-export-", heading=3)>>
 Explicitly authorizes access to sensitive recording content. Required even for clear recordings and even when exporting to a file.
 
 <<flag("allowUntrusted", "bool", default=False, id_prefix="recording-export-", heading=3)>>
-Explicitly permits export after verifying only the artifact's cryptographic self-consistency. This does not establish who created the Recording and cannot be combined with `--expectedProducerId`.
+Explicitly permits export after verifying only the artifact's cryptographic self-consistency. This does not establish who created the Recording and cannot be combined with `--expectedProducerId` or `--auditlog`.
 
 <<flag("decryptionIdentityFile", "File Path", "../../data-type.md#file-path", id_prefix="recording-export-", heading=3)>>
 Protected SSH private-key file used to decrypt encrypted `.becast`. Repeat the flag to provide multiple keys. Bifröst selects only the identity whose public-key fingerprint matches the signed recipient fingerprint. Ed25519 and RSA keys are supported. Clear `.bcast` and signed `.cast` inputs do not require this flag.
@@ -45,6 +51,18 @@ A named output is written through a private temporary file in the output directo
 Atomically replaces an existing named output. This never permits replacing the Recording input or a supplied decryption identity.
 
 ## Examples
+
+On the Bifröst host, export a clear local `.bcast` from an enabled Recording repository without repeating the signing producer ID or configuration path:
+
+```shell
+bifroest recording export \
+  --auditlog default \
+  --with-sensitive \
+  --output session.cast \
+  /var/lib/engity/bifroest/recordings/sealed/<recording-uuid>.bcast
+```
+
+Run this from a directory outside the configured journal and Recording repository. If the input is encrypted `.becast`, keep its private decryption key offline instead of putting it on the Bifröst server; use the external-ID workflow below on the offline workstation.
 
 Export a trusted clear `.bcast` to a private Cast file without a decryption key:
 

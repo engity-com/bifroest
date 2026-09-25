@@ -14,7 +14,7 @@ Clear and encrypted journals can be merged together. The default JSON Lines outp
 
 ## Arguments
 
-`auditlogName` selects one or more configured audit logs by name, not segment paths. Each needs a complete stopped journal with its signed head.
+`auditlogName` selects one or more configured audit logs by name, not segment paths. Each needs its signed head; Bifröst need not be stopped. Different journals are captured independently, not at one atomic instant.
 
 ## Flags {: #audit-merge-flags }
 

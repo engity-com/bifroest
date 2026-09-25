@@ -180,11 +180,11 @@ func TestResolveEncryptionPublicKeyFileEnforcesRecipientPolicyBeforeJournalWrite
 
 			conf, identity := newJournalTestIdentity(t)
 			conf.EncryptionPublicKeyFile = crypto.PublicKeysFile(path)
-			require.NoDirExists(t, conf.Journal.Directory)
+			require.NoDirExists(t, conf.Directory)
 			recorder, err := NewRecorder(&conf, identity)
 			require.Nil(t, recorder)
 			require.ErrorContains(t, err, tc.wantError)
-			require.NoDirExists(t, conf.Journal.Directory)
+			require.NoDirExists(t, conf.Directory)
 		})
 	}
 }
@@ -517,5 +517,5 @@ func appendSealAndCrashCloseJournalTestRecorder(t *testing.T, recorder Recorder)
 }
 
 func producerJournalTestDirectory(conf configuration.Auditlog, identity *Identity) string {
-	return filepath.Join(conf.Journal.Directory, identity.ProducerId().String())
+	return filepath.Join(conf.Directory, identity.ProducerId().String())
 }
