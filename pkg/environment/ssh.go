@@ -248,8 +248,23 @@ func (this *sshEnvironment) openTargetSession(ctx context.Context, transport *ss
 		if actual.err != nil {
 			this.invalidateTransportAfterOpenError(transport, actual.err)
 		}
+		if err := ctx.Err(); err != nil {
+			if actual.session != nil {
+				_ = actual.session.Close()
+			}
+			return nil, err
+		}
 		return actual.session, actual.err
 	case <-ctx.Done():
+		select {
+		case actual := <-completed:
+			if actual.session != nil {
+				_ = actual.session.Close()
+			}
+			return nil, ctx.Err()
+		default:
+		}
+		this.repository.removeTransport(this.connection.Id(), transport)
 		actual := <-completed
 		if actual.session != nil {
 			_ = actual.session.Close()
@@ -428,8 +443,23 @@ func (this *sshEnvironment) openTargetChannel(ctx context.Context, transport *ss
 		if actual.err != nil {
 			this.invalidateTransportAfterOpenError(transport, actual.err)
 		}
+		if err := ctx.Err(); err != nil {
+			if actual.channel != nil {
+				_ = actual.channel.Close()
+			}
+			return nil, nil, err
+		}
 		return actual.channel, actual.requests, actual.err
 	case <-ctx.Done():
+		select {
+		case actual := <-completed:
+			if actual.channel != nil {
+				_ = actual.channel.Close()
+			}
+			return nil, nil, ctx.Err()
+		default:
+		}
+		this.repository.removeTransport(this.connection.Id(), transport)
 		actual := <-completed
 		if actual.channel != nil {
 			_ = actual.channel.Close()
@@ -472,6 +502,13 @@ func (this *sshEnvironment) NewDestinationConnection(ctx context.Context, destin
 	}()
 	select {
 	case actual := <-completed:
+		if err := ctx.Err(); err != nil {
+			if actual.connection != nil {
+				_ = actual.connection.Close()
+			}
+			transport.releaseChannel()
+			return nil, err
+		}
 		if actual.err != nil {
 			transport.releaseChannel()
 			this.invalidateTransportAfterOpenError(transport, actual.err)
@@ -479,6 +516,16 @@ func (this *sshEnvironment) NewDestinationConnection(ctx context.Context, destin
 		}
 		return &sshDestinationConnection{Conn: actual.connection, release: transport.releaseChannel}, nil
 	case <-ctx.Done():
+		select {
+		case actual := <-completed:
+			if actual.connection != nil {
+				_ = actual.connection.Close()
+			}
+			transport.releaseChannel()
+			return nil, ctx.Err()
+		default:
+		}
+		this.repository.removeTransport(this.connection.Id(), transport)
 		go func() {
 			defer transport.releaseChannel()
 			actual := <-completed
@@ -544,6 +591,11 @@ func (this *sshLifetimeSession) Context() essh.Context { return this.context }
 func (this *sshTransport) ensureAgent(task Task, lifetimeContext context.Context) error {
 	this.agentMu.Lock()
 	defer this.agentMu.Unlock()
+	select {
+	case <-this.done:
+		return fmt.Errorf("SSH target transport is closed")
+	default:
+	}
 	if this.agent != nil {
 		return nil
 	}
@@ -558,7 +610,16 @@ func (this *sshTransport) ensureAgent(task Task, lifetimeContext context.Context
 		return err
 	}
 	go bssh.ForwardAgentConnections(listener, task.Connection().Logger(), &sshLifetimeSession{task.SshSession(), lifetime})
-	conn, err := bnet.ConnectToNamedPipe(lifetimeContext, listener.Path())
+	connectContext, cancel := context.WithCancel(lifetimeContext)
+	defer cancel()
+	go func() {
+		select {
+		case <-this.done:
+			cancel()
+		case <-connectContext.Done():
+		}
+	}()
+	conn, err := bnet.ConnectToNamedPipe(connectContext, listener.Path())
 	if err != nil {
 		_ = listener.Close()
 		return err
@@ -567,6 +628,13 @@ func (this *sshTransport) ensureAgent(task Task, lifetimeContext context.Context
 		_ = conn.Close()
 		_ = listener.Close()
 		return err
+	}
+	select {
+	case <-this.done:
+		_ = conn.Close()
+		_ = listener.Close()
+		return fmt.Errorf("SSH target transport is closed")
+	default:
 	}
 	this.agent = &sshAgentBridge{listener: listener, conn: conn}
 	return nil

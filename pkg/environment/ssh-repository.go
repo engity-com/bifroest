@@ -535,15 +535,17 @@ func (this *sshTransport) releaseChannel() {
 
 func (this *sshTransport) Close() (result error) {
 	this.closeOnce.Do(func() {
-		this.agentMu.Lock()
-		if this.agent != nil {
-			result = this.agent.Close()
-		}
-		this.agentMu.Unlock()
-		if err := this.client.Close(); err != nil && result == nil {
+		if err := this.client.Close(); err != nil {
 			result = err
 		}
 		close(this.done)
+		this.agentMu.Lock()
+		if this.agent != nil {
+			if err := this.agent.Close(); err != nil && result == nil {
+				result = err
+			}
+		}
+		this.agentMu.Unlock()
 	})
 	return result
 }
