@@ -101,13 +101,15 @@ The repository contains these managed areas:
 | `sealed/` | Immutable native `.bcast` or CBOR `.becast` artifacts ready for inspection and delivery. |
 | `quarantine/` | Interrupted work that could not be accepted safely. |
 | `.bifroest-work/` | Durable publication and recovery work directories. |
-| `.delivery/` | Signed remote-delivery receipts and audit-outbox state. |
+| `.delivery/` | Signed remote-delivery receipts and local recording-lifecycle audit-outbox state. |
 | `.bifroest-recording-format` | Persistent repository-format binding. |
 | `.bifroest-recording.lock` | Exclusive repository lock. |
 
 Temporary format markers, signed heads, and retention tombstones can also appear while durable state transitions are in progress.
 
 At startup, Bifröst completes interrupted publication and verifies active recordings before opening listeners. Recoverable physical tails are truncated to the last durable boundary, and interrupted active recordings are sealed as `incomplete` with reason `startup-recovery`. Correlation data in the signed lifecycle outbox permits the terminal event to be finalized even for BECast without the recipient private key. Before publication, the outbox binds the event and receipt in a non-replayable `prepared` state. Only successful atomic publication and verification promote it to `pending`. Startup alone replays pending events at least once, so an interruption after audit-journal commit but before outbox completion can produce an identical duplicate.
+
+The local `.delivery/<producer-id>/<artifact-name-hash>/` state includes a `receipt.lifecycle` file (and possibly a temporary replacement) for each outstanding recording lifecycle. This signed **but unencrypted JSON** contains the event name, outcome and status fields, the flow name, connection/session/operation/recording IDs, task type, start time, and, once sealed, digests and duration. It contains no captured terminal output, but its identifying fields remain readable even with `.beaudit` and `.becast`: encryption of those containers does **not** cover the local outbox. Bifröst needs the correlation fields to finish an interrupted encrypted recording and replay its exact audit event without the offline private age key. The outbox is removed after the terminal event is durably recorded and marked complete; if that fails it can remain until recovery succeeds. Restrict access to the **entire** local Recording repository, including `.delivery/` and backups, using the operating system's filesystem permissions/ACLs. The signed outbox protects integrity, not confidentiality; it is not sent to remote artifact targets.
 
 Invalid, not-yet-accepted work directories are moved to `quarantine/` when they can be isolated, after which startup continues. Integrity failures in accepted active or sealed state, rollback behind a signed checkpoint, and repository state that cannot be isolated follow the parent audit log's failure policy. Bifröst has no manual recording-repair command. Preserve the repository unchanged for investigation and use [`recording inspect`](../cli/recording/inspect.md) only on sealed artifact copies or safely obtained remote artifacts.
 

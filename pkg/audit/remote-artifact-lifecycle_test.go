@@ -20,15 +20,35 @@ func TestRemoteArtifactLifecycleOutboxBindsArtifactAndBlocksRetention(t *testing
 	receipts := &RemoteArtifactReceipts{store: store, targets: &RemoteArtifactTargets{}}
 	t.Cleanup(func() { require.NoError(t, receipts.Close()) })
 	fileName := "6ba7b830-9dad-4d1f-80b4-00c04fd430c8.bcast"
+	lifecyclePath := filepath.Join(store.producerDirectory, remoteArtifactReceiptStateName(fileName), remoteArtifactLifecycleFileName)
+	assertOutboxFields := func(keys ...string) {
+		t.Helper()
+		payload, err := os.ReadFile(lifecyclePath)
+		require.NoError(t, err)
+		var stored struct {
+			Event map[string]json.RawMessage `json:"event"`
+		}
+		require.NoError(t, json.Unmarshal(payload, &stored))
+		require.Len(t, stored.Event, len(keys))
+		for _, key := range keys {
+			require.Contains(t, stored.Event, key)
+		}
+		require.Equal(t, json.RawMessage(`"recording-test"`), stored.Event["flow"])
+	}
 	startedAt := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
 	started := remoteArtifactLifecycleTestStartedEvent(fileName)
 	require.NoError(t, receipts.BeginLifecycle(t.Context(), fileName, startedAt, started))
+	assertOutboxFields("name", "domain", "flow", "connectionId", "sessionId", "operationId", "recordingId", "sessionTask", "pty")
 	terminal := remoteArtifactLifecycleTestCompletedEvent(started)
 	require.NoError(t, receipts.StageLifecycle(t.Context(), fileName, terminal))
+	terminalFields := []string{"name", "domain", "outcome", "flow", "connectionId", "sessionId", "operationId", "recordingId", "sessionTask", "durationMillis", "exitCode"}
+	assertOutboxFields(terminalFields...)
 	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), fileName, []byte("sealed recording"))
 	sealedAt := startedAt.Add(5 * time.Second)
 	recordingDigest := strings.Repeat("a", 64)
 	require.NoError(t, receipts.PrepareLifecycle(t.Context(), artifact, sealedAt, recordingDigest, false))
+	preparedFields := append(terminalFields, "recordingDigest")
+	assertOutboxFields(preparedFields...)
 	require.Empty(t, mustPendingRemoteArtifactLifecycle(t, receipts))
 	lifecyclePrepared, err := receipts.LifecyclePrepared(t.Context(), fileName)
 	require.NoError(t, err)
@@ -50,6 +70,7 @@ func TestRemoteArtifactLifecycleOutboxBindsArtifactAndBlocksRetention(t *testing
 	require.ErrorContains(t, receipts.MarkRetentionDeleting(t.Context(), forged, sealedAt), "unfinished session Recording lifecycle")
 
 	require.NoError(t, receipts.PromoteLifecycle(t.Context(), artifact))
+	assertOutboxFields(preparedFields...)
 	pending, err := receipts.PendingLifecycle(t.Context())
 	require.NoError(t, err)
 	require.Len(t, pending, 1)
@@ -63,6 +84,7 @@ func TestRemoteArtifactLifecycleOutboxBindsArtifactAndBlocksRetention(t *testing
 	require.Empty(t, candidates)
 
 	require.NoError(t, receipts.CompleteLifecycle(t.Context(), pending[0]))
+	require.NoFileExists(t, lifecyclePath)
 	require.Empty(t, mustPendingRemoteArtifactLifecycle(t, receipts))
 	lifecyclePrepared, err = receipts.LifecyclePrepared(t.Context(), fileName)
 	require.NoError(t, err)

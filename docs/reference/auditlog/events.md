@@ -314,7 +314,7 @@ Bifröst's built-in audit events never contain:
 * Raw errors, wrapped causes, or formatted error messages.
 * Direct-forwarding destinations, reverse bind addresses, or client-claimed origin addresses.
 
-Error events use only the documented reason codes and broad `errorCategory` values. With `.beaudit`, Bifröst encrypts the confidential event fields at rest; event name, domain, outcome, timestamp, and verification metadata remain visible and signed. With `.baudit`, confidential fields are stored unencrypted but are still omitted from the default JSONL export. Operators must protect both original containers and any sensitive exports. See [public and confidential audit fields](../../formats/audit.md#public-and-confidential-audit-fields) for the exact boundary.
+Error events use only the documented reason codes and broad `errorCategory` values. With `.beaudit`, Bifröst encrypts the confidential event fields in audit segments; event name, domain, outcome, timestamp, and verification metadata remain visible and signed. With `.baudit`, confidential fields are stored unencrypted but are still omitted from the default JSONL export. The separate [local Recording lifecycle outbox](recording.md#storage-and-recovery) retains some private event fields as signed, unencrypted JSON until completion. Operators must protect the local repositories, their backups, original containers, and any sensitive exports. See [public and confidential audit fields](../../formats/audit.md#public-and-confidential-audit-fields) for the container boundary.
 
 ## Audit-event persistence failures
 

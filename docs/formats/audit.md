@@ -134,6 +134,11 @@ map is empty. `.beaudit` also encrypts it with age **per record**; `.baudit`
 leaves the compressed map unencrypted. Public and stored private parts are
 jointly signed: redacted output cannot replace the signed original.
 
+This confidentiality boundary applies to the audit **container**, not to the
+separate [local recording lifecycle outbox](../reference/auditlog/recording.md#storage-and-recovery).
+Its signed JSON retains correlation fields in clear form for crash recovery and
+audit replay without the offline age decryption identity.
+
 `audit export` and `audit merge` omit private fields by default **even for
 `.baudit`**. `--with-sensitive` includes them only after full verification
 and, for `.beaudit`, decryption. Redaction is not access control: `.baudit`
