@@ -137,11 +137,13 @@ type remoteArtifactDeliveryFlushGoal struct {
 // The coordinator owns targets after a successful return, but does not own the
 // source or receipt store.
 func NewRemoteArtifactDelivery(ctx context.Context, sealedDirectory string, source RemoteArtifactSource, receipts *RemoteArtifactReceipts, targets *RemoteArtifactTargets, auditor RemoteArtifactDeliveryAuditor) (*RemoteArtifactDelivery, error) {
-	if isNilRemoteValue(auditor) {
+	if isNilRemoteValue(auditor) && (receipts == nil || receipts.store == nil || !receipts.store.unaudited) {
 		return nil, errors.Config.Newf("nil remote artifact delivery auditor")
 	}
 	options := defaultRemoteArtifactDeliveryOptions()
-	options.auditor = auditor
+	if receipts != nil && receipts.store != nil && !receipts.store.unaudited {
+		options.auditor = auditor
+	}
 	return newRemoteArtifactDelivery(ctx, sealedDirectory, source, receipts, targets, options)
 }
 
@@ -151,6 +153,12 @@ func newRemoteArtifactDelivery(ctx context.Context, sealedDirectory string, sour
 	}
 	if receipts == nil || receipts.store == nil {
 		return nil, errors.Config.Newf("nil remote artifact receipts")
+	}
+	if !receipts.store.unaudited && isNilRemoteValue(options.auditor) {
+		return nil, errors.Config.Newf("nil remote artifact delivery auditor")
+	}
+	if receipts.store.unaudited {
+		options.auditor = nil
 	}
 	if targets == nil {
 		return nil, errors.Config.Newf("nil remote artifact targets")
@@ -258,7 +266,7 @@ func validateRemoteArtifactDeliverySnapshots(ctx context.Context, source RemoteA
 			return err
 		}
 		for _, receiptTarget := range selected {
-			if receiptTarget.AcknowledgedAt != "" && receiptTarget.SuccessAuditedAt != "" {
+			if receiptTarget.AcknowledgedAt != "" && (receipts.unaudited || receiptTarget.SuccessAuditedAt != "") {
 				continue
 			}
 			entry, exists := byTarget[receiptTarget.Target]
@@ -433,7 +441,7 @@ func (this *RemoteArtifactDelivery) flushGoals(ctx context.Context, workers []*r
 			return nil, err
 		}
 		for _, receiptTarget := range selected {
-			if receiptTarget.AcknowledgedAt != "" && receiptTarget.SuccessAuditedAt != "" {
+			if receiptTarget.AcknowledgedAt != "" && (this.receipts.store.unaudited || receiptTarget.SuccessAuditedAt != "") {
 				continue
 			}
 			entry, exists := byTarget[receiptTarget.Target]

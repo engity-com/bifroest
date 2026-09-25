@@ -31,9 +31,10 @@ type ActiveNativeRecording struct {
 }
 
 type localNativeRecordingFormat struct {
-	identity  *audit.Identity
-	recipient *bfcrypto.AgeSshRecipient
-	options   NativeRecordingVerifyOptions
+	identity      *audit.Identity
+	recipient     *bfcrypto.AgeSshRecipient
+	options       NativeRecordingVerifyOptions
+	recordingOnly bool
 }
 
 func NewLocalNativeRecordingRepository(ctx context.Context, directory string, identity *audit.Identity, recipient *bfcrypto.AgeSshRecipient, options NativeRecordingVerifyOptions, repositoryOptions LocalRepositoryOptions) (*LocalNativeRecordingRepository, error) {
@@ -49,7 +50,7 @@ func NewLocalNativeRecordingRepositoryWithArtifactPreparer(ctx context.Context, 
 	}
 	options.ExpectedProducerId = identity.ProducerId()
 	options.AllowUntrusted = false
-	format := &localNativeRecordingFormat{identity: identity, recipient: recipient, options: options}
+	format := &localNativeRecordingFormat{identity: identity, recipient: recipient, options: options, recordingOnly: repositoryOptions.RecordingOnly}
 	repository, err := newLocalRepository(ctx, directory, identity, format, repositoryOptions, preparer)
 	if err != nil {
 		return nil, err
@@ -146,7 +147,13 @@ func (a *ActiveNativeRecording) Close() error { return a.local().closeAndRemove(
 
 func (f *localNativeRecordingFormat) key() string {
 	if f.recipient != nil {
+		if f.recordingOnly {
+			return "becast-cbor-recording-only/v1"
+		}
 		return "becast-cbor/v1"
+	}
+	if f.recordingOnly {
+		return "bcast-recording-only/v1"
 	}
 	return "bcast/v1"
 }

@@ -40,7 +40,7 @@ func registerRecordingExportCmd(parent *kingpin.CmdClause) {
 		PlaceHolder("<auditlogName>").
 		SetValue(&opts.auditlog)
 	cmd.Flag("configuration", "Configuration for --auditlog (defaults to "+defaultConfigurationRef+").").
-		PlaceHolder("<path>").
+		Short('c').PlaceHolder("<path>").
 		StringVar(&opts.configuration)
 	cmd.Flag("expectedProducerId", "Trusted producer ID containing exactly 64 hexadecimal characters.").
 		PlaceHolder("<producer-id>").
@@ -256,10 +256,14 @@ func configuredRecordingProducerId(name configuration.AuditlogName, configPath, 
 	if err != nil {
 		return audit.ProducerId{}, err
 	}
-	if !configured.Enabled || !configured.Recording.Enabled {
+	if !configured.Recording.Enabled {
 		return audit.ProducerId{}, fmt.Errorf("recording for auditlog %q is not enabled", name)
 	}
-	sealed, err := filepath.EvalSymlinks(filepath.Join(configured.Recording.Directory, "sealed"))
+	sealed, err := filepath.Abs(filepath.Join(configured.Recording.Directory, "sealed"))
+	if err != nil {
+		return audit.ProducerId{}, err
+	}
+	sealed, err = filepath.EvalSymlinks(sealed)
 	if err != nil {
 		return audit.ProducerId{}, fmt.Errorf("cannot inspect configured Recording repository: %w", err)
 	}

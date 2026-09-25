@@ -47,6 +47,131 @@ func TestEnsureIdentityCreatesAndReusesDedicatedKey(t *testing.T) {
 	require.Equal(t, first.Fingerprint(), second.Fingerprint())
 }
 
+func TestEnsureIdentityRecordingOnlyDoesNotCreateJournal(t *testing.T) {
+	conf := auditIdentityTestConfiguration(t.TempDir(), false)
+	conf.Recording.Enabled = true
+	conf.Recording.Directory = filepath.Join(filepath.Dir(conf.IdentityFile), "recordings")
+	first, err := EnsureIdentity(&conf)
+	require.NoError(t, err)
+	require.NotNil(t, first)
+	require.FileExists(t, conf.IdentityFile)
+	require.NoDirExists(t, conf.Recording.Directory)
+	require.NoDirExists(t, conf.Directory)
+
+	conf.Directory = ""
+	second, err := EnsureIdentity(&conf)
+	require.NoError(t, err)
+	require.Equal(t, first.ProducerId(), second.ProducerId())
+}
+
+func TestEnsureIdentityRecordingOnlyRejectsMissingKeyWithEvidence(t *testing.T) {
+	for _, kind := range []string{"journal", "journal workspace", "recording"} {
+		t.Run(kind, func(t *testing.T) {
+			conf := auditIdentityTestConfiguration(t.TempDir(), false)
+			conf.Recording.Enabled = true
+			conf.Recording.Directory = filepath.Join(filepath.Dir(conf.IdentityFile), "recordings")
+			path := conf.Directory
+			switch kind {
+			case "recording":
+				path = conf.Recording.Directory
+			case "journal workspace":
+				path = filepath.Join(conf.Directory, journalWorkDirectoryName)
+				require.NoError(t, os.Mkdir(conf.Directory, 0700))
+			}
+			require.NoError(t, os.Mkdir(path, 0700))
+			require.NoError(t, os.WriteFile(filepath.Join(path, "existing-state"), []byte("signed evidence"), 0600))
+			identity, err := EnsureIdentity(&conf)
+			require.Nil(t, identity)
+			require.ErrorContains(t, err, "is missing while")
+			require.True(t, berrors.Config.IsErr(err))
+			require.NoFileExists(t, conf.IdentityFile)
+		})
+	}
+}
+
+func TestEnsureIdentityRecordingOnlySharedJournal(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		prepare   func(*testing.T, configuration.Auditlog, *configuration.Auditlog)
+		wantError bool
+	}{
+		{"other journal history", nil, false},
+		{"symlink to other journal", func(t *testing.T, owner configuration.Auditlog, recording *configuration.Auditlog) {
+			alias := filepath.Join(filepath.Dir(owner.Directory), "journal-alias")
+			if err := os.Symlink(owner.Directory, alias); err != nil {
+				t.Skipf("journal symlink unavailable: %v", err)
+			}
+			recording.Directory = alias
+		}, false},
+		{"other journal delivery state", func(t *testing.T, owner configuration.Auditlog, recording *configuration.Auditlog) {
+			key, err := LoadExistingIdentityPublicKey(owner.IdentityFile)
+			require.NoError(t, err)
+			path := filepath.Join(owner.Directory, remoteDeliveryStateDirectoryName, newProducerId(key.Marshal()).String())
+			require.NoError(t, os.MkdirAll(path, 0700))
+		}, false},
+		{"old own journal history", func(t *testing.T, owner configuration.Auditlog, recording *configuration.Auditlog) {
+			other, err := auditIdentityKeyRequirement.GenerateKey(nil)
+			require.NoError(t, err)
+			id, err := NewIdentity(other)
+			require.NoError(t, err)
+			require.NoError(t, os.Mkdir(filepath.Join(owner.Directory, id.ProducerId().String()), 0700))
+		}, true},
+		{"old own delivery state", func(t *testing.T, owner configuration.Auditlog, recording *configuration.Auditlog) {
+			path := filepath.Join(owner.Directory, remoteDeliveryStateDirectoryName, "old-producer")
+			require.NoError(t, os.MkdirAll(path, 0700))
+		}, true},
+		{"old own workspace", func(t *testing.T, owner configuration.Auditlog, recording *configuration.Auditlog) {
+			path := filepath.Join(owner.Directory, journalWorkDirectoryName)
+			require.NoError(t, os.Mkdir(path, 0700))
+			require.NoError(t, os.WriteFile(filepath.Join(path, "state"), nil, 0600))
+		}, true},
+		{"existing recording", func(t *testing.T, owner configuration.Auditlog, recording *configuration.Auditlog) {
+			require.NoError(t, os.Mkdir(recording.Recording.Directory, 0700))
+			require.NoError(t, os.WriteFile(filepath.Join(recording.Recording.Directory, "sealed"), nil, 0600))
+		}, true},
+		{"missing owner key", func(t *testing.T, owner configuration.Auditlog, recording *configuration.Auditlog) {
+			require.NoError(t, os.Remove(owner.IdentityFile))
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			owner := auditIdentityTestConfiguration(root, true)
+			owner.Name = "owner"
+			owner.IdentityFile = filepath.Join(root, "owner-key")
+			ownerIdentity, err := EnsureIdentity(&owner)
+			require.NoError(t, err)
+			require.NoError(t, os.Mkdir(owner.Directory, 0700))
+			require.NoError(t, os.Mkdir(filepath.Join(owner.Directory, ownerIdentity.ProducerId().String()), 0700))
+			require.NoError(t, os.WriteFile(filepath.Join(owner.Directory, ownerIdentity.ProducerId().String(), "segment"), nil, 0600))
+			recording := auditIdentityTestConfiguration(root, false)
+			recording.Name = "recording"
+			require.NoError(t, recording.Recording.SetDefaults())
+			recording.Recording.Enabled = true
+			recording.Recording.Directory = filepath.Join(root, "recordings")
+			if tc.prepare != nil {
+				tc.prepare(t, owner, &recording)
+			}
+			logs := configuration.Auditlogs{owner, recording}
+			require.NoError(t, logs.Validate())
+			// A direct call without the complete configuration must remain fail-closed.
+			plain, err := EnsureIdentity(&recording)
+			require.Nil(t, plain)
+			require.ErrorContains(t, err, "is missing while journal")
+			identity, err := EnsureIdentityWithAuditlogs(&recording, logs)
+			if tc.wantError {
+				require.Nil(t, identity)
+				require.Error(t, err)
+				require.NoFileExists(t, recording.IdentityFile)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, identity)
+				require.NotEqual(t, ownerIdentity.ProducerId(), identity.ProducerId())
+				require.NoDirExists(t, recording.Recording.Directory)
+			}
+		})
+	}
+}
+
 func TestEnsureIdentityCreatesKeyForEmptyJournal(t *testing.T) {
 	directory := t.TempDir()
 	conf := auditIdentityTestConfiguration(directory, true)

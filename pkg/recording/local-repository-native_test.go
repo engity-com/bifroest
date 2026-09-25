@@ -67,6 +67,31 @@ func TestLocalNativeRecordingRepositorySeal(t *testing.T) {
 	}
 }
 
+func TestLocalNativeRecordingRepositoryBindsRecordingOnlyMode(t *testing.T) {
+	for _, encrypted := range []bool{false, true} {
+		for _, recordingOnly := range []bool{false, true} {
+			root := filepath.Join(t.TempDir(), "recordings")
+			identity, _, _ := castTestValues(t, true)
+			var recipient *bfcrypto.AgeSshRecipient
+			if encrypted {
+				recipient, _ = newBECastTestEncryption(t)
+			}
+			options := localRepositoryTestOptions
+			options.RecordingOnly = recordingOnly
+			repo, err := NewLocalNativeRecordingRepository(t.Context(), root, identity, recipient, NativeRecordingVerifyOptions{}, options)
+			require.NoError(t, err)
+			require.NoError(t, repo.Close())
+			restarted, err := NewLocalNativeRecordingRepository(t.Context(), root, identity, recipient, NativeRecordingVerifyOptions{}, options)
+			require.NoError(t, err)
+			require.NoError(t, restarted.Close())
+
+			options.RecordingOnly = !recordingOnly
+			_, err = NewLocalNativeRecordingRepository(t.Context(), root, identity, recipient, NativeRecordingVerifyOptions{}, options)
+			require.ErrorContains(t, err, "format")
+		}
+	}
+}
+
 func TestLocalNativeRecordingRepositoryRecovery(t *testing.T) {
 	for _, encrypted := range []bool{false, true} {
 		for _, work := range []bool{false, true} {

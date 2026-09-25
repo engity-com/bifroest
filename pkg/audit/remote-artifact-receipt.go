@@ -56,6 +56,7 @@ type remoteArtifactReceiptContent struct {
 	Size           int64                         `json:"size"`
 	SealedAt       string                        `json:"sealedAt"`
 	Targets        []remoteArtifactReceiptTarget `json:"targets"`
+	Unaudited      bool                          `json:"unaudited,omitempty"`
 	PublicKey      []byte                        `json:"publicKey"`
 	StatePadding   string                        `json:"statePadding"`
 }
@@ -96,6 +97,7 @@ type remoteArtifactReceiptStore struct {
 	producerDirectory     string
 	identity              *Identity
 	auditlog              configuration.AuditlogName
+	unaudited             bool
 	quota                 RemoteArtifactReceiptQuota
 	newUUID               remoteArtifactReceiptUUIDGenerator
 	stateLock             *journalProcessLock
@@ -191,7 +193,7 @@ type RemoteArtifactRetentionCandidate struct {
 	AuditOperationId   string
 }
 
-func newRemoteArtifactReceipt(identity *Identity, auditlog configuration.AuditlogName, artifact RemoteArtifact, sealedAt time.Time, targets *RemoteArtifactTargets) (remoteArtifactReceipt, []byte, error) {
+func newRemoteArtifactReceipt(identity *Identity, auditlog configuration.AuditlogName, artifact RemoteArtifact, sealedAt time.Time, targets *RemoteArtifactTargets, unaudited ...bool) (remoteArtifactReceipt, []byte, error) {
 	if err := validateRemoteArtifactReceiptIdentity(identity, auditlog, artifact); err != nil {
 		return remoteArtifactReceipt{}, nil, err
 	}
@@ -214,10 +216,13 @@ func newRemoteArtifactReceipt(identity *Identity, auditlog configuration.Auditlo
 		Targets:        selected,
 		PublicKey:      identity.PublicKey().Marshal(),
 	}
+	if len(unaudited) != 0 {
+		content.Unaudited = unaudited[0]
+	}
 	return signRemoteArtifactReceipt(identity, content)
 }
 
-func decodeRemoteArtifactReceipt(payload []byte, identity *Identity, auditlog configuration.AuditlogName, fileName string) (remoteArtifactReceipt, error) {
+func decodeRemoteArtifactReceipt(payload []byte, identity *Identity, auditlog configuration.AuditlogName, fileName string, mode ...bool) (remoteArtifactReceipt, error) {
 	if err := validateRemoteArtifactReceiptOwner(identity, auditlog, fileName); err != nil {
 		return remoteArtifactReceipt{}, err
 	}
@@ -240,6 +245,9 @@ func decodeRemoteArtifactReceipt(payload []byte, identity *Identity, auditlog co
 	}
 	if err := identity.verify(append([]byte(remoteArtifactReceiptSignDomain), unsigned...), receipt.Signature); err != nil {
 		return remoteArtifactReceipt{}, errors.System.Newf("cannot verify remote artifact delivery receipt: %w", err)
+	}
+	if len(mode) != 0 && receipt.Unaudited != mode[0] {
+		return remoteArtifactReceipt{}, errors.Config.Newf("remote artifact delivery receipt mode does not match Recording state")
 	}
 	return receipt, nil
 }
@@ -342,7 +350,10 @@ func validateRemoteArtifactReceiptContent(content remoteArtifactReceiptContent) 
 		if target.DestinationFingerprint.IsZero() {
 			return errors.Config.Newf("remote artifact delivery receipt target %q has an empty destination fingerprint", target.Target)
 		}
-		if err := validateRemoteArtifactReceiptTargetAudit(target, sealedAt); err != nil {
+		if content.Unaudited && (target.AuditOperationId != "" || target.FailedAt != "" || target.FailureErrorCategory != "" || target.FailureAuditedAt != "" || target.SuccessAuditedAt != "") {
+			return errors.Config.Newf("unaudited remote artifact delivery receipt target %q contains audit state", target.Target)
+		}
+		if err := validateRemoteArtifactReceiptTargetAudit(target, sealedAt, content.Unaudited); err != nil {
 			return err
 		}
 	}
@@ -385,7 +396,7 @@ func normalizeRemoteArtifactReceiptStatePadding(content remoteArtifactReceiptCon
 	return content, nil
 }
 
-func validateRemoteArtifactReceiptTargetAudit(target remoteArtifactReceiptTarget, sealedAt time.Time) error {
+func validateRemoteArtifactReceiptTargetAudit(target remoteArtifactReceiptTarget, sealedAt time.Time, unaudited bool) error {
 	operationId := target.AuditOperationId
 	if operationId != "" {
 		parsed, err := uuid.Parse(operationId)
@@ -438,7 +449,7 @@ func validateRemoteArtifactReceiptTargetAudit(target remoteArtifactReceiptTarget
 	if target.SuccessAuditedAt != "" && (target.AcknowledgedAt == "" || successAuditedAt.Before(acknowledgedAt)) {
 		return errors.Config.Newf("remote artifact delivery receipt target %q has inconsistent success audit state", target.Target)
 	}
-	if target.AcknowledgedAt != "" && operationId == "" {
+	if target.AcknowledgedAt != "" && operationId == "" && !unaudited {
 		return errors.Config.Newf("remote artifact delivery receipt target %q has an acknowledgement without an audit operation ID", target.Target)
 	}
 	return nil
@@ -496,7 +507,7 @@ func acknowledgeRemoteArtifactReceipt(identity *Identity, receipt remoteArtifact
 	content := receipt.remoteArtifactReceiptContent
 	content.Targets = append([]remoteArtifactReceiptTarget(nil), receipt.Targets...)
 	content.Targets[index].AcknowledgedAt = canonicalAcknowledgedAt
-	if content.Targets[index].AuditOperationId == "" {
+	if !receipt.Unaudited && content.Targets[index].AuditOperationId == "" {
 		content.Targets[index].AuditOperationId, err = newRemoteArtifactDeliveryAuditOperationId(newUUID)
 		if err != nil {
 			return remoteArtifactReceipt{}, nil, false, err
@@ -520,7 +531,7 @@ func (this remoteArtifactReceipt) retentionStartedAt() (time.Time, bool) {
 		return time.Time{}, false
 	}
 	for _, target := range this.Targets {
-		if target.AcknowledgedAt == "" || target.SuccessAuditedAt == "" {
+		if target.AcknowledgedAt == "" || !this.Unaudited && target.SuccessAuditedAt == "" {
 			return time.Time{}, false
 		}
 		acknowledgedAt, err := parseRemoteArtifactReceiptTime(target.AcknowledgedAt)
@@ -553,6 +564,10 @@ func parseRemoteArtifactReceiptTime(value string) (time.Time, error) {
 }
 
 func newRemoteArtifactReceiptStore(recordingDirectory string, identity *Identity, auditlog configuration.AuditlogName, quota RemoteArtifactReceiptQuota) (*remoteArtifactReceiptStore, error) {
+	return newRemoteArtifactReceiptStoreWithMode(recordingDirectory, identity, auditlog, quota, false)
+}
+
+func newRemoteArtifactReceiptStoreWithMode(recordingDirectory string, identity *Identity, auditlog configuration.AuditlogName, quota RemoteArtifactReceiptQuota, unaudited bool) (*remoteArtifactReceiptStore, error) {
 	if identity == nil || identity.ProducerId().IsZero() {
 		return nil, errors.Config.Newf("nil audit identity")
 	}
@@ -567,7 +582,85 @@ func newRemoteArtifactReceiptStore(recordingDirectory string, identity *Identity
 	mutex <- struct{}{}
 	retentionRemovalMutex := make(chan struct{}, 1)
 	retentionRemovalMutex <- struct{}{}
-	return &remoteArtifactReceiptStore{mutex: mutex, retentionRemovalMutex: retentionRemovalMutex, producerDirectory: producerDirectory, identity: identity, auditlog: auditlog, quota: ensureRemoteArtifactReceiptQuotaInvalidation(quota), newUUID: uuid.NewRandom, stateLock: stateLock}, nil
+	store := &remoteArtifactReceiptStore{mutex: mutex, retentionRemovalMutex: retentionRemovalMutex, producerDirectory: producerDirectory, identity: identity, auditlog: auditlog, unaudited: unaudited, quota: ensureRemoteArtifactReceiptQuotaInvalidation(quota), newUUID: uuid.NewRandom, stateLock: stateLock}
+	if err := store.validateExistingMode(); err != nil {
+		_ = stateLock.Close()
+		return nil, err
+	}
+	return store, nil
+}
+
+// NewRemoteArtifactReceiptsWithoutAudit creates signed receipts without any
+// lifecycle, delivery, or retention audit obligations.
+func NewRemoteArtifactReceiptsWithoutAudit(recordingDirectory string, identity *Identity, auditlog configuration.AuditlogName, targets *RemoteArtifactTargets, quota RemoteArtifactReceiptQuota) (*RemoteArtifactReceipts, error) {
+	if quota == nil {
+		return nil, errors.Config.Newf("nil remote artifact receipt quota")
+	}
+	store, err := newRemoteArtifactReceiptStoreWithMode(recordingDirectory, identity, auditlog, quota, true)
+	if err != nil {
+		return nil, err
+	}
+	return &RemoteArtifactReceipts{store: store, targets: targets}, nil
+}
+
+func (this *remoteArtifactReceiptStore) validateExistingMode() error {
+	entries, err := os.ReadDir(this.producerDirectory)
+	if err != nil {
+		return errors.System.Newf("cannot inspect remote artifact delivery receipt state: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !isRemoteArtifactReceiptStateName(entry.Name()) {
+			return errors.Config.Newf("remote artifact delivery receipt state contains unsupported entry %q", entry.Name())
+		}
+		directory := filepath.Join(this.producerDirectory, entry.Name())
+		if this.unaudited {
+			for _, name := range []string{remoteArtifactLifecycleFileName, remoteArtifactLifecycleTempName, remoteArtifactLifecycleTempName + remoteArtifactReceiptCleanupSuffix} {
+				if exists, err := remoteArtifactReceiptStateFileExists(directory, name); err != nil {
+					return err
+				} else if exists {
+					return errors.Config.Newf("session Recording lifecycle state prevents switching to unaudited receipts")
+				}
+			}
+		}
+		for _, name := range []string{remoteArtifactReceiptFileName, remoteArtifactReceiptRetentionFileName, remoteArtifactReceiptCompletedFileName, remoteArtifactReceiptTempFileName, remoteArtifactReceiptRetentionTempName} {
+			temporary := name == remoteArtifactReceiptTempFileName || name == remoteArtifactReceiptRetentionTempName
+			payload, exists, err := readRemoteArtifactReceiptPayload(filepath.Join(directory, name))
+			if err != nil {
+				if this.unaudited {
+					var oversized *oversizedRemoteArtifactReceiptError
+					if !temporary || !goerrors.As(err, &oversized) {
+						return err
+					}
+				}
+				continue
+			}
+			if !exists {
+				continue
+			}
+			var receipt remoteArtifactReceipt
+			if err := decodeCanonicalJournalPayload(payload, &receipt); err != nil {
+				if this.unaudited && !temporary {
+					return err
+				}
+				continue
+			}
+			if !temporary && receipt.Unaudited != this.unaudited {
+				return errors.Config.Newf("remote artifact delivery receipt mode does not match existing Recording state")
+			}
+			if this.unaudited {
+				if _, err := decodeRemoteArtifactReceipt(payload, this.identity, this.auditlog, receipt.FileName); err != nil {
+					if temporary {
+						continue
+					}
+					return err
+				}
+			}
+			if receipt.Unaudited != this.unaudited {
+				return errors.Config.Newf("remote artifact delivery receipt mode does not match existing Recording state")
+			}
+		}
+	}
+	return nil
 }
 
 func NewRemoteArtifactReceipts(recordingDirectory string, identity *Identity, auditlog configuration.AuditlogName, targets *RemoteArtifactTargets, quota RemoteArtifactReceiptQuota) (*RemoteArtifactReceipts, error) {
@@ -614,6 +707,9 @@ func (this *RemoteArtifactReceipts) Prepare(ctx context.Context, artifact Remote
 func (this *RemoteArtifactReceipts) PrepareLifecycle(ctx context.Context, artifact RemoteArtifact, sealedAt time.Time, recordingDigest string, interrupted bool) error {
 	if this == nil || this.store == nil {
 		return errors.System.Newf("nil remote artifact receipts")
+	}
+	if this.store.unaudited {
+		return this.Prepare(ctx, artifact, sealedAt)
 	}
 	if recordingDigest == "" {
 		return errors.Config.Newf("session Recording lifecycle Cast digest is empty")
@@ -767,7 +863,7 @@ func (this *remoteArtifactReceiptStore) initializeLocked(artifact RemoteArtifact
 	if exists {
 		return existing, nil
 	}
-	desired, payload, err := newRemoteArtifactReceipt(this.identity, this.auditlog, artifact, sealedAt, targets)
+	desired, payload, err := newRemoteArtifactReceipt(this.identity, this.auditlog, artifact, sealedAt, targets, this.unaudited)
 	if err != nil {
 		return remoteArtifactReceipt{}, err
 	}
@@ -843,7 +939,7 @@ func (this *remoteArtifactReceiptStore) recover(ctx context.Context) error {
 		}); err != nil {
 			return err
 		}
-		if err := cleanupMalformedRemoteArtifactReceiptTemporaries(directory, this.quota); err != nil {
+		if err := cleanupMalformedRemoteArtifactReceiptTemporaries(directory, this.quota, this.unaudited); err != nil {
 			return err
 		}
 		if err := validateRemoteArtifactReceiptState(directory); err != nil {
@@ -996,22 +1092,25 @@ func (this *remoteArtifactReceiptStore) listRetentionCandidates(ctx context.Cont
 
 func remoteArtifactRetentionCandidate(receipt remoteArtifactReceipt, deletionStarted, completionPending bool) RemoteArtifactRetentionCandidate {
 	startedAt, _ := receipt.retentionStartedAt()
-	return RemoteArtifactRetentionCandidate{
+	result := RemoteArtifactRetentionCandidate{
 		FileName:           receipt.FileName,
 		ArtifactDigest:     receipt.ArtifactDigest,
 		Size:               receipt.Size,
 		RetentionStartedAt: startedAt,
 		DeletionStarted:    deletionStarted,
 		CompletionPending:  completionPending,
-		AuditOperationId:   remoteArtifactRetentionOperationId(receipt),
 	}
+	if !receipt.Unaudited {
+		result.AuditOperationId = remoteArtifactRetentionOperationId(receipt)
+	}
+	return result
 }
 
 func (this *remoteArtifactReceiptStore) markRetentionDeleting(ctx context.Context, candidate RemoteArtifactRetentionCandidate, cutoff time.Time) error {
 	if this == nil {
 		return errors.System.Newf("nil remote artifact receipt store")
 	}
-	if err := validateRemoteArtifactRetentionCandidate(candidate, cutoff); err != nil {
+	if err := validateRemoteArtifactRetentionCandidate(candidate, cutoff, this.unaudited); err != nil {
 		return err
 	}
 	if err := this.lock(ctx); err != nil {
@@ -1066,7 +1165,7 @@ func (this *remoteArtifactReceiptStore) markRetentionCompleted(ctx context.Conte
 	if this == nil {
 		return RemoteArtifactRetentionCandidate{}, errors.System.Newf("nil remote artifact receipt store")
 	}
-	if err := validateRemoteArtifactRetentionCandidate(candidate, cutoff); err != nil {
+	if err := validateRemoteArtifactRetentionCandidate(candidate, cutoff, this.unaudited); err != nil {
 		return RemoteArtifactRetentionCandidate{}, err
 	}
 	if err := this.lock(ctx); err != nil {
@@ -1086,7 +1185,7 @@ func (this *remoteArtifactReceiptStore) markRetentionCompleted(ctx context.Conte
 	if err := validateRemoteArtifactRetentionReceipt(receipt, candidate, cutoff); err != nil {
 		return RemoteArtifactRetentionCandidate{}, err
 	}
-	if candidate.AuditOperationId != remoteArtifactRetentionOperationId(receipt) {
+	if candidate.AuditOperationId != retentionOperationId(receipt) {
 		return RemoteArtifactRetentionCandidate{}, errors.Config.Newf("remote artifact %q retention operation changed", candidate.FileName)
 	}
 	directory := filepath.Join(this.producerDirectory, remoteArtifactReceiptStateName(candidate.FileName))
@@ -1121,7 +1220,7 @@ func (this *remoteArtifactReceiptStore) removeRetentionCandidate(ctx context.Con
 	if this == nil {
 		return errors.System.Newf("nil remote artifact receipt store")
 	}
-	if err := validateRemoteArtifactRetentionCandidate(candidate, cutoff); err != nil {
+	if err := validateRemoteArtifactRetentionCandidate(candidate, cutoff, this.unaudited); err != nil {
 		return err
 	}
 	if err := this.lockRetentionRemoval(ctx); err != nil {
@@ -1146,7 +1245,7 @@ func (this *remoteArtifactReceiptStore) removeRetentionCandidate(ctx context.Con
 	if err := validateRemoteArtifactRetentionReceipt(receipt, candidate, cutoff); err != nil {
 		return err
 	}
-	if candidate.AuditOperationId != remoteArtifactRetentionOperationId(receipt) {
+	if candidate.AuditOperationId != retentionOperationId(receipt) {
 		return errors.Config.Newf("remote artifact %q retention operation changed", candidate.FileName)
 	}
 	deletionStarted, err := remoteArtifactReceiptRetentionDeleting(directory)
@@ -1205,12 +1304,21 @@ func (this *remoteArtifactReceiptStore) reconcileFailedRemoteArtifactReceiptRest
 	return goerrors.Join(quotaErr, removeErr, syncErr)
 }
 
-func validateRemoteArtifactRetentionCandidate(candidate RemoteArtifactRetentionCandidate, cutoff time.Time) error {
+func validateRemoteArtifactRetentionCandidate(candidate RemoteArtifactRetentionCandidate, cutoff time.Time, unaudited bool) error {
 	if err := validateRemoteArtifactFileName(candidate.FileName); err != nil || candidate.ArtifactDigest.IsZero() || candidate.Size <= 0 || candidate.RetentionStartedAt.IsZero() {
 		return errors.Config.Newf("invalid remote artifact retention candidate")
 	}
-	operationId, err := uuid.Parse(candidate.AuditOperationId)
-	if err != nil || operationId == uuid.Nil || operationId.String() != candidate.AuditOperationId || candidate.CompletionPending && !candidate.DeletionStarted {
+	if unaudited {
+		if candidate.AuditOperationId != "" {
+			return errors.Config.Newf("invalid remote artifact retention candidate completion")
+		}
+	} else {
+		operationId, err := uuid.Parse(candidate.AuditOperationId)
+		if err != nil || operationId == uuid.Nil || operationId.String() != candidate.AuditOperationId {
+			return errors.Config.Newf("invalid remote artifact retention candidate completion")
+		}
+	}
+	if candidate.CompletionPending && !candidate.DeletionStarted {
 		return errors.Config.Newf("invalid remote artifact retention candidate completion")
 	}
 	return nil
@@ -1222,6 +1330,13 @@ func validateRemoteArtifactRetentionReceipt(receipt remoteArtifactReceipt, candi
 		return errors.Config.Newf("remote artifact %q is no longer eligible for retention cleanup", candidate.FileName)
 	}
 	return nil
+}
+
+func retentionOperationId(receipt remoteArtifactReceipt) string {
+	if receipt.Unaudited {
+		return ""
+	}
+	return remoteArtifactRetentionOperationId(receipt)
 }
 
 func (this *remoteArtifactReceiptStore) stateFileNamesLocked(ctx context.Context) ([]string, error) {
@@ -1243,7 +1358,7 @@ func (this *remoteArtifactReceiptStore) stateFileNamesLocked(ctx context.Context
 		}); err != nil {
 			return nil, err
 		}
-		if err := cleanupMalformedRemoteArtifactReceiptTemporaries(directory, this.quota); err != nil {
+		if err := cleanupMalformedRemoteArtifactReceiptTemporaries(directory, this.quota, this.unaudited); err != nil {
 			return nil, err
 		}
 		if err := validateRemoteArtifactReceiptState(directory); err != nil {
@@ -1318,7 +1433,7 @@ func remoteArtifactReceiptStatus(receipt remoteArtifactReceipt, entry remoteArti
 		if entry.scope.Auditlog != receipt.Auditlog {
 			return remoteArtifactReceiptTargetNotSelected, errors.Config.Newf("remote artifact target %q belongs to a different auditlog", entry.scope.Target)
 		}
-		if target.AcknowledgedAt != "" && target.SuccessAuditedAt != "" {
+		if target.AcknowledgedAt != "" && (receipt.Unaudited || target.SuccessAuditedAt != "") {
 			return remoteArtifactReceiptTargetAcknowledged, nil
 		}
 		if entry.destinationFingerprint.IsZero() || target.DestinationFingerprint != entry.destinationFingerprint {
@@ -1338,6 +1453,9 @@ func remoteArtifactReceiptStatus(receipt remoteArtifactReceipt, entry remoteArti
 func (this *remoteArtifactReceiptStore) beginDeliveryFailure(ctx context.Context, fileName string, entry remoteArtifactTargetEntry, category ErrorCategory, failedAt time.Time) (RemoteArtifactDeliveryAuditEvent, bool, error) {
 	if this == nil {
 		return RemoteArtifactDeliveryAuditEvent{}, false, errors.System.Newf("nil remote artifact receipt store")
+	}
+	if this.unaudited {
+		return RemoteArtifactDeliveryAuditEvent{}, false, errors.Config.Newf("delivery audit is unavailable for unaudited receipts")
 	}
 	if !isErrorCategory(category) {
 		return RemoteArtifactDeliveryAuditEvent{}, false, errors.Config.Newf("illegal remote artifact delivery error category %q", category)
@@ -1399,6 +1517,9 @@ func (this *remoteArtifactReceiptStore) pendingDeliveryAudit(ctx context.Context
 	if this == nil {
 		return RemoteArtifactDeliveryAuditEvent{}, false, errors.System.Newf("nil remote artifact receipt store")
 	}
+	if this.unaudited {
+		return RemoteArtifactDeliveryAuditEvent{}, false, errors.Config.Newf("delivery audit is unavailable for unaudited receipts")
+	}
 	if err := this.lock(ctx); err != nil {
 		return RemoteArtifactDeliveryAuditEvent{}, false, err
 	}
@@ -1431,6 +1552,9 @@ func (this *remoteArtifactReceiptStore) pendingDeliveryAudit(ctx context.Context
 func (this *remoteArtifactReceiptStore) completeDeliveryAudit(ctx context.Context, event RemoteArtifactDeliveryAuditEvent, auditedAt time.Time) error {
 	if this == nil {
 		return errors.System.Newf("nil remote artifact receipt store")
+	}
+	if this.unaudited {
+		return errors.Config.Newf("delivery audit is unavailable for unaudited receipts")
 	}
 	if err := this.lock(ctx); err != nil {
 		return err
@@ -1644,15 +1768,15 @@ func (this *remoteArtifactReceiptStore) loadSnapshotLocked(fileName string, bind
 	retentionPath := filepath.Join(directory, remoteArtifactReceiptRetentionFileName)
 	completedPath := filepath.Join(directory, remoteArtifactReceiptCompletedFileName)
 	temporaryPath := filepath.Join(directory, remoteArtifactReceiptTempFileName)
-	receipt, payload, exists, err := readRemoteArtifactReceipt(targetPath, this.identity, this.auditlog, fileName)
+	receipt, payload, exists, err := readRemoteArtifactReceipt(targetPath, this.identity, this.auditlog, fileName, this.unaudited)
 	if err != nil {
 		return remoteArtifactReceipt{}, false, err
 	}
-	retentionReceipt, retentionPayload, retentionExists, err := readRemoteArtifactReceipt(retentionPath, this.identity, this.auditlog, fileName)
+	retentionReceipt, retentionPayload, retentionExists, err := readRemoteArtifactReceipt(retentionPath, this.identity, this.auditlog, fileName, this.unaudited)
 	if err != nil {
 		return remoteArtifactReceipt{}, false, err
 	}
-	completedReceipt, completedPayload, completedExists, err := readRemoteArtifactReceipt(completedPath, this.identity, this.auditlog, fileName)
+	completedReceipt, completedPayload, completedExists, err := readRemoteArtifactReceipt(completedPath, this.identity, this.auditlog, fileName, this.unaudited)
 	if err != nil {
 		return remoteArtifactReceipt{}, false, err
 	}
@@ -1763,11 +1887,17 @@ func (this *remoteArtifactReceiptStore) readTemporaryLocked(directory, path, fil
 	if !exists {
 		return remoteArtifactReceipt{}, nil, exists, err
 	}
-	receipt, decodeErr := decodeRemoteArtifactReceipt(payload, this.identity, this.auditlog, fileName)
+	receipt, decodeErr := decodeRemoteArtifactReceipt(payload, this.identity, this.auditlog, fileName, this.unaudited)
 	if decodeErr == nil {
 		return receipt, payload, true, nil
 	}
 	receiptErr := errors.System.Newf("cannot use remote artifact delivery receipt %q: %w", path, decodeErr)
+	var recordedMode struct {
+		Unaudited bool `json:"unaudited"`
+	}
+	if json.Unmarshal(payload, &recordedMode) == nil && recordedMode.Unaudited != this.unaudited {
+		return remoteArtifactReceipt{}, nil, false, receiptErr
+	}
 	cleanupErr := mutateRemoteArtifactReceiptState(directory, this.quota, func() error {
 		return cleanupRemoteArtifactReceiptFile(path, directory)
 	})
@@ -1902,12 +2032,12 @@ func removeEmptyRemoteArtifactReceiptState(directory, parent string) error {
 	return nil
 }
 
-func readRemoteArtifactReceipt(path string, identity *Identity, auditlog configuration.AuditlogName, fileName string) (remoteArtifactReceipt, []byte, bool, error) {
+func readRemoteArtifactReceipt(path string, identity *Identity, auditlog configuration.AuditlogName, fileName string, mode ...bool) (remoteArtifactReceipt, []byte, bool, error) {
 	payload, exists, err := readRemoteArtifactReceiptPayload(path)
 	if err != nil || !exists {
 		return remoteArtifactReceipt{}, nil, exists, err
 	}
-	receipt, err := decodeRemoteArtifactReceipt(payload, identity, auditlog, fileName)
+	receipt, err := decodeRemoteArtifactReceipt(payload, identity, auditlog, fileName, mode...)
 	if err != nil {
 		return remoteArtifactReceipt{}, nil, false, errors.System.Newf("cannot use remote artifact delivery receipt %q: %w", path, err)
 	}
@@ -1938,7 +2068,7 @@ func remoteArtifactReceiptStateFileName(directory string) (string, bool, error) 
 	return "", false, nil
 }
 
-func cleanupMalformedRemoteArtifactReceiptTemporaries(directory string, quota RemoteArtifactReceiptQuota) error {
+func cleanupMalformedRemoteArtifactReceiptTemporaries(directory string, quota RemoteArtifactReceiptQuota, unaudited bool) error {
 	var result error
 	for _, name := range []string{remoteArtifactReceiptRetentionTempName, remoteArtifactReceiptTempFileName, remoteArtifactLifecycleTempName} {
 		path := filepath.Join(directory, name)
@@ -1951,7 +2081,11 @@ func cleanupMalformedRemoteArtifactReceiptTemporaries(directory string, quota Re
 			cleanupErr := mutateRemoteArtifactReceiptState(directory, quota, func() error {
 				return cleanupRemoteArtifactReceiptFile(path, directory)
 			})
-			result = goerrors.Join(result, err, cleanupErr)
+			if unaudited {
+				result = goerrors.Join(result, cleanupErr)
+			} else {
+				result = goerrors.Join(result, err, cleanupErr)
+			}
 			continue
 		}
 		if !exists {
@@ -1971,7 +2105,11 @@ func cleanupMalformedRemoteArtifactReceiptTemporaries(directory string, quota Re
 		cleanupErr := mutateRemoteArtifactReceiptState(directory, quota, func() error {
 			return cleanupRemoteArtifactReceiptFile(path, directory)
 		})
-		result = goerrors.Join(result, identifyErr, cleanupErr)
+		if unaudited {
+			result = goerrors.Join(result, cleanupErr)
+		} else {
+			result = goerrors.Join(result, identifyErr, cleanupErr)
+		}
 	}
 	return result
 }
@@ -2308,7 +2446,7 @@ func restoreRemoteArtifactReceiptFileWithOperations(path, directory string, payl
 }
 
 func sameRemoteArtifactReceiptSelection(left, right remoteArtifactReceipt) bool {
-	if left.Schema != right.Schema || left.ProducerId != right.ProducerId || left.Auditlog != right.Auditlog || left.FileName != right.FileName || left.ArtifactDigest != right.ArtifactDigest || left.Size != right.Size || left.SealedAt != right.SealedAt || !bytes.Equal(left.PublicKey, right.PublicKey) || len(left.Targets) != len(right.Targets) {
+	if left.Schema != right.Schema || left.ProducerId != right.ProducerId || left.Auditlog != right.Auditlog || left.FileName != right.FileName || left.ArtifactDigest != right.ArtifactDigest || left.Size != right.Size || left.SealedAt != right.SealedAt || left.Unaudited != right.Unaudited || !bytes.Equal(left.PublicKey, right.PublicKey) || len(left.Targets) != len(right.Targets) {
 		return false
 	}
 	for index := range left.Targets {

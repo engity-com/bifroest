@@ -6,7 +6,7 @@ description: Configure Bifröst's cryptographically verifiable audit log.
 
 Defines named audit logs that Bifröst uses to record security-relevant actions separately from the regular application log. Each [flow](../flow.md) references one of these entries by name.
 
-If `auditlog` is omitted or empty, Bifröst creates an implicit entry named `default` that is disabled. While an entry is disabled, it does not create keys, directories, or network connections.
+If `auditlog` is omitted or empty, Bifröst creates a disabled `default` entry. With both audit logging and recording disabled, no signing key, journal, Recording repository or delivery connection is created. Recording can be enabled independently, without an audit journal.
 
 ## Properties
 
@@ -14,7 +14,7 @@ If `auditlog` is omitted or empty, Bifröst creates an implicit entry named `def
 The unique name used by flows to reference this audit log. The implicit entry and an omitted name default to `default`.
 
 <<property("enabled", "bool", default=False)>>
-If `true`, Bifröst records security-relevant actions in the audit log.
+Enables the audit journal and security events. Set `recording.enabled: true` independently to record sessions **without** an audit journal or audit events.
 
 Enabled audit logs must use distinct identity files and non-overlapping journal directories. Identity files must be outside every enabled journal directory.
 
@@ -27,7 +27,7 @@ Controls what happens when this audit log or its session-recording repository fa
 Only `strict` and `bestEffort` are accepted. Remote-delivery outages continue to use their documented asynchronous retry behavior and do not by themselves disable the local audit log.
 
 <<property("identityFile", "File Path", "../data-type.md#file-path", default="<os specific>")>>
-Where the dedicated audit signing key is stored. If the file does not exist and the local journal does not contain history, an Ed25519 key will be created automatically.
+Signing key for the journal and/or Recording. Bifröst creates an Ed25519 key when an enabled journal or Recording needs one and neither repository contains prior state.
 
 If history exists, a missing or invalid signing key prevents startup. Existing keys must be regular, at most 1 MiB, owned by the Bifröst user, and neither symlinked nor hard-linked:
 
@@ -53,10 +53,12 @@ Filesystem space reserved for authenticated and other essential audit events. `0
 When the reserve is reached, Bifröst suppresses pre-authentication detail and counts it in bounded aggregates. A signed `journal-reserve` marker and pending/final aggregates may still use the emergency reserve. Authenticated events remain synchronous and fail closed; a dedicated filesystem is recommended because other processes can consume the reserved space.
 
 <<property("encryptionPublicKey", "SSH Public Key", "../data-type.md#ssh-public-key")>>
-Optional OpenSSH Ed25519 or RSA **public** age recipient key. Bifröst encrypts confidential fields independently for each event:
+Optional OpenSSH Ed25519 or RSA **public** age recipient key, also used by Recording. For an enabled audit journal, Bifröst encrypts confidential fields independently for each event:
 
 * No recipient: signed `.baudit`; private fields are readable after decompression.
 * With a recipient: signed `.beaudit`; private fields are compressed and encrypted. Only `name`, optional `domain` and `outcome`, plus signed envelope data such as time, record ID, chain and producer remain visible. See the [exact field boundary](../../formats/audit.md#public-and-confidential-audit-fields).
+
+With recording alone, the same recipient selects `.becast`; no `.beaudit` journal is created.
 
 !!! warning "Encryption does not cover all local state"
      A [Recording lifecycle outbox](recording.md#storage-and-recovery) can contain signed, **unencrypted** flow and correlation data even with `.beaudit`. Protect the entire Recording repository and its backups.
@@ -67,10 +69,10 @@ Use exactly one recipient and **keep its private key offline**. It must differ f
 Loads the single encryption public key from an OpenSSH public-key file when the enabled auditlog is initialized. This is an alternative to [`encryptionPublicKey`](#property-encryptionPublicKey); the two properties cannot be combined. The file must exist and contain exactly one supported public key without authorized-key options or certificates.
 
 <<property("recording", "Session recording", "recording.md")>>
-Configures fail-closed shell and exec recording, local retention, and optional artifact delivery. Recording is disabled by default and requires this audit log to be enabled.
+Configures fail-closed shell and exec recording, local retention, and optional artifact delivery. Recording is disabled by default but can run without the audit journal. See [Recording-only](recording.md#recording-only).
 
 <<property("targets", array_ref("Remote target", "remote-targets/index.md"))>>
-Optional destinations that receive complete sealed segments from the authoritative local journal. See [remote targets](remote-targets/index.md).
+Optional destinations for sealed audit segments. Recording may inherit these targets even when the journal is disabled; then only sealed Recordings are delivered. See [remote targets](remote-targets/index.md).
 
 ## Journal
 

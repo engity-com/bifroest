@@ -4,7 +4,7 @@ description: Print the producer ID of a configured local audit signing identity.
 
 # `bifroest audit producer-id`
 
-Prints the 64-character lowercase hexadecimal producer ID derived from the selected audit log's **local signing private key**, not from the journal. It does not create a missing identity or access audit records. The ID is safe to transfer; the signing private key is not.
+Prints the 64-character lowercase hexadecimal producer ID derived from the selected entry's **local signing private key**, not from the journal. It also works when only session recording is enabled. It does not create a missing identity or access audit records. The ID is safe to transfer; the signing private key is not.
 
 ## Syntax
 

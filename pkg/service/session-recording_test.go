@@ -258,7 +258,7 @@ func TestSessionRecordingRepositoryCreatesAndSealsActiveFormats(t *testing.T) {
 			if test.encrypted {
 				encryptionPublicKey = sessionRecordingEncryptionPublicKey(t)
 			}
-			repository, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, encryptionPublicKey, conf.Auditlogs[0].Name, nil)
+			repository, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, encryptionPublicKey, conf.Auditlogs[0].Name, nil, true)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, repository.Close()) })
 
@@ -348,7 +348,7 @@ func TestSessionRecordingRepositoryCreatesAndSealsActiveFormats(t *testing.T) {
 			require.NoError(t, repository.Close())
 			require.NoError(t, os.RemoveAll(filepath.Join(conf.Auditlogs[0].Recording.Directory, ".delivery")))
 			require.NoError(t, os.Mkdir(filepath.Join(conf.Auditlogs[0].Recording.Directory, "active", recordingId.String()), 0o700))
-			missing, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, encryptionPublicKey, conf.Auditlogs[0].Name, nil)
+			missing, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, encryptionPublicKey, conf.Auditlogs[0].Name, nil, true)
 			require.Nil(t, missing)
 			require.ErrorContains(t, err, "delivery receipt")
 			require.ErrorContains(t, err, "is missing")
@@ -375,7 +375,7 @@ func TestSessionRecordingStartupRejectsMissingSealedArtifactWithReceipt(t *testi
 			if test.encrypted {
 				encryptionPublicKey = sessionRecordingEncryptionPublicKey(t)
 			}
-			repository, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, encryptionPublicKey, conf.Auditlogs[0].Name, nil)
+			repository, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, encryptionPublicKey, conf.Auditlogs[0].Name, nil, true)
 			require.NoError(t, err)
 			startedAt := time.Now().UTC()
 			recordingId, err := recording.NewId()
@@ -415,7 +415,7 @@ func TestSessionRecordingStartupRejectsMissingSealedArtifactWithReceipt(t *testi
 			sealedPath := filepath.Join(conf.Auditlogs[0].Recording.Directory, "sealed", name)
 			require.NoError(t, os.Remove(sealedPath))
 
-			restarted, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, encryptionPublicKey, conf.Auditlogs[0].Name, nil)
+			restarted, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, encryptionPublicKey, conf.Auditlogs[0].Name, nil, true)
 			if test.retentionStarted {
 				require.NoError(t, err)
 				require.NoError(t, restarted.Close())
@@ -523,7 +523,7 @@ func TestPrepareRecordingRecoversActiveBCastAsIncomplete(t *testing.T) {
 	enableSessionRecording(&conf.Auditlogs[0])
 	identity, err := audit.EnsureIdentity(&conf.Auditlogs[0])
 	require.NoError(t, err)
-	repository, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, bfcrypto.PublicKeys(""), conf.Auditlogs[0].Name, nil)
+	repository, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, bfcrypto.PublicKeys(""), conf.Auditlogs[0].Name, nil, true)
 	require.NoError(t, err)
 	startedAt := time.Now().UTC().Truncate(time.Second)
 	recordingId, err := recording.NewId()
@@ -585,7 +585,7 @@ func TestSessionRecordingLifecycleStartupRecoveryCreatesIncompleteEvent(t *testi
 			if test.encrypted {
 				encryptionPublicKey = sessionRecordingEncryptionPublicKey(t)
 			}
-			repository, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, encryptionPublicKey, conf.Auditlogs[0].Name, nil)
+			repository, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, encryptionPublicKey, conf.Auditlogs[0].Name, nil, true)
 			require.NoError(t, err)
 			startedAt := time.Now().UTC().Add(-time.Second)
 			recordingId, err := recording.NewId()
@@ -620,7 +620,7 @@ func TestSessionRecordingLifecycleStartupRecoveryCreatesIncompleteEvent(t *testi
 			require.NoError(t, repository.receipts.StageLifecycle(t.Context(), fileName, stagedEvent))
 			require.NoError(t, repository.Close())
 
-			restarted, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, encryptionPublicKey, conf.Auditlogs[0].Name, nil)
+			restarted, err := newSessionRecordingRepository(t.Context(), conf.Auditlogs[0].Recording, identity, encryptionPublicKey, conf.Auditlogs[0].Name, nil, true)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, restarted.Close()) })
 			recoveries := restarted.startupRecoveries()

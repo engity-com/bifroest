@@ -57,12 +57,18 @@ func (this *RemoteArtifactReceipts) BeginLifecycle(ctx context.Context, fileName
 	if this == nil || this.store == nil {
 		return errors.System.Newf("nil remote artifact receipts")
 	}
+	if this.store.unaudited {
+		return this.store.unauditedLifecycleNoop(ctx)
+	}
 	return this.store.beginLifecycle(ctx, fileName, startedAt, event)
 }
 
 func (this *RemoteArtifactReceipts) StageLifecycle(ctx context.Context, fileName string, event Event) error {
 	if this == nil || this.store == nil {
 		return errors.System.Newf("nil remote artifact receipts")
+	}
+	if this.store.unaudited {
+		return this.store.unauditedLifecycleNoop(ctx)
 	}
 	return this.store.stageLifecycle(ctx, fileName, event)
 }
@@ -96,6 +102,9 @@ func (this *RemoteArtifactReceipts) CompleteLifecycle(ctx context.Context, pendi
 	if this == nil || this.store == nil {
 		return errors.System.Newf("nil remote artifact receipts")
 	}
+	if this.store.unaudited {
+		return errors.Config.Newf("unaudited receipts have no pending lifecycle events")
+	}
 	return this.store.completeLifecycle(ctx, pending)
 }
 
@@ -104,6 +113,9 @@ func (this *RemoteArtifactReceipts) CompleteLifecycle(ctx context.Context, pendi
 func (this *RemoteArtifactReceipts) DiscardLifecycle(ctx context.Context, fileName string) error {
 	if this == nil || this.store == nil {
 		return errors.System.Newf("nil remote artifact receipts")
+	}
+	if this.store.unaudited {
+		return this.store.unauditedLifecycleNoop(ctx)
 	}
 	return this.store.discardLifecycle(ctx, fileName)
 }
@@ -114,7 +126,21 @@ func (this *RemoteArtifactReceipts) CleanupOrphanedLifecycles(ctx context.Contex
 	if this == nil || this.store == nil {
 		return errors.System.Newf("nil remote artifact receipts")
 	}
+	if this.store.unaudited {
+		return this.store.unauditedLifecycleNoop(ctx)
+	}
 	return this.store.cleanupOrphanedLifecycles(ctx)
+}
+
+func (this *remoteArtifactReceiptStore) unauditedLifecycleNoop(ctx context.Context) error {
+	if err := this.lock(ctx); err != nil {
+		return err
+	}
+	defer this.unlock()
+	if this.closed {
+		return errors.System.Newf("remote artifact receipt store is closed")
+	}
+	return this.validateExistingMode()
 }
 
 func (this *remoteArtifactReceiptStore) beginLifecycle(ctx context.Context, fileName string, startedAt time.Time, event Event) error {
@@ -282,6 +308,10 @@ func (this *remoteArtifactReceiptStore) promoteLifecycle(ctx context.Context, ar
 	if !receiptExists {
 		return errors.Config.Newf("remote artifact delivery receipt for %q is missing", artifact.FileName())
 	}
+	if this.unaudited {
+		_, _, err := this.loadLifecycleLocked(artifact.FileName(), &receipt)
+		return err
+	}
 	marker, exists, err := this.loadLifecycleLocked(artifact.FileName(), &receipt)
 	if err != nil {
 		return err
@@ -312,6 +342,9 @@ func (this *remoteArtifactReceiptStore) pendingLifecycle(ctx context.Context) ([
 	defer this.unlock()
 	if this.closed {
 		return nil, errors.System.Newf("remote artifact receipt store is closed")
+	}
+	if this.unaudited {
+		return []RemoteArtifactLifecycleEvent{}, this.validateExistingMode()
 	}
 	fileNames, err := this.stateFileNamesLocked(ctx)
 	if err != nil {
@@ -345,6 +378,14 @@ func (this *remoteArtifactReceiptStore) lifecyclePrepared(ctx context.Context, f
 	defer this.unlock()
 	if this.closed {
 		return false, errors.System.Newf("remote artifact receipt store is closed")
+	}
+	if this.unaudited {
+		_, exists, err := this.loadSnapshotLocked(fileName, nil)
+		if err != nil {
+			return false, err
+		}
+		_, _, err = this.loadLifecycleLocked(fileName, nil)
+		return exists, err
 	}
 	marker, exists, err := this.loadLifecycleLocked(fileName, nil)
 	if err != nil || !exists {
@@ -550,6 +591,16 @@ func (this *remoteArtifactReceiptStore) loadLifecycleLocked(fileName string, rec
 	directory := filepath.Join(this.producerDirectory, remoteArtifactReceiptStateName(fileName))
 	if err := ensureRemoteArtifactReceiptDirectory(directory); err != nil {
 		return remoteArtifactLifecycle{}, false, err
+	}
+	if this.unaudited {
+		for _, name := range []string{remoteArtifactLifecycleFileName, remoteArtifactLifecycleTempName, remoteArtifactLifecycleTempName + remoteArtifactReceiptCleanupSuffix} {
+			if exists, err := remoteArtifactReceiptStateFileExists(directory, name); err != nil {
+				return remoteArtifactLifecycle{}, false, err
+			} else if exists {
+				return remoteArtifactLifecycle{}, false, errors.Config.Newf("session Recording lifecycle state prevents using unaudited receipts")
+			}
+		}
+		return remoteArtifactLifecycle{}, false, nil
 	}
 	read := func(path string) (remoteArtifactLifecycle, []byte, bool, error) {
 		payload, exists, err := readRemoteArtifactReceiptPayload(path)

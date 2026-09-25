@@ -710,6 +710,11 @@ func TestAuditProducerIdUsesConfiguredSigningIdentity(t *testing.T) {
 	var output bytes.Buffer
 	require.NoError(t, doAuditProducerId(&auditProducerIdOpts{configuration: ref, auditlog: "default"}, &output))
 	require.Equal(t, auditCliTestProducerId(t, configured.IdentityFile).String()+"\n", output.String())
+	ref.Get().Auditlogs[0].Enabled = false
+	ref.Get().Auditlogs[0].Recording.Enabled = true
+	output.Reset()
+	require.NoError(t, doAuditProducerId(&auditProducerIdOpts{configuration: ref, auditlog: "default"}, &output))
+	require.Equal(t, auditCliTestProducerId(t, configured.IdentityFile).String()+"\n", output.String())
 
 	require.NoError(t, goos.Remove(configured.IdentityFile))
 	output.Reset()

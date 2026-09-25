@@ -306,7 +306,12 @@ func TestAuditlogRecordingPreservesExplicitZeroValuesAcrossYAMLRoundTrip(t *test
 
 func TestAuditlogRecordingParentValidation(t *testing.T) {
 	var parentDisabled Auditlog
-	require.ErrorContains(t, yaml.Unmarshal([]byte("recording:\n  enabled: true"), &parentDisabled), "[recording][enabled] requires [enabled] to be true")
+	require.NoError(t, yaml.Unmarshal([]byte("enabled: false\nrecording:\n  enabled: true"), &parentDisabled))
+	require.False(t, parentDisabled.Enabled)
+	require.True(t, parentDisabled.Recording.Enabled)
+	require.Equal(t, DefaultAuditlogIdentityFile, parentDisabled.IdentityFile)
+	require.Equal(t, DefaultAuditlogRecordingDirectory, parentDisabled.Recording.Directory)
+	require.NoError(t, Auditlogs{parentDisabled}.Validate())
 
 	var inherited Auditlog
 	require.NoError(t, yaml.Unmarshal([]byte(`
@@ -442,6 +447,55 @@ func TestAuditlogRecordingStaticPathOverlaps(t *testing.T) {
 	})
 }
 
+func TestAuditlogRecordingOnlyStaticPathOverlaps(t *testing.T) {
+	root := t.TempDir()
+	recording := expectedDefaultAuditlogRecording()
+	recording.Enabled = true
+	recording.Directory = filepath.Join(root, "recordings")
+	first := Auditlog{Name: "first", IdentityFile: filepath.Join(root, "key"), Directory: filepath.Join(root, "unused-journal"), Recording: recording}
+	second := Auditlog{Name: "second", Enabled: true, IdentityFile: filepath.Join(root, "other-key"), Directory: filepath.Join(root, "journal")}
+	require.NoError(t, Auditlogs{first, second}.Validate())
+
+	for _, tc := range []struct {
+		name    string
+		change  func(*Auditlog, *Auditlog)
+		message string
+	}{
+		{"duplicate identity", func(a, b *Auditlog) { b.IdentityFile = a.IdentityFile }, "[identityFile] duplicates"},
+		{"nested identity", func(a, b *Auditlog) { b.IdentityFile = filepath.Join(a.IdentityFile, "other") }, "[identityFile] overlaps"},
+		{"identity in journal", func(a, b *Auditlog) { a.IdentityFile = filepath.Join(b.Directory, "key") }, "is located inside enabled auditlog"},
+		{"journal below identity", func(a, b *Auditlog) { b.Directory = filepath.Join(a.IdentityFile, "journal") }, "is located below enabled auditlog"},
+		{"recording in journal", func(a, b *Auditlog) { a.Recording.Directory = filepath.Join(b.Directory, "recordings") }, "[recording][directory] overlaps enabled auditlog"},
+		{"recording in identity", func(a, b *Auditlog) { b.IdentityFile = filepath.Join(a.Recording.Directory, "key") }, "[recording][directory] overlaps enabled auditlog"},
+		{"recording roots", func(a, b *Auditlog) { b.Enabled = false; b.Recording = a.Recording }, "[recording][directory] overlaps active auditlog"},
+		{"recording encryption key", func(a, b *Auditlog) {
+			b.EncryptionPublicKeyFile = crypto.PublicKeysFile(filepath.Join(a.Recording.Directory, "recipient.pub"))
+		}, "[encryptionPublicKeyFile]"},
+		{"recording custom target identity", func(a, b *Auditlog) {
+			sftp := validRecordingPathSftpTarget(t, root)
+			sftp.IdentityFiles = []string{filepath.Join(a.Recording.Directory, "sftp-key")}
+			b.Recording = recording
+			b.Recording.Directory = filepath.Join(root, "other-recordings")
+			b.Recording.Targets = customRecordingPathTargets(sftp)
+		}, "[recording][targets][0][identityFiles][0]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, b := first, second
+			tc.change(&a, &b)
+			require.ErrorContains(t, Auditlogs{a, b}.Validate(), tc.message)
+		})
+	}
+
+	first.Directory = second.Directory
+	require.NoError(t, Auditlogs{first, second}.Validate(), "inactive journal paths need not be disjoint")
+	first.Directory = DefaultAuditlogJournalDirectory
+	second.Directory = DefaultAuditlogJournalDirectory
+	require.NoError(t, Auditlogs{first, second}.Validate(), "recording-only may retain the shared default journal path")
+	second.Enabled = false
+	second.IdentityFile = first.IdentityFile
+	require.NoError(t, Auditlogs{second}.Validate(), "fully disabled entries do not reserve signing paths")
+}
+
 func TestConfigurationRejectsRecordingSessionStorageOverlap(t *testing.T) {
 	root := t.TempDir()
 	recording := expectedDefaultAuditlogRecording()
@@ -455,6 +509,9 @@ func TestConfigurationRejectsRecordingSessionStorageOverlap(t *testing.T) {
 
 	conf.Auditlogs[0].Recording.Enabled = false
 	require.NoError(t, conf.validateRecordingSessionStoragePathOverlaps())
+	conf.Auditlogs[0].Enabled = false
+	conf.Auditlogs[0].Recording.Enabled = true
+	require.ErrorContains(t, conf.validateRecordingSessionStoragePathOverlaps(), "[session][storage]")
 }
 
 func TestConfigurationValidateIncludesRecordingSessionStorageOverlap(t *testing.T) {
@@ -478,6 +535,8 @@ flows:
 	conf.Auditlogs[0].Recording.Directory = filepath.Join(root, "storage", "recordings")
 	conf.Session.V.(*SessionFs).Storage = filepath.Join(root, "storage")
 
+	require.ErrorContains(t, conf.Validate(), "[auditlog][0][recording][directory] overlaps [session][storage]")
+	conf.Auditlogs[0].Enabled = false
 	require.ErrorContains(t, conf.Validate(), "[auditlog][0][recording][directory] overlaps [session][storage]")
 }
 

@@ -345,14 +345,22 @@ func (f *fixture) prepareLocal() error {
 	return f.prepareLocalImage(localContainerfile, localConfiguration, nil, true)
 }
 
-func (f *fixture) prepareLocalRecording(auditIdentity string) error {
+func (f *fixture) prepareLocalRecording(auditIdentity string, recordingOnly ...bool) error {
 	extraFiles := map[string]struct {
 		content []byte
 		mode    os.FileMode
 	}{
 		"audit_identity": {mustRead(auditIdentity), 0400},
 	}
-	return f.prepareLocalImage(localRecordingContainerfile, localRecordingConfiguration, extraFiles, false)
+	configuration := localRecordingConfiguration
+	if len(recordingOnly) > 0 && recordingOnly[0] {
+		const enabled = "auditlog:\n  - name: default\n    enabled: true"
+		if strings.Count(configuration, enabled) != 1 {
+			return fmt.Errorf("local Recording configuration has no unique audit enablement")
+		}
+		configuration = strings.Replace(configuration, enabled, "auditlog:\n  - name: default\n    enabled: false", 1)
+	}
+	return f.prepareLocalImage(localRecordingContainerfile, configuration, extraFiles, false)
 }
 
 func (f *fixture) prepareLocalImage(containerfile, configuration string, extraFiles map[string]struct {

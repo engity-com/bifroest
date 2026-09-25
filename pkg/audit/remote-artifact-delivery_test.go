@@ -57,6 +57,92 @@ func TestRemoteArtifactDeliveryPublishesInSortedOrderAndDoesNotRepublishAfterRes
 	require.NoError(t, restarted.Close())
 }
 
+func TestRemoteArtifactDeliveryUnauditedRetriesWithoutAuditor(t *testing.T) {
+	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b855-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("retry without audit"))
+	source.set(artifact)
+	root := t.TempDir()
+	quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
+	fingerprint := remoteArtifactDeliveryTestFingerprint("archive")
+	var calls atomic.Int32
+	firstFailed := make(chan struct{})
+	entry := remoteArtifactDeliveryTestEntry("archive", fingerprint, func(context.Context, RemoteArtifact) error {
+		if calls.Add(1) == 1 {
+			close(firstFailed)
+			return goerrors.New("temporary failure")
+		}
+		return nil
+	})
+	targets := remoteArtifactDeliveryTestTargets(entry)
+	receipts, err := NewRemoteArtifactReceiptsWithoutAudit(root, identity, "security", targets, quota)
+	require.NoError(t, err)
+	sealedAt := time.Now().UTC().Add(-time.Minute)
+	require.NoError(t, receipts.PrepareLifecycle(t.Context(), artifact, sealedAt, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false))
+	t.Cleanup(func() { require.NoError(t, receipts.Close()) })
+	delivery, err := NewRemoteArtifactDelivery(t.Context(), sealedDirectory, source, receipts, targets, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, delivery.Close()) })
+	require.NoError(t, delivery.Start())
+	select {
+	case <-firstFailed:
+	case <-time.After(time.Second):
+		t.Fatal("first delivery attempt did not fail")
+	}
+	receipt, exists, err := receipts.store.load(artifact)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Empty(t, receipt.Targets[0].FailedAt)
+	require.Empty(t, receipt.Targets[0].FailureErrorCategory)
+	remoteArtifactDeliveryTestFlush(t, delivery)
+	require.Equal(t, int32(2), calls.Load())
+	receipt, exists, err = receipts.store.load(artifact)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.NotEmpty(t, receipt.Targets[0].AcknowledgedAt)
+	require.Empty(t, receipt.Targets[0].AuditOperationId)
+	require.Empty(t, receipt.Targets[0].SuccessAuditedAt)
+	candidates, err := receipts.ListRetentionCandidates(t.Context(), time.Now().UTC())
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Empty(t, candidates[0].AuditOperationId)
+	require.NoError(t, delivery.Close())
+	noRepublish := remoteArtifactDeliveryTestTargets(remoteArtifactDeliveryTestEntry("archive", fingerprint, func(context.Context, RemoteArtifact) error {
+		calls.Add(1)
+		return nil
+	}))
+	restarted, err := NewRemoteArtifactDelivery(t.Context(), sealedDirectory, source, receipts, noRepublish, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restarted.Close()) })
+	require.NoError(t, restarted.Start())
+	remoteArtifactDeliveryTestFlush(t, restarted)
+	require.Equal(t, int32(2), calls.Load())
+}
+
+func TestRemoteArtifactDeliveryAuditedStillRequiresAuditor(t *testing.T) {
+	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
+	receipts, err := NewRemoteArtifactReceipts(t.TempDir(), identity, "security", nil, &remoteArtifactReceiptTestQuota{maximum: 1 << 20})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, receipts.Close()) })
+	_, err = NewRemoteArtifactDelivery(t.Context(), sealedDirectory, source, receipts, remoteArtifactDeliveryTestTargets(), nil)
+	require.ErrorContains(t, err, "nil remote artifact delivery auditor")
+}
+
+func TestRemoteArtifactDeliveryUnauditedWithoutTargetsNeedsNoAuditor(t *testing.T) {
+	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b859-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("no destination"))
+	source.set(artifact)
+	receipts, err := NewRemoteArtifactReceiptsWithoutAudit(t.TempDir(), identity, "security", nil, &remoteArtifactReceiptTestQuota{maximum: 1 << 20})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, receipts.Close()) })
+	require.NoError(t, receipts.Prepare(t.Context(), artifact, time.Now().UTC().Add(-time.Minute)))
+	delivery, err := NewRemoteArtifactDelivery(t.Context(), sealedDirectory, source, receipts, remoteArtifactDeliveryTestTargets(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, delivery.Close()) })
+	require.NoError(t, delivery.Start())
+	remoteArtifactDeliveryTestFlush(t, delivery)
+	require.Zero(t, source.openCalls.Load())
+}
+
 func TestRemoteArtifactDeliveryKeepsOneArtifactInFlightPerTarget(t *testing.T) {
 	identity, sealedDirectory, source := newRemoteArtifactDeliveryTestSource(t)
 	artifacts := []RemoteArtifact{

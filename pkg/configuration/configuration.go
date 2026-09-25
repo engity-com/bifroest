@@ -98,7 +98,7 @@ func (this *Configuration) validateRecordingSessionStoragePathOverlaps() error {
 		return nil
 	}
 	for index, auditlog := range this.Auditlogs {
-		if !auditlog.Enabled || !auditlog.Recording.Enabled {
+		if !auditlog.Recording.Enabled {
 			continue
 		}
 		if pathsOverlap(auditlog.Recording.Directory, sessionFs.Storage) {

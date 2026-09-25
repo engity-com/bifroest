@@ -113,6 +113,355 @@ func TestRemoteArtifactReceiptWithoutTargetsStartsRetentionAtSeal(t *testing.T) 
 	require.Equal(t, sealedAt, retentionStartedAt)
 }
 
+func TestRemoteArtifactReceiptUnauditedWithoutTargetsSurvivesRestartAndRetention(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	root := t.TempDir()
+	quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b850-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("unaudited recording"))
+	sealedAt := time.Now().UTC().Add(-time.Minute)
+	receipts, err := NewRemoteArtifactReceiptsWithoutAudit(root, identity, "security", nil, quota)
+	require.NoError(t, err)
+	require.NoError(t, receipts.PrepareLifecycle(t.Context(), artifact, sealedAt, strings.Repeat("a", 64), false))
+	require.NoError(t, receipts.Require(t.Context(), artifact))
+	directory := filepath.Join(receipts.store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName()))
+	require.NoFileExists(t, filepath.Join(directory, remoteArtifactLifecycleFileName))
+	loaded, exists, err := receipts.store.load(artifact)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.True(t, loaded.Unaudited)
+	require.Empty(t, loaded.Targets)
+	require.NoError(t, receipts.PromoteLifecycle(t.Context(), artifact))
+	require.Empty(t, mustPendingRemoteArtifactLifecycle(t, receipts))
+	require.NoError(t, receipts.Close())
+
+	restarted, err := NewRemoteArtifactReceiptsWithoutAudit(root, identity, "security", nil, quota)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restarted.Close()) })
+	require.NoError(t, restarted.Recover(t.Context()))
+	signed, err := restarted.ListSigned(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, []RemoteArtifactSignedReceipt{{FileName: artifact.FileName()}}, signed)
+	candidates, err := restarted.ListRetentionCandidates(t.Context(), sealedAt)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, sealedAt, candidates[0].RetentionStartedAt)
+	require.Empty(t, candidates[0].AuditOperationId)
+	require.NoError(t, restarted.MarkRetentionDeleting(t.Context(), candidates[0], sealedAt))
+	signed, err = restarted.ListSigned(t.Context())
+	require.NoError(t, err)
+	require.True(t, signed[0].RetentionDeletionStarted)
+	candidates, err = restarted.ListRetentionCandidates(t.Context(), time.Time{})
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	completed, err := restarted.MarkRetentionCompleted(t.Context(), candidates[0], time.Time{})
+	require.NoError(t, err)
+	require.Empty(t, completed.AuditOperationId)
+	require.NoError(t, restarted.RemoveRetentionCandidate(t.Context(), completed, time.Time{}))
+	require.NoDirExists(t, directory)
+}
+
+func TestRemoteArtifactReceiptUnauditedAckAndTemporaryRecovery(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	root := t.TempDir()
+	quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
+	entry := remoteArtifactDeliveryTestEntry("archive", remoteArtifactDeliveryTestFingerprint("archive"), nil)
+	targets := remoteArtifactDeliveryTestTargets(entry)
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b851-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("ack recovery"))
+	sealedAt := time.Now().UTC().Add(-time.Minute)
+	receipts, err := NewRemoteArtifactReceiptsWithoutAudit(root, identity, "security", targets, quota)
+	require.NoError(t, err)
+	require.NoError(t, receipts.Prepare(t.Context(), artifact, sealedAt))
+	initial, exists, err := receipts.store.load(artifact)
+	require.NoError(t, err)
+	require.True(t, exists)
+	_, ready := initial.retentionStartedAt()
+	require.False(t, ready)
+	ackAt := sealedAt.Add(time.Second)
+	updated, payload, changed, err := acknowledgeRemoteArtifactReceipt(identity, initial, entry, ackAt, func() (uuid.UUID, error) {
+		return uuid.Nil, fmt.Errorf("UUID generator must not be used without audit")
+	})
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Empty(t, updated.Targets[0].AuditOperationId)
+	require.Empty(t, updated.Targets[0].SuccessAuditedAt)
+	directory := filepath.Join(receipts.store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName()))
+	temporary := filepath.Join(directory, remoteArtifactReceiptTempFileName)
+	require.NoError(t, writeRemoteArtifactReceiptTestFile(temporary, payload))
+	usage, err := remoteArtifactReceiptStateUsage(directory)
+	require.NoError(t, err)
+	quota.usage = uint64(usage)
+	require.NoError(t, receipts.Close())
+
+	restarted, err := NewRemoteArtifactReceiptsWithoutAudit(root, identity, "security", targets, quota)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restarted.Close()) })
+	require.NoError(t, restarted.Recover(t.Context()))
+	require.NoFileExists(t, temporary)
+	status, err := restarted.store.targetStatus(t.Context(), artifact.FileName(), entry)
+	require.NoError(t, err)
+	require.Equal(t, remoteArtifactReceiptTargetAcknowledged, status)
+	candidates, err := restarted.ListRetentionCandidates(t.Context(), ackAt)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, ackAt, candidates[0].RetentionStartedAt)
+}
+
+func TestRemoteArtifactReceiptUnauditedRestartCleansTornTemporary(t *testing.T) {
+	for _, published := range []bool{true, false} {
+		t.Run(fmt.Sprintf("published=%t", published), func(t *testing.T) {
+			_, identity := newJournalTestIdentity(t)
+			root := t.TempDir()
+			quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
+			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b85b-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("surviving crash"))
+			receipts, err := NewRemoteArtifactReceiptsWithoutAudit(root, identity, "security", nil, quota)
+			require.NoError(t, err)
+			if published {
+				require.NoError(t, receipts.Prepare(t.Context(), artifact, time.Now().UTC().Add(-time.Minute)))
+			}
+			directory := filepath.Join(receipts.store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName()))
+			if !published {
+				require.NoError(t, ensureRemoteArtifactReceiptDirectory(directory))
+			}
+			publishedPath := filepath.Join(directory, remoteArtifactReceiptFileName)
+			var original []byte
+			if published {
+				original, err = os.ReadFile(publishedPath)
+				require.NoError(t, err)
+			}
+			temporary := filepath.Join(directory, remoteArtifactReceiptTempFileName)
+			require.NoError(t, writeRemoteArtifactReceiptTestFile(temporary, []byte(`{"schema":`)))
+			usage, err := remoteArtifactReceiptStateUsage(directory)
+			require.NoError(t, err)
+			quota.usage = uint64(usage)
+			require.NoError(t, receipts.Close())
+
+			restarted, err := NewRemoteArtifactReceiptsWithoutAudit(root, identity, "security", nil, quota)
+			require.NoError(t, err)
+			require.NoError(t, restarted.Recover(t.Context()))
+			require.NoFileExists(t, temporary)
+			if published {
+				actual, err := os.ReadFile(publishedPath)
+				require.NoError(t, err)
+				require.Equal(t, original, actual)
+			}
+			if published {
+				require.NoError(t, restarted.Require(t.Context(), artifact))
+			} else {
+				require.NoDirExists(t, directory)
+			}
+			require.NoError(t, restarted.Close())
+			reopened, err := NewRemoteArtifactReceiptsWithoutAudit(root, identity, "security", nil, quota)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, reopened.Close()) })
+			require.NoError(t, reopened.Recover(t.Context()))
+		})
+	}
+}
+
+func TestRemoteArtifactReceiptUnauditedRestartRejectsSignedAuditedTemporary(t *testing.T) {
+	for _, published := range []bool{true, false} {
+		t.Run(fmt.Sprintf("published=%t", published), func(t *testing.T) {
+			_, identity := newJournalTestIdentity(t)
+			root := t.TempDir()
+			quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
+			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b85c-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("opposite mode"))
+			receipts, err := NewRemoteArtifactReceiptsWithoutAudit(root, identity, "security", nil, quota)
+			require.NoError(t, err)
+			if published {
+				require.NoError(t, receipts.Prepare(t.Context(), artifact, time.Now().UTC()))
+			}
+			directory := filepath.Join(receipts.store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName()))
+			if !published {
+				require.NoError(t, ensureRemoteArtifactReceiptDirectory(directory))
+			}
+			publishedPath := filepath.Join(directory, remoteArtifactReceiptFileName)
+			var original []byte
+			if published {
+				original, err = os.ReadFile(publishedPath)
+				require.NoError(t, err)
+			}
+			_, auditedPayload, err := newRemoteArtifactReceipt(identity, "security", artifact, time.Now().UTC(), nil)
+			require.NoError(t, err)
+			temporary := filepath.Join(directory, remoteArtifactReceiptTempFileName)
+			require.NoError(t, writeRemoteArtifactReceiptTestFile(temporary, auditedPayload))
+			require.NoError(t, receipts.Close())
+			_, err = NewRemoteArtifactReceiptsWithoutAudit(root, identity, "security", nil, quota)
+			require.ErrorContains(t, err, "mode")
+			require.FileExists(t, temporary)
+			if published {
+				actual, err := os.ReadFile(publishedPath)
+				require.NoError(t, err)
+				require.Equal(t, original, actual)
+			}
+		})
+	}
+}
+
+func TestRemoteArtifactReceiptUnauditedRestartRejectsUnreadableTemporary(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	root := t.TempDir()
+	quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b85e-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("unreadable temp"))
+	receipts, err := NewRemoteArtifactReceiptsWithoutAudit(root, identity, "security", nil, quota)
+	require.NoError(t, err)
+	require.NoError(t, receipts.Prepare(t.Context(), artifact, time.Now().UTC()))
+	directory := filepath.Join(receipts.store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName()))
+	temporary := filepath.Join(directory, remoteArtifactReceiptTempFileName)
+	require.NoError(t, os.Mkdir(temporary, journalDirectoryMode))
+	require.NoError(t, receipts.Close())
+	_, err = NewRemoteArtifactReceiptsWithoutAudit(root, identity, "security", nil, quota)
+	require.ErrorContains(t, err, "not a regular file")
+	require.DirExists(t, temporary)
+	require.FileExists(t, filepath.Join(directory, remoteArtifactReceiptFileName))
+}
+
+func TestRemoteArtifactReceiptUnauditedRestartRejectsCorruptPublishedReceipt(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	root := t.TempDir()
+	quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b85d-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("published corruption"))
+	receipts, err := NewRemoteArtifactReceiptsWithoutAudit(root, identity, "security", nil, quota)
+	require.NoError(t, err)
+	require.NoError(t, receipts.Prepare(t.Context(), artifact, time.Now().UTC()))
+	path := filepath.Join(receipts.store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName()), remoteArtifactReceiptFileName)
+	payload, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var corrupted remoteArtifactReceipt
+	require.NoError(t, json.Unmarshal(payload, &corrupted))
+	corrupted.Signature[0] ^= 1
+	payload, err = json.Marshal(corrupted)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, payload, journalFileMode))
+	require.NoError(t, receipts.Close())
+	_, err = NewRemoteArtifactReceiptsWithoutAudit(root, identity, "security", nil, quota)
+	require.ErrorContains(t, err, "cannot verify")
+	actual, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, payload, actual)
+}
+
+func TestRemoteArtifactReceiptRejectsModeSwitchWithState(t *testing.T) {
+	for _, unaudited := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unaudited=%t", unaudited), func(t *testing.T) {
+			_, identity := newJournalTestIdentity(t)
+			root := t.TempDir()
+			quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
+			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b852-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("mode switch"))
+			var receipts *RemoteArtifactReceipts
+			var err error
+			if unaudited {
+				receipts, err = NewRemoteArtifactReceiptsWithoutAudit(root, identity, "security", nil, quota)
+			} else {
+				receipts, err = NewRemoteArtifactReceipts(root, identity, "security", nil, quota)
+			}
+			require.NoError(t, err)
+			require.NoError(t, receipts.Prepare(t.Context(), artifact, time.Now().UTC()))
+			require.NoError(t, receipts.Close())
+			if unaudited {
+				_, err = NewRemoteArtifactReceipts(root, identity, "security", nil, quota)
+			} else {
+				_, err = NewRemoteArtifactReceiptsWithoutAudit(root, identity, "security", nil, quota)
+			}
+			require.ErrorContains(t, err, "mode")
+		})
+	}
+}
+
+func TestRemoteArtifactReceiptUnauditedRecoveryRejectsTamperedModeAndHistoricalReceipt(t *testing.T) {
+	for _, state := range []string{remoteArtifactReceiptFileName, remoteArtifactReceiptRetentionFileName, remoteArtifactReceiptCompletedFileName} {
+		t.Run(state, func(t *testing.T) {
+			_, identity := newJournalTestIdentity(t)
+			root := t.TempDir()
+			quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
+			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b856-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("historical mode"))
+			sealedAt := time.Now().UTC().Add(-time.Minute)
+			receipts, err := NewRemoteArtifactReceiptsWithoutAudit(root, identity, "security", nil, quota)
+			require.NoError(t, err)
+			require.NoError(t, receipts.Prepare(t.Context(), artifact, sealedAt))
+			if state != remoteArtifactReceiptFileName {
+				candidates, err := receipts.ListRetentionCandidates(t.Context(), sealedAt)
+				require.NoError(t, err)
+				require.Len(t, candidates, 1)
+				require.NoError(t, receipts.MarkRetentionDeleting(t.Context(), candidates[0], sealedAt))
+				if state == remoteArtifactReceiptCompletedFileName {
+					candidates, err = receipts.ListRetentionCandidates(t.Context(), sealedAt)
+					require.NoError(t, err)
+					_, err = receipts.MarkRetentionCompleted(t.Context(), candidates[0], sealedAt)
+					require.NoError(t, err)
+				}
+			}
+			directory := filepath.Join(receipts.store.producerDirectory, remoteArtifactReceiptStateName(artifact.FileName()))
+			path := filepath.Join(directory, state)
+			payload, err := os.ReadFile(path)
+			require.NoError(t, err)
+			var forged remoteArtifactReceipt
+			require.NoError(t, json.Unmarshal(payload, &forged))
+			forged.Unaudited = false
+			payload, err = json.Marshal(forged)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, payload, journalFileMode))
+			require.ErrorContains(t, receipts.Recover(t.Context()), "cannot verify")
+			require.NoError(t, receipts.Close())
+			_, err = NewRemoteArtifactReceiptsWithoutAudit(root, identity, "security", nil, quota)
+			require.ErrorContains(t, err, "mode")
+		})
+	}
+}
+
+func TestRemoteArtifactReceiptRejectsModeSwitchWithHistoricalReceipt(t *testing.T) {
+	for _, state := range []string{remoteArtifactReceiptRetentionFileName, remoteArtifactReceiptCompletedFileName} {
+		t.Run(state, func(t *testing.T) {
+			_, identity := newJournalTestIdentity(t)
+			root := t.TempDir()
+			quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
+			artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b85a-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("retained mode"))
+			sealedAt := time.Now().UTC().Add(-time.Minute)
+			receipts, err := NewRemoteArtifactReceiptsWithoutAudit(root, identity, "security", nil, quota)
+			require.NoError(t, err)
+			require.NoError(t, receipts.Prepare(t.Context(), artifact, sealedAt))
+			candidates, err := receipts.ListRetentionCandidates(t.Context(), sealedAt)
+			require.NoError(t, err)
+			require.Len(t, candidates, 1)
+			require.NoError(t, receipts.MarkRetentionDeleting(t.Context(), candidates[0], sealedAt))
+			if state == remoteArtifactReceiptCompletedFileName {
+				candidates, err = receipts.ListRetentionCandidates(t.Context(), sealedAt)
+				require.NoError(t, err)
+				_, err = receipts.MarkRetentionCompleted(t.Context(), candidates[0], sealedAt)
+				require.NoError(t, err)
+			}
+			require.NoError(t, receipts.Close())
+			_, err = NewRemoteArtifactReceipts(root, identity, "security", nil, quota)
+			require.ErrorContains(t, err, "mode")
+		})
+	}
+}
+
+func TestRemoteArtifactReceiptUnauditedRejectsAuditStateEvenWhenSigned(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b857-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("no fabricated audit"))
+	entry := remoteArtifactDeliveryTestEntry("archive", remoteArtifactDeliveryTestFingerprint("archive"), nil)
+	targets := remoteArtifactDeliveryTestTargets(entry)
+	receipt, _, err := newRemoteArtifactReceipt(identity, "security", artifact, time.Now().UTC(), targets, true)
+	require.NoError(t, err)
+	content := receipt.remoteArtifactReceiptContent
+	content.Targets = append([]remoteArtifactReceiptTarget(nil), content.Targets...)
+	content.Targets[0].AuditOperationId = uuid.NewString()
+	_, _, err = signRemoteArtifactReceipt(identity, content)
+	require.ErrorContains(t, err, "contains audit state")
+}
+
+func TestRemoteArtifactReceiptUnauditedEnforcesQuota(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	receipts, err := NewRemoteArtifactReceiptsWithoutAudit(t.TempDir(), identity, "security", nil, &remoteArtifactReceiptTestQuota{maximum: 1})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, receipts.Close()) })
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), "6ba7b858-9dad-4d1f-80b4-00c04fd430c8.bcast", []byte("quota"))
+	require.Error(t, receipts.PrepareLifecycle(t.Context(), artifact, time.Now().UTC(), "", false))
+	_, exists, err := receipts.store.load(artifact)
+	require.NoError(t, err)
+	require.False(t, exists)
+}
+
 func TestRemoteArtifactReceiptPersistsDeliveryAuditOutboxAcrossRestart(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)
 	root := t.TempDir()

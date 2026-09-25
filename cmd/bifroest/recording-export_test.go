@@ -110,10 +110,11 @@ func TestRecordingExportTrustsOnlyConfiguredLocalSealedArtifacts(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, stdos.WriteFile(file, content, 0600))
 	configurationPath := filepath.Join(root, "configuration.yaml")
-	writeConfiguration := func(identityFile string, recordingEnabled bool) {
+	writeConfiguration := func(identityFile string, recordingEnabled bool, auditEnabled ...bool) {
 		t.Helper()
-		raw := fmt.Sprintf("auditlog:\n  - enabled: true\n    identityFile: %q\n    directory: %q\n    recording:\n      enabled: %t\n      directory: %q\nflows:\n  - name: flow\n    authorization:\n      type: simple\n    environment:\n      type: dummy\n",
-			filepath.ToSlash(identityFile), filepath.ToSlash(filepath.Join(root, "journal")), recordingEnabled, filepath.ToSlash(filepath.Join(root, "recordings")))
+		journalEnabled := len(auditEnabled) == 0 || auditEnabled[0]
+		raw := fmt.Sprintf("auditlog:\n  - enabled: %t\n    identityFile: %q\n    directory: %q\n    recording:\n      enabled: %t\n      directory: %q\nflows:\n  - name: flow\n    authorization:\n      type: simple\n    environment:\n      type: dummy\n",
+			journalEnabled, filepath.ToSlash(identityFile), filepath.ToSlash(filepath.Join(root, "journal")), recordingEnabled, filepath.ToSlash(filepath.Join(root, "recordings")))
 		require.NoError(t, stdos.WriteFile(configurationPath, []byte(raw), 0600))
 	}
 	writeConfiguration(fixture.signingIdentityPath, true)
@@ -121,6 +122,10 @@ func TestRecordingExportTrustsOnlyConfiguredLocalSealedArtifacts(t *testing.T) {
 	require.NoError(t, err)
 	opts := recordingExportOpts{file: file, auditlog: "default", configuration: configurationPath, withSensitive: true}
 	var output bytes.Buffer
+	require.NoError(t, doRecordingExport(&opts, &output))
+	require.Equal(t, fixture.nativeCast, output.Bytes())
+	writeConfiguration(fixture.signingIdentityPath, true, false)
+	output.Reset()
 	require.NoError(t, doRecordingExport(&opts, &output))
 	require.Equal(t, fixture.nativeCast, output.Bytes())
 

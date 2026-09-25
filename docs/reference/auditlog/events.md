@@ -4,7 +4,7 @@ description: Reference for Bifröst audit events and their privacy and failure s
 
 # Audit events
 
-For each enabled audit log, Bifröst writes structured events for security-relevant SSH transitions selected by the active [flow](../flow.md). Disabled audit logs discard events without journal side effects. Events contain controlled classifications and technical correlation IDs rather than request contents.
+For each enabled audit journal, Bifröst writes structured events for security-relevant SSH transitions selected by the active [flow](../flow.md). With `auditlog.enabled: false`, even if session recording is enabled, **no audit events or journal files are written**. Events contain controlled classifications and technical correlation IDs rather than request contents.
 
 ## Event model
 

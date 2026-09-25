@@ -32,8 +32,8 @@ func doAuditProducerId(opts *auditProducerIdOpts, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if !configured.Enabled {
-		return fmt.Errorf("auditlog %q is disabled", configured.Name)
+	if !configured.Enabled && !configured.Recording.Enabled {
+		return fmt.Errorf("auditlog %q and its Recording are disabled", configured.Name)
 	}
 	privateKey, err := loadAuditPrivateKey(configured.IdentityFile)
 	if err != nil {

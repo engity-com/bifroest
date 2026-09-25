@@ -350,7 +350,7 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	}
 
 	serverPrivateKeys := hostSigners
-	if slices.ContainsFunc(this.Configuration.Auditlogs, func(a configuration.Auditlog) bool { return a.Enabled }) {
+	if slices.ContainsFunc(this.Configuration.Auditlogs, func(a configuration.Auditlog) bool { return a.Enabled || a.Recording.Enabled }) {
 		serverPrivateKeys, err = loadStaticPrivateKeysForAuditEncryption(this.Configuration.Flows, hostSigners)
 		if err != nil {
 			return err
@@ -360,7 +360,7 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	var failedSftpIdentityPublicKeys []crypto.PublicKey
 	for index := range this.Configuration.Auditlogs {
 		auditlog := &this.Configuration.Auditlogs[index]
-		if !auditlog.Enabled {
+		if !auditlog.Enabled && !auditlog.Recording.Enabled {
 			continue
 		}
 		keys, identityErr := loadStaticSftpIdentityPublicKeysForAuditEncryption(auditlog)
@@ -385,10 +385,10 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	availableAuditIdentityKeys := make(map[configuration.AuditlogName]crypto.PublicKey, len(this.Configuration.Auditlogs))
 	for index := range this.Configuration.Auditlogs {
 		auditlog := &this.Configuration.Auditlogs[index]
-		if !auditlog.Enabled || svc.auditlogDisabled(auditlog.Name) {
+		if (!auditlog.Enabled && !auditlog.Recording.Enabled) || svc.auditlogDisabled(auditlog.Name) {
 			continue
 		}
-		identity, identityErr := audit.EnsureIdentity(auditlog)
+		identity, identityErr := audit.EnsureIdentityWithAuditlogs(auditlog, this.Configuration.Auditlogs)
 		if identityErr != nil {
 			if auditlog.Recording.Enabled {
 				identityErr = fmt.Errorf("cannot open Recording repository of auditlog %q: %w", auditlog.Name, identityErr)
@@ -415,7 +415,7 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	}
 	for index := range this.Configuration.Auditlogs {
 		auditlog := &this.Configuration.Auditlogs[index]
-		if availableAuditIdentityKeys[auditlog.Name] != nil || (auditlog.Enabled && !svc.auditlogDisabled(auditlog.Name)) {
+		if availableAuditIdentityKeys[auditlog.Name] != nil || ((auditlog.Enabled || auditlog.Recording.Enabled) && !svc.auditlogDisabled(auditlog.Name)) {
 			continue
 		}
 		key, loadErr := audit.LoadExistingIdentityPublicKey(auditlog.IdentityFile)
@@ -463,7 +463,7 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	resolvedEncryptionPublicKeys := make(map[configuration.AuditlogName]crypto.PublicKeys, len(this.Configuration.Auditlogs))
 	for index := range this.Configuration.Auditlogs {
 		auditlog := &this.Configuration.Auditlogs[index]
-		if !auditlog.Enabled || svc.auditlogDisabled(auditlog.Name) {
+		if (!auditlog.Enabled && !auditlog.Recording.Enabled) || svc.auditlogDisabled(auditlog.Name) {
 			continue
 		}
 		encryptionPublicKey, encryptionErr := audit.ResolveEncryptionPublicKey(auditlog.EncryptionPublicKey, auditlog.EncryptionPublicKeyFile)
@@ -495,7 +495,7 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	}
 	for index := range this.Configuration.Auditlogs {
 		auditlog := &this.Configuration.Auditlogs[index]
-		if !auditlog.Enabled || !auditlog.Recording.Enabled || svc.auditlogDisabled(auditlog.Name) {
+		if !auditlog.Recording.Enabled || svc.auditlogDisabled(auditlog.Name) {
 			continue
 		}
 		targetConfigurations := sessionRecordingTargetConfigurations(auditlog)
@@ -511,7 +511,7 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 				continue
 			}
 		}
-		repository, repositoryErr := newSessionRecordingRepository(ctx, auditlog.Recording, svc.auditIdentities[auditlog.Name], resolvedEncryptionPublicKeys[auditlog.Name], auditlog.Name, targets)
+		repository, repositoryErr := newSessionRecordingRepository(ctx, auditlog.Recording, svc.auditIdentities[auditlog.Name], resolvedEncryptionPublicKeys[auditlog.Name], auditlog.Name, targets, auditlog.Enabled)
 		if repositoryErr != nil {
 			failure := fmt.Errorf("cannot open Recording repository of auditlog %q: %w", auditlog.Name, repositoryErr)
 			if targets != nil {
@@ -533,7 +533,10 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 		}
 		var delivery *audit.RemoteArtifactDelivery
 		if targets != nil {
-			auditor := &sessionRecordingDeliveryAuditor{service: svc, auditlog: auditlog.Name, repository: repository}
+			var auditor audit.RemoteArtifactDeliveryAuditor
+			if auditlog.Enabled {
+				auditor = &sessionRecordingDeliveryAuditor{service: svc, auditlog: auditlog.Name, repository: repository}
+			}
 			var deliveryErr error
 			delivery, deliveryErr = audit.NewRemoteArtifactDelivery(ctx, filepath.Join(auditlog.Recording.Directory, "sealed"), repository, repository.receipts, targets, auditor)
 			if deliveryErr != nil {
@@ -555,7 +558,7 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	}
 	for index := range this.Configuration.Auditlogs {
 		auditlog := &this.Configuration.Auditlogs[index]
-		if svc.auditlogDisabled(auditlog.Name) {
+		if !auditlog.Enabled || svc.auditlogDisabled(auditlog.Name) {
 			svc.auditRecorders[auditlog.Name] = audit.NewNoopRecorder()
 			continue
 		}
@@ -741,16 +744,18 @@ func loadStaticPrivateKeysForAuditEncryption(flows configuration.Flows, hostKeys
 func loadStaticSftpIdentityPublicKeysForAuditEncryption(auditlog *configuration.Auditlog) ([]crypto.PublicKey, error) {
 	var result []crypto.PublicKey
 	var resultErr error
-	for targetIndex := range auditlog.Targets {
-		target := &auditlog.Targets[targetIndex]
-		sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
-		if !ok || len(sftp.IdentityFiles) == 0 {
-			continue
-		}
-		keys, err := audit.LoadSftpIdentityPublicKeys(sftp.IdentityFiles)
-		result = append(result, keys...)
-		if err != nil {
-			resultErr = goerrors.Join(resultErr, fmt.Errorf("cannot load static SFTP identities of target %q in auditlog %q: %w", target.Name, auditlog.Name, err))
+	if auditlog.Enabled || (auditlog.Recording.Enabled && !auditlog.Recording.Targets.IsDisabled() && auditlog.Recording.Targets.Configured() == nil) {
+		for targetIndex := range auditlog.Targets {
+			target := &auditlog.Targets[targetIndex]
+			sftp, ok := target.V.(*configuration.AuditlogTargetSftp)
+			if !ok || len(sftp.IdentityFiles) == 0 {
+				continue
+			}
+			keys, err := audit.LoadSftpIdentityPublicKeys(sftp.IdentityFiles)
+			result = append(result, keys...)
+			if err != nil {
+				resultErr = goerrors.Join(resultErr, fmt.Errorf("cannot load static SFTP identities of target %q in auditlog %q: %w", target.Name, auditlog.Name, err))
+			}
 		}
 	}
 	if !auditlog.Recording.Enabled {
@@ -788,7 +793,7 @@ func loadExistingDisabledSftpIdentityPublicKeys(auditlog *configuration.Auditlog
 				}
 				overlaps := false
 				for _, other := range auditlogs {
-					if other.Enabled && runtimePathsOverlap(resolved, other.IdentityFile) {
+					if (other.Enabled || other.Recording.Enabled) && runtimePathsOverlap(resolved, other.IdentityFile) {
 						resultErr = goerrors.Join(resultErr, errors.Config.Newf("auditlog %q %s %q static SFTP identity file %q overlaps auditlog %q identity file", auditlog.Name, kind, target.Name, path, other.Name))
 						overlaps = true
 						break
@@ -811,10 +816,10 @@ func loadExistingDisabledSftpIdentityPublicKeys(auditlog *configuration.Auditlog
 			}
 		}
 	}
-	if !auditlog.Enabled {
+	if !auditlog.Enabled && (!auditlog.Recording.Enabled || auditlog.Recording.Targets.IsDisabled() || auditlog.Recording.Targets.Configured() != nil) {
 		loadTargets(auditlog.Targets, "target")
 	}
-	if !auditlog.Enabled || !auditlog.Recording.Enabled {
+	if !auditlog.Recording.Enabled {
 		loadTargets(auditlog.Recording.Targets.Configured(), "Recording target")
 	}
 	return result, resultErr
@@ -1093,19 +1098,22 @@ func validateAuditlogRuntimePaths(auditlogs configuration.Auditlogs) error {
 	var resolved []resolvedAuditlog
 	for index := range auditlogs {
 		configured := &auditlogs[index]
-		if !configured.Enabled {
+		if !configured.Enabled && !configured.Recording.Enabled {
 			continue
 		}
 		identityFile, err := sys.CanonicalPath(configured.IdentityFile)
 		if err != nil {
 			return errors.Config.Newf("cannot resolve identity file of auditlog %q: %w", configured.Name, err)
 		}
-		journal, err := sys.CanonicalPath(configured.Directory)
-		if err != nil {
-			return errors.Config.Newf("cannot resolve journal directory of auditlog %q: %w", configured.Name, err)
+		var journal string
+		if configured.Enabled {
+			journal, err = sys.CanonicalPath(configured.Directory)
+			if err != nil {
+				return errors.Config.Newf("cannot resolve journal directory of auditlog %q: %w", configured.Name, err)
+			}
+			configured.Directory = journal
 		}
 		configured.IdentityFile = identityFile
-		configured.Directory = journal
 		if configured.Recording.Enabled {
 			recording, err := sys.CanonicalPath(configured.Recording.Directory)
 			if err != nil {
@@ -1118,7 +1126,7 @@ func validateAuditlogRuntimePaths(auditlogs configuration.Auditlogs) error {
 	for leftIndex, left := range resolved {
 		for rightIndex := leftIndex + 1; rightIndex < len(resolved); rightIndex++ {
 			right := resolved[rightIndex]
-			if runtimePathContains(left.journal, right.journal) || runtimePathContains(right.journal, left.journal) {
+			if left.journal != "" && right.journal != "" && (runtimePathContains(left.journal, right.journal) || runtimePathContains(right.journal, left.journal)) {
 				return errors.Config.Newf("auditlog %q journal overlaps auditlog %q journal", left.name, right.name)
 			}
 			if runtimePathContains(left.identityFile, right.identityFile) || runtimePathContains(right.identityFile, left.identityFile) {
@@ -1126,7 +1134,7 @@ func validateAuditlogRuntimePaths(auditlogs configuration.Auditlogs) error {
 			}
 		}
 		for _, other := range resolved {
-			if runtimePathContains(left.identityFile, other.journal) || runtimePathContains(other.journal, left.identityFile) {
+			if other.journal != "" && (runtimePathContains(left.identityFile, other.journal) || runtimePathContains(other.journal, left.identityFile)) {
 				return errors.Config.Newf("auditlog %q identity file overlaps auditlog %q journal", left.name, other.name)
 			}
 		}
@@ -1136,7 +1144,7 @@ func validateAuditlogRuntimePaths(auditlogs configuration.Auditlogs) error {
 
 func validateRecordingRuntimePathOverlaps(conf *configuration.Configuration, storage string) error {
 	for recordingIndex, recordingAuditlog := range conf.Auditlogs {
-		if !recordingAuditlog.Enabled || !recordingAuditlog.Recording.Enabled {
+		if !recordingAuditlog.Recording.Enabled {
 			continue
 		}
 		recordingDirectory := recordingAuditlog.Recording.Directory
@@ -1144,10 +1152,10 @@ func validateRecordingRuntimePathOverlaps(conf *configuration.Configuration, sto
 			return errors.Config.Newf("auditlog %q recording directory overlaps session storage", recordingAuditlog.Name)
 		}
 		for auditlogIndex, auditlog := range conf.Auditlogs {
-			if !auditlog.Enabled {
+			if !auditlog.Enabled && !auditlog.Recording.Enabled {
 				continue
 			}
-			if runtimePathsOverlap(recordingDirectory, auditlog.Directory) {
+			if auditlog.Enabled && runtimePathsOverlap(recordingDirectory, auditlog.Directory) {
 				return errors.Config.Newf("auditlog %q recording directory overlaps auditlog %q journal", recordingAuditlog.Name, auditlog.Name)
 			}
 			if runtimePathsOverlap(recordingDirectory, auditlog.IdentityFile) {
@@ -1219,7 +1227,7 @@ func cloneRuntimePathConfiguration(conf *configuration.Configuration) configurat
 			result.Auditlogs[auditlogIndex].Targets[targetIndex].V = &cloned
 		}
 		configured := &conf.Auditlogs[auditlogIndex]
-		if !configured.Enabled || !configured.Recording.Enabled {
+		if !configured.Recording.Enabled {
 			continue
 		}
 		configuredTargets := configured.Recording.Targets.Configured()
@@ -1261,15 +1269,17 @@ func validateRuntimePathCandidate(conf *configuration.Configuration) error {
 	}
 	for auditlogIndex := range conf.Auditlogs {
 		auditlog := &conf.Auditlogs[auditlogIndex]
-		if !auditlog.Enabled {
+		if !auditlog.Enabled && !auditlog.Recording.Enabled {
 			continue
 		}
 		if storage != "" {
 			if err := validateSessionStorageRuntimePath(storage, auditlog.IdentityFile, fmt.Sprintf("auditlog %q identity file", auditlog.Name)); err != nil {
 				return err
 			}
-			if err := validateSessionStorageRuntimePath(storage, auditlog.Directory, fmt.Sprintf("auditlog %q journal", auditlog.Name)); err != nil {
-				return err
+			if auditlog.Enabled {
+				if err := validateSessionStorageRuntimePath(storage, auditlog.Directory, fmt.Sprintf("auditlog %q journal", auditlog.Name)); err != nil {
+					return err
+				}
 			}
 		}
 		if !auditlog.EncryptionPublicKeyFile.IsZero() {
@@ -1339,13 +1349,13 @@ func validateStaticKeyRuntimePaths(conf *configuration.Configuration, storage st
 			return errors.Config.Newf("%s overlaps session storage", description)
 		}
 		for _, auditlog := range conf.Auditlogs {
-			if !auditlog.Enabled {
+			if !auditlog.Enabled && !auditlog.Recording.Enabled {
 				continue
 			}
 			if runtimePathsOverlap(resolved, auditlog.IdentityFile) {
 				return errors.Config.Newf("%s overlaps auditlog %q identity file", description, auditlog.Name)
 			}
-			if runtimePathsOverlap(resolved, auditlog.Directory) {
+			if auditlog.Enabled && runtimePathsOverlap(resolved, auditlog.Directory) {
 				return errors.Config.Newf("%s overlaps auditlog %q journal", description, auditlog.Name)
 			}
 			if auditlog.Recording.Enabled && runtimePathsOverlap(resolved, auditlog.Recording.Directory) {

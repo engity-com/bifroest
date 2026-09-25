@@ -9,7 +9,7 @@ Remote targets copy **sealed originals**, not exports:
 * Audit segments: `.baudit` or `.beaudit` under `<producer-id>/<segment-file-name>`.
 * Selected session recordings: `.bcast` or `.becast` under `<producer-id>/<recording-uuid>.<suffix>`.
 
-The local journal remains authoritative and retains its segments. Remote targets never receive `head.cbor`, the active segment, JSONL or a decrypted Cast. A downloaded segment alone is **not** a complete journal for the [audit CLI](../../cli/audit/index.md). Keep the complete local journal for verification and an independently trusted chain tip to detect missing remote history.
+When the audit journal is enabled, it remains authoritative and retains its segments. Remote targets never receive `head.cbor`, the active segment, JSONL or a decrypted Cast. A downloaded segment alone is **not** a complete journal for the [audit CLI](../../cli/audit/index.md). Keep the complete local journal for verification and an independently trusted chain tip to detect missing remote history. [Recording-only](../recording.md#recording-only) delivers sealed Recordings without creating journal segments.
 
 Clear originals contain confidential content after decompression; encrypted originals expose signed public metadata. Protect every destination and configure its retention independently.
 
@@ -45,22 +45,21 @@ At startup:
 * A receipt without its artifact fails closed, unless durable retention deletion already began.
 * If both receipt and artifact disappear, detection requires an independent inventory.
 
-Receipts also hold the audit outbox for [`session.recording.delivery.failed` and `session.recording.delivery.succeeded`](../events.md#sessionrecordingdeliveryfailed). They count toward `maximumSpoolBytes`. Each state update atomically replaces a receipt; temporary copies left by a crash are inventoried and recovered before further spool growth is admitted.
+With an enabled audit journal, receipts also hold the outbox for [`session.recording.delivery.failed` and `session.recording.delivery.succeeded`](../events.md#sessionrecordingdeliveryfailed). Recording-only receipts have **no audit outbox**. All receipts count toward `maximumSpoolBytes`; temporary copies left by atomic replacement are recovered before admitting more spool growth.
 
 ## Recording delivery
 
 * One sequential worker per selected target retries asynchronously with backoff and jitter; notifications have a periodic safety scan.
-* The first failure in an episode is durably recorded and audited **before another attempt**. Retries do not flood the journal.
-* A successful publication needs a durable signed acknowledgement **and** success audit event. If acknowledgement persistence fails, the running worker does not immediately republish; **restart can repeat publication**.
-* After a durable acknowledgement, startup replays a pending success event **without republishing**. Targets must reject conflicting bytes and support idempotent retries.
-* Changing or removing a target with an outstanding delivery or audit obligation fails at startup. A fully acknowledged and audited historical target does not block changes.
-* Shutdown allows up to five seconds for acknowledgements and audit events; unfinished work remains in the local spool for restart.
+* With audit enabled, the first failure in an episode is durably recorded and audited **before another attempt**. A successful publication needs both a signed acknowledgement and success audit event. Startup replays a pending success event **without republishing**.
+* Recording-only has no delivery audit events: failures retry with backoff, and a **durable signed acknowledgement** completes delivery. If acknowledgement persistence fails, the running worker does not immediately republish; restart can repeat publication in either mode. Targets must reject conflicting bytes and support idempotent retries.
+* Changing or removing a target with outstanding delivery (or an enabled audit obligation) fails at startup. Completed historical targets do not block changes.
+* Shutdown allows up to five seconds for acknowledgements and, when audit is enabled, audit events. Unfinished work remains in the local spool for restart.
 
 ## Recording retention
 
-`recording.retainFor` defaults to 30 days. It starts at sealing without targets, or at the **latest durable target acknowledgement** with targets. Every selected target's success event must also be durably marked before deletion.
+`recording.retainFor` defaults to 30 days. It starts at sealing without targets, or at the **latest durable target acknowledgement** with targets. With audit enabled, each selected target's success event must also be durably marked before deletion.
 
-Housekeeping verifies the signed receipt and artifact, marks deletion durably, deletes the local artifact **before** the receipt, and retries later if verification, deletion or audit-start fails. `retainFor: 0s` stops new deletions, not one already begun. Remote copies and local audit-log segments are never deleted by Recording retention.
+Housekeeping verifies the signed receipt and artifact, marks deletion durably, deletes the local artifact **before** the receipt, and retries later if verification, deletion or (when enabled) audit-start fails. `retainFor: 0s` stops new deletions, not one already begun. Remote copies and local audit-log segments are never deleted by Recording retention.
 
 ## Example
 

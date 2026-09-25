@@ -699,7 +699,7 @@ func TestExecuteSessionRecordingCompletionAuditFailurePreservesCompletedArtifact
 			require.Len(t, pending, 1)
 			expected := pending[0].Event
 			require.NoError(t, server.service.recordingRepositories[auditlog].Close())
-			restarted, err := newSessionRecordingRepository(t.Context(), server.service.Configuration.Auditlogs[0].Recording, server.service.auditIdentities[auditlog], server.service.Configuration.Auditlogs[0].EncryptionPublicKey, auditlog, server.service.recordingTargets[auditlog])
+			restarted, err := newSessionRecordingRepository(t.Context(), server.service.Configuration.Auditlogs[0].Recording, server.service.auditIdentities[auditlog], server.service.Configuration.Auditlogs[0].EncryptionPublicKey, auditlog, server.service.recordingTargets[auditlog], true)
 			require.NoError(t, err)
 			server.service.recordingRepositories[auditlog] = restarted
 			auditRecorder.setError(nil)

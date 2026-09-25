@@ -28,9 +28,9 @@ External trust anchor containing exactly 64 hexadecimal characters. Obtain this 
 Use this flag for standalone or downloaded artifacts. Alternatively, `--auditlog` derives the expected ID from a configured local signing identity, but only for files in that audit log's enabled Recording repository under `sealed/`. `--expectedProducerId`, `--allowUntrusted`, and `--auditlog` are mutually exclusive.
 
 <<flag("auditlog", "Audit log Name", "../../auditlog/index.md", id_prefix="recording-export-", heading=3)>>
-Selects an enabled local Recording repository and uses its signing identity as the producer trust anchor. Only a file directly under its configured `recording.directory/sealed/` is accepted. This cannot be used to trust a downloaded or separately copied artifact; use `--expectedProducerId` for those.
+Selects an enabled local Recording repository and uses its signing identity as the producer trust anchor. The parent audit journal may be disabled. Only a file directly under its configured `recording.directory/sealed/` is accepted. This cannot be used to trust a downloaded or separately copied artifact; use `--expectedProducerId` for those.
 
-<<flag("configuration", "File Path", "../../data-type.md#file-path", id_prefix="recording-export-", heading=3)>>
+<<flag("configuration", "File Path", "../../data-type.md#file-path", aliases=["c"], id_prefix="recording-export-", heading=3)>>
 Optional path for `--auditlog`; when omitted, Bifröst loads the platform's default configuration. Without `--auditlog`, this flag is not accepted and no configuration is loaded.
 
 <<flag("with-sensitive", "bool", default=False, id_prefix="recording-export-", heading=3)>>

@@ -85,9 +85,6 @@ func (this *Auditlog) Validate() error {
 	); err != nil {
 		return err
 	}
-	if this.Recording.Enabled && !this.Enabled {
-		return fmt.Errorf("[recording][enabled] requires [enabled] to be true")
-	}
 	return nil
 }
 
@@ -198,57 +195,72 @@ func (this Auditlogs) Validate() error {
 	identityFiles := make(map[string]int)
 	journalDirectories := make(map[string]int)
 	for index, auditlog := range this {
-		if !auditlog.Enabled {
+		if !auditlog.Enabled && !auditlog.Recording.Enabled {
 			continue
 		}
 		if previous, exists := identityFiles[auditlog.IdentityFile]; exists {
-			return fmt.Errorf("[%d][identityFile] duplicates enabled auditlog [%d][identityFile] %q", index, previous, auditlog.IdentityFile)
+			status := "active"
+			if this[previous].Enabled {
+				status = "enabled"
+			}
+			return fmt.Errorf("[%d][identityFile] duplicates %s auditlog [%d][identityFile] %q", index, status, previous, auditlog.IdentityFile)
 		}
 		identityFiles[auditlog.IdentityFile] = index
+		if !auditlog.Enabled {
+			continue
+		}
 		if previous, exists := journalDirectories[auditlog.Directory]; exists {
 			return fmt.Errorf("[%d][directory] duplicates enabled auditlog [%d][directory] %q", index, previous, auditlog.Directory)
 		}
 		journalDirectories[auditlog.Directory] = index
 	}
 	for leftIndex, left := range this {
-		if !left.Enabled {
+		if !left.Enabled && !left.Recording.Enabled {
 			continue
 		}
 		for rightIndex, right := range this {
-			if !right.Enabled {
+			if !right.Enabled && !right.Recording.Enabled {
 				continue
 			}
-			if leftIndex < rightIndex && (pathContains(left.Directory, right.Directory) || pathContains(right.Directory, left.Directory)) {
+			if left.Enabled && right.Enabled && leftIndex < rightIndex && pathsOverlap(left.Directory, right.Directory) {
 				return fmt.Errorf("[%d][directory] overlaps enabled auditlog [%d][directory]", rightIndex, leftIndex)
 			}
-			if pathContains(left.IdentityFile, right.Directory) {
+			if right.Enabled && pathContains(left.IdentityFile, right.Directory) {
 				return fmt.Errorf("[%d][identityFile] is located inside enabled auditlog [%d][directory]", leftIndex, rightIndex)
 			}
-			if pathContains(right.Directory, left.IdentityFile) {
+			if right.Enabled && pathContains(right.Directory, left.IdentityFile) {
 				return fmt.Errorf("[%d][directory] is located below enabled auditlog [%d][identityFile]", rightIndex, leftIndex)
 			}
-			if leftIndex < rightIndex && (pathContains(left.IdentityFile, right.IdentityFile) || pathContains(right.IdentityFile, left.IdentityFile)) {
-				return fmt.Errorf("[%d][identityFile] overlaps enabled auditlog [%d][identityFile]", rightIndex, leftIndex)
+			if leftIndex < rightIndex && pathsOverlap(left.IdentityFile, right.IdentityFile) {
+				return fmt.Errorf("[%d][identityFile] overlaps active auditlog [%d][identityFile]", rightIndex, leftIndex)
 			}
 		}
 	}
 	for recordingIndex, recordingAuditlog := range this {
-		if !recordingAuditlog.Enabled || !recordingAuditlog.Recording.Enabled {
+		if !recordingAuditlog.Recording.Enabled {
 			continue
 		}
 		recordingDirectory := recordingAuditlog.Recording.Directory
 		for auditlogIndex, auditlog := range this {
-			if !auditlog.Enabled {
+			if !auditlog.Enabled && !auditlog.Recording.Enabled {
 				continue
 			}
-			if pathsOverlap(recordingDirectory, auditlog.Directory) {
+			status := "active"
+			if auditlog.Enabled {
+				status = "enabled"
+			}
+			if auditlog.Enabled && pathsOverlap(recordingDirectory, auditlog.Directory) {
 				return fmt.Errorf("[%d][recording][directory] overlaps enabled auditlog [%d][directory]", recordingIndex, auditlogIndex)
 			}
 			if pathsOverlap(recordingDirectory, auditlog.IdentityFile) {
-				return fmt.Errorf("[%d][recording][directory] overlaps enabled auditlog [%d][identityFile]", recordingIndex, auditlogIndex)
+				return fmt.Errorf("[%d][recording][directory] overlaps %s auditlog [%d][identityFile]", recordingIndex, status, auditlogIndex)
 			}
 			if recordingIndex < auditlogIndex && auditlog.Recording.Enabled && pathsOverlap(recordingDirectory, auditlog.Recording.Directory) {
-				return fmt.Errorf("[%d][recording][directory] overlaps enabled auditlog [%d][recording][directory]", auditlogIndex, recordingIndex)
+				status := "active"
+				if recordingAuditlog.Enabled {
+					status = "enabled"
+				}
+				return fmt.Errorf("[%d][recording][directory] overlaps %s auditlog [%d][recording][directory]", auditlogIndex, status, recordingIndex)
 			}
 			if !auditlog.EncryptionPublicKeyFile.IsZero() && pathsOverlap(recordingDirectory, string(auditlog.EncryptionPublicKeyFile)) {
 				return fmt.Errorf("[%d][recording][directory] overlaps enabled auditlog [%d][encryptionPublicKeyFile]", recordingIndex, auditlogIndex)

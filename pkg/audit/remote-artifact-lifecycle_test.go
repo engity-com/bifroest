@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -10,6 +11,51 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestRemoteArtifactLifecycleUnauditedWritesNoOutbox(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	root := t.TempDir()
+	quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
+	receipts, err := NewRemoteArtifactReceiptsWithoutAudit(root, identity, "security", nil, quota)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, receipts.Close()) })
+	fileName := "6ba7b853-9dad-4d1f-80b4-00c04fd430c8.bcast"
+	startedAt := time.Now().UTC().Add(-time.Minute)
+	artifact := newRemoteArtifactReceiptTestArtifact(t, identity.ProducerId(), fileName, []byte("no lifecycle audit"))
+	require.NoError(t, receipts.BeginLifecycle(t.Context(), fileName, startedAt, Event{}))
+	require.NoError(t, receipts.StageLifecycle(t.Context(), fileName, Event{}))
+	prepared, err := receipts.LifecyclePrepared(t.Context(), fileName)
+	require.NoError(t, err)
+	require.False(t, prepared)
+	require.NoError(t, receipts.PrepareLifecycle(t.Context(), artifact, startedAt, "", true))
+	prepared, err = receipts.LifecyclePrepared(t.Context(), fileName)
+	require.NoError(t, err)
+	require.True(t, prepared)
+	require.NoError(t, receipts.PromoteLifecycle(t.Context(), artifact))
+	require.NoError(t, receipts.DiscardLifecycle(t.Context(), fileName))
+	require.NoError(t, receipts.CleanupOrphanedLifecycles(t.Context()))
+	require.Empty(t, mustPendingRemoteArtifactLifecycle(t, receipts))
+	directory := filepath.Join(receipts.store.producerDirectory, remoteArtifactReceiptStateName(fileName))
+	require.NoFileExists(t, filepath.Join(directory, remoteArtifactLifecycleFileName))
+	require.NoFileExists(t, filepath.Join(directory, remoteArtifactLifecycleTempName))
+	require.ErrorContains(t, receipts.CompleteLifecycle(t.Context(), RemoteArtifactLifecycleEvent{}), "no pending lifecycle")
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.ErrorIs(t, receipts.BeginLifecycle(canceled, fileName, startedAt, Event{}), context.Canceled)
+}
+
+func TestRemoteArtifactLifecycleUnauditedRejectsExistingIntent(t *testing.T) {
+	_, identity := newJournalTestIdentity(t)
+	root := t.TempDir()
+	quota := &remoteArtifactReceiptTestQuota{maximum: 1 << 20}
+	audited, err := NewRemoteArtifactReceipts(root, identity, "security", nil, quota)
+	require.NoError(t, err)
+	fileName := "6ba7b854-9dad-4d1f-80b4-00c04fd430c8.bcast"
+	require.NoError(t, audited.BeginLifecycle(t.Context(), fileName, time.Now().UTC(), remoteArtifactLifecycleTestStartedEvent(fileName)))
+	require.NoError(t, audited.Close())
+	_, err = NewRemoteArtifactReceiptsWithoutAudit(root, identity, "security", nil, quota)
+	require.ErrorContains(t, err, "lifecycle state")
+}
 
 func TestRemoteArtifactLifecycleOutboxBindsArtifactAndBlocksRetention(t *testing.T) {
 	_, identity := newJournalTestIdentity(t)

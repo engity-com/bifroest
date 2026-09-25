@@ -36,6 +36,7 @@ const (
 
 type sessionRecordingRepository struct {
 	format        sessionRecordingRepositoryFormat
+	audited       bool
 	native        *recording.LocalNativeRecordingRepository
 	receipts      *audit.RemoteArtifactReceipts
 	auditlog      configuration.AuditlogName
@@ -53,6 +54,7 @@ type sessionRecordingRetentionCandidate struct {
 
 type sessionRecordingReceiptProvider struct {
 	mutex     sync.Mutex
+	audited   bool
 	directory string
 	identity  *audit.Identity
 	auditlog  configuration.AuditlogName
@@ -198,7 +200,7 @@ func isSessionRecordingFailure(err error) bool {
 	return goerrors.As(err, &target)
 }
 
-func newSessionRecordingRepository(ctx context.Context, configuration configuration.AuditlogRecording, identity *audit.Identity, encryptionPublicKey crypto.PublicKeys, auditlogName configuration.AuditlogName, targets *audit.RemoteArtifactTargets) (*sessionRecordingRepository, error) {
+func newSessionRecordingRepository(ctx context.Context, configuration configuration.AuditlogRecording, identity *audit.Identity, encryptionPublicKey crypto.PublicKeys, auditlogName configuration.AuditlogName, targets *audit.RemoteArtifactTargets, audited bool) (*sessionRecordingRepository, error) {
 	if identity == nil {
 		return nil, errors.Config.Newf("nil session Recording identity")
 	}
@@ -206,6 +208,7 @@ func newSessionRecordingRepository(ctx context.Context, configuration configurat
 		return nil, errors.Config.Newf("session Recording chunk size exceeds platform limits")
 	}
 	base := sessionRecordingRepository{
+		audited:       audited,
 		producerId:    identity.ProducerId(),
 		auditlog:      auditlogName,
 		chunkSize:     int(configuration.ChunkSizeBytes),
@@ -214,6 +217,7 @@ func newSessionRecordingRepository(ctx context.Context, configuration configurat
 		notice:        configuration.Notice,
 	}
 	receiptProvider := &sessionRecordingReceiptProvider{
+		audited:   audited,
 		directory: configuration.Directory,
 		identity:  identity,
 		auditlog:  auditlogName,
@@ -221,6 +225,7 @@ func newSessionRecordingRepository(ctx context.Context, configuration configurat
 	}
 	repositoryOptions := recording.LocalRepositoryOptions{
 		MaximumSpoolBytes: configuration.MaximumSpoolBytes,
+		RecordingOnly:     !audited,
 	}
 	prepareSealed := &sessionRecordingReceiptPreparer{provider: receiptProvider}
 	base.format = sessionRecordingRepositoryFormatBCast
@@ -321,7 +326,11 @@ func (this *sessionRecordingReceiptProvider) get() (*audit.RemoteArtifactReceipt
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 	if this.receipts == nil && this.err == nil {
-		this.receipts, this.err = audit.NewRemoteArtifactReceipts(this.directory, this.identity, this.auditlog, this.targets, this.quota)
+		if this.audited {
+			this.receipts, this.err = audit.NewRemoteArtifactReceipts(this.directory, this.identity, this.auditlog, this.targets, this.quota)
+		} else {
+			this.receipts, this.err = audit.NewRemoteArtifactReceiptsWithoutAudit(this.directory, this.identity, this.auditlog, this.targets, this.quota)
+		}
 	}
 	return this.receipts, this.err
 }
@@ -595,6 +604,9 @@ func (this *service) replaySessionRecordingLifecycles(ctx context.Context) error
 		repository := this.recordingRepositories[auditlog]
 		if repository == nil {
 			result = goerrors.Join(result, this.handleRecordingFailure(auditlog, "session Recording recovery", errors.System.Newf("no session Recording repository configured for auditlog %q", auditlog)))
+			continue
+		}
+		if !repository.audited {
 			continue
 		}
 		pending, err := repository.receipts.PendingLifecycle(ctx)
@@ -933,18 +945,24 @@ func (this *service) beginSessionRecording(sshSession essh.Session, pty recorded
 		auditErr := this.recordSessionRecordingEvent(sshSession.Context(), metadata, audit.EventNameSessionRecordingFailed, audit.EventOutcomeFailure, audit.EventReasonRecordingCreate, createErr, 0, nil, nil)
 		return nil, nil, goerrors.Join(createErr, auditErr)
 	}
-	intentEvent := sessionRecordingAuditEvent(metadata, audit.EventNameSessionRecordingStarted, "", "", nil, 0, nil, nil)
-	if err := repository.receipts.BeginLifecycle(sshSession.Context(), artifactName, startedAt, intentEvent); err != nil {
-		createErr := errors.System.Newf("cannot persist session Recording lifecycle intent: %w", err)
-		auditErr := this.recordSessionRecordingEvent(sshSession.Context(), metadata, audit.EventNameSessionRecordingFailed, audit.EventOutcomeFailure, audit.EventReasonRecordingCreate, createErr, 0, nil, nil)
-		return nil, nil, goerrors.Join(createErr, auditErr)
+	if repository.audited {
+		intentEvent := sessionRecordingAuditEvent(metadata, audit.EventNameSessionRecordingStarted, "", "", nil, 0, nil, nil)
+		if err := repository.receipts.BeginLifecycle(sshSession.Context(), artifactName, startedAt, intentEvent); err != nil {
+			createErr := errors.System.Newf("cannot persist session Recording lifecycle intent: %w", err)
+			auditErr := this.recordSessionRecordingEvent(sshSession.Context(), metadata, audit.EventNameSessionRecordingFailed, audit.EventOutcomeFailure, audit.EventReasonRecordingCreate, createErr, 0, nil, nil)
+			return nil, nil, goerrors.Join(createErr, auditErr)
+		}
 	}
 	active, err := repository.createActive(sshSession.Context(), header, metadata, repository.chunkSize)
 	if err != nil {
 		createErr := errors.System.Newf("cannot create active session Recording: %w", err)
-		stateExists, stateErr := repository.recordingStateExists(recordingId)
-		if stateErr == nil && !stateExists {
-			stateErr = repository.receipts.DiscardLifecycle(context.WithoutCancel(sshSession.Context()), artifactName)
+		var stateErr error
+		if repository.audited {
+			var stateExists bool
+			stateExists, stateErr = repository.recordingStateExists(recordingId)
+			if stateErr == nil && !stateExists {
+				stateErr = repository.receipts.DiscardLifecycle(context.WithoutCancel(sshSession.Context()), artifactName)
+			}
 		}
 		auditErr := this.recordSessionRecordingEvent(sshSession.Context(), metadata, audit.EventNameSessionRecordingFailed, audit.EventOutcomeFailure, audit.EventReasonRecordingCreate, createErr, 0, nil, nil)
 		return nil, nil, goerrors.Join(createErr, stateErr, auditErr)
@@ -988,16 +1006,20 @@ func (this *service) beginSessionRecording(sshSession essh.Session, pty recorded
 		event := sessionRecordingAuditEvent(metadata, audit.EventNameSessionRecordingFailed, audit.EventOutcomeFailure, audit.EventReasonRecordingCapture, err, elapsed, nil, nil)
 		lifecycleContext := context.WithoutCancel(sshSession.Context())
 		staged := false
-		_, stopPhase, stopErr := coordinator.stopPrepared(elapsed, result, nil, func(error, sessionRecordingFailurePhase) error {
-			stageErr := repository.stageLifecycle(lifecycleContext, recordingId, event)
-			staged = stageErr == nil
-			return stageErr
-		})
+		var prepare func(error, sessionRecordingFailurePhase) error
+		if repository.audited {
+			prepare = func(error, sessionRecordingFailurePhase) error {
+				stageErr := repository.stageLifecycle(lifecycleContext, recordingId, event)
+				staged = stageErr == nil
+				return stageErr
+			}
+		}
+		_, stopPhase, stopErr := coordinator.stopPrepared(elapsed, result, nil, prepare)
 		auditContext := &sshSessionContext{Context: sshSession.Context(), plainContext: lifecycleContext}
 		var auditErr error
-		if stopErr == nil {
+		if repository.audited && stopErr == nil {
 			auditErr = this.recordPendingSessionRecordingLifecycle(auditContext, lifecycleContext, repository, recordingId)
-		} else {
+		} else if repository.audited {
 			auditErr = this.recordSessionRecordingStopFailure(auditContext, lifecycleContext, repository, recordingId, metadata.Flow, event, staged, stopPhase)
 		}
 		return nil, nil, goerrors.Join(err, stopErr, auditErr)
@@ -1118,15 +1140,21 @@ func (this *sessionRecordingLifecycle) finish(exitCode int, taskErr error) error
 	default:
 		result.Status = recording.CastStatusCompleted
 	}
-	var stagedEvent audit.Event
 	staged := false
 	lifecycleContext := context.WithoutCancel(this.ctx)
-	_, stopPhase, stopErr := this.coordinator.stopPrepared(elapsed, result, exitStatus, func(coordinatorErr error, phase sessionRecordingFailurePhase) error {
-		stagedEvent = sessionRecordingTerminalAuditEvent(this.metadata, result, taskErr, captureErr, coordinatorErr, phase, elapsed, exitStatus)
-		stageErr := this.repository.stageLifecycle(lifecycleContext, this.metadata.RecordingId, stagedEvent)
-		staged = stageErr == nil
-		return stageErr
-	})
+	var prepare func(error, sessionRecordingFailurePhase) error
+	if this.repository.audited {
+		prepare = func(coordinatorErr error, phase sessionRecordingFailurePhase) error {
+			event := sessionRecordingTerminalAuditEvent(this.metadata, result, taskErr, captureErr, coordinatorErr, phase, elapsed, exitStatus)
+			stageErr := this.repository.stageLifecycle(lifecycleContext, this.metadata.RecordingId, event)
+			staged = stageErr == nil
+			return stageErr
+		}
+	}
+	_, stopPhase, stopErr := this.coordinator.stopPrepared(elapsed, result, exitStatus, prepare)
+	if !this.repository.audited {
+		return goerrors.Join(captureErr, this.service.handleRecordingFailure(this.auditlog, "session Recording", stopErr))
+	}
 	finalAuditContext := &sshSessionContext{Context: this.ctx, plainContext: lifecycleContext}
 	if stopErr == nil {
 		auditErr := this.service.recordPendingSessionRecordingLifecycle(finalAuditContext, lifecycleContext, this.repository, this.metadata.RecordingId)
@@ -1184,6 +1212,9 @@ func sessionRecordingTerminalAuditEvent(metadata recording.CastMetadata, result 
 }
 
 func (this *service) recordSessionRecordingEvent(ctx context.Context, metadata recording.CastMetadata, name audit.EventName, outcome audit.EventOutcome, reason audit.EventReason, eventErr error, elapsed time.Duration, digest *recording.CastDigest, exitStatus *uint32) error {
+	if auditlog, ok := this.flowAuditlogs[metadata.Flow]; ok && !this.enabledAuditlogs[auditlog] && this.recordingRepositories[auditlog] != nil && this.recordingRepositories[auditlog].native != nil {
+		return nil
+	}
 	event := sessionRecordingAuditEvent(metadata, name, outcome, reason, eventErr, elapsed, digest, exitStatus)
 	return this.recordFlowAudit(ctx, metadata.Flow, event)
 }

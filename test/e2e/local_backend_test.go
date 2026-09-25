@@ -296,6 +296,14 @@ func TestOpenSSHLocalBackend(t *testing.T) {
 }
 
 func TestOpenSSHLocalSessionRecording(t *testing.T) {
+	testOpenSSHLocalSessionRecording(t, false)
+}
+
+func TestOpenSSHLocalRecordingOnly(t *testing.T) {
+	testOpenSSHLocalSessionRecording(t, true)
+}
+
+func testOpenSSHLocalSessionRecording(t *testing.T, recordingOnly bool) {
 	f, err := newFixture(t)
 	if err != nil {
 		t.Fatal(err)
@@ -315,7 +323,7 @@ func TestOpenSSHLocalSessionRecording(t *testing.T) {
 	}
 	producerID := recordingProducerID(t, auditIdentity)
 
-	if err := f.prepareLocalRecording(auditIdentity); err != nil {
+	if err := f.prepareLocalRecording(auditIdentity, recordingOnly); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("runtime=%s container=%s port=%s producer=%s", f.runtimeCLI, f.containerID, f.port, producerID)
@@ -335,6 +343,12 @@ func TestOpenSSHLocalSessionRecording(t *testing.T) {
 	artifacts := strings.Fields(result.stdout)
 	if len(artifacts) != 1 {
 		t.Fatalf("sealed recordings: got %d, want 1: %q", len(artifacts), result.stdout)
+	}
+	if recordingOnly {
+		result = f.runtime(5*time.Second, "exec", f.containerID, "/bin/sh", "-c", "test ! -e /var/lib/bifroest/auditlog")
+		if result.err != nil {
+			t.Fatalf("recording-only created an audit journal: %v\nstderr:\n%s", result.err, result.stderr)
+		}
 	}
 
 	result = f.runtime(12*time.Second, "stop", "--time", "5", f.containerID)

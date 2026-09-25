@@ -68,6 +68,7 @@ type localFormat[Head, Summary any] interface {
 
 type LocalRepositoryOptions struct {
 	MaximumSpoolBytes uint64
+	RecordingOnly     bool
 }
 
 // SealedArtifactPreparer persists and validates metadata required by a sealed

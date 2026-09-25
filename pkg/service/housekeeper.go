@@ -124,7 +124,7 @@ func (this *houseKeeper) cleanupRecordings(logger log.Logger, ctx context.Contex
 			return goerrors.Join(result, err)
 		}
 		auditlog := &this.service.Configuration.Auditlogs[index]
-		if !auditlog.Enabled || !auditlog.Recording.Enabled || this.service.auditlogDisabled(auditlog.Name) {
+		if !auditlog.Recording.Enabled || this.service.auditlogDisabled(auditlog.Name) {
 			continue
 		}
 		repository := this.service.recordingRepositories[auditlog.Name]
@@ -150,11 +150,22 @@ func (this *houseKeeper) cleanupRecordings(logger log.Logger, ctx context.Contex
 			if err := ctx.Err(); err != nil {
 				return goerrors.Join(result, err)
 			}
-			_, actionErr, auditErr := this.auditRecordingDeletion(ctx, auditlog.Name, candidate, func() (bool, sessionRecordingRetentionCandidate, error) {
-				return repository.deleteRetentionCandidate(ctx, candidate, cutoff)
-			}, func(completed sessionRecordingRetentionCandidate) error {
-				return repository.completeRetentionCandidate(ctx, completed, cutoff)
-			})
+			var actionErr, auditErr error
+			if auditlog.Enabled {
+				_, actionErr, auditErr = this.auditRecordingDeletion(ctx, auditlog.Name, candidate, func() (bool, sessionRecordingRetentionCandidate, error) {
+					return repository.deleteRetentionCandidate(ctx, candidate, cutoff)
+				}, func(completed sessionRecordingRetentionCandidate) error {
+					return repository.completeRetentionCandidate(ctx, completed, cutoff)
+				})
+			} else if candidate.receipt.CompletionPending {
+				actionErr = repository.completeRetentionCandidate(ctx, candidate, cutoff)
+			} else {
+				_, completed, err := repository.deleteRetentionCandidate(ctx, candidate, cutoff)
+				actionErr = err
+				if err == nil && completed.receipt.CompletionPending {
+					actionErr = repository.completeRetentionCandidate(ctx, completed, cutoff)
+				}
+			}
 			if err := goerrors.Join(actionErr, auditErr); err != nil {
 				if ctx.Err() != nil {
 					return goerrors.Join(result, err, ctx.Err())
