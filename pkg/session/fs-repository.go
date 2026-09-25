@@ -252,10 +252,34 @@ func (this *FsRepository) loadAndMatch(ctx context.Context, flow configuration.F
 	result, err := this.findBy(ctx, flow, id, nil, expectedToExist)
 	this.mutex.RUnlock()
 	if err != nil {
-		if !opts.IsAutoCleanUpAllowedFor(ctx, flow, id) || errors.Is(err, ErrNoSuchSession) && !expectedToExist {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		if !errors.Is(err, ErrCorruptSession) || !opts.IsAutoCleanUpAllowedFor(ctx, flow, id) {
 			return nil, err
 		}
 		this.mutex.Lock()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			this.mutex.Unlock()
+			return nil, ctxErr
+		}
+		_, confirmErr := this.findBy(ctx, flow, id, nil, expectedToExist)
+		if !errors.Is(confirmErr, ErrCorruptSession) {
+			this.mutex.Unlock()
+			if confirmErr != nil {
+				return nil, confirmErr
+			}
+			return nil, err
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			this.mutex.Unlock()
+			return nil, ctxErr
+		}
+		if byFlow := this.connectionInterceptors[flow]; byFlow != nil {
+			if interceptor := byFlow[id]; interceptor != nil {
+				interceptor.disposed.Store(true)
+			}
+		}
 		dir, dirErr := this.dir(flow, id)
 		if dirErr == nil {
 			dirErr = os.RemoveAll(dir)
@@ -301,11 +325,15 @@ func (this *FsRepository) findBy(ctx context.Context, flow configuration.FlowNam
 
 	var buf fs
 	if err := json.NewDecoder(f).Decode(&buf.info); err != nil {
-		return cleanUpIfAllowedAndFail(errors.Newf(errors.System, "cannot decode session %v/%v: %w", flow, id, fmt.Errorf("%w: %v", ErrCorruptSession, err)))
+		var readError *os.PathError
+		if !errors.As(err, &readError) {
+			err = fmt.Errorf("%w: %w", ErrCorruptSession, err)
+		}
+		return cleanUpIfAllowedAndFail(errors.Newf(errors.System, "cannot decode session %v/%v: %w", flow, id, err))
 	}
 	fi, err := f.Stat()
 	if err != nil {
-		return cleanUpIfAllowedAndFail(errors.Newf(errors.System, "cannot stat session file of %v/%v: %w", flow, id, fmt.Errorf("%w: %v", ErrCorruptSession, err)))
+		return nil, errors.Newf(errors.System, "cannot stat session file of %v/%v: %w", flow, id, err)
 	}
 	if buf.info.VCreatedAt.IsZero() {
 		buf.info.createdAt = fi.ModTime()
