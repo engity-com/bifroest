@@ -1,8 +1,14 @@
-*.go   text eol=lf
-*.yaml text eol=lf
-*.yml  text eol=lf
-*.json text eol=lf
-*.sh   text eol=lf
-*.md   text eol=lf
-
-docs/assets/recording-format-vectors/** -text
+*.go      text eol=lf
+*.yaml    text eol=lf
+*.yml     text eol=lf
+*.json    text eol=lf
+*.jsonl   text eol=lf
+*.sh      text eol=lf
+*.md      text eol=lf
+*.cast    text eol=lf
+*.cbor    binary
+*.unit    binary
+*.becast  binary
+*.bcast   binary
+*.beaudit binary
+*.baudit  binary
