@@ -19,6 +19,14 @@ type journalProcessLock struct {
 	err  error
 }
 
+func openJournalLockFile(path string, mode os.FileMode) (*os.File, error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, mode)
+	if err != nil {
+		return nil, err
+	}
+	return prepareJournalLockFile(path, file)
+}
+
 func acquireJournalProcessLock(path string, mode os.FileMode) (*journalProcessLock, error) {
 	file, err := openJournalLockFile(path, mode)
 	if err != nil {

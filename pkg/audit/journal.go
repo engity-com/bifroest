@@ -418,14 +418,6 @@ func syncJournalDirectoryHierarchy(path string) error {
 	}
 }
 
-func openJournalLockFile(path string, mode os.FileMode) (*os.File, error) {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, mode)
-	if err != nil {
-		return nil, err
-	}
-	return prepareJournalLockFile(path, file)
-}
-
 func prepareJournalLockFile(path string, file *os.File) (*os.File, error) {
 	if err := secureJournalFile(path, file); err != nil {
 		_ = file.Close()
