@@ -265,6 +265,123 @@ func TestFsRepositoryFindAllRestrictsAutoCleanupPerFlow(t *testing.T) {
 	require.Equal(t, configuration.FlowName("removed"), diagnostics[0].Flow)
 }
 
+func TestFsRepositoryAutoCleanupPreservesSessionAfterMetadataReadError(t *testing.T) {
+	for _, autoCleanup := range []bool{false, true} {
+		t.Run(map[bool]string{false: "disabled", true: "enabled"}[autoCleanup], func(t *testing.T) {
+			repository, err := NewFsRepository(t.Context(), newFsRepositoryTestConfiguration(t))
+			require.NoError(t, err)
+			defer func() { require.NoError(t, repository.Close()) }()
+			created, err := repository.Create(t.Context(), "test", fsRepositoryTestRemote{}, []byte("retain authorization"))
+			require.NoError(t, err)
+			interceptor, err := created.ConnectionInterceptor(t.Context())
+			require.NoError(t, err)
+			defer func() { require.NoError(t, interceptor.Close()) }()
+			metadata, err := repository.file("test", created.Id(), FsFileSession)
+			require.NoError(t, err)
+			original, err := os.ReadFile(metadata)
+			require.NoError(t, err)
+			require.NoError(t, os.Rename(metadata, metadata+".saved"))
+			require.NoError(t, os.Mkdir(metadata, 0700))
+
+			_, err = repository.FindBy(t.Context(), "test", created.Id(), &FindOpts{AutoCleanUpAllowed: &autoCleanup})
+			require.Error(t, err)
+			require.NotErrorIs(t, err, ErrCorruptSession)
+			require.NotErrorIs(t, err, ErrNoSuchSession)
+			require.False(t, interceptor.(*fsConnectionInterceptor).disposed.Load())
+			require.DirExists(t, metadata)
+			saved, readErr := os.ReadFile(metadata + ".saved")
+			require.NoError(t, readErr)
+			require.Equal(t, original, saved)
+
+			var diagnostics []FindDiagnostic
+			require.NoError(t, repository.FindAll(t.Context(), func(context.Context, Session) (bool, error) {
+				t.Fatal("unreadable session must not be returned")
+				return false, nil
+			}, &FindOpts{AutoCleanUpAllowed: &autoCleanup, DiagnosticConsumer: func(_ context.Context, diagnostic FindDiagnostic) error {
+				diagnostics = append(diagnostics, diagnostic)
+				return nil
+			}}))
+			require.Len(t, diagnostics, 1)
+			require.NotErrorIs(t, diagnostics[0].Err, ErrCorruptSession)
+			require.DirExists(t, metadata)
+
+			require.NoError(t, os.Remove(metadata))
+			require.NoError(t, os.Rename(metadata+".saved", metadata))
+			restored, err := repository.FindBy(t.Context(), "test", created.Id(), nil)
+			require.NoError(t, err)
+			token, err := restored.AuthorizationToken(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, []byte("retain authorization"), token)
+		})
+	}
+}
+
+func TestFsRepositoryAutoCleanupOnlyRemovesCorruptOrMissingMetadata(t *testing.T) {
+	for _, kind := range []string{"malformed", "wrong type", "invalid state", "missing"} {
+		t.Run(kind, func(t *testing.T) {
+			repository, err := NewFsRepository(t.Context(), newFsRepositoryTestConfiguration(t))
+			require.NoError(t, err)
+			defer func() { require.NoError(t, repository.Close()) }()
+			created, err := repository.Create(t.Context(), "test", fsRepositoryTestRemote{}, []byte("retain until confirmed corrupt"))
+			require.NoError(t, err)
+			interceptor, err := created.ConnectionInterceptor(t.Context())
+			require.NoError(t, err)
+			defer func() { require.NoError(t, interceptor.Close()) }()
+			metadata, err := repository.file("test", created.Id(), FsFileSession)
+			require.NoError(t, err)
+			switch kind {
+			case "malformed":
+				require.NoError(t, os.WriteFile(metadata, []byte("not-json"), 0600))
+			case "wrong type":
+				require.NoError(t, os.WriteFile(metadata, []byte(`{"state":42}`), 0600))
+			case "invalid state":
+				require.NoError(t, os.WriteFile(metadata, []byte(`{"state":"bogus"}`), 0600))
+			case "missing":
+				require.NoError(t, os.Remove(metadata))
+			}
+			var diagnostic FindDiagnostic
+			autoCleanup := false
+			require.NoError(t, repository.FindAll(t.Context(), func(context.Context, Session) (bool, error) {
+				t.Fatal("corrupt session must not be returned")
+				return false, nil
+			}, &FindOpts{AutoCleanUpAllowed: &autoCleanup, DiagnosticConsumer: func(_ context.Context, value FindDiagnostic) error {
+				diagnostic = value
+				return nil
+			}}))
+			require.ErrorIs(t, diagnostic.Err, ErrCorruptSession)
+			dir, err := repository.dir("test", created.Id())
+			require.NoError(t, err)
+			require.DirExists(t, dir)
+			require.False(t, interceptor.(*fsConnectionInterceptor).disposed.Load())
+
+			autoCleanup = true
+			require.NoError(t, repository.FindAll(t.Context(), func(context.Context, Session) (bool, error) {
+				t.Fatal("corrupt session must not be returned")
+				return false, nil
+			}, &FindOpts{AutoCleanUpAllowed: &autoCleanup}))
+			require.NoDirExists(t, dir)
+			require.True(t, interceptor.(*fsConnectionInterceptor).disposed.Load())
+		})
+	}
+}
+
+func TestFsRepositoryCanceledAutoCleanupPreservesCorruptSession(t *testing.T) {
+	repository, err := NewFsRepository(t.Context(), newFsRepositoryTestConfiguration(t))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, repository.Close()) }()
+	created, err := repository.Create(t.Context(), "test", fsRepositoryTestRemote{}, nil)
+	require.NoError(t, err)
+	metadata, err := repository.file("test", created.Id(), FsFileSession)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(metadata, []byte("not-json"), 0600))
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	autoCleanup := true
+	_, err = repository.FindBy(ctx, "test", created.Id(), &FindOpts{AutoCleanUpAllowed: &autoCleanup})
+	require.ErrorIs(t, err, context.Canceled)
+	require.FileExists(t, metadata)
+}
+
 func newFsRepositoryTestConfiguration(t *testing.T) *configuration.SessionFs {
 	t.Helper()
 	result := &configuration.SessionFs{}

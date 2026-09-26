@@ -20,14 +20,16 @@ func TestVerifyJournalsDoesNotRecoverInterruptedHardLinkPublication(t *testing.T
 
 	activePath := journalTestActivePath(conf, identity)
 	require.NoError(t, os.Chmod(activePath, 0400))
-	targetPath := filepath.Join(producerJournalTestDirectory(conf, identity), sealedJournalFileName(sealed.sequence, sealed.segmentHash))
+	raw, err := os.ReadFile(activePath)
+	require.NoError(t, err)
+	targetPath := filepath.Join(producerJournalTestDirectory(conf, identity), nativeSegmentName(sealed.seq, hashNativeAuditSegment(raw), false))
 	require.NoError(t, os.Link(activePath, targetPath))
-	before := snapshotJournalTestTree(t, conf.Journal.Directory)
+	before := snapshotJournalTestTree(t, conf.Directory)
 
-	verification, err := VerifyJournals(context.Background(), []JournalSource{{Name: "default", Directory: conf.Journal.Directory}})
+	verification, err := VerifyJournals(context.Background(), []JournalSource{{Name: "default", Directory: conf.Directory}})
 	require.NoError(t, err)
 	require.Len(t, verification.Records(), 1)
-	require.Equal(t, before, snapshotJournalTestTree(t, conf.Journal.Directory))
+	require.Equal(t, before, snapshotJournalTestTree(t, conf.Directory))
 	require.FileExists(t, activePath)
 	require.FileExists(t, targetPath)
 }

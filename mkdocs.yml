@@ -159,6 +159,7 @@ nav:
           - Filesystem: reference/session/fs.md
       - Audit log:
           - reference/auditlog/index.md
+          - Session recording: reference/auditlog/recording.md
           - Events: reference/auditlog/events.md
           - Remote targets:
               - reference/auditlog/remote-targets/index.md
@@ -178,10 +179,16 @@ nav:
               - Import host keys: reference/cli/key/import/host.md
           - Audit:
               - reference/cli/audit/index.md
+              - Producer ID: reference/cli/audit/producer-id.md
               - Verify: reference/cli/audit/verify.md
               - Decrypt: reference/cli/audit/decrypt.md
               - Export: reference/cli/audit/export.md
               - Merge: reference/cli/audit/merge.md
+          - Recording:
+              - reference/cli/recording/index.md
+              - Inspect: reference/cli/recording/inspect.md
+              - Verify: reference/cli/recording/verify.md
+              - Export: reference/cli/recording/export.md
           - Windows service:
               - reference/cli/service/index.md
               - Install: reference/cli/service/install.md
@@ -211,6 +218,14 @@ nav:
       - reference/data-type.md
       - reference/housekeeping.md
       - reference/alternatives.md
+  - File formats:
+      - formats/index.md
+      - Native container rules: formats/container.md
+      - Native audit: formats/audit.md
+      - Native recording: formats/recording.md
+      - Signed Cast export: formats/cast.md
+      - Audit vectors: formats/audit-vectors.md
+      - Recording vectors: formats/recording-vectors.md
   - Community:
       - Community: community/index.md
       - Issues: https://github.com/engity-com/bifroest/issues

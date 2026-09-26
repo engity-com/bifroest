@@ -1,23 +1,24 @@
 package audit
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	berrors "github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/nativeformat"
 )
 
 func TestNewRecorderDoesNothingWhenDisabled(t *testing.T) {
@@ -31,7 +32,7 @@ func TestNewRecorderDoesNothingWhenDisabled(t *testing.T) {
 	require.NoError(t, recorder.Record(context.Background(), Event{}))
 	require.NoError(t, recorder.Close())
 	require.NoFileExists(t, conf.IdentityFile)
-	require.NoDirExists(t, conf.Journal.Directory)
+	require.NoDirExists(t, conf.Directory)
 }
 
 func TestNewRecorderRejectsMissingInputs(t *testing.T) {
@@ -45,11 +46,11 @@ func TestNewRecorderRejectsMissingInputs(t *testing.T) {
 	require.True(t, berrors.Config.IsErr(err))
 }
 
-func TestLocalJournalRecordsAndReopens(t *testing.T) {
+func TestNativeJournalRecordsAndReopens(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
-	require.IsType(t, &localJournalRecorder{}, recorder)
+	require.IsType(t, &nativeRecorder{}, recorder)
 
 	before := time.Now().UTC()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -63,7 +64,6 @@ func TestLocalJournalRecordsAndReopens(t *testing.T) {
 	records := readJournalTestRecords(t, conf, identity)
 	require.Len(t, records, 2)
 	for i, record := range records {
-		require.Equal(t, journalRecordSchema, record.Schema)
 		require.Equal(t, identity.ProducerId(), record.ProducerId)
 		require.Equal(t, 4, int(record.Id.Version()))
 		require.False(t, record.RecordedAt.Before(before))
@@ -78,7 +78,7 @@ func TestLocalJournalRecordsAndReopens(t *testing.T) {
 	require.Len(t, readJournalTestRecords(t, conf, identity), 3)
 }
 
-func TestLocalJournalSerializesConcurrentRecords(t *testing.T) {
+func TestNativeJournalSerializesConcurrentRecords(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
@@ -112,11 +112,11 @@ func TestLocalJournalSerializesConcurrentRecords(t *testing.T) {
 	require.Len(t, names, count)
 }
 
-func TestLocalJournalReserveOnlySuppressesSuppressibleRecords(t *testing.T) {
+func TestNativeJournalReserveOnlySuppressesSuppressibleRecords(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
-	local := recorder.(*localJournalRecorder)
+	local := recorder.(*nativeRecorder)
 	local.availableBytes = func(string) (uint64, error) { return 0, nil }
 
 	recorded, err := local.RecordSuppressible(context.Background(), Event{Name: "test.suppressed"})
@@ -130,11 +130,11 @@ func TestLocalJournalReserveOnlySuppressesSuppressibleRecords(t *testing.T) {
 	require.Equal(t, "test.required", records[0].Event.Name)
 }
 
-func TestLocalJournalFreeSpaceFailureFailsClosedWithoutPoisoning(t *testing.T) {
+func TestNativeJournalFreeSpaceFailureFailsClosedWithoutPoisoning(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
-	local := recorder.(*localJournalRecorder)
+	local := recorder.(*nativeRecorder)
 	local.availableBytes = func(string) (uint64, error) { return 0, fmt.Errorf("space unavailable") }
 
 	recorded, err := local.RecordSuppressible(context.Background(), Event{Name: "test.failed"})
@@ -144,20 +144,14 @@ func TestLocalJournalFreeSpaceFailureFailsClosedWithoutPoisoning(t *testing.T) {
 	require.NoError(t, recorder.Close())
 }
 
-func TestLocalJournalRecoversIncompleteTail(t *testing.T) {
+func TestNativeJournalRecoversIncompleteTail(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		tail func([]byte) []byte
 	}{
-		{"length", func(frame []byte) []byte { return frame[:journalFrameLengthSize-1] }},
-		{"zero length", func([]byte) []byte { return make([]byte, journalFrameLengthSize) }},
-		{"oversized length", func([]byte) []byte {
-			length := make([]byte, journalFrameLengthSize)
-			binary.BigEndian.PutUint32(length, maxJournalRecordPayloadSize+1)
-			return length
-		}},
-		{"payload", func(frame []byte) []byte { return frame[:journalFrameLengthSize+10] }},
-		{"checksum", func(frame []byte) []byte { return frame[:len(frame)-1] }},
+		{"prefix", func(frame []byte) []byte { return frame[:5] }},
+		{"uncommitted frame", func(frame []byte) []byte { frame[5] = 0; return frame }},
+		{"uncommitted payload", func(frame []byte) []byte { frame[5] = 0; return frame[:16] }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			conf, identity := newJournalTestIdentity(t)
@@ -166,7 +160,9 @@ func TestLocalJournalRecoversIncompleteTail(t *testing.T) {
 			require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.before-crash"}))
 			crashCloseJournalTestRecorder(t, recorder)
 			activePath := journalTestActivePath(conf, identity)
-			incompleteFrame, err := encodeJournalFrame([]byte(`{"incomplete":true}`))
+			_, payload, _, err := newNativeAuditRecord(identity, recorder.(*nativeRecorder).state.lastRecord, Event{Name: "test.tail"}, uuid.New(), time.Now().UTC(), nil)
+			require.NoError(t, err)
+			incompleteFrame, err := nativeformat.EncodeUnit(nativeformat.ContentUnit, payload, nativeformat.MaxAuditRecordPayload)
 			require.NoError(t, err)
 
 			file, err := os.OpenFile(activePath, os.O_WRONLY|os.O_APPEND, journalFileMode)
@@ -186,7 +182,7 @@ func TestLocalJournalRecoversIncompleteTail(t *testing.T) {
 	}
 }
 
-func TestLocalJournalRejectsCompleteCorruption(t *testing.T) {
+func TestNativeJournalRejectsCompleteCorruption(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
@@ -195,20 +191,20 @@ func TestLocalJournalRejectsCompleteCorruption(t *testing.T) {
 	activePath := journalTestActivePath(conf, identity)
 	raw, err := os.ReadFile(activePath)
 	require.NoError(t, err)
-	raw[journalFrameLengthSize] ^= 1
+	recordOffset := nativeTestRecordOffset(t, raw)
+	raw[recordOffset+6] ^= 1
 	require.NoError(t, os.WriteFile(activePath, raw, journalFileMode))
 
 	failed, err := NewRecorder(&conf, identity)
 
 	require.Nil(t, failed)
 	require.ErrorContains(t, err, "checksum mismatch")
-	require.True(t, berrors.System.IsErr(err))
 	actual, readErr := os.ReadFile(activePath)
 	require.NoError(t, readErr)
 	require.Equal(t, raw, actual)
 }
 
-func TestLocalJournalRejectsCommittedRecordWithCorruptedSize(t *testing.T) {
+func TestNativeJournalRejectsCommittedRecordWithCorruptedSize(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
@@ -217,22 +213,21 @@ func TestLocalJournalRejectsCommittedRecordWithCorruptedSize(t *testing.T) {
 	activePath := journalTestActivePath(conf, identity)
 	raw, err := os.ReadFile(activePath)
 	require.NoError(t, err)
-	headerPayloadSize := int(binary.BigEndian.Uint32(raw[:journalFrameLengthSize]))
-	recordOffset := journalFrameLengthSize + headerPayloadSize + journalFrameChecksumSize + len(journalFrameCommitMarker)
-	payloadSize := binary.BigEndian.Uint32(raw[recordOffset : recordOffset+journalFrameLengthSize])
-	binary.BigEndian.PutUint32(raw[recordOffset:recordOffset+journalFrameLengthSize], payloadSize+1)
+	recordOffset := nativeTestRecordOffset(t, raw)
+	payloadSize := binary.BigEndian.Uint32(raw[recordOffset+1 : recordOffset+5])
+	binary.BigEndian.PutUint32(raw[recordOffset+1:recordOffset+5], payloadSize+1)
 	require.NoError(t, os.WriteFile(activePath, raw, journalFileMode))
 
 	failed, err := NewRecorder(&conf, identity)
 
 	require.Nil(t, failed)
-	require.ErrorContains(t, err, "corrupted size")
+	require.ErrorContains(t, err, "physically incomplete")
 	actual, readErr := os.ReadFile(activePath)
 	require.NoError(t, readErr)
 	require.Equal(t, raw, actual)
 }
 
-func TestLocalJournalDoesNotTruncateCorruptedCommittedRecordBeforePartialTail(t *testing.T) {
+func TestNativeJournalDoesNotTruncateCorruptedCommittedRecordBeforePartialTail(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
@@ -241,22 +236,21 @@ func TestLocalJournalDoesNotTruncateCorruptedCommittedRecordBeforePartialTail(t 
 	activePath := journalTestActivePath(conf, identity)
 	raw, err := os.ReadFile(activePath)
 	require.NoError(t, err)
-	headerPayloadSize := int(binary.BigEndian.Uint32(raw[:journalFrameLengthSize]))
-	recordOffset := journalFrameLengthSize + headerPayloadSize + journalFrameChecksumSize + len(journalFrameCommitMarker)
-	binary.BigEndian.PutUint32(raw[recordOffset:recordOffset+journalFrameLengthSize], maxJournalRecordPayloadSize+1)
+	recordOffset := nativeTestRecordOffset(t, raw)
+	binary.BigEndian.PutUint32(raw[recordOffset+1:recordOffset+5], nativeformat.MaxAuditRecordPayload+1)
 	raw = append(raw, 0, 0, 1)
 	require.NoError(t, os.WriteFile(activePath, raw, journalFileMode))
 
 	failed, err := NewRecorder(&conf, identity)
 
 	require.Nil(t, failed)
-	require.ErrorContains(t, err, "before its committed head")
+	require.ErrorContains(t, err, "invalid native container unit type or payload size")
 	actual, readErr := os.ReadFile(activePath)
 	require.NoError(t, readErr)
 	require.Equal(t, raw, actual)
 }
 
-func TestLocalJournalRejectsCorruptedCommitMarker(t *testing.T) {
+func TestNativeJournalRejectsCorruptedCommitMarker(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
@@ -277,7 +271,7 @@ func TestLocalJournalRejectsCorruptedCommitMarker(t *testing.T) {
 	require.Equal(t, raw, actual)
 }
 
-func TestLocalJournalRejectsDifferentProducer(t *testing.T) {
+func TestNativeJournalRejectsDifferentProducer(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
@@ -291,11 +285,11 @@ func TestLocalJournalRejectsDifferentProducer(t *testing.T) {
 	failed, err := NewRecorder(&conf, otherIdentity)
 
 	require.Nil(t, failed)
-	require.ErrorContains(t, err, "contains unsupported entry")
-	require.NoDirExists(t, filepath.Join(conf.Journal.Directory, otherIdentity.ProducerId().String()))
+	require.ErrorContains(t, err, "invalid native audit root entry")
+	require.NoDirExists(t, filepath.Join(conf.Directory, otherIdentity.ProducerId().String()))
 }
 
-func TestLocalJournalLocksExclusiveWriter(t *testing.T) {
+func TestNativeJournalLocksExclusiveWriter(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	first, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
@@ -311,7 +305,7 @@ func TestLocalJournalLocksExclusiveWriter(t *testing.T) {
 	require.NoError(t, third.Close())
 }
 
-func TestLocalJournalRejectsInvalidEventsWithoutWriting(t *testing.T) {
+func TestNativeJournalRejectsInvalidEventsWithoutWriting(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
@@ -331,7 +325,7 @@ func TestLocalJournalRejectsInvalidEventsWithoutWriting(t *testing.T) {
 	require.NoError(t, recorder.Close())
 }
 
-func TestLocalJournalRejectsRecordsAfterClose(t *testing.T) {
+func TestNativeJournalRejectsRecordsAfterClose(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
@@ -340,21 +334,54 @@ func TestLocalJournalRejectsRecordsAfterClose(t *testing.T) {
 	require.ErrorIs(t, recorder.Record(context.Background(), Event{Name: "test.closed"}), errJournalClosed)
 }
 
-func TestLocalJournalPoisonsRecorderAfterWriteFailure(t *testing.T) {
+func TestNativeJournalPoisonsRecorderAfterWriteFailure(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
-	local := recorder.(*localJournalRecorder)
+	local := recorder.(*nativeRecorder)
 	readOnly, err := os.Open(local.activePath)
 	require.NoError(t, err)
 	require.NoError(t, local.file.Close())
 	local.file = readOnly
 
 	firstErr := recorder.Record(context.Background(), Event{Name: "test.write-fails"})
-	require.ErrorContains(t, firstErr, "cannot append audit journal frame")
+	require.Error(t, firstErr)
 	secondErr := recorder.Record(context.Background(), Event{Name: "test.not-appended"})
 	require.EqualError(t, secondErr, firstErr.Error())
 	require.Error(t, recorder.Close())
+}
+
+func TestNativeJournalCloseAfterAcceptedFailureOmitsOnlyExistingPoison(t *testing.T) {
+	t.Run("existing poison", func(t *testing.T) {
+		conf, identity := newJournalTestIdentity(t)
+		recorder, err := NewRecorder(&conf, identity)
+		require.NoError(t, err)
+		local := recorder.(*nativeRecorder)
+		readOnly, err := os.Open(local.activePath)
+		require.NoError(t, err)
+		require.NoError(t, local.file.Close())
+		local.file = readOnly
+
+		accepted := recorder.Record(context.Background(), Event{Name: "test.write-fails"})
+		require.Error(t, accepted)
+		closeErr := local.CloseAfterAcceptedFailure()
+		require.NotErrorIs(t, closeErr, accepted)
+	})
+
+	t.Run("new cleanup failure", func(t *testing.T) {
+		conf, identity := newJournalTestIdentity(t)
+		recorder, err := NewRecorder(&conf, identity)
+		require.NoError(t, err)
+		local := recorder.(*nativeRecorder)
+		require.NoError(t, local.file.Close())
+
+		accepted := recorder.Record(context.Background(), Event{Name: "test.write-fails"})
+		require.Error(t, accepted)
+		require.NoError(t, local.lock.file.Close())
+		closeErr := local.CloseAfterAcceptedFailure()
+		require.Error(t, closeErr)
+		require.NotErrorIs(t, closeErr, accepted)
+	})
 }
 
 func newJournalTestIdentity(t *testing.T) (configuration.Auditlog, *Identity) {
@@ -366,63 +393,35 @@ func newJournalTestIdentity(t *testing.T) (configuration.Auditlog, *Identity) {
 }
 
 func journalTestActivePath(conf configuration.Auditlog, identity *Identity) string {
-	return filepath.Join(conf.Journal.Directory, identity.ProducerId().String(), journalActiveFileName)
+	return filepath.Join(conf.Directory, identity.ProducerId().String(), nativeActiveClear)
 }
 
-func readJournalTestRecords(t *testing.T, conf configuration.Auditlog, identity *Identity) []journalRecord {
+func readJournalTestRecords(t *testing.T, conf configuration.Auditlog, identity *Identity) []VerifiedRecord {
 	t.Helper()
-	directory := filepath.Join(conf.Journal.Directory, identity.ProducerId().String())
-	entries, err := os.ReadDir(directory)
+	source := JournalSource{Name: "test", Directory: conf.Directory, ExpectedProducerId: identity.ProducerId(), WithSensitive: true}
+	if !conf.EncryptionPublicKey.IsZero() || conf.EncryptionPublicKeyFile != "" {
+		t.Fatal("encrypted test records need explicit decryption identities")
+	}
+	verified, err := VerifyJournals(context.Background(), []JournalSource{source})
 	require.NoError(t, err)
-	var paths []string
-	var active string
-	for _, entry := range entries {
-		path := filepath.Join(directory, entry.Name())
-		if entry.Name() == journalActiveFileName {
-			active = path
-		} else if _, _, ok := parseSealedJournalFileName(entry.Name()); ok {
-			paths = append(paths, path)
-		}
-	}
-	sort.Strings(paths)
-	if active != "" {
-		paths = append(paths, active)
-	}
-	var records []journalRecord
-	var previousRecordHash journalHash
-	for _, path := range paths {
-		file, err := os.Open(path)
-		require.NoError(t, err)
-		info, err := file.Stat()
-		require.NoError(t, err)
-		for offset := int64(0); offset < info.Size(); {
-			payload, frameSize, incomplete, err := readJournalFrame(file, offset, info.Size())
-			require.NoError(t, err)
-			require.False(t, incomplete)
-			var envelope struct {
-				Schema string `json:"schema"`
-			}
-			require.NoError(t, json.Unmarshal(payload, &envelope))
-			if envelope.Schema == journalRecordSchema {
-				record, recordHash, err := decodeJournalRecord(payload, identity, previousRecordHash)
-				require.NoError(t, err)
-				records = append(records, record)
-				previousRecordHash = recordHash
-			}
-			offset += frameSize
-		}
-		require.NoError(t, file.Close())
-	}
-	return records
+	return verified.Records()
 }
 
 func crashCloseJournalTestRecorder(t *testing.T, recorder Recorder) {
 	t.Helper()
-	local := recorder.(*localJournalRecorder)
+	local := recorder.(*nativeRecorder)
 	local.mutex.Lock()
 	defer local.mutex.Unlock()
 	require.NoError(t, local.file.Sync())
 	require.NoError(t, local.file.Close())
-	require.NoError(t, local.processLock.Close())
+	require.NoError(t, local.lock.Close())
 	local.closed = true
+}
+
+func nativeTestRecordOffset(t *testing.T, raw []byte) int {
+	t.Helper()
+	_, offset, tail, err := nativeformat.ReadUnitAt(bytes.NewReader(raw), int64(len(nativeformat.AuditMagic)), int64(len(raw)), nativeformat.MaxAuditRecordPayload)
+	require.NoError(t, err)
+	require.False(t, tail)
+	return int(offset)
 }

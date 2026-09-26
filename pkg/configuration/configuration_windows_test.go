@@ -17,6 +17,7 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 	testlog.Hook(t)
 	require.Equal(t, `C:\ProgramData\Engity\Bifroest\auditlog-key`, DefaultAuditlogIdentityFile)
 	require.Equal(t, `C:\ProgramData\Engity\Bifroest\auditlog`, DefaultAuditlogJournalDirectory)
+	require.Equal(t, `C:\ProgramData\Engity\Bifroest\recordings`, DefaultAuditlogRecordingDirectory)
 	require.Equal(t, `C:\ProgramData\Engity\Bifroest\client-key`, DefaultCertificateIdentityFile.String())
 	require.Equal(t, `C:\ProgramData\Engity\Bifroest\ca`, DefaultCertificateAuthorityFile.String())
 
@@ -49,13 +50,13 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
     type: local`,
 			expected: Configuration{
 				Auditlogs: Auditlogs{{
-					Name:         DefaultAuditlogName,
-					Enabled:      DefaultAuditlogEnabled,
-					IdentityFile: DefaultAuditlogIdentityFile,
-					Journal: AuditlogJournal{
-						Directory:        DefaultAuditlogJournalDirectory,
-						MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
-					},
+					Name:             DefaultAuditlogName,
+					Enabled:          DefaultAuditlogEnabled,
+					FailurePolicy:    DefaultAuditlogFailurePolicy,
+					IdentityFile:     DefaultAuditlogIdentityFile,
+					Directory:        DefaultAuditlogJournalDirectory,
+					MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
+					Recording:        expectedDefaultAuditlogRecording(),
 				}},
 				Ssh: Ssh{
 					Addresses: DefaultSshAddresses,

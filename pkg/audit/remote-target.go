@@ -53,7 +53,7 @@ func (this *SegmentHash) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// SealedSegment describes one immutable, locally verified journal segment.
+// SealedSegment describes one immutable, locally verified native audit segment.
 // Content returns a fresh view positioned at offset zero. Targets must not
 // retain or close that view and must publish synchronously before returning.
 type SealedSegment struct {
@@ -62,6 +62,7 @@ type SealedSegment struct {
 	hash       SegmentHash
 	size       int64
 	content    io.ReaderAt
+	encrypted  bool
 }
 
 func (this SealedSegment) Validate() error {
@@ -91,7 +92,7 @@ func (this SealedSegment) ValidateContext(ctx context.Context) error {
 		return errors.System.Newf("sealed audit segment content is nil")
 	}
 	hasher := sha256.New()
-	_, _ = hasher.Write([]byte(journalSegmentHashDomain))
+	_, _ = hasher.Write([]byte(nativeAuditSegmentHashDomain))
 	written, err := io.Copy(hasher, contextReader{context: ctx, reader: io.NewSectionReader(this.content, 0, this.size)})
 	if err != nil {
 		return errors.System.Newf("cannot hash sealed audit segment content: %w", err)
@@ -154,7 +155,7 @@ func (this SealedSegment) Content() io.ReadSeeker {
 }
 
 func (this SealedSegment) FileName() string {
-	return sealedJournalFileName(this.sequence, journalHash(this.hash))
+	return nativeSegmentName(this.sequence, journalHash(this.hash), this.encrypted)
 }
 
 func (this SealedSegment) RemotePath() string {
@@ -204,7 +205,11 @@ func remoteDeliveryTargetSettings(conf configuration.AuditlogTargetV) (time.Dura
 		if err != nil {
 			return 0, remoteDeliveryDestinationFingerprint{}, err
 		}
-		return sftpRemoteDeliveryTargetSettings(value, values, address)
+		trust, err := loadSftpRemoteHostKeyTrust(value)
+		if err != nil {
+			return 0, remoteDeliveryDestinationFingerprint{}, err
+		}
+		return sftpRemoteDeliveryTargetSettings(value, values, address, trust)
 	default:
 		return 0, remoteDeliveryDestinationFingerprint{}, errors.Config.Newf("custom remote target configuration %T requires an explicit destination identity from its factory", conf)
 	}
@@ -251,13 +256,16 @@ func webdavRemoteDeliveryTargetSettings(values configuration.AuditlogTargetWebda
 	return newRemoteDeliveryTargetSettings(values.PublishAttemptTimeout, destination)
 }
 
-func sftpRemoteDeliveryTargetSettings(conf *configuration.AuditlogTargetSftp, values configuration.AuditlogTargetSftpValues, address string) (time.Duration, remoteDeliveryDestinationFingerprint, error) {
+func sftpRemoteDeliveryTargetSettings(conf *configuration.AuditlogTargetSftp, values configuration.AuditlogTargetSftpValues, address string, trust sftpRemoteHostKeyTrust) (time.Duration, remoteDeliveryDestinationFingerprint, error) {
 	destination := struct {
-		Type      string `json:"type"`
-		Address   string `json:"address"`
-		Directory string `json:"directory"`
-		Username  string `json:"username"`
-	}{"sftp", address, conf.Directory, values.User}
+		Type              string `json:"type"`
+		Address           string `json:"address"`
+		Directory         string `json:"directory"`
+		Username          string `json:"username"`
+		AcceptAllHostKeys bool   `json:"acceptAllHostKeys"`
+		KnownHosts        string `json:"knownHosts"`
+		KnownHostsFile    []byte `json:"knownHostsFile"`
+	}{"sftp", address, conf.Directory, values.User, conf.AcceptAllHostKeys, string(conf.KnownHosts), trust.file}
 	return newRemoteDeliveryTargetSettings(values.PublishAttemptTimeout, destination)
 }
 

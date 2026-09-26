@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	goos "os"
 	"path/filepath"
 	"testing"
@@ -51,4 +52,44 @@ func TestCanonicalAuditOutputRequiresExistingImmediateParent(t *testing.T) {
 	_, err := canonicalAuditOutput(output)
 	require.ErrorContains(t, err, "must already exist")
 	require.NoDirExists(t, filepath.Dir(output))
+}
+
+func TestProtectedOutputFileDoesNotInstallProducerFailure(t *testing.T) {
+	parent := t.TempDir()
+	path := filepath.Join(parent, "output")
+	err := writeProtectedOutputFile(path, false, nil, func(output *goos.File) error {
+		_, writeErr := output.Write([]byte("partial"))
+		require.NoError(t, writeErr)
+		return fmt.Errorf("injected producer failure")
+	})
+	require.ErrorContains(t, err, "injected producer failure")
+	require.NoFileExists(t, path)
+	entries, err := goos.ReadDir(parent)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}
+
+func TestProtectedOutputFileDoesNotInstallAfterFinalValidationFailure(t *testing.T) {
+	parent := t.TempDir()
+	path := filepath.Join(parent, "output")
+	require.NoError(t, goos.WriteFile(path, []byte("existing"), 0600))
+	validations := 0
+	err := writeProtectedOutputFile(path, true, func() error {
+		validations++
+		if validations == 2 {
+			return fmt.Errorf("injected final validation failure")
+		}
+		return nil
+	}, func(output *goos.File) error {
+		_, err := output.Write([]byte("replacement"))
+		return err
+	})
+	require.ErrorContains(t, err, "injected final validation failure")
+	require.Equal(t, 2, validations)
+	raw, err := goos.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "existing", string(raw))
+	entries, err := goos.ReadDir(parent)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
 }

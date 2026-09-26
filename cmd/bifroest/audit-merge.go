@@ -19,6 +19,7 @@ type auditMergeOpts struct {
 	force                   bool
 	decryptionIdentityFiles []string
 	expectedProducerIds     []string
+	withSensitive           bool
 }
 
 func registerAuditMergeCmd(parent *kingpin.CmdClause) {
@@ -29,6 +30,7 @@ func registerAuditMergeCmd(parent *kingpin.CmdClause) {
 	registerAuditOutputFlags(cmd, &opts.output, &opts.force)
 	registerAuditDecryptionIdentityFlags(cmd, &opts.decryptionIdentityFiles)
 	registerAuditTrustAnchorFlags(cmd, &opts.expectedProducerIds)
+	registerAuditSensitiveFlag(cmd, &opts.withSensitive)
 	cmd.Arg("auditlogName", "Configured auditlogs to merge.").Required().StringsVar(&opts.auditlogs)
 }
 
@@ -54,31 +56,31 @@ func doAuditMerge(opts *auditMergeOpts, stdout io.Writer) error {
 		return err
 	}
 	sources := make([]audit.JournalSource, 0, len(configured))
+	identities := opts.decryptionIdentityFiles
+	if !opts.withSensitive {
+		identities = nil
+	}
 	for _, selected := range configured {
-		source, err := configuredAuditJournalSource(selected, opts.decryptionIdentityFiles, expectedProducerIds[selected.Name])
+		source, err := configuredAuditJournalSource(selected, identities, expectedProducerIds[selected.Name])
 		if err != nil {
 			return err
 		}
+		source.WithSensitive = opts.withSensitive
 		sources = append(sources, source)
 	}
 	output, err := canonicalAuditOutput(opts.output)
 	if err != nil {
 		return err
 	}
-	if err := ensureAuditOutputSafe(output, conf); err != nil {
+	validate := func() error {
+		return ensureAuditDestinationSafe(output, stdout, opts.configuration.GetFilename(), conf, opts.decryptionIdentityFiles)
+	}
+	if err := validate(); err != nil {
 		return err
 	}
-	if err := ensureBootstrapOutputIsNotPrivateKey(output, opts.decryptionIdentityFiles...); err != nil {
-		return err
-	}
-	verification, err := audit.VerifyJournals(context.Background(), sources)
+	verification, err := audit.VerifyLiveJournals(context.Background(), sources)
 	if err != nil {
 		return err
 	}
-	return writeAuditOutput(output, opts.force, stdout, verification, audit.RecordOrderChronological, func() error {
-		if err := ensureAuditOutputSafe(output, conf); err != nil {
-			return err
-		}
-		return ensureBootstrapOutputIsNotPrivateKey(output, opts.decryptionIdentityFiles...)
-	})
+	return writeAuditOutput(output, opts.force, stdout, verification, audit.RecordOrderChronological, validate)
 }

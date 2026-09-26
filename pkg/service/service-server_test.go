@@ -37,6 +37,7 @@ func TestPrepareServerAppliesSshLifecycleAndLimits(t *testing.T) {
 	require.Equal(t, int(conf.Ssh.MaxReverseForwards), *server.MaxReverseForwards)
 	require.NotNil(t, server.GracefulShutdownHandler)
 	require.NotNil(t, server.AgentForwardingCallback)
+	require.NotNil(t, server.SessionRequestCallback)
 	require.NotNil(t, server.ConnectionFailedCallback)
 	require.NotNil(t, server.DisconnectCallback)
 	require.Nil(t, server.ProxyProtocol)

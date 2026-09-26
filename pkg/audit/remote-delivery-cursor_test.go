@@ -14,7 +14,7 @@ import (
 
 func TestRemoteDeliveryCursorIsCanonicalSignedAndScoped(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
-	hash := SegmentHash(hashJournalBytes(journalSegmentHashDomain, []byte("segment")))
+	hash := SegmentHash(hashNativeAuditSegment([]byte("segment")))
 	fingerprint := remoteDeliveryDestinationFingerprint(sha256.Sum256([]byte("destination")))
 	cursor, payload, err := newRemoteDeliveryCursor(identity, "archive", fingerprint, 42, hash)
 	require.NoError(t, err)
@@ -46,7 +46,7 @@ func TestRemoteDeliveryCursorIsCanonicalSignedAndScoped(t *testing.T) {
 	_, err = decodeRemoteDeliveryCursor(tamperedPayload, identity, "archive", otherFingerprint)
 	require.ErrorContains(t, err, "illegal audit signature")
 
-	stateDirectory, err := prepareRemoteDeliveryState(conf.Journal.Directory, identity.ProducerId())
+	stateDirectory, err := prepareRemoteDeliveryState(conf.Directory, identity.ProducerId())
 	require.NoError(t, err)
 	targetDirectory := filepath.Join(stateDirectory, remoteDeliveryTargetStateName(configuration.AuditlogTargetName("archive")))
 	_, err = loadRemoteDeliveryCursor(stateDirectory, identity, "archive", fingerprint)
@@ -56,6 +56,33 @@ func TestRemoteDeliveryCursorIsCanonicalSignedAndScoped(t *testing.T) {
 	loaded, err := loadRemoteDeliveryCursor(stateDirectory, identity, "archive", fingerprint)
 	require.NoError(t, err)
 	require.Equal(t, written, loaded)
+}
+
+func TestRemoteDeliveryCursorRejectsSignedLegacySchema(t *testing.T) {
+	conf, identity := newJournalTestIdentity(t)
+	fingerprint := remoteDeliveryDestinationFingerprint(sha256.Sum256([]byte("destination")))
+	cursor, _, err := newRemoteDeliveryCursor(identity, "archive", fingerprint, 1, SegmentHash{1})
+	require.NoError(t, err)
+	cursor.Schema = "bifroest.audit-remote-delivery-cursor/v2"
+	unsigned, err := json.Marshal(cursor.remoteDeliveryCursorContent)
+	require.NoError(t, err)
+	cursor.Signature, err = identity.sign(append([]byte("BIFROEST-AUDIT-REMOTE-DELIVERY-CURSOR-SIGNATURE/v2\x00"), unsigned...))
+	require.NoError(t, err)
+	payload, err := json.Marshal(cursor)
+	require.NoError(t, err)
+	_, err = decodeRemoteDeliveryCursor(payload, identity, "archive", fingerprint)
+	require.ErrorContains(t, err, "different producer or target")
+	stateDirectory, err := prepareRemoteDeliveryState(conf.Directory, identity.ProducerId())
+	require.NoError(t, err)
+	_, err = loadRemoteDeliveryCursor(stateDirectory, identity, "archive", fingerprint)
+	require.NoError(t, err)
+	path := filepath.Join(stateDirectory, remoteDeliveryTargetStateName("archive"), remoteDeliveryCursorFileName)
+	require.NoError(t, writeRemoteDeliveryTestFile(path, payload))
+	_, err = loadRemoteDeliveryCursor(stateDirectory, identity, "archive", fingerprint)
+	require.ErrorContains(t, err, "different producer or target")
+	stored, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, payload, stored)
 }
 
 func TestRemoteDeliveryTargetStateNamesAvoidFilesystemAliases(t *testing.T) {
@@ -71,16 +98,16 @@ func TestRemoteDeliveryTargetStateNamesAvoidFilesystemAliases(t *testing.T) {
 func TestRemoteDeliveryRecoversCompleteTemporaryCursor(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	fingerprint := remoteDeliveryDestinationFingerprint(sha256.Sum256([]byte("destination")))
-	stateDirectory, err := prepareRemoteDeliveryState(conf.Journal.Directory, identity.ProducerId())
+	stateDirectory, err := prepareRemoteDeliveryState(conf.Directory, identity.ProducerId())
 	require.NoError(t, err)
 	_, err = loadRemoteDeliveryCursor(stateDirectory, identity, "archive", fingerprint)
 	require.NoError(t, err)
 	targetDirectory := filepath.Join(stateDirectory, remoteDeliveryTargetStateName("archive"))
 
-	firstHash := SegmentHash(hashJournalBytes(journalSegmentHashDomain, []byte("first")))
+	firstHash := SegmentHash(hashNativeAuditSegment([]byte("first")))
 	_, err = writeRemoteDeliveryCursor(targetDirectory, identity, "archive", fingerprint, 1, firstHash)
 	require.NoError(t, err)
-	secondHash := SegmentHash(hashJournalBytes(journalSegmentHashDomain, []byte("second")))
+	secondHash := SegmentHash(hashNativeAuditSegment([]byte("second")))
 	second, payload, err := newRemoteDeliveryCursor(identity, "archive", fingerprint, 2, secondHash)
 	require.NoError(t, err)
 	temporary := filepath.Join(targetDirectory, remoteDeliveryCursorTempFileName)

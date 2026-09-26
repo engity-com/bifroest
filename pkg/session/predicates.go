@@ -29,7 +29,7 @@ func isExpiredWithThreshold(ctx context.Context, candidate Session, threshold ti
 	if err != nil {
 		return false, err
 	}
-	if info.State() == StateDisposed {
+	if info.State() == StateDisposed && threshold <= 0 {
 		return true, nil
 	}
 	vu, err := info.ValidUntil(ctx)
@@ -37,7 +37,7 @@ func isExpiredWithThreshold(ctx context.Context, candidate Session, threshold ti
 		return false, err
 	}
 	if vu.IsZero() {
-		return false, nil
+		return info.State() == StateDisposed, nil
 	}
 	return !time.Now().Before(vu.Add(threshold)), nil
 }

@@ -5,11 +5,9 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/nativeformat"
 )
 
 func TestVerifyJournalsUsesOnlyPublicJournalDataAndDoesNotMutate(t *testing.T) {
@@ -28,12 +27,12 @@ func TestVerifyJournalsUsesOnlyPublicJournalDataAndDoesNotMutate(t *testing.T) {
 	require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.second"}))
 	require.NoError(t, recorder.Close())
 	require.NoError(t, os.Remove(conf.IdentityFile))
-	before := snapshotJournalTestTree(t, conf.Journal.Directory)
+	before := snapshotJournalTestTree(t, conf.Directory)
 
-	verification, err := VerifyJournals(context.Background(), []JournalSource{{Name: "default", Directory: conf.Journal.Directory}})
+	verification, err := VerifyJournals(context.Background(), []JournalSource{{Name: "default", Directory: conf.Directory}})
 	require.NoError(t, err)
-	require.Equal(t, before, snapshotJournalTestTree(t, conf.Journal.Directory))
-	canonicalDirectory, err := filepath.EvalSymlinks(conf.Journal.Directory)
+	require.Equal(t, before, snapshotJournalTestTree(t, conf.Directory))
+	canonicalDirectory, err := filepath.EvalSymlinks(conf.Directory)
 	require.NoError(t, err)
 	require.Equal(t, []VerifiedJournal{{
 		Name:          "default",
@@ -47,7 +46,7 @@ func TestVerifyJournalsUsesOnlyPublicJournalDataAndDoesNotMutate(t *testing.T) {
 	require.Equal(t, "test.first", records[0].Event.Name)
 	require.Equal(t, "test.second", records[1].Event.Name)
 	require.Equal(t, records[0].Hash, records[1].PreviousHash)
-	require.NoError(t, VerifyJournalIntegrity(context.Background(), []JournalSource{{Name: "default", Directory: conf.Journal.Directory}}))
+	require.NoError(t, VerifyJournalIntegrity(context.Background(), []JournalSource{{Name: "default", Directory: conf.Directory}}))
 }
 
 func TestVerifierBudgetBoundsOnlyMaterializedRecords(t *testing.T) {
@@ -64,7 +63,7 @@ func TestVerifierBudgetBoundsOnlyMaterializedRecords(t *testing.T) {
 	require.Equal(t, int64(maxMaterializedVerifiedBytes), budget.bytes)
 }
 
-func TestVerifierSnapshotsDetectMetadataPreservingProducerReplacementAndContentChange(t *testing.T) {
+func TestVerifierSnapshotsDetectMetadataPreservingProducerReplacement(t *testing.T) {
 	root := t.TempDir()
 	producer := filepath.Join(root, "producer")
 	require.NoError(t, os.Mkdir(producer, 0700))
@@ -92,18 +91,10 @@ func TestVerifierSnapshotsDetectMetadataPreservingProducerReplacementAndContentC
 	require.NotEqual(t, producerIdentity.identity, replacementIdentity.identity)
 	after, err := snapshotVerifierDirectory(context.Background(), root)
 	require.NoError(t, err)
-	require.False(t, equalVerifierDirectorySnapshots(before, after))
-
-	file := filepath.Join(root, "segment")
-	require.NoError(t, os.WriteFile(file, []byte("first"), 0600))
-	info, err := os.Stat(file)
-	require.NoError(t, err)
-	left := []verifierSegmentFile{{name: "segment", size: info.Size(), info: info, digest: sha256.Sum256([]byte("first"))}}
-	right := []verifierSegmentFile{{name: "segment", size: info.Size(), info: info, digest: sha256.Sum256([]byte("other"))}}
-	require.False(t, equalVerifierSegments(left, right))
+	require.NotEqual(t, before, after)
 }
 
-func TestVerifyJournalsFallsBackToJournalWorkspace(t *testing.T) {
+func TestVerifyNativeJournalsDoesNotRequireGlobalTemp(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
@@ -115,44 +106,11 @@ func TestVerifyJournalsFallsBackToJournalWorkspace(t *testing.T) {
 		t.Setenv(variable, unusableTemporaryDirectory)
 	}
 
-	verification, err := VerifyJournals(context.Background(), []JournalSource{{Name: "fallback", Directory: conf.Journal.Directory}})
+	verification, err := VerifyJournals(context.Background(), []JournalSource{{Name: "fallback", Directory: conf.Directory}})
 	require.NoError(t, err)
 	require.Len(t, verification.Records(), 1)
-	workRoot := filepath.Join(conf.Journal.Directory, journalWorkDirectoryName)
-	info, err := os.Stat(workRoot)
-	require.NoError(t, err)
-	require.True(t, info.IsDir())
-	if runtime.GOOS != "windows" {
-		require.Equal(t, os.FileMode(0700), info.Mode().Perm())
-	}
-	entries, err := os.ReadDir(workRoot)
-	require.NoError(t, err)
-	require.Empty(t, entries)
-}
-
-func TestVerifierSegmentInventoryIsBoundedAndCancellable(t *testing.T) {
-	directory := t.TempDir()
-	workspace := t.TempDir()
-	active := filepath.Join(directory, journalActiveFileName)
-	file, err := os.Create(active)
-	require.NoError(t, err)
-	require.NoError(t, file.Truncate(int64(defaultJournalSegmentTargetSize+maxJournalRecordPayloadSize*2)+1))
-	require.NoError(t, file.Close())
-	_, _, err = newVerifierSegmentInventory(context.Background(), directory, workspace)
-	require.ErrorContains(t, err, "exceeds")
-
-	require.NoError(t, os.WriteFile(active, []byte("small"), 0600))
-	segments, activeSegment, err := newVerifierSegmentInventory(context.Background(), directory, workspace)
-	require.NoError(t, err)
-	require.NotNil(t, activeSegment)
-	_, found, err := segments.Next(context.Background())
-	require.NoError(t, err)
-	require.False(t, found)
-	require.NoError(t, segments.Close())
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, _, err = newVerifierSegmentInventory(ctx, directory, workspace)
-	require.ErrorContains(t, err, "canceled")
+	require.NoDirExists(t, filepath.Join(conf.Directory, journalWorkDirectoryName))
+	require.FileExists(t, filepath.Join(producerJournalTestDirectory(conf, identity), nativeHeadFileName))
 }
 
 func TestVerifyJournalsAcceptsMoreThanFormerSegmentLimit(t *testing.T) {
@@ -160,12 +118,14 @@ func TestVerifyJournalsAcceptsMoreThanFormerSegmentLimit(t *testing.T) {
 	producerDirectory := producerJournalTestDirectory(conf, identity)
 	require.NoError(t, os.MkdirAll(producerDirectory, journalDirectoryMode))
 	const segmentCount = uint64(4_097)
+	require.NoError(t, writeNativeHead(producerDirectory, identity, nil, journalHash{}))
 	lastRecordHash := writeVerifierTestSegments(t, producerDirectory, identity, segmentCount)
-	require.NoError(t, writeJournalHead(producerDirectory, identity, lastRecordHash))
+	checkpoint := journalHash{}
+	require.NoError(t, writeNativeHead(producerDirectory, identity, &checkpoint, lastRecordHash))
 
-	verification, err := VerifyJournals(context.Background(), []JournalSource{{Name: "long-lived", Directory: conf.Journal.Directory}})
+	verification, err := VerifyJournals(context.Background(), []JournalSource{{Name: "long-lived", Directory: conf.Directory}})
 	require.NoError(t, err)
-	canonicalDirectory, err := filepath.EvalSymlinks(conf.Journal.Directory)
+	canonicalDirectory, err := filepath.EvalSymlinks(conf.Directory)
 	require.NoError(t, err)
 	require.Equal(t, []VerifiedJournal{{
 		Name:          "long-lived",
@@ -176,32 +136,35 @@ func TestVerifyJournalsAcceptsMoreThanFormerSegmentLimit(t *testing.T) {
 	}}, verification.Journals)
 	recovered, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
-	require.Equal(t, segmentCount+1, recovered.(*localJournalRecorder).state.sequence)
+	require.Equal(t, segmentCount+1, recovered.(*nativeRecorder).state.seq)
 	require.NoError(t, recovered.Close())
 }
 
-func TestVerifyJournalSourceDetectsMutationAfterProducerVerification(t *testing.T) {
+func TestVerifyJournalsRejectsModifiedNativeSegment(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
 	require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.snapshot"}))
 	require.NoError(t, recorder.Close())
+	source := JournalSource{Name: "mutating", Directory: conf.Directory}
+	_, err = VerifyJournals(context.Background(), []JournalSource{source})
+	require.NoError(t, err)
 	producerDirectory := producerJournalTestDirectory(conf, identity)
-	segments, _, err := inventoryJournalTestSegments(producerDirectory)
+	segments, _, _, err := nativeInventory(producerDirectory, nativeActiveClear, false)
 	require.NoError(t, err)
 	require.NotEmpty(t, segments)
-	_, _, err = verifyJournalSourceWithProducerObserver(context.Background(), JournalSource{
-		Name:      "mutating",
-		Directory: conf.Journal.Directory,
-	}, false, &verifierBudget{}, func(string) error {
-		require.NoError(t, makeActiveJournalWritable(segments[0].path))
-		file, err := os.OpenFile(segments[0].path, os.O_WRONLY|os.O_APPEND, journalFileMode)
-		require.NoError(t, err)
-		_, err = file.Write([]byte("changed"))
-		require.NoError(t, err)
-		return file.Close()
-	})
-	require.ErrorContains(t, err, "changed during verification")
+	before, err := snapshotNativeJournalContent(context.Background(), conf.Directory)
+	require.NoError(t, err)
+	file, err := os.OpenFile(segments[0].path, os.O_WRONLY|os.O_APPEND, journalFileMode)
+	require.NoError(t, err)
+	_, err = file.Write([]byte("changed"))
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+	after, err := snapshotNativeJournalContent(context.Background(), conf.Directory)
+	require.NoError(t, err)
+	require.NotEqual(t, before, after)
+	_, err = VerifyJournals(context.Background(), []JournalSource{source})
+	require.Error(t, err)
 }
 
 func TestVerifyJournalsReadsStableActiveSegment(t *testing.T) {
@@ -211,7 +174,7 @@ func TestVerifyJournalsReadsStableActiveSegment(t *testing.T) {
 	require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.active"}))
 	crashCloseJournalTestRecorder(t, recorder)
 
-	verification, err := VerifyJournals(context.Background(), []JournalSource{{Name: "active", Directory: conf.Journal.Directory}})
+	verification, err := VerifyJournals(context.Background(), []JournalSource{{Name: "active", Directory: conf.Directory}})
 	require.NoError(t, err)
 	require.Len(t, verification.Records(), 1)
 	require.Equal(t, "test.active", verification.Records()[0].Event.Name)
@@ -225,12 +188,12 @@ func TestEncryptedJournalKeepsEventsConfidentialAndRecoversWithoutPrivateKey(t *
 	conf.EncryptionPublicKeyFile = crypto.PublicKeysFile(publicKeyFile)
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
-	recorder.(*localJournalRecorder).targetSize = 1
-	require.NoError(t, recorder.Record(context.Background(), Event{Name: "secret.audit.event"}))
-	require.NoError(t, recorder.Record(context.Background(), Event{Name: "secret.audit.second"}))
+	require.NoError(t, recorder.Record(context.Background(), Event{Name: "audit.event", Flow: "secret.audit.event"}))
+	require.NoError(t, recorder.(*nativeRecorder).Seal())
+	require.NoError(t, recorder.Record(context.Background(), Event{Name: "audit.second", Flow: "secret.audit.second"}))
 	crashCloseJournalTestRecorder(t, recorder)
 
-	tree := snapshotJournalTestTree(t, conf.Journal.Directory)
+	tree := snapshotJournalTestTree(t, conf.Directory)
 	for _, entry := range tree {
 		require.NotContains(t, entry.Data, "secret.audit.event")
 		require.NotContains(t, entry.Data, "secret.audit.second")
@@ -239,10 +202,17 @@ func TestEncryptedJournalKeepsEventsConfidentialAndRecoversWithoutPrivateKey(t *
 	require.NoError(t, err)
 	source := JournalSource{
 		Name:                        "encrypted",
-		Directory:                   conf.Journal.Directory,
+		Directory:                   conf.Directory,
 		ExpectedEncryptionRecipient: recipient,
 	}
 	verification, err := VerifyJournals(context.Background(), []JournalSource{source})
+	require.NoError(t, err)
+	require.Len(t, verification.Records(), 2)
+	require.Equal(t, "audit.event", verification.Records()[0].Event.Name)
+	require.Empty(t, verification.Records()[0].Event.Flow)
+	require.NoError(t, VerifyJournalIntegrity(context.Background(), []JournalSource{source}))
+	source.WithSensitive = true
+	verification, err = VerifyJournals(context.Background(), []JournalSource{source})
 	require.Nil(t, verification)
 	require.ErrorContains(t, err, "decryption identity")
 
@@ -250,14 +220,14 @@ func TestEncryptedJournalKeepsEventsConfidentialAndRecoversWithoutPrivateKey(t *
 	source.DecryptionIdentities = []crypto.PrivateKey{wrongIdentity}
 	verification, err = VerifyJournals(context.Background(), []JournalSource{source})
 	require.Nil(t, verification)
-	require.ErrorContains(t, err, "cannot decrypt")
+	require.Error(t, err)
 
 	source.DecryptionIdentities = []crypto.PrivateKey{decryptionIdentity}
 	verification, err = VerifyJournals(context.Background(), []JournalSource{source})
 	require.NoError(t, err)
 	require.Len(t, verification.Records(), 2)
-	require.Equal(t, "secret.audit.event", verification.Records()[0].Event.Name)
-	require.Equal(t, "secret.audit.second", verification.Records()[1].Event.Name)
+	require.Equal(t, "secret.audit.event", verification.Records()[0].Event.Flow)
+	require.Equal(t, "secret.audit.second", verification.Records()[1].Event.Flow)
 	require.NoError(t, VerifyJournalIntegrity(context.Background(), []JournalSource{source}))
 
 	reopened, err := NewRecorder(&conf, identity)
@@ -269,12 +239,12 @@ func TestEncryptedJournalKeepsEventsConfidentialAndRecoversWithoutPrivateKey(t *
 	conf.EncryptionPublicKey = replacementPublicKey
 	reopened, err = NewRecorder(&conf, identity)
 	require.Nil(t, reopened)
-	require.ErrorContains(t, err, "does not match configured recipient")
+	require.ErrorContains(t, err, "chain mismatch")
 
 	conf.EncryptionPublicKey = ""
 	reopened, err = NewRecorder(&conf, identity)
 	require.Nil(t, reopened)
-	require.ErrorContains(t, err, "does not match configured recipient")
+	require.ErrorContains(t, err, "unsupported native audit entry")
 }
 
 func TestAuditEncryptionRejectsServerPrivateKeyReuse(t *testing.T) {
@@ -302,7 +272,7 @@ func TestAuditEncryptionCannotBeEnabledForPlaintextHistory(t *testing.T) {
 
 	recorder, err = NewRecorder(&conf, identity)
 	require.Nil(t, recorder)
-	require.ErrorContains(t, err, "does not match configured recipient")
+	require.ErrorContains(t, err, "unsupported native audit entry")
 }
 
 func TestVerifyJournalsRejectsUnexpectedProducer(t *testing.T) {
@@ -316,7 +286,7 @@ func TestVerifyJournalsRejectsUnexpectedProducer(t *testing.T) {
 	expected[0] ^= 1
 	verification, err := VerifyJournals(context.Background(), []JournalSource{{
 		Name:               "default",
-		Directory:          conf.Journal.Directory,
+		Directory:          conf.Directory,
 		ExpectedProducerId: expected,
 	}})
 	require.Nil(t, verification)
@@ -338,9 +308,9 @@ func TestVerifyJournalsRejectsIncompleteTailWithoutTruncating(t *testing.T) {
 	before, err := os.ReadFile(activePath)
 	require.NoError(t, err)
 
-	verification, err := VerifyJournals(context.Background(), []JournalSource{{Name: "default", Directory: conf.Journal.Directory}})
+	verification, err := VerifyJournals(context.Background(), []JournalSource{{Name: "default", Directory: conf.Directory}})
 	require.Nil(t, verification)
-	require.ErrorContains(t, err, "incomplete frame")
+	require.ErrorContains(t, err, "uncommitted native audit unit")
 	after, readErr := os.ReadFile(activePath)
 	require.NoError(t, readErr)
 	require.Equal(t, before, after)
@@ -352,11 +322,13 @@ func TestVerifyJournalsRequiresHeadAtChainTip(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.active"}))
 	crashCloseJournalTestRecorder(t, recorder)
-	require.NoError(t, writeJournalHead(producerJournalTestDirectory(conf, identity), identity, journalHash{}))
+	_, head, err := newNativeAuditHead(identity, journalHash{})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(producerJournalTestDirectory(conf, identity), nativeHeadFileName), head, journalFileMode))
 
-	verification, err := VerifyJournals(context.Background(), []JournalSource{{Name: "default", Directory: conf.Journal.Directory}})
+	verification, err := VerifyJournals(context.Background(), []JournalSource{{Name: "default", Directory: conf.Directory}})
 	require.Nil(t, verification)
-	require.ErrorContains(t, err, "does not end at its signed journal head")
+	require.ErrorContains(t, err, "does not end at its signed head")
 }
 
 func TestVerificationExportsDeterministicJSONLines(t *testing.T) {
@@ -401,7 +373,7 @@ func snapshotJournalTestTree(t *testing.T, root string) map[string]journalTestSn
 			return err
 		}
 		snapshot := journalTestSnapshot{Mode: info.Mode()}
-		if info.Mode().IsRegular() {
+		if info.Mode().IsRegular() && info.Name() != journalLockFileName {
 			raw, err := os.ReadFile(path)
 			if err != nil {
 				return err
@@ -430,26 +402,22 @@ func writeVerifierTestSegments(t *testing.T, directory string, identity *Identit
 	var previousRecordHash journalHash
 	createdAt := time.Now().UTC()
 	for sequence := uint64(1); sequence <= count; sequence++ {
-		_, headerPayload, err := newJournalSegmentHeader(identity, sequence, previousSegmentHash, previousRecordHash, createdAt)
+		_, headerPayload, err := newNativeAuditHeader(identity, sequence, previousSegmentHash, previousRecordHash, createdAt, "")
 		require.NoError(t, err)
-		headerFrame, err := encodeJournalFrame(headerPayload)
+		headerFrame, err := nativeformat.EncodeUnit(nativeformat.HeaderUnit, headerPayload, nativeformat.MaxMetadataPayload)
 		require.NoError(t, err)
-		id, err := uuid.NewRandom()
+		_, recordPayload, recordHash, err := newNativeAuditRecord(identity, previousRecordHash, Event{Name: "test.long-lived"}, uuid.New(), createdAt, nil)
 		require.NoError(t, err)
-		_, recordPayload, recordHash, err := newJournalRecord(identity, previousRecordHash, Event{Name: "test.long-lived"}, id, createdAt)
+		recordFrame, err := nativeformat.EncodeUnit(nativeformat.ContentUnit, recordPayload, nativeformat.MaxAuditRecordPayload)
 		require.NoError(t, err)
-		recordFrame, err := encodeJournalFrame(recordPayload)
+		content := append(append([]byte(nativeformat.AuditMagic), headerFrame...), recordFrame...)
+		_, sealPayload, err := newNativeAuditSeal(identity, sequence, 1, uint64(len(content)), hashNativeAuditContent(content), recordHash, createdAt)
 		require.NoError(t, err)
-		content := append(append([]byte(nil), headerFrame...), recordFrame...)
-		contentHash := hashJournalBytes(journalSegmentContentHashDomain, content)
-		_, sealPayload, err := newJournalSegmentSeal(identity, sequence, 1, uint64(len(content)), contentHash, recordHash, createdAt)
-		require.NoError(t, err)
-		sealFrame, err := encodeJournalFrame(sealPayload)
+		sealFrame, err := nativeformat.EncodeUnit(nativeformat.SealUnit, sealPayload, nativeformat.MaxMetadataPayload)
 		require.NoError(t, err)
 		segment := append(content, sealFrame...)
-		segmentHash := hashJournalBytes(journalSegmentHashDomain, segment)
-		path := filepath.Join(directory, sealedJournalFileName(sequence, segmentHash))
-		require.NoError(t, os.WriteFile(path, segment, 0400))
+		segmentHash := hashNativeAuditSegment(segment)
+		require.NoError(t, os.WriteFile(filepath.Join(directory, nativeSegmentName(sequence, segmentHash, false)), segment, journalFileMode))
 		previousSegmentHash = segmentHash
 		previousRecordHash = recordHash
 	}

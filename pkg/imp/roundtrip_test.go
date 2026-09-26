@@ -39,6 +39,7 @@ const (
 	flagRoundtripTestImpAddress      = "imp-roundtrip-test-imp-addr"
 	flagRoundtripTestMasterPublicKey = "imp-roundtrip-test-master-public-key"
 	flagRoundtripTestSessionId       = "imp-roundtrip-test-session-id"
+	roundtripTestDummyReadyEnv       = "BIFROEST_IMP_ROUNDTRIP_DUMMY_READY"
 )
 
 var (
@@ -127,20 +128,32 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 	impCmd := impPreparation(masterKey.PublicKey(), sessionId)
 	wg.Add(1)
 	go impCmd(ctx, wg.Done)
+	defer wg.Wait()
+	defer cancelFn()
 
 	var dummyCmdPid atomic.Int64
+	var dummyCmdDone chan struct{}
 	var dummyCmdExecutionId execution.Id
 	if *roundtripTestWithKill {
 		dummyCmdExecutionId, err = execution.NewId()
 		require.NoError(t, err)
 		dummyCmd := prepareRoundtripDummyCmd(t, dummyCmdExecutionId)
+		readyFile := filepath.Join(t.TempDir(), "dummy-ready")
+		dummyCmd.Env = append(dummyCmd.Env, roundtripTestDummyReadyEnv+"="+readyFile)
+		dummyCmdDone = make(chan struct{})
 		wg.Add(1)
-		go runCmd(ctx, t, dummyCmd, wg.Done, &dummyCmdPid)
-		common.SleepSilently(ctx, 100*time.Millisecond)
+		go func() {
+			defer close(dummyCmdDone)
+			runCmd(ctx, t, dummyCmd, wg.Done, &dummyCmdPid)
+		}()
+		require.Eventually(t, func() bool {
+			if dummyCmdPid.Load() <= 0 {
+				return false
+			}
+			_, err := os.Stat(readyFile)
+			return err == nil
+		}, 10*time.Second, 10*time.Millisecond, "dummy process did not become ready")
 	}
-
-	defer wg.Wait()
-	defer cancelFn()
 
 	for i := 0; i < 10000; i++ {
 		common.SleepSilently(ctx, 1*time.Millisecond)
@@ -187,22 +200,13 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 			connId, err := connection.NewId()
 			require.NoError(t, err)
 
-			target, err := process.NewProcess(int32(dummyCmdPid.Load()))
-			require.NoError(t, err)
-			running, err := target.IsRunning()
-			require.NoError(t, err)
-			require.True(t, running)
-
 			require.NoError(t, executionSession.KillExecution(ctx, connId, dummyCmdExecutionId, 0, sys.SIGTERM))
-
-			require.EventuallyWithT(t, func(t *assert.CollectT) {
-				running, err = target.IsRunning()
-				assert.NoError(t, err)
-				assert.False(t, running)
-			}, 1*time.Minute, 100*time.Millisecond)
+			select {
+			case <-dummyCmdDone:
+			case <-time.After(time.Minute):
+				t.Fatal("dummy process did not exit after SIGTERM")
+			}
 		})
-
-		common.SleepSilently(ctx, time.Millisecond*100)
 	}
 
 	t.Run("tcp-forward", func(t *testing.T) {
@@ -346,10 +350,11 @@ func runRoundtripImpProcess(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func runRoundtripDummyProcess(_ *testing.T) {
+func runRoundtripDummyProcess(t *testing.T) {
 	sigs := make(chan os.Signal, 1)
 	defer close(sigs)
 	signal.Notify(sigs, syscall.SIGTERM)
+	require.NoError(t, os.WriteFile(os.Getenv(roundtripTestDummyReadyEnv), nil, 0600))
 	sig := <-sigs
 	log.With("signal", sig).
 		With("context", "imp-test").
@@ -443,11 +448,9 @@ func runCmd(ctx context.Context, t *testing.T, cmd *exec.Cmd, onDone func(), pid
 	go func() {
 		<-ctx.Done()
 		p, err := process.NewProcess(int32(cmd.Process.Pid))
-		if err != nil && !errors.Is(err, process.ErrorProcessNotRunning) {
-			t.Errorf("Cannot get IMP process %d: %v", cmd.Process.Pid, err)
-			return
+		if err != nil || p == nil || p.Terminate() != nil {
+			_ = cmd.Process.Kill()
 		}
-		_ = p.Terminate()
 	}()
 
 	if err := cmd.Wait(); err != nil {

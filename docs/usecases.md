@@ -17,7 +17,7 @@ A big advantage of Bifröst is the simple and flexible configuration (see [confi
 
 !!! tip
 
-    We're planning to also implement an [SSH server chaining / transparent proxy for SSH](https://github.com/engity-com/bifroest/issues/27) and [Session recording](https://github.com/engity-com/bifroest/issues/28). This will soon create much more use-cases. 🤠
+    [Session recording](reference/auditlog/recording.md) can preserve signed terminal output for later playback and high-security investigations. We're also planning an [SSH server chaining / transparent proxy for SSH](https://github.com/engity-com/bifroest/issues/27), which will create further use cases. 🤠
 
 ## Off-board users within the legally binding 15 minutes timeframe of the organization {: #offboard}
 

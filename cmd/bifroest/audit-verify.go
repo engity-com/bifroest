@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	goos "os"
 	"strings"
 
 	"github.com/alecthomas/kingpin/v2"
-	"golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -15,26 +16,47 @@ import (
 
 type auditVerifyOpts struct {
 	configuration           configuration.Ref
+	configurationPath       string
+	sourceDirectory         string
+	encryptionPublicKeyFile string
 	auditlog                configuration.AuditlogName
 	decryptionIdentityFiles []string
 	expectedProducerIds     []string
+	requireFull             bool
 }
 
 func registerAuditVerifyCmd(parent *kingpin.CmdClause) {
 	opts := auditVerifyOpts{}
 	cmd := parent.Command("verify", "Verify an audit journal without modifying it.").
-		Action(func(*kingpin.ParseContext) error { return doAuditVerify(&opts) })
-	registerConfigurationFlag(cmd, &opts.configuration)
+		Action(func(*kingpin.ParseContext) error { return doAuditVerifyOutput(&opts, goos.Stdout) })
+	cmd.Flag("configuration", "Configuration file (defaults to "+defaultConfigurationRef+" without --source).").
+		Short('c').PlaceHolder("<path>").StringVar(&opts.configurationPath)
+	cmd.Flag("source", "Complete auditlog directory for offline verification without a configuration.").
+		PlaceHolder("<path>").StringVar(&opts.sourceDirectory)
+	cmd.Flag("encryptionPublicKeyFile", "Expected encryption recipient for keyless offline verification.").
+		PlaceHolder("<path>").StringVar(&opts.encryptionPublicKeyFile)
 	registerAuditDecryptionIdentityFlags(cmd, &opts.decryptionIdentityFiles)
 	registerAuditTrustAnchorFlags(cmd, &opts.expectedProducerIds)
-	cmd.Arg("auditlogName", "Configured auditlog to verify.").Required().SetValue(&opts.auditlog)
+	cmd.Flag("require-full", "Require decryption and full verification of encrypted audit records.").BoolVar(&opts.requireFull)
+	cmd.Arg("auditlogName", "Configured auditlog, or optional label for an offline journal (default: default).").SetValue(&opts.auditlog)
 }
 
 func doAuditVerify(opts *auditVerifyOpts) error {
+	return doAuditVerifyOutput(opts, io.Discard)
+}
+
+func doAuditVerifyOutput(opts *auditVerifyOpts, stdout io.Writer) error {
 	if opts == nil {
 		return fmt.Errorf("nil options")
 	}
-	configured, err := findConfiguredAuditlog(opts.configuration.Get(), opts.auditlog)
+	if stdout == nil {
+		return fmt.Errorf("nil stdout")
+	}
+	name, conf, err := resolveAuditSourceConfiguration(&opts.configuration, opts.configurationPath, opts.sourceDirectory, opts.encryptionPublicKeyFile, opts.auditlog)
+	if err != nil {
+		return err
+	}
+	configured, err := findConfiguredAuditlog(conf, name)
 	if err != nil {
 		return err
 	}
@@ -42,11 +64,72 @@ func doAuditVerify(opts *auditVerifyOpts) error {
 	if err != nil {
 		return err
 	}
-	source, err := configuredAuditJournalSource(configured, opts.decryptionIdentityFiles, expectedProducerIds[configured.Name])
+	var source audit.JournalSource
+	if opts.sourceDirectory != "" {
+		source, err = offlineAuditJournalSource(configured, expectedProducerIds[configured.Name], opts.decryptionIdentityFiles, opts.encryptionPublicKeyFile)
+	} else {
+		source, err = configuredAuditJournalSource(configured, opts.decryptionIdentityFiles, expectedProducerIds[configured.Name])
+	}
 	if err != nil {
 		return err
 	}
-	return audit.VerifyJournalIntegrity(context.Background(), []audit.JournalSource{source})
+	validate := func() error {
+		return ensureAuditDestinationSafe("-", stdout, opts.configuration.GetFilename(), conf, opts.decryptionIdentityFiles)
+	}
+	if err := validate(); err != nil {
+		return err
+	}
+	if opts.requireFull && source.ExpectedEncryptionRecipient != "" && len(source.DecryptionIdentities) == 0 {
+		return fmt.Errorf("full verification of encrypted audit journal requires --decryptionIdentityFile")
+	}
+	if err := audit.VerifyLiveJournalIntegrity(context.Background(), []audit.JournalSource{source}); err != nil {
+		return err
+	}
+	scope := "full"
+	if source.ExpectedEncryptionRecipient != "" && len(source.DecryptionIdentities) == 0 {
+		scope = "outer"
+	}
+	if err := validate(); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "verified (scope: %s)\n", scope)
+	return err
+}
+
+func resolveAuditSourceConfiguration(ref *configuration.Ref, path, directory, recipient string, name configuration.AuditlogName) (configuration.AuditlogName, *configuration.Configuration, error) {
+	if directory != "" {
+		if path != "" || !ref.IsZero() {
+			return "", nil, fmt.Errorf("--source cannot be combined with --configuration")
+		}
+		if name.IsZero() {
+			name = "default"
+		}
+		if err := name.Validate(); err != nil {
+			return "", nil, err
+		}
+		return name, &configuration.Configuration{Auditlogs: []configuration.Auditlog{{
+			Name: name, Enabled: true, Directory: directory,
+			EncryptionPublicKeyFile: bfcrypto.PublicKeysFile(recipient),
+		}}}, nil
+	}
+	if recipient != "" {
+		return "", nil, fmt.Errorf("--encryptionPublicKeyFile requires --source")
+	}
+	if name.IsZero() {
+		return "", nil, fmt.Errorf("auditlogName is required without --source")
+	}
+	if err := name.Validate(); err != nil {
+		return "", nil, err
+	}
+	if path != "" || len(ref.Get().Auditlogs) == 0 {
+		if path == "" {
+			path = defaultConfigurationRef
+		}
+		if err := ref.Set(path); err != nil {
+			return "", nil, err
+		}
+	}
+	return name, ref.Get(), nil
 }
 
 func configuredAuditJournalSource(configured *configuration.Auditlog, decryptionIdentityFiles []string, expectedProducerId audit.ProducerId) (audit.JournalSource, error) {
@@ -76,23 +159,16 @@ func configuredAuditJournalSource(configured *configuration.Auditlog, decryption
 		return audit.JournalSource{}, fmt.Errorf("cannot use encryption public key of auditlog %q: %w", configured.Name, err)
 	}
 	decryptionIdentities := make([]bfcrypto.PrivateKey, 0, len(decryptionIdentityFiles))
-	matchingDecryptionIdentity := false
 	for _, path := range decryptionIdentityFiles {
 		key, err := loadAuditPrivateKey(path)
 		if err != nil {
 			return audit.JournalSource{}, fmt.Errorf("cannot load audit decryption identity %q: %w", path, err)
 		}
 		decryptionIdentities = append(decryptionIdentities, key)
-		if encryptionRecipient != "" && ssh.FingerprintSHA256(key.PublicKey().ToSsh()) == encryptionRecipient {
-			matchingDecryptionIdentity = true
-		}
-	}
-	if encryptionRecipient != "" && !matchingDecryptionIdentity {
-		return audit.JournalSource{}, fmt.Errorf("auditlog %q requires a matching --decryptionIdentityFile", configured.Name)
 	}
 	return audit.JournalSource{
 		Name:                        configured.Name.String(),
-		Directory:                   configured.Journal.Directory,
+		Directory:                   configured.Directory,
 		ExpectedProducerId:          expectedProducerId,
 		ExpectedEncryptionRecipient: encryptionRecipient,
 		DecryptionIdentities:        decryptionIdentities,
@@ -106,8 +182,8 @@ func registerAuditDecryptionIdentityFlags(cmd *kingpin.CmdClause, target *[]stri
 }
 
 func registerAuditTrustAnchorFlags(cmd *kingpin.CmdClause, target *[]string) {
-	cmd.Flag("expectedProducerId", "Trusted producer ID as <auditlogName>=<64-hex>; repeat for multiple auditlogs.").
-		PlaceHolder("<auditlogName>=<producer-id>").
+	cmd.Flag("expectedProducerId", "Trusted 64-hex producer ID for one auditlog, or <auditlogName>=<producer-id> for multiple.").
+		PlaceHolder("<producer-id|auditlogName=producer-id>").
 		StringsVar(target)
 }
 
@@ -121,9 +197,14 @@ func parseAuditTrustAnchors(raw []string, selected []*configuration.Auditlog) (m
 	result := make(map[configuration.AuditlogName]audit.ProducerId, len(raw))
 	for _, value := range raw {
 		rawName, rawProducerId, found := strings.Cut(value, "=")
+		if !found && len(selectedNames) == 1 {
+			for selectedName := range selectedNames {
+				rawName, rawProducerId, found = string(selectedName), value, true
+			}
+		}
 		name := configuration.AuditlogName(rawName)
 		if !found || rawName == "" || rawProducerId == "" {
-			return nil, fmt.Errorf("illegal --expectedProducerId %q: expected <auditlogName>=<producer-id>", value)
+			return nil, fmt.Errorf("illegal --expectedProducerId %q: expected <producer-id> for one source or <auditlogName>=<producer-id>", value)
 		}
 		if err := name.Validate(); err != nil {
 			return nil, fmt.Errorf("illegal --expectedProducerId %q: %w", value, err)

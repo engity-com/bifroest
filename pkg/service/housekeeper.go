@@ -102,13 +102,154 @@ func (this *houseKeeper) checkedRun(ctx context.Context) (nextRunIn time.Duratio
 func (this *houseKeeper) run(logger log.Logger, ctx context.Context) error {
 	this.orphanedFlows = make(map[configuration.FlowName]struct{})
 	defer func() { this.orphanedFlows = nil }()
-	if err := this.inspectSessions(logger, ctx); err != nil {
-		return err
+	inspectionErr := this.inspectSessions(logger, ctx)
+	if err := ctx.Err(); err != nil {
+		return goerrors.Join(inspectionErr, err)
 	}
-	if err := this.cleanup(logger, ctx); err != nil {
-		return err
+	result := inspectionErr
+	if inspectionErr == nil {
+		result = goerrors.Join(result, this.cleanup(logger, ctx))
+		if err := ctx.Err(); err != nil {
+			return goerrors.Join(result, err)
+		}
 	}
-	return nil
+	recordingErr := this.cleanupRecordings(logger, ctx, time.Now().UTC())
+	return goerrors.Join(result, recordingErr)
+}
+
+func (this *houseKeeper) cleanupRecordings(logger log.Logger, ctx context.Context, now time.Time) error {
+	var result error
+	for index := range this.service.Configuration.Auditlogs {
+		if err := ctx.Err(); err != nil {
+			return goerrors.Join(result, err)
+		}
+		auditlog := &this.service.Configuration.Auditlogs[index]
+		if !auditlog.Recording.Enabled || this.service.auditlogDisabled(auditlog.Name) {
+			continue
+		}
+		repository := this.service.recordingRepositories[auditlog.Name]
+		if repository == nil {
+			failure := errors.System.Newf("no Recording repository configured for auditlog %q", auditlog.Name)
+			result = goerrors.Join(result, this.service.handleRecordingFailure(auditlog.Name, "Recording retention", failure))
+			continue
+		}
+		var cutoff time.Time
+		if !auditlog.Recording.RetainFor.IsZero() {
+			cutoff = now.Add(-auditlog.Recording.RetainFor.Native())
+		}
+		candidates, err := repository.retentionCandidates(ctx, cutoff)
+		if err != nil {
+			if ctx.Err() != nil {
+				return goerrors.Join(result, ctx.Err())
+			}
+			failure := errors.System.Newf("cannot inspect Recording retention of auditlog %q: %w", auditlog.Name, err)
+			result = goerrors.Join(result, this.service.handleRecordingFailure(auditlog.Name, "Recording retention", failure))
+			continue
+		}
+		for _, candidate := range candidates {
+			if err := ctx.Err(); err != nil {
+				return goerrors.Join(result, err)
+			}
+			var actionErr, auditErr error
+			if auditlog.Enabled {
+				_, actionErr, auditErr = this.auditRecordingDeletion(ctx, auditlog.Name, candidate, func() (bool, sessionRecordingRetentionCandidate, error) {
+					return repository.deleteRetentionCandidate(ctx, candidate, cutoff)
+				}, func(completed sessionRecordingRetentionCandidate) error {
+					return repository.completeRetentionCandidate(ctx, completed, cutoff)
+				})
+			} else if candidate.receipt.CompletionPending {
+				actionErr = repository.completeRetentionCandidate(ctx, candidate, cutoff)
+			} else {
+				_, completed, err := repository.deleteRetentionCandidate(ctx, candidate, cutoff)
+				actionErr = err
+				if err == nil && completed.receipt.CompletionPending {
+					actionErr = repository.completeRetentionCandidate(ctx, completed, cutoff)
+				}
+			}
+			if err := goerrors.Join(actionErr, auditErr); err != nil {
+				if ctx.Err() != nil {
+					return goerrors.Join(result, err, ctx.Err())
+				}
+				if policyErr := this.service.handleRecordingFailure(auditlog.Name, "Recording retention", err); policyErr != nil {
+					logger.WithError(policyErr).With("auditlog", auditlog.Name).With("recordingId", candidate.recordingId).Warn("cannot delete retained session Recording; preserving remaining local state")
+				}
+				if this.service.auditlogDisabled(auditlog.Name) {
+					break
+				}
+			}
+		}
+	}
+	return result
+}
+
+func (this *houseKeeper) auditRecordingDeletion(ctx context.Context, auditlog configuration.AuditlogName, candidate sessionRecordingRetentionCandidate, perform func() (bool, sessionRecordingRetentionCandidate, error), complete func(sessionRecordingRetentionCandidate) error) (changed bool, actionErr, auditErr error) {
+	recorder := this.service.auditRecorders[auditlog]
+	if recorder == nil {
+		return false, nil, errors.System.Newf("no audit recorder configured for auditlog %q", auditlog)
+	}
+	if candidate.receipt.CompletionPending {
+		event := recordingRetentionCompletionEvent(candidate)
+		if auditErr = recorder.Record(ctx, event); auditErr == nil {
+			if !this.service.auditlogDisabled(auditlog) {
+				actionErr = complete(candidate)
+			}
+		}
+		return
+	}
+	startedAt := time.Now()
+	event := audit.Event{
+		Name:        audit.EventNameHousekeepingRecordingDeleteStarted,
+		Domain:      audit.EventDomainHousekeeping,
+		OperationId: candidate.receipt.AuditOperationId,
+		RecordingId: candidate.recordingId.String(),
+		Reason:      audit.EventReasonRetentionElapsed,
+	}
+	if err := recorder.Record(ctx, event); err != nil {
+		return false, nil, err
+	}
+	if this.service.auditlogDisabled(auditlog) {
+		return false, nil, nil
+	}
+	var completed sessionRecordingRetentionCandidate
+	changed, completed, actionErr = perform()
+	event.Name = audit.EventNameHousekeepingRecordingDeleteCompleted
+	completionPending := completed.receipt.CompletionPending && completed.receipt.AuditOperationId == candidate.receipt.AuditOperationId
+	if completionPending && actionErr != nil {
+		// The completion rename is visible but was not durably synced. A later
+		// scan resolves whether the old or new marker survived before auditing.
+		return
+	}
+	if completionPending {
+		event = recordingRetentionCompletionEvent(completed)
+	} else if actionErr != nil {
+		event.DurationMillis = common.P(time.Since(startedAt).Milliseconds())
+		event.Outcome = audit.EventOutcomeFailure
+		event.ErrorCategory = auditErrorCategory(actionErr)
+	} else {
+		actionErr = errors.System.Newf("Recording retention completion was not persisted")
+		event.DurationMillis = common.P(time.Since(startedAt).Milliseconds())
+		event.Outcome = audit.EventOutcomeFailure
+		event.ErrorCategory = auditErrorCategory(actionErr)
+	}
+	auditErr = recorder.Record(ctx, event)
+	if completionPending && auditErr == nil && !this.service.auditlogDisabled(auditlog) {
+		actionErr = goerrors.Join(actionErr, complete(completed))
+	}
+	return
+}
+
+func recordingRetentionCompletionEvent(candidate sessionRecordingRetentionCandidate) audit.Event {
+	// The durable completion marker contains no mutable metadata, so retries emit
+	// an equivalent event without consuming additional spool quota.
+	return audit.Event{
+		Name:           audit.EventNameHousekeepingRecordingDeleteCompleted,
+		Domain:         audit.EventDomainHousekeeping,
+		OperationId:    candidate.receipt.AuditOperationId,
+		RecordingId:    candidate.recordingId.String(),
+		Reason:         audit.EventReasonRetentionElapsed,
+		Outcome:        audit.EventOutcomeSuccess,
+		DurationMillis: common.P(int64(0)),
+	}
 }
 
 func (this *houseKeeper) inspectSessions(logger log.Logger, ctx context.Context) error {
@@ -169,7 +310,7 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 		return reportAndContinue(err)
 	} else if shouldBeDeleted {
 		_, disposeErr, disposeAuditErr := this.auditSessionAction(ctx, sess, audit.EventNameHousekeepingSessionDisposeStarted, audit.EventNameHousekeepingSessionDisposeCompleted, audit.EventReasonRetentionElapsed, func() (bool, error) {
-			return this.dispose(ctx, logger, sess)
+			return this.dispose(ctx, logger, sess, true)
 		})
 		if err := goerrors.Join(disposeErr, disposeAuditErr); err != nil {
 			return reportAndContinue(err)
@@ -186,7 +327,7 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 		return reportAndContinue(err)
 	} else if expired {
 		disposed, actionErr, auditErr := this.auditSessionAction(ctx, sess, audit.EventNameHousekeepingSessionDisposeStarted, audit.EventNameHousekeepingSessionDisposeCompleted, audit.EventReasonExpired, func() (bool, error) {
-			return this.dispose(ctx, logger, sess)
+			return this.dispose(ctx, logger, sess, false)
 		})
 		if err := goerrors.Join(actionErr, auditErr); err != nil {
 			return reportAndContinue(err)
@@ -243,7 +384,7 @@ func (this *houseKeeper) auditSessionAction(ctx context.Context, sess session.Se
 
 func (this *houseKeeper) hasEnabledAuditlog() bool {
 	for _, auditlog := range this.service.Configuration.Auditlogs {
-		if auditlog.Enabled {
+		if auditlog.Enabled && !this.service.auditlogDisabled(auditlog.Name) {
 			return true
 		}
 	}
@@ -253,7 +394,7 @@ func (this *houseKeeper) hasEnabledAuditlog() bool {
 func (this *houseKeeper) recordOrphanedSessionAudit(ctx context.Context, event audit.Event) error {
 	var result error
 	for _, auditlog := range this.service.Configuration.Auditlogs {
-		if !auditlog.Enabled {
+		if !auditlog.Enabled || this.service.auditlogDisabled(auditlog.Name) {
 			continue
 		}
 		recorder := this.service.auditRecorders[auditlog.Name]
@@ -270,7 +411,7 @@ func (this *houseKeeper) recordOrphanedSessionAudit(ctx context.Context, event a
 
 func (this *houseKeeper) sessionAutoRepairAllowed() bool {
 	for _, auditlog := range this.service.Configuration.Auditlogs {
-		if auditlog.Enabled {
+		if auditlog.Enabled && !this.service.auditlogDisabled(auditlog.Name) {
 			return false
 		}
 	}
@@ -278,7 +419,7 @@ func (this *houseKeeper) sessionAutoRepairAllowed() bool {
 }
 
 // dispose will dispose a given session.Session but NOT delete it.
-func (this *houseKeeper) dispose(ctx context.Context, logger log.Logger, sess session.Session) (bool, error) {
+func (this *houseKeeper) dispose(ctx context.Context, logger log.Logger, sess session.Session, retentionElapsed bool) (bool, error) {
 	fail := func(err error) (bool, error) {
 		return false, errors.Newf(errors.System, "cannot dispose session %v: %w", sess, err)
 	}
@@ -291,7 +432,7 @@ func (this *houseKeeper) dispose(ctx context.Context, logger log.Logger, sess se
 	if err != nil {
 		return fail(err)
 	}
-	authorizationDisposed, err := this.disposeAuthorization(ctx, logger, sess)
+	authorizationDisposed, err := this.disposeAuthorization(ctx, logger, sess, retentionElapsed)
 	if err != nil {
 		return fail(err)
 	}
@@ -324,10 +465,32 @@ func (this *houseKeeper) disposeEnvironment(ctx context.Context, logger log.Logg
 
 	return disposed, nil
 }
-func (this *houseKeeper) disposeAuthorization(ctx context.Context, logger log.Logger, sess session.Session) (bool, error) {
+func (this *houseKeeper) disposeAuthorization(ctx context.Context, logger log.Logger, sess session.Session, retentionElapsed bool) (bool, error) {
 	fail := func(err error) (bool, error) {
 		logger.WithError(err).Warn("cannot dispose authorization of session")
 		return false, errors.Newf(errors.System, "cannot dispose authorization of session: %w", err)
+	}
+	if retentionElapsed {
+		for _, flow := range this.service.Configuration.Flows {
+			if flow.Name != sess.Flow() {
+				continue
+			}
+			if _, oidc := flow.Authorization.V.(*configuration.AuthorizationOidcDeviceAuth); oidc {
+				token, err := sess.AuthorizationToken(ctx)
+				if err != nil {
+					return fail(err)
+				}
+				if len(token) == 0 {
+					return false, nil
+				}
+				if err := sess.SetAuthorizationToken(ctx, nil); err != nil {
+					return fail(err)
+				}
+				logger.Info("removed local OIDC authorization token after session retention elapsed")
+				return true, nil
+			}
+			break
+		}
 	}
 
 	auth, err := this.service.authorizer.RestoreFromSession(ctx, sess, &authorization.RestoreOpts{

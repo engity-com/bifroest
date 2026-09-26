@@ -1,0 +1,438 @@
+package recording
+
+import (
+	stderrors "errors"
+	"io"
+	"io/fs"
+	"math"
+	"os"
+	"path/filepath"
+	"sync"
+
+	"github.com/engity-com/bifroest/pkg/errors"
+)
+
+type localQuota struct {
+	mutex    sync.Mutex
+	maximum  uint64
+	usage    uint64
+	poisoned error
+}
+
+func newLocalQuota(maximum uint64, paths ...string) (*localQuota, error) {
+	return newLocalQuotaWithReceiptRecovery(maximum, false, paths...)
+}
+
+func newLocalQuotaWithReceiptRecovery(maximum uint64, allowReceiptRecovery bool, paths ...string) (*localQuota, error) {
+	if maximum < 1 {
+		return nil, errors.Config.Newf("maximum local recording spool bytes must be positive")
+	}
+	usage, recoveredUsage, err := inventoryLocalFilesWithReceiptRecovery(paths...)
+	if err != nil {
+		return nil, errors.System.Newf("cannot inventory local recording spool: %w", err)
+	}
+	if usage > maximum && (!allowReceiptRecovery || recoveredUsage > maximum) {
+		return nil, errors.Config.Newf("local recording spool uses %d bytes, exceeding its %d-byte limit", usage, maximum)
+	}
+	return &localQuota{maximum: maximum, usage: usage}, nil
+}
+
+func inventoryLocalFiles(paths ...string) (uint64, error) {
+	total, _, err := inventoryLocalFilesWithReceiptRecovery(paths...)
+	return total, err
+}
+
+func inventoryLocalFilesWithReceiptRecovery(paths ...string) (uint64, uint64, error) {
+	var total uint64
+	var recoverableReceiptBytes uint64
+	seen := make(map[localInventoryFileIdentity]struct{})
+	for _, root := range paths {
+		if _, err := os.Lstat(root); stderrors.Is(err, fs.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return 0, 0, err
+		}
+		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.Type()&os.ModeSymlink != 0 {
+				if entry.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			info, err := os.Lstat(path)
+			if err != nil {
+				return err
+			}
+			if !info.Mode().IsRegular() {
+				return nil
+			}
+			identity, err := inventoryLocalFileIdentity(path, info)
+			if err != nil {
+				return err
+			}
+			if _, exists := seen[identity]; exists {
+				return nil
+			}
+			if info.Size() < 0 {
+				return errors.System.Newf("local recording file has a negative size")
+			}
+			size := uint64(info.Size())
+			if total > math.MaxUint64-size {
+				return errors.System.Newf("local recording spool size overflows uint64")
+			}
+			seen[identity] = struct{}{}
+			total += size
+			var replacedReceipt string
+			if filepath.Base(root) == localDeliveryDirectory {
+				switch entry.Name() {
+				case "receipt.tmp":
+					replacedReceipt = "receipt.json"
+				case "receipt.retention.tmp":
+					replacedReceipt = "receipt.retention"
+				case "receipt.lifecycle.tmp":
+					replacedReceipt = "receipt.lifecycle"
+				case "receipt.tmp.cleanup", "receipt.retention.tmp.cleanup", "receipt.lifecycle.tmp.cleanup":
+					if recoverableReceiptBytes > math.MaxUint64-size {
+						return errors.System.Newf("local recording receipt recovery size overflows uint64")
+					}
+					recoverableReceiptBytes += size
+				}
+			}
+			if replacedReceipt != "" {
+				recoverable := size
+				target, targetErr := os.Lstat(filepath.Join(filepath.Dir(path), replacedReceipt))
+				if targetErr == nil && target.Mode().IsRegular() && target.Size() >= 0 {
+					targetSize := uint64(target.Size())
+					recoverable = max(recoverable, targetSize)
+				} else if targetErr != nil && !stderrors.Is(targetErr, fs.ErrNotExist) {
+					return targetErr
+				}
+				if recoverableReceiptBytes > math.MaxUint64-recoverable {
+					return errors.System.Newf("local recording receipt recovery size overflows uint64")
+				}
+				recoverableReceiptBytes += recoverable
+			}
+			return nil
+		})
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+	if recoverableReceiptBytes > total {
+		return 0, 0, errors.System.Newf("local recording receipt recovery size exceeds spool usage")
+	}
+	return total, total - recoverableReceiptBytes, nil
+}
+
+func (this *localQuota) validateMaximum() error {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if this.poisoned != nil {
+		return this.poisoned
+	}
+	if this.usage > this.maximum {
+		return errors.Config.Newf("local recording spool uses %d bytes, exceeding its %d-byte limit", this.usage, this.maximum)
+	}
+	return nil
+}
+
+func (this *localQuota) reserve(bytes uint64) error {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if this.poisoned != nil {
+		return this.poisoned
+	}
+	if this.usage > this.maximum || bytes > this.maximum-this.usage {
+		return errors.System.Newf("local recording spool limit of %d bytes would be exceeded", this.maximum)
+	}
+	this.usage += bytes
+	return nil
+}
+
+func (this *localQuota) Reserve(bytes uint64) error {
+	return this.reserve(bytes)
+}
+
+func (this *localQuota) release(bytes uint64) error {
+	if this == nil {
+		return nil
+	}
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if this.poisoned != nil {
+		return this.poisoned
+	}
+	if bytes == 0 {
+		return nil
+	}
+	if bytes > this.usage {
+		return this.poisonLocked(errors.System.Newf("local recording spool accounting underflow"))
+	}
+	this.usage -= bytes
+	return nil
+}
+
+func (this *localQuota) reconcile(reserved uint64, before, after int64) error {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if this.poisoned != nil {
+		return this.poisoned
+	}
+	if before < 0 || after < 0 {
+		return this.poisonLocked(errors.System.Newf("local recording file has a negative size"))
+	}
+	if after < before {
+		shrink := uint64(before - after)
+		if reserved > math.MaxUint64-shrink {
+			return this.poisonLocked(errors.System.Newf("local recording spool reconciliation overflows uint64"))
+		}
+		return this.releaseLocked(reserved + shrink)
+	}
+	growth := uint64(after - before)
+	if growth <= reserved {
+		return this.releaseLocked(reserved - growth)
+	}
+	additional := growth - reserved
+	if this.usage > this.maximum || additional > this.maximum-this.usage {
+		return this.poisonLocked(errors.System.Newf("local recording file grew beyond its reservation and the local recording spool limit of %d bytes", this.maximum))
+	}
+	this.usage += additional
+	return nil
+}
+
+func (this *localQuota) Reconcile(reserved uint64, before, after int64) error {
+	return this.reconcile(reserved, before, after)
+}
+
+func (this *localQuota) Invalidate(cause error) {
+	if this == nil {
+		return
+	}
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	_ = this.poisonLocked(cause)
+}
+
+func (this *localQuota) releaseLocked(bytes uint64) error {
+	if bytes > this.usage {
+		return this.poisonLocked(errors.System.Newf("local recording spool accounting underflow"))
+	}
+	this.usage -= bytes
+	return nil
+}
+
+func (this *localQuota) poisonLocked(cause error) error {
+	if this.poisoned == nil {
+		if cause == nil {
+			cause = errors.System.Newf("unknown local recording quota failure")
+		}
+		this.poisoned = errors.System.Newf("local recording quota usage is uncertain: %w", cause)
+	}
+	return this.poisoned
+}
+
+type localQuotaFile struct {
+	*os.File
+	quota     *localQuota
+	mutex     sync.Mutex
+	reserved  uint64
+	uncertain bool
+}
+
+func accountLocalFile(file *os.File, quota *localQuota) *localQuotaFile {
+	return &localQuotaFile{File: file, quota: quota}
+}
+
+func (this *localQuotaFile) adoptReservedBytes(bytes uint64) error {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if this.uncertain {
+		return errors.System.Newf("local recording quota usage is uncertain")
+	}
+	if bytes > math.MaxUint64-this.reserved {
+		return errors.System.Newf("local recording recovery reservation overflows uint64")
+	}
+	this.reserved += bytes
+	return nil
+}
+
+func (this *localQuotaFile) releaseReservedBytes() error {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if this.uncertain {
+		return errors.System.Newf("local recording quota usage is uncertain")
+	}
+	if err := this.quota.release(this.reserved); err != nil {
+		return err
+	}
+	this.reserved = 0
+	return nil
+}
+
+func (this *localQuotaFile) reserveGrowth(growth uint64) (uint64, error) {
+	if this.uncertain {
+		return 0, errors.System.Newf("local recording quota usage is uncertain")
+	}
+	reserved := min(growth, this.reserved)
+	quotaBytes := growth - reserved
+	if err := this.quota.reserve(quotaBytes); err != nil {
+		return 0, err
+	}
+	return quotaBytes, nil
+}
+
+func (this *localQuotaFile) reconcileGrowth(quotaBytes uint64, before, after int64) error {
+	if before < 0 || after < 0 {
+		return errors.System.Newf("local recording file has a negative size")
+	}
+	if after < before {
+		return this.quota.release(quotaBytes + uint64(before-after))
+	}
+	growth := uint64(after - before)
+	reserved := min(growth, this.reserved)
+	this.reserved -= reserved
+	quotaGrowth := growth - reserved
+	if quotaGrowth <= quotaBytes {
+		return this.quota.release(quotaBytes - quotaGrowth)
+	}
+	if err := this.quota.reserve(quotaGrowth - quotaBytes); err != nil {
+		return errors.System.Newf("local recording file grew beyond its reservation: %w", err)
+	}
+	return nil
+}
+
+func (this *localQuotaFile) Write(value []byte) (int, error) {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	before, err := this.Stat()
+	if err != nil {
+		return 0, err
+	}
+	offset, err := this.File.Seek(0, 1)
+	if err != nil {
+		return 0, err
+	}
+	if offset < 0 || int64(len(value)) > math.MaxInt64-offset {
+		return 0, errors.System.Newf("local recording write size overflows int64")
+	}
+	growth := uint64(max(int64(0), offset+int64(len(value))-before.Size()))
+	quotaBytes, err := this.reserveGrowth(growth)
+	if err != nil {
+		return 0, err
+	}
+	written, writeErr := this.File.Write(value)
+	after, statErr := this.Stat()
+	if statErr != nil {
+		this.uncertain = true
+		this.quota.Invalidate(statErr)
+		return written, stderrors.Join(writeErr, statErr)
+	}
+	reconcileErr := this.reconcileGrowth(quotaBytes, before.Size(), after.Size())
+	if reconcileErr != nil {
+		this.uncertain = true
+		this.quota.Invalidate(reconcileErr)
+	}
+	return written, stderrors.Join(writeErr, reconcileErr)
+}
+
+// WriteAt accounts only file growth, including short writes and state-byte
+// rewrites during the native two-sync commit protocol.
+func (this *localQuotaFile) WriteAt(value []byte, offset int64) (int, error) {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if offset < 0 || int64(len(value)) > math.MaxInt64-offset {
+		return 0, errors.System.Newf("local recording write offset overflows int64")
+	}
+	before, err := this.Stat()
+	if err != nil {
+		return 0, err
+	}
+	growth := uint64(max(int64(0), offset+int64(len(value))-before.Size()))
+	quotaBytes, err := this.reserveGrowth(growth)
+	if err != nil {
+		return 0, err
+	}
+	written, writeErr := this.File.WriteAt(value, offset)
+	after, statErr := this.Stat()
+	if statErr != nil {
+		this.uncertain = true
+		this.quota.Invalidate(statErr)
+		return written, stderrors.Join(writeErr, statErr)
+	}
+	reconcileErr := this.reconcileGrowth(quotaBytes, before.Size(), after.Size())
+	if reconcileErr != nil {
+		this.uncertain = true
+		this.quota.Invalidate(reconcileErr)
+	}
+	if writeErr == nil && written != len(value) {
+		writeErr = io.ErrShortWrite
+	}
+	return written, stderrors.Join(writeErr, reconcileErr)
+}
+
+func (this *localQuotaFile) Seek(offset int64, whence int) (int64, error) {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	return this.File.Seek(offset, whence)
+}
+
+func (this *localQuotaFile) Truncate(size int64) error {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	if size < 0 {
+		return errors.System.Newf("cannot truncate a local recording to a negative size")
+	}
+	before, err := this.Stat()
+	if err != nil {
+		return err
+	}
+	growth := uint64(max(int64(0), size-before.Size()))
+	quotaBytes, err := this.reserveGrowth(growth)
+	if err != nil {
+		return err
+	}
+	truncateErr := this.File.Truncate(size)
+	after, statErr := this.Stat()
+	if statErr != nil {
+		this.uncertain = true
+		this.quota.Invalidate(statErr)
+		return stderrors.Join(truncateErr, statErr)
+	}
+	reconcileErr := this.reconcileGrowth(quotaBytes, before.Size(), after.Size())
+	if reconcileErr != nil {
+		this.uncertain = true
+		this.quota.Invalidate(reconcileErr)
+	}
+	return stderrors.Join(truncateErr, reconcileErr)
+}
+
+func removeAccountedLocalFile(path string, quota *localQuota) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	if info.Mode().IsRegular() {
+		return quota.release(uint64(info.Size()))
+	}
+	return nil
+}
+
+func removeAccountedLocalTree(path string, quota *localQuota) error {
+	usage, inventoryErr := inventoryLocalFiles(path)
+	removeErr := os.RemoveAll(path)
+	if removeErr == nil && inventoryErr == nil {
+		return quota.release(usage)
+	}
+	err := stderrors.Join(inventoryErr, removeErr)
+	quota.Invalidate(err)
+	return err
+}

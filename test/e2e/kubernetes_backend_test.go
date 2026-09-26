@@ -287,7 +287,47 @@ func TestOpenSSHKubernetesEnvironment(t *testing.T) {
 	})
 }
 
+func TestOpenSSHKubernetesEnvironmentSessionRecording(t *testing.T) {
+	k, err := newKubernetesRecordingFixture(t)
+	if errors.Is(err, errNoRuntime) {
+		t.Skip(err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	producerID := k.recordingProducerID
+	t.Logf("runtime=%s cluster=%s namespace=%s port=%s producer=%s", k.runtimeCLI, k.clusterName, k.namespace, k.port, producerID)
+
+	result := k.ssh(3*time.Minute, k.clientKey, "e2e", nil, "/usr/local/bin/e2e-helper", "streams")
+	if code := exitCode(result.err); code != 23 {
+		t.Fatalf("recorded command exit code: got %d, want 23 (error: %v)\nstdout:\n%s\nstderr:\n%s", code, result.err, result.stdout, result.stderr)
+	}
+	if !strings.HasSuffix(result.stdout, "stdout-e2e\n") || result.stderr != "stderr-e2e\n" {
+		t.Fatalf("recorded command output: stdout=%q stderr=%q", result.stdout, result.stderr)
+	}
+	if err := k.waitForEnvironmentPod(); err != nil {
+		t.Fatal(err)
+	}
+
+	artifact := sealedSessionRecordingArtifact(t, filepath.Join(k.tempDir, "recordings"))
+	stopHostBifroest(t, k.fixture)
+	if finalArtifact := sealedSessionRecordingArtifact(t, filepath.Join(k.tempDir, "recordings")); finalArtifact != artifact {
+		t.Fatalf("sealed recording changed during shutdown: before=%q after=%q", artifact, finalArtifact)
+	}
+	verifySessionRecordingArtifact(t, k.fixture, artifact, producerID)
+}
+
 func newKubernetesFixture(t *testing.T) (*kubernetesFixture, error) {
+	t.Helper()
+	return newKubernetesFixtureWithRecording(t, false)
+}
+
+func newKubernetesRecordingFixture(t *testing.T) (*kubernetesFixture, error) {
+	t.Helper()
+	return newKubernetesFixtureWithRecording(t, true)
+}
+
+func newKubernetesFixtureWithRecording(t *testing.T, recording bool) (*kubernetesFixture, error) {
 	t.Helper()
 	f, err := newFixture(t)
 	if err != nil {
@@ -307,6 +347,15 @@ func newKubernetesFixture(t *testing.T) (*kubernetesFixture, error) {
 	if k.kubectlTool, err = exec.LookPath("kubectl"); err != nil {
 		return k, errors.New("required tool \"kubectl\" is unavailable")
 	}
+	if recording {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		result := runCommand(ctx, k.repoRoot, nil, k.bifroest, "key", "generate", "--identityFile", filepath.Join(k.tempDir, "auditlog-key"))
+		cancel()
+		if result.err != nil {
+			return k, fmt.Errorf("generate audit identity: %w\n%s", result.err, result.stderr)
+		}
+		k.recordingProducerID = recordingProducerID(t, filepath.Join(k.tempDir, "auditlog-key"))
+	}
 	if err := f.prepareRuntime(true); err != nil {
 		return k, err
 	}
@@ -320,7 +369,7 @@ func newKubernetesFixture(t *testing.T) (*kubernetesFixture, error) {
 	if err != nil {
 		return k, err
 	}
-	if err := k.startBifroest(controllerKubeconfig); err != nil {
+	if err := k.startBifroest(controllerKubeconfig, recording); err != nil {
 		return k, err
 	}
 	return k, nil
@@ -404,7 +453,7 @@ func (k *kubernetesFixture) prepareRBAC() (string, error) {
 		strings.TrimSpace(server.stdout), strings.TrimSpace(ca.stdout), k.namespace, strings.TrimSpace(token.stdout)), nil
 }
 
-func (k *kubernetesFixture) startBifroest(controllerKubeconfig string) error {
+func (k *kubernetesFixture) startBifroest(controllerKubeconfig string, recording bool) error {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
@@ -415,7 +464,24 @@ func (k *kubernetesFixture) startBifroest(controllerKubeconfig string) error {
 		return err
 	}
 	configurationPath := filepath.Join(k.tempDir, "kubernetes-environment.yaml")
+	auditlogConfiguration := ""
+	if recording {
+		auditlogConfiguration = fmt.Sprintf(`auditlog:
+  - name: default
+    enabled: true
+    identityFile: %s
+    directory: %s
+    minimumFreeBytes: 1048576
+    recording:
+      enabled: true
+      directory: %s
+      maximumSpoolBytes: 16777216
+      retainFor: 1h
+      targets: false
+`, yamlString(filepath.Join(k.tempDir, "auditlog-key")), yamlString(filepath.Join(k.tempDir, "auditlog")), yamlString(filepath.Join(k.tempDir, "recordings")))
+	}
 	configuration := fmt.Sprintf(kubernetesEnvironmentConfiguration,
+		auditlogConfiguration,
 		yamlString(net.JoinHostPort(k.host, k.port)), yamlString(k.hostKey), yamlString(k.sessionStorage),
 		yamlString(k.flowName), yamlString(k.clientKey+".pub"), yamlString(controllerKubeconfig),
 		yamlString(k.namespace), yamlString(k.imageName),
@@ -446,11 +512,7 @@ func (k *kubernetesFixture) startBifroest(controllerKubeconfig string) error {
 		return fmt.Errorf("start host Bifroest: %w", err)
 	}
 	if err := pollProcess(30*time.Second, k.bifroestProc, func() error {
-		conn, err := net.DialTimeout("tcp", net.JoinHostPort(k.host, k.port), 500*time.Millisecond)
-		if err != nil {
-			return err
-		}
-		return conn.Close()
+		return probeSSHIdentification(k.host, k.port)
 	}); err != nil {
 		return fmt.Errorf("wait for host Bifroest: %w", err)
 	}
@@ -645,6 +707,7 @@ housekeeping:
   initialDelay: 100ms
   autoRepair: true
   keepExpiredFor: 0s
+%s
 ssh:
   addresses:
     - %s

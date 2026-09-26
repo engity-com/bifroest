@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	gos "os"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,6 +71,46 @@ func TestNormalizeCycloneDxSbomIsDeterministic(t *testing.T) {
 	component := document["metadata"].(map[string]any)["component"].(map[string]any)
 	require.Equal(t, "urn:bifroest:artifact:123", component["bom-ref"])
 	require.Equal(t, "123", component["hashes"].([]any)[0].(map[string]any)["content"])
+}
+
+func TestNormalizeCycloneDxSbomUpdatesRootDependencyReferences(t *testing.T) {
+	filename := t.TempDir() + "/artifact.cdx.json"
+	require.NoError(t, gos.WriteFile(filename, []byte(`{
+  "bomFormat":"CycloneDX", "specVersion":"1.6", "version":1,
+  "metadata":{"timestamp":"2026-09-12T08:00:00Z","component":{"type":"file","name":"artifact.tgz","bom-ref":"root"}},
+  "components":[
+    {"type":"library","name":"dependency","bom-ref":"dependency"},
+    {"type":"library","name":"other","bom-ref":"other"},
+    {"type":"library","name":"root-copy","bom-ref":"root-copy"}
+  ],
+  "dependencies":[
+    {"ref":"root","dependsOn":["dependency"]},
+    {"ref":"other","dependsOn":["root","root-copy"]},
+    {"ref":"dependency","dependsOn":[]}
+  ]
+}`), 0644))
+	timestamp := time.Date(2026, time.September, 12, 8, 0, 0, 0, time.UTC)
+	digest := strings.Repeat("a", 64)
+	newRootRef := "urn:bifroest:artifact:" + digest
+
+	require.NoError(t, normalizeSbom(filename, testSbomPlatform, buildArtifactTypeArchive, "artifact.tgz", "sha256:"+digest, timestamp))
+	first, err := gos.ReadFile(filename)
+	require.NoError(t, err)
+	require.NoError(t, normalizeSbom(filename, testSbomPlatform, buildArtifactTypeArchive, "artifact.tgz", "sha256:"+digest, timestamp))
+	second, err := gos.ReadFile(filename)
+	require.NoError(t, err)
+	require.Equal(t, first, second)
+
+	var document map[string]any
+	require.NoError(t, json.Unmarshal(second, &document))
+	root := document["metadata"].(map[string]any)["component"].(map[string]any)
+	require.Equal(t, newRootRef, root["bom-ref"])
+	dependencies := jsonObjects(document["dependencies"])
+	require.Len(t, dependencies, 3)
+	require.Equal(t, []string{"dependency"}, stringsFromJsonArray(jsonObjectWith(dependencies, "ref", newRootRef)["dependsOn"]))
+	require.Equal(t, []string{newRootRef, "root-copy"}, stringsFromJsonArray(jsonObjectWith(dependencies, "ref", "other")["dependsOn"]))
+	require.NotNil(t, jsonObjectWith(dependencies, "ref", "dependency"))
+	require.Nil(t, jsonObjectWith(dependencies, "ref", "root"))
 }
 
 func TestNormalizeImageSpdxPurlIsCanonicalAndIdempotent(t *testing.T) {

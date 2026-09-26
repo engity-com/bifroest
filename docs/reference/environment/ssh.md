@@ -9,6 +9,10 @@ The SSH environment terminates the incoming SSH connection at Bifröst and creat
 
 Each target transport allows up to 64 concurrently active or pending shell, SFTP, forwarding and agent channels. Additional locally requested channels wait for capacity; excess agent channels initiated by the target are rejected.
 
+If a channel-open request is still unanswered when its source operation is canceled, Bifröst closes the target transport so the pending request cannot retain a channel slot. This also interrupts other active channels of the same incoming connection; later requests can establish a new transport.
+
+If the open result has already arrived, Bifröst closes only that operation's channel or forwarded connection. Canceling an operation **after** its target channel opened does not close the shared transport. An open result arriving concurrently with cancellation may still cause the shared transport to close.
+
 ## Configuration {: #configuration}
 
 <<property("type", "Environment Type", default="ssh", required=True)>>

@@ -55,6 +55,7 @@ type sftpInterruptedReaderAt struct {
 type sftpTimedOutUploadReaderAt struct {
 	content []byte
 	context context.Context
+	cancel  context.CancelCauseFunc
 	passes  atomic.Int32
 }
 
@@ -66,8 +67,9 @@ func (this *sftpTimedOutUploadReaderAt) ReadAt(target []byte, offset int64) (int
 	if pass >= 2 {
 		limit := int64(len(this.content) / 2)
 		if offset >= limit {
+			this.cancel(context.DeadlineExceeded)
 			<-this.context.Done()
-			return 0, this.context.Err()
+			return 0, context.Cause(this.context)
 		}
 		if offset+int64(len(target)) > limit {
 			target = target[:limit-offset]
@@ -141,6 +143,42 @@ func TestSftpRemoteTargetPublishesAgainstEmbeddedSftpServer(t *testing.T) {
 	}
 }
 
+func TestSftpRemoteTargetPublishesNativeAuditVector(t *testing.T) {
+	for _, encrypted := range []bool{false, true} {
+		name := "clear"
+		if encrypted {
+			name = "encrypted"
+		}
+		t.Run(name, func(t *testing.T) {
+			server := newEmbeddedSftpServer(t)
+			target := newEmbeddedSftpRemoteTarget(t, server, "public-key")
+			segment, vector, fingerprint := nativeRemoteTestSegment(t, encrypted)
+			require.NoError(t, target.Publish(context.Background(), segment))
+			finalPath := filepath.Join(server.root, "archive", segment.ProducerId().String(), segment.FileName())
+			verifyRetrievedNativeRemoteTestSegment(t, segment, vector, fingerprint, mustReadFile(t, finalPath))
+		})
+	}
+}
+
+func TestSftpRemoteTargetPublishesArtifactAgainstEmbeddedServer(t *testing.T) {
+	server := newEmbeddedSftpServer(t)
+	target := newEmbeddedSftpRemoteTarget(t, server, "public-key")
+	artifact := validRemoteArtifactTest()
+	content, err := io.ReadAll(artifact.Content())
+	require.NoError(t, err)
+	producerDirectory := filepath.Join(server.root, "archive", artifact.ProducerId().String())
+	finalPath := filepath.Join(producerDirectory, artifact.FileName())
+
+	require.NoError(t, target.PublishArtifact(context.Background(), artifact))
+	require.NoError(t, target.PublishArtifact(context.Background(), artifact))
+	require.Equal(t, content, mustReadFile(t, finalPath))
+	require.Equal(t, []string{artifact.FileName()}, mustReadDirectoryNames(t, producerDirectory))
+	err = target.PublishArtifact(context.Background(), conflictingRemoteArtifactTest(t, artifact))
+	require.ErrorContains(t, err, "conflicts with local content")
+	require.True(t, bferrors.System.IsErr(err), err)
+	require.Equal(t, content, mustReadFile(t, finalPath))
+}
+
 func TestSftpRemoteTargetConcurrentPublicationAgainstEmbeddedServer(t *testing.T) {
 	server := newEmbeddedSftpServer(t)
 	targets := []*sftpRemoteTarget{
@@ -196,9 +234,9 @@ func TestSftpRemoteTargetCleansTimedOutPartialUploadWithFreshConnection(t *testi
 	segment := validRemoteTargetTestSegment()
 	content, err := io.ReadAll(segment.Content())
 	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	segment.content = &sftpTimedOutUploadReaderAt{content: content, context: ctx}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(context.Canceled)
+	segment.content = &sftpTimedOutUploadReaderAt{content: content, context: ctx, cancel: cancel}
 
 	err = target.Publish(ctx, segment)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
@@ -234,7 +272,7 @@ func TestSftpRemoteTargetRetriesFailedCleanupByDeterministicName(t *testing.T) {
 	segment := validRemoteTargetTestSegment()
 	producerDirectory := filepath.Join(server.root, "archive", segment.ProducerId().String())
 	finalPath := filepath.Join(producerDirectory, segment.FileName())
-	temporaryPath := sftpTemporaryPath(producerDirectory, finalPath)
+	temporaryPath := sftpTemporaryPath(producerDirectory, finalPath, nil)
 	var cleanupAttempts atomic.Int32
 	target.cleanup = func(parent context.Context, actualPath string) error {
 		require.Equal(t, temporaryPath, actualPath)
@@ -259,7 +297,7 @@ func TestSftpRemoteTargetResumesMatchingDeterministicTemporary(t *testing.T) {
 	producerDirectory := filepath.Join(server.root, "archive", segment.ProducerId().String())
 	require.NoError(t, os.Mkdir(producerDirectory, 0o700))
 	finalPath := filepath.Join(producerDirectory, segment.FileName())
-	temporaryPath := sftpTemporaryPath(producerDirectory, finalPath)
+	temporaryPath := sftpTemporaryPath(producerDirectory, finalPath, nil)
 	require.NoError(t, os.WriteFile(temporaryPath, mustReadSegmentContent(t, segment), 0o600))
 
 	require.NoError(t, target.Publish(context.Background(), segment))
@@ -275,7 +313,7 @@ func TestSftpRemoteTargetRecoversFromPartialDeterministicTemporary(t *testing.T)
 	producerDirectory := filepath.Join(server.root, "archive", segment.ProducerId().String())
 	require.NoError(t, os.Mkdir(producerDirectory, 0o700))
 	finalPath := filepath.Join(producerDirectory, segment.FileName())
-	temporaryPath := sftpTemporaryPath(producerDirectory, finalPath)
+	temporaryPath := sftpTemporaryPath(producerDirectory, finalPath, nil)
 	require.NoError(t, os.WriteFile(temporaryPath, content[:len(content)/2], 0o600))
 
 	err := target.Publish(context.Background(), segment)

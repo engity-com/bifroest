@@ -3,11 +3,11 @@ package audit
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
-	"encoding/binary"
 	"encoding/json"
-	"hash/crc32"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,9 +16,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/nativeformat"
 )
 
 func TestJournalRecordSignaturesAndHashChain(t *testing.T) {
@@ -141,6 +143,50 @@ func TestResolveEncryptionPublicKeyFile(t *testing.T) {
 	require.NoError(t, file.Close())
 	_, err = ResolveEncryptionPublicKey("", crypto.PublicKeysFile(oversized))
 	require.ErrorContains(t, err, "exceeds")
+}
+
+func TestResolveEncryptionPublicKeyFileEnforcesRecipientPolicyBeforeJournalWrites(t *testing.T) {
+	weakRSA, err := rsa.GenerateKey(rand.Reader, 1024)
+	require.NoError(t, err)
+	strongRSA, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	ecdsaKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name      string
+		key       any
+		wantError string
+	}{
+		{"rsa-1024", &weakRSA.PublicKey, "at least 2048 bits"},
+		{"ecdsa", &ecdsaKey.PublicKey, "cannot be used for encryption"},
+		{"rsa-2048", &strongRSA.PublicKey, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sshKey, err := ssh.NewPublicKey(tc.key)
+			require.NoError(t, err)
+			publicKey := crypto.PublicKeys(strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshKey))))
+			path := filepath.Join(t.TempDir(), "encryption.pub")
+			require.NoError(t, os.WriteFile(path, []byte(publicKey+"\n"), 0600))
+
+			resolved, err := ResolveEncryptionPublicKey("", crypto.PublicKeysFile(path))
+			if tc.wantError == "" {
+				require.NoError(t, err)
+				require.Equal(t, publicKey, resolved)
+				return
+			}
+			require.Empty(t, resolved)
+			require.ErrorContains(t, err, tc.wantError)
+
+			conf, identity := newJournalTestIdentity(t)
+			conf.EncryptionPublicKeyFile = crypto.PublicKeysFile(path)
+			require.NoDirExists(t, conf.Directory)
+			recorder, err := NewRecorder(&conf, identity)
+			require.Nil(t, recorder)
+			require.ErrorContains(t, err, tc.wantError)
+			require.NoDirExists(t, conf.Directory)
+		})
+	}
 }
 
 func TestJournalSegmentMetadataSignatures(t *testing.T) {
@@ -275,74 +321,73 @@ func TestSealedJournalFileNameIsCanonical(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestLocalJournalRotatesAndRecoversSegmentChain(t *testing.T) {
+func TestNativeJournalRotatesAndRecoversSegmentChain(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
-	local := recorder.(*localJournalRecorder)
-	local.targetSize = local.state.contentBytes + 1
-
+	local := recorder.(*nativeRecorder)
 	require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.first"}))
+	require.NoError(t, local.Seal())
 	require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.second"}))
 	require.NoError(t, recorder.Close())
 
 	directory := producerJournalTestDirectory(conf, identity)
-	segments, hasActive, err := inventoryJournalTestSegments(directory)
+	segments, hasActive, hasHead, err := nativeInventory(directory, nativeActiveClear, false)
 	require.NoError(t, err)
 	require.True(t, hasActive)
+	require.True(t, hasHead)
 	require.Len(t, segments, 2)
-	require.Equal(t, uint64(1), segments[0].sequence)
-	require.Equal(t, uint64(2), segments[1].sequence)
+	require.Equal(t, uint64(1), segments[0].seq)
+	require.Equal(t, uint64(2), segments[1].seq)
 	require.NotEqual(t, segments[0].hash, segments[1].hash)
 	require.Len(t, readJournalTestRecords(t, conf, identity), 2)
 
 	reopened, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
-	reopenedLocal := reopened.(*localJournalRecorder)
-	require.Equal(t, uint64(3), reopenedLocal.state.sequence)
-	require.Equal(t, segments[1].hash, reopenedLocal.state.previousSegmentHash)
-	require.False(t, reopenedLocal.state.previousRecordHash.IsZero())
+	reopenedLocal := reopened.(*nativeRecorder)
+	require.Equal(t, uint64(3), reopenedLocal.state.seq)
+	require.Equal(t, segments[1].hash, reopenedLocal.state.prevSegment)
+	require.False(t, reopenedLocal.state.lastRecord.IsZero())
 	require.NoError(t, reopened.Close())
 }
 
-func TestLocalJournalPublishesCommittedSealDuringRecovery(t *testing.T) {
+func TestNativeJournalPublishesCommittedSealDuringRecovery(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
 	require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.before-crash"}))
-	appendSealAndCrashCloseJournalTestRecorder(t, recorder)
+	sealed := appendSealAndCrashCloseJournalTestRecorder(t, recorder)
 
 	recovered, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
-	segments, hasActive, err := inventoryJournalTestSegments(producerJournalTestDirectory(conf, identity))
+	segments, hasActive, _, err := nativeInventory(producerJournalTestDirectory(conf, identity), nativeActiveClear, false)
 	require.NoError(t, err)
 	require.True(t, hasActive)
 	require.Len(t, segments, 1)
-	require.Equal(t, uint64(2), recovered.(*localJournalRecorder).state.sequence)
+	require.Equal(t, sealed.seq+1, recovered.(*nativeRecorder).state.seq)
 	require.Len(t, readJournalTestRecords(t, conf, identity), 1)
 	require.NoError(t, recovered.Close())
 }
 
-func TestLocalJournalRejectsDeletedLatestSegment(t *testing.T) {
+func TestNativeJournalRejectsDeletedLatestSegment(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
 	require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.must-not-disappear"}))
 	require.NoError(t, recorder.Close())
 
-	segments, hasActive, err := inventoryJournalTestSegments(producerJournalTestDirectory(conf, identity))
+	segments, hasActive, _, err := nativeInventory(producerJournalTestDirectory(conf, identity), nativeActiveClear, false)
 	require.NoError(t, err)
 	require.True(t, hasActive)
 	require.Len(t, segments, 1)
-	require.NoError(t, makeActiveJournalWritable(segments[0].path))
 	require.NoError(t, os.Remove(segments[0].path))
 
 	failed, err := NewRecorder(&conf, identity)
 	require.Nil(t, failed)
-	require.ErrorContains(t, err, "schema or sequence")
+	require.ErrorContains(t, err, "chain mismatch")
 }
 
-func TestLocalJournalHeadDetectsActiveTailLoss(t *testing.T) {
+func TestNativeJournalHeadDetectsActiveTailLoss(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		remove func(*testing.T, string)
@@ -353,9 +398,7 @@ func TestLocalJournalHeadDetectsActiveTailLoss(t *testing.T) {
 		{"truncated", func(t *testing.T, path string) {
 			raw, err := os.ReadFile(path)
 			require.NoError(t, err)
-			headerPayloadSize := int(binary.BigEndian.Uint32(raw[:journalFrameLengthSize]))
-			headerFrameSize := journalFrameLengthSize + headerPayloadSize + journalFrameChecksumSize + len(journalFrameCommitMarker)
-			require.NoError(t, os.Truncate(path, int64(headerFrameSize)))
+			require.NoError(t, os.Truncate(path, int64(nativeTestRecordOffset(t, raw))))
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -368,30 +411,52 @@ func TestLocalJournalHeadDetectsActiveTailLoss(t *testing.T) {
 
 			failed, err := NewRecorder(&conf, identity)
 			require.Nil(t, failed)
-			require.ErrorContains(t, err, "does not contain its committed head")
+			require.ErrorContains(t, err, "checkpoint not in chain")
 		})
 	}
 }
 
-func TestLocalJournalRecoversHeadBehindValidRecords(t *testing.T) {
+func TestNativeJournalRejectsMissingHeadWithHistory(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
 	require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.committed"}))
-	committedHash := recorder.(*localJournalRecorder).state.previousRecordHash
+	crashCloseJournalTestRecorder(t, recorder)
+	headPath := filepath.Join(producerJournalTestDirectory(conf, identity), nativeHeadFileName)
+	require.NoError(t, os.Remove(headPath))
+	before, err := os.ReadFile(journalTestActivePath(conf, identity))
+	require.NoError(t, err)
+
+	failed, err := NewRecorder(&conf, identity)
+	require.Nil(t, failed)
+	require.ErrorContains(t, err, "head missing with existing history")
+	require.NoFileExists(t, headPath)
+	after, err := os.ReadFile(journalTestActivePath(conf, identity))
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+}
+
+func TestNativeJournalRecoversHeadBehindValidRecords(t *testing.T) {
+	conf, identity := newJournalTestIdentity(t)
+	recorder, err := NewRecorder(&conf, identity)
+	require.NoError(t, err)
+	require.NoError(t, recorder.Record(context.Background(), Event{Name: "test.committed"}))
+	committedHash := recorder.(*nativeRecorder).state.lastRecord
 	crashCloseJournalTestRecorder(t, recorder)
 
 	directory := producerJournalTestDirectory(conf, identity)
-	require.NoError(t, writeJournalHead(directory, identity, journalHash{}))
+	_, payload, err := newNativeAuditHead(identity, journalHash{})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(directory, nativeHeadFileName), payload, journalFileMode))
 	recovered, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
-	head, err := loadOrCreateJournalHead(directory, identity)
+	head, err := readNativeHead(directory, identity)
 	require.NoError(t, err)
-	require.Equal(t, committedHash, head.LastRecordHash)
+	require.Equal(t, committedHash, head)
 	require.NoError(t, recovered.Close())
 }
 
-func TestLocalJournalRejectsTamperingWithValidFrameChecksum(t *testing.T) {
+func TestNativeJournalRejectsTamperingWithValidFrameChecksum(t *testing.T) {
 	conf, identity := newJournalTestIdentity(t)
 	recorder, err := NewRecorder(&conf, identity)
 	require.NoError(t, err)
@@ -401,57 +466,56 @@ func TestLocalJournalRejectsTamperingWithValidFrameChecksum(t *testing.T) {
 	activePath := journalTestActivePath(conf, identity)
 	raw, err := os.ReadFile(activePath)
 	require.NoError(t, err)
-	headerPayloadSize := int(binary.BigEndian.Uint32(raw[:journalFrameLengthSize]))
-	recordOffset := journalFrameLengthSize + headerPayloadSize + journalFrameChecksumSize + len(journalFrameCommitMarker)
-	recordPayloadSize := int(binary.BigEndian.Uint32(raw[recordOffset : recordOffset+journalFrameLengthSize]))
-	payloadOffset := recordOffset + journalFrameLengthSize
-	payload := raw[payloadOffset : payloadOffset+recordPayloadSize]
-	tamperedPayload := bytes.Replace(payload, []byte("test.original"), []byte("test.tampered"), 1)
-	require.NotEqual(t, payload, tamperedPayload)
-	copy(payload, tamperedPayload)
-	checksumOffset := payloadOffset + recordPayloadSize
-	binary.BigEndian.PutUint32(raw[checksumOffset:checksumOffset+journalFrameChecksumSize], crc32.Checksum(payload, journalChecksumTable))
+	recordOffset := nativeTestRecordOffset(t, raw)
+	unit, _, tail, err := nativeformat.ReadUnitAt(bytes.NewReader(raw), int64(recordOffset), int64(len(raw)), nativeformat.MaxAuditRecordPayload)
+	require.NoError(t, err)
+	require.False(t, tail)
+	record, err := nativeformat.Unmarshal[nativeAuditRecord](unit.Payload, nativeformat.MaxAuditRecordPayload)
+	require.NoError(t, err)
+	record.PublicEvent.Name = "test.tampered"
+	payload, err := nativeformat.Marshal(record, nativeformat.MaxAuditRecordPayload)
+	require.NoError(t, err)
+	frame, err := nativeformat.EncodeUnit(nativeformat.ContentUnit, payload, nativeformat.MaxAuditRecordPayload)
+	require.NoError(t, err)
+	raw = append(raw[:recordOffset], frame...)
 	require.NoError(t, os.WriteFile(activePath, raw, journalFileMode))
 
 	failed, err := NewRecorder(&conf, identity)
 	require.Nil(t, failed)
 	require.ErrorContains(t, err, "illegal audit signature")
+	actual, readErr := os.ReadFile(activePath)
+	require.NoError(t, readErr)
+	require.Equal(t, raw, actual)
 }
 
-func appendSealAndCrashCloseJournalTestRecorder(t *testing.T, recorder Recorder) journalSegmentState {
+func appendSealAndCrashCloseJournalTestRecorder(t *testing.T, recorder Recorder) nativeSegmentState {
 	t.Helper()
-	local := recorder.(*localJournalRecorder)
+	local := recorder.(*nativeRecorder)
 	local.mutex.Lock()
 	defer local.mutex.Unlock()
 
-	content, err := readJournalFilePrefix(local.file, local.state.contentBytes)
+	content, err := nativeReadFile(local.file)
 	require.NoError(t, err)
-	_, payload, err := newJournalSegmentSeal(
+	_, payload, err := newNativeAuditSeal(
 		local.identity,
-		local.state.sequence,
-		local.state.recordCount,
-		uint64(local.state.contentBytes),
-		hashJournalBytes(journalSegmentContentHashDomain, content),
-		local.state.previousRecordHash,
+		local.state.seq,
+		local.state.count,
+		uint64(len(content)),
+		hashNativeAuditContent(content),
+		local.state.lastRecord,
 		time.Now().UTC(),
 	)
 	require.NoError(t, err)
-	frame, err := encodeJournalFrame(payload)
+	_, err = nativeWriteUnit(local.file, int64(len(content)), nativeformat.SealUnit, payload, nativeformat.MaxMetadataPayload)
 	require.NoError(t, err)
-	require.NoError(t, writeCommittedJournalFrame(local.file, frame))
 
 	state := local.state
-	state.fileBytes += int64(len(frame))
-	full, err := readJournalFilePrefix(local.file, state.fileBytes)
-	require.NoError(t, err)
-	state.segmentHash = hashJournalBytes(journalSegmentHashDomain, full)
-	state.sealed = true
 	require.NoError(t, local.file.Close())
-	require.NoError(t, local.processLock.Close())
+	require.NoError(t, local.lock.Close())
 	local.closed = true
 	return state
 }
 
 func producerJournalTestDirectory(conf configuration.Auditlog, identity *Identity) string {
-	return filepath.Join(conf.Journal.Directory, identity.ProducerId().String())
+	return filepath.Join(conf.Directory, identity.ProducerId().String())
 }

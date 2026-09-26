@@ -12,11 +12,8 @@ func registerAuditDecryptCmd(parent *kingpin.CmdClause) {
 	opts := auditExportOpts{output: "-"}
 	cmd := parent.Command("decrypt", "Alias for audit export (verified JSON Lines).").
 		Action(func(*kingpin.ParseContext) error { return doAuditDecrypt(&opts, goos.Stdout) })
-	registerConfigurationFlag(cmd, &opts.configuration)
-	registerAuditOutputFlags(cmd, &opts.output, &opts.force)
-	registerAuditDecryptionIdentityFlags(cmd, &opts.decryptionIdentityFiles)
-	registerAuditTrustAnchorFlags(cmd, &opts.expectedProducerIds)
-	cmd.Arg("auditlogName", "Configured auditlog to export.").Required().SetValue(&opts.auditlog)
+	registerAuditExportFlags(cmd, &opts)
+	cmd.Arg("auditlogName", "Configured auditlog, or optional label for an offline journal (default: default).").SetValue(&opts.auditlog)
 }
 
 func doAuditDecrypt(opts *auditExportOpts, stdout io.Writer) error {

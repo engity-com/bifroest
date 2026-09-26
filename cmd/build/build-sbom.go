@@ -283,7 +283,27 @@ func normalizeSbom(filename string, platform bib.Platform, artifactType buildArt
 		if !ok {
 			return fmt.Errorf("generated CycloneDX SBOM %q has no metadata component", filename)
 		}
-		component["bom-ref"] = "urn:bifroest:artifact:" + strings.TrimPrefix(subjectDigest, "sha256:")
+		oldRef, _ := component["bom-ref"].(string)
+		newRef := "urn:bifroest:artifact:" + strings.TrimPrefix(subjectDigest, "sha256:")
+		component["bom-ref"] = newRef
+		if oldRef != "" && oldRef != newRef {
+			dependencies, _ := document["dependencies"].([]any)
+			for _, rawDependency := range dependencies {
+				dependency, ok := rawDependency.(map[string]any)
+				if !ok {
+					continue
+				}
+				if dependency["ref"] == oldRef {
+					dependency["ref"] = newRef
+				}
+				dependsOn, _ := dependency["dependsOn"].([]any)
+				for index, ref := range dependsOn {
+					if ref == oldRef {
+						dependsOn[index] = newRef
+					}
+				}
+			}
+		}
 		component["hashes"] = []map[string]string{{
 			"alg":     "SHA-256",
 			"content": strings.TrimPrefix(subjectDigest, "sha256:"),

@@ -58,6 +58,10 @@ Will retrieve the ID Token and makes it available in the [corresponding context 
 <<property("retrieveUserInfo", "bool", None, id_prefix="device-auth-", default=False, heading=4)>>
 Will retrieve the UserInfo and makes it available in the [corresponding context via `userInfo`](../context/authorization.md#oidc-property-userInfo).
 
+### Session cleanup
+
+Before the session's retention period ends, a temporary ID-token verification or UserInfo failure leaves the stored authorization token in place for a later retry. After the session has expired **and** its configured retention period has elapsed, housekeeping removes the local OIDC token without contacting the identity provider again. It can then delete the session after successful environment disposal, subject to the configured [audit failure policy](../housekeeping.md#cleanup-guarantees). Bifröst does not revoke access or refresh tokens at the identity provider; OIDC disposal only removes the local token.
+
 ### Context {: #device-auth-context }
 
 This authorization will produce a context of type [Authorization OIDC](../context/authorization.md#oidc).

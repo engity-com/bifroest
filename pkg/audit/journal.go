@@ -1,23 +1,20 @@
 package audit
 
 import (
-	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
-	goerrors "errors"
 	"hash/crc32"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
-	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
@@ -40,25 +37,6 @@ var (
 	errJournalClosed     = errors.System.Newf("audit journal is closed")
 )
 
-type localJournalRecorder struct {
-	mutex            sync.Mutex
-	file             *os.File
-	processLock      *journalProcessLock
-	activePath       string
-	lockPath         string
-	producerId       ProducerId
-	identity         *Identity
-	encryptor        *journalEventEncryptor
-	headPath         string
-	state            journalSegmentState
-	targetSize       int64
-	minimumFreeBytes uint64
-	availableBytes   func(string) (uint64, error)
-	closed           bool
-	poisoned         error
-	closeErr         error
-}
-
 // NewRecorder creates the configured audit recorder. Disabled audit logging
 // returns a no-op recorder without inspecting the identity or filesystem.
 func NewRecorder(conf *configuration.Auditlog, identity *Identity) (Recorder, error) {
@@ -71,228 +49,7 @@ func NewRecorder(conf *configuration.Auditlog, identity *Identity) (Recorder, er
 	if identity == nil || identity.ProducerId().IsZero() {
 		return nil, errors.Config.Newf("nil audit identity")
 	}
-	encryptionPublicKey, err := ResolveEncryptionPublicKey(conf.EncryptionPublicKey, conf.EncryptionPublicKeyFile)
-	if err != nil {
-		return nil, err
-	}
-	if err := ValidateEncryptionRecipientDedicatedFrom(encryptionPublicKey, []bfcrypto.PrivateKey{identity.privateKey}); err != nil {
-		return nil, err
-	}
-	encryptor, err := newJournalEventEncryptor(encryptionPublicKey)
-	if err != nil {
-		return nil, err
-	}
-	encryptionRecipient := ""
-	if encryptor != nil {
-		encryptionRecipient = encryptor.recipientFingerprint
-	}
-
-	journalDirectory, err := canonicalJournalDirectory(strings.TrimSpace(conf.Journal.Directory))
-	if err != nil {
-		return nil, err
-	}
-	if err := ensureJournalDirectory(journalDirectory, true); err != nil {
-		return nil, errors.System.Newf("cannot prepare audit journal directory %q: %w", journalDirectory, err)
-	}
-	lockPath := filepath.Join(journalDirectory, journalLockFileName)
-	processLock, err := acquireJournalProcessLock(lockPath, journalFileMode)
-	if err != nil {
-		return nil, err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = processLock.Close()
-		}
-	}()
-
-	if err := validateLockedJournalPath(processLock, lockPath); err != nil {
-		return nil, err
-	}
-	producerDirectory := filepath.Join(journalDirectory, identity.ProducerId().String())
-	if err := validateJournalRoot(journalDirectory, identity.ProducerId()); err != nil {
-		return nil, err
-	}
-	if err := ensureJournalDirectory(producerDirectory, true); err != nil {
-		return nil, errors.System.Newf("cannot prepare audit producer directory %q: %w", producerDirectory, err)
-	}
-	activePath := filepath.Join(producerDirectory, journalActiveFileName)
-	head, err := loadOrCreateJournalHead(producerDirectory, identity)
-	if err != nil {
-		return nil, err
-	}
-	file, state, err := recoverJournalSegments(producerDirectory, activePath, identity, head.LastRecordHash, encryptionRecipient)
-	if err != nil {
-		return nil, err
-	}
-	if state.previousRecordHash != head.LastRecordHash {
-		if err := writeJournalHead(producerDirectory, identity, state.previousRecordHash); err != nil {
-			_ = file.Close()
-			return nil, err
-		}
-	}
-
-	minimumFreeBytes := conf.Journal.MinimumFreeBytes
-	if minimumFreeBytes == 0 {
-		minimumFreeBytes = configuration.DefaultAuditlogJournalMinimumFreeBytes
-	}
-	committed = true
-	return &localJournalRecorder{
-		file:             file,
-		processLock:      processLock,
-		activePath:       activePath,
-		lockPath:         lockPath,
-		producerId:       identity.ProducerId(),
-		identity:         identity,
-		encryptor:        encryptor,
-		headPath:         filepath.Join(producerDirectory, journalHeadFileName),
-		state:            state,
-		targetSize:       defaultJournalSegmentTargetSize,
-		minimumFreeBytes: minimumFreeBytes,
-		availableBytes:   availableJournalBytes,
-	}, nil
-}
-
-func (this *localJournalRecorder) Record(ctx context.Context, event Event) error {
-	_, err := this.record(ctx, event, false)
-	return err
-}
-
-func (this *localJournalRecorder) RecordSuppressible(ctx context.Context, event Event) (bool, error) {
-	return this.record(ctx, event, true)
-}
-
-func (this *localJournalRecorder) record(_ context.Context, event Event, suppressible bool) (bool, error) {
-	if err := validateAuditEvent(event); err != nil {
-		return false, err
-	}
-
-	this.mutex.Lock()
-	defer this.mutex.Unlock()
-	if this.closed {
-		return false, errJournalClosed
-	}
-	if this.poisoned != nil {
-		return false, this.poisoned
-	}
-	if err := validateLockedJournalPath(this.processLock, this.lockPath); err != nil {
-		return false, this.poison(err)
-	}
-	if err := validateOpenJournalFile(this.activePath, this.file); err != nil {
-		return false, this.poison(err)
-	}
-
-	id, err := uuid.NewRandom()
-	if err != nil {
-		return false, errors.System.Newf("cannot generate audit record ID: %w", err)
-	}
-	_, payload, recordHash, err := newJournalRecord(this.identity, this.state.previousRecordHash, event, id, time.Now().UTC(), this.encryptor)
-	if err != nil {
-		return false, err
-	}
-	frame, err := encodeJournalFrame(payload)
-	if err != nil {
-		return false, err
-	}
-	if suppressible {
-		available, availableErr := this.availableBytes(filepath.Dir(this.activePath))
-		if availableErr != nil {
-			return false, errors.System.Newf("cannot determine free space for audit journal: %w", availableErr)
-		}
-		// Reserve enough for this frame and a maximum-sized replacement journal head.
-		required := this.minimumFreeBytes
-		additional := uint64(len(frame) + maxJournalRecordPayloadSize)
-		if required > ^uint64(0)-additional || available < required+additional {
-			return false, nil
-		}
-	}
-	if this.state.recordCount > 0 && this.state.contentBytes+int64(len(frame)) > this.targetSize {
-		if err := this.rotate(time.Now().UTC()); err != nil {
-			return false, this.poison(err)
-		}
-	}
-	if err := writeCommittedJournalFrame(this.file, frame); err != nil {
-		return false, this.poison(err)
-	}
-	this.state.previousRecordHash = recordHash
-	this.state.recordCount++
-	this.state.contentBytes += int64(len(frame))
-	this.state.fileBytes = this.state.contentBytes
-	if err := writeJournalHead(filepath.Dir(this.headPath), this.identity, recordHash); err != nil {
-		return false, this.poison(err)
-	}
-	return true, nil
-}
-
-func (this *localJournalRecorder) rotate(at time.Time) error {
-	producerDirectory := filepath.Dir(this.activePath)
-	sealed, err := sealActiveJournal(this.file, this.activePath, producerDirectory, this.identity, this.state, at)
-	if err != nil {
-		return err
-	}
-	file, state, err := createActiveJournal(this.activePath, this.identity, sealed.sequence+1, sealed.segmentHash, sealed.previousRecordHash)
-	if err != nil {
-		return err
-	}
-	this.file = file
-	this.state = state
-	return nil
-}
-
-func (this *localJournalRecorder) poison(err error) error {
-	if this.poisoned == nil {
-		this.poisoned = err
-	}
-	return this.poisoned
-}
-
-func (this *localJournalRecorder) Close() error {
-	if this == nil {
-		return nil
-	}
-	this.mutex.Lock()
-	defer this.mutex.Unlock()
-	if this.closed {
-		return this.closeErr
-	}
-	this.closed = true
-
-	this.closeErr = this.sealLocked()
-	if this.file != nil {
-		if err := this.file.Sync(); err != nil {
-			this.closeErr = goerrors.Join(this.closeErr, errors.System.Newf("cannot flush active audit journal while closing: %w", err))
-		}
-		if err := this.file.Close(); err != nil {
-			this.closeErr = goerrors.Join(this.closeErr, errors.System.Newf("cannot close active audit journal: %w", err))
-		}
-	}
-	this.closeErr = goerrors.Join(this.closeErr, this.processLock.Close())
-	return this.closeErr
-}
-
-func (this *localJournalRecorder) Seal() error {
-	if this == nil {
-		return nil
-	}
-	this.mutex.Lock()
-	defer this.mutex.Unlock()
-	if this.closed {
-		return errJournalClosed
-	}
-	return this.sealLocked()
-}
-
-func (this *localJournalRecorder) sealLocked() error {
-	if this.poisoned != nil {
-		return this.poisoned
-	}
-	if this.file == nil || this.state.recordCount == 0 {
-		return nil
-	}
-	if err := this.rotate(time.Now().UTC()); err != nil {
-		return this.poison(err)
-	}
-	return nil
+	return newNativeRecorder(conf, identity)
 }
 
 func validateAuditEvent(event Event) error {
@@ -324,10 +81,13 @@ func validateAuditEvent(event Event) error {
 	if event.SessionTask != "" && event.SessionTask != SessionTaskShell && event.SessionTask != SessionTaskExec && event.SessionTask != SessionTaskSftp {
 		return errors.System.Newf("unknown audit session task %q", event.SessionTask)
 	}
-	if event.ErrorCategory != "" && event.ErrorCategory != ErrorCategoryUnknown && event.ErrorCategory != ErrorCategorySystem &&
-		event.ErrorCategory != ErrorCategoryConfig && event.ErrorCategory != ErrorCategoryNetwork && event.ErrorCategory != ErrorCategoryUser &&
-		event.ErrorCategory != ErrorCategoryPermission && event.ErrorCategory != ErrorCategoryExpired {
+	if event.ErrorCategory != "" && !isErrorCategory(event.ErrorCategory) {
 		return errors.System.Newf("unknown audit error category %q", event.ErrorCategory)
+	}
+	if event.Target != "" {
+		if err := event.Target.Validate(); err != nil {
+			return errors.System.Newf("illegal audit event target: %w", err)
+		}
 	}
 	if err := validateAuditFlow(event.Flow); err != nil {
 		return err
@@ -349,6 +109,12 @@ func validateAuditEvent(event Event) error {
 			return err
 		}
 	}
+	if err := validateAuditRecordingUuid(event.RecordingId); err != nil {
+		return err
+	}
+	if err := validateAuditRecordingDigest(event.RecordingDigest); err != nil {
+		return err
+	}
 	if event.ExitCode != nil && *event.ExitCode < 0 {
 		return errors.System.Newf("audit event exit code is negative")
 	}
@@ -365,6 +131,97 @@ func validateAuditEvent(event Event) error {
 		return errors.System.Newf("audit event count is zero")
 	}
 	return nil
+}
+
+func validateAuditEventForWrite(event Event) error {
+	if err := validateAuditEvent(event); err != nil {
+		return err
+	}
+	if err := validateSessionRecordingAuditEvent(event); err != nil {
+		return err
+	}
+	return validateSessionRecordingDeliveryAuditEvent(event)
+}
+
+func validateSessionRecordingAuditEvent(event Event) error {
+	switch event.Name {
+	case EventNameSessionRecordingStarted, EventNameSessionRecordingCompleted, EventNameSessionRecordingIncomplete, EventNameSessionRecordingFailed:
+	default:
+		return nil
+	}
+	if event.Domain != EventDomainSession || event.Flow == "" || event.ConnectionId == "" || event.SessionId == "" || event.OperationId == "" || event.RecordingId == "" {
+		return errors.System.Newf("session recording audit event lacks required correlation fields")
+	}
+	if event.SessionTask != SessionTaskShell && event.SessionTask != SessionTaskExec {
+		return errors.System.Newf("session recording audit event has illegal task %q", event.SessionTask)
+	}
+	if event.AuthenticationMethod != "" || event.AuthenticationPhase != "" || event.AuthorizationKind != "" ||
+		event.Target != "" || event.BytesRead != nil || event.BytesWritten != nil || event.Count != nil || event.AgentForwarding != nil || event.ForcedCommand != nil {
+		return errors.System.Newf("session recording audit event has unrelated fields")
+	}
+	switch event.Name {
+	case EventNameSessionRecordingStarted:
+		if event.Outcome != "" || event.Reason != "" || event.ErrorCategory != "" || event.RecordingDigest != "" || event.Pty == nil || event.DurationMillis != nil || event.ExitCode != nil {
+			return errors.System.Newf("session recording started audit event has illegal lifecycle fields")
+		}
+	case EventNameSessionRecordingCompleted:
+		if event.Outcome != EventOutcomeSuccess || event.Reason != "" || event.ErrorCategory != "" || event.RecordingDigest == "" || event.Pty != nil || event.DurationMillis == nil || event.ExitCode == nil {
+			return errors.System.Newf("session recording completed audit event lacks required completion fields")
+		}
+	case EventNameSessionRecordingIncomplete:
+		if event.RecordingDigest == "" || event.Pty != nil || event.DurationMillis == nil {
+			return errors.System.Newf("session recording incomplete audit event lacks required completion fields")
+		}
+		valid := event.Outcome == EventOutcomeCanceled && event.ErrorCategory == "" &&
+			(event.Reason == EventReasonContextCanceled || event.Reason == EventReasonDeadlineExceeded) ||
+			event.Outcome == EventOutcomeFailure && event.ErrorCategory == "" && event.Reason == EventReasonInvalidExitCode ||
+			event.Outcome == EventOutcomeFailure && event.ErrorCategory == "" && event.Reason == EventReasonStartupRecovery && event.ExitCode == nil ||
+			event.Outcome == EventOutcomeFailure && event.Reason == EventReasonSessionError && event.ErrorCategory != ""
+		if !valid {
+			return errors.System.Newf("session recording incomplete audit event has illegal outcome and reason")
+		}
+		if event.Reason == EventReasonInvalidExitCode && event.ExitCode != nil {
+			return errors.System.Newf("session recording invalid-exit audit event has an exit code")
+		}
+	case EventNameSessionRecordingFailed:
+		validReason := event.Reason == EventReasonRecordingCreate || event.Reason == EventReasonRecordingCapture || event.Reason == EventReasonRecordingSeal || event.Reason == EventReasonAuditWrite
+		startupFieldsInvalid := (event.Reason == EventReasonRecordingCreate || event.Reason == EventReasonAuditWrite) && event.ExitCode != nil
+		createFieldsInvalid := event.Reason == EventReasonRecordingCreate && (event.RecordingDigest != "" || event.DurationMillis != nil)
+		if event.Outcome != EventOutcomeFailure || !validReason || event.ErrorCategory == "" || event.Pty != nil || event.RecordingDigest != "" && event.DurationMillis == nil || startupFieldsInvalid || createFieldsInvalid {
+			return errors.System.Newf("session recording failed audit event lacks required failure fields")
+		}
+	}
+	return nil
+}
+
+func validateSessionRecordingDeliveryAuditEvent(event Event) error {
+	switch event.Name {
+	case EventNameSessionRecordingDeliveryFailed, EventNameSessionRecordingDeliverySucceeded:
+	default:
+		return nil
+	}
+	if event.Domain != EventDomainSession || event.OperationId == "" || event.RecordingId == "" || event.Target == "" {
+		return errors.System.Newf("session recording delivery audit event lacks required correlation fields")
+	}
+	if event.Flow != "" || event.ConnectionId != "" || event.SessionId != "" || event.RecordingDigest != "" ||
+		event.AuthenticationMethod != "" || event.AuthenticationPhase != "" || event.AuthorizationKind != "" || event.SessionTask != "" ||
+		event.Reason != "" || event.ExitCode != nil || event.BytesRead != nil || event.BytesWritten != nil || event.DurationMillis != nil ||
+		event.Count != nil || event.Pty != nil || event.AgentForwarding != nil || event.ForcedCommand != nil {
+		return errors.System.Newf("session recording delivery audit event has unrelated fields")
+	}
+	if event.Name == EventNameSessionRecordingDeliveryFailed {
+		if event.Outcome != EventOutcomeFailure || event.ErrorCategory == "" {
+			return errors.System.Newf("session recording delivery failed audit event lacks required failure fields")
+		}
+	} else if event.Outcome != EventOutcomeSuccess || event.ErrorCategory != "" {
+		return errors.System.Newf("session recording delivery succeeded audit event has illegal outcome fields")
+	}
+	return nil
+}
+
+func isErrorCategory(value ErrorCategory) bool {
+	return value == ErrorCategoryUnknown || value == ErrorCategorySystem || value == ErrorCategoryConfig || value == ErrorCategoryNetwork ||
+		value == ErrorCategoryUser || value == ErrorCategoryPermission || value == ErrorCategoryExpired
 }
 
 func validateAuditFlow(value string) error {
@@ -416,6 +273,31 @@ func validateAuditUuid(name, value string) error {
 	return nil
 }
 
+func validateAuditRecordingUuid(value string) error {
+	if value == "" {
+		return nil
+	}
+	parsed, err := uuid.Parse(value)
+	if err != nil || parsed == uuid.Nil || parsed.Version() != 4 || parsed.Variant() != uuid.RFC4122 || parsed.String() != value {
+		return errors.System.Newf("illegal audit event recording ID %q", value)
+	}
+	return nil
+}
+
+func validateAuditRecordingDigest(value string) error {
+	if value == "" {
+		return nil
+	}
+	if len(value) != sha256.Size*2 {
+		return errors.System.Newf("illegal audit event recording digest %q", value)
+	}
+	decoded, err := hex.DecodeString(value)
+	if err != nil || hex.EncodeToString(decoded) != value {
+		return errors.System.Newf("illegal audit event recording digest %q", value)
+	}
+	return nil
+}
+
 func encodeJournalFrame(payload []byte) ([]byte, error) {
 	if len(payload) > maxJournalRecordPayloadSize {
 		return nil, errors.System.Newf("encoded audit journal payload exceeds %d bytes", maxJournalRecordPayloadSize)
@@ -427,31 +309,6 @@ func encodeJournalFrame(payload []byte) ([]byte, error) {
 	binary.BigEndian.PutUint32(frame[checksumOffset:], crc32.Checksum(payload, journalChecksumTable))
 	copy(frame[checksumOffset+journalFrameChecksumSize:], journalFrameCommitMarker)
 	return frame, nil
-}
-
-func writeCommittedJournalFrame(file *os.File, frame []byte) error {
-	commitOffset := len(frame) - len(journalFrameCommitMarker)
-	written, err := file.Write(frame[:commitOffset])
-	if err == nil && written != commitOffset {
-		err = io.ErrShortWrite
-	}
-	if err != nil {
-		return errors.System.Newf("cannot append audit journal frame: %w", err)
-	}
-	if err := file.Sync(); err != nil {
-		return errors.System.Newf("cannot flush audit journal frame body: %w", err)
-	}
-	written, err = file.Write(frame[commitOffset:])
-	if err == nil && written != len(journalFrameCommitMarker) {
-		err = io.ErrShortWrite
-	}
-	if err != nil {
-		return errors.System.Newf("cannot commit audit journal frame: %w", err)
-	}
-	if err := file.Sync(); err != nil {
-		return errors.System.Newf("cannot flush audit journal frame commit: %w", err)
-	}
-	return nil
 }
 
 func ensureJsonEof(decoder *json.Decoder) error {
@@ -492,11 +349,6 @@ func canonicalJournalDirectory(path string) (string, error) {
 		return canonical, nil
 	} else if !sys.IsNotExist(err) {
 		return "", errors.Config.Newf("cannot canonicalize audit journal directory %q: %w", absolute, err)
-	}
-	if info, err := os.Lstat(absolute); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return "", errors.Config.Newf("cannot canonicalize dangling audit journal symlink %q", absolute)
-	} else if err != nil && !sys.IsNotExist(err) {
-		return "", errors.System.Newf("cannot inspect audit journal directory %q: %w", absolute, err)
 	}
 	canonicalParent, err := filepath.EvalSymlinks(parent)
 	if err != nil {
@@ -566,171 +418,51 @@ func syncJournalDirectoryHierarchy(path string) error {
 	}
 }
 
-func validateJournalRoot(directory string, producerId ProducerId) error {
-	expected := producerId.String()
-	return forEachJournalDirectoryEntry(context.Background(), directory, func(entry os.DirEntry) error {
-		if entry.Name() == journalLockFileName {
-			lockPath := filepath.Join(directory, entry.Name())
-			info, err := os.Lstat(lockPath)
-			if err != nil {
-				return errors.System.Newf("cannot inspect audit journal lock in %q: %w", directory, err)
-			}
-			if !info.Mode().IsRegular() {
-				return errors.Config.Newf("audit journal lock %q is not a regular file", lockPath)
-			}
-			return nil
-		}
-		if entry.Name() == remoteDeliveryStateDirectoryName {
-			path := filepath.Join(directory, entry.Name())
-			info, err := os.Lstat(path)
-			if err != nil {
-				return errors.System.Newf("cannot inspect remote delivery state in %q: %w", directory, err)
-			}
-			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-				return errors.Config.Newf("remote delivery state %q is not a directory", path)
-			}
-			if err := secureJournalDirectory(path, info); err != nil {
-				return err
-			}
-			return nil
-		}
-		if entry.Name() == journalWorkDirectoryName {
-			path := filepath.Join(directory, entry.Name())
-			info, err := os.Lstat(path)
-			if err != nil {
-				return errors.System.Newf("cannot inspect audit work directory in %q: %w", directory, err)
-			}
-			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-				return errors.Config.Newf("audit work path %q is not a directory", path)
-			}
-			if err := secureJournalDirectory(path, info); err != nil {
-				return err
-			}
-			return nil
-		}
-		if entry.Name() != expected || !entry.IsDir() {
-			return errors.Config.Newf("audit journal %q contains unsupported entry %q for producer %s", directory, entry.Name(), producerId)
-		}
-		return nil
-	})
-}
-
-func openActiveJournal(path string) (*os.File, error) {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, journalFileMode)
-	if err == nil {
-		return prepareActiveJournal(path, file)
-	}
-	if !errors.Is(err, fs.ErrExist) {
-		return nil, errors.System.Newf("cannot create active audit journal %q: %w", path, err)
-	}
-	info, lstatErr := os.Lstat(path)
-	if lstatErr != nil {
-		return nil, errors.System.Newf("cannot inspect active audit journal %q: %w", path, lstatErr)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, errors.Config.Newf("active audit journal %q is not a regular file", path)
-	}
-	file, err = os.OpenFile(path, os.O_RDWR, journalFileMode)
-	if err != nil {
-		return nil, errors.System.Newf("cannot open active audit journal %q: %w", path, err)
-	}
-	return prepareActiveJournal(path, file)
-}
-
-func openJournalLockFile(path string, mode os.FileMode) (*os.File, error) {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, mode)
-	if err == nil {
-		return prepareJournalLockFile(path, file)
-	}
-	if !errors.Is(err, fs.ErrExist) {
-		return nil, err
-	}
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, errors.Config.Newf("audit journal lock %q is not a regular file", path)
-	}
-	file, err = os.OpenFile(path, os.O_RDWR, mode)
-	if err != nil {
-		return nil, err
-	}
-	return prepareJournalLockFile(path, file)
-}
-
 func prepareJournalLockFile(path string, file *os.File) (*os.File, error) {
-	openedInfo, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	pathInfo, err := os.Lstat(path)
-	if err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	if !pathInfo.Mode().IsRegular() || !os.SameFile(openedInfo, pathInfo) {
-		_ = file.Close()
-		return nil, errors.System.Newf("audit journal lock path %q changed while opening the file", path)
-	}
 	if err := secureJournalFile(path, file); err != nil {
 		_ = file.Close()
 		return nil, err
-	}
-	return file, nil
-}
-
-func prepareActiveJournal(path string, file *os.File) (*os.File, error) {
-	if err := validateOpenJournalFile(path, file); err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	if err := secureJournalFile(path, file); err != nil {
-		_ = file.Close()
-		return nil, errors.System.Newf("cannot secure active audit journal %q: %w", path, err)
-	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return nil, errors.System.Newf("cannot flush active audit journal %q: %w", path, err)
-	}
-	if err := syncJournalDirectory(filepath.Dir(path)); err != nil {
-		_ = file.Close()
-		return nil, errors.System.Newf("cannot flush audit producer directory %q: %w", filepath.Dir(path), err)
-	}
-	if _, err := file.Seek(0, io.SeekEnd); err != nil {
-		_ = file.Close()
-		return nil, errors.System.Newf("cannot seek to end of active audit journal %q: %w", path, err)
 	}
 	return file, nil
 }
 
 func validateOpenJournalFile(path string, file *os.File) error {
-	openedInfo, err := file.Stat()
+	if file == nil {
+		return errors.System.Newf("active audit journal %q is closed", path)
+	}
+	info, err := file.Stat()
 	if err != nil {
 		return errors.System.Newf("cannot inspect open active audit journal %q: %w", path, err)
 	}
-	pathInfo, err := os.Lstat(path)
-	if err != nil {
-		return errors.System.Newf("cannot inspect active audit journal path %q: %w", path, err)
-	}
-	if !pathInfo.Mode().IsRegular() || !os.SameFile(openedInfo, pathInfo) {
-		return errors.System.Newf("active audit journal path %q changed while opening the file", path)
+	if !info.Mode().IsRegular() {
+		return errors.Config.Newf("active audit journal %q is not a regular file", path)
 	}
 	return nil
 }
 
 func validateLockedJournalPath(processLock *journalProcessLock, path string) error {
-	lockedInfo, err := processLock.file.Stat()
-	if err != nil {
-		return errors.System.Newf("cannot inspect locked audit journal path %q: %w", path, err)
+	if processLock == nil || processLock.file == nil {
+		return errors.System.Newf("audit journal lock %q is closed", path)
 	}
-	pathInfo, err := os.Lstat(path)
+	same, err := sameJournalProcessLockFile(processLock.file, path)
 	if err != nil {
 		return errors.System.Newf("cannot inspect audit journal lock path %q: %w", path, err)
 	}
-	if !pathInfo.Mode().IsRegular() || !os.SameFile(lockedInfo, pathInfo) {
-		return errors.System.Newf("audit journal lock path %q no longer identifies the locked file", path)
+	if !same {
+		return errors.System.Newf("audit journal lock path %q no longer refers to the acquired lock", path)
+	}
+	return nil
+}
+
+func removeJournalProcessLock(processLock *journalProcessLock, path string) error {
+	if err := validateLockedJournalPath(processLock, path); err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		return errors.System.Newf("cannot remove audit journal lock %q: %w", path, err)
+	}
+	if err := syncJournalDirectory(filepath.Dir(path)); err != nil {
+		return errors.System.Newf("cannot synchronize audit journal lock directory %q: %w", filepath.Dir(path), err)
 	}
 	return nil
 }

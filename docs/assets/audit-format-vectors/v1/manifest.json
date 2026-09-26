@@ -1,0 +1,137 @@
+{
+  "schema": "bifroest.audit-format-vectors/v1",
+  "signingSeedHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "ageRecipientSeedHex": "4242424242424242424242424242424242424242424242424242424242424242",
+  "producerId": "95b9aca00d322047048950d19cc5aece6fa757edd9104a5521446a168792b298",
+  "recipientFingerprint": "SHA256:ZsrOVCtcb1bouzun0GIHz5vL5oCjVhVIQ3jfIBIgZ8g",
+  "clear": {
+    "recordHashes": [
+      "4abff565227d1caa4dd8024573ccb9e913d9c4bd9c5c436ea365e10f2e2b0e0c",
+      "0411421b5a07a742ea3bcea32f41fc2d962eb061b8cbbda88d94484d42a67d2f"
+    ],
+    "contentHash": "5fb0c20d9d91de7b9a4835e4ecc878978931d87a73a5f7b6730a28967866463a",
+    "segmentHash": "fe793ee92c2547663fbd50dec41971378d3d837bb2e6237fe06d6009d0ce9bc5"
+  },
+  "encrypted": {
+    "recordHashes": [
+      "948219b4682315c7c2630691cd0d37da1f68f4610e821d55f6b7ddc1635b11b1",
+      "597d1df3c659c5de7a183d2e1c8b5f7829d27b52fd5bdb6f1659b17560e88749"
+    ],
+    "contentHash": "1ad8504fc41e89811d0236e6b17cc2fc34920d3ab58dd8e9ffb3c213b7ce8f8f",
+    "segmentHash": "917fba80141b65171aa763ee878d45e67c9852aaa227fad87d89eb9451c3ff57"
+  },
+  "artifacts": [
+    {
+      "path": "baudit-v1.baudit",
+      "format": "baudit/v1",
+      "description": "Complete deterministic signed clear audit segment",
+      "bytes": 1021,
+      "sha256": "9e996c9f05ba029cd9c9767d5227ce85d5638d464ced4b6d9854c82f6e6e7111",
+      "reproducible": true
+    },
+    {
+      "path": "baudit-v1-head.cbor",
+      "format": "baudit/v1-head",
+      "description": "Signed clear journal checkpoint (raw CBOR)",
+      "bytes": 194,
+      "sha256": "60f0c6411030966eedbfbb5a07079e319c0ca2718b48b55fc73602175df527af",
+      "reproducible": true
+    },
+    {
+      "path": "baudit-header.unit",
+      "format": "baudit/v1-header-unit",
+      "description": "Framed signed clear header excerpt",
+      "bytes": 259,
+      "sha256": "4b2db2fa1b10f2a2a6ea74cd2f2dfce9c32632eefad677d520c74ba189e128e3",
+      "reproducible": true
+    },
+    {
+      "path": "baudit-records.unit",
+      "format": "baudit/v1-record-units",
+      "description": "Two consecutive framed signed clear record excerpts",
+      "bytes": 578,
+      "sha256": "5adf1f56fdeff3b40022c985345ea793227726387eb82c3a6e8e5deb07daa21e",
+      "reproducible": true
+    },
+    {
+      "path": "baudit-seal.unit",
+      "format": "baudit/v1-seal-unit",
+      "description": "Framed signed clear seal excerpt",
+      "bytes": 176,
+      "sha256": "f57cbb3af450d9fddf1a042358628c0aea5d86ae8e90c289397465437fa69d3a",
+      "reproducible": true
+    },
+    {
+      "path": "baudit-v1-redacted.jsonl",
+      "format": "audit-jsonl/v1",
+      "description": "Verified clear export without sensitive fields",
+      "bytes": 941,
+      "sha256": "72d5715050eb5eee8b0e999a1621c924375cde6a9d396f162aea9659ff594dea",
+      "reproducible": true
+    },
+    {
+      "path": "baudit-v1-with-sensitive.jsonl",
+      "format": "audit-jsonl/v1",
+      "description": "Verified clear export with sensitive fields",
+      "bytes": 1213,
+      "sha256": "76ea79dd237d14dd40c0d2e0afd28aa8950cc2cf304e2b856e5d50546f3f1fb8",
+      "reproducible": true
+    },
+    {
+      "path": "beaudit-v1.beaudit",
+      "format": "beaudit/v1",
+      "description": "Frozen signed age-encrypted audit segment",
+      "bytes": 1500,
+      "sha256": "6e2405618accc2392ef8740e543416e2ee51174ea9eaf7e30857d91bf5f6d2ed",
+      "reproducible": false
+    },
+    {
+      "path": "beaudit-v1-head.cbor",
+      "format": "beaudit/v1-head",
+      "description": "Signed encrypted journal checkpoint (raw CBOR)",
+      "bytes": 194,
+      "sha256": "f808352a77760ab79f428347beffe0a08ec808c416d3df0525a52d30676be124",
+      "reproducible": false
+    },
+    {
+      "path": "beaudit-header.unit",
+      "format": "beaudit/v1-header-unit",
+      "description": "Framed signed age header excerpt, deterministic with public seed",
+      "bytes": 312,
+      "sha256": "97ea3371f35a5eccbd2c779922b480244ffd74a4926f69e14d9429c74ba3f928",
+      "reproducible": true
+    },
+    {
+      "path": "beaudit-records.unit",
+      "format": "beaudit/v1-record-units",
+      "description": "Two frozen framed signed age record excerpts",
+      "bytes": 1004,
+      "sha256": "f256d7b8946aaf5be30202b3b6496df281658ae08a2f45088f551c2d95c42eaf",
+      "reproducible": false
+    },
+    {
+      "path": "beaudit-seal.unit",
+      "format": "beaudit/v1-seal-unit",
+      "description": "Frozen framed signed age seal excerpt",
+      "bytes": 176,
+      "sha256": "ac8bef575bd812d73f95acca7adf4b7114e87a51db155508257c6aee61180e5a",
+      "reproducible": false
+    },
+    {
+      "path": "beaudit-v1-redacted.jsonl",
+      "format": "audit-jsonl/v1",
+      "description": "Verified encrypted outer-only export",
+      "bytes": 941,
+      "sha256": "fe868903a3c388e764496e33f24b6c5f56b861655e45d8ab9ac3c729a273b964",
+      "reproducible": false
+    },
+    {
+      "path": "beaudit-v1-with-sensitive.jsonl",
+      "format": "audit-jsonl/v1",
+      "description": "Verified decrypted export with sensitive fields",
+      "bytes": 1213,
+      "sha256": "3c6198f2c95418430646476a0b93bd1f9f6c37f720423eb71b9a4d8c6a650372",
+      "reproducible": false
+    }
+  ]
+}

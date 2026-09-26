@@ -25,6 +25,8 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
+const maximumS3ObjectKeyBytes = 1024
+
 var _ = registerPreparedRemoteTarget(
 	func() configuration.AuditlogTargetV { return &configuration.AuditlogTargetS3{} },
 	prepareS3RemoteTarget,
@@ -125,6 +127,21 @@ func newS3RemoteTargetWithClient(conf *configuration.AuditlogTargetS3, client s3
 }
 
 func (this *s3RemoteTarget) Publish(ctx context.Context, segment SealedSegment) error {
+	return this.publish(ctx, segment, nil)
+}
+
+func (this *s3RemoteTarget) PublishArtifact(ctx context.Context, artifact RemoteArtifact) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := artifact.validateMetadata(ctx); err != nil {
+		return err
+	}
+	digest := artifact.Digest()
+	return this.publish(ctx, artifact, digest[:])
+}
+
+func (this *s3RemoteTarget) publish(ctx context.Context, object remotePublishObject, expectedChecksum []byte) error {
 	this.mutex.RLock()
 	defer this.mutex.RUnlock()
 	if this.closed {
@@ -133,19 +150,26 @@ func (this *s3RemoteTarget) Publish(ctx context.Context, segment SealedSegment) 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	checksum, err := hashS3Segment(ctx, segment.Content())
-	if err != nil {
-		return err
+	checksum := expectedChecksum
+	if checksum == nil {
+		var err error
+		checksum, err = hashS3Segment(ctx, object.Content())
+		if err != nil {
+			return err
+		}
 	}
-	key := segment.RemotePath()
+	key := object.RemotePath()
 	if this.prefix != "" {
 		key = path.Join(this.prefix, key)
+	}
+	if len(key) > maximumS3ObjectKeyBytes {
+		return errors.Config.Newf("S3 audit object key exceeds %d bytes", maximumS3ObjectKeyBytes)
 	}
 	input := &s3.PutObjectInput{
 		Bucket:         aws.String(this.bucket),
 		Key:            aws.String(key),
-		Body:           segment.Content(),
-		ContentLength:  aws.Int64(segment.Size()),
+		Body:           object.Content(),
+		ContentLength:  aws.Int64(object.Size()),
 		ContentType:    aws.String("application/octet-stream"),
 		IfNoneMatch:    aws.String("*"),
 		ChecksumSHA256: aws.String(base64.StdEncoding.EncodeToString(checksum)),
@@ -153,7 +177,7 @@ func (this *s3RemoteTarget) Publish(ctx context.Context, segment SealedSegment) 
 	if this.expectedBucketOwner != "" {
 		input.ExpectedBucketOwner = aws.String(this.expectedBucketOwner)
 	}
-	_, err = this.client.PutObject(ctx, input)
+	_, err := this.client.PutObject(ctx, input)
 	if err == nil {
 		return nil
 	}
@@ -161,7 +185,7 @@ func (this *s3RemoteTarget) Publish(ctx context.Context, segment SealedSegment) 
 	if status != http.StatusConflict && status != http.StatusPreconditionFailed {
 		return classifyS3RemoteError(ctx, "publish audit segment to S3", err)
 	}
-	return this.verifyExisting(ctx, key, segment, checksum)
+	return this.verifyExisting(ctx, key, object, checksum)
 }
 
 func hashS3Segment(ctx context.Context, content io.Reader) ([]byte, error) {
@@ -175,7 +199,7 @@ func hashS3Segment(ctx context.Context, content io.Reader) ([]byte, error) {
 	return hasher.Sum(nil), nil
 }
 
-func (this *s3RemoteTarget) verifyExisting(ctx context.Context, key string, segment SealedSegment, expectedChecksum []byte) error {
+func (this *s3RemoteTarget) verifyExisting(ctx context.Context, key string, object remotePublishObject, expectedChecksum []byte) error {
 	input := &s3.GetObjectInput{Bucket: aws.String(this.bucket), Key: aws.String(key)}
 	if this.expectedBucketOwner != "" {
 		input.ExpectedBucketOwner = aws.String(this.expectedBucketOwner)
@@ -193,17 +217,17 @@ func (this *s3RemoteTarget) verifyExisting(ctx context.Context, key string, segm
 	conflict := func(message string, args ...any) error {
 		return errors.System.Newf("existing S3 audit segment %q conflicts with local content: "+message, append([]any{key}, args...)...)
 	}
-	if output.ContentLength != nil && *output.ContentLength != segment.Size() {
-		return goerrors.Join(conflict("size is %d instead of %d", *output.ContentLength, segment.Size()), closeS3Object(output.Body, key))
+	if output.ContentLength != nil && *output.ContentLength != object.Size() {
+		return goerrors.Join(conflict("size is %d instead of %d", *output.ContentLength, object.Size()), closeS3Object(output.Body, key))
 	}
 	hasher := sha256.New()
-	read, readErr := copyS3Object(ctx, hasher, output.Body, segment.Size()+1)
+	read, readErr := copyS3Object(ctx, hasher, output.Body, object.Size()+1)
 	closeErr := closeS3Object(output.Body, key)
 	if readErr != nil {
 		return goerrors.Join(readErr, closeErr)
 	}
-	if read != segment.Size() {
-		return goerrors.Join(conflict("size is %d instead of %d", read, segment.Size()), closeErr)
+	if read != object.Size() {
+		return goerrors.Join(conflict("size is %d instead of %d", read, object.Size()), closeErr)
 	}
 	if subtle.ConstantTimeCompare(hasher.Sum(nil), expectedChecksum) != 1 {
 		return goerrors.Join(conflict("SHA-256 checksum differs"), closeErr)

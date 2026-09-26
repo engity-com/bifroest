@@ -4,6 +4,7 @@ package net
 
 import (
 	"context"
+	"fmt"
 	gonet "net"
 	"os"
 	"path/filepath"
@@ -12,12 +13,21 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
+const maxLinuxUnixSocketPathBytes = 107
+
 func newNamedPipe(purpose Purpose, id string) (NamedPipe, error) {
 	dir, err := os.MkdirTemp("", "bifroest-")
 	if err != nil {
 		return nil, err
 	}
 	path := filepath.Join(dir, purpose.String()+"-"+id+".sock")
+	if len(path) > maxLinuxUnixSocketPathBytes {
+		path = filepath.Join(dir, "s")
+	}
+	if len(path) > maxLinuxUnixSocketPathBytes {
+		_ = os.Remove(dir)
+		return nil, fmt.Errorf("unix socket path is too long (%d > %d bytes)", len(path), maxLinuxUnixSocketPathBytes)
+	}
 	ln, err := gonet.Listen("unix", path)
 	if err != nil {
 		_ = os.Remove(dir)

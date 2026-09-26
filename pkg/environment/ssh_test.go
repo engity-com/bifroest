@@ -571,12 +571,15 @@ func (this *sshTestRequestSender) SendRequest(name string, _ bool, payload []byt
 }
 
 type sshTarget struct {
-	listener    gonet.Listener
-	config      *gossh.ServerConfig
-	connections atomic.Int32
-	done        chan struct{}
-	closeOnce   sync.Once
-	blockedExec chan struct{}
+	listener         gonet.Listener
+	config           *gossh.ServerConfig
+	connections      atomic.Int32
+	done             chan struct{}
+	closeOnce        sync.Once
+	blockedExec      chan struct{}
+	pendingOpen      chan string
+	pendingOpenAfter int32
+	openCount        atomic.Int32
 }
 
 func newSshTarget(t *testing.T) *sshTarget {
@@ -584,6 +587,10 @@ func newSshTarget(t *testing.T) *sshTarget {
 }
 
 func newSshTargetWithPublicKeyCallback(t *testing.T, callback func(gossh.ConnMetadata, gossh.PublicKey) (*gossh.Permissions, error)) *sshTarget {
+	return newSshTargetWithPendingOpenAndCallback(t, nil, callback)
+}
+
+func newSshTargetWithPendingOpenAndCallback(t *testing.T, pendingOpen chan string, callback func(gossh.ConnMetadata, gossh.PublicKey) (*gossh.Permissions, error)) *sshTarget {
 	t.Helper()
 	listener, err := gonet.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -591,7 +598,7 @@ func newSshTargetWithPublicKeyCallback(t *testing.T, callback func(gossh.ConnMet
 	config.AddHostKey(newSshTestSigner(t))
 	result := &sshTarget{
 		listener: listener, config: config, done: make(chan struct{}),
-		blockedExec: make(chan struct{}, 1),
+		blockedExec: make(chan struct{}, 1), pendingOpen: pendingOpen,
 	}
 	go result.serve()
 	return result
@@ -626,6 +633,12 @@ func (this *sshTarget) serveConnection(raw gonet.Conn) {
 	defer func() { _ = connection.Close() }()
 	go gossh.DiscardRequests(requests)
 	for channel := range channels {
+		if this.pendingOpen != nil && this.openCount.Add(1) == this.pendingOpenAfter+1 {
+			this.pendingOpen <- channel.ChannelType()
+			// Leave the selected open unanswered until the client closes its transport.
+			_ = connection.Wait()
+			return
+		}
 		switch channel.ChannelType() {
 		case "session":
 			go serveSshTargetSession(channel, this.blockedExec)

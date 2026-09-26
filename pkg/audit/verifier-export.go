@@ -32,6 +32,9 @@ func (this *Verification) ExportJSONLines(output io.Writer, order RecordOrder) e
 	encoder := json.NewEncoder(output)
 	encoder.SetEscapeHTML(false)
 	for _, record := range records {
+		if !this.withSensitive {
+			record.Event = Event{Name: record.Event.Name, Domain: record.Event.Domain, Outcome: record.Event.Outcome}
+		}
 		if err := encoder.Encode(record); err != nil {
 			return errors.System.Newf("cannot export verified audit record: %w", err)
 		}

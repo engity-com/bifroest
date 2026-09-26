@@ -22,13 +22,13 @@ func TestAuditlog_UnmarshalYAML(t *testing.T) {
 			name: "defaults",
 			yaml: `{}`,
 			expected: Auditlog{
-				Name:         DefaultAuditlogName,
-				Enabled:      DefaultAuditlogEnabled,
-				IdentityFile: DefaultAuditlogIdentityFile,
-				Journal: AuditlogJournal{
-					Directory:        DefaultAuditlogJournalDirectory,
-					MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
-				},
+				Name:             DefaultAuditlogName,
+				Enabled:          DefaultAuditlogEnabled,
+				FailurePolicy:    DefaultAuditlogFailurePolicy,
+				IdentityFile:     DefaultAuditlogIdentityFile,
+				Directory:        DefaultAuditlogJournalDirectory,
+				MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
+				Recording:        expectedDefaultAuditlogRecording(),
 			},
 		},
 		unmarshalYamlTestCase[Auditlog]{
@@ -36,17 +36,17 @@ func TestAuditlog_UnmarshalYAML(t *testing.T) {
 			yaml: `
 enabled: true
 name: security
+failurePolicy: bestEffort
 identityFile: "  custom-audit-key  "
-journal:
-  directory: "  custom-journal  "`,
+directory: "  custom-journal  "`,
 			expected: Auditlog{
-				Name:         "security",
-				Enabled:      true,
-				IdentityFile: "custom-audit-key",
-				Journal: AuditlogJournal{
-					Directory:        "custom-journal",
-					MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
-				},
+				Name:             "security",
+				Enabled:          true,
+				FailurePolicy:    AuditlogFailurePolicyBestEffort,
+				IdentityFile:     "custom-audit-key",
+				Directory:        "custom-journal",
+				MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
+				Recording:        expectedDefaultAuditlogRecording(),
 			},
 		},
 		unmarshalYamlTestCase[Auditlog]{
@@ -55,10 +55,8 @@ journal:
 			expectedError: `[identityFile] required but absent`,
 		},
 		unmarshalYamlTestCase[Auditlog]{
-			name: "missing-journal-directory",
-			yaml: `
-journal:
-  directory: " "`,
+			name:          "missing-directory",
+			yaml:          `directory: " "`,
 			expectedError: `[directory] required but absent`,
 		},
 		unmarshalYamlTestCase[Auditlog]{
@@ -67,11 +65,30 @@ journal:
 			expectedError: `field unknown not found`,
 		},
 		unmarshalYamlTestCase[Auditlog]{
-			name: "unknown-journal-field",
-			yaml: `
-journal:
-  unknown: true`,
-			expectedError: `field unknown not found`,
+			name: "nested-journal-rejected",
+			yaml: `journal:
+  directory: journal`,
+			expectedError: `field journal not found`,
+		},
+		unmarshalYamlTestCase[Auditlog]{
+			name: "explicit-reserve",
+			yaml: "minimumFreeBytes: 1048576",
+			expected: Auditlog{
+				Name: DefaultAuditlogName, Enabled: DefaultAuditlogEnabled,
+				FailurePolicy: DefaultAuditlogFailurePolicy, IdentityFile: DefaultAuditlogIdentityFile,
+				Directory: DefaultAuditlogJournalDirectory, MinimumFreeBytes: 1048576,
+				Recording: expectedDefaultAuditlogRecording(),
+			},
+		},
+		unmarshalYamlTestCase[Auditlog]{
+			name: "explicit-zero-reserve",
+			yaml: "minimumFreeBytes: 0",
+			expected: Auditlog{
+				Name: DefaultAuditlogName, Enabled: DefaultAuditlogEnabled,
+				FailurePolicy: DefaultAuditlogFailurePolicy, IdentityFile: DefaultAuditlogIdentityFile,
+				Directory: DefaultAuditlogJournalDirectory, MinimumFreeBytes: 0,
+				Recording: expectedDefaultAuditlogRecording(),
+			},
 		},
 	)
 }
@@ -80,13 +97,13 @@ func TestAuditlogsDefaultAndExplicitEntries(t *testing.T) {
 	var absent Auditlogs
 	require.NoError(t, absent.SetDefaults())
 	require.Equal(t, Auditlogs{{
-		Name:         DefaultAuditlogName,
-		Enabled:      false,
-		IdentityFile: DefaultAuditlogIdentityFile,
-		Journal: AuditlogJournal{
-			Directory:        DefaultAuditlogJournalDirectory,
-			MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
-		},
+		Name:             DefaultAuditlogName,
+		Enabled:          false,
+		FailurePolicy:    DefaultAuditlogFailurePolicy,
+		IdentityFile:     DefaultAuditlogIdentityFile,
+		Directory:        DefaultAuditlogJournalDirectory,
+		MinimumFreeBytes: DefaultAuditlogJournalMinimumFreeBytes,
+		Recording:        expectedDefaultAuditlogRecording(),
 	}}, absent)
 
 	var empty Auditlogs
@@ -99,22 +116,11 @@ func TestAuditlogsDefaultAndExplicitEntries(t *testing.T) {
 - name: security
   enabled: true
   identityFile: security-key
-  journal:
-    directory: security-journal
+  directory: security-journal
 `), &configured))
 	require.Len(t, configured, 2)
 	require.Equal(t, AuditlogName("security"), configured[1].Name)
 	require.True(t, configured[1].Enabled)
-}
-
-func TestAuditlogJournalMinimumFreeBytes(t *testing.T) {
-	var configured AuditlogJournal
-	require.NoError(t, yaml.Unmarshal([]byte("directory: journal\nminimumFreeBytes: 1048576"), &configured))
-	require.Equal(t, uint64(1048576), configured.MinimumFreeBytes)
-	require.True(t, configured.IsEqualTo(AuditlogJournal{Directory: "journal", MinimumFreeBytes: 1048576}))
-
-	var unknown AuditlogJournal
-	require.ErrorContains(t, yaml.Unmarshal([]byte("unknown: true"), &unknown), "field unknown not found")
 }
 
 func TestAuditlogsRejectConflicts(t *testing.T) {
@@ -122,34 +128,37 @@ func TestAuditlogsRejectConflicts(t *testing.T) {
 	require.ErrorContains(t, duplicateNames.Validate(), "duplicates")
 
 	duplicatePaths := Auditlogs{
-		{Name: "first", Enabled: true, IdentityFile: "key", Journal: AuditlogJournal{Directory: "journal-1"}},
-		{Name: "second", Enabled: true, IdentityFile: "key", Journal: AuditlogJournal{Directory: "journal-2"}},
+		{Name: "first", Enabled: true, IdentityFile: "key", Directory: "journal-1"},
+		{Name: "second", Enabled: true, IdentityFile: "key", Directory: "journal-2"},
 	}
 	require.ErrorContains(t, duplicatePaths.Validate(), "identityFile")
+	duplicatePaths[1].IdentityFile = "other-key"
+	duplicatePaths[1].Directory = duplicatePaths[0].Directory
+	require.ErrorContains(t, duplicatePaths.Validate(), "[1][directory] duplicates enabled auditlog [0][directory]")
 
 	overlappingJournals := Auditlogs{
-		{Name: "first", Enabled: true, IdentityFile: "key-1", Journal: AuditlogJournal{Directory: "journals"}},
-		{Name: "second", Enabled: true, IdentityFile: "key-2", Journal: AuditlogJournal{Directory: "journals/second"}},
+		{Name: "first", Enabled: true, IdentityFile: "key-1", Directory: "journals"},
+		{Name: "second", Enabled: true, IdentityFile: "key-2", Directory: "journals/second"},
 	}
-	require.ErrorContains(t, overlappingJournals.Validate(), "overlaps")
+	require.ErrorContains(t, overlappingJournals.Validate(), "[1][directory] overlaps enabled auditlog [0][directory]")
 
 	identityInsideJournal := Auditlogs{
-		{Name: "first", Enabled: true, IdentityFile: "journals/first-key", Journal: AuditlogJournal{Directory: "journal-1"}},
-		{Name: "second", Enabled: true, IdentityFile: "key-2", Journal: AuditlogJournal{Directory: "journals"}},
+		{Name: "first", Enabled: true, IdentityFile: "journals/first-key", Directory: "journal-1"},
+		{Name: "second", Enabled: true, IdentityFile: "key-2", Directory: "journals"},
 	}
-	require.ErrorContains(t, identityInsideJournal.Validate(), "is located inside")
+	require.ErrorContains(t, identityInsideJournal.Validate(), "[0][identityFile] is located inside enabled auditlog [1][directory]")
 
 	journalBelowIdentity := Auditlogs{{
 		Name:         "first",
 		Enabled:      true,
 		IdentityFile: "key",
-		Journal:      AuditlogJournal{Directory: "key/journal"},
+		Directory:    "key/journal",
 	}}
-	require.ErrorContains(t, journalBelowIdentity.Validate(), "is located below")
+	require.ErrorContains(t, journalBelowIdentity.Validate(), "[0][directory] is located below enabled auditlog [0][identityFile]")
 
 	overlappingIdentities := Auditlogs{
-		{Name: "first", Enabled: true, IdentityFile: "keys", Journal: AuditlogJournal{Directory: "journal-1"}},
-		{Name: "second", Enabled: true, IdentityFile: "keys/second", Journal: AuditlogJournal{Directory: "journal-2"}},
+		{Name: "first", Enabled: true, IdentityFile: "keys", Directory: "journal-1"},
+		{Name: "second", Enabled: true, IdentityFile: "keys/second", Directory: "journal-2"},
 	}
 	require.ErrorContains(t, overlappingIdentities.Validate(), "identityFile] overlaps")
 }
@@ -158,7 +167,7 @@ func TestAuditlogNameValidationAlsoAppliesProgrammatically(t *testing.T) {
 	auditlogs := Auditlogs{{
 		Name:         "invalid/name",
 		IdentityFile: "key",
-		Journal:      AuditlogJournal{Directory: "journal"},
+		Directory:    "journal",
 	}}
 	require.ErrorContains(t, auditlogs.Validate(), "illegal auditlog name")
 

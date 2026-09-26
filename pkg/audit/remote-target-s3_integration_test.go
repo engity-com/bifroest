@@ -87,6 +87,22 @@ func TestS3RemoteTargetPublishesAgainstEmbeddedS3Server(t *testing.T) {
 	require.Zero(t, state.missingTokens.Load())
 }
 
+func TestS3RemoteTargetPublishesNativeAuditVector(t *testing.T) {
+	for _, encrypted := range []bool{false, true} {
+		name := "clear"
+		if encrypted {
+			name = "encrypted"
+		}
+		t.Run(name, func(t *testing.T) {
+			target, client, _ := newEmbeddedS3RemoteTestTarget(t, "production")
+			segment, vector, fingerprint := nativeRemoteTestSegment(t, encrypted)
+			require.NoError(t, target.Publish(context.Background(), segment))
+			key := "production/" + segment.RemotePath()
+			verifyRetrievedNativeRemoteTestSegment(t, segment, vector, fingerprint, readEmbeddedS3Object(t, client, key))
+		})
+	}
+}
+
 func TestS3RemoteTargetConcurrentPublicationAgainstEmbeddedServer(t *testing.T) {
 	target, client, state := newEmbeddedS3RemoteTestTarget(t, "")
 	segment := validRemoteTargetTestSegment()

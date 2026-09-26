@@ -9,6 +9,8 @@ go: &go
   - 'LICENSE'
   - 'LICENSES/**'
   - 'pkg/**'
+  - 'docs/assets/audit-format-vectors/**'
+  - 'docs/assets/recording-format-vectors/**'
   - 'cmd/**'
   - 'internal/**'
   - 'contrib/**'

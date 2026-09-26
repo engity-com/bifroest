@@ -78,6 +78,18 @@ type remoteTargetTestInstance struct {
 	close   func() error
 }
 
+type remoteArtifactTargetTestInstance struct {
+	*remoteTargetTestInstance
+	publishArtifact func(context.Context, RemoteArtifact) error
+}
+
+func (this *remoteArtifactTargetTestInstance) PublishArtifact(ctx context.Context, artifact RemoteArtifact) error {
+	if this.publishArtifact != nil {
+		return this.publishArtifact(ctx, artifact)
+	}
+	return nil
+}
+
 func (this *remoteTargetTestInstance) Publish(ctx context.Context, segment SealedSegment) error {
 	if this.publish != nil {
 		return this.publish(ctx, segment)
@@ -127,6 +139,45 @@ func TestNewRemoteTargetValidatesEveryPublishedSegment(t *testing.T) {
 	require.Equal(t, 1, published)
 	require.Error(t, target.Publish(context.Background(), SealedSegment{}))
 	require.Equal(t, 1, published)
+}
+
+func TestNewRemoteTargetPreservesAndValidatesArtifactCapability(t *testing.T) {
+	published := 0
+	conf := configuration.AuditlogTarget{
+		Name: "archive",
+		V: &remoteTargetTestConfiguration{create: func(context.Context, RemoteTargetScope) (RemoteTarget, error) {
+			return &remoteArtifactTargetTestInstance{
+				remoteTargetTestInstance: &remoteTargetTestInstance{},
+				publishArtifact: func(context.Context, RemoteArtifact) error {
+					published++
+					return nil
+				},
+			}, nil
+		}},
+	}
+	target, err := NewRemoteTarget(context.Background(), "security", &conf)
+	require.NoError(t, err)
+	artifactTarget, ok := target.(RemoteArtifactTarget)
+	require.True(t, ok)
+	require.NoError(t, artifactTarget.PublishArtifact(context.Background(), validRemoteArtifactTest()))
+	require.Equal(t, 1, published)
+	require.Error(t, artifactTarget.PublishArtifact(context.Background(), RemoteArtifact{}))
+	require.Equal(t, 1, published)
+	invalidContent := validRemoteArtifactTest()
+	invalidContent.digest[0]++
+	require.ErrorContains(t, artifactTarget.PublishArtifact(context.Background(), invalidContent), "does not match digest")
+	require.Equal(t, 1, published)
+
+	legacy := configuration.AuditlogTarget{
+		Name: "legacy",
+		V: &remoteTargetTestConfiguration{create: func(context.Context, RemoteTargetScope) (RemoteTarget, error) {
+			return &remoteTargetTestInstance{}, nil
+		}},
+	}
+	legacyTarget, err := NewRemoteTarget(context.Background(), "security", &legacy)
+	require.NoError(t, err)
+	_, ok = legacyTarget.(RemoteArtifactTarget)
+	require.False(t, ok)
 }
 
 func TestNewRemoteTargetRejectsInvalidFactories(t *testing.T) {
