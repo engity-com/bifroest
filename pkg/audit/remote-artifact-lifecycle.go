@@ -670,7 +670,7 @@ func isRemoteArtifactLifecycleSuccessor(current, next remoteArtifactLifecycle) b
 func sameRemoteArtifactLifecycleCorrelation(left, right Event) bool {
 	return left.Domain == right.Domain && left.Flow == right.Flow && left.ConnectionId == right.ConnectionId &&
 		left.SessionId == right.SessionId && left.OperationId == right.OperationId && left.RecordingId == right.RecordingId &&
-		left.SessionTask == right.SessionTask
+		left.SessionTask == right.SessionTask && left.SessionSubsystem == right.SessionSubsystem
 }
 
 func writeRemoteArtifactLifecycle(directory, fileName string, payload []byte, quota RemoteArtifactReceiptQuota) (result error) {

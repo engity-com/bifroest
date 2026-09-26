@@ -22,7 +22,8 @@ func MustNewRegexp(plain string) Regexp {
 }
 
 type Regexp struct {
-	v *regexp.Regexp
+	v     *regexp.Regexp
+	whole *regexp.Regexp
 }
 
 func (this Regexp) IsZero() bool {
@@ -43,6 +44,7 @@ func (this Regexp) String() string {
 func (this *Regexp) UnmarshalText(text []byte) error {
 	if len(text) == 0 {
 		this.v = nil
+		this.whole = nil
 		return nil
 	}
 
@@ -50,8 +52,13 @@ func (this *Regexp) UnmarshalText(text []byte) error {
 	if err != nil {
 		return fmt.Errorf("illegal regex")
 	}
+	whole, err := regexp.Compile(`\A(?:` + string(text) + `)\z`)
+	if err != nil {
+		return fmt.Errorf("illegal regex")
+	}
 
 	this.v = v
+	this.whole = whole
 	return nil
 }
 
@@ -61,6 +68,13 @@ func (this *Regexp) Set(text string) error {
 
 func (this *Regexp) MatchString(s string) bool {
 	if v := this.v; v != nil {
+		return v.MatchString(s)
+	}
+	return false
+}
+
+func (this *Regexp) MatchEntireString(s string) bool {
+	if v := this.whole; v != nil {
 		return v.MatchString(s)
 	}
 	return false
@@ -85,8 +99,8 @@ func (this Regexp) IsEqualTo(other any) bool {
 }
 
 func (this Regexp) isEqualTo(other *Regexp) bool {
-	if other.v == nil {
-		return this.v == nil
+	if this.v == nil || other.v == nil {
+		return this.v == nil && other.v == nil
 	}
 	return this.v.String() == other.v.String()
 }

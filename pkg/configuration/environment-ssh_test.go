@@ -38,8 +38,54 @@ acceptAllHostKeys: true
 	require.Equal(t, 10*time.Second, mustRenderDuration(t, actual.ConnectTimeout))
 	require.True(t, mustRenderBool(t, actual.LoginAllowed))
 	require.True(t, mustRenderBool(t, actual.PortForwardingAllowed))
+	require.True(t, actual.AllowedSubsystems.MatchString("sftp"))
+	require.False(t, actual.AllowedSubsystems.MatchEntireString("netconf"))
+	require.False(t, actual.AllowedSubsystems.MatchEntireString("sftp-server"))
 	require.Empty(t, actual.IdentityFiles)
 	require.Equal(t, sys.OsLinux, actual.Os)
+}
+
+func TestEnvironmentSshAllowedSubsystems(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		pattern string
+		allowed []string
+		denied  []string
+	}{
+		{name: "allow selected", pattern: "^(sftp|netconf|powershell)$", allowed: []string{"sftp", "netconf", "powershell"}, denied: []string{"other", "not-netconf"}},
+		{name: "unanchored pattern", pattern: "sftp|netconf", allowed: []string{"sftp", "netconf"}, denied: []string{"not-sftp", "netconf-server"}},
+		{name: "deny all", pattern: "", denied: []string{"sftp", "netconf"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var configured Environment
+			err := yaml.Unmarshal([]byte("type: ssh\naddress: target.example.org:22\nuser: alice\nacceptAllHostKeys: true\nallowedSubsystems: '"+test.pattern+"'\n"), &configured)
+			require.NoError(t, err)
+			actual := configured.V.(*EnvironmentSsh)
+			for _, name := range test.allowed {
+				require.True(t, actual.AllowedSubsystems.MatchEntireString(name), name)
+			}
+			for _, name := range test.denied {
+				require.False(t, actual.AllowedSubsystems.MatchEntireString(name), name)
+			}
+			encoded, err := yaml.Marshal(actual)
+			require.NoError(t, err)
+			require.Contains(t, string(encoded), "allowedSubsystems:")
+			var restored EnvironmentSsh
+			require.NoError(t, yaml.Unmarshal(encoded, &restored))
+			require.True(t, actual.IsEqualTo(restored))
+			changed := *actual
+			changed.AllowedSubsystems = DefaultEnvironmentSshAllowedSubsystems
+			if test.pattern == "" {
+				require.False(t, actual.IsEqualTo(changed))
+				require.False(t, changed.IsEqualTo(actual))
+			}
+		})
+	}
+	var configured Environment
+	require.Error(t, yaml.Unmarshal([]byte("type: ssh\naddress: target.example.org:22\nuser: alice\nacceptAllHostKeys: true\nallowedSubsystems: '['\n"), &configured))
+	require.ErrorContains(t, yaml.Unmarshal([]byte("type: ssh\naddress: target.example.org:22\nuser: alice\nacceptAllHostKeys: true\nallowedSubsystems:\n"), &configured), "cannot be null")
+	require.ErrorContains(t, yaml.Unmarshal([]byte("type: ssh\naddress: target.example.org:22\nuser: alice\nacceptAllHostKeys: true\nbanner: &empty null\nallowedSubsystems: *empty\n"), &configured), "cannot be null")
+	require.ErrorContains(t, yaml.Unmarshal([]byte("type: ssh\naddress: target.example.org:22\nuser: alice\nacceptAllHostKeys: true\npolicy: &policy\n  allowedSubsystems: null\n<<: *policy\n"), &configured), "cannot be null")
 }
 
 func TestEnvironmentSshTargetOs(t *testing.T) {

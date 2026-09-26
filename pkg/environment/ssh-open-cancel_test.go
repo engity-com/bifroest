@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/crypto"
@@ -25,6 +26,7 @@ func TestSshEnvironmentCancellationBeforeChannelOpenReply(t *testing.T) {
 	}{
 		{"shell", TaskTypeShell, "session", 7},
 		{"sftp", TaskTypeSftp, "session", 0},
+		{"netconf", TaskTypeSubsystem, "session", 9},
 		{"direct-tcpip", TaskTypeShell, "direct-tcpip", 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -41,6 +43,9 @@ func TestSshEnvironmentCancellationBeforeChannelOpenReply(t *testing.T) {
 			conf.Address = template.MustNewString(target.Address())
 			conf.User = template.MustNewString("target-user")
 			conf.AcceptAllHostKeys = true
+			if test.taskType == TaskTypeSubsystem {
+				conf.AllowedSubsystems = common.MustNewRegexp("^netconf$")
+			}
 			repository, err := NewSshRepositoryWithHostKeys(context.Background(), "test", conf, []crypto.PrivateKey{newSshTestPrivateKey(t)})
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = repository.Close() })
@@ -48,9 +53,13 @@ func TestSshEnvironmentCancellationBeforeChannelOpenReply(t *testing.T) {
 			ctx, cancel := newSshTestContext()
 			t.Cleanup(cancel)
 			newTask := func(ctx *sshTestContext) *sshTestTask {
+				sshSession := newSshTestSession(ctx, "show-environment", nil)
+				if test.taskType == TaskTypeSubsystem {
+					sshSession.subsystem = test.name
+				}
 				return &sshTestTask{
 					context: ctx, connection: conn, authorization: auth,
-					session: newSshTestSession(ctx, "show-environment", nil), taskType: test.taskType,
+					session: sshSession, taskType: test.taskType,
 				}
 			}
 			task := newTask(ctx)

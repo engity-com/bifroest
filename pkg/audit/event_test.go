@@ -150,26 +150,30 @@ func TestAuditEventValidationRejectsInvalidStructuredFields(t *testing.T) {
 	zeroUint64 := uint64(0)
 	validId := uuid.NewString()
 	tests := map[string]Event{
-		"domain":                {Name: "test.event", Domain: "other"},
-		"outcome":               {Name: "test.event", Outcome: "other"},
-		"authentication method": {Name: "test.event", AuthenticationMethod: "other"},
-		"authentication phase":  {Name: "test.event", AuthenticationPhase: "other"},
-		"session task":          {Name: "test.event", SessionTask: "other"},
-		"error category":        {Name: "test.event", ErrorCategory: "other"},
-		"target":                {Name: "test.event", Target: "invalid/target"},
-		"flow":                  {Name: "test.event", Flow: "invalid/flow"},
-		"authorization kind":    {Name: "test.event", AuthorizationKind: "invalid kind"},
-		"reason":                {Name: "test.event", Reason: "invalid reason"},
-		"connection ID":         {Name: "test.event", ConnectionId: "not-an-id"},
-		"nil connection ID":     {Name: "test.event", ConnectionId: uuid.Nil.String()},
-		"noncanonical ID":       {Name: "test.event", ConnectionId: "34E34AB8-7457-4D88-A5E4-C57791775C3A"},
-		"session ID":            {Name: "test.event", SessionId: "not-an-id"},
-		"operation ID":          {Name: "test.event", OperationId: "not-an-id"},
-		"exit code":             {Name: "test.event", ExitCode: &negativeInt},
-		"bytes read":            {Name: "test.event", BytesRead: &negativeInt64},
-		"bytes written":         {Name: "test.event", BytesWritten: &negativeInt64},
-		"duration":              {Name: "test.event", DurationMillis: &negativeInt64},
-		"count":                 {Name: "test.event", Count: &zeroUint64},
+		"domain":                  {Name: "test.event", Domain: "other"},
+		"outcome":                 {Name: "test.event", Outcome: "other"},
+		"authentication method":   {Name: "test.event", AuthenticationMethod: "other"},
+		"authentication phase":    {Name: "test.event", AuthenticationPhase: "other"},
+		"session task":            {Name: "test.event", SessionTask: "other"},
+		"subsystem without task":  {Name: "test.event", SessionSubsystem: "netconf"},
+		"oversized subsystem":     {Name: "test.event", SessionTask: SessionTaskSubsystem, SessionSubsystem: strings.Repeat("x", MaxSessionSubsystemBytes+1)},
+		"invalid UTF-8 subsystem": {Name: "test.event", SessionTask: SessionTaskSubsystem, SessionSubsystem: string([]byte{0xff})},
+		"NUL subsystem":           {Name: "test.event", SessionTask: SessionTaskSubsystem, SessionSubsystem: "sftp\x00"},
+		"error category":          {Name: "test.event", ErrorCategory: "other"},
+		"target":                  {Name: "test.event", Target: "invalid/target"},
+		"flow":                    {Name: "test.event", Flow: "invalid/flow"},
+		"authorization kind":      {Name: "test.event", AuthorizationKind: "invalid kind"},
+		"reason":                  {Name: "test.event", Reason: "invalid reason"},
+		"connection ID":           {Name: "test.event", ConnectionId: "not-an-id"},
+		"nil connection ID":       {Name: "test.event", ConnectionId: uuid.Nil.String()},
+		"noncanonical ID":         {Name: "test.event", ConnectionId: "34E34AB8-7457-4D88-A5E4-C57791775C3A"},
+		"session ID":              {Name: "test.event", SessionId: "not-an-id"},
+		"operation ID":            {Name: "test.event", OperationId: "not-an-id"},
+		"exit code":               {Name: "test.event", ExitCode: &negativeInt},
+		"bytes read":              {Name: "test.event", BytesRead: &negativeInt64},
+		"bytes written":           {Name: "test.event", BytesWritten: &negativeInt64},
+		"duration":                {Name: "test.event", DurationMillis: &negativeInt64},
+		"count":                   {Name: "test.event", Count: &zeroUint64},
 	}
 
 	for name, event := range tests {
@@ -179,6 +183,7 @@ func TestAuditEventValidationRejectsInvalidStructuredFields(t *testing.T) {
 	}
 
 	require.NoError(t, validateAuditEvent(Event{Name: "test.event", ConnectionId: validId, SessionId: validId, OperationId: validId}))
+	require.NoError(t, validateAuditEvent(Event{Name: "test.event", SessionTask: SessionTaskSubsystem, SessionSubsystem: "netconf"}))
 }
 
 func TestAuditEventFlowEnforcesConfiguredByteLengthLimit(t *testing.T) {

@@ -654,8 +654,9 @@ func (this *Service) prepareServer(_ context.Context, svc *service, hostPrivateK
 		"session":      svc.handleNewSshSession,
 		"direct-tcpip": svc.handleNewDirectTcpIp,
 	}
-	svc.server.SubsystemHandlers = map[string]essh.SubsystemHandler{
-		"sftp": svc.handleSshSftpSession,
+	svc.server.DeferredSubsystemHandlers = map[string]essh.DeferredSubsystemHandler{
+		"sftp":    svc.handleSshSubsystemSession,
+		"default": svc.handleSshSubsystemSession,
 	}
 	svc.server.HostSigners = make([]essh.Signer, len(hostPrivateKeys))
 	for i, v := range hostPrivateKeys {

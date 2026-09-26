@@ -21,6 +21,7 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/crypto"
@@ -130,6 +131,132 @@ func TestSshEnvironmentSharesTransportForExecSftpAndDirectTcpIp(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+func TestSshEnvironmentForwardsNamedSubsystems(t *testing.T) {
+	target := newSshTarget(t)
+	defer target.Close()
+	ctx, cancel := newSshTestContext()
+	defer cancel()
+	conn := &sshTestConnection{id: connection.MustNewId(), context: ctx}
+	auth := &sshTestAuthorization{session: &sshTestStoredSession{id: session.MustNewId()}}
+	conf := &configuration.EnvironmentSsh{}
+	require.NoError(t, conf.SetDefaults())
+	conf.Address = template.MustNewString(target.Address())
+	conf.User = template.MustNewString("target-user")
+	conf.AcceptAllHostKeys = true
+	conf.AllowedSubsystems = common.MustNewRegexp("^(sftp|netconf|powershell|unknown)$")
+	repository, err := NewSshRepositoryWithHostKeys(context.Background(), "test", conf, []crypto.PrivateKey{newSshTestPrivateKey(t)})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, repository.Close()) }()
+
+	for _, name := range []string{"netconf", "powershell", "unknown"} {
+		t.Run(name, func(t *testing.T) {
+			sess := newSshTestSession(ctx, "", []byte("payload for "+name))
+			sess.subsystem = name
+			if name == "netconf" {
+				sess.closeWriteErr = io.EOF
+			}
+			task := &sshTestTask{context: ctx, connection: conn, authorization: auth, session: sess, taskType: TaskTypeSubsystem}
+			resolved, err := repository.Ensure(task)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, resolved.Close()) }()
+			var replies []bool
+			code, err := resolved.(SubsystemRunner).RunSubsystem(task, func(accepted bool) error {
+				replies = append(replies, accepted)
+				return nil
+			})
+			if name == "unknown" {
+				require.ErrorContains(t, err, "rejected")
+				require.Empty(t, replies)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, 9, code)
+			require.Equal(t, []bool{true}, replies)
+			require.Equal(t, "payload for "+name, sess.stdout.String())
+			require.Equal(t, "subsystem stderr", sess.stderr.String())
+		})
+	}
+}
+
+func TestSshEnvironmentDeniedSubsystemDoesNotConnect(t *testing.T) {
+	target := newSshTarget(t)
+	defer target.Close()
+	ctx, cancel := newSshTestContext()
+	defer cancel()
+	conn := &sshTestConnection{id: connection.MustNewId(), context: ctx}
+	auth := &sshTestAuthorization{session: &sshTestStoredSession{id: session.MustNewId()}}
+	conf := &configuration.EnvironmentSsh{}
+	require.NoError(t, conf.SetDefaults())
+	conf.Address = template.MustNewString(target.Address())
+	conf.User = template.MustNewString("target-user")
+	conf.AcceptAllHostKeys = true
+	conf.AllowedSubsystems = common.MustNewRegexp("sftp|netconf")
+	repository, err := NewSshRepositoryWithHostKeys(context.Background(), "test", conf, []crypto.PrivateKey{newSshTestPrivateKey(t)})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, repository.Close()) }()
+	sess := newSshTestSession(ctx, "", nil)
+	sess.subsystem = "not-netconf"
+	task := &sshTestTask{context: ctx, connection: conn, authorization: auth, session: sess, taskType: TaskTypeSubsystem}
+	resolved, err := repository.Ensure(task)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resolved.Close()) }()
+	replies := make(chan bool, 1)
+	code, err := resolved.(SubsystemRunner).RunSubsystem(task, func(accepted bool) error {
+		replies <- accepted
+		return nil
+	})
+	require.Equal(t, -1, code)
+	require.ErrorContains(t, err, "not allowed")
+	require.Empty(t, replies)
+	require.Zero(t, target.connections.Load())
+}
+
+func TestWatchSubsystemInput(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		inputDone   bool
+		cancel      bool
+		shouldClose bool
+	}{
+		{name: "stalled input", shouldClose: true},
+		{name: "completed input", inputDone: true},
+		{name: "canceled session", cancel: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := newSshTestContext()
+			defer cancel()
+			conn := &sshInputWatchConnection{
+				sshTestConnection: &sshTestConnection{id: connection.MustNewId(), context: ctx},
+				closed:            make(chan struct{}),
+			}
+			inputDone := make(chan error, 1)
+			if test.inputDone {
+				inputDone <- nil
+			}
+			if test.cancel {
+				cancel()
+			}
+			finished := make(chan struct{})
+			go func() {
+				watchSubsystemInput(conn, ctx, inputDone, 20*time.Millisecond)
+				close(finished)
+			}()
+			select {
+			case <-finished:
+			case <-time.After(time.Second):
+				t.Fatal("subsystem input watchdog did not finish")
+			}
+			select {
+			case <-conn.closed:
+				require.True(t, test.shouldClose, "watchdog closed a healthy connection")
+			default:
+				require.False(t, test.shouldClose, "watchdog did not close stalled connection")
+			}
+			require.Equal(t, test.shouldClose, conn.stalled.Load())
+		})
+	}
+}
+
 func TestSshEnvironmentCancellationDoesNotCloseSharedTransport(t *testing.T) {
 	target := newSshTarget(t)
 	defer target.Close()
@@ -144,6 +271,7 @@ func TestSshEnvironmentCancellationDoesNotCloseSharedTransport(t *testing.T) {
 	conf.Address = template.MustNewString(target.Address())
 	conf.User = template.MustNewString("target-user")
 	conf.AcceptAllHostKeys = true
+	conf.AllowedSubsystems = common.MustNewRegexp("^(sftp|block-request)$")
 	repository, err := NewSshRepositoryWithHostKeys(context.Background(), "test", conf, []crypto.PrivateKey{newSshTestPrivateKey(t)})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, repository.Close()) }()
@@ -181,6 +309,35 @@ func TestSshEnvironmentCancellationDoesNotCloseSharedTransport(t *testing.T) {
 	require.Eventually(t, func() bool { return len(transport.channels) == 0 }, time.Second, 10*time.Millisecond)
 
 	remaining, err := repository.transportFor(blockedEnvironment)
+	require.NoError(t, err)
+	require.Same(t, transport, remaining)
+	require.Equal(t, int32(1), target.connections.Load())
+
+	subsystemContext, cancelSubsystem := newSshTestContext()
+	defer cancelSubsystem()
+	subsystemSession := newSshTestSession(subsystemContext, "", nil)
+	subsystemSession.subsystem = "block-request"
+	subsystemTask := &sshTestTask{context: subsystemContext, connection: conn, authorization: auth, session: subsystemSession, taskType: TaskTypeSubsystem}
+	subsystemDone := make(chan runResult, 1)
+	go func() {
+		code, err := blockedEnvironment.RunSubsystem(subsystemTask, func(bool) error { return nil })
+		subsystemDone <- runResult{code, err}
+	}()
+	select {
+	case <-target.blockedExec:
+	case <-time.After(time.Second):
+		t.Fatal("target did not receive blocked subsystem request")
+	}
+	cancelSubsystem()
+	select {
+	case result := <-subsystemDone:
+		require.Equal(t, -1, result.code)
+		require.ErrorIs(t, result.err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("canceled subsystem request did not return")
+	}
+	require.Eventually(t, func() bool { return len(transport.channels) == 0 }, time.Second, 10*time.Millisecond)
+	remaining, err = repository.transportFor(blockedEnvironment)
 	require.NoError(t, err)
 	require.Same(t, transport, remaining)
 	require.Equal(t, int32(1), target.connections.Load())
@@ -553,7 +710,7 @@ func TestSshEnvironmentRejectsReversePortForwarding(t *testing.T) {
 func TestCollectSftpExitStatusRequiresStatus(t *testing.T) {
 	requests := make(chan *gossh.Request)
 	close(requests)
-	status, err := collectSftpExitStatus(requests)
+	status, err := collectSubsystemExitStatus(requests, "sftp")
 	require.Equal(t, -1, status)
 	require.ErrorContains(t, err, "did not report an exit status")
 }
@@ -683,14 +840,23 @@ func serveSshTargetSession(channel gossh.NewChannel, blockedExec chan<- struct{}
 		case "subsystem":
 			var payload struct{ Subsystem string }
 			_ = gossh.Unmarshal(request.Payload, &payload)
-			accepted := payload.Subsystem == "sftp"
+			if payload.Subsystem == "block-request" {
+				blockedExec <- struct{}{}
+				continue
+			}
+			accepted := payload.Subsystem == "sftp" || payload.Subsystem == "netconf" || payload.Subsystem == "powershell"
 			_ = request.Reply(accepted, nil)
 			if !accepted {
 				_ = stream.Close()
 				return
 			}
 			_, _ = io.Copy(stream, stream)
-			_, _ = stream.SendRequest("exit-status", false, gossh.Marshal(&struct{ Status uint32 }{0}))
+			status := uint32(0)
+			if payload.Subsystem != "sftp" {
+				status = 9
+				_, _ = io.WriteString(stream.Stderr(), "subsystem stderr")
+			}
+			_, _ = stream.SendRequest("exit-status", false, gossh.Marshal(&struct{ Status uint32 }{status}))
 			_ = stream.Close()
 			return
 		default:
@@ -790,6 +956,22 @@ type sshTestConnection struct {
 	context *sshTestContext
 }
 
+type sshInputWatchConnection struct {
+	*sshTestConnection
+	closed  chan struct{}
+	stalled atomic.Bool
+}
+
+func (this *sshInputWatchConnection) CloseStalledSubsystemInput() error {
+	this.stalled.Store(true)
+	return this.Close()
+}
+
+func (this *sshInputWatchConnection) Close() error {
+	close(this.closed)
+	return nil
+}
+
 func (this *sshTestConnection) Id() connection.Id         { return this.id }
 func (this *sshTestConnection) Remote() bnet.Remote       { return sshTestRemote{} }
 func (this *sshTestConnection) Logger() log.Logger        { return log.GetLogger("test.ssh-environment") }
@@ -886,12 +1068,14 @@ func (*sshTestTask) StartPreparation(string, string, PreparationProgressAttribut
 type sshTestSession struct {
 	context            *sshTestContext
 	command            string
+	subsystem          string
 	originalCommand    string
 	hasOriginalCommand bool
 	environment        []string
 	stdin              *bytes.Reader
 	stdout             bytes.Buffer
 	stderr             bytes.Buffer
+	closeWriteErr      error
 	signals            chan<- essh.Signal
 }
 
@@ -902,7 +1086,7 @@ func newSshTestSession(ctx *sshTestContext, command string, stdin []byte) *sshTe
 func (this *sshTestSession) Read(value []byte) (int, error)            { return this.stdin.Read(value) }
 func (this *sshTestSession) Write(value []byte) (int, error)           { return this.stdout.Write(value) }
 func (*sshTestSession) Close() error                                   { return nil }
-func (*sshTestSession) CloseWrite() error                              { return nil }
+func (this *sshTestSession) CloseWrite() error                         { return this.closeWriteErr }
 func (*sshTestSession) SendRequest(string, bool, []byte) (bool, error) { return false, nil }
 func (this *sshTestSession) Stderr() io.ReadWriter                     { return &this.stderr }
 func (*sshTestSession) User() string                                   { return "source-user" }
@@ -920,7 +1104,7 @@ func (this *sshTestSession) RawCommand() string { return this.command }
 func (this *sshTestSession) OriginalCommand() (string, bool) {
 	return this.originalCommand, this.hasOriginalCommand
 }
-func (*sshTestSession) Subsystem() string                         { return "" }
+func (this *sshTestSession) Subsystem() string                    { return this.subsystem }
 func (*sshTestSession) PublicKey() essh.PublicKey                 { return nil }
 func (this *sshTestSession) Context() essh.Context                { return this.context }
 func (*sshTestSession) Permissions() essh.Permissions             { return essh.Permissions{} }

@@ -99,8 +99,8 @@ github.com/echocat/slf4g/native v1.9.0 h1:u+l6UmWXTZ99Z53VawPB+vupDZHF6YmG/p919b
 github.com/echocat/slf4g/native v1.9.0/go.mod h1:tgpmGHgRWSdgCjzSP4WjFgYUyguM+HaHJ0/2d8VmLdM=
 github.com/emicklei/go-restful/v3 v3.13.0 h1:C4Bl2xDndpU6nJ4bc1jXd+uTmYPVUwkD6bFY/oTyCes=
 github.com/emicklei/go-restful/v3 v3.13.0/go.mod h1:6n3XBCmQQb25CM2LCACGz8ukIrRry+4bhvbpWn3mrbc=
-github.com/engity-com/ssh-server-go v0.2.4 h1:VOdFzpEpFhkE9nCNjpB2tHAWTJN7sxb4r3LRsgFCK+E=
-github.com/engity-com/ssh-server-go v0.2.4/go.mod h1:MrLYK4nxtj/tXeJMz8S+yqLh1GPIw5TWhBj0H/JdobE=
+github.com/engity-com/ssh-server-go v0.3.0 h1:L2/k35HkDRoWCtIpFMsKSJnPwqEujgXHnQ6VmHXbw4w=
+github.com/engity-com/ssh-server-go v0.3.0/go.mod h1:TnA/3Ae/Ii3LLK4V/aqYG2b70vOof/oOPI+CW3avLdc=
 github.com/evanphx/json-patch/v5 v5.6.0 h1:b91NhWfaz02IuVxO9faSllyAtNXHMPkC5J8sJCLunww=
 github.com/evanphx/json-patch/v5 v5.6.0/go.mod h1:G79N1coSVB93tBe7j6PhzjmR3/2VvlbKOFpnXhI9Bw4=
 github.com/felixge/httpsnoop v1.1.0 h1:3YtUj32ZZkqZtt3sZZsClsymw/QDuVfpNhoA31zeORc=

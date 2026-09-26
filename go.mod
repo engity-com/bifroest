@@ -23,7 +23,7 @@ require (
 	github.com/docker/go-connections v0.8.1
 	github.com/echocat/slf4g v1.9.0
 	github.com/echocat/slf4g/native v1.9.0
-	github.com/engity-com/ssh-server-go v0.2.4
+	github.com/engity-com/ssh-server-go v0.3.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/fxamacker/cbor/v2 v2.9.4
 	github.com/go-delve/delve v1.27.2

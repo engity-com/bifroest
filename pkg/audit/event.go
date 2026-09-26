@@ -154,10 +154,13 @@ const (
 
 type SessionTask string
 
+const MaxSessionSubsystemBytes = 256
+
 const (
-	SessionTaskShell SessionTask = "shell"
-	SessionTaskExec  SessionTask = "exec"
-	SessionTaskSftp  SessionTask = "sftp"
+	SessionTaskShell     SessionTask = "shell"
+	SessionTaskExec      SessionTask = "exec"
+	SessionTaskSftp      SessionTask = "sftp"
+	SessionTaskSubsystem SessionTask = "subsystem"
 )
 
 type ErrorCategory string
@@ -189,6 +192,7 @@ type Event struct {
 	AuthenticationPhase  AuthenticationPhase              `json:"authenticationPhase,omitempty"`
 	AuthorizationKind    string                           `json:"authorizationKind,omitempty"`
 	SessionTask          SessionTask                      `json:"sessionTask,omitempty"`
+	SessionSubsystem     string                           `json:"sessionSubsystem,omitempty"`
 	Reason               EventReason                      `json:"reason,omitempty"`
 	ErrorCategory        ErrorCategory                    `json:"errorCategory,omitempty"`
 	ExitCode             *int                             `json:"exitCode,omitempty"`

@@ -1,6 +1,7 @@
 package environment
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -15,9 +16,12 @@ type TaskType uint8
 
 const executionLifecycleCapability = "execution-id-v1"
 
+var ErrSubsystemNotAllowed = errors.New("SSH subsystem is not allowed by the environment")
+
 const (
 	TaskTypeShell TaskType = iota
 	TaskTypeSftp
+	TaskTypeSubsystem
 )
 
 func (this TaskType) String() string {
@@ -26,6 +30,8 @@ func (this TaskType) String() string {
 		return "shell"
 	case TaskTypeSftp:
 		return "sftp"
+	case TaskTypeSubsystem:
+		return "subsystem"
 	default:
 		return fmt.Sprintf("illegal-task-type-%d", this)
 	}
