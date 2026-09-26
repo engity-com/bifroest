@@ -156,7 +156,7 @@ func newEmbeddedS3RemoteTestTarget(t *testing.T, prefix string) (*s3RemoteTarget
 		if request.Header.Get("X-Amz-Security-Token") != "session-token" {
 			state.missingTokens.Add(1)
 		}
-		if strings.HasPrefix(request.URL.Path, "/audit-archive/") {
+		if request.URL.Path != "/audit-archive/" && strings.HasPrefix(request.URL.Path, "/audit-archive/") {
 			switch request.Method {
 			case http.MethodPut:
 				state.objectPuts.Add(1)
