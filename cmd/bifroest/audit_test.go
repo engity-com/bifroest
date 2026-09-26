@@ -25,6 +25,9 @@ func TestAuditVerifyAndExportConfiguredJournal(t *testing.T) {
 
 	require.NoError(t, doAuditVerify(&auditVerifyOpts{configuration: ref, auditlog: "default"}))
 	require.ErrorContains(t, doAuditVerify(&auditVerifyOpts{configuration: ref, auditlog: "missing"}), "does not exist")
+	var verified bytes.Buffer
+	require.NoError(t, doAuditVerifyOutput(&auditVerifyOpts{configuration: ref, auditlog: "default", requireFull: true}, &verified))
+	require.Equal(t, "verified (scope: full)\n", verified.String())
 
 	var output bytes.Buffer
 	require.NoError(t, doAuditExport(&auditExportOpts{configuration: ref, auditlog: "default", output: "-"}, &output))
@@ -459,7 +462,7 @@ func TestAuditExportOfflineWithoutConfiguration(t *testing.T) {
 	producerId := auditCliTestProducerId(t, configured.IdentityFile)
 	require.NoError(t, goos.Remove(configured.IdentityFile))
 	opts := auditExportOpts{
-		auditlog: "default", output: "-", journalDirectory: configured.Directory,
+		auditlog: "default", output: "-", sourceDirectory: configured.Directory,
 		expectedProducerIds: []string{"default=" + producerId.String()},
 		withSensitive:       true, decryptionIdentityFiles: []string{privateKey},
 	}
@@ -497,7 +500,7 @@ func TestAuditExportOfflineWithoutConfiguration(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			opts = auditExportOpts{
-				auditlog: "default", output: "-", journalDirectory: configured.Directory,
+				auditlog: "default", output: "-", sourceDirectory: configured.Directory,
 				expectedProducerIds:     []string{"default=" + producerId.String()},
 				encryptionPublicKeyFile: publicKey,
 			}
@@ -515,12 +518,81 @@ func TestAuditExportOfflineClearWithoutConfiguration(t *testing.T) {
 	producerId := auditCliTestProducerId(t, configured.IdentityFile)
 	require.NoError(t, goos.Remove(configured.IdentityFile))
 	opts := auditExportOpts{
-		auditlog: "default", output: "-", journalDirectory: configured.Directory,
+		auditlog: "default", output: "-", sourceDirectory: configured.Directory,
 		expectedProducerIds: []string{"default=" + producerId.String()}, withSensitive: true,
 	}
 	var output bytes.Buffer
 	require.NoError(t, doAuditExport(&opts, &output))
 	require.Contains(t, output.String(), "confidential-flow-default")
+}
+
+func TestAuditOfflineSingleSourceAndVerifyScopes(t *testing.T) {
+	directory := t.TempDir()
+	privateKey := filepath.Join(directory, "recipient")
+	publicKey := filepath.Join(directory, "recipient.pub")
+	require.NoError(t, doKeyGenerate(privateKey, publicKey))
+	public, err := goos.ReadFile(publicKey)
+	require.NoError(t, err)
+	configured := createAuditCliTestJournalWithEncryption(t, directory, "default", "test.offline-verify", bfcrypto.PublicKeys(strings.TrimSpace(string(public))))
+	producerId := auditCliTestProducerId(t, configured.IdentityFile)
+	require.NoError(t, goos.Remove(configured.IdentityFile))
+	var output bytes.Buffer
+	require.NoError(t, doAuditExport(&auditExportOpts{sourceDirectory: configured.Directory, expectedProducerIds: []string{producerId.String()}, encryptionPublicKeyFile: publicKey, output: "-"}, &output))
+	require.Contains(t, output.String(), `"name":"test.offline-verify"`)
+	var record audit.VerifiedRecord
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(output.Bytes()), &record))
+	require.Equal(t, "default", record.Auditlog)
+
+	opts := auditVerifyOpts{sourceDirectory: configured.Directory, expectedProducerIds: []string{producerId.String()}, encryptionPublicKeyFile: publicKey}
+	output.Reset()
+	require.NoError(t, doAuditVerifyOutput(&opts, &output))
+	require.Equal(t, "verified (scope: outer)\n", output.String())
+	producerHead := filepath.Join(configured.Directory, producerId.String(), "head.cbor")
+	protected, err := goos.OpenFile(producerHead, goos.O_WRONLY, 0)
+	require.NoError(t, err)
+	require.ErrorContains(t, doAuditVerifyOutput(&opts, protected), "journal file")
+	require.NoError(t, protected.Close())
+	opts.requireFull = true
+	output.Reset()
+	require.ErrorContains(t, doAuditVerifyOutput(&opts, &output), "requires --decryptionIdentityFile")
+	require.Empty(t, output.String())
+	opts.decryptionIdentityFiles = []string{privateKey}
+	require.NoError(t, doAuditVerifyOutput(&opts, &output))
+	require.Equal(t, "verified (scope: full)\n", output.String())
+	opts.expectedProducerIds = []string{strings.Repeat("1", 64)}
+	output.Reset()
+	require.Error(t, doAuditVerifyOutput(&opts, &output))
+	require.Empty(t, output.String())
+	opts.expectedProducerIds = nil
+	require.ErrorContains(t, doAuditVerifyOutput(&opts, &output), "requires --expectedProducerId")
+	opts.expectedProducerIds = []string{producerId.String()}
+	opts.configurationPath = "unused.yaml"
+	require.ErrorContains(t, doAuditVerifyOutput(&opts, &output), "cannot be combined")
+}
+
+func TestAuditOutputRejectsRecordingOnlyRepository(t *testing.T) {
+	root := t.TempDir()
+	sealed := filepath.Join(root, "recordings", "sealed")
+	require.NoError(t, goos.MkdirAll(sealed, 0700))
+	other := filepath.Join(sealed, "existing.bcast")
+	require.NoError(t, goos.WriteFile(other, []byte("preserve"), 0600))
+	conf := &configuration.Configuration{Auditlogs: configuration.Auditlogs{{
+		Name: "recording-only", Recording: configuration.AuditlogRecording{Enabled: true, Directory: filepath.Join(root, "recordings")},
+		IdentityFile: filepath.Join(root, "identity"),
+		Targets: configuration.AuditlogTargets{{Name: "archive", V: &configuration.AuditlogTargetSftp{
+			KnownHostsFile: bfcrypto.KnownHostsFile(filepath.Join(root, "known-hosts")), IdentityFiles: []string{filepath.Join(root, "archive-key")},
+		}}},
+	}}}
+	for _, path := range []string{filepath.Join(sealed, "new.cast"), other, conf.Auditlogs[0].IdentityFile, filepath.Join(root, "known-hosts"), filepath.Join(root, "archive-key")} {
+		require.Error(t, ensureAuditOutputSafe(path, conf))
+	}
+	stdout, err := goos.OpenFile(other, goos.O_WRONLY, 0)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, stdout.Close()) }()
+	require.ErrorContains(t, ensureAuditStandardOutputSafe(stdout, "", conf, nil), "recording file")
+	content, err := goos.ReadFile(other)
+	require.NoError(t, err)
+	require.Equal(t, "preserve", string(content))
 }
 
 func TestAuditCommandsReadLiveCommittedCheckpoint(t *testing.T) {

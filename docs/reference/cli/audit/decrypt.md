@@ -8,6 +8,8 @@ description: Alias for exporting a verified Bifröst audit journal.
 
 ## Syntax
 
-`bifroest audit decrypt [flags] <auditlogName>`
+`bifroest audit decrypt [flags] [auditlogName]`
+
+`bifroest audit decrypt --source PATH --expectedProducerId ID [flags] [auditlogName]`
 
 See [`audit export`](export.md) for arguments, flags, output limits, and output safety rules (including the limits of shell `>` redirection). See [Encrypted audit events](../../auditlog/index.md#encrypted-audit-events) for an example.

@@ -128,6 +128,15 @@ func TestRecordingExportTrustsOnlyConfiguredLocalSealedArtifacts(t *testing.T) {
 	output.Reset()
 	require.NoError(t, doRecordingExport(&opts, &output))
 	require.Equal(t, fixture.nativeCast, output.Bytes())
+	opts.output = filepath.Join(sealed, "must-not-write.cast")
+	require.ErrorContains(t, doRecordingExport(&opts, &bytes.Buffer{}), "recording directory")
+	require.NoFileExists(t, opts.output)
+	opts.output = ""
+	opts.file, opts.recordingId, opts.auditlog = "default", fixture.recordingId.String(), ""
+	output.Reset()
+	require.NoError(t, doRecordingExport(&opts, &output))
+	require.Equal(t, fixture.nativeCast, output.Bytes())
+	opts.file, opts.recordingId, opts.auditlog = file, "", "default"
 
 	for _, test := range []struct {
 		name   string
@@ -149,7 +158,7 @@ func TestRecordingExportTrustsOnlyConfiguredLocalSealedArtifacts(t *testing.T) {
 		}, "native sealed"},
 		{"conflicting-producer", func() { opts.expectedProducerId = fixture.identity.ProducerId().String() }, "cannot be combined"},
 		{"untrusted", func() { opts.allowUntrusted = true }, "cannot be combined"},
-		{"configuration-without-auditlog", func() { opts.auditlog = "" }, "requires --auditlog"},
+		{"configuration-without-auditlog", func() { opts.auditlog = "" }, "requires a local auditlog name"},
 		{"disabled-recording", func() { writeConfiguration(fixture.signingIdentityPath, false) }, "not enabled"},
 		{"wrong-signing-identity", func() {
 			writeConfiguration(writeRecordingExportTestPrivateKey(t, ed25519.NewKeyFromSeed(bytes.Repeat([]byte{44}, ed25519.SeedSize))), true)
@@ -170,6 +179,19 @@ func TestRecordingExportTrustsOnlyConfiguredLocalSealedArtifacts(t *testing.T) {
 			require.Equal(t, signingKeyBefore, signingKeyAfter)
 		})
 	}
+}
+
+func TestRecordingExportPositionalFileAndSelectionErrors(t *testing.T) {
+	fixture := newRecordingExportTestFixture(t)
+	opts := recordingExportOpts{file: fixture.nativeClearPath, expectedProducerId: fixture.identity.ProducerId().String(), withSensitive: true}
+	var output bytes.Buffer
+	require.NoError(t, doRecordingExport(&opts, &output))
+	require.Equal(t, fixture.nativeCast, output.Bytes())
+	opts.expectedProducerId = ""
+	require.ErrorContains(t, doRecordingExport(&opts, &bytes.Buffer{}), "--expectedProducerId is required")
+	opts.expectedProducerId = fixture.identity.ProducerId().String()
+	opts.configuration = filepath.Join(t.TempDir(), "configuration.yaml")
+	require.ErrorContains(t, doRecordingExport(&opts, &bytes.Buffer{}), "--configuration requires a local auditlog name")
 }
 
 func TestRecordingExportProducesNoOutputOnVerificationOrDecryptionFailure(t *testing.T) {
@@ -505,6 +527,16 @@ func TestRecordingExportRejectsSignedInvalidLastNativeEventWithoutOutput(t *test
 			_, err = recording.VerifyNativeRecordingFull(bytes.NewReader(forged), int64(len(forged)), identities, verifyOptions)
 			require.Error(t, err, "the inner event must fail full verification")
 			require.NoError(t, stdos.WriteFile(path, forged, 0600))
+			verify := recordingVerifyOpts{file: path, expectedProducerId: fixture.identity.ProducerId().String()}
+			var scope bytes.Buffer
+			if encrypted {
+				require.NoError(t, doRecordingVerify(&verify, &scope))
+				require.Equal(t, "verified (scope: outer)\n", scope.String())
+				verify.decryptionIdentityFiles = identityFiles
+			}
+			scope.Reset()
+			require.Error(t, doRecordingVerify(&verify, &scope))
+			require.Empty(t, scope.String())
 			opts := recordingExportOpts{file: path, expectedProducerId: fixture.identity.ProducerId().String(), decryptionIdentityFiles: identityFiles, withSensitive: true}
 			var stdout bytes.Buffer
 			require.Error(t, doRecordingExport(&opts, &stdout))

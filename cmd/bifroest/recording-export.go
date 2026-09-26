@@ -19,6 +19,7 @@ import (
 
 type recordingExportOpts struct {
 	file                    string
+	recordingId             string
 	output                  string
 	force                   bool
 	withSensitive           bool
@@ -36,10 +37,7 @@ func registerRecordingExportCmd(parent *kingpin.CmdClause) {
 	registerAuditOutputFlags(cmd, &opts.output, &opts.force)
 	cmd.Flag("with-sensitive", "Explicitly authorize exporting sensitive Recording content.").
 		BoolVar(&opts.withSensitive)
-	cmd.Flag("auditlog", "Trust the signing identity of a configured local Recording repository.").
-		PlaceHolder("<auditlogName>").
-		SetValue(&opts.auditlog)
-	cmd.Flag("configuration", "Configuration for --auditlog (defaults to "+defaultConfigurationRef+").").
+	cmd.Flag("configuration", "Configuration for a local Recording (defaults to "+defaultConfigurationRef+").").
 		Short('c').PlaceHolder("<path>").
 		StringVar(&opts.configuration)
 	cmd.Flag("expectedProducerId", "Trusted producer ID containing exactly 64 hexadecimal characters.").
@@ -50,30 +48,36 @@ func registerRecordingExportCmd(parent *kingpin.CmdClause) {
 	cmd.Flag("decryptionIdentityFile", "Private SSH key for decrypting .becast; repeat for multiple keys.").
 		PlaceHolder("<path>").
 		StringsVar(&opts.decryptionIdentityFiles)
-	cmd.Arg("file", "Sealed .bcast or .becast Recording artifact, or signed standalone .cast.").
-		Required().
+	cmd.Arg("fileOrAuditlog", "Configured auditlog name or copied Recording file path.").
 		StringVar(&opts.file)
+	cmd.Arg("recordingId", "Recording UUID when selecting a local auditlog.").StringVar(&opts.recordingId)
 }
 
 func doRecordingExport(opts *recordingExportOpts, stdout io.Writer) (rErr error) {
 	if opts == nil {
 		return fmt.Errorf("nil options")
 	}
+	resolved := *opts
+	opts = &resolved
 	if !opts.withSensitive {
 		return fmt.Errorf("recording export requires --with-sensitive")
 	}
 	if stdout == nil {
 		return fmt.Errorf("nil stdout")
 	}
+	var err error
+	opts.file, opts.auditlog, err = resolveRecordingSelection(opts.file, opts.recordingId, opts.auditlog, opts.configuration, opts.expectedProducerId)
+	if err != nil {
+		return err
+	}
 	if opts.configuration != "" && opts.auditlog.IsZero() {
-		return fmt.Errorf("--configuration requires --auditlog for recording export")
+		return fmt.Errorf("--configuration requires a local auditlog name and Recording ID")
 	}
 	var expectedProducerId audit.ProducerId
 	var localConfiguration configuration.Ref
-	var err error
 	if !opts.auditlog.IsZero() {
 		if opts.expectedProducerId != "" || opts.allowUntrusted {
-			return fmt.Errorf("--auditlog cannot be combined with --expectedProducerId or --allowUntrusted")
+			return fmt.Errorf("local Recording selection cannot be combined with --expectedProducerId or --allowUntrusted")
 		}
 		expectedProducerId, err = configuredRecordingProducerId(opts.auditlog, opts.configuration, opts.file, &localConfiguration)
 	} else {
@@ -105,15 +109,8 @@ func doRecordingExport(opts *recordingExportOpts, stdout io.Writer) (rErr error)
 		return fmt.Errorf("cannot verify Recording %q before export: %w", opts.file, err)
 	}
 	if !opts.auditlog.IsZero() {
-		if inspection.Native == nil {
-			return fmt.Errorf("--auditlog requires a native sealed Recording artifact")
-		}
-		suffix := ".bcast"
-		if inspection.Format == recording.FormatBECastCBOR {
-			suffix = ".becast"
-		}
-		if filepath.Base(opts.file) != recording.Id(inspection.Native.Header.RecordingId).String()+suffix {
-			return fmt.Errorf("--auditlog requires the canonical sealed Recording file name")
+		if err := validateConfiguredSealedRecording(opts.file, inspection); err != nil {
+			return err
 		}
 	}
 	if inspection.Format == recording.FormatBECastCBOR {
@@ -172,6 +169,72 @@ func doRecordingExport(opts *recordingExportOpts, stdout io.Writer) (rErr error)
 		return err
 	}
 	return nil
+}
+
+func validateConfiguredSealedRecording(path string, inspection *recording.Inspection) error {
+	if inspection == nil || inspection.Native == nil {
+		return fmt.Errorf("local auditlog requires a native sealed Recording artifact")
+	}
+	suffix := ".bcast"
+	if inspection.Format == recording.FormatBECastCBOR {
+		suffix = ".becast"
+	}
+	if filepath.Base(path) != recording.Id(inspection.Native.Header.RecordingId).String()+suffix {
+		return fmt.Errorf("local auditlog requires the canonical sealed Recording file name")
+	}
+	return nil
+}
+
+func resolveRecordingSelection(source, recordingId string, auditlogName configuration.AuditlogName, configurationPath, expectedProducerId string) (string, configuration.AuditlogName, error) {
+	if recordingId == "" {
+		if source == "" {
+			return "", "", fmt.Errorf("recording input file or local auditlog and recording ID is required")
+		}
+		return source, auditlogName, nil
+	}
+	if !auditlogName.IsZero() || expectedProducerId != "" {
+		return "", "", fmt.Errorf("local Recording ID cannot be combined with another source selector or --expectedProducerId")
+	}
+	name := configuration.AuditlogName(source)
+	if err := name.Validate(); err != nil {
+		return "", "", err
+	}
+	var id recording.Id
+	if err := id.UnmarshalText([]byte(recordingId)); err != nil {
+		return "", "", err
+	}
+	var ref configuration.Ref
+	path := configurationPath
+	if path == "" {
+		path = defaultConfigurationRef
+	}
+	if err := ref.Set(path); err != nil {
+		return "", "", err
+	}
+	configured, err := findConfiguredAuditlog(ref.Get(), name)
+	if err != nil {
+		return "", "", err
+	}
+	if !configured.Recording.Enabled {
+		return "", "", fmt.Errorf("recording for auditlog %q is not enabled", name)
+	}
+	sealed := filepath.Join(configured.Recording.Directory, "sealed")
+	var selected string
+	for _, suffix := range []string{".bcast", ".becast"} {
+		candidate := filepath.Join(sealed, id.String()+suffix)
+		if _, err := stdos.Lstat(candidate); err == nil {
+			if selected != "" {
+				return "", "", fmt.Errorf("recording %q has both clear and encrypted sealed artifacts", recordingId)
+			}
+			selected = candidate
+		} else if !goerrors.Is(err, stdos.ErrNotExist) {
+			return "", "", fmt.Errorf("cannot inspect Recording %q: %w", candidate, err)
+		}
+	}
+	if selected == "" {
+		return "", "", fmt.Errorf("sealed Recording %q does not exist in auditlog %q", recordingId, name)
+	}
+	return selected, name, nil
 }
 
 func ensureRecordingStandardOutputSafe(stdout io.Writer, input *stdos.File, identityFiles []string) error {
@@ -276,7 +339,7 @@ func configuredRecordingProducerId(name configuration.AuditlogName, configPath, 
 		return audit.ProducerId{}, err
 	}
 	if filepath.Dir(file) != sealed {
-		return audit.ProducerId{}, fmt.Errorf("--auditlog requires a file in the configured Recording sealed directory")
+		return audit.ProducerId{}, fmt.Errorf("local Recording selection requires a file in the configured Recording sealed directory")
 	}
 	privateKey, err := loadAuditPrivateKey(configured.IdentityFile)
 	if err != nil {

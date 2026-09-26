@@ -22,7 +22,7 @@ import (
 type auditExportOpts struct {
 	configuration           configuration.Ref
 	configurationPath       string
-	journalDirectory        string
+	sourceDirectory         string
 	encryptionPublicKeyFile string
 	auditlog                configuration.AuditlogName
 	output                  string
@@ -55,14 +55,14 @@ func registerAuditExportCmd(parent *kingpin.CmdClause) {
 	cmd := parent.Command("export", "Export a verified audit journal as JSON Lines.").
 		Action(func(*kingpin.ParseContext) error { return doAuditExport(&opts, goos.Stdout) })
 	registerAuditExportFlags(cmd, &opts)
-	cmd.Arg("auditlogName", "Auditlog to export.").Required().SetValue(&opts.auditlog)
+	cmd.Arg("auditlogName", "Configured auditlog, or optional label for an offline journal (default: default).").SetValue(&opts.auditlog)
 }
 
 func registerAuditExportFlags(cmd *kingpin.CmdClause, opts *auditExportOpts) {
-	cmd.Flag("configuration", "Configuration file (defaults to "+defaultConfigurationRef+" without --journalDirectory).").
+	cmd.Flag("configuration", "Configuration file (defaults to "+defaultConfigurationRef+" without --source).").
 		Short('c').PlaceHolder("<path>").StringVar(&opts.configurationPath)
-	cmd.Flag("journalDirectory", "Complete journal root for offline export without a configuration.").
-		PlaceHolder("<path>").StringVar(&opts.journalDirectory)
+	cmd.Flag("source", "Complete auditlog directory for offline export without a configuration.").
+		PlaceHolder("<path>").StringVar(&opts.sourceDirectory)
 	cmd.Flag("encryptionPublicKeyFile", "Expected encryption recipient for keyless offline export.").
 		PlaceHolder("<path>").StringVar(&opts.encryptionPublicKeyFile)
 	registerAuditOutputFlags(cmd, &opts.output, &opts.force)
@@ -75,36 +75,11 @@ func doAuditExport(opts *auditExportOpts, stdout io.Writer) error {
 	if opts == nil {
 		return fmt.Errorf("nil options")
 	}
-	if err := opts.auditlog.Validate(); err != nil {
+	name, conf, err := resolveAuditSourceConfiguration(&opts.configuration, opts.configurationPath, opts.sourceDirectory, opts.encryptionPublicKeyFile, opts.auditlog)
+	if err != nil {
 		return err
 	}
-	if opts.journalDirectory != "" {
-		if opts.configurationPath != "" || !opts.configuration.IsZero() {
-			return fmt.Errorf("--journalDirectory cannot be combined with --configuration")
-		}
-	} else {
-		if opts.encryptionPublicKeyFile != "" {
-			return fmt.Errorf("--encryptionPublicKeyFile requires --journalDirectory")
-		}
-		if opts.configurationPath != "" || len(opts.configuration.Get().Auditlogs) == 0 {
-			path := opts.configurationPath
-			if path == "" {
-				path = defaultConfigurationRef
-			}
-			if err := opts.configuration.Set(path); err != nil {
-				return err
-			}
-		}
-	}
-	conf := opts.configuration.Get()
-	if opts.journalDirectory != "" {
-		conf = &configuration.Configuration{Auditlogs: []configuration.Auditlog{{
-			Name: opts.auditlog, Enabled: true,
-			Directory:               opts.journalDirectory,
-			EncryptionPublicKeyFile: bfcrypto.PublicKeysFile(opts.encryptionPublicKeyFile),
-		}}}
-	}
-	configured, err := findConfiguredAuditlog(conf, opts.auditlog)
+	configured, err := findConfiguredAuditlog(conf, name)
 	if err != nil {
 		return err
 	}
@@ -126,39 +101,14 @@ func doAuditExport(opts *auditExportOpts, stdout io.Writer) error {
 		return err
 	}
 	var source audit.JournalSource
-	if opts.journalDirectory != "" {
-		producerId := expectedProducerIds[configured.Name]
-		if producerId.IsZero() {
-			return fmt.Errorf("--journalDirectory requires --expectedProducerId from an independent trust source")
+	if opts.sourceDirectory != "" {
+		identities := opts.decryptionIdentityFiles
+		if !opts.withSensitive {
+			identities = nil
 		}
-		source = audit.JournalSource{Name: configured.Name.String(), Directory: opts.journalDirectory, ExpectedProducerId: producerId}
-		if opts.encryptionPublicKeyFile != "" {
-			publicKey, err := audit.ResolveEncryptionPublicKey("", configured.EncryptionPublicKeyFile)
-			if err != nil {
-				return err
-			}
-			source.ExpectedEncryptionRecipient, err = audit.EncryptionRecipientFingerprint(publicKey)
-			if err != nil {
-				return err
-			}
-		}
-		if opts.withSensitive {
-			for _, path := range opts.decryptionIdentityFiles {
-				key, err := loadAuditPrivateKey(path)
-				if err != nil {
-					return fmt.Errorf("cannot load audit decryption identity %q: %w", path, err)
-				}
-				source.DecryptionIdentities = append(source.DecryptionIdentities, key)
-			}
-			if source.ExpectedEncryptionRecipient == "" && len(source.DecryptionIdentities) == 1 {
-				recipient, err := bfcrypto.NewAgeSshRecipient(source.DecryptionIdentities[0].PublicKey().ToSsh())
-				if err != nil {
-					return err
-				}
-				source.ExpectedEncryptionRecipient = recipient.Fingerprint()
-			} else if source.ExpectedEncryptionRecipient == "" && len(source.DecryptionIdentities) > 1 {
-				return fmt.Errorf("multiple decryption identities require --encryptionPublicKeyFile")
-			}
+		source, err = offlineAuditJournalSource(configured, expectedProducerIds[configured.Name], identities, opts.encryptionPublicKeyFile)
+		if err != nil {
+			return err
 		}
 	} else {
 		identities := opts.decryptionIdentityFiles
@@ -176,6 +126,40 @@ func doAuditExport(opts *auditExportOpts, stdout io.Writer) error {
 		return err
 	}
 	return writeAuditOutput(output, opts.force, stdout, verification, audit.RecordOrderChain, validate)
+}
+
+func offlineAuditJournalSource(configured *configuration.Auditlog, producerId audit.ProducerId, identityFiles []string, recipientFile string) (audit.JournalSource, error) {
+	if producerId.IsZero() {
+		return audit.JournalSource{}, fmt.Errorf("--source requires --expectedProducerId from an independent trust source")
+	}
+	source := audit.JournalSource{Name: configured.Name.String(), Directory: configured.Directory, ExpectedProducerId: producerId}
+	if recipientFile != "" {
+		publicKey, err := audit.ResolveEncryptionPublicKey("", configured.EncryptionPublicKeyFile)
+		if err != nil {
+			return audit.JournalSource{}, err
+		}
+		source.ExpectedEncryptionRecipient, err = audit.EncryptionRecipientFingerprint(publicKey)
+		if err != nil {
+			return audit.JournalSource{}, err
+		}
+	}
+	for _, path := range identityFiles {
+		key, err := loadAuditPrivateKey(path)
+		if err != nil {
+			return audit.JournalSource{}, fmt.Errorf("cannot load audit decryption identity %q: %w", path, err)
+		}
+		source.DecryptionIdentities = append(source.DecryptionIdentities, key)
+	}
+	if source.ExpectedEncryptionRecipient == "" && len(source.DecryptionIdentities) == 1 {
+		recipient, err := bfcrypto.NewAgeSshRecipient(source.DecryptionIdentities[0].PublicKey().ToSsh())
+		if err != nil {
+			return audit.JournalSource{}, err
+		}
+		source.ExpectedEncryptionRecipient = recipient.Fingerprint()
+	} else if source.ExpectedEncryptionRecipient == "" && len(source.DecryptionIdentities) > 1 {
+		return audit.JournalSource{}, fmt.Errorf("multiple decryption identities require --encryptionPublicKeyFile")
+	}
+	return source, nil
 }
 
 func registerAuditSensitiveFlag(cmd *kingpin.CmdClause, target *bool) {
@@ -277,11 +261,13 @@ func ensureAuditStandardOutputSafe(stdout io.Writer, configPath string, conf *co
 	}
 	for index := range conf.Auditlogs {
 		configured := &conf.Auditlogs[index]
-		if !configured.Enabled {
+		if !configured.Enabled && !configured.Recording.Enabled {
 			continue
 		}
-		if err := checkDirectory(configured.Directory, "journal file"); err != nil {
-			return err
+		if configured.Enabled {
+			if err := checkDirectory(configured.Directory, "journal file"); err != nil {
+				return err
+			}
 		}
 		if err := checkFile(configured.IdentityFile, "audit signing identity"); err != nil {
 			return err
@@ -348,15 +334,17 @@ func ensureAuditOutputSafe(output string, conf *configuration.Configuration) err
 	}
 	for index := range conf.Auditlogs {
 		configured := &conf.Auditlogs[index]
-		if !configured.Enabled {
+		if !configured.Enabled && !configured.Recording.Enabled {
 			continue
 		}
-		absoluteJournal, err := ensureAuditOutputOutsideDirectory(output, absoluteOutput, configured.Directory, fmt.Sprintf("auditlog %q journal", configured.Name))
-		if err != nil {
-			return err
-		}
-		if err := ensureAuditOutputDoesNotAliasDirectoryFile(output, absoluteJournal, "journal file"); err != nil {
-			return err
+		if configured.Enabled {
+			absoluteJournal, err := ensureAuditOutputOutsideDirectory(output, absoluteOutput, configured.Directory, fmt.Sprintf("auditlog %q journal", configured.Name))
+			if err != nil {
+				return err
+			}
+			if err := ensureAuditOutputDoesNotAliasDirectoryFile(output, absoluteJournal, "journal file"); err != nil {
+				return err
+			}
 		}
 		if err := ensureBootstrapOutputIsNotPrivateKey(output, configured.IdentityFile); err != nil {
 			return err

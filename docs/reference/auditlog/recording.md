@@ -75,7 +75,7 @@ Recording inherits its signing identity and optional age recipient from the pare
 * Without `encryptionPublicKey` or `encryptionPublicKeyFile`, Bifröst stores signed, compressed native `.bcast` artifacts.
 * With an encryption recipient, Bifröst stores signed CBOR `.becast` artifacts whose compressed event groups are independently encrypted with age.
 
-Encrypted inspection without the private age key verifies only the signed outer envelope, **not** decrypted content or claimed status. Full export verifies the content. Even encrypted artifacts expose metadata such as recording ID and timing; protect them. See the [native format](../../formats/recording.md) and [test vectors](../../formats/recording-vectors.md) for wire details.
+Encrypted inspection or verification without the private age key checks only the signed outer envelope, **not** decrypted content or claimed status. [`recording verify`](../cli/recording/verify.md) with a matching key checks the full content without exporting a Cast; `--require-full` fails rather than accepting outer-only verification. Full export also verifies the content. Even encrypted artifacts expose metadata such as recording ID and timing; protect them. See the [native format](../../formats/recording.md) and [test vectors](../../formats/recording-vectors.md) for wire details.
 
 Switching between `.bcast` and `.becast`, or between recording-only and audited mode, requires a new empty Recording directory. If an audit journal is enabled, changing its recipient also requires a new empty audit-log directory. Preserve old evidence and decryption keys. If the signing key is lost, Bifröst refuses to regenerate it over existing history.
 
@@ -95,7 +95,8 @@ With targets, `retainFor` begins after the last durable acknowledgement; an enab
 
 ## Export and playback
 
-* `recording export` verifies the signature and content before writing a full, **never redacted** Cast. Protect `session.cast` and open it with an [asciicast v3 player](https://docs.asciinema.org/manual/asciicast/v3/).
+* [`recording export`](../cli/recording/export.md) verifies the signature and content before writing a full, **never redacted** Cast; `--with-sensitive` is required. Protect `session.cast` and open it with an [asciicast v3 player](https://docs.asciinema.org/manual/asciicast/v3/).
+* [`recording verify`](../cli/recording/verify.md) checks a locally selected UUID against the configured signing identity, or an offline file against `--expectedProducerId`, without outputting Cast content. It reports whether verification was outer or full.
 * Bifröst does not list, download or play recordings. Remote targets store only sealed originals, not plaintext Casts. For metadata without export, use [`recording inspect`](../cli/recording/inspect.md); see the [native format](../../formats/recording.md) for verification details.
 
 ## Examples
@@ -117,11 +118,12 @@ With targets, `retainFor` begins after the last durable acknowledgement; an enab
 
     ```shell
     bifroest recording export \
-      --auditlog default \
       --with-sensitive \
       --output session.cast \
-      /var/lib/engity/bifroest/recordings/sealed/<recording-uuid>.bcast
+      default <recording-uuid>
     ```
+
+    To verify it without a Cast export, run `bifroest recording verify default <recording-uuid>`.
 
 ### Encrypted recording
 
@@ -152,3 +154,5 @@ With targets, `retainFor` begins after the last durable acknowledgement; an enab
       --output session.cast \
       session.becast
     ```
+
+    To verify the encrypted original without creating a Cast, run `bifroest recording verify --expectedProducerId "<trusted-64-hex-producer-id>" --decryptionIdentityFile /srv/audit-keys/recipient-key --require-full session.becast`. Without the private key, verification is outer-only unless `--require-full` makes it fail.

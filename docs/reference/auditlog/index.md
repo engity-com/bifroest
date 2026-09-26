@@ -86,7 +86,7 @@ See [audit events](events.md) for the recorded security transitions, their struc
 
 * Records are signed and flushed. `.baudit` and `.beaudit` segments rotate around 16 MiB; signed hashes link them to `head.cbor` under `<auditlog-directory>/<producer-id>/`. See the [format](../../formats/audit.md) and [vectors](../../formats/audit-vectors.md).
 * Startup repairs uncommitted tails but rejects invalid committed data and lost records. Large recovery scans can leave `.bifroest-work` after a crash; remove stale work only while Bifröst is stopped. Read-only verification uses an OS temporary directory instead.
-* [`audit export`](../cli/audit/export.md), [`audit verify`](../cli/audit/verify.md) and merge can read while Bifröst runs. They verify the **signed committed state**; later writes are not part of that result.
+* [`audit export`](../cli/audit/export.md), [`audit verify`](../cli/audit/verify.md) and merge can read while Bifröst runs. They verify the **signed committed state**; later writes are not part of that result. Locally, export and verify use the default configuration and the selected auditlog name. Offline, both accept a complete journal copy through `--source` and an independently trusted `--expectedProducerId` without a configuration.
 * Export and merge verify before writing redacted, **unsigned** JSONL. `--with-sensitive` includes private fields and needs the offline decryption key for `.beaudit`.
 * Remote targets deliver **only sealed segments**, never the signed head or active file. A single downloaded segment is not verifiable as a complete journal. Keep the full journal and an independently trusted chain tip to detect a missing remote suffix.
 
@@ -118,8 +118,7 @@ See [audit events](events.md) for the recorded security transitions, their struc
 
 3. Read the recorded events of Bifröst:
     ```shell
-    bifroest audit export \
-       default
+    bifroest audit export default
 
     # Verified, redacted JSONL from a signed checkpoint on stdout.
     ```
@@ -127,7 +126,7 @@ See [audit events](events.md) for the recorded security transitions, their struc
     !!! warning ""
          The exported JSONL is an unsigned view, not a substitute for the signed journal. Even redacted metadata needs protection; the clear `.baudit` files also contain confidential fields after decompression. To include those fields, explicitly add [`--with-sensitive`](../cli/audit/export.md#audit-export-flag-with-sensitive) to `audit export` and protect its plaintext output.
 
-    To check the journal without JSONL, use [`audit verify`](../cli/audit/verify.md).
+    To check the journal without JSONL, use [`audit verify`](../cli/audit/verify.md): `bifroest audit verify default`. It reports outer or full verification on success.
 
 ### Encrypted audit events
 
@@ -164,8 +163,7 @@ See [audit events](events.md) for the recorded security transitions, their struc
 5. Read events, redacted:
 
     ```shell
-    bifroest audit export \
-      default
+    bifroest audit export default
 
     # Redacted JSONL from a signed checkpoint; private fields stay encrypted.
     ```
@@ -190,13 +188,14 @@ See [audit events](events.md) for the recorded security transitions, their struc
 
         ```shell title="Offline workstation"
         bifroest audit export \
-          --journalDirectory /srv/audit-evidence/auditlog \
-          --expectedProducerId "default=<64-hex-producer-id>" \
+          --source /srv/audit-evidence/auditlog \
+          --expectedProducerId "<64-hex-producer-id>" \
           --decryptionIdentityFile /srv/audit-keys/recipient-key \
           --with-sensitive \
-          --output /srv/audit-evidence/sensitive.jsonl \
-          default
+          --output /srv/audit-evidence/sensitive.jsonl
         ```
 
         !!! warning ""
              The decrypted JSONL is unsigned and not encrypted and must be protected like sensitive data.
+
+        To verify without exporting events, use `bifroest audit verify --source /srv/audit-evidence/auditlog --expectedProducerId "<64-hex-producer-id>" --decryptionIdentityFile /srv/audit-keys/recipient-key --require-full`. Without the private key, encrypted journals can only be verified at outer scope. The offline auditlog label defaults to `default`.
