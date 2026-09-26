@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,6 +34,7 @@ func TestSshSubsystemProxyRepliesAfterTargetAndStreamsData(t *testing.T) {
 	}}
 	targetConfig.AddHostKey(signer)
 	agentRequests := make(chan struct{}, 1)
+	var rejectAgent atomic.Bool
 	go func() {
 		for {
 			conn, err := listener.Accept()
@@ -60,6 +62,10 @@ func TestSshSubsystemProxyRepliesAfterTargetAndStreamsData(t *testing.T) {
 						defer func() { _ = stream.Close() }()
 						for request := range requests {
 							if request.Type == "auth-agent-req@openssh.com" {
+								if rejectAgent.Load() {
+									_ = request.Reply(false, nil)
+									continue
+								}
 								_ = request.Reply(true, nil)
 								agentRequests <- struct{}{}
 								continue
@@ -248,14 +254,28 @@ func TestSshSubsystemProxyRepliesAfterTargetAndStreamsData(t *testing.T) {
 	require.NoError(t, err)
 	require.Error(t, blocked.RequestSubsystem("blocked"))
 	_ = blocked.Close()
+	rejectAgent.Store(true)
+	sftpWithAgent, sftpRequests, err := client.OpenChannel("session", nil)
+	require.NoError(t, err)
+	defer func() { _ = sftpWithAgent.Close() }()
+	accepted, err = sftpWithAgent.SendRequest("auth-agent-req@openssh.com", true, nil)
+	require.NoError(t, err)
+	require.True(t, accepted)
+	accepted, err = sftpWithAgent.SendRequest("subsystem", true, gossh.Marshal(&struct{ Name string }{"sftp"}))
+	require.NoError(t, err)
+	require.True(t, accepted, "SFTP failed because the target rejected agent forwarding")
+	require.NoError(t, sftpWithAgent.CloseWrite())
+	_, _ = io.Copy(io.Discard, sftpWithAgent)
+	for range sftpRequests {
+	}
 
 	require.Eventually(t, func() bool {
-		return len(auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameSessionTaskCompleted)) == 9
+		return len(auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameSessionTaskCompleted)) == 10
 	}, 5*time.Second, 10*time.Millisecond)
 	events := recorder.eventsSnapshot()
 	started := auditEventsNamed(events, audit.EventNameSessionTaskStarted)
 	completed := auditEventsNamed(events, audit.EventNameSessionTaskCompleted)
-	require.Len(t, started, 9)
+	require.Len(t, started, 10)
 	for _, name := range []string{"sftp", "netconf", "powershell", "status-open", "early-eof", "status-first", "status-close", "unsupported", "blocked"} {
 		found := false
 		for _, event := range started {

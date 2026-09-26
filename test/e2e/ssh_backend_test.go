@@ -3,9 +3,11 @@
 package e2e_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -13,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	gossh "golang.org/x/crypto/ssh"
 )
 
 type sshEnvironmentFixture struct {
@@ -112,7 +116,7 @@ func TestOpenSSHSSHEnvironmentSubsystem(t *testing.T) {
 	_ = defaultSession.Close()
 	_ = defaultClient.Close()
 	stopHostBifroest(t, f)
-	if err := f.startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targetIdentity, false, "^(sftp|netconf|unsupported-e2e)$"); err != nil {
+	if err := f.startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targetIdentity, false, "^(sftp|netconf|echo-data|unsupported-e2e)$"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -122,6 +126,41 @@ func TestOpenSSHSSHEnvironmentSubsystem(t *testing.T) {
 	}
 
 	client := f.newSSHClient(t, 30*time.Second)
+	channel, requests, err := client.OpenChannel("session", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer channel.Close()
+	accepted, err := channel.SendRequest("subsystem", true, gossh.Marshal(&struct{ Name string }{"echo-data"}))
+	if err != nil || !accepted {
+		t.Fatalf("request duplex subsystem: accepted=%t, error=%v", accepted, err)
+	}
+	const size = 1024
+	seed := []byte("bifroest-e2e\x00\xff")
+	payload := bytes.Repeat(seed, size/len(seed)+1)[:size]
+	if _, err := channel.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := channel.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	output, err := io.ReadAll(channel)
+	if err != nil || !bytes.Equal(output, append(append([]byte(nil), payload...), []byte("ok\n")...)) {
+		t.Fatalf("duplex subsystem output: error=%v, bytes=%d", err, len(output))
+	}
+	var exitCodes []uint32
+	for request := range requests {
+		if request.Type == "exit-status" {
+			var status struct{ Code uint32 }
+			if err := gossh.Unmarshal(request.Payload, &status); err != nil {
+				t.Fatal(err)
+			}
+			exitCodes = append(exitCodes, status.Code)
+		}
+	}
+	if len(exitCodes) != 1 || exitCodes[0] != 0 {
+		t.Fatalf("duplex subsystem exit codes: %v", exitCodes)
+	}
 	session, err := client.NewSession()
 	if err != nil {
 		t.Fatal(err)
@@ -261,7 +300,7 @@ COPY authorized_keys /home/e2e/.ssh/authorized_keys
 RUN chmod 0755 /usr/local/bin/e2e-helper \
  && chmod 0600 /etc/ssh/ssh_host_ed25519_key /home/e2e/.ssh/authorized_keys \
  && chown e2e:e2e /home/e2e/.ssh/authorized_keys
-RUN printf 'Port 2222\nListenAddress 0.0.0.0\nHostKey /etc/ssh/ssh_host_ed25519_key\nAuthorizedKeysFile /home/e2e/.ssh/authorized_keys\nPubkeyAuthentication yes\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\nSubsystem netconf /usr/local/bin/e2e-helper streams\n' > /etc/ssh/sshd_config
+RUN printf 'Port 2222\nListenAddress 0.0.0.0\nHostKey /etc/ssh/ssh_host_ed25519_key\nAuthorizedKeysFile /home/e2e/.ssh/authorized_keys\nPubkeyAuthentication yes\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\nSubsystem netconf /usr/local/bin/e2e-helper streams\nSubsystem echo-data /usr/local/bin/e2e-helper stream-duplex 1024\n' > /etc/ssh/sshd_config
 EXPOSE 2222
 ENTRYPOINT ["/usr/sbin/sshd", "-D", "-e", "-f", "/etc/ssh/sshd_config"]
 `

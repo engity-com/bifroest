@@ -359,14 +359,19 @@ func (this *sshEnvironment) runSubsystem(task Task, transport *sshTransport, env
 	go func() {
 		select {
 		case <-task.Context().Done():
+			stop := time.AfterFunc(2*time.Second, func() {
+				this.repository.removeTransport(this.connection.Id(), transport)
+			})
+			defer stop.Stop()
 			_ = channel.Close()
+			<-channelDone
 		case <-channelDone:
 		}
 	}()
 	if err := sendSshEnvironment(channel, environment); err != nil {
 		return -1, err
 	}
-	if bssh.AgentRequested(task.SshSession()) && authorization.IsAgentForwardingAllowed(task.Authorization()) {
+	if task.TaskType() == TaskTypeSubsystem && bssh.AgentRequested(task.SshSession()) && authorization.IsAgentForwardingAllowed(task.Authorization()) {
 		if err := transport.ensureAgent(task, this.lifetime); err != nil {
 			return -1, fmt.Errorf("cannot forward SSH agent to target: %w", err)
 		}

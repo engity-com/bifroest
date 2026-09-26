@@ -11,7 +11,7 @@ Each target transport allows up to 64 concurrently active or pending shell, SFTP
 
 If a channel-open request is still unanswered when its source operation is canceled, Bifröst closes the target transport so the pending request cannot retain a channel slot. This also interrupts other active channels of the same incoming connection; later requests can establish a new transport.
 
-If the open result has already arrived, Bifröst closes only that operation's channel or forwarded connection. Canceling an operation **after** its target channel opened does not close the shared transport. An open result arriving concurrently with cancellation may still cause the shared transport to close.
+If the open result has already arrived, Bifröst normally closes only that operation's channel or forwarded connection. A subsystem target that does not finish within two seconds after its source is canceled causes the shared target transport to close. An open result arriving concurrently with cancellation may also cause the shared transport to close.
 
 ## Configuration {: #configuration}
 
@@ -119,7 +119,7 @@ When a `bifroest` authorization forwards to another SSH environment, the origina
 | Signals | Forwarded for shell and exec sessions |
 | Allowed SSH subsystems (including SFTP) | The requested subsystem name is sent unchanged to the target; stdin, stdout and stderr are streamed without interpreting the protocol. The client receives success only after the target accepts the subsystem request. |
 | SCP | Modern SCP uses SFTP; legacy SCP is handled as an exec command |
-| Agent forwarding | Forwarded only when requested and permitted by the authorization policy |
+| Agent forwarding | Forwarded for shell, exec and non-SFTP subsystems only when requested and permitted by the authorization policy |
 | `ssh -L` and `ssh -D` | Connections originate from the target SSH server's network |
 | `ssh -R` | Rejected; reverse forwarding is not supported by the SSH environment |
 

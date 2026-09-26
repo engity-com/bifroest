@@ -271,6 +271,7 @@ func TestSshEnvironmentCancellationDoesNotCloseSharedTransport(t *testing.T) {
 	conf.Address = template.MustNewString(target.Address())
 	conf.User = template.MustNewString("target-user")
 	conf.AcceptAllHostKeys = true
+	conf.AllowedSubsystems = common.MustNewRegexp("^(sftp|block-request)$")
 	repository, err := NewSshRepositoryWithHostKeys(context.Background(), "test", conf, []crypto.PrivateKey{newSshTestPrivateKey(t)})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, repository.Close()) }()
@@ -308,6 +309,35 @@ func TestSshEnvironmentCancellationDoesNotCloseSharedTransport(t *testing.T) {
 	require.Eventually(t, func() bool { return len(transport.channels) == 0 }, time.Second, 10*time.Millisecond)
 
 	remaining, err := repository.transportFor(blockedEnvironment)
+	require.NoError(t, err)
+	require.Same(t, transport, remaining)
+	require.Equal(t, int32(1), target.connections.Load())
+
+	subsystemContext, cancelSubsystem := newSshTestContext()
+	defer cancelSubsystem()
+	subsystemSession := newSshTestSession(subsystemContext, "", nil)
+	subsystemSession.subsystem = "block-request"
+	subsystemTask := &sshTestTask{context: subsystemContext, connection: conn, authorization: auth, session: subsystemSession, taskType: TaskTypeSubsystem}
+	subsystemDone := make(chan runResult, 1)
+	go func() {
+		code, err := blockedEnvironment.RunSubsystem(subsystemTask, func(bool) error { return nil })
+		subsystemDone <- runResult{code, err}
+	}()
+	select {
+	case <-target.blockedExec:
+	case <-time.After(time.Second):
+		t.Fatal("target did not receive blocked subsystem request")
+	}
+	cancelSubsystem()
+	select {
+	case result := <-subsystemDone:
+		require.Equal(t, -1, result.code)
+		require.ErrorIs(t, result.err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("canceled subsystem request did not return")
+	}
+	require.Eventually(t, func() bool { return len(transport.channels) == 0 }, time.Second, 10*time.Millisecond)
+	remaining, err = repository.transportFor(blockedEnvironment)
 	require.NoError(t, err)
 	require.Same(t, transport, remaining)
 	require.Equal(t, int32(1), target.connections.Load())
@@ -810,6 +840,10 @@ func serveSshTargetSession(channel gossh.NewChannel, blockedExec chan<- struct{}
 		case "subsystem":
 			var payload struct{ Subsystem string }
 			_ = gossh.Unmarshal(request.Payload, &payload)
+			if payload.Subsystem == "block-request" {
+				blockedExec <- struct{}{}
+				continue
+			}
 			accepted := payload.Subsystem == "sftp" || payload.Subsystem == "netconf" || payload.Subsystem == "powershell"
 			_ = request.Reply(accepted, nil)
 			if !accepted {
