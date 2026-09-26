@@ -101,6 +101,7 @@ func (this *AuthorizerFacade) AuthorizePublicKey(req PublicKeyRequest) (Authoriz
 			}
 		}
 	}
+	this.logNoMatchingFlow(req)
 	return Forbidden(req.Connection().Remote()), nil
 }
 
@@ -122,6 +123,7 @@ func (this *AuthorizerFacade) AuthorizePassword(req PasswordRequest) (Authorizat
 			}
 		}
 	}
+	this.logNoMatchingFlow(req)
 	return Forbidden(req.Connection().Remote()), nil
 }
 
@@ -143,7 +145,18 @@ func (this *AuthorizerFacade) AuthorizeInteractive(req InteractiveRequest) (Auth
 			}
 		}
 	}
+	this.logNoMatchingFlow(req)
 	return Forbidden(req.Connection().Remote()), nil
+}
+
+func (this *AuthorizerFacade) logNoMatchingFlow(req Request) {
+	for _, candidate := range this.entries {
+		matches, err := candidate.canHandle(req)
+		if err != nil || matches {
+			return
+		}
+	}
+	req.Connection().Logger().Debug("no flow matches requested user")
 }
 
 func validateFlowAuthorizationResponse(flow configuration.FlowName, auth Authorization, err error) (Authorization, error) {
