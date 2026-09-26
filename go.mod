@@ -13,16 +13,16 @@ require (
 	github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be
 	github.com/aws/aws-sdk-go-v2 v1.47.0
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.5
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.1
-	github.com/aws/smithy-go v1.28.1
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.2
+	github.com/aws/smithy-go v1.28.2
 	github.com/containerd/errdefs v1.0.0
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/creack/pty v1.1.24
 	github.com/docker/cli v29.8.1+incompatible
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.8.1
-	github.com/echocat/slf4g v1.8.4
-	github.com/echocat/slf4g/native v1.8.4
+	github.com/echocat/slf4g v1.9.0
+	github.com/echocat/slf4g/native v1.9.0
 	github.com/engity-com/ssh-server-go v0.3.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/fxamacker/cbor/v2 v2.9.4
