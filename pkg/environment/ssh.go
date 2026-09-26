@@ -390,6 +390,12 @@ func (this *sshEnvironment) runSubsystem(task Task, transport *sshTransport, env
 		status int
 		err    error
 	}, 1)
+	var inputDone chan error
+	defer func() {
+		if inputDone != nil {
+			go watchSubsystemInput(this.connection, this.lifetime, inputDone, 30*time.Second)
+		}
+	}()
 	requestsDone := make(chan struct{})
 	go func() {
 		defer close(requestsDone)
@@ -418,7 +424,7 @@ func (this *sshEnvironment) runSubsystem(task Task, transport *sshTransport, env
 		defer close(stderrDone)
 		_, _ = io.Copy(task.SshSession().Stderr(), channel.Stderr())
 	}()
-	inputDone := make(chan error, 1)
+	inputDone = make(chan error, 1)
 	go func() {
 		_, copyErr := io.Copy(channel, task.SshSession())
 		if copyErr == nil {
@@ -479,6 +485,40 @@ func (this *sshEnvironment) runSubsystem(task Task, transport *sshTransport, env
 		return -1, status.err
 	}
 	return status.status, nil
+}
+
+func watchSubsystemInput(conn connection.Connection, ctx context.Context, inputDone <-chan error, grace time.Duration) {
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-inputDone:
+		return
+	case <-ctx.Done():
+		return
+	case <-timer.C:
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	select {
+	case <-inputDone:
+		return
+	default:
+	}
+	var closeErr error
+	if closer, ok := conn.(interface{ CloseStalledSubsystemInput() error }); ok {
+		conn.Logger().Warn("closing SSH client connection with stalled subsystem input")
+		closeErr = closer.CloseStalledSubsystemInput()
+	} else if closer, ok := conn.(io.Closer); ok {
+		conn.Logger().Warn("closing SSH client connection with stalled subsystem input")
+		closeErr = closer.Close()
+	} else {
+		conn.Logger().Warn("cannot close SSH client connection with stalled subsystem input")
+		return
+	}
+	if closeErr != nil {
+		conn.Logger().WithError(closeErr).Warn("cannot close SSH client connection with stalled subsystem input")
+	}
 }
 
 func collectSubsystemExitStatus(requests <-chan *gossh.Request, subsystem string) (int, error) {

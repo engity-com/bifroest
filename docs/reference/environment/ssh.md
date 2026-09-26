@@ -122,6 +122,8 @@ When a `bifroest` authorization forwards to another SSH environment, the origina
 
 The target decides which subsystems are available. A rejected target subsystem request is rejected for the client as well. The target has 30 seconds by default to answer a subsystem request before the incoming request is rejected. Subsystem names must be non-empty, valid UTF-8, contain no NUL byte and be at most 256 bytes long. Subsystem requests with a PTY are rejected to prevent terminal newline conversion from changing protocol data. Agent forwarding must be requested before the subsystem starts. Audit events record the requested subsystem name. Subsystem streams are not terminal-recorded, and no login notification is written into their stdout. SSH break requests and other arbitrary session requests are not forwarded. Target exit signals are not forwarded as SSH exit signals; a target exit status and the target output must both finish within 30 seconds after either one finishes to report a successful session completion.
 
+If the client's stdin remains blocked for 30 seconds after a subsystem session ends, Bifröst closes the entire incoming SSH connection. This also terminates other sessions and forwards on that connection. The resulting `connection.closed` audit event has the reason `deadline-exceeded`.
+
 !!! warning
      OpenSSH agent forwarding is scoped to an SSH connection rather than an individual session. After one permitted session enables forwarding, the target can access that source agent until the incoming SSH connection ends. Only enable agent forwarding for trusted targets.
 

@@ -363,3 +363,40 @@ func TestInvalidSubsystemRequestsDoNotDisableBestEffortAudit(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 	require.Equal(t, "sftp", auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameSessionTaskStarted)[0].SessionSubsystem)
 }
+
+func TestStalledSubsystemInputConnectionCloseAuditReason(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		normalFirst    bool
+		expectedReason string
+	}{
+		{name: "watchdog closes connection", expectedReason: audit.EventReasonDeadlineExceeded},
+		{name: "normal close wins", normalFirst: true, expectedReason: audit.EventReasonDisconnected},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			connections := make(chan *connection, 1)
+			server := newAuthorizedKeysTestServer(t, "", &authorizedKeysTestEnvironment{run: func(task environment.Task) (int, error) {
+				connections <- task.Connection().(*connection)
+				return 0, nil
+			}})
+			flow := server.service.Configuration.Flows[0].Name
+			recorder := &recordingAuditRecorder{}
+			server.service.flowAuditRecorders[flow] = recorder
+			client := server.mustDial(t)
+			session, err := client.NewSession()
+			require.NoError(t, err)
+			require.NoError(t, session.Run("true"))
+			conn := <-connections
+			if test.normalFirst {
+				require.NoError(t, conn.Close())
+			}
+			require.NoError(t, conn.CloseStalledSubsystemInput())
+			require.Equal(t, !test.normalFirst, conn.stalledSubsystemInput.Load())
+			require.Eventually(t, func() bool {
+				return len(auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameConnectionClosed)) == 1
+			}, time.Second, 10*time.Millisecond)
+			closed := auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameConnectionClosed)[0]
+			require.Equal(t, test.expectedReason, closed.Reason)
+		})
+	}
+}

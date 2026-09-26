@@ -114,6 +114,9 @@ func (this *service) onDisconnected(ctx essh.Context, _ gonet.Conn) error {
 		if auth != nil {
 			event := this.authorizationAuditEvent(ctx, auth, audit.EventNameConnectionClosed, audit.EventDomainConnection)
 			event.Reason = audit.EventReasonDisconnected
+			if conn.stalledSubsystemInput.Load() {
+				event.Reason = audit.EventReasonDeadlineExceeded
+			}
 			event.BytesRead = common.P(conn.read.Load())
 			event.BytesWritten = common.P(conn.written.Load())
 			event.DurationMillis = common.P(time.Since(conn.createdAt).Milliseconds())
@@ -147,6 +150,7 @@ type connection struct {
 
 	interceptorP            atomic.Pointer[session.ConnectionInterceptor]
 	closed                  atomic.Bool
+	stalledSubsystemInput   atomic.Bool
 	lastActivity            atomic.Int64
 	readConnectionTimeType  atomic.Uint32
 	writeConnectionTimeType atomic.Uint32
@@ -337,10 +341,22 @@ func (this *connection) Read(b []byte) (int, error) {
 	return n, err
 }
 
-func (this *connection) Close() (rErr error) {
+func (this *connection) Close() error {
 	if !this.closed.CompareAndSwap(false, true) {
 		return nil
 	}
+	return this.closeOwned()
+}
+
+func (this *connection) CloseStalledSubsystemInput() error {
+	if !this.closed.CompareAndSwap(false, true) {
+		return nil
+	}
+	this.stalledSubsystemInput.Store(true)
+	return this.closeOwned()
+}
+
+func (this *connection) closeOwned() (rErr error) {
 	defer func(target *error) {
 		if err := this.doWithInterceptor(session.ConnectionInterceptor.Close); err != nil && *target == nil {
 			*target = err

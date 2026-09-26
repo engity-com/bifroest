@@ -176,6 +176,52 @@ func TestSshEnvironmentForwardsNamedSubsystems(t *testing.T) {
 	}
 }
 
+func TestWatchSubsystemInput(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		inputDone   bool
+		cancel      bool
+		shouldClose bool
+	}{
+		{name: "stalled input", shouldClose: true},
+		{name: "completed input", inputDone: true},
+		{name: "canceled session", cancel: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := newSshTestContext()
+			defer cancel()
+			conn := &sshInputWatchConnection{
+				sshTestConnection: &sshTestConnection{id: connection.MustNewId(), context: ctx},
+				closed:            make(chan struct{}),
+			}
+			inputDone := make(chan error, 1)
+			if test.inputDone {
+				inputDone <- nil
+			}
+			if test.cancel {
+				cancel()
+			}
+			finished := make(chan struct{})
+			go func() {
+				watchSubsystemInput(conn, ctx, inputDone, 20*time.Millisecond)
+				close(finished)
+			}()
+			select {
+			case <-finished:
+			case <-time.After(time.Second):
+				t.Fatal("subsystem input watchdog did not finish")
+			}
+			select {
+			case <-conn.closed:
+				require.True(t, test.shouldClose, "watchdog closed a healthy connection")
+			default:
+				require.False(t, test.shouldClose, "watchdog did not close stalled connection")
+			}
+			require.Equal(t, test.shouldClose, conn.stalled.Load())
+		})
+	}
+}
+
 func TestSshEnvironmentCancellationDoesNotCloseSharedTransport(t *testing.T) {
 	target := newSshTarget(t)
 	defer target.Close()
@@ -839,6 +885,22 @@ func (sshTestRemote) String() string  { return "source-user@127.0.0.1" }
 type sshTestConnection struct {
 	id      connection.Id
 	context *sshTestContext
+}
+
+type sshInputWatchConnection struct {
+	*sshTestConnection
+	closed  chan struct{}
+	stalled atomic.Bool
+}
+
+func (this *sshInputWatchConnection) CloseStalledSubsystemInput() error {
+	this.stalled.Store(true)
+	return this.Close()
+}
+
+func (this *sshInputWatchConnection) Close() error {
+	close(this.closed)
+	return nil
 }
 
 func (this *sshTestConnection) Id() connection.Id         { return this.id }
