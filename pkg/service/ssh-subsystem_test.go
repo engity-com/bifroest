@@ -14,6 +14,7 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/template"
@@ -118,6 +119,7 @@ func TestSshSubsystemProxyRepliesAfterTargetAndStreamsData(t *testing.T) {
 		backend.Address = template.MustNewString(listener.Addr().String())
 		backend.User = template.MustNewString("target-user")
 		backend.AcceptAllHostKeys = true // The test target's host key is generated for this test.
+		backend.AllowedSubsystems = common.MustNewRegexp("^(sftp|netconf|powershell|status-open|early-eof|status-first|status-close|unsupported)$")
 		conf.Flows[0].Environment.V = backend
 	})
 	recorder := &recordingAuditRecorder{}
@@ -242,15 +244,19 @@ func TestSshSubsystemProxyRepliesAfterTargetAndStreamsData(t *testing.T) {
 	for request := range deniedRequests {
 		require.NotEqual(t, "exit-status", request.Type)
 	}
+	blocked, err := client.NewSession()
+	require.NoError(t, err)
+	require.Error(t, blocked.RequestSubsystem("blocked"))
+	_ = blocked.Close()
 
 	require.Eventually(t, func() bool {
-		return len(auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameSessionTaskCompleted)) == 8
+		return len(auditEventsNamed(recorder.eventsSnapshot(), audit.EventNameSessionTaskCompleted)) == 9
 	}, 5*time.Second, 10*time.Millisecond)
 	events := recorder.eventsSnapshot()
 	started := auditEventsNamed(events, audit.EventNameSessionTaskStarted)
 	completed := auditEventsNamed(events, audit.EventNameSessionTaskCompleted)
-	require.Len(t, started, 8)
-	for _, name := range []string{"sftp", "netconf", "powershell", "status-open", "early-eof", "status-first", "status-close", "unsupported"} {
+	require.Len(t, started, 9)
+	for _, name := range []string{"sftp", "netconf", "powershell", "status-open", "early-eof", "status-first", "status-close", "unsupported", "blocked"} {
 		found := false
 		for _, event := range started {
 			if event.SessionSubsystem != name {
@@ -265,8 +271,13 @@ func TestSshSubsystemProxyRepliesAfterTargetAndStreamsData(t *testing.T) {
 			for _, result := range completed {
 				if result.OperationId == event.OperationId {
 					require.Equal(t, name, result.SessionSubsystem)
-					if name == "unsupported" {
-						require.Equal(t, audit.EventOutcomeFailure, result.Outcome)
+					if name == "unsupported" || name == "blocked" {
+						if name == "blocked" {
+							require.Equal(t, audit.EventOutcomeDenied, result.Outcome)
+							require.Equal(t, audit.EventReasonEnvironmentPolicy, result.Reason)
+						} else {
+							require.Equal(t, audit.EventOutcomeFailure, result.Outcome)
+						}
 					} else {
 						require.NotNil(t, result.ExitCode)
 						require.Equal(t, 17, *result.ExitCode)

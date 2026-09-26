@@ -1,6 +1,7 @@
 package environment
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,6 +15,8 @@ import (
 type TaskType uint8
 
 const executionLifecycleCapability = "execution-id-v1"
+
+var ErrSubsystemNotAllowed = errors.New("SSH subsystem is not allowed by the environment")
 
 const (
 	TaskTypeShell TaskType = iota

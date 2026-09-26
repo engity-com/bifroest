@@ -7,6 +7,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/ssh"
 	"github.com/engity-com/bifroest/pkg/sys"
@@ -19,6 +20,7 @@ var (
 	DefaultEnvironmentSshLoginAllowed          = template.BoolOf(true)
 	DefaultEnvironmentSshBanner                = template.MustNewString("")
 	DefaultEnvironmentSshPortForwardingAllowed = template.BoolOf(true)
+	DefaultEnvironmentSshAllowedSubsystems     = common.MustNewRegexp("^sftp$")
 
 	_ = RegisterEnvironmentV(func() EnvironmentV { return &EnvironmentSsh{} })
 )
@@ -39,6 +41,7 @@ type EnvironmentSsh struct {
 	LoginAllowed          template.Bool   `yaml:"loginAllowed,omitempty"`
 	Banner                template.String `yaml:"banner,omitempty"`
 	PortForwardingAllowed template.Bool   `yaml:"portForwardingAllowed,omitempty"`
+	AllowedSubsystems     common.Regexp   `yaml:"allowedSubsystems"`
 }
 
 func (this *EnvironmentSsh) SetDefaults() error {
@@ -55,6 +58,7 @@ func (this *EnvironmentSsh) SetDefaults() error {
 		fixedDefault("loginAllowed", func(v *EnvironmentSsh) *template.Bool { return &v.LoginAllowed }, DefaultEnvironmentSshLoginAllowed),
 		fixedDefault("banner", func(v *EnvironmentSsh) *template.String { return &v.Banner }, DefaultEnvironmentSshBanner),
 		fixedDefault("portForwardingAllowed", func(v *EnvironmentSsh) *template.Bool { return &v.PortForwardingAllowed }, DefaultEnvironmentSshPortForwardingAllowed),
+		fixedDefault("allowedSubsystems", func(v *EnvironmentSsh) *common.Regexp { return &v.AllowedSubsystems }, DefaultEnvironmentSshAllowedSubsystems),
 	)
 }
 
@@ -72,6 +76,7 @@ func (this *EnvironmentSsh) Trim() error {
 		noopTrim[EnvironmentSsh]("loginAllowed"),
 		noopTrim[EnvironmentSsh]("banner"),
 		noopTrim[EnvironmentSsh]("portForwardingAllowed"),
+		noopTrim[EnvironmentSsh]("allowedSubsystems"),
 	)
 }
 
@@ -116,11 +121,19 @@ func (this *EnvironmentSsh) Validate() error {
 		func(v *EnvironmentSsh) (string, validator) { return "loginAllowed", &v.LoginAllowed },
 		func(v *EnvironmentSsh) (string, validator) { return "banner", &v.Banner },
 		func(v *EnvironmentSsh) (string, validator) { return "portForwardingAllowed", &v.PortForwardingAllowed },
+		func(v *EnvironmentSsh) (string, validator) { return "allowedSubsystems", &v.AllowedSubsystems },
 	)
 }
 
 func (this *EnvironmentSsh) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *EnvironmentSsh, node *yaml.Node) error {
+		var fields map[string]any
+		if err := node.Decode(&fields); err != nil {
+			return err
+		}
+		if value, present := fields["allowedSubsystems"]; present && value == nil {
+			return fmt.Errorf("[allowedSubsystems] cannot be null; use an empty string to deny all")
+		}
 		type raw EnvironmentSsh
 		return node.Decode((*raw)(target))
 	})
@@ -149,7 +162,8 @@ func (this EnvironmentSsh) isEqualTo(other *EnvironmentSsh) bool {
 		isEqual(&this.ConnectTimeout, &other.ConnectTimeout) &&
 		isEqual(&this.LoginAllowed, &other.LoginAllowed) &&
 		isEqual(&this.Banner, &other.Banner) &&
-		isEqual(&this.PortForwardingAllowed, &other.PortForwardingAllowed)
+		isEqual(&this.PortForwardingAllowed, &other.PortForwardingAllowed) &&
+		isEqual(&this.AllowedSubsystems, &other.AllowedSubsystems)
 }
 
 func (this EnvironmentSsh) Types() []string { return []string{"ssh"} }

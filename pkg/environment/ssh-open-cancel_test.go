@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/crypto"
@@ -42,6 +43,9 @@ func TestSshEnvironmentCancellationBeforeChannelOpenReply(t *testing.T) {
 			conf.Address = template.MustNewString(target.Address())
 			conf.User = template.MustNewString("target-user")
 			conf.AcceptAllHostKeys = true
+			if test.taskType == TaskTypeSubsystem {
+				conf.AllowedSubsystems = common.MustNewRegexp("^netconf$")
+			}
 			repository, err := NewSshRepositoryWithHostKeys(context.Background(), "test", conf, []crypto.PrivateKey{newSshTestPrivateKey(t)})
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = repository.Close() })

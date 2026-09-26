@@ -62,6 +62,9 @@ Displayed before an interactive target shell is opened.
 <<property("portForwardingAllowed", "bool", template_context="../context/authorization.md", default=True)>>
 Controls local and dynamic forwarding after the applicable authorized-key policy has also been checked. Reverse forwarding is not supported by the SSH environment.
 
+<<property("allowedSubsystems", "regular expression", default="^sftp$")>>
+Only matching SSH subsystem names are forwarded to the target. The regular expression must match the entire name, even if no anchors are written. By default, only `sftp` is allowed; `allowedSubsystems: ''` denies all subsystems, while YAML `null` is invalid. For multiple names, use an expression such as `sftp|netconf|powershell`. Shell and exec are unaffected. An authorized-key forced command is executed instead of forwarding the requested subsystem.
+
 At least one host-key verification source is required unless `acceptAllHostKeys` is explicitly enabled.
 
 ## SSH User Certificate {: #certificate}
@@ -114,13 +117,13 @@ When a `bifroest` authorization forwards to another SSH environment, the origina
 | Exit status | Returned from the target command |
 | PTY and resize | Forwarded for shell and exec sessions; subsystem requests with a PTY are rejected |
 | Signals | Forwarded for shell and exec sessions |
-| SSH subsystems (including SFTP) | The requested subsystem name is sent unchanged to the target; stdin, stdout and stderr are streamed without interpreting the protocol. The client receives success only after the target accepts the subsystem request. |
+| Allowed SSH subsystems (including SFTP) | The requested subsystem name is sent unchanged to the target; stdin, stdout and stderr are streamed without interpreting the protocol. The client receives success only after the target accepts the subsystem request. |
 | SCP | Modern SCP uses SFTP; legacy SCP is handled as an exec command |
 | Agent forwarding | Forwarded only when requested and permitted by the authorization policy |
 | `ssh -L` and `ssh -D` | Connections originate from the target SSH server's network |
 | `ssh -R` | Rejected; reverse forwarding is not supported by the SSH environment |
 
-The target decides which subsystems are available. A rejected target subsystem request is rejected for the client as well. The target has 30 seconds by default to answer a subsystem request before the incoming request is rejected. Subsystem names must be non-empty, valid UTF-8, contain no NUL byte and be at most 256 bytes long. Subsystem requests with a PTY are rejected to prevent terminal newline conversion from changing protocol data. Agent forwarding must be requested before the subsystem starts. Audit events record the requested subsystem name. Subsystem streams are not terminal-recorded, and no login notification is written into their stdout. SSH break requests and other arbitrary session requests are not forwarded. Target exit signals are not forwarded as SSH exit signals; a target exit status and the target output must both finish within 30 seconds after either one finishes to report a successful session completion.
+The environment allowlist is checked before connecting to the target. A subsystem denied by the allowlist or rejected by the target receives a failed SSH subsystem request. The target has 30 seconds by default to answer an allowed subsystem request before the incoming request is rejected. Subsystem names must be non-empty, valid UTF-8, contain no NUL byte and be at most 256 bytes long. Subsystem requests with a PTY are rejected to prevent terminal newline conversion from changing protocol data. Agent forwarding must be requested before the subsystem starts. Audit events record the requested subsystem name. Subsystem streams are not terminal-recorded, and no login notification is written into their stdout. SSH break requests and other arbitrary session requests are not forwarded. Target exit signals are not forwarded as SSH exit signals; a target exit status and the target output must both finish within 30 seconds after either one finishes to report a successful session completion.
 
 If the client's stdin remains blocked for 30 seconds after a subsystem session ends, Bifröst closes the entire incoming SSH connection. This also terminates other sessions and forwards on that connection. The resulting `connection.closed` audit event has the reason `deadline-exceeded`.
 

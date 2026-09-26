@@ -51,7 +51,7 @@ func TestOpenSSHSSHEnvironmentSessionRecording(t *testing.T) {
 	}
 	verifySessionRecordingArtifact(t, f.fixture, artifact, f.recordingProducerID)
 
-	if err := f.startSSHEnvironmentBifroest(f.targetPort, f.wrongTargetKnownHosts, f.targetIdentity, false); err != nil {
+	if err := f.startSSHEnvironmentBifroest(f.targetPort, f.wrongTargetKnownHosts, f.targetIdentity, false, ""); err != nil {
 		t.Fatal(err)
 	}
 	rejected := f.ssh(30*time.Second, f.clientKey, "e2e", nil, "/usr/local/bin/e2e-helper", "ready")
@@ -98,7 +98,21 @@ func TestOpenSSHSSHEnvironmentSubsystem(t *testing.T) {
 	if code := exitCode(direct.err); code != 23 || direct.stdout != "stdout-e2e\n" {
 		t.Fatalf("direct OpenSSH target subsystem: exit=%d (error: %v), stdout=%q, stderr=%q", code, direct.err, direct.stdout, direct.stderr)
 	}
-	if err := f.startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targetIdentity, false); err != nil {
+	if err := f.startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targetIdentity, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	defaultClient := f.newSSHClient(t, 30*time.Second)
+	defaultSession, err := defaultClient.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := defaultSession.RequestSubsystem("netconf"); err == nil {
+		t.Fatal("Bifroest forwarded netconf without an explicit allowlist")
+	}
+	_ = defaultSession.Close()
+	_ = defaultClient.Close()
+	stopHostBifroest(t, f)
+	if err := f.startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targetIdentity, false, "^(sftp|netconf|unsupported-e2e)$"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -115,6 +129,14 @@ func TestOpenSSHSSHEnvironmentSubsystem(t *testing.T) {
 	defer session.Close()
 	if err := session.RequestSubsystem("unsupported-e2e"); err == nil {
 		t.Fatal("Bifroest accepted a subsystem rejected by the OpenSSH target")
+	}
+	blocked, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocked.Close()
+	if err := blocked.RequestSubsystem("blocked-e2e"); err == nil {
+		t.Fatal("Bifroest forwarded a subsystem not on the allowlist")
 	}
 }
 
@@ -154,7 +176,7 @@ func newSSHEnvironmentRecordingFixture(t *testing.T) (*sshEnvironmentFixture, er
 	s.targetPort = targetPort
 	s.targetIdentity = targetIdentity
 	s.wrongTargetKnownHosts = wrongTargetKnownHosts
-	if err := f.startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targetIdentity, true); err != nil {
+	if err := f.startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targetIdentity, true, ""); err != nil {
 		return s, err
 	}
 	return s, nil
@@ -253,7 +275,7 @@ func writeSSHEnvironmentKnownHosts(path, host, port, publicKeyPath string) error
 	return os.WriteFile(path, []byte(entry), 0600)
 }
 
-func (f *fixture) startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targetIdentity string, recording bool) error {
+func (f *fixture) startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targetIdentity string, recording bool, allowedSubsystems string) error {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return fmt.Errorf("reserve SSH listen port: %w", err)
@@ -280,10 +302,14 @@ func (f *fixture) startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targ
       targets: false
 `, yamlString(filepath.Join(f.tempDir, "auditlog-key")), yamlString(filepath.Join(f.tempDir, "auditlog")), yamlString(filepath.Join(f.tempDir, "recordings")))
 	}
+	subsystemConfiguration := ""
+	if allowedSubsystems != "" {
+		subsystemConfiguration = fmt.Sprintf("      allowedSubsystems: %s\n", yamlString(allowedSubsystems))
+	}
 	configuration := fmt.Sprintf(sshEnvironmentRecordingConfiguration,
 		auditlogConfiguration,
 		yamlString(net.JoinHostPort(f.host, f.port)), yamlString(f.hostKey), yamlString(f.sessionStorage), yamlString(f.clientKey+".pub"),
-		yamlString(net.JoinHostPort(f.host, targetPort)), yamlString(targetKnownHosts), yamlString(targetIdentity),
+		yamlString(net.JoinHostPort(f.host, targetPort)), yamlString(targetKnownHosts), yamlString(targetIdentity), subsystemConfiguration,
 	)
 	if err := os.WriteFile(configurationPath, []byte(configuration), 0600); err != nil {
 		_ = listener.Close()
@@ -353,4 +379,5 @@ flows:
       connectTimeout: 10s
       banner: '{{""}}'
       portForwardingAllowed: false
+%s
 `

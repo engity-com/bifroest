@@ -261,6 +261,9 @@ func (this *sessionTaskAuditLifecycle) complete(exitCode int, taskErr error) err
 	case taskErr == nil && exitCode < 0 && errors.Is(this.ctx.Err(), context.Canceled), errors.Is(taskErr, context.Canceled):
 		event.Outcome = audit.EventOutcomeCanceled
 		event.Reason = audit.EventReasonContextCanceled
+	case goerrors.Is(taskErr, environment.ErrSubsystemNotAllowed):
+		event.Outcome = audit.EventOutcomeDenied
+		event.Reason = audit.EventReasonEnvironmentPolicy
 	case taskErr != nil:
 		event.Outcome = audit.EventOutcomeFailure
 		event.ErrorCategory = auditErrorCategory(taskErr)

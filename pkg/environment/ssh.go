@@ -51,6 +51,15 @@ func (this *sshEnvironment) RunSubsystem(task Task, reply func(bool) error) (int
 }
 
 func (this *sshEnvironment) run(task Task, reply func(bool) error) (int, error) {
+	if task.TaskType() == TaskTypeSftp || task.TaskType() == TaskTypeSubsystem {
+		subsystem := task.SshSession().Subsystem()
+		if task.TaskType() == TaskTypeSftp {
+			subsystem = "sftp"
+		}
+		if !this.repository.conf.AllowedSubsystems.MatchEntireString(subsystem) {
+			return -1, fmt.Errorf("%w: %q", ErrSubsystemNotAllowed, subsystem)
+		}
+	}
 	transport, err := this.repository.transportFor(this, task.Context())
 	if err != nil {
 		return -1, err

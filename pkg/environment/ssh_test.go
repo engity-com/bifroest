@@ -21,6 +21,7 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/crypto"
@@ -142,6 +143,7 @@ func TestSshEnvironmentForwardsNamedSubsystems(t *testing.T) {
 	conf.Address = template.MustNewString(target.Address())
 	conf.User = template.MustNewString("target-user")
 	conf.AcceptAllHostKeys = true
+	conf.AllowedSubsystems = common.MustNewRegexp("^(sftp|netconf|powershell|unknown)$")
 	repository, err := NewSshRepositoryWithHostKeys(context.Background(), "test", conf, []crypto.PrivateKey{newSshTestPrivateKey(t)})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, repository.Close()) }()
@@ -174,6 +176,39 @@ func TestSshEnvironmentForwardsNamedSubsystems(t *testing.T) {
 			require.Equal(t, "subsystem stderr", sess.stderr.String())
 		})
 	}
+}
+
+func TestSshEnvironmentDeniedSubsystemDoesNotConnect(t *testing.T) {
+	target := newSshTarget(t)
+	defer target.Close()
+	ctx, cancel := newSshTestContext()
+	defer cancel()
+	conn := &sshTestConnection{id: connection.MustNewId(), context: ctx}
+	auth := &sshTestAuthorization{session: &sshTestStoredSession{id: session.MustNewId()}}
+	conf := &configuration.EnvironmentSsh{}
+	require.NoError(t, conf.SetDefaults())
+	conf.Address = template.MustNewString(target.Address())
+	conf.User = template.MustNewString("target-user")
+	conf.AcceptAllHostKeys = true
+	conf.AllowedSubsystems = common.MustNewRegexp("sftp|netconf")
+	repository, err := NewSshRepositoryWithHostKeys(context.Background(), "test", conf, []crypto.PrivateKey{newSshTestPrivateKey(t)})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, repository.Close()) }()
+	sess := newSshTestSession(ctx, "", nil)
+	sess.subsystem = "not-netconf"
+	task := &sshTestTask{context: ctx, connection: conn, authorization: auth, session: sess, taskType: TaskTypeSubsystem}
+	resolved, err := repository.Ensure(task)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resolved.Close()) }()
+	replies := make(chan bool, 1)
+	code, err := resolved.(SubsystemRunner).RunSubsystem(task, func(accepted bool) error {
+		replies <- accepted
+		return nil
+	})
+	require.Equal(t, -1, code)
+	require.ErrorContains(t, err, "not allowed")
+	require.Empty(t, replies)
+	require.Zero(t, target.connections.Load())
 }
 
 func TestWatchSubsystemInput(t *testing.T) {
