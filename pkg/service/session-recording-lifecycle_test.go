@@ -683,6 +683,17 @@ func TestExecuteSessionRecordingCompletionAuditFailurePreservesCompletedArtifact
 			sshSession, err := client.NewSession()
 			require.NoError(t, err)
 			require.Error(t, sshSession.Run("complete-before-audit-fails"))
+			closed := make(chan struct{})
+			go func() {
+				_ = client.Wait()
+				close(closed)
+			}()
+			select {
+			case <-closed:
+			case <-time.After(5 * time.Second):
+				_ = client.Close()
+				t.Fatal("SSH connection remained open after the completion audit failed")
+			}
 			_, err = client.NewSession()
 			require.Error(t, err)
 			healthySession, err := healthyClient.NewSession()
