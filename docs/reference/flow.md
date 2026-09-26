@@ -76,6 +76,8 @@ If this property is set, the requesting name (`ssh <requesting name>@my-host.tld
 !!! warning
      Keep `^` and `$` to ensure a full match, otherwise it matches only a part of it.
 
+If no flow matches the requesting name, Bifröst rejects authentication as usual and logs `no flow matches requested user` at DEBUG level. Use [`--log.level=DEBUG`](cli/index.md#general-flags) to see this diagnostic.
+
 ### Example {: id=requirement-example }
 
 ```yaml
