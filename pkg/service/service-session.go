@@ -5,8 +5,11 @@ import (
 	goerrors "errors"
 	"io"
 	"math"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	essh "github.com/engity-com/ssh-server-go"
 	"github.com/google/uuid"
@@ -60,6 +63,15 @@ func (this *sshSessionRequest) record(requestType string) {
 }
 
 func (this *service) onSessionRequest(sshSession essh.Session, requestType string) (bool, error) {
+	if requestType == "subsystem" {
+		name := sshSession.Subsystem()
+		if name == "" || len(name) > audit.MaxSessionSubsystemBytes || !utf8.ValidString(name) || strings.IndexByte(name, 0) >= 0 {
+			return false, nil
+		}
+		if _, _, hasPty := sshSession.Pty(); hasPty {
+			return false, nil
+		}
+	}
 	if request, ok := sshSession.Context().Value(sshSessionRequestContextKey{}).(*sshSessionRequest); ok {
 		request.record(requestType)
 	}
@@ -127,14 +139,38 @@ func (this *sessionNewChannel) Accept() (gossh.Channel, <-chan *gossh.Request, e
 }
 
 func (this *service) handleSshShellSession(sess essh.Session) error {
-	return this.uncheckedExecuteSshSession(sess, environment.TaskTypeShell)
+	return this.uncheckedExecuteSshSession(sess, environment.TaskTypeShell, nil)
 }
 
-func (this *service) handleSshSftpSession(sess essh.Session) error {
-	return this.uncheckedExecuteSshSession(sess, environment.TaskTypeSftp)
+func (this *service) handleSshSubsystemSession(sess essh.Session, reply essh.SubsystemReply) error {
+	taskType := environment.TaskTypeSubsystem
+	if sess.Subsystem() == "sftp" {
+		taskType = environment.TaskTypeSftp
+	}
+	var replyMu sync.Mutex
+	answered := false
+	respond := func(accepted bool) error {
+		replyMu.Lock()
+		defer replyMu.Unlock()
+		if answered {
+			return essh.ErrSubsystemResponseAlreadySent
+		}
+		answered = true
+		return reply(accepted)
+	}
+	err := this.uncheckedExecuteSshSession(sess, taskType, respond)
+	replyMu.Lock()
+	defer replyMu.Unlock()
+	if !answered {
+		answered = true
+		if replyErr := reply(false); replyErr != nil {
+			return goerrors.Join(err, replyErr)
+		}
+	}
+	return err
 }
 
-func (this *service) uncheckedExecuteSshSession(sshSess essh.Session, taskType environment.TaskType) error {
+func (this *service) uncheckedExecuteSshSession(sshSess essh.Session, taskType environment.TaskType, respond func(bool) error) error {
 	conn := this.connection(sshSess.Context())
 	l := conn.logger
 
@@ -143,7 +179,7 @@ func (this *service) uncheckedExecuteSshSession(sshSess essh.Session, taskType e
 		With("command", sshSess.RawCommand()).
 		Info("new remote session")
 
-	if exitCode, err := this.executeSession(sshSess, conn, taskType); err != nil {
+	if exitCode, err := this.executeSession(sshSess, conn, taskType, respond); err != nil {
 		recordingFailure := isSessionRecordingFailure(err)
 		if !recordingFailure && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 			l.Info("session ended unexpectedly; maybe timeout")
@@ -178,6 +214,7 @@ type sessionTaskAuditLifecycle struct {
 	auth        authorization.Authorization
 	operationId string
 	task        audit.SessionTask
+	subsystem   string
 	startedAt   time.Time
 }
 
@@ -198,6 +235,7 @@ func (this *sessionTaskAuditLifecycle) start(hasPty, agentForwarding, forcedComm
 	event := this.service.authorizationAuditEvent(this.ctx, this.auth, audit.EventNameSessionTaskStarted, audit.EventDomainSession)
 	event.OperationId = this.operationId
 	event.SessionTask = this.task
+	event.SessionSubsystem = this.subsystem
 	event.Pty = common.P(hasPty)
 	event.AgentForwarding = common.P(agentForwarding)
 	event.ForcedCommand = common.P(forcedCommand)
@@ -208,6 +246,7 @@ func (this *sessionTaskAuditLifecycle) complete(exitCode int, taskErr error) err
 	event := this.service.authorizationAuditEvent(this.ctx, this.auth, audit.EventNameSessionTaskCompleted, audit.EventDomainSession)
 	event.OperationId = this.operationId
 	event.SessionTask = this.task
+	event.SessionSubsystem = this.subsystem
 	event.DurationMillis = common.P(time.Since(this.startedAt).Milliseconds())
 	if exitCode >= 0 {
 		event.ExitCode = common.P(exitCode)
@@ -234,7 +273,7 @@ func (this *sessionTaskAuditLifecycle) complete(exitCode int, taskErr error) err
 	return this.service.recordFlowAudit(this.ctx, this.auth.Flow(), event)
 }
 
-func (this *service) executeSession(sshSess essh.Session, conn *connection, taskType environment.TaskType) (exitCode int, rErr error) {
+func (this *service) executeSession(sshSess essh.Session, conn *connection, taskType environment.TaskType, respond func(bool) error) (exitCode int, rErr error) {
 	fail := func(err error) (int, error) {
 		return -1, err
 	}
@@ -254,8 +293,13 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 	if err != nil {
 		return failf(errors.System, "cannot generate audit operation ID: %w", err)
 	}
+	requestedSubsystem := taskType != environment.TaskTypeShell
 	requestedExec := sessionRequestedExec(sshSess)
 	requestedTask := auditSessionTask(taskType, requestedExec)
+	subsystem := ""
+	if requestedSubsystem {
+		subsystem = sshSess.Subsystem()
+	}
 	sshSess, forcedCommand := applyAuthorizedKeyPolicy(auth, sshSess)
 	executesCommand := requestedExec || forcedCommand
 	if forcedCommand {
@@ -270,6 +314,7 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 		auth:        auth,
 		operationId: operationId.String(),
 		task:        requestedTask,
+		subsystem:   subsystem,
 	}
 	if err := taskAudit.start(hasPty, bssh.AgentRequested(sshSess), forcedCommand); err != nil {
 		return fail(err)
@@ -291,16 +336,9 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 				rErr = goerrors.Join(rErr, markSessionRecordingFailure(recordingErr))
 			}
 		}()
-		if err := recordingLifecycle.showNotice(sshSess, !executesCommand); err != nil {
-			return fail(err)
-		}
 	}
 	_, _, oldState, err := this.resolveAuthorizationAndSession(sshSess.Context())
 	if err != nil {
-		return fail(err)
-	}
-
-	if err := this.showRememberMe(sshSess, auth, sess, oldState); err != nil {
 		return fail(err)
 	}
 
@@ -319,6 +357,21 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 		return fail(err)
 	}
 	defer common.KeepCloseError(&rErr, env)
+	if respond != nil && forcedCommand {
+		if err := respond(true); err != nil {
+			return fail(err)
+		}
+	}
+	if recordingLifecycle != nil {
+		if err := recordingLifecycle.showNotice(sshSess, !executesCommand); err != nil {
+			return fail(err)
+		}
+	}
+	if !requestedSubsystem {
+		if err := this.showRememberMe(sshSess, auth, sess, oldState); err != nil {
+			return fail(err)
+		}
+	}
 
 	if !executesCommand && taskType == environment.TaskTypeShell {
 		banner, err := env.Banner(&req)
@@ -338,7 +391,19 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 		sshSession:         sshSess,
 		taskType:           taskType,
 	}
-	exitCode, err = env.Run(&t)
+	if respond != nil && !forcedCommand {
+		if runner, ok := env.(environment.SubsystemRunner); ok {
+			exitCode, err = runner.RunSubsystem(&t, respond)
+		} else if taskType == environment.TaskTypeSftp {
+			if err = respond(true); err == nil {
+				exitCode, err = env.Run(&t)
+			}
+		} else {
+			return failf(errors.User, "environment does not support subsystem %q", subsystem)
+		}
+	} else {
+		exitCode, err = env.Run(&t)
+	}
 	if err != nil {
 		return failf(errors.System, "run of environment failed: %w", err)
 	}
@@ -357,6 +422,9 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 func auditSessionTask(taskType environment.TaskType, command bool) audit.SessionTask {
 	if taskType == environment.TaskTypeSftp {
 		return audit.SessionTaskSftp
+	}
+	if taskType == environment.TaskTypeSubsystem {
+		return audit.SessionTaskSubsystem
 	}
 	if command {
 		return audit.SessionTaskExec

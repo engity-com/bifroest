@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -78,8 +79,22 @@ func validateAuditEvent(event Event) error {
 		event.AuthenticationPhase != AuthenticationPhaseVerified {
 		return errors.System.Newf("unknown audit authentication phase %q", event.AuthenticationPhase)
 	}
-	if event.SessionTask != "" && event.SessionTask != SessionTaskShell && event.SessionTask != SessionTaskExec && event.SessionTask != SessionTaskSftp {
+	if event.SessionTask != "" && event.SessionTask != SessionTaskShell && event.SessionTask != SessionTaskExec && event.SessionTask != SessionTaskSftp && event.SessionTask != SessionTaskSubsystem {
 		return errors.System.Newf("unknown audit session task %q", event.SessionTask)
+	}
+	if event.SessionSubsystem != "" {
+		if event.SessionTask != SessionTaskSftp && event.SessionTask != SessionTaskSubsystem {
+			return errors.System.Newf("audit session subsystem requires a subsystem task")
+		}
+		if len(event.SessionSubsystem) > MaxSessionSubsystemBytes {
+			return errors.System.Newf("audit session subsystem exceeds %d bytes", MaxSessionSubsystemBytes)
+		}
+		if !utf8.ValidString(event.SessionSubsystem) {
+			return errors.System.Newf("audit session subsystem is not valid UTF-8")
+		}
+		if strings.IndexByte(event.SessionSubsystem, 0) >= 0 {
+			return errors.System.Newf("audit session subsystem contains a NUL byte")
+		}
 	}
 	if event.ErrorCategory != "" && !isErrorCategory(event.ErrorCategory) {
 		return errors.System.Newf("unknown audit error category %q", event.ErrorCategory)

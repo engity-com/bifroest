@@ -114,7 +114,7 @@ func nativeAuditPrivateFromEvent(e Event) nativeAuditPrivateEvent {
 		AuthorizationKind: e.AuthorizationKind, SessionTask: string(e.SessionTask), Reason: e.Reason,
 		ErrorCategory: string(e.ErrorCategory), BytesRead: e.BytesRead, BytesWritten: e.BytesWritten,
 		DurationMillis: e.DurationMillis, Count: e.Count, Pty: e.Pty, AgentForwarding: e.AgentForwarding,
-		ForcedCommand: e.ForcedCommand,
+		ForcedCommand: e.ForcedCommand, SessionSubsystem: e.SessionSubsystem,
 	}
 	if e.ExitCode != nil {
 		value := int64(*e.ExitCode)
@@ -129,6 +129,7 @@ func nativeAuditEventFromPrivate(e Event, p nativeAuditPrivateEvent) (Event, err
 	e.Target = configuration.AuditlogTargetName(p.Target)
 	e.AuthenticationMethod, e.AuthenticationPhase = AuthenticationMethod(p.AuthenticationMethod), AuthenticationPhase(p.AuthenticationPhase)
 	e.AuthorizationKind, e.SessionTask, e.Reason = p.AuthorizationKind, SessionTask(p.SessionTask), p.Reason
+	e.SessionSubsystem = p.SessionSubsystem
 	e.ErrorCategory = ErrorCategory(p.ErrorCategory)
 	if p.ExitCode != nil {
 		if *p.ExitCode < math.MinInt || *p.ExitCode > math.MaxInt {

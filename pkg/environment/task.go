@@ -18,6 +18,7 @@ const executionLifecycleCapability = "execution-id-v1"
 const (
 	TaskTypeShell TaskType = iota
 	TaskTypeSftp
+	TaskTypeSubsystem
 )
 
 func (this TaskType) String() string {
@@ -26,6 +27,8 @@ func (this TaskType) String() string {
 		return "shell"
 	case TaskTypeSftp:
 		return "sftp"
+	case TaskTypeSubsystem:
+		return "subsystem"
 	default:
 		return fmt.Sprintf("illegal-task-type-%d", this)
 	}

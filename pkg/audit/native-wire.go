@@ -49,6 +49,7 @@ type nativeAuditPrivateEvent struct {
 	Pty                  *bool   `cbor:"19,keyasint,omitempty"`
 	AgentForwarding      *bool   `cbor:"20,keyasint,omitempty"`
 	ForcedCommand        *bool   `cbor:"21,keyasint,omitempty"`
+	SessionSubsystem     string  `cbor:"22,keyasint,omitempty"`
 }
 
 type nativeAuditRecord struct {

@@ -64,6 +64,60 @@ func TestOpenSSHSSHEnvironmentSessionRecording(t *testing.T) {
 	}
 }
 
+func TestOpenSSHSSHEnvironmentSubsystem(t *testing.T) {
+	f, err := newFixture(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.prepareRuntime(false); errors.Is(err, errNoRuntime) {
+		t.Skip(err)
+	} else if err != nil {
+		t.Fatal(err)
+	}
+
+	targetHostKey := filepath.Join(f.tempDir, "target_host_ed25519")
+	targetIdentity := filepath.Join(f.tempDir, "target_identity")
+	for _, path := range []string{targetHostKey, targetIdentity} {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		result := runCommand(ctx, f.repoRoot, nil, f.bifroest, "key", "generate", "--identityFile", path, "--publicFile", path+".pub")
+		cancel()
+		if result.err != nil {
+			t.Fatalf("generate %s: %v\n%s", filepath.Base(path), result.err, result.stderr)
+		}
+	}
+	targetPort, targetKnownHosts, err := f.prepareSSHEnvironmentTargetWithContainerfile(targetHostKey, targetIdentity, openSSHSubsystemContainerfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	direct := runCommand(ctx, f.repoRoot, nil, f.tools["ssh"],
+		"-F", "/dev/null", "-T", "-s", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
+		"-o", "IdentityFile="+targetIdentity, "-o", "UserKnownHostsFile="+targetKnownHosts,
+		"-o", "StrictHostKeyChecking=yes", "-p", targetPort, "e2e@"+f.host, "netconf")
+	cancel()
+	if code := exitCode(direct.err); code != 23 || direct.stdout != "stdout-e2e\n" {
+		t.Fatalf("direct OpenSSH target subsystem: exit=%d (error: %v), stdout=%q, stderr=%q", code, direct.err, direct.stdout, direct.stderr)
+	}
+	if err := f.startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targetIdentity, false); err != nil {
+		t.Fatal(err)
+	}
+
+	result := f.ssh(30*time.Second, f.clientKey, "e2e", []string{"-T", "-s"}, "netconf")
+	if code := exitCode(result.err); code != 23 || result.stdout != direct.stdout || result.stderr != direct.stderr {
+		t.Fatalf("forwarded netconf subsystem: exit=%d (error: %v), stdout=%q, stderr=%q", code, result.err, result.stdout, result.stderr)
+	}
+
+	client := f.newSSHClient(t, 30*time.Second)
+	session, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if err := session.RequestSubsystem("unsupported-e2e"); err == nil {
+		t.Fatal("Bifroest accepted a subsystem rejected by the OpenSSH target")
+	}
+}
+
 func newSSHEnvironmentRecordingFixture(t *testing.T) (*sshEnvironmentFixture, error) {
 	t.Helper()
 	f, err := newFixture(t)
@@ -107,6 +161,10 @@ func newSSHEnvironmentRecordingFixture(t *testing.T) (*sshEnvironmentFixture, er
 }
 
 func (f *fixture) prepareSSHEnvironmentTarget(hostKey, identity string) (string, string, error) {
+	return f.prepareSSHEnvironmentTargetWithContainerfile(hostKey, identity, localContainerfile)
+}
+
+func (f *fixture) prepareSSHEnvironmentTargetWithContainerfile(hostKey, identity, containerfile string) (string, string, error) {
 	contextDir := filepath.Join(f.tempDir, "ssh-target-context")
 	if err := os.MkdirAll(contextDir, 0755); err != nil {
 		return "", "", err
@@ -115,7 +173,7 @@ func (f *fixture) prepareSSHEnvironmentTarget(hostKey, identity string) (string,
 		content []byte
 		mode    os.FileMode
 	}{
-		"Containerfile":        {[]byte(localContainerfile), 0644},
+		"Containerfile":        {[]byte(containerfile), 0644},
 		"bifroest":             {mustRead(f.bifroest), 0755},
 		"e2e-helper":           {mustRead(f.helper), 0755},
 		"configuration.yaml":   {[]byte(localConfiguration), 0644},
@@ -166,6 +224,25 @@ func (f *fixture) prepareSSHEnvironmentTarget(hostKey, identity string) (string,
 	}
 	return port, knownHosts, nil
 }
+
+const openSSHSubsystemContainerfile = `FROM ` + alpineImage + `
+RUN apk add --no-cache openssh-server \
+ && addgroup -S -g 10001 e2e \
+ && adduser -S -D -H -u 10001 -G e2e -h /home/e2e -s /bin/sh e2e \
+ && echo 'e2e:unused-e2e-password' | chpasswd \
+ && mkdir -p /home/e2e/.ssh /run/sshd \
+ && chown -R e2e:e2e /home/e2e \
+ && chmod 0700 /home/e2e/.ssh
+COPY e2e-helper /usr/local/bin/e2e-helper
+COPY ssh_host_ed25519_key /etc/ssh/ssh_host_ed25519_key
+COPY authorized_keys /home/e2e/.ssh/authorized_keys
+RUN chmod 0755 /usr/local/bin/e2e-helper \
+ && chmod 0600 /etc/ssh/ssh_host_ed25519_key /home/e2e/.ssh/authorized_keys \
+ && chown e2e:e2e /home/e2e/.ssh/authorized_keys
+RUN printf 'Port 2222\nListenAddress 0.0.0.0\nHostKey /etc/ssh/ssh_host_ed25519_key\nAuthorizedKeysFile /home/e2e/.ssh/authorized_keys\nPubkeyAuthentication yes\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\nSubsystem netconf /usr/local/bin/e2e-helper streams\n' > /etc/ssh/sshd_config
+EXPOSE 2222
+ENTRYPOINT ["/usr/sbin/sshd", "-D", "-e", "-f", "/etc/ssh/sshd_config"]
+`
 
 func writeSSHEnvironmentKnownHosts(path, host, port, publicKeyPath string) error {
 	publicKey := strings.Fields(string(mustRead(publicKeyPath)))

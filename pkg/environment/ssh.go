@@ -8,6 +8,7 @@ import (
 	gonet "net"
 	"strings"
 	"sync"
+	"time"
 
 	essh "github.com/engity-com/ssh-server-go"
 	gossh "golang.org/x/crypto/ssh"
@@ -42,6 +43,14 @@ func (this *sshEnvironment) Banner(req Request) (io.ReadCloser, error) {
 }
 
 func (this *sshEnvironment) Run(task Task) (int, error) {
+	return this.run(task, nil)
+}
+
+func (this *sshEnvironment) RunSubsystem(task Task, reply func(bool) error) (int, error) {
+	return this.run(task, reply)
+}
+
+func (this *sshEnvironment) run(task Task, reply func(bool) error) (int, error) {
 	transport, err := this.repository.transportFor(this, task.Context())
 	if err != nil {
 		return -1, err
@@ -65,8 +74,8 @@ func (this *sshEnvironment) Run(task Task) (int, error) {
 		switch task.TaskType() {
 		case TaskTypeShell:
 			code, err = this.runShell(task, transport, environment)
-		case TaskTypeSftp:
-			code, err = this.runSftp(task, transport, environment)
+		case TaskTypeSftp, TaskTypeSubsystem:
+			code, err = this.runSubsystem(task, transport, environment, reply)
 		default:
 			code, err = -1, fmt.Errorf("illegal task type: %v", task.TaskType())
 		}
@@ -323,10 +332,17 @@ func sendTargetWindowChange(target sshRequestSender, window essh.Window) error {
 	return err
 }
 
-func (this *sshEnvironment) runSftp(task Task, transport *sshTransport, environment sys.EnvVars) (int, error) {
+func (this *sshEnvironment) runSubsystem(task Task, transport *sshTransport, environment sys.EnvVars, reply func(bool) error) (int, error) {
+	subsystem := task.SshSession().Subsystem()
+	if task.TaskType() == TaskTypeSftp {
+		subsystem = "sftp"
+	}
+	if subsystem == "" {
+		return -1, fmt.Errorf("SSH subsystem name is empty")
+	}
 	channel, requests, err := this.openTargetChannel(task.Context(), transport, "session", nil)
 	if err != nil {
-		return -1, fmt.Errorf("cannot open SSH target SFTP channel: %w", err)
+		return -1, fmt.Errorf("cannot open SSH target subsystem channel: %w", err)
 	}
 	defer func() { _ = channel.Close() }()
 	channelDone := make(chan struct{})
@@ -341,16 +357,33 @@ func (this *sshEnvironment) runSftp(task Task, transport *sshTransport, environm
 	if err := sendSshEnvironment(channel, environment); err != nil {
 		return -1, err
 	}
+	if bssh.AgentRequested(task.SshSession()) && authorization.IsAgentForwardingAllowed(task.Authorization()) {
+		if err := transport.ensureAgent(task, this.lifetime); err != nil {
+			return -1, fmt.Errorf("cannot forward SSH agent to target: %w", err)
+		}
+		accepted, err := channel.SendRequest("auth-agent-req@openssh.com", true, nil)
+		if err != nil {
+			return -1, fmt.Errorf("cannot request SSH target agent forwarding: %w", err)
+		}
+		if !accepted {
+			return -1, fmt.Errorf("SSH target rejected agent forwarding")
+		}
+	}
 	type subsystemRequest struct{ Subsystem string }
-	accepted, err := channel.SendRequest("subsystem", true, gossh.Marshal(&subsystemRequest{"sftp"}))
+	accepted, err := channel.SendRequest("subsystem", true, gossh.Marshal(&subsystemRequest{subsystem}))
 	if err != nil {
 		if contextErr := task.Context().Err(); contextErr != nil {
 			return -1, contextErr
 		}
-		return -1, fmt.Errorf("cannot request SSH target SFTP subsystem: %w", err)
+		return -1, fmt.Errorf("cannot request SSH target %q subsystem: %w", subsystem, err)
 	}
 	if !accepted {
-		return -1, fmt.Errorf("SSH target rejected SFTP subsystem")
+		return -1, fmt.Errorf("SSH target rejected %q subsystem", subsystem)
+	}
+	if reply != nil {
+		if err := reply(true); err != nil {
+			return -1, fmt.Errorf("cannot confirm SSH subsystem: %w", err)
+		}
 	}
 
 	exitStatus := make(chan struct {
@@ -360,47 +393,95 @@ func (this *sshEnvironment) runSftp(task Task, transport *sshTransport, environm
 	requestsDone := make(chan struct{})
 	go func() {
 		defer close(requestsDone)
-		status, err := collectSftpExitStatus(requests)
+		status, err := collectSubsystemExitStatus(requests, subsystem)
 		exitStatus <- struct {
 			status int
 			err    error
 		}{status, err}
+		for request := range requests {
+			if request.WantReply {
+				_ = request.Reply(false, nil)
+			}
+		}
+	}()
+	defer func() {
+		stop := time.AfterFunc(2*time.Second, func() {
+			// Closing the shared transport also unblocks a target that ignores CHANNEL_CLOSE.
+			this.repository.removeTransport(this.connection.Id(), transport)
+		})
+		defer stop.Stop()
+		_ = channel.Close()
+		<-requestsDone
 	}()
 	stderrDone := make(chan struct{})
 	go func() {
 		defer close(stderrDone)
 		_, _ = io.Copy(task.SshSession().Stderr(), channel.Stderr())
 	}()
-	copyDone := make(chan error, 1)
+	inputDone := make(chan error, 1)
 	go func() {
-		copyDone <- essh.FullDuplexCopy(task.Context(), task.SshSession(), channel, nil)
+		_, copyErr := io.Copy(channel, task.SshSession())
+		if copyErr == nil {
+			copyErr = channel.CloseWrite()
+		}
+		inputDone <- copyErr
 	}()
-	select {
-	case err = <-copyDone:
-	case <-task.Context().Done():
-		_ = channel.Close()
-		err = <-copyDone
+	outputDone := make(chan error, 1)
+	go func() {
+		_, copyErr := io.Copy(task.SshSession(), channel)
+		if copyErr == nil {
+			select {
+			case <-stderrDone:
+				copyErr = task.SshSession().CloseWrite()
+				if errors.Is(copyErr, io.EOF) {
+					copyErr = nil
+				}
+			case <-task.Context().Done():
+				copyErr = task.Context().Err()
+			}
+		}
+		outputDone <- copyErr
+	}()
+
+	var status struct {
+		status int
+		err    error
 	}
-	_ = channel.Close()
-	<-requestsDone
-	<-stderrDone
+	var timeout <-chan time.Time
+	haveStatus, haveOutput := false, false
+	for !haveStatus || !haveOutput {
+		select {
+		case inputErr := <-inputDone:
+			inputDone = nil
+			if inputErr != nil && !errors.Is(inputErr, io.EOF) {
+				return -1, fmt.Errorf("SSH target %q subsystem input failed: %w", subsystem, inputErr)
+			}
+		case outputErr := <-outputDone:
+			haveOutput = true
+			if outputErr != nil {
+				return -1, fmt.Errorf("SSH target %q subsystem output failed: %w", subsystem, outputErr)
+			}
+		case status = <-exitStatus:
+			haveStatus = true
+		case <-task.Context().Done():
+			return -1, task.Context().Err()
+		case <-timeout:
+			return -1, fmt.Errorf("SSH target %q subsystem did not finish in time", subsystem)
+		}
+		if timeout == nil && (haveStatus || haveOutput) {
+			timeout = time.After(30 * time.Second)
+		}
+	}
 	if contextErr := task.Context().Err(); contextErr != nil {
 		return -1, contextErr
 	}
-	if err != nil && task.Context().Err() != nil {
-		return -1, task.Context().Err()
-	}
-	if err != nil {
-		return -1, fmt.Errorf("SSH target SFTP stream failed: %w", err)
-	}
-	status := <-exitStatus
 	if status.err != nil {
 		return -1, status.err
 	}
 	return status.status, nil
 }
 
-func collectSftpExitStatus(requests <-chan *gossh.Request) (int, error) {
+func collectSubsystemExitStatus(requests <-chan *gossh.Request, subsystem string) (int, error) {
 	result := -1
 	received := false
 	var resultErr error
@@ -409,20 +490,23 @@ func collectSftpExitStatus(requests <-chan *gossh.Request) (int, error) {
 		case "exit-status":
 			var payload struct{ Status uint32 }
 			if err := gossh.Unmarshal(request.Payload, &payload); err != nil {
-				resultErr = fmt.Errorf("cannot decode SSH target SFTP exit status: %w", err)
+				resultErr = fmt.Errorf("cannot decode SSH target %q subsystem exit status: %w", subsystem, err)
 			} else {
 				result = int(payload.Status)
 				received = true
 			}
 		case "exit-signal":
-			resultErr = fmt.Errorf("SSH target SFTP subsystem exited by signal")
+			resultErr = fmt.Errorf("SSH target %q subsystem exited by signal", subsystem)
 		}
 		if request.WantReply {
 			_ = request.Reply(false, nil)
 		}
+		if received || resultErr != nil {
+			return result, resultErr
+		}
 	}
 	if !received && resultErr == nil {
-		resultErr = fmt.Errorf("SSH target SFTP subsystem did not report an exit status")
+		resultErr = fmt.Errorf("SSH target %q subsystem did not report an exit status", subsystem)
 	}
 	return result, resultErr
 }

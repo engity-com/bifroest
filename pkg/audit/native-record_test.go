@@ -64,6 +64,8 @@ func TestNativeAuditRecordRoundTripAndRedaction(t *testing.T) {
 	publicIdentity, err := newJournalPublicIdentity(identity.ProducerId(), identity.journalPublicKey())
 	require.NoError(t, err)
 	event := nativeTestEvent()
+	event.SessionTask = SessionTaskSubsystem
+	event.SessionSubsystem = "netconf"
 	*event.Count = 1
 	for _, encrypted := range []bool{false, true} {
 		t.Run(map[bool]string{true: "encrypted", false: "clear"}[encrypted], func(t *testing.T) {

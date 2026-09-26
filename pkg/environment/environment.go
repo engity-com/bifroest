@@ -23,6 +23,11 @@ type Environment interface {
 	Close() error
 }
 
+// SubsystemRunner confirms an upstream subsystem request before streaming its data.
+type SubsystemRunner interface {
+	RunSubsystem(Task, func(bool) error) (int, error)
+}
+
 // ReversePortForwardingPolicy allows an environment to specialize reverse
 // forwarding independently from local and dynamic forwarding.
 type ReversePortForwardingPolicy interface {

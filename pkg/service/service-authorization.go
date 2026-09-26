@@ -341,18 +341,26 @@ func (this *service) validateSessionRecordingPty(flow configuration.FlowName, pt
 	return err
 }
 
-func (this *service) onAgentForwardingRequested(ctx essh.Context, _ essh.Session) (bool, error) {
+func (this *service) onAgentForwardingRequested(ctx essh.Context, sess essh.Session) (bool, error) {
 	auth, ok := ctx.Value(authorizationCtxKey).(authorization.Authorization)
 	if !ok || auth == nil {
 		return false, errors.Newf(errors.System, "no authorization resolved for agent forwarding request")
 	}
-	allowed := authorization.IsAgentForwardingAllowed(auth)
+	late := sess.Subsystem() != ""
+	if request, ok := ctx.Value(sshSessionRequestContextKey{}).(*sshSessionRequest); ok && request.kind.Load() != uint32(sshSessionRequestUnknown) {
+		late = true
+	}
+	allowed := !late && authorization.IsAgentForwardingAllowed(auth)
 	event := this.authorizationAuditEvent(ctx, auth, audit.EventNameSessionAgentForwardingDecided, audit.EventDomainSession)
 	if allowed {
 		event.Outcome = audit.EventOutcomeSuccess
 	} else {
 		event.Outcome = audit.EventOutcomeDenied
-		event.Reason = audit.EventReasonAuthorizedKeyPolicy
+		if late {
+			event.Reason = audit.EventReasonInvalidRequest
+		} else {
+			event.Reason = audit.EventReasonAuthorizedKeyPolicy
+		}
 	}
 	if err := this.recordFlowAudit(ctx, auth.Flow(), event); err != nil {
 		return false, err

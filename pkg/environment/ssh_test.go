@@ -130,6 +130,52 @@ func TestSshEnvironmentSharesTransportForExecSftpAndDirectTcpIp(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+func TestSshEnvironmentForwardsNamedSubsystems(t *testing.T) {
+	target := newSshTarget(t)
+	defer target.Close()
+	ctx, cancel := newSshTestContext()
+	defer cancel()
+	conn := &sshTestConnection{id: connection.MustNewId(), context: ctx}
+	auth := &sshTestAuthorization{session: &sshTestStoredSession{id: session.MustNewId()}}
+	conf := &configuration.EnvironmentSsh{}
+	require.NoError(t, conf.SetDefaults())
+	conf.Address = template.MustNewString(target.Address())
+	conf.User = template.MustNewString("target-user")
+	conf.AcceptAllHostKeys = true
+	repository, err := NewSshRepositoryWithHostKeys(context.Background(), "test", conf, []crypto.PrivateKey{newSshTestPrivateKey(t)})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, repository.Close()) }()
+
+	for _, name := range []string{"netconf", "powershell", "unknown"} {
+		t.Run(name, func(t *testing.T) {
+			sess := newSshTestSession(ctx, "", []byte("payload for "+name))
+			sess.subsystem = name
+			if name == "netconf" {
+				sess.closeWriteErr = io.EOF
+			}
+			task := &sshTestTask{context: ctx, connection: conn, authorization: auth, session: sess, taskType: TaskTypeSubsystem}
+			resolved, err := repository.Ensure(task)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, resolved.Close()) }()
+			var replies []bool
+			code, err := resolved.(SubsystemRunner).RunSubsystem(task, func(accepted bool) error {
+				replies = append(replies, accepted)
+				return nil
+			})
+			if name == "unknown" {
+				require.ErrorContains(t, err, "rejected")
+				require.Empty(t, replies)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, 9, code)
+			require.Equal(t, []bool{true}, replies)
+			require.Equal(t, "payload for "+name, sess.stdout.String())
+			require.Equal(t, "subsystem stderr", sess.stderr.String())
+		})
+	}
+}
+
 func TestSshEnvironmentCancellationDoesNotCloseSharedTransport(t *testing.T) {
 	target := newSshTarget(t)
 	defer target.Close()
@@ -553,7 +599,7 @@ func TestSshEnvironmentRejectsReversePortForwarding(t *testing.T) {
 func TestCollectSftpExitStatusRequiresStatus(t *testing.T) {
 	requests := make(chan *gossh.Request)
 	close(requests)
-	status, err := collectSftpExitStatus(requests)
+	status, err := collectSubsystemExitStatus(requests, "sftp")
 	require.Equal(t, -1, status)
 	require.ErrorContains(t, err, "did not report an exit status")
 }
@@ -683,14 +729,19 @@ func serveSshTargetSession(channel gossh.NewChannel, blockedExec chan<- struct{}
 		case "subsystem":
 			var payload struct{ Subsystem string }
 			_ = gossh.Unmarshal(request.Payload, &payload)
-			accepted := payload.Subsystem == "sftp"
+			accepted := payload.Subsystem == "sftp" || payload.Subsystem == "netconf" || payload.Subsystem == "powershell"
 			_ = request.Reply(accepted, nil)
 			if !accepted {
 				_ = stream.Close()
 				return
 			}
 			_, _ = io.Copy(stream, stream)
-			_, _ = stream.SendRequest("exit-status", false, gossh.Marshal(&struct{ Status uint32 }{0}))
+			status := uint32(0)
+			if payload.Subsystem != "sftp" {
+				status = 9
+				_, _ = io.WriteString(stream.Stderr(), "subsystem stderr")
+			}
+			_, _ = stream.SendRequest("exit-status", false, gossh.Marshal(&struct{ Status uint32 }{status}))
 			_ = stream.Close()
 			return
 		default:
@@ -886,12 +937,14 @@ func (*sshTestTask) StartPreparation(string, string, PreparationProgressAttribut
 type sshTestSession struct {
 	context            *sshTestContext
 	command            string
+	subsystem          string
 	originalCommand    string
 	hasOriginalCommand bool
 	environment        []string
 	stdin              *bytes.Reader
 	stdout             bytes.Buffer
 	stderr             bytes.Buffer
+	closeWriteErr      error
 	signals            chan<- essh.Signal
 }
 
@@ -902,7 +955,7 @@ func newSshTestSession(ctx *sshTestContext, command string, stdin []byte) *sshTe
 func (this *sshTestSession) Read(value []byte) (int, error)            { return this.stdin.Read(value) }
 func (this *sshTestSession) Write(value []byte) (int, error)           { return this.stdout.Write(value) }
 func (*sshTestSession) Close() error                                   { return nil }
-func (*sshTestSession) CloseWrite() error                              { return nil }
+func (this *sshTestSession) CloseWrite() error                         { return this.closeWriteErr }
 func (*sshTestSession) SendRequest(string, bool, []byte) (bool, error) { return false, nil }
 func (this *sshTestSession) Stderr() io.ReadWriter                     { return &this.stderr }
 func (*sshTestSession) User() string                                   { return "source-user" }
@@ -920,7 +973,7 @@ func (this *sshTestSession) RawCommand() string { return this.command }
 func (this *sshTestSession) OriginalCommand() (string, bool) {
 	return this.originalCommand, this.hasOriginalCommand
 }
-func (*sshTestSession) Subsystem() string                         { return "" }
+func (this *sshTestSession) Subsystem() string                    { return this.subsystem }
 func (*sshTestSession) PublicKey() essh.PublicKey                 { return nil }
 func (this *sshTestSession) Context() essh.Context                { return this.context }
 func (*sshTestSession) Permissions() essh.Permissions             { return essh.Permissions{} }

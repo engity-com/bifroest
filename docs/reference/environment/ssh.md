@@ -112,15 +112,15 @@ When a `bifroest` authorization forwards to another SSH environment, the origina
 | Shell and exec | Opened as separate channels on the shared target transport |
 | stdin, stdout and stderr | Forwarded without merging stderr into stdout |
 | Exit status | Returned from the target command |
-| PTY and resize | Terminal type, modes, dimensions and later window changes are forwarded |
-| Signals | Forwarded to the target session |
-| SFTP | The target `sftp` subsystem is streamed directly |
+| PTY and resize | Forwarded for shell and exec sessions; subsystem requests with a PTY are rejected |
+| Signals | Forwarded for shell and exec sessions |
+| SSH subsystems (including SFTP) | The requested subsystem name is sent unchanged to the target; stdin, stdout and stderr are streamed without interpreting the protocol. The client receives success only after the target accepts the subsystem request. |
 | SCP | Modern SCP uses SFTP; legacy SCP is handled as an exec command |
 | Agent forwarding | Forwarded only when requested and permitted by the authorization policy |
 | `ssh -L` and `ssh -D` | Connections originate from the target SSH server's network |
 | `ssh -R` | Rejected; reverse forwarding is not supported by the SSH environment |
 
-Arbitrary subsystems and SSH break requests are not forwarded.
+The target decides which subsystems are available. A rejected target subsystem request is rejected for the client as well. The target has 30 seconds by default to answer a subsystem request before the incoming request is rejected. Subsystem names must be non-empty, valid UTF-8, contain no NUL byte and be at most 256 bytes long. Subsystem requests with a PTY are rejected to prevent terminal newline conversion from changing protocol data. Agent forwarding must be requested before the subsystem starts. Audit events record the requested subsystem name. Subsystem streams are not terminal-recorded, and no login notification is written into their stdout. SSH break requests and other arbitrary session requests are not forwarded. Target exit signals are not forwarded as SSH exit signals; a target exit status and the target output must both finish within 30 seconds after either one finishes to report a successful session completion.
 
 !!! warning
      OpenSSH agent forwarding is scoped to an SSH connection rather than an individual session. After one permitted session enables forwarding, the target can access that source agent until the incoming SSH connection ends. Only enable agent forwarding for trusted targets.

@@ -25,6 +25,7 @@ func TestSshEnvironmentCancellationBeforeChannelOpenReply(t *testing.T) {
 	}{
 		{"shell", TaskTypeShell, "session", 7},
 		{"sftp", TaskTypeSftp, "session", 0},
+		{"netconf", TaskTypeSubsystem, "session", 9},
 		{"direct-tcpip", TaskTypeShell, "direct-tcpip", 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -48,9 +49,13 @@ func TestSshEnvironmentCancellationBeforeChannelOpenReply(t *testing.T) {
 			ctx, cancel := newSshTestContext()
 			t.Cleanup(cancel)
 			newTask := func(ctx *sshTestContext) *sshTestTask {
+				sshSession := newSshTestSession(ctx, "show-environment", nil)
+				if test.taskType == TaskTypeSubsystem {
+					sshSession.subsystem = test.name
+				}
 				return &sshTestTask{
 					context: ctx, connection: conn, authorization: auth,
-					session: newSshTestSession(ctx, "show-environment", nil), taskType: test.taskType,
+					session: sshSession, taskType: test.taskType,
 				}
 			}
 			task := newTask(ctx)
