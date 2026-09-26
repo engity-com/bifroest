@@ -1109,9 +1109,16 @@ func (this *sessionRecordingLifecycle) showNotice(sshSession essh.Session, inter
 	return nil
 }
 
-func (this *sessionRecordingLifecycle) finish(exitCode int, taskErr error) error {
+func (this *sessionRecordingLifecycle) finish(exitCode int, taskErr error, conn *connection) error {
 	if this == nil {
 		return nil
+	}
+	handleFailure := func(err error) error {
+		result := this.service.handleRecordingFailure(this.auditlog, "session Recording", err)
+		if result != nil {
+			_ = conn.Close()
+		}
+		return result
 	}
 	captureErr := this.capture.stopAndWait()
 	elapsed := time.Since(this.started)
@@ -1153,17 +1160,17 @@ func (this *sessionRecordingLifecycle) finish(exitCode int, taskErr error) error
 	}
 	_, stopPhase, stopErr := this.coordinator.stopPrepared(elapsed, result, exitStatus, prepare)
 	if !this.repository.audited {
-		return goerrors.Join(captureErr, this.service.handleRecordingFailure(this.auditlog, "session Recording", stopErr))
+		return goerrors.Join(captureErr, handleFailure(stopErr))
 	}
 	finalAuditContext := &sshSessionContext{Context: this.ctx, plainContext: lifecycleContext}
 	if stopErr == nil {
 		auditErr := this.service.recordPendingSessionRecordingLifecycle(finalAuditContext, lifecycleContext, this.repository, this.metadata.RecordingId)
-		recordingErr := this.service.handleRecordingFailure(this.auditlog, "session Recording", auditErr)
+		recordingErr := handleFailure(auditErr)
 		return goerrors.Join(captureErr, recordingErr)
 	}
 	event := sessionRecordingTerminalAuditEvent(this.metadata, result, taskErr, captureErr, stopErr, stopPhase, elapsed, exitStatus)
 	auditErr := this.service.recordSessionRecordingStopFailure(finalAuditContext, lifecycleContext, this.repository, this.metadata.RecordingId, this.metadata.Flow, event, staged, stopPhase)
-	recordingErr := this.service.handleRecordingFailure(this.auditlog, "session Recording", goerrors.Join(stopErr, auditErr))
+	recordingErr := handleFailure(goerrors.Join(stopErr, auditErr))
 	return goerrors.Join(captureErr, recordingErr)
 }
 

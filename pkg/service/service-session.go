@@ -286,7 +286,7 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 	if recorded != nil {
 		sshSess = recorded
 		defer func() {
-			if recordingErr := recordingLifecycle.finish(exitCode, rErr); recordingErr != nil {
+			if recordingErr := recordingLifecycle.finish(exitCode, rErr, conn); recordingErr != nil {
 				exitCode = -1
 				rErr = goerrors.Join(rErr, markSessionRecordingFailure(recordingErr))
 			}
