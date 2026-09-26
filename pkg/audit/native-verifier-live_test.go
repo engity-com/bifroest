@@ -21,7 +21,7 @@ func TestNativeLiveCapturedHeadSurvivesAppendAndRotation(t *testing.T) {
 			require.NoError(t, r.Record(context.Background(), Event{Name: "first"}))
 			source := JournalSource{Name: "live", Directory: conf.Directory, ExpectedProducerId: id.ProducerId(), ExpectedEncryptionRecipient: r.fingerprint}
 			headPath := filepath.Join(r.headDirectory, nativeHeadFileName)
-			original, snapshot, err := readVerifierFile(headPath, nativeformat.MaxMetadataPayload)
+			original, _, err := readVerifierFile(headPath, nativeformat.MaxMetadataPayload)
 			require.NoError(t, err)
 			head, err := decodeNativeAuditHead(original, id)
 			require.NoError(t, err)
@@ -29,7 +29,7 @@ func TestNativeLiveCapturedHeadSurvivesAppendAndRotation(t *testing.T) {
 			assertCaptured := func() {
 				t.Helper()
 				budget := &verifierBudget{}
-				records, _, err := verifyLiveProducer(context.Background(), source, r.headDirectory, id, nil, checkpoint, snapshot, true, budget, []string{conf.Directory})
+				records, _, err := verifyLiveProducer(context.Background(), source, r.headDirectory, id, nil, checkpoint, true, budget, []string{conf.Directory})
 				require.NoError(t, err)
 				require.Len(t, records, 1)
 				require.Equal(t, "first", records[0].Event.Name)
@@ -47,6 +47,23 @@ func TestNativeLiveCapturedHeadSurvivesAppendAndRotation(t *testing.T) {
 			require.NoError(t, r.Close())
 		})
 	}
+}
+
+func TestNativeLiveRejectsActiveAliasOfCurrentHead(t *testing.T) {
+	conf, id := nativeRecorderTestConfig(t, false)
+	r := nativeTestOpen(t, &conf, id)
+	require.NoError(t, r.Record(context.Background(), Event{Name: "first"}))
+	require.NoError(t, r.file.Close())
+	require.NoError(t, os.Remove(r.activePath))
+	if err := os.Link(filepath.Join(r.headDirectory, nativeHeadFileName), r.activePath); err != nil {
+		require.NoError(t, r.lock.Close())
+		t.Skipf("hard links unavailable: %v", err)
+	}
+	source := JournalSource{Name: "live", Directory: conf.Directory, ExpectedProducerId: id.ProducerId()}
+	verification, err := VerifyLiveJournals(context.Background(), []JournalSource{source})
+	require.ErrorContains(t, err, "native active aliases repository data")
+	require.Nil(t, verification)
+	require.NoError(t, r.lock.Close())
 }
 
 func TestNativeLiveRejectsDamagedPublishedSegmentAfterCapturedHead(t *testing.T) {

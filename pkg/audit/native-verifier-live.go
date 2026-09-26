@@ -102,7 +102,7 @@ func verifyLiveJournal(ctx context.Context, source JournalSource, collect bool, 
 		return VerifiedJournal{}, nil, fmt.Errorf("missing native audit producer %s: %v", producerName, err)
 	}
 	headPath := filepath.Join(directory, nativeHeadFileName)
-	headBytes, headInfo, err := readVerifierFile(headPath, nativeformat.MaxMetadataPayload)
+	headBytes, _, err := readVerifierFile(headPath, nativeformat.MaxMetadataPayload)
 	if err != nil {
 		return VerifiedJournal{}, nil, err
 	}
@@ -130,7 +130,7 @@ func verifyLiveJournal(ctx context.Context, source JournalSource, collect bool, 
 	// captured checkpoint, never substitute a newer head on retry.
 	for attempt := 0; attempt < 3; attempt++ {
 		start := *budget
-		records, segments, err := verifyLiveProducer(ctx, source, directory, identity, identities, checkpoint, headInfo, collect, budget, selected)
+		records, segments, err := verifyLiveProducer(ctx, source, directory, identity, identities, checkpoint, collect, budget, selected)
 		if err == nil {
 			return VerifiedJournal{Name: source.Name, Directory: source.Directory, ProducerCount: 1, SegmentCount: segments, RecordCount: budget.records - start.records}, records, nil
 		}
@@ -142,7 +142,7 @@ func verifyLiveJournal(ctx context.Context, source JournalSource, collect bool, 
 	panic("unreachable")
 }
 
-func verifyLiveProducer(ctx context.Context, source JournalSource, directory string, identity journalIdentity, identities *bfcrypto.AgeSshIdentities, checkpoint journalHash, headInfo verifierFileSnapshot, collect bool, budget *verifierBudget, selected []string) (result []VerifiedRecord, count uint64, resultErr error) {
+func verifyLiveProducer(ctx context.Context, source JournalSource, directory string, identity journalIdentity, identities *bfcrypto.AgeSshIdentities, checkpoint journalHash, collect bool, budget *verifierBudget, selected []string) (result []VerifiedRecord, count uint64, resultErr error) {
 	encrypted := source.ExpectedEncryptionRecipient != ""
 	activeName := nativeActiveClear
 	if encrypted {
@@ -154,9 +154,24 @@ func verifyLiveProducer(ctx context.Context, source JournalSource, directory str
 	if err != nil {
 		return nil, 0, err
 	}
-	reserved := []os.FileInfo{headInfo.info}
+	// The captured head may already have been replaced. Keep the current head
+	// open so its inode cannot be reused by a new active file during this scan.
+	headFile, err := openVerifierFile(filepath.Join(directory, nativeHeadFileName))
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() {
+		if closeErr := headFile.Close(); closeErr != nil {
+			result, count, resultErr = nil, 0, closeErr
+		}
+	}()
+	currentHead, err := headFile.Stat()
+	if err != nil || !currentHead.Mode().IsRegular() {
+		return nil, 0, fmt.Errorf("native audit head changed: %v", err)
+	}
+	reserved := []os.FileInfo{currentHead}
 	if lock, err := os.Lstat(filepath.Join(source.Directory, journalLockFileName)); err == nil {
-		if !lock.Mode().IsRegular() || os.SameFile(lock, headInfo.info) {
+		if !lock.Mode().IsRegular() || os.SameFile(lock, currentHead) {
 			return nil, 0, fmt.Errorf("native audit lock aliases head or is not a regular file")
 		}
 		reserved = append(reserved, lock)
