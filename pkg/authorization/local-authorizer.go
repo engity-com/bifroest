@@ -174,7 +174,7 @@ func (this *LocalAuthorizer) authorizedKeyPolicy(req PublicKeyRequest, u *user.U
 	policy, accepted, err := evaluatePublicKeyCredential(
 		req.RemotePublicKey(), req.Connection().Remote().User(), req.Connection().Remote().Host(), this.trustedUserCAs,
 		func(consumer func(ssh.PublicKey, []crypto.AuthorizedKeyOption) (bool, error)) error {
-			_, err := crypto.DoWithEachAuthorizedKey[bool](false, func(candidate ssh.PublicKey, options []crypto.AuthorizedKeyOption) (bool, bool, error) {
+			_, err := crypto.DoWithEachAuthorizedKeyUsingReader[bool](false, secureLocalAuthorizedKeysReader(u.Uid), func(candidate ssh.PublicKey, options []crypto.AuthorizedKeyOption) (bool, bool, error) {
 				canContinue, err := consumer(candidate, options)
 				return !canContinue, canContinue, err
 			}, files...)
