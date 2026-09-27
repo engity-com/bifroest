@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	gos "os"
+	osexec "os/exec"
+	"strings"
 	"time"
 
 	"github.com/alecthomas/kingpin/v2"
@@ -22,9 +25,16 @@ func newBuildBinary(b *build) *buildBinary {
 
 type buildBinary struct {
 	*build
+
+	darwinSigningIdentity string
 }
 
-func (this *buildBinary) attach(_ *kingpin.CmdClause) {}
+func (this *buildBinary) attach(cmd *kingpin.CmdClause) {
+	cmd.Flag("darwinSigningIdentity", "Developer ID Application identity used to sign native Darwin binaries.").
+		Envar("BIFROEST_DARWIN_SIGNING_IDENTITY").
+		PlaceHolder("<identity>").
+		StringVar(&this.darwinSigningIdentity)
+}
 
 func (this *buildBinary) compile(ctx context.Context, p *bib.Platform) (*buildArtifact, *buildArtifact, error) {
 	fail := func(err error) (*buildArtifact, *buildArtifact, error) {
@@ -82,6 +92,9 @@ func (this *buildBinary) compile(ctx context.Context, p *bib.Platform) (*buildAr
 		return fail(err)
 	}
 	a.thirdPartyNoticesFilepath = notice.filepath
+	if err := this.signDarwin(ctx, a); err != nil {
+		return fail(err)
+	}
 
 	ld := l.With("duration", time.Since(start).Truncate(time.Millisecond))
 	if l.IsDebugEnabled() {
@@ -92,4 +105,23 @@ func (this *buildBinary) compile(ctx context.Context, p *bib.Platform) (*buildAr
 
 	success = true
 	return a, notice, nil
+}
+
+func (this *buildBinary) signDarwin(ctx context.Context, artifact *buildArtifact) error {
+	if artifact.Os != sys.OsDarwin || this.darwinSigningIdentity == "" {
+		return nil
+	}
+	commands := [][]string{
+		{"--force", "--sign", this.darwinSigningIdentity, "--options", "runtime", "--timestamp", artifact.filepath},
+		{"--verify", "--strict", "--verbose=2", artifact.filepath},
+	}
+	for _, args := range commands {
+		command := osexec.CommandContext(ctx, "codesign", args...)
+		command.Env = gos.Environ()
+		output, err := command.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("codesign %s failed: %w: %s", args[0], err, strings.TrimSpace(string(output)))
+		}
+	}
+	return nil
 }

@@ -63,6 +63,8 @@ Not available.
 #### Extended {: #darwin-extended}
 The extended macOS distribution supports Apple silicon (`arm64`) on macOS 13 and later. No generic macOS distribution is available.
 
+Official macOS release binaries are signed with an Engity Developer ID Application certificate, use the hardened runtime and are accepted by Apple's notarization service before publication. Because the executable is distributed in a `tgz` archive, the first Gatekeeper assessment may need network access to retrieve Apple's notarization ticket. Manual development builds are unsigned unless a Developer ID identity is supplied explicitly and should not be redistributed as official releases.
+
 ### Windows {: #windows}
 
 #### Generic {: #windows-generic}
