@@ -407,6 +407,84 @@ func TestReverseTCPDataFrames(t *testing.T) {
 	require.Equal(t, response, string(got))
 }
 
+func TestReverseTCPDataFramesConcurrentReads(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	client, err := smux.Client(left, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer client.Close()
+	server, err := smux.Server(right, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer server.Close()
+	stream, err := client.OpenStream()
+	require.NoError(t, err)
+	defer stream.Close()
+	peer, err := server.AcceptStream()
+	require.NoError(t, err)
+	defer peer.Close()
+
+	const frames = 256
+	sender := &reverseTCPConn{stream: stream}
+	receiver := &reverseTCPConn{stream: peer}
+	received := make(chan byte, frames)
+	readErrors := make(chan error, 8)
+	var readers sync.WaitGroup
+	for range 8 {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			for {
+				var payload [1]byte
+				n, err := receiver.Read(payload[:])
+				if n == 1 {
+					received <- payload[0]
+				}
+				if err == io.EOF {
+					return
+				}
+				if err != nil {
+					readErrors <- err
+					return
+				}
+			}
+		}()
+	}
+	written := make(chan error, 1)
+	go func() {
+		for i := range frames {
+			if _, err := sender.Write([]byte{byte(i)}); err != nil {
+				written <- err
+				return
+			}
+		}
+		written <- sender.CloseWrite()
+	}()
+	select {
+	case err := <-written:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("writing concurrent read frames did not finish")
+	}
+	readDone := make(chan struct{})
+	go func() { readers.Wait(); close(readDone) }()
+	select {
+	case <-readDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("concurrent readers did not finish")
+	}
+	close(received)
+	require.Empty(t, readErrors)
+	require.Len(t, received, frames)
+	var counts [frames]int
+	for value := range received {
+		counts[value]++
+	}
+	for _, count := range counts {
+		require.Equal(t, 1, count)
+	}
+}
+
 func TestReverseTCPDataFrameRejectsOversize(t *testing.T) {
 	left, right := net.Pipe()
 	defer left.Close()

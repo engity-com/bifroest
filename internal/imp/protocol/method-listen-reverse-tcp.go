@@ -495,6 +495,7 @@ type reverseTCPConn struct {
 	closeOnce sync.Once
 	remote    *gonet.TCPAddr
 	local     *gonet.TCPAddr
+	readMu    sync.Mutex
 	writeMu   sync.Mutex
 	stateMu   sync.Mutex
 	readEOF   bool
@@ -525,6 +526,8 @@ func (c *reverseTCPConn) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
+	c.readMu.Lock()
+	defer c.readMu.Unlock()
 	if c.remaining == 0 {
 		if c.readEOF {
 			return 0, io.EOF
