@@ -90,6 +90,11 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	if err != nil {
 		return failf("cannot lookup user: %w", err)
 	}
+	if ok, err := this.isRequestedAccountBound(req.Context(), req.Connection().Remote().User(), u, u); err != nil {
+		return failf("cannot bind requested user to local account: %w", err)
+	} else if !ok {
+		return Forbidden(req.Connection().Remote()), nil
+	}
 
 	candidate := local{
 		u,
@@ -276,6 +281,11 @@ func (this *LocalAuthorizer) AuthorizePassword(req PasswordRequest) (Authorizati
 	if err != nil {
 		return failf("cannot lookup user %q: %w", username, err)
 	}
+	if ok, err := this.isRequestedAccountBound(req.Context(), req.Connection().Remote().User(), nil, u); err != nil {
+		return failf("cannot bind requested user to authenticated local account: %w", err)
+	} else if !ok {
+		return Forbidden(req.Connection().Remote()), nil
+	}
 
 	candidate := local{
 		u,
@@ -335,6 +345,11 @@ func (this *LocalAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Autho
 	}
 	if err != nil {
 		return failf("cannot lookup user %q: %w", username, err)
+	}
+	if ok, err := this.isRequestedAccountBound(req.Context(), req.Connection().Remote().User(), nil, u); err != nil {
+		return failf("cannot bind requested user to authenticated local account: %w", err)
+	} else if !ok {
+		return Forbidden(req.Connection().Remote()), nil
 	}
 
 	candidate := local{
@@ -423,6 +438,11 @@ func (this *LocalAuthorizer) RestoreFromSession(ctx context.Context, sess sessio
 		}
 	} else {
 		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("local authorization token contains no user reference"))
+	}
+	if ok, err := this.isRestoredAccountBound(ctx, &buf.User, u); err != nil {
+		return failf(errors.System, "cannot verify restored local account: %w", err)
+	} else if !ok {
+		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("stored local account name and UID no longer identify the same account"))
 	}
 
 	si, err := sess.Info(ctx)

@@ -78,12 +78,6 @@ func (this *LocalRepository) Ensure(req Request) (Environment, error) {
 		return fail(errors.Newf(t, msg, args...))
 	}
 
-	if ok, err := this.WillBeAccepted(req); err != nil {
-		return fail(err)
-	} else if !ok {
-		return fail(ErrNotAcceptable)
-	}
-
 	sess := req.Authorization().FindSession()
 	if sess == nil {
 		return failf(errors.System, "authorization without session")
@@ -94,6 +88,16 @@ func (this *LocalRepository) Ensure(req Request) (Environment, error) {
 			return fail(err)
 		}
 	} else {
+		target, ok, err := this.willBeAccepted(req)
+		if err != nil {
+			return fail(err)
+		}
+		if !ok {
+			return fail(ErrNotAcceptable)
+		}
+		if current, ok := existing.(*local); !ok || !this.isCurrentTargetAccount(target, current.user) {
+			return fail(ErrNotAcceptable)
+		}
 		return existing, nil
 	}
 
@@ -146,17 +150,24 @@ func (this *LocalRepository) Ensure(req Request) (Environment, error) {
 			return fail(err)
 		}
 	}
+	target, ok, err := this.willBeAccepted(req)
+	if err != nil {
+		return fail(err)
+	}
+	if !ok || !this.isCurrentTargetAccount(target, u) {
+		return fail(ErrNotAcceptable)
+	}
+	actual, ok := target.(*user.User)
+	if !ok {
+		return failf(errors.System, "resolved Unix target account has unexpected type %T", target)
+	}
+	u = actual
 	managed, err = this.isManagedUser(req.Context(), u)
 	if err != nil {
 		return fail(err)
 	}
-	if ok, err := this.isTargetAccountAccepted(u); err != nil {
-		return fail(err)
-	} else if !ok {
-		return fail(ErrNotAcceptable)
-	}
-
-	lt, err := this.newLocalToken(u, req, managed, manageSystemUsers)
+	policyReq := withTargetAccountRequest(req, u)
+	lt, err := this.newLocalToken(u, policyReq, managed, manageSystemUsers)
 	if err != nil {
 		return fail(err)
 	}
@@ -233,7 +244,7 @@ func (this *LocalRepository) FindBySession(ctx context.Context, sess session.Ses
 	if lt.User.Uid != nil && u.Uid != *lt.User.Uid {
 		return userNotFound(lt.User.Name)
 	}
-	if ok, err := this.isStoredTargetAccountAccepted(u, &lt); err != nil {
+	if ok, err := this.isStoredTargetAccountAccepted(ctx, u, &lt); err != nil {
 		return fail(err)
 	} else if !ok {
 		return fail(ErrNotAcceptable)

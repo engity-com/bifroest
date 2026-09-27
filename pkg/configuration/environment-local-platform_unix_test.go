@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build unix
 
 package configuration
 
@@ -20,6 +20,7 @@ func TestEnvironmentLocalTargetAccountPolicyDefaults(t *testing.T) {
 	require.False(t, actual.TargetAccountPolicy.AllowSystemAccounts)
 	require.False(t, actual.TargetAccountPolicy.AllowAdministrators)
 	require.False(t, actual.TargetAccountPolicy.AllowNonLoginShell)
+	require.False(t, actual.TargetAccountPolicy.AllowUnsafeNoneAuthorization)
 	require.Empty(t, actual.TargetAccountPolicy.AllowedNames)
 	require.Empty(t, actual.TargetAccountPolicy.DeniedNames)
 	require.Empty(t, actual.TargetAccountPolicy.AllowedUids)
@@ -38,6 +39,7 @@ targetAccountPolicy:
   allowSystemAccounts: true
   allowAdministrators: true
   allowNonLoginShell: true
+  allowUnsafeNoneAuthorization: true
   allowedNames: [" alice "]
   deniedNames: [" mallory "]
   allowedUids: [501]
@@ -53,18 +55,19 @@ targetAccountPolicy:
 	require.NoError(t, decoder.Decode(&actual))
 
 	require.Equal(t, EnvironmentLocalTargetAccountPolicy{
-		AllowUidZero:        true,
-		AllowSystemAccounts: true,
-		AllowAdministrators: true,
-		AllowNonLoginShell:  true,
-		AllowedNames:        []string{"alice"},
-		DeniedNames:         []string{"mallory"},
-		AllowedUids:         []user.Id{501},
-		DeniedUids:          []user.Id{502},
-		AllowedGroups:       []string{"staff"},
-		DeniedGroups:        []string{"admin"},
-		AllowedGids:         []user.GroupId{20},
-		DeniedGids:          []user.GroupId{80},
+		AllowUidZero:                 true,
+		AllowSystemAccounts:          true,
+		AllowAdministrators:          true,
+		AllowNonLoginShell:           true,
+		AllowUnsafeNoneAuthorization: true,
+		AllowedNames:                 []string{"alice"},
+		DeniedNames:                  []string{"mallory"},
+		AllowedUids:                  []user.Id{501},
+		DeniedUids:                   []user.Id{502},
+		AllowedGroups:                []string{"staff"},
+		DeniedGroups:                 []string{"admin"},
+		AllowedGids:                  []user.GroupId{20},
+		DeniedGids:                   []user.GroupId{80},
 	}, actual.TargetAccountPolicy)
 }
 
@@ -75,9 +78,10 @@ func TestEnvironmentLocalTargetAccountPolicyRejectsEmptyListEntries(t *testing.T
 
 func TestEnvironmentLocalTargetAccountPolicyEquality(t *testing.T) {
 	left := EnvironmentLocalTargetAccountPolicy{
-		AllowUidZero: true,
-		AllowedNames: []string{"alice"},
-		DeniedGids:   []user.GroupId{80},
+		AllowUidZero:                 true,
+		AllowUnsafeNoneAuthorization: true,
+		AllowedNames:                 []string{"alice"},
+		DeniedGids:                   []user.GroupId{80},
 	}
 	right := left
 	right.AllowedNames = append([]string(nil), left.AllowedNames...)
@@ -86,4 +90,15 @@ func TestEnvironmentLocalTargetAccountPolicyEquality(t *testing.T) {
 
 	right.DeniedGids[0] = 81
 	require.False(t, left.IsEqualTo(right))
+	right = left
+	right.AllowUnsafeNoneAuthorization = false
+	require.False(t, left.IsEqualTo(right))
+}
+
+func TestEnvironmentLocalTargetAccountPolicyUnsafeNoneLifecycle(t *testing.T) {
+	policy := EnvironmentLocalTargetAccountPolicy{AllowUnsafeNoneAuthorization: true}
+	require.NoError(t, policy.SetDefaults())
+	require.NoError(t, policy.Trim())
+	require.NoError(t, policy.Validate())
+	require.True(t, policy.AllowUnsafeNoneAuthorization)
 }
