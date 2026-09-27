@@ -15,7 +15,7 @@ func TestContainerAccountCreationRejectsHost(t *testing.T) {
 	if sid == "S-1-5-93-2-1" {
 		t.Skip("requires an ordinary Windows host identity")
 	}
-	t.Setenv("BIFROEST_TEST_NANOSERVER_IN_CONTAINER", "1")
+	t.Setenv("BIFROEST_TEST_LOCAL_SAM_IN_CONTAINER", "1")
 	_, err = prepareContainerTestUser()
 	if err == nil || !strings.Contains(err.Error(), "requires ContainerAdministrator") {
 		t.Fatalf("expected host account creation to be rejected, got %v", err)

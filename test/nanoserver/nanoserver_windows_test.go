@@ -55,22 +55,25 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 		run(t, root, "go", "build", "-o", filepath.Join(dir, build.target), build.pkg)
 	}
 	run(t, root, "go", "test", "-c", "-tags=nanoserver_integration", "-o", filepath.Join(dir, "environment.test.exe"), "./pkg/environment")
-	base := bib.DefaultWindowsContainerBaseImage()
-	dockerfile := fmt.Sprintf("FROM %s\nUSER ContainerAdministrator\nWORKDIR C:/smoke\nCOPY bifroest.exe C:/smoke/bifroest.exe\nCOPY environment.test.exe C:/smoke/environment.test.exe\nCOPY s4u-probe.exe C:/smoke/s4u-probe.exe\n", base)
-	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(dockerfile), 0600); err != nil {
-		t.Fatal(err)
-	}
-	image := fmt.Sprintf("bifroest-nanoserver-smoke:%d", time.Now().UnixNano())
-	run(t, root, "docker", "build", "--isolation="+isolation, "--tag", image, dir)
-	t.Cleanup(func() {
-		cmd := exec.Command("docker", "image", "rm", image)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			t.Errorf("cannot remove temporary Nano Server image %q: %v: %s", image, err, output)
-		}
-	})
-	dockerRun := func(t *testing.T, extra []string, args ...string) string {
+	buildImage := func(base, kind string) string {
 		t.Helper()
-		container := fmt.Sprintf("bifroest-nanoserver-smoke-%d", time.Now().UnixNano())
+		dockerfile := fmt.Sprintf("FROM %s\nUSER ContainerAdministrator\nWORKDIR C:/smoke\nCOPY bifroest.exe C:/smoke/bifroest.exe\nCOPY environment.test.exe C:/smoke/environment.test.exe\nCOPY s4u-probe.exe C:/smoke/s4u-probe.exe\n", base)
+		if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(dockerfile), 0600); err != nil {
+			t.Fatal(err)
+		}
+		image := fmt.Sprintf("bifroest-%s-smoke:%d", kind, time.Now().UnixNano())
+		run(t, root, "docker", "build", "--isolation="+isolation, "--tag", image, dir)
+		t.Cleanup(func() {
+			cmd := exec.Command("docker", "image", "rm", image)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Errorf("cannot remove temporary image %q: %v: %s", image, err, output)
+			}
+		})
+		return image
+	}
+	dockerRun := func(t *testing.T, image string, extra []string, args ...string) string {
+		t.Helper()
+		container := fmt.Sprintf("bifroest-container-smoke-%d", time.Now().UnixNano())
 		t.Cleanup(func() {
 			cmd := exec.Command("docker", "container", "rm", "-f", container)
 			if output, err := cmd.CombinedOutput(); err != nil && !strings.Contains(string(output), "No such container") {
@@ -83,14 +86,15 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 		command = append(command, args...)
 		return run(t, root, "docker", command...)
 	}
-	t.Run("bifroest-starts", func(t *testing.T) {
-		result := dockerRun(t, []string{"--user", "ContainerUser"}, `C:\smoke\bifroest.exe`, "version")
+	nanoImage := buildImage(bib.DefaultWindowsContainerBaseImage(), "nanoserver")
+	t.Run("nanoserver-bifroest-starts", func(t *testing.T) {
+		result := dockerRun(t, nanoImage, []string{"--user", "ContainerUser"}, `C:\smoke\bifroest.exe`, "version")
 		if strings.TrimSpace(result) == "" {
 			t.Errorf("unexpected version output: %s", result)
 		}
 	})
-	t.Run("dlls-and-conpty", func(t *testing.T) {
-		result := dockerRun(t, []string{"--user", "ContainerUser", "--env", "BIFROEST_TEST_NANOSERVER_IN_CONTAINER=1"},
+	t.Run("nanoserver-dlls-and-conpty", func(t *testing.T) {
+		result := dockerRun(t, nanoImage, []string{"--user", "ContainerUser", "--env", "BIFROEST_TEST_NANOSERVER_IN_CONTAINER=1"},
 			`C:\smoke\environment.test.exe`, "-test.run=^(TestLocalNanoServerDLLExports|TestLocalConPTYRelayRoundTrip)$", "-test.v", "-test.timeout=90s")
 		for _, test := range []string{"TestLocalNanoServerDLLExports", "TestLocalConPTYRelayRoundTrip"} {
 			if !strings.Contains(result, "--- PASS: "+test+" ") {
@@ -98,8 +102,16 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 			}
 		}
 	})
-	t.Run("s4u-and-local-pty", func(t *testing.T) {
-		dockerRun(t, []string{"--user", "ContainerAdministrator", "--env", "BIFROEST_TEST_NANOSERVER_IN_CONTAINER=1"},
+	serverCoreImage := buildImage("mcr.microsoft.com/windows/servercore:ltsc2022@sha256:76cf422c98ca437b308374d0498280541fa42ac7061bb44015a6c8b70cf4db6a", "servercore")
+	t.Run("servercore-fixture-apis", func(t *testing.T) {
+		result := dockerRun(t, serverCoreImage, []string{"--user", "ContainerAdministrator", "--env", "BIFROEST_TEST_SERVERCORE_IN_CONTAINER=1"},
+			`C:\smoke\environment.test.exe`, "-test.run=^TestLocalServerCoreAccountFixtureAPIs$", "-test.v")
+		if !strings.Contains(result, "--- PASS: TestLocalServerCoreAccountFixtureAPIs ") {
+			t.Errorf("required Server Core fixture API test did not pass:\n%s", result)
+		}
+	})
+	t.Run("servercore-s4u-and-local-pty", func(t *testing.T) {
+		dockerRun(t, serverCoreImage, []string{"--user", "ContainerAdministrator", "--env", "BIFROEST_TEST_LOCAL_SAM_IN_CONTAINER=1"},
 			`C:\smoke\s4u-probe.exe`, "run-container-test", `C:\smoke\environment.test.exe`)
 	})
 }

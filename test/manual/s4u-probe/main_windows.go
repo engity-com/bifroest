@@ -107,7 +107,7 @@ func main() {
 }
 
 func prepareContainerTestUser() (string, error) {
-	if os.Getenv("BIFROEST_TEST_NANOSERVER_IN_CONTAINER") != "1" {
+	if os.Getenv("BIFROEST_TEST_LOCAL_SAM_IN_CONTAINER") != "1" {
 		return "", fmt.Errorf("container-only test account creation was not explicitly enabled")
 	}
 	sid, err := currentSID()

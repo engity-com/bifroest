@@ -20,8 +20,7 @@ func TestLocalNanoServerDLLExports(t *testing.T) {
 	}{
 		{"secur32.dll", []string{"LsaRegisterLogonProcess", "LsaLookupAuthenticationPackage", "LsaLogonUser", "LsaDeregisterLogonProcess", "LsaFreeReturnBuffer"}},
 		{"advapi32.dll", []string{"AllocateLocallyUniqueId", "CreateProcessAsUserW"}},
-		{"userenv.dll", []string{"LoadUserProfileW", "UnloadUserProfile", "CreateProfile", "CreateEnvironmentBlock", "GetUserProfileDirectoryW"}},
-		{"netapi32.dll", []string{"NetUserAdd"}},
+		{"userenv.dll", []string{"LoadUserProfileW", "UnloadUserProfile", "CreateEnvironmentBlock", "GetUserProfileDirectoryW"}},
 		{"kernel32.dll", []string{"CreatePseudoConsole", "ResizePseudoConsole", "ClosePseudoConsole"}},
 	} {
 		t.Run(library.name, func(t *testing.T) {
