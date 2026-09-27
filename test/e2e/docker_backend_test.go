@@ -240,6 +240,13 @@ func TestOpenSSHDockerEnvironment(t *testing.T) {
 		}
 	})
 
+	t.Run("ssh -R privileged port denied", func(t *testing.T) {
+		result := f.ssh(10*time.Second, f.clientKey, "e2e", []string{"-N", "-o", "ExitOnForwardFailure=yes", "-R", "127.0.0.1:80:127.0.0.1:80"})
+		if result.err == nil || !strings.Contains(result.stderr, "remote port forwarding failed") {
+			t.Fatalf("non-root container user could forward privileged port: error=%v\nstderr:\n%s", result.err, result.stderr)
+		}
+	})
+
 	t.Run("ssh -R SOCKS5 transfer", func(t *testing.T) {
 		hostEcho, address := startEchoServer(t, f.helper)
 		defer hostEcho.stop()

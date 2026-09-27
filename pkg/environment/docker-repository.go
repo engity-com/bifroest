@@ -197,6 +197,7 @@ func (this *DockerRepository) createContainerBy(req Request, sess session.Sessio
 	if err := this.inheritDockerImageUser(req.Context(), config); err != nil && !this.isNoSuchImageError(err) {
 		return failf(errors.System, "cannot inspect container image %s: %w", imageRef, err)
 	}
+	pinDockerReverseTCPUser(config)
 	success := false
 	cr, err := this.apiClient.ContainerCreate(req.Context(), config, hostConfig, networkingConfig, nil, "")
 	if this.isNoSuchImageError(err) && this.conf.ImagePullPolicy != configuration.PullPolicyAlways && this.conf.ImagePullPolicy != configuration.PullPolicyNever {
@@ -208,6 +209,7 @@ func (this *DockerRepository) createContainerBy(req Request, sess session.Sessio
 		if err := this.inheritDockerImageUser(req.Context(), config); err != nil {
 			return failf(errors.System, "cannot inspect container image %s: %w", imageRef, err)
 		}
+		pinDockerReverseTCPUser(config)
 		cr, err = this.apiClient.ContainerCreate(req.Context(), config, hostConfig, networkingConfig, nil, "")
 	}
 	if err != nil {
@@ -271,6 +273,18 @@ func isolatedDockerContainerEnvironment(imageEnvironment, requiredEnvironment []
 	result.Set("PATH", dockerWrapperPath)
 	result.Add(requiredEnvironment...)
 	return result.Strings()
+}
+
+func pinDockerReverseTCPUser(config *container.Config) {
+	env := sys.EnvVars{}
+	env.Add(config.Env...)
+	user := config.Labels[DockerLabelUser]
+	name, _, _ := strings.Cut(user, ":")
+	if name == "" && config.User == "root" {
+		user = "0"
+	}
+	env.Set(imp.EnvVarReverseTCPUser, user)
+	config.Env = env.Strings()
 }
 
 func (this *DockerRepository) pullImage(req Request, ref string) error {

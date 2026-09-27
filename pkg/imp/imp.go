@@ -12,6 +12,7 @@ import (
 
 const (
 	EnvVarMasterPublicKey = "BIFROEST_MASTER_PUBLIC_KEY"
+	EnvVarReverseTCPUser  = "BIFROEST_REVERSE_TCP_USER"
 
 	DefaultInitPathUnix    = `/var/lib/engity/bifroest/init`
 	DefaultInitPathWindows = `C:\ProgramData\Engity\Bifroest\init`

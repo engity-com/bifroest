@@ -79,6 +79,12 @@ func (this *imp) handleMethodListenReverseTCP(ctx context.Context, header *Heade
 		}
 		return nil
 	}
+	if err := authorizeReverseTCPPort(req.port, this.ReverseTCPUser, this.ReverseTCPUserConfigured); err != nil {
+		if e := (reverseTCPResponse{err: err}).EncodeMsgPack(conn); e != nil {
+			return fail(e)
+		}
+		return nil
+	}
 	// An omitted SSH bind host is loopback; only an explicit * requests a wildcard bind.
 	host := req.host
 	switch host {
@@ -97,6 +103,14 @@ func (this *imp) handleMethodListenReverseTCP(ctx context.Context, header *Heade
 		return nil
 	}
 	defer common.IgnoreCloseError(ln)
+	if bound, ok := ln.Addr().(*gonet.TCPAddr); ok {
+		if err := authorizeReverseTCPPort(uint16(bound.Port), this.ReverseTCPUser, this.ReverseTCPUserConfigured); err != nil {
+			if e := (reverseTCPResponse{err: err}).EncodeMsgPack(conn); e != nil {
+				return fail(e)
+			}
+			return nil
+		}
+	}
 	if err := (reverseTCPResponse{addr: ln.Addr().String()}).EncodeMsgPack(conn); err != nil {
 		return fail(err)
 	}

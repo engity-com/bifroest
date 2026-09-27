@@ -230,6 +230,17 @@ func TestOpenSSHKubernetesEnvironment(t *testing.T) {
 		}
 	})
 
+	t.Run("ssh -R privileged port denied", func(t *testing.T) {
+		ready := k.ssh(75*time.Second, k.clientKey, "e2e", nil, "/usr/local/bin/e2e-helper", "ready")
+		if ready.err != nil || !strings.HasSuffix(ready.stdout, "ready\n") {
+			t.Fatalf("prepare Pod before reverse forwarding: error=%v, stdout=%q, stderr=%q", ready.err, ready.stdout, ready.stderr)
+		}
+		result := k.ssh(10*time.Second, k.clientKey, "e2e", []string{"-N", "-o", "ExitOnForwardFailure=yes", "-R", "127.0.0.1:80:127.0.0.1:80"})
+		if result.err == nil || !strings.Contains(result.stderr, "remote port forwarding failed") {
+			t.Fatalf("non-root Pod user could forward privileged port: error=%v\nstderr:\n%s", result.err, result.stderr)
+		}
+	})
+
 	t.Run("agent forwarding", func(t *testing.T) {
 		socket := filepath.Join(t.TempDir(), "agent.sock")
 		agentProcess := startProcess(t, nil, k.tools["ssh-agent"], "-D", "-a", socket)

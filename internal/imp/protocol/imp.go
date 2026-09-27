@@ -35,6 +35,8 @@ type Imp struct {
 	ExitCodeByConnectionIdPath string
 	Addr                       string
 	Logger                     log.Logger
+	ReverseTCPUser             string
+	ReverseTCPUserConfigured   bool
 }
 
 func (this *Imp) Serve(ctx context.Context) error {

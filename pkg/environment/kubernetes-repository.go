@@ -591,6 +591,14 @@ func (this *KubernetesRepository) resolvePodConfig(req Request, sess session.Ses
 	if v, err := this.resolveContainerConfig(req, sess); err != nil {
 		return fail(err)
 	} else {
+		user := result.Annotations[KubernetesAnnotationUser]
+		if user == "" && this.conf.Os == sys.OsLinux && v.SecurityContext != nil && v.SecurityContext.RunAsUser != nil && *v.SecurityContext.RunAsUser == 0 {
+			user = "0"
+		}
+		v.Env = append(v.Env, v1.EnvVar{
+			Name:  imp.EnvVarReverseTCPUser,
+			Value: user,
+		})
 		result.Spec.Containers = []v1.Container{v}
 		containerImage = v.Image
 	}
