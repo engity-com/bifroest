@@ -42,6 +42,46 @@ func (r reverseTCPTestRef) Dial(context.Context) (net.Conn, error) {
 	return r.conn, nil
 }
 
+type reverseTCPBlockingRef struct {
+	reverseTCPTestRef
+	started chan struct{}
+}
+
+func (r reverseTCPBlockingRef) Dial(ctx context.Context) (net.Conn, error) {
+	close(r.started)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestReverseTCPSessionCloseDuringDial(t *testing.T) {
+	key, err := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).GenerateKey(nil)
+	require.NoError(t, err)
+	master, err := NewMaster(context.Background(), key)
+	require.NoError(t, err)
+	sessionId, err := session.NewId()
+	require.NoError(t, err)
+	sessionCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ref := reverseTCPBlockingRef{reverseTCPTestRef: reverseTCPTestRef{sessionId: sessionId}, started: make(chan struct{})}
+	result := make(chan error, 1)
+	go func() {
+		_, err := master.methodListenReverseTCP(context.Background(), sessionCtx, ref, connection.Id{}, "127.0.0.1", 0)
+		result <- err
+	}()
+	select {
+	case <-ref.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("IMP dial did not start")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		t.Fatal("session close did not interrupt IMP dial")
+	}
+}
+
 func TestReverseTCPCancelBeforeResponse(t *testing.T) {
 	key, err := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).GenerateKey(nil)
 	require.NoError(t, err)

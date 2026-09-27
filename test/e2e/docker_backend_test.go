@@ -200,6 +200,17 @@ func TestOpenSSHDockerEnvironment(t *testing.T) {
 	})
 
 	t.Run("ssh -R transfer", func(t *testing.T) {
+		if err := f.waitForEnvironmentContainer(); err != nil {
+			t.Fatal(err)
+		}
+		hostAddress := fmt.Sprintf("127.0.0.1:%d", reversePort)
+		probe, err := net.Listen("tcp", hostAddress)
+		if err != nil {
+			t.Fatalf("host reverse port %s is already occupied: %v", hostAddress, err)
+		}
+		if err := probe.Close(); err != nil {
+			t.Fatal(err)
+		}
 		hostEcho, address := startEchoServer(t, f.helper)
 		defer hostEcho.stop()
 		forward := startSSH(t, f, nil, []string{
@@ -208,11 +219,43 @@ func TestOpenSSHDockerEnvironment(t *testing.T) {
 		}, nil)
 		defer forward.stop()
 		if err := pollProcess(15*time.Second, forward, func() error {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			result := runCommand(ctx, f.repoRoot, nil, f.helper, "echo-client", "tcp", fmt.Sprintf("127.0.0.1:%d", reversePort), "262144")
+			result := f.runtime(5*time.Second, "exec", f.containerID, "/usr/local/bin/e2e-helper", "echo-client", "tcp", hostAddress, "262144")
 			if result.err != nil {
 				return fmt.Errorf("%w: %s", result.err, result.stderr)
+			}
+			if result.stdout != "ok 262144\n" {
+				return fmt.Errorf("unexpected echo-client output %q", result.stdout)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		conn, err := net.DialTimeout("tcp", hostAddress, time.Second)
+		if err == nil {
+			_ = conn.Close()
+			t.Fatalf("host reverse port %s is reachable while container listener is active", hostAddress)
+		}
+		if !errors.Is(err, syscall.ECONNREFUSED) {
+			t.Fatalf("probe host reverse port %s: %v", hostAddress, err)
+		}
+	})
+
+	t.Run("ssh -R SOCKS5 transfer", func(t *testing.T) {
+		hostEcho, address := startEchoServer(t, f.helper)
+		defer hostEcho.stop()
+		proxy := fmt.Sprintf("127.0.0.1:%d", reversePort)
+		forward := startSSH(t, f, nil, []string{"-N", "-o", "ExitOnForwardFailure=yes", "-R", proxy}, nil)
+		defer forward.stop()
+		if err := f.waitForEnvironmentContainer(); err != nil {
+			t.Fatal(err)
+		}
+		if err := pollProcess(15*time.Second, forward, func() error {
+			result := f.runtime(5*time.Second, "exec", f.containerID, "/usr/local/bin/e2e-helper", "echo-client", "socks", proxy, address, "262144")
+			if result.err != nil {
+				return fmt.Errorf("%w: %s", result.err, result.stderr)
+			}
+			if result.stdout != "ok 262144\n" {
+				return fmt.Errorf("unexpected echo-client output %q", result.stdout)
 			}
 			return nil
 		}); err != nil {

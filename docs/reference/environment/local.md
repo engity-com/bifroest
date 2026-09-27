@@ -173,7 +173,7 @@ Will be displayed to the user upon connection to its environment.
    ```
 
 <<property("portForwardingAllowed", "bool", template_context="../context/authorization.md", default=true, id_prefix="linux-", heading=4)>>
-If `true`, users are allowed to use SSH's port forwarding mechanism.
+If `true`, users are allowed to use SSH's port forwarding mechanism, subject to the applicable authorized-key policy. For `ssh -R`, the listener binds on the local Bifröst host. An empty bind host uses loopback; an explicit `*` requests a wildcard bind that may be reachable over the network, subject to policy and network configuration. The forwarded destination is reached from the SSH client. An unprivileged local user cannot explicitly request a reverse listener on privileged ports `1` through `1023`.
 
 <<property("dispose", "Dispose", "#linux-dispose", id_prefix="linux-", heading=4)>>
 Defines what happens if an environment is disposed.
@@ -304,7 +304,7 @@ If the user will execute `ssh foo@bar.com echo "bar"` on the host `C:\WINDOWS\sy
 The working directory in which the command will be executed in.
 
 <<property("portForwardingAllowed", "bool", template_context="../context/authorization.md", default=True, id_prefix="windows-", heading=4)>>
-If `true`, users are allowed to use SSH's port forwarding mechanism.
+If `true`, users are allowed to use SSH's port forwarding mechanism, subject to the applicable authorized-key policy. For `ssh -R`, the listener binds on the local Bifröst host. An empty bind host uses loopback; an explicit `*` requests a wildcard bind that may be reachable over the network, subject to policy and network configuration. The forwarded destination is reached from the SSH client.
 
 ### Examples {: #windows-examples}
 

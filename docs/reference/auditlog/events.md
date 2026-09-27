@@ -259,7 +259,7 @@ Outcomes and reasons:
 * `failure` with `environment`: the target environment could not be prepared.
 * `failure` with `environment-policy`: evaluation of the environment policy failed.
 
-Reverse listener creation and individual reverse-forwarded streams are managed by the SSH server library after the policy callback. Consequently, this event records only the policy decision and does not claim that a listener was successfully created.
+This event records only the policy decision, not whether a listener was successfully created or a forwarded stream established. The reverse listener binds in the selected environment (Local host, Docker container, Kubernetes Pod, or SSH target `sshd`), not generally on the Bifröst host.
 
 ### Connections
 

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -55,7 +56,7 @@ func TestOpenSSHSSHEnvironmentSessionRecording(t *testing.T) {
 	}
 	verifySessionRecordingArtifact(t, f.fixture, artifact, f.recordingProducerID)
 
-	if err := f.startSSHEnvironmentBifroest(f.targetPort, f.wrongTargetKnownHosts, f.targetIdentity, false, ""); err != nil {
+	if err := f.startSSHEnvironmentBifroest(f.targetPort, f.wrongTargetKnownHosts, f.targetIdentity, false, "", false, false); err != nil {
 		t.Fatal(err)
 	}
 	rejected := f.ssh(30*time.Second, f.clientKey, "e2e", nil, "/usr/local/bin/e2e-helper", "ready")
@@ -102,7 +103,7 @@ func TestOpenSSHSSHEnvironmentSubsystem(t *testing.T) {
 	if code := exitCode(direct.err); code != 23 || direct.stdout != "stdout-e2e\n" {
 		t.Fatalf("direct OpenSSH target subsystem: exit=%d (error: %v), stdout=%q, stderr=%q", code, direct.err, direct.stdout, direct.stderr)
 	}
-	if err := f.startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targetIdentity, false, ""); err != nil {
+	if err := f.startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targetIdentity, false, "", false, false); err != nil {
 		t.Fatal(err)
 	}
 	defaultClient := f.newSSHClient(t, 30*time.Second)
@@ -116,7 +117,7 @@ func TestOpenSSHSSHEnvironmentSubsystem(t *testing.T) {
 	_ = defaultSession.Close()
 	_ = defaultClient.Close()
 	stopHostBifroest(t, f)
-	if err := f.startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targetIdentity, false, "^(sftp|netconf|echo-data|unsupported-e2e)$"); err != nil {
+	if err := f.startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targetIdentity, false, "^(sftp|netconf|echo-data|unsupported-e2e)$", false, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -179,6 +180,83 @@ func TestOpenSSHSSHEnvironmentSubsystem(t *testing.T) {
 	}
 }
 
+func TestOpenSSHSSHEnvironmentReverseForwarding(t *testing.T) {
+	f, err := newFixture(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.prepareRuntime(false); errors.Is(err, errNoRuntime) {
+		t.Skip(err)
+	} else if err != nil {
+		t.Fatal(err)
+	}
+
+	targetHostKey := filepath.Join(f.tempDir, "target_host_ed25519")
+	targetIdentity := filepath.Join(f.tempDir, "target_identity")
+	for _, path := range []string{targetHostKey, targetIdentity} {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		result := runCommand(ctx, f.repoRoot, nil, f.bifroest, "key", "generate", "--identityFile", path, "--publicFile", path+".pub")
+		cancel()
+		if result.err != nil {
+			t.Fatalf("generate %s: %v\n%s", filepath.Base(path), result.err, result.stderr)
+		}
+	}
+	targetPort, targetKnownHosts, err := f.prepareSSHEnvironmentTargetWithContainerfile(targetHostKey, targetIdentity, openSSHSubsystemContainerfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targetIdentity, false, "", true, false); err != nil {
+		t.Fatal(err)
+	}
+	ready := f.ssh(30*time.Second, f.clientKey, "e2e", nil, "/usr/local/bin/e2e-helper", "ready")
+	if ready.err != nil {
+		t.Fatalf("SSH target is not ready: %v\nstdout:\n%s\nstderr:\n%s", ready.err, ready.stdout, ready.stderr)
+	}
+
+	hostEcho, address := startEchoServer(t, f.helper)
+	defer hostEcho.stop()
+	forwardArgs := []string{"-N", "-o", "ExitOnForwardFailure=yes", "-R", fmt.Sprintf("127.0.0.1:%d:%s", reversePort, address)}
+	denied := f.ssh(15*time.Second, f.clientKey, "e2e", forwardArgs)
+	if denied.err == nil || errors.Is(denied.err, context.DeadlineExceeded) || !strings.Contains(denied.stderr, "remote port forwarding failed") {
+		t.Fatalf("SSH environment did not deny reverse forwarding by default: error=%v\nstdout:\n%s\nstderr:\n%s", denied.err, denied.stdout, denied.stderr)
+	}
+	stopHostBifroest(t, f)
+
+	if err := f.startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targetIdentity, false, "", true, true); err != nil {
+		t.Fatal(err)
+	}
+	hostAddress := fmt.Sprintf("127.0.0.1:%d", reversePort)
+	probe, err := net.Listen("tcp", hostAddress)
+	if err != nil {
+		t.Fatalf("host reverse port %s is already occupied: %v", hostAddress, err)
+	}
+	if err := probe.Close(); err != nil {
+		t.Fatal(err)
+	}
+	forward := startSSH(t, f, nil, forwardArgs, nil)
+	defer forward.stop()
+	if err := pollProcess(10*time.Second, forward, func() error {
+		result := f.runtime(5*time.Second, "exec", f.containerID, "/usr/local/bin/e2e-helper", "echo-client", "tcp", hostAddress, "262144")
+		if result.err != nil {
+			return fmt.Errorf("target reverse forwarding: %w: %s", result.err, result.stderr)
+		}
+		if result.stdout != "ok 262144\n" {
+			return fmt.Errorf("unexpected target reverse forwarding output %q", result.stdout)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.DialTimeout("tcp", hostAddress, time.Second)
+	if err == nil {
+		_ = conn.Close()
+		t.Fatalf("host reverse port %s is reachable while target listener is active", hostAddress)
+	}
+	if !errors.Is(err, syscall.ECONNREFUSED) {
+		t.Fatalf("probe host reverse port %s: %v", hostAddress, err)
+	}
+}
+
 func newSSHEnvironmentRecordingFixture(t *testing.T) (*sshEnvironmentFixture, error) {
 	t.Helper()
 	f, err := newFixture(t)
@@ -215,7 +293,7 @@ func newSSHEnvironmentRecordingFixture(t *testing.T) (*sshEnvironmentFixture, er
 	s.targetPort = targetPort
 	s.targetIdentity = targetIdentity
 	s.wrongTargetKnownHosts = wrongTargetKnownHosts
-	if err := f.startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targetIdentity, true, ""); err != nil {
+	if err := f.startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targetIdentity, true, "", false, false); err != nil {
 		return s, err
 	}
 	return s, nil
@@ -314,7 +392,7 @@ func writeSSHEnvironmentKnownHosts(path, host, port, publicKeyPath string) error
 	return os.WriteFile(path, []byte(entry), 0600)
 }
 
-func (f *fixture) startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targetIdentity string, recording bool, allowedSubsystems string) error {
+func (f *fixture) startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targetIdentity string, recording bool, allowedSubsystems string, forwardingAllowed, reverseForwardingAllowed bool) error {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return fmt.Errorf("reserve SSH listen port: %w", err)
@@ -345,10 +423,14 @@ func (f *fixture) startSSHEnvironmentBifroest(targetPort, targetKnownHosts, targ
 	if allowedSubsystems != "" {
 		subsystemConfiguration = fmt.Sprintf("      allowedSubsystems: %s\n", yamlString(allowedSubsystems))
 	}
+	reverseForwardingConfiguration := ""
+	if reverseForwardingAllowed {
+		reverseForwardingConfiguration = "      reversePortForwardingAllowed: true\n"
+	}
 	configuration := fmt.Sprintf(sshEnvironmentRecordingConfiguration,
 		auditlogConfiguration,
 		yamlString(net.JoinHostPort(f.host, f.port)), yamlString(f.hostKey), yamlString(f.sessionStorage), yamlString(f.clientKey+".pub"),
-		yamlString(net.JoinHostPort(f.host, targetPort)), yamlString(targetKnownHosts), yamlString(targetIdentity), subsystemConfiguration,
+		yamlString(net.JoinHostPort(f.host, targetPort)), yamlString(targetKnownHosts), yamlString(targetIdentity), forwardingAllowed, reverseForwardingConfiguration, subsystemConfiguration,
 	)
 	if err := os.WriteFile(configurationPath, []byte(configuration), 0600); err != nil {
 		_ = listener.Close()
@@ -417,6 +499,6 @@ flows:
         - %s
       connectTimeout: 10s
       banner: '{{""}}'
-      portForwardingAllowed: false
-%s
+      portForwardingAllowed: %t
+%s%s
 `

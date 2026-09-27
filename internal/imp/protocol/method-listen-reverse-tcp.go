@@ -190,7 +190,11 @@ func (this *Master) methodListenReverseTCP(ctx, sessionCtx context.Context, ref 
 	if err := validateReverseTCPHost(host); err != nil {
 		return fail(err)
 	}
-	conn, err := this.DialContextWithMsgPack(ctx, ref)
+	dialCtx, cancelDial := context.WithCancel(ctx)
+	stopSessionDial := context.AfterFunc(sessionCtx, cancelDial)
+	conn, err := this.DialContextWithMsgPack(dialCtx, ref)
+	stopSessionDial()
+	cancelDial()
 	if err != nil {
 		return fail(err)
 	}
