@@ -15,5 +15,4 @@ func TestLocalServerCoreAccountFixtureAPIs(t *testing.T) {
 		t.Skip("only run inside the Server Core local account integration image")
 	}
 	require.NoError(t, windows.NewLazySystemDLL("netapi32.dll").NewProc("NetUserAdd").Find())
-	require.NoError(t, windows.NewLazySystemDLL("userenv.dll").NewProc("CreateProfile").Find())
 }

@@ -119,11 +119,7 @@ func prepareContainerTestUser() (string, error) {
 	}
 	add := windows.NewLazySystemDLL("netapi32.dll").NewProc("NetUserAdd")
 	if err := add.Find(); err != nil {
-		return "", fmt.Errorf("NetUserAdd unavailable in Nano Server: %w", err)
-	}
-	createProfile := windows.NewLazySystemDLL("userenv.dll").NewProc("CreateProfile")
-	if err := createProfile.Find(); err != nil {
-		return "", fmt.Errorf("CreateProfile unavailable in Nano Server: %w", err)
+		return "", fmt.Errorf("NetUserAdd unavailable in container: %w", err)
 	}
 	var nonce [8]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
@@ -155,21 +151,8 @@ func prepareContainerTestUser() (string, error) {
 		return "", err
 	}
 	accountSID, domain, kind, err := windows.LookupSID("", host+`\`+name)
-	if err != nil || kind != windows.SidTypeUser || !strings.EqualFold(domain, host) {
+	if err != nil || accountSID == nil || !accountSID.IsValid() || kind != windows.SidTypeUser || !strings.EqualFold(domain, host) {
 		return "", fmt.Errorf("container test account %q is not a local SAM user: %v", name, err)
-	}
-	sidText, err := windows.UTF16PtrFromString(accountSID.String())
-	if err != nil {
-		return "", err
-	}
-	profile := make([]uint16, 1024)
-	hresult, _, _ := createProfile.Call(uintptr(unsafe.Pointer(sidText)), uintptr(unsafe.Pointer(username)),
-		uintptr(unsafe.Pointer(&profile[0])), uintptr(len(profile)))
-	runtime.KeepAlive(sidText)
-	runtime.KeepAlive(username)
-	runtime.KeepAlive(profile)
-	if hresult != 0 {
-		return "", fmt.Errorf("CreateProfile for %q: HRESULT 0x%08x", name, uint32(hresult))
 	}
 	return name, nil
 }
