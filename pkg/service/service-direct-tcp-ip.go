@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"math"
+	gonet "net"
+	"sync"
 	"syscall"
 	"time"
 
@@ -327,6 +329,54 @@ func (this *service) onReversePortForwardingRequested(ctx essh.Context, _ gossh.
 		return recordDecision(false, audit.EventOutcomeDenied, audit.EventReasonEnvironmentPolicy, nil)
 	}
 	return recordDecision(true, audit.EventOutcomeSuccess, "", nil)
+}
+
+func (this *service) listenReverseTCP(ctx essh.Context, _ gossh.ConnMetadata, host string, port uint32) (gonet.Listener, error) {
+	if port > math.MaxUint16 {
+		return nil, fmt.Errorf("reverse forwarding port out of range: %d", port)
+	}
+	auth, ok := ctx.Value(authorizationCtxKey).(authorization.Authorization)
+	if !ok || auth == nil {
+		return nil, errors.Newf(errors.System, "no authorization resolved for reverse port forwarding request")
+	}
+	conn := this.connection(ctx)
+	if conn == nil {
+		return nil, errors.Newf(errors.System, "no connection resolved for reverse port forwarding request")
+	}
+	req := environmentRequest{environmentContext{service: this, connection: conn, authorization: auth}, nil}
+	env, err := this.environments.Ensure(&req)
+	if err != nil {
+		return nil, fmt.Errorf("cannot ensure environment for reverse port forwarding: %w", err)
+	}
+	listener, ok := env.(environment.ReverseTCPListener)
+	if !ok {
+		return nil, goerrors.Join(fmt.Errorf("environment does not support reverse TCP listening"), env.Close())
+	}
+	ln, err := listener.ListenReverseTCP(ctx, host, uint16(port))
+	if err != nil {
+		if ln != nil {
+			err = goerrors.Join(err, ln.Close())
+		}
+		return nil, goerrors.Join(err, env.Close())
+	}
+	if ln == nil {
+		return nil, goerrors.Join(fmt.Errorf("environment returned no reverse TCP listener"), env.Close())
+	}
+	return &environmentReverseTCPListener{Listener: ln, owner: env}, nil
+}
+
+type environmentReverseTCPListener struct {
+	gonet.Listener
+	owner environment.Environment
+	once  sync.Once
+	err   error
+}
+
+func (this *environmentReverseTCPListener) Close() error {
+	this.once.Do(func() {
+		this.err = goerrors.Join(this.Listener.Close(), this.owner.Close())
+	})
+	return this.err
 }
 
 func (this *service) reWrapUserFacingErrors(err error) *errors.Error {

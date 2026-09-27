@@ -31,6 +31,8 @@ type local struct {
 	portForwardingAllowed bool
 }
 
+func (this *local) reverseTCPUnprivilegedUser() bool { return false }
+
 func (this *LocalRepository) new(sess session.Session, portForwardingAllowed bool) *local {
 	return &local{
 		this,

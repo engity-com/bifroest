@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	gonet "net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -617,8 +618,135 @@ func (this *sshEnvironment) IsPortForwardingAllowed(bnet.HostPort) (bool, error)
 	return this.settings.forwardAllowed, nil
 }
 
-func (*sshEnvironment) IsReversePortForwardingAllowed(bnet.HostPort) (bool, error) {
-	return false, nil
+func (this *sshEnvironment) IsReversePortForwardingAllowed(bnet.HostPort) (bool, error) {
+	return this.settings.forwardAllowed && this.settings.reverseForwardAllowed, nil
+}
+
+func (this *sshEnvironment) ListenReverseTCP(ctx context.Context, host string, port uint16) (gonet.Listener, error) {
+	if this.settings == nil || !this.settings.forwardAllowed || !this.settings.reverseForwardAllowed {
+		return nil, fmt.Errorf("SSH reverse port forwarding not allowed")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	transport, err := this.repository.transportFor(this, ctx)
+	if err != nil {
+		return nil, err
+	}
+	type result struct {
+		listener gonet.Listener
+		err      error
+	}
+	completed := make(chan result, 1)
+	go func() {
+		listener, err := transport.client.Listen("tcp", gonet.JoinHostPort(host, strconv.Itoa(int(port))))
+		completed <- result{listener, err}
+	}()
+	select {
+	case actual := <-completed:
+		var listener *sshReverseListener
+		if actual.listener != nil {
+			listener = &sshReverseListener{
+				Listener: actual.listener, repository: this.repository,
+				id: this.connection.Id(), transport: transport, done: make(chan struct{}),
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			if listener != nil {
+				_ = listener.Close()
+			}
+			return nil, err
+		}
+		if err := this.lifetime.Err(); err != nil {
+			if listener != nil {
+				_ = listener.Close()
+			}
+			return nil, err
+		}
+		if actual.err != nil {
+			return nil, fmt.Errorf("cannot listen on SSH target %s: %w", gonet.JoinHostPort(host, strconv.Itoa(int(port))), actual.err)
+		}
+		go func() {
+			select {
+			case <-ctx.Done():
+			case <-this.lifetime.Done():
+			case <-transport.done:
+			case <-listener.done:
+				return
+			}
+			_ = listener.Close()
+		}()
+		if ctx.Err() != nil || this.lifetime.Err() != nil {
+			_ = listener.Close()
+		}
+		select {
+		case <-transport.done:
+			_ = listener.Close()
+		default:
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err := this.lifetime.Err(); err != nil {
+			return nil, err
+		}
+		select {
+		case <-transport.done:
+			return nil, fmt.Errorf("SSH target transport is closed")
+		default:
+		}
+		return listener, nil
+	case <-ctx.Done():
+		// SSH global requests cannot be canceled individually while Listen waits for a reply.
+		this.repository.removeTransport(this.connection.Id(), transport)
+		actual := <-completed
+		if actual.listener != nil {
+			_ = actual.listener.Close()
+		}
+		return nil, ctx.Err()
+	case <-this.lifetime.Done():
+		this.repository.removeTransport(this.connection.Id(), transport)
+		actual := <-completed
+		if actual.listener != nil {
+			_ = actual.listener.Close()
+		}
+		return nil, this.lifetime.Err()
+	case <-transport.done:
+		actual := <-completed
+		if actual.listener != nil {
+			_ = actual.listener.Close()
+		}
+		return nil, fmt.Errorf("SSH target transport is closed")
+	}
+}
+
+type sshReverseListener struct {
+	gonet.Listener
+	repository *SshRepository
+	id         connection.Id
+	transport  *sshTransport
+	closeOnce  sync.Once
+	closeErr   error
+	done       chan struct{}
+}
+
+func (this *sshReverseListener) Close() error {
+	this.closeOnce.Do(func() {
+		close(this.done)
+		closed := make(chan error, 1)
+		go func() { closed <- this.Listener.Close() }()
+		select {
+		case this.closeErr = <-closed:
+			if this.closeErr != nil {
+				this.repository.removeTransport(this.id, this.transport)
+			}
+		case <-time.After(time.Second):
+			this.repository.removeTransport(this.id, this.transport)
+			<-closed
+			this.closeErr = fmt.Errorf("SSH target did not respond to cancel-tcpip-forward in time")
+		}
+	})
+	return this.closeErr
 }
 
 func (this *sshEnvironment) NewDestinationConnection(ctx context.Context, destination bnet.HostPort) (io.ReadWriteCloser, error) {

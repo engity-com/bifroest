@@ -421,10 +421,25 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 		_, err = sess.ListenReverseTCP(ctx, connId, "bad:host", 0)
 		require.Error(t, err)
 
-		wildcard, err := sess.ListenReverseTCP(ctx, connId, "", 0)
+		loopback, err := sess.ListenReverseTCP(ctx, connId, "", 0)
+		require.NoError(t, err)
+		assert.True(t, loopback.Addr().(*gonet.TCPAddr).IP.IsLoopback())
+		require.NoError(t, loopback.Close())
+
+		localhost, err := sess.ListenReverseTCP(ctx, connId, "localhost", 0)
+		require.NoError(t, err)
+		assert.True(t, localhost.Addr().(*gonet.TCPAddr).IP.IsLoopback())
+		require.NoError(t, localhost.Close())
+
+		wildcard, err := sess.ListenReverseTCP(ctx, connId, "*", 0)
 		require.NoError(t, err)
 		assert.True(t, wildcard.Addr().(*gonet.TCPAddr).IP.IsUnspecified())
 		require.NoError(t, wildcard.Close())
+
+		ipv4Wildcard, err := sess.ListenReverseTCP(ctx, connId, "0.0.0.0", 0)
+		require.NoError(t, err)
+		assert.True(t, ipv4Wildcard.Addr().(*gonet.TCPAddr).IP.IsUnspecified())
+		require.NoError(t, ipv4Wildcard.Close())
 
 		blocked := make(chan error, 1)
 		go func() { _, e := ln.Accept(); blocked <- e }()

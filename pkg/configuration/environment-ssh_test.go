@@ -38,11 +38,35 @@ acceptAllHostKeys: true
 	require.Equal(t, 10*time.Second, mustRenderDuration(t, actual.ConnectTimeout))
 	require.True(t, mustRenderBool(t, actual.LoginAllowed))
 	require.True(t, mustRenderBool(t, actual.PortForwardingAllowed))
+	require.False(t, mustRenderBool(t, actual.ReversePortForwardingAllowed))
 	require.True(t, actual.AllowedSubsystems.MatchString("sftp"))
 	require.False(t, actual.AllowedSubsystems.MatchEntireString("netconf"))
 	require.False(t, actual.AllowedSubsystems.MatchEntireString("sftp-server"))
 	require.Empty(t, actual.IdentityFiles)
 	require.Equal(t, sys.OsLinux, actual.Os)
+}
+
+func TestEnvironmentSshReversePortForwardingConfiguration(t *testing.T) {
+	var configured Environment
+	require.NoError(t, yaml.Unmarshal([]byte(`
+type: ssh
+address: target.example.org:22
+user: alice
+acceptAllHostKeys: true
+reversePortForwardingAllowed: '{{ eq .targetUser "alice" }}'
+`), &configured))
+	actual := configured.V.(*EnvironmentSsh)
+	require.True(t, actual.ReversePortForwardingAllowed.IsEqualTo(template.MustNewBool(`{{ eq .targetUser "alice" }}`)))
+	encoded, err := yaml.Marshal(actual)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), "reversePortForwardingAllowed:")
+	var restored EnvironmentSsh
+	require.NoError(t, yaml.Unmarshal(encoded, &restored))
+	require.True(t, actual.IsEqualTo(restored))
+	changed := *actual
+	changed.ReversePortForwardingAllowed = template.BoolOf(false)
+	require.False(t, actual.IsEqualTo(changed))
+	require.False(t, changed.IsEqualTo(actual))
 }
 
 func TestEnvironmentSshAllowedSubsystems(t *testing.T) {

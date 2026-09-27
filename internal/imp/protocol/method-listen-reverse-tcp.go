@@ -73,13 +73,21 @@ func (this *imp) handleMethodListenReverseTCP(ctx context.Context, header *Heade
 	if err := req.DecodeMsgPack(conn); err != nil {
 		return fail(err)
 	}
-	addr := gonet.JoinHostPort(req.host, strconv.Itoa(int(req.port)))
 	if err := validateReverseTCPHost(req.host); err != nil {
 		if e := (reverseTCPResponse{err: err}).EncodeMsgPack(conn); e != nil {
 			return fail(e)
 		}
 		return nil
 	}
+	// An omitted SSH bind host is loopback; only an explicit * requests a wildcard bind.
+	host := req.host
+	switch host {
+	case "":
+		host = "localhost"
+	case "*":
+		host = ""
+	}
+	addr := gonet.JoinHostPort(host, strconv.Itoa(int(req.port)))
 	ln, err := gonet.Listen("tcp", addr)
 	if err != nil {
 		if e := (reverseTCPResponse{err: reWrapIfUserFacingNetworkErrors(err)}).EncodeMsgPack(conn); e != nil {

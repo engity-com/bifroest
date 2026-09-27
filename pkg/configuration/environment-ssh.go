@@ -15,12 +15,13 @@ import (
 )
 
 var (
-	DefaultEnvironmentSshConnectTimeout        = template.DurationOf(10 * time.Second)
-	DefaultEnvironmentSshOs                    = sys.OsLinux
-	DefaultEnvironmentSshLoginAllowed          = template.BoolOf(true)
-	DefaultEnvironmentSshBanner                = template.MustNewString("")
-	DefaultEnvironmentSshPortForwardingAllowed = template.BoolOf(true)
-	DefaultEnvironmentSshAllowedSubsystems     = common.MustNewRegexp("^sftp$")
+	DefaultEnvironmentSshConnectTimeout               = template.DurationOf(10 * time.Second)
+	DefaultEnvironmentSshOs                           = sys.OsLinux
+	DefaultEnvironmentSshLoginAllowed                 = template.BoolOf(true)
+	DefaultEnvironmentSshBanner                       = template.MustNewString("")
+	DefaultEnvironmentSshPortForwardingAllowed        = template.BoolOf(true)
+	DefaultEnvironmentSshReversePortForwardingAllowed = template.BoolOf(false)
+	DefaultEnvironmentSshAllowedSubsystems            = common.MustNewRegexp("^sftp$")
 
 	_ = RegisterEnvironmentV(func() EnvironmentV { return &EnvironmentSsh{} })
 )
@@ -38,10 +39,11 @@ type EnvironmentSsh struct {
 	Certificate    *EnvironmentSshCertificate `yaml:"certificate,omitempty"`
 	ConnectTimeout template.Duration          `yaml:"connectTimeout,omitempty"`
 
-	LoginAllowed          template.Bool   `yaml:"loginAllowed,omitempty"`
-	Banner                template.String `yaml:"banner,omitempty"`
-	PortForwardingAllowed template.Bool   `yaml:"portForwardingAllowed,omitempty"`
-	AllowedSubsystems     common.Regexp   `yaml:"allowedSubsystems"`
+	LoginAllowed                 template.Bool   `yaml:"loginAllowed,omitempty"`
+	Banner                       template.String `yaml:"banner,omitempty"`
+	PortForwardingAllowed        template.Bool   `yaml:"portForwardingAllowed,omitempty"`
+	ReversePortForwardingAllowed template.Bool   `yaml:"reversePortForwardingAllowed,omitempty"`
+	AllowedSubsystems            common.Regexp   `yaml:"allowedSubsystems"`
 }
 
 func (this *EnvironmentSsh) SetDefaults() error {
@@ -58,6 +60,7 @@ func (this *EnvironmentSsh) SetDefaults() error {
 		fixedDefault("loginAllowed", func(v *EnvironmentSsh) *template.Bool { return &v.LoginAllowed }, DefaultEnvironmentSshLoginAllowed),
 		fixedDefault("banner", func(v *EnvironmentSsh) *template.String { return &v.Banner }, DefaultEnvironmentSshBanner),
 		fixedDefault("portForwardingAllowed", func(v *EnvironmentSsh) *template.Bool { return &v.PortForwardingAllowed }, DefaultEnvironmentSshPortForwardingAllowed),
+		fixedDefault("reversePortForwardingAllowed", func(v *EnvironmentSsh) *template.Bool { return &v.ReversePortForwardingAllowed }, DefaultEnvironmentSshReversePortForwardingAllowed),
 		fixedDefault("allowedSubsystems", func(v *EnvironmentSsh) *common.Regexp { return &v.AllowedSubsystems }, DefaultEnvironmentSshAllowedSubsystems),
 	)
 }
@@ -76,6 +79,7 @@ func (this *EnvironmentSsh) Trim() error {
 		noopTrim[EnvironmentSsh]("loginAllowed"),
 		noopTrim[EnvironmentSsh]("banner"),
 		noopTrim[EnvironmentSsh]("portForwardingAllowed"),
+		noopTrim[EnvironmentSsh]("reversePortForwardingAllowed"),
 		noopTrim[EnvironmentSsh]("allowedSubsystems"),
 	)
 }
@@ -121,6 +125,9 @@ func (this *EnvironmentSsh) Validate() error {
 		func(v *EnvironmentSsh) (string, validator) { return "loginAllowed", &v.LoginAllowed },
 		func(v *EnvironmentSsh) (string, validator) { return "banner", &v.Banner },
 		func(v *EnvironmentSsh) (string, validator) { return "portForwardingAllowed", &v.PortForwardingAllowed },
+		func(v *EnvironmentSsh) (string, validator) {
+			return "reversePortForwardingAllowed", &v.ReversePortForwardingAllowed
+		},
 		func(v *EnvironmentSsh) (string, validator) { return "allowedSubsystems", &v.AllowedSubsystems },
 	)
 }
@@ -163,6 +170,7 @@ func (this EnvironmentSsh) isEqualTo(other *EnvironmentSsh) bool {
 		isEqual(&this.LoginAllowed, &other.LoginAllowed) &&
 		isEqual(&this.Banner, &other.Banner) &&
 		isEqual(&this.PortForwardingAllowed, &other.PortForwardingAllowed) &&
+		isEqual(&this.ReversePortForwardingAllowed, &other.ReversePortForwardingAllowed) &&
 		isEqual(&this.AllowedSubsystems, &other.AllowedSubsystems)
 }
 
