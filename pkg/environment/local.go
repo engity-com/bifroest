@@ -184,6 +184,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		}
 		return failf("cannot start process %v: %w", cmd.Args, err)
 	}
+	processGroupID := this.startedProcessGroupID(cmd)
 	var outputDone chan error
 	var outputWriting atomic.Int32
 	if stdoutRead != nil {
@@ -291,14 +292,14 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		if t.Context().Err() != nil {
 			_ = sshSess.Close()
 		}
-		this.kill(cmd, l)
+		this.kill(cmd, processGroupID, l)
 		<-waitFinished
 	}()
 	for {
 		select {
 		case s, ok := <-signals:
 			if ok {
-				this.signal(cmd, l, s)
+				this.signal(cmd, processGroupID, l, s)
 			}
 		case <-t.Context().Done():
 			return -2, rErr
@@ -405,17 +406,6 @@ func (this *local) Close() error {
 
 func (this *local) isRelevantError(err error) bool {
 	return err != nil && !errors.Is(err, syscall.EIO) && !sys.IsClosedError(err)
-}
-
-func (this *local) kill(cmd *exec.Cmd, logger log.Logger) {
-	// TODO! We should consider the whole tree...
-	if err := cmd.Process.Kill(); errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.EINVAL) {
-		// Ok, great.
-	} else if err != nil {
-		logger.WithError(err).
-			With("pid", cmd.Process.Pid).
-			Warn("cannot kill process")
-	}
 }
 
 func (this *local) IsPortForwardingAllowed(net.HostPort) (bool, error) {

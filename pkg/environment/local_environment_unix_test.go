@@ -476,6 +476,34 @@ func TestLocalShellCommandArgumentsAndCredentials(t *testing.T) {
 	}
 }
 
+func TestLocalNonPtyCommandStartsInNewProcessGroup(t *testing.T) {
+	local, task := newLocalCommandTest(t, TaskTypeShell, "true")
+	cmd, _, release, err := local.createCmdAndEnv(task)
+	require.NoError(t, err)
+	defer release()
+	require.True(t, cmd.SysProcAttr.Setpgid)
+	require.False(t, cmd.SysProcAttr.Setsid)
+	require.False(t, cmd.SysProcAttr.Setctty)
+}
+
+func TestLocalPtyCommandStartsInNewSessionWithoutSetpgid(t *testing.T) {
+	local, task := newLocalCommandTest(t, TaskTypeShell, "")
+	cmd, _, release, err := local.createCmdAndEnv(task)
+	require.NoError(t, err)
+	defer release()
+
+	fPty, fTty, err := pty.Open()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = fPty.Close()
+		_ = fTty.Close()
+	})
+	require.NoError(t, local.configureCmdForPty(cmd, fPty, fTty))
+	require.False(t, cmd.SysProcAttr.Setpgid)
+	require.True(t, cmd.SysProcAttr.Setsid)
+	require.True(t, cmd.SysProcAttr.Setctty)
+}
+
 func TestLocalSftpCommandPreservesCredentials(t *testing.T) {
 	local, task := newLocalCommandTest(t, TaskTypeSftp, "")
 	cmd, _, release, err := local.createCmdAndEnv(task)
@@ -650,4 +678,197 @@ func TestLocalEnvironmentDoesNotCreateCommandWithoutRequiredPrivileges(t *testin
 	require.Nil(t, release)
 	require.Error(t, err)
 	require.True(t, errors.Permission.IsErr(err))
+}
+
+func TestSignalProcessGroupUsesNegativeProcessGroupID(t *testing.T) {
+	var calls []processGroupCall
+	kill := func(pid int, signal syscall.Signal) error {
+		calls = append(calls, processGroupCall{pid, signal})
+		return nil
+	}
+
+	require.NoError(t, signalProcessGroup(1234, syscall.SIGUSR1, kill))
+	require.Equal(t, []processGroupCall{
+		{-1234, 0},
+		{-1234, syscall.SIGUSR1},
+	}, calls)
+}
+
+func TestSignalProcessGroupIgnoresEsrchAfterProbe(t *testing.T) {
+	callCount := 0
+	kill := func(pid int, signal syscall.Signal) error {
+		callCount++
+		require.Equal(t, -1234, pid)
+		if signal == syscall.SIGTERM {
+			return syscall.ESRCH
+		}
+		return nil
+	}
+
+	require.NoError(t, signalProcessGroup(1234, syscall.SIGTERM, kill))
+	require.Equal(t, 2, callCount)
+}
+
+func TestCleanupProcessGroupTerminatesThenKillsAfterGracePeriod(t *testing.T) {
+	var calls []processGroupCall
+	var sleeps []time.Duration
+	ops := processGroupOps{
+		kill: func(pid int, signal syscall.Signal) error {
+			calls = append(calls, processGroupCall{pid, signal})
+			return nil
+		},
+		sleep: func(duration time.Duration) {
+			sleeps = append(sleeps, duration)
+		},
+	}
+
+	require.NoError(t, cleanupProcessGroup(4321, 55*time.Millisecond, 20*time.Millisecond, ops))
+	require.Equal(t, []time.Duration{20 * time.Millisecond, 20 * time.Millisecond, 15 * time.Millisecond}, sleeps)
+	require.Equal(t, []processGroupCall{
+		{-4321, 0},
+		{-4321, syscall.SIGTERM},
+		{-4321, 0},
+		{-4321, 0},
+		{-4321, 0},
+		{-4321, syscall.SIGKILL},
+	}, calls)
+}
+
+func TestCleanupProcessGroupContinuesAfterLeaderIsGone(t *testing.T) {
+	var calls []processGroupCall
+	ops := processGroupOps{
+		kill: func(pid int, signal syscall.Signal) error {
+			calls = append(calls, processGroupCall{pid, signal})
+			return nil
+		},
+		sleep: func(time.Duration) {},
+	}
+
+	require.NoError(t, cleanupProcessGroup(321, 0, time.Millisecond, ops))
+	require.Equal(t, []processGroupCall{
+		{-321, 0},
+		{-321, syscall.SIGTERM},
+		{-321, 0},
+		{-321, syscall.SIGKILL},
+	}, calls)
+}
+
+func TestCleanupProcessGroupAlreadyGoneIsNoop(t *testing.T) {
+	var calls []processGroupCall
+	ops := processGroupOps{
+		kill: func(pid int, signal syscall.Signal) error {
+			calls = append(calls, processGroupCall{pid, signal})
+			return syscall.ESRCH
+		},
+		sleep: func(time.Duration) {
+			t.Fatal("cleanup slept for an absent process group")
+		},
+	}
+
+	require.NoError(t, cleanupProcessGroup(987, time.Second, time.Millisecond, ops))
+	require.Equal(t, []processGroupCall{{-987, 0}}, calls)
+}
+
+func TestCleanupProcessGroupStopsWhenGroupDisappearsDuringGracePeriod(t *testing.T) {
+	var calls []processGroupCall
+	ops := processGroupOps{
+		kill: func(pid int, signal syscall.Signal) error {
+			calls = append(calls, processGroupCall{pid, signal})
+			if len(calls) == 3 {
+				return syscall.ESRCH
+			}
+			return nil
+		},
+		sleep: func(time.Duration) {},
+	}
+
+	require.NoError(t, cleanupProcessGroup(654, time.Second, time.Second, ops))
+	require.Equal(t, []processGroupCall{
+		{-654, 0},
+		{-654, syscall.SIGTERM},
+		{-654, 0},
+	}, calls)
+}
+
+func TestCleanupProcessGroupTreatsProcessDoneAsGone(t *testing.T) {
+	ops := processGroupOps{
+		kill:  func(int, syscall.Signal) error { return os.ErrProcessDone },
+		sleep: func(time.Duration) { t.Fatal("cleanup slept for a completed process group") },
+	}
+	require.NoError(t, cleanupProcessGroup(852, time.Second, time.Millisecond, ops))
+}
+
+func TestCleanupProcessGroupIsBounded(t *testing.T) {
+	var sleepCount int
+	ops := processGroupOps{
+		kill: func(int, syscall.Signal) error { return nil },
+		sleep: func(time.Duration) {
+			sleepCount++
+		},
+	}
+
+	require.NoError(t, cleanupProcessGroup(741, time.Second, 300*time.Millisecond, ops))
+	require.Equal(t, 4, sleepCount)
+}
+
+func TestLocalProcessGroupLeaderCannotDetach(t *testing.T) {
+	if os.Getenv("BIFROEST_TEST_PROCESS_GROUP_DETACH") == "1" {
+		if _, err := syscall.Setsid(); err == syscall.EPERM {
+			os.Exit(42)
+		} else if err != nil {
+			os.Exit(43)
+		}
+		os.Exit(0)
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestLocalProcessGroupLeaderCannotDetach$")
+	cmd.Env = append(os.Environ(), "BIFROEST_TEST_PROCESS_GROUP_DETACH=1")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	err := cmd.Run()
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 42, exitErr.ExitCode())
+}
+
+func TestCleanupProcessGroupReachesDescendantAfterLeaderExit(t *testing.T) {
+	directory := t.TempDir()
+	readyFile := filepath.Join(directory, "ready")
+	terminatedFile := filepath.Join(directory, "terminated")
+	releaseFile := filepath.Join(directory, "release")
+	script := `(trap 'printf terminated > "$2"; exit 0' TERM; printf ready > "$1"; while :; do sleep 1; done) & while [ ! -f "$3" ]; do sleep 0.01; done`
+	cmd := exec.Command("/bin/sh", "-c", script, "sh", readyFile, terminatedFile, releaseFile)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	require.NoError(t, cmd.Start())
+	processGroupID := cmd.Process.Pid
+	cleanupRequired := true
+	t.Cleanup(func() {
+		if cleanupRequired {
+			_ = syscall.Kill(-processGroupID, syscall.SIGKILL)
+		}
+		_ = cmd.Wait()
+	})
+	actualProcessGroupID, err := syscall.Getpgid(cmd.Process.Pid)
+	require.NoError(t, err)
+	require.Equal(t, cmd.Process.Pid, actualProcessGroupID)
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(readyFile)
+		return err == nil
+	}, time.Second, 10*time.Millisecond)
+	require.NoError(t, os.WriteFile(releaseFile, nil, 0o600))
+	require.NoError(t, cmd.Wait())
+
+	_, exists, err := probeProcessGroup(processGroupID, syscall.Kill)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.NoError(t, cleanupProcessGroup(processGroupID, 500*time.Millisecond, 10*time.Millisecond, defaultProcessGroupOps()))
+	cleanupRequired = false
+	require.Eventually(t, func() bool {
+		content, err := os.ReadFile(terminatedFile)
+		return err == nil && string(content) == "terminated"
+	}, time.Second, 10*time.Millisecond)
+}
+
+type processGroupCall struct {
+	pid    int
+	signal syscall.Signal
 }

@@ -195,7 +195,11 @@ func (this *local) getPathEnv() string {
 	return `C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem`
 }
 
-func (this *local) signal(cmd *exec.Cmd, logger log.Logger, signal essh.Signal) {
+func (this *local) startedProcessGroupID(_ *exec.Cmd) int {
+	return 0
+}
+
+func (this *local) signal(cmd *exec.Cmd, _ int, logger log.Logger, signal essh.Signal) {
 	err := signalProcessFromSsh(signal, func(sig sys.Signal) error {
 		return cmd.Process.Signal(sig.Native())
 	})
@@ -206,6 +210,16 @@ func (this *local) signal(cmd *exec.Cmd, logger log.Logger, signal essh.Signal) 
 			With("pid", cmd.Process.Pid).
 			With("signal", signal).
 			Warn("cannot send signal to process")
+	}
+}
+
+func (this *local) kill(cmd *exec.Cmd, _ int, logger log.Logger) {
+	if err := cmd.Process.Kill(); errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.EINVAL) {
+		// Ignored.
+	} else if err != nil {
+		logger.WithError(err).
+			With("pid", cmd.Process.Pid).
+			Warn("cannot kill process")
 	}
 }
 
