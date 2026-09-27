@@ -91,11 +91,15 @@ func openAuditOutputParent(path string) (*goos.File, error) {
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("output parent %q is not absolute", path)
 	}
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, err
+	}
 	current, err := unix.Open(string(filepath.Separator), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, err
 	}
-	for _, component := range strings.Split(strings.TrimPrefix(filepath.Clean(path), string(filepath.Separator)), string(filepath.Separator)) {
+	for _, component := range strings.Split(strings.TrimPrefix(filepath.Clean(canonical), string(filepath.Separator)), string(filepath.Separator)) {
 		if component == "" {
 			continue
 		}
