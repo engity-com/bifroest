@@ -56,14 +56,15 @@ type build struct {
 	releaseManifest *buildReleaseManifest
 	digest          *buildDigest
 
-	vendor    string
-	dest      string
-	prefix    string
-	rawStages buildStages
-	oses      sys.Oses
-	archs     sys.Archs
-	editions  sys.Editions
-	testing   bool
+	vendor                string
+	dest                  string
+	prefix                string
+	rawStages             buildStages
+	oses                  sys.Oses
+	archs                 sys.Archs
+	editions              sys.Editions
+	testing               bool
+	importReleaseManifest string
 
 	wslBuildDistribution string
 	binaryMode           binaryBuildMode
@@ -112,6 +113,9 @@ func (this *build) init(ctx context.Context, app *kingpin.Application) {
 			SetValue(&this.editions)
 		cmd.Flag("testing", "").
 			BoolVar(&this.testing)
+		cmd.Flag("importReleaseManifest", "").
+			PlaceHolder("<path>").
+			StringVar(&this.importReleaseManifest)
 		cmd.Flag("wslBuildDistribution", "").
 			PlaceHolder("<distroName>").
 			Default(this.wslBuildDistribution).
@@ -328,6 +332,17 @@ func (this *build) buildAll(ctx context.Context, forTesting bool) (_ buildArtifa
 
 	if stages.contains(buildStageImage) {
 		updated, err := this.image.merge(ctx, artifacts)
+		if err != nil {
+			return nil, err
+		}
+		artifacts = updated
+	}
+
+	if this.importReleaseManifest != "" {
+		if !stages.contains(buildStageDigest) {
+			return nil, errors.New("--importReleaseManifest requires the digest stage")
+		}
+		updated, err := this.releaseManifest.importPartial(ctx, artifacts, this.importReleaseManifest)
 		if err != nil {
 			return nil, err
 		}

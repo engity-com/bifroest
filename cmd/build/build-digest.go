@@ -39,7 +39,7 @@ func (this *buildDigest) create(_ context.Context, as buildArtifacts) (_ buildAr
 		},
 		buildContext: as[0].buildContext,
 		t:            buildArtifactTypeDigest,
-		filepath:     as[0].buildContext.filepath("bifroest-checksums.txt"),
+		filepath:     as[0].buildContext.filepath(releaseChecksumFilename),
 	}
 	defer common.IgnoreCloseErrorIfFalse(&success, result)
 
