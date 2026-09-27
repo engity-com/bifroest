@@ -1,6 +1,7 @@
 package sys
 
 var binaryCompatibilityMatrix = map[Os]map[Arch]map[Arch]struct{}{
+	OsDarwin: {},
 	OsLinux: {
 		ArchAmd64: {
 			Arch386: struct{}{},
