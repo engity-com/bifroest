@@ -86,18 +86,6 @@ func (this Requirement) isEqualTo(other *Requirement) bool {
 		this.Skel == other.Skel
 }
 
-func (this Requirement) doesFulfilRef(target *etcPasswdRef) bool {
-	if target == nil || (this.Name == "" && this.Uid == nil) {
-		return false
-	}
-	uid := Id(target.uid)
-	return (this.Name == "" || this.Name == string(target.etcPasswdEntry.name)) &&
-		this.DisplayName == string(target.etcPasswdEntry.geocs) &&
-		(this.Uid == nil || *this.Uid == uid) &&
-		this.Shell == string(target.etcPasswdEntry.shell) &&
-		this.HomeDir == string(target.etcPasswdEntry.homeDir)
-}
-
 func (this Requirement) String() string {
 	if name := this.Name; len(name) > 0 {
 		if uid := this.Uid; uid != nil {
