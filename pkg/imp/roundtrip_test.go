@@ -415,9 +415,9 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 		}
 		require.Empty(t, origins)
 
-		_, err = sess.ListenReverseTCP(ctx, connId, "127.0.0.1", uint16(addr.Port))
+		duplicate, err := sess.ListenReverseTCP(ctx, connId, "127.0.0.1", uint16(addr.Port))
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "address already in use")
+		require.Nil(t, duplicate)
 		_, err = sess.ListenReverseTCP(ctx, connId, "bad:host", 0)
 		require.Error(t, err)
 
@@ -462,10 +462,10 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 		}, 5*time.Second, 20*time.Millisecond)
 
 		listenCtx, cancel := context.WithCancel(ctx)
-		cancelled, err := sess.ListenReverseTCP(listenCtx, connId, "127.0.0.1", 0)
+		canceledListener, err := sess.ListenReverseTCP(listenCtx, connId, "127.0.0.1", 0)
 		require.NoError(t, err)
-		defer common.IgnoreCloseError(cancelled)
-		go func() { _, e := cancelled.Accept(); blocked <- e }()
+		defer common.IgnoreCloseError(canceledListener)
+		go func() { _, e := canceledListener.Accept(); blocked <- e }()
 		cancel()
 		select {
 		case err := <-blocked:
@@ -474,7 +474,7 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 			t.Fatal("context cancellation did not release Accept")
 		}
 		require.Eventually(t, func() bool {
-			rebound, e := sess.ListenReverseTCP(ctx, connId, "127.0.0.1", uint16(cancelled.Addr().(*gonet.TCPAddr).Port))
+			rebound, e := sess.ListenReverseTCP(ctx, connId, "127.0.0.1", uint16(canceledListener.Addr().(*gonet.TCPAddr).Port))
 			if e != nil {
 				return false
 			}
