@@ -253,7 +253,7 @@ func run(testBinary, user string) error {
 	if err != nil {
 		return fmt.Errorf("SCM access (run from an elevated Windows account): %w", err)
 	}
-	defer m.Disconnect()
+	defer func() { _ = m.Disconnect() }()
 	args := []string{"service", name, resultPath}
 	if testBinary != "" {
 		args = append(args, testBinary, user)
@@ -435,7 +435,7 @@ func s4uToken(host, user string) (windows.Token, error) {
 	if err := ntError("LsaRegisterLogonProcess", status); err != nil {
 		return 0, err
 	}
-	defer deregister.Call(handle)
+	defer func() { _, _, _ = deregister.Call(handle) }()
 
 	packageName, packageBytes := makeLSAString("MICROSOFT_AUTHENTICATION_PACKAGE_V1_0")
 	var packageID uint32
@@ -476,7 +476,7 @@ func s4uToken(host, user string) (windows.Token, error) {
 	)
 	runtime.KeepAlive(auth)
 	if profile != 0 {
-		freeBuffer.Call(profile)
+		_, _, _ = freeBuffer.Call(profile)
 	}
 	if err := ntError("LsaLogonUser", status); err != nil {
 		if token != 0 {

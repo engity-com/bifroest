@@ -144,7 +144,7 @@ func RunLocalConPTYRelay(cols, rows int, argv []string) (int, error) {
 	if err != nil {
 		return -1, fmt.Errorf("create shell job: %w", err)
 	}
-	defer windows.CloseHandle(job)
+	defer func() { _ = windows.CloseHandle(job) }()
 	limits := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
 	limits.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
 	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
@@ -158,8 +158,8 @@ func RunLocalConPTYRelay(cols, rows int, argv []string) (int, error) {
 		nil, nil, &startup.StartupInfo, &proc); err != nil {
 		return -1, fmt.Errorf("start shell: %w", err)
 	}
-	defer windows.CloseHandle(proc.Process)
-	defer windows.CloseHandle(proc.Thread)
+	defer func() { _ = windows.CloseHandle(proc.Process) }()
+	defer func() { _ = windows.CloseHandle(proc.Thread) }()
 	// A suspended process cannot spawn children before joining the job.
 	defer func() {
 		_ = windows.TerminateJobObject(job, 1)
