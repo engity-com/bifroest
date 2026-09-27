@@ -398,17 +398,6 @@ func (this *LocalRepository) lookupByName(ctx Context, tmpl template.String) (*u
 	return this.userRepository.LookupByName(ctx.Context(), name)
 }
 
-func (this *LocalRepository) ensureUser(ctx context.Context, req *user.Requirement, opts *localEnsureOpts) (u *user.User, er user.EnsureResult, err error) {
-	u, er, err = this.userRepository.Ensure(ctx, req, &user.EnsureOpts{
-		CreateAllowed: &opts.createIfAbsent,
-		ModifyAllowed: &opts.updateIfDifferent,
-	})
-	if err != nil {
-		return nil, 0, fmt.Errorf("cannot ensure user: %w", err)
-	}
-	return u, er, nil
-}
-
 func (this *LocalRepository) Close() error {
 	return this.userRepository.Close()
 }

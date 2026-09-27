@@ -90,22 +90,6 @@ func TestKillProcessGroupRejectsUnverifiedLeader(t *testing.T) {
 	require.NoError(t, syscall.Kill(targetPid, 0))
 }
 
-func mustGetProcessGroup(t *testing.T, pid int) int {
-	t.Helper()
-	pgid, err := syscall.Getpgid(pid)
-	require.NoError(t, err)
-	return pgid
-}
-
-func processIsGoneOrZombie(pid int) bool {
-	err := syscall.Kill(pid, 0)
-	if errors.Is(err, syscall.ESRCH) {
-		return true
-	}
-	status, readErr := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
-	return readErr == nil && len(strings.Fields(string(status))) >= 3 && strings.Fields(string(status))[2] == "Z"
-}
-
 func TestRegisteredProcessRejectsReusedPid(t *testing.T) {
 	identity, err := processidentity.Get(os.Getpid())
 	require.NoError(t, err)

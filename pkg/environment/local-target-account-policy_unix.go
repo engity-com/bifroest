@@ -159,7 +159,7 @@ func (this *local) revalidateTargetAccount(ctx context.Context) error {
 		return errors.Newf(errors.Permission, "Unix target account %s changed before process start", this.user)
 	}
 	if err := this.repository.validateTargetAccount(byName); err != nil {
-		return fmt.Errorf("Unix target account failed pre-start policy revalidation: %w", err)
+		return fmt.Errorf("unix target account failed pre-start policy revalidation: %w", err)
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ package protocol
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,6 +25,22 @@ import (
 )
 
 const boundedPidfdsHelper = "BIFROEST_BOUNDED_PIDFDS_HELPER"
+
+func mustGetProcessGroup(t *testing.T, pid int) int {
+	t.Helper()
+	pgid, err := syscall.Getpgid(pid)
+	require.NoError(t, err)
+	return pgid
+}
+
+func processIsGoneOrZombie(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	if errors.Is(err, syscall.ESRCH) {
+		return true
+	}
+	status, readErr := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	return readErr == nil && len(strings.Fields(string(status))) >= 3 && strings.Fields(string(status))[2] == "Z"
+}
 
 func TestKillProcessGroupUsingNonLeaderReachesSiblings(t *testing.T) {
 	expectedEnv := "BIFROEST_TEST_EXECUTION=owned"

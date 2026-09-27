@@ -65,6 +65,10 @@ run = "go test -v -count=1 -tags=e2e -timeout=5m -run '^Test(HtpasswdAuthorizati
 [tasks."test:e2e:nanoserver"]
 run = "go test -v -count=1 -tags=nanoserver_integration -timeout=20m -run=TestPinnedNanoServerLocalEnvironment ./test/nanoserver"
 
+[tasks."test:e2e:darwin"]
+depends = ["build:var"]
+run = "go test -v -count=1 -tags=e2e -timeout=15m -run '^TestOpenSSHNativeDarwin$' ./test/e2e"
+
 [tasks."test:e2e"]
 run = [
     { task = "test:e2e:authorization" },
