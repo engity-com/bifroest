@@ -158,6 +158,8 @@ func (this *imp) serveConn(ctx context.Context, plainConn gonet.Conn) (rErr erro
 		return done(this.handleMethodNamedPipe(ctx, &header, l, conn))
 	case MethodNamedPipeForUser:
 		return done(this.handleMethodNamedPipeForUser(ctx, &header, l, conn))
+	case MethodListenReverseTCP:
+		return done(this.handleMethodListenReverseTCP(ctx, &header, l, conn))
 	case MethodGetConnectionExitCode:
 		return done(this.handleMethodGetConnectionExitCode(ctx, &header, l, conn))
 	case MethodGetEnvironment:

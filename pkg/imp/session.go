@@ -16,6 +16,7 @@ type Session interface {
 	Ping(ctx context.Context, connectionId connection.Id) error
 	InitiateTcpForward(ctx context.Context, connectionId connection.Id, target net.HostPort) (gonet.Conn, error)
 	InitiateNamedPipe(ctx context.Context, connectionId connection.Id, purpose net.Purpose) (net.NamedPipe, error)
+	ListenReverseTCP(ctx context.Context, connectionId connection.Id, host string, port uint16) (gonet.Listener, error)
 
 	// GetConnectionExitCode returns the legacy connection-scoped exit code, or
 	// [connection.ErrNotFound] if its result is not available yet.

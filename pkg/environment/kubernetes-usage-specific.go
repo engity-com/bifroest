@@ -3,6 +3,7 @@ package environment
 import (
 	"context"
 	"io"
+	gonet "net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -410,4 +411,17 @@ func (this *kubernetes) NewDestinationConnection(ctx context.Context, dest net.H
 	}
 
 	return this.impSession.InitiateTcpForward(ctx, connId, dest)
+}
+
+func (this *kubernetes) ListenReverseTCP(ctx context.Context, host string, port uint16) (gonet.Listener, error) {
+	if !this.portForwardingAllowed {
+		return nil, errors.Newf(errors.Permission, "port forwarding not allowed")
+	}
+
+	connId, err := connection.NewId()
+	if err != nil {
+		return nil, err
+	}
+
+	return this.impSession.ListenReverseTCP(ctx, connId, host, port)
 }

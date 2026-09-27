@@ -75,7 +75,7 @@ func (this *DockerRepository) new(ctx context.Context, container *types.Containe
 		return fail(err)
 	}
 	var err error
-	openedSession, err := this.imp.Open(ctx, result)
+	openedSession, err := this.imp.Open(context.WithoutCancel(ctx), result)
 	if err != nil {
 		return fail(err)
 	}
@@ -84,6 +84,12 @@ func (this *DockerRepository) new(ctx context.Context, container *types.Containe
 		_ = openedSession.Close()
 		return fail(errors.System.Newf("IMP session does not support execution lifecycle"))
 	}
+	success := false
+	defer func() {
+		if !success {
+			_ = result.impSession.Close()
+		}
+	}()
 
 	connId, err := connection.NewId()
 	if err != nil {
@@ -97,6 +103,7 @@ func (this *DockerRepository) new(ctx context.Context, container *types.Containe
 	}
 
 	result.owners.Add(1)
+	success = true
 
 	return result, nil
 }
@@ -180,11 +187,14 @@ func (this *docker) Close() (rErr error) {
 }
 
 func (this *docker) closeGuarded() error {
+	if this.owners.Load() <= 0 {
+		return nil
+	}
 	if this.owners.Add(-1) > 0 {
 		return nil
 	}
-	this.repository.activeInstances.Delete(this.sessionId)
-	return nil
+	defer this.repository.activeInstances.Delete(this.sessionId)
+	return this.impSession.Close()
 }
 
 func (this *docker) isRelevantError(err error) bool {

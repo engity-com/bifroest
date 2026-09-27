@@ -14,9 +14,16 @@ import (
 type MasterSession struct {
 	parent *Master
 	ref    Ref
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+func (this *MasterSession) ListenReverseTCP(ctx context.Context, connectionId connection.Id, host string, port uint16) (gonet.Listener, error) {
+	return this.parent.methodListenReverseTCP(ctx, this.ctx, this.ref, connectionId, host, port)
 }
 
 func (this *MasterSession) Close() error {
+	this.cancel()
 	return nil
 }
 

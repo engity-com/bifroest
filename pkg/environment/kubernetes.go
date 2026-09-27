@@ -80,7 +80,7 @@ func (this *KubernetesRepository) new(ctx context.Context, pod *v1.Pod, logger l
 		return failf("cannot parse pod: %w", err)
 	}
 	var err error
-	openedSession, err := this.imp.Open(ctx, result)
+	openedSession, err := this.imp.Open(context.WithoutCancel(ctx), result)
 	if err != nil {
 		return failf("cannot open IMP session: %w", err)
 	}
@@ -89,6 +89,12 @@ func (this *KubernetesRepository) new(ctx context.Context, pod *v1.Pod, logger l
 		_ = openedSession.Close()
 		return failf("IMP session does not support execution lifecycle")
 	}
+	success := false
+	defer func() {
+		if !success {
+			_ = result.impSession.Close()
+		}
+	}()
 
 	connId, err := connection.NewId()
 	if err != nil {
@@ -103,6 +109,7 @@ func (this *KubernetesRepository) new(ctx context.Context, pod *v1.Pod, logger l
 	}
 
 	result.owners.Add(1)
+	success = true
 
 	return result, nil
 }
@@ -187,11 +194,14 @@ func (this *kubernetes) Close() (rErr error) {
 }
 
 func (this *kubernetes) closeGuarded() error {
+	if this.owners.Load() <= 0 {
+		return nil
+	}
 	if this.owners.Add(-1) > 0 {
 		return nil
 	}
-	this.repository.activeInstances.Delete(this.sessionId)
-	return nil
+	defer this.repository.activeInstances.Delete(this.sessionId)
+	return this.impSession.Close()
 }
 
 func (this *kubernetes) isRelevantError(err error) bool {
