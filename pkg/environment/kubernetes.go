@@ -183,6 +183,7 @@ func (this *kubernetes) Dispose(ctx context.Context) (_ bool, rErr error) {
 	if err != nil {
 		return fail(err)
 	}
+	this.repository.activeInstances.CompareAndDelete(this.sessionId, this)
 
 	return ok, nil
 }
@@ -200,7 +201,7 @@ func (this *kubernetes) closeGuarded() error {
 	if this.owners.Add(-1) > 0 {
 		return nil
 	}
-	defer this.repository.activeInstances.Delete(this.sessionId)
+	defer this.repository.activeInstances.CompareAndDelete(this.sessionId, this)
 	return this.impSession.Close()
 }
 

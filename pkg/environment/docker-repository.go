@@ -685,7 +685,7 @@ func (this *DockerRepository) findOrEnsureBySession(ctx context.Context, sess se
 	if ok {
 		instance := ip.(*docker)
 		instance.owners.Add(1)
-		return instance, nil
+		return &containerLease{Environment: instance, ReverseTCPListener: instance}, nil
 	}
 
 	c, exitCode, err := this.findContainerBySession(ctx, sess)
@@ -703,7 +703,7 @@ func (this *DockerRepository) findOrEnsureBySession(ctx context.Context, sess se
 	if ok {
 		instance := ip.(*docker)
 		instance.owners.Add(1)
-		return instance, nil
+		return &containerLease{Environment: instance, ReverseTCPListener: instance}, nil
 	}
 	if c != nil && c.Labels[DockerLabelExecutionLifecycle] != executionLifecycleCapability {
 		if !opts.IsAutoCleanUpAllowed() {
@@ -767,7 +767,7 @@ func (this *DockerRepository) findOrEnsureBySession(ctx context.Context, sess se
 
 	this.activeInstances.Store(sessId, instance)
 
-	return instance, nil
+	return &containerLease{Environment: instance, ReverseTCPListener: instance}, nil
 }
 
 func (this *DockerRepository) removeContainer(ctx context.Context, id string) (bool, error) {

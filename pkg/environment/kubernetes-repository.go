@@ -969,7 +969,7 @@ func (this *KubernetesRepository) findOrEnsureBySession(ctx context.Context, ses
 	if ok {
 		instance := ip.(*kubernetes)
 		instance.owners.Add(1)
-		return instance, nil
+		return &containerLease{Environment: instance, ReverseTCPListener: instance}, nil
 	}
 
 	existing, err := this.findPodBySession(ctx, sess)
@@ -987,7 +987,7 @@ func (this *KubernetesRepository) findOrEnsureBySession(ctx context.Context, ses
 	if ok {
 		instance := ip.(*kubernetes)
 		instance.owners.Add(1)
-		return instance, nil
+		return &containerLease{Environment: instance, ReverseTCPListener: instance}, nil
 	}
 	if existing != nil && existing.Annotations[KubernetesAnnotationExecutionLifecycle] != executionLifecycleCapability {
 		if !opts.IsAutoCleanUpAllowed() {
@@ -1050,7 +1050,7 @@ func (this *KubernetesRepository) findOrEnsureBySession(ctx context.Context, ses
 
 	this.activeInstances.Store(sessId, instance)
 
-	return instance, nil
+	return &containerLease{Environment: instance, ReverseTCPListener: instance}, nil
 }
 
 func (this *KubernetesRepository) removePod(ctx context.Context, namespace, name string, ppe PreparationProgressEnabled) (_ bool, rErr error) {
