@@ -281,9 +281,12 @@ func TestLocalWindowsRunAsUser(t *testing.T) {
 	account, err := lookupLocalWindowsAccount(name)
 	require.NoError(t, err)
 	repository := localWindowsTestRepository(t, account.Name)
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	repository.conf.ExecCommandPrefix = template.MustNewStrings(exe)
 	stored := &sshTestStoredSession{id: session.MustNewId()}
 	req := localWindowsTestRequest(t, stored)
-	req.session = newSshTestSession(req.context, fmt.Sprintf("%q local-windows-identity-child", os.Args[0]), nil)
+	req.session = newSshTestSession(req.context, "local-windows-identity-child", nil)
 	env, err := repository.Ensure(req)
 	require.NoError(t, err)
 	code, err := env.Run(req)
@@ -319,12 +322,15 @@ func TestLocalWindowsConPTYAsUser(t *testing.T) {
 	account, err := lookupLocalWindowsAccount(name)
 	require.NoError(t, err)
 	repository := localWindowsTestRepository(t, account.Name)
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	repository.conf.ExecCommandPrefix = template.MustNewStrings(exe)
 	stored := &sshTestStoredSession{id: session.MustNewId()}
 	req := localWindowsTestRequest(t, stored)
 	reader, writer := io.Pipe()
 	defer writer.Close()
 	pty := &localWindowsPtySession{
-		sshTestSession: newSshTestSession(req.context, fmt.Sprintf("%q local-windows-identity-child", os.Args[0]), nil),
+		sshTestSession: newSshTestSession(req.context, "local-windows-identity-child", nil),
 		input:          reader,
 		changes:        make(chan essh.Window, 1),
 	}
