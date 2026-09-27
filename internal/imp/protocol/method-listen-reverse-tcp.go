@@ -50,6 +50,24 @@ type reverseTCPResponse struct {
 	err  error
 }
 
+const maxReverseTCPConnections = 64
+
+func (this *imp) acquireReverseTCPConnection() bool {
+	this.reverseTCPMutex.Lock()
+	defer this.reverseTCPMutex.Unlock()
+	if this.reverseTCPConnections >= maxReverseTCPConnections {
+		return false
+	}
+	this.reverseTCPConnections++
+	return true
+}
+
+func (this *imp) releaseReverseTCPConnection() {
+	this.reverseTCPMutex.Lock()
+	this.reverseTCPConnections--
+	this.reverseTCPMutex.Unlock()
+}
+
 func (r reverseTCPResponse) EncodeMsgPack(enc codec.MsgPackEncoder) error {
 	if err := enc.EncodeString(r.addr); err != nil {
 		return err
@@ -120,11 +138,6 @@ func (this *imp) handleMethodListenReverseTCP(ctx context.Context, header *Heade
 		return fail(err)
 	}
 	defer common.IgnoreCloseError(mux)
-	control, err := mux.AcceptStream()
-	if err != nil {
-		return fail(err)
-	}
-	defer common.IgnoreCloseError(control)
 	var gate sync.Mutex
 	stopped := false
 	stopListener := func() {
@@ -138,6 +151,11 @@ func (this *imp) handleMethodListenReverseTCP(ctx context.Context, header *Heade
 		stopListener()
 	})
 	defer stop()
+	control, err := mux.AcceptStream()
+	if err != nil {
+		return fail(err)
+	}
+	defer common.IgnoreCloseError(control)
 	controlDone := make(chan struct{})
 	go func() {
 		defer close(controlDone)
@@ -167,7 +185,7 @@ func (this *imp) handleMethodListenReverseTCP(ctx context.Context, header *Heade
 			return fail(err)
 		}
 		gate.Lock()
-		if stopped {
+		if stopped || !this.acquireReverseTCPConnection() {
 			gate.Unlock()
 			_ = tcpConn.Close()
 			continue
@@ -176,6 +194,7 @@ func (this *imp) handleMethodListenReverseTCP(ctx context.Context, header *Heade
 		gate.Unlock()
 		go func() {
 			defer workers.Done()
+			defer this.releaseReverseTCPConnection()
 			defer common.IgnoreCloseError(tcpConn)
 			gate.Lock()
 			if stopped {

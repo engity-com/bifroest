@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +29,87 @@ func TestReverseTCPHost(t *testing.T) {
 	}
 	for _, host := range []string{"bad:host", "[::1]", "local\x00host", "::1\x00"} {
 		require.Error(t, validateReverseTCPHost(host), "host %q", host)
+	}
+}
+
+func TestReverseTCPConnectionLimit(t *testing.T) {
+	require.Equal(t, 64, maxReverseTCPConnections)
+	first, second := &imp{}, &imp{}
+	for range maxReverseTCPConnections {
+		require.True(t, first.acquireReverseTCPConnection())
+	}
+	require.False(t, first.acquireReverseTCPConnection(), "65th connection on the same IMP must be rejected")
+	require.True(t, second.acquireReverseTCPConnection(), "another IMP must have its own capacity")
+	second.releaseReverseTCPConnection()
+
+	first.releaseReverseTCPConnection()
+	require.True(t, first.acquireReverseTCPConnection(), "release must restore capacity")
+	require.False(t, first.acquireReverseTCPConnection())
+	for range maxReverseTCPConnections {
+		first.releaseReverseTCPConnection()
+	}
+	require.Equal(t, 0, first.reverseTCPConnections)
+	require.Equal(t, 0, second.reverseTCPConnections)
+}
+
+func TestReverseTCPConnectionLimitParallel(t *testing.T) {
+	instance := &imp{}
+	const contenders = maxReverseTCPConnections * 4
+	start := make(chan struct{})
+	hold := make(chan struct{})
+	var release sync.Once
+	results := make(chan bool, contenders)
+	var workers sync.WaitGroup
+	workers.Add(contenders)
+	for range contenders {
+		go func() {
+			defer workers.Done()
+			<-start
+			acquired := instance.acquireReverseTCPConnection()
+			results <- acquired
+			if acquired {
+				<-hold
+				instance.releaseReverseTCPConnection()
+			}
+		}()
+	}
+	done := make(chan struct{})
+	go func() { workers.Wait(); close(done) }()
+	t.Cleanup(func() {
+		release.Do(func() { close(hold) })
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("parallel workers did not stop during cleanup")
+		}
+	})
+	close(start)
+	occupied := 0
+	for range contenders {
+		select {
+		case acquired := <-results:
+			if acquired {
+				occupied++
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("parallel acquire did not complete")
+		}
+	}
+	require.Equal(t, maxReverseTCPConnections, occupied)
+	require.False(t, instance.acquireReverseTCPConnection())
+	release.Do(func() { close(hold) })
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("parallel releases did not complete")
+	}
+	require.Equal(t, 0, instance.reverseTCPConnections)
+	for range maxReverseTCPConnections {
+		require.True(t, instance.acquireReverseTCPConnection())
+	}
+	require.False(t, instance.acquireReverseTCPConnection())
+	for range maxReverseTCPConnections {
+		instance.releaseReverseTCPConnection()
 	}
 }
 

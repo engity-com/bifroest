@@ -497,6 +497,164 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 		}, 5*time.Second, 20*time.Millisecond)
 	})
 
+	t.Run("reverse-tcp-connection-limit", func(t *testing.T) {
+		port, err := gonet.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		impAddr := port.Addr().String()
+		require.NoError(t, port.Close())
+		isolatedCtx, stop := context.WithCancel(ctx)
+		served := make(chan error, 1)
+		go func() {
+			svc := Service{Addr: impAddr, MasterPublicKey: masterKey.PublicKey(), SessionId: sessionId}
+			served <- svc.Serve(isolatedCtx)
+		}()
+		t.Cleanup(func() {
+			stop()
+			select {
+			case err := <-served:
+				require.NoError(t, err)
+			case <-time.After(5 * time.Second):
+				t.Error("isolated IMP did not stop")
+			}
+		})
+		isolated, err := master.Open(isolatedCtx, refImpl{sessionId: sessionId, addr: impAddr})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = isolated.Close() })
+		connId, err := connection.NewId()
+		require.NoError(t, err)
+		require.Eventually(t, func() bool {
+			pingCtx, cancel := context.WithTimeout(isolatedCtx, time.Second)
+			defer cancel()
+			return isolated.Ping(pingCtx, connId) == nil
+		}, 10*time.Second, 20*time.Millisecond, "isolated IMP did not become ready")
+		ln, err := isolated.ListenReverseTCP(isolatedCtx, connId, "127.0.0.1", 0)
+		require.NoError(t, err)
+		var clients, accepted []gonet.Conn
+		type acceptResult struct {
+			conn gonet.Conn
+			err  error
+		}
+		var pending chan acceptResult
+		t.Cleanup(func() {
+			for _, conn := range clients {
+				if conn != nil {
+					_ = conn.Close()
+				}
+			}
+			for _, conn := range accepted {
+				if conn != nil {
+					_ = conn.Close()
+				}
+			}
+			_ = ln.Close()
+			if pending != nil {
+				select {
+				case result := <-pending:
+					if result.conn != nil {
+						_ = result.conn.Close()
+					}
+				case <-time.After(5 * time.Second):
+					t.Error("pending Accept did not stop after listener Close")
+				}
+			}
+		})
+
+		for i := 0; i < 64; i++ {
+			client, err := gonet.DialTimeout("tcp", ln.Addr().String(), 3*time.Second)
+			require.NoError(t, err)
+			clients = append(clients, client)
+			result := make(chan acceptResult, 1)
+			go func() { conn, e := ln.Accept(); result <- acceptResult{conn, e} }()
+			select {
+			case got := <-result:
+				if got.conn != nil {
+					accepted = append(accepted, got.conn)
+				}
+				require.NoError(t, got.err)
+			case <-time.After(5 * time.Second):
+				// The listener is closed by Cleanup, releasing this Accept.
+				pending = result
+				t.Fatal("one of the first 64 reverse TCP streams was not accepted")
+			}
+			require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+			require.NoError(t, accepted[i].SetDeadline(time.Now().Add(5*time.Second)))
+			_, err = client.Write([]byte{'x'})
+			require.NoError(t, err)
+			var byteReceived [1]byte
+			_, err = io.ReadFull(accepted[i], byteReceived[:])
+			require.NoError(t, err)
+			require.Equal(t, byte('x'), byteReceived[0])
+			require.NoError(t, client.SetDeadline(time.Time{}))
+			require.NoError(t, accepted[i].SetDeadline(time.Time{}))
+		}
+
+		pending = make(chan acceptResult, 1)
+		result := pending
+		go func() { conn, e := ln.Accept(); result <- acceptResult{conn, e} }()
+		overflow, err := gonet.DialTimeout("tcp", ln.Addr().String(), 3*time.Second)
+		require.NoError(t, err)
+		clients = append(clients, overflow)
+		require.NoError(t, overflow.SetReadDeadline(time.Now().Add(5*time.Second)))
+		var byteReceived [1]byte
+		_, err = overflow.Read(byteReceived[:])
+		require.ErrorIs(t, err, io.EOF, "65th TCP peer must be closed instead of forwarded")
+		select {
+		case got := <-pending:
+			if got.conn != nil {
+				accepted = append(accepted, got.conn)
+			}
+			pending = nil
+			t.Fatalf("65th TCP peer reached Accept: %v", got.err)
+		default:
+		}
+
+		require.NoError(t, clients[0].Close())
+		require.NoError(t, accepted[0].Close())
+		clients[0], accepted[0] = nil, nil
+		deadline := time.Now().Add(15 * time.Second)
+		for time.Now().Before(deadline) {
+			client, err := gonet.DialTimeout("tcp", ln.Addr().String(), 3*time.Second)
+			require.NoError(t, err)
+			clients = append(clients, client)
+			require.NoError(t, client.SetReadDeadline(time.Now().Add(time.Second)))
+			_, err = client.Read(byteReceived[:])
+			if errors.Is(err, io.EOF) {
+				_ = client.Close()
+				continue // The released slot has not reached the IMP worker yet.
+			}
+			var timeout gonet.Error
+			require.ErrorAs(t, err, &timeout)
+			require.True(t, timeout.Timeout(), "unexpected probe read: %v", err)
+			select {
+			case got := <-pending:
+				pending = nil
+				if got.conn != nil {
+					accepted = append(accepted, got.conn)
+				}
+				require.NoError(t, got.err)
+				require.Equal(t, client.LocalAddr().String(), got.conn.RemoteAddr().String())
+				require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+				require.NoError(t, got.conn.SetDeadline(time.Now().Add(5*time.Second)))
+				_, err = client.Write([]byte("forward"))
+				require.NoError(t, err)
+				message := make([]byte, len("forward"))
+				_, err = io.ReadFull(got.conn, message)
+				require.NoError(t, err)
+				require.Equal(t, "forward", string(message))
+				_, err = got.conn.Write([]byte("back"))
+				require.NoError(t, err)
+				message = make([]byte, len("back"))
+				_, err = io.ReadFull(client, message)
+				require.NoError(t, err)
+				require.Equal(t, "back", string(message))
+				return
+			case <-time.After(3 * time.Second):
+				t.Fatal("available slot did not produce a reverse TCP stream")
+			}
+		}
+		t.Fatal("reverse TCP capacity was not restored after closing a peer")
+	})
+
 	t.Run("get-environment", func(t *testing.T) {
 		testlog.Hook(t)
 		connId, err := connection.NewId()
@@ -845,6 +1003,7 @@ func decodePublicKeyString(t *testing.T, in string) crypto.PublicKey {
 type refImpl struct {
 	sessionId session.Id
 	dialed    chan gonet.Conn
+	addr      string
 }
 
 func (this refImpl) SessionId() session.Id {
@@ -856,7 +1015,11 @@ func (this refImpl) PublicKey() crypto.PublicKey {
 }
 
 func (this refImpl) Dial(ctx context.Context) (gonet.Conn, error) {
-	conn, err := new(gonet.Dialer).DialContext(ctx, "tcp", roundtripTestImpAddress.String())
+	addr := this.addr
+	if addr == "" {
+		addr = roundtripTestImpAddress.String()
+	}
+	conn, err := new(gonet.Dialer).DialContext(ctx, "tcp", addr)
 	if err == nil && this.dialed != nil {
 		this.dialed <- conn
 	}

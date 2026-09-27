@@ -192,6 +192,8 @@ Will be displayed to the user upon connection to its environment.
 <<property("portForwardingAllowed", "bool", template_context="../context/authorization.md", default=True)>>
 If `true`, users are allowed to use SSH's port forwarding mechanism, subject to the applicable authorized-key policy. For `ssh -R`, the listener binds inside the session's container network namespace, not on the Bifröst host. An empty bind host uses loopback inside the container; an explicit `*` requests a wildcard bind that may be reachable over the container network, subject to policy and network configuration. The forwarded destination is reached from the SSH client. Reverse forwarding does not automatically publish a Docker host port.
 
+Each container accepts at most 64 simultaneous reverse-forwarded TCP connections across all its reverse listeners. Additional connections are closed. This limit is independent of the SSH channel limits.
+
 On Linux, reverse TCP ports 1-1023 require a target user with UID 0 (for example `user: root` or `user: "0"`). An empty `user` setting is also permitted when the resolved image user is root. An unresolvable user cannot authorize these ports. Port `0` and ports 1024 and above are unchanged. Windows containers do not have this restriction.
 
 <<property("impPublishHost", "string")>>

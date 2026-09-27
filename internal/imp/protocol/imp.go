@@ -91,6 +91,9 @@ func (this *Imp) Serve(ctx context.Context) error {
 type imp struct {
 	*Imp
 
+	reverseTCPMutex       sync.Mutex
+	reverseTCPConnections int
+
 	executionResultCleanupMutex sync.Mutex
 	nextExecutionResultCleanup  time.Time
 	executionResultDeliveries   map[connection.Id]executionResultDeliveryState
