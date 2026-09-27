@@ -374,7 +374,22 @@ type environmentReverseTCPListener struct {
 
 func (this *environmentReverseTCPListener) Close() error {
 	this.once.Do(func() {
-		this.err = goerrors.Join(this.Listener.Close(), this.owner.Close())
+		this.err = this.Listener.Close()
+		if listener, ok := this.Listener.(interface{ Drained() <-chan struct{} }); ok {
+			if drained := listener.Drained(); drained != nil {
+				select {
+				case <-drained:
+					this.err = goerrors.Join(this.err, this.owner.Close())
+				default:
+					go func() {
+						<-drained
+						_ = this.owner.Close()
+					}()
+				}
+				return
+			}
+		}
+		this.err = goerrors.Join(this.err, this.owner.Close())
 	})
 	return this.err
 }

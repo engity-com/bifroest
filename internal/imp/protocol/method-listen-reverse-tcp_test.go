@@ -160,6 +160,96 @@ func TestReverseTCPCancelBeforeResponse(t *testing.T) {
 	}
 }
 
+func TestReverseTCPCloseWhileReadingAddresses(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	impMux, err := smux.Client(left, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer impMux.Close()
+	masterMux, err := smux.Server(right, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer masterMux.Close()
+	control, err := masterMux.OpenStream()
+	require.NoError(t, err)
+	ln := &reverseTCPListener{
+		mux: masterMux, control: control,
+	}
+	impControl, err := impMux.AcceptStream()
+	require.NoError(t, err)
+	defer impControl.Close()
+	stalled, err := impMux.OpenStream()
+	require.NoError(t, err)
+	defer stalled.Close()
+	blocked := make(chan error, 1)
+	go func() { _, e := ln.Accept(); blocked <- e }()
+	require.Eventually(t, func() bool {
+		ln.closeMu.Lock()
+		defer ln.closeMu.Unlock()
+		return ln.active == 1
+	}, 5*time.Second, time.Millisecond)
+	go func() {
+		var command [1]byte
+		if _, err := io.ReadFull(impControl, command[:]); err == nil && command[0] == 1 {
+			_, _ = impControl.Write([]byte{1})
+		}
+	}()
+	require.NoError(t, ln.Close())
+	select {
+	case err := <-blocked:
+		require.ErrorIs(t, err, net.ErrClosed)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Accept remained blocked on incomplete stream addresses")
+	}
+	select {
+	case <-ln.Drained():
+	case <-time.After(5 * time.Second):
+		t.Fatal("stalled stream did not release the transport")
+	}
+}
+
+func TestReverseTCPCloseWithConcurrentAccepts(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	impMux, err := smux.Client(left, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer impMux.Close()
+	masterMux, err := smux.Server(right, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer masterMux.Close()
+	control, err := masterMux.OpenStream()
+	require.NoError(t, err)
+	ln := &reverseTCPListener{mux: masterMux, control: control}
+	impControl, err := impMux.AcceptStream()
+	require.NoError(t, err)
+	defer impControl.Close()
+	go func() {
+		var command [1]byte
+		if _, e := io.ReadFull(impControl, command[:]); e == nil && command[0] == 1 {
+			_, _ = impControl.Write([]byte{1})
+		}
+	}()
+	results := make(chan error, 8)
+	for range 8 {
+		go func() { _, e := ln.Accept(); results <- e }()
+	}
+	require.NoError(t, ln.Close())
+	for range 8 {
+		select {
+		case err := <-results:
+			require.ErrorIs(t, err, net.ErrClosed)
+		case <-time.After(5 * time.Second):
+			t.Fatal("concurrent Accept did not stop")
+		}
+	}
+	select {
+	case <-ln.Drained():
+	case <-time.After(5 * time.Second):
+		t.Fatal("listener did not drain")
+	}
+}
+
 func TestReverseTCPAddressFrame(t *testing.T) {
 	var wire bytes.Buffer
 	remote := &net.TCPAddr{IP: net.ParseIP("2001:db8::1"), Port: 1234}

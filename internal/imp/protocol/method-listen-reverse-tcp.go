@@ -106,28 +106,81 @@ func (this *imp) handleMethodListenReverseTCP(ctx context.Context, header *Heade
 		return fail(err)
 	}
 	defer common.IgnoreCloseError(mux)
-	stop := context.AfterFunc(ctx, func() {
+	control, err := mux.AcceptStream()
+	if err != nil {
+		return fail(err)
+	}
+	defer common.IgnoreCloseError(control)
+	var gate sync.Mutex
+	stopped := false
+	stopListener := func() {
+		gate.Lock()
+		stopped = true
 		_ = ln.Close()
+		gate.Unlock()
+	}
+	stop := context.AfterFunc(ctx, func() {
 		_ = mux.Close()
+		stopListener()
 	})
 	defer stop()
+	controlDone := make(chan struct{})
+	go func() {
+		defer close(controlDone)
+		var command [1]byte
+		if _, err := io.ReadFull(control, command[:]); err == nil && command[0] == 1 {
+			stopListener()
+			_, _ = control.Write([]byte{1})
+		} else {
+			stopListener()
+			_ = mux.Close()
+		}
+	}()
 
+	var workers sync.WaitGroup
+	defer func() {
+		workers.Wait()
+		<-controlDone
+		<-mux.CloseChan()
+	}()
 	for {
 		tcpConn, err := ln.Accept()
 		if sys.IsClosedError(err) || ctx.Err() != nil {
 			return nil
 		}
 		if err != nil {
+			_ = mux.Close()
 			return fail(err)
 		}
+		gate.Lock()
+		if stopped {
+			gate.Unlock()
+			_ = tcpConn.Close()
+			continue
+		}
+		workers.Add(1)
+		gate.Unlock()
 		go func() {
+			defer workers.Done()
 			defer common.IgnoreCloseError(tcpConn)
+			gate.Lock()
+			if stopped {
+				gate.Unlock()
+				return
+			}
+			gate.Unlock()
 			stream, err := mux.OpenStream()
 			if err != nil {
 				logger.WithError(err).Debug("cannot open reverse TCP stream")
 				return
 			}
 			defer common.IgnoreCloseError(stream)
+			gate.Lock()
+			wasStopped := stopped
+			gate.Unlock()
+			if wasStopped {
+				return
+			}
 			if err := writeReverseTCPAddresses(stream, tcpConn.RemoteAddr(), tcpConn.LocalAddr()); err != nil {
 				logger.WithError(err).Warn("cannot send reverse TCP addresses")
 				return
@@ -225,24 +278,36 @@ func (this *Master) methodListenReverseTCP(ctx, sessionCtx context.Context, ref 
 	if err != nil {
 		return fail(err)
 	}
-	ln := &reverseTCPListener{conn: conn, mux: mux, addr: gonet.TCPAddrFromAddrPort(parsed)}
-	stopRequest := context.AfterFunc(ctx, func() { _ = ln.Close() })
-	stopSession := context.AfterFunc(sessionCtx, func() { _ = ln.Close() })
-	ln.closeMu.Lock()
-	if ln.closed {
-		stopRequest()
-		stopSession()
-	} else {
-		ln.stopRequest = stopRequest
-		ln.stopSession = stopSession
+	control, err := mux.OpenStream()
+	if err != nil {
+		_ = mux.Close()
+		return fail(err)
 	}
-	ln.closeMu.Unlock()
+	ln := &reverseTCPListener{mux: mux, control: control, addr: gonet.TCPAddrFromAddrPort(parsed)}
 	stopRequestDuringSetup()
 	stopSessionDuringSetup()
 	if ctx.Err() != nil || sessionCtx.Err() != nil {
-		_ = ln.Close()
+		ln.forceClose()
 		return fail(context.Canceled)
 	}
+	go func() {
+		<-mux.CloseChan()
+		ln.forceClose()
+	}()
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = ln.Close()
+		case <-ln.Drained():
+		}
+	}()
+	go func() {
+		select {
+		case <-sessionCtx.Done():
+			ln.forceClose()
+		case <-ln.Drained():
+		}
+	}()
 	success = true
 	return ln, nil
 }
@@ -260,50 +325,141 @@ func validateReverseTCPHost(host string) error {
 }
 
 type reverseTCPListener struct {
-	conn        codec.MsgPackConn
-	mux         *smux.Session
-	addr        *gonet.TCPAddr
-	once        sync.Once
-	closeMu     sync.Mutex
-	closed      bool
-	stopRequest func() bool
-	stopSession func() bool
+	mux          *smux.Session
+	control      *smux.Stream
+	addr         *gonet.TCPAddr
+	once         sync.Once
+	closeMu      sync.Mutex
+	acceptMu     sync.Mutex
+	closed       bool
+	acknowledged bool
+	active       int
+	closeErr     error
 }
 
 func (l *reverseTCPListener) Accept() (gonet.Conn, error) {
-	stream, err := l.mux.AcceptStream()
-	if err != nil {
-		return nil, err
+	l.acceptMu.Lock()
+	defer l.acceptMu.Unlock()
+	for {
+		l.closeMu.Lock()
+		if l.closed {
+			l.closeMu.Unlock()
+			return nil, gonet.ErrClosed
+		}
+		l.closeMu.Unlock()
+		// smux applies this deadline only to the next AcceptStream call.
+		_ = l.mux.SetDeadline(time.Now().Add(200 * time.Millisecond))
+		stream, err := l.mux.AcceptStream()
+		if err != nil {
+			if timeout, ok := err.(gonet.Error); ok && timeout.Timeout() {
+				continue
+			}
+			l.closeMu.Lock()
+			closed := l.closed
+			l.closeMu.Unlock()
+			l.forceClose()
+			if closed {
+				return nil, gonet.ErrClosed
+			}
+			return nil, err
+		}
+		l.closeMu.Lock()
+		if l.closed {
+			l.closeMu.Unlock()
+			_ = stream.Close()
+			return nil, gonet.ErrClosed
+		}
+		l.active++
+		l.closeMu.Unlock()
+		_ = stream.SetReadDeadline(time.Now().Add(3 * time.Second))
+		remote, local, err := readReverseTCPAddresses(stream)
+		_ = stream.SetReadDeadline(time.Time{})
+		l.closeMu.Lock()
+		closed := l.closed
+		l.closeMu.Unlock()
+		if err != nil || closed {
+			_ = stream.Close()
+			l.release()
+			if closed {
+				return nil, gonet.ErrClosed
+			}
+			return nil, err
+		}
+		return &reverseTCPConn{stream: stream, remote: remote, local: local, onClose: l.release}, nil
 	}
-	remote, local, err := readReverseTCPAddresses(stream)
-	if err != nil {
-		_ = stream.Close()
-		return nil, err
-	}
-	return &reverseTCPConn{stream: stream, remote: remote, local: local}, nil
 }
 
 func (l *reverseTCPListener) Close() error {
 	l.once.Do(func() {
 		l.closeMu.Lock()
 		l.closed = true
-		if l.stopRequest != nil {
-			l.stopRequest()
-		}
-		if l.stopSession != nil {
-			l.stopSession()
-		}
 		l.closeMu.Unlock()
-		_ = l.mux.Close()
-		_ = l.conn.Close()
+		select {
+		case <-l.Drained():
+		default:
+			_ = l.control.SetDeadline(time.Now().Add(5 * time.Second))
+			if _, err := l.control.Write([]byte{1}); err != nil {
+				l.closeErr = err
+				l.forceClose()
+			} else {
+				var ack [1]byte
+				if _, err := io.ReadFull(l.control, ack[:]); err != nil || ack[0] != 1 {
+					if err != nil {
+						l.closeErr = err
+					} else {
+						l.closeErr = fmt.Errorf("invalid reverse TCP stop acknowledgement")
+					}
+					l.forceClose()
+				} else {
+					_ = l.control.SetDeadline(time.Time{})
+					go func() {
+						var command [1]byte
+						_, _ = l.control.Read(command[:])
+						l.forceClose()
+					}()
+				}
+			}
+		}
+		l.closeMu.Lock()
+		l.acknowledged = true
+		last := l.active == 0
+		l.closeMu.Unlock()
+		if last {
+			l.closeTransport()
+		}
 	})
-	return nil
+	return l.closeErr
+}
+
+func (l *reverseTCPListener) Drained() <-chan struct{} { return l.mux.CloseChan() }
+
+func (l *reverseTCPListener) closeTransport() {
+	_ = l.mux.Close()
+}
+
+func (l *reverseTCPListener) forceClose() {
+	l.closeMu.Lock()
+	l.closed = true
+	l.closeMu.Unlock()
+	l.closeTransport()
+}
+
+func (l *reverseTCPListener) release() {
+	l.closeMu.Lock()
+	l.active--
+	last := l.closed && l.acknowledged && l.active == 0
+	l.closeMu.Unlock()
+	if last {
+		l.closeTransport()
+	}
 }
 
 func (l *reverseTCPListener) Addr() gonet.Addr { return l.addr }
 
 type reverseTCPConn struct {
 	stream    *smux.Stream
+	onClose   func()
+	closeOnce sync.Once
 	remote    *gonet.TCPAddr
 	local     *gonet.TCPAddr
 	writeMu   sync.Mutex
@@ -313,9 +469,18 @@ type reverseTCPConn struct {
 	remaining uint16
 }
 
-func (c *reverseTCPConn) RemoteAddr() gonet.Addr             { return c.remote }
-func (c *reverseTCPConn) LocalAddr() gonet.Addr              { return c.local }
-func (c *reverseTCPConn) Close() error                       { return c.stream.Close() }
+func (c *reverseTCPConn) RemoteAddr() gonet.Addr { return c.remote }
+func (c *reverseTCPConn) LocalAddr() gonet.Addr  { return c.local }
+func (c *reverseTCPConn) Close() error {
+	var err error
+	c.closeOnce.Do(func() {
+		err = c.stream.Close()
+		if c.onClose != nil {
+			c.onClose()
+		}
+	})
+	return err
+}
 func (c *reverseTCPConn) SetDeadline(t time.Time) error      { return c.stream.SetDeadline(t) }
 func (c *reverseTCPConn) SetReadDeadline(t time.Time) error  { return c.stream.SetReadDeadline(t) }
 func (c *reverseTCPConn) SetWriteDeadline(t time.Time) error { return c.stream.SetWriteDeadline(t) }
@@ -346,7 +511,7 @@ func (c *reverseTCPConn) Read(p []byte) (int, error) {
 			c.stateMu.Lock()
 			c.readEOF = true
 			if c.writeEOF {
-				_ = c.stream.Close()
+				_ = c.Close()
 			}
 			c.stateMu.Unlock()
 			return 0, io.EOF
@@ -380,7 +545,7 @@ func (c *reverseTCPConn) Write(p []byte) (int, error) {
 			err = io.ErrShortWrite
 		}
 		if err != nil {
-			_ = c.stream.Close()
+			_ = c.Close()
 			return written, err
 		}
 		written += n
@@ -404,7 +569,7 @@ func (c *reverseTCPConn) CloseWrite() error {
 	c.stateMu.Lock()
 	c.writeEOF = true
 	if c.readEOF {
-		_ = c.stream.Close()
+		_ = c.Close()
 	}
 	c.stateMu.Unlock()
 	return nil

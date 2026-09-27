@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	gonet "net"
@@ -170,4 +171,75 @@ func TestReverseTCPListenerCloseIsIdempotent(t *testing.T) {
 	require.ErrorIs(t, listener.Close(), gonet.ErrClosed)
 	require.NoError(t, wrapped.Close())
 	require.EqualValues(t, 1, closed.Load())
+}
+
+type reverseTCPDrainingListener struct {
+	gonet.Listener
+	drained  chan struct{}
+	closeErr error
+	closes   atomic.Int32
+}
+
+func (l *reverseTCPDrainingListener) Close() error {
+	l.closes.Add(1)
+	return errors.Join(l.Listener.Close(), l.closeErr)
+}
+
+func (l *reverseTCPDrainingListener) Drained() <-chan struct{} { return l.drained }
+
+func TestReverseTCPListenerDefersEnvironmentCloseUntilDrained(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		closeErr       error
+		alreadyDrained bool
+	}{
+		{name: "active stream"},
+		{name: "failed close", closeErr: errors.New("control stream failed")},
+		{name: "forced close", alreadyDrained: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ln, err := gonet.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			drained := make(chan struct{})
+			t.Cleanup(func() {
+				select {
+				case <-drained:
+				default:
+					close(drained)
+				}
+			})
+			if tc.alreadyDrained {
+				close(drained)
+			}
+			active, peer := gonet.Pipe()
+			defer active.Close()
+			defer peer.Close()
+			tracked := &reverseTCPDrainingListener{Listener: ln, drained: drained, closeErr: tc.closeErr}
+			var closed atomic.Int32
+			owner := &reverseTCPTrackedEnvironment{&authorizedKeysTestEnvironment{}, &closed}
+			wrapped := &environmentReverseTCPListener{Listener: tracked, owner: owner}
+			require.ErrorIs(t, wrapped.Close(), tc.closeErr)
+			rebound, err := gonet.Listen("tcp", ln.Addr().String())
+			require.NoError(t, err, "listener port must be free before draining")
+			require.NoError(t, rebound.Close())
+			if !tc.alreadyDrained {
+				require.Zero(t, closed.Load(), "environment closed while streams were active")
+				written := make(chan error, 1)
+				go func() { _, e := active.Write([]byte("x")); written <- e }()
+				require.NoError(t, peer.SetReadDeadline(time.Now().Add(time.Second)))
+				var payload [1]byte
+				_, err = io.ReadFull(peer, payload[:])
+				require.NoError(t, err, "active connection was closed with its listener")
+				require.Equal(t, byte('x'), payload[0])
+				require.NoError(t, <-written)
+				require.NoError(t, active.Close())
+				require.NoError(t, peer.Close())
+				close(drained)
+			}
+			require.Eventually(t, func() bool { return closed.Load() == 1 }, time.Second, time.Millisecond)
+			require.ErrorIs(t, wrapped.Close(), tc.closeErr)
+			require.EqualValues(t, 1, tracked.closes.Load())
+			require.EqualValues(t, 1, closed.Load())
+		})
+	}
 }
