@@ -687,7 +687,7 @@ func newDockerEnvironmentFixtureWithRecording(t *testing.T, recording bool) (*fi
 		mode    os.FileMode
 	}{
 		"Containerfile": {[]byte(dockerEnvironmentContainerfile), 0644},
-		"e2e-helper":    {mustRead(f.helper), 0755},
+		"e2e-helper":    {mustRead(f.targetHelper), 0755},
 	}
 	for name, file := range files {
 		if err := os.WriteFile(filepath.Join(contextDir, name), file.content, file.mode); err != nil {

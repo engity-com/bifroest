@@ -64,6 +64,9 @@ func (this *provider) FindBinaryFor(ctx context.Context, hostOs sys.Os, hostArch
 		}
 		l.Warn("existing broken alternatives' location exists and has been deleted")
 	} else {
+		if err := goos.Chmod(fn, 0755); err != nil {
+			return failf(errors.System, "cannot make existing alternative location file %q executable: %w", fn, err)
+		}
 		l.Debug("existing alternatives location was returned")
 		return fn, nil
 	}
@@ -137,13 +140,7 @@ func (this *provider) FindBinaryFor(ctx context.Context, hostOs sys.Os, hostArch
 		in = zf
 	}
 
-	out, err := goos.OpenFile(fn, goos.O_CREATE|goos.O_TRUNC|goos.O_WRONLY, 0644)
-	if err != nil {
-		return failf(errors.System, "cannot create target file %q to store alternative inside: %w", fn, err)
-	}
-	defer common.KeepCloseError(&rErr, out)
-
-	if _, err := io.Copy(out, in); err != nil {
+	if err := publishAlternative(fn, in); err != nil {
 		return failf(errors.System, "cannot store %q into target file %q to store alternative inside: %w", du, fn, err)
 	}
 
@@ -152,7 +149,45 @@ func (this *provider) FindBinaryFor(ctx context.Context, hostOs sys.Os, hostArch
 	return fn, nil
 }
 
-func (this *provider) FindOciImageFor(_ context.Context, _ sys.Os, _ sys.Arch) (string, error) {
+func publishAlternative(fn string, in io.Reader) (rErr error) {
+	out, err := goos.CreateTemp(filepath.Dir(fn), "."+filepath.Base(fn)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	temporary := out.Name()
+	defer func() {
+		if out != nil {
+			common.KeepCloseError(&rErr, out)
+		}
+		if temporary != "" {
+			_ = goos.Remove(temporary)
+		}
+	}()
+
+	if err := out.Chmod(0755); err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	out = nil
+	if err := goos.Rename(temporary, fn); err != nil {
+		return err
+	}
+	temporary = ""
+	return nil
+}
+
+func (this *provider) FindOciImageFor(_ context.Context, os sys.Os, _ sys.Arch) (string, error) {
+	if sys.BifroestOciBinaryFileLocation(os) == "" {
+		return "", errors.Config.Newf("os %v is unsupported for OCI images", os)
+	}
 	return "ghcr.io/engity-com/bifroest:generic-" + this.getVersionRef(), nil
 }
 

@@ -50,9 +50,14 @@ type fixture struct {
 	knownHosts      string
 	helper          string
 	bifroest        string
+	targetHelper    string
+	targetBifroest  string
 	bifroestVersion string
 	host            string
 	port            string
+	targetGOOS      string
+	targetGOARCH    string
+	targetPlatform  string
 
 	runtimeCLI          string
 	runtimeHost         string
@@ -76,8 +81,9 @@ type commandResult struct {
 
 func newFixture(t *testing.T) (*fixture, error) {
 	t.Helper()
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		return nil, fmt.Errorf("the e2e suite requires a linux/amd64 host, got %s/%s", runtime.GOOS, runtime.GOARCH)
+	targetGOOS, targetGOARCH, targetPlatform, err := e2eTargetForHost(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return nil, err
 	}
 	repoRoot, err := findRepoRoot()
 	if err != nil {
@@ -107,6 +113,9 @@ func newFixture(t *testing.T) (*fixture, error) {
 		imageName:       "localhost/" + unique + ":latest",
 		bifroestVersion: "e2e-" + unique,
 		host:            "127.0.0.1",
+		targetGOOS:      targetGOOS,
+		targetGOARCH:    targetGOARCH,
+		targetPlatform:  targetPlatform,
 		clientKey:       filepath.Join(tempDir, "client_ed25519"),
 		wrongKey:        filepath.Join(tempDir, "wrong_ed25519"),
 		agentKey:        filepath.Join(tempDir, "agent_ed25519"),
@@ -120,6 +129,16 @@ func newFixture(t *testing.T) (*fixture, error) {
 		return f, err
 	}
 	return f, nil
+}
+
+func e2eTargetForHost(hostOS, hostArch string) (goos, goarch, platform string, err error) {
+	if hostOS != "linux" && hostOS != "darwin" {
+		return "", "", "", fmt.Errorf("the e2e suite requires a Linux or Darwin host, got %s/%s", hostOS, hostArch)
+	}
+	if hostArch != "amd64" && hostArch != "arm64" {
+		return "", "", "", fmt.Errorf("the e2e suite requires an amd64 or arm64 host, got %s/%s", hostOS, hostArch)
+	}
+	return "linux", hostArch, "linux/" + hostArch, nil
 }
 
 func newLocalFixture(t *testing.T) (*fixture, error) {
@@ -278,19 +297,27 @@ func (f *fixture) prepareCommon() error {
 	}
 	f.helper = filepath.Join(binDir, "e2e-helper")
 	f.bifroest = filepath.Join(binDir, "bifroest")
-	buildEnv := []string{"CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64"}
+	f.targetHelper = filepath.Join(binDir, "e2e-helper-target")
+	f.targetBifroest = filepath.Join(binDir, "bifroest-target")
+	hostCgo := "0"
+	if runtime.GOOS == "darwin" {
+		hostCgo = "1"
+	}
 	for _, build := range []struct {
 		output      string
 		packagePath string
 		tags        string
 		ldflags     string
+		environment []string
 	}{
-		{f.bifroest, "./cmd/bifroest", "local_build,local_kind", "-s -w -X main.version=" + f.bifroestVersion},
-		{f.helper, "./test/e2e/helper", "e2e", "-s -w"},
+		{f.bifroest, "./cmd/bifroest", "local_build,local_kind", "-s -w -X main.version=" + f.bifroestVersion, []string{"CGO_ENABLED=" + hostCgo, "GOOS=" + runtime.GOOS, "GOARCH=" + runtime.GOARCH}},
+		{f.helper, "./test/e2e/helper", "e2e", "-s -w", []string{"CGO_ENABLED=0", "GOOS=" + runtime.GOOS, "GOARCH=" + runtime.GOARCH}},
+		{f.targetBifroest, "./cmd/bifroest", "local_build,local_kind", "-s -w -X main.version=" + f.bifroestVersion, []string{"CGO_ENABLED=0", "GOOS=" + f.targetGOOS, "GOARCH=" + f.targetGOARCH}},
+		{f.targetHelper, "./test/e2e/helper", "e2e", "-s -w", []string{"CGO_ENABLED=0", "GOOS=" + f.targetGOOS, "GOARCH=" + f.targetGOARCH}},
 	} {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 		args := []string{"build", "-tags", build.tags, "-trimpath", "-ldflags=" + build.ldflags, "-o", build.output, build.packagePath}
-		result := runCommand(ctx, f.repoRoot, buildEnv, f.goTool, args...)
+		result := runCommand(ctx, f.repoRoot, build.environment, f.goTool, args...)
 		cancel()
 		if result.err != nil {
 			return fmt.Errorf("build %s: %w\n%s", build.packagePath, result.err, result.stderr)
@@ -376,8 +403,8 @@ func (f *fixture) prepareLocalImage(containerfile, configuration string, extraFi
 		mode    os.FileMode
 	}{
 		"Containerfile":        {[]byte(containerfile), 0644},
-		"bifroest":             {mustRead(f.bifroest), 0755},
-		"e2e-helper":           {mustRead(f.helper), 0755},
+		"bifroest":             {mustRead(f.targetBifroest), 0755},
+		"e2e-helper":           {mustRead(f.targetHelper), 0755},
 		"configuration.yaml":   {[]byte(configuration), 0644},
 		"ssh_host_ed25519_key": {mustRead(f.hostKey), 0600},
 		"authorized_keys":      {mustRead(f.clientKey + ".pub"), 0644},
@@ -468,7 +495,7 @@ func probeSSHIdentification(host, port string) error {
 
 func (f *fixture) buildImage(contextDir string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
-	result := runCommand(ctx, f.repoRoot, nil, f.runtimeCLI, "build", "--file", filepath.Join(contextDir, "Containerfile"), "--platform=linux/amd64", "--tag", f.imageName, contextDir)
+	result := runCommand(ctx, f.repoRoot, nil, f.runtimeCLI, "build", "--file", filepath.Join(contextDir, "Containerfile"), "--platform="+f.targetPlatform, "--tag", f.imageName, contextDir)
 	cancel()
 	if result.err != nil {
 		return fmt.Errorf("build container image: %w\nstdout:\n%s\nstderr:\n%s", result.err, result.stdout, result.stderr)

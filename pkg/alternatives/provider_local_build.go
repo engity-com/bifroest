@@ -122,6 +122,9 @@ func (this *provider) FindOciImageFor(ctx context.Context, os sys.Os, arch sys.A
 	failf := func(msg string, args ...any) (string, error) {
 		return fail(errors.System.Newf(msg, args...))
 	}
+	if sys.BifroestOciBinaryFileLocation(os) == "" {
+		return failf("os %v is unsupported for OCI images", os)
+	}
 	version := this.version.Version()
 	platform, err := v1.ParsePlatform(os.String() + "/" + arch.Oci())
 	if err != nil {
@@ -169,11 +172,11 @@ func (this *provider) FindOciImageFor(ctx context.Context, os sys.Os, arch sys.A
 		return fail(err)
 	}
 
-	targetBinaryFileLocation := sys.BifroestBinaryFileLocation(os)
+	targetBinaryFileLocation := sys.BifroestOciBinaryFileLocation(os)
 	if len(targetBinaryFileLocation) == 0 {
 		return failf("cannot resolve Bifröst's binary file location for os %v", os)
 	}
-	targetBinaryDirLocation := sys.BifroestBinaryDirLocation(os)
+	targetBinaryDirLocation := sys.BifroestOciBinaryDirLocation(os)
 	if len(targetBinaryDirLocation) == 0 {
 		return failf("cannot resolve Bifröst's binary dir location for os %v", os)
 	}

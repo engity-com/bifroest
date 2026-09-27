@@ -50,7 +50,10 @@ func TestDockerConnectionReferenceUsesConfiguredUnixSocket(t *testing.T) {
 		t.Skip("Unix sockets are not supported by this test on Windows")
 	}
 
-	socket := filepath.Join(t.TempDir(), "docker.sock")
+	socketDir, err := os.MkdirTemp("/tmp", "bifroest-docker-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(socketDir)) })
+	socket := filepath.Join(socketDir, "docker.sock")
 	listener, err := net.Listen("unix", socket)
 	require.NoError(t, err)
 	server := &http.Server{Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

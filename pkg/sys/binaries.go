@@ -35,3 +35,21 @@ func BifroestBinaryDirLocation(os Os) string {
 		return ""
 	}
 }
+
+func BifroestOciBinaryFileLocation(os Os) string {
+	switch os {
+	case OsLinux, OsWindows:
+		return BifroestBinaryFileLocation(os)
+	default:
+		return ""
+	}
+}
+
+func BifroestOciBinaryDirLocation(os Os) string {
+	switch os {
+	case OsLinux, OsWindows:
+		return BifroestBinaryDirLocation(os)
+	default:
+		return ""
+	}
+}

@@ -163,7 +163,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 			return failf("cannot execute empty command")
 		}
 		opts.Cmd = []string{
-			sys.BifroestBinaryFileLocation(this.repository.hostOs), "exec",
+			sys.BifroestOciBinaryFileLocation(this.repository.hostOs), "exec",
 			"-c", t.Connection().Id().String(),
 			"--executionId", executionId.String(),
 			"-p", command[0],
