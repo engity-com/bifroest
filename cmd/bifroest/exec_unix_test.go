@@ -235,27 +235,43 @@ func TestEnrichExecCmdSetsSupplementaryGroups(t *testing.T) {
 }
 
 func TestEnrichExecCmdAcceptsNumericCredentialsWithoutNssEntries(t *testing.T) {
+	uid := unknownNumericUserID(t)
+	gid := uid - 1
 	cmd := exec.Command("/bin/true")
 	cmd.SysProcAttr = &syscall.SysProcAttr{}
-	opts := execOpts{user: "4294967294", group: "4294967293"}
+	opts := execOpts{user: strconv.FormatUint(uint64(uid), 10), group: strconv.FormatUint(uint64(gid), 10)}
 
 	require.NoError(t, enrichExecCmd(cmd, &opts))
-	require.Equal(t, uint32(4294967294), cmd.SysProcAttr.Credential.Uid)
-	require.Equal(t, uint32(4294967293), cmd.SysProcAttr.Credential.Gid)
+	require.Equal(t, uid, cmd.SysProcAttr.Credential.Uid)
+	require.Equal(t, gid, cmd.SysProcAttr.Credential.Gid)
 	require.NotNil(t, cmd.SysProcAttr.Credential.Groups)
 	require.Empty(t, cmd.SysProcAttr.Credential.Groups)
 }
 
 func TestEnrichExecCmdDoesNotUseRootGroupForUnknownNumericUser(t *testing.T) {
+	uid := unknownNumericUserID(t)
 	cmd := exec.Command("/bin/true")
 	cmd.SysProcAttr = &syscall.SysProcAttr{}
-	opts := execOpts{user: "4294967294"}
+	opts := execOpts{user: strconv.FormatUint(uint64(uid), 10)}
 
 	require.NoError(t, enrichExecCmd(cmd, &opts))
-	require.Equal(t, uint32(4294967294), cmd.SysProcAttr.Credential.Uid)
-	require.Equal(t, uint32(4294967294), cmd.SysProcAttr.Credential.Gid)
+	require.Equal(t, uid, cmd.SysProcAttr.Credential.Uid)
+	require.Equal(t, uid, cmd.SysProcAttr.Credential.Gid)
 	require.NotNil(t, cmd.SysProcAttr.Credential.Groups)
 	require.Empty(t, cmd.SysProcAttr.Credential.Groups)
+}
+
+func unknownNumericUserID(t *testing.T) uint32 {
+	t.Helper()
+	for _, candidate := range []uint32{4294967293, 4294967292, 4294967291, 4294967290} {
+		_, err := user.LookupId(strconv.FormatUint(uint64(candidate), 10))
+		var unknown user.UnknownUserIdError
+		if goerrors.As(err, &unknown) {
+			return candidate
+		}
+	}
+	t.Skip("cannot find an unmapped numeric user ID")
+	return 0
 }
 
 func TestEnrichExecCmdAcceptsGroupWithoutUser(t *testing.T) {

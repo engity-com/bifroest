@@ -291,15 +291,14 @@ func TestKillProcessesScansForExecutionAfterStartingWrapperExited(t *testing.T) 
 	pidPath := filepath.Join(directory, executionId.String()+".pid")
 	require.NoError(t, os.WriteFile(pidPath, []byte(execution.StateStartingMarker+" 2147483647 1"), 0600))
 	expectedEnv := "BIFROEST_TEST_EXECUTION=stale-starting-wrapper"
-	cmd := exec.Command("/bin/sh", "-c", "sleep 30")
-	cmd.Env = append(os.Environ(), expectedEnv)
+	cmd := exec.Command(os.Args[0], "-test.run=^TestKillProcessEnvironmentHelper$")
+	cmd.Env = append(os.Environ(), expectedEnv, killProcessEnvironmentHelper+"=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	require.NoError(t, cmd.Start())
 	t.Cleanup(func() {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		_ = cmd.Wait()
 	})
-
 	response := (&imp{}).killProcesses(
 		context.Background(),
 		&Header{ConnectionId: connection.MustNewId()},
@@ -365,8 +364,8 @@ func TestHandleMethodKillFallsBackToExecutionProcessGroup(t *testing.T) {
 	stateDirectory := filepath.Join(directory, execution.StateDirectoryName)
 	require.NoError(t, os.MkdirAll(stateDirectory, 0700))
 	childPidFile := filepath.Join(directory, "child.pid")
-	cmd := exec.Command("/bin/sh", "-c", `env -u BIFROEST_EXECUTION_ID sh -c 'sleep 30 & echo $! > "$1"; wait' sh "$1" & wait`, "sh", childPidFile)
-	cmd.Env = append(os.Environ(), execution.EnvName+"="+executionId.String())
+	cmd := exec.Command(os.Args[0], "-test.run=^TestKillProcessEnvironmentHelper$")
+	cmd.Env = append(os.Environ(), execution.EnvName+"="+executionId.String(), killProcessEnvironmentHelper+"=1", killProcessEnvironmentChildPidFile+"="+childPidFile)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	require.NoError(t, cmd.Start())
 	t.Cleanup(func() {
@@ -417,4 +416,26 @@ func TestHandleMethodKillFallsBackToExecutionProcessGroup(t *testing.T) {
 		status, readErr := os.ReadFile("/proc/" + strconv.Itoa(childPid) + "/stat")
 		return readErr == nil && len(strings.Fields(string(status))) >= 3 && strings.Fields(string(status))[2] == "Z"
 	}, 2*time.Second, 10*time.Millisecond)
+}
+
+const (
+	killProcessEnvironmentHelper       = "BIFROEST_KILL_PROCESS_ENVIRONMENT_HELPER"
+	killProcessEnvironmentChildPidFile = "BIFROEST_KILL_PROCESS_ENVIRONMENT_CHILD_PID_FILE"
+)
+
+func TestKillProcessEnvironmentHelper(t *testing.T) {
+	if os.Getenv(killProcessEnvironmentHelper) != "1" {
+		return
+	}
+	child := exec.Command("/bin/sleep", "30")
+	for _, value := range os.Environ() {
+		if !strings.HasPrefix(value, execution.EnvName+"=") && !strings.HasPrefix(value, "BIFROEST_TEST_EXECUTION=") {
+			child.Env = append(child.Env, value)
+		}
+	}
+	require.NoError(t, child.Start())
+	if path := os.Getenv(killProcessEnvironmentChildPidFile); path != "" {
+		require.NoError(t, os.WriteFile(path, []byte(strconv.Itoa(child.Process.Pid)), 0600))
+	}
+	_ = child.Wait()
 }

@@ -192,7 +192,7 @@ func (this *imp) killProcesses(ctx context.Context, header *Header, logger log.L
 			return fail(0, err)
 		}
 		for _, candidate := range candidates {
-			envs, err := candidate.Environ()
+			envs, err := processEnviron(candidate)
 			if err != nil || len(envs) == 0 {
 				continue
 			}
@@ -361,7 +361,7 @@ func processHasEnvironment(pid int, expected string) bool {
 	if err != nil {
 		return false
 	}
-	envs, err := candidate.Environ()
+	envs, err := processEnviron(candidate)
 	if err != nil {
 		return false
 	}

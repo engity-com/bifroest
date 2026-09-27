@@ -1,10 +1,9 @@
-//go:build unix
+//go:build linux || darwin
 
 package service
 
 import (
 	"os"
-	osuser "os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,34 +14,18 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/template"
-	buser "github.com/engity-com/bifroest/pkg/user"
 )
 
 func TestLocalAuthorizationAcceptsUserCertificates(t *testing.T) {
-	const username = "certificate-local-user"
-	current, err := osuser.Current()
-	require.NoError(t, err)
-	userDirectory := t.TempDir()
-	passwdFile := filepath.Join(userDirectory, "passwd")
-	groupFile := filepath.Join(userDirectory, "group")
-	shadowFile := filepath.Join(userDirectory, "shadow")
-	require.NoError(t, os.WriteFile(passwdFile, []byte(username+":x:"+current.Uid+":"+current.Gid+"::"+current.HomeDir+":/bin/sh\n"), 0600))
-	require.NoError(t, os.WriteFile(groupFile, []byte(username+":x:"+current.Gid+":"+username+"\n"), 0600))
-	require.NoError(t, os.WriteFile(shadowFile, []byte(username+":!:19722:0:99999:7:::\n"), 0600))
-	previousRepositoryProvider := buser.DefaultRepositoryProvider
-	buser.DefaultRepositoryProvider = &buser.SharedRepositoryProvider[*buser.EtcColonRepository]{V: &buser.EtcColonRepository{
-		PasswdFilename: passwdFile,
-		GroupFilename:  groupFile,
-		ShadowFilename: shadowFile,
-	}}
-	t.Cleanup(func() { buser.DefaultRepositoryProvider = previousRepositoryProvider })
+	username := prepareLocalUserCertificateTest(t)
 
 	authority := newIncomingCertificateTestSigner(t)
 	plainAuthority := strings.TrimSpace(string(gossh.MarshalAuthorizedKey(authority.PublicKey())))
 
 	for _, trustPath := range []string{"trusted-user-cas", "trusted-user-cas-file", "authorized-keys-cert-authority"} {
 		t.Run(trustPath, func(t *testing.T) {
-			directory := t.TempDir()
+			directory, err := filepath.EvalSymlinks(t.TempDir())
+			require.NoError(t, err)
 			caFile := filepath.Join(directory, "ca")
 			authorizedKeysFile := filepath.Join(directory, "authorized_keys")
 			require.NoError(t, os.WriteFile(caFile, []byte(plainAuthority+"\n"), 0600))
@@ -51,6 +34,7 @@ func TestLocalAuthorizationAcceptsUserCertificates(t *testing.T) {
 			server := newAuthorizedKeysTestServerWithUsernameAndConfiguration(t, username, "", &authorizedKeysTestEnvironment{}, func(conf *configuration.Configuration) {
 				local := &configuration.AuthorizationLocal{}
 				require.NoError(t, local.SetDefaults())
+				configureLocalUserCertificateAuthorization(local)
 				switch trustPath {
 				case "trusted-user-cas":
 					local.AuthorizedKeys = template.Strings{}

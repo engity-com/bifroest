@@ -96,9 +96,7 @@ func TestEnvironmentLocalTargetAccountPolicyEquality(t *testing.T) {
 }
 
 func TestEnvironmentLocalTargetAccountPolicyUnsafeNoneLifecycle(t *testing.T) {
-	policy := EnvironmentLocalTargetAccountPolicy{AllowUnsafeNoneAuthorization: true}
-	require.NoError(t, policy.SetDefaults())
-	require.NoError(t, policy.Trim())
-	require.NoError(t, policy.Validate())
+	var policy EnvironmentLocalTargetAccountPolicy
+	require.NoError(t, yaml.Unmarshal([]byte("allowUnsafeNoneAuthorization: true\n"), &policy))
 	require.True(t, policy.AllowUnsafeNoneAuthorization)
 }

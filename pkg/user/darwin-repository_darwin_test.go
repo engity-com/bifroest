@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	osuser "os/user"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -83,6 +84,37 @@ func TestDarwinRepositoryLookupUser(t *testing.T) {
 			}, actual)
 		})
 	}
+}
+
+func TestDarwinRepositoryResolvesCurrentDirectoryServicesIdentity(t *testing.T) {
+	current, err := osuser.Current()
+	require.NoError(t, err)
+	uid, err := strconv.ParseUint(current.Uid, 10, 32)
+	require.NoError(t, err)
+
+	repository := &DarwinRepository{}
+	byName, err := repository.LookupByName(t.Context(), current.Username)
+	require.NoError(t, err)
+	byID, err := repository.LookupById(t.Context(), Id(uid))
+	require.NoError(t, err)
+	require.Equal(t, byName, byID)
+	require.Equal(t, current.Username, byName.Name)
+	require.Equal(t, current.HomeDir, byName.HomeDir)
+	require.NotEmpty(t, byName.Shell)
+
+	expectedGroupIDs, err := current.GroupIds()
+	require.NoError(t, err)
+	expected := make(map[GroupId]struct{}, len(expectedGroupIDs))
+	for _, raw := range expectedGroupIDs {
+		value, err := strconv.ParseUint(raw, 10, 32)
+		require.NoError(t, err)
+		expected[GroupId(value)] = struct{}{}
+	}
+	actual := map[GroupId]struct{}{byName.Group.Gid: {}}
+	for _, group := range byName.Groups {
+		actual[group.Gid] = struct{}{}
+	}
+	require.Equal(t, expected, actual)
 }
 
 func TestDarwinRepositoryLookupGroup(t *testing.T) {
