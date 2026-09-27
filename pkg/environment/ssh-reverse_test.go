@@ -140,6 +140,20 @@ func newReverseSshEnvironment(t *testing.T, target *sshTarget, forward, reverse 
 	return resolved.(*sshEnvironment), repository, cancel
 }
 
+func readReverseSshConnection(t *testing.T, conn gonet.Conn, buf []byte) error {
+	t.Helper()
+	// SSH forwarded connections do not support read deadlines; bound the read instead.
+	finished := make(chan error, 1)
+	go func() { _, err := io.ReadFull(conn, buf); finished <- err }()
+	select {
+	case err := <-finished:
+		return err
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out reading SSH reverse connection")
+		return context.DeadlineExceeded
+	}
+}
+
 func TestSshReverseForwardingPolicyAndNoLocalBind(t *testing.T) {
 	target, requests := newReverseSshTarget(t, false, sshReverseCancelAccept)
 	t.Cleanup(target.Close)
@@ -238,6 +252,143 @@ func TestSshReverseForwardingDataAndLifetime(t *testing.T) {
 		defer repository.mutex.Unlock()
 		return len(repository.transports) == 0
 	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestSshReverseChannelCapacityAndClose(t *testing.T) {
+	target, _ := newReverseSshTarget(t, false, sshReverseCancelAccept)
+	t.Cleanup(target.Close)
+	env, repository, _ := newReverseSshEnvironment(t, target, true, true)
+	listener, err := env.ListenReverseTCP(context.Background(), "127.0.0.1", 0)
+	require.NoError(t, err)
+	defer listener.Close()
+	transport, err := repository.transportFor(env)
+	require.NoError(t, err)
+	require.Zero(t, len(transport.channels), "idle listener must not occupy a target channel")
+
+	direct, err := env.NewDestinationConnection(context.Background(), bnet.MustNewHostPort("example.org:443"))
+	require.NoError(t, err)
+	defer direct.Close()
+	for range maxSshTargetChannels - 2 {
+		require.True(t, transport.tryAcquireChannel()) // additional shell/direct channel reservations
+	}
+	require.Equal(t, maxSshTargetChannels-1, len(transport.channels))
+	peer, err := gonet.DialTimeout("tcp", listener.Addr().String(), time.Second)
+	require.NoError(t, err)
+	defer peer.Close()
+	require.NoError(t, peer.SetDeadline(time.Now().Add(3*time.Second)))
+	acceptedResult := make(chan struct {
+		conn gonet.Conn
+		err  error
+	}, 1)
+	go func() {
+		conn, err := listener.Accept()
+		acceptedResult <- struct {
+			conn gonet.Conn
+			err  error
+		}{conn, err}
+	}()
+	var accepted gonet.Conn
+	select {
+	case result := <-acceptedResult:
+		require.NoError(t, result.err)
+		accepted = result.conn
+	case <-time.After(3 * time.Second):
+		t.Fatal("reverse connection was not accepted")
+	}
+	defer accepted.Close()
+	require.Equal(t, maxSshTargetChannels, len(transport.channels))
+	require.NoError(t, peer.(*gonet.TCPConn).CloseWrite())
+	require.ErrorIs(t, readReverseSshConnection(t, accepted, make([]byte, 1)), io.EOF)
+	require.Equal(t, maxSshTargetChannels, len(transport.channels), "half-close must retain the slot")
+	_, err = accepted.Write([]byte("reply"))
+	require.NoError(t, err)
+	reply := make([]byte, len("reply"))
+	require.NoError(t, readReverseSshConnection(t, peer, reply))
+	require.Equal(t, "reply", string(reply))
+	require.NoError(t, accepted.(interface{ CloseWrite() error }).CloseWrite())
+	require.Equal(t, maxSshTargetChannels, len(transport.channels), "closing the write side must retain the slot")
+	require.NoError(t, listener.Close())
+	require.Equal(t, maxSshTargetChannels, len(transport.channels), "listener close must retain accepted slots")
+	_ = accepted.Close()
+	require.Equal(t, maxSshTargetChannels-1, len(transport.channels))
+	_ = accepted.Close()
+	require.Equal(t, maxSshTargetChannels-1, len(transport.channels), "repeated close must not release another slot")
+	require.NoError(t, direct.Close())
+	for range maxSshTargetChannels - 2 {
+		transport.releaseChannel()
+	}
+	require.Zero(t, len(transport.channels))
+}
+
+func TestSshReverseChannelCapacityRejectsPeerAndRecovers(t *testing.T) {
+	target, _ := newReverseSshTarget(t, false, sshReverseCancelAccept)
+	t.Cleanup(target.Close)
+	env, repository, _ := newReverseSshEnvironment(t, target, true, true)
+	listener, err := env.ListenReverseTCP(context.Background(), "127.0.0.1", 0)
+	require.NoError(t, err)
+	defer listener.Close()
+	transport, err := repository.transportFor(env)
+	require.NoError(t, err)
+	for range maxSshTargetChannels {
+		require.True(t, transport.tryAcquireChannel())
+	}
+	require.False(t, transport.tryAcquireChannel())
+	acceptedResult := make(chan struct {
+		conn gonet.Conn
+		err  error
+	}, 1)
+	go func() {
+		conn, err := listener.Accept()
+		acceptedResult <- struct {
+			conn gonet.Conn
+			err  error
+		}{conn, err}
+	}()
+	rejected, err := gonet.DialTimeout("tcp", listener.Addr().String(), time.Second)
+	require.NoError(t, err)
+	defer rejected.Close()
+	require.NoError(t, rejected.SetReadDeadline(time.Now().Add(3*time.Second)))
+	_, err = rejected.Read(make([]byte, 1))
+	require.ErrorIs(t, err, io.EOF, "full capacity must close the incoming peer")
+	select {
+	case result := <-acceptedResult:
+		if result.conn != nil {
+			_ = result.conn.Close()
+		}
+		t.Fatalf("rejected peer ended Accept: %v", result.err)
+	default:
+	}
+	require.Equal(t, maxSshTargetChannels, len(transport.channels))
+	transport.releaseChannel()
+	peer, err := gonet.DialTimeout("tcp", listener.Addr().String(), time.Second)
+	require.NoError(t, err)
+	defer peer.Close()
+	require.NoError(t, peer.SetDeadline(time.Now().Add(3*time.Second)))
+	_, err = peer.Write([]byte("ping"))
+	require.NoError(t, err)
+	var accepted gonet.Conn
+	select {
+	case result := <-acceptedResult:
+		require.NoError(t, result.err)
+		accepted = result.conn
+	case <-time.After(3 * time.Second):
+		t.Fatal("listener did not accept another peer after freeing a slot")
+	}
+	defer accepted.Close()
+	require.Equal(t, maxSshTargetChannels, len(transport.channels))
+	buf := make([]byte, 4)
+	require.NoError(t, readReverseSshConnection(t, accepted, buf))
+	require.Equal(t, "ping", string(buf))
+	_, err = accepted.Write([]byte("pong"))
+	require.NoError(t, err)
+	_, err = io.ReadFull(peer, buf)
+	require.NoError(t, err)
+	require.Equal(t, "pong", string(buf))
+	require.NoError(t, accepted.Close())
+	for range maxSshTargetChannels - 1 {
+		transport.releaseChannel()
+	}
+	require.Zero(t, len(transport.channels))
 }
 
 func TestSshReverseForwardingTransportLoss(t *testing.T) {

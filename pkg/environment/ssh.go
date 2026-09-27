@@ -730,6 +730,35 @@ type sshReverseListener struct {
 	done       chan struct{}
 }
 
+func (this *sshReverseListener) Accept() (gonet.Conn, error) {
+	for {
+		conn, err := this.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		if !this.transport.tryAcquireChannel() {
+			_ = conn.Close()
+			select {
+			case <-this.done:
+				return nil, gonet.ErrClosed
+			case <-this.transport.done:
+				return nil, gonet.ErrClosed
+			default:
+				continue
+			}
+		}
+		select {
+		case <-this.done:
+		case <-this.transport.done:
+		default:
+			return &sshDestinationConnection{Conn: conn, release: this.transport.releaseChannel}, nil
+		}
+		_ = conn.Close()
+		this.transport.releaseChannel()
+		return nil, gonet.ErrClosed
+	}
+}
+
 func (this *sshReverseListener) Close() error {
 	this.closeOnce.Do(func() {
 		close(this.done)
