@@ -88,11 +88,6 @@ run = "go run ./cmd/build build-binary --log.colorMode=always"
 
 [tasks."build:go:package"]
 run = "go run ./cmd/build package-binaries --log.colorMode=always"
-
-[tasks."build:go:macos"]
-depends = ["build:var"]
-run = "CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 MACOSX_DEPLOYMENT_TARGET=13.0 go build -o var/bifroest-darwin-arm64-development ./cmd/bifroest"
-
 [tasks."build:docs"]
 run = [
     "mkdocs --color build -c",
