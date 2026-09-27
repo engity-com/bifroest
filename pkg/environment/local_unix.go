@@ -45,6 +45,7 @@ type local struct {
 	deferred                   bool
 	token                      *localToken
 	accountMissing             bool
+	getEffectiveUserID         func() int
 }
 
 func (this *local) reverseTCPUnprivilegedUser() bool {
@@ -63,6 +64,7 @@ func (this *LocalRepository) new(u *user.User, sess session.Session, portForward
 		expectedHomeDir:            lt.User.HomeDir,
 		allowSystemUsers:           lt.User.AllowSystemUsers,
 		token:                      lt,
+		getEffectiveUserID:         os.Geteuid,
 	}
 }
 
@@ -103,10 +105,16 @@ func (this *local) configureShellCmd(t Task, cmd *exec.Cmd) error {
 }
 
 func (this *local) createCmdAndEnv(t Task) (*exec.Cmd, *sys.EnvVars, func(), error) {
-	creds := this.user.ToCredentials()
+	getEffectiveUserID := this.getEffectiveUserID
+	if getEffectiveUserID == nil {
+		getEffectiveUserID = os.Geteuid
+	}
+	creds, err := credentialsForUser(this.user, getEffectiveUserID())
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	dir := this.user.HomeDir
 	if !this.repository.conf.Directory.IsZero() {
-		var err error
 		dir, err = this.repository.conf.Directory.Render(t)
 		if err != nil {
 			return nil, nil, nil, errors.Config.Newf("cannot evaluate directory: %w", err)
@@ -122,7 +130,7 @@ func (this *local) createCmdAndEnv(t Task) (*exec.Cmd, *sys.EnvVars, func(), err
 	cmd := exec.Cmd{
 		Dir: dir,
 		SysProcAttr: &syscall.SysProcAttr{
-			Credential: &creds,
+			Credential: creds,
 		},
 	}
 
@@ -147,6 +155,22 @@ func (this *local) createCmdAndEnv(t Task) (*exec.Cmd, *sys.EnvVars, func(), err
 
 func (this *local) runConPTY(Task, *exec.Cmd) (int, error) {
 	return -1, errors.System.Newf("ConPTY is only available on Windows")
+}
+
+func credentialsForUser(target *user.User, effectiveUserID int) (*syscall.Credential, error) {
+	if target == nil {
+		return nil, errors.System.Newf("cannot create local process credentials without a target user")
+	}
+
+	credentials := target.ToCredentials()
+	if credentials.Uid != uint32(effectiveUserID) && effectiveUserID != 0 {
+		return nil, errors.Permission.Newf(
+			"cannot run local process as UID %d from effective UID %d: root privileges are required",
+			credentials.Uid,
+			effectiveUserID,
+		)
+	}
+	return &credentials, nil
 }
 
 func (this *local) configureCmdForPty(cmd *exec.Cmd, pty, tty *os.File) error {

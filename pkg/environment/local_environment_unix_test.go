@@ -16,6 +16,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/connection"
+	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/engity-com/bifroest/pkg/template"
@@ -66,10 +67,27 @@ func TestLocalEnvironmentProtectsUserIdentityVariables(t *testing.T) {
 			"SHELL":   {},
 		},
 	}
-	local := &local{repository: &LocalRepository{conf: &configuration.EnvironmentLocal{}}, user: &user.User{Name: "trusted-user", HomeDir: "/trusted/home", Shell: "/trusted/shell"}}
-	_, environment, release, err := local.createCmdAndEnv(task)
+	local := &local{
+		repository: &LocalRepository{conf: &configuration.EnvironmentLocal{}},
+		user: &user.User{
+			Name:    "trusted-user",
+			Uid:     1000,
+			Group:   user.Group{Gid: 1001},
+			Groups:  user.Groups{{Gid: 1002}},
+			HomeDir: "/trusted/home",
+			Shell:   "/trusted/shell",
+		},
+		getEffectiveUserID: func() int { return 0 },
+	}
+	cmd, environment, release, err := local.createCmdAndEnv(task)
 	require.NoError(t, err)
 	defer release()
+	require.NotNil(t, cmd.SysProcAttr)
+	require.NotNil(t, cmd.SysProcAttr.Credential)
+	require.Equal(t, uint32(1000), cmd.SysProcAttr.Credential.Uid)
+	require.Equal(t, uint32(1001), cmd.SysProcAttr.Credential.Gid)
+	require.Equal(t, []uint32{1002}, cmd.SysProcAttr.Credential.Groups)
+	require.False(t, cmd.SysProcAttr.Credential.NoSetGroups)
 	require.Equal(t, "/trusted/home", (*environment)["HOME"])
 	require.Equal(t, "trusted-user", (*environment)["USER"])
 	require.Equal(t, "trusted-user", (*environment)["LOGNAME"])
@@ -422,4 +440,59 @@ func TestLocalUnixNonPtyBlockedOutputDoesNotHoldCancellation(t *testing.T) {
 	case <-time.After(8 * time.Second):
 		t.Fatal("canceled non-PTY process remained blocked inside SSH output writer")
 	}
+}
+
+func TestCredentialsForUser(t *testing.T) {
+	target := &user.User{
+		Uid:    1000,
+		Group:  user.Group{Gid: 1001},
+		Groups: user.Groups{{Gid: 1002}},
+	}
+
+	tests := map[string]struct {
+		effectiveUserID int
+		wantPermission  bool
+	}{
+		"root to another UID": {
+			effectiveUserID: 0,
+		},
+		"non-root to same UID": {
+			effectiveUserID: 1000,
+		},
+		"non-root to another UID denied": {
+			effectiveUserID: 1003,
+			wantPermission:  true,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			credentials, err := credentialsForUser(target, test.effectiveUserID)
+			if test.wantPermission {
+				require.Nil(t, credentials)
+				require.Error(t, err)
+				require.True(t, errors.Permission.IsErr(err))
+				require.Contains(t, err.Error(), "root privileges are required")
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, target.ToCredentials(), *credentials)
+		})
+	}
+}
+
+func TestLocalEnvironmentDoesNotCreateCommandWithoutRequiredPrivileges(t *testing.T) {
+	local := &local{
+		repository:         &LocalRepository{conf: &configuration.EnvironmentLocal{}},
+		user:               &user.User{Uid: 1000},
+		getEffectiveUserID: func() int { return 1001 },
+	}
+
+	cmd, environment, release, err := local.createCmdAndEnv(nil)
+	require.Nil(t, cmd)
+	require.Nil(t, environment)
+	require.Nil(t, release)
+	require.Error(t, err)
+	require.True(t, errors.Permission.IsErr(err))
 }

@@ -79,14 +79,17 @@ func (this User) isEqualTo(other *User) bool {
 }
 
 func (this User) ToCredentials() syscall.Credential {
-	gids := make([]uint32, len(this.Groups))
-	for i, gid := range this.Groups {
-		gids[i] = uint32(gid.Gid)
+	gids := make([]uint32, 0, len(this.Groups))
+	for _, group := range this.Groups {
+		if group.Gid != this.Group.Gid {
+			gids = append(gids, uint32(group.Gid))
+		}
 	}
 	return syscall.Credential{
-		Uid:    uint32(this.Uid),
-		Gid:    uint32(this.Group.Gid),
-		Groups: gids,
+		Uid:         uint32(this.Uid),
+		Gid:         uint32(this.Group.Gid),
+		Groups:      gids,
+		NoSetGroups: false,
 	}
 }
 
