@@ -14,6 +14,10 @@ func (this *LocalRepository) WillBeAccepted(ctx Context) (ok bool, err error) {
 		return false, err
 	}
 
+	if ok, err = this.willTargetAccountBeAccepted(ctx); err != nil || !ok {
+		return ok, err
+	}
+
 	if ok, err = this.conf.LoginAllowed.Render(ctx); err != nil {
 		return fail(fmt.Errorf("cannot evaluate if user is allowed to login or not: %w", err))
 	}

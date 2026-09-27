@@ -31,6 +31,8 @@ type LocalRepository struct {
 	Logger log.Logger
 
 	userRepository user.CloseableRepository
+
+	targetAccountShellValidator func(string) error
 }
 
 func NewLocalRepository(ctx context.Context, flow configuration.FlowName, conf *configuration.EnvironmentLocal, _ alternatives.Provider, _ imp.Imp) (*LocalRepository, error) {
@@ -148,6 +150,12 @@ func (this *LocalRepository) Ensure(req Request) (Environment, error) {
 	if err != nil {
 		return fail(err)
 	}
+	if ok, err := this.isTargetAccountAccepted(u); err != nil {
+		return fail(err)
+	} else if !ok {
+		return fail(ErrNotAcceptable)
+	}
+
 	lt, err := this.newLocalToken(u, req, managed, manageSystemUsers)
 	if err != nil {
 		return fail(err)
@@ -225,6 +233,16 @@ func (this *LocalRepository) FindBySession(ctx context.Context, sess session.Ses
 	if lt.User.Uid != nil && u.Uid != *lt.User.Uid {
 		return userNotFound(lt.User.Name)
 	}
+	if ok, err := this.isStoredTargetAccountAccepted(u, &lt); err != nil {
+		return fail(err)
+	} else if !ok {
+		return fail(ErrNotAcceptable)
+	}
+	if ok, err := this.isTargetAccountAccepted(u); err != nil {
+		return fail(err)
+	} else if !ok {
+		return fail(ErrNotAcceptable)
+	}
 
 	return this.new(u, sess, lt.PortForwardingAllowed, &lt), nil
 }
@@ -259,7 +277,7 @@ func (this *LocalRepository) getEnsureOptsOf(r Request, candidate *user.User, ma
 	return result, nil
 }
 
-func (this *LocalRepository) lookupUserBy(req Request) (u *user.User, err error) {
+func (this *LocalRepository) lookupUserBy(ctx Context) (u *user.User, err error) {
 	fail := func(err error) (*user.User, error) {
 		return nil, err
 	}
@@ -268,11 +286,11 @@ func (this *LocalRepository) lookupUserBy(req Request) (u *user.User, err error)
 	}
 
 	if v := this.conf.User.Name; !v.IsZero() {
-		if u, err = this.lookupByName(req, v); err != nil {
+		if u, err = this.lookupByName(ctx, v); err != nil {
 			return fail(err)
 		}
 	} else if v := this.conf.User.Uid; v != nil {
-		if u, err = this.lookupByUid(req, *v); err != nil {
+		if u, err = this.lookupByUid(ctx, *v); err != nil {
 			return fail(err)
 		}
 	} else {
@@ -337,7 +355,7 @@ func (this *LocalRepository) isManagedUser(ctx context.Context, u *user.User) (b
 	return false, nil
 }
 
-func (this *LocalRepository) lookupByUid(r Request, tmpl template.TextMarshaller[user.Id, *user.Id]) (*user.User, error) {
+func (this *LocalRepository) lookupByUid(ctx Context, tmpl template.TextMarshaller[user.Id, *user.Id]) (*user.User, error) {
 	fail := func(err error) (*user.User, error) {
 		return nil, err
 	}
@@ -345,15 +363,15 @@ func (this *LocalRepository) lookupByUid(r Request, tmpl template.TextMarshaller
 		return fail(fmt.Errorf(msg, args...))
 	}
 
-	uid, err := tmpl.Render(r)
+	uid, err := tmpl.Render(ctx)
 	if err != nil {
 		return failf("cannot render UID: %w", err)
 	}
 
-	return this.userRepository.LookupById(r.Context(), uid)
+	return this.userRepository.LookupById(ctx.Context(), uid)
 }
 
-func (this *LocalRepository) lookupByName(r Request, tmpl template.String) (*user.User, error) {
+func (this *LocalRepository) lookupByName(ctx Context, tmpl template.String) (*user.User, error) {
 	fail := func(err error) (*user.User, error) {
 		return nil, err
 	}
@@ -361,12 +379,12 @@ func (this *LocalRepository) lookupByName(r Request, tmpl template.String) (*use
 		return fail(fmt.Errorf(msg, args...))
 	}
 
-	name, err := tmpl.Render(r)
+	name, err := tmpl.Render(ctx)
 	if err != nil {
 		return failf("cannot render user name: %w", err)
 	}
 
-	return this.userRepository.LookupByName(r.Context(), name)
+	return this.userRepository.LookupByName(ctx.Context(), name)
 }
 
 func (this *LocalRepository) ensureUser(ctx context.Context, req *user.Requirement, opts *localEnsureOpts) (u *user.User, er user.EnsureResult, err error) {

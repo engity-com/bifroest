@@ -177,6 +177,9 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		}
 	}
 
+	if err := this.revalidateTargetAccount(t.Context()); err != nil {
+		return fail(err)
+	}
 	if err := cmd.Start(); err != nil {
 		if stdin != nil {
 			_ = stdin.Close()

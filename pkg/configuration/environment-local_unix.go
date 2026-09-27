@@ -15,13 +15,15 @@ var (
 )
 
 type EnvironmentLocal struct {
-	User                   UserRequirementTemplate `yaml:",inline"`
-	EnvironmentLocalCommon `yaml:",inline"`
+	User                     UserRequirementTemplate `yaml:",inline"`
+	EnvironmentLocalPlatform `yaml:",inline"`
+	EnvironmentLocalCommon   `yaml:",inline"`
 }
 
 func (this *EnvironmentLocal) SetDefaults() error {
 	return setDefaults(this,
 		func(v *EnvironmentLocal) (string, defaulter) { return "", &v.User },
+		func(v *EnvironmentLocal) (string, defaulter) { return "", &v.EnvironmentLocalPlatform },
 
 		func(v *EnvironmentLocal) (string, defaulter) { return "", &v.EnvironmentLocalCommon },
 	)
@@ -30,6 +32,7 @@ func (this *EnvironmentLocal) SetDefaults() error {
 func (this *EnvironmentLocal) Trim() error {
 	return trim(this,
 		func(v *EnvironmentLocal) (string, trimmer) { return "", &v.User },
+		func(v *EnvironmentLocal) (string, trimmer) { return "", &v.EnvironmentLocalPlatform },
 
 		func(v *EnvironmentLocal) (string, trimmer) { return "", &v.EnvironmentLocalCommon },
 	)
@@ -38,6 +41,7 @@ func (this *EnvironmentLocal) Trim() error {
 func (this *EnvironmentLocal) Validate() error {
 	return validate(this,
 		func(v *EnvironmentLocal) (string, validator) { return "", &v.User },
+		func(v *EnvironmentLocal) (string, validator) { return "", &v.EnvironmentLocalPlatform },
 
 		func(v *EnvironmentLocal) (string, validator) { return "", &v.EnvironmentLocalCommon },
 	)
@@ -66,6 +70,7 @@ func (this EnvironmentLocal) IsEqualTo(other any) bool {
 
 func (this EnvironmentLocal) isEqualTo(other *EnvironmentLocal) bool {
 	return isEqual(&this.User, &other.User) &&
+		isEqual(&this.EnvironmentLocalPlatform, &other.EnvironmentLocalPlatform) &&
 		isEqual(&this.EnvironmentLocalCommon, &other.EnvironmentLocalCommon)
 }
 
