@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/creack/pty"
+	essh "github.com/engity-com/ssh-server-go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -61,10 +63,10 @@ func TestLocalEnvironmentProtectsUserIdentityVariables(t *testing.T) {
 		session:       sshSession,
 		taskType:      TaskTypeShell,
 		environmentVariables: configuration.EnvironmentVariables{
-			"HOME":    {},
-			"USER":    {},
-			"LOGNAME": {},
-			"SHELL":   {},
+			"HOME":    template.MustNewString("/forged/task"),
+			"USER":    template.MustNewString("forged-task"),
+			"LOGNAME": template.MustNewString("forged-task"),
+			"SHELL":   template.MustNewString("/forged/task-shell"),
 		},
 	}
 	local := &local{
@@ -88,6 +90,7 @@ func TestLocalEnvironmentProtectsUserIdentityVariables(t *testing.T) {
 	require.Equal(t, uint32(1001), cmd.SysProcAttr.Credential.Gid)
 	require.Equal(t, []uint32{1002}, cmd.SysProcAttr.Credential.Groups)
 	require.False(t, cmd.SysProcAttr.Credential.NoSetGroups)
+	require.Equal(t, "/trusted/home", cmd.Dir)
 	require.Equal(t, "/trusted/home", (*environment)["HOME"])
 	require.Equal(t, "trusted-user", (*environment)["USER"])
 	require.Equal(t, "trusted-user", (*environment)["LOGNAME"])
@@ -440,6 +443,158 @@ func TestLocalUnixNonPtyBlockedOutputDoesNotHoldCancellation(t *testing.T) {
 	case <-time.After(8 * time.Second):
 		t.Fatal("canceled non-PTY process remained blocked inside SSH output writer")
 	}
+}
+
+func TestLocalShellCommandArgumentsAndCredentials(t *testing.T) {
+	tests := map[string]struct {
+		rawCommand string
+		wantArgs   []string
+	}{
+		"interactive login shell": {
+			wantArgs: []string{"-zsh"},
+		},
+		"remote command remains one raw argument": {
+			rawCommand: `printf '%s\n' "$HOME"; touch '/tmp/not interpolated'`,
+			wantArgs:   []string{"zsh", "-c", `printf '%s\n' "$HOME"; touch '/tmp/not interpolated'`},
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			local, task := newLocalCommandTest(t, TaskTypeShell, test.rawCommand)
+			cmd, _, release, err := local.createCmdAndEnv(task)
+			require.NoError(t, err)
+			defer release()
+			credentials := cmd.SysProcAttr.Credential
+			require.NotNil(t, credentials)
+
+			require.NoError(t, local.configureCmd(task, cmd))
+			require.Equal(t, "/bin/zsh", cmd.Path)
+			require.Equal(t, test.wantArgs, cmd.Args)
+			require.Same(t, credentials, cmd.SysProcAttr.Credential)
+		})
+	}
+}
+
+func TestLocalSftpCommandPreservesCredentials(t *testing.T) {
+	local, task := newLocalCommandTest(t, TaskTypeSftp, "")
+	cmd, _, release, err := local.createCmdAndEnv(task)
+	require.NoError(t, err)
+	defer release()
+	credentials := cmd.SysProcAttr.Credential
+	require.NotNil(t, credentials)
+
+	require.NoError(t, local.configureCmd(task, cmd))
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	require.Equal(t, executable, cmd.Path)
+	require.Equal(t, []string{executable, "sftp-server"}, cmd.Args)
+	require.Same(t, credentials, cmd.SysProcAttr.Credential)
+}
+
+func TestInitialPtyWinsize(t *testing.T) {
+	size, err := initialPtyWinsize(essh.Window{
+		Width:        1<<16 - 1,
+		Height:       0,
+		WidthPixels:  1920,
+		HeightPixels: 1080,
+	})
+	require.NoError(t, err)
+	require.Equal(t, uint16(1<<16-1), size.Cols)
+	require.Zero(t, size.Rows)
+	require.Equal(t, uint16(1920), size.X)
+	require.Equal(t, uint16(1080), size.Y)
+}
+
+func TestPtyWinsizeRejectsOutOfRangeDimensions(t *testing.T) {
+	tests := map[string]essh.Window{
+		"negative width":          {Width: -1},
+		"oversized width":         {Width: 1 << 16},
+		"negative height":         {Height: -1},
+		"oversized height":        {Height: 1 << 16},
+		"negative width pixels":   {WidthPixels: -1},
+		"oversized width pixels":  {WidthPixels: 1 << 16},
+		"negative height pixels":  {HeightPixels: -1},
+		"oversized height pixels": {HeightPixels: 1 << 16},
+	}
+
+	for name, window := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := initialPtyWinsize(window)
+			require.ErrorContains(t, err, "outside uint16 range")
+
+			_, err = resizedPtyWinsize(ptyTestWinsize(), window)
+			require.ErrorContains(t, err, "outside uint16 range")
+		})
+	}
+}
+
+func TestResizedPtyWinsizePreservesZeroDimensions(t *testing.T) {
+	current := ptyTestWinsize()
+
+	unchanged, err := resizedPtyWinsize(current, essh.Window{})
+	require.NoError(t, err)
+	require.Equal(t, current, unchanged)
+
+	resized, err := resizedPtyWinsize(current, essh.Window{Width: 100, HeightPixels: 720})
+	require.NoError(t, err)
+	require.Equal(t, uint16(100), resized.Cols)
+	require.Equal(t, current.Rows, resized.Rows)
+	require.Equal(t, current.X, resized.X)
+	require.Equal(t, uint16(720), resized.Y)
+}
+
+func TestLocalRunRejectsInvalidInitialPtySize(t *testing.T) {
+	local, task := newLocalCommandTest(t, TaskTypeShell, "true")
+	task.session = &localPtyTestSession{
+		sshTestSession: task.session.(*sshTestSession),
+		pty:            essh.Pty{Window: essh.Window{Width: 1 << 16}},
+	}
+
+	exitCode, err := local.Run(task)
+	require.Equal(t, -1, exitCode)
+	require.ErrorContains(t, err, "invalid initial pty size")
+}
+
+func newLocalCommandTest(t *testing.T, taskType TaskType, rawCommand string) (*local, *sshTestTask) {
+	t.Helper()
+	ctx, cancel := newSshTestContext()
+	t.Cleanup(cancel)
+	storedSession := &sshTestStoredSession{id: session.MustNewId()}
+	sshSession := newSshTestSession(ctx, rawCommand, nil)
+	task := &sshTestTask{
+		context:       ctx,
+		connection:    &sshTestConnection{id: connection.MustNewId(), context: ctx},
+		authorization: &sshTestAuthorization{session: storedSession},
+		session:       sshSession,
+		taskType:      taskType,
+	}
+	return &local{
+		repository: &LocalRepository{conf: &configuration.EnvironmentLocal{}},
+		user: &user.User{
+			Name:    "trusted-user",
+			Uid:     1000,
+			Group:   user.Group{Gid: 1001},
+			Groups:  user.Groups{{Gid: 1002}},
+			HomeDir: "/trusted/home",
+			Shell:   "/bin/zsh",
+		},
+		getEffectiveUserID: func() int { return 0 },
+	}, task
+}
+
+func ptyTestWinsize() pty.Winsize {
+	return pty.Winsize{Rows: 24, Cols: 80, X: 640, Y: 480}
+}
+
+type localPtyTestSession struct {
+	*sshTestSession
+	pty     essh.Pty
+	windows <-chan essh.Window
+}
+
+func (this *localPtyTestSession) Pty() (essh.Pty, <-chan essh.Window, bool) {
+	return this.pty, this.windows, true
 }
 
 func TestCredentialsForUser(t *testing.T) {

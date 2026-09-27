@@ -22,8 +22,6 @@ import (
 	"github.com/engity-com/bifroest/pkg/user"
 )
 
-const localTargetOs = sys.OsLinux
-
 func (this *local) newAgentNamedPipe() (net.NamedPipe, error) {
 	return net.NewNamedPipeForUser(
 		"ssh-agent",

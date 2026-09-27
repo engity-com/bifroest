@@ -54,7 +54,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	auth := t.Authorization()
 	sess := auth.FindSession()
 	if sess == nil {
-		return failf("authorization without session is not supported to run docker environment")
+		return failf("authorization without session is not supported to run local environment")
 	}
 
 	cmd, ev, release, err := this.createCmdAndEnv(t)
@@ -65,20 +65,8 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 
 	setReservedEnvironment(ev, localTargetOs, session.EnvName, sess.Id().String())
 
-	switch t.TaskType() {
-	case TaskTypeShell:
-		if err := this.configureShellCmd(t, cmd); err != nil {
-			return fail(err)
-		}
-	case TaskTypeSftp:
-		efn, err := os.Executable()
-		if err != nil {
-			return failf("cannot resolve the location of the server's executable location: %w", err)
-		}
-		cmd.Path = efn
-		cmd.Args = []string{efn, "sftp-server"}
-	default:
-		return failf("illegal task type: %v", t.TaskType())
+	if err := this.configureCmd(t, cmd); err != nil {
+		return fail(err)
 	}
 
 	if ssh.AgentRequested(sshSess) && authorization.IsAgentForwardingAllowed(auth) {
@@ -106,9 +94,13 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 
 	var fPty, fTty *os.File
 	var winCh <-chan essh.Window
+	var currentPtySize pty.Winsize
 	if ptyReq, windows, isPty := sshSess.Pty(); isPty {
 		winCh = windows
-		var err error
+		initialSize, err := initialPtyWinsize(ptyReq.Window)
+		if err != nil {
+			return failf("invalid initial pty size: %w", err)
+		}
 		fPty, fTty, err = pty.Open()
 		if err != nil {
 			return failf("cannot allocate pty: %w", err)
@@ -116,10 +108,10 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		defer common.IgnoreCloseError(fPty)
 		defer common.IgnoreCloseError(fTty)
 		setReservedEnvironment(ev, localTargetOs, "TERM", ptyReq.Term)
-		initialSize := pty.Winsize{Rows: uint16(ptyReq.Window.Height), Cols: uint16(ptyReq.Window.Width)}
 		if err := pty.Setsize(fPty, &initialSize); err != nil {
 			return failf("cannot set initial pty size: %w", err)
 		}
+		currentPtySize = initialSize
 		if err := this.configureCmdForPty(cmd, fPty, fTty); err != nil {
 			return failf("cannot configure cmd for pty: %w", err)
 		}
@@ -141,9 +133,15 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 					if !ok {
 						return
 					}
-					size := pty.Winsize{Rows: uint16(win.Height), Cols: uint16(win.Width)}
+					size, err := resizedPtyWinsize(currentPtySize, win)
+					if err != nil {
+						l.WithError(err).With("window", win).Warn("invalid pty resize; ignoring")
+						continue
+					}
 					if err := pty.Setsize(fPty, &size); err != nil {
 						l.WithError(err).Warn("cannot set winsize; ignoring")
+					} else {
+						currentPtySize = size
 					}
 				}
 			}
@@ -329,6 +327,54 @@ func (this localOutputWriter) Write(data []byte) (int, error) {
 	this.writing.Add(1)
 	defer this.writing.Add(-1)
 	return this.Writer.Write(data)
+}
+
+func (this *local) configureCmd(t Task, cmd *exec.Cmd) error {
+	switch t.TaskType() {
+	case TaskTypeShell:
+		return this.configureShellCmd(t, cmd)
+	case TaskTypeSftp:
+		executable, err := os.Executable()
+		if err != nil {
+			return errors.System.Newf("cannot resolve the location of the server's executable location: %w", err)
+		}
+		cmd.Path = executable
+		cmd.Args = []string{executable, "sftp-server"}
+		return nil
+	default:
+		return errors.System.Newf("illegal task type: %v", t.TaskType())
+	}
+}
+
+func initialPtyWinsize(window essh.Window) (pty.Winsize, error) {
+	return ptyWinsize(pty.Winsize{}, window, false)
+}
+
+func resizedPtyWinsize(current pty.Winsize, window essh.Window) (pty.Winsize, error) {
+	return ptyWinsize(current, window, true)
+}
+
+func ptyWinsize(size pty.Winsize, window essh.Window, preserveZero bool) (pty.Winsize, error) {
+	dimensions := []struct {
+		name   string
+		value  int
+		target *uint16
+	}{
+		{"height", window.Height, &size.Rows},
+		{"width", window.Width, &size.Cols},
+		{"widthPixels", window.WidthPixels, &size.X},
+		{"heightPixels", window.HeightPixels, &size.Y},
+	}
+	for _, dimension := range dimensions {
+		if dimension.value < 0 || dimension.value > 1<<16-1 {
+			return pty.Winsize{}, errors.System.Newf("pty %s %d is outside uint16 range", dimension.name, dimension.value)
+		}
+		if preserveZero && dimension.value == 0 {
+			continue
+		}
+		*dimension.target = uint16(dimension.value)
+	}
+	return size, nil
 }
 
 func (this *local) Dispose(ctx context.Context) (_ bool, rErr error) {
