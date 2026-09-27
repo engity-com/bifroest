@@ -15,6 +15,7 @@ const (
 	EnvVarReverseTCPUser  = "BIFROEST_REVERSE_TCP_USER"
 
 	DefaultInitPathUnix    = `/var/lib/engity/bifroest/init`
+	DefaultInitPathDarwin  = `/Library/Application Support/Engity/Bifroest/init`
 	DefaultInitPathWindows = `C:\ProgramData\Engity\Bifroest\init`
 )
 
