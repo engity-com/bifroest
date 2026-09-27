@@ -67,7 +67,7 @@ func (this *local) configureShellCmd(t Task, cmd *exec.Cmd) error {
 	return nil
 }
 
-func (this *local) createCmdAndEnv(t Task) (*exec.Cmd, *sys.EnvVars, error) {
+func (this *local) createCmdAndEnv(t Task) (*exec.Cmd, *sys.EnvVars, func(), error) {
 	creds := this.user.ToCredentials()
 	cmd := exec.Cmd{
 		Dir: this.user.HomeDir,
@@ -83,7 +83,7 @@ func (this *local) createCmdAndEnv(t Task) (*exec.Cmd, *sys.EnvVars, error) {
 		ev.Set("TZ", v)
 	}
 	if err := applyTaskEnvironment(&ev, localTargetOs, t); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	ev.Set(
 		"HOME", this.user.HomeDir,
@@ -92,7 +92,11 @@ func (this *local) createCmdAndEnv(t Task) (*exec.Cmd, *sys.EnvVars, error) {
 		"SHELL", this.user.Shell,
 	)
 
-	return &cmd, &ev, nil
+	return &cmd, &ev, func() {}, nil
+}
+
+func (this *local) runConPTY(Task, *exec.Cmd) (int, error) {
+	return -1, errors.System.Newf("ConPTY is only available on Windows")
 }
 
 func (this *local) configureCmdForPty(cmd *exec.Cmd, pty, tty *os.File) error {

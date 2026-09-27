@@ -255,17 +255,26 @@ In combination with [`deleteManagedUser`](#linux-dispose-property-deleteManagedU
 
 ## Windows
 
-The Windows variant is supported by Windows 10, Windows Server 2016, and later versions.
+The Windows variant is supported by Windows 10, Windows Server 2016, and later versions. Bifröst must run as **LocalSystem** to start local session processes as another Windows user. It uses a passwordless MSV1_0 S4U logon: SSH public keys or OIDC authorize the connection, and the `name` property selects an **existing local Windows account**. Domain accounts and account creation, modification, and removal are not supported by this variant.
+
+In a Windows container, the account must exist **inside the container**; a local account on the host is not automatically available to the container. The Bifröst process must also run as LocalSystem inside the container. The default Nano Server image entrypoint does not install Bifröst as a LocalSystem service, so its default startup cannot impersonate local accounts. The Nano Server `ltsc2022` image contains the required Windows DLLs, but actual S4U and ConPTY behavior still depends on the container runtime and host.
 
 !!! warning
-     In contrast to the [Linux](#linux) version this variant **CANNOT** [impersonate](https://en.wiktionary.org/wiki/impersonate). As a consequence, each user session always executes as the user the Bifröst process itself runs with.
+     `name` is required. A Windows local environment without it is rejected instead of running a user session as the Bifröst service account. Existing Windows configurations using `type: local` without `name` must be updated when upgrading.
 
-     Impersonating on a Windows machine requires either full credentials (password) or another running process the session tokens can be cloned from. As both conflicts how we intend Bifröst to work, both solutions leave a lot of use-cases behind. Since it is very "hacky", we decided to stick with the simple approach.
+     S4U logons do not provide the user's credentials for remote network shares or encrypted files (EFS). SSH TCP port forwarding is performed by the Bifröst process, not under the impersonated account.
+
+ConPTY-based interactive terminals require Windows 10 version 1809 or Windows Server 2019 (or later). On older supported Windows versions, SSH PTY requests are rejected; non-PTY shell commands and SFTP remain available.
 
 ### Configuration {: #windows-configuration}
 
 <<property("type", "Environment Type", default="local", required=True, id_prefix="windows-", heading=4)>>
 Has to be set to `local` to enable the local environment.
+
+<<property("name", "string", template_context="../context/authorization.md", required=True, id_prefix="windows-", heading=4)>>
+The name of an existing local Windows account. Use only its account name (for example, `foosel`), not a domain-qualified name or an OIDC email address. The account is looked up on the local machine and bound to the session by its Windows SID. An account that is missing or whose SID has changed is rejected; Bifröst never falls back to LocalSystem.
+
+For SSH-key authorization with `type: simple`, `{{.authorization.entry.name}}` can map the configured entry to a local account. For OIDC, use a claim specifically controlled to contain the local account name, such as `{{.authorization.idToken.local_user}}`.
 
 <<property("variables", "Environment Variables", "../data-type.md#environment-variables", template_context="../context/authorization.md", id_prefix="windows-", heading=4)>>
 Defines environment variables for commands and shells. Names are handled case-insensitively. They override values received from the SSH client, `authorized_keys` and authorization. Bifröst-generated runtime and local account identity variables take precedence.
@@ -300,37 +309,39 @@ The executor command prefix which is used when a user executes a command instead
 
 If the user will execute `ssh foo@bar.com echo "bar"` on the host `C:\WINDOWS\system32\cmd.exe /C 'echo "bar"'` will be executed.
 
-<<property("directory", "File Path", "../data-type.md#file-path", template_context="../context/authorization.md", default="<working directory of Bifröst>", id_prefix="windows-", heading=4)>>
-The working directory in which the command will be executed in.
+<<property("directory", "File Path", "../data-type.md#file-path", template_context="../context/authorization.md", default="<profile directory of the local account>", id_prefix="windows-", heading=4)>>
+The working directory in which the command will be executed. If omitted, the local account's profile directory is used.
 
 <<property("portForwardingAllowed", "bool", template_context="../context/authorization.md", default=True, id_prefix="windows-", heading=4)>>
-If `true`, users are allowed to use SSH's port forwarding mechanism, subject to the applicable authorized-key policy. For `ssh -R`, the listener binds on the local Bifröst host. An empty bind host uses loopback; an explicit `*` requests a wildcard bind that may be reachable over the network, subject to policy and network configuration. The forwarded destination is reached from the SSH client.
+If `true`, users are allowed to use SSH's port forwarding mechanism, subject to the applicable authorized-key policy. Outbound local connections are opened as the Bifröst process, not as the impersonated account. For `ssh -R`, the listener binds on the local Bifröst host. An empty bind host uses loopback; an explicit `*` requests a wildcard bind that may be reachable over the network, subject to policy and network configuration. The forwarded destination is reached from the SSH client.
 
 ### Examples {: #windows-examples}
 
-1. Simple:
-   ```yaml
-   type: local
-   ```
-2. OIDC:
-   ```yaml
-   type: local
+1. SSH public key with a configured `simple` entry for an existing local account:
+    ```yaml
+    type: local
+    name: "{{.authorization.entry.name}}"
+    ```
+2. OIDC with a trusted claim containing the local account name:
+    ```yaml
+    type: local
+    name: "{{.authorization.idToken.local_user}}"
 
-   ## Use the PowerShell Core without banner as Shell
-   shellCommand: ["pwsh.exe", "-NoLogo"]
-   directory: "C:\\my\\home"
+    ## Use the PowerShell Core without banner as Shell
+    shellCommand: ["pwsh.exe", "-NoLogo"]
+    directory: "C:\\my\\home"
 
-   variables:
-     BIFROEST_ORIGINAL_USER: "{{.session.created.remote.user}}"
+    variables:
+      BIFROEST_ORIGINAL_USER: "{{.session.created.remote.user}}"
 
-   ## Only allow login if the OIDC's groups has "my-great-group-uuid"
-   ## ...and the tid (tenant ID) is "my-great-tenant-uuid"
-   loginAllowed: |
-       {{ and
-         (.authorization.idToken.groups | has "my-great-group-uuid")
-         (.authorization.idToken.tid    | eq  "my-great-tenant-uuid")
-       }}
-   ```
+    ## Only allow login if the OIDC's groups has "my-great-group-uuid"
+    ## ...and the tid (tenant ID) is "my-great-tenant-uuid"
+    loginAllowed: |
+        {{ and
+          (.authorization.idToken.groups | has "my-great-group-uuid")
+          (.authorization.idToken.tid    | eq  "my-great-tenant-uuid")
+        }}
+    ```
 
 `## Compatibility
 

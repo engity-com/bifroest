@@ -13,6 +13,10 @@ const (
 	fromDefaultWindows       = "mcr.microsoft.com/windows/nanoserver:ltsc2022@sha256:8e17c72fbf586d21e7e5a4edf51d97d05ce2c095cbbd345246c69d151fb3ddb3"
 )
 
+func DefaultWindowsContainerBaseImage() string {
+	return fromDefaultWindows
+}
+
 var Goarch = func() sys.Arch {
 	var buf sys.Arch
 	common.Must(buf.Set(runtime.GOARCH))

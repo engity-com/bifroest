@@ -47,7 +47,8 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
     clientId: anId
     clientSecret: aSecret
   environment:
-    type: local`,
+    type: local
+    name: foosel`,
 			expected: Configuration{
 				Auditlogs: Auditlogs{{
 					Name:             DefaultAuditlogName,
@@ -126,6 +127,7 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 						RetrieveUserInfo: DefaultAuthorizationOidcRetrieveUserInfo,
 					}},
 					Environment: Environment{V: &EnvironmentLocal{
+						Name:                  template.MustNewString("foosel"),
 						LoginAllowed:          DefaultEnvironmentLocalLoginAllowed,
 						Banner:                DefaultEnvironmentLocalBanner,
 						ShellCommand:          DefaultEnvironmentLocalShellCommand,

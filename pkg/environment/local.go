@@ -44,6 +44,9 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 
 	l := t.Connection().Logger()
 	sshSess := t.SshSession()
+	if _, _, isPty := sshSess.Pty(); isPty && t.TaskType() == TaskTypeSftp {
+		return fail(ErrSubsystemNotAllowed)
+	}
 
 	auth := t.Authorization()
 	sess := auth.FindSession()
@@ -51,10 +54,11 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		return failf("authorization without session is not supported to run docker environment")
 	}
 
-	cmd, ev, err := this.createCmdAndEnv(t)
+	cmd, ev, release, err := this.createCmdAndEnv(t)
 	if err != nil {
 		return fail(err)
 	}
+	defer release()
 
 	setReservedEnvironment(ev, localTargetOs, session.EnvName, sess.Id().String())
 
@@ -83,8 +87,12 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		go ssh.ForwardAgentConnections(ln, l, sshSess)
 		setReservedEnvironment(ev, localTargetOs, ssh.AuthSockEnvName, ln.Path())
 	}
+	if ptyReq, _, isPty := sshSess.Pty(); isPty && localTargetOs == sys.OsWindows {
+		setReservedEnvironment(ev, localTargetOs, "TERM", ptyReq.Term)
+		cmd.Env = ev.Strings()
+		return this.runConPTY(t, cmd)
+	}
 
-	cmd.Stdin = sshSess
 	cmd.Stdout = sshSess
 	if t.TaskType() == TaskTypeSftp {
 		cmd.Stderr = &log.LoggingWriter{
@@ -145,9 +153,25 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		}()
 	}
 	cmd.Env = ev.Strings()
+	var stdin io.WriteCloser
+	if fPty == nil {
+		stdin, err = cmd.StdinPipe()
+		if err != nil {
+			return failf("cannot open process stdin: %w", err)
+		}
+	}
 
 	if err := cmd.Start(); err != nil {
+		if stdin != nil {
+			_ = stdin.Close()
+		}
 		return failf("cannot start process %v: %w", cmd.Args, err)
+	}
+	if stdin != nil {
+		go func() {
+			defer stdin.Close()
+			_, _ = io.Copy(stdin, sshSess)
+		}()
 	}
 	l.With("pid", cmd.Process.Pid).
 		Debug("user's process started")
@@ -158,6 +182,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	}
 	signals := make(chan essh.Signal, 1)
 	processDone := make(chan doneT, 1)
+	waitFinished := make(chan struct{})
 	copyDone := make(chan error, 2)
 	var activeRoutines sync.WaitGroup
 	defer func() {
@@ -188,17 +213,29 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	activeRoutines.Add(1)
 	go func() {
 		defer activeRoutines.Done()
-		if state, err := cmd.Process.Wait(); err != nil {
-			processDone <- doneT{-1, err}
+		defer close(waitFinished)
+		if err := cmd.Wait(); err != nil {
+			var exit *exec.ExitError
+			if errors.As(err, &exit) {
+				processDone <- doneT{exit.ExitCode(), nil}
+			} else {
+				processDone <- doneT{-1, err}
+			}
 		} else {
-			processDone <- doneT{state.ExitCode(), nil}
+			processDone <- doneT{0, nil}
 		}
 		l.Trace("finished process")
 	}()
 
 	sshSess.Signals(signals)
 	defer sshSess.Signals(nil)
-	defer this.kill(cmd, l)
+	defer func() {
+		if t.Context().Err() != nil {
+			_ = sshSess.Close()
+		}
+		this.kill(cmd, l)
+		<-waitFinished
+	}()
 	for {
 		select {
 		case s, ok := <-signals:

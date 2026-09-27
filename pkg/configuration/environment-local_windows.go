@@ -4,7 +4,6 @@ package configuration
 
 import (
 	"os"
-	"os/user"
 
 	"gopkg.in/yaml.v3"
 
@@ -22,17 +21,12 @@ var (
 
 	DefaultEnvironmentLocalShellCommand      = template.MustNewStrings(DefaultShell)
 	DefaultEnvironmentLocalExecCommandPrefix = template.MustNewStrings(DefaultShell, "/C")
-	DefaultEnvironmentLocalDirectory         = template.MustNewString(func() string {
-		u, err := user.Current()
-		if err == nil && u.HomeDir != "" {
-			return u.HomeDir
-		}
-		return ""
-	}())
+	DefaultEnvironmentLocalDirectory         = template.String{}
 )
 
 type EnvironmentLocal struct {
-	LoginAllowed template.Bool `yaml:"loginAllowed,omitempty"`
+	Name         template.String `yaml:"name,omitempty"`
+	LoginAllowed template.Bool   `yaml:"loginAllowed,omitempty"`
 
 	Banner template.String `yaml:"banner,omitempty"`
 
@@ -55,6 +49,7 @@ func (this *EnvironmentLocal) SetDefaults() error {
 
 func (this *EnvironmentLocal) Trim() error {
 	return trim(this,
+		noopTrim[EnvironmentLocal]("name"),
 		noopTrim[EnvironmentLocal]("loginAllowed"),
 		noopTrim[EnvironmentLocal]("banner"),
 		noopTrim[EnvironmentLocal]("shellCommand"),
@@ -66,6 +61,7 @@ func (this *EnvironmentLocal) Trim() error {
 
 func (this *EnvironmentLocal) Validate() error {
 	return validate(this,
+		notZeroValidate("name", func(v *EnvironmentLocal) *template.String { return &v.Name }),
 		func(v *EnvironmentLocal) (string, validator) { return "loginAllowed", &v.LoginAllowed },
 		func(v *EnvironmentLocal) (string, validator) { return "banner", &v.Banner },
 		func(v *EnvironmentLocal) (string, validator) { return "shellCommand", &v.ShellCommand },
@@ -99,7 +95,8 @@ func (this EnvironmentLocal) IsEqualTo(other any) bool {
 }
 
 func (this EnvironmentLocal) isEqualTo(other *EnvironmentLocal) bool {
-	return isEqual(&this.LoginAllowed, &other.LoginAllowed) &&
+	return isEqual(&this.Name, &other.Name) &&
+		isEqual(&this.LoginAllowed, &other.LoginAllowed) &&
 		isEqual(&this.Banner, &other.Banner) &&
 		isEqual(&this.ShellCommand, &other.ShellCommand) &&
 		isEqual(&this.ExecCommandPrefix, &other.ExecCommandPrefix) &&
@@ -112,7 +109,7 @@ func (this EnvironmentLocal) Types() []string {
 }
 
 func (this EnvironmentLocal) FeatureFlags() []string {
-	return []string{"local"}
+	return []string{"local[pty,impersonate]"}
 }
 
 func (this EnvironmentLocal) SupportsEnvironmentVariables() bool { return true }

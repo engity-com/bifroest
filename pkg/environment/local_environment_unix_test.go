@@ -48,8 +48,9 @@ func TestLocalEnvironmentProtectsUserIdentityVariables(t *testing.T) {
 		},
 	}
 	local := &local{user: &user.User{Name: "trusted-user", HomeDir: "/trusted/home", Shell: "/trusted/shell"}}
-	_, environment, err := local.createCmdAndEnv(task)
+	_, environment, release, err := local.createCmdAndEnv(task)
 	require.NoError(t, err)
+	defer release()
 	require.Equal(t, "/trusted/home", (*environment)["HOME"])
 	require.Equal(t, "trusted-user", (*environment)["USER"])
 	require.Equal(t, "trusted-user", (*environment)["LOGNAME"])

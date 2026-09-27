@@ -3,10 +3,11 @@
 package environment
 
 type localToken struct {
-	PortForwardingAllowed bool `json:"portForwardingAllowed"`
+	User                  windowsLocalAccount `json:"user"`
+	PortForwardingAllowed bool                `json:"portForwardingAllowed"`
 }
 
-func (this *LocalRepository) newLocalToken(req Request) (*localToken, error) {
+func (this *LocalRepository) newLocalToken(req Request, account windowsLocalAccount) (*localToken, error) {
 	fail := func(err error) (*localToken, error) {
 		return nil, err
 	}
@@ -17,6 +18,7 @@ func (this *LocalRepository) newLocalToken(req Request) (*localToken, error) {
 	}
 
 	return &localToken{
-		portForwardingAllowed,
+		User:                  account,
+		PortForwardingAllowed: portForwardingAllowed,
 	}, nil
 }
