@@ -9,17 +9,22 @@ func DoesEditionSupportBinaryFor(e sys.Edition, o sys.Os, a sys.Arch, assumedOs 
 		return false
 	}
 
+	if assumedOs == 0 {
+		assumedOs = Goos
+	}
+	if assumedArch == 0 {
+		assumedArch = Goarch
+	}
+
+	if o == sys.OsDarwin {
+		return e == sys.EditionExtended && assumedOs == o && assumedArch == a
+	}
+
 	if e == sys.EditionGeneric {
 		return true
 	}
 
 	if e == sys.EditionExtended {
-		if assumedOs == 0 {
-			assumedOs = Goos
-		}
-		if assumedArch == 0 {
-			assumedArch = Goarch
-		}
 		buildDetails := archToDetails[a].os[o].build[archBuildKey{assumedOs, assumedArch}]
 		return buildDetails.crossCc != ""
 	}
