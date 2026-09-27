@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/connection"
+	berrors "github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
@@ -39,10 +40,12 @@ func TestPamAuthorizeSuccess(t *testing.T) {
 			require.Equal(t, map[pam.Item]string{pam.Rhost: "203.0.113.7"}, tx.items)
 			if interactive {
 				require.Equal(t, pam.Flags(0), tx.flags)
+				require.Equal(t, pam.Flags(0), tx.acctMgmtFlags)
 			} else {
 				require.Equal(t, pam.Silent, tx.flags)
+				require.Equal(t, pam.Silent, tx.acctMgmtFlags)
 			}
-			require.Equal(t, []string{"set-item", "authenticate", "get-item", "get-env-list", "end"}, tx.calls)
+			require.Equal(t, []string{"set-item", "authenticate", "acct-mgmt", "get-item", "get-env-list", "end"}, tx.calls)
 		})
 	}
 }
@@ -89,9 +92,10 @@ func TestPamAuthorizeFailures(t *testing.T) {
 	}{
 		{"set item", func(tx *pamTestTransaction) { tx.setItemErr = failure }, []string{"set-item", "end"}},
 		{"authenticate", func(tx *pamTestTransaction) { tx.authenticateErr = pam.ErrSystem }, []string{"set-item", "authenticate", "end"}},
-		{"get item", func(tx *pamTestTransaction) { tx.getItemErr = failure }, []string{"set-item", "authenticate", "get-item", "end"}},
-		{"get environment", func(tx *pamTestTransaction) { tx.getEnvListErr = failure }, []string{"set-item", "authenticate", "get-item", "get-env-list", "end"}},
-		{"end", func(tx *pamTestTransaction) { tx.endErr = failure }, []string{"set-item", "authenticate", "get-item", "get-env-list", "end"}},
+		{"account management", func(tx *pamTestTransaction) { tx.acctMgmtErr = pam.ErrSystem }, []string{"set-item", "authenticate", "acct-mgmt", "end"}},
+		{"get item", func(tx *pamTestTransaction) { tx.getItemErr = failure }, []string{"set-item", "authenticate", "acct-mgmt", "get-item", "end"}},
+		{"get environment", func(tx *pamTestTransaction) { tx.getEnvListErr = failure }, []string{"set-item", "authenticate", "acct-mgmt", "get-item", "get-env-list", "end"}},
+		{"end", func(tx *pamTestTransaction) { tx.endErr = failure }, []string{"set-item", "authenticate", "acct-mgmt", "get-item", "get-env-list", "end"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -104,8 +108,9 @@ func TestPamAuthorizeFailures(t *testing.T) {
 
 			require.Error(t, err)
 			require.False(t, success)
+			require.True(t, berrors.IsType(err, berrors.System))
 			require.Equal(t, test.expectedCalls, tx.calls)
-			if test.name == "authenticate" {
+			if test.name == "authenticate" || test.name == "account management" {
 				require.ErrorIs(t, err, pam.ErrSystem)
 			} else {
 				require.ErrorIs(t, err, failure)
@@ -126,6 +131,132 @@ func TestPamAuthorizeStartFailure(t *testing.T) {
 
 	require.ErrorIs(t, err, failure)
 	require.False(t, success)
+}
+
+func TestPamAuthorizeAccountDenials(t *testing.T) {
+	for _, denial := range pamTestAccountDenials() {
+		t.Run(denial.Error(), func(t *testing.T) {
+			tx := &pamTestTransaction{acctMgmtErr: denial}
+
+			username, env, success, err := pamAuthorizeForPamHandlerFunc(pamTestFactory(tx), "sshd", false, func(pam.Style, string) (string, error) {
+				return "", nil
+			}, "requested-user", "client.example")
+
+			require.NoError(t, err)
+			require.False(t, success)
+			require.Empty(t, username)
+			require.Nil(t, env)
+			require.Equal(t, []string{"set-item", "authenticate", "acct-mgmt", "end"}, tx.calls)
+		})
+	}
+}
+
+func TestPamAccountOnly(t *testing.T) {
+	tx := &pamTestTransaction{}
+	factory := func(service, user string, handler func(pam.Style, string) (string, error)) (pamTransaction, error) {
+		require.Equal(t, "sshd", service)
+		require.Equal(t, "canonical-user", user)
+		tx.handler = handler
+		return tx, nil
+	}
+
+	success, err := pamAccountForPamHandlerFunc(factory, "sshd", "canonical-user", "203.0.113.9")
+
+	require.NoError(t, err)
+	require.True(t, success)
+	require.Equal(t, pam.Silent, tx.acctMgmtFlags)
+	require.Equal(t, map[pam.Item]string{pam.Rhost: "203.0.113.9"}, tx.items)
+	require.Equal(t, []string{"set-item", "acct-mgmt", "end"}, tx.calls)
+}
+
+func TestPamAccountOnlyDenialsAndFailures(t *testing.T) {
+	for _, denial := range pamTestAccountDenials() {
+		t.Run("denial/"+denial.Error(), func(t *testing.T) {
+			tx := &pamTestTransaction{acctMgmtErr: denial}
+			success, err := pamAccountForPamHandlerFunc(pamTestFactory(tx), "sshd", "canonical-user", "client.example")
+			require.NoError(t, err)
+			require.False(t, success)
+			require.Equal(t, []string{"set-item", "acct-mgmt", "end"}, tx.calls)
+		})
+	}
+
+	failure := errors.New("injected PAM failure")
+	for _, test := range []struct {
+		name          string
+		configure     func(*pamTestTransaction)
+		expectedCalls []string
+	}{
+		{"set item", func(tx *pamTestTransaction) { tx.setItemErr = failure }, []string{"set-item", "end"}},
+		{"account management", func(tx *pamTestTransaction) { tx.acctMgmtErr = pam.ErrSystem }, []string{"set-item", "acct-mgmt", "end"}},
+		{"end", func(tx *pamTestTransaction) { tx.endErr = failure }, []string{"set-item", "acct-mgmt", "end"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tx := &pamTestTransaction{}
+			test.configure(tx)
+			success, err := pamAccountForPamHandlerFunc(pamTestFactory(tx), "sshd", "canonical-user", "client.example")
+			require.Error(t, err)
+			require.False(t, success)
+			require.True(t, berrors.IsType(err, berrors.System))
+			require.Equal(t, test.expectedCalls, tx.calls)
+		})
+	}
+}
+
+func TestPamAccountConversation(t *testing.T) {
+	for _, style := range []pam.Style{pam.ErrorMsg, pam.TextInfo} {
+		response, err := handlePamAccountConversation(style, "message", false, nil)
+		require.NoError(t, err)
+		require.Empty(t, response)
+	}
+	for _, style := range []pam.Style{pam.PromptEchoOff, pam.PromptEchoOn} {
+		_, err := handlePamAccountConversation(style, "Password: ", false, nil)
+		require.ErrorContains(t, err, "unsupported prompt")
+	}
+
+	req := &pamTestInteractiveRequest{}
+	handler := interactiveRequestToPamHandlerFunc(req, func(string, Request) (bool, error) { return true, nil })
+	_, err := handlePamAccountConversation(pam.ErrorMsg, "error", true, handler)
+	require.NoError(t, err)
+	_, err = handlePamAccountConversation(pam.TextInfo, "info", true, handler)
+	require.NoError(t, err)
+	require.Equal(t, []string{"error"}, req.errors)
+	require.Equal(t, []string{"info"}, req.infos)
+}
+
+func TestPamAuthorizeUsesAccountOnlyConversation(t *testing.T) {
+	t.Run("password ignores messages", func(t *testing.T) {
+		tx := &pamTestTransaction{user: "canonical-user", acctMgmtStyles: []pam.Style{pam.ErrorMsg, pam.TextInfo}}
+		baseHandlerCalls := 0
+		_, _, success, err := pamAuthorizeForPamHandlerFunc(pamTestFactoryWithHandler(tx), "sshd", false, func(pam.Style, string) (string, error) {
+			baseHandlerCalls++
+			return "", nil
+		}, "requested-user", "client.example")
+		require.NoError(t, err)
+		require.True(t, success)
+		require.Zero(t, baseHandlerCalls)
+	})
+
+	t.Run("interactive forwards messages", func(t *testing.T) {
+		tx := &pamTestTransaction{user: "canonical-user", acctMgmtStyles: []pam.Style{pam.ErrorMsg, pam.TextInfo}}
+		var styles []pam.Style
+		_, _, success, err := pamAuthorizeForPamHandlerFunc(pamTestFactoryWithHandler(tx), "sshd", true, func(style pam.Style, _ string) (string, error) {
+			styles = append(styles, style)
+			return "", nil
+		}, "requested-user", "client.example")
+		require.NoError(t, err)
+		require.True(t, success)
+		require.Equal(t, []pam.Style{pam.ErrorMsg, pam.TextInfo}, styles)
+	})
+
+	t.Run("prompt fails closed", func(t *testing.T) {
+		tx := &pamTestTransaction{acctMgmtStyles: []pam.Style{pam.PromptEchoOff}}
+		_, _, success, err := pamAuthorizeForPamHandlerFunc(pamTestFactoryWithHandler(tx), "sshd", false, func(pam.Style, string) (string, error) {
+			return "password", nil
+		}, "requested-user", "client.example")
+		require.ErrorContains(t, err, "unsupported prompt")
+		require.False(t, success)
+		require.True(t, berrors.IsType(err, berrors.System))
+	})
 }
 
 func TestPasswordPamConversation(t *testing.T) {
@@ -183,10 +314,14 @@ type pamTestTransaction struct {
 	env             map[string]string
 	setItemErr      error
 	authenticateErr error
+	acctMgmtErr     error
 	getItemErr      error
 	getEnvListErr   error
 	endErr          error
+	handler         func(pam.Style, string) (string, error)
 	calls           []string
+	acctMgmtFlags   pam.Flags
+	acctMgmtStyles  []pam.Style
 }
 
 func (tx *pamTestTransaction) SetItem(item pam.Item, value string) error {
@@ -202,6 +337,17 @@ func (tx *pamTestTransaction) Authenticate(flags pam.Flags) error {
 	tx.calls = append(tx.calls, "authenticate")
 	tx.flags = flags
 	return tx.authenticateErr
+}
+
+func (tx *pamTestTransaction) AcctMgmt(flags pam.Flags) error {
+	tx.calls = append(tx.calls, "acct-mgmt")
+	tx.acctMgmtFlags = flags
+	for _, style := range tx.acctMgmtStyles {
+		if _, err := tx.handler(style, "account message"); err != nil {
+			return err
+		}
+	}
+	return tx.acctMgmtErr
 }
 
 func (tx *pamTestTransaction) GetItem(item pam.Item) (string, error) {
@@ -225,6 +371,31 @@ func (tx *pamTestTransaction) End() error {
 func pamTestFactory(tx pamTransaction) pamTransactionFactory {
 	return func(string, string, func(pam.Style, string) (string, error)) (pamTransaction, error) {
 		return tx, nil
+	}
+}
+
+func pamTestFactoryWithHandler(tx *pamTestTransaction) pamTransactionFactory {
+	return func(_ string, _ string, handler func(pam.Style, string) (string, error)) (pamTransaction, error) {
+		tx.handler = handler
+		return tx, nil
+	}
+}
+
+func pamTestAccountDenials() []error {
+	return []error{
+		pam.ErrPermDenied,
+		pam.ErrAuth,
+		pam.ErrCredInsufficient,
+		pam.ErrAuthinfoUnavail,
+		pam.ErrUserUnknown,
+		pam.ErrMaxtries,
+		pam.ErrNewAuthtokReqd,
+		pam.ErrAcctExpired,
+		pam.ErrCredUnavail,
+		pam.ErrCredExpired,
+		pam.ErrTryAgain,
+		pam.ErrIgnore,
+		pam.ErrAuthtokExpired,
 	}
 }
 

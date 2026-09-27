@@ -29,6 +29,7 @@ type LocalAuthorizer struct {
 	flow           configuration.FlowName
 	conf           *configuration.AuthorizationLocal
 	trustedUserCAs []ssh.PublicKey
+	accountChecker func(string, string) (bool, error)
 
 	Logger log.Logger
 
@@ -120,10 +121,19 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	}
 	candidate.authorizedKeyPolicy = policy
 
+	if !isPublicKeyVerified(req) {
+		return &candidate, nil
+	}
+
+	accountAllowed, err := this.checkAccount(u.Name, req.Connection().Remote().Host().String())
+	if err != nil {
+		return fail(errors.Newf(errors.System, "cannot check PAM account: %w", err))
+	}
+	if !accountAllowed {
+		return Forbidden(req.Connection().Remote()), nil
+	}
+
 	if isCertificate {
-		if !isPublicKeyVerified(req) {
-			return &candidate, nil
-		}
 		sess, err := this.ensureSessionFor(req, u)
 		if err != nil {
 			return fail(err)
@@ -152,6 +162,13 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	}
 
 	return &candidate, nil
+}
+
+func (this *LocalAuthorizer) checkAccount(username, remoteHost string) (bool, error) {
+	if this.accountChecker != nil {
+		return this.accountChecker(username, remoteHost)
+	}
+	return checkLocalAccount(this.conf.PamService, username, remoteHost)
 }
 
 func (this *LocalAuthorizer) authorizedKeyPolicy(req PublicKeyRequest, u *user.User) (*AuthorizedKeyPolicy, bool, bool, error) {
@@ -452,6 +469,13 @@ func (this *LocalAuthorizer) RestoreFromSession(ctx context.Context, sess sessio
 	sla, err := si.LastAccessed(ctx)
 	if err != nil {
 		return failf(errors.System, "cannot retrieve session's last accessed: %w", err)
+	}
+	accountAllowed, err := this.checkAccount(u.Name, sla.Remote().Host().String())
+	if err != nil {
+		return failf(errors.System, "cannot check PAM account: %w", err)
+	}
+	if !accountAllowed {
+		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("local account %q is no longer authorized by PAM", u.Name))
 	}
 
 	return &local{

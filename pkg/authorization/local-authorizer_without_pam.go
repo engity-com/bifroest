@@ -27,3 +27,10 @@ func (this *LocalAuthorizer) assertNoPamServiceConfigured() error {
 	}
 	return nil
 }
+
+func checkLocalAccount(pamService, _, _ string) (bool, error) {
+	if pamService != "" {
+		return false, errors.Config.Newf("this build of Engity's Bifröst does not support PAM, so configuration parameter pamService must be empty; got: %q", pamService)
+	}
+	return true, nil
+}
