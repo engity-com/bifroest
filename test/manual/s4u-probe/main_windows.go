@@ -64,6 +64,14 @@ type tokenSource struct {
 	ID   luid
 }
 
+type containerTestUserInfo struct {
+	Name, Password    *uint16
+	PasswordAge, Priv uint32
+	HomeDir, Comment  *uint16
+	Flags             uint32
+	ScriptPath        *uint16
+}
+
 func main() {
 	var err error
 	switch {
@@ -73,6 +81,12 @@ func main() {
 		err = run(os.Args[2], targetUser)
 	case len(os.Args) == 4 && os.Args[1] == "run-test":
 		err = run(os.Args[2], os.Args[3])
+	case len(os.Args) == 3 && os.Args[1] == "run-container-test":
+		var account string
+		account, err = prepareContainerTestUser()
+		if err == nil {
+			err = run(os.Args[2], account)
+		}
 	case len(os.Args) == 4 && os.Args[1] == "service":
 		err = svc.Run(os.Args[2], &probeService{resultPath: os.Args[3]})
 	case len(os.Args) == 6 && os.Args[1] == "service":
@@ -84,12 +98,80 @@ func main() {
 			fmt.Println(sid)
 		}
 	default:
-		err = fmt.Errorf("usage: %s run | run-test <windows environment test binary> [local account]", os.Args[0])
+		err = fmt.Errorf("usage: %s run | run-test <windows environment test binary> [local account] | run-container-test <windows environment test binary>", os.Args[0])
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func prepareContainerTestUser() (string, error) {
+	if os.Getenv("BIFROEST_TEST_NANOSERVER_IN_CONTAINER") != "1" {
+		return "", fmt.Errorf("container-only test account creation was not explicitly enabled")
+	}
+	sid, err := currentSID()
+	if err != nil {
+		return "", err
+	}
+	if sid != "S-1-5-93-2-1" { // ContainerAdministrator, never the host Administrator.
+		return "", fmt.Errorf("container test account creation requires ContainerAdministrator, got %s", sid)
+	}
+	add := windows.NewLazySystemDLL("netapi32.dll").NewProc("NetUserAdd")
+	if err := add.Find(); err != nil {
+		return "", fmt.Errorf("NetUserAdd unavailable in Nano Server: %w", err)
+	}
+	createProfile := windows.NewLazySystemDLL("userenv.dll").NewProc("CreateProfile")
+	if err := createProfile.Find(); err != nil {
+		return "", fmt.Errorf("CreateProfile unavailable in Nano Server: %w", err)
+	}
+	var nonce [8]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return "", err
+	}
+	name := "bif" + hex.EncodeToString(nonce[:])
+	var secret [32]byte
+	if _, err := rand.Read(secret[:]); err != nil {
+		return "", err
+	}
+	username, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		return "", err
+	}
+	password, err := windows.UTF16PtrFromString("T3st!" + hex.EncodeToString(secret[:]) + "X")
+	if err != nil {
+		return "", err
+	}
+	info := containerTestUserInfo{Name: username, Password: password, Priv: 1, Flags: 0x201} // USER_PRIV_USER, UF_SCRIPT | UF_NORMAL_ACCOUNT.
+	var invalidParameter uint32
+	status, _, _ := add.Call(0, 1, uintptr(unsafe.Pointer(&info)), uintptr(unsafe.Pointer(&invalidParameter)))
+	runtime.KeepAlive(username)
+	runtime.KeepAlive(password)
+	if status != 0 {
+		return "", fmt.Errorf("NetUserAdd: %w (parameter %d)", syscall.Errno(status), invalidParameter)
+	}
+	host, err := os.Hostname()
+	if err != nil {
+		return "", err
+	}
+	accountSID, domain, kind, err := windows.LookupSID("", host+`\`+name)
+	if err != nil || kind != windows.SidTypeUser || !strings.EqualFold(domain, host) {
+		return "", fmt.Errorf("container test account %q is not a local SAM user: %v", name, err)
+	}
+	sidText, err := windows.UTF16PtrFromString(accountSID.String())
+	if err != nil {
+		return "", err
+	}
+	profile := make([]uint16, 1024)
+	hresult, _, _ := createProfile.Call(uintptr(unsafe.Pointer(sidText)), uintptr(unsafe.Pointer(username)),
+		uintptr(unsafe.Pointer(&profile[0])), uintptr(len(profile)))
+	runtime.KeepAlive(sidText)
+	runtime.KeepAlive(username)
+	runtime.KeepAlive(profile)
+	if hresult != 0 {
+		return "", fmt.Errorf("CreateProfile for %q: HRESULT 0x%08x", name, uint32(hresult))
+	}
+	return name, nil
 }
 
 func run(testBinary, user string) error {

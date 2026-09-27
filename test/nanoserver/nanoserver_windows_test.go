@@ -99,7 +99,7 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 		}
 	})
 	t.Run("s4u-and-local-pty", func(t *testing.T) {
-		dockerRun(t, []string{"--user", "ContainerAdministrator"},
-			`C:\smoke\s4u-probe.exe`, "run-test", `C:\smoke\environment.test.exe`, "ContainerUser")
+		dockerRun(t, []string{"--user", "ContainerAdministrator", "--env", "BIFROEST_TEST_NANOSERVER_IN_CONTAINER=1"},
+			`C:\smoke\s4u-probe.exe`, "run-container-test", `C:\smoke\environment.test.exe`)
 	})
 }
