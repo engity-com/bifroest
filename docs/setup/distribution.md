@@ -11,7 +11,8 @@ On this page you'll find:
 
 1. [Operating Systems](#os)
     1. [Linux](#linux)
-    2. [Windows](#windows)
+    2. [macOS](#darwin)
+    3. [Windows](#windows)
 2. [Packaging](#packaging)
     1. [Archives](#archive)
     2. [OCI/Docker Images](#image)
@@ -23,7 +24,7 @@ On this page you'll find:
 
 ## Operating Systems {: #os}
 
-Bifröst is currently available for [Linux](#linux) and [Windows](#windows).
+Bifröst is currently available for [Linux](#linux), [macOS](#darwin) and [Windows](#windows).
 
 ### Linux {: #linux}
 
@@ -54,6 +55,14 @@ It does provide the following features:
    ```
 * **RedHat/Fedora**: Already installed by default.
 
+### macOS {: #darwin}
+
+#### Generic {: #darwin-generic}
+Not available.
+
+#### Extended {: #darwin-extended}
+The extended macOS distribution supports Apple silicon (`arm64`) on macOS 13 and later. No generic macOS distribution is available.
+
 ### Windows {: #windows}
 
 #### Generic {: #windows-generic}
@@ -82,6 +91,10 @@ See the [release page](<< release_url() >>) for all available downloads.
     ```plain
     <<release_asset_url("bifroest-linux-<arch>-<edition>.tgz")>>
     ```
+* macOS:
+    ```plain
+    <<release_asset_url("bifroest-darwin-arm64-extended.tgz")>>
+    ```
 * Windows:
     ```plain
     <<release_asset_url("bifroest-windows-<arch>-<edition>.zip")>>
@@ -94,6 +107,11 @@ See the [release page](<< release_url() >>) for all available downloads.
     curl -sSLf <<release_asset_url("bifroest-linux-amd64-extended.tgz")>> | sudo tar -zxv -C /usr/bin bifroest
     ```
 
+* macOS Extended on ARM64:
+    ```shell
+    curl -sSLf <<release_asset_url("bifroest-darwin-arm64-extended.tgz")>> | sudo tar -zxv -C /usr/local/bin bifroest
+    ```
+
 * Windows Generic on AMD64:
     ```{.powershell title="Run elevated"}
     mkdir -Force 'C:\Program Files\Engity\Bifroest'
@@ -104,6 +122,8 @@ See the [release page](<< release_url() >>) for all available downloads.
 ### OCI/Docker Images {: #image}
 
 Bifröst is also available in OCI/Docker images. You just need to mount a valid configuration into the container.
+
+There is no Darwin OCI image. On macOS, use the native archive or run a supported Linux image through a container runtime.
 
 See the [container registry page](<< container_packages_url() >>) for all available tags.
 
@@ -148,6 +168,11 @@ SBOMs alongside its archives. Archive SBOMs describe the downloadable archive;
 OCI SBOMs describe the indicated platform image within the multi-platform OCI
 index. They are intentionally separate because their package inventories and
 subject digests can differ.
+
+The `darwin/arm64/extended` release variant therefore includes
+`bifroest-darwin-arm64-extended.tgz`, its `.third-party-notices.txt` file, and
+the archive's `.spdx.json` and `.cdx.json` SBOMs. It has no OCI image or OCI
+SBOMs.
 
 The [release manifest](<<release_asset_url("bifroest-release-manifest.json")>>)
 relates every artifact to its platform, edition, media type and SHA-256 digest.

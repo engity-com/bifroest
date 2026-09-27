@@ -20,6 +20,7 @@ Configuration file to load.
 The default depends on the platform:
 
 * Linux: `/etc/engity/bifroest/configuration.yaml`
+* macOS: `/Library/Application Support/Engity/Bifroest/configuration.yaml`
 * Windows: `C:\ProgramData\Engity\Bifroest\configuration.yaml`
 
 <<flag("serviceName", "string", default="engity-bifroest", id_prefix="run-", heading=3)>>

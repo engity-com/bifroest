@@ -10,6 +10,8 @@ Defines the behavior of the SSH protocol for a user who is connecting to Bifrös
 <<property("addresses", array_ref("Net Address", "../data-type.md#net-address"), default=[":22"])>>
 To which address the service will bind and listen to.
 
+For a native macOS installation, `127.0.0.1:2222` is a useful initial listener: it avoids a collision with macOS Remote Login on port `22`, does not require a privileged port, and is reachable only from the Mac itself. Connect with `ssh -p 2222 <user>@127.0.0.1`. Change the bind address only after applying the intended host firewall and authorization policy. The default remains `:22` on every platform.
+
 <<property("keys", "Keys", "#keys")>>
 See [below](#keys).
 
@@ -144,6 +146,7 @@ Where to store the host keys at. If they do not exist, they will be created as E
 Default Locations:
 
 * Linux: `/etc/engity/bifroest/key`
+* Darwin: `/Library/Application Support/Engity/Bifroest/key`
 * Windows: `C:\ProgramData\Engity\Bifroest\key`
 
 <<property("exchanges", "Exchanges", "../data-type.md#ssh-key-exchange", default=["curve25519-sha256@libssh.org", "curve25519-sha256", "diffie-hellman-group16-sha512", "mlkem768x25519-sha256"], heading=4, id_prefix="keys-")>>
@@ -259,6 +262,6 @@ preparationMessages:
 
 ## Compatibility
 
-| <<dist("linux")>> | <<dist("windows")>> |
-| - | - |
-| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"windows")>> |
+| <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
+| - | - | - |
+| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(None,True,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |

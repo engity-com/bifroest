@@ -25,21 +25,27 @@ Contains files with the format of classic [authorized keys](../data-type.md#auth
 
 An entry with the `cert-authority` option treats its key as a user certificate authority for that local user. The optional `principals="..."` option restricts it further. An empty `authorizedKeys` list does not disable certificate authentication through `trustedUserCAs` or `trustedUserCAsFile`.
 
+On Linux and Darwin, every rendered path must be absolute. Bifröst opens each path component without following symbolic links and accepts only components owned by root or the target user and not writable by group or others. The final file must be a regular file owned by root or the target user, have exactly one hard link, and be no larger than 16 MiB. A missing file is treated as an optional absent key source.
+
 <<property("password", "Password", "#password")>>
 See [below](#password).
 
 <<property("pamService", "string", default="<os and edition specific>")>>
 If set to a non-empty value, this [PAM](https://wiki.archlinux.org/title/PAM) service will be directly used during the authorization process instead of `/etc/passwd` and `/etc/shadow`.
 
+PAM password and keyboard-interactive authentication runs both authentication and account-management checks. A verified public key also has to pass PAM account management before it is accepted, and the check is repeated when a stored local authorization is restored. Account-management policy can therefore reject an otherwise valid password or key because, for example, the account is expired or administratively disabled.
+
+On Darwin, the released extended binary includes PAM and fails closed when `pamService` is empty: password authentication, keyboard-interactive authentication, verified public keys, and restored sessions cannot complete the required local account check. The default `sshd` service uses `/etc/pam.d/sshd`; review that service's policy before exposing Bifröst.
+
 ##### Default settings
 
-| <<dist("linux","extended")>> | <<else_ref()>> |
-| - | - |
-| `sshd` | _empty_ |
+| <<dist("linux","extended")>> | <<dist("darwin","extended")>> | <<else_ref()>> |
+| - | - | - |
+| `sshd` | `sshd` | _empty_ |
 
 ## Password
 
-The password can either be validated via `/etc/passwd` and `/etc/shadow` (default) or via PAM (if [`pamService`](#property-pamService) is set to a valid value).
+On Linux, the password can be validated via `/etc/passwd` and `/etc/shadow` when [`pamService`](#property-pamService) is empty, or via PAM when it is set. A PAM-enabled Darwin build requires a non-empty service and has no local password-repository fallback.
 
 ### Properties {. #password-properties}
 
@@ -72,7 +78,7 @@ User certificates must be current, signed by the selected CA, have the requested
 
 ## Compatibility
 
-| Feature | <<dist("linux")>> | <<dist("windows")>> |
-| - | - | - |
-| [PAM](#property-pamService) | <<compatibility_editions(False,True,"linux")>> | <<compatibility_editions(False,None,"windows")>> |
-| <<else_ref()>> | <<compatibility_editions(True,True,"windows")>> | <<compatibility_editions(False,None,"windows")>> |
+| Feature | <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
+| - | - | - | - |
+| [PAM](#property-pamService) | <<compatibility_editions(False,True,"linux")>> | <<compatibility_editions(None,True,"darwin")>> | <<compatibility_editions(False,None,"windows")>> |
+| <<else_ref()>> | <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(None,True,"darwin")>> | <<compatibility_editions(False,None,"windows")>> |

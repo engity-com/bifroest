@@ -210,6 +210,6 @@ deleteOnDispose: "{{.user.managed}}"
 
 ## Compatibility
 
-| <<dist("linux")>> | <<dist("windows")>> |
-| - | - |
-| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"windows")>> |
+| <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
+| - | - | - |
+| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(None,True,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |

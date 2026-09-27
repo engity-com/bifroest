@@ -17,7 +17,7 @@ toc_depth: 3
 
     #### Syntax
     ```shell
-    curl -sSLf <<release_asset_url("bifroest-windows-<arch>-<edition>.tgz")>> | sudo tar -zxv -C /usr/bin bifroest
+    curl -sSLf <<release_asset_url("bifroest-linux-<arch>-<edition>.tgz")>> | sudo tar -zxv -C /usr/bin bifroest
     ```
 
     #### Matrix
@@ -58,8 +58,39 @@ toc_depth: 3
 
 6. Now you can log in to Bifröst the first time:
    ```shell
-   ssh demo@localhost
-   ```
+    ssh demo@localhost
+    ```
+
+## macOS
+
+This guide supports Apple silicon (`arm64`) on macOS 13 and later.
+
+!!! warning
+     macOS Remote Login normally listens on port `22`. Stop Remote Login before configuring Bifröst on port `22`, or use another port. The steps below use port `2222` so both servers can run at the same time.
+
+1. Download and install the extended Bifröst archive:
+    ```shell
+    curl -sSLf <<release_asset_url("bifroest-darwin-arm64-extended.tgz")>> | sudo tar -zxv -C /usr/local/bin bifroest
+    ```
+
+2. Create the native configuration directory and install the [native macOS example](<<asset_url("contrib/configurations/native-macos.yaml")>>) (see the [configuration documentation](../reference/configuration.md)):
+    ```shell
+    sudo mkdir -p '/Library/Application Support/Engity/Bifroest'
+    sudo curl -sSLf <<asset_url("contrib/configurations/native-macos.yaml", True)>> -o '/Library/Application Support/Engity/Bifroest/configuration.yaml'
+    sudo vi '/Library/Application Support/Engity/Bifroest/configuration.yaml'
+    ```
+
+    Replace the example account `alice` with the controlled existing macOS account that should be reachable. The example listens only on `127.0.0.1:2222`; change the address only after applying the intended firewall and authorization policy.
+
+3. Start Bifröst manually as root. No macOS service is installed by the archive:
+    ```shell
+    sudo /usr/local/bin/bifroest run
+    ```
+
+4. In another terminal, log in using the configured port:
+    ```shell
+    ssh -p 2222 demo@localhost
+    ```
 
 ## Windows
 

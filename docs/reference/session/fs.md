@@ -30,13 +30,14 @@ The storage must not overlap an enabled audit log's journal, signing identity, e
 The default value is different, depending on the platform Bifröst runs on:
 
 * Linux: `/var/lib/engity/bifroest/sessions`
-* Window: `C:\ProgramData\Engity\Bifroest\sessions`
+* macOS: `/Library/Application Support/Engity/Bifroest/sessions`
+* Windows: `C:\ProgramData\Engity\Bifroest\sessions`
 
 <<property("fileMode", "File Mode", "../data-type.md#file-mode", default="0600")>>
 All files/directories inside the session storage will be stored with this mode. Directories will always get the executable bit.
 
 ## Compatibility
 
-| <<dist("linux")>> | <<dist("windows")>> |
-| - | - |
-| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"windows")>> |
+| <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
+| - | - | - |
+| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(None,True,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |

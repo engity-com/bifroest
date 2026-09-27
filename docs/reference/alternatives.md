@@ -23,4 +23,5 @@ A file that already exists, will not be downloaded again.
 The default value is different, depending on the platform Bifröst runs on:
 
 * Linux: `/var/lib/engity/bifroest/binaries/{{.version}}/{{.os}}-{{.arch}}-{{.edition}}{{.ext}}`
-* Window: `C:\ProgramData\Engity\Bifroest\binaries\{{.version}}\{{.os}}-{{.arch}}-{{.edition}}{{.ext}}`
+* macOS: `/Library/Application Support/Engity/Bifroest/binaries/{{.version}}/{{.os}}-{{.arch}}-{{.edition}}{{.ext}}`
+* Windows: `C:\ProgramData\Engity\Bifroest\binaries\{{.version}}\{{.os}}-{{.arch}}-{{.edition}}{{.ext}}`

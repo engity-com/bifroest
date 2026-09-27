@@ -115,6 +115,8 @@ Empty always defaults to `["default"]`.
 !!! note
      As long as [`impPublishHost`](#property-impPublishHost) isn't set, the **first** network should be always reachable by Bifröst itself. This can be either the case if Bifröst itself runs inside of Docker (Bifröst in Docker) or it runs on the host machine and there is a valid route (which is the default Linux native, but not on Docker/Podman for Desktop).
 
+     Docker Desktop on macOS runs the Docker daemon and Linux containers inside a virtual machine. A Bifröst process running natively on macOS normally cannot route directly to a container's VM-internal bridge address, even though it can reach the Docker API socket. Configure [`impPublishHost`](#property-impPublishHost) so Bifröst uses a dynamically published host port for the IMP connection.
+
 <<property("volumes", array_ref("string"), template_context="../context/authorization.md")>>
 Defines which volumes should be mounted into the container. Each entry is an individual mount statement.
 
@@ -196,7 +198,7 @@ Each container accepts at most 64 simultaneous reverse-forwarded TCP connections
 
 On Linux, reverse TCP ports 1-1023 require a target user with UID 0 (for example `user: root` or `user: "0"`). An empty `user` setting is also permitted when the resolved image user is root. An unresolvable user cannot authorize these ports. Port `0` and ports 1024 and above are unchanged. Windows containers do not have this restriction.
 
-<<property("impPublishHost", "string")>>
+<<property("impPublishHost", "Host", "../data-type.md#host")>>
 If this property is set, only the IMP port `8683` is published with a dynamically allocated host port in addition to being exposed on the container network. Other ports declared with the image's `EXPOSE` instruction are not published automatically.
 
 At this address Bifröst will then connect to the published IMP port. The value is not passed to the Docker daemon as a host-interface binding; the daemon chooses the publish interface according to its own defaults. This property is static and does not support template evaluation.
@@ -205,6 +207,16 @@ At this address Bifröst will then connect to the published IMP port. The value 
      To set this property makes only sense as long you have a firewall in place, which prevents external attackers to connect to the host ports, and you have no other choice. Usually Bifröst can connect via the container networks to IMP directly (see [`networks`](#property-networks)).
 
 This is usually required, if you run Bifröst on a Docker/Podman for Desktop installation (such as on Windows or macOS) where the Docker daemon does not run on the host directly, but inside a virtual machine.
+
+For Bifröst running natively on the same Mac as Docker Desktop, use:
+
+```yaml
+type: docker
+image: alpine
+impPublishHost: 127.0.0.1
+```
+
+Docker publishes only the container's IMP port `8683` to a dynamic host port, and Bifröst connects to that port at `127.0.0.1`. `impPublishHost` selects the address Bifröst dials; it does not request a Docker bind address. If Bifröst itself runs in a container instead, use an address reachable from that container, commonly `host.docker.internal`, and apply firewall rules appropriate to the daemon's publish behavior.
 
 <<property("cleanOrphan", "bool", template_context="../context/container.md", default=True)>>
 While the [housekeeping iterations](../housekeeping.md) this environment will look for containers that can be inspected by its docker daemon connection if there is any container that does not belong to any flow of this Bifröst instance.
@@ -285,6 +297,6 @@ Holds the tag of the image to be downloaded.
 
 ## Compatibility
 
-| <<dist("linux")>> | <<dist("windows")>> |
-| - | - |
-| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"windows")>> |
+| <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
+| - | - | - |
+| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(None,True,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |

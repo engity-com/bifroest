@@ -4,6 +4,8 @@
 
 Bifröst (spoken as "Bee-frest"), is an advanced SSH server. It can be used as a drop-in-replacement for [OpenSSH Server](https://www.openssh.com/), but it was actually created with some more advanced stuff in mind; see below.
 
+Native archives are available for Linux and Windows, and an extended-edition archive is available for Apple silicon (`arm64`) Macs running macOS 13 or later. See the [distribution matrix](https://bifroest.engity.org/setup/distribution/) for editions and OCI image availability.
+
 ## TOC
 
 * [Use-cases](https://bifroest.engity.org/usecases/)
@@ -51,6 +53,8 @@ If authorized via another authentication token then a Public Key, it can store (
 If a local environment is used where the user executes inside and [OpenID Connect](#openid-connect) was used to authorize a user, Bifröst can automatically create these users based on a defined requirement template.
 
 It can also automatically clean up these users as they're no longer needed, for example: If their session becoming idle and times out (30 minutes). In this case the user itself, its home directory and all running processes can be cleaned up.
+
+Automatic local-account provisioning is available on Linux. Native macOS operation is read-only and requires a pre-provisioned account.
 
 #### More to come...
 

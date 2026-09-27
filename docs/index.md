@@ -10,6 +10,8 @@ description: Bifröst is a highly customizable SSH server with several ways to a
 
 Bifröst (spoken as "Bee-frest"), is a highly customizable SSH server with several ways to authorize a user and where and how to execute its session. It can be used as a drop-in-replacement for [OpenSSH's sshd](https://man.openbsd.org/sshd)[^openssh-compatibility], but it was actually created with some more advanced stuff in mind; see below.
 
+Native archives are available for Linux and Windows, and an extended-edition archive is available for Apple silicon (`arm64`) Macs running macOS 13 or later. See [Distributions](setup/distribution.md) for the edition and packaging matrix.
+
 [^openssh-compatibility]: Bifröst supports the vast majority of common OpenSSH setups. Only a small number of specialized edge cases are not supported, including some `authorized_keys` options such as `no-touch-required`.
 
 ## Features
@@ -40,6 +42,8 @@ Once authenticated using a public key, Bifröst can (temporarily) store that pub
 If a user needs to be authorized in a local environment using [OpenID Connect](#openid-connect), Bifröst can automatically create a local user based on a pre-defined requirement template.
 
 Bifröst can also automatically clean up these local users once they are no longer needed. For example: If their session times out after a defined idle-time, the local user, their home directory, and all running processes can be cleaned up.
+
+Automatic local-account provisioning is available on Linux. Native macOS operation is read-only and requires a pre-provisioned account.
 
 ### More to come...
 

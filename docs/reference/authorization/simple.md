@@ -66,6 +66,8 @@ This feature usually only makes sense for cases where you want to create dummy c
 
 This authorization will produce a context of type [Authorization Simple](../context/authorization.md#simple).
 
+When this authorization is paired with a native Darwin [local environment](../environment/local.md), the selected target must already be a local account. Map the entry explicitly with `name: "{{.authorization.entry.name}}"`, or omit the environment `name` to use the incoming SSH username. The mapping does not create a macOS account.
+
 ## Examples
 
 1. Using [plain password](#entry-property-password):
@@ -96,6 +98,6 @@ User certificates must be current, signed by the selected CA, have the requested
 
 ## Compatibility
 
-| <<dist("linux")>> | <<dist("windows")>> |
-| - | - |
-| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"windows")>> |
+| <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
+| - | - | - |
+| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(None,True,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |

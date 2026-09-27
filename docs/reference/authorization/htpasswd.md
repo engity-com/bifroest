@@ -18,7 +18,8 @@ A file where each line contains an entry in [htpasswd format](#format).
 The default value varies depending on the platform Bifröst runs on:
 
 * Linux: `/etc/engity/bifroest/htpasswd`
-* Window: `C:\ProgramData\Engity\Bifroest\htpasswd`
+* Darwin: `/Library/Application Support/Engity/Bifroest/htpasswd`
+* Windows: `C:\ProgramData\Engity\Bifroest\htpasswd`
 
 #### Examples {: id=property-file-examples }
 ```{.yaml title="/etc/engity/bifroest/htpasswd"}
@@ -84,6 +85,6 @@ This authorization will produce a context of type [Authorization Htpasswd](../co
 
 ## Compatibility
 
-| <<dist("linux")>> | <<dist("windows")>> |
-| - | - |
-| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"windows")>> |
+| <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
+| - | - | - |
+| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(None,True,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |
