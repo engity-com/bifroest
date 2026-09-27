@@ -14,7 +14,8 @@ import (
 )
 
 var (
-	ErrUnknownSignal = errors.New("unknown signal")
+	ErrUnknownSignal     = errors.New("unknown signal")
+	ErrUnsupportedSignal = errors.New("unsupported signal")
 )
 
 type Signal uint16
@@ -97,8 +98,18 @@ func (this Signal) IsZero() bool {
 	return this == 0
 }
 
-func (this Signal) Native() syscall.Signal {
-	return syscall.Signal(this)
+func (this Signal) Native() (syscall.Signal, error) {
+	if result, ok := signalToNative(this); ok {
+		return result, nil
+	}
+	return 0, fmt.Errorf("%w: %s", ErrUnsupportedSignal, this)
+}
+
+func SignalFromNative(signal syscall.Signal) (Signal, error) {
+	if result, ok := signalFromNative(signal); ok {
+		return result, nil
+	}
+	return 0, fmt.Errorf("%w: %d", ErrUnsupportedSignal, signal)
 }
 
 func (this Signal) IsEqualTo(other any) bool {
@@ -108,9 +119,11 @@ func (this Signal) IsEqualTo(other any) bool {
 	case *Signal:
 		return this == *v
 	case syscall.Signal:
-		return this.Native() == v
+		native, err := this.Native()
+		return err == nil && native == v
 	case *syscall.Signal:
-		return this.Native() == *v
+		native, err := this.Native()
+		return err == nil && native == *v
 	default:
 		return false
 	}

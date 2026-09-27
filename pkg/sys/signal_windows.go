@@ -65,7 +65,30 @@ func (this Signal) sendToProcess(p *os.Process) error {
 	if this == SIGINT {
 		return this.sendIntToPid(p.Pid)
 	}
-	return p.Signal(this.Native())
+	native, err := this.Native()
+	if err != nil {
+		return err
+	}
+	return p.Signal(native)
+}
+
+func signalToNative(signal Signal) (syscall.Signal, bool) {
+	if signal == 0 {
+		return 0, true
+	}
+	if _, ok := signalToStr[signal]; !ok {
+		return 0, false
+	}
+	return syscall.Signal(signal), true
+}
+
+func signalFromNative(signal syscall.Signal) (Signal, bool) {
+	result := Signal(signal)
+	if signal == 0 {
+		return result, true
+	}
+	_, ok := signalToStr[result]
+	return result, ok
 }
 
 func (this Signal) sendIntToPid(pid int) error {

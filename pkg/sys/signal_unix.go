@@ -8,39 +8,40 @@ import (
 )
 
 const (
-	SIGABRT   = Signal(syscall.SIGABRT)
-	SIGALRM   = Signal(syscall.SIGALRM)
-	SIGBUS    = Signal(syscall.SIGBUS)
-	SIGCHLD   = Signal(syscall.SIGCHLD)
-	SIGCLD    = Signal(syscall.SIGCLD)
-	SIGCONT   = Signal(syscall.SIGCONT)
-	SIGFPE    = Signal(syscall.SIGFPE)
-	SIGHUP    = Signal(syscall.SIGHUP)
-	SIGILL    = Signal(syscall.SIGILL)
-	SIGINT    = Signal(syscall.SIGINT)
-	SIGIO     = Signal(syscall.SIGIO)
-	SIGIOT    = Signal(syscall.SIGIOT)
-	SIGKILL   = Signal(syscall.SIGKILL)
-	SIGPIPE   = Signal(syscall.SIGPIPE)
-	SIGPOLL   = Signal(syscall.SIGPOLL)
-	SIGPROF   = Signal(syscall.SIGPROF)
-	SIGPWR    = Signal(syscall.SIGPWR)
-	SIGQUIT   = Signal(syscall.SIGQUIT)
-	SIGSEGV   = Signal(syscall.SIGSEGV)
-	SIGSTOP   = Signal(syscall.SIGSTOP)
-	SIGSYS    = Signal(syscall.SIGSYS)
-	SIGTERM   = Signal(syscall.SIGTERM)
-	SIGTRAP   = Signal(syscall.SIGTRAP)
-	SIGTSTP   = Signal(syscall.SIGTSTP)
-	SIGTTIN   = Signal(syscall.SIGTTIN)
-	SIGTTOU   = Signal(syscall.SIGTTOU)
-	SIGURG    = Signal(syscall.SIGURG)
-	SIGUSR1   = Signal(syscall.SIGUSR1)
-	SIGUSR2   = Signal(syscall.SIGUSR2)
-	SIGVTALRM = Signal(syscall.SIGVTALRM)
-	SIGWINCH  = Signal(syscall.SIGWINCH)
-	SIGXCPU   = Signal(syscall.SIGXCPU)
-	SIGXFSZ   = Signal(syscall.SIGXFSZ)
+	// Signal values are part of the Bifroest protocol and stay compatible with Linux.
+	SIGHUP    = Signal(1)
+	SIGINT    = Signal(2)
+	SIGQUIT   = Signal(3)
+	SIGILL    = Signal(4)
+	SIGTRAP   = Signal(5)
+	SIGABRT   = Signal(6)
+	SIGIOT    = SIGABRT
+	SIGBUS    = Signal(7)
+	SIGFPE    = Signal(8)
+	SIGKILL   = Signal(9)
+	SIGUSR1   = Signal(10)
+	SIGSEGV   = Signal(11)
+	SIGUSR2   = Signal(12)
+	SIGPIPE   = Signal(13)
+	SIGALRM   = Signal(14)
+	SIGTERM   = Signal(15)
+	SIGCHLD   = Signal(17)
+	SIGCLD    = SIGCHLD
+	SIGCONT   = Signal(18)
+	SIGSTOP   = Signal(19)
+	SIGTSTP   = Signal(20)
+	SIGTTIN   = Signal(21)
+	SIGTTOU   = Signal(22)
+	SIGURG    = Signal(23)
+	SIGXCPU   = Signal(24)
+	SIGXFSZ   = Signal(25)
+	SIGVTALRM = Signal(26)
+	SIGPROF   = Signal(27)
+	SIGWINCH  = Signal(28)
+	SIGIO     = Signal(29)
+	SIGPOLL   = SIGIO
+	SIGPWR    = Signal(30)
+	SIGSYS    = Signal(31)
 )
 
 var (
@@ -82,9 +83,17 @@ var (
 )
 
 func (this Signal) sendToProcess(p *os.Process) error {
-	return p.Signal(this.Native())
+	native, err := this.Native()
+	if err != nil {
+		return err
+	}
+	return p.Signal(native)
 }
 
 func (this Signal) sendToPid(pid int) error {
-	return syscall.Kill(pid, this.Native())
+	native, err := this.Native()
+	if err != nil {
+		return err
+	}
+	return syscall.Kill(pid, native)
 }

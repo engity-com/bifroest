@@ -121,7 +121,10 @@ func doDlv(addr string, wait bool, args []string) (rErr error) {
 				if !ok {
 					continue
 				}
-				sig := sys.Signal(scs)
+				sig, err := sys.SignalFromNative(scs)
+				if err != nil {
+					continue
+				}
 				_ = sig.SendToPid(pid)
 			}
 		}

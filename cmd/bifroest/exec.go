@@ -229,7 +229,12 @@ func doExec(opts *execOpts) error {
 					log.With("signal", plain).Warn("cannot forward unknown signal")
 					continue
 				}
-				_ = signalExecCmd(&cmd, sys.Signal(scs))
+				forwarded, err := sys.SignalFromNative(scs)
+				if err != nil {
+					log.With("signal", plain).Warn("cannot forward unsupported signal")
+					continue
+				}
+				_ = signalExecCmd(&cmd, forwarded)
 			}
 		}
 	}()

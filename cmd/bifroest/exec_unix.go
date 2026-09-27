@@ -58,7 +58,11 @@ func signalExecCmd(cmd *exec.Cmd, signal sys.Signal) error {
 	if cmd.Process == nil {
 		return nil
 	}
-	return syscall.Kill(-cmd.Process.Pid, signal.Native())
+	native, err := signal.Native()
+	if err != nil {
+		return err
+	}
+	return syscall.Kill(-cmd.Process.Pid, native)
 }
 
 func execExitCode(err *exec.ExitError) int {

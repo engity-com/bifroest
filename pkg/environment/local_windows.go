@@ -201,7 +201,11 @@ func (this *local) startedProcessGroupID(_ *exec.Cmd) int {
 
 func (this *local) signal(cmd *exec.Cmd, _ int, logger log.Logger, signal essh.Signal) {
 	err := signalProcessFromSsh(signal, func(sig sys.Signal) error {
-		return cmd.Process.Signal(sig.Native())
+		native, err := sig.Native()
+		if err != nil {
+			return err
+		}
+		return cmd.Process.Signal(native)
 	})
 	if errors.Is(err, os.ErrProcessDone) {
 		// Ignored.
