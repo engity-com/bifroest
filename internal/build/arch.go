@@ -110,10 +110,7 @@ var (
 			sys.OsWindows: {fromImage: fromDefaultWindows},
 		}},
 		sys.ArchArmV6: {arm: "6", os: map[sys.Os]archOsDetails{
-			sys.OsLinux: {fromImage: fromDefaultLinux, build: map[archBuildKey]archBuildDetails{
-				{sys.OsLinux, sys.ArchAmd64}:   {"arm-linux-gnueabihf-gcc"},
-				{sys.OsWindows, sys.ArchAmd64}: {},
-			}},
+			sys.OsLinux: {fromImage: fromDefaultLinux},
 		}},
 		sys.ArchArmV7: {arm: "7", os: map[sys.Os]archOsDetails{
 			sys.OsLinux: {fromImage: fromDefaultLinux, fromImageExtended: fromDefaultLinuxExtended, build: map[archBuildKey]archBuildDetails{

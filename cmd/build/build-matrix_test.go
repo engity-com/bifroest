@@ -19,7 +19,7 @@ func TestBuildMatricesAssignEveryBinaryPlatformToExactlyOneJob(t *testing.T) {
 	require.Equal(t, []buildTestMatrixEntry{{Os: "windows", Runner: "windows-latest"}}, matrices.TestHost.Include)
 	require.Equal(t, []buildTestMatrixEntry{{Os: "linux", Runner: "ubuntu-latest", Image: binaryLinuxExtendedImage}}, matrices.TestContainer.Include)
 	require.Len(t, matrices.Host.Include, 8)
-	require.Len(t, matrices.Container.Include, 5)
+	require.Len(t, matrices.Container.Include, 4)
 
 	assigned := make(map[string]bool)
 	for _, entry := range matrices.Host.Include {
@@ -41,7 +41,7 @@ func TestBuildMatricesAssignEveryBinaryPlatformToExactlyOneJob(t *testing.T) {
 	}
 	require.True(t, assigned["linux/armv6/generic"])
 	require.True(t, assigned["linux/riscv64/generic"])
-	require.True(t, assigned["linux/armv6/extended"])
+	require.False(t, assigned["linux/armv6/extended"])
 	require.False(t, assigned["linux/riscv64/extended"])
 }
 
