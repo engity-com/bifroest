@@ -15,17 +15,19 @@ on:
         required: true
 
 jobs:
-  release:
-    name: "Release"
+  evaluate:
+    name: "Evaluate"
     runs-on: ubuntu-latest
     outputs:
       release_tag: ${{ steps.release-version.outputs.release_tag }}
       version: ${{ steps.release-version.outputs.version }}
+      commit: ${{ steps.refs.outputs.commit }}
+      test-host-matrix: ${{ steps.refs.outputs.test-host-matrix }}
+      test-container-matrix: ${{ steps.refs.outputs.test-container-matrix }}
+      binary-host-matrix: ${{ steps.refs.outputs.binary-host-matrix }}
+      binary-container-matrix: ${{ steps.refs.outputs.binary-container-matrix }}
     permissions:
-      contents: write
-      packages: write
-    container:
-      image: ghcr.io/engity-com/build-images/build:debian12@sha256:94b2f0b0b2c7bb429dff0571fcc135db6914c73612c82c8cea3d30e747b0c2f5
+      contents: read
     steps:
       - name: Resolve release version
         id: release-version
@@ -56,9 +58,6 @@ jobs:
           fetch-depth: 0
           ref: ${{ steps.release-version.outputs.release_tag }}
 
-      - name: Set reproducible build time
-        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "${GITHUB_ENV}"
-
       - name: Cache Go
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
@@ -67,52 +66,36 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
-      - name: Cache images dependencies
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: .cache/dependencies/images
-          key: images-dependencies
-          restore-keys: images-dependencies
-
       - name: Install MISE
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
 
-      - name: Git configure
-        run: git config --global --add safe.directory $(pwd)
-
-      - name: Lint licenses
-        run: mise run lint:reuse
-
-      - name: Install dependencies
-        run: mise install:go
-
-      - name: Install asciinema compatibility tool
-        env:
-          MISE_GITHUB_TOKEN: ""
-          ASCIINEMA_VERSION: 3.2.1
-          ASCIINEMA_SHA256: bec9781bc8f297a9d3d74ff60205599507f2abba1183578b8b2f22be4c999214
-        run: |
-          curl --fail --location --silent --show-error \
-            --output "$RUNNER_TEMP/asciinema" \
-            "https://github.com/asciinema/asciinema/releases/download/v${ASCIINEMA_VERSION}/asciinema-x86_64-unknown-linux-musl"
-          printf '%s  %s\n' "$ASCIINEMA_SHA256" "$RUNNER_TEMP/asciinema" | sha256sum --check -
-          chmod 0755 "$RUNNER_TEMP/asciinema"
-          test "$("$RUNNER_TEMP/asciinema" --version)" = "asciinema ${ASCIINEMA_VERSION}"
-          echo "ASCIINEMA=$RUNNER_TEMP/asciinema" >> "$GITHUB_ENV"
-
-      - name: Test
-        run: mise run test:go
-
-      - name: Build/Release
+      - name: Evaluate build environment
+        id: refs
         env:
           GITHUB_REF_NAME: ${{ steps.release-version.outputs.release_tag }}
         run: |
           export GITHUB_SHA="$(git rev-parse HEAD)"
-          mise run build:go
+          mise run ci:evaluate-environment
+
+  build:
+    name: Build and release packages
+    needs: evaluate
+    permissions:
+      contents: write
+      packages: write
+    uses: ./.github/workflows/build.yml
+    with:
+      test_host_matrix: ${{ needs.evaluate.outputs.test-host-matrix }}
+      test_container_matrix: ${{ needs.evaluate.outputs.test-container-matrix }}
+      binary_host_matrix: ${{ needs.evaluate.outputs.binary-host-matrix }}
+      binary_container_matrix: ${{ needs.evaluate.outputs.binary-container-matrix }}
+      ref: ${{ needs.evaluate.outputs.release_tag }}
+      commit: ${{ needs.evaluate.outputs.commit }}
+      lint_reuse: true
 
   documentation:
     name: "Documentation"
-    needs: release
+    needs: [ evaluate, build ]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -122,7 +105,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: true
-          ref: ${{ needs.release.outputs.release_tag }}
+          ref: ${{ needs.evaluate.outputs.release_tag }}
 
       - name: Create temp repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -130,7 +113,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
           path: var/doc
-          ref: ${{ needs.release.outputs.release_tag }}
+          ref: ${{ needs.evaluate.outputs.release_tag }}
 
       - name: Setup Git
         working-directory: var/doc
@@ -158,7 +141,7 @@ jobs:
 
       - name: Verify release assets
         env:
-          RELEASE_TAG: ${{ needs.release.outputs.release_tag }}
+          RELEASE_TAG: ${{ needs.evaluate.outputs.release_tag }}
         run: |
           set -euo pipefail
           mkdir -p var/release
@@ -170,13 +153,13 @@ jobs:
         env:
           RELEASE_ASSETS_FILE: var/release/assets.txt
           RELEASE_MANIFEST_FILE: var/release/bifroest-release-manifest.json
-          VERSION: ${{ needs.release.outputs.version }}
+          VERSION: ${{ needs.evaluate.outputs.version }}
         run: mise run build:docs
 
       - name: Deploy
         working-directory: var/doc
         env:
-          VERSION: ${{ needs.release.outputs.version }}
+          VERSION: ${{ needs.evaluate.outputs.version }}
         run: |
           git add -A
           git commit -m "Release v${VERSION}"

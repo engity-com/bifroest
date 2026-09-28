@@ -957,13 +957,14 @@ func TestRemoteArtifactDeliveryFlushCapturesVisibleNames(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("first artifact did not start")
 	}
+	listedBeforeFlush := source.listCalls.Load()
 	flushed := make(chan error, 1)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		flushed <- delivery.Flush(ctx)
 	}()
-	require.Eventually(t, func() bool { return source.listCalls.Load() >= 2 }, time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return source.listCalls.Load() > listedBeforeFlush }, time.Second, time.Millisecond)
 	_, err := receipts.store.initialize(second, time.Now().UTC(), receiptTargets)
 	require.NoError(t, err)
 	source.set(first, second)
