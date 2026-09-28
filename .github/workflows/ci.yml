@@ -301,7 +301,7 @@ jobs:
     if: needs.files-changed.outputs.go == 'true'
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/engity-com/build-images/build:debian12@sha256:94b2f0b0b2c7bb429dff0571fcc135db6914c73612c82c8cea3d30e747b0c2f5
+      image: ghcr.io/engity-com/build-images/build:debian12-amd64@sha256:4c5969c27f1e4044b7f41118072505cdea482a39067549ebbb07961e948897c4
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

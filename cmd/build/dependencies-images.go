@@ -45,12 +45,12 @@ type dependencyImage struct {
 
 var dependencyImages = []dependencyImage{
 	{
-		name:   "Build environment image",
-		source: "ghcr.io/engity-com/build-images/build:debian12",
+		name:   "AMD64 build environment image",
+		source: "ghcr.io/engity-com/build-images/build:debian12-amd64",
 		locations: []dependencyImageLocation{
-			{path: dependencyCiWorkflowPath, references: []string{"ghcr.io/engity-com/build-images/go", "ghcr.io/engity-com/build-images/build:debian12"}, expected: 1},
-			{path: dependencyReleaseWorkflowPath, references: []string{"ghcr.io/engity-com/build-images/go", "ghcr.io/engity-com/build-images/build:debian12"}, expected: 1},
-			{path: dependencyBuildMatrixPath, references: []string{"ghcr.io/engity-com/build-images/build:debian12"}, expected: 1},
+			{path: dependencyCiWorkflowPath, references: []string{"ghcr.io/engity-com/build-images/build:debian12-amd64"}, expected: 1},
+			{path: dependencyReleaseWorkflowPath, references: []string{"ghcr.io/engity-com/build-images/build:debian12-amd64"}, expected: 1},
+			{path: dependencyBuildMatrixPath, references: []string{"ghcr.io/engity-com/build-images/build:debian12-amd64"}, expected: 1},
 		},
 	},
 	{
@@ -74,6 +74,27 @@ var dependencyImages = []dependencyImage{
 		locations: []dependencyImageLocation{
 			{path: dependencyBuildArchPath, references: []string{"mcr.microsoft.com/windows/nanoserver:ltsc2022"}, expected: 1},
 			{path: dependencyBuildImagesPath, references: []string{"mcr.microsoft.com/windows/nanoserver:ltsc2022"}, expected: 1},
+		},
+	},
+	{
+		name:   "386 build environment image",
+		source: "ghcr.io/engity-com/build-images/build:debian12-386",
+		locations: []dependencyImageLocation{
+			{path: dependencyBuildMatrixPath, references: []string{"ghcr.io/engity-com/build-images/build:debian12-386"}, expected: 1},
+		},
+	},
+	{
+		name:   "ARMv7 build environment image",
+		source: "ghcr.io/engity-com/build-images/build:debian12-armv7",
+		locations: []dependencyImageLocation{
+			{path: dependencyBuildMatrixPath, references: []string{"ghcr.io/engity-com/build-images/build:debian12-armv7"}, expected: 1},
+		},
+	},
+	{
+		name:   "ARM64 build environment image",
+		source: "ghcr.io/engity-com/build-images/build:debian12-arm64",
+		locations: []dependencyImageLocation{
+			{path: dependencyBuildMatrixPath, references: []string{"ghcr.io/engity-com/build-images/build:debian12-arm64"}, expected: 1},
 		},
 	},
 }

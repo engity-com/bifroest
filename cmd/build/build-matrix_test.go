@@ -17,7 +17,7 @@ func TestBuildMatricesAssignEveryBinaryPlatformToExactlyOneJob(t *testing.T) {
 	matrices, err := build.buildMatrices()
 	require.NoError(t, err)
 	require.Equal(t, []buildTestMatrixEntry{{Os: "windows", Runner: "windows-latest"}}, matrices.TestHost.Include)
-	require.Equal(t, []buildTestMatrixEntry{{Os: "linux", Runner: "ubuntu-latest", Image: binaryLinuxExtendedImage}}, matrices.TestContainer.Include)
+	require.Equal(t, []buildTestMatrixEntry{{Os: "linux", Runner: "ubuntu-latest", Image: binaryLinuxAmd64Image}}, matrices.TestContainer.Include)
 	require.Len(t, matrices.Host.Include, 8)
 	require.Len(t, matrices.Container.Include, 4)
 
@@ -32,7 +32,10 @@ func TestBuildMatricesAssignEveryBinaryPlatformToExactlyOneJob(t *testing.T) {
 		require.Equal(t, "linux", entry.Os)
 		require.Equal(t, "extended", entry.Edition)
 		require.Equal(t, "ubuntu-latest", entry.Runner)
-		require.Equal(t, binaryLinuxExtendedImage, entry.Image)
+		var arch sys.Arch
+		require.NoError(t, arch.Set(entry.Arch))
+		require.Equal(t, binaryLinuxExtendedImages[arch], entry.Image)
+		require.Contains(t, entry.Image, ":debian12-"+entry.Arch+"@sha256:")
 		require.False(t, assigned[entry.Os+"/"+entry.Arch+"/"+entry.Edition])
 		assigned[entry.Os+"/"+entry.Arch+"/"+entry.Edition] = true
 	}

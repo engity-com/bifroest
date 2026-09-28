@@ -6,7 +6,14 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-const binaryLinuxExtendedImage = "ghcr.io/engity-com/build-images/build:debian12@sha256:94b2f0b0b2c7bb429dff0571fcc135db6914c73612c82c8cea3d30e747b0c2f5"
+const binaryLinuxAmd64Image = "ghcr.io/engity-com/build-images/build:debian12-amd64@sha256:4c5969c27f1e4044b7f41118072505cdea482a39067549ebbb07961e948897c4"
+
+var binaryLinuxExtendedImages = map[sys.Arch]string{
+	sys.Arch386:   "ghcr.io/engity-com/build-images/build:debian12-386@sha256:ca0c8473153b9eac87208b8e29a2a60cf69a4c83bd3de7f3b411fe132546e0bd",
+	sys.ArchAmd64: binaryLinuxAmd64Image,
+	sys.ArchArmV7: "ghcr.io/engity-com/build-images/build:debian12-armv7@sha256:a8e14839dfa2c4eb7954b4cba5ec069a71164afe76bba72b1c66bb704b88ede4",
+	sys.ArchArm64: "ghcr.io/engity-com/build-images/build:debian12-arm64@sha256:2c65dd238e88bd2efe513be00fe00e64c094bdd9220b34f8a1e4a5ae3104132c",
+}
 
 type buildMatrix[T any] struct {
 	Include []T `json:"include"`
@@ -48,7 +55,11 @@ func (this *build) buildMatrices() (buildEnvironmentMatrices, error) {
 		case sys.OsLinux:
 			entry.Runner = "ubuntu-latest"
 			if p.Edition == sys.EditionExtended {
-				entry.Image = binaryLinuxExtendedImage
+				var ok bool
+				entry.Image, ok = binaryLinuxExtendedImages[p.Arch]
+				if !ok {
+					return result, fmt.Errorf("no build image configured for %s", p)
+				}
 			}
 		case sys.OsWindows:
 			entry.Runner = "windows-latest"
@@ -58,7 +69,7 @@ func (this *build) buildMatrices() (buildEnvironmentMatrices, error) {
 		if !seenTestOs[p.Os] {
 			testEntry := buildTestMatrixEntry{Os: p.Os.String(), Runner: entry.Runner}
 			if p.Os == sys.OsLinux {
-				testEntry.Image = binaryLinuxExtendedImage
+				testEntry.Image = binaryLinuxAmd64Image
 				result.TestContainer.Include = append(result.TestContainer.Include, testEntry)
 			} else {
 				result.TestHost.Include = append(result.TestHost.Include, testEntry)

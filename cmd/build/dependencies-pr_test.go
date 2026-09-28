@@ -27,15 +27,19 @@ import (
 func TestApplyImageUpdatesReconcilesEveryManagedLocation(t *testing.T) {
 	old := "sha256:" + strings.Repeat("1", 64)
 	resolved := map[string]string{
-		"ghcr.io/engity-com/build-images/build:debian12": "sha256:" + strings.Repeat("2", 64),
-		"docker.io/library/ubuntu:26.04":                 "sha256:" + strings.Repeat("3", 64),
-		"docker.io/library/alpine:latest":                "sha256:" + strings.Repeat("4", 64),
-		"mcr.microsoft.com/windows/nanoserver:ltsc2022":  "sha256:" + strings.Repeat("5", 64),
+		"ghcr.io/engity-com/build-images/build:debian12-amd64": "sha256:" + strings.Repeat("2", 64),
+		"docker.io/library/ubuntu:26.04":                       "sha256:" + strings.Repeat("3", 64),
+		"docker.io/library/alpine:latest":                      "sha256:" + strings.Repeat("4", 64),
+		"mcr.microsoft.com/windows/nanoserver:ltsc2022":        "sha256:" + strings.Repeat("5", 64),
+		"ghcr.io/engity-com/build-images/build:debian12-386":   "sha256:" + strings.Repeat("6", 64),
+		"ghcr.io/engity-com/build-images/build:debian12-armv7": "sha256:" + strings.Repeat("7", 64),
+		"ghcr.io/engity-com/build-images/build:debian12-arm64": "sha256:" + strings.Repeat("8", 64),
 	}
 	files := map[string][]byte{
-		dependencyCiWorkflowPath:      []byte("ghcr.io/engity-com/build-images/go@" + old),
-		dependencyReleaseWorkflowPath: []byte("ghcr.io/engity-com/build-images/go@" + old),
-		dependencyBuildMatrixPath:     []byte("ghcr.io/engity-com/build-images/build:debian12@" + old),
+		dependencyCiWorkflowPath:      []byte(dependencyImages[0].source + "@" + old),
+		dependencyReleaseWorkflowPath: []byte(dependencyImages[0].source + "@" + old),
+		dependencyBuildMatrixPath: []byte(dependencyImages[0].source + "@" + old + "\n" +
+			dependencyImages[4].source + "@" + old + "\n" + dependencyImages[5].source + "@" + old + "\n" + dependencyImages[6].source + "@" + old),
 		dependencyBuildArchPath: []byte("docker.io/library/ubuntu:26.04@" + old + "\n" +
 			"mcr.microsoft.com/windows/nanoserver:ltsc2022@" + old),
 		dependencyBuildImagesPath: []byte("docker.io/library/alpine:latest@" + old + "\n" +
@@ -54,19 +58,23 @@ func TestApplyImageUpdatesReconcilesEveryManagedLocation(t *testing.T) {
 		require.True(t, check.changed, check.name)
 		require.Contains(t, check.current, resolved[check.source])
 	}
-	require.Contains(t, string(files[dependencyCiWorkflowPath]), "build:debian12@"+resolved[dependencyImages[0].source])
-	require.Contains(t, string(files[dependencyBuildMatrixPath]), "build:debian12@"+resolved[dependencyImages[0].source])
+	for _, index := range []int{0, 4, 5, 6} {
+		require.Contains(t, string(files[dependencyBuildMatrixPath]), dependencyImages[index].source+"@"+resolved[dependencyImages[index].source])
+	}
+	require.Contains(t, string(files[dependencyCiWorkflowPath]), dependencyImages[0].source+"@"+resolved[dependencyImages[0].source])
 	require.Contains(t, string(files[dependencyBuildArchPath]), "ubuntu:26.04@"+resolved[dependencyImages[1].source])
 	require.Contains(t, string(files[dependencyBuildImagesPath]), "alpine:latest@"+resolved[dependencyImages[2].source])
 	require.Contains(t, string(files[dependencyE2eHarnessPath]), "alpine:latest@"+resolved[dependencyImages[2].source])
 	require.Contains(t, string(files[dependencyBuildArchPath]), "nanoserver:ltsc2022@"+resolved[dependencyImages[3].source])
 }
 
-func TestManagedBuildImageReferencesMatchCurrentFiles(t *testing.T) {
-	for _, location := range dependencyImages[0].locations {
-		raw, err := gos.ReadFile(filepath.Join("..", "..", filepath.FromSlash(location.path)))
-		require.NoError(t, err)
-		require.Len(t, findDependencyImageReferences(raw, location.references), location.expected, location.path)
+func TestManagedImageReferencesMatchCurrentFiles(t *testing.T) {
+	for _, image := range dependencyImages {
+		for _, location := range image.locations {
+			raw, err := gos.ReadFile(filepath.Join("..", "..", filepath.FromSlash(location.path)))
+			require.NoError(t, err)
+			require.Len(t, findDependencyImageReferences(raw, location.references), location.expected, location.path)
+		}
 	}
 }
 
@@ -359,12 +367,18 @@ func TestUpdatePrDoesNotWriteWhenEveryDependencyIsCurrent(t *testing.T) {
 		dependencyImages[1].source: "sha256:" + strings.Repeat("3", 64),
 		dependencyImages[2].source: "sha256:" + strings.Repeat("4", 64),
 		dependencyImages[3].source: "sha256:" + strings.Repeat("5", 64),
+		dependencyImages[4].source: "sha256:" + strings.Repeat("6", 64),
+		dependencyImages[5].source: "sha256:" + strings.Repeat("7", 64),
+		dependencyImages[6].source: "sha256:" + strings.Repeat("8", 64),
 	}
 	files := map[string]string{
 		defaultCaCertsTargetFn:        certificates.String(),
 		dependencyCiWorkflowPath:      dependencyImages[0].source + "@" + digests[dependencyImages[0].source],
 		dependencyReleaseWorkflowPath: dependencyImages[0].source + "@" + digests[dependencyImages[0].source],
-		dependencyBuildMatrixPath:     dependencyImages[0].source + "@" + digests[dependencyImages[0].source],
+		dependencyBuildMatrixPath: dependencyImages[0].source + "@" + digests[dependencyImages[0].source] + "\n" +
+			dependencyImages[4].source + "@" + digests[dependencyImages[4].source] + "\n" +
+			dependencyImages[5].source + "@" + digests[dependencyImages[5].source] + "\n" +
+			dependencyImages[6].source + "@" + digests[dependencyImages[6].source],
 		dependencyBuildArchPath: dependencyImages[1].source + "@" + digests[dependencyImages[1].source] + "\n" +
 			dependencyImages[3].source + "@" + digests[dependencyImages[3].source],
 		dependencyBuildImagesPath: dependencyImages[2].source + "@" + digests[dependencyImages[2].source] + "\n" +
