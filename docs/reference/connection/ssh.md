@@ -10,8 +10,6 @@ Defines the behavior of the SSH protocol for a user who is connecting to Bifrös
 <<property("addresses", array_ref("Net Address", "../data-type.md#net-address"), default=[":22"])>>
 To which address the service will bind and listen to.
 
-For a native macOS installation, `127.0.0.1:2222` is a useful initial listener: it avoids a collision with macOS Remote Login on port `22`, does not require a privileged port, and is reachable only from the Mac itself. Connect with `ssh -p 2222 <user>@127.0.0.1`. Change the bind address only after applying the intended host firewall and authorization policy. The default remains `:22` on every platform.
-
 <<property("keys", "Keys", "#keys")>>
 See [below](#keys).
 

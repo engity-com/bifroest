@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	osuser "os/user"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -25,15 +26,17 @@ const (
 	credentialHelperUID    = "BIFROEST_CREDENTIAL_UID"
 	credentialHelperGID    = "BIFROEST_CREDENTIAL_GID"
 	credentialHelperGroups = "BIFROEST_CREDENTIAL_GROUPS"
+	credentialRootMarker   = "BIFROEST_CREDENTIAL_ROOT_TEST"
 )
 
-func TestLocalCredentialImpersonationChild(t *testing.T) {
+func TestLocalCredentialImpersonation(t *testing.T) {
 	if os.Getenv(credentialHelperMarker) == "1" {
 		assertCredentialHelperIdentity(t)
 		return
 	}
 	if os.Geteuid() != 0 {
-		t.Skip("credential impersonation requires effective UID 0")
+		runCredentialTestAsRoot(t)
+		return
 	}
 
 	target, err := existingCredentialTestUser()
@@ -44,7 +47,7 @@ func TestLocalCredentialImpersonationChild(t *testing.T) {
 	require.NoError(t, err)
 
 	executable := copyCredentialHelperExecutable(t)
-	cmd := exec.Command(executable, "-test.run=^TestLocalCredentialImpersonationChild$")
+	cmd := exec.Command(executable, "-test.run=^TestLocalCredentialImpersonation$")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: credentials}
 	cmd.Env = append(os.Environ(),
 		credentialHelperMarker+"=1",
@@ -55,6 +58,29 @@ func TestLocalCredentialImpersonationChild(t *testing.T) {
 
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "credential helper failed: %s", output)
+}
+
+func runCredentialTestAsRoot(t *testing.T) {
+	t.Helper()
+	if os.Getenv(credentialRootMarker) == "1" {
+		t.Fatal("sudo did not provide effective UID 0")
+	}
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	command := exec.Command("sudo", "-n", "env",
+		"PATH="+os.Getenv("PATH"),
+		"HOME="+os.Getenv("HOME"),
+		"GOCACHE="+filepath.Join(os.TempDir(), "bifroest-root-go-cache"),
+		credentialRootMarker+"=1",
+		executable,
+		"-test.run=^"+regexp.QuoteMeta(t.Name())+"$",
+		"-test.v",
+	)
+	output, err := command.CombinedOutput()
+	if err != nil && os.Getenv("CI") == "" {
+		t.Skipf("passwordless sudo is unavailable: %v", err)
+	}
+	require.NoError(t, err, "privileged test failed: %s", output)
 }
 
 func assertCredentialHelperIdentity(t *testing.T) {

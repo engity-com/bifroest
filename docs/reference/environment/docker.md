@@ -115,8 +115,6 @@ Empty always defaults to `["default"]`.
 !!! note
      As long as [`impPublishHost`](#property-impPublishHost) isn't set, the **first** network should be always reachable by Bifröst itself. This can be either the case if Bifröst itself runs inside of Docker (Bifröst in Docker) or it runs on the host machine and there is a valid route (which is the default Linux native, but not on Docker/Podman for Desktop).
 
-     Docker Desktop on macOS runs the Docker daemon and Linux containers inside a virtual machine. A Bifröst process running natively on macOS normally cannot route directly to a container's VM-internal bridge address, even though it can reach the Docker API socket. Configure [`impPublishHost`](#property-impPublishHost) so Bifröst uses a dynamically published host port for the IMP connection.
-
 <<property("volumes", array_ref("string"), template_context="../context/authorization.md")>>
 Defines which volumes should be mounted into the container. Each entry is an individual mount statement.
 

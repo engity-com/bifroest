@@ -66,11 +66,16 @@ toc_depth: 3
 This guide supports Apple silicon (`arm64`) on macOS 13 and later.
 
 !!! warning
-     macOS Remote Login normally listens on port `22`. Stop Remote Login before configuring Bifröst on port `22`, or use another port. The steps below use port `2222` so both servers can run at the same time.
+     Bifröst uses the standard SSH port `22`. If macOS Remote Login already occupies that port, Bifröst fails to start. Disable Remote Login before installing the LaunchDaemon.
 
 1. Download and install the extended Bifröst archive:
     ```shell
-    curl -sSLf <<release_asset_url("bifroest-darwin-arm64-extended.tgz")>> | sudo tar -zxv -C /usr/local/bin bifroest
+    rm -rf /tmp/bifroest-release
+    mkdir -p /tmp/bifroest-release
+    curl -sSLf <<release_asset_url("bifroest-darwin-arm64-extended.tgz")>> -o /tmp/bifroest-darwin-arm64-extended.tgz
+    curl -sSLf <<release_asset_url("bifroest-checksums.txt")>> -o /tmp/bifroest-checksums.txt
+    (cd /tmp && grep '  bifroest-darwin-arm64-extended.tgz$' bifroest-checksums.txt | shasum -a 256 --check -)
+    tar -zxvf /tmp/bifroest-darwin-arm64-extended.tgz -C /tmp/bifroest-release
     ```
 
 2. Create the native configuration directory and install the [native macOS example](<<asset_url("contrib/configurations/native-macos.yaml")>>) (see the [configuration documentation](../reference/configuration.md)):
@@ -78,19 +83,39 @@ This guide supports Apple silicon (`arm64`) on macOS 13 and later.
     sudo mkdir -p '/Library/Application Support/Engity/Bifroest'
     sudo curl -sSLf <<asset_url("contrib/configurations/native-macos.yaml", True)>> -o '/Library/Application Support/Engity/Bifroest/configuration.yaml'
     sudo vi '/Library/Application Support/Engity/Bifroest/configuration.yaml'
+    sudo chown root:wheel '/Library/Application Support/Engity/Bifroest/configuration.yaml'
+    sudo chmod 0640 '/Library/Application Support/Engity/Bifroest/configuration.yaml'
     ```
 
-    Replace the example account `alice` with the controlled existing macOS account that should be reachable. The example listens only on `127.0.0.1:2222`; change the address only after applying the intended firewall and authorization policy.
+    Replace the example account `alice` with the controlled existing macOS account that should be reachable.
 
-3. Start Bifröst manually as root. No macOS service is installed by the archive:
+3. Install and start the system LaunchDaemon:
     ```shell
-    sudo /usr/local/bin/bifroest run
+    sudo bash /tmp/bifroest-release/contrib/launchd/bifroest-service.sh install /tmp/bifroest-release/bifroest
     ```
+
+    The service runs as `root`, starts at boot, restarts after failures and writes standard output and error to `/Library/Logs/Engity/Bifroest`. Its working directory and persistent state remain under `/Library/Application Support/Engity/Bifroest`.
 
 4. In another terminal, log in using the configured port:
     ```shell
-    ssh -p 2222 demo@localhost
+    ssh demo@localhost
     ```
+
+### Manage the macOS service
+
+Run `upgrade` from an extracted newer archive to stop the service, atomically replace the binary and LaunchDaemon definition, and start it again:
+
+```shell
+sudo bash /tmp/bifroest-release/contrib/launchd/bifroest-service.sh upgrade /tmp/bifroest-release/bifroest
+```
+
+The same script supports `start` and `stop`. `uninstall` stops the LaunchDaemon and removes its definition and `/usr/local/bin/bifroest`, but deliberately preserves configuration, keys, audit data and recordings under `/Library/Application Support/Engity/Bifroest` as well as logs under `/Library/Logs/Engity/Bifroest`:
+
+```shell
+sudo /usr/local/libexec/bifroest/bifroest-service stop
+sudo /usr/local/libexec/bifroest/bifroest-service start
+sudo /usr/local/libexec/bifroest/bifroest-service uninstall
+```
 
 ## Windows
 

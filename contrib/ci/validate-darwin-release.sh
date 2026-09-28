@@ -32,9 +32,14 @@ done < <(tar -tzf "${archive}")
 
 extract_dir="$(mktemp -d)"
 trap 'rm -rf "${extract_dir}"' EXIT
-tar -xzf "${archive}" -C "${extract_dir}" bifroest
+tar -xzf "${archive}" -C "${extract_dir}" \
+  bifroest \
+  contrib/launchd/com.engity.bifroest.plist \
+  contrib/launchd/bifroest-service.sh
 binary="${extract_dir}/bifroest"
 test -x "${binary}"
+plutil -lint "${extract_dir}/contrib/launchd/com.engity.bifroest.plist"
+bash -n "${extract_dir}/contrib/launchd/bifroest-service.sh"
 
 "${binary}" version --no-long
 test "$(lipo -archs "${binary}")" = "arm64"

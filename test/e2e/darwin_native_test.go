@@ -5,16 +5,24 @@ package e2e_test
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	osuser "os/user"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestOpenSSHNativeDarwin(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("native Darwin credential impersonation requires effective UID 0")
+const darwinPrivilegedTestMarker = "BIFROEST_DARWIN_PRIVILEGED_TEST"
+
+func TestOpenSSHLocalNative(t *testing.T) {
+	if runtime.GOARCH != "arm64" {
+		t.Fatalf("native Darwin test requires arm64, got %s", runtime.GOARCH)
+	}
+	if !runDarwinTestAsRoot(t) {
+		return
 	}
 	targetName := os.Getenv("BIFROEST_E2E_TARGET_USER")
 	if targetName == "" {
@@ -100,4 +108,43 @@ flows:
 	if actual := strings.TrimSpace(pty.stdout); !strings.HasPrefix(actual, "/dev/tty") {
 		t.Fatalf("native SSH PTY returned unexpected terminal %q", actual)
 	}
+}
+
+func runDarwinTestAsRoot(t *testing.T) bool {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		return true
+	}
+	if os.Getenv(darwinPrivilegedTestMarker) == "1" {
+		t.Fatal("sudo did not provide effective UID 0")
+	}
+	current, err := osuser.Current()
+	if err != nil {
+		t.Fatalf("resolve current account: %v", err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("resolve test executable: %v", err)
+	}
+	cache := filepath.Join(os.TempDir(), "bifroest-root-go-cache")
+	command := exec.Command("sudo", "-n", "env",
+		"PATH="+os.Getenv("PATH"),
+		"HOME="+os.Getenv("HOME"),
+		"GOCACHE="+cache,
+		darwinPrivilegedTestMarker+"=1",
+		"BIFROEST_E2E_TARGET_USER="+current.Username,
+		executable,
+		"-test.run=^"+regexp.QuoteMeta(t.Name())+"$",
+		"-test.v",
+		"-test.timeout=15m",
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		if os.Getenv("CI") == "" {
+			t.Skipf("passwordless sudo is unavailable: %v", err)
+		}
+		t.Fatalf("privileged test failed: %v\n%s", err, output)
+	}
+	t.Logf("privileged test output:\n%s", output)
+	return false
 }

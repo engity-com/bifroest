@@ -2,10 +2,6 @@
 ## selected account's UID, GID, and supplementary groups.
 ## Replace "alice" with a controlled, existing local account before use.
 
-ssh:
-  addresses:
-    - "127.0.0.1:2222"
-
 flows:
   - name: native-macos
     authorization:
