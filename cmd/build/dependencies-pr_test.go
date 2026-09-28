@@ -36,8 +36,7 @@ func TestApplyImageUpdatesReconcilesEveryManagedLocation(t *testing.T) {
 		"ghcr.io/engity-com/build-images/build:debian12-arm64": "sha256:" + strings.Repeat("8", 64),
 	}
 	files := map[string][]byte{
-		dependencyCiWorkflowPath:      []byte(dependencyImages[0].source + "@" + old),
-		dependencyReleaseWorkflowPath: []byte(dependencyImages[0].source + "@" + old),
+		dependencyBuildWorkflowPath: []byte(dependencyImages[0].source + "@" + old),
 		dependencyBuildMatrixPath: []byte(dependencyImages[0].source + "@" + old + "\n" +
 			dependencyImages[4].source + "@" + old + "\n" + dependencyImages[5].source + "@" + old + "\n" + dependencyImages[6].source + "@" + old),
 		dependencyBuildArchPath: []byte("docker.io/library/ubuntu:26.04@" + old + "\n" +
@@ -61,7 +60,7 @@ func TestApplyImageUpdatesReconcilesEveryManagedLocation(t *testing.T) {
 	for _, index := range []int{0, 4, 5, 6} {
 		require.Contains(t, string(files[dependencyBuildMatrixPath]), dependencyImages[index].source+"@"+resolved[dependencyImages[index].source])
 	}
-	require.Contains(t, string(files[dependencyCiWorkflowPath]), dependencyImages[0].source+"@"+resolved[dependencyImages[0].source])
+	require.Contains(t, string(files[dependencyBuildWorkflowPath]), dependencyImages[0].source+"@"+resolved[dependencyImages[0].source])
 	require.Contains(t, string(files[dependencyBuildArchPath]), "ubuntu:26.04@"+resolved[dependencyImages[1].source])
 	require.Contains(t, string(files[dependencyBuildImagesPath]), "alpine:latest@"+resolved[dependencyImages[2].source])
 	require.Contains(t, string(files[dependencyE2eHarnessPath]), "alpine:latest@"+resolved[dependencyImages[2].source])
@@ -80,12 +79,11 @@ func TestManagedImageReferencesMatchCurrentFiles(t *testing.T) {
 
 func TestApplyImageUpdatesFailsClosedWhenLocationDrifts(t *testing.T) {
 	files := map[string][]byte{
-		dependencyCiWorkflowPath:      []byte("no managed reference"),
-		dependencyReleaseWorkflowPath: []byte("no managed reference"),
-		dependencyBuildMatrixPath:     []byte("no managed reference"),
-		dependencyBuildArchPath:       []byte("no managed reference"),
-		dependencyBuildImagesPath:     []byte("no managed reference"),
-		dependencyE2eHarnessPath:      []byte("no managed reference"),
+		dependencyBuildWorkflowPath: []byte("no managed reference"),
+		dependencyBuildMatrixPath:   []byte("no managed reference"),
+		dependencyBuildArchPath:     []byte("no managed reference"),
+		dependencyBuildImagesPath:   []byte("no managed reference"),
+		dependencyE2eHarnessPath:    []byte("no managed reference"),
 	}
 	dependencies := &dependencies{resolveImageDigest: func(context.Context, string) (string, error) {
 		return "sha256:" + strings.Repeat("2", 64), nil
@@ -372,9 +370,8 @@ func TestUpdatePrDoesNotWriteWhenEveryDependencyIsCurrent(t *testing.T) {
 		dependencyImages[6].source: "sha256:" + strings.Repeat("8", 64),
 	}
 	files := map[string]string{
-		defaultCaCertsTargetFn:        certificates.String(),
-		dependencyCiWorkflowPath:      dependencyImages[0].source + "@" + digests[dependencyImages[0].source],
-		dependencyReleaseWorkflowPath: dependencyImages[0].source + "@" + digests[dependencyImages[0].source],
+		defaultCaCertsTargetFn:      certificates.String(),
+		dependencyBuildWorkflowPath: dependencyImages[0].source + "@" + digests[dependencyImages[0].source],
 		dependencyBuildMatrixPath: dependencyImages[0].source + "@" + digests[dependencyImages[0].source] + "\n" +
 			dependencyImages[4].source + "@" + digests[dependencyImages[4].source] + "\n" +
 			dependencyImages[5].source + "@" + digests[dependencyImages[5].source] + "\n" +

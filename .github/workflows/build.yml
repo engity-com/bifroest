@@ -1,0 +1,320 @@
+name: Build and package
+
+on:
+  workflow_call:
+    inputs:
+      test_host_matrix:
+        required: true
+        type: string
+      test_container_matrix:
+        required: true
+        type: string
+      binary_host_matrix:
+        required: true
+        type: string
+      binary_container_matrix:
+        required: true
+        type: string
+      ref:
+        type: string
+        default: ''
+      commit:
+        type: string
+        default: ''
+      lint_go:
+        type: boolean
+        default: false
+      lint_reuse:
+        type: boolean
+        default: false
+      upload_dist:
+        type: boolean
+        default: false
+
+env:
+  GITHUB_TOKEN: ${{ github.token }}
+  BIFROEST_VENDOR: "Engity GmbH"
+
+jobs:
+  test-host:
+    name: Tests ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      matrix: ${{ fromJSON(inputs.test_host_matrix) }}
+    runs-on: ${{ matrix.runner }}
+    env:
+      GITHUB_TOKEN: ""
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.ref }}
+
+      - name: Cache Go
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install MISE
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+
+      - name: Install dependencies
+        run: mise run install:go
+
+      - name: Lint Go
+        if: inputs.lint_go
+        run: mise run lint:go
+
+      - name: Test
+        env:
+          MISE_GITHUB_TOKEN: ""
+        run: mise run test:go
+
+  test-container:
+    name: Tests ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      matrix: ${{ fromJSON(inputs.test_container_matrix) }}
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.image }}
+    env:
+      GITHUB_TOKEN: ""
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.ref }}
+
+      - name: Cache Go
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install MISE
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+
+      - name: Git configure
+        run: git config --global --add safe.directory "$(pwd)"
+
+      - name: Install dependencies
+        run: mise run install:go
+
+      - name: Install asciinema compatibility tool
+        env:
+          MISE_GITHUB_TOKEN: ""
+          ASCIINEMA_VERSION: 3.2.1
+          ASCIINEMA_SHA256: bec9781bc8f297a9d3d74ff60205599507f2abba1183578b8b2f22be4c999214
+        run: |
+          curl --fail --location --silent --show-error \
+            --output "$RUNNER_TEMP/asciinema" \
+            "https://github.com/asciinema/asciinema/releases/download/v${ASCIINEMA_VERSION}/asciinema-x86_64-unknown-linux-musl"
+          printf '%s  %s\n' "$ASCIINEMA_SHA256" "$RUNNER_TEMP/asciinema" | sha256sum --check -
+          chmod 0755 "$RUNNER_TEMP/asciinema"
+          test "$("$RUNNER_TEMP/asciinema" --version)" = "asciinema ${ASCIINEMA_VERSION}"
+          echo "ASCIINEMA=$RUNNER_TEMP/asciinema" >> "$GITHUB_ENV"
+
+      - name: Lint Go
+        if: inputs.lint_go
+        run: mise run lint:go
+
+      - name: Test
+        env:
+          MISE_GITHUB_TOKEN: ""
+        run: mise run test:go
+
+      - name: Test with race detector
+        env:
+          MISE_GITHUB_TOKEN: ""
+        run: mise run test:go:race
+
+  binary-host:
+    name: Binary ${{ matrix.os }}/${{ matrix.arch }}/${{ matrix.edition }}
+    permissions:
+      contents: read
+    strategy:
+      matrix: ${{ fromJSON(inputs.binary_host_matrix) }}
+    runs-on: ${{ matrix.runner }}
+    env:
+      GITHUB_REF_NAME: ${{ inputs.ref || github.ref_name }}
+      GITHUB_SHA: ${{ inputs.commit || github.sha }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref }}
+
+      - name: Set reproducible build time
+        if: matrix.os == 'linux'
+        run: |
+          epoch="$(git show -s --format=%ct HEAD)"
+          echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"
+
+      - name: Set reproducible build time on Windows
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $epoch = git show -s --format=%ct HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot determine build time' }
+          "SOURCE_DATE_EPOCH=$epoch" >> $env:GITHUB_ENV
+
+      - name: Cache Go
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install MISE
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+
+      - name: Install dependencies
+        run: mise run install:go
+
+      - name: Build binary
+        run: mise run build:go:binary -- --os=${{ matrix.os }} --arch=${{ matrix.arch }} --edition=${{ matrix.edition }}
+
+      - name: Upload binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: binary-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.edition }}
+          path: var/dist
+          retention-days: 1
+          if-no-files-found: error
+
+  binary-container:
+    name: Binary ${{ matrix.os }}/${{ matrix.arch }}/${{ matrix.edition }}
+    permissions:
+      contents: read
+    strategy:
+      matrix: ${{ fromJSON(inputs.binary_container_matrix) }}
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.image }}
+    env:
+      GITHUB_REF_NAME: ${{ inputs.ref || github.ref_name }}
+      GITHUB_SHA: ${{ inputs.commit || github.sha }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref }}
+
+      - name: Git configure
+        run: git config --global --add safe.directory "$(pwd)"
+
+      - name: Set reproducible build time
+        run: |
+          epoch="$(git show -s --format=%ct HEAD)"
+          echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"
+
+      - name: Cache Go
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install MISE
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+
+      - name: Install dependencies
+        run: mise run install:go
+
+      - name: Build binary
+        run: mise run build:go:binary -- --os=${{ matrix.os }} --arch=${{ matrix.arch }} --edition=${{ matrix.edition }}
+
+      - name: Upload binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: binary-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.edition }}
+          path: var/dist
+          retention-days: 1
+          if-no-files-found: error
+
+  package:
+    name: Package
+    needs: [ test-host, test-container, binary-host, binary-container ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    container:
+      image: ghcr.io/engity-com/build-images/build:debian12-amd64@sha256:4c5969c27f1e4044b7f41118072505cdea482a39067549ebbb07961e948897c4
+    env:
+      GITHUB_REF_NAME: ${{ inputs.ref || github.ref_name }}
+      GITHUB_SHA: ${{ inputs.commit || github.sha }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref }}
+
+      - name: Git configure
+        run: git config --global --add safe.directory "$(pwd)"
+
+      - name: Set reproducible build time
+        run: |
+          epoch="$(git show -s --format=%ct HEAD)"
+          echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"
+
+      - name: Cache Go
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Cache images dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .cache/dependencies/images
+          key: images-dependencies
+          restore-keys: images-dependencies
+
+      - name: Install MISE
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+
+      - name: Lint licenses
+        if: inputs.lint_reuse
+        run: mise run lint:reuse
+
+      - name: Download binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: binary-*
+          merge-multiple: true
+          path: var/dist
+
+      - name: Install dependencies
+        run: mise run install:go
+
+      - name: Package
+        run: mise run build:go:package
+
+      - name: Archive package results
+        if: inputs.upload_dist
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          retention-days: 1
+          name: dist
+          path: |
+            var/dist/**/*

@@ -15,12 +15,11 @@ import (
 )
 
 const (
-	dependencyCiWorkflowPath      = ".github/workflows/ci.yml"
-	dependencyReleaseWorkflowPath = ".github/workflows/release.yml"
-	dependencyBuildMatrixPath     = "cmd/build/build-matrix.go"
-	dependencyBuildArchPath       = "internal/build/arch.go"
-	dependencyBuildImagesPath     = "internal/build/images/build.go"
-	dependencyE2eHarnessPath      = "test/e2e/harness_test.go"
+	dependencyBuildWorkflowPath = ".github/workflows/build.yml"
+	dependencyBuildMatrixPath   = "cmd/build/build-matrix.go"
+	dependencyBuildArchPath     = "internal/build/arch.go"
+	dependencyBuildImagesPath   = "internal/build/images/build.go"
+	dependencyE2eHarnessPath    = "test/e2e/harness_test.go"
 )
 
 type dependencyImageDigestResolver func(context.Context, string) (string, error)
@@ -48,8 +47,7 @@ var dependencyImages = []dependencyImage{
 		name:   "AMD64 build environment image",
 		source: "ghcr.io/engity-com/build-images/build:debian12-amd64",
 		locations: []dependencyImageLocation{
-			{path: dependencyCiWorkflowPath, references: []string{"ghcr.io/engity-com/build-images/build:debian12-amd64"}, expected: 1},
-			{path: dependencyReleaseWorkflowPath, references: []string{"ghcr.io/engity-com/build-images/build:debian12-amd64"}, expected: 1},
+			{path: dependencyBuildWorkflowPath, references: []string{"ghcr.io/engity-com/build-images/build:debian12-amd64"}, expected: 1},
 			{path: dependencyBuildMatrixPath, references: []string{"ghcr.io/engity-com/build-images/build:debian12-amd64"}, expected: 1},
 		},
 	},
