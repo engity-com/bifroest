@@ -98,7 +98,7 @@ jobs:
 
   build:
     name: Build packages
-    needs: [ evaluate, files-changed, reuse ]
+    needs: [ evaluate, files-changed ]
     if: needs.files-changed.outputs.go == 'true'
     permissions:
       contents: write
