@@ -80,6 +80,12 @@ run = [
 [tasks."build:go"]
 run = "go run ./cmd/build build --log.colorMode=always"
 
+[tasks."build:go:binary"]
+run = "go run ./cmd/build build-binary --log.colorMode=always"
+
+[tasks."build:go:package"]
+run = "go run ./cmd/build package-binaries --log.colorMode=always"
+
 [tasks."build:docs"]
 run = [
     "mkdocs --color build -c",

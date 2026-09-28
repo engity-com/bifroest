@@ -65,11 +65,20 @@ type build struct {
 	testing   bool
 
 	wslBuildDistribution string
+	binaryMode           binaryBuildMode
 
 	timeP         atomic.Pointer[time.Time]
 	buildContextP atomic.Pointer[buildContext]
 	stagesP       atomic.Pointer[buildStages]
 }
+
+type binaryBuildMode uint8
+
+const (
+	binaryBuildAndPackage binaryBuildMode = iota
+	binaryBuildOnly
+	binaryUseExisting
+)
 
 func (this *build) init(ctx context.Context, app *kingpin.Application) {
 	attach := func(cmd *kingpin.CmdClause) {
@@ -120,15 +129,34 @@ func (this *build) init(ctx context.Context, app *kingpin.Application) {
 		}))
 
 	attach(app.Command("build", "").
-		Action(func(*kingpin.ParseContext) (rErr error) {
-			as, err := this.buildAll(ctx, this.testing)
-			if err != nil {
-				return err
-			}
-			defer common.KeepCloseError(&rErr, as)
-
-			return nil
+		Action(func(*kingpin.ParseContext) error {
+			return this.runBuild(ctx)
 		}))
+
+	attach(app.Command("build-binary", "").
+		Action(func(*kingpin.ParseContext) error {
+			if len(this.rawStages) > 0 {
+				return errors.New("build-binary does not accept --stages")
+			}
+			this.binaryMode = binaryBuildOnly
+			this.rawStages = buildStages{buildStageBinary}
+			return this.runBuild(ctx)
+		}))
+
+	attach(app.Command("package-binaries", "").
+		Action(func(*kingpin.ParseContext) error {
+			this.binaryMode = binaryUseExisting
+			return this.runBuild(ctx)
+		}))
+}
+
+func (this *build) runBuild(ctx context.Context) (rErr error) {
+	as, err := this.buildAll(ctx, this.testing)
+	if err != nil {
+		return err
+	}
+	defer common.KeepCloseError(&rErr, as)
+	return nil
 }
 
 func (this *build) allPlatforms(forTesting bool) iter.Seq[*bib.Platform] {
@@ -251,12 +279,17 @@ func (this *build) buildAll(ctx context.Context, forTesting bool) (_ buildArtifa
 	var artifacts buildArtifacts
 	defer func() { common.IgnoreCloseErrorIfFalse(&success, artifacts) }()
 
+	platformCount := 0
 	for a := range this.allPlatforms(forTesting) {
+		platformCount++
 		vs, err := this.buildSingle(ctx, a)
 		if err != nil {
 			return nil, err
 		}
 		artifacts = append(artifacts, vs...)
+	}
+	if platformCount == 0 && this.binaryMode != binaryBuildAndPackage {
+		return nil, errors.New("no binary platforms match the selected OS, architecture and edition")
 	}
 
 	if stages.contains(buildStageSbom) {
@@ -318,13 +351,25 @@ func (this *build) buildSingle(ctx context.Context, p *bib.Platform) (_ buildArt
 	defer func() { common.IgnoreCloseErrorIfFalse(&success, artifacts) }()
 
 	var ba *buildArtifact
-	if stages.contains(buildStageBinary) && p.IsBinarySupported(this.assumedBuildOs(), this.assumedBuildArch()) {
+	if this.binaryMode == binaryUseExisting {
+		var notice *buildArtifact
+		ba, notice, err = this.binary.load(ctx, p)
+		if err != nil {
+			return fail(err)
+		}
+		artifacts = append(artifacts, ba, notice)
+	} else if stages.contains(buildStageBinary) && p.IsBinarySupported(this.assumedBuildOs(), this.assumedBuildArch()) {
 		var notice *buildArtifact
 		ba, notice, err = this.binary.compile(ctx, p)
 		if err != nil {
 			return fail(err)
 		}
 		artifacts = append(artifacts, ba, notice)
+		if this.binaryMode == binaryBuildOnly {
+			if err := this.binary.save(ba, notice); err != nil {
+				return fail(err)
+			}
+		}
 
 	} else {
 		l.With("stage", buildStageBinary).Info("build binary skipped")
