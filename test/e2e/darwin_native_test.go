@@ -18,8 +18,11 @@ import (
 const darwinPrivilegedTestMarker = "BIFROEST_DARWIN_PRIVILEGED_TEST"
 
 func TestOpenSSHLocalNative(t *testing.T) {
-	if runtime.GOARCH != "arm64" {
-		t.Fatalf("native Darwin test requires arm64, got %s", runtime.GOARCH)
+	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+		t.Fatalf("native Darwin test requires amd64 or arm64, got %s", runtime.GOARCH)
+	}
+	if expected := os.Getenv("BIFROEST_E2E_EXPECTED_ARCH"); expected != "" && runtime.GOARCH != expected {
+		t.Fatalf("native Darwin test runs on %s, expected %s", runtime.GOARCH, expected)
 	}
 	if !runDarwinTestAsRoot(t) {
 		return
@@ -133,6 +136,7 @@ func runDarwinTestAsRoot(t *testing.T) bool {
 		"GOCACHE="+cache,
 		darwinPrivilegedTestMarker+"=1",
 		"BIFROEST_E2E_TARGET_USER="+current.Username,
+		"BIFROEST_E2E_EXPECTED_ARCH="+os.Getenv("BIFROEST_E2E_EXPECTED_ARCH"),
 		executable,
 		"-test.run=^"+regexp.QuoteMeta(t.Name())+"$",
 		"-test.v",

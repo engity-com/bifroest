@@ -56,15 +56,15 @@ type build struct {
 	releaseManifest *buildReleaseManifest
 	digest          *buildDigest
 
-	vendor                string
-	dest                  string
-	prefix                string
-	rawStages             buildStages
-	oses                  sys.Oses
-	archs                 sys.Archs
-	editions              sys.Editions
-	testing               bool
-	importReleaseManifest string
+	vendor                 string
+	dest                   string
+	prefix                 string
+	rawStages              buildStages
+	oses                   sys.Oses
+	archs                  sys.Archs
+	editions               sys.Editions
+	testing                bool
+	importReleaseManifests []string
 
 	wslBuildDistribution string
 	binaryMode           binaryBuildMode
@@ -115,7 +115,7 @@ func (this *build) init(ctx context.Context, app *kingpin.Application) {
 			BoolVar(&this.testing)
 		cmd.Flag("importReleaseManifest", "").
 			PlaceHolder("<path>").
-			StringVar(&this.importReleaseManifest)
+			StringsVar(&this.importReleaseManifests)
 		cmd.Flag("wslBuildDistribution", "").
 			PlaceHolder("<distroName>").
 			Default(this.wslBuildDistribution).
@@ -338,15 +338,17 @@ func (this *build) buildAll(ctx context.Context, forTesting bool) (_ buildArtifa
 		artifacts = updated
 	}
 
-	if this.importReleaseManifest != "" {
+	if len(this.importReleaseManifests) > 0 {
 		if !stages.contains(buildStageDigest) {
 			return nil, errors.New("--importReleaseManifest requires the digest stage")
 		}
-		updated, err := this.releaseManifest.importPartial(ctx, artifacts, this.importReleaseManifest)
-		if err != nil {
-			return nil, err
+		for _, filename := range this.importReleaseManifests {
+			updated, err := this.releaseManifest.importPartial(ctx, artifacts, filename)
+			if err != nil {
+				return nil, err
+			}
+			artifacts = updated
 		}
-		artifacts = updated
 	}
 
 	if stages.contains(buildStageDigest) {

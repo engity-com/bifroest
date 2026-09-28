@@ -53,8 +53,10 @@ func (this *buildReleaseManifest) importPartial(ctx context.Context, artifacts b
 		return fail(fmt.Errorf("expected exactly one variant, got %d", len(manifest.Variants)))
 	}
 	variant := manifest.Variants[0]
-	if variant.Os != sys.OsDarwin.String() || variant.Architecture != sys.ArchArm64.String() || variant.Edition != sys.EditionExtended.String() {
-		return fail(fmt.Errorf("expected darwin/arm64/extended variant, got %s/%s/%s", variant.Os, variant.Architecture, variant.Edition))
+	var architecture sys.Arch
+	if err := architecture.Set(variant.Architecture); err != nil || (architecture != sys.ArchAmd64 && architecture != sys.ArchArm64) ||
+		variant.Os != sys.OsDarwin.String() || variant.Edition != sys.EditionExtended.String() {
+		return fail(fmt.Errorf("expected supported Darwin extended variant, got %s/%s/%s", variant.Os, variant.Architecture, variant.Edition))
 	}
 	if variant.Image != nil || variant.Sboms.Image != nil {
 		return fail(errors.New("darwin variant must not contain an image or image SBOMs"))
@@ -64,7 +66,7 @@ func (this *buildReleaseManifest) importPartial(ctx context.Context, artifacts b
 		return fail(errors.New("darwin variant has incomplete archive, notice, or archive SBOM references"))
 	}
 
-	platform := &bib.Platform{Os: sys.OsDarwin, Arch: sys.ArchArm64, Edition: sys.EditionExtended, Testing: artifactsTesting(artifacts)}
+	platform := &bib.Platform{Os: sys.OsDarwin, Arch: architecture, Edition: sys.EditionExtended, Testing: artifactsTesting(artifacts)}
 	references := []struct {
 		name         string
 		artifactType buildArtifactType

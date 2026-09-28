@@ -16,6 +16,7 @@ func TestE2ETargetForHost(t *testing.T) {
 	}{
 		{"Linux AMD64", "linux", "amd64", "linux", "amd64", "linux/amd64", false},
 		{"Linux ARM64", "linux", "arm64", "linux", "arm64", "linux/arm64", false},
+		{"Darwin AMD64", "darwin", "amd64", "linux", "amd64", "linux/amd64", false},
 		{"Darwin ARM64", "darwin", "arm64", "linux", "arm64", "linux/arm64", false},
 		{"Windows", "windows", "amd64", "", "", "", true},
 		{"unsupported architecture", "darwin", "riscv64", "", "", "", true},

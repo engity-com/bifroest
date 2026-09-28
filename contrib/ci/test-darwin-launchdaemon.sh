@@ -2,14 +2,19 @@
 
 set -euo pipefail
 
-dist_dir="$(cd "${1:?usage: test-darwin-launchdaemon.sh <dist-directory>}" && pwd)"
+dist_dir="$(cd "${1:?usage: test-darwin-launchdaemon.sh <dist-directory> <architecture>}" && pwd)"
+architecture="${2:?usage: test-darwin-launchdaemon.sh <dist-directory> <architecture>}"
+case "${architecture}" in
+  amd64|arm64) ;;
+  *) echo "Unsupported Darwin architecture: ${architecture}" >&2; exit 2 ;;
+esac
 if test "$(id -u)" -ne 0; then
   exec sudo -n env \
     "PATH=${PATH}" \
     "BIFROEST_LAUNCHD_TEST_USER=$(id -un)" \
-    bash "$0" "${dist_dir}"
+    bash "$0" "${dist_dir}" "${architecture}"
 fi
-archive="${dist_dir}/bifroest-darwin-arm64-extended.tgz"
+archive="${dist_dir}/bifroest-darwin-${architecture}-extended.tgz"
 label="com.engity.bifroest"
 plist="/Library/LaunchDaemons/${label}.plist"
 binary="/usr/local/bin/bifroest"

@@ -4,7 +4,7 @@
 
 Bifröst (spoken as "Bee-frest"), is an advanced SSH server. It can be used as a drop-in-replacement for [OpenSSH Server](https://www.openssh.com/), but it was actually created with some more advanced stuff in mind; see below.
 
-Native archives are available for Linux and Windows, and an extended-edition archive is available for Apple silicon (`arm64`) Macs running macOS 13 or later. See the [distribution matrix](https://bifroest.engity.org/setup/distribution/) for editions and OCI image availability.
+Native archives are available for Linux and Windows, and extended-edition archives are available for Intel (`amd64`) and Apple silicon (`arm64`) Macs running macOS 13 or later. See the [distribution matrix](https://bifroest.engity.org/setup/distribution/) for editions and OCI image availability.
 
 ## TOC
 

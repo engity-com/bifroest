@@ -199,10 +199,10 @@ support_matrix = SupportMatrix(
         False, False
     ),
 
-    [Edition(
-        Os.darwin, Arch.arm64, EditionKind.extended,
-        True, False,
-    )],
+    [
+        Edition(Os.darwin, Arch.amd64, EditionKind.extended, True, False),
+        Edition(Os.darwin, Arch.arm64, EditionKind.extended, True, False),
+    ],
 
     editions_of(
         Os.windows, Arch.amd64,

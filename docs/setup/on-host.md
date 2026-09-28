@@ -63,7 +63,7 @@ toc_depth: 3
 
 ## macOS
 
-This guide supports Apple silicon (`arm64`) on macOS 13 and later.
+This guide supports Intel (`amd64`) and Apple silicon (`arm64`) on macOS 13 and later.
 
 !!! warning
      Bifröst uses the standard SSH port `22`. If macOS Remote Login already occupies that port, Bifröst fails to start. Disable Remote Login before installing the LaunchDaemon.
@@ -72,10 +72,21 @@ This guide supports Apple silicon (`arm64`) on macOS 13 and later.
     ```shell
     rm -rf /tmp/bifroest-release
     mkdir -p /tmp/bifroest-release
-    curl -sSLf <<release_asset_url("bifroest-darwin-arm64-extended.tgz")>> -o /tmp/bifroest-darwin-arm64-extended.tgz
+    case "$(uname -m)" in
+      arm64)
+        archive=bifroest-darwin-arm64-extended.tgz
+        archive_url=<<release_asset_url("bifroest-darwin-arm64-extended.tgz")>>
+        ;;
+      x86_64)
+        archive=bifroest-darwin-amd64-extended.tgz
+        archive_url=<<release_asset_url("bifroest-darwin-amd64-extended.tgz")>>
+        ;;
+      *) echo "Unsupported macOS architecture: $(uname -m)" >&2; exit 1 ;;
+    esac
+    curl -sSLf "${archive_url}" -o "/tmp/${archive}"
     curl -sSLf <<release_asset_url("bifroest-checksums.txt")>> -o /tmp/bifroest-checksums.txt
-    (cd /tmp && grep '  bifroest-darwin-arm64-extended.tgz$' bifroest-checksums.txt | shasum -a 256 --check -)
-    tar -zxvf /tmp/bifroest-darwin-arm64-extended.tgz -C /tmp/bifroest-release
+    (cd /tmp && grep "  ${archive}$" bifroest-checksums.txt | shasum -a 256 --check -)
+    tar -zxvf "/tmp/${archive}" -C /tmp/bifroest-release
     ```
 
 2. Create the native configuration directory and install the [native macOS example](<<asset_url("contrib/configurations/native-macos.yaml")>>) (see the [configuration documentation](../reference/configuration.md)):

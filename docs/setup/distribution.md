@@ -61,7 +61,7 @@ It does provide the following features:
 Not available.
 
 #### Extended {: #darwin-extended}
-The extended macOS distribution supports Apple silicon (`arm64`) on macOS 13 and later. No generic macOS distribution is available.
+The extended macOS distribution supports Intel (`amd64`) and Apple silicon (`arm64`) on macOS 13 and later. Each architecture has a separate native archive; Universal 2 binaries are not published. No generic macOS distribution is available.
 
 Official macOS release binaries are signed with an Engity Developer ID Application certificate, use the hardened runtime and are accepted by Apple's notarization service before publication. Because the executable is distributed in a `tgz` archive, the first Gatekeeper assessment may need network access to retrieve Apple's notarization ticket. Manual development builds are unsigned unless a Developer ID identity is supplied explicitly and should not be redistributed as official releases.
 
@@ -97,7 +97,7 @@ See the [release page](<< release_url() >>) for all available downloads.
     ```
 * macOS:
     ```plain
-    <<release_asset_url("bifroest-darwin-arm64-extended.tgz")>>
+    <<release_asset_url("bifroest-darwin-<arch>-extended.tgz")>>
     ```
 * Windows:
     ```plain
@@ -114,6 +114,11 @@ See the [release page](<< release_url() >>) for all available downloads.
 * macOS Extended on ARM64:
     ```shell
     curl -sSLf <<release_asset_url("bifroest-darwin-arm64-extended.tgz")>> | sudo tar -zxv -C /usr/local/bin bifroest
+    ```
+
+* macOS Extended on AMD64:
+    ```shell
+    curl -sSLf <<release_asset_url("bifroest-darwin-amd64-extended.tgz")>> | sudo tar -zxv -C /usr/local/bin bifroest
     ```
 
 * Windows Generic on AMD64:
@@ -173,9 +178,9 @@ OCI SBOMs describe the indicated platform image within the multi-platform OCI
 index. They are intentionally separate because their package inventories and
 subject digests can differ.
 
-The `darwin/arm64/extended` release variant therefore includes
-`bifroest-darwin-arm64-extended.tgz`, its `.third-party-notices.txt` file, and
-the archive's `.spdx.json` and `.cdx.json` SBOMs. It has no OCI image or OCI
+The `darwin/amd64/extended` and `darwin/arm64/extended` release variants each
+include their architecture-specific archive, `.third-party-notices.txt` file,
+and archive `.spdx.json` and `.cdx.json` SBOMs. They have no OCI images or OCI
 SBOMs.
 
 The [release manifest](<<release_asset_url("bifroest-release-manifest.json")>>)

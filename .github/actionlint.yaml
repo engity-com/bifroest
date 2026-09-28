@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+
+paths:
+  .github/workflows/**/*.{yml,yaml}:
+    ignore:
+      # actionlint 1.7.7 predates GitHub's standard macos-15-intel runner.
+      - 'label "macos-15-intel" is unknown'

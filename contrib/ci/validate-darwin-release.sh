@@ -2,9 +2,15 @@
 
 set -euo pipefail
 
-dist_dir="${1:?usage: validate-darwin-release.sh <dist-directory>}"
+dist_dir="${1:?usage: validate-darwin-release.sh <dist-directory> <architecture>}"
+architecture="${2:?usage: validate-darwin-release.sh <dist-directory> <architecture>}"
 deployment_target="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
-prefix="bifroest-darwin-arm64-extended"
+case "${architecture}" in
+  amd64) macho_architecture=x86_64 ;;
+  arm64) macho_architecture=arm64 ;;
+  *) echo "Unsupported Darwin architecture: ${architecture}" >&2; exit 2 ;;
+esac
+prefix="bifroest-darwin-${architecture}-extended"
 archive="${dist_dir}/${prefix}.tgz"
 manifest="${dist_dir}/bifroest-release-manifest.json"
 checksums="${dist_dir}/bifroest-checksums.txt"
@@ -42,8 +48,8 @@ plutil -lint "${extract_dir}/contrib/launchd/com.engity.bifroest.plist"
 bash -n "${extract_dir}/contrib/launchd/bifroest-service.sh"
 
 "${binary}" version --no-long
-test "$(lipo -archs "${binary}")" = "arm64"
-file -b "${binary}" | grep -Eq '^Mach-O 64-bit executable arm64$'
+test "$(lipo -archs "${binary}")" = "${macho_architecture}"
+file -b "${binary}" | grep -Eq "^Mach-O 64-bit executable ${macho_architecture}$"
 vtool -show-build "${binary}" | grep -Eq "minos[[:space:]]+${deployment_target//./\\.}([[:space:]]|$)"
 
 dependencies="$(otool -L "${binary}")"
@@ -67,19 +73,20 @@ if grep -Eq '/Applications/Xcode|/Library/Developer|MacOSX[^/]*\.sdk' "${strings
   exit 1
 fi
 
-python3 - "${manifest}" "${prefix}" <<'PY'
+python3 - "${manifest}" "${prefix}" "${architecture}" <<'PY'
 import json
 import pathlib
 import sys
 
 manifest_path = pathlib.Path(sys.argv[1])
 prefix = sys.argv[2]
+architecture = sys.argv[3]
 manifest = json.loads(manifest_path.read_text())
 assert manifest["manifestAsset"] == "bifroest-release-manifest.json"
 assert manifest["checksumAsset"] == "bifroest-checksums.txt"
 assert len(manifest["variants"]) == 1
 variant = manifest["variants"][0]
-assert (variant["os"], variant["architecture"], variant["edition"]) == ("darwin", "arm64", "extended")
+assert (variant["os"], variant["architecture"], variant["edition"]) == ("darwin", architecture, "extended")
 assert variant["archive"] == f"{prefix}.tgz"
 assert variant["notice"] == f"{prefix}.third-party-notices.txt"
 assert variant["sboms"]["archive"] == {

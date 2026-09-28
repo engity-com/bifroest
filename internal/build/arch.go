@@ -107,6 +107,9 @@ var (
 			}},
 		}},
 		sys.ArchAmd64: {amd64: "v1", os: map[sys.Os]archOsDetails{
+			sys.OsDarwin: {build: map[archBuildKey]archBuildDetails{
+				{sys.OsDarwin, sys.ArchAmd64}: {"clang"},
+			}},
 			sys.OsLinux: {fromImage: fromDefaultLinux, fromImageExtended: fromDefaultLinuxExtended, build: map[archBuildKey]archBuildDetails{
 				{sys.OsLinux, sys.ArchAmd64}:   {"x86-64-linux-gnu-gcc"},
 				{sys.OsWindows, sys.ArchAmd64}: {},

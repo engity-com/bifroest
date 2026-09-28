@@ -17,7 +17,7 @@ import (
 )
 
 func TestImportPartialReleaseManifestRehydratesDarwinArtifacts(t *testing.T) {
-	partialManifest := testPartialDarwinRelease(t)
+	partialManifest := testPartialDarwinRelease(t, sys.ArchArm64)
 	build, buildContext := testReleaseManifestBuild(t)
 	local := testArchiveReleaseArtifacts(t, build, buildContext, &bib.Platform{Os: sys.OsWindows, Arch: sys.ArchAmd64, Edition: sys.EditionExtended})
 
@@ -89,6 +89,34 @@ func TestImportPartialReleaseManifestRehydratesDarwinArtifacts(t *testing.T) {
 	}
 }
 
+func TestImportPartialReleaseManifestsRehydratesBothDarwinArchitectures(t *testing.T) {
+	amd64Manifest := testPartialDarwinRelease(t, sys.ArchAmd64)
+	arm64Manifest := testPartialDarwinRelease(t, sys.ArchArm64)
+	build, buildContext := testReleaseManifestBuild(t)
+
+	artifacts, err := build.releaseManifest.importPartial(t.Context(), nil, amd64Manifest)
+	require.NoError(t, err)
+	artifacts, err = build.releaseManifest.importPartial(t.Context(), artifacts, arm64Manifest)
+	require.NoError(t, err)
+	require.Len(t, artifacts, 8)
+	require.Equal(t, sys.ArchAmd64, artifacts[0].Arch)
+	require.Equal(t, sys.ArchArm64, artifacts[4].Arch)
+
+	withManifest, err := build.releaseManifest.create(t.Context(), artifacts, true)
+	require.NoError(t, err)
+	_, err = build.digest.create(t.Context(), withManifest)
+	require.NoError(t, err)
+
+	var manifest releaseManifest
+	rawManifest, err := gos.ReadFile(buildContext.filepath(releaseManifestFilename))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(rawManifest, &manifest))
+	require.Len(t, manifest.Assets, 8)
+	require.Len(t, manifest.Variants, 2)
+	require.Equal(t, "amd64", manifest.Variants[0].Architecture)
+	require.Equal(t, "arm64", manifest.Variants[1].Architecture)
+}
+
 func TestImportPartialReleaseManifestRejectsInvalidJSONAndContext(t *testing.T) {
 	t.Run("manifest symlink", func(t *testing.T) {
 		manifestFilename := testPartialDarwinRelease(t)
@@ -148,8 +176,8 @@ func TestImportPartialReleaseManifestRejectsInvalidVariantAndAssets(t *testing.T
 			"exactly one variant",
 		},
 		"wrong platform": {
-			func(v *releaseManifest) { v.Variants[0].Architecture = "amd64" },
-			"darwin/arm64/extended",
+			func(v *releaseManifest) { v.Variants[0].Architecture = "386" },
+			"supported Darwin extended",
 		},
 		"image": {
 			func(v *releaseManifest) { v.Variants[0].Image = &releaseManifestVariantImage{} },
@@ -326,10 +354,14 @@ func TestImportPartialReleaseManifestRejectsInvalidChecksums(t *testing.T) {
 	}
 }
 
-func testPartialDarwinRelease(t *testing.T) string {
+func testPartialDarwinRelease(t *testing.T, requested ...sys.Arch) string {
 	t.Helper()
+	arch := sys.ArchArm64
+	if len(requested) > 0 {
+		arch = requested[0]
+	}
 	build, buildContext := testReleaseManifestBuild(t)
-	platform := &bib.Platform{Os: sys.OsDarwin, Arch: sys.ArchArm64, Edition: sys.EditionExtended}
+	platform := &bib.Platform{Os: sys.OsDarwin, Arch: arch, Edition: sys.EditionExtended}
 	archiveName := platform.FilenamePrefix(build.prefix) + ".tgz"
 	archive := testReleaseManifestFile(t, buildContext, platform, buildArtifactTypeArchive, archiveName, "archive", nil)
 	archiveDigest := mustSha256File(t, archive.filepath)

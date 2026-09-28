@@ -18,7 +18,9 @@ func TestOsDarwin(t *testing.T) {
 
 func TestDarwinBinaryCompatibility(t *testing.T) {
 	require.True(t, IsBinaryCompatibleWithHost(OsDarwin, ArchArm64, OsDarwin, ArchArm64))
+	require.True(t, IsBinaryCompatibleWithHost(OsDarwin, ArchAmd64, OsDarwin, ArchAmd64))
 	require.False(t, IsBinaryCompatibleWithHost(OsDarwin, ArchAmd64, OsDarwin, ArchArm64))
+	require.False(t, IsBinaryCompatibleWithHost(OsDarwin, ArchArm64, OsDarwin, ArchAmd64))
 	require.False(t, IsBinaryCompatibleWithHost(OsLinux, ArchArm64, OsDarwin, ArchArm64))
 }
 

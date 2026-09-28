@@ -2,9 +2,14 @@
 
 set -euo pipefail
 
-dist_dir="${1:?usage: validate-darwin-signature.sh <dist-directory> [--gatekeeper]}"
-gatekeeper="${2:-}"
-archive="${dist_dir}/bifroest-darwin-arm64-extended.tgz"
+dist_dir="${1:?usage: validate-darwin-signature.sh <dist-directory> <architecture> [--gatekeeper]}"
+architecture="${2:?usage: validate-darwin-signature.sh <dist-directory> <architecture> [--gatekeeper]}"
+case "${architecture}" in
+  amd64|arm64) ;;
+  *) echo "Unsupported Darwin architecture: ${architecture}" >&2; exit 2 ;;
+esac
+gatekeeper="${3:-}"
+archive="${dist_dir}/bifroest-darwin-${architecture}-extended.tgz"
 extract_dir="$(mktemp -d)"
 trap 'rm -rf "${extract_dir}"' EXIT
 
