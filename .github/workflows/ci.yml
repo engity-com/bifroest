@@ -71,7 +71,7 @@ jobs:
           mise run ci:evaluate-environment
 
   reuse:
-    name: REUSE lint
+    name: REUSE lint ${{ matrix.os }}
     needs: evaluate
     permissions:
       contents: read
