@@ -21,6 +21,8 @@ type Service struct {
 	Addr                       string
 	MasterPublicKey            crypto.PublicKey
 	SessionId                  session.Id
+	ReverseTCPUser             string
+	ReverseTCPUserConfigured   bool
 
 	Logger log.Logger
 }
@@ -50,6 +52,8 @@ func (this *Service) createInstance() (*service, error) {
 	result.imp.Addr = this.Addr
 	result.imp.MasterPublicKey = this.MasterPublicKey
 	result.imp.SessionId = this.SessionId
+	result.imp.ReverseTCPUser = this.ReverseTCPUser
+	result.imp.ReverseTCPUserConfigured = this.ReverseTCPUserConfigured
 	result.imp.Logger = this.logger()
 
 	return &result, nil

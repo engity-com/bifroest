@@ -80,7 +80,7 @@ func (this *KubernetesRepository) new(ctx context.Context, pod *v1.Pod, logger l
 		return failf("cannot parse pod: %w", err)
 	}
 	var err error
-	openedSession, err := this.imp.Open(ctx, result)
+	openedSession, err := this.imp.Open(context.WithoutCancel(ctx), result)
 	if err != nil {
 		return failf("cannot open IMP session: %w", err)
 	}
@@ -89,6 +89,12 @@ func (this *KubernetesRepository) new(ctx context.Context, pod *v1.Pod, logger l
 		_ = openedSession.Close()
 		return failf("IMP session does not support execution lifecycle")
 	}
+	success := false
+	defer func() {
+		if !success {
+			_ = result.impSession.Close()
+		}
+	}()
 
 	connId, err := connection.NewId()
 	if err != nil {
@@ -103,6 +109,7 @@ func (this *KubernetesRepository) new(ctx context.Context, pod *v1.Pod, logger l
 	}
 
 	result.owners.Add(1)
+	success = true
 
 	return result, nil
 }
@@ -176,6 +183,7 @@ func (this *kubernetes) Dispose(ctx context.Context) (_ bool, rErr error) {
 	if err != nil {
 		return fail(err)
 	}
+	this.repository.activeInstances.CompareAndDelete(this.sessionId, this)
 
 	return ok, nil
 }
@@ -187,11 +195,14 @@ func (this *kubernetes) Close() (rErr error) {
 }
 
 func (this *kubernetes) closeGuarded() error {
+	if this.owners.Load() <= 0 {
+		return nil
+	}
 	if this.owners.Add(-1) > 0 {
 		return nil
 	}
-	this.repository.activeInstances.Delete(this.sessionId)
-	return nil
+	defer this.repository.activeInstances.CompareAndDelete(this.sessionId, this)
+	return this.impSession.Close()
 }
 
 func (this *kubernetes) isRelevantError(err error) bool {
@@ -268,6 +279,25 @@ func (this *kubernetes) parsePod(pod *v1.Pod) (err error) {
 	this.group = annotations[KubernetesAnnotationGroup]
 	this.directory = annotations[KubernetesAnnotationDirectory]
 	this.portForwardingAllowed = annotations[KubernetesAnnotationPortForwardingAllowed] == "true"
+	for _, container := range pod.Spec.Containers {
+		if container.Name != "bifroest" {
+			continue
+		}
+		expectedUser := this.user
+		if expectedUser == "" && container.SecurityContext != nil && container.SecurityContext.RunAsUser != nil && *container.SecurityContext.RunAsUser == 0 && pod.Spec.OS != nil && pod.Spec.OS.Name == v1.Linux {
+			expectedUser = "0"
+		}
+		found := false
+		for _, env := range container.Env {
+			if env.Name != imp.EnvVarReverseTCPUser {
+				continue
+			}
+			if found || env.ValueFrom != nil || env.Value != expectedUser {
+				return failf("target user annotation does not match pinned IMP user")
+			}
+			found = true
+		}
+	}
 
 	return nil
 }

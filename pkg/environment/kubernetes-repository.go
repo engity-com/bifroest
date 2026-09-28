@@ -591,6 +591,14 @@ func (this *KubernetesRepository) resolvePodConfig(req Request, sess session.Ses
 	if v, err := this.resolveContainerConfig(req, sess); err != nil {
 		return fail(err)
 	} else {
+		user := result.Annotations[KubernetesAnnotationUser]
+		if user == "" && this.conf.Os == sys.OsLinux && v.SecurityContext != nil && v.SecurityContext.RunAsUser != nil && *v.SecurityContext.RunAsUser == 0 {
+			user = "0"
+		}
+		v.Env = append(v.Env, v1.EnvVar{
+			Name:  imp.EnvVarReverseTCPUser,
+			Value: user,
+		})
 		result.Spec.Containers = []v1.Container{v}
 		containerImage = v.Image
 	}
@@ -969,7 +977,7 @@ func (this *KubernetesRepository) findOrEnsureBySession(ctx context.Context, ses
 	if ok {
 		instance := ip.(*kubernetes)
 		instance.owners.Add(1)
-		return instance, nil
+		return &containerLease{Environment: instance, ReverseTCPListener: instance}, nil
 	}
 
 	existing, err := this.findPodBySession(ctx, sess)
@@ -987,7 +995,7 @@ func (this *KubernetesRepository) findOrEnsureBySession(ctx context.Context, ses
 	if ok {
 		instance := ip.(*kubernetes)
 		instance.owners.Add(1)
-		return instance, nil
+		return &containerLease{Environment: instance, ReverseTCPListener: instance}, nil
 	}
 	if existing != nil && existing.Annotations[KubernetesAnnotationExecutionLifecycle] != executionLifecycleCapability {
 		if !opts.IsAutoCleanUpAllowed() {
@@ -1050,7 +1058,7 @@ func (this *KubernetesRepository) findOrEnsureBySession(ctx context.Context, ses
 
 	this.activeInstances.Store(sessId, instance)
 
-	return instance, nil
+	return &containerLease{Environment: instance, ReverseTCPListener: instance}, nil
 }
 
 func (this *KubernetesRepository) removePod(ctx context.Context, namespace, name string, ppe PreparationProgressEnabled) (_ bool, rErr error) {

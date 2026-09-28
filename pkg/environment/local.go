@@ -6,6 +6,7 @@ import (
 	gonet "net"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -274,4 +275,24 @@ func (this *local) NewDestinationConnection(ctx context.Context, dest net.HostPo
 
 	var dialer gonet.Dialer
 	return dialer.DialContext(ctx, "tcp", dest.String())
+}
+
+func (this *local) ListenReverseTCP(ctx context.Context, host string, port uint16) (gonet.Listener, error) {
+	if !this.portForwardingAllowed {
+		return nil, errors.Newf(errors.Permission, "port forwarding not allowed")
+	}
+	if port > 0 && port < 1024 && this.reverseTCPUnprivilegedUser() {
+		return nil, errors.Newf(errors.Permission, "privileged reverse TCP port %d not allowed for unprivileged user", port)
+	}
+
+	// An omitted SSH bind host is loopback; only an explicit * requests a wildcard bind.
+	switch host {
+	case "":
+		host = "localhost"
+	case "*":
+		host = ""
+	}
+
+	var config gonet.ListenConfig
+	return config.Listen(ctx, "tcp", gonet.JoinHostPort(host, strconv.FormatUint(uint64(port), 10)))
 }

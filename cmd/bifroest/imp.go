@@ -57,6 +57,7 @@ func doImp(encodecMasterPublicKey string, sessionId session.Id, exitCodeByConnec
 		ExitCodeByConnectionIdPath: exitCodeByConnectionIdPath,
 		Addr:                       addr,
 	}
+	service.ReverseTCPUser, service.ReverseTCPUserConfigured = goos.LookupEnv(imp.EnvVarReverseTCPUser)
 
 	if b, err := base64.RawStdEncoding.DecodeString(encodecMasterPublicKey); err != nil {
 		return errors.System.Newf("cannot decode imp master's public key: %w", err)

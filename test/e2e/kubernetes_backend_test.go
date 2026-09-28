@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -192,20 +193,51 @@ func TestOpenSSHKubernetesEnvironment(t *testing.T) {
 	})
 
 	t.Run("ssh -R transfer", func(t *testing.T) {
+		if err := k.waitForEnvironmentPod(); err != nil {
+			t.Fatal(err)
+		}
+		hostAddress := fmt.Sprintf("127.0.0.1:%d", reversePort)
+		probe, err := net.Listen("tcp", hostAddress)
+		if err != nil {
+			t.Fatalf("host reverse port %s is already occupied: %v", hostAddress, err)
+		}
+		if err := probe.Close(); err != nil {
+			t.Fatal(err)
+		}
 		hostEcho, address := startEchoServer(t, k.helper)
 		defer hostEcho.stop()
 		forward := startSSH(t, k.fixture, nil, []string{"-N", "-o", "ExitOnForwardFailure=yes", "-R", fmt.Sprintf("127.0.0.1:%d:%s", reversePort, address)}, nil)
 		defer forward.stop()
 		if err := pollProcess(20*time.Second, forward, func() error {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			result := runCommand(ctx, k.repoRoot, nil, k.helper, "echo-client", "tcp", fmt.Sprintf("127.0.0.1:%d", reversePort), "262144")
+			result := k.podExec(5*time.Second, "/usr/local/bin/e2e-helper", "echo-client", "tcp", hostAddress, "262144")
 			if result.err != nil {
 				return fmt.Errorf("%w: %s", result.err, result.stderr)
+			}
+			if result.stdout != "ok 262144\n" {
+				return fmt.Errorf("unexpected echo-client output %q", result.stdout)
 			}
 			return nil
 		}); err != nil {
 			t.Fatal(err)
+		}
+		conn, err := net.DialTimeout("tcp", hostAddress, time.Second)
+		if err == nil {
+			_ = conn.Close()
+			t.Fatalf("host reverse port %s is reachable while Pod listener is active", hostAddress)
+		}
+		if !errors.Is(err, syscall.ECONNREFUSED) {
+			t.Fatalf("probe host reverse port %s: %v", hostAddress, err)
+		}
+	})
+
+	t.Run("ssh -R privileged port denied", func(t *testing.T) {
+		ready := k.ssh(75*time.Second, k.clientKey, "e2e", nil, "/usr/local/bin/e2e-helper", "ready")
+		if ready.err != nil || !strings.HasSuffix(ready.stdout, "ready\n") {
+			t.Fatalf("prepare Pod before reverse forwarding: error=%v, stdout=%q, stderr=%q", ready.err, ready.stdout, ready.stderr)
+		}
+		result := k.ssh(10*time.Second, k.clientKey, "e2e", []string{"-N", "-o", "ExitOnForwardFailure=yes", "-R", "127.0.0.1:80:127.0.0.1:80"})
+		if result.err == nil || !strings.Contains(result.stderr, "remote port forwarding failed") {
+			t.Fatalf("non-root Pod user could forward privileged port: error=%v\nstderr:\n%s", result.err, result.stderr)
 		}
 	})
 

@@ -31,13 +31,14 @@ var _ = RegisterRepository(NewSshRepository)
 const maxSshTargetChannels = 64
 
 type sshResolvedSettings struct {
-	address        bnet.HostPort
-	user           string
-	connectTimeout time.Duration
-	forwardAllowed bool
-	signers        []gossh.Signer
-	certificate    *sshCertificateSpec
-	cacheKey       string
+	address               bnet.HostPort
+	user                  string
+	connectTimeout        time.Duration
+	forwardAllowed        bool
+	reverseForwardAllowed bool
+	signers               []gossh.Signer
+	certificate           *sshCertificateSpec
+	cacheKey              string
 }
 
 type SshRepository struct {
@@ -207,6 +208,10 @@ func (this *SshRepository) resolveSettings(req Context) (*sshResolvedSettings, e
 	if err != nil {
 		return nil, fmt.Errorf("cannot render SSH port forwarding setting: %w", err)
 	}
+	reverseForwardAllowed, err := this.conf.ReversePortForwardingAllowed.Render(req)
+	if err != nil {
+		return nil, fmt.Errorf("cannot render SSH reverse port forwarding setting: %w", err)
+	}
 
 	var signers []gossh.Signer
 	identityKey := "fallback"
@@ -217,12 +222,13 @@ func (this *SshRepository) resolveSettings(req Context) (*sshResolvedSettings, e
 		}
 		identityKey = "certificate\x00" + this.certificateKeys.subjectFingerprint
 		return &sshResolvedSettings{
-			address:        address,
-			user:           user,
-			connectTimeout: connectTimeout,
-			forwardAllowed: forwardAllowed,
-			certificate:    certificate,
-			cacheKey:       address.String() + "\x00" + user + "\x00" + connectTimeout.String() + "\x00" + identityKey,
+			address:               address,
+			user:                  user,
+			connectTimeout:        connectTimeout,
+			forwardAllowed:        forwardAllowed,
+			reverseForwardAllowed: reverseForwardAllowed,
+			certificate:           certificate,
+			cacheKey:              address.String() + "\x00" + user + "\x00" + connectTimeout.String() + "\x00" + identityKey,
 		}, nil
 	} else if len(this.conf.IdentityFiles) > 0 {
 		files, err := this.conf.IdentityFiles.Render(req)
@@ -257,12 +263,13 @@ func (this *SshRepository) resolveSettings(req Context) (*sshResolvedSettings, e
 	}
 
 	return &sshResolvedSettings{
-		address:        address,
-		user:           user,
-		connectTimeout: connectTimeout,
-		forwardAllowed: forwardAllowed,
-		signers:        signers,
-		cacheKey:       address.String() + "\x00" + user + "\x00" + connectTimeout.String() + "\x00" + identityKey,
+		address:               address,
+		user:                  user,
+		connectTimeout:        connectTimeout,
+		forwardAllowed:        forwardAllowed,
+		reverseForwardAllowed: reverseForwardAllowed,
+		signers:               signers,
+		cacheKey:              address.String() + "\x00" + user + "\x00" + connectTimeout.String() + "\x00" + identityKey,
 	}, nil
 }
 

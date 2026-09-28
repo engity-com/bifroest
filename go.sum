@@ -101,6 +101,8 @@ github.com/emicklei/go-restful/v3 v3.13.0 h1:C4Bl2xDndpU6nJ4bc1jXd+uTmYPVUwkD6bF
 github.com/emicklei/go-restful/v3 v3.13.0/go.mod h1:6n3XBCmQQb25CM2LCACGz8ukIrRry+4bhvbpWn3mrbc=
 github.com/engity-com/ssh-server-go v0.3.0 h1:L2/k35HkDRoWCtIpFMsKSJnPwqEujgXHnQ6VmHXbw4w=
 github.com/engity-com/ssh-server-go v0.3.0/go.mod h1:TnA/3Ae/Ii3LLK4V/aqYG2b70vOof/oOPI+CW3avLdc=
+github.com/engity-com/ssh-server-go v0.4.0 h1:36rZMdoIL/S5bH2I/S8SbJNbcrjjgdcyd1Hk6wJreOw=
+github.com/engity-com/ssh-server-go v0.4.0/go.mod h1:TnA/3Ae/Ii3LLK4V/aqYG2b70vOof/oOPI+CW3avLdc=
 github.com/evanphx/json-patch/v5 v5.6.0 h1:b91NhWfaz02IuVxO9faSllyAtNXHMPkC5J8sJCLunww=
 github.com/evanphx/json-patch/v5 v5.6.0/go.mod h1:G79N1coSVB93tBe7j6PhzjmR3/2VvlbKOFpnXhI9Bw4=
 github.com/felixge/httpsnoop v1.1.0 h1:3YtUj32ZZkqZtt3sZZsClsymw/QDuVfpNhoA31zeORc=

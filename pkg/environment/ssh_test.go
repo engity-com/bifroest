@@ -701,7 +701,7 @@ func TestSshRepositoryRejectsEmptyRenderedAddress(t *testing.T) {
 }
 
 func TestSshEnvironmentRejectsReversePortForwarding(t *testing.T) {
-	environment := &sshEnvironment{}
+	environment := &sshEnvironment{settings: &sshResolvedSettings{forwardAllowed: true}}
 	allowed, err := environment.IsReversePortForwardingAllowed(bnet.MustNewHostPort("127.0.0.1:2222"))
 	require.NoError(t, err)
 	require.False(t, allowed)
@@ -737,6 +737,7 @@ type sshTarget struct {
 	pendingOpen      chan string
 	pendingOpenAfter int32
 	openCount        atomic.Int32
+	globalRequests   func(*gossh.ServerConn, <-chan *gossh.Request)
 }
 
 func newSshTarget(t *testing.T) *sshTarget {
@@ -788,7 +789,11 @@ func (this *sshTarget) serveConnection(raw gonet.Conn) {
 		return
 	}
 	defer func() { _ = connection.Close() }()
-	go gossh.DiscardRequests(requests)
+	if this.globalRequests != nil {
+		go this.globalRequests(connection, requests)
+	} else {
+		go gossh.DiscardRequests(requests)
+	}
 	for channel := range channels {
 		if this.pendingOpen != nil && this.openCount.Add(1) == this.pendingOpenAfter+1 {
 			this.pendingOpen <- channel.ChannelType()

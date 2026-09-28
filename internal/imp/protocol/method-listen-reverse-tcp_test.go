@@ -1,0 +1,625 @@
+package protocol
+
+import (
+	"bytes"
+	"context"
+	"crypto/tls"
+	"encoding/binary"
+	"errors"
+	"io"
+	"net"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	"github.com/vmihailenco/msgpack/v5"
+	"github.com/xtaci/smux"
+
+	"github.com/engity-com/bifroest/pkg/codec"
+	"github.com/engity-com/bifroest/pkg/connection"
+	"github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/session"
+)
+
+func TestReverseTCPHost(t *testing.T) {
+	for _, host := range []string{"", "localhost", "127.0.0.1", "::1", "fe80::1%lo"} {
+		require.NoError(t, validateReverseTCPHost(host), "host %q", host)
+	}
+	for _, host := range []string{"bad:host", "[::1]", "local\x00host", "::1\x00"} {
+		require.Error(t, validateReverseTCPHost(host), "host %q", host)
+	}
+}
+
+func TestReverseTCPConnectionLimit(t *testing.T) {
+	require.Equal(t, 64, maxReverseTCPConnections)
+	first, second := &imp{}, &imp{}
+	for range maxReverseTCPConnections {
+		require.True(t, first.acquireReverseTCPConnection())
+	}
+	require.False(t, first.acquireReverseTCPConnection(), "65th connection on the same IMP must be rejected")
+	require.True(t, second.acquireReverseTCPConnection(), "another IMP must have its own capacity")
+	second.releaseReverseTCPConnection()
+
+	first.releaseReverseTCPConnection()
+	require.True(t, first.acquireReverseTCPConnection(), "release must restore capacity")
+	require.False(t, first.acquireReverseTCPConnection())
+	for range maxReverseTCPConnections {
+		first.releaseReverseTCPConnection()
+	}
+	require.Equal(t, 0, first.reverseTCPConnections)
+	require.Equal(t, 0, second.reverseTCPConnections)
+}
+
+func TestReverseTCPConnectionLimitParallel(t *testing.T) {
+	instance := &imp{}
+	const contenders = maxReverseTCPConnections * 4
+	start := make(chan struct{})
+	hold := make(chan struct{})
+	var release sync.Once
+	results := make(chan bool, contenders)
+	var workers sync.WaitGroup
+	workers.Add(contenders)
+	for range contenders {
+		go func() {
+			defer workers.Done()
+			<-start
+			acquired := instance.acquireReverseTCPConnection()
+			results <- acquired
+			if acquired {
+				<-hold
+				instance.releaseReverseTCPConnection()
+			}
+		}()
+	}
+	done := make(chan struct{})
+	go func() { workers.Wait(); close(done) }()
+	t.Cleanup(func() {
+		release.Do(func() { close(hold) })
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("parallel workers did not stop during cleanup")
+		}
+	})
+	close(start)
+	occupied := 0
+	for range contenders {
+		select {
+		case acquired := <-results:
+			if acquired {
+				occupied++
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("parallel acquire did not complete")
+		}
+	}
+	require.Equal(t, maxReverseTCPConnections, occupied)
+	require.False(t, instance.acquireReverseTCPConnection())
+	release.Do(func() { close(hold) })
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("parallel releases did not complete")
+	}
+	require.Equal(t, 0, instance.reverseTCPConnections)
+	for range maxReverseTCPConnections {
+		require.True(t, instance.acquireReverseTCPConnection())
+	}
+	require.False(t, instance.acquireReverseTCPConnection())
+	for range maxReverseTCPConnections {
+		instance.releaseReverseTCPConnection()
+	}
+}
+
+type reverseTCPTestRef struct {
+	sessionId session.Id
+	conn      net.Conn
+}
+
+func (r reverseTCPTestRef) SessionId() session.Id       { return r.sessionId }
+func (r reverseTCPTestRef) PublicKey() crypto.PublicKey { return nil }
+func (r reverseTCPTestRef) Dial(context.Context) (net.Conn, error) {
+	return r.conn, nil
+}
+
+type reverseTCPBlockingRef struct {
+	reverseTCPTestRef
+	started chan struct{}
+}
+
+func (r reverseTCPBlockingRef) Dial(ctx context.Context) (net.Conn, error) {
+	close(r.started)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestReverseTCPSessionCloseDuringDial(t *testing.T) {
+	key, err := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).GenerateKey(nil)
+	require.NoError(t, err)
+	master, err := NewMaster(context.Background(), key)
+	require.NoError(t, err)
+	sessionId, err := session.NewId()
+	require.NoError(t, err)
+	sessionCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ref := reverseTCPBlockingRef{reverseTCPTestRef: reverseTCPTestRef{sessionId: sessionId}, started: make(chan struct{})}
+	result := make(chan error, 1)
+	go func() {
+		_, err := master.methodListenReverseTCP(context.Background(), sessionCtx, ref, connection.Id{}, "127.0.0.1", 0)
+		result <- err
+	}()
+	select {
+	case <-ref.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("IMP dial did not start")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		t.Fatal("session close did not interrupt IMP dial")
+	}
+}
+
+func TestReverseTCPCancelBeforeResponse(t *testing.T) {
+	key, err := (crypto.KeyRequirement{Type: crypto.KeyTypeEd25519}).GenerateKey(nil)
+	require.NoError(t, err)
+	master, err := NewMaster(context.Background(), key)
+	require.NoError(t, err)
+	sessionId, err := session.NewId()
+	require.NoError(t, err)
+	serverConfig, err := (&Imp{MasterPublicKey: key.PublicKey(), SessionId: sessionId}).createTlsConfig()
+	require.NoError(t, err)
+
+	for _, cancelContext := range []string{"request", "session"} {
+		t.Run(cancelContext, func(t *testing.T) {
+			client, server := net.Pipe()
+			defer client.Close()
+			defer server.Close()
+			ready := make(chan struct{})
+			serverDone := make(chan error, 1)
+			go func() {
+				tlsConn := tls.Server(server, serverConfig)
+				conn := codec.NewMsgPackConn(tlsConn)
+				defer conn.Close()
+				if err := tlsConn.Handshake(); err != nil {
+					serverDone <- err
+					return
+				}
+				var header Header
+				if err := header.DecodeMsgPack(conn); err != nil {
+					serverDone <- err
+					return
+				}
+				var req reverseTCPRequest
+				if err := req.DecodeMsgPack(conn); err != nil {
+					serverDone <- err
+					return
+				}
+				close(ready)
+				var buf [1]byte
+				_, err := conn.Read(buf[:])
+				serverDone <- err
+			}()
+
+			ctx, cancelRequest := context.WithCancel(context.Background())
+			defer cancelRequest()
+			sessionCtx, cancelSession := context.WithCancel(context.Background())
+			defer cancelSession()
+			result := make(chan error, 1)
+			go func() {
+				_, err := master.methodListenReverseTCP(ctx, sessionCtx, reverseTCPTestRef{sessionId, client}, connection.Id{}, "127.0.0.1", 0)
+				result <- err
+			}()
+			select {
+			case <-ready:
+			case err := <-serverDone:
+				t.Fatalf("fake IMP failed before request: %v", err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("fake IMP did not receive request")
+			}
+			if cancelContext == "request" {
+				cancelRequest()
+			} else {
+				cancelSession()
+			}
+			select {
+			case err := <-result:
+				require.ErrorIs(t, err, context.Canceled)
+			case <-time.After(5 * time.Second):
+				t.Fatal("cancellation did not release response decode")
+			}
+			select {
+			case err := <-serverDone:
+				require.True(t, errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed), "fake IMP read: %v", err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("connection did not close on cancellation")
+			}
+		})
+	}
+}
+
+func TestReverseTCPCloseWhileReadingAddresses(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	impMux, err := smux.Client(left, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer impMux.Close()
+	masterMux, err := smux.Server(right, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer masterMux.Close()
+	control, err := masterMux.OpenStream()
+	require.NoError(t, err)
+	ln := &reverseTCPListener{
+		mux: masterMux, control: control,
+	}
+	impControl, err := impMux.AcceptStream()
+	require.NoError(t, err)
+	defer impControl.Close()
+	stalled, err := impMux.OpenStream()
+	require.NoError(t, err)
+	defer stalled.Close()
+	blocked := make(chan error, 1)
+	go func() { _, e := ln.Accept(); blocked <- e }()
+	require.Eventually(t, func() bool {
+		ln.closeMu.Lock()
+		defer ln.closeMu.Unlock()
+		return ln.active == 1
+	}, 5*time.Second, time.Millisecond)
+	go func() {
+		var command [1]byte
+		if _, err := io.ReadFull(impControl, command[:]); err == nil && command[0] == 1 {
+			_, _ = impControl.Write([]byte{1})
+		}
+	}()
+	require.NoError(t, ln.Close())
+	select {
+	case err := <-blocked:
+		require.ErrorIs(t, err, net.ErrClosed)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Accept remained blocked on incomplete stream addresses")
+	}
+	select {
+	case <-ln.Drained():
+	case <-time.After(5 * time.Second):
+		t.Fatal("stalled stream did not release the transport")
+	}
+}
+
+func TestReverseTCPCloseWithConcurrentAccepts(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	impMux, err := smux.Client(left, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer impMux.Close()
+	masterMux, err := smux.Server(right, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer masterMux.Close()
+	control, err := masterMux.OpenStream()
+	require.NoError(t, err)
+	ln := &reverseTCPListener{mux: masterMux, control: control}
+	impControl, err := impMux.AcceptStream()
+	require.NoError(t, err)
+	defer impControl.Close()
+	go func() {
+		var command [1]byte
+		if _, e := io.ReadFull(impControl, command[:]); e == nil && command[0] == 1 {
+			_, _ = impControl.Write([]byte{1})
+		}
+	}()
+	results := make(chan error, 8)
+	for range 8 {
+		go func() { _, e := ln.Accept(); results <- e }()
+	}
+	require.NoError(t, ln.Close())
+	for range 8 {
+		select {
+		case err := <-results:
+			require.ErrorIs(t, err, net.ErrClosed)
+		case <-time.After(5 * time.Second):
+			t.Fatal("concurrent Accept did not stop")
+		}
+	}
+	select {
+	case <-ln.Drained():
+	case <-time.After(5 * time.Second):
+		t.Fatal("listener did not drain")
+	}
+}
+
+func TestReverseTCPCloseDrainsLateStreams(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	impMux, err := smux.Client(left, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer impMux.Close()
+	masterMux, err := smux.Server(right, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer masterMux.Close()
+	control, err := masterMux.OpenStream()
+	require.NoError(t, err)
+	ln := &reverseTCPListener{mux: masterMux, control: control}
+	impControl, err := impMux.AcceptStream()
+	require.NoError(t, err)
+	defer impControl.Close()
+
+	activeStream, err := impMux.OpenStream()
+	require.NoError(t, err)
+	defer activeStream.Close()
+	remote := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1234}
+	local := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5678}
+	require.NoError(t, writeReverseTCPAddresses(activeStream, remote, local))
+	active, err := ln.Accept()
+	require.NoError(t, err)
+	defer active.Close()
+
+	stopDone := make(chan struct{})
+	go func() {
+		defer close(stopDone)
+		var command [1]byte
+		if _, e := io.ReadFull(impControl, command[:]); e == nil && command[0] == 1 {
+			_, _ = impControl.Write([]byte{1})
+		}
+	}()
+	require.NoError(t, ln.Close())
+	acceptDone := make(chan error, 1)
+	go func() { _, err := ln.Accept(); acceptDone <- err }()
+	select {
+	case err := <-acceptDone:
+		require.ErrorIs(t, err, net.ErrClosed)
+	case <-time.After(time.Second):
+		t.Fatal("Accept blocked behind the drain after listener Close")
+	}
+	stalled, err := impMux.OpenStream()
+	require.NoError(t, err)
+	defer stalled.Close()
+	late, err := impMux.OpenStream()
+	require.NoError(t, err)
+	require.NoError(t, writeReverseTCPAddresses(late, remote, local))
+	<-stopDone
+	select {
+	case <-ln.Drained():
+		t.Fatal("active connection must keep the mux open after the stop ACK")
+	default:
+	}
+
+	defer late.Close()
+	require.NoError(t, late.SetReadDeadline(time.Now().Add(5*time.Second)))
+	var data [2]byte
+	_, err = late.Read(data[:])
+	require.ErrorIs(t, err, io.EOF, "late stream must be closed despite an earlier stalled stream")
+	_ = stalled.Close()
+
+	peer := &reverseTCPConn{stream: activeStream}
+	_, err = peer.Write([]byte("still active"))
+	require.NoError(t, err)
+	got := make([]byte, len("still active"))
+	_, err = io.ReadFull(active, got)
+	require.NoError(t, err)
+	require.Equal(t, "still active", string(got))
+	_, err = active.Write([]byte("ok"))
+	require.NoError(t, err)
+	_, err = io.ReadFull(peer, data[:])
+	require.NoError(t, err)
+	require.Equal(t, "ok", string(data[:]))
+
+	select {
+	case <-ln.Drained():
+		t.Fatal("listener transport closed while accepted connection was still active")
+	default:
+	}
+	_ = active.Close()
+	select {
+	case <-ln.Drained():
+	case <-time.After(5 * time.Second):
+		t.Fatal("listener did not drain after the last active connection closed")
+	}
+}
+
+func TestReverseTCPAddressFrame(t *testing.T) {
+	var wire bytes.Buffer
+	remote := &net.TCPAddr{IP: net.ParseIP("2001:db8::1"), Port: 1234}
+	local := &net.TCPAddr{IP: net.ParseIP("2001:db8::2"), Port: 5678}
+	require.NoError(t, writeReverseTCPAddresses(&wire, remote, local))
+	_, err := wire.Write([]byte{0, 1, 255})
+	require.NoError(t, err)
+	gotRemote, gotLocal, err := readReverseTCPAddresses(&wire)
+	require.NoError(t, err)
+	require.Equal(t, remote.String(), gotRemote.String())
+	require.Equal(t, local.String(), gotLocal.String())
+	remaining, err := io.ReadAll(&wire)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0, 1, 255}, remaining)
+}
+
+func TestReverseTCPAddressFrameRejectsInvalidAddresses(t *testing.T) {
+	for _, addresses := range [][2]string{
+		{"host:1234", "127.0.0.1:5678"},
+		{"127.0.0.1:0", "127.0.0.1:5678"},
+		{"127.0.0.1:1234", "127.0.0.1:0"},
+	} {
+		var wire bytes.Buffer
+		payload, err := msgpack.Marshal(addresses)
+		require.NoError(t, err)
+		require.Less(t, len(payload), 256)
+		_, err = wire.Write([]byte{0, byte(len(payload))})
+		require.NoError(t, err)
+		_, err = wire.Write(payload)
+		require.NoError(t, err)
+		_, _, err = readReverseTCPAddresses(&wire)
+		require.Error(t, err)
+	}
+	_, _, err := readReverseTCPAddresses(bytes.NewReader([]byte{2, 1}))
+	require.Error(t, err)
+}
+
+func TestReverseTCPDataFrames(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	client, err := smux.Client(left, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer client.Close()
+	server, err := smux.Server(right, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer server.Close()
+	stream, err := client.OpenStream()
+	require.NoError(t, err)
+	defer stream.Close()
+	peer, err := server.AcceptStream()
+	require.NoError(t, err)
+	defer peer.Close()
+
+	masterConn := &reverseTCPConn{stream: stream}
+	impConn := &reverseTCPConn{stream: peer}
+	request := strings.Repeat("request", 5000)
+	response := strings.Repeat("response", 5000)
+	_, err = masterConn.Write([]byte(request))
+	require.NoError(t, err)
+	require.NoError(t, masterConn.CloseWrite())
+	require.NoError(t, masterConn.CloseWrite())
+	_, err = masterConn.Write([]byte("late"))
+	require.ErrorIs(t, err, io.ErrClosedPipe)
+	got, err := io.ReadAll(impConn)
+	require.NoError(t, err)
+	require.Equal(t, request, string(got))
+	_, err = impConn.Write([]byte(response))
+	require.NoError(t, err)
+	require.NoError(t, impConn.CloseWrite())
+	got, err = io.ReadAll(masterConn)
+	require.NoError(t, err)
+	require.Equal(t, response, string(got))
+}
+
+func TestReverseTCPDataFramesConcurrentReads(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	client, err := smux.Client(left, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer client.Close()
+	server, err := smux.Server(right, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer server.Close()
+	stream, err := client.OpenStream()
+	require.NoError(t, err)
+	defer stream.Close()
+	peer, err := server.AcceptStream()
+	require.NoError(t, err)
+	defer peer.Close()
+
+	const frames = 256
+	sender := &reverseTCPConn{stream: stream}
+	receiver := &reverseTCPConn{stream: peer}
+	received := make(chan byte, frames)
+	readErrors := make(chan error, 8)
+	var readers sync.WaitGroup
+	for range 8 {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			for {
+				var payload [1]byte
+				n, err := receiver.Read(payload[:])
+				if n == 1 {
+					received <- payload[0]
+				}
+				if err == io.EOF {
+					return
+				}
+				if err != nil {
+					readErrors <- err
+					return
+				}
+			}
+		}()
+	}
+	written := make(chan error, 1)
+	go func() {
+		for i := range frames {
+			if _, err := sender.Write([]byte{byte(i)}); err != nil {
+				written <- err
+				return
+			}
+		}
+		written <- sender.CloseWrite()
+	}()
+	select {
+	case err := <-written:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("writing concurrent read frames did not finish")
+	}
+	readDone := make(chan struct{})
+	go func() { readers.Wait(); close(readDone) }()
+	select {
+	case <-readDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("concurrent readers did not finish")
+	}
+	close(received)
+	require.Empty(t, readErrors)
+	require.Len(t, received, frames)
+	var counts [frames]int
+	for value := range received {
+		counts[value]++
+	}
+	for _, count := range counts {
+		require.Equal(t, 1, count)
+	}
+}
+
+func TestReverseTCPDataFrameRejectsOversize(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	client, err := smux.Client(left, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer client.Close()
+	server, err := smux.Server(right, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer server.Close()
+	stream, err := client.OpenStream()
+	require.NoError(t, err)
+	defer stream.Close()
+	peer, err := server.AcceptStream()
+	require.NoError(t, err)
+	defer peer.Close()
+
+	var header [2]byte
+	binary.BigEndian.PutUint16(header[:], reverseTCPChunkSize+1)
+	_, err = stream.Write(header[:])
+	require.NoError(t, err)
+	_, err = (&reverseTCPConn{stream: peer}).Read(make([]byte, 1))
+	require.ErrorContains(t, err, "invalid reverse TCP data frame length")
+}
+
+func TestReverseTCPDataFrameRejectsTruncatedPayload(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	client, err := smux.Client(left, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer client.Close()
+	server, err := smux.Server(right, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer server.Close()
+	stream, err := client.OpenStream()
+	require.NoError(t, err)
+	peer, err := server.AcceptStream()
+	require.NoError(t, err)
+	defer peer.Close()
+
+	_, err = stream.Write([]byte{0, 4, 'x'})
+	require.NoError(t, err)
+	require.NoError(t, stream.Close())
+	got, err := io.ReadAll(&reverseTCPConn{stream: peer})
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	require.Equal(t, "x", string(got))
+}

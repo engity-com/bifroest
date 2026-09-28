@@ -47,10 +47,13 @@ type Ref interface {
 	Dial(context.Context) (gonet.Conn, error)
 }
 
-func (this *Master) Open(_ context.Context, ref Ref) (*MasterSession, error) {
+func (this *Master) Open(ctx context.Context, ref Ref) (*MasterSession, error) {
+	sessionCtx, cancel := context.WithCancel(ctx)
 	return &MasterSession{
 		parent: this,
 		ref:    ref,
+		ctx:    sessionCtx,
+		cancel: cancel,
 	}, nil
 }
 

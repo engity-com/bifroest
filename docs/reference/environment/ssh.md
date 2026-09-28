@@ -60,7 +60,13 @@ Controls whether the environment accepts an authorization.
 Displayed before an interactive target shell is opened.
 
 <<property("portForwardingAllowed", "bool", template_context="../context/authorization.md", default=True)>>
-Controls local and dynamic forwarding after the applicable authorized-key policy has also been checked. Reverse forwarding is not supported by the SSH environment.
+Controls local and dynamic forwarding after the applicable authorized-key policy has also been checked. Must also be `true` for reverse forwarding.
+
+<<property("reversePortForwardingAllowed", "bool", template_context="../context/authorization.md", default=False)>>
+Enables `ssh -R` only when [`portForwardingAllowed`](#property-portForwardingAllowed) is also `true` and the applicable authorized-key policy permits the bind address. Disabled by default. The listener is requested on the target SSH server, not on Bifröst. The target `sshd` must permit forwarding (`AllowTcpForwarding`, including remote forwarding) and its `GatewayPorts` setting controls which requested bind addresses it accepts. The destination of each forwarded connection is reached from the SSH client.
+
+!!! warning
+     Bifröst checks `permitlisten` against the **requested** bind address. The SSH protocol does not report the address actually bound by the target. With `GatewayPorts yes`, a target `sshd` can turn a permitted loopback request into a wildcard listener. If `permitlisten` is intended to restrict network exposure, ensure the target server does not widen the bind address (for example, use `GatewayPorts no`) before enabling reverse forwarding.
 
 <<property("allowedSubsystems", "regular expression", default="^sftp$")>>
 Only matching SSH subsystem names are forwarded to the target. The regular expression must match the entire name, even if no anchors are written. By default, only `sftp` is allowed; `allowedSubsystems: ''` denies all subsystems, while YAML `null` is invalid. For multiple names, use an expression such as `sftp|netconf|powershell`. Shell and exec are unaffected. An authorized-key forced command is executed instead of forwarding the requested subsystem.
@@ -121,9 +127,11 @@ When a `bifroest` authorization forwards to another SSH environment, the origina
 | SCP | Modern SCP uses SFTP; legacy SCP is handled as an exec command |
 | Agent forwarding | Forwarded for shell, exec and non-SFTP subsystems only when requested and permitted by the authorization policy |
 | `ssh -L` and `ssh -D` | Connections originate from the target SSH server's network |
-| `ssh -R` | Rejected; reverse forwarding is not supported by the SSH environment |
+| `ssh -R` | When enabled, the target SSH server binds the listener according to its `GatewayPorts` setting; each forwarded connection reaches its destination from the SSH client |
 
 The environment allowlist is checked before connecting to the target. A subsystem denied by the allowlist or rejected by the target receives a failed SSH subsystem request. The target has 30 seconds by default to answer an allowed subsystem request before the incoming request is rejected. Subsystem names must be non-empty, valid UTF-8, contain no NUL byte and be at most 256 bytes long. Subsystem requests with a PTY are rejected to prevent terminal newline conversion from changing protocol data. Agent forwarding must be requested before the subsystem starts. Audit events record the requested subsystem name. Subsystem streams are not terminal-recorded, and no login notification is written into their stdout. SSH break requests and other arbitrary session requests are not forwarded. Target exit signals are not forwarded as SSH exit signals; a target exit status and the target output must both finish within 30 seconds after either one finishes to report a successful session completion.
+
+If an `ssh -R` request is canceled while the target has not replied to the listen request, Bifröst closes the shared target SSH transport. If the target does not reply to `cancel-tcpip-forward` when a listener closes, Bifröst also closes that transport. Other active channels and reverse forwards sharing it are interrupted.
 
 If the client's stdin remains blocked for 30 seconds after a subsystem session ends, Bifröst closes the entire incoming SSH connection. This also terminates other sessions and forwards on that connection. The resulting `connection.closed` audit event has the reason `deadline-exceeded`.
 

@@ -35,6 +35,8 @@ type Imp struct {
 	ExitCodeByConnectionIdPath string
 	Addr                       string
 	Logger                     log.Logger
+	ReverseTCPUser             string
+	ReverseTCPUserConfigured   bool
 }
 
 func (this *Imp) Serve(ctx context.Context) error {
@@ -88,6 +90,9 @@ func (this *Imp) Serve(ctx context.Context) error {
 
 type imp struct {
 	*Imp
+
+	reverseTCPMutex       sync.Mutex
+	reverseTCPConnections int
 
 	executionResultCleanupMutex sync.Mutex
 	nextExecutionResultCleanup  time.Time
@@ -158,6 +163,8 @@ func (this *imp) serveConn(ctx context.Context, plainConn gonet.Conn) (rErr erro
 		return done(this.handleMethodNamedPipe(ctx, &header, l, conn))
 	case MethodNamedPipeForUser:
 		return done(this.handleMethodNamedPipeForUser(ctx, &header, l, conn))
+	case MethodListenReverseTCP:
+		return done(this.handleMethodListenReverseTCP(ctx, &header, l, conn))
 	case MethodGetConnectionExitCode:
 		return done(this.handleMethodGetConnectionExitCode(ctx, &header, l, conn))
 	case MethodGetEnvironment:

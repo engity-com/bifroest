@@ -3,6 +3,7 @@ package environment
 import (
 	"context"
 	"io"
+	gonet "net"
 
 	"github.com/engity-com/bifroest/pkg/net"
 )
@@ -32,4 +33,9 @@ type SubsystemRunner interface {
 // forwarding independently from local and dynamic forwarding.
 type ReversePortForwardingPolicy interface {
 	IsReversePortForwardingAllowed(net.HostPort) (bool, error)
+}
+
+// ReverseTCPListener binds reverse forwards inside the environment.
+type ReverseTCPListener interface {
+	ListenReverseTCP(context.Context, string, uint16) (gonet.Listener, error)
 }

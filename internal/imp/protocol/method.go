@@ -22,6 +22,7 @@ const (
 	MethodKillExecution
 	MethodGetExecutionExitCode
 	MethodNamedPipeForUser
+	MethodListenReverseTCP
 )
 
 var (
@@ -88,6 +89,7 @@ var (
 		"killExecution":         MethodKillExecution,
 		"getExecutionExitCode":  MethodGetExecutionExitCode,
 		"namedPipeForUser":      MethodNamedPipeForUser,
+		"listenReverseTCP":      MethodListenReverseTCP,
 	}
 	protocolMethodToString = func(in map[string]Method) map[Method]string {
 		result := make(map[Method]string, len(in))

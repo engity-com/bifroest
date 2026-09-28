@@ -66,6 +66,8 @@ Controls how detailed audit records produced before a client has proven authenti
 
 Listener-scoped limits are tracked independently for every entry in [`addresses`](#property-addresses). For example, two configured listen addresses can each serve up to `maxChannels` active channels and `maxReverseForwards` reverse-forward listeners. `maxConnections` is different: Bifröst enforces it across the complete service and all configured addresses.
 
+With `ssh -R [bind_address:]port:destination_host:destination_port`, the reverse listener binds in the selected environment: on the Bifröst host for [Local](../environment/local.md), in the container network namespace for [Docker](../environment/docker.md), in the Pod network namespace for [Kubernetes](../environment/kubernetes.md), or on the target `sshd` for the [SSH environment](../environment/ssh.md). The forwarded destination is reached from the SSH client, not from the listener environment. Omitting the destination (`ssh -R [bind_address:]port`) lets a supporting SSH client serve SOCKS5 on that reverse listener. For Local, Docker and Kubernetes, an empty bind host uses loopback in that environment; an explicit `*` requests a wildcard bind, whose network reachability depends on the authorized-key and environment policies and the network configuration. For the SSH environment, the target server's `GatewayPorts` setting governs the actual bind address. A permitted request does not guarantee a successful bind or network access to the listener.
+
 !!! note
      A client must acknowledge a new `forwarded-tcpip` channel within one second. Otherwise only the affected forwarded connection fails; the SSH connection and unrelated active channels remain available.
 

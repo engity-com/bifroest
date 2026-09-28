@@ -41,6 +41,10 @@ type local struct {
 	killUserProcessesOnDispose bool
 }
 
+func (this *local) reverseTCPUnprivilegedUser() bool {
+	return this.user != nil && this.user.Uid != 0
+}
+
 func (this *LocalRepository) new(u *user.User, sess session.Session, portForwardingAllowed bool, lt *localToken) *local {
 	return &local{
 		this,

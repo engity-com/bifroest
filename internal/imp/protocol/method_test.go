@@ -16,4 +16,5 @@ func TestMethodIdsRemainWireCompatible(t *testing.T) {
 	require.Equal(t, Method(6), MethodKillExecution)
 	require.Equal(t, Method(7), MethodGetExecutionExitCode)
 	require.Equal(t, Method(8), MethodNamedPipeForUser)
+	require.Equal(t, Method(9), MethodListenReverseTCP)
 }

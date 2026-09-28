@@ -471,3 +471,16 @@ func (this *docker) NewDestinationConnection(ctx context.Context, dest net.HostP
 
 	return this.impSession.InitiateTcpForward(ctx, connId, dest)
 }
+
+func (this *docker) ListenReverseTCP(ctx context.Context, host string, port uint16) (gonet.Listener, error) {
+	if !this.portForwardingAllowed {
+		return nil, errors.Newf(errors.Permission, "port forwarding not allowed")
+	}
+
+	connId, err := connection.NewId()
+	if err != nil {
+		return nil, err
+	}
+
+	return this.impSession.ListenReverseTCP(ctx, connId, host, port)
+}

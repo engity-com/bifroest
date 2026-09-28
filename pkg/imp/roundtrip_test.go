@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -178,7 +179,7 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 		assert.NoError(t, master.Close())
 	}()
 
-	sess, err := master.Open(ctx, refImpl{sessionId})
+	sess, err := master.Open(ctx, refImpl{sessionId: sessionId})
 	require.NoError(t, err)
 
 	t.Run("ping", func(t *testing.T) {
@@ -309,6 +310,351 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 		common.SleepSilently(ctx, time.Millisecond*100)
 	})
 
+	t.Run("reverse-tcp", func(t *testing.T) {
+		connId, err := connection.NewId()
+		require.NoError(t, err)
+		ln, err := sess.ListenReverseTCP(ctx, connId, "127.0.0.1", 0)
+		require.NoError(t, err)
+		defer common.IgnoreCloseError(ln)
+		addr, ok := ln.Addr().(*gonet.TCPAddr)
+		require.True(t, ok)
+		require.Equal(t, "127.0.0.1", addr.IP.String())
+		require.NotZero(t, addr.Port)
+
+		for i := 0; i < 3; i++ {
+			client, err := gonet.DialTimeout("tcp", ln.Addr().String(), 3*time.Second)
+			require.NoError(t, err)
+			func() {
+				defer common.IgnoreCloseError(client)
+				require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+				message := strings.Repeat("hello\x00world", 100)
+				_, err := client.Write([]byte(message))
+				require.NoError(t, err)
+				require.NoError(t, client.(*gonet.TCPConn).CloseWrite())
+
+				accepted, err := ln.Accept()
+				require.NoError(t, err)
+				defer common.IgnoreCloseError(accepted)
+				require.NoError(t, accepted.SetDeadline(time.Now().Add(5*time.Second)))
+				assert.Equal(t, client.LocalAddr().String(), accepted.RemoteAddr().String())
+				assert.Equal(t, client.RemoteAddr().String(), accepted.LocalAddr().String())
+				assert.Equal(t, "tcp", accepted.RemoteAddr().Network())
+				_, ok := accepted.RemoteAddr().(*gonet.TCPAddr)
+				assert.True(t, ok)
+				got, err := io.ReadAll(accepted)
+				require.NoError(t, err)
+				assert.Equal(t, message, string(got))
+				_, err = accepted.Write(got)
+				require.NoError(t, err)
+				reply := make([]byte, len(message))
+				_, err = io.ReadFull(client, reply)
+				require.NoError(t, err)
+				assert.Equal(t, message, string(reply))
+				require.NoError(t, accepted.(interface{ CloseWrite() error }).CloseWrite())
+				require.NoError(t, accepted.(interface{ CloseWrite() error }).CloseWrite())
+				_, err = accepted.Write([]byte("after EOF"))
+				require.ErrorIs(t, err, io.ErrClosedPipe)
+				remaining, err := io.ReadAll(client)
+				require.NoError(t, err)
+				assert.Empty(t, remaining)
+			}()
+		}
+		// The reply and its EOF arrive before the client starts reading. Both
+		// directions have already sent EOF, but the reply must remain available.
+		for i := 0; i < 20; i++ {
+			client, err := gonet.DialTimeout("tcp", ln.Addr().String(), 3*time.Second)
+			require.NoError(t, err)
+			func() {
+				defer common.IgnoreCloseError(client)
+				require.NoError(t, client.SetDeadline(time.Now().Add(10*time.Second)))
+				accepted, err := ln.Accept()
+				require.NoError(t, err)
+				defer common.IgnoreCloseError(accepted)
+				require.NoError(t, accepted.SetDeadline(time.Now().Add(10*time.Second)))
+				request := strings.Repeat("request\x00", 4096)
+				response := strings.Repeat("response\x00", 4096)
+				_, err = client.Write([]byte(request))
+				require.NoError(t, err)
+				require.NoError(t, client.(*gonet.TCPConn).CloseWrite())
+				got, err := io.ReadAll(accepted)
+				require.NoError(t, err)
+				require.Equal(t, request, string(got))
+				_, err = accepted.Write([]byte(response))
+				require.NoError(t, err)
+				require.NoError(t, accepted.(interface{ CloseWrite() error }).CloseWrite())
+				require.NoError(t, accepted.(interface{ CloseWrite() error }).CloseWrite())
+				_, err = accepted.Write([]byte("after EOF"))
+				require.ErrorIs(t, err, io.ErrClosedPipe)
+				time.Sleep(10 * time.Millisecond)
+				got, err = io.ReadAll(client)
+				require.NoError(t, err)
+				require.Equal(t, response, string(got))
+			}()
+		}
+		first, err := gonet.DialTimeout("tcp", ln.Addr().String(), 3*time.Second)
+		require.NoError(t, err)
+		defer common.IgnoreCloseError(first)
+		second, err := gonet.DialTimeout("tcp", ln.Addr().String(), 3*time.Second)
+		require.NoError(t, err)
+		defer common.IgnoreCloseError(second)
+		firstAccepted, err := ln.Accept()
+		require.NoError(t, err)
+		defer common.IgnoreCloseError(firstAccepted)
+		secondAccepted, err := ln.Accept()
+		require.NoError(t, err)
+		defer common.IgnoreCloseError(secondAccepted)
+		origins := map[string]string{
+			first.LocalAddr().String():  first.RemoteAddr().String(),
+			second.LocalAddr().String(): second.RemoteAddr().String(),
+		}
+		for _, accepted := range []gonet.Conn{firstAccepted, secondAccepted} {
+			local, ok := origins[accepted.RemoteAddr().String()]
+			require.True(t, ok, "unknown origin: %s", accepted.RemoteAddr())
+			assert.Equal(t, local, accepted.LocalAddr().String())
+			delete(origins, accepted.RemoteAddr().String())
+		}
+		require.Empty(t, origins)
+
+		duplicate, err := sess.ListenReverseTCP(ctx, connId, "127.0.0.1", uint16(addr.Port))
+		require.Error(t, err)
+		require.Nil(t, duplicate)
+		_, err = sess.ListenReverseTCP(ctx, connId, "bad:host", 0)
+		require.Error(t, err)
+
+		loopback, err := sess.ListenReverseTCP(ctx, connId, "", 0)
+		require.NoError(t, err)
+		assert.True(t, loopback.Addr().(*gonet.TCPAddr).IP.IsLoopback())
+		require.NoError(t, loopback.Close())
+
+		localhost, err := sess.ListenReverseTCP(ctx, connId, "localhost", 0)
+		require.NoError(t, err)
+		assert.True(t, localhost.Addr().(*gonet.TCPAddr).IP.IsLoopback())
+		require.NoError(t, localhost.Close())
+
+		wildcard, err := sess.ListenReverseTCP(ctx, connId, "*", 0)
+		require.NoError(t, err)
+		assert.True(t, wildcard.Addr().(*gonet.TCPAddr).IP.IsUnspecified())
+		require.NoError(t, wildcard.Close())
+
+		ipv4Wildcard, err := sess.ListenReverseTCP(ctx, connId, "0.0.0.0", 0)
+		require.NoError(t, err)
+		assert.True(t, ipv4Wildcard.Addr().(*gonet.TCPAddr).IP.IsUnspecified())
+		require.NoError(t, ipv4Wildcard.Close())
+
+		blocked := make(chan error, 1)
+		go func() { _, e := ln.Accept(); blocked <- e }()
+		require.NoError(t, ln.Close())
+		require.NoError(t, ln.Close())
+		select {
+		case err := <-blocked:
+			require.Error(t, err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("listener Close did not release Accept")
+		}
+
+		require.Eventually(t, func() bool {
+			rebound, e := sess.ListenReverseTCP(ctx, connId, "127.0.0.1", uint16(addr.Port))
+			if e != nil {
+				return false
+			}
+			_ = rebound.Close()
+			return true
+		}, 5*time.Second, 20*time.Millisecond)
+
+		listenCtx, cancel := context.WithCancel(ctx)
+		canceledListener, err := sess.ListenReverseTCP(listenCtx, connId, "127.0.0.1", 0)
+		require.NoError(t, err)
+		defer common.IgnoreCloseError(canceledListener)
+		canceledClient, err := gonet.DialTimeout("tcp", canceledListener.Addr().String(), 3*time.Second)
+		require.NoError(t, err)
+		defer common.IgnoreCloseError(canceledClient)
+		canceledAccepted, err := canceledListener.Accept()
+		require.NoError(t, err)
+		defer common.IgnoreCloseError(canceledAccepted)
+		require.NoError(t, canceledClient.SetDeadline(time.Now().Add(5*time.Second)))
+		require.NoError(t, canceledAccepted.SetDeadline(time.Now().Add(5*time.Second)))
+		go func() { _, e := canceledListener.Accept(); blocked <- e }()
+		cancel()
+		select {
+		case err := <-blocked:
+			require.Error(t, err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("context cancellation did not release Accept")
+		}
+		_, err = canceledClient.Write([]byte("still alive"))
+		require.NoError(t, err)
+		message := make([]byte, len("still alive"))
+		_, err = io.ReadFull(canceledAccepted, message)
+		require.NoError(t, err)
+		require.Equal(t, "still alive", string(message))
+		require.Eventually(t, func() bool {
+			rebound, e := sess.ListenReverseTCP(ctx, connId, "127.0.0.1", uint16(canceledListener.Addr().(*gonet.TCPAddr).Port))
+			if e != nil {
+				return false
+			}
+			_ = rebound.Close()
+			return true
+		}, 5*time.Second, 20*time.Millisecond)
+	})
+
+	t.Run("reverse-tcp-connection-limit", func(t *testing.T) {
+		port, err := gonet.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		impAddr := port.Addr().String()
+		require.NoError(t, port.Close())
+		isolatedCtx, stop := context.WithCancel(ctx)
+		served := make(chan error, 1)
+		go func() {
+			svc := Service{Addr: impAddr, MasterPublicKey: masterKey.PublicKey(), SessionId: sessionId}
+			served <- svc.Serve(isolatedCtx)
+		}()
+		t.Cleanup(func() {
+			stop()
+			select {
+			case err := <-served:
+				require.NoError(t, err)
+			case <-time.After(5 * time.Second):
+				t.Error("isolated IMP did not stop")
+			}
+		})
+		isolated, err := master.Open(isolatedCtx, refImpl{sessionId: sessionId, addr: impAddr})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = isolated.Close() })
+		connId, err := connection.NewId()
+		require.NoError(t, err)
+		require.Eventually(t, func() bool {
+			pingCtx, cancel := context.WithTimeout(isolatedCtx, time.Second)
+			defer cancel()
+			return isolated.Ping(pingCtx, connId) == nil
+		}, 10*time.Second, 20*time.Millisecond, "isolated IMP did not become ready")
+		ln, err := isolated.ListenReverseTCP(isolatedCtx, connId, "127.0.0.1", 0)
+		require.NoError(t, err)
+		var clients, accepted []gonet.Conn
+		type acceptResult struct {
+			conn gonet.Conn
+			err  error
+		}
+		var pending chan acceptResult
+		t.Cleanup(func() {
+			for _, conn := range clients {
+				if conn != nil {
+					_ = conn.Close()
+				}
+			}
+			for _, conn := range accepted {
+				if conn != nil {
+					_ = conn.Close()
+				}
+			}
+			_ = ln.Close()
+			if pending != nil {
+				select {
+				case result := <-pending:
+					if result.conn != nil {
+						_ = result.conn.Close()
+					}
+				case <-time.After(5 * time.Second):
+					t.Error("pending Accept did not stop after listener Close")
+				}
+			}
+		})
+
+		for i := 0; i < 64; i++ {
+			client, err := gonet.DialTimeout("tcp", ln.Addr().String(), 3*time.Second)
+			require.NoError(t, err)
+			clients = append(clients, client)
+			result := make(chan acceptResult, 1)
+			go func() { conn, e := ln.Accept(); result <- acceptResult{conn, e} }()
+			select {
+			case got := <-result:
+				if got.conn != nil {
+					accepted = append(accepted, got.conn)
+				}
+				require.NoError(t, got.err)
+			case <-time.After(5 * time.Second):
+				// The listener is closed by Cleanup, releasing this Accept.
+				pending = result
+				t.Fatal("one of the first 64 reverse TCP streams was not accepted")
+			}
+			require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+			require.NoError(t, accepted[i].SetDeadline(time.Now().Add(5*time.Second)))
+			_, err = client.Write([]byte{'x'})
+			require.NoError(t, err)
+			var byteReceived [1]byte
+			_, err = io.ReadFull(accepted[i], byteReceived[:])
+			require.NoError(t, err)
+			require.Equal(t, byte('x'), byteReceived[0])
+			require.NoError(t, client.SetDeadline(time.Time{}))
+			require.NoError(t, accepted[i].SetDeadline(time.Time{}))
+		}
+
+		pending = make(chan acceptResult, 1)
+		result := pending
+		go func() { conn, e := ln.Accept(); result <- acceptResult{conn, e} }()
+		overflow, err := gonet.DialTimeout("tcp", ln.Addr().String(), 3*time.Second)
+		require.NoError(t, err)
+		clients = append(clients, overflow)
+		require.NoError(t, overflow.SetReadDeadline(time.Now().Add(5*time.Second)))
+		var byteReceived [1]byte
+		_, err = overflow.Read(byteReceived[:])
+		require.ErrorIs(t, err, io.EOF, "65th TCP peer must be closed instead of forwarded")
+		select {
+		case got := <-pending:
+			if got.conn != nil {
+				accepted = append(accepted, got.conn)
+			}
+			pending = nil
+			t.Fatalf("65th TCP peer reached Accept: %v", got.err)
+		default:
+		}
+
+		require.NoError(t, clients[0].Close())
+		require.NoError(t, accepted[0].Close())
+		clients[0], accepted[0] = nil, nil
+		deadline := time.Now().Add(15 * time.Second)
+		for time.Now().Before(deadline) {
+			client, err := gonet.DialTimeout("tcp", ln.Addr().String(), 3*time.Second)
+			require.NoError(t, err)
+			clients = append(clients, client)
+			require.NoError(t, client.SetReadDeadline(time.Now().Add(time.Second)))
+			_, err = client.Read(byteReceived[:])
+			if errors.Is(err, io.EOF) {
+				_ = client.Close()
+				continue // The released slot has not reached the IMP worker yet.
+			}
+			var timeout gonet.Error
+			require.ErrorAs(t, err, &timeout)
+			require.True(t, timeout.Timeout(), "unexpected probe read: %v", err)
+			select {
+			case got := <-pending:
+				pending = nil
+				if got.conn != nil {
+					accepted = append(accepted, got.conn)
+				}
+				require.NoError(t, got.err)
+				require.Equal(t, client.LocalAddr().String(), got.conn.RemoteAddr().String())
+				require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+				require.NoError(t, got.conn.SetDeadline(time.Now().Add(5*time.Second)))
+				_, err = client.Write([]byte("forward"))
+				require.NoError(t, err)
+				message := make([]byte, len("forward"))
+				_, err = io.ReadFull(got.conn, message)
+				require.NoError(t, err)
+				require.Equal(t, "forward", string(message))
+				_, err = got.conn.Write([]byte("back"))
+				require.NoError(t, err)
+				message = make([]byte, len("back"))
+				_, err = io.ReadFull(client, message)
+				require.NoError(t, err)
+				require.Equal(t, "back", string(message))
+				return
+			case <-time.After(3 * time.Second):
+				t.Fatal("available slot did not produce a reverse TCP stream")
+			}
+		}
+		t.Fatal("reverse TCP capacity was not restored after closing a peer")
+	})
+
 	t.Run("get-environment", func(t *testing.T) {
 		testlog.Hook(t)
 		connId, err := connection.NewId()
@@ -320,6 +666,184 @@ func runRoundtripMaster(t *testing.T, impPreparation func(crypto.PublicKey, sess
 		var expected sys.EnvVars
 		expected.Add(os.Environ()...)
 		require.Equal(t, expected, env)
+	})
+
+	t.Run("reverse-tcp-transport-close", func(t *testing.T) {
+		connId, err := connection.NewId()
+		require.NoError(t, err)
+		dialed := make(chan gonet.Conn, 1)
+		transportSession, err := master.Open(ctx, refImpl{sessionId: sessionId, dialed: dialed})
+		require.NoError(t, err)
+		defer common.IgnoreCloseError(transportSession)
+		ln, err := transportSession.ListenReverseTCP(ctx, connId, "127.0.0.1", 0)
+		require.NoError(t, err)
+		defer common.IgnoreCloseError(ln)
+		port := uint16(ln.Addr().(*gonet.TCPAddr).Port)
+		client, err := gonet.DialTimeout("tcp", ln.Addr().String(), 3*time.Second)
+		require.NoError(t, err)
+		defer common.IgnoreCloseError(client)
+		accepted, err := ln.Accept()
+		require.NoError(t, err)
+		defer common.IgnoreCloseError(accepted)
+		require.NoError(t, ln.Close())
+		require.NoError(t, accepted.SetReadDeadline(time.Now().Add(5*time.Second)))
+		blocked := make(chan error, 1)
+		go func() { _, e := ln.Accept(); blocked <- e }()
+		require.NoError(t, (<-dialed).Close())
+		select {
+		case <-ln.(interface{ Drained() <-chan struct{} }).Drained():
+		case <-time.After(5 * time.Second):
+			t.Fatal("transport loss did not drain the listener")
+		}
+		_, err = accepted.Read(make([]byte, 1))
+		require.Error(t, err, "transport loss must terminate active streams after listener Close")
+		var timeout gonet.Error
+		if errors.As(err, &timeout) {
+			require.False(t, timeout.Timeout(), "active stream remained open until its deadline")
+		}
+		select {
+		case err := <-blocked:
+			require.Error(t, err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("transport failure did not release Accept")
+		}
+		require.Eventually(t, func() bool {
+			rebound, e := sess.ListenReverseTCP(ctx, connId, "127.0.0.1", port)
+			if e != nil {
+				return false
+			}
+			_ = rebound.Close()
+			return true
+		}, 5*time.Second, 20*time.Millisecond)
+	})
+
+	t.Run("reverse-tcp-close-keeps-connections", func(t *testing.T) {
+		connId, err := connection.NewId()
+		require.NoError(t, err)
+		ln, err := sess.ListenReverseTCP(ctx, connId, "127.0.0.1", 0)
+		require.NoError(t, err)
+		defer common.IgnoreCloseError(ln)
+		client, err := gonet.DialTimeout("tcp", ln.Addr().String(), 3*time.Second)
+		require.NoError(t, err)
+		defer common.IgnoreCloseError(client)
+		accepted, err := ln.Accept()
+		require.NoError(t, err)
+		defer common.IgnoreCloseError(accepted)
+		require.NoError(t, client.SetDeadline(time.Now().Add(10*time.Second)))
+		require.NoError(t, accepted.SetDeadline(time.Now().Add(10*time.Second)))
+		drained := ln.(interface{ Drained() <-chan struct{} }).Drained()
+		_, err = client.Write([]byte("before"))
+		require.NoError(t, err)
+		buf := make([]byte, 6)
+		_, err = io.ReadFull(accepted, buf)
+		require.NoError(t, err)
+		require.Equal(t, "before", string(buf))
+
+		blocked := make(chan error, 1)
+		go func() { _, e := ln.Accept(); blocked <- e }()
+		require.NoError(t, ln.Close())
+		select {
+		case <-drained:
+			t.Fatal("transport closed while accepted connection was active")
+		default:
+		}
+		select {
+		case err := <-blocked:
+			require.Error(t, err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("Close did not unblock Accept")
+		}
+		_, err = ln.Accept()
+		require.Error(t, err)
+		require.Eventually(t, func() bool {
+			rebound, e := gonet.Listen("tcp", ln.Addr().String())
+			if e != nil {
+				return false
+			}
+			_ = rebound.Close()
+			return true
+		}, 5*time.Second, 20*time.Millisecond, "IMP port was not released")
+
+		_, err = client.Write([]byte("forward"))
+		require.NoError(t, err)
+		buf = make([]byte, 7)
+		_, err = io.ReadFull(accepted, buf)
+		require.NoError(t, err)
+		require.Equal(t, "forward", string(buf))
+		_, err = accepted.Write([]byte("backward"))
+		require.NoError(t, err)
+		buf = make([]byte, 8)
+		_, err = io.ReadFull(client, buf)
+		require.NoError(t, err)
+		require.Equal(t, "backward", string(buf))
+		require.NoError(t, client.(*gonet.TCPConn).CloseWrite())
+		_, err = io.ReadAll(accepted)
+		require.NoError(t, err)
+		require.NoError(t, accepted.(interface{ CloseWrite() error }).CloseWrite())
+		_, err = io.ReadAll(client)
+		require.NoError(t, err)
+		require.NoError(t, accepted.Close())
+		require.NoError(t, client.Close())
+		select {
+		case <-drained:
+		case <-time.After(5 * time.Second):
+			t.Fatal("transport did not drain after connection close")
+		}
+		require.Eventually(t, func() bool {
+			rebound, e := sess.ListenReverseTCP(ctx, connId, "127.0.0.1", uint16(ln.Addr().(*gonet.TCPAddr).Port))
+			if e != nil {
+				return false
+			}
+			_ = rebound.Close()
+			return true
+		}, 5*time.Second, 20*time.Millisecond)
+	})
+
+	t.Run("reverse-tcp-session-close", func(t *testing.T) {
+		connId, err := connection.NewId()
+		require.NoError(t, err)
+		child, err := master.Open(ctx, refImpl{sessionId: sessionId})
+		require.NoError(t, err)
+		ln, err := child.ListenReverseTCP(ctx, connId, "127.0.0.1", 0)
+		require.NoError(t, err)
+		defer common.IgnoreCloseError(ln)
+		port := uint16(ln.Addr().(*gonet.TCPAddr).Port)
+		client, err := gonet.DialTimeout("tcp", ln.Addr().String(), 3*time.Second)
+		require.NoError(t, err)
+		defer common.IgnoreCloseError(client)
+		accepted, err := ln.Accept()
+		require.NoError(t, err)
+		defer common.IgnoreCloseError(accepted)
+		require.NoError(t, ln.Close())
+		require.NoError(t, accepted.SetReadDeadline(time.Now().Add(5*time.Second)))
+		blocked := make(chan error, 1)
+		go func() { _, e := ln.Accept(); blocked <- e }()
+		require.NoError(t, child.Close())
+		_, err = accepted.Read(make([]byte, 1))
+		require.Error(t, err, "session Close must terminate active streams after listener Close")
+		var timeout gonet.Error
+		if errors.As(err, &timeout) {
+			require.False(t, timeout.Timeout(), "active stream remained open until its deadline")
+		}
+		select {
+		case <-ln.(interface{ Drained() <-chan struct{} }).Drained():
+		case <-time.After(5 * time.Second):
+			t.Fatal("session Close did not drain the listener")
+		}
+		select {
+		case err := <-blocked:
+			require.Error(t, err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("session Close did not release Accept")
+		}
+		require.Eventually(t, func() bool {
+			rebound, e := sess.ListenReverseTCP(ctx, connId, "127.0.0.1", port)
+			if e != nil {
+				return false
+			}
+			_ = rebound.Close()
+			return true
+		}, 5*time.Second, 20*time.Millisecond)
 	})
 
 	common.SleepSilently(ctx, time.Millisecond*100)
@@ -478,6 +1002,8 @@ func decodePublicKeyString(t *testing.T, in string) crypto.PublicKey {
 
 type refImpl struct {
 	sessionId session.Id
+	dialed    chan gonet.Conn
+	addr      string
 }
 
 func (this refImpl) SessionId() session.Id {
@@ -489,5 +1015,13 @@ func (this refImpl) PublicKey() crypto.PublicKey {
 }
 
 func (this refImpl) Dial(ctx context.Context) (gonet.Conn, error) {
-	return new(gonet.Dialer).DialContext(ctx, "tcp", roundtripTestImpAddress.String())
+	addr := this.addr
+	if addr == "" {
+		addr = roundtripTestImpAddress.String()
+	}
+	conn, err := new(gonet.Dialer).DialContext(ctx, "tcp", addr)
+	if err == nil && this.dialed != nil {
+		this.dialed <- conn
+	}
+	return conn, err
 }
