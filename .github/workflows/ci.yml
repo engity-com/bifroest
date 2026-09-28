@@ -215,7 +215,9 @@ jobs:
 
       - name: Set reproducible build time
         if: matrix.os == 'linux'
-        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "${GITHUB_ENV}"
+        run: |
+          epoch="$(git show -s --format=%ct HEAD)"
+          echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"
 
       - name: Set reproducible build time on Windows
         if: matrix.os == 'windows'
@@ -264,8 +266,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Git configure
+        run: git config --global --add safe.directory "$(pwd)"
+
       - name: Set reproducible build time
-        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "${GITHUB_ENV}"
+        run: |
+          epoch="$(git show -s --format=%ct HEAD)"
+          echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"
 
       - name: Cache Go
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -277,9 +284,6 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
-
-      - name: Git configure
-        run: git config --global --add safe.directory $(pwd)
 
       - name: Install dependencies
         run: mise run install:go
@@ -308,8 +312,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Git configure
+        run: git config --global --add safe.directory "$(pwd)"
+
       - name: Set reproducible build time
-        run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "${GITHUB_ENV}"
+        run: |
+          epoch="$(git show -s --format=%ct HEAD)"
+          echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"
 
       - name: Cache Go
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -328,9 +337,6 @@ jobs:
 
       - name: Install MISE
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
-
-      - name: Git configure
-        run: git config --global --add safe.directory $(pwd)
 
       - name: Download binaries
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
