@@ -371,6 +371,12 @@ type reverseTCPListener struct {
 }
 
 func (l *reverseTCPListener) Accept() (gonet.Conn, error) {
+	l.closeMu.Lock()
+	closed := l.closed
+	l.closeMu.Unlock()
+	if closed {
+		return nil, gonet.ErrClosed
+	}
 	l.acceptMu.Lock()
 	defer l.acceptMu.Unlock()
 	for {
@@ -445,11 +451,11 @@ func (l *reverseTCPListener) Close() error {
 					l.forceClose()
 				} else {
 					_ = l.control.SetDeadline(time.Time{})
-					go func() {
-						var command [1]byte
-						_, _ = l.control.Read(command[:])
-						l.forceClose()
-					}()
+					l.closeMu.Lock()
+					if l.active > 0 {
+						go l.drainLateStreams()
+					}
+					l.closeMu.Unlock()
 				}
 			}
 		}
@@ -465,6 +471,36 @@ func (l *reverseTCPListener) Close() error {
 }
 
 func (l *reverseTCPListener) Drained() <-chan struct{} { return l.mux.CloseChan() }
+
+func (l *reverseTCPListener) drainLateStreams() {
+	pending := make(chan struct{}, maxReverseTCPConnections)
+	for {
+		l.acceptMu.Lock()
+		_ = l.mux.SetDeadline(time.Now().Add(200 * time.Millisecond))
+		stream, err := l.mux.AcceptStream()
+		l.acceptMu.Unlock()
+		if err != nil {
+			if timeout, ok := err.(gonet.Error); ok && timeout.Timeout() {
+				continue
+			}
+			l.forceClose()
+			return
+		}
+		select {
+		case pending <- struct{}{}:
+		case <-l.Drained():
+			return
+		}
+		go func(stream *smux.Stream) {
+			defer func() { <-pending }()
+			defer common.IgnoreCloseError(stream)
+			// The peer sends addresses only after OpenStream has registered locally.
+			// Wait beyond smux's 30-second open timeout before closing the stream.
+			_ = stream.SetReadDeadline(time.Now().Add(35 * time.Second))
+			_, _, _ = readReverseTCPAddresses(stream)
+		}(stream)
+	}
+}
 
 func (l *reverseTCPListener) closeTransport() {
 	_ = l.mux.Close()

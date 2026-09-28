@@ -5,6 +5,7 @@ import (
 	"io"
 	gonet "net"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -23,6 +24,20 @@ import (
 type sshReverseRequest struct {
 	Address string
 	Port    uint32
+}
+
+type sshBlockingReverseListener struct {
+	gonet.Listener
+	entered chan struct{}
+	release chan struct{}
+	exited  chan struct{}
+}
+
+func (this *sshBlockingReverseListener) Close() error {
+	close(this.entered)
+	<-this.release
+	defer close(this.exited)
+	return this.Listener.Close()
 }
 
 type sshReverseCancelMode uint8
@@ -565,4 +580,75 @@ func TestSshReverseForwardingCloseUnresponsiveTarget(t *testing.T) {
 			_ = rebound.Close()
 		})
 	}
+}
+
+func TestSshReverseCloseBlockedListenerReturnsAfterTimeout(t *testing.T) {
+	target, _ := newReverseSshTarget(t, false, sshReverseCancelAccept)
+	t.Cleanup(target.Close)
+	env, repository, _ := newReverseSshEnvironment(t, target, true, true)
+	transport, err := repository.transportFor(env)
+	require.NoError(t, err)
+	actual, err := transport.client.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	fake := &sshBlockingReverseListener{
+		Listener: actual, entered: make(chan struct{}), release: make(chan struct{}), exited: make(chan struct{}),
+	}
+	listener := &sshReverseListener{
+		Listener: fake, repository: repository, id: env.connection.Id(),
+		transport: transport, done: make(chan struct{}),
+	}
+	results := make(chan error, 3)
+	var workers sync.WaitGroup
+	workers.Add(3)
+	for range 3 {
+		go func() {
+			defer workers.Done()
+			results <- listener.Close()
+		}()
+	}
+	t.Cleanup(func() {
+		close(fake.release)
+		workers.Wait()
+		<-fake.exited
+	})
+	select {
+	case <-fake.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("listener Close was not called")
+	}
+
+	deadline := time.NewTimer(3 * time.Second)
+	defer deadline.Stop()
+	var closeErr error
+	for range 3 {
+		select {
+		case err := <-results:
+			require.ErrorContains(t, err, "did not respond to cancel-tcpip-forward in time")
+			if closeErr == nil {
+				closeErr = err
+			} else {
+				require.Equal(t, closeErr, err)
+			}
+		case <-deadline.C:
+			t.Fatal("concurrent Close calls did not return while listener Close remained blocked")
+		}
+	}
+	select {
+	case <-fake.exited:
+		t.Fatal("fake listener Close returned before it was released")
+	default:
+	}
+	require.Equal(t, closeErr, listener.Close())
+	select {
+	case <-transport.done:
+	default:
+		t.Fatal("timed-out Close did not close the shared transport")
+	}
+	repository.mutex.Lock()
+	remaining := repository.transports[env.connection.Id()]
+	repository.mutex.Unlock()
+	require.Nil(t, remaining, "timed-out Close did not remove the transport")
+	require.Zero(t, len(transport.channels), "listener Close retained a target channel")
+	require.False(t, transport.tryAcquireChannel(), "closed transport accepted another channel")
+	require.Zero(t, len(transport.channels))
 }

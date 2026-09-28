@@ -771,7 +771,6 @@ func (this *sshReverseListener) Close() error {
 			}
 		case <-time.After(time.Second):
 			this.repository.removeTransport(this.id, this.transport)
-			<-closed
 			this.closeErr = fmt.Errorf("SSH target did not respond to cancel-tcpip-forward in time")
 		}
 	})

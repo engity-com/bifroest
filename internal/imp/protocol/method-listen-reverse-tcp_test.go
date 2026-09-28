@@ -332,6 +332,96 @@ func TestReverseTCPCloseWithConcurrentAccepts(t *testing.T) {
 	}
 }
 
+func TestReverseTCPCloseDrainsLateStreams(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	impMux, err := smux.Client(left, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer impMux.Close()
+	masterMux, err := smux.Server(right, baseNamedPipeConfig())
+	require.NoError(t, err)
+	defer masterMux.Close()
+	control, err := masterMux.OpenStream()
+	require.NoError(t, err)
+	ln := &reverseTCPListener{mux: masterMux, control: control}
+	impControl, err := impMux.AcceptStream()
+	require.NoError(t, err)
+	defer impControl.Close()
+
+	activeStream, err := impMux.OpenStream()
+	require.NoError(t, err)
+	defer activeStream.Close()
+	remote := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1234}
+	local := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5678}
+	require.NoError(t, writeReverseTCPAddresses(activeStream, remote, local))
+	active, err := ln.Accept()
+	require.NoError(t, err)
+	defer active.Close()
+
+	stopDone := make(chan struct{})
+	go func() {
+		defer close(stopDone)
+		var command [1]byte
+		if _, e := io.ReadFull(impControl, command[:]); e == nil && command[0] == 1 {
+			_, _ = impControl.Write([]byte{1})
+		}
+	}()
+	require.NoError(t, ln.Close())
+	acceptDone := make(chan error, 1)
+	go func() { _, err := ln.Accept(); acceptDone <- err }()
+	select {
+	case err := <-acceptDone:
+		require.ErrorIs(t, err, net.ErrClosed)
+	case <-time.After(time.Second):
+		t.Fatal("Accept blocked behind the drain after listener Close")
+	}
+	stalled, err := impMux.OpenStream()
+	require.NoError(t, err)
+	defer stalled.Close()
+	late, err := impMux.OpenStream()
+	require.NoError(t, err)
+	require.NoError(t, writeReverseTCPAddresses(late, remote, local))
+	<-stopDone
+	select {
+	case <-ln.Drained():
+		t.Fatal("active connection must keep the mux open after the stop ACK")
+	default:
+	}
+
+	defer late.Close()
+	require.NoError(t, late.SetReadDeadline(time.Now().Add(5*time.Second)))
+	var data [2]byte
+	_, err = late.Read(data[:])
+	require.ErrorIs(t, err, io.EOF, "late stream must be closed despite an earlier stalled stream")
+	_ = stalled.Close()
+
+	peer := &reverseTCPConn{stream: activeStream}
+	_, err = peer.Write([]byte("still active"))
+	require.NoError(t, err)
+	got := make([]byte, len("still active"))
+	_, err = io.ReadFull(active, got)
+	require.NoError(t, err)
+	require.Equal(t, "still active", string(got))
+	_, err = active.Write([]byte("ok"))
+	require.NoError(t, err)
+	_, err = io.ReadFull(peer, data[:])
+	require.NoError(t, err)
+	require.Equal(t, "ok", string(data[:]))
+
+	select {
+	case <-ln.Drained():
+		t.Fatal("listener transport closed while accepted connection was still active")
+	default:
+	}
+	_ = active.Close()
+	select {
+	case <-ln.Drained():
+	case <-time.After(5 * time.Second):
+		t.Fatal("listener did not drain after the last active connection closed")
+	}
+}
+
 func TestReverseTCPAddressFrame(t *testing.T) {
 	var wire bytes.Buffer
 	remote := &net.TCPAddr{IP: net.ParseIP("2001:db8::1"), Port: 1234}
