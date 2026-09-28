@@ -240,7 +240,8 @@ func (this *build) evaluateEnvironment(ctx context.Context) error {
 			name  string
 			value any
 		}{
-			{"test-matrix", matrices.Tests},
+			{"test-host-matrix", matrices.TestHost},
+			{"test-container-matrix", matrices.TestContainer},
 			{"binary-host-matrix", matrices.Host},
 			{"binary-container-matrix", matrices.Container},
 		} {

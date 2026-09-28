@@ -15,6 +15,7 @@ type buildMatrix[T any] struct {
 type buildTestMatrixEntry struct {
 	Os     string `json:"os"`
 	Runner string `json:"runner"`
+	Image  string `json:"image"`
 }
 
 type buildBinaryMatrixEntry struct {
@@ -26,16 +27,18 @@ type buildBinaryMatrixEntry struct {
 }
 
 type buildEnvironmentMatrices struct {
-	Tests     buildMatrix[buildTestMatrixEntry]
-	Host      buildMatrix[buildBinaryMatrixEntry]
-	Container buildMatrix[buildBinaryMatrixEntry]
+	TestHost      buildMatrix[buildTestMatrixEntry]
+	TestContainer buildMatrix[buildTestMatrixEntry]
+	Host          buildMatrix[buildBinaryMatrixEntry]
+	Container     buildMatrix[buildBinaryMatrixEntry]
 }
 
 func (this *build) buildMatrices() (buildEnvironmentMatrices, error) {
 	result := buildEnvironmentMatrices{
-		Tests:     buildMatrix[buildTestMatrixEntry]{Include: []buildTestMatrixEntry{}},
-		Host:      buildMatrix[buildBinaryMatrixEntry]{Include: []buildBinaryMatrixEntry{}},
-		Container: buildMatrix[buildBinaryMatrixEntry]{Include: []buildBinaryMatrixEntry{}},
+		TestHost:      buildMatrix[buildTestMatrixEntry]{Include: []buildTestMatrixEntry{}},
+		TestContainer: buildMatrix[buildTestMatrixEntry]{Include: []buildTestMatrixEntry{}},
+		Host:          buildMatrix[buildBinaryMatrixEntry]{Include: []buildBinaryMatrixEntry{}},
+		Container:     buildMatrix[buildBinaryMatrixEntry]{Include: []buildBinaryMatrixEntry{}},
 	}
 	seenTestOs := map[sys.Os]bool{}
 	// The evaluator may run on another host than the Linux package job.
@@ -53,7 +56,13 @@ func (this *build) buildMatrices() (buildEnvironmentMatrices, error) {
 			return result, fmt.Errorf("no binary runner configured for %s", p.Os)
 		}
 		if !seenTestOs[p.Os] {
-			result.Tests.Include = append(result.Tests.Include, buildTestMatrixEntry{Os: p.Os.String(), Runner: entry.Runner})
+			testEntry := buildTestMatrixEntry{Os: p.Os.String(), Runner: entry.Runner}
+			if p.Os == sys.OsLinux {
+				testEntry.Image = binaryLinuxExtendedImage
+				result.TestContainer.Include = append(result.TestContainer.Include, testEntry)
+			} else {
+				result.TestHost.Include = append(result.TestHost.Include, testEntry)
+			}
 			seenTestOs[p.Os] = true
 		}
 		if entry.Image == "" {

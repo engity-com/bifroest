@@ -16,7 +16,8 @@ func TestBuildMatricesAssignEveryBinaryPlatformToExactlyOneJob(t *testing.T) {
 	build := newBuild(&base{})
 	matrices, err := build.buildMatrices()
 	require.NoError(t, err)
-	require.Equal(t, []buildTestMatrixEntry{{Os: "linux", Runner: "ubuntu-latest"}, {Os: "windows", Runner: "windows-latest"}}, matrices.Tests.Include)
+	require.Equal(t, []buildTestMatrixEntry{{Os: "windows", Runner: "windows-latest"}}, matrices.TestHost.Include)
+	require.Equal(t, []buildTestMatrixEntry{{Os: "linux", Runner: "ubuntu-latest", Image: binaryLinuxExtendedImage}}, matrices.TestContainer.Include)
 	require.Len(t, matrices.Host.Include, 8)
 	require.Len(t, matrices.Container.Include, 5)
 
@@ -53,7 +54,7 @@ func TestEvaluateEnvironmentEmitsMatrices(t *testing.T) {
 	require.NoError(t, b.build.evaluateEnvironment(t.Context()))
 	raw, err := gos.ReadFile(b.optionsOutputFilename)
 	require.NoError(t, err)
-	for _, name := range []string{"test-matrix", "binary-host-matrix", "binary-container-matrix"} {
+	for _, name := range []string{"test-host-matrix", "test-container-matrix", "binary-host-matrix", "binary-container-matrix"} {
 		var matrix map[string][]map[string]string
 		found := false
 		for _, line := range strings.Split(string(raw), "\n") {

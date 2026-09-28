@@ -22,7 +22,8 @@ jobs:
       release_tag: ${{ steps.release-version.outputs.release_tag }}
       version: ${{ steps.release-version.outputs.version }}
       commit: ${{ steps.refs.outputs.commit }}
-      test-matrix: ${{ steps.refs.outputs.test-matrix }}
+      test-host-matrix: ${{ steps.refs.outputs.test-host-matrix }}
+      test-container-matrix: ${{ steps.refs.outputs.test-container-matrix }}
       binary-host-matrix: ${{ steps.refs.outputs.binary-host-matrix }}
       binary-container-matrix: ${{ steps.refs.outputs.binary-container-matrix }}
     permissions:
@@ -76,19 +77,15 @@ jobs:
           export GITHUB_SHA="$(git rev-parse HEAD)"
           mise run ci:evaluate-environment
 
-  test:
+  test-host:
     name: Tests ${{ matrix.os }}
     needs: evaluate
     permissions:
       contents: read
     strategy:
-      matrix: ${{ fromJSON(needs.evaluate.outputs.test-matrix) }}
+      matrix: ${{ fromJSON(needs.evaluate.outputs.test-host-matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: Install Ubuntu dependencies
-        if: matrix.os == 'linux'
-        run: sudo apt update && sudo apt install libpam0g-dev
-
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -110,8 +107,45 @@ jobs:
       - name: Install dependencies
         run: mise run install:go
 
+      - name: Test
+        run: mise run test:go
+
+  test-container:
+    name: Tests ${{ matrix.os }}
+    needs: evaluate
+    permissions:
+      contents: read
+    strategy:
+      matrix: ${{ fromJSON(needs.evaluate.outputs.test-container-matrix) }}
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.evaluate.outputs.release_tag }}
+
+      - name: Cache Go
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install MISE
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+
+      - name: Git configure
+        run: git config --global --add safe.directory $(pwd)
+
+      - name: Install dependencies
+        run: mise run install:go
+
       - name: Install asciinema compatibility tool
-        if: matrix.os == 'linux'
         env:
           MISE_GITHUB_TOKEN: ""
           ASCIINEMA_VERSION: 3.2.1
@@ -129,12 +163,11 @@ jobs:
         run: mise run test:go
 
       - name: Test with race detector
-        if: matrix.os == 'linux'
         run: mise run test:go:race
 
   package-binary-host:
     name: Binary ${{ matrix.os }}/${{ matrix.arch }}/${{ matrix.edition }}
-    needs: [ evaluate, test ]
+    needs: [ evaluate, test-host, test-container ]
     strategy:
       matrix: ${{ fromJSON(needs.evaluate.outputs.binary-host-matrix) }}
     runs-on: ${{ matrix.runner }}
@@ -186,7 +219,7 @@ jobs:
 
   package-binary-container:
     name: Binary ${{ matrix.os }}/${{ matrix.arch }}/${{ matrix.edition }}
-    needs: [ evaluate, test ]
+    needs: [ evaluate, test-host, test-container ]
     strategy:
       matrix: ${{ fromJSON(needs.evaluate.outputs.binary-container-matrix) }}
     runs-on: ${{ matrix.runner }}
