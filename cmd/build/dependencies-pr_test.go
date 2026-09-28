@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	gos "os"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -33,6 +35,7 @@ func TestApplyImageUpdatesReconcilesEveryManagedLocation(t *testing.T) {
 	files := map[string][]byte{
 		dependencyCiWorkflowPath:      []byte("ghcr.io/engity-com/build-images/go@" + old),
 		dependencyReleaseWorkflowPath: []byte("ghcr.io/engity-com/build-images/go@" + old),
+		dependencyBuildMatrixPath:     []byte("ghcr.io/engity-com/build-images/build:debian12@" + old),
 		dependencyBuildArchPath: []byte("docker.io/library/ubuntu:26.04@" + old + "\n" +
 			"mcr.microsoft.com/windows/nanoserver:ltsc2022@" + old),
 		dependencyBuildImagesPath: []byte("docker.io/library/alpine:latest@" + old + "\n" +
@@ -52,16 +55,26 @@ func TestApplyImageUpdatesReconcilesEveryManagedLocation(t *testing.T) {
 		require.Contains(t, check.current, resolved[check.source])
 	}
 	require.Contains(t, string(files[dependencyCiWorkflowPath]), "build:debian12@"+resolved[dependencyImages[0].source])
+	require.Contains(t, string(files[dependencyBuildMatrixPath]), "build:debian12@"+resolved[dependencyImages[0].source])
 	require.Contains(t, string(files[dependencyBuildArchPath]), "ubuntu:26.04@"+resolved[dependencyImages[1].source])
 	require.Contains(t, string(files[dependencyBuildImagesPath]), "alpine:latest@"+resolved[dependencyImages[2].source])
 	require.Contains(t, string(files[dependencyE2eHarnessPath]), "alpine:latest@"+resolved[dependencyImages[2].source])
 	require.Contains(t, string(files[dependencyBuildArchPath]), "nanoserver:ltsc2022@"+resolved[dependencyImages[3].source])
 }
 
+func TestManagedBuildImageReferencesMatchCurrentFiles(t *testing.T) {
+	for _, location := range dependencyImages[0].locations {
+		raw, err := gos.ReadFile(filepath.Join("..", "..", filepath.FromSlash(location.path)))
+		require.NoError(t, err)
+		require.Len(t, findDependencyImageReferences(raw, location.references), location.expected, location.path)
+	}
+}
+
 func TestApplyImageUpdatesFailsClosedWhenLocationDrifts(t *testing.T) {
 	files := map[string][]byte{
 		dependencyCiWorkflowPath:      []byte("no managed reference"),
 		dependencyReleaseWorkflowPath: []byte("no managed reference"),
+		dependencyBuildMatrixPath:     []byte("no managed reference"),
 		dependencyBuildArchPath:       []byte("no managed reference"),
 		dependencyBuildImagesPath:     []byte("no managed reference"),
 		dependencyE2eHarnessPath:      []byte("no managed reference"),
@@ -351,6 +364,7 @@ func TestUpdatePrDoesNotWriteWhenEveryDependencyIsCurrent(t *testing.T) {
 		defaultCaCertsTargetFn:        certificates.String(),
 		dependencyCiWorkflowPath:      dependencyImages[0].source + "@" + digests[dependencyImages[0].source],
 		dependencyReleaseWorkflowPath: dependencyImages[0].source + "@" + digests[dependencyImages[0].source],
+		dependencyBuildMatrixPath:     dependencyImages[0].source + "@" + digests[dependencyImages[0].source],
 		dependencyBuildArchPath: dependencyImages[1].source + "@" + digests[dependencyImages[1].source] + "\n" +
 			dependencyImages[3].source + "@" + digests[dependencyImages[3].source],
 		dependencyBuildImagesPath: dependencyImages[2].source + "@" + digests[dependencyImages[2].source] + "\n" +

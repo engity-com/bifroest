@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
@@ -160,9 +161,13 @@ func (this *build) runBuild(ctx context.Context) (rErr error) {
 }
 
 func (this *build) allPlatforms(forTesting bool) iter.Seq[*bib.Platform] {
+	return this.platforms(forTesting, this.assumedBuildOs(), this.assumedBuildArch())
+}
+
+func (this *build) platforms(forTesting bool, assumedOs sys.Os, assumedArch sys.Arch) iter.Seq[*bib.Platform] {
 	return func(yield func(*bib.Platform) bool) {
 		var platforms []*bib.Platform
-		for p := range bib.AllBinaryPlatforms(forTesting, this.assumedBuildOs(), this.assumedBuildArch()) {
+		for p := range bib.AllBinaryPlatforms(forTesting, assumedOs, assumedArch) {
 			if slices.Contains(this.oses, p.Os) &&
 				slices.Contains(this.archs, p.Arch) && slices.Contains(this.editions, p.Edition) {
 				platforms = append(platforms, p)
@@ -205,6 +210,10 @@ func (this *build) evaluateEnvironment(ctx context.Context) error {
 		With("stages", stages).
 		Info()
 	prStr := strconv.FormatUint(uint64(pr), 10)
+	matrices, err := this.buildMatrices()
+	if err != nil {
+		return err
+	}
 
 	if fn := this.optionsOutputFilename; fn != "" {
 		f, err := gos.OpenFile(fn, gos.O_CREATE|gos.O_APPEND|gos.O_WRONLY, 0644)
@@ -224,6 +233,22 @@ func (this *build) evaluateEnvironment(ctx context.Context) error {
 
 		for _, stage := range allBuildStageVariants {
 			if _, err = fmt.Fprintf(f, "stage-%v=%v\n", stage, stages.contains(stage)); err != nil {
+				return err
+			}
+		}
+		for _, matrix := range []struct {
+			name  string
+			value any
+		}{
+			{"test-matrix", matrices.Tests},
+			{"binary-host-matrix", matrices.Host},
+			{"binary-container-matrix", matrices.Container},
+		} {
+			raw, err := json.Marshal(matrix.value)
+			if err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintf(f, "%s=%s\n", matrix.name, raw); err != nil {
 				return err
 			}
 		}

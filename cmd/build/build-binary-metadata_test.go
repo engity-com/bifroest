@@ -12,7 +12,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-func TestBinaryTransferRestoresPackagingInputs(t *testing.T) {
+func TestBinaryMetadataRestoresPackagingInputs(t *testing.T) {
 	build, bc := testReleaseManifestBuild(t)
 	build.buildContextP.Store(bc)
 	p := &bib.Platform{Os: sys.OsWindows, Arch: sys.ArchArm64, Edition: sys.EditionGeneric}
@@ -32,7 +32,7 @@ func TestBinaryTransferRestoresPackagingInputs(t *testing.T) {
 	require.Equal(t, binary.thirdPartyLicenseInventory, loaded.thirdPartyLicenseInventory)
 }
 
-func TestBinaryTransferRejectsMissingAndModifiedInputs(t *testing.T) {
+func TestBinaryMetadataRejectsMissingAndModifiedInputs(t *testing.T) {
 	build, bc := testReleaseManifestBuild(t)
 	build.buildContextP.Store(bc)
 	p := &bib.Platform{Os: sys.OsLinux, Arch: sys.ArchAmd64, Edition: sys.EditionExtended}
@@ -57,7 +57,7 @@ func TestBinaryTransferRejectsMissingAndModifiedInputs(t *testing.T) {
 	require.ErrorContains(t, err, "does not match the expected build")
 }
 
-func TestBinaryTransferRejectsWrongPlatformAndIncompleteInventory(t *testing.T) {
+func TestBinaryMetadataRejectsWrongPlatformAndIncompleteInventory(t *testing.T) {
 	build, bc := testReleaseManifestBuild(t)
 	build.buildContextP.Store(bc)
 	p := &bib.Platform{Os: sys.OsLinux, Arch: sys.ArchArmV6, Edition: sys.EditionGeneric}
@@ -66,22 +66,22 @@ func TestBinaryTransferRejectsWrongPlatformAndIncompleteInventory(t *testing.T) 
 	binary.thirdPartyNoticesFilepath = notice.filepath
 	binary.thirdPartyLicenseInventory = &thirdPartyLicenseInventory{modules: []thirdPartyLicenseModule{{names: []string{"example.com/module"}, licenseExpression: "MIT"}}}
 	require.NoError(t, build.binary.save(binary, notice))
-	filename := build.binary.transferFilepath(binary)
+	filename := build.binary.metadataFilepath(binary)
 	raw, err := gos.ReadFile(filename)
 	require.NoError(t, err)
-	var transfer binaryTransfer
-	require.NoError(t, json.Unmarshal(raw, &transfer))
+	var metadata binaryBuildMetadata
+	require.NoError(t, json.Unmarshal(raw, &metadata))
 
-	transfer.Platform = "linux/riscv64/generic"
-	modified, err := json.Marshal(transfer)
+	metadata.Platform = "linux/riscv64/generic"
+	modified, err := json.Marshal(metadata)
 	require.NoError(t, err)
 	require.NoError(t, gos.WriteFile(filename, modified, 0644))
 	_, _, err = build.binary.load(t.Context(), p)
 	require.ErrorContains(t, err, "does not match the expected build")
 
-	transfer.Platform = p.String()
-	transfer.Licenses[0].Expression = ""
-	modified, err = json.Marshal(transfer)
+	metadata.Platform = p.String()
+	metadata.Licenses[0].Expression = ""
+	modified, err = json.Marshal(metadata)
 	require.NoError(t, err)
 	require.NoError(t, gos.WriteFile(filename, modified, 0644))
 	_, _, err = build.binary.load(t.Context(), p)
