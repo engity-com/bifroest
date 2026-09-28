@@ -4,7 +4,9 @@ package nanoserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,12 +50,24 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 	if got := strings.TrimSpace(run(t, root, "docker", "info", "--format", "{{.OSType}}")); got != "windows" {
 		t.Fatalf("Nano Server integration requires a Windows Docker daemon, got %q", got)
 	}
-	for _, build := range []struct{ target, pkg string }{
-		{"bifroest.exe", "./cmd/bifroest"},
-		{"s4u-probe.exe", "./test/manual/s4u-probe"},
-	} {
-		run(t, root, "go", "build", "-o", filepath.Join(dir, build.target), build.pkg)
+	binaries, err := filepath.Glob(filepath.Join(root, "var", "dist", "*", "bifroest-windows-amd64-generic.exe"))
+	if err != nil || len(binaries) != 1 {
+		t.Fatalf("expected exactly one native Windows binary from mise run build:go:binary, got %v: %v", binaries, err)
 	}
+	binarySource, err := os.Open(binaries[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := os.Create(filepath.Join(dir, "bifroest.exe"))
+	if err != nil {
+		_ = binarySource.Close()
+		t.Fatal(err)
+	}
+	_, copyErr := io.Copy(target, binarySource)
+	if err := errors.Join(copyErr, target.Close(), binarySource.Close()); err != nil {
+		t.Fatal(err)
+	}
+	run(t, root, "go", "build", "-o", filepath.Join(dir, "s4u-probe.exe"), "./test/manual/s4u-probe")
 	run(t, root, "go", "test", "-c", "-tags=nanoserver_integration", "-o", filepath.Join(dir, "environment.test.exe"), "./pkg/environment")
 	buildImage := func(base, kind string) string {
 		t.Helper()

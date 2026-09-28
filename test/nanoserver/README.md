@@ -6,13 +6,16 @@ This is a capability test, not a test of the released image's default entrypoint
 
 Run it on a Windows host (or Windows VM) with a working **Windows-container** Docker daemon, Hyper-V isolation support, and Go 1.27. From the repository root in Nushell:
 
+The `cmd/build` binary stage requires `GITHUB_TOKEN`; the GitHub Actions workflow supplies a read-only token. Set it explicitly when running these tasks outside CI.
+
 ```nu
 $env.BIFROEST_TEST_NANOSERVER = "1"
+mise run build:go:binary -- --os=windows --arch=amd64 --edition=generic
 mise run test:e2e:nanoserver
 ```
 
 Without `BIFROEST_TEST_NANOSERVER=1` the test is skipped. With it enabled, a missing or Linux Docker daemon is a **failure**, not a skip. Hyper-V isolation is the default; `BIFROEST_TEST_NANOSERVER_ISOLATION=process` is an explicit opt-in to weaker process isolation on a compatible Windows host. Do not run this test on a production Windows host.
 
-The test builds temporary binaries and ephemeral images from both pinned bases, uses no writable host mounts and publishes no ports, then removes its image tags. Base images may remain in the Docker cache. Nano Server's built-in `ContainerUser` is not a local SAM account, and the pinned image lacks `netapi32.dll` for provisioning a SAM test fixture. An explicitly guarded test helper creates a random local account **only inside the disposable Server Core container**, then starts a temporary LocalSystem service to test S4U, user-profile loading, Exec and PTY. The provider itself does not create or remove accounts; no host account or service is changed.
+The test uses the Windows/amd64 binary built by `cmd/build`, builds temporary test helpers and ephemeral images from both pinned bases, uses no writable host mounts and publishes no ports, then removes its image tags. Base images may remain in the Docker cache. Nano Server's built-in `ContainerUser` is not a local SAM account, and the pinned image lacks `netapi32.dll` for provisioning a SAM test fixture. An explicitly guarded test helper creates a random local account **only inside the disposable Server Core container**, then starts a temporary LocalSystem service to test S4U, user-profile loading, Exec and PTY. The provider itself does not create or remove accounts; no host account or service is changed.
 
 The GitHub Actions `Nano Server Integration` workflow runs this task on a disposable `windows-2022` runner with process isolation, if its Windows Docker daemon is available. For Hyper-V isolation use a dedicated Windows Docker runner instead. A successful cross-build or a native Windows host test does **not** replace this container test.

@@ -118,6 +118,10 @@ run_windows = 'if not exist var mkdir var'
 hide = true
 run = "go run ./cmd/build evaluate-environment --log.colorMode=always"
 
+[tasks."ci:write-build-epoch"]
+hide = true
+run = "go run ./cmd/build write-build-epoch"
+
 [tasks."ci:inspect-pr-action"]
 hide = true
 run = "go run ./cmd/build inspect-pr-action --log.colorMode=always"

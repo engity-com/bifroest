@@ -102,6 +102,10 @@ func (this *base) init(ctx context.Context, app *kingpin.Application) {
 		Action(func(*kingpin.ParseContext) error {
 			return this.status(ctx)
 		})
+	app.Command("write-build-epoch", "Write the checkout commit's timestamp to GITHUB_ENV.").
+		Action(func(*kingpin.ParseContext) error {
+			return this.writeBuildEpoch(ctx)
+		})
 
 	this.repo.init(ctx, app)
 	this.build.init(ctx, app)

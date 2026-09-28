@@ -9,7 +9,9 @@ on:
       - ready_for_review
     paths:
       - .github/workflows/nanoserver.yml
+      - .github/workflows/build.yml
       - cmd/bifroest/**
+      - cmd/build/**
       - docs/reference/environment/local.md
       - go.mod
       - go.sum
@@ -27,7 +29,7 @@ permissions:
 
 jobs:
   windows-local:
-    name: Local account and ConPTY in Nano Server
+    name: Windows local in Nano Server and Server Core
     runs-on: windows-2022
     timeout-minutes: 25
     env:
@@ -45,6 +47,19 @@ jobs:
       - name: Install dependencies
         run: mise run install:go
 
+      - name: Set reproducible build time
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MISE_GITHUB_TOKEN: ""
+        run: mise run ci:write-build-epoch
+
+      - name: Build native Windows binary
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BIFROEST_VENDOR: Engity GmbH
+          MISE_GITHUB_TOKEN: ""
+        run: mise run build:go:binary -- --os=windows --arch=amd64 --edition=generic
+
       - name: Start Windows Docker daemon
         shell: pwsh
         run: |
@@ -53,5 +68,8 @@ jobs:
             Start-Service docker
           }
 
-      - name: Test pinned Nano Server image
+      - name: Test pinned Windows container images
+        env:
+          GITHUB_TOKEN: ""
+          MISE_GITHUB_TOKEN: ""
         run: mise run test:e2e:nanoserver
