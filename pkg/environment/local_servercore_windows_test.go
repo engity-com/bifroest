@@ -10,8 +10,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"unsafe"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
@@ -266,4 +268,84 @@ func TestLocalServerCoreFailedSkelDisablesNewAccount(t *testing.T) {
 	require.True(t, disabled)
 	_, err = repo.Ensure(localWindowsTestRequest(t, &sshTestStoredSession{id: session.MustNewId()}))
 	require.ErrorContains(t, err, "disabled")
+}
+
+func TestLocalServerCoreFailedDisplayDisablesNewAccount(t *testing.T) {
+	if os.Getenv("BIFROEST_TEST_SERVERCORE_IN_CONTAINER") != "1" {
+		t.Skip("only run inside the disposable Server Core integration container")
+	}
+	marker, err := os.ReadFile(serverCoreContainerMarker)
+	require.NoError(t, err)
+	require.Equal(t, "bifroest-servercore-integration", strings.TrimSpace(string(marker)))
+	var nonce [8]byte
+	_, err = rand.Read(nonce[:])
+	require.NoError(t, err)
+	suffix := hex.EncodeToString(nonce[:])
+	name, group := "bdc"+suffix, "bdg"+suffix
+	conf := &configuration.EnvironmentLocal{}
+	require.NoError(t, conf.SetDefaults())
+	conf.Name = template.MustNewString(name)
+	conf.ManagedGroup = group
+	conf.CreateIfAbsent = template.BoolOf(true)
+	conf.DisplayName = template.MustNewString("{{ .targetUser }}")
+	repo, err := NewLocalRepository(context.Background(), "test", conf, nil, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, repo.Close()) })
+	stored := &sshTestStoredSession{id: session.MustNewId()}
+	request := localWindowsTestRequest(t, stored)
+	request.targetUser = "invalid\x00display"
+	_, err = repo.Ensure(request)
+	require.Error(t, err)
+	account, err := lookupLocalWindowsAccount(name)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if err := DeleteLocalWindowsAccount(name, account.SID); err != nil {
+			t.Logf("best-effort disposable container account cleanup: %v", err)
+		}
+	})
+	disabled, err := localWindowsAccountDisabled(name, account.SID)
+	require.NoError(t, err)
+	require.True(t, disabled, "failed display-name setup left an enabled account")
+	_, err = repo.Ensure(localWindowsTestRequest(t, &sshTestStoredSession{id: session.MustNewId()}))
+	require.ErrorContains(t, err, "disabled")
+}
+
+func TestLocalServerCoreUnmanagedNewAccountCanBeDisabled(t *testing.T) {
+	if os.Getenv("BIFROEST_TEST_SERVERCORE_IN_CONTAINER") != "1" {
+		t.Skip("only run inside the disposable Server Core integration container")
+	}
+	marker, err := os.ReadFile(serverCoreContainerMarker)
+	require.NoError(t, err)
+	require.Equal(t, "bifroest-servercore-integration", strings.TrimSpace(string(marker)))
+	var nonce [8]byte
+	_, err = rand.Read(nonce[:])
+	require.NoError(t, err)
+	suffix := hex.EncodeToString(nonce[:])
+	name, group := "buc"+suffix, "bug"+suffix
+	sid, err := CreateLocalWindowsAccount(name, "", group)
+	if sid != "" {
+		t.Cleanup(func() {
+			if account, lookupErr := lookupLocalWindowsAccount(name); lookupErr == nil && account.SID == sid {
+				if err := DeleteLocalWindowsAccount(name, sid); err != nil {
+					t.Logf("best-effort disposable container account cleanup: %v", err)
+				}
+			}
+		})
+	}
+	require.NoError(t, err)
+	groupName, err := windows.UTF16PtrFromString(group)
+	require.NoError(t, err)
+	parsedSID, err := windows.StringToSid(sid)
+	require.NoError(t, err)
+	member := localSAMMemberInfo0{SID: parsedSID}
+	require.NoError(t, localSAMCall("NetLocalGroupDelMembers", 0, uintptr(unsafe.Pointer(groupName)), 0, uintptr(unsafe.Pointer(&member)), 1))
+	runtime.KeepAlive(groupName)
+	runtime.KeepAlive(parsedSID)
+	managed, err := IsLocalWindowsAccountInGroup(name, sid, group)
+	require.NoError(t, err)
+	require.False(t, managed)
+	require.NoError(t, disableNewLocalWindowsAccount(name, sid))
+	disabled, err := localWindowsAccountDisabled(name, sid)
+	require.NoError(t, err)
+	require.True(t, disabled)
 }

@@ -215,19 +215,21 @@ func localWindowsAccountDisabled(name, sid string) (bool, error) {
 	return localSAMAccountDisabled(flags), nil
 }
 
-// disableLocalWindowsAccount preserves all existing SAM flags and refuses to
-// change an account that is no longer the expected managed user.
-func disableLocalWindowsAccount(name, sid, managedGroup string) error {
+// Only call this with a SID observed immediately after creating the account.
+// Group setup might have failed, so disabling cannot require membership.
+func setNewLocalWindowsAccountDisabled(name, sid, managedGroup string, disabled bool) error {
 	account, err := localSAMCurrent(name, sid)
 	if err != nil {
 		return err
 	}
-	member, err := IsLocalWindowsAccountInGroup(account.Name, account.SID, managedGroup)
-	if err != nil {
-		return err
-	}
-	if !member {
-		return fmt.Errorf("local SAM account %q is not a member of managed group %q", name, managedGroup)
+	if !disabled {
+		member, err := IsLocalWindowsAccountInGroup(account.Name, account.SID, managedGroup)
+		if err != nil {
+			return err
+		}
+		if !member {
+			return fmt.Errorf("local SAM account %q is not in managed group %q", name, managedGroup)
+		}
 	}
 	flags, err := localSAMUserFlags(account.Name)
 	if err != nil {
@@ -237,26 +239,37 @@ func disableLocalWindowsAccount(name, sid, managedGroup string) error {
 	if err != nil {
 		return err
 	}
-	member, err = IsLocalWindowsAccountInGroup(account.Name, account.SID, managedGroup)
-	if err != nil {
-		return err
-	}
-	updated, err := localSAMDisableFlags(account, member, flags)
-	if err != nil {
-		return err
+	if disabled {
+		flags, err = localSAMDisableFlags(account, true, flags)
+		if err != nil {
+			return err
+		}
+	} else {
+		member, err := IsLocalWindowsAccountInGroup(account.Name, account.SID, managedGroup)
+		if err != nil {
+			return err
+		}
+		if !member {
+			return fmt.Errorf("local SAM account %q is not in managed group %q", name, managedGroup)
+		}
+		flags &^= localSAMUFAccountDisable
 	}
 	username, err := windows.UTF16PtrFromString(account.Name)
 	if err != nil {
 		return err
 	}
-	info := localSAMUserInfo1008{Flags: updated}
+	info := localSAMUserInfo1008{Flags: flags}
 	var invalid uint32
 	err = localSAMCall("NetUserSetInfo", 0, uintptr(unsafe.Pointer(username)), 1008, uintptr(unsafe.Pointer(&info)), uintptr(unsafe.Pointer(&invalid)))
 	runtime.KeepAlive(username)
 	if err != nil {
-		return fmt.Errorf("disable local SAM user %q (parameter %d): %w", name, invalid, err)
+		return fmt.Errorf("set disabled state of local SAM user %q (parameter %d): %w", name, invalid, err)
 	}
 	return nil
+}
+
+func disableNewLocalWindowsAccount(name, sid string) error {
+	return setNewLocalWindowsAccountDisabled(name, sid, "", true)
 }
 
 func localSAMDisplayName(name string) (string, error) {
@@ -310,9 +323,9 @@ func ensureLocalSAMGroup(group string) error {
 	return localSAMGroupIdentity(group)
 }
 
-// CreateLocalWindowsAccount creates a normal local user with a random, never
-// returned password. A failure after NetUserAdd leaves the account for explicit
-// operator reconciliation; it is never deleted without an observed SID.
+// CreateLocalWindowsAccount creates a local user with a random, never returned
+// password. It remains disabled until group and display-name setup succeed.
+// Failures after observing the new SID return it for verified cleanup.
 func CreateLocalWindowsAccount(name, displayName, managedGroup string) (string, error) {
 	if !validLocalSAMName(name) || localSAMProtectedName(name) {
 		return "", fmt.Errorf("invalid or protected local SAM account name %q", name)
@@ -344,7 +357,7 @@ func CreateLocalWindowsAccount(name, displayName, managedGroup string) (string, 
 	password = append(password, 0)
 	username, _ := windows.UTF16PtrFromString(name)
 	// Never include the password or its buffer in diagnostics.
-	info := localSAMUserInfo1{Name: username, Password: &password[0], Priv: 1, Flags: 0x201} // USER_PRIV_USER; UF_SCRIPT | UF_NORMAL_ACCOUNT
+	info := localSAMUserInfo1{Name: username, Password: &password[0], Priv: 1, Flags: 0x201 | localSAMUFAccountDisable} // USER_PRIV_USER; UF_SCRIPT | UF_NORMAL_ACCOUNT
 	var invalid uint32
 	err := localSAMCall("NetUserAdd", 0, 1, uintptr(unsafe.Pointer(&info)), uintptr(unsafe.Pointer(&invalid)))
 	runtime.KeepAlive(username)
@@ -363,10 +376,13 @@ func CreateLocalWindowsAccount(name, displayName, managedGroup string) (string, 
 		return "", fmt.Errorf("created user %q resolves to a protected SID", name)
 	}
 	if err := EnsureLocalWindowsAccountGroup(account.Name, account.SID, managedGroup); err != nil {
-		return "", err
+		return account.SID, err
 	}
 	if err := UpdateLocalWindowsAccountDisplayName(account.Name, account.SID, displayName, true); err != nil {
-		return "", err
+		return account.SID, err
+	}
+	if err := setNewLocalWindowsAccountDisabled(account.Name, account.SID, managedGroup, false); err != nil {
+		return account.SID, err
 	}
 	return account.SID, nil
 }

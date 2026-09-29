@@ -126,7 +126,7 @@ func (this *LocalRepository) Ensure(req Request) (_ Environment, rErr error) {
 	var createdName, createdSID string
 	defer func() {
 		if createdSID != "" && rErr != nil {
-			if disableErr := disableLocalWindowsAccount(createdName, createdSID, this.conf.ManagedGroup); disableErr != nil {
+			if disableErr := disableNewLocalWindowsAccount(createdName, createdSID); disableErr != nil {
 				rErr = fmt.Errorf("%w; additionally cannot disable incomplete local account %q: %v", rErr, createdName, disableErr)
 			}
 		}
@@ -234,10 +234,10 @@ func (this *LocalRepository) Ensure(req Request) (_ Environment, rErr error) {
 		}
 		var createErr error
 		createdSID, createErr = CreateLocalWindowsAccount(name, display, this.conf.ManagedGroup)
+		createdName = name
 		if createErr != nil {
 			return fail(createErr)
 		}
-		createdName = name
 		account, err = lookupLocalWindowsAccount(name)
 		if err != nil {
 			return fail(err)
