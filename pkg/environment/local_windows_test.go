@@ -394,6 +394,20 @@ func TestLocalWindowsKeepsMissingAccountTokenForProcessCleanup(t *testing.T) {
 	require.NotEmpty(t, encoded)
 }
 
+func TestLocalWindowsCompletedKillOnlyDoesNotRequireCoordinator(t *testing.T) {
+	account := windowsLocalAccount{Name: "BifroestMissingAccount_987654321", SID: "S-1-5-21-1-2-3-1001"}
+	token := localToken{Version: 2, User: account, KillProcessesOnDispose: true, ProcessesKilledOnDispose: true}
+	encoded, err := json.Marshal(token)
+	require.NoError(t, err)
+	stored := &localCoordinatorTestSession{flow: "test", id: session.MustNewId(), state: session.StateDisposed, token: encoded}
+	env := (&LocalRepository{}).new(account, stored, false, &token)
+	env.accountMissing = true
+
+	_, err = env.Dispose(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, stored.token)
+}
+
 func TestLocalWindowsS4ULogonAsUser(t *testing.T) {
 	name := os.Getenv("BIFROEST_TEST_LOCAL_WINDOWS_USER")
 	if name == "" {

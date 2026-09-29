@@ -20,14 +20,31 @@ func localSessionHasActiveConnections(sess session.Session) bool {
 	return !ok || connections.HasActiveConnections()
 }
 
+func (this *localAccountCoordinator) canKillProcesses(ctx context.Context, current session.Session, name, identity string) (bool, error) {
+	if this == nil || this.sessions == nil {
+		return false, fmt.Errorf("cannot clean up local account without a session repository")
+	}
+	if localSessionHasActiveConnections(current) {
+		return false, nil
+	}
+	active, disposed, err := this.accountSessionsState(ctx, current, name, identity)
+	return !active && disposed && err == nil, err
+}
+
 // otherActive checks all flows while Ensure and Dispose share the coordinator
 // lock. Unreadable sessions are an error, not evidence that the account is free.
 func (this *localAccountCoordinator) otherActive(ctx context.Context, current session.Session, name, identity string) (bool, error) {
+	active, _, err := this.accountSessionsState(ctx, current, name, identity)
+	return active, err
+}
+
+func (this *localAccountCoordinator) accountSessionsState(ctx context.Context, current session.Session, name, identity string) (bool, bool, error) {
 	if this == nil || this.sessions == nil {
-		return false, fmt.Errorf("cannot delete local account without a session repository")
+		return false, false, fmt.Errorf("cannot inspect local account without a session repository")
 	}
 	active := false
 	foundCurrent := false
+	currentDisposed := false
 	err := this.sessions.FindAll(ctx, func(ctx context.Context, other session.Session) (bool, error) {
 		isCurrent := other.Flow() == current.Flow() && other.Id() == current.Id()
 		encoded, err := other.EnvironmentToken(ctx)
@@ -68,6 +85,14 @@ func (this *localAccountCoordinator) otherActive(ctx context.Context, current se
 				return false, fmt.Errorf("local account session %s/%s changed identity", current.Flow(), current.Id())
 			}
 			foundCurrent = true
+			info, err := other.Info(ctx)
+			if err != nil {
+				return false, err
+			}
+			if info == nil {
+				return false, fmt.Errorf("cannot inspect current local account session")
+			}
+			currentDisposed = info.State() == session.StateDisposed && !localSessionHasActiveConnections(other)
 			return true, nil
 		}
 		if !nameMatches && !identityMatches {
@@ -88,7 +113,7 @@ func (this *localAccountCoordinator) otherActive(ctx context.Context, current se
 		return true, nil
 	}, nil)
 	if err == nil && !active && !foundCurrent {
-		return false, fmt.Errorf("cannot confirm local account session %s/%s in session repository", current.Flow(), current.Id())
+		return false, false, fmt.Errorf("cannot confirm local account session %s/%s in session repository", current.Flow(), current.Id())
 	}
-	return active, err
+	return active, currentDisposed, err
 }

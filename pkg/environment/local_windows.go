@@ -211,8 +211,7 @@ func (this *local) signal(cmd *exec.Cmd, logger log.Logger, signal essh.Signal) 
 
 func (this *local) dispose(ctx context.Context) (bool, error) {
 	this.deferred = false
-	if this.repository.coordinator != nil && this.session != nil && localSessionHasActiveConnections(this.session) &&
-		(!this.killProcessesOnDispose || this.token.ProcessesKilledOnDispose) {
+	if this.repository.coordinator != nil && this.session != nil && localSessionHasActiveConnections(this.session) {
 		this.deferred = true
 		return false, nil
 	}
@@ -222,14 +221,15 @@ func (this *local) dispose(ctx context.Context) (bool, error) {
 	if this.session == nil {
 		return false, errors.System.Newf("cannot clean up local account without a session")
 	}
-	if this.deleteOnDispose && this.repository.coordinator == nil {
-		return false, errors.System.Newf("cannot delete local account without a session coordinator")
+	if this.repository.coordinator == nil && (this.deleteOnDispose ||
+		(this.killProcessesOnDispose && !this.token.ProcessesKilledOnDispose)) {
+		return false, errors.System.Newf("cannot clean up local account without a session coordinator")
 	}
 	if this.repository.coordinator != nil {
 		this.repository.coordinator.mu.Lock()
 		defer this.repository.coordinator.mu.Unlock()
 	}
-	if localSessionHasActiveConnections(this.session) && (!this.killProcessesOnDispose || this.token.ProcessesKilledOnDispose) {
+	if this.repository.coordinator != nil && localSessionHasActiveConnections(this.session) {
 		this.deferred = true
 		return false, nil
 	}
@@ -273,6 +273,14 @@ func (this *local) dispose(ctx context.Context) (bool, error) {
 		return false, errors.System.Newf("local account %q is protected", account.Name)
 	}
 	if this.killProcessesOnDispose && !this.token.ProcessesKilledOnDispose {
+		ready, err := this.repository.coordinator.canKillProcesses(ctx, this.session, account.Name, account.SID)
+		if err != nil {
+			return false, err
+		}
+		if !ready {
+			this.deferred = true
+			return false, nil
+		}
 		if err := localWindowsKillUserProcesses(account, this.allowSystemUsers); err != nil {
 			return false, err
 		}

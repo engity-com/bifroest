@@ -189,8 +189,7 @@ func (this *local) dispose(ctx context.Context) (bool, error) {
 	}
 
 	this.deferred = false
-	if this.repository.coordinator != nil && localSessionHasActiveConnections(this.session) &&
-		(!this.killProcessesOnDispose || this.token.User.ProcessesKilledOnDispose) {
+	if this.repository.coordinator != nil && this.session != nil && localSessionHasActiveConnections(this.session) {
 		this.deferred = true
 		return false, nil
 	}
@@ -200,15 +199,15 @@ func (this *local) dispose(ctx context.Context) (bool, error) {
 	if this.session == nil {
 		return fail(errors.System.Newf("cannot clean up local account without a session"))
 	}
-	if this.deleteUserOnDispose && this.repository.coordinator == nil {
-		return fail(errors.System.Newf("cannot delete local account without a session coordinator"))
+	if this.repository.coordinator == nil && (this.deleteUserOnDispose ||
+		(this.killProcessesOnDispose && !this.token.User.ProcessesKilledOnDispose)) {
+		return fail(errors.System.Newf("cannot clean up local account without a session coordinator"))
 	}
 	if this.repository.coordinator != nil {
 		this.repository.coordinator.mu.Lock()
 		defer this.repository.coordinator.mu.Unlock()
 	}
-	if localSessionHasActiveConnections(this.session) && this.repository.coordinator != nil &&
-		(!this.killProcessesOnDispose || this.token.User.ProcessesKilledOnDispose) {
+	if this.repository.coordinator != nil && localSessionHasActiveConnections(this.session) {
 		this.deferred = true
 		return false, nil
 	}
@@ -240,6 +239,14 @@ func (this *local) dispose(ctx context.Context) (bool, error) {
 	}
 	disposed := false
 	if this.killProcessesOnDispose && !this.token.User.ProcessesKilledOnDispose {
+		ready, err := this.repository.coordinator.canKillProcesses(ctx, this.session, this.user.Name, this.user.Uid.String())
+		if err != nil {
+			return fail(err)
+		}
+		if !ready {
+			this.deferred = true
+			return false, nil
+		}
 		if this.accountMissing {
 			killer, ok := this.repository.userRepository.(interface {
 				KillProcessesByAbsentIdentity(context.Context, user.Id) error

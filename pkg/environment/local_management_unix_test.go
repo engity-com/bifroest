@@ -264,13 +264,19 @@ func TestLocalUnixMissingAccountRetainsPendingProcessCleanup(t *testing.T) {
 	encoded, err := json.Marshal(token)
 	require.NoError(t, err)
 	stored := &localCoordinatorTestSession{flow: "test", id: session.MustNewId(), state: session.StateDisposed, token: encoded}
+	other := &localCoordinatorTestSession{flow: "other", id: session.MustNewId(), state: session.StateAuthorized, token: encoded}
 	users := &localManagementTestUsers{}
-	coordinator := &localAccountCoordinator{sessions: &localCoordinatorTestRepository{sessions: []session.Session{stored}}}
+	coordinator := &localAccountCoordinator{sessions: &localCoordinatorTestRepository{sessions: []session.Session{stored, other}}}
 	repository := &LocalRepository{userRepository: users, coordinator: coordinator}
 	clean := true
 	env, err := repository.FindBySession(ctx, stored, &FindOpts{AutoCleanUpAllowed: &clean})
 	require.NoError(t, err)
 	require.True(t, env.(*local).accountMissing)
+	_, err = env.Dispose(ctx)
+	require.NoError(t, err)
+	require.Zero(t, users.kills)
+	require.Equal(t, encoded, stored.token)
+	other.state = session.StateDisposed
 	_, err = env.Dispose(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, users.kills)
@@ -403,7 +409,7 @@ func TestLocalUnixDeletesUnmanagedAccountWhenExplicitlyRequested(t *testing.T) {
 	require.Empty(t, stored.token)
 }
 
-func TestLocalUnixKillsWithoutDeletingOrWaitingForOtherSessions(t *testing.T) {
+func TestLocalUnixKillOnlyWaitsForLastSession(t *testing.T) {
 	ctx := context.Background()
 	uid := user.Id(1234)
 	account := &user.User{Name: "ordinary", Uid: uid}
@@ -418,12 +424,55 @@ func TestLocalUnixKillsWithoutDeletingOrWaitingForOtherSessions(t *testing.T) {
 
 	changed, err := repository.new(account, first, false, &token).Dispose(ctx)
 	require.NoError(t, err)
-	require.True(t, changed)
-	require.Equal(t, 1, users.kills)
+	require.False(t, changed)
+	require.Zero(t, users.kills)
 	require.False(t, users.deleted)
 	require.NotNil(t, users.account)
-	require.Empty(t, first.token)
+	require.Equal(t, encoded, first.token, "deferred kill must keep its session token")
 	require.NotEmpty(t, second.token)
+	second.state = session.StateDisposed
+	changed, err = repository.new(account, first, false, &token).Dispose(ctx)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, 1, users.kills)
+	require.Empty(t, first.token)
+	require.False(t, users.deleted, "kill-only must not delete the account")
+}
+
+func TestLocalUnixKillOnlyRequiresCoordinator(t *testing.T) {
+	ctx := context.Background()
+	uid := user.Id(1234)
+	account := &user.User{Name: "ordinary", Uid: uid}
+	users := &localManagementTestUsers{account: account}
+	token := localToken{Version: 2, User: localTokenUser{Name: account.Name, Uid: &uid, KillProcessesOnDispose: true}}
+	encoded, err := json.Marshal(token)
+	require.NoError(t, err)
+	stored := &localCoordinatorTestSession{flow: "test", id: session.MustNewId(), state: session.StateDisposed, token: encoded}
+	repository := &LocalRepository{userRepository: users}
+
+	_, err = repository.new(account, stored, false, &token).Dispose(ctx)
+	require.ErrorContains(t, err, "without a session coordinator")
+	require.Zero(t, users.kills)
+	require.Equal(t, encoded, stored.token)
+}
+
+func TestLocalUnixCompletedKillOnlyDoesNotRequireCoordinator(t *testing.T) {
+	ctx := context.Background()
+	uid := user.Id(1234)
+	account := &user.User{Name: "ordinary", Uid: uid}
+	users := &localManagementTestUsers{account: account}
+	token := localToken{Version: 2, User: localTokenUser{
+		Name: account.Name, Uid: &uid, KillProcessesOnDispose: true, ProcessesKilledOnDispose: true,
+	}}
+	encoded, err := json.Marshal(token)
+	require.NoError(t, err)
+	stored := &localCoordinatorTestSession{flow: "test", id: session.MustNewId(), state: session.StateDisposed, token: encoded}
+	repository := &LocalRepository{userRepository: users}
+
+	_, err = repository.new(account, stored, false, &token).Dispose(ctx)
+	require.NoError(t, err)
+	require.Zero(t, users.kills)
+	require.Empty(t, stored.token)
 }
 
 func TestLocalUnixDeferredDeletionDoesNotRepeatProcessKill(t *testing.T) {
@@ -446,18 +495,18 @@ func TestLocalUnixDeferredDeletionDoesNotRepeatProcessKill(t *testing.T) {
 
 	changed, err := env.Dispose(ctx)
 	require.NoError(t, err)
-	require.True(t, changed)
-	require.Equal(t, 1, users.kills)
+	require.False(t, changed)
+	require.Zero(t, users.kills)
 	require.NotEmpty(t, first.token)
 	var stored localToken
 	require.NoError(t, json.Unmarshal(first.token, &stored))
-	require.True(t, stored.User.ProcessesKilledOnDispose)
+	require.False(t, stored.User.ProcessesKilledOnDispose)
 	_, err = env.Dispose(ctx)
 	require.NoError(t, err)
-	require.Equal(t, 1, users.kills)
+	require.Zero(t, users.kills)
 	_, err = staleEnv.Dispose(ctx)
 	require.NoError(t, err)
-	require.Equal(t, 1, users.kills)
+	require.Zero(t, users.kills)
 	second.state = session.StateDisposed
 	_, err = env.Dispose(ctx)
 	require.NoError(t, err)
@@ -465,7 +514,7 @@ func TestLocalUnixDeferredDeletionDoesNotRepeatProcessKill(t *testing.T) {
 	require.Equal(t, 1, users.kills)
 }
 
-func TestLocalUnixKillsBeforeActiveConnectionDrains(t *testing.T) {
+func TestLocalUnixKillWaitsForActiveConnection(t *testing.T) {
 	ctx := context.Background()
 	uid := user.Id(1234)
 	account := &user.User{Name: "ordinary", Uid: uid}
@@ -480,9 +529,9 @@ func TestLocalUnixKillsBeforeActiveConnectionDrains(t *testing.T) {
 
 	changed, err := env.Dispose(ctx)
 	require.NoError(t, err)
-	require.True(t, changed)
-	require.Equal(t, 1, users.kills)
-	require.NotEmpty(t, stored.token)
+	require.False(t, changed)
+	require.Zero(t, users.kills)
+	require.Equal(t, encoded, stored.token)
 	stored.connections = false
 	_, err = env.Dispose(ctx)
 	require.NoError(t, err)
@@ -490,7 +539,7 @@ func TestLocalUnixKillsBeforeActiveConnectionDrains(t *testing.T) {
 	require.Empty(t, stored.token)
 }
 
-func TestLocalUnixPersistsKillProgressInDisposedFsSession(t *testing.T) {
+func TestLocalUnixRetainsPendingKillInDisposedFsSession(t *testing.T) {
 	ctx := t.Context()
 	conf := &configuration.SessionFs{}
 	require.NoError(t, conf.SetDefaults())
@@ -519,17 +568,17 @@ func TestLocalUnixPersistsKillProgressInDisposedFsSession(t *testing.T) {
 	require.NoError(t, err)
 	changed, err := env.Dispose(ctx)
 	require.NoError(t, err)
-	require.True(t, changed)
-	require.Equal(t, 1, users.kills)
+	require.False(t, changed)
+	require.Zero(t, users.kills)
 	require.False(t, users.deleted)
 	actual, err := first.EnvironmentToken(ctx)
 	require.NoError(t, err)
 	var pending localToken
 	require.NoError(t, json.Unmarshal(actual, &pending))
-	require.True(t, pending.User.ProcessesKilledOnDispose)
+	require.False(t, pending.User.ProcessesKilledOnDispose)
 	_, err = env.Dispose(ctx)
 	require.NoError(t, err)
-	require.Equal(t, 1, users.kills)
+	require.Zero(t, users.kills)
 	_, err = second.Dispose(ctx)
 	require.NoError(t, err)
 	_, err = env.Dispose(ctx)

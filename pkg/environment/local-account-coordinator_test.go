@@ -89,6 +89,54 @@ func TestLocalAccountCoordinatorOtherActiveAcrossFlows(t *testing.T) {
 	}
 }
 
+func TestLocalAccountCoordinatorKillWaitsForLastSessionAndConnections(t *testing.T) {
+	const sid = "S-1-5-21-1-2-3-1001"
+	current := &localCoordinatorTestSession{flow: "first", id: session.MustNewId(), state: session.StateDisposed, token: []byte(`{"user":{"name":"alice","sid":"S-1-5-21-1-2-3-1001"}}`)}
+	other := &localCoordinatorTestSession{flow: "second", id: session.MustNewId(), token: []byte(`{"user":{"name":"alice","sid":"S-1-5-21-1-2-3-1001"}}`)}
+	coordinator := &localAccountCoordinator{sessions: &localCoordinatorTestRepository{sessions: []session.Session{current, other}}}
+	for _, test := range []struct {
+		name               string
+		currentState       session.State
+		currentConnections bool
+		otherState         session.State
+		otherConnections   bool
+		want               bool
+	}{
+		{name: "current session is active", currentState: session.StateAuthorized, otherState: session.StateDisposed},
+		{name: "current connection remains", currentState: session.StateDisposed, currentConnections: true, otherState: session.StateDisposed},
+		{name: "other session is active", currentState: session.StateDisposed, otherState: session.StateAuthorized},
+		{name: "other connection remains", currentState: session.StateDisposed, otherState: session.StateDisposed, otherConnections: true},
+		{name: "last session disposed", currentState: session.StateDisposed, otherState: session.StateDisposed, want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			current.state, current.connections = test.currentState, test.currentConnections
+			other.state, other.connections = test.otherState, test.otherConnections
+			ready, err := coordinator.canKillProcesses(context.Background(), current, "alice", sid)
+			require.NoError(t, err)
+			require.Equal(t, test.want, ready)
+		})
+	}
+}
+
+func TestLocalAccountCoordinatorKillFailsClosed(t *testing.T) {
+	current := &localCoordinatorTestSession{flow: "first", id: session.MustNewId(), state: session.StateDisposed, token: []byte(`{"user":{"name":"alice","uid":1234}}`)}
+	for _, test := range []struct {
+		name        string
+		coordinator *localAccountCoordinator
+	}{
+		{name: "no coordinator"},
+		{name: "no repository", coordinator: &localAccountCoordinator{}},
+		{name: "enumeration fails", coordinator: &localAccountCoordinator{sessions: &localCoordinatorTestRepository{err: errors.New("cannot inspect sessions")}}},
+		{name: "current session missing", coordinator: &localAccountCoordinator{sessions: &localCoordinatorTestRepository{}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ready, err := test.coordinator.canKillProcesses(context.Background(), current, "alice", "1234")
+			require.False(t, ready)
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestLocalAccountCoordinatorReadsTextMarshaledUID(t *testing.T) {
 	current := &localCoordinatorTestSession{flow: "first", id: session.MustNewId(), token: []byte(`{"user":{"name":"original-account","uid":"1234"}}`)}
 	other := &localCoordinatorTestSession{
