@@ -281,7 +281,7 @@ func (this *local) dispose(ctx context.Context) (bool, error) {
 			this.deferred = true
 			return false, nil
 		}
-		if err := localWindowsKillUserProcesses(account, this.allowSystemUsers); err != nil {
+		if err := localWindowsKillUserProcesses(ctx, account, this.allowSystemUsers); err != nil {
 			return false, err
 		}
 		lt.ProcessesKilledOnDispose = true

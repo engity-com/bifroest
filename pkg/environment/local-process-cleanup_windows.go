@@ -3,9 +3,11 @@
 package environment
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -15,7 +17,7 @@ func localWindowsProcessMatches(pid, self uint32, targetSID, processSID string) 
 	return pid != 0 && pid != self && targetSID != "" && targetSID != "S-1-5-18" && processSID == targetSID
 }
 
-func localWindowsKillUserProcesses(account windowsLocalAccount, allowSystemUsers bool) error {
+func localWindowsKillUserProcesses(ctx context.Context, account windowsLocalAccount, allowSystemUsers bool) error {
 	if localSAMProtectedAccount(account) && !allowSystemUsers {
 		return fmt.Errorf("refusing to kill processes of protected local account %q", account.Name)
 	}
@@ -23,79 +25,153 @@ func localWindowsKillUserProcesses(account windowsLocalAccount, allowSystemUsers
 	if err != nil || sid == nil || !sid.IsValid() || sid.String() == "S-1-5-18" {
 		return fmt.Errorf("invalid or LocalSystem process cleanup SID %q: %v", account.SID, err)
 	}
+	self, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil || self == nil || self.User.Sid == nil || !self.User.Sid.IsValid() {
+		return fmt.Errorf("cannot verify process cleanup against own identity: %v", err)
+	}
+	if account.SID == self.User.Sid.String() {
+		return fmt.Errorf("refusing to clean up processes of the running service identity %q", account.SID)
+	}
+	return localWindowsSweepProcessesUntilEmpty(ctx, time.Now().Add(10*time.Second), func(deadline time.Time) (bool, error) {
+		return localWindowsKillUserProcessesOnce(ctx, account.SID, deadline)
+	})
+}
+
+func localWindowsSweepProcessesUntilEmpty(ctx context.Context, deadline time.Time, sweep func(time.Time) (bool, error)) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("windows process cleanup did not finish before timeout")
+		}
+		matched, err := sweep(deadline)
+		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("windows process cleanup did not finish before timeout")
+		}
+		if !matched {
+			return nil
+		}
+	}
+}
+
+func localWindowsKillUserProcessesOnce(ctx context.Context, targetSID string, deadline time.Time) (bool, error) {
 	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {
-		return fmt.Errorf("snapshot processes: %w", err)
+		return false, fmt.Errorf("snapshot processes: %w", err)
 	}
 	defer func() { _ = windows.CloseHandle(snapshot) }()
 
 	entry := windows.ProcessEntry32{Size: uint32(unsafe.Sizeof(windows.ProcessEntry32{}))}
 	if err := windows.Process32First(snapshot, &entry); err != nil {
 		if errors.Is(err, windows.ERROR_NO_MORE_FILES) {
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("enumerate processes: %w", err)
+		return false, fmt.Errorf("enumerate processes: %w", err)
 	}
 	self := uint32(os.Getpid())
+	matched := false
 	for {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		if !time.Now().Before(deadline) {
+			return false, fmt.Errorf("windows process cleanup did not finish before timeout")
+		}
 		if entry.ProcessID != 0 && entry.ProcessID != self {
-			if err := localWindowsKillProcess(entry.ProcessID, self, account.SID); err != nil {
-				return fmt.Errorf("cleanup process %d: %w", entry.ProcessID, err)
+			found, err := localWindowsKillProcess(ctx, entry.ProcessID, self, targetSID, deadline)
+			if err != nil {
+				return false, fmt.Errorf("cleanup process %d: %w", entry.ProcessID, err)
 			}
+			matched = matched || found
 		}
 		err = windows.Process32Next(snapshot, &entry)
 		if errors.Is(err, windows.ERROR_NO_MORE_FILES) {
-			return nil
+			return matched, nil
 		}
 		if err != nil {
-			return fmt.Errorf("enumerate processes: %w", err)
+			return false, fmt.Errorf("enumerate processes: %w", err)
 		}
 	}
 }
 
-func localWindowsKillProcess(pid, self uint32, targetSID string) error {
+func localWindowsKillProcess(ctx context.Context, pid, self uint32, targetSID string, deadline time.Time) (bool, error) {
 	process, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
 	if errors.Is(err, windows.ERROR_INVALID_PARAMETER) || errors.Is(err, windows.ERROR_NOT_FOUND) {
-		return nil // Exited after the snapshot.
+		return false, nil // Exited after the snapshot.
 	}
 	if err != nil {
-		return localWindowsUnverifiedProcessError(pid, targetSID, err, localWindowsForeignProcess)
+		return false, localWindowsUnverifiedProcessError(pid, targetSID, err, localWindowsForeignProcess)
 	}
 	defer func() { _ = windows.CloseHandle(process) }()
 	processSID, err := localWindowsProcessSID(process)
 	if err != nil {
 		if localWindowsProcessExited(process) {
-			return nil
+			return false, nil
 		}
-		return localWindowsUnverifiedProcessError(pid, targetSID, err, localWindowsForeignProcess)
+		return false, localWindowsUnverifiedProcessError(pid, targetSID, err, localWindowsForeignProcess)
 	}
 	if !localWindowsProcessMatches(pid, self, targetSID, processSID) {
-		return nil
+		return false, nil
 	}
 
 	// Keep the query handle open so this PID cannot be reused between checks.
-	target, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_TERMINATE, false, pid)
+	target, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_TERMINATE|windows.SYNCHRONIZE, false, pid)
 	if errors.Is(err, windows.ERROR_INVALID_PARAMETER) || errors.Is(err, windows.ERROR_NOT_FOUND) {
-		return nil
+		return true, nil
 	}
 	if err != nil {
-		return err
+		return true, err
 	}
 	defer func() { _ = windows.CloseHandle(target) }()
 	confirmedSID, err := localWindowsProcessSID(target)
 	if err != nil {
 		if !errors.Is(err, windows.ERROR_ACCESS_DENIED) && localWindowsProcessExited(target) {
-			return nil
+			return true, nil
 		}
-		return err
+		return true, err
 	}
 	if !localWindowsProcessMatches(pid, self, targetSID, confirmedSID) || confirmedSID != processSID {
-		return nil
+		return true, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return true, err
+	}
+	if !time.Now().Before(deadline) {
+		return true, fmt.Errorf("windows process cleanup did not finish before timeout")
 	}
 	if err := windows.TerminateProcess(target, 1); err != nil {
-		return err
+		status, waitErr := windows.WaitForSingleObject(target, 0)
+		if waitErr != nil || status != windows.WAIT_OBJECT_0 {
+			return true, err
+		}
+		return true, nil // The process exited before termination was requested.
 	}
-	return nil
+	for {
+		if err := ctx.Err(); err != nil {
+			return true, err
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return true, fmt.Errorf("windows process %d did not exit before timeout", pid)
+		}
+		status, err := windows.WaitForSingleObject(target, uint32(max(1, min(remaining.Milliseconds(), 200))))
+		if err != nil {
+			return true, fmt.Errorf("wait for windows process %d to exit: %w", pid, err)
+		}
+		if status == windows.WAIT_OBJECT_0 {
+			return true, nil
+		}
+		if status != uint32(windows.WAIT_TIMEOUT) {
+			return true, fmt.Errorf("windows process %d did not exit (wait status %#x)", pid, status)
+		}
+	}
 }
 
 func localWindowsUnverifiedProcessError(pid uint32, targetSID string, processErr error, foreignProcess func(uint32, string) (bool, error)) error {

@@ -3,16 +3,20 @@
 package environment
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/stretchr/testify/require"
@@ -348,4 +352,128 @@ func TestLocalServerCoreUnmanagedNewAccountCanBeDisabled(t *testing.T) {
 	disabled, err := localWindowsAccountDisabled(name, sid)
 	require.NoError(t, err)
 	require.True(t, disabled)
+}
+
+func TestLocalServerCoreProcessCleanupWaitsForExit(t *testing.T) {
+	if os.Getenv("BIFROEST_TEST_SERVERCORE_IN_CONTAINER") != "1" {
+		t.Skip("only run inside the disposable Server Core integration container")
+	}
+	marker, err := os.ReadFile(serverCoreContainerMarker)
+	require.NoError(t, err)
+	require.Equal(t, "bifroest-servercore-integration", strings.TrimSpace(string(marker)))
+	self, err := windows.GetCurrentProcessToken().GetTokenUser()
+	require.NoError(t, err)
+	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
+	require.NoError(t, err)
+	if !self.User.Sid.Equals(system) {
+		t.Skip("process cleanup fixture requires the container's LocalSystem service")
+	}
+	var nonce [8]byte
+	_, err = rand.Read(nonce[:])
+	require.NoError(t, err)
+	suffix := hex.EncodeToString(nonce[:])
+	name, group := "bkc"+suffix, "bkg"+suffix
+	sid, err := CreateLocalWindowsAccount(name, "", group)
+	childExited := true
+	if sid != "" {
+		t.Cleanup(func() {
+			if !childExited {
+				t.Log("leaving test account in disposable container until its process exits")
+				return
+			}
+			if account, lookupErr := lookupLocalWindowsAccount(name); lookupErr == nil && account.SID == sid {
+				if err := DeleteLocalWindowsAccount(name, sid); err != nil {
+					t.Logf("best-effort disposable container account cleanup: %v", err)
+				}
+			}
+		})
+	}
+	require.NoError(t, err)
+	account, err := lookupLocalWindowsAccount(name)
+	require.NoError(t, err)
+	token, release, err := account.logon()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if childExited {
+			release()
+		} else {
+			t.Log("leaving test profile loaded in disposable container until its process exits")
+		}
+	})
+	home, err := token.GetUserProfileDirectory()
+	require.NoError(t, err)
+	childEnv, err := token.Environ(false)
+	require.NoError(t, err)
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	cmd := exec.Command(exe, "local-windows-cleanup-child")
+	cmd.Dir = home
+	cmd.Env = childEnv
+	cmd.SysProcAttr = &syscall.SysProcAttr{Token: syscall.Token(token)}
+	output, err := cmd.StdoutPipe()
+	require.NoError(t, err)
+	require.NoError(t, cmd.Start())
+	childExited = false
+	done := make(chan error, 1)
+	waitStarted := false
+	reaped := false
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		if !waitStarted {
+			_ = cmd.Wait()
+			childExited = cmd.ProcessState != nil && cmd.ProcessState.Exited()
+			if !childExited {
+				t.Error("disposable container process could not be reaped after cleanup")
+			}
+			return
+		}
+		if !reaped {
+			select {
+			case <-done:
+				childExited = cmd.ProcessState != nil && cmd.ProcessState.Exited()
+			case <-time.After(3 * time.Second):
+				t.Error("disposable container process did not exit after cleanup")
+			}
+		}
+	})
+	ready := make(chan struct {
+		sid string
+		err error
+	}, 1)
+	go func() {
+		line, err := bufio.NewReader(output).ReadString('\n')
+		ready <- struct {
+			sid string
+			err error
+		}{strings.TrimSpace(line), err}
+	}()
+	select {
+	case actual := <-ready:
+		require.NoError(t, actual.err)
+		require.Equal(t, account.SID, actual.sid)
+	case <-time.After(5 * time.Second):
+		t.Fatal("disposable container process did not report its SID")
+	}
+	waitStarted = true
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		reaped = true
+		childExited = cmd.ProcessState != nil && cmd.ProcessState.Exited()
+		t.Fatalf("disposable container process exited before cleanup: %v", err)
+	default:
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	require.NoError(t, localWindowsKillUserProcesses(ctx, account, false))
+	select {
+	case err := <-done:
+		reaped = true
+		childExited = cmd.ProcessState != nil && cmd.ProcessState.Exited()
+		var exit *exec.ExitError
+		require.ErrorAs(t, err, &exit)
+		require.Equal(t, 1, exit.ExitCode())
+	case <-time.After(3 * time.Second):
+		t.Fatal("process cleanup returned while the target process was still running")
+	}
 }

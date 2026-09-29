@@ -3,10 +3,12 @@
 package environment
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
@@ -33,6 +35,59 @@ func TestLocalWindowsProcessMatches(t *testing.T) {
 			require.Equal(t, test.want, localWindowsProcessMatches(test.pid, test.self, test.targetSID, test.processSID))
 		})
 	}
+}
+
+func TestLocalWindowsProcessCleanupRequiresEmptyRescan(t *testing.T) {
+	var calls int
+	err := localWindowsSweepProcessesUntilEmpty(context.Background(), time.Now().Add(time.Second), func(time.Time) (bool, error) {
+		calls++
+		return calls < 3, nil // A second process appears after the first sweep.
+	})
+	require.NoError(t, err)
+	require.Equal(t, 3, calls)
+}
+
+func TestLocalWindowsProcessCleanupFailsClosed(t *testing.T) {
+	lookupFailure := errors.New("cannot inspect process")
+	err := localWindowsSweepProcessesUntilEmpty(context.Background(), time.Now().Add(time.Second), func(time.Time) (bool, error) {
+		return false, lookupFailure
+	})
+	require.ErrorIs(t, err, lookupFailure)
+	var calls int
+	err = localWindowsSweepProcessesUntilEmpty(context.Background(), time.Now().Add(-time.Second), func(time.Time) (bool, error) {
+		calls++
+		return false, nil
+	})
+	require.ErrorContains(t, err, "timeout")
+	require.Zero(t, calls)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = localWindowsSweepProcessesUntilEmpty(ctx, time.Now().Add(time.Second), func(time.Time) (bool, error) {
+		calls++
+		return false, nil
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Zero(t, calls)
+	ctx, cancel = context.WithCancel(context.Background())
+	err = localWindowsSweepProcessesUntilEmpty(ctx, time.Now().Add(time.Second), func(time.Time) (bool, error) {
+		calls++
+		cancel()
+		return true, nil
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, 1, calls)
+	ctx, cancel = context.WithCancel(context.Background())
+	err = localWindowsSweepProcessesUntilEmpty(ctx, time.Now().Add(time.Second), func(time.Time) (bool, error) {
+		calls++
+		cancel()
+		return false, nil
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, 2, calls)
+	err = localWindowsSweepProcessesUntilEmpty(context.Background(), time.Now().Add(50*time.Millisecond), func(time.Time) (bool, error) {
+		return true, nil // A target keeps respawning; never report successful cleanup.
+	})
+	require.ErrorContains(t, err, "timeout")
 }
 
 func TestLocalWindowsUnverifiedProcessFailsClosed(t *testing.T) {

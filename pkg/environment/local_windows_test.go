@@ -120,6 +120,17 @@ func TestMain(m *testing.M) {
 		fmt.Println(user.User.Sid.String())
 		os.Exit(0)
 	}
+	if len(os.Args) == 2 && os.Args[1] == "local-windows-cleanup-child" {
+		user, err := windows.GetCurrentProcessToken().GetTokenUser()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println(user.User.Sid.String())
+		for {
+			time.Sleep(time.Second)
+		}
+	}
 	if len(os.Args) == 4 && os.Args[1] == "local-conpty-relay" {
 		cols, colErr := strconv.Atoi(os.Args[2])
 		rows, rowErr := strconv.Atoi(os.Args[3])
