@@ -74,6 +74,8 @@ The cleanup switches under [Dispose](#dispose) are top-level properties of `loca
 
 ### Session
 
+For both Unix PTYs and Windows ConPTY, closing SSH standard input alone does not generate a terminal EOF. An interactive program may continue waiting for input; use a non-PTY session for commands that need pipe EOF, or close the session explicitly.
+
 <<property("loginAllowed", "bool", template_context="../context/authorization-request.md", default=True, heading=4)>>
 Whether this authorization may use the environment.
 
@@ -138,6 +140,8 @@ If `true`, terminate the account's processes after the last active Bifröst sess
 * On Windows, an unidentifiable process blocks cleanup.
 * Unreadable sessions or a missing session coordinator block a pending kill instead of assuming no other session is active.
 * Completed process cleanup is recorded in the session token and is not repeated while deletion is pending.
+
+See the [upgrade notes](../../setup/upgrade.md#local-environments-and-existing-sessions) for existing Linux sessions with older cleanup tokens and Linux `pidfd` requirements.
 
 ##### Examples
 
