@@ -203,7 +203,7 @@ func copyLocalWindowsProfileTemplate(source, target string, token windows.Token)
 					return err
 				}
 				info, err := localProfileSafeInfo(path)
-				if os.IsNotExist(err) {
+				if errors.Is(err, os.ErrNotExist) {
 					if err := os.Mkdir(path, 0777); err != nil {
 						return fmt.Errorf("create profile directory %q: %w", path, err)
 					}
@@ -226,7 +226,7 @@ func copyLocalWindowsProfileTemplate(source, target string, token windows.Token)
 				}
 				if _, err := localProfileSafeInfo(to); err == nil {
 					return fmt.Errorf("profile template collision at %q", to)
-				} else if !os.IsNotExist(err) {
+				} else if !errors.Is(err, os.ErrNotExist) {
 					return err
 				}
 				requests <- e.rel

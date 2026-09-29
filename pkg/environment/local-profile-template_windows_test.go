@@ -3,6 +3,7 @@
 package environment
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,8 +12,29 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+func localProfileTestToken(t *testing.T) windows.Token {
+	t.Helper()
+	var token windows.Token
+	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY|windows.TOKEN_DUPLICATE, &token); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := token.Close(); err != nil {
+			t.Errorf("close profile test token: %v", err)
+		}
+	})
+	return token
+}
+
+func TestLocalProfileSafeInfoMissingPreservesNotExist(t *testing.T) {
+	_, err := localProfileSafeInfo(filepath.Join(t.TempDir(), "not-created"))
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing file must preserve not-exist identity: %v", err)
+	}
+}
+
 func TestCopyLocalWindowsProfileTemplate(t *testing.T) {
-	token := windows.GetCurrentProcessToken()
+	token := localProfileTestToken(t)
 	root := t.TempDir()
 	source, target := filepath.Join(root, "template"), filepath.Join(root, "profile")
 	for _, dir := range []string{filepath.Join(source, "nested", "deep"), filepath.Join(source, "empty"), filepath.Join(target, "nested")} {
@@ -59,7 +81,7 @@ func TestCopyLocalWindowsProfileTemplate(t *testing.T) {
 }
 
 func TestCopyLocalWindowsProfileTemplateCollision(t *testing.T) {
-	token := windows.GetCurrentProcessToken()
+	token := localProfileTestToken(t)
 	root := t.TempDir()
 	source, target := filepath.Join(root, "template"), filepath.Join(root, "profile")
 	for _, dir := range []string{source, target} {
@@ -94,7 +116,7 @@ func TestCopyLocalWindowsProfileTemplateCollision(t *testing.T) {
 }
 
 func TestCopyLocalWindowsProfileTemplateNestedCollisionPreflight(t *testing.T) {
-	token := windows.GetCurrentProcessToken()
+	token := localProfileTestToken(t)
 	root := t.TempDir()
 	source, target := filepath.Join(root, "template"), filepath.Join(root, "profile")
 	for _, dir := range []string{filepath.Join(source, "nested", "deep"), target} {
@@ -123,7 +145,7 @@ func TestCopyLocalWindowsProfileTemplateNestedCollisionPreflight(t *testing.T) {
 }
 
 func TestCopyLocalWindowsProfileTemplateOverlappingPaths(t *testing.T) {
-	token := windows.GetCurrentProcessToken()
+	token := localProfileTestToken(t)
 	root := t.TempDir()
 	child := filepath.Join(root, "child")
 	if err := os.Mkdir(child, 0777); err != nil {
@@ -137,7 +159,7 @@ func TestCopyLocalWindowsProfileTemplateOverlappingPaths(t *testing.T) {
 }
 
 func TestCopyLocalWindowsProfileTemplateReparsePoints(t *testing.T) {
-	token := windows.GetCurrentProcessToken()
+	token := localProfileTestToken(t)
 	for _, tc := range []struct {
 		name     string
 		link     func(string, string) error
@@ -205,7 +227,7 @@ func TestCopyLocalWindowsProfileTemplateReparsePoints(t *testing.T) {
 }
 
 func TestCopyLocalWindowsProfileTemplateUnrelatedReparsePoints(t *testing.T) {
-	token := windows.GetCurrentProcessToken()
+	token := localProfileTestToken(t)
 	for _, tc := range []struct {
 		name string
 		link func(string, string) error
@@ -253,7 +275,7 @@ func TestCopyLocalWindowsProfileTemplateMissingSource(t *testing.T) {
 	if err := os.Mkdir(target, 0777); err != nil {
 		t.Fatal(err)
 	}
-	if err := copyLocalWindowsProfileTemplate(filepath.Join(root, "missing"), target, windows.GetCurrentProcessToken()); err == nil {
+	if err := copyLocalWindowsProfileTemplate(filepath.Join(root, "missing"), target, localProfileTestToken(t)); err == nil {
 		t.Fatal("accepted missing template directory")
 	}
 }
