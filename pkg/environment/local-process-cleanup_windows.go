@@ -131,7 +131,7 @@ func localWindowsForeignProcess(pid uint32, targetSID string) (bool, error) {
 		return false, fmt.Errorf("enumerate Windows process identities: %w", localS4UCallError(callErr))
 	}
 	if records == nil {
-		return false, fmt.Errorf("Windows process identities returned no data")
+		return false, fmt.Errorf("windows process identities returned no data")
 	}
 	defer windows.WTSFreeMemory(uintptr(unsafe.Pointer(records)))
 	for _, record := range unsafe.Slice(records, count) {
@@ -139,11 +139,11 @@ func localWindowsForeignProcess(pid uint32, targetSID string) (bool, error) {
 			continue
 		}
 		if record.UserSID == nil || !record.UserSID.IsValid() {
-			return false, fmt.Errorf("Windows process %d has no valid enumerated SID", pid)
+			return false, fmt.Errorf("windows process %d has no valid enumerated SID", pid)
 		}
 		return record.UserSID.String() != targetSID, nil
 	}
-	return false, fmt.Errorf("Windows process %d has no enumerated SID", pid)
+	return false, fmt.Errorf("windows process %d has no enumerated SID", pid)
 }
 
 func localWindowsProcessSID(process windows.Handle) (string, error) {
