@@ -5,6 +5,7 @@ package user
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -676,7 +677,15 @@ func (this *EtcColonRepository) DeleteById(ctx context.Context, id Id, opts *Del
 // DeleteByIdentity checks the account and its home path while holding the same
 // repository lock used for removal.
 func (this *EtcColonRepository) DeleteByIdentity(ctx context.Context, id Id, name, expectedHomeDir string, opts *DeleteOpts) error {
-	return this.deleteRefWithOrder(ctx, opts, func() (*etcPasswdRef, error) {
+	var homeParent *os.Root
+	var homeName string
+	var homeInfo os.FileInfo
+	defer func() {
+		if homeParent != nil {
+			_ = homeParent.Close()
+		}
+	}()
+	return this.deleteRefWithCleanup(ctx, opts, func() (*etcPasswdRef, error) {
 		ref := this.idToUser[id]
 		if ref == nil {
 			return nil, ErrNoSuchUser
@@ -697,7 +706,16 @@ func (this *EtcColonRepository) DeleteByIdentity(ctx context.Context, id Id, nam
 					return nil, fmt.Errorf("refusing to delete shared home directory %q", home)
 				}
 			}
-			info, err := os.Lstat(home)
+			parent, err := os.OpenRoot(filepath.Dir(home))
+			if os.IsNotExist(err) {
+				return ref, nil
+			}
+			if err != nil {
+				return nil, err
+			}
+			homeParent = parent
+			homeName = filepath.Base(home)
+			info, err := parent.Lstat(homeName)
 			if err != nil && !os.IsNotExist(err) {
 				return nil, err
 			}
@@ -706,10 +724,86 @@ func (this *EtcColonRepository) DeleteByIdentity(ctx context.Context, id Id, nam
 				if !ok || !info.IsDir() || stat.Uid != uint32(id) {
 					return nil, fmt.Errorf("home directory %q is not exclusively owned by account %q", home, name)
 				}
+				if err := validateOwnedHomeAncestors(home, stat.Uid); err != nil {
+					return nil, err
+				}
+				homeInfo = info
 			}
 		}
 		return ref, nil
-	}, true)
+	}, func() error {
+		if homeInfo == nil {
+			return nil
+		}
+		return removeOwnedHome(homeParent, homeName, homeInfo)
+	})
+}
+
+// The home entry must not be movable by an unprivileged user while its
+// contents are removed through a descriptor rooted at that directory.
+func validateOwnedHomeAncestors(home string, childOwner uint32) error {
+	for path := filepath.Dir(home); ; path = filepath.Dir(path) {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || !info.IsDir() || stat.Uid != 0 ||
+			(info.Mode().Perm()&022 != 0 && (info.Mode()&os.ModeSticky == 0 || childOwner != 0)) {
+			return fmt.Errorf("unsafe home directory ancestor %q", path)
+		}
+		if filepath.Dir(path) == path {
+			return nil
+		}
+		childOwner = stat.Uid
+	}
+}
+
+func removeOwnedHome(parent *os.Root, name string, expected os.FileInfo) error {
+	current, err := parent.Lstat(name)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(current, expected) {
+		return fmt.Errorf("home directory %q changed identity before cleanup", name)
+	}
+	home, err := parent.OpenRoot(name)
+	if err != nil {
+		return err
+	}
+	defer home.Close()
+	opened, err := home.Stat(".")
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(opened, expected) {
+		return fmt.Errorf("home directory %q changed identity before cleanup", name)
+	}
+	dir, err := home.Open(".")
+	if err != nil {
+		return err
+	}
+	entries, readErr := dir.ReadDir(-1)
+	closeErr := dir.Close()
+	if err := goerrors.Join(readErr, closeErr); err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := home.RemoveAll(entry.Name()); err != nil {
+			return err
+		}
+	}
+	current, err = parent.Lstat(name)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(current, expected) {
+		return fmt.Errorf("home directory %q changed identity during cleanup", name)
+	}
+	return parent.Remove(name)
 }
 
 func (this *EtcColonRepository) KillProcessesByIdentity(ctx context.Context, id Id, name string) (rErr error) {
@@ -764,10 +858,10 @@ func (this *EtcColonRepository) DeleteByName(ctx context.Context, name string, o
 }
 
 func (this *EtcColonRepository) deleteRef(ctx context.Context, opts *DeleteOpts, selector func() (*etcPasswdRef, error)) (rErr error) {
-	return this.deleteRefWithOrder(ctx, opts, selector, false)
+	return this.deleteRefWithCleanup(ctx, opts, selector, nil)
 }
 
-func (this *EtcColonRepository) deleteRefWithOrder(ctx context.Context, opts *DeleteOpts, selector func() (*etcPasswdRef, error), cleanupFirst bool) (rErr error) {
+func (this *EtcColonRepository) deleteRefWithCleanup(ctx context.Context, opts *DeleteOpts, selector func() (*etcPasswdRef, error), removeHome func() error) (rErr error) {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 
@@ -781,23 +875,29 @@ func (this *EtcColonRepository) deleteRefWithOrder(ctx context.Context, opts *De
 	if err != nil {
 		return err
 	}
+	if removeHome != nil && opts.IsKillProcesses() {
+		if err := this.killAllOf(ctx, ref.uid); err != nil {
+			return err
+		}
+	}
 	cleanup := func() error {
-		if opts.IsKillProcesses() {
+		if removeHome == nil && opts.IsKillProcesses() {
 			if err := this.killAllOf(ctx, ref.uid); err != nil {
 				return err
 			}
 		}
 		if opts.IsHomeDir() {
-			if err := os.RemoveAll(string(ref.homeDir)); err != nil && !sys.IsNotExist(err) {
+			var err error
+			if removeHome != nil {
+				err = removeHome()
+			} else {
+				err = os.RemoveAll(string(ref.homeDir))
+			}
+			if err != nil && !sys.IsNotExist(err) {
 				return err
 			}
 		}
 		return nil
-	}
-	if cleanupFirst {
-		if err := cleanup(); err != nil {
-			return err
-		}
 	}
 
 	delete(this.nameToUser, string(ref.etcPasswdEntry.name))
@@ -825,10 +925,12 @@ func (this *EtcColonRepository) deleteRefWithOrder(ctx context.Context, opts *De
 		return err
 	}
 
-	if !cleanupFirst {
-		if err := cleanup(); err != nil {
-			return err
+	if err := cleanup(); err != nil {
+		if removeHome != nil && opts.IsHomeDir() {
+			this.loggerForRef(ref).With("homeDir", string(ref.homeDir)).WithError(err).
+				Warn("account deleted but home cleanup failed; manual cleanup required")
 		}
+		return err
 	}
 
 	this.loggerForRef(ref).Info("user deleted")

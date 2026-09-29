@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -117,4 +118,106 @@ func TestDeleteByIdentityRejectsUnsafeOrSharedHomes(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestDeleteByIdentityRemovesOwnedHomeAfterSaving(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("automatic home deletion requires a protected root-owned parent")
+	}
+	dir := newTestDir(t)
+	home := dir.child("home")
+	require.NoError(t, os.Mkdir(home, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "data"), []byte("contents"), 0600))
+	uid := Id(2_000_000_000)
+	require.NoError(t, os.Chown(home, int(uid), -1))
+	repository := &EtcColonRepository{
+		PasswdFilename: dir.file("passwd").setContent(fmt.Sprintf("alice:x:%d:1001::%s:/bin/sh\n", uid, home)).name(),
+		GroupFilename:  dir.file("group").setContent("ordinary:x:1001:alice\n").name(),
+		ShadowFilename: dir.file("shadow").setContent("alice:!:19722:0:99999:7:::\n").name(),
+	}
+	ctx := context.Background()
+	require.NoError(t, repository.Init(ctx))
+	t.Cleanup(func() { require.NoError(t, repository.Close()) })
+	require.NoError(t, repository.DeleteByIdentity(ctx, uid, "alice", home, &DeleteOpts{
+		HomeDir: common.P(true), KillProcesses: common.P(false),
+	}))
+	_, err := os.Lstat(home)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestDeleteByIdentityDoesNotRemoveHomeWhenSaveFails(t *testing.T) {
+	dir := newTestDir(t)
+	home := dir.child("home")
+	require.NoError(t, os.Mkdir(home, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "data"), []byte("contents"), 0600))
+	uid := Id(2_000_000_000)
+	repository := &EtcColonRepository{
+		PasswdFilename: dir.file("passwd").setContent(fmt.Sprintf("alice:x:%d:1001::%s:/bin/sh\nbob:x:2001:1001::/home/bob:/bin/sh\n", uid, home)).name(),
+		GroupFilename:  dir.file("group").setContent("ordinary:x:1001:alice,bob\n").name(),
+		ShadowFilename: dir.file("shadow").setContent("alice:!:19722:0:99999:7:::\nbob:!:19722:0:99999:7:::\n").name(),
+	}
+	ctx := context.Background()
+	require.NoError(t, repository.Init(ctx))
+	t.Cleanup(func() { require.NoError(t, repository.Close()) })
+	removed := false
+	err := repository.deleteRefWithCleanup(ctx, &DeleteOpts{HomeDir: common.P(true), KillProcesses: common.P(false)}, func() (*etcPasswdRef, error) {
+		// Force passwd encoding to fail after the selector but before home cleanup.
+		repository.idToUser[2001].etcPasswdEntry.name = []byte("invalid:name")
+		return repository.idToUser[uid], nil
+	}, func() error {
+		removed = true
+		return os.RemoveAll(home)
+	})
+	require.Error(t, err)
+	require.False(t, removed)
+	contents, err := os.ReadFile(filepath.Join(home, "data"))
+	require.NoError(t, err)
+	require.Equal(t, "contents", string(contents))
+}
+
+func TestDeleteByIdentityRejectsMovableHomeParent(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("testing home ownership requires root")
+	}
+	dir := newTestDir(t)
+	parent := dir.child("writable-parent")
+	require.NoError(t, os.Mkdir(parent, 0700))
+	require.NoError(t, os.Chmod(parent, 0777))
+	home := filepath.Join(parent, "home")
+	require.NoError(t, os.Mkdir(home, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(home, "data"), []byte("keep"), 0600))
+	uid := Id(2_000_000_000)
+	require.NoError(t, os.Chown(home, int(uid), -1))
+	repository := &EtcColonRepository{
+		PasswdFilename: dir.file("passwd").setContent(fmt.Sprintf("alice:x:%d:1001::%s:/bin/sh\n", uid, home)).name(),
+		GroupFilename:  dir.file("group").setContent("ordinary:x:1001:alice\n").name(),
+		ShadowFilename: dir.file("shadow").setContent("alice:!:19722:0:99999:7:::\n").name(),
+	}
+	ctx := context.Background()
+	require.NoError(t, repository.Init(ctx))
+	t.Cleanup(func() { require.NoError(t, repository.Close()) })
+	require.ErrorContains(t, repository.DeleteByIdentity(ctx, uid, "alice", home, &DeleteOpts{
+		HomeDir: common.P(true), KillProcesses: common.P(false),
+	}), "unsafe home directory ancestor")
+	_, err := repository.LookupByName(ctx, "alice")
+	require.NoError(t, err)
+	contents, err := os.ReadFile(filepath.Join(home, "data"))
+	require.NoError(t, err)
+	require.Equal(t, "keep", string(contents))
+}
+
+func TestRemoveOwnedHomeRejectsReplacedDirectory(t *testing.T) {
+	parentPath := t.TempDir()
+	home := filepath.Join(parentPath, "home")
+	require.NoError(t, os.Mkdir(home, 0700))
+	parent, err := os.OpenRoot(parentPath)
+	require.NoError(t, err)
+	defer parent.Close()
+	homeInfo, err := parent.Lstat("home")
+	require.NoError(t, err)
+	require.NoError(t, os.Rename(home, filepath.Join(parentPath, "original")))
+	require.NoError(t, os.Mkdir(home, 0700))
+	require.ErrorContains(t, removeOwnedHome(parent, "home", homeInfo), "changed identity")
+	_, err = os.Stat(home)
+	require.NoError(t, err)
 }

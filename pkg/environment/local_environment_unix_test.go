@@ -6,7 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -143,4 +147,57 @@ func TestLocalUnixDirectoryOverride(t *testing.T) {
 	require.NoError(t, os.WriteFile(task.targetUser, nil, 0600))
 	_, _, _, err = env.createCmdAndEnv(task)
 	require.ErrorContains(t, err, "is not a directory")
+}
+
+func TestLocalUnixNonPtyWaitDoesNotHangOnInheritedOutput(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("starting a process with Unix credentials requires root")
+	}
+	ctx, cancel := newSshTestContext()
+	defer cancel()
+	home := t.TempDir()
+	pidFile := filepath.Join(home, "child.pid")
+	t.Cleanup(func() {
+		data, err := os.ReadFile(pidFile)
+		if err != nil {
+			return
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+		if err == nil {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
+	stored := &sshTestStoredSession{id: session.MustNewId()}
+	sshSession := newSshTestSession(ctx, `sleep 30 & echo $! > "$HOME/child.pid"`, nil)
+	task := &sshTestTask{
+		context:       ctx,
+		connection:    &sshTestConnection{id: connection.MustNewId(), context: ctx},
+		authorization: &sshTestAuthorization{session: stored},
+		session:       sshSession,
+		taskType:      TaskTypeShell,
+	}
+	env := &local{
+		repository: &LocalRepository{conf: &configuration.EnvironmentLocal{}},
+		user: &user.User{
+			Name: "test", Uid: user.Id(os.Getuid()), Group: user.Group{Gid: user.GroupId(os.Getgid())},
+			HomeDir: home, Shell: "/bin/sh",
+		},
+	}
+	type outcome struct {
+		exitCode int
+		err      error
+	}
+	result := make(chan outcome, 1)
+	go func() {
+		exitCode, err := env.Run(task)
+		result <- outcome{exitCode, err}
+	}()
+	select {
+	case outcome := <-result:
+		require.NoError(t, outcome.err)
+		require.Zero(t, outcome.exitCode)
+	case <-time.After(10 * time.Second):
+		cancel()
+		t.Fatal("non-PTY process wait remained blocked by child output pipes")
+	}
 }

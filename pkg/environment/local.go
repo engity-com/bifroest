@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/creack/pty"
 	log "github.com/echocat/slf4g"
@@ -155,6 +156,8 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	cmd.Env = ev.Strings()
 	var stdin io.WriteCloser
 	if fPty == nil {
+		// A detached child may inherit stdout/stderr after the shell exits.
+		cmd.WaitDelay = 2 * time.Second
 		stdin, err = cmd.StdinPipe()
 		if err != nil {
 			return failf("cannot open process stdin: %w", err)
@@ -216,7 +219,10 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		defer close(waitFinished)
 		if err := cmd.Wait(); err != nil {
 			var exit *exec.ExitError
-			if errors.As(err, &exit) {
+			if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+				l.WithError(err).Warn("stopped waiting for output pipes after the process exited")
+				processDone <- doneT{0, nil}
+			} else if errors.As(err, &exit) {
 				processDone <- doneT{exit.ExitCode(), nil}
 			} else {
 				processDone <- doneT{-1, err}
