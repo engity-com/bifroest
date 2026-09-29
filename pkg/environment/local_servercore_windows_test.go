@@ -146,22 +146,25 @@ func TestLocalServerCoreProviderAccountLifecycle(t *testing.T) {
 
 	var profileDir string
 	if self.User.Sid.Equals(system) {
-		loggedOn, release, err := account.logon()
-		require.NoError(t, err, "S4U logon of newly provisioned container account")
-		loggedOnUser, lookupErr := loggedOn.GetTokenUser()
-		profile, profileErr := loggedOn.GetUserProfileDirectory()
-		profileDir = profile
-		if profileErr == nil {
-			var copied []byte
-			copied, profileErr = os.ReadFile(filepath.Join(profile, "welcome.txt"))
-			if profileErr == nil {
-				require.Equal(t, "Server Core template", string(copied))
-			}
-		}
-		release() // Unload the newly created profile before any account disposal.
-		require.NoError(t, lookupErr)
-		require.NoError(t, profileErr)
-		require.Equal(t, createdSID, loggedOnUser.User.Sid.String())
+		func() {
+			loggedOn, release, err := account.logon()
+			require.NoError(t, err, "S4U logon of newly provisioned container account")
+			defer release() // Unload the profile before account disposal.
+			loggedOnUser, err := loggedOn.GetTokenUser()
+			require.NoError(t, err)
+			profileDir, err = loggedOn.GetUserProfileDirectory()
+			require.NoError(t, err)
+			copied, err := os.ReadFile(filepath.Join(profileDir, "welcome.txt"))
+			require.NoError(t, err)
+			require.Equal(t, "Server Core template", string(copied))
+			security, err := windows.GetNamedSecurityInfo(filepath.Join(profileDir, "welcome.txt"), windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+			require.NoError(t, err)
+			owner, _, err := security.Owner()
+			require.NoError(t, err)
+			require.NotNil(t, owner)
+			require.True(t, owner.Equals(loggedOnUser.User.Sid), "profile template file must be owned by the created local user")
+			require.Equal(t, createdSID, loggedOnUser.User.Sid.String())
+		}()
 		fromTemplate, templateErr := template.MustNewString("{{ .user.homeDir }}").Render(localTemplateContext{
 			Request: localTemplateTestRequest{}, user: account,
 		})

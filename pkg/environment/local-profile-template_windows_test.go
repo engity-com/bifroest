@@ -62,14 +62,23 @@ func TestCopyLocalWindowsProfileTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	admins, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminMember, err := token.IsMember(admins)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, path := range []string{filepath.Join(target, "empty"), filepath.Join(target, "nested", "deep"), filepath.Join(target, "nested", "deep", "settings.txt")} {
 		sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
 		if err != nil {
 			t.Fatalf("owner of %q: %v", path, err)
 		}
 		owner, _, err := sd.Owner()
-		if err != nil || owner == nil || !owner.Equals(user.User.Sid) {
-			t.Fatalf("owner of %q: %v, %v; want %v", path, owner, err, user.User.Sid)
+		allowedOwner := owner != nil && (owner.Equals(user.User.Sid) || (adminMember && owner.Equals(admins)))
+		if err != nil || !allowedOwner {
+			t.Fatalf("owner of %q: %v, %v; want %v or its enabled Administrators group", path, owner, err, user.User.Sid)
 		}
 	}
 	if data, err := os.ReadFile(filepath.Join(target, "keep.txt")); err != nil || string(data) != "existing" {
