@@ -66,7 +66,12 @@ func TestCopyLocalWindowsProfileTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	adminMember, err := token.IsMember(admins)
+	var impersonation windows.Token
+	if err := windows.DuplicateTokenEx(token, windows.TOKEN_QUERY, nil, windows.SecurityImpersonation, windows.TokenImpersonation, &impersonation); err != nil {
+		t.Fatal(err)
+	}
+	defer impersonation.Close()
+	adminMember, err := impersonation.IsMember(admins)
 	if err != nil {
 		t.Fatal(err)
 	}

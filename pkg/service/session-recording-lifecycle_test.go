@@ -958,6 +958,41 @@ func TestExecuteSessionRecordingIntervalCheckpointFailureAuditsCaptureFailure(t 
 	require.Empty(t, failedEvents[0].RecordingDigest)
 }
 
+func TestExecuteSessionRecordingClosedRepositoryAuditsCaptureFailure(t *testing.T) {
+	root := t.TempDir()
+	var repository *sessionRecordingRepository
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{run: func(task environment.Task) (int, error) {
+		if _, err := task.SshSession().Write([]byte("dirty")); err != nil {
+			return -1, err
+		}
+		if err := repository.Close(); err != nil {
+			return -1, err
+		}
+		// The interval timer may already have checkpointed the first write.
+		if _, err := task.SshSession().Write([]byte("after close")); err != nil {
+			return -1, err
+		}
+		return -1, fmt.Errorf("recording accepted output after repository close")
+	}}, func(conf *configuration.Configuration) {
+		enableSessionRecordingForLifecycleTest(conf, root)
+		conf.Auditlogs[0].Recording.FlushInterval = common.DurationOf(5 * time.Millisecond)
+	})
+	auditlog := server.service.flowAuditlogs[server.service.Configuration.Flows[0].Name]
+	repository = server.service.recordingRepositories[auditlog]
+	auditRecorder := &recordingAuditRecorder{}
+	flow := server.service.Configuration.Flows[0].Name
+	server.service.flowAuditRecorders[flow] = auditRecorder
+	client := server.mustDial(t)
+	sshSession, err := client.NewSession()
+	require.NoError(t, err)
+	require.Error(t, sshSession.Run("checkpoint-failure"))
+	failedEvents := requireAuditEventsNamedEventually(t, auditRecorder, audit.EventNameSessionRecordingFailed, 1)
+	require.Len(t, failedEvents, 1)
+	require.Equal(t, audit.EventReasonRecordingCapture, failedEvents[0].Reason)
+	require.Equal(t, audit.EventOutcomeFailure, failedEvents[0].Outcome)
+	require.Empty(t, failedEvents[0].RecordingDigest)
+}
+
 func requireAuditEventsNamedEventually(t *testing.T, recorder *recordingAuditRecorder, name audit.EventName, count int) []audit.Event {
 	t.Helper()
 	var events []audit.Event
