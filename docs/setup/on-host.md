@@ -91,7 +91,7 @@ This guide supports Intel (`amd64`) and Apple silicon (`arm64`) on macOS 13 and 
 
 2. Create the native configuration directory and install the [native macOS example](<<asset_url("contrib/configurations/native-macos.yaml")>>) (see the [configuration documentation](../reference/configuration.md)):
     ```shell
-    sudo mkdir -p '/Library/Application Support/Engity/Bifroest'
+    sudo install -d -o root -g wheel -m 0750 '/Library/Application Support/Engity/Bifroest'
     sudo curl -sSLf <<asset_url("contrib/configurations/native-macos.yaml", True)>> -o '/Library/Application Support/Engity/Bifroest/configuration.yaml'
     sudo vi '/Library/Application Support/Engity/Bifroest/configuration.yaml'
     sudo chown root:wheel '/Library/Application Support/Engity/Bifroest/configuration.yaml'
@@ -102,7 +102,7 @@ This guide supports Intel (`amd64`) and Apple silicon (`arm64`) on macOS 13 and 
 
 3. Install and start the system LaunchDaemon:
     ```shell
-    sudo bash /tmp/bifroest-release/contrib/launchd/bifroest-service.sh install /tmp/bifroest-release/bifroest
+    sudo /tmp/bifroest-release/bifroest service install
     ```
 
     The service runs as `root`, starts at boot, restarts after failures and writes standard output and error to `/Library/Logs/Engity/Bifroest`. Its working directory and persistent state remain under `/Library/Application Support/Engity/Bifroest`.
@@ -114,18 +114,18 @@ This guide supports Intel (`amd64`) and Apple silicon (`arm64`) on macOS 13 and 
 
 ### Manage the macOS service
 
-Run `upgrade` from an extracted newer archive to stop the service, atomically replace the binary and LaunchDaemon definition, and start it again:
+Run `service install` from an extracted newer archive to stop the service, atomically replace the binary and LaunchDaemon definition, and start it again:
 
 ```shell
-sudo bash /tmp/bifroest-release/contrib/launchd/bifroest-service.sh upgrade /tmp/bifroest-release/bifroest
+sudo /tmp/bifroest-release/bifroest service install
 ```
 
-The same script supports `start` and `stop`. `uninstall` stops the LaunchDaemon and removes its definition and `/usr/local/bin/bifroest`, but deliberately preserves configuration, keys, audit data and recordings under `/Library/Application Support/Engity/Bifroest` as well as logs under `/Library/Logs/Engity/Bifroest`:
+The installed CLI supports `start`, `stop` and `remove`. `remove` stops the LaunchDaemon and removes its definition and `/Library/PrivilegedHelperTools/com.engity.bifroest`, but deliberately preserves configuration, keys, audit data and recordings under `/Library/Application Support/Engity/Bifroest` as well as logs under `/Library/Logs/Engity/Bifroest`:
 
 ```shell
-sudo /usr/local/libexec/bifroest/bifroest-service stop
-sudo /usr/local/libexec/bifroest/bifroest-service start
-sudo /usr/local/libexec/bifroest/bifroest-service uninstall
+sudo /Library/PrivilegedHelperTools/com.engity.bifroest service stop
+sudo /Library/PrivilegedHelperTools/com.engity.bifroest service start
+sudo /Library/PrivilegedHelperTools/com.engity.bifroest service remove
 ```
 
 ## Windows

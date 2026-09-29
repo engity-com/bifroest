@@ -21,6 +21,7 @@ type buildMatrix[T any] struct {
 
 type buildTestMatrixEntry struct {
 	Os     string `json:"os"`
+	Arch   string `json:"arch"`
 	Runner string `json:"runner"`
 	Image  string `json:"image"`
 }
@@ -47,13 +48,15 @@ func (this *build) buildMatrices() (buildEnvironmentMatrices, error) {
 		Host:          buildMatrix[buildBinaryMatrixEntry]{Include: []buildBinaryMatrixEntry{}},
 		Container:     buildMatrix[buildBinaryMatrixEntry]{Include: []buildBinaryMatrixEntry{}},
 	}
-	seenTestOs := map[sys.Os]bool{}
-	// The evaluator may run on another host than the Linux package job.
-	for p := range this.platforms(false, sys.OsLinux, sys.ArchAmd64) {
+	seenTestHosts := map[string]bool{}
+	for p := range this.distributablePlatforms(false) {
 		entry := buildBinaryMatrixEntry{Os: p.Os.String(), Arch: p.Arch.String(), Edition: p.Edition.String()}
+		testEntry := buildTestMatrixEntry{Os: p.Os.String()}
 		switch p.Os {
 		case sys.OsLinux:
 			entry.Runner = "ubuntu-latest"
+			testEntry.Arch = sys.ArchAmd64.String()
+			testEntry.Runner = entry.Runner
 			if p.Edition == sys.EditionExtended {
 				var ok bool
 				entry.Image, ok = binaryLinuxExtendedImages[p.Arch]
@@ -61,20 +64,33 @@ func (this *build) buildMatrices() (buildEnvironmentMatrices, error) {
 					return result, fmt.Errorf("no build image configured for %s", p)
 				}
 			}
+		case sys.OsDarwin:
+			testEntry.Arch = p.Arch.String()
+			switch p.Arch {
+			case sys.ArchAmd64:
+				entry.Runner = "macos-15-intel"
+			case sys.ArchArm64:
+				entry.Runner = "macos-15"
+			default:
+				return result, fmt.Errorf("no Darwin runner configured for %s", p)
+			}
+			testEntry.Runner = entry.Runner
 		case sys.OsWindows:
 			entry.Runner = "windows-latest"
+			testEntry.Arch = sys.ArchAmd64.String()
+			testEntry.Runner = entry.Runner
 		default:
 			return result, fmt.Errorf("no binary runner configured for %s", p.Os)
 		}
-		if !seenTestOs[p.Os] {
-			testEntry := buildTestMatrixEntry{Os: p.Os.String(), Runner: entry.Runner}
+		testKey := testEntry.Os + "/" + testEntry.Arch
+		if !seenTestHosts[testKey] {
 			if p.Os == sys.OsLinux {
 				testEntry.Image = binaryLinuxAmd64Image
 				result.TestContainer.Include = append(result.TestContainer.Include, testEntry)
 			} else {
 				result.TestHost.Include = append(result.TestHost.Include, testEntry)
 			}
-			seenTestOs[p.Os] = true
+			seenTestHosts[testKey] = true
 		}
 		if entry.Image == "" {
 			result.Host.Include = append(result.Host.Include, entry)

@@ -65,7 +65,7 @@ The extended macOS distribution supports Intel (`amd64`) and Apple silicon (`arm
 
 Official macOS release binaries are signed with an Engity Developer ID Application certificate, use the hardened runtime and are accepted by Apple's notarization service before publication. Because the executable is distributed in a `tgz` archive, the first Gatekeeper assessment may need network access to retrieve Apple's notarization ticket. Manual development builds are unsigned unless a Developer ID identity is supplied explicitly and should not be redistributed as official releases.
 
-The supported unattended-installation channel is the archive containing the signed executable and its included system LaunchDaemon management script. A notarized installer package and a Homebrew formula are deferred; Homebrew's versioned prefix and user-oriented service model do not match the current root LaunchDaemon layout.
+The signed executable manages its system LaunchDaemon through `bifroest service install`, `start`, `stop` and `remove`; no additional management script is required. A notarized installer package and a Homebrew formula are deferred; Homebrew's versioned prefix and user-oriented service model do not match the current root LaunchDaemon layout.
 
 ### Windows {: #windows}
 

@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	gos "os"
-	osexec "os/exec"
-	"strings"
 	"time"
 
 	"github.com/alecthomas/kingpin/v2"
@@ -14,8 +12,19 @@ import (
 	bib "github.com/engity-com/bifroest/internal/build"
 	"github.com/engity-com/bifroest/internal/build/binary"
 	"github.com/engity-com/bifroest/pkg/common"
-	"github.com/engity-com/bifroest/pkg/sys"
 )
+
+const (
+	darwinCertificateEnvironment         = "BIFROEST_DARWIN_CERTIFICATE"
+	darwinCertificatePasswordEnvironment = "BIFROEST_DARWIN_CERTIFICATE_PASSWORD"
+	darwinNotaryKeyEnvironment           = "BIFROEST_DARWIN_NOTARY_KEY"
+)
+
+var darwinSecretEnvironment = []string{
+	darwinCertificateEnvironment,
+	darwinCertificatePasswordEnvironment,
+	darwinNotaryKeyEnvironment,
+}
 
 func newBuildBinary(b *build) *buildBinary {
 	return &buildBinary{
@@ -27,6 +36,12 @@ type buildBinary struct {
 	*build
 
 	darwinSigningIdentity string
+	darwinCertificate     string
+	darwinCertificatePass string
+	darwinNotaryKey       string
+	darwinNotaryKeyId     string
+	darwinNotaryIssuer    string
+	darwinReleaseRequired bool
 }
 
 func (this *buildBinary) attach(cmd *kingpin.CmdClause) {
@@ -34,6 +49,29 @@ func (this *buildBinary) attach(cmd *kingpin.CmdClause) {
 		Envar("BIFROEST_DARWIN_SIGNING_IDENTITY").
 		PlaceHolder("<identity>").
 		StringVar(&this.darwinSigningIdentity)
+	cmd.Flag("darwinCertificate", "Base64-encoded Developer ID certificate imported into a temporary keychain.").
+		Envar(darwinCertificateEnvironment).
+		PlaceHolder("<base64>").
+		StringVar(&this.darwinCertificate)
+	cmd.Flag("darwinCertificatePassword", "Password of the Developer ID certificate.").
+		Envar(darwinCertificatePasswordEnvironment).
+		PlaceHolder("<password>").
+		StringVar(&this.darwinCertificatePass)
+	cmd.Flag("darwinNotaryKey", "App Store Connect API private key used for notarization.").
+		Envar(darwinNotaryKeyEnvironment).
+		PlaceHolder("<key>").
+		StringVar(&this.darwinNotaryKey)
+	cmd.Flag("darwinNotaryKeyId", "App Store Connect API key ID used for notarization.").
+		Envar("BIFROEST_DARWIN_NOTARY_KEY_ID").
+		PlaceHolder("<id>").
+		StringVar(&this.darwinNotaryKeyId)
+	cmd.Flag("darwinNotaryIssuer", "App Store Connect issuer ID used for notarization.").
+		Envar("BIFROEST_DARWIN_NOTARY_ISSUER_ID").
+		PlaceHolder("<id>").
+		StringVar(&this.darwinNotaryIssuer)
+	cmd.Flag("darwinReleaseRequired", "Require Developer ID signing and notarization for Darwin binaries.").
+		Envar("BIFROEST_DARWIN_RELEASE_REQUIRED").
+		BoolVar(&this.darwinReleaseRequired)
 }
 
 func (this *buildBinary) compile(ctx context.Context, p *bib.Platform) (*buildArtifact, *buildArtifact, error) {
@@ -92,7 +130,7 @@ func (this *buildBinary) compile(ctx context.Context, p *bib.Platform) (*buildAr
 		return fail(err)
 	}
 	a.thirdPartyNoticesFilepath = notice.filepath
-	if err := this.signDarwin(ctx, a); err != nil {
+	if err := this.prepareDarwinBinary(ctx, a); err != nil {
 		return fail(err)
 	}
 
@@ -107,21 +145,8 @@ func (this *buildBinary) compile(ctx context.Context, p *bib.Platform) (*buildAr
 	return a, notice, nil
 }
 
-func (this *buildBinary) signDarwin(ctx context.Context, artifact *buildArtifact) error {
-	if artifact.Os != sys.OsDarwin || this.darwinSigningIdentity == "" {
-		return nil
+func (this *buildBinary) clearDarwinSecretsFromEnvironment() {
+	for _, name := range darwinSecretEnvironment {
+		_ = gos.Unsetenv(name)
 	}
-	commands := [][]string{
-		{"--force", "--sign", this.darwinSigningIdentity, "--options", "runtime", "--timestamp", artifact.filepath},
-		{"--verify", "--strict", "--verbose=2", artifact.filepath},
-	}
-	for _, args := range commands {
-		command := osexec.CommandContext(ctx, "codesign", args...)
-		command.Env = gos.Environ()
-		output, err := command.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("codesign %s failed: %w: %s", args[0], err, strings.TrimSpace(string(output)))
-		}
-	}
-	return nil
 }

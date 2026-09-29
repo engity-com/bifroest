@@ -30,6 +30,12 @@ on:
       upload_dist:
         type: boolean
         default: false
+      darwin_release:
+        type: boolean
+        default: false
+      darwin_environment:
+        type: string
+        default: ''
 
 env:
   GITHUB_TOKEN: ${{ github.token }}
@@ -37,7 +43,7 @@ env:
 
 jobs:
   test-host:
-    name: Tests ${{ matrix.os }}
+    name: Tests ${{ matrix.os }}/${{ matrix.arch }}
     permissions:
       contents: read
     strategy:
@@ -77,7 +83,7 @@ jobs:
         run: mise run test:go
 
   test-container:
-    name: Tests ${{ matrix.os }}
+    name: Tests ${{ matrix.os }}/${{ matrix.arch }}
     permissions:
       contents: read
     strategy:
@@ -147,6 +153,7 @@ jobs:
     strategy:
       matrix: ${{ fromJSON(inputs.binary_host_matrix) }}
     runs-on: ${{ matrix.runner }}
+    environment: ${{ matrix.os == 'darwin' && inputs.darwin_environment || '' }}
     env:
       GITHUB_REF_NAME: ${{ inputs.ref || github.ref_name }}
       GITHUB_SHA: ${{ inputs.commit || github.sha }}
@@ -174,8 +181,19 @@ jobs:
       - name: Set reproducible build time
         run: mise run ci:write-build-epoch
 
+      - name: Compile build command
+        run: mise run build:go:command
+
       - name: Build binary
-        run: mise run build:go:binary -- --os=${{ matrix.os }} --arch=${{ matrix.arch }} --edition=${{ matrix.edition }}
+        run: mise run build:go:binary:compiled -- --os=${{ matrix.os }} --arch=${{ matrix.arch }} --edition=${{ matrix.edition }}
+        env:
+          BIFROEST_DARWIN_RELEASE_REQUIRED: ${{ inputs.darwin_release && matrix.os == 'darwin' }}
+          BIFROEST_DARWIN_CERTIFICATE: ${{ matrix.os == 'darwin' && secrets.MACOS_DEVELOPER_ID_CERTIFICATE || '' }}
+          BIFROEST_DARWIN_CERTIFICATE_PASSWORD: ${{ matrix.os == 'darwin' && secrets.MACOS_DEVELOPER_ID_CERTIFICATE_PASSWORD || '' }}
+          BIFROEST_DARWIN_SIGNING_IDENTITY: ${{ matrix.os == 'darwin' && secrets.MACOS_SIGNING_IDENTITY || '' }}
+          BIFROEST_DARWIN_NOTARY_KEY: ${{ matrix.os == 'darwin' && secrets.MACOS_APP_STORE_CONNECT_KEY || '' }}
+          BIFROEST_DARWIN_NOTARY_KEY_ID: ${{ matrix.os == 'darwin' && secrets.MACOS_APP_STORE_CONNECT_KEY_ID || '' }}
+          BIFROEST_DARWIN_NOTARY_ISSUER_ID: ${{ matrix.os == 'darwin' && secrets.MACOS_APP_STORE_CONNECT_ISSUER_ID || '' }}
 
       - name: Upload binary
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

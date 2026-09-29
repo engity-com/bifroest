@@ -134,6 +134,54 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  native:
+    name: native on ${{ matrix.os }}/${{ matrix.arch }}
+    needs: files-changed
+    if: always() && (github.event_name != 'pull_request' || needs.files-changed.outputs.go == 'true')
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: darwin
+            arch: amd64
+            runner: macos-15-intel
+          - os: darwin
+            arch: arm64
+            runner: macos-15
+    env:
+      BIFROEST_E2E_EXPECTED_ARCH: ${{ matrix.arch }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Cache Go
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install MISE
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+
+      - name: Install dependencies
+        run: mise run install:go
+
+      - name: Run native end-to-end suite
+        run: mise run test:e2e:native
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-native-${{ matrix.os }}-${{ matrix.arch }}
+          path: var/e2e/**/*
+          if-no-files-found: ignore
+          retention-days: 7
+
   kind-docker:
     name: kubernetes with kind and docker
     needs: files-changed
