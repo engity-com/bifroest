@@ -207,6 +207,7 @@ nav:
           - Connection: reference/context/connection.md
           - Container: reference/context/container.md
           - Core: reference/context/core.md
+          - Local Environment: reference/context/local-environment.md
           - Local Group: reference/context/local-group.md
           - Local User: reference/context/local-user.md
           - OIDC Token: reference/context/oidc-token.md

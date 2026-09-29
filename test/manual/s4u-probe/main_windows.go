@@ -76,21 +76,23 @@ func main() {
 	var err error
 	switch {
 	case len(os.Args) == 2 && os.Args[1] == "run":
-		err = run("", targetUser)
+		err = run("", targetUser, false)
 	case len(os.Args) == 3 && os.Args[1] == "run-test":
-		err = run(os.Args[2], targetUser)
+		err = run(os.Args[2], targetUser, false)
 	case len(os.Args) == 4 && os.Args[1] == "run-test":
-		err = run(os.Args[2], os.Args[3])
+		err = run(os.Args[2], os.Args[3], false)
 	case len(os.Args) == 3 && os.Args[1] == "run-container-test":
 		var account string
 		account, err = prepareContainerTestUser()
 		if err == nil {
-			err = run(os.Args[2], account)
+			err = run(os.Args[2], account, true)
 		}
 	case len(os.Args) == 4 && os.Args[1] == "service":
 		err = svc.Run(os.Args[2], &probeService{resultPath: os.Args[3]})
 	case len(os.Args) == 6 && os.Args[1] == "service":
 		err = svc.Run(os.Args[2], &probeService{resultPath: os.Args[3], testBinary: os.Args[4], user: os.Args[5]})
+	case len(os.Args) == 7 && os.Args[1] == "service" && os.Args[6] == "servercore":
+		err = svc.Run(os.Args[2], &probeService{resultPath: os.Args[3], testBinary: os.Args[4], user: os.Args[5], serverCore: true})
 	case len(os.Args) == 2 && os.Args[1] == "child":
 		var sid string
 		sid, err = currentSID()
@@ -157,7 +159,7 @@ func prepareContainerTestUser() (string, error) {
 	return name, nil
 }
 
-func run(testBinary, user string) error {
+func run(testBinary, user string, serverCore bool) error {
 	if user == "" || strings.ContainsAny(user, `\/@`) {
 		return fmt.Errorf("expected a bare local account name")
 	}
@@ -257,6 +259,9 @@ func run(testBinary, user string) error {
 	args := []string{"service", name, resultPath}
 	if testBinary != "" {
 		args = append(args, testBinary, user)
+		if serverCore {
+			args = append(args, "servercore")
+		}
 	}
 	s, err := m.CreateService(name, exe, mgr.Config{
 		StartType:        mgr.StartManual,
@@ -284,7 +289,7 @@ func run(testBinary, user string) error {
 		}
 		return fmt.Errorf("start temporary service: %w", err)
 	}
-	deadline := time.Now().Add(90 * time.Second)
+	deadline := time.Now().Add(180 * time.Second)
 	for time.Now().Before(deadline) {
 		status, err := s.Query()
 		if err != nil {
@@ -307,13 +312,14 @@ func run(testBinary, user string) error {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	return fmt.Errorf("temporary service %s did not stop within 90s; check and stop it before removing the executable", name)
+	return fmt.Errorf("temporary service %s did not stop within 180s; check and stop it before removing the executable", name)
 }
 
 type probeService struct {
 	resultPath string
 	testBinary string
 	user       string
+	serverCore bool
 }
 
 func (p *probeService) Execute(_ []string, _ <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
@@ -322,12 +328,23 @@ func (p *probeService) Execute(_ []string, _ <-chan svc.ChangeRequest, changes c
 	var err error
 	result := "PASS local S4U child process has foosel's SID\n"
 	if p.testBinary != "" {
-		cmd := exec.Command(p.testBinary, "-test.run=TestLocalWindows(S4ULogonAsUser|RunAsUser|ConPTYAsUser)$", "-test.v", "-test.timeout=60s")
+		pattern := "TestLocalWindows(S4ULogonAsUser|RunAsUser|ConPTYAsUser)$"
+		if p.serverCore {
+			pattern = "^(TestLocalWindows(S4ULogonAsUser|RunAsUser|ConPTYAsUser)|TestLocalServerCore(ProviderAccountLifecycle|FailedSkelDisablesNewAccount))$"
+		}
+		cmd := exec.Command(p.testBinary, "-test.run="+pattern, "-test.v", "-test.timeout=150s")
 		cmd.Env = append(os.Environ(), "BIFROEST_TEST_LOCAL_WINDOWS_USER="+p.user)
+		if p.serverCore {
+			cmd.Env = append(cmd.Env, "BIFROEST_TEST_SERVERCORE_IN_CONTAINER=1")
+		}
 		output, runErr := cmd.CombinedOutput()
 		err = runErr
 		if err == nil {
-			for _, test := range []string{"TestLocalWindowsS4ULogonAsUser", "TestLocalWindowsRunAsUser", "TestLocalWindowsConPTYAsUser"} {
+			required := []string{"TestLocalWindowsS4ULogonAsUser", "TestLocalWindowsRunAsUser", "TestLocalWindowsConPTYAsUser"}
+			if p.serverCore {
+				required = append(required, "TestLocalServerCoreProviderAccountLifecycle", "TestLocalServerCoreFailedSkelDisablesNewAccount")
+			}
+			for _, test := range required {
 				if !strings.Contains(string(output), "--- PASS: "+test+" ") {
 					err = fmt.Errorf("required test %s did not pass", test)
 					break

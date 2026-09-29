@@ -1,35 +1,27 @@
-//go:build unix
-
 package configuration
 
 import (
+	"fmt"
+
 	"gopkg.in/yaml.v3"
 
 	"github.com/engity-com/bifroest/pkg/template"
 )
 
-var (
-	DefaultEnvironmentLocalDisposeDeleteManagedUser        = template.BoolOf(true)
-	DefaultEnvironmentLocalDisposeDeleteManagedUserHomeDir = template.BoolOf(true)
-	DefaultEnvironmentLocalDisposeKillManagedUserProcesses = template.BoolOf(true)
-)
-
 type EnvironmentLocalDispose struct {
+	DeleteOnDispose          template.Bool `yaml:"deleteOnDispose,omitempty"`
 	DeleteManagedUser        template.Bool `yaml:"deleteManagedUser,omitempty"`
 	DeleteManagedUserHomeDir template.Bool `yaml:"deleteManagedUserHomeDir,omitempty"`
 	KillManagedUserProcesses template.Bool `yaml:"killManagedUserProcesses,omitempty"`
 }
 
 func (this *EnvironmentLocalDispose) SetDefaults() error {
-	return setDefaults(this,
-		fixedDefault("deleteManagedUser", func(v *EnvironmentLocalDispose) *template.Bool { return &v.DeleteManagedUser }, DefaultEnvironmentLocalDisposeDeleteManagedUser),
-		fixedDefault("deleteManagedUserHomeDir", func(v *EnvironmentLocalDispose) *template.Bool { return &v.DeleteManagedUserHomeDir }, DefaultEnvironmentLocalDisposeDeleteManagedUserHomeDir),
-		fixedDefault("killManagedUserProcesses", func(v *EnvironmentLocalDispose) *template.Bool { return &v.KillManagedUserProcesses }, DefaultEnvironmentLocalDisposeKillManagedUserProcesses),
-	)
+	return nil
 }
 
 func (this *EnvironmentLocalDispose) Trim() error {
 	return trim(this,
+		noopTrim[EnvironmentLocalDispose]("deleteOnDispose"),
 		noopTrim[EnvironmentLocalDispose]("deleteManagedUser"),
 		noopTrim[EnvironmentLocalDispose]("deleteManagedUserHomeDir"),
 		noopTrim[EnvironmentLocalDispose]("killManagedUserProcesses"),
@@ -37,15 +29,20 @@ func (this *EnvironmentLocalDispose) Trim() error {
 }
 
 func (this *EnvironmentLocalDispose) Validate() error {
-	return validate(this,
-		func(v *EnvironmentLocalDispose) (string, validator) { return "deleteManagedUser", &v.DeleteManagedUser },
-		func(v *EnvironmentLocalDispose) (string, validator) {
-			return "deleteManagedUserHomeDir", &v.DeleteManagedUserHomeDir
-		},
-		func(v *EnvironmentLocalDispose) (string, validator) {
-			return "killManagedUserProcesses", &v.KillManagedUserProcesses
-		},
-	)
+	for _, field := range []struct {
+		name, replacement string
+		value             template.Bool
+	}{
+		{"deleteOnDispose", "deleteOnDispose", this.DeleteOnDispose},
+		{"deleteManagedUser", "deleteOnDispose", this.DeleteManagedUser},
+		{"deleteManagedUserHomeDir", "deleteHomeTogetherWithUser", this.DeleteManagedUserHomeDir},
+		{"killManagedUserProcesses", "killProcessesOnDispose", this.KillManagedUserProcesses},
+	} {
+		if !field.value.IsZero() {
+			return fmt.Errorf("[%s] replaced by top-level %s; migrate this setting explicitly", field.name, field.replacement)
+		}
+	}
+	return nil
 }
 
 func (this *EnvironmentLocalDispose) UnmarshalYAML(node *yaml.Node) error {
@@ -70,7 +67,8 @@ func (this EnvironmentLocalDispose) IsEqualTo(other any) bool {
 }
 
 func (this EnvironmentLocalDispose) isEqualTo(other *EnvironmentLocalDispose) bool {
-	return isEqual(&this.DeleteManagedUser, &other.DeleteManagedUser) &&
+	return isEqual(&this.DeleteOnDispose, &other.DeleteOnDispose) &&
+		isEqual(&this.DeleteManagedUser, &other.DeleteManagedUser) &&
 		isEqual(&this.DeleteManagedUserHomeDir, &other.DeleteManagedUserHomeDir) &&
 		isEqual(&this.KillManagedUserProcesses, &other.KillManagedUserProcesses)
 }

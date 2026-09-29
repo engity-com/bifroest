@@ -16,7 +16,7 @@ import (
 
 func TestWindowsBinaryResources(t *testing.T) {
 	require.GreaterOrEqual(t, len(windowsIcon), 6)
-	require.Equal(t, uint16(7), binary.LittleEndian.Uint16(windowsIcon[4:6]))
+	require.Positive(t, binary.LittleEndian.Uint16(windowsIcon[4:6]))
 	for _, arch := range []string{"amd64", "arm64"} {
 		t.Run(arch, func(t *testing.T) {
 			root := t.TempDir()

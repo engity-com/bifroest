@@ -26,6 +26,90 @@ import (
 	"github.com/engity-com/bifroest/pkg/template"
 )
 
+func TestLocalWindowsCandidateTemplateFields(t *testing.T) {
+	unavailable, exists, err := (windowsLocalAccount{Name: "alice"}).GetField("managed")
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Nil(t, unavailable)
+	for _, managed := range []bool{false, true} {
+		value, err := configuration.DefaultEnvironmentLocalKillProcessesOnDispose.Render(localTemplateContext{
+			Request: localTemplateTestRequest{}, user: windowsLocalAccount{Name: "alice"}, managed: managed,
+		})
+		require.NoError(t, err)
+		require.Equal(t, managed, value)
+	}
+	ctx := localTemplateContext{
+		Request: localTemplateTestRequest{},
+		user:    windowsLocalAccount{Name: "alice", SID: "S-1-5-21-1-2-3-1001"},
+		managed: true,
+	}
+	value, err := template.MustNewString("{{ .user.name }}/{{ .user.uid }}/{{ .user.managed }}").Render(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "alice/S-1-5-21-1-2-3-1001/true", value)
+	ctx.user = windowsLocalAccount{Name: "alice", Groups: []windowsLocalGroupRequirement{{Name: "builders", SID: "S-1-5-21-1-2-3-2001"}}}
+	value, err = template.MustNewString("{{ (index .user.groups 0).name }}/{{ (index .user.groups 0).gid }}").Render(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "builders/S-1-5-21-1-2-3-2001", value)
+	value, err = template.MustNewString("{{ .user.shell }}/{{ index .user.gids 0 }}").Render(ctx)
+	require.NoError(t, err)
+	require.Equal(t, configuration.DefaultShell+"/S-1-5-21-1-2-3-2001", value)
+	value, err = template.MustNewString("{{ .user.displayName }}").Render(localTemplateContext{Request: localTemplateTestRequest{}, user: windowsLocalAccount{DisplayName: "Alice"}})
+	require.NoError(t, err)
+	require.Equal(t, "Alice", value)
+}
+
+func TestLocalWindowsDisposeFlags(t *testing.T) {
+	repository := &LocalRepository{}
+	account := windowsLocalAccount{Name: "alice", SID: "S-1-5-21-1-2-3-1001"}
+	for _, version := range []uint8{0, 1, 2} {
+		token := &localToken{Version: version, User: account, DeleteOnDispose: true, DeleteProfileOnDispose: true, KillProcessesOnDispose: true}
+		env := repository.new(account, nil, false, token)
+		require.Equal(t, version == 2, env.deleteOnDispose)
+		require.Equal(t, version == 2, env.deleteProfileOnDispose)
+		require.Equal(t, version == 2, env.killProcessesOnDispose)
+		if version != 2 {
+			disposed, err := env.dispose(context.Background())
+			require.NoError(t, err)
+			require.True(t, disposed)
+		}
+	}
+	withoutMarker := repository.new(account, nil, false, &localToken{Version: 2, DeleteOnDispose: true})
+	require.True(t, withoutMarker.deleteOnDispose)
+	protected := windowsLocalAccount{Name: "renamed", SID: "S-1-5-21-1-2-3-500"}
+	require.False(t, localWindowsCleanupAllowed(protected, false, true))
+	require.True(t, localWindowsCleanupAllowed(protected, true, true))
+	require.True(t, localWindowsCleanupAllowed(account, false, true))
+	require.False(t, localWindowsCleanupAllowed(account, true, false))
+	require.False(t, repository.new(protected, nil, false, &localToken{Version: 2, User: protected, Managed: true, DeleteOnDispose: true}).deleteOnDispose)
+}
+
+func TestLocalWindowsUnmanagedCleanupSnapshot(t *testing.T) {
+	conf := &configuration.EnvironmentLocal{}
+	require.NoError(t, conf.SetDefaults())
+	conf.DeleteOnDispose = template.MustNewBool("{{ not .user.managed }}")
+	conf.DeleteHomeTogetherWithUser = template.BoolOf(true)
+	conf.KillProcessesOnDispose = template.BoolOf(true)
+	repository := &LocalRepository{conf: conf}
+	account := windowsLocalAccount{Name: "alice", SID: "S-1-5-21-1-2-3-1001"}
+	token, err := repository.newLocalToken(localTemplateTestRequest{}, account, false, false)
+	require.NoError(t, err)
+	require.False(t, token.Managed)
+	require.True(t, token.DeleteOnDispose)
+	require.True(t, token.DeleteProfileOnDispose)
+	require.True(t, token.KillProcessesOnDispose)
+
+	conf.DeleteOnDispose = template.BoolOf(false)
+	conf.KillProcessesOnDispose = template.MustNewBool("{{ not .user.managed }}")
+	token, err = repository.newLocalToken(localTemplateTestRequest{}, account, false, false)
+	require.NoError(t, err)
+	require.False(t, token.DeleteOnDispose)
+	require.False(t, token.DeleteProfileOnDispose)
+	require.True(t, token.KillProcessesOnDispose)
+	restored := repository.new(account, nil, false, token)
+	require.False(t, restored.deleteOnDispose)
+	require.True(t, restored.killProcessesOnDispose)
+}
+
 func TestMain(m *testing.M) {
 	if len(os.Args) == 2 && os.Args[1] == "local-windows-identity-child" {
 		user, err := windows.GetCurrentProcessToken().GetTokenUser()
@@ -115,19 +199,24 @@ func TestLocalWindowsTokenRestoresWithoutProvisioning(t *testing.T) {
 
 	created, err := repository.Ensure(req)
 	require.NoError(t, err)
-	require.Equal(t, account, created.(*local).user)
+	require.Equal(t, account.SID, created.(*local).user.SID)
+	require.Equal(t, account.Name, created.(*local).user.Name)
 	require.Equal(t, int32(1), stored.environmentTokenWrites.Load())
 	encoded, err := stored.EnvironmentToken(context.Background())
 	require.NoError(t, err)
 	var token localToken
 	require.NoError(t, json.Unmarshal(encoded, &token))
-	require.Equal(t, account, token.User)
+	require.Equal(t, account.SID, token.User.SID)
+	require.Equal(t, account.Name, token.User.Name)
+	require.Equal(t, uint8(2), token.Version)
+	require.False(t, token.DeleteOnDispose)
 	require.False(t, token.PortForwardingAllowed)
 
 	restarted := localWindowsTestRepository(t, strings.ToUpper(account.Name))
 	restored, err := restarted.FindBySession(context.Background(), stored, nil)
 	require.NoError(t, err)
-	require.Equal(t, account, restored.(*local).user)
+	require.Equal(t, account.SID, restored.(*local).user.SID)
+	require.Equal(t, account.Name, restored.(*local).user.Name)
 	allowed, err := restored.IsPortForwardingAllowed(bnet.HostPort{})
 	require.NoError(t, err)
 	require.False(t, allowed)
@@ -139,7 +228,8 @@ func TestLocalWindowsTokenRestoresWithoutProvisioning(t *testing.T) {
 	require.True(t, compatible)
 	again, err := restarted.Ensure(req)
 	require.NoError(t, err)
-	require.Equal(t, account, again.(*local).user)
+	require.Equal(t, account.SID, again.(*local).user.SID)
+	require.Equal(t, account.Name, again.(*local).user.Name)
 	require.Equal(t, int32(1), stored.environmentTokenWrites.Load())
 
 	disposed, err := restored.Dispose(context.Background())
@@ -152,6 +242,25 @@ func TestLocalWindowsTokenRestoresWithoutProvisioning(t *testing.T) {
 	remaining, err := lookupLocalWindowsAccount(account.Name)
 	require.NoError(t, err)
 	require.Equal(t, account, remaining)
+}
+
+func TestLocalWindowsAcceptsUIDOnlyAndRejectsMismatchedIdentity(t *testing.T) {
+	account := localWindowsTestAccount(t)
+	repository := localWindowsTestRepository(t, account.Name)
+	repository.conf.Name = template.String{}
+	repository.conf.Uid = template.MustNewString(account.SID)
+	stored := &sshTestStoredSession{id: session.MustNewId()}
+	created, err := repository.Ensure(localWindowsTestRequest(t, stored))
+	require.NoError(t, err)
+	require.Equal(t, account.SID, created.(*local).user.SID)
+
+	repository.conf.Name = template.MustNewString(account.Name)
+	repository.conf.Uid = template.MustNewString("S-1-5-21-1-2-3-1001")
+	if account.SID == "S-1-5-21-1-2-3-1001" {
+		repository.conf.Uid = template.MustNewString("S-1-5-21-1-2-3-1002")
+	}
+	_, err = repository.Ensure(localWindowsTestRequest(t, &sshTestStoredSession{id: session.MustNewId()}))
+	require.ErrorContains(t, err, "does not match UID")
 }
 
 func TestLocalWindowsRejectsLegacyMissingAndChangedIdentity(t *testing.T) {
@@ -215,7 +324,11 @@ func TestLocalWindowsRejectsInvalidNamesBeforeAccountLookup(t *testing.T) {
 			require.ErrorContains(t, err, "invalid local SAM account name")
 			stored := &sshTestStoredSession{id: session.MustNewId()}
 			_, err = localWindowsTestRepository(t, name).Ensure(localWindowsTestRequest(t, stored))
-			require.ErrorContains(t, err, "invalid local SAM account name")
+			if name == "" {
+				require.ErrorContains(t, err, "name or UID is required")
+			} else {
+				require.ErrorContains(t, err, "invalid local SAM account name")
+			}
 			encoded, err := stored.EnvironmentToken(context.Background())
 			require.NoError(t, err)
 			require.Empty(t, encoded)
@@ -234,6 +347,51 @@ func TestLocalWindowsRejectsMissingConfiguredUser(t *testing.T) {
 	encoded, err := stored.EnvironmentToken(context.Background())
 	require.NoError(t, err)
 	require.Empty(t, encoded)
+}
+
+func TestLocalWindowsKeepsMissingAccountTokenForProfileCleanup(t *testing.T) {
+	const name = "BifroestNoSuchUser_987654321"
+	account := windowsLocalAccount{Name: name, SID: "S-1-5-21-1-2-3-1001"}
+	if _, err := lookupLocalWindowsAccount(name); err == nil {
+		t.Skip("test account name unexpectedly exists")
+	}
+	stored := &sshTestStoredSession{id: session.MustNewId()}
+	setLocalWindowsTestToken(t, stored, localToken{
+		Version: 2, User: account, DeleteOnDispose: true, DeleteProfileOnDispose: true,
+	})
+	repository := localWindowsTestRepository(t, name)
+	_, err := repository.FindBySession(context.Background(), stored, nil)
+	require.ErrorContains(t, err, "changed SID")
+	clean := true
+	pending, err := repository.FindBySession(context.Background(), stored, &FindOpts{AutoCleanUpAllowed: &clean})
+	require.NoError(t, err)
+	require.True(t, pending.(*local).accountMissing)
+	require.True(t, pending.(*local).deleteOnDispose)
+	require.True(t, pending.(*local).deleteProfileOnDispose)
+	encoded, err := stored.EnvironmentToken(context.Background())
+	require.NoError(t, err)
+	require.NotEmpty(t, encoded, "profile cleanup must remain retryable")
+}
+
+func TestLocalWindowsKeepsMissingAccountTokenForProcessCleanup(t *testing.T) {
+	const name = "BifroestNoSuchUser_987654321"
+	if _, err := lookupLocalWindowsAccount(name); err == nil {
+		t.Skip("test account name unexpectedly exists")
+	}
+	stored := &sshTestStoredSession{id: session.MustNewId()}
+	setLocalWindowsTestToken(t, stored, localToken{
+		Version: 2, User: windowsLocalAccount{Name: name, SID: "S-1-5-21-1-2-3-1001"}, KillProcessesOnDispose: true,
+	})
+	repository := localWindowsTestRepository(t, name)
+	clean := true
+	pending, err := repository.FindBySession(context.Background(), stored, &FindOpts{AutoCleanUpAllowed: &clean})
+	require.NoError(t, err)
+	require.True(t, pending.(*local).accountMissing)
+	require.True(t, pending.(*local).killProcessesOnDispose)
+	require.False(t, pending.(*local).deleteOnDispose)
+	encoded, err := stored.EnvironmentToken(context.Background())
+	require.NoError(t, err)
+	require.NotEmpty(t, encoded)
 }
 
 func TestLocalWindowsS4ULogonAsUser(t *testing.T) {

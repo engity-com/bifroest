@@ -15,6 +15,8 @@ import (
 
 	log "github.com/echocat/slf4g"
 	"golang.org/x/sys/windows"
+
+	"github.com/engity-com/bifroest/pkg/configuration"
 )
 
 var (
@@ -32,8 +34,43 @@ var (
 )
 
 type windowsLocalAccount struct {
-	Name string `json:"name"`
-	SID  string `json:"sid"`
+	Name        string                         `json:"name"`
+	SID         string                         `json:"sid"`
+	DisplayName string                         `json:"-"`
+	Groups      []windowsLocalGroupRequirement `json:"-"`
+}
+
+func (this windowsLocalAccount) GetField(name string) (any, bool, error) {
+	switch name {
+	case "name":
+		return this.Name, true, nil
+	case "uid":
+		return this.SID, true, nil
+	case "displayName":
+		return this.DisplayName, true, nil
+	case "groups":
+		return this.Groups, true, nil
+	case "gids":
+		gids := make([]string, len(this.Groups))
+		for i, group := range this.Groups {
+			gids[i] = group.SID
+		}
+		return gids, true, nil
+	case "managed":
+		return nil, true, nil
+	case "shell":
+		return configuration.DefaultShell, true, nil
+	case "homeDir":
+		token, release, err := this.logon()
+		if err != nil {
+			return nil, false, err
+		}
+		defer release()
+		home, err := token.GetUserProfileDirectory()
+		return home, err == nil, err
+	default:
+		return nil, false, fmt.Errorf("unknown user field %q", name)
+	}
 }
 
 func lookupLocalWindowsAccount(name string) (windowsLocalAccount, error) {
@@ -66,6 +103,35 @@ func lookupLocalWindowsAccount(name string) (windowsLocalAccount, error) {
 		return windowsLocalAccount{}, fmt.Errorf("cannot stringify local account SID")
 	}
 	return windowsLocalAccount{Name: canonical, SID: sidString}, nil
+}
+
+func lookupLocalWindowsAccountByUID(uid string) (windowsLocalAccount, error) {
+	sid, err := windows.StringToSid(uid)
+	if err != nil || sid == nil || !sid.IsValid() {
+		return windowsLocalAccount{}, fmt.Errorf("invalid local Windows UID %q: %v", uid, err)
+	}
+	name, domain, kind, err := sid.LookupAccount("")
+	if errors.Is(err, windows.ERROR_NONE_MAPPED) {
+		return windowsLocalAccount{}, fmt.Errorf("%w: UID %q", errLocalWindowsAccountNotFound, uid)
+	}
+	if err != nil {
+		return windowsLocalAccount{}, err
+	}
+	host, err := os.Hostname()
+	if err != nil {
+		return windowsLocalAccount{}, err
+	}
+	if kind != windows.SidTypeUser || !strings.EqualFold(domain, host) {
+		return windowsLocalAccount{}, fmt.Errorf("%w: UID %q is not a local SAM account", errLocalWindowsAccountNotFound, uid)
+	}
+	account, err := lookupLocalWindowsAccount(name)
+	if err != nil {
+		return windowsLocalAccount{}, err
+	}
+	if account.SID != sid.String() {
+		return windowsLocalAccount{}, fmt.Errorf("local account %q changed UID", name)
+	}
+	return account, nil
 }
 
 func validLocalSAMName(name string) bool {

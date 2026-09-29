@@ -33,6 +33,8 @@ func (this User) GetField(name string) (any, bool, error) {
 		return this.Group.Gid, true, nil
 	case "groups":
 		return this.Groups, true, nil
+	case "managed":
+		return nil, true, nil
 	case "gids":
 		gids := make([]GroupId, len(this.Groups))
 		for i, gid := range this.Groups {

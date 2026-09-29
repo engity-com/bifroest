@@ -4,6 +4,7 @@ package environment
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,8 +38,13 @@ type local struct {
 	user                       *user.User
 	portForwardingAllowed      bool
 	deleteUserOnDispose        bool
-	deleteUserHomeDirOnDispose bool
-	killUserProcessesOnDispose bool
+	deleteHomeTogetherWithUser bool
+	killProcessesOnDispose     bool
+	expectedHomeDir            string
+	allowSystemUsers           bool
+	deferred                   bool
+	token                      *localToken
+	accountMissing             bool
 }
 
 func (this *local) reverseTCPUnprivilegedUser() bool {
@@ -47,30 +53,74 @@ func (this *local) reverseTCPUnprivilegedUser() bool {
 
 func (this *LocalRepository) new(u *user.User, sess session.Session, portForwardingAllowed bool, lt *localToken) *local {
 	return &local{
-		this,
-		sess,
-		u,
-		portForwardingAllowed,
-		lt.User.DeleteOnDispose,
-		lt.User.DeleteHomeDirOnDispose,
-		lt.User.KillProcessesOnDispose,
+		repository:                 this,
+		session:                    sess,
+		user:                       u,
+		portForwardingAllowed:      portForwardingAllowed,
+		deleteUserOnDispose:        lt.User.DeleteOnDispose,
+		deleteHomeTogetherWithUser: lt.User.DeleteHomeTogetherWithUser,
+		killProcessesOnDispose:     lt.User.KillProcessesOnDispose,
+		expectedHomeDir:            lt.User.HomeDir,
+		allowSystemUsers:           lt.User.AllowSystemUsers,
+		token:                      lt,
 	}
 }
 
 func (this *local) configureShellCmd(t Task, cmd *exec.Cmd) error {
-	cmd.Path = this.user.Shell
-	if rc := t.SshSession().RawCommand(); len(rc) > 0 {
-		cmd.Args = []string{filepath.Base(this.user.Shell), "-c", rc}
+	raw := t.SshSession().RawCommand()
+	source := &this.repository.conf.ShellCommand
+	property := "shellCommand"
+	if raw != "" {
+		source = &this.repository.conf.ExecCommandPrefix
+		property = "execCommandPrefix"
+	}
+	if source.IsZero() {
+		cmd.Path = this.user.Shell
+		if raw != "" {
+			cmd.Args = []string{filepath.Base(this.user.Shell), "-c", raw}
+		} else {
+			cmd.Args = []string{"-" + filepath.Base(this.user.Shell)}
+		}
+		return nil
+	}
+	args, err := source.Render(t)
+	if err != nil {
+		return errors.Config.Newf("cannot evaluate %s: %w", property, err)
+	}
+	if len(args) == 0 || args[0] == "" {
+		return errors.Config.Newf("%s requires an executable", property)
+	}
+	cmd.Path, err = exec.LookPath(args[0])
+	if err != nil {
+		return errors.Config.Newf("cannot find %s executable %q: %w", property, args[0], err)
+	}
+	if raw != "" {
+		cmd.Args = append(args, raw)
 	} else {
-		cmd.Args = []string{"-" + filepath.Base(this.user.Shell)}
+		cmd.Args = args
 	}
 	return nil
 }
 
 func (this *local) createCmdAndEnv(t Task) (*exec.Cmd, *sys.EnvVars, func(), error) {
 	creds := this.user.ToCredentials()
+	dir := this.user.HomeDir
+	if !this.repository.conf.Directory.IsZero() {
+		var err error
+		dir, err = this.repository.conf.Directory.Render(t)
+		if err != nil {
+			return nil, nil, nil, errors.Config.Newf("cannot evaluate directory: %w", err)
+		}
+		fi, err := os.Stat(dir)
+		if err != nil {
+			return nil, nil, nil, errors.Config.Newf("cannot access directory %q: %w", dir, err)
+		}
+		if !fi.IsDir() {
+			return nil, nil, nil, errors.Config.Newf("directory %q is not a directory", dir)
+		}
+	}
 	cmd := exec.Cmd{
-		Dir: this.user.HomeDir,
+		Dir: dir,
 		SysProcAttr: &syscall.SysProcAttr{
 			Credential: &creds,
 		},
@@ -138,17 +188,124 @@ func (this *local) dispose(ctx context.Context) (bool, error) {
 		return false, err
 	}
 
+	this.deferred = false
+	if this.repository.coordinator != nil && localSessionHasActiveConnections(this.session) &&
+		(!this.killProcessesOnDispose || this.token.User.ProcessesKilledOnDispose) {
+		this.deferred = true
+		return false, nil
+	}
+	if !this.deleteUserOnDispose && !this.killProcessesOnDispose {
+		return false, nil
+	}
+	if this.session == nil {
+		return fail(errors.System.Newf("cannot clean up local account without a session"))
+	}
+	if this.deleteUserOnDispose && this.repository.coordinator == nil {
+		return fail(errors.System.Newf("cannot delete local account without a session coordinator"))
+	}
+	if this.repository.coordinator != nil {
+		this.repository.coordinator.mu.Lock()
+		defer this.repository.coordinator.mu.Unlock()
+	}
+	if localSessionHasActiveConnections(this.session) && this.repository.coordinator != nil &&
+		(!this.killProcessesOnDispose || this.token.User.ProcessesKilledOnDispose) {
+		this.deferred = true
+		return false, nil
+	}
+	stored, err := this.session.EnvironmentToken(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	var lt localToken
+	if err := json.Unmarshal(stored, &lt); err != nil || lt.Version != 2 || lt.User.Name != this.user.Name ||
+		lt.User.Uid == nil || *lt.User.Uid != this.user.Uid || lt.User.DeleteOnDispose != this.deleteUserOnDispose ||
+		lt.User.KillProcessesOnDispose != this.killProcessesOnDispose || lt.User.AllowSystemUsers != this.allowSystemUsers {
+		return fail(errors.System.Newf("cannot verify local account token before cleanup: %v", err))
+	}
+	if lt.User.ProcessesKilledOnDispose {
+		this.token.User.ProcessesKilledOnDispose = true
+	}
+	if !this.accountMissing {
+		current, err := this.repository.userRepository.LookupById(ctx, this.user.Uid)
+		if errors.Is(err, user.ErrNoSuchUser) {
+			this.accountMissing = true
+		} else if err != nil {
+			return fail(err)
+		} else if current.Name != this.user.Name || (current.Uid == 0 && !this.allowSystemUsers) {
+			return fail(errors.System.Newf("local account %q changed identity or is protected", this.user.Name))
+		}
+	}
+	if this.accountMissing && this.user.Uid == 0 && !this.allowSystemUsers {
+		return fail(errors.System.Newf("local account UID 0 is protected"))
+	}
 	disposed := false
+	if this.killProcessesOnDispose && !this.token.User.ProcessesKilledOnDispose {
+		if this.accountMissing {
+			killer, ok := this.repository.userRepository.(interface {
+				KillProcessesByAbsentIdentity(context.Context, user.Id) error
+			})
+			if !ok {
+				return fail(errors.System.Newf("local user repository does not support orphaned process cleanup"))
+			}
+			if err := killer.KillProcessesByAbsentIdentity(ctx, this.user.Uid); err != nil {
+				return fail(err)
+			}
+		} else {
+			killer, ok := this.repository.userRepository.(interface {
+				KillProcessesByIdentity(context.Context, user.Id, string) error
+			})
+			if !ok {
+				return fail(errors.System.Newf("local user repository does not support verified process cleanup"))
+			}
+			if err := killer.KillProcessesByIdentity(ctx, this.user.Uid, this.user.Name); err != nil {
+				return fail(err)
+			}
+		}
+		lt.User.ProcessesKilledOnDispose = true
+		encoded, err := json.Marshal(&lt)
+		if err != nil {
+			return fail(err)
+		}
+		if err := updateLocalCleanupToken(ctx, this.session, stored, encoded); err != nil {
+			return fail(err)
+		}
+		this.token.User.ProcessesKilledOnDispose = true
+		disposed = true
+	}
+	if this.repository.coordinator != nil && localSessionHasActiveConnections(this.session) {
+		this.deferred = true
+		return disposed, nil
+	}
 	if this.deleteUserOnDispose {
-		if err := this.repository.userRepository.DeleteById(ctx, this.user.Uid, &user.DeleteOpts{
-			HomeDir:       common.P(this.deleteUserHomeDirOnDispose),
-			KillProcesses: common.P(this.killUserProcessesOnDispose),
+		if this.accountMissing {
+			return disposed, nil
+		}
+		active, err := this.repository.coordinator.otherActive(ctx, this.session, this.user.Name, this.user.Uid.String())
+		if err != nil {
+			return fail(err)
+		}
+		if active {
+			this.deferred = true
+			return disposed, nil
+		}
+		deleter, ok := this.repository.userRepository.(interface {
+			DeleteByIdentity(context.Context, user.Id, string, string, *user.DeleteOpts) error
+		})
+		if !ok {
+			return fail(errors.System.Newf("local user repository does not support verified account deletion"))
+		}
+		if err := deleter.DeleteByIdentity(ctx, this.user.Uid, this.user.Name, this.expectedHomeDir, &user.DeleteOpts{
+			HomeDir:       common.P(this.deleteHomeTogetherWithUser),
+			KillProcesses: common.P(false),
 		}); errors.Is(err, user.ErrNoSuchUser) {
 			// Ok, continue....
 		} else if err != nil {
 			return fail(err)
 		} else {
 			disposed = true
+			if err := this.session.SetEnvironmentToken(ctx, nil); err != nil {
+				return fail(err)
+			}
 		}
 	}
 

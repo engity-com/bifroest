@@ -20,8 +20,12 @@ func NewRepositoryFacade(ctx context.Context, flows *configuration.Flows, ap alt
 	return newRepositoryFacade(ctx, flows, ap, i)
 }
 
-func NewRepositoryFacadeWithHostKeys(ctx context.Context, flows *configuration.Flows, ap alternatives.Provider, i imp.Imp, hostKeys []crypto.PrivateKey) (*RepositoryFacade, error) {
-	ctx = context.WithValue(ctx, repositoryDependenciesContextKey{}, repositoryDependencies{hostKeys: hostKeys})
+func NewRepositoryFacadeWithHostKeys(ctx context.Context, flows *configuration.Flows, ap alternatives.Provider, i imp.Imp, hostKeys []crypto.PrivateKey, sessions ...session.Repository) (*RepositoryFacade, error) {
+	deps := repositoryDependencies{hostKeys: hostKeys}
+	if len(sessions) > 0 {
+		deps.localAccounts = &localAccountCoordinator{sessions: sessions[0]}
+	}
+	ctx = context.WithValue(ctx, repositoryDependenciesContextKey{}, deps)
 	return newRepositoryFacade(ctx, flows, ap, i)
 }
 
@@ -183,7 +187,8 @@ func RegisterRepository[C any, R CloseableRepository](factory RepositoryFactory[
 type repositoryDependenciesContextKey struct{}
 
 type repositoryDependencies struct {
-	hostKeys []crypto.PrivateKey
+	hostKeys      []crypto.PrivateKey
+	localAccounts *localAccountCoordinator
 }
 
 func repositoryDependenciesFrom(ctx context.Context) repositoryDependencies {

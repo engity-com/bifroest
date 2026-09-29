@@ -42,3 +42,10 @@ type Session interface {
 
 	String() string
 }
+
+// EnvironmentCleanupTokenUpdater permits a compare-and-swap update to an
+// existing environment token after the session has been disposed. It is used
+// only to persist cleanup progress, never to create a new environment token.
+type EnvironmentCleanupTokenUpdater interface {
+	UpdateEnvironmentTokenForCleanup(context.Context, []byte, []byte) error
+}

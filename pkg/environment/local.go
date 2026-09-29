@@ -273,7 +273,7 @@ func (this *local) Dispose(ctx context.Context) (_ bool, rErr error) {
 	}
 
 	sess := this.session
-	if sess != nil {
+	if sess != nil && !this.deferred {
 		if err := sess.SetEnvironmentToken(ctx, nil); err != nil {
 			return fail(err)
 		}

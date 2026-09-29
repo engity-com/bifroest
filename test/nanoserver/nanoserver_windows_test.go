@@ -72,6 +72,9 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 	buildImage := func(base, kind string) string {
 		t.Helper()
 		dockerfile := fmt.Sprintf("FROM %s\nUSER ContainerAdministrator\nWORKDIR C:/smoke\nCOPY bifroest.exe C:/smoke/bifroest.exe\nCOPY environment.test.exe C:/smoke/environment.test.exe\nCOPY s4u-probe.exe C:/smoke/s4u-probe.exe\n", base)
+		if kind == "servercore" {
+			dockerfile += "RUN cmd /C \"echo bifroest-servercore-integration > C:/smoke/servercore-container.marker\"\n"
+		}
 		if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(dockerfile), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -114,6 +117,13 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 			if !strings.Contains(result, "--- PASS: "+test+" ") {
 				t.Errorf("required container test %s did not pass:\n%s", test, result)
 			}
+		}
+	})
+	t.Run("nanoserver-local-sam-lifecycle", func(t *testing.T) {
+		result := dockerRun(t, nanoImage, []string{"--user", "ContainerAdministrator", "--env", "BIFROEST_TEST_NANO_SAM_IN_CONTAINER=1"},
+			`C:\smoke\environment.test.exe`, "-test.run=^TestLocalNanoServerSAMLifecycle$", "-test.v", "-test.timeout=90s")
+		if !strings.Contains(result, "--- PASS: TestLocalNanoServerSAMLifecycle ") {
+			t.Errorf("required Nano Server SAM lifecycle test did not pass:\n%s", result)
 		}
 	})
 	serverCoreImage := buildImage("mcr.microsoft.com/windows/servercore:ltsc2022@sha256:76cf422c98ca437b308374d0498280541fa42ac7061bb44015a6c8b70cf4db6a", "servercore")

@@ -315,6 +315,14 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 		if err := goerrors.Join(disposeErr, disposeAuditErr); err != nil {
 			return reportAndContinue(err)
 		}
+		pending, err := sess.EnvironmentToken(ctx)
+		if err != nil {
+			return reportAndContinue(err)
+		}
+		if len(pending) != 0 {
+			logger.Debug("preserving session with pending environment cleanup")
+			return true, nil
+		}
 		_, deleteErr, deleteAuditErr := this.auditSessionAction(ctx, sess, audit.EventNameHousekeepingSessionDeleteStarted, audit.EventNameHousekeepingSessionDeleteCompleted, audit.EventReasonRetentionElapsed, func() (bool, error) {
 			return true, this.service.sessions.Delete(ctx, sess)
 		})

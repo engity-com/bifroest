@@ -13,7 +13,7 @@ import (
 var (
 	DefaultShell = func() string {
 		v, ok := os.LookupEnv("COMSPEC")
-		if ok {
+		if ok && v != "" {
 			return v
 		}
 		return `C:\WINDOWS\system32\cmd.exe`
@@ -22,54 +22,32 @@ var (
 	DefaultEnvironmentLocalShellCommand      = template.MustNewStrings(DefaultShell)
 	DefaultEnvironmentLocalExecCommandPrefix = template.MustNewStrings(DefaultShell, "/C")
 	DefaultEnvironmentLocalDirectory         = template.String{}
+	DefaultEnvironmentLocalDisplayName       = template.String{}
 )
 
 type EnvironmentLocal struct {
-	Name         template.String `yaml:"name,omitempty"`
-	LoginAllowed template.Bool   `yaml:"loginAllowed,omitempty"`
-
-	Banner template.String `yaml:"banner,omitempty"`
-
-	ShellCommand          template.Strings `yaml:"shellCommand,omitempty"`
-	ExecCommandPrefix     template.Strings `yaml:"execCommandPrefix,omitempty"`
-	Directory             template.String  `yaml:"directory,omitempty"`
-	PortForwardingAllowed template.Bool    `yaml:"portForwardingAllowed,omitempty"`
+	WindowsUserRequirementTemplate `yaml:",inline"`
+	EnvironmentLocalCommon         `yaml:",inline"`
 }
 
 func (this *EnvironmentLocal) SetDefaults() error {
 	return setDefaults(this,
-		fixedDefault("loginAllowed", func(v *EnvironmentLocal) *template.Bool { return &v.LoginAllowed }, DefaultEnvironmentLocalLoginAllowed),
-		fixedDefault("banner", func(v *EnvironmentLocal) *template.String { return &v.Banner }, DefaultEnvironmentLocalBanner),
-		fixedDefault("shellCommand", func(v *EnvironmentLocal) *template.Strings { return &v.ShellCommand }, DefaultEnvironmentLocalShellCommand),
-		fixedDefault("execCommandPrefix", func(v *EnvironmentLocal) *template.Strings { return &v.ExecCommandPrefix }, DefaultEnvironmentLocalExecCommandPrefix),
-		fixedDefault("directory", func(v *EnvironmentLocal) *template.String { return &v.Directory }, DefaultEnvironmentLocalDirectory),
-		fixedDefault("portForwardingAllowed", func(v *EnvironmentLocal) *template.Bool { return &v.PortForwardingAllowed }, DefaultEnvironmentLocalPortForwardingAllowed),
+		func(v *EnvironmentLocal) (string, defaulter) { return "", &v.WindowsUserRequirementTemplate },
+		func(v *EnvironmentLocal) (string, defaulter) { return "", &v.EnvironmentLocalCommon },
 	)
 }
 
 func (this *EnvironmentLocal) Trim() error {
 	return trim(this,
-		noopTrim[EnvironmentLocal]("name"),
-		noopTrim[EnvironmentLocal]("loginAllowed"),
-		noopTrim[EnvironmentLocal]("banner"),
-		noopTrim[EnvironmentLocal]("shellCommand"),
-		noopTrim[EnvironmentLocal]("execCommandPrefix"),
-		noopTrim[EnvironmentLocal]("directory"),
-		noopTrim[EnvironmentLocal]("portForwardingAllowed"),
+		func(v *EnvironmentLocal) (string, trimmer) { return "", &v.WindowsUserRequirementTemplate },
+		func(v *EnvironmentLocal) (string, trimmer) { return "", &v.EnvironmentLocalCommon },
 	)
 }
 
 func (this *EnvironmentLocal) Validate() error {
 	return validate(this,
-		notZeroValidate("name", func(v *EnvironmentLocal) *template.String { return &v.Name }),
-		func(v *EnvironmentLocal) (string, validator) { return "loginAllowed", &v.LoginAllowed },
-		func(v *EnvironmentLocal) (string, validator) { return "banner", &v.Banner },
-		func(v *EnvironmentLocal) (string, validator) { return "shellCommand", &v.ShellCommand },
-		func(v *EnvironmentLocal) (string, validator) { return "execCommandPrefix", &v.ExecCommandPrefix },
-		func(v *EnvironmentLocal) (string, validator) { return "directory", &v.Directory },
-		func(v *EnvironmentLocal) (string, validator) {
-			return "portForwardingAllowed", &v.PortForwardingAllowed
-		},
+		func(v *EnvironmentLocal) (string, validator) { return "", &v.WindowsUserRequirementTemplate },
+		func(v *EnvironmentLocal) (string, validator) { return "", &v.EnvironmentLocalCommon },
 	)
 }
 
@@ -95,13 +73,8 @@ func (this EnvironmentLocal) IsEqualTo(other any) bool {
 }
 
 func (this EnvironmentLocal) isEqualTo(other *EnvironmentLocal) bool {
-	return isEqual(&this.Name, &other.Name) &&
-		isEqual(&this.LoginAllowed, &other.LoginAllowed) &&
-		isEqual(&this.Banner, &other.Banner) &&
-		isEqual(&this.ShellCommand, &other.ShellCommand) &&
-		isEqual(&this.ExecCommandPrefix, &other.ExecCommandPrefix) &&
-		isEqual(&this.Directory, &other.Directory) &&
-		isEqual(&this.PortForwardingAllowed, &other.PortForwardingAllowed)
+	return isEqual(&this.WindowsUserRequirementTemplate, &other.WindowsUserRequirementTemplate) &&
+		isEqual(&this.EnvironmentLocalCommon, &other.EnvironmentLocalCommon)
 }
 
 func (this EnvironmentLocal) Types() []string {

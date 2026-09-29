@@ -688,6 +688,21 @@ func Test_EtcColonRepository_Ensure(t *testing.T) {
 
 		expectedErr string
 	}{{
+		name: "create-without-modify-permission",
+		requirement: Requirement{
+			Name:    "test",
+			Group:   GroupRequirement{Name: "testg"},
+			Groups:  GroupRequirements{{Name: "testg"}},
+			Shell:   "/bin/sh",
+			HomeDir: dir.child("create-without-modify-permission"),
+		},
+		opts:           &EnsureOpts{CreateAllowed: common.P(true), ModifyAllowed: common.P(false)},
+		expectedResult: EnsureResultCreated,
+		expected:       User{"test", "", 1000, Group{1000, "testg"}, Groups{{1000, "testg"}}, "/bin/sh", dir.child("create-without-modify-permission")},
+		expectedPasswd: `test:x:1000:1000::` + dir.child("create-without-modify-permission") + `:/bin/sh`,
+		expectedGroup:  `testg:x:1000:test`,
+		expectedShadow: `test:\*:\d+:0:99999:7:::`,
+	}, {
 		name: "full-new",
 		requirement: Requirement{
 			Name:        "test",

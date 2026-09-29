@@ -14,9 +14,16 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 )
 
-func (this *fs) ConnectionInterceptor(context.Context) (ConnectionInterceptor, error) {
+func (this *fs) ConnectionInterceptor(ctx context.Context) (ConnectionInterceptor, error) {
 	this.repository.mutex.Lock()
 	defer this.repository.mutex.Unlock()
+	current, err := this.repository.findBy(ctx, this.flow, this.id, nil, false)
+	if err != nil {
+		return nil, err
+	}
+	if current.info.VState == StateDisposed {
+		return nil, fmt.Errorf("cannot attach a connection to disposed session %v", this)
+	}
 
 	if this.repository.connectionInterceptors == nil {
 		this.repository.connectionInterceptors = make(fsConnectionInterceptors)
@@ -67,15 +74,15 @@ func (this *fsConnectionInterceptorStack) create() (*fsConnectionInterceptor, er
 }
 
 func (this *fsConnectionInterceptorStack) close() error {
+	this.repository.mutex.Lock()
+	defer this.repository.mutex.Unlock()
+
 	if n := this.active.Add(-1); n < 0 {
 		panic("closed more where created")
 	} else if n > 0 {
 		// Still others open, let it open...
 		return nil
 	}
-
-	this.repository.mutex.Lock()
-	defer this.repository.mutex.Unlock()
 
 	if this.repository.connectionInterceptors == nil {
 		panic("this connectionInterceptors is nil, before this instance was closed")
