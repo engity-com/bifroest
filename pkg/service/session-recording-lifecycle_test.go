@@ -922,12 +922,12 @@ func TestExecuteSessionRecordingSealFailureAuditsSealFailure(t *testing.T) {
 
 func TestExecuteSessionRecordingIntervalCheckpointFailureAuditsCaptureFailure(t *testing.T) {
 	root := t.TempDir()
-	var repository *sessionRecordingRepository
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", &authorizedKeysTestEnvironment{run: func(task environment.Task) (int, error) {
+		coordinator := task.SshSession().(*recordedSession).sink.(*sessionRecordingCoordinator)
+		coordinator.mu.Lock()
+		coordinator.active.checkpoint = func() error { return bferrors.System.Newf("checkpoint failed") }
+		coordinator.mu.Unlock()
 		if _, err := task.SshSession().Write([]byte("dirty")); err != nil {
-			return -1, err
-		}
-		if err := repository.Close(); err != nil {
 			return -1, err
 		}
 		<-task.SshSession().Context().Done()
@@ -936,15 +936,21 @@ func TestExecuteSessionRecordingIntervalCheckpointFailureAuditsCaptureFailure(t 
 		enableSessionRecordingForLifecycleTest(conf, root)
 		conf.Auditlogs[0].Recording.FlushInterval = common.DurationOf(5 * time.Millisecond)
 	})
-	auditlog := server.service.flowAuditlogs[server.service.Configuration.Flows[0].Name]
-	repository = server.service.recordingRepositories[auditlog]
 	auditRecorder := &recordingAuditRecorder{}
 	flow := server.service.Configuration.Flows[0].Name
 	server.service.flowAuditRecorders[flow] = auditRecorder
 	client := server.mustDial(t)
 	sshSession, err := client.NewSession()
 	require.NoError(t, err)
-	require.Error(t, sshSession.Run("checkpoint-failure"))
+	runDone := make(chan error, 1)
+	go func() { runDone <- sshSession.Run("checkpoint-failure") }()
+	select {
+	case err := <-runDone:
+		require.Error(t, err)
+	case <-time.After(5 * time.Second):
+		_ = client.Close()
+		t.Fatal("SSH session remained open after the interval checkpoint failed")
+	}
 	failedEvents := requireAuditEventsNamedEventually(t, auditRecorder, audit.EventNameSessionRecordingFailed, 1)
 	require.Len(t, failedEvents, 1)
 	require.Equal(t, audit.EventReasonRecordingCapture, failedEvents[0].Reason)
