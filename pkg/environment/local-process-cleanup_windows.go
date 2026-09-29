@@ -59,15 +59,15 @@ func localWindowsKillProcess(pid, self uint32, targetSID string) error {
 		return nil // Exited after the snapshot.
 	}
 	if err != nil {
-		return err
+		return localWindowsUnverifiedProcessError(pid, targetSID, err, localWindowsForeignProcess)
 	}
 	defer func() { _ = windows.CloseHandle(process) }()
 	processSID, err := localWindowsProcessSID(process)
 	if err != nil {
-		if !errors.Is(err, windows.ERROR_ACCESS_DENIED) && localWindowsProcessExited(process) {
+		if localWindowsProcessExited(process) {
 			return nil
 		}
-		return err
+		return localWindowsUnverifiedProcessError(pid, targetSID, err, localWindowsForeignProcess)
 	}
 	if !localWindowsProcessMatches(pid, self, targetSID, processSID) {
 		return nil
@@ -96,6 +96,54 @@ func localWindowsKillProcess(pid, self uint32, targetSID string) error {
 		return err
 	}
 	return nil
+}
+
+func localWindowsUnverifiedProcessError(pid uint32, targetSID string, processErr error, foreignProcess func(uint32, string) (bool, error)) error {
+	if !errors.Is(processErr, windows.ERROR_ACCESS_DENIED) {
+		return processErr
+	}
+	foreign, err := foreignProcess(pid, targetSID)
+	if err != nil {
+		return errors.Join(processErr, err)
+	}
+	if foreign {
+		return nil
+	}
+	return processErr
+}
+
+type localWTSProcessInfo struct {
+	SessionID uint32
+	ProcessID uint32
+	Name      *uint16
+	UserSID   *windows.SID
+}
+
+func localWindowsForeignProcess(pid uint32, targetSID string) (bool, error) {
+	proc := windows.NewLazySystemDLL("wtsapi32.dll").NewProc("WTSEnumerateProcessesW")
+	if err := proc.Find(); err != nil {
+		return false, fmt.Errorf("enumerate Windows process identities: %w", err)
+	}
+	var records *localWTSProcessInfo
+	var count uint32
+	ok, _, callErr := proc.Call(0, 0, 1, uintptr(unsafe.Pointer(&records)), uintptr(unsafe.Pointer(&count)))
+	if ok == 0 {
+		return false, fmt.Errorf("enumerate Windows process identities: %w", localS4UCallError(callErr))
+	}
+	if records == nil {
+		return false, fmt.Errorf("Windows process identities returned no data")
+	}
+	defer windows.WTSFreeMemory(uintptr(unsafe.Pointer(records)))
+	for _, record := range unsafe.Slice(records, count) {
+		if record.ProcessID != pid {
+			continue
+		}
+		if record.UserSID == nil || !record.UserSID.IsValid() {
+			return false, fmt.Errorf("Windows process %d has no valid enumerated SID", pid)
+		}
+		return record.UserSID.String() != targetSID, nil
+	}
+	return false, fmt.Errorf("Windows process %d has no enumerated SID", pid)
 }
 
 func localWindowsProcessSID(process windows.Handle) (string, error) {
