@@ -130,6 +130,9 @@ func (this *LocalRepository) Ensure(req Request) (Environment, error) {
 		((candidate == nil && ensureOpts.createIfAbsent) || (candidate != nil && ensureOpts.updateIfDifferent)) {
 		return failf(errors.Config, "refusing to create or modify account with protected UID 0")
 	}
+	if candidate != nil && ensureOpts.updateIfDifferent && accountReq.Name == "" && accountReq.Uid != nil {
+		return failf(errors.Config, "cannot update existing local account by UID alone; configure its name explicitly")
+	}
 
 	var u *user.User
 	if !ensureOpts.canCreateOrUpdate() {

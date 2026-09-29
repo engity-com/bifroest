@@ -5,11 +5,13 @@ package environment
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
+	bferrors "github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/template"
 	"github.com/engity-com/bifroest/pkg/user"
@@ -100,6 +102,56 @@ func TestLocalUnixGetEnsureOptsOfManagedUserAndAuthorization(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, opts.createIfAbsent)
 			require.Equal(t, test.managed, opts.updateIfDifferent)
+		})
+	}
+}
+
+func TestLocalUnixUIDOnlyDoesNotUpdateExistingAccount(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		uid    user.Id
+		create bool
+		update bool
+	}{
+		{name: "lookup only", uid: 2_000_000_000},
+		{name: "update only", uid: 2_000_000_000, update: true},
+		{name: "create and update", uid: 2_000_000_000, create: true, update: true},
+		{name: "protected UID lookup", uid: 0, update: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := newSshTestContext()
+			defer cancel()
+			conf := &configuration.EnvironmentLocal{}
+			require.NoError(t, conf.SetDefaults())
+			uid := template.MustNewTextMarshaller[user.Id, *user.Id](fmt.Sprint(test.uid))
+			conf.User.Uid = &uid
+			conf.CreateIfAbsent = template.BoolOf(test.create)
+			conf.UpdateIfDifferent = template.BoolOf(test.update)
+			account := &user.User{
+				Name: "alice", Uid: test.uid, DisplayName: "Alice", Shell: "/bin/sh",
+				HomeDir: "/home/existing-alice", Group: user.Group{Name: "existing-team", Gid: 2001},
+			}
+			stored := &sshTestStoredSession{id: session.MustNewId()}
+			repository := &LocalRepository{conf: conf, userRepository: &localManagementTestUsers{account: account}}
+			request := &sshTestTask{context: ctx, authorization: &sshTestAuthorization{session: stored}}
+			resolved, err := repository.Ensure(request)
+			if test.update && test.uid != 0 {
+				require.ErrorContains(t, err, "cannot update existing local account by UID alone")
+				require.True(t, bferrors.Config.IsErr(err))
+				require.Nil(t, resolved)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, account, resolved.(*local).user)
+			}
+			encoded, err := stored.EnvironmentToken(ctx)
+			require.NoError(t, err)
+			if test.update && test.uid != 0 {
+				require.Empty(t, encoded)
+			} else {
+				require.NotEmpty(t, encoded)
+			}
+			require.Equal(t, "alice", account.Name)
+			require.Equal(t, "/home/existing-alice", account.HomeDir)
 		})
 	}
 }

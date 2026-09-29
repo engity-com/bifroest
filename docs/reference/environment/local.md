@@ -51,7 +51,7 @@ Create a missing account and enroll it in `managedGroup`. Its template has no `.
 <<property("updateIfDifferent", "bool", template_context="../context/local-environment.md", default=False, heading=4)>>
 Update or adopt an existing account and enroll it in `managedGroup`. The template sees the account **before** any changes.
 
-* Linux: ensure the configured account and group requirements.
+* Linux: ensure the configured account and group requirements. Updating an existing account by `uid` alone is rejected; set `name` explicitly when using `updateIfDifferent`. UID-only lookups without updates remain supported.
 * Windows: update `displayName` and add configured group memberships.
 * Both management options `false`: use existing accounts without checking other requirements. On Linux, `createIfAbsent: true` still checks existing accounts without modifying them.
 
