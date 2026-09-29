@@ -201,3 +201,144 @@ func TestLocalUnixNonPtyWaitDoesNotHangOnInheritedOutput(t *testing.T) {
 		t.Fatal("non-PTY process wait remained blocked by child output pipes")
 	}
 }
+
+type localBlockedOutputSession struct {
+	*sshTestSession
+	started chan struct{}
+	release chan struct{}
+}
+
+func (this *localBlockedOutputSession) Write(data []byte) (int, error) {
+	select {
+	case this.started <- struct{}{}:
+	default:
+	}
+	<-this.release
+	return this.sshTestSession.Write(data)
+}
+
+func TestLocalUnixNonPtyWaitDoesNotHangOnBlockedOutput(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("starting a process with Unix credentials requires root")
+	}
+	ctx, cancel := newSshTestContext()
+	defer cancel()
+	sshSession := &localBlockedOutputSession{
+		sshTestSession: newSshTestSession(ctx, "printf output", nil),
+		started:        make(chan struct{}, 1),
+		release:        make(chan struct{}),
+	}
+	t.Cleanup(func() { close(sshSession.release) })
+	stored := &sshTestStoredSession{id: session.MustNewId()}
+	task := &sshTestTask{
+		context:       ctx,
+		connection:    &sshTestConnection{id: connection.MustNewId(), context: ctx},
+		authorization: &sshTestAuthorization{session: stored},
+		session:       sshSession,
+		taskType:      TaskTypeShell,
+	}
+	env := &local{
+		repository: &LocalRepository{conf: &configuration.EnvironmentLocal{}},
+		user: &user.User{
+			Name: "test", Uid: user.Id(os.Getuid()), Group: user.Group{Gid: user.GroupId(os.Getgid())},
+			HomeDir: t.TempDir(), Shell: "/bin/sh",
+		},
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, err := env.Run(task)
+		result <- err
+	}()
+	select {
+	case <-sshSession.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("process did not write to SSH output")
+	}
+	select {
+	case err := <-result:
+		require.ErrorContains(t, err, "process output")
+	case <-time.After(8 * time.Second):
+		cancel()
+		t.Fatal("non-PTY process wait remained blocked inside SSH output writer")
+	}
+}
+
+func TestLocalUnixNonPtyForwardsAllOutput(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("starting a process with Unix credentials requires root")
+	}
+	ctx, cancel := newSshTestContext()
+	defer cancel()
+	stored := &sshTestStoredSession{id: session.MustNewId()}
+	sshSession := newSshTestSession(ctx, "printf stdout; printf stderr >&2", nil)
+	task := &sshTestTask{
+		context:       ctx,
+		connection:    &sshTestConnection{id: connection.MustNewId(), context: ctx},
+		authorization: &sshTestAuthorization{session: stored},
+		session:       sshSession,
+		taskType:      TaskTypeShell,
+	}
+	env := &local{
+		repository: &LocalRepository{conf: &configuration.EnvironmentLocal{}},
+		user: &user.User{
+			Name: "test", Uid: user.Id(os.Getuid()), Group: user.Group{Gid: user.GroupId(os.Getgid())},
+			HomeDir: t.TempDir(), Shell: "/bin/sh",
+		},
+	}
+	exitCode, err := env.Run(task)
+	require.NoError(t, err)
+	require.Zero(t, exitCode)
+	require.Equal(t, "stdout", sshSession.stdout.String())
+	require.Equal(t, "stderr", sshSession.stderr.String())
+}
+
+func TestLocalUnixNonPtyBlockedOutputDoesNotHoldCancellation(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("starting a process with Unix credentials requires root")
+	}
+	ctx, cancel := newSshTestContext()
+	defer cancel()
+	sshSession := &localBlockedOutputSession{
+		sshTestSession: newSshTestSession(ctx, "printf output; exec sleep 30", nil),
+		started:        make(chan struct{}, 1),
+		release:        make(chan struct{}),
+	}
+	t.Cleanup(func() { close(sshSession.release) })
+	stored := &sshTestStoredSession{id: session.MustNewId()}
+	task := &sshTestTask{
+		context:       ctx,
+		connection:    &sshTestConnection{id: connection.MustNewId(), context: ctx},
+		authorization: &sshTestAuthorization{session: stored},
+		session:       sshSession,
+		taskType:      TaskTypeShell,
+	}
+	env := &local{
+		repository: &LocalRepository{conf: &configuration.EnvironmentLocal{}},
+		user: &user.User{
+			Name: "test", Uid: user.Id(os.Getuid()), Group: user.Group{Gid: user.GroupId(os.Getgid())},
+			HomeDir: t.TempDir(), Shell: "/bin/sh",
+		},
+	}
+	type outcome struct {
+		exitCode int
+		err      error
+	}
+	result := make(chan outcome, 1)
+	go func() {
+		exitCode, err := env.Run(task)
+		result <- outcome{exitCode, err}
+	}()
+	select {
+	case <-sshSession.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("process did not write to SSH output")
+	}
+	cancel()
+	select {
+	case actual := <-result:
+		require.Equal(t, -2, actual.exitCode)
+		require.NoError(t, actual.err)
+	case <-time.After(8 * time.Second):
+		t.Fatal("canceled non-PTY process remained blocked inside SSH output writer")
+	}
+}

@@ -2,6 +2,7 @@ package environment
 
 import (
 	"context"
+	"fmt"
 	"io"
 	gonet "net"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -94,14 +96,12 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		return this.runConPTY(t, cmd)
 	}
 
-	cmd.Stdout = sshSess
+	var stderr io.Writer = sshSess.Stderr()
 	if t.TaskType() == TaskTypeSftp {
-		cmd.Stderr = &log.LoggingWriter{
+		stderr = &log.LoggingWriter{
 			Logger:         l,
 			LevelExtractor: level.FixedLevelExtractor(level.Error),
 		}
-	} else {
-		cmd.Stderr = sshSess.Stderr()
 	}
 
 	var fPty, fTty *os.File
@@ -155,9 +155,22 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	}
 	cmd.Env = ev.Strings()
 	var stdin io.WriteCloser
+	var stdoutRead, stderrRead *os.File
+	var stdoutWrite, stderrWrite *os.File
 	if fPty == nil {
-		// A detached child may inherit stdout/stderr after the shell exits.
-		cmd.WaitDelay = 2 * time.Second
+		stdoutRead, stdoutWrite, err = os.Pipe()
+		if err != nil {
+			return failf("cannot open process stdout: %w", err)
+		}
+		defer stdoutRead.Close()
+		defer stdoutWrite.Close()
+		stderrRead, stderrWrite, err = os.Pipe()
+		if err != nil {
+			return failf("cannot open process stderr: %w", err)
+		}
+		defer stderrRead.Close()
+		defer stderrWrite.Close()
+		cmd.Stdout, cmd.Stderr = stdoutWrite, stderrWrite
 		stdin, err = cmd.StdinPipe()
 		if err != nil {
 			return failf("cannot open process stdin: %w", err)
@@ -169,6 +182,21 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 			_ = stdin.Close()
 		}
 		return failf("cannot start process %v: %w", cmd.Args, err)
+	}
+	var outputDone chan error
+	var outputWriting atomic.Int32
+	if stdoutRead != nil {
+		_ = stdoutWrite.Close()
+		_ = stderrWrite.Close()
+		outputDone = make(chan error, 2)
+		go func() {
+			_, err := io.Copy(localOutputWriter{Writer: sshSess, writing: &outputWriting}, stdoutRead)
+			outputDone <- err
+		}()
+		go func() {
+			_, err := io.Copy(localOutputWriter{Writer: stderr, writing: &outputWriting}, stderrRead)
+			outputDone <- err
+		}()
 	}
 	if stdin != nil {
 		go func() {
@@ -217,12 +245,35 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	go func() {
 		defer activeRoutines.Done()
 		defer close(waitFinished)
-		if err := cmd.Wait(); err != nil {
+		waitErr := cmd.Wait()
+		var outputErr error
+		if outputDone != nil {
+			timer := time.NewTimer(2 * time.Second)
+			defer timer.Stop()
+		drainOutput:
+			for remaining := 2; remaining > 0; remaining-- {
+				select {
+				case err := <-outputDone:
+					if this.isRelevantError(err) && outputErr == nil {
+						outputErr = fmt.Errorf("forward local process output: %w", err)
+					}
+				case <-timer.C:
+					_ = stdoutRead.Close()
+					_ = stderrRead.Close()
+					if outputWriting.Load() > 0 {
+						outputErr = errors.System.Newf("local process output did not complete before timeout")
+					} else {
+						l.Warn("stopped waiting for output pipes after the process exited")
+					}
+					break drainOutput
+				}
+			}
+		}
+		if outputErr != nil {
+			processDone <- doneT{-1, outputErr}
+		} else if err := waitErr; err != nil {
 			var exit *exec.ExitError
-			if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
-				l.WithError(err).Warn("stopped waiting for output pipes after the process exited")
-				processDone <- doneT{0, nil}
-			} else if errors.As(err, &exit) {
+			if errors.As(err, &exit) {
 				processDone <- doneT{exit.ExitCode(), nil}
 			} else {
 				processDone <- doneT{-1, err}
@@ -264,6 +315,17 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 			}
 		}
 	}
+}
+
+type localOutputWriter struct {
+	io.Writer
+	writing *atomic.Int32
+}
+
+func (this localOutputWriter) Write(data []byte) (int, error) {
+	this.writing.Add(1)
+	defer this.writing.Add(-1)
+	return this.Writer.Write(data)
 }
 
 func (this *local) Dispose(ctx context.Context) (_ bool, rErr error) {
