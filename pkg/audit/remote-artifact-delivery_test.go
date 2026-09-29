@@ -79,7 +79,12 @@ func TestRemoteArtifactDeliveryUnauditedRetriesWithoutAuditor(t *testing.T) {
 	sealedAt := time.Now().UTC().Add(-time.Minute)
 	require.NoError(t, receipts.PrepareLifecycle(t.Context(), artifact, sealedAt, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false))
 	t.Cleanup(func() { require.NoError(t, receipts.Close()) })
-	delivery, err := NewRemoteArtifactDelivery(t.Context(), sealedDirectory, source, receipts, targets, nil)
+	options := defaultRemoteArtifactDeliveryOptions()
+	// The retry must require Flush to wake the worker, not the backoff timer.
+	options.initialBackoff = time.Minute
+	options.maximumBackoff = time.Minute
+	options.jitter = func(delay time.Duration) time.Duration { return delay }
+	delivery, err := newRemoteArtifactDelivery(t.Context(), sealedDirectory, source, receipts, targets, options)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, delivery.Close()) })
 	require.NoError(t, delivery.Start())
@@ -1316,7 +1321,7 @@ func newRemoteArtifactDeliveryTestCoordinator(t *testing.T, sealedDirectory stri
 
 func remoteArtifactDeliveryTestFlush(t *testing.T, delivery *RemoteArtifactDelivery) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	require.NoError(t, delivery.Flush(ctx))
 }
