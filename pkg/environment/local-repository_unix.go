@@ -24,8 +24,9 @@ var (
 )
 
 type LocalRepository struct {
-	flow configuration.FlowName
-	conf *configuration.EnvironmentLocal
+	flow        configuration.FlowName
+	conf        *configuration.EnvironmentLocal
+	coordinator *localAccountCoordinator
 
 	Logger log.Logger
 
@@ -52,6 +53,7 @@ func NewLocalRepository(ctx context.Context, flow configuration.FlowName, conf *
 	result := LocalRepository{
 		flow:           flow,
 		conf:           conf,
+		coordinator:    repositoryDependenciesFrom(ctx).localAccounts,
 		userRepository: userRepository,
 	}
 
@@ -63,6 +65,10 @@ func (this *LocalRepository) DoesSupportPty(Context, essh.Pty) (bool, error) {
 }
 
 func (this *LocalRepository) Ensure(req Request) (Environment, error) {
+	if this.coordinator != nil {
+		this.coordinator.mu.Lock()
+		defer this.coordinator.mu.Unlock()
+	}
 	fail := func(err error) (Environment, error) {
 		return nil, err
 	}
@@ -83,38 +89,66 @@ func (this *LocalRepository) Ensure(req Request) (Environment, error) {
 
 	if existing, err := this.FindBySession(req.Context(), sess, nil); err != nil {
 		if !errors.Is(err, ErrNoSuchEnvironment) {
-			req.Connection().Logger().
-				WithError(err).
-				Warn("cannot restore environment from existing session; will create a new one")
+			return fail(err)
 		}
 	} else {
 		return existing, nil
 	}
 
-	ensureOpts, err := this.getEnsureOptsOf(req)
+	accountReq, err := this.conf.User.Render(nil, req)
 	if err != nil {
 		return fail(err)
 	}
+	var candidate *user.User
+	if accountReq.Name != "" {
+		candidate, err = this.userRepository.LookupByName(req.Context(), accountReq.Name)
+	} else if accountReq.Uid != nil {
+		candidate, err = this.userRepository.LookupById(req.Context(), *accountReq.Uid)
+	}
+	if errors.Is(err, user.ErrNoSuchUser) {
+		candidate, err = nil, nil
+	}
+	if err != nil {
+		return fail(err)
+	}
+	managed, err := this.isManagedUser(req.Context(), candidate)
+	if err != nil {
+		return fail(err)
+	}
+	manageSystemUsers, err := this.conf.ManageSystemUsers.Render(req)
+	if err != nil {
+		return fail(err)
+	}
+	ensureOpts, err := this.getEnsureOptsOf(req, candidate, managed)
+	if err != nil {
+		return fail(err)
+	}
+	if candidate != nil && candidate.Uid == 0 && !manageSystemUsers {
+		ensureOpts.updateIfDifferent = false
+	}
+	if accountReq.Uid != nil && *accountReq.Uid == 0 && !manageSystemUsers &&
+		((candidate == nil && ensureOpts.createIfAbsent) || (candidate != nil && ensureOpts.updateIfDifferent)) {
+		return failf(errors.Config, "refusing to create or modify account with protected UID 0")
+	}
+	if candidate != nil && ensureOpts.updateIfDifferent && accountReq.Name == "" && accountReq.Uid != nil {
+		return failf(errors.Config, "cannot update existing local account by UID alone; configure its name explicitly")
+	}
 
 	var u *user.User
-	var userIsManaged bool
 	if !ensureOpts.canCreateOrUpdate() {
 		if u, err = this.lookupUserBy(req); err != nil {
 			return fail(err)
 		}
-		userIsManaged = false
 	} else {
-		if u, _, err = this.ensureUserByTask(req, &ensureOpts); err != nil {
+		if u, _, err = this.ensureUserByTask(req, accountReq, candidate, &ensureOpts, manageSystemUsers); err != nil {
 			return fail(err)
 		}
-		userIsManaged = true
 	}
-
-	lt, err := this.newLocalToken(u, req, userIsManaged)
+	managed, err = this.isManagedUser(req.Context(), u)
 	if err != nil {
 		return fail(err)
 	}
-	portForwardingAllowed, err := this.conf.PortForwardingAllowed.Render(req)
+	lt, err := this.newLocalToken(u, req, managed, manageSystemUsers)
 	if err != nil {
 		return fail(err)
 	}
@@ -124,7 +158,7 @@ func (this *LocalRepository) Ensure(req Request) (Environment, error) {
 		return failf(errors.System, "cannot store environment token at session: %w", err)
 	}
 
-	return this.new(u, sess, portForwardingAllowed, lt), nil
+	return this.new(u, sess, lt.PortForwardingAllowed, lt), nil
 }
 
 func (this *LocalRepository) FindBySession(ctx context.Context, sess session.Session, opts *FindOpts) (Environment, error) {
@@ -134,9 +168,16 @@ func (this *LocalRepository) FindBySession(ctx context.Context, sess session.Ses
 	failf := func(t errors.Type, msg string, args ...any) (Environment, error) {
 		return fail(errors.Newf(t, msg, args...))
 	}
+	var lt localToken
 	userNotFound := func(userRef any) (Environment, error) {
 		if !opts.IsAutoCleanUpAllowed() {
 			return failf(errors.Expired, "user %q of session cannot longer be found; treat as expired", userRef)
+		}
+		if lt.Version == 2 && lt.User.Name != "" && lt.User.Uid != nil &&
+			lt.User.KillProcessesOnDispose && !lt.User.ProcessesKilledOnDispose {
+			pending := this.new(&user.User{Name: lt.User.Name, Uid: *lt.User.Uid}, sess, lt.PortForwardingAllowed, &lt)
+			pending.accountMissing = true
+			return pending, nil
 		}
 		// Clear the stored token.
 		if err := sess.SetEnvironmentToken(ctx, nil); err != nil {
@@ -156,9 +197,13 @@ func (this *LocalRepository) FindBySession(ctx context.Context, sess session.Ses
 	if len(ltb) == 0 {
 		return fail(ErrNoSuchEnvironment)
 	}
-	var lt localToken
 	if err := json.Unmarshal(ltb, &lt); err != nil {
 		return failf(errors.System, "cannot decode environment token: %w", err)
+	}
+	if lt.Version != 2 {
+		lt.User.DeleteOnDispose = false
+		lt.User.DeleteHomeTogetherWithUser = false
+		lt.User.KillProcessesOnDispose = false
 	}
 
 	var u *user.User
@@ -177,6 +222,9 @@ func (this *LocalRepository) FindBySession(ctx context.Context, sess session.Ses
 	} else {
 		return failf(errors.System, "environment token does not contain valid user information: %w", err)
 	}
+	if lt.User.Uid != nil && u.Uid != *lt.User.Uid {
+		return userNotFound(lt.User.Name)
+	}
 
 	return this.new(u, sess, lt.PortForwardingAllowed, &lt), nil
 }
@@ -190,7 +238,7 @@ func (this localEnsureOpts) canCreateOrUpdate() bool {
 	return this.createIfAbsent || this.updateIfDifferent
 }
 
-func (this *LocalRepository) getEnsureOptsOf(r Request) (result localEnsureOpts, err error) {
+func (this *LocalRepository) getEnsureOptsOf(r Request, candidate *user.User, managed bool) (result localEnsureOpts, err error) {
 	fail := func(err error) (localEnsureOpts, error) {
 		return localEnsureOpts{}, err
 	}
@@ -202,8 +250,10 @@ func (this *LocalRepository) getEnsureOptsOf(r Request) (result localEnsureOpts,
 		return failf("cannot render createIfAbsent: %w", err)
 	}
 
-	if result.updateIfDifferent, err = this.conf.UpdateIfDifferent.Render(r); err != nil {
-		return failf("cannot render updateIfDifferent: %w", err)
+	if candidate != nil {
+		if result.updateIfDifferent, err = this.conf.UpdateIfDifferent.Render(localTemplateContext{Request: r, user: candidate, managed: managed}); err != nil {
+			return failf("cannot render updateIfDifferent: %w", err)
+		}
 	}
 
 	return result, nil
@@ -232,20 +282,59 @@ func (this *LocalRepository) lookupUserBy(req Request) (u *user.User, err error)
 	return u, nil
 }
 
-func (this *LocalRepository) ensureUserByTask(r Request, opts *localEnsureOpts) (*user.User, user.EnsureResult, error) {
-	fail := func(err error) (*user.User, user.EnsureResult, error) {
-		return nil, 0, err
-	}
-	failf := func(msg string, args ...any) (*user.User, user.EnsureResult, error) {
-		return fail(fmt.Errorf(msg, args...))
-	}
-
-	req, err := this.conf.User.Render(nil, r)
-	if err != nil {
-		return failf("cannot render user requirement: %w", err)
+func (this *LocalRepository) ensureUserByTask(r Request, req *user.Requirement, candidate *user.User, opts *localEnsureOpts, allowSystemUsers bool) (*user.User, user.EnsureResult, error) {
+	if (candidate == nil && opts.createIfAbsent) || (candidate != nil && opts.updateIfDifferent) {
+		if !allowSystemUsers {
+			group, err := this.userRepository.LookupGroupByName(r.Context(), this.conf.ManagedGroup)
+			if err == nil && group.Gid == 0 {
+				return nil, user.EnsureResultError, fmt.Errorf("refusing to manage privileged group %q", this.conf.ManagedGroup)
+			}
+			if err != nil && !errors.Is(err, user.ErrNoSuchGroup) {
+				return nil, user.EnsureResultError, err
+			}
+		}
+		createGroup := true
+		modifyGroup := false
+		if _, _, err := this.userRepository.EnsureGroup(r.Context(), &user.GroupRequirement{Name: this.conf.ManagedGroup}, &user.EnsureOpts{
+			CreateAllowed: &createGroup,
+			ModifyAllowed: &modifyGroup,
+		}); err != nil {
+			return nil, user.EnsureResultError, fmt.Errorf("cannot ensure managed group: %w", err)
+		}
+		// Keep the ordinary group requirements intact, including their defaults.
+		groups := req.OrDefaults().Groups
+		for _, group := range groups {
+			if group.Name == this.conf.ManagedGroup {
+				req.Groups = groups
+				return this.ensureUser(r.Context(), req, opts)
+			}
+		}
+		req.Groups = append(groups, user.GroupRequirement{Name: this.conf.ManagedGroup})
 	}
 
 	return this.ensureUser(r.Context(), req, opts)
+}
+
+func (this *LocalRepository) isManagedUser(ctx context.Context, u *user.User) (bool, error) {
+	if u == nil {
+		return false, nil
+	}
+	group, err := this.userRepository.LookupGroupByName(ctx, this.conf.ManagedGroup)
+	if errors.Is(err, user.ErrNoSuchGroup) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if u.Group.Gid == group.Gid {
+		return true, nil
+	}
+	for _, candidate := range u.Groups {
+		if candidate.Gid == group.Gid {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (this *LocalRepository) lookupByUid(r Request, tmpl template.TextMarshaller[user.Id, *user.Id]) (*user.User, error) {

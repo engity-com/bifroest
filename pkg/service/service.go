@@ -298,7 +298,7 @@ func (this *Service) prepare() (svc *service, err error) {
 	if svc.authorizer, err = authorization.NewAuthorizerFacadeWithObserver(ctx, &this.Configuration.Flows, svc.observeFlowAuthorization); err != nil {
 		return fail(err)
 	}
-	if svc.environments, err = environment.NewRepositoryFacadeWithHostKeys(ctx, &this.Configuration.Flows, svc.alternatives, svc.imp, hostSigners); err != nil {
+	if svc.environments, err = environment.NewRepositoryFacadeWithHostKeys(ctx, &this.Configuration.Flows, svc.alternatives, svc.imp, hostSigners, svc.sessions); err != nil {
 		return fail(err)
 	}
 	if err = svc.houseKeeper.init(svc); err != nil {

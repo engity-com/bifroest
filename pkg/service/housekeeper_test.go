@@ -280,10 +280,36 @@ func TestHouseKeeperContinuesAfterCorruptSessionDiagnostic(t *testing.T) {
 
 	require.NoError(t, hk.run(hk.logger(), context.Background()))
 	require.Equal(t, 1, valid.disposeCalls)
+	require.Equal(t, 1, hk.service.environments.(*houseKeeperTestEnvironmentRepository).disposeSessionCalls)
 	require.Equal(t, 1, environments.cleanupCalls)
 	require.NotNil(t, repository.findAllOpts.DiagnosticConsumer)
 	require.NotNil(t, repository.findAllOpts.AutoCleanUpAllowed)
 	require.False(t, *repository.findAllOpts.AutoCleanUpAllowed)
+}
+
+func TestHouseKeeperPreservesSessionAfterEnvironmentTypeChange(t *testing.T) {
+	repository := &houseKeeperTestSessionRepository{}
+	sess := &houseKeeperTestSession{
+		flow:             "current",
+		id:               session.MustNewId(),
+		validUntil:       time.Now().Add(-2 * time.Hour),
+		environmentToken: []byte(`{"version":2,"user":{"name":"alice","uid":1001},"killProcessesOnDispose":true}`),
+	}
+	hk := newHouseKeeperForTest(repository, &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization})
+	hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
+	environments := hk.service.environments.(*houseKeeperTestEnvironmentRepository)
+	environments.checkToken = true
+	environments.tokenMatches = false
+
+	for range 2 {
+		_, err := hk.inspectSession(context.Background(), sess)
+		require.NoError(t, err)
+	}
+	require.Equal(t, 2, environments.tokenChecks)
+	require.Zero(t, sess.disposeCalls)
+	require.Zero(t, environments.findCalls)
+	require.Zero(t, repository.deleteCalls)
+	require.Equal(t, []byte(`{"version":2,"user":{"name":"alice","uid":1001},"killProcessesOnDispose":true}`), sess.environmentToken)
 }
 
 func TestHouseKeeperRunsRecordingRetentionAfterSessionInspectionFailure(t *testing.T) {
@@ -658,11 +684,28 @@ func (this *houseKeeperTestAuthorizer) RestoreFromSession(_ context.Context, _ s
 
 type houseKeeperTestEnvironmentRepository struct {
 	environment.CloseableRepository
-	findCalls         int
-	cleanupCalls      int
-	cleanupErr        error
-	cleanupCheckFlow  configuration.FlowName
-	cleanupFlowExists bool
+	findCalls           int
+	disposeSessionCalls int
+	tokenChecks         int
+	tokenMatches        bool
+	checkToken          bool
+	cleanupCalls        int
+	cleanupErr          error
+	cleanupCheckFlow    configuration.FlowName
+	cleanupFlowExists   bool
+}
+
+func (this *houseKeeperTestEnvironmentRepository) SessionEnvironmentMatches(context.Context, session.Session) (bool, error) {
+	this.tokenChecks++
+	if this.checkToken {
+		return this.tokenMatches, nil
+	}
+	return true, nil
+}
+
+func (this *houseKeeperTestEnvironmentRepository) DisposeSession(ctx context.Context, sess session.Session) (bool, error) {
+	this.disposeSessionCalls++
+	return sess.Dispose(ctx)
 }
 
 func (this *houseKeeperTestEnvironmentRepository) FindBySession(context.Context, session.Session, *environment.FindOpts) (environment.Environment, error) {

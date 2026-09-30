@@ -104,6 +104,9 @@ The permissions to access a file in octal notation. See [Oracles documentation](
 ## File Path
 A location of a file on the local file system. Like `/foo/bar`
 
+## GID {: #gid }
+The identifier of a local group: a `uint32` on Linux, or a textual local SAM group [SID](https://en.wikipedia.org/wiki/Security_Identifier) on Windows (not an Active Directory object GUID).
+
 ## Host
 Represents a host(-name), which can be either an [IPv4](https://en.wikipedia.org/wiki/IPv4), [IPv6](https://en.wikipedia.org/wiki/IPv6) or [DNS name](https://en.wikipedia.org/wiki/Domain_Name_System).
 
@@ -222,6 +225,9 @@ Can be one of:
 The public variant of an [SSH keypair](https://wiki.archlinux.org/title/SSH_keys) of a user.
 
 Please refer to the [good documentation at GitHub how to create SSH (public) keys](https://docs.github.com/de/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent).
+
+## UID {: #uid }
+The identifier of a local user: a `uint32` on Linux, or a textual local SAM user [SID](https://en.wikipedia.org/wiki/Security_Identifier on Windows (not an Active Directory object GUID).
 
 ## URL
 Represents a classical [URL](https://en.wikipedia.org/wiki/URL) to reference resources (for example) in the internet, like [https://bifroest.engity.org](https://bifroest.engity.org).

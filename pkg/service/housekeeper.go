@@ -305,6 +305,18 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 		}
 		return true, nil
 	}
+	if verifier, ok := this.service.environments.(interface {
+		SessionEnvironmentMatches(context.Context, session.Session) (bool, error)
+	}); ok {
+		matches, err := verifier.SessionEnvironmentMatches(ctx, sess)
+		if err != nil {
+			return reportAndContinue(err)
+		}
+		if !matches {
+			logger.Warn("session environment token does not match the configured environment; preserving session for operator inspection")
+			return true, nil
+		}
+	}
 
 	if shouldBeDeleted, err := session.IsExpiredWithThreshold(this.service.Configuration.HouseKeeping.KeepExpiredFor.Native())(ctx, sess); err != nil {
 		return reportAndContinue(err)
@@ -314,6 +326,14 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 		})
 		if err := goerrors.Join(disposeErr, disposeAuditErr); err != nil {
 			return reportAndContinue(err)
+		}
+		pending, err := sess.EnvironmentToken(ctx)
+		if err != nil {
+			return reportAndContinue(err)
+		}
+		if len(pending) != 0 {
+			logger.Debug("preserving session with pending environment cleanup")
+			return true, nil
 		}
 		_, deleteErr, deleteAuditErr := this.auditSessionAction(ctx, sess, audit.EventNameHousekeepingSessionDeleteStarted, audit.EventNameHousekeepingSessionDeleteCompleted, audit.EventReasonRetentionElapsed, func() (bool, error) {
 			return true, this.service.sessions.Delete(ctx, sess)
@@ -424,7 +444,15 @@ func (this *houseKeeper) dispose(ctx context.Context, logger log.Logger, sess se
 		return false, errors.Newf(errors.System, "cannot dispose session %v: %w", sess, err)
 	}
 
-	sessionDisposed, err := sess.Dispose(ctx)
+	var sessionDisposed bool
+	var err error
+	if coordinator, ok := this.service.environments.(interface {
+		DisposeSession(context.Context, session.Session) (bool, error)
+	}); ok {
+		sessionDisposed, err = coordinator.DisposeSession(ctx, sess)
+	} else {
+		sessionDisposed, err = sess.Dispose(ctx)
+	}
 	if err != nil {
 		return fail(err)
 	}

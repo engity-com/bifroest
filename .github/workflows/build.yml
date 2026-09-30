@@ -157,20 +157,6 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.ref }}
 
-      - name: Set reproducible build time
-        if: matrix.os == 'linux'
-        run: |
-          epoch="$(git show -s --format=%ct HEAD)"
-          echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"
-
-      - name: Set reproducible build time on Windows
-        if: matrix.os == 'windows'
-        shell: pwsh
-        run: |
-          $epoch = git show -s --format=%ct HEAD
-          if ($LASTEXITCODE -ne 0) { throw 'Cannot determine build time' }
-          "SOURCE_DATE_EPOCH=$epoch" >> $env:GITHUB_ENV
-
       - name: Cache Go
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
@@ -184,6 +170,9 @@ jobs:
 
       - name: Install dependencies
         run: mise run install:go
+
+      - name: Set reproducible build time
+        run: mise run ci:write-build-epoch
 
       - name: Build binary
         run: mise run build:go:binary -- --os=${{ matrix.os }} --arch=${{ matrix.arch }} --edition=${{ matrix.edition }}
@@ -218,11 +207,6 @@ jobs:
       - name: Git configure
         run: git config --global --add safe.directory "$(pwd)"
 
-      - name: Set reproducible build time
-        run: |
-          epoch="$(git show -s --format=%ct HEAD)"
-          echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"
-
       - name: Cache Go
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
@@ -236,6 +220,9 @@ jobs:
 
       - name: Install dependencies
         run: mise run install:go
+
+      - name: Set reproducible build time
+        run: mise run ci:write-build-epoch
 
       - name: Build binary
         run: mise run build:go:binary -- --os=${{ matrix.os }} --arch=${{ matrix.arch }} --edition=${{ matrix.edition }}
@@ -270,11 +257,6 @@ jobs:
       - name: Git configure
         run: git config --global --add safe.directory "$(pwd)"
 
-      - name: Set reproducible build time
-        run: |
-          epoch="$(git show -s --format=%ct HEAD)"
-          echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"
-
       - name: Cache Go
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
@@ -306,6 +288,9 @@ jobs:
 
       - name: Install dependencies
         run: mise run install:go
+
+      - name: Set reproducible build time
+        run: mise run ci:write-build-epoch
 
       - name: Package
         run: mise run build:go:package

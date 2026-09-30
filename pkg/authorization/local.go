@@ -59,11 +59,34 @@ func (this *local) GetField(name string, ce ContextEnabled) (any, bool, error) {
 	return getField(name, ce, this, func() (any, bool, error) {
 		switch name {
 		case "user":
+			if resolver, ok := ce.(interface {
+				ResolveLocalUserManaged(configuration.FlowName, *user.User) (bool, bool, error)
+			}); ok {
+				managed, available, err := resolver.ResolveLocalUserManaged(this.flow, this.user)
+				if err != nil {
+					return nil, false, err
+				}
+				if available {
+					return localUserWithManagement{this.user, managed}, true, nil
+				}
+			}
 			return this.user, true, nil
 		default:
 			return nil, false, fmt.Errorf("unknown field %q", name)
 		}
 	})
+}
+
+type localUserWithManagement struct {
+	*user.User
+	managed bool
+}
+
+func (this localUserWithManagement) GetField(name string) (any, bool, error) {
+	if name == "managed" {
+		return this.managed, true, nil
+	}
+	return this.User.GetField(name)
 }
 
 func (this *local) Dispose(ctx context.Context) (bool, error) {

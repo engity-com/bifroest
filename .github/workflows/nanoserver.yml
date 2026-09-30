@@ -1,0 +1,78 @@
+name: Nano Server Integration
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+    paths:
+      - .github/workflows/nanoserver.yml
+      - .github/workflows/build.yml
+      - cmd/bifroest/**
+      - cmd/build/**
+      - docs/reference/environment/local.md
+      - go.mod
+      - go.sum
+      - internal/build/**
+      - mise.toml
+      - pkg/configuration/**
+      - pkg/environment/**
+      - pkg/net/**
+      - pkg/service/**
+      - pkg/session/**
+      - pkg/user/**
+      - test/manual/s4u-probe/**
+      - test/nanoserver/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-local:
+    name: Windows local in Nano Server and Server Core
+    runs-on: windows-2022
+    timeout-minutes: 25
+    env:
+      BIFROEST_TEST_NANOSERVER: "1"
+      BIFROEST_TEST_NANOSERVER_ISOLATION: process
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install MISE
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+
+      - name: Install dependencies
+        run: mise run install:go
+
+      - name: Set reproducible build time
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MISE_GITHUB_TOKEN: ""
+        run: mise run ci:write-build-epoch
+
+      - name: Build native Windows binary
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BIFROEST_VENDOR: Engity GmbH
+          MISE_GITHUB_TOKEN: ""
+        run: mise run build:go:binary -- --os=windows --arch=amd64 --edition=generic
+
+      - name: Start Windows Docker daemon
+        shell: pwsh
+        run: |
+          $service = Get-Service docker -ErrorAction SilentlyContinue
+          if ($service -and $service.Status -ne 'Running') {
+            Start-Service docker
+          }
+
+      - name: Test pinned Windows container images
+        env:
+          GITHUB_TOKEN: ""
+          MISE_GITHUB_TOKEN: ""
+        run: mise run test:e2e:nanoserver

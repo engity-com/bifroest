@@ -47,7 +47,8 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
     clientId: anId
     clientSecret: aSecret
   environment:
-    type: local`,
+    type: local
+    name: foosel`,
 			expected: Configuration{
 				Auditlogs: Auditlogs{{
 					Name:             DefaultAuditlogName,
@@ -126,12 +127,25 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 						RetrieveUserInfo: DefaultAuthorizationOidcRetrieveUserInfo,
 					}},
 					Environment: Environment{V: &EnvironmentLocal{
-						LoginAllowed:          DefaultEnvironmentLocalLoginAllowed,
-						Banner:                DefaultEnvironmentLocalBanner,
-						ShellCommand:          DefaultEnvironmentLocalShellCommand,
-						ExecCommandPrefix:     DefaultEnvironmentLocalExecCommandPrefix,
-						Directory:             DefaultEnvironmentLocalDirectory,
-						PortForwardingAllowed: DefaultEnvironmentLocalPortForwardingAllowed,
+						WindowsUserRequirementTemplate: WindowsUserRequirementTemplate{
+							Name:        template.MustNewString("foosel"),
+							DisplayName: DefaultEnvironmentLocalDisplayName,
+						},
+						EnvironmentLocalCommon: EnvironmentLocalCommon{
+							LoginAllowed:               DefaultEnvironmentLocalLoginAllowed,
+							CreateIfAbsent:             DefaultEnvironmentLocalCreateIfAbsent,
+							UpdateIfDifferent:          DefaultEnvironmentLocalUpdateIfDifferent,
+							ManagedGroup:               DefaultEnvironmentLocalManagedGroup,
+							ManageSystemUsers:          DefaultEnvironmentLocalManageSystemUsers,
+							DeleteOnDispose:            DefaultEnvironmentLocalDeleteOnDispose,
+							DeleteHomeTogetherWithUser: DefaultEnvironmentLocalDeleteHomeTogetherWithUser,
+							KillProcessesOnDispose:     DefaultEnvironmentLocalKillProcessesOnDispose,
+							Banner:                     DefaultEnvironmentLocalBanner,
+							PortForwardingAllowed:      DefaultEnvironmentLocalPortForwardingAllowed,
+							ShellCommand:               DefaultEnvironmentLocalShellCommand,
+							ExecCommandPrefix:          DefaultEnvironmentLocalExecCommandPrefix,
+							Directory:                  DefaultEnvironmentLocalDirectory,
+						},
 					}},
 				}},
 				Alternatives: Alternatives{

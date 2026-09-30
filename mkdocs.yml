@@ -130,6 +130,7 @@ nav:
           - On Host: setup/on-host.md
           - In Docker: setup/in-docker.md
       - setup/distribution.md
+      - Upgrade notes: setup/upgrade.md
       - Security: https://github.com/engity-com/bifroest/blob/main/SECURITY.md
       - License: legal/license.md
   - Reference:
@@ -207,6 +208,7 @@ nav:
           - Connection: reference/context/connection.md
           - Container: reference/context/container.md
           - Core: reference/context/core.md
+          - Local Environment: reference/context/local-environment.md
           - Local Group: reference/context/local-group.md
           - Local User: reference/context/local-user.md
           - OIDC Token: reference/context/oidc-token.md

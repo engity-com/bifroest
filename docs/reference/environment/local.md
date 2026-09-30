@@ -1,340 +1,215 @@
 ---
-description: A Local environment is executed on the host itself (same host on which Bifröst is running).
+description: Run SSH sessions as local users on the Bifröst host.
 toc_depth: 4
 ---
 
 # Local environment
 
-A local environment is executed on the host itself (same host on which Bifröst is running).
-
-Currently, we support different variants provided by the host operating system which is executing the environment.
-
-Type identifier is `local`.
-
-## Linux
-
-The Linux variant is only supported by Linux based operating systems.
-
-It can run as the Bifröst user itself, but can also [impersonate](https://en.wiktionary.org/wiki/impersonate) another user.
-
-!!! note
-     If impersonating another user Bifröst is running at, root permissions are required.
-
-### User requirement {: #linux-user-requirement}
-
-Users have to fulfill the defined requirements ([`name`](#linux-property-name), [`displayName`](#linux-property-displayName), [`uid`](#linux-property-uid), [`group`](#linux-property-group), [`groups`](#linux-property-groups), [`shell`](#linux-property-shell), [`homeDir`](#linux-property-homeDir) and [`skel`](#linux-property-skel)).
-
-If a user does not fulfill this requirement they are not eligible for the environment. The environment **can** create a user ([`createIfAbsent`](#linux-property-createIfAbsent) = `true`) or even updates an existing one ([`updateIfDifferent`](#linux-property-updateIfDifferent) = `true`) to match this requirement. This does not make a lot of sense for [local users](../authorization/local.md); but for [users authorized via OIDC](../authorization/oidc.md) - which usually do not exist locally.
-
-See the evaluation matrix of [`createIfAbsent`](#linux-property-createIfAbsent-evaluation) and [`updateIfDifferent`](#linux-property-updateIfDifferent-evaluation) to see the actual reactions of the local environment per users requirement evaluation state.
-
-### Configuration {: #linux-configuration}
-
-<<property("type", "Environment Type", default="local", required=True, id_prefix="linux-", heading=4)>>
-Has to be set to `local` to enable the local environment.
-
-<<property("variables", "Environment Variables", "../data-type.md#environment-variables", template_context="../context/authorization.md", id_prefix="linux-", heading=4)>>
-Defines environment variables for commands and shells. They override values received from the SSH client, `authorized_keys` and authorization. Bifröst-generated runtime and local account identity variables take precedence.
-
-<<property("loginAllowed", "bool", template_context="../context/authorization.md", default=True, id_prefix="linux-", heading=4)>>
-Has to be true (after being evaluated) that the user is allowed to use this environment.
-
-##### Examples {: #linux-property-loginAllowed-examples}
-
-1. Require that the existing [local user](../authorization/local.md) has the group `ssh`:
-   ```yaml
-   loginAllowed: |
-      {{ or
-          (.authorization.user.group.name | eq "ssh" )
-          (.authorization.user.groups     | firstMatching `{{.name | eq "ssh"}}`)
-      }}
-   ```
-
-2. Require that [the user authorized via OIDC](../authorization/oidc.md) has in the group `my-great-group-uuid` and the tenant ID (`tid`) in this OIDC ID token:
-   ```yaml
-   loginAllowed: |
-      {{ and
-         (.authorization.idToken.groups | has "my-great-group-uuid")
-         (.authorization.idToken.tid    | eq  "my-great-tenant-uuid")
-      }}
-   ```
-
-<<property("name", "string", template_context="../context/authorization.md", id_prefix="linux-", heading=4, requirement="linux-user-requirement")>>
-The _username_ the user should have. Empty means this requirement won't be evaluated or applied (in case of creation/modification of a user).
-
-##### Examples {: #linux-property-name-examples}
-1. Use the name of the [local user](../authorization/local.md):
-   ```yaml
-   name: "{{.authorization.user.name}}"
-   ```
-2. Use the email address of [the user authorized via OIDC](../authorization/oidc.md):
-   ```yaml
-   name: "{{.authorization.idToken.email}}"
-   ```
-3. Always use `foobar`:
-   ```yaml
-   name: "foobar"
-   ```
-
-<<property("displayName", "string", template_context="../context/authorization.md", id_prefix="linux-", heading=4, requirement="linux-user-requirement")>>
-The display name (or _title_ or [_GECOS_](https://en.wikipedia.org/wiki/Gecos_field)) the user should have.
-
-##### Examples {: #linux-property-name-examples}
-1. In case of [local user](../authorization/local.md) should be never be defined.
-2. Use the e-mail address of [the user authorized via OIDC](../authorization/oidc.md):
-   ```yaml
-   displayName: "{{.authorization.idToken.name}}"
-   ```
-3. Always use `Foobar`:
-   ```yaml
-   displayName: "Foobar"
-   ```
-
-<<property("uid", "uint32", template_context="../context/authorization.md", id_prefix="linux-", heading=4, requirement="linux-user-requirement")>>
-The [_UID_ (user identifier)](https://en.wikipedia.org/wiki/User_identifier) the user should have. Empty means this requirement won't be evaluated or applied (in case of creation/modification of a user).
-
-##### Examples {: #linux-property-uid-examples}
-1. Use the name of the [local user](../authorization/local.md):
-   ```yaml
-   uid: "{{.authorization.user.uid}}"
-   ```
-2. In case of [users authorized via OIDC](../authorization/oidc.md) this should usually not be defined.
-3. Always use `123`:
-   ```yaml
-   uid: 123
-   ```
-
-<<property("group", "Group", "#linux-group", id_prefix="linux-", heading=4, requirement="linux-user-requirement")>>
-The primary group the user should have. Empty means this requirement won't be evaluated or applied (in case of creation/modification of a user).
-
-##### Examples {: #linux-property-group-examples}
-1. If [local user](../authorization/local.md) is used, this should usually not be defined.
-2. Assign always group with name `oidc` in case of [users authorized via OIDC](../authorization/oidc.md):
-   ```yaml
-   group:
-     name: "oidc"
-   ```
-
-<<property("groups", array_ref("Group", "#linux-group"), id_prefix="linux-", heading=4, requirement="linux-user-requirement")>>
-The groups (do not confuse with the [primary group](#linux-property-group)) the user should have. Empty means this requirement won't be evaluated or applied (in case of creation/modification of a user).
-
-##### Examples {: #linux-property-groups-examples}
-1. If [local user](../authorization/local.md) is used, this should usually not be defined.
-2. Assign always group with name `oidc` in case of [users authorized via OIDC](../authorization/oidc.md):
-   ```yaml
-   groups:
-     - name: "oidc"
-   ```
-
-<<property("shell", "File Path", "../data-type.md#file-path", template_context="../context/authorization.md", default="/bin/sh", id_prefix="linux-", heading=4, requirement="linux-user-requirement")>>
-The [shell](https://en.wikipedia.org/wiki/Shell_(computing)) the user should have. Not defined means this requirement won't be evaluated or applied (in case of creation/modification of a user).
-
-<<property("homeDir", "File Path", "../data-type.md#file-path", template_context="../context/authorization.md", default="/home/<user.name>", id_prefix="linux-", heading=4, requirement="linux-user-requirement")>>
-The home directory the user should have. Not defined means this requirement won't be evaluated or applied (in case of creation/modification of a user).
-
-<<property("skel", "File Path", "../data-type.md#file-path", template_context="../context/authorization.md", default="/etc/skel", id_prefix="linux-", heading=4, requirement="linux-user-requirement")>>
-If a new user needs to be created in a directory on the Bifröst hosts, it will receive its initial files of its [home directory](#linux-property-homeDir) from (= user's home skeleton/template directory).
-
-<<property("createIfAbsent", "string", template_context="../context/authorization.md", default=false, id_prefix="linux-", heading=4)>>
-Will create the local user if it does not exist to match the provided requirements (see below). If this property is `false` the user has to exist, otherwise the execution will fail and the connection will be closed immediately.
-
-This property (together with [`updateIfDifferent`](#linux-property-updateIfDifferent)) has to be `true` if you're using authorizations like [OIDC](../authorization/oidc.md), where the user is not expected to exist locally, and you don't want to create each user individually.
-
-##### Evaluation {: #linux-property-createIfAbsent-evaluation}
-| [`createIfAbsent`](#linux-property-createIfAbsent) | = `false`  | = `true` |
-| - | - | - |
-| Exists and matches | :octicons-check-circle-24: Accepted | :octicons-check-circle-24: Accepted |
-| Exists, but does not match | _Does not apply_ | _Does not apply_ |
-| Does not exist | :octicons-x-circle-24: Rejected | :octicons-check-circle-24: Created and accepted |
-
-<<property("updateIfDifferent", "bool", template_context="../context/authorization.md", default=false, id_prefix="linux-", heading=4)>>
-If an existing user does not match the provided requirements (see below) and the property is `true`, this user is asked to match the requirements.
-
-This property (together with [`createIfAbsent`](#linux-property-createIfAbsent)) should be `true` if you're using authorizations like [OIDC](../authorization/oidc.md), where the user is not expected to exist locally, and you don't want to create each user individually.
-
-##### Evaluation {: #linux-property-updateIfDifferent-evaluation}
-| [`updateIfDifferent`](#linux-property-updateIfDifferent) | = `false`  | = `true` |
-| - | - | - |
-| Exists and matches | :octicons-check-circle-24: Accepted | :octicons-check-circle-24: Accepted |
-| Exists but does not match | :octicons-x-circle-24: Rejected | :octicons-check-circle-24: Modified and accepted |
-| Does not exist | _Does not apply_ | _Does not apply_ |
+Run SSH sessions as local users on the Bifröst host. Use existing accounts or optionally create, update and remove them.
 
-<<property("banner", "string", template_context="../context/authorization.md", default="", id_prefix="linux-", heading=4)>>
-Will be displayed to the user upon connection to its environment.
+## Configuration
 
-##### Examples {: #linux-property-banner-examples}
-1. If [local user](../authorization/local.md) is used, show its name in a message:
-   ```yaml
-   banner: "Hello, {{.authorization.user.name}}!\n"
-   ```
-2. If [users authorized via OIDC](../authorization/oidc.md) is used, show its name in a message:
-   ```yaml
-   banner: "Hello, {{.authorization.idToken.name}}!\n"
-   ```
+<<property("type", "Environment Type", default="local", required=True, heading=3)>>
+Must be `local`.
 
-<<property("portForwardingAllowed", "bool", template_context="../context/authorization.md", default=true, id_prefix="linux-", heading=4)>>
-If `true`, users are allowed to use SSH's port forwarding mechanism, subject to the applicable authorized-key policy. For `ssh -R`, the listener binds on the local Bifröst host. An empty bind host uses loopback; an explicit `*` requests a wildcard bind that may be reachable over the network, subject to policy and network configuration. The forwarded destination is reached from the SSH client. An unprivileged local user cannot explicitly request a reverse listener on privileged ports `1` through `1023`.
+### Account {: #account}
 
-<<property("dispose", "Dispose", "#linux-dispose", id_prefix="linux-", heading=4)>>
-Defines what happens if an environment is disposed.
+<<property("name", "string", template_context="../context/authorization-request.md", requirement="account", heading=4)>>
+Local account name. On Windows, `name` or `uid` is required; use a bare local SAM name, not a domain-qualified name or an email address. On Linux, an empty name means no name requirement if `uid` is provided.
 
-### Examples {: #linux-examples}
+<<property("uid", "UID", "../data-type.md#uid", template_context="../context/authorization-request.md", requirement="account", heading=4)>>
+Desired [user identifier](../data-type.md#uid). On Windows, it selects an existing local account or checks that `name` resolves to the expected SID. Windows assigns SIDs itself: a missing account cannot be created with an explicitly specified `uid`.
 
-1. Use existing UNIX user:
-   ```yaml
-   type: local
-   name: "{{.authorization.user.name}}"
-   ```
-2. OIDC - create/modify user if absent/different and cleanup automatically:
-   ```yaml
-   type: local
+<<property("displayName", "string", template_context="../context/authorization-request.md", requirement="account", heading=4)>>
+Desired display name: Linux GECOS or Windows SAM full name. On Windows, an omitted value leaves an existing name unchanged.
 
-   ## Ensure users get created/modified if absent/different...
-   createIfAbsent: true
-   updateIfDifferent: true
+<<property("group", "Group", "#group", requirement="account", heading=4)>>
+**Linux only.** Desired primary group. Windows has no primary `group` property.
 
-   ## Use the email address of the OIDC's ID token
-   name: "{{.authorization.idToken.email}}"
+<<property("groups", array_ref("Group", "#group"), requirement="account", heading=4)>>
+Supplementary group requirements, each with a `name` and/or [`gid`](../data-type.md#gid). Linux ensures the configured group set. Windows adds direct memberships in local aliases without removing other memberships. Windows accepts local groups by name or SID, but not domain groups or protected BUILTIN aliases.
 
-   ## Use the display name of the OIDC's ID token
-   displayName: "{{.authorization.idToken.name}}"
+<<property("shell", "File Path", "../data-type.md#file-path", template_context="../context/authorization-request.md", default="/bin/sh", requirement="account", heading=4)>>
+**Linux only.** Shell stored on the account. Session-only overrides are available through `shellCommand` and `execCommandPrefix` below.
 
-   groups:
-     ## Ensure user has always the group `oidc` assigned for better access control
-     ## on the host itself.
-     - name: oidc
+<<property("homeDir", "File Path", "../data-type.md#file-path", template_context="../context/authorization-request.md", default="/home/<user.name>", requirement="account", heading=4)>>
+**Linux only.** Account home directory. `directory` below changes only the session's working directory.
 
-   shell: "/bin/bash"
+<<property("skel", "File Path", "../data-type.md#file-path", template_context="../context/authorization-request.md", default="<os specific>", requirement="account", heading=4)>>
+Source for initial files, used only when Bifröst creates an account. Linux copies it into the new home directory. Windows copies its contents into the newly created Windows profile as that user, inheriting profile permissions; existing files are never replaced. Use an administrator-controlled source without junctions or other reparse points. A failed Windows copy can leave partial content; Bifröst attempts to disable the incomplete account for operator repair.
 
-   variables:
-     BIFROEST_ORIGINAL_USER: "{{.session.created.remote.user}}"
+The default depends on the platform:
 
-   ## Only allow login if the OIDC's groups has "my-great-group-uuid"
-   ## ...and the tid (tenant ID) is "my-great-tenant-uuid"
-   loginAllowed: |
-       {{ and
-         (.authorization.idToken.groups | has "my-great-group-uuid")
-         (.authorization.idToken.tid    | eq  "my-great-tenant-uuid")
-       }}
-   ```
-### Group {: #linux-group}
+* Linux: `/etc/skel`.
+* Windows: None.
 
-<<property("name", "string", template_context="../context/authorization.md", id_prefix="linux-group-", heading=4)>>
-The _name_ the group should have. Empty means this requirement won't be evaluated or applied (in case of creation/modification of a user).
+### Account Management
 
-##### Examples {: #linux-group-property-name-examples}
+<<property("createIfAbsent", "bool", template_context="../context/authorization-request.md", default=False, heading=4)>>
+Create a missing account and enroll it in `managedGroup`. Its template has no `.user`. Without it, a missing account is rejected.
 
-1. In case of [local user](../authorization/local.md) this should usually not be used.
-2. Use the email address of [the user authorized via OIDC](../authorization/oidc.md) always set the name `oidc`:
-   ```yaml
-   name: "oidc"
-   ```
+<<property("updateIfDifferent", "bool", template_context="../context/local-environment.md", default=False, heading=4)>>
+Update or adopt an existing account and enroll it in `managedGroup`. The template sees the account **before** any changes.
 
-<<property("gid", "uint32", template_context="../context/authorization.md", id_prefix="linux-group-", heading=4)>>
-The _GID_ (group identifier) the group should have. Empty means this requirement won't be evaluated or applied (in case of creation/modification of a user).
+* Linux: ensure the configured account and group requirements. Updating an existing account by `uid` alone is rejected; set `name` explicitly when using `updateIfDifferent`. UID-only lookups without updates remain supported.
+* Windows: update `displayName` and add configured group memberships.
+* Both management options `false`: use existing accounts without checking other requirements. On Linux, `createIfAbsent: true` still checks existing accounts without modifying them.
 
-##### Examples {: #linux-group-property-gid-examples}
+##### Examples
 
-1. Always use `123`
-   ```yaml
-   gid: 123
-   ```
+```yaml
+## Update only accounts that already belong to the management group.
+updateIfDifferent: "{{ .user.managed }}"
+```
 
-### Dispose {: #linux-dispose}
+Set `updateIfDifferent: true` to permit adopting an existing, unmarked account.
 
-Defines the behavior of an environment on disposal (cleanup).
+<<property("managedGroup", "string", default="bifroest-managed", heading=4)>>
+Static local group that sets [`.user.managed`](../context/local-user.md#property-managed). Membership remains visible if the session repository is lost. It does not restrict an explicitly enabled `deleteOnDispose` or `killProcessesOnDispose`.
 
-<<property("deleteManagedUser", "bool", template_context="../context/authorization.md", default=True, id_prefix="linux-dispose-", heading=4)>>
-If `true` the environment will also delete users, created/managed by it. Usually, if [`createIfAbsent`](#linux-property-createIfAbsent) and [`updateIfDifferent`](#linux-property-updateIfDifferent) is both `false` this has no effect.
+<<property("manageSystemUsers", "bool", template_context="../context/authorization-request.md", default=False, heading=4)>>
+Explicitly permit cleanup of Linux UID 0 or protected Windows accounts such as the built-in Administrator. Linux does **not** automatically classify other service UIDs as system users; use the [Local Environment context](../context/local-environment.md) in the cleanup templates to restrict them. `manageSystemUsers` itself has no `.user` and should be enabled only deliberately.
 
-<<property("deleteManagedUserHomeDir", "bool", template_context="../context/authorization.md", default=True, id_prefix="linux-dispose-", heading=4)>>
-In combination with [`deleteManagedUser`](#linux-dispose-property-deleteManagedUser), if `true` the environment will **also** delete the user's home directory.
+The cleanup switches under [Dispose](#dispose) are top-level properties of `local`, not a nested `dispose` object.
 
-<<property("killManagedUserProcesses", "bool", template_context="../context/authorization.md", default=True, id_prefix="linux-dispose-", heading=4)>>
-In combination with [`deleteManagedUser`](#linux-dispose-property-deleteManagedUser), if `true` the environment will **also** kill **all** user's running processes.
+### Session
 
-## Windows
+For both Unix PTYs and Windows ConPTY, closing SSH standard input alone does not generate a terminal EOF. An interactive program may continue waiting for input; use a non-PTY session for commands that need pipe EOF, or close the session explicitly.
 
-The Windows variant is supported by Windows 10, Windows Server 2016, and later versions.
+For non-PTY commands and SFTP, after the process exits Bifröst waits up to two seconds for outstanding stdout and stderr forwarding. A write blocked beyond that limit yields a task error and failure audit instead of the process's exit code, even if the SSH client later resumes reading. Remaining output can be lost. This bounded drain prevents a permanently stalled client from holding the session open indefinitely; closing or canceling the session remains independent of that client's write.
 
-!!! warning
-     In contrast to the [Linux](#linux) version this variant **CANNOT** [impersonate](https://en.wiktionary.org/wiki/impersonate). As a consequence, each user session always executes as the user the Bifröst process itself runs with.
+<<property("loginAllowed", "bool", template_context="../context/authorization-request.md", default=True, heading=4)>>
+Whether this authorization may use the environment.
 
-     Impersonating on a Windows machine requires either full credentials (password) or another running process the session tokens can be cloned from. As both conflicts how we intend Bifröst to work, both solutions leave a lot of use-cases behind. Since it is very "hacky", we decided to stick with the simple approach.
+<<property("variables", "Environment Variables", "../data-type.md#environment-variables", template_context="../context/authorization-request.md", heading=4)>>
+Variables for commands and shells. Bifröst-generated identity variables take precedence; names are case-insensitive on Windows.
 
-### Configuration {: #windows-configuration}
+<<property("banner", "string", template_context="../context/authorization-request.md", default="", heading=4)>>
+Text displayed on connection.
 
-<<property("type", "Environment Type", default="local", required=True, id_prefix="windows-", heading=4)>>
-Has to be set to `local` to enable the local environment.
+<<property("shellCommand", array_ref("string"), template_context="../context/authorization-request.md", default="<os specific>", heading=4)>>
+Command and arguments for an interactive shell. An explicit command does not change the stored account shell.
 
-<<property("variables", "Environment Variables", "../data-type.md#environment-variables", template_context="../context/authorization.md", id_prefix="windows-", heading=4)>>
-Defines environment variables for commands and shells. Names are handled case-insensitively. They override values received from the SSH client, `authorized_keys` and authorization. Bifröst-generated runtime and local account identity variables take precedence.
+The default depends on the platform:
 
-<<property("loginAllowed", "bool", template_context="../context/authorization.md", default=True, id_prefix="windows-", heading=4)>>
-Has to be true (after being evaluated) that the user is allowed to use this environment.
+* Linux: `[<user's shell>]`
+* Windows: `[%COMSPEC%]` (in most cases: `COMSPEC=cmd.exe`)
 
-##### Examples {: #windows-property-loginAllowed-examples}
+<<property("execCommandPrefix", array_ref("string"), template_context="../context/authorization-request.md", default="<os specific>", heading=4)>>
+Command and arguments prepended to a non-interactive SSH command. The requested command is appended as one argument when a prefix is configured.
 
-1. Require that [the user authorized via OIDC](../authorization/oidc.md) has in the group `my-great-group-uuid` and the tenant ID (`tid`) in this OIDC ID token:
-   ```yaml
-   loginAllowed: |
-      {{ and
-         (.authorization.idToken.groups | has "my-great-group-uuid")
-         (.authorization.idToken.tid    | eq  "my-great-tenant-uuid")
-      }}
-   ```
-<<property("banner", "string", template_context="../context/authorization.md", id_prefix="windows-", heading=4)>>
-Will be displayed to the user upon connection to its environment.
+The default depends on the platform:
 
-##### Examples {: #windows-property-banner-examples}
-1. If [users authorized via OIDC](../authorization/oidc.md) is used, show its name in a message:
-   ```yaml
-   banner: "Hello, {{.authorization.idToken.name}}!\n"
-   ```
+* Linux: `[<user's shell>, -c]`
+* Windows: `[%COMSPEC%, /C]` (in most cases: `COMSPEC=cmd.exe`)
 
-<<property("shellCommand", "string", template_context="../context/authorization.md", default=["C:\\WINDOWS\\system32\\cmd.exe"], id_prefix="windows-", heading=4)>>
-The shell which is used to execute the user's session.
+<<property("directory", "File Path", "../data-type.md#file-path", template_context="../context/authorization-request.md", default="<user's home>", heading=4)>>
+Working directory for sessions. Defaults to the account home on Linux or profile directory on Windows. If configured, it must exist and be a directory; it does not change the account home or the destination of `skel`.
 
-<<property("execCommandPrefix", "string", template_context="../context/authorization.md", default=[ "C:\\WINDOWS\\system32\\cmd.exe", "/C" ], id_prefix="windows-", heading=4)>>
-The executor command prefix which is used when a user executes a command instead of executing into a shell.
+<<property("portForwardingAllowed", "bool", template_context="../context/authorization-request.md", default=True, heading=4)>>
+Allow SSH port forwarding, subject to authorized-key policy. Reverse listeners bind on the Bifröst host; an explicit `*` can expose the listener beyond loopback. On Linux, unprivileged users cannot request reverse listeners on ports `1` through `1023`. Windows outbound forwarding uses the Bifröst process identity.
 
-If the user will execute `ssh foo@bar.com echo "bar"` on the host `C:\WINDOWS\system32\cmd.exe /C 'echo "bar"'` will be executed.
+### Dispose {: #dispose}
 
-<<property("directory", "File Path", "../data-type.md#file-path", template_context="../context/authorization.md", default="<working directory of Bifröst>", id_prefix="windows-", heading=4)>>
-The working directory in which the command will be executed in.
+<<property("deleteOnDispose", "bool", template_context="../context/local-environment.md", default=False, heading=4)>>
+If evaluates to `true`, the is deleted account when its environment is disposed.
 
-<<property("portForwardingAllowed", "bool", template_context="../context/authorization.md", default=True, id_prefix="windows-", heading=4)>>
-If `true`, users are allowed to use SSH's port forwarding mechanism, subject to the applicable authorized-key policy. For `ssh -R`, the listener binds on the local Bifröst host. An empty bind host uses loopback; an explicit `*` requests a wildcard bind that may be reachable over the network, subject to policy and network configuration. The forwarded destination is reached from the SSH client.
+* Protected accounts require [`manageSystemUsers: true`](#property-manageSystemUsers).
+* Deletion waits until no other active session in the same repository uses the account.
+* Pending deletion survives restarts in the session token. Unreadable sessions or a changed [UID](../data-type.md#uid) block deletion.
+* Independent instances with separate repositories cannot see each other's sessions. Losing the repository also loses automatic cleanup.
 
-### Examples {: #windows-examples}
+##### Examples
 
-1. Simple:
-   ```yaml
-   type: local
-   ```
-2. OIDC:
-   ```yaml
-   type: local
+```yaml
+## Automatically deleted by Bifröst managed user/accounts,
+## but no other user/account.
+deleteOnDispose: "{{ .user.managed }}"
+```
 
-   ## Use the PowerShell Core without banner as Shell
-   shellCommand: ["pwsh.exe", "-NoLogo"]
-   directory: "C:\\my\\home"
+<<property("deleteHomeTogetherWithUser", "bool", template_context="../context/local-environment.md", default=True, heading=4)>>
 
-   variables:
-     BIFROEST_ORIGINAL_USER: "{{.session.created.remote.user}}"
+If this property is `true` and [`deleteOnDispose`](#property-deleteOnDispose) actually deletes the account, remove its home/profile too.
 
-   ## Only allow login if the OIDC's groups has "my-great-group-uuid"
-   ## ...and the tid (tenant ID) is "my-great-tenant-uuid"
-   loginAllowed: |
-       {{ and
-         (.authorization.idToken.groups | has "my-great-group-uuid")
-         (.authorization.idToken.tid    | eq  "my-great-tenant-uuid")
-       }}
-   ```
+* Linux: the stored path must match, must not be the filesystem root or a shared home, and must be owned by the account.
+* Windows: profile cleanup follows account deletion; a failed cleanup remains pending for retry.
 
-`## Compatibility
+<<property("killProcessesOnDispose", "bool", template_context="../context/local-environment.md", default="{{ .user.managed }}", heading=4)>>
+
+If `true`, terminate the account's processes after the last active Bifröst session for that account has been disposed and its connections have ended, independently of account deletion. A pending kill survives in the session token. The kill is account-wide and can still affect processes started outside Bifröst under the same identity.
+
+* On Linux, if process cleanup is pending and the account disappears or changes identity, processes are not killed using its old [UID](../data-type.md#uid). Bifröst logs a warning and releases the pending session token once no active session remains; operators must inspect any leftover processes and files manually.
+* On Windows, an unidentifiable process blocks cleanup.
+* Unreadable sessions or a missing session coordinator block a pending kill instead of assuming no other session is active.
+* Completed process cleanup is recorded in the session token and is not repeated while deletion is pending.
+
+See the [upgrade notes](../../setup/upgrade.md#local-environments-and-existing-sessions) for existing Linux sessions with older cleanup tokens and Linux `pidfd` requirements.
+
+##### Examples
+
+###### Automatically kill all Biföst manged account's processes
+```yaml
+killProcessesOnDispose: "{{ .user.managed }}"
+```
+
+###### Automatically kill account's processes
+```yaml
+killProcessesOnDispose: true
+```
+
+## Group {: #group}
+
+<<property("name", "string", template_context="../context/authorization-request.md", id_prefix="group-", heading=3)>>
+Name of a Unix group or local Windows alias.
+
+<<property("gid", "GID", "../data-type.md#gid", template_context="../context/authorization-request.md", id_prefix="group-", heading=3)>>
+[Group identifier](../data-type.md#gid). On Windows, a specified name and GID must resolve to the same local group; Windows cannot assign an arbitrary SID to a newly created group.
+
+
+## Examples
+
+### Existing local account
+
+```yaml
+type: local
+name: "{{.authorization.user.name}}" # Linux local authorization
+```
+
+### OIDC with managed Linux users
+
+```yaml
+type: local
+name: "{{.authorization.idToken.email}}"
+displayName: "{{.authorization.idToken.name}}"
+groups:
+  - name: oidc
+createIfAbsent: true
+updateIfDifferent: true
+deleteOnDispose: true
+```
+
+### OIDC with managed Windows users
+
+```yaml
+type: local
+name: "{{.authorization.idToken.local_user}}"
+groups:
+  - name: oidc
+skel: 'C:\bootstrap-profile'
+createIfAbsent: true
+updateIfDifferent: "{{.user.managed}}" # Do not adopt an unmarked account.
+deleteOnDispose: "{{.user.managed}}"
+```
+
+## Requirements
+
+- On Linux, changing local accounts or impersonating a different user requires appropriate privileges, usually root.
+- On Windows, session processes for local accounts require Bifröst to run as LocalSystem. Only local SAM accounts are supported; S4U does not provide credentials for remote shares or EFS.
+- Windows interactive PTYs require Windows 10 1809 or Windows Server 2019 or later. Older versions support non-PTY commands and SFTP.
+- In Windows containers, accounts live inside the container. The default Nano Server entrypoint is not a LocalSystem service. The pinned Nano image has an isolated SAM capability test, but `samcli.dll` availability and runtime behavior have not yet been verified on every host.
+
+## Compatibility
 
 | <<dist("linux")>> | <<dist("windows")>> |
 | - | - |
 | <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"windows")>> |
-`

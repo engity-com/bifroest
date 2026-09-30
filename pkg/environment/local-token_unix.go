@@ -8,20 +8,24 @@ import (
 )
 
 type localToken struct {
+	Version               uint8          `json:"version,omitempty"`
 	User                  localTokenUser `json:"user"`
 	PortForwardingAllowed bool           `json:"portForwardingAllowed"`
 }
 
 type localTokenUser struct {
-	Name                   string   `json:"name,omitempty"`
-	Uid                    *user.Id `json:"uid,omitempty"`
-	Managed                bool     `json:"managed,omitempty"`
-	DeleteOnDispose        bool     `json:"deleteOnDispose,omitempty"`
-	DeleteHomeDirOnDispose bool     `json:"deleteHomeDirOnDispose,omitempty"`
-	KillProcessesOnDispose bool     `json:"killProcessesOnDispose,omitempty"`
+	Name                       string   `json:"name,omitempty"`
+	Uid                        *user.Id `json:"uid,omitempty"`
+	HomeDir                    string   `json:"homeDir,omitempty"`
+	Managed                    bool     `json:"managed,omitempty"`
+	AllowSystemUsers           bool     `json:"allowSystemUsers,omitempty"`
+	DeleteOnDispose            bool     `json:"deleteOnDispose,omitempty"`
+	DeleteHomeTogetherWithUser bool     `json:"deleteHomeTogetherWithUser,omitempty"`
+	KillProcessesOnDispose     bool     `json:"killProcessesOnDispose,omitempty"`
+	ProcessesKilledOnDispose   bool     `json:"processesKilledOnDispose,omitempty"`
 }
 
-func (this *LocalRepository) newLocalToken(u *user.User, req Request, userIsManaged bool) (*localToken, error) {
+func (this *LocalRepository) newLocalToken(u *user.User, req Request, managed, allowSystemUsers bool) (*localToken, error) {
 	fail := func(err error) (*localToken, error) {
 		return nil, err
 	}
@@ -30,29 +34,36 @@ func (this *LocalRepository) newLocalToken(u *user.User, req Request, userIsMana
 	if err != nil {
 		return fail(err)
 	}
+	ctx := localTemplateContext{Request: req, user: u, managed: managed}
 
-	deleteOnDispose, err := this.conf.Dispose.DeleteManagedUser.Render(req)
+	deleteOnDispose, err := this.conf.DeleteOnDispose.Render(ctx)
 	if err != nil {
 		return fail(err)
 	}
-	deleteHomeDirOnDispose, err := this.conf.Dispose.DeleteManagedUserHomeDir.Render(req)
+	killProcessesOnDispose, err := this.conf.KillProcessesOnDispose.Render(ctx)
 	if err != nil {
 		return fail(err)
 	}
-	killProcessesOnDispose, err := this.conf.Dispose.KillManagedUserProcesses.Render(req)
-	if err != nil {
-		return fail(err)
+	allowed := u.Uid != 0 || allowSystemUsers
+	deleteHomeTogetherWithUser := false
+	if deleteOnDispose && allowed {
+		if deleteHomeTogetherWithUser, err = this.conf.DeleteHomeTogetherWithUser.Render(ctx); err != nil {
+			return fail(err)
+		}
 	}
 
 	return &localToken{
-		localTokenUser{
-			u.Name,
-			common.P(u.Uid),
-			userIsManaged,
-			deleteOnDispose && userIsManaged,
-			deleteHomeDirOnDispose && deleteOnDispose && userIsManaged,
-			killProcessesOnDispose && userIsManaged,
+		Version: 2,
+		User: localTokenUser{
+			Name:                       u.Name,
+			Uid:                        common.P(u.Uid),
+			HomeDir:                    u.HomeDir,
+			Managed:                    managed,
+			AllowSystemUsers:           allowSystemUsers,
+			DeleteOnDispose:            deleteOnDispose && allowed,
+			DeleteHomeTogetherWithUser: deleteHomeTogetherWithUser,
+			KillProcessesOnDispose:     killProcessesOnDispose && allowed,
 		},
-		portForwardingAllowed,
+		PortForwardingAllowed: portForwardingAllowed,
 	}, nil
 }

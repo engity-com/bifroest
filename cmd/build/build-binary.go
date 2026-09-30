@@ -11,6 +11,7 @@ import (
 	bib "github.com/engity-com/bifroest/internal/build"
 	"github.com/engity-com/bifroest/internal/build/binary"
 	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 func newBuildBinary(b *build) *buildBinary {
@@ -66,6 +67,11 @@ func (this *buildBinary) compile(ctx context.Context, p *bib.Platform) (*buildAr
 
 	if err := binary.Build(ctx, req); err != nil {
 		return fail(err)
+	}
+	if p.Os == sys.OsWindows {
+		if err := this.addWindowsResources(a); err != nil {
+			return fail(err)
+		}
 	}
 	notice, err := this.newBuildFileArtifact(ctx, p, buildArtifactTypeNotice, p.FilenamePrefix(this.prefix)+".third-party-notices.txt")
 	if err != nil {

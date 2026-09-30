@@ -51,7 +51,14 @@ func (this *UserRequirementTemplate) Trim() error {
 
 func (this *UserRequirementTemplate) Validate() error {
 	return validate(this,
-		notZeroValidate("name", func(v *UserRequirementTemplate) *template.String { return &v.Name }),
+		func(v *UserRequirementTemplate) (string, validator) {
+			return "name", validatorFunc(func() error {
+				if v.Name.IsZero() && v.Uid == nil {
+					return fmt.Errorf("name or uid is required")
+				}
+				return nil
+			})
+		},
 		func(v *UserRequirementTemplate) (string, validator) { return "name", &v.Name },
 		func(v *UserRequirementTemplate) (string, validator) { return "displayName", &v.DisplayName },
 		func(v *UserRequirementTemplate) (string, validator) { return "uid", v.Uid },

@@ -62,6 +62,9 @@ run = "go test -v -count=1 -failfast -tags=e2e -timeout=30m -run '^TestOpenSSHKu
 depends = ["build:var"]
 run = "go test -v -count=1 -tags=e2e -timeout=5m -run '^Test(HtpasswdAuthorization|OIDCDeviceAuthorization)$' ./test/e2e"
 
+[tasks."test:e2e:nanoserver"]
+run = "go test -v -count=1 -tags=nanoserver_integration -timeout=20m -run=TestPinnedNanoServerLocalEnvironment ./test/nanoserver"
+
 [tasks."test:e2e"]
 run = [
     { task = "test:e2e:authorization" },
@@ -114,6 +117,10 @@ run_windows = 'if not exist var mkdir var'
 [tasks."ci:evaluate-environment"]
 hide = true
 run = "go run ./cmd/build evaluate-environment --log.colorMode=always"
+
+[tasks."ci:write-build-epoch"]
+hide = true
+run = "go run ./cmd/build write-build-epoch"
 
 [tasks."ci:inspect-pr-action"]
 hide = true

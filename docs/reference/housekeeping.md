@@ -18,9 +18,11 @@ Sealed session Recordings become eligible only after their retention period and 
 
 Sessions whose flow no longer exists are preserved because Bifröst can no longer interpret their environment and authorization tokens safely. Their resources are excluded from automatic orphan cleanup, and the skip is logged as [`housekeeping.orphaned-session.cleanup.skipped`](auditlog/events.md#housekeeping-orphaned-session-cleanup-skipped).
 
+If a flow keeps its name but changes environment type, sessions with an old or unrecognized environment token are also left untouched. Bifröst logs a warning with the flow and session ID instead of disposing the session or letting the new environment discard a token that may still require account, process, or profile cleanup. Restore the original environment configuration to finish its cleanup, or inspect the session and its resources before removing anything manually. Such sessions remain stored until an operator resolves the mismatch, even after the retention period. Older sessions without an environment token have no persisted type information; Bifröst cannot detect a type change for them.
+
 ## Corrupt sessions
 
-Without automatic repair, corrupt entries are preserved and reported individually. Automatic repair is limited to configured flows; one corrupt entry does not block other sessions or environment cleanup.
+Without automatic repair, corrupt entries are preserved and reported individually. Automatic repair is limited to configured flows; one corrupt entry does not block other sessions or environment cleanup. Even with automatic repair enabled, a corrupt session with a nonempty environment token is preserved for operator inspection rather than discarded with the token.
 
 ## Properties
 

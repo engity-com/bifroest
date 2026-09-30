@@ -2,8 +2,10 @@ package environment
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
+	"runtime"
 
 	essh "github.com/engity-com/ssh-server-go"
 
@@ -20,8 +22,12 @@ func NewRepositoryFacade(ctx context.Context, flows *configuration.Flows, ap alt
 	return newRepositoryFacade(ctx, flows, ap, i)
 }
 
-func NewRepositoryFacadeWithHostKeys(ctx context.Context, flows *configuration.Flows, ap alternatives.Provider, i imp.Imp, hostKeys []crypto.PrivateKey) (*RepositoryFacade, error) {
-	ctx = context.WithValue(ctx, repositoryDependenciesContextKey{}, repositoryDependencies{hostKeys: hostKeys})
+func NewRepositoryFacadeWithHostKeys(ctx context.Context, flows *configuration.Flows, ap alternatives.Provider, i imp.Imp, hostKeys []crypto.PrivateKey, sessions ...session.Repository) (*RepositoryFacade, error) {
+	deps := repositoryDependencies{hostKeys: hostKeys}
+	if len(sessions) > 0 {
+		deps.localAccounts = &localAccountCoordinator{sessions: sessions[0]}
+	}
+	ctx = context.WithValue(ctx, repositoryDependenciesContextKey{}, deps)
 	return newRepositoryFacade(ctx, flows, ap, i)
 }
 
@@ -82,6 +88,15 @@ func (this *RepositoryFacade) Ensure(req Request) (Environment, error) {
 	if !ok {
 		return nil, fmt.Errorf("does not find valid environment for flow %v", flow)
 	}
+	if sess := req.Authorization().FindSession(); sess != nil {
+		matches, err := this.SessionEnvironmentMatches(req.Context(), sess)
+		if err != nil {
+			return nil, err
+		}
+		if !matches {
+			return nil, fmt.Errorf("session %s has a token from a different or unrecognized environment; operator inspection required", sess)
+		}
+	}
 	return candidate.Ensure(req)
 }
 
@@ -91,7 +106,107 @@ func (this *RepositoryFacade) FindBySession(ctx context.Context, sess session.Se
 	if !ok {
 		return nil, ErrNoSuchEnvironment
 	}
+	matches, err := this.SessionEnvironmentMatches(ctx, sess)
+	if err != nil {
+		return nil, err
+	}
+	if !matches {
+		return nil, fmt.Errorf("session %s has a token from a different or unrecognized environment; operator inspection required", sess)
+	}
 	return candidate.FindBySession(ctx, sess, opts)
+}
+
+// SessionEnvironmentMatches leaves unknown persisted tokens for operator review.
+func (this *RepositoryFacade) SessionEnvironmentMatches(ctx context.Context, sess session.Session) (bool, error) {
+	candidate, ok := this.entries[sess.Flow()]
+	if !ok {
+		return false, nil
+	}
+	raw, err := sess.EnvironmentToken(ctx)
+	if err != nil {
+		return false, fmt.Errorf("cannot inspect environment token of session %s: %w", sess, err)
+	}
+	if len(raw) == 0 {
+		return true, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return false, nil
+	}
+	if schema, present := fields["schema"]; present {
+		var marker string
+		if err := json.Unmarshal(schema, &marker); err != nil || marker != sshUserCertificateSchema || len(fields["user"]) != 0 {
+			return false, nil
+		}
+		_, ok := candidate.(*SshRepository)
+		return ok, nil
+	}
+	if user, present := fields["user"]; present {
+		encoded, present := fields["portForwardingAllowed"]
+		if !present || (string(encoded) != "true" && string(encoded) != "false") {
+			return false, nil
+		}
+		for key := range fields {
+			switch key {
+			case "user", "version", "portForwardingAllowed":
+			case "managed", "managedGroup", "managedGroupSid", "allowSystemUsers", "deleteOnDispose", "deleteProfileOnDispose", "killProcessesOnDispose", "processesKilledOnDispose":
+				if runtime.GOOS != "windows" {
+					return false, nil
+				}
+			default:
+				return false, nil
+			}
+		}
+		var identity struct {
+			Name string          `json:"name"`
+			UID  json.RawMessage `json:"uid"`
+			SID  string          `json:"sid"`
+		}
+		if err := json.Unmarshal(user, &identity); err != nil {
+			return false, nil
+		}
+		if version, present := fields["version"]; present {
+			var number uint8
+			if err := json.Unmarshal(version, &number); err != nil || number != 2 {
+				return false, nil
+			}
+			if identity.Name == "" || (runtime.GOOS == "windows" && identity.SID == "") ||
+				(runtime.GOOS != "windows" && (len(identity.UID) == 0 || string(identity.UID) == "null")) {
+				return false, nil
+			}
+		} else if runtime.GOOS == "windows" ||
+			(identity.Name == "" && (len(identity.UID) == 0 || string(identity.UID) == "null")) {
+			return false, nil
+		}
+		_, ok := candidate.(*LocalRepository)
+		return ok, nil
+	}
+	if runtime.GOOS == "windows" && len(fields) == 1 {
+		if encoded, present := fields["portForwardingAllowed"]; present {
+			var allowed bool
+			if json.Unmarshal(encoded, &allowed) == nil {
+				_, ok := candidate.(*LocalRepository)
+				return ok, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// DisposeSession serializes local session disposal with account provisioning.
+func (this *RepositoryFacade) DisposeSession(ctx context.Context, sess session.Session) (bool, error) {
+	if local, ok := this.entries[sess.Flow()].(*LocalRepository); ok && local.coordinator != nil {
+		local.coordinator.mu.Lock()
+		defer local.coordinator.mu.Unlock()
+	}
+	matches, err := this.SessionEnvironmentMatches(ctx, sess)
+	if err != nil {
+		return false, err
+	}
+	if !matches {
+		return false, fmt.Errorf("session %s has a token from a different or unrecognized environment; operator inspection required", sess)
+	}
+	return sess.Dispose(ctx)
 }
 
 func (this *RepositoryFacade) IsSessionCompatible(ctx context.Context, sess session.Session) (bool, error) {
@@ -101,6 +216,9 @@ func (this *RepositoryFacade) IsSessionCompatible(ctx context.Context, sess sess
 	candidate, ok := this.entries[sess.Flow()]
 	if !ok {
 		return false, nil
+	}
+	if matches, err := this.SessionEnvironmentMatches(ctx, sess); err != nil || !matches {
+		return false, err
 	}
 	checker, ok := candidate.(SessionCompatibilityChecker)
 	if !ok {
@@ -116,6 +234,9 @@ func (this *RepositoryFacade) IsSessionCompatibleWith(ctx Context, sess session.
 	candidate, ok := this.entries[sess.Flow()]
 	if !ok {
 		return false, nil
+	}
+	if matches, err := this.SessionEnvironmentMatches(ctx.Context(), sess); err != nil || !matches {
+		return false, err
 	}
 	checker, ok := candidate.(ContextualSessionCompatibilityChecker)
 	if !ok {
@@ -183,7 +304,8 @@ func RegisterRepository[C any, R CloseableRepository](factory RepositoryFactory[
 type repositoryDependenciesContextKey struct{}
 
 type repositoryDependencies struct {
-	hostKeys []crypto.PrivateKey
+	hostKeys      []crypto.PrivateKey
+	localAccounts *localAccountCoordinator
 }
 
 func repositoryDependenciesFrom(ctx context.Context) repositoryDependencies {
