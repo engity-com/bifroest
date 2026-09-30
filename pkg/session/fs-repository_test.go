@@ -193,6 +193,59 @@ func TestFsRepositoryFindAllReportsCorruptEntryAndContinues(t *testing.T) {
 	require.FileExists(t, filepath.Join(corruptDirectory, FsFileEnvironmentToken))
 }
 
+func TestFsRepositoryAutoRepairPreservesCorruptSessionWithEnvironmentToken(t *testing.T) {
+	repository, err := NewFsRepository(t.Context(), newFsRepositoryTestConfiguration(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, repository.Close()) })
+	id := MustNewId()
+	dir, err := repository.dir("test", id)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(dir, 0700))
+	metadata := filepath.Join(dir, FsFileSession)
+	token := filepath.Join(dir, FsFileEnvironmentToken)
+	require.NoError(t, os.WriteFile(metadata, []byte("not-json"), 0600))
+	require.NoError(t, os.WriteFile(token, []byte(`{"version":2,"user":{"name":"alice","uid":1001},"killProcessesOnDispose":true}`), 0600))
+	autoCleanup := true
+	_, err = repository.FindBy(t.Context(), "test", id, &FindOpts{AutoCleanUpAllowed: &autoCleanup})
+	require.ErrorIs(t, err, ErrCorruptSession)
+	require.ErrorContains(t, err, "environment token requires operator inspection")
+	require.FileExists(t, metadata)
+	require.FileExists(t, token)
+}
+
+func TestFsRepositoryAutoRepairPreservesEnvironmentTokenUnderInvalidNames(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		flow   string
+		id     string
+		nested bool
+	}{
+		{name: "invalid session ID", flow: "test", id: "invalid_id"},
+		{name: "nested under invalid session ID", flow: "test", id: "invalid_id", nested: true},
+		{name: "invalid flow", flow: "invalid_flow", id: MustNewId().String()},
+		{name: "nested under invalid flow", flow: "invalid_flow", id: MustNewId().String(), nested: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repository, err := NewFsRepository(t.Context(), newFsRepositoryTestConfiguration(t))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, repository.Close()) })
+			dir := filepath.Join(repository.storage, tc.flow, tc.id)
+			if tc.nested {
+				dir = filepath.Join(dir, "nested", "child")
+			}
+			require.NoError(t, os.MkdirAll(dir, 0700))
+			token := filepath.Join(dir, FsFileEnvironmentToken)
+			require.NoError(t, os.WriteFile(token, []byte(`{"version":2,"user":{"name":"alice","uid":1001}}`), 0600))
+			autoCleanup := true
+			require.NoError(t, repository.FindAll(t.Context(), func(context.Context, Session) (bool, error) {
+				t.Fatal("unexpected session found under invalid storage path")
+				return false, nil
+			}, &FindOpts{AutoCleanUpAllowed: &autoCleanup}))
+			require.FileExists(t, token)
+		})
+	}
+}
+
 func TestFsRepositoryFindAllReportsSessionDirectoryWithoutMetadata(t *testing.T) {
 	conf := newFsRepositoryTestConfiguration(t)
 	repository, err := NewFsRepository(context.Background(), conf)

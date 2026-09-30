@@ -305,6 +305,18 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 		}
 		return true, nil
 	}
+	if verifier, ok := this.service.environments.(interface {
+		SessionEnvironmentMatches(context.Context, session.Session) (bool, error)
+	}); ok {
+		matches, err := verifier.SessionEnvironmentMatches(ctx, sess)
+		if err != nil {
+			return reportAndContinue(err)
+		}
+		if !matches {
+			logger.Warn("session environment token does not match the configured environment; preserving session for operator inspection")
+			return true, nil
+		}
+	}
 
 	if shouldBeDeleted, err := session.IsExpiredWithThreshold(this.service.Configuration.HouseKeeping.KeepExpiredFor.Native())(ctx, sess); err != nil {
 		return reportAndContinue(err)

@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	iofs "io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -274,6 +275,20 @@ func (this *FsRepository) loadAndMatch(ctx context.Context, flow configuration.F
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			this.mutex.Unlock()
 			return nil, ctxErr
+		}
+		fn, pathErr := this.file(flow, id, FsFileEnvironmentToken)
+		if pathErr != nil {
+			this.mutex.Unlock()
+			return nil, pathErr
+		}
+		present, statErr := fsEnvironmentTokenExists(fn)
+		if statErr != nil {
+			this.mutex.Unlock()
+			return nil, fmt.Errorf("cannot inspect environment token before repairing session %v/%v: %w", flow, id, statErr)
+		}
+		if present {
+			this.mutex.Unlock()
+			return nil, fmt.Errorf("%w: environment token requires operator inspection before session removal", err)
 		}
 		if byFlow := this.connectionInterceptors[flow]; byFlow != nil {
 			if interceptor := byFlow[id]; interceptor != nil {
@@ -653,11 +668,52 @@ func (this *FsRepository) deleteUnexpectedFiles(logger log.Logger, sess *fs) err
 	return nil
 }
 
+func fsEnvironmentTokenExists(path string) (bool, error) {
+	state, err := os.Lstat(path)
+	if sys.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return state.Size() > 0 || !state.Mode().IsRegular(), nil
+}
+
+func fsPathContainsEnvironmentToken(path string) (bool, error) {
+	present := false
+	err := filepath.WalkDir(path, func(fn string, entry iofs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.Name() != FsFileEnvironmentToken {
+			return nil
+		}
+		var err error
+		present, err = fsEnvironmentTokenExists(fn)
+		if err != nil {
+			return err
+		}
+		if present {
+			return iofs.SkipAll
+		}
+		return nil
+	})
+	if sys.IsNotExist(err) {
+		return false, nil
+	}
+	return present, err
+}
+
 func (this *FsRepository) doFindAutoCleanFlowContentIfAllowed(ctx context.Context, flow configuration.FlowName, fn string, opts *FindOpts, successMessage string, cause error) {
 	if opts.IsAutoCleanUpAllowedFor(ctx, flow, Id{}) {
 		logger := opts.GetLogger(this.logger).
 			With("flow", flow).
 			With("path", fn)
+		present, err := fsPathContainsEnvironmentToken(fn)
+		if err != nil || present {
+			logger.WithError(err).Warn("preserving unexpected session storage path: environment token may require operator inspection")
+			return
+		}
 		if err := os.RemoveAll(fn); err != nil && !os.IsNotExist(err) {
 			logger.
 				WithError(err).
@@ -677,6 +733,11 @@ func (this *FsRepository) doFindAutoCleanRootContentIfAllowed(_ context.Context,
 	if opts.IsAutoCleanUpAllowed() {
 		logger := opts.GetLogger(this.logger).
 			With("path", fn)
+		present, err := fsPathContainsEnvironmentToken(fn)
+		if err != nil || present {
+			logger.WithError(err).Warn("preserving unexpected session storage path: environment token may require operator inspection")
+			return
+		}
 		if err := os.RemoveAll(fn); err != nil && !os.IsNotExist(err) {
 			logger.
 				WithError(err).
