@@ -277,7 +277,7 @@ func TestLocalServerCoreFailedUpdateRestoresManagedMembership(t *testing.T) {
 	_, err = rand.Read(nonce[:])
 	require.NoError(t, err)
 	suffix := hex.EncodeToString(nonce[:])
-	name, initialGroup, managedGroup := "bsc"+suffix, "bsi"+suffix, "bsm"+suffix
+	name, initialGroup, managedGroup, extraGroup := "bsc"+suffix, "bsi"+suffix, "bsm"+suffix, "bsx"+suffix
 	sid, err := CreateLocalWindowsAccount(name, "Original", initialGroup)
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -288,27 +288,38 @@ func TestLocalServerCoreFailedUpdateRestoresManagedMembership(t *testing.T) {
 		}
 	})
 	require.NoError(t, ensureLocalSAMGroup(managedGroup))
+	require.NoError(t, ensureLocalSAMGroup(extraGroup))
 	repository := localWindowsTestRepository(t, name)
 	repository.conf.ManagedGroup = managedGroup
 	repository.conf.UpdateIfDifferent = template.BoolOf(true)
+	repository.conf.Groups = configuration.WindowsUserGroupRequirementTemplates{{Name: template.MustNewString(extraGroup)}}
 	assertMembership := func(t *testing.T, want bool) {
 		t.Helper()
 		member, err := IsLocalWindowsAccountInGroup(name, sid, managedGroup)
 		require.NoError(t, err)
 		require.Equal(t, want, member)
 	}
+	assertExtraMembership := func(t *testing.T, want bool) {
+		t.Helper()
+		member, err := windowsLocalGroupHasMember(extraGroup, sid)
+		require.NoError(t, err)
+		require.Equal(t, want, member)
+	}
 	assertMembership(t, false)
+	assertExtraMembership(t, false)
 
 	repository.conf.DisplayName = template.MustNewString("{{ .missing }}")
 	_, err = repository.Ensure(localWindowsTestRequest(t, &sshTestStoredSession{id: session.MustNewId()}))
 	require.Error(t, err)
 	assertMembership(t, false)
+	assertExtraMembership(t, false)
 
 	repository.conf.DisplayName = template.MustNewString("Updated")
 	repository.conf.DeleteOnDispose = template.MustNewBool("{{ .missing }}")
 	_, err = repository.Ensure(localWindowsTestRequest(t, &sshTestStoredSession{id: session.MustNewId()}))
 	require.Error(t, err)
 	assertMembership(t, false)
+	assertExtraMembership(t, false)
 
 	repository.conf.DeleteOnDispose = template.BoolOf(false)
 	stalled := &serverCoreTokenWriteFailureSession{&sshTestStoredSession{id: session.MustNewId()}}
@@ -317,6 +328,7 @@ func TestLocalServerCoreFailedUpdateRestoresManagedMembership(t *testing.T) {
 	_, err = repository.Ensure(req)
 	require.ErrorContains(t, err, "test token write failure")
 	assertMembership(t, false)
+	assertExtraMembership(t, false)
 	storedToken, err := stalled.EnvironmentToken(context.Background())
 	require.NoError(t, err)
 	require.Empty(t, storedToken)
@@ -325,9 +337,11 @@ func TestLocalServerCoreFailedUpdateRestoresManagedMembership(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, created.(*local).token.Managed)
 	assertMembership(t, true)
+	assertExtraMembership(t, true)
 	_, err = repository.Ensure(req)
 	require.ErrorContains(t, err, "test token write failure")
 	assertMembership(t, true)
+	assertExtraMembership(t, true)
 }
 
 func TestLocalServerCoreProvisioningPrecedesSessionDispose(t *testing.T) {

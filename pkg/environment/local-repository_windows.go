@@ -140,11 +140,20 @@ func (this *LocalRepository) Ensure(req Request) (_ Environment, rErr error) {
 		}
 	}
 	var createdName, createdSID, addedManagedGroupSID string
+	var addedGroups []windowsLocalGroupRequirement
 	var allowSystemUsers bool
 	defer func() {
 		if createdSID != "" && rErr != nil {
 			if disableErr := disableNewLocalWindowsAccount(createdName, createdSID); disableErr != nil {
 				rErr = fmt.Errorf("%w; additionally cannot disable incomplete local account %q: %v", rErr, createdName, disableErr)
+			}
+		}
+		if createdSID == "" && rErr != nil {
+			for i := len(addedGroups) - 1; i >= 0; i-- {
+				group := addedGroups[i]
+				if undoErr := removeWindowsLocalUserGroupMember(account.Name, account.SID, group, allowSystemUsers); undoErr != nil {
+					rErr = fmt.Errorf("%w; additionally cannot remove local account %q from group %q: %v", rErr, account.Name, group.Name, undoErr)
+				}
 			}
 		}
 		if addedManagedGroupSID != "" && rErr != nil {
@@ -290,8 +299,10 @@ func (this *LocalRepository) Ensure(req Request) (_ Environment, rErr error) {
 		}
 	}
 	if len(groups) > 0 {
-		if _, err := ensureWindowsLocalUserGroups(account.Name, account.SID, groups, allowSystemUsers); err != nil {
-			return fail(err)
+		var groupErr error
+		_, addedGroups, groupErr = ensureWindowsLocalUserGroups(account.Name, account.SID, groups, allowSystemUsers)
+		if groupErr != nil {
+			return fail(groupErr)
 		}
 	}
 	if skel != "" {

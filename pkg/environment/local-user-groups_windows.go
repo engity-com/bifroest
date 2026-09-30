@@ -160,51 +160,52 @@ func resolveWindowsLocalGroup(group windowsLocalGroupRequirement, host string, r
 
 // ensureWindowsLocalUserGroups adds direct memberships only; it never changes
 // the managed group used for account ownership and deletion.
-func ensureWindowsLocalUserGroups(name, sid string, groups []windowsLocalGroupRequirement, allowSystemUsers bool) ([]windowsLocalGroupRequirement, error) {
+func ensureWindowsLocalUserGroups(name, sid string, groups []windowsLocalGroupRequirement, allowSystemUsers bool) ([]windowsLocalGroupRequirement, []windowsLocalGroupRequirement, error) {
 	account, err := localSAMCurrent(name, sid, allowSystemUsers)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	host, err := os.Hostname()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	result := make([]windowsLocalGroupRequirement, len(groups))
+	var added []windowsLocalGroupRequirement
 	missing := make([]bool, len(groups))
 	// Resolve all supplied identities before creating or changing any group.
 	for i, group := range groups {
 		result[i], missing[i], err = resolveWindowsLocalGroup(group, host, false)
 		if err != nil {
-			return nil, fmt.Errorf("resolve local group requirement %d: %w", i, err)
+			return nil, added, fmt.Errorf("resolve local group requirement %d: %w", i, err)
 		}
 	}
 	for i, group := range groups {
 		if missing[i] {
 			if err := ensureLocalSAMGroup(group.Name); err != nil {
-				return nil, err
+				return nil, added, err
 			}
 			result[i], missing[i], err = resolveWindowsLocalGroup(group, host, false)
 			if err != nil || missing[i] {
-				return nil, fmt.Errorf("resolve created local group %q: %v", group.Name, err)
+				return nil, added, fmt.Errorf("resolve created local group %q: %v", group.Name, err)
 			}
 		}
 		current, absent, err := resolveWindowsLocalGroup(result[i], host, false)
 		if err != nil || absent || current.SID != result[i].SID {
-			return nil, fmt.Errorf("local group %q changed identity: %v", result[i].Name, err)
+			return nil, added, fmt.Errorf("local group %q changed identity: %v", result[i].Name, err)
 		}
 		member, err := windowsLocalGroupHasMember(current.Name, account.SID)
 		if err != nil {
-			return nil, err
+			return nil, added, err
 		}
 		if member {
 			continue
 		}
 		if _, err := localSAMCurrent(name, sid, allowSystemUsers); err != nil {
-			return nil, err
+			return nil, added, err
 		}
 		current, absent, err = resolveWindowsLocalGroup(result[i], host, false)
 		if err != nil || absent || current.SID != result[i].SID {
-			return nil, fmt.Errorf("local group %q changed identity: %v", result[i].Name, err)
+			return nil, added, fmt.Errorf("local group %q changed identity: %v", result[i].Name, err)
 		}
 		parsed, _ := windows.StringToSid(account.SID)
 		groupName, _ := windows.UTF16PtrFromString(current.Name)
@@ -213,10 +214,35 @@ func ensureWindowsLocalUserGroups(name, sid string, groups []windowsLocalGroupRe
 		runtime.KeepAlive(groupName)
 		runtime.KeepAlive(parsed)
 		if err != nil {
-			return nil, fmt.Errorf("add account to local group %q: %w", current.Name, err)
+			return nil, added, fmt.Errorf("add account to local group %q: %w", current.Name, err)
 		}
+		added = append(added, current)
 	}
-	return result, nil
+	return result, added, nil
+}
+
+func removeWindowsLocalUserGroupMember(name, sid string, group windowsLocalGroupRequirement, allowSystemUsers bool) error {
+	if _, err := localSAMCurrent(name, sid, allowSystemUsers); err != nil {
+		return err
+	}
+	host, err := os.Hostname()
+	if err != nil {
+		return err
+	}
+	current, absent, err := resolveWindowsLocalGroup(group, host, false)
+	if err != nil || absent || current.SID != group.SID {
+		return fmt.Errorf("local group %q changed identity before rollback: %v", group.Name, err)
+	}
+	if _, err := localSAMCurrent(name, sid, allowSystemUsers); err != nil {
+		return err
+	}
+	parsed, _ := windows.StringToSid(sid)
+	groupName, _ := windows.UTF16PtrFromString(current.Name)
+	info := localSAMMemberInfo0{SID: parsed}
+	err = localSAMCall("NetLocalGroupDelMembers", 0, uintptr(unsafe.Pointer(groupName)), 0, uintptr(unsafe.Pointer(&info)), 1)
+	runtime.KeepAlive(groupName)
+	runtime.KeepAlive(parsed)
+	return err
 }
 
 func windowsLocalGroupHasMember(name, sid string) (bool, error) {

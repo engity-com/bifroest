@@ -63,14 +63,14 @@ func TestLocalNanoServerSAMLifecycle(t *testing.T) {
 	if err != nil || !member {
 		t.Fatalf("created account lacks direct managed-group membership: member=%t, err=%v", member, err)
 	}
-	if _, err := ensureWindowsLocalUserGroups(name, sid, []windowsLocalGroupRequirement{{Name: extraGroup}}, false); err != nil {
+	if _, _, err := ensureWindowsLocalUserGroups(name, sid, []windowsLocalGroupRequirement{{Name: extraGroup}}, false); err != nil {
 		t.Fatalf("enroll in additional local group: %v", err)
 	}
 	extraSID, err := localSAMGroupSID(extraGroup)
 	if err != nil {
 		t.Fatalf("resolve additional group SID: %v", err)
 	}
-	if _, err := ensureWindowsLocalUserGroups(name, sid, []windowsLocalGroupRequirement{{SID: extraSID}}, false); err != nil {
+	if _, _, err := ensureWindowsLocalUserGroups(name, sid, []windowsLocalGroupRequirement{{SID: extraSID}}, false); err != nil {
 		t.Fatalf("resolve and confirm additional group by SID: %v", err)
 	}
 	listed, err := lookupWindowsLocalUserGroups(name, sid)
