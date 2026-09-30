@@ -217,6 +217,20 @@ func (this *localBlockedOutputSession) Write(data []byte) (int, error) {
 	return this.sshTestSession.Write(data)
 }
 
+type localDelayedOutputSession struct {
+	*localBlockedOutputSession
+	delivered chan error
+}
+
+func (this *localDelayedOutputSession) Write(data []byte) (int, error) {
+	n, err := this.localBlockedOutputSession.Write(data)
+	select {
+	case this.delivered <- err:
+	default:
+	}
+	return n, err
+}
+
 func TestLocalUnixNonPtyWaitDoesNotHangOnBlockedOutput(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("starting a process with Unix credentials requires root")
@@ -260,6 +274,73 @@ func TestLocalUnixNonPtyWaitDoesNotHangOnBlockedOutput(t *testing.T) {
 	case <-time.After(8 * time.Second):
 		cancel()
 		t.Fatal("non-PTY process wait remained blocked inside SSH output writer")
+	}
+}
+
+func TestLocalUnixNonPtyLateSuccessfulWriteKeepsOutputFailure(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("starting a process with Unix credentials requires root")
+	}
+	ctx, cancel := newSshTestContext()
+	defer cancel()
+	sshSession := &localDelayedOutputSession{
+		localBlockedOutputSession: &localBlockedOutputSession{
+			sshTestSession: newSshTestSession(ctx, "printf output", nil),
+			started:        make(chan struct{}, 1),
+			release:        make(chan struct{}),
+		},
+		delivered: make(chan error, 1),
+	}
+	t.Cleanup(func() {
+		select {
+		case <-sshSession.release:
+		default:
+			close(sshSession.release)
+		}
+	})
+	stored := &sshTestStoredSession{id: session.MustNewId()}
+	task := &sshTestTask{
+		context:       ctx,
+		connection:    &sshTestConnection{id: connection.MustNewId(), context: ctx},
+		authorization: &sshTestAuthorization{session: stored},
+		session:       sshSession,
+		taskType:      TaskTypeShell,
+	}
+	env := &local{
+		repository: &LocalRepository{conf: &configuration.EnvironmentLocal{}},
+		user: &user.User{
+			Name: "test", Uid: user.Id(os.Getuid()), Group: user.Group{Gid: user.GroupId(os.Getgid())},
+			HomeDir: t.TempDir(), Shell: "/bin/sh",
+		},
+	}
+	type outcome struct {
+		code int
+		err  error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		code, err := env.Run(task)
+		done <- outcome{code, err}
+	}()
+	select {
+	case <-sshSession.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("local process did not reach SSH output writer")
+	}
+	select {
+	case result := <-done:
+		require.Equal(t, -1, result.code)
+		require.ErrorContains(t, result.err, "local process output did not complete before timeout")
+	case <-time.After(8 * time.Second):
+		cancel()
+		t.Fatal("local process did not finish after output timeout")
+	}
+	close(sshSession.release)
+	select {
+	case err := <-sshSession.delivered:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("delayed SSH writer did not complete after release")
 	}
 }
 

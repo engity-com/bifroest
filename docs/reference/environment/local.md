@@ -76,6 +76,8 @@ The cleanup switches under [Dispose](#dispose) are top-level properties of `loca
 
 For both Unix PTYs and Windows ConPTY, closing SSH standard input alone does not generate a terminal EOF. An interactive program may continue waiting for input; use a non-PTY session for commands that need pipe EOF, or close the session explicitly.
 
+For non-PTY commands and SFTP, after the process exits Bifröst waits up to two seconds for outstanding stdout and stderr forwarding. A write blocked beyond that limit yields a task error and failure audit instead of the process's exit code, even if the SSH client later resumes reading. Remaining output can be lost. This bounded drain prevents a permanently stalled client from holding the session open indefinitely; closing or canceling the session remains independent of that client's write.
+
 <<property("loginAllowed", "bool", template_context="../context/authorization-request.md", default=True, heading=4)>>
 Whether this authorization may use the environment.
 
