@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 	"time"
 	"unsafe"
 
+	essh "github.com/engity-com/ssh-server-go"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
 
@@ -54,6 +56,19 @@ func (*serverCoreTokenWriteFailureSession) SetEnvironmentToken(context.Context, 
 	return errors.New("test token write failure")
 }
 
+type serverCoreDisplayChangedSession struct {
+	*sshTestStoredSession
+	name string
+	sid  string
+}
+
+func (this *serverCoreDisplayChangedSession) SetEnvironmentToken(context.Context, []byte) error {
+	if err := UpdateLocalWindowsAccountDisplayName(this.name, this.sid, "Operator override", true); err != nil {
+		return err
+	}
+	return errors.New("test token write failure")
+}
+
 type serverCorePausedTokenSession struct {
 	*serverCoreLifecycleSession
 	atToken chan struct{}
@@ -85,6 +100,21 @@ func (this *serverCorePausedTokenSession) Dispose(context.Context) (bool, error)
 	defer this.mu.Unlock()
 	this.state = session.StateDisposed
 	return true, nil
+}
+
+type serverCoreBlockedPTYSession struct {
+	*localWindowsPtySession
+	started chan struct{}
+	release chan struct{}
+}
+
+func (this *serverCoreBlockedPTYSession) Write(data []byte) (int, error) {
+	select {
+	case this.started <- struct{}{}:
+	default:
+	}
+	<-this.release
+	return this.localWindowsPtySession.Write(data)
 }
 
 func TestLocalServerCoreProviderAccountLifecycle(t *testing.T) {
@@ -305,14 +335,22 @@ func TestLocalServerCoreFailedUpdateRestoresManagedMembership(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, want, member)
 	}
+	assertDisplay := func(t *testing.T, want string) {
+		t.Helper()
+		current, err := localSAMDisplayName(name)
+		require.NoError(t, err)
+		require.Equal(t, want, current)
+	}
 	assertMembership(t, false)
 	assertExtraMembership(t, false)
+	assertDisplay(t, "Original")
 
 	repository.conf.DisplayName = template.MustNewString("{{ .missing }}")
 	_, err = repository.Ensure(localWindowsTestRequest(t, &sshTestStoredSession{id: session.MustNewId()}))
 	require.Error(t, err)
 	assertMembership(t, false)
 	assertExtraMembership(t, false)
+	assertDisplay(t, "Original")
 
 	repository.conf.DisplayName = template.MustNewString("Updated")
 	repository.conf.DeleteOnDispose = template.MustNewBool("{{ .missing }}")
@@ -320,6 +358,7 @@ func TestLocalServerCoreFailedUpdateRestoresManagedMembership(t *testing.T) {
 	require.Error(t, err)
 	assertMembership(t, false)
 	assertExtraMembership(t, false)
+	assertDisplay(t, "Original")
 
 	repository.conf.DeleteOnDispose = template.BoolOf(false)
 	stalled := &serverCoreTokenWriteFailureSession{&sshTestStoredSession{id: session.MustNewId()}}
@@ -329,19 +368,35 @@ func TestLocalServerCoreFailedUpdateRestoresManagedMembership(t *testing.T) {
 	require.ErrorContains(t, err, "test token write failure")
 	assertMembership(t, false)
 	assertExtraMembership(t, false)
+	assertDisplay(t, "Original")
 	storedToken, err := stalled.EnvironmentToken(context.Background())
 	require.NoError(t, err)
 	require.Empty(t, storedToken)
+	overridden := &serverCoreDisplayChangedSession{
+		sshTestStoredSession: &sshTestStoredSession{id: session.MustNewId()},
+		name:                 name,
+		sid:                  sid,
+	}
+	overrideRequest := localWindowsTestRequest(t, overridden.sshTestStoredSession)
+	overrideRequest.authorization = &sshTestAuthorization{session: overridden}
+	_, err = repository.Ensure(overrideRequest)
+	require.ErrorContains(t, err, "cannot restore display name")
+	assertDisplay(t, "Operator override")
+	assertMembership(t, false)
+	assertExtraMembership(t, false)
+	require.NoError(t, UpdateLocalWindowsAccountDisplayName(name, sid, "Original", true))
 
 	created, err := repository.Ensure(localWindowsTestRequest(t, &sshTestStoredSession{id: session.MustNewId()}))
 	require.NoError(t, err)
 	require.True(t, created.(*local).token.Managed)
 	assertMembership(t, true)
 	assertExtraMembership(t, true)
+	assertDisplay(t, "Updated")
 	_, err = repository.Ensure(req)
 	require.ErrorContains(t, err, "test token write failure")
 	assertMembership(t, true)
 	assertExtraMembership(t, true)
+	assertDisplay(t, "Updated")
 }
 
 func TestLocalServerCoreProvisioningPrecedesSessionDispose(t *testing.T) {
@@ -452,6 +507,90 @@ func TestLocalServerCoreProvisioningPrecedesSessionDispose(t *testing.T) {
 		require.Empty(t, raw)
 	case <-time.After(20 * time.Second):
 		t.Fatal("account provisioning did not finish after resuming token write")
+	}
+}
+
+func TestLocalServerCoreConPTYBlockedOutputDoesNotHang(t *testing.T) {
+	if os.Getenv("BIFROEST_TEST_SERVERCORE_IN_CONTAINER") != "1" {
+		t.Skip("only run inside the disposable Server Core integration container")
+	}
+	marker, err := os.ReadFile(serverCoreContainerMarker)
+	require.NoError(t, err)
+	require.Equal(t, "bifroest-servercore-integration", strings.TrimSpace(string(marker)))
+	self, err := windows.GetCurrentProcessToken().GetTokenUser()
+	require.NoError(t, err)
+	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
+	require.NoError(t, err)
+	if !self.User.Sid.Equals(system) {
+		t.Skip("ConPTY integration requires the container's LocalSystem service")
+	}
+	if err := windows.NewLazySystemDLL("kernel32.dll").NewProc("CreatePseudoConsole").Find(); err != nil {
+		t.Skip("ConPTY is not available on this Windows version")
+	}
+	account, err := lookupLocalWindowsAccount(os.Getenv("BIFROEST_TEST_LOCAL_WINDOWS_USER"))
+	require.NoError(t, err)
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name    string
+		command string
+		cancel  bool
+	}{
+		{name: "cancel", command: "local-windows-identity-child", cancel: true},
+		{name: "output timeout", command: "local-windows-cleanup-child"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repository := localWindowsTestRepository(t, account.Name)
+			repository.conf.ExecCommandPrefix = template.MustNewStrings(exe)
+			req := localWindowsTestRequest(t, &sshTestStoredSession{id: session.MustNewId()})
+			ctx, cancel := context.WithCancel(req.context.Context)
+			req.context.Context = ctx
+			t.Cleanup(cancel)
+			reader, writer := io.Pipe()
+			t.Cleanup(func() { _ = writer.Close() })
+			blocked := &serverCoreBlockedPTYSession{
+				localWindowsPtySession: &localWindowsPtySession{
+					sshTestSession: newSshTestSession(req.context, tc.command, nil),
+					input:          reader,
+					changes:        make(chan essh.Window),
+				},
+				started: make(chan struct{}, 1),
+				release: make(chan struct{}),
+			}
+			t.Cleanup(func() { close(blocked.release) })
+			req.session = blocked
+			env, err := repository.Ensure(req)
+			require.NoError(t, err)
+			type outcome struct {
+				code int
+				err  error
+			}
+			done := make(chan outcome, 1)
+			go func() {
+				code, err := env.Run(req)
+				done <- outcome{code, err}
+			}()
+			select {
+			case <-blocked.started:
+			case <-time.After(10 * time.Second):
+				t.Fatal("ConPTY output did not reach the SSH writer")
+			}
+			if tc.cancel {
+				cancel()
+			}
+			select {
+			case result := <-done:
+				if tc.cancel {
+					require.NoError(t, result.err)
+					require.Equal(t, -2, result.code)
+				} else {
+					require.ErrorContains(t, result.err, "SSH output write did not finish")
+					require.Equal(t, -1, result.code)
+				}
+			case <-time.After(6 * time.Second):
+				t.Fatal("ConPTY remained blocked on SSH output")
+			}
+		})
 	}
 }
 

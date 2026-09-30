@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -510,6 +511,16 @@ func (this *localWindowsPtySession) Pty() (essh.Pty, <-chan essh.Window, bool) {
 	return essh.Pty{Term: "xterm-256color", Window: essh.Window{Width: 80, Height: 25}}, this.changes, true
 }
 
+type localWindowsCloseTrackingPTYSession struct {
+	*localWindowsPtySession
+	closed atomic.Bool
+}
+
+func (this *localWindowsCloseTrackingPTYSession) Close() error {
+	this.closed.Store(true)
+	return this.localWindowsPtySession.Close()
+}
+
 func TestLocalWindowsConPTYAsUser(t *testing.T) {
 	name := os.Getenv("BIFROEST_TEST_LOCAL_WINDOWS_USER")
 	if name == "" {
@@ -602,10 +613,12 @@ func TestLocalWindowsConPTYDistinguishesShellExitFromRelayFailure(t *testing.T) 
 			req := localWindowsTestRequest(t, stored)
 			reader, writer := io.Pipe()
 			defer writer.Close()
-			req.session = &localWindowsPtySession{
-				sshTestSession: newSshTestSession(req.context, tc.command, nil),
-				input:          reader,
-				changes:        make(chan essh.Window),
+			req.session = &localWindowsCloseTrackingPTYSession{
+				localWindowsPtySession: &localWindowsPtySession{
+					sshTestSession: newSshTestSession(req.context, tc.command, nil),
+					input:          reader,
+					changes:        make(chan essh.Window),
+				},
 			}
 			env, err := repository.Ensure(req)
 			require.NoError(t, err)
@@ -620,7 +633,9 @@ func TestLocalWindowsConPTYDistinguishesShellExitFromRelayFailure(t *testing.T) 
 			}()
 			select {
 			case result := <-done:
-				output := req.session.(*localWindowsPtySession).stdout.String()
+				pty := req.session.(*localWindowsCloseTrackingPTYSession)
+				require.False(t, pty.closed.Load(), "completed relay must leave the SSH channel open for exit status")
+				output := pty.stdout.String()
 				require.NotContains(t, output, "BIFROEST-CONPTY/1 EXIT")
 				require.NotContains(t, output, "shell argument contains NUL")
 				if tc.fail {

@@ -141,11 +141,18 @@ func (this *LocalRepository) Ensure(req Request) (_ Environment, rErr error) {
 	}
 	var createdName, createdSID, addedManagedGroupSID string
 	var addedGroups []windowsLocalGroupRequirement
+	var previousDisplayName, appliedDisplayName string
+	var changedDisplayName bool
 	var allowSystemUsers bool
 	defer func() {
 		if createdSID != "" && rErr != nil {
 			if disableErr := disableNewLocalWindowsAccount(createdName, createdSID); disableErr != nil {
 				rErr = fmt.Errorf("%w; additionally cannot disable incomplete local account %q: %v", rErr, createdName, disableErr)
+			}
+		}
+		if changedDisplayName && rErr != nil {
+			if _, _, undoErr := updateLocalWindowsAccountDisplayName(account.Name, account.SID, previousDisplayName, true, &appliedDisplayName, allowSystemUsers); undoErr != nil {
+				rErr = fmt.Errorf("%w; additionally cannot restore display name of local account %q: %v", rErr, account.Name, undoErr)
 			}
 		}
 		if createdSID == "" && rErr != nil {
@@ -293,9 +300,11 @@ func (this *LocalRepository) Ensure(req Request) (_ Environment, rErr error) {
 			addedManagedGroupSID = groupSID
 		}
 		if !this.conf.DisplayName.IsZero() {
-			if err = UpdateLocalWindowsAccountDisplayName(account.Name, account.SID, display, true, allowSystemUsers); err != nil {
+			previousDisplayName, changedDisplayName, err = updateLocalWindowsAccountDisplayName(account.Name, account.SID, display, true, nil, allowSystemUsers)
+			if err != nil {
 				return fail(err)
 			}
+			appliedDisplayName = display
 		}
 	}
 	if len(groups) > 0 {

@@ -13,7 +13,9 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	essh "github.com/engity-com/ssh-server-go"
 )
@@ -46,6 +48,18 @@ type localConPTYRelayStatusWriter struct {
 	tail      [4096]byte
 	length    int
 	truncated bool
+}
+
+type localConPTYOutputWriter struct {
+	io.Writer
+	writingSince atomic.Pointer[time.Time]
+}
+
+func (this *localConPTYOutputWriter) Write(data []byte) (int, error) {
+	started := time.Now()
+	this.writingSince.Store(&started)
+	defer this.writingSince.Store(nil)
+	return this.Writer.Write(data)
 }
 
 func (this *localConPTYRelayStatusWriter) Write(data []byte) (int, error) {
@@ -127,7 +141,13 @@ func (this *local) runConPTY(t Task, shell *exec.Cmd) (int, error) {
 	relay.Dir = shell.Dir
 	relay.Env = shell.Env
 	relay.SysProcAttr = &syscall.SysProcAttr{Token: shell.SysProcAttr.Token}
-	relay.Stdout = t.SshSession()
+	outputRead, outputWrite, err := os.Pipe()
+	if err != nil {
+		return fail("open relay output pipe: %w", err)
+	}
+	defer outputRead.Close()
+	defer outputWrite.Close()
+	relay.Stdout = outputWrite
 	status := &localConPTYRelayStatusWriter{}
 	relay.Stderr = status
 	control, err := relay.StdinPipe()
@@ -138,14 +158,24 @@ func (this *local) runConPTY(t Task, shell *exec.Cmd) (int, error) {
 		_ = control.Close()
 		return fail("start relay as %q: %w", this.user.Name, err)
 	}
+	_ = outputWrite.Close()
 	t.Connection().Logger().With("pid", relay.Process.Pid).Debug("local ConPTY relay started")
 
+	outputDone := make(chan error, 1)
+	outputWriter := &localConPTYOutputWriter{Writer: t.SshSession()}
+	go func() {
+		_, err := io.Copy(outputWriter, outputRead)
+		outputDone <- err
+	}()
+	const outputTimeout = 2 * time.Second
+	outputWatch := time.NewTicker(100 * time.Millisecond)
+	defer outputWatch.Stop()
 	stop := make(chan struct{})
 	frames := make(chan localConPTYFrame, 8)
 	resizes := make(chan localConPTYFrame, 1)
 	processDone := make(chan error, 1)
 	waitFinished := make(chan struct{})
-	exitObserved := false
+	outputDrained := false
 	go func() {
 		defer close(waitFinished)
 		processDone <- relay.Wait()
@@ -153,8 +183,9 @@ func (this *local) runConPTY(t Task, shell *exec.Cmd) (int, error) {
 	defer func() {
 		close(stop)
 		_ = control.Close()
-		if !exitObserved {
-			_ = t.SshSession().Close()
+		_ = outputRead.Close()
+		if !outputDrained {
+			go func() { _ = t.SshSession().Close() }()
 		}
 		_ = relay.Process.Kill()
 		<-waitFinished
@@ -209,7 +240,38 @@ func (this *local) runConPTY(t Task, shell *exec.Cmd) (int, error) {
 		case <-t.Context().Done():
 			return -2, nil
 		case err := <-processDone:
-			exitObserved = true
+			if t.Context().Err() != nil {
+				return -2, nil
+			}
+			if outputDone != nil {
+				timer := time.NewTimer(outputTimeout)
+				defer timer.Stop()
+				select {
+				case outputErr := <-outputDone:
+					if t.Context().Err() != nil {
+						return -2, nil
+					}
+					if outputErr != nil {
+						_, diagnostic, _ := status.exitStatus()
+						if err != nil {
+							return fail("relay exited: %w; output forwarding failed: %v (stderr: %s)", err, outputErr, diagnostic)
+						}
+						return fail("forward relay output: %w (relay stderr: %s)", outputErr, diagnostic)
+					}
+				case <-timer.C:
+					if t.Context().Err() != nil {
+						return -2, nil
+					}
+					if err != nil {
+						_, diagnostic, _ := status.exitStatus()
+						return fail("relay exited: %w; output did not drain within %s (stderr: %s)", err, outputTimeout, diagnostic)
+					}
+					return fail("relay output did not drain within %s", outputTimeout)
+				case <-t.Context().Done():
+					return -2, nil
+				}
+			}
+			outputDrained = true
 			code, diagnostic, statusErr := status.exitStatus()
 			if err != nil {
 				return fail("relay exited: %w (stderr: %s)", err, diagnostic)
@@ -221,6 +283,24 @@ func (this *local) runConPTY(t Task, shell *exec.Cmd) (int, error) {
 				t.Connection().Logger().With("stderr", diagnostic).Warn("ConPTY relay reported diagnostics")
 			}
 			return code, nil
+		case err := <-outputDone:
+			outputDone = nil
+			if err != nil {
+				if t.Context().Err() != nil {
+					return -2, nil
+				}
+				_ = relay.Process.Kill()
+				<-waitFinished
+				_, diagnostic, _ := status.exitStatus()
+				return fail("forward relay output: %w (relay stderr: %s)", err, diagnostic)
+			}
+		case <-outputWatch.C:
+			if started := outputWriter.writingSince.Load(); started != nil && time.Since(*started) >= outputTimeout {
+				if t.Context().Err() != nil {
+					return -2, nil
+				}
+				return fail("SSH output write did not finish within %s", outputTimeout)
+			}
 		case err := <-inputDone:
 			inputDone = nil
 			if err != nil && !errors.Is(err, io.EOF) {

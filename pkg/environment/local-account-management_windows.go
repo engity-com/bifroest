@@ -390,21 +390,26 @@ func CreateLocalWindowsAccount(name, displayName, managedGroup string) (string, 
 // UpdateLocalWindowsAccountDisplayName does nothing unless requested; an empty
 // requested name is an intentional update.
 func UpdateLocalWindowsAccountDisplayName(name, sid, displayName string, requested bool, allowSystemUsers ...bool) error {
+	_, _, err := updateLocalWindowsAccountDisplayName(name, sid, displayName, requested, nil, allowSystemUsers...)
+	return err
+}
+
+func updateLocalWindowsAccountDisplayName(name, sid, displayName string, requested bool, expectedCurrent *string, allowSystemUsers ...bool) (string, bool, error) {
 	if _, err := localSAMCurrent(name, sid, allowSystemUsers...); err != nil {
-		return err
+		return "", false, err
 	}
 	if !requested {
-		return nil
+		return "", false, nil
 	}
 	username, _ := windows.UTF16PtrFromString(name)
 	var buffer *localSAMUserInfo10
 	err := localSAMCall("NetUserGetInfo", 0, uintptr(unsafe.Pointer(username)), 10, uintptr(unsafe.Pointer(&buffer)))
 	runtime.KeepAlive(username)
 	if err != nil {
-		return err
+		return "", false, err
 	}
 	if buffer == nil {
-		return fmt.Errorf("NetUserGetInfo returned no data")
+		return "", false, fmt.Errorf("NetUserGetInfo returned no data")
 	}
 	var current string
 	if fullName := buffer.FullName; fullName != nil {
@@ -412,17 +417,20 @@ func UpdateLocalWindowsAccountDisplayName(name, sid, displayName string, request
 	}
 	freeErr := localSAMCall("NetApiBufferFree", uintptr(unsafe.Pointer(buffer)))
 	if freeErr != nil {
-		return freeErr
+		return "", false, freeErr
 	}
 	if current == displayName {
-		return nil
+		return current, false, nil
+	}
+	if expectedCurrent != nil && current != *expectedCurrent {
+		return current, false, fmt.Errorf("display name of local SAM user %q changed during provisioning", name)
 	}
 	fullName, err := windows.UTF16PtrFromString(displayName)
 	if err != nil {
-		return err
+		return current, false, err
 	}
 	if _, err := localSAMCurrent(name, sid, allowSystemUsers...); err != nil {
-		return err
+		return current, false, err
 	}
 	info := localSAMUserInfo1011{FullName: fullName}
 	var invalid uint32
@@ -430,9 +438,9 @@ func UpdateLocalWindowsAccountDisplayName(name, sid, displayName string, request
 	runtime.KeepAlive(username)
 	runtime.KeepAlive(fullName)
 	if err != nil {
-		return fmt.Errorf("set display name (parameter %d): %w", invalid, err)
+		return current, false, fmt.Errorf("set display name (parameter %d): %w", invalid, err)
 	}
-	return nil
+	return current, true, nil
 }
 
 // IsLocalWindowsAccountInGroup checks direct membership by SID, not account name.
