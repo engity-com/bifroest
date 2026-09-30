@@ -20,6 +20,9 @@ on:
       - pkg/configuration/**
       - pkg/environment/**
       - pkg/net/**
+      - pkg/service/**
+      - pkg/session/**
+      - pkg/user/**
       - test/manual/s4u-probe/**
       - test/nanoserver/**
   workflow_dispatch:

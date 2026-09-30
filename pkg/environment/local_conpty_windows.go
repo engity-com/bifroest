@@ -85,7 +85,7 @@ func (this *localConPTYRelayStatusWriter) exitStatus() (int, string, error) {
 	}
 	digits := data[start+len(localConPTYRelayExitPrefix) : len(data)-1]
 	for _, digit := range digits {
-		if !('0' <= digit && digit <= '9' || 'a' <= digit && digit <= 'f') {
+		if (digit < '0' || digit > '9') && (digit < 'a' || digit > 'f') {
 			return 0, diagnostic(data), fmt.Errorf("invalid ConPTY relay exit status")
 		}
 	}
