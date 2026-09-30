@@ -109,7 +109,7 @@ func TestHouseKeeperDisposesActiveSessionWithIncompatibleImp(t *testing.T) {
 	require.Equal(t, audit.EventOutcomeSuccess, events[1].Outcome)
 }
 
-func TestHouseKeeperDoesNotDisposeReplacedImpEnvironment(t *testing.T) {
+func TestHouseKeeperDoesNotRemoveReplacedImpEnvironment(t *testing.T) {
 	sess := &houseKeeperTestSession{flow: "current", id: session.MustNewId(), validUntil: time.Now().Add(time.Hour)}
 	authorizer := &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization}
 	hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, authorizer)
@@ -129,7 +129,7 @@ func TestHouseKeeperDoesNotDisposeReplacedImpEnvironment(t *testing.T) {
 	_, err := hk.inspectSession(t.Context(), sess)
 	require.NoError(t, err)
 	require.Equal(t, &environments.protocolIdentity, environments.findOpts.ExpectedResource)
-	require.Zero(t, sess.disposeCalls)
+	require.Equal(t, 1, sess.disposeCalls)
 	require.Zero(t, env.disposeCalls)
 	require.Zero(t, authorizer.restoreCalls)
 	require.Equal(t, audit.EventOutcomeFailure, recorder.eventsSnapshot()[1].Outcome)
@@ -178,7 +178,7 @@ func TestHouseKeeperRetriesFailedImpEnvironmentDisposal(t *testing.T) {
 
 	_, err := hk.inspectSession(t.Context(), sess)
 	require.NoError(t, err)
-	require.Zero(t, sess.disposeCalls)
+	require.Equal(t, 1, sess.disposeCalls)
 	require.Equal(t, 1, env.disposeCalls)
 	require.Zero(t, authorizer.restoreCalls)
 	require.Equal(t, audit.EventOutcomeFailure, recorder.eventsSnapshot()[1].Outcome)
@@ -190,6 +190,36 @@ func TestHouseKeeperRetriesFailedImpEnvironmentDisposal(t *testing.T) {
 	require.Equal(t, 2, env.disposeCalls)
 	require.Equal(t, 1, authorizer.restoreCalls)
 	require.Equal(t, audit.EventOutcomeSuccess, recorder.eventsSnapshot()[3].Outcome)
+}
+
+func TestHouseKeeperKeepsIncompatibleResourceIfSessionDisposeFails(t *testing.T) {
+	sess := &houseKeeperTestSession{
+		flow: "current", id: session.MustNewId(), validUntil: time.Now().Add(time.Hour),
+		disposeErr: goerrors.New("session storage unavailable"),
+	}
+	authorizer := &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization}
+	hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, authorizer)
+	hk.service.flowAuditRecorders[sess.flow] = &recordingAuditRecorder{}
+	environments := hk.service.environments.(*houseKeeperTestEnvironmentRepository)
+	environments.protocolFound = true
+	environments.protocolRevision = 1
+	environments.protocolIdentity = environment.ResourceIdentity{DockerID: "old"}
+	env := &houseKeeperTestEnvironment{}
+	environments.findResult = env
+
+	_, err := hk.inspectSession(t.Context(), sess)
+	require.NoError(t, err)
+	require.Equal(t, 1, sess.disposeCalls)
+	require.Zero(t, env.disposeCalls)
+	require.Zero(t, authorizer.restoreCalls)
+	require.Zero(t, environments.findCalls)
+
+	sess.disposeErr = nil
+	_, err = hk.inspectSession(t.Context(), sess)
+	require.NoError(t, err)
+	require.Equal(t, 2, sess.disposeCalls)
+	require.Equal(t, 1, env.disposeCalls)
+	require.Equal(t, 1, authorizer.restoreCalls)
 }
 
 func TestHouseKeeperKeepsSessionWhenUnusableAuthorizationTokenCannotBeCleared(t *testing.T) {
@@ -722,6 +752,7 @@ type houseKeeperTestSession struct {
 	validUntil                 time.Time
 	state                      session.State
 	disposeCalls               int
+	disposeErr                 error
 	authorizationToken         []byte
 	authorizationTokenCalls    int
 	authorizationTokenError    error
@@ -746,6 +777,9 @@ func (this *houseKeeperTestSession) Info(context.Context) (session.Info, error) 
 }
 func (this *houseKeeperTestSession) Dispose(context.Context) (bool, error) {
 	this.disposeCalls++
+	if this.disposeErr != nil {
+		return false, this.disposeErr
+	}
 	return true, nil
 }
 func (this *houseKeeperTestSession) AuthorizationToken(context.Context) ([]byte, error) {

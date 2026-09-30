@@ -76,7 +76,13 @@ func (c *protocolDockerClient) ContainerList(_ context.Context, opts container.L
 	if !slices.Contains(opts.Filters.Get("label"), DockerLabelFlow+"=test") || len(opts.Filters.Get("label")) != 2 {
 		return nil, fmt.Errorf("missing flow/session Docker selectors: %v", opts.Filters)
 	}
-	return c.containers, nil
+	var result []container.Summary
+	for _, candidate := range c.containers {
+		if candidate.Labels[DockerLabelFlow] == "test" && slices.Contains(opts.Filters.Get("label"), DockerLabelSessionId+"="+candidate.Labels[DockerLabelSessionId]) {
+			result = append(result, candidate)
+		}
+	}
+	return result, nil
 }
 
 func (c *protocolDockerClient) ContainerRemove(context.Context, string, container.RemoveOptions) error {
@@ -147,6 +153,18 @@ func TestImpProtocolCompatibilityDocker(t *testing.T) {
 	require.Zero(t, api.removes)
 	api.containers[0].Labels[DockerLabelSessionId] = session.MustNewId().String()
 	check(false, false, 0, "", false)
+}
+
+func TestImpProtocolCompatibilityRejectsDuplicateDockerResources(t *testing.T) {
+	sess := &sshTestStoredSession{id: session.MustNewId()}
+	api := &protocolDockerClient{containers: []container.Summary{
+		{ID: "old", Labels: map[string]string{DockerLabelFlow: "test", DockerLabelSessionId: sess.id.String()}},
+		{ID: "new", Labels: map[string]string{DockerLabelFlow: "test", DockerLabelSessionId: sess.id.String(), DockerLabelImpProtocolRevision: "2", DockerLabelExecutionLifecycle: executionLifecycleCapability}},
+	}}
+	repo := &DockerRepository{flow: "test", apiClient: api}
+	_, _, _, _, err := repo.ImpProtocolCompatibility(t.Context(), sess)
+	require.ErrorContains(t, err, "multiple Docker containers")
+	require.Zero(t, api.removes)
 }
 
 func TestExplicitDockerCleanupRemovesIncompatibleContainer(t *testing.T) {
@@ -302,6 +320,19 @@ func TestImpProtocolCompatibilityKubernetes(t *testing.T) {
 	check(false, false, 0, false)
 }
 
+func TestImpProtocolCompatibilityRejectsDuplicateKubernetesPods(t *testing.T) {
+	sess := &sshTestStoredSession{id: session.MustNewId()}
+	labels := map[string]string{KubernetesLabelFlow: "test", KubernetesLabelSessionId: sess.id.String()}
+	clientSet := fake.NewSimpleClientset(
+		&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "old", Namespace: "default", UID: "old", Labels: labels}},
+		&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "new", Namespace: "default", UID: "new", Labels: labels,
+			Annotations: map[string]string{KubernetesAnnotationImpProtocolRevision: "2", KubernetesAnnotationExecutionLifecycle: executionLifecycleCapability}}},
+	)
+	repo := &KubernetesRepository{flow: "test", client: &protocolKubernetesClient{clientSet: clientSet}, conf: &configuration.EnvironmentKubernetes{}}
+	_, _, _, _, err := repo.ImpProtocolCompatibility(t.Context(), sess)
+	require.ErrorContains(t, err, "multiple Kubernetes pods")
+}
+
 func TestExplicitKubernetesCleanupRemovesIncompatiblePod(t *testing.T) {
 	sess := &sshTestStoredSession{id: session.MustNewId()}
 	clientSet := fake.NewSimpleClientset(&v1.Pod{ObjectMeta: metav1.ObjectMeta{
@@ -429,6 +460,24 @@ func TestRemovePodDoesNotRemoveReplacedPod(t *testing.T) {
 	_, err := repo.removePod(t.Context(), "default", "replaced", nil, types.UID("old"))
 	require.ErrorContains(t, err, "pod identity changed")
 	_, err = clientSet.CoreV1().Pods("default").Get(t.Context(), "replaced", metav1.GetOptions{})
+	require.NoError(t, err)
+}
+
+func TestRemovePodDoesNotRemovePodWithChangedProtocolMetadata(t *testing.T) {
+	old := &v1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name: "corrected", Namespace: "default", UID: "same", ResourceVersion: "1",
+		Labels:      map[string]string{KubernetesLabelFlow: "test", KubernetesLabelSessionId: session.MustNewId().String()},
+		Annotations: map[string]string{KubernetesAnnotationImpProtocolRevision: "1"},
+	}}
+	newPod := old.DeepCopy()
+	newPod.ResourceVersion = "2"
+	newPod.Annotations[KubernetesAnnotationImpProtocolRevision] = "2"
+	newPod.Annotations[KubernetesAnnotationExecutionLifecycle] = executionLifecycleCapability
+	clientSet := fake.NewSimpleClientset(newPod)
+	repo := &KubernetesRepository{client: &protocolKubernetesClient{clientSet: clientSet}, conf: &configuration.EnvironmentKubernetes{}}
+	_, err := repo.removePodChecked(t.Context(), "default", "corrected", nil, old, old.UID)
+	require.ErrorContains(t, err, "IMP protocol metadata changed")
+	_, err = clientSet.CoreV1().Pods("default").Get(t.Context(), "corrected", metav1.GetOptions{})
 	require.NoError(t, err)
 }
 

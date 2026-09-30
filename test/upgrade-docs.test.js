@@ -67,12 +67,28 @@ test("links to the setup guide for the minor without public upgrade notes", asyn
   assert.equal(hint.parts[1].textContent, "v0.7.x setup guide");
 });
 
-test("pre-release docs resolve the current latest patch from its alias", async () => {
-  const { hint } = await render("v0.8.0", [
+test("RC docs resolve the current stable latest patch from its alias", async () => {
+  const { hint } = await render("v0.8.0-rc.1", [
     { version: "..", title: "Latest (0.7.7)", aliases: ["latest"], latest: true },
     { version: "v0.7.6" },
   ]);
+  assert.equal(hint.hidden, false);
   assert.equal(hint.parts[1].href, "/v0.7.7/setup/");
+});
+
+test("later RC docs skip prereleases and select the first stable lower minor", async () => {
+  for (const release of ["v0.8.0-rc.2", "v0.8.0-rc.10"]) {
+    const { hint } = await render(release, [
+      { version: "..", title: "Latest (0.8.0-rc.10)", latest: true },
+      { version: "v0.8.0-rc.2" },
+      { version: "v0.8.0-rc.1" },
+      { version: "v0.7.8-rc.1" },
+      { version: "v0.7.7" },
+      { version: "v0.7.6" },
+    ]);
+    assert.equal(hint.hidden, false);
+    assert.equal(hint.parts[1].href, "/v0.7.7/setup/");
+  }
 });
 
 test("works without Material navigation on an already loaded page or DOMContentLoaded", async () => {

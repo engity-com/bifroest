@@ -2,7 +2,7 @@ async function showUpgradePredecessor() {
   const hint = document.getElementById("upgrade-predecessor");
   if (!hint) return;
 
-  const own = /^v(\d+)\.(\d+)\.(\d+)$/.exec(hint.dataset.release || "");
+  const own = /^v(\d+)\.(\d+)\.(\d+)(?:-rc\.(?:0|[1-9]\d*))?$/.exec(hint.dataset.release || "");
   if (!own) return;
 
   try {

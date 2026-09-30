@@ -1022,7 +1022,7 @@ func (this *KubernetesRepository) findOrEnsureBySession(ctx context.Context, ses
 			}
 			if lifecycle := pod.Annotations[KubernetesAnnotationExecutionLifecycle]; !impProtocolCompatible(revision, lifecycle) {
 				if opts.IsAutoCleanUpAllowed() && createUsing == nil {
-					if _, err := this.removePod(ctx, pod.Namespace, pod.Name, nil, pod.UID); err != nil {
+					if _, err := this.removePodChecked(ctx, pod.Namespace, pod.Name, nil, pod, pod.UID); err != nil {
 						return fail(err)
 					}
 					this.activeInstances.CompareAndDelete(sessId, instance)
@@ -1056,7 +1056,7 @@ func (this *KubernetesRepository) findOrEnsureBySession(ctx context.Context, ses
 		}
 		if lifecycle := existing.Annotations[KubernetesAnnotationExecutionLifecycle]; !impProtocolCompatible(revision, lifecycle) {
 			if opts.IsAutoCleanUpAllowed() && createUsing == nil {
-				if _, err := this.removePod(ctx, existing.Namespace, existing.Name, nil, existing.UID); err != nil {
+				if _, err := this.removePodChecked(ctx, existing.Namespace, existing.Name, nil, existing, existing.UID); err != nil {
 					return fail(err)
 				}
 				return fail(ErrNoSuchEnvironment)
@@ -1104,7 +1104,7 @@ func (this *KubernetesRepository) findOrEnsureBySession(ctx context.Context, ses
 	if err != nil {
 		if errors.Is(err, podContainsProblemsErr) || errors.Is(err, bkp.ErrEndpointNotFound) || errors.Is(err, bkp.ErrPodNotFound) {
 			if createUsing != nil {
-				removePodUnchecked()
+				_ = removePodUnchecked()
 				return fail(err)
 			} else if opts.IsAutoCleanUpAllowed() {
 				if removeErr := removePodUnchecked(); removeErr != nil && opts != nil && opts.ExpectedResource != nil {
@@ -1127,9 +1127,23 @@ func (this *KubernetesRepository) ImpProtocolCompatibility(ctx context.Context, 
 		return false, false, 0, ResourceIdentity{}, nil
 	}
 	defer this.sessionIdMutex.RLock(sess.Id())()
-	pod, err := this.findPodBySession(ctx, sess)
-	if err != nil || pod == nil {
+	client, err := this.podsClient()
+	if err != nil {
 		return false, false, 0, ResourceIdentity{}, err
+	}
+	list, err := client.List(ctx, metav1.ListOptions{
+		LabelSelector: KubernetesLabelSessionId + "=" + sess.Id().String() + "," + KubernetesLabelFlow + "=" + this.flow.String(),
+		Limit:         2,
+	})
+	if err != nil || len(list.Items) == 0 {
+		return false, false, 0, ResourceIdentity{}, err
+	}
+	if len(list.Items) > 1 || list.Continue != "" {
+		return false, false, 0, ResourceIdentity{}, fmt.Errorf("multiple Kubernetes pods found for session %s; operator inspection required", sess)
+	}
+	pod := &list.Items[0]
+	if pod.Labels[KubernetesLabelFlow] != this.flow.String() || pod.Labels[KubernetesLabelSessionId] != sess.Id().String() {
+		return false, false, 0, ResourceIdentity{}, fmt.Errorf("pod %s/%s does not belong to session %s; operator inspection required", pod.Namespace, pod.Name, sess)
 	}
 	identity = ResourceIdentity{KubernetesNamespace: pod.Namespace, KubernetesName: pod.Name, KubernetesUID: string(pod.UID)}
 	revision, err = parseImpProtocolRevision(pod.Annotations, KubernetesAnnotationImpProtocolRevision)
@@ -1139,7 +1153,11 @@ func (this *KubernetesRepository) ImpProtocolCompatibility(ctx context.Context, 
 	return impProtocolCompatible(revision, pod.Annotations[KubernetesAnnotationExecutionLifecycle]), true, revision, identity, nil
 }
 
-func (this *KubernetesRepository) removePod(ctx context.Context, namespace, name string, ppe PreparationProgressEnabled, expectedUID ...types.UID) (_ bool, rErr error) {
+func (this *KubernetesRepository) removePod(ctx context.Context, namespace, name string, ppe PreparationProgressEnabled, expectedUID ...types.UID) (bool, error) {
+	return this.removePodChecked(ctx, namespace, name, ppe, nil, expectedUID...)
+}
+
+func (this *KubernetesRepository) removePodChecked(ctx context.Context, namespace, name string, ppe PreparationProgressEnabled, expected *v1.Pod, expectedUID ...types.UID) (_ bool, rErr error) {
 	fail := func(err error) (bool, error) {
 		return false, errors.System.Newf("cannot remove pod %v/%v: %w", namespace, name, err)
 	}
@@ -1176,6 +1194,12 @@ func (this *KubernetesRepository) removePod(ctx context.Context, namespace, name
 	if len(expectedUID) > 0 && expectedUID[0] != "" && pod.UID != expectedUID[0] {
 		return fail(fmt.Errorf("pod identity changed since it was inspected"))
 	}
+	if expected != nil && (pod.Labels[KubernetesLabelFlow] != expected.Labels[KubernetesLabelFlow] ||
+		pod.Labels[KubernetesLabelSessionId] != expected.Labels[KubernetesLabelSessionId] ||
+		pod.Annotations[KubernetesAnnotationImpProtocolRevision] != expected.Annotations[KubernetesAnnotationImpProtocolRevision] ||
+		pod.Annotations[KubernetesAnnotationExecutionLifecycle] != expected.Annotations[KubernetesAnnotationExecutionLifecycle]) {
+		return fail(fmt.Errorf("pod IMP protocol metadata changed since it was inspected"))
+	}
 
 	watch, err := client.Watch(ctx, metav1.ListOptions{
 		FieldSelector: "metadata.name=" + name,
@@ -1190,6 +1214,12 @@ func (this *KubernetesRepository) removePod(ctx context.Context, namespace, name
 	deleteOptions := metav1.DeleteOptions{}
 	if pod.UID != "" {
 		deleteOptions.Preconditions = &metav1.Preconditions{UID: &pod.UID}
+	}
+	if pod.ResourceVersion != "" {
+		if deleteOptions.Preconditions == nil {
+			deleteOptions.Preconditions = &metav1.Preconditions{}
+		}
+		deleteOptions.Preconditions.ResourceVersion = &pod.ResourceVersion
 	}
 	if err := client.Delete(ctx, name, deleteOptions); errdefs.IsNotFound(err) {
 		return false, nil

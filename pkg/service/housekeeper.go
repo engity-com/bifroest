@@ -461,15 +461,6 @@ func (this *houseKeeper) dispose(ctx context.Context, logger log.Logger, sess se
 		return false, errors.Newf(errors.System, "cannot dispose session %v: %w", sess, err)
 	}
 
-	var environmentDisposed bool
-	if expected != nil {
-		var err error
-		environmentDisposed, err = this.disposeEnvironment(ctx, logger, sess, expected)
-		if err != nil {
-			return fail(err)
-		}
-	}
-
 	var sessionDisposed bool
 	var err error
 	if coordinator, ok := this.service.environments.(interface {
@@ -482,11 +473,9 @@ func (this *houseKeeper) dispose(ctx context.Context, logger log.Logger, sess se
 	if err != nil {
 		return fail(err)
 	}
-	if expected == nil {
-		environmentDisposed, err = this.disposeEnvironment(ctx, logger, sess, nil)
-		if err != nil {
-			return fail(err)
-		}
+	environmentDisposed, err := this.disposeEnvironment(ctx, logger, sess, expected)
+	if err != nil {
+		return fail(err)
 	}
 	authorizationDisposed, err := this.disposeAuthorization(ctx, logger, sess, retentionElapsed)
 	if err != nil {

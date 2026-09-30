@@ -822,9 +822,23 @@ func (this *DockerRepository) ImpProtocolCompatibility(ctx context.Context, sess
 		return false, false, 0, ResourceIdentity{}, nil
 	}
 	defer this.sessionIdMutex.RLock(sess.Id())()
-	c, _, err := this.findContainerBySession(ctx, sess)
-	if err != nil || c == nil {
+	containers, err := this.apiClient.ContainerList(ctx, container.ListOptions{
+		All: true,
+		Filters: filters.NewArgs(
+			filters.Arg("label", DockerLabelSessionId+"="+sess.Id().String()),
+			filters.Arg("label", DockerLabelFlow+"="+this.flow.String()),
+		),
+		Limit: 2,
+	})
+	if err != nil || len(containers) == 0 {
 		return false, false, 0, ResourceIdentity{}, err
+	}
+	if len(containers) > 1 {
+		return false, false, 0, ResourceIdentity{}, fmt.Errorf("multiple Docker containers found for session %s; operator inspection required", sess)
+	}
+	c := &containers[0]
+	if c.Labels[DockerLabelFlow] != this.flow.String() || c.Labels[DockerLabelSessionId] != sess.Id().String() {
+		return false, false, 0, ResourceIdentity{}, fmt.Errorf("container %s does not belong to session %s; operator inspection required", c.ID, sess)
 	}
 	identity.DockerID = c.ID
 	revision, err = parseImpProtocolRevision(c.Labels, DockerLabelImpProtocolRevision)
