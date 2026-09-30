@@ -47,6 +47,12 @@ func (s *serverCoreLifecycleSession) Info(context.Context) (session.Info, error)
 
 func (*serverCoreLifecycleSession) HasActiveConnections() bool { return false }
 
+type serverCoreTokenWriteFailureSession struct{ *sshTestStoredSession }
+
+func (*serverCoreTokenWriteFailureSession) SetEnvironmentToken(context.Context, []byte) error {
+	return errors.New("test token write failure")
+}
+
 func TestLocalServerCoreProviderAccountLifecycle(t *testing.T) {
 	if os.Getenv("BIFROEST_TEST_SERVERCORE_IN_CONTAINER") != "1" {
 		t.Skip("only run inside the disposable Server Core integration container")
@@ -224,6 +230,70 @@ func TestLocalServerCoreProviderAccountLifecycle(t *testing.T) {
 		_, err = os.Stat(profileDir)
 		require.True(t, os.IsNotExist(err), "deleted account profile must be removed: %v", err)
 	}
+}
+
+func TestLocalServerCoreFailedUpdateRestoresManagedMembership(t *testing.T) {
+	if os.Getenv("BIFROEST_TEST_SERVERCORE_IN_CONTAINER") != "1" {
+		t.Skip("only run inside the disposable Server Core integration container")
+	}
+	marker, err := os.ReadFile(serverCoreContainerMarker)
+	require.NoError(t, err)
+	require.Equal(t, "bifroest-servercore-integration", strings.TrimSpace(string(marker)))
+	var nonce [8]byte
+	_, err = rand.Read(nonce[:])
+	require.NoError(t, err)
+	suffix := hex.EncodeToString(nonce[:])
+	name, initialGroup, managedGroup := "bsc"+suffix, "bsi"+suffix, "bsm"+suffix
+	sid, err := CreateLocalWindowsAccount(name, "Original", initialGroup)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if account, err := lookupLocalWindowsAccount(name); err == nil && account.SID == sid {
+			if err := DeleteLocalWindowsAccount(name, sid); err != nil {
+				t.Logf("best-effort disposable container account cleanup: %v", err)
+			}
+		}
+	})
+	require.NoError(t, ensureLocalSAMGroup(managedGroup))
+	repository := localWindowsTestRepository(t, name)
+	repository.conf.ManagedGroup = managedGroup
+	repository.conf.UpdateIfDifferent = template.BoolOf(true)
+	assertMembership := func(t *testing.T, want bool) {
+		t.Helper()
+		member, err := IsLocalWindowsAccountInGroup(name, sid, managedGroup)
+		require.NoError(t, err)
+		require.Equal(t, want, member)
+	}
+	assertMembership(t, false)
+
+	repository.conf.DisplayName = template.MustNewString("{{ .missing }}")
+	_, err = repository.Ensure(localWindowsTestRequest(t, &sshTestStoredSession{id: session.MustNewId()}))
+	require.Error(t, err)
+	assertMembership(t, false)
+
+	repository.conf.DisplayName = template.MustNewString("Updated")
+	repository.conf.DeleteOnDispose = template.MustNewBool("{{ .missing }}")
+	_, err = repository.Ensure(localWindowsTestRequest(t, &sshTestStoredSession{id: session.MustNewId()}))
+	require.Error(t, err)
+	assertMembership(t, false)
+
+	repository.conf.DeleteOnDispose = template.BoolOf(false)
+	stalled := &serverCoreTokenWriteFailureSession{&sshTestStoredSession{id: session.MustNewId()}}
+	req := localWindowsTestRequest(t, stalled.sshTestStoredSession)
+	req.authorization = &sshTestAuthorization{session: stalled}
+	_, err = repository.Ensure(req)
+	require.ErrorContains(t, err, "test token write failure")
+	assertMembership(t, false)
+	storedToken, err := stalled.EnvironmentToken(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, storedToken)
+
+	created, err := repository.Ensure(localWindowsTestRequest(t, &sshTestStoredSession{id: session.MustNewId()}))
+	require.NoError(t, err)
+	require.True(t, created.(*local).token.Managed)
+	assertMembership(t, true)
+	_, err = repository.Ensure(req)
+	require.ErrorContains(t, err, "test token write failure")
+	assertMembership(t, true)
 }
 
 func TestLocalServerCoreFailedSkelDisablesNewAccount(t *testing.T) {

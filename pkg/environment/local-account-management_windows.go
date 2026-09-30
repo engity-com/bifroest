@@ -481,23 +481,58 @@ func IsLocalWindowsAccountInGroup(name, sid, managedGroup string, allowSystemUse
 // EnsureLocalWindowsAccountGroup creates the group if missing and adds the
 // verified user's SID only when not already a direct member.
 func EnsureLocalWindowsAccountGroup(name, sid, managedGroup string, allowSystemUsers ...bool) error {
+	_, _, err := ensureLocalWindowsAccountGroup(name, sid, managedGroup, allowSystemUsers...)
+	return err
+}
+
+func ensureLocalWindowsAccountGroup(name, sid, managedGroup string, allowSystemUsers ...bool) (bool, string, error) {
 	if _, err := localSAMCurrent(name, sid, allowSystemUsers...); err != nil {
-		return err
+		return false, "", err
 	}
 	if err := ensureLocalSAMGroup(managedGroup); err != nil {
-		return err
+		return false, "", err
+	}
+	groupSID, err := localSAMGroupSID(managedGroup)
+	if err != nil {
+		return false, "", err
 	}
 	member, err := IsLocalWindowsAccountInGroup(name, sid, managedGroup, allowSystemUsers...)
 	if err != nil || member {
-		return err
+		return false, "", err
 	}
 	if _, err := localSAMCurrent(name, sid, allowSystemUsers...); err != nil {
-		return err
+		return false, "", err
 	}
 	parsed, _ := windows.StringToSid(sid)
 	group, _ := windows.UTF16PtrFromString(managedGroup)
 	info := localSAMMemberInfo0{SID: parsed}
 	err = localSAMCall("NetLocalGroupAddMembers", 0, uintptr(unsafe.Pointer(group)), 0, uintptr(unsafe.Pointer(&info)), 1)
+	runtime.KeepAlive(group)
+	runtime.KeepAlive(parsed)
+	if err != nil {
+		return false, "", err
+	}
+	return true, groupSID, nil
+}
+
+func removeLocalWindowsAccountGroup(name, sid, groupName, expectedGroupSID string, allowSystemUsers bool) error {
+	if _, err := localSAMCurrent(name, sid, allowSystemUsers); err != nil {
+		return err
+	}
+	groupSID, err := localSAMGroupSID(groupName)
+	if err != nil {
+		return err
+	}
+	if groupSID != expectedGroupSID {
+		return fmt.Errorf("managed group %q changed SID", groupName)
+	}
+	if _, err := localSAMCurrent(name, sid, allowSystemUsers); err != nil {
+		return err
+	}
+	parsed, _ := windows.StringToSid(sid)
+	group, _ := windows.UTF16PtrFromString(groupName)
+	info := localSAMMemberInfo0{SID: parsed}
+	err = localSAMCall("NetLocalGroupDelMembers", 0, uintptr(unsafe.Pointer(group)), 0, uintptr(unsafe.Pointer(&info)), 1)
 	runtime.KeepAlive(group)
 	runtime.KeepAlive(parsed)
 	return err

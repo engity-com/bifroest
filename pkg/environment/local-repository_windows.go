@@ -123,11 +123,17 @@ func (this *LocalRepository) Ensure(req Request) (_ Environment, rErr error) {
 			return failf(errors.Expired, "local account %q is disabled; check incomplete provisioning", account.Name)
 		}
 	}
-	var createdName, createdSID string
+	var createdName, createdSID, addedManagedGroupSID string
+	var allowSystemUsers bool
 	defer func() {
 		if createdSID != "" && rErr != nil {
 			if disableErr := disableNewLocalWindowsAccount(createdName, createdSID); disableErr != nil {
 				rErr = fmt.Errorf("%w; additionally cannot disable incomplete local account %q: %v", rErr, createdName, disableErr)
+			}
+		}
+		if addedManagedGroupSID != "" && rErr != nil {
+			if undoErr := removeLocalWindowsAccountGroup(account.Name, account.SID, this.conf.ManagedGroup, addedManagedGroupSID, allowSystemUsers); undoErr != nil {
+				rErr = fmt.Errorf("%w; additionally cannot remove newly added managed group from local account %q: %v", rErr, account.Name, undoErr)
 			}
 		}
 	}()
@@ -165,7 +171,7 @@ func (this *LocalRepository) Ensure(req Request) (_ Environment, rErr error) {
 	if exists {
 		ctx.user = account
 	}
-	allowSystemUsers, err := this.conf.ManageSystemUsers.Render(req)
+	allowSystemUsers, err = this.conf.ManageSystemUsers.Render(req)
 	if err != nil {
 		return fail(err)
 	}
@@ -246,14 +252,22 @@ func (this *LocalRepository) Ensure(req Request) (_ Environment, rErr error) {
 			return failf(errors.Expired, "newly created local account changed SID")
 		}
 	} else if update && (!localSAMProtectedAccount(account) || allowSystemUsers) {
-		if err = EnsureLocalWindowsAccountGroup(account.Name, account.SID, this.conf.ManagedGroup, allowSystemUsers); err != nil {
-			return fail(err)
-		}
+		var display string
 		if !this.conf.DisplayName.IsZero() {
-			display, renderErr := this.conf.DisplayName.Render(req)
+			var renderErr error
+			display, renderErr = this.conf.DisplayName.Render(req)
 			if renderErr != nil {
 				return fail(renderErr)
 			}
+		}
+		added, groupSID, groupErr := ensureLocalWindowsAccountGroup(account.Name, account.SID, this.conf.ManagedGroup, allowSystemUsers)
+		if groupErr != nil {
+			return fail(groupErr)
+		}
+		if added {
+			addedManagedGroupSID = groupSID
+		}
+		if !this.conf.DisplayName.IsZero() {
 			if err = UpdateLocalWindowsAccountDisplayName(account.Name, account.SID, display, true, allowSystemUsers); err != nil {
 				return fail(err)
 			}
