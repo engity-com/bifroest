@@ -260,13 +260,16 @@ This is useful to clean up old pods which are leftovers after you have changed t
 
 ## Execution lifecycle and upgrades
 
-Pods created by the current version carry the annotation `org.engity.bifroest/execution-lifecycle=execution-id-v1`. Bifröst uses a unique execution ID to route signals and exit statuses to the correct command and supervises the command's process tree inside the Pod.
+Pods created by the current version carry the annotations `org.engity.bifroest/execution-lifecycle=execution-id-v1` and `org.engity.bifroest/imp-protocol-revision=2`. These declare the execution-lifecycle and IMP protocol revisions assigned when the Pod was created; they do not verify the actual IMP binary, whether it is running or whether an execution is reachable. Bifröst uses a unique execution ID to route signals and exit statuses to the correct command and supervises the command's process tree inside the Pod.
 
 On Windows, the command is resumed only after it has been assigned to Bifröst's kill-on-close Job Object. If restrictions on an inherited Job Object reject nested assignment, the command fails while still suspended rather than running without descendant-cleanup guarantees.
 
 On Linux, execution-scoped signaling requires Linux kernel 5.3 or later for `pidfd_open` and `pidfd_send_signal` support. The container's seccomp policy must allow both system calls; Bifröst rejects the signal request rather than falling back to an unsafe numeric PID when they are unavailable.
 
-Pods from versions without this annotation cannot be reused by the current master. A normal login rejects such a Pod without deleting it. Housekeeping may remove it when disposing an expired session according to the configured cleanup policy. Back up Pod-local ephemeral data before manually or automatically removing old environments; persistent volumes retain their own lifecycle rules.
+Pods without matching declared lifecycle and IMP protocol revisions cannot be reused. A missing IMP protocol revision is treated as revision 1. A normal login rejects reuse without deleting the Pod, even when automatic cleanup is allowed. Housekeeping proactively disposes sessions with known incompatible metadata as a whole, even if still active and not expired, including their environments; explicit environment disposal also removes the Pod. Invalid metadata or failed inspections require operator review instead. Session storage is deleted only after the required cleanup succeeds and its retention period has elapsed.
+
+!!! warning
+    Removing the Pod can destroy Pod-local ephemeral data. Back up anything you need before upgrading or allowing disposal; persistent volumes retain their own lifecycle rules. Metadata alone is not a guarantee that the Pod or its data will be preserved.
 
 ## Preparation Processes {: #preparationProcesses }
 

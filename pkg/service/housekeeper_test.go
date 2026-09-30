@@ -14,6 +14,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/imp"
 	"github.com/engity-com/bifroest/pkg/recording"
 	"github.com/engity-com/bifroest/pkg/session"
 )
@@ -66,6 +67,7 @@ func TestHouseKeeperClearsPermanentlyUnusableAuthorizationBeforeRetentionDelete(
 	require.Equal(t, 1, sess.setAuthorizationTokenCalls)
 	require.Empty(t, sess.authorizationToken)
 	require.Equal(t, 1, repository.deleteCalls)
+	require.Nil(t, hk.service.environments.(*houseKeeperTestEnvironmentRepository).findOpts.ExpectedResource)
 	require.NotNil(t, authorizer.lastRestoreOpts)
 	require.False(t, authorizer.lastRestoreOpts.IsAutoCleanUpAllowed())
 
@@ -75,6 +77,119 @@ func TestHouseKeeperClearsPermanentlyUnusableAuthorizationBeforeRetentionDelete(
 	require.Equal(t, audit.EventOutcomeSuccess, events[1].Outcome)
 	require.Equal(t, audit.EventNameHousekeepingSessionDeleteStarted, events[2].Name)
 	require.Equal(t, audit.EventOutcomeSuccess, events[3].Outcome)
+}
+
+func TestHouseKeeperDisposesActiveSessionWithIncompatibleImp(t *testing.T) {
+	repository := &houseKeeperTestSessionRepository{}
+	sess := &houseKeeperTestSession{flow: "current", id: session.MustNewId(), validUntil: time.Now().Add(time.Hour)}
+	authorizer := &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization}
+	hk := newHouseKeeperForTest(repository, authorizer)
+	recorder := &recordingAuditRecorder{}
+	hk.service.flowAuditRecorders[sess.flow] = recorder
+	environments := hk.service.environments.(*houseKeeperTestEnvironmentRepository)
+	environments.protocolFound = true
+	environments.protocolRevision = 1
+	environments.protocolIdentity = environment.ResourceIdentity{DockerID: "old"}
+	env := &houseKeeperTestEnvironment{}
+	environments.findResult = env
+
+	_, err := hk.inspectSession(t.Context(), sess)
+	require.NoError(t, err)
+	require.Equal(t, 1, sess.disposeCalls)
+	require.Equal(t, 1, env.disposeCalls)
+	require.Equal(t, 1, authorizer.restoreCalls)
+	require.Zero(t, repository.deleteCalls)
+	require.Equal(t, 1, environments.protocolChecks)
+	require.Equal(t, 1, environments.findCalls)
+	require.True(t, environments.findOpts.IsAutoCleanUpAllowed())
+	require.Equal(t, &environments.protocolIdentity, environments.findOpts.ExpectedResource)
+	events := recorder.eventsSnapshot()
+	require.Len(t, events, 2)
+	require.Equal(t, audit.EventReasonSessionIncompatible, events[0].Reason)
+	require.Equal(t, audit.EventOutcomeSuccess, events[1].Outcome)
+}
+
+func TestHouseKeeperDoesNotDisposeReplacedImpEnvironment(t *testing.T) {
+	sess := &houseKeeperTestSession{flow: "current", id: session.MustNewId(), validUntil: time.Now().Add(time.Hour)}
+	authorizer := &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization}
+	hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, authorizer)
+	recorder := &recordingAuditRecorder{}
+	hk.service.flowAuditRecorders[sess.flow] = recorder
+	environments := hk.service.environments.(*houseKeeperTestEnvironmentRepository)
+	environments.protocolFound = true
+	environments.protocolRevision = 1
+	environments.protocolIdentity = environment.ResourceIdentity{DockerID: "old"}
+	environments.currentIdentity = environments.protocolIdentity
+	environments.afterProtocolCheck = func() {
+		environments.currentIdentity = environment.ResourceIdentity{DockerID: "new"}
+	}
+	env := &houseKeeperTestEnvironment{}
+	environments.findResult = env
+
+	_, err := hk.inspectSession(t.Context(), sess)
+	require.NoError(t, err)
+	require.Equal(t, &environments.protocolIdentity, environments.findOpts.ExpectedResource)
+	require.Zero(t, sess.disposeCalls)
+	require.Zero(t, env.disposeCalls)
+	require.Zero(t, authorizer.restoreCalls)
+	require.Equal(t, audit.EventOutcomeFailure, recorder.eventsSnapshot()[1].Outcome)
+}
+
+func TestHouseKeeperDoesNotDisposeWhenImpRevisionCannotBeRead(t *testing.T) {
+	sess := &houseKeeperTestSession{flow: "current", id: session.MustNewId(), validUntil: time.Now().Add(time.Hour)}
+	hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, nil)
+	environments := hk.service.environments.(*houseKeeperTestEnvironmentRepository)
+	environments.protocolFound = true
+	environments.protocolErr = goerrors.New("container API unavailable")
+
+	_, err := hk.inspectSession(t.Context(), sess)
+	require.NoError(t, err)
+	require.Zero(t, sess.disposeCalls)
+	require.Zero(t, environments.findCalls)
+}
+
+func TestHouseKeeperDoesNotDisposeCompatibleImpOrAbsentResource(t *testing.T) {
+	for _, found := range []bool{false, true} {
+		sess := &houseKeeperTestSession{flow: "current", id: session.MustNewId(), validUntil: time.Now().Add(time.Hour)}
+		hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, nil)
+		environments := hk.service.environments.(*houseKeeperTestEnvironmentRepository)
+		environments.protocolFound = found
+		environments.protocolCompatible = true
+		environments.protocolRevision = imp.ProtocolRevision
+		_, err := hk.inspectSession(t.Context(), sess)
+		require.NoError(t, err)
+		require.Zero(t, sess.disposeCalls)
+		require.Zero(t, environments.findCalls)
+	}
+}
+
+func TestHouseKeeperRetriesFailedImpEnvironmentDisposal(t *testing.T) {
+	sess := &houseKeeperTestSession{flow: "current", id: session.MustNewId(), validUntil: time.Now().Add(time.Hour)}
+	authorizer := &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization}
+	hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, authorizer)
+	hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
+	recorder := &recordingAuditRecorder{}
+	hk.service.flowAuditRecorders[sess.flow] = recorder
+	environments := hk.service.environments.(*houseKeeperTestEnvironmentRepository)
+	environments.protocolFound = true
+	environments.protocolRevision = 1
+	env := &houseKeeperTestEnvironment{disposeErr: goerrors.New("container API unavailable")}
+	environments.findResult = env
+
+	_, err := hk.inspectSession(t.Context(), sess)
+	require.NoError(t, err)
+	require.Zero(t, sess.disposeCalls)
+	require.Equal(t, 1, env.disposeCalls)
+	require.Zero(t, authorizer.restoreCalls)
+	require.Equal(t, audit.EventOutcomeFailure, recorder.eventsSnapshot()[1].Outcome)
+
+	env.disposeErr = nil
+	sess.state = session.StateDisposed
+	_, err = hk.inspectSession(t.Context(), sess)
+	require.NoError(t, err)
+	require.Equal(t, 2, env.disposeCalls)
+	require.Equal(t, 1, authorizer.restoreCalls)
+	require.Equal(t, audit.EventOutcomeSuccess, recorder.eventsSnapshot()[3].Outcome)
 }
 
 func TestHouseKeeperKeepsSessionWhenUnusableAuthorizationTokenCannotBeCleared(t *testing.T) {
@@ -693,6 +808,24 @@ type houseKeeperTestEnvironmentRepository struct {
 	cleanupErr          error
 	cleanupCheckFlow    configuration.FlowName
 	cleanupFlowExists   bool
+	protocolCompatible  bool
+	protocolFound       bool
+	protocolRevision    uint32
+	protocolIdentity    environment.ResourceIdentity
+	currentIdentity     environment.ResourceIdentity
+	afterProtocolCheck  func()
+	protocolErr         error
+	protocolChecks      int
+	findResult          environment.Environment
+	findOpts            *environment.FindOpts
+}
+
+func (this *houseKeeperTestEnvironmentRepository) ImpProtocolCompatibility(context.Context, session.Session) (bool, bool, uint32, environment.ResourceIdentity, error) {
+	this.protocolChecks++
+	if this.afterProtocolCheck != nil {
+		this.afterProtocolCheck()
+	}
+	return this.protocolCompatible, this.protocolFound, this.protocolRevision, this.protocolIdentity, this.protocolErr
 }
 
 func (this *houseKeeperTestEnvironmentRepository) SessionEnvironmentMatches(context.Context, session.Session) (bool, error) {
@@ -708,10 +841,30 @@ func (this *houseKeeperTestEnvironmentRepository) DisposeSession(ctx context.Con
 	return sess.Dispose(ctx)
 }
 
-func (this *houseKeeperTestEnvironmentRepository) FindBySession(context.Context, session.Session, *environment.FindOpts) (environment.Environment, error) {
+func (this *houseKeeperTestEnvironmentRepository) FindBySession(_ context.Context, _ session.Session, opts *environment.FindOpts) (environment.Environment, error) {
 	this.findCalls++
+	this.findOpts = opts
+	if opts.ExpectedResource != nil && this.afterProtocolCheck != nil && *opts.ExpectedResource != this.currentIdentity {
+		return nil, fmt.Errorf("resource identity changed since it was inspected")
+	}
+	if this.findResult != nil {
+		return this.findResult, nil
+	}
 	return nil, environment.ErrNoSuchEnvironment
 }
+
+type houseKeeperTestEnvironment struct {
+	environment.Environment
+	disposeCalls int
+	disposeErr   error
+}
+
+func (this *houseKeeperTestEnvironment) Dispose(context.Context) (bool, error) {
+	this.disposeCalls++
+	return this.disposeErr == nil, this.disposeErr
+}
+
+func (this *houseKeeperTestEnvironment) Close() error { return nil }
 
 func (this *houseKeeperTestEnvironmentRepository) Cleanup(_ context.Context, opts *environment.CleanupOpts) error {
 	this.cleanupCalls++

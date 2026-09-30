@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -50,6 +51,7 @@ const (
 	KubernetesAnnotationCreatedRemoteUser     = KubernetesAnnotationPrefix + "created-remote-user"
 	KubernetesAnnotationCreatedRemoteHost     = KubernetesAnnotationPrefix + "created-remote-host"
 	KubernetesAnnotationExecutionLifecycle    = KubernetesAnnotationPrefix + "execution-lifecycle"
+	KubernetesAnnotationImpProtocolRevision   = KubernetesAnnotationPrefix + "imp-protocol-revision"
 	KubernetesAnnotationShellCommand          = KubernetesAnnotationPrefix + "shellCommand"
 	KubernetesAnnotationExecCommand           = KubernetesAnnotationPrefix + "execCommand"
 	KubernetesAnnotationSftpCommand           = KubernetesAnnotationPrefix + "sftpCommand"
@@ -559,9 +561,10 @@ func (this *KubernetesRepository) resolvePodConfig(req Request, sess session.Ses
 	}
 
 	result.Annotations = map[string]string{
-		KubernetesAnnotationCreatedRemoteUser:  remote.User(),
-		KubernetesAnnotationCreatedRemoteHost:  remote.Host().String(),
-		KubernetesAnnotationExecutionLifecycle: executionLifecycleCapability,
+		KubernetesAnnotationCreatedRemoteUser:   remote.User(),
+		KubernetesAnnotationCreatedRemoteHost:   remote.Host().String(),
+		KubernetesAnnotationExecutionLifecycle:  executionLifecycleCapability,
+		KubernetesAnnotationImpProtocolRevision: strconv.FormatUint(uint64(imp.ProtocolRevision), 10),
 	}
 	if result.Annotations[KubernetesAnnotationShellCommand], err = this.resolveEncodedShellCommand(req); err != nil {
 		return fail(err)
@@ -962,57 +965,109 @@ func (this *KubernetesRepository) findOrEnsureBySession(ctx context.Context, ses
 	fail := func(err error) (Environment, error) {
 		return nil, err
 	}
+	if sess == nil || sess.Flow() != this.flow {
+		return fail(ErrNoSuchEnvironment)
+	}
 
 	sessId := sess.Id()
-	rUnlocker := this.sessionIdMutex.RLock(sessId)
-	rUnlock := func() {
-		if rUnlocker != nil {
-			rUnlocker()
+	defer this.sessionIdMutex.Lock(sessId)()
+	var pod *v1.Pod
+	if opts != nil && opts.ExpectedResource != nil {
+		expected := opts.ExpectedResource
+		if expected.KubernetesNamespace == "" || expected.KubernetesName == "" || expected.KubernetesUID == "" {
+			return fail(errors.System.Newf("missing expected Kubernetes pod identity for session %s", sessId))
 		}
-		rUnlocker = nil
+		var err error
+		pod, err = this.findPodBySession(ctx, sess)
+		if err != nil {
+			return fail(err)
+		}
+		if pod == nil {
+			return fail(ErrNoSuchEnvironment)
+		}
+		if pod.Namespace != expected.KubernetesNamespace || pod.Name != expected.KubernetesName || string(pod.UID) != expected.KubernetesUID {
+			return fail(errors.System.Newf("pod identity changed since it was inspected: expected %s/%s (%s), found %s/%s (%s)", expected.KubernetesNamespace, expected.KubernetesName, expected.KubernetesUID, pod.Namespace, pod.Name, pod.UID))
+		}
 	}
-	defer rUnlock()
 
 	ip, ok := this.activeInstances.Load(sessId)
 	if ok {
 		instance := ip.(*kubernetes)
-		instance.owners.Add(1)
-		return &containerLease{Environment: instance, ReverseTCPListener: instance}, nil
+		if instance.repository != this || instance.sessionId != sessId {
+			return fail(errors.System.Newf("cached environment %s/%s belongs to a different session or flow; operator inspection required", instance.namespace, instance.name))
+		}
+		// Pod annotations can be changed after creation, unlike Docker labels.
+		if pod == nil {
+			var err error
+			pod, err = this.findPodBySession(ctx, sess)
+			if err != nil {
+				return fail(err)
+			}
+		}
+		if pod == nil {
+			return fail(ErrNoSuchEnvironment)
+		}
+		if pod.Namespace != instance.namespace || pod.Name != instance.name || pod.UID != instance.uid {
+			if opts != nil && opts.ExpectedResource != nil {
+				return fail(errors.System.Newf("cached pod identity changed since it was inspected: %s/%s (%s)", instance.namespace, instance.name, instance.uid))
+			}
+			this.activeInstances.CompareAndDelete(sessId, instance)
+		} else {
+			revision, err := parseImpProtocolRevision(pod.Annotations, KubernetesAnnotationImpProtocolRevision)
+			if err != nil {
+				return fail(errors.System.Newf("existing environment %s/%s: %w; remove it explicitly before retrying", pod.Namespace, pod.Name, err))
+			}
+			if opts != nil && opts.ExpectedResource != nil && impProtocolCompatible(revision, pod.Annotations[KubernetesAnnotationExecutionLifecycle]) {
+				return fail(errors.System.Newf("pod IMP protocol metadata changed since it was inspected: %s/%s", pod.Namespace, pod.Name))
+			}
+			if lifecycle := pod.Annotations[KubernetesAnnotationExecutionLifecycle]; !impProtocolCompatible(revision, lifecycle) {
+				if opts.IsAutoCleanUpAllowed() && createUsing == nil {
+					if _, err := this.removePod(ctx, pod.Namespace, pod.Name, nil, pod.UID); err != nil {
+						return fail(err)
+					}
+					this.activeInstances.CompareAndDelete(sessId, instance)
+					return fail(ErrNoSuchEnvironment)
+				}
+				return fail(incompatibleImpResource(pod.Namespace+"/"+pod.Name, revision, lifecycle))
+			}
+			instance.owners.Add(1)
+			return &containerLease{Environment: instance, ReverseTCPListener: instance}, nil
+		}
 	}
 
-	existing, err := this.findPodBySession(ctx, sess)
-	if err != nil {
-		return nil, err
+	existing := pod
+	if existing == nil {
+		var err error
+		existing, err = this.findPodBySession(ctx, sess)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if existing == nil && createUsing == nil {
 		return fail(ErrNoSuchEnvironment)
 	}
-	rUnlock()
-
-	defer this.sessionIdMutex.Lock(sessId)()
-
-	ip, ok = this.activeInstances.Load(sessId)
-	if ok {
-		instance := ip.(*kubernetes)
-		instance.owners.Add(1)
-		return &containerLease{Environment: instance, ReverseTCPListener: instance}, nil
-	}
-	if existing != nil && existing.Annotations[KubernetesAnnotationExecutionLifecycle] != executionLifecycleCapability {
-		if !opts.IsAutoCleanUpAllowed() {
-			return fail(errors.System.Newf("existing environment %s/%s does not support execution lifecycle; remove it explicitly before retrying", existing.Namespace, existing.Name))
+	if existing != nil {
+		revision, err := parseImpProtocolRevision(existing.Annotations, KubernetesAnnotationImpProtocolRevision)
+		if err != nil {
+			return fail(errors.System.Newf("existing environment %s/%s: %w; remove it explicitly before retrying", existing.Namespace, existing.Name, err))
 		}
-		if _, err := this.removePod(ctx, existing.Namespace, existing.Name, createUsing); err != nil {
-			return fail(err)
+		if opts != nil && opts.ExpectedResource != nil && impProtocolCompatible(revision, existing.Annotations[KubernetesAnnotationExecutionLifecycle]) {
+			return fail(errors.System.Newf("pod IMP protocol metadata changed since it was inspected: %s/%s", existing.Namespace, existing.Name))
 		}
-		if createUsing == nil {
-			return fail(ErrNoSuchEnvironment)
+		if lifecycle := existing.Annotations[KubernetesAnnotationExecutionLifecycle]; !impProtocolCompatible(revision, lifecycle) {
+			if opts.IsAutoCleanUpAllowed() && createUsing == nil {
+				if _, err := this.removePod(ctx, existing.Namespace, existing.Name, nil, existing.UID); err != nil {
+					return fail(err)
+				}
+				return fail(ErrNoSuchEnvironment)
+			}
+			return fail(incompatibleImpResource(existing.Namespace+"/"+existing.Name, revision, lifecycle))
 		}
-		existing = nil
 	}
 
 	if existing != nil && existing.Status.Phase != v1.PodPending && existing.Status.Phase != v1.PodRunning {
 		if opts.IsAutoCleanUpAllowed() || createUsing != nil {
-			if _, err := this.removePod(ctx, existing.Namespace, existing.Name, createUsing); err != nil {
+			if _, err := this.removePod(ctx, existing.Namespace, existing.Name, createUsing, existing.UID); err != nil {
 				return fail(err)
 			}
 		}
@@ -1023,6 +1078,7 @@ func (this *KubernetesRepository) findOrEnsureBySession(ctx context.Context, ses
 	}
 
 	if existing == nil {
+		var err error
 		existing, err = this.createPodBy(createUsing, sess)
 		if err != nil {
 			return fail(err)
@@ -1034,12 +1090,14 @@ func (this *KubernetesRepository) findOrEnsureBySession(ctx context.Context, ses
 		With("name", existing.Name).
 		With("sessionId", sessId)
 
-	removePodUnchecked := func() {
-		if _, err := this.removePod(ctx, existing.Namespace, existing.Name, nil); err != nil {
+	removePodUnchecked := func() error {
+		if _, err := this.removePod(ctx, existing.Namespace, existing.Name, nil, existing.UID); err != nil {
 			logger.
 				WithError(err).
 				Warnf("cannot broken pod; need to be done manually")
+			return err
 		}
+		return nil
 	}
 
 	instance, err := this.new(ctx, existing, logger)
@@ -1049,7 +1107,9 @@ func (this *KubernetesRepository) findOrEnsureBySession(ctx context.Context, ses
 				removePodUnchecked()
 				return fail(err)
 			} else if opts.IsAutoCleanUpAllowed() {
-				removePodUnchecked()
+				if removeErr := removePodUnchecked(); removeErr != nil && opts != nil && opts.ExpectedResource != nil {
+					return fail(removeErr)
+				}
 				return fail(ErrNoSuchEnvironment)
 			}
 		}
@@ -1061,7 +1121,25 @@ func (this *KubernetesRepository) findOrEnsureBySession(ctx context.Context, ses
 	return &containerLease{Environment: instance, ReverseTCPListener: instance}, nil
 }
 
-func (this *KubernetesRepository) removePod(ctx context.Context, namespace, name string, ppe PreparationProgressEnabled) (_ bool, rErr error) {
+// ImpProtocolCompatibility inspects only Pod metadata; it does not open or remove the environment.
+func (this *KubernetesRepository) ImpProtocolCompatibility(ctx context.Context, sess session.Session) (compatible bool, found bool, revision uint32, identity ResourceIdentity, err error) {
+	if sess == nil || sess.Flow() != this.flow {
+		return false, false, 0, ResourceIdentity{}, nil
+	}
+	defer this.sessionIdMutex.RLock(sess.Id())()
+	pod, err := this.findPodBySession(ctx, sess)
+	if err != nil || pod == nil {
+		return false, false, 0, ResourceIdentity{}, err
+	}
+	identity = ResourceIdentity{KubernetesNamespace: pod.Namespace, KubernetesName: pod.Name, KubernetesUID: string(pod.UID)}
+	revision, err = parseImpProtocolRevision(pod.Annotations, KubernetesAnnotationImpProtocolRevision)
+	if err != nil {
+		return false, true, 0, identity, fmt.Errorf("pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+	return impProtocolCompatible(revision, pod.Annotations[KubernetesAnnotationExecutionLifecycle]), true, revision, identity, nil
+}
+
+func (this *KubernetesRepository) removePod(ctx context.Context, namespace, name string, ppe PreparationProgressEnabled, expectedUID ...types.UID) (_ bool, rErr error) {
 	fail := func(err error) (bool, error) {
 		return false, errors.System.Newf("cannot remove pod %v/%v: %w", namespace, name, err)
 	}
@@ -1089,10 +1167,14 @@ func (this *KubernetesRepository) removePod(ctx context.Context, namespace, name
 	}
 	client := clientSet.CoreV1().Pods(namespace)
 
-	if _, err := client.Get(ctx, name, metav1.GetOptions{}); errdefs.IsNotFound(err) {
+	pod, err := client.Get(ctx, name, metav1.GetOptions{})
+	if errdefs.IsNotFound(err) {
 		return false, nil
 	} else if err != nil {
 		return fail(err)
+	}
+	if len(expectedUID) > 0 && expectedUID[0] != "" && pod.UID != expectedUID[0] {
+		return fail(fmt.Errorf("pod identity changed since it was inspected"))
 	}
 
 	watch, err := client.Watch(ctx, metav1.ListOptions{
@@ -1105,7 +1187,11 @@ func (this *KubernetesRepository) removePod(ctx context.Context, namespace, name
 	}
 	defer watch.Stop()
 
-	if err := client.Delete(ctx, name, metav1.DeleteOptions{}); errdefs.IsNotFound(err) {
+	deleteOptions := metav1.DeleteOptions{}
+	if pod.UID != "" {
+		deleteOptions.Preconditions = &metav1.Preconditions{UID: &pod.UID}
+	}
+	if err := client.Delete(ctx, name, deleteOptions); errdefs.IsNotFound(err) {
 		return false, nil
 	} else if err != nil {
 		return fail(err)
@@ -1152,7 +1238,7 @@ func (this *KubernetesRepository) findPodBySession(ctx context.Context, sess ses
 	}
 
 	candidates, err := client.List(ctx, metav1.ListOptions{
-		LabelSelector: KubernetesLabelSessionId + "=" + sess.Id().String(),
+		LabelSelector: KubernetesLabelSessionId + "=" + sess.Id().String() + "," + KubernetesLabelFlow + "=" + this.flow.String(),
 		Limit:         1,
 	})
 	if err != nil {
@@ -1162,7 +1248,11 @@ func (this *KubernetesRepository) findPodBySession(ctx context.Context, sess ses
 		return nil, nil
 	}
 
-	return &candidates.Items[0], nil
+	pod := &candidates.Items[0]
+	if pod.Labels[KubernetesLabelFlow] != this.flow.String() || pod.Labels[KubernetesLabelSessionId] != sess.Id().String() {
+		return nil, nil
+	}
+	return pod, nil
 }
 
 func (this *KubernetesRepository) podsClient() (v2.PodInterface, error) {

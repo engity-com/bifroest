@@ -11,6 +11,10 @@ import (
 )
 
 const (
+	// ProtocolRevision is the master/IMP protocol revision, independent of the application version.
+	// Resources created before the revision metadata was introduced have revision 1.
+	ProtocolRevision uint32 = 2
+
 	EnvVarMasterPublicKey = "BIFROEST_MASTER_PUBLIC_KEY"
 	EnvVarReverseTCPUser  = "BIFROEST_REVERSE_TCP_USER"
 

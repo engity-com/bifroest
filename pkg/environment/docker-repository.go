@@ -42,12 +42,13 @@ var (
 )
 
 const (
-	DockerLabelPrefix             = "org.engity.bifroest/"
-	DockerLabelFlow               = DockerLabelPrefix + "flow"
-	DockerLabelSessionId          = DockerLabelPrefix + "session-id"
-	DockerLabelCreatedRemoteUser  = DockerLabelPrefix + "created-remote-user"
-	DockerLabelCreatedRemoteHost  = DockerLabelPrefix + "created-remote-host"
-	DockerLabelExecutionLifecycle = DockerLabelPrefix + "execution-lifecycle"
+	DockerLabelPrefix              = "org.engity.bifroest/"
+	DockerLabelFlow                = DockerLabelPrefix + "flow"
+	DockerLabelSessionId           = DockerLabelPrefix + "session-id"
+	DockerLabelCreatedRemoteUser   = DockerLabelPrefix + "created-remote-user"
+	DockerLabelCreatedRemoteHost   = DockerLabelPrefix + "created-remote-host"
+	DockerLabelExecutionLifecycle  = DockerLabelPrefix + "execution-lifecycle"
+	DockerLabelImpProtocolRevision = DockerLabelPrefix + "imp-protocol-revision"
 
 	DockerLabelShellCommand          = DockerLabelPrefix + "shellCommand"
 	DockerLabelExecCommand           = DockerLabelPrefix + "execCommand"
@@ -374,9 +375,10 @@ func (this *DockerRepository) resolveContainerConfig(req Request, sess session.S
 
 	remote := req.Connection().Remote()
 	result.Labels = map[string]string{
-		DockerLabelFlow:               this.flow.String(),
-		DockerLabelSessionId:          sess.Id().String(),
-		DockerLabelExecutionLifecycle: executionLifecycleCapability,
+		DockerLabelFlow:                this.flow.String(),
+		DockerLabelSessionId:           sess.Id().String(),
+		DockerLabelExecutionLifecycle:  executionLifecycleCapability,
+		DockerLabelImpProtocolRevision: strconv.FormatUint(uint64(imp.ProtocolRevision), 10),
 
 		DockerLabelCreatedRemoteUser: remote.User(),
 		DockerLabelCreatedRemoteHost: remote.Host().String(),
@@ -684,104 +686,152 @@ func (this *DockerRepository) findOrEnsureBySession(ctx context.Context, sess se
 	fail := func(err error) (Environment, error) {
 		return nil, err
 	}
+	if sess == nil || sess.Flow() != this.flow {
+		return fail(ErrNoSuchEnvironment)
+	}
 
 	sessId := sess.Id()
-	rUnlocker := this.sessionIdMutex.RLock(sessId)
-	rUnlock := func() {
-		if rUnlocker != nil {
-			rUnlocker()
+	defer this.sessionIdMutex.Lock(sessId)()
+	if opts != nil && opts.ExpectedResource != nil {
+		expected := opts.ExpectedResource.DockerID
+		if expected == "" {
+			return fail(errors.System.Newf("missing expected Docker container identity for session %s", sessId))
 		}
-		rUnlocker = nil
+		current, _, err := this.findContainerBySession(ctx, sess)
+		if err != nil {
+			return fail(err)
+		}
+		if current == nil {
+			return fail(ErrNoSuchEnvironment)
+		}
+		if current.ID != expected {
+			return fail(errors.System.Newf("container identity changed since it was inspected: expected %s, found %s", expected, current.ID))
+		}
 	}
-	defer rUnlock()
 
 	ip, ok := this.activeInstances.Load(sessId)
 	if ok {
 		instance := ip.(*docker)
-		instance.owners.Add(1)
-		return &containerLease{Environment: instance, ReverseTCPListener: instance}, nil
-	}
-
-	c, exitCode, err := this.findContainerBySession(ctx, sess)
-	if err != nil {
-		return nil, err
-	}
-	if c == nil && createUsing == nil {
-		return fail(ErrNoSuchEnvironment)
-	}
-	rUnlock()
-
-	defer this.sessionIdMutex.Lock(sessId)()
-
-	ip, ok = this.activeInstances.Load(sessId)
-	if ok {
-		instance := ip.(*docker)
-		instance.owners.Add(1)
-		return &containerLease{Environment: instance, ReverseTCPListener: instance}, nil
-	}
-	if c != nil && c.Labels[DockerLabelExecutionLifecycle] != executionLifecycleCapability {
-		if !opts.IsAutoCleanUpAllowed() {
-			return fail(errors.System.Newf("existing environment %s does not support execution lifecycle; remove it explicitly before retrying", c.ID))
+		if instance.repository != this || instance.sessionId != sessId {
+			return fail(errors.System.Newf("cached environment %s belongs to a different session or flow; operator inspection required", instance.containerId))
 		}
-		if _, err := this.removeContainer(ctx, c.ID); err != nil {
-			return fail(err)
+		if opts != nil && opts.ExpectedResource != nil && instance.containerId != opts.ExpectedResource.DockerID {
+			return fail(errors.System.Newf("cached container identity changed since it was inspected: expected %s, found %s", opts.ExpectedResource.DockerID, instance.containerId))
 		}
-		if createUsing == nil {
-			return fail(ErrNoSuchEnvironment)
-		}
-		c = nil
-	}
-
-	if c != nil && exitCode >= 0 {
-		if opts.IsAutoCleanUpAllowed() {
-			if _, err := this.removeContainer(ctx, c.ID); err != nil {
-				return fail(err)
+		if !impProtocolCompatible(instance.protocolRevision, instance.executionLifecycle) {
+			if opts.IsAutoCleanUpAllowed() && createUsing == nil {
+				if _, err := this.removeContainer(ctx, instance.containerId); err != nil {
+					return fail(err)
+				}
+				this.activeInstances.CompareAndDelete(sessId, instance)
+				return fail(ErrNoSuchEnvironment)
 			}
+			return fail(incompatibleImpResource(instance.containerId, instance.protocolRevision, instance.executionLifecycle))
 		}
-		if createUsing == nil {
-			return fail(ErrNoSuchEnvironment)
-		}
+		instance.owners.Add(1)
+		return &containerLease{Environment: instance, ReverseTCPListener: instance}, nil
 	}
 
-	if c == nil {
-		c, err = this.createContainerBy(createUsing, sess)
+	for {
+		c, exitCode, err := this.findContainerBySession(ctx, sess)
 		if err != nil {
 			return fail(err)
 		}
-	}
-
-	logger := this.logger().
-		With("containerId", c.ID).
-		With("sessionId", sessId)
-
-	removeContainerUnchecked := func() {
-		if _, err := this.removeContainer(ctx, c.ID); err != nil {
-			logger.
-				WithError(err).
-				Warnf("cannot broken container; need to be done manually")
+		if c == nil && createUsing == nil {
+			return fail(ErrNoSuchEnvironment)
 		}
-	}
+		if c != nil && opts != nil && opts.ExpectedResource != nil && c.ID != opts.ExpectedResource.DockerID {
+			return fail(errors.System.Newf("container identity changed since it was inspected: expected %s, found %s", opts.ExpectedResource.DockerID, c.ID))
+		}
+		if c != nil {
+			revision, err := parseImpProtocolRevision(c.Labels, DockerLabelImpProtocolRevision)
+			if err != nil {
+				return fail(errors.System.Newf("existing environment %s: %w; remove it explicitly before retrying", c.ID, err))
+			}
+			if opts != nil && opts.ExpectedResource != nil && impProtocolCompatible(revision, c.Labels[DockerLabelExecutionLifecycle]) {
+				return fail(errors.System.Newf("container IMP protocol metadata changed since it was inspected: %s", c.ID))
+			}
+			if lifecycle := c.Labels[DockerLabelExecutionLifecycle]; !impProtocolCompatible(revision, lifecycle) {
+				if opts.IsAutoCleanUpAllowed() && createUsing == nil {
+					if _, err := this.removeContainer(ctx, c.ID); err != nil {
+						return fail(err)
+					}
+					return fail(ErrNoSuchEnvironment)
+				}
+				return fail(incompatibleImpResource(c.ID, revision, lifecycle))
+			}
+		}
 
-	instance, err := this.new(ctx, c, logger)
-	if err != nil {
-		if errors.Is(err, containerContainsProblemsErr) {
-			if createUsing != nil {
-				removeContainerUnchecked()
-				if !retryAllowed {
+		if c != nil && exitCode >= 0 {
+			if opts.IsAutoCleanUpAllowed() {
+				if _, err := this.removeContainer(ctx, c.ID); err != nil {
 					return fail(err)
 				}
-				return this.findOrEnsureBySession(ctx, sess, opts, createUsing, false)
-			} else if opts.IsAutoCleanUpAllowed() {
-				removeContainerUnchecked()
+			}
+			if createUsing == nil {
 				return fail(ErrNoSuchEnvironment)
 			}
 		}
-		return fail(err)
+
+		if c == nil {
+			c, err = this.createContainerBy(createUsing, sess)
+			if err != nil {
+				return fail(err)
+			}
+		}
+
+		logger := this.logger().
+			With("containerId", c.ID).
+			With("sessionId", sessId)
+
+		removeContainerUnchecked := func() {
+			if _, err := this.removeContainer(ctx, c.ID); err != nil {
+				logger.
+					WithError(err).
+					Warnf("cannot broken container; need to be done manually")
+			}
+		}
+
+		instance, err := this.new(ctx, c, logger)
+		if err != nil {
+			if errors.Is(err, containerContainsProblemsErr) {
+				if createUsing != nil {
+					removeContainerUnchecked()
+					if !retryAllowed {
+						return fail(err)
+					}
+					retryAllowed = false
+					continue
+				} else if opts.IsAutoCleanUpAllowed() {
+					removeContainerUnchecked()
+					return fail(ErrNoSuchEnvironment)
+				}
+			}
+			return fail(err)
+		}
+
+		this.activeInstances.Store(sessId, instance)
+
+		return &containerLease{Environment: instance, ReverseTCPListener: instance}, nil
 	}
+}
 
-	this.activeInstances.Store(sessId, instance)
-
-	return &containerLease{Environment: instance, ReverseTCPListener: instance}, nil
+// ImpProtocolCompatibility inspects only Docker metadata; it does not open or remove the environment.
+func (this *DockerRepository) ImpProtocolCompatibility(ctx context.Context, sess session.Session) (compatible bool, found bool, revision uint32, identity ResourceIdentity, err error) {
+	if sess == nil || sess.Flow() != this.flow {
+		return false, false, 0, ResourceIdentity{}, nil
+	}
+	defer this.sessionIdMutex.RLock(sess.Id())()
+	c, _, err := this.findContainerBySession(ctx, sess)
+	if err != nil || c == nil {
+		return false, false, 0, ResourceIdentity{}, err
+	}
+	identity.DockerID = c.ID
+	revision, err = parseImpProtocolRevision(c.Labels, DockerLabelImpProtocolRevision)
+	if err != nil {
+		return false, true, 0, identity, fmt.Errorf("container %s: %w", c.ID, err)
+	}
+	return impProtocolCompatible(revision, c.Labels[DockerLabelExecutionLifecycle]), true, revision, identity, nil
 }
 
 func (this *DockerRepository) removeContainer(ctx context.Context, id string) (bool, error) {
@@ -797,9 +847,14 @@ func (this *DockerRepository) removeContainer(ctx context.Context, id string) (b
 }
 
 func (this *DockerRepository) findContainerBySession(ctx context.Context, sess session.Session) (c *container.Summary, exitCode int, err error) {
-	return this.findContainerBy(ctx, filters.NewArgs(
+	c, exitCode, err = this.findContainerBy(ctx, filters.NewArgs(
 		filters.Arg("label", DockerLabelSessionId+"="+sess.Id().String()),
+		filters.Arg("label", DockerLabelFlow+"="+this.flow.String()),
 	))
+	if c != nil && (c.Labels[DockerLabelFlow] != this.flow.String() || c.Labels[DockerLabelSessionId] != sess.Id().String()) {
+		return nil, -1, nil
+	}
+	return c, exitCode, err
 }
 func (this *DockerRepository) findContainerById(ctx context.Context, id string) (c *container.Summary, exitCode int, err error) {
 	return this.findContainerBy(ctx, filters.NewArgs(
