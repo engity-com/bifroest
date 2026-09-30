@@ -265,6 +265,16 @@ func RunLocalConPTYRelay(cols, rows int, argv []string) (int, error) {
 			}
 		}
 	}
+	// Observe a completed input failure before canceling the pending frame read.
+	if inputDone != nil {
+		select {
+		case err := <-inputDone:
+			if err != nil {
+				relayErr = errors.Join(relayErr, fmt.Errorf("relay input: %w", err))
+			}
+		default:
+		}
+	}
 	var code uint32
 	if err := windows.GetExitCodeProcess(proc.Process, &code); err != nil && relayErr == nil {
 		relayErr = fmt.Errorf("get shell exit code: %w", err)

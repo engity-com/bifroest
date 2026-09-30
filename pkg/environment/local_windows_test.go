@@ -120,6 +120,12 @@ func TestMain(m *testing.M) {
 		fmt.Println(user.User.Sid.String())
 		os.Exit(0)
 	}
+	if len(os.Args) == 2 && os.Args[1] == "local-windows-exit-one-child" {
+		os.Exit(1)
+	}
+	if len(os.Args) == 2 && os.Args[1] == "local-windows-exit-255-child" {
+		os.Exit(255)
+	}
 	if len(os.Args) == 2 && os.Args[1] == "local-windows-cleanup-child" {
 		user, err := windows.GetCurrentProcessToken().GetTokenUser()
 		if err != nil {
@@ -148,7 +154,11 @@ func TestMain(m *testing.M) {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		os.Exit(code)
+		if err := WriteLocalConPTYRelayExitStatus(os.Stderr, code); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
 	}
 	os.Exit(m.Run())
 }
@@ -543,5 +553,83 @@ func TestLocalWindowsConPTYAsUser(t *testing.T) {
 	case <-time.After(20 * time.Second):
 		_ = pty.Close()
 		require.FailNow(t, "ConPTY did not finish within 20 seconds")
+	}
+}
+
+func TestLocalWindowsConPTYDistinguishesShellExitFromRelayFailure(t *testing.T) {
+	name := os.Getenv("BIFROEST_TEST_LOCAL_WINDOWS_USER")
+	if name == "" {
+		t.Skip("set BIFROEST_TEST_LOCAL_WINDOWS_USER explicitly to run privileged ConPTY integration")
+	}
+	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
+	require.NoError(t, err)
+	self, err := windows.GetCurrentProcessToken().GetTokenUser()
+	require.NoError(t, err)
+	if !self.User.Sid.Equals(system) {
+		t.Skip("ConPTY integration requires a LocalSystem process")
+	}
+	if err := windows.NewLazySystemDLL("kernel32.dll").NewProc("CreatePseudoConsole").Find(); err != nil {
+		t.Skip("ConPTY is not available on this Windows version")
+	}
+	account, err := lookupLocalWindowsAccount(name)
+	require.NoError(t, err)
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name    string
+		command string
+		code    int
+		fail    bool
+	}{
+		{name: "shell exit 1", command: "local-windows-exit-one-child", code: 1},
+		{name: "shell exit 255", command: "local-windows-exit-255-child", code: 255},
+		{name: "relay failure", command: "invalid\x00argument", fail: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repository := localWindowsTestRepository(t, account.Name)
+			repository.conf.ExecCommandPrefix = template.MustNewStrings(exe)
+			stored := &sshTestStoredSession{id: session.MustNewId()}
+			req := localWindowsTestRequest(t, stored)
+			reader, writer := io.Pipe()
+			defer writer.Close()
+			req.session = &localWindowsPtySession{
+				sshTestSession: newSshTestSession(req.context, tc.command, nil),
+				input:          reader,
+				changes:        make(chan essh.Window),
+			}
+			env, err := repository.Ensure(req)
+			require.NoError(t, err)
+			type outcome struct {
+				code int
+				err  error
+			}
+			done := make(chan outcome, 1)
+			go func() {
+				code, err := env.Run(req)
+				done <- outcome{code, err}
+			}()
+			select {
+			case result := <-done:
+				output := req.session.(*localWindowsPtySession).stdout.String()
+				require.NotContains(t, output, "BIFROEST-CONPTY/1 EXIT")
+				require.NotContains(t, output, "shell argument contains NUL")
+				if tc.fail {
+					require.ErrorContains(t, result.err, "relay exited")
+					require.ErrorContains(t, result.err, "shell argument contains NUL")
+					require.Equal(t, -1, result.code)
+				} else {
+					require.NoError(t, result.err)
+					require.Equal(t, tc.code, result.code)
+				}
+			case <-time.After(20 * time.Second):
+				_ = req.session.Close()
+				select {
+				case <-done:
+				case <-time.After(5 * time.Second):
+					t.Error("ConPTY relay did not stop after SSH session close")
+				}
+				t.Fatal("ConPTY relay did not finish within 20 seconds")
+			}
+		})
 	}
 }

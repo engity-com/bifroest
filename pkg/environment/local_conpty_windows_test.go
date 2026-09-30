@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -39,6 +40,66 @@ func TestLocalConPTYCommandFrame(t *testing.T) {
 	require.NoError(t, writeLocalConPTYFrame(&buf, localConPTYFrame{kind: 'R', data: []byte{80, 0, 25, 0}}))
 	_, err = ReadLocalConPTYCommand(&buf)
 	require.ErrorContains(t, err, "invalid ConPTY command frame")
+}
+
+func TestLocalConPTYRelayExitStatus(t *testing.T) {
+	for _, code := range []int{0, 1, 255, 65535} {
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			var frame bytes.Buffer
+			require.NoError(t, WriteLocalConPTYRelayExitStatus(&frame, code))
+			status := &localConPTYRelayStatusWriter{}
+			_, err := status.Write([]byte("relay diagnostic\n"))
+			require.NoError(t, err)
+			_, err = status.Write(frame.Bytes()[:3])
+			require.NoError(t, err)
+			_, err = status.Write(frame.Bytes()[3:])
+			require.NoError(t, err)
+			got, diagnostic, err := status.exitStatus()
+			require.NoError(t, err)
+			require.Equal(t, code, got)
+			require.Equal(t, "relay diagnostic", diagnostic)
+		})
+	}
+}
+
+func TestLocalConPTYRelayExitStatusFailsClosed(t *testing.T) {
+	var valid bytes.Buffer
+	require.NoError(t, WriteLocalConPTYRelayExitStatus(&valid, 1))
+	for _, tc := range []struct {
+		name string
+		data []byte
+		want string
+	}{
+		{name: "missing", data: []byte("relay failed\n"), want: "missing"},
+		{name: "invalid", data: []byte(localConPTYRelayExitPrefix + "00000x01\n"), want: "invalid"},
+		{name: "invalid sign", data: []byte(localConPTYRelayExitPrefix + "+0000001\n"), want: "invalid"},
+		{name: "duplicate", data: bytes.Repeat(valid.Bytes(), 2), want: "duplicate"},
+		{name: "trailing output", data: append(bytes.Clone(valid.Bytes()), []byte("later\n")...), want: "missing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status := &localConPTYRelayStatusWriter{}
+			_, err := status.Write(tc.data)
+			require.NoError(t, err)
+			_, _, err = status.exitStatus()
+			require.ErrorContains(t, err, tc.want)
+		})
+	}
+	status := &localConPTYRelayStatusWriter{}
+	large := bytes.Repeat([]byte("x"), 16*1024)
+	_, err := status.Write(large)
+	require.NoError(t, err)
+	_, err = status.Write(valid.Bytes())
+	require.NoError(t, err)
+	require.Equal(t, len(status.tail), status.length)
+	code, diagnostic, err := status.exitStatus()
+	require.NoError(t, err)
+	require.Equal(t, 1, code)
+	require.Contains(t, diagnostic, "[truncated]")
+	status = &localConPTYRelayStatusWriter{}
+	_, err = status.Write(bytes.Repeat([]byte("x"), len(status.tail)))
+	require.NoError(t, err)
+	require.False(t, status.truncated)
+	require.ErrorContains(t, WriteLocalConPTYRelayExitStatus(io.Discard, -1), "invalid")
 }
 
 func TestLocalConPTYRelayRoundTrip(t *testing.T) {

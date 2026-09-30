@@ -3,6 +3,7 @@
 package environment
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -11,16 +12,88 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"syscall"
 
-	log "github.com/echocat/slf4g"
-	"github.com/echocat/slf4g/level"
 	essh "github.com/engity-com/ssh-server-go"
 )
 
 type localConPTYFrame struct {
 	kind byte
 	data []byte
+}
+
+const localConPTYRelayExitPrefix = "\nBIFROEST-CONPTY/1 EXIT "
+
+// WriteLocalConPTYRelayExitStatus confirms a shell exit only after the relay
+// has successfully drained its output. Stderr is separate from PTY output.
+func WriteLocalConPTYRelayExitStatus(out io.Writer, code int) error {
+	if code < 0 || uint64(code) > uint64(^uint32(0)) {
+		return fmt.Errorf("invalid ConPTY shell exit code %d", code)
+	}
+	status := fmt.Sprintf("%s%08x\n", localConPTYRelayExitPrefix, uint32(code))
+	n, err := io.WriteString(out, status)
+	if err != nil {
+		return err
+	}
+	if n != len(status) {
+		return io.ErrShortWrite
+	}
+	return nil
+}
+
+type localConPTYRelayStatusWriter struct {
+	tail      [4096]byte
+	length    int
+	truncated bool
+}
+
+func (this *localConPTYRelayStatusWriter) Write(data []byte) (int, error) {
+	length := len(data)
+	if length >= len(this.tail) {
+		copy(this.tail[:], data[length-len(this.tail):])
+		this.truncated = this.truncated || this.length > 0 || length > len(this.tail)
+		this.length = len(this.tail)
+		return length, nil
+	}
+	if discard := this.length + length - len(this.tail); discard > 0 {
+		copy(this.tail[:], this.tail[discard:this.length])
+		this.length -= discard
+		this.truncated = true
+	}
+	copy(this.tail[this.length:], data)
+	this.length += length
+	return length, nil
+}
+
+func (this *localConPTYRelayStatusWriter) exitStatus() (int, string, error) {
+	data := this.tail[:this.length]
+	diagnostic := func(raw []byte) string {
+		result := strings.TrimSpace(string(raw))
+		if this.truncated {
+			return "[truncated] " + result
+		}
+		return result
+	}
+	footerLength := len(localConPTYRelayExitPrefix) + 8 + 1
+	if len(data) < footerLength || !bytes.HasPrefix(data[len(data)-footerLength:], []byte(localConPTYRelayExitPrefix)) || data[len(data)-1] != '\n' {
+		return 0, diagnostic(data), fmt.Errorf("missing ConPTY relay exit status")
+	}
+	start := len(data) - footerLength
+	if bytes.Contains(data[:start], []byte(localConPTYRelayExitPrefix)) {
+		return 0, diagnostic(data), fmt.Errorf("duplicate ConPTY relay exit status")
+	}
+	digits := data[start+len(localConPTYRelayExitPrefix) : len(data)-1]
+	for _, digit := range digits {
+		if !('0' <= digit && digit <= '9' || 'a' <= digit && digit <= 'f') {
+			return 0, diagnostic(data), fmt.Errorf("invalid ConPTY relay exit status")
+		}
+	}
+	value, err := strconv.ParseUint(string(digits), 16, 32)
+	if err != nil {
+		return 0, diagnostic(data), fmt.Errorf("invalid ConPTY relay exit status: %w", err)
+	}
+	return int(value), diagnostic(data[:start]), nil
 }
 
 func (this *local) runConPTY(t Task, shell *exec.Cmd) (int, error) {
@@ -55,7 +128,8 @@ func (this *local) runConPTY(t Task, shell *exec.Cmd) (int, error) {
 	relay.Env = shell.Env
 	relay.SysProcAttr = &syscall.SysProcAttr{Token: shell.SysProcAttr.Token}
 	relay.Stdout = t.SshSession()
-	relay.Stderr = &log.LoggingWriter{Logger: t.Connection().Logger(), LevelExtractor: level.FixedLevelExtractor(level.Error)}
+	status := &localConPTYRelayStatusWriter{}
+	relay.Stderr = status
 	control, err := relay.StdinPipe()
 	if err != nil {
 		return fail("open relay control pipe: %w", err)
@@ -136,14 +210,17 @@ func (this *local) runConPTY(t Task, shell *exec.Cmd) (int, error) {
 			return -2, nil
 		case err := <-processDone:
 			exitObserved = true
-			if err == nil {
-				return 0, nil
+			code, diagnostic, statusErr := status.exitStatus()
+			if err != nil {
+				return fail("relay exited: %w (stderr: %s)", err, diagnostic)
 			}
-			var exit *exec.ExitError
-			if errors.As(err, &exit) {
-				return exit.ExitCode(), nil
+			if statusErr != nil {
+				return fail("relay status: %w (stderr: %s)", statusErr, diagnostic)
 			}
-			return fail("relay exited: %w", err)
+			if diagnostic != "" {
+				t.Connection().Logger().With("stderr", diagnostic).Warn("ConPTY relay reported diagnostics")
+			}
+			return code, nil
 		case err := <-inputDone:
 			inputDone = nil
 			if err != nil && !errors.Is(err, io.EOF) {

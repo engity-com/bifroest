@@ -22,9 +22,6 @@ var _ = registerCommand(func(app *kingpin.Application) {
 		if err != nil {
 			return err
 		}
-		if code != 0 {
-			goos.Exit(code)
-		}
-		return nil
+		return environment.WriteLocalConPTYRelayExitStatus(goos.Stderr, code)
 	})
 })

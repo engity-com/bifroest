@@ -330,7 +330,7 @@ func (p *probeService) Execute(_ []string, _ <-chan svc.ChangeRequest, changes c
 	if p.testBinary != "" {
 		pattern := "TestLocalWindows(S4ULogonAsUser|RunAsUser|ConPTYAsUser)$"
 		if p.serverCore {
-			pattern = "^(TestLocalWindows(S4ULogonAsUser|RunAsUser|ConPTYAsUser)|TestLocalServerCore(ProviderAccountLifecycle|FailedSkelDisablesNewAccount|FailedDisplayDisablesNewAccount|UnmanagedNewAccountCanBeDisabled|ProcessCleanupWaitsForExit))$"
+			pattern = "^(TestLocalWindows(S4ULogonAsUser|RunAsUser|ConPTYAsUser|ConPTYDistinguishesShellExitFromRelayFailure)|TestLocalServerCore(ProviderAccountLifecycle|FailedSkelDisablesNewAccount|FailedDisplayDisablesNewAccount|UnmanagedNewAccountCanBeDisabled|ProcessCleanupWaitsForExit))$"
 		}
 		cmd := exec.Command(p.testBinary, "-test.run="+pattern, "-test.v", "-test.timeout=150s")
 		cmd.Env = append(os.Environ(), "BIFROEST_TEST_LOCAL_WINDOWS_USER="+p.user)
@@ -342,7 +342,7 @@ func (p *probeService) Execute(_ []string, _ <-chan svc.ChangeRequest, changes c
 		if err == nil {
 			required := []string{"TestLocalWindowsS4ULogonAsUser", "TestLocalWindowsRunAsUser", "TestLocalWindowsConPTYAsUser"}
 			if p.serverCore {
-				required = append(required, "TestLocalServerCoreProviderAccountLifecycle", "TestLocalServerCoreFailedSkelDisablesNewAccount", "TestLocalServerCoreFailedDisplayDisablesNewAccount", "TestLocalServerCoreUnmanagedNewAccountCanBeDisabled", "TestLocalServerCoreProcessCleanupWaitsForExit")
+				required = append(required, "TestLocalWindowsConPTYDistinguishesShellExitFromRelayFailure", "TestLocalServerCoreProviderAccountLifecycle", "TestLocalServerCoreFailedSkelDisablesNewAccount", "TestLocalServerCoreFailedDisplayDisablesNewAccount", "TestLocalServerCoreUnmanagedNewAccountCanBeDisabled", "TestLocalServerCoreProcessCleanupWaitsForExit")
 			}
 			for _, test := range required {
 				if !strings.Contains(string(output), "--- PASS: "+test+" ") {
