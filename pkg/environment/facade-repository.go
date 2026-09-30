@@ -98,6 +98,15 @@ func (this *RepositoryFacade) FindBySession(ctx context.Context, sess session.Se
 	return candidate.FindBySession(ctx, sess, opts)
 }
 
+// DisposeSession serializes local session disposal with account provisioning.
+func (this *RepositoryFacade) DisposeSession(ctx context.Context, sess session.Session) (bool, error) {
+	if local, ok := this.entries[sess.Flow()].(*LocalRepository); ok && local.coordinator != nil {
+		local.coordinator.mu.Lock()
+		defer local.coordinator.mu.Unlock()
+	}
+	return sess.Dispose(ctx)
+}
+
 func (this *RepositoryFacade) IsSessionCompatible(ctx context.Context, sess session.Session) (bool, error) {
 	if sess == nil {
 		return false, nil

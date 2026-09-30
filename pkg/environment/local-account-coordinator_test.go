@@ -33,6 +33,18 @@ func (this *localCoordinatorTestRepository) FindAll(ctx context.Context, consume
 	return nil
 }
 
+func (this *localCoordinatorTestRepository) FindBy(_ context.Context, flow configuration.FlowName, id session.Id, _ *session.FindOpts) (session.Session, error) {
+	if this.err != nil {
+		return nil, this.err
+	}
+	for _, candidate := range this.sessions {
+		if candidate.Flow() == flow && candidate.Id() == id {
+			return candidate, nil
+		}
+	}
+	return nil, session.ErrNoSuchSession
+}
+
 type localCoordinatorTestSession struct {
 	session.Session
 	flow        configuration.FlowName
@@ -56,12 +68,41 @@ func (this *localCoordinatorTestSession) Info(context.Context) (session.Info, er
 }
 func (this *localCoordinatorTestSession) HasActiveConnections() bool { return this.connections }
 
+type localCoordinatorTestDisposeSession struct {
+	*localCoordinatorTestSession
+	coordinator *localAccountCoordinator
+}
+
+func (this *localCoordinatorTestDisposeSession) Dispose(context.Context) (bool, error) {
+	if this.coordinator.mu.TryLock() {
+		this.coordinator.mu.Unlock()
+		return false, errors.New("session disposal was not coordinated")
+	}
+	this.state = session.StateDisposed
+	return true, nil
+}
+
 type localCoordinatorTestInfo struct {
 	session.Info
 	state session.State
 }
 
 func (this localCoordinatorTestInfo) State() session.State { return this.state }
+
+func TestLocalAccountCoordinatorSerializesSessionDispose(t *testing.T) {
+	coordinator := &localAccountCoordinator{}
+	stored := &localCoordinatorTestDisposeSession{
+		localCoordinatorTestSession: &localCoordinatorTestSession{flow: "local", id: session.MustNewId(), state: session.StateAuthorized},
+		coordinator:                 coordinator,
+	}
+	facade := &RepositoryFacade{entries: map[configuration.FlowName]CloseableRepository{
+		"local": &LocalRepository{coordinator: coordinator},
+	}}
+	disposed, err := facade.DisposeSession(t.Context(), stored)
+	require.NoError(t, err)
+	require.True(t, disposed)
+	require.Equal(t, session.StateDisposed, stored.state)
+}
 
 func TestLocalAccountCoordinatorOtherActiveAcrossFlows(t *testing.T) {
 	current := &localCoordinatorTestSession{flow: "first", id: session.MustNewId(), token: []byte(`{"user":{"name":"local-user","uid":1234}}`)}

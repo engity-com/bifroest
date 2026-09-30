@@ -432,7 +432,15 @@ func (this *houseKeeper) dispose(ctx context.Context, logger log.Logger, sess se
 		return false, errors.Newf(errors.System, "cannot dispose session %v: %w", sess, err)
 	}
 
-	sessionDisposed, err := sess.Dispose(ctx)
+	var sessionDisposed bool
+	var err error
+	if coordinator, ok := this.service.environments.(interface {
+		DisposeSession(context.Context, session.Session) (bool, error)
+	}); ok {
+		sessionDisposed, err = coordinator.DisposeSession(ctx, sess)
+	} else {
+		sessionDisposed, err = sess.Dispose(ctx)
+	}
 	if err != nil {
 		return fail(err)
 	}

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -51,6 +52,39 @@ type serverCoreTokenWriteFailureSession struct{ *sshTestStoredSession }
 
 func (*serverCoreTokenWriteFailureSession) SetEnvironmentToken(context.Context, []byte) error {
 	return errors.New("test token write failure")
+}
+
+type serverCorePausedTokenSession struct {
+	*serverCoreLifecycleSession
+	atToken chan struct{}
+	resume  chan struct{}
+	mu      sync.Mutex
+}
+
+func (this *serverCorePausedTokenSession) Info(context.Context) (session.Info, error) {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	return localCoordinatorTestInfo{state: this.state}, nil
+}
+
+func (this *serverCorePausedTokenSession) SetEnvironmentToken(ctx context.Context, value []byte) error {
+	if len(value) != 0 {
+		close(this.atToken)
+		<-this.resume
+	}
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	if len(value) != 0 && this.state == session.StateDisposed {
+		return errors.New("cannot write environment token to disposed session")
+	}
+	return this.serverCoreLifecycleSession.SetEnvironmentToken(ctx, value)
+}
+
+func (this *serverCorePausedTokenSession) Dispose(context.Context) (bool, error) {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	this.state = session.StateDisposed
+	return true, nil
 }
 
 func TestLocalServerCoreProviderAccountLifecycle(t *testing.T) {
@@ -294,6 +328,117 @@ func TestLocalServerCoreFailedUpdateRestoresManagedMembership(t *testing.T) {
 	_, err = repository.Ensure(req)
 	require.ErrorContains(t, err, "test token write failure")
 	assertMembership(t, true)
+}
+
+func TestLocalServerCoreProvisioningPrecedesSessionDispose(t *testing.T) {
+	if os.Getenv("BIFROEST_TEST_SERVERCORE_IN_CONTAINER") != "1" {
+		t.Skip("only run inside the disposable Server Core integration container")
+	}
+	marker, err := os.ReadFile(serverCoreContainerMarker)
+	require.NoError(t, err)
+	require.Equal(t, "bifroest-servercore-integration", strings.TrimSpace(string(marker)))
+	var nonce [8]byte
+	_, err = rand.Read(nonce[:])
+	require.NoError(t, err)
+	name := "bsc" + hex.EncodeToString(nonce[:])
+	_, err = lookupLocalWindowsAccount(name)
+	require.ErrorIs(t, err, errLocalWindowsAccountNotFound)
+	var createdSID string
+	t.Cleanup(func() {
+		if current, err := lookupLocalWindowsAccount(name); err == nil && (createdSID == "" || current.SID == createdSID) {
+			if err := DeleteLocalWindowsAccount(name, current.SID); err != nil {
+				t.Logf("best-effort disposable container account cleanup: %v", err)
+			}
+		}
+	})
+	conf := &configuration.EnvironmentLocal{}
+	require.NoError(t, conf.SetDefaults())
+	conf.Name = template.MustNewString(name)
+	conf.ManagedGroup = "bsg" + hex.EncodeToString(nonce[:])
+	conf.CreateIfAbsent = template.BoolOf(true)
+	conf.KillProcessesOnDispose = template.BoolOf(false)
+	stored := &serverCorePausedTokenSession{
+		serverCoreLifecycleSession: &serverCoreLifecycleSession{sshTestStoredSession: &sshTestStoredSession{id: session.MustNewId()}, state: session.StateAuthorized},
+		atToken:                    make(chan struct{}),
+		resume:                     make(chan struct{}),
+	}
+	coordinator := &localAccountCoordinator{sessions: &localCoordinatorTestRepository{sessions: []session.Session{stored}}}
+	ctx := context.WithValue(context.Background(), repositoryDependenciesContextKey{}, repositoryDependencies{localAccounts: coordinator})
+	repository, err := NewLocalRepository(ctx, "test", conf, nil, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, repository.Close()) })
+	facade := &RepositoryFacade{entries: map[configuration.FlowName]CloseableRepository{"test": repository}}
+	req := localWindowsTestRequest(t, stored.sshTestStoredSession)
+	req.authorization = &sshTestAuthorization{session: stored}
+	type outcome struct {
+		env Environment
+		err error
+	}
+	provisioned := make(chan outcome, 1)
+	provisioningFinished := make(chan struct{})
+	go func() {
+		defer close(provisioningFinished)
+		env, err := repository.Ensure(req)
+		provisioned <- outcome{env, err}
+	}()
+	t.Cleanup(func() {
+		select {
+		case <-stored.resume:
+		default:
+			close(stored.resume)
+		}
+		select {
+		case <-provisioningFinished:
+		case <-time.After(5 * time.Second):
+			t.Error("account provisioning did not stop during test cleanup")
+		}
+	})
+	select {
+	case <-stored.atToken:
+	case <-time.After(20 * time.Second):
+		t.Fatal("account was not provisioned before the token write")
+	}
+	account, err := lookupLocalWindowsAccount(name)
+	require.NoError(t, err)
+	createdSID = account.SID
+	disposed := make(chan error, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		_, err := facade.DisposeSession(ctx, stored)
+		disposed <- err
+	}()
+	<-started
+	select {
+	case err := <-disposed:
+		t.Fatalf("session disposed before provisioning finished: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(stored.resume)
+	select {
+	case result := <-provisioned:
+		require.NoError(t, result.err)
+		require.NotNil(t, result.env)
+		select {
+		case err := <-disposed:
+			require.NoError(t, err)
+		case <-time.After(10 * time.Second):
+			t.Fatal("session disposal remained blocked after provisioning")
+		}
+		info, err := stored.Info(ctx)
+		require.NoError(t, err)
+		require.Equal(t, session.StateDisposed, info.State())
+		raw, err := stored.EnvironmentToken(ctx)
+		require.NoError(t, err)
+		require.NotEmpty(t, raw)
+		_, err = result.env.Dispose(ctx)
+		require.NoError(t, err)
+		raw, err = stored.EnvironmentToken(ctx)
+		require.NoError(t, err)
+		require.Empty(t, raw)
+	case <-time.After(20 * time.Second):
+		t.Fatal("account provisioning did not finish after resuming token write")
+	}
 }
 
 func TestLocalServerCoreFailedSkelDisablesNewAccount(t *testing.T) {

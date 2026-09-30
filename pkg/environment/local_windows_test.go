@@ -284,6 +284,16 @@ func TestLocalWindowsAcceptsUIDOnlyAndRejectsMismatchedIdentity(t *testing.T) {
 	require.ErrorContains(t, err, "does not match UID")
 }
 
+func TestLocalWindowsRejectsDisposedSessionBeforeAccountLookup(t *testing.T) {
+	repository := localWindowsTestRepository(t, "BifroestNoSuchUser_987654321")
+	stored := &localCoordinatorTestSession{flow: "test", id: session.MustNewId(), state: session.StateDisposed}
+	repository.coordinator = &localAccountCoordinator{sessions: &localCoordinatorTestRepository{sessions: []session.Session{stored}}}
+	req := localWindowsTestRequest(t, &sshTestStoredSession{id: stored.id})
+	req.authorization = &sshTestAuthorization{session: stored}
+	_, err := repository.Ensure(req)
+	require.ErrorContains(t, err, "disposed local account session")
+}
+
 func TestLocalWindowsRejectsLegacyMissingAndChangedIdentity(t *testing.T) {
 	account := localWindowsTestAccount(t)
 	repository := localWindowsTestRepository(t, account.Name)

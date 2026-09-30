@@ -280,6 +280,7 @@ func TestHouseKeeperContinuesAfterCorruptSessionDiagnostic(t *testing.T) {
 
 	require.NoError(t, hk.run(hk.logger(), context.Background()))
 	require.Equal(t, 1, valid.disposeCalls)
+	require.Equal(t, 1, hk.service.environments.(*houseKeeperTestEnvironmentRepository).disposeSessionCalls)
 	require.Equal(t, 1, environments.cleanupCalls)
 	require.NotNil(t, repository.findAllOpts.DiagnosticConsumer)
 	require.NotNil(t, repository.findAllOpts.AutoCleanUpAllowed)
@@ -658,11 +659,17 @@ func (this *houseKeeperTestAuthorizer) RestoreFromSession(_ context.Context, _ s
 
 type houseKeeperTestEnvironmentRepository struct {
 	environment.CloseableRepository
-	findCalls         int
-	cleanupCalls      int
-	cleanupErr        error
-	cleanupCheckFlow  configuration.FlowName
-	cleanupFlowExists bool
+	findCalls           int
+	disposeSessionCalls int
+	cleanupCalls        int
+	cleanupErr          error
+	cleanupCheckFlow    configuration.FlowName
+	cleanupFlowExists   bool
+}
+
+func (this *houseKeeperTestEnvironmentRepository) DisposeSession(ctx context.Context, sess session.Session) (bool, error) {
+	this.disposeSessionCalls++
+	return sess.Dispose(ctx)
 }
 
 func (this *houseKeeperTestEnvironmentRepository) FindBySession(context.Context, session.Session, *environment.FindOpts) (environment.Environment, error) {

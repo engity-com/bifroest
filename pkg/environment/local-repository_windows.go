@@ -109,6 +109,22 @@ func (this *LocalRepository) Ensure(req Request) (_ Environment, rErr error) {
 	if sess == nil {
 		return failf(errors.System, "authorization without session")
 	}
+	if this.coordinator != nil {
+		if this.coordinator.sessions == nil {
+			return failf(errors.System, "cannot verify local account session without a session repository")
+		}
+		current, err := this.coordinator.sessions.FindBy(req.Context(), sess.Flow(), sess.Id(), nil)
+		if err != nil {
+			return failf(errors.Expired, "cannot verify local account session before provisioning: %w", err)
+		}
+		info, err := current.Info(req.Context())
+		if err != nil {
+			return fail(err)
+		}
+		if info == nil || info.State() == session.StateDisposed {
+			return failf(errors.Expired, "cannot provision a disposed local account session")
+		}
+	}
 
 	account, name, uid, err := this.lookupConfiguredAccount(req)
 	if err != nil && !errors.Is(err, errLocalWindowsAccountNotFound) {
