@@ -136,7 +136,7 @@ If this property is `true` and [`deleteOnDispose`](#property-deleteOnDispose) ac
 
 If `true`, terminate the account's processes after the last active Bifröst session for that account has been disposed and its connections have ended, independently of account deletion. A pending kill survives in the session token. The kill is account-wide and can still affect processes started outside Bifröst under the same identity.
 
-* A removed account's processes can still be targeted by its stored [UID](../data-type.md#uid), unless Linux has reassigned that [UID](../data-type.md#uid).
+* On Linux, if process cleanup is pending and the account disappears or changes identity, processes are not killed using its old [UID](../data-type.md#uid). Bifröst logs a warning and releases the pending session token once no active session remains; operators must inspect any leftover processes and files manually.
 * On Windows, an unidentifiable process blocks cleanup.
 * Unreadable sessions or a missing session coordinator block a pending kill instead of assuming no other session is active.
 * Completed process cleanup is recorded in the session token and is not repeated while deletion is pending.

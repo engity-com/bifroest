@@ -230,8 +230,10 @@ func (this *local) dispose(ctx context.Context) (bool, error) {
 			this.accountMissing = true
 		} else if err != nil {
 			return fail(err)
-		} else if current.Name != this.user.Name || (current.Uid == 0 && !this.allowSystemUsers) {
-			return fail(errors.System.Newf("local account %q changed identity or is protected", this.user.Name))
+		} else if current.Name != this.user.Name {
+			this.accountMissing = true
+		} else if current.Uid == 0 && !this.allowSystemUsers {
+			return fail(errors.System.Newf("local account UID 0 is protected"))
 		}
 	}
 	if this.accountMissing && this.user.Uid == 0 && !this.allowSystemUsers {
@@ -248,25 +250,22 @@ func (this *local) dispose(ctx context.Context) (bool, error) {
 			return false, nil
 		}
 		if this.accountMissing {
-			killer, ok := this.repository.userRepository.(interface {
-				KillProcessesByAbsentIdentity(context.Context, user.Id) error
-			})
-			if !ok {
-				return fail(errors.System.Newf("local user repository does not support orphaned process cleanup"))
+			logger := this.repository.logger().With("session", this.session).With("name", this.user.Name).With("uid", this.user.Uid)
+			if this.deleteUserOnDispose {
+				logger.Warn("skipping process and account cleanup: original local account identity is no longer verifiable; inspect remaining processes and files manually")
+			} else {
+				logger.Warn("skipping process cleanup: original local account identity is no longer verifiable; inspect remaining processes manually")
 			}
-			if err := killer.KillProcessesByAbsentIdentity(ctx, this.user.Uid); err != nil {
-				return fail(err)
-			}
-		} else {
-			killer, ok := this.repository.userRepository.(interface {
-				KillProcessesByIdentity(context.Context, user.Id, string) error
-			})
-			if !ok {
-				return fail(errors.System.Newf("local user repository does not support verified process cleanup"))
-			}
-			if err := killer.KillProcessesByIdentity(ctx, this.user.Uid, this.user.Name); err != nil {
-				return fail(err)
-			}
+			return true, nil // local.Dispose clears the token after all active sessions have ended.
+		}
+		killer, ok := this.repository.userRepository.(interface {
+			KillProcessesByIdentity(context.Context, user.Id, string) error
+		})
+		if !ok {
+			return fail(errors.System.Newf("local user repository does not support verified process cleanup"))
+		}
+		if err := killer.KillProcessesByIdentity(ctx, this.user.Uid, this.user.Name); err != nil {
+			return fail(err)
 		}
 		lt.User.ProcessesKilledOnDispose = true
 		encoded, err := json.Marshal(&lt)
@@ -285,7 +284,17 @@ func (this *local) dispose(ctx context.Context) (bool, error) {
 	}
 	if this.deleteUserOnDispose {
 		if this.accountMissing {
-			return disposed, nil
+			ready, err := this.repository.coordinator.canKillProcesses(ctx, this.session, this.user.Name, this.user.Uid.String())
+			if err != nil {
+				return fail(err)
+			}
+			if !ready {
+				this.deferred = true
+				return disposed, nil
+			}
+			this.repository.logger().With("session", this.session).With("name", this.user.Name).
+				With("uid", this.user.Uid).Warn("skipping account deletion: original local account identity is no longer verifiable; inspect remaining files manually")
+			return true, nil
 		}
 		active, err := this.repository.coordinator.otherActive(ctx, this.session, this.user.Name, this.user.Uid.String())
 		if err != nil {

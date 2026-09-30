@@ -824,22 +824,6 @@ func (this *EtcColonRepository) KillProcessesByIdentity(ctx context.Context, id 
 	return this.killAllOf(ctx, ref.uid)
 }
 
-// KillProcessesByAbsentIdentity handles processes left behind after an account
-// was removed. A reused UID is never treated as the original account.
-func (this *EtcColonRepository) KillProcessesByAbsentIdentity(ctx context.Context, id Id) (rErr error) {
-	this.mutex.Lock()
-	defer this.mutex.Unlock()
-	f, err := this.openAndLoad(true, true)
-	if err != nil {
-		return err
-	}
-	defer common.KeepError(&rErr, f.close)
-	if this.idToUser[id] != nil {
-		return fmt.Errorf("cannot clean up processes: UID %d is assigned to an account", id)
-	}
-	return this.killAllOf(ctx, uint32(id))
-}
-
 // DeleteByName implements Repository.DeleteByName.
 func (this *EtcColonRepository) DeleteByName(ctx context.Context, name string, opts *DeleteOpts) (rErr error) {
 	return this.deleteRef(ctx, opts, func() (*etcPasswdRef, error) {

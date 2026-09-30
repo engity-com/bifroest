@@ -72,14 +72,6 @@ func (this *localManagementTestUsers) KillProcessesByIdentity(_ context.Context,
 	return nil
 }
 
-func (this *localManagementTestUsers) KillProcessesByAbsentIdentity(_ context.Context, id user.Id) error {
-	if this.account != nil && this.account.Uid == id {
-		return user.ErrNoSuchUser
-	}
-	this.kills++
-	return nil
-}
-
 func TestLocalUnixGetEnsureOptsOfManagedUserAndAuthorization(t *testing.T) {
 	conf := &configuration.EnvironmentLocal{
 		EnvironmentLocalCommon: configuration.EnvironmentLocalCommon{
@@ -257,32 +249,99 @@ func TestLocalUnixFindBySessionLegacyTokenDoesNotDeleteUser(t *testing.T) {
 	require.Equal(t, encoded, stored.environmentToken, "UID mismatch must not clear the token without explicit cleanup")
 }
 
-func TestLocalUnixMissingAccountRetainsPendingProcessCleanup(t *testing.T) {
+func TestLocalUnixSkipsUnverifiableAccountProcessCleanup(t *testing.T) {
+	uid := user.Id(2_000_000_000)
+	for _, test := range []struct {
+		name    string
+		account *user.User
+		delete  bool
+	}{
+		{name: "account removed"},
+		{name: "account removed with pending deletion", delete: true},
+		{name: "account renamed", account: &user.User{Name: "renamed", Uid: uid}},
+		{name: "name reused with different UID", account: &user.User{Name: "removed", Uid: uid + 1}, delete: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			token := localToken{Version: 2, User: localTokenUser{Name: "removed", Uid: &uid, KillProcessesOnDispose: true, DeleteOnDispose: test.delete}}
+			encoded, err := json.Marshal(token)
+			require.NoError(t, err)
+			stored := &localCoordinatorTestSession{flow: "test", id: session.MustNewId(), state: session.StateDisposed, token: encoded}
+			other := &localCoordinatorTestSession{flow: "other", id: session.MustNewId(), state: session.StateAuthorized, token: encoded}
+			users := &localManagementTestUsers{account: test.account}
+			coordinator := &localAccountCoordinator{sessions: &localCoordinatorTestRepository{sessions: []session.Session{stored, other}}}
+			repository := &LocalRepository{userRepository: users, coordinator: coordinator}
+			clean := true
+			env, err := repository.FindBySession(ctx, stored, &FindOpts{AutoCleanUpAllowed: &clean})
+			require.NoError(t, err)
+			require.True(t, env.(*local).accountMissing)
+			_, err = env.Dispose(ctx)
+			require.NoError(t, err)
+			require.Zero(t, users.kills)
+			require.Equal(t, encoded, stored.token)
+			other.state = session.StateDisposed
+			changed, err := env.Dispose(ctx)
+			require.NoError(t, err)
+			require.True(t, changed)
+			require.Zero(t, users.kills)
+			require.False(t, users.deleted)
+			require.Equal(t, test.account, users.account)
+			require.Empty(t, stored.token)
+			_, err = repository.FindBySession(ctx, stored, &FindOpts{AutoCleanUpAllowed: &clean})
+			require.ErrorIs(t, err, ErrNoSuchEnvironment)
+		})
+	}
+}
+
+func TestLocalUnixSkipsIdentityChangedAfterTokenRestore(t *testing.T) {
 	ctx := context.Background()
-	uid := user.Id(1234)
-	token := localToken{Version: 2, User: localTokenUser{Name: "removed", Uid: &uid, KillProcessesOnDispose: true}}
+	uid := user.Id(2_000_000_000)
+	token := localToken{Version: 2, User: localTokenUser{Name: "original", Uid: &uid, DeleteOnDispose: true, KillProcessesOnDispose: true}}
 	encoded, err := json.Marshal(token)
 	require.NoError(t, err)
 	stored := &localCoordinatorTestSession{flow: "test", id: session.MustNewId(), state: session.StateDisposed, token: encoded}
-	other := &localCoordinatorTestSession{flow: "other", id: session.MustNewId(), state: session.StateAuthorized, token: encoded}
-	users := &localManagementTestUsers{}
+	users := &localManagementTestUsers{account: &user.User{Name: "original", Uid: uid}}
+	coordinator := &localAccountCoordinator{sessions: &localCoordinatorTestRepository{sessions: []session.Session{stored}}}
+	repository := &LocalRepository{userRepository: users, coordinator: coordinator}
+	env, err := repository.FindBySession(ctx, stored, nil)
+	require.NoError(t, err)
+	users.account = &user.User{Name: "renamed", Uid: uid}
+
+	changed, err := env.Dispose(ctx)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Zero(t, users.kills)
+	require.False(t, users.deleted)
+	require.Equal(t, "renamed", users.account.Name)
+	require.Empty(t, stored.token)
+}
+
+func TestLocalUnixChangedIdentityDefersPendingDeletion(t *testing.T) {
+	ctx := context.Background()
+	uid := user.Id(2_000_000_000)
+	token := localToken{Version: 2, User: localTokenUser{Name: "original", Uid: &uid, DeleteOnDispose: true}}
+	encoded, err := json.Marshal(token)
+	require.NoError(t, err)
+	stored := &localCoordinatorTestSession{flow: "first", id: session.MustNewId(), state: session.StateDisposed, token: encoded}
+	other := &localCoordinatorTestSession{flow: "second", id: session.MustNewId(), state: session.StateAuthorized, token: encoded}
+	users := &localManagementTestUsers{account: &user.User{Name: "original", Uid: uid}}
 	coordinator := &localAccountCoordinator{sessions: &localCoordinatorTestRepository{sessions: []session.Session{stored, other}}}
 	repository := &LocalRepository{userRepository: users, coordinator: coordinator}
-	clean := true
-	env, err := repository.FindBySession(ctx, stored, &FindOpts{AutoCleanUpAllowed: &clean})
+	env, err := repository.FindBySession(ctx, stored, nil)
 	require.NoError(t, err)
-	require.True(t, env.(*local).accountMissing)
-	_, err = env.Dispose(ctx)
+	users.account = &user.User{Name: "renamed", Uid: uid}
+
+	changed, err := env.Dispose(ctx)
 	require.NoError(t, err)
-	require.Zero(t, users.kills)
+	require.False(t, changed)
 	require.Equal(t, encoded, stored.token)
 	other.state = session.StateDisposed
-	_, err = env.Dispose(ctx)
+	changed, err = env.Dispose(ctx)
 	require.NoError(t, err)
-	require.Equal(t, 1, users.kills)
+	require.True(t, changed)
+	require.False(t, users.deleted)
+	require.Zero(t, users.kills)
 	require.Empty(t, stored.token)
-	_, err = repository.FindBySession(ctx, stored, &FindOpts{AutoCleanUpAllowed: &clean})
-	require.ErrorIs(t, err, ErrNoSuchEnvironment)
 }
 
 func TestLocalUnixEnsureDoesNotOverwriteUnrestorableToken(t *testing.T) {
