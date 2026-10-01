@@ -722,6 +722,12 @@ func (this *DarwinRepository) Ensure(ctx context.Context, req *Requirement, opts
 	}
 
 	path, _ := darwinRecordPath("Users", tReq.Name)
+	generatedUID := ""
+	if existing != nil {
+		generatedUID = existing.generatedUID
+	} else {
+		generatedUID = strings.ToUpper(uuid.NewString())
+	}
 	if created {
 		if _, err := this.runNative(ctx, darwinDSCLPath, darwinLocalNode, "-create", path); err != nil {
 			return nil, EnsureResultError, berrors.Newf(berrors.System, "cannot create local Darwin user %q: %w", tReq.Name, err)
@@ -730,6 +736,9 @@ func (this *DarwinRepository) Ensure(ctx context.Context, req *Requirement, opts
 			_, err := this.runNative(ctx, darwinDSCLPath, darwinLocalNode, "-delete", path)
 			return err
 		})
+		if err := this.setLocalAttribute(ctx, path, "GeneratedUID", generatedUID); err != nil {
+			return nil, EnsureResultError, err
+		}
 	} else if oldName != tReq.Name {
 		oldPath, _ := darwinRecordPath("Users", oldName)
 		if _, err := this.runNative(ctx, darwinDSCLPath, darwinLocalNode, "-change", oldPath, "RecordName", oldName, tReq.Name); err != nil {
@@ -747,13 +756,6 @@ func (this *DarwinRepository) Ensure(ctx context.Context, req *Requirement, opts
 		{"RealName", tReq.DisplayName},
 		{"UserShell", tReq.Shell},
 		{"NFSHomeDirectory", tReq.HomeDir},
-	}
-	generatedUID := ""
-	if existing != nil {
-		generatedUID = existing.generatedUID
-	} else {
-		generatedUID = strings.ToUpper(uuid.NewString())
-		attributes = append(attributes, [2]string{"GeneratedUID", generatedUID})
 	}
 	previousAttributes := map[string]string{}
 	if existing != nil {

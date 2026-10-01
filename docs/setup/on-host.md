@@ -63,7 +63,7 @@ toc_depth: 3
 
 ## macOS
 
-This guide supports Intel (`amd64`) and Apple silicon (`arm64`) on macOS 13 and later.
+This guide supports Apple Silicon and Intel on macOS 13 and later.
 
 !!! warning
      Bifröst uses the standard SSH port `22`. If macOS Remote Login already occupies that port, Bifröst fails to start. Disable Remote Login before installing the LaunchDaemon.

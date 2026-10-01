@@ -66,8 +66,6 @@ This feature usually only makes sense for cases where you want to create dummy c
 
 This authorization will produce a context of type [Authorization Simple](../context/authorization.md#simple).
 
-When this authorization is paired with a native Darwin [local environment](../environment/local.md), map the entry explicitly with `name: "{{.authorization.entry.name}}"`. The environment can use an existing local account or create it when `createIfAbsent` is enabled.
-
 ## Examples
 
 1. Using [plain password](#entry-property-password):

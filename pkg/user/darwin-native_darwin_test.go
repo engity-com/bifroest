@@ -619,6 +619,30 @@ func TestDarwinEnsureUserCreateUpdateAndVerify(t *testing.T) {
 	require.False(t, runner.groups["staff"].members["alice"])
 }
 
+func TestDarwinEnsureUserSetsGeneratedUIDImmediatelyAfterCreation(t *testing.T) {
+	runner := newFakeDarwinRunner()
+	runner.groups["primary"] = &fakeDarwinGroup{name: "primary", gid: 100, members: map[string]bool{}}
+	repository := newFakeNativeDarwinRepository(runner)
+	home := false
+
+	_, result, err := repository.Ensure(t.Context(), &Requirement{
+		Name: "alice", Group: GroupRequirement{Name: "primary"},
+		Shell: "/bin/zsh", HomeDir: "/Users/alice",
+	}, &EnsureOpts{HomeDir: &home})
+	require.NoError(t, err)
+	require.Equal(t, EnsureResultCreated, result)
+
+	createCall := darwinDSCLPath + " " + darwinLocalNode + " -create /Users/alice"
+	for i, call := range runner.calls {
+		if call == createCall {
+			require.Less(t, i+1, len(runner.calls))
+			require.True(t, strings.HasPrefix(runner.calls[i+1], createCall+" GeneratedUID "))
+			return
+		}
+	}
+	t.Fatal("user creation command was not executed")
+}
+
 func TestDarwinEnsureUserReadsAndRemovesUUIDMemberships(t *testing.T) {
 	fake := newFakeDarwinRunner()
 	fake.users["alice"] = &fakeDarwinUser{
