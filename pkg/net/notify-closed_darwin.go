@@ -1,11 +1,10 @@
-//go:build unix
+//go:build darwin
 
 package net
 
 import (
 	"context"
 	"syscall"
-	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -17,21 +16,19 @@ func notifyClosed(ctx context.Context, rc syscall.RawConn, onClosed func(), onUn
 	if ctx.Err() != nil {
 		return
 	}
-	epFd, err := epollCreate()
+
+	kq, err := kqueueCreate()
 	if err != nil {
-		onUnexpectedEnd(errors.Network.Newf("failed to create epoll fd: %w", err))
+		onUnexpectedEnd(errors.Network.Newf("failed to create kqueue fd: %w", err))
 		return
 	}
-	defer func() {
-		_ = unix.Close(epFd)
-	}()
+	defer func() { _ = unix.Close(kq) }()
 
 	var registrationErr error
 	if err := rc.Control(func(fd uintptr) {
-		registrationErr = epollCtl(epFd, unix.EPOLL_CTL_ADD, int(fd), &unix.EpollEvent{
-			Events: unix.EPOLLHUP | unix.EPOLLRDHUP,
-			Fd:     int32(fd),
-		})
+		changes := make([]unix.Kevent_t, 1)
+		unix.SetKevent(&changes[0], int(fd), unix.EVFILT_READ, unix.EV_ADD|unix.EV_CLEAR)
+		_, registrationErr = kevent(kq, changes, nil, nil)
 	}); err != nil {
 		if sys.IsClosedError(err) {
 			if ctx.Err() == nil {
@@ -47,45 +44,49 @@ func notifyClosed(ctx context.Context, rc syscall.RawConn, onClosed func(), onUn
 		return
 	}
 
-	events := make([]unix.EpollEvent, 1)
+	events := make([]unix.Kevent_t, 1)
 	for ctx.Err() == nil {
-		n, err := epollWait(epFd, events, int(notifyClosedPollInterval/time.Millisecond))
+		timeout := unix.NsecToTimespec(notifyClosedPollInterval.Nanoseconds())
+		n, err := kevent(kq, nil, events, &timeout)
 		if err != nil {
 			onUnexpectedEnd(errors.Network.Newf("failed to wait for close notifications: %w", err))
 			return
 		}
-		if n > 0 {
-			if ctx.Err() == nil {
-				onClosed()
-			}
+		if n == 0 {
+			continue
+		}
+
+		event := events[0]
+		if event.Flags&unix.EV_ERROR != 0 {
+			onUnexpectedEnd(errors.Network.Newf("failed to wait for close notifications: %w", syscall.Errno(event.Data)))
 			return
 		}
+		if event.Flags&unix.EV_EOF == 0 {
+			continue
+		}
+		if ctx.Err() == nil {
+			onClosed()
+		}
+		return
 	}
 }
 
-func epollCreate() (int, error) {
+func kqueueCreate() (int, error) {
 	for {
-		fd, err := unix.EpollCreate1(unix.EPOLL_CLOEXEC)
+		fd, err := unix.Kqueue()
 		if errors.Is(err, unix.EINTR) {
 			continue
+		}
+		if err == nil {
+			unix.CloseOnExec(fd)
 		}
 		return fd, err
 	}
 }
 
-func epollCtl(epFd int, op int, fd int, event *unix.EpollEvent) error {
+func kevent(kq int, changes, events []unix.Kevent_t, timeout *unix.Timespec) (int, error) {
 	for {
-		err := unix.EpollCtl(epFd, op, fd, event)
-		if errors.Is(err, unix.EINTR) {
-			continue
-		}
-		return err
-	}
-}
-
-func epollWait(epFd int, events []unix.EpollEvent, msec int) (int, error) {
-	for {
-		n, err := unix.EpollWait(epFd, events, msec)
+		n, err := unix.Kevent(kq, changes, events, timeout)
 		if errors.Is(err, unix.EINTR) {
 			continue
 		}

@@ -288,6 +288,6 @@ Holds the tag of the image to be downloaded.
 
 ## Compatibility
 
-| <<dist("linux")>> | <<dist("windows")>> |
-| - | - |
-| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"windows")>> |
+| <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
+| - | - | - |
+| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |

@@ -56,15 +56,14 @@ type build struct {
 	releaseManifest *buildReleaseManifest
 	digest          *buildDigest
 
-	vendor    string
-	dest      string
-	prefix    string
-	rawStages buildStages
-	oses      sys.Oses
-	archs     sys.Archs
-	editions  sys.Editions
-	testing   bool
-
+	vendor               string
+	dest                 string
+	prefix               string
+	rawStages            buildStages
+	oses                 sys.Oses
+	archs                sys.Archs
+	editions             sys.Editions
+	testing              bool
 	wslBuildDistribution string
 	binaryMode           binaryBuildMode
 
@@ -152,6 +151,7 @@ func (this *build) init(ctx context.Context, app *kingpin.Application) {
 }
 
 func (this *build) runBuild(ctx context.Context) (rErr error) {
+	this.binary.clearSecretsFromEnvironment()
 	as, err := this.buildAll(ctx, this.testing)
 	if err != nil {
 		return err
@@ -161,7 +161,36 @@ func (this *build) runBuild(ctx context.Context) (rErr error) {
 }
 
 func (this *build) allPlatforms(forTesting bool) iter.Seq[*bib.Platform] {
+	if this.binaryMode == binaryUseExisting {
+		return this.distributablePlatforms(forTesting)
+	}
 	return this.platforms(forTesting, this.assumedBuildOs(), this.assumedBuildArch())
+}
+
+func (this *build) distributablePlatforms(forTesting bool) iter.Seq[*bib.Platform] {
+	return func(yield func(*bib.Platform) bool) {
+		hosts := []struct {
+			os   sys.Os
+			arch sys.Arch
+		}{
+			{sys.OsLinux, sys.ArchAmd64},
+			{sys.OsDarwin, sys.ArchAmd64},
+			{sys.OsDarwin, sys.ArchArm64},
+		}
+		seen := make(map[string]struct{})
+		for _, host := range hosts {
+			for platform := range this.platforms(forTesting, host.os, host.arch) {
+				key := platform.String()
+				if _, exists := seen[key]; exists {
+					continue
+				}
+				seen[key] = struct{}{}
+				if !yield(platform) {
+					return
+				}
+			}
+		}
+	}
 }
 
 func (this *build) platforms(forTesting bool, assumedOs sys.Os, assumedArch sys.Arch) iter.Seq[*bib.Platform] {

@@ -14,7 +14,7 @@ func availableJournalBytes(path string) (uint64, error) {
 	if err := unix.Statfs(path, &stat); err != nil {
 		return 0, err
 	}
-	if stat.Bsize < 0 {
+	if stat.Bsize < 0 { //nolint:staticcheck // Statfs_t.Bsize is signed on supported Unix platforms other than Darwin.
 		return 0, fmt.Errorf("filesystem returned a negative block size")
 	}
 	blocks, blockSize := uint64(stat.Bavail), uint64(stat.Bsize)

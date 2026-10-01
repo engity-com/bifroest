@@ -313,8 +313,8 @@ func (f *fixture) prepareSSHEnvironmentTargetWithContainerfile(hostKey, identity
 		mode    os.FileMode
 	}{
 		"Containerfile":        {[]byte(containerfile), 0644},
-		"bifroest":             {mustRead(f.bifroest), 0755},
-		"e2e-helper":           {mustRead(f.helper), 0755},
+		"bifroest":             {mustRead(f.targetBifroest), 0755},
+		"e2e-helper":           {mustRead(f.targetHelper), 0755},
 		"configuration.yaml":   {[]byte(localConfiguration), 0644},
 		"ssh_host_ed25519_key": {mustRead(hostKey), 0600},
 		"authorized_keys":      {mustRead(identity + ".pub"), 0644},

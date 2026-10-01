@@ -58,8 +58,70 @@ toc_depth: 3
 
 6. Now you can log in to Bifröst the first time:
    ```shell
-   ssh demo@localhost
-   ```
+    ssh demo@localhost
+    ```
+
+## macOS
+
+This guide supports Apple Silicon and Intel on macOS 13 and later.
+
+!!! warning
+     Bifröst uses the standard SSH port `22`. If macOS Remote Login already occupies that port, Bifröst fails to start. Disable Remote Login before installing the LaunchDaemon.
+
+1. Download and install Bifröst (see [release page](<< release_url() >>)):<br>
+
+    #### Matrix
+
+    <<compatibility_matrix(os="darwin", packaging="archive")>>
+
+    #### Example - macOS Apple Silicon
+    ```shell
+    sudo install -d /usr/local/bin
+    curl -sSLf <<release_asset_url("bifroest-darwin-arm64-generic.tgz")>> | sudo tar -zxv -C /usr/local/bin bifroest
+    ```
+
+    #### Example - macOS Intel
+    ```shell
+    sudo install -d /usr/local/bin
+    curl -sSLf <<release_asset_url("bifroest-darwin-amd64-generic.tgz")>> | sudo tar -zxv -C /usr/local/bin bifroest
+    ```
+
+2. Create the native configuration directory and install the [SSHD replacement example](<<asset_url("contrib/configurations/sshd-dropin-replacement.yaml")>>) (see the [configuration documentation](../reference/configuration.md)):
+    ```shell
+    sudo install -d -o root -g wheel -m 0750 '/Library/Application Support/Engity/Bifroest'
+    sudo curl -sSLf <<asset_url("contrib/configurations/sshd-dropin-replacement.yaml", True)>> -o '/Library/Application Support/Engity/Bifroest/configuration.yaml'
+    sudo vi '/Library/Application Support/Engity/Bifroest/configuration.yaml'
+    sudo chown root:wheel '/Library/Application Support/Engity/Bifroest/configuration.yaml'
+    sudo chmod 0640 '/Library/Application Support/Engity/Bifroest/configuration.yaml'
+    ```
+
+3. Install and start the system LaunchDaemon:
+    ```shell
+    sudo /usr/local/bin/bifroest service install
+    ```
+
+    The service runs as `root`, starts at boot, restarts after failures and writes standard output and error to `/Library/Logs/Engity/Bifroest`. Root is required for account management and impersonation. Only records in the local `/Local/Default` Directory Services node are mutated; newly created accounts do not receive a local password from Bifröst. Its working directory and persistent state remain under `/Library/Application Support/Engity/Bifroest`.
+
+4. In another terminal, log in using the configured port:
+    ```shell
+    ssh <local-account>@localhost
+    ```
+
+### Manage the macOS service
+
+Install a newer release in `/usr/local/bin` and run `service install` again to stop the service, atomically replace the service binary and LaunchDaemon definition, and start it again:
+
+```shell
+sudo /usr/local/bin/bifroest service install
+```
+
+The installed CLI supports `start`, `stop` and `remove`. `remove` stops the LaunchDaemon and removes its definition and `/Library/PrivilegedHelperTools/com.engity.bifroest`, but deliberately preserves configuration, keys, audit data and recordings under `/Library/Application Support/Engity/Bifroest` as well as logs under `/Library/Logs/Engity/Bifroest`:
+
+```shell
+sudo /Library/PrivilegedHelperTools/com.engity.bifroest service stop
+sudo /Library/PrivilegedHelperTools/com.engity.bifroest service start
+sudo /Library/PrivilegedHelperTools/com.engity.bifroest service remove
+```
 
 ## Windows
 

@@ -19,7 +19,7 @@ Loads the same configuration as `bifroest run` and exports the effective SSH cer
 Includes [all general flags](../../index.md#general-flags).
 
 <<flag("configuration", "File Path", "../../../data-type.md#file-path", aliases=["c"], id_prefix="key-export-ca-", heading=3)>>
-Configuration to load. The default is `/etc/engity/bifroest/configuration.yaml` on Unix and `C:\ProgramData\Engity\Bifroest\configuration.yaml` on Windows.
+Configuration to load. The default is `/etc/engity/bifroest/configuration.yaml` on Linux, `/Library/Application Support/Engity/Bifroest/configuration.yaml` on macOS and `C:\ProgramData\Engity\Bifroest\configuration.yaml` on Windows.
 
 <<flag("output", ref("File Path", "../../../data-type.md#file-path"), default="-", id_prefix="key-export-ca-", heading=3)>>
 Output file. `-` writes exactly one LF-terminated OpenSSH public-key line to stdout.

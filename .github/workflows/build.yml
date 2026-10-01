@@ -30,6 +30,19 @@ on:
       upload_dist:
         type: boolean
         default: false
+    secrets:
+      MACOS_DEVELOPER_ID_CERTIFICATE:
+        required: false
+      MACOS_DEVELOPER_ID_CERTIFICATE_PASSWORD:
+        required: false
+      MACOS_SIGNING_IDENTITY:
+        required: false
+      MACOS_APP_STORE_CONNECT_KEY:
+        required: false
+      MACOS_APP_STORE_CONNECT_KEY_ID:
+        required: false
+      MACOS_APP_STORE_CONNECT_ISSUER_ID:
+        required: false
 
 env:
   GITHUB_TOKEN: ${{ github.token }}
@@ -44,6 +57,7 @@ jobs:
       matrix: ${{ fromJSON(inputs.test_host_matrix) }}
     runs-on: ${{ matrix.runner }}
     env:
+      CGO_ENABLED: "0"
       GITHUB_TOKEN: ""
     steps:
       - name: Checkout code
@@ -176,6 +190,13 @@ jobs:
 
       - name: Build binary
         run: mise run build:go:binary -- --os=${{ matrix.os }} --arch=${{ matrix.arch }} --edition=${{ matrix.edition }}
+        env:
+          BIFROEST_DARWIN_CERTIFICATE: ${{ matrix.os == 'darwin' && secrets.MACOS_DEVELOPER_ID_CERTIFICATE || '' }}
+          BIFROEST_DARWIN_CERTIFICATE_PASSWORD: ${{ matrix.os == 'darwin' && secrets.MACOS_DEVELOPER_ID_CERTIFICATE_PASSWORD || '' }}
+          BIFROEST_DARWIN_SIGNING_IDENTITY: ${{ matrix.os == 'darwin' && secrets.MACOS_SIGNING_IDENTITY || '' }}
+          BIFROEST_DARWIN_NOTARY_KEY: ${{ matrix.os == 'darwin' && secrets.MACOS_APP_STORE_CONNECT_KEY || '' }}
+          BIFROEST_DARWIN_NOTARY_KEY_ID: ${{ matrix.os == 'darwin' && secrets.MACOS_APP_STORE_CONNECT_KEY_ID || '' }}
+          BIFROEST_DARWIN_NOTARY_ISSUER_ID: ${{ matrix.os == 'darwin' && secrets.MACOS_APP_STORE_CONNECT_ISSUER_ID || '' }}
 
       - name: Upload binary
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

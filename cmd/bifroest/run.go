@@ -18,6 +18,9 @@ var _ = registerCommand(func(app *kingpin.Application) {
 })
 
 func doRunDefault(conf configuration.Ref) error {
+	if err := configureProcessLimits(); err != nil {
+		return err
+	}
 	svc := service.Service{
 		Configuration: *conf.Get(),
 		Version:       versionV,

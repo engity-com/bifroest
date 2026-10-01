@@ -11,7 +11,8 @@ On this page you'll find:
 
 1. [Operating Systems](#os)
     1. [Linux](#linux)
-    2. [Windows](#windows)
+    2. [macOS](#darwin)
+    3. [Windows](#windows)
 2. [Packaging](#packaging)
     1. [Archives](#archive)
     2. [OCI/Docker Images](#image)
@@ -23,7 +24,7 @@ On this page you'll find:
 
 ## Operating Systems {: #os}
 
-Bifröst is currently available for [Linux](#linux) and [Windows](#windows).
+Bifröst is currently available for [Linux](#linux), [macOS](#darwin) and [Windows](#windows).
 
 ### Linux {: #linux}
 
@@ -54,6 +55,15 @@ It does provide the following features:
    ```
 * **RedHat/Fedora**: Already installed by default.
 
+### macOS {: #darwin}
+
+#### Generic {: #darwin-generic}
+
+The generic macOS distribution of Bifröst contains all supported features for macOS 13 and later. It does not have any requirements on which other shared libraries need to be installed.
+
+#### Extended {: #darwin-extended}
+Not available.
+
 ### Windows {: #windows}
 
 #### Generic {: #windows-generic}
@@ -82,6 +92,10 @@ See the [release page](<< release_url() >>) for all available downloads.
     ```plain
     <<release_asset_url("bifroest-linux-<arch>-<edition>.tgz")>>
     ```
+* macOS:
+    ```plain
+    <<release_asset_url("bifroest-darwin-<arch>-<edition>.tgz")>>
+    ```
 * Windows:
     ```plain
     <<release_asset_url("bifroest-windows-<arch>-<edition>.zip")>>
@@ -92,6 +106,18 @@ See the [release page](<< release_url() >>) for all available downloads.
 * Linux Extended on AMD64:
     ```shell
     curl -sSLf <<release_asset_url("bifroest-linux-amd64-extended.tgz")>> | sudo tar -zxv -C /usr/bin bifroest
+    ```
+
+* macOS Generic on ARM64:
+    ```shell
+    sudo install -d /usr/local/bin
+    curl -sSLf <<release_asset_url("bifroest-darwin-arm64-generic.tgz")>> | sudo tar -zxv -C /usr/local/bin bifroest
+    ```
+
+* macOS Generic on AMD64:
+    ```shell
+    sudo install -d /usr/local/bin
+    curl -sSLf <<release_asset_url("bifroest-darwin-amd64-generic.tgz")>> | sudo tar -zxv -C /usr/local/bin bifroest
     ```
 
 * Windows Generic on AMD64:
@@ -148,6 +174,11 @@ SBOMs alongside its archives. Archive SBOMs describe the downloadable archive;
 OCI SBOMs describe the indicated platform image within the multi-platform OCI
 index. They are intentionally separate because their package inventories and
 subject digests can differ.
+
+The generic `darwin/amd64` and `darwin/arm64` release variants each
+include their architecture-specific archive, `.third-party-notices.txt` file,
+and archive `.spdx.json` and `.cdx.json` SBOMs. They have no OCI images or OCI
+SBOMs.
 
 The [release manifest](<<release_asset_url("bifroest-release-manifest.json")>>)
 relates every artifact to its platform, edition, media type and SHA-256 digest.

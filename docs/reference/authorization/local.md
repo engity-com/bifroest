@@ -32,17 +32,20 @@ See [below](#password).
 <<property("pamService", "string", default="<os and edition specific>")>>
 If set to a non-empty value, this [PAM](https://wiki.archlinux.org/title/PAM) service will be directly used during the authorization process instead of `/etc/passwd` and `/etc/shadow`.
 
+On macOS, PAM password and keyboard-interactive authentication runs both authentication and account-management checks. The generic edition fails closed when `pamService` is empty and loads the system PAM library dynamically without CGO. The default `sshd` service uses `/etc/pam.d/sshd`; review that service's policy before exposing Bifröst.
+
 PAM is unavailable on Windows; a non-empty `pamService` is rejected there.
 
 ##### Default settings
 
-| <<dist("linux","extended")>> | <<else_ref()>> |
-| - | - |
-| `sshd` | _empty_ |
+| <<dist("linux","extended")>> | <<dist("darwin")>> | <<else_ref()>> |
+| - | - | - |
+| `sshd` | `sshd` | _empty_ |
 
 ## Password
 
-* On Unix, passwords are validated via `/etc/passwd` and `/etc/shadow` or via PAM (if [`pamService`](#property-pamService) is set to a valid value).
+* On Linux, passwords are validated via `/etc/passwd` and `/etc/shadow` when [`pamService`](#property-pamService) is empty, or via PAM when it is set.
+* On macOS, a non-empty PAM service is required; there is no local password-repository fallback.
 * On Windows, password and keyboard-interactive authentication validate the password of an existing **local SAM account**. Windows account restrictions (such as disabled accounts or denied network logon) still apply. Domain and Microsoft Entra accounts are not supported by `local` authorization.
 
 ### Properties {. #password-properties}
@@ -91,7 +94,7 @@ User certificates must be current, signed by the selected CA, have the requested
 
 ## Compatibility
 
-| Feature | <<dist("linux")>> | <<dist("windows")>> |
-| - | - | - |
-| [PAM](#property-pamService) | <<compatibility_editions(False,True,"linux")>> | <<compatibility_editions(False,None,"windows")>> |
-| <<else_ref()>> | <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"windows")>> |
+| Feature | <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
+| - | - | - | - |
+| [PAM](#property-pamService) | <<compatibility_editions(False,True,"linux")>> | <<compatibility_editions(True,None,"darwin")>> | <<compatibility_editions(False,None,"windows")>> |
+| <<else_ref()>> | <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |

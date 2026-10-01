@@ -13,9 +13,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/codec"
 )
 
-var (
-	ErrUnknownSignal = errors.New("unknown signal")
-)
+var ErrUnknownSignal = errors.New("unknown signal")
 
 type Signal uint16
 
@@ -98,7 +96,8 @@ func (this Signal) IsZero() bool {
 }
 
 func (this Signal) Native() syscall.Signal {
-	return syscall.Signal(this)
+	result, _ := signalToNative(this)
+	return result
 }
 
 func (this Signal) IsEqualTo(other any) bool {

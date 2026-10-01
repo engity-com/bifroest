@@ -791,7 +791,7 @@ func (this *KubernetesRepository) resolveContainerConfig(req Request, sess sessi
 
 	result.Command = strslice.StrSlice{}
 	result.SecurityContext = &v1.SecurityContext{}
-	result.Command = []string{sys.BifroestBinaryFileLocation(this.conf.Os)}
+	result.Command = []string{sys.BifroestOciBinaryFileLocation(this.conf.Os)}
 	if len(result.Command[0]) == 0 {
 		return failf("cannot resolve target path for host %v", this.conf.Os)
 	}
@@ -946,7 +946,7 @@ func (this *KubernetesRepository) resolveEncodedSftpCommand(req Request) (string
 		return failf("cannot evaluate sftpCommand: %w", err)
 	}
 	if len(v) == 0 {
-		v = []string{sys.BifroestBinaryFileLocation(this.conf.Os), `sftp-server`}
+		v = []string{sys.BifroestOciBinaryFileLocation(this.conf.Os), `sftp-server`}
 		if len(v[0]) == 0 {
 			return failf("sftpCommand was not defined for kubernetes environment and default cannot be resolved for %v", this.conf.Os)
 		}

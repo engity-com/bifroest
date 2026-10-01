@@ -1,4 +1,4 @@
-//go:build (!cgo || !linux || without_pam) && unix
+//go:build unix && (without_pam || (linux && !cgo) || (!linux && !darwin))
 
 package configuration
 

@@ -37,6 +37,7 @@ If history exists, a missing or invalid signing key prevents startup. Existing k
 The default value is different, depending on the platform Bifröst runs on:
 
 * Linux: `/etc/engity/bifroest/auditlog-key`
+* macOS: `/Library/Application Support/Engity/Bifroest/auditlog-key`
 * Windows: `C:\ProgramData\Engity\Bifroest\auditlog-key`
 
 <<property("directory", "File Path", "../data-type.md#file-path", default="<os specific>")>>
@@ -45,6 +46,7 @@ Local audit-log directory. It contains the journal, delivery cursors, and tempor
 The platform defaults are:
 
 * Linux: `/var/lib/engity/bifroest/auditlog`
+* macOS: `/Library/Application Support/Engity/Bifroest/auditlog`
 * Windows: `C:\ProgramData\Engity\Bifroest\auditlog`
 
 <<property("minimumFreeBytes", "uint64", None, default=268435456)>>

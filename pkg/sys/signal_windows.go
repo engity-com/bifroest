@@ -50,6 +50,10 @@ var (
 	procGenerateConsoleCtrlEvent = dllKernel32.NewProc("GenerateConsoleCtrlEvent")
 )
 
+func signalToNative(signal Signal) (syscall.Signal, bool) {
+	return syscall.Signal(signal), true
+}
+
 func (this Signal) sendToPid(pid int) error {
 	if this == SIGINT {
 		return this.sendIntToPid(pid)

@@ -26,6 +26,7 @@ const (
 	DefaultPort = 9687
 
 	DefaultExitCodeByConnectionIdPathUnix    = `/var/lib/engity/bifroest/exitcodes`
+	DefaultExitCodeByConnectionIdPathDarwin  = `/Library/Application Support/Engity/Bifroest/exitcodes`
 	DefaultExitCodeByConnectionIdPathWindows = `C:\ProgramData\Engity\Bifroest\exitcodes`
 )
 

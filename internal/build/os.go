@@ -8,6 +8,8 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
+const DefaultMacosDeploymentTarget = "13.0"
+
 var Goos = func() sys.Os {
 	var buf sys.Os
 	common.Must(buf.Set(runtime.GOOS))
@@ -56,4 +58,7 @@ func ArchiveFormatFor(os sys.Os) ArchiveFormat {
 
 func SetOsToEnv(o sys.Os, env interface{ SetEnv(key, val string) }) {
 	env.SetEnv("GOOS", o.String())
+	if o == sys.OsDarwin {
+		env.SetEnv("MACOSX_DEPLOYMENT_TARGET", DefaultMacosDeploymentTarget)
+	}
 }

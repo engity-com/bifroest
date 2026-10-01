@@ -22,8 +22,6 @@ import (
 	"github.com/engity-com/bifroest/pkg/user"
 )
 
-const localTargetOs = sys.OsLinux
-
 func (this *local) newAgentNamedPipe() (net.NamedPipe, error) {
 	return net.NewNamedPipeForUser(
 		"ssh-agent",
@@ -152,14 +150,7 @@ func (this *local) runConPTY(Task, *exec.Cmd) (int, error) {
 func (this *local) configureCmdForPty(cmd *exec.Cmd, pty, tty *os.File) error {
 	cmd.SysProcAttr.Setsid = true
 	cmd.SysProcAttr.Setctty = true
-
-	if err := syscall.SetNonblock(int(pty.Fd()), true); err != nil {
-		return err
-	}
-	if err := syscall.SetNonblock(int(tty.Fd()), true); err != nil {
-		return err
-	}
-	return nil
+	return configureLocalPtyDescriptors(pty, tty)
 }
 
 func (this *local) getPathEnv() string {
@@ -171,7 +162,7 @@ func (this *local) getPathEnv() string {
 
 func (this *local) signal(cmd *exec.Cmd, logger log.Logger, signal essh.Signal) {
 	err := signalProcessFromSsh(signal, func(sig sys.Signal) error {
-		return cmd.Process.Signal(sig.Native())
+		return sig.SendToProcess(cmd.Process)
 	})
 	if errors.Is(err, os.ErrProcessDone) {
 		// Ignored.
@@ -291,6 +282,18 @@ func (this *local) dispose(ctx context.Context) (bool, error) {
 			if !ready {
 				this.deferred = true
 				return disposed, nil
+			}
+			if this.deleteHomeTogetherWithUser {
+				cleaner, ok := this.repository.userRepository.(interface {
+					DeleteHomeByAbsentIdentity(context.Context, user.Id, string, string) error
+				})
+				if !ok {
+					return fail(errors.System.Newf("local user repository does not support verified cleanup of an absent account home"))
+				}
+				if err := cleaner.DeleteHomeByAbsentIdentity(ctx, this.user.Uid, this.user.Name, this.expectedHomeDir); err != nil {
+					return fail(err)
+				}
+				disposed = true
 			}
 			this.repository.logger().With("session", this.session).With("name", this.user.Name).
 				With("uid", this.user.Uid).Warn("skipping account deletion: original local account identity is no longer verifiable; inspect remaining files manually")

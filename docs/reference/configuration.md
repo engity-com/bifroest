@@ -8,6 +8,7 @@ Bifröst will be configured in the [YAML language](https://en.wikipedia.org/wiki
 By default, the configuration is taken from the following location:
 
 * Linux: `/etc/engity/bifroest/configuration.yaml`
+* macOS: `/Library/Application Support/Engity/Bifroest/configuration.yaml`
 * Windows: `C:\ProgramData\Engity\Bifroest\configuration.yaml`
 
 This location can be changed by the `--configuration=<path>` flag when executing:

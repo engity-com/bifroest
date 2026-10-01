@@ -19,10 +19,12 @@ import (
 
 type localManagementTestUsers struct {
 	user.CloseableRepository
-	account *user.User
-	group   *user.Group
-	deleted bool
-	kills   int
+	account        *user.User
+	group          *user.Group
+	deleted        bool
+	kills          int
+	absentHomes    int
+	absentHomeFail bool
 }
 
 type localManagementTestRequest struct{ Request }
@@ -69,6 +71,17 @@ func (this *localManagementTestUsers) KillProcessesByIdentity(_ context.Context,
 		return user.ErrNoSuchUser
 	}
 	this.kills++
+	return nil
+}
+
+func (this *localManagementTestUsers) DeleteHomeByAbsentIdentity(_ context.Context, id user.Id, name, home string) error {
+	if this.account != nil || id == 0 || name == "" || home == "" {
+		return fmt.Errorf("identity is not safely absent")
+	}
+	if this.absentHomeFail {
+		return fmt.Errorf("injected absent home cleanup failure")
+	}
+	this.absentHomes++
 	return nil
 }
 
@@ -291,6 +304,40 @@ func TestLocalUnixSkipsUnverifiableAccountProcessCleanup(t *testing.T) {
 			require.ErrorIs(t, err, ErrNoSuchEnvironment)
 		})
 	}
+}
+
+func TestLocalUnixRetriesHomeCleanupAfterAccountDeletion(t *testing.T) {
+	ctx := context.Background()
+	uid := user.Id(2_000_000_000)
+	token := localToken{Version: 2, User: localTokenUser{
+		Name: "removed", Uid: &uid, HomeDir: "/Users/removed",
+		DeleteOnDispose: true, DeleteHomeTogetherWithUser: true,
+	}}
+	encoded, err := json.Marshal(token)
+	require.NoError(t, err)
+	stored := &localCoordinatorTestSession{flow: "test", id: session.MustNewId(), state: session.StateDisposed, token: encoded}
+	users := &localManagementTestUsers{absentHomeFail: true}
+	repository := &LocalRepository{
+		userRepository: users,
+		coordinator:    &localAccountCoordinator{sessions: &localCoordinatorTestRepository{sessions: []session.Session{stored}}},
+	}
+	clean := true
+	env, err := repository.FindBySession(ctx, stored, &FindOpts{AutoCleanUpAllowed: &clean})
+	require.NoError(t, err)
+	require.True(t, env.(*local).accountMissing)
+
+	changed, err := env.Dispose(ctx)
+	require.False(t, changed)
+	require.ErrorContains(t, err, "injected absent home cleanup failure")
+	require.Equal(t, encoded, stored.token)
+	require.Zero(t, users.absentHomes)
+
+	users.absentHomeFail = false
+	changed, err = env.Dispose(ctx)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, 1, users.absentHomes)
+	require.Empty(t, stored.token)
 }
 
 func TestLocalUnixSkipsIdentityChangedAfterTokenRestore(t *testing.T) {

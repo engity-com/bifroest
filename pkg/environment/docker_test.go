@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/network"
 	log "github.com/echocat/slf4g"
 	"github.com/stretchr/testify/require"
 
@@ -100,6 +101,47 @@ func TestDockerResolveImpBindingUsesConfiguredPublishHost(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "127.0.0.1", actual.Host.String())
 	require.Equal(t, uint16(44807), actual.Port)
+}
+
+func TestDockerResolveImpBindingUsesContainerNetworkWithoutPublishHost(t *testing.T) {
+	repository := &DockerRepository{conf: &configuration.EnvironmentDocker{}}
+	environment := docker{repository: repository}
+	container := &types.Container{
+		NetworkSettings: &types.SummaryNetworkSettings{
+			Networks: map[string]*network.EndpointSettings{
+				"bridge": {IPAddress: "172.18.0.4"},
+			},
+		},
+		Ports: []types.Port{{
+			PrivatePort: imp.ServicePort,
+			PublicPort:  44807,
+			Type:        "tcp",
+		}},
+	}
+
+	actual, err := environment.resolveImpBinding(container)
+	require.NoError(t, err)
+	require.Equal(t, "172.18.0.4", actual.Host.String())
+	require.Equal(t, uint16(imp.ServicePort), actual.Port)
+}
+
+func TestDockerResolveImpBindingRequiresPublishedPortForPublishHost(t *testing.T) {
+	repository := &DockerRepository{
+		conf: &configuration.EnvironmentDocker{
+			ImpPublishHost: bnet.MustNewHost("host.docker.internal"),
+		},
+	}
+	environment := docker{repository: repository}
+	container := &types.Container{
+		NetworkSettings: &types.SummaryNetworkSettings{
+			Networks: map[string]*network.EndpointSettings{
+				"bridge": {IPAddress: "172.18.0.4"},
+			},
+		},
+	}
+
+	_, err := environment.resolveImpBinding(container)
+	require.ErrorContains(t, err, "does not have any valid exposed port")
 }
 
 func TestDockerImpPortBindingLetsDaemonChooseHostInterfaceAndPort(t *testing.T) {

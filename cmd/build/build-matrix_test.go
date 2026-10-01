@@ -16,15 +16,20 @@ func TestBuildMatricesAssignEveryBinaryPlatformToExactlyOneJob(t *testing.T) {
 	build := newBuild(&base{})
 	matrices, err := build.buildMatrices()
 	require.NoError(t, err)
-	require.Equal(t, []buildTestMatrixEntry{{Os: "windows", Runner: "windows-latest"}}, matrices.TestHost.Include)
+	require.Equal(t, []buildTestMatrixEntry{
+		{Os: "windows", Runner: "windows-latest"},
+		{Os: "darwin", Runner: "macos-15"},
+	}, matrices.TestHost.Include)
 	require.Equal(t, []buildTestMatrixEntry{{Os: "linux", Runner: "ubuntu-latest", Image: binaryLinuxAmd64Image}}, matrices.TestContainer.Include)
-	require.Len(t, matrices.Host.Include, 8)
+	require.Len(t, matrices.Host.Include, 10)
 	require.Len(t, matrices.Container.Include, 4)
 
 	assigned := make(map[string]bool)
 	for _, entry := range matrices.Host.Include {
 		require.Empty(t, entry.Image)
-		require.Equal(t, "generic", entry.Edition)
+		if entry.Os != "darwin" {
+			require.Equal(t, "generic", entry.Edition)
+		}
 		require.False(t, assigned[entry.Os+"/"+entry.Arch+"/"+entry.Edition])
 		assigned[entry.Os+"/"+entry.Arch+"/"+entry.Edition] = true
 	}
@@ -39,13 +44,31 @@ func TestBuildMatricesAssignEveryBinaryPlatformToExactlyOneJob(t *testing.T) {
 		require.False(t, assigned[entry.Os+"/"+entry.Arch+"/"+entry.Edition])
 		assigned[entry.Os+"/"+entry.Arch+"/"+entry.Edition] = true
 	}
-	for platform := range build.platforms(false, sys.OsLinux, sys.ArchAmd64) {
+	for platform := range build.distributablePlatforms(false) {
 		require.True(t, assigned[platform.String()], platform.String())
 	}
+	require.True(t, assigned["darwin/amd64/generic"])
+	require.True(t, assigned["darwin/arm64/generic"])
+	require.False(t, assigned["darwin/amd64/extended"])
+	require.False(t, assigned["darwin/arm64/extended"])
+	require.Contains(t, matrices.Host.Include, buildBinaryMatrixEntry{Os: "darwin", Arch: "amd64", Edition: "generic", Runner: "macos-15-intel"})
+	require.Contains(t, matrices.Host.Include, buildBinaryMatrixEntry{Os: "darwin", Arch: "arm64", Edition: "generic", Runner: "macos-15"})
 	require.True(t, assigned["linux/armv6/generic"])
 	require.True(t, assigned["linux/riscv64/generic"])
 	require.False(t, assigned["linux/armv6/extended"])
 	require.False(t, assigned["linux/riscv64/extended"])
+}
+
+func TestBuildMatricesUsesOneDarwinTestForAmd64OnlyBuilds(t *testing.T) {
+	build := newBuild(&base{})
+	build.oses = sys.Oses{sys.OsDarwin}
+	build.archs = sys.Archs{sys.ArchAmd64}
+	build.editions = sys.Editions{sys.EditionGeneric}
+
+	matrices, err := build.buildMatrices()
+	require.NoError(t, err)
+	require.Equal(t, []buildTestMatrixEntry{{Os: "darwin", Runner: "macos-15"}}, matrices.TestHost.Include)
+	require.Equal(t, []buildBinaryMatrixEntry{{Os: "darwin", Arch: "amd64", Edition: "generic", Runner: "macos-15-intel"}}, matrices.Host.Include)
 }
 
 func TestEvaluateEnvironmentEmitsMatrices(t *testing.T) {

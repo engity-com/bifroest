@@ -167,7 +167,7 @@ func (this *kubernetes) Run(t Task) (exitCode int, rErr error) {
 		streamOpts.Stdin = io.MultiReader(sshSess, terminalStdinEOF)
 	}
 
-	opts.Command = []string{sys.BifroestBinaryFileLocation(this.repository.conf.Os), "exec",
+	opts.Command = []string{sys.BifroestOciBinaryFileLocation(this.repository.conf.Os), "exec",
 		"-c", t.Connection().Id().String(),
 		"--executionId", executionId.String(),
 		"-p", path,

@@ -3,44 +3,9 @@
 package sys
 
 import (
+	"fmt"
 	"os"
 	"syscall"
-)
-
-const (
-	SIGABRT   = Signal(syscall.SIGABRT)
-	SIGALRM   = Signal(syscall.SIGALRM)
-	SIGBUS    = Signal(syscall.SIGBUS)
-	SIGCHLD   = Signal(syscall.SIGCHLD)
-	SIGCLD    = Signal(syscall.SIGCLD)
-	SIGCONT   = Signal(syscall.SIGCONT)
-	SIGFPE    = Signal(syscall.SIGFPE)
-	SIGHUP    = Signal(syscall.SIGHUP)
-	SIGILL    = Signal(syscall.SIGILL)
-	SIGINT    = Signal(syscall.SIGINT)
-	SIGIO     = Signal(syscall.SIGIO)
-	SIGIOT    = Signal(syscall.SIGIOT)
-	SIGKILL   = Signal(syscall.SIGKILL)
-	SIGPIPE   = Signal(syscall.SIGPIPE)
-	SIGPOLL   = Signal(syscall.SIGPOLL)
-	SIGPROF   = Signal(syscall.SIGPROF)
-	SIGPWR    = Signal(syscall.SIGPWR)
-	SIGQUIT   = Signal(syscall.SIGQUIT)
-	SIGSEGV   = Signal(syscall.SIGSEGV)
-	SIGSTOP   = Signal(syscall.SIGSTOP)
-	SIGSYS    = Signal(syscall.SIGSYS)
-	SIGTERM   = Signal(syscall.SIGTERM)
-	SIGTRAP   = Signal(syscall.SIGTRAP)
-	SIGTSTP   = Signal(syscall.SIGTSTP)
-	SIGTTIN   = Signal(syscall.SIGTTIN)
-	SIGTTOU   = Signal(syscall.SIGTTOU)
-	SIGURG    = Signal(syscall.SIGURG)
-	SIGUSR1   = Signal(syscall.SIGUSR1)
-	SIGUSR2   = Signal(syscall.SIGUSR2)
-	SIGVTALRM = Signal(syscall.SIGVTALRM)
-	SIGWINCH  = Signal(syscall.SIGWINCH)
-	SIGXCPU   = Signal(syscall.SIGXCPU)
-	SIGXFSZ   = Signal(syscall.SIGXFSZ)
 )
 
 var (
@@ -82,9 +47,17 @@ var (
 )
 
 func (this Signal) sendToProcess(p *os.Process) error {
-	return p.Signal(this.Native())
+	native, ok := signalToNative(this)
+	if !ok {
+		return fmt.Errorf("unsupported signal on this operating system: %s", this)
+	}
+	return p.Signal(native)
 }
 
 func (this Signal) sendToPid(pid int) error {
-	return syscall.Kill(pid, this.Native())
+	native, ok := signalToNative(this)
+	if !ok {
+		return fmt.Errorf("unsupported signal on this operating system: %s", this)
+	}
+	return syscall.Kill(pid, native)
 }
