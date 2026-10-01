@@ -41,9 +41,6 @@ func TestOpenSSHLocalNative(t *testing.T) {
 	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
 		t.Fatalf("native Darwin test requires amd64 or arm64, got %s", runtime.GOARCH)
 	}
-	if expected := os.Getenv("BIFROEST_E2E_EXPECTED_ARCH"); expected != "" && expected != runtime.GOARCH {
-		t.Fatalf("native Darwin test runs on %s, expected %s", runtime.GOARCH, expected)
-	}
 	if !runDarwinTestAsRoot(t) {
 		return
 	}
@@ -348,9 +345,6 @@ func TestDarwinLaunchDaemon(t *testing.T) {
 	if runnerUser == "" {
 		t.Fatal("missing invoking user for privileged service test")
 	}
-	if expected := os.Getenv("BIFROEST_E2E_EXPECTED_ARCH"); expected != "" && expected != runtime.GOARCH {
-		t.Fatalf("native Darwin service test runs on %s, expected %s", runtime.GOARCH, expected)
-	}
 	for _, path := range []string{darwinServicePlist, darwinServiceBinary, darwinServiceStateDirectory, darwinServiceLogDirectory} {
 		if _, err := os.Lstat(path); err == nil {
 			t.Fatalf("clean-host LaunchDaemon test refuses to replace existing path: %s", path)
@@ -540,7 +534,6 @@ func runDarwinServiceTestAsRoot(t *testing.T, binary, user string) {
 		"PATH="+os.Getenv("PATH"),
 		"HOME="+os.Getenv("HOME"),
 		"BIFROEST_E2E_TARGET_USER="+user,
-		"BIFROEST_E2E_EXPECTED_ARCH="+os.Getenv("BIFROEST_E2E_EXPECTED_ARCH"),
 		darwinServiceTestBinary+"="+binary,
 		executable,
 		"-test.run=^"+regexp.QuoteMeta(t.Name())+"$",

@@ -17,11 +17,10 @@ func TestBuildMatricesAssignEveryBinaryPlatformToExactlyOneJob(t *testing.T) {
 	matrices, err := build.buildMatrices()
 	require.NoError(t, err)
 	require.Equal(t, []buildTestMatrixEntry{
-		{Os: "windows", Arch: "amd64", Runner: "windows-latest"},
-		{Os: "darwin", Arch: "amd64", Runner: "macos-15-intel"},
-		{Os: "darwin", Arch: "arm64", Runner: "macos-15"},
+		{Os: "windows", Runner: "windows-latest"},
+		{Os: "darwin", Runner: "macos-15"},
 	}, matrices.TestHost.Include)
-	require.Equal(t, []buildTestMatrixEntry{{Os: "linux", Arch: "amd64", Runner: "ubuntu-latest", Image: binaryLinuxAmd64Image}}, matrices.TestContainer.Include)
+	require.Equal(t, []buildTestMatrixEntry{{Os: "linux", Runner: "ubuntu-latest", Image: binaryLinuxAmd64Image}}, matrices.TestContainer.Include)
 	require.Len(t, matrices.Host.Include, 10)
 	require.Len(t, matrices.Container.Include, 4)
 

@@ -37,7 +37,7 @@ env:
 
 jobs:
   test-host:
-    name: Tests ${{ matrix.os }}/${{ matrix.arch }}
+    name: Tests ${{ matrix.os }}
     permissions:
       contents: read
     strategy:
@@ -77,7 +77,7 @@ jobs:
         run: mise run test:go
 
   test-container:
-    name: Tests ${{ matrix.os }}/${{ matrix.arch }}
+    name: Tests ${{ matrix.os }}
     permissions:
       contents: read
     strategy:

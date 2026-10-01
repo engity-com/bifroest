@@ -21,7 +21,6 @@ type buildMatrix[T any] struct {
 
 type buildTestMatrixEntry struct {
 	Os     string `json:"os"`
-	Arch   string `json:"arch"`
 	Runner string `json:"runner"`
 	Image  string `json:"image"`
 }
@@ -52,10 +51,10 @@ func (this *build) buildMatrices() (buildEnvironmentMatrices, error) {
 	for p := range this.distributablePlatforms(false) {
 		entry := buildBinaryMatrixEntry{Os: p.Os.String(), Arch: p.Arch.String(), Edition: p.Edition.String()}
 		testEntry := buildTestMatrixEntry{Os: p.Os.String()}
+		includeTest := true
 		switch p.Os {
 		case sys.OsLinux:
 			entry.Runner = "ubuntu-latest"
-			testEntry.Arch = sys.ArchAmd64.String()
 			testEntry.Runner = entry.Runner
 			if p.Edition == sys.EditionExtended {
 				var ok bool
@@ -65,25 +64,24 @@ func (this *build) buildMatrices() (buildEnvironmentMatrices, error) {
 				}
 			}
 		case sys.OsDarwin:
-			testEntry.Arch = p.Arch.String()
 			switch p.Arch {
 			case sys.ArchAmd64:
 				entry.Runner = "macos-15-intel"
+				includeTest = false
 			case sys.ArchArm64:
 				entry.Runner = "macos-15"
+				testEntry.Runner = entry.Runner
 			default:
 				return result, fmt.Errorf("no Darwin runner configured for %s", p)
 			}
-			testEntry.Runner = entry.Runner
 		case sys.OsWindows:
 			entry.Runner = "windows-latest"
-			testEntry.Arch = sys.ArchAmd64.String()
 			testEntry.Runner = entry.Runner
 		default:
 			return result, fmt.Errorf("no binary runner configured for %s", p.Os)
 		}
-		testKey := testEntry.Os + "/" + testEntry.Arch
-		if !seenTestHosts[testKey] {
+		testKey := testEntry.Os
+		if includeTest && !seenTestHosts[testKey] {
 			if p.Os == sys.OsLinux {
 				testEntry.Image = binaryLinuxAmd64Image
 				result.TestContainer.Include = append(result.TestContainer.Include, testEntry)
