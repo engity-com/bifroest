@@ -26,8 +26,10 @@ import (
 type docker struct {
 	repository *DockerRepository
 
-	containerId string
-	sessionId   session.Id
+	containerId        string
+	sessionId          session.Id
+	protocolRevision   uint32
+	executionLifecycle string
 
 	remoteUser string
 	remoteHost net.Host
@@ -221,6 +223,13 @@ func (this *docker) parseContainer(container *types.Container) (err error) {
 	this.containerId = container.ID
 
 	labels := container.Labels
+	if this.protocolRevision, err = parseImpProtocolRevision(labels, DockerLabelImpProtocolRevision); err != nil {
+		return fail(err)
+	}
+	this.executionLifecycle = labels[DockerLabelExecutionLifecycle]
+	if !impProtocolCompatible(this.protocolRevision, this.executionLifecycle) {
+		return fail(incompatibleImpResource(container.ID, this.protocolRevision, this.executionLifecycle))
+	}
 	if v := labels[DockerLabelFlow]; v == "" {
 		return failf("missing label %s", DockerLabelFlow)
 	} else if v != this.repository.flow.String() {

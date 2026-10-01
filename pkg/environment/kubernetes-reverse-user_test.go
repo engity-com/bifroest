@@ -22,9 +22,11 @@ func TestKubernetesRejectsChangedReverseTCPIdentity(t *testing.T) {
 				KubernetesLabelSessionId: session.MustNewId().String(),
 			},
 			Annotations: map[string]string{
-				KubernetesAnnotationCreatedRemoteHost: "127.0.0.1",
-				KubernetesAnnotationShellCommand:      `["sh"]`,
-				KubernetesAnnotationExecCommand:       `["sh"]`,
+				KubernetesAnnotationCreatedRemoteHost:   "127.0.0.1",
+				KubernetesAnnotationExecutionLifecycle:  executionLifecycleCapability,
+				KubernetesAnnotationImpProtocolRevision: "2",
+				KubernetesAnnotationShellCommand:        `["sh"]`,
+				KubernetesAnnotationExecCommand:         `["sh"]`,
 			},
 		},
 		Spec: v1.PodSpec{

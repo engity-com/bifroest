@@ -58,9 +58,27 @@ type ContextualSessionCompatibilityChecker interface {
 	IsSessionCompatibleWith(Context, session.Session) (bool, error)
 }
 
+// ImpProtocolCompatibilityChecker reads an existing resource's master-assigned
+// IMP revision without opening IMP or changing the resource. found=false means
+// no resource; a malformed revision returns found=true and an error.
+type ImpProtocolCompatibilityChecker interface {
+	ImpProtocolCompatibility(context.Context, session.Session) (compatible bool, found bool, revision uint32, identity ResourceIdentity, err error)
+}
+
+// ResourceIdentity identifies the exact container or pod inspected for IMP compatibility.
+type ResourceIdentity struct {
+	DockerID            string
+	KubernetesNamespace string
+	KubernetesName      string
+	KubernetesUID       string
+}
+
 // FindOpts adds some more hints what should happen when find methods of
 // Repository are executed.
 type FindOpts struct {
+	// ExpectedResource prevents cleanup or reuse if the inspected resource was replaced.
+	ExpectedResource *ResourceIdentity
+
 	// AutoCleanUpAllowed tells the repository to clean up everything
 	// automatically while executing the search. The requester will never
 	// see the requested result. This is false by default because it could

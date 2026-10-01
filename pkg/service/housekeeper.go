@@ -16,6 +16,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/imp"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
@@ -322,7 +323,7 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 		return reportAndContinue(err)
 	} else if shouldBeDeleted {
 		_, disposeErr, disposeAuditErr := this.auditSessionAction(ctx, sess, audit.EventNameHousekeepingSessionDisposeStarted, audit.EventNameHousekeepingSessionDisposeCompleted, audit.EventReasonRetentionElapsed, func() (bool, error) {
-			return this.dispose(ctx, logger, sess, true)
+			return this.dispose(ctx, logger, sess, true, nil)
 		})
 		if err := goerrors.Join(disposeErr, disposeAuditErr); err != nil {
 			return reportAndContinue(err)
@@ -347,7 +348,7 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 		return reportAndContinue(err)
 	} else if expired {
 		disposed, actionErr, auditErr := this.auditSessionAction(ctx, sess, audit.EventNameHousekeepingSessionDisposeStarted, audit.EventNameHousekeepingSessionDisposeCompleted, audit.EventReasonExpired, func() (bool, error) {
-			return this.dispose(ctx, logger, sess, false)
+			return this.dispose(ctx, logger, sess, false, nil)
 		})
 		if err := goerrors.Join(actionErr, auditErr); err != nil {
 			return reportAndContinue(err)
@@ -356,6 +357,22 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 			logger.Info("session is expired and was therefore disposed")
 		} else {
 			logger.Trace("session is expired and was therefore disposed; but nothing relevant happen while disposing all components")
+		}
+	} else if checker, ok := this.service.environments.(environment.ImpProtocolCompatibilityChecker); ok {
+		compatible, found, revision, identity, err := checker.ImpProtocolCompatibility(ctx, sess)
+		if err != nil {
+			return reportAndContinue(err)
+		}
+		if found && !compatible {
+			_, actionErr, auditErr := this.auditSessionAction(ctx, sess, audit.EventNameHousekeepingSessionDisposeStarted, audit.EventNameHousekeepingSessionDisposeCompleted, audit.EventReasonSessionIncompatible, func() (bool, error) {
+				return this.dispose(ctx, logger, sess, false, &identity)
+			})
+			if err := goerrors.Join(actionErr, auditErr); err != nil {
+				return reportAndContinue(err)
+			}
+			logger.With("impProtocolRevision", revision).
+				With("expectedImpProtocolRevision", imp.ProtocolRevision).
+				Warn("Session was disposed due to incompatible IMP protocol metadata")
 		}
 	}
 
@@ -439,7 +456,7 @@ func (this *houseKeeper) sessionAutoRepairAllowed() bool {
 }
 
 // dispose will dispose a given session.Session but NOT delete it.
-func (this *houseKeeper) dispose(ctx context.Context, logger log.Logger, sess session.Session, retentionElapsed bool) (bool, error) {
+func (this *houseKeeper) dispose(ctx context.Context, logger log.Logger, sess session.Session, retentionElapsed bool, expected *environment.ResourceIdentity) (bool, error) {
 	fail := func(err error) (bool, error) {
 		return false, errors.Newf(errors.System, "cannot dispose session %v: %w", sess, err)
 	}
@@ -456,7 +473,7 @@ func (this *houseKeeper) dispose(ctx context.Context, logger log.Logger, sess se
 	if err != nil {
 		return fail(err)
 	}
-	environmentDisposed, err := this.disposeEnvironment(ctx, logger, sess)
+	environmentDisposed, err := this.disposeEnvironment(ctx, logger, sess, expected)
 	if err != nil {
 		return fail(err)
 	}
@@ -468,13 +485,14 @@ func (this *houseKeeper) dispose(ctx context.Context, logger log.Logger, sess se
 	return environmentDisposed || authorizationDisposed || sessionDisposed, nil
 }
 
-func (this *houseKeeper) disposeEnvironment(ctx context.Context, logger log.Logger, sess session.Session) (_ bool, rErr error) {
+func (this *houseKeeper) disposeEnvironment(ctx context.Context, logger log.Logger, sess session.Session, expected *environment.ResourceIdentity) (_ bool, rErr error) {
 	fail := func(err error) (bool, error) {
-		return false, errors.Newf(errors.System, "cannot dispose authorization: %w", err)
+		return false, errors.Newf(errors.System, "cannot dispose environment: %w", err)
 	}
 
 	env, err := this.service.environments.FindBySession(ctx, sess, &environment.FindOpts{
 		AutoCleanUpAllowed: common.P(true),
+		ExpectedResource:   expected,
 		Logger:             logger,
 	})
 	if errors.Is(err, environment.ErrNoSuchEnvironment) {

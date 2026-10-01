@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/connection"
@@ -35,7 +36,8 @@ type lifecycleStoredSession struct {
 	id session.Id
 }
 
-func (s *lifecycleStoredSession) Id() session.Id { return s.id }
+func (s *lifecycleStoredSession) Id() session.Id               { return s.id }
+func (s *lifecycleStoredSession) Flow() configuration.FlowName { return "test" }
 
 type lifecycleReverseEnvironment interface {
 	ListenReverseTCP(context.Context, string, uint16) (gonet.Listener, error)
@@ -446,6 +448,7 @@ func containerLifecycleCases() []struct {
 			container := &types.Container{ID: "test", Labels: map[string]string{
 				DockerLabelFlow: "test", DockerLabelSessionId: id.String(), DockerLabelCreatedRemoteHost: "127.0.0.1",
 				DockerLabelShellCommand: `["sh"]`, DockerLabelExecCommand: `["sh"]`,
+				DockerLabelExecutionLifecycle: executionLifecycleCapability, DockerLabelImpProtocolRevision: "2",
 				DockerLabelPortForwardingAllowed: "true",
 			}, Ports: []types.Port{{PrivatePort: imp.ServicePort, PublicPort: 12345, Type: "tcp"}}}
 			env, err := repo.new(ctx, container, log.GetLogger("test"))
@@ -459,14 +462,16 @@ func containerLifecycleCases() []struct {
 		}},
 		{"kubernetes", func(ctx context.Context, i imp.Imp) (Environment, func() (Environment, error), func() bool, error) {
 			id := session.MustNewId()
-			repo := &KubernetesRepository{flow: configuration.FlowName("test"), imp: i}
+			repo := &KubernetesRepository{flow: configuration.FlowName("test"), imp: i, conf: &configuration.EnvironmentKubernetes{}}
 			pod := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default", Labels: map[string]string{
 				KubernetesLabelFlow: "test", KubernetesLabelSessionId: id.String(),
 			}, Annotations: map[string]string{
 				KubernetesAnnotationCreatedRemoteHost: "127.0.0.1",
 				KubernetesAnnotationShellCommand:      `["sh"]`, KubernetesAnnotationExecCommand: `["sh"]`,
+				KubernetesAnnotationExecutionLifecycle: executionLifecycleCapability, KubernetesAnnotationImpProtocolRevision: "2",
 				KubernetesAnnotationPortForwardingAllowed: "true",
 			}}}
+			repo.client = &protocolKubernetesClient{clientSet: fake.NewSimpleClientset(pod)}
 			env, err := repo.new(ctx, pod, log.GetLogger("test"))
 			if err != nil {
 				return nil, nil, nil, err

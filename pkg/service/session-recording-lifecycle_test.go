@@ -484,13 +484,15 @@ func TestExecuteSessionRecordingCapturesForcedCommandRequestedAsSftp(t *testing.
 		t.Fatal("forced command did not run")
 	}
 	require.Eventually(t, func() bool {
-		entries, readErr := os.ReadDir(filepath.Join(root, "recordings", "sealed"))
-		return readErr == nil && len(entries) == 1
-	}, time.Second, 10*time.Millisecond)
+		events := auditRecorder.eventsSnapshot()
+		completed := auditEventsNamed(events, audit.EventNameSessionRecordingCompleted)
+		tasks := auditEventsNamed(events, audit.EventNameSessionTaskCompleted)
+		return len(completed) == 1 && completed[0].RecordingDigest != "" &&
+			len(tasks) == 1 && tasks[0].Outcome == audit.EventOutcomeSuccess
+	}, 15*time.Second, 20*time.Millisecond)
 	verification := verifyOnlySessionRecording(t, server.service, root)
 	require.Equal(t, recording.CastStatusCompleted, verification.Cast.Result.Status)
 	require.Equal(t, audit.SessionTaskExec, verification.Cast.Metadata.Task)
-	requireAuditEventsNamedEventually(t, auditRecorder, audit.EventNameSessionTaskCompleted, 1)
 	events := auditRecorder.eventsSnapshot()
 	taskStarted := auditEventsNamed(events, audit.EventNameSessionTaskStarted)
 	taskCompleted := auditEventsNamed(events, audit.EventNameSessionTaskCompleted)
@@ -636,9 +638,9 @@ func TestExecuteSessionRecordingStartedAuditFailurePreventsEnvironmentRun(t *tes
 			require.Error(t, sshSession.Run("must-not-run"))
 			require.False(t, runCalled.Load())
 			require.Eventually(t, func() bool {
-				entries, readErr := os.ReadDir(filepath.Join(root, "recordings", "sealed"))
-				return readErr == nil && len(entries) == 1
-			}, time.Second, 10*time.Millisecond)
+				failed := auditEventsNamed(auditRecorder.eventsSnapshot(), audit.EventNameSessionRecordingFailed)
+				return len(failed) == 1 && failed[0].RecordingDigest != ""
+			}, 15*time.Second, 20*time.Millisecond)
 
 			verification := verifyOnlySessionRecording(t, server.service, root)
 			require.Equal(t, recording.CastStatusFailed, verification.Cast.Result.Status)

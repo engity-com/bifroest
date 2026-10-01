@@ -2,3 +2,4 @@ var
 .cache
 __pycache__/
 .env
+docs/versions.json

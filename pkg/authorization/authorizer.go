@@ -25,7 +25,7 @@ func unusableAuthorizationToken(ctx context.Context, sess session.Session, opts 
 	if err := sess.SetAuthorizationToken(ctx, nil); err != nil {
 		return fmt.Errorf("cannot remove unusable persisted authorization token: %w", err)
 	}
-	opts.GetLogger(nil).With("session", sess).Info("removed unusable persisted authorization token")
+	opts.GetLogger(nil).With("session", sess.String()).Info("removed unusable persisted authorization token")
 	return ErrNoSuchAuthorization
 }
 

@@ -245,6 +245,30 @@ func (this *RepositoryFacade) IsSessionCompatibleWith(ctx Context, sess session.
 	return checker.IsSessionCompatibleWith(ctx, sess)
 }
 
+// ImpProtocolCompatibility inspects the session's resource without opening IMP
+// or disposing the resource or session. Non-IMP flows have no IMP resource.
+func (this *RepositoryFacade) ImpProtocolCompatibility(ctx context.Context, sess session.Session) (compatible bool, found bool, revision uint32, identity ResourceIdentity, err error) {
+	if sess == nil {
+		return false, false, 0, ResourceIdentity{}, nil
+	}
+	candidate, ok := this.entries[sess.Flow()]
+	if !ok {
+		return false, false, 0, ResourceIdentity{}, nil
+	}
+	matches, err := this.SessionEnvironmentMatches(ctx, sess)
+	if err != nil {
+		return false, false, 0, ResourceIdentity{}, err
+	}
+	if !matches {
+		return false, false, 0, ResourceIdentity{}, fmt.Errorf("session %s has a token from a different or unrecognized environment; operator inspection required", sess)
+	}
+	checker, ok := candidate.(ImpProtocolCompatibilityChecker)
+	if !ok {
+		return true, false, 0, ResourceIdentity{}, nil
+	}
+	return checker.ImpProtocolCompatibility(ctx, sess)
+}
+
 func (this *RepositoryFacade) Close() (rErr error) {
 	for _, entity := range this.entries {
 		//goland:noinspection GoDeferInLoop
