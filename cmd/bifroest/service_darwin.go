@@ -73,13 +73,15 @@ func (darwinService) install(conf configuration.Ref, start bool) error {
 		return err
 	}
 	configurationFilename := conf.GetFilename()
-	sourceBinary, err := gos.Executable()
+	sourceBinaryPath, err := gos.Executable()
 	if err != nil {
 		return fmt.Errorf("cannot resolve own executable: %w", err)
 	}
-	if err := validateDarwinServiceBinary(sourceBinary); err != nil {
+	sourceBinary, err := openDarwinServiceBinary(sourceBinaryPath)
+	if err != nil {
 		return err
 	}
+	defer func() { _ = sourceBinary.Close() }()
 	for _, directory := range []struct {
 		path string
 		mode gos.FileMode
@@ -101,7 +103,7 @@ func (darwinService) install(conf configuration.Ref, start bool) error {
 	}
 	defer lock.release()
 
-	stagedBinary, err := stageDarwinServiceFile(sourceBinary, darwinServiceBinary, 0755)
+	stagedBinary, err := stageDarwinServiceReader(sourceBinary, darwinServiceBinary, 0755)
 	if err != nil {
 		return err
 	}
@@ -257,15 +259,24 @@ func requireDarwinServiceRoot() error {
 	return nil
 }
 
-func validateDarwinServiceBinary(filename string) error {
-	info, err := gos.Stat(filename)
+func openDarwinServiceBinary(filename string) (*gos.File, error) {
+	fd, err := syscall.Open(filename, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 	if err != nil {
-		return fmt.Errorf("cannot access Bifröst binary %q: %w", filename, err)
+		return nil, fmt.Errorf("cannot open Bifröst binary %q: %w", filename, err)
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
-		return fmt.Errorf("bifröst binary is not an executable regular file: %s", filename)
+	file := gos.NewFile(uintptr(fd), filename)
+	fail := func(err error) (*gos.File, error) {
+		_ = file.Close()
+		return nil, err
 	}
-	return nil
+	var stat syscall.Stat_t
+	if err := syscall.Fstat(fd, &stat); err != nil {
+		return fail(fmt.Errorf("cannot inspect Bifröst binary %q: %w", filename, err))
+	}
+	if stat.Mode&syscall.S_IFMT != syscall.S_IFREG || stat.Mode&0111 == 0 {
+		return fail(fmt.Errorf("bifröst binary is not an executable regular file: %s", filename))
+	}
+	return file, nil
 }
 
 func validateDarwinServiceConfiguration(filename string) error {
@@ -469,15 +480,6 @@ func acquireDarwinServiceLock() (*darwinServiceLock, error) {
 func (this *darwinServiceLock) release() {
 	_ = syscall.Flock(int(this.file.Fd()), syscall.LOCK_UN)
 	_ = this.file.Close()
-}
-
-func stageDarwinServiceFile(source, target string, mode gos.FileMode) (string, error) {
-	input, err := gos.Open(source)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = input.Close() }()
-	return stageDarwinServiceReader(input, target, mode)
 }
 
 func stageDarwinServiceBytes(source []byte, target string, mode gos.FileMode) (string, error) {
