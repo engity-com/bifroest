@@ -76,6 +76,8 @@ extra:
         link: legal/license.md
 extra_css:
   - assets/extra.css
+extra_javascript:
+  - assets/upgrade.js
 
 theme:
   custom_dir: docs/.theme

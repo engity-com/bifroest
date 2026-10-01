@@ -14,6 +14,7 @@ import (
 	log "github.com/echocat/slf4g"
 	"github.com/moby/spdystream"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/connection"
@@ -29,9 +30,12 @@ import (
 type kubernetes struct {
 	repository *KubernetesRepository
 
-	name      string
-	namespace string
-	sessionId session.Id
+	name               string
+	namespace          string
+	uid                types.UID
+	sessionId          session.Id
+	protocolRevision   uint32
+	executionLifecycle string
 
 	remoteUser string
 	remoteHost net.Host
@@ -179,7 +183,7 @@ func (this *kubernetes) Dispose(ctx context.Context) (_ bool, rErr error) {
 	defer this.repository.sessionIdMutex.Lock(this.sessionId)()
 	defer common.KeepError(&rErr, this.closeGuarded)
 
-	ok, err := this.repository.removePod(ctx, this.namespace, this.name, nil)
+	ok, err := this.repository.removePod(ctx, this.namespace, this.name, nil, this.uid)
 	if err != nil {
 		return fail(err)
 	}
@@ -227,6 +231,7 @@ func (this *kubernetes) parsePod(pod *v1.Pod) (err error) {
 
 	this.name = pod.Name
 	this.namespace = pod.Namespace
+	this.uid = pod.UID
 
 	labels := pod.Labels
 	if labels == nil {
@@ -246,6 +251,13 @@ func (this *kubernetes) parsePod(pod *v1.Pod) (err error) {
 	annotations := pod.Annotations
 	if annotations == nil {
 		pod.Annotations = map[string]string{}
+	}
+	if this.protocolRevision, err = parseImpProtocolRevision(annotations, KubernetesAnnotationImpProtocolRevision); err != nil {
+		return fail(err)
+	}
+	this.executionLifecycle = annotations[KubernetesAnnotationExecutionLifecycle]
+	if !impProtocolCompatible(this.protocolRevision, this.executionLifecycle) {
+		return fail(incompatibleImpResource(pod.Namespace+"/"+pod.Name, this.protocolRevision, this.executionLifecycle))
 	}
 	this.remoteUser = annotations[KubernetesAnnotationCreatedRemoteUser]
 	if v := annotations[KubernetesAnnotationCreatedRemoteHost]; v == "" {

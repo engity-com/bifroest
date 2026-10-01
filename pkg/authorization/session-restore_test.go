@@ -324,6 +324,9 @@ type authorizationRestoreTestSession struct {
 }
 
 func (this *authorizationRestoreTestSession) Flow() configuration.FlowName { return this.flow }
+func (this *authorizationRestoreTestSession) String() string {
+	return this.flow.String() + "/test-session"
+}
 func (this *authorizationRestoreTestSession) AuthorizationToken(context.Context) ([]byte, error) {
 	return append([]byte(nil), this.token...), this.tokenErr
 }

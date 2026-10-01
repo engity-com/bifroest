@@ -15,6 +15,7 @@ import (
 	essh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/alternatives"
+	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/imp"
@@ -129,6 +130,9 @@ func (this *LocalRepository) Ensure(req Request) (_ Environment, rErr error) {
 	account, name, uid, err := this.lookupConfiguredAccount(req)
 	if err != nil && !errors.Is(err, errLocalWindowsAccountNotFound) {
 		return failf(errors.Config, "invalid local account: %w", err)
+	}
+	if !localWindowsAuthorizationMatches(req.Authorization(), name, account.SID) {
+		return failf(errors.Expired, "local account %q changed SID since authorization", name)
 	}
 	if err == nil && !localSAMProtectedAccount(account) {
 		disabled, flagErr := localWindowsAccountDisabled(account.Name, account.SID)
@@ -356,6 +360,15 @@ func (this *LocalRepository) Ensure(req Request) (_ Environment, rErr error) {
 	}
 
 	return this.new(account, sess, lt.PortForwardingAllowed, lt), nil
+}
+
+func localWindowsAuthorizationMatches(auth authorization.Authorization, targetName, targetSID string) bool {
+	identity, ok := auth.(interface{ LocalWindowsIdentity() (string, string) })
+	if !ok {
+		return true
+	}
+	name, sid := identity.LocalWindowsIdentity()
+	return !strings.EqualFold(name, targetName) || (sid != "" && sid == targetSID)
 }
 
 func (this *LocalRepository) FindBySession(ctx context.Context, sess session.Session, opts *FindOpts) (Environment, error) {

@@ -4,7 +4,7 @@ description: How to access context information about a local user within Bifrös
 
 # Context Local User
 
-Represents a local account on Linux, macOS or Windows. [Local authorization](../authorization/local.md) is Unix-only; a local account candidate is also available in the [Local Environment context](local-environment.md) on all platforms.
+Represents a local account on Linux, macOS or Windows. [Local authorization](../authorization/local.md) supports existing local accounts on all three platforms, including local SAM accounts on Windows. A local account candidate is also available in the [Local Environment context](local-environment.md).
 
 ## Properties
 

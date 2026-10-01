@@ -37,7 +37,13 @@ There are no fixed cycles for releases. Currently, they are triggered as soon as
 
 #### Creation
 
-First of all, prepare the release notes as usual and merge them.
+Prepare release notes for the GitHub Release description separately from
+operator-facing upgrade instructions in `docs/setup/upgrade.md`. For a new minor
+release, replace that upgrade page with guidance from the preceding minor
+series, or state explicitly that no action is necessary. Patch releases
+normally retain their minor series' upgrade instructions. Merge changes to
+the versioned documentation before tagging, and link the published upgrade
+page from the GitHub Release description.
 
 Once the release notes are ready, a release train is launched by *tagging* from `main` to `vX.Y.Z`.
 

@@ -148,8 +148,6 @@ If `true`, terminate the account's processes after the last active Bifröst sess
 * Unreadable sessions or a missing session coordinator block a pending kill instead of assuming no other session is active.
 * Completed process cleanup is recorded in the session token and is not repeated while deletion is pending.
 
-See the [upgrade notes](../../setup/upgrade.md#local-environments-and-existing-sessions) for existing Linux sessions with older cleanup tokens and Linux `pidfd` requirements.
-
 ##### Examples
 
 ###### Automatically kill all Biföst manged account's processes
