@@ -64,6 +64,9 @@ Official macOS release binaries are signed with an Engity Developer ID Applicati
 
 The signed executable manages its system LaunchDaemon through `bifroest service install`, `start`, `stop` and `remove`; no additional management script is required. A notarized installer package and a Homebrew formula are deferred; Homebrew's versioned prefix and user-oriented service model do not match the current root LaunchDaemon layout.
 
+#### Extended {: #darwin-extended}
+Not available.
+
 ### Windows {: #windows}
 
 #### Generic {: #windows-generic}
@@ -128,8 +131,6 @@ See the [release page](<< release_url() >>) for all available downloads.
 ### OCI/Docker Images {: #image}
 
 Bifröst is also available in OCI/Docker images. You just need to mount a valid configuration into the container.
-
-There is no Darwin OCI image. On macOS, use the native archive or run a supported Linux image through a container runtime.
 
 See the [container registry page](<< container_packages_url() >>) for all available tags.
 

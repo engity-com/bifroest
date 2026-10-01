@@ -5,7 +5,7 @@ toc_depth: 2
 
 # Getting started
 
-Bifröst is available as a binary for Linux and Windows, and as generic-edition binaries for Intel (`amd64`) and Apple silicon (`arm64`) Macs running macOS 13 or later. OCI/Docker images are available for the supported Linux and Windows variants, but not for Darwin.
+Bifröst is available as a binary for many different platforms, or even as an OCI/Docker image.
 
 Before we get started, you need to choose your operating mode. Here are the main differences to help you decide:
 

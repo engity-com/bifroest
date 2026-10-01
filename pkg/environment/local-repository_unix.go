@@ -31,8 +31,6 @@ type LocalRepository struct {
 	Logger log.Logger
 
 	userRepository user.CloseableRepository
-
-	targetAccountShellValidator func(string) error
 }
 
 func NewLocalRepository(ctx context.Context, flow configuration.FlowName, conf *configuration.EnvironmentLocal, _ alternatives.Provider, _ imp.Imp) (*LocalRepository, error) {
@@ -94,20 +92,6 @@ func (this *LocalRepository) Ensure(req Request) (Environment, error) {
 			return fail(err)
 		}
 	} else {
-		current, ok := existing.(*local)
-		if !ok {
-			return fail(ErrNotAcceptable)
-		}
-		target, ok, err := this.validateCurrentTargetAccount(req, current.user)
-		if err != nil {
-			return fail(err)
-		}
-		if !ok {
-			return fail(ErrNotAcceptable)
-		}
-		if !this.isCurrentTargetAccount(target, current.user) {
-			return fail(ErrNotAcceptable)
-		}
 		return existing, nil
 	}
 
@@ -160,29 +144,11 @@ func (this *LocalRepository) Ensure(req Request) (Environment, error) {
 			return fail(err)
 		}
 	}
-	target, ok, err := this.validateCurrentTargetAccount(req, u)
-	if err != nil {
-		return fail(err)
-	}
-	if !ok {
-		return fail(ErrNotAcceptable)
-	}
-	actual, accepted, err := this.acceptedTargetAccount(target, u)
-	if err != nil {
-		return fail(err)
-	}
-	if !accepted {
-		return fail(ErrNotAcceptable)
-	}
-	if actual != nil {
-		u = actual
-	}
 	managed, err = this.isManagedUser(req.Context(), u)
 	if err != nil {
 		return fail(err)
 	}
-	policyReq := this.withValidatedTargetAccountRequest(req, u)
-	lt, err := this.newLocalToken(u, policyReq, managed, manageSystemUsers)
+	lt, err := this.newLocalToken(u, req, managed, manageSystemUsers)
 	if err != nil {
 		return fail(err)
 	}
@@ -263,17 +229,6 @@ func (this *LocalRepository) FindBySession(ctx context.Context, sess session.Ses
 	if lt.User.Uid != nil && u.Uid != *lt.User.Uid {
 		return userNotFound(lt.User.Name)
 	}
-	if ok, err := this.isStoredTargetAccountAccepted(ctx, u, &lt); err != nil {
-		return fail(err)
-	} else if !ok {
-		return fail(ErrNotAcceptable)
-	}
-	if ok, err := this.isTargetAccountAccepted(u); err != nil {
-		return fail(err)
-	} else if !ok {
-		return fail(ErrNotAcceptable)
-	}
-
 	return this.new(u, sess, lt.PortForwardingAllowed, &lt), nil
 }
 
@@ -307,7 +262,7 @@ func (this *LocalRepository) getEnsureOptsOf(r Request, candidate *user.User, ma
 	return result, nil
 }
 
-func (this *LocalRepository) lookupUserBy(ctx Context) (u *user.User, err error) {
+func (this *LocalRepository) lookupUserBy(req Request) (u *user.User, err error) {
 	fail := func(err error) (*user.User, error) {
 		return nil, err
 	}
@@ -316,11 +271,11 @@ func (this *LocalRepository) lookupUserBy(ctx Context) (u *user.User, err error)
 	}
 
 	if v := this.conf.User.Name; !v.IsZero() {
-		if u, err = this.lookupByName(ctx, v); err != nil {
+		if u, err = this.lookupByName(req, v); err != nil {
 			return fail(err)
 		}
 	} else if v := this.conf.User.Uid; v != nil {
-		if u, err = this.lookupByUid(ctx, *v); err != nil {
+		if u, err = this.lookupByUid(req, *v); err != nil {
 			return fail(err)
 		}
 	} else {
@@ -341,28 +296,26 @@ func (this *LocalRepository) ensureUserByTask(r Request, req *user.Requirement, 
 				return nil, user.EnsureResultError, err
 			}
 		}
-		if _, validated := this.userRepository.(validatedUserEnsureRepository); !validated {
-			createGroup := true
-			modifyGroup := false
-			if _, _, err := this.userRepository.EnsureGroup(r.Context(), &user.GroupRequirement{Name: this.conf.ManagedGroup}, &user.EnsureOpts{
-				CreateAllowed: &createGroup,
-				ModifyAllowed: &modifyGroup,
-			}); err != nil {
-				return nil, user.EnsureResultError, fmt.Errorf("cannot ensure managed group: %w", err)
-			}
+		createGroup := true
+		modifyGroup := false
+		if _, _, err := this.userRepository.EnsureGroup(r.Context(), &user.GroupRequirement{Name: this.conf.ManagedGroup}, &user.EnsureOpts{
+			CreateAllowed: &createGroup,
+			ModifyAllowed: &modifyGroup,
+		}); err != nil {
+			return nil, user.EnsureResultError, fmt.Errorf("cannot ensure managed group: %w", err)
 		}
 		// Keep the ordinary group requirements intact, including their defaults.
 		groups := req.OrDefaults().Groups
 		for _, group := range groups {
 			if group.Name == this.conf.ManagedGroup {
 				req.Groups = groups
-				return this.ensureUser(r, req, opts)
+				return this.ensureUser(r.Context(), req, opts)
 			}
 		}
 		req.Groups = append(groups, user.GroupRequirement{Name: this.conf.ManagedGroup})
 	}
 
-	return this.ensureUser(r, req, opts)
+	return this.ensureUser(r.Context(), req, opts)
 }
 
 func (this *LocalRepository) isManagedUser(ctx context.Context, u *user.User) (bool, error) {
@@ -387,7 +340,7 @@ func (this *LocalRepository) isManagedUser(ctx context.Context, u *user.User) (b
 	return false, nil
 }
 
-func (this *LocalRepository) lookupByUid(ctx Context, tmpl template.TextMarshaller[user.Id, *user.Id]) (*user.User, error) {
+func (this *LocalRepository) lookupByUid(r Request, tmpl template.TextMarshaller[user.Id, *user.Id]) (*user.User, error) {
 	fail := func(err error) (*user.User, error) {
 		return nil, err
 	}
@@ -395,15 +348,15 @@ func (this *LocalRepository) lookupByUid(ctx Context, tmpl template.TextMarshall
 		return fail(fmt.Errorf(msg, args...))
 	}
 
-	uid, err := tmpl.Render(ctx)
+	uid, err := tmpl.Render(r)
 	if err != nil {
 		return failf("cannot render UID: %w", err)
 	}
 
-	return this.userRepository.LookupById(ctx.Context(), uid)
+	return this.userRepository.LookupById(r.Context(), uid)
 }
 
-func (this *LocalRepository) lookupByName(ctx Context, tmpl template.String) (*user.User, error) {
+func (this *LocalRepository) lookupByName(r Request, tmpl template.String) (*user.User, error) {
 	fail := func(err error) (*user.User, error) {
 		return nil, err
 	}
@@ -411,30 +364,19 @@ func (this *LocalRepository) lookupByName(ctx Context, tmpl template.String) (*u
 		return fail(fmt.Errorf(msg, args...))
 	}
 
-	name, err := tmpl.Render(ctx)
+	name, err := tmpl.Render(r)
 	if err != nil {
 		return failf("cannot render user name: %w", err)
 	}
 
-	return this.userRepository.LookupByName(ctx.Context(), name)
+	return this.userRepository.LookupByName(r.Context(), name)
 }
 
-type validatedUserEnsureRepository interface {
-	EnsureValidated(context.Context, *user.Requirement, *user.EnsureOpts, func(*user.User) error) (*user.User, user.EnsureResult, error)
-}
-
-func (this *LocalRepository) ensureUser(request Request, req *user.Requirement, opts *localEnsureOpts) (u *user.User, result user.EnsureResult, err error) {
-	ensureOpts := &user.EnsureOpts{
+func (this *LocalRepository) ensureUser(ctx context.Context, req *user.Requirement, opts *localEnsureOpts) (u *user.User, result user.EnsureResult, err error) {
+	u, result, err = this.userRepository.Ensure(ctx, req, &user.EnsureOpts{
 		CreateAllowed: &opts.createIfAbsent,
 		ModifyAllowed: &opts.updateIfDifferent,
-	}
-	if repository, ok := this.userRepository.(validatedUserEnsureRepository); ok {
-		u, result, err = repository.EnsureValidated(request.Context(), req, ensureOpts, func(target *user.User) error {
-			return this.validateProvisionedTargetAccount(request, target)
-		})
-	} else {
-		u, result, err = this.userRepository.Ensure(request.Context(), req, ensureOpts)
-	}
+	})
 	if err != nil {
 		return nil, user.EnsureResultError, fmt.Errorf("cannot ensure user: %w", err)
 	}

@@ -128,9 +128,6 @@ func TestLocalUnixUIDOnlyDoesNotUpdateExistingAccount(t *testing.T) {
 			defer cancel()
 			conf := &configuration.EnvironmentLocal{}
 			require.NoError(t, conf.SetDefaults())
-			if test.uid == 0 {
-				allowUidZeroForLocalManagementTest(conf)
-			}
 			uid := template.MustNewTextMarshaller[user.Id, *user.Id](fmt.Sprint(test.uid))
 			conf.User.Uid = &uid
 			conf.CreateIfAbsent = template.BoolOf(test.create)
@@ -234,7 +231,7 @@ func TestLocalUnixIsManagedUserMatchesGroupGID(t *testing.T) {
 	}
 }
 
-func TestLocalUnixFindBySessionLegacyTokenCompatibility(t *testing.T) {
+func TestLocalUnixFindBySessionLegacyTokenDoesNotDeleteUser(t *testing.T) {
 	ctx := context.Background()
 	uid := user.Id(1234)
 	account := &user.User{Name: "local-user", Uid: uid}
@@ -247,14 +244,9 @@ func TestLocalUnixFindBySessionLegacyTokenCompatibility(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, stored.SetEnvironmentToken(ctx, encoded))
-	repository := &LocalRepository{conf: newLocalManagementPolicyTestConfiguration(), userRepository: &localManagementTestUsers{account: account}}
+	repository := &LocalRepository{userRepository: &localManagementTestUsers{account: account}}
 
 	resolved, err := repository.FindBySession(ctx, stored, nil)
-	if !acceptLegacyEnvironmentTokenWithoutAuthorizationKind() {
-		require.Nil(t, resolved)
-		require.ErrorContains(t, err, "authorization kind is missing")
-		return
-	}
 	require.NoError(t, err)
 	localEnv, ok := resolved.(*local)
 	require.True(t, ok)
@@ -317,7 +309,7 @@ func TestLocalUnixSkipsUnverifiableAccountProcessCleanup(t *testing.T) {
 func TestLocalUnixRetriesHomeCleanupAfterAccountDeletion(t *testing.T) {
 	ctx := context.Background()
 	uid := user.Id(2_000_000_000)
-	token := localToken{Version: 2, AuthorizationKind: "simple", User: localTokenUser{
+	token := localToken{Version: 2, User: localTokenUser{
 		Name: "removed", Uid: &uid, HomeDir: "/Users/removed",
 		DeleteOnDispose: true, DeleteHomeTogetherWithUser: true,
 	}}
@@ -351,13 +343,13 @@ func TestLocalUnixRetriesHomeCleanupAfterAccountDeletion(t *testing.T) {
 func TestLocalUnixSkipsIdentityChangedAfterTokenRestore(t *testing.T) {
 	ctx := context.Background()
 	uid := user.Id(2_000_000_000)
-	token := localToken{Version: 2, AuthorizationKind: "simple", User: localTokenUser{Name: "original", Uid: &uid, DeleteOnDispose: true, KillProcessesOnDispose: true}}
+	token := localToken{Version: 2, User: localTokenUser{Name: "original", Uid: &uid, DeleteOnDispose: true, KillProcessesOnDispose: true}}
 	encoded, err := json.Marshal(token)
 	require.NoError(t, err)
 	stored := &localCoordinatorTestSession{flow: "test", id: session.MustNewId(), state: session.StateDisposed, token: encoded}
 	users := &localManagementTestUsers{account: &user.User{Name: "original", Uid: uid}}
 	coordinator := &localAccountCoordinator{sessions: &localCoordinatorTestRepository{sessions: []session.Session{stored}}}
-	repository := &LocalRepository{conf: newLocalManagementPolicyTestConfiguration(), userRepository: users, coordinator: coordinator}
+	repository := &LocalRepository{userRepository: users, coordinator: coordinator}
 	env, err := repository.FindBySession(ctx, stored, nil)
 	require.NoError(t, err)
 	users.account = &user.User{Name: "renamed", Uid: uid}
@@ -374,14 +366,14 @@ func TestLocalUnixSkipsIdentityChangedAfterTokenRestore(t *testing.T) {
 func TestLocalUnixChangedIdentityDefersPendingDeletion(t *testing.T) {
 	ctx := context.Background()
 	uid := user.Id(2_000_000_000)
-	token := localToken{Version: 2, AuthorizationKind: "simple", User: localTokenUser{Name: "original", Uid: &uid, DeleteOnDispose: true}}
+	token := localToken{Version: 2, User: localTokenUser{Name: "original", Uid: &uid, DeleteOnDispose: true}}
 	encoded, err := json.Marshal(token)
 	require.NoError(t, err)
 	stored := &localCoordinatorTestSession{flow: "first", id: session.MustNewId(), state: session.StateDisposed, token: encoded}
 	other := &localCoordinatorTestSession{flow: "second", id: session.MustNewId(), state: session.StateAuthorized, token: encoded}
 	users := &localManagementTestUsers{account: &user.User{Name: "original", Uid: uid}}
 	coordinator := &localAccountCoordinator{sessions: &localCoordinatorTestRepository{sessions: []session.Session{stored, other}}}
-	repository := &LocalRepository{conf: newLocalManagementPolicyTestConfiguration(), userRepository: users, coordinator: coordinator}
+	repository := &LocalRepository{userRepository: users, coordinator: coordinator}
 	env, err := repository.FindBySession(ctx, stored, nil)
 	require.NoError(t, err)
 	users.account = &user.User{Name: "renamed", Uid: uid}

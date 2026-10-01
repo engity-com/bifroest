@@ -113,10 +113,6 @@ func (this *SharedRepositoryProvider[T]) Create(ctx context.Context) (CloseableR
 	}
 	identity, hasIdentity := any(this.V).(identityCleanupRepository)
 	home, hasHome := any(this.V).(absentIdentityHomeCleanupRepository)
-	validated, hasValidated := any(this.V).(validatedEnsureRepository)
-	if hasIdentity && hasHome && hasValidated {
-		return &sharedIdentityHomeAndValidatedRepository[T]{shared, identity, home, validated}, nil
-	}
 	if hasIdentity && hasHome {
 		return &sharedIdentityAndHomeCleanupRepository[T]{shared, identity, home}, nil
 	}
@@ -133,10 +129,6 @@ type identityCleanupRepository interface {
 
 type absentIdentityHomeCleanupRepository interface {
 	DeleteHomeByAbsentIdentity(context.Context, Id, string, string) error
-}
-
-type validatedEnsureRepository interface {
-	EnsureValidated(context.Context, *Requirement, *EnsureOpts, func(*User) error) (*User, EnsureResult, error)
 }
 
 type sharedRepository[T interface {
@@ -163,16 +155,6 @@ type sharedIdentityAndHomeCleanupRepository[T interface {
 	*sharedRepository[T]
 	identityCleanupRepository
 	absentIdentityHomeCleanupRepository
-}
-
-type sharedIdentityHomeAndValidatedRepository[T interface {
-	CloseableRepository
-	Init(context.Context) error
-}] struct {
-	*sharedRepository[T]
-	identityCleanupRepository
-	absentIdentityHomeCleanupRepository
-	validatedEnsureRepository
 }
 
 func (this *sharedRepository[T]) Close() error {

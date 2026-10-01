@@ -613,14 +613,6 @@ func darwinUserRequirementMatches(req *Requirement, actual *User) bool {
 }
 
 func (this *DarwinRepository) Ensure(ctx context.Context, req *Requirement, opts *EnsureOpts) (_ *User, _ EnsureResult, rErr error) {
-	return this.ensureValidated(ctx, req, opts, nil)
-}
-
-func (this *DarwinRepository) EnsureValidated(ctx context.Context, req *Requirement, opts *EnsureOpts, validate func(*User) error) (_ *User, _ EnsureResult, rErr error) {
-	return this.ensureValidated(ctx, req, opts, validate)
-}
-
-func (this *DarwinRepository) ensureValidated(ctx context.Context, req *Requirement, opts *EnsureOpts, validate func(*User) error) (_ *User, _ EnsureResult, rErr error) {
 	if req == nil {
 		panic("nil user requirement")
 	}
@@ -656,11 +648,6 @@ func (this *DarwinRepository) ensureValidated(ctx context.Context, req *Requirem
 			return nil, EnsureResultError, err
 		}
 		if darwinUserRequirementMatches(&tReq, current) {
-			if validate != nil {
-				if err := validate(current); err != nil {
-					return nil, EnsureResultError, err
-				}
-			}
 			return current, EnsureResultUnchanged, nil
 		}
 		if req.Name == "" {
@@ -878,11 +865,6 @@ func (this *DarwinRepository) ensureValidated(ctx context.Context, req *Requirem
 	}
 	if !darwinUserRequirementMatches(&tReq, verified) {
 		return nil, EnsureResultError, fmt.Errorf("local Darwin user %q does not satisfy its requirement after mutation", tReq.Name)
-	}
-	if validate != nil {
-		if err := validate(verified); err != nil {
-			return nil, EnsureResultError, err
-		}
 	}
 	committed = true
 	if err := transaction.commit(ctx); err != nil {

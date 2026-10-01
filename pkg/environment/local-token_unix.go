@@ -10,7 +10,6 @@ import (
 type localToken struct {
 	Version               uint8          `json:"version,omitempty"`
 	User                  localTokenUser `json:"user"`
-	AuthorizationKind     string         `json:"authorizationKind,omitempty"`
 	PortForwardingAllowed bool           `json:"portForwardingAllowed"`
 }
 
@@ -54,8 +53,7 @@ func (this *LocalRepository) newLocalToken(u *user.User, req Request, managed, a
 	}
 
 	return &localToken{
-		Version:           2,
-		AuthorizationKind: this.localTokenAuthorizationKind(req),
+		Version: 2,
 		User: localTokenUser{
 			Name:                       u.Name,
 			Uid:                        common.P(u.Uid),

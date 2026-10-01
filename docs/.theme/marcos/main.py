@@ -199,10 +199,14 @@ support_matrix = SupportMatrix(
         False, False
     ),
 
-    [
-        Edition(Os.darwin, Arch.amd64, EditionKind.generic, True, False),
-        Edition(Os.darwin, Arch.arm64, EditionKind.generic, True, False),
-    ],
+    editions_of(
+        Os.darwin, Arch.amd64,
+        True, False,
+    ),
+    editions_of(
+        Os.darwin, Arch.arm64,
+        True, False,
+    ),
 
     editions_of(
         Os.windows, Arch.amd64,
@@ -784,10 +788,7 @@ def define_env(env: MacrosPlugin):
             files: Files = env.variables.files
             file: File = files.get_file_from_path("setup/distribution.md")
             dst = PurePath(path.relpath(file.src_path, path.dirname(env.page.file.src_path)))
-            generic_ref = f"[{compatibility(generic, "generic", os)}]({dst.as_posix()}#{os.name}-generic)"
-            if os == Os.darwin and extended is None:
-                return generic_ref
-            return (f"{generic_ref}/"
+            return (f"[{compatibility(generic, "generic", os)}]({dst.as_posix()}#{os.name}-generic)/"
                     f"[{compatibility(extended, "extended", os)}]({dst.as_posix()}#{os.name}-extended)")
 
     @env.macro

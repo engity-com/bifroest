@@ -6,15 +6,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/template"
 )
 
 type localTemplateTestRequest struct {
 	Request
 }
-
-func (localTemplateTestRequest) Authorization() authorization.Authorization { return nil }
 
 func (localTemplateTestRequest) GetField(name string) (any, bool, error) {
 	if name == "authorization" {

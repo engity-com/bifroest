@@ -94,11 +94,7 @@ flows:
     environment:
       type: local
       name: %s
-      targetAccountPolicy:
-        allowAdministrators: true
-        allowedNames:
-          - %s
-`, yamlString(f.hostKey), yamlString(f.sessionStorage), yamlString(f.clientKey+".pub"), yamlString(targetName), yamlString(targetName))
+`, yamlString(f.hostKey), yamlString(f.sessionStorage), yamlString(f.clientKey+".pub"), yamlString(targetName))
 	configurationPath := filepath.Join(f.tempDir, "configuration.yaml")
 	if err := os.WriteFile(configurationPath, []byte(configuration), 0600); err != nil {
 		t.Fatal(err)
@@ -227,10 +223,7 @@ flows:
     environment:
       type: local
       name: %s
-      targetAccountPolicy:
-        allowedNames:
-          - %s
-`, yamlString(f.hostKey), yamlString(f.sessionStorage), yamlString(f.clientKey+".pub"), yamlString(accountName), yamlString(accountName))
+`, yamlString(f.hostKey), yamlString(f.sessionStorage), yamlString(f.clientKey+".pub"), yamlString(accountName))
 	configurationPath := filepath.Join(f.tempDir, "darwin-account-lifecycle.yaml")
 	if err := os.WriteFile(configurationPath, []byte(configuration), 0600); err != nil {
 		t.Fatal(err)

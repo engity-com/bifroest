@@ -98,8 +98,6 @@ This guide supports Intel (`amd64`) and Apple silicon (`arm64`) on macOS 13 and 
     sudo chmod 0640 '/Library/Application Support/Engity/Bifroest/configuration.yaml'
     ```
 
-    The example maps each authenticated username to the existing local account with the same name. Before starting the service, restrict `targetAccountPolicy.allowedNames` to the accounts that should be reachable. Most interactive macOS accounts are administrators; set `targetAccountPolicy.allowAdministrators` to `true` only when an explicitly allowed account requires it.
-
 3. Install and start the system LaunchDaemon:
     ```shell
     sudo /tmp/bifroest-release/bifroest service install

@@ -149,10 +149,6 @@ func (this *RepositoryFacade) SessionEnvironmentMatches(ctx context.Context, ses
 		for key := range fields {
 			switch key {
 			case "user", "version", "portForwardingAllowed":
-			case "authorizationKind":
-				if runtime.GOOS != "darwin" {
-					return false, nil
-				}
 			case "managed", "managedGroup", "managedGroupSid", "allowSystemUsers", "deleteOnDispose", "deleteProfileOnDispose", "killProcessesOnDispose", "processesKilledOnDispose":
 				if runtime.GOOS != "windows" {
 					return false, nil
