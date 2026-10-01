@@ -1,17 +1,14 @@
-## The configuration can be used if you simply want to use Engity's Bifröst as a drop-in-replacement
-## for the regular sshd.
-
+## Host service for an existing local account on Linux, Windows or macOS.
+## Local authentication uses the platform default.
 flows:
   - name: local
     authorization:
       type: local
-      ## If PAM does not exist or is not supported, please comment the following line.
-      pamService: "sshd"
-
     environment:
       type: local
       name: "{{.authorization.user.name}}"
       ## If you only want to allow user with group "ssh" to log in, uncomment the following lines:
+      ## Unix only: Windows users have no primary group.
       #loginAllowed: |
       #  {{ or
       #    (.authorization.user.group.name | eq "ssh" )

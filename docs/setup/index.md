@@ -15,7 +15,7 @@ Before we get started, you need to choose your operating mode. Here are the main
 | [Compatibility (os/architecture)](distribution.md#compatibility) | :fontawesome-solid-circle-plus: Available for the most amount of different platforms. | :fontawesome-regular-circle: Available for the major platforms. |
 | Consumption (CPU/RAM/storage)| :fontawesome-solid-circle-plus: Lowest possible consumption. | :fontawesome-regular-circle: Meaningful overhead, caused virtualization and additional processes. |
 | Host integration | :fontawesome-solid-circle-plus: It runs directly on the host and has therefore direct access to everything on the host. | :fontawesome-solid-circle-plus: If running in [privileged mode](../reference/environment/docker.md#property-privileged) and all required devices are mounted, same as _On host_. |
-| Host isolation | :fontawesome-solid-circle-minus: Possible, but complicated and designed for it. | :fontawesome-solid-circle-plus: Maximum possible, by design. |
+| Host isolation | Depends on service privileges and host configuration. | Depends on container privileges, mounts and runtime access; a Docker socket grants broad host control. |
 | Interactions with containers | :fontawesome-regular-circle: Full, [except if interacting with Docker for Desktop](../reference/environment/docker.md#property-impPublishHost). | :fontawesome-solid-circle-plus: Full |
 | Installation effort | :fontawesome-solid-circle-plus: Minimal | :fontawesome-solid-circle-plus: Minimal |
 

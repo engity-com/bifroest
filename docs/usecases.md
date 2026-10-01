@@ -4,22 +4,21 @@ description: "Bifröst is very flexible in its configuration (see configuration 
 ---
 # Use cases
 
-Bifröst helps IT admins to administer servers much faster, more secure, with more options, and much more flexible than without using Bifröst.
-A big advantage of Bifröst is the simple and flexible configuration (see [configuration documentation](reference/configuration.md)). Below, you find some use-cases showing that Bifröst makes the difference:
+Bifröst can combine SSH authorization with different session environments. The following examples illustrate configurations for specific access problems; their security properties depend on the identity provider, session settings, target permissions and deployment.
 
-1. [**Off**-board users within the legally binding 15 minutes timeframe of the organization](#offboard)
-2. [**On**-board users within 15 minutes in the organization](#onboard)
+1. [Off-board users by changing access at the identity provider](#offboard)
+2. [On-board users with an identity provider](#onboard)
 3. [Bastion Host / Jump Host](#bastion)
 4. [Access Kubernetes clusters without publicly exposing their APIs](#kubernetes-firewall)
 5. [Isolated Demo/Training environments](#demos)
 6. [Different rules for different user groups per host](#multi-environment)
-7. [Drop-in-Replacement](#drop-in-replacement)
+7. [Migrating from sshd](#drop-in-replacement)
 
 !!! tip
 
-    [Session recording](reference/auditlog/recording.md) can preserve signed terminal output for later playback and high-security investigations. We're also planning an [SSH server chaining / transparent proxy for SSH](https://github.com/engity-com/bifroest/issues/27), which will create further use cases. 🤠
+    [Session recording](reference/auditlog/recording.md) can preserve signed terminal output, but not raw keyboard input or SFTP/forwarding payloads. An [SSH environment](reference/environment/ssh.md) can connect to a target server with a separate authentication step; it does not transparently forward arbitrary SSH requests.
 
-## Off-board users within the legally binding 15 minutes timeframe of the organization {: #offboard}
+## Off-board users via an identity provider {: #offboard}
 
 ### Problem
 
@@ -35,28 +34,26 @@ In cases of SSH servers, this often results in going through all servers and eit
 * Remove user's public keys (if you can find out who it is 🤯),
 * or change the [Ansible](https://www.ansible.com/) or [Puppet](https://www.puppet.com/) configuration and apply it on every machine.
 
-How this should be done within the legally binding 15 minutes timeframe AND NOT over days or weeks?<br>
-How do you ensure you really removed this user everywhere?
+How do you stop new SSH access without updating credentials on every host? How do you check for existing sessions that must be terminated separately?
 
 ### Solution
 
 #### Don't ...
-1. ... have users installed on the systems itself.
-2. ... share passwords of shared users or even the `root` user.
-3. ... have user's public keys stored at shared users or even the `root` user.
+1. ... share passwords of shared users or even the `root` user.
+2. ... store unmanaged public keys on shared accounts without a revocation process.
 
 #### Do
 Use the [OpenID Connect authorization](reference/authorization/oidc.md).
 
-As the users are always authorized by your [Identity Provider (IdP)](https://openid.net/developers/how-connect-works/), their access rights are always evaluated when someone tries to access the service via SSH. If the IdP rejects the authorization, Bifröst will also immediately reject the authorization to this service. Depending on the residual duration of the off-token, the user rights are taken away within a maximum timeframe of 15 minutes.
+For a new OIDC Device Authorization, Bifröst relies on your [Identity Provider (IdP)](https://openid.net/developers/how-connect-works/) and the configured access rules. Revocation timing depends on the IdP, token validity and session settings. A remembered SSH key, an existing session or an already authenticated [SSH target transport](reference/environment/ssh.md#certificate) is not necessarily terminated when access changes at the IdP. Plan separate session termination and a test of your actual off-boarding requirements; **there is no general 15-minute guarantee**.
 
-There is no need to access any of these services directly to remove/de-authorize these users.
+IdP-managed access can reduce the need to update credentials on each host, but does not replace checking active connections and other credential paths.
 
-If the [environments are configured accordingly](reference/environment/index.md) (default setting) all the user's files and processes will be removed/killed automatically, too.
+Account, file and process cleanup depends on the chosen [environment](reference/environment/index.md) and explicit policies; it is not a universal default.
 
-## On-board users within 15 minutes in the organization {: #onboard}
+## On-board users via an identity provider {: #onboard}
 
-This is quite similar to [Off-board users within the legally binding 15 minutes of the organization](#offboard), but obviously reverse.
+This is the counterpart to [off-boarding users](#offboard), but the IdP, environment and target permissions must all allow the new access.
 
 ### Problem
 
@@ -77,20 +74,18 @@ Often admins have to ask themselves: "Did I really give them access everywhere?"
 
 ### Solution
 
-Use the [OpenID Connect authorization](reference/authorization/oidc.md).
+Use [OIDC authorization](reference/authorization/oidc.md) with a configured [IdP](https://openid.net/developers/how-connect-works/) to authenticate the user. A Docker or Kubernetes session does not require a matching local host account; a [local environment](reference/environment/local.md) needs an existing account or explicit provisioning settings.
 
-There is no need to create them somewhere on the server itself. The [OIDC authorization](reference/authorization/oidc.md) will do that using the configured [Identity Provider (IdP)](https://openid.net/developers/how-connect-works/) - that's it!
+Check the permissions of the selected environment and any downstream services separately.
 
-There is no need to access any of these services directly to create/authorize these users.
-
-If the [environments are configured accordingly](reference/environment/index.md) (default setting), all the user's resources (like the home directory) will be automatically created.
+Resource creation depends on the [environment](reference/environment/index.md) and its configuration; it is not a universal default.
 
 ## Bastion Host / Jump Host {: #bastion}
 
 ### Problem
 
 1. Assume you have to manage resources.
-2. These resources are not directly accessible to you. They are protected within other networks to which you have no direct access. For example, you're sitting at home and there's another service inside an [AWS private VPC]. (https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html).
+2. These resources are not directly accessible to you. They are protected within other networks to which you have no direct access, for example a service inside an [AWS private VPC](https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html).
 3. You have to manage that service.
 
 The following cases are usually used:
@@ -103,8 +98,8 @@ The following cases are usually used:
 1. Set up a bastion host, either:
     1. Inside the private network itself (in case of [AWS a dedicated EC2 instance](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/concepts.html) for example of [instance-type `t2.micro`](https://aws.amazon.com/ec2/instance-types/))
     2. or outside the network with a fixed VPN connection to get inside the private network.
-2. Configure your preferred [authorization](reference/authorization/index.md) (for example [OpenID Connect](reference/authorization/oidc.md) for best [on-boarding](#onboard) and [off-boarding](#offboard) experience).
-3. Plus: If you're using the [docker environment](reference/environment/docker.md), you also gain the maximum possible security by environment isolation.
+2. Configure an appropriate [authorization](reference/authorization/index.md), for example [OpenID Connect](reference/authorization/oidc.md), and review session reuse and revocation behavior.
+3. Choose the [Docker environment](reference/environment/docker.md) when a container is appropriate. Isolation depends on privileges, mounted sockets/volumes and runtime access; it does not by itself guarantee the security of the host.
 
 ## Access Kubernetes clusters without publicly exposing their APIs {: #kubernetes-firewall}
 
@@ -123,7 +118,7 @@ Usually, you either make the Kubernetes cluster's API directly accessible over t
 3. Pick an OCI/Docker image which holds [kubectl](https://kubernetes.io/docs/reference/kubectl/).
 4. Configure the [kubernetes environment](reference/environment/kubernetes.md) with a [kubeconfig](reference/environment/kubernetes.md#property-config) which is able to access the Kubernetes cluster inside your network.
 
-As a result your people can easily use a default SSH agent with [OpenID Connect](reference/authorization/oidc.md) to access a kubectl instance which is able to control your cluster without exposing your cluster directly to the public internet.
+As a result your people can use a standard SSH client with [OpenID Connect](reference/authorization/oidc.md) (including a browser verification step) to access a kubectl instance without exposing the cluster API directly to the public internet. The kubeconfig and Pod permissions still determine what they can do.
 
 As a plus, the users accessing this instance have easier access to the resources like databases and rest APIs inside Kubernetes, because they can directly use the cluster internal domain names, instance `kubectl port-forward`.
 
@@ -153,17 +148,17 @@ As a plus, the users accessing this instance have easier access to the resources
 2. Different users should be authorized differently.
 3. Different users should run in different [environments](reference/environment/index.md) (one in a local environment with permission A, another with permission B, and a third user in a remote environment).
 
-This is almost impossible with current technologies except with different [OpenSSH sshd](https://man.openbsd.org/sshd.8) setups on a host, or even different hosts, or hacked [PAM](https://en.wikipedia.org/wiki/Linux_PAM) or [shell](https://en.wikipedia.org/wiki/Unix_shell) set-ups.
+Different rules can also be implemented with other SSH configurations or access platforms; Bifröst expresses the authorization and environment choice through [flows](reference/flow.md).
 
 ### Solution
 
 Use Bifröst with multiple configured [flows](reference/flow.md). Each flow can handle different authorizations and environments.
 
-## Drop-in-Replacement {: #drop-in-replacement}
+## Migrating from sshd {: #drop-in-replacement}
 
-You simply want to use something else than [OpenSSH sshd](https://man.openbsd.org/sshd.8), Bifröst will do this, too. 😉 Just use << asset_link("contrib/configurations/sshd-dropin-replacement.yaml", "this configuration") >>.
+For local-account SSH access, use the << asset_link("contrib/configurations/on-host.yaml", "host configuration") >> and [installation guide](setup/on-host.md). Bifröst uses port 22, so stop the previous SSH server before starting it.
 
-Bifröst supports the vast majority of common OpenSSH setups. Only a small number of specialized edge cases are not supported, including some [`authorized_keys` options](reference/data-type.md#authorized-keys) such as `no-touch-required`.
+Test your particular `sshd` configuration: Bifröst does not implement every OpenSSH extension or [`authorized_keys` option](reference/data-type.md#authorized-keys), such as `no-touch-required`.
 
 
 ## More topics

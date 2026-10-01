@@ -1,27 +1,25 @@
 ---
-description: Bifröst is a highly customizable SSH server with several ways to authorize a user and options where and how to execute a user's session.
+description: Bifröst is an SSH server with OIDC authorization and configurable local, container and SSH target sessions.
 ---
 
 # Engity's Bifröst
 
 ![Engity's Bifröst](assets/logo-with-text.svg){. class=bifroest-logo title="Logo of Engity's Bifröst with title"}
 
-## Welcome
+## SSH access with configurable authorization and session targets
 
-Bifröst (spoken as "Bee-frest"), is a highly customizable SSH server with several ways to authorize a user and where and how to execute its session. It can be used as a drop-in-replacement for [OpenSSH's sshd](https://man.openbsd.org/sshd)[^openssh-compatibility], but it was actually created with some more advanced stuff in mind; see below.
+Bifröst lets platform teams combine SSH authorization with the environment in which a session runs. Users connect with a standard SSH client; [OIDC Device Authorization](reference/authorization/oidc.md) also requires a browser and a supported identity provider. Sessions can run on a local account, in a Docker container or Kubernetes Pod, or through a separately authenticated [SSH target](reference/environment/ssh.md). Bifröst is not a universal drop-in replacement for [OpenSSH's sshd](https://man.openbsd.org/sshd).
 
-[^openssh-compatibility]: Bifröst supports the vast majority of common OpenSSH setups. Only a small number of specialized edge cases are not supported, including some `authorized_keys` options such as `no-touch-required`.
+**Install it as a host service:** the [host guide](setup/on-host.md) starts Bifröst on port 22 with the privileges required to open a real shell as an existing local account. Linux uses systemd, Windows uses a Windows service, and the upcoming release is planned to include a macOS LaunchDaemon.
 
 ## Features
 
-### SSH protocol compliant
+### Standard SSH clients
 
-Fully **[SSH protocol](https://www.rfc-editor.org/rfc/rfc4253) compliant server**, like you would expect.
+Connect with OpenSSH, PuTTY and other standard SSH clients. Check the [supported operations](reference/environment/ssh.md#supported-operations) and test specialized `sshd` policies before migrating.
 
 ### OpenID Connect
-You can connect via your **SSH keys**, as usually. And so on...
-
-...but you can also use **[OpenID Connect](https://openid.net/)** (or OAuth2) identity provider. The best thing about it: In contrast to the other SSH servers with OpenID Connect you don't need to install another client in addition to your regular SSH Client ([OpenSSH](https://www.openssh.com/), [PuTTy](https://www.putty.org/), ...).
+Authorize via SSH keys or an [OpenID Connect](https://openid.net/) identity provider. Device Authorization needs a browser verification step, but no separate SSH client application.
 
 #### Docker environments
 
@@ -39,7 +37,7 @@ Once authenticated using a public key, Bifröst can (temporarily) store that pub
 
 If a user needs to be authorized in a local environment using [OpenID Connect](#openid-connect), Bifröst can automatically create a local user based on a pre-defined requirement template.
 
-Bifröst can also automatically clean up these local users once they are no longer needed. For example: If their session times out after a defined idle-time, the local user, their home directory, and all running processes can be cleaned up.
+Configured policies can clean up managed accounts, homes and processes after sessions end. These operations are not universally enabled by default; review the [local environment settings](reference/environment/local.md#dispose).
 
 ### More to come...
 
