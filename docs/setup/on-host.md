@@ -68,25 +68,20 @@ This guide supports Intel (`amd64`) and Apple silicon (`arm64`) on macOS 13 and 
 !!! warning
      Bifröst uses the standard SSH port `22`. If macOS Remote Login already occupies that port, Bifröst fails to start. Disable Remote Login before installing the LaunchDaemon.
 
-1. Download and install the generic Bifröst archive:
+1. Download and install Bifröst (see [release page](<< release_url() >>)):<br>
+
+    #### Matrix
+
+    <<compatibility_matrix(os="darwin", packaging="archive")>>
+
+    #### Example - macOS Apple Silicon
     ```shell
-    rm -rf /tmp/bifroest-release
-    mkdir -p /tmp/bifroest-release
-    case "$(uname -m)" in
-      arm64)
-        archive=bifroest-darwin-arm64-generic.tgz
-        archive_url=<<release_asset_url("bifroest-darwin-arm64-generic.tgz")>>
-        ;;
-      x86_64)
-        archive=bifroest-darwin-amd64-generic.tgz
-        archive_url=<<release_asset_url("bifroest-darwin-amd64-generic.tgz")>>
-        ;;
-      *) echo "Unsupported macOS architecture: $(uname -m)" >&2; exit 1 ;;
-    esac
-    curl -sSLf "${archive_url}" -o "/tmp/${archive}"
-    curl -sSLf <<release_asset_url("bifroest-checksums.txt")>> -o /tmp/bifroest-checksums.txt
-    (cd /tmp && grep "  ${archive}$" bifroest-checksums.txt | shasum -a 256 --check -)
-    tar -zxvf "/tmp/${archive}" -C /tmp/bifroest-release
+    curl -sSLf <<release_asset_url("bifroest-darwin-arm64-generic.tgz")>> | sudo tar -zxv -C /usr/local/bin bifroest
+    ```
+
+    #### Example - macOS Intel
+    ```shell
+    curl -sSLf <<release_asset_url("bifroest-darwin-amd64-generic.tgz")>> | sudo tar -zxv -C /usr/local/bin bifroest
     ```
 
 2. Create the native configuration directory and install the [SSHD replacement example](<<asset_url("contrib/configurations/sshd-dropin-replacement.yaml")>>) (see the [configuration documentation](../reference/configuration.md)):
@@ -100,7 +95,7 @@ This guide supports Intel (`amd64`) and Apple silicon (`arm64`) on macOS 13 and 
 
 3. Install and start the system LaunchDaemon:
     ```shell
-    sudo /tmp/bifroest-release/bifroest service install
+    sudo /usr/local/bin/bifroest service install
     ```
 
     The service runs as `root`, starts at boot, restarts after failures and writes standard output and error to `/Library/Logs/Engity/Bifroest`. Root is required for account management and impersonation. Only records in the local `/Local/Default` Directory Services node are mutated; newly created accounts do not receive a local password from Bifröst. Its working directory and persistent state remain under `/Library/Application Support/Engity/Bifroest`.
@@ -112,10 +107,10 @@ This guide supports Intel (`amd64`) and Apple silicon (`arm64`) on macOS 13 and 
 
 ### Manage the macOS service
 
-Run `service install` from an extracted newer archive to stop the service, atomically replace the binary and LaunchDaemon definition, and start it again:
+Install a newer release in `/usr/local/bin` and run `service install` again to stop the service, atomically replace the service binary and LaunchDaemon definition, and start it again:
 
 ```shell
-sudo /tmp/bifroest-release/bifroest service install
+sudo /usr/local/bin/bifroest service install
 ```
 
 The installed CLI supports `start`, `stop` and `remove`. `remove` stops the LaunchDaemon and removes its definition and `/Library/PrivilegedHelperTools/com.engity.bifroest`, but deliberately preserves configuration, keys, audit data and recordings under `/Library/Application Support/Engity/Bifroest` as well as logs under `/Library/Logs/Engity/Bifroest`:
