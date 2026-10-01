@@ -90,19 +90,9 @@ run = "go run ./cmd/build build --log.colorMode=always"
 [tasks."build:go:binary"]
 run = "go run ./cmd/build build-binary --log.colorMode=always"
 
-[tasks."build:go:command"]
-hide = true
-depends = ["build:var"]
-run = "go build -o var/bifroest-build ./cmd/build"
-run_windows = 'go build -o var\bifroest-build.exe ./cmd/build'
-
-[tasks."build:go:binary:compiled"]
-hide = true
-run = "./var/bifroest-build build-binary --log.colorMode=always"
-run_windows = '.\var\bifroest-build.exe build-binary --log.colorMode=always'
-
 [tasks."build:go:package"]
 run = "go run ./cmd/build package-binaries --log.colorMode=always"
+
 [tasks."build:docs"]
 run = [
     "mkdocs --color build -c",

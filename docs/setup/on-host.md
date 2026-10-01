@@ -89,16 +89,16 @@ This guide supports Intel (`amd64`) and Apple silicon (`arm64`) on macOS 13 and 
     tar -zxvf "/tmp/${archive}" -C /tmp/bifroest-release
     ```
 
-2. Create the native configuration directory and install the [native macOS example](<<asset_url("contrib/configurations/native-macos.yaml")>>) (see the [configuration documentation](../reference/configuration.md)):
+2. Create the native configuration directory and install the [SSHD replacement example](<<asset_url("contrib/configurations/sshd-dropin-replacement.yaml")>>) (see the [configuration documentation](../reference/configuration.md)):
     ```shell
     sudo install -d -o root -g wheel -m 0750 '/Library/Application Support/Engity/Bifroest'
-    sudo curl -sSLf <<asset_url("contrib/configurations/native-macos.yaml", True)>> -o '/Library/Application Support/Engity/Bifroest/configuration.yaml'
+    sudo curl -sSLf <<asset_url("contrib/configurations/sshd-dropin-replacement.yaml", True)>> -o '/Library/Application Support/Engity/Bifroest/configuration.yaml'
     sudo vi '/Library/Application Support/Engity/Bifroest/configuration.yaml'
     sudo chown root:wheel '/Library/Application Support/Engity/Bifroest/configuration.yaml'
     sudo chmod 0640 '/Library/Application Support/Engity/Bifroest/configuration.yaml'
     ```
 
-    Replace the example account `alice` with the controlled macOS account that should be reachable. The account may already exist, or the local environment can create and manage it with `createIfAbsent`; account mutation requires the service to run as `root`.
+    The example maps each authenticated username to the existing local account with the same name. Before starting the service, restrict `targetAccountPolicy.allowedNames` to the accounts that should be reachable. Most interactive macOS accounts are administrators; set `targetAccountPolicy.allowAdministrators` to `true` only when an explicitly allowed account requires it.
 
 3. Install and start the system LaunchDaemon:
     ```shell
@@ -109,7 +109,7 @@ This guide supports Intel (`amd64`) and Apple silicon (`arm64`) on macOS 13 and 
 
 4. In another terminal, log in using the configured port:
     ```shell
-    ssh demo@localhost
+    ssh <local-account>@localhost
     ```
 
 ### Manage the macOS service

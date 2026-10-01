@@ -30,6 +30,19 @@ on:
       upload_dist:
         type: boolean
         default: false
+    secrets:
+      MACOS_DEVELOPER_ID_CERTIFICATE:
+        required: false
+      MACOS_DEVELOPER_ID_CERTIFICATE_PASSWORD:
+        required: false
+      MACOS_SIGNING_IDENTITY:
+        required: false
+      MACOS_APP_STORE_CONNECT_KEY:
+        required: false
+      MACOS_APP_STORE_CONNECT_KEY_ID:
+        required: false
+      MACOS_APP_STORE_CONNECT_ISSUER_ID:
+        required: false
 
 env:
   GITHUB_TOKEN: ${{ github.token }}
@@ -147,7 +160,6 @@ jobs:
     strategy:
       matrix: ${{ fromJSON(inputs.binary_host_matrix) }}
     runs-on: ${{ matrix.runner }}
-    environment: ${{ matrix.os == 'darwin' && (github.event_name == 'release' || github.event_name == 'workflow_dispatch') && 'macos-release' || '' }}
     env:
       GITHUB_REF_NAME: ${{ inputs.ref || github.ref_name }}
       GITHUB_SHA: ${{ inputs.commit || github.sha }}
@@ -175,11 +187,8 @@ jobs:
       - name: Set reproducible build time
         run: mise run ci:write-build-epoch
 
-      - name: Compile build command
-        run: mise run build:go:command
-
       - name: Build binary
-        run: mise run build:go:binary:compiled -- --os=${{ matrix.os }} --arch=${{ matrix.arch }} --edition=${{ matrix.edition }}
+        run: mise run build:go:binary -- --os=${{ matrix.os }} --arch=${{ matrix.arch }} --edition=${{ matrix.edition }}
         env:
           BIFROEST_DARWIN_RELEASE_REQUIRED: ${{ matrix.os == 'darwin' && (github.event_name == 'release' || github.event_name == 'workflow_dispatch') }}
           BIFROEST_DARWIN_CERTIFICATE: ${{ matrix.os == 'darwin' && secrets.MACOS_DEVELOPER_ID_CERTIFICATE || '' }}

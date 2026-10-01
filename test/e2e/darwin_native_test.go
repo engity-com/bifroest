@@ -330,20 +330,12 @@ func TestDarwinLaunchDaemon(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		current, err := osuser.Current()
-		if err != nil {
-			t.Fatal(err)
-		}
-		runDarwinServiceTestAsRoot(t, f.bifroest, current.Username)
+		runDarwinServiceTestAsRoot(t, f.bifroest)
 		return
 	}
 	sourceBinary := os.Getenv(darwinServiceTestBinary)
 	if sourceBinary == "" {
 		t.Fatal("missing source binary for privileged service test")
-	}
-	runnerUser := os.Getenv("BIFROEST_E2E_TARGET_USER")
-	if runnerUser == "" {
-		t.Fatal("missing invoking user for privileged service test")
 	}
 	for _, path := range []string{darwinServicePlist, darwinServiceBinary, darwinServiceStateDirectory, darwinServiceLogDirectory} {
 		if _, err := os.Lstat(path); err == nil {
@@ -378,14 +370,10 @@ func TestDarwinLaunchDaemon(t *testing.T) {
 		_ = os.RemoveAll(darwinServiceStateDirectory)
 		_ = os.RemoveAll(darwinServiceLogDirectory)
 	})
-	configurationTemplate, err := os.ReadFile(filepath.Join(repositoryRoot, "contrib/configurations/native-macos.yaml"))
+	configuration, err := os.ReadFile(filepath.Join(repositoryRoot, "contrib/configurations/sshd-dropin-replacement.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(configurationTemplate), "- alice") != 1 {
-		t.Fatal("native macOS configuration does not contain exactly one example account")
-	}
-	configuration := strings.Replace(string(configurationTemplate), "- alice", "- "+runnerUser, 1)
 	if err := os.MkdirAll(darwinServiceStateDirectory, 0750); err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +392,7 @@ func TestDarwinLaunchDaemon(t *testing.T) {
 	if err := os.Chmod(darwinServiceLogDirectory, 0710); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(darwinServiceConfiguration, []byte(configuration), 0640); err != nil {
+	if err := os.WriteFile(darwinServiceConfiguration, configuration, 0640); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chown(darwinServiceConfiguration, 0, 0); err != nil {
@@ -524,7 +512,7 @@ func TestDarwinLaunchDaemon(t *testing.T) {
 	}
 }
 
-func runDarwinServiceTestAsRoot(t *testing.T, binary, user string) {
+func runDarwinServiceTestAsRoot(t *testing.T, binary string) {
 	t.Helper()
 	executable, err := os.Executable()
 	if err != nil {
@@ -533,7 +521,6 @@ func runDarwinServiceTestAsRoot(t *testing.T, binary, user string) {
 	command := exec.Command("sudo", "-n", "env",
 		"PATH="+os.Getenv("PATH"),
 		"HOME="+os.Getenv("HOME"),
-		"BIFROEST_E2E_TARGET_USER="+user,
 		darwinServiceTestBinary+"="+binary,
 		executable,
 		"-test.run=^"+regexp.QuoteMeta(t.Name())+"$",
