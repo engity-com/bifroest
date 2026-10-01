@@ -253,7 +253,7 @@ func collectBaseContents(req BuildRequest) (iter.Seq2[LayerItem, error], error) 
 		item := LayerItem{
 			SourceFs:   req.BifroestBinarySourceFs,
 			SourceFile: v,
-			TargetFile: sys.BifroestBinaryFileLocation(req.Os),
+			TargetFile: sys.BifroestOciBinaryFileLocation(req.Os),
 			Mode:       0755,
 		}
 

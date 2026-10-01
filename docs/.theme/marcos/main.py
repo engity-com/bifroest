@@ -31,6 +31,7 @@ class Packaging(str, Enum):
 
 class Os(str, Enum):
     linux = 'linux'
+    darwin = 'darwin'
     windows = 'windows'
 
 
@@ -196,6 +197,15 @@ support_matrix = SupportMatrix(
         Os.linux, Arch.riscv64,
         True, True,
         False, False
+    ),
+
+    editions_of(
+        Os.darwin, Arch.amd64,
+        True, False,
+    ),
+    editions_of(
+        Os.darwin, Arch.arm64,
+        True, False,
     ),
 
     editions_of(

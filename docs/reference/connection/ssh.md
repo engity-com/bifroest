@@ -144,6 +144,7 @@ Where to store the host keys at. If they do not exist, they will be created as E
 Default Locations:
 
 * Linux: `/etc/engity/bifroest/key`
+* Darwin: `/Library/Application Support/Engity/Bifroest/key`
 * Windows: `C:\ProgramData\Engity\Bifroest\key`
 
 <<property("exchanges", "Exchanges", "../data-type.md#ssh-key-exchange", default=["curve25519-sha256@libssh.org", "curve25519-sha256", "diffie-hellman-group16-sha512", "mlkem768x25519-sha256"], heading=4, id_prefix="keys-")>>
@@ -259,6 +260,6 @@ preparationMessages:
 
 ## Compatibility
 
-| <<dist("linux")>> | <<dist("windows")>> |
-| - | - |
-| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"windows")>> |
+| <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
+| - | - | - |
+| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |

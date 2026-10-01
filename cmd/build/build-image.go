@@ -92,11 +92,11 @@ func (this *buildImage) createPart(ctx context.Context, binary *buildArtifact) (
 	start := time.Now()
 	l.Debug("building image...")
 
-	bifroestTargetFileLocation := sys.BifroestBinaryFileLocation(a.Os)
+	bifroestTargetFileLocation := sys.BifroestOciBinaryFileLocation(a.Os)
 	if bifroestTargetFileLocation == "" {
 		return failf("cannot find binary file location for os: %v", a.Os)
 	}
-	bifroestTargetDirLocation := sys.BifroestBinaryDirLocation(a.Os)
+	bifroestTargetDirLocation := sys.BifroestOciBinaryDirLocation(a.Os)
 	if bifroestTargetDirLocation == "" {
 		return failf("cannot find binary dir location for os: %v", a.Os)
 	}

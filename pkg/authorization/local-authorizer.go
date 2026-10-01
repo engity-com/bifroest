@@ -90,7 +90,6 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	if err != nil {
 		return failf("cannot lookup user: %w", err)
 	}
-
 	candidate := local{
 		u,
 		req.Connection().Remote(),
@@ -276,7 +275,6 @@ func (this *LocalAuthorizer) AuthorizePassword(req PasswordRequest) (Authorizati
 	if err != nil {
 		return failf("cannot lookup user %q: %w", username, err)
 	}
-
 	candidate := local{
 		u,
 		req.Connection().Remote(),
@@ -336,7 +334,6 @@ func (this *LocalAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Autho
 	if err != nil {
 		return failf("cannot lookup user %q: %w", username, err)
 	}
-
 	candidate := local{
 		u,
 		req.Connection().Remote(),
@@ -424,7 +421,6 @@ func (this *LocalAuthorizer) RestoreFromSession(ctx context.Context, sess sessio
 	} else {
 		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("local authorization token contains no user reference"))
 	}
-
 	si, err := sess.Info(ctx)
 	if err != nil {
 		return failf(errors.System, "cannot retrieve session's info: %w", err)
@@ -433,7 +429,6 @@ func (this *LocalAuthorizer) RestoreFromSession(ctx context.Context, sess sessio
 	if err != nil {
 		return failf(errors.System, "cannot retrieve session's last accessed: %w", err)
 	}
-
 	return &local{
 		u,
 		sla.Remote(),
@@ -449,11 +444,13 @@ func (this *LocalAuthorizer) Close() error {
 	return this.userRepository.Close()
 }
 
+//nolint:unused // Used on Linux and in non-PAM builds.
 func (this *LocalAuthorizer) checkPasswordViaRepository(req PasswordRequest, requestedUsername string, validatePassword func(string, Request) (bool, error)) (username string, env sys.EnvVars, success bool, rErr error) {
 	pass := req.RemotePassword()
 	return this.checkPasswordValueViaRepository(req, pass, requestedUsername, validatePassword)
 }
 
+//nolint:unused // Used on Linux and in non-PAM builds.
 func (this *LocalAuthorizer) checkInteractiveViaRepository(req InteractiveRequest, requestedUsername string, validatePassword func(string, Request) (bool, error)) (username string, env sys.EnvVars, success bool, rErr error) {
 	pass, err := req.Prompt("Password: ", false)
 	if err != nil {
@@ -463,6 +460,7 @@ func (this *LocalAuthorizer) checkInteractiveViaRepository(req InteractiveReques
 	return this.checkPasswordValueViaRepository(req, pass, requestedUsername, validatePassword)
 }
 
+//nolint:unused // Used on Linux and in non-PAM builds.
 func (this *LocalAuthorizer) checkPasswordValueViaRepository(req Request, requestedPassword, requestedUsername string, validatePassword func(string, Request) (bool, error)) (username string, env sys.EnvVars, success bool, rErr error) {
 	ok, err := validatePassword(requestedPassword, req)
 	if err != nil || !ok {

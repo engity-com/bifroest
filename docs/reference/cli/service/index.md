@@ -1,13 +1,13 @@
 ---
-description: Manage Bifröst as a Windows service.
+description: Manage Bifröst as a Windows service or macOS LaunchDaemon.
 ---
 
 # `bifroest service` {: #service }
 
-Service commands install and control Bifröst through the Windows Service Control Manager.
+Service commands install and control Bifröst through the Windows Service Control Manager or macOS `launchd`.
 
 !!! note
-     These commands are available only on Windows.
+     These commands are available on Windows and macOS. Service management requires an elevated Administrator terminal on Windows and `root` privileges on macOS.
 
 ## Commands
 

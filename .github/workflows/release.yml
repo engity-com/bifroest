@@ -101,6 +101,13 @@ jobs:
       ref: ${{ needs.evaluate.outputs.release_tag }}
       commit: ${{ needs.evaluate.outputs.commit }}
       lint_reuse: true
+    secrets:
+      MACOS_DEVELOPER_ID_CERTIFICATE: ${{ secrets.MACOS_DEVELOPER_ID_CERTIFICATE }}
+      MACOS_DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+      MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+      MACOS_APP_STORE_CONNECT_KEY: ${{ secrets.MACOS_APP_STORE_CONNECT_KEY }}
+      MACOS_APP_STORE_CONNECT_KEY_ID: ${{ secrets.MACOS_APP_STORE_CONNECT_KEY_ID }}
+      MACOS_APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.MACOS_APP_STORE_CONNECT_ISSUER_ID }}
 
   documentation:
     name: "Documentation"

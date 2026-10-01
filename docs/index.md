@@ -13,7 +13,7 @@ Bifröst lets platform teams combine SSH authorization with the environment in w
 
 Bifröst was created for teams with [time-bound off-boarding requirements](usecases.md#offboard), whether the target is 15 minutes, 60 minutes or another defined limit. Meeting it depends on the IdP, bounded access and checks of existing connections.
 
-**Install it as a host service:** the [host guide](setup/on-host.md) starts Bifröst on port 22 with the privileges required to open a real shell as an existing local account. Linux uses systemd, Windows uses a Windows service, and the upcoming release is planned to include a macOS LaunchDaemon.
+**Install it as a host service:** the [host guide](setup/on-host.md) starts Bifröst on port 22 with the privileges required to open a real shell as an existing local account. Linux uses systemd, Windows uses a Windows service, and macOS uses a LaunchDaemon.
 
 ## Choose your task
 

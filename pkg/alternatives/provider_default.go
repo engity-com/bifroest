@@ -137,7 +137,7 @@ func (this *provider) FindBinaryFor(ctx context.Context, hostOs sys.Os, hostArch
 		in = zf
 	}
 
-	out, err := goos.OpenFile(fn, goos.O_CREATE|goos.O_TRUNC|goos.O_WRONLY, 0644)
+	out, err := goos.OpenFile(fn, goos.O_CREATE|goos.O_TRUNC|goos.O_WRONLY, 0755)
 	if err != nil {
 		return failf(errors.System, "cannot create target file %q to store alternative inside: %w", fn, err)
 	}
@@ -152,7 +152,10 @@ func (this *provider) FindBinaryFor(ctx context.Context, hostOs sys.Os, hostArch
 	return fn, nil
 }
 
-func (this *provider) FindOciImageFor(_ context.Context, _ sys.Os, _ sys.Arch) (string, error) {
+func (this *provider) FindOciImageFor(_ context.Context, os sys.Os, _ sys.Arch) (string, error) {
+	if sys.BifroestOciBinaryFileLocation(os) == "" {
+		return "", errors.Config.Newf("os %v is unsupported for OCI images", os)
+	}
 	return "ghcr.io/engity-com/bifroest:generic-" + this.getVersionRef(), nil
 }
 

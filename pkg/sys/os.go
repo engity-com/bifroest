@@ -12,6 +12,7 @@ const (
 	OsUnknown Os = iota
 	OsLinux
 	OsWindows
+	OsDarwin
 )
 
 func (this Os) String() string {
@@ -63,7 +64,7 @@ func (this Os) IsZero() bool {
 
 func (this Os) IsUnix() bool {
 	switch this {
-	case OsLinux:
+	case OsLinux, OsDarwin:
 		return true
 	default:
 		return false
@@ -114,6 +115,7 @@ func AllOsVariants() Oses {
 
 var (
 	osToName = map[Os]string{
+		OsDarwin:  "darwin",
 		OsLinux:   "linux",
 		OsWindows: "windows",
 	}

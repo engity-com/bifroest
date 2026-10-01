@@ -1,10 +1,9 @@
-//go:build unix
+//go:build linux || darwin
 
 package service
 
 import (
 	"os"
-	osuser "os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,27 +14,10 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/template"
-	buser "github.com/engity-com/bifroest/pkg/user"
 )
 
 func TestLocalAuthorizationAcceptsUserCertificates(t *testing.T) {
-	const username = "certificate-local-user"
-	current, err := osuser.Current()
-	require.NoError(t, err)
-	userDirectory := t.TempDir()
-	passwdFile := filepath.Join(userDirectory, "passwd")
-	groupFile := filepath.Join(userDirectory, "group")
-	shadowFile := filepath.Join(userDirectory, "shadow")
-	require.NoError(t, os.WriteFile(passwdFile, []byte(username+":x:"+current.Uid+":"+current.Gid+"::"+current.HomeDir+":/bin/sh\n"), 0600))
-	require.NoError(t, os.WriteFile(groupFile, []byte(username+":x:"+current.Gid+":"+username+"\n"), 0600))
-	require.NoError(t, os.WriteFile(shadowFile, []byte(username+":!:19722:0:99999:7:::\n"), 0600))
-	previousRepositoryProvider := buser.DefaultRepositoryProvider
-	buser.DefaultRepositoryProvider = &buser.SharedRepositoryProvider[*buser.EtcColonRepository]{V: &buser.EtcColonRepository{
-		PasswdFilename: passwdFile,
-		GroupFilename:  groupFile,
-		ShadowFilename: shadowFile,
-	}}
-	t.Cleanup(func() { buser.DefaultRepositoryProvider = previousRepositoryProvider })
+	username := prepareLocalUserCertificateTest(t)
 
 	authority := newIncomingCertificateTestSigner(t)
 	plainAuthority := strings.TrimSpace(string(gossh.MarshalAuthorizedKey(authority.PublicKey())))

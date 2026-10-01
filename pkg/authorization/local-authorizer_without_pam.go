@@ -1,4 +1,4 @@
-//go:build (!cgo || without_pam) && linux
+//go:build unix && (without_pam || (linux && !cgo) || (!linux && !darwin))
 
 package authorization
 

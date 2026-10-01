@@ -8,10 +8,6 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 )
 
-const (
-	defaultConfigurationRef = "/etc/engity/bifroest/configuration.yaml"
-)
-
 func configureRunCmd(app *kingpin.Application) *kingpin.Application {
 	var conf configuration.Ref
 	cmd := app.Command("run", "Runs the service.").

@@ -33,7 +33,7 @@ func (this *imp) kill(_ context.Context, target processTarget, signal sys.Signal
 			pid = -pgid
 		}
 	}
-	if err := syscall.Kill(pid, signal.Native()); errors.Is(err, syscall.ESRCH) {
+	if err := signal.SendToPid(pid); errors.Is(err, syscall.ESRCH) {
 		return ErrNoSuchProcess
 	} else if err != nil {
 		return err

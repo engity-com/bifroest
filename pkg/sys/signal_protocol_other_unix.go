@@ -1,0 +1,41 @@
+//go:build unix && !linux && !darwin
+
+package sys
+
+import "syscall"
+
+const (
+	SIGABRT   = Signal(syscall.SIGABRT)
+	SIGALRM   = Signal(syscall.SIGALRM)
+	SIGBUS    = Signal(syscall.SIGBUS)
+	SIGCHLD   = Signal(syscall.SIGCHLD)
+	SIGCLD    = Signal(syscall.SIGCLD)
+	SIGCONT   = Signal(syscall.SIGCONT)
+	SIGFPE    = Signal(syscall.SIGFPE)
+	SIGHUP    = Signal(syscall.SIGHUP)
+	SIGILL    = Signal(syscall.SIGILL)
+	SIGINT    = Signal(syscall.SIGINT)
+	SIGIO     = Signal(syscall.SIGIO)
+	SIGIOT    = Signal(syscall.SIGIOT)
+	SIGKILL   = Signal(syscall.SIGKILL)
+	SIGPIPE   = Signal(syscall.SIGPIPE)
+	SIGPOLL   = Signal(syscall.SIGPOLL)
+	SIGPROF   = Signal(syscall.SIGPROF)
+	SIGPWR    = Signal(syscall.SIGPWR)
+	SIGQUIT   = Signal(syscall.SIGQUIT)
+	SIGSEGV   = Signal(syscall.SIGSEGV)
+	SIGSTOP   = Signal(syscall.SIGSTOP)
+	SIGSYS    = Signal(syscall.SIGSYS)
+	SIGTERM   = Signal(syscall.SIGTERM)
+	SIGTRAP   = Signal(syscall.SIGTRAP)
+	SIGTSTP   = Signal(syscall.SIGTSTP)
+	SIGTTIN   = Signal(syscall.SIGTTIN)
+	SIGTTOU   = Signal(syscall.SIGTTOU)
+	SIGURG    = Signal(syscall.SIGURG)
+	SIGUSR1   = Signal(syscall.SIGUSR1)
+	SIGUSR2   = Signal(syscall.SIGUSR2)
+	SIGVTALRM = Signal(syscall.SIGVTALRM)
+	SIGWINCH  = Signal(syscall.SIGWINCH)
+	SIGXCPU   = Signal(syscall.SIGXCPU)
+	SIGXFSZ   = Signal(syscall.SIGXFSZ)
+)

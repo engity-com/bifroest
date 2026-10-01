@@ -11,7 +11,7 @@ Bifröst runs as a host service on **port 22**. Sign in with an existing local u
 
 SSH may warn that the server key changed; verify the change before continuing.
 
-Use the [archive](distribution.md#archive) from the same release as this page. These examples use AMD64 and assume a fresh installation; for other systems see [distributions](distribution.md), for upgrades see the [upgrade notes](upgrade.md).
+Use the [archive](distribution.md#archive) from the same release as this page. These examples use AMD64 for Linux and Windows, ARM64 for macOS, and assume a fresh installation; for other systems see [distributions](distribution.md), for upgrades see the [upgrade notes](upgrade.md).
 
 ## Linux
 
@@ -64,6 +64,7 @@ Use the [macOS generic edition](distribution.md#darwin-generic) and an existing 
 
 ```sh
 curl -fLsS -o bifroest-darwin-arm64-generic.tgz '<<release_asset_url("bifroest-darwin-arm64-generic.tgz")>>'
+sudo install -d /usr/local/bin
 sudo tar -xzf bifroest-darwin-arm64-generic.tgz -C /usr/local/bin bifroest
 sudo install -d -o root -g wheel -m 0750 '/Library/Application Support/Engity/Bifroest'
 sudo curl -fLsS -o '/Library/Application Support/Engity/Bifroest/configuration.yaml' '<<asset_url("contrib/configurations/on-host.yaml", True)>>'

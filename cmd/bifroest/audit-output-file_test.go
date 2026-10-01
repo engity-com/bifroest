@@ -10,7 +10,7 @@ import (
 )
 
 func TestAuditOutputFileRejectsParentSwapAfterPinning(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalTestTempDir(t)
 	parent := filepath.Join(root, "output")
 	movedParent := filepath.Join(root, "pinned-output")
 	require.NoError(t, goos.Mkdir(parent, 0700))
@@ -26,7 +26,7 @@ func TestAuditOutputFileRejectsParentSwapAfterPinning(t *testing.T) {
 }
 
 func TestAuditOutputFileForceNoReplacePermissionsAndCleanup(t *testing.T) {
-	parent := t.TempDir()
+	parent := canonicalTestTempDir(t)
 	path := filepath.Join(parent, "audit.jsonl")
 	require.NoError(t, writeAuditOutputFile(path, []byte("first\n"), false, nil))
 
@@ -48,14 +48,14 @@ func TestAuditOutputFileForceNoReplacePermissionsAndCleanup(t *testing.T) {
 }
 
 func TestCanonicalAuditOutputRequiresExistingImmediateParent(t *testing.T) {
-	output := filepath.Join(t.TempDir(), "missing", "audit.jsonl")
+	output := filepath.Join(canonicalTestTempDir(t), "missing", "audit.jsonl")
 	_, err := canonicalAuditOutput(output)
 	require.ErrorContains(t, err, "must already exist")
 	require.NoDirExists(t, filepath.Dir(output))
 }
 
 func TestProtectedOutputFileDoesNotInstallProducerFailure(t *testing.T) {
-	parent := t.TempDir()
+	parent := canonicalTestTempDir(t)
 	path := filepath.Join(parent, "output")
 	err := writeProtectedOutputFile(path, false, nil, func(output *goos.File) error {
 		_, writeErr := output.Write([]byte("partial"))
@@ -70,7 +70,7 @@ func TestProtectedOutputFileDoesNotInstallProducerFailure(t *testing.T) {
 }
 
 func TestProtectedOutputFileDoesNotInstallAfterFinalValidationFailure(t *testing.T) {
-	parent := t.TempDir()
+	parent := canonicalTestTempDir(t)
 	path := filepath.Join(parent, "output")
 	require.NoError(t, goos.WriteFile(path, []byte("existing"), 0600))
 	validations := 0
@@ -92,4 +92,11 @@ func TestProtectedOutputFileDoesNotInstallAfterFinalValidationFailure(t *testing
 	entries, err := goos.ReadDir(parent)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
+}
+
+func canonicalTestTempDir(t *testing.T) string {
+	t.Helper()
+	result, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	return result
 }

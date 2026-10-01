@@ -173,8 +173,12 @@ func (this *LocalRepository) FindBySession(ctx context.Context, sess session.Ses
 		if !opts.IsAutoCleanUpAllowed() {
 			return failf(errors.Expired, "user %q of session cannot longer be found; treat as expired", userRef)
 		}
+		_, canCleanAbsentHome := this.userRepository.(interface {
+			DeleteHomeByAbsentIdentity(context.Context, user.Id, string, string) error
+		})
 		if lt.Version == 2 && lt.User.Name != "" && lt.User.Uid != nil &&
-			lt.User.KillProcessesOnDispose && !lt.User.ProcessesKilledOnDispose {
+			((lt.User.KillProcessesOnDispose && !lt.User.ProcessesKilledOnDispose) ||
+				(lt.User.DeleteOnDispose && lt.User.DeleteHomeTogetherWithUser && canCleanAbsentHome)) {
 			pending := this.new(&user.User{Name: lt.User.Name, Uid: *lt.User.Uid}, sess, lt.PortForwardingAllowed, &lt)
 			pending.accountMissing = true
 			return pending, nil
@@ -225,7 +229,6 @@ func (this *LocalRepository) FindBySession(ctx context.Context, sess session.Ses
 	if lt.User.Uid != nil && u.Uid != *lt.User.Uid {
 		return userNotFound(lt.User.Name)
 	}
-
 	return this.new(u, sess, lt.PortForwardingAllowed, &lt), nil
 }
 
@@ -369,15 +372,15 @@ func (this *LocalRepository) lookupByName(r Request, tmpl template.String) (*use
 	return this.userRepository.LookupByName(r.Context(), name)
 }
 
-func (this *LocalRepository) ensureUser(ctx context.Context, req *user.Requirement, opts *localEnsureOpts) (u *user.User, er user.EnsureResult, err error) {
-	u, er, err = this.userRepository.Ensure(ctx, req, &user.EnsureOpts{
+func (this *LocalRepository) ensureUser(ctx context.Context, req *user.Requirement, opts *localEnsureOpts) (u *user.User, result user.EnsureResult, err error) {
+	u, result, err = this.userRepository.Ensure(ctx, req, &user.EnsureOpts{
 		CreateAllowed: &opts.createIfAbsent,
 		ModifyAllowed: &opts.updateIfDifferent,
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("cannot ensure user: %w", err)
+		return nil, user.EnsureResultError, fmt.Errorf("cannot ensure user: %w", err)
 	}
-	return u, er, nil
+	return u, result, nil
 }
 
 func (this *LocalRepository) Close() error {

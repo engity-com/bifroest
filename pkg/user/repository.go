@@ -91,9 +91,10 @@ type SharedRepositoryProvider[T interface {
 	CloseableRepository
 	Init(context.Context) error
 }] struct {
-	V      T
-	usages int16
-	mutex  sync.Mutex
+	V                          T
+	ForwardCleanupCapabilities bool
+	usages                     int16
+	mutex                      sync.Mutex
 }
 
 func (this *SharedRepositoryProvider[T]) Create(ctx context.Context) (CloseableRepository, error) {
@@ -106,7 +107,28 @@ func (this *SharedRepositoryProvider[T]) Create(ctx context.Context) (CloseableR
 		}
 	}
 	this.usages++
-	return &sharedRepository[T]{this, this.V, false}, nil
+	shared := &sharedRepository[T]{this, this.V, false}
+	if !this.ForwardCleanupCapabilities {
+		return shared, nil
+	}
+	identity, hasIdentity := any(this.V).(identityCleanupRepository)
+	home, hasHome := any(this.V).(absentIdentityHomeCleanupRepository)
+	if hasIdentity && hasHome {
+		return &sharedIdentityAndHomeCleanupRepository[T]{shared, identity, home}, nil
+	}
+	if hasIdentity {
+		return &sharedIdentityCleanupRepository[T]{shared, identity}, nil
+	}
+	return shared, nil
+}
+
+type identityCleanupRepository interface {
+	DeleteByIdentity(context.Context, Id, string, string, *DeleteOpts) error
+	KillProcessesByIdentity(context.Context, Id, string) error
+}
+
+type absentIdentityHomeCleanupRepository interface {
+	DeleteHomeByAbsentIdentity(context.Context, Id, string, string) error
 }
 
 type sharedRepository[T interface {
@@ -116,6 +138,23 @@ type sharedRepository[T interface {
 	provider *SharedRepositoryProvider[T]
 	Repository
 	closed bool
+}
+
+type sharedIdentityCleanupRepository[T interface {
+	CloseableRepository
+	Init(context.Context) error
+}] struct {
+	*sharedRepository[T]
+	identityCleanupRepository
+}
+
+type sharedIdentityAndHomeCleanupRepository[T interface {
+	CloseableRepository
+	Init(context.Context) error
+}] struct {
+	*sharedRepository[T]
+	identityCleanupRepository
+	absentIdentityHomeCleanupRepository
 }
 
 func (this *sharedRepository[T]) Close() error {

@@ -64,15 +64,6 @@ func (this GroupRequirement) isEqualTo(other *GroupRequirement) bool {
 		this.Name == other.Name
 }
 
-func (this GroupRequirement) doesFulfilRef(ref *etcGroupRef) bool {
-	if ref == nil || (this.Name == "" && this.Gid == nil) {
-		return false
-	}
-	gid := GroupId(ref.gid)
-	return (this.Gid == nil || *this.Gid == gid) &&
-		(this.Name == "" || this.Name == string(ref.name))
-}
-
 func (this GroupRequirement) String() string {
 	if name := this.Name; len(name) > 0 {
 		if gid := this.Gid; gid != nil {

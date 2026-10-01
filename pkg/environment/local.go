@@ -54,7 +54,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	auth := t.Authorization()
 	sess := auth.FindSession()
 	if sess == nil {
-		return failf("authorization without session is not supported to run docker environment")
+		return failf("authorization without session is not supported to run local environment")
 	}
 
 	cmd, ev, release, err := this.createCmdAndEnv(t)

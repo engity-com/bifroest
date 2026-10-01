@@ -80,10 +80,10 @@ Bifröst issues exactly one certificate for each persistent Bifröst session. Re
 ### Configuration {: #certificate-configuration}
 
 <<property("identityFile", "File Path", "../data-type.md#file-path", id_prefix="certificate-", heading=4)>>
-Static path to the private subject key used with the certificate. The default is `/etc/engity/bifroest/client-key` on Unix and `C:\ProgramData\Engity\Bifroest\client-key` on Windows. The default key is shared by all certificate-enabled flows of one Bifröst instance. If the file does not exist, an Ed25519 key is generated. Existing unreadable, encrypted or invalid files cause startup to fail and are never overwritten. The private key is not copied into session storage.
+Static path to the private subject key used with the certificate. The default is `/etc/engity/bifroest/client-key` on Linux, `/Library/Application Support/Engity/Bifroest/client-key` on Darwin, and `C:\ProgramData\Engity\Bifroest\client-key` on Windows. The default key is shared by all certificate-enabled flows of one Bifröst instance. If the file does not exist, an Ed25519 key is generated. Existing unreadable, encrypted or invalid files cause startup to fail and are never overwritten. The private key is not copied into session storage.
 
 <<property("authorityIdentityFile", "File Path", "../data-type.md#file-path", id_prefix="certificate-", heading=4)>>
-Static path to the private SSH certificate-authority key. The default is `/etc/engity/bifroest/ca` on Unix and `C:\ProgramData\Engity\Bifroest\ca` on Windows. The default CA is shared by all certificate-enabled flows of one Bifröst instance. If the file does not exist, an Ed25519 key is generated. Existing unreadable, encrypted or invalid files cause startup to fail and are never overwritten. The server host key is never used as certificate authority. Existing certificates remain bound to their original CA after a configured CA rotation.
+Static path to the private SSH certificate-authority key. The default is `/etc/engity/bifroest/ca` on Linux, `/Library/Application Support/Engity/Bifroest/ca` on Darwin, and `C:\ProgramData\Engity\Bifroest\ca` on Windows. The default CA is shared by all certificate-enabled flows of one Bifröst instance. If the file does not exist, an Ed25519 key is generated. Existing unreadable, encrypted or invalid files cause startup to fail and are never overwritten. The server host key is never used as certificate authority. Existing certificates remain bound to their original CA after a configured CA rotation.
 
 Bifröst does not create a `.pub` companion file for either private key. The CA public key is logged at every startup and can be exported for a specific flow with `bifroest key export ca`.
 
@@ -214,6 +214,6 @@ For Bifröst-to-Bifröst certificate delegation, see the [Bifröst authorization
 
 ## Compatibility
 
-| <<dist("linux")>> | <<dist("windows")>> |
-| - | - |
-| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"windows")>> |
+| <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
+| - | - | - |
+| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |

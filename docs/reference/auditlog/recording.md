@@ -17,6 +17,7 @@ Local recording repository. Keep it on an access-controlled filesystem, separate
 The default depends on the operating system:
 
 * Linux: `/var/lib/engity/bifroest/recordings`
+* macOS: `/Library/Application Support/Engity/Bifroest/recordings`
 * Windows: `C:\ProgramData\Engity\Bifroest\recordings`
 
 The local filesystem is trusted; repository signatures do not protect against an operator or attacker who can alter managed paths concurrently.

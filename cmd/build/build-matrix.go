@@ -48,8 +48,7 @@ func (this *build) buildMatrices() (buildEnvironmentMatrices, error) {
 		Container:     buildMatrix[buildBinaryMatrixEntry]{Include: []buildBinaryMatrixEntry{}},
 	}
 	seenTestOs := map[sys.Os]bool{}
-	// The evaluator may run on another host than the Linux package job.
-	for p := range this.platforms(false, sys.OsLinux, sys.ArchAmd64) {
+	for p := range this.distributablePlatforms(false) {
 		entry := buildBinaryMatrixEntry{Os: p.Os.String(), Arch: p.Arch.String(), Edition: p.Edition.String()}
 		switch p.Os {
 		case sys.OsLinux:
@@ -60,6 +59,15 @@ func (this *build) buildMatrices() (buildEnvironmentMatrices, error) {
 				if !ok {
 					return result, fmt.Errorf("no build image configured for %s", p)
 				}
+			}
+		case sys.OsDarwin:
+			switch p.Arch {
+			case sys.ArchAmd64:
+				entry.Runner = "macos-15-intel"
+			case sys.ArchArm64:
+				entry.Runner = "macos-15"
+			default:
+				return result, fmt.Errorf("no Darwin runner configured for %s", p)
 			}
 		case sys.OsWindows:
 			entry.Runner = "windows-latest"
@@ -72,6 +80,9 @@ func (this *build) buildMatrices() (buildEnvironmentMatrices, error) {
 				testEntry.Image = binaryLinuxAmd64Image
 				result.TestContainer.Include = append(result.TestContainer.Include, testEntry)
 			} else {
+				if p.Os == sys.OsDarwin {
+					testEntry.Runner = "macos-15"
+				}
 				result.TestHost.Include = append(result.TestHost.Include, testEntry)
 			}
 			seenTestOs[p.Os] = true
