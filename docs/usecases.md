@@ -1,12 +1,12 @@
 ---
 toc_depth: 2
-description: "Bifröst is very flexible in its configuration (see configuration documentation). Here are some use cases that can be fulfilled by it:"
+description: "Use Bifröst for time-bound SSH off-boarding, OIDC login, SSH gateways and isolated sessions."
 ---
 # Use cases
 
 Bifröst can combine SSH authorization with different session environments. The following examples illustrate configurations for specific access problems; their security properties depend on the identity provider, session settings, target permissions and deployment.
 
-1. [Off-board users by changing access at the identity provider](#offboard)
+1. [Meet a defined off-boarding deadline](#offboard)
 2. [On-board users with an identity provider](#onboard)
 3. [Bastion Host / Jump Host](#bastion)
 4. [Access Kubernetes clusters without publicly exposing their APIs](#kubernetes-firewall)
@@ -16,40 +16,28 @@ Bifröst can combine SSH authorization with different session environments. The 
 
 !!! tip
 
-    [Session recording](reference/auditlog/recording.md) can preserve signed terminal output, but not raw keyboard input or SFTP/forwarding payloads. An [SSH environment](reference/environment/ssh.md) can connect to a target server with a separate authentication step; it does not transparently forward arbitrary SSH requests.
+    [Session recording](guides/recording.md) can preserve signed terminal output, but not raw keyboard input or SFTP/forwarding payloads. An [SSH gateway](guides/ssh-gateway.md) can connect to a target server with a separate authentication step; it does not transparently forward arbitrary SSH requests.
 
-## Off-board users via an identity provider {: #offboard}
+## Meet a defined off-boarding deadline {: #offboard}
 
-### Problem
+Customer contracts or certification requirements can set an off-boarding deadline, for example **15 or 60 minutes**. A requirement to *be able to disable remote access* is different from proving that a departing person *can no longer access any resource* within that time after the off-boarding decision. Define which requirement applies and when its clock starts. Bifröst was created in part for this problem: OIDC can centralize new access decisions instead of changing keys on every host.
 
-1. Assume you're part of an organization.
-2. Assume this organization has more than _just_ 10 people who might be able to access SSH resources.
-3. Assume you've to off-board an employee, now.
-4. Assume it is your job to make sure that this employee cannot do any harm to the organization, because the machines the user is currently on are critical to the technical security of the organization.
+### Put the control in place
 
-In cases of SSH servers, this often results in going through all servers and either:
+1. Use [OIDC Device Authorization](reference/authorization/oidc.md) so that your IdP can reject new logins after access is withdrawn. Measure how long that change takes at the IdP; an SSH key remembered for an existing Bifröst session may otherwise skip a new Device Authorization.
+2. Set **both** [`ssh.maxTimeout`](reference/connection/ssh.md#property-maxTimeout) and [`session.maxTimeout`](reference/session/fs.md#property-maxTimeout) to fit your deadline. Both default to unlimited. The `5m` values below illustrate a short time budget; neither idle timeout nor SSH certificate expiry alone ends every active connection.
+3. If the requirement is actual off-boarding, measure from the recorded decision to the last possible access: test new logins **and existing** shells, SFTP, forwards and downstream access. A change at the IdP does not itself terminate existing connections or independent processes on a target. If the deadline cannot be met, add an explicit termination step and test it.
 
-* Change the passwords,
-* Remove dedicated users,
-* Remove user's public keys (if you can find out who it is 🤯),
-* or change the [Ansible](https://www.ansible.com/) or [Puppet](https://www.puppet.com/) configuration and apply it on every machine.
+```yaml
+ssh:
+  maxTimeout: 5m
+session:
+  maxTimeout: 5m
+```
 
-How do you stop new SSH access without updating credentials on every host? How do you check for existing sessions that must be terminated separately?
+These are **example values**, not a claim that adding this snippet guarantees the deadline. Account and process cleanup depends on the selected [environment](reference/environment/index.md). Validate the complete path, including other login methods and targets, against your organization's actual control. See the [OIDC guide](guides/oidc.md) for a first login.
 
-### Solution
-
-#### Don't ...
-1. ... share passwords of shared users or even the `root` user.
-2. ... store unmanaged public keys on shared accounts without a revocation process.
-
-#### Do
-Use the [OpenID Connect authorization](reference/authorization/oidc.md).
-
-For a new OIDC Device Authorization, Bifröst relies on your [Identity Provider (IdP)](https://openid.net/developers/how-connect-works/) and the configured access rules. Revocation timing depends on the IdP, token validity and session settings. A remembered SSH key, an existing session or an already authenticated [SSH target transport](reference/environment/ssh.md#certificate) is not necessarily terminated when access changes at the IdP. Plan separate session termination and a test of your actual off-boarding requirements; **there is no general 15-minute guarantee**.
-
-IdP-managed access can reduce the need to update credentials on each host, but does not replace checking active connections and other credential paths.
-
-Account, file and process cleanup depends on the chosen [environment](reference/environment/index.md) and explicit policies; it is not a universal default.
+If your requirement is only the capability to disable remote access within a deadline, measure that operation separately; it is not proof that every session or credential of a departing person has been revoked.
 
 ## On-board users via an identity provider {: #onboard}
 
@@ -99,7 +87,7 @@ The following cases are usually used:
     1. Inside the private network itself (in case of [AWS a dedicated EC2 instance](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/concepts.html) for example of [instance-type `t2.micro`](https://aws.amazon.com/ec2/instance-types/))
     2. or outside the network with a fixed VPN connection to get inside the private network.
 2. Configure an appropriate [authorization](reference/authorization/index.md), for example [OpenID Connect](reference/authorization/oidc.md), and review session reuse and revocation behavior.
-3. Choose the [Docker environment](reference/environment/docker.md) when a container is appropriate. Isolation depends on privileges, mounted sockets/volumes and runtime access; it does not by itself guarantee the security of the host.
+3. For an existing private OpenSSH server, follow the [SSH gateway guide](guides/ssh-gateway.md). For a separate workspace, choose the [Docker environment](reference/environment/docker.md); its isolation depends on privileges, mounts and runtime access.
 
 ## Access Kubernetes clusters without publicly exposing their APIs {: #kubernetes-firewall}
 

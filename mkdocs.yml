@@ -126,6 +126,11 @@ nav:
   - Home:
       - Welcome: index.md
       - Use cases: usecases.md
+      - Guides:
+          - guides/index.md
+          - SSH gateway: guides/ssh-gateway.md
+          - OIDC login: guides/oidc.md
+          - Session recording: guides/recording.md
   - Getting started:
       - setup/index.md
       - Installation:

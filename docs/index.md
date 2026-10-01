@@ -1,5 +1,5 @@
 ---
-description: Bifröst is an SSH server with OIDC authorization and configurable local, container and SSH target sessions.
+description: Bifröst is an SSH server with OIDC login, SSH gateways, container sessions and verifiable audit and recording.
 ---
 
 # Engity's Bifröst
@@ -10,36 +10,37 @@ description: Bifröst is an SSH server with OIDC authorization and configurable 
 
 Bifröst lets platform teams combine SSH authorization with the environment in which a session runs. Users connect with a standard SSH client; [OIDC Device Authorization](reference/authorization/oidc.md) also requires a browser and a supported identity provider. Sessions can run on a local account, in a Docker container or Kubernetes Pod, or through a separately authenticated [SSH target](reference/environment/ssh.md). Bifröst is not a universal drop-in replacement for [OpenSSH's sshd](https://man.openbsd.org/sshd).
 
+Bifröst was created for teams with [time-bound off-boarding requirements](usecases.md#offboard), whether the target is 15 minutes, 60 minutes or another defined limit. Meeting it depends on the IdP, bounded access and checks of existing connections.
+
 **Install it as a host service:** the [host guide](setup/on-host.md) starts Bifröst on port 22 with the privileges required to open a real shell as an existing local account. Linux uses systemd, Windows uses a Windows service, and the upcoming release is planned to include a macOS LaunchDaemon.
+
+## Choose your task
+
+* [Connect to a private OpenSSH server](guides/ssh-gateway.md) through an SSH gateway.
+* [Log in with OIDC](guides/oidc.md) using an SSH client and a browser verification step.
+* [Verify a session recording](guides/recording.md) and export the recorded output.
 
 ## Features
 
-### Standard SSH clients
+### SSH access with your identity
 
-Connect with OpenSSH, PuTTY and other standard SSH clients. Check the [supported operations](reference/environment/ssh.md#supported-operations) and test specialized `sshd` policies before migrating.
+Connect using OpenSSH, PuTTY or another standard SSH client. Authorize with local accounts, SSH keys or [OIDC Device Authorization](guides/oidc.md); OIDC adds a browser verification step, not a separate SSH client.
 
-### OpenID Connect
-Authorize via SSH keys or an [OpenID Connect](https://openid.net/) identity provider. Device Authorization needs a browser verification step, but no separate SSH client application.
+### Choose where sessions run
 
-#### Docker environments
+Open a shell on the [host](reference/environment/local.md), in a [Docker container](reference/environment/docker.md) or in a [Kubernetes Pod](reference/environment/kubernetes.md). Flows combine the authorization method and session environment; container isolation depends on the permissions you grant.
 
-You can execute your users into individual Docker containers with custom images, network settings, and much more...
+### SSH gateway to private servers
 
-#### Kubernetes environments
+Connect through Bifröst to an existing SSH server. The [gateway](guides/ssh-gateway.md) verifies the target host key and authenticates to it separately; it does not transparently proxy every SSH request.
 
-Be directly inside a dedicated Pod inside your Kubernetes cluster and have access to all of its resources without extra port forwarding.
+### Verifiable audit and recording
 
-### Remember me
+Optionally sign [audit events](reference/auditlog/index.md) and [terminal recordings](guides/recording.md) for later verification. Recording captures terminal output, not raw keyboard input or SFTP and forwarding payloads.
 
-Once authenticated using a public key, Bifröst can (temporarily) store that public key for faster reconnection while the session is still active.
+### Bound access over time
 
-### Automatic user provisioning
-
-If a user needs to be authorized in a local environment using [OpenID Connect](#openid-connect), Bifröst can automatically create a local user based on a pre-defined requirement template.
-
-Configured policies can clean up managed accounts, homes and processes after sessions end. These operations are not universally enabled by default; review the [local environment settings](reference/environment/local.md#dispose).
-
-### More to come...
+Set maximum [connection](reference/connection/ssh.md#property-maxTimeout) and [session](reference/session/fs.md#property-maxTimeout) lifetimes, and optionally provision or clean up [local accounts](reference/environment/local.md#account-management). A remembered public key can simplify reconnects while its session remains valid; [time-bound off-boarding](usecases.md#offboard) still needs an end-to-end check.
 
 ## More topics
 * [Getting started](setup/index.md)

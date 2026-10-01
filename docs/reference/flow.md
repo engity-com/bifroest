@@ -43,7 +43,7 @@ flows:
     requirement:
       includedRequestingName: ^sso$
     authorization:
-      type: oidc
+      type: oidcDeviceAuth
       # ...
     environment:
       type: local

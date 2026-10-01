@@ -7,6 +7,8 @@ toc_depth: 2
 
 Bifröst is available as a binary for many different platforms, or even as an OCI/Docker image.
 
+For OIDC login, an SSH gateway or session recording, see the [task guides](../guides/index.md).
+
 Before we get started, you need to choose your operating mode. Here are the main differences to help you decide:
 
 | Criteria | [On Host](on-host.md) | [In Docker/Container](in-docker.md) |

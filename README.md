@@ -2,75 +2,31 @@
 
 ![Engity's Bifröst](docs/assets/logo-with-text.svg)
 
-Bifröst is an SSH server for teams that need to control how users authenticate and where their sessions run. Configurable flows connect authorization (including OIDC Device Authorization) to local, Docker, Kubernetes, or SSH target environments. Users connect with a standard SSH client; OIDC Device Authorization also requires a browser and a configured identity provider. Bifröst does not replace every `sshd` setup without changes.
-
-## TOC
-
-* [Use-cases](https://bifroest.engity.org/usecases/)
-* [Features](#features)
-* [Install on a host](#install-on-a-host)
-* [Configuration](https://bifroest.engity.org/reference/configuration/)
-* [Status](#status)
-* [License](LICENSE)
-* [Code of Conduct](CODE_OF_CONDUCT.md)
-* [Contributing](CONTRIBUTING.md)
-* [Security](SECURITY.md)
-
-## Install on a host
-
-The [host installation guide](docs/setup/on-host.md) sets up Bifröst as an SSH service on port 22 and logs into an existing local account on Linux (systemd) or Windows (Windows Service). The upcoming release is also intended to support macOS (LaunchDaemon) after [PR #580](https://github.com/engity-com/bifroest/pull/580) is merged and validated. Use the [documentation matching your release](https://bifroest.engity.org/setup/on-host/) and its [assets](https://github.com/engity-com/bifroest/releases); unreleased `main` features are not necessarily in the latest stable binary.
+Bifröst is a configurable SSH server and gateway for teams managing access to hosts and isolated work environments. Flows combine authorization with where a session runs. Users connect with a standard SSH client; OIDC Device Authorization also requires a browser and a suitable identity provider.
 
 ## Features
 
-1. [Standard SSH clients](#standard-ssh-clients)
-2. [OpenID Connect](#openid-connect)
-3. [Docker environments](#docker-environments)
-4. [Kubernetes environments](#kubernetes-environments)
-5. [Remember me](#remember-me)
-6. [Automatic user provisioning](#automatic-user-provisioning)
+* **Standard SSH clients:** Connect using OpenSSH, PuTTY or another regular SSH client without installing a Bifröst-specific client.
+* **Flexible authorization:** Choose local accounts, SSH keys or [OIDC Device Authorization](docs/guides/oidc.md) through configurable access flows.
+* **Host and container sessions:** Work as a local user, in a Docker container or in a Kubernetes Pod; optionally provision and clean up managed local accounts.
+* **SSH gateway:** Reach private SSH servers through a [separately authenticated connection](docs/guides/ssh-gateway.md) with target host-key verification.
+* **Audit and recording:** Optionally write signed audit events and verifiable [terminal recordings](docs/guides/recording.md).
+* **Time-bound access:** Set connection and session lifetimes to support [off-boarding targets](docs/usecases.md#offboard) such as 15 or 60 minutes, and test the result against your requirements.
 
-#### Standard SSH clients
+## Get started
 
-Connect using an SSH client such as [OpenSSH](https://www.openssh.com/) or [PuTTY](https://www.putty.org/). Not every `sshd` setting is compatible; read the [host installation guide](docs/setup/on-host.md) before replacing an existing SSH server.
+[Install Bifröst on Linux, Windows or macOS](docs/setup/on-host.md) as a host service, or choose a [container installation](https://bifroest.engity.org/setup/in-docker/). Then follow a task guide:
 
-#### OpenID Connect
-Authorize SSH access with keys or an [OpenID Connect](https://openid.net/) identity provider. Device Authorization works with a standard SSH client, but the user must open a verification page in a browser and the identity provider must support and allow this flow.
+* [OIDC login with a standard SSH client](docs/guides/oidc.md)
+* [SSH gateway to an OpenSSH server](docs/guides/ssh-gateway.md)
+* [Verifiable session recording](docs/guides/recording.md)
 
-#### Docker environments
+The links to files in this repository describe the current source. For an installation, choose a [published release](https://github.com/engity-com/bifroest/releases) and its **matching versioned documentation** at [bifroest.engity.org](https://bifroest.engity.org/); the site root describes the current stable release, which may differ from `main`. Alpha and beta container images use only full version tags such as `:1.0.0-beta1`; `:latest` and other moving tags are for stable releases.
 
-You can execute your users into individual Docker containers with custom images, network settings, and much more...
+## OpenSSH migration and security
 
-#### Kubernetes environments
+Replacing an OpenSSH `sshd`? Use the [host installation guide](docs/setup/on-host.md) to set up Bifröst, and the [configuration reference](docs/reference/configuration.md) to select your SSH access policies. Review the [upgrade guidance](docs/setup/upgrade.md) when updating Bifröst and the [security policy](SECURITY.md) for vulnerability reporting.
 
-Be directly inside a dedicated Pod inside your Kubernetes cluster and have access to all of its resources without extra port forwarding.
+## Project
 
-#### Remember me
-
-After an authorization such as OIDC, Bifröst can temporarily remember a presented public key for faster reconnects while the session is valid. Account revocation and existing connections require separate consideration.
-
-#### Automatic user provisioning
-
-If a local environment is used where the user executes inside and [OpenID Connect](#openid-connect) was used to authorize a user, Bifröst can automatically create these users based on a defined requirement template.
-
-When configured for it, a local environment can create accounts for authorized users and clean them up after sessions end. Cleanup is policy-dependent, not a blanket default; see the [local environment reference](docs/reference/environment/local.md).
-
-#### More to come...
-
-## What's next?
-
-Read the [use cases](https://bifroest.engity.org/usecases/), the [installation guide](https://bifroest.engity.org/setup/) and the [configuration reference](https://bifroest.engity.org/reference/configuration/) for more detail. The source tree also contains [SSH target](docs/reference/environment/ssh.md) and [audit/recording](docs/reference/auditlog/index.md) documentation; check the selected release before relying on these features.
-
-## Status
-
-The latest stable release and its [documentation](https://bifroest.engity.org/) can differ from unreleased `main`. Configuration, commands and APIs may still change; review the [upgrade notes](https://bifroest.engity.org/setup/upgrade/) for the version you plan to install and [report bugs](https://github.com/engity-com/bifroest/issues/new/choose).
-
-For alpha and beta builds, use the exact version from [GitHub Releases](https://github.com/engity-com/bifroest/releases) and its matching versioned documentation. Container images for prereleases use only full version tags such as `:1.0.0-beta1`; `:latest` and other moving tags refer to stable releases.
-
-## More topics
-* [Use-Cases](https://bifroest.engity.org/usecases/)
-* [Getting started](https://bifroest.engity.org/setup/)
-* [Configuration](https://bifroest.engity.org/reference/configuration/)
-* [License](LICENSE)
-* [Code of Conduct](CODE_OF_CONDUCT.md)
-* [Contributing](CONTRIBUTING.md)
-* [Security](SECURITY.md)
+[License](LICENSE) | [Contributing](CONTRIBUTING.md) | [Code of Conduct](CODE_OF_CONDUCT.md) | [Report an issue](https://github.com/engity-com/bifroest/issues/new/choose) | [Discussions](https://github.com/engity-com/bifroest/discussions)
