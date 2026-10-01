@@ -110,11 +110,13 @@ See the [release page](<< release_url() >>) for all available downloads.
 
 * macOS Generic on ARM64:
     ```shell
+    sudo install -d /usr/local/bin
     curl -sSLf <<release_asset_url("bifroest-darwin-arm64-generic.tgz")>> | sudo tar -zxv -C /usr/local/bin bifroest
     ```
 
 * macOS Generic on AMD64:
     ```shell
+    sudo install -d /usr/local/bin
     curl -sSLf <<release_asset_url("bifroest-darwin-amd64-generic.tgz")>> | sudo tar -zxv -C /usr/local/bin bifroest
     ```
 
