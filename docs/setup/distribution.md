@@ -59,7 +59,7 @@ It does provide the following features:
 
 #### Generic {: #darwin-generic}
 
-The generic Windows distribution of Bifröst contains all supported features for macOS 13 and later. It does not have any requirements on which other shared libraries need to be installed.
+The generic macOS distribution of Bifröst contains all supported features for macOS 13 and later. It does not have any requirements on which other shared libraries need to be installed.
 
 #### Extended {: #darwin-extended}
 Not available.
