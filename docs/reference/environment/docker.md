@@ -206,16 +206,6 @@ At this address Bifröst will then connect to the published IMP port. The value 
 
 This is usually required, if you run Bifröst on a Docker/Podman for Desktop installation (such as on Windows or macOS) where the Docker daemon does not run on the host directly, but inside a virtual machine.
 
-For Bifröst running natively on the same Mac as Docker Desktop, use:
-
-```yaml
-type: docker
-image: alpine
-impPublishHost: 127.0.0.1
-```
-
-Docker publishes only the container's IMP port `8683` to a dynamic host port, and Bifröst connects to that port at `127.0.0.1`. `impPublishHost` selects the address Bifröst dials; it does not request a Docker bind address. If Bifröst itself runs in a container instead, use an address reachable from that container, commonly `host.docker.internal`, and apply firewall rules appropriate to the daemon's publish behavior.
-
 <<property("cleanOrphan", "bool", template_context="../context/container.md", default=True)>>
 While the [housekeeping iterations](../housekeeping.md) this environment will look for containers that can be inspected by its docker daemon connection if there is any container that does not belong to any flow of this Bifröst instance.
 

@@ -23,9 +23,6 @@ import (
 )
 
 func (this *buildBinary) prepareDarwinBinary(ctx context.Context, artifact *buildArtifact) (rErr error) {
-	if artifact.Os != sys.OsDarwin {
-		return nil
-	}
 	certificateConfigured := this.darwinCertificate != "" || this.darwinCertificatePass != ""
 	if certificateConfigured && (this.darwinCertificate == "" || this.darwinCertificatePass == "" || this.darwinSigningIdentity == "") {
 		return fmt.Errorf("darwin signing certificate, password, and identity must be configured together")
@@ -314,15 +311,15 @@ func randomDarwinKeychainPassword() (string, error) {
 }
 
 func runDarwinBuildCommand(ctx context.Context, executable string, args ...string) (string, error) {
-	command := osexec.CommandContext(ctx, executable, args...)
+	cmd := osexec.CommandContext(ctx, executable, args...)
 	for _, value := range gos.Environ() {
 		name, _, _ := strings.Cut(value, "=")
-		if slices.Contains(darwinSecretEnvironment, name) {
+		if slices.Contains(secretEnvironmentNames, name) {
 			continue
 		}
-		command.Env = append(command.Env, value)
+		cmd.Env = append(cmd.Env, value)
 	}
-	output, err := command.CombinedOutput()
+	output, err := cmd.CombinedOutput()
 	plain := strings.TrimSpace(string(output))
 	if err != nil {
 		return plain, fmt.Errorf("%s %s failed: %w: %s", executable, args[0], err, plain)

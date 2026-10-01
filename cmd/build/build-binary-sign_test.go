@@ -41,15 +41,15 @@ func TestSignDarwinUsesHardenedRuntimeAndTimestamp(t *testing.T) {
 	}, lines)
 }
 
-func TestBuildRemovesDarwinSecretsFromProcessEnvironment(t *testing.T) {
-	for _, name := range darwinSecretEnvironment {
+func TestBuildRemovesSecretNamesFromProcessEnvironment(t *testing.T) {
+	for _, name := range secretEnvironmentNames {
 		t.Setenv(name, "secret")
 	}
 
 	build, _ := testReleaseManifestBuild(t)
-	build.binary.clearDarwinSecretsFromEnvironment()
+	build.binary.clearSecretsFromEnvironment()
 
-	for _, name := range darwinSecretEnvironment {
+	for _, name := range secretEnvironmentNames {
 		require.Empty(t, gos.Getenv(name))
 	}
 }

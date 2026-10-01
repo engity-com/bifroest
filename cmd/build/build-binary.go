@@ -21,7 +21,7 @@ const (
 	darwinNotaryKeyEnvironment           = "BIFROEST_DARWIN_NOTARY_KEY"
 )
 
-var darwinSecretEnvironment = []string{
+var secretEnvironmentNames = []string{
 	darwinCertificateEnvironment,
 	darwinCertificatePasswordEnvironment,
 	darwinNotaryKeyEnvironment,
@@ -50,27 +50,27 @@ func (this *buildBinary) attach(cmd *kingpin.CmdClause) {
 		Envar("BIFROEST_DARWIN_SIGNING_IDENTITY").
 		PlaceHolder("<identity>").
 		StringVar(&this.darwinSigningIdentity)
-	cmd.Flag("darwinCertificate", "Base64-encoded Developer ID certificate imported into a temporary keychain.").
+	cmd.Flag("darwin.certificate", "Base64-encoded Developer ID certificate imported into a temporary keychain.").
 		Envar(darwinCertificateEnvironment).
 		PlaceHolder("<base64>").
 		StringVar(&this.darwinCertificate)
-	cmd.Flag("darwinCertificatePassword", "Password of the Developer ID certificate.").
+	cmd.Flag("darwin.certificate.password", "Password of the Developer ID certificate.").
 		Envar(darwinCertificatePasswordEnvironment).
 		PlaceHolder("<password>").
 		StringVar(&this.darwinCertificatePass)
-	cmd.Flag("darwinNotaryKey", "App Store Connect API private key used for notarization.").
+	cmd.Flag("darwin.notary.key", "App Store Connect API private key used for notarization.").
 		Envar(darwinNotaryKeyEnvironment).
 		PlaceHolder("<key>").
 		StringVar(&this.darwinNotaryKey)
-	cmd.Flag("darwinNotaryKeyId", "App Store Connect API key ID used for notarization.").
+	cmd.Flag("darwin.notary.keyId", "App Store Connect API key ID used for notarization.").
 		Envar("BIFROEST_DARWIN_NOTARY_KEY_ID").
 		PlaceHolder("<id>").
 		StringVar(&this.darwinNotaryKeyId)
-	cmd.Flag("darwinNotaryIssuer", "App Store Connect issuer ID used for notarization.").
+	cmd.Flag("darwin.notary.issuer", "App Store Connect issuer ID used for notarization.").
 		Envar("BIFROEST_DARWIN_NOTARY_ISSUER_ID").
 		PlaceHolder("<id>").
 		StringVar(&this.darwinNotaryIssuer)
-	cmd.Flag("darwinReleaseRequired", "Require Developer ID signing and notarization for Darwin binaries.").
+	cmd.Flag("darwin.release.required", "Require Developer ID signing and notarization for Darwin binaries.").
 		Envar("BIFROEST_DARWIN_RELEASE_REQUIRED").
 		BoolVar(&this.darwinReleaseRequired)
 }
@@ -131,8 +131,10 @@ func (this *buildBinary) compile(ctx context.Context, p *bib.Platform) (*buildAr
 		return fail(err)
 	}
 	a.thirdPartyNoticesFilepath = notice.filepath
-	if err := this.prepareDarwinBinary(ctx, a); err != nil {
-		return fail(err)
+	if p.Os == sys.OsDarwin {
+		if err := this.prepareDarwinBinary(ctx, a); err != nil {
+			return fail(err)
+		}
 	}
 
 	ld := l.With("duration", time.Since(start).Truncate(time.Millisecond))
@@ -146,8 +148,8 @@ func (this *buildBinary) compile(ctx context.Context, p *bib.Platform) (*buildAr
 	return a, notice, nil
 }
 
-func (this *buildBinary) clearDarwinSecretsFromEnvironment() {
-	for _, name := range darwinSecretEnvironment {
+func (this *buildBinary) clearSecretsFromEnvironment() {
+	for _, name := range secretEnvironmentNames {
 		_ = gos.Unsetenv(name)
 	}
 }

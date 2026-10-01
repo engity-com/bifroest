@@ -151,7 +151,7 @@ func (this *build) init(ctx context.Context, app *kingpin.Application) {
 }
 
 func (this *build) runBuild(ctx context.Context) (rErr error) {
-	this.binary.clearDarwinSecretsFromEnvironment()
+	this.binary.clearSecretsFromEnvironment()
 	as, err := this.buildAll(ctx, this.testing)
 	if err != nil {
 		return err

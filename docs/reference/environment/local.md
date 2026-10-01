@@ -7,8 +7,6 @@ toc_depth: 4
 
 Run SSH sessions as local users on the Bifröst host. Use existing accounts or optionally create, update and remove them.
 
-See the [native macOS configuration example](<<asset_url("contrib/configurations/native-macos.yaml")>>) for local authorized keys, PAM account checks, and an explicit target-account allowlist.
-
 ## Configuration
 
 <<property("type", "Environment Type", default="local", required=True, heading=3)>>
