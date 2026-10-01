@@ -150,14 +150,7 @@ func (this *local) runConPTY(Task, *exec.Cmd) (int, error) {
 func (this *local) configureCmdForPty(cmd *exec.Cmd, pty, tty *os.File) error {
 	cmd.SysProcAttr.Setsid = true
 	cmd.SysProcAttr.Setctty = true
-
-	if err := syscall.SetNonblock(int(pty.Fd()), true); err != nil {
-		return err
-	}
-	if err := syscall.SetNonblock(int(tty.Fd()), true); err != nil {
-		return err
-	}
-	return nil
+	return configureLocalPtyDescriptors(pty, tty)
 }
 
 func (this *local) getPathEnv() string {
