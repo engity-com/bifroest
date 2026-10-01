@@ -67,6 +67,9 @@ func (this *fakeDarwinRunner) Run(ctx context.Context, path string, args ...stri
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 	this.calls = append(this.calls, path+" "+strings.Join(args, " "))
+	if path == darwinDSCacheUtilPath && len(args) == 1 && args[0] == "-flushcache" {
+		return nil, nil
+	}
 	if path != darwinDSCLPath && path != darwinDSEditGroupPath {
 		return nil, fmt.Errorf("unexpected executable %q", path)
 	}
@@ -873,6 +876,7 @@ func TestDarwinDeleteRequiresLocalIdentityBinding(t *testing.T) {
 
 	require.NoError(t, repository.DeleteByIdentity(t.Context(), 501, "alice", "/Users/alice", opts))
 	require.NotContains(t, runner.users, "alice")
+	require.Contains(t, runner.calls, darwinDSCacheUtilPath+" -flushcache")
 	require.ErrorIs(t, repository.DeleteById(t.Context(), 501, opts), ErrNoSuchUser)
 }
 

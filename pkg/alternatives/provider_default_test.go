@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -40,7 +41,9 @@ func TestFindBinaryDownloadsExecutableAlternative(t *testing.T) {
 	require.Equal(t, "alternative binary", string(content))
 	info, err := os.Stat(actual)
 	require.NoError(t, err)
-	require.Equal(t, os.FileMode(0755), info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		require.Equal(t, os.FileMode(0755), info.Mode().Perm())
+	}
 }
 
 func TestDefaultProviderRejectsDarwinOciImage(t *testing.T) {
