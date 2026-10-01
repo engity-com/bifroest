@@ -63,6 +63,9 @@ jobs:
           MISE_GITHUB_TOKEN: ""
         run: mise run build:go:binary -- --os=windows --arch=amd64 --edition=generic
 
+      - name: Test Windows local authorization
+        run: go test ./pkg/configuration ./pkg/authorization ./pkg/windowslocal ./pkg/service -run '^(TestWindowsLocal.*|TestLocalSAMIntegration|TestSIDMatching|TestMissingIdentity|TestNames|TestFieldsWithoutConfiguration|TestInvalidCredentials|TestS4ULogonBuffer)$'
+
       - name: Start Windows Docker daemon
         shell: pwsh
         run: |

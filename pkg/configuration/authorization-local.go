@@ -1,4 +1,4 @@
-//go:build unix
+//go:build unix || windows
 
 package configuration
 
@@ -43,12 +43,15 @@ func (this *AuthorizationLocal) Trim() error {
 }
 
 func (this *AuthorizationLocal) Validate() error {
-	return validate(this,
+	if err := validate(this,
 		func(v *AuthorizationLocal) (string, validator) { return "", &v.UserCertificateAuthorityProperties },
 		func(v *AuthorizationLocal) (string, validator) { return "authorizedKeys", &v.AuthorizedKeys },
 		func(v *AuthorizationLocal) (string, validator) { return "password", &v.Password },
 		noopValidate[AuthorizationLocal]("pamService"),
-	)
+	); err != nil {
+		return err
+	}
+	return validateAuthorizationLocalPamService(this.PamService)
 }
 
 func (this *AuthorizationLocal) UnmarshalYAML(node *yaml.Node) error {
