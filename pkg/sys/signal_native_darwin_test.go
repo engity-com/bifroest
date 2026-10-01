@@ -21,17 +21,15 @@ func TestDarwinSignalMappings(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		native, err := test.protocol.Native()
-		require.NoError(t, err)
+		native, ok := signalToNative(test.protocol)
+		require.True(t, ok)
 		require.Equal(t, test.native, native)
-
-		protocol, err := SignalFromNative(test.native)
-		require.NoError(t, err)
-		require.Equal(t, test.protocol, protocol)
+		require.Equal(t, test.native, test.protocol.Native())
 	}
 }
 
 func TestDarwinRejectsLinuxOnlySignal(t *testing.T) {
-	_, err := SIGPWR.Native()
-	require.ErrorIs(t, err, ErrUnsupportedSignal)
+	_, ok := signalToNative(SIGPWR)
+	require.False(t, ok)
+	require.Zero(t, SIGPWR.Native())
 }

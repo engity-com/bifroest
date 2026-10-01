@@ -17,7 +17,7 @@ func DoesEditionSupportBinaryFor(e sys.Edition, o sys.Os, a sys.Arch, assumedOs 
 	}
 
 	if o == sys.OsDarwin {
-		return e == sys.EditionExtended && assumedOs == o && assumedArch == a
+		return e == sys.EditionGeneric && assumedOs == o && assumedArch == a
 	}
 
 	if e == sys.EditionGeneric {

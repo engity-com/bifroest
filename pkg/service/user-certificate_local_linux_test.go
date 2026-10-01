@@ -10,7 +10,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/engity-com/bifroest/pkg/configuration"
 	buser "github.com/engity-com/bifroest/pkg/user"
 )
 
@@ -34,8 +33,4 @@ func prepareLocalUserCertificateTest(t *testing.T) string {
 	}}
 	t.Cleanup(func() { buser.DefaultRepositoryProvider = previousRepositoryProvider })
 	return username
-}
-
-func configureLocalUserCertificateAuthorization(local *configuration.AuthorizationLocal) {
-	local.PamService = ""
 }

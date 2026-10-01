@@ -22,7 +22,6 @@ import (
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/debug"
 	"github.com/engity-com/bifroest/pkg/errors"
-	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 var _ = registerCommand(func(app *kingpin.Application) {
@@ -121,11 +120,7 @@ func doDlv(addr string, wait bool, args []string) (rErr error) {
 				if !ok {
 					continue
 				}
-				sig, err := sys.SignalFromNative(scs)
-				if err != nil {
-					continue
-				}
-				_ = sig.SendToPid(pid)
+				_ = syscall.Kill(pid, scs)
 			}
 		}
 	}()

@@ -16,10 +16,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-const (
-	releaseManifestFilename = "bifroest-release-manifest.json"
-	releaseChecksumFilename = "bifroest-checksums.txt"
-)
+const releaseManifestFilename = "bifroest-release-manifest.json"
 
 type buildReleaseManifest struct {
 	*build
@@ -305,7 +302,7 @@ func (this *buildReleaseManifest) create(_ context.Context, artifacts buildArtif
 		Created:       artifacts[0].time.UTC().Format(time.RFC3339),
 		Registry:      this.repo.fullImageName(),
 		ManifestAsset: releaseManifestFilename,
-		ChecksumAsset: releaseChecksumFilename,
+		ChecksumAsset: "bifroest-checksums.txt",
 		Assets:        assets,
 		Variants:      variants,
 	}

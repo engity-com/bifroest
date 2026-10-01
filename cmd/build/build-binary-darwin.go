@@ -120,6 +120,9 @@ func (this *buildBinary) prepareDarwinBinary(ctx context.Context, artifact *buil
 }
 
 func validateDarwinBinary(ctx context.Context, artifact *buildArtifact) error {
+	if artifact.Edition != sys.EditionGeneric {
+		return fmt.Errorf("unsupported Darwin edition: %s", artifact.Edition)
+	}
 	if _, err := runDarwinBuildCommand(ctx, artifact.filepath, "version", "--no-long"); err != nil {
 		return err
 	}
@@ -156,8 +159,8 @@ func validateDarwinBinary(ctx context.Context, artifact *buildArtifact) error {
 	if err != nil {
 		return err
 	}
-	if !strings.Contains(dependencies, "/usr/lib/libpam.2.dylib") {
-		return fmt.Errorf("darwin binary is not linked to system PAM")
+	if strings.Contains(dependencies, "/usr/lib/libpam.2.dylib") {
+		return fmt.Errorf("generic darwin binary unexpectedly links to system PAM")
 	}
 	for index, line := range strings.Split(dependencies, "\n") {
 		if index == 0 || strings.TrimSpace(line) == "" {
@@ -168,21 +171,15 @@ func validateDarwinBinary(ctx context.Context, artifact *buildArtifact) error {
 			return fmt.Errorf("darwin binary has non-system dependency %q", dependency)
 		}
 	}
-	symbols, err := runDarwinBuildCommand(ctx, "nm", "-m", artifact.filepath)
-	if err != nil {
-		return err
-	}
-	for _, symbol := range []string{"_pam_start", "_pam_authenticate", "_pam_acct_mgmt"} {
-		if !strings.Contains(symbols, "(undefined) external "+symbol+" (from libpam)") {
-			return fmt.Errorf("darwin binary does not resolve PAM symbol %s dynamically", symbol)
-		}
-	}
 	binaryStrings, err := runDarwinBuildCommand(ctx, "strings", artifact.filepath)
 	if err != nil {
 		return err
 	}
 	if regexp.MustCompile(`/Applications/Xcode|/Library/Developer|MacOSX[^/]*\.sdk`).MatchString(binaryStrings) {
 		return fmt.Errorf("darwin binary embeds an Apple SDK or Xcode path")
+	}
+	if !strings.Contains(binaryStrings, "/usr/lib/libpam.2.dylib") {
+		return fmt.Errorf("generic darwin binary does not contain the system PAM loader path")
 	}
 	return nil
 }

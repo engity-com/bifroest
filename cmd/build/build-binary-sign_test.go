@@ -29,7 +29,7 @@ func TestSignDarwinUsesHardenedRuntimeAndTimestamp(t *testing.T) {
 
 	build, buildContext := testReleaseManifestBuild(t)
 	build.binary.darwinSigningIdentity = "Developer ID Application: Engity GmbH (TEAMID)"
-	artifact := testReleaseManifestFile(t, buildContext, &bib.Platform{Os: sys.OsDarwin, Arch: sys.ArchArm64, Edition: sys.EditionExtended}, buildArtifactTypeBinary, "bifroest", "binary", nil)
+	artifact := testReleaseManifestFile(t, buildContext, &bib.Platform{Os: sys.OsDarwin, Arch: sys.ArchArm64, Edition: sys.EditionGeneric}, buildArtifactTypeBinary, "bifroest", "binary", nil)
 
 	require.NoError(t, build.binary.signDarwin(t.Context(), artifact))
 	raw, err := gos.ReadFile(logFilename)
@@ -96,9 +96,8 @@ func TestPrepareDarwinReleaseOwnsCredentialLifecycle(t *testing.T) {
 	writeDarwinTestCommand(t, directory, "lipo", "test -z \"${BIFROEST_DARWIN_CERTIFICATE:-}${BIFROEST_DARWIN_CERTIFICATE_PASSWORD:-}${BIFROEST_DARWIN_NOTARY_KEY:-}\"; echo arm64")
 	writeDarwinTestCommand(t, directory, "file", "echo 'Mach-O 64-bit executable arm64'")
 	writeDarwinTestCommand(t, directory, "vtool", "echo 'minos 13.0'")
-	writeDarwinTestCommand(t, directory, "otool", "printf '%s\\n' binary '/usr/lib/libpam.2.dylib (compatibility version 1.0.0)' '/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)'")
-	writeDarwinTestCommand(t, directory, "nm", "printf '%s\\n' '(undefined) external _pam_start (from libpam)' '(undefined) external _pam_authenticate (from libpam)' '(undefined) external _pam_acct_mgmt (from libpam)'")
-	writeDarwinTestCommand(t, directory, "strings", ":")
+	writeDarwinTestCommand(t, directory, "otool", "printf '%s\\n' binary '/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)'")
+	writeDarwinTestCommand(t, directory, "strings", "echo /usr/lib/libpam.2.dylib")
 	writeDarwinTestCommand(t, directory, "security", "if test \"$*\" = 'list-keychains -d user'; then echo '\"/Users/test/Login Keychain.keychain-db\"'; elif test \"$1\" = find-identity; then echo 'Developer ID Application: Engity GmbH (TEAMID)'; fi")
 	writeDarwinTestCommand(t, directory, "codesign", "if test \"$1\" = --display; then printf '%s\\n' 'Authority=Developer ID Application: Engity GmbH (TEAMID)' 'TeamIdentifier=TEAMID' 'CodeDirectory v=20500 size=1 flags=0x10000(runtime)' 'Timestamp=Sep 28, 2026'; fi")
 	writeDarwinTestCommand(t, directory, "ditto", ":")
@@ -113,7 +112,7 @@ func TestPrepareDarwinReleaseOwnsCredentialLifecycle(t *testing.T) {
 	build.binary.darwinNotaryKeyId = "KEYID"
 	build.binary.darwinNotaryIssuer = "ISSUER"
 	build.binary.darwinReleaseRequired = true
-	artifact := testReleaseManifestFile(t, buildContext, &bib.Platform{Os: sys.OsDarwin, Arch: sys.ArchArm64, Edition: sys.EditionExtended}, buildArtifactTypeBinary, "bifroest", "#!/bin/sh\necho version\n", nil)
+	artifact := testReleaseManifestFile(t, buildContext, &bib.Platform{Os: sys.OsDarwin, Arch: sys.ArchArm64, Edition: sys.EditionGeneric}, buildArtifactTypeBinary, "bifroest", "#!/bin/sh\necho version\n", nil)
 	require.NoError(t, gos.Chmod(artifact.filepath, 0755))
 
 	require.NoError(t, build.binary.prepareDarwinBinary(t.Context(), artifact))
@@ -127,6 +126,33 @@ func TestPrepareDarwinReleaseOwnsCredentialLifecycle(t *testing.T) {
 	require.Contains(t, commands, "spctl --assess --type execute")
 	require.Contains(t, commands, "security list-keychains -d user -s /Users/test/Login Keychain.keychain-db")
 	require.Contains(t, commands, "security delete-keychain")
+}
+
+func TestValidateGenericDarwinBinaryUsesDynamicPam(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses POSIX executables")
+	}
+	directory := t.TempDir()
+	t.Setenv("DARWIN_COMMAND_LOG", filepath.Join(directory, "commands.log"))
+	t.Setenv("PATH", directory+string(gos.PathListSeparator)+gos.Getenv("PATH"))
+	writeDarwinTestCommand(t, directory, "lipo", "echo arm64")
+	writeDarwinTestCommand(t, directory, "file", "echo 'Mach-O 64-bit executable arm64'")
+	writeDarwinTestCommand(t, directory, "vtool", "echo 'minos 13.0'")
+	writeDarwinTestCommand(t, directory, "otool", "printf '%s\\n' binary '/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)'")
+	writeDarwinTestCommand(t, directory, "strings", "echo /usr/lib/libpam.2.dylib")
+
+	_, buildContext := testReleaseManifestBuild(t)
+	artifact := testReleaseManifestFile(t, buildContext, &bib.Platform{Os: sys.OsDarwin, Arch: sys.ArchArm64, Edition: sys.EditionGeneric}, buildArtifactTypeBinary, "bifroest", "#!/bin/sh\nexit 0\n", nil)
+	require.NoError(t, gos.Chmod(artifact.filepath, 0755))
+
+	require.NoError(t, validateDarwinBinary(t.Context(), artifact))
+}
+
+func TestValidateDarwinBinaryRejectsExtendedEdition(t *testing.T) {
+	_, buildContext := testReleaseManifestBuild(t)
+	artifact := testReleaseManifestFile(t, buildContext, &bib.Platform{Os: sys.OsDarwin, Arch: sys.ArchArm64, Edition: sys.EditionExtended}, buildArtifactTypeBinary, "bifroest", "binary", nil)
+
+	require.ErrorContains(t, validateDarwinBinary(t.Context(), artifact), "unsupported Darwin edition: extended")
 }
 
 func TestNotarizeDarwinRejectsInvalidSubmission(t *testing.T) {

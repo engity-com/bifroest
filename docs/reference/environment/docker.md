@@ -196,7 +196,7 @@ Each container accepts at most 64 simultaneous reverse-forwarded TCP connections
 
 On Linux, reverse TCP ports 1-1023 require a target user with UID 0 (for example `user: root` or `user: "0"`). An empty `user` setting is also permitted when the resolved image user is root. An unresolvable user cannot authorize these ports. Port `0` and ports 1024 and above are unchanged. Windows containers do not have this restriction.
 
-<<property("impPublishHost", "Host", "../data-type.md#host")>>
+<<property("impPublishHost", "string")>>
 If this property is set, only the IMP port `8683` is published with a dynamically allocated host port in addition to being exposed on the container network. Other ports declared with the image's `EXPOSE` instruction are not published automatically.
 
 At this address Bifröst will then connect to the published IMP port. The value is not passed to the Docker daemon as a host-interface binding; the daemon chooses the publish interface according to its own defaults. This property is static and does not support template evaluation.
@@ -287,4 +287,4 @@ Holds the tag of the image to be downloaded.
 
 | <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
 | - | - | - |
-| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(None,True,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |
+| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |

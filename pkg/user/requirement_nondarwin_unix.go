@@ -1,3 +1,5 @@
+//go:build unix && !darwin
+
 package user
 
 func (this Requirement) doesFulfilRef(target *etcPasswdRef) bool {

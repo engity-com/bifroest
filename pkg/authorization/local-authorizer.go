@@ -29,7 +29,6 @@ type LocalAuthorizer struct {
 	flow           configuration.FlowName
 	conf           *configuration.AuthorizationLocal
 	trustedUserCAs []ssh.PublicKey
-	accountChecker func(string, string) (bool, error)
 
 	Logger log.Logger
 
@@ -91,12 +90,6 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	if err != nil {
 		return failf("cannot lookup user: %w", err)
 	}
-	if ok, err := this.isRequestedAccountBound(req.Context(), req.Connection().Remote().User(), u, u); err != nil {
-		return failf("cannot bind requested user to local account: %w", err)
-	} else if !ok {
-		return Forbidden(req.Connection().Remote()), nil
-	}
-
 	candidate := local{
 		u,
 		req.Connection().Remote(),
@@ -121,19 +114,10 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	}
 	candidate.authorizedKeyPolicy = policy
 
-	if !isPublicKeyVerified(req) {
-		return &candidate, nil
-	}
-
-	accountAllowed, err := this.checkAccount(u.Name, req.Connection().Remote().Host().String())
-	if err != nil {
-		return fail(errors.Newf(errors.System, "cannot check PAM account: %w", err))
-	}
-	if !accountAllowed {
-		return Forbidden(req.Connection().Remote()), nil
-	}
-
 	if isCertificate {
+		if !isPublicKeyVerified(req) {
+			return &candidate, nil
+		}
 		sess, err := this.ensureSessionFor(req, u)
 		if err != nil {
 			return fail(err)
@@ -164,13 +148,6 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	return &candidate, nil
 }
 
-func (this *LocalAuthorizer) checkAccount(username, remoteHost string) (bool, error) {
-	if this.accountChecker != nil {
-		return this.accountChecker(username, remoteHost)
-	}
-	return checkLocalAccount(this.conf.PamService, username, remoteHost)
-}
-
 func (this *LocalAuthorizer) authorizedKeyPolicy(req PublicKeyRequest, u *user.User) (*AuthorizedKeyPolicy, bool, bool, error) {
 	fail := func(err error) (*AuthorizedKeyPolicy, bool, bool, error) {
 		return nil, false, false, err
@@ -191,7 +168,7 @@ func (this *LocalAuthorizer) authorizedKeyPolicy(req PublicKeyRequest, u *user.U
 	policy, accepted, err := evaluatePublicKeyCredential(
 		req.RemotePublicKey(), req.Connection().Remote().User(), req.Connection().Remote().Host(), this.trustedUserCAs,
 		func(consumer func(ssh.PublicKey, []crypto.AuthorizedKeyOption) (bool, error)) error {
-			_, err := crypto.DoWithEachAuthorizedKeyUsingReader[bool](false, secureLocalAuthorizedKeysReader(u.Uid), func(candidate ssh.PublicKey, options []crypto.AuthorizedKeyOption) (bool, bool, error) {
+			_, err := crypto.DoWithEachAuthorizedKey[bool](false, func(candidate ssh.PublicKey, options []crypto.AuthorizedKeyOption) (bool, bool, error) {
 				canContinue, err := consumer(candidate, options)
 				return !canContinue, canContinue, err
 			}, files...)
@@ -298,12 +275,6 @@ func (this *LocalAuthorizer) AuthorizePassword(req PasswordRequest) (Authorizati
 	if err != nil {
 		return failf("cannot lookup user %q: %w", username, err)
 	}
-	if ok, err := this.isRequestedAccountBound(req.Context(), req.Connection().Remote().User(), nil, u); err != nil {
-		return failf("cannot bind requested user to authenticated local account: %w", err)
-	} else if !ok {
-		return Forbidden(req.Connection().Remote()), nil
-	}
-
 	candidate := local{
 		u,
 		req.Connection().Remote(),
@@ -363,12 +334,6 @@ func (this *LocalAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Autho
 	if err != nil {
 		return failf("cannot lookup user %q: %w", username, err)
 	}
-	if ok, err := this.isRequestedAccountBound(req.Context(), req.Connection().Remote().User(), nil, u); err != nil {
-		return failf("cannot bind requested user to authenticated local account: %w", err)
-	} else if !ok {
-		return Forbidden(req.Connection().Remote()), nil
-	}
-
 	candidate := local{
 		u,
 		req.Connection().Remote(),
@@ -456,12 +421,6 @@ func (this *LocalAuthorizer) RestoreFromSession(ctx context.Context, sess sessio
 	} else {
 		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("local authorization token contains no user reference"))
 	}
-	if ok, err := this.isRestoredAccountBound(ctx, &buf.User, u); err != nil {
-		return failf(errors.System, "cannot verify restored local account: %w", err)
-	} else if !ok {
-		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("stored local account name and UID no longer identify the same account"))
-	}
-
 	si, err := sess.Info(ctx)
 	if err != nil {
 		return failf(errors.System, "cannot retrieve session's info: %w", err)
@@ -470,14 +429,6 @@ func (this *LocalAuthorizer) RestoreFromSession(ctx context.Context, sess sessio
 	if err != nil {
 		return failf(errors.System, "cannot retrieve session's last accessed: %w", err)
 	}
-	accountAllowed, err := this.checkAccount(u.Name, sla.Remote().Host().String())
-	if err != nil {
-		return failf(errors.System, "cannot check PAM account: %w", err)
-	}
-	if !accountAllowed {
-		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("local account %q is no longer authorized by PAM", u.Name))
-	}
-
 	return &local{
 		u,
 		sla.Remote(),
@@ -493,11 +444,13 @@ func (this *LocalAuthorizer) Close() error {
 	return this.userRepository.Close()
 }
 
+//nolint:unused // Used on Linux and in non-PAM builds.
 func (this *LocalAuthorizer) checkPasswordViaRepository(req PasswordRequest, requestedUsername string, validatePassword func(string, Request) (bool, error)) (username string, env sys.EnvVars, success bool, rErr error) {
 	pass := req.RemotePassword()
 	return this.checkPasswordValueViaRepository(req, pass, requestedUsername, validatePassword)
 }
 
+//nolint:unused // Used on Linux and in non-PAM builds.
 func (this *LocalAuthorizer) checkInteractiveViaRepository(req InteractiveRequest, requestedUsername string, validatePassword func(string, Request) (bool, error)) (username string, env sys.EnvVars, success bool, rErr error) {
 	pass, err := req.Prompt("Password: ", false)
 	if err != nil {
@@ -507,6 +460,7 @@ func (this *LocalAuthorizer) checkInteractiveViaRepository(req InteractiveReques
 	return this.checkPasswordValueViaRepository(req, pass, requestedUsername, validatePassword)
 }
 
+//nolint:unused // Used on Linux and in non-PAM builds.
 func (this *LocalAuthorizer) checkPasswordValueViaRepository(req Request, requestedPassword, requestedUsername string, validatePassword func(string, Request) (bool, error)) (username string, env sys.EnvVars, success bool, rErr error) {
 	ok, err := validatePassword(requestedPassword, req)
 	if err != nil || !ok {

@@ -265,11 +265,7 @@ func (*imp) killWithoutPidfd(target processTarget, signal sys.Signal) error {
 		return ErrNoSuchProcess
 	}
 	pid := target.pid
-	native, err := signal.Native()
-	if err != nil {
-		return err
-	}
-	if err := syscall.Kill(pid, native); errors.Is(err, syscall.ESRCH) {
+	if err := syscall.Kill(pid, signal.Native()); errors.Is(err, syscall.ESRCH) {
 		return ErrNoSuchProcess
 	} else {
 		return err
@@ -277,11 +273,7 @@ func (*imp) killWithoutPidfd(target processTarget, signal sys.Signal) error {
 }
 
 var sendPidfdSignal = func(pidfd int, signal sys.Signal, flags int) error {
-	native, err := signal.Native()
-	if err != nil {
-		return err
-	}
-	if err := unix.PidfdSendSignal(pidfd, unix.Signal(native), nil, flags); errors.Is(err, syscall.ESRCH) {
+	if err := unix.PidfdSendSignal(pidfd, unix.Signal(signal.Native()), nil, flags); errors.Is(err, syscall.ESRCH) {
 		return ErrNoSuchProcess
 	} else {
 		return err

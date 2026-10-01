@@ -60,6 +60,9 @@ Update or adopt an existing account and enroll it in `managedGroup`. The templat
 
 On macOS, Bifröst mutates only records in the local `/Local/Default` Directory Services node. Network and domain identities can be resolved for use but are never modified or deleted. Newly created accounts receive no local password from Bifröst; PAM continues to validate credentials that were provisioned externally.
 
+<<property("targetAccountPolicy", "Target Account Policy", "#target-account-policy", default="{}", heading=4)>>
+**macOS only.** Restricts which resolved local account a session may use. The policy is checked before account mutation, inside managed-account provisioning before commit, when restoring an environment and immediately before process start.
+
 ##### Examples
 
 ```yaml
@@ -76,6 +79,49 @@ Static local group that sets [`.user.managed`](../context/local-user.md#property
 Explicitly permit management and cleanup of Unix UID 0 or protected Windows accounts such as the built-in Administrator. Unix does **not** automatically classify other service UIDs as system users; use the [Local Environment context](../context/local-environment.md) in the cleanup templates to restrict them. `manageSystemUsers` itself has no `.user` and should be enabled only deliberately.
 
 The cleanup switches under [Dispose](#dispose) are top-level properties of `local`, not a nested `dispose` object.
+
+### Target Account Policy {: #target-account-policy}
+
+These properties are available only on macOS. Denylists always win. If multiple allowlists are non-empty, the target must satisfy every one; a group allowlist is satisfied by the primary group or any supplementary group.
+
+<<property("allowUidZero", "bool", default=False, id_prefix="targetAccountPolicy-", heading=4)>>
+Permit a target account with UID `0`.
+
+<<property("allowSystemAccounts", "bool", default=False, id_prefix="targetAccountPolicy-", heading=4)>>
+Permit macOS system accounts whose names begin with `_`.
+
+<<property("allowAdministrators", "bool", default=False, id_prefix="targetAccountPolicy-", heading=4)>>
+Permit accounts that belong to the local `admin` group.
+
+<<property("allowNonLoginShell", "bool", default=False, id_prefix="targetAccountPolicy-", heading=4)>>
+Permit accounts whose shell is empty, non-executable, absent from `/etc/shells`, or conventionally disables login.
+
+<<property("allowUnsafeNoneAuthorization", "bool", default=False, id_prefix="targetAccountPolicy-", heading=4)>>
+Permit the unauthenticated [`none`](../authorization/none.md) authorization type to select a local target account. Keep this disabled on host environments.
+
+<<property("allowedNames", array_ref("string"), default="[]", id_prefix="targetAccountPolicy-", heading=4)>>
+Allow only accounts with one of these exact names when the list is non-empty.
+
+<<property("deniedNames", array_ref("string"), default="[]", id_prefix="targetAccountPolicy-", heading=4)>>
+Deny accounts with any of these exact names.
+
+<<property("allowedUids", array_ref("UID", "../data-type.md#uid"), default="[]", id_prefix="targetAccountPolicy-", heading=4)>>
+Allow only accounts with one of these UIDs when the list is non-empty.
+
+<<property("deniedUids", array_ref("UID", "../data-type.md#uid"), default="[]", id_prefix="targetAccountPolicy-", heading=4)>>
+Deny accounts with any of these UIDs.
+
+<<property("allowedGroups", array_ref("string"), default="[]", id_prefix="targetAccountPolicy-", heading=4)>>
+Require membership in at least one of these exact group names when the list is non-empty.
+
+<<property("deniedGroups", array_ref("string"), default="[]", id_prefix="targetAccountPolicy-", heading=4)>>
+Deny accounts that belong to any of these exact group names.
+
+<<property("allowedGids", array_ref("GID", "../data-type.md#gid"), default="[]", id_prefix="targetAccountPolicy-", heading=4)>>
+Require membership in at least one of these GIDs when the list is non-empty.
+
+<<property("deniedGids", array_ref("GID", "../data-type.md#gid"), default="[]", id_prefix="targetAccountPolicy-", heading=4)>>
+Deny accounts that belong to any of these GIDs.
 
 ### Session
 
@@ -217,4 +263,4 @@ deleteOnDispose: "{{.user.managed}}"
 
 | <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
 | - | - | - |
-| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(None,True,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |
+| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |

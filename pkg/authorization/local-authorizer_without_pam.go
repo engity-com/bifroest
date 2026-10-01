@@ -1,9 +1,10 @@
-//go:build unix && (!cgo || without_pam || (!linux && !darwin))
+//go:build unix && (without_pam || (linux && !cgo) || (!linux && !darwin))
 
 package authorization
 
 import (
-	"github.com/engity-com/bifroest/pkg/errors"
+	"fmt"
+
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -23,14 +24,7 @@ func (this *LocalAuthorizer) checkInteractive(req InteractiveRequest, requestedU
 
 func (this *LocalAuthorizer) assertNoPamServiceConfigured() error {
 	if v := this.conf.PamService; v != "" {
-		return errors.Config.Newf("this build of Engity's Bifröst does not support PAM, so configuration parameter pamService must be empty; got: %q", v)
+		return fmt.Errorf("this version of Engity's Bifröst is build without PAM support therefore configuration parameter pamService needs to be leave empty; but was: %q", v)
 	}
 	return nil
-}
-
-func checkLocalAccount(pamService, _, _ string) (bool, error) {
-	if pamService != "" {
-		return false, errors.Config.Newf("this build of Engity's Bifröst does not support PAM, so configuration parameter pamService must be empty; got: %q", pamService)
-	}
-	return true, nil
 }

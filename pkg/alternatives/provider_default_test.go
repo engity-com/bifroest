@@ -4,11 +4,10 @@ package alternatives
 
 import (
 	"context"
-	"errors"
-	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -18,41 +17,16 @@ import (
 	"github.com/engity-com/bifroest/pkg/template"
 )
 
-func TestPublishAlternativeCreatesExecutable(t *testing.T) {
+func TestFindBinaryDownloadsExecutableAlternative(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "bifroest")
-
-	require.NoError(t, publishAlternative(target, strings.NewReader("alternative binary")))
-
-	content, err := os.ReadFile(target)
-	require.NoError(t, err)
-	require.Equal(t, "alternative binary", string(content))
-	info, err := os.Stat(target)
-	require.NoError(t, err)
-	require.Equal(t, os.FileMode(0755), info.Mode().Perm())
-}
-
-func TestPublishAlternativeDoesNotExposePartialDownload(t *testing.T) {
-	directory := t.TempDir()
-	target := filepath.Join(directory, "bifroest")
-	require.NoError(t, os.WriteFile(target, []byte("existing binary"), 0755))
-
-	err := publishAlternative(target, io.MultiReader(strings.NewReader("partial replacement"), failingReader{}))
-	require.ErrorContains(t, err, "download failed")
-
-	content, err := os.ReadFile(target)
-	require.NoError(t, err)
-	require.Equal(t, "existing binary", string(content))
-	entries, err := os.ReadDir(directory)
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
-}
-
-func TestFindBinaryMakesCachedAlternativeExecutable(t *testing.T) {
-	target := filepath.Join(t.TempDir(), "linux-arm64")
-	require.NoError(t, os.WriteFile(target, []byte("cached binary"), 0644))
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte("alternative binary"))
+	}))
+	t.Cleanup(server.Close)
 	p := &provider{
 		conf: &configuration.Alternatives{
-			Location: template.MustNewString(target),
+			Location:    template.MustNewString(target),
+			DownloadUrl: template.MustNewUrl(server.URL + "/bifroest"),
 		},
 		version: alternativesTestVersion{},
 	}
@@ -60,7 +34,11 @@ func TestFindBinaryMakesCachedAlternativeExecutable(t *testing.T) {
 	actual, err := p.FindBinaryFor(context.Background(), sys.OsLinux, sys.ArchArm64)
 	require.NoError(t, err)
 	require.Equal(t, target, actual)
-	info, err := os.Stat(target)
+
+	content, err := os.ReadFile(actual)
+	require.NoError(t, err)
+	require.Equal(t, "alternative binary", string(content))
+	info, err := os.Stat(actual)
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(0755), info.Mode().Perm())
 }
@@ -68,12 +46,6 @@ func TestFindBinaryMakesCachedAlternativeExecutable(t *testing.T) {
 func TestDefaultProviderRejectsDarwinOciImage(t *testing.T) {
 	_, err := (&provider{}).FindOciImageFor(context.Background(), sys.OsDarwin, sys.ArchArm64)
 	require.ErrorContains(t, err, "darwin is unsupported for OCI images")
-}
-
-type failingReader struct{}
-
-func (failingReader) Read([]byte) (int, error) {
-	return 0, errors.New("download failed")
 }
 
 type alternativesTestVersion struct {

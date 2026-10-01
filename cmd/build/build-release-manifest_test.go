@@ -155,7 +155,6 @@ func testReleaseManifestBuild(t *testing.T) (*build, *buildContext) {
 		vendor:   "Engity GmbH",
 		revision: "revision",
 	}
-	build.buildContextP.Store(buildContext)
 	return build, buildContext
 }
 

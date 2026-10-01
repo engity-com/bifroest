@@ -30,7 +30,10 @@ type DarwinRepository struct {
 }
 
 func init() {
-	DefaultRepositoryProvider = &SharedRepositoryProvider[*DarwinRepository]{V: &DarwinRepository{}}
+	DefaultRepositoryProvider = &SharedRepositoryProvider[*DarwinRepository]{
+		V:                          &DarwinRepository{},
+		ForwardCleanupCapabilities: true,
+	}
 }
 
 var _ CloseableRepository = (*DarwinRepository)(nil)

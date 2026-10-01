@@ -37,20 +37,7 @@ var signalToNativeDarwin = map[Signal]syscall.Signal{
 	SIGSYS:    syscall.SIGSYS,
 }
 
-var signalFromNativeDarwin = func() map[syscall.Signal]Signal {
-	result := make(map[syscall.Signal]Signal, len(signalToNativeDarwin))
-	for protocol, native := range signalToNativeDarwin {
-		result[native] = protocol
-	}
-	return result
-}()
-
 func signalToNative(signal Signal) (syscall.Signal, bool) {
 	result, ok := signalToNativeDarwin[signal]
-	return result, ok
-}
-
-func signalFromNative(signal syscall.Signal) (Signal, bool) {
-	result, ok := signalFromNativeDarwin[signal]
 	return result, ok
 }

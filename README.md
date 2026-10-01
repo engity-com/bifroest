@@ -52,8 +52,6 @@ If a local environment is used where the user executes inside and [OpenID Connec
 
 It can also automatically clean up these users as they're no longer needed, for example: If their session becoming idle and times out (30 minutes). In this case the user itself, its home directory and all running processes can be cleaned up.
 
-Automatic local-account provisioning and coordinated cleanup are available.
-
 #### More to come...
 
 ## What's next?

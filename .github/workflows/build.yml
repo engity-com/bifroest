@@ -57,6 +57,7 @@ jobs:
       matrix: ${{ fromJSON(inputs.test_host_matrix) }}
     runs-on: ${{ matrix.runner }}
     env:
+      CGO_ENABLED: "0"
       GITHUB_TOKEN: ""
     steps:
       - name: Checkout code

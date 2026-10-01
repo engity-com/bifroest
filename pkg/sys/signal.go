@@ -13,10 +13,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/codec"
 )
 
-var (
-	ErrUnknownSignal     = errors.New("unknown signal")
-	ErrUnsupportedSignal = errors.New("unsupported signal")
-)
+var ErrUnknownSignal = errors.New("unknown signal")
 
 type Signal uint16
 
@@ -98,18 +95,9 @@ func (this Signal) IsZero() bool {
 	return this == 0
 }
 
-func (this Signal) Native() (syscall.Signal, error) {
-	if result, ok := signalToNative(this); ok {
-		return result, nil
-	}
-	return 0, fmt.Errorf("%w: %s", ErrUnsupportedSignal, this)
-}
-
-func SignalFromNative(signal syscall.Signal) (Signal, error) {
-	if result, ok := signalFromNative(signal); ok {
-		return result, nil
-	}
-	return 0, fmt.Errorf("%w: %d", ErrUnsupportedSignal, signal)
+func (this Signal) Native() syscall.Signal {
+	result, _ := signalToNative(this)
+	return result
 }
 
 func (this Signal) IsEqualTo(other any) bool {
@@ -119,11 +107,9 @@ func (this Signal) IsEqualTo(other any) bool {
 	case *Signal:
 		return this == *v
 	case syscall.Signal:
-		native, err := this.Native()
-		return err == nil && native == v
+		return this.Native() == v
 	case *syscall.Signal:
-		native, err := this.Native()
-		return err == nil && native == *v
+		return this.Native() == *v
 	default:
 		return false
 	}

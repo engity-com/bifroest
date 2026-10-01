@@ -12,7 +12,7 @@ Always authorizes a user regardless of the password used, even if no password or
 
       There are only very rare cases where this makes sense. Only in cases like creating a demo server does it make sense to use it. See [our demonstration/training use case as a ligable example](../../usecases.md#demos)
 
-     A Unix local environment rejects `none` authorization by default. Its [`targetAccountPolicy.allowUnsafeNoneAuthorization`](../environment/local.md#targetAccountPolicy-property-allowUnsafeNoneAuthorization) override removes that safeguard and can turn an unauthenticated SSH connection into local account access. Do not enable it on a host environment; if a controlled test requires it, also constrain the target with explicit account allowlists.
+     A macOS local environment rejects `none` authorization by default. Its [`targetAccountPolicy.allowUnsafeNoneAuthorization`](../environment/local.md#targetAccountPolicy-property-allowUnsafeNoneAuthorization) override removes that safeguard and can turn an unauthenticated SSH connection into local account access. Do not enable it on a host environment; if a controlled test requires it, also constrain the target with explicit account allowlists.
 
 ## Properties
 
@@ -32,4 +32,4 @@ type: none
 
 | <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
 | - | - | - |
-| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(None,True,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |
+| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |

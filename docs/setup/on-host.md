@@ -17,7 +17,7 @@ toc_depth: 3
 
     #### Syntax
     ```shell
-    curl -sSLf <<release_asset_url("bifroest-linux-<arch>-<edition>.tgz")>> | sudo tar -zxv -C /usr/bin bifroest
+    curl -sSLf <<release_asset_url("bifroest-windows-<arch>-<edition>.tgz")>> | sudo tar -zxv -C /usr/bin bifroest
     ```
 
     #### Matrix
@@ -68,18 +68,18 @@ This guide supports Intel (`amd64`) and Apple silicon (`arm64`) on macOS 13 and 
 !!! warning
      Bifröst uses the standard SSH port `22`. If macOS Remote Login already occupies that port, Bifröst fails to start. Disable Remote Login before installing the LaunchDaemon.
 
-1. Download and install the extended Bifröst archive:
+1. Download and install the generic Bifröst archive:
     ```shell
     rm -rf /tmp/bifroest-release
     mkdir -p /tmp/bifroest-release
     case "$(uname -m)" in
       arm64)
-        archive=bifroest-darwin-arm64-extended.tgz
-        archive_url=<<release_asset_url("bifroest-darwin-arm64-extended.tgz")>>
+        archive=bifroest-darwin-arm64-generic.tgz
+        archive_url=<<release_asset_url("bifroest-darwin-arm64-generic.tgz")>>
         ;;
       x86_64)
-        archive=bifroest-darwin-amd64-extended.tgz
-        archive_url=<<release_asset_url("bifroest-darwin-amd64-extended.tgz")>>
+        archive=bifroest-darwin-amd64-generic.tgz
+        archive_url=<<release_asset_url("bifroest-darwin-amd64-generic.tgz")>>
         ;;
       *) echo "Unsupported macOS architecture: $(uname -m)" >&2; exit 1 ;;
     esac

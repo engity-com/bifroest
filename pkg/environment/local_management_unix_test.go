@@ -29,14 +29,6 @@ type localManagementTestUsers struct {
 
 type localManagementTestRequest struct{ Request }
 
-func newLocalManagementPolicyTestConfiguration() *configuration.EnvironmentLocal {
-	return &configuration.EnvironmentLocal{
-		EnvironmentLocalPlatform: configuration.EnvironmentLocalPlatform{
-			TargetAccountPolicy: configuration.EnvironmentLocalTargetAccountPolicy{AllowNonLoginShell: true},
-		},
-	}
-}
-
 func (localManagementTestRequest) GetField(name string) (any, bool, error) {
 	if name == "authorization" {
 		return map[string]any{"name": "remote-user"}, true, nil
@@ -137,7 +129,7 @@ func TestLocalUnixUIDOnlyDoesNotUpdateExistingAccount(t *testing.T) {
 			conf := &configuration.EnvironmentLocal{}
 			require.NoError(t, conf.SetDefaults())
 			if test.uid == 0 {
-				conf.TargetAccountPolicy.AllowUidZero = true
+				allowUidZeroForLocalManagementTest(conf)
 			}
 			uid := template.MustNewTextMarshaller[user.Id, *user.Id](fmt.Sprint(test.uid))
 			conf.User.Uid = &uid

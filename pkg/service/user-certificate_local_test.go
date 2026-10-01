@@ -24,8 +24,7 @@ func TestLocalAuthorizationAcceptsUserCertificates(t *testing.T) {
 
 	for _, trustPath := range []string{"trusted-user-cas", "trusted-user-cas-file", "authorized-keys-cert-authority"} {
 		t.Run(trustPath, func(t *testing.T) {
-			directory, err := filepath.EvalSymlinks(t.TempDir())
-			require.NoError(t, err)
+			directory := t.TempDir()
 			caFile := filepath.Join(directory, "ca")
 			authorizedKeysFile := filepath.Join(directory, "authorized_keys")
 			require.NoError(t, os.WriteFile(caFile, []byte(plainAuthority+"\n"), 0600))
@@ -34,7 +33,6 @@ func TestLocalAuthorizationAcceptsUserCertificates(t *testing.T) {
 			server := newAuthorizedKeysTestServerWithUsernameAndConfiguration(t, username, "", &authorizedKeysTestEnvironment{}, func(conf *configuration.Configuration) {
 				local := &configuration.AuthorizationLocal{}
 				require.NoError(t, local.SetDefaults())
-				configureLocalUserCertificateAuthorization(local)
 				switch trustPath {
 				case "trusted-user-cas":
 					local.AuthorizedKeys = template.Strings{}

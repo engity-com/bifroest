@@ -200,6 +200,7 @@ func TestDarwinDefaultRepositoryProvider(t *testing.T) {
 	require.NoError(t, err)
 	require.Implements(t, (*identityCleanupRepository)(nil), repository)
 	require.Implements(t, (*absentIdentityHomeCleanupRepository)(nil), repository)
+	require.Implements(t, (*validatedEnsureRepository)(nil), repository)
 	require.NoError(t, repository.Close())
 }
 

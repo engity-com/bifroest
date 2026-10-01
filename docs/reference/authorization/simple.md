@@ -100,4 +100,4 @@ User certificates must be current, signed by the selected CA, have the requested
 
 | <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
 | - | - | - |
-| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(None,True,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |
+| <<compatibility_editions(True,True,"linux")>> | <<compatibility_editions(True,None,"darwin")>> | <<compatibility_editions(True,None,"windows")>> |

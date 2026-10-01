@@ -5,13 +5,11 @@ package environment
 import (
 	"context"
 	"encoding/json"
-	goerrors "errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"syscall"
-	"time"
 
 	log "github.com/echocat/slf4g"
 	essh "github.com/engity-com/ssh-server-go"
@@ -23,23 +21,6 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/engity-com/bifroest/pkg/user"
 )
-
-const (
-	localProcessGroupGracePeriod  = 1500 * time.Millisecond
-	localProcessGroupPollInterval = 25 * time.Millisecond
-)
-
-type processGroupOps struct {
-	kill  func(int, syscall.Signal) error
-	sleep func(time.Duration)
-}
-
-func defaultProcessGroupOps() processGroupOps {
-	return processGroupOps{
-		kill:  syscall.Kill,
-		sleep: time.Sleep,
-	}
-}
 
 func (this *local) newAgentNamedPipe() (net.NamedPipe, error) {
 	return net.NewNamedPipeForUser(
@@ -62,7 +43,6 @@ type local struct {
 	deferred                   bool
 	token                      *localToken
 	accountMissing             bool
-	getEffectiveUserID         func() int
 }
 
 func (this *local) reverseTCPUnprivilegedUser() bool {
@@ -81,7 +61,6 @@ func (this *LocalRepository) new(u *user.User, sess session.Session, portForward
 		expectedHomeDir:            lt.User.HomeDir,
 		allowSystemUsers:           lt.User.AllowSystemUsers,
 		token:                      lt,
-		getEffectiveUserID:         os.Geteuid,
 	}
 }
 
@@ -122,16 +101,10 @@ func (this *local) configureShellCmd(t Task, cmd *exec.Cmd) error {
 }
 
 func (this *local) createCmdAndEnv(t Task) (*exec.Cmd, *sys.EnvVars, func(), error) {
-	getEffectiveUserID := this.getEffectiveUserID
-	if getEffectiveUserID == nil {
-		getEffectiveUserID = os.Geteuid
-	}
-	creds, err := credentialsForUser(this.user, getEffectiveUserID())
-	if err != nil {
-		return nil, nil, nil, err
-	}
+	creds := this.user.ToCredentials()
 	dir := this.user.HomeDir
 	if !this.repository.conf.Directory.IsZero() {
+		var err error
 		dir, err = this.repository.conf.Directory.Render(t)
 		if err != nil {
 			return nil, nil, nil, errors.Config.Newf("cannot evaluate directory: %w", err)
@@ -147,8 +120,7 @@ func (this *local) createCmdAndEnv(t Task) (*exec.Cmd, *sys.EnvVars, func(), err
 	cmd := exec.Cmd{
 		Dir: dir,
 		SysProcAttr: &syscall.SysProcAttr{
-			Credential: creds,
-			Setpgid:    true,
+			Credential: &creds,
 		},
 	}
 
@@ -175,24 +147,7 @@ func (this *local) runConPTY(Task, *exec.Cmd) (int, error) {
 	return -1, errors.System.Newf("ConPTY is only available on Windows")
 }
 
-func credentialsForUser(target *user.User, effectiveUserID int) (*syscall.Credential, error) {
-	if target == nil {
-		return nil, errors.System.Newf("cannot create local process credentials without a target user")
-	}
-
-	credentials := target.ToCredentials()
-	if credentials.Uid != uint32(effectiveUserID) && effectiveUserID != 0 {
-		return nil, errors.Permission.Newf(
-			"cannot run local process as UID %d from effective UID %d: root privileges are required",
-			credentials.Uid,
-			effectiveUserID,
-		)
-	}
-	return &credentials, nil
-}
-
 func (this *local) configureCmdForPty(cmd *exec.Cmd, pty, tty *os.File) error {
-	cmd.SysProcAttr.Setpgid = false
 	cmd.SysProcAttr.Setsid = true
 	cmd.SysProcAttr.Setctty = true
 
@@ -212,120 +167,18 @@ func (this *local) getPathEnv() string {
 	return "/bin:/usr/bin"
 }
 
-func (this *local) startedProcessGroupID(cmd *exec.Cmd) int {
-	return cmd.Process.Pid
-}
-
-func (this *local) signal(_ *exec.Cmd, processGroupID int, logger log.Logger, signal essh.Signal) {
+func (this *local) signal(cmd *exec.Cmd, logger log.Logger, signal essh.Signal) {
 	err := signalProcessFromSsh(signal, func(sig sys.Signal) error {
-		native, err := sig.Native()
-		if err != nil {
-			return err
-		}
-		return signalProcessGroup(processGroupID, native, syscall.Kill)
+		return sig.SendToProcess(cmd.Process)
 	})
-	if isProcessGroupGone(err) {
+	if errors.Is(err, os.ErrProcessDone) {
 		// Ignored.
 	} else if err != nil {
 		logger.WithError(err).
-			With("pgid", processGroupID).
+			With("pid", cmd.Process.Pid).
 			With("signal", signal).
-			Warn("cannot send signal to process group")
+			Warn("cannot send signal to process")
 	}
-}
-
-func (this *local) kill(_ *exec.Cmd, processGroupID int, logger log.Logger) {
-	if err := cleanupProcessGroup(
-		processGroupID,
-		localProcessGroupGracePeriod,
-		localProcessGroupPollInterval,
-		defaultProcessGroupOps(),
-	); err != nil {
-		logger.WithError(err).
-			With("pgid", processGroupID).
-			Warn("cannot completely terminate process group")
-	}
-}
-
-func signalProcessGroup(processGroupID int, signal syscall.Signal, kill func(int, syscall.Signal) error) error {
-	target, exists, err := probeProcessGroup(processGroupID, kill)
-	if err != nil || !exists {
-		return err
-	}
-	if err := kill(target, signal); isProcessGroupGone(err) {
-		return nil
-	} else if err != nil {
-		return errors.System.Newf("cannot send %s to process group %d: %w", signal, processGroupID, err)
-	}
-	return nil
-}
-
-func cleanupProcessGroup(processGroupID int, gracePeriod, pollInterval time.Duration, ops processGroupOps) error {
-	if gracePeriod < 0 {
-		gracePeriod = 0
-	}
-	if pollInterval <= 0 {
-		pollInterval = gracePeriod
-		if pollInterval <= 0 {
-			pollInterval = time.Nanosecond
-		}
-	}
-
-	target, exists, err := probeProcessGroup(processGroupID, ops.kill)
-	if err != nil || !exists {
-		return err
-	}
-
-	var result error
-	if err := ops.kill(target, syscall.SIGTERM); isProcessGroupGone(err) {
-		return nil
-	} else if err != nil {
-		result = errors.System.Newf("cannot send SIGTERM to process group %d: %w", processGroupID, err)
-	}
-
-	remaining := gracePeriod
-	for {
-		if remaining > 0 {
-			delay := min(remaining, pollInterval)
-			ops.sleep(delay)
-			remaining -= delay
-		}
-
-		target, exists, err = probeProcessGroup(processGroupID, ops.kill)
-		if err != nil {
-			return goerrors.Join(result, err)
-		}
-		if !exists {
-			return result
-		}
-		if remaining <= 0 {
-			break
-		}
-	}
-
-	if err := ops.kill(target, syscall.SIGKILL); isProcessGroupGone(err) {
-		return result
-	} else if err != nil {
-		return goerrors.Join(result, errors.System.Newf("cannot send SIGKILL to process group %d: %w", processGroupID, err))
-	}
-	return result
-}
-
-func probeProcessGroup(processGroupID int, kill func(int, syscall.Signal) error) (target int, exists bool, err error) {
-	if processGroupID <= 0 {
-		return 0, false, errors.System.Newf("invalid process group ID: %d", processGroupID)
-	}
-	target = -processGroupID
-	if err := kill(target, 0); isProcessGroupGone(err) {
-		return target, false, nil
-	} else if err != nil {
-		return target, false, errors.System.Newf("cannot probe process group %d: %w", processGroupID, err)
-	}
-	return target, true, nil
-}
-
-func isProcessGroupGone(err error) bool {
-	return errors.Is(err, syscall.ESRCH) || errors.Is(err, os.ErrProcessDone)
 }
 
 func (this *local) dispose(ctx context.Context) (bool, error) {

@@ -1,4 +1,4 @@
-//go:build unix
+//go:build darwin
 
 package environment
 
@@ -26,8 +26,16 @@ func (this *LocalRepository) willBeAcceptedAtAdmission(ctx Context) (bool, error
 			return false, fmt.Errorf("cannot inspect local environment token during admission: %w", err)
 		}
 		if len(token) == 0 {
-			return authorization.KindOf(ctx.Authorization()) != "none" || this.conf.TargetAccountPolicy.AllowUnsafeNoneAuthorization, nil
+			if authorization.KindOf(ctx.Authorization()) == "none" && !this.conf.TargetAccountPolicy.AllowUnsafeNoneAuthorization {
+				return false, nil
+			}
+			ok, err := this.conf.LoginAllowed.Render(ctx)
+			if err != nil {
+				return false, fmt.Errorf("cannot evaluate if user is allowed to login or not: %w", err)
+			}
+			return ok, nil
 		}
+		return true, nil
 	}
 	_, accepted, err := this.willBeAccepted(ctx)
 	return accepted, err
@@ -109,6 +117,41 @@ func (this *LocalRepository) isStoredTargetAccountAccepted(ctx context.Context, 
 func (*LocalRepository) isCurrentTargetAccount(expected any, actual *user.User) bool {
 	target, ok := expected.(*user.User)
 	return ok && target != nil && actual != nil && target.Name == actual.Name && target.Uid == actual.Uid
+}
+
+func (*LocalRepository) acceptedTargetAccount(expected any, actual *user.User) (*user.User, bool, error) {
+	target, ok := expected.(*user.User)
+	if !ok {
+		return nil, false, errors.Newf(errors.System, "resolved Darwin target account has unexpected type %T", expected)
+	}
+	return target, sameUnixTargetAccount(target, actual), nil
+}
+
+func (this *LocalRepository) validateCurrentTargetAccount(ctx Context, actual *user.User) (any, bool, error) {
+	target, accepted, err := this.willBeAccepted(ctx)
+	return target, accepted && this.isCurrentTargetAccount(target, actual), err
+}
+
+func (*LocalRepository) withValidatedTargetAccountRequest(request Request, target *user.User) Request {
+	return withTargetAccountRequest(request, target)
+}
+
+func (this *LocalRepository) validateProvisionedTargetAccount(request Request, target *user.User) error {
+	accepted, err := this.isTargetAccountAccepted(target)
+	if err != nil {
+		return err
+	}
+	if !accepted || !this.isAuthorizationTargetAccountBound(request, target) {
+		return ErrNotAcceptable
+	}
+	allowed, err := this.conf.LoginAllowed.Render(withTargetAccountRequest(request, target))
+	if err != nil {
+		return fmt.Errorf("cannot evaluate if user is allowed to login or not: %w", err)
+	}
+	if !allowed {
+		return ErrNotAcceptable
+	}
+	return nil
 }
 
 func (this *LocalRepository) validateTargetAccount(target *user.User) error {

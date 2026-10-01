@@ -299,10 +299,6 @@ func (f *fixture) prepareCommon() error {
 	f.bifroest = filepath.Join(binDir, "bifroest")
 	f.targetHelper = filepath.Join(binDir, "e2e-helper-target")
 	f.targetBifroest = filepath.Join(binDir, "bifroest-target")
-	hostCgo := "0"
-	if runtime.GOOS == "darwin" {
-		hostCgo = "1"
-	}
 	for _, build := range []struct {
 		output      string
 		packagePath string
@@ -310,7 +306,7 @@ func (f *fixture) prepareCommon() error {
 		ldflags     string
 		environment []string
 	}{
-		{f.bifroest, "./cmd/bifroest", "local_build,local_kind", "-s -w -X main.version=" + f.bifroestVersion, []string{"CGO_ENABLED=" + hostCgo, "GOOS=" + runtime.GOOS, "GOARCH=" + runtime.GOARCH}},
+		{f.bifroest, "./cmd/bifroest", "local_build,local_kind", "-s -w -X main.version=" + f.bifroestVersion, []string{"CGO_ENABLED=0", "GOOS=" + runtime.GOOS, "GOARCH=" + runtime.GOARCH}},
 		{f.helper, "./test/e2e/helper", "e2e", "-s -w", []string{"CGO_ENABLED=0", "GOOS=" + runtime.GOOS, "GOARCH=" + runtime.GOARCH}},
 		{f.targetBifroest, "./cmd/bifroest", "local_build,local_kind", "-s -w -X main.version=" + f.bifroestVersion, []string{"CGO_ENABLED=0", "GOOS=" + f.targetGOOS, "GOARCH=" + f.targetGOARCH}},
 		{f.targetHelper, "./test/e2e/helper", "e2e", "-s -w", []string{"CGO_ENABLED=0", "GOOS=" + f.targetGOOS, "GOARCH=" + f.targetGOARCH}},

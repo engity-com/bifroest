@@ -78,6 +78,12 @@ func (this *LocalRepository) Ensure(req Request) (Environment, error) {
 		return fail(errors.Newf(t, msg, args...))
 	}
 
+	if ok, err := this.WillBeAccepted(req); err != nil {
+		return fail(err)
+	} else if !ok {
+		return fail(ErrNotAcceptable)
+	}
+
 	sess := req.Authorization().FindSession()
 	if sess == nil {
 		return failf(errors.System, "authorization without session")
@@ -88,14 +94,18 @@ func (this *LocalRepository) Ensure(req Request) (Environment, error) {
 			return fail(err)
 		}
 	} else {
-		target, ok, err := this.willBeAccepted(req)
+		current, ok := existing.(*local)
+		if !ok {
+			return fail(ErrNotAcceptable)
+		}
+		target, ok, err := this.validateCurrentTargetAccount(req, current.user)
 		if err != nil {
 			return fail(err)
 		}
 		if !ok {
 			return fail(ErrNotAcceptable)
 		}
-		if current, ok := existing.(*local); !ok || !this.isCurrentTargetAccount(target, current.user) {
+		if !this.isCurrentTargetAccount(target, current.user) {
 			return fail(ErrNotAcceptable)
 		}
 		return existing, nil
@@ -150,23 +160,28 @@ func (this *LocalRepository) Ensure(req Request) (Environment, error) {
 			return fail(err)
 		}
 	}
-	target, ok, err := this.willBeAccepted(req)
+	target, ok, err := this.validateCurrentTargetAccount(req, u)
 	if err != nil {
 		return fail(err)
 	}
-	if !ok || !this.isCurrentTargetAccount(target, u) {
+	if !ok {
 		return fail(ErrNotAcceptable)
 	}
-	actual, ok := target.(*user.User)
-	if !ok {
-		return failf(errors.System, "resolved Unix target account has unexpected type %T", target)
+	actual, accepted, err := this.acceptedTargetAccount(target, u)
+	if err != nil {
+		return fail(err)
 	}
-	u = actual
+	if !accepted {
+		return fail(ErrNotAcceptable)
+	}
+	if actual != nil {
+		u = actual
+	}
 	managed, err = this.isManagedUser(req.Context(), u)
 	if err != nil {
 		return fail(err)
 	}
-	policyReq := withTargetAccountRequest(req, u)
+	policyReq := this.withValidatedTargetAccountRequest(req, u)
 	lt, err := this.newLocalToken(u, policyReq, managed, manageSystemUsers)
 	if err != nil {
 		return fail(err)
@@ -326,26 +341,28 @@ func (this *LocalRepository) ensureUserByTask(r Request, req *user.Requirement, 
 				return nil, user.EnsureResultError, err
 			}
 		}
-		createGroup := true
-		modifyGroup := false
-		if _, _, err := this.userRepository.EnsureGroup(r.Context(), &user.GroupRequirement{Name: this.conf.ManagedGroup}, &user.EnsureOpts{
-			CreateAllowed: &createGroup,
-			ModifyAllowed: &modifyGroup,
-		}); err != nil {
-			return nil, user.EnsureResultError, fmt.Errorf("cannot ensure managed group: %w", err)
+		if _, validated := this.userRepository.(validatedUserEnsureRepository); !validated {
+			createGroup := true
+			modifyGroup := false
+			if _, _, err := this.userRepository.EnsureGroup(r.Context(), &user.GroupRequirement{Name: this.conf.ManagedGroup}, &user.EnsureOpts{
+				CreateAllowed: &createGroup,
+				ModifyAllowed: &modifyGroup,
+			}); err != nil {
+				return nil, user.EnsureResultError, fmt.Errorf("cannot ensure managed group: %w", err)
+			}
 		}
 		// Keep the ordinary group requirements intact, including their defaults.
 		groups := req.OrDefaults().Groups
 		for _, group := range groups {
 			if group.Name == this.conf.ManagedGroup {
 				req.Groups = groups
-				return this.ensureUser(r.Context(), req, opts)
+				return this.ensureUser(r, req, opts)
 			}
 		}
 		req.Groups = append(groups, user.GroupRequirement{Name: this.conf.ManagedGroup})
 	}
 
-	return this.ensureUser(r.Context(), req, opts)
+	return this.ensureUser(r, req, opts)
 }
 
 func (this *LocalRepository) isManagedUser(ctx context.Context, u *user.User) (bool, error) {
@@ -402,11 +419,22 @@ func (this *LocalRepository) lookupByName(ctx Context, tmpl template.String) (*u
 	return this.userRepository.LookupByName(ctx.Context(), name)
 }
 
-func (this *LocalRepository) ensureUser(ctx context.Context, req *user.Requirement, opts *localEnsureOpts) (u *user.User, result user.EnsureResult, err error) {
-	u, result, err = this.userRepository.Ensure(ctx, req, &user.EnsureOpts{
+type validatedUserEnsureRepository interface {
+	EnsureValidated(context.Context, *user.Requirement, *user.EnsureOpts, func(*user.User) error) (*user.User, user.EnsureResult, error)
+}
+
+func (this *LocalRepository) ensureUser(request Request, req *user.Requirement, opts *localEnsureOpts) (u *user.User, result user.EnsureResult, err error) {
+	ensureOpts := &user.EnsureOpts{
 		CreateAllowed: &opts.createIfAbsent,
 		ModifyAllowed: &opts.updateIfDifferent,
-	})
+	}
+	if repository, ok := this.userRepository.(validatedUserEnsureRepository); ok {
+		u, result, err = repository.EnsureValidated(request.Context(), req, ensureOpts, func(target *user.User) error {
+			return this.validateProvisionedTargetAccount(request, target)
+		})
+	} else {
+		u, result, err = this.userRepository.Ensure(request.Context(), req, ensureOpts)
+	}
 	if err != nil {
 		return nil, user.EnsureResultError, fmt.Errorf("cannot ensure user: %w", err)
 	}

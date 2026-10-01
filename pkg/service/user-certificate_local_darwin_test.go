@@ -7,8 +7,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
-	"github.com/engity-com/bifroest/pkg/configuration"
 )
 
 func prepareLocalUserCertificateTest(t *testing.T) string {
@@ -17,5 +15,3 @@ func prepareLocalUserCertificateTest(t *testing.T) string {
 	require.NoError(t, err)
 	return current.Username
 }
-
-func configureLocalUserCertificateAuthorization(*configuration.AuthorizationLocal) {}

@@ -9,13 +9,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-type AuthorizedKeysReader func(string) ([]byte, error)
-
 func DoWithEachAuthorizedKey[R any](requireExistence bool, callback func(ssh.PublicKey, []AuthorizedKeyOption) (result R, canContinue bool, err error), files ...string) (result R, err error) {
-	return DoWithEachAuthorizedKeyUsingReader(requireExistence, os.ReadFile, callback, files...)
-}
-
-func DoWithEachAuthorizedKeyUsingReader[R any](requireExistence bool, reader AuthorizedKeysReader, callback func(ssh.PublicKey, []AuthorizedKeyOption) (result R, canContinue bool, err error), files ...string) (result R, err error) {
 	fail := func(err error) (R, error) {
 		var empty R
 		return empty, err
@@ -25,7 +19,7 @@ func DoWithEachAuthorizedKeyUsingReader[R any](requireExistence bool, reader Aut
 	}
 
 	for _, file := range files {
-		rest, err := reader(file)
+		rest, err := os.ReadFile(file)
 		if !requireExistence && sys.IsNotExist(err) {
 			continue
 		}

@@ -29,22 +29,3 @@ func TestDoWithEachAuthorizedKeyProvidesOptions(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, called)
 }
-
-func TestDoWithEachAuthorizedKeyUsesInjectedReader(t *testing.T) {
-	entry := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(ed255191Pub)))
-	var readPath string
-	reader := func(path string) ([]byte, error) {
-		readPath = path
-		return []byte(entry), nil
-	}
-
-	called := false
-	_, err := DoWithEachAuthorizedKeyUsingReader[bool](true, reader, func(candidate ssh.PublicKey, _ []AuthorizedKeyOption) (bool, bool, error) {
-		called = true
-		require.Equal(t, ed255191Pub.Marshal(), candidate.Marshal())
-		return true, false, nil
-	}, "/injected/authorized_keys")
-	require.NoError(t, err)
-	require.Equal(t, "/injected/authorized_keys", readPath)
-	require.True(t, called)
-}
