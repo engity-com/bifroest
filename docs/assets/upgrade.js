@@ -1,8 +1,9 @@
 async function showUpgradePredecessor() {
+  const headline = document.querySelector("h1.upgrade-notes-headline[data-release]");
+  if (!headline) return;
   const hint = document.getElementById("upgrade-predecessor");
-  if (!hint) return;
 
-  const own = /^v(\d+)\.(\d+)\.(\d+)(?:-rc\.(?:0|[1-9]\d*))?$/.exec(hint.dataset.release || "");
+  const own = /^v(\d+)\.(\d+)\.(\d+)(?:-rc\.(?:0|[1-9]\d*))?$/.exec(headline.dataset.release || "");
   if (!own) return;
 
   try {
@@ -30,12 +31,15 @@ async function showUpgradePredecessor() {
 
     const [, major, minor] = previous.match;
     const series = `v${major}.${minor}.x`;
+    if (document.querySelector("h1.upgrade-notes-headline[data-release]") !== headline) return;
+    headline.innerText = `Upgrade from ${series} to ${headline.dataset.release}`;
+
+    if (!hint || document.getElementById("upgrade-predecessor") !== hint) return;
     // The v0.7.x site predates public upgrade notes.
     const hasNotes = !(Number(major) === 0 && Number(minor) === 7);
     const link = document.createElement("a");
     link.href = `/${previous.version}/setup/${hasNotes ? "upgrade/" : ""}`;
     link.textContent = `${series} ${hasNotes ? "upgrade notes" : "setup guide"}`;
-    if (document.getElementById("upgrade-predecessor") !== hint) return;
     hint.append(`If your current Bifröst is not ${series}, consult the `, link, " as well before upgrading.");
     hint.hidden = false;
   } catch (_) {
