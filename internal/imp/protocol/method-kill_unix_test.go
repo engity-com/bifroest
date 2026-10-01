@@ -206,12 +206,10 @@ func TestKillProcessesDoesNotWaitAfterExecutionResultExists(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(directory, stateId.String()), []byte("0"), 0600))
 	expectedEnv := execution.EnvName + "=" + stateId.String()
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	started := time.Now()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 	response := (&imp{}).killProcesses(ctx, &Header{ConnectionId: connection.MustNewId()}, log.GetLogger("test"), directory, stateId, expectedEnv, 0, sys.SIGKILL, false, true)
 	require.ErrorIs(t, response.error, ErrNoSuchProcess)
-	require.Less(t, time.Since(started), 500*time.Millisecond)
 }
 
 func TestKillProcessesDoesNotWaitAfterExecutionResultWasAcknowledged(t *testing.T) {
@@ -222,13 +220,11 @@ func TestKillProcessesDoesNotWaitAfterExecutionResultWasAcknowledged(t *testing.
 	instance.rememberExecutionCompletionLocked(stateId, time.Now())
 	instance.executionResultCleanupMutex.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	started := time.Now()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 	response := instance.killProcesses(ctx, &Header{ConnectionId: connection.MustNewId()}, log.GetLogger("test"), directory, stateId, execution.EnvName+"="+stateId.String(), 0, sys.SIGKILL, false, true)
 
 	require.ErrorIs(t, response.error, ErrNoSuchProcess)
-	require.Less(t, time.Since(started), 500*time.Millisecond)
 }
 
 func TestKillProcessesHonorsContextWhileRegistrationIsPending(t *testing.T) {

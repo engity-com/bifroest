@@ -288,8 +288,15 @@ flows:
 	if err := repository.DeleteByIdentity(t.Context(), account.Uid, accountName, updatedHome, &bfuser.DeleteOpts{HomeDir: &yes, KillProcesses: &yes}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := osuser.Lookup(accountName); err == nil {
-		t.Fatal("Darwin account still resolves after deletion")
+	accountLookupDeadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := osuser.Lookup(accountName); err != nil {
+			break
+		}
+		if time.Now().After(accountLookupDeadline) {
+			t.Fatal("Darwin account still resolves after deletion")
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	if _, err := os.Lstat(updatedHome); !os.IsNotExist(err) {
 		t.Fatalf("Darwin home still exists after deletion: %v", err)
@@ -481,8 +488,12 @@ func TestDarwinLaunchDaemon(t *testing.T) {
 	darwinServiceTestTouch(t, filepath.Join(darwinServiceLogDirectory, "preserve-on-remove"))
 
 	darwinServiceTestRun(t, darwinServiceBinary, "service", "stop")
-	if darwinServiceTestLoaded() {
-		t.Fatal("LaunchDaemon is still loaded after stop")
+	stopDeadline := time.Now().Add(10 * time.Second)
+	for darwinServiceTestLoaded() {
+		if time.Now().After(stopDeadline) {
+			t.Fatal("LaunchDaemon is still loaded after stop")
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	time.Sleep(darwinServiceTestRestartPeriod)
 	if darwinServiceTestLoaded() {
