@@ -46,10 +46,6 @@ run = "go test -race ./..."
 depends = ["build:var"]
 run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHLocal(Backend|SessionRecording|EncryptedSessionRecordingPTY)$' ./test/e2e"
 
-[tasks."test:e2e:native"]
-depends = ["build:var"]
-run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^Test(OpenSSHLocalNative|DarwinLocalAccountLifecycle|DarwinLaunchDaemon)$' ./test/e2e"
-
 [tasks."test:e2e:docker"]
 depends = ["build:var"]
 run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHDockerEnvironment(SessionRecording)?$' ./test/e2e"
@@ -71,13 +67,12 @@ run = "go test -v -count=1 -tags=nanoserver_integration -timeout=20m -run=TestPi
 
 [tasks."test:e2e:darwin"]
 depends = ["build:var"]
-run = "go test -v -count=1 -tags=e2e -timeout=15m -run '^Test(OpenSSHLocalNative|DarwinLocalAccountLifecycle)$' ./test/e2e"
+run = "go test -v -count=1 -tags=e2e -timeout=30m -run '^Test(OpenSSHLocalNative|DarwinLocalAccountLifecycle|DarwinLaunchDaemon)$' ./test/e2e"
 
 [tasks."test:e2e"]
 run = [
     { task = "test:e2e:authorization" },
     { task = "test:e2e:local" },
-    { task = "test:e2e:native" },
     { task = "test:e2e:docker" },
     { task = "test:e2e:ssh" },
     { task = "test:e2e:kubernetes" }

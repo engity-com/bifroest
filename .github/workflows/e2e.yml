@@ -134,8 +134,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  native:
-    name: native on ${{ matrix.os }}/${{ matrix.arch }}
+  darwin:
+    name: darwin on ${{ matrix.arch }}
     needs: files-changed
     if: always() && (github.event_name != 'pull_request' || needs.files-changed.outputs.go == 'true')
     runs-on: ${{ matrix.runner }}
@@ -144,11 +144,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: darwin
-            arch: amd64
+          - arch: amd64
             runner: macos-15-intel
-          - os: darwin
-            arch: arm64
+          - arch: arm64
             runner: macos-15
     env:
       BIFROEST_E2E_EXPECTED_ARCH: ${{ matrix.arch }}
@@ -170,14 +168,14 @@ jobs:
       - name: Install dependencies
         run: mise run install:go
 
-      - name: Run native end-to-end suite
-        run: mise run test:e2e:native
+      - name: Run Darwin end-to-end suite
+        run: mise run test:e2e:darwin
 
       - name: Upload failure diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: e2e-native-${{ matrix.os }}-${{ matrix.arch }}
+          name: e2e-darwin-${{ matrix.arch }}
           path: var/e2e/**/*
           if-no-files-found: ignore
           retention-days: 7

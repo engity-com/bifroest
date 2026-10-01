@@ -92,8 +92,6 @@ jobs:
       ref: ${{ needs.evaluate.outputs.release_tag }}
       commit: ${{ needs.evaluate.outputs.commit }}
       lint_reuse: true
-      darwin_release: true
-      darwin_environment: macos-release
 
   documentation:
     name: "Documentation"

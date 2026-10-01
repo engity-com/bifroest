@@ -30,12 +30,6 @@ on:
       upload_dist:
         type: boolean
         default: false
-      darwin_release:
-        type: boolean
-        default: false
-      darwin_environment:
-        type: string
-        default: ''
 
 env:
   GITHUB_TOKEN: ${{ github.token }}
@@ -153,7 +147,7 @@ jobs:
     strategy:
       matrix: ${{ fromJSON(inputs.binary_host_matrix) }}
     runs-on: ${{ matrix.runner }}
-    environment: ${{ matrix.os == 'darwin' && inputs.darwin_environment || '' }}
+    environment: ${{ matrix.os == 'darwin' && (github.event_name == 'release' || github.event_name == 'workflow_dispatch') && 'macos-release' || '' }}
     env:
       GITHUB_REF_NAME: ${{ inputs.ref || github.ref_name }}
       GITHUB_SHA: ${{ inputs.commit || github.sha }}
@@ -187,7 +181,7 @@ jobs:
       - name: Build binary
         run: mise run build:go:binary:compiled -- --os=${{ matrix.os }} --arch=${{ matrix.arch }} --edition=${{ matrix.edition }}
         env:
-          BIFROEST_DARWIN_RELEASE_REQUIRED: ${{ inputs.darwin_release && matrix.os == 'darwin' }}
+          BIFROEST_DARWIN_RELEASE_REQUIRED: ${{ matrix.os == 'darwin' && (github.event_name == 'release' || github.event_name == 'workflow_dispatch') }}
           BIFROEST_DARWIN_CERTIFICATE: ${{ matrix.os == 'darwin' && secrets.MACOS_DEVELOPER_ID_CERTIFICATE || '' }}
           BIFROEST_DARWIN_CERTIFICATE_PASSWORD: ${{ matrix.os == 'darwin' && secrets.MACOS_DEVELOPER_ID_CERTIFICATE_PASSWORD || '' }}
           BIFROEST_DARWIN_SIGNING_IDENTITY: ${{ matrix.os == 'darwin' && secrets.MACOS_SIGNING_IDENTITY || '' }}
