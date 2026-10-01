@@ -23,8 +23,8 @@ import (
 
 const (
 	darwinDSCLPath        = "/usr/bin/dscl"
-	darwinDSCacheUtilPath = "/usr/bin/dscacheutil"
 	darwinDSEditGroupPath = "/usr/sbin/dseditgroup"
+	darwinODUtilPath      = "/usr/bin/odutil"
 	darwinLocalNode       = "/Local/Default"
 	maxDarwinAllocatedID  = 1<<31 - 1
 )
@@ -139,7 +139,7 @@ func (this *DarwinRepository) lockMutation(ctx context.Context) error {
 }
 
 func (this *DarwinRepository) runNative(ctx context.Context, path string, args ...string) ([]byte, error) {
-	if path != darwinDSCLPath && path != darwinDSCacheUtilPath && path != darwinDSEditGroupPath {
+	if path != darwinDSCLPath && path != darwinDSEditGroupPath && path != darwinODUtilPath {
 		return nil, fmt.Errorf("refusing to execute unsupported Darwin account tool %q", path)
 	}
 	if err := ctx.Err(); err != nil {
@@ -1351,7 +1351,7 @@ func (this *DarwinRepository) deleteUser(ctx context.Context, opts *DeleteOpts, 
 	} else if remaining != nil {
 		return fmt.Errorf("local Darwin user %q still exists after deletion", record.name)
 	}
-	if _, err := this.runNative(ctx, darwinDSCacheUtilPath, "-flushcache"); err != nil {
+	if _, err := this.runNative(ctx, darwinODUtilPath, "reset", "cache"); err != nil {
 		return fmt.Errorf("cannot flush Darwin account cache after deleting user %q: %w", record.name, err)
 	}
 	groups, err = this.allLocalGroups(ctx)
