@@ -35,6 +35,9 @@ const (
 	darwinServiceLaunchTarget      = "system/" + darwinServiceLabel
 	darwinServiceTestWaitAttempts  = 60
 	darwinServiceTestRestartPeriod = 11 * time.Second
+	darwinServiceTestHost          = "127.0.0.1"
+	darwinServiceTestPort          = "2224"
+	darwinServiceTestAddress       = darwinServiceTestHost + ":" + darwinServiceTestPort
 )
 
 func TestOpenSSHLocalNative(t *testing.T) {
@@ -337,9 +340,9 @@ func TestDarwinLaunchDaemon(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if connection, err := net.DialTimeout("tcp", "127.0.0.1:22", time.Second); err == nil {
+	if connection, err := net.DialTimeout("tcp", darwinServiceTestAddress, time.Second); err == nil {
 		_ = connection.Close()
-		t.Fatal("clean-host LaunchDaemon test requires port 22 to be unused")
+		t.Fatalf("clean-host LaunchDaemon test requires %s to be unused", darwinServiceTestAddress)
 	}
 	repositoryRoot, err := findRepoRoot()
 	if err != nil {
@@ -367,6 +370,7 @@ func TestDarwinLaunchDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	configuration = append([]byte("ssh:\n  addresses:\n    - \""+darwinServiceTestAddress+"\"\n\n"), configuration...)
 	if err := os.MkdirAll(darwinServiceStateDirectory, 0750); err != nil {
 		t.Fatal(err)
 	}
@@ -552,7 +556,7 @@ func darwinServiceTestWait(t *testing.T) {
 	t.Helper()
 	for range darwinServiceTestWaitAttempts {
 		if darwinServiceTestLoaded() {
-			if err := probeSSHIdentification("127.0.0.1", "22"); err == nil {
+			if err := probeSSHIdentification(darwinServiceTestHost, darwinServiceTestPort); err == nil {
 				return
 			}
 		}
