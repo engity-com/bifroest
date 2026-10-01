@@ -2,6 +2,10 @@ package main
 
 import (
 	"iter"
+	"os"
+	osExec "os/exec"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -9,7 +13,84 @@ import (
 	"github.com/Masterminds/semver/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
+
+func TestVersion_releaseNames(t *testing.T) {
+	for _, plain := range []string{"v0.0.0", "v1.0.0", "v1.0.0-alpha1", "v1.0.0-alpha10", "v1.0.0-beta1", "v1.0.0-beta10"} {
+		t.Run(plain, func(t *testing.T) {
+			var v version
+			require.NoError(t, v.Set(plain))
+			require.NotNil(t, v.semver)
+		})
+	}
+	for _, plain := range []string{"v1.0.0-alpha0", "v1.0.0-beta01", "v1.0.0-alpha.1", "v1.0.0-beta.1", "v1.0.0-rc1", "v1.0.0+meta", "v01.0.0", "v1.00.0", "v1.0.00"} {
+		t.Run(plain, func(t *testing.T) {
+			var v version
+			require.Error(t, v.Set(plain))
+		})
+	}
+}
+
+func TestReleaseWorkflow_versionAndStatus(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("release workflow uses Bash")
+	}
+	content, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	require.NoError(t, err)
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Name string `yaml:"name"`
+				Run  string `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	require.NoError(t, yaml.Unmarshal(content, &workflow))
+	var script string
+	for _, step := range workflow.Jobs["evaluate"].Steps {
+		if step.Name == "Resolve release version" {
+			script = step.Run
+		}
+	}
+	require.NotEmpty(t, script)
+	script = `gh() {
+  if [[ "$1" != api || "$2" != "repos/${GITHUB_REPOSITORY}/releases/tags/${TEST_RELEASE_TAG}" ]]; then return 1; fi
+  if [[ -z "$TEST_RELEASE_STATE" ]]; then return 1; fi
+  printf '%s\n' "$TEST_RELEASE_STATE"
+}
+` + script
+	for _, tc := range []struct {
+		tag, state, event string
+		valid             bool
+	}{
+		{"v1.0.0", "false\tfalse", "release", true},
+		{"v1.0.0-alpha1", "false\ttrue", "release", true},
+		{"v1.0.0-beta12", "false\ttrue", "workflow_dispatch", true},
+		{"v1.0.0-beta1", "false\tfalse", "release", false},
+		{"v1.0.0", "false\ttrue", "workflow_dispatch", false},
+		{"v1.0.0-alpha1", "true\ttrue", "release", false},
+		{"v1.0.0-beta1", "", "release", false},
+		{"v1.0.0-rc1", "false\ttrue", "release", false},
+		{"v1.0.0-alpha.1", "false\ttrue", "release", false},
+		{"v1.0.0-beta01", "false\ttrue", "release", false},
+	} {
+		t.Run(tc.tag+"/"+tc.event+"/"+tc.state, func(t *testing.T) {
+			cmd := osExec.Command("bash", "-c", script)
+			cmd.Env = append(os.Environ(),
+				"EVENT_NAME="+tc.event, "RELEASE_EVENT_TAG="+tc.tag, "VERSION_INPUT="+tc.tag,
+				"TEST_RELEASE_TAG="+tc.tag, "TEST_RELEASE_STATE="+tc.state,
+				"GITHUB_REPOSITORY=engity-com/bifroest", "GITHUB_OUTPUT="+os.DevNull,
+			)
+			output, err := cmd.CombinedOutput()
+			if tc.valid {
+				require.NoError(t, err, string(output))
+			} else {
+				require.Error(t, err, string(output))
+			}
+		})
+	}
+}
 
 func TestVersion_evaluateLatest(t *testing.T) {
 	var instance version
@@ -67,6 +148,11 @@ func TestVersion_evaluateLatest(t *testing.T) {
 		expectedMajor: false,
 		expectedMinor: false,
 		expectedPatch: true,
+	}, {
+		input:         a[string]("2.3.4", "3.0.0-beta1"),
+		expectedMajor: true,
+		expectedMinor: true,
+		expectedPatch: true,
 	}}
 
 	for _, c := range cases {
@@ -80,6 +166,26 @@ func TestVersion_evaluateLatest(t *testing.T) {
 			assert.Equal(t, c.expectedPatch, given.latestPatch)
 		})
 	}
+}
+
+func TestVersion_prereleaseTags(t *testing.T) {
+	for _, plain := range []string{"v1.0.0-alpha1", "v1.0.0-beta1"} {
+		t.Run(plain, func(t *testing.T) {
+			var v version
+			require.NoError(t, v.Set(plain))
+			require.NoError(t, v.evaluateLatest(allSemver("0.7.7")))
+			assert.Equal(t, []string{"generic-" + plain[1:]}, slices.Collect(v.tags("generic-", "generic")))
+			assert.Equal(t, []string{plain[1:]}, slices.Collect(v.tags("", "latest")))
+		})
+	}
+}
+
+func TestVersion_stableTagsAfterPrerelease(t *testing.T) {
+	var v version
+	require.NoError(t, v.Set("v0.8.0"))
+	require.NoError(t, v.evaluateLatest(allSemver("0.7.7", "1.0.0-beta1")))
+	assert.Equal(t, []string{"0.8.0", "0.8", "0", "latest"}, slices.Collect(v.tags("", "latest")))
+	assert.Equal(t, []string{"extended-0.8.0", "extended-0.8", "extended-0", "extended"}, slices.Collect(v.tags("extended-", "extended")))
 }
 
 func TestVersion_tags_semver(t *testing.T) {

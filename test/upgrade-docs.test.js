@@ -48,7 +48,8 @@ async function render(release, versions, ok = true, navigation = "material") {
 
 test("upgrade page uses release macro without hardcoded release numbers", () => {
   assert.match(page, /^# .*\{: #upgrade-notes \.upgrade-notes-headline data-release="<<release_name\(\)>>" \}/m);
-  assert.doesNotMatch(page, /v\d+\.\d+(?:\.\d+|\.x)?/);
+  assert.match(page, /Upgrade from v0\.7\.x to <<release_name\(\)>>/);
+  assert.doesNotMatch(page, /v\d+\.\d+\.\d+/);
 });
 
 test("selects the first lower minor numerically, ignoring aliases and prereleases", async () => {
@@ -73,22 +74,22 @@ test("links to the setup guide for the minor without public upgrade notes", asyn
   assert.equal(hint.parts[1].textContent, "v0.7.x setup guide");
 });
 
-test("RC docs resolve the current stable latest patch from its alias", async () => {
-  const { headline, hint } = await render("v0.8.0-rc.1", [
+test("beta docs resolve the current stable latest patch from its alias", async () => {
+  const { headline, hint } = await render("v1.0.0-beta1", [
     { version: "..", title: "Latest (0.7.7)", aliases: ["latest"], latest: true },
     { version: "v0.7.6" },
   ]);
   assert.equal(hint.hidden, false);
-  assert.equal(headline.innerText, "Upgrade from v0.7.x to v0.8.0-rc.1");
+  assert.equal(headline.innerText, "Upgrade from v0.7.x to v1.0.0-beta1");
   assert.equal(hint.parts[1].href, "/v0.7.7/setup/");
 });
 
-test("later RC docs skip prereleases and select the first stable lower minor", async () => {
-  for (const release of ["v0.8.0-rc.2", "v0.8.0-rc.10"]) {
+test("alpha and later beta docs skip prereleases and select the stable lower series", async () => {
+  for (const release of ["v1.0.0-alpha2", "v1.0.0-beta10"]) {
     const { hint } = await render(release, [
-      { version: "..", title: "Latest (0.8.0-rc.10)", latest: true },
-      { version: "v0.8.0-rc.2" },
-      { version: "v0.8.0-rc.1" },
+      { version: "..", title: "Latest (0.7.7)", latest: true },
+      { version: "v1.0.0-beta1" },
+      { version: "v1.0.0-alpha1" },
       { version: "v0.7.8-rc.1" },
       { version: "v0.7.7" },
       { version: "v0.7.6" },
@@ -111,6 +112,10 @@ test("hides hint without a release tag or usable versions index", async () => {
   const dev = await render("latest", [{ version: "v0.7.7" }]);
   assert.equal(dev.requested, false);
   assert.equal(dev.hint.hidden, true);
+  for (const release of ["v1.0.0-rc1", "v1.0.0-beta.1", "v1.0.0-beta01"]) {
+    const invalid = await render(release, [{ version: "v0.7.7" }]);
+    assert.equal(invalid.requested, false);
+  }
   for (const [versions, ok] of [[[], false], [new Error("offline"), true], [[{ version: ".." }], true]]) {
     const result = await render("v0.8.0", versions, ok);
     assert.equal(result.hint.hidden, true);

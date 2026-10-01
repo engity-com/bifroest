@@ -41,6 +41,9 @@ In the majority of the cases you might run Linux or Windows on AMD64, which is s
    sudo vi /etc/systemd/system/bifroest.service
    ```
 
+    !!! note
+         On a release-specific documentation page, set `Environment=IMAGE=<<container_image_uri("*")>>` in the service file to run that release. Its default `:latest` selects a moving stable release, not an alpha or beta release.
+
 4. Reload the systemd daemon:
    ```shell
    sudo systemctl daemon-reload
@@ -83,7 +86,7 @@ In the majority of the cases you might run Linux or Windows on AMD64, which is s
 
 4. Enable and start Bifröst:
    ```shell
-   docker run -d --restart unless-stopped --name bifroest -p 22:22 -v //var/run/docker.sock:/var/run/docker.sock -v C:\ProgramData\Engity\Bifroest:/etc/engity/bifroest -v C:\ProgramData\Engity\Bifroest:/var/lib/engity/bifroest ghcr.io/engity-com/bifroest:latest run --log.colorMode=always
+   docker run -d --restart unless-stopped --name bifroest -p 22:22 -v //var/run/docker.sock:/var/run/docker.sock -v C:\ProgramData\Engity\Bifroest:/etc/engity/bifroest -v C:\ProgramData\Engity\Bifroest:/var/lib/engity/bifroest <<container_image_uri("*")>> run --log.colorMode=always
    ```
 
 5. Now you can log in to Bifröst the first time:

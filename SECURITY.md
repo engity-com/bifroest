@@ -4,7 +4,7 @@
 
 * We use [Semantic Versioning](https://semver.org/).
 * Each version is supported until the next one is released (e.g. 1.1.x will be supported until 1.2.0 is out).
-* Release Candidates are available before the release (e.g. 1.1.0-rc1, 1.1.0-rc2, 1.1.0-rc3, 1.1.0-rc4, before 1.1.0).
+* Prereleases use `-alphaN` and `-betaN` (e.g. 1.1.0-alpha1, 1.1.0-beta1, before 1.1.0).
 * Bug-fixes (e.g. 1.1.1, 1.1.2, 1.2.1, 1.2.3) are released as needed (no additional features are delivered in those versions, bug-fixes only).
 
 

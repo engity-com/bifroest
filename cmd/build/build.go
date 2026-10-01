@@ -438,6 +438,13 @@ func (this *build) publish(ctx context.Context, as buildArtifacts) error {
 	if release == nil {
 		return fail(errors.New("GitHub release for current ref does not exist"))
 	}
+	ver, err := this.version(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	if release.GetDraft() || ver.semver != nil && release.GetPrerelease() != (ver.semver.Prerelease() != "") {
+		return fail(fmt.Errorf("GitHub release for %s has incorrect draft or prerelease status", ver))
+	}
 
 	if err := this.image.publish(ctx, as); err != nil {
 		return fail(err)

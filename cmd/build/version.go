@@ -11,7 +11,8 @@ import (
 )
 
 var (
-	versionPattern = regexp.MustCompile(`^\w[\w.-]{0,127}$`)
+	versionPattern        = regexp.MustCompile(`^\w[\w.-]{0,127}$`)
+	releaseVersionPattern = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta)[1-9][0-9]*)?$`)
 
 	versionNormalizePattern = regexp.MustCompile(`[^\w]+`)
 )
@@ -37,6 +38,9 @@ func (this *version) Set(plain string) error {
 		if strings.HasPrefix(plain, "v") {
 			v, err := semver.NewVersion(plain[1:])
 			if err == nil {
+				if !releaseVersionPattern.MatchString(plain) {
+					return fmt.Errorf("invalid release version: %s", plain)
+				}
 				buf.semver = v
 			}
 		}
@@ -81,6 +85,9 @@ func (this version) tags(prefix string, rootTag string) iter.Seq[string] {
 		if !yield(prefix + smv.String()) {
 			return
 		}
+		if smv.Prerelease() != "" {
+			return
+		}
 
 		if this.latestPatch {
 			if !yield(f("", smv.Major(), smv.Minor())) {
@@ -117,12 +124,18 @@ func (this *version) evaluateLatest(i iter.Seq2[*semver.Version, error]) error {
 	if tv == nil {
 		return nil
 	}
+	if tv.Prerelease() != "" {
+		return nil
+	}
 
 	major, minor, patch := true, true, true
 
 	for ov, err := range i {
 		if err != nil {
 			return fail(err)
+		}
+		if ov.Prerelease() != "" {
+			continue
 		}
 
 		if ov.Major() > tv.Major() {

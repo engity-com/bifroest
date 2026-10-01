@@ -1,10 +1,10 @@
 ---
-description: Actions and behavior to consider when upgrading Bifröst from the previous minor release.
+description: Actions and behavior to consider when upgrading Bifröst from v0.7.x.
 ---
 
-# Upgrade from previous minor versions to <<release_name()>> {: #upgrade-notes .upgrade-notes-headline data-release="<<release_name()>>" }
+# Upgrade from v0.7.x to <<release_name()>> {: #upgrade-notes .upgrade-notes-headline data-release="<<release_name()>>" }
 
-These notes apply to an upgrade from any patch release in the previous minor series to <<release_name()>>. Patch releases within the same minor series share these upgrade notes.
+These notes apply to an upgrade from any v0.7.x release to <<release_name()>>. They document upgrade actions and behavior changes, not release notes. Patch releases within the new series share these upgrade notes.
 
 <p id="upgrade-predecessor" data-release="<<release_name()>>" hidden></p>
 
