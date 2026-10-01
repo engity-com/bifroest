@@ -43,7 +43,7 @@ require (
 	github.com/openwall/yescrypt-go v1.0.0
 	github.com/otiai10/copy v1.14.1
 	github.com/pkg/sftp v1.13.11
-	github.com/shirou/gopsutil/v4 v4.26.8
+	github.com/shirou/gopsutil/v4 v4.26.9
 	github.com/stretchr/testify v1.12.1
 	github.com/tc-hib/winres v0.3.1
 	github.com/tg123/go-htpasswd v1.2.5
