@@ -18,11 +18,13 @@ on:
       - internal/build/**
       - mise.toml
       - pkg/configuration/**
+      - pkg/authorization/**
       - pkg/environment/**
       - pkg/net/**
       - pkg/service/**
       - pkg/session/**
       - pkg/user/**
+      - pkg/windowslocal/**
       - test/manual/s4u-probe/**
       - test/nanoserver/**
   workflow_dispatch:
@@ -64,7 +66,7 @@ jobs:
         run: mise run build:go:binary -- --os=windows --arch=amd64 --edition=generic
 
       - name: Test Windows local authorization
-        run: go test ./pkg/configuration ./pkg/authorization ./pkg/windowslocal ./pkg/service -run '^(TestWindowsLocal.*|TestLocalSAMIntegration|TestSIDMatching|TestMissingIdentity|TestNames|TestFieldsWithoutConfiguration|TestInvalidCredentials|TestS4ULogonBuffer)$'
+        run: go test ./pkg/configuration ./pkg/authorization ./pkg/windowslocal ./pkg/environment ./pkg/service -run '^(TestWindowsLocal.*|TestLocalWindowsAuthorizationAccountReplacement|TestLocalSAMIntegration|TestSIDMatching|TestMissingIdentity|TestNames|TestFieldsWithoutConfiguration|TestInvalidCredentials|TestAccountUnavailable|TestS4ULogonBuffer)$'
 
       - name: Start Windows Docker daemon
         shell: pwsh

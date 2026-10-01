@@ -25,6 +25,7 @@ type local struct {
 }
 
 func (*local) AuthorizationKind() string                      { return "local" }
+func (this *local) LocalWindowsIdentity() (string, string)    { return this.user.Name, this.user.SID }
 func (this *local) Remote() net.Remote                        { return this.remote }
 func (*local) IsAuthorized() bool                             { return true }
 func (*local) EnvVars() sys.EnvVars                           { return nil }

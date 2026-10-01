@@ -56,11 +56,11 @@ func (this *LocalAuthorizer) lookupActive(name string) (windowslocal.Account, bo
 	if err != nil {
 		return u, false, err
 	}
-	disabled, err := windowslocal.Disabled(u)
+	unavailable, err := windowslocal.Unavailable(u)
 	if errors.Is(err, windowslocal.ErrNotFound) {
 		return u, false, nil
 	}
-	return u, !disabled && err == nil, err
+	return u, !unavailable && err == nil, err
 }
 
 func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authorization, error) {
@@ -81,15 +81,15 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	} else if !ok {
 		return Forbidden(remote), nil
 	}
-	files, err := common.MapSliceErr(this.conf.AuthorizedKeys, func(tmpl template.String) (string, error) {
-		return tmpl.Render(&localUserRequest{Request: req, user: u})
-	})
-	if err != nil {
-		return nil, fmt.Errorf("cannot render authorizedKeys: %w", err)
-	}
 	policy, accepted, err := evaluatePublicKeyCredential(req.RemotePublicKey(), remote.User(), remote.Host(), this.trustedUserCAs,
 		func(consumer func(ssh.PublicKey, []crypto.AuthorizedKeyOption) (bool, error)) error {
-			_, err := crypto.DoWithEachAuthorizedKey[bool](false, func(key ssh.PublicKey, options []crypto.AuthorizedKeyOption) (bool, bool, error) {
+			files, err := common.MapSliceErr(this.conf.AuthorizedKeys, func(tmpl template.String) (string, error) {
+				return tmpl.Render(&localUserRequest{Request: req, user: u})
+			})
+			if err != nil {
+				return fmt.Errorf("cannot render authorizedKeys: %w", err)
+			}
+			_, err = crypto.DoWithEachAuthorizedKey[bool](false, func(key ssh.PublicKey, options []crypto.AuthorizedKeyOption) (bool, bool, error) {
 				cont, err := consumer(key, options)
 				return !cont, cont, err
 			}, files...)
@@ -267,8 +267,8 @@ func (this *LocalAuthorizer) RestoreFromSession(ctx context.Context, sess sessio
 	if err != nil {
 		return nil, err
 	}
-	disabled, err := windowslocal.Disabled(u)
-	if errors.Is(err, windowslocal.ErrNotFound) || (err == nil && disabled) {
+	unavailable, err := windowslocal.Unavailable(u)
+	if errors.Is(err, windowslocal.ErrNotFound) || (err == nil && unavailable) {
 		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("local account is unavailable"))
 	}
 	if err != nil {

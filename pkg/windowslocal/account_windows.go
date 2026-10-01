@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"time"
 	"unicode"
 	"unicode/utf8"
 	"unsafe"
@@ -210,6 +211,18 @@ type userInfo1 struct {
 	ScriptPath        *uint16
 }
 
+type userInfo2 struct {
+	userInfo1
+	AuthFlags                                       uint32
+	FullName, UserComment, Parameters, Workstations *uint16
+	LastLogon, LastLogoff, AccountExpires           uint32
+	MaxStorage, UnitsPerWeek                        uint32
+	LogonHours                                      *byte
+	BadPasswordCount, LogonCount                    uint32
+	LogonServer                                     *uint16
+	CountryCode, CodePage                           uint32
+}
+
 type userInfo10 struct {
 	Name, Comment, UserComment, FullName *uint16
 }
@@ -245,19 +258,19 @@ func netCall(name string, args ...uintptr) error {
 	return nil
 }
 
-// Disabled reads UF_ACCOUNTDISABLE from the local NetUserGetInfo flags.
-func Disabled(a Account) (bool, error) {
+// Unavailable rejects disabled, locked, and expired local SAM accounts.
+func Unavailable(a Account) (bool, error) {
 	current, err := currentAccount(a)
 	if err != nil {
 		return false, err
 	}
 	name, _ := windows.UTF16PtrFromString(current.Name)
-	var info *userInfo1
-	err = netCall("NetUserGetInfo", 0, uintptr(unsafe.Pointer(name)), 1, uintptr(unsafe.Pointer(&info)))
+	var info *userInfo2
+	err = netCall("NetUserGetInfo", 0, uintptr(unsafe.Pointer(name)), 2, uintptr(unsafe.Pointer(&info)))
 	runtime.KeepAlive(name)
 	if info != nil {
 		if err == nil {
-			flags := info.Flags
+			unavailable := accountUnavailable(info.Flags, info.AccountExpires, time.Now())
 			err = netCall("NetApiBufferFree", uintptr(unsafe.Pointer(info)))
 			if err != nil {
 				return false, err
@@ -265,7 +278,7 @@ func Disabled(a Account) (bool, error) {
 			if _, err = currentAccount(a); err != nil {
 				return false, err
 			}
-			return flags&0x2 != 0, nil
+			return unavailable, nil
 		}
 		err = errors.Join(err, netCall("NetApiBufferFree", uintptr(unsafe.Pointer(info))))
 	}
@@ -273,6 +286,14 @@ func Disabled(a Account) (bool, error) {
 		err = errors.New("NetUserGetInfo returned no data")
 	}
 	return false, err
+}
+
+func accountUnavailable(flags, expires uint32, now time.Time) bool {
+	const (
+		accountDisabled = 0x2  // UF_ACCOUNTDISABLE
+		accountLocked   = 0x10 // UF_LOCKOUT
+	)
+	return flags&(accountDisabled|accountLocked) != 0 || (expires != ^uint32(0) && int64(expires) <= now.Unix())
 }
 
 func userDisplayName(name string) (string, error) {

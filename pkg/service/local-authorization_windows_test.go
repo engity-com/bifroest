@@ -25,9 +25,9 @@ func TestWindowsLocalSSHAuthorization(t *testing.T) {
 	}
 	u, err := windowslocal.Lookup(username)
 	require.NoError(t, err)
-	disabled, err := windowslocal.Disabled(u)
+	unavailable, err := windowslocal.Unavailable(u)
 	require.NoError(t, err)
-	require.False(t, disabled)
+	require.False(t, unavailable)
 
 	authority := newIncomingCertificateTestSigner(t)
 	keyFile := filepath.Join(t.TempDir(), "authorized_keys")

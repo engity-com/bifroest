@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -42,8 +43,8 @@ func TestMissingIdentity(t *testing.T) {
 		if _, err := currentAccount(a); err == nil {
 			t.Errorf("currentAccount(%+v) accepted incomplete identity", a)
 		}
-		if _, err := Disabled(a); err == nil {
-			t.Errorf("Disabled(%+v) accepted incomplete identity", a)
+		if _, err := Unavailable(a); err == nil {
+			t.Errorf("Unavailable(%+v) accepted incomplete identity", a)
 		}
 		if _, err := ValidatePassword(a, "test"); err == nil {
 			t.Errorf("ValidatePassword(%+v) accepted incomplete identity", a)
@@ -106,6 +107,28 @@ func TestInvalidCredentials(t *testing.T) {
 	}
 }
 
+func TestAccountUnavailable(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	for _, tc := range []struct {
+		name           string
+		flags, expires uint32
+		want           bool
+	}{
+		{"active", 0, ^uint32(0), false},
+		{"disabled", 0x2, ^uint32(0), true},
+		{"locked", 0x10, ^uint32(0), true},
+		{"expires later", 0, uint32(now.Unix() + 1), false},
+		{"expired now", 0, uint32(now.Unix()), true},
+		{"expired earlier", 0, uint32(now.Unix() - 1), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := accountUnavailable(tc.flags, tc.expires, now); got != tc.want {
+				t.Errorf("accountUnavailable(%#x, %d) = %t, want %t", tc.flags, tc.expires, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestS4ULogonBuffer(t *testing.T) {
 	buffer, length, err := s4uLogonBuffer("localuser")
 	if err != nil {
@@ -148,7 +171,7 @@ func TestLocalSAMIntegration(t *testing.T) {
 	if err != nil || bySID != a {
 		t.Fatalf("LookupBySID = %+v, %v; want %+v", bySID, err, a)
 	}
-	if _, err := Disabled(a); err != nil {
+	if _, err := Unavailable(a); err != nil {
 		t.Fatal(err)
 	}
 	for _, field := range []string{"displayName", "groups", "gids"} {
