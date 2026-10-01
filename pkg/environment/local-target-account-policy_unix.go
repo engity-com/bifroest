@@ -18,6 +18,21 @@ import (
 
 const unixLoginShellsFile = "/etc/shells"
 
+func (this *LocalRepository) willBeAcceptedAtAdmission(ctx Context) (bool, error) {
+	sess := ctx.Authorization().FindSession()
+	if sess != nil {
+		token, err := sess.EnvironmentToken(ctx.Context())
+		if err != nil {
+			return false, fmt.Errorf("cannot inspect local environment token during admission: %w", err)
+		}
+		if len(token) == 0 {
+			return authorization.KindOf(ctx.Authorization()) != "none" || this.conf.TargetAccountPolicy.AllowUnsafeNoneAuthorization, nil
+		}
+	}
+	_, accepted, err := this.willBeAccepted(ctx)
+	return accepted, err
+}
+
 func (this *LocalRepository) resolveTargetAccount(ctx Context) (any, bool, error) {
 	if authorization.KindOf(ctx.Authorization()) == "none" && !this.conf.TargetAccountPolicy.AllowUnsafeNoneAuthorization {
 		return nil, false, nil

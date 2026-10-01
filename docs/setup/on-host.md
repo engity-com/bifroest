@@ -98,14 +98,14 @@ This guide supports Intel (`amd64`) and Apple silicon (`arm64`) on macOS 13 and 
     sudo chmod 0640 '/Library/Application Support/Engity/Bifroest/configuration.yaml'
     ```
 
-    Replace the example account `alice` with the controlled existing macOS account that should be reachable.
+    Replace the example account `alice` with the controlled macOS account that should be reachable. The account may already exist, or the local environment can create and manage it with `createIfAbsent`; account mutation requires the service to run as `root`.
 
 3. Install and start the system LaunchDaemon:
     ```shell
     sudo /tmp/bifroest-release/bifroest service install
     ```
 
-    The service runs as `root`, starts at boot, restarts after failures and writes standard output and error to `/Library/Logs/Engity/Bifroest`. Its working directory and persistent state remain under `/Library/Application Support/Engity/Bifroest`.
+    The service runs as `root`, starts at boot, restarts after failures and writes standard output and error to `/Library/Logs/Engity/Bifroest`. Root is required for account management and impersonation. Only records in the local `/Local/Default` Directory Services node are mutated; newly created accounts do not receive a local password from Bifröst. Its working directory and persistent state remain under `/Library/Application Support/Engity/Bifroest`.
 
 4. In another terminal, log in using the configured port:
     ```shell

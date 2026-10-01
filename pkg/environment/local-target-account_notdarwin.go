@@ -22,15 +22,6 @@ func (this *LocalRepository) lookupTargetAccount(ctx Context) (*user.User, error
 	return nil, err
 }
 
-func (this *LocalRepository) resolveUserForEnsure(req Request, opts *localEnsureOpts) (*user.User, bool, error) {
-	if !opts.canCreateOrUpdate() {
-		target, err := this.lookupUserBy(req)
-		return target, false, err
-	}
-	target, _, err := this.ensureUserByTask(req, opts)
-	return target, true, err
-}
-
 func acceptLegacyEnvironmentTokenWithoutAuthorizationKind() bool {
 	return true
 }

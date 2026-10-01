@@ -12,6 +12,7 @@ import (
 	bib "github.com/engity-com/bifroest/internal/build"
 	"github.com/engity-com/bifroest/internal/build/binary"
 	"github.com/engity-com/bifroest/pkg/common"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 const (

@@ -10,8 +10,7 @@ var (
 )
 
 func (this *LocalRepository) WillBeAccepted(ctx Context) (ok bool, err error) {
-	_, ok, err = this.willBeAccepted(ctx)
-	return ok, err
+	return this.willBeAcceptedAtAdmission(ctx)
 }
 
 func (this *LocalRepository) willBeAccepted(ctx Context) (target any, ok bool, err error) {

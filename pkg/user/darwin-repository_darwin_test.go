@@ -187,6 +187,9 @@ func TestDarwinRepositoryInitAndCloseAreSideEffectFree(t *testing.T) {
 	require.NoError(t, repository.Init(context.Background()))
 	require.NoError(t, repository.Close())
 	require.NoError(t, repository.Close())
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, repository.Init(canceled), context.Canceled)
 }
 
 func TestDarwinDefaultRepositoryProvider(t *testing.T) {
@@ -195,33 +198,26 @@ func TestDarwinDefaultRepositoryProvider(t *testing.T) {
 
 	repository, err := DefaultRepositoryProvider.Create(context.Background())
 	require.NoError(t, err)
+	require.Implements(t, (*identityCleanupRepository)(nil), repository)
+	require.Implements(t, (*absentIdentityHomeCleanupRepository)(nil), repository)
 	require.NoError(t, repository.Close())
 }
 
-func TestDarwinRepositoryIsReadOnly(t *testing.T) {
+func TestDarwinRepositoryPasswordValidationUnsupported(t *testing.T) {
 	repository := &DarwinRepository{}
 	ctx := context.Background()
 
-	actualUser, result, err := repository.Ensure(ctx, &Requirement{}, &EnsureOpts{})
-	require.Nil(t, actualUser)
-	require.Equal(t, EnsureResultError, result)
-	require.ErrorIs(t, err, ErrReadOnlyRepository)
-
-	actualGroup, result, err := repository.EnsureGroup(ctx, &GroupRequirement{}, &EnsureOpts{})
-	require.Nil(t, actualGroup)
-	require.Equal(t, EnsureResultError, result)
-	require.ErrorIs(t, err, ErrReadOnlyRepository)
-
-	require.ErrorIs(t, repository.DeleteById(ctx, 501, &DeleteOpts{}), ErrReadOnlyRepository)
-	require.ErrorIs(t, repository.DeleteByName(ctx, "alice", &DeleteOpts{}), ErrReadOnlyRepository)
-	require.ErrorIs(t, repository.DeleteGroupById(ctx, 20, &DeleteOpts{}), ErrReadOnlyRepository)
-	require.ErrorIs(t, repository.DeleteGroupByName(ctx, "staff", &DeleteOpts{}), ErrReadOnlyRepository)
-
 	valid, err := repository.ValidatePasswordById(ctx, 501, "secret")
 	require.False(t, valid)
-	require.ErrorIs(t, err, ErrReadOnlyRepository)
+	require.ErrorIs(t, err, ErrDarwinPasswordValidationUnsupported)
 
 	valid, err = repository.ValidatePasswordByName(ctx, "alice", "secret")
 	require.False(t, valid)
-	require.ErrorIs(t, err, ErrReadOnlyRepository)
+	require.ErrorIs(t, err, ErrDarwinPasswordValidationUnsupported)
+
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	valid, err = repository.ValidatePasswordByName(canceled, "alice", "secret")
+	require.False(t, valid)
+	require.ErrorIs(t, err, context.Canceled)
 }

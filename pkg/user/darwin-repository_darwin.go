@@ -12,11 +12,12 @@ import (
 	berrors "github.com/engity-com/bifroest/pkg/errors"
 )
 
-// ErrReadOnlyRepository indicates an operation that cannot be performed by the
-// native read-only Darwin account repository.
-var ErrReadOnlyRepository = stderrors.New("darwin user repository is read-only: operation unsupported")
+// ErrDarwinPasswordValidationUnsupported indicates that macOS password
+// validation is deliberately unavailable because passing a password to the
+// native command line tools would expose it to other local processes.
+var ErrDarwinPasswordValidationUnsupported = stderrors.New("darwin password validation is unsupported without a safe native authentication API")
 
-// DarwinRepository resolves native macOS users and groups without modifying them.
+// DarwinRepository resolves and manages native macOS users and groups.
 type DarwinRepository struct {
 	lookupUserByName  func(string) (*osuser.User, error)
 	lookupUserById    func(string) (*osuser.User, error)
@@ -24,6 +25,8 @@ type DarwinRepository struct {
 	lookupGroupById   func(string) (*osuser.Group, error)
 	lookupGroupIds    func(*osuser.User) ([]string, error)
 	lookupLoginShell  func(string) (string, error)
+	commandRunner     darwinCommandRunner
+	processes         darwinProcessLister
 }
 
 func init() {
@@ -33,8 +36,8 @@ func init() {
 var _ CloseableRepository = (*DarwinRepository)(nil)
 
 // Init is side-effect free because Darwin account information is queried on demand.
-func (this *DarwinRepository) Init(context.Context) error {
-	return nil
+func (this *DarwinRepository) Init(ctx context.Context) error {
+	return ctx.Err()
 }
 
 // Close is side-effect free because DarwinRepository owns no resources.
@@ -102,36 +105,18 @@ func (this *DarwinRepository) LookupGroupById(ctx context.Context, id GroupId) (
 	return darwinGroupToGroup(native)
 }
 
-func (this *DarwinRepository) Ensure(context.Context, *Requirement, *EnsureOpts) (*User, EnsureResult, error) {
-	return nil, EnsureResultError, ErrReadOnlyRepository
+func (this *DarwinRepository) ValidatePasswordById(ctx context.Context, _ Id, _ string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return false, ErrDarwinPasswordValidationUnsupported
 }
 
-func (this *DarwinRepository) EnsureGroup(context.Context, *GroupRequirement, *EnsureOpts) (*Group, EnsureResult, error) {
-	return nil, EnsureResultError, ErrReadOnlyRepository
-}
-
-func (this *DarwinRepository) DeleteById(context.Context, Id, *DeleteOpts) error {
-	return ErrReadOnlyRepository
-}
-
-func (this *DarwinRepository) DeleteByName(context.Context, string, *DeleteOpts) error {
-	return ErrReadOnlyRepository
-}
-
-func (this *DarwinRepository) DeleteGroupById(context.Context, GroupId, *DeleteOpts) error {
-	return ErrReadOnlyRepository
-}
-
-func (this *DarwinRepository) DeleteGroupByName(context.Context, string, *DeleteOpts) error {
-	return ErrReadOnlyRepository
-}
-
-func (this *DarwinRepository) ValidatePasswordById(context.Context, Id, string) (bool, error) {
-	return false, ErrReadOnlyRepository
-}
-
-func (this *DarwinRepository) ValidatePasswordByName(context.Context, string, string) (bool, error) {
-	return false, ErrReadOnlyRepository
+func (this *DarwinRepository) ValidatePasswordByName(ctx context.Context, _ string, _ string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return false, ErrDarwinPasswordValidationUnsupported
 }
 
 func (this *DarwinRepository) toUser(ctx context.Context, native *osuser.User) (*User, error) {
@@ -242,6 +227,13 @@ func darwinGroupToGroup(native *osuser.Group) (*Group, error) {
 }
 
 func parseDarwinId(value, kind string) (uint32, error) {
+	if len(value) > 0 && value[0] == '-' {
+		id, err := strconv.ParseInt(value, 10, 32)
+		if err != nil {
+			return 0, berrors.Newf(berrors.System, "invalid Darwin %s id %q: %w", kind, value, err)
+		}
+		return uint32(int32(id)), nil
+	}
 	id, err := strconv.ParseUint(value, 10, 32)
 	if err != nil {
 		return 0, berrors.Newf(berrors.System, "invalid Darwin %s id %q: %w", kind, value, err)

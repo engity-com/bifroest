@@ -148,7 +148,9 @@ func TestLocalUnixDirectoryOverride(t *testing.T) {
 	dir := t.TempDir()
 	conf := &configuration.EnvironmentLocal{}
 	conf.Directory = template.MustNewString("{{.targetUser}}")
-	env := &local{repository: &LocalRepository{conf: conf}, user: &user.User{Name: "alice", HomeDir: "/home/alice"}}
+	env := &local{repository: &LocalRepository{conf: conf}, user: &user.User{
+		Name: "alice", Uid: user.Id(os.Geteuid()), Group: user.Group{Gid: user.GroupId(os.Getegid())}, HomeDir: "/home/alice",
+	}}
 	task := &sshTestTask{
 		context:       ctx,
 		targetUser:    dir,

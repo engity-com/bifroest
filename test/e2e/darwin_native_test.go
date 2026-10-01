@@ -3,6 +3,7 @@
 package e2e_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"net"
@@ -17,6 +18,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	bfuser "github.com/engity-com/bifroest/pkg/user"
 )
 
 const (
@@ -127,6 +130,200 @@ flows:
 	}
 	if actual := strings.TrimSpace(pty.stdout); !strings.HasPrefix(actual, "/dev/tty") {
 		t.Fatalf("native SSH PTY returned unexpected terminal %q", actual)
+	}
+}
+
+func TestDarwinLocalAccountLifecycle(t *testing.T) {
+	if !runDarwinTestAsRoot(t) {
+		return
+	}
+	suffix := strconv.FormatInt(time.Now().UnixNano()%1_000_000_000, 10)
+	accountName := "bifroest-e2e-" + suffix
+	primaryGroupName := accountName + "-primary"
+	extraGroupName := accountName + "-extra"
+	home := filepath.Join("/Users", accountName)
+	updatedHome := home + "-updated"
+	repository := &bfuser.DarwinRepository{}
+	if err := repository.Init(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repository.Close() })
+	cleanup := func() {
+		no := false
+		yes := true
+		if account, err := repository.LookupByName(context.Background(), accountName); err == nil {
+			_ = repository.DeleteByIdentity(context.Background(), account.Uid, accountName, account.HomeDir, &bfuser.DeleteOpts{HomeDir: &yes, KillProcesses: &yes})
+		}
+		_ = repository.DeleteGroupByName(context.Background(), extraGroupName, &bfuser.DeleteOpts{HomeDir: &no, KillProcesses: &no})
+		_ = repository.DeleteGroupByName(context.Background(), primaryGroupName, &bfuser.DeleteOpts{HomeDir: &no, KillProcesses: &no})
+		_ = exec.Command("/usr/bin/dscl", "/Local/Default", "-delete", "/Users/"+accountName).Run()
+		_ = exec.Command("/usr/bin/dscl", "/Local/Default", "-delete", "/Groups/"+extraGroupName).Run()
+		_ = exec.Command("/usr/bin/dscl", "/Local/Default", "-delete", "/Groups/"+primaryGroupName).Run()
+		_ = os.RemoveAll(home)
+		_ = os.RemoveAll(updatedHome)
+	}
+	t.Cleanup(cleanup)
+	if _, err := osuser.Lookup(accountName); err == nil {
+		t.Fatalf("refusing to use existing Darwin account %q", accountName)
+	}
+	for _, name := range []string{primaryGroupName, extraGroupName} {
+		if _, err := osuser.LookupGroup(name); err == nil {
+			t.Fatalf("refusing to use existing Darwin group %q", name)
+		}
+	}
+	for _, path := range []string{home, updatedHome} {
+		if _, err := os.Lstat(path); err == nil {
+			t.Fatalf("refusing to use existing Darwin home %q", path)
+		} else if !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+
+	yes := true
+	requirement := &bfuser.Requirement{
+		Name:        accountName,
+		DisplayName: "Bifroest Darwin E2E",
+		Group:       bfuser.GroupRequirement{Name: primaryGroupName},
+		Groups:      bfuser.GroupRequirements{{Name: extraGroupName}},
+		Shell:       "/bin/zsh",
+		HomeDir:     home,
+	}
+	account, result, err := repository.Ensure(t.Context(), requirement, &bfuser.EnsureOpts{CreateAllowed: &yes, ModifyAllowed: &yes, HomeDir: &yes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != bfuser.EnsureResultCreated {
+		t.Fatalf("created account returned result %v", result)
+	}
+	darwinRequireLifecycleAccount(t, account, requirement)
+
+	f, err := newFixture(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(f.tempDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	f.port = "2223"
+	if err := f.writeKnownHosts(); err != nil {
+		t.Fatal(err)
+	}
+	configuration := fmt.Sprintf(`startMessage: '{{""}}'
+ssh:
+  addresses:
+    - "127.0.0.1:2223"
+  keys:
+    hostKeys:
+      - %s
+    rememberMeNotification: '{{""}}'
+  banner: '{{""}}'
+session:
+  type: fs
+  storage: %s
+flows:
+  - name: darwin-account-lifecycle
+    authorization:
+      type: simple
+      entries:
+        - name: e2e
+          authorizedKeysFile: %s
+    environment:
+      type: local
+      name: %s
+      targetAccountPolicy:
+        allowedNames:
+          - %s
+`, yamlString(f.hostKey), yamlString(f.sessionStorage), yamlString(f.clientKey+".pub"), yamlString(accountName), yamlString(accountName))
+	configurationPath := filepath.Join(f.tempDir, "darwin-account-lifecycle.yaml")
+	if err := os.WriteFile(configurationPath, []byte(configuration), 0600); err != nil {
+		t.Fatal(err)
+	}
+	f.bifroestProc, err = f.launchLoggedProcess("bifroest", nil, f.bifroest, "run", "--configuration="+configurationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pollProcess(30*time.Second, f.bifroestProc, func() error {
+		return probeSSHIdentification(f.host, f.port)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	identity := f.ssh(15*time.Second, f.clientKey, "e2e", nil, "/usr/bin/id", "-un")
+	if identity.err != nil || strings.TrimSpace(identity.stdout) != accountName {
+		t.Fatalf("managed Darwin SSH identity failed: %v\nstdout:\n%s\nstderr:\n%s", identity.err, identity.stdout, identity.stderr)
+	}
+	pty := f.ssh(15*time.Second, f.clientKey, "e2e", []string{"-tt"}, "/usr/bin/tty")
+	if pty.err != nil || !strings.HasPrefix(strings.TrimSpace(pty.stdout), "/dev/tty") {
+		t.Fatalf("managed Darwin SSH PTY failed: %v\nstdout:\n%s\nstderr:\n%s", pty.err, pty.stdout, pty.stderr)
+	}
+
+	requirement.DisplayName = "Bifroest Darwin E2E Updated"
+	requirement.Shell = "/bin/bash"
+	requirement.HomeDir = updatedHome
+	account, result, err = repository.Ensure(t.Context(), requirement, &bfuser.EnsureOpts{CreateAllowed: &yes, ModifyAllowed: &yes, HomeDir: &yes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != bfuser.EnsureResultModified {
+		t.Fatalf("updated account returned result %v", result)
+	}
+	darwinRequireLifecycleAccount(t, account, requirement)
+	if _, err := os.Lstat(home); !os.IsNotExist(err) {
+		t.Fatalf("old Darwin home still exists after move: %v", err)
+	}
+
+	sleeper := exec.Command("/usr/bin/su", "-m", accountName, "-c", "exec /bin/sleep 60")
+	if err := sleeper.Start(); err != nil {
+		t.Fatal(err)
+	}
+	processDone := make(chan error, 1)
+	go func() { processDone <- sleeper.Wait() }()
+	t.Cleanup(func() {
+		if sleeper.Process != nil {
+			_ = sleeper.Process.Kill()
+		}
+	})
+	time.Sleep(250 * time.Millisecond)
+	if err := repository.KillProcessesByIdentity(t.Context(), account.Uid, accountName); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-processDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Darwin account process was not terminated")
+	}
+
+	if err := repository.DeleteByIdentity(t.Context(), account.Uid, accountName, updatedHome, &bfuser.DeleteOpts{HomeDir: &yes, KillProcesses: &yes}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := osuser.Lookup(accountName); err == nil {
+		t.Fatal("Darwin account still resolves after deletion")
+	}
+	if _, err := os.Lstat(updatedHome); !os.IsNotExist(err) {
+		t.Fatalf("Darwin home still exists after deletion: %v", err)
+	}
+	if err := repository.DeleteGroupByName(t.Context(), extraGroupName, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.DeleteGroupByName(t.Context(), primaryGroupName, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func darwinRequireLifecycleAccount(t *testing.T, actual *bfuser.User, requirement *bfuser.Requirement) {
+	t.Helper()
+	if actual.Name != requirement.Name || actual.DisplayName != requirement.DisplayName || actual.Shell != requirement.Shell || actual.HomeDir != requirement.HomeDir {
+		t.Fatalf("Darwin account does not match requirement: actual=%+v requirement=%+v", actual, requirement)
+	}
+	if actual.Group.Name != requirement.Group.Name || len(actual.Groups) != len(requirement.Groups) || actual.Groups[0].Name != requirement.Groups[0].Name {
+		t.Fatalf("Darwin account groups do not match requirement: %+v", actual)
+	}
+	info, err := os.Stat(actual.HomeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != uint32(actual.Uid) || stat.Gid != uint32(actual.Group.Gid) {
+		t.Fatalf("Darwin home has owner %v, expected %d:%d", info.Sys(), actual.Uid, actual.Group.Gid)
 	}
 }
 

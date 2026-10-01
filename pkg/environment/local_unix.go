@@ -437,6 +437,18 @@ func (this *local) dispose(ctx context.Context) (bool, error) {
 				this.deferred = true
 				return disposed, nil
 			}
+			if this.deleteHomeTogetherWithUser {
+				cleaner, ok := this.repository.userRepository.(interface {
+					DeleteHomeByAbsentIdentity(context.Context, user.Id, string, string) error
+				})
+				if !ok {
+					return fail(errors.System.Newf("local user repository does not support verified cleanup of an absent account home"))
+				}
+				if err := cleaner.DeleteHomeByAbsentIdentity(ctx, this.user.Uid, this.user.Name, this.expectedHomeDir); err != nil {
+					return fail(err)
+				}
+				disposed = true
+			}
 			this.repository.logger().With("session", this.session).With("name", this.user.Name).
 				With("uid", this.user.Uid).Warn("skipping account deletion: original local account identity is no longer verifiable; inspect remaining files manually")
 			return true, nil

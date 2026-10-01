@@ -19,13 +19,23 @@ import (
 
 type localManagementTestUsers struct {
 	user.CloseableRepository
-	account *user.User
-	group   *user.Group
-	deleted bool
-	kills   int
+	account        *user.User
+	group          *user.Group
+	deleted        bool
+	kills          int
+	absentHomes    int
+	absentHomeFail bool
 }
 
 type localManagementTestRequest struct{ Request }
+
+func newLocalManagementPolicyTestConfiguration() *configuration.EnvironmentLocal {
+	return &configuration.EnvironmentLocal{
+		EnvironmentLocalPlatform: configuration.EnvironmentLocalPlatform{
+			TargetAccountPolicy: configuration.EnvironmentLocalTargetAccountPolicy{AllowNonLoginShell: true},
+		},
+	}
+}
 
 func (localManagementTestRequest) GetField(name string) (any, bool, error) {
 	if name == "authorization" {
@@ -72,6 +82,17 @@ func (this *localManagementTestUsers) KillProcessesByIdentity(_ context.Context,
 	return nil
 }
 
+func (this *localManagementTestUsers) DeleteHomeByAbsentIdentity(_ context.Context, id user.Id, name, home string) error {
+	if this.account != nil || id == 0 || name == "" || home == "" {
+		return fmt.Errorf("identity is not safely absent")
+	}
+	if this.absentHomeFail {
+		return fmt.Errorf("injected absent home cleanup failure")
+	}
+	this.absentHomes++
+	return nil
+}
+
 func TestLocalUnixGetEnsureOptsOfManagedUserAndAuthorization(t *testing.T) {
 	conf := &configuration.EnvironmentLocal{
 		EnvironmentLocalCommon: configuration.EnvironmentLocalCommon{
@@ -115,6 +136,9 @@ func TestLocalUnixUIDOnlyDoesNotUpdateExistingAccount(t *testing.T) {
 			defer cancel()
 			conf := &configuration.EnvironmentLocal{}
 			require.NoError(t, conf.SetDefaults())
+			if test.uid == 0 {
+				conf.TargetAccountPolicy.AllowUidZero = true
+			}
 			uid := template.MustNewTextMarshaller[user.Id, *user.Id](fmt.Sprint(test.uid))
 			conf.User.Uid = &uid
 			conf.CreateIfAbsent = template.BoolOf(test.create)
@@ -218,7 +242,7 @@ func TestLocalUnixIsManagedUserMatchesGroupGID(t *testing.T) {
 	}
 }
 
-func TestLocalUnixFindBySessionLegacyTokenDoesNotDeleteUser(t *testing.T) {
+func TestLocalUnixFindBySessionLegacyTokenCompatibility(t *testing.T) {
 	ctx := context.Background()
 	uid := user.Id(1234)
 	account := &user.User{Name: "local-user", Uid: uid}
@@ -231,9 +255,14 @@ func TestLocalUnixFindBySessionLegacyTokenDoesNotDeleteUser(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, stored.SetEnvironmentToken(ctx, encoded))
-	repository := &LocalRepository{userRepository: &localManagementTestUsers{account: account}}
+	repository := &LocalRepository{conf: newLocalManagementPolicyTestConfiguration(), userRepository: &localManagementTestUsers{account: account}}
 
 	resolved, err := repository.FindBySession(ctx, stored, nil)
+	if !acceptLegacyEnvironmentTokenWithoutAuthorizationKind() {
+		require.Nil(t, resolved)
+		require.ErrorContains(t, err, "authorization kind is missing")
+		return
+	}
 	require.NoError(t, err)
 	localEnv, ok := resolved.(*local)
 	require.True(t, ok)
@@ -293,16 +322,50 @@ func TestLocalUnixSkipsUnverifiableAccountProcessCleanup(t *testing.T) {
 	}
 }
 
+func TestLocalUnixRetriesHomeCleanupAfterAccountDeletion(t *testing.T) {
+	ctx := context.Background()
+	uid := user.Id(2_000_000_000)
+	token := localToken{Version: 2, AuthorizationKind: "simple", User: localTokenUser{
+		Name: "removed", Uid: &uid, HomeDir: "/Users/removed",
+		DeleteOnDispose: true, DeleteHomeTogetherWithUser: true,
+	}}
+	encoded, err := json.Marshal(token)
+	require.NoError(t, err)
+	stored := &localCoordinatorTestSession{flow: "test", id: session.MustNewId(), state: session.StateDisposed, token: encoded}
+	users := &localManagementTestUsers{absentHomeFail: true}
+	repository := &LocalRepository{
+		userRepository: users,
+		coordinator:    &localAccountCoordinator{sessions: &localCoordinatorTestRepository{sessions: []session.Session{stored}}},
+	}
+	clean := true
+	env, err := repository.FindBySession(ctx, stored, &FindOpts{AutoCleanUpAllowed: &clean})
+	require.NoError(t, err)
+	require.True(t, env.(*local).accountMissing)
+
+	changed, err := env.Dispose(ctx)
+	require.False(t, changed)
+	require.ErrorContains(t, err, "injected absent home cleanup failure")
+	require.Equal(t, encoded, stored.token)
+	require.Zero(t, users.absentHomes)
+
+	users.absentHomeFail = false
+	changed, err = env.Dispose(ctx)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, 1, users.absentHomes)
+	require.Empty(t, stored.token)
+}
+
 func TestLocalUnixSkipsIdentityChangedAfterTokenRestore(t *testing.T) {
 	ctx := context.Background()
 	uid := user.Id(2_000_000_000)
-	token := localToken{Version: 2, User: localTokenUser{Name: "original", Uid: &uid, DeleteOnDispose: true, KillProcessesOnDispose: true}}
+	token := localToken{Version: 2, AuthorizationKind: "simple", User: localTokenUser{Name: "original", Uid: &uid, DeleteOnDispose: true, KillProcessesOnDispose: true}}
 	encoded, err := json.Marshal(token)
 	require.NoError(t, err)
 	stored := &localCoordinatorTestSession{flow: "test", id: session.MustNewId(), state: session.StateDisposed, token: encoded}
 	users := &localManagementTestUsers{account: &user.User{Name: "original", Uid: uid}}
 	coordinator := &localAccountCoordinator{sessions: &localCoordinatorTestRepository{sessions: []session.Session{stored}}}
-	repository := &LocalRepository{userRepository: users, coordinator: coordinator}
+	repository := &LocalRepository{conf: newLocalManagementPolicyTestConfiguration(), userRepository: users, coordinator: coordinator}
 	env, err := repository.FindBySession(ctx, stored, nil)
 	require.NoError(t, err)
 	users.account = &user.User{Name: "renamed", Uid: uid}
@@ -319,14 +382,14 @@ func TestLocalUnixSkipsIdentityChangedAfterTokenRestore(t *testing.T) {
 func TestLocalUnixChangedIdentityDefersPendingDeletion(t *testing.T) {
 	ctx := context.Background()
 	uid := user.Id(2_000_000_000)
-	token := localToken{Version: 2, User: localTokenUser{Name: "original", Uid: &uid, DeleteOnDispose: true}}
+	token := localToken{Version: 2, AuthorizationKind: "simple", User: localTokenUser{Name: "original", Uid: &uid, DeleteOnDispose: true}}
 	encoded, err := json.Marshal(token)
 	require.NoError(t, err)
 	stored := &localCoordinatorTestSession{flow: "first", id: session.MustNewId(), state: session.StateDisposed, token: encoded}
 	other := &localCoordinatorTestSession{flow: "second", id: session.MustNewId(), state: session.StateAuthorized, token: encoded}
 	users := &localManagementTestUsers{account: &user.User{Name: "original", Uid: uid}}
 	coordinator := &localAccountCoordinator{sessions: &localCoordinatorTestRepository{sessions: []session.Session{stored, other}}}
-	repository := &LocalRepository{userRepository: users, coordinator: coordinator}
+	repository := &LocalRepository{conf: newLocalManagementPolicyTestConfiguration(), userRepository: users, coordinator: coordinator}
 	env, err := repository.FindBySession(ctx, stored, nil)
 	require.NoError(t, err)
 	users.account = &user.User{Name: "renamed", Uid: uid}

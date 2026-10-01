@@ -43,7 +43,7 @@ If a user needs to be authorized in a local environment using [OpenID Connect](#
 
 Bifröst can also automatically clean up these local users once they are no longer needed. For example: If their session times out after a defined idle-time, the local user, their home directory, and all running processes can be cleaned up.
 
-Automatic local-account provisioning is available on Linux. Native macOS operation is read-only and requires a pre-provisioned account.
+Automatic local-account provisioning and coordinated cleanup are available on Linux and macOS.
 
 ### More to come...
 
