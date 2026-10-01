@@ -25,7 +25,7 @@ The links to files in this repository describe the current source. For an instal
 
 ## OpenSSH migration and security
 
-Replacing an OpenSSH `sshd`? Use the [host installation guide](docs/setup/on-host.md) to set up Bifröst, and the [configuration reference](docs/reference/configuration.md) to select your SSH access policies. Review the [upgrade guidance](docs/setup/upgrade.md) when updating Bifröst and the [security policy](SECURITY.md) for vulnerability reporting.
+Replacing an OpenSSH `sshd`? Use the [host installation guide](docs/setup/on-host.md) to set up Bifröst, and the [configuration reference](docs/reference/configuration.md) to select your SSH access policies. For an evaluation, read [Choosing Bifröst](docs/choosing-bifroest.md) and [Security and trust](docs/security.md). Review the [upgrade guidance](docs/setup/upgrade.md) when updating Bifröst; report vulnerabilities through the [security policy](SECURITY.md).
 
 ## Project
 

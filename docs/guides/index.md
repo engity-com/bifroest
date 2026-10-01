@@ -11,3 +11,5 @@ Choose the task you want to accomplish:
 * [Verifiable session recording](recording.md): capture terminal output, verify it and export a recording.
 
 Install Bifröst first using the [host installation guide](../setup/on-host.md), and use the guide from the **same release** as your binary. Each example requires you to provide your own identities and permissions; none replaces the [configuration reference](../reference/configuration.md).
+
+Not sure which setup fits? See [Choosing Bifröst](../choosing-bifroest.md) and [Security and trust](../security.md).

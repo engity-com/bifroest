@@ -126,6 +126,7 @@ nav:
   - Home:
       - Welcome: index.md
       - Use cases: usecases.md
+      - Choosing Bifröst: choosing-bifroest.md
       - Guides:
           - guides/index.md
           - SSH gateway: guides/ssh-gateway.md
@@ -138,7 +139,7 @@ nav:
           - In Docker: setup/in-docker.md
       - setup/distribution.md
       - Upgrade notes: setup/upgrade.md
-      - Security: https://github.com/engity-com/bifroest/blob/main/SECURITY.md
+      - Security and trust: security.md
       - License: legal/license.md
   - Reference:
       - reference/index.md

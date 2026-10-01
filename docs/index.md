@@ -1,12 +1,13 @@
 ---
-description: Bifröst is an SSH server with OIDC login, SSH gateways, container sessions and verifiable audit and recording.
+title: Bifröst SSH server and gateway
+description: Use standard SSH clients with OIDC Device Authorization, SSH gateways and Docker/Kubernetes sessions. Verify optional audit and recordings.
 ---
 
 # Engity's Bifröst
 
 ![Engity's Bifröst](assets/logo-with-text.svg){. class=bifroest-logo title="Logo of Engity's Bifröst with title"}
 
-## SSH access with configurable authorization and session targets
+## SSH access with identity and session control
 
 Bifröst lets platform teams combine SSH authorization with the environment in which a session runs. Users connect with a standard SSH client; [OIDC Device Authorization](reference/authorization/oidc.md) also requires a browser and a supported identity provider. Sessions can run on a local account, in a Docker container or Kubernetes Pod, or through a separately authenticated [SSH target](reference/environment/ssh.md). Bifröst is not a universal drop-in replacement for [OpenSSH's sshd](https://man.openbsd.org/sshd).
 
@@ -45,4 +46,6 @@ Set maximum [connection](reference/connection/ssh.md#property-maxTimeout) and [s
 ## More topics
 * [Getting started](setup/index.md)
 * [Use-Cases](usecases.md)
+* [Choosing Bifröst](choosing-bifroest.md)
+* [Security and trust](security.md)
 * [Configuration](reference/configuration.md)

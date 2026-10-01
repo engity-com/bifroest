@@ -41,14 +41,10 @@ sudo systemctl restart bifroest.service
 ## Log in
 
 ```sh
-ssh -o PreferredAuthentications=keyboard-interactive \
-    -o PubkeyAuthentication=no \
-    -o PasswordAuthentication=no \
-    -l 'YOUR_IDP_SUB' \
-    gateway.example.org 'id -u'
+ssh YOUR_IDP_SUB@gateway.example.org 'id -u'
 ```
 
-Open the URL shown by SSH in a browser, sign in at the **expected IdP**, enter the displayed code if prompted, and approve the request. After approval, the command should print `1000` from the container. Disabling public-key authentication for this first test ensures a remembered key cannot skip the browser step.
+On the first login, open the URL shown by SSH in a browser, sign in at the **expected IdP**, enter the displayed code if prompted, and approve the request. The command should then print `1000` from the container. If the SSH client offered a public key, Bifröst can remember it for reconnects while the session remains valid; those reconnects may skip the browser step.
 
 If login fails, check that Device Authorization is enabled for the client, the issuer and `sub` match, and the IdP permits the requested `openid` scope and client-secret method. For a private IdP CA, configure `SSL_CERT_FILE` in the Bifröst service environment; do not disable HTTPS verification. Docker socket access grants broad host privileges, and this example is not an isolation guarantee; see the [OIDC](../reference/authorization/oidc.md) and [Docker](../reference/environment/docker.md) references.
 
