@@ -37,6 +37,16 @@ type AuthorizerFacade struct {
 	observer FlowAuthorizationObserver
 }
 
+func (this *AuthorizerFacade) OidcRefreshAuthorizer(flow configuration.FlowName) *OidcDeviceAuthAuthorizer {
+	for _, entry := range this.entries {
+		if entry.flow == flow {
+			authorizer, _ := entry.CloseableAuthorizer.(*OidcDeviceAuthAuthorizer)
+			return authorizer
+		}
+	}
+	return nil
+}
+
 type FlowAuthorizationMethod string
 
 const (

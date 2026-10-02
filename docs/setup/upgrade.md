@@ -28,6 +28,24 @@ Sessions saved by the previous minor series have no creation timestamp. For them
 
 Flow names must be unique, may not be `.` or `..`, and may not exceed 255 bytes. Correct existing names that violate these rules before starting the upgraded version, or configuration validation will fail.
 
+## Authorizations
+
+### OIDC Device Auth
+
+OIDC now defaults to `forceDisposeSessionOn: lostAccess` and `refreshToken.mode: proactive`. Before upgrading, ensure your identity provider issues refresh tokens for the configured client and scopes (often requiring `offline_access`). Otherwise, new OIDC logins will be rejected. Bifröst does not add provider-specific scopes automatically.
+
+Previously created sessions without a refresh token or recorded identity will be disposed when the upgraded service starts. Users of those sessions must authenticate again; running work may be interrupted.
+
+To temporarily retain the previous behavior while configuring your identity provider, explicitly set **both** properties in the OIDC authorization:
+
+```yaml
+forceDisposeSessionOn: never
+refreshToken:
+  mode: never
+```
+
+See the [OIDC authorization reference](../reference/authorization/oidc.md#device-auth) for the full configuration and examples.
+
 ## Environments
 
 ### All environment types

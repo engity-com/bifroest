@@ -2,13 +2,16 @@ package authorization
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	goerrors "errors"
 	"fmt"
+	"hash/fnv"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	coidc "github.com/coreos/go-oidc/v3/oidc"
@@ -28,11 +31,17 @@ type OidcDeviceAuthAuthorizer struct {
 	flow configuration.FlowName
 	conf *configuration.AuthorizationOidcDeviceAuth
 
-	Logger log.Logger
+	Logger       log.Logger
+	OnVerified   func(session.Session, time.Time)
+	OnLostAccess func(session.Session)
 
 	oauth2Config oauth2.Config
 	provider     *coidc.Provider
 	verifier     *coidc.IDTokenVerifier
+	refreshLocks [64]struct {
+		once  sync.Once
+		ready chan struct{}
+	}
 }
 
 func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *configuration.AuthorizationOidcDeviceAuth) (*OidcDeviceAuthAuthorizer, error) {
@@ -242,6 +251,279 @@ func withSameOriginRedirects(ctx context.Context, endpoint string) (context.Cont
 	return context.WithValue(ctx, oauth2.HTTPClient, &copyOfClient), nil
 }
 
+func (this *OidcDeviceAuthAuthorizer) lockSession(ctx context.Context, sess session.Session) (func(), error) {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(sess.String()))
+	lock := &this.refreshLocks[h.Sum32()%uint32(len(this.refreshLocks))]
+	lock.once.Do(func() {
+		lock.ready = make(chan struct{}, 1)
+		lock.ready <- struct{}{}
+	})
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-lock.ready:
+		if err := ctx.Err(); err != nil {
+			lock.ready <- struct{}{}
+			return nil, err
+		}
+		return func() { lock.ready <- struct{}{} }, nil
+	}
+}
+
+func (this *OidcDeviceAuthAuthorizer) refreshDue(t *oidcToken) time.Time {
+	if t == nil || t.Token == nil || t.ReceivedAt.IsZero() {
+		return time.Now()
+	}
+	fallback := this.conf.RefreshToken.FallbackEvery.Native()
+	if fallback <= 0 {
+		fallback = 15 * time.Minute
+	}
+	if t.Expiry.IsZero() || !t.Expiry.After(t.ReceivedAt) {
+		if !t.Expiry.IsZero() && !time.Now().Before(t.Expiry) {
+			return time.Now()
+		}
+		return t.ReceivedAt.Add(fallback)
+	}
+	percent := this.conf.RefreshToken.AtLifetimePercent
+	if percent == 0 {
+		percent = 70
+	}
+	return t.ReceivedAt.Add(time.Duration(int64(t.Expiry.Sub(t.ReceivedAt)) * int64(percent) / 100))
+}
+
+func (this *OidcDeviceAuthAuthorizer) verificationDue(t *oidcToken) time.Time {
+	max := this.maxUnverifiedFor()
+	advance := min(max/10, 5*time.Minute)
+	return t.LastVerifiedAt.Add(max - advance)
+}
+
+func (this *OidcDeviceAuthAuthorizer) maxUnverifiedFor() time.Duration {
+	max := this.conf.RefreshToken.MaxUnverifiedFor.Native()
+	if max <= 0 {
+		return 30 * time.Minute
+	}
+	return max
+}
+
+func (this *OidcDeviceAuthAuthorizer) NextRefreshAt(ctx context.Context, sess session.Session) (time.Time, error) {
+	if this.conf == nil || !this.conf.RefreshEnabled() {
+		return time.Time{}, nil
+	}
+	unlock, err := this.lockSession(ctx, sess)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer unlock()
+	t, err := this.readSessionToken(ctx, sess)
+	if err != nil {
+		if this.conf.ForceDisposeSessionOn != "never" &&
+			(goerrors.Is(err, ErrNoSuchAuthorization) || goerrors.Is(err, ErrUnusableAuthorizationToken)) {
+			return time.Now(), nil
+		}
+		return time.Time{}, err
+	}
+	if this.conf.ForceDisposeSessionOn != "never" && (t.RefreshToken == "" || t.Subject == "" || t.Issuer == "" || t.LastVerifiedAt.IsZero()) {
+		return time.Now(), nil
+	}
+	return this.nextRefreshAt(t), nil
+}
+
+func (this *OidcDeviceAuthAuthorizer) nextRefreshAt(t *oidcToken) time.Time {
+	next := this.refreshDue(t)
+	if this.conf.RetrieveIdToken && t.IdToken != "" {
+		// Unverified JWT expiry is only an earlier scheduling hint, never identity evidence.
+		parts := strings.Split(t.IdToken, ".")
+		if len(parts) != 3 {
+			return time.Now()
+		}
+		payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+		if err != nil {
+			return time.Now()
+		}
+		var claims struct {
+			Expiry json.Number `json:"exp"`
+		}
+		if err := json.Unmarshal(payload, &claims); err != nil {
+			return time.Now()
+		}
+		exp, err := claims.Expiry.Int64()
+		if err != nil || exp <= time.Now().Unix() {
+			return time.Now()
+		}
+		if idExpiry := time.Unix(exp, 0); idExpiry.Before(next) {
+			next = idExpiry
+		}
+	}
+	if this.conf.ForceDisposeSessionOn != "never" && !t.LastVerifiedAt.IsZero() {
+		if due := this.verificationDue(t); due.Before(next) {
+			next = due
+		}
+	}
+	return next
+}
+
+// VerificationDeadline returns the persisted grant's absolute verification deadline without contacting the provider.
+func (this *OidcDeviceAuthAuthorizer) VerificationDeadline(ctx context.Context, sess session.Session) (time.Time, error) {
+	unlock, err := this.lockSession(ctx, sess)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer unlock()
+	t, err := this.readSessionToken(ctx, sess)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if this.conf == nil || this.conf.ForceDisposeSessionOn == "never" {
+		return time.Time{}, nil
+	}
+	if t.LastVerifiedAt.IsZero() || t.Subject == "" || t.Issuer == "" {
+		return time.Time{}, fmt.Errorf("%w: OIDC session identity is not verified", ErrUnusableAuthorizationToken)
+	}
+	return t.LastVerifiedAt.Add(this.maxUnverifiedFor()), nil
+}
+
+func (this *OidcDeviceAuthAuthorizer) readSessionToken(ctx context.Context, sess session.Session) (*oidcToken, error) {
+	if !sess.Flow().IsEqualTo(this.flow) {
+		return nil, ErrNoSuchAuthorization
+	}
+	raw, err := sess.AuthorizationToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read OIDC session token: %w", err)
+	}
+	if len(raw) == 0 {
+		return nil, ErrNoSuchAuthorization
+	}
+	var t oidcToken
+	if err := json.Unmarshal(raw, &t); err != nil || t.Token == nil || t.AccessToken == "" {
+		return nil, fmt.Errorf("%w: invalid persisted OIDC session token", ErrUnusableAuthorizationToken)
+	}
+	return &t, nil
+}
+
+// RefreshSession serializes token exchange and persistence with reconnects for this authorizer.
+func (this *OidcDeviceAuthAuthorizer) RefreshSession(ctx context.Context, sess session.Session) (next time.Time, lost bool, err error) {
+	if this.conf == nil || !this.conf.RefreshEnabled() {
+		return time.Time{}, false, nil
+	}
+	unlock, err := this.lockSession(ctx, sess)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	defer unlock()
+	t, err := this.readSessionToken(ctx, sess)
+	if err != nil {
+		if goerrors.Is(err, ErrNoSuchAuthorization) && this.conf.ForceDisposeSessionOn != "never" {
+			return time.Time{}, true, fmt.Errorf("OIDC session has no authorization token")
+		}
+		return time.Now().Add(time.Minute), this.conf.ForceDisposeSessionOn != "never" && goerrors.Is(err, ErrUnusableAuthorizationToken), err
+	}
+	force := false
+	if this.conf.RetrieveIdToken && t.IdToken != "" {
+		verifyCtx := ctx
+		if this.conf.ForceDisposeSessionOn != "never" && !t.LastVerifiedAt.IsZero() {
+			var cancel context.CancelFunc
+			verifyCtx, cancel = context.WithDeadline(ctx, t.LastVerifiedAt.Add(this.maxUnverifiedFor()))
+			defer cancel()
+		}
+		_, err := this.verifyToken(verifyCtx, t)
+		force = errors.IsType(err, errors.Expired)
+	}
+	return this.refreshSession(ctx, sess, t, force)
+}
+
+// refreshSession requires the session lock. The caller must reload the token under that lock.
+func (this *OidcDeviceAuthAuthorizer) refreshSession(ctx context.Context, sess session.Session, t *oidcToken, force bool) (time.Time, bool, error) {
+	now := time.Now()
+	due := this.refreshDue(t)
+	lostAccess := this.conf.ForceDisposeSessionOn != "never"
+	deadline := t.LastVerifiedAt.Add(this.maxUnverifiedFor())
+	if lostAccess && (t.Subject == "" || t.Issuer == "" || t.LastVerifiedAt.IsZero()) {
+		return time.Time{}, true, fmt.Errorf("OIDC session identity is no longer verified")
+	}
+	if lostAccess && t.RefreshToken == "" {
+		return time.Time{}, true, fmt.Errorf("OIDC session has no refresh token")
+	}
+	if lostAccess && !now.Before(deadline) {
+		return time.Time{}, true, fmt.Errorf("OIDC refresh verification deadline exceeded")
+	}
+	if lostAccess && !now.Before(this.verificationDue(t)) {
+		force = true
+	}
+	if !force && !t.ReceivedAt.IsZero() && now.Before(due) && (t.Expiry.IsZero() || now.Before(t.Expiry)) && (!lostAccess || now.Before(deadline)) {
+		return this.nextRefreshAt(t), false, nil
+	}
+	retry := now.Add(time.Minute)
+	if lostAccess && deadline.Before(retry) && now.Before(deadline) {
+		retry = deadline
+	}
+	if t.RefreshToken == "" {
+		return retry, lostAccess, fmt.Errorf("OIDC session has no refresh token")
+	}
+	if lostAccess {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
+	}
+	ctx, err := withSameOriginRedirects(ctx, this.oauth2Config.Endpoint.TokenURL)
+	if err != nil {
+		return retry, false, fmt.Errorf("cannot prepare OIDC refresh: %w", err)
+	}
+	// TokenSource returns its input without an exchange while the access token is valid.
+	input := *t.Token
+	input.Expiry = now.Add(-time.Second)
+	updated, err := this.oauth2Config.TokenSource(ctx, &input).Token()
+	if err != nil {
+		var retrieveErr *oauth2.RetrieveError
+		if goerrors.As(err, &retrieveErr) && retrieveErr.ErrorCode == "invalid_grant" {
+			return retry, lostAccess, fmt.Errorf("OIDC refresh token was rejected")
+		}
+		if lostAccess && !time.Now().Before(deadline) {
+			return time.Time{}, true, fmt.Errorf("OIDC refresh could not verify identity before deadline")
+		}
+		return retry, false, fmt.Errorf("OIDC token refresh failed")
+	}
+	if lostAccess && !time.Now().Before(deadline) {
+		return time.Time{}, true, fmt.Errorf("OIDC refresh verification deadline exceeded")
+	}
+	fresh := newOidcToken(updated)
+	if !fresh.Expiry.IsZero() && !time.Now().Before(fresh.Expiry) {
+		return retry, lostAccess && !time.Now().Before(deadline), fmt.Errorf("OIDC refresh returned an expired access token")
+	}
+	fresh.Subject, fresh.Issuer, fresh.LastVerifiedAt = t.Subject, t.Issuer, t.LastVerifiedAt
+	if fresh.IdToken != "" {
+		verified, verifyErr := this.verifyToken(ctx, &fresh)
+		if verifyErr != nil {
+			if lostAccess && !time.Now().Before(deadline) {
+				return time.Time{}, true, fmt.Errorf("OIDC refreshed identity could not be verified before deadline")
+			}
+			return retry, false, fmt.Errorf("OIDC refreshed ID token could not be verified")
+		}
+		if t.Subject != "" && (t.Subject != verified.Subject || t.Issuer != verified.Issuer) {
+			return retry, lostAccess, fmt.Errorf("OIDC refreshed identity differs from session identity")
+		}
+		fresh.Subject, fresh.Issuer, fresh.LastVerifiedAt = verified.Subject, verified.Issuer, time.Now()
+	} else {
+		if t.IdToken != "" && t.Subject != "" && t.Issuer != "" {
+			if previous, err := this.verifyToken(ctx, t); err == nil && time.Now().Before(previous.Expiry) &&
+				previous.Subject == t.Subject && previous.Issuer == t.Issuer {
+				fresh.IdToken = t.IdToken
+			}
+		}
+		fresh.LastVerifiedAt = time.Now()
+	}
+	if lostAccess && !time.Now().Before(deadline) {
+		return time.Time{}, true, fmt.Errorf("OIDC refresh verification deadline exceeded")
+	}
+	if err := this.updateSessionWith(ctx, &fresh, sess); err != nil {
+		return retry, lostAccess, fmt.Errorf("cannot persist refreshed OIDC token: %w", err)
+	}
+	if lostAccess && this.OnVerified != nil {
+		this.OnVerified(sess, fresh.LastVerifiedAt.Add(this.maxUnverifiedFor()))
+	}
+	return this.nextRefreshAt(&fresh), false, nil
+}
+
 func (this *OidcDeviceAuthAuthorizer) RestoreFromSession(ctx context.Context, sess session.Session, opts *RestoreOpts) (Authorization, error) {
 	fail := func(err error) (Authorization, error) {
 		return nil, errors.Newf(errors.System, "cannot restore authorization from session %v: %w", sess, err)
@@ -253,6 +535,11 @@ func (this *OidcDeviceAuthAuthorizer) RestoreFromSession(ctx context.Context, se
 	if !sess.Flow().IsEqualTo(this.flow) {
 		return nil, ErrNoSuchAuthorization
 	}
+	unlock, err := this.lockSession(ctx, sess)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 
 	tb, err := sess.AuthorizationToken(ctx)
 	if err != nil {
@@ -270,14 +557,58 @@ func (this *OidcDeviceAuthAuthorizer) RestoreFromSession(ctx context.Context, se
 	if t.Token == nil || t.AccessToken == "" {
 		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("OIDC authorization token has no access token"))
 	}
-	if this.conf != nil && this.conf.RetrieveIdToken && t.IdToken == "" {
+	refreshEnabled := this.conf != nil && this.conf.RefreshEnabled()
+	if this.conf != nil && this.conf.RetrieveIdToken && t.IdToken == "" && !(refreshEnabled && !t.LastVerifiedAt.IsZero() && t.Subject != "" && t.Issuer != "") {
 		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("OIDC authorization token has no required ID token"))
 	}
+	if refreshEnabled && this.conf.ForceDisposeSessionOn != "never" && (t.Expiry.IsZero() || time.Now().Before(t.Expiry)) {
+		if _, lost, err := this.refreshSession(ctx, sess, &t, false); lost {
+			return nil, unusableAuthorizationToken(ctx, sess, opts, err)
+		} else if err != nil {
+			return fail(err)
+		}
+		updated, err := this.readSessionToken(ctx, sess)
+		if err != nil {
+			return fail(err)
+		}
+		t = *updated
+	}
 	if !t.Expiry.IsZero() && !time.Now().Before(t.Expiry) {
-		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("OIDC authorization token expired at %s", t.Expiry))
+		if !refreshEnabled {
+			return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("OIDC authorization token expired at %s", t.Expiry))
+		}
+		if _, lost, err := this.refreshSession(ctx, sess, &t, true); lost {
+			return nil, unusableAuthorizationToken(ctx, sess, opts, err)
+		} else if err != nil {
+			return fail(err)
+		}
+		updated, err := this.readSessionToken(ctx, sess)
+		if err != nil {
+			return fail(err)
+		}
+		t = *updated
+		if !t.Expiry.IsZero() && !time.Now().Before(t.Expiry) {
+			return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("OIDC access token is expired"))
+		}
+	}
+	if refreshEnabled && this.conf.RetrieveIdToken && t.IdToken != "" {
+		if _, err := this.verifyToken(ctx, &t); errors.IsType(err, errors.Expired) {
+			if _, lost, err := this.refreshSession(ctx, sess, &t, true); lost {
+				return nil, unusableAuthorizationToken(ctx, sess, opts, err)
+			} else if err != nil {
+				return fail(err)
+			}
+			updated, err := this.readSessionToken(ctx, sess)
+			if err != nil {
+				return fail(err)
+			}
+			t = *updated
+		}
+	}
+	if !t.Expiry.IsZero() && !time.Now().Before(t.Expiry) {
+		return fail(fmt.Errorf("OIDC access token is expired"))
 	}
 
-	// TODO! Refresh the token
 	auth, err := this.finalizeAuth(ctx, this.logger(), &t, true)
 	if errors.IsType(err, errors.Expired) {
 		return nil, unusableAuthorizationToken(ctx, sess, opts, err)
@@ -327,9 +658,25 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizeInteractive(req InteractiveReques
 	req.Connection().Logger().Debug("token received")
 
 	t := newOidcToken(buf)
+	if this.conf.RefreshEnabled() && t.RefreshToken == "" {
+		return failf("OIDC provider did not issue a refresh token required for configured refresh")
+	}
 	auth, err := this.finalizeAuth(ctx, req.Connection().Logger(), &t, true)
 	if err != nil {
 		return fail(err)
+	}
+	if this.conf.ForceDisposeSessionOn != "never" || (this.conf.RefreshEnabled() && t.IdToken != "") {
+		verified := auth.idToken.IDToken
+		if verified == nil {
+			verified, err = this.verifyToken(ctx, &t)
+			if err != nil {
+				return fail(err)
+			}
+		}
+		t.Subject, t.Issuer, t.LastVerifiedAt = verified.Subject, verified.Issuer, time.Now()
+		if t.Subject == "" || t.Issuer == "" {
+			return failf("OIDC ID token has no subject or issuer")
+		}
 	}
 	auth.remote = req.Connection().Remote()
 
@@ -360,6 +707,11 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (
 	var selectedAuth *oidc
 	var selectedToken *oidcToken
 	restoreCandidate := func(ctx context.Context, candidate session.Session) (bool, error) {
+		unlock, err := this.lockSession(ctx, candidate)
+		if err != nil {
+			return false, err
+		}
+		defer unlock()
 		at, err := candidate.AuthorizationToken(ctx)
 		if err != nil {
 			return false, err
@@ -370,6 +722,65 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (
 		var token oidcToken
 		if err := json.Unmarshal(at, &token); err != nil {
 			return false, err
+		}
+		if token.Token == nil || token.AccessToken == "" {
+			return false, nil
+		}
+		if this.conf != nil && this.conf.ForceDisposeSessionOn != "never" && (token.Expiry.IsZero() || time.Now().Before(token.Expiry)) {
+			if _, lost, err := this.refreshSession(ctx, candidate, &token, false); lost {
+				if this.OnLostAccess != nil {
+					this.OnLostAccess(candidate)
+				}
+				return false, nil
+			} else if err != nil {
+				return false, err
+			}
+			updated, err := this.readSessionToken(ctx, candidate)
+			if err != nil {
+				return false, err
+			}
+			token = *updated
+		}
+		if !token.Expiry.IsZero() && !time.Now().Before(token.Expiry) {
+			if this.conf == nil || !this.conf.RefreshEnabled() {
+				return false, nil
+			}
+			if _, lost, err := this.refreshSession(ctx, candidate, &token, true); lost {
+				if this.OnLostAccess != nil {
+					this.OnLostAccess(candidate)
+				}
+				return false, nil
+			} else if err != nil {
+				return false, err
+			}
+			updated, err := this.readSessionToken(ctx, candidate)
+			if err != nil {
+				return false, err
+			}
+			token = *updated
+			if !token.Expiry.IsZero() && !time.Now().Before(token.Expiry) {
+				return false, nil
+			}
+		}
+		if this.conf != nil && this.conf.RefreshEnabled() && this.conf.RetrieveIdToken && token.IdToken != "" {
+			if _, err := this.verifyToken(ctx, &token); errors.IsType(err, errors.Expired) {
+				if _, lost, err := this.refreshSession(ctx, candidate, &token, true); lost {
+					if this.OnLostAccess != nil {
+						this.OnLostAccess(candidate)
+					}
+					return false, nil
+				} else if err != nil {
+					return false, err
+				}
+				updated, err := this.readSessionToken(ctx, candidate)
+				if err != nil {
+					return false, err
+				}
+				token = *updated
+			}
+		}
+		if !token.Expiry.IsZero() && !time.Now().Before(token.Expiry) {
+			return false, nil
 		}
 		auth, err := this.finalizeAuth(ctx, req.Connection().Logger(), &token, true)
 		if errors.IsType(err, errors.Expired) {
@@ -383,6 +794,9 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (
 		accepted, err := req.Validate(auth)
 		if err != nil || !accepted {
 			return accepted, err
+		}
+		if err := this.updateSessionWith(ctx, &token, candidate); err != nil {
+			return false, err
 		}
 		selectedAuth = auth
 		selectedToken = &token
@@ -405,9 +819,6 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (
 	if selectedAuth == nil || selectedToken == nil || selectedAuth.session != sess {
 		return failf("selected session was not restored")
 	}
-	if err := this.updateSessionWith(req.Context(), selectedToken, sess); err != nil {
-		return fail(err)
-	}
 	return selectedAuth, nil
 }
 
@@ -427,15 +838,19 @@ func (this *OidcDeviceAuthAuthorizer) finalizeAuth(ctx context.Context, logger l
 		return failf("cannot store token at response: %w", err)
 	}
 
-	if retrieveArtifactsAllowed && this.conf.RetrieveIdToken {
+	if retrieveArtifactsAllowed && this.conf.RetrieveIdToken && t.IdToken != "" {
 		idToken, err := this.verifyToken(ctx, t)
 		if err != nil {
 			return fail(err)
+		} else {
+			if t.Subject != "" && (idToken.Subject != t.Subject || idToken.Issuer != t.Issuer) {
+				return failf("OIDC ID token identity differs from session identity")
+			}
+			auth.idToken.IDToken = idToken
+			logger.With("idToken", &auth.idToken).Debug("id token received")
 		}
-
-		auth.idToken.IDToken = idToken
-
-		logger.With("idToken", &auth.idToken).Debug("id token received")
+	} else if retrieveArtifactsAllowed && this.conf.RetrieveIdToken && !this.conf.RefreshEnabled() {
+		return failf("token does not contain id_token")
 	}
 
 	if retrieveArtifactsAllowed && this.conf.RetrieveUserInfo {

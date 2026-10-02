@@ -325,6 +325,13 @@ func (this *Service) prepare() (svc *service, err error) {
 			}
 		}
 	}
+	if err := svc.oidcRefresh.init(svc); err != nil {
+		// The initial refresh scan runs after housekeeping and other service
+		// resources have started. Close all of them on a scan failure.
+		sessionRepositoryPrepared = true
+		resourcesOwnedByService = true
+		return fail(goerrors.Join(err, svc.Close()))
+	}
 
 	sessionRepositoryPrepared = true
 	resourcesOwnedByService = true
@@ -921,6 +928,8 @@ type service struct {
 	authorizer               authorization.CloseableAuthorizer
 	environments             environment.CloseableRepository
 	houseKeeper              houseKeeper
+	oidcRefresh              oidcRefreshManager
+	sessionConnections       sessionConnectionRegistry
 	alternatives             alternatives.Provider
 	imp                      imp.Imp
 	server                   essh.Server
@@ -993,6 +1002,7 @@ func (this *service) Close() (rErr error) {
 	defer common.KeepCloseError(&rErr, this.authorizer)
 	defer common.KeepCloseError(&rErr, this.environments)
 	defer common.KeepCloseError(&rErr, &this.houseKeeper)
+	defer common.KeepCloseError(&rErr, &this.oidcRefresh)
 	return nil
 }
 

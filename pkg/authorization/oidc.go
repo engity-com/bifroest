@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	coidc "github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/crypto/ssh"
@@ -179,7 +180,7 @@ func (this *OidcUserInfo) GetField(name string) (_ any, _ bool, err error) {
 }
 
 func newOidcToken(in *oauth2.Token) oidcToken {
-	result := oidcToken{Token: in}
+	result := oidcToken{Token: in, ReceivedAt: time.Now()}
 	if in != nil {
 		if v, ok := in.Extra("id_token").(string); ok {
 			result.IdToken = v
@@ -190,5 +191,9 @@ func newOidcToken(in *oauth2.Token) oidcToken {
 
 type oidcToken struct {
 	*oauth2.Token
-	IdToken string `json:"id_token,omitempty"`
+	IdToken        string    `json:"id_token,omitempty"`
+	ReceivedAt     time.Time `json:"receivedAt,omitempty"`
+	LastVerifiedAt time.Time `json:"lastVerifiedAt,omitempty"`
+	Subject        string    `json:"subject,omitempty"`
+	Issuer         string    `json:"issuer,omitempty"`
 }

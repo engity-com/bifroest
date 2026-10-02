@@ -9,10 +9,47 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
 )
+
+type housekeepingDeadlineAuthorizer struct {
+	authorization.CloseableAuthorizer
+	deadline time.Time
+	set      bool
+}
+
+func (this *housekeepingDeadlineAuthorizer) RestoreFromSession(ctx context.Context, _ session.Session, _ *authorization.RestoreOpts) (authorization.Authorization, error) {
+	this.deadline, this.set = ctx.Deadline()
+	return nil, authorization.ErrNoSuchAuthorization
+}
+
+func TestHouseKeeperBoundsOIDCRestore(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		config  configuration.AuthorizationV
+		bounded bool
+	}{
+		{"OIDC", &configuration.AuthorizationOidcDeviceAuth{}, true},
+		{"other", &configuration.AuthorizationNone{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, &houseKeeperTestAuthorizer{})
+			authorizer := &housekeepingDeadlineAuthorizer{}
+			hk.service.authorizer = authorizer
+			sess := &houseKeeperTestSession{flow: "current", id: session.MustNewId()}
+			hk.service.Configuration.Flows = configuration.Flows{{Name: sess.flow, Authorization: configuration.Authorization{V: tc.config}}}
+			_, err := hk.disposeAuthorization(context.Background(), hk.logger(), sess, false)
+			require.NoError(t, err)
+			require.Equal(t, tc.bounded, authorizer.set)
+			if tc.bounded {
+				require.WithinDuration(t, time.Now().Add(oidcRefreshTimeout), authorizer.deadline, time.Second)
+			}
+		})
+	}
+}
 
 func TestHouseKeeperOIDCFinalRetentionClearsLocalTokenWithoutRestore(t *testing.T) {
 	for name, restoreErr := range map[string]error{
