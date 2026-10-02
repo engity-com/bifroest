@@ -65,7 +65,7 @@ func (this *sessionConnectionRegistry) untrack(conn *connection) {
 	this.mutex.Unlock()
 }
 
-// remove must be called with mutex held. Revoked entries remain to reject late registrations.
+// remove must be called with mutex held. Revoked entries remain until final deletion.
 func (this *sessionConnectionRegistry) remove(conn *connection, key sessionConnectionKey) {
 	delete(this.connections, conn)
 	entry := this.sessions[key]
@@ -73,6 +73,18 @@ func (this *sessionConnectionRegistry) remove(conn *connection, key sessionConne
 	if !entry.revoked && len(entry.connections) == 0 {
 		delete(this.sessions, key)
 	}
+}
+
+// finalSessionDeleted removes the revocation tombstone only after a durable
+// session deletion. Never call this on disposal or an attempted deletion:
+// late registrations must still be rejected while the session exists.
+func (this *sessionConnectionRegistry) finalSessionDeleted(flow configuration.FlowName, id session.Id) {
+	key := sessionConnectionKey{flow: flow, id: id}
+	this.mutex.Lock()
+	if entry := this.sessions[key]; entry != nil && entry.revoked && len(entry.connections) == 0 {
+		delete(this.sessions, key)
+	}
+	this.mutex.Unlock()
 }
 
 func (this *sessionConnectionRegistry) revoke(flow configuration.FlowName, id session.Id) {

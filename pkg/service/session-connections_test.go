@@ -67,6 +67,20 @@ func TestSessionConnectionRegistryRejectsRegistrationAfterRevoke(t *testing.T) {
 	require.EqualValues(t, 0, svc.activeConnections.Load())
 }
 
+func TestSessionConnectionRegistryRetainsRevokeUntilFinalDeletion(t *testing.T) {
+	svc := &service{}
+	sess := &houseKeeperTestSession{flow: "main", id: session.MustNewId()}
+	svc.sessionConnections.revoke(sess.flow, sess.id)
+	for range 2 {
+		conn := newTrackedSessionConnection(t, svc)
+		svc.sessionConnections.track(conn, sess)
+		require.True(t, conn.closed.Load())
+	}
+	require.Len(t, svc.sessionConnections.sessions, 1)
+	svc.sessionConnections.finalSessionDeleted(sess.flow, sess.id)
+	require.Empty(t, svc.sessionConnections.sessions)
+}
+
 func TestSessionConnectionRegistryUntrackAndClosedRegistration(t *testing.T) {
 	svc := &service{}
 	sess := &houseKeeperTestSession{flow: "main", id: session.MustNewId()}

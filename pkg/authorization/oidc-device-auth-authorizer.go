@@ -323,6 +323,9 @@ func (this *OidcDeviceAuthAuthorizer) NextRefreshAt(ctx context.Context, sess se
 		}
 		return time.Time{}, err
 	}
+	if t.Pending != nil {
+		return this.nextRefreshAt(t), nil
+	}
 	if this.conf.ForceDisposeSessionOn != "never" && (t.RefreshToken == "" || t.Subject == "" || t.Issuer == "" || t.LastVerifiedAt.IsZero()) {
 		return time.Now(), nil
 	}
@@ -330,6 +333,21 @@ func (this *OidcDeviceAuthAuthorizer) NextRefreshAt(ctx context.Context, sess se
 }
 
 func (this *OidcDeviceAuthAuthorizer) nextRefreshAt(t *oidcToken) time.Time {
+	if t.Pending != nil {
+		next := t.Pending.ReceivedAt.Add(time.Minute)
+		if t.Pending.ReceivedAt.IsZero() {
+			next = time.Now()
+		}
+		base := t.LastVerifiedAt
+		if base.IsZero() {
+			base = t.Pending.ReceivedAt
+		}
+		maxUnverified := this.maxUnverifiedFor()
+		if due := base.Add(maxUnverified - min(maxUnverified/10, 5*time.Minute)); due.Before(next) {
+			return due
+		}
+		return next
+	}
 	next := this.refreshDue(t)
 	if this.conf.RetrieveIdToken && t.IdToken != "" {
 		// Unverified JWT expiry is only an earlier scheduling hint, never identity evidence.
@@ -441,6 +459,43 @@ func (this *OidcDeviceAuthAuthorizer) refreshSession(ctx context.Context, sess s
 	if lostAccess && (t.Subject == "" || t.Issuer == "" || t.LastVerifiedAt.IsZero()) {
 		return time.Time{}, true, fmt.Errorf("OIDC session identity is no longer verified")
 	}
+	if t.Pending != nil {
+		base := t.LastVerifiedAt
+		if base.IsZero() {
+			base = t.Pending.ReceivedAt
+		}
+		pendingDeadline := base.Add(this.maxUnverifiedFor())
+		if base.IsZero() || !now.Before(pendingDeadline) {
+			return time.Time{}, lostAccess, fmt.Errorf("OIDC pending verification deadline exceeded")
+		}
+		if t.Pending.Token == nil || t.Pending.AccessToken == "" || t.Pending.RefreshToken == "" || t.Pending.IdToken == "" {
+			return time.Time{}, lostAccess, fmt.Errorf("OIDC pending verification has incomplete credentials")
+		}
+		verifyCtx, cancel := context.WithDeadline(ctx, pendingDeadline)
+		defer cancel()
+		fresh := oidcToken{Token: t.Pending.Token, IdToken: t.Pending.IdToken, ReceivedAt: t.Pending.ReceivedAt}
+		verified, verifyErr := this.verifyToken(verifyCtx, &fresh)
+		if verifyErr != nil {
+			if !time.Now().Before(pendingDeadline) {
+				return time.Time{}, lostAccess, fmt.Errorf("OIDC pending verification deadline exceeded")
+			}
+			return this.nextRefreshAt(t), false, fmt.Errorf("OIDC pending ID token could not be verified")
+		}
+		if verified.Subject == "" || verified.Issuer == "" || (t.Subject != "" && t.Subject != verified.Subject) || (t.Issuer != "" && t.Issuer != verified.Issuer) {
+			return time.Time{}, lostAccess, fmt.Errorf("OIDC refreshed identity differs from session identity")
+		}
+		if lostAccess && !time.Now().Before(deadline) {
+			return time.Time{}, true, fmt.Errorf("OIDC refresh verification deadline exceeded")
+		}
+		fresh.Subject, fresh.Issuer, fresh.LastVerifiedAt = verified.Subject, verified.Issuer, time.Now()
+		if err := this.updateSessionWith(ctx, &fresh, sess); err != nil {
+			return time.Time{}, true, fmt.Errorf("cannot persist verified OIDC token: %w", err)
+		}
+		if lostAccess && this.OnVerified != nil {
+			this.OnVerified(sess, fresh.LastVerifiedAt.Add(this.maxUnverifiedFor()))
+		}
+		return this.nextRefreshAt(&fresh), false, nil
+	}
 	if lostAccess && t.RefreshToken == "" {
 		return time.Time{}, true, fmt.Errorf("OIDC session has no refresh token")
 	}
@@ -497,9 +552,13 @@ func (this *OidcDeviceAuthAuthorizer) refreshSession(ctx context.Context, sess s
 			if lostAccess && !time.Now().Before(deadline) {
 				return time.Time{}, true, fmt.Errorf("OIDC refreshed identity could not be verified before deadline")
 			}
+			t.Pending = &oidcPendingVerification{Token: fresh.Token, IdToken: fresh.IdToken, ReceivedAt: fresh.ReceivedAt}
+			if err := this.updateSessionWith(ctx, t, sess); err != nil {
+				return time.Time{}, true, fmt.Errorf("cannot persist pending OIDC verification: %w", err)
+			}
 			return retry, false, fmt.Errorf("OIDC refreshed ID token could not be verified")
 		}
-		if t.Subject != "" && (t.Subject != verified.Subject || t.Issuer != verified.Issuer) {
+		if verified.Subject == "" || verified.Issuer == "" || (t.Subject != "" && t.Subject != verified.Subject) || (t.Issuer != "" && t.Issuer != verified.Issuer) {
 			return retry, lostAccess, fmt.Errorf("OIDC refreshed identity differs from session identity")
 		}
 		fresh.Subject, fresh.Issuer, fresh.LastVerifiedAt = verified.Subject, verified.Issuer, time.Now()
@@ -558,8 +617,20 @@ func (this *OidcDeviceAuthAuthorizer) RestoreFromSession(ctx context.Context, se
 		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("OIDC authorization token has no access token"))
 	}
 	refreshEnabled := this.conf != nil && this.conf.RefreshEnabled()
-	if this.conf != nil && this.conf.RetrieveIdToken && t.IdToken == "" && !(refreshEnabled && !t.LastVerifiedAt.IsZero() && t.Subject != "" && t.Issuer != "") {
+	if this.conf != nil && this.conf.RetrieveIdToken && t.IdToken == "" && (!refreshEnabled || t.LastVerifiedAt.IsZero() || t.Subject == "" || t.Issuer == "") {
 		return nil, unusableAuthorizationToken(ctx, sess, opts, fmt.Errorf("OIDC authorization token has no required ID token"))
+	}
+	if t.Pending != nil {
+		if _, lost, err := this.refreshSession(ctx, sess, &t, false); lost {
+			return nil, unusableAuthorizationToken(ctx, sess, opts, err)
+		} else if err != nil {
+			return fail(err)
+		}
+		updated, err := this.readSessionToken(ctx, sess)
+		if err != nil {
+			return fail(err)
+		}
+		t = *updated
 	}
 	if refreshEnabled && this.conf.ForceDisposeSessionOn != "never" && (t.Expiry.IsZero() || time.Now().Before(t.Expiry)) {
 		if _, lost, err := this.refreshSession(ctx, sess, &t, false); lost {
@@ -726,6 +797,21 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (
 		if token.Token == nil || token.AccessToken == "" {
 			return false, nil
 		}
+		if token.Pending != nil {
+			if _, lost, err := this.refreshSession(ctx, candidate, &token, false); lost {
+				if this.OnLostAccess != nil {
+					this.OnLostAccess(candidate)
+				}
+				return false, nil
+			} else if err != nil {
+				return false, err
+			}
+			updated, err := this.readSessionToken(ctx, candidate)
+			if err != nil {
+				return false, err
+			}
+			token = *updated
+		}
 		if this.conf != nil && this.conf.ForceDisposeSessionOn != "never" && (token.Expiry.IsZero() || time.Now().Before(token.Expiry)) {
 			if _, lost, err := this.refreshSession(ctx, candidate, &token, false); lost {
 				if this.OnLostAccess != nil {
@@ -828,6 +914,9 @@ func (this *OidcDeviceAuthAuthorizer) finalizeAuth(ctx context.Context, logger l
 	}
 	failf := func(message string, args ...any) (*oidc, error) {
 		return fail(fmt.Errorf(message, args...))
+	}
+	if t.Pending != nil {
+		return failf("OIDC session has unverified pending credentials")
 	}
 
 	auth := oidc{

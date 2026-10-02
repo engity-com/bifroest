@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	goerrors "errors"
 	"fmt"
 	"hash/fnv"
@@ -153,7 +154,7 @@ func (this *oidcRefreshManager) run(ctx context.Context, key sessionConnectionKe
 		updateDeadline := func(sess session.Session) bool {
 			readCtx, readCancel := context.WithTimeout(ctx, oidcRefreshTimeout)
 			defer readCancel()
-			deadline, err := authorizer.VerificationDeadline(readCtx, sess)
+			deadline, err := this.verificationDeadline(readCtx, key, sess)
 			if err != nil {
 				logger.WithError(err).Warn("cannot read OIDC verification deadline; retaining previous deadline")
 				return false
@@ -168,6 +169,39 @@ func (this *oidcRefreshManager) run(ctx context.Context, key sessionConnectionKe
 		return
 	}
 	this.refreshLoop(ctx, key, authorizer, nil)
+}
+
+// Read only persisted state here: VerificationDeadline takes a refresh shard
+// lock which can be held across a slow provider call for another session.
+func (this *oidcRefreshManager) verificationDeadline(ctx context.Context, key sessionConnectionKey, sess session.Session) (time.Time, error) {
+	if sess.Flow() != key.flow || sess.Id() != key.id {
+		return time.Time{}, fmt.Errorf("OIDC session identity changed during deadline read")
+	}
+	raw, err := sess.AuthorizationToken(ctx)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("cannot read OIDC session token: %w", err)
+	}
+	var token struct {
+		AccessToken    string    `json:"access_token"`
+		Subject        string    `json:"subject"`
+		Issuer         string    `json:"issuer"`
+		LastVerifiedAt time.Time `json:"lastVerifiedAt"`
+	}
+	if err := json.Unmarshal(raw, &token); err != nil || token.AccessToken == "" || token.Subject == "" || token.Issuer == "" || token.LastVerifiedAt.IsZero() {
+		return time.Time{}, fmt.Errorf("invalid persisted OIDC verification token: %w", authorization.ErrUnusableAuthorizationToken)
+	}
+	for _, flow := range this.service.Configuration.Flows {
+		if flow.Name == key.flow {
+			if conf, ok := flow.Authorization.V.(*configuration.AuthorizationOidcDeviceAuth); ok {
+				maxUnverified := conf.RefreshToken.MaxUnverifiedFor.Native()
+				if maxUnverified <= 0 {
+					maxUnverified = 30 * time.Minute
+				}
+				return token.LastVerifiedAt.Add(maxUnverified), nil
+			}
+		}
+	}
+	return time.Time{}, fmt.Errorf("no OIDC configuration for flow %q", key.flow)
 }
 
 func (this *oidcRefreshManager) verificationUpdated(sess session.Session, deadline time.Time) {
@@ -269,8 +303,25 @@ func (this *oidcRefreshManager) watchDeadline(ctx, workerCtx context.Context, ca
 			if workerCtx.Err() != nil || ctx.Err() != nil {
 				return
 			}
-			// A refresh completing at the same instant as the timer may lose
-			// this race; revocation is deliberately conservative.
+			// The timer and an already queued verification can both be ready.
+			// Consult the latest accepted update before committing to revoke.
+			this.mutex.Lock()
+			latest := this.lastDeadlines[key]
+			this.mutex.Unlock()
+			if latest.After(current) {
+				current = latest
+				timer.Reset(max(0, time.Until(current)))
+				continue
+			}
+			select {
+			case latest = <-deadlines:
+				if latest.After(current) {
+					current = latest
+					timer.Reset(max(0, time.Until(current)))
+					continue
+				}
+			default:
+			}
 			this.service.logger().With("flow", key.flow).With("sessionId", key.id).
 				Warn("OIDC verification deadline reached; disposing session")
 			this.invalidate(key, nil)
@@ -278,6 +329,15 @@ func (this *oidcRefreshManager) watchDeadline(ctx, workerCtx context.Context, ca
 			return
 		}
 	}
+}
+
+// finalSessionDeleted is called only after the repository has durably deleted
+// the session. The caller must also clear the connection registry tombstone.
+func (this *oidcRefreshManager) finalSessionDeleted(flow configuration.FlowName, id session.Id) {
+	key := sessionConnectionKey{flow: flow, id: id}
+	this.mutex.Lock()
+	delete(this.invalidating, key)
+	this.mutex.Unlock()
 }
 
 func (this *oidcRefreshManager) refreshLoop(ctx context.Context, key sessionConnectionKey, authorizer *authorization.OidcDeviceAuthAuthorizer, updateDeadline func(session.Session) bool) {

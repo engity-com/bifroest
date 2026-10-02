@@ -191,9 +191,17 @@ func newOidcToken(in *oauth2.Token) oidcToken {
 
 type oidcToken struct {
 	*oauth2.Token
-	IdToken        string    `json:"id_token,omitempty"`
-	ReceivedAt     time.Time `json:"receivedAt,omitempty"`
-	LastVerifiedAt time.Time `json:"lastVerifiedAt,omitempty"`
-	Subject        string    `json:"subject,omitempty"`
-	Issuer         string    `json:"issuer,omitempty"`
+	IdToken        string                   `json:"id_token,omitempty"`
+	ReceivedAt     time.Time                `json:"receivedAt,omitempty"`
+	LastVerifiedAt time.Time                `json:"lastVerifiedAt,omitempty"`
+	Subject        string                   `json:"subject,omitempty"`
+	Issuer         string                   `json:"issuer,omitempty"`
+	Pending        *oidcPendingVerification `json:"pendingVerification,omitempty"`
+}
+
+// Pending credentials are persisted separately from the trusted authorization token.
+type oidcPendingVerification struct {
+	*oauth2.Token
+	IdToken    string    `json:"id_token"`
+	ReceivedAt time.Time `json:"receivedAt"`
 }

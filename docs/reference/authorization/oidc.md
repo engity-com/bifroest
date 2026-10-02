@@ -71,6 +71,8 @@ Controls forced session disposal when OIDC access can no longer be verified. Can
 
 With `lostAccess`, a login without a refresh token is denied, and existing OIDC sessions without a refresh token or a recorded identity are disposed. If a refresh returns a new ID token, its issuer and subject must match the identity bound to the session. A refresh without a new ID token still checks that the provider accepts the refresh grant; it does not re-evaluate claims. This does not require UserInfo or periodically re-evaluate `loginAllowed`.
 
+If verification of a newly returned ID token temporarily fails (for example, because JWKS is unavailable), rotated credentials are stored as pending. They cannot authorize a reconnect or replace trusted claims until verification succeeds. Failure beyond `refreshToken.maxUnverifiedFor` disposes the session.
+
 <<property("refreshToken", "Refresh Token", "#device-auth-refresh-token", id_prefix="device-auth-", heading=4)>>
 Settings for refresh-token verification. Refresh is enabled when `forceDisposeSessionOn` is `lostAccess` or `refreshToken.mode` is `proactive`. When enabled, a login without a refresh token is denied.
 
@@ -95,7 +97,7 @@ For `lostAccess`, a refresh is scheduled before this deadline if the configured 
 
 ### Session cleanup
 
-Before the session's retention period ends, a temporary ID-token verification or UserInfo failure leaves the stored authorization token in place for a later retry. After the session has expired **and** its configured retention period has elapsed, housekeeping removes the local OIDC token without contacting the identity provider again. It can then delete the session after successful environment disposal, subject to the configured [audit failure policy](../housekeeping.md#cleanup-guarantees). Bifröst does not revoke access or refresh tokens at the identity provider; OIDC disposal only removes the local token.
+When a session is disposed (for example, after expiry or lost OIDC access), housekeeping removes the local OIDC authorization token after successful session and environment disposal, without contacting the identity provider or restoring the authorization. This applies both before and after the session's retention period ends. After retention, housekeeping can delete the session once environment cleanup succeeds, subject to the configured [audit failure policy](../housekeeping.md#cleanup-guarantees). Bifröst does not revoke access or refresh tokens at the identity provider; OIDC disposal only removes the local token.
 
 ### Context {: #device-auth-context }
 

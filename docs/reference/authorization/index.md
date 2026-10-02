@@ -28,9 +28,10 @@ Everything in Bifröst starts here. Firstly, a user must be authorized. Bifröst
    clientId: my-great-client-uuid
    clientSecret: very-secret-secret
    scopes:
-       - openid
-       - email
-       - profile
+      - openid
+      - email
+      - profile
+      - offline_access
    ```
 3. Using [Simple DeviceAuth](simple.md):
    ```yaml

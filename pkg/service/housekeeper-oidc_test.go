@@ -15,40 +15,147 @@ import (
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
-type housekeepingDeadlineAuthorizer struct {
+type housekeepingWritingAuthorizer struct {
 	authorization.CloseableAuthorizer
-	deadline time.Time
-	set      bool
+	restoreCalls int
 }
 
-func (this *housekeepingDeadlineAuthorizer) RestoreFromSession(ctx context.Context, _ session.Session, _ *authorization.RestoreOpts) (authorization.Authorization, error) {
-	this.deadline, this.set = ctx.Deadline()
-	return nil, authorization.ErrNoSuchAuthorization
+func (this *housekeepingWritingAuthorizer) RestoreFromSession(ctx context.Context, sess session.Session, _ *authorization.RestoreOpts) (authorization.Authorization, error) {
+	this.restoreCalls++
+	return nil, sess.SetAuthorizationToken(ctx, []byte("refreshed-token"))
 }
 
-func TestHouseKeeperBoundsOIDCRestore(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		config  configuration.AuthorizationV
-		bounded bool
-	}{
-		{"OIDC", &configuration.AuthorizationOidcDeviceAuth{}, true},
-		{"other", &configuration.AuthorizationNone{}, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, &houseKeeperTestAuthorizer{})
-			authorizer := &housekeepingDeadlineAuthorizer{}
-			hk.service.authorizer = authorizer
-			sess := &houseKeeperTestSession{flow: "current", id: session.MustNewId()}
-			hk.service.Configuration.Flows = configuration.Flows{{Name: sess.flow, Authorization: configuration.Authorization{V: tc.config}}}
-			_, err := hk.disposeAuthorization(context.Background(), hk.logger(), sess, false)
+type housekeepingDisposedTokenSession struct {
+	*houseKeeperTestSession
+	rejectedWrites int
+}
+
+func (this *housekeepingDisposedTokenSession) Dispose(ctx context.Context) (bool, error) {
+	disposed, err := this.houseKeeperTestSession.Dispose(ctx)
+	if err == nil {
+		this.state = session.StateDisposed
+	}
+	return disposed, err
+}
+
+func (this *housekeepingDisposedTokenSession) SetAuthorizationToken(ctx context.Context, token []byte) error {
+	if this.state == session.StateDisposed && len(token) != 0 {
+		this.rejectedWrites++
+		return goerrors.New("cannot write authorization token to disposed session")
+	}
+	return this.houseKeeperTestSession.SetAuthorizationToken(ctx, token)
+}
+
+func TestHouseKeeperOIDCCleanupBeforeRetentionWithDisposedSession(t *testing.T) {
+	recorder := &recordingAuditRecorder{}
+	repository := &houseKeeperTestSessionRepository{}
+	authorizer := &housekeepingWritingAuthorizer{}
+	sess := &housekeepingDisposedTokenSession{houseKeeperTestSession: &houseKeeperTestSession{
+		flow: "current", id: session.MustNewId(), validUntil: time.Now().Add(-time.Minute),
+		authorizationToken: []byte("oidc-token"),
+	}}
+	hk := newHouseKeeperForTest(repository, nil)
+	hk.service.authorizer = authorizer
+	hk.service.Configuration.Flows = configuration.Flows{{Name: sess.flow, Authorization: configuration.Authorization{V: &configuration.AuthorizationOidcDeviceAuth{}}}}
+	hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
+	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security", Enabled: true}}
+	hk.service.flowAuditRecorders[sess.flow] = recorder
+
+	for range 2 {
+		canContinue, err := hk.inspectSession(t.Context(), sess)
+		require.NoError(t, err)
+		require.True(t, canContinue)
+	}
+	require.Equal(t, session.StateDisposed, sess.state)
+	require.Empty(t, sess.authorizationToken)
+	require.Equal(t, 2, sess.authorizationTokenCalls)
+	require.Equal(t, 1, sess.setAuthorizationTokenCalls)
+	require.Zero(t, sess.rejectedWrites)
+	require.Zero(t, authorizer.restoreCalls)
+	require.Zero(t, repository.deleteCalls)
+	events := recorder.eventsSnapshot()
+	require.Len(t, events, 4)
+	for i := 0; i < len(events); i += 2 {
+		require.Equal(t, audit.EventNameHousekeepingSessionDisposeStarted, events[i].Name)
+		require.Equal(t, audit.EventNameHousekeepingSessionDisposeCompleted, events[i+1].Name)
+		require.Equal(t, audit.EventReasonExpired, events[i].Reason)
+		require.Equal(t, audit.EventOutcomeSuccess, events[i+1].Outcome)
+		require.Equal(t, events[i].OperationId, events[i+1].OperationId)
+	}
+	require.ErrorContains(t, sess.SetAuthorizationToken(t.Context(), []byte("refreshed-token")), "disposed session")
+	require.Equal(t, 1, sess.rejectedWrites)
+}
+
+func TestHouseKeeperOIDCCleanupWaitsForAuditAndEnvironment(t *testing.T) {
+	for _, name := range []string{"audit start failure", "environment token mismatch", "environment disposal failure"} {
+		t.Run(name, func(t *testing.T) {
+			recorder := &recordingAuditRecorder{}
+			authorizer := &houseKeeperTestAuthorizer{restoreErr: errors.Network.Newf("provider unavailable")}
+			sess := &houseKeeperTestSession{
+				flow: "current", id: session.MustNewId(), validUntil: time.Now().Add(-time.Minute),
+				authorizationToken: []byte("oidc-token"),
+			}
+			hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, authorizer)
+			hk.service.Configuration.Flows = configuration.Flows{{Name: sess.flow, Authorization: configuration.Authorization{V: &configuration.AuthorizationOidcDeviceAuth{}}}}
+			hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
+			hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security", Enabled: true}}
+			hk.service.flowAuditRecorders[sess.flow] = recorder
+			environments := hk.service.environments.(*houseKeeperTestEnvironmentRepository)
+			switch name {
+			case "audit start failure":
+				recorder.setErrorBeforeRecordForName(audit.EventNameHousekeepingSessionDisposeStarted, goerrors.New("audit unavailable"))
+			case "environment token mismatch":
+				environments.checkToken = true
+				environments.tokenMatches = false
+			case "environment disposal failure":
+				environments.findResult = &houseKeeperTestEnvironment{disposeErr: goerrors.New("environment unavailable")}
+			}
+
+			_, err := hk.inspectSession(t.Context(), sess)
 			require.NoError(t, err)
-			require.Equal(t, tc.bounded, authorizer.set)
-			if tc.bounded {
-				require.WithinDuration(t, time.Now().Add(oidcRefreshTimeout), authorizer.deadline, time.Second)
+			require.Equal(t, []byte("oidc-token"), sess.authorizationToken)
+			require.Zero(t, sess.authorizationTokenCalls)
+			require.Zero(t, sess.setAuthorizationTokenCalls)
+			require.Zero(t, authorizer.restoreCalls)
+			if name == "environment disposal failure" {
+				require.Equal(t, audit.EventOutcomeFailure, recorder.eventsSnapshot()[1].Outcome)
+				environments.findResult.(*houseKeeperTestEnvironment).disposeErr = nil
+				_, err = hk.inspectSession(t.Context(), sess)
+				require.NoError(t, err)
+				require.Empty(t, sess.authorizationToken)
+				require.Equal(t, 1, sess.setAuthorizationTokenCalls)
+				require.Zero(t, authorizer.restoreCalls)
+				require.Equal(t, audit.EventOutcomeSuccess, recorder.eventsSnapshot()[3].Outcome)
+			} else {
+				require.Zero(t, sess.disposeCalls)
+				require.Zero(t, environments.findCalls)
 			}
 		})
 	}
+}
+
+func TestHouseKeeperForgetsOIDCRevocationAfterFinalDeleteEvenIfAuditCompletionFails(t *testing.T) {
+	repository := &houseKeeperTestSessionRepository{}
+	hk := newHouseKeeperForTest(repository, &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization})
+	sess := &houseKeeperTestSession{
+		flow: "current", id: session.MustNewId(), validUntil: time.Now().Add(-2 * time.Hour), authorizationToken: []byte("oidc-token"),
+	}
+	hk.service.Configuration.Flows = configuration.Flows{{Name: sess.flow, Authorization: configuration.Authorization{V: &configuration.AuthorizationOidcDeviceAuth{}}}}
+	hk.service.Configuration.HouseKeeping.KeepExpiredFor.SetNative(time.Hour)
+	hk.service.Configuration.Auditlogs = configuration.Auditlogs{{Name: "security", Enabled: true}}
+	recorder := &recordingAuditRecorder{}
+	recorder.setErrorBeforeRecordForName(audit.EventNameHousekeepingSessionDeleteCompleted, goerrors.New("audit completion unavailable"))
+	hk.service.flowAuditRecorders[sess.flow] = recorder
+	key := sessionConnectionKey{flow: sess.flow, id: sess.id}
+	hk.service.oidcRefresh.invalidating = map[sessionConnectionKey]struct{}{key: {}}
+	hk.service.sessionConnections.revoke(sess.flow, sess.id)
+
+	_, err := hk.inspectSession(context.Background(), sess)
+	require.NoError(t, err) // Housekeeping reports audit failures and continues.
+	require.Equal(t, 1, repository.deleteCalls)
+	require.NotContains(t, hk.service.oidcRefresh.invalidating, key)
+	require.NotContains(t, hk.service.sessionConnections.sessions, key)
+	require.Empty(t, sess.authorizationToken)
 }
 
 func TestHouseKeeperOIDCFinalRetentionClearsLocalTokenWithoutRestore(t *testing.T) {
@@ -95,7 +202,7 @@ func TestHouseKeeperOIDCFinalRetentionClearsLocalTokenWithoutRestore(t *testing.
 	}
 }
 
-func TestHouseKeeperOIDCOnlyBypassesRestoreAfterRetentionAndSuccessfulTokenAccess(t *testing.T) {
+func TestHouseKeeperOIDCOnlyBypassesRestoreAndSuccessfulTokenAccess(t *testing.T) {
 	for _, tc := range []struct {
 		name            string
 		beforeRetention bool
@@ -108,8 +215,8 @@ func TestHouseKeeperOIDCOnlyBypassesRestoreAfterRetentionAndSuccessfulTokenAcces
 		wantRestores    int
 		wantReason      audit.EventReason
 	}{
-		{name: "temporary failure before retention", beforeRetention: true, wantRestores: 1, wantReason: audit.EventReasonExpired},
-		{name: "already disposed before retention", beforeRetention: true, disposed: true, wantRestores: 1, wantReason: audit.EventReasonExpired},
+		{name: "write failure before retention", beforeRetention: true, writeErr: goerrors.New("storage unavailable"), wantReadCalls: 1, wantSetCalls: 1, wantReason: audit.EventReasonExpired},
+		{name: "read failure before retention", beforeRetention: true, disposed: true, readErr: goerrors.New("storage unavailable"), wantReadCalls: 1, wantReason: audit.EventReasonExpired},
 		{name: "write failure at final retention", writeErr: goerrors.New("storage unavailable"), wantReadCalls: 1, wantSetCalls: 1, wantReason: audit.EventReasonRetentionElapsed},
 		{name: "read failure at final retention", readErr: goerrors.New("storage unavailable"), wantReadCalls: 1, wantReason: audit.EventReasonRetentionElapsed},
 		{name: "non-OIDC at final retention", nonOIDC: true, wantRestores: 1, wantReason: audit.EventReasonRetentionElapsed},

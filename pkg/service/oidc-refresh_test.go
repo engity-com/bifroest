@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	goerrors "errors"
+	"hash/fnv"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,6 +26,23 @@ import (
 type oidcRefreshTestRepository struct {
 	*houseKeeperTestSessionRepository
 	findBy func(context.Context, configuration.FlowName, session.Id, *session.FindOpts) (session.Session, error)
+}
+
+type oidcRefreshSynchronizedSession struct {
+	*houseKeeperTestSession
+	mutex sync.Mutex
+}
+
+func (this *oidcRefreshSynchronizedSession) AuthorizationToken(ctx context.Context) ([]byte, error) {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	return this.houseKeeperTestSession.AuthorizationToken(ctx)
+}
+
+func (this *oidcRefreshSynchronizedSession) SetAuthorizationToken(ctx context.Context, token []byte) error {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	return this.houseKeeperTestSession.SetAuthorizationToken(ctx, token)
 }
 
 func (this *oidcRefreshTestRepository) FindBy(ctx context.Context, flow configuration.FlowName, id session.Id, opts *session.FindOpts) (session.Session, error) {
@@ -70,15 +89,16 @@ func oidcRefreshWatchdogFixture(t *testing.T, ctx context.Context, conf *configu
 	sess := &houseKeeperTestSession{flow: "current", id: session.MustNewId(), validUntil: time.Now().Add(time.Hour), authorizationToken: token}
 	repository := &oidcRefreshTestRepository{houseKeeperTestSessionRepository: &houseKeeperTestSessionRepository{}}
 	if findBy == nil {
+		synchronized := &oidcRefreshSynchronizedSession{houseKeeperTestSession: sess}
 		findBy = func(context.Context, configuration.FlowName, session.Id, *session.FindOpts) (session.Session, error) {
-			return sess, nil
+			return synchronized, nil
 		}
 	}
 	repository.findBy = findBy
 	hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization})
 	svc := hk.service
 	svc.sessions = repository
-	svc.houseKeeper = *hk
+	svc.houseKeeper.service = svc
 	svc.Configuration.Flows = configuration.Flows{{Name: sess.flow, Authorization: configuration.Authorization{V: conf}}}
 	recorder := &recordingAuditRecorder{}
 	svc.flowAuditRecorders[sess.flow] = recorder
@@ -134,6 +154,135 @@ func TestOidcRefreshWatchdogAcceptsReconnectVerification(t *testing.T) {
 	<-finished
 }
 
+func TestOidcRefreshWatchdogChecksQueuedDeadlineAfterTimer(t *testing.T) {
+	ctx, conf := oidcRefreshTestConfig(t)
+	manager, _, sess, conn, _ := oidcRefreshWatchdogFixture(t, ctx, conf, nil, oidcRefreshWatchdogToken(t, time.Now()))
+	key := sessionConnectionKey{flow: sess.flow, id: sess.id}
+	updates := make(chan time.Time, 1)
+	manager.deadlines = map[sessionConnectionKey]chan time.Time{key: updates}
+	manager.lastDeadlines = make(map[sessionConnectionKey]time.Time)
+	parent, cancel := context.WithCancel(manager.ctx)
+	defer cancel()
+	worker, stopWorker := context.WithCancel(parent)
+	defer stopWorker()
+	stop := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		manager.watchDeadline(parent, worker, stopWorker, stop, key, updates)
+	}()
+	manager.verificationUpdated(sess, time.Now().Add(150*time.Millisecond))
+	time.Sleep(75 * time.Millisecond)
+	manager.mutex.Lock()
+	time.Sleep(150 * time.Millisecond)
+	fresh := time.Now().Add(time.Second)
+	manager.lastDeadlines[key] = fresh
+	updates <- fresh
+	manager.mutex.Unlock()
+	require.False(t, conn.closed.Load())
+	time.Sleep(100 * time.Millisecond)
+	require.False(t, conn.closed.Load(), "queued persisted verification must win over an expired timer")
+	cancel()
+	close(stop)
+	<-finished
+}
+
+type oidcRefreshReadOnlySession struct {
+	*houseKeeperTestSession
+	token []byte
+}
+
+func (this *oidcRefreshReadOnlySession) AuthorizationToken(context.Context) ([]byte, error) {
+	return append([]byte(nil), this.token...), nil
+}
+
+func TestOidcRefreshStartupDeadlineDoesNotWaitForCollidingProvider(t *testing.T) {
+	requested := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	ctx, conf := oidcRefreshTestConfig(t, func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(requested) })
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	})
+	conf.RefreshToken.MaxUnverifiedFor = common.DurationOf(4 * time.Second)
+	authorizer, err := authorization.NewOidcDeviceAuth(ctx, "current", conf)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, authorizer.Close()) })
+	sessions := make(map[session.Id]*oidcRefreshReadOnlySession)
+	flow := configuration.FlowName("current")
+	makeSession := func(expiry time.Time) *oidcRefreshReadOnlySession {
+		sess := &oidcRefreshReadOnlySession{houseKeeperTestSession: &houseKeeperTestSession{
+			flow: flow, id: session.MustNewId(), validUntil: time.Now().Add(time.Hour),
+		}}
+		token, marshalErr := json.Marshal(map[string]any{
+			"access_token": "access", "token_type": "Bearer", "refresh_token": "refresh",
+			"subject": "user", "issuer": "issuer", "lastVerifiedAt": time.Now().UTC(),
+			"receivedAt": time.Now().UTC(), "expiry": expiry.UTC(),
+		})
+		require.NoError(t, marshalErr)
+		sess.token = token
+		return sess
+	}
+	first := makeSession(time.Now().Add(200 * time.Millisecond))
+	sessions[first.id] = first
+	shard := func(sess *oidcRefreshReadOnlySession) uint32 {
+		h := fnv.New32a()
+		_, _ = h.Write([]byte(sess.String()))
+		return h.Sum32() % 64
+	}
+	var peers []*oidcRefreshReadOnlySession
+	for len(peers) < 99 {
+		candidate := makeSession(time.Now().Add(time.Hour))
+		if len(peers) == 0 && shard(candidate) != shard(first) {
+			continue
+		}
+		peers = append(peers, candidate)
+		sessions[candidate.id] = candidate
+	}
+	repository := &oidcRefreshTestRepository{houseKeeperTestSessionRepository: &houseKeeperTestSessionRepository{}}
+	repository.findBy = func(_ context.Context, _ configuration.FlowName, id session.Id, _ *session.FindOpts) (session.Session, error) {
+		return sessions[id], nil
+	}
+	hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization})
+	svc := hk.service
+	svc.sessions = repository
+	svc.houseKeeper.service = svc
+	svc.Configuration.Flows = configuration.Flows{{Name: flow, Authorization: configuration.Authorization{V: conf}}}
+	manager := &svc.oidcRefresh
+	manager.service = svc
+	manager.authorizers = map[configuration.FlowName]*authorization.OidcDeviceAuthAuthorizer{flow: authorizer}
+	manager.workers = make(map[sessionConnectionKey]context.CancelFunc)
+	manager.limit = make(chan struct{}, 8)
+	manager.ctx, manager.cancel = context.WithCancel(ctx)
+	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	manager.register(first)
+	select {
+	case <-requested:
+	case <-time.After(2 * time.Second):
+		t.Fatal("provider call did not start")
+	}
+	connections := make([]*connection, 0, len(peers))
+	for _, peer := range peers {
+		conn := newTrackedSessionConnection(t, svc)
+		svc.sessionConnections.track(conn, peer)
+		connections = append(connections, conn)
+		manager.register(peer)
+	}
+	require.Eventually(t, func() bool {
+		manager.mutex.Lock()
+		defer manager.mutex.Unlock()
+		return len(manager.lastDeadlines) == 100
+	}, time.Second, 10*time.Millisecond, "every persisted deadline should be readable during the blocked provider call")
+	time.Sleep(oidcRefreshUnknownGrace + 200*time.Millisecond)
+	for i, conn := range connections {
+		require.Falsef(t, conn.closed.Load(), "valid session %d revoked while provider held shard %d", i, shard(first))
+	}
+	close(release)
+}
+
 func TestOidcRefreshVerificationNotificationsDoNotBlock(t *testing.T) {
 	manager := &oidcRefreshManager{deadlines: make(map[sessionConnectionKey]chan time.Time)}
 	manager.ctx, manager.cancel = context.WithCancel(context.Background())
@@ -174,6 +323,14 @@ func TestOidcRefreshManagerRevokesOnReconnectLostAccess(t *testing.T) {
 	require.True(t, conn.closed.Load(), "public-key restore must close existing connections without waiting for a worker")
 	require.Eventually(t, func() bool { return len(recorder.eventsSnapshot()) == 2 }, 2*time.Second, 10*time.Millisecond)
 	require.NoError(t, manager.Close())
+}
+
+func TestOidcRefreshInvalidationRetainedUntilFinalDeletion(t *testing.T) {
+	key := sessionConnectionKey{flow: "current", id: session.MustNewId()}
+	manager := &oidcRefreshManager{invalidating: map[sessionConnectionKey]struct{}{key: {}}}
+	require.Contains(t, manager.invalidating, key)
+	manager.finalSessionDeleted(key.flow, key.id)
+	require.Empty(t, manager.invalidating)
 }
 
 func TestOidcRefreshWatchdogBlockedProvider(t *testing.T) {
@@ -423,7 +580,7 @@ func TestOidcRefreshManagerLostAccessDisposalAndAuditRetry(t *testing.T) {
 			recorder := &recordingAuditRecorder{}
 			hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization})
 			svc := hk.service
-			svc.houseKeeper = *hk
+			svc.houseKeeper.service = svc
 			svc.flowAuditRecorders[sess.flow] = recorder
 			manager := &oidcRefreshManager{service: svc}
 			target := newTrackedSessionConnection(t, svc)
@@ -484,7 +641,7 @@ func TestOidcRefreshWorkerDisposesPersistedSessionWithoutRefreshToken(t *testing
 	hk := newHouseKeeperForTest(&houseKeeperTestSessionRepository{}, &houseKeeperTestAuthorizer{restoreErr: authorization.ErrNoSuchAuthorization})
 	svc := hk.service
 	svc.sessions = repository
-	svc.houseKeeper = *hk
+	svc.houseKeeper.service = svc
 	recorder := &recordingAuditRecorder{}
 	svc.flowAuditRecorders[sess.flow] = recorder
 	manager := &svc.oidcRefresh

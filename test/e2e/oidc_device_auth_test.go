@@ -57,12 +57,14 @@ type oidcProviderSnapshot struct {
 	invalidGrants    int
 	refreshInputs    []string
 	jwksRequests     int
+	jwksFailures     int
 	userinfoCalls    int
 }
 
 type oidcTestProvider struct {
 	server                  *httptest.Server
 	privateKey              *rsa.PrivateKey
+	refreshedPrivateKey     *rsa.PrivateKey
 	keyID                   string
 	authMethod              string
 	refreshTokens           bool
@@ -71,6 +73,7 @@ type oidcTestProvider struct {
 	rejectRefreshAfterFirst bool
 	accessTokenLifetime     int
 	mu                      sync.Mutex
+	jwksUnavailable         bool
 	nextOutcome             oidcDeviceOutcome
 	nextDeviceID            int
 	currentRefreshToken     string
@@ -83,6 +86,7 @@ type oidcFixtureOptions struct {
 	authMethod              string
 	refreshTokens           bool
 	rotateRefreshTokens     bool
+	rotateIDTokenKey        bool
 	refreshUnavailable      bool
 	legacyPolicy            bool
 	rejectRefreshAfterFirst bool
@@ -340,6 +344,185 @@ func TestOIDCRotatedRefreshTokenSurvivesRestart(t *testing.T) {
 	}
 }
 
+func TestOIDCPendingVerificationAfterJWKSOutage(t *testing.T) {
+	provider, f := newOIDCAuthorizationFixtureWithOptions(t, oidcFixtureOptions{
+		authMethod:          "client_secret_post",
+		refreshTokens:       true,
+		rotateRefreshTokens: true,
+		rotateIDTokenKey:    true,
+		accessTokenLifetime: 8,
+		maxUnverifiedFor:    22 * time.Second,
+	})
+	signer, err := gossh.ParsePrivateKey(mustRead(f.clientKey))
+	if err != nil {
+		t.Fatalf("parse SSH client key: %v", err)
+	}
+	hostKey, _, _, _, err := gossh.ParseAuthorizedKey(mustRead(f.hostKey + ".pub"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := net.JoinHostPort(f.host, f.port)
+	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.SetDeadline(time.Now().Add(12 * time.Second)); err != nil {
+		_ = conn.Close()
+		t.Fatal(err)
+	}
+	sshConn, channels, requests, err := gossh.NewClientConn(conn, address, &gossh.ClientConfig{User: "oidc-pending-jwks", HostKeyCallback: gossh.FixedHostKey(hostKey), Auth: []gossh.AuthMethod{gossh.PublicKeys(signer), gossh.KeyboardInteractive(func(_, _ string, questions []string, _ []bool) ([]string, error) {
+		if len(questions) != 0 {
+			return nil, fmt.Errorf("unexpected OIDC questions: %q", questions)
+		}
+		return []string{}, nil
+	})}})
+	if err != nil {
+		_ = conn.Close()
+		t.Fatalf("OIDC device login failed: %v", err)
+	}
+	client := gossh.NewClient(sshConn, channels, requests)
+	defer client.Close()
+	if err := runAuthorizationSession(client); err != nil {
+		t.Fatalf("authenticated SSH session failed: %v", err)
+	}
+	if got := provider.getSnapshot(); got.jwksRequests == 0 || got.jwksFailures != 0 {
+		t.Fatalf("initial login did not fetch available JWKS: %+v", got)
+	}
+
+	provider.mu.Lock()
+	provider.jwksUnavailable = true
+	provider.mu.Unlock()
+
+	tokenPath := func() (string, error) {
+		sessions, err := os.ReadDir(filepath.Join(f.sessionStorage, "authorization-e2e"))
+		if err != nil {
+			return "", err
+		}
+		if len(sessions) != 1 {
+			return "", fmt.Errorf("persisted sessions: got %d, want 1", len(sessions))
+		}
+		return filepath.Join(f.sessionStorage, "authorization-e2e", sessions[0].Name(), "at"), nil
+	}
+	var initial struct {
+		IDToken        string    `json:"id_token"`
+		LastVerifiedAt time.Time `json:"lastVerifiedAt"`
+	}
+	path, err := tokenPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &initial); err != nil {
+		t.Fatal(err)
+	}
+	if initial.IDToken == "" || initial.LastVerifiedAt.IsZero() {
+		t.Fatalf("initial ID token or verification timestamp missing: %s", data)
+	}
+
+	if err := poll(9*time.Second, func() error {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		var token struct {
+			IDToken        string    `json:"id_token"`
+			RefreshToken   string    `json:"refresh_token"`
+			LastVerifiedAt time.Time `json:"lastVerifiedAt"`
+			Pending        *struct {
+				IDToken      string `json:"id_token"`
+				RefreshToken string `json:"refresh_token"`
+			} `json:"pendingVerification"`
+		}
+		if err := json.Unmarshal(data, &token); err != nil {
+			return err
+		}
+		if token.Pending == nil || token.Pending.RefreshToken != oidcRefreshToken+"-1" || token.Pending.IDToken == "" {
+			return fmt.Errorf("rotated refresh token and new ID token not pending yet: %s", data)
+		}
+		if token.IDToken != initial.IDToken || token.RefreshToken != oidcRefreshToken || !token.LastVerifiedAt.Equal(initial.LastVerifiedAt) {
+			return fmt.Errorf("unverified claims or credentials replaced trusted token: %s", data)
+		}
+		parts := strings.Split(token.Pending.IDToken, ".")
+		if len(parts) != 3 {
+			return fmt.Errorf("pending ID token is not a JWT")
+		}
+		header, err := base64.RawURLEncoding.DecodeString(parts[0])
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(string(header), `"kid":"bifroest-e2e-refreshed-key"`) {
+			return fmt.Errorf("pending ID token does not use refreshed kid: %s", header)
+		}
+		claims, err := base64.RawURLEncoding.DecodeString(parts[1])
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(string(claims), `"name":"OIDC E2E Refreshed User"`) {
+			return fmt.Errorf("pending ID token does not contain changed claims: %s", claims)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before := provider.getSnapshot()
+	if before.refreshSuccesses != 1 || before.jwksFailures == 0 || before.invalidGrants != 0 {
+		t.Fatalf("first refresh did not encounter transient JWKS failure: %+v", before)
+	}
+	provider.mu.Lock()
+	provider.jwksUnavailable = false
+	provider.mu.Unlock()
+
+	// A public-key reconnect rechecks pending credentials without waiting for the worker's minute-long retry.
+	verified, err := dialAuthorizationSSH(f, "oidc-pending-jwks", gossh.PublicKeys(signer), 5*time.Second)
+	if err != nil {
+		t.Fatalf("reconnect to verify pending ID token: %v", err)
+	}
+	defer verified.Close()
+	if err := runAuthorizationSession(verified); err != nil {
+		t.Fatalf("SSH session after pending verification failed: %v", err)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var promoted struct {
+		RefreshToken   string          `json:"refresh_token"`
+		Expiry         time.Time       `json:"expiry"`
+		LastVerifiedAt time.Time       `json:"lastVerifiedAt"`
+		Pending        json.RawMessage `json:"pendingVerification"`
+	}
+	if err := json.Unmarshal(data, &promoted); err != nil {
+		t.Fatal(err)
+	}
+	if promoted.RefreshToken != oidcRefreshToken+"-1" || len(promoted.Pending) != 0 || !promoted.LastVerifiedAt.After(initial.LastVerifiedAt) {
+		t.Fatalf("pending credentials not promoted after JWKS recovery: %s", data)
+	}
+	if wait := time.Until(promoted.Expiry.Add(200 * time.Millisecond)); wait > 0 {
+		if wait > 10*time.Second {
+			t.Fatalf("promoted access token expiry is unexpectedly far away: %s", promoted.Expiry)
+		}
+		time.Sleep(wait)
+	}
+	refreshed, err := dialAuthorizationSSH(f, "oidc-pending-jwks", gossh.PublicKeys(signer), 5*time.Second)
+	if err != nil {
+		t.Fatalf("reconnect to refresh with rotated token: %v", err)
+	}
+	defer refreshed.Close()
+	if err := runAuthorizationSession(refreshed); err != nil {
+		t.Fatalf("SSH session after second refresh failed: %v", err)
+	}
+	got := provider.getSnapshot()
+	if got.refreshSuccesses < 2 || len(got.refreshInputs) < 2 || got.refreshInputs[0] != oidcRefreshToken || got.refreshInputs[1] != oidcRefreshToken+"-1" || got.invalidGrants != 0 || got.jwksRequests <= before.jwksRequests {
+		t.Errorf("subsequent refresh did not use rotated token after JWKS recovery: %+v", got)
+	}
+	if err := runAuthorizationSession(refreshed); err != nil {
+		t.Fatalf("SSH session did not survive subsequent refresh: %v", err)
+	}
+}
+
 func TestOIDCLostAccessRejectsLoginWithoutRefreshToken(t *testing.T) {
 	provider, f := newOIDCAuthorizationFixtureWithOptions(t, oidcFixtureOptions{
 		authMethod: "client_secret_post",
@@ -465,8 +648,16 @@ func newOIDCTestProvider(t *testing.T, opts oidcFixtureOptions) *oidcTestProvide
 	if err != nil {
 		t.Fatal(err)
 	}
+	var refreshedPrivateKey *rsa.PrivateKey
+	if opts.rotateIDTokenKey {
+		refreshedPrivateKey, err = rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	p := &oidcTestProvider{
 		privateKey:              privateKey,
+		refreshedPrivateKey:     refreshedPrivateKey,
 		keyID:                   "bifroest-e2e-key",
 		authMethod:              opts.authMethod,
 		refreshTokens:           opts.refreshTokens,
@@ -636,7 +827,7 @@ func (p *oidcTestProvider) serveToken(w http.ResponseWriter, r *http.Request) {
 		p.writeOAuthError(w, "unsupported_grant_type")
 		return
 	}
-	idToken, err := p.signIDToken()
+	idToken, err := p.signIDToken(r.Form.Get("grant_type") == "refresh_token")
 	if err != nil {
 		p.recordError("sign ID token: %v", err)
 		http.Error(w, "cannot sign token", http.StatusInternalServerError)
@@ -688,17 +879,34 @@ func (p *oidcTestProvider) serveJWKS(w http.ResponseWriter, r *http.Request) {
 	}
 	p.mu.Lock()
 	p.snapshot.jwksRequests++
+	unavailable := p.jwksUnavailable
+	if unavailable {
+		p.snapshot.jwksFailures++
+	}
+	refreshed := p.snapshot.refreshSuccesses > 0
 	p.mu.Unlock()
+	if unavailable {
+		p.writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "server_error"})
+		return
+	}
 	publicKey := p.privateKey.PublicKey
+	keys := []map[string]any{{
+		"kty": "RSA",
+		"kid": p.keyID,
+		"use": "sig",
+		"alg": "RS256",
+		"n":   base64.RawURLEncoding.EncodeToString(publicKey.N.Bytes()),
+		"e":   base64.RawURLEncoding.EncodeToString([]byte{0x01, 0x00, 0x01}),
+	}}
+	if refreshed && p.refreshedPrivateKey != nil {
+		keys = append(keys, map[string]any{
+			"kty": "RSA", "kid": "bifroest-e2e-refreshed-key", "use": "sig", "alg": "RS256",
+			"n": base64.RawURLEncoding.EncodeToString(p.refreshedPrivateKey.PublicKey.N.Bytes()),
+			"e": base64.RawURLEncoding.EncodeToString([]byte{0x01, 0x00, 0x01}),
+		})
+	}
 	p.writeJSON(w, http.StatusOK, map[string]any{
-		"keys": []map[string]any{{
-			"kty": "RSA",
-			"kid": p.keyID,
-			"use": "sig",
-			"alg": "RS256",
-			"n":   base64.RawURLEncoding.EncodeToString(publicKey.N.Bytes()),
-			"e":   base64.RawURLEncoding.EncodeToString([]byte{0x01, 0x00, 0x01}),
-		}},
+		"keys": keys,
 	})
 }
 
@@ -723,9 +931,13 @@ func (p *oidcTestProvider) serveUserInfo(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-func (p *oidcTestProvider) signIDToken() (string, error) {
+func (p *oidcTestProvider) signIDToken(refresh bool) (string, error) {
 	now := time.Now().Unix()
-	header, err := json.Marshal(map[string]any{"alg": "RS256", "kid": p.keyID, "typ": "JWT"})
+	key, kid, name := p.privateKey, p.keyID, "OIDC E2E User"
+	if refresh && p.refreshedPrivateKey != nil {
+		key, kid, name = p.refreshedPrivateKey, "bifroest-e2e-refreshed-key", "OIDC E2E Refreshed User"
+	}
+	header, err := json.Marshal(map[string]any{"alg": "RS256", "kid": kid, "typ": "JWT"})
 	if err != nil {
 		return "", err
 	}
@@ -735,7 +947,7 @@ func (p *oidcTestProvider) signIDToken() (string, error) {
 		"aud":            oidcClientID,
 		"iat":            now,
 		"exp":            now + 60,
-		"name":           "OIDC E2E User",
+		"name":           name,
 		"email":          "oidc-e2e@example.invalid",
 		"email_verified": true,
 	})
@@ -746,7 +958,7 @@ func (p *oidcTestProvider) signIDToken() (string, error) {
 	encodedClaims := base64.RawURLEncoding.EncodeToString(claims)
 	signingInput := encodedHeader + "." + encodedClaims
 	digest := sha256.Sum256([]byte(signingInput))
-	signature, err := rsa.SignPKCS1v15(rand.Reader, p.privateKey, crypto.SHA256, digest[:])
+	signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, digest[:])
 	if err != nil {
 		return "", err
 	}
