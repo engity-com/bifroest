@@ -69,6 +69,12 @@ func (this *service) authorizePublicKey(ctx essh.Context, key essh.PublicKey, ve
 	}
 
 	ctx.SetValue(authorizationCtxKey, auth)
+	if this.sessions != nil {
+		if sess := auth.FindSession(); sess != nil {
+			this.sessionConnections.track(conn, sess)
+			this.oidcRefresh.register(sess)
+		}
+	}
 	// We've authorized via the regular public key we do not store them.
 	ctx.SetValue(handshakeKeyCtxKey, nil)
 
@@ -135,6 +141,12 @@ func (this *service) handlePassword(ctx essh.Context, _ gossh.ConnMetadata, pass
 		return false, err
 	}
 	ctx.SetValue(authorizationCtxKey, auth)
+	if this.sessions != nil {
+		if sess := auth.FindSession(); sess != nil {
+			this.sessionConnections.track(conn, sess)
+			this.oidcRefresh.register(sess)
+		}
+	}
 
 	l.Debug("password accepted")
 	return true, nil
@@ -177,6 +189,12 @@ func (this *service) handleKeyboardInteractiveChallenge(ctx essh.Context, _ goss
 		return false, err
 	}
 	ctx.SetValue(authorizationCtxKey, auth)
+	if this.sessions != nil {
+		if sess := auth.FindSession(); sess != nil {
+			this.sessionConnections.track(conn, sess)
+			this.oidcRefresh.register(sess)
+		}
+	}
 
 	l.Debug("interactive accepted")
 	return true, nil
