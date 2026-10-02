@@ -1,174 +1,87 @@
 ---
-description: How to install, configure and run Bifröst directly on the host machine.
+description: Install Bifröst as a host service with SSH access to existing local accounts.
 toc_depth: 3
 ---
 
 # Installing on host
 
-!!! tip
-     This guide shows how to install Bifröst from [downloadable archive](distribution.md#archive). If you like to use Bifröst inside Docker/Container, see our documentation for [OCI/Docker Images](in-docker.md).
+Bifröst runs as a host service on **port 22**. Sign in with an existing local user; the same [configuration](<<asset_url("contrib/configurations/on-host.yaml")>>) works on all three platforms.
+
+**Port 22 must be free:** stop the existing SSH server first, and keep another way to access the machine.
+
+SSH may warn that the server key changed; verify the change before continuing.
+
+Use the [archive](distribution.md#archive) from the same release as this page. These examples use AMD64 for Linux and Windows, ARM64 for macOS, and assume a fresh installation; for other systems see [distributions](distribution.md), for upgrades see the [upgrade notes](upgrade.md).
 
 ## Linux
 
-!!! note
-     This guide assumes you have a Linux distribution with [systemd](https://systemd.io/) running. This reflects the majority of all actual distributions, such as Ubuntu, Debian, Fedora, ...
+Use the [Linux extended edition](distribution.md#linux-extended) and an existing local user:
 
-1. Download Bifröst (see [release page](<< release_url() >>)):<br>
-
-    #### Syntax
-    ```shell
-    curl -sSLf <<release_asset_url("bifroest-windows-<arch>-<edition>.tgz")>> | sudo tar -zxv -C /usr/bin bifroest
-    ```
-
-    #### Matrix
-
-    !!! tip ""
-         Cells express support in format of `<generic>`/`<extended>`. See our [documentation of distributions of Bifröst](distribution.md#linux) to learn more.
-
-    <<compatibility_matrix(os="linux", packaging="archive")>>
-
-    #### Example - Linux AMD64
-    ```shell
-    curl -sSLf <<release_asset_url("bifroest-linux-amd64-extended.tgz")>> | sudo tar -zxv -C /usr/bin bifroest
-    ```
-
-2. Configure Bifröst. For example download the demo configuration and adjust it to your needs (see [documentation of configuration](../reference/configuration.md) for the documentation about it):
-   ```shell
-   sudo mkdir -p /etc/engity/bifroest/
-   sudo curl -sSLf <<asset_url("contrib/configurations/sshd-dropin-replacement.yaml", True)>> -o /etc/engity/bifroest/configuration.yaml
-   # Adjust it to your needs
-   sudo vi /etc/engity/bifroest/configuration.yaml
-   ```
-
-3. Download <<asset_link("contrib/systemd/bifroest.service", "our example service configuration")>>:
-   ```shell
-   sudo curl -sSLf <<asset_url("contrib/systemd/bifroest.service", True)>> -o /etc/systemd/system/bifroest.service
-   ```
-
-4. Reload the systemd daemon:
-   ```shell
-   sudo systemctl daemon-reload
-   ```
-
-5. Enable and start Bifröst:
-   ```shell
-   sudo systemctl enable bifroest.service
-   sudo systemctl start bifroest.service
-   ```
-
-6. Now you can log in to Bifröst the first time:
-   ```shell
-    ssh demo@localhost
-    ```
-
-## macOS
-
-This guide supports Apple Silicon and Intel on macOS 13 and later.
-
-!!! warning
-     Bifröst uses the standard SSH port `22`. If macOS Remote Login already occupies that port, Bifröst fails to start. Disable Remote Login before installing the LaunchDaemon.
-
-1. Download and install Bifröst (see [release page](<< release_url() >>)):<br>
-
-    #### Matrix
-
-    <<compatibility_matrix(os="darwin", packaging="archive")>>
-
-    #### Example - macOS Apple Silicon
-    ```shell
-    sudo install -d /usr/local/bin
-    curl -sSLf <<release_asset_url("bifroest-darwin-arm64-generic.tgz")>> | sudo tar -zxv -C /usr/local/bin bifroest
-    ```
-
-    #### Example - macOS Intel
-    ```shell
-    sudo install -d /usr/local/bin
-    curl -sSLf <<release_asset_url("bifroest-darwin-amd64-generic.tgz")>> | sudo tar -zxv -C /usr/local/bin bifroest
-    ```
-
-2. Create the native configuration directory and install the [SSHD replacement example](<<asset_url("contrib/configurations/sshd-dropin-replacement.yaml")>>) (see the [configuration documentation](../reference/configuration.md)):
-    ```shell
-    sudo install -d -o root -g wheel -m 0750 '/Library/Application Support/Engity/Bifroest'
-    sudo curl -sSLf <<asset_url("contrib/configurations/sshd-dropin-replacement.yaml", True)>> -o '/Library/Application Support/Engity/Bifroest/configuration.yaml'
-    sudo vi '/Library/Application Support/Engity/Bifroest/configuration.yaml'
-    sudo chown root:wheel '/Library/Application Support/Engity/Bifroest/configuration.yaml'
-    sudo chmod 0640 '/Library/Application Support/Engity/Bifroest/configuration.yaml'
-    ```
-
-3. Install and start the system LaunchDaemon:
-    ```shell
-    sudo /usr/local/bin/bifroest service install
-    ```
-
-    The service runs as `root`, starts at boot, restarts after failures and writes standard output and error to `/Library/Logs/Engity/Bifroest`. Root is required for account management and impersonation. Only records in the local `/Local/Default` Directory Services node are mutated; newly created accounts do not receive a local password from Bifröst. Its working directory and persistent state remain under `/Library/Application Support/Engity/Bifroest`.
-
-4. In another terminal, log in using the configured port:
-    ```shell
-    ssh <local-account>@localhost
-    ```
-
-### Manage the macOS service
-
-Install a newer release in `/usr/local/bin` and run `service install` again to stop the service, atomically replace the service binary and LaunchDaemon definition, and start it again:
-
-```shell
-sudo /usr/local/bin/bifroest service install
+```bash
+curl -fLsS -o bifroest-linux-amd64-extended.tgz '<<release_asset_url("bifroest-linux-amd64-extended.tgz")>>'
+sudo tar -xzf bifroest-linux-amd64-extended.tgz -C /usr/bin bifroest
+sudo install -d -m 0750 /etc/engity/bifroest
+sudo curl -fLsS -o /etc/engity/bifroest/configuration.yaml '<<asset_url("contrib/configurations/on-host.yaml", True)>>'
+sudo curl -fLsS -o /etc/systemd/system/bifroest.service '<<asset_url("contrib/systemd/bifroest.service", True)>>'
+sudo systemctl daemon-reload
+sudo systemctl enable --now bifroest.service
 ```
 
-The installed CLI supports `start`, `stop` and `remove`. `remove` stops the LaunchDaemon and removes its definition and `/Library/PrivilegedHelperTools/com.engity.bifroest`, but deliberately preserves configuration, keys, audit data and recordings under `/Library/Application Support/Engity/Bifroest` as well as logs under `/Library/Logs/Engity/Bifroest`:
+Log in with that user's SSH key or password:
 
-```shell
-sudo /Library/PrivilegedHelperTools/com.engity.bifroest service stop
-sudo /Library/PrivilegedHelperTools/com.engity.bifroest service start
-sudo /Library/PrivilegedHelperTools/com.engity.bifroest service remove
+```bash
+ssh "$USER@localhost"
 ```
+
+If login fails, check `sudo journalctl -u bifroest.service`. To revert, run `sudo systemctl disable --now bifroest.service` and restart the previous SSH server.
 
 ## Windows
 
-1. Open a Powershell Terminal with Administrator privileges.
+Use the [Windows generic edition](distribution.md#windows-generic) and an existing local user (not a domain account).
 
-2. Download and extract Bifröst (see [release page](<< release_url() >>)):<br>
+```powershell
+# Do the following commands in an elevated PowerShell window
+$archive = Join-Path $env:TEMP 'bifroest-windows-amd64-generic.zip'
+Invoke-WebRequest -Uri '<<release_asset_url("bifroest-windows-amd64-generic.zip")>>' -OutFile $archive
+New-Item -ItemType Directory -Force 'C:\Program Files\Engity\Bifroest' | Out-Null
+Expand-Archive -LiteralPath $archive -DestinationPath 'C:\Program Files\Engity\Bifroest'
+New-Item -ItemType Directory -Force 'C:\ProgramData\Engity\Bifroest' | Out-Null
+Invoke-WebRequest -Uri '<<asset_url("contrib/configurations/on-host.yaml", True)>>' -OutFile 'C:\ProgramData\Engity\Bifroest\configuration.yaml'
+& 'C:\Program Files\Engity\Bifroest\bifroest.exe' service install --configuration 'C:\ProgramData\Engity\Bifroest\configuration.yaml'
+```
 
-    #### Syntax
-    ```powershell
-    curl -sSLf <<release_asset_url("bifroest-windows-<arch>-<edition>.zip")>> -o "${Env:Temp}\bifroest.zip"
-    mkdir -Force 'C:\Program Files\Engity\Bifroest'
-    Expand-Archive "${Env:Temp}\bifroest.zip" -DestinationPath 'C:\Program Files\Engity\Bifroest'
-    ```
+Log in with that user's SSH key or password:
 
-    #### Matrix
+```powershell
+ssh "$env:USERNAME@localhost"
+```
 
-    !!! tip ""
-         Cells express support in format of `<generic>`/`<extended>`. See our [documentation of distributions of Bifröst](distribution.md#windows) to learn more.
+If login fails, check Windows Event Viewer. To revert, stop Bifröst with `& 'C:\Program Files\Engity\Bifroest\bifroest.exe' service remove` and restart the previous SSH server.
 
-    <<compatibility_matrix(os="windows", packaging="archive")>>
+## macOS
 
-    #### Example - Windows AMD64
-    ```powershell
-    curl -sSLf <<release_asset_url("bifroest-windows-amd64-generic.zip")>> -o "${Env:Temp}\bifroest.zip"
-    mkdir -Force 'C:\Program Files\Engity\Bifroest'
-    Expand-Archive "${Env:Temp}\bifroest.zip" -DestinationPath 'C:\Program Files\Engity\Bifroest'
-    ```
+Use the [macOS generic edition](distribution.md#darwin-generic) and an existing local user:
 
-3. Configure Bifröst. For example download the demo configuration and adjust it to your needs (see [documentation of configuration](../reference/configuration.md) for the documentation about it):
-   ```powershell
-   mkdir -Force 'C:\ProgramData\Engity\Bifroest'
-   curl -sSLf <<asset_url("contrib/configurations/dummy-windows.yaml", True)>> -o 'C:\ProgramData\Engity\Bifroest\configuration.yaml'
-   # Adjust it to your needs
-   notepad 'C:\ProgramData\Engity\Bifroest\configuration.yaml'
-   ```
+```sh
+curl -fLsS -o bifroest-darwin-arm64-generic.tgz '<<release_asset_url("bifroest-darwin-arm64-generic.tgz")>>'
+sudo install -d /usr/local/bin
+sudo tar -xzf bifroest-darwin-arm64-generic.tgz -C /usr/local/bin bifroest
+sudo install -d -o root -g wheel -m 0750 '/Library/Application Support/Engity/Bifroest'
+sudo curl -fLsS -o '/Library/Application Support/Engity/Bifroest/configuration.yaml' '<<asset_url("contrib/configurations/on-host.yaml", True)>>'
+sudo chown root:wheel '/Library/Application Support/Engity/Bifroest/configuration.yaml'
+sudo chmod 0640 '/Library/Application Support/Engity/Bifroest/configuration.yaml'
+sudo /usr/local/bin/bifroest service install
+```
 
-4. Enable and start Bifröst:
-   ```powershell
-   'C:\Program Files\Engity\Bifroest\bifroest.exe' service install
-   ```
+Log in with that user's SSH key or password:
 
-5. Now you can log in to Bifröst the first time:
-   ```powershell
-   ssh demo@localhost
-   ```
+```sh
+ssh "$USER@localhost"
+```
 
-## What's next?
+If login fails, check the logs in `/Library/Logs/Engity/Bifroest`. To revert, run `sudo /Library/PrivilegedHelperTools/com.engity.bifroest service remove` and re-enable Remote Login.
 
-* [Configuration details](../reference/configuration.md)
-* [Install in Docker](in-docker.md)
+## Next steps
+
+* Adjust [flows](../reference/flow.md), [local authorization](../reference/authorization/local.md) and [session environments](../reference/environment/index.md) for your access policy.
+* Configure [Docker or Kubernetes](in-docker.md) only if you need those environments.

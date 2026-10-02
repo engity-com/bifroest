@@ -71,11 +71,12 @@ func (this *repoReleases) all(ctx context.Context) iter.Seq2[*repoRelease, error
 func (this *repoReleases) allSemver(ctx context.Context) iter.Seq2[*semver.Version, error] {
 	return func(yield func(*semver.Version, error) bool) {
 		for r, err := range this.all(ctx) {
-			if err != nil && !yield(nil, err) {
+			if err != nil {
+				yield(nil, err)
 				return
 			}
 
-			if r.TagName == nil {
+			if r.GetDraft() || r.GetPrerelease() || r.TagName == nil {
 				continue
 			}
 			if !strings.HasPrefix(*r.TagName, "v") {
@@ -89,7 +90,7 @@ func (this *repoReleases) allSemver(ctx context.Context) iter.Seq2[*semver.Versi
 				} else {
 					return
 				}
-			} else if !yield(rsmv, nil) {
+			} else if rsmv.Prerelease() == "" && !yield(rsmv, nil) {
 				return
 			}
 		}

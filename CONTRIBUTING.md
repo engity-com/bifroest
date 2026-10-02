@@ -48,10 +48,10 @@ versioned upgrade page from the GitHub Release description when publishing it.
 Keep the target version in the page derived from the release tag rather than
 hard-coding it in the Markdown.
 
-Once the release notes are ready, a release train is launched by *tagging* from `main` to `vX.Y.Z`.
+Once the release notes are ready, a release train is launched by *tagging* from `main` to `vX.Y.Z`, `vX.Y.Z-alphaN`, or `vX.Y.Z-betaN` (positive integers without leading zeros). Mark alpha and beta GitHub releases as prereleases, and stable releases as non-prereleases. The GitHub "Latest" selection remains a manual release decision. OCI images for prereleases use only full version tags; moving tags such as `latest` are reserved for stable releases.
 
 #### Validation
 
-The `vX.Y.Z` tag will go through the release CI.
+The release tag will go through the release CI, which checks the tag syntax and GitHub prerelease flag before building or publishing.
 
 If anything fails the release tag is dropped, the issue fixed in `main` and a new release train is started on a new tag.

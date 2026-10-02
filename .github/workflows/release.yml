@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to be released (syntax: v<major>.<minor>.<patch>)"
+        description: "Version to be released (vX.Y.Z, vX.Y.Z-alphaN, or vX.Y.Z-betaN)"
         required: true
 
 jobs:
@@ -43,10 +43,19 @@ jobs:
             workflow_dispatch) release_tag="${VERSION_INPUT}" ;;
             *) echo "Unsupported event: ${EVENT_NAME}" >&2; exit 1 ;;
           esac
-          prerelease_identifier='(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)'
-          semver_re="^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-${prerelease_identifier}(\\.${prerelease_identifier})*)?$"
+          semver_re='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta)[1-9][0-9]*)?$'
           if [[ ! "${release_tag}" =~ ${semver_re} ]]; then
             echo "Invalid release tag: ${release_tag}" >&2
+            exit 1
+          fi
+          expected_prerelease=false
+          if [[ -n "${BASH_REMATCH[5]}" ]]; then
+            expected_prerelease=true
+          fi
+          release_state="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}" --jq '[.draft, .prerelease] | @tsv')"
+          read -r draft prerelease <<< "${release_state}"
+          if [[ "${draft}" != false || "${prerelease}" != "${expected_prerelease}" ]]; then
+            echo "Release ${release_tag} must be published with prerelease=${expected_prerelease} (draft=${draft}, prerelease=${prerelease})" >&2
             exit 1
           fi
           echo "release_tag=${release_tag}" >> "${GITHUB_OUTPUT}"

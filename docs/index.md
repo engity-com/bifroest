@@ -1,49 +1,51 @@
 ---
-description: Bifröst is a highly customizable SSH server with several ways to authorize a user and options where and how to execute a user's session.
+title: Bifröst SSH server and gateway
+description: Use standard SSH clients with OIDC Device Authorization, SSH gateways and Docker/Kubernetes sessions. Verify optional audit and recordings.
 ---
 
 # Engity's Bifröst
 
 ![Engity's Bifröst](assets/logo-with-text.svg){. class=bifroest-logo title="Logo of Engity's Bifröst with title"}
 
-## Welcome
+## SSH access with identity and session control
 
-Bifröst (spoken as "Bee-frest"), is a highly customizable SSH server with several ways to authorize a user and where and how to execute its session. It can be used as a drop-in-replacement for [OpenSSH's sshd](https://man.openbsd.org/sshd)[^openssh-compatibility], but it was actually created with some more advanced stuff in mind; see below.
+Bifröst lets platform teams combine SSH authorization with the environment in which a session runs. Users connect with a standard SSH client; [OIDC Device Authorization](reference/authorization/oidc.md) also requires a browser and a supported identity provider. Sessions can run on a local account, in a Docker container or Kubernetes Pod, or through a separately authenticated [SSH target](reference/environment/ssh.md). Bifröst is not a universal drop-in replacement for [OpenSSH's sshd](https://man.openbsd.org/sshd).
 
-[^openssh-compatibility]: Bifröst supports the vast majority of common OpenSSH setups. Only a small number of specialized edge cases are not supported, including some `authorized_keys` options such as `no-touch-required`.
+Bifröst was created for teams with [time-bound off-boarding requirements](usecases.md#offboard), whether the target is 15 minutes, 60 minutes or another defined limit. Meeting it depends on the IdP, bounded access and checks of existing connections.
+
+**Install it as a host service:** the [host guide](setup/on-host.md) starts Bifröst on port 22 with the privileges required to open a real shell as an existing local account. Linux uses systemd, Windows uses a Windows service, and macOS uses a LaunchDaemon.
+
+## Choose your task
+
+* [Connect to a private OpenSSH server](guides/ssh-gateway.md) through an SSH gateway.
+* [Log in with OIDC](guides/oidc.md) using an SSH client and a browser verification step.
+* [Verify a session recording](guides/recording.md) and export the recorded output.
 
 ## Features
 
-### SSH protocol compliant
+### SSH access with your identity
 
-Fully **[SSH protocol](https://www.rfc-editor.org/rfc/rfc4253) compliant server**, like you would expect.
+Connect using OpenSSH, PuTTY or another standard SSH client. Authorize with local accounts, SSH keys or [OIDC Device Authorization](guides/oidc.md); OIDC adds a browser verification step, not a separate SSH client.
 
-### OpenID Connect
-You can connect via your **SSH keys**, as usually. And so on...
+### Choose where sessions run
 
-...but you can also use **[OpenID Connect](https://openid.net/)** (or OAuth2) identity provider. The best thing about it: In contrast to the other SSH servers with OpenID Connect you don't need to install another client in addition to your regular SSH Client ([OpenSSH](https://www.openssh.com/), [PuTTy](https://www.putty.org/), ...).
+Open a shell on the [host](reference/environment/local.md), in a [Docker container](reference/environment/docker.md) or in a [Kubernetes Pod](reference/environment/kubernetes.md). Flows combine the authorization method and session environment; container isolation depends on the permissions you grant.
 
-#### Docker environments
+### SSH gateway to private servers
 
-You can execute your users into individual Docker containers with custom images, network settings, and much more...
+Connect through Bifröst to an existing SSH server. The [gateway](guides/ssh-gateway.md) verifies the target host key and authenticates to it separately; it does not transparently proxy every SSH request.
 
-#### Kubernetes environments
+### Verifiable audit and recording
 
-Be directly inside a dedicated Pod inside your Kubernetes cluster and have access to all of its resources without extra port forwarding.
+Optionally sign [audit events](reference/auditlog/index.md) and [terminal recordings](guides/recording.md) for later verification. Recording captures terminal output, not raw keyboard input or SFTP and forwarding payloads.
 
-### Remember me
+### Bound access over time
 
-Once authenticated using a public key, Bifröst can (temporarily) store that public key for faster reconnection while the session is still active.
-
-### Automatic user provisioning
-
-If a user needs to be authorized in a local environment using [OpenID Connect](#openid-connect), Bifröst can automatically create a local user based on a pre-defined requirement template.
-
-Bifröst can also automatically clean up these local users once they are no longer needed. For example: If their session times out after a defined idle-time, the local user, their home directory, and all running processes can be cleaned up.
-
-### More to come...
+Set maximum [connection](reference/connection/ssh.md#property-maxTimeout) and [session](reference/session/fs.md#property-maxTimeout) lifetimes, and optionally provision or clean up [local accounts](reference/environment/local.md#account-management). OIDC's default policy checks refresh grants even for sessions reused with a remembered public key and closes Bifröst connections after a grant is rejected. [Time-bound off-boarding](usecases.md#offboard) still needs an end-to-end check.
 
 ## More topics
 * [Getting started](setup/index.md)
 * [Use-Cases](usecases.md)
+* [Choosing Bifröst](choosing-bifroest.md)
+* [Security and trust](security.md)
 * [Configuration](reference/configuration.md)

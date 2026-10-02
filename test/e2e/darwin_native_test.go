@@ -375,7 +375,7 @@ func TestDarwinLaunchDaemon(t *testing.T) {
 		_ = os.RemoveAll(darwinServiceStateDirectory)
 		_ = os.RemoveAll(darwinServiceLogDirectory)
 	})
-	configuration, err := os.ReadFile(filepath.Join(repositoryRoot, "contrib/configurations/sshd-dropin-replacement.yaml"))
+	configuration, err := os.ReadFile(filepath.Join(repositoryRoot, "contrib/configurations/on-host.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}

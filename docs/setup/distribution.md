@@ -133,6 +133,8 @@ Bifröst is also available in OCI/Docker images. You just need to mount a valid 
 
 See the [container registry page](<< container_packages_url() >>) for all available tags.
 
+Alpha and beta releases publish only their full version tags (for example, `1.0.0-beta1`, `generic-1.0.0-beta1` and `extended-1.0.0-beta1`). Moving tags such as `latest`, `generic`, `extended`, and major/minor aliases refer only to stable releases. Use the full version tag when installing a prerelease.
+
 #### Matrix {: #image-matrix }
 
 <<compatibility_matrix(packaging="image")>>
@@ -160,6 +162,8 @@ See the [container registry page](<< container_packages_url() >>) for all availa
     ```
 
 ##### Examples {: #image-examples }
+
+On a release-specific documentation page, the first image below matches that release. The other tags select moving stable releases and do not select alpha or beta versions.
 
 ```shell
 <<container_image_uri("*")>>

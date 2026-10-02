@@ -3,7 +3,7 @@ async function showUpgradePredecessor() {
   if (!headline) return;
   const hint = document.getElementById("upgrade-predecessor");
 
-  const own = /^v(\d+)\.(\d+)\.(\d+)(?:-rc\.(?:0|[1-9]\d*))?$/.exec(headline.dataset.release || "");
+  const own = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:alpha|beta)[1-9]\d*)?$/.exec(headline.dataset.release || "");
   if (!own) return;
 
   try {

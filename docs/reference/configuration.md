@@ -59,9 +59,9 @@ If defined this message will be displayed in the log files of Bifröst on startu
     startMessage: ""
     ```
 
-2. ??? plain "Drop in replacement for OpenSSH sshd"
+2. ??? plain "Local-account host configuration"
     ```yaml
-    --8<-- "contrib/configurations/sshd-dropin-replacement.yaml"
+    --8<-- "contrib/configurations/on-host.yaml"
     ```
 
 3. ??? plain "Docker environment with OpenID Connect authorization"
