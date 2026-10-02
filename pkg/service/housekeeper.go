@@ -328,6 +328,7 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 		if err := goerrors.Join(disposeErr, disposeAuditErr); err != nil {
 			return reportAndContinue(err)
 		}
+		this.service.oidcRefresh.stop(sess)
 		pending, err := sess.EnvironmentToken(ctx)
 		if err != nil {
 			return reportAndContinue(err)
@@ -337,7 +338,15 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 			return true, nil
 		}
 		_, deleteErr, deleteAuditErr := this.auditSessionAction(ctx, sess, audit.EventNameHousekeepingSessionDeleteStarted, audit.EventNameHousekeepingSessionDeleteCompleted, audit.EventReasonRetentionElapsed, func() (bool, error) {
-			return true, this.service.sessions.Delete(ctx, sess)
+			if err := this.service.sessions.Delete(ctx, sess); err != nil {
+				return false, err
+			}
+			// The session has been removed durably, even if recording the audit
+			// completion below fails. Its in-memory revocation state can go too.
+			this.service.oidcRefresh.stop(sess)
+			this.service.oidcRefresh.finalSessionDeleted(sess.Flow(), sess.Id())
+			this.service.sessionConnections.finalSessionDeleted(sess.Flow(), sess.Id())
+			return true, nil
 		})
 		if err := goerrors.Join(deleteErr, deleteAuditErr); err != nil {
 			return reportAndContinue(err)
@@ -353,6 +362,7 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 		if err := goerrors.Join(actionErr, auditErr); err != nil {
 			return reportAndContinue(err)
 		}
+		this.service.oidcRefresh.stop(sess)
 		if disposed {
 			logger.Info("session is expired and was therefore disposed")
 		} else {
@@ -370,6 +380,7 @@ func (this *houseKeeper) inspectSession(ctx context.Context, sess session.Sessio
 			if err := goerrors.Join(actionErr, auditErr); err != nil {
 				return reportAndContinue(err)
 			}
+			this.service.oidcRefresh.stop(sess)
 			logger.With("impProtocolRevision", revision).
 				With("expectedImpProtocolRevision", imp.ProtocolRevision).
 				Warn("Session was disposed due to incompatible IMP protocol metadata")
@@ -457,6 +468,10 @@ func (this *houseKeeper) sessionAutoRepairAllowed() bool {
 
 // dispose will dispose a given session.Session but NOT delete it.
 func (this *houseKeeper) dispose(ctx context.Context, logger log.Logger, sess session.Session, retentionElapsed bool, expected *environment.ResourceIdentity) (bool, error) {
+	return this.disposeWith(ctx, logger, sess, retentionElapsed, expected, nil)
+}
+
+func (this *houseKeeper) disposeWith(ctx context.Context, logger log.Logger, sess session.Session, _ bool, expected *environment.ResourceIdentity, onSessionDisposed func()) (bool, error) {
 	fail := func(err error) (bool, error) {
 		return false, errors.Newf(errors.System, "cannot dispose session %v: %w", sess, err)
 	}
@@ -473,11 +488,14 @@ func (this *houseKeeper) dispose(ctx context.Context, logger log.Logger, sess se
 	if err != nil {
 		return fail(err)
 	}
+	if onSessionDisposed != nil {
+		onSessionDisposed()
+	}
 	environmentDisposed, err := this.disposeEnvironment(ctx, logger, sess, expected)
 	if err != nil {
 		return fail(err)
 	}
-	authorizationDisposed, err := this.disposeAuthorization(ctx, logger, sess, retentionElapsed)
+	authorizationDisposed, err := this.disposeAuthorization(ctx, logger, sess)
 	if err != nil {
 		return fail(err)
 	}
@@ -511,16 +529,13 @@ func (this *houseKeeper) disposeEnvironment(ctx context.Context, logger log.Logg
 
 	return disposed, nil
 }
-func (this *houseKeeper) disposeAuthorization(ctx context.Context, logger log.Logger, sess session.Session, retentionElapsed bool) (bool, error) {
+func (this *houseKeeper) disposeAuthorization(ctx context.Context, logger log.Logger, sess session.Session) (bool, error) {
 	fail := func(err error) (bool, error) {
 		logger.WithError(err).Warn("cannot dispose authorization of session")
 		return false, errors.Newf(errors.System, "cannot dispose authorization of session: %w", err)
 	}
-	if retentionElapsed {
-		for _, flow := range this.service.Configuration.Flows {
-			if flow.Name != sess.Flow() {
-				continue
-			}
+	for _, flow := range this.service.Configuration.Flows {
+		if flow.Name == sess.Flow() {
 			if _, oidc := flow.Authorization.V.(*configuration.AuthorizationOidcDeviceAuth); oidc {
 				token, err := sess.AuthorizationToken(ctx)
 				if err != nil {
@@ -532,13 +547,12 @@ func (this *houseKeeper) disposeAuthorization(ctx context.Context, logger log.Lo
 				if err := sess.SetAuthorizationToken(ctx, nil); err != nil {
 					return fail(err)
 				}
-				logger.Info("removed local OIDC authorization token after session retention elapsed")
+				logger.Info("removed local OIDC authorization token from disposed session")
 				return true, nil
 			}
 			break
 		}
 	}
-
 	auth, err := this.service.authorizer.RestoreFromSession(ctx, sess, &authorization.RestoreOpts{
 		AutoCleanUpAllowed: common.P(false),
 		Logger:             logger,

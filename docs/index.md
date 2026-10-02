@@ -41,7 +41,7 @@ Optionally sign [audit events](reference/auditlog/index.md) and [terminal record
 
 ### Bound access over time
 
-Set maximum [connection](reference/connection/ssh.md#property-maxTimeout) and [session](reference/session/fs.md#property-maxTimeout) lifetimes, and optionally provision or clean up [local accounts](reference/environment/local.md#account-management). A remembered public key can simplify reconnects while its session remains valid; [time-bound off-boarding](usecases.md#offboard) still needs an end-to-end check.
+Set maximum [connection](reference/connection/ssh.md#property-maxTimeout) and [session](reference/session/fs.md#property-maxTimeout) lifetimes, and optionally provision or clean up [local accounts](reference/environment/local.md#account-management). OIDC's default policy checks refresh grants even for sessions reused with a remembered public key and closes Bifröst connections after a grant is rejected. [Time-bound off-boarding](usecases.md#offboard) still needs an end-to-end check.
 
 ## More topics
 * [Getting started](setup/index.md)

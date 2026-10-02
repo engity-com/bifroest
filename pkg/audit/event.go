@@ -68,6 +68,7 @@ const (
 	EventReasonRateLimit           = "rate-limit"
 	EventReasonJournalReserve      = "journal-reserve"
 	EventReasonSessionIncompatible = "session-incompatible"
+	EventReasonOIDCAccessLost      = "oidc-access-lost"
 	EventReasonAuthorizedKeyPolicy = "authorized-key-policy"
 	EventReasonEnvironmentPolicy   = "environment-policy"
 	EventReasonContextCanceled     = "context-canceled"
@@ -95,6 +96,7 @@ var knownEventReasons = [...]EventReason{
 	EventReasonRateLimit,
 	EventReasonJournalReserve,
 	EventReasonSessionIncompatible,
+	EventReasonOIDCAccessLost,
 	EventReasonAuthorizedKeyPolicy,
 	EventReasonEnvironmentPolicy,
 	EventReasonContextCanceled,

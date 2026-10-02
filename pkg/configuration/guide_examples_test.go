@@ -36,6 +36,9 @@ func TestGuideConfigurations(t *testing.T) {
 				yamlExample = strings.ReplaceAll(yamlExample, "/etc/engity/bifroest/gateway-clients.pub", keyFile)
 				yamlExample = strings.ReplaceAll(yamlExample, "/etc/engity/bifroest/target_known_hosts", hostsFile)
 			}
+			if name == "oidc" {
+				require.Contains(t, yamlExample, "offline_access")
+			}
 			var conf Configuration
 			require.NoError(t, conf.LoadFromYaml(strings.NewReader(yamlExample), name+".md"))
 		})

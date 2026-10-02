@@ -105,6 +105,7 @@ func (this *service) newConnection(orig gonet.Conn, ctx essh.Context, logger log
 func (this *service) onDisconnected(ctx essh.Context, _ gonet.Conn) error {
 	defer finishConnectionLifecycle(ctx)
 	if conn := this.connection(ctx); conn != nil {
+		this.sessionConnections.untrack(conn)
 		conn.logger.
 			With("read", conn.read.Load()).
 			With("written", conn.written.Load()).
@@ -129,6 +130,9 @@ func (this *service) onDisconnected(ctx essh.Context, _ gonet.Conn) error {
 }
 
 func (this *service) onConnectionFailed(ctx essh.Context, _ gonet.Conn, _ error) error {
+	if conn := this.connection(ctx); conn != nil {
+		this.sessionConnections.untrack(conn)
+	}
 	finishConnectionLifecycle(ctx)
 	return nil
 }
@@ -357,6 +361,7 @@ func (this *connection) CloseStalledSubsystemInput() error {
 }
 
 func (this *connection) closeOwned() (rErr error) {
+	this.service.sessionConnections.untrack(this)
 	defer func(target *error) {
 		if err := this.doWithInterceptor(session.ConnectionInterceptor.Close); err != nil && *target == nil {
 			*target = err

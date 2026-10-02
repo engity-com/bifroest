@@ -11,7 +11,7 @@ Bifröst is a configurable SSH server and gateway for teams managing access to h
 * **Host and container sessions:** Work as a local user, in a Docker container or in a Kubernetes Pod; optionally provision and clean up managed local accounts.
 * **SSH gateway:** Reach private SSH servers through a [separately authenticated connection](docs/guides/ssh-gateway.md) with target host-key verification.
 * **Audit and recording:** Optionally write signed audit events and verifiable [terminal recordings](docs/guides/recording.md).
-* **Time-bound access:** Set connection and session lifetimes to support [off-boarding targets](docs/usecases.md#offboard) such as 15 or 60 minutes, and test the result against your requirements.
+* **Time-bound access:** OIDC can close Bifröst connections after a refresh grant is rejected. Set connection and session lifetimes to support [off-boarding targets](docs/usecases.md#offboard) such as 15 or 60 minutes, and test the result against your IdP and requirements.
 
 ## Get started
 

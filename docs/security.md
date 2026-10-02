@@ -8,7 +8,7 @@ Bifröst accepts SSH connections, selects an [authorization and session environm
 
 ## Identity and SSH targets
 
-* An [OIDC Device login](guides/oidc.md) requires a browser and an identity provider that supports the flow. Keep the client secret and session storage restricted to the service operator; Bifröst stores authorization data in its session repository.
+* An [OIDC Device login](guides/oidc.md) requires a browser and an identity provider that supports the flow. By default it also requires a refresh token: Bifröst checks the grant while the session is active, and closes its SSH connections if access is lost. Check whether the IdP invalidates existing refresh grants on user disablement; this is not an instant global logout. Keep the client secret and session storage restricted to the service operator; Bifröst stores authorization data in its session repository.
 * An [SSH gateway](guides/ssh-gateway.md) ends the incoming SSH connection and opens a separately authenticated one to the target. Configure and verify the target's host key; the gateway's incoming host key does not prove the identity of that target.
 * [Connection](reference/connection/ssh.md#property-maxTimeout) and [session](reference/session/fs.md#property-maxTimeout) maximum lifetimes can be configured. For a time-bound [off-boarding requirement](usecases.md#offboard), test both new and existing access against the actual IdP and target systems.
 

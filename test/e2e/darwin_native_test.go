@@ -285,7 +285,9 @@ flows:
 		t.Fatal("Darwin account process was not terminated")
 	}
 
-	if err := repository.DeleteByIdentity(t.Context(), account.Uid, accountName, updatedHome, &bfuser.DeleteOpts{HomeDir: &yes, KillProcesses: &yes}); err != nil {
+	// Process termination was already checked above; avoid a redundant system-wide scan.
+	killAgain := false
+	if err := repository.DeleteByIdentity(t.Context(), account.Uid, accountName, updatedHome, &bfuser.DeleteOpts{HomeDir: &yes, KillProcesses: &killAgain}); err != nil {
 		t.Fatal(err)
 	}
 	accountLookupDeadline := time.Now().Add(10 * time.Second)

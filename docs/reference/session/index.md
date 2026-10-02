@@ -10,6 +10,8 @@ A session is grouping one or more connections of a user together. This enables t
 2. ... to use the same [environment](../environment/index.md), although all other prior connections are already disconnected, but the timeout of idle sessions is not already reached,
 3. ... and the authorization _more lean_ by remembering the user by its [SSH Public Key](../data-type.md#ssh-public-key) instead of (for example of the [OpenID Connect Authorization](../authorization/oidc.md)) repeatedly asking the user to go through the authorization flow.
 
+For OIDC, a remembered key can skip the browser step, but does not disable configured refresh-token checks or permit reuse of a disposed session.
+
 ## Types
 
 1. `fs`: [Filesystem](fs.md) (default type)

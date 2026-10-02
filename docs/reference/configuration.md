@@ -78,6 +78,7 @@ If defined this message will be displayed in the log files of Bifröst on startu
             - openid
             - email
             - profile
+            - offline_access
         environment:
           type: docker
           image: alpine

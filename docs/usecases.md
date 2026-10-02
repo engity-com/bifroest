@@ -24,9 +24,9 @@ Customer contracts or certification requirements can set an off-boarding deadlin
 
 ### Put the control in place
 
-1. Use [OIDC Device Authorization](reference/authorization/oidc.md) so that your IdP can reject new logins after access is withdrawn. Measure how long that change takes at the IdP; an SSH key remembered for an existing Bifröst session may otherwise skip a new Device Authorization.
-2. Set **both** [`ssh.maxTimeout`](reference/connection/ssh.md#property-maxTimeout) and [`session.maxTimeout`](reference/session/fs.md#property-maxTimeout) to fit your deadline. Both default to unlimited. The `5m` values below illustrate a short time budget; neither idle timeout nor SSH certificate expiry alone ends every active connection.
-3. If the requirement is actual off-boarding, measure from the recorded decision to the last possible access: test new logins **and existing** shells, SFTP, forwards and downstream access. A change at the IdP does not itself terminate existing connections or independent processes on a target. If the deadline cannot be met, add an explicit termination step and test it.
+1. Use [OIDC Device Authorization](reference/authorization/oidc.md) so that your IdP can reject new logins after access is withdrawn. By default Bifröst requires a refresh token and checks it while the session is active, including sessions reused with a remembered SSH key. A permanently rejected refresh grant closes the associated Bifröst SSH connections and disposes the session. Check whether disabling a user actually invalidates their refresh grant at your IdP, and when the next verification will run.
+2. Set **both** [`ssh.maxTimeout`](reference/connection/ssh.md#property-maxTimeout) and [`session.maxTimeout`](reference/session/fs.md#property-maxTimeout) to fit your deadline. Both default to unlimited. For OIDC, also review [`refreshToken.maxUnverifiedFor`](reference/authorization/oidc.md#device-auth-refresh-token-property-maxUnverifiedFor): it defaults to 30 minutes before disposal during an IdP outage. The `5m` values below illustrate a short time budget; neither idle timeout nor SSH certificate expiry alone ends every active connection.
+3. If the requirement is actual off-boarding, measure from the recorded decision to the last possible access: test new logins **and existing** shells, SFTP, forwards and downstream access. An IdP change is not necessarily reflected in an existing refresh grant or independent processes on a target. If the deadline cannot be met, add an explicit termination step and test it.
 
 ```yaml
 ssh:
