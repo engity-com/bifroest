@@ -110,7 +110,9 @@ func TestOidcRestoreClassifiesExpiredPersistedTokenAsUnusable(t *testing.T) {
 		Expiry:      time.Now().Add(-time.Minute),
 	}})
 	require.NoError(t, err)
-	authorizer := &OidcDeviceAuthAuthorizer{flow: "flow"}
+	authorizer := &OidcDeviceAuthAuthorizer{flow: "flow", conf: &configuration.AuthorizationOidcDeviceAuth{
+		ForceDisposeSessionOn: "never", RefreshToken: configuration.AuthorizationOidcRefreshToken{Mode: "never"},
+	}}
 
 	withoutCleanup := &authorizationRestoreTestSession{flow: "flow", token: raw}
 	_, err = authorizer.RestoreFromSession(context.Background(), withoutCleanup, &RestoreOpts{})
@@ -135,7 +137,9 @@ func TestOidcRestoreClassifiesMissingRequiredTokensAsUnusable(t *testing.T) {
 		{name: "no token", raw: []byte(`{}`)},
 		{name: "absent access token", raw: []byte(`{"token_type":"Bearer"}`)},
 		{name: "empty access token", raw: []byte(`{"access_token":""}`)},
-		{name: "missing required ID token", raw: []byte(`{"access_token":"valid"}`), conf: &configuration.AuthorizationOidcDeviceAuth{RetrieveIdToken: true}},
+		{name: "missing required ID token", raw: []byte(`{"access_token":"valid"}`), conf: &configuration.AuthorizationOidcDeviceAuth{
+			RetrieveIdToken: true, ForceDisposeSessionOn: "never", RefreshToken: configuration.AuthorizationOidcRefreshToken{Mode: "never"},
+		}},
 	} {
 		for _, autoCleanup := range []bool{false, true} {
 			name := tc.name + "/no cleanup"
@@ -182,8 +186,10 @@ func TestOidcRestoreClassifiesExpiredIdTokenAsUnusable(t *testing.T) {
 	})
 	require.NoError(t, err)
 	authorizer := &OidcDeviceAuthAuthorizer{
-		flow:     "flow",
-		conf:     &configuration.AuthorizationOidcDeviceAuth{RetrieveIdToken: true},
+		flow: "flow",
+		conf: &configuration.AuthorizationOidcDeviceAuth{
+			RetrieveIdToken: true, ForceDisposeSessionOn: "never", RefreshToken: configuration.AuthorizationOidcRefreshToken{Mode: "never"},
+		},
 		verifier: verifier,
 	}
 
@@ -219,8 +225,10 @@ func TestOidcRestoreDoesNotClassifyVerifierFailureAsUnusable(t *testing.T) {
 	})
 	require.NoError(t, err)
 	authorizer := &OidcDeviceAuthAuthorizer{
-		flow:     "flow",
-		conf:     &configuration.AuthorizationOidcDeviceAuth{RetrieveIdToken: true},
+		flow: "flow",
+		conf: &configuration.AuthorizationOidcDeviceAuth{
+			RetrieveIdToken: true, ForceDisposeSessionOn: "never", RefreshToken: configuration.AuthorizationOidcRefreshToken{Mode: "never"},
+		},
 		verifier: verifier,
 	}
 	autoCleanup := true
@@ -272,8 +280,10 @@ func TestOidcRestoreKeepsTokenOnKeySetFailure(t *testing.T) {
 					})
 					require.NoError(t, err)
 					authorizer := &OidcDeviceAuthAuthorizer{
-						flow:     "flow",
-						conf:     &configuration.AuthorizationOidcDeviceAuth{RetrieveIdToken: true},
+						flow: "flow",
+						conf: &configuration.AuthorizationOidcDeviceAuth{
+							RetrieveIdToken: true, ForceDisposeSessionOn: "never", RefreshToken: configuration.AuthorizationOidcRefreshToken{Mode: "never"},
+						},
 						verifier: verifier,
 					}
 					sess := &authorizationRestoreTestSession{flow: "flow", token: raw}
