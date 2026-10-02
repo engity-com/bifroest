@@ -376,13 +376,18 @@ func TestSessionRecordingRejectsInvalidResizeWithoutDisablingBestEffortAuditlog(
 	require.NoError(t, err)
 	require.NoError(t, invalid.RequestPty("xterm", 24, 80, nil))
 	require.NoError(t, invalid.Start("invalid-resize"))
+	runDone := make(chan error, 1)
+	go func() { runDone <- invalid.Wait() }()
 	select {
 	case <-firstRunStarted:
-	case <-time.After(time.Second):
+	case err := <-runDone:
+		t.Fatalf("SSH session ended before environment run started: %v", err)
+	case <-time.After(15 * time.Second):
+		_ = invalid.Close()
 		t.Fatal("environment run did not start")
 	}
 	require.NoError(t, invalid.WindowChange(24, int(recording.MaximumCastTerminalDimension)+1))
-	require.Error(t, invalid.Wait())
+	require.Error(t, <-runDone)
 	require.False(t, server.service.auditlogDisabled(auditlog))
 
 	healthy, err := client.NewSession()
