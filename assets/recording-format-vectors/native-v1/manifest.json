@@ -1,0 +1,119 @@
+{
+  "schema": "bifroest.native-recording-format-vectors/v1",
+  "signingSeedHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "becastRecipientSeedHex": "4242424242424242424242424242424242424242424242424242424242424242",
+  "artifacts": [
+    {
+      "path": "bcast-v1.bcast",
+      "format": "bcast/v1",
+      "description": "Deterministic signed clear native CBOR recording",
+      "bytes": 1321,
+      "sha256": "188c68682eacab9357c17025a01f6b611745f6adc01760bb30d756c226df4af7",
+      "reproducible": true
+    },
+    {
+      "path": "bcast-v1.cast",
+      "format": "asciicast/v3",
+      "description": "Signed Cast exported from the clear native recording",
+      "bytes": 1404,
+      "sha256": "6744e21dc3dc28fca2387e023628e93b10738d683c5d24779d0ec79a5fde3a13",
+      "reproducible": true
+    },
+    {
+      "path": "bcast-head.cbor",
+      "format": "bcast/v1-head",
+      "description": "Deterministic signed clear checkpoint",
+      "bytes": 203,
+      "sha256": "0d8b9ad27aba84b6877ed3d285c07f4b1c370049ace9e4674d9bea3b5cb99ee7",
+      "reproducible": true
+    },
+    {
+      "path": "bcast-header.unit",
+      "format": "bcast/v1-header-unit",
+      "description": "Complete signed clear header frame",
+      "bytes": 209,
+      "sha256": "9b08eadef27422d518451a2d8a253fd3b81d1588c107b15b49bf4ea4eff8ed2e",
+      "reproducible": true
+    },
+    {
+      "path": "bcast-continuation.unit",
+      "format": "bcast/v1-continuation-unit",
+      "description": "Complete signed clear continuation frame",
+      "bytes": 461,
+      "sha256": "a0b39940faba3a058493ea3ddf18fbca1c123da05c93c4c9262c97c8e4ab0b04",
+      "reproducible": true
+    },
+    {
+      "path": "bcast-final.unit",
+      "format": "bcast/v1-final-unit",
+      "description": "Complete signed clear final chunk frame",
+      "bytes": 366,
+      "sha256": "589114f001bc8aad321bce9085e122b87b4be9fb974eb9cfed5b94d63336f6fd",
+      "reproducible": true
+    },
+    {
+      "path": "bcast-seal.unit",
+      "format": "bcast/v1-seal-unit",
+      "description": "Complete signed clear seal frame",
+      "bytes": 278,
+      "sha256": "3bead79b7ffcd005e9f377f192961e643d04208a5190041608dbc5c73cd10d55",
+      "reproducible": true
+    },
+    {
+      "path": "becast-v1.becast",
+      "format": "becast-cbor/v1",
+      "description": "Frozen signed age-encrypted native CBOR decoder vector",
+      "bytes": 1800,
+      "sha256": "2b720b9ae8cc757e160ced1e6b7a379d37e5139873780a532d4ff9a25369069a",
+      "reproducible": false
+    },
+    {
+      "path": "becast-v1.cast",
+      "format": "asciicast/v3",
+      "description": "Signed Cast exported from the frozen native age recording",
+      "bytes": 1404,
+      "sha256": "6744e21dc3dc28fca2387e023628e93b10738d683c5d24779d0ec79a5fde3a13",
+      "reproducible": true
+    },
+    {
+      "path": "becast-head.cbor",
+      "format": "becast-cbor/v1-head",
+      "description": "Frozen signed age recording checkpoint",
+      "bytes": 203,
+      "sha256": "e1b48bb1818229970bc5e51c2566607199586cb8b9a9e8fdccc6c882f9ddef7b",
+      "reproducible": false
+    },
+    {
+      "path": "becast-header.unit",
+      "format": "becast-cbor/v1-header-unit",
+      "description": "Complete signed deterministic age header frame",
+      "bytes": 262,
+      "sha256": "788f5747e3fc8ad8e299f7de3e5ada07f66116001deeb08be46247eaf76bf0fa",
+      "reproducible": true
+    },
+    {
+      "path": "becast-continuation.unit",
+      "format": "becast-cbor/v1-continuation-unit",
+      "description": "Complete signed frozen age continuation frame",
+      "bytes": 674,
+      "sha256": "5ef8d5aceb5fa2d2dd3ee40912dfaa0a4b7ad26c7d8c835776ef666fe569efe4",
+      "reproducible": false
+    },
+    {
+      "path": "becast-final.unit",
+      "format": "becast-cbor/v1-final-unit",
+      "description": "Complete signed frozen age final chunk frame",
+      "bytes": 579,
+      "sha256": "bf7fc695016c439d89e8a3a75cf24037d625b283cc7e505617a0d52ef2e7830f",
+      "reproducible": false
+    },
+    {
+      "path": "becast-seal.unit",
+      "format": "becast-cbor/v1-seal-unit",
+      "description": "Complete signed frozen age seal frame",
+      "bytes": 278,
+      "sha256": "1e39d11af63cd5bca5e0d09b512d191054d9e3afe680f09887799d943270daa0",
+      "reproducible": false
+    }
+  ]
+}
