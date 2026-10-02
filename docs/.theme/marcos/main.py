@@ -181,7 +181,7 @@ support_matrix = SupportMatrix(
     editions_of(
         Os.linux, Arch.armv6,
         True, True,
-        True, False
+        False, False
     ),
     editions_of(
         Os.linux, Arch.armv7,

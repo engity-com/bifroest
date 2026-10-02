@@ -654,7 +654,9 @@ func TestOidcRefreshWorkerDisposesPersistedSessionWithoutRefreshToken(t *testing
 	conn := newTrackedSessionConnection(t, svc)
 	svc.sessionConnections.track(conn, sess)
 	manager.register(sess)
-	require.Eventually(t, func() bool { return conn.closed.Load() }, 7*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		return conn.closed.Load() && len(recorder.eventsSnapshot()) == 2
+	}, 7*time.Second, 10*time.Millisecond)
 	require.NoError(t, manager.Close())
 	require.Equal(t, 1, sess.disposeCalls)
 	events := recorder.eventsSnapshot()

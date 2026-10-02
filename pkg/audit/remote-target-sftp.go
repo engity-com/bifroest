@@ -636,6 +636,10 @@ func classifySftpRemoteError(ctx context.Context, operation string, err error) e
 	if strings.Contains(err.Error(), "unable to authenticate") || goerrors.Is(err, os.ErrPermission) || goerrors.Is(err, gosftp.ErrSSHFxPermissionDenied) {
 		return errors.Permission.Newf("cannot %s: %w", operation, err)
 	}
+	// Another publisher can remove the temporary file between Lstat and Open.
+	if goerrors.Is(err, os.ErrNotExist) {
+		return errors.Network.Newf("cannot %s: %w", operation, err)
+	}
 	if goerrors.Is(err, gosftp.ErrSSHFxOpUnsupported) {
 		return errors.Config.Newf("cannot %s: %w", operation, err)
 	}
