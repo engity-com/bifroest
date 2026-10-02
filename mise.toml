@@ -98,10 +98,12 @@ run = "go run ./cmd/build package-binaries --log.colorMode=always"
 
 [tasks."build:docs"]
 run = [
+    "python -m unittest discover -s test -p 'test_docs_*.py'",
     "mkdocs --color build -c",
     "rm -f var/doc/requirements.txt"
 ]
 run_windows = [
+    'python -m unittest discover -s test -p "test_docs_*.py"',
     'mkdocs --color build -c',
     '''del var\doc\requirements.txt'''
 ]
