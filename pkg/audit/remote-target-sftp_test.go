@@ -38,6 +38,8 @@ func TestSftpRemoteTargetClassifiesFailuresWithoutRetry(t *testing.T) {
 		{"host-key", sftpHostKeyError{error: goerrors.New("host key mismatch")}, bferrors.Config},
 		{"no-connection", gosftp.ErrSSHFxNoConnection, bferrors.Network},
 		{"connection-lost", gosftp.ErrSSHFxConnectionLost, bferrors.Network},
+		{"not-found", os.ErrNotExist, bferrors.Network},
+		{"removed-after-inspection", &os.PathError{Op: "open", Path: "temporary-segment", Err: os.ErrNotExist}, bferrors.Network},
 		{"eof", io.EOF, bferrors.Network},
 		{"local", goerrors.New("failure"), bferrors.System},
 	}
