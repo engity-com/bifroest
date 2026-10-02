@@ -21,10 +21,10 @@ require (
 	github.com/docker/cli v29.8.2+incompatible
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.8.1
-	github.com/ebitengine/purego v0.10.2
+	github.com/ebitengine/purego v0.11.1
 	github.com/echocat/slf4g v1.9.0
 	github.com/echocat/slf4g/native v1.9.0
-	github.com/engity-com/ssh-server-go v0.4.0
+	github.com/engity-com/ssh-server-go v0.4.1
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/fxamacker/cbor/v2 v2.9.4
 	github.com/go-delve/delve v1.27.2
@@ -43,7 +43,7 @@ require (
 	github.com/openwall/yescrypt-go v1.0.0
 	github.com/otiai10/copy v1.14.1
 	github.com/pkg/sftp v1.13.11
-	github.com/shirou/gopsutil/v4 v4.26.8
+	github.com/shirou/gopsutil/v4 v4.26.9
 	github.com/stretchr/testify v1.12.1
 	github.com/tc-hib/winres v0.3.1
 	github.com/tg123/go-htpasswd v1.2.5
