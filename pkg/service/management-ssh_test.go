@@ -122,6 +122,16 @@ func TestManagementSSHStreamsSignedRecordingWithoutPrivateKeys(t *testing.T) {
 	ids, err := server.service.recordingRepositories["default"].native.ListSealed(t.Context())
 	require.NoError(t, err)
 	require.Len(t, ids, 1)
+	producer, err := client.NewSession()
+	require.NoError(t, err)
+	producerRequest, err := management.EncodeWireRequest([]string{"auditlog", "producer-id", "default"})
+	require.NoError(t, err)
+	producer.Stdin = bytes.NewReader(producerRequest)
+	producerResponse, err := producer.Output(management.WireCommand)
+	require.NoError(t, err)
+	var producerID management.ProducerView
+	require.NoError(t, management.DecodeWireResult(bytes.NewReader(producerResponse), &producerID))
+	require.Equal(t, server.service.auditIdentities["default"].ProducerId().String(), producerID.ProducerID)
 
 	transfer, err := client.NewSession()
 	require.NoError(t, err)

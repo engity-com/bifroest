@@ -78,7 +78,16 @@ func doRemoteAuditCommand(ctx context.Context, target *managementTarget, command
 		return fmt.Errorf("at least one auditlog name is required")
 	}
 	remote := managementclient.Target{Host: target.RawHost, User: target.User, Port: target.Port, ExplicitPort: target.ExplicitPort}
-	if len(anchors) == 0 && len(names) == 1 && verb != "producer-id" {
+	if verb == "producer-id" {
+		if len(names) != 1 {
+			return fmt.Errorf("exactly one auditlog name is required")
+		}
+		if err := names[0].Validate(); err != nil {
+			return err
+		}
+		return managementclient.Run(ctx, remote, []string{"auditlog", "producer-id", names[0].String(), "--format=" + string(format)}, output)
+	}
+	if len(anchors) == 0 && len(names) == 1 {
 		value, err := managementclient.ExpectedRecordingProducerID(remote)
 		if err != nil {
 			return err
@@ -98,11 +107,9 @@ func doRemoteAuditCommand(ctx context.Context, target *managementTarget, command
 	if err != nil {
 		return err
 	}
-	if verb != "producer-id" {
-		for _, name := range names {
-			if producerIDs[name].IsZero() {
-				return fmt.Errorf("remote auditlog %q requires --expectedProducerId or X-ExpectedProducerId from an independent trust source", name)
-			}
+	for _, name := range names {
+		if producerIDs[name].IsZero() {
+			return fmt.Errorf("remote auditlog %q requires --expectedProducerId or X-ExpectedProducerId from an independent trust source", name)
 		}
 	}
 	if len(identityFiles) == 0 && (withSensitive || requireFull || verb == "verify") {
@@ -139,9 +146,6 @@ func doRemoteAuditCommand(ctx context.Context, target *managementTarget, command
 		header, err := managementclient.DownloadAuditSnapshot(ctx, remote, name.String(), localRoot)
 		if err != nil {
 			return err
-		}
-		if verb == "producer-id" {
-			return management.WriteProducerID(output, format, header.Producer)
 		}
 		if header.Producer != producerIDs[name].String() {
 			return fmt.Errorf("remote auditlog %q has an unexpected producer ID", name)
