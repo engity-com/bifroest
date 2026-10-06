@@ -1,6 +1,7 @@
 package managementclient
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -25,4 +26,13 @@ func TestSelectOutputFormatKeepsCommandAndFilters(t *testing.T) {
 	}
 	_, _, err := selectOutputFormat([]string{"flow", "ls", "--format=xml"})
 	require.ErrorContains(t, err, "invalid")
+}
+
+func TestManagementDiagnosticsRemainBoundedWithoutBlockingSSH(t *testing.T) {
+	var output diagnosticOutput
+	message := bytes.Repeat([]byte{'x'}, 1<<20)
+	written, err := output.Write(message)
+	require.NoError(t, err)
+	require.Equal(t, len(message), written)
+	require.Len(t, output.Bytes(), 16<<10)
 }

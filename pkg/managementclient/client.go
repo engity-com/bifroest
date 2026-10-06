@@ -147,13 +147,14 @@ func expandHome(path string) (string, error) {
 	return path, nil
 }
 
-type limitedOutput struct{ bytes.Buffer }
+type diagnosticOutput struct{ bytes.Buffer }
 
-func (this *limitedOutput) Write(p []byte) (int, error) {
-	if len(p) > management.MaxWireResultBytes-this.Len() {
-		return 0, fmt.Errorf("management response exceeds %d bytes", management.MaxWireResultBytes)
+func (this *diagnosticOutput) Write(p []byte) (int, error) {
+	const limit = 16 << 10
+	if this.Len() < limit {
+		_, _ = this.Buffer.Write(p[:min(len(p), limit-this.Len())])
 	}
-	return this.Buffer.Write(p)
+	return len(p), nil
 }
 
 func Run(ctx context.Context, target Target, args []string, output io.Writer) error {
@@ -193,65 +194,77 @@ func Run(ctx context.Context, target Target, args []string, output io.Writer) er
 		return err
 	}
 	session.Stdin = bytes.NewReader(encoded)
-	var stdout limitedOutput
-	var stderr bytes.Buffer
-	session.Stdout = &stdout
+	var stderr diagnosticOutput
 	session.Stderr = &stderr
-	if err := session.Run(management.WireCommand); err != nil {
+	stream, err := session.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err := session.Start(management.WireCommand); err != nil {
+		return err
+	}
+	stdout, err := io.ReadAll(io.LimitReader(stream, management.MaxWireResultBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(stdout) > management.MaxWireResultBytes {
+		return fmt.Errorf("remote management response exceeds %d bytes", management.MaxWireResultBytes)
+	}
+	if err := session.Wait(); err != nil {
 		return fmt.Errorf("remote management command failed: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	switch wireArgs[0] + " " + wireArgs[1] {
 	case "recording ls":
 		var entries []management.RecordingView
-		if err := management.DecodeWireResult(&stdout, &entries); err != nil {
+		if err := management.DecodeWireResult(bytes.NewReader(stdout), &entries); err != nil {
 			return err
 		}
 		return management.WriteRecordingList(output, format, entries)
 	case "recording show":
 		var entry management.RecordingView
-		if err := management.DecodeWireResult(&stdout, &entry); err != nil {
+		if err := management.DecodeWireResult(bytes.NewReader(stdout), &entry); err != nil {
 			return err
 		}
 		return management.WriteRecordingDetail(output, format, entry)
 	case "auditlog ls":
 		var entries []management.AuditlogSummary
-		if err := management.DecodeWireResult(&stdout, &entries); err != nil {
+		if err := management.DecodeWireResult(bytes.NewReader(stdout), &entries); err != nil {
 			return err
 		}
 		return management.WriteAuditlogList(output, format, entries)
 	case "auditlog show":
 		var settings map[string]any
-		if err := management.DecodeWireResult(&stdout, &settings); err != nil {
+		if err := management.DecodeWireResult(bytes.NewReader(stdout), &settings); err != nil {
 			return err
 		}
 		return management.WriteFlowSettings(output, format, settings)
 	case "auditlog events":
 		var records []audit.VerifiedRecord
-		if err := management.DecodeWireResult(&stdout, &records); err != nil {
+		if err := management.DecodeWireResult(bytes.NewReader(stdout), &records); err != nil {
 			return err
 		}
 		return management.WriteAuditEvents(output, format, records, management.AuditEventFilter{}, containsArg(args, "--with-sensitive"))
 	case "flow ls":
 		var entries []management.FlowSummary
-		if err := management.DecodeWireResult(&stdout, &entries); err != nil {
+		if err := management.DecodeWireResult(bytes.NewReader(stdout), &entries); err != nil {
 			return err
 		}
 		return management.WriteFlowList(output, format, entries)
 	case "flow show":
 		var settings map[string]any
-		if err := management.DecodeWireResult(&stdout, &settings); err != nil {
+		if err := management.DecodeWireResult(bytes.NewReader(stdout), &settings); err != nil {
 			return err
 		}
 		return management.WriteFlowSettings(output, format, settings)
 	case "session ls":
 		var entries []management.SessionView
-		if err := management.DecodeWireResult(&stdout, &entries); err != nil {
+		if err := management.DecodeWireResult(bytes.NewReader(stdout), &entries); err != nil {
 			return err
 		}
 		return management.WriteSessionList(output, format, entries)
 	case "session show":
 		var entry management.SessionView
-		if err := management.DecodeWireResult(&stdout, &entry); err != nil {
+		if err := management.DecodeWireResult(bytes.NewReader(stdout), &entry); err != nil {
 			return err
 		}
 		return management.WriteSessionDetail(output, format, entry)

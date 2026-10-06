@@ -37,7 +37,7 @@ func DownloadAuditSnapshot(ctx context.Context, target Target, auditlogName, roo
 	if err != nil {
 		return management.AuditSnapshotHeader{}, err
 	}
-	var stderr bytes.Buffer
+	var stderr diagnosticOutput
 	sess.Stderr = &stderr
 	request, err := management.EncodeWireRequest([]string{"auditlog", name.String()})
 	if err != nil {
