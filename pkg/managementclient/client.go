@@ -17,6 +17,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
+	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/management"
 )
 
@@ -159,6 +160,9 @@ func Run(ctx context.Context, target Target, args []string, output io.Writer) (r
 		if arg == "-c" || arg == "--configuration" || strings.HasPrefix(arg, "--configuration=") {
 			return fmt.Errorf("local --configuration cannot be combined with a remote target")
 		}
+		if arg == "--decryptionIdentityFile" || strings.HasPrefix(arg, "--decryptionIdentityFile=") || arg == "--source" || strings.HasPrefix(arg, "--source=") {
+			return fmt.Errorf("offline source and local decryption identities cannot be used as remote command arguments")
+		}
 	}
 	conf, err := resolve(target)
 	if err != nil {
@@ -250,6 +254,12 @@ func Run(ctx context.Context, target Target, args []string, output io.Writer) (r
 			return err
 		}
 		return management.WriteFlowSettings(output, format, settings)
+	case "auditlog events":
+		var records []audit.VerifiedRecord
+		if err := management.DecodeWireResult(&stdout, &records); err != nil {
+			return err
+		}
+		return management.WriteAuditEvents(output, format, records, management.AuditEventFilter{}, containsArg(args, "--with-sensitive"))
 	case "flow ls":
 		var entries []management.FlowSummary
 		if err := management.DecodeWireResult(&stdout, &entries); err != nil {
@@ -277,6 +287,15 @@ func Run(ctx context.Context, target Target, args []string, output io.Writer) (r
 	default:
 		return fmt.Errorf("unsupported management command %q", strings.Join(wireArgs[:2], " "))
 	}
+}
+
+func containsArg(args []string, candidate string) bool {
+	for _, arg := range args {
+		if arg == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func selectOutputFormat(args []string) (management.Format, []string, error) {

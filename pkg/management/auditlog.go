@@ -1,9 +1,11 @@
 package management
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"sort"
+	"time"
 
 	"github.com/alecthomas/kingpin/v2"
 	"gopkg.in/yaml.v3"
@@ -18,7 +20,7 @@ type AuditlogSummary struct {
 	Encrypted        bool                       `json:"encrypted" yaml:"encrypted"`
 }
 
-func RegisterAuditlogCommands(app *kingpin.Application, source ConfigurationSource, output io.Writer, local bool) {
+func RegisterAuditlogCommands(app *kingpin.Application, source ConfigurationSource, events AuditEventSource, ctx context.Context, output io.Writer, local bool) {
 	parent := app.Command("auditlog", "Inspect configured audit logs.")
 	var format, path string
 	formats := []string{"table", "json", "yaml"}
@@ -44,6 +46,44 @@ func RegisterAuditlogCommands(app *kingpin.Application, source ConfigurationSour
 		}
 		return ShowAuditlog(output, Format(format), conf, name)
 	}).Arg("name", "Name of the audit log.").Required().SetValue(&name)
+	var eventName, flowName, since, until string
+	var withSensitive bool
+	var limit int
+	var identityFiles []string
+	var eventAuditlog configuration.AuditlogName
+	eventCmd := parent.Command("events", "Show verified audit events.")
+	eventCmd.Flag("name", "Filter by event name.").StringVar(&eventName)
+	eventCmd.Flag("flow", "Filter by flow (requires --with-sensitive).").StringVar(&flowName)
+	eventCmd.Flag("since", "Events recorded at or after RFC3339 time.").StringVar(&since)
+	eventCmd.Flag("until", "Events recorded at or before RFC3339 time.").StringVar(&until)
+	eventCmd.Flag("limit", "Limit the number of newest matching events (0 = all).").Default("100").IntVar(&limit)
+	eventCmd.Flag("with-sensitive", "Include private event fields (encrypted journals need a local decryption identity).").BoolVar(&withSensitive)
+	if local {
+		eventCmd.Flag("decryptionIdentityFile", "Local private key for encrypted events (repeatable).").StringsVar(&identityFiles)
+	}
+	eventCmd.Arg("name", "Name of the audit log.").Required().SetValue(&eventAuditlog)
+	eventCmd.Action(func(*kingpin.ParseContext) error {
+		filter := AuditEventFilter{Name: eventName, Flow: flowName, Limit: limit}
+		var err error
+		if since != "" {
+			if filter.Since, err = time.Parse(time.RFC3339, since); err != nil {
+				return fmt.Errorf("invalid --since: %w", err)
+			}
+		}
+		if until != "" {
+			if filter.Until, err = time.Parse(time.RFC3339, until); err != nil {
+				return fmt.Errorf("invalid --until: %w", err)
+			}
+		}
+		if flowName != "" && !withSensitive {
+			return fmt.Errorf("--flow requires --with-sensitive")
+		}
+		records, err := events(ctx, path, eventAuditlog, withSensitive, identityFiles)
+		if err != nil {
+			return err
+		}
+		return WriteAuditEvents(output, Format(format), records, filter, withSensitive)
+	})
 }
 
 func ListAuditlogs(output io.Writer, format Format, conf *configuration.Configuration) error {
