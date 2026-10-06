@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -219,6 +220,16 @@ func (this *service) runManagementArgs(task environment.Task, includingCredentia
 			entries = append(entries, view)
 		}
 		return entries, nil
+	}, func(ctx context.Context, path string, name configuration.AuditlogName, id recording.Id) (result management.RecordingView, resultErr error) {
+		if path != "" {
+			return result, fmt.Errorf("remote recording commands cannot read local configuration files")
+		}
+		artifact, err := this.openManagementRecording(ctx, name.String(), id.String())
+		if err != nil {
+			return result, err
+		}
+		defer func() { resultErr = errors.Join(resultErr, artifact.Close()) }()
+		return management.InspectRecording(ctx, name, artifact, artifact.Size(), artifact.ProducerId())
 	}, task.Context(), task.SshSession(), false)
 	this.registerManagementRecordingCommands(recordingCommands, task)
 	if _, err := app.Parse(args); err != nil {

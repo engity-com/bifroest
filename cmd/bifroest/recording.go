@@ -22,7 +22,7 @@ var _ = registerCommand(func(app *kingpin.Application) {
 	registerRecordingVerifyCmd(cmd)
 	registerRecordingExportCmd(cmd)
 	registerRecordingPlayCmd(cmd)
-	management.RegisterRecordingCommands(cmd, inspectLocalRecordings, context.Background(), goos.Stdout, true)
+	management.RegisterRecordingCommands(cmd, inspectLocalRecordings, inspectLocalRecording, context.Background(), goos.Stdout, true)
 })
 
 func inspectLocalRecordings(ctx context.Context, configPath string, name configuration.AuditlogName) ([]management.RecordingView, error) {
@@ -91,4 +91,36 @@ func inspectLocalRecordings(ctx context.Context, configPath string, name configu
 		return result, nil
 	}
 	return nil, fmt.Errorf("auditlog %q does not exist", name)
+}
+
+func inspectLocalRecording(ctx context.Context, configPath string, name configuration.AuditlogName, id recording.Id) (result management.RecordingView, resultErr error) {
+	path, _, err := resolveRecordingSelection(name.String(), id.String(), "", configPath, "")
+	if err != nil {
+		return result, err
+	}
+	var ref configuration.Ref
+	expected, err := configuredRecordingProducerId(name, configPath, path, &ref)
+	if err != nil {
+		return result, err
+	}
+	file, initial, err := openRecordingInput(path)
+	if err != nil {
+		return result, err
+	}
+	defer func() { resultErr = goerrors.Join(resultErr, file.Close()) }()
+	result, err = management.InspectRecording(ctx, name, file, initial.Size(), expected)
+	if err != nil {
+		return result, err
+	}
+	suffix := ".bcast"
+	if result.Encrypted {
+		suffix = ".becast"
+	}
+	if filepath.Base(path) != result.ID+suffix || result.ID != id.String() {
+		return result, fmt.Errorf("recording %q does not match its signed ID or format", path)
+	}
+	if err := validateRecordingInput(path, file, initial); err != nil {
+		return result, err
+	}
+	return result, nil
 }

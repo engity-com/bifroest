@@ -30,8 +30,9 @@ type RecordingView struct {
 }
 
 type RecordingSource func(context.Context, string, configuration.AuditlogName) ([]RecordingView, error)
+type RecordingDetailSource func(context.Context, string, configuration.AuditlogName, recording.Id) (RecordingView, error)
 
-func RegisterRecordingCommands(parent *kingpin.CmdClause, source RecordingSource, ctx context.Context, output io.Writer, local bool) {
+func RegisterRecordingCommands(parent *kingpin.CmdClause, source RecordingSource, detail RecordingDetailSource, ctx context.Context, output io.Writer, local bool) {
 	register := func(command *kingpin.CmdClause, action func(string, Format) error) {
 		var path, format string
 		formats := []string{"table", "json", "yaml"}
@@ -64,16 +65,11 @@ func RegisterRecordingCommands(parent *kingpin.CmdClause, source RecordingSource
 		if err := id.UnmarshalText([]byte(rawID)); err != nil {
 			return err
 		}
-		entries, err := source(ctx, path, showAuditlog)
+		entry, err := detail(ctx, path, showAuditlog, id)
 		if err != nil {
 			return err
 		}
-		for _, entry := range entries {
-			if entry.ID == id.String() {
-				return WriteRecordingDetail(output, format, entry)
-			}
-		}
-		return fmt.Errorf("recording %s does not exist in auditlog %q", id, showAuditlog)
+		return WriteRecordingDetail(output, format, entry)
 	})
 }
 
