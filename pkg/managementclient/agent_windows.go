@@ -46,5 +46,6 @@ func connectAgent(ctx context.Context, identityAgent string) (agent.Agent, io.Cl
 		}
 		return nil, nil, err
 	}
-	return agent.NewClient(conn), conn, nil
+	client, closer := newAgentConnection(ctx, conn)
+	return client, closer, nil
 }

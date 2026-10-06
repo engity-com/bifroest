@@ -61,3 +61,13 @@ func TestManagementClientCanSignUsingUnixSSHAgent(t *testing.T) {
 	_, _, err = connectAgent(ctx, socket)
 	require.ErrorIs(t, err, context.Canceled)
 }
+
+func TestUnixSSHAgentRequestStopsOnCancel(t *testing.T) {
+	directory, err := os.MkdirTemp("", "bfa-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(directory)) })
+	listener, err := net.Listen("unix", filepath.Join(directory, "agent.sock"))
+	require.NoError(t, err)
+	defer listener.Close()
+	checkStalledAgentIsClosedOnCancel(t, listener, listener.Addr().String())
+}
