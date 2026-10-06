@@ -29,7 +29,11 @@ type SessionView struct {
 func RegisterSessionCommands(app *kingpin.Application, source SessionSource, ctx context.Context, output, diagnostics io.Writer, local bool) {
 	parent := app.Command("session", "Inspect Bifröst sessions.")
 	var format, configPath string
-	parent.Flag("format", "Display as a table/list, JSON, or YAML.").Default("table").EnumVar(&format, "table", "json", "yaml")
+	formats := []string{"table", "json", "yaml"}
+	if !local {
+		formats = append(formats, "cbor")
+	}
+	parent.Flag("format", "Display as a table/list, JSON, or YAML.").Default("table").EnumVar(&format, formats...)
 	if local {
 		parent.Flag("configuration", "Bifröst configuration file.").Short('c').StringVar(&configPath)
 	}
@@ -79,6 +83,10 @@ func ListSessions(ctx context.Context, output io.Writer, format Format, source S
 		}
 		return entries[i].CreatedAt.Before(entries[j].CreatedAt)
 	})
+	return WriteSessionList(output, format, entries)
+}
+
+func WriteSessionList(output io.Writer, format Format, entries []SessionView) error {
 	rows := make([][]string, 0, len(entries))
 	for _, entry := range entries {
 		rows = append(rows, []string{entry.ID, entry.Flow, entry.State, entry.User, entry.CreatedAt.Format(time.RFC3339)})
@@ -119,6 +127,10 @@ func ShowSession(ctx context.Context, output io.Writer, format Format, source Se
 	if result == nil {
 		return fmt.Errorf("session %s does not exist", id)
 	}
+	return WriteSessionDetail(output, format, *result)
+}
+
+func WriteSessionDetail(output io.Writer, format Format, result SessionView) error {
 	fields := []Field{{"ID", result.ID}, {"Flow", result.Flow}, {"State", result.State}, {"User", result.User}, {"Remote", result.Remote}, {"Created", result.CreatedAt.Format(time.RFC3339)}}
 	if result.LastAccessed != nil {
 		fields = append(fields, Field{"Last accessed", result.LastAccessed.Format(time.RFC3339)})

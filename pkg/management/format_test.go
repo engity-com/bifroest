@@ -61,4 +61,10 @@ func TestManagementCBORResultHasVersionAndBounds(t *testing.T) {
 	output.Reset()
 	require.Error(t, DecodeWireResult(&output, &decoded))
 	require.NoError(t, WriteDetail(io.Discard, FormatCBOR, nil, decoded))
+	output.Reset()
+	settings := map[string]any{"environment": map[string]any{"password": "***redacted***"}}
+	require.NoError(t, WriteFlowSettings(&output, FormatCBOR, settings))
+	var restored map[string]any
+	require.NoError(t, DecodeWireResult(&output, &restored))
+	require.Equal(t, settings, restored)
 }

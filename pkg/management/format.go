@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"text/tabwriter"
 
@@ -43,7 +44,11 @@ func DecodeWireResult(input io.Reader, target any) error {
 	if frame.Version != 1 || len(frame.Payload) == 0 {
 		return fmt.Errorf("unsupported or empty management response")
 	}
-	return cbor.Unmarshal(frame.Payload, target)
+	mode, err := (cbor.DecOptions{DefaultMapType: reflect.TypeFor[map[string]any](), DupMapKey: cbor.DupMapKeyEnforcedAPF}).DecMode()
+	if err != nil {
+		return err
+	}
+	return mode.Unmarshal(frame.Payload, target)
 }
 
 type Field struct {
