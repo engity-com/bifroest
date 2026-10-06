@@ -16,6 +16,14 @@ import (
 	"github.com/engity-com/bifroest/pkg/recording"
 )
 
+func (this *Service) warnOnManagementCredentials() {
+	for _, flow := range this.Configuration.Flows {
+		if management, ok := flow.Environment.V.(*configuration.EnvironmentManagement); ok && management.IncludingCredentials {
+			this.logger().With("flow", flow.Name).Warn("management environment exposes Flow credentials; enable includingCredentials only temporarily for debugging or migration, never in production")
+		}
+	}
+}
+
 func (this *service) isManagementFlow(name configuration.FlowName) bool {
 	for _, flow := range this.Configuration.Flows {
 		if flow.Name == name {
@@ -160,7 +168,7 @@ func (this *service) runManagementArgs(task environment.Task, includingCredentia
 		return &this.Configuration, nil
 	}, task.SshSession(), includingCredentials, false)
 	management.RegisterSessionCommands(app, management.SessionSourceFromRepository(this.sessions), task.Context(), task.SshSession(), task.SshSession().Stderr(), false)
-	auditlogCommands, _ := management.RegisterAuditlogCommands(app, func(path string) (*configuration.Configuration, error) {
+	auditlogCommands, auditOptions := management.RegisterAuditlogCommands(app, func(path string) (*configuration.Configuration, error) {
 		if path != "" {
 			return nil, fmt.Errorf("remote management commands do not accept local configuration files")
 		}
@@ -175,8 +183,8 @@ func (this *service) runManagementArgs(task environment.Task, includingCredentia
 		}
 		return management.ReadAuditEvents(ctx, &this.Configuration, name, identity.ProducerId(), sensitive, nil)
 	}, task.Context(), task.SshSession(), false)
-	this.registerManagementAuditCommands(auditlogCommands, task)
-	this.registerManagementAuditCommands(app.Command("audit", "Inspect signed audit journals."), task)
+	this.registerManagementAuditCommands(auditlogCommands, task, &auditOptions.Format)
+	this.registerManagementAuditCommands(app.Command("audit", "Inspect signed audit journals."), task, nil)
 	recordingCommands := app.Command("recording", "Inspect sealed session recordings.")
 	management.RegisterRecordingCommands(recordingCommands, func(ctx context.Context, path string, name configuration.AuditlogName) ([]management.RecordingView, error) {
 		if path != "" {
