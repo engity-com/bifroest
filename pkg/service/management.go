@@ -81,6 +81,35 @@ func (this *service) runManagementArgs(task environment.Task, includingCredentia
 		}
 		return management.ReadAuditEvents(ctx, &this.Configuration, name, identity.ProducerId(), sensitive, nil)
 	}, task.Context(), task.SshSession(), false)
+	management.RegisterRecordingCommands(app.Command("recording", "Inspect sealed session recordings."), func(ctx context.Context, path string, name configuration.AuditlogName) ([]management.RecordingView, error) {
+		if path != "" {
+			return nil, fmt.Errorf("remote recording commands cannot read local configuration files")
+		}
+		repository := this.recordingRepositories[name]
+		if repository == nil || repository.native == nil {
+			return nil, fmt.Errorf("auditlog %q has no active recording repository", name)
+		}
+		ids, err := repository.native.ListSealed(ctx)
+		if err != nil {
+			return nil, err
+		}
+		entries := make([]management.RecordingView, 0, len(ids))
+		for _, id := range ids {
+			artifact, err := repository.native.OpenSealed(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			view, err := management.InspectRecording(ctx, name, artifact, artifact.Size(), repository.producerId)
+			if closeErr := artifact.Close(); err == nil {
+				err = closeErr
+			}
+			if err != nil {
+				return nil, err
+			}
+			entries = append(entries, view)
+		}
+		return entries, nil
+	}, task.Context(), task.SshSession(), false)
 	if _, err := app.Parse(args); err != nil {
 		_, _ = fmt.Fprintln(task.SshSession().Stderr(), err)
 		return 1, nil
