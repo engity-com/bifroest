@@ -33,8 +33,10 @@ func (this *service) openManagementRecording(ctx context.Context, auditlogName s
 func (this *service) registerManagementRecordingCommands(parent *kingpin.CmdClause, task environment.Task) {
 	var verifyName, verifyID string
 	var requireFull bool
+	var verifyFormat string
 	verify := management.RecordingArtifactCommand(parent, "verify")
 	management.RequireFullVerificationFlag(verify, &requireFull)
+	management.VerificationFormatFlag(verify, &verifyFormat)
 	verify.Arg("auditlog", "Configured auditlog name.").Required().StringVar(&verifyName)
 	verify.Arg("recordingId", "Recording UUID.").Required().StringVar(&verifyID)
 	verify.Action(func(*kingpin.ParseContext) error {
@@ -50,8 +52,7 @@ func (this *service) registerManagementRecordingCommands(parent *kingpin.CmdClau
 		if requireFull && view.VerificationScope != "full" {
 			return fmt.Errorf("full verification of encrypted Recordings requires a local private key; use bifroest @host recording verify")
 		}
-		_, err = fmt.Fprintf(task.SshSession(), "verified (scope: %s)\n", view.VerificationScope)
-		return err
+		return management.WriteVerification(task.SshSession(), management.Format(verifyFormat), view.VerificationScope)
 	})
 	registerSensitive := func(verb string, handler func(*recording.LocalSealedArtifact[recording.NativeRecordingSummary], float64) error) {
 		var name, id string

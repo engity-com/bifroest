@@ -24,12 +24,15 @@ type auditVerifyOpts struct {
 	decryptionIdentityFiles []string
 	expectedProducerIds     []string
 	requireFull             bool
+	format                  string
+	commandRoot             string
 }
 
 var remoteAuditVerifyOpts = map[string]*auditVerifyOpts{}
 
 func registerAuditVerifyCmd(parent *kingpin.CmdClause) {
 	opts := auditVerifyOpts{}
+	opts.commandRoot = parent.FullCommand()
 	remoteAuditVerifyOpts[parent.FullCommand()] = &opts
 	cmd := management.AuditArtifactCommand(parent, "verify").
 		Action(func(*kingpin.ParseContext) error { return doAuditVerifyOutput(&opts, goos.Stdout) })
@@ -42,6 +45,9 @@ func registerAuditVerifyCmd(parent *kingpin.CmdClause) {
 	registerAuditDecryptionIdentityFlags(cmd, &opts.decryptionIdentityFiles)
 	registerAuditTrustAnchorFlags(cmd, &opts.expectedProducerIds)
 	management.RequireFullVerificationFlag(cmd, &opts.requireFull)
+	if opts.commandRoot == "audit" {
+		management.VerificationFormatFlag(cmd, &opts.format)
+	}
 	cmd.Arg("auditlogName", "Configured auditlog, or optional label for an offline journal (default: default).").SetValue(&opts.auditlog)
 }
 
@@ -96,8 +102,7 @@ func doAuditVerifyOutput(opts *auditVerifyOpts, stdout io.Writer) error {
 	if err := validate(); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(stdout, "verified (scope: %s)\n", scope)
-	return err
+	return management.WriteVerification(stdout, selectedAuditFormat(opts.commandRoot, opts.format), scope)
 }
 
 func resolveAuditSourceConfiguration(ref *configuration.Ref, path, directory, recipient string, name configuration.AuditlogName) (configuration.AuditlogName, *configuration.Configuration, error) {

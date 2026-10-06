@@ -22,12 +22,14 @@ type auditMergeOpts struct {
 	decryptionIdentityFiles []string
 	expectedProducerIds     []string
 	withSensitive           bool
+	commandRoot             string
 }
 
 var remoteAuditMergeOpts = map[string]*auditMergeOpts{}
 
 func registerAuditMergeCmd(parent *kingpin.CmdClause) {
 	opts := auditMergeOpts{output: "-"}
+	opts.commandRoot = parent.FullCommand()
 	remoteAuditMergeOpts[parent.FullCommand()] = &opts
 	cmd := management.AuditArtifactCommand(parent, "merge").
 		Action(func(*kingpin.ParseContext) error { return doAuditMerge(&opts, goos.Stdout) })
@@ -42,6 +44,9 @@ func registerAuditMergeCmd(parent *kingpin.CmdClause) {
 func doAuditMerge(opts *auditMergeOpts, stdout io.Writer) error {
 	if opts == nil {
 		return fmt.Errorf("nil options")
+	}
+	if format := selectedAuditFormat(opts.commandRoot, ""); format != management.FormatTable {
+		return fmt.Errorf("audit merge has a fixed JSON Lines output; use auditlog events --format=%s for structured views", format)
 	}
 	configured := make([]*configuration.Auditlog, 0, len(opts.auditlogs))
 	if opts.configurationPath != "" || len(opts.configuration.Get().Auditlogs) == 0 {

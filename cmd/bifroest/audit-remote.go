@@ -12,6 +12,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/management"
 	"github.com/engity-com/bifroest/pkg/managementclient"
 )
 
@@ -24,6 +25,7 @@ func doRemoteAuditCommand(ctx context.Context, target *managementTarget, command
 	var sourceDirectory, configPath, recipientFile string
 	var outPath string
 	var force, withSensitive, requireFull bool
+	var ownFormat string
 	commandRoot, verb, _ := strings.Cut(command, " ")
 	if commandRoot != "audit" && commandRoot != "auditlog" {
 		return fmt.Errorf("unsupported remote audit command %q", command)
@@ -35,6 +37,7 @@ func doRemoteAuditCommand(ctx context.Context, target *managementTarget, command
 			return fmt.Errorf("audit verify is not registered")
 		}
 		names, anchors, identityFiles, sourceDirectory, configPath, recipientFile, requireFull = []configuration.AuditlogName{opts.auditlog}, opts.expectedProducerIds, opts.decryptionIdentityFiles, opts.sourceDirectory, opts.configurationPath, opts.encryptionPublicKeyFile, opts.requireFull
+		ownFormat = opts.format
 	case "export", "decrypt":
 		opts := remoteAuditExportOpts[commandRoot]
 		if verb == "decrypt" {
@@ -60,12 +63,16 @@ func doRemoteAuditCommand(ctx context.Context, target *managementTarget, command
 		if opts == nil {
 			return fmt.Errorf("audit producer-id is not registered")
 		}
-		names, configPath = []configuration.AuditlogName{opts.auditlog}, opts.configurationPath
+		names, configPath, ownFormat = []configuration.AuditlogName{opts.auditlog}, opts.configurationPath, opts.format
 	default:
 		return fmt.Errorf("unsupported remote audit command %q", command)
 	}
 	if sourceDirectory != "" || configPath != "" || recipientFile != "" {
 		return fmt.Errorf("--source, --configuration and --encryptionPublicKeyFile are local/offline inputs and cannot be used with a remote target")
+	}
+	format := selectedAuditFormat(commandRoot, ownFormat)
+	if (verb == "export" || verb == "decrypt" || verb == "merge") && format != management.FormatTable {
+		return fmt.Errorf("audit export and merge have a fixed JSON Lines output; use auditlog events --format=%s for structured views", format)
 	}
 	if len(names) == 0 {
 		return fmt.Errorf("at least one auditlog name is required")
@@ -134,8 +141,7 @@ func doRemoteAuditCommand(ctx context.Context, target *managementTarget, command
 			return err
 		}
 		if verb == "producer-id" {
-			_, err := fmt.Fprintln(output, header.Producer)
-			return err
+			return management.WriteProducerID(output, format, header.Producer)
 		}
 		if header.Producer != producerIDs[name].String() {
 			return fmt.Errorf("remote auditlog %q has an unexpected producer ID", name)
@@ -158,8 +164,7 @@ func doRemoteAuditCommand(ctx context.Context, target *managementTarget, command
 		if sources[0].ExpectedEncryptionRecipient != "" && len(identities) == 0 {
 			scope = "outer"
 		}
-		_, err := fmt.Fprintf(output, "verified (scope: %s)\n", scope)
-		return err
+		return management.WriteVerification(output, format, scope)
 	}
 	verified, err := audit.VerifyJournals(ctx, sources)
 	if err != nil {
