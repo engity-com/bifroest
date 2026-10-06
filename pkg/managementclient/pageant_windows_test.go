@@ -1,6 +1,7 @@
 package managementclient
 
 import (
+	"context"
 	"encoding/binary"
 	"testing"
 
@@ -25,4 +26,11 @@ func TestPageantListsKeysWhenAvailable(t *testing.T) {
 	}
 	_, err := agent.NewClient(&pageantConnection{}).List()
 	require.NoError(t, err)
+}
+
+func TestWindowsAgentDialHonorsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, _, err := connectAgent(ctx, `\\.\pipe\bifroest-management-cancellation-test`)
+	require.ErrorIs(t, err, context.Canceled)
 }

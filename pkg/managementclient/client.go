@@ -290,11 +290,14 @@ func connect(ctx context.Context, target Target) (_ *ssh.Client, _ func(), resul
 	}
 	auth := make([]ssh.AuthMethod, 0, 2)
 	var agentCloser io.Closer
-	if agentClient, closer, err := connectAgent(conf.agentPath); err == nil && agentClient != nil {
+	if agentClient, closer, err := connectAgent(ctx, conf.agentPath); err == nil && agentClient != nil {
 		agentCloser = closer
 		auth = append(auth, ssh.PublicKeysCallback(agentClient.Signers))
 	} else if conf.agentPath != "" && conf.agentPath != "none" {
 		return nil, nil, fmt.Errorf("cannot connect to configured SSH agent: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
 	}
 	defer func() {
 		if resultErr != nil && agentCloser != nil {

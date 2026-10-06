@@ -3,6 +3,7 @@
 package managementclient
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
@@ -38,7 +39,7 @@ func TestManagementClientCanSignUsingUnixSSHAgent(t *testing.T) {
 		defer conn.Close()
 		served <- agent.ServeAgent(keyring, conn)
 	}()
-	client, closer, err := connectAgent(socket)
+	client, closer, err := connectAgent(t.Context(), socket)
 	require.NoError(t, err)
 	require.NotNil(t, closer)
 	signers, err := client.Signers()
@@ -51,8 +52,12 @@ func TestManagementClientCanSignUsingUnixSSHAgent(t *testing.T) {
 	require.NoError(t, closer.Close())
 	serveErr := <-served // ServeAgent ends when the client socket closes.
 	require.True(t, serveErr == nil || errors.Is(serveErr, io.EOF), "unexpected agent error: %v", serveErr)
-	other, closeOther, err := connectAgent("none")
+	other, closeOther, err := connectAgent(t.Context(), "none")
 	require.NoError(t, err)
 	require.Nil(t, other)
 	require.Nil(t, closeOther)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, _, err = connectAgent(ctx, socket)
+	require.ErrorIs(t, err, context.Canceled)
 }
