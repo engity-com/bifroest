@@ -56,6 +56,29 @@ type Field struct {
 	Value string
 }
 
+type VerificationView struct {
+	Verified bool   `json:"verified" yaml:"verified"`
+	Scope    string `json:"scope" yaml:"scope"`
+}
+
+func WriteVerification(output io.Writer, format Format, scope string) error {
+	if format == FormatTable {
+		_, err := fmt.Fprintf(output, "verified (scope: %s)\n", scope)
+		return err
+	}
+	return writeStructured(output, format, VerificationView{Verified: true, Scope: scope})
+}
+
+func WriteProducerID(output io.Writer, format Format, id string) error {
+	if format == FormatTable {
+		_, err := fmt.Fprintln(output, id)
+		return err
+	}
+	return writeStructured(output, format, struct {
+		ProducerID string `json:"producerId" yaml:"producerId"`
+	}{id})
+}
+
 func WriteList(output io.Writer, format Format, columns []string, rows [][]string, structured any) error {
 	if format != FormatTable {
 		return writeStructured(output, format, structured)

@@ -68,3 +68,23 @@ func TestManagementCBORResultHasVersionAndBounds(t *testing.T) {
 	require.NoError(t, DecodeWireResult(&output, &restored))
 	require.Equal(t, settings, restored)
 }
+
+func TestVerificationAndProducerFormats(t *testing.T) {
+	for _, format := range []Format{FormatTable, FormatJSON, FormatYAML} {
+		var output bytes.Buffer
+		require.NoError(t, WriteVerification(&output, format, "outer"))
+		if format == FormatTable {
+			require.Equal(t, "verified (scope: outer)\n", output.String())
+		} else {
+			require.Contains(t, output.String(), "outer")
+			require.Contains(t, output.String(), "verified")
+		}
+		output.Reset()
+		require.NoError(t, WriteProducerID(&output, format, "abc"))
+		if format == FormatTable {
+			require.Equal(t, "abc\n", output.String())
+		} else {
+			require.Contains(t, output.String(), "producerId")
+		}
+	}
+}

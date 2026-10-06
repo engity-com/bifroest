@@ -16,16 +16,22 @@ type auditProducerIdOpts struct {
 	configuration     configuration.Ref
 	configurationPath string
 	auditlog          configuration.AuditlogName
+	format            string
+	commandRoot       string
 }
 
 var remoteAuditProducerIdOpts = map[string]*auditProducerIdOpts{}
 
 func registerAuditProducerIdCmd(parent *kingpin.CmdClause) {
 	opts := auditProducerIdOpts{}
+	opts.commandRoot = parent.FullCommand()
 	remoteAuditProducerIdOpts[parent.FullCommand()] = &opts
 	cmd := management.AuditArtifactCommand(parent, "producer-id").
 		Action(func(*kingpin.ParseContext) error { return doAuditProducerId(&opts, goos.Stdout) })
 	cmd.Flag("configuration", "Configuration file (defaults to "+defaultConfigurationRef+").").Short('c').StringVar(&opts.configurationPath)
+	if opts.commandRoot == "audit" {
+		management.VerificationFormatFlag(cmd, &opts.format)
+	}
 	cmd.Arg("auditlogName", "Configured auditlog whose signing identity to inspect.").Required().SetValue(&opts.auditlog)
 }
 
@@ -57,6 +63,5 @@ func doAuditProducerId(opts *auditProducerIdOpts, output io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("cannot use identity of auditlog %q: %w", configured.Name, err)
 	}
-	_, err = fmt.Fprintln(output, identity.ProducerId())
-	return err
+	return management.WriteProducerID(output, selectedAuditFormat(opts.commandRoot, opts.format), identity.ProducerId().String())
 }

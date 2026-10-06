@@ -13,6 +13,7 @@ var remoteAuditDecryptOpts = map[string]*auditExportOpts{}
 
 func registerAuditDecryptCmd(parent *kingpin.CmdClause) {
 	opts := auditExportOpts{output: "-"}
+	opts.commandRoot = parent.FullCommand()
 	remoteAuditDecryptOpts[parent.FullCommand()] = &opts
 	cmd := management.AuditArtifactCommand(parent, "decrypt").
 		Action(func(*kingpin.ParseContext) error { return doAuditDecrypt(&opts, goos.Stdout) })

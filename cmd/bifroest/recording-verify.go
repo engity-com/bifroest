@@ -23,6 +23,7 @@ type recordingVerifyOpts struct {
 	expectedProducerId      string
 	decryptionIdentityFiles []string
 	requireFull             bool
+	format                  string
 }
 
 var remoteRecordingVerifyOpts *recordingVerifyOpts
@@ -36,6 +37,7 @@ func registerRecordingVerifyCmd(parent *kingpin.CmdClause) {
 	cmd.Flag("expectedProducerId", "Independently trusted 64-hex producer ID for an offline artifact.").PlaceHolder("<producer-id>").StringVar(&opts.expectedProducerId)
 	cmd.Flag("decryptionIdentityFile", "Private SSH key for full verification of .becast; repeat for multiple keys.").PlaceHolder("<path>").StringsVar(&opts.decryptionIdentityFiles)
 	management.RequireFullVerificationFlag(cmd, &opts.requireFull)
+	management.VerificationFormatFlag(cmd, &opts.format)
 	cmd.Arg("fileOrAuditlog", "Configured auditlog name or copied Recording file path.").StringVar(&opts.file)
 	cmd.Arg("recordingId", "Recording UUID when selecting a local auditlog.").StringVar(&opts.recordingId)
 }
@@ -114,6 +116,9 @@ func doRecordingVerify(opts *recordingVerifyOpts, stdout io.Writer) (rErr error)
 	if err := ensureRecordingStandardOutputSafe(stdout, input, opts.decryptionIdentityFiles); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(stdout, "verified (scope: %s)\n", scope)
-	return err
+	format := management.Format(opts.format)
+	if format == "" {
+		format = management.FormatTable
+	}
+	return management.WriteVerification(stdout, format, scope)
 }

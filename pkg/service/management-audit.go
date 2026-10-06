@@ -56,9 +56,22 @@ func (this *service) managementAuditSources(names []string, sensitive bool) ([]a
 	return sources, nil
 }
 
-func (this *service) registerManagementAuditCommands(parent *kingpin.CmdClause, task environment.Task) {
+func (this *service) registerManagementAuditCommands(parent *kingpin.CmdClause, task environment.Task, inheritedFormat *string) {
+	format := func(own string) management.Format {
+		if inheritedFormat != nil && *inheritedFormat != "" {
+			return management.Format(*inheritedFormat)
+		}
+		if own != "" {
+			return management.Format(own)
+		}
+		return management.FormatTable
+	}
 	var producerName string
 	producer := management.AuditArtifactCommand(parent, "producer-id")
+	var producerFormat string
+	if inheritedFormat == nil {
+		management.VerificationFormatFlag(producer, &producerFormat)
+	}
 	producer.Arg("auditlogName", "Configured auditlog name.").Required().StringVar(&producerName)
 	producer.Action(func(*kingpin.ParseContext) error {
 		name := configuration.AuditlogName(producerName)
@@ -69,13 +82,16 @@ func (this *service) registerManagementAuditCommands(parent *kingpin.CmdClause, 
 		if identity == nil {
 			return fmt.Errorf("auditlog %q has no signing identity", name)
 		}
-		_, err := fmt.Fprintln(task.SshSession(), identity.ProducerId())
-		return err
+		return management.WriteProducerID(task.SshSession(), format(producerFormat), identity.ProducerId().String())
 	})
 	var verifyName string
 	var requireFull bool
+	var verifyFormat string
 	verify := management.AuditArtifactCommand(parent, "verify")
 	management.RequireFullVerificationFlag(verify, &requireFull)
+	if inheritedFormat == nil {
+		management.VerificationFormatFlag(verify, &verifyFormat)
+	}
 	verify.Arg("auditlogName", "Configured auditlog name.").Required().StringVar(&verifyName)
 	verify.Action(func(*kingpin.ParseContext) error {
 		sources, err := this.managementAuditSources([]string{verifyName}, false)
@@ -92,8 +108,7 @@ func (this *service) registerManagementAuditCommands(parent *kingpin.CmdClause, 
 		if err := audit.VerifyLiveJournalIntegrity(task.Context(), sources); err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(task.SshSession(), "verified (scope: %s)\n", scope)
-		return err
+		return management.WriteVerification(task.SshSession(), format(verifyFormat), scope)
 	})
 	for _, verb := range []string{"export", "decrypt"} {
 		var name string
@@ -102,6 +117,9 @@ func (this *service) registerManagementAuditCommands(parent *kingpin.CmdClause, 
 		management.AuditSensitiveFlag(command, &sensitive)
 		command.Arg("auditlogName", "Configured auditlog name.").Required().StringVar(&name)
 		command.Action(func(*kingpin.ParseContext) error {
+			if format("") != management.FormatTable {
+				return fmt.Errorf("audit export has a fixed JSON Lines output; use auditlog events for structured views")
+			}
 			return this.exportManagementAudit(task.Context(), task, []string{name}, sensitive, audit.RecordOrderChain)
 		})
 	}
@@ -111,6 +129,9 @@ func (this *service) registerManagementAuditCommands(parent *kingpin.CmdClause, 
 	management.AuditSensitiveFlag(merge, &mergeSensitive)
 	merge.Arg("auditlogName", "Configured auditlog names.").Required().StringsVar(&mergeNames)
 	merge.Action(func(*kingpin.ParseContext) error {
+		if format("") != management.FormatTable {
+			return fmt.Errorf("audit merge has a fixed JSON Lines output; use auditlog events for structured views")
+		}
 		return this.exportManagementAudit(task.Context(), task, mergeNames, mergeSensitive, audit.RecordOrderChronological)
 	})
 }

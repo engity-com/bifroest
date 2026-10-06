@@ -56,3 +56,7 @@ func RecordingSensitiveFlag(cmd *kingpin.CmdClause, target *bool) {
 func RequireFullVerificationFlag(cmd *kingpin.CmdClause, target *bool) {
 	cmd.Flag("require-full", "Fail if encrypted content cannot be fully verified without a local private key.").BoolVar(target)
 }
+
+func VerificationFormatFlag(cmd *kingpin.CmdClause, target *string) {
+	cmd.Flag("format", "Display verification as text, JSON, or YAML.").Default("table").EnumVar(target, "table", "json", "yaml")
+}
