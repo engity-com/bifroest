@@ -13,6 +13,16 @@ import (
 	"github.com/engity-com/bifroest/pkg/management"
 )
 
+func (this *service) isManagementFlow(name configuration.FlowName) bool {
+	for _, flow := range this.Configuration.Flows {
+		if flow.Name == name {
+			_, ok := flow.Environment.V.(*configuration.EnvironmentManagement)
+			return ok
+		}
+	}
+	return false
+}
+
 type managementTermination struct{ status int }
 
 func (this *service) RunManagementCommand(task environment.Task, includingCredentials bool) (exitCode int, resultErr error) {
@@ -27,6 +37,13 @@ func (this *service) RunManagementCommand(task environment.Task, includingCreden
 		}
 	}()
 	raw := task.SshSession().RawCommand()
+	if raw == management.WireCommand {
+		args, err := management.DecodeWireRequest(task.SshSession())
+		if err != nil {
+			return -1, err
+		}
+		return this.runManagementArgs(task, includingCredentials, append(args, "--format=cbor"))
+	}
 	if len(raw) > 16<<10 || !utf8.ValidString(raw) || strings.ContainsRune(raw, 0) {
 		return -1, fmt.Errorf("invalid management command")
 	}
@@ -34,6 +51,10 @@ func (this *service) RunManagementCommand(task environment.Task, includingCreden
 	if err != nil {
 		return -1, fmt.Errorf("invalid management command: %w", err)
 	}
+	return this.runManagementArgs(task, includingCredentials, args)
+}
+
+func (this *service) runManagementArgs(task environment.Task, includingCredentials bool, args []string) (int, error) {
 	app := kingpin.New("bifroest", "Inspect Bifröst over SSH.").Terminate(func(status int) { panic(managementTermination{status}) })
 	app.UsageWriter(task.SshSession().Stderr()).ErrorWriter(task.SshSession().Stderr())
 	management.RegisterFlowCommands(app, func(path string) (*configuration.Configuration, error) {

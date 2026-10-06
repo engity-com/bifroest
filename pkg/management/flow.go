@@ -26,7 +26,11 @@ type FlowSummary struct {
 func RegisterFlowCommands(app *kingpin.Application, source ConfigurationSource, output io.Writer, includeCredentials, local bool) {
 	parent := app.Command("flow", "Inspect configured flows.")
 	var format string
-	parent.Flag("format", "Display as a table/list, JSON, or YAML.").Default("table").EnumVar(&format, "table", "json", "yaml")
+	formats := []string{"table", "json", "yaml"}
+	if !local {
+		formats = append(formats, "cbor")
+	}
+	parent.Flag("format", "Display as a table/list, JSON, or YAML.").Default("table").EnumVar(&format, formats...)
 	var configPath string
 	if local {
 		parent.Flag("configuration", "Bifröst configuration file.").Short('c').StringVar(&configPath)
@@ -64,6 +68,10 @@ func ListFlows(output io.Writer, format Format, conf *configuration.Configuratio
 		entries = append(entries, FlowSummary{flow.Name, flow.Auditlog, authorization, environment})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+	return WriteFlowList(output, format, entries)
+}
+
+func WriteFlowList(output io.Writer, format Format, entries []FlowSummary) error {
 	rows := make([][]string, 0, len(entries))
 	for _, entry := range entries {
 		rows = append(rows, []string{entry.Name.String(), entry.Auditlog.String(), entry.Authorization, entry.Environment})
@@ -95,16 +103,20 @@ func ShowFlow(output io.Writer, format Format, conf *configuration.Configuration
 		if !includeCredentials {
 			redactFlowSettings(settings)
 		}
-		if format != FormatTable {
-			return writeStructured(output, format, settings)
-		}
-		var fields []Field
-		if err := appendFlowFields(&fields, "", settings); err != nil {
-			return err
-		}
-		return WriteDetail(output, format, fields, settings)
+		return WriteFlowSettings(output, format, settings)
 	}
 	return fmt.Errorf("flow %q does not exist", name)
+}
+
+func WriteFlowSettings(output io.Writer, format Format, settings map[string]any) error {
+	if format != FormatTable {
+		return writeStructured(output, format, settings)
+	}
+	var fields []Field
+	if err := appendFlowFields(&fields, "", settings); err != nil {
+		return err
+	}
+	return WriteDetail(output, format, fields, settings)
 }
 
 func appendFlowFields(fields *[]Field, prefix string, settings map[string]any) error {

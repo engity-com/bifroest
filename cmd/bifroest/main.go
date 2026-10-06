@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
+	stderrors "errors"
 	"fmt"
 	goos "os"
+	"os/signal"
 
 	log "github.com/echocat/slf4g"
 
 	"github.com/engity-com/bifroest/pkg/logging"
+	"github.com/engity-com/bifroest/pkg/managementclient"
 
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/echocat/slf4g/native"
@@ -14,6 +18,7 @@ import (
 
 var (
 	registerCommands []func(*kingpin.Application)
+	errRemoteHandled = stderrors.New("remote command already handled")
 )
 
 func registerCommand(rc func(*kingpin.Application)) func(*kingpin.Application) {
@@ -47,7 +52,14 @@ func main() {
 			}
 			return fmt.Errorf("command %q does not support remote execution", command)
 		}
-		return fmt.Errorf("remote execution of %q is not available yet", ctx.SelectedCommand.FullCommand())
+		remoteCtx, stop := signal.NotifyContext(context.Background(), goos.Interrupt)
+		defer stop()
+		if err := managementclient.Run(remoteCtx, managementclient.Target{
+			Host: target.RawHost, User: target.User, Port: target.Port, ExplicitPort: target.ExplicitPort,
+		}, args, goos.Stdout); err != nil {
+			return err
+		}
+		return errRemoteHandled
 	})
 
 	for _, rc := range registerCommands {
@@ -55,6 +67,9 @@ func main() {
 	}
 
 	if _, err := app.Parse(args); err != nil {
+		if stderrors.Is(err, errRemoteHandled) {
+			return
+		}
 		log.WithError(err).Error("execution failed")
 		goos.Exit(1)
 	}
