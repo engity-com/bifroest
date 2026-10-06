@@ -6,27 +6,22 @@ import (
 	"encoding/json"
 	"fmt"
 	gonet "net"
+	"net/netip"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/docker/cli/opts"
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/registry"
-	"github.com/docker/docker/api/types/strslice"
-	"github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
 	"github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/level"
 	essh "github.com/engity-com/ssh-server-go"
-	mobymount "github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/registry"
+	"github.com/moby/moby/api/types/strslice"
+	"github.com/moby/moby/client"
 
 	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/common"
@@ -67,7 +62,7 @@ type DockerRepository struct {
 	apiClient   client.APIClient
 	hostOs      sys.Os
 	hostArch    sys.Arch
-	hostVersion *types.Version
+	hostVersion *client.ServerVersionResult
 
 	Logger              log.Logger
 	defaultLogLevelName string
@@ -95,7 +90,7 @@ func NewDockerRepository(ctx context.Context, flow configuration.FlowName, conf 
 		return fail(err)
 	}
 
-	hostVersion, err := apiClient.ServerVersion(ctx)
+	hostVersion, err := apiClient.ServerVersion(ctx, client.ServerVersionOptions{})
 	if err != nil {
 		return failf("cannot retrieve docker host's version: %w", err)
 	}
@@ -200,7 +195,7 @@ func (this *DockerRepository) createContainerBy(req Request, sess session.Sessio
 	}
 	pinDockerReverseTCPUser(config)
 	success := false
-	cr, err := this.apiClient.ContainerCreate(req.Context(), config, hostConfig, networkingConfig, nil, "")
+	cr, err := this.apiClient.ContainerCreate(req.Context(), client.ContainerCreateOptions{Config: config, HostConfig: hostConfig, NetworkingConfig: networkingConfig})
 	if this.isNoSuchImageError(err) && this.conf.ImagePullPolicy != configuration.PullPolicyAlways && this.conf.ImagePullPolicy != configuration.PullPolicyNever {
 		config.Image = imageRef
 		config.Labels[DockerLabelUser] = configuredUser
@@ -211,7 +206,7 @@ func (this *DockerRepository) createContainerBy(req Request, sess session.Sessio
 			return failf(errors.System, "cannot inspect container image %s: %w", imageRef, err)
 		}
 		pinDockerReverseTCPUser(config)
-		cr, err = this.apiClient.ContainerCreate(req.Context(), config, hostConfig, networkingConfig, nil, "")
+		cr, err = this.apiClient.ContainerCreate(req.Context(), client.ContainerCreateOptions{Config: config, HostConfig: hostConfig, NetworkingConfig: networkingConfig})
 	}
 	if err != nil {
 		return failf(errors.System, "cannot create container: %w", err)
@@ -227,7 +222,7 @@ func (this *DockerRepository) createContainerBy(req Request, sess session.Sessio
 		}
 	}()
 
-	if err := this.apiClient.ContainerStart(req.Context(), containerId, container.StartOptions{}); err != nil {
+	if _, err := this.apiClient.ContainerStart(req.Context(), containerId, client.ContainerStartOptions{}); err != nil {
 		return failf(errors.System, "cannot start container #%s: %w", containerId, err)
 	}
 	c, _, err := this.findContainerById(req.Context(), containerId)
@@ -309,7 +304,7 @@ func (this *DockerRepository) pullImage(req Request, ref string) error {
 		return fail(err)
 	}
 
-	var pOpts image.PullOptions
+	var pOpts client.ImagePullOptions
 
 	if pOpts.RegistryAuth, err = this.resolvePullCredentials(req, ref); err != nil {
 		return fail(err)
@@ -343,7 +338,7 @@ func (this *DockerRepository) resolvePullCredentials(req Request, _ string) (str
 		return "", nil
 	}
 
-	if buf, err := registry.DecodeAuthConfig(plain); err == nil && (buf.Auth != "" || buf.Username != "" || buf.Password != "") {
+	if buf, err := decodeDockerAuthConfig(plain); err == nil && (buf.Auth != "" || buf.Username != "" || buf.Password != "") {
 		// We can take it as it is, because it is in fully valid format.
 		return plain, nil
 	}
@@ -356,7 +351,7 @@ func (this *DockerRepository) resolvePullCredentials(req Request, _ string) (str
 
 	// Seems to be direct auth string...
 	buf.Auth = plain
-	result, err := registry.EncodeAuthConfig(buf)
+	result, err := encodeDockerAuthConfig(buf)
 	if err != nil {
 		return fail(err)
 	}
@@ -404,8 +399,8 @@ func (this *DockerRepository) resolveContainerConfig(req Request, sess session.S
 		result.Labels[DockerLabelPortForwardingAllowed] = "true"
 	}
 
-	result.ExposedPorts = map[nat.Port]struct{}{
-		nat.Port(fmt.Sprintf("%d/tcp", imp.ServicePort)): {},
+	result.ExposedPorts = network.PortSet{
+		network.MustParsePort(fmt.Sprintf("%d/tcp", imp.ServicePort)): {},
 	}
 
 	if result.Image, err = this.conf.Image.Render(req); err != nil {
@@ -458,15 +453,13 @@ func (this *DockerRepository) resolveHostConfig(req Request) (_ *container.HostC
 	if raws, err := this.conf.Mounts.Render(req); err != nil {
 		return failf("cannot evaluate mounts: %w", err)
 	} else {
-		var buf opts.MountOpt
+		result.Mounts = make([]mount.Mount, 0, len(raws))
 		for i, raw := range raws {
-			if err := buf.Set(raw); err != nil {
+			parsed, err := parseDockerMount(raw)
+			if err != nil {
 				return failf("cannot evaluate mount %d: %w", i, err)
 			}
-		}
-		result.Mounts = make([]mount.Mount, len(buf.Value()))
-		for i, value := range buf.Value() {
-			result.Mounts[i] = toDockerMount(value)
+			result.Mounts = append(result.Mounts, parsed)
 		}
 	}
 	if result.CapAdd, err = this.conf.Capabilities.Render(req); err != nil {
@@ -475,8 +468,16 @@ func (this *DockerRepository) resolveHostConfig(req Request) (_ *container.HostC
 	if result.Privileged, err = this.conf.Privileged.Render(req); err != nil {
 		return failf("cannot evaluate capabilities: %w", err)
 	}
-	if result.DNS, err = this.conf.DnsServers.Render(req); err != nil {
+	dnsServers, err := this.conf.DnsServers.Render(req)
+	if err != nil {
 		return failf("cannot evaluate dnsServer: %w", err)
+	}
+	for _, server := range dnsServers {
+		address, err := netip.ParseAddr(server)
+		if err != nil {
+			return failf("cannot parse dnsServer %q: %w", server, err)
+		}
+		result.DNS = append(result.DNS, address)
 	}
 	if result.DNSSearch, err = this.conf.DnsSearch.Render(req); err != nil {
 		return failf("cannot evaluate dnsSearch: %w", err)
@@ -510,84 +511,9 @@ func (this *DockerRepository) resolveHostConfig(req Request) (_ *container.HostC
 	return &result, nil
 }
 
-func dockerImpPortBindings() nat.PortMap {
-	return nat.PortMap{
-		nat.Port(fmt.Sprintf("%d/tcp", imp.ServicePort)): {{}},
-	}
-}
-
-func toDockerMount(value mobymount.Mount) mount.Mount {
-	return mount.Mount{
-		Type:           mount.Type(value.Type),
-		Source:         value.Source,
-		Target:         value.Target,
-		ReadOnly:       value.ReadOnly,
-		Consistency:    mount.Consistency(value.Consistency),
-		BindOptions:    toDockerBindOptions(value.BindOptions),
-		VolumeOptions:  toDockerVolumeOptions(value.VolumeOptions),
-		ImageOptions:   toDockerImageOptions(value.ImageOptions),
-		TmpfsOptions:   toDockerTmpfsOptions(value.TmpfsOptions),
-		ClusterOptions: toDockerClusterOptions(value.ClusterOptions),
-	}
-}
-
-func toDockerBindOptions(value *mobymount.BindOptions) *mount.BindOptions {
-	if value == nil {
-		return nil
-	}
-	return &mount.BindOptions{
-		Propagation:            mount.Propagation(value.Propagation),
-		NonRecursive:           value.NonRecursive,
-		CreateMountpoint:       value.CreateMountpoint,
-		ReadOnlyNonRecursive:   value.ReadOnlyNonRecursive,
-		ReadOnlyForceRecursive: value.ReadOnlyForceRecursive,
-	}
-}
-
-func toDockerVolumeOptions(value *mobymount.VolumeOptions) *mount.VolumeOptions {
-	if value == nil {
-		return nil
-	}
-	return &mount.VolumeOptions{
-		NoCopy:       value.NoCopy,
-		Labels:       value.Labels,
-		Subpath:      value.Subpath,
-		DriverConfig: toDockerDriver(value.DriverConfig),
-	}
-}
-
-func toDockerImageOptions(value *mobymount.ImageOptions) *mount.ImageOptions {
-	if value == nil {
-		return nil
-	}
-	return &mount.ImageOptions{Subpath: value.Subpath}
-}
-
-func toDockerTmpfsOptions(value *mobymount.TmpfsOptions) *mount.TmpfsOptions {
-	if value == nil {
-		return nil
-	}
-	return &mount.TmpfsOptions{
-		SizeBytes: value.SizeBytes,
-		Mode:      value.Mode,
-		Options:   value.Options,
-	}
-}
-
-func toDockerClusterOptions(value *mobymount.ClusterOptions) *mount.ClusterOptions {
-	if value == nil {
-		return nil
-	}
-	return &mount.ClusterOptions{}
-}
-
-func toDockerDriver(value *mobymount.Driver) *mount.Driver {
-	if value == nil {
-		return nil
-	}
-	return &mount.Driver{
-		Name:    value.Name,
-		Options: value.Options,
+func dockerImpPortBindings() network.PortMap {
+	return network.PortMap{
+		network.MustParsePort(fmt.Sprintf("%d/tcp", imp.ServicePort)): {{}},
 	}
 }
 
@@ -822,21 +748,18 @@ func (this *DockerRepository) ImpProtocolCompatibility(ctx context.Context, sess
 		return false, false, 0, ResourceIdentity{}, nil
 	}
 	defer this.sessionIdMutex.RLock(sess.Id())()
-	containers, err := this.apiClient.ContainerList(ctx, container.ListOptions{
-		All: true,
-		Filters: filters.NewArgs(
-			filters.Arg("label", DockerLabelSessionId+"="+sess.Id().String()),
-			filters.Arg("label", DockerLabelFlow+"="+this.flow.String()),
-		),
-		Limit: 2,
+	containers, err := this.apiClient.ContainerList(ctx, client.ContainerListOptions{
+		All:     true,
+		Filters: client.Filters{}.Add("label", DockerLabelSessionId+"="+sess.Id().String(), DockerLabelFlow+"="+this.flow.String()),
+		Limit:   2,
 	})
-	if err != nil || len(containers) == 0 {
+	if err != nil || len(containers.Items) == 0 {
 		return false, false, 0, ResourceIdentity{}, err
 	}
-	if len(containers) > 1 {
+	if len(containers.Items) > 1 {
 		return false, false, 0, ResourceIdentity{}, fmt.Errorf("multiple Docker containers found for session %s; operator inspection required", sess)
 	}
-	c := &containers[0]
+	c := &containers.Items[0]
 	if c.Labels[DockerLabelFlow] != this.flow.String() || c.Labels[DockerLabelSessionId] != sess.Id().String() {
 		return false, false, 0, ResourceIdentity{}, fmt.Errorf("container %s does not belong to session %s; operator inspection required", c.ID, sess)
 	}
@@ -849,10 +772,11 @@ func (this *DockerRepository) ImpProtocolCompatibility(ctx context.Context, sess
 }
 
 func (this *DockerRepository) removeContainer(ctx context.Context, id string) (bool, error) {
-	if err := this.apiClient.ContainerRemove(ctx, id, container.RemoveOptions{
+	_, err := this.apiClient.ContainerRemove(ctx, id, client.ContainerRemoveOptions{
 		RemoveVolumes: true,
 		Force:         true,
-	}); cerrdefs.IsNotFound(err) {
+	})
+	if cerrdefs.IsNotFound(err) {
 		return false, nil
 	} else if err != nil {
 		return false, errors.System.Newf("cannot remove container #%s: %w", id, err)
@@ -861,23 +785,18 @@ func (this *DockerRepository) removeContainer(ctx context.Context, id string) (b
 }
 
 func (this *DockerRepository) findContainerBySession(ctx context.Context, sess session.Session) (c *container.Summary, exitCode int, err error) {
-	c, exitCode, err = this.findContainerBy(ctx, filters.NewArgs(
-		filters.Arg("label", DockerLabelSessionId+"="+sess.Id().String()),
-		filters.Arg("label", DockerLabelFlow+"="+this.flow.String()),
-	))
+	c, exitCode, err = this.findContainerBy(ctx, client.Filters{}.Add("label", DockerLabelSessionId+"="+sess.Id().String(), DockerLabelFlow+"="+this.flow.String()))
 	if c != nil && (c.Labels[DockerLabelFlow] != this.flow.String() || c.Labels[DockerLabelSessionId] != sess.Id().String()) {
 		return nil, -1, nil
 	}
 	return c, exitCode, err
 }
 func (this *DockerRepository) findContainerById(ctx context.Context, id string) (c *container.Summary, exitCode int, err error) {
-	return this.findContainerBy(ctx, filters.NewArgs(
-		filters.Arg("id", id),
-	))
+	return this.findContainerBy(ctx, client.Filters{}.Add("id", id))
 }
 
-func (this *DockerRepository) findContainerBy(ctx context.Context, filters filters.Args) (c *container.Summary, exitCode int, err error) {
-	list, err := this.apiClient.ContainerList(ctx, container.ListOptions{
+func (this *DockerRepository) findContainerBy(ctx context.Context, filters client.Filters) (c *container.Summary, exitCode int, err error) {
+	list, err := this.apiClient.ContainerList(ctx, client.ContainerListOptions{
 		Limit:   1,
 		All:     true,
 		Filters: filters,
@@ -885,11 +804,11 @@ func (this *DockerRepository) findContainerBy(ctx context.Context, filters filte
 	if err != nil {
 		return nil, -1, errors.System.Newf("cannot list container by %v: %w", filters, err)
 	}
-	if len(list) == 0 {
+	if len(list.Items) == 0 {
 		return nil, -1, nil
 	}
 
-	c = &list[0]
+	c = &list.Items[0]
 	exitCode = -1
 	if strings.HasPrefix(c.Status, "Exited (") {
 		status := strings.TrimPrefix(c.Status, "Exited (")
@@ -913,11 +832,9 @@ func (this *DockerRepository) Cleanup(ctx context.Context, opts *CleanupOpts) er
 		return errors.System.Newf("cannot cleanup potential orhpan docker containers: %w", err)
 	}
 
-	list, err := this.apiClient.ContainerList(ctx, container.ListOptions{
-		All: true,
-		Filters: filters.NewArgs(
-			filters.Arg("label", DockerLabelFlow),
-		),
+	list, err := this.apiClient.ContainerList(ctx, client.ContainerListOptions{
+		All:     true,
+		Filters: client.Filters{}.Add("label", DockerLabelFlow),
 	})
 	if err != nil {
 		return fail(err)
@@ -925,7 +842,7 @@ func (this *DockerRepository) Cleanup(ctx context.Context, opts *CleanupOpts) er
 
 	l := opts.GetLogger(this.logger)
 
-	for _, c := range list {
+	for _, c := range list.Items {
 		cl := l.With("containerId", c.ID)
 		if ns := c.Names; len(ns) > 0 {
 			cl = cl.With("containerName", strings.TrimPrefix(ns[0], "/"))

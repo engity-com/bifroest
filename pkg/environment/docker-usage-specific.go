@@ -11,12 +11,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/errdefs"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/containerd/errdefs"
 	log "github.com/echocat/slf4g"
 	essh "github.com/engity-com/ssh-server-go"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/client"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
@@ -50,7 +49,7 @@ var dockerWrapperEnvironment = []string{
 	"MALLOC_TRACE=",
 }
 
-func attachDockerExecWithTimeout(ctx context.Context, timeout time.Duration, attach func(context.Context) (types.HijackedResponse, error)) (types.HijackedResponse, error) {
+func attachDockerExecWithTimeout(ctx context.Context, timeout time.Duration, attach func(context.Context) (client.ExecAttachResult, error)) (client.ExecAttachResult, error) {
 	attachCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 	defer cancel()
 	return attach(attachCtx)
@@ -88,7 +87,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		return failf("cannot create execution ID: %w", err)
 	}
 
-	opts := container.ExecOptions{
+	opts := client.ExecCreateOptions{
 		User:         this.user,
 		WorkingDir:   this.directory,
 		AttachStdin:  true,
@@ -150,8 +149,8 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	if ptyReq, windows, isPty := sshSess.Pty(); isPty {
 		winCh = windows
 		setReservedEnvironment(&ev, this.repository.hostOs, "TERM", ptyReq.Term)
-		opts.Tty = true
-		opts.ConsoleSize = &[2]uint{uint(ptyReq.Window.Height), uint(ptyReq.Window.Width)}
+		opts.TTY = true
+		opts.ConsoleSize = client.ConsoleSize{Height: uint(ptyReq.Window.Height), Width: uint(ptyReq.Window.Width)}
 	}
 	usesExecWrapper := this.repository.hostOs == sys.OsLinux || this.repository.hostOs == sys.OsWindows
 	if opts.Env, err = dockerExecEnvironment(usesExecWrapper, this.repository.hostOs, ev); err != nil {
@@ -186,7 +185,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		}
 	}
 
-	e, err := apiClient.ContainerExecCreate(t.Context(), this.containerId, opts)
+	e, err := apiClient.ExecCreate(t.Context(), this.containerId, opts)
 	if err != nil {
 		return failf("cannot execute command: %w", err)
 	}
@@ -197,9 +196,9 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		})
 	}
 
-	ea, err := attachDockerExecWithTimeout(t.Context(), dockerAttachTimeout, func(ctx context.Context) (types.HijackedResponse, error) {
-		return apiClient.ContainerExecAttach(ctx, execId, container.ExecAttachOptions{
-			Tty:         opts.Tty,
+	ea, err := attachDockerExecWithTimeout(t.Context(), dockerAttachTimeout, func(ctx context.Context) (client.ExecAttachResult, error) {
+		return apiClient.ExecAttach(ctx, execId, client.ExecAttachOptions{
+			TTY:         opts.TTY,
 			ConsoleSize: opts.ConsoleSize,
 		})
 	})
@@ -207,10 +206,10 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		cleanupExecution()
 		return failf("cannot attach to execution #%v: %w", execId, err)
 	}
-	if opts.ConsoleSize != nil {
-		if err := apiClient.ContainerExecResize(t.Context(), execId, container.ResizeOptions{
-			Height: opts.ConsoleSize[0],
-			Width:  opts.ConsoleSize[1],
+	if opts.TTY {
+		if _, err := apiClient.ExecResize(t.Context(), execId, client.ExecResizeOptions{
+			Height: opts.ConsoleSize.Height,
+			Width:  opts.ConsoleSize.Width,
 		}); err != nil && t.Context().Err() == nil {
 			l.WithError(err).Warn("cannot set initial window size; ignoring")
 		}
@@ -228,7 +227,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 					if !ok {
 						return
 					}
-					if err := apiClient.ContainerExecResize(resizeCtx, execId, container.ResizeOptions{
+					if _, err := apiClient.ExecResize(resizeCtx, execId, client.ExecResizeOptions{
 						Height: uint(win.Height),
 						Width:  uint(win.Width),
 					}); err != nil && resizeCtx.Err() == nil {
@@ -258,7 +257,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	go func() {
 		defer activeRoutines.Done()
 		var cErr error
-		if opts.Tty {
+		if opts.TTY {
 			_, cErr = io.Copy(sshSess, ea.Reader)
 		} else {
 			_, cErr = stdcopy.StdCopy(sshSess, sshSess.Stderr(), ea.Reader)
@@ -275,7 +274,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		defer activeRoutines.Done()
 		_, err := io.Copy(ea.Conn, sshSess)
 		// A Docker TTY uses one stream for both directions; half-closing it can discard pending output.
-		if !opts.Tty {
+		if !opts.TTY {
 			_ = ea.CloseWrite()
 		}
 		if this.isRelevantError(err) {
@@ -287,7 +286,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	}()
 
 	finish := func(ctx context.Context) (int, error) {
-		ei, iErr := apiClient.ContainerExecInspect(ctx, execId)
+		ei, iErr := apiClient.ExecInspect(ctx, execId, client.ExecInspectOptions{})
 		if iErr != nil {
 			return failf("cannot inspect execution #%s: %w", execId, iErr)
 		}
@@ -385,7 +384,7 @@ func cleanupCompletedExecution(logger log.Logger, executionId execution.Id, kill
 }
 
 func isRetryableDockerExecutionResultError(err error) bool {
-	return errdefs.IsUnavailable(err) || errdefs.IsSystem(err) || isRetryableTransportError(err)
+	return errdefs.IsUnavailable(err) || errdefs.IsInternal(err) || isRetryableTransportError(err)
 }
 
 func isRetryableTransportError(err error) bool {

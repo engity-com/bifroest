@@ -20,7 +20,7 @@ func TestReadThirdPartyLicensePolicy(t *testing.T) {
 	require.Equal(t, 2, policy.SchemaVersion)
 	require.Equal(t, thirdPartyLicenseAllowed, policy.licenseDecision("MIT"))
 	require.Equal(t, thirdPartyLicenseManualReview, policy.licenseDecision("GPL-3.0-only"))
-	require.Equal(t, "github.com/moby/moby", canonicalModuleMap(policy)["github.com/docker/docker"])
+	require.Equal(t, "github.com/moby/moby", canonicalModuleMap(policy)["github.com/moby/moby/client"])
 }
 
 func TestReadThirdPartyLicensePolicyRejectsOverlappingDecisions(t *testing.T) {
@@ -67,35 +67,34 @@ func TestReconcileThirdPartyComponentsCanonicalizesMoby(t *testing.T) {
 	policy, err := readThirdPartyLicensePolicy(thirdPartyLicensePolicyRaw)
 	require.NoError(t, err)
 	modules := []*thirdPartyModule{
-		{matches: []string{"github.com/docker/docker", "github.com/moby/moby"}, component: "github.com/moby/moby", version: "v28.5.2+incompatible"},
-		{matches: []string{"github.com/moby/moby/api"}, component: "github.com/moby/moby", version: "v1.56.0"},
+		{matches: []string{"github.com/moby/moby/client"}, component: "github.com/moby/moby", version: "v0.6.1"},
+		{matches: []string{"github.com/moby/moby/api"}, component: "github.com/moby/moby", version: "v1.56.1"},
 	}
 	records := []thirdPartyLicenseRecord{
-		{Library: "github.com/moby/moby/api/types", Version: "v1.56.0", License: "Apache-2.0", Text: "api license\n"},
-		{Library: "github.com/docker/docker", Version: "v28.5.2", License: "Apache-2.0", Text: "moby license\n"},
+		{Library: "github.com/moby/moby/api/types", Version: "v1.56.1", License: "Apache-2.0", Text: "api license\n"},
+		{Library: "github.com/moby/moby/client", Version: "v0.6.1", License: "Apache-2.0", Text: "moby license\n"},
 	}
 	saved := t.TempDir()
-	testWriteFile(t, saved, "github.com/docker/docker/NOTICE", "moby notice\r\n")
+	testWriteFile(t, saved, "github.com/moby/moby/client/NOTICE", "moby notice\r\n")
 
 	components, err := reconcileThirdPartyComponents(modules, records, saved, policy)
 
 	require.NoError(t, err)
 	require.Len(t, components, 1)
 	require.Equal(t, "github.com/moby/moby", components[0].name)
-	require.Contains(t, components[0].libraries, "github.com/moby/moby")
-	require.NotContains(t, components[0].libraries, "github.com/docker/docker")
+	require.Contains(t, components[0].libraries, "github.com/moby/moby/client")
 	notices := make([]thirdPartyNotice, 0, len(components[0].notices))
 	for _, notice := range components[0].notices {
 		notices = append(notices, notice)
 	}
-	require.Equal(t, "github.com/moby/moby/NOTICE", notices[0].name)
+	require.Equal(t, "github.com/moby/moby/client/NOTICE", notices[0].name)
 	require.Equal(t, "moby notice\n", notices[0].text)
 
 	info := &debug.BuildInfo{GoVersion: goToolchainVersion}
 	platform := bib.Platform{Os: sys.OsLinux, Arch: sys.ArchAmd64, Edition: sys.EditionGeneric}
 	var first bytes.Buffer
 	require.NoError(t, renderThirdPartyNotices(&first, platform, info, components))
-	require.NotContains(t, first.String(), "github.com/docker/docker")
+	require.Contains(t, first.String(), "github.com/moby/moby/client")
 	require.Contains(t, first.String(), "Component: github.com/moby/moby")
 
 	slicesReversed := []thirdPartyComponent{components[0]}
@@ -144,7 +143,7 @@ func TestReconcileThirdPartyComponentsEnforcesLicenseDecision(t *testing.T) {
 	}
 }
 
-func TestThirdPartyModulesUsesReplacementAsCanonicalComponent(t *testing.T) {
+func TestThirdPartyModulesGroupsMobyModules(t *testing.T) {
 	policy, err := readThirdPartyLicensePolicy(thirdPartyLicensePolicyRaw)
 	require.NoError(t, err)
 	info := &debug.BuildInfo{
@@ -156,21 +155,23 @@ func TestThirdPartyModulesUsesReplacementAsCanonicalComponent(t *testing.T) {
 			{Key: "CGO_ENABLED", Value: "0"},
 			{Key: "GOAMD64", Value: "v1"},
 		},
-		Deps: []*debug.Module{{
-			Path:    "github.com/docker/docker",
-			Version: "v0.0.0",
-			Replace: &debug.Module{Path: "github.com/moby/moby", Version: "v28.5.2+incompatible"},
-		}},
+		Deps: []*debug.Module{
+			{Path: "github.com/moby/moby/api", Version: "v1.56.1"},
+			{Path: "github.com/moby/moby/client", Version: "v0.6.1"},
+		},
 	}
 	platform := bib.Platform{Os: sys.OsLinux, Arch: sys.ArchAmd64, Edition: sys.EditionGeneric}
 
 	modules, err := thirdPartyModules(info, platform, policy)
 
 	require.NoError(t, err)
-	require.Len(t, modules, 1)
+	require.Len(t, modules, 2)
 	require.Equal(t, "github.com/moby/moby", modules[0].component)
-	require.Equal(t, "v28.5.2+incompatible", modules[0].version)
-	require.Equal(t, []string{"github.com/docker/docker", "github.com/moby/moby"}, modules[0].matches)
+	require.Equal(t, "v1.56.1", modules[0].version)
+	require.Equal(t, []string{"github.com/moby/moby/api"}, modules[0].matches)
+	require.Equal(t, "github.com/moby/moby", modules[1].component)
+	require.Equal(t, "v0.6.1", modules[1].version)
+	require.Equal(t, []string{"github.com/moby/moby/client"}, modules[1].matches)
 }
 
 func TestThirdPartyModulesRejectsWrongArmVariant(t *testing.T) {

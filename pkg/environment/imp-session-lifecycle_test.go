@@ -8,10 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
 	log "github.com/echocat/slf4g"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -168,9 +167,9 @@ type lifecycleDockerAPIClient struct {
 	removes int
 }
 
-func (c *lifecycleDockerAPIClient) ContainerRemove(context.Context, string, container.RemoveOptions) error {
+func (c *lifecycleDockerAPIClient) ContainerRemove(context.Context, string, client.ContainerRemoveOptions) (client.ContainerRemoveResult, error) {
 	c.removes++
-	return nil
+	return client.ContainerRemoveResult{}, nil
 }
 
 func TestDockerLeaseDisposeInvalidatesCacheWithActiveOwner(t *testing.T) {
@@ -445,12 +444,12 @@ func containerLifecycleCases() []struct {
 		{"docker", func(ctx context.Context, i imp.Imp) (Environment, func() (Environment, error), func() bool, error) {
 			id := session.MustNewId()
 			repo := &DockerRepository{flow: configuration.FlowName("test"), conf: &configuration.EnvironmentDocker{ImpPublishHost: net.MustNewHost("127.0.0.1")}, imp: i}
-			container := &types.Container{ID: "test", Labels: map[string]string{
+			container := &container.Summary{ID: "test", Labels: map[string]string{
 				DockerLabelFlow: "test", DockerLabelSessionId: id.String(), DockerLabelCreatedRemoteHost: "127.0.0.1",
 				DockerLabelShellCommand: `["sh"]`, DockerLabelExecCommand: `["sh"]`,
 				DockerLabelExecutionLifecycle: executionLifecycleCapability, DockerLabelImpProtocolRevision: "2",
 				DockerLabelPortForwardingAllowed: "true",
-			}, Ports: []types.Port{{PrivatePort: imp.ServicePort, PublicPort: 12345, Type: "tcp"}}}
+			}, Ports: []container.PortSummary{{PrivatePort: imp.ServicePort, PublicPort: 12345, Type: "tcp"}}}
 			env, err := repo.new(ctx, container, log.GetLogger("test"))
 			if err != nil {
 				return nil, nil, nil, err

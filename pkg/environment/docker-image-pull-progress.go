@@ -6,15 +6,15 @@ import (
 	"iter"
 	"strings"
 
-	"github.com/docker/docker/pkg/jsonmessage"
 	log "github.com/echocat/slf4g"
+	"github.com/moby/moby/api/types/jsonstream"
 )
 
-func toJsonMessageSeq(reader io.Reader) iter.Seq2[*jsonmessage.JSONMessage, error] {
-	return func(yield func(*jsonmessage.JSONMessage, error) bool) {
+func toJsonMessageSeq(reader io.Reader) iter.Seq2[*jsonstream.Message, error] {
+	return func(yield func(*jsonstream.Message, error) bool) {
 		dec := json.NewDecoder(reader)
 		for {
-			var jm jsonmessage.JSONMessage
+			var jm jsonstream.Message
 			err := dec.Decode(&jm)
 			if err == io.EOF {
 				return

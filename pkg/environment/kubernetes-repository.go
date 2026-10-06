@@ -12,12 +12,12 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/docker/docker/api/types/registry"
-	"github.com/docker/docker/api/types/strslice"
-	"github.com/docker/docker/errdefs"
+	"github.com/containerd/errdefs"
 	"github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/level"
 	essh "github.com/engity-com/ssh-server-go"
+	"github.com/moby/moby/api/types/registry"
+	"github.com/moby/moby/api/types/strslice"
 	v1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -469,7 +469,7 @@ func (this *KubernetesRepository) resolvePullCredentials(req Request, image stri
 
 	ir := this.extractRegistryFromImage(image)
 
-	if v, err := registry.DecodeAuthConfig(plain); err == nil && (v.Auth != "" || v.Username != "" || v.Password != "") {
+	if v, err := decodeDockerAuthConfig(plain); err == nil && (v.Auth != "" || v.Username != "" || v.Password != "") {
 		// Seems to be an encoded docker authConfig. Just wrap it...
 		buf.Auths = map[string]registry.AuthConfig{
 			ir: *v,

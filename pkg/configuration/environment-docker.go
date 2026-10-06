@@ -1,7 +1,7 @@
 package configuration
 
 import (
-	"github.com/docker/docker/api/types/network"
+	"github.com/moby/moby/api/types/network"
 	"gopkg.in/yaml.v3"
 
 	"github.com/engity-com/bifroest/pkg/net"

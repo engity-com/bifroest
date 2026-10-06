@@ -5,12 +5,11 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"fmt"
-	"slices"
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -71,24 +70,24 @@ type protocolDockerClient struct {
 	removes    int
 }
 
-func (c *protocolDockerClient) ContainerList(_ context.Context, opts container.ListOptions) ([]container.Summary, error) {
+func (c *protocolDockerClient) ContainerList(_ context.Context, opts client.ContainerListOptions) (client.ContainerListResult, error) {
 	c.listCalls++
-	if !slices.Contains(opts.Filters.Get("label"), DockerLabelFlow+"=test") || len(opts.Filters.Get("label")) != 2 {
-		return nil, fmt.Errorf("missing flow/session Docker selectors: %v", opts.Filters)
+	if !opts.Filters["label"][DockerLabelFlow+"=test"] || len(opts.Filters["label"]) != 2 {
+		return client.ContainerListResult{}, fmt.Errorf("missing flow/session Docker selectors: %v", opts.Filters)
 	}
 	var result []container.Summary
 	for _, candidate := range c.containers {
-		if candidate.Labels[DockerLabelFlow] == "test" && slices.Contains(opts.Filters.Get("label"), DockerLabelSessionId+"="+candidate.Labels[DockerLabelSessionId]) {
+		if candidate.Labels[DockerLabelFlow] == "test" && opts.Filters["label"][DockerLabelSessionId+"="+candidate.Labels[DockerLabelSessionId]] {
 			result = append(result, candidate)
 		}
 	}
-	return result, nil
+	return client.ContainerListResult{Items: result}, nil
 }
 
-func (c *protocolDockerClient) ContainerRemove(context.Context, string, container.RemoveOptions) error {
+func (c *protocolDockerClient) ContainerRemove(context.Context, string, client.ContainerRemoveOptions) (client.ContainerRemoveResult, error) {
 	c.removes++
 	c.containers = nil
-	return nil
+	return client.ContainerRemoveResult{}, nil
 }
 
 type protocolKubernetesClient struct {
