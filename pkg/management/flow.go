@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/alecthomas/kingpin/v2"
-	"github.com/distribution/reference"
 	"gopkg.in/yaml.v3"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -115,8 +114,8 @@ func ShowFlow(output io.Writer, format Format, conf *configuration.Configuration
 	return fmt.Errorf("flow %q does not exist", name)
 }
 
-// Only a few explicitly reviewed environment values are public metadata.
-// Arbitrary strings still pass through the fail-closed redactor below.
+// Only fixed enum values are public environment metadata. Image references
+// remain private because even a syntactically valid name may contain secrets.
 func publicFlowEnvironmentSettings(configured configuration.EnvironmentV, settings map[string]any) map[string]string {
 	switch configured.(type) {
 	case *configuration.EnvironmentDocker, *configuration.EnvironmentKubernetes:
@@ -128,11 +127,6 @@ func publicFlowEnvironmentSettings(configured configuration.EnvironmentV, settin
 		return nil
 	}
 	result := map[string]string{}
-	if image, ok := environment["image"].(string); ok && image != "" && !strings.Contains(image, "{{") && !strings.Contains(image, "}}") {
-		if _, err := reference.ParseNormalizedNamed(image); err == nil {
-			result["image"] = image
-		}
-	}
 	if policy, ok := environment["imagePullPolicy"].(string); ok {
 		switch policy {
 		case "ifAbsent", "always", "never":
