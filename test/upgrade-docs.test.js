@@ -6,7 +6,7 @@ const { join } = require("node:path");
 
 const script = readFileSync(join(__dirname, "../docs/assets/upgrade.js"), "utf8");
 const page = readFileSync(join(__dirname, "../docs/setup/upgrade.md"), "utf8");
-const latest = { title: "Latest (0.7.7)", path: "/" };
+const latest = { title: "0.7.7", path: "/" };
 
 async function render(release, metadata, pathname = "/setup/upgrade/", navigation = "material", ok = true) {
   const headline = { dataset: { release }, innerText: "Upgrade from previous minor versions" };
@@ -61,7 +61,8 @@ test("beta and directly opened older versions request their own metadata", async
     ["v0.8.1", "v0.7.8", "/v0.8.1/setup/upgrade/", "/v0.7.8/setup/"],
   ]) {
     const { headline, hint, requests } = await render(release, {
-      isLatest: false, latest, previous, previousMajorMinor: "v0.7",
+      isLatest: false, latest, ...(release.includes("-") ? { prerelease: true } : {}),
+      previous, previousMajorMinor: "v0.7",
     }, pathname);
     assert.deepEqual(requests, [`/${release}/release.json`]);
     assert.equal(headline.innerText, `Upgrade from v0.7.x to ${release}`);

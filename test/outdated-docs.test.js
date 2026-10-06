@@ -8,7 +8,7 @@ const script = readFileSync(join(__dirname, "../docs/assets/versions.js"), "utf8
 const template = readFileSync(join(__dirname, "../docs/.theme/main.html"), "utf8");
 const config = readFileSync(join(__dirname, "../mkdocs.yml"), "utf8");
 
-const latest = { title: "Latest (0.7.7)", path: "/" };
+const latest = { title: "0.7.7", path: "/" };
 const versions = [
   { tag: "v1.0.0-beta1", title: "1.0.0-beta1", path: "/v1.0.0-beta1/", prerelease: true },
   { tag: "v0.7.7", title: latest.title, path: latest.path, aliases: ["/latest/", "/v0.7.7/"], latest: true },
@@ -29,8 +29,8 @@ async function render(pathname, manifests, index = versions) {
       return { ".md-version__current": button, ".md-version__list": list }[selector];
     },
   };
-  const link = {};
-  const banner = { hidden: true, querySelector: () => link };
+  const content = { replaceChildren(...parts) { this.parts = parts; } };
+  const banner = { hidden: true, querySelector: () => content };
   const topic = { append(child) { child.parentElement = this; } };
   let load;
   const requests = [];
@@ -57,7 +57,8 @@ async function render(pathname, manifests, index = versions) {
   runInNewContext(script, context);
   await load();
   return {
-    button, list, picker, banner, link, topic, requests,
+    button, list, picker, banner, content, topic, requests,
+    get bannerLink() { return content.parts?.[1]; },
     async open(event = "mouseenter") {
       await (event === "mouseenter" ? picker.events[event] : button.events[event])();
     },
@@ -69,7 +70,7 @@ test("uses Material's picker appearance without enabling its versions.json integ
   assert.doesNotMatch(config, /provider: mike/);
   assert.match(config, /assets\/versions\.js/);
   assert.match(template, /data-md-component="outdated"/);
-  assert.match(template, /data-md-version-latest><strong>Click here to go to latest\.<\/strong>/);
+  assert.doesNotMatch(template, /You're not viewing|pre-release version|Click here to go/);
   assert.match(template, /class="md-version__current"/);
   assert.match(template, /class="md-version__list"/);
   assert.doesNotMatch(script, /versions\.json/);
@@ -80,28 +81,31 @@ test("root and stable aliases use release metadata without loading the menu", as
     const url = pathname.startsWith("/v0.7.7/") ? "/v0.7.7/release.json" : "/release.json";
     const result = await render(pathname, { [url]: { isLatest: true, latest } });
     assert.deepEqual(result.requests, [url]);
-    assert.equal(result.button.textContent, latest.title);
+    assert.equal(result.button.textContent, "Latest (0.7.7)");
     assert.equal(result.picker.parentElement, result.topic);
     assert.equal(result.picker.hidden, false);
     assert.equal(result.banner.hidden, true);
   }
 });
 
-test("beta banner reads latest link and title solely from its own release manifest", async () => {
+test("beta banner describes a pre-release and uses the release manifest's latest path", async () => {
   const path = "/v1.0.0-beta1/setup/upgrade/";
   const releaseUrl = "/v1.0.0-beta1/release.json";
   const result = await render(path, {
-    [releaseUrl]: { isLatest: false, latest: { title: "Latest (0.9.3)", path: "/v0.9.3/" } },
+    [releaseUrl]: { isLatest: false, prerelease: true, latest: { title: "0.9.3", path: "/v0.9.3/" } },
   }, [versions[0]]);
   assert.deepEqual(result.requests, [releaseUrl]);
   assert.equal(result.button.textContent, "1.0.0-beta1");
   assert.equal(result.banner.hidden, false);
-  assert.equal(result.link.href, "/v0.9.3/");
-  assert.equal(result.link.title, "Latest (0.9.3)");
+  assert.equal(result.content.parts[0], "You're viewing a pre-release version. ");
+  assert.equal(result.bannerLink.href, "/v0.9.3/");
+  assert.equal(result.bannerLink.title, "Latest (0.9.3)");
+  assert.equal(result.bannerLink.link.textContent, "Click here to go to latest stable version.");
 
   await result.open();
   assert.deepEqual(result.requests, [releaseUrl, "/versions-v2.json"]);
   assert.equal(result.list.items[0].link.href, "/v1.0.0-beta1/");
+  assert.equal(result.list.items[0].link.textContent, "1.0.0-beta1");
 });
 
 test("an old filtered-out version stays identified before and after opening the menu", async () => {
@@ -111,12 +115,15 @@ test("an old filtered-out version stays identified before and after opening the 
   });
   assert.equal(result.button.textContent, "0.7.5");
   assert.equal(result.banner.hidden, false);
+  assert.equal(result.content.parts[0], "You're not viewing the latest version. ");
+  assert.equal(result.bannerLink.link.textContent, "Click here to go to latest.");
   assert.deepEqual(result.requests, [releaseUrl]);
   await result.open("focus");
   assert.equal(result.button.textContent, "0.7.5");
   assert.equal(result.list.items.some(item => item.link.href === "/v0.7.5/"), false);
   assert.equal(result.list.items[1].link.href, "/");
   assert.equal(result.list.items[1].link.className, "md-version__link");
+  assert.equal(result.list.items[1].link.textContent, "Latest (0.7.7)");
   await result.open("click");
   assert.equal(result.requests.filter(url => url === "/versions-v2.json").length, 1);
 });
@@ -178,7 +185,18 @@ test("absent isLatest shows the banner when latest provides a usable target", as
     const result = await render(pathname, { [releaseUrl]: { latest } });
     assert.deepEqual(result.requests, [releaseUrl]);
     assert.equal(result.banner.hidden, false);
-    assert.equal(result.link.href, latest.path);
-    assert.equal(result.link.title, latest.title);
+    assert.equal(result.content.parts[0], "You're not viewing the latest version. ");
+    assert.equal(result.bannerLink.href, latest.path);
+    assert.equal(result.bannerLink.title, "Latest (0.7.7)");
   }
+});
+
+test("prerelease flag selects the pre-release banner even without isLatest", async () => {
+  const result = await render("/v1.0.0-beta1/setup/", {
+    "/v1.0.0-beta1/release.json": { prerelease: true, latest },
+  });
+  assert.equal(result.banner.hidden, false);
+  assert.equal(result.content.parts[0], "You're viewing a pre-release version. ");
+  assert.equal(result.bannerLink.href, "/");
+  assert.equal(result.bannerLink.link.textContent, "Click here to go to latest stable version.");
 });

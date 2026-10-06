@@ -9,6 +9,10 @@ function versionPrefix(pathname) {
   return /^\/(v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\//.exec(pathname)?.[1];
 }
 
+function versionTitle(title, latest) {
+  return latest ? `Latest (${title})` : title;
+}
+
 function renderVersionMenu() {
   const picker = document.querySelector(".md-version");
   const button = picker?.querySelector(".md-version__current");
@@ -21,7 +25,7 @@ function renderVersionMenu() {
   const current = menuEntries.find(entry => paths(entry)
     .some(path => path !== "/" && pathname.startsWith(path))) ||
     (!versionPrefix(pathname) && menuEntries.find(entry => paths(entry).includes("/")));
-  if (current) button.textContent = current.title;
+  if (current) button.textContent = versionTitle(current.title, current.latest === true);
 
   list.replaceChildren();
   for (const entry of menuEntries) {
@@ -30,7 +34,7 @@ function renderVersionMenu() {
     const link = document.createElement("a");
     link.className = "md-version__link";
     link.href = entry.path;
-    link.textContent = entry.title;
+    link.textContent = versionTitle(entry.title, entry.latest === true);
     item.append(link);
     list.append(item);
   }
@@ -88,11 +92,23 @@ async function showVersions() {
     if (typeof latest?.title !== "string" || typeof latest.path !== "string" ||
       !latest.path.startsWith("/") || !latest.path.endsWith("/")) return;
 
-    if (release.isLatest === true) button.textContent = latest.title;
+    if (release.isLatest === true) button.textContent = versionTitle(latest.title, true);
     if (release.isLatest !== true) {
-      const link = banner.querySelector("[data-md-version-latest]");
+      const prerelease = release.prerelease === true;
+      const link = document.createElement("a");
       link.href = latest.path;
-      link.title = latest.title;
+      link.title = versionTitle(latest.title, true);
+      const strong = document.createElement("strong");
+      strong.textContent = prerelease
+        ? "Click here to go to latest stable version."
+        : "Click here to go to latest.";
+      link.append(strong);
+      banner.querySelector(".md-banner__inner").replaceChildren(
+        prerelease
+          ? "You're viewing a pre-release version. "
+          : "You're not viewing the latest version. ",
+        link
+      );
       banner.hidden = false;
     }
   } catch (_) {
