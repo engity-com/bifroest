@@ -24,8 +24,11 @@ type recordingVerifyOpts struct {
 	requireFull             bool
 }
 
+var remoteRecordingVerifyOpts *recordingVerifyOpts
+
 func registerRecordingVerifyCmd(parent *kingpin.CmdClause) {
 	opts := recordingVerifyOpts{}
+	remoteRecordingVerifyOpts = &opts
 	cmd := parent.Command("verify", "Verify a Recording against a trusted producer without exporting it.").
 		Action(func(*kingpin.ParseContext) error { return doRecordingVerify(&opts, goos.Stdout) })
 	cmd.Flag("configuration", "Configuration for a local Recording (defaults to "+defaultConfigurationRef+").").Short('c').PlaceHolder("<path>").StringVar(&opts.configuration)

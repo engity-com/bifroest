@@ -145,7 +145,7 @@ func (this *limitedOutput) Write(p []byte) (int, error) {
 	return this.Buffer.Write(p)
 }
 
-func Run(ctx context.Context, target Target, args []string, output io.Writer) (rErr error) {
+func Run(ctx context.Context, target Target, args []string, output io.Writer) error {
 	if len(args) < 2 {
 		return fmt.Errorf("a management command and subcommand are required")
 	}
@@ -156,6 +156,9 @@ func Run(ctx context.Context, target Target, args []string, output io.Writer) (r
 	if len(wireArgs) < 2 || wireArgs[0] != "flow" && wireArgs[0] != "session" && wireArgs[0] != "auditlog" && wireArgs[0] != "recording" {
 		return fmt.Errorf("remote command %q is not yet supported", args[0])
 	}
+	if wireArgs[0] == "recording" && wireArgs[1] != "ls" && wireArgs[1] != "show" {
+		return fmt.Errorf("recording %s does not accept a remote source; use an auditlog name and Recording ID for verify, export or play", wireArgs[1])
+	}
 	for _, arg := range wireArgs {
 		if arg == "-c" || arg == "--configuration" || strings.HasPrefix(arg, "--configuration=") {
 			return fmt.Errorf("local --configuration cannot be combined with a remote target")
@@ -164,66 +167,11 @@ func Run(ctx context.Context, target Target, args []string, output io.Writer) (r
 			return fmt.Errorf("offline source and local decryption identities cannot be used as remote command arguments")
 		}
 	}
-	conf, err := resolve(target)
+	client, release, err := connect(ctx, target)
 	if err != nil {
 		return err
 	}
-	hostKeys, err := knownhosts.New(conf.knownHosts...)
-	if err != nil {
-		return err
-	}
-	auth := make([]ssh.AuthMethod, 0, 2)
-	if agentClient, closer, err := connectAgent(conf.agentPath); err == nil && agentClient != nil {
-		if closer != nil {
-			defer func() { rErr = errors.Join(rErr, closer.Close()) }()
-		}
-		auth = append(auth, ssh.PublicKeysCallback(agentClient.Signers))
-	} else if conf.agentPath != "" && conf.agentPath != "none" {
-		return fmt.Errorf("cannot connect to configured SSH agent: %w", err)
-	}
-	var signers []ssh.Signer
-	for _, name := range conf.identities {
-		path, err := expandHome(name)
-		if err != nil {
-			return err
-		}
-		content, err := os.ReadFile(path)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		signer, err := ssh.ParsePrivateKey(content)
-		if err != nil {
-			var passphrase *ssh.PassphraseMissingError
-			if errors.As(err, &passphrase) && len(auth) > 0 {
-				continue
-			}
-			return fmt.Errorf("cannot use SSH identity %q: %w", path, err)
-		}
-		signers = append(signers, signer)
-	}
-	if len(signers) != 0 {
-		auth = append(auth, ssh.PublicKeys(signers...))
-	}
-	if len(auth) == 0 {
-		return fmt.Errorf("no SSH agent or usable identity file available")
-	}
-	address := net.JoinHostPort(conf.host, strconv.Itoa(int(conf.port)))
-	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", address)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = conn.Close() }()
-	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
-	defer stop()
-	clientConn, chans, requests, err := ssh.NewClientConn(conn, address, &ssh.ClientConfig{User: conf.user, Auth: auth, HostKeyCallback: hostKeys})
-	if err != nil {
-		return err
-	}
-	client := ssh.NewClient(clientConn, chans, requests)
-	defer func() { _ = client.Close() }()
+	defer release()
 	session, err := client.NewSession()
 	if err != nil {
 		return err
@@ -299,6 +247,84 @@ func Run(ctx context.Context, target Target, args []string, output io.Writer) (r
 	default:
 		return fmt.Errorf("unsupported management command %q", strings.Join(wireArgs[:2], " "))
 	}
+}
+
+func connect(ctx context.Context, target Target) (_ *ssh.Client, _ func(), resultErr error) {
+	conf, err := resolve(target)
+	if err != nil {
+		return nil, nil, err
+	}
+	hostKeys, err := knownhosts.New(conf.knownHosts...)
+	if err != nil {
+		return nil, nil, err
+	}
+	auth := make([]ssh.AuthMethod, 0, 2)
+	var agentCloser io.Closer
+	if agentClient, closer, err := connectAgent(conf.agentPath); err == nil && agentClient != nil {
+		agentCloser = closer
+		auth = append(auth, ssh.PublicKeysCallback(agentClient.Signers))
+	} else if conf.agentPath != "" && conf.agentPath != "none" {
+		return nil, nil, fmt.Errorf("cannot connect to configured SSH agent: %w", err)
+	}
+	defer func() {
+		if resultErr != nil && agentCloser != nil {
+			_ = agentCloser.Close()
+		}
+	}()
+	var signers []ssh.Signer
+	for _, name := range conf.identities {
+		path, err := expandHome(name)
+		if err != nil {
+			return nil, nil, err
+		}
+		content, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		signer, err := ssh.ParsePrivateKey(content)
+		if err != nil {
+			var passphrase *ssh.PassphraseMissingError
+			if errors.As(err, &passphrase) && len(auth) > 0 {
+				continue
+			}
+			return nil, nil, fmt.Errorf("cannot use SSH identity %q: %w", path, err)
+		}
+		signers = append(signers, signer)
+	}
+	if len(signers) != 0 {
+		auth = append(auth, ssh.PublicKeys(signers...))
+	}
+	if len(auth) == 0 {
+		return nil, nil, fmt.Errorf("no SSH agent or usable identity file available")
+	}
+	address := net.JoinHostPort(conf.host, strconv.Itoa(int(conf.port)))
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", address)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		if resultErr != nil {
+			_ = conn.Close()
+		}
+	}()
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	clientConn, chans, requests, err := ssh.NewClientConn(conn, address, &ssh.ClientConfig{User: conf.user, Auth: auth, HostKeyCallback: hostKeys})
+	if err != nil {
+		stop()
+		return nil, nil, err
+	}
+	client := ssh.NewClient(clientConn, chans, requests)
+	return client, func() {
+		stop()
+		_ = client.Close()
+		_ = conn.Close()
+		if agentCloser != nil {
+			_ = agentCloser.Close()
+		}
+	}, nil
 }
 
 func containsArg(args []string, candidate string) bool {

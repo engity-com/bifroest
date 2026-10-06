@@ -13,6 +13,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/management"
+	"github.com/engity-com/bifroest/pkg/recording"
 )
 
 func (this *service) isManagementFlow(name configuration.FlowName) bool {
@@ -46,6 +47,13 @@ func (this *service) RunManagementCommand(task environment.Task, includingCreden
 		}
 		return this.runManagementArgs(task, includingCredentials, append(args, "--format=cbor"))
 	}
+	if raw == management.WireRecordingCommand {
+		args, err := management.DecodeWireRequest(task.SshSession())
+		if err != nil {
+			return -1, err
+		}
+		return this.streamManagementRecording(task, args)
+	}
 	if len(raw) > 16<<10 || !utf8.ValidString(raw) || strings.ContainsRune(raw, 0) {
 		return -1, fmt.Errorf("invalid management command")
 	}
@@ -54,6 +62,38 @@ func (this *service) RunManagementCommand(task environment.Task, includingCreden
 		return -1, fmt.Errorf("invalid management command: %w", err)
 	}
 	return this.runManagementArgs(task, includingCredentials, args)
+}
+
+func (this *service) streamManagementRecording(task environment.Task, args []string) (int, error) {
+	if len(args) != 3 || args[0] != "recording" {
+		return -1, fmt.Errorf("recording artifact requires an auditlog and Recording ID")
+	}
+	name := configuration.AuditlogName(args[1])
+	if err := name.Validate(); err != nil {
+		return -1, err
+	}
+	var id recording.Id
+	if err := id.UnmarshalText([]byte(args[2])); err != nil {
+		return -1, err
+	}
+	repository := this.recordingRepositories[name]
+	if repository == nil || repository.native == nil {
+		return -1, fmt.Errorf("auditlog %q has no active recording repository", name)
+	}
+	artifact, err := repository.native.OpenSealed(task.Context(), id)
+	if err != nil {
+		return -1, err
+	}
+	defer artifact.Close()
+	if artifact.Size() > recording.DefaultMaximumNativeRecordingBytes {
+		return -1, fmt.Errorf("recording exceeds the maximum supported artifact size")
+	}
+	if err := management.WriteRecordingArtifact(task.SshSession(), management.RecordingArtifactHeader{
+		Version: 1, ID: id.String(), ProducerID: artifact.ProducerId().String(), Size: artifact.Size(), SHA256: artifact.ArtifactDigest().String(),
+	}, artifact.Reader()); err != nil {
+		return -1, err
+	}
+	return 0, nil
 }
 
 func (this *service) runManagementArgs(task environment.Task, includingCredentials bool, args []string) (int, error) {

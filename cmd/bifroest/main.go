@@ -54,6 +54,13 @@ func main() {
 		}
 		remoteCtx, stop := signal.NotifyContext(context.Background(), goos.Interrupt)
 		defer stop()
+		switch ctx.SelectedCommand.FullCommand() {
+		case "recording verify", "recording export", "recording play":
+			if err := doRemoteRecordingCommand(remoteCtx, target, ctx.SelectedCommand.FullCommand(), goos.Stdout); err != nil {
+				return err
+			}
+			return errRemoteHandled
+		}
 		if err := managementclient.Run(remoteCtx, managementclient.Target{
 			Host: target.RawHost, User: target.User, Port: target.Port, ExplicitPort: target.ExplicitPort,
 		}, args, goos.Stdout); err != nil {

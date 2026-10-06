@@ -19,8 +19,11 @@ type recordingPlayOpts struct {
 	speed float64
 }
 
+var remoteRecordingPlayOpts *recordingPlayOpts
+
 func registerRecordingPlayCmd(parent *kingpin.CmdClause) {
 	opts := recordingPlayOpts{speed: 1, recordingExportOpts: recordingExportOpts{output: "-"}}
+	remoteRecordingPlayOpts = &opts
 	cmd := parent.Command("play", "Verify and play a signed session Recording in the terminal.").
 		Action(func(*kingpin.ParseContext) error { return doRecordingPlay(context.Background(), &opts, goos.Stdout) })
 	cmd.Flag("with-sensitive", "Allow replay of potentially sensitive terminal output.").BoolVar(&opts.withSensitive)
