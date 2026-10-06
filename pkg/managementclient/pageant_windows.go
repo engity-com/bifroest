@@ -101,7 +101,7 @@ func pageantQuery(request []byte) ([]byte, error) {
 	defer pageantMutex.Unlock()
 	window := pageantWindow()
 	if window == 0 {
-		return nil, fmt.Errorf("Pageant is not running")
+		return nil, fmt.Errorf("pageant is not running")
 	}
 	thread, _, _ := currentThread.Call()
 	name := fmt.Sprintf("PageantRequest%08x", thread)
@@ -113,12 +113,12 @@ func pageantQuery(request []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer syscall.CloseHandle(mapping)
+	defer func() { _ = syscall.CloseHandle(mapping) }()
 	pointer, err := syscall.MapViewOfFile(mapping, syscall.FILE_MAP_WRITE, 0, 0, pageantMaxMessage)
 	if err != nil {
 		return nil, err
 	}
-	defer syscall.UnmapViewOfFile(pointer)
+	defer func() { _ = syscall.UnmapViewOfFile(pointer) }()
 	buffer := make([]byte, pageantMaxMessage)
 	copy(buffer, request)
 	var transferred uintptr
@@ -132,7 +132,7 @@ func pageantQuery(request []byte) ([]byte, error) {
 	runtime.KeepAlive(nameBytes)
 	runtime.KeepAlive(message)
 	if status == 0 || response == 0 {
-		return nil, fmt.Errorf("Pageant did not respond within 10 seconds: %w", sendErr)
+		return nil, fmt.Errorf("pageant did not respond within 10 seconds: %w", sendErr)
 	}
 	if err := windows.ReadProcessMemory(windows.CurrentProcess(), pointer, &buffer[0], uintptr(len(buffer)), &transferred); err != nil || transferred != uintptr(len(buffer)) {
 		return nil, fmt.Errorf("cannot read Pageant shared memory: %v", err)
