@@ -8,11 +8,11 @@ import (
 	"github.com/alecthomas/kingpin/v2"
 )
 
-var remoteAuditDecryptOpts *auditExportOpts
+var remoteAuditDecryptOpts = map[string]*auditExportOpts{}
 
 func registerAuditDecryptCmd(parent *kingpin.CmdClause) {
 	opts := auditExportOpts{output: "-"}
-	remoteAuditDecryptOpts = &opts
+	remoteAuditDecryptOpts[parent.FullCommand()] = &opts
 	cmd := parent.Command("decrypt", "Alias for audit export (verified JSON Lines).").
 		Action(func(*kingpin.ParseContext) error { return doAuditDecrypt(&opts, goos.Stdout) })
 	registerAuditExportFlags(cmd, &opts)

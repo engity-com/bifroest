@@ -111,11 +111,11 @@ func TestRemoteAuditExportDecryptsLocallyFromSignedSnapshot(t *testing.T) {
 	settings.ConfigFinder(func() string { return configPath })
 	ssh_config.DefaultUserSettings = settings
 	defer func() { ssh_config.DefaultUserSettings = previous }()
-	prior := remoteAuditExportOpts
-	defer func() { remoteAuditExportOpts = prior }()
+	prior := remoteAuditExportOpts["audit"]
+	defer func() { remoteAuditExportOpts["audit"] = prior }()
 	registerAuditExportCmd(kingpin.New("bifroest", "test").Command("audit", "test"))
-	remoteAuditExportOpts.auditlog = "default"
-	remoteAuditExportOpts.withSensitive = true
+	remoteAuditExportOpts["audit"].auditlog = "default"
+	remoteAuditExportOpts["audit"].withSensitive = true
 	var output bytes.Buffer
 	require.NoError(t, doRemoteAuditCommand(context.Background(), &managementTarget{RawHost: "audit-test", Port: 22}, "audit export", &output))
 	require.Contains(t, output.String(), "confidential-flow-default")

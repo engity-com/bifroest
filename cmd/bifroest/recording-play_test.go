@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/engity-com/bifroest/pkg/management"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,5 +33,5 @@ func TestRecordingPlaybackRequiresSensitiveAndDecryptsLocally(t *testing.T) {
 }
 
 func TestPlaybackParserRejectsInvalidHeader(t *testing.T) {
-	require.ErrorContains(t, playAsciicast(t.Context(), strings.NewReader("{}\n"), &bytes.Buffer{}, 1), "unsupported asciicast")
+	require.ErrorContains(t, management.PlayAsciicast(t.Context(), strings.NewReader("{}\n"), &bytes.Buffer{}, 1), "unsupported asciicast")
 }

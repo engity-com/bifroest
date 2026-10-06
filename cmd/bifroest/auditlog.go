@@ -12,8 +12,10 @@ import (
 	"github.com/engity-com/bifroest/pkg/management"
 )
 
+var remoteAuditEventsOpts *management.AuditEventsOptions
+
 var _ = registerCommand(func(app *kingpin.Application) {
-	management.RegisterAuditlogCommands(app, loadManagementConfiguration, func(ctx context.Context, path string, name configuration.AuditlogName, sensitive bool, identities []string) ([]audit.VerifiedRecord, error) {
+	parent, options := management.RegisterAuditlogCommands(app, loadManagementConfiguration, func(ctx context.Context, path string, name configuration.AuditlogName, sensitive bool, identities []string) ([]audit.VerifiedRecord, error) {
 		conf, err := loadManagementConfiguration(path)
 		if err != nil {
 			return nil, err
@@ -33,4 +35,6 @@ var _ = registerCommand(func(app *kingpin.Application) {
 		}
 		return nil, fmt.Errorf("auditlog %q does not exist", name)
 	}, context.Background(), goos.Stdout, true)
+	remoteAuditEventsOpts = options
+	registerAuditArtifactCommands(parent)
 })

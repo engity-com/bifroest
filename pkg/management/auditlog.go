@@ -20,70 +20,88 @@ type AuditlogSummary struct {
 	Encrypted        bool                       `json:"encrypted" yaml:"encrypted"`
 }
 
-func RegisterAuditlogCommands(app *kingpin.Application, source ConfigurationSource, events AuditEventSource, ctx context.Context, output io.Writer, local bool) {
+type AuditEventsOptions struct {
+	Format            string
+	ConfigurationPath string
+	EventName         string
+	FlowName          string
+	Since             string
+	Until             string
+	Auditlog          configuration.AuditlogName
+	Limit             int
+	WithSensitive     bool
+	IdentityFiles     []string
+}
+
+func RegisterAuditlogCommands(app *kingpin.Application, source ConfigurationSource, events AuditEventSource, ctx context.Context, output io.Writer, local bool) (*kingpin.CmdClause, *AuditEventsOptions) {
 	parent := app.Command("auditlog", "Inspect configured audit logs.")
-	var format, path string
+	opts := &AuditEventsOptions{}
+	var path string
 	formats := []string{"table", "json", "yaml"}
 	if !local {
 		formats = append(formats, "cbor")
 	}
-	parent.Flag("format", "Display as a table/list, JSON, or YAML.").Default("table").EnumVar(&format, formats...)
+	parent.Flag("format", "Display as a table/list, JSON, or YAML.").Default("table").EnumVar(&opts.Format, formats...)
+	list := parent.Command("ls", "List configured audit logs.")
 	if local {
-		parent.Flag("configuration", "Bifröst configuration file.").Short('c').StringVar(&path)
+		list.Flag("configuration", "Bifröst configuration file.").Short('c').StringVar(&path)
 	}
-	parent.Command("ls", "List configured audit logs.").Action(func(*kingpin.ParseContext) error {
+	list.Action(func(*kingpin.ParseContext) error {
 		conf, err := source(path)
 		if err != nil {
 			return err
 		}
-		return ListAuditlogs(output, Format(format), conf)
+		return ListAuditlogs(output, Format(opts.Format), conf)
 	})
 	var name configuration.AuditlogName
-	parent.Command("show", "Show audit-log settings.").Action(func(*kingpin.ParseContext) error {
+	show := parent.Command("show", "Show audit-log settings.")
+	if local {
+		show.Flag("configuration", "Bifröst configuration file.").Short('c').StringVar(&path)
+	}
+	show.Action(func(*kingpin.ParseContext) error {
 		conf, err := source(path)
 		if err != nil {
 			return err
 		}
-		return ShowAuditlog(output, Format(format), conf, name)
+		return ShowAuditlog(output, Format(opts.Format), conf, name)
 	}).Arg("name", "Name of the audit log.").Required().SetValue(&name)
-	var eventName, flowName, since, until string
-	var withSensitive bool
-	var limit int
-	var identityFiles []string
-	var eventAuditlog configuration.AuditlogName
 	eventCmd := parent.Command("events", "Show verified audit events.")
-	eventCmd.Flag("name", "Filter by event name.").StringVar(&eventName)
-	eventCmd.Flag("flow", "Filter by flow (requires --with-sensitive).").StringVar(&flowName)
-	eventCmd.Flag("since", "Events recorded at or after RFC3339 time.").StringVar(&since)
-	eventCmd.Flag("until", "Events recorded at or before RFC3339 time.").StringVar(&until)
-	eventCmd.Flag("limit", "Limit the number of newest matching events (0 = all).").Default("100").IntVar(&limit)
-	eventCmd.Flag("with-sensitive", "Include private event fields (encrypted journals need a local decryption identity).").BoolVar(&withSensitive)
 	if local {
-		eventCmd.Flag("decryptionIdentityFile", "Local private key for encrypted events (repeatable).").StringsVar(&identityFiles)
+		eventCmd.Flag("configuration", "Bifröst configuration file.").Short('c').StringVar(&opts.ConfigurationPath)
 	}
-	eventCmd.Arg("name", "Name of the audit log.").Required().SetValue(&eventAuditlog)
+	eventCmd.Flag("name", "Filter by event name.").StringVar(&opts.EventName)
+	eventCmd.Flag("flow", "Filter by flow (requires --with-sensitive).").StringVar(&opts.FlowName)
+	eventCmd.Flag("since", "Events recorded at or after RFC3339 time.").StringVar(&opts.Since)
+	eventCmd.Flag("until", "Events recorded at or before RFC3339 time.").StringVar(&opts.Until)
+	eventCmd.Flag("limit", "Limit the number of newest matching events (0 = all).").Default("100").IntVar(&opts.Limit)
+	eventCmd.Flag("with-sensitive", "Include private event fields (encrypted journals need a local decryption identity).").BoolVar(&opts.WithSensitive)
+	if local {
+		eventCmd.Flag("decryptionIdentityFile", "Local private key for encrypted events (repeatable).").StringsVar(&opts.IdentityFiles)
+	}
+	eventCmd.Arg("name", "Name of the audit log.").Required().SetValue(&opts.Auditlog)
 	eventCmd.Action(func(*kingpin.ParseContext) error {
-		filter := AuditEventFilter{Name: eventName, Flow: flowName, Limit: limit}
+		filter := AuditEventFilter{Name: opts.EventName, Flow: opts.FlowName, Limit: opts.Limit}
 		var err error
-		if since != "" {
-			if filter.Since, err = time.Parse(time.RFC3339, since); err != nil {
+		if opts.Since != "" {
+			if filter.Since, err = time.Parse(time.RFC3339, opts.Since); err != nil {
 				return fmt.Errorf("invalid --since: %w", err)
 			}
 		}
-		if until != "" {
-			if filter.Until, err = time.Parse(time.RFC3339, until); err != nil {
+		if opts.Until != "" {
+			if filter.Until, err = time.Parse(time.RFC3339, opts.Until); err != nil {
 				return fmt.Errorf("invalid --until: %w", err)
 			}
 		}
-		if flowName != "" && !withSensitive {
+		if opts.FlowName != "" && !opts.WithSensitive {
 			return fmt.Errorf("--flow requires --with-sensitive")
 		}
-		records, err := events(ctx, path, eventAuditlog, withSensitive, identityFiles)
+		records, err := events(ctx, opts.ConfigurationPath, opts.Auditlog, opts.WithSensitive, opts.IdentityFiles)
 		if err != nil {
 			return err
 		}
-		return WriteAuditEvents(output, Format(format), records, filter, withSensitive)
+		return WriteAuditEvents(output, Format(opts.Format), records, filter, opts.WithSensitive)
 	})
+	return parent, opts
 }
 
 func ListAuditlogs(output io.Writer, format Format, conf *configuration.Configuration) error {

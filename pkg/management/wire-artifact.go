@@ -31,7 +31,7 @@ func WriteRecordingArtifact(output io.Writer, header RecordingArtifactHeader, co
 		return err
 	}
 	if len(encoded) > maxRecordingHeaderBytes {
-		return fmt.Errorf("Recording artifact header exceeds %d bytes", maxRecordingHeaderBytes)
+		return fmt.Errorf("recording artifact header exceeds %d bytes", maxRecordingHeaderBytes)
 	}
 	var size [4]byte
 	binary.BigEndian.PutUint32(size[:], uint32(len(encoded)))
@@ -76,11 +76,11 @@ func ReadRecordingArtifact(input io.Reader, output io.Writer, maxBytes int64) (R
 		return header, err
 	}
 	if hex.EncodeToString(hasher.Sum(nil)) != header.SHA256 {
-		return header, fmt.Errorf("Recording artifact SHA-256 does not match the declared digest")
+		return header, fmt.Errorf("recording artifact SHA-256 does not match the declared digest")
 	}
 	var trailing [1]byte
 	if _, err := io.ReadFull(input, trailing[:]); err != io.EOF {
-		return header, fmt.Errorf("Recording artifact contains trailing data or failed before EOF: %v", err)
+		return header, fmt.Errorf("recording artifact contains trailing data or failed before EOF: %v", err)
 	}
 	return header, nil
 }

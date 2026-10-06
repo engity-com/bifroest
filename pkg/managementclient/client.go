@@ -16,6 +16,7 @@ import (
 	"github.com/kevinburke/ssh_config"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
+	"golang.org/x/term"
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/management"
@@ -287,8 +288,22 @@ func connect(ctx context.Context, target Target) (_ *ssh.Client, _ func(), resul
 		signer, err := ssh.ParsePrivateKey(content)
 		if err != nil {
 			var passphrase *ssh.PassphraseMissingError
-			if errors.As(err, &passphrase) && len(auth) > 0 {
-				continue
+			if errors.As(err, &passphrase) {
+				if len(auth) > 0 {
+					continue
+				}
+				secret, readErr := readManagementPassword(fmt.Sprintf("Passphrase for SSH key %s: ", path))
+				if readErr != nil {
+					return nil, nil, readErr
+				}
+				signer, err = ssh.ParsePrivateKeyWithPassphrase(content, secret)
+				for i := range secret {
+					secret[i] = 0
+				}
+				if err == nil {
+					signers = append(signers, signer)
+					continue
+				}
 			}
 			return nil, nil, fmt.Errorf("cannot use SSH identity %q: %w", path, err)
 		}
@@ -298,7 +313,22 @@ func connect(ctx context.Context, target Target) (_ *ssh.Client, _ func(), resul
 		auth = append(auth, ssh.PublicKeys(signers...))
 	}
 	if len(auth) == 0 {
-		return nil, nil, fmt.Errorf("no SSH agent or usable identity file available")
+		if !term.IsTerminal(int(os.Stdin.Fd())) {
+			return nil, nil, fmt.Errorf("no SSH agent or usable identity file available (password login needs a terminal)")
+		}
+	}
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		auth = append(auth, ssh.KeyboardInteractive(keyboardInteractive), ssh.PasswordCallback(func() (string, error) {
+			secret, err := readManagementPassword("SSH password: ")
+			if err != nil {
+				return "", err
+			}
+			value := string(secret)
+			for i := range secret {
+				secret[i] = 0
+			}
+			return value, nil
+		}))
 	}
 	address := net.JoinHostPort(conf.host, strconv.Itoa(int(conf.port)))
 	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", address)
