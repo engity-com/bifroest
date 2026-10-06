@@ -55,10 +55,10 @@ func startAuthorizationService(f *fixture, authorizationYAML string, environment
 	return nil
 }
 
-func dialAuthorizationSSH(f *fixture, user string, auth gossh.AuthMethod, timeout time.Duration) (*gossh.Client, error) {
+func dialAuthorizationSSH(f *fixture, user string, auth gossh.AuthMethod, timeout time.Duration, additionalAuth ...gossh.AuthMethod) (*gossh.Client, error) {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
-		client, err := dialAuthorizationSSHOnce(f, user, auth, timeout)
+		client, err := dialAuthorizationSSHOnce(f, user, auth, timeout, additionalAuth...)
 		if err == nil || !isTransientSSHDialError(err) {
 			return client, err
 		}
@@ -68,7 +68,7 @@ func dialAuthorizationSSH(f *fixture, user string, auth gossh.AuthMethod, timeou
 	return nil, lastErr
 }
 
-func dialAuthorizationSSHOnce(f *fixture, user string, auth gossh.AuthMethod, timeout time.Duration) (*gossh.Client, error) {
+func dialAuthorizationSSHOnce(f *fixture, user string, auth gossh.AuthMethod, timeout time.Duration, additionalAuth ...gossh.AuthMethod) (*gossh.Client, error) {
 	hostKey, _, _, _, err := gossh.ParseAuthorizedKey(mustRead(f.hostKey + ".pub"))
 	if err != nil {
 		return nil, err
@@ -87,7 +87,7 @@ func dialAuthorizationSSHOnce(f *fixture, user string, auth gossh.AuthMethod, ti
 	}
 	sshConn, channels, requests, err := gossh.NewClientConn(conn, address, &gossh.ClientConfig{
 		User:            user,
-		Auth:            []gossh.AuthMethod{auth},
+		Auth:            append([]gossh.AuthMethod{auth}, additionalAuth...),
 		HostKeyCallback: gossh.FixedHostKey(hostKey),
 	})
 	if err != nil {
