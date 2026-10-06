@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -8,6 +9,7 @@ import (
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/anmitsu/go-shlex"
 
+	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/management"
@@ -69,7 +71,16 @@ func (this *service) runManagementArgs(task environment.Task, includingCredentia
 			return nil, fmt.Errorf("remote management commands do not accept local configuration files")
 		}
 		return &this.Configuration, nil
-	}, task.SshSession(), false)
+	}, func(ctx context.Context, path string, name configuration.AuditlogName, sensitive bool, identities []string) ([]audit.VerifiedRecord, error) {
+		if path != "" || len(identities) != 0 {
+			return nil, fmt.Errorf("remote management commands cannot read local files")
+		}
+		identity := this.auditIdentities[name]
+		if identity == nil {
+			return nil, fmt.Errorf("auditlog %q has no active signing identity", name)
+		}
+		return management.ReadAuditEvents(ctx, &this.Configuration, name, identity.ProducerId(), sensitive, nil)
+	}, task.Context(), task.SshSession(), false)
 	if _, err := app.Parse(args); err != nil {
 		_, _ = fmt.Fprintln(task.SshSession().Stderr(), err)
 		return 1, nil
