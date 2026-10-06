@@ -30,8 +30,11 @@ type recordingExportOpts struct {
 	decryptionIdentityFiles []string
 }
 
+var remoteRecordingExportOpts *recordingExportOpts
+
 func registerRecordingExportCmd(parent *kingpin.CmdClause) {
 	opts := recordingExportOpts{output: "-"}
+	remoteRecordingExportOpts = &opts
 	cmd := parent.Command("export", "Verify and export a session Recording as asciicast v3.").
 		Action(func(*kingpin.ParseContext) error { return doRecordingExport(&opts, stdos.Stdout) })
 	registerAuditOutputFlags(cmd, &opts.output, &opts.force)
