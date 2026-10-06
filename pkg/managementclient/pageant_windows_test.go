@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 func TestPageantRequestChecksBoundsBeforeContact(t *testing.T) {
@@ -16,4 +17,12 @@ func TestPageantRequestChecksBoundsBeforeContact(t *testing.T) {
 	binary.BigEndian.PutUint32(oversized[:4], uint32(len(oversized)-4))
 	_, err = pageantQuery(oversized)
 	require.ErrorContains(t, err, "oversized")
+}
+
+func TestPageantListsKeysWhenAvailable(t *testing.T) {
+	if !pageantAvailable() {
+		t.Skip("Pageant is not running on this Windows host")
+	}
+	_, err := agent.NewClient(&pageantConnection{}).List()
+	require.NoError(t, err)
 }

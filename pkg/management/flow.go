@@ -136,6 +136,23 @@ func appendFlowFields(fields *[]Field, prefix string, settings map[string]any) e
 			}
 			continue
 		}
+		if entries, ok := settings[key].([]any); ok && len(entries) != 0 {
+			for index, entry := range entries {
+				itemPath := fmt.Sprintf("%s[%d]", path, index)
+				if mapping, ok := entry.(map[string]any); ok {
+					if err := appendFlowFields(fields, itemPath, mapping); err != nil {
+						return err
+					}
+					continue
+				}
+				encoded, err := yaml.Marshal(entry)
+				if err != nil {
+					return err
+				}
+				*fields = append(*fields, Field{Name: itemPath, Value: strings.TrimSpace(string(encoded))})
+			}
+			continue
+		}
 		value, err := yaml.Marshal(settings[key])
 		if err != nil {
 			return err
