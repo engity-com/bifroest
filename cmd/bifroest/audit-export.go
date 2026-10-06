@@ -32,6 +32,8 @@ type auditExportOpts struct {
 	withSensitive           bool
 }
 
+var remoteAuditExportOpts *auditExportOpts
+
 const maxAuditOutputSize = 128 << 20
 
 type boundedAuditOutput struct {
@@ -52,6 +54,7 @@ func (this *boundedAuditOutput) Write(content []byte) (int, error) {
 
 func registerAuditExportCmd(parent *kingpin.CmdClause) {
 	opts := auditExportOpts{output: "-"}
+	remoteAuditExportOpts = &opts
 	cmd := parent.Command("export", "Export a verified audit journal as JSON Lines.").
 		Action(func(*kingpin.ParseContext) error { return doAuditExport(&opts, goos.Stdout) })
 	registerAuditExportFlags(cmd, &opts)
