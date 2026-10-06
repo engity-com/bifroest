@@ -34,5 +34,6 @@ func connectAgent(ctx context.Context, identityAgent string) (agent.Agent, io.Cl
 	if err != nil {
 		return nil, nil, fmt.Errorf("cannot connect to SSH agent socket %q: %w", path, err)
 	}
-	return agent.NewClient(conn), conn, nil
+	client, closer := newAgentConnection(ctx, conn)
+	return client, closer, nil
 }

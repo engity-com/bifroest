@@ -3,8 +3,11 @@ package managementclient
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"testing"
+	"time"
 
+	"github.com/Microsoft/go-winio"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh/agent"
 )
@@ -33,4 +36,12 @@ func TestWindowsAgentDialHonorsCanceledContext(t *testing.T) {
 	cancel()
 	_, _, err := connectAgent(ctx, `\\.\pipe\bifroest-management-cancellation-test`)
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestWindowsSSHAgentRequestStopsOnCancel(t *testing.T) {
+	path := fmt.Sprintf(`\\.\pipe\bifroest-agent-test-%d`, time.Now().UnixNano())
+	listener, err := winio.ListenPipe(path, nil)
+	require.NoError(t, err)
+	defer listener.Close()
+	checkStalledAgentIsClosedOnCancel(t, listener, path)
 }
