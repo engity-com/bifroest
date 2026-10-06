@@ -159,6 +159,11 @@ func (this *service) streamManagementRecording(task environment.Task, args []str
 }
 
 func (this *service) runManagementArgs(task environment.Task, includingCredentials bool, args []string) (int, error) {
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "@") {
+			return -1, fmt.Errorf("management commands do not permit @file argument expansion")
+		}
+	}
 	app := kingpin.New("bifroest", "Inspect Bifröst over SSH.").Terminate(func(status int) { panic(managementTermination{status}) })
 	app.UsageWriter(task.SshSession().Stderr()).ErrorWriter(task.SshSession().Stderr())
 	management.RegisterFlowCommands(app, func(path string) (*configuration.Configuration, error) {

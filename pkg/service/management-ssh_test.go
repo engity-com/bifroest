@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -57,6 +58,17 @@ func TestManagementFlowHandlesHumanAndCBORSSHExecWithoutShell(t *testing.T) {
 	require.NoError(t, err)
 	require.Error(t, agent.RequestAgentForwarding(forwarding))
 	_ = forwarding.Close()
+
+	secretFile := filepath.Join(t.TempDir(), "management-secret")
+	require.NoError(t, os.WriteFile(secretFile, []byte("never-export-this-credential"), 0600))
+	responseFile, err := client.NewSession()
+	require.NoError(t, err)
+	var stderr bytes.Buffer
+	responseFile.Stderr = &stderr
+	_, err = responseFile.Output("flow ls @" + secretFile)
+	require.Error(t, err)
+	require.Contains(t, stderr.String(), "do not permit @file")
+	require.NotContains(t, stderr.String(), "never-export-this-credential")
 }
 
 func TestManagementSSHExportsSignedLiveAuditSnapshot(t *testing.T) {

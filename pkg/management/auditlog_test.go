@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/template"
 )
 
 func TestAuditlogListAndDetailFormats(t *testing.T) {
@@ -23,4 +24,21 @@ func TestAuditlogListAndDetailFormats(t *testing.T) {
 	require.NotContains(t, output.String(), "private-signing-key")
 	require.Contains(t, output.String(), "***redacted***")
 	require.ErrorContains(t, ShowAuditlog(&output, FormatTable, conf, "absent"), "does not exist")
+}
+
+func TestAuditlogDetailsRedactNestedDeliveryPassword(t *testing.T) {
+	conf := &configuration.Configuration{Auditlogs: configuration.Auditlogs{{
+		Name: "remote", Targets: configuration.AuditlogTargets{{
+			Name: "archive", V: &configuration.AuditlogTargetWebdav{
+				Endpoint: "https://archive.example.org/", Username: template.MustNewString("archive-user"),
+				Password: template.MustNewString("archive-secret"),
+			},
+		}},
+	}}}
+	for _, format := range []Format{FormatTable, FormatJSON, FormatYAML} {
+		var output bytes.Buffer
+		require.NoError(t, ShowAuditlog(&output, format, conf, "remote"))
+		require.Contains(t, output.String(), "***redacted***")
+		require.NotContains(t, output.String(), "archive-secret")
+	}
 }

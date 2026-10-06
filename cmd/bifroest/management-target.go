@@ -19,7 +19,15 @@ type managementTarget struct {
 }
 
 func parseManagementTarget(args []string) (*managementTarget, []string, error) {
-	if len(args) == 0 || !strings.HasPrefix(args[0], "@") {
+	if len(args) == 0 {
+		return nil, args, nil
+	}
+	for _, arg := range args[1:] {
+		if strings.HasPrefix(arg, "@") {
+			return nil, nil, fmt.Errorf("remote target %q must be the first argument to bifroest", arg)
+		}
+	}
+	if !strings.HasPrefix(args[0], "@") {
 		return nil, args, nil
 	}
 	value := strings.TrimPrefix(args[0], "@")

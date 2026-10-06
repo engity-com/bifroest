@@ -24,7 +24,8 @@ func TestParseManagementTarget(t *testing.T) {
 		{"missing host", []string{"@admin@", "session", "ls"}, nil, nil, "host"},
 		{"invalid port", []string{"@host:bad", "session", "ls"}, nil, nil, "invalid"},
 		{"invalid host", []string{"@-host", "session", "ls"}, nil, nil, "invalid"},
-		{"not first", []string{"session", "@host", "ls"}, nil, []string{"session", "@host", "ls"}, ""},
+		{"not first", []string{"session", "@host", "ls"}, nil, nil, "first argument"},
+		{"remote with second target", []string{"@admin", "session", "@other", "ls"}, nil, nil, "first argument"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			actual, args, err := parseManagementTarget(test.args)

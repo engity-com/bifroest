@@ -13,7 +13,7 @@ bifroest @bifroest-admin flow show administration --format=yaml
 ssh management@bifroest.example.org 'auditlog ls'
 ```
 
-`@target` must precede all other arguments. The leading `@` is reserved for remote selection; Kingpin's argument-file syntax `@file` is not available as the first argument. Direct SSH commands execute inside the management flow and do not start a shell.
+`@target` must precede all other arguments. The leading `@` is reserved for remote selection; `@file` argument expansion is not available in management commands, and `@target` in a later position is rejected. Direct SSH commands execute inside the management flow and do not start a shell.
 
 | Subject | Commands | Notes |
 | --- | --- | --- |
