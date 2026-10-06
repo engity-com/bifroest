@@ -7,7 +7,8 @@ var _ = RegisterEnvironmentV(func() EnvironmentV { return &EnvironmentManagement
 // EnvironmentManagement makes the read-only management commands available to
 // an explicitly authorized SSH flow.
 type EnvironmentManagement struct {
-	IncludingCredentials bool `yaml:"includingCredentials,omitempty"`
+	IncludingCredentials  bool `yaml:"includingCredentials,omitempty"`
+	AllowArtifactTransfer bool `yaml:"allowArtifactTransfer,omitempty"`
 }
 
 func (this *EnvironmentManagement) SetDefaults() error {
@@ -25,7 +26,7 @@ func (this *EnvironmentManagement) Validate() error {
 
 func (this *EnvironmentManagement) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *EnvironmentManagement, node *yaml.Node) error {
-		if err := rejectUnknownAuditlogFields(node, "type", "variables", "includingCredentials"); err != nil {
+		if err := rejectUnknownAuditlogFields(node, "type", "variables", "includingCredentials", "allowArtifactTransfer"); err != nil {
 			return err
 		}
 		type raw EnvironmentManagement
@@ -36,9 +37,9 @@ func (this *EnvironmentManagement) UnmarshalYAML(node *yaml.Node) error {
 func (this EnvironmentManagement) IsEqualTo(other any) bool {
 	switch value := other.(type) {
 	case EnvironmentManagement:
-		return this.IncludingCredentials == value.IncludingCredentials
+		return this.IncludingCredentials == value.IncludingCredentials && this.AllowArtifactTransfer == value.AllowArtifactTransfer
 	case *EnvironmentManagement:
-		return value != nil && this.IncludingCredentials == value.IncludingCredentials
+		return value != nil && this.IncludingCredentials == value.IncludingCredentials && this.AllowArtifactTransfer == value.AllowArtifactTransfer
 	default:
 		return false
 	}

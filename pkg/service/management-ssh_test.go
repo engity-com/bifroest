@@ -69,11 +69,35 @@ func TestManagementFlowHandlesHumanAndCBORSSHExecWithoutShell(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, stderr.String(), "do not permit @file")
 	require.NotContains(t, stderr.String(), "never-export-this-credential")
+
+	for _, command := range []string{management.WireAuditCommand, management.WireRecordingCommand} {
+		transfer, err := client.NewSession()
+		require.NoError(t, err)
+		request, err := management.EncodeWireRequest([]string{"auditlog", "default"})
+		require.NoError(t, err)
+		transfer.Stdin = bytes.NewReader(request)
+		var stderr bytes.Buffer
+		transfer.Stderr = &stderr
+		content, err := transfer.Output(command)
+		require.Error(t, err)
+		require.Empty(t, content)
+		require.Contains(t, stderr.String(), "allowArtifactTransfer")
+	}
+	for _, command := range []string{"auditlog events --with-sensitive default", "auditlog export --with-sensitive default", "auditlog merge --with-sensitive default"} {
+		query, err := client.NewSession()
+		require.NoError(t, err)
+		var stderr bytes.Buffer
+		query.Stderr = &stderr
+		content, err := query.Output(command)
+		require.Error(t, err)
+		require.Empty(t, content)
+		require.Contains(t, stderr.String(), "allowArtifactTransfer")
+	}
 }
 
 func TestManagementSSHExportsSignedLiveAuditSnapshot(t *testing.T) {
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
-		conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
+		conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{AllowArtifactTransfer: true}
 		parent := filepath.Dir(conf.Session.V.(*configuration.SessionFs).Storage)
 		conf.Auditlogs[0].Enabled = true
 		conf.Auditlogs[0].IdentityFile = filepath.Join(parent, "management-audit-signing-key")
@@ -90,6 +114,13 @@ func TestManagementSSHExportsSignedLiveAuditSnapshot(t *testing.T) {
 	result, err := verify.Output("auditlog verify default")
 	require.NoError(t, err)
 	require.Equal(t, "verified (scope: full)\n", string(result))
+	sensitive, err := client.NewSession()
+	require.NoError(t, err)
+	result, err = sensitive.Output("auditlog events --with-sensitive default --format=json")
+	require.NoError(t, err)
+	var events []audit.VerifiedRecord
+	require.NoError(t, json.Unmarshal(result, &events))
+	require.NotEmpty(t, events)
 
 	transfer, err := client.NewSession()
 	require.NoError(t, err)
@@ -115,7 +146,7 @@ func TestManagementSSHExportsSignedLiveAuditSnapshot(t *testing.T) {
 
 func TestManagementSSHStreamsSignedRecordingWithoutPrivateKeys(t *testing.T) {
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
-		conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
+		conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{AllowArtifactTransfer: true}
 		parent := filepath.Dir(conf.Session.V.(*configuration.SessionFs).Storage)
 		conf.Auditlogs[0].IdentityFile = filepath.Join(parent, "management-signing-key")
 		conf.Auditlogs[0].Recording.Enabled = true
@@ -196,4 +227,13 @@ func TestManagementRecordingShowIgnoresUnrelatedCorruptArtifact(t *testing.T) {
 	var view management.RecordingView
 	require.NoError(t, json.Unmarshal(output, &view))
 	require.Equal(t, ids[0].String(), view.ID)
+
+	content, err := client.NewSession()
+	require.NoError(t, err)
+	var stderr bytes.Buffer
+	content.Stderr = &stderr
+	denied, err := content.Output("recording export --with-sensitive default " + ids[0].String())
+	require.Error(t, err)
+	require.Empty(t, denied)
+	require.Contains(t, stderr.String(), "allowArtifactTransfer")
 }

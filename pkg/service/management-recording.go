@@ -30,7 +30,7 @@ func (this *service) openManagementRecording(ctx context.Context, auditlogName s
 	return repository.native.OpenSealed(ctx, id)
 }
 
-func (this *service) registerManagementRecordingCommands(parent *kingpin.CmdClause, task environment.Task) {
+func (this *service) registerManagementRecordingCommands(parent *kingpin.CmdClause, task environment.Task, allowArtifactTransfer bool) {
 	var verifyName, verifyID string
 	var requireFull bool
 	var verifyFormat string
@@ -68,6 +68,9 @@ func (this *service) registerManagementRecordingCommands(parent *kingpin.CmdClau
 		cmd.Action(func(*kingpin.ParseContext) error {
 			if !withSensitive {
 				return fmt.Errorf("recording %s requires --with-sensitive", verb)
+			}
+			if !allowArtifactTransfer {
+				return fmt.Errorf("recording content requires allowArtifactTransfer in the management environment")
 			}
 			artifact, err := this.openManagementRecording(task.Context(), name, id)
 			if err != nil {

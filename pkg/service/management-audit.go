@@ -56,7 +56,7 @@ func (this *service) managementAuditSources(names []string, sensitive bool) ([]a
 	return sources, nil
 }
 
-func (this *service) registerManagementAuditCommands(parent *kingpin.CmdClause, task environment.Task, inheritedFormat *string) {
+func (this *service) registerManagementAuditCommands(parent *kingpin.CmdClause, task environment.Task, inheritedFormat *string, allowArtifactTransfer bool) {
 	format := func(own string) management.Format {
 		if inheritedFormat != nil && *inheritedFormat != "" {
 			return management.Format(*inheritedFormat)
@@ -117,6 +117,9 @@ func (this *service) registerManagementAuditCommands(parent *kingpin.CmdClause, 
 		management.AuditSensitiveFlag(command, &sensitive)
 		command.Arg("auditlogName", "Configured auditlog name.").Required().StringVar(&name)
 		command.Action(func(*kingpin.ParseContext) error {
+			if sensitive && !allowArtifactTransfer {
+				return fmt.Errorf("sensitive audit export requires allowArtifactTransfer in the management environment")
+			}
 			if format("") != management.FormatTable {
 				return fmt.Errorf("audit export has a fixed JSON Lines output; use auditlog events for structured views")
 			}
@@ -129,6 +132,9 @@ func (this *service) registerManagementAuditCommands(parent *kingpin.CmdClause, 
 	management.AuditSensitiveFlag(merge, &mergeSensitive)
 	merge.Arg("auditlogName", "Configured auditlog names.").Required().StringsVar(&mergeNames)
 	merge.Action(func(*kingpin.ParseContext) error {
+		if mergeSensitive && !allowArtifactTransfer {
+			return fmt.Errorf("sensitive audit export requires allowArtifactTransfer in the management environment")
+		}
 		if format("") != management.FormatTable {
 			return fmt.Errorf("audit merge has a fixed JSON Lines output; use auditlog events for structured views")
 		}

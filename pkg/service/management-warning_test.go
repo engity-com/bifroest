@@ -28,9 +28,11 @@ func TestManagementCredentialDisclosureEmitsStartupWarning(t *testing.T) {
 		Flows: configuration.Flows{
 			{Name: "safe", Environment: configuration.Environment{V: &configuration.EnvironmentManagement{}}},
 			{Name: "debug", Environment: configuration.Environment{V: &configuration.EnvironmentManagement{IncludingCredentials: true}}},
+			{Name: "evidence", Environment: configuration.Environment{V: &configuration.EnvironmentManagement{AllowArtifactTransfer: true}}},
 		},
 	}}
-	svc.warnOnManagementCredentials()
-	require.Len(t, warnings, 1)
+	svc.warnOnManagementAccess()
+	require.Len(t, warnings, 2)
 	require.Contains(t, strings.ToLower(warnings[0]), "never in production")
+	require.Contains(t, warnings[1], "allowArtifactTransfer")
 }
