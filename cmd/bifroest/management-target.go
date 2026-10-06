@@ -22,9 +22,11 @@ func parseManagementTarget(args []string) (*managementTarget, []string, error) {
 	if len(args) == 0 {
 		return nil, args, nil
 	}
-	for _, arg := range args[1:] {
-		if strings.HasPrefix(arg, "@") {
-			return nil, nil, fmt.Errorf("remote target %q must be the first argument to bifroest", arg)
+	if strings.HasPrefix(args[0], "@") || supportsRemoteManagementCommand(args[0]) {
+		for _, arg := range args[1:] {
+			if strings.HasPrefix(arg, "@") {
+				return nil, nil, fmt.Errorf("remote target %q must be the first argument to bifroest", arg)
+			}
 		}
 	}
 	if !strings.HasPrefix(args[0], "@") {
