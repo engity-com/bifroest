@@ -165,3 +165,35 @@ func TestManagementSSHStreamsSignedRecordingWithoutPrivateKeys(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, recording.FormatBcast, inspection.Format)
 }
+
+func TestManagementRecordingShowIgnoresUnrelatedCorruptArtifact(t *testing.T) {
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
+		conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
+		parent := filepath.Dir(conf.Session.V.(*configuration.SessionFs).Storage)
+		conf.Auditlogs[0].IdentityFile = filepath.Join(parent, "management-signing-key")
+		conf.Auditlogs[0].Recording.Enabled = true
+		conf.Auditlogs[0].Recording.Directory = filepath.Join(parent, "management-recordings")
+	})
+	client, err := gossh.Dial("tcp", server.address, &gossh.ClientConfig{
+		User: server.username, Auth: []gossh.AuthMethod{gossh.PublicKeys(server.signer)},
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(),
+	})
+	require.NoError(t, err)
+	defer client.Close()
+	initial, err := client.NewSession()
+	require.NoError(t, err)
+	_, err = initial.Output("flow ls")
+	require.NoError(t, err)
+	ids, err := server.service.recordingRepositories["default"].native.ListSealed(t.Context())
+	require.NoError(t, err)
+	require.Len(t, ids, 1)
+	sealed := filepath.Join(server.service.Configuration.Auditlogs[0].Recording.Directory, "sealed")
+	require.NoError(t, os.WriteFile(filepath.Join(sealed, "11111111-1111-4111-8111-111111111111.bcast"), []byte("corrupt"), 0600))
+	sess, err := client.NewSession()
+	require.NoError(t, err)
+	output, err := sess.Output("recording show default " + ids[0].String() + " --format=json")
+	require.NoError(t, err)
+	var view management.RecordingView
+	require.NoError(t, json.Unmarshal(output, &view))
+	require.Equal(t, ids[0].String(), view.ID)
+}
