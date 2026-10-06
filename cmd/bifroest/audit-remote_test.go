@@ -90,7 +90,7 @@ func TestRemoteAuditExportDecryptsLocallyFromSignedSnapshot(t *testing.T) {
 				done <- fmt.Errorf("unexpected audit request: %v, %v", args, err)
 				return
 			}
-			err = snapshot.WriteTo(channel)
+			err = snapshot.StreamTo(channel)
 			if err == nil {
 				_, err = channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 			}

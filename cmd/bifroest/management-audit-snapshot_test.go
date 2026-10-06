@@ -23,7 +23,7 @@ func TestManagementAuditSnapshotCanBeVerifiedAndExportedOffline(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, snapshot.Close()) }()
 	var wire bytes.Buffer
-	require.NoError(t, snapshot.WriteTo(&wire))
+	require.NoError(t, snapshot.StreamTo(&wire))
 	copyRoot := t.TempDir()
 	header, err := management.ReadAuditSnapshot(&wire, copyRoot)
 	require.NoError(t, err)
@@ -51,7 +51,7 @@ func TestManagementEncryptedAuditSnapshotNeedsOnlyLocalPrivateKey(t *testing.T) 
 	require.NoError(t, err)
 	defer func() { require.NoError(t, snapshot.Close()) }()
 	var wire bytes.Buffer
-	require.NoError(t, snapshot.WriteTo(&wire))
+	require.NoError(t, snapshot.StreamTo(&wire))
 	root := t.TempDir()
 	header, err := management.ReadAuditSnapshot(&wire, root)
 	require.NoError(t, err)
