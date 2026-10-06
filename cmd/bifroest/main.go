@@ -55,7 +55,15 @@ func main() {
 		remoteCtx, stop := signal.NotifyContext(context.Background(), goos.Interrupt)
 		defer stop()
 		switch ctx.SelectedCommand.FullCommand() {
-		case "audit verify", "audit export", "audit decrypt", "audit merge", "audit producer-id":
+		case "auditlog events":
+			if remoteAuditEventsOpts != nil && remoteAuditEventsOpts.WithSensitive {
+				if err := doRemoteAuditEvents(remoteCtx, target, remoteAuditEventsOpts, goos.Stdout); err != nil {
+					return err
+				}
+				return errRemoteHandled
+			}
+		case "audit verify", "audit export", "audit decrypt", "audit merge", "audit producer-id",
+			"auditlog verify", "auditlog export", "auditlog decrypt", "auditlog merge", "auditlog producer-id":
 			if err := doRemoteAuditCommand(remoteCtx, target, ctx.SelectedCommand.FullCommand(), goos.Stdout); err != nil {
 				return err
 			}

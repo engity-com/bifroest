@@ -23,11 +23,11 @@ type auditMergeOpts struct {
 	withSensitive           bool
 }
 
-var remoteAuditMergeOpts *auditMergeOpts
+var remoteAuditMergeOpts = map[string]*auditMergeOpts{}
 
 func registerAuditMergeCmd(parent *kingpin.CmdClause) {
 	opts := auditMergeOpts{output: "-"}
-	remoteAuditMergeOpts = &opts
+	remoteAuditMergeOpts[parent.FullCommand()] = &opts
 	cmd := parent.Command("merge", "Merge verified audit journals chronologically as JSON Lines.").
 		Action(func(*kingpin.ParseContext) error { return doAuditMerge(&opts, goos.Stdout) })
 	cmd.Flag("configuration", "Configuration file (defaults to "+defaultConfigurationRef+").").Short('c').StringVar(&opts.configurationPath)

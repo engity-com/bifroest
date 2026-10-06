@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	goos "os"
@@ -9,7 +10,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/managementclient"
 )
 
-func doRemoteRecordingCommand(ctx context.Context, target *managementTarget, command string, output io.Writer) error {
+func doRemoteRecordingCommand(ctx context.Context, target *managementTarget, command string, output io.Writer) (resultErr error) {
 	if target == nil {
 		return fmt.Errorf("a remote target is required")
 	}
@@ -19,19 +20,19 @@ func doRemoteRecordingCommand(ctx context.Context, target *managementTarget, com
 	switch command {
 	case "recording verify":
 		if remoteRecordingVerifyOpts == nil {
-			return fmt.Errorf("Recording verification is not registered")
+			return fmt.Errorf("recording verification is not registered")
 		}
 		opts := remoteRecordingVerifyOpts
 		auditlog, id, expected, configurationPath, identities = opts.file, opts.recordingId, opts.expectedProducerId, opts.configuration, opts.decryptionIdentityFiles
 	case "recording export":
 		if remoteRecordingExportOpts == nil {
-			return fmt.Errorf("Recording export is not registered")
+			return fmt.Errorf("recording export is not registered")
 		}
 		opts := remoteRecordingExportOpts
 		auditlog, id, expected, configurationPath, identities, allowUntrusted = opts.file, opts.recordingId, opts.expectedProducerId, opts.configuration, opts.decryptionIdentityFiles, opts.allowUntrusted
 	case "recording play":
 		if remoteRecordingPlayOpts == nil {
-			return fmt.Errorf("Recording playback is not registered")
+			return fmt.Errorf("recording playback is not registered")
 		}
 		opts := remoteRecordingPlayOpts
 		auditlog, id, expected, configurationPath, identities, allowUntrusted = opts.file, opts.recordingId, opts.expectedProducerId, opts.configuration, opts.decryptionIdentityFiles, opts.allowUntrusted
@@ -65,8 +66,12 @@ func doRemoteRecordingCommand(ctx context.Context, target *managementTarget, com
 	if err != nil {
 		return err
 	}
-	defer goos.Remove(artifact.Name())
-	defer artifact.Close()
+	defer func() {
+		if err := artifact.Close(); err != nil && !errors.Is(err, goos.ErrClosed) {
+			resultErr = errors.Join(resultErr, err)
+		}
+		resultErr = errors.Join(resultErr, goos.Remove(artifact.Name()))
+	}()
 	header, err := managementclient.DownloadRecording(ctx, remote, auditlog, id, artifact)
 	if err != nil {
 		return err

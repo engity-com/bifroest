@@ -19,10 +19,10 @@ ssh management@bifroest.example.org 'auditlog ls'
 | --- | --- | --- |
 | `session` | `ls`, `show <id>` | `ls` defaults to authorized, non-expired sessions; use `--state=all`, `--flow` and `--user` for more. |
 | `flow` | `ls`, `show <name>` | Settings are redacted unless that management flow explicitly enables `includingCredentials`. |
-| `auditlog` | `ls`, `show <name>`, `events <name>` | `events` is signature-verified; private fields require `--with-sensitive`. |
-| `recording` | `ls <auditlog>`, `show <auditlog> <id>`, `play` | An encrypted Recording reports outer verification until the matching local private key is supplied for full verification and playback. |
+| `auditlog` | `ls`, `show <name>`, `events <name>`, `producer-id`, `verify`, `export`, `decrypt`, `merge` | `events` is signature-verified; private fields require `--with-sensitive`. The older `audit` subject remains an alias for the artifact commands. |
+| `recording` | `ls <auditlog>`, `show <auditlog> <id>`, `verify`, `export`, `play` | An encrypted Recording reports outer verification until the matching local private key is supplied for full verification, export and playback. |
 
-Lists display tables and detail commands display key/value lists by default. Use `--format=json` or `--format=yaml` for structured output. This is independent of the existing `--output` flag, which chooses an export **file**. Local `audit verify/export/merge` and `recording verify/export` commands remain available. Remote Recording `verify`, `export`, and `play` use an SSH transfer of the signed original, verify it on the CLI machine, and never transmit a decryption private key to the server. `recording play` and export require `--with-sensitive`.
+Lists display tables and detail commands display key/value lists by default. Use `--format=json` or `--format=yaml` for structured output. This is independent of the existing `--output` flag, which chooses an export **file**. Local `audit verify/export/merge` and `recording verify/export` commands remain available. Remote audit verification/export copies a signed journal checkpoint and verifies it on the CLI machine. Remote Recording `verify`, `export`, and `play` copy the signed original and verify it there. Neither operation transmits a decryption private key to the server. `recording play` and export require `--with-sensitive`.
 
 Local file inputs, such as `audit verify --source ./journal` and `recording verify ./file.becast`, are not remote paths. Use a configured auditlog and Recording ID for remote selection. Output files and decryption-key files always refer to the CLI machine.
 
@@ -41,9 +41,19 @@ Host bifroest-admin
     HostName bifroest.example.org
     User management
     X-RecordingPrivateKey ~/.ssh/bifroest-recording-decryption
+    X-AuditPrivateKey ~/.ssh/bifroest-audit-decryption
     X-ExpectedProducerId 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
-`X-RecordingPrivateKey` names a **local** private-key file; `X-ExpectedProducerId` pins an independently trusted audit/Recording signing producer ID. Both can be overridden with command-specific flags. Keep signing and encryption keys distinct and retain producer IDs independently of copied evidence. A server-supplied ID is not a trust anchor.
+`X-RecordingPrivateKey` names a **local** private-key file. For encrypted audits, use `X-AuditPrivateKey` in the same `Host` block or supply `--decryptionIdentityFile` to the command. `X-ExpectedProducerId` pins an independently trusted audit/Recording signing producer ID; artifact commands also accept `--expectedProducerId`. Keep signing and encryption keys distinct and retain producer IDs independently of copied evidence. A server-supplied ID is not a trust anchor.
 
 Without a matching private key, encrypted audit events and Recordings expose only their verified public/outer metadata. Direct SSH sessions cannot use a private key kept only on a separate CLI machine.
+
+```shell
+bifroest @bifroest-admin auditlog verify default
+bifroest @bifroest-admin auditlog export --with-sensitive default
+bifroest @bifroest-admin recording play --with-sensitive default RECORDING_UUID
+ssh management@bifroest.example.org 'recording verify default RECORDING_UUID'
+```
+
+Direct SSH can export/play unencrypted Recordings with `--with-sensitive`. For encrypted content, use the Bifröst client with a local decryption key. Encrypted audit journals work similarly: direct SSH remains keyless; the CLI downloads a signed checkpoint and decrypts it locally. A remote audit checkpoint is currently limited to **1 GiB** of signed journal files; recordings use the existing native-format size limit. The snapshot is verified both before transport and again on the client. A live journal that changes while it is copied may require a retry.

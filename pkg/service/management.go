@@ -155,7 +155,7 @@ func (this *service) runManagementArgs(task environment.Task, includingCredentia
 		return &this.Configuration, nil
 	}, task.SshSession(), includingCredentials, false)
 	management.RegisterSessionCommands(app, management.SessionSourceFromRepository(this.sessions), task.Context(), task.SshSession(), task.SshSession().Stderr(), false)
-	management.RegisterAuditlogCommands(app, func(path string) (*configuration.Configuration, error) {
+	auditlogCommands, _ := management.RegisterAuditlogCommands(app, func(path string) (*configuration.Configuration, error) {
 		if path != "" {
 			return nil, fmt.Errorf("remote management commands do not accept local configuration files")
 		}
@@ -170,7 +170,10 @@ func (this *service) runManagementArgs(task environment.Task, includingCredentia
 		}
 		return management.ReadAuditEvents(ctx, &this.Configuration, name, identity.ProducerId(), sensitive, nil)
 	}, task.Context(), task.SshSession(), false)
-	management.RegisterRecordingCommands(app.Command("recording", "Inspect sealed session recordings."), func(ctx context.Context, path string, name configuration.AuditlogName) ([]management.RecordingView, error) {
+	this.registerManagementAuditCommands(auditlogCommands, task)
+	this.registerManagementAuditCommands(app.Command("audit", "Inspect signed audit journals."), task)
+	recordingCommands := app.Command("recording", "Inspect sealed session recordings.")
+	management.RegisterRecordingCommands(recordingCommands, func(ctx context.Context, path string, name configuration.AuditlogName) ([]management.RecordingView, error) {
 		if path != "" {
 			return nil, fmt.Errorf("remote recording commands cannot read local configuration files")
 		}
@@ -199,6 +202,7 @@ func (this *service) runManagementArgs(task environment.Task, includingCredentia
 		}
 		return entries, nil
 	}, task.Context(), task.SshSession(), false)
+	this.registerManagementRecordingCommands(recordingCommands, task)
 	if _, err := app.Parse(args); err != nil {
 		_, _ = fmt.Fprintln(task.SshSession().Stderr(), err)
 		return 1, nil

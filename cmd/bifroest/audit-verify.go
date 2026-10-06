@@ -25,11 +25,11 @@ type auditVerifyOpts struct {
 	requireFull             bool
 }
 
-var remoteAuditVerifyOpts *auditVerifyOpts
+var remoteAuditVerifyOpts = map[string]*auditVerifyOpts{}
 
 func registerAuditVerifyCmd(parent *kingpin.CmdClause) {
 	opts := auditVerifyOpts{}
-	remoteAuditVerifyOpts = &opts
+	remoteAuditVerifyOpts[parent.FullCommand()] = &opts
 	cmd := parent.Command("verify", "Verify an audit journal without modifying it.").
 		Action(func(*kingpin.ParseContext) error { return doAuditVerifyOutput(&opts, goos.Stdout) })
 	cmd.Flag("configuration", "Configuration file (defaults to "+defaultConfigurationRef+" without --source).").

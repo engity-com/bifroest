@@ -17,11 +17,11 @@ type auditProducerIdOpts struct {
 	auditlog          configuration.AuditlogName
 }
 
-var remoteAuditProducerIdOpts *auditProducerIdOpts
+var remoteAuditProducerIdOpts = map[string]*auditProducerIdOpts{}
 
 func registerAuditProducerIdCmd(parent *kingpin.CmdClause) {
 	opts := auditProducerIdOpts{}
-	remoteAuditProducerIdOpts = &opts
+	remoteAuditProducerIdOpts[parent.FullCommand()] = &opts
 	cmd := parent.Command("producer-id", "Print the producer ID from a configured local audit signing key.").
 		Action(func(*kingpin.ParseContext) error { return doAuditProducerId(&opts, goos.Stdout) })
 	cmd.Flag("configuration", "Configuration file (defaults to "+defaultConfigurationRef+").").Short('c').StringVar(&opts.configurationPath)

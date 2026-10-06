@@ -1,17 +1,15 @@
 package main
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	goos "os"
-	"strings"
-	"time"
 
 	"github.com/alecthomas/kingpin/v2"
+
+	"github.com/engity-com/bifroest/pkg/management"
 )
 
 type recordingPlayOpts struct {
@@ -55,63 +53,7 @@ func doRecordingPlay(ctx context.Context, opts *recordingPlayOpts, output io.Wri
 		_ = writer.CloseWithError(err)
 		done <- err
 	}()
-	playErr := playAsciicast(ctx, reader, output, opts.speed)
+	playErr := management.PlayAsciicast(ctx, reader, output, opts.speed)
 	_ = reader.CloseWithError(playErr)
 	return errors.Join(playErr, <-done)
-}
-
-func playAsciicast(ctx context.Context, source io.Reader, output io.Writer, speed float64) error {
-	scanner := bufio.NewScanner(source)
-	scanner.Buffer(make([]byte, 64<<10), 1<<20)
-	if !scanner.Scan() {
-		if err := scanner.Err(); err != nil {
-			return err
-		}
-		return fmt.Errorf("recording is empty")
-	}
-	var header struct {
-		Version int `json:"version"`
-	}
-	if err := json.Unmarshal(scanner.Bytes(), &header); err != nil {
-		return fmt.Errorf("invalid asciicast header: %w", err)
-	}
-	if header.Version != 3 {
-		return fmt.Errorf("unsupported asciicast version %d", header.Version)
-	}
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "#") || line == "" {
-			continue
-		}
-		var event []json.RawMessage
-		if err := json.Unmarshal([]byte(line), &event); err != nil || len(event) != 3 {
-			return fmt.Errorf("invalid asciicast event: %v", err)
-		}
-		var elapsed float64
-		var kind, value string
-		if err := json.Unmarshal(event[0], &elapsed); err != nil || elapsed < 0 || elapsed > 365*24*60*60 {
-			return fmt.Errorf("invalid asciicast event time")
-		}
-		if err := json.Unmarshal(event[1], &kind); err != nil {
-			return err
-		}
-		if err := json.Unmarshal(event[2], &value); err != nil {
-			return err
-		}
-		if delay := time.Duration(elapsed / speed * float64(time.Second)); delay > 0 {
-			timer := time.NewTimer(delay)
-			select {
-			case <-timer.C:
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			}
-		}
-		if kind == "o" {
-			if _, err := io.WriteString(output, value); err != nil {
-				return err
-			}
-		}
-	}
-	return scanner.Err()
 }
