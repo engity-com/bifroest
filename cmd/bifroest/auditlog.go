@@ -9,5 +9,5 @@ import (
 )
 
 var _ = registerCommand(func(app *kingpin.Application) {
-	management.RegisterFlowCommands(app, loadManagementConfiguration, goos.Stdout, false, true)
+	management.RegisterAuditlogCommands(app, loadManagementConfiguration, goos.Stdout, true)
 })

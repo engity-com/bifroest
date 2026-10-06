@@ -152,7 +152,7 @@ func Run(ctx context.Context, target Target, args []string, output io.Writer) (r
 	if err != nil {
 		return err
 	}
-	if len(wireArgs) < 2 || wireArgs[0] != "flow" && wireArgs[0] != "session" {
+	if len(wireArgs) < 2 || wireArgs[0] != "flow" && wireArgs[0] != "session" && wireArgs[0] != "auditlog" {
 		return fmt.Errorf("remote command %q is not yet supported", args[0])
 	}
 	for _, arg := range wireArgs {
@@ -238,6 +238,18 @@ func Run(ctx context.Context, target Target, args []string, output io.Writer) (r
 		return fmt.Errorf("remote management command failed: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	switch wireArgs[0] + " " + wireArgs[1] {
+	case "auditlog ls":
+		var entries []management.AuditlogSummary
+		if err := management.DecodeWireResult(&stdout, &entries); err != nil {
+			return err
+		}
+		return management.WriteAuditlogList(output, format, entries)
+	case "auditlog show":
+		var settings map[string]any
+		if err := management.DecodeWireResult(&stdout, &settings); err != nil {
+			return err
+		}
+		return management.WriteFlowSettings(output, format, settings)
 	case "flow ls":
 		var entries []management.FlowSummary
 		if err := management.DecodeWireResult(&stdout, &entries); err != nil {
