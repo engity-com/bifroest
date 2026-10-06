@@ -10,6 +10,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/management"
 )
 
 type auditMergeOpts struct {
@@ -28,7 +29,7 @@ var remoteAuditMergeOpts = map[string]*auditMergeOpts{}
 func registerAuditMergeCmd(parent *kingpin.CmdClause) {
 	opts := auditMergeOpts{output: "-"}
 	remoteAuditMergeOpts[parent.FullCommand()] = &opts
-	cmd := parent.Command("merge", "Merge verified audit journals chronologically as JSON Lines.").
+	cmd := management.AuditArtifactCommand(parent, "merge").
 		Action(func(*kingpin.ParseContext) error { return doAuditMerge(&opts, goos.Stdout) })
 	cmd.Flag("configuration", "Configuration file (defaults to "+defaultConfigurationRef+").").Short('c').StringVar(&opts.configurationPath)
 	registerAuditOutputFlags(cmd, &opts.output, &opts.force)

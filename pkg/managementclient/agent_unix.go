@@ -15,6 +15,9 @@ func connectAgent(identityAgent string) (agent.Agent, io.Closer, error) {
 	if identityAgent == "none" {
 		return nil, nil, nil
 	}
+	if identityAgent == "pageant" {
+		return nil, nil, fmt.Errorf("pageant is only available on Windows")
+	}
 	path := identityAgent
 	if path == "" {
 		path = os.Getenv("SSH_AUTH_SOCK")

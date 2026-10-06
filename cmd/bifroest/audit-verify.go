@@ -12,6 +12,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/management"
 )
 
 type auditVerifyOpts struct {
@@ -30,7 +31,7 @@ var remoteAuditVerifyOpts = map[string]*auditVerifyOpts{}
 func registerAuditVerifyCmd(parent *kingpin.CmdClause) {
 	opts := auditVerifyOpts{}
 	remoteAuditVerifyOpts[parent.FullCommand()] = &opts
-	cmd := parent.Command("verify", "Verify an audit journal without modifying it.").
+	cmd := management.AuditArtifactCommand(parent, "verify").
 		Action(func(*kingpin.ParseContext) error { return doAuditVerifyOutput(&opts, goos.Stdout) })
 	cmd.Flag("configuration", "Configuration file (defaults to "+defaultConfigurationRef+" without --source).").
 		Short('c').PlaceHolder("<path>").StringVar(&opts.configurationPath)
@@ -40,7 +41,7 @@ func registerAuditVerifyCmd(parent *kingpin.CmdClause) {
 		PlaceHolder("<path>").StringVar(&opts.encryptionPublicKeyFile)
 	registerAuditDecryptionIdentityFlags(cmd, &opts.decryptionIdentityFiles)
 	registerAuditTrustAnchorFlags(cmd, &opts.expectedProducerIds)
-	cmd.Flag("require-full", "Require decryption and full verification of encrypted audit records.").BoolVar(&opts.requireFull)
+	management.RequireFullVerificationFlag(cmd, &opts.requireFull)
 	cmd.Arg("auditlogName", "Configured auditlog, or optional label for an offline journal (default: default).").SetValue(&opts.auditlog)
 }
 

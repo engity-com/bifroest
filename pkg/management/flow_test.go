@@ -67,3 +67,25 @@ func TestFlowRedactionHandlesNestedEntries(t *testing.T) {
 	require.Contains(t, output.String(), "authorization.entries[0].name")
 	require.NotContains(t, output.String(), "PRIVATE_FILE")
 }
+
+func TestFlowShowRedactsConfiguredSimplePassword(t *testing.T) {
+	var conf configuration.Configuration
+	require.NoError(t, conf.LoadFromYaml(strings.NewReader(`
+flows:
+  - name: demonstration
+    authorization:
+      type: simple
+      entries:
+        - name: bob
+          password: plain:super-secret-password
+    environment:
+      type: dummy
+`), "flow-with-password.yaml"))
+	var output bytes.Buffer
+	require.NoError(t, ShowFlow(&output, FormatJSON, &conf, "demonstration", false))
+	require.NotContains(t, output.String(), "super-secret-password")
+	require.Contains(t, output.String(), "***redacted***")
+	output.Reset()
+	require.NoError(t, ShowFlow(&output, FormatJSON, &conf, "demonstration", true))
+	require.Contains(t, output.String(), "super-secret-password")
+}

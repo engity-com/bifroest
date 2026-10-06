@@ -16,6 +16,12 @@ func connectAgent(identityAgent string) (agent.Agent, io.Closer, error) {
 	if identityAgent == "none" {
 		return nil, nil, nil
 	}
+	if identityAgent == "pageant" {
+		if !pageantAvailable() {
+			return nil, nil, fmt.Errorf("configured Pageant SSH agent is not running")
+		}
+		return agent.NewClient(&pageantConnection{}), nil, nil
+	}
 	path := identityAgent
 	if path == "" {
 		path = defaultWindowsAgent

@@ -101,6 +101,16 @@ func resolve(target Target) (settings, error) {
 	if err != nil {
 		return settings{}, err
 	}
+	preferredAgent, err := lookup("X-SSHAgent")
+	if err != nil {
+		return settings{}, err
+	}
+	if preferredAgent != "" {
+		if preferredAgent != "pageant" || agentPath != "" {
+			return settings{}, fmt.Errorf("custom X-SSHAgent supports only pageant and cannot be combined with IdentityAgent")
+		}
+		agentPath = preferredAgent
+	}
 	knownHostsConfig, err := lookup("UserKnownHostsFile")
 	if err != nil {
 		return settings{}, err

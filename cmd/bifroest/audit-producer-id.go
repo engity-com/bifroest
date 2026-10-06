@@ -9,6 +9,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/management"
 )
 
 type auditProducerIdOpts struct {
@@ -22,7 +23,7 @@ var remoteAuditProducerIdOpts = map[string]*auditProducerIdOpts{}
 func registerAuditProducerIdCmd(parent *kingpin.CmdClause) {
 	opts := auditProducerIdOpts{}
 	remoteAuditProducerIdOpts[parent.FullCommand()] = &opts
-	cmd := parent.Command("producer-id", "Print the producer ID from a configured local audit signing key.").
+	cmd := management.AuditArtifactCommand(parent, "producer-id").
 		Action(func(*kingpin.ParseContext) error { return doAuditProducerId(&opts, goos.Stdout) })
 	cmd.Flag("configuration", "Configuration file (defaults to "+defaultConfigurationRef+").").Short('c').StringVar(&opts.configurationPath)
 	cmd.Arg("auditlogName", "Configured auditlog whose signing identity to inspect.").Required().SetValue(&opts.auditlog)

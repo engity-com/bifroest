@@ -33,8 +33,8 @@ func (this *service) openManagementRecording(ctx context.Context, auditlogName s
 func (this *service) registerManagementRecordingCommands(parent *kingpin.CmdClause, task environment.Task) {
 	var verifyName, verifyID string
 	var requireFull bool
-	verify := parent.Command("verify", "Verify a signed sealed Recording.")
-	verify.Flag("require-full", "Fail if encrypted content cannot be verified without a local private key.").BoolVar(&requireFull)
+	verify := management.RecordingArtifactCommand(parent, "verify")
+	management.RequireFullVerificationFlag(verify, &requireFull)
 	verify.Arg("auditlog", "Configured auditlog name.").Required().StringVar(&verifyName)
 	verify.Arg("recordingId", "Recording UUID.").Required().StringVar(&verifyID)
 	verify.Action(func(*kingpin.ParseContext) error {
@@ -57,8 +57,8 @@ func (this *service) registerManagementRecordingCommands(parent *kingpin.CmdClau
 		var name, id string
 		var withSensitive bool
 		speed := float64(1)
-		cmd := parent.Command(verb, "Export or play a signed clear Recording (encrypted content requires a local private key).")
-		cmd.Flag("with-sensitive", "Allow output of potentially sensitive terminal content.").BoolVar(&withSensitive)
+		cmd := management.RecordingArtifactCommand(parent, verb)
+		management.RecordingSensitiveFlag(cmd, &withSensitive)
 		if verb == "play" {
 			cmd.Flag("speed", "Playback speed multiplier (positive, at most 100).").Default("1").Float64Var(&speed)
 		}

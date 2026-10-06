@@ -14,6 +14,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/management"
 	"github.com/engity-com/bifroest/pkg/recording"
 )
 
@@ -35,11 +36,10 @@ var remoteRecordingExportOpts *recordingExportOpts
 func registerRecordingExportCmd(parent *kingpin.CmdClause) {
 	opts := recordingExportOpts{output: "-"}
 	remoteRecordingExportOpts = &opts
-	cmd := parent.Command("export", "Verify and export a session Recording as asciicast v3.").
+	cmd := management.RecordingArtifactCommand(parent, "export").
 		Action(func(*kingpin.ParseContext) error { return doRecordingExport(&opts, stdos.Stdout) })
 	registerAuditOutputFlags(cmd, &opts.output, &opts.force)
-	cmd.Flag("with-sensitive", "Explicitly authorize exporting sensitive Recording content.").
-		BoolVar(&opts.withSensitive)
+	management.RecordingSensitiveFlag(cmd, &opts.withSensitive)
 	cmd.Flag("configuration", "Configuration for a local Recording (defaults to "+defaultConfigurationRef+").").
 		Short('c').PlaceHolder("<path>").
 		StringVar(&opts.configuration)
