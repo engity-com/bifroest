@@ -53,7 +53,7 @@ func DownloadRecording(ctx context.Context, target Target, auditlogName string, 
 	if err != nil {
 		return management.RecordingArtifactHeader{}, err
 	}
-	var stderr bytes.Buffer
+	var stderr diagnosticOutput
 	sess.Stderr = &stderr
 	request, err := management.EncodeWireRequest([]string{"recording", name.String(), id.String()})
 	if err != nil {
