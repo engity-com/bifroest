@@ -7,6 +7,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/fxamacker/cbor/v2"
 	"gopkg.in/yaml.v3"
 )
 
@@ -16,7 +17,34 @@ const (
 	FormatTable Format = "table"
 	FormatJSON  Format = "json"
 	FormatYAML  Format = "yaml"
+	// FormatCBOR is used only inside the versioned SSH management exchange.
+	FormatCBOR Format = "cbor"
 )
+
+const MaxWireResultBytes = 16 << 20
+
+type wireResult struct {
+	Version uint8           `cbor:"1,keyasint"`
+	Payload cbor.RawMessage `cbor:"2,keyasint"`
+}
+
+func DecodeWireResult(input io.Reader, target any) error {
+	data, err := io.ReadAll(io.LimitReader(input, MaxWireResultBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(data) > MaxWireResultBytes {
+		return fmt.Errorf("management response exceeds %d bytes", MaxWireResultBytes)
+	}
+	var frame wireResult
+	if err := cbor.Unmarshal(data, &frame); err != nil {
+		return err
+	}
+	if frame.Version != 1 || len(frame.Payload) == 0 {
+		return fmt.Errorf("unsupported or empty management response")
+	}
+	return cbor.Unmarshal(frame.Payload, target)
+}
 
 type Field struct {
 	Name  string
@@ -87,6 +115,23 @@ func writeStructured(output io.Writer, format Format, value any) error {
 		return encoder.Encode(value)
 	case FormatYAML:
 		return yaml.NewEncoder(output).Encode(value)
+	case FormatCBOR:
+		payload, err := cbor.Marshal(value)
+		if err != nil {
+			return err
+		}
+		encoded, err := cbor.Marshal(wireResult{Version: 1, Payload: payload})
+		if err != nil {
+			return err
+		}
+		if len(encoded) > MaxWireResultBytes {
+			return fmt.Errorf("management response exceeds %d bytes", MaxWireResultBytes)
+		}
+		written, err := output.Write(encoded)
+		if err == nil && written != len(encoded) {
+			return io.ErrShortWrite
+		}
+		return err
 	default:
 		return fmt.Errorf("unsupported output format %q", format)
 	}

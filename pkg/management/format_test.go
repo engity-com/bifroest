@@ -3,6 +3,7 @@ package management
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"strings"
 	"testing"
 
@@ -44,4 +45,20 @@ func TestManagementOutputFormats(t *testing.T) {
 	require.Equal(t, 2, strings.Count(output.String(), "\n"))
 	require.ErrorContains(t, WriteList(&output, FormatTable, []string{"NAME"}, [][]string{{"one", "two"}}, entries), "instead of")
 	require.ErrorContains(t, WriteDetail(&output, "xml", nil, entries), "unsupported output format")
+}
+
+func TestManagementCBORResultHasVersionAndBounds(t *testing.T) {
+	type data struct {
+		Name string `cbor:"name"`
+	}
+	var output bytes.Buffer
+	require.NoError(t, WriteDetail(&output, FormatCBOR, nil, data{Name: "secure"}))
+	var decoded data
+	require.NoError(t, DecodeWireResult(&output, &decoded))
+	require.Equal(t, data{Name: "secure"}, decoded)
+	require.Error(t, DecodeWireResult(bytes.NewReader(bytes.Repeat([]byte{0}, MaxWireResultBytes+1)), &decoded))
+	require.Error(t, DecodeWireResult(bytes.NewReader([]byte{0xff}), &decoded))
+	output.Reset()
+	require.Error(t, DecodeWireResult(&output, &decoded))
+	require.NoError(t, WriteDetail(io.Discard, FormatCBOR, nil, decoded))
 }
