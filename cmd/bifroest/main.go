@@ -55,6 +55,11 @@ func main() {
 		remoteCtx, stop := signal.NotifyContext(context.Background(), goos.Interrupt)
 		defer stop()
 		switch ctx.SelectedCommand.FullCommand() {
+		case "audit verify", "audit export", "audit decrypt", "audit merge", "audit producer-id":
+			if err := doRemoteAuditCommand(remoteCtx, target, ctx.SelectedCommand.FullCommand(), goos.Stdout); err != nil {
+				return err
+			}
+			return errRemoteHandled
 		case "recording verify", "recording export", "recording play":
 			if err := doRemoteRecordingCommand(remoteCtx, target, ctx.SelectedCommand.FullCommand(), goos.Stdout); err != nil {
 				return err

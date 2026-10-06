@@ -12,21 +12,34 @@ import (
 )
 
 type auditProducerIdOpts struct {
-	configuration configuration.Ref
-	auditlog      configuration.AuditlogName
+	configuration     configuration.Ref
+	configurationPath string
+	auditlog          configuration.AuditlogName
 }
+
+var remoteAuditProducerIdOpts *auditProducerIdOpts
 
 func registerAuditProducerIdCmd(parent *kingpin.CmdClause) {
 	opts := auditProducerIdOpts{}
+	remoteAuditProducerIdOpts = &opts
 	cmd := parent.Command("producer-id", "Print the producer ID from a configured local audit signing key.").
 		Action(func(*kingpin.ParseContext) error { return doAuditProducerId(&opts, goos.Stdout) })
-	registerConfigurationFlag(cmd, &opts.configuration)
+	cmd.Flag("configuration", "Configuration file (defaults to "+defaultConfigurationRef+").").Short('c').StringVar(&opts.configurationPath)
 	cmd.Arg("auditlogName", "Configured auditlog whose signing identity to inspect.").Required().SetValue(&opts.auditlog)
 }
 
 func doAuditProducerId(opts *auditProducerIdOpts, output io.Writer) error {
 	if opts == nil || output == nil {
 		return fmt.Errorf("missing audit producer ID options or output")
+	}
+	if opts.configurationPath != "" || len(opts.configuration.Get().Auditlogs) == 0 {
+		path := opts.configurationPath
+		if path == "" {
+			path = defaultConfigurationRef
+		}
+		if err := opts.configuration.Set(path); err != nil {
+			return err
+		}
 	}
 	configured, err := findConfiguredAuditlog(opts.configuration.Get(), opts.auditlog)
 	if err != nil {

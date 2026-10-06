@@ -14,6 +14,7 @@ import (
 
 type auditMergeOpts struct {
 	configuration           configuration.Ref
+	configurationPath       string
 	auditlogs               []string
 	output                  string
 	force                   bool
@@ -22,11 +23,14 @@ type auditMergeOpts struct {
 	withSensitive           bool
 }
 
+var remoteAuditMergeOpts *auditMergeOpts
+
 func registerAuditMergeCmd(parent *kingpin.CmdClause) {
 	opts := auditMergeOpts{output: "-"}
+	remoteAuditMergeOpts = &opts
 	cmd := parent.Command("merge", "Merge verified audit journals chronologically as JSON Lines.").
 		Action(func(*kingpin.ParseContext) error { return doAuditMerge(&opts, goos.Stdout) })
-	registerConfigurationFlag(cmd, &opts.configuration)
+	cmd.Flag("configuration", "Configuration file (defaults to "+defaultConfigurationRef+").").Short('c').StringVar(&opts.configurationPath)
 	registerAuditOutputFlags(cmd, &opts.output, &opts.force)
 	registerAuditDecryptionIdentityFlags(cmd, &opts.decryptionIdentityFiles)
 	registerAuditTrustAnchorFlags(cmd, &opts.expectedProducerIds)
@@ -39,6 +43,15 @@ func doAuditMerge(opts *auditMergeOpts, stdout io.Writer) error {
 		return fmt.Errorf("nil options")
 	}
 	configured := make([]*configuration.Auditlog, 0, len(opts.auditlogs))
+	if opts.configurationPath != "" || len(opts.configuration.Get().Auditlogs) == 0 {
+		path := opts.configurationPath
+		if path == "" {
+			path = defaultConfigurationRef
+		}
+		if err := opts.configuration.Set(path); err != nil {
+			return err
+		}
+	}
 	conf := opts.configuration.Get()
 	for _, rawName := range opts.auditlogs {
 		name := configuration.AuditlogName(rawName)

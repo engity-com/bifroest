@@ -15,7 +15,7 @@ import (
 )
 
 func RecordingPrivateKey(target Target) (string, error) {
-	path, err := ssh_config.GetStrict(target.Host, "X-RecordingPrivateKey")
+	path, err := sshConfigValue(target.Host, "X-RecordingPrivateKey")
 	if err != nil || path == "" {
 		return "", err
 	}
@@ -23,7 +23,11 @@ func RecordingPrivateKey(target Target) (string, error) {
 }
 
 func ExpectedRecordingProducerID(target Target) (string, error) {
-	return ssh_config.GetStrict(target.Host, "X-ExpectedProducerId")
+	return sshConfigValue(target.Host, "X-ExpectedProducerId")
+}
+
+func sshConfigValue(host, key string) (string, error) {
+	return ssh_config.GetStrict(host, key)
 }
 
 func DownloadRecording(ctx context.Context, target Target, auditlogName string, recordingID string, output io.Writer) (management.RecordingArtifactHeader, error) {

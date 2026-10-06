@@ -54,6 +54,13 @@ func (this *service) RunManagementCommand(task environment.Task, includingCreden
 		}
 		return this.streamManagementRecording(task, args)
 	}
+	if raw == management.WireAuditCommand {
+		args, err := management.DecodeWireRequest(task.SshSession())
+		if err != nil {
+			return -1, err
+		}
+		return this.streamManagementAudit(task, args)
+	}
 	if len(raw) > 16<<10 || !utf8.ValidString(raw) || strings.ContainsRune(raw, 0) {
 		return -1, fmt.Errorf("invalid management command")
 	}
@@ -62,6 +69,48 @@ func (this *service) RunManagementCommand(task environment.Task, includingCreden
 		return -1, fmt.Errorf("invalid management command: %w", err)
 	}
 	return this.runManagementArgs(task, includingCredentials, args)
+}
+
+func (this *service) streamManagementAudit(task environment.Task, args []string) (int, error) {
+	if len(args) != 2 || args[0] != "auditlog" {
+		return -1, fmt.Errorf("audit snapshot requires an auditlog name")
+	}
+	name := configuration.AuditlogName(args[1])
+	if err := name.Validate(); err != nil {
+		return -1, err
+	}
+	identity := this.auditIdentities[name]
+	if identity == nil {
+		return -1, fmt.Errorf("auditlog %q has no active signing identity", name)
+	}
+	for _, conf := range this.Configuration.Auditlogs {
+		if conf.Name != name {
+			continue
+		}
+		if !conf.Enabled {
+			return -1, fmt.Errorf("auditlog %q is disabled", name)
+		}
+		key, err := audit.ResolveEncryptionPublicKey(conf.EncryptionPublicKey, conf.EncryptionPublicKeyFile)
+		if err != nil {
+			return -1, err
+		}
+		recipient, err := audit.EncryptionRecipientFingerprint(key)
+		if err != nil {
+			return -1, err
+		}
+		snapshot, err := management.SnapshotAudit(task.Context(), audit.JournalSource{
+			Name: name.String(), Directory: conf.Directory, ExpectedProducerId: identity.ProducerId(), ExpectedEncryptionRecipient: recipient,
+		})
+		if err != nil {
+			return -1, err
+		}
+		defer snapshot.Close()
+		if err := snapshot.WriteTo(task.SshSession()); err != nil {
+			return -1, err
+		}
+		return 0, nil
+	}
+	return -1, fmt.Errorf("auditlog %q does not exist", name)
 }
 
 func (this *service) streamManagementRecording(task environment.Task, args []string) (int, error) {
