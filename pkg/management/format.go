@@ -61,6 +61,10 @@ type VerificationView struct {
 	Scope    string `json:"scope" yaml:"scope"`
 }
 
+type ProducerView struct {
+	ProducerID string `json:"producerId" yaml:"producerId"`
+}
+
 func WriteVerification(output io.Writer, format Format, scope string) error {
 	if format == FormatTable {
 		_, err := fmt.Fprintf(output, "verified (scope: %s)\n", scope)
@@ -74,9 +78,7 @@ func WriteProducerID(output io.Writer, format Format, id string) error {
 		_, err := fmt.Fprintln(output, id)
 		return err
 	}
-	return writeStructured(output, format, struct {
-		ProducerID string `json:"producerId" yaml:"producerId"`
-	}{id})
+	return writeStructured(output, format, ProducerView{ProducerID: id})
 }
 
 func WriteList(output io.Writer, format Format, columns []string, rows [][]string, structured any) error {

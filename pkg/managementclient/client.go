@@ -214,6 +214,12 @@ func Run(ctx context.Context, target Target, args []string, output io.Writer) er
 		return fmt.Errorf("remote management command failed: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	switch wireArgs[0] + " " + wireArgs[1] {
+	case "auditlog producer-id":
+		var producer management.ProducerView
+		if err := management.DecodeWireResult(bytes.NewReader(stdout), &producer); err != nil {
+			return err
+		}
+		return management.WriteProducerID(output, format, producer.ProducerID)
 	case "recording ls":
 		var entries []management.RecordingView
 		if err := management.DecodeWireResult(bytes.NewReader(stdout), &entries); err != nil {
