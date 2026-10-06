@@ -176,11 +176,27 @@ func redactFlowSettings(settings map[string]any) {
 		case map[string]any:
 			redactFlowSettings(nested)
 		case []any:
-			for _, entry := range nested {
-				if mapping, ok := entry.(map[string]any); ok {
-					redactFlowSettings(mapping)
-				}
+			redactFlowEntries(nested)
+		case string:
+			// Arbitrary configuration strings (including commands, URLs and
+			// templates) can contain credentials without a secret-looking key.
+			// Only structural names are safe to show by default.
+			if lower != "name" && lower != "type" && lower != "auditlog" {
+				settings[key] = "***redacted***"
 			}
+		}
+	}
+}
+
+func redactFlowEntries(entries []any) {
+	for index, entry := range entries {
+		switch value := entry.(type) {
+		case map[string]any:
+			redactFlowSettings(value)
+		case []any:
+			redactFlowEntries(value)
+		case string:
+			entries[index] = "***redacted***"
 		}
 	}
 }

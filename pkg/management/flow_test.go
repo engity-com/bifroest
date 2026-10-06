@@ -54,13 +54,15 @@ func TestFlowCommandsRedactCredentialsInAllFormats(t *testing.T) {
 func TestFlowRedactionHandlesNestedEntries(t *testing.T) {
 	settings := map[string]any{
 		"authorization": map[string]any{"entries": []any{map[string]any{"passwordFile": "PRIVATE_FILE", "name": "alice"}}},
-		"environment":   map[string]any{"imagePullCredentials": "PULL_SECRET", "image": "alpine"},
+		"environment":   map[string]any{"imagePullCredentials": "PULL_SECRET", "image": "alpine", "arguments": []any{[]any{"EMBEDDED_SECRET"}}},
 	}
 	redactFlowSettings(settings)
 	value := settings["authorization"].(map[string]any)["entries"].([]any)[0].(map[string]any)
 	require.Equal(t, "***redacted***", value["passwordFile"])
 	require.Equal(t, "alice", value["name"])
 	require.Equal(t, "***redacted***", settings["environment"].(map[string]any)["imagePullCredentials"])
+	require.Equal(t, "***redacted***", settings["environment"].(map[string]any)["image"])
+	require.Equal(t, "***redacted***", settings["environment"].(map[string]any)["arguments"].([]any)[0].([]any)[0])
 	var output bytes.Buffer
 	require.NoError(t, WriteFlowSettings(&output, FormatTable, settings))
 	require.Contains(t, output.String(), "authorization.entries[0].passwordFile")
@@ -88,4 +90,27 @@ flows:
 	output.Reset()
 	require.NoError(t, ShowFlow(&output, FormatJSON, &conf, "demonstration", true))
 	require.Contains(t, output.String(), "super-secret-password")
+}
+
+func TestFlowShowRedactsEmbeddedSecretsInCommandsAndStrings(t *testing.T) {
+	secret := "review-embedded-token-1234"
+	conf := &configuration.Configuration{Flows: configuration.Flows{{
+		Name: "production", Auditlog: "default",
+		Authorization: configuration.Authorization{V: &configuration.AuthorizationNone{}},
+		Environment: configuration.Environment{V: &configuration.EnvironmentDocker{
+			Image: template.MustNewString("alpine"),
+			ShellCommand: template.MustNewStrings("sh", "-c", "curl -H 'Authorization: Bearer "+secret+"' https://example.invalid"),
+		}},
+	}}}
+	for _, format := range []Format{FormatTable, FormatJSON, FormatYAML} {
+		var output bytes.Buffer
+		require.NoError(t, ShowFlow(&output, format, conf, "production", false))
+		require.NotContains(t, output.String(), secret)
+		require.NotContains(t, output.String(), "alpine")
+		require.Contains(t, output.String(), "***redacted***")
+		require.Contains(t, output.String(), "production")
+		output.Reset()
+		require.NoError(t, ShowFlow(&output, format, conf, "production", true))
+		require.Contains(t, output.String(), secret)
+	}
 }

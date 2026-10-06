@@ -34,7 +34,7 @@ Authentication and authorization use the configured flow as usual; there is no i
 Enables the built-in management-command environment for this flow.
 
 <<property("includingCredentials", "bool", default=False)>>
-Controls whether `flow show` exposes credentials **in that management flow's output**. The default is `false`: credentials and environment variables are redacted as `***redacted***`. Audit-log target credentials are redacted independently. This option is intended only for temporary debugging or migration.
+Controls whether `flow show` exposes credentials **in that management flow's output**. The default is `false`: arbitrary configuration strings, commands, URLs, credentials and environment variables are redacted as `***redacted***`. Structural names, booleans and numeric settings remain visible. Audit-log target settings are redacted independently. This option is intended only for temporary debugging or migration.
 
 !!! warning "Do not enable includingCredentials in production"
     `includingCredentials: true` can reveal secrets configured in other flows to every administrator authorized by this management flow. Bifröst emits a warning in the startup logs for each management flow with this option enabled. Limit access to the flow and turn the option off again after debugging or migration.
