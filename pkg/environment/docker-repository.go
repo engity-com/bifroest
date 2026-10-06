@@ -20,7 +20,6 @@ import (
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/api/types/registry"
-	"github.com/moby/moby/api/types/strslice"
 	"github.com/moby/moby/client"
 
 	"github.com/engity-com/bifroest/pkg/alternatives"
@@ -406,7 +405,7 @@ func (this *DockerRepository) resolveContainerConfig(req Request, sess session.S
 	if result.Image, err = this.conf.Image.Render(req); err != nil {
 		return failf("cannot evaluate image: %w", err)
 	}
-	result.Entrypoint = strslice.StrSlice{}
+	result.Entrypoint = []string{}
 	result.Cmd = []string{sys.BifroestOciBinaryFileLocation(this.hostOs)}
 	if len(result.Cmd[0]) == 0 {
 		return failf("cannot resolve target path for host %s/%s", this.hostOs, this.hostArch)

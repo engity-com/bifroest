@@ -17,7 +17,6 @@ import (
 	"github.com/echocat/slf4g/level"
 	essh "github.com/engity-com/ssh-server-go"
 	"github.com/moby/moby/api/types/registry"
-	"github.com/moby/moby/api/types/strslice"
 	v1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -745,7 +744,7 @@ func (this *KubernetesRepository) resolveInitContainerConfig(req Request, _ sess
 		MountPath: targetPath,
 	}}
 
-	result.Args = strslice.StrSlice{
+	result.Args = []string{
 		"imp-init",
 		"--targetPath=" + targetPath,
 		"--log.colorMode=always",
@@ -789,7 +788,6 @@ func (this *KubernetesRepository) resolveContainerConfig(req Request, sess sessi
 	}}
 	// TODO! Maybe, allow other ports?
 
-	result.Command = strslice.StrSlice{}
 	result.SecurityContext = &v1.SecurityContext{}
 	result.Command = []string{sys.BifroestOciBinaryFileLocation(this.conf.Os)}
 	if len(result.Command[0]) == 0 {

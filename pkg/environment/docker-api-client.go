@@ -88,7 +88,7 @@ func (this dockerConnectionReference) toApiClient() (_ *client.Client, err error
 
 	clientOpts := []client.Opt{client.WithHTTPClient(&httpClient), client.WithHost(host)}
 	if v := this.apiVersion; v != "" {
-		clientOpts = append(clientOpts, client.WithVersion(v))
+		clientOpts = append(clientOpts, client.WithAPIVersion(v))
 	}
 	if v := this.certPath; v != "" {
 		if httpTransport.TLSClientConfig, err = tlsconfig.Client(tlsconfig.Options{
@@ -101,7 +101,7 @@ func (this dockerConnectionReference) toApiClient() (_ *client.Client, err error
 		}
 	}
 
-	apiClient, err := client.NewClientWithOpts(clientOpts...)
+	apiClient, err := client.New(clientOpts...)
 	if err != nil {
 		return fail(err)
 	}
