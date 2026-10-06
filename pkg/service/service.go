@@ -97,7 +97,7 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 	if err != nil {
 		return err
 	}
-	this.warnOnManagementCredentials()
+	this.warnOnManagementAccess()
 	closeService := true
 	defer func() {
 		if closeService {

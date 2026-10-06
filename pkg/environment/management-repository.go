@@ -19,7 +19,7 @@ var _ = RegisterRepository(NewManagementRepository)
 // ManagementCommandRunner binds the management environment to the already
 // running service instead of opening its exclusively locked repositories again.
 type ManagementCommandRunner interface {
-	RunManagementCommand(Task, bool) (int, error)
+	RunManagementCommand(Task, bool, bool) (int, error)
 }
 
 func NewManagementRepository(ctx context.Context, flow configuration.FlowName, conf *configuration.EnvironmentManagement, _ alternatives.Provider, _ imp.Imp) (*ManagementRepository, error) {
@@ -30,13 +30,14 @@ func NewManagementRepository(ctx context.Context, flow configuration.FlowName, c
 	if runner == nil {
 		return nil, fmt.Errorf("management environment requires a service command runner")
 	}
-	return &ManagementRepository{flow: flow, includingCredentials: conf.IncludingCredentials, runner: runner}, nil
+	return &ManagementRepository{flow: flow, includingCredentials: conf.IncludingCredentials, allowArtifactTransfer: conf.AllowArtifactTransfer, runner: runner}, nil
 }
 
 type ManagementRepository struct {
-	flow                 configuration.FlowName
-	includingCredentials bool
-	runner               ManagementCommandRunner
+	flow                  configuration.FlowName
+	includingCredentials  bool
+	allowArtifactTransfer bool
+	runner                ManagementCommandRunner
 }
 
 func (this *ManagementRepository) WillBeAccepted(Context) (bool, error) { return true, nil }
@@ -69,7 +70,7 @@ func (this *managementEnvironment) Run(task Task) (int, error) {
 	if task.TaskType() != TaskTypeShell || task.SshSession().Subsystem() != "" || task.SshSession().RawCommand() == "" {
 		return -1, fmt.Errorf("management environment requires an SSH exec command")
 	}
-	return this.repository.runner.RunManagementCommand(task, this.repository.includingCredentials)
+	return this.repository.runner.RunManagementCommand(task, this.repository.includingCredentials, this.repository.allowArtifactTransfer)
 }
 
 func (this *managementEnvironment) RunSubsystem(Task, func(bool) error) (int, error) {

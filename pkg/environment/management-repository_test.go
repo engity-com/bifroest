@@ -12,7 +12,7 @@ import (
 
 type managementTestRunner struct{}
 
-func (managementTestRunner) RunManagementCommand(Task, bool) (int, error) { return 0, nil }
+func (managementTestRunner) RunManagementCommand(Task, bool, bool) (int, error) { return 0, nil }
 
 func TestManagementEnvironmentRejectsNonCommandAccess(t *testing.T) {
 	_, err := NewManagementRepository(context.Background(), "admin", &configuration.EnvironmentManagement{}, nil, nil)
