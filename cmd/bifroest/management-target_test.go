@@ -33,6 +33,9 @@ func TestParseManagementTarget(t *testing.T) {
 		{"separate logging value before management", []string{"--log.level", "INFO", "session", "ls", "@local-args"}, nil, nil, "first argument"},
 		{"logging value named flow", []string{"--log.level", "flow", "version", "@local-args"}, nil, []string{"--log.level", "flow", "version", "@local-args"}, ""},
 		{"logging flag before non-management", []string{"--log.level=INFO", "version", "@local-args"}, nil, []string{"--log.level=INFO", "version", "@local-args"}, ""},
+		{"late target after global flag", []string{"--log.level=INFO", "@host", "flow", "ls"}, nil, nil, "first argument"},
+		{"late target after separate global flag", []string{"--log.level", "INFO", "@admin@host:2222", "session", "ls"}, nil, nil, "first argument"},
+		{"non-management response file after global flag", []string{"--log.level=INFO", "@local-args", "version"}, nil, []string{"--log.level=INFO", "@local-args", "version"}, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			actual, args, err := parseManagementTarget(test.args)

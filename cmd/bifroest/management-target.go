@@ -29,6 +29,9 @@ func parseManagementTarget(args []string) (*managementTarget, []string, error) {
 			}
 		}
 	} else if command := localManagementCommandIndex(args); command >= 0 {
+		if strings.HasPrefix(args[command], "@") {
+			return nil, nil, fmt.Errorf("remote target %q must be the first argument to bifroest", args[command])
+		}
 		for _, arg := range args[command+1:] {
 			if strings.HasPrefix(arg, "@") {
 				return nil, nil, fmt.Errorf("remote target %q must be the first argument to bifroest", arg)
@@ -69,7 +72,8 @@ func parseManagementTarget(args []string) (*managementTarget, []string, error) {
 
 // Only the global logging flags can precede a local command. Skip their
 // separate values so that e.g. "--log.level flow" is not mistaken for a
-// management invocation before Kingpin can expand @file arguments.
+// management invocation. Also catch an @target between those flags and a
+// management subject before Kingpin can expand it as a local response file.
 func localManagementCommandIndex(args []string) int {
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -81,7 +85,8 @@ func localManagementCommandIndex(args []string) int {
 		if strings.HasPrefix(arg, "-") {
 			continue
 		}
-		if supportsRemoteManagementCommand(arg) {
+		if supportsRemoteManagementCommand(arg) ||
+			(index > 0 && strings.HasPrefix(arg, "@") && index+1 < len(args) && supportsRemoteManagementCommand(args[index+1])) {
 			return index
 		}
 		return -1
