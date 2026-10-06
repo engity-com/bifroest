@@ -368,13 +368,16 @@ func (this *service) onAgentForwardingRequested(ctx essh.Context, sess essh.Sess
 	if request, ok := ctx.Value(sshSessionRequestContextKey{}).(*sshSessionRequest); ok && request.kind.Load() != uint32(sshSessionRequestUnknown) {
 		late = true
 	}
-	allowed := !late && authorization.IsAgentForwardingAllowed(auth)
+	managementFlow := this.isManagementFlow(auth.Flow())
+	allowed := !late && !managementFlow && authorization.IsAgentForwardingAllowed(auth)
 	event := this.authorizationAuditEvent(ctx, auth, audit.EventNameSessionAgentForwardingDecided, audit.EventDomainSession)
 	if allowed {
 		event.Outcome = audit.EventOutcomeSuccess
 	} else {
 		event.Outcome = audit.EventOutcomeDenied
-		if late {
+		if managementFlow {
+			event.Reason = audit.EventReasonEnvironmentPolicy
+		} else if late {
 			event.Reason = audit.EventReasonInvalidRequest
 		} else {
 			event.Reason = audit.EventReasonAuthorizedKeyPolicy
