@@ -196,6 +196,65 @@ func TestOIDCDeviceAuthorization(t *testing.T) {
 	})
 }
 
+func TestOIDCRememberMe(t *testing.T) {
+	provider, f := newOIDCAuthorizationFixture(t)
+	signer, err := gossh.ParsePrivateKey(mustRead(f.clientKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongSigner, err := gossh.ParsePrivateKey(mustRead(f.wrongKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	challenges := 0
+	client, err := dialAuthorizationSSH(f, "oidc-remember-me", gossh.PublicKeys(signer), 12*time.Second,
+		gossh.KeyboardInteractive(func(_, _ string, questions []string, _ []bool) ([]string, error) {
+			challenges++
+			if len(questions) != 0 {
+				return nil, fmt.Errorf("unexpected OIDC questions: %q", questions)
+			}
+			return []string{}, nil
+		}))
+	if err != nil {
+		t.Fatalf("first OIDC login with offered key failed: %v", err)
+	}
+	if challenges != 1 {
+		t.Errorf("OIDC challenges on first login: got %d, want 1", challenges)
+	}
+	if err := runAuthorizationSession(client); err != nil {
+		t.Fatalf("first SSH session failed: %v", err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before := provider.getSnapshot()
+	if before.deviceRequests != 1 || before.tokenRequests != 2 {
+		t.Fatalf("first OIDC login did not complete device authorization: %+v", before)
+	}
+
+	remembered, err := dialAuthorizationSSH(f, "oidc-remember-me", gossh.PublicKeys(signer), 10*time.Second)
+	if err != nil {
+		t.Fatalf("remembered key login without OIDC challenge failed: %v", err)
+	}
+	defer remembered.Close()
+	if err := runAuthorizationSession(remembered); err != nil {
+		t.Fatalf("remembered key SSH session failed: %v", err)
+	}
+
+	other, err := dialAuthorizationSSH(f, "oidc-remember-me", gossh.PublicKeys(wrongSigner), 10*time.Second)
+	if other != nil {
+		_ = other.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "unable to authenticate") {
+		t.Fatalf("different key was not rejected: %v", err)
+	}
+	after := provider.getSnapshot()
+	if after.deviceRequests != before.deviceRequests || after.tokenRequests != before.tokenRequests {
+		t.Errorf("remembered key login unexpectedly restarted OIDC device authorization: before %+v, after %+v", before, after)
+	}
+}
+
 func TestOIDCLostAccessAfterRefresh(t *testing.T) {
 	provider, f := newOIDCAuthorizationFixtureWithOptions(t, oidcFixtureOptions{
 		authMethod:              "client_secret_post",
