@@ -108,7 +108,7 @@ func TestFlowShowRedactsEmbeddedSecretsInCommandsAndStrings(t *testing.T) {
 		var output bytes.Buffer
 		require.NoError(t, ShowFlow(&output, format, conf, "production", false))
 		require.NotContains(t, output.String(), secret)
-		require.Contains(t, output.String(), "alpine")
+		require.NotContains(t, output.String(), "alpine")
 		require.Contains(t, output.String(), "always")
 		require.Contains(t, output.String(), "***redacted***")
 		require.Contains(t, output.String(), "production")
@@ -118,8 +118,8 @@ func TestFlowShowRedactsEmbeddedSecretsInCommandsAndStrings(t *testing.T) {
 	}
 }
 
-func TestFlowShowDoesNotExposeUnvalidatedImageStrings(t *testing.T) {
-	for _, image := range []string{"https://admin:secret@registry.example.org/private", "{{ .token }}"} {
+func TestFlowShowRedactsImageReferencesEvenWhenValid(t *testing.T) {
+	for _, image := range []string{"alpine", "registry.example.org/team/access-token-1234", "https://admin:secret@registry.example.org/private", "{{ .token }}"} {
 		conf := &configuration.Configuration{Flows: configuration.Flows{{
 			Name: "production", Environment: configuration.Environment{V: &configuration.EnvironmentDocker{Image: template.MustNewString(image)}},
 		}}}
@@ -132,7 +132,7 @@ func TestFlowShowDoesNotExposeUnvalidatedImageStrings(t *testing.T) {
 	}
 }
 
-func TestFlowShowKeepsValidatedKubernetesImageMetadata(t *testing.T) {
+func TestFlowShowKeepsKubernetesImagePullPolicy(t *testing.T) {
 	conf := &configuration.Configuration{Flows: configuration.Flows{{
 		Name: "production", Environment: configuration.Environment{V: &configuration.EnvironmentKubernetes{
 			Os: sys.OsLinux, Arch: sys.ArchAmd64, Image: template.MustNewString("registry.example.org/team/service:1.2.3"), ImagePullPolicy: configuration.PullPolicyNever,
@@ -140,6 +140,6 @@ func TestFlowShowKeepsValidatedKubernetesImageMetadata(t *testing.T) {
 	}}}
 	var output bytes.Buffer
 	require.NoError(t, ShowFlow(&output, FormatJSON, conf, "production", false))
-	require.Contains(t, output.String(), "registry.example.org/team/service:1.2.3")
+	require.NotContains(t, output.String(), "registry.example.org/team/service:1.2.3")
 	require.Contains(t, output.String(), "never")
 }
