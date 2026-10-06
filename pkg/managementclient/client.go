@@ -153,7 +153,7 @@ func Run(ctx context.Context, target Target, args []string, output io.Writer) (r
 	if err != nil {
 		return err
 	}
-	if len(wireArgs) < 2 || wireArgs[0] != "flow" && wireArgs[0] != "session" && wireArgs[0] != "auditlog" {
+	if len(wireArgs) < 2 || wireArgs[0] != "flow" && wireArgs[0] != "session" && wireArgs[0] != "auditlog" && wireArgs[0] != "recording" {
 		return fmt.Errorf("remote command %q is not yet supported", args[0])
 	}
 	for _, arg := range wireArgs {
@@ -242,6 +242,18 @@ func Run(ctx context.Context, target Target, args []string, output io.Writer) (r
 		return fmt.Errorf("remote management command failed: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	switch wireArgs[0] + " " + wireArgs[1] {
+	case "recording ls":
+		var entries []management.RecordingView
+		if err := management.DecodeWireResult(&stdout, &entries); err != nil {
+			return err
+		}
+		return management.WriteRecordingList(output, format, entries)
+	case "recording show":
+		var entry management.RecordingView
+		if err := management.DecodeWireResult(&stdout, &entry); err != nil {
+			return err
+		}
+		return management.WriteRecordingDetail(output, format, entry)
 	case "auditlog ls":
 		var entries []management.AuditlogSummary
 		if err := management.DecodeWireResult(&stdout, &entries); err != nil {
