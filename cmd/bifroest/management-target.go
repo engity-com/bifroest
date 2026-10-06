@@ -22,8 +22,14 @@ func parseManagementTarget(args []string) (*managementTarget, []string, error) {
 	if len(args) == 0 {
 		return nil, args, nil
 	}
-	if strings.HasPrefix(args[0], "@") || supportsRemoteManagementCommand(args[0]) {
+	if strings.HasPrefix(args[0], "@") {
 		for _, arg := range args[1:] {
+			if strings.HasPrefix(arg, "@") {
+				return nil, nil, fmt.Errorf("remote target %q must be the first argument to bifroest", arg)
+			}
+		}
+	} else if command := localManagementCommandIndex(args); command >= 0 {
+		for _, arg := range args[command+1:] {
 			if strings.HasPrefix(arg, "@") {
 				return nil, nil, fmt.Errorf("remote target %q must be the first argument to bifroest", arg)
 			}
@@ -59,6 +65,28 @@ func parseManagementTarget(args []string) (*managementTarget, []string, error) {
 	explicitPort := strings.HasPrefix(address, "[") && strings.Contains(address, "]:") ||
 		strings.Count(address, ":") == 1 && !isIPv6Literal(address)
 	return &managementTarget{User: user, RawHost: host, Port: parsed.Port, ExplicitPort: explicitPort}, args[1:], nil
+}
+
+// Only the global logging flags can precede a local command. Skip their
+// separate values so that e.g. "--log.level flow" is not mistaken for a
+// management invocation before Kingpin can expand @file arguments.
+func localManagementCommandIndex(args []string) int {
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch arg {
+		case "--log.level", "--log.format", "--log.colorMode":
+			index++
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		if supportsRemoteManagementCommand(arg) {
+			return index
+		}
+		return -1
+	}
+	return -1
 }
 
 func isIPv6Literal(value string) bool {
