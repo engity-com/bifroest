@@ -39,6 +39,11 @@ func (this *service) RunManagementCommand(task environment.Task, includingCreden
 			}
 		}
 	}()
+	defer func() {
+		if resultErr != nil {
+			_, _ = fmt.Fprintln(task.SshSession().Stderr(), resultErr)
+		}
+	}()
 	raw := task.SshSession().RawCommand()
 	if raw == management.WireCommand {
 		args, err := management.DecodeWireRequest(task.SshSession())

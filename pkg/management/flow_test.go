@@ -61,4 +61,9 @@ func TestFlowRedactionHandlesNestedEntries(t *testing.T) {
 	require.Equal(t, "***redacted***", value["passwordFile"])
 	require.Equal(t, "alice", value["name"])
 	require.Equal(t, "***redacted***", settings["environment"].(map[string]any)["imagePullCredentials"])
+	var output bytes.Buffer
+	require.NoError(t, WriteFlowSettings(&output, FormatTable, settings))
+	require.Contains(t, output.String(), "authorization.entries[0].passwordFile")
+	require.Contains(t, output.String(), "authorization.entries[0].name")
+	require.NotContains(t, output.String(), "PRIVATE_FILE")
 }
