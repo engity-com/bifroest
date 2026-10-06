@@ -42,6 +42,7 @@ func (this *service) RunManagementCommand(task environment.Task, includingCreden
 		}
 		return &this.Configuration, nil
 	}, task.SshSession(), includingCredentials, false)
+	management.RegisterSessionCommands(app, management.SessionSourceFromRepository(this.sessions), task.Context(), task.SshSession(), task.SshSession().Stderr(), false)
 	if _, err := app.Parse(args); err != nil {
 		_, _ = fmt.Fprintln(task.SshSession().Stderr(), err)
 		return 1, nil
