@@ -11,6 +11,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/management"
 	"github.com/engity-com/bifroest/pkg/recording"
 )
 
@@ -29,12 +30,12 @@ var remoteRecordingVerifyOpts *recordingVerifyOpts
 func registerRecordingVerifyCmd(parent *kingpin.CmdClause) {
 	opts := recordingVerifyOpts{}
 	remoteRecordingVerifyOpts = &opts
-	cmd := parent.Command("verify", "Verify a Recording against a trusted producer without exporting it.").
+	cmd := management.RecordingArtifactCommand(parent, "verify").
 		Action(func(*kingpin.ParseContext) error { return doRecordingVerify(&opts, goos.Stdout) })
 	cmd.Flag("configuration", "Configuration for a local Recording (defaults to "+defaultConfigurationRef+").").Short('c').PlaceHolder("<path>").StringVar(&opts.configuration)
 	cmd.Flag("expectedProducerId", "Independently trusted 64-hex producer ID for an offline artifact.").PlaceHolder("<producer-id>").StringVar(&opts.expectedProducerId)
 	cmd.Flag("decryptionIdentityFile", "Private SSH key for full verification of .becast; repeat for multiple keys.").PlaceHolder("<path>").StringsVar(&opts.decryptionIdentityFiles)
-	cmd.Flag("require-full", "Fail if encrypted content cannot be fully verified.").BoolVar(&opts.requireFull)
+	management.RequireFullVerificationFlag(cmd, &opts.requireFull)
 	cmd.Arg("fileOrAuditlog", "Configured auditlog name or copied Recording file path.").StringVar(&opts.file)
 	cmd.Arg("recordingId", "Recording UUID when selecting a local auditlog.").StringVar(&opts.recordingId)
 }

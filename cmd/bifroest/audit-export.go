@@ -16,6 +16,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/management"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -55,7 +56,7 @@ func (this *boundedAuditOutput) Write(content []byte) (int, error) {
 func registerAuditExportCmd(parent *kingpin.CmdClause) {
 	opts := auditExportOpts{output: "-"}
 	remoteAuditExportOpts[parent.FullCommand()] = &opts
-	cmd := parent.Command("export", "Export a verified audit journal as JSON Lines.").
+	cmd := management.AuditArtifactCommand(parent, "export").
 		Action(func(*kingpin.ParseContext) error { return doAuditExport(&opts, goos.Stdout) })
 	registerAuditExportFlags(cmd, &opts)
 	cmd.Arg("auditlogName", "Configured auditlog, or optional label for an offline journal (default: default).").SetValue(&opts.auditlog)
@@ -166,7 +167,7 @@ func offlineAuditJournalSource(configured *configuration.Auditlog, producerId au
 }
 
 func registerAuditSensitiveFlag(cmd *kingpin.CmdClause, target *bool) {
-	cmd.Flag("with-sensitive", "Include private event fields; encrypted journals require a matching decryption identity.").BoolVar(target)
+	management.AuditSensitiveFlag(cmd, target)
 }
 
 func registerAuditOutputFlags(cmd *kingpin.CmdClause, output *string, force *bool) {

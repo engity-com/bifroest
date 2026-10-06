@@ -9,6 +9,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/environment"
+	"github.com/engity-com/bifroest/pkg/management"
 )
 
 func (this *service) managementAuditSources(names []string, sensitive bool) ([]audit.JournalSource, error) {
@@ -57,7 +58,7 @@ func (this *service) managementAuditSources(names []string, sensitive bool) ([]a
 
 func (this *service) registerManagementAuditCommands(parent *kingpin.CmdClause, task environment.Task) {
 	var producerName string
-	producer := parent.Command("producer-id", "Print the configured signing producer ID.")
+	producer := management.AuditArtifactCommand(parent, "producer-id")
 	producer.Arg("auditlogName", "Configured auditlog name.").Required().StringVar(&producerName)
 	producer.Action(func(*kingpin.ParseContext) error {
 		name := configuration.AuditlogName(producerName)
@@ -73,8 +74,8 @@ func (this *service) registerManagementAuditCommands(parent *kingpin.CmdClause, 
 	})
 	var verifyName string
 	var requireFull bool
-	verify := parent.Command("verify", "Verify the signed live audit journal.")
-	verify.Flag("require-full", "Fail if encrypted records cannot be fully verified without a local private key.").BoolVar(&requireFull)
+	verify := management.AuditArtifactCommand(parent, "verify")
+	management.RequireFullVerificationFlag(verify, &requireFull)
 	verify.Arg("auditlogName", "Configured auditlog name.").Required().StringVar(&verifyName)
 	verify.Action(func(*kingpin.ParseContext) error {
 		sources, err := this.managementAuditSources([]string{verifyName}, false)
@@ -97,8 +98,8 @@ func (this *service) registerManagementAuditCommands(parent *kingpin.CmdClause, 
 	for _, verb := range []string{"export", "decrypt"} {
 		var name string
 		var sensitive bool
-		command := parent.Command(verb, "Export verified live audit events as JSON Lines.")
-		command.Flag("with-sensitive", "Include private fields; encrypted records need a local decryption key.").BoolVar(&sensitive)
+		command := management.AuditArtifactCommand(parent, verb)
+		management.AuditSensitiveFlag(command, &sensitive)
 		command.Arg("auditlogName", "Configured auditlog name.").Required().StringVar(&name)
 		command.Action(func(*kingpin.ParseContext) error {
 			return this.exportManagementAudit(task.Context(), task, []string{name}, sensitive, audit.RecordOrderChain)
@@ -106,8 +107,8 @@ func (this *service) registerManagementAuditCommands(parent *kingpin.CmdClause, 
 	}
 	var mergeNames []string
 	var mergeSensitive bool
-	merge := parent.Command("merge", "Merge verified live audit logs chronologically.")
-	merge.Flag("with-sensitive", "Include private event fields; encrypted records need a local decryption key.").BoolVar(&mergeSensitive)
+	merge := management.AuditArtifactCommand(parent, "merge")
+	management.AuditSensitiveFlag(merge, &mergeSensitive)
 	merge.Arg("auditlogName", "Configured auditlog names.").Required().StringsVar(&mergeNames)
 	merge.Action(func(*kingpin.ParseContext) error {
 		return this.exportManagementAudit(task.Context(), task, mergeNames, mergeSensitive, audit.RecordOrderChronological)
