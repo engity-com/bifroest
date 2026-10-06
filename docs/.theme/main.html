@@ -1,8 +1,17 @@
 {%- extends "base.html" %}
 
-{%- block outdated %}
-You're not viewing the latest version.
-<a href="{{ '../' ~ base_url }}">
-    <strong>Click here to go to latest.</strong>
-</a>
+{%- block header %}
+<div data-md-component="outdated" data-md-color-scheme="default" hidden>
+  <aside class="md-banner md-banner--warning">
+    <div class="md-banner__inner md-grid md-typeset">
+      You're not viewing the latest version.
+      <a href="/" data-md-version-latest><strong>Click here to go to latest.</strong></a>
+    </div>
+  </aside>
+</div>
+{{ super() }}
+<div class="md-version" hidden>
+  <button class="md-version__current" aria-label="Select version"></button>
+  <ul class="md-version__list"></ul>
+</div>
 {%- endblock %}
