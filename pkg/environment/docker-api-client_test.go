@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -41,7 +41,7 @@ func TestDockerConnectionReferenceUsesConfiguredTcpHost(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	_, err = actual.Ping(ctx)
+	_, err = actual.Ping(ctx, client.PingOptions{})
 	require.NoError(t, err)
 }
 
@@ -79,7 +79,7 @@ func TestDockerConnectionReferenceUsesConfiguredUnixSocket(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	_, err = actual.Ping(ctx)
+	_, err = actual.Ping(ctx, client.PingOptions{})
 	require.NoError(t, err)
 }
 
@@ -119,6 +119,42 @@ func TestDockerConnectionReferenceUsesConfiguredTLSHost(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	_, err = actual.Ping(ctx)
+	_, err = actual.Ping(ctx, client.PingOptions{})
 	require.NoError(t, err)
+}
+
+func TestDockerRemoveContainerRecognizesDaemonNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		require.Equal(t, http.MethodDelete, request.Method)
+		require.Equal(t, "/v1.44/containers/missing", request.URL.Path)
+		writer.WriteHeader(http.StatusNotFound)
+		_, _ = writer.Write([]byte(`{"message":"No such container: missing"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	api, err := (dockerConnectionReference{host: server.URL, apiVersion: "1.44"}).toApiClient()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, api.Close()) })
+	repository := &DockerRepository{apiClient: api}
+
+	removed, err := repository.removeContainer(t.Context(), "missing")
+	require.NoError(t, err)
+	require.False(t, removed)
+}
+
+func TestDockerExecInspectRetriesDaemonFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		require.Equal(t, http.MethodGet, request.Method)
+		require.Equal(t, "/v1.44/exec/test/json", request.URL.Path)
+		writer.WriteHeader(http.StatusInternalServerError)
+		_, _ = writer.Write([]byte(`{"message":"temporary daemon failure"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	api, err := (dockerConnectionReference{host: server.URL, apiVersion: "1.44"}).toApiClient()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, api.Close()) })
+	_, err = api.ExecInspect(t.Context(), "test", client.ExecInspectOptions{})
+	require.Error(t, err)
+	require.True(t, isRetryableDockerExecutionResultError(err))
 }

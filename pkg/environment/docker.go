@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/docker/docker/api/types"
 	log "github.com/echocat/slf4g"
+	"github.com/moby/moby/api/types/container"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/connection"
@@ -65,7 +65,7 @@ func (this *docker) Dial(ctx context.Context) (gonet.Conn, error) {
 	return this.repository.rawDialer.DialContext(ctx, "tcp", this.impBinding.String())
 }
 
-func (this *DockerRepository) new(ctx context.Context, container *types.Container, logger log.Logger) (*docker, error) {
+func (this *DockerRepository) new(ctx context.Context, container *container.Summary, logger log.Logger) (*docker, error) {
 	fail := func(err error) (*docker, error) {
 		return nil, errors.System.Newf("cannot create environment from container %s of flow %v: %w", container.ID, this.flow, err)
 	}
@@ -208,7 +208,7 @@ var (
 	containerContainsProblemsErr = errors.System.Newf("container contains problems")
 )
 
-func (this *docker) parseContainer(container *types.Container) (err error) {
+func (this *docker) parseContainer(container *container.Summary) (err error) {
 	fail := func(err error) error {
 		return fmt.Errorf("%w: %v", containerContainsProblemsErr, err)
 	}
@@ -275,7 +275,7 @@ func (this *docker) parseContainer(container *types.Container) (err error) {
 	return nil
 }
 
-func (this *docker) resolveImpBinding(container *types.Container) (net.HostPort, error) {
+func (this *docker) resolveImpBinding(container *container.Summary) (net.HostPort, error) {
 	fail := func(err error) (net.HostPort, error) {
 		return net.HostPort{}, err
 	}
@@ -291,8 +291,8 @@ func (this *docker) resolveImpBinding(container *types.Container) (net.HostPort,
 		}
 		result := net.HostPort{Port: imp.ServicePort}
 		for n, candidate := range ns.Networks {
-			if ip := candidate.IPAddress; ip != "" {
-				if err := result.Host.Set(ip); err != nil {
+			if ip := candidate.IPAddress; ip.IsValid() {
+				if err := result.Host.Set(ip.String()); err != nil {
 					return failf("cannot parse ip address of network %s to: %w", n, err)
 				}
 				return result, nil

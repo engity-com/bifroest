@@ -14,7 +14,6 @@
     {
       "name": "github.com/moby/moby",
       "modules": [
-        "github.com/docker/docker",
         "github.com/moby/moby",
         "github.com/moby/moby/api",
         "github.com/moby/moby/client"

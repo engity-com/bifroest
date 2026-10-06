@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types"
 	essh "github.com/engity-com/ssh-server-go"
+	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/connection"
@@ -87,9 +87,9 @@ func TestAddEnvironmentLayerRejectsAmbiguousWindowsLayer(t *testing.T) {
 
 func TestAttachDockerExecWithTimeoutBoundsApiSetup(t *testing.T) {
 	started := time.Now()
-	_, err := attachDockerExecWithTimeout(context.Background(), 20*time.Millisecond, func(ctx context.Context) (types.HijackedResponse, error) {
+	_, err := attachDockerExecWithTimeout(context.Background(), 20*time.Millisecond, func(ctx context.Context) (client.ExecAttachResult, error) {
 		<-ctx.Done()
-		return types.HijackedResponse{}, ctx.Err()
+		return client.ExecAttachResult{}, ctx.Err()
 	})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.Less(t, time.Since(started), time.Second)
@@ -97,9 +97,9 @@ func TestAttachDockerExecWithTimeoutBoundsApiSetup(t *testing.T) {
 
 func TestAttachDockerExecWithTimeoutReturnsApiResult(t *testing.T) {
 	want := errors.New("attach failed")
-	_, err := attachDockerExecWithTimeout(context.Background(), time.Second, func(ctx context.Context) (types.HijackedResponse, error) {
+	_, err := attachDockerExecWithTimeout(context.Background(), time.Second, func(ctx context.Context) (client.ExecAttachResult, error) {
 		require.NoError(t, ctx.Err())
-		return types.HijackedResponse{}, want
+		return client.ExecAttachResult{}, want
 	})
 	require.ErrorIs(t, err, want)
 }
@@ -108,9 +108,9 @@ func TestAttachDockerExecWithTimeoutDoesNotCancelOutputSetupWithTask(t *testing.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	want := errors.New("attach completed")
-	_, err := attachDockerExecWithTimeout(ctx, time.Second, func(ctx context.Context) (types.HijackedResponse, error) {
+	_, err := attachDockerExecWithTimeout(ctx, time.Second, func(ctx context.Context) (client.ExecAttachResult, error) {
 		require.NoError(t, ctx.Err())
-		return types.HijackedResponse{}, want
+		return client.ExecAttachResult{}, want
 	})
 	require.ErrorIs(t, err, want)
 }

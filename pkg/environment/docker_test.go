@@ -3,13 +3,14 @@ package environment
 import (
 	"context"
 	gonet "net"
+	"net/netip"
 	"syscall"
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/network"
 	log "github.com/echocat/slf4g"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -88,9 +89,9 @@ func TestDockerResolveImpBindingUsesConfiguredPublishHost(t *testing.T) {
 		},
 	}
 	environment := docker{repository: repository}
-	container := &types.Container{
-		Ports: []types.Port{{
-			IP:          "0.0.0.0",
+	container := &container.Summary{
+		Ports: []container.PortSummary{{
+			IP:          netip.MustParseAddr("0.0.0.0"),
 			PrivatePort: imp.ServicePort,
 			PublicPort:  44807,
 			Type:        "tcp",
@@ -106,13 +107,13 @@ func TestDockerResolveImpBindingUsesConfiguredPublishHost(t *testing.T) {
 func TestDockerResolveImpBindingUsesContainerNetworkWithoutPublishHost(t *testing.T) {
 	repository := &DockerRepository{conf: &configuration.EnvironmentDocker{}}
 	environment := docker{repository: repository}
-	container := &types.Container{
-		NetworkSettings: &types.SummaryNetworkSettings{
+	container := &container.Summary{
+		NetworkSettings: &container.NetworkSettingsSummary{
 			Networks: map[string]*network.EndpointSettings{
-				"bridge": {IPAddress: "172.18.0.4"},
+				"bridge": {IPAddress: netip.MustParseAddr("172.18.0.4")},
 			},
 		},
-		Ports: []types.Port{{
+		Ports: []container.PortSummary{{
 			PrivatePort: imp.ServicePort,
 			PublicPort:  44807,
 			Type:        "tcp",
@@ -132,10 +133,10 @@ func TestDockerResolveImpBindingRequiresPublishedPortForPublishHost(t *testing.T
 		},
 	}
 	environment := docker{repository: repository}
-	container := &types.Container{
-		NetworkSettings: &types.SummaryNetworkSettings{
+	container := &container.Summary{
+		NetworkSettings: &container.NetworkSettingsSummary{
 			Networks: map[string]*network.EndpointSettings{
-				"bridge": {IPAddress: "172.18.0.4"},
+				"bridge": {IPAddress: netip.MustParseAddr("172.18.0.4")},
 			},
 		},
 	}
@@ -146,10 +147,10 @@ func TestDockerResolveImpBindingRequiresPublishedPortForPublishHost(t *testing.T
 
 func TestDockerImpPortBindingLetsDaemonChooseHostInterfaceAndPort(t *testing.T) {
 	bindings := dockerImpPortBindings()
-	port := bindings["8683/tcp"]
+	port := bindings[network.MustParsePort("8683/tcp")]
 
 	require.Len(t, bindings, 1)
 	require.Len(t, port, 1)
-	require.Empty(t, port[0].HostIP)
+	require.False(t, port[0].HostIP.IsValid())
 	require.Empty(t, port[0].HostPort)
 }

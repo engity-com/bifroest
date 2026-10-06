@@ -431,7 +431,7 @@ func reconcileThirdPartyComponents(modules []*thirdPartyModule, records []thirdP
 		}
 		module.licenses[record.License] = struct{}{}
 		component := componentFor(module)
-		component.libraries[canonicalLibraryName(record.Library)] = struct{}{}
+		component.libraries[record.Library] = struct{}{}
 		hash := sha256.Sum256([]byte(record.Text))
 		key := hex.EncodeToString(hash[:])
 		license := component.licenses[key]
@@ -476,7 +476,7 @@ func reconcileThirdPartyComponents(modules []*thirdPartyModule, records []thirdP
 		}
 		text := normalizeNoticeText(string(raw))
 		hash := sha256.Sum256([]byte(text))
-		name := canonicalLibraryName(relative)
+		name := relative
 		componentFor(module).notices[name+":"+hex.EncodeToString(hash[:])] = thirdPartyNotice{name: name, hash: hex.EncodeToString(hash[:]), text: text}
 		return nil
 	})
@@ -528,14 +528,6 @@ func matchThirdPartyModule(name string, modules []*thirdPartyModule) *thirdParty
 		}
 	}
 	return result
-}
-
-func canonicalLibraryName(name string) string {
-	const legacy = "github.com/docker/docker"
-	if name == legacy || strings.HasPrefix(name, legacy+"/") {
-		return "github.com/moby/moby" + strings.TrimPrefix(name, legacy)
-	}
-	return name
 }
 
 func normalizeNoticeText(value string) string {
