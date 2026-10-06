@@ -97,11 +97,7 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 	if err != nil {
 		return err
 	}
-	for _, flow := range this.Configuration.Flows {
-		if management, ok := flow.Environment.V.(*configuration.EnvironmentManagement); ok && management.IncludingCredentials {
-			this.logger().With("flow", flow.Name).Warn("management environment exposes Flow credentials; enable includingCredentials only temporarily for debugging or migration, never in production")
-		}
-	}
+	this.warnOnManagementCredentials()
 	closeService := true
 	defer func() {
 		if closeService {
