@@ -3,6 +3,7 @@
 package managementclient
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -11,7 +12,7 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 )
 
-func connectAgent(identityAgent string) (agent.Agent, io.Closer, error) {
+func connectAgent(ctx context.Context, identityAgent string) (agent.Agent, io.Closer, error) {
 	if identityAgent == "none" {
 		return nil, nil, nil
 	}
@@ -29,7 +30,7 @@ func connectAgent(identityAgent string) (agent.Agent, io.Closer, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	conn, err := net.Dial("unix", path)
+	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", path)
 	if err != nil {
 		return nil, nil, fmt.Errorf("cannot connect to SSH agent socket %q: %w", path, err)
 	}
