@@ -56,7 +56,7 @@ func main() {
 		defer stop()
 		switch ctx.SelectedCommand.FullCommand() {
 		case "auditlog events":
-			if remoteAuditEventsOpts != nil && remoteAuditEventsOpts.WithSensitive {
+			if remoteAuditEventsOpts != nil && (remoteAuditEventsOpts.WithSensitive || remoteAuditEventsOpts.ExpectedProducerID != "") {
 				if err := doRemoteAuditEvents(remoteCtx, target, remoteAuditEventsOpts, goos.Stdout); err != nil {
 					return err
 				}

@@ -21,16 +21,17 @@ type AuditlogSummary struct {
 }
 
 type AuditEventsOptions struct {
-	Format            string
-	ConfigurationPath string
-	EventName         string
-	FlowName          string
-	Since             string
-	Until             string
-	Auditlog          configuration.AuditlogName
-	Limit             int
-	WithSensitive     bool
-	IdentityFiles     []string
+	Format             string
+	ConfigurationPath  string
+	EventName          string
+	FlowName           string
+	Since              string
+	Until              string
+	Auditlog           configuration.AuditlogName
+	Limit              int
+	WithSensitive      bool
+	IdentityFiles      []string
+	ExpectedProducerID string
 }
 
 func RegisterAuditlogCommands(app *kingpin.Application, source ConfigurationSource, events AuditEventSource, ctx context.Context, output io.Writer, local bool) (*kingpin.CmdClause, *AuditEventsOptions) {
@@ -77,9 +78,13 @@ func RegisterAuditlogCommands(app *kingpin.Application, source ConfigurationSour
 	eventCmd.Flag("with-sensitive", "Include private event fields (encrypted journals need a local decryption identity).").BoolVar(&opts.WithSensitive)
 	if local {
 		eventCmd.Flag("decryptionIdentityFile", "Local private key for encrypted events (repeatable).").StringsVar(&opts.IdentityFiles)
+		eventCmd.Flag("expectedProducerId", "Independently trusted producer ID for remote sensitive events.").StringVar(&opts.ExpectedProducerID)
 	}
 	eventCmd.Arg("name", "Name of the audit log.").Required().SetValue(&opts.Auditlog)
 	eventCmd.Action(func(*kingpin.ParseContext) error {
+		if opts.ExpectedProducerID != "" {
+			return fmt.Errorf("--expectedProducerId for auditlog events requires a remote target and --with-sensitive")
+		}
 		filter := AuditEventFilter{Name: opts.EventName, Flow: opts.FlowName, Limit: opts.Limit}
 		var err error
 		if opts.Since != "" {

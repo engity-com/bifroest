@@ -18,17 +18,16 @@ func doRemoteAuditEvents(ctx context.Context, target *managementTarget, opts *ma
 	if target == nil || opts == nil {
 		return fmt.Errorf("remote audit events require a target and options")
 	}
+	if !opts.WithSensitive {
+		return fmt.Errorf("--expectedProducerId for auditlog events requires --with-sensitive")
+	}
 	if opts.ConfigurationPath != "" {
 		return fmt.Errorf("--configuration is a local file path and cannot be used with a remote target")
 	}
 	remote := managementclient.Target{Host: target.RawHost, User: target.User, Port: target.Port, ExplicitPort: target.ExplicitPort}
-	expectedText, err := managementclient.ExpectedRecordingProducerID(remote)
+	expected, err := expectedAuditEventsProducerID(remote, opts.ExpectedProducerID)
 	if err != nil {
 		return err
-	}
-	var expected audit.ProducerId
-	if expectedText == "" || expected.Set(expectedText) != nil || expected.IsZero() {
-		return fmt.Errorf("remote sensitive audit events require an independently trusted X-ExpectedProducerId in the SSH config")
 	}
 	identities := opts.IdentityFiles
 	if len(identities) == 0 {
@@ -79,4 +78,19 @@ func doRemoteAuditEvents(ctx context.Context, target *managementTarget, opts *ma
 		}
 	}
 	return management.WriteAuditEvents(output, management.Format(opts.Format), verified.Records(), filter, true)
+}
+
+func expectedAuditEventsProducerID(remote managementclient.Target, configured string) (audit.ProducerId, error) {
+	if configured == "" {
+		var err error
+		configured, err = managementclient.ExpectedRecordingProducerID(remote)
+		if err != nil {
+			return audit.ProducerId{}, err
+		}
+	}
+	var expected audit.ProducerId
+	if configured == "" || expected.Set(configured) != nil || expected.IsZero() {
+		return audit.ProducerId{}, fmt.Errorf("remote sensitive audit events require an independently trusted --expectedProducerId or X-ExpectedProducerId in the SSH config")
+	}
+	return expected, nil
 }
