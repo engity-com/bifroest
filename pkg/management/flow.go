@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/alecthomas/kingpin/v2"
+	"github.com/distribution/reference"
 	"gopkg.in/yaml.v3"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -101,11 +102,44 @@ func ShowFlow(output io.Writer, format Format, conf *configuration.Configuration
 			return err
 		}
 		if !includeCredentials {
+			publicEnvironment := publicFlowEnvironmentSettings(flow.Environment.V, settings)
 			redactFlowSettings(settings)
+			if environment, ok := settings["environment"].(map[string]any); ok {
+				for key, value := range publicEnvironment {
+					environment[key] = value
+				}
+			}
 		}
 		return WriteFlowSettings(output, format, settings)
 	}
 	return fmt.Errorf("flow %q does not exist", name)
+}
+
+// Only a few explicitly reviewed environment values are public metadata.
+// Arbitrary strings still pass through the fail-closed redactor below.
+func publicFlowEnvironmentSettings(configured configuration.EnvironmentV, settings map[string]any) map[string]string {
+	switch configured.(type) {
+	case *configuration.EnvironmentDocker, *configuration.EnvironmentKubernetes:
+	default:
+		return nil
+	}
+	environment, ok := settings["environment"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	result := map[string]string{}
+	if image, ok := environment["image"].(string); ok && image != "" && !strings.Contains(image, "{{") && !strings.Contains(image, "}}") {
+		if _, err := reference.ParseNormalizedNamed(image); err == nil {
+			result["image"] = image
+		}
+	}
+	if policy, ok := environment["imagePullPolicy"].(string); ok {
+		switch policy {
+		case "ifAbsent", "always", "never":
+			result["imagePullPolicy"] = policy
+		}
+	}
+	return result
 }
 
 func WriteFlowSettings(output io.Writer, format Format, settings map[string]any) error {
