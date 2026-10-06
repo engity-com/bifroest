@@ -64,6 +64,12 @@ func (this *service) runManagementArgs(task environment.Task, includingCredentia
 		return &this.Configuration, nil
 	}, task.SshSession(), includingCredentials, false)
 	management.RegisterSessionCommands(app, management.SessionSourceFromRepository(this.sessions), task.Context(), task.SshSession(), task.SshSession().Stderr(), false)
+	management.RegisterAuditlogCommands(app, func(path string) (*configuration.Configuration, error) {
+		if path != "" {
+			return nil, fmt.Errorf("remote management commands do not accept local configuration files")
+		}
+		return &this.Configuration, nil
+	}, task.SshSession(), false)
 	if _, err := app.Parse(args); err != nil {
 		_, _ = fmt.Fprintln(task.SshSession().Stderr(), err)
 		return 1, nil
