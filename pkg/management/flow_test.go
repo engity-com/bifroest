@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/engity-com/bifroest/pkg/template"
 )
 
@@ -98,19 +99,47 @@ func TestFlowShowRedactsEmbeddedSecretsInCommandsAndStrings(t *testing.T) {
 		Name: "production", Auditlog: "default",
 		Authorization: configuration.Authorization{V: &configuration.AuthorizationNone{}},
 		Environment: configuration.Environment{V: &configuration.EnvironmentDocker{
-			Image: template.MustNewString("alpine"),
-			ShellCommand: template.MustNewStrings("sh", "-c", "curl -H 'Authorization: Bearer "+secret+"' https://example.invalid"),
+			Image:           template.MustNewString("alpine"),
+			ImagePullPolicy: configuration.PullPolicyAlways,
+			ShellCommand:    template.MustNewStrings("sh", "-c", "curl -H 'Authorization: Bearer "+secret+"' https://example.invalid"),
 		}},
 	}}}
 	for _, format := range []Format{FormatTable, FormatJSON, FormatYAML} {
 		var output bytes.Buffer
 		require.NoError(t, ShowFlow(&output, format, conf, "production", false))
 		require.NotContains(t, output.String(), secret)
-		require.NotContains(t, output.String(), "alpine")
+		require.Contains(t, output.String(), "alpine")
+		require.Contains(t, output.String(), "always")
 		require.Contains(t, output.String(), "***redacted***")
 		require.Contains(t, output.String(), "production")
 		output.Reset()
 		require.NoError(t, ShowFlow(&output, format, conf, "production", true))
 		require.Contains(t, output.String(), secret)
 	}
+}
+
+func TestFlowShowDoesNotExposeUnvalidatedImageStrings(t *testing.T) {
+	for _, image := range []string{"https://admin:secret@registry.example.org/private", "{{ .token }}"} {
+		conf := &configuration.Configuration{Flows: configuration.Flows{{
+			Name: "production", Environment: configuration.Environment{V: &configuration.EnvironmentDocker{Image: template.MustNewString(image)}},
+		}}}
+		for _, format := range []Format{FormatTable, FormatJSON, FormatYAML} {
+			var output bytes.Buffer
+			require.NoError(t, ShowFlow(&output, format, conf, "production", false))
+			require.NotContains(t, output.String(), image)
+			require.Contains(t, output.String(), "***redacted***")
+		}
+	}
+}
+
+func TestFlowShowKeepsValidatedKubernetesImageMetadata(t *testing.T) {
+	conf := &configuration.Configuration{Flows: configuration.Flows{{
+		Name: "production", Environment: configuration.Environment{V: &configuration.EnvironmentKubernetes{
+			Os: sys.OsLinux, Arch: sys.ArchAmd64, Image: template.MustNewString("registry.example.org/team/service:1.2.3"), ImagePullPolicy: configuration.PullPolicyNever,
+		}},
+	}}}
+	var output bytes.Buffer
+	require.NoError(t, ShowFlow(&output, FormatJSON, conf, "production", false))
+	require.Contains(t, output.String(), "registry.example.org/team/service:1.2.3")
+	require.Contains(t, output.String(), "never")
 }
