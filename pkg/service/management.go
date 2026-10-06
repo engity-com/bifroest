@@ -119,7 +119,7 @@ func (this *service) streamManagementAudit(task environment.Task, args []string)
 			return -1, err
 		}
 		defer snapshot.Close()
-		if err := snapshot.WriteTo(task.SshSession()); err != nil {
+		if err := snapshot.StreamTo(task.SshSession()); err != nil {
 			return -1, err
 		}
 		return 0, nil

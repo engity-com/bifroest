@@ -159,7 +159,7 @@ func (this *AuditSnapshot) copy(ctx context.Context, source audit.JournalSource)
 	return nil
 }
 
-func (this *AuditSnapshot) WriteTo(output io.Writer) error {
+func (this *AuditSnapshot) StreamTo(output io.Writer) error {
 	if this == nil || this.root == "" || output == nil {
 		return fmt.Errorf("closed audit snapshot or missing output")
 	}
