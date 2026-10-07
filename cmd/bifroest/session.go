@@ -25,6 +25,6 @@ var _ = registerCommand(func(app *kingpin.Application) {
 		if !ok {
 			return fmt.Errorf("local inspection does not support session repository %T", ref.Get().Session.V)
 		}
-		return session.InspectFsSessions(ctx, fs.Storage, consumer, diagnostics)
+		return session.InspectFsSessions(ctx, fs, consumer, diagnostics)
 	}, context.Background(), goos.Stdout, goos.Stderr, true)
 })
