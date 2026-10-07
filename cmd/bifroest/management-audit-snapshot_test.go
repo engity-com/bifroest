@@ -9,15 +9,17 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	audit2 "github.com/engity-com/bifroest/pkg/cli/audit"
+	"github.com/engity-com/bifroest/pkg/cli/recording"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/management"
 )
 
 func TestManagementAuditSnapshotCanBeVerifiedAndExportedOffline(t *testing.T) {
 	directory := t.TempDir()
-	configured := createAuditCliTestJournal(t, directory, "default", "test.snapshot")
-	expected := auditCliTestProducerId(t, configured.IdentityFile)
-	source, err := configuredAuditJournalSource(&configured, nil, expected)
+	configured := audit2.createAuditCliTestJournal(t, directory, "default", "test.snapshot")
+	expected := audit2.auditCliTestProducerId(t, configured.IdentityFile)
+	source, err := audit2.configuredAuditJournalSource(&configured, nil, expected)
 	require.NoError(t, err)
 	snapshot, err := management.SnapshotAudit(t.Context(), source)
 	require.NoError(t, err)
@@ -39,13 +41,13 @@ func TestManagementAuditSnapshotCanBeVerifiedAndExportedOffline(t *testing.T) {
 
 func TestManagementEncryptedAuditSnapshotNeedsOnlyLocalPrivateKey(t *testing.T) {
 	directory := t.TempDir()
-	recordingFixture := newRecordingExportTestFixture(t)
-	private, err := loadAuditPrivateKey(recordingFixture.identityPath)
+	recordingFixture := recording.newRecordingExportTestFixture(t)
+	private, err := audit2.loadAuditPrivateKey(recordingFixture.identityPath)
 	require.NoError(t, err)
 	public := bfcrypto.PublicKeys(strings.TrimSpace(string(bfcrypto.MarshalPublicKey(private.PublicKey()))))
-	configured := createAuditCliTestJournalWithEncryption(t, directory, "encrypted", "test.private", public)
-	expected := auditCliTestProducerId(t, configured.IdentityFile)
-	source, err := configuredAuditJournalSource(&configured, nil, expected)
+	configured := audit2.createAuditCliTestJournalWithEncryption(t, directory, "encrypted", "test.private", public)
+	expected := audit2.auditCliTestProducerId(t, configured.IdentityFile)
+	source, err := audit2.configuredAuditJournalSource(&configured, nil, expected)
 	require.NoError(t, err)
 	snapshot, err := management.SnapshotAudit(t.Context(), source)
 	require.NoError(t, err)

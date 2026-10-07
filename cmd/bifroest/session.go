@@ -15,7 +15,7 @@ import (
 var _ = registerCommand(func(app *kingpin.Application) {
 	management.RegisterSessionCommands(app, func(ctx context.Context, path string, consumer func(context.Context, session.Info) (bool, error), diagnostics session.FindDiagnosticConsumer) error {
 		if path == "" {
-			path = defaultConfigurationRef
+			path = configuration.DefaultRef
 		}
 		var ref configuration.Ref
 		if err := ref.Set(path); err != nil {

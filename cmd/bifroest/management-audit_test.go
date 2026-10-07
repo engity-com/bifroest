@@ -8,15 +8,16 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	audit2 "github.com/engity-com/bifroest/pkg/cli/audit"
 	"github.com/engity-com/bifroest/pkg/management"
 )
 
 func TestManagementAuditEventsKeepSensitiveBoundary(t *testing.T) {
 	directory := t.TempDir()
-	configured := createAuditCliTestJournal(t, directory, "default", "test.management")
-	ref := writeAuditCliTestConfiguration(t, directory, configured)
+	configured := audit2.createAuditCliTestJournal(t, directory, "default", "test.management")
+	ref := audit2.writeAuditCliTestConfiguration(t, directory, configured)
 	conf := ref.Get()
-	expected := auditCliTestProducerId(t, configured.IdentityFile)
+	expected := audit2.auditCliTestProducerId(t, configured.IdentityFile)
 	for _, test := range []struct {
 		withSensitive bool
 		flowPresent   bool

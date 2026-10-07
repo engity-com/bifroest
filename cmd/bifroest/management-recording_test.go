@@ -8,11 +8,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/engity-com/bifroest/pkg/cli/recording"
 	"github.com/engity-com/bifroest/pkg/management"
 )
 
 func TestManagementRecordingInspectionKeepsEncryptedContentPrivate(t *testing.T) {
-	fixture := newRecordingExportTestFixture(t)
+	fixture := recording.newRecordingExportTestFixture(t)
 	for _, test := range []struct {
 		path      string
 		encrypted bool
@@ -21,7 +22,7 @@ func TestManagementRecordingInspectionKeepsEncryptedContentPrivate(t *testing.T)
 		{fixture.nativeClearPath, false, "full"},
 		{fixture.nativeEncryptedPath, true, "outer"},
 	} {
-		file, initial, err := openRecordingInput(test.path)
+		file, initial, err := recording.openRecordingInput(test.path)
 		require.NoError(t, err)
 		view, err := management.InspectRecording(t.Context(), "default", file, initial.Size(), fixture.identity.ProducerId())
 		require.NoError(t, err)
@@ -36,7 +37,7 @@ func TestManagementRecordingInspectionKeepsEncryptedContentPrivate(t *testing.T)
 }
 
 func TestRecordingShowIgnoresUnrelatedCorruptArtifact(t *testing.T) {
-	fixture := newRecordingExportTestFixture(t)
+	fixture := recording.newRecordingExportTestFixture(t)
 	root := t.TempDir()
 	sealed := filepath.Join(root, "recordings", "sealed")
 	require.NoError(t, goos.MkdirAll(sealed, 0700))
@@ -47,9 +48,9 @@ func TestRecordingShowIgnoresUnrelatedCorruptArtifact(t *testing.T) {
 	configPath := filepath.Join(root, "configuration.yaml")
 	configuration := "auditlog:\n  - enabled: false\n    identityFile: " + fixture.signingIdentityPath + "\n    recording:\n      enabled: true\n      directory: " + filepath.Join(root, "recordings") + "\nflows:\n  - name: flow\n    authorization:\n      type: simple\n    environment:\n      type: dummy\n"
 	require.NoError(t, goos.WriteFile(configPath, []byte(configuration), 0600))
-	_, err = inspectLocalRecordings(t.Context(), configPath, "default")
+	_, err = recording.inspectLocalRecordings(t.Context(), configPath, "default")
 	require.Error(t, err)
-	view, err := inspectLocalRecording(t.Context(), configPath, "default", fixture.recordingId)
+	view, err := recording.inspectLocalRecording(t.Context(), configPath, "default", fixture.recordingId)
 	require.NoError(t, err)
 	require.Equal(t, fixture.recordingId.String(), view.ID)
 }

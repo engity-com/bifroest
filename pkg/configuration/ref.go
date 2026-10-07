@@ -1,10 +1,84 @@
 package configuration
 
 import (
+	"context"
+	"os"
 	"path/filepath"
+	"reflect"
 
+	"github.com/echocat/cli4g/codec"
+
+	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
+
+func NewCliCodec(mustBeNotZero, mustExist bool) codec.Codec[Configuration, string] {
+	return cliCodec{mustBeNotZero, mustExist}
+}
+
+type cliCodec struct {
+	mustBeNotZero bool
+	mustExist     bool
+}
+
+func (c cliCodec) CanHandleType(ctx context.Context, typ reflect.Type) (bool, error) {
+	return typ == reflect.TypeFor[Configuration](), ctx.Err()
+}
+
+func (c cliCodec) ExpectMinMax(context.Context, codec.Usage) (int, int) {
+	return 1, 1
+}
+
+func (c cliCodec) ParseRequirement(ctx context.Context, usage codec.Usage, args ...string) (string, error) {
+	if err := codec.EnsureArgumentsMatching(ctx, usage, c, args...); err != nil {
+		return "", err
+	}
+	path := args[0]
+	if path == "" && !c.mustBeNotZero {
+		return "", codec.NewValidationErrorf("configuration path must be not empty")
+	}
+	return args[0], nil
+}
+
+func (c cliCodec) FormatRequirement(_ context.Context, path string) ([]string, error) {
+	return []string{path}, nil
+}
+
+func (c cliCodec) DisplayRequirement(ctx context.Context, path string) ([]string, error) {
+	return c.FormatRequirement(ctx, path)
+}
+
+func (c cliCodec) Resolve(ctx context.Context, _ codec.Scope, fn string) (Configuration, error) {
+	if err := ctx.Err(); err != nil {
+		return Configuration{}, err
+	}
+	if fn == "" && !c.mustBeNotZero {
+		return Configuration{}, nil
+	}
+	f, err := os.Open(fn)
+	if sys.IsNotExist(err) {
+		if c.mustExist {
+			return Configuration{}, codec.NewValidationErrorf("configuration file %q does not exist", fn)
+		}
+		return Configuration{}, nil
+	}
+	if err != nil {
+		return Configuration{}, codec.NewValidationErrorf("cannot open configuration file %q: %w", fn, err)
+	}
+	defer common.IgnoreCloseError(f)
+	var result Configuration
+
+	if err := result.LoadFromYaml(f, fn); err != nil {
+		return Configuration{}, codec.NewValidationError(err)
+	}
+
+	return result, nil
+}
+
+func (c cliCodec) ToRaw(ctx context.Context) codec.Codec[any, any] {
+	return codec.Raw(ctx, c)
+}
 
 type Ref struct {
 	v  Configuration

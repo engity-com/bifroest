@@ -9,6 +9,10 @@ import (
 
 	log "github.com/echocat/slf4g"
 
+	"github.com/engity-com/bifroest/pkg/cli"
+	"github.com/engity-com/bifroest/pkg/cli/audit"
+	. "github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/cli/recording"
 	"github.com/engity-com/bifroest/pkg/logging"
 	"github.com/engity-com/bifroest/pkg/managementclient"
 
@@ -17,14 +21,8 @@ import (
 )
 
 var (
-	registerCommands []func(*kingpin.Application)
 	errRemoteHandled = stderrors.New("remote command already handled")
 )
-
-func registerCommand(rc func(*kingpin.Application)) func(*kingpin.Application) {
-	registerCommands = append(registerCommands, rc)
-	return rc
-}
 
 func main() {
 	target, args, err := parseManagementTarget(goos.Args[1:])
@@ -40,6 +38,9 @@ func main() {
 			goos.Exit(code)
 		})
 
+	ctx, stop := signal.NotifyContext(context.Background(), goos.Interrupt)
+	defer stop()
+
 	logging.ConfigureLoggingForFlags(app, native.DefaultProvider)
 	app.PreAction(func(ctx *kingpin.ParseContext) error {
 		if target == nil {
@@ -52,29 +53,27 @@ func main() {
 			}
 			return fmt.Errorf("command %q does not support remote execution", command)
 		}
-		remoteCtx, stop := signal.NotifyContext(context.Background(), goos.Interrupt)
-		defer stop()
 		switch ctx.SelectedCommand.FullCommand() {
 		case "auditlog events":
-			if remoteAuditEventsOpts != nil && (remoteAuditEventsOpts.WithSensitive || remoteAuditEventsOpts.ExpectedProducerID != "") {
-				if err := doRemoteAuditEvents(remoteCtx, target, remoteAuditEventsOpts, goos.Stdout); err != nil {
+			if audit.remoteAuditEventsOpts != nil && (audit.remoteAuditEventsOpts.WithSensitive || audit.remoteAuditEventsOpts.ExpectedProducerID != "") {
+				if err := audit.doRemoteAuditEvents(ctx, target, audit.remoteAuditEventsOpts, goos.Stdout); err != nil {
 					return err
 				}
 				return errRemoteHandled
 			}
 		case "audit verify", "audit export", "audit decrypt", "audit merge", "audit producer-id",
 			"auditlog verify", "auditlog export", "auditlog decrypt", "auditlog merge", "auditlog producer-id":
-			if err := doRemoteAuditCommand(remoteCtx, target, ctx.SelectedCommand.FullCommand(), goos.Stdout); err != nil {
+			if err := audit.doRemoteAuditCommand(ctx, target, ctx.SelectedCommand.FullCommand(), goos.Stdout); err != nil {
 				return err
 			}
 			return errRemoteHandled
 		case "recording verify", "recording export", "recording play":
-			if err := doRemoteRecordingCommand(remoteCtx, target, ctx.SelectedCommand.FullCommand(), goos.Stdout); err != nil {
+			if err := recording.doRemoteRecordingCommand(ctx, target, ctx.SelectedCommand.FullCommand(), goos.Stdout); err != nil {
 				return err
 			}
 			return errRemoteHandled
 		}
-		if err := managementclient.Run(remoteCtx, managementclient.Target{
+		if err := managementclient.Run(ctx, managementclient.Target{
 			Host: target.RawHost, User: target.User, Port: target.Port, ExplicitPort: target.ExplicitPort,
 		}, args, goos.Stdout); err != nil {
 			return err
@@ -82,9 +81,7 @@ func main() {
 		return errRemoteHandled
 	})
 
-	for _, rc := range registerCommands {
-		rc(app)
-	}
+	cli.Register(ctx, app, UsageExecutable, versionV)
 
 	if _, err := app.Parse(args); err != nil {
 		if stderrors.Is(err, errRemoteHandled) {

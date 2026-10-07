@@ -45,6 +45,10 @@ func RecordingArtifactCommand(parent *kingpin.CmdClause, name string) *kingpin.C
 	return parent.Command(name, description)
 }
 
+type WithSensitiveOpts struct {
+	WithSensitive bool `flag:"with-sensitive" description:"Include private audit event fields; encrypted journals need a local decryption identity."`
+}
+
 func AuditSensitiveFlag(cmd *kingpin.CmdClause, target *bool) {
 	cmd.Flag("with-sensitive", "Include private audit event fields; encrypted journals need a local decryption identity.").BoolVar(target)
 }
@@ -53,8 +57,16 @@ func RecordingSensitiveFlag(cmd *kingpin.CmdClause, target *bool) {
 	cmd.Flag("with-sensitive", "Explicitly authorize access to sensitive Recording content.").BoolVar(target)
 }
 
+type RequireFullVerificationOpts struct {
+	RequireFull bool `flag:"require-full" description:"Fail if encrypted content cannot be fully verified without a local private key."`
+}
+
 func RequireFullVerificationFlag(cmd *kingpin.CmdClause, target *bool) {
 	cmd.Flag("require-full", "Fail if encrypted content cannot be fully verified without a local private key.").BoolVar(target)
+}
+
+type VerificationFormatOpts struct {
+	Format string `flag:"format" default:"table" enums:"table|json|yaml" description:"Display verification as text, JSON, or YAML."`
 }
 
 func VerificationFormatFlag(cmd *kingpin.CmdClause, target *string) {
