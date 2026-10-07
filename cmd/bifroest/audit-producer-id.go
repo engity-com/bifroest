@@ -9,24 +9,44 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/management"
 )
 
 type auditProducerIdOpts struct {
-	configuration configuration.Ref
-	auditlog      configuration.AuditlogName
+	configuration     configuration.Ref
+	configurationPath string
+	auditlog          configuration.AuditlogName
+	format            string
+	commandRoot       string
 }
+
+var remoteAuditProducerIdOpts = map[string]*auditProducerIdOpts{}
 
 func registerAuditProducerIdCmd(parent *kingpin.CmdClause) {
 	opts := auditProducerIdOpts{}
-	cmd := parent.Command("producer-id", "Print the producer ID from a configured local audit signing key.").
+	opts.commandRoot = parent.FullCommand()
+	remoteAuditProducerIdOpts[parent.FullCommand()] = &opts
+	cmd := management.AuditArtifactCommand(parent, "producer-id").
 		Action(func(*kingpin.ParseContext) error { return doAuditProducerId(&opts, goos.Stdout) })
-	registerConfigurationFlag(cmd, &opts.configuration)
+	cmd.Flag("configuration", "Configuration file (defaults to "+defaultConfigurationRef+").").Short('c').StringVar(&opts.configurationPath)
+	if opts.commandRoot == "audit" {
+		management.VerificationFormatFlag(cmd, &opts.format)
+	}
 	cmd.Arg("auditlogName", "Configured auditlog whose signing identity to inspect.").Required().SetValue(&opts.auditlog)
 }
 
 func doAuditProducerId(opts *auditProducerIdOpts, output io.Writer) error {
 	if opts == nil || output == nil {
 		return fmt.Errorf("missing audit producer ID options or output")
+	}
+	if opts.configurationPath != "" || len(opts.configuration.Get().Auditlogs) == 0 {
+		path := opts.configurationPath
+		if path == "" {
+			path = defaultConfigurationRef
+		}
+		if err := opts.configuration.Set(path); err != nil {
+			return err
+		}
 	}
 	configured, err := findConfiguredAuditlog(opts.configuration.Get(), opts.auditlog)
 	if err != nil {
@@ -43,6 +63,5 @@ func doAuditProducerId(opts *auditProducerIdOpts, output io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("cannot use identity of auditlog %q: %w", configured.Name, err)
 	}
-	_, err = fmt.Fprintln(output, identity.ProducerId())
-	return err
+	return management.WriteProducerID(output, selectedAuditFormat(opts.commandRoot, opts.format), identity.ProducerId().String())
 }

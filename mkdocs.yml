@@ -162,6 +162,7 @@ nav:
           - Local: reference/environment/local.md
           - SSH: reference/environment/ssh.md
           - Dummy: reference/environment/dummy.md
+          - Management: reference/environment/management.md
       - Sessions:
           - reference/session/index.md
           - Filesystem: reference/session/fs.md
@@ -177,6 +178,7 @@ nav:
       - Command line interface (CLI):
           - reference/cli/index.md
           - Run: reference/cli/run.md
+          - Management: reference/cli/management.md
           - Keys:
               - reference/cli/key/index.md
               - Generate: reference/cli/key/generate.md

@@ -97,6 +97,7 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 	if err != nil {
 		return err
 	}
+	this.warnOnManagementAccess()
 	closeService := true
 	defer func() {
 		if closeService {
@@ -298,7 +299,7 @@ func (this *Service) prepare() (svc *service, err error) {
 	if svc.authorizer, err = authorization.NewAuthorizerFacadeWithObserver(ctx, &this.Configuration.Flows, svc.observeFlowAuthorization); err != nil {
 		return fail(err)
 	}
-	if svc.environments, err = environment.NewRepositoryFacadeWithHostKeys(ctx, &this.Configuration.Flows, svc.alternatives, svc.imp, hostSigners, svc.sessions); err != nil {
+	if svc.environments, err = environment.NewRepositoryFacadeWithManagement(ctx, &this.Configuration.Flows, svc.alternatives, svc.imp, hostSigners, svc.sessions, svc); err != nil {
 		return fail(err)
 	}
 	if err = svc.houseKeeper.init(svc); err != nil {

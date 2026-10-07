@@ -31,6 +31,13 @@ func NewRepositoryFacadeWithHostKeys(ctx context.Context, flows *configuration.F
 	return newRepositoryFacade(ctx, flows, ap, i)
 }
 
+func NewRepositoryFacadeWithManagement(ctx context.Context, flows *configuration.Flows, ap alternatives.Provider, i imp.Imp, hostKeys []crypto.PrivateKey, sessions session.Repository, management ManagementCommandRunner) (*RepositoryFacade, error) {
+	ctx = context.WithValue(ctx, repositoryDependenciesContextKey{}, repositoryDependencies{
+		hostKeys: hostKeys, localAccounts: &localAccountCoordinator{sessions: sessions}, management: management,
+	})
+	return newRepositoryFacade(ctx, flows, ap, i)
+}
+
 func newRepositoryFacade(ctx context.Context, flows *configuration.Flows, ap alternatives.Provider, i imp.Imp) (*RepositoryFacade, error) {
 	if flows == nil {
 		return &RepositoryFacade{}, nil
@@ -330,6 +337,7 @@ type repositoryDependenciesContextKey struct{}
 type repositoryDependencies struct {
 	hostKeys      []crypto.PrivateKey
 	localAccounts *localAccountCoordinator
+	management    ManagementCommandRunner
 }
 
 func repositoryDependenciesFrom(ctx context.Context) repositoryDependencies {

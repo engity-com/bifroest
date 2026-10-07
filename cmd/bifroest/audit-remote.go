@@ -1,0 +1,195 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	goos "os"
+	"path/filepath"
+	"strings"
+
+	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/configuration"
+	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/management"
+	"github.com/engity-com/bifroest/pkg/managementclient"
+)
+
+func doRemoteAuditCommand(ctx context.Context, target *managementTarget, command string, output io.Writer) (resultErr error) {
+	if target == nil {
+		return fmt.Errorf("a remote target is required")
+	}
+	var names []configuration.AuditlogName
+	var anchors, identityFiles []string
+	var sourceDirectory, configPath, recipientFile string
+	var outPath string
+	var force, withSensitive, requireFull bool
+	var ownFormat string
+	commandRoot, verb, _ := strings.Cut(command, " ")
+	if commandRoot != "audit" && commandRoot != "auditlog" {
+		return fmt.Errorf("unsupported remote audit command %q", command)
+	}
+	switch verb {
+	case "verify":
+		opts := remoteAuditVerifyOpts[commandRoot]
+		if opts == nil {
+			return fmt.Errorf("audit verify is not registered")
+		}
+		names, anchors, identityFiles, sourceDirectory, configPath, recipientFile, requireFull = []configuration.AuditlogName{opts.auditlog}, opts.expectedProducerIds, opts.decryptionIdentityFiles, opts.sourceDirectory, opts.configurationPath, opts.encryptionPublicKeyFile, opts.requireFull
+		ownFormat = opts.format
+	case "export", "decrypt":
+		opts := remoteAuditExportOpts[commandRoot]
+		if verb == "decrypt" {
+			opts = remoteAuditDecryptOpts[commandRoot]
+		}
+		if opts == nil {
+			return fmt.Errorf("audit export is not registered")
+		}
+		names, anchors, identityFiles, sourceDirectory, configPath, recipientFile = []configuration.AuditlogName{opts.auditlog}, opts.expectedProducerIds, opts.decryptionIdentityFiles, opts.sourceDirectory, opts.configurationPath, opts.encryptionPublicKeyFile
+		outPath, force, withSensitive = opts.output, opts.force, opts.withSensitive
+	case "merge":
+		opts := remoteAuditMergeOpts[commandRoot]
+		if opts == nil {
+			return fmt.Errorf("audit merge is not registered")
+		}
+		for _, name := range opts.auditlogs {
+			names = append(names, configuration.AuditlogName(name))
+		}
+		anchors, identityFiles, configPath = opts.expectedProducerIds, opts.decryptionIdentityFiles, opts.configurationPath
+		outPath, force, withSensitive = opts.output, opts.force, opts.withSensitive
+	case "producer-id":
+		opts := remoteAuditProducerIdOpts[commandRoot]
+		if opts == nil {
+			return fmt.Errorf("audit producer-id is not registered")
+		}
+		names, configPath, ownFormat = []configuration.AuditlogName{opts.auditlog}, opts.configurationPath, opts.format
+	default:
+		return fmt.Errorf("unsupported remote audit command %q", command)
+	}
+	if sourceDirectory != "" || configPath != "" || recipientFile != "" {
+		return fmt.Errorf("--source, --configuration and --encryptionPublicKeyFile are local/offline inputs and cannot be used with a remote target")
+	}
+	format := selectedAuditFormat(commandRoot, ownFormat)
+	if (verb == "export" || verb == "decrypt" || verb == "merge") && format != management.FormatTable {
+		return fmt.Errorf("audit export and merge have a fixed JSON Lines output; use auditlog events --format=%s for structured views", format)
+	}
+	if len(names) == 0 {
+		return fmt.Errorf("at least one auditlog name is required")
+	}
+	remote := managementclient.Target{Host: target.RawHost, User: target.User, Port: target.Port, ExplicitPort: target.ExplicitPort}
+	if verb == "producer-id" {
+		if len(names) != 1 {
+			return fmt.Errorf("exactly one auditlog name is required")
+		}
+		if err := names[0].Validate(); err != nil {
+			return err
+		}
+		return managementclient.Run(ctx, remote, []string{"auditlog", "producer-id", names[0].String(), "--format=" + string(format)}, output)
+	}
+	if len(anchors) == 0 && len(names) == 1 {
+		value, err := managementclient.ExpectedRecordingProducerID(remote)
+		if err != nil {
+			return err
+		}
+		if value != "" {
+			anchors = []string{value}
+		}
+	}
+	selected := make([]*configuration.Auditlog, 0, len(names))
+	for _, name := range names {
+		if err := name.Validate(); err != nil {
+			return err
+		}
+		selected = append(selected, &configuration.Auditlog{Name: name})
+	}
+	producerIDs, err := parseAuditTrustAnchors(anchors, selected)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		if producerIDs[name].IsZero() {
+			return fmt.Errorf("remote auditlog %q requires --expectedProducerId or X-ExpectedProducerId from an independent trust source", name)
+		}
+	}
+	if len(identityFiles) == 0 && (withSensitive || requireFull || verb == "verify") {
+		path, err := managementclient.AuditPrivateKey(remote)
+		if err != nil {
+			return err
+		}
+		if path != "" {
+			identityFiles = []string{path}
+		}
+	}
+	var identities []bfcrypto.PrivateKey
+	if withSensitive || requireFull || verb == "verify" {
+		for _, path := range identityFiles {
+			key, err := loadAuditPrivateKey(path)
+			if err != nil {
+				return err
+			}
+			identities = append(identities, key)
+		}
+	}
+	root, err := goos.MkdirTemp("", "bifroest-remote-audit-*")
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, goos.RemoveAll(root)) }()
+	var sources []audit.JournalSource
+	var destination configuration.Configuration
+	for index, name := range names {
+		localRoot := filepath.Join(root, fmt.Sprintf("%d", index))
+		if err := goos.Mkdir(localRoot, 0700); err != nil {
+			return err
+		}
+		header, err := managementclient.DownloadAuditSnapshot(ctx, remote, name.String(), localRoot)
+		if err != nil {
+			return err
+		}
+		if header.Producer != producerIDs[name].String() {
+			return fmt.Errorf("remote auditlog %q has an unexpected producer ID", name)
+		}
+		journal := filepath.Join(localRoot, "journal")
+		sources = append(sources, audit.JournalSource{
+			Name: name.String(), Directory: journal, ExpectedProducerId: producerIDs[name], ExpectedEncryptionRecipient: header.Recipient,
+			DecryptionIdentities: identities, WithSensitive: withSensitive || verb == "verify" && len(identities) != 0,
+		})
+		destination.Auditlogs = append(destination.Auditlogs, configuration.Auditlog{Name: name, Enabled: true, Directory: journal})
+	}
+	if verb == "verify" {
+		if requireFull && sources[0].ExpectedEncryptionRecipient != "" && len(identities) == 0 {
+			return fmt.Errorf("full verification of encrypted audit journals requires a local --decryptionIdentityFile or X-AuditPrivateKey")
+		}
+		if err := audit.VerifyJournalIntegrity(ctx, sources); err != nil {
+			return err
+		}
+		scope := "full"
+		if sources[0].ExpectedEncryptionRecipient != "" && len(identities) == 0 {
+			scope = "outer"
+		}
+		return management.WriteVerification(output, format, scope)
+	}
+	verified, err := audit.VerifyJournals(ctx, sources)
+	if err != nil {
+		return err
+	}
+	if outPath == "" {
+		outPath = "-"
+	}
+	outPath, err = canonicalAuditOutput(outPath)
+	if err != nil {
+		return err
+	}
+	validate := func() error {
+		return ensureAuditDestinationSafe(outPath, output, "", &destination, identityFiles)
+	}
+	if err := validate(); err != nil {
+		return err
+	}
+	order := audit.RecordOrderChain
+	if verb == "merge" {
+		order = audit.RecordOrderChronological
+	}
+	return writeAuditOutput(outPath, force, output, verified, order, validate)
+}

@@ -16,6 +16,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/management"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -30,7 +31,10 @@ type auditExportOpts struct {
 	decryptionIdentityFiles []string
 	expectedProducerIds     []string
 	withSensitive           bool
+	commandRoot             string
 }
+
+var remoteAuditExportOpts = map[string]*auditExportOpts{}
 
 const maxAuditOutputSize = 128 << 20
 
@@ -52,7 +56,9 @@ func (this *boundedAuditOutput) Write(content []byte) (int, error) {
 
 func registerAuditExportCmd(parent *kingpin.CmdClause) {
 	opts := auditExportOpts{output: "-"}
-	cmd := parent.Command("export", "Export a verified audit journal as JSON Lines.").
+	opts.commandRoot = parent.FullCommand()
+	remoteAuditExportOpts[parent.FullCommand()] = &opts
+	cmd := management.AuditArtifactCommand(parent, "export").
 		Action(func(*kingpin.ParseContext) error { return doAuditExport(&opts, goos.Stdout) })
 	registerAuditExportFlags(cmd, &opts)
 	cmd.Arg("auditlogName", "Configured auditlog, or optional label for an offline journal (default: default).").SetValue(&opts.auditlog)
@@ -74,6 +80,9 @@ func registerAuditExportFlags(cmd *kingpin.CmdClause, opts *auditExportOpts) {
 func doAuditExport(opts *auditExportOpts, stdout io.Writer) error {
 	if opts == nil {
 		return fmt.Errorf("nil options")
+	}
+	if format := selectedAuditFormat(opts.commandRoot, ""); format != management.FormatTable {
+		return fmt.Errorf("audit export has a fixed JSON Lines output; use auditlog events --format=%s for structured views", format)
 	}
 	name, conf, err := resolveAuditSourceConfiguration(&opts.configuration, opts.configurationPath, opts.sourceDirectory, opts.encryptionPublicKeyFile, opts.auditlog)
 	if err != nil {
@@ -163,7 +172,7 @@ func offlineAuditJournalSource(configured *configuration.Auditlog, producerId au
 }
 
 func registerAuditSensitiveFlag(cmd *kingpin.CmdClause, target *bool) {
-	cmd.Flag("with-sensitive", "Include private event fields; encrypted journals require a matching decryption identity.").BoolVar(target)
+	management.AuditSensitiveFlag(cmd, target)
 }
 
 func registerAuditOutputFlags(cmd *kingpin.CmdClause, output *string, force *bool) {

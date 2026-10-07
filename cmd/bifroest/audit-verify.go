@@ -12,6 +12,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/management"
 )
 
 type auditVerifyOpts struct {
@@ -23,11 +24,17 @@ type auditVerifyOpts struct {
 	decryptionIdentityFiles []string
 	expectedProducerIds     []string
 	requireFull             bool
+	format                  string
+	commandRoot             string
 }
+
+var remoteAuditVerifyOpts = map[string]*auditVerifyOpts{}
 
 func registerAuditVerifyCmd(parent *kingpin.CmdClause) {
 	opts := auditVerifyOpts{}
-	cmd := parent.Command("verify", "Verify an audit journal without modifying it.").
+	opts.commandRoot = parent.FullCommand()
+	remoteAuditVerifyOpts[parent.FullCommand()] = &opts
+	cmd := management.AuditArtifactCommand(parent, "verify").
 		Action(func(*kingpin.ParseContext) error { return doAuditVerifyOutput(&opts, goos.Stdout) })
 	cmd.Flag("configuration", "Configuration file (defaults to "+defaultConfigurationRef+" without --source).").
 		Short('c').PlaceHolder("<path>").StringVar(&opts.configurationPath)
@@ -37,7 +44,10 @@ func registerAuditVerifyCmd(parent *kingpin.CmdClause) {
 		PlaceHolder("<path>").StringVar(&opts.encryptionPublicKeyFile)
 	registerAuditDecryptionIdentityFlags(cmd, &opts.decryptionIdentityFiles)
 	registerAuditTrustAnchorFlags(cmd, &opts.expectedProducerIds)
-	cmd.Flag("require-full", "Require decryption and full verification of encrypted audit records.").BoolVar(&opts.requireFull)
+	management.RequireFullVerificationFlag(cmd, &opts.requireFull)
+	if opts.commandRoot == "audit" {
+		management.VerificationFormatFlag(cmd, &opts.format)
+	}
 	cmd.Arg("auditlogName", "Configured auditlog, or optional label for an offline journal (default: default).").SetValue(&opts.auditlog)
 }
 
@@ -92,8 +102,7 @@ func doAuditVerifyOutput(opts *auditVerifyOpts, stdout io.Writer) error {
 	if err := validate(); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(stdout, "verified (scope: %s)\n", scope)
-	return err
+	return management.WriteVerification(stdout, selectedAuditFormat(opts.commandRoot, opts.format), scope)
 }
 
 func resolveAuditSourceConfiguration(ref *configuration.Ref, path, directory, recipient string, name configuration.AuditlogName) (configuration.AuditlogName, *configuration.Configuration, error) {
