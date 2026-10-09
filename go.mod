@@ -25,7 +25,7 @@ require (
 	github.com/echocat/slf4g/native v1.9.0
 	github.com/engity-com/ssh-server-go v0.4.1
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/fxamacker/cbor/v2 v2.9.4
+	github.com/fxamacker/cbor/v2 v2.9.6
 	github.com/go-delve/delve v1.27.2
 	github.com/google/go-containerregistry v0.22.1
 	github.com/google/go-github/v65 v65.0.0
