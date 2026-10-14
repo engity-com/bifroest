@@ -35,7 +35,7 @@ require (
 	github.com/mattn/go-zglob v0.0.8
 	github.com/mikesmitty/edkey v0.0.0-20170222072505-3356ea4e686a
 	github.com/moby/moby/api v1.56.1
-	github.com/moby/moby/client v0.6.1
+	github.com/moby/moby/client v0.6.2
 	github.com/moby/spdystream v0.5.1
 	github.com/mr-tron/base58 v1.3.0
 	github.com/msteinert/pam/v2 v2.1.0
