@@ -18,7 +18,7 @@ require (
 	github.com/containerd/errdefs v1.0.0
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/creack/pty v1.1.24
-	github.com/docker/go-connections v0.8.1
+	github.com/docker/go-connections v0.8.2
 	github.com/docker/go-units v0.5.0
 	github.com/ebitengine/purego v0.11.1
 	github.com/echocat/slf4g v1.9.0
