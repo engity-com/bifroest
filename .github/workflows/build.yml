@@ -199,7 +199,7 @@ jobs:
           BIFROEST_DARWIN_NOTARY_ISSUER_ID: ${{ matrix.os == 'darwin' && secrets.MACOS_APP_STORE_CONNECT_ISSUER_ID || '' }}
 
       - name: Upload binary
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: binary-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.edition }}
           path: var/dist
@@ -249,7 +249,7 @@ jobs:
         run: mise run build:go:binary -- --os=${{ matrix.os }} --arch=${{ matrix.arch }} --edition=${{ matrix.edition }}
 
       - name: Upload binary
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: binary-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.edition }}
           path: var/dist
@@ -318,7 +318,7 @@ jobs:
 
       - name: Archive package results
         if: inputs.upload_dist
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           retention-days: 1
           name: dist
