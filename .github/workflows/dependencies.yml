@@ -33,7 +33,7 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Install MISE
-        uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           version: 2026.9.5
           sha256: 32f644d8c291bb182f702c6d2b0dda9f8b01441e940d74d328aad5f08446b2fd
