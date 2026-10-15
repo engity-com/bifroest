@@ -7,14 +7,11 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
-	stdos "os"
 
-	"github.com/alecthomas/kingpin/v2"
+	cli "github.com/echocat/cli4g"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/audit"
-	. "github.com/engity-com/bifroest/pkg/cli/recording/common"
-	"github.com/engity-com/bifroest/pkg/cli/recording/export"
 	"github.com/engity-com/bifroest/pkg/recording"
 )
 
@@ -59,19 +56,21 @@ type recordingInspectCast struct {
 	MarkerEvents uint64 `json:"markerEvents"`
 }
 
-func registerRecordingInspectCmd(parent *kingpin.CmdClause) {
-	opts := recordingInspectOpts{}
-	cmd := parent.Command("inspect", "Verify and inspect a session Recording artifact as JSON.").
-		Action(func(*kingpin.ParseContext) error { return doRecordingInspect(&opts, stdos.Stdout) })
-	cmd.Flag("expectedProducerId", "Trusted producer ID containing exactly 64 hexadecimal characters.").
-		PlaceHolder("<producer-id>").
-		StringVar(&opts.expectedProducerId)
-	cmd.Arg("file", "Sealed .bcast or .becast Recording artifact, or signed standalone .cast.").
-		Required().
-		StringVar(&opts.file)
+type inspectCommandOptions struct {
+	File               string `argument:"file" required:"true" description:"Sealed .bcast or .becast Recording artifact, or signed standalone .cast."`
+	ExpectedProducerId string `flag:"expectedProducerId" description:"Independently trusted producer ID."`
 }
 
-func doRecordingInspect(opts *recordingInspectOpts, stdout io.Writer) (rErr error) {
+func registerRecordingInspectCmd(parent cli.ContainerRequirementSetters) {
+	parent.AddCommand(cli.NewCommand[inspectCommandOptions]().
+		WithName("inspect").
+		WithDescription("Verify and inspect a session Recording artifact as JSON.").
+		WithHandler(func(ctx context.Context, o inspectCommandOptions) error {
+			return doRecordingInspect(ctx, &recordingInspectOpts{file: o.File, expectedProducerId: o.ExpectedProducerId}, cli.StdoutOfContext(ctx))
+		}))
+}
+
+func doRecordingInspect(ctx context.Context, opts *recordingInspectOpts, stdout io.Writer) (rErr error) {
 	if opts == nil {
 		return fmt.Errorf("nil options")
 	}
@@ -94,7 +93,7 @@ func doRecordingInspect(opts *recordingInspectOpts, stdout io.Writer) (rErr erro
 	}
 	defer func() { rErr = goerrors.Join(rErr, file.Close()) }()
 	inspection, err := recording.Inspect(file, initial.Size(), recording.InspectOptions{
-		Context:            context.Background(),
+		Context:            ctx,
 		ExpectedProducerId: expectedProducerId,
 		AllowUntrusted:     allowUntrusted,
 	})
@@ -104,7 +103,7 @@ func doRecordingInspect(opts *recordingInspectOpts, stdout io.Writer) (rErr erro
 	if err := ValidateRecordingInput(opts.file, file, initial); err != nil {
 		return err
 	}
-	if err := export.ensureRecordingStandardOutputSafe(stdout, file, nil); err != nil {
+	if err := EnsureRecordingStandardOutputSafe(stdout, file, nil); err != nil {
 		return err
 	}
 	result, err := newRecordingInspectOutput(inspection, initial.Size())

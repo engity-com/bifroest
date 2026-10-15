@@ -15,14 +15,14 @@ import (
 
 	"github.com/engity-com/bifroest/internal/imp/protocol"
 	"github.com/engity-com/bifroest/internal/processidentity"
-	. "github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/execution"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-func Register(_ context.Context, c cli.ContainerRequirementSetters, usage Usage) {
+func Register(_ context.Context, c cli.ContainerRequirementSetters, usage common.Usage) {
 	if !usage.IncludeExec() {
 		return
 	}
@@ -34,18 +34,19 @@ func Register(_ context.Context, c cli.ContainerRequirementSetters, usage Usage)
 		WithVisible(false).
 		WithHandler(handler),
 	)
+	registerLocalConPTYRelay(c)
 }
 
 func newOpts(context.Context) (opts, error) {
 	return opts{
-		WorkingDirectory:           WorkingDirectory(),
+		WorkingDirectory:           common.WorkingDirectory(),
 		Environment:                sys.EnvVars{},
 		EncodedEnvironment:         goos.Getenv(execution.TargetEnvironmentEnvName),
 		ExitCodeByConnectionIdPath: protocol.DefaultExitCodeByConnectionIdPath,
 	}, nil
 }
 
-func handler(_ context.Context, o opts) error {
+func handler(ctx context.Context, o opts) error {
 	legacyState := false
 	if o.StoreExitCodeForConnectionId && o.ExecutionId.IsZero() {
 		if o.ConnectionId.IsZero() {
@@ -132,9 +133,9 @@ func handler(_ context.Context, o opts) error {
 	cmd := exec.Cmd{
 		Dir:         o.WorkingDirectory,
 		SysProcAttr: &syscall.SysProcAttr{},
-		Stderr:      goos.Stderr,
-		Stdin:       goos.Stdin,
-		Stdout:      goos.Stdout,
+		Stderr:      cli.StderrOfContext(ctx),
+		Stdin:       cli.StdinOfContext(ctx),
+		Stdout:      cli.StdoutOfContext(ctx),
 		Args:        o.Command,
 		Path:        o.Executable,
 	}

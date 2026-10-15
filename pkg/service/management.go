@@ -7,13 +7,16 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/alecthomas/kingpin/v2"
 	"github.com/anmitsu/go-shlex"
+	clibase "github.com/echocat/cli4g"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	cliCommon "github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/cli/model"
+	clirecording "github.com/engity-com/bifroest/pkg/cli/recording"
+	"github.com/engity-com/bifroest/pkg/cli/transport"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/environment"
-	"github.com/engity-com/bifroest/pkg/management"
 	"github.com/engity-com/bifroest/pkg/recording"
 )
 
@@ -40,47 +43,35 @@ func (this *service) isManagementFlow(name configuration.FlowName) bool {
 	return false
 }
 
-type managementTermination struct{ status int }
-
 func (this *service) RunManagementCommand(task environment.Task, includingCredentials, allowArtifactTransfer bool) (exitCode int, resultErr error) {
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			if termination, ok := recovered.(managementTermination); ok {
-				exitCode = termination.status
-				resultErr = nil
-			} else {
-				panic(recovered)
-			}
-		}
-	}()
 	defer func() {
 		if resultErr != nil {
 			_, _ = fmt.Fprintln(task.SshSession().Stderr(), resultErr)
 		}
 	}()
 	raw := task.SshSession().RawCommand()
-	if raw == management.WireCommand {
-		args, err := management.DecodeWireRequest(task.SshSession())
+	if raw == transport.WireCommand {
+		args, err := transport.DecodeWireRequest(task.SshSession())
 		if err != nil {
 			return -1, err
 		}
-		return this.runManagementArgs(task, includingCredentials, allowArtifactTransfer, append(args, "--format=cbor"))
+		return this.runManagementArgs(task, includingCredentials, allowArtifactTransfer, args, true)
 	}
-	if raw == management.WireRecordingCommand {
+	if raw == transport.WireRecordingCommand {
 		if !allowArtifactTransfer {
 			return -1, fmt.Errorf("raw artifact downloads require allowArtifactTransfer in the management environment")
 		}
-		args, err := management.DecodeWireRequest(task.SshSession())
+		args, err := transport.DecodeWireRequest(task.SshSession())
 		if err != nil {
 			return -1, err
 		}
 		return this.streamManagementRecording(task, args)
 	}
-	if raw == management.WireAuditCommand {
+	if raw == transport.WireAuditCommand {
 		if !allowArtifactTransfer {
 			return -1, fmt.Errorf("raw artifact downloads require allowArtifactTransfer in the management environment")
 		}
-		args, err := management.DecodeWireRequest(task.SshSession())
+		args, err := transport.DecodeWireRequest(task.SshSession())
 		if err != nil {
 			return -1, err
 		}
@@ -93,7 +84,7 @@ func (this *service) RunManagementCommand(task environment.Task, includingCreden
 	if err != nil {
 		return -1, fmt.Errorf("invalid management command: %w", err)
 	}
-	return this.runManagementArgs(task, includingCredentials, allowArtifactTransfer, args)
+	return this.runManagementArgs(task, includingCredentials, allowArtifactTransfer, args, false)
 }
 
 func (this *service) streamManagementAudit(task environment.Task, args []string) (int, error) {
@@ -123,7 +114,7 @@ func (this *service) streamManagementAudit(task environment.Task, args []string)
 		if err != nil {
 			return -1, err
 		}
-		snapshot, err := management.SnapshotAudit(task.Context(), audit.JournalSource{
+		snapshot, err := transport.SnapshotAudit(task.Context(), audit.JournalSource{
 			Name: name.String(), Directory: conf.Directory, ExpectedProducerId: identity.ProducerId(), ExpectedEncryptionRecipient: recipient,
 		})
 		if err != nil {
@@ -162,7 +153,7 @@ func (this *service) streamManagementRecording(task environment.Task, args []str
 	if artifact.Size() > recording.DefaultMaximumNativeRecordingBytes {
 		return -1, fmt.Errorf("recording exceeds the maximum supported artifact size")
 	}
-	if err := management.WriteRecordingArtifact(task.SshSession(), management.RecordingArtifactHeader{
+	if err := transport.WriteRecordingArtifact(task.SshSession(), transport.RecordingArtifactHeader{
 		Version: 1, ID: id.String(), ProducerID: artifact.ProducerId().String(), Size: artifact.Size(), SHA256: artifact.ArtifactDigest().String(),
 	}, artifact.Reader()); err != nil {
 		return -1, err
@@ -170,85 +161,66 @@ func (this *service) streamManagementRecording(task environment.Task, args []str
 	return 0, nil
 }
 
-func (this *service) runManagementArgs(task environment.Task, includingCredentials, allowArtifactTransfer bool, args []string) (int, error) {
+func (this *service) runManagementArgs(task environment.Task, includingCredentials, allowArtifactTransfer bool, args []string, wire bool) (int, error) {
 	for _, arg := range args {
 		if strings.HasPrefix(arg, "@") {
 			return -1, fmt.Errorf("management commands do not permit @file argument expansion")
 		}
 	}
-	app := kingpin.New("bifroest", "Inspect Bifröst over SSH.").Terminate(func(status int) { panic(managementTermination{status}) })
-	app.UsageWriter(task.SshSession().Stderr()).ErrorWriter(task.SshSession().Stderr())
-	management.RegisterFlowCommands(app, func(path string) (*configuration.Configuration, error) {
-		if path != "" {
-			return nil, fmt.Errorf("remote management commands do not accept local configuration files")
-		}
-		return &this.Configuration, nil
-	}, task.SshSession(), includingCredentials, false)
-	management.RegisterSessionCommands(app, management.SessionSourceFromRepository(this.sessions), task.Context(), task.SshSession(), task.SshSession().Stderr(), false)
-	auditlogCommands, auditOptions := management.RegisterAuditlogCommands(app, func(path string) (*configuration.Configuration, error) {
-		if path != "" {
-			return nil, fmt.Errorf("remote management commands do not accept local configuration files")
-		}
-		return &this.Configuration, nil
-	}, func(ctx context.Context, path string, name configuration.AuditlogName, sensitive bool, identities []string) ([]audit.VerifiedRecord, error) {
-		if sensitive && !allowArtifactTransfer {
-			return nil, fmt.Errorf("sensitive audit events require allowArtifactTransfer in the management environment")
-		}
-		if path != "" || len(identities) != 0 {
-			return nil, fmt.Errorf("remote management commands cannot read local files")
-		}
-		identity := this.auditIdentities[name]
-		if identity == nil {
-			return nil, fmt.Errorf("auditlog %q has no active signing identity", name)
-		}
-		return management.ReadAuditEvents(ctx, &this.Configuration, name, identity.ProducerId(), sensitive, nil)
-	}, task.Context(), task.SshSession(), false)
-	this.registerManagementAuditCommands(auditlogCommands, task, &auditOptions.Format, allowArtifactTransfer)
-	this.registerManagementAuditCommands(app.Command("audit", "Inspect signed audit journals."), task, nil, allowArtifactTransfer)
-	recordingCommands := app.Command("recording", "Inspect sealed session recordings.")
-	management.RegisterRecordingCommands(recordingCommands, func(ctx context.Context, path string, name configuration.AuditlogName) ([]management.RecordingView, error) {
-		if path != "" {
-			return nil, fmt.Errorf("remote recording commands cannot read local configuration files")
-		}
-		repository := this.recordingRepositories[name]
-		if repository == nil || repository.native == nil {
-			return nil, fmt.Errorf("auditlog %q has no active recording repository", name)
-		}
-		ids, err := repository.native.ListSealed(ctx)
-		if err != nil {
-			return nil, err
-		}
-		entries := make([]management.RecordingView, 0, len(ids))
-		for _, id := range ids {
-			artifact, err := repository.native.OpenSealed(ctx, id)
+	if this.ManagementApplication == nil {
+		return -1, fmt.Errorf("management CLI application is unavailable")
+	}
+	access := cliCommon.ManagementAccess{
+		Configuration: &this.Configuration, Sessions: this.sessions,
+		IncludingCredentials: includingCredentials, AllowArtifactTransfer: allowArtifactTransfer, WireFormat: wire,
+		Audit:     managementAuditOperations{service: this, allowArtifactTransfer: allowArtifactTransfer},
+		Recording: managementRecordingOperations{service: this, allowArtifactTransfer: allowArtifactTransfer},
+		ProducerID: func(name configuration.AuditlogName) (audit.ProducerId, error) {
+			identity := this.auditIdentities[name]
+			if identity == nil {
+				return audit.ProducerId{}, fmt.Errorf("auditlog %q has no active signing identity", name)
+			}
+			return identity.ProducerId(), nil
+		},
+		RecordingList: func(ctx context.Context, name configuration.AuditlogName) ([]model.RecordingView, error) {
+			repository := this.recordingRepositories[name]
+			if repository == nil || repository.native == nil {
+				return nil, fmt.Errorf("auditlog %q has no active recording repository", name)
+			}
+			ids, err := repository.native.ListSealed(ctx)
 			if err != nil {
 				return nil, err
 			}
-			view, err := management.InspectRecording(ctx, name, artifact, artifact.Size(), repository.producerId)
-			if closeErr := artifact.Close(); err == nil {
-				err = closeErr
+			entries := make([]model.RecordingView, 0, len(ids))
+			for _, id := range ids {
+				artifact, err := repository.native.OpenSealed(ctx, id)
+				if err != nil {
+					return nil, err
+				}
+				view, err := clirecording.InspectRecording(ctx, name, artifact, artifact.Size(), repository.producerId)
+				if closeErr := artifact.Close(); err == nil {
+					err = closeErr
+				}
+				if err != nil {
+					return nil, err
+				}
+				entries = append(entries, view)
 			}
+			return entries, nil
+		},
+		RecordingDetail: func(ctx context.Context, name configuration.AuditlogName, id recording.Id) (result model.RecordingView, resultErr error) {
+			artifact, err := this.openManagementRecording(ctx, name.String(), id.String())
 			if err != nil {
-				return nil, err
+				return result, err
 			}
-			entries = append(entries, view)
-		}
-		return entries, nil
-	}, func(ctx context.Context, path string, name configuration.AuditlogName, id recording.Id) (result management.RecordingView, resultErr error) {
-		if path != "" {
-			return result, fmt.Errorf("remote recording commands cannot read local configuration files")
-		}
-		artifact, err := this.openManagementRecording(ctx, name.String(), id.String())
-		if err != nil {
-			return result, err
-		}
-		defer func() { resultErr = errors.Join(resultErr, artifact.Close()) }()
-		return management.InspectRecording(ctx, name, artifact, artifact.Size(), artifact.ProducerId())
-	}, task.Context(), task.SshSession(), false)
-	this.registerManagementRecordingCommands(recordingCommands, task, allowArtifactTransfer)
-	if _, err := app.Parse(args); err != nil {
-		_, _ = fmt.Fprintln(task.SshSession().Stderr(), err)
-		return 1, nil
+			defer func() { resultErr = errors.Join(resultErr, artifact.Close()) }()
+			return clirecording.InspectRecording(ctx, name, artifact, artifact.Size(), artifact.ProducerId())
+		},
+	}
+	ctx := clibase.ContextWithStdio(task.Context(), task.SshSession(), task.SshSession(), task.SshSession().Stderr())
+	ctx = cliCommon.ContextWithManagementAccess(ctx, access)
+	if err := this.ManagementApplication.ParseAndExecute(ctx, nil, args...); err != nil {
+		return 1, err
 	}
 	return 0, nil
 }

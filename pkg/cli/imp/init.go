@@ -9,7 +9,7 @@ import (
 	cli "github.com/echocat/cli4g"
 	log "github.com/echocat/slf4g"
 
-	. "github.com/engity-com/bifroest/pkg/cli/common"
+	cliCommon "github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/imp"
@@ -26,7 +26,7 @@ func newInitOpts(context.Context) (initOpts, error) {
 	}, nil
 }
 
-func registerInit(_ context.Context, c cli.ContainerRequirementSetters, usage Usage, version sys.Version) {
+func registerInit(_ context.Context, c cli.ContainerRequirementSetters, usage cliCommon.Usage, version sys.Version) {
 	if !usage.IncludeService() {
 		return
 	}

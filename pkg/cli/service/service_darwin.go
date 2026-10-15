@@ -18,7 +18,7 @@ import (
 
 	cli "github.com/echocat/cli4g"
 
-	. "github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
@@ -46,12 +46,11 @@ type opts struct {
 }
 
 type installOpts struct {
-	opts
 	configuration.StrOpts
 	Start bool `flag:"start" default:"true" description:"If enabled, the service will be started afterwards, automatically."`
 }
 
-func Register(ctx context.Context, c cli.ContainerRequirementSetters, usage Usage, _ sys.Version) {
+func Register(ctx context.Context, c cli.ContainerRequirementSetters, usage common.Usage, _ sys.Version) {
 	if !usage.IncludeService() {
 		return
 	}

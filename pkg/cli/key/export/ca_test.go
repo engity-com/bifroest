@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	cli "github.com/echocat/cli4g"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
 
@@ -21,9 +22,10 @@ func TestKeyExportCaUsesFlowConfigurationBeforeServiceStart(t *testing.T) {
 
 	var ref configuration.Ref
 	require.NoError(t, ref.Set(configurationFile))
-	opts := exportOpts{configuration: ref, flow: "entry", output: "-"}
+	opts := exportOpts{Opts: configuration.Opts{Configuration: *ref.Get()}, Flow: "entry", Output: "-"}
 	var stdout bytes.Buffer
-	require.NoError(t, handleExport(&opts, &stdout))
+	ctx := cli.ContextWithStdio(t.Context(), nil, &stdout, nil)
+	require.NoError(t, handleExport(ctx, opts))
 
 	privateRaw, err := goos.ReadFile(authorityFile)
 	require.NoError(t, err)
@@ -46,12 +48,12 @@ func TestKeyExportCaFileIsNoClobberUnlessForced(t *testing.T) {
 	var ref configuration.Ref
 	require.NoError(t, ref.Set(configurationFile))
 	output := filepath.Join(directory, "ca.pub")
-	opts := exportOpts{configuration: ref, flow: "entry", output: output}
+	opts := exportOpts{Opts: configuration.Opts{Configuration: *ref.Get()}, Flow: "entry", Output: output}
 
-	require.NoError(t, handleExport(&opts, &bytes.Buffer{}))
-	require.Error(t, handleExport(&opts, &bytes.Buffer{}))
-	opts.force = true
-	require.NoError(t, handleExport(&opts, &bytes.Buffer{}))
+	require.NoError(t, handleExport(t.Context(), opts))
+	require.Error(t, handleExport(t.Context(), opts))
+	opts.Force = true
+	require.NoError(t, handleExport(t.Context(), opts))
 }
 
 func TestKeyExportCaDoesNotReplacePrivateKeyWithForce(t *testing.T) {
@@ -61,7 +63,7 @@ func TestKeyExportCaDoesNotReplacePrivateKeyWithForce(t *testing.T) {
 	var ref configuration.Ref
 	require.NoError(t, ref.Set(configurationFile))
 
-	err := handleExport(&exportOpts{configuration: ref, flow: "entry", output: authorityFile, force: true}, &bytes.Buffer{})
+	err := handleExport(t.Context(), exportOpts{Opts: configuration.Opts{Configuration: *ref.Get()}, Flow: "entry", Output: authorityFile, Force: true})
 	require.ErrorContains(t, err, "must not replace private key")
 	privateRaw, readErr := goos.ReadFile(authorityFile)
 	require.NoError(t, readErr)
@@ -76,7 +78,7 @@ func TestKeyExportCaRejectsUnknownOrInapplicableFlow(t *testing.T) {
 	require.NoError(t, ref.Set(configurationFile))
 
 	for _, flow := range []configuration.FlowName{"missing", "entry"} {
-		err := handleExport(&exportOpts{configuration: ref, flow: flow, output: "-"}, &bytes.Buffer{})
+		err := handleExport(t.Context(), exportOpts{Opts: configuration.Opts{Configuration: *ref.Get()}, Flow: flow, Output: "-"})
 		require.Error(t, err)
 	}
 }

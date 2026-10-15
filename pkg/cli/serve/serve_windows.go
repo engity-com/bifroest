@@ -14,7 +14,7 @@ import (
 	cservice "github.com/engity-com/bifroest/pkg/cli/service"
 	"github.com/engity-com/bifroest/pkg/configuration"
 
-	. "github.com/engity-com/bifroest/pkg/cli/common"
+	cliCommon "github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/logging/wel"
@@ -26,7 +26,7 @@ type opts struct {
 	cservice.BaseOpts
 }
 
-func Register(_ context.Context, c cli.ContainerRequirementSetters, usage Usage, version sys.Version) {
+func Register(_ context.Context, c cli.ContainerRequirementSetters, usage cliCommon.Usage, version sys.Version) {
 	if !usage.IncludeService() {
 		return
 	}
@@ -62,10 +62,11 @@ func doRun(ctx context.Context, o *opts, version sys.Version) error {
 	log.SetProvider(welProvider)
 
 	ws := &cservice.WindowsService{
-		Version: version,
-		Name:    o.ServiceName,
-		Conf:    o.Configuration,
-		Logger:  eLog,
+		Version:               version,
+		Name:                  o.ServiceName,
+		Conf:                  o.Configuration,
+		Logger:                eLog,
+		ManagementApplication: cliCommon.ManagementApplicationFromContext(ctx),
 	}
 	if err := svc.Run(ws.Name, ws); err != nil {
 		log.WithError(err).Error()

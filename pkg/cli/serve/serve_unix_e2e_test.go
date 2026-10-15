@@ -17,7 +17,25 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
+
+type serveTestVersion struct{}
+
+func (serveTestVersion) Title() string                 { return "Bifröst" }
+func (serveTestVersion) Version() string               { return "test" }
+func (serveTestVersion) Revision() string              { return "test" }
+func (serveTestVersion) Edition() sys.Edition          { return sys.EditionGeneric }
+func (serveTestVersion) BuildAt() time.Time            { return time.Now() }
+func (serveTestVersion) Vendor() string                { return "test" }
+func (serveTestVersion) GoVersion() string             { return "test" }
+func (serveTestVersion) Os() sys.Os                    { return sys.OsLinux }
+func (serveTestVersion) Arch() sys.Arch                { return sys.ArchAmd64 }
+func (serveTestVersion) Features() sys.VersionFeatures { return serveTestFeatures{} }
+
+type serveTestFeatures struct{}
+
+func (serveTestFeatures) ForEach(func(sys.VersionFeatureCategory)) {}
 
 func TestDoRunDefaultRemovesRepositoryLocksOnShutdown(t *testing.T) {
 	root := t.TempDir()
@@ -53,7 +71,7 @@ func runDefaultUntilInterrupted(t *testing.T, ref configuration.Ref, lockPaths [
 	done := make(chan error, 1)
 	stopped := false
 	go func() {
-		done <- doRunDefault(ref)
+		done <- doRunDefault(t.Context(), &opts{Opts: configuration.Opts{Configuration: *ref.Get()}}, serveTestVersion{})
 	}()
 	t.Cleanup(func() {
 		if stopped {

@@ -2,24 +2,28 @@ package _import
 
 import (
 	"bytes"
+	crand "crypto/rand"
 	"path/filepath"
 	"testing"
 
+	cli "github.com/echocat/cli4g"
 	"github.com/stretchr/testify/require"
 
-	"github.com/engity-com/bifroest/pkg/cli/key"
-	"github.com/engity-com/bifroest/pkg/cli/key/export"
+	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 )
 
 func TestKeyImportCaMergesCertificateAuthorities(t *testing.T) {
 	directory := t.TempDir()
 	identityFile := filepath.Join(directory, "ca")
-	require.NoError(t, key.doKeyGenerate(identityFile, ""))
-	var public bytes.Buffer
-	require.NoError(t, export.doKeyExportPublic(identityFile, "", "-", false, &public))
+	_, err := (bfcrypto.KeyRequirement{Type: bfcrypto.KeyTypeEd25519}).CreateFile(crand.Reader, identityFile)
+	require.NoError(t, err)
+	public, err := bfcrypto.ExportPublicKey(identityFile, "")
+	require.NoError(t, err)
 
 	trustedCAsFile := filepath.Join(directory, "trusted-cas")
-	require.NoError(t, handleCa(trustedCAsFile, "-", "", bytes.NewReader(public.Bytes())))
-	require.NoError(t, handleCa(trustedCAsFile, "-", "", bytes.NewReader(public.Bytes())))
+	for range 2 {
+		ctx := cli.ContextWithStdio(t.Context(), bytes.NewReader(public), nil, nil)
+		require.NoError(t, handleCa(ctx, caOpts{TrustedCAsFile: trustedCAsFile, Input: "-"}))
+	}
 	require.FileExists(t, trustedCAsFile)
 }

@@ -6,7 +6,7 @@ import (
 
 	cli "github.com/echocat/cli4g"
 
-	. "github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/environment"
@@ -16,10 +16,10 @@ type exportOpts struct {
 	configuration.Opts
 	Output string                 `flag:"output" default:"-" placeholder:"<path|->" description:"Output file or - for stdout."`
 	Force  bool                   `flag:"force" description:"Replace an existing output file."`
-	Flow   configuration.FlowName `arg:"flowName" required:"true" description:"Flow whose SSH certificate authority should be exported."`
+	Flow   configuration.FlowName `argument:"flowName" required:"true" description:"Flow whose SSH certificate authority should be exported."`
 }
 
-func registerCa(_ context.Context, c cli.ContainerRequirementSetters, _ Usage) {
+func registerCa(_ context.Context, c cli.ContainerRequirementSetters, _ common.Usage) {
 	c.AddCommand(cli.NewCommand[exportOpts]().
 		WithName("ca").
 		WithDescription("Export the public key of a flow's SSH certificate authority.").
@@ -36,10 +36,10 @@ func handleExport(ctx context.Context, o exportOpts) error {
 	if err != nil {
 		return err
 	}
-	if err := EnsureBootstrapOutputIsNotPrivateKey(o.Output, identityFile); err != nil {
+	if err := common.EnsureBootstrapOutputIsNotPrivateKey(o.Output, identityFile); err != nil {
 		return err
 	}
-	return WriteBootstrapOutput(ctx, o.Output, bfcrypto.MarshalPublicKey(key.PublicKey()), o.Force)
+	return common.WriteBootstrapOutput(ctx, o.Output, bfcrypto.MarshalPublicKey(key.PublicKey()), o.Force)
 }
 
 func findConfiguredFlow(o *exportOpts) (*configuration.Flow, error) {

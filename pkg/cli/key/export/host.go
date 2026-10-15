@@ -6,7 +6,7 @@ import (
 
 	cli "github.com/echocat/cli4g"
 
-	. "github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/service"
@@ -20,7 +20,7 @@ type hostOpts struct {
 	Force        bool   `flag:"force" description:"Replace an existing output file."`
 }
 
-func registerHost(_ context.Context, c cli.ContainerRequirementSetters, _ Usage) {
+func registerHost(_ context.Context, c cli.ContainerRequirementSetters, _ common.Usage) {
 	c.AddCommand(cli.NewCommand[hostOpts]().
 		WithName("host").
 		WithDescription("Export SSH host keys as known_hosts entries without network access.").
@@ -50,12 +50,12 @@ func handleHost(ctx context.Context, o hostOpts) error {
 			return err
 		}
 	}
-	if err := EnsureBootstrapOutputIsNotPrivateKey(o.Output, identityFiles...); err != nil {
+	if err := common.EnsureBootstrapOutputIsNotPrivateKey(o.Output, identityFiles...); err != nil {
 		return err
 	}
 	raw, err := bfcrypto.ExportKnownHostKeys(keys, o.Address)
 	if err != nil {
 		return err
 	}
-	return WriteBootstrapOutput(ctx, o.Output, raw, o.Force)
+	return common.WriteBootstrapOutput(ctx, o.Output, raw, o.Force)
 }

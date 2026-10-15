@@ -12,7 +12,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/execution"
 	"github.com/engity-com/bifroest/pkg/sys"
@@ -31,13 +30,13 @@ func TestDoExecStoresResultForImmediatelyExitingProcess(t *testing.T) {
 			StoreExitCodeForConnectionId: true,
 			ExitCodeByConnectionIdPath:   directory,
 			ExecutionId:                  executionId,
-			common.WorkingDirectory:      directory,
+			WorkingDirectory:             directory,
 			Environment:                  map[string]string{},
 			Executable:                   command,
 			Command:                      []string{command, "/D", "/C", "exit 37"},
 		}
 
-		require.NoError(t, handler(&opts))
+		require.NoError(t, handler(t.Context(), opts))
 		stateDirectory := filepath.Join(directory, execution.StateDirectoryName)
 		content, err := goos.ReadFile(executionStatePath(stateDirectory, executionId, ""))
 		require.NoError(t, err)

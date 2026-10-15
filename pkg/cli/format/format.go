@@ -6,28 +6,25 @@ import (
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
-var (
-	ErrIllegal = errors.User.Newf("illegal format")
-)
+var ErrIllegal = errors.User.Newf("illegal format")
 
-type Format uint8
+type Format string
 
 const (
-	Text Format = iota
-	Json
-	Yaml
+	Text Format = "table"
+	Json Format = "json"
+	Yaml Format = "yaml"
+	Cbor Format = "cbor"
+	// WireCbor is an internal transport envelope, not a user-visible enum value.
+	WireCbor Format = "internal-cbor"
 )
 
 func (this Format) MarshalText() ([]byte, error) {
 	switch this {
-	case Text:
-		return []byte("text"), nil
-	case Json:
-		return []byte("json"), nil
-	case Yaml:
-		return []byte("yaml"), nil
+	case Text, Json, Yaml, Cbor:
+		return []byte(this), nil
 	default:
-		return nil, errors.User.Newf("%w: %d", ErrIllegal, this)
+		return nil, errors.User.Newf("%w: %s", ErrIllegal, this)
 	}
 }
 
@@ -35,18 +32,18 @@ func (this *Format) UnmarshalText(b []byte) error {
 	switch strings.ToLower(string(b)) {
 	case "text", "table":
 		*this = Text
-		return nil
 	case "json":
 		*this = Json
-		return nil
 	case "yaml":
 		*this = Yaml
-		return nil
+	case "cbor":
+		*this = Cbor
 	default:
-		return errors.User.Newf("%w: %s", ErrIllegal, string(b))
+		return errors.User.Newf("%w: %s", ErrIllegal, b)
 	}
+	return nil
 }
 
 type Opts struct {
-	Format Format `flag:"format" default:"text" description:"Display result as: text, JSON or YAML."`
+	Format Format `flag:"format" enum:"table|json|yaml|cbor" default:"table" description:"Display result as table, JSON, YAML or CBOR."`
 }

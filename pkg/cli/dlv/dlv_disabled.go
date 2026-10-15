@@ -3,7 +3,11 @@
 package dlv
 
 import (
-	. "github.com/engity-com/bifroest/pkg/cli/common"
+	"context"
+
+	cli "github.com/echocat/cli4g"
+
+	"github.com/engity-com/bifroest/pkg/cli/common"
 )
 
-func Register(cmds Commands, _ Usage) {}
+func Register(context.Context, cli.ContainerRequirementSetters, common.Usage) {}

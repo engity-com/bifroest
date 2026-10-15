@@ -10,7 +10,7 @@ Commands run locally unless the **first argument** is `@[USER@]HOST[:PORT]`. Tha
 bifroest session ls
 bifroest @management@bifroest.example.org session ls --format=json
 bifroest @bifroest-admin flow show administration --format=yaml
-ssh management@bifroest.example.org 'auditlog ls'
+ssh management@bifroest.example.org 'audit ls'
 ```
 
 `@target` must precede all other arguments. The leading `@` is reserved for remote selection; `@file` argument expansion is not available in management commands, and `@target` in a later position is rejected. Direct SSH commands execute inside the management flow and do not start a shell.
@@ -19,10 +19,10 @@ ssh management@bifroest.example.org 'auditlog ls'
 | --- | --- | --- |
 | `session` | `ls`, `show <id>` | `ls` defaults to authorized, non-expired sessions; use `--state=all`, `--flow` and `--user` for more. |
 | `flow` | `ls`, `show <name>` | Arbitrary strings, including image references, are redacted unless that management flow explicitly enables `includingCredentials`; structural names, non-string settings and fixed image-pull policies remain visible. |
-| `auditlog` | `ls`, `show <name>`, `events <name>`, `producer-id`, `verify`, `export`, `decrypt`, `merge` | `events` is signature-verified; private fields require `--with-sensitive`. The older `audit` subject remains an alias for the artifact commands. |
+| `audit` | `ls`, `show <name>`, `events <name>`, `producer-id`, `verify`, `export`, `decrypt`, `merge` | `events` is signature-verified; private fields require `--with-sensitive`. |
 | `recording` | `ls <auditlog>`, `show <auditlog> <id>`, `verify`, `export`, `play` | An encrypted Recording reports outer verification until the matching local private key is supplied for full verification, export and playback. |
 
-Lists display tables and detail commands display key/value lists by default. Use `--format=json` or `--format=yaml` for structured output, including verification results and producer IDs. Audit export/merge remain **JSON Lines** and Recording export remains **asciicast**; those stream formats cannot be changed with `--format`. This is independent of the existing `--output` flag, which chooses an export **file**. Local `audit verify/export/merge` and `recording verify/export` commands remain available. Remote audit verification/export copies a signed journal checkpoint and verifies it on the CLI machine. Remote Recording `verify`, `export`, and `play` copy the signed original and verify it there. These remote downloads require `allowArtifactTransfer: true` on the authorized management flow, including for `verify` without `--with-sensitive`. Neither operation transmits a decryption private key to the server. `recording play` and export require `--with-sensitive`.
+Lists display tables and detail commands display key/value lists by default. Use `--format=json`, `--format=yaml` or `--format=cbor` for structured output, including verification results and producer IDs. Public CBOR output contains only the result; the versioned CBOR envelope belongs to the internal SSH transport. Audit export/merge remain **JSON Lines** and Recording export remains **asciicast**; those stream formats cannot be changed with `--format`. This is independent of the existing `--output` flag, which chooses an export **file**. Local `audit verify/export/merge` and `recording verify/export` commands remain available. Remote audit verification/export copies a signed journal checkpoint and verifies it on the CLI machine. Remote Recording `verify`, `export`, and `play` copy the signed original and verify it there. These remote downloads require `allowArtifactTransfer: true` on the authorized management flow, including for `verify` without `--with-sensitive`. Neither operation transmits a decryption private key to the server. `recording play` and export require `--with-sensitive`.
 
 Local file inputs, such as `audit verify --source ./journal` and `recording verify ./file.becast`, are not remote paths. Use a configured auditlog and Recording ID for remote selection. Output files and decryption-key files always refer to the CLI machine.
 
@@ -45,15 +45,15 @@ Host bifroest-admin
     X-ExpectedProducerId 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
-`X-RecordingPrivateKey` names a **local** private-key file. For encrypted audits, use `X-AuditPrivateKey` in the same `Host` block or supply `--decryptionIdentityFile` to the command. `X-ExpectedProducerId` pins an independently trusted audit/Recording signing producer ID; artifact commands and `auditlog events --with-sensitive` also accept `--expectedProducerId`. Keep signing and encryption keys distinct and retain producer IDs independently of copied evidence. A server-supplied ID is not a trust anchor.
+`X-RecordingPrivateKey` names a **local** private-key file. For encrypted audits, use `X-AuditPrivateKey` in the same `Host` block or supply `--decryptionIdentityFile` to the command. `X-ExpectedProducerId` pins an independently trusted audit/Recording signing producer ID; artifact commands and `audit events --with-sensitive` also accept `--expectedProducerId`. Keep signing and encryption keys distinct and retain producer IDs independently of copied evidence. A server-supplied ID is not a trust anchor.
 
 Without a matching private key, encrypted audit events and Recordings expose only their verified public/outer metadata. Direct SSH sessions cannot use a private key kept only on a separate CLI machine.
 
-With `allowArtifactTransfer: false`, `auditlog` and `recording` metadata and public event queries work remotely. Direct SSH can verify artifacts on the server without downloading them; client-side `@host audit[log] verify` and `@host recording verify` require the artifact-transfer permission. Unencrypted original files can already contain sensitive information, so only grant this permission to flows whose administrators are allowed to read that evidence.
+With `allowArtifactTransfer: false`, `audit` and `recording` metadata and public event queries work remotely. Direct SSH can verify artifacts on the server without downloading them; client-side `@host audit verify` and `@host recording verify` require the artifact-transfer permission. Unencrypted original files can already contain sensitive information, so only grant this permission to flows whose administrators are allowed to read that evidence.
 
 ```shell
-bifroest @bifroest-admin auditlog verify default
-bifroest @bifroest-admin auditlog export --with-sensitive default
+bifroest @bifroest-admin audit verify default
+bifroest @bifroest-admin audit export --with-sensitive default
 bifroest @bifroest-admin recording play --with-sensitive default RECORDING_UUID
 ssh management@bifroest.example.org 'recording verify default RECORDING_UUID'
 ```

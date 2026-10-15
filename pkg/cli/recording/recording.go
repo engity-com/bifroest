@@ -8,27 +8,147 @@ import (
 	"path/filepath"
 	"strings"
 
+	cli "github.com/echocat/cli4g"
+
 	"github.com/engity-com/bifroest/pkg/audit"
-	. "github.com/engity-com/bifroest/pkg/cli/audit/common"
-	. "github.com/engity-com/bifroest/pkg/cli/common"
-	. "github.com/engity-com/bifroest/pkg/cli/recording/common"
-	"github.com/engity-com/bifroest/pkg/cli/recording/export"
+	claudit "github.com/engity-com/bifroest/pkg/cli/audit"
+	"github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/cli/format"
 	"github.com/engity-com/bifroest/pkg/configuration"
-	"github.com/engity-com/bifroest/pkg/management"
+	"github.com/engity-com/bifroest/pkg/managementclient"
 	"github.com/engity-com/bifroest/pkg/recording"
 )
 
-func Register(cmds Commands, usage Usage) {
-	cmd := cmds.Command("recording", "Verify, inspect and export session Recording artifacts.")
-	registerRecordingInspectCmd(cmd)
-	registerRecordingVerifyCmd(cmd)
-	export.registerRecordingExportCmd(cmd)
-	registerRecordingPlayCmd(cmd)
-	management.RegisterRecordingCommands(cmd, inspectLocalRecordings, inspectLocalRecording, context.Background(), goos.Stdout, true)
-})
+type selectedAuditlog struct {
+	Auditlog configuration.AuditlogName `argument:"auditlog" required:"true" description:"Configured auditlog name."`
+}
 
-func inspectLocalRecordings(ctx context.Context, configPath string, name configuration.AuditlogName) ([]management.RecordingView, error) {
-	conf, err := LoadManagementConfiguration(configPath)
+type recordingIDOptions struct {
+	ID recording.Id `argument:"id" required:"true" description:"Recording UUID."`
+}
+
+type listOptions struct {
+	configuration.EmptyStrOpts
+	format.Opts
+	selectedAuditlog
+}
+
+type showOptions struct {
+	listOptions
+	ID recording.Id `argument:"id" required:"true" description:"Recording UUID."`
+}
+
+type managementListOptions struct {
+	format.Opts
+	selectedAuditlog
+}
+
+type managementShowOptions struct {
+	managementListOptions
+	recordingIDOptions
+}
+
+func Register(_ context.Context, parent cli.ContainerRequirementSetters, usage common.Usage) {
+	cmd := cli.NewSimpleCommand().
+		WithName("recording").
+		WithDescription("Inspect sealed session recordings.")
+	if usage == common.UsageExecutable {
+		registerRecordingInspectCmd(cmd)
+		registerRecordingVerifyCmd(cmd)
+		registerRecordingExportCmd(cmd)
+		registerRecordingPlayCmd(cmd)
+	}
+	if usage == common.UsageManagement {
+		registerManagementVerify(cmd)
+		registerManagementExport(cmd)
+		registerManagementPlay(cmd)
+		cmd.AddCommand(
+			cli.NewCommand[managementListOptions]().
+				WithName("ls").
+				WithDescription("List sealed Recordings in one auditlog.").
+				WithHandler(handleManagementList),
+		)
+		cmd.AddCommand(
+			cli.NewCommand[managementShowOptions]().
+				WithName("show").
+				WithDescription("Show verified metadata of a sealed Recording.").
+				WithHandler(handleManagementShow),
+		)
+	} else {
+		cmd.AddCommand(
+			cli.NewCommand[listOptions]().
+				WithName("ls").
+				WithDescription("List sealed Recordings in one auditlog.").
+				WithHandler(handleList),
+		)
+		cmd.AddCommand(
+			cli.NewCommand[showOptions]().
+				WithName("show").
+				WithDescription("Show verified metadata of a sealed Recording.").
+				WithHandler(handleShow),
+		)
+	}
+	parent.AddCommand(cmd)
+}
+
+func handleManagementList(ctx context.Context, opts managementListOptions) error {
+	access, ok := common.ManagementAccessFromContext(ctx)
+	if !ok || access.RecordingList == nil {
+		return fmt.Errorf("management recording repository is unavailable")
+	}
+	rows, err := access.RecordingList(ctx, opts.Auditlog)
+	if err != nil {
+		return err
+	}
+	return format.WriteRecordingList(cli.StdoutOfContext(ctx), common.FormatForInvocation(ctx, opts.Format), rows)
+}
+
+func handleManagementShow(ctx context.Context, opts managementShowOptions) error {
+	access, ok := common.ManagementAccessFromContext(ctx)
+	if !ok || access.RecordingDetail == nil {
+		return fmt.Errorf("management recording repository is unavailable")
+	}
+	row, err := access.RecordingDetail(ctx, opts.Auditlog, opts.ID)
+	if err != nil {
+		return err
+	}
+	return format.WriteRecordingDetail(cli.StdoutOfContext(ctx), common.FormatForInvocation(ctx, opts.Format), row)
+}
+
+func handleList(ctx context.Context, opts listOptions) error {
+	if target, remote := common.RemoteTargetFromContext(ctx); remote {
+		if opts.Configuration != "" {
+			return fmt.Errorf("--configuration cannot be combined with a remote target")
+		}
+		return managementclient.Run(ctx, target, []string{
+			"recording", "ls", opts.Auditlog.String(), "--format=" + string(opts.Format),
+		}, cli.StdoutOfContext(ctx))
+	}
+	rows, err := inspectLocalRecordings(ctx, opts.Configuration, opts.Auditlog)
+	if err != nil {
+		return err
+	}
+	return format.WriteRecordingList(cli.StdoutOfContext(ctx), opts.Format, rows)
+}
+
+func handleShow(ctx context.Context, opts showOptions) error {
+	if target, remote := common.RemoteTargetFromContext(ctx); remote {
+		if opts.Configuration != "" {
+			return fmt.Errorf("--configuration cannot be combined with a remote target")
+		}
+		return managementclient.Run(ctx, target, []string{
+			"recording", "show", opts.Auditlog.String(), opts.ID.String(), "--format=" + string(opts.Format),
+		}, cli.StdoutOfContext(ctx))
+	}
+	row, err := inspectLocalRecording(ctx, opts.Configuration, opts.Auditlog, opts.ID)
+	if err != nil {
+		return err
+	}
+	return format.WriteRecordingDetail(cli.StdoutOfContext(ctx), opts.Format, row)
+}
+
+func inspectLocalRecordings(ctx context.Context, configPath string, name configuration.AuditlogName) ([]RecordingView, error) {
+	conf, err := common.LoadManagementConfiguration(configPath)
 	if err != nil {
 		return nil, err
 	}
@@ -39,7 +159,7 @@ func inspectLocalRecordings(ctx context.Context, configPath string, name configu
 		if !configured.Recording.Enabled {
 			return nil, fmt.Errorf("recording of auditlog %q is disabled", name)
 		}
-		key, err := LoadAuditPrivateKey(configured.IdentityFile)
+		key, err := claudit.LoadAuditPrivateKey(configured.IdentityFile)
 		if err != nil {
 			return nil, err
 		}
@@ -50,12 +170,12 @@ func inspectLocalRecordings(ctx context.Context, configPath string, name configu
 		root := filepath.Join(configured.Recording.Directory, "sealed")
 		files, err := goos.ReadDir(root)
 		if goerrors.Is(err, goos.ErrNotExist) {
-			return []management.RecordingView{}, nil
+			return []RecordingView{}, nil
 		}
 		if err != nil {
 			return nil, err
 		}
-		result := make([]management.RecordingView, 0, len(files))
+		result := make([]RecordingView, 0, len(files))
 		for _, entry := range files {
 			if err := ctx.Err(); err != nil {
 				return nil, err
@@ -71,7 +191,7 @@ func inspectLocalRecordings(ctx context.Context, configPath string, name configu
 			if err != nil {
 				return nil, err
 			}
-			view, err := management.InspectRecording(ctx, name, file, initial.Size(), identity.ProducerId())
+			view, err := InspectRecording(ctx, name, file, initial.Size(), identity.ProducerId())
 			if err == nil {
 				suffix := ".bcast"
 				if view.Encrypted {
@@ -95,13 +215,13 @@ func inspectLocalRecordings(ctx context.Context, configPath string, name configu
 	return nil, fmt.Errorf("auditlog %q does not exist", name)
 }
 
-func inspectLocalRecording(ctx context.Context, configPath string, name configuration.AuditlogName, id recording.Id) (result management.RecordingView, resultErr error) {
-	path, _, err := export.resolveRecordingSelection(name.String(), id.String(), "", configPath, "")
+func inspectLocalRecording(ctx context.Context, configPath string, name configuration.AuditlogName, id recording.Id) (result RecordingView, resultErr error) {
+	path, _, err := ResolveRecordingSelection(name.String(), id.String(), "", configPath, "")
 	if err != nil {
 		return result, err
 	}
 	var ref configuration.Ref
-	expected, err := export.configuredRecordingProducerId(name, configPath, path, &ref)
+	expected, err := configuredRecordingProducerId(name, configPath, path, &ref)
 	if err != nil {
 		return result, err
 	}
@@ -110,7 +230,7 @@ func inspectLocalRecording(ctx context.Context, configPath string, name configur
 		return result, err
 	}
 	defer func() { resultErr = goerrors.Join(resultErr, file.Close()) }()
-	result, err = management.InspectRecording(ctx, name, file, initial.Size(), expected)
+	result, err = InspectRecording(ctx, name, file, initial.Size(), expected)
 	if err != nil {
 		return result, err
 	}

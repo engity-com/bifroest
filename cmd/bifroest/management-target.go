@@ -102,7 +102,7 @@ func isIPv6Literal(value string) bool {
 func supportsRemoteManagementCommand(command string) bool {
 	root, _, _ := strings.Cut(command, " ")
 	switch root {
-	case "session", "flow", "auditlog", "recording", "audit":
+	case "session", "flow", "recording", "audit", "version":
 		return true
 	default:
 		return false

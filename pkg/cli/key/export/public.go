@@ -5,7 +5,7 @@ import (
 
 	cli "github.com/echocat/cli4g"
 
-	. "github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/cli/common"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 )
 
@@ -16,7 +16,7 @@ type publicOpts struct {
 	Force        bool   `flag:"force" description:"Replace an existing output file."`
 }
 
-func registerPublic(_ context.Context, c cli.ContainerRequirementSetters, _ Usage) {
+func registerPublic(_ context.Context, c cli.ContainerRequirementSetters, _ common.Usage) {
 	c.AddCommand(cli.NewCommand[publicOpts]().
 		WithName("public").
 		WithDescription("Export the public key of a local private key.").
@@ -25,12 +25,12 @@ func registerPublic(_ context.Context, c cli.ContainerRequirementSetters, _ Usag
 }
 
 func handlePublic(ctx context.Context, o publicOpts) error {
-	if err := EnsureBootstrapOutputIsNotPrivateKey(o.Output, o.IdentityFile); err != nil {
+	if err := common.EnsureBootstrapOutputIsNotPrivateKey(o.Output, o.IdentityFile); err != nil {
 		return err
 	}
 	raw, err := bfcrypto.ExportPublicKey(o.IdentityFile, o.Comment)
 	if err != nil {
 		return err
 	}
-	return WriteBootstrapOutput(ctx, o.Output, raw, o.Force)
+	return common.WriteBootstrapOutput(ctx, o.Output, raw, o.Force)
 }

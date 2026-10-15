@@ -8,6 +8,7 @@ import (
 
 	"github.com/echocat/slf4g"
 
+	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/service"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
@@ -17,8 +18,9 @@ func doRunDefault(rc context.Context, o *opts, version sys.Version) error {
 		return err
 	}
 	svc := service.Service{
-		Configuration: o.Configuration,
-		Version:       version,
+		Configuration:         o.Configuration,
+		Version:               version,
+		ManagementApplication: common.ManagementApplicationFromContext(rc),
 	}
 
 	ctx, cancelFunc := context.WithCancel(rc)

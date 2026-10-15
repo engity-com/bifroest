@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/stretchr/testify/require"
 )
 

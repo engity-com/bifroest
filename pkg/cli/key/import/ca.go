@@ -5,7 +5,7 @@ import (
 
 	cli "github.com/echocat/cli4g"
 
-	. "github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/cli/common"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 )
 
@@ -15,7 +15,7 @@ type caOpts struct {
 	ExpectedFingerprint string `flag:"expectedFingerprint" placeholder:"<SHA256:...|unknown>" description:"Expected SHA256 fingerprint or unknown."`
 }
 
-func registerCa(_ context.Context, c cli.ContainerRequirementSetters, _ Usage) {
+func registerCa(_ context.Context, c cli.ContainerRequirementSetters, _ common.Usage) {
 	c.AddCommand(cli.NewCommand[caOpts]().
 		WithName("ca").
 		WithDescription("Validate and atomically merge trusted SSH certificate authority keys.").
@@ -24,7 +24,7 @@ func registerCa(_ context.Context, c cli.ContainerRequirementSetters, _ Usage) {
 }
 
 func handleCa(ctx context.Context, o caOpts) error {
-	raw, err := ReadBootstrapInput(ctx, o.Input)
+	raw, err := common.ReadBootstrapInput(ctx, o.Input)
 	if err != nil {
 		return err
 	}

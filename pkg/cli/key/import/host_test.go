@@ -9,26 +9,30 @@ import (
 	"path/filepath"
 	"testing"
 
+	cli "github.com/echocat/cli4g"
 	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/engity-com/bifroest/pkg/cli/key"
-	"github.com/engity-com/bifroest/pkg/cli/key/export"
+	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 )
 
 func TestKeyImportHostUsesExplicitInputAndIsIdempotent(t *testing.T) {
 	directory := t.TempDir()
 	identityFile := filepath.Join(directory, "identity")
-	require.NoError(t, key.doKeyGenerate(identityFile, ""))
+	key, err := (bfcrypto.KeyRequirement{Type: bfcrypto.KeyTypeEd25519}).CreateFile(rand.Reader, identityFile)
+	require.NoError(t, err)
 	hostKeyFile := filepath.Join(directory, "host-key")
-	require.NoError(t, export.doKeyExportHost(&export.keyExportHostOpts{identityFile: identityFile, address: "host.example", output: hostKeyFile}, &bytes.Buffer{}))
+	raw, err := bfcrypto.ExportKnownHostKeys([]bfcrypto.PrivateKey{key}, "host.example")
+	require.NoError(t, err)
+	require.NoError(t, goos.WriteFile(hostKeyFile, raw, 0600))
 
 	knownHostsFile := filepath.Join(directory, "known-hosts")
-	require.NoError(t, handleHost(&hostOpts{KnownHostsFile: knownHostsFile, Input: hostKeyFile}, bytes.NewReader([]byte("unused"))))
+	require.NoError(t, handleHost(t.Context(), hostOpts{KnownHostsFile: knownHostsFile, Input: hostKeyFile}))
 	first, err := goos.ReadFile(knownHostsFile)
 	require.NoError(t, err)
-	require.NoError(t, handleHost(&hostOpts{KnownHostsFile: knownHostsFile, ExpectedFingerprint: "unknown"}, bytes.NewReader(first)))
+	ctx := cli.ContextWithStdio(t.Context(), bytes.NewReader(first), nil, nil)
+	require.NoError(t, handleHost(ctx, hostOpts{KnownHostsFile: knownHostsFile, Input: "-", ExpectedFingerprint: "unknown"}))
 	second, err := goos.ReadFile(knownHostsFile)
 	require.NoError(t, err)
 	require.Equal(t, first, second)
@@ -42,7 +46,7 @@ func TestKeyImportHostRetrievesKeyFromAddress(t *testing.T) {
 		Address:             address,
 		ExpectedFingerprint: ssh.FingerprintSHA256(key),
 	}
-	require.NoError(t, handleHost(&opts, &bytes.Buffer{}))
+	require.NoError(t, handleHost(t.Context(), opts))
 	require.Error(t, <-serverDone)
 	require.FileExists(t, knownHostsFile)
 }
@@ -56,7 +60,7 @@ func TestKeyImportHostAllowsExplicitUnknownFingerprint(t *testing.T) {
 		Address:             address,
 		ExpectedFingerprint: "unknown",
 	}
-	require.NoError(t, handleHost(&opts, &bytes.Buffer{}))
+	require.NoError(t, handleHost(t.Context(), opts))
 	require.Error(t, <-serverDone)
 	require.FileExists(t, knownHostsFile)
 }
@@ -66,7 +70,7 @@ func TestKeyImportHostRequiresNetworkFingerprintAndRejectsInput(t *testing.T) {
 		{KnownHostsFile: "known-hosts", Address: "host.example"},
 		{KnownHostsFile: "known-hosts", Address: "host.example", Input: "input", ExpectedFingerprint: "unknown"},
 	} {
-		require.Error(t, handleHost(&opts, &bytes.Buffer{}))
+		require.Error(t, handleHost(t.Context(), opts))
 	}
 }
 
@@ -78,7 +82,7 @@ func TestKeyImportHostFingerprintMismatchDoesNotCreateFile(t *testing.T) {
 		Address:             address,
 		ExpectedFingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 	}
-	require.Error(t, handleHost(&opts, &bytes.Buffer{}))
+	require.Error(t, handleHost(t.Context(), opts))
 	require.Error(t, <-serverDone)
 	require.NoFileExists(t, knownHostsFile)
 }

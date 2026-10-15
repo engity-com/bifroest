@@ -6,9 +6,12 @@ import (
 	"testing"
 
 	cli "github.com/echocat/cli4g"
+	"github.com/fxamacker/cbor/v2"
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/cli/model"
+	"github.com/engity-com/bifroest/pkg/cli/transport"
 	"github.com/engity-com/bifroest/pkg/configuration"
 )
 
@@ -40,4 +43,15 @@ func TestManagementFlowUsesReusableDefinitionAndInvocationAccess(t *testing.T) {
 	ctx := cli.ContextWithStdio(common.ContextWithManagementAccess(t.Context(), common.ManagementAccess{Configuration: conf}), nil, &output, &diagnostic)
 	require.Error(t, app.ParseAndExecute(ctx, nil, "flow", "ls", "--configuration=server.yaml"))
 	require.Empty(t, output.String())
+	output.Reset()
+	require.NoError(t, app.ParseAndExecute(ctx, nil, "flow", "ls", "--format=cbor"))
+	var decoded []model.FlowSummary
+	require.NoError(t, cbor.Unmarshal(output.Bytes(), &decoded))
+	require.Len(t, decoded, 1)
+	output.Reset()
+	wireCtx := common.ContextWithManagementAccess(t.Context(), common.ManagementAccess{Configuration: conf, WireFormat: true})
+	wireCtx = cli.ContextWithStdio(wireCtx, nil, &output, nil)
+	require.NoError(t, app.ParseAndExecute(wireCtx, nil, "flow", "ls"))
+	require.NoError(t, transport.DecodeWireResult(bytes.NewReader(output.Bytes()), &decoded))
+	require.Len(t, decoded, 1)
 }

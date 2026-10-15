@@ -5,34 +5,61 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	goos "os"
 
-	"github.com/alecthomas/kingpin/v2"
+	cli "github.com/echocat/cli4g"
 
-	"github.com/engity-com/bifroest/pkg/cli/recording/export"
-	"github.com/engity-com/bifroest/pkg/management"
+	"github.com/engity-com/bifroest/pkg/cli/common"
 )
 
 type recordingPlayOpts struct {
-	export.recordingExportOpts
+	recordingExportOpts
 	speed float64
 }
 
-var remoteRecordingPlayOpts *recordingPlayOpts
+type playCommandOptions struct {
+	exportCommandOptions
+	Speed float64 `flag:"speed" default:"1" description:"Playback speed multiplier, up to 100."`
+}
 
-func registerRecordingPlayCmd(parent *kingpin.CmdClause) {
-	opts := recordingPlayOpts{speed: 1, export.recordingExportOpts: export.recordingExportOpts{output: "-"}}
-	remoteRecordingPlayOpts = &opts
-	cmd := management.RecordingArtifactCommand(parent, "play").
-		Action(func(*kingpin.ParseContext) error { return doRecordingPlay(context.Background(), &opts, goos.Stdout) })
-	management.RecordingSensitiveFlag(cmd, &opts.withSensitive)
-	cmd.Flag("speed", "Playback speed multiplier (positive, default 1).").Default("1").Float64Var(&opts.speed)
-	cmd.Flag("configuration", "Configuration for a local Recording (defaults to "+configuration.DefaultRef+").").Short('c').StringVar(&opts.configuration)
-	cmd.Flag("expectedProducerId", "Trusted producer ID for an offline artifact.").StringVar(&opts.expectedProducerId)
-	cmd.Flag("allowUntrusted", "Allow a self-signed, cryptographically valid Recording without a trusted producer.").BoolVar(&opts.allowUntrusted)
-	cmd.Flag("decryptionIdentityFile", "Local private key for encrypted Recording; repeatable.").StringsVar(&opts.decryptionIdentityFiles)
-	cmd.Arg("fileOrAuditlog", "Local Recording file or configured auditlog.").StringVar(&opts.file)
-	cmd.Arg("recordingId", "Recording UUID when selecting an auditlog.").StringVar(&opts.recordingId)
+type managementPlayOptions struct {
+	managementExportOptions
+	Speed float64 `flag:"speed" default:"1" description:"Playback speed multiplier, up to 100."`
+}
+
+func registerManagementPlay(parent cli.ContainerRequirementSetters) {
+	parent.AddCommand(
+		cli.NewCommand[managementPlayOptions]().
+			WithName("play").
+			WithDescription("Verify and play a session Recording in the terminal.").
+			WithHandler(handleManagementPlay),
+	)
+}
+
+func handleManagementPlay(ctx context.Context, opts managementPlayOptions) error {
+	if !opts.WithSensitive {
+		return fmt.Errorf("recording play requires --with-sensitive")
+	}
+	access, ok := common.ManagementAccessFromContext(ctx)
+	if !ok || access.Recording == nil {
+		return fmt.Errorf("management recording repository is unavailable")
+	}
+	return access.Recording.Play(ctx, opts.Auditlog, opts.ID, opts.Speed, cli.StdoutOfContext(ctx))
+}
+
+func registerRecordingPlayCmd(parent cli.ContainerRequirementSetters) {
+	parent.AddCommand(cli.NewCommand[playCommandOptions]().
+		WithName("play").
+		WithDescription("Verify and play a session Recording in the terminal.").
+		WithHandler(func(ctx context.Context, o playCommandOptions) error {
+			if target, remote := common.RemoteTargetFromContext(ctx); remote {
+				return runRemotePlay(ctx, target, o, cli.StdoutOfContext(ctx))
+			}
+			return doRecordingPlay(ctx, &recordingPlayOpts{recordingExportOpts: recordingExportOpts{
+				file: o.File, recordingId: o.RecordingID, withSensitive: o.WithSensitive,
+				configuration: o.Configuration, expectedProducerId: o.ExpectedProducerID,
+				allowUntrusted: o.AllowUntrusted, decryptionIdentityFiles: o.DecryptionIdentityFiles,
+			}, speed: o.Speed}, cli.StdoutOfContext(ctx))
+		}))
 }
 
 func doRecordingPlay(ctx context.Context, opts *recordingPlayOpts, output io.Writer) error {
@@ -50,11 +77,11 @@ func doRecordingPlay(ctx context.Context, opts *recordingPlayOpts, output io.Wri
 	go func() {
 		export := opts.recordingExportOpts
 		export.output = "-"
-		err := export.doRecordingExport(&export, writer)
+		err := doRecordingExport(ctx, &export, writer)
 		_ = writer.CloseWithError(err)
 		done <- err
 	}()
-	playErr := management.PlayAsciicast(ctx, reader, output, opts.speed)
+	playErr := PlayAsciicast(ctx, reader, output, opts.speed)
 	_ = reader.CloseWithError(playErr)
 	return errors.Join(playErr, <-done)
 }

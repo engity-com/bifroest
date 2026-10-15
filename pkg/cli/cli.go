@@ -14,6 +14,7 @@ import (
 	cforever "github.com/engity-com/bifroest/pkg/cli/forever"
 	cimp "github.com/engity-com/bifroest/pkg/cli/imp"
 	ckey "github.com/engity-com/bifroest/pkg/cli/key"
+	crecording "github.com/engity-com/bifroest/pkg/cli/recording"
 	cserve "github.com/engity-com/bifroest/pkg/cli/serve"
 	cservice "github.com/engity-com/bifroest/pkg/cli/service"
 	csession "github.com/engity-com/bifroest/pkg/cli/session"
@@ -22,14 +23,13 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-func Register(ctx context.Context, c cli.ContainerRequirementSetters, usage common.Usage, version sys.Version) {
+func registerExecutable(ctx context.Context, c cli.ContainerRequirementSetters, version sys.Version) {
+	usage := common.UsageExecutable
 	caudit.Register(ctx, c, usage)
 	cflow.Register(ctx, c, usage)
 	csession.Register(ctx, c, usage)
+	crecording.Register(ctx, c, usage)
 	cversion.Register(ctx, c, usage, version)
-	if usage == common.UsageManagement {
-		return
-	}
 	cdlv.Register(ctx, c, usage)
 	cdummyserver.Register(ctx, c, usage)
 	cexec.Register(ctx, c, usage)

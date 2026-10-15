@@ -24,6 +24,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/authorization"
+	cliCommon "github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
@@ -45,8 +46,9 @@ var (
 const remoteAuditDeliveryShutdownTimeout = 5 * time.Second
 
 type Service struct {
-	Configuration configuration.Configuration
-	Version       sys.Version
+	Configuration         configuration.Configuration
+	Version               sys.Version
+	ManagementApplication cliCommon.ManagementApplication
 
 	Logger log.Logger
 }

@@ -11,7 +11,7 @@ import (
 
 	cli "github.com/echocat/cli4g"
 
-	. "github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/cli/common"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 )
 
@@ -20,7 +20,7 @@ type opts struct {
 	PublicFile   string `flag:"publicFile" placeholder:"<path>" description:"Optional public key file to create."`
 }
 
-func Register(_ context.Context, c cli.ContainerRequirementSetters, usage Usage) {
+func Register(_ context.Context, c cli.ContainerRequirementSetters, usage common.Usage) {
 	c.AddCommand(cli.NewCommand[opts]().
 		WithName("generate").
 		WithDescription("Generate an Ed25519 private key without replacing an existing file.").

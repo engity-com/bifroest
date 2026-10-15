@@ -8,10 +8,10 @@ import (
 
 	cli "github.com/echocat/cli4g"
 
-	. "github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/cli/common"
 )
 
-func Register(_ context.Context, c cli.ContainerRequirementSetters, usage Usage) {
+func Register(_ context.Context, c cli.ContainerRequirementSetters, usage common.Usage) {
 	if !usage.IncludeService() {
 		return
 	}

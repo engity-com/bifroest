@@ -19,7 +19,9 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
-	"github.com/engity-com/bifroest/pkg/management"
+	cliformat "github.com/engity-com/bifroest/pkg/cli/format"
+	"github.com/engity-com/bifroest/pkg/cli/model"
+	"github.com/engity-com/bifroest/pkg/cli/transport"
 )
 
 func TestManagementClientExecsCBORAndRendersJSON(t *testing.T) {
@@ -70,7 +72,7 @@ func TestManagementClientExecsCBORAndRendersJSON(t *testing.T) {
 				continue
 			}
 			var exec struct{ Command string }
-			if ssh.Unmarshal(request.Payload, &exec) != nil || exec.Command != management.WireCommand {
+			if ssh.Unmarshal(request.Payload, &exec) != nil || exec.Command != transport.WireCommand {
 				_ = request.Reply(false, nil)
 				serverDone <- fmt.Errorf("unexpected SSH exec command")
 				return
@@ -79,7 +81,7 @@ func TestManagementClientExecsCBORAndRendersJSON(t *testing.T) {
 				serverDone <- err
 				return
 			}
-			args, err := management.DecodeWireRequest(channel)
+			args, err := transport.DecodeWireRequest(channel)
 			if err != nil {
 				serverDone <- err
 				return
@@ -88,7 +90,7 @@ func TestManagementClientExecsCBORAndRendersJSON(t *testing.T) {
 				serverDone <- fmt.Errorf("unexpected request args %v", args)
 				return
 			}
-			if err := management.WriteFlowList(channel, management.FormatCBOR, []management.FlowSummary{{Name: "production", Auditlog: "default"}}); err != nil {
+			if err := cliformat.WriteFlowList(channel, cliformat.WireCbor, []model.FlowSummary{{Name: "production", Auditlog: "default"}}); err != nil {
 				serverDone <- err
 				return
 			}
@@ -113,7 +115,7 @@ func TestManagementClientExecsCBORAndRendersJSON(t *testing.T) {
 	defer func() { ssh_config.DefaultUserSettings = previous }()
 	var output bytes.Buffer
 	require.NoError(t, Run(context.Background(), Target{Host: "management-test", Port: 22}, []string{"flow", "ls", "--format=json"}, &output))
-	var entries []management.FlowSummary
+	var entries []model.FlowSummary
 	require.NoError(t, json.Unmarshal(output.Bytes(), &entries))
 	require.Len(t, entries, 1)
 	require.Equal(t, "production", entries[0].Name.String())

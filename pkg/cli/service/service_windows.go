@@ -15,7 +15,7 @@ import (
 	"golang.org/x/sys/windows/svc/eventlog"
 	"golang.org/x/sys/windows/svc/mgr"
 
-	. "github.com/engity-com/bifroest/pkg/cli/common"
+	cliCommon "github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
@@ -24,7 +24,8 @@ import (
 )
 
 type WindowsService struct {
-	Version sys.Version
+	Version               sys.Version
+	ManagementApplication cliCommon.ManagementApplication
 
 	Name   string
 	Conf   configuration.Configuration
@@ -51,14 +52,11 @@ type removeOpts struct {
 	Stop bool `flag:"stop" default:"true" description:"If enabled, the service will be stopped afterwards, automatically."`
 }
 
-func Register(_ context.Context, c cli.ContainerRequirementSetters, usage Usage, version sys.Version) {
+func Register(_ context.Context, c cli.ContainerRequirementSetters, usage cliCommon.Usage, version sys.Version) {
 	if !usage.IncludeService() {
 		return
 	}
 
-	ws := WindowsService{
-		Version: version,
-	}
 	c.AddCommand(cli.NewSimpleCommand().
 		WithName("service").
 		WithCommand(
@@ -66,7 +64,6 @@ func Register(_ context.Context, c cli.ContainerRequirementSetters, usage Usage,
 				WithName("install").
 				WithDescription("Installs the service.").
 				WithHandler(func(_ context.Context, o installOpts) error {
-					ws.Name = o.ServiceName
 					return (&WindowsService{
 						Version: version,
 						Name:    o.ServiceName,
@@ -108,8 +105,9 @@ func (this *WindowsService) Execute(_ []string, r <-chan svc.ChangeRequest, chan
 	changes <- svc.Status{State: svc.StartPending}
 
 	s := service.Service{
-		Configuration: this.Conf,
-		Version:       this.Version,
+		Configuration:         this.Conf,
+		Version:               this.Version,
+		ManagementApplication: this.ManagementApplication,
 	}
 
 	fail := func(err error) (ssec bool, errno uint32) {

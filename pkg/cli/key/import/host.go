@@ -9,7 +9,7 @@ import (
 	cli "github.com/echocat/cli4g"
 	log "github.com/echocat/slf4g"
 
-	. "github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/cli/common"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 )
 
@@ -22,7 +22,7 @@ type hostOpts struct {
 	ExpectedFingerprint string `flag:"expectedFingerprint" placeholder:"<SHA256:...|unknown>" description:"Expected SHA256 fingerprint or unknown."`
 }
 
-func registerHost(_ context.Context, c cli.ContainerRequirementSetters, _ Usage) {
+func registerHost(_ context.Context, c cli.ContainerRequirementSetters, _ common.Usage) {
 	c.AddCommand(cli.NewCommand[hostOpts]().
 		WithName("host").
 		WithDescription("Import SSH host keys from a file, stdin or a server.").
@@ -45,7 +45,7 @@ func handleHost(ctx context.Context, o hostOpts) error {
 			log.With("address", o.Address).Warn("The host key fingerprint is unknown; trusting a key retrieved from the network is potentially unsafe")
 			expectedFingerprint = ""
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), keyImportHostNetworkTimeout)
+		ctx, cancel := context.WithTimeout(ctx, keyImportHostNetworkTimeout)
 		defer cancel()
 		raw, err = bfcrypto.FetchKnownHostKey(ctx, o.Address)
 	} else {
@@ -53,7 +53,7 @@ func handleHost(ctx context.Context, o hostOpts) error {
 		if input == "" {
 			input = "-"
 		}
-		raw, err = ReadBootstrapInput(ctx, input)
+		raw, err = common.ReadBootstrapInput(ctx, input)
 		expectedFingerprint = normalizeUnknownFingerprint(expectedFingerprint)
 	}
 	if err != nil {

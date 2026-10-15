@@ -13,7 +13,7 @@ import (
 	cli "github.com/echocat/cli4g"
 	log "github.com/echocat/slf4g"
 
-	. "github.com/engity-com/bifroest/pkg/cli/common"
+	cliCommon "github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
 )
@@ -22,7 +22,7 @@ type opts struct {
 	Addr string `flag:"addr" default:":8783" placeholder:"[<host>]:<port>" description:"Address to bind to."`
 }
 
-func Register(_ context.Context, c cli.ContainerRequirementSetters, usage Usage) {
+func Register(_ context.Context, c cli.ContainerRequirementSetters, usage cliCommon.Usage) {
 	if !usage.IncludeService() {
 		return
 	}

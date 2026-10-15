@@ -5,10 +5,10 @@ import (
 
 	cli "github.com/echocat/cli4g"
 
-	. "github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/cli/common"
 )
 
-func Register(ctx context.Context, c cli.ContainerRequirementSetters, usage Usage) {
+func Register(ctx context.Context, c cli.ContainerRequirementSetters, usage common.Usage) {
 	cmd := cli.NewSimpleCommand().
 		WithName("import").
 		WithDescription("Import trusted SSH public key material.")

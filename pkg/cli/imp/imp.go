@@ -12,7 +12,7 @@ import (
 	log "github.com/echocat/slf4g"
 
 	"github.com/engity-com/bifroest/internal/imp/protocol"
-	. "github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/imp"
@@ -36,12 +36,12 @@ func newOpts(context.Context) (opts, error) {
 	}, nil
 }
 
-func Register(ctx context.Context, c cli.ContainerRequirementSetters, usage Usage, version sys.Version) {
+func Register(ctx context.Context, c cli.ContainerRequirementSetters, usage common.Usage, version sys.Version) {
 	register(ctx, c, usage, version)
 	registerInit(ctx, c, usage, version)
 }
 
-func register(_ context.Context, c cli.ContainerRequirementSetters, usage Usage, version sys.Version) {
+func register(_ context.Context, c cli.ContainerRequirementSetters, usage common.Usage, version sys.Version) {
 	if !usage.IncludeService() {
 		return
 	}
@@ -57,7 +57,7 @@ func register(_ context.Context, c cli.ContainerRequirementSetters, usage Usage,
 	)
 }
 
-func handler(_ context.Context, o opts, version sys.Version) error {
+func handler(ctx context.Context, o opts, version sys.Version) error {
 	service := imp.Service{
 		Version:                    version,
 		SessionId:                  o.SessionId,
@@ -72,24 +72,26 @@ func handler(_ context.Context, o opts, version sys.Version) error {
 		return errors.System.Newf("cannot decode imp master's public key: %w", err)
 	}
 
-	ctx, cancelFunc := context.WithCancel(context.Background())
+	ctx, cancelFunc := context.WithCancel(ctx)
 	defer cancelFunc()
 
 	sigs := make(chan goos.Signal, 1)
-	defer close(sigs)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigs)
 	go func() {
-		sig := <-sigs
-		log.With("signal", sig).Info("received signal")
-		cancelFunc()
+		select {
+		case sig := <-sigs:
+			log.With("signal", sig).Info("received signal")
+			cancelFunc()
+		case <-ctx.Done():
+		}
 	}()
 
 	log.WithAll(sys.VersionToMap(version)).
 		Info("Engity's Bifröst imp running...")
 
 	if err := service.Serve(ctx); err != nil {
-		log.WithError(err).Error()
-		goos.Exit(1)
+		return err
 	}
 
 	log.Info("bye!")

@@ -15,8 +15,8 @@ func TestKeyGenerateKeepsPrivateMaterialOffPublicFile(t *testing.T) {
 	identityFile := filepath.Join(directory, "identity")
 	publicFile := filepath.Join(directory, "identity.pub")
 
-	require.NoError(t, handle(identityFile, publicFile))
-	require.Error(t, handle(identityFile, publicFile))
+	require.NoError(t, handle(t.Context(), opts{IdentityFile: identityFile, PublicFile: publicFile}))
+	require.Error(t, handle(t.Context(), opts{IdentityFile: identityFile, PublicFile: publicFile}))
 
 	privateRaw, err := goos.ReadFile(identityFile)
 	require.NoError(t, err)
@@ -33,7 +33,7 @@ func TestKeyGenerateKeepsPrivateMaterialOffPublicFile(t *testing.T) {
 
 func TestKeyGenerateWithoutPublicFile(t *testing.T) {
 	identityFile := filepath.Join(t.TempDir(), "identity")
-	require.NoError(t, handle(identityFile, ""))
+	require.NoError(t, handle(t.Context(), opts{IdentityFile: identityFile}))
 	require.FileExists(t, identityFile)
 }
 
@@ -43,7 +43,7 @@ func TestKeyGenerateRejectsPublicFileBeforeCreatingPrivateKey(t *testing.T) {
 	publicFile := filepath.Join(directory, "identity.pub")
 	require.NoError(t, goos.WriteFile(publicFile, []byte("existing"), 0600))
 
-	require.Error(t, handle(identityFile, publicFile))
+	require.Error(t, handle(t.Context(), opts{IdentityFile: identityFile, PublicFile: publicFile}))
 	require.NoFileExists(t, identityFile)
 	actual, err := goos.ReadFile(publicFile)
 	require.NoError(t, err)
@@ -52,6 +52,6 @@ func TestKeyGenerateRejectsPublicFileBeforeCreatingPrivateKey(t *testing.T) {
 
 func TestKeyGenerateRejectsSamePrivateAndPublicFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "identity")
-	require.Error(t, handle(path, path))
+	require.Error(t, handle(t.Context(), opts{IdentityFile: path, PublicFile: path}))
 	require.NoFileExists(t, path)
 }

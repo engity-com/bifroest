@@ -24,11 +24,3 @@ func WorkingDirectory() string {
 	}
 	return "/"
 }
-
-func RegisterConfigurationFlag(flags Flags, target *configuration.Ref) {
-	flags.Flag("configuration", "Configuration which should be used. Default: "+configuration.DefaultRef).
-		Short('c').
-		Default(configuration.DefaultRef).
-		PlaceHolder("<path>").
-		SetValue(target)
-}

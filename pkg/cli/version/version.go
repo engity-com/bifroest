@@ -5,7 +5,8 @@ import (
 
 	cli "github.com/echocat/cli4g"
 
-	. "github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/managementclient"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -13,12 +14,12 @@ type opts struct {
 	Long bool `flag:"long" description:"Include build, platform and feature details."`
 }
 
-func Register(_ context.Context, c cli.ContainerRequirementSetters, usage Usage, version sys.Version) {
+func Register(_ context.Context, c cli.ContainerRequirementSetters, usage common.Usage, version sys.Version) {
 	c.AddCommand(cli.NewCommand[opts]().
 		WithName("version").
 		WithDescription((func() string {
 			switch usage {
-			case UsageExecutable:
+			case common.UsageExecutable:
 				return "Show version details of this executable."
 			default:
 				return "Show version details of this Bifröst instance."
@@ -31,6 +32,13 @@ func Register(_ context.Context, c cli.ContainerRequirementSetters, usage Usage,
 }
 
 func handle(ctx context.Context, o opts, version sys.Version) error {
+	if target, remote := common.RemoteTargetFromContext(ctx); remote {
+		command := "version"
+		if o.Long {
+			command += " --long"
+		}
+		return managementclient.RunDirect(ctx, target, command, cli.StdoutOfContext(ctx))
+	}
 	f := sys.VersionFormatShort
 	if o.Long {
 		f = sys.VersionFormatLong

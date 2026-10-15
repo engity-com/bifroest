@@ -7,6 +7,8 @@ import (
 	goos "os"
 	"path/filepath"
 
+	cli "github.com/echocat/cli4g"
+
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 )
 
@@ -14,7 +16,7 @@ func ReadBootstrapInput(ctx context.Context, path string) ([]byte, error) {
 	var reader io.Reader
 	var closeInput io.Closer
 	if path == "-" {
-		stdin := StdinOfContext(ctx)
+		stdin := cli.StdinOfContext(ctx)
 		if stdin == nil {
 			return nil, fmt.Errorf("cannot open input file %q: illegal path", path)
 		}
@@ -41,7 +43,7 @@ func ReadBootstrapInput(ctx context.Context, path string) ([]byte, error) {
 
 func WriteBootstrapOutput(ctx context.Context, path string, raw []byte, force bool) error {
 	if path == "-" {
-		stdout := StdoutOfContext(ctx)
+		stdout := cli.StdoutOfContext(ctx)
 		if stdout == nil {
 			return fmt.Errorf("illegal filename: `-`")
 		}

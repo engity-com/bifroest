@@ -79,9 +79,9 @@ func (this AuditlogName) Clone() AuditlogName {
 }
 
 type AuditlogNameOpts struct {
-	Auditlog AuditlogName `arg:"auditlogName" placeholder:"<name of auditlog>" default:"default" description:"Configured auditlog, or optional label for an offline journal."`
+	Auditlog AuditlogName `argument:"auditlogName" placeholder:"<name of auditlog>" default:"default" description:"Configured auditlog, or optional label for an offline journal."`
 }
 
 type AuditlogNamesOpts struct {
-	Auditlogs []AuditlogName `arg:"auditlogName" placeholder:"<name of auditlog>" default:"default" description:"Configured auditlog, or optional label for an offline journal."`
+	Auditlogs []string `argument:"auditlogName" placeholder:"<name of auditlog>" description:"Configured auditlogs to merge."`
 }

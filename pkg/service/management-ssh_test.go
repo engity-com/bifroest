@@ -12,8 +12,10 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	cliformat "github.com/engity-com/bifroest/pkg/cli/format"
+	"github.com/engity-com/bifroest/pkg/cli/model"
+	"github.com/engity-com/bifroest/pkg/cli/transport"
 	"github.com/engity-com/bifroest/pkg/configuration"
-	"github.com/engity-com/bifroest/pkg/management"
 	"github.com/engity-com/bifroest/pkg/recording"
 )
 
@@ -32,20 +34,34 @@ func TestManagementFlowHandlesHumanAndCBORSSHExecWithoutShell(t *testing.T) {
 	require.NoError(t, err)
 	output, err := human.Output("flow ls --format=json")
 	require.NoError(t, err)
-	var flows []management.FlowSummary
+	var flows []model.FlowSummary
 	require.NoError(t, json.Unmarshal(output, &flows))
 	require.Len(t, flows, 1)
 	require.Equal(t, "management", flows[0].Environment)
+	versionSession, err := client.NewSession()
+	require.NoError(t, err)
+	versionOutput, err := versionSession.Output("version")
+	require.NoError(t, err)
+	require.Contains(t, string(versionOutput), "Bifroest test")
+	auditSession, err := client.NewSession()
+	require.NoError(t, err)
+	auditOutput, err := auditSession.Output("audit ls --format=json")
+	require.NoError(t, err)
+	require.Contains(t, string(auditOutput), `"name":"default"`)
+	legacy, err := client.NewSession()
+	require.NoError(t, err)
+	_, err = legacy.Output("auditlog ls")
+	require.Error(t, err)
 
 	wire, err := client.NewSession()
 	require.NoError(t, err)
-	request, err := management.EncodeWireRequest([]string{"flow", "ls"})
+	request, err := transport.EncodeWireRequest([]string{"flow", "ls"})
 	require.NoError(t, err)
 	wire.Stdin = bytes.NewReader(request)
-	response, err := wire.Output(management.WireCommand)
+	response, err := wire.Output(transport.WireCommand)
 	require.NoError(t, err)
-	var decoded []management.FlowSummary
-	require.NoError(t, management.DecodeWireResult(bytes.NewReader(response), &decoded))
+	var decoded []model.FlowSummary
+	require.NoError(t, transport.DecodeWireResult(bytes.NewReader(response), &decoded))
 	require.Equal(t, flows, decoded)
 
 	sshSession, err := client.NewSession()
@@ -70,10 +86,10 @@ func TestManagementFlowHandlesHumanAndCBORSSHExecWithoutShell(t *testing.T) {
 	require.Contains(t, stderr.String(), "do not permit @file")
 	require.NotContains(t, stderr.String(), "never-export-this-credential")
 
-	for _, command := range []string{management.WireAuditCommand, management.WireRecordingCommand} {
+	for _, command := range []string{transport.WireAuditCommand, transport.WireRecordingCommand} {
 		transfer, err := client.NewSession()
 		require.NoError(t, err)
-		request, err := management.EncodeWireRequest([]string{"auditlog", "default"})
+		request, err := transport.EncodeWireRequest([]string{"auditlog", "default"})
 		require.NoError(t, err)
 		transfer.Stdin = bytes.NewReader(request)
 		var stderr bytes.Buffer
@@ -83,7 +99,7 @@ func TestManagementFlowHandlesHumanAndCBORSSHExecWithoutShell(t *testing.T) {
 		require.Empty(t, content)
 		require.Contains(t, stderr.String(), "allowArtifactTransfer")
 	}
-	for _, command := range []string{"auditlog events --with-sensitive default", "auditlog export --with-sensitive default", "auditlog merge --with-sensitive default"} {
+	for _, command := range []string{"audit events --with-sensitive default", "audit export --with-sensitive default", "audit merge --with-sensitive default"} {
 		query, err := client.NewSession()
 		require.NoError(t, err)
 		var stderr bytes.Buffer
@@ -111,12 +127,12 @@ func TestManagementSSHExportsSignedLiveAuditSnapshot(t *testing.T) {
 	defer client.Close()
 	verify, err := client.NewSession()
 	require.NoError(t, err)
-	result, err := verify.Output("auditlog verify default")
+	result, err := verify.Output("audit verify default")
 	require.NoError(t, err)
 	require.Equal(t, "verified (scope: full)\n", string(result))
 	sensitive, err := client.NewSession()
 	require.NoError(t, err)
-	result, err = sensitive.Output("auditlog events --with-sensitive default --format=json")
+	result, err = sensitive.Output("audit events --with-sensitive default --format=json")
 	require.NoError(t, err)
 	var events []audit.VerifiedRecord
 	require.NoError(t, json.Unmarshal(result, &events))
@@ -125,14 +141,14 @@ func TestManagementSSHExportsSignedLiveAuditSnapshot(t *testing.T) {
 	transfer, err := client.NewSession()
 	require.NoError(t, err)
 	defer transfer.Close()
-	encoded, err := management.EncodeWireRequest([]string{"auditlog", "default"})
+	encoded, err := transport.EncodeWireRequest([]string{"auditlog", "default"})
 	require.NoError(t, err)
 	transfer.Stdin = bytes.NewReader(encoded)
 	stream, err := transfer.StdoutPipe()
 	require.NoError(t, err)
-	require.NoError(t, transfer.Start(management.WireAuditCommand))
+	require.NoError(t, transfer.Start(transport.WireAuditCommand))
 	directory := t.TempDir()
-	header, err := management.ReadAuditSnapshot(stream, directory)
+	header, err := transport.ReadAuditSnapshot(stream, directory)
 	require.NoError(t, err)
 	require.NoError(t, transfer.Wait())
 	expected := server.service.auditIdentities["default"].ProducerId()
@@ -167,26 +183,26 @@ func TestManagementSSHStreamsSignedRecordingWithoutPrivateKeys(t *testing.T) {
 	require.Len(t, ids, 1)
 	producer, err := client.NewSession()
 	require.NoError(t, err)
-	producerRequest, err := management.EncodeWireRequest([]string{"auditlog", "producer-id", "default"})
+	producerRequest, err := transport.EncodeWireRequest([]string{"audit", "producer-id", "default"})
 	require.NoError(t, err)
 	producer.Stdin = bytes.NewReader(producerRequest)
-	producerResponse, err := producer.Output(management.WireCommand)
+	producerResponse, err := producer.Output(transport.WireCommand)
 	require.NoError(t, err)
-	var producerID management.ProducerView
-	require.NoError(t, management.DecodeWireResult(bytes.NewReader(producerResponse), &producerID))
+	var producerID cliformat.ProducerView
+	require.NoError(t, transport.DecodeWireResult(bytes.NewReader(producerResponse), &producerID))
 	require.Equal(t, server.service.auditIdentities["default"].ProducerId().String(), producerID.ProducerID)
 
 	transfer, err := client.NewSession()
 	require.NoError(t, err)
 	defer transfer.Close()
-	encoded, err := management.EncodeWireRequest([]string{"recording", "default", ids[0].String()})
+	encoded, err := transport.EncodeWireRequest([]string{"recording", "default", ids[0].String()})
 	require.NoError(t, err)
 	transfer.Stdin = bytes.NewReader(encoded)
 	stream, err := transfer.StdoutPipe()
 	require.NoError(t, err)
-	require.NoError(t, transfer.Start(management.WireRecordingCommand))
+	require.NoError(t, transfer.Start(transport.WireRecordingCommand))
 	var evidence bytes.Buffer
-	header, err := management.ReadRecordingArtifact(stream, &evidence, recording.DefaultMaximumNativeRecordingBytes)
+	header, err := transport.ReadRecordingArtifact(stream, &evidence, recording.DefaultMaximumNativeRecordingBytes)
 	require.NoError(t, err)
 	require.NoError(t, transfer.Wait())
 	require.Equal(t, ids[0].String(), header.ID)
@@ -224,7 +240,7 @@ func TestManagementRecordingShowIgnoresUnrelatedCorruptArtifact(t *testing.T) {
 	require.NoError(t, err)
 	output, err := sess.Output("recording show default " + ids[0].String() + " --format=json")
 	require.NoError(t, err)
-	var view management.RecordingView
+	var view model.RecordingView
 	require.NoError(t, json.Unmarshal(output, &view))
 	require.Equal(t, ids[0].String(), view.ID)
 

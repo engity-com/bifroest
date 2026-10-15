@@ -5,40 +5,20 @@ import (
 
 	cli "github.com/echocat/cli4g"
 
-	cdecrypt "github.com/engity-com/bifroest/pkg/cli/audit/decrypt"
-	cexport "github.com/engity-com/bifroest/pkg/cli/audit/export"
-	"github.com/engity-com/bifroest/pkg/cli/audit/merge"
-	cproducerid "github.com/engity-com/bifroest/pkg/cli/audit/producer-id"
-	cverify "github.com/engity-com/bifroest/pkg/cli/audit/verify"
-	. "github.com/engity-com/bifroest/pkg/cli/common"
-	"github.com/engity-com/bifroest/pkg/cli/format"
-	"github.com/engity-com/bifroest/pkg/management"
+	"github.com/engity-com/bifroest/pkg/cli/common"
 )
 
-func Register(ctx context.Context, c cli.ContainerRequirementSetters, usage Usage) {
+func Register(_ context.Context, c cli.ContainerRequirementSetters, usage common.Usage) {
 	cmd := cli.NewSimpleCommand().
 		WithName("audit").
-		WithDescription("Identify, verify, decrypt, export and merge audit journals.")
+		WithDescription("Inspect and verify signed audit journals.")
 
-	registerCmd(ctx, cmd, usage)
+	registerBrowse(cmd, usage)
+	registerProducerID(cmd, usage)
+	registerVerify(cmd, usage)
+	registerDecrypt(cmd, usage)
+	registerAuditExport(cmd, usage)
+	registerMerge(cmd, usage)
 
 	c.AddCommand(cmd)
-}
-
-func registerCmd(ctx context.Context, c cli.ContainerRequirementSetters, usage Usage) {
-	cproducerid.Register(ctx, c, usage)
-	cverify.Register(ctx, c, usage)
-	cdecrypt.Register(ctx, c, usage)
-	cexport.Register(ctx, c, usage)
-	merge.Register(ctx, c, usage)
-}
-
-func selectedAuditFormat(root string, ownFormat format.Format) management.Format {
-	if root == "auditlog" && main.remoteAuditEventsOpts != nil && main.remoteAuditEventsOpts.Format != "" {
-		return management.Format(main.remoteAuditEventsOpts.Format)
-	}
-	if ownFormat != "" {
-		return management.Format(ownFormat)
-	}
-	return management.FormatTable
 }

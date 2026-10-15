@@ -21,7 +21,7 @@ require (
 	github.com/docker/go-connections v0.8.2
 	github.com/docker/go-units v0.5.0
 	github.com/ebitengine/purego v0.11.1
-	github.com/echocat/cli4g v0.1.3
+	github.com/echocat/cli4g v0.1.4
 	github.com/echocat/slf4g v1.9.0
 	github.com/echocat/slf4g/native v1.9.0
 	github.com/engity-com/ssh-server-go v0.4.1

@@ -3,17 +3,20 @@ package cli
 import (
 	"context"
 	"errors"
+	"time"
 
 	clibase "github.com/echocat/cli4g"
+	"github.com/echocat/cli4g/codec"
 
-	"github.com/engity-com/bifroest/pkg/cli/common"
+	managementSchema "github.com/engity-com/bifroest/pkg/cli/management"
+	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 // Applications contains the two compiled, reusable command definitions. Each
 // ParseAndExecute call still owns its own options, streams, and resources.
 type Applications struct {
-	Executable *clibase.Application[clibase.NoOptions]
+	Executable *clibase.Application[executableOptions]
 	Management *clibase.Application[clibase.NoOptions]
 }
 
@@ -24,19 +27,22 @@ func NewApplications(version sys.Version) (_ *Applications, err error) {
 			err = errors.Join(err, result.Close())
 		}
 	}()
-	create := func(usage common.Usage) (*clibase.Application[clibase.NoOptions], error) {
-		requirement := clibase.NewSimpleApplication().
+	createExecutable := func() (*clibase.Application[executableOptions], error) {
+		requirement := clibase.NewApplication[executableOptions]().
 			WithName("bifroest").
 			WithDescription("Bifröst SSH administration.").
 			WithFallbackToStdio(false).
-			WithErrorHandlerEnabled(false)
-		Register(context.Background(), requirement, usage, version)
+			WithErrorHandlerEnabled(false).
+			WithInitializeHandler(configureExecutableLogging).
+			WithCodec(configuration.NewCliCodec(true, true)).
+			WithCodec(codec.NewDateTime().WithFormats(time.RFC3339), "rfc3339")
+		registerExecutable(context.Background(), requirement, version)
 		return requirement.Create()
 	}
-	if result.Executable, err = create(common.UsageExecutable); err != nil {
+	if result.Executable, err = createExecutable(); err != nil {
 		return nil, err
 	}
-	if result.Management, err = create(common.UsageManagement); err != nil {
+	if result.Management, err = managementSchema.NewApplication(version); err != nil {
 		return nil, err
 	}
 	return result, nil

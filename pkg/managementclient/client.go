@@ -19,7 +19,9 @@ import (
 	"golang.org/x/term"
 
 	"github.com/engity-com/bifroest/pkg/audit"
-	"github.com/engity-com/bifroest/pkg/management"
+	cliformat "github.com/engity-com/bifroest/pkg/cli/format"
+	"github.com/engity-com/bifroest/pkg/cli/model"
+	"github.com/engity-com/bifroest/pkg/cli/transport"
 )
 
 type Target struct {
@@ -165,7 +167,7 @@ func Run(ctx context.Context, target Target, args []string, output io.Writer) er
 	if err != nil {
 		return err
 	}
-	if len(wireArgs) < 2 || wireArgs[0] != "flow" && wireArgs[0] != "session" && wireArgs[0] != "auditlog" && wireArgs[0] != "recording" {
+	if len(wireArgs) < 2 || wireArgs[0] != "flow" && wireArgs[0] != "session" && wireArgs[0] != "audit" && wireArgs[0] != "recording" {
 		return fmt.Errorf("remote command %q is not yet supported", args[0])
 	}
 	if wireArgs[0] == "recording" && wireArgs[1] != "ls" && wireArgs[1] != "show" {
@@ -189,7 +191,7 @@ func Run(ctx context.Context, target Target, args []string, output io.Writer) er
 		return err
 	}
 	defer func() { _ = session.Close() }()
-	encoded, err := management.EncodeWireRequest(wireArgs)
+	encoded, err := transport.EncodeWireRequest(wireArgs)
 	if err != nil {
 		return err
 	}
@@ -200,83 +202,126 @@ func Run(ctx context.Context, target Target, args []string, output io.Writer) er
 	if err != nil {
 		return err
 	}
-	if err := session.Start(management.WireCommand); err != nil {
+	if err := session.Start(transport.WireCommand); err != nil {
 		return err
 	}
-	stdout, err := io.ReadAll(io.LimitReader(stream, management.MaxWireResultBytes+1))
+	stdout, err := io.ReadAll(io.LimitReader(stream, transport.MaxWireResultBytes+1))
 	if err != nil {
 		return err
 	}
-	if len(stdout) > management.MaxWireResultBytes {
-		return fmt.Errorf("remote management response exceeds %d bytes", management.MaxWireResultBytes)
+	if len(stdout) > transport.MaxWireResultBytes {
+		return fmt.Errorf("remote management response exceeds %d bytes", transport.MaxWireResultBytes)
 	}
 	if err := session.Wait(); err != nil {
 		return fmt.Errorf("remote management command failed: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	switch wireArgs[0] + " " + wireArgs[1] {
-	case "auditlog producer-id":
-		var producer management.ProducerView
-		if err := management.DecodeWireResult(bytes.NewReader(stdout), &producer); err != nil {
+	case "audit producer-id":
+		var producer cliformat.ProducerView
+		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &producer); err != nil {
 			return err
 		}
-		return management.WriteProducerID(output, format, producer.ProducerID)
+		return cliformat.WriteProducerID(output, format, producer.ProducerID)
 	case "recording ls":
-		var entries []management.RecordingView
-		if err := management.DecodeWireResult(bytes.NewReader(stdout), &entries); err != nil {
+		var entries []model.RecordingView
+		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &entries); err != nil {
 			return err
 		}
-		return management.WriteRecordingList(output, format, entries)
+		return cliformat.WriteRecordingList(output, format, entries)
 	case "recording show":
-		var entry management.RecordingView
-		if err := management.DecodeWireResult(bytes.NewReader(stdout), &entry); err != nil {
+		var entry model.RecordingView
+		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &entry); err != nil {
 			return err
 		}
-		return management.WriteRecordingDetail(output, format, entry)
-	case "auditlog ls":
-		var entries []management.AuditlogSummary
-		if err := management.DecodeWireResult(bytes.NewReader(stdout), &entries); err != nil {
+		return cliformat.WriteRecordingDetail(output, format, entry)
+	case "audit ls":
+		var entries []model.AuditlogSummary
+		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &entries); err != nil {
 			return err
 		}
-		return management.WriteAuditlogList(output, format, entries)
-	case "auditlog show":
+		return cliformat.WriteAuditlogList(output, format, entries)
+	case "audit show":
 		var settings map[string]any
-		if err := management.DecodeWireResult(bytes.NewReader(stdout), &settings); err != nil {
+		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &settings); err != nil {
 			return err
 		}
-		return management.WriteFlowSettings(output, format, settings)
-	case "auditlog events":
+		return cliformat.WriteSettings(output, format, settings)
+	case "audit events":
 		var records []audit.VerifiedRecord
-		if err := management.DecodeWireResult(bytes.NewReader(stdout), &records); err != nil {
+		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &records); err != nil {
 			return err
 		}
-		return management.WriteAuditEvents(output, format, records, management.AuditEventFilter{}, containsArg(args, "--with-sensitive"))
+		return cliformat.WriteAuditEvents(output, format, records, cliformat.AuditEventFilter{}, containsArg(args, "--with-sensitive"))
 	case "flow ls":
-		var entries []management.FlowSummary
-		if err := management.DecodeWireResult(bytes.NewReader(stdout), &entries); err != nil {
+		var entries []model.FlowSummary
+		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &entries); err != nil {
 			return err
 		}
-		return management.WriteFlowList(output, format, entries)
+		return cliformat.WriteFlowList(output, format, entries)
 	case "flow show":
 		var settings map[string]any
-		if err := management.DecodeWireResult(bytes.NewReader(stdout), &settings); err != nil {
+		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &settings); err != nil {
 			return err
 		}
-		return management.WriteFlowSettings(output, format, settings)
+		return cliformat.WriteSettings(output, format, settings)
 	case "session ls":
-		var entries []management.SessionView
-		if err := management.DecodeWireResult(bytes.NewReader(stdout), &entries); err != nil {
+		var entries []model.SessionView
+		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &entries); err != nil {
 			return err
 		}
-		return management.WriteSessionList(output, format, entries)
+		return cliformat.WriteSessionList(output, format, entries)
 	case "session show":
-		var entry management.SessionView
-		if err := management.DecodeWireResult(bytes.NewReader(stdout), &entry); err != nil {
+		var entry model.SessionView
+		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &entry); err != nil {
 			return err
 		}
-		return management.WriteSessionDetail(output, format, entry)
+		return cliformat.WriteSessionDetail(output, format, entry)
 	default:
 		return fmt.Errorf("unsupported management command %q", strings.Join(wireArgs[:2], " "))
 	}
+}
+
+// RunDirect executes a fixed, human-readable management command over the same
+// authenticated and host-key-checked SSH transport as the CBOR commands.
+func RunDirect(ctx context.Context, target Target, command string, output io.Writer) error {
+	if command != "version" && command != "version --long" {
+		return fmt.Errorf("unsupported direct management command %q", command)
+	}
+	client, release, err := connect(ctx, target)
+	if err != nil {
+		return err
+	}
+	defer release()
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = session.Close() }()
+	var stderr diagnosticOutput
+	session.Stderr = &stderr
+	stream, err := session.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err := session.Start(command); err != nil {
+		return err
+	}
+	const maximumVersionOutput = 64 << 10
+	content, err := io.ReadAll(io.LimitReader(stream, maximumVersionOutput+1))
+	if err != nil {
+		return err
+	}
+	if len(content) > maximumVersionOutput {
+		return fmt.Errorf("remote version response exceeds %d bytes", maximumVersionOutput)
+	}
+	if err := session.Wait(); err != nil {
+		return fmt.Errorf("remote version command failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	written, err := output.Write(content)
+	if err == nil && written != len(content) {
+		return io.ErrShortWrite
+	}
+	return err
 }
 
 func connect(ctx context.Context, target Target) (_ *ssh.Client, _ func(), resultErr error) {
@@ -398,8 +443,8 @@ func containsArg(args []string, candidate string) bool {
 	return false
 }
 
-func selectOutputFormat(args []string) (management.Format, []string, error) {
-	format := management.FormatTable
+func selectOutputFormat(args []string) (cliformat.Format, []string, error) {
+	format := cliformat.Text
 	selected := make([]string, 0, len(args))
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -409,14 +454,14 @@ func selectOutputFormat(args []string) (management.Format, []string, error) {
 			if index >= len(args) {
 				return "", nil, fmt.Errorf("--format requires a value")
 			}
-			format = management.Format(args[index])
+			format = cliformat.Format(args[index])
 		case strings.HasPrefix(arg, "--format="):
-			format = management.Format(strings.TrimPrefix(arg, "--format="))
+			format = cliformat.Format(strings.TrimPrefix(arg, "--format="))
 		default:
 			selected = append(selected, arg)
 		}
 	}
-	if format != management.FormatTable && format != management.FormatJSON && format != management.FormatYAML {
+	if _, err := format.MarshalText(); err != nil {
 		return "", nil, fmt.Errorf("invalid management output format %q", format)
 	}
 	return format, selected, nil

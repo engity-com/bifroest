@@ -26,16 +26,16 @@ func TestParseManagementTarget(t *testing.T) {
 		{"invalid host", []string{"@-host", "session", "ls"}, nil, nil, "invalid"},
 		{"not first", []string{"session", "@host", "ls"}, nil, nil, "first argument"},
 		{"remote with second target", []string{"@admin", "session", "@other", "ls"}, nil, nil, "first argument"},
-		{"non-management response file", []string{"version", "@local-args"}, nil, []string{"version", "@local-args"}, ""},
+		{"version is management", []string{"version", "@local-args"}, nil, nil, "first argument"},
 		{"non-management command with target-shaped argument", []string{"run", "@host"}, nil, []string{"run", "@host"}, ""},
 		{"management response file", []string{"flow", "ls", "@local-args"}, nil, nil, "first argument"},
 		{"logging flag before management", []string{"--log.level=INFO", "flow", "ls", "@local-args"}, nil, nil, "first argument"},
 		{"separate logging value before management", []string{"--log.level", "INFO", "session", "ls", "@local-args"}, nil, nil, "first argument"},
-		{"logging value named flow", []string{"--log.level", "flow", "version", "@local-args"}, nil, []string{"--log.level", "flow", "version", "@local-args"}, ""},
-		{"logging flag before non-management", []string{"--log.level=INFO", "version", "@local-args"}, nil, []string{"--log.level=INFO", "version", "@local-args"}, ""},
+		{"logging value named flow", []string{"--log.level", "flow", "version", "@local-args"}, nil, nil, "first argument"},
+		{"logging flag before version", []string{"--log.level=INFO", "version", "@local-args"}, nil, nil, "first argument"},
 		{"late target after global flag", []string{"--log.level=INFO", "@host", "flow", "ls"}, nil, nil, "first argument"},
 		{"late target after separate global flag", []string{"--log.level", "INFO", "@admin@host:2222", "session", "ls"}, nil, nil, "first argument"},
-		{"non-management response file after global flag", []string{"--log.level=INFO", "@local-args", "version"}, nil, []string{"--log.level=INFO", "@local-args", "version"}, ""},
+		{"late target before version", []string{"--log.level=INFO", "@local-args", "version"}, nil, nil, "first argument"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			actual, args, err := parseManagementTarget(test.args)

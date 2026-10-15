@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	cli "github.com/echocat/cli4g"
+	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
 )
@@ -16,17 +18,17 @@ func TestKeyExportHostCreatesExplicitKeyAndUsesNoClobber(t *testing.T) {
 	identityFile := filepath.Join(directory, "identity")
 
 	hostKeyFile := filepath.Join(directory, "host-key")
-	opts := hostOpts{identityFile: identityFile, Address: "host.example", output: hostKeyFile}
-	require.NoError(t, handleHost(&opts, &bytes.Buffer{}))
+	opts := hostOpts{IdentityFile: identityFile, Address: "host.example", Output: hostKeyFile}
+	require.NoError(t, executeHostForTest(t, opts, &bytes.Buffer{}))
 	require.FileExists(t, identityFile)
-	require.Error(t, handleHost(&opts, &bytes.Buffer{}))
+	require.Error(t, executeHostForTest(t, opts, &bytes.Buffer{}))
 }
 
 func TestKeyExportHostDoesNotReplacePrivateKeyWithForce(t *testing.T) {
 	identityFile := filepath.Join(t.TempDir(), "identity")
-	opts := hostOpts{identityFile: identityFile, Address: "host.example", output: identityFile, Force: true}
+	opts := hostOpts{IdentityFile: identityFile, Address: "host.example", Output: identityFile, Force: true}
 
-	err := handleHost(&opts, &bytes.Buffer{})
+	err := executeHostForTest(t, opts, &bytes.Buffer{})
 	require.ErrorContains(t, err, "must not replace private key")
 	privateRaw, readErr := goos.ReadFile(identityFile)
 	require.NoError(t, readErr)
@@ -54,8 +56,8 @@ flows:
 	require.NoError(t, goos.WriteFile(configurationFile, []byte(raw), 0600))
 
 	var stdout bytes.Buffer
-	opts := hostOpts{configuration: configurationFile, Address: "host.example", output: "-"}
-	require.NoError(t, handleHost(&opts, &stdout))
+	opts := hostOpts{EmptyStrOpts: configuration.EmptyStrOpts{Configuration: configurationFile}, Address: "host.example", Output: "-"}
+	require.NoError(t, executeHostForTest(t, opts, &stdout))
 	require.FileExists(t, first)
 	require.FileExists(t, second)
 
@@ -68,17 +70,17 @@ flows:
 	}
 	require.Empty(t, bytes.TrimSpace(remaining))
 
-	opts.output = first
+	opts.Output = first
 	opts.Force = true
-	require.ErrorContains(t, handleHost(&opts, &bytes.Buffer{}), "must not replace private key")
+	require.ErrorContains(t, executeHostForTest(t, opts, &bytes.Buffer{}), "must not replace private key")
 }
 
 func TestKeyExportHostRejectsConfigurationWithIdentityFile(t *testing.T) {
-	err := handleHost(&hostOpts{
-		configuration: "configuration.yaml",
-		identityFile:  "identity",
-		Address:       "host.example",
-		output:        "-",
+	err := executeHostForTest(t, hostOpts{
+		EmptyStrOpts: configuration.EmptyStrOpts{Configuration: "configuration.yaml"},
+		IdentityFile: "identity",
+		Address:      "host.example",
+		Output:       "-",
 	}, &bytes.Buffer{})
 	require.ErrorContains(t, err, "cannot be combined")
 }
@@ -100,15 +102,21 @@ flows:
 `, identityFile)
 	require.NoError(t, goos.WriteFile(configurationFile, []byte(raw), 0600))
 
-	err := handleHost(&hostOpts{
-		configuration: configurationFile,
-		Address:       "host.example",
-		output:        identityFile,
-		Force:         true,
+	err := executeHostForTest(t, hostOpts{
+		EmptyStrOpts: configuration.EmptyStrOpts{Configuration: configurationFile},
+		Address:      "host.example",
+		Output:       identityFile,
+		Force:        true,
 	}, &bytes.Buffer{})
 	require.ErrorContains(t, err, "must not replace private key")
 	privateRaw, readErr := goos.ReadFile(identityFile)
 	require.NoError(t, readErr)
 	_, parseErr := ssh.ParsePrivateKey(privateRaw)
 	require.NoError(t, parseErr)
+}
+
+func executeHostForTest(t *testing.T, options hostOpts, output *bytes.Buffer) error {
+	t.Helper()
+	ctx := cli.ContextWithStdio(t.Context(), nil, output, nil)
+	return handleHost(ctx, options)
 }

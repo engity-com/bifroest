@@ -2,11 +2,11 @@ package sftp_server
 
 import (
 	"context"
-	goos "os"
+	"io"
 
 	cli "github.com/echocat/cli4g"
 
-	. "github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/sftp"
 )
 
@@ -16,11 +16,11 @@ type opts struct {
 
 func newOpts(context.Context) (opts, error) {
 	return opts{
-		WorkingDirectory(),
+		common.WorkingDirectory(),
 	}, nil
 }
 
-func Register(_ context.Context, c cli.ContainerRequirementSetters, usage Usage) {
+func Register(_ context.Context, c cli.ContainerRequirementSetters, usage common.Usage) {
 	if !usage.IncludeService() {
 		return
 	}
@@ -34,33 +34,34 @@ func Register(_ context.Context, c cli.ContainerRequirementSetters, usage Usage)
 	)
 }
 
-func handle(_ context.Context, o opts) error {
+func handle(ctx context.Context, o opts) error {
 	s := sftp.Server{
 		WorkingDir: o.WorkingDirectory,
 	}
 
-	if err := s.Run(&stdpipe{}); err != nil {
+	if err := s.Run(&stdpipe{input: cli.StdinOfContext(ctx), output: cli.StdoutOfContext(ctx)}); err != nil {
 		return err
 	}
 	return nil
 }
 
-type stdpipe struct{}
+type stdpipe struct {
+	input io.Reader
+	output io.Writer
+}
 
 func (this *stdpipe) Read(p []byte) (n int, err error) {
-	return goos.Stdin.Read(p)
+	if this.input == nil {
+		return 0, io.ErrClosedPipe
+	}
+	return this.input.Read(p)
 }
 
 func (this *stdpipe) Write(p []byte) (n int, err error) {
-	return goos.Stdout.Write(p)
+	if this.output == nil {
+		return 0, io.ErrClosedPipe
+	}
+	return this.output.Write(p)
 }
 
-func (this *stdpipe) Close() (rErr error) {
-	if err := goos.Stdin.Close(); err != nil {
-		rErr = err
-	}
-	if err := goos.Stdout.Close(); err != nil && rErr == nil {
-		rErr = err //nolint:staticcheck
-	}
-	return nil
-}
+func (*stdpipe) Close() error { return nil } // Invocation streams are borrowed.

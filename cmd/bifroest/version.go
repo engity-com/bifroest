@@ -25,10 +25,6 @@ var (
 	buildAtV time.Time
 )
 
-var (
-	long = true
-)
-
 func init() {
 	if err := editionV.Set(edition); err != nil {
 		panic(fmt.Errorf("illegal main.edidtion value (%q): %w", edition, err))
