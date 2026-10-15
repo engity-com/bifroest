@@ -2,8 +2,6 @@ package version
 
 import (
 	"context"
-	"fmt"
-	goos "os"
 
 	cli "github.com/echocat/cli4g"
 
@@ -12,11 +10,12 @@ import (
 )
 
 type opts struct {
-	Long bool `flag:"long" description:"Configuration which should be used to serve the service."`
+	Long bool `flag:"long" description:"Include build, platform and feature details."`
 }
 
 func Register(_ context.Context, c cli.ContainerRequirementSetters, usage Usage, version sys.Version) {
 	c.AddCommand(cli.NewCommand[opts]().
+		WithName("version").
 		WithDescription((func() string {
 			switch usage {
 			case UsageExecutable:
@@ -31,12 +30,10 @@ func Register(_ context.Context, c cli.ContainerRequirementSetters, usage Usage,
 	)
 }
 
-func handle(_ context.Context, o opts, version sys.Version) error {
-	defer goos.Exit(1)
+func handle(ctx context.Context, o opts, version sys.Version) error {
 	f := sys.VersionFormatShort
 	if o.Long {
 		f = sys.VersionFormatLong
 	}
-	fmt.Println(sys.FormatVersion(version, f))
-	return nil
+	return cli.Println(ctx, sys.FormatVersion(version, f))
 }
