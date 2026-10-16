@@ -60,18 +60,18 @@ func doRemoteAuditEvents(ctx context.Context, target management.Target, opts Aud
 		}
 		source.DecryptionIdentities = append(source.DecryptionIdentities, key)
 	}
-	verified, err := audit.VerifyJournals(ctx, []audit.JournalSource{source})
-	if err != nil {
-		return err
-	}
 	filter := EventFilter{
 		Name: opts.EventName, Flow: opts.FlowName, Since: opts.Since, Until: opts.Until, Limit: opts.Limit,
 	}
-	records, err := FilterEvents(verified.Records(), filter, true)
+	selection, err := filter.selection(true)
 	if err != nil {
 		return err
 	}
-	return format.WriteAuditEvents(output, opts.Format, records, true)
+	verified, err := audit.SelectJournalRecords(ctx, []audit.JournalSource{source}, selection)
+	if err != nil {
+		return err
+	}
+	return format.WriteAuditEvents(output, opts.Format, verified.Records(), true)
 }
 
 func expectedAuditEventsProducerID(remote management.Target, configured string) (audit.ProducerId, error) {

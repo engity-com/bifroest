@@ -9,7 +9,7 @@ import (
 	bfAudit "github.com/engity-com/bifroest/pkg/audit"
 )
 
-func TestEventFilterKeepsNewestMatchingRecordsWithoutOverflow(t *testing.T) {
+func TestEventFilterMatchesNameFlowAndInclusiveTimes(t *testing.T) {
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	records := []bfAudit.VerifiedRecord{
 		{RecordedAt: start, Event: bfAudit.Event{Name: "login", Flow: "public"}},
@@ -18,15 +18,19 @@ func TestEventFilterKeepsNewestMatchingRecordsWithoutOverflow(t *testing.T) {
 		{RecordedAt: start.Add(3 * time.Minute), Event: bfAudit.Event{Name: "login", Flow: "admin"}},
 	}
 	filter := EventFilter{Name: "login", Flow: "admin", Since: start.Add(time.Minute), Limit: 1}
-	_, err := FilterEvents(records, filter, false)
+	_, err := filter.selection(false)
 	require.ErrorContains(t, err, "--with-sensitive")
-	selected, err := FilterEvents(records, filter, true)
+	selection, err := filter.selection(true)
 	require.NoError(t, err)
-	require.Len(t, selected, 1)
-	require.Equal(t, start.Add(3*time.Minute), selected[0].RecordedAt)
+	require.Equal(t, uint(1), selection.Limit)
+	for i, want := range []bool{false, true, false, true} {
+		require.Equal(t, want, selection.Matches(records[i]))
+	}
 
-	filter.Limit = ^uint(0)
-	selected, err = FilterEvents(records, filter, true)
+	filter.Until = start.Add(time.Minute)
+	selection, err = filter.selection(true)
 	require.NoError(t, err)
-	require.Len(t, selected, 2)
+	for i, want := range []bool{false, true, false, false} {
+		require.Equal(t, want, selection.Matches(records[i]))
+	}
 }

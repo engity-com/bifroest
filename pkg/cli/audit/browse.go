@@ -210,11 +210,7 @@ func writeEvents(ctx context.Context, conf *configuration.Configuration, name co
 		Name: options.EventName, Flow: options.FlowName,
 		Since: options.Since, Until: options.Until, Limit: options.Limit,
 	}
-	records, err := ReadAuditEvents(ctx, conf, name, expected, sensitive, identities)
-	if err != nil {
-		return err
-	}
-	records, err = FilterEvents(records, filter, sensitive)
+	records, err := ReadAuditEvents(ctx, conf, name, expected, filter, sensitive, identities)
 	if err != nil {
 		return err
 	}

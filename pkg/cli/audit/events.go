@@ -11,9 +11,13 @@ import (
 
 type AuditEventSource func(context.Context, string, configuration.AuditlogName, bool, []string) ([]audit.VerifiedRecord, error)
 
-func ReadAuditEvents(ctx context.Context, conf *configuration.Configuration, name configuration.AuditlogName, expected audit.ProducerId, withSensitive bool, identities []string) ([]audit.VerifiedRecord, error) {
+func ReadAuditEvents(ctx context.Context, conf *configuration.Configuration, name configuration.AuditlogName, expected audit.ProducerId, filter EventFilter, withSensitive bool, identities []string) ([]audit.VerifiedRecord, error) {
 	if conf == nil || expected.IsZero() {
 		return nil, fmt.Errorf("audit events require a configured journal and trusted producer ID")
+	}
+	selection, err := filter.selection(withSensitive)
+	if err != nil {
+		return nil, err
 	}
 	for _, selected := range conf.Auditlogs {
 		if selected.Name != name {
@@ -43,7 +47,7 @@ func ReadAuditEvents(ctx context.Context, conf *configuration.Configuration, nam
 				source.DecryptionIdentities = append(source.DecryptionIdentities, key)
 			}
 		}
-		verified, err := audit.VerifyLiveJournals(ctx, []audit.JournalSource{source})
+		verified, err := audit.SelectLiveJournalRecords(ctx, []audit.JournalSource{source}, selection)
 		if err != nil {
 			return nil, err
 		}
