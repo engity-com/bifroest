@@ -24,7 +24,7 @@ type opts struct {
 	WorkingDirectory             string            `flag:"workingDir" short:"d" description:"Directory to start in."`
 	Environment                  map[string]string `flag:"env" short:"e" description:"Environment variables to execute the process with."`
 	Executable                   string            `flag:"executable" short:"p" description:"Path to executable to be used. If not defined, first argument will be used."`
-	Command                      []string          `flag:"command" required:"true" description:"Command to execute."`
+	Command                      []string          `argument:"command" required:"true" description:"Command to execute."`
 
 	EncodedEnvironment string
 }

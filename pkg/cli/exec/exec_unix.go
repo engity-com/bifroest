@@ -26,7 +26,7 @@ type opts struct {
 	User                         string            `flag:"user" short:"u" description:"User the process should run with."`
 	Group                        string            `flag:"group" short:"g" description:"Group the process should run with."`
 	Executable                   string            `flag:"executable" short:"p" description:"Path to executable to be used. If not defined, first argument will be used."`
-	Command                      []string          `flag:"command" required:"true" description:"Command to execute."`
+	Command                      []string          `argument:"command" required:"true" description:"Command to execute."`
 
 	EncodedEnvironment string
 }
