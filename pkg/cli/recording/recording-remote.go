@@ -10,6 +10,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/management"
+	"github.com/engity-com/bifroest/pkg/recording"
 )
 
 // downloadRemoteRecording never sends a local decryption identity or output
@@ -18,6 +19,7 @@ import (
 type downloadedRecording struct {
 	path     string
 	producer string
+	id       recording.Id
 	cleanup  func() error
 }
 
@@ -49,6 +51,7 @@ func remoteHandleVerify(ctx context.Context, options verifyCommandOptions) (resu
 	if err != nil {
 		return err
 	}
+	options.expectedRecordingID = downloaded.id
 	options.File, options.RecordingID = downloaded.path, ""
 	options.ExpectedProducerID, options.DecryptionIdentityFiles = downloaded.producer, identities
 	return doRecordingVerify(ctx, options, cli.StdoutOfContext(ctx))
@@ -74,6 +77,7 @@ func remoteHandleExport(ctx context.Context, options exportCommandOptions) (resu
 	if err != nil {
 		return err
 	}
+	options.expectedRecordingID = downloaded.id
 	options.File, options.RecordingID = downloaded.path, ""
 	options.ExpectedProducerID, options.DecryptionIdentityFiles = downloaded.producer, identities
 	return doRecordingExport(ctx, options, cli.StdoutOfContext(ctx))
@@ -99,6 +103,7 @@ func remoteHandlePlay(ctx context.Context, options playCommandOptions) (resultEr
 	if err != nil {
 		return err
 	}
+	options.expectedRecordingID = downloaded.id
 	options.File, options.RecordingID = downloaded.path, ""
 	options.ExpectedProducerID, options.DecryptionIdentityFiles = downloaded.producer, identities
 	options.Output = "-"
@@ -108,6 +113,10 @@ func remoteHandlePlay(ctx context.Context, options playCommandOptions) (resultEr
 func downloadRemoteRecording(ctx context.Context, target management.Target, auditlog, id, expected string, allowUntrusted bool) (downloadedRecording, error) {
 	if auditlog == "" || id == "" {
 		return downloadedRecording{}, fmt.Errorf("remote Recording commands require an auditlog name and Recording ID")
+	}
+	var requested recording.Id
+	if err := requested.UnmarshalText([]byte(id)); err != nil {
+		return downloadedRecording{}, err
 	}
 	var err error
 	if expected == "" {
@@ -136,7 +145,7 @@ func downloadRemoteRecording(ctx context.Context, target management.Target, audi
 	if err != nil {
 		return downloadedRecording{}, errors.Join(err, remove())
 	}
-	return downloadedRecording{path: file.Name(), producer: expected, cleanup: func() error {
+	return downloadedRecording{path: file.Name(), producer: expected, id: requested, cleanup: func() error {
 		err := os.Remove(file.Name())
 		if errors.Is(err, os.ErrNotExist) {
 			return nil

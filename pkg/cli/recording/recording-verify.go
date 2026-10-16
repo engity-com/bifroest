@@ -23,6 +23,9 @@ type verifyCommandOptions struct {
 	RecordingID        string        `argument:"recordingId" description:"Recording UUID when selecting an auditlog."`
 	ExpectedProducerID string        `flag:"expectedProducerId" description:"Independently trusted producer ID."`
 	Format             format.Format `flag:"format" default:"table" enum:"table|json|yaml|cbor" description:"Output format."`
+
+	// Set by the remote handler, independently of the local source selector.
+	expectedRecordingID recording.Id
 }
 
 type managementVerifyOptions struct {
@@ -93,6 +96,9 @@ func doRecordingVerify(ctx context.Context, opts verifyCommandOptions, stdout io
 	inspection, err := recording.Inspect(snapshot, initial.Size(), recording.InspectOptions{Context: ctx, ExpectedProducerId: expected})
 	if err != nil {
 		return fmt.Errorf("cannot verify Recording %q: %w", filePath, err)
+	}
+	if err := validateExpectedRecordingID(inspection, opts.expectedRecordingID); err != nil {
+		return err
 	}
 	if !auditlogName.IsZero() {
 		if err := validateConfiguredSealedRecording(filePath, inspection); err != nil {

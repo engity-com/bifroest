@@ -5,6 +5,8 @@ import (
 	"fmt"
 	stdos "os"
 	"strings"
+
+	"github.com/engity-com/bifroest/pkg/recording"
 )
 
 func OpenRecordingInput(path string) (*stdos.File, stdos.FileInfo, error) {
@@ -30,6 +32,21 @@ func OpenRecordingInput(path string) (*stdos.File, stdos.FileInfo, error) {
 		return nil, nil, goerrors.Join(fmt.Errorf("recording input %q is empty", path), file.Close())
 	}
 	return file, initial, nil
+}
+
+// Inspect must have authenticated the snapshot before its signed ID is used.
+// A transport header alone cannot bind an artifact to the requested Recording.
+func validateExpectedRecordingID(inspection *recording.Inspection, expected recording.Id) error {
+	if expected.IsZero() {
+		return nil
+	}
+	if inspection == nil || inspection.Native == nil {
+		return fmt.Errorf("remote Recording requires a native sealed Recording artifact")
+	}
+	if recording.Id(inspection.Native.Header.RecordingId) != expected {
+		return fmt.Errorf("remote Recording does not match requested signed ID")
+	}
+	return nil
 }
 
 func ValidateRecordingInput(path string, file *stdos.File, initial stdos.FileInfo) error {

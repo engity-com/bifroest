@@ -29,6 +29,9 @@ type exportCommandOptions struct {
 	Force              bool   `flag:"force" description:"Replace an existing output."`
 	ExpectedProducerID string `flag:"expectedProducerId" description:"Independently trusted producer ID."`
 	AllowUntrusted     bool   `flag:"allowUntrusted" description:"Explicitly accept a self-signed Recording."`
+
+	// Set by the remote handler, independently of the local source selector.
+	expectedRecordingID recording.Id
 }
 
 type managementExportOptions struct {
@@ -108,6 +111,9 @@ func doRecordingExport(ctx context.Context, opts exportCommandOptions, stdout io
 	inspection, err := recording.Inspect(snapshot, initial.Size(), inspectOptions)
 	if err != nil {
 		return fmt.Errorf("cannot verify Recording %q before export: %w", file, err)
+	}
+	if err := validateExpectedRecordingID(inspection, opts.expectedRecordingID); err != nil {
+		return err
 	}
 	if !auditlogName.IsZero() {
 		if err := validateConfiguredSealedRecording(file, inspection); err != nil {
