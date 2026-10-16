@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	cli "github.com/echocat/cli4g"
 	"github.com/kevinburke/ssh_config"
@@ -150,14 +151,27 @@ func expandHome(path string) (string, error) {
 	return path, nil
 }
 
-type diagnosticOutput struct{ bytes.Buffer }
+// diagnosticOutput captures a bounded stderr prefix while SSH may still be writing.
+type diagnosticOutput struct {
+	mutex  sync.Mutex
+	buffer bytes.Buffer
+}
 
 func (this *diagnosticOutput) Write(p []byte) (int, error) {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+
 	const limit = 16 << 10
-	if this.Len() < limit {
-		_, _ = this.Buffer.Write(p[:min(len(p), limit-this.Len())])
+	if remaining := limit - this.buffer.Len(); remaining > 0 {
+		_, _ = this.buffer.Write(p[:min(len(p), remaining)])
 	}
 	return len(p), nil
+}
+
+func (this *diagnosticOutput) String() string {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	return this.buffer.String()
 }
 
 func (target Target) Run(ctx context.Context, args ...string) error {

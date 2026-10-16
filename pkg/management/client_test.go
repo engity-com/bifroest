@@ -2,6 +2,7 @@ package management
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -34,7 +35,43 @@ func TestManagementDiagnosticsRemainBoundedWithoutBlockingSSH(t *testing.T) {
 	written, err := output.Write(message)
 	require.NoError(t, err)
 	require.Equal(t, len(message), written)
-	require.Len(t, output.Bytes(), 16<<10)
+	snapshot := output.String()
+	require.Equal(t, string(message[:16<<10]), snapshot)
+	written, err = output.Write([]byte("discarded after the limit"))
+	require.NoError(t, err)
+	require.Equal(t, len("discarded after the limit"), written)
+	require.Equal(t, snapshot, output.String())
+}
+
+func TestManagementDiagnosticsAllowConcurrentWritesAndReads(t *testing.T) {
+	for _, writers := range []int{1, 4} {
+		t.Run(fmt.Sprintf("writers=%d", writers), func(t *testing.T) {
+			var output diagnosticOutput
+			start := make(chan struct{})
+			results := make(chan error, writers)
+			for range writers {
+				go func() {
+					<-start
+					for range 32768 {
+						written, err := output.Write([]byte{'x'})
+						if err != nil || written != 1 {
+							results <- fmt.Errorf("diagnostic write returned %d, %v", written, err)
+							return
+						}
+					}
+					results <- nil
+				}()
+			}
+			close(start)
+			for range 2048 {
+				require.LessOrEqual(t, len(output.String()), 16<<10)
+			}
+			for range writers {
+				require.NoError(t, <-results)
+			}
+			require.Equal(t, string(bytes.Repeat([]byte{'x'}, 16<<10)), output.String())
+		})
+	}
 }
 
 func TestRunDirectRejectsCommandsOutsideVersionForms(t *testing.T) {
