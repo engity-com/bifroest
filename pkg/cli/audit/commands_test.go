@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/configuration"
 )
 
 func TestAuditCLIReusesSchemaAndControlsSensitiveExport(t *testing.T) {
@@ -18,8 +19,9 @@ func TestAuditCLIReusesSchemaAndControlsSensitiveExport(t *testing.T) {
 	requirement := cli.NewSimpleApplication().WithName("bifroest").
 		WithFallbackToStdio(false).
 		WithErrorHandlerEnabled(false).
+		WithCodec(configuration.NewOptionalCliCodec()).
 		WithCodec(codec.NewDateTime().WithFormats(time.RFC3339), "rfc3339")
-	Register(t.Context(), requirement, common.UsageExecutable)
+	Register(requirement)
 	app, err := requirement.Create()
 	require.NoError(t, err)
 	defer func() { require.NoError(t, app.Close()) }()
@@ -36,7 +38,7 @@ func TestAuditCLIReusesSchemaAndControlsSensitiveExport(t *testing.T) {
 	} {
 		var output bytes.Buffer
 		ctx := cli.ContextWithStdio(t.Context(), nil, &output, nil)
-		require.NoError(t, app.ParseAndExecute(ctx, nil, invocation.args...))
+		require.NoError(t, app.ParseAndExecute(ctx, &cli.ParseOpts{Profiles: []string{common.ProfileExecutable}}, invocation.args...))
 		require.Contains(t, output.String(), invocation.contains)
 		if invocation.notContains != "" {
 			require.NotContains(t, output.String(), invocation.notContains)

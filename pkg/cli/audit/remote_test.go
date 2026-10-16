@@ -22,7 +22,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/transport"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
-	"github.com/engity-com/bifroest/pkg/managementclient"
+	"github.com/engity-com/bifroest/pkg/management"
 )
 
 func TestRemoteAuditExportDecryptsLocallyFromSignedSnapshot(t *testing.T) {
@@ -119,7 +119,7 @@ func TestRemoteAuditExportDecryptsLocallyFromSignedSnapshot(t *testing.T) {
 	ssh_config.DefaultUserSettings = settings
 	defer func() { ssh_config.DefaultUserSettings = previous }()
 	var output bytes.Buffer
-	require.NoError(t, runRemoteAudit(context.Background(), managementclient.Target{Host: "audit-test", Port: 22}, remoteAuditOptions{
+	require.NoError(t, runRemoteAudit(context.Background(), management.Target{Host: "audit-test", Port: 22}, remoteAuditOptions{
 		Operation: remoteExport, Names: []configuration.AuditlogName{"default"}, WithSensitive: true, Format: format.Text,
 	}, &output))
 	require.Contains(t, output.String(), "confidential-flow-default")

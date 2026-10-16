@@ -33,7 +33,7 @@ func (noFeatures) ForEach(func(sys.VersionFeatureCategory)) {}
 
 func TestVersionReusesApplicationAndContextStreams(t *testing.T) {
 	requirement := cli.NewSimpleApplication().WithName("bifroest").WithFallbackToStdio(false).WithErrorHandlerEnabled(false)
-	Register(t.Context(), requirement, common.UsageManagement, testVersion{})
+	Register(requirement, testVersion{})
 	app, err := requirement.Create()
 	require.NoError(t, err)
 	defer func() { require.NoError(t, app.Close()) }()
@@ -47,7 +47,7 @@ func TestVersionReusesApplicationAndContextStreams(t *testing.T) {
 	} {
 		var output, diagnostics bytes.Buffer
 		ctx := cli.ContextWithStdio(context.Background(), nil, &output, &diagnostics)
-		require.NoError(t, app.ParseAndExecute(ctx, nil, test.args...))
+		require.NoError(t, app.ParseAndExecute(ctx, &cli.ParseOpts{Profiles: []string{common.ProfileManagement}}, test.args...))
 		require.Contains(t, output.String(), test.want)
 		require.Empty(t, diagnostics.String())
 		if len(test.args) == 1 {

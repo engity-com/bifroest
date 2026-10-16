@@ -7,7 +7,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/engity-com/bifroest/pkg/managementclient"
+	"github.com/engity-com/bifroest/pkg/management"
 )
 
 // downloadRemoteRecording never sends a local decryption identity or output
@@ -19,18 +19,18 @@ type downloadedRecording struct {
 	cleanup  func() error
 }
 
-func remoteRecordingIdentities(target managementclient.Target, configured []string) ([]string, error) {
+func remoteRecordingIdentities(target management.Target, configured []string) ([]string, error) {
 	if len(configured) != 0 {
 		return configured, nil
 	}
-	path, err := managementclient.RecordingPrivateKey(target)
+	path, err := management.RecordingPrivateKey(target)
 	if err != nil || path == "" {
 		return nil, err
 	}
 	return []string{path}, nil
 }
 
-func runRemoteVerify(ctx context.Context, target managementclient.Target, options verifyCommandOptions, output io.Writer) (resultErr error) {
+func runRemoteVerify(ctx context.Context, target management.Target, options verifyCommandOptions, output io.Writer) (resultErr error) {
 	if options.Configuration != "" {
 		return fmt.Errorf("remote Recording commands cannot use --configuration")
 	}
@@ -43,13 +43,12 @@ func runRemoteVerify(ctx context.Context, target managementclient.Target, option
 	if err != nil {
 		return err
 	}
-	return doRecordingVerify(ctx, &recordingVerifyOpts{
-		file: downloaded.path, expectedProducerId: downloaded.producer,
-		decryptionIdentityFiles: identities, requireFull: options.RequireFull, format: options.Format,
-	}, output)
+	options.File, options.RecordingID = downloaded.path, ""
+	options.ExpectedProducerID, options.DecryptionIdentityFiles = downloaded.producer, identities
+	return doRecordingVerify(ctx, options, output)
 }
 
-func runRemoteExport(ctx context.Context, target managementclient.Target, options exportCommandOptions, output io.Writer) (resultErr error) {
+func runRemoteExport(ctx context.Context, target management.Target, options exportCommandOptions, output io.Writer) (resultErr error) {
 	if !options.WithSensitive {
 		return fmt.Errorf("recording export requires --with-sensitive")
 	}
@@ -65,14 +64,12 @@ func runRemoteExport(ctx context.Context, target managementclient.Target, option
 	if err != nil {
 		return err
 	}
-	return doRecordingExport(ctx, &recordingExportOpts{
-		file: downloaded.path, expectedProducerId: downloaded.producer,
-		allowUntrusted: options.AllowUntrusted, decryptionIdentityFiles: identities,
-		withSensitive: true, output: options.Output, force: options.Force,
-	}, output)
+	options.File, options.RecordingID = downloaded.path, ""
+	options.ExpectedProducerID, options.DecryptionIdentityFiles = downloaded.producer, identities
+	return doRecordingExport(ctx, options, output)
 }
 
-func runRemotePlay(ctx context.Context, target managementclient.Target, options playCommandOptions, output io.Writer) (resultErr error) {
+func runRemotePlay(ctx context.Context, target management.Target, options playCommandOptions, output io.Writer) (resultErr error) {
 	if !options.WithSensitive {
 		return fmt.Errorf("recording playback requires --with-sensitive")
 	}
@@ -88,20 +85,19 @@ func runRemotePlay(ctx context.Context, target managementclient.Target, options 
 	if err != nil {
 		return err
 	}
-	return doRecordingPlay(ctx, &recordingPlayOpts{recordingExportOpts: recordingExportOpts{
-		file: downloaded.path, expectedProducerId: downloaded.producer,
-		allowUntrusted: options.AllowUntrusted, decryptionIdentityFiles: identities,
-		withSensitive: true, output: "-",
-	}, speed: options.Speed}, output)
+	options.File, options.RecordingID = downloaded.path, ""
+	options.ExpectedProducerID, options.DecryptionIdentityFiles = downloaded.producer, identities
+	options.Output = "-"
+	return doRecordingPlay(ctx, options, output)
 }
 
-func downloadRemoteRecording(ctx context.Context, target managementclient.Target, auditlog, id, expected string, allowUntrusted bool) (downloadedRecording, error) {
+func downloadRemoteRecording(ctx context.Context, target management.Target, auditlog, id, expected string, allowUntrusted bool) (downloadedRecording, error) {
 	if auditlog == "" || id == "" {
 		return downloadedRecording{}, fmt.Errorf("remote Recording commands require an auditlog name and Recording ID")
 	}
 	var err error
 	if expected == "" {
-		expected, err = managementclient.ExpectedRecordingProducerID(target)
+		expected, err = management.ExpectedRecordingProducerID(target)
 		if err != nil {
 			return downloadedRecording{}, err
 		}
@@ -116,7 +112,7 @@ func downloadRemoteRecording(ctx context.Context, target managementclient.Target
 	remove := func() error {
 		return errors.Join(file.Close(), os.Remove(file.Name()))
 	}
-	header, err := managementclient.DownloadRecording(ctx, target, auditlog, id, file)
+	header, err := management.DownloadRecording(ctx, target, auditlog, id, file)
 	if err == nil && expected != "" && header.ProducerID != expected {
 		err = fmt.Errorf("remote Recording producer does not match the trusted ID")
 	}

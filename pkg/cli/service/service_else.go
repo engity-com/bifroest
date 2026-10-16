@@ -3,12 +3,9 @@
 package service
 
 import (
-	"context"
-
 	cli "github.com/echocat/cli4g"
 
-	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-func Register(context.Context, cli.ContainerRequirementSetters, common.Usage, sys.Version) {}
+func Register(cli.ContainerRequirementSetters, sys.Version) {}

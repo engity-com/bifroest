@@ -21,7 +21,6 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
-	managementSchema "github.com/engity-com/bifroest/pkg/cli/management"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/environment"
@@ -731,15 +730,6 @@ flows:
 	}
 
 	definition := &Service{Configuration: conf, Version: serviceTestVersion{}}
-	for _, flow := range conf.Flows {
-		if _, ok := flow.Environment.V.(*configuration.EnvironmentManagement); ok {
-			application, appErr := managementSchema.NewApplication(definition.Version)
-			require.NoError(t, appErr)
-			definition.ManagementApplication = application
-			t.Cleanup(func() { require.NoError(t, application.Close()) })
-			break
-		}
-	}
 	svc, err := definition.prepare()
 	require.NoError(t, err)
 	if testEnvironment != nil {

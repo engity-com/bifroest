@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	clibase "github.com/echocat/cli4g"
 	log "github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/fields"
 	essh "github.com/engity-com/ssh-server-go"
@@ -24,7 +25,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/authorization"
-	cliCommon "github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/cli"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
@@ -46,11 +47,15 @@ var (
 const remoteAuditDeliveryShutdownTimeout = 5 * time.Second
 
 type Service struct {
-	Configuration         configuration.Configuration
-	Version               sys.Version
-	ManagementApplication cliCommon.ManagementApplication
+	Configuration configuration.Configuration
+	Version       sys.Version
 
 	Logger log.Logger
+}
+
+// Run starts a service with the configuration selected by the executable CLI.
+func Run(ctx context.Context, conf configuration.Configuration, version sys.Version) error {
+	return (&Service{Configuration: conf, Version: version}).Run(ctx)
 }
 
 func (this *Service) isProblematicError(err error) bool {
@@ -233,6 +238,17 @@ func (this *Service) prepare() (svc *service, err error) {
 		Service:             this,
 		connectionLifecycle: newConnectionLifecycle(),
 	}
+	resourcesOwnedByService := false
+	svc.managementApplication, err = cli.NewApplication[clibase.NoOptions](this.Version, "Bifröst SSH management.", nil).
+		Create()
+	if err != nil {
+		return fail(err)
+	}
+	defer func(application *clibase.Application[clibase.NoOptions]) {
+		if !resourcesOwnedByService {
+			err = goerrors.Join(err, application.Close())
+		}
+	}(svc.managementApplication)
 
 	svc.knownFlows = make(map[configuration.FlowName]struct{})
 	for _, flow := range this.Configuration.Flows {
@@ -268,7 +284,6 @@ func (this *Service) prepare() (svc *service, err error) {
 	if err != nil {
 		return fail(err)
 	}
-	resourcesOwnedByService := false
 	defer func(preparedService *service) {
 		if !resourcesOwnedByService {
 			recordingErr := preparedService.closeRecording(false)
@@ -843,38 +858,7 @@ func EnsureHostPrivateKeys(conf *configuration.Configuration) ([]crypto.PrivateK
 }
 
 func EnsureHostPrivateKeysWithPaths(conf *configuration.Configuration) ([]crypto.PrivateKey, []string, error) {
-	if conf == nil {
-		return nil, nil, fmt.Errorf("nil configuration")
-	}
-	kc := &conf.Ssh.Keys
-
-	hostKeys, err := kc.HostKeys.Render(noopContext{})
-	if err != nil {
-		return nil, nil, errors.Config.Newf("cannot render hostKeys: %w", err)
-	}
-
-	var result []crypto.PrivateKey
-	var resultPaths []string
-	for _, fn := range hostKeys {
-		if fn == "" {
-			continue
-		}
-		pk, err := crypto.EnsureKeyFile(fn, &crypto.KeyRequirement{
-			Type: crypto.KeyTypeEd25519,
-		}, nil)
-		if err != nil {
-			return nil, nil, fmt.Errorf("cannot ensure host key: %w", err)
-		}
-
-		if ok, err := kc.KeyAllowed(pk); err != nil {
-			return nil, nil, fmt.Errorf("cannot check if host key %q is allowed or not: %w", fn, err)
-		} else if !ok {
-			return nil, nil, fmt.Errorf("cannot check if host key %q is not allowed by restrictions: %w", fn, err)
-		}
-		result = append(result, pk)
-		resultPaths = append(resultPaths, fn)
-	}
-	return result, resultPaths, nil
+	return configuration.EnsureHostPrivateKeysWithPaths(conf)
 }
 
 func (this *Service) logCertificateAuthorities(hostKeys []crypto.PrivateKey) error {
@@ -910,6 +894,7 @@ func (this *Service) logCertificateAuthorities(hostKeys []crypto.PrivateKey) err
 
 type service struct {
 	*Service
+	managementApplication *clibase.Application[clibase.NoOptions]
 
 	auditIdentities          map[configuration.AuditlogName]*audit.Identity
 	auditRecorders           map[configuration.AuditlogName]audit.Recorder
@@ -997,6 +982,7 @@ func sshMaxAuthTries(value uint8) int {
 }
 
 func (this *service) Close() (rErr error) {
+	defer common.KeepCloseError(&rErr, this.managementApplication)
 	defer func() { rErr = goerrors.Join(rErr, this.closeAudit(true)) }()
 	defer func() { rErr = goerrors.Join(rErr, this.closeRecording(true)) }()
 	defer common.KeepCloseError(&rErr, this.alternatives)

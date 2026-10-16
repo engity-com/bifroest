@@ -16,17 +16,6 @@ import (
 	"github.com/engity-com/bifroest/pkg/recording"
 )
 
-type recordingVerifyOpts struct {
-	file                    string
-	recordingId             string
-	auditlog                configuration.AuditlogName
-	configuration           string
-	expectedProducerId      string
-	decryptionIdentityFiles []string
-	requireFull             bool
-	format                  format.Format
-}
-
 type verifyCommandOptions struct {
 	common.RequireFullVerificationOpts
 	common.DecryptionIdentityFilesOpts
@@ -46,9 +35,8 @@ type managementVerifyOptions struct {
 
 func registerManagementVerify(parent cli.ContainerRequirementSetters) {
 	parent.AddCommand(
-		cli.NewCommand[managementVerifyOptions]().
-			WithName("verify").
-			WithDescription("Verify a signed session Recording.").
+		cli.NewCommand[managementVerifyOptions]("verify", "Verify a signed session Recording.").
+			WithProfiles(common.ProfileManagement).
 			WithHandler(handleManagementVerify),
 	)
 }
@@ -66,41 +54,36 @@ func handleManagementVerify(ctx context.Context, opts managementVerifyOptions) e
 }
 
 func registerRecordingVerifyCmd(parent cli.ContainerRequirementSetters) {
-	parent.AddCommand(cli.NewCommand[verifyCommandOptions]().
-		WithName("verify").
-		WithDescription("Verify a signed session Recording.").
+	parent.AddCommand(cli.NewCommand[verifyCommandOptions]("verify", "Verify a signed session Recording.").
+		WithProfiles(common.ProfileExecutable).
 		WithHandler(func(ctx context.Context, o verifyCommandOptions) error {
 			if target, remote := common.RemoteTargetFromContext(ctx); remote {
 				return runRemoteVerify(ctx, target, o, cli.StdoutOfContext(ctx))
 			}
-			return doRecordingVerify(ctx, &recordingVerifyOpts{
-				file: o.File, recordingId: o.RecordingID, configuration: o.Configuration,
-				expectedProducerId: o.ExpectedProducerID, decryptionIdentityFiles: o.DecryptionIdentityFiles,
-				requireFull: o.RequireFull, format: o.Format,
-			}, cli.StdoutOfContext(ctx))
+			return doRecordingVerify(ctx, o, cli.StdoutOfContext(ctx))
 		}))
 }
 
-func doRecordingVerify(ctx context.Context, opts *recordingVerifyOpts, stdout io.Writer) (rErr error) {
-	if opts == nil || stdout == nil {
-		return fmt.Errorf("nil Recording verification options or output")
+func doRecordingVerify(ctx context.Context, opts verifyCommandOptions, stdout io.Writer) (rErr error) {
+	if stdout == nil {
+		return fmt.Errorf("nil Recording verification output")
 	}
-	filePath, auditlogName, err := ResolveRecordingSelection(opts.file, opts.recordingId, opts.auditlog, opts.configuration, opts.expectedProducerId)
+	filePath, auditlogName, err := ResolveRecordingSelection(opts.File, opts.RecordingID, "", opts.Configuration, opts.ExpectedProducerID)
 	if err != nil {
 		return err
 	}
-	if opts.configuration != "" && auditlogName.IsZero() {
+	if opts.Configuration != "" && auditlogName.IsZero() {
 		return fmt.Errorf("--configuration requires a local auditlog name and Recording ID")
 	}
 	var expected audit.ProducerId
 	var localConfiguration configuration.Ref
 	if !auditlogName.IsZero() {
-		if opts.expectedProducerId != "" {
+		if opts.ExpectedProducerID != "" {
 			return fmt.Errorf("local Recording selection cannot be combined with --expectedProducerId")
 		}
-		expected, err = configuredRecordingProducerId(auditlogName, opts.configuration, filePath, &localConfiguration)
+		expected, err = configuredRecordingProducerId(auditlogName, opts.Configuration, filePath, &localConfiguration)
 	} else {
-		expected, err = recordingExportTrust(opts.expectedProducerId, false)
+		expected, err = recordingExportTrust(opts.ExpectedProducerID, false)
 	}
 	if err != nil {
 		return err
@@ -130,8 +113,8 @@ func doRecordingVerify(ctx context.Context, opts *recordingVerifyOpts, stdout io
 	scope := "full"
 	if inspection.Format == recording.FormatBECastCBOR {
 		scope = "outer"
-		if len(opts.decryptionIdentityFiles) != 0 {
-			identities, err := loadRecordingDecryptionIdentities(opts.decryptionIdentityFiles)
+		if len(opts.DecryptionIdentityFiles) != 0 {
+			identities, err := loadRecordingDecryptionIdentities(opts.DecryptionIdentityFiles)
 			if err != nil {
 				return err
 			}
@@ -141,21 +124,21 @@ func doRecordingVerify(ctx context.Context, opts *recordingVerifyOpts, stdout io
 			scope = "full"
 		}
 	}
-	if opts.requireFull && scope != "full" {
+	if opts.RequireFull && scope != "full" {
 		return fmt.Errorf("full verification of encrypted Recording requires --decryptionIdentityFile")
 	}
 	if err := ValidateRecordingInput(filePath, input, initial); err != nil {
 		return err
 	}
 	if !auditlogName.IsZero() {
-		if err := audit2.EnsureAuditDestinationSafe("-", stdout, localConfiguration.GetFilename(), localConfiguration.Get(), opts.decryptionIdentityFiles); err != nil {
+		if err := audit2.EnsureAuditDestinationSafe("-", stdout, localConfiguration.GetFilename(), localConfiguration.Get(), opts.DecryptionIdentityFiles); err != nil {
 			return err
 		}
 	}
-	if err := EnsureRecordingStandardOutputSafe(stdout, input, opts.decryptionIdentityFiles); err != nil {
+	if err := EnsureRecordingStandardOutputSafe(stdout, input, opts.DecryptionIdentityFiles); err != nil {
 		return err
 	}
-	selected := opts.format
+	selected := opts.Format
 	if selected == "" {
 		selected = format.Text
 	}

@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/engity-com/bifroest/pkg/cli/common"
@@ -20,9 +21,9 @@ func FindConfigured(conf *configuration.Configuration, name configuration.Auditl
 	return nil, fmt.Errorf("auditlog %q does not exist", name)
 }
 
-func resolveAuditSourceConfiguration(configPath, directory, recipient string, name configuration.AuditlogName) (configuration.AuditlogName, *configuration.Configuration, error) {
+func resolveAuditSourceConfiguration[O common.ConfigurationOptions](ctx context.Context, options O, directory, recipient string, name configuration.AuditlogName) (configuration.AuditlogName, *configuration.Configuration, error) {
 	if directory != "" {
-		if configPath != "" {
+		if options.GetConfiguration() != nil {
 			return "", nil, fmt.Errorf("--source cannot be combined with --configuration")
 		}
 		if name.IsZero() {
@@ -44,6 +45,6 @@ func resolveAuditSourceConfiguration(configPath, directory, recipient string, na
 	if err := name.Validate(); err != nil {
 		return "", nil, err
 	}
-	conf, err := common.LoadManagementConfiguration(configPath)
+	conf, err := common.ResolveConfiguration(ctx, options)
 	return name, conf, err
 }

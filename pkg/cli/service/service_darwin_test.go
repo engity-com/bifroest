@@ -11,8 +11,9 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/stretchr/testify/require"
+
+	"github.com/engity-com/bifroest/pkg/configuration"
 )
 
 func TestDarwinServicePlist(t *testing.T) {

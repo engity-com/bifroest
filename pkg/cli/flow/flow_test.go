@@ -13,11 +13,13 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/model"
 	"github.com/engity-com/bifroest/pkg/cli/transport"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/management"
 )
 
 func TestManagementFlowUsesReusableDefinitionAndInvocationAccess(t *testing.T) {
-	requirement := cli.NewSimpleApplication().WithName("bifroest").WithFallbackToStdio(false).WithErrorHandlerEnabled(false)
-	Register(t.Context(), requirement, common.UsageManagement)
+	requirement := cli.NewSimpleApplication().WithName("bifroest").WithFallbackToStdio(false).WithErrorHandlerEnabled(false).
+		WithCodec(configuration.NewOptionalCliCodec())
+	Register(requirement)
 	app, err := requirement.Create()
 	require.NoError(t, err)
 	defer func() { require.NoError(t, app.Close()) }()
@@ -35,23 +37,27 @@ func TestManagementFlowUsesReusableDefinitionAndInvocationAccess(t *testing.T) {
 		var output, diagnostic bytes.Buffer
 		ctx := common.ContextWithManagementAccess(context.Background(), common.ManagementAccess{Configuration: conf})
 		ctx = cli.ContextWithStdio(ctx, nil, &output, &diagnostic)
-		require.NoError(t, app.ParseAndExecute(ctx, nil, test.args...))
+		require.NoError(t, app.ParseAndExecute(ctx, &cli.ParseOpts{Profiles: []string{common.ProfileManagement}}, test.args...))
 		require.Contains(t, output.String(), test.expects)
 		require.Empty(t, diagnostic.String())
 	}
 	var output, diagnostic bytes.Buffer
 	ctx := cli.ContextWithStdio(common.ContextWithManagementAccess(t.Context(), common.ManagementAccess{Configuration: conf}), nil, &output, &diagnostic)
-	require.Error(t, app.ParseAndExecute(ctx, nil, "flow", "ls", "--configuration=server.yaml"))
+	require.Error(t, app.ParseAndExecute(ctx, &cli.ParseOpts{Profiles: []string{common.ProfileManagement}}, "flow", "ls", "--configuration=server.yaml"))
 	require.Empty(t, output.String())
 	output.Reset()
-	require.NoError(t, app.ParseAndExecute(ctx, nil, "flow", "ls", "--format=cbor"))
+	require.NoError(t, app.ParseAndExecute(ctx, &cli.ParseOpts{Profiles: []string{common.ProfileManagement}}, "flow", "ls", "--format=cbor"))
 	var decoded []model.FlowSummary
 	require.NoError(t, cbor.Unmarshal(output.Bytes(), &decoded))
 	require.Len(t, decoded, 1)
 	output.Reset()
 	wireCtx := common.ContextWithManagementAccess(t.Context(), common.ManagementAccess{Configuration: conf, WireFormat: true})
 	wireCtx = cli.ContextWithStdio(wireCtx, nil, &output, nil)
-	require.NoError(t, app.ParseAndExecute(wireCtx, nil, "flow", "ls"))
+	require.NoError(t, app.ParseAndExecute(wireCtx, &cli.ParseOpts{Profiles: []string{common.ProfileManagement}}, "flow", "ls"))
 	require.NoError(t, transport.DecodeWireResult(bytes.NewReader(output.Bytes()), &decoded))
 	require.Len(t, decoded, 1)
+	remoteCtx := common.ContextWithRemoteTarget(t.Context(), management.Target{Host: "example.invalid"})
+	remoteCtx = cli.ContextWithStdio(remoteCtx, nil, &output, &diagnostic)
+	require.ErrorContains(t, app.ParseAndExecute(remoteCtx, &cli.ParseOpts{Profiles: []string{common.ProfileExecutable}},
+		"flow", "ls", "--configuration=does-not-exist.yaml"), "--configuration cannot be combined with a remote target")
 }

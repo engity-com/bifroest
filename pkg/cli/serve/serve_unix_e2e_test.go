@@ -1,6 +1,6 @@
 //go:build unix
 
-package serve
+package serve_test
 
 import (
 	"fmt"
@@ -12,11 +12,15 @@ import (
 	"testing"
 	"time"
 
+	cli "github.com/echocat/cli4g"
 	logrecording "github.com/echocat/slf4g/testing/recording"
 	"github.com/stretchr/testify/require"
 	gossh "golang.org/x/crypto/ssh"
 
+	"github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/cli/serve"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/service"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
@@ -67,11 +71,21 @@ func TestDoRunDefaultRemovesRepositoryLocksOnShutdown(t *testing.T) {
 
 func runDefaultUntilInterrupted(t *testing.T, ref configuration.Ref, lockPaths []string, provider *logrecording.Provider) {
 	t.Helper()
+	requirement := cli.NewSimpleApplication().
+		WithName("bifroest").
+		WithFallbackToStdio(false).
+		WithErrorHandlerEnabled(false).
+		WithCodec(configuration.NewCliCodec(true, true))
+	serve.Register(requirement, serveTestVersion{}, service.Run)
+	application, err := requirement.Create()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, application.Close()) })
 	firstEvent := provider.Len()
 	done := make(chan error, 1)
 	stopped := false
 	go func() {
-		done <- doRunDefault(t.Context(), &opts{Opts: configuration.Opts{Configuration: *ref.Get()}}, serveTestVersion{})
+		done <- application.ParseAndExecute(t.Context(), &cli.ParseOpts{Profiles: []string{common.ProfileExecutable}},
+			"serve", "--configuration="+ref.String())
 	}()
 	t.Cleanup(func() {
 		if stopped {
@@ -151,8 +165,7 @@ func requireNoLockFiles(t *testing.T, root string) {
 
 func runDefaultLockTestConfiguration(t *testing.T, root string) configuration.Ref {
 	t.Helper()
-	var result configuration.Ref
-	err := result.Get().LoadFromYaml(strings.NewReader(fmt.Sprintf(`
+	content := fmt.Sprintf(`
 ssh:
   addresses: ["127.0.0.1:0"]
   keys:
@@ -167,13 +180,19 @@ flows:
       type: none
     environment:
       type: dummy
-`, filepath.ToSlash(filepath.Join(root, "host-key")), filepath.ToSlash(filepath.Join(root, "sessions")))), "run-lock-test.yaml")
-	require.NoError(t, err)
-	auditlog := &result.Get().Auditlogs[0]
-	auditlog.Enabled = true
-	auditlog.IdentityFile = filepath.Join(root, "audit-identity")
-	auditlog.Directory = filepath.Join(root, "journal")
-	auditlog.Recording.Enabled = true
-	auditlog.Recording.Directory = filepath.Join(root, "recordings")
+auditlog:
+  - enabled: true
+    identityFile: "%s"
+    directory: "%s"
+    recording:
+      enabled: true
+      directory: "%s"
+`, filepath.ToSlash(filepath.Join(root, "host-key")), filepath.ToSlash(filepath.Join(root, "sessions")),
+		filepath.ToSlash(filepath.Join(root, "audit-identity")), filepath.ToSlash(filepath.Join(root, "journal")),
+		filepath.ToSlash(filepath.Join(root, "recordings")))
+	path := filepath.Join(root, "run-lock-test.yaml")
+	require.NoError(t, goos.WriteFile(path, []byte(content), 0600))
+	var result configuration.Ref
+	require.NoError(t, result.Set(path))
 	return result
 }

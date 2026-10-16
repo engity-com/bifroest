@@ -54,8 +54,7 @@ func TestManagementSessionSelection(t *testing.T) {
 	first := testSessionInfo{id: session.MustNewId(), flow: "production", state: session.StateAuthorized, user: "alice", valid: time.Now().Add(time.Hour)}
 	second := testSessionInfo{id: session.MustNewId(), flow: "production", state: session.StateAuthorized, user: "bob", valid: time.Now().Add(-time.Hour)}
 	third := testSessionInfo{id: session.MustNewId(), flow: "other", state: session.StateNew, user: "carol"}
-	source := func(ctx context.Context, path string, consumer func(context.Context, session.Info) (bool, error), _ session.FindDiagnosticConsumer) error {
-		require.Empty(t, path)
+	source := func(ctx context.Context, consumer func(context.Context, session.Info) (bool, error), _ session.FindDiagnosticConsumer) error {
 		for _, info := range []testSessionInfo{first, second, third} {
 			cont, err := consumer(ctx, info)
 			if err != nil || !cont {
@@ -65,19 +64,19 @@ func TestManagementSessionSelection(t *testing.T) {
 		return nil
 	}
 	var output bytes.Buffer
-	require.NoError(t, ListSessions(t.Context(), &output, cliformat.Json, source, "", "", "", "active", nil))
+	require.NoError(t, ListSessions(t.Context(), &output, cliformat.Json, source, "", "", "active", nil))
 	var active []model.SessionView
 	require.NoError(t, json.Unmarshal(output.Bytes(), &active))
 	require.Len(t, active, 1)
 	require.Equal(t, first.id.String(), active[0].ID)
 	output.Reset()
-	require.NoError(t, ListSessions(t.Context(), &output, cliformat.Json, source, "", "production", "bob", "all", nil))
+	require.NoError(t, ListSessions(t.Context(), &output, cliformat.Json, source, "production", "bob", "all", nil))
 	var filtered []model.SessionView
 	require.NoError(t, json.Unmarshal(output.Bytes(), &filtered))
 	require.Len(t, filtered, 1)
 	require.Equal(t, second.id.String(), filtered[0].ID)
 	output.Reset()
-	require.NoError(t, ShowSession(t.Context(), &output, cliformat.Text, source, "", third.id, nil))
+	require.NoError(t, ShowSession(t.Context(), &output, cliformat.Text, source, third.id, nil))
 	require.Contains(t, output.String(), "carol")
 	require.Contains(t, output.String(), "other")
 	require.NotContains(t, output.String(), "authorizationToken")

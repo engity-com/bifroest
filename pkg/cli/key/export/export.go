@@ -1,21 +1,18 @@
 package export
 
 import (
-	"context"
-
 	cli "github.com/echocat/cli4g"
 
 	"github.com/engity-com/bifroest/pkg/cli/common"
 )
 
-func Register(ctx context.Context, c cli.ContainerRequirementSetters, usage common.Usage) {
-	cmd := cli.NewSimpleCommand().
-		WithName("export").
-		WithDescription("Export SSH public key material.")
+func Register(c cli.ContainerRequirementSetters) {
+	cmd := cli.NewSimpleCommand("export", "Export SSH public key material.").
+		WithProfiles(common.ProfileExecutable)
 
-	registerPublic(ctx, cmd, usage)
-	registerCa(ctx, cmd, usage)
-	registerHost(ctx, cmd, usage)
+	registerPublic(cmd)
+	registerCa(cmd)
+	registerHost(cmd)
 
 	c.AddCommand(cmd)
 }

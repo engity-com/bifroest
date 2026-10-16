@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"fmt"
 	goos "os"
 	"os/signal"
 	"syscall"
@@ -9,18 +10,15 @@ import (
 	"github.com/echocat/slf4g"
 
 	"github.com/engity-com/bifroest/pkg/cli/common"
-	"github.com/engity-com/bifroest/pkg/service"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-func doRunDefault(rc context.Context, o *opts, version sys.Version) error {
+func doRunDefault(rc context.Context, o *opts, version sys.Version, run common.ServiceRunner) error {
+	if run == nil {
+		return fmt.Errorf("service runner is unavailable")
+	}
 	if err := configureProcessLimits(); err != nil {
 		return err
-	}
-	svc := service.Service{
-		Configuration:         o.Configuration,
-		Version:               version,
-		ManagementApplication: common.ManagementApplicationFromContext(rc),
 	}
 
 	ctx, cancelFunc := context.WithCancel(rc)
@@ -38,7 +36,7 @@ func doRunDefault(rc context.Context, o *opts, version sys.Version) error {
 		}
 	}()
 
-	if err := svc.Run(ctx); err != nil {
+	if err := run(ctx, o.Configuration, version); err != nil {
 		return err
 	}
 

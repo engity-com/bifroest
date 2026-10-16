@@ -3,7 +3,6 @@ package format
 import (
 	"fmt"
 	"io"
-	"sort"
 	"time"
 
 	"github.com/engity-com/bifroest/pkg/audit"
@@ -46,7 +45,6 @@ func WriteAuditlogList(output io.Writer, selected Format, entries []model.Auditl
 }
 
 func WriteRecordingList(output io.Writer, selected Format, entries []model.RecordingView) error {
-	sort.Slice(entries, func(i, j int) bool { return entries[i].StartedAt.Before(entries[j].StartedAt) })
 	rows := make([][]string, 0, len(entries))
 	for _, entry := range entries {
 		rows = append(rows, []string{entry.ID, entry.Auditlog, entry.Status, entry.StartedAt.Format(time.RFC3339), entry.VerificationScope})
@@ -68,43 +66,16 @@ func WriteRecordingDetail(output io.Writer, selected Format, entry model.Recordi
 	return WriteDetail(output, selected, fields, entry)
 }
 
-type AuditEventFilter struct {
-	Name  string
-	Flow  string
-	Since time.Time
-	Until time.Time
-	Limit int
-}
-
-func WriteAuditEvents(output io.Writer, selected Format, records []audit.VerifiedRecord, filter AuditEventFilter, sensitive bool) error {
-	if filter.Flow != "" && !sensitive {
-		return fmt.Errorf("filtering audit events by flow requires --with-sensitive")
-	}
-	if filter.Limit < 0 {
-		return fmt.Errorf("audit event limit cannot be negative")
-	}
-	matching := make([]audit.VerifiedRecord, 0)
+func WriteAuditEvents(output io.Writer, selected Format, records []audit.VerifiedRecord, sensitive bool) error {
+	rows := make([][]string, 0, len(records))
 	for _, record := range records {
-		if filter.Name != "" && record.Event.Name != filter.Name ||
-			filter.Flow != "" && record.Event.Flow != filter.Flow ||
-			!filter.Since.IsZero() && record.RecordedAt.Before(filter.Since) ||
-			!filter.Until.IsZero() && record.RecordedAt.After(filter.Until) {
-			continue
-		}
-		matching = append(matching, record)
-	}
-	if filter.Limit > 0 && len(matching) > filter.Limit {
-		matching = matching[len(matching)-filter.Limit:]
-	}
-	rows := make([][]string, 0, len(matching))
-	for _, record := range matching {
 		rows = append(rows, []string{record.RecordedAt.Format(time.RFC3339), record.Event.Name, string(record.Event.Domain), string(record.Event.Outcome), record.Id.String()})
 	}
 	if selected == Text && sensitive {
 		for index := range rows {
-			rows[index] = append(rows[index], matching[index].Event.Flow)
+			rows[index] = append(rows[index], records[index].Event.Flow)
 		}
-		return WriteList(output, selected, []string{"RECORDED", "NAME", "DOMAIN", "OUTCOME", "ID", "FLOW"}, rows, matching)
+		return WriteList(output, selected, []string{"RECORDED", "NAME", "DOMAIN", "OUTCOME", "ID", "FLOW"}, rows, records)
 	}
-	return WriteList(output, selected, []string{"RECORDED", "NAME", "DOMAIN", "OUTCOME", "ID"}, rows, matching)
+	return WriteList(output, selected, []string{"RECORDED", "NAME", "DOMAIN", "OUTCOME", "ID"}, rows, records)
 }

@@ -40,14 +40,9 @@ func newOpts(context.Context) (opts, error) {
 	}, nil
 }
 
-func Register(_ context.Context, c cli.ContainerRequirementSetters, usage Usage) {
-	if !usage.IncludeService() {
-		return
-	}
-
-	c.AddCommand(cli.NewCommand[opts]().
-		WithName("dlv").
-		WithDescription("Runs a command of this binary with Delve.").
+func Register(c cli.ContainerRequirementSetters) {
+	c.AddCommand(cli.NewCommand[opts]("dlv", "Runs a command of this binary with Delve.").
+		WithProfiles(ProfileExecutable).
 		WithVisible(false).
 		WithCreateOptionsHandler(newOpts).
 		WithHandler(handler),

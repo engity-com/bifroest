@@ -1,6 +1,6 @@
 //go:build !windows
 
-package managementclient
+package management
 
 import (
 	"context"

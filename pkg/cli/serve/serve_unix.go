@@ -16,16 +16,12 @@ type opts struct {
 	configuration.Opts
 }
 
-func Register(_ context.Context, c cli.ContainerRequirementSetters, usage common.Usage, version sys.Version) {
-	if !usage.IncludeService() {
-		return
-	}
-
-	c.AddCommand(cli.NewCommand[*opts]().
-		WithName("serve", "run").
-		WithDescription("Runs the service.").
+func Register(c cli.ContainerRequirementSetters, version sys.Version, run common.ServiceRunner) {
+	c.AddCommand(cli.NewCommand[*opts]("serve", "Runs the service.").
+		WithProfiles(common.ProfileExecutable).
+		WithAliases("run").
 		WithHandler(func(ctx context.Context, o *opts) error {
-			return doRunDefault(ctx, o, version)
+			return doRunDefault(ctx, o, version, run)
 		}),
 	)
 }

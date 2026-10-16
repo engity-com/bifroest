@@ -14,7 +14,7 @@ func (this StrOpts) LoadConfiguration() (*Configuration, error) {
 
 	var result Configuration
 	if err := result.LoadFromFile(fn); err != nil {
-		return nil, codec.NewValidationError(err)
+		return nil, codec.NewValidationError("cannot load configuration", err)
 	}
 	return &result, nil
 }
@@ -42,7 +42,7 @@ func (this EmptyStrOpts) LoadConfiguration(fallbackToDefault bool) (*Configurati
 
 	var result Configuration
 	if err := result.LoadFromFile(fn); err != nil {
-		return nil, false, codec.NewValidationError(err)
+		return nil, false, codec.NewValidationError("cannot load configuration", err)
 	}
 	return &result, true, nil
 }

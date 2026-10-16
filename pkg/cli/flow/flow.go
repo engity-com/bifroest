@@ -9,12 +9,11 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/cli/format"
 	"github.com/engity-com/bifroest/pkg/configuration"
-	"github.com/engity-com/bifroest/pkg/managementclient"
 )
 
 type flowOptions struct {
-	configuration.EmptyStrOpts
 	format.Opts
+	common.ExecutableConfigurationOpts
 }
 
 type flowNameOptions struct {
@@ -30,103 +29,72 @@ type showOptions struct {
 	flowNameOptions
 }
 
-type managementFlowOptions struct{ format.Opts }
-
-type managementListOptions struct {
-	Parent *managementFlowOptions `parent:"matchingType"`
-}
-
-type managementShowOptions struct {
-	Parent *managementFlowOptions `parent:"matchingType"`
-	flowNameOptions
-}
-
-func Register(_ context.Context, parent cli.ContainerRequirementSetters, usage common.Usage) {
-	if usage == common.UsageManagement {
-		command := cli.NewCommand[managementFlowOptions]().
-			WithName("flow").
-			WithDescription("Inspect configured flows.")
-		command.AddCommand(
-			cli.NewCommand[managementListOptions]().
-				WithName("ls").
-				WithDescription("List configured flows.").
-				WithHandler(handleManagementList),
-		)
-		command.AddCommand(
-			cli.NewCommand[managementShowOptions]().
-				WithName("show").
-				WithDescription("Show the settings of one flow.").
-				WithHandler(handleManagementShow),
-		)
-		parent.AddCommand(command)
-		return
-	}
-	command := cli.NewCommand[flowOptions]().
-		WithName("flow").
-		WithDescription("Inspect configured flows.")
+func Register(parent cli.ContainerRequirementSetters) {
+	command := cli.NewCommand[flowOptions]("flow", "Inspect configured flows.").
+		WithProfiles(common.ProfileExecutable, common.ProfileManagement)
 	command.AddCommand(
-		cli.NewCommand[listOptions]().
-			WithName("ls").
-			WithDescription("List configured flows.").
+		cli.NewCommand[listOptions]("ls", "List configured flows.").
+			WithProfiles(common.ProfileExecutable).
 			WithHandler(handleList),
+		cli.NewCommand[listOptions]("ls", "List configured flows.").
+			WithProfiles(common.ProfileManagement).
+			WithHandler(handleManagementList),
 	)
 	command.AddCommand(
-		cli.NewCommand[showOptions]().
-			WithName("show").
-			WithDescription("Show the settings of one flow.").
+		cli.NewCommand[showOptions]("show", "Show the settings of one flow.").
+			WithProfiles(common.ProfileExecutable).
 			WithHandler(handleShow),
+		cli.NewCommand[showOptions]("show", "Show the settings of one flow.").
+			WithProfiles(common.ProfileManagement).
+			WithHandler(handleManagementShow),
 	)
 	parent.AddCommand(command)
 }
 
-func handleManagementList(ctx context.Context, opts managementListOptions) error {
-	conf, err := managementConfiguration(ctx)
+func handleManagementList(ctx context.Context, opts listOptions) error {
+	conf, err := common.ResolveConfiguration(ctx, opts.Parent)
 	if err != nil {
 		return err
 	}
 	return ListFlows(cli.StdoutOfContext(ctx), common.FormatForInvocation(ctx, opts.Parent.Format), conf)
 }
 
-func handleManagementShow(ctx context.Context, opts managementShowOptions) error {
-	access, ok := common.ManagementAccessFromContext(ctx)
-	if !ok || access.Configuration == nil {
-		return fmt.Errorf("management configuration is unavailable")
-	}
-	return ShowFlow(cli.StdoutOfContext(ctx), common.FormatForInvocation(ctx, opts.Parent.Format), access.Configuration, opts.Name, access.IncludingCredentials)
-}
-
 func handleList(ctx context.Context, opts listOptions) error {
-	if target, remote := common.RemoteTargetFromContext(ctx); remote {
-		if opts.Parent.Configuration != "" {
-			return fmt.Errorf("--configuration cannot be combined with a remote target")
-		}
-		return managementclient.Run(ctx, target, []string{"flow", "ls", "--format=" + string(opts.Parent.Format)}, cli.StdoutOfContext(ctx))
-	}
-	conf, err := common.LoadManagementConfiguration(opts.Parent.Configuration)
+	conf, err := common.ResolveConfiguration(ctx, opts.Parent)
 	if err != nil {
 		return err
+	}
+	if target, remote := common.RemoteTargetFromContext(ctx); remote {
+		if conf != nil {
+			return fmt.Errorf("--configuration cannot be combined with a remote target")
+		}
+		return target.Run(ctx, "flow", "ls", "--format="+string(opts.Parent.Format))
 	}
 	return ListFlows(cli.StdoutOfContext(ctx), opts.Parent.Format, conf)
 }
 
-func handleShow(ctx context.Context, opts showOptions) error {
-	if target, remote := common.RemoteTargetFromContext(ctx); remote {
-		if opts.Parent.Configuration != "" {
-			return fmt.Errorf("--configuration cannot be combined with a remote target")
-		}
-		return managementclient.Run(ctx, target, []string{"flow", "show", opts.Name.String(), "--format=" + string(opts.Parent.Format)}, cli.StdoutOfContext(ctx))
+func handleManagementShow(ctx context.Context, opts showOptions) error {
+	access, ok := common.ManagementAccessFromContext(ctx)
+	if !ok {
+		return fmt.Errorf("management configuration is unavailable")
 	}
-	conf, err := common.LoadManagementConfiguration(opts.Parent.Configuration)
+	conf, err := common.ResolveConfiguration(ctx, opts.Parent)
 	if err != nil {
 		return err
 	}
-	return ShowFlow(cli.StdoutOfContext(ctx), opts.Parent.Format, conf, opts.Name, false)
+	return ShowFlow(cli.StdoutOfContext(ctx), common.FormatForInvocation(ctx, opts.Parent.Format), conf, opts.Name, access.IncludingCredentials)
 }
 
-func managementConfiguration(ctx context.Context) (*configuration.Configuration, error) {
-	access, ok := common.ManagementAccessFromContext(ctx)
-	if !ok || access.Configuration == nil {
-		return nil, fmt.Errorf("management configuration is unavailable")
+func handleShow(ctx context.Context, opts showOptions) error {
+	conf, err := common.ResolveConfiguration(ctx, opts.Parent)
+	if err != nil {
+		return err
 	}
-	return access.Configuration, nil
+	if target, remote := common.RemoteTargetFromContext(ctx); remote {
+		if conf != nil {
+			return fmt.Errorf("--configuration cannot be combined with a remote target")
+		}
+		return target.Run(ctx, "flow", "show", opts.Name.String(), "--format="+string(opts.Parent.Format))
+	}
+	return ShowFlow(cli.StdoutOfContext(ctx), opts.Parent.Format, conf, opts.Name, false)
 }

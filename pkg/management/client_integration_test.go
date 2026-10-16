@@ -1,4 +1,4 @@
-package managementclient
+package management
 
 import (
 	"bytes"
@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	cli "github.com/echocat/cli4g"
 	"github.com/kevinburke/ssh_config"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
@@ -114,7 +115,8 @@ func TestManagementClientExecsCBORAndRendersJSON(t *testing.T) {
 	ssh_config.DefaultUserSettings = settings
 	defer func() { ssh_config.DefaultUserSettings = previous }()
 	var output bytes.Buffer
-	require.NoError(t, Run(context.Background(), Target{Host: "management-test", Port: 22}, []string{"flow", "ls", "--format=json"}, &output))
+	ctx := cli.ContextWithStdio(context.Background(), nil, &output, nil)
+	require.NoError(t, (Target{Host: "management-test", Port: 22}).Run(ctx, "flow", "ls", "--format=json"))
 	var entries []model.FlowSummary
 	require.NoError(t, json.Unmarshal(output.Bytes(), &entries))
 	require.Len(t, entries, 1)

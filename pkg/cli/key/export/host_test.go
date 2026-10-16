@@ -8,9 +8,10 @@ import (
 	"testing"
 
 	cli "github.com/echocat/cli4g"
-	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
+
+	"github.com/engity-com/bifroest/pkg/configuration"
 )
 
 func TestKeyExportHostCreatesExplicitKeyAndUsesNoClobber(t *testing.T) {

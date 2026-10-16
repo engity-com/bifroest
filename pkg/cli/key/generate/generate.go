@@ -20,10 +20,9 @@ type opts struct {
 	PublicFile   string `flag:"publicFile" placeholder:"<path>" description:"Optional public key file to create."`
 }
 
-func Register(_ context.Context, c cli.ContainerRequirementSetters, usage common.Usage) {
-	c.AddCommand(cli.NewCommand[opts]().
-		WithName("generate").
-		WithDescription("Generate an Ed25519 private key without replacing an existing file.").
+func Register(c cli.ContainerRequirementSetters) {
+	c.AddCommand(cli.NewCommand[opts]("generate", "Generate an Ed25519 private key without replacing an existing file.").
+		WithProfiles(common.ProfileExecutable).
 		WithHandler(handle),
 	)
 }

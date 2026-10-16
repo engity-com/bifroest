@@ -19,19 +19,6 @@ import (
 	"github.com/engity-com/bifroest/pkg/recording"
 )
 
-type recordingExportOpts struct {
-	file                    string
-	recordingId             string
-	output                  string
-	force                   bool
-	withSensitive           bool
-	auditlog                configuration.AuditlogName
-	configuration           string
-	expectedProducerId      string
-	allowUntrusted          bool
-	decryptionIdentityFiles []string
-}
-
 type exportCommandOptions struct {
 	common.WithSensitiveOpts
 	common.DecryptionIdentityFilesOpts
@@ -52,9 +39,8 @@ type managementExportOptions struct {
 
 func registerManagementExport(parent cli.ContainerRequirementSetters) {
 	parent.AddCommand(
-		cli.NewCommand[managementExportOptions]().
-			WithName("export").
-			WithDescription("Verify and export a session Recording as asciicast v3.").
+		cli.NewCommand[managementExportOptions]("export", "Verify and export a session Recording as asciicast v3.").
+			WithProfiles(common.ProfileManagement).
 			WithHandler(handleManagementExport),
 	)
 }
@@ -71,83 +57,73 @@ func handleManagementExport(ctx context.Context, opts managementExportOptions) e
 }
 
 func registerRecordingExportCmd(parent cli.ContainerRequirementSetters) {
-	parent.AddCommand(cli.NewCommand[exportCommandOptions]().
-		WithName("export").
-		WithDescription("Verify and export a session Recording as asciicast v3.").
+	parent.AddCommand(cli.NewCommand[exportCommandOptions]("export", "Verify and export a session Recording as asciicast v3.").
+		WithProfiles(common.ProfileExecutable).
 		WithHandler(func(ctx context.Context, o exportCommandOptions) error {
 			if target, remote := common.RemoteTargetFromContext(ctx); remote {
 				return runRemoteExport(ctx, target, o, cli.StdoutOfContext(ctx))
 			}
-			return doRecordingExport(ctx, &recordingExportOpts{
-				file: o.File, recordingId: o.RecordingID, output: o.Output, force: o.Force, withSensitive: o.WithSensitive,
-				configuration: o.Configuration, expectedProducerId: o.ExpectedProducerID, allowUntrusted: o.AllowUntrusted,
-				decryptionIdentityFiles: o.DecryptionIdentityFiles,
-			}, cli.StdoutOfContext(ctx))
+			return doRecordingExport(ctx, o, cli.StdoutOfContext(ctx))
 		}))
 }
 
-func doRecordingExport(ctx context.Context, opts *recordingExportOpts, stdout io.Writer) (rErr error) {
-	if opts == nil {
-		return fmt.Errorf("nil options")
-	}
-	resolved := *opts
-	opts = &resolved
-	if !opts.withSensitive {
+func doRecordingExport(ctx context.Context, opts exportCommandOptions, stdout io.Writer) (rErr error) {
+	if !opts.WithSensitive {
 		return fmt.Errorf("recording export requires --with-sensitive")
 	}
 	if stdout == nil {
 		return fmt.Errorf("nil stdout")
 	}
 	var err error
-	opts.file, opts.auditlog, err = ResolveRecordingSelection(opts.file, opts.recordingId, opts.auditlog, opts.configuration, opts.expectedProducerId)
+	file, auditlogName, err := ResolveRecordingSelection(opts.File, opts.RecordingID, "", opts.Configuration, opts.ExpectedProducerID)
 	if err != nil {
 		return err
 	}
-	if opts.configuration != "" && opts.auditlog.IsZero() {
+	if opts.Configuration != "" && auditlogName.IsZero() {
 		return fmt.Errorf("--configuration requires a local auditlog name and Recording ID")
 	}
 	var expectedProducerId audit.ProducerId
 	var localConfiguration configuration.Ref
-	if !opts.auditlog.IsZero() {
-		if opts.expectedProducerId != "" || opts.allowUntrusted {
+	if !auditlogName.IsZero() {
+		if opts.ExpectedProducerID != "" || opts.AllowUntrusted {
 			return fmt.Errorf("local Recording selection cannot be combined with --expectedProducerId or --allowUntrusted")
 		}
-		expectedProducerId, err = configuredRecordingProducerId(opts.auditlog, opts.configuration, opts.file, &localConfiguration)
+		expectedProducerId, err = configuredRecordingProducerId(auditlogName, opts.Configuration, file, &localConfiguration)
 	} else {
-		expectedProducerId, err = recordingExportTrust(opts.expectedProducerId, opts.allowUntrusted)
+		expectedProducerId, err = recordingExportTrust(opts.ExpectedProducerID, opts.AllowUntrusted)
 	}
 	if err != nil {
 		return err
 	}
-	input, initial, err := OpenRecordingInput(opts.file)
+	input, initial, err := OpenRecordingInput(file)
 	if err != nil {
 		return err
 	}
 	defer func() { rErr = goerrors.Join(rErr, input.Close()) }()
 	snapshot, err := snapshotRecordingInput(input, initial.Size())
 	if err != nil {
-		return fmt.Errorf("cannot snapshot Recording %q: %w", opts.file, err)
+		return fmt.Errorf("cannot snapshot Recording %q: %w", file, err)
 	}
 	defer func() { rErr = goerrors.Join(rErr, snapshot.Close()) }()
-	if err := ValidateRecordingInput(opts.file, input, initial); err != nil {
+	if err := ValidateRecordingInput(file, input, initial); err != nil {
 		return err
 	}
 	inspectOptions := recording.InspectOptions{
 		Context:            ctx,
 		ExpectedProducerId: expectedProducerId,
-		AllowUntrusted:     opts.allowUntrusted,
+		AllowUntrusted:     opts.AllowUntrusted,
 	}
 	inspection, err := recording.Inspect(snapshot, initial.Size(), inspectOptions)
 	if err != nil {
-		return fmt.Errorf("cannot verify Recording %q before export: %w", opts.file, err)
+		return fmt.Errorf("cannot verify Recording %q before export: %w", file, err)
 	}
-	if !opts.auditlog.IsZero() {
-		if err := validateConfiguredSealedRecording(opts.file, inspection); err != nil {
+	if !auditlogName.IsZero() {
+		if err := validateConfiguredSealedRecording(file, inspection); err != nil {
 			return err
 		}
 	}
 	if inspection.Format == recording.FormatBECastCBOR {
-		identities, err := loadRecordingDecryptionIdentities(opts.decryptionIdentityFiles)
+		identities, err := loadRecordingDecryptionIdentities(opts.DecryptionIdentityFiles)
 		if err != nil {
 			return err
 		}
@@ -158,7 +134,7 @@ func doRecordingExport(ctx context.Context, opts *recordingExportOpts, stdout io
 			return fmt.Errorf("cannot fully verify encrypted Recording before export: %w", err)
 		}
 	}
-	requestedOutput := opts.output
+	requestedOutput := opts.Output
 	if requestedOutput == "" {
 		requestedOutput = "-"
 	}
@@ -167,30 +143,30 @@ func doRecordingExport(ctx context.Context, opts *recordingExportOpts, stdout io
 		return err
 	}
 	validate := func() error {
-		if err := ValidateRecordingInput(opts.file, input, initial); err != nil {
+		if err := ValidateRecordingInput(file, input, initial); err != nil {
 			return err
 		}
-		if !opts.auditlog.IsZero() {
-			if err := caudit.EnsureAuditDestinationSafe(output, stdout, localConfiguration.GetFilename(), localConfiguration.Get(), opts.decryptionIdentityFiles); err != nil {
+		if !auditlogName.IsZero() {
+			if err := caudit.EnsureAuditDestinationSafe(output, stdout, localConfiguration.GetFilename(), localConfiguration.Get(), opts.DecryptionIdentityFiles); err != nil {
 				return err
 			}
 		}
 		if output == "-" {
-			return EnsureRecordingStandardOutputSafe(stdout, input, opts.decryptionIdentityFiles)
+			return EnsureRecordingStandardOutputSafe(stdout, input, opts.DecryptionIdentityFiles)
 		}
-		if err := caudit.EnsureAuditOutputDoesNotReplaceFile(output, opts.file, "Recording input"); err != nil {
+		if err := caudit.EnsureAuditOutputDoesNotReplaceFile(output, file, "Recording input"); err != nil {
 			return err
 		}
-		return common.EnsureBootstrapOutputIsNotPrivateKey(output, opts.decryptionIdentityFiles...)
+		return common.EnsureBootstrapOutputIsNotPrivateKey(output, opts.DecryptionIdentityFiles...)
 	}
 	if err := validate(); err != nil {
 		return err
 	}
 	produce := func(target io.Writer) error {
-		return exportRecordingPayload(snapshot, initial.Size(), target, inspection, inspectOptions, opts.decryptionIdentityFiles)
+		return exportRecordingPayload(snapshot, initial.Size(), target, inspection, inspectOptions, opts.DecryptionIdentityFiles)
 	}
 	if output != "-" {
-		if err := caudit.WriteProtectedOutputFile(output, opts.force, validate, func(target *stdos.File) error {
+		if err := caudit.WriteProtectedOutputFile(output, opts.Force, validate, func(target *stdos.File) error {
 			return produce(target)
 		}); err != nil {
 			return fmt.Errorf("cannot install Recording export at %q: %w", output, err)
@@ -246,12 +222,17 @@ func ResolveRecordingSelection(source, recordingId string, auditlogName configur
 	if err := ref.Set(path); err != nil {
 		return "", "", err
 	}
-	configured, err := caudit.FindConfigured(ref.Get(), name)
+	selected, err := findSealedRecording(ref.Get(), name, id)
+	return selected, name, err
+}
+
+func findSealedRecording(conf *configuration.Configuration, name configuration.AuditlogName, id recording.Id) (string, error) {
+	configured, err := caudit.FindConfigured(conf, name)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	if !configured.Recording.Enabled {
-		return "", "", fmt.Errorf("recording for auditlog %q is not enabled", name)
+		return "", fmt.Errorf("recording for auditlog %q is not enabled", name)
 	}
 	sealed := filepath.Join(configured.Recording.Directory, "sealed")
 	var selected string
@@ -259,17 +240,17 @@ func ResolveRecordingSelection(source, recordingId string, auditlogName configur
 		candidate := filepath.Join(sealed, id.String()+suffix)
 		if _, err := stdos.Lstat(candidate); err == nil {
 			if selected != "" {
-				return "", "", fmt.Errorf("recording %q has both clear and encrypted sealed artifacts", recordingId)
+				return "", fmt.Errorf("recording %q has both clear and encrypted sealed artifacts", id)
 			}
 			selected = candidate
 		} else if !goerrors.Is(err, stdos.ErrNotExist) {
-			return "", "", fmt.Errorf("cannot inspect Recording %q: %w", candidate, err)
+			return "", fmt.Errorf("cannot inspect Recording %q: %w", candidate, err)
 		}
 	}
 	if selected == "" {
-		return "", "", fmt.Errorf("sealed Recording %q does not exist in auditlog %q", recordingId, name)
+		return "", fmt.Errorf("sealed Recording %q does not exist in auditlog %q", id, name)
 	}
-	return selected, name, nil
+	return selected, nil
 }
 
 func EnsureRecordingStandardOutputSafe(stdout io.Writer, input *stdos.File, identityFiles []string) error {
@@ -350,7 +331,11 @@ func configuredRecordingProducerId(name configuration.AuditlogName, configPath, 
 	if err := ref.Set(configPath); err != nil {
 		return audit.ProducerId{}, fmt.Errorf("cannot load recording configuration: %w", err)
 	}
-	configured, err := caudit.FindConfigured(ref.Get(), name)
+	return configuredRecordingProducerIdFromConfiguration(name, ref.Get(), filePath)
+}
+
+func configuredRecordingProducerIdFromConfiguration(name configuration.AuditlogName, conf *configuration.Configuration, filePath string) (audit.ProducerId, error) {
+	configured, err := caudit.FindConfigured(conf, name)
 	if err != nil {
 		return audit.ProducerId{}, err
 	}

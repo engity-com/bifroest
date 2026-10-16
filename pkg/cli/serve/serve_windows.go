@@ -26,27 +26,23 @@ type opts struct {
 	cservice.BaseOpts
 }
 
-func Register(_ context.Context, c cli.ContainerRequirementSetters, usage cliCommon.Usage, version sys.Version) {
-	if !usage.IncludeService() {
-		return
-	}
-
-	c.AddCommand(cli.NewCommand[*opts]().
-		WithName("serve", "run").
-		WithDescription("Runs the service.").
+func Register(c cli.ContainerRequirementSetters, version sys.Version, run cliCommon.ServiceRunner) {
+	c.AddCommand(cli.NewCommand[*opts]("serve", "Runs the service.").
+		WithProfiles(cliCommon.ProfileExecutable).
+		WithAliases("run").
 		WithHandler(func(ctx context.Context, o *opts) error {
-			return doRun(ctx, o, version)
+			return doRun(ctx, o, version, run)
 		}),
 	)
 }
 
-func doRun(ctx context.Context, o *opts, version sys.Version) error {
+func doRun(ctx context.Context, o *opts, version sys.Version, run cliCommon.ServiceRunner) error {
 	inService, err := svc.IsWindowsService()
 	if err != nil {
 		return errors.System.Newf("failed to determine if we are running in service: %w", err)
 	}
 	if !inService {
-		return doRunDefault(ctx, o, version)
+		return doRunDefault(ctx, o, version, run)
 	}
 
 	eLog, err := eventlog.Open(o.ServiceName)
@@ -62,11 +58,11 @@ func doRun(ctx context.Context, o *opts, version sys.Version) error {
 	log.SetProvider(welProvider)
 
 	ws := &cservice.WindowsService{
-		Version:               version,
-		Name:                  o.ServiceName,
-		Conf:                  o.Configuration,
-		Logger:                eLog,
-		ManagementApplication: cliCommon.ManagementApplicationFromContext(ctx),
+		Version: version,
+		Name:    o.ServiceName,
+		Conf:    o.Configuration,
+		Logger:  eLog,
+		Run:     run,
 	}
 	if err := svc.Run(ws.Name, ws); err != nil {
 		log.WithError(err).Error()

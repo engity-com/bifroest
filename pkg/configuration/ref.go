@@ -17,6 +17,33 @@ func NewCliCodec(mustBeNotZero, mustExist bool) codec.Codec[Configuration, strin
 	return cliCodec{mustBeNotZero, mustExist}
 }
 
+// NewOptionalCliCodec decodes an explicitly supplied configuration file. A
+// missing flag leaves the pointer nil so the caller can choose its own source.
+func NewOptionalCliCodec() codec.Codec[*Configuration, string] {
+	return optionalCliCodec{cliCodec{mustBeNotZero: true, mustExist: true}}
+}
+
+type optionalCliCodec struct{ cliCodec }
+
+func (c optionalCliCodec) CanHandleType(ctx context.Context, typ reflect.Type) (bool, error) {
+	return typ == reflect.TypeFor[*Configuration](), ctx.Err()
+}
+
+func (c optionalCliCodec) Resolve(ctx context.Context, scope codec.Scope, path string) (*Configuration, error) {
+	if RemoteConfigurationForbidden(ctx) {
+		return nil, codec.NewValidationErrorf("--configuration cannot be combined with a remote target")
+	}
+	resolved, err := c.cliCodec.Resolve(ctx, scope, path)
+	if err != nil {
+		return nil, err
+	}
+	return &resolved, nil
+}
+
+func (c optionalCliCodec) ToRaw(ctx context.Context) codec.Codec[any, any] {
+	return codec.Raw(ctx, c)
+}
+
 type cliCodec struct {
 	mustBeNotZero bool
 	mustExist     bool
@@ -35,7 +62,7 @@ func (c cliCodec) ParseRequirement(ctx context.Context, usage codec.Usage, args 
 		return "", err
 	}
 	path := args[0]
-	if path == "" && !c.mustBeNotZero {
+	if path == "" && c.mustBeNotZero {
 		return "", codec.NewValidationErrorf("configuration path must be not empty")
 	}
 	return args[0], nil
@@ -70,7 +97,7 @@ func (c cliCodec) Resolve(ctx context.Context, _ codec.Scope, fn string) (Config
 	var result Configuration
 
 	if err := result.LoadFromYaml(f, fn); err != nil {
-		return Configuration{}, codec.NewValidationError(err)
+		return Configuration{}, codec.NewValidationError("cannot load configuration", err)
 	}
 
 	return result, nil

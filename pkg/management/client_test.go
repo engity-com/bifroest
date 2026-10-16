@@ -1,4 +1,4 @@
-package managementclient
+package management
 
 import (
 	"bytes"

@@ -1,8 +1,6 @@
 package key
 
 import (
-	"context"
-
 	cli "github.com/echocat/cli4g"
 
 	"github.com/engity-com/bifroest/pkg/cli/common"
@@ -11,14 +9,13 @@ import (
 	cimport "github.com/engity-com/bifroest/pkg/cli/key/import"
 )
 
-func Register(ctx context.Context, c cli.ContainerRequirementSetters, usage common.Usage) {
-	cmd := cli.NewSimpleCommand().
-		WithName("key").
-		WithDescription("Generate, export and import SSH keys.")
+func Register(c cli.ContainerRequirementSetters) {
+	cmd := cli.NewSimpleCommand("key", "Generate, export and import SSH keys.").
+		WithProfiles(common.ProfileExecutable)
 
-	cexport.Register(ctx, cmd, usage)
-	cgenerate.Register(ctx, cmd, usage)
-	cimport.Register(ctx, cmd, usage)
+	cexport.Register(cmd)
+	cgenerate.Register(cmd)
+	cimport.Register(cmd)
 
 	c.AddCommand(cmd)
 }

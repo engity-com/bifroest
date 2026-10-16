@@ -11,6 +11,8 @@ import (
 	cli "github.com/echocat/cli4g"
 	"golang.org/x/crypto/ssh"
 
+	"github.com/engity-com/bifroest/pkg/cli/common"
+
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/recording"
 )
@@ -62,9 +64,8 @@ type inspectCommandOptions struct {
 }
 
 func registerRecordingInspectCmd(parent cli.ContainerRequirementSetters) {
-	parent.AddCommand(cli.NewCommand[inspectCommandOptions]().
-		WithName("inspect").
-		WithDescription("Verify and inspect a session Recording artifact as JSON.").
+	parent.AddCommand(cli.NewCommand[inspectCommandOptions]("inspect", "Verify and inspect a session Recording artifact as JSON.").
+		WithProfiles(common.ProfileExecutable).
 		WithHandler(func(ctx context.Context, o inspectCommandOptions) error {
 			return doRecordingInspect(ctx, &recordingInspectOpts{file: o.File, expectedProducerId: o.ExpectedProducerId}, cli.StdoutOfContext(ctx))
 		}))

@@ -15,7 +15,7 @@ import (
 )
 
 type verifyOptions struct {
-	configuration.EmptyStrOpts
+	common.ExecutableConfigurationOpts
 	configuration.AuditlogNameOpts
 	DecryptionIdentityFilesOpts
 	TrustAnchorsOpts
@@ -28,23 +28,20 @@ type verifyOptions struct {
 type managementVerifyOptions struct {
 	common.RequireFullVerificationOpts
 	format.Opts
-	Name configuration.AuditlogName `argument:"auditlogName" required:"true" description:"Configured auditlog name."`
+	ConfiguredAuditlogOptions
 }
 
-func registerVerify(c cli.ContainerRequirementSetters, usage common.Usage) {
-	if usage == common.UsageManagement {
-		c.AddCommand(
-			cli.NewCommand[managementVerifyOptions]().
-				WithName("verify").
-				WithDescription("Verify a signed audit journal without modifying it.").
-				WithHandler(handleManagementVerify),
-		)
-		return
-	}
-	c.AddCommand(cli.NewCommand[verifyOptions]().
-		WithName("verify").
-		WithDescription("Verify a signed audit journal without modifying it.").
-		WithHandler(handleVerify))
+func registerVerify(c cli.ContainerRequirementSetters) {
+	c.AddCommand(
+		cli.NewCommand[managementVerifyOptions]("verify", "Verify a signed audit journal without modifying it.").
+			WithProfiles(common.ProfileManagement).
+			WithHandler(handleManagementVerify),
+	)
+	c.AddCommand(
+		cli.NewCommand[verifyOptions]("verify", "Verify a signed audit journal without modifying it.").
+			WithProfiles(common.ProfileExecutable).
+			WithHandler(handleVerify),
+	)
 }
 
 func handleManagementVerify(ctx context.Context, opts managementVerifyOptions) error {
@@ -61,15 +58,18 @@ func handleManagementVerify(ctx context.Context, opts managementVerifyOptions) e
 
 func handleVerify(ctx context.Context, o verifyOptions) error {
 	if target, remote := common.RemoteTargetFromContext(ctx); remote {
+		if o.Configuration != nil {
+			return fmt.Errorf("--configuration cannot be combined with a remote target")
+		}
 		return runRemoteAudit(ctx, target, remoteAuditOptions{
 			Operation: remoteVerify, Names: []configuration.AuditlogName{o.Auditlog},
 			TrustAnchors: o.ExpectedProducerIds, IdentityFiles: o.DecryptionIdentityFiles,
-			ConfigurationPath: o.Configuration, SourceDirectory: o.SourceDirectory,
-			RecipientFile: o.EncryptionPublicKeyFile, RequireFull: o.RequireFull,
+			SourceDirectory: o.SourceDirectory,
+			RecipientFile:   o.EncryptionPublicKeyFile, RequireFull: o.RequireFull,
 			Format: o.Format,
 		}, cli.StdoutOfContext(ctx))
 	}
-	name, conf, err := resolveAuditSourceConfiguration(o.Configuration, o.SourceDirectory, o.EncryptionPublicKeyFile, o.Auditlog)
+	name, conf, err := resolveAuditSourceConfiguration(ctx, o, o.SourceDirectory, o.EncryptionPublicKeyFile, o.Auditlog)
 	if err != nil {
 		return err
 	}

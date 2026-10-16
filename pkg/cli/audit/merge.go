@@ -13,7 +13,7 @@ import (
 )
 
 type mergeOptions struct {
-	configuration.EmptyStrOpts
+	common.ExecutableConfigurationOpts
 	OutputOpts
 	DecryptionIdentityFilesOpts
 	TrustAnchorsOpts
@@ -26,20 +26,17 @@ type managementMergeOptions struct {
 	common.WithSensitiveOpts
 }
 
-func registerMerge(parent cli.ContainerRequirementSetters, usage common.Usage) {
-	if usage == common.UsageManagement {
-		parent.AddCommand(
-			cli.NewCommand[managementMergeOptions]().
-				WithName("merge").
-				WithDescription("Merge verified audit journals chronologically as JSON Lines.").
-				WithHandler(handleManagementMerge),
-		)
-		return
-	}
-	parent.AddCommand(cli.NewCommand[mergeOptions]().
-		WithName("merge").
-		WithDescription("Merge verified audit journals chronologically as JSON Lines.").
-		WithHandler(handleMerge))
+func registerMerge(parent cli.ContainerRequirementSetters) {
+	parent.AddCommand(
+		cli.NewCommand[managementMergeOptions]("merge", "Merge verified audit journals chronologically as JSON Lines.").
+			WithProfiles(common.ProfileManagement).
+			WithHandler(handleManagementMerge),
+	)
+	parent.AddCommand(
+		cli.NewCommand[mergeOptions]("merge", "Merge verified audit journals chronologically as JSON Lines.").
+			WithProfiles(common.ProfileExecutable).
+			WithHandler(handleMerge),
+	)
 }
 
 func handleManagementMerge(ctx context.Context, opts managementMergeOptions) error {
@@ -68,17 +65,20 @@ func handleMerge(ctx context.Context, opts mergeOptions) error {
 		}
 		names = append(names, name)
 	}
-	if target, remote := common.RemoteTargetFromContext(ctx); remote {
-		return runRemoteAudit(ctx, target, remoteAuditOptions{
-			Operation: remoteMerge, Names: names, TrustAnchors: opts.ExpectedProducerIds,
-			IdentityFiles: opts.DecryptionIdentityFiles, ConfigurationPath: opts.Configuration,
-			Output: opts.Output, Force: opts.Force, WithSensitive: opts.WithSensitive,
-			Format: format.Text,
-		}, cli.StdoutOfContext(ctx))
-	}
-	conf, err := common.LoadManagementConfiguration(opts.Configuration)
+	conf, err := common.ResolveConfiguration(ctx, opts)
 	if err != nil {
 		return err
+	}
+	if target, remote := common.RemoteTargetFromContext(ctx); remote {
+		if conf != nil {
+			return fmt.Errorf("--configuration cannot be combined with a remote target")
+		}
+		return runRemoteAudit(ctx, target, remoteAuditOptions{
+			Operation: remoteMerge, Names: names, TrustAnchors: opts.ExpectedProducerIds,
+			IdentityFiles: opts.DecryptionIdentityFiles,
+			Output:        opts.Output, Force: opts.Force, WithSensitive: opts.WithSensitive,
+			Format: format.Text,
+		}, cli.StdoutOfContext(ctx))
 	}
 	configured := make([]*configuration.Auditlog, 0, len(opts.Auditlogs))
 	for _, name := range names {

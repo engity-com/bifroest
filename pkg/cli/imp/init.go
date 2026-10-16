@@ -26,14 +26,9 @@ func newInitOpts(context.Context) (initOpts, error) {
 	}, nil
 }
 
-func registerInit(_ context.Context, c cli.ContainerRequirementSetters, usage cliCommon.Usage, version sys.Version) {
-	if !usage.IncludeService() {
-		return
-	}
-
-	c.AddCommand(cli.NewCommand[initOpts]().
-		WithName("imp-init").
-		WithDescription("Prepares the environment to run Bifröst's imp inside.").
+func registerInit(c cli.ContainerRequirementSetters, version sys.Version) {
+	c.AddCommand(cli.NewCommand[initOpts]("imp-init", "Prepares the environment to run Bifröst's imp inside.").
+		WithProfiles(cliCommon.ProfileExecutable).
 		WithVisible(false).
 		WithCreateOptionsHandler(newInitOpts).
 		WithHandler(func(ctx context.Context, o initOpts) error {

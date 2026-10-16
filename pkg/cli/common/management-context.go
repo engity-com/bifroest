@@ -21,8 +21,7 @@ type ManagementAccess struct {
 	AllowArtifactTransfer bool
 	WireFormat            bool
 	ProducerID            func(configuration.AuditlogName) (audit.ProducerId, error)
-	RecordingList         func(context.Context, configuration.AuditlogName) ([]model.RecordingView, error)
-	RecordingDetail       func(context.Context, configuration.AuditlogName, bfRecording.Id) (model.RecordingView, error)
+	Recordings            ManagementRecordingBrowser
 	Audit                 ManagementAuditOperations
 	Recording             ManagementRecordingOperations
 }
@@ -36,6 +35,11 @@ type ManagementRecordingOperations interface {
 	Verify(context.Context, configuration.AuditlogName, bfRecording.Id, bool) (string, error)
 	Export(context.Context, configuration.AuditlogName, bfRecording.Id, io.Writer) error
 	Play(context.Context, configuration.AuditlogName, bfRecording.Id, float64, io.Writer) error
+}
+
+type ManagementRecordingBrowser interface {
+	List(context.Context, configuration.AuditlogName) ([]model.RecordingView, error)
+	Detail(context.Context, configuration.AuditlogName, bfRecording.Id) (model.RecordingView, error)
 }
 
 // FormatForInvocation selects CBOR for the versioned SSH command; users may

@@ -7,17 +7,10 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/engity-com/bifroest/pkg/cli/transport"
 	"github.com/fxamacker/cbor/v2"
 	"gopkg.in/yaml.v3"
-)
 
-const (
-	FormatTable Format = Text
-	FormatJSON  Format = Json
-	FormatYAML  Format = Yaml
-	// FormatCBOR is used only inside the versioned SSH management exchange.
-	FormatCBOR Format = WireCbor
+	"github.com/engity-com/bifroest/pkg/cli/transport"
 )
 
 type Field struct {
@@ -35,7 +28,7 @@ type ProducerView struct {
 }
 
 func WriteVerification(output io.Writer, format Format, scope string) error {
-	if format == FormatTable {
+	if format == Text {
 		_, err := fmt.Fprintf(output, "verified (scope: %s)\n", scope)
 		return err
 	}
@@ -43,7 +36,7 @@ func WriteVerification(output io.Writer, format Format, scope string) error {
 }
 
 func WriteProducerID(output io.Writer, format Format, id string) error {
-	if format == FormatTable {
+	if format == Text {
 		_, err := fmt.Fprintln(output, id)
 		return err
 	}
@@ -51,7 +44,7 @@ func WriteProducerID(output io.Writer, format Format, id string) error {
 }
 
 func WriteList(output io.Writer, format Format, columns []string, rows [][]string, structured any) error {
-	if format != FormatTable {
+	if format != Text {
 		return writeStructured(output, format, structured)
 	}
 	if len(columns) == 0 {
@@ -73,7 +66,7 @@ func WriteList(output io.Writer, format Format, columns []string, rows [][]strin
 }
 
 func WriteDetail(output io.Writer, format Format, fields []Field, structured any) error {
-	if format != FormatTable {
+	if format != Text {
 		return writeStructured(output, format, structured)
 	}
 	writer := tabwriter.NewWriter(output, 0, 0, 2, ' ', 0)
@@ -108,11 +101,11 @@ func writeRow(output io.Writer, cells []string) error {
 
 func writeStructured(output io.Writer, format Format, value any) error {
 	switch format {
-	case FormatJSON:
+	case Json:
 		encoder := json.NewEncoder(output)
 		encoder.SetEscapeHTML(false)
 		return encoder.Encode(value)
-	case FormatYAML:
+	case Yaml:
 		return yaml.NewEncoder(output).Encode(value)
 	case Cbor:
 		encoded, err := cbor.Marshal(value)
@@ -127,7 +120,7 @@ func writeStructured(output io.Writer, format Format, value any) error {
 			return io.ErrShortWrite
 		}
 		return err
-	case FormatCBOR:
+	case WireCbor:
 		encoded, err := transport.EncodeWireResult(value)
 		if err != nil {
 			return err

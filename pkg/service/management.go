@@ -167,14 +167,12 @@ func (this *service) runManagementArgs(task environment.Task, includingCredentia
 			return -1, fmt.Errorf("management commands do not permit @file argument expansion")
 		}
 	}
-	if this.ManagementApplication == nil {
-		return -1, fmt.Errorf("management CLI application is unavailable")
-	}
 	access := cliCommon.ManagementAccess{
 		Configuration: &this.Configuration, Sessions: this.sessions,
 		IncludingCredentials: includingCredentials, AllowArtifactTransfer: allowArtifactTransfer, WireFormat: wire,
-		Audit:     managementAuditOperations{service: this, allowArtifactTransfer: allowArtifactTransfer},
-		Recording: managementRecordingOperations{service: this, allowArtifactTransfer: allowArtifactTransfer},
+		Audit:      managementAuditOperations{service: this, allowArtifactTransfer: allowArtifactTransfer},
+		Recording:  managementRecordingOperations{service: this, allowArtifactTransfer: allowArtifactTransfer},
+		Recordings: managementRecordingBrowser{service: this},
 		ProducerID: func(name configuration.AuditlogName) (audit.ProducerId, error) {
 			identity := this.auditIdentities[name]
 			if identity == nil {
@@ -182,45 +180,51 @@ func (this *service) runManagementArgs(task environment.Task, includingCredentia
 			}
 			return identity.ProducerId(), nil
 		},
-		RecordingList: func(ctx context.Context, name configuration.AuditlogName) ([]model.RecordingView, error) {
-			repository := this.recordingRepositories[name]
-			if repository == nil || repository.native == nil {
-				return nil, fmt.Errorf("auditlog %q has no active recording repository", name)
-			}
-			ids, err := repository.native.ListSealed(ctx)
-			if err != nil {
-				return nil, err
-			}
-			entries := make([]model.RecordingView, 0, len(ids))
-			for _, id := range ids {
-				artifact, err := repository.native.OpenSealed(ctx, id)
-				if err != nil {
-					return nil, err
-				}
-				view, err := clirecording.InspectRecording(ctx, name, artifact, artifact.Size(), repository.producerId)
-				if closeErr := artifact.Close(); err == nil {
-					err = closeErr
-				}
-				if err != nil {
-					return nil, err
-				}
-				entries = append(entries, view)
-			}
-			return entries, nil
-		},
-		RecordingDetail: func(ctx context.Context, name configuration.AuditlogName, id recording.Id) (result model.RecordingView, resultErr error) {
-			artifact, err := this.openManagementRecording(ctx, name.String(), id.String())
-			if err != nil {
-				return result, err
-			}
-			defer func() { resultErr = errors.Join(resultErr, artifact.Close()) }()
-			return clirecording.InspectRecording(ctx, name, artifact, artifact.Size(), artifact.ProducerId())
-		},
 	}
 	ctx := clibase.ContextWithStdio(task.Context(), task.SshSession(), task.SshSession(), task.SshSession().Stderr())
 	ctx = cliCommon.ContextWithManagementAccess(ctx, access)
-	if err := this.ManagementApplication.ParseAndExecute(ctx, nil, args...); err != nil {
+	if err := this.managementApplication.ParseAndExecute(ctx, &clibase.ParseOpts{
+		Profiles: []string{cliCommon.ProfileManagement},
+	}, args...); err != nil {
 		return 1, err
 	}
 	return 0, nil
+}
+
+type managementRecordingBrowser struct{ service *service }
+
+func (this managementRecordingBrowser) List(ctx context.Context, name configuration.AuditlogName) ([]model.RecordingView, error) {
+	repository := this.service.recordingRepositories[name]
+	if repository == nil || repository.native == nil {
+		return nil, fmt.Errorf("auditlog %q has no active recording repository", name)
+	}
+	ids, err := repository.native.ListSealed(ctx)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]model.RecordingView, 0, len(ids))
+	for _, id := range ids {
+		artifact, err := repository.native.OpenSealed(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		view, err := clirecording.InspectRecording(ctx, name, artifact, artifact.Size(), repository.producerId)
+		if closeErr := artifact.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, view)
+	}
+	return entries, nil
+}
+
+func (this managementRecordingBrowser) Detail(ctx context.Context, name configuration.AuditlogName, id recording.Id) (result model.RecordingView, resultErr error) {
+	artifact, err := this.service.openManagementRecording(ctx, name.String(), id.String())
+	if err != nil {
+		return result, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, artifact.Close()) }()
+	return clirecording.InspectRecording(ctx, name, artifact, artifact.Size(), artifact.ProducerId())
 }

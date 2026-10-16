@@ -2,12 +2,6 @@
 
 package dlv
 
-import (
-	"context"
+import cli "github.com/echocat/cli4g"
 
-	cli "github.com/echocat/cli4g"
-
-	"github.com/engity-com/bifroest/pkg/cli/common"
-)
-
-func Register(context.Context, cli.ContainerRequirementSetters, common.Usage) {}
+func Register(cli.ContainerRequirementSetters) {}

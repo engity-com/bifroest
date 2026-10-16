@@ -1,4 +1,4 @@
-package cli
+package main
 
 import (
 	"context"
@@ -10,13 +10,13 @@ import (
 
 // Executable-only logging options do not appear in the SSH management schema.
 // The compiled definition is immutable; parsing creates these values per run.
-type executableOptions struct {
+type opts struct {
 	LogLevel     string `flag:"log.level" description:"Minimum log level."`
 	LogFormat    string `flag:"log.format" description:"Log formatter."`
 	LogColorMode string `flag:"log.colorMode" description:"Color mode: auto, always or never."`
 }
 
-func configureExecutableLogging(ctx context.Context, options executableOptions) error {
+func configureExecutableLogging(ctx context.Context, options opts) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

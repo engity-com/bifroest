@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -18,10 +19,10 @@ type AuditEventsOptions struct {
 	ConfigurationPath  string
 	EventName          string
 	FlowName           string
-	Since              string
-	Until              string
+	Since              time.Time
+	Until              time.Time
 	Auditlog           configuration.AuditlogName
-	Limit              int
+	Limit              uint
 	WithSensitive      bool
 	IdentityFiles      []string
 	ExpectedProducerID string

@@ -15,10 +15,9 @@ type caOpts struct {
 	ExpectedFingerprint string `flag:"expectedFingerprint" placeholder:"<SHA256:...|unknown>" description:"Expected SHA256 fingerprint or unknown."`
 }
 
-func registerCa(_ context.Context, c cli.ContainerRequirementSetters, _ common.Usage) {
-	c.AddCommand(cli.NewCommand[caOpts]().
-		WithName("ca").
-		WithDescription("Validate and atomically merge trusted SSH certificate authority keys.").
+func registerCa(c cli.ContainerRequirementSetters) {
+	c.AddCommand(cli.NewCommand[caOpts]("ca", "Validate and atomically merge trusted SSH certificate authority keys.").
+		WithProfiles(common.ProfileExecutable).
 		WithHandler(handleCa),
 	)
 }

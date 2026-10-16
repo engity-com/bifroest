@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strings"
 	"time"
 
 	cliformat "github.com/engity-com/bifroest/pkg/cli/format"
@@ -13,11 +12,11 @@ import (
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
-type SessionSource func(context.Context, string, func(context.Context, session.Info) (bool, error), session.FindDiagnosticConsumer) error
+type SessionSource func(context.Context, func(context.Context, session.Info) (bool, error), session.FindDiagnosticConsumer) error
 
-func ListSessions(ctx context.Context, output io.Writer, selected cliformat.Format, source SessionSource, configPath, flow, user, state string, diagnostics session.FindDiagnosticConsumer) error {
+func ListSessions(ctx context.Context, output io.Writer, selected cliformat.Format, source SessionSource, flow, user, state string, diagnostics session.FindDiagnosticConsumer) error {
 	entries := make([]model.SessionView, 0)
-	err := source(ctx, configPath, func(ctx context.Context, info session.Info) (bool, error) {
+	err := source(ctx, func(ctx context.Context, info session.Info) (bool, error) {
 		if flow != "" && info.Flow().String() != flow {
 			return true, nil
 		}
@@ -57,9 +56,9 @@ func matchesSessionState(view model.SessionView, state string, now time.Time) bo
 	}
 }
 
-func ShowSession(ctx context.Context, output io.Writer, selected cliformat.Format, source SessionSource, configPath string, id session.Id, diagnostics session.FindDiagnosticConsumer) error {
+func ShowSession(ctx context.Context, output io.Writer, selected cliformat.Format, source SessionSource, id session.Id, diagnostics session.FindDiagnosticConsumer) error {
 	var result *model.SessionView
-	err := source(ctx, configPath, func(ctx context.Context, info session.Info) (bool, error) {
+	err := source(ctx, func(ctx context.Context, info session.Info) (bool, error) {
 		if info.Id() != id {
 			return true, nil
 		}
@@ -113,10 +112,7 @@ func newSessionView(ctx context.Context, info session.Info) (model.SessionView, 
 }
 
 func SessionSourceFromRepository(repository session.Repository) SessionSource {
-	return func(ctx context.Context, path string, consumer func(context.Context, session.Info) (bool, error), diagnostics session.FindDiagnosticConsumer) error {
-		if strings.TrimSpace(path) != "" {
-			return fmt.Errorf("remote session commands do not accept local configuration files")
-		}
+	return func(ctx context.Context, consumer func(context.Context, session.Info) (bool, error), diagnostics session.FindDiagnosticConsumer) error {
 		return repository.FindAll(ctx, func(ctx context.Context, current session.Session) (bool, error) {
 			info, err := current.Info(ctx)
 			if err != nil {

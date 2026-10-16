@@ -10,21 +10,23 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/configuration"
 )
 
 func TestRecordingCLIReusesSchemaAndKeepsSensitiveOutputGated(t *testing.T) {
 	fixture := createRecordingFixture(t)
 	requirement := cli.NewSimpleApplication().WithName("bifroest").
 		WithFallbackToStdio(false).
-		WithErrorHandlerEnabled(false)
-	Register(t.Context(), requirement, common.UsageExecutable)
+		WithErrorHandlerEnabled(false).
+		WithCodec(configuration.NewOptionalCliCodec())
+	Register(requirement)
 	app, err := requirement.Create()
 	require.NoError(t, err)
 	defer func() { require.NoError(t, app.Close()) }()
 	invoke := func(args ...string) (string, error) {
 		var output bytes.Buffer
 		ctx := cli.ContextWithStdio(context.Background(), nil, &output, nil)
-		err := app.ParseAndExecute(ctx, nil, args...)
+		err := app.ParseAndExecute(ctx, &cli.ParseOpts{Profiles: []string{common.ProfileExecutable}}, args...)
 		return output.String(), err
 	}
 	trust := "--expectedProducerId=" + fixture.identity.ProducerId().String()
@@ -54,10 +56,10 @@ func TestRecordingCLIRejectsUntrustedAndUnsafeOutput(t *testing.T) {
 	fixture := createRecordingFixture(t)
 	var output bytes.Buffer
 	ctx := cli.ContextWithStdio(t.Context(), nil, &output, nil)
-	require.ErrorContains(t, doRecordingExport(t.Context(), &recordingExportOpts{file: fixture.clear, output: "-", withSensitive: true}, &output), "--expectedProducerId")
+	require.ErrorContains(t, doRecordingExport(t.Context(), exportCommandOptions{File: fixture.clear, Output: "-", WithSensitiveOpts: common.WithSensitiveOpts{WithSensitive: true}}, &output), "--expectedProducerId")
 	require.Empty(t, output.String())
-	require.ErrorContains(t, doRecordingExport(t.Context(), &recordingExportOpts{
-		file: fixture.encrypted, output: fixture.identityFile, force: true, withSensitive: true,
-		expectedProducerId: fixture.identity.ProducerId().String(), decryptionIdentityFiles: []string{fixture.identityFile},
+	require.ErrorContains(t, doRecordingExport(t.Context(), exportCommandOptions{
+		File: fixture.encrypted, Output: fixture.identityFile, Force: true, WithSensitiveOpts: common.WithSensitiveOpts{WithSensitive: true},
+		ExpectedProducerID: fixture.identity.ProducerId().String(), DecryptionIdentityFilesOpts: common.DecryptionIdentityFilesOpts{DecryptionIdentityFiles: []string{fixture.identityFile}},
 	}, cli.StdoutOfContext(ctx)), "must not replace private key")
 }

@@ -22,14 +22,9 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-func Register(_ context.Context, c cli.ContainerRequirementSetters, usage common.Usage) {
-	if !usage.IncludeExec() {
-		return
-	}
-
-	c.AddCommand(cli.NewCommand[opts]().
-		WithName("exec").
-		WithDescription("Runs a given process with the given attributes (environment, working directory, ...).").
+func Register(c cli.ContainerRequirementSetters) {
+	c.AddCommand(cli.NewCommand[opts]("exec", "Runs a given process with the given attributes (environment, working directory, ...).").
+		WithProfiles(common.ProfileExecutable).
 		WithCreateOptionsHandler(newOpts).
 		WithVisible(false).
 		WithHandler(handler),

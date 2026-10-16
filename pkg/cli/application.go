@@ -1,56 +1,55 @@
 package cli
 
 import (
-	"context"
-	"errors"
 	"time"
 
 	clibase "github.com/echocat/cli4g"
 	"github.com/echocat/cli4g/codec"
 
-	managementSchema "github.com/engity-com/bifroest/pkg/cli/management"
+	caudit "github.com/engity-com/bifroest/pkg/cli/audit"
+	"github.com/engity-com/bifroest/pkg/cli/common"
+	cdlv "github.com/engity-com/bifroest/pkg/cli/dlv"
+	cdummyserver "github.com/engity-com/bifroest/pkg/cli/dummy-server"
+	cexec "github.com/engity-com/bifroest/pkg/cli/exec"
+	cflow "github.com/engity-com/bifroest/pkg/cli/flow"
+	cforever "github.com/engity-com/bifroest/pkg/cli/forever"
+	cimp "github.com/engity-com/bifroest/pkg/cli/imp"
+	ckey "github.com/engity-com/bifroest/pkg/cli/key"
+	crecording "github.com/engity-com/bifroest/pkg/cli/recording"
+	cserve "github.com/engity-com/bifroest/pkg/cli/serve"
+	cservice "github.com/engity-com/bifroest/pkg/cli/service"
+	csession "github.com/engity-com/bifroest/pkg/cli/session"
+	csftpserver "github.com/engity-com/bifroest/pkg/cli/sftp-server"
+	cversion "github.com/engity-com/bifroest/pkg/cli/version"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-// Applications contains the two compiled, reusable command definitions. Each
-// ParseAndExecute call still owns its own options, streams, and resources.
-type Applications struct {
-	Executable *clibase.Application[executableOptions]
-	Management *clibase.Application[clibase.NoOptions]
-}
-
-func NewApplications(version sys.Version) (_ *Applications, err error) {
-	result := &Applications{}
-	defer func() {
-		if err != nil {
-			err = errors.Join(err, result.Close())
-		}
-	}()
-	createExecutable := func() (*clibase.Application[executableOptions], error) {
-		requirement := clibase.NewApplication[executableOptions]().
-			WithName("bifroest").
-			WithDescription("Bifröst SSH administration.").
-			WithFallbackToStdio(false).
-			WithErrorHandlerEnabled(false).
-			WithInitializeHandler(configureExecutableLogging).
-			WithCodec(configuration.NewCliCodec(true, true)).
-			WithCodec(codec.NewDateTime().WithFormats(time.RFC3339), "rfc3339")
-		registerExecutable(context.Background(), requirement, version)
-		return requirement.Create()
-	}
-	if result.Executable, err = createExecutable(); err != nil {
-		return nil, err
-	}
-	if result.Management, err = managementSchema.NewApplication(version); err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-func (this *Applications) Close() error {
-	if this == nil {
-		return nil
-	}
-	return errors.Join(this.Executable.Close(), this.Management.Close())
+// NewApplication registers all commands once. The selected profile determines
+// which commands are available per invocation. The executable supplies run;
+// management invocations cannot activate serve.
+func NewApplication[O any](version sys.Version, description string, run common.ServiceRunner) *clibase.ApplicationRequirement[O] {
+	requirement := clibase.NewApplication[O]().
+		WithName("bifroest").
+		WithDescription(description).
+		WithFallbackToStdio(false).
+		WithErrorHandlerEnabled(false).
+		WithCodec(configuration.NewCliCodec(true, true)).
+		WithCodec(configuration.NewOptionalCliCodec()).
+		WithCodec(codec.NewDateTime().WithFormats(time.RFC3339), "rfc3339")
+	caudit.Register(requirement)
+	cflow.Register(requirement)
+	csession.Register(requirement)
+	crecording.Register(requirement)
+	cversion.Register(requirement, version)
+	cdlv.Register(requirement)
+	cdummyserver.Register(requirement)
+	cexec.Register(requirement)
+	cforever.Register(requirement)
+	cimp.Register(requirement, version)
+	ckey.Register(requirement)
+	cserve.Register(requirement, version, run)
+	cservice.Register(requirement, version)
+	csftpserver.Register(requirement)
+	return requirement
 }

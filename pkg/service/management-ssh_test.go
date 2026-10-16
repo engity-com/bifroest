@@ -7,17 +7,34 @@ import (
 	"path/filepath"
 	"testing"
 
+	cli "github.com/echocat/cli4g"
 	"github.com/stretchr/testify/require"
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/cli/common"
 	cliformat "github.com/engity-com/bifroest/pkg/cli/format"
 	"github.com/engity-com/bifroest/pkg/cli/model"
 	"github.com/engity-com/bifroest/pkg/cli/transport"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/recording"
 )
+
+func TestServiceOwnsManagementApplication(t *testing.T) {
+	server := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
+		conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
+	})
+	application := server.service.managementApplication
+	require.NotNil(t, application)
+	options := &cli.ParseOpts{Profiles: []string{common.ProfileManagement}}
+	var output bytes.Buffer
+	ctx := cli.ContextWithStdio(t.Context(), nil, &output, nil)
+	require.NoError(t, application.ParseAndExecute(ctx, options, "version"))
+	require.NotEmpty(t, output.String())
+	require.NoError(t, server.stop())
+	require.Error(t, application.ParseAndExecute(ctx, options, "version"))
+}
 
 func TestManagementFlowHandlesHumanAndCBORSSHExecWithoutShell(t *testing.T) {
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {

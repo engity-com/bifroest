@@ -1,4 +1,4 @@
-package managementclient
+package management
 
 import (
 	"bytes"
@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	cli "github.com/echocat/cli4g"
 	"github.com/kevinburke/ssh_config"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -159,9 +160,13 @@ func (this *diagnosticOutput) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func Run(ctx context.Context, target Target, args []string, output io.Writer) error {
+func (target Target) Run(ctx context.Context, args ...string) error {
 	if len(args) < 2 {
 		return fmt.Errorf("a management command and subcommand are required")
+	}
+	output := cli.StdoutOfContext(ctx)
+	if output == nil {
+		return fmt.Errorf("remote management output is unavailable")
 	}
 	format, wireArgs, err := selectOutputFormat(args)
 	if err != nil {
@@ -251,7 +256,7 @@ func Run(ctx context.Context, target Target, args []string, output io.Writer) er
 		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &records); err != nil {
 			return err
 		}
-		return cliformat.WriteAuditEvents(output, format, records, cliformat.AuditEventFilter{}, containsArg(args, "--with-sensitive"))
+		return cliformat.WriteAuditEvents(output, format, records, containsArg(args, "--with-sensitive"))
 	case "flow ls":
 		var entries []model.FlowSummary
 		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &entries); err != nil {
@@ -283,9 +288,13 @@ func Run(ctx context.Context, target Target, args []string, output io.Writer) er
 
 // RunDirect executes a fixed, human-readable management command over the same
 // authenticated and host-key-checked SSH transport as the CBOR commands.
-func RunDirect(ctx context.Context, target Target, command string, output io.Writer) error {
+func (target Target) RunDirect(ctx context.Context, command string) error {
 	if command != "version" && command != "version --long" {
 		return fmt.Errorf("unsupported direct management command %q", command)
+	}
+	output := cli.StdoutOfContext(ctx)
+	if output == nil {
+		return fmt.Errorf("remote management output is unavailable")
 	}
 	client, release, err := connect(ctx, target)
 	if err != nil {

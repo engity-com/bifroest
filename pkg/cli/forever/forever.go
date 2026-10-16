@@ -11,14 +11,9 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/common"
 )
 
-func Register(_ context.Context, c cli.ContainerRequirementSetters, usage common.Usage) {
-	if !usage.IncludeService() {
-		return
-	}
-
-	c.AddCommand(cli.NewSimpleCommand().
-		WithName("forever").
-		WithDescription("This is a supporting command which simply runs forever until it receives a interrupt signal.").
+func Register(c cli.ContainerRequirementSetters) {
+	c.AddCommand(cli.NewSimpleCommand("forever", "This is a supporting command which simply runs forever until it receives a interrupt signal.").
+		WithProfiles(common.ProfileExecutable).
 		WithHandler(handle),
 	)
 }

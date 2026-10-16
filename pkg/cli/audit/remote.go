@@ -12,7 +12,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/format"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
-	"github.com/engity-com/bifroest/pkg/managementclient"
+	"github.com/engity-com/bifroest/pkg/management"
 )
 
 type remoteAuditOperation uint8
@@ -40,7 +40,7 @@ type remoteAuditOptions struct {
 
 // runRemoteAudit receives invocation-owned options. The SSH server never sees
 // local decryption keys, output paths or independently trusted producer IDs.
-func runRemoteAudit(ctx context.Context, target managementclient.Target, opts remoteAuditOptions, output io.Writer) (resultErr error) {
+func runRemoteAudit(ctx context.Context, target management.Target, opts remoteAuditOptions, output io.Writer) (resultErr error) {
 	if opts.ConfigurationPath != "" || opts.SourceDirectory != "" || opts.RecipientFile != "" {
 		return fmt.Errorf("--source, --configuration and --encryptionPublicKeyFile are local/offline inputs and cannot be used with a remote target")
 	}
@@ -52,7 +52,7 @@ func runRemoteAudit(ctx context.Context, target managementclient.Target, opts re
 	}
 	anchors := opts.TrustAnchors
 	if len(anchors) == 0 && len(opts.Names) == 1 {
-		value, err := managementclient.ExpectedRecordingProducerID(target)
+		value, err := management.ExpectedRecordingProducerID(target)
 		if err != nil {
 			return err
 		}
@@ -78,7 +78,7 @@ func runRemoteAudit(ctx context.Context, target managementclient.Target, opts re
 	}
 	identityFiles := opts.IdentityFiles
 	if len(identityFiles) == 0 && (opts.WithSensitive || opts.RequireFull || opts.Operation == remoteVerify) {
-		path, err := managementclient.AuditPrivateKey(target)
+		path, err := management.AuditPrivateKey(target)
 		if err != nil {
 			return err
 		}
@@ -108,7 +108,7 @@ func runRemoteAudit(ctx context.Context, target managementclient.Target, opts re
 		if err := os.Mkdir(localRoot, 0700); err != nil {
 			return err
 		}
-		header, err := managementclient.DownloadAuditSnapshot(ctx, target, name.String(), localRoot)
+		header, err := management.DownloadAuditSnapshot(ctx, target, name.String(), localRoot)
 		if err != nil {
 			return err
 		}

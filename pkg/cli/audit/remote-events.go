@@ -7,14 +7,13 @@ import (
 	"io"
 	goos "os"
 	"path/filepath"
-	"time"
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/cli/format"
-	"github.com/engity-com/bifroest/pkg/managementclient"
+	"github.com/engity-com/bifroest/pkg/management"
 )
 
-func doRemoteAuditEvents(ctx context.Context, target managementclient.Target, opts AuditEventsOptions, output io.Writer) (resultErr error) {
+func doRemoteAuditEvents(ctx context.Context, target management.Target, opts AuditEventsOptions, output io.Writer) (resultErr error) {
 	if target.Host == "" {
 		return fmt.Errorf("remote audit events require a target and options")
 	}
@@ -30,7 +29,7 @@ func doRemoteAuditEvents(ctx context.Context, target managementclient.Target, op
 	}
 	identities := opts.IdentityFiles
 	if len(identities) == 0 {
-		path, err := managementclient.AuditPrivateKey(target)
+		path, err := management.AuditPrivateKey(target)
 		if err != nil {
 			return err
 		}
@@ -43,7 +42,7 @@ func doRemoteAuditEvents(ctx context.Context, target managementclient.Target, op
 		return err
 	}
 	defer func() { resultErr = errors.Join(resultErr, goos.RemoveAll(root)) }()
-	header, err := managementclient.DownloadAuditSnapshot(ctx, target, opts.Auditlog.String(), root)
+	header, err := management.DownloadAuditSnapshot(ctx, target, opts.Auditlog.String(), root)
 	if err != nil {
 		return err
 	}
@@ -65,24 +64,20 @@ func doRemoteAuditEvents(ctx context.Context, target managementclient.Target, op
 	if err != nil {
 		return err
 	}
-	filter := format.AuditEventFilter{Name: opts.EventName, Flow: opts.FlowName, Limit: opts.Limit}
-	if opts.Since != "" {
-		if filter.Since, err = time.Parse(time.RFC3339, opts.Since); err != nil {
-			return fmt.Errorf("invalid --since: %w", err)
-		}
+	filter := EventFilter{
+		Name: opts.EventName, Flow: opts.FlowName, Since: opts.Since, Until: opts.Until, Limit: opts.Limit,
 	}
-	if opts.Until != "" {
-		if filter.Until, err = time.Parse(time.RFC3339, opts.Until); err != nil {
-			return fmt.Errorf("invalid --until: %w", err)
-		}
+	records, err := FilterEvents(verified.Records(), filter, true)
+	if err != nil {
+		return err
 	}
-	return format.WriteAuditEvents(output, opts.Format, verified.Records(), filter, true)
+	return format.WriteAuditEvents(output, opts.Format, records, true)
 }
 
-func expectedAuditEventsProducerID(remote managementclient.Target, configured string) (audit.ProducerId, error) {
+func expectedAuditEventsProducerID(remote management.Target, configured string) (audit.ProducerId, error) {
 	if configured == "" {
 		var err error
-		configured, err = managementclient.ExpectedRecordingProducerID(remote)
+		configured, err = management.ExpectedRecordingProducerID(remote)
 		if err != nil {
 			return audit.ProducerId{}, err
 		}

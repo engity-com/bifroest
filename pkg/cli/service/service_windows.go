@@ -19,13 +19,12 @@ import (
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
-	"github.com/engity-com/bifroest/pkg/service"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 type WindowsService struct {
-	Version               sys.Version
-	ManagementApplication cliCommon.ManagementApplication
+	Version sys.Version
+	Run     cliCommon.ServiceRunner
 
 	Name   string
 	Conf   configuration.Configuration
@@ -52,17 +51,12 @@ type removeOpts struct {
 	Stop bool `flag:"stop" default:"true" description:"If enabled, the service will be stopped afterwards, automatically."`
 }
 
-func Register(_ context.Context, c cli.ContainerRequirementSetters, usage cliCommon.Usage, version sys.Version) {
-	if !usage.IncludeService() {
-		return
-	}
-
-	c.AddCommand(cli.NewSimpleCommand().
-		WithName("service").
+func Register(c cli.ContainerRequirementSetters, version sys.Version) {
+	c.AddCommand(cli.NewSimpleCommand("service").
+		WithProfiles(cliCommon.ProfileExecutable).
 		WithCommand(
-			cli.NewCommand[installOpts]().
-				WithName("install").
-				WithDescription("Installs the service.").
+			cli.NewCommand[installOpts]("install", "Installs the service.").
+				WithProfiles(cliCommon.ProfileExecutable).
 				WithHandler(func(_ context.Context, o installOpts) error {
 					return (&WindowsService{
 						Version: version,
@@ -70,27 +64,24 @@ func Register(_ context.Context, c cli.ContainerRequirementSetters, usage cliCom
 						Conf:    o.Configuration,
 					}).install(o.Start, true, o.DisplayName)
 				}),
-			cli.NewCommand[removeOpts]().
-				WithName("remove").
-				WithDescription("Removes the service.").
+			cli.NewCommand[removeOpts]("remove", "Removes the service.").
+				WithProfiles(cliCommon.ProfileExecutable).
 				WithHandler(func(_ context.Context, o removeOpts) error {
 					return (&WindowsService{
 						Version: version,
 						Name:    o.ServiceName,
 					}).remove(o.Stop)
 				}),
-			cli.NewCommand[opts]().
-				WithName("start").
-				WithDescription("Starts the service.").
+			cli.NewCommand[opts]("start", "Starts the service.").
+				WithProfiles(cliCommon.ProfileExecutable).
 				WithHandler(func(_ context.Context, o opts) error {
 					return (&WindowsService{
 						Version: version,
 						Name:    o.ServiceName,
 					}).start()
 				}),
-			cli.NewCommand[opts]().
-				WithName("stop").
-				WithDescription("Stops the service.").
+			cli.NewCommand[opts]("stop", "Stops the service.").
+				WithProfiles(cliCommon.ProfileExecutable).
 				WithHandler(func(_ context.Context, o opts) error {
 					return (&WindowsService{
 						Version: version,
@@ -103,12 +94,6 @@ func Register(_ context.Context, c cli.ContainerRequirementSetters, usage cliCom
 
 func (this *WindowsService) Execute(_ []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (ssec bool, errno uint32) {
 	changes <- svc.Status{State: svc.StartPending}
-
-	s := service.Service{
-		Configuration:         this.Conf,
-		Version:               this.Version,
-		ManagementApplication: this.ManagementApplication,
-	}
 
 	fail := func(err error) (ssec bool, errno uint32) {
 		log.Error(err)
@@ -136,7 +121,10 @@ func (this *WindowsService) Execute(_ []string, r <-chan svc.ChangeRequest, chan
 	}()
 
 	changes <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
-	if err := s.Run(ctx); err != nil {
+	if this.Run == nil {
+		return fail(fmt.Errorf("service runner is unavailable"))
+	}
+	if err := this.Run(ctx, this.Conf, this.Version); err != nil {
 		return fail(err)
 	}
 

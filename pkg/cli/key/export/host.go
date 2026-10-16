@@ -9,7 +9,6 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
-	"github.com/engity-com/bifroest/pkg/service"
 )
 
 type hostOpts struct {
@@ -20,10 +19,9 @@ type hostOpts struct {
 	Force        bool   `flag:"force" description:"Replace an existing output file."`
 }
 
-func registerHost(_ context.Context, c cli.ContainerRequirementSetters, _ common.Usage) {
-	c.AddCommand(cli.NewCommand[hostOpts]().
-		WithName("host").
-		WithDescription("Export SSH host keys as known_hosts entries without network access.").
+func registerHost(c cli.ContainerRequirementSetters) {
+	c.AddCommand(cli.NewCommand[hostOpts]("host", "Export SSH host keys as known_hosts entries without network access.").
+		WithProfiles(common.ProfileExecutable).
 		WithHandler(handleHost),
 	)
 }
@@ -46,7 +44,7 @@ func handleHost(ctx context.Context, o hostOpts) error {
 		if err != nil {
 			return err
 		}
-		if keys, identityFiles, err = service.EnsureHostPrivateKeysWithPaths(c); err != nil {
+		if keys, identityFiles, err = configuration.EnsureHostPrivateKeysWithPaths(c); err != nil {
 			return err
 		}
 	}

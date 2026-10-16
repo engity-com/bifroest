@@ -19,10 +19,9 @@ type exportOpts struct {
 	Flow   configuration.FlowName `argument:"flowName" required:"true" description:"Flow whose SSH certificate authority should be exported."`
 }
 
-func registerCa(_ context.Context, c cli.ContainerRequirementSetters, _ common.Usage) {
-	c.AddCommand(cli.NewCommand[exportOpts]().
-		WithName("ca").
-		WithDescription("Export the public key of a flow's SSH certificate authority.").
+func registerCa(c cli.ContainerRequirementSetters) {
+	c.AddCommand(cli.NewCommand[exportOpts]("ca", "Export the public key of a flow's SSH certificate authority.").
+		WithProfiles(common.ProfileExecutable).
 		WithHandler(handleExport),
 	)
 }

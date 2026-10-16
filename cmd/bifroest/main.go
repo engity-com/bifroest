@@ -14,7 +14,9 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/cli"
 	"github.com/engity-com/bifroest/pkg/cli/common"
-	"github.com/engity-com/bifroest/pkg/managementclient"
+	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/management"
+	"github.com/engity-com/bifroest/pkg/service"
 )
 
 func main() {
@@ -26,26 +28,32 @@ func main() {
 
 func run() (resultErr error) {
 	native.DefaultProvider.Consumer = consumer.NewWriter(goos.Stderr)
-	ctx, stop := signal.NotifyContext(context.Background(), goos.Interrupt)
-	defer stop()
-	ctx = clibase.ContextWithStdio(ctx, goos.Stdin, goos.Stdout, goos.Stderr)
-	applications, err := cli.NewApplications(versionV)
+	application, err := cli.NewApplication[opts](versionV, "SSH server and gateway for standard SSH clients: OIDC Device Authorization, Docker/Kubernetes sessions, verifiable audit and recording.", service.Run).
+		WithInitializeHandler(configureExecutableLogging).
+		WithFallbackToStdio(true).
+		WithCodec(configuration.NewCliCodec(true, true)).
+		Create()
 	if err != nil {
 		return err
 	}
-	defer func() { resultErr = errors.Join(resultErr, applications.Close()) }()
-	ctx = common.ContextWithManagementApplication(ctx, applications.Management)
+	defer func() { resultErr = errors.Join(resultErr, application.Close()) }()
 	target, args, err := parseManagementTarget(goos.Args[1:])
 	if err != nil {
 		return err
 	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), goos.Interrupt)
+	defer stop()
+
 	if target != nil {
 		if len(args) == 0 || !supportsRemoteManagementCommand(args[0]) {
 			return fmt.Errorf("command %q does not support remote execution", args)
 		}
-		ctx = common.ContextWithRemoteTarget(ctx, managementclient.Target{
+		ctx = common.ContextWithRemoteTarget(ctx, management.Target{
 			Host: target.RawHost, User: target.User, Port: target.Port, ExplicitPort: target.ExplicitPort,
 		})
 	}
-	return applications.Executable.ParseAndExecute(ctx, nil, args...)
+	return application.ParseAndExecute(ctx, &clibase.ParseOpts{
+		Profiles: []string{common.ProfileExecutable},
+	}, args...)
 }

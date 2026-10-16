@@ -7,6 +7,7 @@ import (
 
 	cli "github.com/echocat/cli4g"
 
+	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/environment"
 )
 
@@ -17,9 +18,8 @@ type localConPTYRelayOptions struct {
 
 func registerLocalConPTYRelay(parent cli.ContainerRequirementSetters) {
 	parent.AddCommand(
-		cli.NewCommand[localConPTYRelayOptions]().
-			WithName("local-conpty-relay").
-			WithDescription("Internal ConPTY relay for local shell sessions.").
+		cli.NewCommand[localConPTYRelayOptions]("local-conpty-relay", "Internal ConPTY relay for local shell sessions.").
+			WithProfiles(common.ProfileExecutable).
 			WithVisible(false).
 			WithHandler(func(ctx context.Context, opts localConPTYRelayOptions) error {
 				argv, err := environment.ReadLocalConPTYCommand(cli.StdinOfContext(ctx))
