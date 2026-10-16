@@ -123,7 +123,7 @@ func validateDarwinBinary(ctx context.Context, artifact *buildArtifact) error {
 	if artifact.Edition != sys.EditionGeneric {
 		return fmt.Errorf("unsupported Darwin edition: %s", artifact.Edition)
 	}
-	if _, err := runDarwinBuildCommand(ctx, artifact.filepath, "version", "--no-long"); err != nil {
+	if _, err := runDarwinBuildCommand(ctx, artifact.filepath, "version", "--long=false"); err != nil {
 		return err
 	}
 	machoArchitecture := map[sys.Arch]string{

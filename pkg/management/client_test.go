@@ -36,3 +36,12 @@ func TestManagementDiagnosticsRemainBoundedWithoutBlockingSSH(t *testing.T) {
 	require.Equal(t, len(message), written)
 	require.Len(t, output.Bytes(), 16<<10)
 }
+
+func TestRunDirectRejectsCommandsOutsideVersionForms(t *testing.T) {
+	for _, command := range []string{
+		"sh", "version; id", "version --long=false; id", "version --long=$(id)", "version --long=false --help",
+	} {
+		err := (Target{}).RunDirect(t.Context(), command)
+		require.ErrorContains(t, err, "unsupported direct management command")
+	}
+}

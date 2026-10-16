@@ -15,4 +15,4 @@ Prints the version of the current Bifröst executable. Long output additionally 
 Includes [all general flags](index.md#general-flags).
 
 <<flag("long", "bool", default=True, id_prefix="version-", heading=3)>>
-Controls whether detailed build information is printed. Use `--no-long` for the short version format.
+Controls whether detailed build information is printed. Detailed output is the default. Use `--long=false` for the short version format; `--long` (or `--long=true`) selects detailed output explicitly. This also applies to remote management commands.

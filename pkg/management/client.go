@@ -289,7 +289,9 @@ func (target Target) Run(ctx context.Context, args ...string) error {
 // RunDirect executes a fixed, human-readable management command over the same
 // authenticated and host-key-checked SSH transport as the CBOR commands.
 func (target Target) RunDirect(ctx context.Context, command string) error {
-	if command != "version" && command != "version --long" {
+	switch command {
+	case "version", "version --long", "version --long=true", "version --long=false":
+	default:
 		return fmt.Errorf("unsupported direct management command %q", command)
 	}
 	output := cli.StdoutOfContext(ctx)

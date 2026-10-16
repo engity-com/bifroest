@@ -2,6 +2,7 @@ package version
 
 import (
 	"context"
+	"strconv"
 
 	cli "github.com/echocat/cli4g"
 
@@ -10,7 +11,7 @@ import (
 )
 
 type opts struct {
-	Long bool `flag:"long" description:"Include build, platform and feature details."`
+	Long bool `flag:"long" default:"true" description:"Include build, platform and feature details."`
 }
 
 func CreateCommands(version sys.Version) []cli.CommandRequirementLike {
@@ -39,9 +40,5 @@ func remoteHandle(ctx context.Context, o opts) error {
 	if err != nil {
 		return err
 	}
-	command := "version"
-	if o.Long {
-		command += " --long"
-	}
-	return target.RunDirect(ctx, command)
+	return target.RunDirect(ctx, "version --long="+strconv.FormatBool(o.Long))
 }
