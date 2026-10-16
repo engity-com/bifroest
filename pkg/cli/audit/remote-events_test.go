@@ -27,15 +27,15 @@ func TestSensitiveAuditEventsRequireExplicitTrustAnchorAndRemoteTarget(t *testin
 	requirement := cli.NewSimpleApplication().WithName("bifroest").
 		WithFallbackToStdio(false).
 		WithErrorHandlerEnabled(false).
-		WithCodec(configuration.NewOptionalCliCodec()).
+		WithCodec(configuration.NewCliCodec(common.ProfileExecutable)).
 		WithCodec(codec.NewDateTime().WithFormats(time.RFC3339), "rfc3339")
-	Register(requirement)
+	requirement.WithCommand(CreateCommands()...)
 	app, err := requirement.Create()
 	require.NoError(t, err)
 	defer func() { require.NoError(t, app.Close()) }()
 	var output bytes.Buffer
 	ctx := cli.ContextWithStdio(t.Context(), nil, &output, nil)
 	err = app.ParseAndExecute(ctx, &cli.ParseOpts{Profiles: []string{common.ProfileExecutable}}, "audit", "events", "default", "--with-sensitive", "--expectedProducerId="+expected)
-	require.ErrorContains(t, err, "requires a remote target")
+	require.ErrorContains(t, err, "unknown flag --expectedProducerId")
 	require.Empty(t, output.String())
 }

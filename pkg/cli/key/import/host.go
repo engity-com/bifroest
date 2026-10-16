@@ -22,11 +22,12 @@ type hostOpts struct {
 	ExpectedFingerprint string `flag:"expectedFingerprint" placeholder:"<SHA256:...|unknown>" description:"Expected SHA256 fingerprint or unknown."`
 }
 
-func registerHost(c cli.ContainerRequirementSetters) {
-	c.AddCommand(cli.NewCommand[hostOpts]("host", "Import SSH host keys from a file, stdin or a server.").
-		WithProfiles(common.ProfileExecutable).
-		WithHandler(handleHost),
-	)
+func createHostCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
+		cli.NewCommand[hostOpts]("host", "Import SSH host keys from a file, stdin or a server.").
+			WithProfiles(common.ProfileExecutable).
+			WithHandler(handleHost),
+	}
 }
 
 func handleHost(ctx context.Context, o hostOpts) error {

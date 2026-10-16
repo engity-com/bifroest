@@ -5,6 +5,8 @@ import (
 	"fmt"
 	os2 "os"
 
+	cli "github.com/echocat/cli4g"
+
 	"github.com/engity-com/bifroest/pkg/configuration"
 )
 
@@ -22,17 +24,20 @@ func ResolveConfiguration[O ConfigurationOptions](ctx context.Context, options O
 		}
 		return access.Configuration, nil
 	}
-	if configuration.RemoteConfigurationForbidden(ctx) {
+	if cli.ContextContainsProfile(ctx, ProfileRemote) {
 		return options.GetConfiguration(), nil
 	}
 	if conf := options.GetConfiguration(); conf != nil {
 		return conf, nil
 	}
-	var ref configuration.Ref
-	if err := ref.Set(configuration.DefaultRef); err != nil {
+	if !cli.ContextContainsProfile(ctx, ProfileExecutable) {
+		return nil, fmt.Errorf("local configuration requires the executable profile")
+	}
+	var result configuration.Configuration
+	if err := result.LoadFromFile(configuration.DefaultFilename); err != nil {
 		return nil, err
 	}
-	return ref.Get(), nil
+	return &result, nil
 }
 
 func WorkingDirectory() string {

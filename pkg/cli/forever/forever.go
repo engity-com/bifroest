@@ -11,11 +11,12 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/common"
 )
 
-func Register(c cli.ContainerRequirementSetters) {
-	c.AddCommand(cli.NewSimpleCommand("forever", "This is a supporting command which simply runs forever until it receives a interrupt signal.").
-		WithProfiles(common.ProfileExecutable).
-		WithHandler(handle),
-	)
+func CreateCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
+		cli.NewSimpleCommand("forever", "This is a supporting command which simply runs forever until it receives a interrupt signal.").
+			WithProfiles(common.ProfileExecutable).
+			WithHandler(handle),
+	}
 }
 
 func handle(context.Context, cli.NoOptions) error {

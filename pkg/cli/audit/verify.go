@@ -21,8 +21,8 @@ type verifyOptions struct {
 	TrustAnchorsOpts
 	common.RequireFullVerificationOpts
 	format.Opts
-	SourceDirectory         string `flag:"source" placeholder:"<path>" description:"Complete auditlog directory for offline verification without a configuration."`
-	EncryptionPublicKeyFile string `flag:"encryptionPublicKeyFile" placeholder:"<path>" description:"Expected encryption recipient for keyless offline verification."`
+	SourceDirectory         string `flag:"source" profile:"executable" placeholder:"<path>" description:"Complete auditlog directory for offline verification without a configuration."`
+	EncryptionPublicKeyFile string `flag:"encryptionPublicKeyFile" profile:"executable" placeholder:"<path>" description:"Expected encryption recipient for keyless offline verification."`
 }
 
 type managementVerifyOptions struct {
@@ -31,17 +31,18 @@ type managementVerifyOptions struct {
 	ConfiguredAuditlogOptions
 }
 
-func registerVerify(c cli.ContainerRequirementSetters) {
-	c.AddCommand(
+func createVerifyCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
 		cli.NewCommand[managementVerifyOptions]("verify", "Verify a signed audit journal without modifying it.").
 			WithProfiles(common.ProfileManagement).
 			WithHandler(handleManagementVerify),
-	)
-	c.AddCommand(
 		cli.NewCommand[verifyOptions]("verify", "Verify a signed audit journal without modifying it.").
 			WithProfiles(common.ProfileExecutable).
 			WithHandler(handleVerify),
-	)
+		cli.NewCommand[verifyOptions]("verify", "Verify a signed audit journal without modifying it.").
+			WithProfiles(common.ProfileRemote).
+			WithHandler(remoteHandleVerify),
+	}
 }
 
 func handleManagementVerify(ctx context.Context, opts managementVerifyOptions) error {
@@ -56,19 +57,24 @@ func handleManagementVerify(ctx context.Context, opts managementVerifyOptions) e
 	return format.WriteVerification(cli.StdoutOfContext(ctx), common.FormatForInvocation(ctx, opts.Format), scope)
 }
 
-func handleVerify(ctx context.Context, o verifyOptions) error {
-	if target, remote := common.RemoteTargetFromContext(ctx); remote {
-		if o.Configuration != nil {
-			return fmt.Errorf("--configuration cannot be combined with a remote target")
-		}
-		return runRemoteAudit(ctx, target, remoteAuditOptions{
-			Operation: remoteVerify, Names: []configuration.AuditlogName{o.Auditlog},
-			TrustAnchors: o.ExpectedProducerIds, IdentityFiles: o.DecryptionIdentityFiles,
-			SourceDirectory: o.SourceDirectory,
-			RecipientFile:   o.EncryptionPublicKeyFile, RequireFull: o.RequireFull,
-			Format: o.Format,
-		}, cli.StdoutOfContext(ctx))
+func remoteHandleVerify(ctx context.Context, o verifyOptions) error {
+	if o.Configuration != nil {
+		return fmt.Errorf("--configuration cannot be combined with a remote target")
 	}
+	target, err := common.RemoteTargetFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	return runRemoteAudit(ctx, target, remoteAuditOptions{
+		Operation: remoteVerify, Names: []configuration.AuditlogName{o.Auditlog},
+		TrustAnchors: o.ExpectedProducerIds, IdentityFiles: o.DecryptionIdentityFiles,
+		SourceDirectory: o.SourceDirectory,
+		RecipientFile:   o.EncryptionPublicKeyFile, RequireFull: o.RequireFull,
+		Format: o.Format,
+	}, cli.StdoutOfContext(ctx))
+}
+
+func handleVerify(ctx context.Context, o verifyOptions) error {
 	name, conf, err := resolveAuditSourceConfiguration(ctx, o, o.SourceDirectory, o.EncryptionPublicKeyFile, o.Auditlog)
 	if err != nil {
 		return err

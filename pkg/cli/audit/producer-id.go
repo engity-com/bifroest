@@ -17,15 +17,18 @@ type producerOptions struct {
 	ConfiguredAuditlogOptions
 }
 
-func registerProducerID(parent cli.ContainerRequirementSetters) {
-	parent.AddCommand(
+func createProducerIDCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
 		cli.NewCommand[producerOptions]("producer-id", "Print the signing producer ID of an audit log.").
 			WithProfiles(common.ProfileExecutable).
 			WithHandler(handleProducerID),
 		cli.NewCommand[producerOptions]("producer-id", "Print the signing producer ID of an audit log.").
+			WithProfiles(common.ProfileRemote).
+			WithHandler(remoteHandleProducerID),
+		cli.NewCommand[producerOptions]("producer-id", "Print the signing producer ID of an audit log.").
 			WithProfiles(common.ProfileManagement).
 			WithHandler(handleManagementProducerID),
-	)
+	}
 }
 
 func handleManagementProducerID(ctx context.Context, o producerOptions) error {
@@ -45,12 +48,6 @@ func handleProducerID(ctx context.Context, o producerOptions) error {
 	if err != nil {
 		return err
 	}
-	if target, remote := common.RemoteTargetFromContext(ctx); remote {
-		if conf != nil {
-			return fmt.Errorf("--configuration cannot be combined with a remote target")
-		}
-		return target.Run(ctx, "audit", "producer-id", o.Name.String(), "--format="+string(o.Format))
-	}
 	configured, err := FindConfigured(conf, o.Name)
 	if err != nil {
 		return err
@@ -67,4 +64,15 @@ func handleProducerID(ctx context.Context, o producerOptions) error {
 		return err
 	}
 	return format.WriteProducerID(cli.StdoutOfContext(ctx), o.Format, identity.ProducerId().String())
+}
+
+func remoteHandleProducerID(ctx context.Context, o producerOptions) error {
+	if o.Configuration != nil {
+		return fmt.Errorf("--configuration cannot be combined with a remote target")
+	}
+	target, err := common.RemoteTargetFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	return target.Run(ctx, "audit", "producer-id", o.Name.String(), "--format="+string(o.Format))
 }

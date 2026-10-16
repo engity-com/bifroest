@@ -43,7 +43,7 @@ func (serveTestFeatures) ForEach(func(sys.VersionFeatureCategory)) {}
 
 func TestDoRunDefaultRemovesRepositoryLocksOnShutdown(t *testing.T) {
 	root := t.TempDir()
-	ref := runDefaultLockTestConfiguration(t, root)
+	configurationPath := runDefaultLockTestConfiguration(t, root)
 	lockPaths := []string{
 		filepath.Join(root, ".sessions.bifroest.lock"),
 		filepath.Join(root, "journal", ".bifroest.lock"),
@@ -53,7 +53,7 @@ func TestDoRunDefaultRemovesRepositoryLocksOnShutdown(t *testing.T) {
 	defer provider.HookGlobally()()
 
 	for range 2 {
-		runDefaultUntilInterrupted(t, ref, lockPaths, provider)
+		runDefaultUntilInterrupted(t, configurationPath, lockPaths, provider)
 		for _, lockPath := range lockPaths {
 			require.NoFileExists(t, lockPath)
 		}
@@ -69,14 +69,14 @@ func TestDoRunDefaultRemovesRepositoryLocksOnShutdown(t *testing.T) {
 	}
 }
 
-func runDefaultUntilInterrupted(t *testing.T, ref configuration.Ref, lockPaths []string, provider *logrecording.Provider) {
+func runDefaultUntilInterrupted(t *testing.T, configurationPath string, lockPaths []string, provider *logrecording.Provider) {
 	t.Helper()
 	requirement := cli.NewSimpleApplication().
 		WithName("bifroest").
 		WithFallbackToStdio(false).
 		WithErrorHandlerEnabled(false).
-		WithCodec(configuration.NewCliCodec(true, true))
-	serve.Register(requirement, serveTestVersion{}, service.Run)
+		WithCodec(configuration.NewCliCodec(common.ProfileExecutable))
+	requirement.WithCommand(serve.CreateCommands(serveTestVersion{}, service.Run)...)
 	application, err := requirement.Create()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, application.Close()) })
@@ -85,7 +85,7 @@ func runDefaultUntilInterrupted(t *testing.T, ref configuration.Ref, lockPaths [
 	stopped := false
 	go func() {
 		done <- application.ParseAndExecute(t.Context(), &cli.ParseOpts{Profiles: []string{common.ProfileExecutable}},
-			"serve", "--configuration="+ref.String())
+			"serve", "--configuration="+configurationPath)
 	}()
 	t.Cleanup(func() {
 		if stopped {
@@ -163,7 +163,7 @@ func requireNoLockFiles(t *testing.T, root string) {
 	require.Empty(t, lockFiles)
 }
 
-func runDefaultLockTestConfiguration(t *testing.T, root string) configuration.Ref {
+func runDefaultLockTestConfiguration(t *testing.T, root string) string {
 	t.Helper()
 	content := fmt.Sprintf(`
 ssh:
@@ -192,7 +192,5 @@ auditlog:
 		filepath.ToSlash(filepath.Join(root, "recordings")))
 	path := filepath.Join(root, "run-lock-test.yaml")
 	require.NoError(t, goos.WriteFile(path, []byte(content), 0600))
-	var result configuration.Ref
-	require.NoError(t, result.Set(path))
-	return result
+	return path
 }

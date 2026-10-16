@@ -22,11 +22,11 @@ import (
 type exportCommandOptions struct {
 	common.WithSensitiveOpts
 	common.DecryptionIdentityFilesOpts
+	common.ExecutableConfigurationOpts
 	File               string `argument:"fileOrAuditlog" description:"Configured auditlog name or copied Recording file path."`
 	RecordingID        string `argument:"recordingId" description:"Recording UUID when selecting an auditlog."`
 	Output             string `flag:"output" default:"-" description:"Export destination, or - for stdout."`
 	Force              bool   `flag:"force" description:"Replace an existing output."`
-	Configuration      string `flag:"configuration" short:"c" description:"Local configuration file."`
 	ExpectedProducerID string `flag:"expectedProducerId" description:"Independently trusted producer ID."`
 	AllowUntrusted     bool   `flag:"allowUntrusted" description:"Explicitly accept a self-signed Recording."`
 }
@@ -37,12 +37,20 @@ type managementExportOptions struct {
 	common.WithSensitiveOpts
 }
 
-func registerManagementExport(parent cli.ContainerRequirementSetters) {
-	parent.AddCommand(
+func createExportCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
 		cli.NewCommand[managementExportOptions]("export", "Verify and export a session Recording as asciicast v3.").
 			WithProfiles(common.ProfileManagement).
 			WithHandler(handleManagementExport),
-	)
+		cli.NewCommand[exportCommandOptions]("export", "Verify and export a session Recording as asciicast v3.").
+			WithProfiles(common.ProfileExecutable).
+			WithHandler(func(ctx context.Context, o exportCommandOptions) error {
+				return doRecordingExport(ctx, o, cli.StdoutOfContext(ctx))
+			}),
+		cli.NewCommand[exportCommandOptions]("export", "Verify and export a session Recording as asciicast v3.").
+			WithProfiles(common.ProfileRemote).
+			WithHandler(remoteHandleExport),
+	}
 }
 
 func handleManagementExport(ctx context.Context, opts managementExportOptions) error {
@@ -56,17 +64,6 @@ func handleManagementExport(ctx context.Context, opts managementExportOptions) e
 	return access.Recording.Export(ctx, opts.Auditlog, opts.ID, cli.StdoutOfContext(ctx))
 }
 
-func registerRecordingExportCmd(parent cli.ContainerRequirementSetters) {
-	parent.AddCommand(cli.NewCommand[exportCommandOptions]("export", "Verify and export a session Recording as asciicast v3.").
-		WithProfiles(common.ProfileExecutable).
-		WithHandler(func(ctx context.Context, o exportCommandOptions) error {
-			if target, remote := common.RemoteTargetFromContext(ctx); remote {
-				return runRemoteExport(ctx, target, o, cli.StdoutOfContext(ctx))
-			}
-			return doRecordingExport(ctx, o, cli.StdoutOfContext(ctx))
-		}))
-}
-
 func doRecordingExport(ctx context.Context, opts exportCommandOptions, stdout io.Writer) (rErr error) {
 	if !opts.WithSensitive {
 		return fmt.Errorf("recording export requires --with-sensitive")
@@ -74,21 +71,16 @@ func doRecordingExport(ctx context.Context, opts exportCommandOptions, stdout io
 	if stdout == nil {
 		return fmt.Errorf("nil stdout")
 	}
-	var err error
-	file, auditlogName, err := ResolveRecordingSelection(opts.File, opts.RecordingID, "", opts.Configuration, opts.ExpectedProducerID)
+	file, auditlogName, localConfiguration, err := resolveRecordingSelection(ctx, opts.File, opts.RecordingID, opts.ExpectedProducerID, opts)
 	if err != nil {
 		return err
 	}
-	if opts.Configuration != "" && auditlogName.IsZero() {
-		return fmt.Errorf("--configuration requires a local auditlog name and Recording ID")
-	}
 	var expectedProducerId audit.ProducerId
-	var localConfiguration configuration.Ref
 	if !auditlogName.IsZero() {
-		if opts.ExpectedProducerID != "" || opts.AllowUntrusted {
-			return fmt.Errorf("local Recording selection cannot be combined with --expectedProducerId or --allowUntrusted")
+		if opts.AllowUntrusted {
+			return fmt.Errorf("local Recording selection cannot be combined with --allowUntrusted")
 		}
-		expectedProducerId, err = configuredRecordingProducerId(auditlogName, opts.Configuration, file, &localConfiguration)
+		expectedProducerId, err = configuredRecordingProducerId(auditlogName, localConfiguration, file)
 	} else {
 		expectedProducerId, err = recordingExportTrust(opts.ExpectedProducerID, opts.AllowUntrusted)
 	}
@@ -147,7 +139,7 @@ func doRecordingExport(ctx context.Context, opts exportCommandOptions, stdout io
 			return err
 		}
 		if !auditlogName.IsZero() {
-			if err := caudit.EnsureAuditDestinationSafe(output, stdout, localConfiguration.GetFilename(), localConfiguration.Get(), opts.DecryptionIdentityFiles); err != nil {
+			if err := caudit.EnsureAuditDestinationSafe(output, stdout, localConfiguration.Filename, localConfiguration, opts.DecryptionIdentityFiles); err != nil {
 				return err
 			}
 		}
@@ -196,34 +188,33 @@ func validateConfiguredSealedRecording(path string, inspection *recording.Inspec
 	return nil
 }
 
-func ResolveRecordingSelection(source, recordingId string, auditlogName configuration.AuditlogName, configurationPath, expectedProducerId string) (string, configuration.AuditlogName, error) {
+func resolveRecordingSelection(ctx context.Context, source, recordingId, expectedProducerId string, options common.ConfigurationOptions) (string, configuration.AuditlogName, *configuration.Configuration, error) {
 	if recordingId == "" {
 		if source == "" {
-			return "", "", fmt.Errorf("recording input file or local auditlog and recording ID is required")
+			return "", "", nil, fmt.Errorf("recording input file or local auditlog and recording ID is required")
 		}
-		return source, auditlogName, nil
+		if options.GetConfiguration() != nil {
+			return "", "", nil, fmt.Errorf("--configuration requires a local auditlog name and Recording ID")
+		}
+		return source, "", nil, nil
 	}
-	if !auditlogName.IsZero() || expectedProducerId != "" {
-		return "", "", fmt.Errorf("local Recording ID cannot be combined with another source selector or --expectedProducerId")
+	if expectedProducerId != "" {
+		return "", "", nil, fmt.Errorf("local Recording ID cannot be combined with --expectedProducerId")
 	}
 	name := configuration.AuditlogName(source)
 	if err := name.Validate(); err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	var id recording.Id
 	if err := id.UnmarshalText([]byte(recordingId)); err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
-	var ref configuration.Ref
-	path := configurationPath
-	if path == "" {
-		path = configuration.DefaultRef
+	conf, err := common.ResolveConfiguration(ctx, options)
+	if err != nil {
+		return "", "", nil, err
 	}
-	if err := ref.Set(path); err != nil {
-		return "", "", err
-	}
-	selected, err := findSealedRecording(ref.Get(), name, id)
-	return selected, name, err
+	selected, err := findSealedRecording(conf, name, id)
+	return selected, name, conf, err
 }
 
 func findSealedRecording(conf *configuration.Configuration, name configuration.AuditlogName, id recording.Id) (string, error) {
@@ -324,17 +315,7 @@ func recordingExportTrust(raw string, allowUntrusted bool) (audit.ProducerId, er
 	return result, nil
 }
 
-func configuredRecordingProducerId(name configuration.AuditlogName, configPath, filePath string, ref *configuration.Ref) (audit.ProducerId, error) {
-	if configPath == "" {
-		configPath = configuration.DefaultRef
-	}
-	if err := ref.Set(configPath); err != nil {
-		return audit.ProducerId{}, fmt.Errorf("cannot load recording configuration: %w", err)
-	}
-	return configuredRecordingProducerIdFromConfiguration(name, ref.Get(), filePath)
-}
-
-func configuredRecordingProducerIdFromConfiguration(name configuration.AuditlogName, conf *configuration.Configuration, filePath string) (audit.ProducerId, error) {
+func configuredRecordingProducerId(name configuration.AuditlogName, conf *configuration.Configuration, filePath string) (audit.ProducerId, error) {
 	configured, err := caudit.FindConfigured(conf, name)
 	if err != nil {
 		return audit.ProducerId{}, err

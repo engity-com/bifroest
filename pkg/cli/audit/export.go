@@ -24,8 +24,8 @@ import (
 type exportOptions struct {
 	common.ExecutableConfigurationOpts
 	configuration.AuditlogNameOpts
-	SourceDirectory         string `flag:"source" placeholder:"<path>" description:"Complete auditlog directory for offline verification without a configuration."`
-	EncryptionPublicKeyFile string `flag:"encryptionPublicKeyFile" placeholder:"<path>" description:"Expected encryption recipient for keyless offline export."`
+	SourceDirectory         string `flag:"source" profile:"executable" placeholder:"<path>" description:"Complete auditlog directory for offline verification without a configuration."`
+	EncryptionPublicKeyFile string `flag:"encryptionPublicKeyFile" profile:"executable" placeholder:"<path>" description:"Expected encryption recipient for keyless offline export."`
 	OutputOpts
 	DecryptionIdentityFilesOpts
 	TrustAnchorsOpts
@@ -55,17 +55,21 @@ func (this *boundedAuditOutput) Write(content []byte) (int, error) {
 	return this.Buffer.Write(content)
 }
 
-func registerAuditExport(c cli.ContainerRequirementSetters) {
-	c.AddCommand(
+func createAuditExportCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
 		cli.NewCommand[managementExportOptions]("export", "Export verified audit events as JSON Lines.").
+			WithAliases("decrypt").
 			WithProfiles(common.ProfileManagement).
 			WithHandler(handleManagementExport),
-	)
-	c.AddCommand(
 		cli.NewCommand[exportOptions]("export", "Export verified audit events as JSON Lines.").
+			WithAliases("decrypt").
 			WithProfiles(common.ProfileExecutable).
 			WithHandler(handleAuditExport),
-	)
+		cli.NewCommand[exportOptions]("export", "Export verified audit events as JSON Lines.").
+			WithAliases("decrypt").
+			WithProfiles(common.ProfileRemote).
+			WithHandler(remoteHandleAuditExport),
+	}
 }
 
 func handleManagementExport(ctx context.Context, opts managementExportOptions) error {
@@ -77,19 +81,24 @@ func handleManagementExport(ctx context.Context, opts managementExportOptions) e
 		audit.RecordOrderChain, cli.StdoutOfContext(ctx))
 }
 
-func handleAuditExport(ctx context.Context, o exportOptions) error {
-	if target, remote := common.RemoteTargetFromContext(ctx); remote {
-		if o.Configuration != nil {
-			return fmt.Errorf("--configuration cannot be combined with a remote target")
-		}
-		return runRemoteAudit(ctx, target, remoteAuditOptions{
-			Operation: remoteExport, Names: []configuration.AuditlogName{o.Auditlog},
-			TrustAnchors: o.ExpectedProducerIds, IdentityFiles: o.DecryptionIdentityFiles,
-			SourceDirectory: o.SourceDirectory,
-			RecipientFile:   o.EncryptionPublicKeyFile, Output: o.Output,
-			Force: o.Force, WithSensitive: o.WithSensitive, Format: format.Text,
-		}, cli.StdoutOfContext(ctx))
+func remoteHandleAuditExport(ctx context.Context, o exportOptions) error {
+	if o.Configuration != nil {
+		return fmt.Errorf("--configuration cannot be combined with a remote target")
 	}
+	target, err := common.RemoteTargetFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	return runRemoteAudit(ctx, target, remoteAuditOptions{
+		Operation: remoteExport, Names: []configuration.AuditlogName{o.Auditlog},
+		TrustAnchors: o.ExpectedProducerIds, IdentityFiles: o.DecryptionIdentityFiles,
+		SourceDirectory: o.SourceDirectory,
+		RecipientFile:   o.EncryptionPublicKeyFile, Output: o.Output,
+		Force: o.Force, WithSensitive: o.WithSensitive, Format: format.Text,
+	}, cli.StdoutOfContext(ctx))
+}
+
+func handleAuditExport(ctx context.Context, o exportOptions) error {
 	name, conf, err := resolveAuditSourceConfiguration(ctx, o, o.SourceDirectory, o.EncryptionPublicKeyFile, o.Auditlog)
 	if err != nil {
 		return err

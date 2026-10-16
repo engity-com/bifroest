@@ -9,13 +9,12 @@ import (
 	cimport "github.com/engity-com/bifroest/pkg/cli/key/import"
 )
 
-func Register(c cli.ContainerRequirementSetters) {
-	cmd := cli.NewSimpleCommand("key", "Generate, export and import SSH keys.").
-		WithProfiles(common.ProfileExecutable)
-
-	cexport.Register(cmd)
-	cgenerate.Register(cmd)
-	cimport.Register(cmd)
-
-	c.AddCommand(cmd)
+func CreateCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
+		cli.NewSimpleCommand("key", "Generate, export and import SSH keys.").
+			WithProfiles(common.ProfileExecutable).
+			WithCommand(cexport.CreateCommands()...).
+			WithCommand(cgenerate.CreateCommands()...).
+			WithCommand(cimport.CreateCommands()...),
+	}
 }

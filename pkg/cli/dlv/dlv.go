@@ -40,13 +40,14 @@ func newOpts(context.Context) (opts, error) {
 	}, nil
 }
 
-func Register(c cli.ContainerRequirementSetters) {
-	c.AddCommand(cli.NewCommand[opts]("dlv", "Runs a command of this binary with Delve.").
-		WithProfiles(ProfileExecutable).
-		WithVisible(false).
-		WithCreateOptionsHandler(newOpts).
-		WithHandler(handler),
-	)
+func CreateCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
+		cli.NewCommand[opts]("dlv", "Runs a command of this binary with Delve.").
+			WithProfiles(ProfileExecutable).
+			WithVisible(false).
+			WithCreateOptionsHandler(newOpts).
+			WithHandler(handler),
+	}
 }
 
 func handler(_ context.Context, o opts) (rErr error) {

@@ -2,18 +2,21 @@ package common
 
 import (
 	"context"
+	"fmt"
 
-	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/management"
 )
 
 type remoteTargetKey struct{}
 
 func ContextWithRemoteTarget(ctx context.Context, target management.Target) context.Context {
-	return context.WithValue(configuration.ContextWithoutLocalConfiguration(ctx), remoteTargetKey{}, target)
+	return context.WithValue(ctx, remoteTargetKey{}, target)
 }
 
-func RemoteTargetFromContext(ctx context.Context) (management.Target, bool) {
+func RemoteTargetFromContext(ctx context.Context) (management.Target, error) {
 	target, found := ctx.Value(remoteTargetKey{}).(management.Target)
-	return target, found
+	if !found {
+		return management.Target{}, fmt.Errorf("remote target is unavailable")
+	}
+	return target, nil
 }

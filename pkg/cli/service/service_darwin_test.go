@@ -30,7 +30,7 @@ func TestDarwinServicePlist(t *testing.T) {
 }
 
 func TestDarwinServicePlistDoesNotUseShell(t *testing.T) {
-	contents := string(darwinServicePlistContents(configuration.DefaultRef))
+	contents := string(darwinServicePlistContents(configuration.DefaultFilename))
 	for _, forbidden := range []string{"/bin/sh", "/bin/bash", "python"} {
 		require.NotContains(t, strings.ToLower(contents), forbidden)
 	}

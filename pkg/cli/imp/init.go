@@ -26,15 +26,16 @@ func newInitOpts(context.Context) (initOpts, error) {
 	}, nil
 }
 
-func registerInit(c cli.ContainerRequirementSetters, version sys.Version) {
-	c.AddCommand(cli.NewCommand[initOpts]("imp-init", "Prepares the environment to run Bifröst's imp inside.").
-		WithProfiles(cliCommon.ProfileExecutable).
-		WithVisible(false).
-		WithCreateOptionsHandler(newInitOpts).
-		WithHandler(func(ctx context.Context, o initOpts) error {
-			return handleInit(ctx, o, version)
-		}),
-	)
+func createInitCommands(version sys.Version) []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
+		cli.NewCommand[initOpts]("imp-init", "Prepares the environment to run Bifröst's imp inside.").
+			WithProfiles(cliCommon.ProfileExecutable).
+			WithVisible(false).
+			WithCreateOptionsHandler(newInitOpts).
+			WithHandler(func(ctx context.Context, o initOpts) error {
+				return handleInit(ctx, o, version)
+			}),
+	}
 }
 
 func handleInit(_ context.Context, o initOpts, version sys.Version) (rErr error) {

@@ -36,7 +36,7 @@ func doRunDefault(rc context.Context, o *opts, version sys.Version, run common.S
 		}
 	}()
 
-	if err := run(ctx, o.Configuration, version); err != nil {
+	if err := run(ctx, *o.Configuration, version); err != nil {
 		return err
 	}
 

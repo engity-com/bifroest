@@ -22,14 +22,14 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-func Register(c cli.ContainerRequirementSetters) {
-	c.AddCommand(cli.NewCommand[opts]("exec", "Runs a given process with the given attributes (environment, working directory, ...).").
-		WithProfiles(common.ProfileExecutable).
-		WithCreateOptionsHandler(newOpts).
-		WithVisible(false).
-		WithHandler(handler),
-	)
-	registerLocalConPTYRelay(c)
+func CreateCommands() []cli.CommandRequirementLike {
+	return append([]cli.CommandRequirementLike{
+		cli.NewCommand[opts]("exec", "Runs a given process with the given attributes (environment, working directory, ...).").
+			WithProfiles(common.ProfileExecutable).
+			WithCreateOptionsHandler(newOpts).
+			WithVisible(false).
+			WithHandler(handler),
+	}, createLocalConPTYRelayCommands()...)
 }
 
 func newOpts(context.Context) (opts, error) {

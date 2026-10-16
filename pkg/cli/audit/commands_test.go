@@ -15,13 +15,13 @@ import (
 
 func TestAuditCLIReusesSchemaAndControlsSensitiveExport(t *testing.T) {
 	configured := createAuditCliTestJournal(t, t.TempDir(), "default", "test.event")
-	ref := writeAuditCliTestConfiguration(t, t.TempDir(), configured)
+	configurationPath := writeAuditCliTestConfiguration(t, t.TempDir(), configured)
 	requirement := cli.NewSimpleApplication().WithName("bifroest").
 		WithFallbackToStdio(false).
 		WithErrorHandlerEnabled(false).
-		WithCodec(configuration.NewOptionalCliCodec()).
+		WithCodec(configuration.NewCliCodec(common.ProfileExecutable)).
 		WithCodec(codec.NewDateTime().WithFormats(time.RFC3339), "rfc3339")
-	Register(requirement)
+	requirement.WithCommand(CreateCommands()...)
 	app, err := requirement.Create()
 	require.NoError(t, err)
 	defer func() { require.NoError(t, app.Close()) }()
@@ -31,10 +31,10 @@ func TestAuditCLIReusesSchemaAndControlsSensitiveExport(t *testing.T) {
 		contains    string
 		notContains string
 	}{
-		{[]string{"audit", "verify", "default", "-c", ref.String()}, "verified", "confidential-flow"},
-		{[]string{"audit", "export", "default", "-c", ref.String()}, "test.event", "confidential-flow"},
-		{[]string{"audit", "export", "default", "-c", ref.String(), "--with-sensitive"}, "confidential-flow", ""},
-		{[]string{"audit", "ls", "-c", ref.String(), "--format=json"}, "default", "confidential-flow"},
+		{[]string{"audit", "verify", "default", "-c", configurationPath}, "verified", "confidential-flow"},
+		{[]string{"audit", "export", "default", "-c", configurationPath}, "test.event", "confidential-flow"},
+		{[]string{"audit", "export", "default", "-c", configurationPath, "--with-sensitive"}, "confidential-flow", ""},
+		{[]string{"audit", "ls", "-c", configurationPath, "--format=json"}, "default", "confidential-flow"},
 	} {
 		var output bytes.Buffer
 		ctx := cli.ContextWithStdio(t.Context(), nil, &output, nil)

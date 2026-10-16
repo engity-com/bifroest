@@ -26,17 +26,18 @@ type managementMergeOptions struct {
 	common.WithSensitiveOpts
 }
 
-func registerMerge(parent cli.ContainerRequirementSetters) {
-	parent.AddCommand(
+func createMergeCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
 		cli.NewCommand[managementMergeOptions]("merge", "Merge verified audit journals chronologically as JSON Lines.").
 			WithProfiles(common.ProfileManagement).
 			WithHandler(handleManagementMerge),
-	)
-	parent.AddCommand(
 		cli.NewCommand[mergeOptions]("merge", "Merge verified audit journals chronologically as JSON Lines.").
 			WithProfiles(common.ProfileExecutable).
 			WithHandler(handleMerge),
-	)
+		cli.NewCommand[mergeOptions]("merge", "Merge verified audit journals chronologically as JSON Lines.").
+			WithProfiles(common.ProfileRemote).
+			WithHandler(remoteHandleMerge),
+	}
 }
 
 func handleManagementMerge(ctx context.Context, opts managementMergeOptions) error {
@@ -44,41 +45,22 @@ func handleManagementMerge(ctx context.Context, opts managementMergeOptions) err
 	if !ok || access.Audit == nil {
 		return fmt.Errorf("management audit repository is unavailable")
 	}
-	names := make([]configuration.AuditlogName, 0, len(opts.Auditlogs))
-	for _, text := range opts.Auditlogs {
-		name := configuration.AuditlogName(text)
-		if err := name.Validate(); err != nil {
-			return err
-		}
-		names = append(names, name)
+	names, err := parseAuditlogNames(opts.Auditlogs)
+	if err != nil {
+		return err
 	}
 	return access.Audit.Export(ctx, names, opts.WithSensitive,
 		audit.RecordOrderChronological, cli.StdoutOfContext(ctx))
 }
 
 func handleMerge(ctx context.Context, opts mergeOptions) error {
-	names := make([]configuration.AuditlogName, 0, len(opts.Auditlogs))
-	for _, raw := range opts.Auditlogs {
-		name := configuration.AuditlogName(raw)
-		if err := name.Validate(); err != nil {
-			return err
-		}
-		names = append(names, name)
+	names, err := parseAuditlogNames(opts.Auditlogs)
+	if err != nil {
+		return err
 	}
 	conf, err := common.ResolveConfiguration(ctx, opts)
 	if err != nil {
 		return err
-	}
-	if target, remote := common.RemoteTargetFromContext(ctx); remote {
-		if conf != nil {
-			return fmt.Errorf("--configuration cannot be combined with a remote target")
-		}
-		return runRemoteAudit(ctx, target, remoteAuditOptions{
-			Operation: remoteMerge, Names: names, TrustAnchors: opts.ExpectedProducerIds,
-			IdentityFiles: opts.DecryptionIdentityFiles,
-			Output:        opts.Output, Force: opts.Force, WithSensitive: opts.WithSensitive,
-			Format: format.Text,
-		}, cli.StdoutOfContext(ctx))
 	}
 	configured := make([]*configuration.Auditlog, 0, len(opts.Auditlogs))
 	for _, name := range names {
@@ -124,4 +106,36 @@ func handleMerge(ctx context.Context, opts mergeOptions) error {
 		return err
 	}
 	return writeAuditOutput(output, opts.Force, stdout, verified, audit.RecordOrderChronological, validate)
+}
+
+func remoteHandleMerge(ctx context.Context, opts mergeOptions) error {
+	if opts.Configuration != nil {
+		return fmt.Errorf("--configuration cannot be combined with a remote target")
+	}
+	target, err := common.RemoteTargetFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	names, err := parseAuditlogNames(opts.Auditlogs)
+	if err != nil {
+		return err
+	}
+	return runRemoteAudit(ctx, target, remoteAuditOptions{
+		Operation: remoteMerge, Names: names, TrustAnchors: opts.ExpectedProducerIds,
+		IdentityFiles: opts.DecryptionIdentityFiles,
+		Output:        opts.Output, Force: opts.Force, WithSensitive: opts.WithSensitive,
+		Format: format.Text,
+	}, cli.StdoutOfContext(ctx))
+}
+
+func parseAuditlogNames(values []string) ([]configuration.AuditlogName, error) {
+	names := make([]configuration.AuditlogName, 0, len(values))
+	for _, value := range values {
+		name := configuration.AuditlogName(value)
+		if err := name.Validate(); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, nil
 }

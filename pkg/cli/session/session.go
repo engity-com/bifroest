@@ -37,26 +37,33 @@ type showOptions struct {
 	sessionIDOptions
 }
 
-func Register(parent cli.ContainerRequirementSetters) {
-	command := cli.NewCommand[sessionOptions]("session", "Inspect Bifröst sessions.").
-		WithProfiles(common.ProfileExecutable, common.ProfileManagement)
-	command.AddCommand(
-		cli.NewCommand[listOptions]("ls", "List active sessions by default.").
-			WithProfiles(common.ProfileExecutable).
-			WithHandler(handleList),
-		cli.NewCommand[listOptions]("ls", "List active sessions by default.").
-			WithProfiles(common.ProfileManagement).
-			WithHandler(handleManagementList),
-	)
-	command.AddCommand(
-		cli.NewCommand[showOptions]("show", "Show one session by ID.").
-			WithProfiles(common.ProfileExecutable).
-			WithHandler(handleShow),
-		cli.NewCommand[showOptions]("show", "Show one session by ID.").
-			WithProfiles(common.ProfileManagement).
-			WithHandler(handleManagementShow),
-	)
-	parent.AddCommand(command)
+func CreateCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
+		cli.NewCommand[sessionOptions]("session", "Inspect Bifröst sessions.").
+			WithProfiles(common.ProfileExecutable, common.ProfileRemote, common.ProfileManagement).
+			WithCommand(
+				cli.NewCommand[listOptions]("ls", "List active sessions by default.").
+					WithProfiles(common.ProfileExecutable).
+					WithHandler(handleList),
+				cli.NewCommand[listOptions]("ls", "List active sessions by default.").
+					WithProfiles(common.ProfileRemote).
+					WithHandler(remoteHandleList),
+				cli.NewCommand[listOptions]("ls", "List active sessions by default.").
+					WithProfiles(common.ProfileManagement).
+					WithHandler(handleManagementList),
+			).
+			WithCommand(
+				cli.NewCommand[showOptions]("show", "Show one session by ID.").
+					WithProfiles(common.ProfileExecutable).
+					WithHandler(handleShow),
+				cli.NewCommand[showOptions]("show", "Show one session by ID.").
+					WithProfiles(common.ProfileRemote).
+					WithHandler(remoteHandleShow),
+				cli.NewCommand[showOptions]("show", "Show one session by ID.").
+					WithProfiles(common.ProfileManagement).
+					WithHandler(handleManagementShow),
+			),
+	}
 }
 
 func handleManagementList(ctx context.Context, opts listOptions) error {
@@ -98,20 +105,25 @@ func handleList(ctx context.Context, opts listOptions) error {
 	if err != nil {
 		return err
 	}
-	if target, exists := common.RemoteTargetFromContext(ctx); exists {
-		if conf != nil {
-			return fmt.Errorf("--configuration cannot be combined with a remote target")
-		}
-		args := []string{"session", "ls", "--state=" + opts.State, "--format=" + string(opts.Parent.Format)}
-		if opts.Flow != "" {
-			args = append(args, "--flow="+opts.Flow)
-		}
-		if opts.User != "" {
-			args = append(args, "--user="+opts.User)
-		}
-		return target.Run(ctx, args...)
-	}
 	return listSessions(ctx, opts.Parent.Format, opts.listFilterOptions, localSessionSource(conf))
+}
+
+func remoteHandleList(ctx context.Context, opts listOptions) error {
+	if opts.Parent.Configuration != nil {
+		return fmt.Errorf("--configuration cannot be combined with a remote target")
+	}
+	target, err := common.RemoteTargetFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	args := []string{"session", "ls", "--state=" + opts.State, "--format=" + string(opts.Parent.Format)}
+	if opts.Flow != "" {
+		args = append(args, "--flow="+opts.Flow)
+	}
+	if opts.User != "" {
+		args = append(args, "--user="+opts.User)
+	}
+	return target.Run(ctx, args...)
 }
 
 func listSessions(ctx context.Context, selected format.Format, filters listFilterOptions, source SessionSource) error {
@@ -126,13 +138,18 @@ func handleShow(ctx context.Context, opts showOptions) error {
 	if err != nil {
 		return err
 	}
-	if target, exists := common.RemoteTargetFromContext(ctx); exists {
-		if conf != nil {
-			return fmt.Errorf("--configuration cannot be combined with a remote target")
-		}
-		return target.Run(ctx, "session", "show", opts.ID.String(), "--format="+string(opts.Parent.Format))
-	}
 	return showSession(ctx, opts.Parent.Format, opts.ID, localSessionSource(conf))
+}
+
+func remoteHandleShow(ctx context.Context, opts showOptions) error {
+	if opts.Parent.Configuration != nil {
+		return fmt.Errorf("--configuration cannot be combined with a remote target")
+	}
+	target, err := common.RemoteTargetFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	return target.Run(ctx, "session", "show", opts.ID.String(), "--format="+string(opts.Parent.Format))
 }
 
 func showSession(ctx context.Context, selected format.Format, id bfSession.Id, source SessionSource) error {

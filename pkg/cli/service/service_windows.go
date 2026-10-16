@@ -51,45 +51,46 @@ type removeOpts struct {
 	Stop bool `flag:"stop" default:"true" description:"If enabled, the service will be stopped afterwards, automatically."`
 }
 
-func Register(c cli.ContainerRequirementSetters, version sys.Version) {
-	c.AddCommand(cli.NewSimpleCommand("service").
-		WithProfiles(cliCommon.ProfileExecutable).
-		WithCommand(
-			cli.NewCommand[installOpts]("install", "Installs the service.").
-				WithProfiles(cliCommon.ProfileExecutable).
-				WithHandler(func(_ context.Context, o installOpts) error {
-					return (&WindowsService{
-						Version: version,
-						Name:    o.ServiceName,
-						Conf:    o.Configuration,
-					}).install(o.Start, true, o.DisplayName)
-				}),
-			cli.NewCommand[removeOpts]("remove", "Removes the service.").
-				WithProfiles(cliCommon.ProfileExecutable).
-				WithHandler(func(_ context.Context, o removeOpts) error {
-					return (&WindowsService{
-						Version: version,
-						Name:    o.ServiceName,
-					}).remove(o.Stop)
-				}),
-			cli.NewCommand[opts]("start", "Starts the service.").
-				WithProfiles(cliCommon.ProfileExecutable).
-				WithHandler(func(_ context.Context, o opts) error {
-					return (&WindowsService{
-						Version: version,
-						Name:    o.ServiceName,
-					}).start()
-				}),
-			cli.NewCommand[opts]("stop", "Stops the service.").
-				WithProfiles(cliCommon.ProfileExecutable).
-				WithHandler(func(_ context.Context, o opts) error {
-					return (&WindowsService{
-						Version: version,
-						Name:    o.ServiceName,
-					}).stop()
-				}),
-		),
-	)
+func CreateCommands(version sys.Version) []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
+		cli.NewSimpleCommand("service").
+			WithProfiles(cliCommon.ProfileExecutable).
+			WithCommand(
+				cli.NewCommand[installOpts]("install", "Installs the service.").
+					WithProfiles(cliCommon.ProfileExecutable).
+					WithHandler(func(_ context.Context, o installOpts) error {
+						return (&WindowsService{
+							Version: version,
+							Name:    o.ServiceName,
+							Conf:    *o.Configuration,
+						}).install(o.Start, true, o.DisplayName)
+					}),
+				cli.NewCommand[removeOpts]("remove", "Removes the service.").
+					WithProfiles(cliCommon.ProfileExecutable).
+					WithHandler(func(_ context.Context, o removeOpts) error {
+						return (&WindowsService{
+							Version: version,
+							Name:    o.ServiceName,
+						}).remove(o.Stop)
+					}),
+				cli.NewCommand[opts]("start", "Starts the service.").
+					WithProfiles(cliCommon.ProfileExecutable).
+					WithHandler(func(_ context.Context, o opts) error {
+						return (&WindowsService{
+							Version: version,
+							Name:    o.ServiceName,
+						}).start()
+					}),
+				cli.NewCommand[opts]("stop", "Stops the service.").
+					WithProfiles(cliCommon.ProfileExecutable).
+					WithHandler(func(_ context.Context, o opts) error {
+						return (&WindowsService{
+							Version: version,
+							Name:    o.ServiceName,
+						}).stop()
+					}),
+			),
+	}
 }
 
 func (this *WindowsService) Execute(_ []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (ssec bool, errno uint32) {

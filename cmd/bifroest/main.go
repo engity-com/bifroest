@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	goos "os"
 	"os/signal"
 
@@ -14,7 +13,6 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/cli"
 	"github.com/engity-com/bifroest/pkg/cli/common"
-	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/management"
 	"github.com/engity-com/bifroest/pkg/service"
 )
@@ -31,7 +29,6 @@ func run() (resultErr error) {
 	application, err := cli.NewApplication[opts](versionV, "SSH server and gateway for standard SSH clients: OIDC Device Authorization, Docker/Kubernetes sessions, verifiable audit and recording.", service.Run).
 		WithInitializeHandler(configureExecutableLogging).
 		WithFallbackToStdio(true).
-		WithCodec(configuration.NewCliCodec(true, true)).
 		Create()
 	if err != nil {
 		return err
@@ -45,15 +42,14 @@ func run() (resultErr error) {
 	ctx, stop := signal.NotifyContext(context.Background(), goos.Interrupt)
 	defer stop()
 
+	profile := common.ProfileExecutable
 	if target != nil {
-		if len(args) == 0 || !supportsRemoteManagementCommand(args[0]) {
-			return fmt.Errorf("command %q does not support remote execution", args)
-		}
+		profile = common.ProfileRemote
 		ctx = common.ContextWithRemoteTarget(ctx, management.Target{
 			Host: target.RawHost, User: target.User, Port: target.Port, ExplicitPort: target.ExplicitPort,
 		})
 	}
 	return application.ParseAndExecute(ctx, &clibase.ParseOpts{
-		Profiles: []string{common.ProfileExecutable},
+		Profiles: []string{profile},
 	}, args...)
 }

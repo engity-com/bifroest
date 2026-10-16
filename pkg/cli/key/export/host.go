@@ -19,11 +19,12 @@ type hostOpts struct {
 	Force        bool   `flag:"force" description:"Replace an existing output file."`
 }
 
-func registerHost(c cli.ContainerRequirementSetters) {
-	c.AddCommand(cli.NewCommand[hostOpts]("host", "Export SSH host keys as known_hosts entries without network access.").
-		WithProfiles(common.ProfileExecutable).
-		WithHandler(handleHost),
-	)
+func createHostCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
+		cli.NewCommand[hostOpts]("host", "Export SSH host keys as known_hosts entries without network access.").
+			WithProfiles(common.ProfileExecutable).
+			WithHandler(handleHost),
+	}
 }
 
 func handleHost(ctx context.Context, o hostOpts) error {

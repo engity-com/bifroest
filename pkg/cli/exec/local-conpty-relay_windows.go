@@ -16,8 +16,8 @@ type localConPTYRelayOptions struct {
 	Rows    int `argument:"rows" required:"true" description:"PTY rows."`
 }
 
-func registerLocalConPTYRelay(parent cli.ContainerRequirementSetters) {
-	parent.AddCommand(
+func createLocalConPTYRelayCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
 		cli.NewCommand[localConPTYRelayOptions]("local-conpty-relay", "Internal ConPTY relay for local shell sessions.").
 			WithProfiles(common.ProfileExecutable).
 			WithVisible(false).
@@ -32,5 +32,5 @@ func registerLocalConPTYRelay(parent cli.ContainerRequirementSetters) {
 				}
 				return environment.WriteLocalConPTYRelayExitStatus(cli.StderrOfContext(ctx), code)
 			}),
-	)
+	}
 }

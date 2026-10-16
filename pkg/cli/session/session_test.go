@@ -21,8 +21,8 @@ func (emptySessionRepository) FindAll(context.Context, bfSession.Consumer, *bfSe
 
 func TestManagementSessionInvocationsKeepSeparateStreamsAndOptions(t *testing.T) {
 	requirement := cli.NewSimpleApplication().WithName("bifroest").WithFallbackToStdio(false).WithErrorHandlerEnabled(false).
-		WithCodec(configuration.NewOptionalCliCodec())
-	Register(requirement)
+		WithCodec(configuration.NewCliCodec(common.ProfileExecutable))
+	requirement.WithCommand(CreateCommands()...)
 	app, err := requirement.Create()
 	require.NoError(t, err)
 	defer func() { require.NoError(t, app.Close()) }()

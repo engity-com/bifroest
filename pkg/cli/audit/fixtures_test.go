@@ -48,7 +48,7 @@ func auditCliTestProducerId(t *testing.T, identityFile string) bfAudit.ProducerI
 	return identity.ProducerId()
 }
 
-func writeAuditCliTestConfiguration(t *testing.T, directory string, auditlogs ...configuration.Auditlog) configuration.Ref {
+func writeAuditCliTestConfiguration(t *testing.T, directory string, auditlogs ...configuration.Auditlog) string {
 	t.Helper()
 	var raw strings.Builder
 	raw.WriteString("auditlog:\n")
@@ -62,7 +62,5 @@ func writeAuditCliTestConfiguration(t *testing.T, directory string, auditlogs ..
 	_, _ = fmt.Fprintf(&raw, "flows:\n  - name: flow\n    auditlog: %s\n    authorization:\n      type: simple\n    environment:\n      type: dummy\n", auditlogs[0].Name)
 	path := filepath.Join(directory, "configuration.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(raw.String()), 0600))
-	var ref configuration.Ref
-	require.NoError(t, ref.Set(path))
-	return ref
+	return path
 }

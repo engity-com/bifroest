@@ -8,4 +8,4 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-func Register(cli.ContainerRequirementSetters, sys.Version) {}
+func CreateCommands(sys.Version) []cli.CommandRequirementLike { return nil }

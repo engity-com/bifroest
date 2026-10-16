@@ -26,14 +26,15 @@ type opts struct {
 	cservice.BaseOpts
 }
 
-func Register(c cli.ContainerRequirementSetters, version sys.Version, run cliCommon.ServiceRunner) {
-	c.AddCommand(cli.NewCommand[*opts]("serve", "Runs the service.").
-		WithProfiles(cliCommon.ProfileExecutable).
-		WithAliases("run").
-		WithHandler(func(ctx context.Context, o *opts) error {
-			return doRun(ctx, o, version, run)
-		}),
-	)
+func CreateCommands(version sys.Version, run cliCommon.ServiceRunner) []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
+		cli.NewCommand[*opts]("serve", "Runs the service.").
+			WithProfiles(cliCommon.ProfileExecutable).
+			WithAliases("run").
+			WithHandler(func(ctx context.Context, o *opts) error {
+				return doRun(ctx, o, version, run)
+			}),
+	}
 }
 
 func doRun(ctx context.Context, o *opts, version sys.Version, run cliCommon.ServiceRunner) error {
@@ -60,7 +61,7 @@ func doRun(ctx context.Context, o *opts, version sys.Version, run cliCommon.Serv
 	ws := &cservice.WindowsService{
 		Version: version,
 		Name:    o.ServiceName,
-		Conf:    o.Configuration,
+		Conf:    *o.Configuration,
 		Logger:  eLog,
 		Run:     run,
 	}

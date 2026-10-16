@@ -38,33 +38,40 @@ type showOptions struct {
 	recordingIDOptions
 }
 
-func Register(parent cli.ContainerRequirementSetters) {
-	cmd := cli.NewSimpleCommand("recording", "Inspect sealed session recordings.").
-		WithProfiles(common.ProfileExecutable, common.ProfileManagement)
-	registerRecordingInspectCmd(cmd)
-	registerRecordingVerifyCmd(cmd)
-	registerRecordingExportCmd(cmd)
-	registerRecordingPlayCmd(cmd)
-	registerManagementVerify(cmd)
-	registerManagementExport(cmd)
-	registerManagementPlay(cmd)
-	cmd.AddCommand(
+func CreateCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
+		cli.NewSimpleCommand("recording", "Inspect sealed session recordings.").
+			WithProfiles(common.ProfileExecutable, common.ProfileRemote, common.ProfileManagement).
+			WithCommand(createInspectCommands()...).
+			WithCommand(createVerifyCommands()...).
+			WithCommand(createExportCommands()...).
+			WithCommand(createPlayCommands()...).
+			WithCommand(createBrowseCommands()...),
+	}
+}
+
+func createBrowseCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
 		cli.NewCommand[listOptions]("ls", "List sealed Recordings in one auditlog.").
 			WithProfiles(common.ProfileExecutable).
 			WithHandler(handleList),
 		cli.NewCommand[listOptions]("ls", "List sealed Recordings in one auditlog.").
+			WithProfiles(common.ProfileRemote).
+			WithHandler(remoteHandleList),
+		cli.NewCommand[listOptions]("ls", "List sealed Recordings in one auditlog.").
 			WithProfiles(common.ProfileManagement).
 			WithHandler(handleManagementList),
-	)
-	cmd.AddCommand(
+
 		cli.NewCommand[showOptions]("show", "Show verified metadata of a sealed Recording.").
 			WithProfiles(common.ProfileExecutable).
 			WithHandler(handleShow),
 		cli.NewCommand[showOptions]("show", "Show verified metadata of a sealed Recording.").
+			WithProfiles(common.ProfileRemote).
+			WithHandler(remoteHandleShow),
+		cli.NewCommand[showOptions]("show", "Show verified metadata of a sealed Recording.").
 			WithProfiles(common.ProfileManagement).
 			WithHandler(handleManagementShow),
-	)
-	parent.AddCommand(cmd)
+	}
 }
 
 func handleManagementList(ctx context.Context, opts listOptions) error {
@@ -85,20 +92,23 @@ func handleList(ctx context.Context, opts listOptions) error {
 	if err != nil {
 		return err
 	}
-	if target, remote := common.RemoteTargetFromContext(ctx); remote {
-		if conf != nil {
-			return fmt.Errorf("--configuration cannot be combined with a remote target")
-		}
-		return target.Run(ctx,
-			"recording", "ls", opts.Auditlog.String(), "--format="+string(opts.Format),
-		)
-	}
 	rows, err := inspectLocalRecordings(ctx, conf, opts.Auditlog)
 	if err != nil {
 		return err
 	}
 	sortRecordings(rows)
 	return format.WriteRecordingList(cli.StdoutOfContext(ctx), opts.Format, rows)
+}
+
+func remoteHandleList(ctx context.Context, opts listOptions) error {
+	if opts.Configuration != nil {
+		return fmt.Errorf("--configuration cannot be combined with a remote target")
+	}
+	target, err := common.RemoteTargetFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	return target.Run(ctx, "recording", "ls", opts.Auditlog.String(), "--format="+string(opts.Format))
 }
 
 func sortRecordings(rows []RecordingView) {
@@ -122,19 +132,22 @@ func handleShow(ctx context.Context, opts showOptions) error {
 	if err != nil {
 		return err
 	}
-	if target, remote := common.RemoteTargetFromContext(ctx); remote {
-		if conf != nil {
-			return fmt.Errorf("--configuration cannot be combined with a remote target")
-		}
-		return target.Run(ctx,
-			"recording", "show", opts.Auditlog.String(), opts.ID.String(), "--format="+string(opts.Format),
-		)
-	}
 	row, err := inspectLocalRecording(ctx, conf, opts.Auditlog, opts.ID)
 	if err != nil {
 		return err
 	}
 	return format.WriteRecordingDetail(cli.StdoutOfContext(ctx), opts.Format, row)
+}
+
+func remoteHandleShow(ctx context.Context, opts showOptions) error {
+	if opts.Configuration != nil {
+		return fmt.Errorf("--configuration cannot be combined with a remote target")
+	}
+	target, err := common.RemoteTargetFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	return target.Run(ctx, "recording", "show", opts.Auditlog.String(), opts.ID.String(), "--format="+string(opts.Format))
 }
 
 func inspectLocalRecordings(ctx context.Context, conf *configuration.Configuration, name configuration.AuditlogName) ([]RecordingView, error) {
@@ -206,7 +219,7 @@ func inspectLocalRecording(ctx context.Context, conf *configuration.Configuratio
 	if err != nil {
 		return result, err
 	}
-	expected, err := configuredRecordingProducerIdFromConfiguration(name, conf, path)
+	expected, err := configuredRecordingProducerId(name, conf, path)
 	if err != nil {
 		return result, err
 	}

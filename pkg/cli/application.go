@@ -29,27 +29,25 @@ import (
 // which commands are available per invocation. The executable supplies run;
 // management invocations cannot activate serve.
 func NewApplication[O any](version sys.Version, description string, run common.ServiceRunner) *clibase.ApplicationRequirement[O] {
-	requirement := clibase.NewApplication[O]().
+	return clibase.NewApplication[O]().
 		WithName("bifroest").
 		WithDescription(description).
 		WithFallbackToStdio(false).
 		WithErrorHandlerEnabled(false).
-		WithCodec(configuration.NewCliCodec(true, true)).
-		WithCodec(configuration.NewOptionalCliCodec()).
-		WithCodec(codec.NewDateTime().WithFormats(time.RFC3339), "rfc3339")
-	caudit.Register(requirement)
-	cflow.Register(requirement)
-	csession.Register(requirement)
-	crecording.Register(requirement)
-	cversion.Register(requirement, version)
-	cdlv.Register(requirement)
-	cdummyserver.Register(requirement)
-	cexec.Register(requirement)
-	cforever.Register(requirement)
-	cimp.Register(requirement, version)
-	ckey.Register(requirement)
-	cserve.Register(requirement, version, run)
-	cservice.Register(requirement, version)
-	csftpserver.Register(requirement)
-	return requirement
+		WithCodec(configuration.NewCliCodec(common.ProfileExecutable)).
+		WithCodec(codec.NewDateTime().WithFormats(time.RFC3339), "rfc3339").
+		WithCommand(caudit.CreateCommands()...).
+		WithCommand(cflow.CreateCommands()...).
+		WithCommand(csession.CreateCommands()...).
+		WithCommand(crecording.CreateCommands()...).
+		WithCommand(cversion.CreateCommands(version)...).
+		WithCommand(cdlv.CreateCommands()...).
+		WithCommand(cdummyserver.CreateCommands()...).
+		WithCommand(cexec.CreateCommands()...).
+		WithCommand(cforever.CreateCommands()...).
+		WithCommand(cimp.CreateCommands(version)...).
+		WithCommand(ckey.CreateCommands()...).
+		WithCommand(cserve.CreateCommands(version, run)...).
+		WithCommand(cservice.CreateCommands(version)...).
+		WithCommand(csftpserver.CreateCommands()...)
 }

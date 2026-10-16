@@ -33,7 +33,7 @@ func (noFeatures) ForEach(func(sys.VersionFeatureCategory)) {}
 
 func TestVersionReusesApplicationAndContextStreams(t *testing.T) {
 	requirement := cli.NewSimpleApplication().WithName("bifroest").WithFallbackToStdio(false).WithErrorHandlerEnabled(false)
-	Register(requirement, testVersion{})
+	requirement.WithCommand(CreateCommands(testVersion{})...)
 	app, err := requirement.Create()
 	require.NoError(t, err)
 	defer func() { require.NoError(t, app.Close()) }()

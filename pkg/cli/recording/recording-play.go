@@ -21,12 +21,20 @@ type managementPlayOptions struct {
 	Speed float64 `flag:"speed" default:"1" description:"Playback speed multiplier, up to 100."`
 }
 
-func registerManagementPlay(parent cli.ContainerRequirementSetters) {
-	parent.AddCommand(
+func createPlayCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
 		cli.NewCommand[managementPlayOptions]("play", "Verify and play a session Recording in the terminal.").
 			WithProfiles(common.ProfileManagement).
 			WithHandler(handleManagementPlay),
-	)
+		cli.NewCommand[playCommandOptions]("play", "Verify and play a session Recording in the terminal.").
+			WithProfiles(common.ProfileExecutable).
+			WithHandler(func(ctx context.Context, o playCommandOptions) error {
+				return doRecordingPlay(ctx, o, cli.StdoutOfContext(ctx))
+			}),
+		cli.NewCommand[playCommandOptions]("play", "Verify and play a session Recording in the terminal.").
+			WithProfiles(common.ProfileRemote).
+			WithHandler(remoteHandlePlay),
+	}
 }
 
 func handleManagementPlay(ctx context.Context, opts managementPlayOptions) error {
@@ -38,17 +46,6 @@ func handleManagementPlay(ctx context.Context, opts managementPlayOptions) error
 		return fmt.Errorf("management recording repository is unavailable")
 	}
 	return access.Recording.Play(ctx, opts.Auditlog, opts.ID, opts.Speed, cli.StdoutOfContext(ctx))
-}
-
-func registerRecordingPlayCmd(parent cli.ContainerRequirementSetters) {
-	parent.AddCommand(cli.NewCommand[playCommandOptions]("play", "Verify and play a session Recording in the terminal.").
-		WithProfiles(common.ProfileExecutable).
-		WithHandler(func(ctx context.Context, o playCommandOptions) error {
-			if target, remote := common.RemoteTargetFromContext(ctx); remote {
-				return runRemotePlay(ctx, target, o, cli.StdoutOfContext(ctx))
-			}
-			return doRecordingPlay(ctx, o, cli.StdoutOfContext(ctx))
-		}))
 }
 
 func doRecordingPlay(ctx context.Context, opts playCommandOptions, output io.Writer) error {

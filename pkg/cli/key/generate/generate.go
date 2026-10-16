@@ -20,11 +20,12 @@ type opts struct {
 	PublicFile   string `flag:"publicFile" placeholder:"<path>" description:"Optional public key file to create."`
 }
 
-func Register(c cli.ContainerRequirementSetters) {
-	c.AddCommand(cli.NewCommand[opts]("generate", "Generate an Ed25519 private key without replacing an existing file.").
-		WithProfiles(common.ProfileExecutable).
-		WithHandler(handle),
-	)
+func CreateCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
+		cli.NewCommand[opts]("generate", "Generate an Ed25519 private key without replacing an existing file.").
+			WithProfiles(common.ProfileExecutable).
+			WithHandler(handle),
+	}
 }
 
 func handle(_ context.Context, o opts) error {

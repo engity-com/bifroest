@@ -6,12 +6,11 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/common"
 )
 
-func Register(c cli.ContainerRequirementSetters) {
-	cmd := cli.NewSimpleCommand("import", "Import trusted SSH public key material.").
-		WithProfiles(common.ProfileExecutable)
-
-	registerCa(cmd)
-	registerHost(cmd)
-
-	c.AddCommand(cmd)
+func CreateCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
+		cli.NewSimpleCommand("import", "Import trusted SSH public key material.").
+			WithProfiles(common.ProfileExecutable).
+			WithCommand(createCaCommands()...).
+			WithCommand(createHostCommands()...),
+	}
 }

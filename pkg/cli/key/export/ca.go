@@ -19,11 +19,12 @@ type exportOpts struct {
 	Flow   configuration.FlowName `argument:"flowName" required:"true" description:"Flow whose SSH certificate authority should be exported."`
 }
 
-func registerCa(c cli.ContainerRequirementSetters) {
-	c.AddCommand(cli.NewCommand[exportOpts]("ca", "Export the public key of a flow's SSH certificate authority.").
-		WithProfiles(common.ProfileExecutable).
-		WithHandler(handleExport),
-	)
+func createCaCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
+		cli.NewCommand[exportOpts]("ca", "Export the public key of a flow's SSH certificate authority.").
+			WithProfiles(common.ProfileExecutable).
+			WithHandler(handleExport),
+	}
 }
 
 func handleExport(ctx context.Context, o exportOpts) error {
@@ -42,6 +43,9 @@ func handleExport(ctx context.Context, o exportOpts) error {
 }
 
 func findConfiguredFlow(o *exportOpts) (*configuration.Flow, error) {
+	if o.Configuration == nil {
+		return nil, fmt.Errorf("configuration is unavailable")
+	}
 	for i := range o.Configuration.Flows {
 		if o.Flow.IsEqualTo(o.Configuration.Flows[i].Name) {
 			return &o.Configuration.Flows[i], nil

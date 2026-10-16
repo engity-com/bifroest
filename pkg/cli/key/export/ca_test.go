@@ -20,9 +20,9 @@ func TestKeyExportCaUsesFlowConfigurationBeforeServiceStart(t *testing.T) {
 	authorityFile := filepath.Join(directory, "ca")
 	configurationFile := writeKeyExportCaTestConfiguration(t, directory, identityFile, authorityFile, true)
 
-	var ref configuration.Ref
-	require.NoError(t, ref.Set(configurationFile))
-	opts := exportOpts{Opts: configuration.Opts{Configuration: *ref.Get()}, Flow: "entry", Output: "-"}
+	var conf configuration.Configuration
+	require.NoError(t, conf.LoadFromFile(configurationFile))
+	opts := exportOpts{Opts: configuration.Opts{Configuration: &conf}, Flow: "entry", Output: "-"}
 	var stdout bytes.Buffer
 	ctx := cli.ContextWithStdio(t.Context(), nil, &stdout, nil)
 	require.NoError(t, handleExport(ctx, opts))
@@ -45,10 +45,10 @@ func TestKeyExportCaFileIsNoClobberUnlessForced(t *testing.T) {
 	directory := t.TempDir()
 	authorityFile := filepath.Join(directory, "ca")
 	configurationFile := writeKeyExportCaTestConfiguration(t, directory, filepath.Join(directory, "client-key"), authorityFile, true)
-	var ref configuration.Ref
-	require.NoError(t, ref.Set(configurationFile))
+	var conf configuration.Configuration
+	require.NoError(t, conf.LoadFromFile(configurationFile))
 	output := filepath.Join(directory, "ca.pub")
-	opts := exportOpts{Opts: configuration.Opts{Configuration: *ref.Get()}, Flow: "entry", Output: output}
+	opts := exportOpts{Opts: configuration.Opts{Configuration: &conf}, Flow: "entry", Output: output}
 
 	require.NoError(t, handleExport(t.Context(), opts))
 	require.Error(t, handleExport(t.Context(), opts))
@@ -60,10 +60,10 @@ func TestKeyExportCaDoesNotReplacePrivateKeyWithForce(t *testing.T) {
 	directory := t.TempDir()
 	authorityFile := filepath.Join(directory, "ca")
 	configurationFile := writeKeyExportCaTestConfiguration(t, directory, filepath.Join(directory, "client-key"), authorityFile, true)
-	var ref configuration.Ref
-	require.NoError(t, ref.Set(configurationFile))
+	var conf configuration.Configuration
+	require.NoError(t, conf.LoadFromFile(configurationFile))
 
-	err := handleExport(t.Context(), exportOpts{Opts: configuration.Opts{Configuration: *ref.Get()}, Flow: "entry", Output: authorityFile, Force: true})
+	err := handleExport(t.Context(), exportOpts{Opts: configuration.Opts{Configuration: &conf}, Flow: "entry", Output: authorityFile, Force: true})
 	require.ErrorContains(t, err, "must not replace private key")
 	privateRaw, readErr := goos.ReadFile(authorityFile)
 	require.NoError(t, readErr)
@@ -74,11 +74,11 @@ func TestKeyExportCaDoesNotReplacePrivateKeyWithForce(t *testing.T) {
 func TestKeyExportCaRejectsUnknownOrInapplicableFlow(t *testing.T) {
 	directory := t.TempDir()
 	configurationFile := writeKeyExportCaTestConfiguration(t, directory, filepath.Join(directory, "client-key"), filepath.Join(directory, "ca"), false)
-	var ref configuration.Ref
-	require.NoError(t, ref.Set(configurationFile))
+	var conf configuration.Configuration
+	require.NoError(t, conf.LoadFromFile(configurationFile))
 
 	for _, flow := range []configuration.FlowName{"missing", "entry"} {
-		err := handleExport(t.Context(), exportOpts{Opts: configuration.Opts{Configuration: *ref.Get()}, Flow: flow, Output: "-"})
+		err := handleExport(t.Context(), exportOpts{Opts: configuration.Opts{Configuration: &conf}, Flow: flow, Output: "-"})
 		require.Error(t, err)
 	}
 }

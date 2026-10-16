@@ -12,16 +12,15 @@ import (
 	audit2 "github.com/engity-com/bifroest/pkg/cli/audit"
 	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/cli/format"
-	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/recording"
 )
 
 type verifyCommandOptions struct {
 	common.RequireFullVerificationOpts
 	common.DecryptionIdentityFilesOpts
+	common.ExecutableConfigurationOpts
 	File               string        `argument:"fileOrAuditlog" description:"Configured auditlog name or copied Recording file path."`
 	RecordingID        string        `argument:"recordingId" description:"Recording UUID when selecting an auditlog."`
-	Configuration      string        `flag:"configuration" short:"c" description:"Local configuration file."`
 	ExpectedProducerID string        `flag:"expectedProducerId" description:"Independently trusted producer ID."`
 	Format             format.Format `flag:"format" default:"table" enum:"table|json|yaml|cbor" description:"Output format."`
 }
@@ -33,12 +32,20 @@ type managementVerifyOptions struct {
 	format.Opts
 }
 
-func registerManagementVerify(parent cli.ContainerRequirementSetters) {
-	parent.AddCommand(
+func createVerifyCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
 		cli.NewCommand[managementVerifyOptions]("verify", "Verify a signed session Recording.").
 			WithProfiles(common.ProfileManagement).
 			WithHandler(handleManagementVerify),
-	)
+		cli.NewCommand[verifyCommandOptions]("verify", "Verify a signed session Recording.").
+			WithProfiles(common.ProfileExecutable).
+			WithHandler(func(ctx context.Context, o verifyCommandOptions) error {
+				return doRecordingVerify(ctx, o, cli.StdoutOfContext(ctx))
+			}),
+		cli.NewCommand[verifyCommandOptions]("verify", "Verify a signed session Recording.").
+			WithProfiles(common.ProfileRemote).
+			WithHandler(remoteHandleVerify),
+	}
 }
 
 func handleManagementVerify(ctx context.Context, opts managementVerifyOptions) error {
@@ -53,35 +60,17 @@ func handleManagementVerify(ctx context.Context, opts managementVerifyOptions) e
 	return format.WriteVerification(cli.StdoutOfContext(ctx), common.FormatForInvocation(ctx, opts.Format), scope)
 }
 
-func registerRecordingVerifyCmd(parent cli.ContainerRequirementSetters) {
-	parent.AddCommand(cli.NewCommand[verifyCommandOptions]("verify", "Verify a signed session Recording.").
-		WithProfiles(common.ProfileExecutable).
-		WithHandler(func(ctx context.Context, o verifyCommandOptions) error {
-			if target, remote := common.RemoteTargetFromContext(ctx); remote {
-				return runRemoteVerify(ctx, target, o, cli.StdoutOfContext(ctx))
-			}
-			return doRecordingVerify(ctx, o, cli.StdoutOfContext(ctx))
-		}))
-}
-
 func doRecordingVerify(ctx context.Context, opts verifyCommandOptions, stdout io.Writer) (rErr error) {
 	if stdout == nil {
 		return fmt.Errorf("nil Recording verification output")
 	}
-	filePath, auditlogName, err := ResolveRecordingSelection(opts.File, opts.RecordingID, "", opts.Configuration, opts.ExpectedProducerID)
+	filePath, auditlogName, localConfiguration, err := resolveRecordingSelection(ctx, opts.File, opts.RecordingID, opts.ExpectedProducerID, opts)
 	if err != nil {
 		return err
 	}
-	if opts.Configuration != "" && auditlogName.IsZero() {
-		return fmt.Errorf("--configuration requires a local auditlog name and Recording ID")
-	}
 	var expected audit.ProducerId
-	var localConfiguration configuration.Ref
 	if !auditlogName.IsZero() {
-		if opts.ExpectedProducerID != "" {
-			return fmt.Errorf("local Recording selection cannot be combined with --expectedProducerId")
-		}
-		expected, err = configuredRecordingProducerId(auditlogName, opts.Configuration, filePath, &localConfiguration)
+		expected, err = configuredRecordingProducerId(auditlogName, localConfiguration, filePath)
 	} else {
 		expected, err = recordingExportTrust(opts.ExpectedProducerID, false)
 	}
@@ -131,7 +120,7 @@ func doRecordingVerify(ctx context.Context, opts verifyCommandOptions, stdout io
 		return err
 	}
 	if !auditlogName.IsZero() {
-		if err := audit2.EnsureAuditDestinationSafe("-", stdout, localConfiguration.GetFilename(), localConfiguration.Get(), opts.DecryptionIdentityFiles); err != nil {
+		if err := audit2.EnsureAuditDestinationSafe("-", stdout, localConfiguration.Filename, localConfiguration, opts.DecryptionIdentityFiles); err != nil {
 			return err
 		}
 	}

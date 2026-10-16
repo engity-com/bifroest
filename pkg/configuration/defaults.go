@@ -37,7 +37,7 @@ func (this EmptyStrOpts) LoadConfiguration(fallbackToDefault bool) (*Configurati
 		if !fallbackToDefault {
 			return nil, false, nil
 		}
-		fn = DefaultRef
+		fn = DefaultFilename
 	}
 
 	var result Configuration

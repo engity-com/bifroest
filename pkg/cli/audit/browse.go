@@ -35,35 +35,42 @@ type eventsOptions struct {
 	showOptions
 	eventFilterOptions
 	common.WithSensitiveOpts
-	DecryptionIdentityFiles []string `flag:"decryptionIdentityFile" profile:"executable" description:"Local private key for encrypted content; repeatable."`
-	ExpectedProducerID      string   `flag:"expectedProducerId" profile:"executable" description:"Independently trusted producer ID for remote sensitive events."`
+	DecryptionIdentityFiles []string `flag:"decryptionIdentityFile" profile:"executable|remote" description:"Local private key for encrypted content; repeatable."`
+	ExpectedProducerID      string   `flag:"expectedProducerId" profile:"remote" description:"Independently trusted producer ID for remote sensitive events."`
 }
 
-func registerBrowse(parent cli.ContainerRequirementSetters) {
-	parent.AddCommand(
+func createBrowseCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
 		cli.NewCommand[listOptions]("ls", "List configured audit logs.").
 			WithProfiles(common.ProfileExecutable).
 			WithHandler(handleList),
 		cli.NewCommand[listOptions]("ls", "List configured audit logs.").
+			WithProfiles(common.ProfileRemote).
+			WithHandler(remoteHandleList),
+		cli.NewCommand[listOptions]("ls", "List configured audit logs.").
 			WithProfiles(common.ProfileManagement).
 			WithHandler(handleManagementList),
-	)
-	parent.AddCommand(
+
 		cli.NewCommand[showOptions]("show", "Show audit-log settings.").
 			WithProfiles(common.ProfileExecutable).
 			WithHandler(handleShow),
 		cli.NewCommand[showOptions]("show", "Show audit-log settings.").
+			WithProfiles(common.ProfileRemote).
+			WithHandler(remoteHandleShow),
+		cli.NewCommand[showOptions]("show", "Show audit-log settings.").
 			WithProfiles(common.ProfileManagement).
 			WithHandler(handleManagementShow),
-	)
-	parent.AddCommand(
+
 		cli.NewCommand[eventsOptions]("events", "Show verified audit events.").
 			WithProfiles(common.ProfileExecutable).
 			WithHandler(handleEvents),
 		cli.NewCommand[eventsOptions]("events", "Show verified audit events.").
+			WithProfiles(common.ProfileRemote).
+			WithHandler(remoteHandleEvents),
+		cli.NewCommand[eventsOptions]("events", "Show verified audit events.").
 			WithProfiles(common.ProfileManagement).
 			WithHandler(handleManagementEvents),
-	)
+	}
 }
 
 func handleManagementList(ctx context.Context, options listOptions) error {
@@ -79,15 +86,18 @@ func handleList(ctx context.Context, options listOptions) error {
 	if err != nil {
 		return err
 	}
-	if target, remote := common.RemoteTargetFromContext(ctx); remote {
-		if conf != nil {
-			return fmt.Errorf("--configuration cannot be combined with a remote target")
-		}
-		return target.Run(ctx,
-			"audit", "ls", "--format="+string(options.Format),
-		)
-	}
 	return ListAuditlogs(cli.StdoutOfContext(ctx), options.Format, conf)
+}
+
+func remoteHandleList(ctx context.Context, options listOptions) error {
+	if options.Configuration != nil {
+		return fmt.Errorf("--configuration cannot be combined with a remote target")
+	}
+	target, err := common.RemoteTargetFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	return target.Run(ctx, "audit", "ls", "--format="+string(options.Format))
 }
 
 func handleManagementShow(ctx context.Context, options showOptions) error {
@@ -103,15 +113,18 @@ func handleShow(ctx context.Context, options showOptions) error {
 	if err != nil {
 		return err
 	}
-	if target, remote := common.RemoteTargetFromContext(ctx); remote {
-		if conf != nil {
-			return fmt.Errorf("--configuration cannot be combined with a remote target")
-		}
-		return target.Run(ctx,
-			"audit", "show", options.Name.String(), "--format="+string(options.Format),
-		)
-	}
 	return ShowAuditlog(cli.StdoutOfContext(ctx), options.Format, conf, options.Name)
+}
+
+func remoteHandleShow(ctx context.Context, options showOptions) error {
+	if options.Configuration != nil {
+		return fmt.Errorf("--configuration cannot be combined with a remote target")
+	}
+	target, err := common.RemoteTargetFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	return target.Run(ctx, "audit", "show", options.Name.String(), "--format="+string(options.Format))
 }
 
 func handleManagementEvents(ctx context.Context, options eventsOptions) error {
@@ -135,44 +148,11 @@ func handleManagementEvents(ctx context.Context, options eventsOptions) error {
 
 func handleEvents(ctx context.Context, options eventsOptions) error {
 	if options.ExpectedProducerID != "" {
-		if _, remote := common.RemoteTargetFromContext(ctx); !remote {
-			return fmt.Errorf("--expectedProducerId for audit events requires a remote target and --with-sensitive")
-		}
+		return fmt.Errorf("--expectedProducerId for audit events requires a remote target and --with-sensitive")
 	}
 	conf, err := common.ResolveConfiguration(ctx, options)
 	if err != nil {
 		return err
-	}
-	if target, remote := common.RemoteTargetFromContext(ctx); remote {
-		if conf != nil {
-			return fmt.Errorf("--configuration cannot be combined with a remote target")
-		}
-		if options.WithSensitive {
-			return doRemoteAuditEvents(ctx, target, AuditEventsOptions{
-				Format: options.Format, Auditlog: options.Name,
-				EventName: options.EventName, FlowName: options.FlowName,
-				Since: options.Since, Until: options.Until, Limit: options.Limit,
-				WithSensitive: true, IdentityFiles: options.DecryptionIdentityFiles,
-				ExpectedProducerID: options.ExpectedProducerID,
-			}, cli.StdoutOfContext(ctx))
-		}
-		if options.ExpectedProducerID != "" || len(options.DecryptionIdentityFiles) != 0 {
-			return fmt.Errorf("sensitive audit options require --with-sensitive")
-		}
-		args := []string{"audit", "events", options.Name.String(), "--format=" + string(options.Format), fmt.Sprintf("--limit=%d", options.Limit)}
-		if options.EventName != "" {
-			args = append(args, "--name="+options.EventName)
-		}
-		if options.FlowName != "" {
-			args = append(args, "--flow="+options.FlowName)
-		}
-		if !options.Since.IsZero() {
-			args = append(args, "--since="+options.Since.Format(time.RFC3339))
-		}
-		if !options.Until.IsZero() {
-			args = append(args, "--until="+options.Until.Format(time.RFC3339))
-		}
-		return target.Run(ctx, args...)
 	}
 	configured, err := FindConfigured(conf, options.Name)
 	if err != nil {
@@ -187,6 +167,42 @@ func handleEvents(ctx context.Context, options eventsOptions) error {
 		return err
 	}
 	return writeEvents(ctx, conf, options.Name, identity.ProducerId(), options.Format, options.eventFilterOptions, options.WithSensitive, options.DecryptionIdentityFiles)
+}
+
+func remoteHandleEvents(ctx context.Context, options eventsOptions) error {
+	if options.Configuration != nil {
+		return fmt.Errorf("--configuration cannot be combined with a remote target")
+	}
+	target, err := common.RemoteTargetFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	if options.WithSensitive {
+		return doRemoteAuditEvents(ctx, target, AuditEventsOptions{
+			Format: options.Format, Auditlog: options.Name,
+			EventName: options.EventName, FlowName: options.FlowName,
+			Since: options.Since, Until: options.Until, Limit: options.Limit,
+			WithSensitive: true, IdentityFiles: options.DecryptionIdentityFiles,
+			ExpectedProducerID: options.ExpectedProducerID,
+		}, cli.StdoutOfContext(ctx))
+	}
+	if options.ExpectedProducerID != "" || len(options.DecryptionIdentityFiles) != 0 {
+		return fmt.Errorf("sensitive audit options require --with-sensitive")
+	}
+	args := []string{"audit", "events", options.Name.String(), "--format=" + string(options.Format), fmt.Sprintf("--limit=%d", options.Limit)}
+	if options.EventName != "" {
+		args = append(args, "--name="+options.EventName)
+	}
+	if options.FlowName != "" {
+		args = append(args, "--flow="+options.FlowName)
+	}
+	if !options.Since.IsZero() {
+		args = append(args, "--since="+options.Since.Format(time.RFC3339))
+	}
+	if !options.Until.IsZero() {
+		args = append(args, "--until="+options.Until.Format(time.RFC3339))
+	}
+	return target.Run(ctx, args...)
 }
 
 func writeEvents(ctx context.Context, conf *configuration.Configuration, name configuration.AuditlogName, expected bfAudit.ProducerId, selected format.Format, options eventFilterOptions, sensitive bool, identities []string) error {

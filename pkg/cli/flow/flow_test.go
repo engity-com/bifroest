@@ -18,8 +18,8 @@ import (
 
 func TestManagementFlowUsesReusableDefinitionAndInvocationAccess(t *testing.T) {
 	requirement := cli.NewSimpleApplication().WithName("bifroest").WithFallbackToStdio(false).WithErrorHandlerEnabled(false).
-		WithCodec(configuration.NewOptionalCliCodec())
-	Register(requirement)
+		WithCodec(configuration.NewCliCodec(common.ProfileExecutable))
+	requirement.WithCommand(CreateCommands()...)
 	app, err := requirement.Create()
 	require.NoError(t, err)
 	defer func() { require.NoError(t, app.Close()) }()
@@ -58,6 +58,6 @@ func TestManagementFlowUsesReusableDefinitionAndInvocationAccess(t *testing.T) {
 	require.Len(t, decoded, 1)
 	remoteCtx := common.ContextWithRemoteTarget(t.Context(), management.Target{Host: "example.invalid"})
 	remoteCtx = cli.ContextWithStdio(remoteCtx, nil, &output, &diagnostic)
-	require.ErrorContains(t, app.ParseAndExecute(remoteCtx, &cli.ParseOpts{Profiles: []string{common.ProfileExecutable}},
-		"flow", "ls", "--configuration=does-not-exist.yaml"), "--configuration cannot be combined with a remote target")
+	require.ErrorContains(t, app.ParseAndExecute(remoteCtx, &cli.ParseOpts{Profiles: []string{common.ProfileRemote}},
+		"flow", "ls", "--configuration=does-not-exist.yaml"), "unknown flag --configuration")
 }

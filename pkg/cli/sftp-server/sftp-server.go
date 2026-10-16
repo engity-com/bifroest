@@ -20,13 +20,14 @@ func newOpts(context.Context) (opts, error) {
 	}, nil
 }
 
-func Register(c cli.ContainerRequirementSetters) {
-	c.AddCommand(cli.NewCommand[opts]("sftp-server", "Run the sftp server instance used by this instance.").
-		WithProfiles(common.ProfileExecutable).
-		WithCreateOptionsHandler(newOpts).
-		WithVisible(false).
-		WithHandler(handle),
-	)
+func CreateCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
+		cli.NewCommand[opts]("sftp-server", "Run the sftp server instance used by this instance.").
+			WithProfiles(common.ProfileExecutable).
+			WithCreateOptionsHandler(newOpts).
+			WithVisible(false).
+			WithHandler(handle),
+	}
 }
 
 func handle(ctx context.Context, o opts) error {

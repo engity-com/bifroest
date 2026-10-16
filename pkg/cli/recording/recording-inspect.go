@@ -63,12 +63,14 @@ type inspectCommandOptions struct {
 	ExpectedProducerId string `flag:"expectedProducerId" description:"Independently trusted producer ID."`
 }
 
-func registerRecordingInspectCmd(parent cli.ContainerRequirementSetters) {
-	parent.AddCommand(cli.NewCommand[inspectCommandOptions]("inspect", "Verify and inspect a session Recording artifact as JSON.").
-		WithProfiles(common.ProfileExecutable).
-		WithHandler(func(ctx context.Context, o inspectCommandOptions) error {
-			return doRecordingInspect(ctx, &recordingInspectOpts{file: o.File, expectedProducerId: o.ExpectedProducerId}, cli.StdoutOfContext(ctx))
-		}))
+func createInspectCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
+		cli.NewCommand[inspectCommandOptions]("inspect", "Verify and inspect a session Recording artifact as JSON.").
+			WithProfiles(common.ProfileExecutable).
+			WithHandler(func(ctx context.Context, o inspectCommandOptions) error {
+				return doRecordingInspect(ctx, &recordingInspectOpts{file: o.File, expectedProducerId: o.ExpectedProducerId}, cli.StdoutOfContext(ctx))
+			}),
+	}
 }
 
 func doRecordingInspect(ctx context.Context, opts *recordingInspectOpts, stdout io.Writer) (rErr error) {

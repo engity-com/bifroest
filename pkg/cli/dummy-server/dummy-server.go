@@ -22,12 +22,13 @@ type opts struct {
 	Addr string `flag:"addr" default:":8783" placeholder:"[<host>]:<port>" description:"Address to bind to."`
 }
 
-func Register(c cli.ContainerRequirementSetters) {
-	c.AddCommand(cli.NewCommand[opts]("dummy-server", "This is a supporting command which simply runs forever until it receives a interrupt signal.").
-		WithProfiles(cliCommon.ProfileExecutable).
-		WithVisible(false).
-		WithHandler(handler),
-	)
+func CreateCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
+		cli.NewCommand[opts]("dummy-server", "This is a supporting command which simply runs forever until it receives a interrupt signal.").
+			WithProfiles(cliCommon.ProfileExecutable).
+			WithVisible(false).
+			WithHandler(handler),
+	}
 }
 
 func handler(_ context.Context, o opts) (rErr error) {

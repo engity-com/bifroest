@@ -36,20 +36,20 @@ func newOpts(context.Context) (opts, error) {
 	}, nil
 }
 
-func Register(c cli.ContainerRequirementSetters, version sys.Version) {
-	register(c, version)
-	registerInit(c, version)
+func CreateCommands(version sys.Version) []cli.CommandRequirementLike {
+	return append(createImpCommands(version), createInitCommands(version)...)
 }
 
-func register(c cli.ContainerRequirementSetters, version sys.Version) {
-	c.AddCommand(cli.NewCommand[opts]("imp", "Runs the imp service.").
-		WithProfiles(common.ProfileExecutable).
-		WithVisible(false).
-		WithCreateOptionsHandler(newOpts).
-		WithHandler(func(ctx context.Context, o opts) error {
-			return handler(ctx, o, version)
-		}),
-	)
+func createImpCommands(version sys.Version) []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
+		cli.NewCommand[opts]("imp", "Runs the imp service.").
+			WithProfiles(common.ProfileExecutable).
+			WithVisible(false).
+			WithCreateOptionsHandler(newOpts).
+			WithHandler(func(ctx context.Context, o opts) error {
+				return handler(ctx, o, version)
+			}),
+	}
 }
 
 func handler(ctx context.Context, o opts, version sys.Version) error {

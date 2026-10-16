@@ -50,38 +50,39 @@ type installOpts struct {
 	Start bool `flag:"start" default:"true" description:"If enabled, the service will be started afterwards, automatically."`
 }
 
-func Register(c cli.ContainerRequirementSetters, _ sys.Version) {
-	c.AddCommand(cli.NewSimpleCommand("service").
-		WithProfiles(common.ProfileExecutable).
-		WithCommand(cli.NewCommand[installOpts]("install", "Installs the service.").
+func CreateCommands(_ sys.Version) []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
+		cli.NewSimpleCommand("service").
 			WithProfiles(common.ProfileExecutable).
-			WithHandler(func(ctx context.Context, o installOpts) error {
-				c, err := o.GetAbsoluteConfiguration()
-				if err != nil {
-					return err
-				}
-				return (darwinService{}).install(c, o.Start)
-			}),
-		).
-		WithCommand(cli.NewCommand[opts]("remove", "Removes the service.").
-			WithProfiles(common.ProfileExecutable).
-			WithHandler(func(context.Context, opts) error {
-				return (darwinService{}).remove()
-			}),
-		).
-		WithCommand(cli.NewCommand[opts]("start", "Starts the service.").
-			WithProfiles(common.ProfileExecutable).
-			WithHandler(func(context.Context, opts) error {
-				return (darwinService{}).start()
-			}),
-		).
-		WithCommand(cli.NewCommand[opts]("stop", "Stops the service.").
-			WithProfiles(common.ProfileExecutable).
-			WithHandler(func(context.Context, opts) error {
-				return (darwinService{}).stop()
-			}),
-		),
-	)
+			WithCommand(cli.NewCommand[installOpts]("install", "Installs the service.").
+				WithProfiles(common.ProfileExecutable).
+				WithHandler(func(ctx context.Context, o installOpts) error {
+					c, err := o.GetAbsoluteConfiguration()
+					if err != nil {
+						return err
+					}
+					return (darwinService{}).install(c, o.Start)
+				}),
+			).
+			WithCommand(cli.NewCommand[opts]("remove", "Removes the service.").
+				WithProfiles(common.ProfileExecutable).
+				WithHandler(func(context.Context, opts) error {
+					return (darwinService{}).remove()
+				}),
+			).
+			WithCommand(cli.NewCommand[opts]("start", "Starts the service.").
+				WithProfiles(common.ProfileExecutable).
+				WithHandler(func(context.Context, opts) error {
+					return (darwinService{}).start()
+				}),
+			).
+			WithCommand(cli.NewCommand[opts]("stop", "Stops the service.").
+				WithProfiles(common.ProfileExecutable).
+				WithHandler(func(context.Context, opts) error {
+					return (darwinService{}).stop()
+				}),
+			),
+	}
 }
 
 func (darwinService) install(conf string, start bool) error {

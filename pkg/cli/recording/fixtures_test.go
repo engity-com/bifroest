@@ -23,6 +23,7 @@ import (
 
 type recordingFixture struct {
 	clear, encrypted, identityFile string
+	signingIdentityFile            string
 	identity                       *audit.Identity
 	id                             bfRecording.Id
 }
@@ -59,8 +60,14 @@ func createRecordingFixture(t *testing.T) recordingFixture {
 	block, err := ssh.MarshalPrivateKey(encryptionKey, "recording-test")
 	require.NoError(t, err)
 	root := t.TempDir()
-	result := recordingFixture{identity: identity, id: id, identityFile: filepath.Join(root, "decrypt.key")}
+	result := recordingFixture{
+		identity: identity, id: id, identityFile: filepath.Join(root, "decrypt.key"),
+		signingIdentityFile: filepath.Join(root, "signing.key"),
+	}
 	require.NoError(t, bfcrypto.WriteBootstrapFile(result.identityFile, pem.EncodeToMemory(block), false))
+	signingBlock, err := ssh.MarshalPrivateKey(signingKey, "recording-signing-test")
+	require.NoError(t, err)
+	require.NoError(t, bfcrypto.WriteBootstrapFile(result.signingIdentityFile, pem.EncodeToMemory(signingBlock), false))
 	for _, encrypted := range []bool{false, true} {
 		var target *bfcrypto.AgeSshRecipient
 		name := "clear.bcast"

@@ -6,16 +6,14 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/common"
 )
 
-func Register(c cli.ContainerRequirementSetters) {
-	cmd := cli.NewSimpleCommand("audit", "Inspect and verify signed audit journals.").
-		WithProfiles(common.ProfileExecutable, common.ProfileManagement)
-
-	registerBrowse(cmd)
-	registerProducerID(cmd)
-	registerVerify(cmd)
-	registerDecrypt(cmd)
-	registerAuditExport(cmd)
-	registerMerge(cmd)
-
-	c.AddCommand(cmd)
+func CreateCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
+		cli.NewSimpleCommand("audit", "Inspect and verify signed audit journals.").
+			WithProfiles(common.ProfileExecutable, common.ProfileRemote, common.ProfileManagement).
+			WithCommand(createBrowseCommands()...).
+			WithCommand(createProducerIDCommands()...).
+			WithCommand(createVerifyCommands()...).
+			WithCommand(createAuditExportCommands()...).
+			WithCommand(createMergeCommands()...),
+	}
 }

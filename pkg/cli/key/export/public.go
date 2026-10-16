@@ -16,11 +16,12 @@ type publicOpts struct {
 	Force        bool   `flag:"force" description:"Replace an existing output file."`
 }
 
-func registerPublic(c cli.ContainerRequirementSetters) {
-	c.AddCommand(cli.NewCommand[publicOpts]("public", "Export the public key of a local private key.").
-		WithProfiles(common.ProfileExecutable).
-		WithHandler(handlePublic),
-	)
+func createPublicCommands() []cli.CommandRequirementLike {
+	return []cli.CommandRequirementLike{
+		cli.NewCommand[publicOpts]("public", "Export the public key of a local private key.").
+			WithProfiles(common.ProfileExecutable).
+			WithHandler(handlePublic),
+	}
 }
 
 func handlePublic(ctx context.Context, o publicOpts) error {
