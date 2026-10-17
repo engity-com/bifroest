@@ -19,7 +19,7 @@ import (
 	"github.com/go-delve/delve/service/rpc2"
 	"github.com/go-delve/delve/service/rpccommon"
 
-	. "github.com/engity-com/bifroest/pkg/cli/common"
+	cliCommon "github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/debug"
 	"github.com/engity-com/bifroest/pkg/errors"
@@ -29,7 +29,7 @@ import (
 type opts struct {
 	Addr string   `flag:"addr" placeholder:"[<host>]:<port>" description:"Address to bind to."`
 	Wait bool     `flag:"wait" description:"By default the process continue to start without waiting for a remote debugger to attach. If this is provided, the target process wait to start for the first remote debugger being attached/connected."`
-	Args []string `flag:"args" description:"The actual target arguments to run the bifroest binary with."`
+	Args []string `argument:"args" description:"The actual target arguments to run the bifroest binary with."`
 }
 
 func newOpts(context.Context) (opts, error) {
@@ -43,7 +43,7 @@ func newOpts(context.Context) (opts, error) {
 func CreateCommands() []cli.CommandRequirementLike {
 	return []cli.CommandRequirementLike{
 		cli.NewCommand[opts]("dlv", "Runs a command of this binary with Delve.").
-			WithProfiles(ProfileExecutable).
+			WithProfiles(cliCommon.ProfileExecutable).
 			WithVisible(false).
 			WithCreateOptionsHandler(newOpts).
 			WithHandler(handler),
