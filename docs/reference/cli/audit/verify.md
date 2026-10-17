@@ -4,7 +4,7 @@ description: Verify a Bifröst audit journal.
 
 # `bifroest audit verify`
 
-Verifies signed `head.cbor`, producer identity, record and segment chains, seals, and file-name hashes up to a captured committed state without exporting records. Bifröst can keep writing. On success, the command reports `verified (scope: outer)` or `verified (scope: full)` on stdout and exits with status `0`. A sealed segment alone is not an accepted input.
+Verifies signed `head.cbor`, producer identity, record and segment chains, seals, and file-name hashes up to a captured committed state without exporting records. Bifröst can keep writing. By default, a successful command reports `verified (scope: outer)` or `verified (scope: full)` on stdout and exits with status `0`; `--format` selects structured output instead. A sealed segment alone is not an accepted input.
 
 When stdout is a regular file, the command refuses to write into protected journal, Recording, or identity files. Shell `>` redirection can truncate a file before Bifröst starts, so do not redirect verification output to protected files.
 
@@ -14,9 +14,11 @@ For `.beaudit`, the outer signatures and encrypted bytes can be verified without
 
 `bifroest audit verify [flags] [auditlogName]`
 
+`bifroest @target audit verify [flags] [auditlogName]`
+
 ## Arguments
 
-`auditlogName` selects a configured audit log by name and is required locally. With `--source`, it is an optional label for the offline source, defaulting to `default`, not a journal or segment path. A complete offline copy includes signed `head.cbor`.
+`auditlogName` selects a configured audit log by name and defaults to `default`, locally and through `@target`. With `--source`, it is a label for the offline source rather than a journal or segment path. A complete offline copy includes signed `head.cbor`.
 
 ## Flags {: #audit-verify-flags }
 
@@ -24,6 +26,8 @@ Includes [all general flags](../index.md#general-flags).
 
 <<flag("configuration", "File Path", "../../data-type.md#file-path", aliases=["c"], id_prefix="audit-verify-", heading=3)>>
 Configuration to load. Without this flag, local verification uses the same platform default as `bifroest run`. Cannot be combined with `--source`; offline verification needs no configuration file.
+
+This flag cannot be combined with a remote target. Remote verification uses the selected server's journal and verifies a downloaded signed checkpoint on the CLI machine.
 
 <<flag("source", "File Path", "../../data-type.md#file-path", id_prefix="audit-verify-", heading=3)>>
 Complete auditlog copy to verify without a configuration file or signing private key, including the signed head and all segments. Requires `--expectedProducerId` from an independent trust source. A downloaded sealed segment alone is not a complete journal.
@@ -39,6 +43,11 @@ Require full verification. For encrypted `.beaudit`, verification fails without 
 
 <<flag("expectedProducerId", "string", id_prefix="audit-verify-", heading=3)>>
 External trust anchor as a 64-hex producer ID. On the Bifröst host, omit it to use the configured signing key. With `--source`, it is required. Obtain the ID from [`audit producer-id`](producer-id.md) on the server and retain it through an independently trusted channel. A value read only from the journal being verified is not a trust anchor.
+
+Remote verification requires this flag or an independently trusted `X-ExpectedProducerId` in the target's SSH configuration. Private decryption keys stay on the CLI machine; use `--decryptionIdentityFile` or the SSH setting `X-AuditPrivateKey`. The management flow must enable `allowArtifactTransfer: true`, including for outer-only verification. Offline `--source` and `--encryptionPublicKeyFile` selectors cannot be used with `@target`.
+
+<<flag("format", "string", default="table", id_prefix="audit-verify-", heading=3)>>
+Output format: `table`, `json`, `yaml` or `cbor`. The default `table` format prints the status line shown above; structured formats contain the verification result and its scope.
 
 ## Examples
 
@@ -57,3 +66,12 @@ bifroest audit verify \
 ```
 
 For encrypted journals, add `--encryptionPublicKeyFile /srv/audit-keys/recipient-key.pub` for outer-only verification, or add `--decryptionIdentityFile /srv/audit-keys/recipient-key --require-full` to require full verification. See [Encrypted audit events](../../auditlog/index.md#encrypted-audit-events) for the copy workflow.
+
+Verify a remote journal on the CLI machine:
+
+```shell
+bifroest @bifroest-admin audit verify \
+  --expectedProducerId "<trusted-64-hex-id>" \
+  --format=json \
+  default
+```

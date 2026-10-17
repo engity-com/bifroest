@@ -15,6 +15,7 @@ An embedded signing key proves that an artifact is internally consistent, not wh
 * [`bifroest recording inspect`](inspect.md) verifies one Recording artifact and emits its metadata as JSON.
 * [`bifroest recording verify`](verify.md) checks a Recording against a trusted producer without exporting the Cast.
 * [`bifroest recording export`](export.md) verifies, decompresses, and when necessary decrypts one Recording artifact as asciicast v3.
+* [`bifroest recording play`](export.md#built-in-playback) verifies and replays a local, offline, or remotely selected Recording in the terminal.
 
 ## Listing pages
 
