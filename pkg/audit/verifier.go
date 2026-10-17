@@ -57,8 +57,9 @@ const (
 )
 
 type verifierBudget struct {
-	records uint64
-	bytes   int64
+	records   uint64
+	bytes     int64
+	selection *verifiedRecordSelection
 }
 
 func (this *verifierBudget) consume(payloadBytes int64, materialize bool) error {
@@ -95,14 +96,21 @@ type verifierFileSnapshot struct {
 // revalidates the selected journal tree. It does not lock live journals, so a
 // writer may change a file after that file's final revalidation.
 func VerifyJournalIntegrity(ctx context.Context, sources []JournalSource) error {
-	_, err := verifyNativeJournals(ctx, sources, false)
+	_, err := verifyNativeJournals(ctx, sources, false, nil)
 	return err
 }
 
 // VerifyJournals has the same point-in-time semantics as VerifyJournalIntegrity
 // and materializes records from the handles whose contents were verified.
 func VerifyJournals(ctx context.Context, sources []JournalSource) (*Verification, error) {
-	return verifyNativeJournals(ctx, sources, true)
+	return verifyNativeJournals(ctx, sources, true, nil)
+}
+
+// SelectJournalRecords verifies the same complete journals as VerifyJournals,
+// retaining only the selected records within the materialization budget.
+// No selection is returned unless the entire verification succeeds.
+func SelectJournalRecords(ctx context.Context, sources []JournalSource, selection RecordSelection) (*Verification, error) {
+	return verifyNativeJournals(ctx, sources, true, &verifiedRecordSelection{selection: selection})
 }
 
 func (this *verifierDirectorySnapshot) add(name string, file verifierFileSnapshot) {

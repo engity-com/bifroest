@@ -729,7 +729,8 @@ flows:
 		configure(&conf)
 	}
 
-	svc, err := (&Service{Configuration: conf, Version: serviceTestVersion{}}).prepare()
+	definition := &Service{Configuration: conf, Version: serviceTestVersion{}}
+	svc, err := definition.prepare()
 	require.NoError(t, err)
 	if testEnvironment != nil {
 		require.NoError(t, svc.environments.Close())

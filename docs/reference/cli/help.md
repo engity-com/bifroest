@@ -2,13 +2,15 @@
 description: Show help for Bifröst CLI commands.
 ---
 
-# `bifroest help`
+# `bifroest --help`
 
 Shows command-line help for Bifröst or for a selected command path.
 
 ## Syntax
 
-`bifroest help [<command>...]`
+`bifroest [<command>...] --help`
+
+`bifroest @target <command>... --help`
 
 ## Arguments
 
@@ -16,10 +18,12 @@ Shows command-line help for Bifröst or for a selected command path.
 
 ## Flags
 
-This command has no command-specific flags. It includes [all general flags](index.md#general-flags).
+`-h` and `--help` show help for the selected command without executing its handler. For a remote target, help describes the commands and flags available to the integrated management client and does not open an SSH connection. See [general flags](index.md#general-flags).
 
 ## Example
 
 ```shell
-bifroest help audit verify
+bifroest --help
+bifroest audit verify --help
+bifroest @bifroest-admin recording play --help
 ```

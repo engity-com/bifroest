@@ -21,7 +21,7 @@ Name of the service on Windows. This flag is not available on macOS, where the f
 Configuration file used by the installed service. On macOS, the file must be below `/Library/Application Support/Engity/Bifroest`, owned by `root:wheel`, have no ACL and use permissions no broader than `0640`. The macOS default is `/Library/Application Support/Engity/Bifroest/configuration.yaml`.
 
 <<flag("start", "bool", default=True, id_prefix="service-install-", heading=3)>>
-Starts the service immediately after installation. Use `--no-start` to install it without starting it. The default behavior is equivalent to subsequently calling [`bifroest service start`](start.md).
+Starts the service immediately after installation. Use `--start=false` to install it without starting it. The default behavior is equivalent to subsequently calling [`bifroest service start`](start.md).
 
 ## Example
 

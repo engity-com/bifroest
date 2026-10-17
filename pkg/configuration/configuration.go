@@ -34,6 +34,8 @@ type Configuration struct {
 	Alternatives Alternatives `yaml:"alternatives"`
 
 	StartMessage template.String `yaml:"startMessage,omitempty"`
+
+	Filename string `yaml:"-"`
 }
 
 func (this *Configuration) SetDefaults() error {
@@ -144,6 +146,13 @@ func (this *Configuration) LoadFromYaml(reader io.Reader, fn string) error {
 		return errors.Newf(errors.Config, "configuration file %q contains problems: %w", fn, err)
 	}
 
+	switch fn {
+	case "<anonymous>":
+		buf.Filename = ""
+	default:
+		buf.Filename = fn
+	}
+
 	*this = buf
 	return nil
 }
@@ -170,4 +179,8 @@ func (this Configuration) isEqualTo(other *Configuration) bool {
 		isEqual(&this.HouseKeeping, &other.HouseKeeping) &&
 		isEqual(&this.Alternatives, &other.Alternatives) &&
 		isEqual(&this.StartMessage, &other.StartMessage)
+}
+
+func (this Configuration) GetFilename() string {
+	return this.Filename
 }

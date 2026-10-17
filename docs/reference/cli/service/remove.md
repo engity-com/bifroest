@@ -18,4 +18,4 @@ Includes [all general flags](../index.md#general-flags).
 Name of the service on Windows. This flag is not available on macOS.
 
 <<flag("stop", "bool", default=True, id_prefix="service-remove-", heading=3)>>
-Stops the service before removing it on Windows. Use `--no-stop` to remove it without first stopping it. This flag is not available on macOS, where removing a LaunchDaemon always stops and unregisters it first.
+Stops the service before removing it on Windows. Use `--stop=false` to remove it without first stopping it. This flag is not available on macOS, where removing a LaunchDaemon always stops and unregisters it first.

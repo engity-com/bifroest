@@ -77,3 +77,11 @@ func (this AuditlogName) IsEqualTo(other any) bool {
 func (this AuditlogName) Clone() AuditlogName {
 	return AuditlogName(strings.Clone(string(this)))
 }
+
+type AuditlogNameOpts struct {
+	Auditlog AuditlogName `argument:"auditlogName" placeholder:"<name of auditlog>" default:"default" description:"Configured auditlog, or optional label for an offline journal."`
+}
+
+type AuditlogNamesOpts struct {
+	Auditlogs []string `argument:"auditlogName" placeholder:"<name of auditlog>" description:"Configured auditlogs to merge."`
+}

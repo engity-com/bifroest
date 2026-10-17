@@ -91,6 +91,10 @@ func TestNativeLiveRejectsDamagedPublishedSegmentAfterCapturedHead(t *testing.T)
 				require.EqualValues(t, 1, verification.Journals[0].RecordCount)
 				require.Len(t, verification.Records(), 1)
 				require.Equal(t, "captured", verification.Records()[0].Event.Name)
+				selection := RecordSelection{Limit: 1}
+				selected, err := SelectLiveJournalRecords(context.Background(), []JournalSource{source}, selection)
+				require.NoError(t, err)
+				require.Equal(t, verification.Records(), selected.Records())
 				require.NoError(t, VerifyLiveJournalIntegrity(context.Background(), []JournalSource{source}))
 				activeName := nativeActiveClear
 				if encrypted {
@@ -121,6 +125,9 @@ func TestNativeLiveRejectsDamagedPublishedSegmentAfterCapturedHead(t *testing.T)
 				verification, err = VerifyLiveJournals(context.Background(), []JournalSource{source})
 				require.Error(t, err)
 				require.Nil(t, verification)
+				selected, err = SelectLiveJournalRecords(context.Background(), []JournalSource{source}, selection)
+				require.Error(t, err)
+				require.Nil(t, selected)
 				require.Error(t, VerifyLiveJournalIntegrity(context.Background(), []JournalSource{source}))
 				require.Equal(t, before, snapshotJournalTestTree(t, conf.Directory))
 				var output bytes.Buffer

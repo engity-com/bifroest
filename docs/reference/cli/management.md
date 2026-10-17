@@ -1,0 +1,65 @@
+---
+description: Inspect sessions, flows, audit logs, and recordings locally or through the SSH management flow.
+---
+
+# Management commands
+
+Commands run locally unless the **first argument** is `@[USER@]HOST[:PORT]`. That target selects remote execution for the entire command, even if a particular command does not support remote access; unsupported combinations fail with an error. A bracketed IPv6 literal can be used with a port: `@[::1]:2222`.
+
+```shell
+bifroest session ls
+bifroest @management@bifroest.example.org session ls --format=json
+bifroest @bifroest-admin flow show administration --format=yaml
+ssh management@bifroest.example.org 'audit ls'
+```
+
+`@target` must precede all other arguments. The leading `@` is reserved for remote selection; `@file` argument expansion is not available in management commands, and `@target` in a later position is rejected. Direct SSH commands execute inside the management flow and do not start a shell.
+
+| Subject | Commands | Notes |
+| --- | --- | --- |
+| `session` | `ls`, `show <id>` | `ls` defaults to authorized, non-expired sessions; use `--state=all`, `--flow` and `--user` for more. |
+| `flow` | `ls`, `show <name>` | Arbitrary strings, including image references, Kubernetes name templates and SSH certificate extension values, are redacted unless that management flow explicitly enables `includingCredentials`; only the Flow name, selected auditlog, authorization/environment types, non-string settings and fixed image-pull policies remain visible. |
+| `audit` | `ls`, `show <name>`, `events <name>`, `producer-id`, `verify`, `export`, `decrypt`, `merge` | `events` is signature-verified; private fields require `--with-sensitive`. |
+| `recording` | `ls <auditlog>`, `show <auditlog> <id>`, `verify`, `export`, `play` | `ls` [streams verified entries](recording/index.md#streaming-a-page) by default and aborts on errors. It returns 100 entries by default, sorted by Recording ID; use `--limit=1..1000` and the last ID as `--after` for [further pages](recording/index.md#listing-pages). An encrypted Recording reports outer verification until the matching local private key is supplied for full verification, export and playback. |
+
+`audit events <name>` defaults to the newest 100 matching events in journal order. `--name`, `--flow` (with `--with-sensitive`), `--since`, and `--until` filter before the `--limit` selection; `--limit=0` selects all matches. Verification checks the complete signed journal prefix before producing output, including excluded records. Only selected events are retained; the materialization limits of 250,000 records and 64 MiB of stored record payload apply to that selection.
+
+Lists display tables and detail commands display key/value lists by default. Use `--format=json`, `--format=yaml` or `--format=cbor` for structured output, including verification results and producer IDs. Public CBOR output contains only the result; the versioned CBOR envelope belongs to the internal SSH transport. Audit export/merge remain **JSON Lines** and Recording export remains **asciicast**; those stream formats cannot be changed with `--format`. This is independent of the existing `--output` flag, which chooses an export **file**. Local `audit verify/export/merge` and `recording verify/export` commands remain available. Remote audit verification/export copies a signed journal checkpoint and verifies it on the CLI machine. Remote Recording `verify`, `export`, and `play` copy the signed original and verify it there. These remote downloads require `allowArtifactTransfer: true` on the authorized management flow, including for `verify` without `--with-sensitive`. Neither operation transmits a decryption private key to the server. `recording play` and export require `--with-sensitive`.
+
+Local file inputs, such as `audit verify --source ./journal` and `recording verify ./file.becast`, are not remote paths. Use a configured auditlog and Recording ID for remote selection. Output files and decryption-key files always refer to the CLI machine.
+
+`recording play` writes the verified terminal content to standard output. To save an asciicast file, use `recording export --output PATH`; `--output` and `--force` are export options and are not accepted by `play`.
+
+## SSH client and trust
+
+The `bifroest @target` client is integrated into the binary. It uses SSH configuration for host aliases, `HostName`, `User`, `Port`, `IdentityFile`, `IdentityAgent`, and `UserKnownHostsFile`. The host must have a trusted entry in `known_hosts`; Bifröst does not automatically accept an unknown host key. Unsupported SSH proxy directives such as `ProxyJump` and `ProxyCommand` fail explicitly. Other complex OpenSSH configurations might need to be simplified for this integrated client.
+
+For SSH authentication, Unix-like systems use `SSH_AUTH_SOCK`. On Windows, the client first tries the Windows OpenSSH agent named pipe (for at most five seconds), then Pageant's native agent interface. Canceling the command also closes an OpenSSH-agent connection waiting for a response. When both agents are running, set `X-SSHAgent pageant` in the matching SSH `Host` block to select Pageant explicitly; this cannot be combined with `IdentityAgent`. Modern Pageant versions can also provide an OpenSSH-compatible named pipe via `IdentityAgent`. The agent is used **only for SSH login**, not to decrypt audit or Recording content. In a container, mount the agent socket and/or identity files, SSH configuration, and `known_hosts` when needed; no `ssh` executable is required inside the container.
+
+Custom per-host SSH configuration is supported (the `IgnoreUnknown` directive allows the same file to be read by OpenSSH):
+
+```sshconfig
+IgnoreUnknown X-*
+
+Host bifroest-admin
+    HostName bifroest.example.org
+    User management
+    X-RecordingPrivateKey ~/.ssh/bifroest-recording-decryption
+    X-AuditPrivateKey ~/.ssh/bifroest-audit-decryption
+    X-ExpectedProducerId 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+```
+
+`X-RecordingPrivateKey` names a **local** private-key file. For encrypted audits, use `X-AuditPrivateKey` in the same `Host` block or supply `--decryptionIdentityFile` to the command. `X-ExpectedProducerId` pins an independently trusted audit/Recording signing producer ID; artifact commands and `audit events --with-sensitive` also accept `--expectedProducerId`. Keep signing and encryption keys distinct and retain producer IDs independently of copied evidence. A server-supplied ID is not a trust anchor.
+
+Without a matching private key, encrypted audit events and Recordings expose only their verified public/outer metadata. Direct SSH sessions cannot use a private key kept only on a separate CLI machine.
+
+With `allowArtifactTransfer: false`, `audit` and `recording` metadata and public event queries work remotely. Direct SSH can verify artifacts on the server without downloading them; client-side `@host audit verify` and `@host recording verify` require the artifact-transfer permission. Unencrypted original files can already contain sensitive information, so only grant this permission to flows whose administrators are allowed to read that evidence.
+
+```shell
+bifroest @bifroest-admin audit verify default
+bifroest @bifroest-admin audit export --with-sensitive default
+bifroest @bifroest-admin recording play --with-sensitive default RECORDING_UUID
+ssh management@bifroest.example.org 'recording verify default RECORDING_UUID'
+```
+
+Direct SSH can export/play unencrypted Recordings with `--with-sensitive` when the authorized management flow enables `allowArtifactTransfer: true`. For encrypted content, use the Bifröst client with a local decryption key. Encrypted audit journals work similarly: direct SSH remains keyless; the CLI downloads a signed checkpoint and decrypts it locally. A remote audit checkpoint is currently limited to **1 GiB** of signed journal files; recordings use the existing native-format size limit. The snapshot is verified both before transport and again on the client. A live journal that changes while it is copied may require a retry.
