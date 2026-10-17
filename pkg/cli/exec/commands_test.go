@@ -42,6 +42,9 @@ func TestExecCLIForwardsPositionalCommandAndStoresExitCode(t *testing.T) {
 			if systemRoot := os.Getenv("SystemRoot"); systemRoot != "" {
 				args = append(args, "--env=SystemRoot="+systemRoot)
 			}
+			if testing.CoverMode() != "" {
+				args = append(args, "--env=GOCOVERDIR="+t.TempDir())
+			}
 			if test.explicitExecutable {
 				args = append(args, "-p", executable)
 			}
