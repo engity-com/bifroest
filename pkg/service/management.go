@@ -44,18 +44,32 @@ func (this *service) isManagementFlow(name configuration.FlowName) bool {
 }
 
 func (this *service) RunManagementCommand(task environment.Task, includingCredentials, allowArtifactTransfer bool) (exitCode int, resultErr error) {
+	raw := task.SshSession().RawCommand()
 	defer func() {
 		if resultErr != nil {
+			this.logger().WithError(resultErr).Error("management command failed")
+			if raw == transport.WireRecordingListStreamCommand {
+				_ = transport.WriteRecordingStreamError(task.SshSession(), resultErr)
+			}
 			_, _ = fmt.Fprintln(task.SshSession().Stderr(), resultErr)
 		}
 	}()
-	raw := task.SshSession().RawCommand()
+	if raw == transport.WireRecordingListStreamCommand {
+		args, err := transport.DecodeWireRequest(task.SshSession())
+		if err != nil {
+			return -1, err
+		}
+		if len(args) < 2 || args[0] != "recording" || args[1] != "ls" {
+			return -1, fmt.Errorf("recording list streaming requires recording ls")
+		}
+		return this.runManagementArgs(task, includingCredentials, allowArtifactTransfer, args, managementStream)
+	}
 	if raw == transport.WireCommand {
 		args, err := transport.DecodeWireRequest(task.SshSession())
 		if err != nil {
 			return -1, err
 		}
-		return this.runManagementArgs(task, includingCredentials, allowArtifactTransfer, args, true)
+		return this.runManagementArgs(task, includingCredentials, allowArtifactTransfer, args, managementWire)
 	}
 	if raw == transport.WireRecordingCommand {
 		if !allowArtifactTransfer {
@@ -84,7 +98,7 @@ func (this *service) RunManagementCommand(task environment.Task, includingCreden
 	if err != nil {
 		return -1, fmt.Errorf("invalid management command: %w", err)
 	}
-	return this.runManagementArgs(task, includingCredentials, allowArtifactTransfer, args, false)
+	return this.runManagementArgs(task, includingCredentials, allowArtifactTransfer, args, managementHuman)
 }
 
 func (this *service) streamManagementAudit(task environment.Task, args []string) (int, error) {
@@ -161,7 +175,15 @@ func (this *service) streamManagementRecording(task environment.Task, args []str
 	return 0, nil
 }
 
-func (this *service) runManagementArgs(task environment.Task, includingCredentials, allowArtifactTransfer bool, args []string, wire bool) (int, error) {
+type managementOutputMode uint8
+
+const (
+	managementHuman managementOutputMode = iota
+	managementWire
+	managementStream
+)
+
+func (this *service) runManagementArgs(task environment.Task, includingCredentials, allowArtifactTransfer bool, args []string, outputMode managementOutputMode) (int, error) {
 	for _, arg := range args {
 		if strings.HasPrefix(arg, "@") {
 			return -1, fmt.Errorf("management commands do not permit @file argument expansion")
@@ -169,7 +191,8 @@ func (this *service) runManagementArgs(task environment.Task, includingCredentia
 	}
 	access := cliCommon.ManagementAccess{
 		Configuration: &this.Configuration, Sessions: this.sessions,
-		IncludingCredentials: includingCredentials, AllowArtifactTransfer: allowArtifactTransfer, WireFormat: wire,
+		IncludingCredentials: includingCredentials, AllowArtifactTransfer: allowArtifactTransfer,
+		WireFormat: outputMode != managementHuman, WireStream: outputMode == managementStream,
 		Audit:      managementAuditOperations{service: this, allowArtifactTransfer: allowArtifactTransfer},
 		Recording:  managementRecordingOperations{service: this, allowArtifactTransfer: allowArtifactTransfer},
 		Recordings: managementRecordingBrowser{service: this},
@@ -193,31 +216,35 @@ func (this *service) runManagementArgs(task environment.Task, includingCredentia
 
 type managementRecordingBrowser struct{ service *service }
 
-func (this managementRecordingBrowser) List(ctx context.Context, name configuration.AuditlogName) ([]model.RecordingView, error) {
+func (this managementRecordingBrowser) Visit(ctx context.Context, name configuration.AuditlogName, options recording.SealedPageOptions, consume func(model.RecordingView) error) error {
+	if err := options.Validate(); err != nil {
+		return err
+	}
 	repository := this.service.recordingRepositories[name]
 	if repository == nil || repository.native == nil {
-		return nil, fmt.Errorf("auditlog %q has no active recording repository", name)
+		return fmt.Errorf("auditlog %q has no active recording repository", name)
 	}
-	ids, err := repository.native.ListSealed(ctx)
+	ids, err := repository.native.ListSealedPage(ctx, options)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	entries := make([]model.RecordingView, 0, len(ids))
 	for _, id := range ids {
 		artifact, err := repository.native.OpenSealed(ctx, id)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		view, err := clirecording.InspectRecording(ctx, name, artifact, artifact.Size(), repository.producerId)
 		if closeErr := artifact.Close(); err == nil {
 			err = closeErr
 		}
 		if err != nil {
-			return nil, err
+			return err
 		}
-		entries = append(entries, view)
+		if err := consume(view); err != nil {
+			return err
+		}
 	}
-	return entries, nil
+	return nil
 }
 
 func (this managementRecordingBrowser) Detail(ctx context.Context, name configuration.AuditlogName, id recording.Id) (result model.RecordingView, resultErr error) {

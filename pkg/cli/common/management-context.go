@@ -20,6 +20,7 @@ type ManagementAccess struct {
 	IncludingCredentials  bool
 	AllowArtifactTransfer bool
 	WireFormat            bool
+	WireStream            bool
 	ProducerID            func(configuration.AuditlogName) (audit.ProducerId, error)
 	Recordings            ManagementRecordingBrowser
 	Audit                 ManagementAuditOperations
@@ -38,7 +39,7 @@ type ManagementRecordingOperations interface {
 }
 
 type ManagementRecordingBrowser interface {
-	List(context.Context, configuration.AuditlogName) ([]model.RecordingView, error)
+	Visit(context.Context, configuration.AuditlogName, bfRecording.SealedPageOptions, func(model.RecordingView) error) error
 	Detail(context.Context, configuration.AuditlogName, bfRecording.Id) (model.RecordingView, error)
 }
 

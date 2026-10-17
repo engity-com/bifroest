@@ -17,7 +17,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 )
 
-func newRecordingPlaybackTestApplication(t *testing.T) *cli.Application[cli.NoOptions] {
+func newRecordingTestApplication(t *testing.T) *cli.Application[cli.NoOptions] {
 	t.Helper()
 	app := cli.NewSimpleApplication("test").
 		WithFallbackToStdio(false).
@@ -108,7 +108,7 @@ func assertRecordingRejectsAppend(t *testing.T, args []string, path string, alia
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = output.Close() })
 	ctx := cli.ContextWithStdio(t.Context(), nil, output, nil)
-	err = newRecordingPlaybackTestApplication(t).ParseAndExecute(ctx,
+	err = newRecordingTestApplication(t).ParseAndExecute(ctx,
 		&cli.ParseOpts{Profiles: []string{common.ProfileExecutable}}, args...)
 	require.NoError(t, output.Close())
 	after, readErr := os.ReadFile(path)
@@ -122,7 +122,7 @@ func TestRecordingPlayAllowsSafeFileAndPropagatesOutputFailure(t *testing.T) {
 	args := []string{"recording", "play", fixture.clear, "--with-sensitive", "--speed=100",
 		"--expectedProducerId=" + fixture.identity.ProducerId().String(),
 	}
-	app := newRecordingPlaybackTestApplication(t)
+	app := newRecordingTestApplication(t)
 	opts := &cli.ParseOpts{Profiles: []string{common.ProfileExecutable}}
 	path := filepath.Join(t.TempDir(), "playback.txt")
 	output, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0600)
@@ -159,7 +159,7 @@ func TestRemoteRecordingPlayProtectsLocalDecryptionIdentity(t *testing.T) {
 			defer cancel()
 			ctx = common.ContextWithRemoteTarget(ctx, target)
 			ctx = cli.ContextWithStdio(ctx, nil, output, nil)
-			err = newRecordingPlaybackTestApplication(t).ParseAndExecute(ctx,
+			err = newRecordingTestApplication(t).ParseAndExecute(ctx,
 				&cli.ParseOpts{Profiles: []string{common.ProfileRemote}},
 				"recording", "play", "default", fixture.id.String(), "--with-sensitive", "--speed=100",
 				"--expectedProducerId="+fixture.identity.ProducerId().String(),
@@ -184,7 +184,7 @@ type failedPlaybackOutput struct{}
 func (failedPlaybackOutput) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
 func TestRecordingPlayDoesNotExposeExportDestinationFlags(t *testing.T) {
-	app := newRecordingPlaybackTestApplication(t)
+	app := newRecordingTestApplication(t)
 	for _, profile := range []string{common.ProfileExecutable, common.ProfileRemote, common.ProfileManagement} {
 		t.Run(profile, func(t *testing.T) {
 			var help bytes.Buffer

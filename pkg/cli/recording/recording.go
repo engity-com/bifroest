@@ -7,7 +7,6 @@ import (
 	goos "os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	cli "github.com/echocat/cli4g"
 
@@ -27,14 +26,20 @@ type recordingIDOptions struct {
 	ID recording.Id `argument:"id" required:"true" description:"Recording UUID."`
 }
 
-type listOptions struct {
+type browseOptions struct {
 	common.ExecutableConfigurationOpts
 	format.Opts
 	selectedAuditlog
 }
 
+type listOptions struct {
+	browseOptions
+	Limit uint         `flag:"limit" default:"100" description:"Recordings per page (1-1000), ordered by Recording ID."`
+	After recording.Id `flag:"after" description:"Continue after this Recording ID; use the last ID of the previous page."`
+}
+
 type showOptions struct {
-	listOptions
+	browseOptions
 	recordingIDOptions
 }
 
@@ -75,44 +80,102 @@ func createBrowseCommands() []cli.CommandRequirementLike {
 }
 
 func handleManagementList(ctx context.Context, opts listOptions) error {
+	page := recording.SealedPageOptions{After: opts.After, Limit: opts.Limit}
+	if err := page.Validate(); err != nil {
+		return err
+	}
 	access, ok := common.ManagementAccessFromContext(ctx)
 	if !ok || access.Recordings == nil {
 		return fmt.Errorf("management recording repository is unavailable")
 	}
-	rows, err := access.Recordings.List(ctx, opts.Auditlog)
-	if err != nil {
-		return err
+	selected := common.FormatForInvocation(ctx, opts.Format)
+	if access.WireStream {
+		selected = format.WireCborStream
 	}
-	sortRecordings(rows)
-	return format.WriteRecordingList(cli.StdoutOfContext(ctx), common.FormatForInvocation(ctx, opts.Format), rows)
+	return writeRecordingPage(ctx, opts, selected, func(consume func(RecordingView) error) error {
+		return access.Recordings.Visit(ctx, opts.Auditlog, page, consume)
+	})
 }
 
 func handleList(ctx context.Context, opts listOptions) error {
+	page := recording.SealedPageOptions{After: opts.After, Limit: opts.Limit}
+	if err := page.Validate(); err != nil {
+		return err
+	}
 	conf, err := common.ResolveConfiguration(ctx, opts)
 	if err != nil {
 		return err
 	}
-	rows, err := inspectLocalRecordings(ctx, conf, opts.Auditlog)
-	if err != nil {
-		return err
-	}
-	sortRecordings(rows)
-	return format.WriteRecordingList(cli.StdoutOfContext(ctx), opts.Format, rows)
+	return writeRecordingPage(ctx, opts, opts.Format, func(consume func(RecordingView) error) error {
+		return visitLocalRecordings(ctx, conf, opts.Auditlog, page, consume)
+	})
 }
 
 func remoteHandleList(ctx context.Context, opts listOptions) error {
 	if opts.Configuration != nil {
 		return fmt.Errorf("--configuration cannot be combined with a remote target")
 	}
+	if err := (recording.SealedPageOptions{After: opts.After, Limit: opts.Limit}).Validate(); err != nil {
+		return err
+	}
 	target, err := common.RemoteTargetFromContext(ctx)
 	if err != nil {
 		return err
 	}
-	return target.Run(ctx, "recording", "ls", opts.Auditlog.String(), "--format="+string(opts.Format))
+	args := []string{"recording", "ls", opts.Auditlog.String(), "--format=" + string(opts.Format), fmt.Sprintf("--limit=%d", opts.Limit)}
+	if !opts.After.IsZero() {
+		args = append(args, "--after="+opts.After.String())
+	}
+	return target.Run(ctx, args...)
+}
+
+func writeRecordingPage(ctx context.Context, opts listOptions, selected format.Format, visit func(func(RecordingView) error) error) error {
+	if selected != format.WireCbor {
+		stream, err := format.NewRecordingListStream(cli.StdoutOfContext(ctx), selected)
+		if err != nil {
+			return err
+		}
+		var count uint
+		var previous string
+		if err := visit(func(entry RecordingView) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if count >= opts.Limit || previous != "" && entry.ID <= previous {
+				return fmt.Errorf("recording stream violates its page limit or ID order")
+			}
+			if err := stream.Write(entry); err != nil {
+				return err
+			}
+			count++
+			previous = entry.ID
+			return nil
+		}); err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return stream.Close()
+	}
+	// Legacy V1 requests keep their single-response envelope. Current clients
+	// select the versioned streaming endpoint automatically for recording lists.
+	rows := make([]RecordingView, 0, opts.Limit)
+	if err := visit(func(entry RecordingView) error {
+		if uint(len(rows)) >= opts.Limit {
+			return fmt.Errorf("recording list exceeds its page limit")
+		}
+		rows = append(rows, entry)
+		return nil
+	}); err != nil {
+		return err
+	}
+	sortRecordings(rows)
+	return format.WriteRecordingList(cli.StdoutOfContext(ctx), selected, rows)
 }
 
 func sortRecordings(rows []RecordingView) {
-	sort.Slice(rows, func(i, j int) bool { return rows[i].StartedAt.Before(rows[j].StartedAt) })
+	sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
 }
 
 func handleManagementShow(ctx context.Context, opts showOptions) error {
@@ -150,45 +213,42 @@ func remoteHandleShow(ctx context.Context, opts showOptions) error {
 	return target.Run(ctx, "recording", "show", opts.Auditlog.String(), opts.ID.String(), "--format="+string(opts.Format))
 }
 
-func inspectLocalRecordings(ctx context.Context, conf *configuration.Configuration, name configuration.AuditlogName) ([]RecordingView, error) {
+func visitLocalRecordings(ctx context.Context, conf *configuration.Configuration, name configuration.AuditlogName, page recording.SealedPageOptions, consume func(RecordingView) error) error {
+	if err := page.Validate(); err != nil {
+		return err
+	}
 	for _, configured := range conf.Auditlogs {
 		if configured.Name != name {
 			continue
 		}
 		if !configured.Recording.Enabled {
-			return nil, fmt.Errorf("recording of auditlog %q is disabled", name)
+			return fmt.Errorf("recording of auditlog %q is disabled", name)
 		}
 		key, err := claudit.LoadAuditPrivateKey(configured.IdentityFile)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		identity, err := audit.NewIdentity(key)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		root := filepath.Join(configured.Recording.Directory, "sealed")
-		files, err := goos.ReadDir(root)
+		files, err := recording.ReadSealedRecordingPage(ctx, root, page)
 		if goerrors.Is(err, goos.ErrNotExist) {
-			return []RecordingView{}, nil
+			return nil
 		}
 		if err != nil {
-			return nil, err
+			return err
 		}
-		result := make([]RecordingView, 0, len(files))
 		for _, entry := range files {
 			if err := ctx.Err(); err != nil {
-				return nil, err
+				return err
 			}
-			filename := entry.Name()
-			idText := strings.TrimSuffix(strings.TrimSuffix(filename, ".bcast"), ".becast")
-			var id recording.Id
-			if idText == filename || id.UnmarshalText([]byte(idText)) != nil || !entry.Type().IsRegular() {
-				return nil, fmt.Errorf("unexpected sealed recording entry %q", filename)
-			}
+			filename := entry.Name
 			path := filepath.Join(root, filename)
 			file, initial, err := OpenRecordingInput(path)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			view, err := InspectRecording(ctx, name, file, initial.Size(), identity.ProducerId())
 			if err == nil {
@@ -205,13 +265,15 @@ func inspectLocalRecordings(ctx context.Context, conf *configuration.Configurati
 			}
 			err = goerrors.Join(err, file.Close())
 			if err != nil {
-				return nil, err
+				return err
 			}
-			result = append(result, view)
+			if err := consume(view); err != nil {
+				return err
+			}
 		}
-		return result, nil
+		return nil
 	}
-	return nil, fmt.Errorf("auditlog %q does not exist", name)
+	return fmt.Errorf("auditlog %q does not exist", name)
 }
 
 func inspectLocalRecording(ctx context.Context, conf *configuration.Configuration, name configuration.AuditlogName, id recording.Id) (result RecordingView, resultErr error) {

@@ -16,7 +16,8 @@ const (
 	Yaml Format = "yaml"
 	Cbor Format = "cbor"
 	// WireCbor is an internal transport envelope, not a user-visible enum value.
-	WireCbor Format = "internal-cbor"
+	WireCbor       Format = "internal-cbor"
+	WireCborStream Format = "internal-cbor-stream"
 )
 
 func (this Format) MarshalText() ([]byte, error) {

@@ -221,8 +221,30 @@ func (target Target) Run(ctx context.Context, args ...string) error {
 	if err != nil {
 		return err
 	}
-	if err := session.Start(transport.WireCommand); err != nil {
+	wireCommand := transport.WireCommand
+	streaming := wireArgs[0] == "recording" && wireArgs[1] == "ls"
+	if streaming {
+		wireCommand = transport.WireRecordingListStreamCommand
+	}
+	if err := session.Start(wireCommand); err != nil {
 		return err
+	}
+	if streaming {
+		writer, err := cliformat.NewRecordingListStream(output, format)
+		if err != nil {
+			return err
+		}
+		if err := transport.DecodeRecordingListStream(stream, writer.Write); err != nil {
+			// Closing the connection also interrupts SSH stderr copying and tells
+			// the producer to stop on local output or protocol failures.
+			_ = client.Close()
+			_ = session.Wait()
+			return fmt.Errorf("remote recording stream failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+		}
+		if err := session.Wait(); err != nil {
+			return fmt.Errorf("remote recording stream failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+		}
+		return writer.Close()
 	}
 	stdout, err := io.ReadAll(io.LimitReader(stream, transport.MaxWireResultBytes+1))
 	if err != nil {
@@ -241,12 +263,6 @@ func (target Target) Run(ctx context.Context, args ...string) error {
 			return err
 		}
 		return cliformat.WriteProducerID(output, format, producer.ProducerID)
-	case "recording ls":
-		var entries []model.RecordingView
-		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &entries); err != nil {
-			return err
-		}
-		return cliformat.WriteRecordingList(output, format, entries)
 	case "recording show":
 		var entry model.RecordingView
 		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &entry); err != nil {

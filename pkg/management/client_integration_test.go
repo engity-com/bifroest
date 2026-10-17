@@ -49,6 +49,55 @@ func TestManagementClientExecsCBORAndRendersJSON(t *testing.T) {
 	require.NoError(t, <-serverDone)
 }
 
+func TestManagementRecordingStreamRejectsTruncationAndPreservesVerifiedPrefix(t *testing.T) {
+	target, done := managementClientTestServer(t, transport.WireRecordingListStreamCommand, func(channel ssh.Channel, args []string) error {
+		if strings.Join(args, " ") != "recording ls default" {
+			return fmt.Errorf("unexpected streaming request %v", args)
+		}
+		if err := transport.WriteRecordingStreamEntry(channel, model.RecordingView{ID: "verified-prefix"}); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(channel.Stderr(), "server stream stopped early\n"); err != nil {
+			return err
+		}
+		_, err := channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
+		return err
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	var output bytes.Buffer
+	ctx = cli.ContextWithStdio(ctx, nil, &output, nil)
+	err := target.Run(ctx, "recording", "ls", "default", "--format=json")
+	require.ErrorContains(t, err, "completion frame")
+	require.Contains(t, output.String(), "verified-prefix")
+	require.False(t, json.Valid(output.Bytes()))
+	require.NoError(t, <-done)
+}
+
+type failedRecordingStreamOutput struct{}
+
+func (failedRecordingStreamOutput) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestManagementRecordingStreamAbortsProducerOnLocalOutputFailure(t *testing.T) {
+	target, done := managementClientTestServer(t, transport.WireRecordingListStreamCommand, func(channel ssh.Channel, _ []string) error {
+		for {
+			if err := transport.WriteRecordingStreamEntry(channel, model.RecordingView{ID: "entry"}); err != nil {
+				return nil
+			}
+		}
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	ctx = cli.ContextWithStdio(ctx, nil, failedRecordingStreamOutput{}, nil)
+	require.ErrorIs(t, target.Run(ctx, "recording", "ls", "default", "--format=json"), io.ErrClosedPipe)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-ctx.Done():
+		t.Fatal("stream producer did not stop after a client output error")
+	}
+}
+
 func TestManagementArtifactFailuresReadDiagnosticsBeforeServerExit(t *testing.T) {
 	id, err := recording.NewId()
 	require.NoError(t, err)
