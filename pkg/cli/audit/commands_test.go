@@ -2,29 +2,16 @@ package audit
 
 import (
 	"bytes"
+	"encoding/json"
 	"testing"
-	"time"
 
-	cli "github.com/echocat/cli4g"
-	"github.com/echocat/cli4g/codec"
 	"github.com/stretchr/testify/require"
-
-	"github.com/engity-com/bifroest/pkg/cli/common"
-	"github.com/engity-com/bifroest/pkg/configuration"
 )
 
-func TestAuditCLIReusesSchemaAndControlsSensitiveExport(t *testing.T) {
+func TestAuditCLIControlsSensitiveExportAcrossInvocations(t *testing.T) {
 	configured := createAuditCliTestJournal(t, t.TempDir(), "default", "test.event")
 	configurationPath := writeAuditCliTestConfiguration(t, t.TempDir(), configured)
-	requirement := cli.NewSimpleApplication().WithName("bifroest").
-		WithFallbackToStdio(false).
-		WithErrorHandlerEnabled(false).
-		WithCodec(configuration.NewCliCodec(common.ProfileExecutable)).
-		WithCodec(codec.NewDateTime().WithFormats(time.RFC3339), "rfc3339")
-	requirement.WithCommand(CreateCommands()...)
-	app, err := requirement.Create()
-	require.NoError(t, err)
-	defer func() { require.NoError(t, app.Close()) }()
+	app := newAuditCliTestApplication(t)
 
 	for _, invocation := range []struct {
 		args        []string
@@ -37,11 +24,29 @@ func TestAuditCLIReusesSchemaAndControlsSensitiveExport(t *testing.T) {
 		{[]string{"audit", "ls", "-c", configurationPath, "--format=json"}, "default", "confidential-flow"},
 	} {
 		var output bytes.Buffer
-		ctx := cli.ContextWithStdio(t.Context(), nil, &output, nil)
-		require.NoError(t, app.ParseAndExecute(ctx, &cli.ParseOpts{Profiles: []string{common.ProfileExecutable}}, invocation.args...))
+		require.NoError(t, runAuditCliTestCommand(t, app, &output, invocation.args...))
 		require.Contains(t, output.String(), invocation.contains)
 		if invocation.notContains != "" {
 			require.NotContains(t, output.String(), invocation.notContains)
 		}
+	}
+}
+
+func TestAuditExportsKeepOnlyPublicEventFieldsByDefault(t *testing.T) {
+	configured := createAuditCliTestJournal(t, t.TempDir(), "default", "test.public")
+	path := writeAuditCliTestConfiguration(t, t.TempDir(), configured)
+	app := newAuditCliTestApplication(t)
+	for _, command := range []string{"export", "decrypt", "merge"} {
+		var output bytes.Buffer
+		require.NoError(t, runAuditCliTestCommand(t, app, &output, "audit", command, "default", "--configuration="+path))
+		var record map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(output.Bytes(), &record))
+		require.Len(t, record, 9)
+		for _, field := range []string{"auditlog", "producerId", "segmentSequence", "segmentRecordIndex", "id", "recordedAt", "event", "previousHash", "hash"} {
+			require.Contains(t, record, field)
+		}
+		var event map[string]string
+		require.NoError(t, json.Unmarshal(record["event"], &event))
+		require.Equal(t, map[string]string{"name": "test.public", "domain": "session", "outcome": "success"}, event)
 	}
 }

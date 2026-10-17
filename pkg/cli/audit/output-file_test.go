@@ -54,6 +54,14 @@ func TestCanonicalAuditOutputRequiresExistingImmediateParent(t *testing.T) {
 	require.NoDirExists(t, filepath.Dir(output))
 }
 
+func TestBoundedAuditOutputRejectsOversizedWrite(t *testing.T) {
+	output := boundedAuditOutput{limit: 4}
+	written, err := output.Write([]byte("12345"))
+	require.Zero(t, written)
+	require.ErrorContains(t, err, "exceeds 4 bytes")
+	require.Empty(t, output.Bytes())
+}
+
 func TestProtectedOutputFileDoesNotInstallProducerFailure(t *testing.T) {
 	parent := canonicalTestTempDir(t)
 	path := filepath.Join(parent, "output")
