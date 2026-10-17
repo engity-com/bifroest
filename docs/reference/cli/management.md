@@ -18,7 +18,7 @@ ssh management@bifroest.example.org 'audit ls'
 | Subject | Commands | Notes |
 | --- | --- | --- |
 | `session` | `ls`, `show <id>` | `ls` defaults to authorized, non-expired sessions; use `--state=all`, `--flow` and `--user` for more. |
-| `flow` | `ls`, `show <name>` | Arbitrary strings, including image references, are redacted unless that management flow explicitly enables `includingCredentials`; structural names, non-string settings and fixed image-pull policies remain visible. |
+| `flow` | `ls`, `show <name>` | Arbitrary strings, including image references, Kubernetes name templates and SSH certificate extension values, are redacted unless that management flow explicitly enables `includingCredentials`; only the Flow name, selected auditlog, authorization/environment types, non-string settings and fixed image-pull policies remain visible. |
 | `audit` | `ls`, `show <name>`, `events <name>`, `producer-id`, `verify`, `export`, `decrypt`, `merge` | `events` is signature-verified; private fields require `--with-sensitive`. |
 | `recording` | `ls <auditlog>`, `show <auditlog> <id>`, `verify`, `export`, `play` | An encrypted Recording reports outer verification until the matching local private key is supplied for full verification, export and playback. |
 

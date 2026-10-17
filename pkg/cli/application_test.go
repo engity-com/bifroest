@@ -255,22 +255,27 @@ func TestManagementApplicationDoesNotShareCredentialDisclosure(t *testing.T) {
 		MustCreate()
 	defer func() { require.NoError(t, app.Close()) }()
 	const secret = "invocation-only-credential"
-	conf := &configuration.Configuration{Flows: configuration.Flows{{
-		Name: "production", Environment: configuration.Environment{
-			V: &configuration.EnvironmentDocker{ImagePullCredentials: template.MustNewString(secret)},
-		},
-	}}}
-	for _, disclose := range []bool{false, true, false} {
-		var output bytes.Buffer
-		ctx := common.ContextWithManagementAccess(t.Context(), common.ManagementAccess{
-			Configuration: conf, IncludingCredentials: disclose,
-		})
-		ctx = clibase.ContextWithStdio(ctx, nil, &output, nil)
-		require.NoError(t, app.ParseAndExecute(ctx, &clibase.ParseOpts{Profiles: []string{common.ProfileManagement}}, "flow", "show", "production", "--format=json"))
-		if disclose {
-			require.Contains(t, output.String(), secret)
-		} else {
-			require.NotContains(t, output.String(), secret)
+	for _, environment := range []configuration.EnvironmentV{
+		&configuration.EnvironmentDocker{ImagePullCredentials: template.MustNewString(secret)},
+		&configuration.EnvironmentSsh{Certificate: &configuration.EnvironmentSshCertificate{
+			Extensions: configuration.EnvironmentSshCertificateExtensions{"name": template.MustNewString(secret)},
+		}},
+	} {
+		conf := &configuration.Configuration{Flows: configuration.Flows{{
+			Name: "production", Environment: configuration.Environment{V: environment},
+		}}}
+		for _, disclose := range []bool{false, true, false} {
+			var output bytes.Buffer
+			ctx := common.ContextWithManagementAccess(t.Context(), common.ManagementAccess{
+				Configuration: conf, IncludingCredentials: disclose,
+			})
+			ctx = clibase.ContextWithStdio(ctx, nil, &output, nil)
+			require.NoError(t, app.ParseAndExecute(ctx, &clibase.ParseOpts{Profiles: []string{common.ProfileManagement}}, "flow", "show", "production", "--format=json"))
+			if disclose {
+				require.Contains(t, output.String(), secret)
+			} else {
+				require.NotContains(t, output.String(), secret)
+			}
 		}
 	}
 }

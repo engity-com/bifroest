@@ -58,7 +58,7 @@ func ShowFlow(output io.Writer, selected cliformat.Format, conf *configuration.C
 		}
 		if !includeCredentials {
 			publicEnvironment := publicFlowEnvironmentSettings(flow.Environment.V, settings)
-			RedactSettings(settings)
+			RedactSettings(settings, "name", "auditlog", "authorization.type", "environment.type")
 			if environment, ok := settings["environment"].(map[string]any); ok {
 				for key, value := range publicEnvironment {
 					environment[key] = value
@@ -92,7 +92,9 @@ func publicFlowEnvironmentSettings(configured configuration.EnvironmentV, settin
 	return result
 }
 
-func RedactSettings(settings map[string]any) {
+// RedactSettings hides strings except at explicitly public, case-sensitive paths.
+// Paths use dot-separated fields and [] for sequence entries, never map wildcards.
+func RedactSettings(settings map[string]any, publicPaths ...string) {
 	for key, value := range settings {
 		lower := strings.ToLower(key)
 		if lower == "variables" || strings.Contains(lower, "password") || strings.Contains(lower, "secret") ||
@@ -102,29 +104,53 @@ func RedactSettings(settings map[string]any) {
 			settings[key] = "***redacted***"
 			continue
 		}
+		public, children := publicSettingFields(key, publicPaths)
 		switch nested := value.(type) {
 		case map[string]any:
-			RedactSettings(nested)
+			RedactSettings(nested, children...)
 		case []any:
-			redactFlowEntries(nested)
+			redactFlowEntries(nested, children)
 		case string:
 			// Arbitrary configuration strings (including commands, URLs and
 			// templates) can contain credentials without a secret-looking key.
-			// Only structural names are safe to show by default.
-			if lower != "name" && lower != "type" && lower != "auditlog" {
+			if !public {
 				settings[key] = "***redacted***"
 			}
 		}
 	}
 }
 
-func redactFlowEntries(entries []any) {
+func publicSettingFields(key string, paths []string) (public bool, children []string) {
+	if key == "[]" {
+		return false, nil
+	}
+	for _, path := range paths {
+		field, tail, nested := strings.Cut(path, ".")
+		if field != key {
+			continue
+		}
+		if nested {
+			children = append(children, tail)
+		} else {
+			public = true
+		}
+	}
+	return public, children
+}
+
+func redactFlowEntries(entries []any, publicPaths []string) {
+	var children []string
+	for _, path := range publicPaths {
+		if tail, ok := strings.CutPrefix(path, "[]."); ok {
+			children = append(children, tail)
+		}
+	}
 	for index, entry := range entries {
 		switch value := entry.(type) {
 		case map[string]any:
-			RedactSettings(value)
+			RedactSettings(value, children...)
 		case []any:
-			redactFlowEntries(value)
+			redactFlowEntries(value, children)
 		case string:
 			entries[index] = "***redacted***"
 		}

@@ -44,3 +44,38 @@ func TestAuditlogDetailsRedactNestedDeliveryPassword(t *testing.T) {
 		require.NotContains(t, output.String(), "archive-secret")
 	}
 }
+
+func TestAuditlogDetailsKeepDeclaredDeliveryTargetNamesAndTypes(t *testing.T) {
+	target := func(name configuration.AuditlogTargetName) configuration.AuditlogTarget {
+		return configuration.AuditlogTarget{Name: name, V: &configuration.AuditlogTargetWebdav{
+			Endpoint: "https://archive.example.org/", Username: template.MustNewString("private-archive-user"),
+			Password: template.MustNewString("private-archive-password"),
+		}}
+	}
+	conf := &configuration.Configuration{Auditlogs: configuration.Auditlogs{{
+		Name: "default", Targets: configuration.AuditlogTargets{target("audit-archive")},
+		Recording: configuration.AuditlogRecording{Targets: configuration.AuditlogRecordingTargets{
+			Mode: configuration.AuditlogRecordingTargetsModeCustom, Targets: configuration.AuditlogTargets{target("recording-archive")},
+		}},
+	}}}
+	for _, selected := range []cliformat.Format{cliformat.Text, cliformat.Json, cliformat.Yaml, cliformat.Cbor, cliformat.WireCbor} {
+		var output bytes.Buffer
+		require.NoError(t, ShowAuditlog(&output, selected, conf, "default"))
+		require.NotContains(t, output.String(), "private-")
+		require.NotContains(t, output.String(), "archive.example.org")
+		require.Contains(t, output.String(), "audit-archive")
+		require.Contains(t, output.String(), "recording-archive")
+		require.Contains(t, output.String(), "webdav")
+	}
+	var output bytes.Buffer
+	require.NoError(t, ShowAuditlog(&output, cliformat.Json, conf, "default"))
+	var settings map[string]any
+	require.NoError(t, json.Unmarshal(output.Bytes(), &settings))
+	require.Equal(t, "default", settings["name"])
+	entry := settings["targets"].([]any)[0].(map[string]any)
+	require.Equal(t, "audit-archive", entry["name"])
+	require.Equal(t, "webdav", entry["type"])
+	entry = settings["recording"].(map[string]any)["targets"].([]any)[0].(map[string]any)
+	require.Equal(t, "recording-archive", entry["name"])
+	require.Equal(t, "webdav", entry["type"])
+}
