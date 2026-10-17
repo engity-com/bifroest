@@ -12,7 +12,7 @@ import (
 )
 
 type playCommandOptions struct {
-	exportCommandOptions
+	recordingContentOptions
 	Speed float64 `flag:"speed" default:"1" description:"Playback speed multiplier, up to 100."`
 }
 
@@ -58,16 +58,19 @@ func doRecordingPlay(ctx context.Context, opts playCommandOptions, output io.Wri
 	if opts.Speed <= 0 || opts.Speed > 100 {
 		return fmt.Errorf("--speed must be greater than zero and at most 100")
 	}
-	reader, writer := io.Pipe()
-	done := make(chan error, 1)
-	go func() {
-		export := opts.exportCommandOptions
-		export.Output = "-"
-		err := doRecordingExport(ctx, export, writer)
-		_ = writer.CloseWithError(err)
-		done <- err
-	}()
-	playErr := PlayAsciicast(ctx, reader, output, opts.Speed)
-	_ = reader.CloseWithError(playErr)
-	return errors.Join(playErr, <-done)
+	return withRecordingContent(ctx, opts.recordingContentOptions, func(content verifiedRecordingContent) error {
+		if err := content.validateOutput("-", output); err != nil {
+			return err
+		}
+		reader, writer := io.Pipe()
+		done := make(chan error, 1)
+		go func() {
+			err := content.writeTo(writer)
+			_ = writer.CloseWithError(err)
+			done <- err
+		}()
+		playErr := PlayAsciicast(ctx, reader, output, opts.Speed)
+		_ = reader.CloseWithError(playErr)
+		return errors.Join(playErr, <-done, content.validateOutput("-", output))
+	})
 }

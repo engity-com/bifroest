@@ -38,8 +38,11 @@ func TestRemoteRecordingAuthenticatesRequestedArtifact(t *testing.T) {
 	require.NoError(t, err)
 	var cast bytes.Buffer
 	require.NoError(t, doRecordingExport(t.Context(), exportCommandOptions{
-		File: fixture.clear, ExpectedProducerID: fixture.identity.ProducerId().String(), Output: "-",
-		WithSensitiveOpts: common.WithSensitiveOpts{WithSensitive: true},
+		recordingContentOptions: recordingContentOptions{
+			File: fixture.clear, ExpectedProducerID: fixture.identity.ProducerId().String(),
+			WithSensitiveOpts: common.WithSensitiveOpts{WithSensitive: true},
+		},
+		Output: "-",
 	}, &cast))
 	app := cli.NewSimpleApplication("test").
 		WithFallbackToStdio(false).

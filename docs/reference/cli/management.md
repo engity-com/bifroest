@@ -28,6 +28,8 @@ Lists display tables and detail commands display key/value lists by default. Use
 
 Local file inputs, such as `audit verify --source ./journal` and `recording verify ./file.becast`, are not remote paths. Use a configured auditlog and Recording ID for remote selection. Output files and decryption-key files always refer to the CLI machine.
 
+`recording play` writes the verified terminal content to standard output. To save an asciicast file, use `recording export --output PATH`; `--output` and `--force` are export options and are not accepted by `play`.
+
 ## SSH client and trust
 
 The `bifroest @target` client is integrated into the binary. It uses SSH configuration for host aliases, `HostName`, `User`, `Port`, `IdentityFile`, `IdentityAgent`, and `UserKnownHostsFile`. The host must have a trusted entry in `known_hosts`; Bifröst does not automatically accept an unknown host key. Unsupported SSH proxy directives such as `ProxyJump` and `ProxyCommand` fail explicitly. Other complex OpenSSH configurations might need to be simplified for this integrated client.

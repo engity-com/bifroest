@@ -20,18 +20,9 @@ import (
 )
 
 type exportCommandOptions struct {
-	common.WithSensitiveOpts
-	common.DecryptionIdentityFilesOpts
-	common.ExecutableConfigurationOpts
-	File               string `argument:"fileOrAuditlog" description:"Configured auditlog name or copied Recording file path."`
-	RecordingID        string `argument:"recordingId" description:"Recording UUID when selecting an auditlog."`
-	Output             string `flag:"output" default:"-" description:"Export destination, or - for stdout."`
-	Force              bool   `flag:"force" description:"Replace an existing output."`
-	ExpectedProducerID string `flag:"expectedProducerId" description:"Independently trusted producer ID."`
-	AllowUntrusted     bool   `flag:"allowUntrusted" description:"Explicitly accept a self-signed Recording."`
-
-	// Set by the remote handler, independently of the local source selector.
-	expectedRecordingID recording.Id
+	recordingContentOptions
+	Output string `flag:"output" default:"-" description:"Export destination, or - for stdout."`
+	Force  bool   `flag:"force" description:"Replace an existing output."`
 }
 
 type managementExportOptions struct {
@@ -67,117 +58,39 @@ func handleManagementExport(ctx context.Context, opts managementExportOptions) e
 	return access.Recording.Export(ctx, opts.Auditlog, opts.ID, cli.StdoutOfContext(ctx))
 }
 
-func doRecordingExport(ctx context.Context, opts exportCommandOptions, stdout io.Writer) (rErr error) {
+func doRecordingExport(ctx context.Context, opts exportCommandOptions, stdout io.Writer) error {
 	if !opts.WithSensitive {
 		return fmt.Errorf("recording export requires --with-sensitive")
 	}
 	if stdout == nil {
 		return fmt.Errorf("nil stdout")
 	}
-	file, auditlogName, localConfiguration, err := resolveRecordingSelection(ctx, opts.File, opts.RecordingID, opts.ExpectedProducerID, opts)
-	if err != nil {
-		return err
-	}
-	var expectedProducerId audit.ProducerId
-	if !auditlogName.IsZero() {
-		if opts.AllowUntrusted {
-			return fmt.Errorf("local Recording selection cannot be combined with --allowUntrusted")
+	return withRecordingContent(ctx, opts.recordingContentOptions, func(content verifiedRecordingContent) error {
+		requestedOutput := opts.Output
+		if requestedOutput == "" {
+			requestedOutput = "-"
 		}
-		expectedProducerId, err = configuredRecordingProducerId(auditlogName, localConfiguration, file)
-	} else {
-		expectedProducerId, err = recordingExportTrust(opts.ExpectedProducerID, opts.AllowUntrusted)
-	}
-	if err != nil {
-		return err
-	}
-	input, initial, err := OpenRecordingInput(file)
-	if err != nil {
-		return err
-	}
-	defer func() { rErr = goerrors.Join(rErr, input.Close()) }()
-	snapshot, err := snapshotRecordingInput(input, initial.Size())
-	if err != nil {
-		return fmt.Errorf("cannot snapshot Recording %q: %w", file, err)
-	}
-	defer func() { rErr = goerrors.Join(rErr, snapshot.Close()) }()
-	if err := ValidateRecordingInput(file, input, initial); err != nil {
-		return err
-	}
-	inspectOptions := recording.InspectOptions{
-		Context:            ctx,
-		ExpectedProducerId: expectedProducerId,
-		AllowUntrusted:     opts.AllowUntrusted,
-	}
-	inspection, err := recording.Inspect(snapshot, initial.Size(), inspectOptions)
-	if err != nil {
-		return fmt.Errorf("cannot verify Recording %q before export: %w", file, err)
-	}
-	if err := validateExpectedRecordingID(inspection, opts.expectedRecordingID); err != nil {
-		return err
-	}
-	if !auditlogName.IsZero() {
-		if err := validateConfiguredSealedRecording(file, inspection); err != nil {
-			return err
-		}
-	}
-	if inspection.Format == recording.FormatBECastCBOR {
-		identities, err := loadRecordingDecryptionIdentities(opts.DecryptionIdentityFiles)
+		output, err := caudit.CanonicalAuditOutput(requestedOutput)
 		if err != nil {
 			return err
 		}
-		if _, err := recording.VerifyNativeRecordingFull(snapshot, initial.Size(), identities, recording.NativeRecordingVerifyOptions{
-			Context: inspectOptions.Context, ExpectedProducerId: inspectOptions.ExpectedProducerId,
-			AllowUntrusted: inspectOptions.AllowUntrusted,
-		}); err != nil {
-			return fmt.Errorf("cannot fully verify encrypted Recording before export: %w", err)
-		}
-	}
-	requestedOutput := opts.Output
-	if requestedOutput == "" {
-		requestedOutput = "-"
-	}
-	output, err := caudit.CanonicalAuditOutput(requestedOutput)
-	if err != nil {
-		return err
-	}
-	validate := func() error {
-		if err := ValidateRecordingInput(file, input, initial); err != nil {
+		validate := func() error { return content.validateOutput(output, stdout) }
+		if err := validate(); err != nil {
 			return err
 		}
-		if !auditlogName.IsZero() {
-			if err := caudit.EnsureAuditDestinationSafe(output, stdout, localConfiguration.Filename, localConfiguration, opts.DecryptionIdentityFiles); err != nil {
-				return err
+		if output != "-" {
+			if err := caudit.WriteProtectedOutputFile(output, opts.Force, validate, func(target *stdos.File) error {
+				return content.writeTo(target)
+			}); err != nil {
+				return fmt.Errorf("cannot install Recording export at %q: %w", output, err)
 			}
+			return nil
 		}
-		if output == "-" {
-			return EnsureRecordingStandardOutputSafe(stdout, input, opts.DecryptionIdentityFiles)
-		}
-		if err := caudit.EnsureAuditOutputDoesNotReplaceFile(output, file, "Recording input"); err != nil {
+		if err := content.writeTo(stdout); err != nil {
 			return err
 		}
-		return common.EnsureBootstrapOutputIsNotPrivateKey(output, opts.DecryptionIdentityFiles...)
-	}
-	if err := validate(); err != nil {
-		return err
-	}
-	produce := func(target io.Writer) error {
-		return exportRecordingPayload(snapshot, initial.Size(), target, inspection, inspectOptions, opts.DecryptionIdentityFiles)
-	}
-	if output != "-" {
-		if err := caudit.WriteProtectedOutputFile(output, opts.Force, validate, func(target *stdos.File) error {
-			return produce(target)
-		}); err != nil {
-			return fmt.Errorf("cannot install Recording export at %q: %w", output, err)
-		}
-		return nil
-	}
-	if err := produce(stdout); err != nil {
-		return err
-	}
-	if err := validate(); err != nil {
-		return err
-	}
-	return nil
+		return validate()
+	})
 }
 
 func validateConfiguredSealedRecording(path string, inspection *recording.Inspection) error {

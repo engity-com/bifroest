@@ -3,9 +3,7 @@ package recording
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -60,43 +58,25 @@ func TestRecordingCLIRejectsUntrustedAndUnsafeOutput(t *testing.T) {
 	fixture := createRecordingFixture(t)
 	var output bytes.Buffer
 	ctx := cli.ContextWithStdio(t.Context(), nil, &output, nil)
-	require.ErrorContains(t, doRecordingExport(t.Context(), exportCommandOptions{File: fixture.clear, Output: "-", WithSensitiveOpts: common.WithSensitiveOpts{WithSensitive: true}}, &output), "--expectedProducerId")
+	require.ErrorContains(t, doRecordingExport(t.Context(), exportCommandOptions{
+		recordingContentOptions: recordingContentOptions{File: fixture.clear, WithSensitiveOpts: common.WithSensitiveOpts{WithSensitive: true}},
+		Output:                  "-",
+	}, &output), "--expectedProducerId")
 	require.Empty(t, output.String())
 	require.ErrorContains(t, doRecordingExport(t.Context(), exportCommandOptions{
-		File: fixture.encrypted, Output: fixture.identityFile, Force: true, WithSensitiveOpts: common.WithSensitiveOpts{WithSensitive: true},
-		ExpectedProducerID: fixture.identity.ProducerId().String(), DecryptionIdentityFilesOpts: common.DecryptionIdentityFilesOpts{DecryptionIdentityFiles: []string{fixture.identityFile}},
+		recordingContentOptions: recordingContentOptions{
+			File: fixture.encrypted, WithSensitiveOpts: common.WithSensitiveOpts{WithSensitive: true},
+			ExpectedProducerID: fixture.identity.ProducerId().String(), DecryptionIdentityFilesOpts: common.DecryptionIdentityFilesOpts{DecryptionIdentityFiles: []string{fixture.identityFile}},
+		},
+		Output: fixture.identityFile, Force: true,
 	}, cli.StdoutOfContext(ctx)), "must not replace private key")
 }
 
 func TestConfiguredRecordingUsesResolvedConfigurationWithoutReloading(t *testing.T) {
 	fixture := createRecordingFixture(t)
-	root := t.TempDir()
-	recordingRoot := filepath.Join(root, "recordings")
-	sealed := filepath.Join(recordingRoot, "sealed")
-	require.NoError(t, os.MkdirAll(sealed, 0700))
-	content, err := os.ReadFile(fixture.clear)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(sealed, fixture.id.String()+".bcast"), content, 0600))
-	path := filepath.Join(root, "configuration.yaml")
-	configurationText := fmt.Sprintf(`auditlog:
-  - name: default
-    enabled: false
-    identityFile: %q
-    recording:
-      enabled: true
-      directory: %q
-flows:
-  - name: test
-    authorization:
-      type: none
-    environment:
-      type: dummy
-`, filepath.ToSlash(fixture.signingIdentityFile), filepath.ToSlash(recordingRoot))
-	require.NoError(t, os.WriteFile(path, []byte(configurationText), 0600))
-	var conf configuration.Configuration
-	require.NoError(t, conf.LoadFromFile(path))
-	require.NoError(t, os.Remove(path))
-	options := common.ExecutableConfigurationOpts{Configuration: &conf}
+	conf, _ := configureRecordingFixture(t, fixture)
+	require.NoError(t, os.Remove(conf.Filename))
+	options := common.ExecutableConfigurationOpts{Configuration: conf}
 
 	var output bytes.Buffer
 	require.NoError(t, doRecordingVerify(t.Context(), verifyCommandOptions{
@@ -105,8 +85,20 @@ flows:
 	require.Contains(t, output.String(), `"scope":"full"`)
 	output.Reset()
 	require.NoError(t, doRecordingExport(t.Context(), exportCommandOptions{
-		ExecutableConfigurationOpts: options, File: "default", RecordingID: fixture.id.String(), Output: "-",
-		WithSensitiveOpts: common.WithSensitiveOpts{WithSensitive: true},
+		recordingContentOptions: recordingContentOptions{
+			ExecutableConfigurationOpts: options, File: "default", RecordingID: fixture.id.String(),
+			WithSensitiveOpts: common.WithSensitiveOpts{WithSensitive: true},
+		},
+		Output: "-",
 	}, &output))
 	require.Contains(t, output.String(), "sensitive terminal output")
+	output.Reset()
+	require.NoError(t, doRecordingPlay(t.Context(), playCommandOptions{
+		recordingContentOptions: recordingContentOptions{
+			ExecutableConfigurationOpts: options, File: "default", RecordingID: fixture.id.String(),
+			WithSensitiveOpts: common.WithSensitiveOpts{WithSensitive: true},
+		},
+		Speed: 100,
+	}, &output))
+	require.Equal(t, "sensitive terminal output\n", output.String())
 }

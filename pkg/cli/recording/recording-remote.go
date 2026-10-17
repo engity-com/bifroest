@@ -106,7 +106,6 @@ func remoteHandlePlay(ctx context.Context, options playCommandOptions) (resultEr
 	options.expectedRecordingID = downloaded.id
 	options.File, options.RecordingID = downloaded.path, ""
 	options.ExpectedProducerID, options.DecryptionIdentityFiles = downloaded.producer, identities
-	options.Output = "-"
 	return doRecordingPlay(ctx, options, cli.StdoutOfContext(ctx))
 }
 

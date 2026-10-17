@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/pem"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -93,4 +94,38 @@ func createRecordingFixture(t *testing.T) recordingFixture {
 		}
 	}
 	return result
+}
+
+func configureRecordingFixture(t *testing.T, fixture recordingFixture) (*configuration.Configuration, string) {
+	t.Helper()
+	root := t.TempDir()
+	recordingRoot := filepath.Join(root, "recordings")
+	sealed := filepath.Join(recordingRoot, "sealed")
+	require.NoError(t, os.MkdirAll(sealed, 0700))
+	content, err := os.ReadFile(fixture.clear)
+	require.NoError(t, err)
+	input := filepath.Join(sealed, fixture.id.String()+".bcast")
+	require.NoError(t, os.WriteFile(input, content, 0600))
+	path := filepath.Join(root, "configuration.yaml")
+	configurationText := fmt.Sprintf(`auditlog:
+  - name: default
+    enabled: false
+    identityFile: %q
+    recording:
+      enabled: true
+      directory: %q
+session:
+  type: fs
+  storage: %q
+flows:
+  - name: test
+    authorization:
+      type: none
+    environment:
+      type: dummy
+`, filepath.ToSlash(fixture.signingIdentityFile), filepath.ToSlash(recordingRoot), filepath.ToSlash(filepath.Join(root, "sessions")))
+	require.NoError(t, os.WriteFile(path, []byte(configurationText), 0600))
+	var conf configuration.Configuration
+	require.NoError(t, conf.LoadFromFile(path))
+	return &conf, input
 }
