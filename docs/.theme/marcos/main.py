@@ -791,6 +791,91 @@ def define_env(env: MacrosPlugin):
             return (f"[{compatibility(generic, "generic", os)}]({dst.as_posix()}#{os.name}-generic)/"
                     f"[{compatibility(extended, "extended", os)}]({dst.as_posix()}#{os.name}-extended)")
 
+    def cli_reference(destination: str) -> str:
+        filename, separator, fragment = destination.partition('#')
+        relative = PurePath(path.relpath(filename, path.dirname(env.page.file.src_path))).as_posix()
+        return f"{relative}{separator}{fragment}"
+
+    @env.macro
+    def cli_syntax(
+            command: str,
+            arguments: str = "[flags]",
+            remote: bool = False,
+            flag_prefix: str | None = None,
+            flags_link: str | None = None,
+            argument_links: dict[str, str] | None = None,
+    ) -> str:
+        def linked_code(label: str, destination: str) -> str:
+            return f"[`{label}`]({destination})"
+
+        target = cli_reference("reference/cli/management.md#select-a-target")
+        prefix = command.replace(' ', '-') if flag_prefix is None else flag_prefix
+        flags_link = flags_link or f"#{prefix}-flags"
+        argument_links = argument_links or {}
+        parts = command.split()
+        result = [linked_code('bifroest', cli_reference('reference/cli/index.md'))]
+        if remote:
+            result.append(linked_code('@target', target))
+        for index, part in enumerate(parts):
+            if index == len(parts) - 1:
+                result.append(f"`{part}`")
+                continue
+            parent = f"reference/cli/{'/'.join(parts[:index + 1])}/index.md"
+            if env.variables.files.get_file_from_path(parent) is None:
+                parent = f"reference/cli/{'/'.join(parts[:index])}/index.md#{part}"
+            result.append(linked_code(part, cli_reference(parent)))
+
+        def literal(value: str) -> str:
+            return html.escape(value).replace('[', r'\[').replace(']', r'\]')
+
+        tokens = re.compile(r'\[flags\]|\[@target\]|<(?P<required>[^>]+)>|\[(?P<optional>[A-Za-z][A-Za-z0-9-]*)\]|(?P<flag>--[A-Za-z][A-Za-z0-9.-]*)')
+        suffix = []
+        start = 0
+        for match in tokens.finditer(arguments):
+            suffix.append(literal(arguments[start:match.start()]))
+            token = match.group(0)
+            if token == '[flags]':
+                suffix.append(r'\[' + linked_code('flags', flags_link) + r'\]')
+            elif token == '[@target]':
+                suffix.append(r'\[' + linked_code('@target', target) + r'\]')
+            elif match.group('flag'):
+                name = token[2:]
+                suffix.append(linked_code(token, f"#{prefix}-flag-{name}"))
+            else:
+                name = match.group('required') or match.group('optional')
+                link = linked_code(name, argument_links.get(name, f"#argument-{name}"))
+                suffix.append(f"&lt;{link}&gt;" if match.group('required') else r'\[' + link + r'\]')
+            start = match.end()
+        suffix.append(literal(arguments[start:]))
+        result.append(''.join(suffix))
+        return '<div class="cli-syntax" markdown="span">\n' + ' '.join(result).rstrip() + '\n</div>'
+
+    @env.macro
+    def cli_availability(
+            linux: bool = True,
+            darwin: bool = True,
+            windows: bool = True,
+            local: bool = True,
+            remote: bool = False,
+            direct_ssh: bool = False,
+    ) -> str:
+        local_link = cli_reference('reference/cli/usage.md#execution-modes')
+        remote_link = cli_reference('reference/cli/management.md#select-a-target')
+        ssh_link = cli_reference('reference/cli/management.md#direct-ssh')
+        return (
+            "| `linux` | `darwin` | `windows` |\n"
+            "| --- | --- | --- |\n"
+            f"| {compatibility_editions(linux, linux, 'linux')} "
+            f"| {compatibility_editions(darwin, None, 'darwin')} "
+            f"| {compatibility_editions(windows, None, 'windows')} |\n\n"
+            "### Invocation modes\n\n"
+            f"| [Local CLI]({local_link}) | [`@target`]({remote_link}) | [Direct SSH]({ssh_link}) |\n"
+            "| --- | --- | --- |\n"
+            f"| {compatibility(local, 'Local CLI')} "
+            f"| {compatibility(remote, '@target')} "
+            f"| {compatibility(direct_ssh, 'Direct SSH')} |\n"
+        )
+
     @env.macro
     def is_binary_supported(o: Os | str, arch: Arch | str, kind: EditionKind | str) -> bool:
         return support_matrix.is_binary_supported(o, arch, kind)

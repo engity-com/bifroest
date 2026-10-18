@@ -15,6 +15,7 @@ func CreateCommands() []cli.CommandRequirementLike {
 	return []cli.CommandRequirementLike{
 		cli.NewSimpleCommand("forever", "This is a supporting command which simply runs forever until it receives a interrupt signal.").
 			WithProfiles(common.ProfileExecutable).
+			WithVisible(false).
 			WithHandler(handle),
 	}
 }

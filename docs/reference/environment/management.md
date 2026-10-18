@@ -27,7 +27,7 @@ flows:
       allowArtifactTransfer: true  # Only when client-side verification/download is needed.
 ```
 
-Authentication and authorization use the configured flow as usual; there is no implicit administrator role. Bifröst still creates a session for the management connection. If audit logging is enabled, management SSH operations also pass through the existing audit lifecycle. Consult the [management CLI](../cli/management.md) for commands and client setup.
+Authentication and authorization use the configured flow as usual; there is no implicit administrator role. Bifröst still creates a session for the management connection. If audit logging is enabled, management SSH operations also pass through the existing audit lifecycle. Follow [the remote-management guide](../../guides/management.md) for a complete two-flow setup, or consult [Remote access](../cli/management.md) for client settings and the [CLI reference](../cli/index.md) for commands.
 
 ## Properties
 

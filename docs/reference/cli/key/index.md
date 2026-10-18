@@ -10,9 +10,28 @@ Exchange exported public material and SHA256 fingerprints over an independently 
 
 ## Commands
 
-* [`bifroest key generate`](generate.md) creates a new Ed25519 key pair.
-* [`bifroest key export public`](export/public.md) exports a public key from a private identity.
-* [`bifroest key export ca`](export/ca.md) exports the effective SSH certificate authority of a flow.
-* [`bifroest key export host`](export/host.md) creates `known_hosts` entries without network access.
-* [`bifroest key import ca`](import/ca.md) imports trusted SSH certificate authorities.
-* [`bifroest key import host`](import/host.md) imports trusted SSH host keys.
+| Command | Purpose |
+| --- | --- |
+| [`generate`](generate.md) | Create a new Ed25519 key pair. |
+
+### `export` {: #export }
+
+| Command | Purpose |
+| --- | --- |
+| [`public`](export/public.md) | Export a public key from a private identity. |
+| [`ca`](export/ca.md) | Export the effective SSH certificate authority of a flow. |
+| [`host`](export/host.md) | Create `known_hosts` entries without network access. |
+
+### `import` {: #import }
+
+| Command | Purpose |
+| --- | --- |
+| [`ca`](import/ca.md) | Import trusted SSH certificate authorities. |
+| [`host`](import/host.md) | Import trusted SSH host keys. |
+
+Some key bootstrap operations create missing identities, unlike the read-only audit and Recording commands.
+
+## Examples
+
+* [Configure encrypted audit and Recording evidence](../../../guides/evidence.md) with a dedicated recipient pair.
+* [Configure OpenSSH certificate authentication](../../environment/ssh.md#openssh-certificate-authentication) using CA and host-key exchange.
