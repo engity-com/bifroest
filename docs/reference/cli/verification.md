@@ -52,6 +52,8 @@ Verification of large journals may require temporary disk space. Use a private t
 
 Export files must be outside managed journal, Recording and filesystem session-storage directories. Destination checks protect the loaded configuration, signing identities, referenced encryption public keys, SFTP known-hosts files and SFTP identities, as well as supplied decryption identities. They cover active configured entries beyond the selected sources, including Recording-only entries, and apply with `--force`.
 
+The integrated management client also protects its SSH login identities and `known_hosts` files from stdout redirection or use as an export destination.
+
 Named output requires an existing immediate parent directory. An existing destination is replaced only with a complete, verified result. Symbolic links, hard links and stdout redirection do not bypass protected-file checks where the alias can be detected; normal pipes remain supported.
 
 A shell redirection using `>` can truncate its destination **before Bifröst starts**. Command-side checks cannot undo that truncation. Choose a separate destination, and use the command's `--output` option when saving an export. Protect managed paths against concurrent untrusted writers; the filesystem is part of the trusted boundary.

@@ -24,6 +24,8 @@ bifroest @[::1]:2222 audit ls
 
 The client is integrated into the Bifröst binary; it needs no separate `ssh` executable. It reads SSH host aliases and the settings `HostName`, `User`, `Port`, `IdentityFile`, `IdentityAgent` and `UserKnownHostsFile`. A trusted host key must already be present in `known_hosts`; unknown keys are not automatically accepted.
 
+`UserKnownHostsFile` selects one local file; the client default is `~/.ssh/known_hosts`. Quote paths containing spaces in the SSH configuration, for example `UserKnownHostsFile "C:/Users/Alice Example/.ssh/known_hosts"` on Windows. Use a single trust file for the integrated client rather than a list of files in this setting.
+
 Unsupported proxy directives such as `ProxyJump` and `ProxyCommand` fail explicitly. Other complex OpenSSH configurations may need to be simplified for this client.
 
 ### Authentication agents

@@ -105,6 +105,9 @@ func handleList(ctx context.Context, opts listOptions) error {
 	if err != nil {
 		return err
 	}
+	if err := common.EnsureStandardOutputSafe(ctx, cli.StdoutOfContext(ctx), conf.Filename, conf, nil); err != nil {
+		return err
+	}
 	return listSessions(ctx, opts.Parent.Format, opts.listFilterOptions, localSessionSource(conf))
 }
 
@@ -136,6 +139,9 @@ func listSessions(ctx context.Context, selected format.Format, filters listFilte
 func handleShow(ctx context.Context, opts showOptions) error {
 	conf, err := common.ResolveConfiguration(ctx, opts.Parent)
 	if err != nil {
+		return err
+	}
+	if err := common.EnsureStandardOutputSafe(ctx, cli.StdoutOfContext(ctx), conf.Filename, conf, nil); err != nil {
 		return err
 	}
 	return showSession(ctx, opts.Parent.Format, opts.ID, localSessionSource(conf))

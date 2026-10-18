@@ -97,7 +97,7 @@ func handleVerify(ctx context.Context, o verifyOptions) error {
 		return err
 	}
 	validate := func() error {
-		return EnsureAuditDestinationSafe("-", cli.StdoutOfContext(ctx), conf.Filename, conf, o.DecryptionIdentityFiles)
+		return EnsureAuditDestinationSafe(ctx, "-", cli.StdoutOfContext(ctx), conf.Filename, conf, o.DecryptionIdentityFiles)
 	}
 	if err := validate(); err != nil {
 		return err

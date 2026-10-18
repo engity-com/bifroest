@@ -96,7 +96,7 @@ func handleMerge(ctx context.Context, opts mergeOptions) error {
 	}
 	stdout := cli.StdoutOfContext(ctx)
 	validate := func() error {
-		return EnsureAuditDestinationSafe(output, stdout, conf.Filename, conf, opts.DecryptionIdentityFiles)
+		return EnsureAuditDestinationSafe(ctx, output, stdout, conf.Filename, conf, opts.DecryptionIdentityFiles)
 	}
 	if err := validate(); err != nil {
 		return err

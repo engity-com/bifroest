@@ -39,6 +39,9 @@ func DownloadRecording(ctx context.Context, target Target, auditlogName string, 
 	if err := id.UnmarshalText([]byte(recordingID)); err != nil {
 		return transport.RecordingArtifactHeader{}, err
 	}
+	if err := target.EnsureOutputSafe(ctx, "-", output); err != nil {
+		return transport.RecordingArtifactHeader{}, err
+	}
 	client, release, err := connect(ctx, target)
 	if err != nil {
 		return transport.RecordingArtifactHeader{}, err

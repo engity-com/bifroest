@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/stretchr/testify/require"
@@ -13,6 +15,36 @@ import (
 	"github.com/engity-com/bifroest/pkg/cli/model"
 	"github.com/engity-com/bifroest/pkg/cli/transport"
 )
+
+func TestRecordingListStreamKeepsTableColumnsAligned(t *testing.T) {
+	for _, auditlog := range []string{"default", strings.Repeat("a", 128)} {
+		t.Run(auditlog, func(t *testing.T) {
+			var output bytes.Buffer
+			writer, err := NewRecordingListStream(&output, Text)
+			require.NoError(t, err)
+			started := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
+			entries := []model.RecordingView{
+				{ID: "00000001-0000-4000-8000-000000000000", Auditlog: auditlog, Status: "completed", StartedAt: started, VerificationScope: "full"},
+				{ID: "00000002-0000-4000-8000-000000000000", Auditlog: auditlog, Status: "incomplete", StartedAt: started, VerificationScope: "outer"},
+			}
+			for _, entry := range entries {
+				require.NoError(t, writer.Write(entry))
+				require.Contains(t, output.String(), entry.ID, "each row must be visible before stream completion")
+			}
+			require.NoError(t, writer.Close())
+			lines := strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n")
+			require.Len(t, lines, 3)
+			for index, entry := range entries {
+				for header, value := range map[string]string{
+					"AUDITLOG": entry.Auditlog, "STATUS": entry.Status,
+					"STARTED": entry.StartedAt.Format(time.RFC3339), "VERIFIED": entry.VerificationScope,
+				} {
+					require.Equal(t, strings.Index(lines[0], header), strings.Index(lines[index+1], value), "column %s moved between streamed rows", header)
+				}
+			}
+		})
+	}
+}
 
 func TestRecordingListStreamWritesEachEntryAndCompletesFormats(t *testing.T) {
 	entries := []model.RecordingView{{ID: "first", Auditlog: "default"}, {ID: "second", Auditlog: "default"}}

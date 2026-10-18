@@ -23,6 +23,7 @@ type RecordingListStream struct {
 	started bool
 	closed  bool
 	table   *tabwriter.Writer
+	widths  [4]int
 }
 
 type recordingStreamOutput struct{ io.Writer }
@@ -55,15 +56,21 @@ func writeRecordingStreamBytes(output io.Writer, content []byte) error {
 	return err
 }
 
-func (this *RecordingListStream) start() error {
+func (this *RecordingListStream) start(first *model.RecordingView) error {
 	if this.started {
 		return nil
 	}
 	this.started = true
 	switch this.format {
 	case Text:
+		// A page belongs to one auditlog. Its name determines that column's
+		// width; IDs, statuses and UTC timestamps have bounded display widths.
+		this.widths = [4]int{36, len("AUDITLOG"), 10, 20}
+		if first != nil {
+			this.widths[1] = max(this.widths[1], len(first.Auditlog))
+		}
 		this.table = tabwriter.NewWriter(this.output, 0, 0, 2, ' ', 0)
-		return writeRow(this.table, []string{"ID", "AUDITLOG", "STATUS", "STARTED", "VERIFIED"})
+		return this.writeTableRow([]string{"ID", "AUDITLOG", "STATUS", "STARTED", "VERIFIED"})
 	case Json:
 		return writeRecordingStreamBytes(this.output, []byte("[\n"))
 	case Cbor:
@@ -72,17 +79,24 @@ func (this *RecordingListStream) start() error {
 	return nil
 }
 
+func (this *RecordingListStream) writeTableRow(cells []string) error {
+	for index, width := range this.widths {
+		cells[index] = fmt.Sprintf("%-*s", width, cells[index])
+	}
+	return writeRow(this.table, cells)
+}
+
 func (this *RecordingListStream) Write(entry model.RecordingView) error {
 	if this.closed {
 		return io.ErrClosedPipe
 	}
-	if err := this.start(); err != nil {
+	if err := this.start(&entry); err != nil {
 		return err
 	}
 	var err error
 	switch this.format {
 	case Text:
-		err = writeRow(this.table, []string{entry.ID, entry.Auditlog, entry.Status, entry.StartedAt.Format(time.RFC3339), entry.VerificationScope})
+		err = this.writeTableRow([]string{entry.ID, entry.Auditlog, entry.Status, entry.StartedAt.UTC().Format(time.RFC3339), entry.VerificationScope})
 		if err == nil {
 			err = this.table.Flush()
 		}
@@ -123,7 +137,7 @@ func (this *RecordingListStream) Close() error {
 		return io.ErrClosedPipe
 	}
 	this.closed = true
-	if err := this.start(); err != nil {
+	if err := this.start(nil); err != nil {
 		return err
 	}
 	switch this.format {

@@ -86,6 +86,9 @@ func handleList(ctx context.Context, options listOptions) error {
 	if err != nil {
 		return err
 	}
+	if err := common.EnsureStandardOutputSafe(ctx, cli.StdoutOfContext(ctx), conf.Filename, conf, nil); err != nil {
+		return err
+	}
 	return ListAuditlogs(cli.StdoutOfContext(ctx), options.Format, conf)
 }
 
@@ -111,6 +114,9 @@ func handleManagementShow(ctx context.Context, options showOptions) error {
 func handleShow(ctx context.Context, options showOptions) error {
 	conf, err := common.ResolveConfiguration(ctx, options)
 	if err != nil {
+		return err
+	}
+	if err := common.EnsureStandardOutputSafe(ctx, cli.StdoutOfContext(ctx), conf.Filename, conf, nil); err != nil {
 		return err
 	}
 	return ShowAuditlog(cli.StdoutOfContext(ctx), options.Format, conf, options.Name)
@@ -152,6 +158,9 @@ func handleEvents(ctx context.Context, options eventsOptions) error {
 	}
 	conf, err := common.ResolveConfiguration(ctx, options)
 	if err != nil {
+		return err
+	}
+	if err := common.EnsureStandardOutputSafe(ctx, cli.StdoutOfContext(ctx), conf.Filename, conf, options.DecryptionIdentityFiles); err != nil {
 		return err
 	}
 	configured, err := FindConfigured(conf, options.Name)

@@ -13,21 +13,8 @@ Exchange exported public material and SHA256 fingerprints over an independently 
 | Command | Purpose |
 | --- | --- |
 | [`generate`](generate.md) | Create a new Ed25519 key pair. |
-
-### `export` {: #export }
-
-| Command | Purpose |
-| --- | --- |
-| [`public`](export/public.md) | Export a public key from a private identity. |
-| [`ca`](export/ca.md) | Export the effective SSH certificate authority of a flow. |
-| [`host`](export/host.md) | Create `known_hosts` entries without network access. |
-
-### `import` {: #import }
-
-| Command | Purpose |
-| --- | --- |
-| [`ca`](import/ca.md) | Import trusted SSH certificate authorities. |
-| [`host`](import/host.md) | Import trusted SSH host keys. |
+| [`export`](export/index.md) | Export public keys, certificate authorities and host trust entries. |
+| [`import`](import/index.md) | Validate and merge public certificate authorities or host trust entries. |
 
 Some key bootstrap operations create missing identities, unlike the read-only audit and Recording commands.
 

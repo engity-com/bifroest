@@ -119,25 +119,27 @@ func resolve(target Target) (settings, error) {
 	if err != nil {
 		return settings{}, err
 	}
-	if knownHostsConfig == "" {
+	if knownHostsConfig == "" || knownHostsConfig == ssh_config.Default("UserKnownHostsFile") {
 		knownHostsConfig = "~/.ssh/known_hosts"
 	}
-	knownHosts := make([]string, 0)
-	for _, candidate := range strings.Fields(knownHostsConfig) {
-		path, err := expandHome(candidate)
-		if err != nil {
-			return settings{}, err
-		}
-		if _, err := os.Stat(path); err == nil {
-			knownHosts = append(knownHosts, path)
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return settings{}, err
-		}
+	if knownHostsConfig == "none" {
+		return settings{}, fmt.Errorf("the integrated management client requires a trusted UserKnownHostsFile")
 	}
-	if len(knownHosts) == 0 {
+	knownHostsPath, err := expandHome(knownHostsConfig)
+	if err != nil {
+		return settings{}, err
+	}
+	info, err := os.Stat(knownHostsPath)
+	if errors.Is(err, os.ErrNotExist) {
 		return settings{}, fmt.Errorf("no SSH known_hosts file found for %q", target.Host)
 	}
-	return settings{host: host, user: user, port: port, identities: identities, agentPath: agentPath, knownHosts: knownHosts}, nil
+	if err != nil {
+		return settings{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return settings{}, fmt.Errorf("SSH known_hosts path %q is not a regular file", knownHostsPath)
+	}
+	return settings{host: host, user: user, port: port, identities: identities, agentPath: agentPath, knownHosts: []string{knownHostsPath}}, nil
 }
 
 func expandHome(path string) (string, error) {
@@ -368,6 +370,9 @@ func (target Target) RunDirect(ctx context.Context, command string) error {
 func connect(ctx context.Context, target Target) (_ *ssh.Client, _ func(), resultErr error) {
 	conf, err := resolve(target)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := ensureSSHInputOutputSafe(ctx, conf, "-", cli.StdoutOfContext(ctx)); err != nil {
 		return nil, nil, err
 	}
 	hostKeys, err := knownhosts.New(conf.knownHosts...)

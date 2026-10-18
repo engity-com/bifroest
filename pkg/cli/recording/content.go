@@ -100,7 +100,7 @@ func withRecordingContent(ctx context.Context, opts recordingContentOptions, con
 				return err
 			}
 			if !auditlogName.IsZero() {
-				if err := caudit.EnsureAuditDestinationSafe(path, output, localConfiguration.Filename, localConfiguration, opts.DecryptionIdentityFiles); err != nil {
+				if err := caudit.EnsureAuditDestinationSafe(ctx, path, output, localConfiguration.Filename, localConfiguration, opts.DecryptionIdentityFiles); err != nil {
 					return err
 				}
 			}

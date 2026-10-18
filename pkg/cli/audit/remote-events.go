@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/cli/format"
+	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/management"
 )
 
@@ -36,6 +38,12 @@ func doRemoteAuditEvents(ctx context.Context, target management.Target, opts Aud
 		if path != "" {
 			identities = []string{path}
 		}
+	}
+	if err := common.EnsureStandardOutputSafe(ctx, output, "", &configuration.Configuration{}, identities); err != nil {
+		return err
+	}
+	if err := target.EnsureOutputSafe(ctx, "-", output); err != nil {
+		return err
 	}
 	root, err := goos.MkdirTemp("", "bifroest-remote-audit-events-*")
 	if err != nil {

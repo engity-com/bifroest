@@ -48,6 +48,9 @@ func handleProducerID(ctx context.Context, o producerOptions) error {
 	if err != nil {
 		return err
 	}
+	if err := common.EnsureStandardOutputSafe(ctx, cli.StdoutOfContext(ctx), conf.Filename, conf, nil); err != nil {
+		return err
+	}
 	configured, err := FindConfigured(conf, o.Name)
 	if err != nil {
 		return err

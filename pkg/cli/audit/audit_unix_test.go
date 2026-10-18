@@ -51,10 +51,10 @@ func TestAuditOutputRejectsEncryptionPublicKeyAliases(t *testing.T) {
 	conf := &configuration.Configuration{Auditlogs: configuration.Auditlogs{*configured}}
 	symlink := filepath.Join(directory, "public-symlink")
 	require.NoError(t, goos.Symlink(publicKey, symlink))
-	require.ErrorContains(t, ensureAuditOutputSafe(symlink, conf), "must not replace encryption public key")
+	require.ErrorContains(t, ensureAuditOutputSafe(t.Context(), symlink, conf), "must not replace encryption public key")
 	hardlink := filepath.Join(directory, "public-hardlink")
 	require.NoError(t, goos.Link(publicKey, hardlink))
-	require.ErrorContains(t, ensureAuditOutputSafe(hardlink, conf), "must not replace encryption public key")
+	require.ErrorContains(t, ensureAuditOutputSafe(t.Context(), hardlink, conf), "must not replace encryption public key")
 }
 
 func TestAuditOutputRejectsSessionStorageAliases(t *testing.T) {
@@ -67,9 +67,9 @@ func TestAuditOutputRejectsSessionStorageAliases(t *testing.T) {
 
 	symlinkDirectory := filepath.Join(directory, "session-alias")
 	require.NoError(t, goos.Symlink(storage, symlinkDirectory))
-	require.ErrorContains(t, ensureAuditOutputSafe(filepath.Join(symlinkDirectory, "export.jsonl"), conf), "must not be inside session storage")
+	require.ErrorContains(t, ensureAuditOutputSafe(t.Context(), filepath.Join(symlinkDirectory, "export.jsonl"), conf), "must not be inside session storage")
 
 	hardlink := filepath.Join(directory, "session-hardlink")
 	require.NoError(t, goos.Link(sessionFile, hardlink))
-	require.ErrorContains(t, ensureAuditOutputSafe(hardlink, conf), "must not replace session storage file")
+	require.ErrorContains(t, ensureAuditOutputSafe(t.Context(), hardlink, conf), "must not replace session storage file")
 }

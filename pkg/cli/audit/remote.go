@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/cli/format"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
@@ -86,6 +87,14 @@ func runRemoteAudit(ctx context.Context, target management.Target, opts remoteAu
 			identityFiles = []string{path}
 		}
 	}
+	if opts.Operation == remoteVerify || opts.Output == "" || opts.Output == "-" {
+		if err := common.EnsureStandardOutputSafe(ctx, output, "", &configuration.Configuration{}, identityFiles); err != nil {
+			return err
+		}
+	}
+	if err := target.EnsureOutputSafe(ctx, opts.Output, output); err != nil {
+		return err
+	}
 	var identities []bfcrypto.PrivateKey
 	if opts.WithSensitive || opts.RequireFull || opts.Operation == remoteVerify {
 		for _, path := range identityFiles {
@@ -149,7 +158,7 @@ func runRemoteAudit(ctx context.Context, target management.Target, opts remoteAu
 		return err
 	}
 	validate := func() error {
-		return EnsureAuditDestinationSafe(path, output, "", &destination, identityFiles)
+		return EnsureAuditDestinationSafe(ctx, path, output, "", &destination, identityFiles)
 	}
 	if err := validate(); err != nil {
 		return err

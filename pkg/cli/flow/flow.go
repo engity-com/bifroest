@@ -71,6 +71,9 @@ func handleList(ctx context.Context, opts listOptions) error {
 	if err != nil {
 		return err
 	}
+	if err := common.EnsureStandardOutputSafe(ctx, cli.StdoutOfContext(ctx), conf.Filename, conf, nil); err != nil {
+		return err
+	}
 	return ListFlows(cli.StdoutOfContext(ctx), opts.Parent.Format, conf)
 }
 
@@ -100,6 +103,9 @@ func handleManagementShow(ctx context.Context, opts showOptions) error {
 func handleShow(ctx context.Context, opts showOptions) error {
 	conf, err := common.ResolveConfiguration(ctx, opts.Parent)
 	if err != nil {
+		return err
+	}
+	if err := common.EnsureStandardOutputSafe(ctx, cli.StdoutOfContext(ctx), conf.Filename, conf, nil); err != nil {
 		return err
 	}
 	return ShowFlow(cli.StdoutOfContext(ctx), opts.Parent.Format, conf, opts.Name, false)

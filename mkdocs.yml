@@ -215,10 +215,12 @@ nav:
               - reference/cli/key/index.md
               - generate: reference/cli/key/generate.md
               - export:
+                  - reference/cli/key/export/index.md
                   - public: reference/cli/key/export/public.md
                   - ca: reference/cli/key/export/ca.md
                   - host: reference/cli/key/export/host.md
               - import:
+                  - reference/cli/key/import/index.md
                   - ca: reference/cli/key/import/ca.md
                   - host: reference/cli/key/import/host.md
           - service:

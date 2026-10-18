@@ -126,7 +126,7 @@ func doRecordingVerify(ctx context.Context, opts verifyCommandOptions, stdout io
 		return err
 	}
 	if !auditlogName.IsZero() {
-		if err := audit2.EnsureAuditDestinationSafe("-", stdout, localConfiguration.Filename, localConfiguration, opts.DecryptionIdentityFiles); err != nil {
+		if err := audit2.EnsureAuditDestinationSafe(ctx, "-", stdout, localConfiguration.Filename, localConfiguration, opts.DecryptionIdentityFiles); err != nil {
 			return err
 		}
 	}

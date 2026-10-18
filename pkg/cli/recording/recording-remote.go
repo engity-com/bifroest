@@ -80,6 +80,9 @@ func remoteHandleExport(ctx context.Context, options exportCommandOptions) (resu
 	options.expectedRecordingID = downloaded.id
 	options.File, options.RecordingID = downloaded.path, ""
 	options.ExpectedProducerID, options.DecryptionIdentityFiles = downloaded.producer, identities
+	if err := target.EnsureOutputSafe(ctx, options.Output, cli.StdoutOfContext(ctx)); err != nil {
+		return err
+	}
 	return doRecordingExport(ctx, options, cli.StdoutOfContext(ctx))
 }
 

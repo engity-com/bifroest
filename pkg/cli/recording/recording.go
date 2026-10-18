@@ -106,6 +106,9 @@ func handleList(ctx context.Context, opts listOptions) error {
 	if err != nil {
 		return err
 	}
+	if err := common.EnsureStandardOutputSafe(ctx, cli.StdoutOfContext(ctx), conf.Filename, conf, nil); err != nil {
+		return err
+	}
 	return writeRecordingPage(ctx, opts, opts.Format, func(consume func(RecordingView) error) error {
 		return visitLocalRecordings(ctx, conf, opts.Auditlog, page, consume)
 	})
@@ -193,6 +196,9 @@ func handleManagementShow(ctx context.Context, opts showOptions) error {
 func handleShow(ctx context.Context, opts showOptions) error {
 	conf, err := common.ResolveConfiguration(ctx, opts)
 	if err != nil {
+		return err
+	}
+	if err := common.EnsureStandardOutputSafe(ctx, cli.StdoutOfContext(ctx), conf.Filename, conf, nil); err != nil {
 		return err
 	}
 	row, err := inspectLocalRecording(ctx, conf, opts.Auditlog, opts.ID)

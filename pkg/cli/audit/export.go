@@ -116,7 +116,7 @@ func handleAuditExport(ctx context.Context, o exportOptions) error {
 	}
 	stdout := cli.StdoutOfContext(ctx)
 	validate := func() error {
-		return EnsureAuditDestinationSafe(output, stdout, conf.Filename, conf, o.DecryptionIdentityFiles)
+		return EnsureAuditDestinationSafe(ctx, output, stdout, conf.Filename, conf, o.DecryptionIdentityFiles)
 	}
 	if err := validate(); err != nil {
 		return err
@@ -210,11 +210,14 @@ func writeAuditOutput(path string, force bool, stdout io.Writer, verification *a
 	return nil
 }
 
-func EnsureAuditDestinationSafe(output string, stdout io.Writer, configPath string, conf *configuration.Configuration, identityFiles []string) error {
-	if output == "-" {
-		return ensureAuditStandardOutputSafe(stdout, configPath, conf, identityFiles)
+func EnsureAuditDestinationSafe(ctx context.Context, output string, stdout io.Writer, configPath string, conf *configuration.Configuration, identityFiles []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	if err := ensureAuditOutputSafe(output, conf); err != nil {
+	if output == "-" {
+		return common.EnsureStandardOutputSafe(ctx, stdout, configPath, conf, identityFiles)
+	}
+	if err := ensureAuditOutputSafe(ctx, output, conf); err != nil {
 		return err
 	}
 	if configPath != "" {
@@ -225,107 +228,10 @@ func EnsureAuditDestinationSafe(output string, stdout io.Writer, configPath stri
 	return common.EnsureBootstrapOutputIsNotPrivateKey(output, identityFiles...)
 }
 
-func ensureAuditStandardOutputSafe(stdout io.Writer, configPath string, conf *configuration.Configuration, identityFiles []string) error {
-	output, ok := stdout.(*goos.File)
-	if !ok {
-		return nil
-	}
-	outputInfo, err := output.Stat()
-	if err != nil {
-		return fmt.Errorf("cannot inspect standard output: %w", err)
-	}
-	if !outputInfo.Mode().IsRegular() {
-		return nil
-	}
-	if conf == nil {
-		return fmt.Errorf("nil configuration")
-	}
-	checkFile := func(path, description string) error {
-		if path == "" {
-			return nil
-		}
-		info, err := goos.Stat(path)
-		if goerrors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("cannot inspect %s %q: %w", description, path, err)
-		}
-		if goos.SameFile(outputInfo, info) {
-			return fmt.Errorf("standard output must not replace %s %q", description, path)
-		}
-		return nil
-	}
-	checkDirectory := func(path, description string) error {
-		if path == "" {
-			return nil
-		}
-		return ensureAuditFileDoesNotAliasDirectoryFile("standard output", outputInfo, path, description)
-	}
-	if err := checkFile(configPath, "configuration file"); err != nil {
+func ensureAuditOutputSafe(ctx context.Context, output string, conf *configuration.Configuration) error {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	for _, path := range identityFiles {
-		if err := checkFile(path, "decryption identity"); err != nil {
-			return err
-		}
-	}
-	if sessionFs, ok := conf.Session.V.(*configuration.SessionFs); ok {
-		if err := checkDirectory(sessionFs.Storage, "session storage file"); err != nil {
-			return err
-		}
-	}
-	for index := range conf.Auditlogs {
-		configured := &conf.Auditlogs[index]
-		if !configured.Enabled && !configured.Recording.Enabled {
-			continue
-		}
-		if configured.Enabled {
-			if err := checkDirectory(configured.Directory, "journal file"); err != nil {
-				return err
-			}
-		}
-		if err := checkFile(configured.IdentityFile, "audit signing identity"); err != nil {
-			return err
-		}
-		if err := checkFile(string(configured.EncryptionPublicKeyFile), "encryption public key"); err != nil {
-			return err
-		}
-		if configured.Recording.Enabled {
-			if err := checkDirectory(configured.Recording.Directory, "recording file"); err != nil {
-				return err
-			}
-		}
-		checkSftp := func(targets configuration.AuditlogTargets) error {
-			for index := range targets {
-				sftp, ok := targets[index].V.(*configuration.AuditlogTargetSftp)
-				if !ok {
-					continue
-				}
-				if err := checkFile(string(sftp.KnownHostsFile), "SFTP known-hosts file"); err != nil {
-					return err
-				}
-				for _, path := range sftp.IdentityFiles {
-					if err := checkFile(path, "SFTP identity"); err != nil {
-						return err
-					}
-				}
-			}
-			return nil
-		}
-		if err := checkSftp(configured.Targets); err != nil {
-			return err
-		}
-		if configured.Recording.Enabled {
-			if err := checkSftp(configured.Recording.Targets.Configured()); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func ensureAuditOutputSafe(output string, conf *configuration.Configuration) error {
 	if output == "-" {
 		return nil
 	}
@@ -344,7 +250,7 @@ func ensureAuditOutputSafe(output string, conf *configuration.Configuration) err
 		if err != nil {
 			return err
 		}
-		if err := ensureAuditOutputDoesNotAliasDirectoryFile(output, absoluteStorage, "session storage file"); err != nil {
+		if err := ensureAuditOutputDoesNotAliasDirectoryFile(ctx, output, absoluteStorage, "session storage file"); err != nil {
 			return err
 		}
 	}
@@ -358,7 +264,7 @@ func ensureAuditOutputSafe(output string, conf *configuration.Configuration) err
 			if err != nil {
 				return err
 			}
-			if err := ensureAuditOutputDoesNotAliasDirectoryFile(output, absoluteJournal, "journal file"); err != nil {
+			if err := ensureAuditOutputDoesNotAliasDirectoryFile(ctx, output, absoluteJournal, "journal file"); err != nil {
 				return err
 			}
 		}
@@ -430,7 +336,7 @@ func ensureAuditOutputOutsideDirectory(output, absoluteOutput, directory, descri
 	return absoluteDirectory, nil
 }
 
-func ensureAuditOutputDoesNotAliasDirectoryFile(output, directory, description string) error {
+func ensureAuditOutputDoesNotAliasDirectoryFile(ctx context.Context, output, directory, description string) error {
 	outputInfo, err := goos.Stat(output)
 	if goerrors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -438,34 +344,7 @@ func ensureAuditOutputDoesNotAliasDirectoryFile(output, directory, description s
 	if err != nil {
 		return fmt.Errorf("cannot inspect output path %q: %w", output, err)
 	}
-	return ensureAuditFileDoesNotAliasDirectoryFile(output, outputInfo, directory, description)
-}
-
-func ensureAuditFileDoesNotAliasDirectoryFile(output string, outputInfo fs.FileInfo, directory, description string) error {
-	if _, err := goos.Stat(directory); goerrors.Is(err, fs.ErrNotExist) {
-		return nil
-	} else if err != nil {
-		return fmt.Errorf("cannot inspect protected directory %q: %w", directory, err)
-	}
-	return filepath.WalkDir(directory, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return fmt.Errorf("cannot inspect protected path %q: %w", path, walkErr)
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		info, err := goos.Stat(path)
-		if goerrors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("cannot inspect protected path %q: %w", path, err)
-		}
-		if goos.SameFile(outputInfo, info) {
-			return fmt.Errorf("output %q must not replace %s %q", output, description, path)
-		}
-		return nil
-	})
+	return common.EnsureFileDoesNotAliasDirectoryFile(ctx, output, outputInfo, directory, description)
 }
 
 func EnsureAuditOutputDoesNotReplaceFile(output, protected, description string) error {
