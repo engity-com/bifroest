@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"slices"
@@ -85,6 +86,18 @@ func managementCommandTestCases(t *testing.T) []managementCommandTestCase {
 			},
 		},
 		{
+			name: "recording-list", command: transport.WireRecordingListStreamCommand, args: []string{"recording", "ls", "default"},
+			run: func(ctx context.Context, target Target, _ io.Writer, _ string) error {
+				return target.Run(ctx, "recording", "ls", "default", "--format=json")
+			},
+			response: func(output io.Writer) error {
+				if err := transport.WriteRecordingStreamEntry(output, model.RecordingView{ID: id.String()}); err != nil {
+					return err
+				}
+				return transport.WriteRecordingStreamEnd(output, 1)
+			},
+		},
+		{
 			name: "recording", command: transport.WireRecordingCommand, args: []string{"recording", "default", id.String()},
 			run: func(ctx context.Context, target Target, output io.Writer, _ string) error {
 				_, err := DownloadRecording(ctx, target, "default", id.String(), output)
@@ -153,17 +166,20 @@ func TestManagementCommandsRequireSuccessfulSSHExit(t *testing.T) {
 				_, err := channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{23}))
 				return err
 			})
-			var output bytes.Buffer
+			var output, diagnostic bytes.Buffer
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			ctx = cli.ContextWithStdio(ctx, nil, &output, nil)
+			ctx = cli.ContextWithStdio(ctx, nil, &output, &diagnostic)
 			err := test.run(ctx, target, &output, t.TempDir())
 			require.ErrorContains(t, err, "server operation incomplete")
+			require.Empty(t, diagnostic.Bytes(), "failed-command diagnostics are already included in the returned error")
 			var exit *ssh.ExitError
 			require.ErrorAs(t, err, &exit)
 			require.Equal(t, 23, exit.ExitStatus())
 			if test.buffered {
 				require.Empty(t, output.Bytes(), "failed commands must not publish their buffered response")
+			} else if test.name == "recording-list" {
+				require.False(t, json.Valid(output.Bytes()), "a failed stream must not be completed")
 			}
 			require.NoError(t, <-done)
 		})
@@ -250,6 +266,72 @@ func TestManagementBufferedResponsesRejectOversizedOutput(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal("oversized response producer was not stopped")
 			}
+		})
+	}
+}
+
+func TestManagementCommandsForwardSuccessfulDiagnostics(t *testing.T) {
+	for _, test := range managementCommandTestCases(t) {
+		t.Run(test.name, func(t *testing.T) {
+			const warning = "remote operation warning\n"
+			target, done := managementSSHTestServer(t, test.command, func(channel ssh.Channel) error {
+				if err := checkManagementCommandRequest(channel, test.args); err != nil {
+					return err
+				}
+				if _, err := io.WriteString(channel.Stderr(), warning); err != nil {
+					return err
+				}
+				if err := test.response(channel); err != nil {
+					return err
+				}
+				_, err := channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
+				return err
+			})
+			var output, diagnostic bytes.Buffer
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			ctx = cli.ContextWithStdio(ctx, nil, &output, &diagnostic)
+			require.NoError(t, test.run(ctx, target, &output, t.TempDir()))
+			require.Equal(t, warning, diagnostic.String())
+			require.NotContains(t, output.String(), warning)
+			require.NoError(t, <-done)
+		})
+	}
+}
+
+type failedDiagnosticOutput struct{}
+
+func (failedDiagnosticOutput) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestManagementCommandsPropagateDiagnosticOutputFailure(t *testing.T) {
+	for _, test := range managementCommandTestCases(t) {
+		t.Run(test.name, func(t *testing.T) {
+			target, done := managementSSHTestServer(t, test.command, func(channel ssh.Channel) error {
+				if err := checkManagementCommandRequest(channel, test.args); err != nil {
+					return err
+				}
+				if _, err := io.WriteString(channel.Stderr(), "warning that cannot be delivered\n"); err != nil {
+					return err
+				}
+				if err := test.response(channel); err != nil {
+					return err
+				}
+				_, err := channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
+				return err
+			})
+			var output bytes.Buffer
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			ctx = cli.ContextWithStdio(ctx, nil, &output, failedDiagnosticOutput{})
+			err := test.run(ctx, target, &output, t.TempDir())
+			require.ErrorIs(t, err, io.ErrClosedPipe)
+			require.ErrorContains(t, err, "cannot write remote diagnostics")
+			if test.buffered {
+				require.Empty(t, output.Bytes())
+			} else if test.name == "recording-list" {
+				require.False(t, json.Valid(output.Bytes()), "undeliverable diagnostics must not complete the stream")
+			}
+			require.NoError(t, <-done)
 		})
 	}
 }

@@ -3,6 +3,7 @@ package management
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -72,6 +73,17 @@ func TestManagementDiagnosticsAllowConcurrentWritesAndReads(t *testing.T) {
 			require.Equal(t, string(bytes.Repeat([]byte{'x'}, 16<<10)), output.String())
 		})
 	}
+}
+
+type shortDiagnosticOutput struct{}
+
+func (shortDiagnosticOutput) Write(content []byte) (int, error) { return len(content) - 1, nil }
+
+func TestManagementDiagnosticsReportShortWrites(t *testing.T) {
+	var diagnostic diagnosticOutput
+	_, err := diagnostic.Write([]byte("remote warning\n"))
+	require.NoError(t, err)
+	require.ErrorIs(t, diagnostic.forwardTo(shortDiagnosticOutput{}), io.ErrShortWrite)
 }
 
 func TestRunDirectRejectsCommandsOutsideVersionForms(t *testing.T) {

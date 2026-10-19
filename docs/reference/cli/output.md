@@ -47,6 +47,8 @@ A failed command returns a nonzero exit status. Check that status before accepti
 
 Remote failures are reported on stderr where possible. A local output failure, cancellation or lost connection aborts the operation. The repository can change between listing pages; see [`recording ls`](recording/ls.md).
 
+The integrated client also forwards server diagnostics to local stderr when a command succeeds, for example when session inspection skips a corrupt entry. It retains at most the first 16 KiB and marks truncated diagnostics. If the local diagnostic output fails, the command returns an error.
+
 ## Examples
 
 ### Save a structured session listing

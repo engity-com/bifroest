@@ -49,6 +49,32 @@ func TestManagementClientExecsCBORAndRendersJSON(t *testing.T) {
 	require.NoError(t, <-serverDone)
 }
 
+func TestManagementSuccessfulDiagnosticsRemainBoundedWithoutBlockingSSH(t *testing.T) {
+	message := bytes.Repeat([]byte("remote warning\n"), 256<<10)
+	target, serverDone := managementClientTestServer(t, transport.WireCommand, func(channel ssh.Channel, _ []string) error {
+		// The diagnostic stream exceeds the SSH window before stdout is sent.
+		if _, err := channel.Stderr().Write(message); err != nil {
+			return err
+		}
+		if err := cliformat.WriteFlowList(channel, cliformat.WireCbor, []model.FlowSummary{{Name: "production"}}); err != nil {
+			return err
+		}
+		_, err := channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
+		return err
+	})
+	var output, diagnostic bytes.Buffer
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	ctx = cli.ContextWithStdio(ctx, nil, &output, &diagnostic)
+	runErr := target.Run(ctx, "flow", "ls", "--format=json")
+	require.NoError(t, <-serverDone)
+	require.NoError(t, runErr)
+	require.True(t, json.Valid(output.Bytes()))
+	require.True(t, strings.HasPrefix(diagnostic.String(), string(message[:16<<10])))
+	require.Contains(t, diagnostic.String(), "[remote diagnostics truncated after 16384 bytes]")
+	require.LessOrEqual(t, diagnostic.Len(), (16<<10)+128)
+}
+
 func TestManagementRecordingStreamRejectsTruncationAndPreservesVerifiedPrefix(t *testing.T) {
 	target, done := managementClientTestServer(t, transport.WireRecordingListStreamCommand, func(channel ssh.Channel, args []string) error {
 		if strings.Join(args, " ") != "recording ls default" {
@@ -196,7 +222,7 @@ func managementSSHTestServer(t *testing.T, command string, handle func(ssh.Chann
 			return
 		}
 		defer conn.Close()
-		_, channels, requests, err := ssh.NewServerConn(conn, config)
+		server, channels, requests, err := ssh.NewServerConn(conn, config)
 		if err != nil {
 			serverDone <- err
 			return
@@ -224,7 +250,14 @@ func managementSSHTestServer(t *testing.T, command string, handle func(ssh.Chann
 				serverDone <- err
 				return
 			}
-			serverDone <- handle(channel)
+			handleErr := handle(channel)
+			_ = channel.Close()
+			if handleErr == nil {
+				// Let the client receive the channel's exit status and close its
+				// connection before tearing down TCP with window updates in flight.
+				_ = server.Wait()
+			}
+			serverDone <- handleErr
 			return
 		}
 		serverDone <- fmt.Errorf("missing SSH exec request")
