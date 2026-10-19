@@ -35,21 +35,9 @@ func EnsureStandardOutputSafe(ctx context.Context, stdout io.Writer, configPath 
 	}
 	var location *outputLocation
 	locationChecked := false
+	guard := &fileOutputGuard{info: outputInfo, label: "standard output"}
 	checkFile := func(path, description string) error {
-		if path == "" {
-			return nil
-		}
-		info, err := os.Stat(path)
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("cannot inspect %s %q: %w", description, path, err)
-		}
-		if os.SameFile(outputInfo, info) {
-			return fmt.Errorf("standard output must not replace %s %q", description, path)
-		}
-		return nil
+		return guard.check(ctx, path, description)
 	}
 	checkDirectory := func(path, description string) error {
 		if path == "" {
@@ -77,6 +65,9 @@ func EnsureStandardOutputSafe(ctx context.Context, stdout io.Writer, configPath 
 		if err := checkFile(path, "decryption identity"); err != nil {
 			return err
 		}
+	}
+	if err := checkConfiguredSSHFiles(ctx, conf, checkFile); err != nil {
+		return err
 	}
 	if sessionFs, ok := conf.Session.V.(*configuration.SessionFs); ok {
 		if err := checkDirectory(sessionFs.Storage, "session storage file"); err != nil {

@@ -12,9 +12,11 @@ import (
 
 	cli "github.com/echocat/cli4g"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 )
 
 func newRecordingTestApplication(t *testing.T) *cli.Application[cli.NoOptions] {
@@ -91,6 +93,35 @@ func TestConfiguredRecordingContentProtectsFinalOutput(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestConfiguredRecordingExportProtectsSSHHostIdentity(t *testing.T) {
+	fixture := createRecordingFixture(t)
+	conf, _ := configureRecordingFixture(t, fixture)
+	// A second configured private identity is not the Recording signing key.
+	path := filepath.Join(t.TempDir(), "host-identity")
+	_, err := (bfcrypto.KeyRequirement{Type: bfcrypto.KeyTypeEd25519}).CreateFile(nil, path)
+	require.NoError(t, err)
+	raw, err := os.ReadFile(conf.Filename)
+	require.NoError(t, err)
+	var document map[string]any
+	require.NoError(t, yaml.Unmarshal(raw, &document))
+	document["ssh"] = map[string]any{"keys": map[string]any{"hostKeys": []string{path}}}
+	raw, err = yaml.Marshal(document)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(conf.Filename, raw, 0600))
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	app := newRecordingTestApplication(t)
+	var output bytes.Buffer
+	ctx := cli.ContextWithStdio(t.Context(), nil, &output, nil)
+	err = app.ParseAndExecute(ctx, &cli.ParseOpts{Profiles: []string{common.ProfileExecutable}},
+		"recording", "export", "default", fixture.id.String(), "--with-sensitive", "--configuration="+conf.Filename, "--output="+path, "--force")
+	require.ErrorContains(t, err, "must not replace SSH host identity")
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	require.Empty(t, output.Bytes())
 }
 
 func assertRecordingRejectsAppend(t *testing.T, args []string, path string, alias bool) {

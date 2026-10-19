@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	bfAudit "github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -78,6 +79,16 @@ func createAuditOutputProtectionFixture(t *testing.T) auditOutputProtectionFixtu
 		require.NoError(t, os.WriteFile(files[name], []byte("preserve "+name+"\n"), 0600))
 	}
 	path := writeAuditCliTestConfiguration(t, root, selected, other, recordingOnly)
+	sshHost, _ := createAuditCliTestKeyPair(t, root, "ssh-host-identity")
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var document map[string]any
+	require.NoError(t, yaml.Unmarshal(raw, &document))
+	document["ssh"] = map[string]any{"keys": map[string]any{"hostKeys": []string{sshHost}}}
+	encoded, err := yaml.Marshal(document)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, encoded, 0600))
+	files["SSH host identity"] = sshHost
 	files["configuration"] = path
 	return auditOutputProtectionFixture{
 		configurationPath: path, decryptionKey: key,
@@ -145,7 +156,7 @@ func TestAuditOutputsProtectEveryConfiguredEvidenceSource(t *testing.T) {
 func TestAuditCommandsDoNotReplaceConfigurationOrJournalAliases(t *testing.T) {
 	fixture := createAuditOutputProtectionFixture(t)
 	app := newAuditCliTestApplication(t)
-	for _, protected := range []string{"configuration", "other segment"} {
+	for _, protected := range []string{"configuration", "other segment", "SSH host identity"} {
 		for _, alias := range []string{"symlink", "hardlink"} {
 			t.Run(protected+"/"+alias, func(t *testing.T) {
 				path := fixture.files[protected]

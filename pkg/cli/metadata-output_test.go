@@ -10,12 +10,14 @@ import (
 	clibase "github.com/echocat/cli4g"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh/knownhosts"
 	"gopkg.in/yaml.v3"
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/connection"
+	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	bfnet "github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/recording"
 	"github.com/engity-com/bifroest/pkg/session"
@@ -32,7 +34,29 @@ func TestLocalMetadataCommandsProtectConfiguredFiles(t *testing.T) {
 	path := filepath.Join(root, "configuration.yaml")
 	journal, recordings, sessions := filepath.Join(root, "journal"), filepath.Join(root, "recordings"), filepath.Join(root, "sessions")
 	key := filepath.Join(root, "signing-key")
+	sshFiles := map[string]string{}
+	newSSHKey := func(name string) bfcrypto.PrivateKey {
+		path := filepath.Join(root, name)
+		key, err := (bfcrypto.KeyRequirement{Type: bfcrypto.KeyTypeEd25519}).CreateFile(nil, path)
+		require.NoError(t, err)
+		sshFiles[name] = path
+		return key
+	}
+	host := newSSHKey("host-key")
+	newSSHKey("second-host-key")
+	newSSHKey("login-key")
+	newSSHKey("certificate-subject")
+	newSSHKey("certificate-ca")
+	hosts := filepath.Join(root, "known-hosts")
+	require.NoError(t, os.WriteFile(hosts, []byte(knownhosts.Line([]string{"target.invalid"}, host.PublicKey().ToSsh())+"\n"), 0600))
+	sshFiles["known-hosts"] = hosts
+	authorized, trusted := filepath.Join(root, "authorized-keys"), filepath.Join(root, "trusted-cas")
+	for _, path := range []string{authorized, trusted} {
+		require.NoError(t, os.WriteFile(path, bfcrypto.MarshalPublicKey(host.PublicKey()), 0600))
+		sshFiles[filepath.Base(path)] = path
+	}
 	raw, err := yaml.Marshal(map[string]any{
+		"ssh": map[string]any{"keys": map[string]any{"hostKeys": []string{sshFiles["host-key"], sshFiles["second-host-key"]}}},
 		"auditlog": []map[string]any{{
 			"name": "default", "enabled": true, "identityFile": key, "directory": journal,
 			"recording": map[string]any{"enabled": true, "directory": recordings},
@@ -41,6 +65,21 @@ func TestLocalMetadataCommandsProtectConfiguredFiles(t *testing.T) {
 		"flows": []map[string]any{{
 			"name": "local", "authorization": map[string]string{"type": "none"},
 			"environment": map[string]string{"type": "dummy"},
+		}, {
+			"name": "ssh-login", "authorization": map[string]any{
+				"type": "simple", "trustedUserCAsFile": trusted,
+				"entries": []map[string]string{{"name": "alice", "authorizedKeysFile": authorized}},
+			},
+			"environment": map[string]any{
+				"type": "ssh", "address": "target.invalid", "user": "alice", "knownHostsFile": hosts,
+				"identityFiles": []string{sshFiles["login-key"]},
+			},
+		}, {
+			"name": "ssh-certificate", "authorization": map[string]string{"type": "none"},
+			"environment": map[string]any{
+				"type": "ssh", "address": "target.invalid", "user": "alice", "knownHostsFile": hosts,
+				"certificate": map[string]string{"identityFile": sshFiles["certificate-subject"], "authorityIdentityFile": sshFiles["certificate-ca"]},
+			},
 		}},
 	})
 	require.NoError(t, err)
@@ -83,6 +122,9 @@ func TestLocalMetadataCommandsProtectConfiguredFiles(t *testing.T) {
 	files := map[string]string{
 		"configuration": path, "signing identity": key, "recording": artifact,
 		"journal": filepath.Join(journal, identity.ProducerId().String(), "head.cbor"), "session state": state,
+	}
+	for name, path := range sshFiles {
+		files[name] = path
 	}
 	for _, path := range files {
 		require.NoError(t, os.Chmod(path, 0600))

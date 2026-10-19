@@ -217,6 +217,9 @@ func EnsureAuditDestinationSafe(ctx context.Context, output string, stdout io.Wr
 	if output == "-" {
 		return common.EnsureStandardOutputSafe(ctx, stdout, configPath, conf, identityFiles)
 	}
+	if err := common.EnsureConfiguredSSHOutputSafe(ctx, output, stdout, conf); err != nil {
+		return err
+	}
 	if err := ensureAuditOutputSafe(ctx, output, conf); err != nil {
 		return err
 	}
