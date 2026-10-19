@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 
 	cli "github.com/echocat/cli4g"
 	"github.com/kevinburke/ssh_config"
@@ -153,29 +152,6 @@ func expandHome(path string) (string, error) {
 	return path, nil
 }
 
-// diagnosticOutput captures a bounded stderr prefix while SSH may still be writing.
-type diagnosticOutput struct {
-	mutex  sync.Mutex
-	buffer bytes.Buffer
-}
-
-func (this *diagnosticOutput) Write(p []byte) (int, error) {
-	this.mutex.Lock()
-	defer this.mutex.Unlock()
-
-	const limit = 16 << 10
-	if remaining := limit - this.buffer.Len(); remaining > 0 {
-		_, _ = this.buffer.Write(p[:min(len(p), remaining)])
-	}
-	return len(p), nil
-}
-
-func (this *diagnosticOutput) String() string {
-	this.mutex.Lock()
-	defer this.mutex.Unlock()
-	return this.buffer.String()
-}
-
 func (target Target) Run(ctx context.Context, args ...string) error {
 	if len(args) < 2 {
 		return fmt.Errorf("a management command and subcommand are required")
@@ -202,61 +178,32 @@ func (target Target) Run(ctx context.Context, args ...string) error {
 			return fmt.Errorf("offline source and local decryption identities cannot be used as remote command arguments")
 		}
 	}
-	client, release, err := connect(ctx, target)
-	if err != nil {
-		return err
-	}
-	defer release()
-	session, err := client.NewSession()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = session.Close() }()
-	encoded, err := transport.EncodeWireRequest(wireArgs)
-	if err != nil {
-		return err
-	}
-	session.Stdin = bytes.NewReader(encoded)
-	var stderr diagnosticOutput
-	session.Stderr = &stderr
-	stream, err := session.StdoutPipe()
-	if err != nil {
-		return err
-	}
 	wireCommand := transport.WireCommand
 	streaming := wireArgs[0] == "recording" && wireArgs[1] == "ls"
 	if streaming {
 		wireCommand = transport.WireRecordingListStreamCommand
 	}
-	if err := session.Start(wireCommand); err != nil {
+	command, err := target.startWireCommand(ctx, wireCommand, wireArgs...)
+	if err != nil {
 		return err
 	}
+	defer command.close()
 	if streaming {
 		writer, err := cliformat.NewRecordingListStream(output, format)
 		if err != nil {
 			return err
 		}
-		if err := transport.DecodeRecordingListStream(stream, writer.Write); err != nil {
-			// Closing the connection also interrupts SSH stderr copying and tells
-			// the producer to stop on local output or protocol failures.
-			_ = client.Close()
-			_ = session.Wait()
-			return fmt.Errorf("remote recording stream failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+		if err := transport.DecodeRecordingListStream(command.stdout, writer.Write); err != nil {
+			return command.abort("remote recording stream failed", err)
 		}
-		if err := session.Wait(); err != nil {
-			return fmt.Errorf("remote recording stream failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+		if err := command.wait("remote recording stream failed"); err != nil {
+			return err
 		}
 		return writer.Close()
 	}
-	stdout, err := io.ReadAll(io.LimitReader(stream, transport.MaxWireResultBytes+1))
+	stdout, err := command.readResponse(transport.MaxWireResultBytes, "remote management response", "remote management command failed")
 	if err != nil {
 		return err
-	}
-	if len(stdout) > transport.MaxWireResultBytes {
-		return fmt.Errorf("remote management response exceeds %d bytes", transport.MaxWireResultBytes)
-	}
-	if err := session.Wait(); err != nil {
-		return fmt.Errorf("remote management command failed: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	switch wireArgs[0] + " " + wireArgs[1] {
 	case "audit producer-id":
@@ -330,35 +277,15 @@ func (target Target) RunDirect(ctx context.Context, command string) error {
 	if output == nil {
 		return fmt.Errorf("remote management output is unavailable")
 	}
-	client, release, err := connect(ctx, target)
+	invocation, err := target.startCommand(ctx, command, nil)
 	if err != nil {
 		return err
 	}
-	defer release()
-	session, err := client.NewSession()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = session.Close() }()
-	var stderr diagnosticOutput
-	session.Stderr = &stderr
-	stream, err := session.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	if err := session.Start(command); err != nil {
-		return err
-	}
+	defer invocation.close()
 	const maximumVersionOutput = 64 << 10
-	content, err := io.ReadAll(io.LimitReader(stream, maximumVersionOutput+1))
+	content, err := invocation.readResponse(maximumVersionOutput, "remote version response", "remote version command failed")
 	if err != nil {
 		return err
-	}
-	if len(content) > maximumVersionOutput {
-		return fmt.Errorf("remote version response exceeds %d bytes", maximumVersionOutput)
-	}
-	if err := session.Wait(); err != nil {
-		return fmt.Errorf("remote version command failed: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	written, err := output.Write(content)
 	if err == nil && written != len(content) {

@@ -1,10 +1,8 @@
 package management
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/engity-com/bifroest/pkg/cli/transport"
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -23,36 +21,17 @@ func DownloadAuditSnapshot(ctx context.Context, target Target, auditlogName, roo
 	if err := name.Validate(); err != nil {
 		return transport.AuditSnapshotHeader{}, err
 	}
-	client, release, err := connect(ctx, target)
+	cmd, err := target.startWireCommand(ctx, transport.WireAuditCommand, "auditlog", name.String())
 	if err != nil {
 		return transport.AuditSnapshotHeader{}, err
 	}
-	defer release()
-	sess, err := client.NewSession()
+	defer cmd.close()
+	header, err := transport.ReadAuditSnapshot(cmd.stdout, root)
 	if err != nil {
+		return transport.AuditSnapshotHeader{}, cmd.failure("cannot download audit snapshot", err)
+	}
+	if err := cmd.wait("remote audit snapshot transfer failed"); err != nil {
 		return transport.AuditSnapshotHeader{}, err
-	}
-	defer sess.Close()
-	stream, err := sess.StdoutPipe()
-	if err != nil {
-		return transport.AuditSnapshotHeader{}, err
-	}
-	var stderr diagnosticOutput
-	sess.Stderr = &stderr
-	request, err := transport.EncodeWireRequest([]string{"auditlog", name.String()})
-	if err != nil {
-		return transport.AuditSnapshotHeader{}, err
-	}
-	sess.Stdin = bytes.NewReader(request)
-	if err := sess.Start(transport.WireAuditCommand); err != nil {
-		return transport.AuditSnapshotHeader{}, err
-	}
-	header, err := transport.ReadAuditSnapshot(stream, root)
-	if err != nil {
-		return transport.AuditSnapshotHeader{}, fmt.Errorf("cannot download audit snapshot: %w: %s", err, strings.TrimSpace(stderr.String()))
-	}
-	if err := sess.Wait(); err != nil {
-		return transport.AuditSnapshotHeader{}, fmt.Errorf("remote audit snapshot transfer failed: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	if header.Name != name.String() {
 		return transport.AuditSnapshotHeader{}, fmt.Errorf("remote audit snapshot has the wrong auditlog name")

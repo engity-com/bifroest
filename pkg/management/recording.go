@@ -1,11 +1,9 @@
 package management
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/kevinburke/ssh_config"
 
@@ -42,36 +40,17 @@ func DownloadRecording(ctx context.Context, target Target, auditlogName string, 
 	if err := target.EnsureOutputSafe(ctx, "-", output); err != nil {
 		return transport.RecordingArtifactHeader{}, err
 	}
-	client, release, err := connect(ctx, target)
+	command, err := target.startWireCommand(ctx, transport.WireRecordingCommand, "recording", name.String(), id.String())
 	if err != nil {
 		return transport.RecordingArtifactHeader{}, err
 	}
-	defer release()
-	sess, err := client.NewSession()
+	defer command.close()
+	header, err := transport.ReadRecordingArtifact(command.stdout, output, recording.DefaultMaximumNativeRecordingBytes)
 	if err != nil {
+		return transport.RecordingArtifactHeader{}, command.failure("cannot download signed recording", err)
+	}
+	if err := command.wait("remote recording transfer failed"); err != nil {
 		return transport.RecordingArtifactHeader{}, err
-	}
-	defer sess.Close()
-	stream, err := sess.StdoutPipe()
-	if err != nil {
-		return transport.RecordingArtifactHeader{}, err
-	}
-	var stderr diagnosticOutput
-	sess.Stderr = &stderr
-	request, err := transport.EncodeWireRequest([]string{"recording", name.String(), id.String()})
-	if err != nil {
-		return transport.RecordingArtifactHeader{}, err
-	}
-	sess.Stdin = bytes.NewReader(request)
-	if err := sess.Start(transport.WireRecordingCommand); err != nil {
-		return transport.RecordingArtifactHeader{}, err
-	}
-	header, err := transport.ReadRecordingArtifact(stream, output, recording.DefaultMaximumNativeRecordingBytes)
-	if err != nil {
-		return transport.RecordingArtifactHeader{}, fmt.Errorf("cannot download signed recording: %w: %s", err, strings.TrimSpace(stderr.String()))
-	}
-	if err := sess.Wait(); err != nil {
-		return transport.RecordingArtifactHeader{}, fmt.Errorf("remote recording transfer failed: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	if header.ID != id.String() {
 		return transport.RecordingArtifactHeader{}, fmt.Errorf("remote recording does not match requested ID")

@@ -157,6 +157,17 @@ func TestManagementArtifactFailuresReadDiagnosticsBeforeServerExit(t *testing.T)
 
 func managementClientTestServer(t *testing.T, command string, handle func(ssh.Channel, []string) error) (Target, <-chan error) {
 	t.Helper()
+	return managementSSHTestServer(t, command, func(channel ssh.Channel) error {
+		args, err := transport.DecodeWireRequest(channel)
+		if err != nil {
+			return err
+		}
+		return handle(channel, args)
+	})
+}
+
+func managementSSHTestServer(t *testing.T, command string, handle func(ssh.Channel) error) (Target, <-chan error) {
+	t.Helper()
 	t.Setenv("SSH_AUTH_SOCK", "")
 	_, hostKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
@@ -213,12 +224,7 @@ func managementClientTestServer(t *testing.T, command string, handle func(ssh.Ch
 				serverDone <- err
 				return
 			}
-			args, err := transport.DecodeWireRequest(channel)
-			if err != nil {
-				serverDone <- err
-				return
-			}
-			serverDone <- handle(channel, args)
+			serverDone <- handle(channel)
 			return
 		}
 		serverDone <- fmt.Errorf("missing SSH exec request")
