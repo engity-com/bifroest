@@ -6,11 +6,14 @@ import (
 
 	"github.com/echocat/slf4g/native"
 	"github.com/echocat/slf4g/native/facade/value"
+
+	"github.com/engity-com/bifroest/pkg/cli/common"
 )
 
 // Executable-only logging options do not appear in the SSH management schema.
 // The compiled definition is immutable; parsing creates these values per run.
 type opts struct {
+	common.SSHConfigOpts
 	LogLevel     string `flag:"log.level" description:"Minimum log level."`
 	LogFormat    string `flag:"log.format" description:"Log formatter."`
 	LogColorMode string `flag:"log.colorMode" description:"Color mode: auto, always or never."`

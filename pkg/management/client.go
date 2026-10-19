@@ -26,23 +26,32 @@ import (
 )
 
 type Target struct {
-	Host         string
-	User         string
-	Port         uint16
-	ExplicitPort bool
+	Host          string
+	User          string
+	Port          uint16
+	ExplicitPort  bool
+	SSHConfigFile string
 }
 
 type settings struct {
-	host       string
-	user       string
-	port       uint16
-	identities []string
-	agentPath  string
-	knownHosts []string
+	host          string
+	user          string
+	port          uint16
+	identities    []string
+	agentPath     string
+	knownHosts    []string
+	configuration string
 }
 
 func resolve(target Target) (settings, error) {
-	lookup := func(key string) (string, error) { return ssh_config.GetStrict(target.Host, key) }
+	config := target.sshSettings()
+	lookup := func(key string) (string, error) {
+		value, err := config.GetStrict(target.Host, key)
+		if err != nil {
+			return "", target.configurationError(err)
+		}
+		return value, nil
+	}
 	host, err := lookup("HostName")
 	if err != nil {
 		return settings{}, err
@@ -93,9 +102,9 @@ func resolve(target Target) (settings, error) {
 	if port == 0 {
 		port = 22
 	}
-	identities, err := ssh_config.GetAllStrict(target.Host, "IdentityFile")
+	identities, err := config.GetAllStrict(target.Host, "IdentityFile")
 	if err != nil {
-		return settings{}, err
+		return settings{}, target.configurationError(err)
 	}
 	if len(identities) == 0 || len(identities) == 1 && identities[0] == "~/.ssh/identity" {
 		identities = []string{"~/.ssh/id_ed25519", "~/.ssh/id_rsa"}
@@ -138,7 +147,7 @@ func resolve(target Target) (settings, error) {
 	if !info.Mode().IsRegular() {
 		return settings{}, fmt.Errorf("SSH known_hosts path %q is not a regular file", knownHostsPath)
 	}
-	return settings{host: host, user: user, port: port, identities: identities, agentPath: agentPath, knownHosts: []string{knownHostsPath}}, nil
+	return settings{host: host, user: user, port: port, identities: identities, agentPath: agentPath, knownHosts: []string{knownHostsPath}, configuration: target.SSHConfigFile}, nil
 }
 
 func expandHome(path string) (string, error) {

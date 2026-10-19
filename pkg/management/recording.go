@@ -5,15 +5,13 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/kevinburke/ssh_config"
-
 	"github.com/engity-com/bifroest/pkg/cli/transport"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/recording"
 )
 
 func RecordingPrivateKey(target Target) (string, error) {
-	path, err := sshConfigValue(target.Host, "X-RecordingPrivateKey")
+	path, err := sshConfigValue(target, "X-RecordingPrivateKey")
 	if err != nil || path == "" {
 		return "", err
 	}
@@ -21,11 +19,15 @@ func RecordingPrivateKey(target Target) (string, error) {
 }
 
 func ExpectedRecordingProducerID(target Target) (string, error) {
-	return sshConfigValue(target.Host, "X-ExpectedProducerId")
+	return sshConfigValue(target, "X-ExpectedProducerId")
 }
 
-func sshConfigValue(host, key string) (string, error) {
-	return ssh_config.GetStrict(host, key)
+func sshConfigValue(target Target, key string) (string, error) {
+	value, err := target.sshSettings().GetStrict(target.Host, key)
+	if err != nil {
+		return "", target.configurationError(err)
+	}
+	return value, nil
 }
 
 func DownloadRecording(ctx context.Context, target Target, auditlogName string, recordingID string, output io.Writer) (transport.RecordingArtifactHeader, error) {

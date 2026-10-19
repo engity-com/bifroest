@@ -78,6 +78,11 @@ func ensureSSHInputOutputSafe(ctx context.Context, conf settings, destination st
 		}
 		return nil
 	}
+	if conf.configuration != "" {
+		if err := check(conf.configuration, "SSH client configuration"); err != nil {
+			return err
+		}
+	}
 	for _, identity := range conf.identities {
 		if err := check(identity, "SSH login identity"); err != nil {
 			return err

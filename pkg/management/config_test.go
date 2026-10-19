@@ -124,3 +124,97 @@ func TestSSHConfigDisabledKnownHostsDoesNotReadWorkingDirectoryFile(t *testing.T
 	_, err := resolve(Target{Host: "disabled-hosts"})
 	require.ErrorContains(t, err, "requires a trusted UserKnownHostsFile")
 }
+
+func TestSelectedSSHConfigurationIsIsolatedFromUnsupportedMatchFinal(t *testing.T) {
+	directory := t.TempDir()
+	unsupported := filepath.Join(directory, "system-config")
+	require.NoError(t, os.WriteFile(unsupported, []byte("Match final\n UserKnownHostsFile unsafe-trust\n"), 0600))
+	previous := ssh_config.DefaultUserSettings
+	defaults := &ssh_config.UserSettings{}
+	defaults.ConfigFinder(func() string { return unsupported })
+	ssh_config.DefaultUserSettings = defaults
+	t.Cleanup(func() { ssh_config.DefaultUserSettings = previous })
+	_, err := resolve(Target{Host: "selected"})
+	require.ErrorContains(t, err, "unsupported Match criterion")
+	require.ErrorContains(t, err, "--sshConfig")
+	hosts := filepath.ToSlash(filepath.Join(directory, "known-hosts"))
+	require.NoError(t, os.WriteFile(hosts, []byte("selected host trust\n"), 0600))
+	include := filepath.Join(directory, "included")
+	key := filepath.ToSlash(filepath.Join(directory, "recipient"))
+	raw := fmt.Sprintf("Host selected\n HostName selected.example.org\n User manager\n Port 2222\n IdentityAgent none\n IdentityFile selected-login\n UserKnownHostsFile %q\n X-AuditPrivateKey %q\n X-RecordingPrivateKey %q\n X-ExpectedProducerId selected-producer\n", hosts, key, key)
+	require.NoError(t, os.WriteFile(include, []byte(raw), 0600))
+	selected := filepath.Join(directory, "selected.conf")
+	require.NoError(t, os.WriteFile(selected, []byte("IgnoreUnknown X-*\nInclude "+filepath.ToSlash(include)+"\n"), 0600))
+	target := Target{Host: "selected", SSHConfigFile: selected}
+	actual, err := resolve(target)
+	require.NoError(t, err)
+	require.Equal(t, "selected.example.org", actual.host)
+	require.Equal(t, "manager", actual.user)
+	require.Equal(t, uint16(2222), actual.port)
+	require.Equal(t, []string{"selected-login"}, actual.identities)
+	require.Equal(t, []string{hosts}, actual.knownHosts)
+	auditKey, err := AuditPrivateKey(target)
+	require.NoError(t, err)
+	require.Equal(t, key, auditKey)
+	recordingKey, err := RecordingPrivateKey(target)
+	require.NoError(t, err)
+	require.Equal(t, key, recordingKey)
+	producer, err := ExpectedRecordingProducerID(target)
+	require.NoError(t, err)
+	require.Equal(t, "selected-producer", producer)
+}
+
+func TestSelectedSSHConfigurationNeverFallsBackAfterErrors(t *testing.T) {
+	directory := t.TempDir()
+	hosts := filepath.Join(directory, "known-hosts")
+	require.NoError(t, os.WriteFile(hosts, []byte("default host trust\n"), 0600))
+	defaultPath := filepath.Join(directory, "working-default.conf")
+	require.NoError(t, os.WriteFile(defaultPath, []byte(fmt.Sprintf("Host selected\n HostName default.example.org\n User manager\n UserKnownHostsFile %q\n", filepath.ToSlash(hosts))), 0600))
+	previous := ssh_config.DefaultUserSettings
+	defaults := &ssh_config.UserSettings{}
+	defaults.ConfigFinder(func() string { return defaultPath })
+	ssh_config.DefaultUserSettings = defaults
+	t.Cleanup(func() { ssh_config.DefaultUserSettings = previous })
+	_, err := resolve(Target{Host: "selected"})
+	require.NoError(t, err, "the ordinary configuration would work if it were incorrectly used as a fallback")
+	unsupported := filepath.Join(directory, "unsupported.conf")
+	require.NoError(t, os.WriteFile(unsupported, []byte("Match final\n UserKnownHostsFile unsafe-trust\n"), 0600))
+	for _, path := range []string{unsupported, filepath.Join(directory, "missing.conf")} {
+		target := Target{Host: "selected", SSHConfigFile: path}
+		_, err := resolve(target)
+		require.ErrorContains(t, err, "cannot read selected SSH configuration")
+		_, err = AuditPrivateKey(target)
+		require.ErrorContains(t, err, "cannot read selected SSH configuration")
+		_, err = RecordingPrivateKey(target)
+		require.ErrorContains(t, err, "cannot read selected SSH configuration")
+		_, err = ExpectedRecordingProducerID(target)
+		require.ErrorContains(t, err, "cannot read selected SSH configuration")
+	}
+}
+
+func TestSelectedSSHConfigurationIsProtectedFromOutputs(t *testing.T) {
+	directory := t.TempDir()
+	hosts := filepath.ToSlash(filepath.Join(directory, "known-hosts"))
+	require.NoError(t, os.WriteFile(hosts, []byte("host trust\n"), 0600))
+	path := filepath.Join(directory, "selected.conf")
+	raw := []byte(fmt.Sprintf("Host selected\n HostName selected.example.org\n User admin\n UserKnownHostsFile %q\n", hosts))
+	require.NoError(t, os.WriteFile(path, raw, 0600))
+	target := Target{Host: "selected", SSHConfigFile: path}
+	for _, alias := range []bool{false, true} {
+		outputPath := path
+		if alias {
+			outputPath = filepath.Join(t.TempDir(), "config-alias")
+			if err := os.Link(path, outputPath); err != nil {
+				t.Skipf("hard links unavailable: %v", err)
+			}
+		}
+		require.ErrorContains(t, target.EnsureOutputSafe(t.Context(), outputPath, nil), "must not replace SSH client configuration")
+		output, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_APPEND, 0)
+		require.NoError(t, err)
+		require.ErrorContains(t, target.EnsureOutputSafe(t.Context(), "-", output), "must not replace SSH client configuration")
+		require.NoError(t, output.Close())
+		content, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.Equal(t, raw, content)
+	}
+}

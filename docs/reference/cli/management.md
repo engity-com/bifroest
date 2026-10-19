@@ -28,6 +28,27 @@ The client is integrated into the Bifröst binary; it needs no separate `ssh` ex
 
 Unsupported proxy directives such as `ProxyJump` and `ProxyCommand` fail explicitly. Other complex OpenSSH configurations may need to be simplified for this client.
 
+### Isolated client configuration
+
+The integrated parser supports a subset of OpenSSH configuration syntax. In particular, `Match final` is not interpreted; configurations containing it fail explicitly. To use the integrated client on a host whose normal SSH configuration needs unsupported rules, select a separate file with `--sshConfig PATH` (short option `-F`):
+
+```sshconfig title="Administrator workstation: bifroest-ssh.conf"
+IgnoreUnknown X-*
+
+Host bifroest-admin
+    HostName bifroest.example.org
+    User management
+    IdentityFile ~/.ssh/bifroest-management
+    UserKnownHostsFile ~/.ssh/known_hosts
+```
+
+```shell title="Administrator workstation"
+bifroest @bifroest-admin --sshConfig ./bifroest-ssh.conf session ls
+bifroest @bifroest-admin -F ./bifroest-ssh.conf audit ls
+```
+
+The selected file replaces the normal user and system SSH configuration. Its explicit `Include` directives are still processed. Login identities, host trust and the `X-*` artifact settings below are all taken from this same source. A missing or invalid selected file causes an error; it never falls back to another configuration, ignores an unsupported Match rule, or accepts an unknown host key. These options belong to the integrated client and are not available through direct management SSH.
+
 ### Authentication agents
 
 On Unix-like systems, agent authentication uses `SSH_AUTH_SOCK`. On Windows, the client tries the OpenSSH agent named pipe for at most five seconds, then Pageant's native interface. Canceling the command also closes an OpenSSH-agent connection waiting for a response.

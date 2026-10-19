@@ -9,7 +9,7 @@ import (
 )
 
 func AuditPrivateKey(target Target) (string, error) {
-	path, err := sshConfigValue(target.Host, "X-AuditPrivateKey")
+	path, err := sshConfigValue(target, "X-AuditPrivateKey")
 	if err != nil || path == "" {
 		return "", err
 	}

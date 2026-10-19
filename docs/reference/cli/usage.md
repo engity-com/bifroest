@@ -60,7 +60,7 @@ For downloaded evidence, output files and decryption-key paths belong to the **C
 
 ## General flags {: #general-flags }
 
-These flags configure the executable in local and `@target` mode. Direct management SSH uses the server's logging configuration and does not expose the executable's logging flags; `--help` remains available.
+These flags configure the executable in local and `@target` mode; options marked remote-only require a leading target. Direct management SSH uses the server's logging configuration and does not expose the executable's logging or SSH-client flags; `--help` remains available.
 
 <<flag("help", "bool", default=False, aliases=["h"], heading=3)>>
 Shows help without executing the selected command. See [Help](help.md).
@@ -73,6 +73,9 @@ Format of log messages; independent of a command's result format.
 
 <<flag("log.colorMode", "Log Color Mode", "../data-type.md#log-color-mode", default="auto", heading=3)>>
 Color mode for logs: `auto`, `always` or `never`.
+
+<<flag("sshConfig", "File Path", "../data-type.md#file-path", aliases=["F"], heading=3)>>
+Remote-client-only SSH configuration file. It replaces the normal user and system configuration; explicit `Include` directives in this file remain active. Login, host trust and `X-*` artifact settings all use the selected file. See [isolated client configuration](management.md#isolated-client-configuration).
 
 ## Examples
 
