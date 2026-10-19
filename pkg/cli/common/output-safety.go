@@ -33,6 +33,8 @@ func EnsureStandardOutputSafe(ctx context.Context, stdout io.Writer, configPath 
 	if conf == nil {
 		return fmt.Errorf("nil configuration")
 	}
+	var location *outputLocation
+	locationChecked := false
 	checkFile := func(path, description string) error {
 		if path == "" {
 			return nil
@@ -52,6 +54,19 @@ func EnsureStandardOutputSafe(ctx context.Context, stdout io.Writer, configPath 
 	checkDirectory := func(path, description string) error {
 		if path == "" {
 			return nil
+		}
+		if !locationChecked {
+			resolved, err := inspectOutputLocation(ctx, output, outputInfo)
+			if err != nil {
+				return err
+			}
+			location, locationChecked = resolved, true
+		}
+		if location != nil {
+			outside, err := location.excludesDirectory(ctx, path, description)
+			if err != nil || outside {
+				return err
+			}
 		}
 		return EnsureFileDoesNotAliasDirectoryFile(ctx, "standard output", outputInfo, path, description)
 	}

@@ -54,6 +54,8 @@ Export files must be outside managed journal, Recording and filesystem session-s
 
 The integrated management client also protects its SSH login identities and `known_hosts` files from stdout redirection or use as an export destination.
 
+Redirecting metadata to a separate regular file normally does not require listing unrelated repositories. Hard-linked outputs or ambiguous filesystem aliases can require an inventory check; insufficient access then causes the command to fail before writing. Reading the selected source still requires its normal permissions.
+
 Named output requires an existing immediate parent directory. An existing destination is replaced only with a complete, verified result. Symbolic links, hard links and stdout redirection do not bypass protected-file checks where the alias can be detected; normal pipes remain supported.
 
 A shell redirection using `>` can truncate its destination **before Bifröst starts**. Command-side checks cannot undo that truncation. Choose a separate destination, and use the command's `--output` option when saving an export. Protect managed paths against concurrent untrusted writers; the filesystem is part of the trusted boundary.
