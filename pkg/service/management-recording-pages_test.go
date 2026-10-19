@@ -153,6 +153,17 @@ func TestManagementRecordingPagesOverIntegratedSSHClient(t *testing.T) {
 			})
 			require.NoError(t, err)
 			defer client.Close()
+			query, err := client.NewSession()
+			require.NoError(t, err)
+			request, err := transport.EncodeWireRequest([]string{"recording", "ls", "pages", "--limit=1"})
+			require.NoError(t, err)
+			query.Stdin = bytes.NewReader(request)
+			var legacyDiagnostic bytes.Buffer
+			query.Stderr = &legacyDiagnostic
+			output, err := query.Output(transport.WireCommand)
+			require.Error(t, err, "recording lists must not use the single-response transport")
+			require.Empty(t, output)
+			require.Contains(t, legacyDiagnostic.String(), "recording ls requires the streaming SSH transport")
 			for _, limit := range []uint{0, recording.MaximumSealedPageSize + 1} {
 				query, err := client.NewSession()
 				require.NoError(t, err)
@@ -161,14 +172,17 @@ func TestManagementRecordingPagesOverIntegratedSSHClient(t *testing.T) {
 				query.Stdin = bytes.NewReader(request)
 				var stderr bytes.Buffer
 				query.Stderr = &stderr
-				output, err := query.Output(transport.WireCommand)
+				output, err := query.Output(transport.WireRecordingListStreamCommand)
 				require.Error(t, err)
-				require.Empty(t, output)
 				require.Contains(t, stderr.String(), "limit must be between")
+				require.ErrorContains(t, transport.DecodeRecordingListStream(bytes.NewReader(output), func(model.RecordingView) error {
+					t.Fatal("an invalid page limit must not publish entries")
+					return nil
+				}), "limit must be between")
 			}
-			query, err := client.NewSession()
+			query, err = client.NewSession()
 			require.NoError(t, err)
-			output, err := query.Output("recording ls pages --limit=1 --after=" + ids[2].String())
+			output, err = query.Output("recording ls pages --limit=1 --after=" + ids[2].String())
 			require.Error(t, err)
 			require.Empty(t, output, "a selected corrupt artifact must not publish metadata")
 			query, err = client.NewSession()

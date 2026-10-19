@@ -6,7 +6,6 @@ import (
 	"fmt"
 	goos "os"
 	"path/filepath"
-	"sort"
 
 	cli "github.com/echocat/cli4g"
 
@@ -88,6 +87,9 @@ func handleManagementList(ctx context.Context, opts listOptions) error {
 	if !ok || access.Recordings == nil {
 		return fmt.Errorf("management recording repository is unavailable")
 	}
+	if access.WireFormat && !access.WireStream {
+		return fmt.Errorf("recording ls requires the streaming SSH transport")
+	}
 	selected := common.FormatForInvocation(ctx, opts.Format)
 	if access.WireStream {
 		selected = format.WireCborStream
@@ -133,52 +135,32 @@ func remoteHandleList(ctx context.Context, opts listOptions) error {
 }
 
 func writeRecordingPage(ctx context.Context, opts listOptions, selected format.Format, visit func(func(RecordingView) error) error) error {
-	if selected != format.WireCbor {
-		stream, err := format.NewRecordingListStream(cli.StdoutOfContext(ctx), selected)
-		if err != nil {
-			return err
-		}
-		var count uint
-		var previous string
-		if err := visit(func(entry RecordingView) error {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if count >= opts.Limit || previous != "" && entry.ID <= previous {
-				return fmt.Errorf("recording stream violates its page limit or ID order")
-			}
-			if err := stream.Write(entry); err != nil {
-				return err
-			}
-			count++
-			previous = entry.ID
-			return nil
-		}); err != nil {
-			return err
-		}
+	stream, err := format.NewRecordingListStream(cli.StdoutOfContext(ctx), selected)
+	if err != nil {
+		return err
+	}
+	var count uint
+	var previous string
+	if err := visit(func(entry RecordingView) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		return stream.Close()
-	}
-	// Legacy V1 requests keep their single-response envelope. Current clients
-	// select the versioned streaming endpoint automatically for recording lists.
-	rows := make([]RecordingView, 0, opts.Limit)
-	if err := visit(func(entry RecordingView) error {
-		if uint(len(rows)) >= opts.Limit {
-			return fmt.Errorf("recording list exceeds its page limit")
+		if count >= opts.Limit || previous != "" && entry.ID <= previous {
+			return fmt.Errorf("recording stream violates its page limit or ID order")
 		}
-		rows = append(rows, entry)
+		if err := stream.Write(entry); err != nil {
+			return err
+		}
+		count++
+		previous = entry.ID
 		return nil
 	}); err != nil {
 		return err
 	}
-	sortRecordings(rows)
-	return format.WriteRecordingList(cli.StdoutOfContext(ctx), selected, rows)
-}
-
-func sortRecordings(rows []RecordingView) {
-	sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return stream.Close()
 }
 
 func handleManagementShow(ctx context.Context, opts showOptions) error {

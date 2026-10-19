@@ -44,14 +44,6 @@ func WriteAuditlogList(output io.Writer, selected Format, entries []model.Auditl
 	return WriteList(output, selected, []string{"NAME", "AUDIT", "RECORDING", "ENCRYPTED"}, rows, entries)
 }
 
-func WriteRecordingList(output io.Writer, selected Format, entries []model.RecordingView) error {
-	rows := make([][]string, 0, len(entries))
-	for _, entry := range entries {
-		rows = append(rows, []string{entry.ID, entry.Auditlog, entry.Status, entry.StartedAt.Format(time.RFC3339), entry.VerificationScope})
-	}
-	return WriteList(output, selected, []string{"ID", "AUDITLOG", "STATUS", "STARTED", "VERIFIED"}, rows, entries)
-}
-
 func WriteRecordingDetail(output io.Writer, selected Format, entry model.RecordingView) error {
 	fields := []Field{
 		{"ID", entry.ID}, {"Auditlog", entry.Auditlog}, {"Producer ID", entry.ProducerID},

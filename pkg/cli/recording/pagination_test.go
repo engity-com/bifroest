@@ -183,15 +183,30 @@ func TestManagementRecordingListForwardsPageOptionsAndWireFormat(t *testing.T) {
 	app := newRecordingTestApplication(t)
 	var after bfRecording.Id
 	require.NoError(t, after.UnmarshalText([]byte("00000001-0000-4000-8000-000000000000")))
-	browser := &recordingPageTestBrowser{rows: []RecordingView{{ID: "00000003-0000-4000-8000-000000000000"}, {ID: "00000002-0000-4000-8000-000000000000"}}}
+	browser := &recordingPageTestBrowser{rows: []RecordingView{{ID: "00000002-0000-4000-8000-000000000000"}, {ID: "00000003-0000-4000-8000-000000000000"}}}
 	var output bytes.Buffer
-	ctx := common.ContextWithManagementAccess(t.Context(), common.ManagementAccess{Recordings: browser, WireFormat: true})
+	ctx := common.ContextWithManagementAccess(t.Context(), common.ManagementAccess{Recordings: browser, WireFormat: true, WireStream: true})
 	ctx = cli.ContextWithStdio(ctx, nil, &output, nil)
 	require.NoError(t, app.ParseAndExecute(ctx, &cli.ParseOpts{Profiles: []string{common.ProfileManagement}},
 		"recording", "ls", "default", "--limit=2", "--after="+after.String()))
 	require.Equal(t, bfRecording.SealedPageOptions{Limit: 2, After: after}, browser.options)
 	var rows []RecordingView
-	require.NoError(t, transport.DecodeWireResult(bytes.NewReader(output.Bytes()), &rows))
+	require.NoError(t, transport.DecodeRecordingListStream(bytes.NewReader(output.Bytes()), func(entry RecordingView) error {
+		rows = append(rows, entry)
+		return nil
+	}))
 	require.Len(t, rows, 2)
 	require.Less(t, rows[0].ID, rows[1].ID)
+}
+
+func TestManagementRecordingListRejectsSingleResponseBeforeReadingRepository(t *testing.T) {
+	app := newRecordingTestApplication(t)
+	browser := &recordingPageTestBrowser{}
+	var output bytes.Buffer
+	ctx := common.ContextWithManagementAccess(t.Context(), common.ManagementAccess{Recordings: browser, WireFormat: true})
+	ctx = cli.ContextWithStdio(ctx, nil, &output, nil)
+	err := app.ParseAndExecute(ctx, &cli.ParseOpts{Profiles: []string{common.ProfileManagement}}, "recording", "ls", "default")
+	require.ErrorContains(t, err, "recording ls requires the streaming SSH transport")
+	require.Empty(t, output.Bytes())
+	require.Equal(t, bfRecording.SealedPageOptions{}, browser.options, "rejected transport must not visit the repository")
 }
