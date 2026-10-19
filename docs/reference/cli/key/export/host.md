@@ -4,11 +4,15 @@ description: Export Bifröst host keys as known_hosts entries.
 
 # `bifroest key export host`
 
-Creates `known_hosts` entries for an address without network access. With `--identityFile`, that key is loaded or generated. Otherwise all host keys from the selected configuration are loaded or generated.
+Exports `known_hosts` entries for the supplied address. Locally, `--identityFile` selects a key to load or create; otherwise the configured host keys are loaded or created. With `@target` or direct SSH, the running server's active host keys are exported without creating or changing any key.
 
 ## Syntax
 
 <<cli_syntax("key export host")>>
+
+<<cli_syntax("key export host", "[flags]", remote=True)>>
+
+`--address` labels the exported entries; it does not connect to that address. A remote invocation connects only to the management target.
 
 ## Arguments
 
@@ -19,23 +23,23 @@ None.
 Includes [all general flags](../../index.md#general-flags).
 
 <<flag("configuration", "File Path", "../../../data-type.md#file-path", aliases=["c"], id_prefix="key-export-host-", heading=3)>>
-Configuration to load when `identityFile` is absent. Defaults to the [platform path](../../usage.md#configuration).
+Local configuration to load when `identityFile` is absent. Defaults to the [platform path](../../usage.md#configuration). Not accepted with `@target` or direct SSH.
 
 <<flag("identityFile", "File Path", "../../../data-type.md#file-path", id_prefix="key-export-host-", heading=3)>>
-Specific host private-key file to load or create. This cannot be combined with `configuration`.
+Specific local host private-key file to load or create. This cannot be combined with `configuration` and is not accepted with `@target` or direct SSH.
 
 <<flag("address", "string", required=True, id_prefix="key-export-host-", heading=3)>>
 Host represented by the generated entries. Port `22` can be omitted; non-default IPv6 ports use `[address]:port`.
 
 <<flag("output", ref("File Path", "../../../data-type.md#file-path"), default="-", id_prefix="key-export-host-", heading=3)>>
-Output file. `-` writes to stdout.
+Output file on the CLI machine. `-` writes to stdout. Direct SSH always writes to stdout and does not accept `output` or `force`.
 
 <<flag("force", "bool", default=False, id_prefix="key-export-host-", heading=3)>>
 Replaces an existing output file.
 
 ## Output
 
-OpenSSH `known_hosts` entries on stdout or in the requested file. Configured or explicit local host keys are loaded or created; the command does not discover a server key over the network.
+OpenSSH `known_hosts` entries on stdout or in the requested file. Remote export returns the keys already used by the running Bifröst server; it is not a host-key discovery or unknown-key acceptance command.
 
 ## Examples
 
@@ -53,8 +57,19 @@ OpenSSH `known_hosts` entries on stdout or in the requested file. Configured or 
 
     The [management guide](../../../../guides/management.md) uses these entries for SSH host-key checking. See [Bifröst delegation](../../../authorization/bifroest.md) for a complete host-key bootstrap sequence.
 
+### Export active host keys over an already trusted connection
+
+1. Provision management SSH trust and configure the workstation alias as in [the management guide](../../../../guides/management.md).
+2. Export the server's active public keys:
+
+    ```shell title="Administrator workstation"
+    bifroest @bifroest-admin key export host \
+      --address bifroest.example.org \
+      --output bifroest-known-hosts
+    ```
+
+    The initial management connection still needs a trusted `known_hosts` entry. This command cannot bootstrap its own unknown host key. Direct SSH supports `ssh management@bifroest.example.org 'key export host --address=bifroest.example.org'`.
+
 ## Availability
 
-<<cli_availability()>>
-
-`--address` labels the generated entry; it does not connect to that host.
+<<cli_availability(remote=True, direct_ssh=True)>>

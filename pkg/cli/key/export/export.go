@@ -9,7 +9,7 @@ import (
 func CreateCommands() []cli.CommandRequirementLike {
 	return []cli.CommandRequirementLike{
 		cli.NewSimpleCommand("export", "Export SSH public key material.").
-			WithProfiles(common.ProfileExecutable).
+			WithProfiles(common.ProfileExecutable, common.ProfileRemote, common.ProfileManagement).
 			WithCommand(createPublicCommands()...).
 			WithCommand(createCaCommands()...).
 			WithCommand(createHostCommands()...),

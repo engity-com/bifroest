@@ -15,6 +15,8 @@ Validate public SSH trust material and merge it into the selected trust file. An
 
 The command pages document accepted inputs, destinations and fingerprint checks. A failed validation leaves the destination unchanged.
 
+Imports are local bootstrap commands. Select the destination with `--trustedCAsFile` or `--knownHostsFile` on the CLI machine.
+
 ## Examples
 
 Follow [Bifröst delegation](../../../authorization/bifroest.md) for a complete trust exchange, or the [SSH-environment example](../../../environment/ssh.md#openssh-certificate-authentication) to provision target trust.

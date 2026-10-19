@@ -9,6 +9,7 @@ Choose the task you want to accomplish:
 * [SSH gateway to an OpenSSH server](ssh-gateway.md): authenticate at Bifröst, then connect to a private SSH target.
 * [OIDC login with a standard SSH client](oidc.md): approve a Device Authorization in the browser and open a container session.
 * [Manage a Bifröst host remotely](management.md): configure workload and administration flows, then inspect live state from a workstation.
+* [Export server public keys remotely](keys.md): retrieve configured public SSH identities, certificate authorities and active host keys through management access.
 * [Record, find and replay a session](recording.md): capture terminal output, find the sealed original and verify, play or export it.
 * [Verify encrypted evidence on a workstation](evidence.md): configure encrypted audit and Recording data, pin producer trust and keep decryption local.
 

@@ -22,7 +22,7 @@ Includes [all general flags](../../index.md#general-flags).
 Public-key file containing the trusted SSH certificate authorities to update.
 
 <<flag("input", ref("File Path", "../../../data-type.md#file-path"), default="-", id_prefix="key-import-ca-", heading=3)>>
-File containing the public CA keys. `-` reads from stdin.
+File containing the public CA keys. `-` reads from stdin. Input is limited to 4 MiB.
 
 <<flag("expectedFingerprint", "string", id_prefix="key-import-ca-", heading=3)>>
 Expected OpenSSH SHA256 fingerprint of every imported CA, or `unknown`. Omission implies `unknown`.
@@ -45,7 +45,7 @@ A CA trust file containing the successfully imported public keys. Input validati
       --expectedFingerprint CA_FINGERPRINT
     ```
 
-    The destination's parent directory must already exist.
+    The service user needs write access to the destination's parent directory.
 
 ## Availability
 

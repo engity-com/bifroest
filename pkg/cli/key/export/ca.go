@@ -7,6 +7,7 @@ import (
 	cli "github.com/echocat/cli4g"
 
 	"github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/cli/model"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/environment"
@@ -19,11 +20,30 @@ type exportOpts struct {
 	Flow   configuration.FlowName `argument:"flowName" required:"true" description:"Flow whose SSH certificate authority should be exported."`
 }
 
+type serverCaOpts struct {
+	Flow configuration.FlowName `argument:"flowName" required:"true" description:"Flow whose active SSH certificate authority should be exported."`
+}
+
+type remoteCaOpts struct {
+	serverCaOpts
+	keyOutputOpts
+}
+
 func createCaCommands() []cli.CommandRequirementLike {
 	return []cli.CommandRequirementLike{
 		cli.NewCommand[exportOpts]("ca", "Export the public key of a flow's SSH certificate authority.").
 			WithProfiles(common.ProfileExecutable).
 			WithHandler(handleExport),
+		cli.NewCommand[remoteCaOpts]("ca", "Export the public key of a server flow's active SSH certificate authority.").
+			WithProfiles(common.ProfileRemote).
+			WithHandler(func(ctx context.Context, o remoteCaOpts) error {
+				return exportRemote(ctx, o.keyOutputOpts, "key", "export", "ca", o.Flow.String())
+			}),
+		cli.NewCommand[serverCaOpts]("ca", "Export the public key of a flow's active SSH certificate authority.").
+			WithProfiles(common.ProfileManagement).
+			WithHandler(func(ctx context.Context, o serverCaOpts) error {
+				return exportManagement(ctx, model.KeyExportRequest{Kind: "ca", Flow: o.Flow})
+			}),
 	}
 }
 

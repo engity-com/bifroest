@@ -37,6 +37,7 @@ func TestEnvironmentManagementConfiguration(t *testing.T) {
 	require.ErrorContains(t, yaml.Unmarshal([]byte("type: management\nincludingCredentials: invalid\n"), &configured), "cannot unmarshal")
 	require.ErrorContains(t, yaml.Unmarshal([]byte("type: management\nincludingCredential: true\n"), &configured), "includingCredential")
 	require.ErrorContains(t, yaml.Unmarshal([]byte("type: management\nallowArtifactTransfer: invalid\n"), &configured), "cannot unmarshal")
+	require.ErrorContains(t, yaml.Unmarshal([]byte("type: management\nallowTrustUpdates: true\n"), &configured), "allowTrustUpdates")
 	require.ErrorContains(t, yaml.Unmarshal([]byte("type: management\nvariables:\n  SECRET: value\n"), &configured), "not supported")
 	require.False(t, (&EnvironmentManagement{}).IsEqualTo(EnvironmentManagement{IncludingCredentials: true}))
 	require.False(t, (&EnvironmentManagement{}).IsEqualTo(EnvironmentManagement{AllowArtifactTransfer: true}))

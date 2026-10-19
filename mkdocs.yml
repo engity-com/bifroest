@@ -132,6 +132,7 @@ nav:
           - OIDC login: guides/oidc.md
           - Session recording: guides/recording.md
           - Remote administration: guides/management.md
+          - Remote public-key export: guides/keys.md
           - Encrypted evidence: guides/evidence.md
   - Getting started:
       - setup/index.md

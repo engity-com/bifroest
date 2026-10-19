@@ -10,6 +10,8 @@ Validates and merges normal `known_hosts` entries from a file, stdin, or an SSH 
 
 <<cli_syntax("key import host")>>
 
+`--address` can contact an SSH server to obtain a host key. The imported trust file is local to the CLI machine.
+
 ## Arguments
 
 None.
@@ -22,7 +24,7 @@ Includes [all general flags](../../index.md#general-flags).
 OpenSSH `known_hosts` file to update.
 
 <<flag("input", ref("File Path", "../../../data-type.md#file-path"), id_prefix="key-import-host-", heading=3)>>
-File containing entries to import. `-` or omission reads from stdin. This cannot be combined with `address`.
+File containing entries to import. `-` or omission reads from stdin. This cannot be combined with `address`. Input is limited to 4 MiB.
 
 <<flag("address", "string", id_prefix="key-import-host-", heading=3)>>
 SSH server from which one negotiated host key is retrieved. Port `22` can be omitted.
@@ -50,10 +52,8 @@ A local `known_hosts` file containing the successfully imported entries. Invalid
       --input /srv/ssh-trust/bifroest-known-hosts
     ```
 
-    The parent directory must already exist. For a single imported key, `--expectedFingerprint` can additionally check its independently retained fingerprint; one fingerprint cannot match several different keys. The [SSH-environment configuration](../../../environment/ssh.md#openssh-certificate-authentication) and [Bifröst delegation example](../../../authorization/bifroest.md) show complete trust exchanges. Use [Remote access](../../management.md) to configure a management alias after provisioning host trust.
+    The importing user needs write access to the destination's parent directory. For a single imported key, `--expectedFingerprint` can additionally check its independently retained fingerprint; one fingerprint cannot match several different keys. The [SSH-environment configuration](../../../environment/ssh.md#openssh-certificate-authentication) and [Bifröst delegation example](../../../authorization/bifroest.md) show complete trust exchanges. Use [Remote access](../../management.md) to configure a management alias after provisioning host trust.
 
 ## Availability
 
 <<cli_availability()>>
-
-`--address` can contact an SSH server to obtain a host key. The imported trust file is local to the CLI machine.

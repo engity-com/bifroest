@@ -25,6 +25,11 @@ type ManagementAccess struct {
 	Recordings            ManagementRecordingBrowser
 	Audit                 ManagementAuditOperations
 	Recording             ManagementRecordingOperations
+	Keys                  ManagementKeyOperations
+}
+
+type ManagementKeyOperations interface {
+	Export(context.Context, model.KeyExportRequest) ([]byte, error)
 }
 
 type ManagementAuditOperations interface {

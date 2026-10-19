@@ -72,8 +72,11 @@ Direct SSH cannot use decryption keys stored on a separate workstation. It can v
 | Client-side `recording verify/export/play` | Yes |
 | Direct-SSH verification without content export | No |
 | Direct-SSH sensitive audit output or Recording export/play | Yes |
+| Public `key export public/ca/host` | No |
 
 These are properties of the authorized management flow, not client-granted privileges. `--with-sensitive` controls disclosure by a command; it does not grant server permissions. `includingCredentials` separately controls the management flow's `flow show` output. See [management environment properties](../environment/management.md#properties).
+
+Public key exports select configured server identities and write their output on the CLI machine. See [Export server public keys remotely](../../guides/keys.md) for a complete configuration. `key generate` and `key import` remain local-only; server trust files are maintained through normal configuration management.
 
 Remote artifact commands download the selected audit journal or original Recording and verify it on the CLI machine. Private decryption keys stay there. An audit download is limited to **1 GiB** of journal files; Recording downloads are subject to the [Recording size limits](../../formats/recording.md). A live journal that changes during the download can cause an error and require a retry.
 

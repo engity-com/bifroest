@@ -12,7 +12,7 @@ import (
 func CreateCommands() []cli.CommandRequirementLike {
 	return []cli.CommandRequirementLike{
 		cli.NewSimpleCommand("key", "Generate, export and import SSH keys.").
-			WithProfiles(common.ProfileExecutable).
+			WithProfiles(common.ProfileExecutable, common.ProfileRemote, common.ProfileManagement).
 			WithCommand(cexport.CreateCommands()...).
 			WithCommand(cgenerate.CreateCommands()...).
 			WithCommand(cimport.CreateCommands()...),

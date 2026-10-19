@@ -23,14 +23,14 @@ func TestGuideConfigurations(t *testing.T) {
 	hostsFile := filepath.Join(t.TempDir(), "target_known_hosts")
 	require.NoError(t, os.WriteFile(hostsFile, []byte(knownhosts.Line([]string{"target.example.org"}, sshKey)+"\n"), 0600))
 
-	for _, name := range []string{"ssh-gateway", "oidc", "recording", "management", "evidence"} {
+	for _, name := range []string{"ssh-gateway", "oidc", "recording", "management", "evidence", "keys"} {
 		t.Run(name, func(t *testing.T) {
 			markdown, err := os.ReadFile(filepath.Join("..", "..", "docs", "guides", name+".md"))
 			require.NoError(t, err)
 			yamlExample := firstGuideYAML(t, string(markdown))
 			yamlExample = strings.ReplaceAll(yamlExample, "/etc/engity/bifroest/management_authorized_keys", keyFile)
 			yamlExample = strings.ReplaceAll(yamlExample, "/etc/engity/bifroest/evidence-recipient.pub", keyFile)
-			if name == "ssh-gateway" {
+			if name == "ssh-gateway" || name == "keys" {
 				require.Contains(t, yamlExample, "/etc/engity/bifroest/gateway-clients.pub")
 				yamlExample = strings.ReplaceAll(yamlExample, "/etc/engity/bifroest/gateway-clients.pub", keyFile)
 				yamlExample = strings.ReplaceAll(yamlExample, "/etc/engity/bifroest/target_known_hosts", hostsFile)
