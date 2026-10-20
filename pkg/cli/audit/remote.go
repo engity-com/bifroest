@@ -158,6 +158,10 @@ func runRemoteAudit(ctx context.Context, target management.Target, opts remoteAu
 		return err
 	}
 	validate := func() error {
+		// The destination may have become an SSH input alias during the download.
+		if err := target.EnsureOutputSafe(ctx, path, output); err != nil {
+			return err
+		}
 		return EnsureAuditDestinationSafe(ctx, path, output, "", &destination, identityFiles)
 	}
 	if err := validate(); err != nil {
