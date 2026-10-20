@@ -336,11 +336,15 @@ func TestManagementClientInteractiveAuthenticationUsesCancelableContextTerminal(
 
 func TestManagementConsoleInterruptProcess(t *testing.T) {
 	if config := os.Getenv("BIFROEST_TEST_CONSOLE_INTERRUPT_CONFIG"); config != "" {
+		original, flags := consoleTestTTYState(t, os.Stdin)
 		ctx, cancel := signal.NotifyContext(t.Context(), os.Interrupt)
 		defer cancel()
 		ctx = cli.ContextWithStdio(ctx, os.Stdin, os.Stdout, os.Stderr)
 		err := (Target{Host: "cancel-test", SSHConfigFile: config}).Run(ctx, "flow", "ls")
 		require.True(t, errors.Is(err, context.Canceled), "expected interrupted authentication, got %v", err)
+		// Darwin revokes the controlling PTY when this session exits, so check
+		// restoration here while the child still owns a usable terminal.
+		requireConsoleTestTTYState(t, os.Stdin, original, flags)
 		return
 	}
 	_, key, err := ed25519.GenerateKey(rand.Reader)
@@ -363,9 +367,7 @@ func TestManagementConsoleInterruptProcess(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			master, terminal := consoleTestTTY(t)
-			// os/exec exposes inherited files through Fd(), making them blocking.
-			_ = terminal.Fd()
-			original, flags := consoleTestTTYState(t, terminal)
+			original, _ := consoleTestTTYState(t, terminal)
 			output := newConsoleTestOutput()
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
@@ -388,7 +390,6 @@ func TestManagementConsoleInterruptProcess(t *testing.T) {
 			result := awaitConsoleTestResult(t, done)
 			require.NoError(t, result.err, "child output: %s; stderr: %s", stdout.String(), output.String())
 			require.NoError(t, ctx.Err(), "authentication must finish before the watchdog kills it")
-			requireConsoleTestTTYState(t, terminal, original, flags)
 		})
 	}
 }

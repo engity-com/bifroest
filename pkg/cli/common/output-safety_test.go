@@ -109,7 +109,9 @@ func TestMultiplyLinkedOutputRetainsInventoryCheck(t *testing.T) {
 }
 
 func TestOutputLocationRequiresInventoryForSubtreeMounts(t *testing.T) {
-	root := t.TempDir()
+	// OS mount tables use canonical paths, including for macOS's /var alias.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	protected := filepath.Join(root, "protected")
 	require.NoError(t, os.Mkdir(protected, 0700))
 	require.False(t, hasMountBelow(protected, []string{protected, protected + "-sibling"}))
