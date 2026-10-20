@@ -41,8 +41,9 @@ func (webdavRemoteNetworkError) Timeout() bool   { return false }
 func (webdavRemoteNetworkError) Temporary() bool { return true }
 
 type webdavRemoteInterruptedReaderAt struct {
-	content []byte
-	passes  atomic.Int32
+	content     []byte
+	passes      atomic.Int32
+	interrupted atomic.Bool
 }
 
 func TestWebdavTemporaryURLIsDeterministicAndFinalPathBound(t *testing.T) {
@@ -68,6 +69,7 @@ func (this *webdavRemoteInterruptedReaderAt) ReadAt(target []byte, offset int64)
 	if pass >= 2 {
 		limit := int64(len(this.content) / 2)
 		if offset >= limit {
+			this.interrupted.Store(true)
 			return 0, goerrors.New("interrupted upload")
 		}
 		if offset+int64(len(target)) > limit {
@@ -76,6 +78,7 @@ func (this *webdavRemoteInterruptedReaderAt) ReadAt(target []byte, offset int64)
 	}
 	read, err := bytes.NewReader(this.content).ReadAt(target, offset)
 	if pass >= 2 && offset+int64(read) >= int64(len(this.content)/2) {
+		this.interrupted.Store(true)
 		return read, goerrors.New("interrupted upload")
 	}
 	return read, err
@@ -603,10 +606,14 @@ func TestWebdavRemoteTargetCleansUpInterruptedUploadAgainstEmbeddedServer(t *tes
 	segment := validRemoteTargetTestSegment()
 	content, err := io.ReadAll(segment.Content())
 	require.NoError(t, err)
-	segment.content = &webdavRemoteInterruptedReaderAt{content: content}
+	reader := &webdavRemoteInterruptedReaderAt{content: content}
+	segment.content = reader
 
 	err = target.Publish(context.Background(), segment)
-	require.ErrorContains(t, err, "interrupted upload")
+	require.Error(t, err)
+	// The transport may report the read failure or the server's rejection of
+	// the incomplete PUT. Verify the injected failure itself in either case.
+	require.True(t, reader.interrupted.Load(), "upload must reach the injected read failure")
 	finalPath := "/audit/" + segment.ProducerId().String() + "/" + segment.FileName()
 	_, err = fileSystem.Stat(context.Background(), finalPath)
 	require.ErrorIs(t, err, os.ErrNotExist)
