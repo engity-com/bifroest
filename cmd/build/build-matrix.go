@@ -6,13 +6,13 @@ import (
 	"github.com/engity-com/bifroest/pkg/sys"
 )
 
-const binaryLinuxAmd64Image = "ghcr.io/engity-com/build-images/build:debian12-amd64@sha256:7ff5ceba077d14f55c7fdd45912188cc8cc4977a37a1c19784bb9bbed3581b6c"
+const binaryLinuxAmd64Image = "ghcr.io/engity-com/build-images/build:debian12-amd64@sha256:d0cafdee78c5186226b9aa95e02b344a87617290cffa5d394605cf2b31831298"
 
 var binaryLinuxExtendedImages = map[sys.Arch]string{
-	sys.Arch386:   "ghcr.io/engity-com/build-images/build:debian12-386@sha256:8cadc8cc47489f0b3549fe432dcb5ea65e0b12f3241522adacb6be9485c2a8e0",
+	sys.Arch386:   "ghcr.io/engity-com/build-images/build:debian12-386@sha256:08ba94ef3eff203c40abce42948a2b7bee34da5b8a247695c511bdfa495637ce",
 	sys.ArchAmd64: binaryLinuxAmd64Image,
-	sys.ArchArmV7: "ghcr.io/engity-com/build-images/build:debian12-armv7@sha256:7e79a5036c0e2c15c19dac6a291b97b9ec965131ec9564077eff623d12624cdb",
-	sys.ArchArm64: "ghcr.io/engity-com/build-images/build:debian12-arm64@sha256:770e1e5cbc4ab130e864ea0e4447da2fd9f6650300909df9374f80ad3fdd36f5",
+	sys.ArchArmV7: "ghcr.io/engity-com/build-images/build:debian12-armv7@sha256:467b28b8227fa5d7fc294cad78082bfd341c734b893a1c9ec01bfa61e304fecc",
+	sys.ArchArm64: "ghcr.io/engity-com/build-images/build:debian12-arm64@sha256:a33489db69cc1b579fed21eee982d5879b47680c9e95045e34f5ca33143e887a",
 }
 
 type buildMatrix[T any] struct {
