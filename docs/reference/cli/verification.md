@@ -54,7 +54,7 @@ Export files must be outside managed journal, Recording and filesystem session-s
 
 Local metadata and configured evidence-output commands also protect statically configured SSH host keys and SSH-flow login/certificate/CA identities, together with known-hosts files, authorized-keys files and trusted user-CA files. The checks inspect file identities without loading or generating keys. Session-dependent file templates are not evaluated by metadata queries and cannot supply additional protected paths for that query.
 
-The integrated management client also protects its SSH login identities, `known_hosts` files and an explicitly selected primary SSH client configuration from stdout redirection or use as an export destination.
+The integrated management client also protects its SSH login identities, `known_hosts` files and the normal primary user and system SSH client configuration files from stdout redirection or use as an export destination. With `--sshConfig` (`-F`), it protects the selected primary configuration instead of the unused normal configuration files. Additional files referenced by `Include` are not automatically inventoried by this destination check.
 
 Redirecting metadata to a separate regular file normally does not require listing unrelated repositories. Hard-linked outputs or ambiguous filesystem aliases can require an inventory check; insufficient access then causes the command to fail before writing. Reading the selected source still requires its normal permissions.
 

@@ -33,13 +33,13 @@ type Target struct {
 }
 
 type settings struct {
-	host          string
-	user          string
-	port          uint16
-	identities    []string
-	agentPath     string
-	knownHosts    []string
-	configuration string
+	host               string
+	user               string
+	port               uint16
+	identities         []string
+	agentPath          string
+	knownHosts         []string
+	configurationFiles []string
 }
 
 func resolve(target Target) (settings, error) {
@@ -146,7 +146,10 @@ func resolve(target Target) (settings, error) {
 	if !info.Mode().IsRegular() {
 		return settings{}, fmt.Errorf("SSH known_hosts path %q is not a regular file", knownHostsPath)
 	}
-	return settings{host: host, user: user, port: port, identities: identities, agentPath: agentPath, knownHosts: []string{knownHostsPath}, configuration: target.SSHConfigFile}, nil
+	return settings{
+		host: host, user: user, port: port, identities: identities, agentPath: agentPath,
+		knownHosts: []string{knownHostsPath}, configurationFiles: target.sshConfigurationFiles(),
+	}, nil
 }
 
 func expandHome(path string) (string, error) {

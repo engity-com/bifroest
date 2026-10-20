@@ -1,14 +1,19 @@
 package management
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
+	osuser "os/user"
 	"path/filepath"
 	"runtime"
 	"testing"
 
+	cli "github.com/echocat/cli4g"
 	"github.com/kevinburke/ssh_config"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
 )
 
 func TestSSHConfigIncludeCustomManagementProperties(t *testing.T) {
@@ -200,6 +205,9 @@ func TestSelectedSSHConfigurationIsProtectedFromOutputs(t *testing.T) {
 	raw := []byte(fmt.Sprintf("Host selected\n HostName selected.example.org\n User admin\n UserKnownHostsFile %q\n", hosts))
 	require.NoError(t, os.WriteFile(path, raw, 0600))
 	target := Target{Host: "selected", SSHConfigFile: path}
+	resolved, err := resolve(target)
+	require.NoError(t, err)
+	require.Equal(t, []string{path}, resolved.configurationFiles, "-F must not protect unused default configuration files")
 	for _, alias := range []bool{false, true} {
 		outputPath := path
 		if alias {
@@ -217,4 +225,32 @@ func TestSelectedSSHConfigurationIsProtectedFromOutputs(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, raw, content)
 	}
+}
+
+func TestDefaultSSHConfigurationPathsAreProtectedFromOutputs(t *testing.T) {
+	target, done := managementSSHTestServer(t, "version", func(channel ssh.Channel) error {
+		if _, err := io.WriteString(channel, "test version\n"); err != nil {
+			return err
+		}
+		_, err := channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
+		return err
+	})
+	// Match the library's default search paths without modifying real SSH files.
+	home := os.Getenv("HOME")
+	if current, err := osuser.Current(); err == nil {
+		home = current.HomeDir
+	}
+	for _, path := range []string{
+		filepath.Join(home, ".ssh", "config"),
+		filepath.Join(string(filepath.Separator), "etc", "ssh", "ssh_config"),
+	} {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			require.ErrorContains(t, target.EnsureOutputSafe(t.Context(), path, io.Discard), "must not replace SSH client configuration")
+		})
+	}
+	var output bytes.Buffer
+	ctx := cli.ContextWithStdio(t.Context(), nil, &output, io.Discard)
+	require.NoError(t, target.RunDirect(ctx, "version"))
+	require.Equal(t, "test version\n", output.String())
+	require.NoError(t, <-done)
 }
