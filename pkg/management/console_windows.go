@@ -45,9 +45,21 @@ type consoleInput struct {
 }
 
 func openConsoleInput(input uintptr, echo bool, output io.Writer) (*consoleInput, error) {
-	var handle windows.Handle
-	process := windows.CurrentProcess()
-	if err := windows.DuplicateHandle(process, windows.Handle(input), process, &handle, 0, false, windows.DUPLICATE_SAME_ACCESS); err != nil {
+	// GetConsoleMode also accepts output handles. Validate the invocation's
+	// input before reopening its console's single input buffer.
+	var events uint32
+	if err := windows.GetNumberOfConsoleInputEvents(windows.Handle(input), &events); err != nil {
+		return nil, err
+	}
+	path, err := windows.UTF16PtrFromString("CONIN$")
+	if err != nil {
+		return nil, err
+	}
+	// A duplicate shares the file object: a canceled read can consume input
+	// from the next prompt. A fresh handle isolates and releases that read.
+	handle, err := windows.CreateFile(path, windows.GENERIC_READ|windows.GENERIC_WRITE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, 0, 0)
+	if err != nil {
 		return nil, err
 	}
 	fail := func(err error) (*consoleInput, error) {

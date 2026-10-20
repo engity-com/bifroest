@@ -128,4 +128,41 @@ func TestManagementConsoleWindowsProcess(t *testing.T) {
 			checkRestored(t)
 		})
 	}
+	t.Run("borrowed input remains readable", func(t *testing.T) {
+		writeInput(t, "x")
+		done := make(chan struct {
+			record consoleInputRecord
+			err    error
+		}, 1)
+		go func() {
+			record, err := (&consoleInput{handle: handle}).nextRecord()
+			done <- struct {
+				record consoleInputRecord
+				err    error
+			}{record, err}
+		}()
+		select {
+		case result := <-done:
+			require.NoError(t, result.err)
+			require.Equal(t, uint16('x'), result.record.key.character)
+		case <-time.After(3 * time.Second):
+			t.Fatal("borrowed input no longer receives console events")
+		}
+		checkRestored(t)
+	})
+	t.Run("console output is not a terminal input", func(t *testing.T) {
+		path, err := windows.UTF16PtrFromString("CONOUT$")
+		require.NoError(t, err)
+		handle, err := windows.CreateFile(path, windows.GENERIC_READ|windows.GENERIC_WRITE,
+			windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, 0, 0)
+		require.NoError(t, err)
+		outputTerminal := os.NewFile(uintptr(handle), "test console output")
+		defer func() { require.NoError(t, outputTerminal.Close()) }()
+		output := newConsoleTestOutput()
+		ctx := cli.ContextWithStdio(t.Context(), outputTerminal, io.Discard, output)
+		line, err := readManagementPassword(ctx, "Password: ")
+		require.Error(t, err)
+		require.Nil(t, line)
+		require.Empty(t, output.String())
+	})
 }
