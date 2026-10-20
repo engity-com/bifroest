@@ -17,7 +17,6 @@ import (
 	"github.com/kevinburke/ssh_config"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
-	"golang.org/x/term"
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	cliformat "github.com/engity-com/bifroest/pkg/cli/format"
@@ -351,7 +350,7 @@ func connect(ctx context.Context, target Target) (_ *ssh.Client, _ func(), resul
 				if len(auth) > 0 {
 					continue
 				}
-				secret, readErr := readManagementPassword(fmt.Sprintf("Passphrase for SSH key %s: ", path))
+				secret, readErr := readManagementPassword(ctx, fmt.Sprintf("Passphrase for SSH key %s: ", path))
 				if readErr != nil {
 					return nil, nil, readErr
 				}
@@ -372,13 +371,15 @@ func connect(ctx context.Context, target Target) (_ *ssh.Client, _ func(), resul
 		auth = append(auth, ssh.PublicKeys(signers...))
 	}
 	if len(auth) == 0 {
-		if !term.IsTerminal(int(os.Stdin.Fd())) {
+		if _, err := managementTerminalInput(ctx); err != nil {
 			return nil, nil, fmt.Errorf("no SSH agent or usable identity file available (password login needs a terminal)")
 		}
 	}
-	if term.IsTerminal(int(os.Stdin.Fd())) {
-		auth = append(auth, ssh.KeyboardInteractive(keyboardInteractive), ssh.PasswordCallback(func() (string, error) {
-			secret, err := readManagementPassword("SSH password: ")
+	if _, err := managementTerminalInput(ctx); err == nil {
+		auth = append(auth, ssh.KeyboardInteractive(func(user, instructions string, questions []string, echos []bool) ([]string, error) {
+			return keyboardInteractive(ctx, user, instructions, questions, echos)
+		}), ssh.PasswordCallback(func() (string, error) {
+			secret, err := readManagementPassword(ctx, "SSH password: ")
 			if err != nil {
 				return "", err
 			}

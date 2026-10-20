@@ -194,6 +194,11 @@ func managementClientTestServer(t *testing.T, command string, handle func(ssh.Ch
 
 func managementSSHTestServer(t *testing.T, command string, handle func(ssh.Channel) error) (Target, <-chan error) {
 	t.Helper()
+	return managementSSHAuthTestServer(t, command, handle, nil)
+}
+
+func managementSSHAuthTestServer(t *testing.T, command string, handle func(ssh.Channel) error, configure func(*ssh.ServerConfig)) (Target, <-chan error) {
+	t.Helper()
 	t.Setenv("SSH_AUTH_SOCK", "")
 	_, hostKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
@@ -213,6 +218,9 @@ func managementSSHTestServer(t *testing.T, command string, handle func(ssh.Chann
 		}
 		return nil, nil
 	}}
+	if configure != nil {
+		configure(config)
+	}
 	config.AddHostKey(hostSigner)
 	serverDone := make(chan error, 1)
 	go func() {

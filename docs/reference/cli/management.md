@@ -57,6 +57,12 @@ When both Windows agents are running, set `X-SSHAgent pageant` in the matching `
 
 The agent authenticates the SSH connection. Audit and Recording decryption use separate local private-key files. In a container, provide the agent socket or login identity, SSH configuration and trusted host keys as needed.
 
+### Authentication prompts
+
+Passphrases for encrypted SSH identities, passwords and keyboard-interactive answers are read from the invoking terminal. Prompts are written to stderr; secret answers are hidden. Press `Ctrl+C` to cancel a prompt without pressing Enter. The original terminal settings are restored when the prompt finishes or is canceled.
+
+For non-interactive commands, provide an SSH agent or a usable identity file. The client does not read passwords from a pipe or from command output.
+
 ### Artifact settings
 
 The integrated client recognizes these additional SSH settings:
