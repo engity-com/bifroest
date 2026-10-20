@@ -148,19 +148,19 @@ func (this *consoleInput) readLine(ctx context.Context) (line []byte, resultErr 
 		}
 		key := record.key
 		for range max(int(key.repeat), 1) {
-			switch {
-			case key.character == 3:
+			switch key.character {
+			case 3:
 				return line, context.Canceled
-			case key.character == '\r' || key.character == '\n':
+			case '\r', '\n':
 				if this.echo {
 					if err := writeConsoleText(this.output, "\n"); err != nil {
 						return line, err
 					}
 				}
 				return line, nil
-			case key.character == 4:
+			case 4:
 				return line, io.EOF
-			case key.character == '\b':
+			case '\b':
 				if len(line) != 0 {
 					_, size := utf8.DecodeLastRune(line)
 					clear(line[len(line)-size:])
