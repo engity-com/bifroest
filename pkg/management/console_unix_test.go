@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -107,6 +108,107 @@ func TestManagementConsolePasswordPreservesBorrowedTerminal(t *testing.T) {
 	require.Equal(t, "still usable\n", string(buffer[:n]))
 }
 
+func TestManagementConsolePreservesLongAnswers(t *testing.T) {
+	for _, echo := range []bool{false, true} {
+		for _, test := range []struct {
+			name  string
+			input string
+			over  bool
+		}{
+			{"old boundary", strings.Repeat("x", 4095), false},
+			{"past old boundary", strings.Repeat("x", 4096), false},
+			{"review repro", strings.Repeat("x", 5000), false},
+			{"long unicode", strings.Repeat("é😀", 1000), false},
+			{"at limit", strings.Repeat("x", maximumConsoleInputBytes), false},
+			{"unicode at limit", strings.Repeat("x", maximumConsoleInputBytes-4) + "😀", false},
+			{"over limit", strings.Repeat("x", maximumConsoleInputBytes+1), true},
+			{"unicode over limit", strings.Repeat("x", maximumConsoleInputBytes-3) + "😀", true},
+		} {
+			t.Run(fmt.Sprintf("echo=%t/%s", echo, test.name), func(t *testing.T) {
+				master, terminal := consoleTestTTY(t)
+				original, flags := consoleTestTTYState(t, terminal)
+				output := newConsoleTestOutput()
+				var stdout bytes.Buffer
+				ctx, cancel := context.WithTimeout(cli.ContextWithStdio(t.Context(), terminal, &stdout, output), 5*time.Second)
+				defer cancel()
+				done := make(chan consoleTestResult, 1)
+				go func() {
+					line, err := readManagementLine(ctx, "Long answer: ", echo)
+					done <- consoleTestResult{line, err}
+				}()
+				output.await(t, "Long answer: ")
+				_, err := io.WriteString(master, test.input+"\n")
+				require.NoError(t, err)
+				result := awaitConsoleTestResult(t, done)
+				defer clear(result.line)
+				if test.over {
+					require.ErrorContains(t, result.err, "input exceeds")
+					require.Nil(t, result.line, "oversized answers must not expose their prefix")
+				} else {
+					require.NoError(t, result.err)
+					require.Equal(t, len(test.input), len(result.line), "terminal answer must not be silently truncated")
+					require.True(t, bytes.Equal([]byte(test.input), result.line), "terminal answer must remain unchanged")
+					if echo {
+						require.True(t, output.String() == "Long answer: "+test.input+"\n", "visible answers must echo unchanged to stderr")
+					}
+				}
+				if !echo {
+					require.Equal(t, "Long answer: \n", output.String())
+				}
+				require.Empty(t, stdout.Bytes())
+				requireConsoleTestTTYState(t, terminal, original, flags)
+			})
+		}
+	}
+}
+
+func TestManagementConsoleEditsUnicodeAnswers(t *testing.T) {
+	for _, echo := range []bool{false, true} {
+		for _, edit := range []string{"erase", "kill", "word erase"} {
+			t.Run(fmt.Sprintf("echo=%t/%s", echo, edit), func(t *testing.T) {
+				master, terminal := consoleTestTTY(t)
+				original, flags := consoleTestTTYState(t, terminal)
+				var input, expected string
+				switch edit {
+				case "erase":
+					input = "së😀" + string(original.Cc[unix.VERASE]) + "X\n"
+					expected = "sëX"
+				case "kill":
+					input = "discard sëcret😀" + string(original.Cc[unix.VKILL]) + "fresh\n"
+					expected = "fresh"
+				case "word erase":
+					if original.Lflag&unix.IEXTEN == 0 || original.Cc[unix.VWERASE] == disabledConsoleControl {
+						t.Skip("terminal word erase is disabled")
+					}
+					input = "first é😀 " + string(original.Cc[unix.VWERASE]) + "last\n"
+					expected = "first last"
+				}
+				output := newConsoleTestOutput()
+				ctx, cancel := context.WithCancel(cli.ContextWithStdio(t.Context(), terminal, io.Discard, output))
+				defer cancel()
+				done := make(chan consoleTestResult, 1)
+				go func() {
+					line, err := readManagementLine(ctx, "Answer: ", echo)
+					done <- consoleTestResult{line, err}
+				}()
+				output.await(t, "Answer: ")
+				_, err := io.WriteString(master, input)
+				require.NoError(t, err)
+				result := awaitConsoleTestResult(t, done)
+				defer clear(result.line)
+				require.NoError(t, result.err)
+				require.Equal(t, expected, string(result.line))
+				tail := result.line[len(result.line):cap(result.line)]
+				require.Equal(t, len(tail), bytes.Count(tail, []byte{0}), "erased secret bytes must be cleared")
+				if !echo {
+					require.Equal(t, "Answer: \n", output.String())
+				}
+				requireConsoleTestTTYState(t, terminal, original, flags)
+			})
+		}
+	}
+}
+
 func TestManagementConsoleCancellationDiscardsUnsubmittedSecret(t *testing.T) {
 	master, terminal := consoleTestTTY(t)
 	original, flags := consoleTestTTYState(t, terminal)
@@ -174,7 +276,7 @@ func TestManagementConsoleKeyboardInteractiveMixedEcho(t *testing.T) {
 	}()
 	output.await(t, "Login: ")
 	mode, _ := consoleTestTTYState(t, terminal)
-	require.NotZero(t, mode.Lflag&unix.ECHO)
+	require.Zero(t, mode.Lflag&(unix.ECHO|unix.ICANON), "visible input is echoed by the application, not the kernel")
 	_, err := master.Write([]byte("alice\n"))
 	require.NoError(t, err)
 	output.await(t, "Token: ")
@@ -184,6 +286,7 @@ func TestManagementConsoleKeyboardInteractiveMixedEcho(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, awaitConsoleTestResult(t, done).err)
 	require.Equal(t, []string{"alice", "private token"}, answers)
+	require.Contains(t, output.String(), "Login: alice\nToken: ")
 	require.NotContains(t, output.String(), "private token")
 	requireConsoleTestTTYState(t, terminal, original, flags)
 }
@@ -214,25 +317,133 @@ func TestManagementConsoleRestoresTerminalOnPromptFailureAndEOF(t *testing.T) {
 }
 
 func TestManagementConsoleDoesNotConsumeNextAnswer(t *testing.T) {
+	for _, echo := range []bool{false, true} {
+		for _, long := range []bool{false, true} {
+			t.Run(fmt.Sprintf("echo=%t/long=%t", echo, long), func(t *testing.T) {
+				master, terminal := consoleTestTTY(t)
+				original, flags := consoleTestTTYState(t, terminal)
+				output := newConsoleTestOutput()
+				ctx, cancel := context.WithTimeout(cli.ContextWithStdio(t.Context(), terminal, io.Discard, output), 5*time.Second)
+				defer cancel()
+				first, second := "first", "second"
+				if long {
+					first, second = strings.Repeat("é😀", 1000), strings.Repeat("sëcond", 1000)
+				}
+				var answers []string
+				done := make(chan consoleTestResult, 1)
+				go func() {
+					var err error
+					answers, err = keyboardInteractive(ctx, "admin", "", []string{"First: ", "Second: "}, []bool{echo, !echo})
+					done <- consoleTestResult{err: err}
+				}()
+				output.await(t, "First: ")
+				_, err := io.WriteString(master, first+"\n"+second+"\n")
+				require.NoError(t, err)
+				require.NoError(t, awaitConsoleTestResult(t, done).err)
+				require.Len(t, answers, 2)
+				require.True(t, answers[0] == first && answers[1] == second, "queued answers must not be truncated or consumed by the previous prompt")
+				requireConsoleTestTTYState(t, terminal, original, flags)
+			})
+		}
+	}
+}
+
+func TestManagementConsoleHonorsConfiguredAndDisabledControls(t *testing.T) {
+	for _, disabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("disabled=%t", disabled), func(t *testing.T) {
+			master, terminal := consoleTestTTY(t)
+			mode, _ := consoleTestTTYState(t, terminal)
+			mode.Lflag |= unix.IEXTEN
+			mode.Cc[unix.VERASE], mode.Cc[unix.VKILL], mode.Cc[unix.VWERASE] = '#', '@', '!'
+			input, expected := "a#b@first é😀 !last\n", "first last"
+			if disabled {
+				for _, index := range []int{unix.VEOF, unix.VERASE, unix.VKILL, unix.VWERASE} {
+					mode.Cc[index] = disabledConsoleControl
+				}
+				input = string([]byte{'a', disabledConsoleControl, 'b', '\n'})
+				expected = input[:len(input)-1]
+			}
+			raw, err := terminal.SyscallConn()
+			require.NoError(t, err)
+			var modeErr error
+			require.NoError(t, raw.Control(func(fd uintptr) { modeErr = writeConsoleTermios(int(fd), &mode, false) }))
+			require.NoError(t, modeErr)
+			original, flags := consoleTestTTYState(t, terminal)
+			output := newConsoleTestOutput()
+			ctx, cancel := context.WithCancel(cli.ContextWithStdio(t.Context(), terminal, io.Discard, output))
+			defer cancel()
+			done := startConsoleTestPassword(ctx, "Answer: ")
+			output.await(t, "Answer: ")
+			_, err = io.WriteString(master, input)
+			require.NoError(t, err)
+			result := awaitConsoleTestResult(t, done)
+			defer clear(result.line)
+			require.NoError(t, result.err)
+			require.Equal(t, expected, string(result.line))
+			require.Equal(t, "Answer: \n", output.String())
+			requireConsoleTestTTYState(t, terminal, original, flags)
+		})
+	}
+}
+
+type consoleTestEchoFailure struct{ *consoleTestOutput }
+
+func (this consoleTestEchoFailure) Write(value []byte) (int, error) {
+	if string(value) == "Answer: " {
+		return this.consoleTestOutput.Write(value)
+	}
+	return 0, io.ErrClosedPipe
+}
+
+func TestManagementConsoleRestoresTerminalOnEchoFailure(t *testing.T) {
 	master, terminal := consoleTestTTY(t)
+	original, flags := consoleTestTTYState(t, terminal)
 	output := newConsoleTestOutput()
-	ctx, cancel := context.WithCancel(cli.ContextWithStdio(t.Context(), terminal, io.Discard, output))
+	ctx, cancel := context.WithCancel(cli.ContextWithStdio(t.Context(), terminal, io.Discard, consoleTestEchoFailure{output}))
 	defer cancel()
 	done := make(chan consoleTestResult, 1)
 	go func() {
-		answers, err := keyboardInteractive(ctx, "admin", "", []string{"First: ", "Second: "}, []bool{false, false})
-		if err == nil && (len(answers) != 2 || answers[0] != "first" || answers[1] != "second") {
-			err = io.ErrUnexpectedEOF
-		}
-		done <- consoleTestResult{err: err}
+		line, err := readManagementLine(ctx, "Answer: ", true)
+		done <- consoleTestResult{line, err}
 	}()
-	output.await(t, "First: ")
-	_, err := master.Write([]byte("first\nsecond\n"))
+	output.await(t, "Answer: ")
+	_, err := io.WriteString(master, "answer\n")
 	require.NoError(t, err)
-	require.NoError(t, awaitConsoleTestResult(t, done).err)
+	result := awaitConsoleTestResult(t, done)
+	require.ErrorIs(t, result.err, io.ErrClosedPipe)
+	require.Nil(t, result.line)
+	require.Equal(t, "Answer: ", output.String())
+	requireConsoleTestTTYState(t, terminal, original, flags)
+}
+
+func TestManagementConsoleDiscardsPartialAnswerOnEOF(t *testing.T) {
+	master, terminal := consoleTestTTY(t)
+	original, flags := consoleTestTTYState(t, terminal)
+	output := newConsoleTestOutput()
+	ctx, cancel := context.WithCancel(cli.ContextWithStdio(t.Context(), terminal, io.Discard, output))
+	defer cancel()
+	done := startConsoleTestPassword(ctx, "Answer: ")
+	output.await(t, "Answer: ")
+	_, err := master.Write(append([]byte("partial answer"), original.Cc[unix.VEOF]))
+	require.NoError(t, err)
+	result := awaitConsoleTestResult(t, done)
+	require.ErrorIs(t, result.err, io.EOF)
+	require.Nil(t, result.line)
+	require.Equal(t, "Answer: \n", output.String())
+	requireConsoleTestTTYState(t, terminal, original, flags)
 }
 
 func TestManagementClientUnlocksEncryptedIdentityFromContextTerminal(t *testing.T) {
+	for name, passphrase := range map[string]string{
+		"short": "key passphrase",
+		"long":  strings.Repeat("é😀", 1000),
+	} {
+		t.Run(name, func(t *testing.T) { testManagementClientUnlocksEncryptedIdentity(t, passphrase) })
+	}
+}
+
+func testManagementClientUnlocksEncryptedIdentity(t *testing.T, passphrase string) {
+	t.Helper()
 	target, serverDone := managementClientTestServer(t, transport.WireCommand, func(channel ssh.Channel, _ []string) error {
 		if err := cliformat.WriteFlowList(channel, cliformat.WireCbor, []model.FlowSummary{{Name: "authenticated"}}); err != nil {
 			return err
@@ -246,7 +457,7 @@ func TestManagementClientUnlocksEncryptedIdentityFromContextTerminal(t *testing.
 	require.NoError(t, err)
 	key, err := ssh.ParseRawPrivateKey(content)
 	require.NoError(t, err)
-	block, err := ssh.MarshalPrivateKeyWithPassphrase(key, "test", []byte("key passphrase"))
+	block, err := ssh.MarshalPrivateKeyWithPassphrase(key, "test", []byte(passphrase))
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(settings.identities[0], pem.EncodeToMemory(block), 0600))
 	master, terminal := consoleTestTTY(t)
@@ -258,16 +469,26 @@ func TestManagementClientUnlocksEncryptedIdentityFromContextTerminal(t *testing.
 	done := make(chan consoleTestResult, 1)
 	go func() { done <- consoleTestResult{err: target.Run(ctx, "flow", "ls", "--format=json")} }()
 	output.await(t, "Passphrase for SSH key")
-	_, err = master.Write([]byte("key passphrase\n"))
+	_, err = io.WriteString(master, passphrase+"\n")
 	require.NoError(t, err)
 	require.NoError(t, awaitConsoleTestResult(t, done).err)
 	require.NoError(t, <-serverDone)
 	require.Contains(t, stdout.String(), "authenticated")
-	require.NotContains(t, output.String(), "key passphrase")
+	require.NotContains(t, output.String(), passphrase)
 	requireConsoleTestTTYState(t, terminal, original, flags)
 }
 
 func TestManagementClientInteractiveAuthenticationUsesCancelableContextTerminal(t *testing.T) {
+	for name, answer := range map[string]string{
+		"short": "authentication secret",
+		"long":  strings.Repeat("é😀", 1000),
+	} {
+		t.Run(name, func(t *testing.T) { testManagementClientInteractiveAuthentication(t, answer) })
+	}
+}
+
+func testManagementClientInteractiveAuthentication(t *testing.T, answer string) {
+	t.Helper()
 	for _, keyboard := range []bool{false, true} {
 		for _, interrupt := range []bool{false, true} {
 			t.Run(fmt.Sprintf("keyboard=%v/cancel=%v", keyboard, interrupt), func(t *testing.T) {
@@ -288,14 +509,14 @@ func TestManagementClientInteractiveAuthenticationUsesCancelableContextTerminal(
 							if err != nil {
 								return nil, err
 							}
-							if len(answers) != 1 || answers[0] != "authentication secret" {
+							if len(answers) != 1 || answers[0] != answer {
 								return nil, fmt.Errorf("unexpected authentication answer")
 							}
 							return nil, nil
 						}
 					} else {
 						config.PasswordCallback = func(_ ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
-							if string(password) != "authentication secret" {
+							if string(password) != answer {
 								return nil, fmt.Errorf("unexpected password")
 							}
 							return nil, nil
@@ -321,13 +542,13 @@ func TestManagementClientInteractiveAuthenticationUsesCancelableContextTerminal(
 					require.Error(t, <-serverDone)
 					require.Empty(t, stdout.String())
 				} else {
-					_, err := master.Write([]byte("authentication secret\n"))
+					_, err := io.WriteString(master, answer+"\n")
 					require.NoError(t, err)
 					require.NoError(t, awaitConsoleTestResult(t, done).err)
 					require.NoError(t, <-serverDone)
 					require.Contains(t, stdout.String(), "authenticated")
 				}
-				require.NotContains(t, output.String(), "authentication secret")
+				require.NotContains(t, output.String(), answer)
 				requireConsoleTestTTYState(t, terminal, original, flags)
 			})
 		}

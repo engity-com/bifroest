@@ -7,6 +7,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const disabledConsoleControl = 0
+
 func consoleInputPath(fd uintptr) (string, error) {
 	return os.Readlink(fmt.Sprintf("/proc/self/fd/%d", fd))
 }

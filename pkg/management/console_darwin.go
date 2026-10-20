@@ -6,6 +6,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const disabledConsoleControl = 0xff
+
 func consoleInputPath(fd uintptr) (string, error) {
 	var path [1024]byte
 	if _, _, errno := unix.Syscall(unix.SYS_FCNTL, fd, unix.F_GETPATH, uintptr(unsafe.Pointer(&path[0]))); errno != 0 {
