@@ -89,7 +89,7 @@ func (this Requirement) isEqualTo(other *Requirement) bool {
 func (this Requirement) String() string {
 	if name := this.Name; len(name) > 0 {
 		if uid := this.Uid; uid != nil {
-			return fmt.Sprintf("%d(%s)", uid, name)
+			return fmt.Sprintf("%d(%s)", *uid, name)
 		} else {
 			return strings.Clone(name)
 		}
