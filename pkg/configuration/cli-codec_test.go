@@ -3,15 +3,20 @@ package configuration_test
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
 	cli "github.com/echocat/cli4g"
+	"github.com/echocat/cli4g/codec"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	"github.com/engity-com/bifroest/pkg/cli/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	bferrors "github.com/engity-com/bifroest/pkg/errors"
 )
 
 type configurationCodecOptions struct {
@@ -120,6 +125,100 @@ func TestConfigurationCodecRejectsNonExecutableProfilesBeforeOpeningFiles(t *tes
 	} {
 		err := app.ParseAndExecute(t.Context(), &cli.ParseOpts{Profiles: profiles}, "--configuration="+path)
 		require.ErrorContains(t, err, "configuration files require the executable profile exclusively")
+	}
+}
+
+func TestConfigurationLoadErrorsPreserveDiagnosticsAndCauses(t *testing.T) {
+	loaders := map[string]func(*testing.T, string) error{
+		"codec": func(t *testing.T, path string) error {
+			app := cli.NewApplication[configurationCodecOptions]("test").
+				WithCodec(configuration.NewCliCodec(common.ProfileExecutable)).
+				WithErrorHandlerEnabled(false).
+				WithFallbackToStdio(false).
+				WithHandler(func(context.Context, configurationCodecOptions) error {
+					t.Error("invalid configuration must not reach the command handler")
+					return nil
+				}).MustCreate()
+			t.Cleanup(func() { require.NoError(t, app.Close()) })
+			return app.ParseAndExecute(t.Context(), &cli.ParseOpts{Profiles: []string{common.ProfileExecutable}}, "--configuration="+path)
+		},
+		"string options": func(t *testing.T, path string) error {
+			conf, err := (configuration.StrOpts{Configuration: path}).LoadConfiguration()
+			require.Nil(t, conf)
+			return err
+		},
+		"optional string options": func(t *testing.T, path string) error {
+			conf, loaded, err := (configuration.EmptyStrOpts{Configuration: path}).LoadConfiguration(true)
+			require.Nil(t, conf)
+			require.False(t, loaded)
+			return err
+		},
+	}
+	for _, test := range []struct {
+		name      string
+		contents  string
+		missing   bool
+		directory bool
+		secret    string
+	}{
+		{name: "missing file", missing: true},
+		{name: "directory", directory: true},
+		{name: "empty file"},
+		{name: "YAML syntax", contents: "flows: [\n"},
+		{name: "missing required flows", contents: "flows: []\n"},
+		{name: "invalid field type", contents: "flows:\n  - name: test\n    authorization:\n      type: none\n    environment:\n      type: management\n      includingCredentials: notBool\n"},
+		{name: "invalid credential", contents: "flows:\n  - name: test\n    authorization:\n      type: simple\n      entries:\n        - name: test\n          password: CodecCredentialMarker\n    environment:\n      type: dummy\n", secret: "CodecCredentialMarker"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "configuration.yaml")
+			switch {
+			case test.directory:
+				require.NoError(t, os.Mkdir(path, 0700))
+			case !test.missing:
+				require.NoError(t, os.WriteFile(path, []byte(test.contents), 0600))
+			}
+			var original configuration.Configuration
+			cause := original.LoadFromFile(path)
+			require.Error(t, cause)
+			for name, load := range loaders {
+				t.Run(name, func(t *testing.T) {
+					err := load(t, path)
+					require.ErrorContains(t, err, "cannot load configuration")
+					require.ErrorContains(t, err, cause.Error(), "the displayed diagnostic must retain the full loader message, including its path")
+					require.True(t, codec.IsValidationError(err))
+					require.True(t, bferrors.IsType(err, bferrors.Config))
+					if test.secret != "" {
+						require.NotContains(t, err.Error(), test.secret)
+						require.ErrorContains(t, err, "***redacted***")
+					}
+					if errors.Is(cause, io.EOF) {
+						require.ErrorIs(t, err, io.EOF)
+					}
+					var wrapped *bferrors.Error
+					require.ErrorAs(t, err, &wrapped)
+					require.Equal(t, cause.Error(), wrapped.Error())
+					var location *configuration.LocationError
+					if errors.As(cause, &location) {
+						var actual *configuration.LocationError
+						require.ErrorAs(t, err, &actual)
+						require.Equal(t, location.Line, actual.Line)
+						require.Equal(t, location.Column, actual.Column)
+					}
+					var typeError *yaml.TypeError
+					if errors.As(cause, &typeError) {
+						var actual *yaml.TypeError
+						require.ErrorAs(t, err, &actual)
+						require.Equal(t, typeError.Errors, actual.Errors)
+					}
+					var pathError *os.PathError
+					if errors.As(cause, &pathError) {
+						var actual *os.PathError
+						require.ErrorAs(t, err, &actual)
+						require.Equal(t, pathError.Err, actual.Err)
+					}
+				})
+			}
+		})
 	}
 }
 

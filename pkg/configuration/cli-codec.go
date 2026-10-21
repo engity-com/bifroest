@@ -63,7 +63,7 @@ func (c cliCodec) Resolve(ctx context.Context, _ codec.Scope, path string) (*Con
 	}
 	var result Configuration
 	if err := result.LoadFromFile(path); err != nil {
-		return nil, codec.NewValidationError("cannot load configuration", err)
+		return nil, codec.NewValidationErrorf("cannot load configuration: %w", err)
 	}
 	return &result, ctx.Err()
 }

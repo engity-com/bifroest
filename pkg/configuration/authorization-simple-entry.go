@@ -14,8 +14,8 @@ type AuthorizationSimpleEntry struct {
 	Name               string                    `yaml:"name"`
 	AuthorizedKeys     crypto.AuthorizedKeys     `yaml:"authorizedKeys,omitempty"`
 	AuthorizedKeysFile crypto.AuthorizedKeysFile `yaml:"authorizedKeysFile,omitempty"`
-	Password           crypto.Password           `yaml:"password,omitempty"`
-	PasswordFile       crypto.PasswordFile       `yaml:"passwordFile,omitempty"`
+	Password           crypto.Password           `yaml:"password,omitempty" sensitive:"true"`
+	PasswordFile       crypto.PasswordFile       `yaml:"passwordFile,omitempty" sensitive:"true"`
 
 	CreatePasswordFileIfAbsentOfType *crypto.PasswordType `yaml:"createPasswordFileIfAbsentOfType,omitempty"`
 }
@@ -95,7 +95,7 @@ func (this *AuthorizationSimpleEntry) Validate() error {
 func (this *AuthorizationSimpleEntry) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *AuthorizationSimpleEntry, node *yaml.Node) error {
 		type raw AuthorizationSimpleEntry
-		return node.Decode((*raw)(target))
+		return decodeConfigurationFields(node, (*raw)(target))
 	})
 }
 

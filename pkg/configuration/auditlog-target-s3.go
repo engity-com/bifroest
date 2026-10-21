@@ -35,9 +35,9 @@ type AuditlogTargetS3 struct {
 	PathStyle             bool              `yaml:"pathStyle,omitempty"`
 	ExpectedBucketOwner   string            `yaml:"expectedBucketOwner,omitempty"`
 	DestinationIdentity   string            `yaml:"destinationIdentity,omitempty"`
-	AccessKeyId           template.String   `yaml:"accessKeyId,omitempty"`
-	SecretAccessKey       template.String   `yaml:"secretAccessKey,omitempty"`
-	SessionToken          template.String   `yaml:"sessionToken,omitempty"`
+	AccessKeyId           template.String   `yaml:"accessKeyId,omitempty" sensitive:"true"`
+	SecretAccessKey       template.String   `yaml:"secretAccessKey,omitempty" sensitive:"true"`
+	SessionToken          template.String   `yaml:"sessionToken,omitempty" sensitive:"true"`
 	PublishAttemptTimeout template.Duration `yaml:"publishAttemptTimeout,omitempty"`
 	sessionTokenDefault   bool
 }
@@ -331,7 +331,7 @@ func (this *AuditlogTargetS3) UnmarshalYAML(node *yaml.Node) error {
 			return err
 		}
 		type raw AuditlogTargetS3
-		if err := node.Decode((*raw)(target)); err != nil {
+		if err := decodeConfigurationFields(node, (*raw)(target)); err != nil {
 			return err
 		}
 		target.sessionTokenDefault = true

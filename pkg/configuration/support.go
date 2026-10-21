@@ -26,7 +26,7 @@ func setDefaults[T any](target *T, fs ...func(*T) (string, defaulter)) error {
 			if n == "" {
 				return err
 			}
-			return fmt.Errorf("[%s] %w", n, err)
+			return configurationFieldError(target, n, err)
 		}
 	}
 	return nil
@@ -71,7 +71,7 @@ func trim[T validator](target T, fs ...func(T) (string, trimmer)) error {
 			if n == "" {
 				return err
 			}
-			return fmt.Errorf("[%s] %w", n, err)
+			return configurationFieldError(target, n, err)
 		}
 	}
 	return target.Validate()
@@ -111,7 +111,7 @@ func validate[T any](target T, fs ...func(T) (string, validator)) error {
 			if n == "" {
 				return err
 			}
-			return fmt.Errorf("[%s] %w", n, err)
+			return configurationFieldError(target, n, err)
 		}
 	}
 	return nil

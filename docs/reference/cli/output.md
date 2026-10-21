@@ -41,6 +41,8 @@ Configuration detail commands redact arbitrary strings. The management flow's `i
 
 A failed command returns a nonzero exit status. Check that status before accepting output as complete.
 
+Local configuration-loading errors include the file path and parser or validation details, with line and column information where available. Known credential fields (passwords and password files, client credentials, remote storage credentials, registry credentials and environment variables) replace value-bearing errors with a field-specific `***redacted***` diagnostic. Other fields retain their detailed errors: a secret accidentally placed in an unrelated field is not automatically recognized. Treat captured stderr and logs as potentially sensitive.
+
 * **`recording ls` streams** each selected entry after verifying it. A later failure leaves partial output; JSON or CBOR can remain unfinished. Accept the page as complete only when the command succeeds.
 * **Audit export and merge verify all selected sources before publishing output.** A corrupt source produces no event output and leaves an existing destination file unchanged.
 * **Recording export verifies before publishing content.** An existing destination is replaced only with a complete, verified export. Playback verifies its input before replaying terminal events.

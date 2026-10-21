@@ -64,7 +64,7 @@ type EnvironmentKubernetes struct {
 	Image                template.String   `yaml:"image"`
 	ImagePullPolicy      PullPolicy        `yaml:"imagePullPolicy,omitempty"`
 	ImagePullSecretName  template.String   `yaml:"imagePullSecretName,omitempty"`
-	ImagePullCredentials template.String   `yaml:"imagePullCredentials,omitempty"`
+	ImagePullCredentials template.String   `yaml:"imagePullCredentials,omitempty" sensitive:"true"`
 	ReadyTimeout         template.Duration `yaml:"readyTimeout,omitempty"`
 	RemoveTimeout        time.Duration     `yaml:"removeTimeout,omitempty"`
 	Capabilities         template.Strings  `yaml:"capabilities,omitempty"`
@@ -217,7 +217,7 @@ func (this *EnvironmentKubernetes) Validate() error {
 func (this *EnvironmentKubernetes) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *EnvironmentKubernetes, node *yaml.Node) error {
 		type raw EnvironmentKubernetes
-		return node.Decode((*raw)(target))
+		return decodeConfigurationFields(node, (*raw)(target))
 	})
 }
 

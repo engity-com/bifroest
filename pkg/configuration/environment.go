@@ -9,7 +9,7 @@ import (
 )
 
 type Environment struct {
-	Variables EnvironmentVariables `yaml:"variables,omitempty"`
+	Variables EnvironmentVariables `yaml:"variables,omitempty" sensitive:"true"`
 	V         EnvironmentV         `yaml:"-"`
 }
 
@@ -58,14 +58,14 @@ func (this *Environment) Trim() error {
 		}
 	}
 	if err := this.Variables.Trim(); err != nil {
-		return fmt.Errorf("[variables] %w", err)
+		return configurationFieldError(this, "variables", err)
 	}
 	return this.Validate()
 }
 
 func (this *Environment) Validate() error {
 	if err := this.Variables.Validate(); err != nil {
-		return fmt.Errorf("[variables] %w", err)
+		return configurationFieldError(this, "variables", err)
 	}
 	if v := this.V; v != nil {
 		if !this.Variables.IsZero() {
@@ -106,9 +106,9 @@ func (this *Environment) UnmarshalYAML(node *yaml.Node) error {
 		return reportYamlRelatedErr(node, err)
 	}
 	var common struct {
-		Variables EnvironmentVariables `yaml:"variables,omitempty"`
+		Variables EnvironmentVariables `yaml:"variables,omitempty" sensitive:"true"`
 	}
-	if err := node.Decode(&common); err != nil {
+	if err := decodeConfigurationFields(node, &common); err != nil {
 		return reportYamlRelatedErr(node, err)
 	}
 	this.Variables = common.Variables

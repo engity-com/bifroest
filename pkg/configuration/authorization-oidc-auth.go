@@ -31,8 +31,8 @@ var (
 
 type AuthorizationOidcDeviceAuth struct {
 	Issuer       template.Url     `yaml:"issuer"`
-	ClientId     template.String  `yaml:"clientId"`
-	ClientSecret template.String  `yaml:"clientSecret"`
+	ClientId     template.String  `yaml:"clientId" sensitive:"true"`
+	ClientSecret template.String  `yaml:"clientSecret" sensitive:"true"`
 	Scopes       template.Strings `yaml:"scopes"`
 
 	RetrieveIdToken       bool                          `yaml:"retrieveIdToken,omitempty"`
@@ -99,7 +99,7 @@ func (this *AuthorizationOidcDeviceAuth) Validate() error {
 func (this *AuthorizationOidcDeviceAuth) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *AuthorizationOidcDeviceAuth, node *yaml.Node) error {
 		type raw AuthorizationOidcDeviceAuth
-		return node.Decode((*raw)(target))
+		return decodeConfigurationFields(node, (*raw)(target))
 	})
 }
 
