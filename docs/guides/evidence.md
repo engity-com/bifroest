@@ -80,7 +80,7 @@ The management login uses a separate SSH identity and trusted host key as in [th
 
 ### Configure the verification workstation
 
-1. Provision the trusted SSH host key and management login identity as in [the management guide](management.md#configure-read-only-remote-administration).
+1. Provision the trusted SSH host key and management login identity as in [the management guide](management.md#configure-remote-administration).
 2. Add the producer pin and local decryption paths. Replace `PRODUCER_ID` with the independently retained ID:
 
     ```sshconfig title="Verification workstation: ~/.ssh/config"

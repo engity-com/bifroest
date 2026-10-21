@@ -12,7 +12,7 @@ Use `bifroest` to run the server, inspect its state, manage SSH keys, and work w
 | --- | --- |
 | [`serve`](serve.md) | Run the Bifröst server. |
 | [`flow`](flow/index.md) | List configured flows and inspect their settings. |
-| [`session`](session/index.md) | List sessions and inspect an individual session. |
+| [`session`](session/index.md) | Inspect sessions; remotely disconnect or dispose of them. |
 | [`audit`](audit/index.md) | Inspect audit logs and events; verify, export or merge journals. |
 | [`recording`](recording/index.md) | Find, inspect, verify, export and play session recordings. |
 | [`key`](key/index.md) | Generate keys and exchange SSH trust material. |

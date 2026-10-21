@@ -182,6 +182,8 @@ func TestRemoteHandlersRequireTargetWithoutLocalFallback(t *testing.T) {
 		{"flow", "show", "production"},
 		{"session", "ls"},
 		{"session", "show", id},
+		{"session", "disconnect", id},
+		{"session", "dispose", id},
 		{"recording", "ls", "default"},
 		{"recording", "show", "default", id},
 		{"recording", "verify", "default", id},
@@ -194,6 +196,23 @@ func TestRemoteHandlersRequireTargetWithoutLocalFallback(t *testing.T) {
 		err := app.ParseAndExecute(ctx, remote, args...)
 		require.ErrorContains(t, err, "remote target is unavailable", "%v", args)
 		require.Empty(t, output.String())
+	}
+}
+
+func TestSessionControlCommandsAreManagementOnly(t *testing.T) {
+	apps := newTestApplications(t)
+	for _, app := range []clibase.Container{apps.Executable, apps.Management} {
+		parent, found := app.CommandOfProfile("session", common.ProfileManagement)
+		require.True(t, found)
+		for _, name := range []string{"disconnect", "dispose"} {
+			_, found := parent.CommandOfProfile(name, common.ProfileExecutable)
+			require.False(t, found, "%s must not mutate offline session storage", name)
+			for _, profile := range []string{common.ProfileRemote, common.ProfileManagement} {
+				command, found := parent.CommandOfProfile(name, profile)
+				require.True(t, found)
+				require.Equal(t, []string{profile}, command.Profiles())
+			}
+		}
 	}
 }
 

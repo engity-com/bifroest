@@ -94,6 +94,7 @@ Direct SSH cannot use decryption keys stored on a separate workstation. It can v
 | Operation | Requires `allowArtifactTransfer: true` |
 | --- | --- |
 | Session, flow, auditlog and Recording metadata | No |
+| [`session disconnect`](session/disconnect.md) and [`session dispose`](session/dispose.md) | No |
 | Public `audit events` | No |
 | Client-side `audit verify/export/merge` or sensitive `audit events` | Yes |
 | Client-side `recording verify/export/play` | Yes |
@@ -102,6 +103,8 @@ Direct SSH cannot use decryption keys stored on a separate workstation. It can v
 | Public `key export public/ca/host` | No |
 
 These are properties of the authorized management flow, not client-granted privileges. `--with-sensitive` controls disclosure by a command; it does not grant server permissions. `includingCredentials` separately controls the management flow's `flow show` output. See [management environment properties](../environment/management.md#configuration).
+
+Every authorized management user can disconnect or dispose of sessions in any flow, even with both environment permissions disabled. Disposal also runs configured cleanup and can remove workload resources; management access is not read-only.
 
 Public key exports select configured server identities and write their output on the CLI machine. See [Export server public keys remotely](../../guides/keys.md) for a complete configuration. `key generate` and `key import` remain local-only; server trust files are maintained through normal configuration management.
 

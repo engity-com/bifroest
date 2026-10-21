@@ -271,6 +271,12 @@ func (target Target) Run(ctx context.Context, args ...string) error {
 			return err
 		}
 		return cliformat.WriteSessionDetail(output, format, entry)
+	case "session disconnect", "session dispose":
+		var result model.SessionActionResult
+		if err := transport.DecodeWireResult(bytes.NewReader(stdout), &result); err != nil {
+			return err
+		}
+		return cliformat.WriteSessionAction(output, format, result)
 	default:
 		return fmt.Errorf("unsupported management command %q", strings.Join(wireArgs[:2], " "))
 	}

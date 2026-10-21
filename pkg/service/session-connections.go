@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"sync"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -87,7 +88,7 @@ func (this *sessionConnectionRegistry) finalSessionDeleted(flow configuration.Fl
 	this.mutex.Unlock()
 }
 
-func (this *sessionConnectionRegistry) revoke(flow configuration.FlowName, id session.Id) {
+func (this *sessionConnectionRegistry) revoke(flow configuration.FlowName, id session.Id) error {
 	key := sessionConnectionKey{flow, id}
 	this.mutex.Lock()
 	entry := this.sessions[key]
@@ -107,14 +108,34 @@ func (this *sessionConnectionRegistry) revoke(flow configuration.FlowName, id se
 	entry.connections = nil
 	this.mutex.Unlock()
 
+	return closeSessionConnections(connections)
+}
+
+// disconnect takes a snapshot without revoking the session. Connections tracked
+// after this snapshot are new connections and are intentionally left alone.
+func (this *sessionConnectionRegistry) disconnect(flow configuration.FlowName, id session.Id) error {
+	this.mutex.Lock()
+	var connections []*connection
+	if entry := this.sessions[sessionConnectionKey{flow, id}]; entry != nil {
+		for conn := range entry.connections {
+			connections = append(connections, conn)
+		}
+	}
+	this.mutex.Unlock()
+	return closeSessionConnections(connections)
+}
+
+func closeSessionConnections(connections []*connection) error {
 	// A blocked interceptor cleanup must not delay closing other SSH sockets.
 	var closing sync.WaitGroup
-	for _, conn := range connections {
+	failures := make([]error, len(connections))
+	for index, conn := range connections {
 		closing.Add(1)
 		go func() {
 			defer closing.Done()
-			_ = conn.Close()
+			failures[index] = conn.Close()
 		}()
 	}
 	closing.Wait()
+	return errors.Join(failures...)
 }

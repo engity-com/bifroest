@@ -24,6 +24,12 @@ type SessionView struct {
 	ValidUntil   *time.Time `json:"validUntil,omitempty" yaml:"validUntil,omitempty"`
 }
 
+type SessionActionResult struct {
+	ID     string `json:"id" yaml:"id"`
+	Flow   string `json:"flow" yaml:"flow"`
+	Action string `json:"action" yaml:"action"`
+}
+
 type AuditlogSummary struct {
 	Name             configuration.AuditlogName `json:"name" yaml:"name"`
 	Enabled          bool                       `json:"enabled" yaml:"enabled"`

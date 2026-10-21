@@ -10,7 +10,7 @@ Start with an installed [Bifröst host](../setup/on-host.md), a local account al
 
 ## Examples
 
-### Configure read-only remote administration
+### Configure remote administration
 
 1. Provision the administrator's **public login key** in `/etc/engity/bifroest/management_authorized_keys`. Keep the corresponding private key on the workstation as `~/.ssh/bifroest-management`. Make the server file readable by the Bifröst service user and writable only by the administrator responsible for configuration.
 
@@ -83,7 +83,7 @@ Start with an installed [Bifröst host](../setup/on-host.md), a local account al
     bifroest @bifroest-admin audit events administration --limit=20
     ```
 
-    Settings are redacted. Metadata and public event queries work with `allowArtifactTransfer: false`.
+    Settings are redacted. Metadata and public event queries work with `allowArtifactTransfer: false`. This does not make the flow read-only: all authorized management users can also disconnect and dispose of sessions.
 
 ### Find a workload session and its Recording
 
@@ -127,6 +127,24 @@ Start with an installed [Bifröst host](../setup/on-host.md), a local account al
     ```
 
     Supply the appropriate OpenSSH identity or agent for this separate connection. Direct SSH executes a management command and does not open a host shell.
+
+### Disconnect or dispose of a workload session
+
+Find the workload session with `session ls`, then choose **one** action:
+
+* Close its current SSH connections but keep the session reusable:
+
+    ```shell
+    bifroest @bifroest-admin session disconnect SESSION_UUID
+    ```
+
+* Revoke it, disconnect it and run its configured cleanup:
+
+    ```shell
+    bifroest @bifroest-admin session dispose SESSION_UUID
+    ```
+
+Disposal can remove containers, Pods or managed accounts and home directories, depending on the environment. Neither command requires an additional permission. A command cannot target its own executing management session. See [`disconnect`](../reference/cli/session/disconnect.md) and [`dispose`](../reference/cli/session/dispose.md) for details and failure behavior.
 
 ## Next steps
 

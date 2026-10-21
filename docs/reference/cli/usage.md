@@ -21,7 +21,7 @@ Command and subcommand names are literal words, for example `recording show` or 
 | Mode | Example | Configuration and state |
 | --- | --- | --- |
 | Local CLI | `bifroest session ls` | Runs on the CLI machine and reads local configuration, state or file inputs. |
-| Integrated remote client | `bifroest @bifroest-admin session ls` | Connects to the server's authorized management flow and reads server state. |
+| Integrated remote client | `bifroest @bifroest-admin session ls` | Executes supported commands through the server's authorized management flow. |
 | Direct SSH | `ssh management@bifroest.example.org 'session ls'` | Runs inside the server's management flow using its loaded configuration. |
 
 Availability is specified on each executable command's page. Server startup, service installation and key bootstrap commands run locally. The [remote-access reference](management.md) explains SSH configuration and management permissions.
@@ -43,6 +43,8 @@ Commands that select configured local state accept `--configuration PATH` (alias
 | Windows | `C:\ProgramData\Engity\Bifroest\configuration.yaml` |
 
 The local CLI needs filesystem permission to read the selected configuration, state and relevant keys. Local `session` inspection supports filesystem repositories. Through management, the service reads its active session repository.
+
+[`session disconnect`](session/disconnect.md) and [`session dispose`](session/dispose.md) are management-only operations that change server state. They are not available against local filesystem storage.
 
 `--configuration` cannot be combined with `@target`. Direct SSH commands use the running service's configuration and do not accept a replacement configuration file.
 

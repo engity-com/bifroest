@@ -4,7 +4,7 @@ description: Export configured public SSH identities, certificate authorities an
 
 # Export server public keys remotely
 
-This Linux example configures a certificate-authenticated SSH gateway and a separate, read-only management flow. An administrator exports the gateway's existing public identities to a workstation. Private keys stay on their source machines.
+This Linux example configures a certificate-authenticated SSH gateway and a separate management flow. An administrator exports the gateway's existing public identities to a workstation. Private keys stay on their source machines. Management access also permits session disconnection and disposal; it is not read-only.
 
 Start with an installed [Bifröst host](../setup/on-host.md), separate login keys for the administrator and `alice`, and an OpenSSH target for `alice` at `target.example.org`. Obtain the target host keys through a trusted provisioning channel. The first management connection also needs an independently trusted Bifröst host-key entry; remote key export cannot establish its own initial host trust.
 

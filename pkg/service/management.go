@@ -191,6 +191,7 @@ func (this *service) runManagementArgs(task environment.Task, includingCredentia
 	}
 	access := cliCommon.ManagementAccess{
 		Configuration: &this.Configuration, Sessions: this.sessions,
+		SessionControl:       managementSessionControl{service: this, task: task},
 		IncludingCredentials: includingCredentials, AllowArtifactTransfer: allowArtifactTransfer,
 		WireFormat: outputMode != managementHuman, WireStream: outputMode == managementStream,
 		Audit:      managementAuditOperations{service: this, allowArtifactTransfer: allowArtifactTransfer},

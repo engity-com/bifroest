@@ -17,6 +17,7 @@ import (
 type ManagementAccess struct {
 	Configuration         *configuration.Configuration
 	Sessions              session.Repository
+	SessionControl        ManagementSessionControl
 	IncludingCredentials  bool
 	AllowArtifactTransfer bool
 	WireFormat            bool
@@ -26,6 +27,11 @@ type ManagementAccess struct {
 	Audit                 ManagementAuditOperations
 	Recording             ManagementRecordingOperations
 	Keys                  ManagementKeyOperations
+}
+
+type ManagementSessionControl interface {
+	Disconnect(context.Context, session.Id) (model.SessionActionResult, error)
+	Dispose(context.Context, session.Id) (model.SessionActionResult, error)
 }
 
 type ManagementKeyOperations interface {

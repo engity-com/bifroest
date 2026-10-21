@@ -36,6 +36,10 @@ func WriteSessionDetail(output io.Writer, selected Format, entry model.SessionVi
 	return WriteDetail(output, selected, fields, entry)
 }
 
+func WriteSessionAction(output io.Writer, selected Format, result model.SessionActionResult) error {
+	return WriteDetail(output, selected, []Field{{"ID", result.ID}, {"Flow", result.Flow}, {"Action", result.Action}}, result)
+}
+
 func WriteAuditlogList(output io.Writer, selected Format, entries []model.AuditlogSummary) error {
 	rows := make([][]string, 0, len(entries))
 	for _, entry := range entries {

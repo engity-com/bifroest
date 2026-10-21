@@ -40,13 +40,13 @@ func TestSessionConnectionRegistryRevokesOnlyMatchingFlowAndSession(t *testing.T
 		svc.sessionConnections.track(conns[i], sess)
 	}
 
-	svc.sessionConnections.revoke(first.flow, first.id)
+	require.NoError(t, svc.sessionConnections.revoke(first.flow, first.id))
 	require.True(t, conns[0].closed.Load())
 	require.True(t, conns[1].closed.Load())
 	require.False(t, conns[2].closed.Load())
 	require.False(t, conns[3].closed.Load())
 	require.EqualValues(t, 2, svc.activeConnections.Load())
-	svc.sessionConnections.revoke(first.flow, first.id)
+	require.NoError(t, svc.sessionConnections.revoke(first.flow, first.id))
 	require.EqualValues(t, 2, svc.activeConnections.Load())
 
 	for _, conn := range conns[2:] {
@@ -59,7 +59,7 @@ func TestSessionConnectionRegistryRevokesOnlyMatchingFlowAndSession(t *testing.T
 func TestSessionConnectionRegistryRejectsRegistrationAfterRevoke(t *testing.T) {
 	svc := &service{}
 	sess := &houseKeeperTestSession{flow: "main", id: session.MustNewId()}
-	svc.sessionConnections.revoke(sess.flow, sess.id)
+	require.NoError(t, svc.sessionConnections.revoke(sess.flow, sess.id))
 	conn := newTrackedSessionConnection(t, svc)
 	svc.sessionConnections.track(conn, sess)
 	require.True(t, conn.closed.Load())
@@ -70,7 +70,7 @@ func TestSessionConnectionRegistryRejectsRegistrationAfterRevoke(t *testing.T) {
 func TestSessionConnectionRegistryRetainsRevokeUntilFinalDeletion(t *testing.T) {
 	svc := &service{}
 	sess := &houseKeeperTestSession{flow: "main", id: session.MustNewId()}
-	svc.sessionConnections.revoke(sess.flow, sess.id)
+	require.NoError(t, svc.sessionConnections.revoke(sess.flow, sess.id))
 	for range 2 {
 		conn := newTrackedSessionConnection(t, svc)
 		svc.sessionConnections.track(conn, sess)
@@ -90,7 +90,7 @@ func TestSessionConnectionRegistryUntrackAndClosedRegistration(t *testing.T) {
 	svc.sessionConnections.track(conn, sess)
 	require.Empty(t, svc.sessionConnections.connections)
 	require.Empty(t, svc.sessionConnections.sessions)
-	svc.sessionConnections.revoke(sess.flow, sess.id)
+	require.NoError(t, svc.sessionConnections.revoke(sess.flow, sess.id))
 	require.EqualValues(t, 0, svc.activeConnections.Load())
 }
 
@@ -101,9 +101,9 @@ func TestSessionConnectionRegistryRetrackMovesConnection(t *testing.T) {
 	conn := newTrackedSessionConnection(t, svc)
 	svc.sessionConnections.track(conn, first)
 	svc.sessionConnections.track(conn, second)
-	svc.sessionConnections.revoke(first.flow, first.id)
+	require.NoError(t, svc.sessionConnections.revoke(first.flow, first.id))
 	require.False(t, conn.closed.Load())
-	svc.sessionConnections.revoke(second.flow, second.id)
+	require.NoError(t, svc.sessionConnections.revoke(second.flow, second.id))
 	require.True(t, conn.closed.Load())
 	require.EqualValues(t, 0, svc.activeConnections.Load())
 }
@@ -121,7 +121,7 @@ func TestSessionConnectionRegistryTrackRacesRevoke(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			svc.sessionConnections.revoke(sess.flow, sess.id)
+			_ = svc.sessionConnections.revoke(sess.flow, sess.id)
 		}()
 		wg.Wait()
 		require.True(t, conn.closed.Load())
@@ -150,7 +150,7 @@ func TestSessionConnectionRegistryDoesNotHoldLockWhileClosing(t *testing.T) {
 	svc.sessionConnections.track(conn, sess)
 	done := make(chan struct{})
 	go func() {
-		svc.sessionConnections.revoke(sess.flow, sess.id)
+		_ = svc.sessionConnections.revoke(sess.flow, sess.id)
 		close(done)
 	}()
 	select {
@@ -196,7 +196,7 @@ func TestSessionConnectionRegistryClosesOtherConnectionsWhileOneCloseBlocks(t *t
 	svc.sessionConnections.track(other, sess)
 	done := make(chan struct{})
 	go func() {
-		svc.sessionConnections.revoke(sess.flow, sess.id)
+		_ = svc.sessionConnections.revoke(sess.flow, sess.id)
 		close(done)
 	}()
 	select {
@@ -218,5 +218,45 @@ func TestSessionConnectionRegistryClosesOtherConnectionsWhileOneCloseBlocks(t *t
 	case <-time.After(time.Second):
 		t.Fatal("revocation did not finish")
 	}
+	require.Zero(t, svc.activeConnections.Load())
+}
+
+func TestSessionConnectionRegistryDisconnectClosesOnlySnapshot(t *testing.T) {
+	svc := &service{}
+	sess := &houseKeeperTestSession{flow: "main", id: session.MustNewId()}
+	conn := newTrackedSessionConnection(t, svc)
+	blocked := &blockingSessionCloseConn{Conn: conn.Conn, entered: make(chan struct{}), release: make(chan struct{})}
+	conn.Conn = blocked
+	svc.sessionConnections.track(conn, sess)
+	done := make(chan error, 1)
+	go func() { done <- svc.sessionConnections.disconnect(sess.flow, sess.id) }()
+	defer func() {
+		select {
+		case <-blocked.release:
+		default:
+			close(blocked.release)
+		}
+	}()
+	select {
+	case <-blocked.entered:
+	case <-time.After(time.Second):
+		t.Fatal("disconnect did not close the connection")
+	}
+	late := newTrackedSessionConnection(t, svc)
+	svc.sessionConnections.track(late, sess)
+	other := newTrackedSessionConnection(t, svc)
+	svc.sessionConnections.track(other, &houseKeeperTestSession{flow: "other", id: sess.id})
+	close(blocked.release)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("disconnect did not finish")
+	}
+	require.False(t, late.closed.Load())
+	require.False(t, other.closed.Load())
+	require.NoError(t, late.Close())
+	require.NoError(t, other.Close())
+	require.Empty(t, svc.sessionConnections.sessions)
 	require.Zero(t, svc.activeConnections.Load())
 }

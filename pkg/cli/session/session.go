@@ -39,7 +39,7 @@ type showOptions struct {
 
 func CreateCommands() []cli.CommandRequirementLike {
 	return []cli.CommandRequirementLike{
-		cli.NewCommand[sessionOptions]("session", "Inspect Bifröst sessions.").
+		cli.NewCommand[sessionOptions]("session", "Inspect and manage Bifröst sessions.").
 			WithProfiles(common.ProfileExecutable, common.ProfileRemote, common.ProfileManagement).
 			WithCommand(
 				cli.NewCommand[listOptions]("ls", "List active sessions by default.").
@@ -62,8 +62,67 @@ func CreateCommands() []cli.CommandRequirementLike {
 				cli.NewCommand[showOptions]("show", "Show one session by ID.").
 					WithProfiles(common.ProfileManagement).
 					WithHandler(handleManagementShow),
+			).
+			WithCommand(
+				cli.NewCommand[showOptions]("disconnect", "Disconnect a session's current SSH connections without revoking it.").
+					WithProfiles(common.ProfileRemote).
+					WithHandler(remoteHandleDisconnect),
+				cli.NewCommand[showOptions]("disconnect", "Disconnect a session's current SSH connections without revoking it.").
+					WithProfiles(common.ProfileManagement).
+					WithHandler(handleManagementDisconnect),
+			).
+			WithCommand(
+				cli.NewCommand[showOptions]("dispose", "Revoke a session, disconnect it and clean up its environment and authorization.").
+					WithProfiles(common.ProfileRemote).
+					WithHandler(remoteHandleDispose),
+				cli.NewCommand[showOptions]("dispose", "Revoke a session, disconnect it and clean up its environment and authorization.").
+					WithProfiles(common.ProfileManagement).
+					WithHandler(handleManagementDispose),
 			),
 	}
+}
+
+func handleManagementDisconnect(ctx context.Context, opts showOptions) error {
+	return handleManagementAction(ctx, opts, false)
+}
+
+func handleManagementDispose(ctx context.Context, opts showOptions) error {
+	return handleManagementAction(ctx, opts, true)
+}
+
+func handleManagementAction(ctx context.Context, opts showOptions, dispose bool) error {
+	access, ok := common.ManagementAccessFromContext(ctx)
+	if !ok || access.SessionControl == nil {
+		return fmt.Errorf("management session control is unavailable")
+	}
+	action := access.SessionControl.Disconnect
+	if dispose {
+		action = access.SessionControl.Dispose
+	}
+	result, err := action(ctx, opts.ID)
+	if err != nil {
+		return err
+	}
+	return format.WriteSessionAction(cli.StdoutOfContext(ctx), common.FormatForInvocation(ctx, opts.Parent.Format), result)
+}
+
+func remoteHandleDisconnect(ctx context.Context, opts showOptions) error {
+	return remoteHandleAction(ctx, opts, "disconnect")
+}
+
+func remoteHandleDispose(ctx context.Context, opts showOptions) error {
+	return remoteHandleAction(ctx, opts, "dispose")
+}
+
+func remoteHandleAction(ctx context.Context, opts showOptions, action string) error {
+	if opts.Parent.Configuration != nil {
+		return fmt.Errorf("--configuration cannot be combined with a remote target")
+	}
+	target, err := common.RemoteTargetFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	return target.Run(ctx, "session", action, opts.ID.String(), "--format="+string(opts.Parent.Format))
 }
 
 func handleManagementList(ctx context.Context, opts listOptions) error {

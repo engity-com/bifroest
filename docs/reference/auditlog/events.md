@@ -196,6 +196,24 @@ Outcomes and reasons:
 * `failure` with `invalid-exit-code`: execution returned neither an error nor a valid exit code.
 * `failure`: task execution failed; `errorCategory` classifies the failure.
 
+#### `session.disconnect.started`
+
+Written before an authorized management command disconnects a session. `domain` is `session`; `flow` and `sessionId` identify the **target session**, while `connectionId` identifies the initiating management connection. Its authentication and task events identify the administrator. `operationId` pairs the start and completion.
+
+The events are recorded according to the management and target flow's audit configurations, once if both use the same auditlog. A strict start-audit failure prevents the action. Invalid, ambiguous or self-targeting requests fail before these events; the management task lifecycle still records the failed command.
+
+#### `session.disconnect.completed`
+
+Written after disconnection returns, with the same identifiers as its start event. `durationMillis` records elapsed time. `outcome: success` means the operation completed; `outcome: failure` and `errorCategory` indicate failure, possibly after partial changes.
+
+#### `session.dispose.started`
+
+Written before a management command revokes a session, disconnects its SSH connections and runs configured environment and authorization cleanup. Fields and audit routing match `session.disconnect.started`.
+
+#### `session.dispose.completed`
+
+Written after disposal returns, with the same identifiers as its start event. Completion fields and outcomes match `session.disconnect.completed`. Disposal does not delete retained session metadata, audit logs or Recordings. A failure can occur after revocation or after some resources have already been removed.
+
 ### Port forwarding
 
 #### `port-forwarding.direct.decided`

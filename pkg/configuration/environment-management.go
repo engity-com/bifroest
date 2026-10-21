@@ -4,7 +4,7 @@ import "gopkg.in/yaml.v3"
 
 var _ = RegisterEnvironmentV(func() EnvironmentV { return &EnvironmentManagement{} })
 
-// EnvironmentManagement makes the read-only management commands available to
+// EnvironmentManagement makes the management commands available to
 // an explicitly authorized SSH flow.
 type EnvironmentManagement struct {
 	IncludingCredentials  bool `yaml:"includingCredentials,omitempty"`
