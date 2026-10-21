@@ -150,6 +150,24 @@ html .md-typeset .admonition > :not(.admonition-title):first-child {
     text-transform: none;
 }
 
+.md-typeset .cli-syntax {
+    background: var(--md-code-bg-color);
+    border-radius: .1rem;
+    color: var(--md-code-fg-color);
+    font-family: var(--md-code-font-family);
+    font-size: .85em;
+    margin: .5em 12px;
+    padding: .4em .6em;
+    overflow-wrap: anywhere;
+}
+
+.md-typeset .cli-syntax code {
+    background: none;
+    color: inherit;
+    font-size: inherit;
+    padding: 0;
+}
+
 .md-typeset .property-title:has(+ .property-description) {
     display: inline-block;
     margin-top: 0.5em;

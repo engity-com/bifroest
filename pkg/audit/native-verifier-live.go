@@ -17,15 +17,22 @@ import (
 // for each producer. Later appends and head replacements are not part of it.
 // A producer ID must be supplied out of band; the head alone is not a trust root.
 func VerifyLiveJournals(ctx context.Context, sources []JournalSource) (*Verification, error) {
-	return verifyLiveJournals(ctx, sources, true)
+	return verifyLiveJournals(ctx, sources, true, nil)
+}
+
+// SelectLiveJournalRecords verifies the same signed prefixes as VerifyLiveJournals,
+// retaining only the selected records within the materialization budget.
+// No selection is returned unless the entire verification succeeds.
+func SelectLiveJournalRecords(ctx context.Context, sources []JournalSource, selection RecordSelection) (*Verification, error) {
+	return verifyLiveJournals(ctx, sources, true, &verifiedRecordSelection{selection: selection})
 }
 
 func VerifyLiveJournalIntegrity(ctx context.Context, sources []JournalSource) error {
-	_, err := verifyLiveJournals(ctx, sources, false)
+	_, err := verifyLiveJournals(ctx, sources, false, nil)
 	return err
 }
 
-func verifyLiveJournals(ctx context.Context, sources []JournalSource, collect bool) (*Verification, error) {
+func verifyLiveJournals(ctx context.Context, sources []JournalSource, collect bool, selection *verifiedRecordSelection) (*Verification, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -64,7 +71,7 @@ func verifyLiveJournals(ctx context.Context, sources []JournalSource, collect bo
 		directories = append(directories, info)
 		paths = append(paths, path)
 	}
-	budget := &verifierBudget{}
+	budget := &verifierBudget{selection: selection}
 	for i, source := range sources {
 		source.Directory = paths[i]
 		result.withSensitive = result.withSensitive && source.WithSensitive
@@ -74,6 +81,9 @@ func verifyLiveJournals(ctx context.Context, sources []JournalSource, collect bo
 		}
 		result.Journals = append(result.Journals, journal)
 		result.records = append(result.records, records...)
+	}
+	if budget.selection != nil {
+		result.records = budget.selection.materialize()
 	}
 	return result, nil
 }
@@ -130,6 +140,9 @@ func verifyLiveJournal(ctx context.Context, source JournalSource, collect bool, 
 	// captured checkpoint, never substitute a newer head on retry.
 	for attempt := 0; attempt < 3; attempt++ {
 		start := *budget
+		if budget.selection != nil {
+			budget.selection = budget.selection.clone()
+		}
 		records, segments, err := verifyLiveProducer(ctx, source, directory, identity, identities, checkpoint, collect, budget, selected)
 		if err == nil {
 			return VerifiedJournal{Name: source.Name, Directory: source.Directory, ProducerCount: 1, SegmentCount: segments, RecordCount: budget.records - start.records}, records, nil

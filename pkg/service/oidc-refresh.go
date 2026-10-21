@@ -242,7 +242,7 @@ func (this *oidcRefreshManager) invalidateSession(sess session.Session) {
 }
 
 func (this *oidcRefreshManager) invalidate(key sessionConnectionKey, sess session.Session) {
-	this.service.sessionConnections.revoke(key.flow, key.id)
+	_ = this.service.sessionConnections.revoke(key.flow, key.id)
 	this.mutex.Lock()
 	if this.ctx == nil || this.ctx.Err() != nil {
 		this.mutex.Unlock()
@@ -484,7 +484,7 @@ func (this *oidcRefreshManager) dispose(ctx context.Context, sess session.Sessio
 	if sess == nil {
 		return session.ErrNoSuchSession
 	}
-	this.service.sessionConnections.revoke(sess.Flow(), sess.Id())
+	_ = this.service.sessionConnections.revoke(sess.Flow(), sess.Id())
 	logger := this.service.logger().With("session", sess)
 	callCtx, cancel := context.WithTimeout(ctx, oidcRefreshTimeout)
 	defer cancel()
@@ -496,13 +496,13 @@ func (this *oidcRefreshManager) dispose(ctx context.Context, sess session.Sessio
 		func() (bool, error) {
 			attempted = true
 			return this.service.houseKeeper.disposeWith(callCtx, logger, sess, false, nil, func() {
-				this.service.sessionConnections.revoke(sess.Flow(), sess.Id())
+				_ = this.service.sessionConnections.revoke(sess.Flow(), sess.Id())
 			})
 		})
 	if attempted {
 		// Fail closed even if persisting the disposed state failed. Housekeeping
 		// retries any incomplete cleanup after the audited attempt.
-		this.service.sessionConnections.revoke(sess.Flow(), sess.Id())
+		_ = this.service.sessionConnections.revoke(sess.Flow(), sess.Id())
 	}
 	return goerrors.Join(actionErr, auditErr)
 }

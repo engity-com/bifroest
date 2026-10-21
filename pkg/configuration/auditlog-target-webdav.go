@@ -22,8 +22,8 @@ var (
 
 type AuditlogTargetWebdav struct {
 	Endpoint              string            `yaml:"endpoint"`
-	Username              template.String   `yaml:"username,omitempty"`
-	Password              template.String   `yaml:"password,omitempty"`
+	Username              template.String   `yaml:"username,omitempty" sensitive:"true"`
+	Password              template.String   `yaml:"password,omitempty" sensitive:"true"`
 	PublishAttemptTimeout template.Duration `yaml:"publishAttemptTimeout,omitempty"`
 }
 
@@ -167,7 +167,7 @@ func (this *AuditlogTargetWebdav) UnmarshalYAML(node *yaml.Node) error {
 			return err
 		}
 		type raw AuditlogTargetWebdav
-		return node.Decode((*raw)(target))
+		return decodeConfigurationFields(node, (*raw)(target))
 	})
 }
 

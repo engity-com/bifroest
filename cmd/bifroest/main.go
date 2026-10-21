@@ -1,42 +1,55 @@
 package main
 
 import (
+	"context"
+	"errors"
 	goos "os"
+	"os/signal"
 
+	clibase "github.com/echocat/cli4g"
 	log "github.com/echocat/slf4g"
-
-	"github.com/engity-com/bifroest/pkg/logging"
-
-	"github.com/alecthomas/kingpin/v2"
 	"github.com/echocat/slf4g/native"
-)
+	"github.com/echocat/slf4g/native/consumer"
 
-var (
-	registerCommands []func(*kingpin.Application)
+	"github.com/engity-com/bifroest/pkg/cli"
+	"github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/management"
+	"github.com/engity-com/bifroest/pkg/service"
 )
-
-func registerCommand(rc func(*kingpin.Application)) func(*kingpin.Application) {
-	registerCommands = append(registerCommands, rc)
-	return rc
-}
 
 func main() {
-	app := kingpin.New("bifroest", "SSH server which provides authorization and authentication via OpenID Connect and classic mechanisms to access a real host or a dedicated Docker container.").
-		UsageWriter(goos.Stderr).
-		ErrorWriter(goos.Stderr).
-		Terminate(func(i int) {
-			code := max(i, 1)
-			goos.Exit(code)
-		})
-
-	logging.ConfigureLoggingForFlags(app, native.DefaultProvider)
-
-	for _, rc := range registerCommands {
-		rc(app)
-	}
-
-	if _, err := app.Parse(goos.Args[1:]); err != nil {
+	if err := run(); err != nil {
 		log.WithError(err).Error("execution failed")
 		goos.Exit(1)
 	}
+}
+
+func run() (resultErr error) {
+	native.DefaultProvider.Consumer = consumer.NewWriter(goos.Stderr)
+	application, err := cli.NewApplication[opts](versionV, "SSH server and gateway for standard SSH clients: OIDC Device Authorization, Docker/Kubernetes sessions, verifiable audit and recording.", service.Run).
+		WithInitializeHandler(configureExecutableLogging).
+		WithFallbackToStdio(true).
+		Create()
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, application.Close()) }()
+	target, args, err := parseManagementTarget(goos.Args[1:])
+	if err != nil {
+		return err
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), goos.Interrupt)
+	defer stop()
+
+	profile := common.ProfileExecutable
+	if target != nil {
+		profile = common.ProfileRemote
+		ctx = common.ContextWithRemoteTarget(ctx, management.Target{
+			Host: target.RawHost, User: target.User, Port: target.Port, ExplicitPort: target.ExplicitPort,
+		})
+	}
+	return application.ParseAndExecute(ctx, &clibase.ParseOpts{
+		Profiles: []string{profile},
+	}, args...)
 }

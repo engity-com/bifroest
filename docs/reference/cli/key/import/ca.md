@@ -4,11 +4,15 @@ description: Import trusted SSH certificate authorities.
 
 # `bifroest key import ca`
 
-Validates and atomically merges plain OpenSSH certificate-authority public keys. Certificates, private keys, and authorized-key options are rejected. Concurrent merge operations are locked, and any fingerprint mismatch leaves the destination unchanged.
+Validates and merges plain OpenSSH certificate-authority public keys into a local trust file. Certificates, private keys, and authorized-key options are rejected. A fingerprint mismatch leaves the destination unchanged.
 
 ## Syntax
 
-`bifroest key import ca [flags]`
+<<cli_syntax("key import ca")>>
+
+## Arguments
+
+None.
 
 ## Flags {: #key-import-ca-flags }
 
@@ -18,11 +22,31 @@ Includes [all general flags](../../index.md#general-flags).
 Public-key file containing the trusted SSH certificate authorities to update.
 
 <<flag("input", ref("File Path", "../../../data-type.md#file-path"), default="-", id_prefix="key-import-ca-", heading=3)>>
-File containing the public CA keys. `-` reads from stdin.
+File containing the public CA keys. `-` reads from stdin. Input is limited to 4 MiB.
 
 <<flag("expectedFingerprint", "string", id_prefix="key-import-ca-", heading=3)>>
 Expected OpenSSH SHA256 fingerprint of every imported CA, or `unknown`. Omission implies `unknown`.
 
-## Example
+## Output
 
-See [Bifröst delegation authorization](../../../authorization/bifroest.md) for a complete CA exchange.
+A CA trust file containing the successfully imported public keys. Input validation or fingerprint failure leaves the destination unchanged; no private key is imported.
+
+## Examples
+
+### Import a separately provisioned CA
+
+1. Obtain the CA public key and its SHA256 fingerprint through a trusted channel, as in [the delegation example](../../../authorization/bifroest.md).
+2. Import it, replacing `CA_FINGERPRINT` with that value:
+
+    ```shell
+    bifroest key import ca \
+      --trustedCAsFile /etc/engity/bifroest/trusted-cas.pub \
+      --input /srv/ssh-trust/bifroest-ca.pub \
+      --expectedFingerprint CA_FINGERPRINT
+    ```
+
+    The service user needs write access to the destination's parent directory.
+
+## Availability
+
+<<cli_availability()>>

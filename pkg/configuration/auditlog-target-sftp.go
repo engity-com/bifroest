@@ -20,13 +20,13 @@ var DefaultAuditlogTargetSftpConnectTimeout = template.DurationOf(10 * time.Seco
 
 type AuditlogTargetSftp struct {
 	Address               string                `yaml:"address"`
-	User                  template.String       `yaml:"user"`
+	User                  template.String       `yaml:"user" sensitive:"true"`
 	Directory             string                `yaml:"directory"`
 	KnownHosts            crypto.KnownHosts     `yaml:"knownHosts,omitempty"`
 	KnownHostsFile        crypto.KnownHostsFile `yaml:"knownHostsFile,omitempty"`
 	AcceptAllHostKeys     bool                  `yaml:"acceptAllHostKeys,omitempty"`
 	IdentityFiles         []string              `yaml:"identityFiles,omitempty"`
-	Password              template.String       `yaml:"password,omitempty"`
+	Password              template.String       `yaml:"password,omitempty" sensitive:"true"`
 	ConnectTimeout        template.Duration     `yaml:"connectTimeout,omitempty"`
 	PublishAttemptTimeout template.Duration     `yaml:"publishAttemptTimeout,omitempty"`
 }
@@ -196,7 +196,7 @@ func (this *AuditlogTargetSftp) UnmarshalYAML(node *yaml.Node) error {
 			return err
 		}
 		type raw AuditlogTargetSftp
-		return node.Decode((*raw)(target))
+		return decodeConfigurationFields(node, (*raw)(target))
 	})
 }
 

@@ -288,6 +288,7 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 	if auth == nil {
 		return failf(errors.System, "no authorization resolved, but it should")
 	}
+	managementFlow := this.isManagementFlow(auth.Flow())
 	sess := auth.FindSession()
 	if sess == nil {
 		return failf(errors.System, "authorization resolved, but does not have a valid session")
@@ -365,12 +366,12 @@ func (this *service) executeSession(sshSess essh.Session, conn *connection, task
 			return fail(err)
 		}
 	}
-	if recordingLifecycle != nil {
+	if recordingLifecycle != nil && !managementFlow {
 		if err := recordingLifecycle.showNotice(sshSess, !executesCommand); err != nil {
 			return fail(err)
 		}
 	}
-	if !requestedSubsystem {
+	if !requestedSubsystem && !managementFlow {
 		if err := this.showRememberMe(sshSess, auth, sess, oldState); err != nil {
 			return fail(err)
 		}

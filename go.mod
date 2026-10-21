@@ -1,6 +1,6 @@
 module github.com/engity-com/bifroest
 
-go 1.27.0
+go 1.27.3
 
 require (
 	dario.cat/mergo v1.0.2
@@ -8,7 +8,7 @@ require (
 	github.com/GehirnInc/crypt v0.0.0-20230320061759-8cc1b52080c5
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/Masterminds/sprig/v3 v3.3.0
-	github.com/Microsoft/go-winio v0.6.3
+	github.com/Microsoft/go-winio v0.6.4
 	github.com/alecthomas/kingpin/v2 v2.4.0
 	github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be
 	github.com/aws/aws-sdk-go-v2 v1.47.3
@@ -21,6 +21,7 @@ require (
 	github.com/docker/go-connections v0.8.2
 	github.com/docker/go-units v0.5.0
 	github.com/ebitengine/purego v0.11.1
+	github.com/echocat/cli4g v0.2.1
 	github.com/echocat/slf4g v1.9.0
 	github.com/echocat/slf4g/native v1.9.0
 	github.com/engity-com/ssh-server-go v0.4.1
@@ -31,6 +32,7 @@ require (
 	github.com/google/go-github/v65 v65.0.0
 	github.com/google/uuid v1.6.0
 	github.com/johannesboyne/gofakes3 v1.2.0
+	github.com/kevinburke/ssh_config v1.6.0
 	github.com/klauspost/compress v1.20.3
 	github.com/mattn/go-zglob v0.0.8
 	github.com/mikesmitty/edkey v0.0.0-20170222072505-3356ea4e686a

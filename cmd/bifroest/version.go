@@ -2,12 +2,9 @@ package main
 
 import (
 	"fmt"
-	goos "os"
 	"runtime"
 	"strings"
 	"time"
-
-	"github.com/alecthomas/kingpin/v2"
 
 	"github.com/engity-com/bifroest/pkg/sys"
 )
@@ -27,36 +24,6 @@ var (
 	editionV sys.Edition
 	buildAtV time.Time
 )
-
-var (
-	long = true
-)
-
-var _ = registerCommand(func(app *kingpin.Application) {
-	cmd := app.Command("version", "Show version details of this executable.").
-		Action(func(*kingpin.ParseContext) error {
-			return doVersion()
-		})
-	cmd.Flag("long", "Configuration which should be used to serve the service. Default: "+fmt.Sprint(long)).
-		PlaceHolder("<true|false>").
-		BoolVar(&long)
-
-	app.Flag("version", "Show version details of this executable.").
-		Action(func(*kingpin.ParseContext) error {
-			defer goos.Exit(1)
-			return doVersion()
-		}).
-		Bool()
-})
-
-func doVersion() error {
-	f := sys.VersionFormatShort
-	if long {
-		f = sys.VersionFormatLong
-	}
-	fmt.Println(sys.FormatVersion(versionV, f))
-	return nil
-}
 
 func init() {
 	if err := editionV.Set(edition); err != nil {

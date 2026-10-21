@@ -148,7 +148,7 @@ func TestHouseKeeperForgetsOIDCRevocationAfterFinalDeleteEvenIfAuditCompletionFa
 	hk.service.flowAuditRecorders[sess.flow] = recorder
 	key := sessionConnectionKey{flow: sess.flow, id: sess.id}
 	hk.service.oidcRefresh.invalidating = map[sessionConnectionKey]struct{}{key: {}}
-	hk.service.sessionConnections.revoke(sess.flow, sess.id)
+	require.NoError(t, hk.service.sessionConnections.revoke(sess.flow, sess.id))
 
 	_, err := hk.inspectSession(context.Background(), sess)
 	require.NoError(t, err) // Housekeeping reports audit failures and continues.

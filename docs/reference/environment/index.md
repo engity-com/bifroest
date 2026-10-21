@@ -13,6 +13,7 @@ Bifröst executes user sessions within environments. These environments can eith
 3. `local`: [Local](local.md) executes on the host itself (same host on which Bifröst is running).
 4. `ssh`: [SSH](ssh.md) connects to another SSH server and forwards sessions and direct TCP channels.
 5. `dummy`: [Dummy](dummy.md) for demonstration purposes, it simply prints a message and exists immediately.
+6. `management`: [Management](management.md) provides authorized administrative commands via SSH without a shell.
 
 ## Examples
 

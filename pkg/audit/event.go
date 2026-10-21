@@ -24,6 +24,10 @@ const (
 	EventNamePortForwardingDirectCompleted             = "port-forwarding.direct.completed"
 	EventNamePortForwardingReverseDecided              = "port-forwarding.reverse.decided"
 	EventNameConnectionClosed                          = "connection.closed"
+	EventNameSessionDisconnectStarted                  = "session.disconnect.started"
+	EventNameSessionDisconnectCompleted                = "session.disconnect.completed"
+	EventNameSessionDisposeStarted                     = "session.dispose.started"
+	EventNameSessionDisposeCompleted                   = "session.dispose.completed"
 	EventNameHousekeepingSessionDisposeStarted         = "housekeeping.session.dispose.started"
 	EventNameHousekeepingSessionDisposeCompleted       = "housekeeping.session.dispose.completed"
 	EventNameHousekeepingSessionDeleteStarted          = "housekeeping.session.delete.started"
@@ -53,6 +57,10 @@ var knownEventNames = [...]EventName{
 	EventNamePortForwardingDirectCompleted,
 	EventNamePortForwardingReverseDecided,
 	EventNameConnectionClosed,
+	EventNameSessionDisconnectStarted,
+	EventNameSessionDisconnectCompleted,
+	EventNameSessionDisposeStarted,
+	EventNameSessionDisposeCompleted,
 	EventNameHousekeepingSessionDisposeStarted,
 	EventNameHousekeepingSessionDisposeCompleted,
 	EventNameHousekeepingSessionDeleteStarted,

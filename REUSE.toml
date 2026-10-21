@@ -13,7 +13,7 @@ SPDX-FileCopyrightText = "2009 The Go Authors"
 SPDX-License-Identifier = "BSD-3-Clause"
 
 [[annotations]]
-path = "cmd/build/third-party-licenses/BSD-3-Clause-Go-1.27.0.txt"
+path = "cmd/build/third-party-licenses/BSD-3-Clause-Go-1.27.3.txt"
 precedence = "override"
 SPDX-FileCopyrightText = "2009 The Go Authors"
 SPDX-License-Identifier = "BSD-3-Clause"

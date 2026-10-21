@@ -23,6 +23,8 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 )
 
+const directForwardingPrivacyMarker = "audit-secret-direct-forwarding-payload"
+
 func TestOpenSSHDockerEnvironment(t *testing.T) {
 	f, err := newDockerEnvironmentFixture(t)
 	if errors.Is(err, errNoRuntime) {
@@ -194,6 +196,60 @@ func TestOpenSSHDockerEnvironment(t *testing.T) {
 				return fmt.Errorf("%w: %s", result.err, result.stderr)
 			}
 			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("direct forwarding audit completes before disconnect", func(t *testing.T) {
+		ensureContainerEchoServer(t, f)
+		client := f.newSSHClient(t, 30*time.Second)
+		session, err := client.NewSession()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close()
+		environment, err := session.Output("/usr/local/bin/e2e-helper environment")
+		if err != nil {
+			t.Fatalf("read forwarding connection ID: %v", err)
+		}
+		connectionID := parseEnvironmentIDs(t, string(environment))["connection"]
+		if connectionID == "" {
+			t.Fatal("forwarding connection ID is empty")
+		}
+		forwarded, err := client.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", echoPort))
+		if err != nil {
+			t.Fatalf("open audited direct forwarding: %v", err)
+		}
+		defer forwarded.Close()
+		closeWriter, ok := forwarded.(interface{ CloseWrite() error })
+		if !ok {
+			t.Fatal("audited forwarding does not support half-close")
+		}
+		const size = 64 << 10
+		seed := []byte(directForwardingPrivacyMarker + "\x00\xff")
+		payload := bytes.Repeat(seed, size/len(seed)+1)[:size]
+		if _, err := io.Copy(forwarded, bytes.NewReader(payload)); err != nil {
+			t.Fatalf("write audited forwarding payload: %v", err)
+		}
+		if err := closeWriter.CloseWrite(); err != nil {
+			t.Fatalf("half-close audited forwarding: %v", err)
+		}
+		response, err := io.ReadAll(io.LimitReader(forwarded, size+1))
+		if err != nil || !bytes.Equal(response, payload) {
+			t.Fatalf("read audited forwarding response: bytes=%d err=%v", len(response), err)
+		}
+		// Forwarding EOF does not acknowledge the server's audit write.
+		// Keep the SSH transport alive until the signed live journal contains it.
+		if err := poll(10*time.Second, func() error {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			exported := runCommand(ctx, f.repoRoot, nil, f.bifroest, "audit", "export",
+				"--configuration="+filepath.Join(f.tempDir, "docker-environment.yaml"), "--with-sensitive", "--output=-", "default")
+			if exported.err != nil {
+				return fmt.Errorf("read signed live forwarding audit: %w: %s", exported.err, exported.stderr)
+			}
+			return verifyAuditedDirectForward(decodeExportedAuditRecords(t, exported.stdout), connectionID, size)
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -435,6 +491,8 @@ type exportedAuditEvent struct {
 	Name                 string `json:"name"`
 	Domain               string `json:"domain"`
 	Outcome              string `json:"outcome"`
+	Reason               string `json:"reason"`
+	ErrorCategory        string `json:"errorCategory"`
 	Flow                 string `json:"flow"`
 	ConnectionId         string `json:"connectionId"`
 	SessionId            string `json:"sessionId"`
@@ -513,9 +571,6 @@ func runDockerAuditE2E(t *testing.T, f *fixture, configurationPath string) {
 	var authentication, pty, agentForwarding, reverseDecision, connectionClosed, housekeepingDispose, housekeepingDelete bool
 	taskStarts := make(map[string]exportedAuditEvent)
 	taskCompletions := make(map[string]exportedAuditEvent)
-	directDecisions := make(map[string]exportedAuditEvent)
-	directStarts := make(map[string]exportedAuditEvent)
-	directCompletions := make(map[string]exportedAuditEvent)
 	for _, record := range records {
 		event := record.Event
 		if event.Flow != "" && event.Flow != f.flowName {
@@ -538,14 +593,6 @@ func runDockerAuditE2E(t *testing.T, f *fixture, configurationPath string) {
 			taskStarts[event.OperationId] = event
 		case audit.EventNameSessionTaskCompleted:
 			taskCompletions[event.OperationId] = event
-		case audit.EventNamePortForwardingDirectDecided:
-			if event.Outcome == "success" {
-				directDecisions[event.OperationId] = event
-			}
-		case audit.EventNamePortForwardingDirectStarted:
-			directStarts[event.OperationId] = event
-		case audit.EventNamePortForwardingDirectCompleted:
-			directCompletions[event.OperationId] = event
 		case audit.EventNamePortForwardingReverseDecided:
 			reverseDecision = reverseDecision || event.Outcome == "success"
 		case audit.EventNameConnectionClosed:
@@ -580,24 +627,8 @@ func runDockerAuditE2E(t *testing.T, f *fixture, configurationPath string) {
 	if !execWithExpectedExit || !sftpCompleted {
 		t.Fatalf("missing completed task audit: exec=%v sftp=%v", execWithExpectedExit, sftpCompleted)
 	}
-	directTransferred := false
-	for operationId, completed := range directCompletions {
-		decision, decisionOk := directDecisions[operationId]
-		started, startedOk := directStarts[operationId]
-		if !decisionOk || !startedOk {
-			continue
-		}
-		if decision.ConnectionId != started.ConnectionId || started.ConnectionId != completed.ConnectionId ||
-			decision.SessionId != started.SessionId || started.SessionId != completed.SessionId {
-			t.Fatalf("direct forwarding %s correlation mismatch", operationId)
-		}
-		if completed.Outcome == "success" && completed.BytesRead != nil && *completed.BytesRead > 0 &&
-			completed.BytesWritten != nil && *completed.BytesWritten > 0 && completed.DurationMillis != nil {
-			directTransferred = true
-		}
-	}
-	if !directTransferred {
-		t.Fatal("no complete audited direct-forwarding transfer found")
+	if err := verifyAuditedDirectForward(records, "", 0); err != nil {
+		t.Fatal(err)
 	}
 
 	privacyMarkers := []string{
@@ -607,6 +638,7 @@ func runDockerAuditE2E(t *testing.T, f *fixture, configurationPath string) {
 		"audit-secret-upload.tmp",
 		"audit-secret-renamed.bin",
 		"docker-sftp-e2e",
+		directForwardingPrivacyMarker,
 		"xterm-256color",
 		"127.0.0.1:31001",
 		publicKeyBlob(t, f.clientKey+".pub"),
@@ -617,6 +649,51 @@ func runDockerAuditE2E(t *testing.T, f *fixture, configurationPath string) {
 			t.Fatalf("audit export contains private marker %q", marker)
 		}
 	}
+}
+
+func verifyAuditedDirectForward(records []exportedAuditRecord, connectionID string, expectedBytes int64) error {
+	decisions := make(map[string]exportedAuditEvent)
+	starts := make(map[string]exportedAuditEvent)
+	completions := make(map[string]exportedAuditEvent)
+	for _, record := range records {
+		event := record.Event
+		if connectionID != "" && event.ConnectionId != connectionID {
+			continue
+		}
+		switch event.Name {
+		case audit.EventNamePortForwardingDirectDecided:
+			if event.Outcome == "success" {
+				decisions[event.OperationId] = event
+			}
+		case audit.EventNamePortForwardingDirectStarted:
+			starts[event.OperationId] = event
+		case audit.EventNamePortForwardingDirectCompleted:
+			completions[event.OperationId] = event
+		}
+	}
+	found := false
+	for operationID, completed := range completions {
+		decision, decisionOK := decisions[operationID]
+		started, startedOK := starts[operationID]
+		if !decisionOK || !startedOK {
+			continue
+		}
+		if operationID == "" || completed.ConnectionId == "" || completed.SessionId == "" ||
+			decision.ConnectionId != started.ConnectionId || started.ConnectionId != completed.ConnectionId ||
+			decision.SessionId != started.SessionId || started.SessionId != completed.SessionId {
+			return fmt.Errorf("direct forwarding %s correlation mismatch", operationID)
+		}
+		if completed.Outcome == "success" && completed.BytesRead != nil && *completed.BytesRead > 0 &&
+			completed.BytesWritten != nil && *completed.BytesWritten > 0 && completed.DurationMillis != nil &&
+			(expectedBytes == 0 || *completed.BytesRead == expectedBytes && *completed.BytesWritten == expectedBytes) {
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("no complete audited direct-forwarding transfer found for connection %q: decisions=%#v starts=%#v completions=%#v",
+			connectionID, decisions, starts, completions)
+	}
+	return nil
 }
 
 func decodeExportedAuditRecords(t *testing.T, payload string) []exportedAuditRecord {

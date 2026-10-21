@@ -1,5 +1,5 @@
 ---
-description: Practical guides for OIDC SSH login, an OpenSSH gateway and verifiable session recording with Bifröst.
+description: Practical guides for SSH gateways, OIDC login, remote administration and verifiable audit and Recording evidence.
 ---
 
 # Guides
@@ -8,7 +8,10 @@ Choose the task you want to accomplish:
 
 * [SSH gateway to an OpenSSH server](ssh-gateway.md): authenticate at Bifröst, then connect to a private SSH target.
 * [OIDC login with a standard SSH client](oidc.md): approve a Device Authorization in the browser and open a container session.
-* [Verifiable session recording](recording.md): capture terminal output, verify it and export a recording.
+* [Manage a Bifröst host remotely](management.md): configure workload and administration flows, then inspect live state from a workstation.
+* [Export server public keys remotely](keys.md): retrieve configured public SSH identities, certificate authorities and active host keys through management access.
+* [Record, find and replay a session](recording.md): capture terminal output, find the sealed original and verify, play or export it.
+* [Verify encrypted evidence on a workstation](evidence.md): configure encrypted audit and Recording data, pin producer trust and keep decryption local.
 
 Install Bifröst first using the [host installation guide](../setup/on-host.md), and use the guide from the **same release** as your binary. Each example requires you to provide your own identities and permissions; none replaces the [configuration reference](../reference/configuration.md).
 

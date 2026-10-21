@@ -147,21 +147,21 @@ func testReleaseLicenseRoot(t *testing.T) (string, map[string]string) {
 	root := t.TempDir()
 	expected := map[string]string{
 		"LICENSE":                             "project license",
-		"LICENSES/BSD-3-Clause-Go-1.27.0.txt": "Go standard library license",
+		"LICENSES/BSD-3-Clause-Go-1.27.3.txt": "Go standard library license",
 		"LICENSES/MIT.txt":                    "MIT license",
 		"LICENSES/vendor/BSD-3-Clause.txt":    "BSD license",
 	}
 	for name, content := range expected {
-		if name == "LICENSES/BSD-3-Clause-Go-1.27.0.txt" {
+		if name == "LICENSES/BSD-3-Clause-Go-1.27.3.txt" {
 			continue
 		}
 		filename := filepath.Join(root, filepath.FromSlash(name))
 		require.NoError(t, gos.MkdirAll(filepath.Dir(filename), 0755))
 		require.NoError(t, gos.WriteFile(filename, []byte(content), 0644))
 	}
-	goLicense := filepath.Join(root, "cmd", "build", "third-party-licenses", "BSD-3-Clause-Go-1.27.0.txt")
+	goLicense := filepath.Join(root, "cmd", "build", "third-party-licenses", "BSD-3-Clause-Go-1.27.3.txt")
 	require.NoError(t, gos.MkdirAll(filepath.Dir(goLicense), 0755))
-	require.NoError(t, gos.WriteFile(goLicense, []byte(expected["LICENSES/BSD-3-Clause-Go-1.27.0.txt"]), 0644))
+	require.NoError(t, gos.WriteFile(goLicense, []byte(expected["LICENSES/BSD-3-Clause-Go-1.27.3.txt"]), 0644))
 	return root, expected
 }
 

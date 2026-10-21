@@ -77,6 +77,14 @@ func (r *LocalNativeRecordingRepository) ListSealed(ctx context.Context) ([]Id, 
 	return r.repository.listSealed(ctx)
 }
 
+// ListSealedPage selects IDs before opening or verifying artifact contents.
+func (r *LocalNativeRecordingRepository) ListSealedPage(ctx context.Context, options SealedPageOptions) ([]Id, error) {
+	if r == nil || r.repository == nil {
+		return nil, errors.System.Newf("nil local native recording repository")
+	}
+	return r.repository.listSealedPage(ctx, options)
+}
+
 func (r *LocalNativeRecordingRepository) RecordingStateExists(id Id) (bool, error) {
 	if r == nil || r.repository == nil {
 		return false, errors.System.Newf("nil local native recording repository")

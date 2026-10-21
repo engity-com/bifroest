@@ -1,5 +1,5 @@
-golang        1.27.0
-golangci-lint v2.13.2
+golang        1.27.3
+golangci-lint v2.14.0
 go-licenses   2.0.1
 syft          1.51.1
 python        3.14

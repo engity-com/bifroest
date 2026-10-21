@@ -16,7 +16,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/nativeformat"
 )
 
-func verifyNativeJournals(ctx context.Context, sources []JournalSource, collect bool) (*Verification, error) {
+func verifyNativeJournals(ctx context.Context, sources []JournalSource, collect bool, selection *verifiedRecordSelection) (*Verification, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -25,7 +25,7 @@ func verifyNativeJournals(ctx context.Context, sources []JournalSource, collect 
 	}
 	result := &Verification{Journals: make([]VerifiedJournal, 0, len(sources))}
 	result.withSensitive = true
-	budget := &verifierBudget{}
+	budget := &verifierBudget{selection: selection}
 	names := map[string]bool{}
 	var directories []os.FileInfo
 	prepared := make([]JournalSource, 0, len(sources))
@@ -70,6 +70,9 @@ func verifyNativeJournals(ctx context.Context, sources []JournalSource, collect 
 		}
 		result.Journals = append(result.Journals, journal)
 		result.records = append(result.records, records...)
+	}
+	if budget.selection != nil {
+		result.records = budget.selection.materialize()
 	}
 	return result, nil
 }
@@ -380,12 +383,19 @@ func verifyNativeSegmentUntil(ctx context.Context, data []byte, identity journal
 				event = Event{Name: event.Name, Domain: event.Domain, Outcome: event.Outcome}
 			}
 			if !reached {
-				if err := budget.consume(int64(len(unit.Payload)), collect); err != nil {
+				if err := budget.consume(int64(len(unit.Payload)), collect && budget.selection == nil); err != nil {
 					return nil, journalHash{}, journalHash{}, false, false, err
 				}
 				if collect {
 					at, _ := r.RecordedAt.Time()
-					records = append(records, VerifiedRecord{Auditlog: source.Name, ProducerId: identity.ProducerId(), SegmentSequence: seq, SegmentRecordIndex: count, Id: uuid.UUID(r.Id), RecordedAt: at.UTC(), Event: event, PreviousHash: last.String(), Hash: hash.String()})
+					record := VerifiedRecord{Auditlog: source.Name, ProducerId: identity.ProducerId(), SegmentSequence: seq, SegmentRecordIndex: count, Id: uuid.UUID(r.Id), RecordedAt: at.UTC(), Event: event, PreviousHash: last.String(), Hash: hash.String()}
+					if budget.selection != nil {
+						if err := budget.selection.add(record, int64(len(unit.Payload))); err != nil {
+							return nil, journalHash{}, journalHash{}, false, false, err
+						}
+					} else {
+						records = append(records, record)
+					}
 				}
 			}
 			count++

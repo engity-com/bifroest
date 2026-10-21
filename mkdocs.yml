@@ -131,6 +131,9 @@ nav:
           - SSH gateway: guides/ssh-gateway.md
           - OIDC login: guides/oidc.md
           - Session recording: guides/recording.md
+          - Remote administration: guides/management.md
+          - Remote public-key export: guides/keys.md
+          - Encrypted evidence: guides/evidence.md
   - Getting started:
       - setup/index.md
       - Installation:
@@ -162,6 +165,7 @@ nav:
           - Local: reference/environment/local.md
           - SSH: reference/environment/ssh.md
           - Dummy: reference/environment/dummy.md
+          - Management: reference/environment/management.md
       - Sessions:
           - reference/session/index.md
           - Filesystem: reference/session/fs.md
@@ -174,37 +178,61 @@ nav:
               - S3: reference/auditlog/remote-targets/s3.md
               - SFTP: reference/auditlog/remote-targets/sftp.md
               - WebDAV: reference/auditlog/remote-targets/webdav.md
-      - Command line interface (CLI):
+      - Command line interface:
           - reference/cli/index.md
-          - Run: reference/cli/run.md
-          - Keys:
-              - reference/cli/key/index.md
-              - Generate: reference/cli/key/generate.md
-              - Export public key: reference/cli/key/export/public.md
-              - Export certificate authority: reference/cli/key/export/ca.md
-              - Export host keys: reference/cli/key/export/host.md
-              - Import certificate authorities: reference/cli/key/import/ca.md
-              - Import host keys: reference/cli/key/import/host.md
-          - Audit:
+          - Basics:
+              - Invocation and data sources: reference/cli/usage.md
+              - Remote access: reference/cli/management.md
+              - Output and errors: reference/cli/output.md
+              - Trust and verification: reference/cli/verification.md
+              - Help: reference/cli/help.md
+          - serve: reference/cli/serve.md
+          - flow:
+              - reference/cli/flow/index.md
+              - ls: reference/cli/flow/ls.md
+              - show: reference/cli/flow/show.md
+          - session:
+              - reference/cli/session/index.md
+              - ls: reference/cli/session/ls.md
+              - show: reference/cli/session/show.md
+              - disconnect: reference/cli/session/disconnect.md
+              - dispose: reference/cli/session/dispose.md
+          - audit:
               - reference/cli/audit/index.md
-              - Producer ID: reference/cli/audit/producer-id.md
-              - Verify: reference/cli/audit/verify.md
-              - Decrypt: reference/cli/audit/decrypt.md
-              - Export: reference/cli/audit/export.md
-              - Merge: reference/cli/audit/merge.md
-          - Recording:
+              - ls: reference/cli/audit/ls.md
+              - show: reference/cli/audit/show.md
+              - events: reference/cli/audit/events.md
+              - producer-id: reference/cli/audit/producer-id.md
+              - verify: reference/cli/audit/verify.md
+              - export: reference/cli/audit/export.md
+              - merge: reference/cli/audit/merge.md
+          - recording:
               - reference/cli/recording/index.md
-              - Inspect: reference/cli/recording/inspect.md
-              - Verify: reference/cli/recording/verify.md
-              - Export: reference/cli/recording/export.md
-          - Windows service:
+              - ls: reference/cli/recording/ls.md
+              - show: reference/cli/recording/show.md
+              - inspect: reference/cli/recording/inspect.md
+              - verify: reference/cli/recording/verify.md
+              - export: reference/cli/recording/export.md
+              - play: reference/cli/recording/play.md
+          - key:
+              - reference/cli/key/index.md
+              - generate: reference/cli/key/generate.md
+              - export:
+                  - reference/cli/key/export/index.md
+                  - public: reference/cli/key/export/public.md
+                  - ca: reference/cli/key/export/ca.md
+                  - host: reference/cli/key/export/host.md
+              - import:
+                  - reference/cli/key/import/index.md
+                  - ca: reference/cli/key/import/ca.md
+                  - host: reference/cli/key/import/host.md
+          - service:
               - reference/cli/service/index.md
-              - Install: reference/cli/service/install.md
-              - Remove: reference/cli/service/remove.md
-              - Start: reference/cli/service/start.md
-              - Stop: reference/cli/service/stop.md
-          - Version: reference/cli/version.md
-          - Help: reference/cli/help.md
+              - install: reference/cli/service/install.md
+              - remove: reference/cli/service/remove.md
+              - start: reference/cli/service/start.md
+              - stop: reference/cli/service/stop.md
+          - version: reference/cli/version.md
       - Templating:
           - reference/templating/index.md
       - Context Objects:

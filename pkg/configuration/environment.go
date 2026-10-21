@@ -9,7 +9,7 @@ import (
 )
 
 type Environment struct {
-	Variables EnvironmentVariables `yaml:"variables,omitempty"`
+	Variables EnvironmentVariables `yaml:"variables,omitempty" sensitive:"true"`
 	V         EnvironmentV         `yaml:"-"`
 }
 
@@ -58,14 +58,14 @@ func (this *Environment) Trim() error {
 		}
 	}
 	if err := this.Variables.Trim(); err != nil {
-		return fmt.Errorf("[variables] %w", err)
+		return configurationFieldError(this, "variables", err)
 	}
 	return this.Validate()
 }
 
 func (this *Environment) Validate() error {
 	if err := this.Variables.Validate(); err != nil {
-		return fmt.Errorf("[variables] %w", err)
+		return configurationFieldError(this, "variables", err)
 	}
 	if v := this.V; v != nil {
 		if !this.Variables.IsZero() {
@@ -106,9 +106,9 @@ func (this *Environment) UnmarshalYAML(node *yaml.Node) error {
 		return reportYamlRelatedErr(node, err)
 	}
 	var common struct {
-		Variables EnvironmentVariables `yaml:"variables,omitempty"`
+		Variables EnvironmentVariables `yaml:"variables,omitempty" sensitive:"true"`
 	}
-	if err := node.Decode(&common); err != nil {
+	if err := decodeConfigurationFields(node, &common); err != nil {
 		return reportYamlRelatedErr(node, err)
 	}
 	this.Variables = common.Variables
@@ -117,19 +117,29 @@ func (this *Environment) UnmarshalYAML(node *yaml.Node) error {
 }
 
 func (this *Environment) MarshalYAML() (any, error) {
-	typeBuf := struct {
-		EnvironmentV `yaml:",inline"`
-		Type         string               `yaml:"type,omitempty"`
-		Variables    EnvironmentVariables `yaml:"variables,omitempty"`
-	}{}
-	typeBuf.Variables = this.Variables
-
-	if this.V != nil {
-		typeBuf.Type = this.V.Types()[0]
-		typeBuf.EnvironmentV = this.V
+	if this.V == nil {
+		return nil, fmt.Errorf("cannot marshal environment without a type")
 	}
-
-	return typeBuf, nil
+	var result yaml.Node
+	if err := result.Encode(this.V); err != nil {
+		return nil, err
+	}
+	if result.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("environment %T does not encode as a mapping", this.V)
+	}
+	result.Content = append([]*yaml.Node{
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "type"},
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: this.V.Types()[0]},
+	}, result.Content...)
+	if !this.Variables.IsZero() {
+		var variables yaml.Node
+		if err := variables.Encode(this.Variables); err != nil {
+			return nil, err
+		}
+		result.Content = append(result.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "variables"}, &variables)
+	}
+	return &result, nil
 }
 
 func (this Environment) IsEqualTo(other any) bool {

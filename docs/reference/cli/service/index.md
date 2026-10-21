@@ -6,12 +6,17 @@ description: Manage Bifröst as a Windows service or macOS LaunchDaemon.
 
 Service commands install and control Bifröst through the Windows Service Control Manager or macOS `launchd`.
 
-!!! note
-     These commands are available on Windows and macOS. Service management requires an elevated Administrator terminal on Windows and `root` privileges on macOS.
-
 ## Commands
 
-* [`bifroest service install`](install.md) installs the service and optionally starts it.
-* [`bifroest service remove`](remove.md) optionally stops and removes the service.
-* [`bifroest service start`](start.md) starts the installed service.
-* [`bifroest service stop`](stop.md) stops the installed service.
+| Command | Purpose |
+| --- | --- |
+| [`install`](install.md) | Install the platform service and optionally start it. |
+| [`remove`](remove.md) | Remove its registration; macOS always stops it first. |
+| [`start`](start.md) | Start an installed service. |
+| [`stop`](stop.md) | Stop the service through the platform manager. |
+
+For direct foreground startup, see [`serve`](../serve.md).
+
+## Examples
+
+Follow [host installation](../../../setup/on-host.md) for platform configuration and privileges, then use the numbered [installation examples](install.md#examples).

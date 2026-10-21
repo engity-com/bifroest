@@ -1338,7 +1338,7 @@ func (f *fixture) saveLogs() {
 	var content strings.Builder
 	if f.bifroestProc != nil {
 		if exited, err := f.bifroestProc.collect(); exited {
-			content.WriteString(fmt.Sprintf("--- bifroest process result ---\n%v\n", err))
+			fmt.Fprintf(&content, "--- bifroest process result ---\n%v\n", err)
 		}
 		content.WriteString("--- bifroest stdout ---\n")
 		content.WriteString(f.bifroestProc.stdout.String())

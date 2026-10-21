@@ -23,15 +23,14 @@ func TestGuideConfigurations(t *testing.T) {
 	hostsFile := filepath.Join(t.TempDir(), "target_known_hosts")
 	require.NoError(t, os.WriteFile(hostsFile, []byte(knownhosts.Line([]string{"target.example.org"}, sshKey)+"\n"), 0600))
 
-	for _, name := range []string{"ssh-gateway", "oidc", "recording"} {
+	for _, name := range []string{"ssh-gateway", "oidc", "recording", "management", "evidence", "keys"} {
 		t.Run(name, func(t *testing.T) {
 			markdown, err := os.ReadFile(filepath.Join("..", "..", "docs", "guides", name+".md"))
 			require.NoError(t, err)
-			_, after, found := strings.Cut(string(markdown), "```yaml\n")
-			require.True(t, found, "guide has no YAML example")
-			yamlExample, _, found := strings.Cut(after, "\n```")
-			require.True(t, found, "guide has no closing YAML fence")
-			if name == "ssh-gateway" {
+			yamlExample := firstGuideYAML(t, string(markdown))
+			yamlExample = strings.ReplaceAll(yamlExample, "/etc/engity/bifroest/management_authorized_keys", keyFile)
+			yamlExample = strings.ReplaceAll(yamlExample, "/etc/engity/bifroest/evidence-recipient.pub", keyFile)
+			if name == "ssh-gateway" || name == "keys" {
 				require.Contains(t, yamlExample, "/etc/engity/bifroest/gateway-clients.pub")
 				yamlExample = strings.ReplaceAll(yamlExample, "/etc/engity/bifroest/gateway-clients.pub", keyFile)
 				yamlExample = strings.ReplaceAll(yamlExample, "/etc/engity/bifroest/target_known_hosts", hostsFile)
@@ -43,4 +42,26 @@ func TestGuideConfigurations(t *testing.T) {
 			require.NoError(t, conf.LoadFromYaml(strings.NewReader(yamlExample), name+".md"))
 		})
 	}
+}
+
+func firstGuideYAML(t *testing.T, markdown string) string {
+	t.Helper()
+	lines := strings.Split(markdown, "\n")
+	for index, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != "```yaml" {
+			continue
+		}
+		indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+		var content []string
+		for _, next := range lines[index+1:] {
+			if strings.TrimSpace(next) == "```" {
+				return strings.Join(content, "\n")
+			}
+			content = append(content, strings.TrimPrefix(next, indent))
+		}
+		t.Fatal("guide has no closing YAML fence")
+	}
+	t.Fatal("guide has no YAML example")
+	return ""
 }

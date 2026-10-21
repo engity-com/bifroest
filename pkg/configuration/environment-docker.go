@@ -53,7 +53,7 @@ type EnvironmentDocker struct {
 
 	Image                template.String  `yaml:"image"`
 	ImagePullPolicy      PullPolicy       `yaml:"imagePullPolicy,omitempty"`
-	ImagePullCredentials template.String  `yaml:"imagePullCredentials,omitempty"`
+	ImagePullCredentials template.String  `yaml:"imagePullCredentials,omitempty" sensitive:"true"`
 	Networks             template.Strings `yaml:"networks"`
 	Volumes              template.Strings `yaml:"volumes,omitempty"`
 	Mounts               template.Strings `yaml:"mounts,omitempty"`
@@ -189,7 +189,7 @@ func (this *EnvironmentDocker) Validate() error {
 func (this *EnvironmentDocker) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *EnvironmentDocker, node *yaml.Node) error {
 		type raw EnvironmentDocker
-		return node.Decode((*raw)(target))
+		return decodeConfigurationFields(node, (*raw)(target))
 	})
 }
 

@@ -67,7 +67,7 @@ func (this GroupRequirement) isEqualTo(other *GroupRequirement) bool {
 func (this GroupRequirement) String() string {
 	if name := this.Name; len(name) > 0 {
 		if gid := this.Gid; gid != nil {
-			return fmt.Sprintf("%d(%s)", gid, name)
+			return fmt.Sprintf("%d(%s)", *gid, name)
 		} else {
 			return strings.Clone(name)
 		}
