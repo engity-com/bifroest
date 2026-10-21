@@ -5,6 +5,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/engity-com/bifroest/pkg/authentication"
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/environment"
@@ -71,6 +72,10 @@ func (this *sessionCompatibilityAuthorization) FindSession() session.Session {
 
 func (this *sessionCompatibilityAuthorization) AuthorizationKind() string {
 	return authorization.KindOf(this.Authorization)
+}
+
+func (this *sessionCompatibilityAuthorization) Authentication() (authentication.Identity, error) {
+	return authorization.AuthenticationOf(this.Authorization)
 }
 
 func (this *sessionCompatibilityAuthorization) AuthorizedKeyPolicy() *authorization.AuthorizedKeyPolicy {

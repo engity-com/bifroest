@@ -18,6 +18,7 @@ type htpasswd struct {
 	flow              configuration.FlowName
 	session           session.Session
 	sessionsPublicKey ssh.PublicKey
+	principal         string
 }
 
 func (*htpasswd) AuthorizationKind() string { return "htpasswd" }

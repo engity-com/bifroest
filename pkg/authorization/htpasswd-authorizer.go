@@ -56,10 +56,25 @@ func (this *HtpasswdAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Author
 	}
 	setAuthorizationContext(req, auth)
 
+	restorePrincipal := func(ctx context.Context, candidate session.Session) (bool, error) {
+		stored, err := candidate.AuthorizationToken(ctx)
+		if err != nil {
+			return false, err
+		}
+		var token htpasswdToken
+		if err := json.Unmarshal(stored, &token); err != nil || token.User.Name == "" || token.User.Name != req.Connection().Remote().User() {
+			return false, nil
+		}
+		// Populate the verified session identity before the service evaluates
+		// environment compatibility, whose templates may use authentication.
+		auth.principal = token.User.Name
+		return true, nil
+	}
 	sess, err := req.Sessions().FindByPublicKey(req.Context(), req.RemotePublicKey(), (&session.FindOpts{}).WithPredicate(
 		session.IsFlow(this.flow),
 		session.IsStillValid,
 		session.IsRemoteName(req.Connection().Remote().User()),
+		restorePrincipal,
 	))
 	if errors.Is(err, session.ErrNoSuchSession) {
 		return Forbidden(req.Connection().Remote()), nil
@@ -69,6 +84,9 @@ func (this *HtpasswdAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Author
 
 	auth.session = sess
 	auth.sessionsPublicKey = req.RemotePublicKey()
+	if auth.principal == "" {
+		return Forbidden(req.Connection().Remote()), nil
+	}
 
 	if accepted, err := req.Validate(auth); err != nil {
 		return nil, fmt.Errorf("cannot validate request: %w", err)
@@ -103,6 +121,7 @@ func (this *HtpasswdAuthorizer) lookupEntry(req Request, password string) (auth 
 		this.flow,
 		nil,
 		nil,
+		req.Connection().Remote().User(),
 	}
 
 	accepted, err = req.Validate(auth)
@@ -240,6 +259,7 @@ func (this *HtpasswdAuthorizer) RestoreFromSession(ctx context.Context, sess ses
 		this.flow.Clone(),
 		sess,
 		nil,
+		buf.User.Name,
 	}, nil
 }
 

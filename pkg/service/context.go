@@ -9,6 +9,7 @@ import (
 	essh "github.com/engity-com/ssh-server-go"
 	gossh "golang.org/x/crypto/ssh"
 
+	"github.com/engity-com/bifroest/pkg/authentication"
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bconn "github.com/engity-com/bifroest/pkg/connection"
@@ -54,6 +55,9 @@ type authorizeRequest struct {
 
 func (this *authorizeRequest) GetField(name string) (any, bool, error) {
 	switch name {
+	case "authentication":
+		identity, err := (&environmentContext{service: this.service, connection: this.connection, authorization: this.authorization}).Authentication()
+		return identity, true, err
 	case "connection":
 		return this.connection, true, nil
 	case "remote":
@@ -200,6 +204,9 @@ type environmentContext struct {
 
 func (this *environmentContext) GetField(name string) (any, bool, error) {
 	switch name {
+	case "authentication":
+		identity, err := this.Authentication()
+		return identity, true, err
 	case "context":
 		return this.Context(), true, nil
 	case "connection":
@@ -381,10 +388,10 @@ func (this *environmentTask) EnvironmentVariables() configuration.EnvironmentVar
 
 func newRememberMeNotificationContext(ctx essh.Context, auth authorization.Authorization, newSession bool, pub essh.PublicKey) *rememberMeNotificationContext {
 	return &rememberMeNotificationContext{
-		ctx,
-		newSession,
-		auth,
-		pub,
+		context:       ctx,
+		newSession:    newSession,
+		authorization: auth,
+		key:           pub,
 	}
 }
 
@@ -393,10 +400,11 @@ type contextEnabled interface {
 }
 
 type rememberMeNotificationContext struct {
-	context       essh.Context
-	newSession    bool
-	authorization authorization.Authorization
-	key           essh.PublicKey
+	context        essh.Context
+	newSession     bool
+	authorization  authorization.Authorization
+	key            essh.PublicKey
+	authentication func() (authentication.Identity, error)
 }
 
 func (this *rememberMeNotificationContext) Context() context.Context {
@@ -405,6 +413,13 @@ func (this *rememberMeNotificationContext) Context() context.Context {
 
 func (this *rememberMeNotificationContext) GetField(name string, ctx contextEnabled) (any, bool, error) {
 	switch name {
+	case "authentication":
+		if this.authentication != nil {
+			identity, err := this.authentication()
+			return identity, true, err
+		}
+		identity, err := authorization.AuthenticationOf(this.authorization)
+		return identity, true, err
 	case "authorization":
 		return this.authorization, true, nil
 	case "key":
