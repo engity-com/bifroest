@@ -238,6 +238,7 @@ nav:
       - Context Objects:
           - reference/context/index.md
           - Alternative Binary: reference/context/alternative-binary.md
+          - Authentication: reference/context/authentication.md
           - Authorization: reference/context/authorization.md
           - Authorization Request: reference/context/authorization-request.md
           - Connection: reference/context/connection.md

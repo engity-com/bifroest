@@ -118,7 +118,7 @@ func TestConfiguration_UnmarshalYAML(t *testing.T) {
 						IncludedRequestingName: common.MustNewRegexp(""),
 						ExcludedRequestingName: common.MustNewRegexp(""),
 					},
-					Authorization: Authorization{&AuthorizationOidcDeviceAuth{
+					Authorization: Authorization{V: &AuthorizationOidcDeviceAuth{
 						Issuer:           template.MustNewUrl("https://foo-bar"),
 						ClientId:         template.MustNewString("anId"),
 						ClientSecret:     template.MustNewString("aSecret"),

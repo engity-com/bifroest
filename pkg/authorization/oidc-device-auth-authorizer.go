@@ -18,6 +18,7 @@ import (
 	log "github.com/echocat/slf4g"
 	"golang.org/x/oauth2"
 
+	"github.com/engity-com/bifroest/pkg/authentication"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
@@ -36,6 +37,7 @@ type OidcDeviceAuthAuthorizer struct {
 	OnLostAccess func(session.Session)
 
 	oauth2Config oauth2.Config
+	issuer       string
 	provider     *coidc.Provider
 	verifier     *coidc.IDTokenVerifier
 	refreshLocks [64]struct {
@@ -116,8 +118,9 @@ func NewOidcDeviceAuth(ctx context.Context, flow configuration.FlowName, conf *c
 	}
 
 	result := OidcDeviceAuthAuthorizer{
-		flow: flow,
-		conf: conf,
+		flow:   flow,
+		conf:   conf,
+		issuer: issuer.String(),
 
 		oauth2Config: oauth2.Config{
 			ClientID:     clientId,
@@ -922,6 +925,9 @@ func (this *OidcDeviceAuthAuthorizer) finalizeAuth(ctx context.Context, logger l
 	auth := oidc{
 		flow: this.flow,
 	}
+	if t.Issuer != "" && t.Subject != "" && !t.LastVerifiedAt.IsZero() {
+		auth.identity = authentication.Identity{Principal: t.Subject, Issuer: t.Issuer, Subject: t.Subject}
+	}
 
 	if err := auth.token.SetRaw(t.Token); err != nil {
 		return failf("cannot store token at response: %w", err)
@@ -936,6 +942,7 @@ func (this *OidcDeviceAuthAuthorizer) finalizeAuth(ctx context.Context, logger l
 				return failf("OIDC ID token identity differs from session identity")
 			}
 			auth.idToken.IDToken = idToken
+			auth.identity = authentication.Identity{Principal: idToken.Subject, Issuer: idToken.Issuer, Subject: idToken.Subject}
 			logger.With("idToken", &auth.idToken).Debug("id token received")
 		}
 	} else if retrieveArtifactsAllowed && this.conf.RetrieveIdToken && !this.conf.RefreshEnabled() {
@@ -949,6 +956,12 @@ func (this *OidcDeviceAuthAuthorizer) finalizeAuth(ctx context.Context, logger l
 		}
 
 		auth.userInfo.UserInfo = userInfo
+		if auth.identity.IsAuthenticated() && userInfo.Subject != auth.identity.Subject {
+			return failf("OIDC UserInfo subject differs from authenticated identity")
+		}
+		if !auth.identity.IsAuthenticated() && this.issuer != "" && userInfo.Subject != "" {
+			auth.identity = authentication.Identity{Principal: userInfo.Subject, Issuer: this.issuer, Subject: userInfo.Subject}
+		}
 
 		logger.With("userInfo", &auth.userInfo).Debug("user info received")
 	}
