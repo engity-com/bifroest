@@ -105,5 +105,5 @@ Start with an installed [Bifröst host](../setup/on-host.md), separate login key
 ## Next steps
 
 * [Key reference](../reference/cli/key/index.md) documents per-command arguments and invocation modes.
-* [Management permissions](../reference/environment/management.md#properties) describes the separate access controls.
+* [Management permissions](../reference/environment/management.md#configuration) describes the separate access controls.
 * [Bifröst delegation](../reference/authorization/bifroest.md) configures certificate trust between Bifröst instances.
