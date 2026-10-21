@@ -36,6 +36,9 @@ this mapping refers to the default principal, not recursively to the mapping.
 For example, an OIDC authorization can use
 `principal: '{{ .authorization.idToken.email }}'` when the verified provider
 claims and the installation's access policy make that email suitable.
+A signed email claim does not itself prove email ownership; check the provider's
+verification policy and `email_verified` where applicable before using it for
+account selection.
 
 An empty, unavailable or invalid mapped value fails when resolved. There is no
 fallback to the unverified `.remote.user`. A mapping changes neither issuer nor
