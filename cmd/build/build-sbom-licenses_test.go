@@ -17,7 +17,7 @@ func TestNormalizeSpdxSbomEnrichesLicenses(t *testing.T) {
     {"SPDXID":"SPDXRef-Root","name":"artifact.tgz","licenseConcluded":"NOASSERTION","licenseDeclared":"NOASSERTION"},
     {"SPDXID":"SPDXRef-Project","name":"github.com/engity-com/bifroest","licenseConcluded":"NOASSERTION","licenseDeclared":"NOASSERTION","externalRefs":[{"referenceType":"purl","referenceLocator":"pkg:golang/github.com/engity-com/bifroest"}]},
     {"SPDXID":"SPDXRef-Dependency","name":"example.com/dependency","licenseConcluded":"NOASSERTION","licenseDeclared":"NOASSERTION","externalRefs":[{"referenceType":"purl","referenceLocator":"pkg:golang/example.com/dependency@v1.2.3"}]},
-    {"SPDXID":"SPDXRef-Stdlib","name":"stdlib","licenseConcluded":"NOASSERTION","licenseDeclared":"BSD-3-Clause","externalRefs":[{"referenceType":"purl","referenceLocator":"pkg:golang/stdlib@1.27.0"}]},
+    {"SPDXID":"SPDXRef-Stdlib","name":"stdlib","licenseConcluded":"NOASSERTION","licenseDeclared":"BSD-3-Clause","externalRefs":[{"referenceType":"purl","referenceLocator":"pkg:golang/stdlib@1.27.3"}]},
     {"SPDXID":"SPDXRef-BaseImageGoPackage","name":"example.com/base-image","licenseConcluded":"NOASSERTION","licenseDeclared":"NOASSERTION","externalRefs":[{"referenceType":"purl","referenceLocator":"pkg:golang/example.com/base-image@v2.0.0"}]}
   ],
   "relationships": [
@@ -62,7 +62,7 @@ func TestNormalizeCycloneDxSbomEnrichesLicenses(t *testing.T) {
   "components":[
     {"bom-ref":"project","name":"github.com/engity-com/bifroest","purl":"pkg:golang/github.com/engity-com/bifroest"},
     {"bom-ref":"dependency","name":"example.com/dependency","purl":"pkg:golang/example.com/dependency@v1.2.3"},
-    {"bom-ref":"stdlib","name":"stdlib","purl":"pkg:golang/stdlib@1.27.0","licenses":[{"license":{"id":"BSD-3-Clause"}}]},
+    {"bom-ref":"stdlib","name":"stdlib","purl":"pkg:golang/stdlib@1.27.3","licenses":[{"license":{"id":"BSD-3-Clause"}}]},
     {"bom-ref":"base-image","name":"example.com/base-image","purl":"pkg:golang/example.com/base-image@v2.0.0"}
   ],
   "dependencies":[{"ref":"project","dependsOn":["dependency","stdlib"]}]
@@ -103,7 +103,7 @@ func TestNormalizeSbomRejectsMissingInventoryModule(t *testing.T) {
   "packages":[
     {"SPDXID":"SPDXRef-Root","name":"artifact.tgz"},
     {"SPDXID":"SPDXRef-Project","name":"github.com/engity-com/bifroest","externalRefs":[{"referenceType":"purl","referenceLocator":"pkg:golang/github.com/engity-com/bifroest"}]},
-    {"SPDXID":"SPDXRef-Stdlib","name":"stdlib","externalRefs":[{"referenceType":"purl","referenceLocator":"pkg:golang/stdlib@1.27.0"}]}
+    {"SPDXID":"SPDXRef-Stdlib","name":"stdlib","externalRefs":[{"referenceType":"purl","referenceLocator":"pkg:golang/stdlib@1.27.3"}]}
   ],
   "relationships":[{"spdxElementId":"SPDXRef-Stdlib","relationshipType":"DEPENDENCY_OF","relatedSpdxElement":"SPDXRef-Project"}]
 }`), 0644))

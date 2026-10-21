@@ -30,7 +30,8 @@ const (
 	thirdPartyNoticesFilename = "THIRD_PARTY_NOTICES.txt"
 	thirdPartyNoticesFormat   = "1"
 	goLicensesVersion         = "v2.0.1"
-	goToolchainVersion        = "go1.27.0"
+	goToolchainVersion        = "go1.27.3"
+	goToolchainLicenseFile    = "BSD-3-Clause-Go-1.27.3.txt"
 	modifiedGoSourcesVersion  = "go1.22.0"
 	goLicensesTemplate        = "cmd/build/third-party-notices.tpl"
 	projectModule             = "github.com/engity-com/bifroest"
@@ -544,7 +545,7 @@ func renderThirdPartyNotices(target io.Writer, platform bib.Platform, info *debu
 	if err := write("Bifroest THIRD_PARTY_NOTICES\nFormat-Version: %s\nTarget: %s/%s/%s\nGo-Version: %s\nGenerator: github.com/google/go-licenses/v2 %s\n\n", thirdPartyNoticesFormat, platform.Os, platform.Arch, platform.Edition, info.GoVersion, goLicensesVersion); err != nil {
 		return err
 	}
-	if err := write("Bundled components not represented as external Go modules:\n- Go standard library %s; BSD-3-Clause; license: LICENSES/BSD-3-Clause-Go-1.27.0.txt\n- Modified Go standard library sources from %s; BSD-3-Clause; license: LICENSES/BSD-3-Clause.txt\n- Mozilla NSS CA certificate data; MPL-2.0; license: LICENSES/MPL-2.0.txt; provenance: pkg/crypto/ca-certs.crt\n\n", info.GoVersion, modifiedGoSourcesVersion); err != nil {
+	if err := write("Bundled components not represented as external Go modules:\n- Go standard library %s; BSD-3-Clause; license: LICENSES/%s\n- Modified Go standard library sources from %s; BSD-3-Clause; license: LICENSES/BSD-3-Clause.txt\n- Mozilla NSS CA certificate data; MPL-2.0; license: LICENSES/MPL-2.0.txt; provenance: pkg/crypto/ca-certs.crt\n\n", info.GoVersion, goToolchainLicenseFile, modifiedGoSourcesVersion); err != nil {
 		return err
 	}
 	for _, component := range components {

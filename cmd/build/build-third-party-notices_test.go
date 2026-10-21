@@ -4,7 +4,9 @@ import (
 	"bytes"
 	gos "os"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -12,6 +14,42 @@ import (
 	bib "github.com/engity-com/bifroest/internal/build"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
+
+func TestGoToolchainMetadataMatchesRepository(t *testing.T) {
+	version := strings.TrimPrefix(goToolchainVersion, "go")
+	root := filepath.Join("..", "..")
+	for name, directive := range map[string]string{".tool-versions": "golang", "go.mod": "go"} {
+		t.Run(name, func(t *testing.T) {
+			contents, err := gos.ReadFile(filepath.Join(root, name))
+			require.NoError(t, err)
+			for line := range strings.Lines(string(contents)) {
+				if fields := strings.Fields(line); len(fields) == 2 && fields[0] == directive {
+					require.Equal(t, version, fields[1], "toolchain pin and release build metadata must agree")
+					return
+				}
+			}
+			t.Fatalf("missing %s directive in %s", directive, name)
+		})
+	}
+	require.Equal(t, "BSD-3-Clause-Go-"+version+".txt", goToolchainLicenseFile)
+	licensePath := filepath.Join("cmd", "build", "third-party-licenses", goToolchainLicenseFile)
+	license, err := gos.ReadFile(filepath.Join(root, licensePath))
+	require.NoError(t, err)
+	toolchainLicense, err := gos.ReadFile(filepath.Join(runtime.GOROOT(), "LICENSE"))
+	require.NoError(t, err)
+	// Git may check out text files with CRLF on Windows.
+	require.Equal(t, normalizeNoticeText(string(toolchainLicense)), normalizeNoticeText(string(license)), "bundled license text must match the actual Go toolchain")
+	reuse, err := gos.ReadFile(filepath.Join(root, "REUSE.toml"))
+	require.NoError(t, err)
+	require.Contains(t, string(reuse), `path = "`+filepath.ToSlash(licensePath)+`"`)
+}
+
+func TestThirdPartyModulesRejectsOldGoToolchain(t *testing.T) {
+	info := &debug.BuildInfo{Path: projectModule + "/cmd/bifroest", GoVersion: "go1.27.0"}
+	_, err := thirdPartyModules(info, bib.Platform{}, thirdPartyLicensePolicy{})
+	require.ErrorContains(t, err, `built binary uses Go "go1.27.0"`)
+	require.ErrorContains(t, err, goToolchainVersion)
+}
 
 func TestReadThirdPartyLicensePolicy(t *testing.T) {
 	policy, err := readThirdPartyLicensePolicy(thirdPartyLicensePolicyRaw)
@@ -96,6 +134,8 @@ func TestReconcileThirdPartyComponentsCanonicalizesMoby(t *testing.T) {
 	require.NoError(t, renderThirdPartyNotices(&first, platform, info, components))
 	require.Contains(t, first.String(), "github.com/moby/moby/client")
 	require.Contains(t, first.String(), "Component: github.com/moby/moby")
+	require.Contains(t, first.String(), "Go standard library "+goToolchainVersion)
+	require.Contains(t, first.String(), "license: LICENSES/"+goToolchainLicenseFile)
 
 	slicesReversed := []thirdPartyComponent{components[0]}
 	var second bytes.Buffer

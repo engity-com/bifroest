@@ -1,6 +1,6 @@
 module github.com/engity-com/bifroest
 
-go 1.27.0
+go 1.27.3
 
 require (
 	dario.cat/mergo v1.0.2
