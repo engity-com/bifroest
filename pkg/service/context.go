@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	goerrors "errors"
 	"fmt"
 	"io"
@@ -62,7 +63,7 @@ func (this *authorizeRequest) GetField(name string) (any, bool, error) {
 	}
 }
 
-func (this *authorizeRequest) Context() essh.Context {
+func (this *authorizeRequest) Context() context.Context {
 	return this.connection.context
 }
 
@@ -194,7 +195,7 @@ type environmentContext struct {
 	service          *service
 	connection       *connection
 	authorization    authorization.Authorization
-	executionContext essh.Context
+	executionContext context.Context
 }
 
 func (this *environmentContext) GetField(name string) (any, bool, error) {
@@ -214,7 +215,7 @@ func (this *environmentContext) GetField(name string) (any, bool, error) {
 	}
 }
 
-func (this *environmentContext) Context() essh.Context {
+func (this *environmentContext) Context() context.Context {
 	if this.executionContext != nil {
 		return this.executionContext
 	}
@@ -388,7 +389,7 @@ func newRememberMeNotificationContext(ctx essh.Context, auth authorization.Autho
 }
 
 type contextEnabled interface {
-	Context() essh.Context
+	Context() context.Context
 }
 
 type rememberMeNotificationContext struct {
@@ -398,7 +399,7 @@ type rememberMeNotificationContext struct {
 	key           essh.PublicKey
 }
 
-func (this *rememberMeNotificationContext) Context() essh.Context {
+func (this *rememberMeNotificationContext) Context() context.Context {
 	return this.context
 }
 
