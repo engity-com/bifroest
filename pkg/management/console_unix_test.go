@@ -348,6 +348,89 @@ func TestManagementConsoleDoesNotConsumeNextAnswer(t *testing.T) {
 	}
 }
 
+type consoleTestChallengeOutput struct {
+	*consoleTestOutput
+	terminal *os.File
+}
+
+func (this consoleTestChallengeOutput) Write(value []byte) (int, error) {
+	if string(value) == "\n" {
+		raw, err := this.terminal.SyscallConn()
+		if err != nil {
+			return 0, err
+		}
+		var mode *unix.Termios
+		var modeErr error
+		if err := raw.Control(func(fd uintptr) { mode, modeErr = readConsoleTermios(int(fd)) }); err != nil {
+			return 0, err
+		}
+		if modeErr != nil {
+			return 0, modeErr
+		}
+		if mode.Lflag&unix.ICANON != 0 {
+			return 0, fmt.Errorf("terminal restored between keyboard-interactive questions")
+		}
+	}
+	return this.consoleTestOutput.Write(value)
+}
+
+func TestManagementConsoleKeepsTerminalForEntireChallenge(t *testing.T) {
+	master, terminal := consoleTestTTY(t)
+	original, flags := consoleTestTTYState(t, terminal)
+	output := newConsoleTestOutput()
+	ctx, cancel := context.WithCancel(cli.ContextWithStdio(t.Context(), terminal, io.Discard, consoleTestChallengeOutput{output, terminal}))
+	defer cancel()
+	done := make(chan consoleTestResult, 1)
+	var answers []string
+	go func() {
+		var err error
+		answers, err = keyboardInteractive(ctx, "admin", "", []string{"First: ", "Second: "}, []bool{false, false})
+		done <- consoleTestResult{err: err}
+	}()
+	output.await(t, "First: ")
+	_, err := io.WriteString(master, "first\nsecond\n")
+	require.NoError(t, err)
+	require.NoError(t, awaitConsoleTestResult(t, done).err)
+	require.Equal(t, []string{"first", "second"}, answers)
+	requireConsoleTestTTYState(t, terminal, original, flags)
+}
+
+func TestManagementConsoleCancellationDiscardsEntireChallenge(t *testing.T) {
+	master, terminal := consoleTestTTY(t)
+	original, flags := consoleTestTTYState(t, terminal)
+	output := newConsoleTestOutput()
+	ctx, cancel := context.WithCancel(cli.ContextWithStdio(t.Context(), terminal, io.Discard, output))
+	defer cancel()
+	done := make(chan consoleTestResult, 1)
+	var answers []string
+	go func() {
+		var err error
+		answers, err = keyboardInteractive(ctx, "admin", "", []string{"First: ", "Second: "}, []bool{false, false})
+		done <- consoleTestResult{err: err}
+	}()
+	output.await(t, "First: ")
+	_, err := io.WriteString(master, "first answer\n")
+	require.NoError(t, err)
+	output.await(t, "Second: ")
+	_, err = io.WriteString(master, "discard this secret")
+	require.NoError(t, err)
+	cancel()
+	require.ErrorIs(t, awaitConsoleTestResult(t, done).err, context.Canceled)
+	require.Nil(t, answers, "a failed challenge must not return earlier answers")
+	requireConsoleTestTTYState(t, terminal, original, flags)
+
+	ctx = cli.ContextWithStdio(t.Context(), terminal, io.Discard, output)
+	fresh := startConsoleTestPassword(ctx, "Fresh: ")
+	output.await(t, "Fresh: ")
+	_, err = io.WriteString(master, "fresh\n")
+	require.NoError(t, err)
+	result := awaitConsoleTestResult(t, fresh)
+	defer clear(result.line)
+	require.NoError(t, result.err)
+	require.Equal(t, "fresh", string(result.line))
+	requireConsoleTestTTYState(t, terminal, original, flags)
+}
+
 func TestManagementConsoleHonorsConfiguredAndDisabledControls(t *testing.T) {
 	for _, disabled := range []bool{false, true} {
 		t.Run(fmt.Sprintf("disabled=%t", disabled), func(t *testing.T) {

@@ -41,6 +41,28 @@ func readManagementPassword(ctx context.Context, prompt string) ([]byte, error) 
 }
 
 func readManagementLine(ctx context.Context, prompt string, echo bool) (line []byte, resultErr error) {
+	console, err := openManagementConsole(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		resultErr = console.close(resultErr)
+		if resultErr != nil {
+			clear(line)
+			line = nil
+		}
+	}()
+	return console.readLine(ctx, prompt, echo)
+}
+
+// managementConsole owns the terminal mode and prompt gate for one complete
+// authentication interaction, including every question in a challenge.
+type managementConsole struct {
+	input  *consoleInput
+	output io.Writer
+}
+
+func openManagementConsole(ctx context.Context) (*managementConsole, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -54,10 +76,15 @@ func readManagementLine(ctx context.Context, prompt string, echo bool) (line []b
 	}
 	select {
 	case managementConsoleGate <- struct{}{}:
-		defer func() { <-managementConsoleGate }()
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+	opened := false
+	defer func() {
+		if !opened {
+			<-managementConsoleGate
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -67,26 +94,39 @@ func readManagementLine(ctx context.Context, prompt string, echo bool) (line []b
 	}
 	var console *consoleInput
 	var openErr error
-	if err := raw.Control(func(fd uintptr) { console, openErr = openConsoleInput(fd, echo, output) }); err != nil {
+	if err := raw.Control(func(fd uintptr) { console, openErr = openConsoleInput(fd, false, output) }); err != nil {
 		return nil, err
 	}
 	if openErr != nil {
 		return nil, openErr
 	}
+	opened = true
+	return &managementConsole{input: console, output: output}, nil
+}
+
+func (this *managementConsole) close(err error) error {
+	defer func() { <-managementConsoleGate }()
+	return errors.Join(err, this.input.close(err != nil))
+}
+
+func (this *managementConsole) readLine(ctx context.Context, prompt string, echo bool) (line []byte, resultErr error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	this.input.echo = echo
 	defer func() {
-		resultErr = errors.Join(resultErr, console.close(resultErr != nil))
 		if !echo || resultErr != nil {
-			resultErr = errors.Join(resultErr, writeConsoleText(output, "\n"))
+			resultErr = errors.Join(resultErr, writeConsoleText(this.output, "\n"))
 		}
 		if resultErr != nil {
 			clear(line)
 			line = nil
 		}
 	}()
-	if err := writeConsoleText(output, prompt); err != nil {
+	if err := writeConsoleText(this.output, prompt); err != nil {
 		return nil, err
 	}
-	return console.readLine(ctx)
+	return this.input.readLine(ctx)
 }
 
 func writeConsoleText(output io.Writer, text string) error {
@@ -97,29 +137,29 @@ func writeConsoleText(output io.Writer, text string) error {
 	return err
 }
 
-func keyboardInteractive(ctx context.Context, _ string, instructions string, questions []string, echos []bool) ([]string, error) {
-	if err := ctx.Err(); err != nil {
+func keyboardInteractive(ctx context.Context, _ string, instructions string, questions []string, echos []bool) (answers []string, resultErr error) {
+	console, err := openManagementConsole(ctx)
+	if err != nil {
 		return nil, err
 	}
-	if _, err := managementTerminalInput(ctx); err != nil {
-		return nil, err
-	}
-	output := cli.StderrOfContext(ctx)
-	if output == nil {
-		return nil, fmt.Errorf("SSH authentication prompt output is unavailable")
-	}
+	defer func() {
+		resultErr = console.close(resultErr)
+		if resultErr != nil {
+			clear(answers)
+			answers = nil
+		}
+	}()
 	if instructions != "" {
-		if err := writeConsoleText(output, instructions+"\n"); err != nil {
+		if err := writeConsoleText(console.output, instructions+"\n"); err != nil {
 			return nil, err
 		}
 	}
-	answers := make([]string, 0, len(questions))
+	answers = make([]string, 0, len(questions))
 	for index, question := range questions {
 		echo := index >= len(echos) || echos[index]
-		line, err := readManagementLine(ctx, question, echo)
+		line, err := console.readLine(ctx, question, echo)
 		if err != nil {
-			clear(answers)
-			return nil, err
+			return answers, err
 		}
 		answers = append(answers, string(line))
 		clear(line)

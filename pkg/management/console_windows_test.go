@@ -128,6 +128,48 @@ func TestManagementConsoleWindowsProcess(t *testing.T) {
 			checkRestored(t)
 		})
 	}
+	for _, test := range []struct {
+		name   string
+		cancel bool
+	}{
+		{name: "keyboard-interactive queued answers"},
+		{name: "keyboard-interactive cancellation", cancel: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			output := newConsoleTestOutput()
+			ctx, cancel := context.WithCancel(cli.ContextWithStdio(t.Context(), terminal, io.Discard, output))
+			defer cancel()
+			var answers []string
+			done := make(chan consoleTestResult, 1)
+			go func() {
+				var err error
+				answers, err = keyboardInteractive(ctx, "admin", "", []string{"First: ", "Second: "}, []bool{true, false})
+				done <- consoleTestResult{err: err}
+			}()
+			output.await(t, "First: ")
+			if test.cancel {
+				writeInput(t, "alice\r")
+				output.await(t, "Second: ")
+				writeInput(t, "discard this secret")
+				cancel()
+			} else {
+				writeInput(t, "alice\rprivate token\r")
+			}
+			result := awaitConsoleTestResult(t, done)
+			if test.cancel {
+				require.ErrorIs(t, result.err, context.Canceled)
+				require.Nil(t, answers)
+			} else {
+				require.NoError(t, result.err)
+				require.Equal(t, []string{"alice", "private token"}, answers)
+			}
+			clear(answers)
+			require.Contains(t, output.String(), "First: alice\nSecond: ")
+			require.NotContains(t, output.String(), "private token")
+			require.NotContains(t, output.String(), "discard this secret")
+			checkRestored(t)
+		})
+	}
 	t.Run("borrowed input remains readable", func(t *testing.T) {
 		writeInput(t, "x")
 		done := make(chan struct {
