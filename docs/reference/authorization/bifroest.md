@@ -128,7 +128,7 @@ This authorization produces a context of type [Authorization Bifröst](../contex
 
 With the filesystem session repository and built-in target resolvers, fresh authenticated delegation logins for the same stable identity, flow and effective target can share a [session association](../session/fs.md#session-association-groundwork), even when certificate keys, serials or connection policies differ. Each connection must independently pass certificate and possession verification and retains its own PTY/forwarding restrictions and evidence chain. The persisted session creation evidence is not copied onto new connections or overwritten by them.
 
-The stable identity uses the attested original user scoped to the originating CA fingerprint and authorization kind. Evidence v1 does not contain an original OIDC issuer/subject pair; no such identity is inferred. Anonymous delegation is not identity-merged. Browser certificate/key challenges and persistent resumption grants remain unimplemented; the initial HTTP adapter supports password authorization only.
+The stable identity uses the attested original user scoped to the originating CA fingerprint and authorization kind. Evidence v1 does not contain an original OIDC issuer/subject pair; no such identity is inferred. Anonymous delegation is not identity-merged. The [public-key HTTP protocol](../connection/http.md#public-key-possession-boundary) now verifies a fresh signature over a scoped challenge before invoking the same key/certificate authorizer. This does not add a browser imported-key UI, broaden certificate policy, or implement persistent browser RememberMe.
 
 ## Compatibility
 

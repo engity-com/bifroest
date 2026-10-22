@@ -4,8 +4,8 @@ toc_depth: 5
 ---
 # HTTP / HTTPS
 
-!!! warning "Password API and discovery; no interactive browser workspace yet"
-    Enabled HTTPS now serves published access links, flow-selection metadata and a password login API using the same authorizer/session selector as SSH. Keyboard-interactive/OIDC browser login, public-key browser challenges, RememberMe, React frontend, assets, WebSocket terminals and browser Management actions remain unimplemented. The previous blanket 501 response is replaced by these initial routes; unknown internal routes still return 404. Keep HTTP omitted or disabled unless you intend to expose this partial API.
+!!! warning "Authentication API and discovery; no interactive browser workspace yet"
+    Enabled HTTPS serves published access links, flow metadata and password, keyboard-interactive/OIDC-device and public-key authentication APIs through the same authorizers/session selector as SSH. RememberMe, React frontend/imported-key UI, assets, WebSocket terminals and browser Management actions remain unimplemented. Unknown internal routes return 404. Keep HTTP omitted or disabled unless you intend to expose this partial API.
 
 HTTP is a separate incoming transport for the same [flows](../flow.md), not SSH tunneled over WebSocket. Omission of the root `http` block means disabled. Merely configuring domains, TLS or customization does not enable it. When the endpoint is available, all flows are HTTP-eligible by default unless their individual `http.enabled` is false; `ssh.enabled` remains independent.
 
@@ -47,11 +47,49 @@ A successful login returns `status`, `accessToken`, `expiresAt`, `scope` (canoni
 
 Anonymous logins get independent sessions and permissions; the label `anonymous` never merges them. The independent token may authorize a fresh connection only to its own stored session/target. A known session ID, user name or discovery link is never accepted as proof. This does not yet add anonymous web-to-SSH resumption.
 
-There are at most 64 concurrent API operations, four per direct peer IP, 12 password starts and 120 API requests per peer per minute, 1024 tracked peers and 1024 live/retained permissions. Forwarded headers cannot change the peer or authority. Limits fail closed with 429 and `Retry-After`; expired inactive entries are reclaimed lazily. Read deadlines bound request bodies to the shorter of 20 seconds and configured `readHeaderTimeout`; authorization receives a 20-second cancellation context. Shutdown cancels/drains admissions, including slow body reads, before closing repositories. These fixed initial safeguards are not a substitute for future WebSocket/interactive/connection limits.
+There are at most 64 concurrent API requests, four per direct peer IP, 12 login starts (across all methods) and 120 API requests per peer per minute, 1024 tracked peers and 1024 live/retained web permissions. Pending logins have additional limits below. Forwarded headers cannot change the peer or authority. Limits fail closed with 429 and `Retry-After`; expired inactive entries are reclaimed lazily. Read deadlines bound request bodies to the shorter of 20 seconds and configured `readHeaderTimeout`; non-streaming API writes also have a 20-second deadline. Password/claim requests receive a 20-second cancellation context; multi-step authorizers have the independent lifetime below. Shutdown cancels/drains admissions, including slow body reads/writes, before closing repositories. Future WebSocket protocols still need their own connection/message limits.
 
 Login itself does not provision an environment, renew session access or reserve a connection quota. The internal connection adapter revalidates permission/target and acquires the same neutral session quota as SSH for **each new execution connection**. It rejects reattachment. Expiry prevents new access but leaves existing authenticated executions alone; an expired permission retained for active children can still prove logout. Explicit logout closes only its own children, while session limits/disposal and session-wide revocation remain stronger controls. There is not yet a public terminal or Management execution endpoint.
 
 Tests cover a real TLS/HTTP2 password login and a real SSH login selecting one stored session, plus scoped anonymous proofs, quota acquisition, expiry/logout isolation, target changes, strict/best-effort audit, bounded admission, cancellation and shutdown during a withheld request body. They are not a browser, WebSocket, or real shared-container end-to-end test.
+
+## Interactive and public-key login protocol
+
+These endpoints use the same boundary, flat string-only JSON parser and login-start/request budgets as the password API:
+
+| Method and path | JSON body | Purpose |
+| --- | --- | --- |
+| `POST /_bifroest/api/v1/login/interactive` | `{"slug":"Work","user":"alice"}` | Start keyboard-interactive authorization, including the existing OIDC Device Authorization Flow. |
+| `POST /_bifroest/api/v1/login/public-key` | `{"slug":"Work","user":"alice","publicKey":"<base64>"}` | Start a possession challenge for an SSH wire-format public key or certificate, encoded as canonical standard Base64. No private key, PEM, authorized-keys text or passphrase is accepted. |
+| `POST /_bifroest/api/v1/login/poll` | `{"slug":"Work"}` | Read the outstanding step or claim a completed login exactly once. |
+| `POST /_bifroest/api/v1/login/reply` | `{"slug":"Work","sequence":"1",...}` | Acknowledge an info/error step, answer a prompt, or submit one possession signature. |
+| `POST /_bifroest/api/v1/login/cancel` | `{"slug":"Work"}` | Cancel an unconsumed login attempt, not a session or an already-issued web permission. |
+
+Start returns 202 with `status: "pending"`, `attemptToken`, `expiresAt`, `pollAfterMillis: 1000` and an optional `step`. Poll/reply/cancel require `Authorization: Bearer <attemptToken>`. This independent 256-bit `bwl1.` proof is indexed only by hash in server memory and binds the exact HTTPS origin, slug, original requesting user/key and direct peer IP. It cannot authenticate access/logout/terminal requests, and an `accessToken` cannot control a login attempt. Keep both proofs only in tab memory, never URLs or persistent browser storage. A network/peer change during a login requires a new attempt.
+
+Polling returns 200 with `status: "pending"` and at most one outstanding step. There is no unbounded message queue. A step has an exact string `sequence`, a `kind` and an `echo` flag:
+
+- `info` / `error`: show `message` as **plain text**, never HTML or terminal/shell input. Reply with only `slug` and `sequence` to acknowledge it. OIDC's device URL/user-code instruction uses this path; no browser redirect flow or OAuth token is sent to the browser. Acknowledgement lets the existing server-side device polling continue.
+- `prompt`: show the plain-text message and honor `echo`. Reply with `slug`, `sequence` and an `answer` string of at most 4096 bytes. Secret answers are not echoed in any API response. This is a login dialog, not task stdin.
+- `public-key`: sign the decoded `challenge` bytes locally and reply with `slug`, `sequence` and a `signature` string as described below. Never send the selected private key or passphrase.
+
+Successful replies return 202; the next poll reads progress. A sequence can be answered once, and stale/duplicate replies return 409. Wrong field sets and malformed JSON are rejected without supplying credentials to an authorizer. After a worker completes, exactly one poll may claim its result through the same session/target/environment checks, Authentication-Completed audit and ephemeral web-permission issuance as password login. It returns the normal authorized/access-token response. Parallel polls cannot mint duplicate grants or cancel the winning claim. Consumed results are not replayable; if the claim response is lost, start a new regular login. Internal errors remain redacted.
+
+There are at most 64 retained/running login attempts and four per direct IP, separately from request concurrency. Attempts expire after 90 seconds without valid polling/replies, with a hard lifetime of ten minutes for interactive/OIDC and two minutes for keys. Normal completion of the start HTTP request does not cancel the logical login. Explicit cancel, idle/hard expiry and shutdown do cancel prompts and IdP requests. A cancelled worker keeps its capacity until it **actually returns**; cancellation relies on authorizers honoring their context, rather than abandoning goroutines. Shutdown drains those workers before closing repositories. Cancel/expiry never dispose sessions: an authorizer that has already verified credentials may have allocated session state, but cannot issue a late web permission from a cancelled/unclaimed attempt.
+
+Interactions are bounded to 32 steps, 8 KiB per message and 32 KiB of message text per attempt. Polling does not extend the hard lifetime or renew session access. These limits and timers do not implement RememberMe or a terminal execution lease.
+
+### Public-key possession boundary
+
+The server accepts Ed25519, RSA from 2048 through 8192 bits, and NIST P-256/P-384/P-521 ECDSA keys, including SSH user certificates over those keys. DSA, RSA/SHA-1 possession signatures and hardware/security-key formats are not enabled by this initial protocol. Existing SSH configuration and key handling are unchanged.
+
+`step.challenge` is canonical standard Base64 of the exact bytes to sign: the domain-separating prefix `bifroest-http-public-key-v1` followed by a zero byte and server-generated JSON containing origin/effective port, slug, requesting user, connection ID, the exact key/certificate fingerprint, an independent 256-bit nonce and expiry. Sign the supplied bytes, not a reconstructed JSON document. A Go-compatible client uses `ssh.Signer.Sign` (RSA: `ssh.AlgorithmSigner.SignWithAlgorithm` with `rsa-sha2-256` or `rsa-sha2-512`), encodes the resulting `ssh.Signature` with `ssh.Marshal`, then standard Base64. This is a signature encoding, not an SSH transport or tunnel.
+
+The server verifies against its stored challenge and exact key, rejects trailing signature data and unsupported algorithms, and consumes an accepted proof reply even if the signature is wrong. Only after a valid fresh signature may the trusted adapter assert `PublicKeyVerified()` and call the existing public-key authorizer. Certificate CA signatures alone cannot allocate a session or authenticate; CA/principal/type/time/critical-option checks and configured-key/remembered-key policies still run after proof. Certificate policy is not broadened: options rejected by the existing checker remain rejected. Configured forced-command/environment/PTY restrictions are retained in the issued authorization, and regular browser key login does not silently register a key for SSH RememberMe.
+
+OIDC uses the existing verified issuer/subject, token verification, session locks, refresh/pending/lost-access rules and claim separation. A fresh device login cannot overwrite an existing rotating refresh chain. HTTP permission issuance requires a valid normalized identity, never a guessed requesting name or decoded JWT fallback. Audit records distinguish `keyboard-interactive` and `public-key`; OIDC additionally retains its existing authorization kind.
+
+Tests exercise acknowledged multi-step messages and secret/echo prompts, replay/scope/peer rejection, one-time concurrent claims, late cancellation, capacity retention, strong signature formats and existing certificate rules. Real TLS/HTTP2 interactive/key logins and an SSH login select one persisted session. A local TLS IdP with signed ID tokens exercises device login, retained rotated grants and cancellation of a real outstanding token request. This remains server/protocol coverage, not a browser imported-key UI, WebSocket, or shared-container E2E result.
 
 ## Properties
 
@@ -138,7 +176,7 @@ The server-side `pkg/https` package provides the following checks, with separate
 - Strict, temporary TLS-ALPN-01 proof validation: a single DNS name, the critical ACME SHA-256 identifier extension, self-signature and matching key. Cancellation/timeout/close invalidates proofs; releasing an older proof cannot remove a newer one. Proof certificates cannot become application certificates.
 - Context-bound preparation and shutdown with no detached acquisition/renewal goroutines. TLS uses a minimum of TLS 1.2. Session tickets are initially disabled so resumption cannot bypass readiness or certificate-lifetime checks; supplied-chain expiration is rechecked for new handshakes.
 
-Tests include actual TLS, HTTP/2 and TLS-ALPN proof handshakes, private CA and IP cases, joint SSH/HTTPS startup/failure/cancellation, bounded HTTP shutdown, and path/key separation. ACME tests exercise issuance, persistent account/certificate storage and renewal against a local test CA through a real HTTPS listener; no public CA is contacted. Password HTTP login is covered separately above; interactive browser authentication remains pending.
+Tests include actual TLS, HTTP/2 and TLS-ALPN proof handshakes, private CA and IP cases, joint SSH/HTTPS startup/failure/cancellation, bounded HTTP shutdown, and path/key separation. ACME tests exercise issuance, persistent account/certificate storage and renewal against a local test CA through a real HTTPS listener; no public CA is contacted. The authentication APIs are covered separately above; the browser UI remains pending.
 
 ### ACME
 
@@ -189,7 +227,7 @@ Under `http.rememberMe`:
 
 ## Schema examples
 
-These are complete, parser-checked configuration examples for HTTPS. Actual startup requires the indicated certificate/key files or successful ACME issuance for every domain. The examples' OIDC browser login and Management UI remain unimplemented; the initial HTTP adapter supports password authorization only.
+These are complete, parser-checked configuration examples for HTTPS. Actual startup requires the indicated certificate/key files or successful ACME issuance for every domain. OIDC device login is now available through the interactive HTTP protocol; the browser/Management UI and public execution endpoints remain unimplemented.
 
 ### Explicit certificates for internal domains
 
