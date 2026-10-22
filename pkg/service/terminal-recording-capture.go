@@ -25,6 +25,11 @@ func newRecordedTerminal(stream terminal.Stream, sink recordingSink, elapsed fun
 		return nil, errors.System.Newf("nil execution stream for Recording")
 	}
 	pty, source, hasPty := stream.Pty()
+	return newRecordedTerminalWithPty(stream, terminalRecordingPty{pty: pty, windows: source, hasPty: hasPty}, sink, elapsed, onFailure)
+}
+
+func newRecordedTerminalWithPty(stream terminal.Stream, snapshot terminalRecordingPty, sink recordingSink, elapsed func() time.Duration, onFailure func(error)) (*recordedTerminal, error) {
+	pty, source, hasPty := snapshot.pty, snapshot.windows, snapshot.hasPty
 	capture, err := newTerminalCapture(hasPty, pty.Window.Width, pty.Window.Height, sink, elapsed, onFailure)
 	if err != nil {
 		return nil, err
