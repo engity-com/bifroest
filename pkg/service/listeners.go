@@ -154,6 +154,9 @@ func (this *service) runListeners(parent context.Context, bind func(bnet.Address
 	}
 	shutdown.startedAt = time.Now()
 	this.connectionLifecycle.stop()
+	if this.web != nil {
+		this.web.stop()
+	}
 	if this.terminalAdmissions != nil {
 		this.terminalAdmissions.stop()
 	}
