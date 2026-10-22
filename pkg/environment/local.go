@@ -17,7 +17,6 @@ import (
 	"github.com/creack/pty"
 	log "github.com/echocat/slf4g"
 	"github.com/echocat/slf4g/level"
-	essh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/common"
@@ -26,6 +25,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/ssh"
 	"github.com/engity-com/bifroest/pkg/sys"
+	"github.com/engity-com/bifroest/pkg/terminal"
 )
 
 func (this *local) Banner(req Request) (io.ReadCloser, error) {
@@ -38,6 +38,10 @@ func (this *local) Banner(req Request) (io.ReadCloser, error) {
 }
 
 func (this *local) Run(t Task) (exitCode int, rErr error) {
+	return this.run(t)
+}
+func (this *local) RunTerminal(t TerminalTask) (int, error) { return this.run(t) }
+func (this *local) run(t TaskContext) (exitCode int, rErr error) {
 	fail := func(err error) (int, error) {
 		return -1, err
 	}
@@ -46,7 +50,12 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	}
 
 	l := t.Connection().Logger()
-	sshSess := t.SshSession()
+	stream, releaseTerminal, err := taskTerminal(t)
+	if err != nil {
+		return fail(err)
+	}
+	defer releaseTerminal()
+	sshSess := stream
 	if _, _, isPty := sshSess.Pty(); isPty && t.TaskType() == TaskTypeSftp {
 		return fail(ErrSubsystemNotAllowed)
 	}
@@ -81,19 +90,19 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		return failf("illegal task type: %v", t.TaskType())
 	}
 
-	if ssh.AgentRequested(sshSess) && authorization.IsAgentForwardingAllowed(auth) {
+	if source := taskSshSession(t); source != nil && ssh.AgentRequested(source) && authorization.IsAgentForwardingAllowed(auth) {
 		ln, err := this.newAgentNamedPipe()
 		if err != nil {
 			return failf("cannot listen to agent: %w", err)
 		}
 		defer common.IgnoreCloseError(ln)
-		go ssh.ForwardAgentConnections(ln, l, sshSess)
+		go ssh.ForwardAgentConnections(ln, l, source)
 		setReservedEnvironment(ev, localTargetOs, ssh.AuthSockEnvName, ln.Path())
 	}
 	if ptyReq, _, isPty := sshSess.Pty(); isPty && localTargetOs == sys.OsWindows {
 		setReservedEnvironment(ev, localTargetOs, "TERM", ptyReq.Term)
 		cmd.Env = ev.Strings()
-		return this.runConPTY(t, cmd)
+		return this.runConPTY(t, cmd, stream)
 	}
 
 	var stderr io.Writer = sshSess.Stderr()
@@ -105,7 +114,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 	}
 
 	var fPty, fTty *os.File
-	var winCh <-chan essh.Window
+	var winCh <-chan terminal.Window
 	if ptyReq, windows, isPty := sshSess.Pty(); isPty {
 		winCh = windows
 		var err error
@@ -211,7 +220,7 @@ func (this *local) Run(t Task) (exitCode int, rErr error) {
 		exitCode int
 		err      error
 	}
-	signals := make(chan essh.Signal, 1)
+	signals := make(chan terminal.Signal, 1)
 	processDone := make(chan doneT, 1)
 	waitFinished := make(chan struct{})
 	copyDone := make(chan error, 2)

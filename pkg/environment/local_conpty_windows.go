@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/engity-com/bifroest/pkg/terminal"
 	essh "github.com/engity-com/ssh-server-go"
 )
 
@@ -110,18 +111,18 @@ func (this *localConPTYRelayStatusWriter) exitStatus() (int, string, error) {
 	return int(value), diagnostic(data[:start]), nil
 }
 
-func (this *local) runConPTY(t Task, shell *exec.Cmd) (int, error) {
+func (this *local) runConPTY(t TaskContext, shell *exec.Cmd, stream terminal.Stream) (int, error) {
 	fail := func(format string, args ...any) (int, error) {
 		return -1, fmt.Errorf("cannot run local ConPTY: "+format, args...)
 	}
 	if shell.SysProcAttr == nil || shell.SysProcAttr.Token == 0 {
 		return fail("missing local account token")
 	}
-	pty, sizes, ok := t.SshSession().Pty()
+	pty, sizes, ok := stream.Pty()
 	if !ok {
 		return fail("missing SSH PTY request")
 	}
-	if err := localConPTYSize(pty.Window); err != nil {
+	if err := localConPTYSize(essh.Window(pty.Window)); err != nil {
 		return fail("%w", err)
 	}
 	exe, err := os.Executable()
@@ -162,7 +163,7 @@ func (this *local) runConPTY(t Task, shell *exec.Cmd) (int, error) {
 	t.Connection().Logger().With("pid", relay.Process.Pid).Debug("local ConPTY relay started")
 
 	outputDone := make(chan error, 1)
-	outputWriter := &localConPTYOutputWriter{Writer: t.SshSession()}
+	outputWriter := &localConPTYOutputWriter{Writer: stream}
 	go func() {
 		_, err := io.Copy(outputWriter, outputRead)
 		outputDone <- err
@@ -185,7 +186,7 @@ func (this *local) runConPTY(t Task, shell *exec.Cmd) (int, error) {
 		_ = control.Close()
 		_ = outputRead.Close()
 		if !outputDrained {
-			go func() { _ = t.SshSession().Close() }()
+			go func() { _ = stream.Close() }()
 		}
 		_ = relay.Process.Kill()
 		<-waitFinished
@@ -215,7 +216,7 @@ func (this *local) runConPTY(t Task, shell *exec.Cmd) (int, error) {
 	go func() {
 		var buf [32768]byte
 		for {
-			n, err := t.SshSession().Read(buf[:])
+			n, err := stream.Read(buf[:])
 			if n > 0 {
 				frame := localConPTYFrame{kind: 'D', data: append([]byte(nil), buf[:n]...)}
 				select {
@@ -232,9 +233,9 @@ func (this *local) runConPTY(t Task, shell *exec.Cmd) (int, error) {
 			}
 		}
 	}()
-	signals := make(chan essh.Signal, 1)
-	t.SshSession().Signals(signals)
-	defer t.SshSession().Signals(nil)
+	signals := make(chan terminal.Signal, 1)
+	stream.Signals(signals)
+	defer stream.Signals(nil)
 	for {
 		select {
 		case <-t.Context().Done():
@@ -311,7 +312,7 @@ func (this *local) runConPTY(t Task, shell *exec.Cmd) (int, error) {
 				sizes = nil
 				continue
 			}
-			if err := localConPTYSize(win); err != nil {
+			if err := localConPTYSize(essh.Window(win)); err != nil {
 				t.Connection().Logger().WithError(err).Warn("invalid ConPTY resize; ignoring")
 				continue
 			}

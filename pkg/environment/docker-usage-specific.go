@@ -13,7 +13,6 @@ import (
 
 	"github.com/containerd/errdefs"
 	log "github.com/echocat/slf4g"
-	essh "github.com/engity-com/ssh-server-go"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/client"
 
@@ -27,6 +26,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/ssh"
 	"github.com/engity-com/bifroest/pkg/sys"
+	"github.com/engity-com/bifroest/pkg/terminal"
 )
 
 const (
@@ -65,6 +65,10 @@ func (this *docker) Banner(req Request) (io.ReadCloser, error) {
 }
 
 func (this *docker) Run(t Task) (exitCode int, rErr error) {
+	return this.run(t)
+}
+func (this *docker) RunTerminal(t TerminalTask) (int, error) { return this.run(t) }
+func (this *docker) run(t TaskContext) (exitCode int, rErr error) {
 	fail := func(err error) (int, error) {
 		return -1, err
 	}
@@ -80,7 +84,11 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 	if sess == nil {
 		return failf("authorization without session is not supported to run docker environment")
 	}
-	sshSess := t.SshSession()
+	sshSess, releaseTerminal, err := taskTerminal(t)
+	if err != nil {
+		return fail(err)
+	}
+	defer releaseTerminal()
 	l := t.Connection().Logger()
 	executionId, err := execution.NewId()
 	if err != nil {
@@ -121,7 +129,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		return failf("illegal task type: %v", t.TaskType())
 	}
 
-	if ssh.AgentRequested(sshSess) && authorization.IsAgentForwardingAllowed(auth) {
+	if source := taskSshSession(t); source != nil && ssh.AgentRequested(source) && authorization.IsAgentForwardingAllowed(auth) {
 		user, group, _ := strings.Cut(this.user, ":")
 		if user == "" {
 			user = "0"
@@ -140,12 +148,12 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 			return fail(err)
 		} else {
 			defer common.IgnoreCloseError(ln)
-			go ssh.ForwardAgentConnections(ln, l, sshSess)
+			go ssh.ForwardAgentConnections(ln, l, source)
 			setReservedEnvironment(&ev, this.repository.hostOs, ssh.AuthSockEnvName, ln.Path())
 		}
 	}
 
-	var winCh <-chan essh.Window
+	var winCh <-chan terminal.Window
 	if ptyReq, windows, isPty := sshSess.Pty(); isPty {
 		winCh = windows
 		setReservedEnvironment(&ev, this.repository.hostOs, "TERM", ptyReq.Term)
@@ -242,7 +250,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		}()
 	}
 
-	signals := make(chan essh.Signal, 1)
+	signals := make(chan terminal.Signal, 1)
 	outputDone := make(chan error, 1)
 	inputDone := make(chan error, 1)
 	var activeRoutines sync.WaitGroup
@@ -305,7 +313,7 @@ func (this *docker) Run(t Task) (exitCode int, rErr error) {
 		}
 		return ei.ExitCode, nil
 	}
-	signalExec := func(ctx context.Context, sshSignal essh.Signal) {
+	signalExec := func(ctx context.Context, sshSignal terminal.Signal) {
 		this.signal(ctx, l, t.Connection().Id(), executionId, sshSignal)
 	}
 	sshSess.Signals(signals)
@@ -436,8 +444,8 @@ func scheduleDockerExecutionCleanup(logger log.Logger, executionId execution.Id,
 	}()
 }
 
-func (this *docker) signal(ctx context.Context, logger log.Logger, connectionId connection.Id, executionId execution.Id, sshSignal essh.Signal) {
-	signal, err := signalFromSsh(sshSignal)
+func (this *docker) signal(ctx context.Context, logger log.Logger, connectionId connection.Id, executionId execution.Id, sshSignal terminal.Signal) {
+	signal, err := signalFromTerminal(sshSignal)
 	if err != nil {
 		logger.WithError(err).
 			With("signal", sshSignal).

@@ -3,13 +3,16 @@ package environment
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 
 	essh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
+	bssh "github.com/engity-com/bifroest/pkg/ssh"
 	"github.com/engity-com/bifroest/pkg/sys"
+	"github.com/engity-com/bifroest/pkg/terminal"
 )
 
 type TaskType uint8
@@ -37,10 +40,62 @@ func (this TaskType) String() string {
 	}
 }
 
-type Task interface {
+type TaskContext interface {
 	Context
-	SshSession() essh.Session
 	TaskType() TaskType
+}
+
+// Task remains the legacy SSH entry point for existing environments/adapters.
+// New transports use TerminalTask and TerminalRunner without a fake SSH session.
+type Task interface {
+	TaskContext
+	SshSession() essh.Session
+}
+type TerminalTask interface {
+	TaskContext
+	Terminal() terminal.Stream
+}
+
+// TerminalRunner is a trusted post-authorization execution capability. It does
+// not authenticate a caller, register a connection or replace session limits.
+// Task.Context and Terminal.Context must describe the same execution lifetime.
+type TerminalRunner interface {
+	RunTerminal(TerminalTask) (int, error)
+}
+
+func taskSshSession(task TaskContext) essh.Session {
+	if provider, ok := task.(Task); ok {
+		return provider.SshSession()
+	}
+	return nil
+}
+
+func taskTerminal(task TaskContext) (terminal.Stream, func(), error) {
+	if provider, ok := task.(TerminalTask); ok {
+		stream := provider.Terminal()
+		if nilTaskDependency(stream) {
+			return nil, nil, fmt.Errorf("missing execution terminal")
+		}
+		return stream, func() {}, nil
+	}
+	if legacy := taskSshSession(task); !nilTaskDependency(legacy) {
+		stream := bssh.NewTerminal(task.Context(), legacy)
+		return stream, stream.Stop, nil
+	}
+	return nil, nil, fmt.Errorf("task has no execution terminal")
+}
+
+func nilTaskDependency(value any) bool {
+	if value == nil {
+		return true
+	}
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
 }
 
 type environmentVariablesProvider interface {
@@ -56,14 +111,19 @@ type originalCommandProvider interface {
 	OriginalCommand() (string, bool)
 }
 
-func applyTaskEnvironment(environment *sys.EnvVars, targetOs sys.Os, task Task) error {
-	if provider, ok := task.SshSession().(layeredSshEnvironmentProvider); ok {
+func applyTaskEnvironment(environment *sys.EnvVars, targetOs sys.Os, task TaskContext) error {
+	stream, release, err := taskTerminal(task)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if provider, ok := stream.(layeredSshEnvironmentProvider); ok {
 		addEnvironmentEntries(environment, targetOs, provider.ClientEnvironment())
 		if err := addEnvironmentLayer(environment, targetOs, provider.AuthorizedKeyEnvironment()); err != nil {
 			return fmt.Errorf("cannot apply authorized-key environment variables: %w", err)
 		}
 	} else {
-		addEnvironmentEntries(environment, targetOs, task.SshSession().Environ())
+		addEnvironmentEntries(environment, targetOs, stream.Environ())
 	}
 	if err := addEnvironmentLayer(environment, targetOs, task.Authorization().EnvVars()); err != nil {
 		return fmt.Errorf("cannot apply authorization environment variables: %w", err)
@@ -77,7 +137,7 @@ func applyTaskEnvironment(environment *sys.EnvVars, targetOs sys.Os, task Task) 
 			return fmt.Errorf("cannot apply environment variables: %w", err)
 		}
 	}
-	if provider, ok := task.SshSession().(originalCommandProvider); ok {
+	if provider, ok := stream.(originalCommandProvider); ok {
 		if value, present := provider.OriginalCommand(); present {
 			setReservedEnvironment(environment, targetOs, "SSH_ORIGINAL_COMMAND", value)
 		}
@@ -123,6 +183,9 @@ func addEnvironmentLayer(environment *sys.EnvVars, targetOs sys.Os, values sys.E
 }
 
 func signalFromSsh(value essh.Signal) (sys.Signal, error) {
+	return signalFromTerminal(terminal.Signal(value))
+}
+func signalFromTerminal(value terminal.Signal) (sys.Signal, error) {
 	var result sys.Signal
 	if err := result.Set(string(value)); err != nil {
 		return 0, err
@@ -131,7 +194,10 @@ func signalFromSsh(value essh.Signal) (sys.Signal, error) {
 }
 
 func signalProcessFromSsh(value essh.Signal, send func(sys.Signal) error) error {
-	signal, err := signalFromSsh(value)
+	return signalProcessFromTerminal(terminal.Signal(value), send)
+}
+func signalProcessFromTerminal(value terminal.Signal, send func(sys.Signal) error) error {
+	signal, err := signalFromTerminal(value)
 	if err != nil {
 		return err
 	}

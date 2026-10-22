@@ -15,7 +15,6 @@ import (
 	"golang.org/x/sys/windows"
 
 	log "github.com/echocat/slf4g"
-	essh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/errors"
@@ -23,6 +22,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/engity-com/bifroest/pkg/template"
+	"github.com/engity-com/bifroest/pkg/terminal"
 )
 
 const localTargetOs = sys.OsWindows
@@ -61,7 +61,7 @@ func (this *LocalRepository) new(user windowsLocalAccount, sess session.Session,
 	}
 }
 
-func (this *local) createCmdAndEnv(t Task) (*exec.Cmd, *sys.EnvVars, func(), error) {
+func (this *local) createCmdAndEnv(t TaskContext) (*exec.Cmd, *sys.EnvVars, func(), error) {
 	token, release, err := this.user.logon()
 	if err != nil {
 		return nil, nil, nil, errors.System.Newf("cannot log on as local account %q: %w", this.user.Name, err)
@@ -137,11 +137,16 @@ func hasWindowsPath(env sys.EnvVars) bool {
 	return false
 }
 
-func (this *local) configureShellCmd(t Task, cmd *exec.Cmd) error {
+func (this *local) configureShellCmd(t TaskContext, cmd *exec.Cmd) error {
 	var argSource *template.Strings
 	var argName string
 
-	rc := t.SshSession().RawCommand()
+	stream, release, err := taskTerminal(t)
+	if err != nil {
+		return err
+	}
+	defer release()
+	rc := stream.RawCommand()
 	if len(rc) > 0 {
 		argSource = &this.repository.conf.ExecCommandPrefix
 		argName = "execCommandPrefix"
@@ -161,7 +166,7 @@ func (this *local) configureShellCmd(t Task, cmd *exec.Cmd) error {
 	return nil
 }
 
-func (this *local) evaluateCommand(t Task, name string, tmpl *template.Strings) ([]string, error) {
+func (this *local) evaluateCommand(t TaskContext, name string, tmpl *template.Strings) ([]string, error) {
 	args, err := tmpl.Render(t)
 	if err != nil {
 		return nil, errors.Config.Newf("cannot evaluate environment's %s: %w", name, err)
@@ -195,8 +200,8 @@ func (this *local) getPathEnv() string {
 	return `C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem`
 }
 
-func (this *local) signal(cmd *exec.Cmd, logger log.Logger, signal essh.Signal) {
-	err := signalProcessFromSsh(signal, func(sig sys.Signal) error {
+func (this *local) signal(cmd *exec.Cmd, logger log.Logger, signal terminal.Signal) {
+	err := signalProcessFromTerminal(signal, func(sig sys.Signal) error {
 		return cmd.Process.Signal(sig.Native())
 	})
 	if errors.Is(err, os.ErrProcessDone) {
