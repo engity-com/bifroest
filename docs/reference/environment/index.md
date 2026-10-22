@@ -15,6 +15,17 @@ Bifröst executes user sessions within environments. These environments can eith
 5. `dummy`: [Dummy](dummy.md) for demonstration purposes, it simply prints a message and exists immediately.
 6. `management`: [Management](management.md) provides authorized administrative commands via SSH without a shell.
 
+## Transport-independent terminal groundwork
+
+Built-in Local (Unix and Windows/ConPTY), Docker, Kubernetes, SSH-target and Dummy environments expose an optional `TerminalRunner.RunTerminal` capability. Its `TerminalTask` supplies authorized context and a `pkg/terminal.Stream`: execution-scoped stdin, stdout/stderr, input/output half-close, initial PTY settings, resize events, symbolic signals and cancellation. It does not require a source SSH session. Existing `Environment.Run(Task)` and third-party SSH environments remain compatible; the SSH adapter maps channel controls onto the same backend execution code. Agent forwarding and named SSH subsystems remain separate SSH-only capabilities. Management still uses its existing structured SSH command path, not a terminal-based web workaround.
+
+This is a trusted **post-authorization** execution API, not authentication, connection registration or a replacement for session limits/revocation. Each task and stream has one execution lifetime; it is not stored for terminal reattachment. The caller must provide the execution's context, preserve the existing authorization/environment checks and close its transport to release blocked I/O. A new transport must not synthesize an SSH session for an environment without the optional capability.
+
+SSH and neutral recording wrappers share output/resize capture ordering, terminal normalization and failure state. Every resize is captured before downstream coalescing; capture failure prevents unrecorded output delivery. The SSH adapter owns and drains its control workers without closing the channel before exit-status delivery.
+
+!!! warning "Partial execution extraction; no web terminal yet"
+    The service's execution orchestration, connection limits/revocation, audit metadata and recording creation/sealing lifecycle still use SSH-specific entry points. The neutral backend/capture interfaces do **not** yet enable HTTP login, a WebSocket terminal, browser RememberMe or cross-transport workload execution. Tests exercise a neutral source against a real SSH target connection, control-worker shutdown, recording capture and cancellable Kubernetes resize queues. They do not prove real shared Docker/Kubernetes workloads or Windows/ConPTY runtime behavior. Local Unix process tests require root and are skipped when unavailable.
+
 ## Examples
 
 1. Using [local environment](local.md):
