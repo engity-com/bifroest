@@ -22,7 +22,7 @@ bifroest run --configuration=/my/config.yaml
 Defines how the SSH connections itself will behave.
 
 <<property("http", "HTTP / HTTPS", "connection/http.md")>>
-Optional browser-endpoint configuration groundwork. Disabled by default. The listener is not implemented yet; explicitly enabling it fails the entire service startup rather than silently starting only SSH.
+Optional HTTPS endpoint configuration, disabled by default. Enabled SSH/HTTPS inputs are jointly startup-critical. Discovery and an initial password API are available; the interactive browser workspace, terminal protocol and RememberMe remain pending. See the linked HTTP reference for the current boundary and limits.
 
 <<property("session", "Session", "session/index.md")>>
 Defines where and how the sessions inside Bifröst are handled.

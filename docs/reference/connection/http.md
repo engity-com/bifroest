@@ -4,8 +4,8 @@ toc_depth: 5
 ---
 # HTTP / HTTPS
 
-!!! warning "HTTPS transport foundation; browser access is not implemented yet"
-    This version starts the HTTPS listener with the TLS/ACME backend and jointly supervises all configured SSH/HTTPS inputs. It does **not** yet serve a frontend, authenticate browsers, implement RememberMe or run web terminals/management actions. Valid flow paths return **501 Not Implemented**; reserved internal routes return 404. Keep HTTP omitted or disabled unless you intend to run this transport foundation.
+!!! warning "Password API and discovery; no interactive browser workspace yet"
+    Enabled HTTPS now serves published access links, flow-selection metadata and a password login API using the same authorizer/session selector as SSH. Keyboard-interactive/OIDC browser login, public-key browser challenges, RememberMe, React frontend, assets, WebSocket terminals and browser Management actions remain unimplemented. The previous blanket 501 response is replaced by these initial routes; unknown internal routes still return 404. Keep HTTP omitted or disabled unless you intend to expose this partial API.
 
 HTTP is a separate incoming transport for the same [flows](../flow.md), not SSH tunneled over WebSocket. Omission of the root `http` block means disabled. Merely configuring domains, TLS or customization does not enable it. When the endpoint is available, all flows are HTTP-eligible by default unless their individual `http.enabled` is false; `ssh.enabled` remains independent.
 
@@ -21,11 +21,37 @@ After readiness, SSH and HTTPS run together, with a caller-owned ACME renewal lo
 
 The HTTP boundary requires directly terminated TLS, a configured Host consistent with SNI, and matching HTTPS origin (including the effective port) whenever an Origin is supplied. Missing Origin is rejected for non-GET/HEAD methods and upgrades; safe browser navigations may omit it. Cross-site requests into the reserved internal namespace are rejected. Forwarded headers do not override these checks. Absolute-form proxy requests, CONNECT and encoded/dot/backslash path aliases are rejected before routing; no path cleaning can turn them into another flow.
 
-Responses use `frame-ancestors 'none'`, `X-Frame-Options: DENY`, a restrictive same-origin CSP, `no-store`, `nosniff`, HSTS without an implicit subdomain/preload commitment, and same-origin opener/resource policies. There is no CORS grant, cookie-based authentication, asset serving or working WebSocket protocol yet. These checks are not a substitute for the pending authenticated request/connection protocol and its limits.
+Responses use `frame-ancestors 'none'`, `X-Frame-Options: DENY`, a restrictive same-origin CSP, `no-store`, `nosniff`, HSTS without an implicit subdomain/preload commitment, and same-origin opener/resource policies. There is no CORS grant, cookie-based authentication, asset serving or working WebSocket protocol yet. The password API adds the stricter limits below; future interactive/streaming protocols still need their own controls.
 
 Before opening TLS or ACME state, runtime paths are canonicalized on a cloned configuration. TLS files/ACME storage are checked against session storage, audit/recording state and static SSH/SFTP inputs. Public asset directories and custom CSS/JS inputs cannot overlap these protected paths; existing hard-link aliases are checked in addition to canonical symlink paths. Disabled HTTP does not inspect its unused paths. Per-file asset containment checks are still required when serving is implemented.
 
 TLS certificate and ACME account/certificate public keys must be distinct from known static SSH keys, audit signing identities, SFTP identities and configured audit encryption recipients, including configured recipients of disabled auditlogs. Copied key material at unrelated paths is not an exemption; audit best-effort policy cannot waive this HTTPS safety check. New ACME keys and cached/renewed certificates are checked before use/publication. Audit decryption private keys are never requested by the HTTPS endpoint.
+
+## Initial discovery and password API
+
+`GET /` shows only configured `discoverAsSlug` links for the current host, in configuration order, as a small static English page. `Accept: application/json` requests discovery/selection metadata instead. `GET /<slug>` returns JSON selection metadata, including `requestUser`; these are **not** authorizations. `HEAD` returns headers only. The final React frontend will replace this interim presentation.
+
+The published-slug priority, general/HTTP requirements, host/slug matching, `http.enabled` and `http.requestUser` are enforced by the **same authorizer facade** used for SSH, with an explicit HTTP selection. A published flow's rejected credentials or requirements cannot fall through to another flow. An undiscovered slug retains normal configuration-order matching. Disabled name collection requires an empty `user`; the server never substitutes the principal for `.remote.user`. Discovery cannot predict whether a name, credential or environment will be accepted.
+
+The initial JSON endpoints are:
+
+| Method and path | JSON body | Purpose |
+| --- | --- | --- |
+| `POST /_bifroest/api/v1/login/password` | `{"slug":"Work","user":"alice","password":"..."}` | Verify through the existing password authorizer and issue a scoped ephemeral permission. All three string fields are required; empty values remain subject to configured authorization. |
+| `POST /_bifroest/api/v1/access` | `{"slug":"Work"}` | With `Authorization: Bearer <accessToken>`, recheck the permission, session, identity, target and environment. It does not renew its expiry or touch session last access. |
+| `POST /_bifroest/api/v1/logout` | `{"slug":"Work"}` | With the same bearer proof, remove only that permission and close its attached web connections. No session/environment disposal and no session-wide SSH disconnect. |
+
+All these requests require the boundary's same HTTPS Origin. Query parameters, unknown/duplicate/null/non-string JSON fields, trailing JSON, encoded request bodies and non-JSON content are rejected. Login bodies are limited to 16 KiB, names to 256 bytes and passwords to 4096 bytes. Internal authentication errors are not returned to the client. Private keys and passphrases are not accepted fields; later imported-key support must sign locally in tab memory.
+
+A successful login returns `status`, `accessToken`, `expiresAt`, `scope` (canonical HTTPS origin including port and exact slug), the mapped `principal`, `environment` (`terminal` or `management`) and `terminalAvailable: false`. The opaque token contains 256 random bits and is indexed by its SHA-256 hash only in server memory. Its permission also pins the verified authorization/flow, session and pure target digest, independently of persistent session ownership. It expires after ten minutes, does not slide and does not survive a service restart. **This is not RememberMe.** A future browser client must keep it only in tab memory: never URLs, cookies, LocalStorage or IndexedDB. Possession remains a bearer capability and is not protection against trusted same-origin JavaScript.
+
+Anonymous logins get independent sessions and permissions; the label `anonymous` never merges them. The independent token may authorize a fresh connection only to its own stored session/target. A known session ID, user name or discovery link is never accepted as proof. This does not yet add anonymous web-to-SSH resumption.
+
+There are at most 64 concurrent API operations, four per direct peer IP, 12 password starts and 120 API requests per peer per minute, 1024 tracked peers and 1024 live/retained permissions. Forwarded headers cannot change the peer or authority. Limits fail closed with 429 and `Retry-After`; expired inactive entries are reclaimed lazily. Read deadlines bound request bodies to the shorter of 20 seconds and configured `readHeaderTimeout`; authorization receives a 20-second cancellation context. Shutdown cancels/drains admissions, including slow body reads, before closing repositories. These fixed initial safeguards are not a substitute for future WebSocket/interactive/connection limits.
+
+Login itself does not provision an environment, renew session access or reserve a connection quota. The internal connection adapter revalidates permission/target and acquires the same neutral session quota as SSH for **each new execution connection**. It rejects reattachment. Expiry prevents new access but leaves existing authenticated executions alone; an expired permission retained for active children can still prove logout. Explicit logout closes only its own children, while session limits/disposal and session-wide revocation remain stronger controls. There is not yet a public terminal or Management execution endpoint.
+
+Tests cover a real TLS/HTTP2 password login and a real SSH login selecting one stored session, plus scoped anonymous proofs, quota acquisition, expiry/logout isolation, target changes, strict/best-effort audit, bounded admission, cancellation and shutdown during a withheld request body. They are not a browser, WebSocket, or real shared-container end-to-end test.
 
 ## Properties
 
@@ -112,7 +138,7 @@ The server-side `pkg/https` package provides the following checks, with separate
 - Strict, temporary TLS-ALPN-01 proof validation: a single DNS name, the critical ACME SHA-256 identifier extension, self-signature and matching key. Cancellation/timeout/close invalidates proofs; releasing an older proof cannot remove a newer one. Proof certificates cannot become application certificates.
 - Context-bound preparation and shutdown with no detached acquisition/renewal goroutines. TLS uses a minimum of TLS 1.2. Session tickets are initially disabled so resumption cannot bypass readiness or certificate-lifetime checks; supplied-chain expiration is rechecked for new handshakes.
 
-Tests include actual TLS, HTTP/2 and TLS-ALPN proof handshakes, private CA and IP cases, joint SSH/HTTPS startup/failure/cancellation, bounded HTTP shutdown, and path/key separation. ACME tests exercise issuance, persistent account/certificate storage and renewal against a local test CA through a real HTTPS listener; no public CA is contacted. Browser authentication remains unimplemented.
+Tests include actual TLS, HTTP/2 and TLS-ALPN proof handshakes, private CA and IP cases, joint SSH/HTTPS startup/failure/cancellation, bounded HTTP shutdown, and path/key separation. ACME tests exercise issuance, persistent account/certificate storage and renewal against a local test CA through a real HTTPS listener; no public CA is contacted. Password HTTP login is covered separately above; interactive browser authentication remains pending.
 
 ### ACME
 
@@ -163,7 +189,7 @@ Under `http.rememberMe`:
 
 ## Schema examples
 
-These are complete, parser-checked configuration examples for the HTTPS transport foundation. Actual startup requires the indicated certificate/key files or successful ACME issuance for every domain. Browser login and the management UI remain unimplemented.
+These are complete, parser-checked configuration examples for HTTPS. Actual startup requires the indicated certificate/key files or successful ACME issuance for every domain. The examples' OIDC browser login and Management UI remain unimplemented; the initial HTTP adapter supports password authorization only.
 
 ### Explicit certificates for internal domains
 
