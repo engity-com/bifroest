@@ -14,9 +14,11 @@ import (
 
 const DefaultHttpAcmeDirectoryUrl = "https://acme-v02.api.letsencrypt.org/directory"
 
-// HttpTls permits explicit certificates and optional ACME for remaining domains.
+// HttpTls permits explicit certificates and optional ACME for remaining domains,
+// or an explicitly selected ephemeral dummy certificate for testing only.
 // File content, domain coverage and certificate validity are runtime checks.
 type HttpTls struct {
+	Dummy        bool              `yaml:"dummy,omitempty"`
 	Certificates []HttpCertificate `yaml:"certificates,omitempty"`
 	Acme         HttpAcme          `yaml:"acme"`
 }
@@ -37,6 +39,9 @@ func (this *HttpTls) Trim() error {
 	return this.Validate()
 }
 func (this *HttpTls) Validate() error {
+	if this.Dummy && (len(this.Certificates) > 0 || this.Acme.Enabled) {
+		return fmt.Errorf("[dummy] cannot be combined with certificates or enabled ACME")
+	}
 	for index := range this.Certificates {
 		if err := this.Certificates[index].Validate(); err != nil {
 			return fmt.Errorf("[certificates][%d] %w", index, err)
@@ -47,13 +52,13 @@ func (this *HttpTls) Validate() error {
 func (this *HttpTls) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *HttpTls, node *yaml.Node) error {
 		type raw HttpTls
-		return decodeHttpFields(node, (*raw)(target), map[string]string{"certificates": "!!seq/!!map", "acme": "!!map"})
+		return decodeHttpFields(node, (*raw)(target), map[string]string{"dummy": "!!bool", "certificates": "!!seq/!!map", "acme": "!!map"})
 	})
 }
 func (this HttpTls) IsEqualTo(other any) bool {
 	switch value := other.(type) {
 	case HttpTls:
-		return slices.Equal(this.Certificates, value.Certificates) && this.Acme == value.Acme
+		return this.Dummy == value.Dummy && slices.Equal(this.Certificates, value.Certificates) && this.Acme == value.Acme
 	case *HttpTls:
 		return value != nil && this.IsEqualTo(*value)
 	default:

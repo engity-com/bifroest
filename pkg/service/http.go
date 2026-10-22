@@ -45,6 +45,10 @@ func (this *service) prepareHTTPS() error {
 		return fmt.Errorf("cannot prepare HTTPS endpoint: %w", err)
 	}
 	this.https = endpoint
+	if this.Configuration.Http.Tls.Dummy {
+		this.logger().With("domains", this.Configuration.Http.Domains).
+			Warn("http.tls.dummy=true: created an ephemeral self-signed HTTPS dummy certificate for testing only; browsers do not trust it, certificate expires in 24 hours")
+	}
 	return nil
 }
 
