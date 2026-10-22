@@ -14,6 +14,13 @@ func (this *authorizeRequest) ResolveAuthenticatedSession(auth authorization.Aut
 	return this.service.resolveAuthenticatedSession(&environmentContext{service: this.service, connection: this.connection, authorization: auth}, token)
 }
 
+func (this *authorizeRequest) ResolveAuthenticatedSessionWithReuse(auth authorization.Authorization, token []byte, reuse session.Predicate) (session.Session, bool, error) {
+	if reuse == nil {
+		return nil, true, fmt.Errorf("session association requires a credential reuse check")
+	}
+	return this.service.resolveAuthenticatedSessionWithReuse(&environmentContext{service: this.service, connection: this.connection, authorization: auth}, token, reuse)
+}
+
 func (this *publicKeyAuthorizeRequest) ResolveAuthenticatedSession(auth authorization.Authorization, token []byte) (session.Session, bool, error) {
 	if !this.verified {
 		return nil, true, fmt.Errorf("session association requires verified key possession")
@@ -21,11 +28,28 @@ func (this *publicKeyAuthorizeRequest) ResolveAuthenticatedSession(auth authoriz
 	return this.authorizeRequest.ResolveAuthenticatedSession(auth, token)
 }
 
+func (this *publicKeyAuthorizeRequest) ResolveAuthenticatedSessionWithReuse(auth authorization.Authorization, token []byte, reuse session.Predicate) (session.Session, bool, error) {
+	if !this.verified {
+		return nil, true, fmt.Errorf("session association requires verified key possession")
+	}
+	return this.authorizeRequest.ResolveAuthenticatedSessionWithReuse(auth, token, reuse)
+}
+
 // resolveAuthenticatedSession is transport-neutral. It accepts only a trusted
 // post-credential authorization/context, not HTTP payload identities or probes.
-// Fresh OIDC grants deliberately do not call this hook until refresh coordination
-// is implemented; token comparison is for static authorizers only.
+// Static authorizers use opaque token equality. Rotating authorizers supply a
+// trusted, lock-coordinated check through resolveAuthenticatedSessionWithReuse.
 func (this *service) resolveAuthenticatedSession(base environment.Context, token []byte) (session.Session, bool, error) {
+	return this.resolveAuthenticatedSessionWithReuse(base, token, func(ctx context.Context, candidate session.Session) (bool, error) {
+		stored, err := candidate.AuthorizationToken(ctx)
+		return err == nil && bytes.Equal(stored, token), err
+	})
+}
+
+func (this *service) resolveAuthenticatedSessionWithReuse(base environment.Context, token []byte, reuse session.Predicate) (session.Session, bool, error) {
+	if reuse == nil {
+		return nil, true, fmt.Errorf("session association requires a credential reuse check")
+	}
 	auth := base.Authorization()
 	if auth == nil || !auth.IsAuthorized() {
 		return nil, true, fmt.Errorf("session association requires an authenticated authorization")
@@ -54,14 +78,10 @@ func (this *service) resolveAuthenticatedSession(base environment.Context, token
 			return resolver.ResolveSessionTarget(newAssociationTargetContext(ctx, base, ref))
 		},
 		Compatible: func(ctx context.Context, candidate session.Session) (bool, error) {
-			stored, err := candidate.AuthorizationToken(ctx)
-			if err != nil {
-				return false, err
+			if compatible, err := this.associationEnvironmentCompatible(ctx, base, candidate); err != nil || !compatible {
+				return compatible, err
 			}
-			if !bytes.Equal(stored, token) {
-				return false, nil
-			}
-			return this.associationEnvironmentCompatible(ctx, base, candidate)
+			return reuse(ctx, candidate)
 		},
 	})
 	return found, true, err

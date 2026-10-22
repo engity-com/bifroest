@@ -200,6 +200,12 @@ func TestAssociationTargetContextUsesCandidateWithoutInventingMetadata(t *testin
 	_, handled, err := request.ResolveAuthenticatedSession(base.auth, []byte("static"))
 	require.True(t, handled)
 	require.ErrorContains(t, err, "verified key possession")
+	_, handled, err = request.ResolveAuthenticatedSessionWithReuse(base.auth, []byte("rotating"), func(context.Context, session.Session) (bool, error) {
+		t.Fatal("unsigned request reached reuse check")
+		return true, nil
+	})
+	require.True(t, handled)
+	require.ErrorContains(t, err, "verified key possession")
 }
 
 func TestAssociationSelectionSeparatesVerifiedSubjectsAndAnonymousFallback(t *testing.T) {
