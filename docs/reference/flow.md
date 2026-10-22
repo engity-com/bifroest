@@ -15,7 +15,7 @@ Flows are tried in configuration order. A disabled transport or an unmet require
 5. Can a compatible session be reused or a new one created?
 
 !!! warning "HTTP groundwork, not yet a browser endpoint"
-    The HTTP flow settings below define selection and validation in the shared core. This version does **not** yet start an HTTP listener, serve a WebUI, or implement browser authentication. They do not expose existing flows on the network by themselves.
+    The HTTP flow settings below define selection and validation in the shared core. The [root HTTP configuration](connection/http.md) is parsed, including domain-scoped discovery collision checks, but this version does **not** yet start an HTTP listener, serve a WebUI, or implement browser authentication. Explicitly enabling the root HTTP endpoint fails service startup instead of silently running SSH alone.
 
 ## Configuration
 
