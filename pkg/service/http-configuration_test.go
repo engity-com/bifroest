@@ -14,7 +14,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/template"
 )
 
-func TestEnabledHttpCannotSilentlyStartSshOrCreateServiceResources(t *testing.T) {
+func TestInvalidExplicitHttpFailsBeforeSessionsAuthorizersOrListeners(t *testing.T) {
 	storage := filepath.Join(t.TempDir(), "not-created")
 	var conf configuration.Configuration
 	require.NoError(t, conf.LoadFromYaml(strings.NewReader(`http:
@@ -32,13 +32,12 @@ flows:
 	conf.Session.V.(*configuration.SessionFs).Storage = filepath.Join(storage, "sessions")
 	definition := &Service{Configuration: conf, Version: serviceTestVersion{}}
 	err := definition.Run(context.Background())
-	require.ErrorContains(t, err, "HTTP endpoint is not implemented yet")
-	require.ErrorContains(t, err, "http.enabled=true")
-	_, err = os.Stat(storage)
-	require.True(t, os.IsNotExist(err), "HTTP guard must run before keys, sessions, authorizers or listeners are prepared")
+	require.ErrorContains(t, err, "cannot prepare HTTPS endpoint")
+	_, err = os.Stat(filepath.Join(storage, "sessions"))
+	require.True(t, os.IsNotExist(err), "invalid TLS must fail before sessions, authorizers or listeners are prepared")
 }
 
-func TestHttpDiscoveryCollisionsFailServicePreparationBeforeTransportGuard(t *testing.T) {
+func TestHttpDiscoveryCollisionsFailBeforeRuntimePreparation(t *testing.T) {
 	var conf configuration.Configuration
 	require.NoError(t, conf.LoadFromYaml(strings.NewReader(`http:
   domains: [app.example.org]
