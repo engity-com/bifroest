@@ -45,6 +45,7 @@ type TLS struct {
 	domains        []string
 	explicit       map[string]*preparedCertificate
 	source         CertificateSource
+	validateKey    KeyValidator
 	startupTimeout time.Duration
 	now            func() time.Time
 	lifetime       context.Context
@@ -181,6 +182,11 @@ func (this *TLS) Prepare(ctx context.Context) error {
 		}
 		if !certificateMatches(checked.value, domain) {
 			return fmt.Errorf("TLS certificate does not cover configured domain %q", domain)
+		}
+		if this.validateKey != nil {
+			if err := this.validateKey(checked.value.Leaf.PublicKey); err != nil {
+				return err
+			}
 		}
 		certificates[domain] = checked
 	}

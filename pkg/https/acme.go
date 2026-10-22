@@ -32,6 +32,7 @@ type ACME struct {
 	store         *acmeStore
 	httpClient    *http.Client
 	client        *acme.Client
+	validateKey   KeyValidator
 	timeout       time.Duration
 	now           func() time.Time
 	lifetime      context.Context
@@ -117,6 +118,20 @@ func (this *ACME) obtain(ctx context.Context, domain string, challenge Challenge
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if this.validateKey != nil {
+		raw, err := this.store.read("account.pem")
+		if err == nil {
+			key, err := parseACMEAccountKey(raw)
+			if err != nil {
+				return nil, err
+			}
+			if err := this.validateKey(key.Public()); err != nil {
+				return nil, err
+			}
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return nil, err
+		}
+	}
 	cached, err := this.store.certificate(domain)
 	if this.lifetime.Err() != nil {
 		return nil, ErrClosed
@@ -128,6 +143,11 @@ func (this *ACME) obtain(ctx context.Context, domain string, challenge Challenge
 		return nil, err
 	}
 	if cached != nil {
+		if this.validateKey != nil {
+			if err := this.validateKey(cached.value.Leaf.PublicKey); err != nil {
+				return nil, err
+			}
+		}
 		if this.now().Before(cached.notBefore) {
 			return nil, fmt.Errorf("stored ACME certificate is not valid yet")
 		}
@@ -151,6 +171,11 @@ func (this *ACME) obtain(ctx context.Context, domain string, challenge Challenge
 		return nil, err
 	}
 	leaf := checked.value.Leaf
+	if this.validateKey != nil {
+		if err := this.validateKey(leaf.PublicKey); err != nil {
+			return nil, err
+		}
+	}
 	if len(leaf.DNSNames) != 1 || leaf.DNSNames[0] != domain || len(leaf.IPAddresses) != 0 || len(leaf.EmailAddresses) != 0 || len(leaf.URIs) != 0 {
 		return nil, fmt.Errorf("issued ACME certificate identifiers differ from the requested DNS domain")
 	}
@@ -189,6 +214,11 @@ func (this *ACME) acmeClient(ctx context.Context) (*acme.Client, error) {
 	key, err := this.store.accountKey(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if this.validateKey != nil {
+		if err := this.validateKey(key.Public()); err != nil {
+			return nil, err
+		}
 	}
 	client := &acme.Client{
 		Key: key, DirectoryURL: this.configuration.DirectoryUrl, HTTPClient: this.httpClient, UserAgent: "engity-bifroest",

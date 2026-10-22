@@ -99,6 +99,9 @@ func (this *TLS) RenewDue(ctx context.Context) error {
 		if err == nil && !certificateMatches(checked.value, domain) {
 			err = fmt.Errorf("renewed TLS certificate does not cover its configured domain")
 		}
+		if err == nil && this.validateKey != nil {
+			err = this.validateKey(checked.value.Leaf.PublicKey)
+		}
 		if err == nil && !certificateRenewalAt(checked).After(this.now()) {
 			err = fmt.Errorf("renewed TLS certificate already requires renewal")
 		}
