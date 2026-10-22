@@ -229,6 +229,11 @@ func (this *Service) prepare() (svc *service, err error) {
 	if err := this.Configuration.Validate(); err != nil {
 		return fail(err)
 	}
+	// Until the HTTPS transport and its joint listener lifecycle are implemented,
+	// never silently ignore an explicitly enabled, startup-critical HTTP input.
+	if this.Configuration.Http.IsEnabled() {
+		return fail(errors.Config.Newf("HTTP endpoint is not implemented yet; cannot start with http.enabled=true"))
+	}
 	if err := validateRuntimePaths(&this.Configuration); err != nil {
 		return fail(err)
 	}

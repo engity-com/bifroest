@@ -149,6 +149,7 @@ nav:
       - Connections:
           - reference/connection/index.md
           - SSH: reference/connection/ssh.md
+          - HTTP / HTTPS (groundwork): reference/connection/http.md
       - reference/flow.md
       - Authorizations:
           - reference/authorization/index.md

@@ -21,6 +21,9 @@ bifroest run --configuration=/my/config.yaml
 <<property("ssh", "SSH", "connection/ssh.md")>>
 Defines how the SSH connections itself will behave.
 
+<<property("http", "HTTP / HTTPS", "connection/http.md")>>
+Optional browser-endpoint configuration groundwork. Disabled by default. The listener is not implemented yet; explicitly enabling it fails the entire service startup rather than silently starting only SSH.
+
 <<property("session", "Session", "session/index.md")>>
 Defines where and how the sessions inside Bifröst are handled.
 
