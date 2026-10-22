@@ -258,7 +258,7 @@ func TestJointListenersServeSshAndHttpsAndStopTogether(t *testing.T) {
 				if response != nil {
 					_ = response.Body.Close()
 				}
-				return err == nil && response.StatusCode == 501
+				return err == nil && response.StatusCode == http.StatusOK
 			}, 5*time.Second, 10*time.Millisecond)
 			ssh, err := gossh.Dial("tcp", sshListener.Addr().String(), &gossh.ClientConfig{User: "test", Auth: []gossh.AuthMethod{gossh.Password("")}, HostKeyCallback: gossh.InsecureIgnoreHostKey(), Timeout: time.Second}) //nolint:gosec // Test-local server.
 			require.NoError(t, err)

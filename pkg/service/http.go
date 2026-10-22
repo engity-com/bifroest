@@ -39,7 +39,8 @@ func (this *service) prepareHTTPS() error {
 			return fmt.Errorf("cannot inspect audit recipient identities for HTTPS")
 		}
 	}
-	endpoint, err := https.NewEndpoint(this.Configuration.Http, https.EndpointOptions{ValidateKey: this.validateHTTPSKey})
+	this.web = newWebService(this)
+	endpoint, err := https.NewEndpoint(this.Configuration.Http, https.EndpointOptions{ValidateKey: this.validateHTTPSKey, Handler: this.web})
 	if err != nil {
 		return fmt.Errorf("cannot prepare HTTPS endpoint: %w", err)
 	}

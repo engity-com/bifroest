@@ -842,6 +842,7 @@ func (this *Service) logCertificateAuthorities(hostKeys []crypto.PrivateKey) err
 
 type service struct {
 	*Service
+	web                   *webService
 	managementApplication *clibase.Application[clibase.NoOptions]
 
 	auditIdentities          map[configuration.AuditlogName]*audit.Identity
@@ -941,6 +942,9 @@ func (this *service) Close() (rErr error) {
 
 // Failed preparation owns the same resources but must not start remote flushing.
 func (this *service) close(flush bool) (rErr error) {
+	if this.web != nil {
+		rErr = goerrors.Join(rErr, this.web.Close())
+	}
 	if this.terminalAdmissions != nil {
 		this.terminalAdmissions.stop()
 	}
