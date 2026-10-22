@@ -73,6 +73,8 @@ With `lostAccess`, a login without a refresh token is denied, and existing OIDC 
 
 If verification of a newly returned ID token temporarily fails (for example, because JWKS is unavailable), rotated credentials are stored as pending. They cannot authorize a reconnect or replace trusted claims until verification succeeds. Failure beyond `refreshToken.maxUnverifiedFor` disposes the session.
 
+An unsigned SSH remembered-key offer only checks for an eligible persisted session; it does not restore OIDC claims, contact the provider, refresh/promote credentials or report lost access. After SSH verifies possession of the key, Bifröst re-evaluates the authorization, including refresh and environment checks. The unsigned probe may therefore be accepted while the subsequent authenticated attempt is denied. Independent background refresh and its disposal deadlines remain active regardless of probes.
+
 <<property("refreshToken", "Refresh Token", "#device-auth-refresh-token", id_prefix="device-auth-", heading=4)>>
 Settings for refresh-token verification. Refresh is enabled when `forceDisposeSessionOn` is `lostAccess` or `refreshToken.mode` is `proactive`. When enabled, a login without a refresh token is denied.
 
