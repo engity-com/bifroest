@@ -9,7 +9,7 @@ toc_depth: 5
 
 HTTP is a separate incoming transport for the same [flows](../flow.md), not SSH tunneled over WebSocket. Omission of the root `http` block means disabled. Merely configuring domains, TLS or customization does not enable it. When the endpoint is available, all flows are HTTP-eligible by default unless their individual `http.enabled` is false; `ssh.enabled` remains independent.
 
-Configuration loading performs no certificate-file reads, key generation, ACME requests or asset-file reads. The schema supports explicit PEM certificate/key pairs, ACME, or both. The [TLS preparation core](#tls-preparation-core) and [ACME backend](#acme-backend-and-renewal) are integrated into the [joint listener lifecycle](#joint-listener-lifecycle). Schema validation alone does not prove certificate availability or port binding.
+Configuration loading performs no certificate-file reads, key generation, ACME requests or asset-file reads. The schema supports explicit PEM certificate/key pairs, ACME, or both; an explicitly selected [dummy certificate](#dummy-tls-for-local-testing) is a separate test-only alternative. The [TLS preparation core](#tls-preparation-core) and [ACME backend](#acme-backend-and-renewal) are integrated into the [joint listener lifecycle](#joint-listener-lifecycle). Schema validation alone does not prove certificate availability or port binding.
 
 ## Joint listener lifecycle
 
@@ -107,7 +107,7 @@ Under the root `http` mapping:
     Flow host requirements only narrow this list. An empty host matcher cannot authorize another domain or trigger certificate issuance for it. Published-slug collisions are checked against **every configured domain** when HTTP is enabled, both during configuration loading and service preparation; different non-overlapping domains may use the same slug. Disabled HTTP leaves legacy SSH flow selection unchanged.
 
 <<property("tls", "TLS", "#tls")>>
-:   Certificate sources. An enabled endpoint requires at least one configured certificate pair or explicitly enabled ACME.
+:   Certificate sources. An enabled endpoint requires configured certificates, explicitly enabled ACME, or explicit test-only `tls.dummy: true`.
 
 <<property("startupTimeout", "Duration", "../data-type.md#duration", default="2m")>>
 :   Positive budget reserved for joint HTTPS preparation, including initial certificate availability for all domains.
@@ -148,11 +148,22 @@ Use real YAML booleans for flags and duration strings such as `30s`. Unknown fie
 
 Under `http.tls`:
 
+<<property("dummy", "bool", default=False, id_prefix="tls-", heading=3)>>
+:   Explicitly generate an ephemeral self-signed test certificate during service preparation and log a **WARN**. Cannot be combined with `certificates` or enabled ACME. There is no automatic fallback to dummy TLS. See [Dummy TLS for local testing](#dummy-tls-for-local-testing).
+
 <<property("certificates", array_ref("Certificate", "#certificate"), id_prefix="tls-", heading=3)>>
 :   Ordered explicit certificate sources. Runtime preparation prefers the first matching explicit certificate before consulting ACME for remaining allowed domains. Full explicit coverage does not open ACME storage or contact the CA. A list can cover multiple domains; its actual certificate contents are not inspected by configuration validation.
 
 <<property("acme", "ACME", "#acme", id_prefix="tls-", heading=3)>>
 :   Optional automated certificate source. It remains disabled unless explicitly enabled, even if no explicit certificate is configured.
+
+### Dummy TLS for local testing
+
+`http.enabled: true` together with `http.tls.dummy: true` explicitly requests a newly generated ECDSA P-256 key and self-signed certificate. The service emits a WARN naming `http.tls.dummy=true` and explaining that the material is for testing only and not browser-trusted. Merely parsing configuration, disabling HTTP, omitting the flag or setting it to false never generates a dummy certificate.
+
+The key/certificate stay only in memory, are new for every service preparation and are valid for 24 hours (with a five-minute not-before allowance). They cover only the finite configured DNS/IP domains, including IPv6 SANs; no wildcard or arbitrary-host issuing is added. There is no disk persistence, ACME request, renewal or OS/browser trust-store installation. After expiry, restart the test instance to generate new material. TLS readiness, Host/SNI/Origin enforcement and key-role separation remain active.
+
+Browsers will show a certificate warning. Any manual exception or a command such as `curl --insecure https://localhost:8443/` is a deliberate **local test-client** choice, not trust granted by Bifröst; do not use this mode with production credentials. Own certificate pairs or enabled ACME alongside `dummy: true` are configuration errors, so broken explicit certificate material can never silently become a dummy certificate. Other normal service prerequisites and writable state paths still apply.
 
 ### Certificate
 
@@ -227,7 +238,28 @@ Under `http.rememberMe`:
 
 ## Schema examples
 
-These are complete, parser-checked configuration examples for HTTPS. Actual startup requires the indicated certificate/key files or successful ACME issuance for every domain. OIDC device login is now available through the interactive HTTP protocol; the browser/Management UI and public execution endpoints remain unimplemented.
+These are complete, parser-checked configuration examples for HTTPS. Apart from the explicit dummy test case, startup requires the indicated certificate/key files or successful ACME issuance for every domain. OIDC device login is now available through the interactive HTTP protocol; the browser/Management UI and public execution endpoints remain unimplemented.
+
+### Explicit dummy TLS for local testing
+
+This example needs no TLS files or CA, but intentionally does not establish browser trust. Both transports remain jointly startup-critical.
+
+```yaml
+ssh:
+  addresses: ["127.0.0.1:2222"]
+http:
+  enabled: true
+  addresses: ["127.0.0.1:8443"]
+  domains: [localhost, 127.0.0.1]
+  tls:
+    dummy: true
+flows:
+  - name: local-test
+    authorization:
+      type: none
+    environment:
+      type: dummy
+```
 
 ### Explicit certificates for internal domains
 
