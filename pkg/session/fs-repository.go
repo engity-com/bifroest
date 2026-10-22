@@ -117,10 +117,12 @@ type FsRepository struct {
 
 	connectionInterceptors fsConnectionInterceptors
 
-	mutex       sync.RWMutex
-	closeOnce   sync.Once
-	closeErr    error
-	processLock *fsRepositoryProcessLock
+	mutex            sync.RWMutex
+	closeOnce        sync.Once
+	closeErr         error
+	processLock      *fsRepositoryProcessLock
+	associationMutex sync.Mutex
+	associationLocks map[associationSubject]*associationLock
 }
 
 func (this *FsRepository) dir(flow configuration.FlowName, id Id) (string, error) {
@@ -201,18 +203,34 @@ func (this *FsRepository) dirFileMode() sys.FileMode {
 func (this *FsRepository) Create(ctx context.Context, flow configuration.FlowName, remote net.Remote, authToken []byte) (Session, error) {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
+	return this.create(ctx, flow, remote, authToken, Id{}, nil)
+}
+
+// create holds mutex through publication of metadata, tokens and association.
+func (this *FsRepository) create(ctx context.Context, flow configuration.FlowName, remote net.Remote, authToken []byte, id Id, association *Association) (Session, error) {
 
 	fail := func(err error) (Session, error) {
 		return nil, fmt.Errorf("cannot create session for user %v at flow %v: %w", remote, flow, err)
 	}
 
-	vid, err := uuid.NewUUID()
+	if id.IsZero() {
+		vid, err := uuid.NewUUID()
+		if err != nil {
+			return fail(err)
+		}
+		id = Id(vid)
+	}
+	dir, err := this.dir(flow, id)
 	if err != nil {
 		return fail(err)
 	}
-	id := Id(vid)
-	dir, err := this.dir(flow, id)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dir), os.FileMode(this.dirFileMode())); err != nil {
+		return fail(err)
+	}
+	if err := os.Mkdir(dir, os.FileMode(this.dirFileMode())); err != nil {
 		return fail(err)
 	}
 	committed := false
@@ -236,6 +254,11 @@ func (this *FsRepository) Create(ctx context.Context, flow configuration.FlowNam
 	}
 	if len(authToken) > 0 {
 		if err := sess.setAuthorizationToken(ctx, authToken); err != nil {
+			return fail(err)
+		}
+	}
+	if association != nil {
+		if err := this.writeAssociation(ctx, flow, id, *association); err != nil {
 			return fail(err)
 		}
 	}
@@ -275,6 +298,15 @@ func (this *FsRepository) loadAndMatch(ctx context.Context, flow configuration.F
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			this.mutex.Unlock()
 			return nil, ctxErr
+		}
+		associationPath, pathErr := this.file(flow, id, FsFileAssociation)
+		if pathErr != nil {
+			this.mutex.Unlock()
+			return nil, pathErr
+		}
+		if _, err := os.Lstat(associationPath); err == nil || !os.IsNotExist(err) {
+			this.mutex.Unlock()
+			return nil, ErrInvalidAssociation
 		}
 		fn, pathErr := this.file(flow, id, FsFileEnvironmentToken)
 		if pathErr != nil {
@@ -328,6 +360,11 @@ func (this *FsRepository) findBy(ctx context.Context, flow configuration.FlowNam
 	f, _, err := this.openRead(flow, id, FsFileSession)
 	if err != nil {
 		if sys.IsNotExist(err) {
+			if path, pathErr := this.file(flow, id, FsFileAssociation); pathErr != nil {
+				return nil, pathErr
+			} else if _, associationErr := os.Lstat(path); associationErr == nil || !os.IsNotExist(associationErr) {
+				return nil, ErrInvalidAssociation
+			}
 			if expectedToExist {
 				this.doFindAutoCleanIfAllowed(ctx, flow, id, opts, "found broken session directory; it was removed entirely", err)
 				return nil, fmt.Errorf("%w: session metadata of %v/%v is missing", ErrCorruptSession, flow, id)
@@ -356,6 +393,9 @@ func (this *FsRepository) findBy(ctx context.Context, flow configuration.FlowNam
 		buf.info.createdAt = buf.info.VCreatedAt
 	}
 	buf.init(this, flow, id)
+	if _, err := this.readAssociation(flow, id); err != nil {
+		return nil, err
+	}
 
 	this.doAutoCleanUnexpectedFilesIfAllowed(ctx, &buf, opts)
 
@@ -585,6 +625,12 @@ func (this *FsRepository) doFindAutoCleanIfAllowed(ctx context.Context, flow con
 	if opts.IsAutoCleanUpAllowedFor(ctx, flow, id) {
 		logger := opts.GetLogger(this.logger).
 			Withf("sesion", "%v/%v", flow, id)
+		if path, err := this.file(flow, id, FsFileAssociation); err != nil {
+			return
+		} else if _, err := os.Lstat(path); err == nil || !os.IsNotExist(err) {
+			logger.Warn("preserving session association for operator inspection")
+			return
+		}
 		if err := this.deleteBy(ctx, flow, id); err != nil {
 			logger.
 				WithError(err).
@@ -630,7 +676,7 @@ func (this *FsRepository) deleteUnexpectedFiles(logger log.Logger, sess *fs) err
 	for _, entry := range entries {
 		name := entry.Name()
 		switch name {
-		case FsFileSession, FsFileLastAccessed, FsFileAccessToken, FsFileEnvironmentToken:
+		case FsFileSession, FsFileLastAccessed, FsFileAccessToken, FsFileEnvironmentToken, FsFileAssociation:
 			// Valid filename
 			continue
 		}
@@ -685,6 +731,10 @@ func fsPathContainsEnvironmentToken(path string) (bool, error) {
 		if walkErr != nil {
 			return walkErr
 		}
+		if entry.Name() == FsFileAssociation {
+			present = true
+			return iofs.SkipAll
+		}
 		if entry.Name() != FsFileEnvironmentToken {
 			return nil
 		}
@@ -711,7 +761,7 @@ func (this *FsRepository) doFindAutoCleanFlowContentIfAllowed(ctx context.Contex
 			With("path", fn)
 		present, err := fsPathContainsEnvironmentToken(fn)
 		if err != nil || present {
-			logger.WithError(err).Warn("preserving unexpected session storage path: environment token may require operator inspection")
+			logger.WithError(err).Warn("preserving unexpected session storage path: environment token or session association may require operator inspection")
 			return
 		}
 		if err := os.RemoveAll(fn); err != nil && !os.IsNotExist(err) {
@@ -735,7 +785,7 @@ func (this *FsRepository) doFindAutoCleanRootContentIfAllowed(_ context.Context,
 			With("path", fn)
 		present, err := fsPathContainsEnvironmentToken(fn)
 		if err != nil || present {
-			logger.WithError(err).Warn("preserving unexpected session storage path: environment token may require operator inspection")
+			logger.WithError(err).Warn("preserving unexpected session storage path: environment token or session association may require operator inspection")
 			return
 		}
 		if err := os.RemoveAll(fn); err != nil && !os.IsNotExist(err) {
