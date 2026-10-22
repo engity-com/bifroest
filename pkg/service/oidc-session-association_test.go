@@ -31,19 +31,29 @@ import (
 )
 
 type oidcAssociationProvider struct {
-	server                         *httptest.Server
-	key                            *rsa.PrivateKey
-	logins, refreshes              atomic.Int32
-	rejectRefresh                  atomic.Bool
-	refreshStarted, releaseRefresh chan struct{}
-	releaseOnce                    sync.Once
+	server                                  *httptest.Server
+	key                                     *rsa.PrivateKey
+	logins, refreshes                       atomic.Int32
+	rejectRefresh                           atomic.Bool
+	refreshStarted, releaseRefresh          chan struct{}
+	releaseOnce                             sync.Once
+	deviceTokenStarted, deviceTokenCanceled chan struct{}
+	deviceStartedOnce, deviceCanceledOnce   sync.Once
 }
 
 func newOidcAssociationProvider(t *testing.T) *oidcAssociationProvider {
+	return newOidcAssociationProviderWithDeviceHold(t, false)
+}
+
+func newOidcAssociationProviderWithDeviceHold(t *testing.T, holdDevice bool) *oidcAssociationProvider {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 	p := &oidcAssociationProvider{key: key, refreshStarted: make(chan struct{}, 1), releaseRefresh: make(chan struct{})}
+	if holdDevice {
+		p.deviceTokenStarted = make(chan struct{})
+		p.deviceTokenCanceled = make(chan struct{})
+	}
 	p.server = httptest.NewTLSServer(http.HandlerFunc(p.serve))
 	t.Cleanup(func() { p.release(); p.server.Close() })
 	return p
@@ -81,6 +91,12 @@ func (p *oidcAssociationProvider) serve(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": fmt.Sprintf("rotated-access-%d", n), "refresh_token": fmt.Sprintf("rotated-refresh-%d", n), "token_type": "Bearer", "expires_in": 3600})
+			return
+		}
+		if p.deviceTokenStarted != nil {
+			p.deviceStartedOnce.Do(func() { close(p.deviceTokenStarted) })
+			<-r.Context().Done()
+			p.deviceCanceledOnce.Do(func() { close(p.deviceTokenCanceled) })
 			return
 		}
 		n := p.logins.Add(1)
