@@ -2,9 +2,12 @@ package service
 
 import (
 	"errors"
+	"io"
+	"reflect"
 	"sync"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
+	bconn "github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
@@ -14,23 +17,41 @@ type sessionConnectionKey struct {
 }
 
 type sessionConnectionEntry struct {
-	connections map[*connection]struct{}
+	connections map[managedConnection]struct{}
 	revoked     bool
 }
 
-type sessionConnectionRegistry struct {
-	mutex       sync.Mutex
-	sessions    map[sessionConnectionKey]*sessionConnectionEntry
-	connections map[*connection]sessionConnectionKey
+// Internal registrations use pointer implementations so connection identity is
+// distinct from an ID supplied by a transport. Close must cancel pending I/O.
+type managedConnection interface {
+	bconn.LifetimeAware
+	io.Closer
+	IsClosed() bool
 }
 
-func (this *sessionConnectionRegistry) track(conn *connection, sess session.Session) {
-	if conn == nil || sess == nil {
+type sessionConnectionRegistry struct {
+	mutex           sync.Mutex
+	sessions        map[sessionConnectionKey]*sessionConnectionEntry
+	connections     map[managedConnection]sessionConnectionKey
+	terminalsClosed bool
+}
+
+func (this *sessionConnectionRegistry) track(conn managedConnection, sess session.Session) {
+	if isNilDependency(conn) || sess == nil {
+		return
+	}
+	if !reflect.TypeOf(conn).Comparable() {
+		_ = conn.Close()
 		return
 	}
 	key := sessionConnectionKey{sess.Flow(), sess.Id()}
 	this.mutex.Lock()
-	if conn.closed.Load() {
+	if _, terminal := conn.(*terminalConnection); terminal && this.terminalsClosed {
+		this.mutex.Unlock()
+		_ = conn.Close()
+		return
+	}
+	if conn.IsClosed() {
 		this.mutex.Unlock()
 		return
 	}
@@ -39,7 +60,7 @@ func (this *sessionConnectionRegistry) track(conn *connection, sess session.Sess
 	}
 	entry := this.sessions[key]
 	if entry == nil {
-		entry = &sessionConnectionEntry{connections: make(map[*connection]struct{})}
+		entry = &sessionConnectionEntry{connections: make(map[managedConnection]struct{})}
 		if this.sessions == nil {
 			this.sessions = make(map[sessionConnectionKey]*sessionConnectionEntry)
 		}
@@ -52,13 +73,16 @@ func (this *sessionConnectionRegistry) track(conn *connection, sess session.Sess
 	}
 	entry.connections[conn] = struct{}{}
 	if this.connections == nil {
-		this.connections = make(map[*connection]sessionConnectionKey)
+		this.connections = make(map[managedConnection]sessionConnectionKey)
 	}
 	this.connections[conn] = key
 	this.mutex.Unlock()
 }
 
-func (this *sessionConnectionRegistry) untrack(conn *connection) {
+func (this *sessionConnectionRegistry) untrack(conn managedConnection) {
+	if isNilDependency(conn) || !reflect.TypeOf(conn).Comparable() {
+		return
+	}
 	this.mutex.Lock()
 	if key, ok := this.connections[conn]; ok {
 		this.remove(conn, key)
@@ -67,7 +91,7 @@ func (this *sessionConnectionRegistry) untrack(conn *connection) {
 }
 
 // remove must be called with mutex held. Revoked entries remain until final deletion.
-func (this *sessionConnectionRegistry) remove(conn *connection, key sessionConnectionKey) {
+func (this *sessionConnectionRegistry) remove(conn managedConnection, key sessionConnectionKey) {
 	delete(this.connections, conn)
 	entry := this.sessions[key]
 	delete(entry.connections, conn)
@@ -100,7 +124,7 @@ func (this *sessionConnectionRegistry) revoke(flow configuration.FlowName, id se
 		this.sessions[key] = entry
 	}
 	entry.revoked = true
-	connections := make([]*connection, 0, len(entry.connections))
+	connections := make([]managedConnection, 0, len(entry.connections))
 	for conn := range entry.connections {
 		connections = append(connections, conn)
 		delete(this.connections, conn)
@@ -115,7 +139,7 @@ func (this *sessionConnectionRegistry) revoke(flow configuration.FlowName, id se
 // after this snapshot are new connections and are intentionally left alone.
 func (this *sessionConnectionRegistry) disconnect(flow configuration.FlowName, id session.Id) error {
 	this.mutex.Lock()
-	var connections []*connection
+	var connections []managedConnection
 	if entry := this.sessions[sessionConnectionKey{flow, id}]; entry != nil {
 		for conn := range entry.connections {
 			connections = append(connections, conn)
@@ -125,7 +149,7 @@ func (this *sessionConnectionRegistry) disconnect(flow configuration.FlowName, i
 	return closeSessionConnections(connections)
 }
 
-func closeSessionConnections(connections []*connection) error {
+func closeSessionConnections(connections []managedConnection) error {
 	// A blocked interceptor cleanup must not delay closing other SSH sockets.
 	var closing sync.WaitGroup
 	failures := make([]error, len(connections))
@@ -138,4 +162,19 @@ func closeSessionConnections(connections []*connection) error {
 	}
 	closing.Wait()
 	return errors.Join(failures...)
+}
+
+// HTTP hijacks/future framed transports are not owned by the SSH server's grace
+// mechanism. Stop their connections explicitly and let the common driver drain.
+func (this *sessionConnectionRegistry) closeTerminals() error {
+	this.mutex.Lock()
+	this.terminalsClosed = true
+	var closing []managedConnection
+	for conn := range this.connections {
+		if _, ok := conn.(*terminalConnection); ok {
+			closing = append(closing, conn)
+		}
+	}
+	this.mutex.Unlock()
+	return closeSessionConnections(closing)
 }
