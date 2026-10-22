@@ -12,7 +12,7 @@ A session is grouping one or more connections of a user together. This enables t
 
 For OIDC, a remembered key can skip the browser step, but does not disable configured refresh-token checks or permit reuse of a disposed session.
 
-The filesystem repository also contains [identity/target association groundwork](fs.md#session-association-groundwork) for future shared SSH/HTTP selection. This server API is not yet connected to login adapters; it does not enable browser sessions, anonymous reuse or RememberMe by itself.
+The filesystem repository also provides [identity/target association selection](fs.md#session-association-groundwork), now used by primary Simple, htpasswd and Local logins with built-in environments. OIDC/delegation integration, browser login, anonymous cross-transport possession proofs and browser RememberMe remain pending.
 
 ## Types
 
