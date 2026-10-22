@@ -4,8 +4,8 @@ toc_depth: 5
 ---
 # HTTP / HTTPS
 
-!!! warning "Authentication API and discovery; no interactive browser workspace yet"
-    Enabled HTTPS serves published access links, flow metadata and password, keyboard-interactive/OIDC-device and public-key authentication APIs through the same authorizers/session selector as SSH. RememberMe, React frontend/imported-key UI, assets, WebSocket terminals and browser Management actions remain unimplemented. Unknown internal routes return 404. Keep HTTP omitted or disabled unless you intend to expose this partial API.
+!!! warning "Authentication and terminal protocols; no browser workspace UI yet"
+    Enabled HTTPS serves published access links, flow metadata, password/keyboard-interactive/OIDC-device/public-key authentication APIs and a WebSocket terminal protocol through the same authorizers/session selector and execution driver as SSH. RememberMe, React frontend/imported-key UI, assets and browser Management actions remain unimplemented. Unknown internal routes return 404. Keep HTTP omitted or disabled unless you intend to expose these partial browser-facing protocols.
 
 HTTP is a separate incoming transport for the same [flows](../flow.md), not SSH tunneled over WebSocket. Omission of the root `http` block means disabled. Merely configuring domains, TLS or customization does not enable it. When the endpoint is available, all flows are HTTP-eligible by default unless their individual `http.enabled` is false; `ssh.enabled` remains independent.
 
@@ -21,7 +21,7 @@ After readiness, SSH and HTTPS run together, with a caller-owned ACME renewal lo
 
 The HTTP boundary requires directly terminated TLS, a configured Host consistent with SNI, and matching HTTPS origin (including the effective port) whenever an Origin is supplied. Missing Origin is rejected for non-GET/HEAD methods and upgrades; safe browser navigations may omit it. Cross-site requests into the reserved internal namespace are rejected. Forwarded headers do not override these checks. Absolute-form proxy requests, CONNECT and encoded/dot/backslash path aliases are rejected before routing; no path cleaning can turn them into another flow.
 
-Responses use `frame-ancestors 'none'`, `X-Frame-Options: DENY`, a restrictive same-origin CSP, `no-store`, `nosniff`, HSTS without an implicit subdomain/preload commitment, and same-origin opener/resource policies. There is no CORS grant, cookie-based authentication, asset serving or working WebSocket protocol yet. The password API adds the stricter limits below; future interactive/streaming protocols still need their own controls.
+Responses use `frame-ancestors 'none'`, `X-Frame-Options: DENY`, a restrictive same-origin CSP, `no-store`, `nosniff`, HSTS without an implicit subdomain/preload commitment, and same-origin opener/resource policies. There is no CORS grant, cookie-based authentication or asset serving. Authentication and terminal protocols add the limits below.
 
 Before opening TLS or ACME state, runtime paths are canonicalized on a cloned configuration. TLS files/ACME storage are checked against session storage, audit/recording state and static SSH/SFTP inputs. Public asset directories and custom CSS/JS inputs cannot overlap these protected paths; existing hard-link aliases are checked in addition to canonical symlink paths. Disabled HTTP does not inspect its unused paths. Per-file asset containment checks are still required when serving is implemented.
 
@@ -43,15 +43,15 @@ The initial JSON endpoints are:
 
 All these requests require the boundary's same HTTPS Origin. Query parameters, unknown/duplicate/null/non-string JSON fields, trailing JSON, encoded request bodies and non-JSON content are rejected. Login bodies are limited to 16 KiB, names to 256 bytes and passwords to 4096 bytes. Internal authentication errors are not returned to the client. Private keys and passphrases are not accepted fields; later imported-key support must sign locally in tab memory.
 
-A successful login returns `status`, `accessToken`, `expiresAt`, `scope` (canonical HTTPS origin including port and exact slug), the mapped `principal`, `environment` (`terminal` or `management`) and `terminalAvailable: false`. The opaque token contains 256 random bits and is indexed by its SHA-256 hash only in server memory. Its permission also pins the verified authorization/flow, session and pure target digest, independently of persistent session ownership. It expires after ten minutes, does not slide and does not survive a service restart. **This is not RememberMe.** A future browser client must keep it only in tab memory: never URLs, cookies, LocalStorage or IndexedDB. Possession remains a bearer capability and is not protection against trusted same-origin JavaScript.
+A successful login returns `status`, `accessToken`, `expiresAt`, `scope` (canonical HTTPS origin including port and exact slug), the mapped `principal`, `environment` (`terminal` or `management`) and `terminalAvailable` (true for terminal flows, false for Management). The opaque token contains 256 random bits and is indexed by its SHA-256 hash only in server memory. Its permission also pins the verified authorization/flow, session and pure target digest, independently of persistent session ownership. It expires after ten minutes, does not slide and does not survive a service restart. **This is not RememberMe.** A future browser client must keep it only in tab memory: never URLs, cookies, LocalStorage or IndexedDB. Possession remains a bearer capability and is not protection against trusted same-origin JavaScript.
 
 Anonymous logins get independent sessions and permissions; the label `anonymous` never merges them. The independent token may authorize a fresh connection only to its own stored session/target. A known session ID, user name or discovery link is never accepted as proof. This does not yet add anonymous web-to-SSH resumption.
 
-There are at most 64 concurrent API requests, four per direct peer IP, 12 login starts (across all methods) and 120 API requests per peer per minute, 1024 tracked peers and 1024 live/retained web permissions. Pending logins have additional limits below. Forwarded headers cannot change the peer or authority. Limits fail closed with 429 and `Retry-After`; expired inactive entries are reclaimed lazily. Read deadlines bound request bodies to the shorter of 20 seconds and configured `readHeaderTimeout`; non-streaming API writes also have a 20-second deadline. Password/claim requests receive a 20-second cancellation context; multi-step authorizers have the independent lifetime below. Shutdown cancels/drains admissions, including slow body reads/writes, before closing repositories. Future WebSocket protocols still need their own connection/message limits.
+There are at most 64 concurrent API requests, four per direct peer IP, 12 login starts (across all methods) and 120 API requests per peer per minute, 1024 tracked peers and 1024 live/retained web permissions. Pending logins and terminals have additional limits below. Forwarded headers cannot change the peer or authority. Limits fail closed with 429 and `Retry-After`; expired inactive entries are reclaimed lazily. Read deadlines bound request bodies to the shorter of 20 seconds and configured `readHeaderTimeout`; non-streaming API writes also have a 20-second deadline. Password/claim requests receive a 20-second cancellation context; multi-step authorizers have the independent lifetime below. Shutdown cancels/drains admissions, including slow body reads/writes, before closing repositories.
 
-Login itself does not provision an environment, renew session access or reserve a connection quota. The internal connection adapter revalidates permission/target and acquires the same neutral session quota as SSH for **each new execution connection**. It rejects reattachment. Expiry prevents new access but leaves existing authenticated executions alone; an expired permission retained for active children can still prove logout. Explicit logout closes only its own children, while session limits/disposal and session-wide revocation remain stronger controls. There is not yet a public terminal or Management execution endpoint.
+Login itself does not provision an environment, renew session access or reserve a connection quota. The connection adapter revalidates permission/target and acquires the same neutral session quota as SSH for **each new execution connection**. It rejects reattachment. Expiry prevents new access but leaves existing authenticated executions alone; an expired permission retained for active children can still prove logout. Explicit logout closes only its own children, while session limits/disposal and session-wide revocation remain stronger controls. Terminal execution is available through the WebSocket protocol below; structured browser Management actions remain pending.
 
-Tests cover a real TLS/HTTP2 password login and a real SSH login selecting one stored session, plus scoped anonymous proofs, quota acquisition, expiry/logout isolation, target changes, strict/best-effort audit, bounded admission, cancellation and shutdown during a withheld request body. They are not a browser, WebSocket, or real shared-container end-to-end test.
+Tests cover a real TLS/HTTP2 password login and a real SSH login selecting one stored session, plus scoped anonymous proofs, quota acquisition, expiry/logout isolation, target changes, strict/best-effort audit, bounded admission, cancellation and shutdown during a withheld request body. Terminal protocol tests are described below; neither set is a browser or real shared-container end-to-end test.
 
 ## Interactive and public-key login protocol
 
@@ -89,7 +89,46 @@ The server verifies against its stored challenge and exact key, rejects trailing
 
 OIDC uses the existing verified issuer/subject, token verification, session locks, refresh/pending/lost-access rules and claim separation. A fresh device login cannot overwrite an existing rotating refresh chain. HTTP permission issuance requires a valid normalized identity, never a guessed requesting name or decoded JWT fallback. Audit records distinguish `keyboard-interactive` and `public-key`; OIDC additionally retains its existing authorization kind.
 
-Tests exercise acknowledged multi-step messages and secret/echo prompts, replay/scope/peer rejection, one-time concurrent claims, late cancellation, capacity retention, strong signature formats and existing certificate rules. Real TLS/HTTP2 interactive/key logins and an SSH login select one persisted session. A local TLS IdP with signed ID tokens exercises device login, retained rotated grants and cancellation of a real outstanding token request. This remains server/protocol coverage, not a browser imported-key UI, WebSocket, or shared-container E2E result.
+Tests exercise acknowledged multi-step messages and secret/echo prompts, replay/scope/peer rejection, one-time concurrent claims, late cancellation, capacity retention, strong signature formats and existing certificate rules. Real TLS/HTTP2 interactive/key logins and an SSH login select one persisted session. A local TLS IdP with signed ID tokens exercises device login, retained rotated grants and cancellation of a real outstanding token request. This remains server/protocol coverage, not a browser imported-key UI or shared-container E2E result.
+
+## WebSocket terminal protocol
+
+`GET /_bifroest/api/v1/terminal` accepts an HTTP/1.1 WebSocket upgrade with exactly the subprotocol `bifroest-terminal.v1`. Ordinary APIs continue to support HTTP/2; extended CONNECT/HTTP2 WebSockets are not implemented. The normal direct-TLS/Host/SNI/same-HTTPS-Origin boundary runs before upgrading. Query parameters and upgrade request bodies are forbidden. No compression is negotiated.
+
+Browser WebSocket APIs cannot supply an ordinary Authorization header. The access proof is therefore sent only in the **first text message**, within five seconds of upgrade, never in the URL, cookies or subprotocol:
+
+```json
+{"type":"open","slug":"Work","accessToken":"bwa1.…","task":"shell","pty":{"term":"xterm-256color","columns":80,"rows":24},"environment":["LANG=en_US.UTF-8"]}
+```
+
+For exec, use `"task":"exec","command":"..."` instead; shell requests must omit `command`. `pty` and `environment` are optional. The empty slug selects the root. No client-selected session/connection ID, subsystem, private key or passphrase is accepted. Objects have exact case-sensitive field sets: unknown/duplicate/null fields, non-UTF8 controls and trailing JSON fail closed. Commands are limited to 4096 bytes without NUL. Terminal names are 1–128 ASCII letters/digits or `-_.+`; columns/rows must be positive uint16 values and optional `widthPixels`/`heightPixels` uint32 values. At most 32 environment strings are accepted, each `NAME=value`, with ASCII identifier names of at most 128 bytes, values of at most 2048 bytes, 8 KiB total and no NUL or case-insensitive duplicate names. Existing server/key/client environment-layer and forced-command policies still decide the effective environment/command.
+
+The server rechecks the scoped proof, authorization, session, identity, effective target and environment before acquiring a fresh shared connection quota. It replies `{"type":"ready","connectionId":"..."}` after registration, **not** as a promise that provisioning or execution will succeed. Each socket owns exactly one new shell/exec, with the shared task/audit/recording driver; reconnect or reload never reattaches to an old execution. Management flows are rejected here, not routed through CLI subprocesses or SSH tunnels. Their UI/protocol remains separate work.
+
+After open:
+
+| Direction / frame | Payload | Meaning |
+| --- | --- | --- |
+| Client binary | Raw bytes, no channel prefix | Task stdin; bytes are not UTF8-decoded. |
+| Client text | `{"type":"eof"}` | Drain already-queued input, then input EOF; output, controls and heartbeat continue. Repeated EOF or later stdin is invalid. |
+| Client text | `{"type":"resize","columns":100,"rows":30}` | PTY-only resize, with the same dimensions and optional pixel fields as open. |
+| Client text | `{"type":"signal","signal":"TERM"}` | Supported symbolic target signal; `SIGTERM` aliases normalize. No native numeric signals. |
+| Server binary | One channel byte (`0` stdout/terminal, `1` stderr), then raw bytes | Ordered bounded output chunks. PTY backends may merge stderr themselves. |
+| Server text | `{"type":"exit","status":0}` | Validated uint32 task status, after recording seal and final task audit, followed by normal WebSocket close (1000). |
+| Server text | `{"type":"error","code":"execution-failed"}` | Redacted failure, never raw backend/authentication diagnostics or a successful exit. Connection loss or strict audit/capture failure may close without a final message. |
+
+EOF is not disconnect; socket loss cancels the owning execution. Successful exit is authoritative only when an `exit` message is received. An abnormal close must not be treated as status zero. No session/environment disposal occurs merely because a connection ends. Grant expiry denies new connections but does not terminate authenticated ones; own logout, session limits/disposal and registry revocation remain effective.
+
+### Terminal resource and lifetime limits
+
+- At most 64 upgrading/live terminal sockets globally and eight per direct peer IP, independently of shared per-session connection limits. Handshake/open/registration also uses the API concurrency and request-rate budgets above; authenticated terminals release the non-streaming worker slot. Capacity is retained through execution/worker cleanup, not just until disconnect.
+- At most 16 KiB per complete incoming message, 1 KiB per post-open text control, four queued stdin messages (64 KiB plus the current read), and 16 queued resize/signal controls each. Full queues close the connection rather than dropping input or growing without bound.
+- Per socket, fixed one-second inbound budgets of 128 messages, 32 text/Ping/Pong controls and 64 KiB of decoded message payload. An additional 96 KiB/second WebSocket wire-read budget bounds empty/tiny fragmented-frame floods before a complete message exists. These are abuse limits, not a bulk-file-transfer protocol; clients must pace input.
+- Output is written synchronously in chunks of at most 16 KiB including channel byte, with a five-second write budget per message and no detached output queue. Backpressure/deadline or forced close cancels the execution and closes the underlying socket without waiting for a TLS goodbye write.
+- A server Ping with a fresh nonce is sent every 15 seconds when no previous Ping is outstanding. Only its matching Pong extends the 45-second receive deadline; unrelated data and unsolicited Pongs do not. No browser unload callback is required. Heartbeats are transport liveness only: they do not renew session idle activity, ephemeral grant expiry or RememberMe.
+- Reader, heartbeat and signal-forwarding workers are owned/drained. Shutdown cancels even sockets that never sent open, closes authenticated transports and drains execution before closing repositories.
+
+Tests use real HTTPS/WebSocket connections and signed filesystem recordings for raw stdin/stdout/stderr, EOF, resize/signal capture, separate executions in one session, strict recording failure, redacted backend errors, proof/Origin/query rejection, quotas, expiry/logout/revocation, oversized/fragmented floods, bounded queues, slow-reader write timeout, missing Pong, abandoned open and shutdown. A real incoming SSH execution and two WebSocket executions use the same persisted session with the built-in Dummy backend. This is not a browser UI, Windows/ConPTY runtime or real shared Docker/Kubernetes container E2E claim.
 
 ## Properties
 
@@ -238,7 +277,7 @@ Under `http.rememberMe`:
 
 ## Schema examples
 
-These are complete, parser-checked configuration examples for HTTPS. Apart from the explicit dummy test case, startup requires the indicated certificate/key files or successful ACME issuance for every domain. OIDC device login is now available through the interactive HTTP protocol; the browser/Management UI and public execution endpoints remain unimplemented.
+These are complete, parser-checked configuration examples for HTTPS. Apart from the explicit dummy test case, startup requires the indicated certificate/key files or successful ACME issuance for every domain. OIDC device login and terminal execution are available through the protocols above; the browser/Management UI and structured browser Management actions remain unimplemented.
 
 ### Explicit dummy TLS for local testing
 
