@@ -31,8 +31,8 @@ import (
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/https"
 	"github.com/engity-com/bifroest/pkg/imp"
-	bnet "github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
 )
@@ -100,7 +100,7 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 		}
 	}
 
-	svc, err := this.prepare()
+	svc, err := this.prepareContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -112,84 +112,17 @@ func (this *Service) Run(ctx context.Context) (rErr error) {
 		}
 	}()
 
-	lns := make([]struct {
-		ln   gonet.Listener
-		addr bnet.Address
-	}, len(this.Configuration.Ssh.Addresses))
-	closeLns := func() {
-		for _, ln := range lns {
-			if ln.ln != nil {
-				if err := ln.ln.Close(); this.isProblematicError(err) && rErr == nil {
-					rErr = err
-				}
-			}
-		}
-	}
-	defer closeLns()
-
-	for i, addr := range this.Configuration.Ssh.Addresses {
-		ln, err := addr.Listen()
-		if err != nil {
-			return fmt.Errorf("cannot listen to %v: %w", addr, err)
-		}
-		lns[i].addr = addr
-		lns[i].ln = ln
-	}
-
-	this.logger().WithAll(sys.VersionToMap(this.Version)).Info("started")
-
-	serveCtx, cancelServe := context.WithCancelCause(ctx)
-	defer cancelServe(nil)
+	shutdown, err := svc.runListeners(ctx, nil)
+	rErr = err
 	gracefulShutdownTimeout := this.Configuration.Ssh.GracefulShutdownTimeout.Native()
-	var beginShutdownOnce sync.Once
-	var shutdownStartedAt time.Time
-	beginShutdown := func() {
-		beginShutdownOnce.Do(func() {
-			shutdownStartedAt = time.Now()
-			svc.connectionLifecycle.stop()
-		})
-	}
-	stopLifecycleWatch := context.AfterFunc(serveCtx, beginShutdown)
-	defer stopLifecycleWatch()
-	type serveResult struct {
-		address bnet.Address
-		err     error
-	}
-	done := make(chan serveResult, len(lns))
-	for _, ln := range lns {
-		go func() {
-			l := this.logger().With("address", ln.ln.Addr())
-			l.Info("listening...")
-			err := svc.server.Serve(serveCtx, ln.ln)
-			if this.isProblematicError(err) {
-				l.WithError(err).Error("listening... FAILED!")
-			} else {
-				l.Info("listening... DONE!")
-			}
-			done <- serveResult{ln.addr, err}
-		}()
-	}
-
-	forcedShutdown := false
-	for i := 0; i < len(lns); i++ {
-		result := <-done
-		if i == 0 {
-			beginShutdown()
-			cancelServe(result.err)
-		}
-		forcedShutdown = forcedShutdown || goerrors.Is(result.err, essh.ErrGracefulShutdownTimeout)
-		if this.isProblematicError(result.err) {
-			rErr = goerrors.Join(rErr, fmt.Errorf("SSH listener %v failed: %w", result.address, result.err))
-		}
-	}
-	handlerDrainTimeout := remainingGracefulShutdownTimeout(gracefulShutdownTimeout, shutdownStartedAt, time.Now())
-	if forcedShutdown {
+	handlerDrainTimeout := remainingGracefulShutdownTimeout(gracefulShutdownTimeout, shutdown.startedAt, time.Now())
+	if shutdown.forced {
 		handlerDrainTimeout = 0
 	}
 	if !svc.connectionLifecycle.wait(handlerDrainTimeout) {
 		drainErr := fmt.Errorf("SSH connection handlers did not finish within the graceful shutdown timeout of %s", gracefulShutdownTimeout)
 		this.logger().WithError(drainErr).Warn("delaying service cleanup until SSH connection handlers finish")
-		if this.isProblematicError(context.Cause(serveCtx)) {
+		if this.isProblematicError(shutdown.cause) {
 			rErr = goerrors.Join(rErr, drainErr)
 		}
 		closeService = false
@@ -223,37 +156,38 @@ func (this *Service) logger() log.Logger {
 }
 
 func (this *Service) prepare() (svc *service, err error) {
+	return this.prepareContext(context.Background())
+}
+
+func (this *Service) prepareContext(ctx context.Context) (svc *service, err error) {
 	fail := func(err error) (*service, error) {
 		return nil, fmt.Errorf("cannot prepare service: %w", err)
 	}
 	if err := this.Configuration.Validate(); err != nil {
 		return fail(err)
 	}
-	// Until the HTTPS transport and its joint listener lifecycle are implemented,
-	// never silently ignore an explicitly enabled, startup-critical HTTP input.
-	if this.Configuration.Http.IsEnabled() {
-		return fail(errors.Config.Newf("HTTP endpoint is not implemented yet; cannot start with http.enabled=true"))
+	if err := ctx.Err(); err != nil {
+		return fail(err)
 	}
 	if err := validateRuntimePaths(&this.Configuration); err != nil {
 		return fail(err)
 	}
 
-	ctx := context.Background()
 	svc = &service{
 		Service:             this,
 		connectionLifecycle: newConnectionLifecycle(),
 	}
 	resourcesOwnedByService := false
+	defer func(prepared *service) {
+		if !resourcesOwnedByService {
+			err = goerrors.Join(err, prepared.close(false))
+		}
+	}(svc)
 	svc.managementApplication, err = cli.NewApplication[clibase.NoOptions](this.Version, "Bifröst SSH management.", nil).
 		Create()
 	if err != nil {
 		return fail(err)
 	}
-	defer func(application *clibase.Application[clibase.NoOptions]) {
-		if !resourcesOwnedByService {
-			err = goerrors.Join(err, application.Close())
-		}
-	}(svc.managementApplication)
 
 	svc.knownFlows = make(map[configuration.FlowName]struct{})
 	for _, flow := range this.Configuration.Flows {
@@ -289,14 +223,10 @@ func (this *Service) prepare() (svc *service, err error) {
 	if err != nil {
 		return fail(err)
 	}
-	defer func(preparedService *service) {
-		if !resourcesOwnedByService {
-			recordingErr := preparedService.closeRecording(false)
-			auditErr := preparedService.closeAudit(false)
-			err = goerrors.Join(err, recordingErr, auditErr)
-		}
-	}(svc)
 	if err := this.prepareAudit(ctx, svc, hostSigners); err != nil {
+		return fail(err)
+	}
+	if err := svc.prepareHTTPS(); err != nil {
 		return fail(err)
 	}
 	if err := this.logCertificateAuthorities(hostSigners); err != nil {
@@ -309,21 +239,21 @@ func (this *Service) prepare() (svc *service, err error) {
 	if svc.imp, err = imp.NewImp(ctx, hostSigners[0]); err != nil {
 		return fail(err)
 	}
-	if svc.sessions, err = session.NewFacadeRepository(ctx, &this.Configuration.Session); err != nil {
+	sessions, err := session.NewFacadeRepository(ctx, &this.Configuration.Session)
+	if err != nil {
 		return fail(err)
 	}
-	sessionRepositoryPrepared := false
-	defer func(preparedService *service) {
-		if !sessionRepositoryPrepared {
-			_ = preparedService.sessions.Close()
-		}
-	}(svc)
-	if svc.authorizer, err = authorization.NewAuthorizerFacadeWithObserver(ctx, &this.Configuration.Flows, svc.observeFlowAuthorization); err != nil {
+	svc.sessions = sessions
+	authorizer, err := authorization.NewAuthorizerFacadeWithObserver(ctx, &this.Configuration.Flows, svc.observeFlowAuthorization)
+	if err != nil {
 		return fail(err)
 	}
-	if svc.environments, err = environment.NewRepositoryFacadeWithManagement(ctx, &this.Configuration.Flows, svc.alternatives, svc.imp, hostSigners, svc.sessions, svc); err != nil {
+	svc.authorizer = authorizer
+	environments, err := environment.NewRepositoryFacadeWithManagement(ctx, &this.Configuration.Flows, svc.alternatives, svc.imp, hostSigners, svc.sessions, svc)
+	if err != nil {
 		return fail(err)
 	}
+	svc.environments = environments
 	if err = svc.houseKeeper.init(svc); err != nil {
 		return fail(err)
 	}
@@ -349,14 +279,9 @@ func (this *Service) prepare() (svc *service, err error) {
 		}
 	}
 	if err := svc.oidcRefresh.init(svc); err != nil {
-		// The initial refresh scan runs after housekeeping and other service
-		// resources have started. Close all of them on a scan failure.
-		sessionRepositoryPrepared = true
-		resourcesOwnedByService = true
-		return fail(goerrors.Join(err, svc.Close()))
+		return fail(err)
 	}
 
-	sessionRepositoryPrepared = true
 	resourcesOwnedByService = true
 	return svc, nil
 }
@@ -380,11 +305,14 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	}
 
 	serverPrivateKeys := hostSigners
-	if slices.ContainsFunc(this.Configuration.Auditlogs, func(a configuration.Auditlog) bool { return a.Enabled || a.Recording.Enabled }) {
+	if this.Configuration.Http.IsEnabled() || slices.ContainsFunc(this.Configuration.Auditlogs, func(a configuration.Auditlog) bool { return a.Enabled || a.Recording.Enabled }) {
 		serverPrivateKeys, err = loadStaticPrivateKeysForAuditEncryption(this.Configuration.Flows, hostSigners)
 		if err != nil {
 			return err
 		}
+	}
+	for _, key := range serverPrivateKeys {
+		svc.httpsForbiddenKeys = append(svc.httpsForbiddenKeys, key.PublicKey())
 	}
 	sftpIdentityPublicKeysByAuditlog := make(map[configuration.AuditlogName][]crypto.PublicKey, len(this.Configuration.Auditlogs))
 	var failedSftpIdentityPublicKeys []crypto.PublicKey
@@ -490,6 +418,8 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 	for _, key := range availableAuditIdentityKeys {
 		auditIdentityPublicKeys = append(auditIdentityPublicKeys, key)
 	}
+	svc.httpsForbiddenKeys = append(svc.httpsForbiddenKeys, auditIdentityPublicKeys...)
+	svc.httpsForbiddenKeys = append(svc.httpsForbiddenKeys, sftpIdentityPublicKeys...)
 	resolvedEncryptionPublicKeys := make(map[configuration.AuditlogName]crypto.PublicKeys, len(this.Configuration.Auditlogs))
 	for index := range this.Configuration.Auditlogs {
 		auditlog := &this.Configuration.Auditlogs[index]
@@ -522,6 +452,16 @@ func (this *Service) prepareAudit(ctx context.Context, svc *service, hostSigners
 			continue
 		}
 		resolvedEncryptionPublicKeys[auditlog.Name] = encryptionPublicKey
+		if err := encryptionPublicKey.ForEach(func(_ int, key gossh.PublicKey, _ string) (bool, error) {
+			public, err := crypto.PublicKeyFromSsh(key)
+			if err != nil {
+				return false, err
+			}
+			svc.httpsForbiddenKeys = append(svc.httpsForbiddenKeys, public)
+			return true, nil
+		}); err != nil {
+			return fmt.Errorf("cannot inspect audit encryption recipients: %w", err)
+		}
 	}
 	for index := range this.Configuration.Auditlogs {
 		auditlog := &this.Configuration.Auditlogs[index]
@@ -926,6 +866,8 @@ type service struct {
 	alternatives             alternatives.Provider
 	imp                      imp.Imp
 	server                   essh.Server
+	https                    *https.Endpoint
+	httpsForbiddenKeys       []crypto.PublicKey
 	forwardHandler           essh.ForwardedTCPHandler
 
 	knownFlows map[configuration.FlowName]struct{}
@@ -987,9 +929,16 @@ func sshMaxAuthTries(value uint8) int {
 }
 
 func (this *service) Close() (rErr error) {
-	defer common.KeepCloseError(&rErr, this.managementApplication)
-	defer func() { rErr = goerrors.Join(rErr, this.closeAudit(true)) }()
-	defer func() { rErr = goerrors.Join(rErr, this.closeRecording(true)) }()
+	return this.close(true)
+}
+
+// Failed preparation owns the same resources but must not start remote flushing.
+func (this *service) close(flush bool) (rErr error) {
+	if this.managementApplication != nil {
+		defer common.KeepCloseError(&rErr, this.managementApplication)
+	}
+	defer func() { rErr = goerrors.Join(rErr, this.closeAudit(flush)) }()
+	defer func() { rErr = goerrors.Join(rErr, this.closeRecording(flush)) }()
 	defer common.KeepCloseError(&rErr, this.alternatives)
 	defer common.KeepCloseError(&rErr, this.imp)
 	defer common.KeepCloseError(&rErr, this.sessions)
@@ -997,6 +946,9 @@ func (this *service) Close() (rErr error) {
 	defer common.KeepCloseError(&rErr, this.environments)
 	defer common.KeepCloseError(&rErr, &this.houseKeeper)
 	defer common.KeepCloseError(&rErr, &this.oidcRefresh)
+	if this.https != nil {
+		defer common.KeepCloseError(&rErr, this.https)
+	}
 	return nil
 }
 
@@ -1220,6 +1172,13 @@ func validateRuntimePaths(conf *configuration.Configuration) error {
 
 func cloneRuntimePathConfiguration(conf *configuration.Configuration) configuration.Configuration {
 	result := *conf
+	if conf.Http != nil {
+		cloned := *conf.Http
+		cloned.Tls.Certificates = slices.Clone(conf.Http.Tls.Certificates)
+		cloned.CustomCss = slices.Clone(conf.Http.CustomCss)
+		cloned.CustomJs = slices.Clone(conf.Http.CustomJs)
+		result.Http = &cloned
+	}
 	result.Auditlogs = slices.Clone(conf.Auditlogs)
 	for auditlogIndex := range result.Auditlogs {
 		result.Auditlogs[auditlogIndex].Targets = slices.Clone(conf.Auditlogs[auditlogIndex].Targets)
@@ -1342,7 +1301,10 @@ func validateRuntimePathCandidate(conf *configuration.Configuration) error {
 	if err := validateRecordingRuntimePathOverlaps(conf, storage); err != nil {
 		return err
 	}
-	return validateStaticKeyRuntimePaths(conf, storage)
+	if err := validateStaticKeyRuntimePaths(conf, storage); err != nil {
+		return err
+	}
+	return validateHTTPRuntimePaths(conf, storage)
 }
 
 func validateStaticKeyRuntimePaths(conf *configuration.Configuration, storage string) error {
