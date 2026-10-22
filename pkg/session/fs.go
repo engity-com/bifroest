@@ -20,6 +20,7 @@ const (
 	FsFileLastAccessed        = "la"
 	FsFileAccessToken         = "at"
 	FsFileEnvironmentToken    = "et"
+	FsFileAssociation         = "sa"
 	FsFilePublicKeysPrefix    = "pk-"
 	FsFilePublicKeysPrefixLen = len(FsFilePublicKeysPrefix)
 )
