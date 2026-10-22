@@ -76,10 +76,10 @@ func (this *SimpleAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriz
 	}
 	if accepted {
 		auth.authorizedKeyPolicy = policy
+		if !isPublicKeyVerified(req) {
+			return auth, nil
+		}
 		if isCertificate {
-			if !isPublicKeyVerified(req) {
-				return auth, nil
-			}
 			sess, err := this.ensureSessionFor(req, entry)
 			if err != nil {
 				return fail(err)

@@ -1029,7 +1029,10 @@ type oidcRefreshTestPublicKeyRequest struct {
 
 func (this oidcRefreshTestPublicKeyRequest) Sessions() session.Repository { return this.repository }
 func (this oidcRefreshTestPublicKeyRequest) Context() context.Context     { return this.ctx }
-func (oidcRefreshTestPublicKeyRequest) RemotePublicKey() gossh.PublicKey  { return nil }
+
+// These existing refresh tests exercise the post-possession restoration path.
+func (oidcRefreshTestPublicKeyRequest) PublicKeyVerified() bool          { return true }
+func (oidcRefreshTestPublicKeyRequest) RemotePublicKey() gossh.PublicKey { return nil }
 func (oidcRefreshTestPublicKeyRequest) Connection() connection.Connection {
 	return oidcRefreshTestConnection{}
 }

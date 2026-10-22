@@ -114,10 +114,10 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	}
 	candidate.authorizedKeyPolicy = policy
 
+	if !isPublicKeyVerified(req) {
+		return &candidate, nil
+	}
 	if isCertificate {
-		if !isPublicKeyVerified(req) {
-			return &candidate, nil
-		}
 		sess, err := this.ensureSessionFor(req, u)
 		if err != nil {
 			return fail(err)
