@@ -111,7 +111,7 @@ func (this *Authorization) UnmarshalYAML(node *yaml.Node) error {
 	return this.Trim()
 }
 
-func (this *Authorization) MarshalYAML() (any, error) {
+func (this Authorization) MarshalYAML() (any, error) {
 	if this.V == nil {
 		return struct{}{}, nil
 	}

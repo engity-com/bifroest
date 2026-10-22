@@ -116,7 +116,7 @@ func (this *Environment) UnmarshalYAML(node *yaml.Node) error {
 	return this.Trim()
 }
 
-func (this *Environment) MarshalYAML() (any, error) {
+func (this Environment) MarshalYAML() (any, error) {
 	if this.V == nil {
 		return nil, fmt.Errorf("cannot marshal environment without a type")
 	}
