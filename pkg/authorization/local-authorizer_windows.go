@@ -106,7 +106,7 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 		return candidate, nil
 	}
 	if _, isCert := req.RemotePublicKey().(*ssh.Certificate); isCert {
-		candidate.session, err = this.ensureSessionFor(req, u)
+		candidate.session, err = this.ensureSessionFor(req, candidate)
 		if err != nil {
 			return nil, err
 		}
@@ -131,7 +131,7 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 			return candidate, nil
 		}
 	}
-	candidate.session, err = this.ensureSessionFor(req, u)
+	candidate.session, err = this.ensureSessionFor(req, candidate)
 	if err != nil {
 		return nil, err
 	}
@@ -162,12 +162,15 @@ func localSessionMatches(ctx context.Context, sess session.Session, u windowsloc
 	return token.User.SID == u.SID && strings.EqualFold(token.User.Name, u.Name), nil
 }
 
-func (this *LocalAuthorizer) ensureSessionFor(req Request, u windowslocal.Account) (session.Session, error) {
+func (this *LocalAuthorizer) ensureSessionFor(req Request, auth *local) (session.Session, error) {
 	var token localToken
-	token.User.Name, token.User.SID = u.Name, u.SID
+	token.User.Name, token.User.SID = auth.user.Name, auth.user.SID
 	b, err := json.Marshal(token)
 	if err != nil {
 		return nil, err
+	}
+	if sess, handled, err := resolveAuthenticatedSession(req, auth, b); handled || err != nil {
+		return sess, err
 	}
 	sess, err := req.Sessions().FindByAccessToken(req.Context(), b, (&session.FindOpts{}).WithPredicate(
 		session.IsFlow(this.flow), session.IsStillValid, session.IsRemoteName(req.Connection().Remote().User()),
@@ -219,7 +222,7 @@ func (this *LocalAuthorizer) authorizePassword(req Request, value string, allowe
 	} else if !ok {
 		return Forbidden(remote), nil
 	}
-	candidate.session, err = this.ensureSessionFor(req, u)
+	candidate.session, err = this.ensureSessionFor(req, candidate)
 	if err != nil {
 		return nil, err
 	}
