@@ -97,8 +97,8 @@ func (this *Http) Validate() error {
 	if err := this.Tls.Validate(); err != nil {
 		return configurationFieldError(this, "tls", err)
 	}
-	if this.Enabled && len(this.Tls.Certificates) == 0 && !this.Tls.Acme.Enabled {
-		return fmt.Errorf("[tls] configure certificates or explicitly enable ACME")
+	if this.Enabled && len(this.Tls.Certificates) == 0 && !this.Tls.Acme.Enabled && !this.Tls.Dummy {
+		return fmt.Errorf("[tls] configure certificates, explicitly enable ACME or explicitly select dummy TLS for testing")
 	}
 	for _, field := range []struct {
 		name  string

@@ -99,6 +99,15 @@ func newTLS(conf *configuration.Http, source CertificateSource, now func() time.
 	if !conf.Tls.Acme.Enabled {
 		source = nil
 	}
+	if conf.Tls.Dummy {
+		certificate, err := newDummyCertificate(domains, now())
+		if err != nil {
+			return nil, fmt.Errorf("cannot create explicitly requested dummy TLS certificate: %w", err)
+		}
+		for _, domain := range domains {
+			explicit[domain] = certificate
+		}
+	}
 	for _, domain := range domains {
 		if explicit[domain] == nil && source == nil {
 			return nil, fmt.Errorf("[http][tls] no certificate source covers configured domain %q", domain)
