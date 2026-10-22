@@ -453,3 +453,27 @@ func TestAssociationFacadeForwardsOnlyToSupportingRepositories(t *testing.T) {
 	_, _, err = unsupported.ResolveAssociatedSession(context.Background(), associationRequestFor(t, "one"))
 	require.ErrorIs(t, err, ErrAssociationUnavailable)
 }
+
+func TestAssociatedSessionCreationPreviewUsesExactPersistedMetadata(t *testing.T) {
+	repository, _ := newAssociationRepository(t)
+	request := associationRequestFor(t, "one")
+	var at time.Time
+	request.ResolveTarget = func(ctx context.Context, ref Reference) (Target, error) {
+		require.NotNil(t, ref.Created)
+		at = ref.Created.At()
+		return NewTarget("test", map[string]string{"at": at.UTC().Format(time.RFC3339Nano), "user": ref.Created.Remote().User()})
+	}
+	first, created, err := repository.ResolveAssociatedSession(t.Context(), request)
+	require.NoError(t, err)
+	require.True(t, created)
+	info, err := first.Info(t.Context())
+	require.NoError(t, err)
+	metadata, err := info.Created(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, at, metadata.At())
+	request.Remote = associationRemote("")
+	second, created, err := repository.ResolveAssociatedSession(t.Context(), request)
+	require.NoError(t, err)
+	require.False(t, created)
+	require.Equal(t, first.Id(), second.Id())
+}
