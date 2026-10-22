@@ -25,11 +25,12 @@ import (
 const maximumACMEStateBytes = 2 << 20
 
 type acmeStore struct {
-	base      *os.File
-	baseInfo  os.FileInfo
-	directory *os.File
-	info      os.FileInfo
-	path      string
+	base        *os.File
+	baseInfo    os.FileInfo
+	directory   *os.File
+	info        os.FileInfo
+	path        string
+	validateKey KeyValidator
 }
 
 func openACMEStore(path, directoryURL string) (*acmeStore, error) {
@@ -156,6 +157,11 @@ func (this *acmeStore) accountKey(ctx context.Context) (crypto.Signer, error) {
 		key, createErr := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if createErr != nil {
 			return nil, createErr
+		}
+		if this.validateKey != nil {
+			if err := this.validateKey(key.Public()); err != nil {
+				return nil, err
+			}
 		}
 		raw, createErr = marshalPrivateKey(key)
 		if createErr != nil {
