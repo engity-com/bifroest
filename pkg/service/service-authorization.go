@@ -9,6 +9,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	bconn "github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
 )
@@ -242,21 +243,12 @@ func flowAuthorizationObservationIsUnauthenticated(observation authorization.Flo
 }
 
 func (this *service) recordAuthenticationCompleted(ctx essh.Context, auth authorization.Authorization, method audit.AuthenticationMethod, outcome audit.EventOutcome, reason audit.EventReason) error {
-	event := audit.Event{
-		Name:                 audit.EventNameAuthenticationCompleted,
-		Domain:               audit.EventDomainAuthentication,
-		Outcome:              outcome,
-		Flow:                 auth.Flow().String(),
-		AuthenticationMethod: method,
-		AuthorizationKind:    authorization.KindOf(auth),
-		Reason:               reason,
-	}
-	if conn := this.connection(ctx); conn != nil {
-		event.ConnectionId = conn.Id().String()
-	}
-	if sess := auth.FindSession(); sess != nil {
-		event.SessionId = sess.Id().String()
-	}
+	return this.recordAuthenticationCompletedFor(ctx, this.connection(ctx), auth, method, outcome, reason)
+}
+
+func (this *service) recordAuthenticationCompletedFor(ctx context.Context, conn bconn.Connection, auth authorization.Authorization, method audit.AuthenticationMethod, outcome audit.EventOutcome, reason audit.EventReason) error {
+	event := authorizationAuditEventFor(conn, auth, audit.EventNameAuthenticationCompleted, audit.EventDomainAuthentication)
+	event.Outcome, event.AuthenticationMethod, event.Reason = outcome, method, reason
 	return this.recordFlowAudit(ctx, auth.Flow(), event)
 }
 
