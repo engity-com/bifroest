@@ -27,6 +27,10 @@ func (this *dummy) Banner(req Request) (io.ReadCloser, error) {
 }
 
 func (this *dummy) Run(t Task) (int, error) {
+	return this.run(t)
+}
+func (this *dummy) RunTerminal(t TerminalTask) (int, error) { return this.run(t) }
+func (this *dummy) run(t TaskContext) (int, error) {
 	exitCode, err := this.repository.conf.ExitCode.Render(t)
 	if err != nil {
 		return -1, err
