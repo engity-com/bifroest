@@ -39,7 +39,10 @@ func (this *service) executeTerminal(conn *terminalConnection, stream terminal.S
 	}
 	stopSource := context.AfterFunc(stream.Context(), func() { _ = conn.Close() })
 	defer stopSource()
-	stopConnection := context.AfterFunc(conn.Lifetime(), func() { _ = stream.Close() })
+	// Capture the original transport, not the variable replaced by policy and
+	// activity wrappers below; cancellation can run during that replacement.
+	transportStream := stream
+	stopConnection := context.AfterFunc(conn.Lifetime(), func() { _ = transportStream.Close() })
 	defer stopConnection()
 	command = command || stream.RawCommand() != ""
 	stream, forced := applyTerminalPolicy(conn.authorization, stream, conn.Lifetime())
