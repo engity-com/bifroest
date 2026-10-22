@@ -164,7 +164,8 @@ func (this *webAccess) close() error {
 	return closeSessionConnections(children)
 }
 
-// Internal adapter bridge, deliberately not a public terminal endpoint yet.
+// Trusted adapter bridge; only the protocol handler can turn a verified proof
+// into a connection. Neither session IDs nor client metadata are authorizations.
 // Each use acquires a fresh quota lease and never reattaches an old execution.
 func (this *webService) connect(scope webScope, token string, transport terminalTransport) (*terminalConnection, error) {
 	if isNilDependency(transport) || isNilDependency(transport.Lifetime()) {

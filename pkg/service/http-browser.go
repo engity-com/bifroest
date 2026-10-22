@@ -38,23 +38,26 @@ type webPeerBudget struct {
 }
 
 type webService struct {
-	service      *service
-	ctx          context.Context
-	cancel       context.CancelFunc
-	operations   *connectionLifecycle
-	mutex        sync.Mutex
-	peers        map[netip.Addr]*webPeerBudget
-	active       int
-	access       map[[32]byte]*webAccess
-	attempts     map[[32]byte]*webLoginAttempt
-	loginWorkers *connectionLifecycle
-	closeOnce    sync.Once
-	closeErr     error
+	service         *service
+	ctx             context.Context
+	cancel          context.CancelFunc
+	operations      *connectionLifecycle
+	mutex           sync.Mutex
+	peers           map[netip.Addr]*webPeerBudget
+	active          int
+	access          map[[32]byte]*webAccess
+	attempts        map[[32]byte]*webLoginAttempt
+	loginWorkers    *connectionLifecycle
+	sockets         int
+	socketPeers     map[netip.Addr]int
+	terminalTimings webTerminalTimings
+	closeOnce       sync.Once
+	closeErr        error
 }
 
 func newWebService(svc *service) *webService {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &webService{service: svc, ctx: ctx, cancel: cancel, operations: newConnectionLifecycle(), loginWorkers: newConnectionLifecycle(), peers: make(map[netip.Addr]*webPeerBudget), access: make(map[[32]byte]*webAccess), attempts: make(map[[32]byte]*webLoginAttempt)}
+	return &webService{service: svc, ctx: ctx, cancel: cancel, operations: newConnectionLifecycle(), loginWorkers: newConnectionLifecycle(), peers: make(map[netip.Addr]*webPeerBudget), access: make(map[[32]byte]*webAccess), attempts: make(map[[32]byte]*webLoginAttempt), socketPeers: make(map[netip.Addr]int), terminalTimings: defaultWebTerminalTimings()}
 }
 
 // Lazy, bounded cleanup requires no per-token goroutines. Expired permissions
@@ -157,6 +160,10 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !strings.HasPrefix(r.URL.Path, "/_bifroest/") {
 		this.describe(w, r)
+		return
+	}
+	if r.URL.Path == webAPI+"terminal" {
+		this.serveWebSocketTerminal(w, r)
 		return
 	}
 	switch r.URL.Path {
@@ -343,7 +350,7 @@ func (this *webService) accessResponse(access *webAccess, token string) any {
 		Principal         string    `json:"principal"`
 		Environment       string    `json:"environment"`
 		TerminalAvailable bool      `json:"terminalAvailable"`
-	}{"authorized", token, access.expires, access.scope, access.identity.Principal, kind, false}
+	}{"authorized", token, access.expires, access.scope, access.identity.Principal, kind, kind != "management"}
 }
 
 var webDiscoveryTemplate = htmltemplate.Must(htmltemplate.New("discovery").Parse(`<!doctype html><html lang="en-US"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Bifröst</title><h1>Bifröst</h1><p>Published access links. Each link still requires authorization.</p><ul>{{range .}}<li><a href="/{{.}}">{{.}}</a></li>{{else}}<li>No access links published on this host.</li>{{end}}</ul><p>The interactive browser interface is not available yet.</p></html>`))
