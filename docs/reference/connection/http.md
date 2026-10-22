@@ -5,11 +5,11 @@ toc_depth: 5
 # HTTP / HTTPS
 
 !!! warning "Configuration groundwork; no HTTP listener yet"
-    This version parses and validates the settings below, but does not yet implement the HTTPS listener, certificate acquisition, asset serving, browser authentication or RememberMe. Setting `http.enabled: true` deliberately **fails the entire service startup**, before SSH listeners, keys, sessions or authorizers are prepared. It is not silently ignored. Keep HTTP omitted or disabled for an operational SSH-only deployment.
+    This version parses and validates the settings below and includes a separately tested TLS/ACME backend, but does not yet integrate it with an HTTPS listener, asset serving, browser authentication or RememberMe. Setting `http.enabled: true` deliberately **fails the entire service startup**, before SSH listeners, keys, sessions or authorizers are prepared. It is not silently ignored. Keep HTTP omitted or disabled for an operational SSH-only deployment.
 
 HTTP is a separate incoming transport for the same [flows](../flow.md), not SSH tunneled over WebSocket. Omission of the root `http` block means disabled. Merely configuring domains, TLS or customization does not enable it. When the endpoint is available, all flows are HTTP-eligible by default unless their individual `http.enabled` is false; `ssh.enabled` remains independent.
 
-Configuration loading performs no certificate-file reads, key generation, ACME requests or asset-file reads. The schema supports explicit PEM certificate/key pairs, ACME, or both. A separate [TLS preparation core](#tls-preparation-core) now implements explicit certificate checks and an all-domain readiness barrier, but is **not yet integrated into service startup**. Actual ACME issuance/renewal and joint listener startup remain implementation work, not guarantees of successful schema validation.
+Configuration loading performs no certificate-file reads, key generation, ACME requests or asset-file reads. The schema supports explicit PEM certificate/key pairs, ACME, or both. A separate [TLS preparation core](#tls-preparation-core) implements explicit certificate checks and an all-domain readiness barrier; its [ACME backend](#acme-backend-and-renewal) implements issuance, private persistent storage and controlled renewal. Both are **not yet integrated into service startup**. Schema validation does not prove certificate availability or joint listener startup.
 
 ## Properties
 
@@ -96,7 +96,7 @@ The server-side `pkg/https` package is tested independently of the service liste
 - Strict, temporary TLS-ALPN-01 proof validation: a single DNS name, the critical ACME SHA-256 identifier extension, self-signature and matching key. Cancellation/timeout/close invalidates proofs; releasing an older proof cannot remove a newer one. Proof certificates cannot become application certificates.
 - Context-bound preparation and shutdown with no detached acquisition/renewal goroutines. TLS uses a minimum of TLS 1.2. Session tickets are initially disabled so resumption cannot bypass readiness or certificate-lifetime checks; supplied-chain expiration is rechecked for new handshakes.
 
-Tests include actual TLS and TLS-ALPN proof handshakes, including private CA and IP cases. These tests do **not** contact an ACME CA or prove issuance, persistent account/certificate storage, renewal, browser authentication, or the joint SSH/HTTPS listener lifecycle. The service startup guard remains in place until that integration is complete.
+Tests include actual TLS and TLS-ALPN proof handshakes, including private CA and IP cases. Separate ACME tests exercise issuance, persistent account/certificate storage and renewal against a local test CA; no public CA is contacted. Browser authentication and the joint SSH/HTTPS listener lifecycle remain unimplemented. The service startup guard remains in place until that integration is complete.
 
 ### ACME
 
@@ -121,7 +121,22 @@ Under `http.tls.acme`:
     - macOS: `/Library/Application Support/Engity/Bifroest/http/acme`
     - Windows: `C:\ProgramData\Engity\Bifroest\http\acme`
 
-    This must not be an asset directory. Creation, restrictive permissions and renewal behavior belong to the pending TLS runtime implementation.
+    This must not be an asset directory. The separate backend creates and checks private storage as described below; service-level path-overlap checks and listener integration remain pending.
+
+### ACME backend and renewal
+
+The server-side backend uses the context-aware `acme.Client` directly. It does not use `autocert.Manager`, whose detached acquisition contexts and unexposed renewal timers do not fit the joint startup/shutdown lifecycle.
+
+- Only configured DNS domains can be requested, using **TLS-ALPN-01 only**. An IP literal needs an explicit certificate; HTTP-01, DNS-01, wildcard issuance and incoming-host-triggered issuance are not implemented. Order/authorization identifiers, the CSR, the returned certificate/key pair and the complete supplied chain are checked before persistence.
+- Storage has a private base directory and a separate `ca-<SHA-256 of directoryUrl>` subdirectory per CA directory. Newly generated account and certificate keys use ECDSA P-256. `account.pem` stores the account key; `certificate-<SHA-256 of canonical domain>.pem` stores a certificate key and chain together. Account keys and certificate keys are separate. A change of CA directory therefore does not reuse another CA's account or certificate cache.
+- New private files use the existing protected temporary-file and atomic-install helpers. They are flushed before installation; certificate and key are replaced as one unit. Existing directory ownership/modes or protected Windows ACLs are validated rather than repaired. Reads reject symlink/nonregular, multiply linked, oversized or insecure files and malformed PEM state; state files and ACME response bodies are bounded to 2 MiB, with the TLS core's stricter chain limits applied additionally.
+- A new account key is generated only in an empty CA-specific store. Existing account keys are never silently replaced. Missing account keys alongside stored state, corrupt keys, or an account-key change while running make new issuance fail; restore the intended account state rather than expecting automatic account replacement. A still-valid cached certificate can be loaded without contacting the CA or needing account registration. The private store belongs to the service operator; it is not a defense against malicious code running as that same OS identity.
+- Initial preparation reuses valid stored certificates even when renewal is already due, so an unavailable CA does not prevent startup with valid material. Missing or expired certificates require successful issuance. Failure for any initial domain prevents all normal TLS handshakes; a later retry can reuse already persisted certificates without issuing them again.
+- `TLS.RunRenewal` is a blocking loop owned by the caller, not an automatically detached goroutine. Renewal becomes due one third of the supplied chain's effective lifetime before expiry, capped at 30 days before expiry. Replacements are checked and persisted before publication; a newly issued certificate that already requires renewal is rejected. During validation, the existing valid application certificate remains usable alongside the temporary proof.
+- Failed renewal retains the existing live certificate/key. Issuance or validation failure does not replace cached material; a storage error can occur after an atomic installation, in which case a later retry revalidates the stored result. Per-domain retries wait at least 30 minutes and honor longer ACME rate-limit `Retry-After` values; hidden request retries do not repeatedly create orders. Existing certificates are never served past their validity interval. Stopping renewal does not dispose sessions or terminate already authenticated connections.
+- Each operation is bounded by its caller context and `startupTimeout`; cancellation removes active proofs. Closing the backend cancels and drains active operations and closes its idle HTTP connections and storage handles. ACME endpoints, including redirects, must remain HTTPS without embedded credentials. Errors are safe for logs; their preserved causes must not be separately logged without redaction.
+
+The local test CA verifies request signatures and nonces, CSR signatures and actual account-bound TLS-ALPN-01 proofs. Tests cover multiple domains, failure of a later domain, restart with an offline CA, expired-cache reissuance using the same account, renewal, rate limits, corrupt/private storage, active-challenge cancellation and timeout/close. These are backend tests, **not** proof that enabling HTTP starts a usable deployment yet.
 
 ## RememberMe
 
