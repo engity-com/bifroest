@@ -751,6 +751,12 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizeInteractive(req InteractiveReques
 		if t.Subject == "" || t.Issuer == "" {
 			return failf("OIDC ID token has no subject or issuer")
 		}
+		auth.identity = authentication.Identity{Principal: t.Subject, Issuer: t.Issuer, Subject: t.Subject}
+	}
+	// Retain verified identity even when refresh/disposal is disabled or only
+	// verified UserInfo was requested. Never infer it from requesting names/JWTs.
+	if auth.identity.IsAuthenticated() {
+		t.Subject, t.Issuer, t.LastVerifiedAt = auth.identity.Subject, auth.identity.Issuer, time.Now()
 	}
 	auth.remote = req.Connection().Remote()
 
@@ -760,7 +766,7 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizeInteractive(req InteractiveReques
 		return Forbidden(req.Connection().Remote()), nil
 	}
 
-	sess, err := this.ensureSessionFor(req, &t)
+	sess, err := this.ensureSessionFor(req, auth, &t)
 	if err != nil {
 		return fail(err)
 	}
@@ -993,7 +999,7 @@ func (this *OidcDeviceAuthAuthorizer) updateSessionWith(ctx context.Context, t *
 	return nil
 }
 
-func (this *OidcDeviceAuthAuthorizer) ensureSessionFor(req Request, t *oidcToken) (session.Session, error) {
+func (this *OidcDeviceAuthAuthorizer) ensureSessionFor(req Request, auth *oidc, t *oidcToken) (session.Session, error) {
 	fail := func(err error) (session.Session, error) {
 		return nil, err
 	}
@@ -1006,7 +1012,11 @@ func (this *OidcDeviceAuthAuthorizer) ensureSessionFor(req Request, t *oidcToken
 		return failf("cannot marshal authorization token: %w", err)
 	}
 
-	// TODO! Maybe find a way to restore an existing one?
+	if auth.identity.IsAuthenticated() {
+		if sess, handled, err := resolveAuthenticatedSessionWithReuse(req, auth, at, this.primarySessionReuse(auth.identity, t)); handled || err != nil {
+			return sess, err
+		}
+	}
 	sess, err := req.Sessions().Create(req.Context(), this.flow, req.Connection().Remote(), at)
 	if err != nil {
 		return fail(err)
