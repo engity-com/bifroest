@@ -291,7 +291,7 @@ func TestHttpReferenceExamplesParseWithoutFilesystemOrNetworkAccess(t *testing.T
 	contents, err := os.ReadFile("../../docs/reference/connection/http.md")
 	require.NoError(t, err)
 	examples := regexp.MustCompile("(?s)```yaml\n(.*?)\n```").FindAllSubmatch(contents, -1)
-	require.Len(t, examples, 2)
+	require.Len(t, examples, 3)
 	for _, example := range examples {
 		var conf Configuration
 		require.NoError(t, conf.LoadFromYaml(strings.NewReader(string(example[1])), "http-reference-example"))
