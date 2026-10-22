@@ -124,6 +124,12 @@ B verifies A's CA signature, the `from-entry` audience, the signed evidence and 
 
 This authorization produces a context of type [Authorization Bifröst](../context/authorization.md#bifroest).
 
+## Session sharing
+
+With the filesystem session repository and built-in target resolvers, fresh authenticated delegation logins for the same stable identity, flow and effective target can share a [session association](../session/fs.md#session-association-groundwork), even when certificate keys, serials or connection policies differ. Each connection must independently pass certificate and possession verification and retains its own PTY/forwarding restrictions and evidence chain. The persisted session creation evidence is not copied onto new connections or overwritten by them.
+
+The stable identity uses the attested original user scoped to the originating CA fingerprint and authorization kind. Evidence v1 does not contain an original OIDC issuer/subject pair; no such identity is inferred. Anonymous delegation is not identity-merged. Browser authentication and resumption grants remain unimplemented.
+
 ## Compatibility
 
 | <<dist("linux")>> | <<dist("darwin")>> | <<dist("windows")>> |
