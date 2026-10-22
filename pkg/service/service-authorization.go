@@ -58,6 +58,13 @@ func (this *service) authorizePublicKey(ctx essh.Context, key essh.PublicKey, ve
 		l.Debug("public key rejected")
 		return false, nil
 	}
+	if !verified {
+		// An accepted eligibility probe is not authentication. In particular, do
+		// not publish it in the connection context, track the session, schedule
+		// OIDC refresh or emit authentication-completed events here.
+		l.Debug("public key candidate accepted; awaiting possession proof")
+		return true, nil
+	}
 	if compatible, err := authReq.IsSessionCompatible(auth); err != nil {
 		return false, errors.Newf(errors.System, "cannot validate environment session compatibility: %w", err)
 	} else if !compatible {
@@ -84,14 +91,14 @@ func (this *service) authorizePublicKey(ctx essh.Context, key essh.PublicKey, ve
 
 func (this *service) verifiedPublicKeyAuditCallback(ctx essh.Context) func(gossh.ConnMetadata, gossh.PublicKey, *gossh.Permissions, string) (*gossh.Permissions, error) {
 	return func(_ gossh.ConnMetadata, key gossh.PublicKey, permissions *gossh.Permissions, _ string) (*gossh.Permissions, error) {
-		if _, isCertificate := key.(*gossh.Certificate); isCertificate {
-			accepted, err := this.authorizePublicKey(ctx, key, true)
-			if err != nil {
-				return nil, err
-			}
-			if !accepted {
-				return nil, errors.User.Newf("user certificate rejected after public key verification")
-			}
+		// x/crypto may cache the unsigned callback result. Always resolve again
+		// after its signature check, for raw keys as well as user certificates.
+		accepted, err := this.authorizePublicKey(ctx, key, true)
+		if err != nil {
+			return nil, err
+		}
+		if !accepted {
+			return nil, errors.User.Newf("public key rejected after possession verification")
 		}
 		auth, _ := ctx.Value(authorizationCtxKey).(authorization.Authorization)
 		if auth == nil {

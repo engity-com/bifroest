@@ -771,6 +771,9 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizeInteractive(req InteractiveReques
 }
 
 func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authorization, error) {
+	if !isPublicKeyVerified(req) {
+		return this.probePublicKey(req)
+	}
 	fail := func(err error) (Authorization, error) {
 		return nil, fmt.Errorf("cannot restore oidc authorization with public key: %w", err)
 	}
@@ -878,6 +881,7 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (
 		if err != nil {
 			return false, err
 		}
+		auth.remote = req.Connection().Remote()
 		auth.session = candidate
 		auth.sessionsPublicKey = req.RemotePublicKey()
 		accepted, err := req.Validate(auth)

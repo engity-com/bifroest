@@ -102,10 +102,10 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 		return Forbidden(remote), nil
 	}
 	candidate.authorizedKeyPolicy = policy
+	if !isPublicKeyVerified(req) {
+		return candidate, nil
+	}
 	if _, isCert := req.RemotePublicKey().(*ssh.Certificate); isCert {
-		if !isPublicKeyVerified(req) {
-			return candidate, nil
-		}
 		candidate.session, err = this.ensureSessionFor(req, u)
 		if err != nil {
 			return nil, err
