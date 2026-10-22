@@ -59,8 +59,9 @@ type fsConnectionInterceptorStack struct {
 	created    int64
 	active     atomic.Int32
 
-	lastActivity atomic.Int64
-	disposed     atomic.Bool
+	lastActivity     atomic.Int64
+	observedActivity atomic.Int64
+	disposed         atomic.Bool
 }
 
 func (this *fsConnectionInterceptorStack) create() (*fsConnectionInterceptor, error) {
@@ -115,6 +116,11 @@ func (this *fsConnectionInterceptorStack) onConnectionAction() (time.Time, Conne
 	}
 	now := time.Now()
 	nowMilli := now.UnixMilli()
+	for previous := this.observedActivity.Load(); nowMilli > previous; previous = this.observedActivity.Load() {
+		if this.observedActivity.CompareAndSwap(previous, nowMilli) {
+			break
+		}
+	}
 
 	if this.lastActivity.Load()+this.repository.touchThreshold.Milliseconds() < nowMilli {
 		// We only touch the times of the [FsFileLastAccessed] in when the threshold is reached
@@ -145,6 +151,61 @@ func (this *fsConnectionInterceptorStack) onConnectionAction() (time.Time, Conne
 	}
 
 	return deadline, t, nil
+}
+
+func (this *fsConnectionInterceptorStack) Check(ctx context.Context) (time.Time, ConnectionInterceptorResult, error) {
+	if err := ctx.Err(); err != nil {
+		return time.Time{}, ConnectionInterceptorResultNone, err
+	}
+	if this.disposed.Load() {
+		return time.Time{}, ConnectionInterceptorResultDisposed, nil
+	}
+	current, err := this.repository.FindBy(ctx, this.flow, this.id, nil)
+	if err != nil {
+		return time.Time{}, ConnectionInterceptorResultNone, err
+	}
+	info, err := current.Info(ctx)
+	if err != nil {
+		return time.Time{}, ConnectionInterceptorResultNone, err
+	}
+	if info.State() == StateDisposed {
+		return time.Time{}, ConnectionInterceptorResultDisposed, nil
+	}
+	last, err := info.LastAccessed(ctx)
+	if err != nil {
+		return time.Time{}, ConnectionInterceptorResultNone, err
+	}
+	var deadline time.Time
+	var result ConnectionInterceptorResult
+	if idle := this.repository.conf.IdleTimeout.Native(); idle > 0 {
+		at := last.At()
+		if observed := time.UnixMilli(this.observedActivity.Load()); observed.After(at) {
+			at = observed
+		}
+		deadline, result = at.Add(idle), ConnectionInterceptorResultIdle
+	}
+	if maximum := this.repository.conf.MaxTimeout.Native(); maximum > 0 {
+		created, err := info.Created(ctx)
+		if err != nil {
+			return time.Time{}, ConnectionInterceptorResultNone, err
+		}
+		limit := created.At().Add(maximum)
+		if deadline.IsZero() || limit.Before(deadline) {
+			deadline, result = limit, ConnectionInterceptorResultMax
+		}
+	}
+	return deadline, result, nil
+}
+
+func (this *fsConnectionInterceptorStack) OnActivity(ctx context.Context) (time.Time, ConnectionInterceptorResult, error) {
+	deadline, result, err := this.Check(ctx)
+	if err != nil || result == ConnectionInterceptorResultDisposed || !deadline.IsZero() && !time.Now().Before(deadline) {
+		return deadline, result, err
+	}
+	if _, _, err := this.onConnectionAction(); err != nil {
+		return time.Time{}, ConnectionInterceptorResultNone, err
+	}
+	return this.Check(ctx)
 }
 
 type fsConnectionInterceptor struct {

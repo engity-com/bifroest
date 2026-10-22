@@ -85,6 +85,18 @@ func (this *fsInfo) ValidUntil(context.Context) (result time.Time, _ error) {
 		return time.Time{}, err
 	}
 	lat := lastAccessed.At()
+	// In-memory activity bridges the bounded filesystem touch interval. A busy
+	// SSH/neutral connection must not appear idle merely because no Chtimes was
+	// due yet. Reading validity itself never updates this timestamp.
+	this.session.repository.mutex.RLock()
+	if byFlow := this.session.repository.connectionInterceptors[this.Flow()]; byFlow != nil {
+		if stack := byFlow[this.Id()]; stack != nil {
+			if at := time.UnixMilli(stack.observedActivity.Load()); at.After(lat) {
+				lat = at
+			}
+		}
+	}
+	this.session.repository.mutex.RUnlock()
 	if v := this.session.repository.conf.IdleTimeout.Native(); v > 0 {
 		result = lat.Add(v)
 	}
