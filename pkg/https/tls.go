@@ -50,6 +50,8 @@ type TLS struct {
 	lifetime       context.Context
 	cancel         context.CancelFunc
 	preparing      chan struct{}
+	renewing       chan struct{}
+	renewRetry     map[string]time.Time
 	mutex          sync.RWMutex
 	ready          bool
 	closed         bool
@@ -105,6 +107,7 @@ func newTLS(conf *configuration.Http, source CertificateSource, now func() time.
 	return &TLS{
 		domains: domains, explicit: explicit, source: source, startupTimeout: conf.StartupTimeout.Native(), now: now,
 		lifetime: lifetime, cancel: cancel, challenges: make(map[string]*activeChallenge), preparing: make(chan struct{}, 1),
+		renewing: make(chan struct{}, 1), renewRetry: make(map[string]time.Time),
 	}, nil
 }
 
