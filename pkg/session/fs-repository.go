@@ -302,14 +302,9 @@ func (this *FsRepository) loadAndMatch(ctx context.Context, flow configuration.F
 			this.mutex.Unlock()
 			return nil, ctxErr
 		}
-		associationPath, pathErr := this.file(flow, id, FsFileAssociation)
-		if pathErr != nil {
+		if err := this.persistentSessionProtection(flow, id); err != nil {
 			this.mutex.Unlock()
-			return nil, pathErr
-		}
-		if _, err := os.Lstat(associationPath); err == nil || !os.IsNotExist(err) {
-			this.mutex.Unlock()
-			return nil, ErrInvalidAssociation
+			return nil, err
 		}
 		fn, pathErr := this.file(flow, id, FsFileEnvironmentToken)
 		if pathErr != nil {
@@ -363,10 +358,8 @@ func (this *FsRepository) findBy(ctx context.Context, flow configuration.FlowNam
 	f, _, err := this.openRead(flow, id, FsFileSession)
 	if err != nil {
 		if sys.IsNotExist(err) {
-			if path, pathErr := this.file(flow, id, FsFileAssociation); pathErr != nil {
-				return nil, pathErr
-			} else if _, associationErr := os.Lstat(path); associationErr == nil || !os.IsNotExist(associationErr) {
-				return nil, ErrInvalidAssociation
+			if err := this.persistentSessionProtection(flow, id); err != nil {
+				return nil, err
 			}
 			if expectedToExist {
 				this.doFindAutoCleanIfAllowed(ctx, flow, id, opts, "found broken session directory; it was removed entirely", err)
@@ -628,10 +621,8 @@ func (this *FsRepository) doFindAutoCleanIfAllowed(ctx context.Context, flow con
 	if opts.IsAutoCleanUpAllowedFor(ctx, flow, id) {
 		logger := opts.GetLogger(this.logger).
 			Withf("sesion", "%v/%v", flow, id)
-		if path, err := this.file(flow, id, FsFileAssociation); err != nil {
-			return
-		} else if _, err := os.Lstat(path); err == nil || !os.IsNotExist(err) {
-			logger.Warn("preserving session association for operator inspection")
+		if err := this.persistentSessionProtection(flow, id); err != nil {
+			logger.Warn("preserving session ownership/browser binding state for operator inspection")
 			return
 		}
 		if err := this.deleteBy(ctx, flow, id); err != nil {
@@ -679,7 +670,7 @@ func (this *FsRepository) deleteUnexpectedFiles(logger log.Logger, sess *fs) err
 	for _, entry := range entries {
 		name := entry.Name()
 		switch name {
-		case FsFileSession, FsFileLastAccessed, FsFileAccessToken, FsFileEnvironmentToken, FsFileAssociation:
+		case FsFileSession, FsFileLastAccessed, FsFileAccessToken, FsFileEnvironmentToken, FsFileAssociation, FsFileBrowserBindings:
 			// Valid filename
 			continue
 		}
@@ -734,7 +725,7 @@ func fsPathContainsEnvironmentToken(path string) (bool, error) {
 		if walkErr != nil {
 			return walkErr
 		}
-		if entry.Name() == FsFileAssociation {
+		if entry.Name() == FsFileAssociation || entry.Name() == FsFileBrowserBindings {
 			present = true
 			return iofs.SkipAll
 		}

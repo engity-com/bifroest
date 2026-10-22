@@ -61,6 +61,11 @@ func (this *fs) BindSessionAssociation(ctx context.Context, association Associat
 	if current.info.VState != StateNew {
 		return fmt.Errorf("%w: established legacy session needs explicit migration", ErrAssociationConflict)
 	}
+	if path, err := this.repository.file(this.flow, this.id, FsFileBrowserBindings); err != nil {
+		return err
+	} else if _, err := os.Lstat(path); err == nil || !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%w: existing browser binding state requires explicit migration", ErrAssociationConflict)
+	}
 	if path, err := this.repository.file(this.flow, this.id, FsFileEnvironmentToken); err != nil {
 		return err
 	} else if exists, err := fsEnvironmentTokenExists(path); err != nil {
