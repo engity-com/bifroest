@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -78,6 +79,14 @@ func (this *FsRepository) ResolveAssociatedSession(ctx context.Context, request 
 		if errors.Is(err, ErrNoSuchSession) {
 			return true, nil
 		}
+		// FindBy reports association-bearing damaged entries as
+		// ErrInvalidAssociation. A corrupt, unbound legacy entry is not an
+		// ownership candidate: preserve it for management diagnostics without
+		// preventing a fresh verified management login in the same flow.
+		if errors.Is(err, ErrCorruptSession) {
+			this.logger().With("flow", request.Flow).With("sessionId", id).Warn("preserving corrupt unbound session during association selection")
+			return true, nil
+		}
 		if err != nil {
 			return false, err
 		}
@@ -93,7 +102,15 @@ func (this *FsRepository) ResolveAssociatedSession(ctx context.Context, request 
 		if err != nil || !valid {
 			return err == nil, err
 		}
-		target, err := request.ResolveTarget(ctx, Reference{request.Flow, id})
+		info, err := candidate.Info(ctx)
+		if err != nil {
+			return false, err
+		}
+		created, err := info.Created(ctx)
+		if err != nil {
+			return false, err
+		}
+		target, err := request.ResolveTarget(ctx, Reference{Flow: request.Flow, Id: id, Created: created})
 		if err != nil {
 			return false, err
 		}
@@ -145,7 +162,13 @@ func (this *FsRepository) ResolveAssociatedSession(ctx context.Context, request 
 	if err != nil {
 		return nil, false, err
 	}
-	target, err := request.ResolveTarget(ctx, Reference{request.Flow, Id(id)})
+	createdAt := time.Now().Truncate(time.Millisecond)
+	preview := &fs{}
+	preview.init(this, request.Flow, Id(id))
+	preview.info.createdAt = createdAt
+	preview.info.VRemoteUser = request.Remote.User()
+	preview.info.VRemoteHost = request.Remote.Host().Clone()
+	target, err := request.ResolveTarget(ctx, Reference{Flow: request.Flow, Id: Id(id), Created: &preview.info.created})
 	if err != nil {
 		return nil, false, err
 	}
@@ -161,7 +184,7 @@ func (this *FsRepository) ResolveAssociatedSession(ctx context.Context, request 
 	if err := validateFsRepositoryProcessLock(this.processLock, this.processLockPath()); err != nil {
 		return nil, false, err
 	}
-	created, err := this.create(ctx, request.Flow, request.Remote, request.AuthorizationToken, Id(id), &association)
+	created, err := this.create(ctx, request.Flow, request.Remote, request.AuthorizationToken, Id(id), &association, createdAt)
 	return created, err == nil, err
 }
 

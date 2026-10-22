@@ -207,7 +207,7 @@ func (this *FsRepository) Create(ctx context.Context, flow configuration.FlowNam
 }
 
 // create holds mutex through publication of metadata, tokens and association.
-func (this *FsRepository) create(ctx context.Context, flow configuration.FlowName, remote net.Remote, authToken []byte, id Id, association *Association) (Session, error) {
+func (this *FsRepository) create(ctx context.Context, flow configuration.FlowName, remote net.Remote, authToken []byte, id Id, association *Association, creationTimes ...time.Time) (Session, error) {
 
 	fail := func(err error) (Session, error) {
 		return nil, fmt.Errorf("cannot create session for user %v at flow %v: %w", remote, flow, err)
@@ -243,6 +243,9 @@ func (this *FsRepository) create(ctx context.Context, flow configuration.FlowNam
 	var sess fs
 	sess.info.VState = StateNew
 	sess.info.createdAt = time.Now().Truncate(time.Millisecond)
+	if len(creationTimes) > 0 {
+		sess.info.createdAt = creationTimes[0]
+	}
 	sess.info.VRemoteUser = remote.User()
 	sess.info.VRemoteHost = remote.Host()
 	sess.init(this, flow, id)

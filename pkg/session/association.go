@@ -145,6 +145,9 @@ func AssociationOf(ctx context.Context, sess Session) (*Association, error) {
 type Reference struct {
 	Flow configuration.FlowName
 	Id   Id
+	// Created is immutable persisted creation metadata for an existing candidate,
+	// or the exact prospective metadata which creation will persist on success.
+	Created InfoCreated
 }
 type TargetResolver func(context.Context, Reference) (Target, error)
 
