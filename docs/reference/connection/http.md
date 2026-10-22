@@ -9,7 +9,7 @@ toc_depth: 5
 
 HTTP is a separate incoming transport for the same [flows](../flow.md), not SSH tunneled over WebSocket. Omission of the root `http` block means disabled. Merely configuring domains, TLS or customization does not enable it. When the endpoint is available, all flows are HTTP-eligible by default unless their individual `http.enabled` is false; `ssh.enabled` remains independent.
 
-Configuration loading performs no certificate-file reads, key generation, ACME requests or asset-file reads. The schema supports explicit PEM certificate/key pairs, ACME, or both. Certificate validity, key matching, complete domain coverage, TLS-ALPN-01 issuance/renewal and joint listener startup remain runtime implementation work, not guarantees of successful schema validation.
+Configuration loading performs no certificate-file reads, key generation, ACME requests or asset-file reads. The schema supports explicit PEM certificate/key pairs, ACME, or both. A separate [TLS preparation core](#tls-preparation-core) now implements explicit certificate checks and an all-domain readiness barrier, but is **not yet integrated into service startup**. Actual ACME issuance/renewal and joint listener startup remain implementation work, not guarantees of successful schema validation.
 
 ## Properties
 
@@ -69,7 +69,7 @@ Use real YAML booleans for flags and duration strings such as `30s`. Unknown fie
 Under `http.tls`:
 
 <<property("certificates", array_ref("Certificate", "#certificate"), id_prefix="tls-", heading=3)>>
-:   Ordered explicit certificate sources. Runtime selection will prefer a matching explicit certificate before ACME for remaining allowed domains. A list can cover multiple domains; its actual certificate contents are not inspected by configuration validation.
+:   Ordered explicit certificate sources. The TLS preparation core prefers the first matching explicit certificate before consulting a certificate source for remaining allowed domains. A list can cover multiple domains; its actual certificate contents are not inspected by configuration validation.
 
 <<property("acme", "ACME", "#acme", id_prefix="tls-", heading=3)>>
 :   Optional automated certificate source. It remains disabled unless explicitly enabled, even if no explicit certificate is configured.
@@ -83,6 +83,20 @@ Each entry under `http.tls.certificates`:
 
 <<property("privateKeyFile", "File Path", "../data-type.md#file-path", required=True, id_prefix="certificate-", heading=4)>>
 :   Local PEM private key file, **not inline private key material**. Configuration errors do not echo rejected key-field values.
+
+### TLS preparation core
+
+The server-side `pkg/https` package is tested independently of the service listener. It currently provides:
+
+- Bounded certificate/key file reads, leaf/key matching, validity intervals, server-authentication usage, and signatures/order of supplied certificate-chain entries. Every configured pair must be valid and cover at least one allowed domain; a broken explicit pair does not silently fall back to ACME.
+- Self-signed and private-CA certificates without requiring the server's OS public root store. The final supplied certificate is the explicit chain-validation anchor; a root need not be sent in a bundle. An omitted issuer cannot be verified locally. **Browser trust, missing-issuer resolution and revocation remain client checks**, not properties asserted by the server's preparation result.
+- The existing private-file protection policy: Unix service ownership and no group/other access; on Windows a protected owner/SYSTEM access-control list. Explicit paths are resolved before loading. The loader does not repair permissions, generate missing keys or overwrite files. RSA keys require at least 2048 bits, ECDSA at least 256 bits; Ed25519 is also supported.
+- SNI selection strictly limited to configured domains, even when a wildcard/SAN certificate covers more. Missing SNI is rejected for DNS names and ambiguous selections. Because browsers omit SNI for IP URLs, a sole explicitly configured IP literal can be selected without SNI; the future HTTP boundary must still enforce Host/SNI/Origin rules.
+- An atomic initial readiness barrier: normal TLS handshakes fail until **all** configured domains have valid certificates. Before readiness, only an actively installed, domain-bound `acme-tls/1` proof is available. ClientHello requests never trigger certificate acquisition.
+- Strict, temporary TLS-ALPN-01 proof validation: a single DNS name, the critical ACME SHA-256 identifier extension, self-signature and matching key. Cancellation/timeout/close invalidates proofs; releasing an older proof cannot remove a newer one. Proof certificates cannot become application certificates.
+- Context-bound preparation and shutdown with no detached acquisition/renewal goroutines. TLS uses a minimum of TLS 1.2. Session tickets are initially disabled so resumption cannot bypass readiness or certificate-lifetime checks; supplied-chain expiration is rechecked for new handshakes.
+
+Tests include actual TLS and TLS-ALPN proof handshakes, including private CA and IP cases. These tests do **not** contact an ACME CA or prove issuance, persistent account/certificate storage, renewal, browser authentication, or the joint SSH/HTTPS listener lifecycle. The service startup guard remains in place until that integration is complete.
 
 ### ACME
 
