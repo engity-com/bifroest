@@ -95,6 +95,10 @@ type recordedSessionPty struct {
 	hasPty  bool
 }
 
+func sessionRecordingTerminal(pty recordedSessionPty) (recording.CastTerminal, error) {
+	return executionRecordingTerminal(terminalRecordingPty{pty: bssh.TerminalPty(pty.pty), hasPty: pty.hasPty})
+}
+
 func newRecordedSession(session essh.Session, sink recordingSink, elapsed func() time.Duration, onFailure func(error)) (*recordedSession, error) {
 	if isNilDependency(session) {
 		return nil, errors.System.Newf("nil SSH session for Recording")
