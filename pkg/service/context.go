@@ -75,6 +75,13 @@ func (this *authorizeRequest) Connection() bconn.Connection {
 	return this.connection
 }
 
+func (this *authorizeRequest) Selection() bconn.Selection {
+	if selected, ok := this.connection.(bconn.SelectionProvider); ok {
+		return selected.Selection()
+	}
+	return bconn.Selection{Transport: bconn.TransportSsh}
+}
+
 func (this *authorizeRequest) Sessions() session.Repository {
 	return &compatibleSessionRepository{
 		Repository:       this.service.sessions,

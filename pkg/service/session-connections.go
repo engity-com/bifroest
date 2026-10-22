@@ -36,6 +36,13 @@ type sessionConnectionRegistry struct {
 	terminalsClosed bool
 }
 
+func (this *sessionConnectionRegistry) isRevoked(sess session.Session) bool {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	entry := this.sessions[sessionConnectionKey{sess.Flow(), sess.Id()}]
+	return entry != nil && entry.revoked
+}
+
 func (this *sessionConnectionRegistry) track(conn managedConnection, sess session.Session) {
 	if isNilDependency(conn) || sess == nil {
 		return
