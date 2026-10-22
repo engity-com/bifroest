@@ -132,7 +132,7 @@ func (this *HtpasswdAuthorizer) lookupEntry(req Request, password string) (auth 
 	return auth, accepted, nil
 }
 
-func (this *HtpasswdAuthorizer) ensureSessionFor(req Request) (session.Session, error) {
+func (this *HtpasswdAuthorizer) ensureSessionFor(req Request, auth *htpasswd) (session.Session, error) {
 	fail := func(err error) (session.Session, error) {
 		return nil, err
 	}
@@ -149,6 +149,9 @@ func (this *HtpasswdAuthorizer) ensureSessionFor(req Request) (session.Session, 
 	at, err := json.Marshal(buf)
 	if err != nil {
 		return failf("cannot marshal authorization token: %w", err)
+	}
+	if sess, handled, err := resolveAuthenticatedSession(req, auth, at); handled || err != nil {
+		return sess, err
 	}
 
 	sess, err := req.Sessions().FindByAccessToken(req.Context(), at, (&session.FindOpts{}).WithPredicate(
@@ -182,7 +185,7 @@ func (this *HtpasswdAuthorizer) AuthorizePassword(req PasswordRequest) (Authoriz
 		return Forbidden(req.Connection().Remote()), nil
 	}
 
-	sess, err := this.ensureSessionFor(req)
+	sess, err := this.ensureSessionFor(req, auth)
 	if err != nil {
 		return failf("cannot create session: %w", err)
 	}
@@ -212,7 +215,7 @@ func (this *HtpasswdAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Au
 		return Forbidden(req.Connection().Remote()), nil
 	}
 
-	sess, err := this.ensureSessionFor(req)
+	sess, err := this.ensureSessionFor(req, auth)
 	if err != nil {
 		return failf("cannot create session: %w", err)
 	}

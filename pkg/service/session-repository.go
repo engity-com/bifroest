@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 
 	"golang.org/x/crypto/ssh"
 
@@ -58,12 +59,62 @@ func (this *compatibleSessionRepository) withCompatibility(opts *session.FindOpt
 		}
 		return checker.IsSessionCompatible(ctx, candidate)
 	})
+	result.Predicates = append(result.Predicates, this.associationCompatible)
 	return result
+}
+
+// A remembered key or legacy token lookup must not bypass an existing immutable
+// association. Unbound legacy sessions retain their independent proof-based path.
+func (this *compatibleSessionRepository) associationCompatible(ctx context.Context, candidate session.Session) (bool, error) {
+	association, err := session.AssociationOf(ctx, candidate)
+	if errors.Is(err, session.ErrAssociationUnavailable) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if association == nil {
+		return true, nil
+	}
+	auth := this.authorizeRequest.authorization
+	if auth == nil {
+		return true, nil
+	} // Unsigned OIDC probe: checked again after proof.
+	identity, err := authorization.AuthenticationOf(auth)
+	if err != nil {
+		return false, err
+	}
+	if auth.Flow() != candidate.Flow() || !association.SameSubject(identity) {
+		return false, nil
+	}
+	stored, err := candidate.AuthorizationToken(ctx)
+	if err != nil {
+		return false, err
+	}
+	if len(stored) == 0 {
+		return false, nil
+	}
+	resolver, ok := environment.SessionTargetResolverFor(this.environments, auth.Flow())
+	if !ok {
+		return false, nil
+	}
+	base := &environmentContext{service: this.authorizeRequest.service, connection: this.authorizeRequest.connection, authorization: auth, executionContext: ctx}
+	info, err := candidate.Info(ctx)
+	if err != nil {
+		return false, err
+	}
+	created, err := info.Created(ctx)
+	if err != nil {
+		return false, err
+	}
+	target, err := resolver.ResolveSessionTarget(newAssociationTargetContext(ctx, base, session.Reference{Flow: candidate.Flow(), Id: candidate.Id(), Created: created}))
+	return err == nil && target == association.Target, err
 }
 
 type sessionCompatibilityAuthorization struct {
 	authorization.Authorization
-	session session.Session
+	session      session.Session
+	fieldContext authorization.ContextEnabled
 }
 
 func (this *sessionCompatibilityAuthorization) FindSession() session.Session {
@@ -96,6 +147,9 @@ func (this *sessionCompatibilityAuthorization) GetField(name string, ctx authori
 	})
 	if !ok {
 		return nil, false, nil
+	}
+	if this.fieldContext != nil {
+		ctx = this.fieldContext
 	}
 	return provider.GetField(name, ctx)
 }
