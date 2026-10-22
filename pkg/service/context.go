@@ -49,7 +49,7 @@ func (this *remote) String() string {
 
 type authorizeRequest struct {
 	service       *service
-	connection    *connection
+	connection    bconn.LifetimeAware
 	authorization authorization.Authorization
 }
 
@@ -68,7 +68,7 @@ func (this *authorizeRequest) GetField(name string) (any, bool, error) {
 }
 
 func (this *authorizeRequest) Context() context.Context {
-	return this.connection.context
+	return this.connection.Lifetime()
 }
 
 func (this *authorizeRequest) Connection() bconn.Connection {
@@ -197,7 +197,7 @@ func markInteractiveClientDisconnect(err error) error {
 
 type environmentContext struct {
 	service          *service
-	connection       *connection
+	connection       bconn.LifetimeAware
 	authorization    authorization.Authorization
 	executionContext context.Context
 }
@@ -226,7 +226,7 @@ func (this *environmentContext) Context() context.Context {
 	if this.executionContext != nil {
 		return this.executionContext
 	}
-	return this.connection.context
+	return this.connection.Lifetime()
 }
 
 func (this *environmentContext) Connection() bconn.Connection {
@@ -375,7 +375,7 @@ func (this *environmentTask) TaskType() environment.TaskType {
 	return this.taskType
 }
 
-func (this *environmentTask) EnvironmentVariables() configuration.EnvironmentVariables {
+func (this *environmentContext) EnvironmentVariables() configuration.EnvironmentVariables {
 	flowName := this.Authorization().Flow()
 	for i := range this.service.Configuration.Flows {
 		flow := &this.service.Configuration.Flows[i]

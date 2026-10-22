@@ -176,7 +176,10 @@ func (this *Service) prepareContext(ctx context.Context) (svc *service, err erro
 	svc = &service{
 		Service:             this,
 		connectionLifecycle: newConnectionLifecycle(),
+		executions:          newConnectionLifecycle(),
+		terminalAdmissions:  newConnectionLifecycle(),
 	}
+	svc.terminalContext, svc.cancelTerminals = context.WithCancel(context.Background())
 	resourcesOwnedByService := false
 	defer func(prepared *service) {
 		if !resourcesOwnedByService {
@@ -878,6 +881,10 @@ type service struct {
 
 	activeConnections   atomic.Int64
 	connectionLifecycle *connectionLifecycle
+	executions          *connectionLifecycle
+	terminalAdmissions  *connectionLifecycle
+	terminalContext     context.Context
+	cancelTerminals     context.CancelFunc
 }
 
 type auditlogRuntimeState struct {
@@ -934,6 +941,25 @@ func (this *service) Close() (rErr error) {
 
 // Failed preparation owns the same resources but must not start remote flushing.
 func (this *service) close(flush bool) (rErr error) {
+	if this.terminalAdmissions != nil {
+		this.terminalAdmissions.stop()
+	}
+	if this.cancelTerminals != nil {
+		this.cancelTerminals()
+	}
+	if this.connectionLifecycle != nil {
+		this.connectionLifecycle.stop()
+	}
+	if this.executions != nil {
+		this.executions.stop()
+	}
+	rErr = goerrors.Join(rErr, this.sessionConnections.closeTerminals())
+	if this.terminalAdmissions != nil {
+		this.terminalAdmissions.waitUntilDrained()
+	}
+	if this.executions != nil {
+		this.executions.waitUntilDrained()
+	}
 	if this.managementApplication != nil {
 		defer common.KeepCloseError(&rErr, this.managementApplication)
 	}
@@ -949,7 +975,7 @@ func (this *service) close(flush bool) (rErr error) {
 	if this.https != nil {
 		defer common.KeepCloseError(&rErr, this.https)
 	}
-	return nil
+	return rErr
 }
 
 func (this *service) closeRecording(flush bool) (result error) {

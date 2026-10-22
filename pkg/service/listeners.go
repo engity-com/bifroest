@@ -154,7 +154,17 @@ func (this *service) runListeners(parent context.Context, bind func(bnet.Address
 	}
 	shutdown.startedAt = time.Now()
 	this.connectionLifecycle.stop()
+	if this.terminalAdmissions != nil {
+		this.terminalAdmissions.stop()
+	}
+	if this.cancelTerminals != nil {
+		this.cancelTerminals()
+	}
+	if this.executions != nil {
+		this.executions.stop()
+	}
 	cancel(shutdown.cause)
+	rErr = errors.Join(rErr, this.sessionConnections.closeTerminals())
 	// Stop all accepting immediately; HTTP grace and SSH grace run concurrently.
 	// Close only raw listeners here; the servers own active connections.
 	closeInputs()
