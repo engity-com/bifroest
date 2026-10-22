@@ -45,6 +45,7 @@ func ShowFlow(output io.Writer, selected cliformat.Format, conf *configuration.C
 		}
 		encoded, err := yaml.Marshal(map[string]any{
 			"name": flow.Name, "auditlog": flow.Auditlog,
+			"ssh": &flow.Ssh, "http": &flow.Http, "discoverAsSlug": flow.DiscoverAsSlug,
 			"requirement":   &flow.Requirement,
 			"authorization": &flow.Authorization,
 			"environment":   &flow.Environment,

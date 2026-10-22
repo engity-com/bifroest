@@ -9,6 +9,7 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/session"
 )
@@ -29,11 +30,12 @@ func NewAuthorizerFacadeWithObserver(ctx context.Context, flows *configuration.F
 		}
 	}
 
-	return &AuthorizerFacade{entries: entries, observer: observer}, nil
+	return &AuthorizerFacade{entries: entries, flows: append(configuration.Flows(nil), (*flows)...), observer: observer}, nil
 }
 
 type AuthorizerFacade struct {
 	entries  []facaded
+	flows    configuration.Flows
 	observer FlowAuthorizationObserver
 }
 
@@ -84,18 +86,22 @@ type FlowAuthorizationObservation struct {
 type FlowAuthorizationObserver func(context.Context, FlowAuthorizationObservation) error
 
 func (this *AuthorizerFacade) AuthorizePublicKey(req PublicKeyRequest) (Authorization, error) {
+	selection, candidates, err := this.candidatesFor(req)
+	if err != nil {
+		return nil, err
+	}
 	_, isCertificate := req.RemotePublicKey().(*ssh.Certificate)
 	phase := FlowAuthorizationPhaseCandidate
 	if isPublicKeyVerified(req) {
 		phase = FlowAuthorizationPhaseVerified
 	}
-	for _, candidate := range this.entries {
+	for _, candidate := range candidates {
 		if isCertificate {
 			if _, supported := candidate.CloseableAuthorizer.(userCertificateAuthorizer); !supported {
 				continue
 			}
 		}
-		if ok, err := candidate.canHandle(req); err != nil {
+		if ok, err := candidate.canHandle(req, selection); err != nil {
 			return nil, fmt.Errorf("[%v] %w", candidate.flow, err)
 		} else if ok {
 			resp, err := candidate.AuthorizePublicKey(req)
@@ -111,13 +117,17 @@ func (this *AuthorizerFacade) AuthorizePublicKey(req PublicKeyRequest) (Authoriz
 			}
 		}
 	}
-	this.logNoMatchingFlow(req)
+	this.logNoMatchingFlow(req, selection, candidates)
 	return Forbidden(req.Connection().Remote()), nil
 }
 
 func (this *AuthorizerFacade) AuthorizePassword(req PasswordRequest) (Authorization, error) {
-	for _, candidate := range this.entries {
-		if ok, err := candidate.canHandle(req); err != nil {
+	selection, candidates, err := this.candidatesFor(req)
+	if err != nil {
+		return nil, err
+	}
+	for _, candidate := range candidates {
+		if ok, err := candidate.canHandle(req, selection); err != nil {
 			return nil, fmt.Errorf("[%v] %w", candidate.flow, err)
 		} else if ok {
 			resp, err := candidate.AuthorizePassword(req)
@@ -133,13 +143,17 @@ func (this *AuthorizerFacade) AuthorizePassword(req PasswordRequest) (Authorizat
 			}
 		}
 	}
-	this.logNoMatchingFlow(req)
+	this.logNoMatchingFlow(req, selection, candidates)
 	return Forbidden(req.Connection().Remote()), nil
 }
 
 func (this *AuthorizerFacade) AuthorizeInteractive(req InteractiveRequest) (Authorization, error) {
-	for _, candidate := range this.entries {
-		if ok, err := candidate.canHandle(req); err != nil {
+	selection, candidates, err := this.candidatesFor(req)
+	if err != nil {
+		return nil, err
+	}
+	for _, candidate := range candidates {
+		if ok, err := candidate.canHandle(req, selection); err != nil {
 			return nil, fmt.Errorf("[%v] %w", candidate.flow, err)
 		} else if ok {
 			resp, err := candidate.AuthorizeInteractive(req)
@@ -155,18 +169,43 @@ func (this *AuthorizerFacade) AuthorizeInteractive(req InteractiveRequest) (Auth
 			}
 		}
 	}
-	this.logNoMatchingFlow(req)
+	this.logNoMatchingFlow(req, selection, candidates)
 	return Forbidden(req.Connection().Remote()), nil
 }
 
-func (this *AuthorizerFacade) logNoMatchingFlow(req Request) {
-	for _, candidate := range this.entries {
-		matches, err := candidate.canHandle(req)
+func (this *AuthorizerFacade) logNoMatchingFlow(req Request, selection connection.Selection, candidates []facaded) {
+	for _, candidate := range candidates {
+		matches, err := candidate.canHandle(req, selection)
 		if err != nil || matches {
 			return
 		}
 	}
 	req.Connection().Logger().Debug("no flow matches requested user")
+}
+
+// Resolve the logical request once. A fixed published slug narrows the entire
+// attempt, including every authentication method, to exactly that flow. Failed
+// requirements or rejected credentials must not expose a generic fallback flow.
+func (this *AuthorizerFacade) candidatesFor(req Request) (connection.Selection, []facaded, error) {
+	selection, err := connection.SelectionOf(req)
+	if err != nil {
+		return connection.Selection{}, nil, err
+	}
+	if selection.Transport == connection.TransportHttp {
+		flow, fixed, err := this.flows.ResolveHttpSlug(selection.Host, selection.Slug)
+		if err != nil {
+			return connection.Selection{}, nil, err
+		}
+		if fixed {
+			for index := range this.entries {
+				if this.entries[index].flow == flow {
+					return selection, this.entries[index : index+1], nil
+				}
+			}
+			return connection.Selection{}, nil, errors.System.Newf("published HTTP flow has no authorizer")
+		}
+	}
+	return selection, this.entries, nil
 }
 
 func validateFlowAuthorizationResponse(flow configuration.FlowName, auth Authorization, err error) (Authorization, error) {
@@ -238,6 +277,8 @@ type facaded struct {
 
 	flow        configuration.FlowName
 	requirement *configuration.Requirement
+	ssh         configuration.FlowSsh
+	http        configuration.FlowHttp
 }
 
 func (this *facaded) newFrom(ctx context.Context, flow *configuration.Flow) error {
@@ -257,20 +298,27 @@ func (this *facaded) newFrom(ctx context.Context, flow *configuration.Flow) erro
 	this.CloseableAuthorizer = rets[0].Interface().(CloseableAuthorizer)
 	this.requirement = &flow.Requirement
 	this.flow = flow.Name
+	this.ssh = flow.Ssh
+	this.http = flow.Http
 	return nil
 }
 
-func (this *facaded) canHandle(req Request) (bool, error) {
-	incl, excl := this.requirement.IncludedRequestingName, this.requirement.ExcludedRequestingName
-
-	if !incl.IsZero() && !incl.MatchString(req.Connection().Remote().User()) {
-		return false, nil
+func (this *facaded) canHandle(req Request, selection connection.Selection) (bool, error) {
+	name := req.Connection().Remote().User()
+	switch selection.Transport {
+	case connection.TransportSsh:
+		return this.ssh.IsEnabled() && this.requirement.MatchesSsh(name), nil
+	case connection.TransportHttp:
+		if !this.http.IsEnabled() {
+			return false, nil
+		}
+		if !this.http.RequestUserEnabled() && name != "" {
+			return false, nil
+		}
+		return this.requirement.MatchesHttp(name, selection.Host, selection.Slug), nil
+	default:
+		return false, errors.User.Newf("unsupported incoming transport")
 	}
-	if !excl.IsZero() && excl.MatchString(req.Connection().Remote().User()) {
-		return false, nil
-	}
-
-	return true, nil
 }
 
 var (
