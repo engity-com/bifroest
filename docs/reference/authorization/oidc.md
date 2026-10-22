@@ -97,6 +97,12 @@ Positive maximum time without successful refresh verification during transient i
 
 For `lostAccess`, a refresh is scheduled before this deadline if the configured access-token percentage would be later. A session that has already exceeded the deadline is disposed even if the identity provider becomes available again.
 
+### Session sharing
+
+With the filesystem session repository and built-in target resolvers, regular device logins with the same verified issuer/subject, flow and effective target can reuse a [session association](../session/fs.md#session-association-groundwork), independently of the requesting name. Each connection keeps its freshly verified claims. Configurations without verified identity artifacts retain their previous allocation path rather than inferring identity from a name or unverified JWT.
+
+The retained grant is checked under the same lock as reconnect and background refresh. A fresh login cannot replace a rotating refresh chain, bypass pending verification or reset the retained grant's verification deadline. With `lostAccess`, detected grant loss revokes the old session's connections; a regular fresh login may instead receive a new session. Temporary retained-grant verification failures fail the login without replacing its credentials. Only when both refresh and forced disposal are disabled can a newer verified login update the non-refreshing snapshot under that lock. Removed credentials are not restored. Browser login and browser RememberMe remain unimplemented.
+
 ### Session cleanup
 
 When a session is disposed (for example, after expiry or lost OIDC access), housekeeping removes the local OIDC authorization token after successful session and environment disposal, without contacting the identity provider or restoring the authorization. This applies both before and after the session's retention period ends. After retention, housekeeping can delete the session once environment cleanup succeeds, subject to the configured [audit failure policy](../housekeeping.md#cleanup-guarantees). Bifröst does not revoke access or refresh tokens at the identity provider; OIDC disposal only removes the local token.
