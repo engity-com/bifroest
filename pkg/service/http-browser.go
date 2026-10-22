@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/authorization"
 	bnet "github.com/engity-com/bifroest/pkg/net"
 )
 
@@ -37,26 +38,41 @@ type webPeerBudget struct {
 }
 
 type webService struct {
-	service    *service
-	ctx        context.Context
-	cancel     context.CancelFunc
-	operations *connectionLifecycle
-	mutex      sync.Mutex
-	peers      map[netip.Addr]*webPeerBudget
-	active     int
-	access     map[[32]byte]*webAccess
-	closeOnce  sync.Once
-	closeErr   error
+	service      *service
+	ctx          context.Context
+	cancel       context.CancelFunc
+	operations   *connectionLifecycle
+	mutex        sync.Mutex
+	peers        map[netip.Addr]*webPeerBudget
+	active       int
+	access       map[[32]byte]*webAccess
+	attempts     map[[32]byte]*webLoginAttempt
+	loginWorkers *connectionLifecycle
+	closeOnce    sync.Once
+	closeErr     error
 }
 
 func newWebService(svc *service) *webService {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &webService{service: svc, ctx: ctx, cancel: cancel, operations: newConnectionLifecycle(), peers: make(map[netip.Addr]*webPeerBudget), access: make(map[[32]byte]*webAccess)}
+	return &webService{service: svc, ctx: ctx, cancel: cancel, operations: newConnectionLifecycle(), loginWorkers: newConnectionLifecycle(), peers: make(map[netip.Addr]*webPeerBudget), access: make(map[[32]byte]*webAccess), attempts: make(map[[32]byte]*webLoginAttempt)}
 }
 
 // Lazy, bounded cleanup requires no per-token goroutines. Expired permissions
 // with running children remain addressable for logout, never for new access.
 func (this *webService) pruneLocked(now time.Time) {
+	for key, attempt := range this.attempts {
+		attempt.mutex.Lock()
+		expired := !attempt.claiming && (attempt.consumed || attempt.conn.IsClosed())
+		attempt.mutex.Unlock()
+		if expired {
+			select {
+			case <-attempt.done:
+				attempt.stop()
+				delete(this.attempts, key)
+			default:
+			}
+		}
+	}
 	for peer, budget := range this.peers {
 		if budget.active == 0 && now.Sub(budget.since) >= time.Minute {
 			delete(this.peers, peer)
@@ -90,7 +106,7 @@ func (this *webService) admit(peer netip.Addr, login bool) (func(), bool) {
 		budget.requests = 0
 		budget.logins = 0
 	}
-	if budget == nil || this.active >= webMaximumWorkers || budget.active >= webMaximumWorkersPerPeer || budget.requests >= webMaximumRequestsPerMinute || login && (budget.logins >= webMaximumLoginsPerMinute || len(this.access)+this.active >= webMaximumAccess) || this.ctx.Err() != nil {
+	if budget == nil || this.active >= webMaximumWorkers || budget.active >= webMaximumWorkersPerPeer || budget.requests >= webMaximumRequestsPerMinute || login && (budget.logins >= webMaximumLoginsPerMinute || len(this.access)+len(this.attempts)+this.active >= webMaximumAccess) || this.ctx.Err() != nil {
 		this.mutex.Unlock()
 		release()
 		return nil, false
@@ -119,11 +135,18 @@ func (this *webService) Close() error {
 			this.closeErr = goerrors.Join(this.closeErr, value.close())
 		}
 		this.operations.waitUntilDrained()
+		this.loginWorkers.waitUntilDrained()
+		this.mutex.Lock()
+		for _, attempt := range this.attempts {
+			attempt.stop()
+		}
+		this.attempts = make(map[[32]byte]*webLoginAttempt)
+		this.mutex.Unlock()
 	})
 	return this.closeErr
 }
 
-func (this *webService) stop() { this.operations.stop(); this.cancel() }
+func (this *webService) stop() { this.operations.stop(); this.loginWorkers.stop(); this.cancel() }
 
 func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// https.Boundary must already have validated TLS, authority and Origin. This
@@ -137,7 +160,7 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.URL.Path {
-	case webAPI + "login/password", webAPI + "access", webAPI + "logout":
+	case webAPI + "login/password", webAPI + "login/interactive", webAPI + "login/public-key", webAPI + "login/poll", webAPI + "login/reply", webAPI + "login/cancel", webAPI + "access", webAPI + "logout":
 	default:
 		http.NotFound(w, r)
 		return
@@ -152,7 +175,8 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		webError(w, http.StatusBadRequest, "invalid direct peer")
 		return
 	}
-	release, ok := this.admit(peer, r.URL.Path == webAPI+"login/password")
+	isLogin := r.URL.Path == webAPI+"login/password" || r.URL.Path == webAPI+"login/interactive" || r.URL.Path == webAPI+"login/public-key"
+	release, ok := this.admit(peer, isLogin)
 	if !ok {
 		w.Header().Set("Retry-After", "60")
 		webError(w, http.StatusTooManyRequests, "web request limit reached")
@@ -171,16 +195,22 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		readBudget = min(readBudget, conf.ReadHeaderTimeout.Native())
 	}
 	_ = controller.SetReadDeadline(time.Now().Add(readBudget))
+	_ = controller.SetWriteDeadline(time.Now().Add(20 * time.Second))
 	body := r.Body
 	readStopped := make(chan struct{})
-	stopRead := context.AfterFunc(ctx, func() { defer close(readStopped); _ = controller.SetReadDeadline(time.Now()); _ = body.Close() })
+	stopRead := context.AfterFunc(ctx, func() {
+		defer close(readStopped)
+		_ = controller.SetReadDeadline(time.Now())
+		_ = controller.SetWriteDeadline(time.Now())
+		_ = body.Close()
+	})
 	defer func() {
 		if !stopRead() {
 			<-readStopped
 		}
 	}()
 	r = r.WithContext(ctx)
-	values, err := webJSON(w, r)
+	values, err := webJSON(w, r, webRequestFields(r.URL.Path)...)
 	if err != nil {
 		webError(w, http.StatusBadRequest, "invalid JSON request")
 		return
@@ -192,6 +222,10 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == webAPI+"login/password" {
 		this.password(w, r, scope, values)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, webAPI+"login/") {
+		this.handleAttempt(w, r, scope, peer, values)
 		return
 	}
 	if len(values) != 1 {
@@ -234,7 +268,7 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (this *webService) password(w http.ResponseWriter, r *http.Request, scope webScope, values map[string]string) {
-	if len(values) != 3 || len(values["user"]) > 256 || !utf8.ValidString(values["user"]) || strings.ContainsFunc(values["user"], unicode.IsControl) || len(values["password"]) > 4096 {
+	if len(values) != 3 || !validWebLoginUser(values["user"]) || len(values["password"]) > 4096 {
 		webError(w, http.StatusBadRequest, "invalid password request")
 		return
 	}
@@ -250,13 +284,28 @@ func (this *webService) password(w http.ResponseWriter, r *http.Request, scope w
 		webError(w, http.StatusServiceUnavailable, "authentication unavailable")
 		return
 	}
+	this.completeAuthentication(w, r.Context(), conn, auth, audit.AuthenticationMethodPassword)
+}
+
+func validWebLoginUser(user string) bool {
+	return len(user) <= 256 && utf8.ValidString(user) && !strings.ContainsFunc(user, unicode.IsControl)
+}
+
+// Every verified adapter converges here. An attempt token, certificate CA
+// signature or a public-key eligibility decision cannot substitute for proof.
+func (this *webService) completeAuthentication(w http.ResponseWriter, ctx context.Context, conn *webLoginConnection, auth authorization.Authorization, method audit.AuthenticationMethod) {
 	if auth == nil || !auth.IsAuthorized() || auth.FindSession() == nil {
 		webError(w, http.StatusUnauthorized, "authentication denied")
 		return
 	}
-	base := &environmentContext{service: this.service, connection: conn, authorization: auth}
+	if auth.Flow() != auth.FindSession().Flow() || ctx.Err() != nil || conn.IsClosed() {
+		webError(w, http.StatusServiceUnavailable, "authentication unavailable")
+		return
+	}
+	ctx = context.WithValue(ctx, auditConnectionContextKey{}, conn)
+	base := &environmentContext{service: this.service, connection: conn, authorization: auth, executionContext: ctx}
 	if err := this.service.validateTerminalAuthorization(base); err != nil || this.service.sessionConnections.isRevoked(auth.FindSession()) {
-		if auditErr := this.service.recordAuthenticationCompletedFor(conn.Lifetime(), conn, auth, audit.AuthenticationMethodPassword, audit.EventOutcomeDenied, audit.EventReasonSessionIncompatible); auditErr != nil {
+		if auditErr := this.service.recordAuthenticationCompletedFor(ctx, conn, auth, method, audit.EventOutcomeDenied, audit.EventReasonSessionIncompatible); auditErr != nil {
 			webError(w, http.StatusServiceUnavailable, "authentication unavailable")
 			return
 		}
@@ -264,7 +313,7 @@ func (this *webService) password(w http.ResponseWriter, r *http.Request, scope w
 		return
 	}
 	// Mint only after the completed-success audit is durable under its policy.
-	if err := this.service.recordAuthenticationCompletedFor(conn.Lifetime(), conn, auth, audit.AuthenticationMethodPassword, audit.EventOutcomeSuccess, ""); err != nil {
+	if err := this.service.recordAuthenticationCompletedFor(ctx, conn, auth, method, audit.EventOutcomeSuccess, ""); err != nil {
 		webError(w, http.StatusServiceUnavailable, "authentication unavailable")
 		return
 	}
@@ -272,7 +321,7 @@ func (this *webService) password(w http.ResponseWriter, r *http.Request, scope w
 		webError(w, http.StatusServiceUnavailable, "authentication unavailable")
 		return
 	}
-	token, access, err := this.issue(scope, base)
+	token, access, err := this.issue(conn.scope, base)
 	if err != nil {
 		webError(w, http.StatusServiceUnavailable, "web access unavailable")
 		return
@@ -354,13 +403,15 @@ func (this *webService) describe(w http.ResponseWriter, r *http.Request) {
 		RequestUser       bool     `json:"requestUser"`
 		PublishedSlugs    []string `json:"publishedSlugs,omitempty"`
 		Login             string   `json:"passwordLogin"`
+		InteractiveLogin  string   `json:"interactiveLogin"`
+		PublicKeyLogin    string   `json:"publicKeyLogin"`
 		FrontendAvailable bool     `json:"frontendAvailable"`
-	}{scope, requestUser, links, webAPI + "login/password", false})
+	}{scope, requestUser, links, webAPI + "login/password", webAPI + "login/interactive", webAPI + "login/public-key", false})
 }
 
 // The current protocol has a flat string-only payload. Reject duplicate keys,
 // nulls, unknown fields, trailing JSON and private-key/password extras explicitly.
-func webJSON(w http.ResponseWriter, r *http.Request) (map[string]string, error) {
+func webJSON(w http.ResponseWriter, r *http.Request, fields ...string) (map[string]string, error) {
 	contentType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || contentType != "application/json" || len(params) > 1 || params["charset"] != "" && !strings.EqualFold(params["charset"], "utf-8") {
 		return nil, fmt.Errorf("JSON required")
@@ -393,9 +444,11 @@ func webJSON(w http.ResponseWriter, r *http.Request) (map[string]string, error) 
 		if _, exists := result[name]; exists {
 			return nil, fmt.Errorf("duplicate field")
 		}
-		switch name {
-		case "slug", "user", "password":
-		default:
+		allowed := name == "slug"
+		for _, field := range fields {
+			allowed = allowed || name == field
+		}
+		if !allowed {
 			return nil, fmt.Errorf("unknown field")
 		}
 		var raw json.RawMessage
@@ -421,6 +474,21 @@ func webJSON(w http.ResponseWriter, r *http.Request) (map[string]string, error) 
 		return nil, fmt.Errorf("missing slug")
 	}
 	return result, nil
+}
+
+func webRequestFields(path string) []string {
+	switch path {
+	case webAPI + "login/password":
+		return []string{"user", "password"}
+	case webAPI + "login/interactive":
+		return []string{"user"}
+	case webAPI + "login/public-key":
+		return []string{"user", "publicKey"}
+	case webAPI + "login/reply":
+		return []string{"sequence", "answer", "signature"}
+	default:
+		return nil
+	}
 }
 
 func webJSONResponse(w http.ResponseWriter, status int, value any) {
