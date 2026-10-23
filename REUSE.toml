@@ -65,3 +65,9 @@ SPDX-FileCopyrightText = [
   "2024-2026 Engity GmbH",
 ]
 SPDX-License-Identifier = "CC-BY-3.0"
+
+[[annotations]]
+path = "web/licenses/react-remove-scroll-bar-MIT.txt"
+precedence = "override"
+SPDX-FileCopyrightText = "2025 Anton Korzunov <thekashey@gmail.com>"
+SPDX-License-Identifier = "MIT"

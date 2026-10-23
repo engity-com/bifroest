@@ -14,6 +14,16 @@ export interface AccessSnapshot {
 
 interface AccessResponse extends AccessSnapshot { readonly accessToken: string; }
 
+export interface LogoutResult {
+  readonly localState: 'removed' | 'not-owned' | 'changed' | 'unavailable';
+}
+
+async function forgetOwned(handle: BrowserBinding | null | undefined): Promise<LogoutResult> {
+  if (handle === null || handle === undefined) return { localState: 'not-owned' };
+  try { await handle.forgetLocal(); return { localState: 'removed' }; }
+  catch (error) { return { localState: error instanceof RememberMeError && error.code === 'changed' ? 'changed' : 'unavailable' }; }
+}
+
 function accessResponse(value: unknown, scope: Scope): AccessResponse {
   const body = object(value, ['status', 'accessToken', 'expiresAt', 'scope', 'principal', 'environment', 'terminalAvailable']);
   const selected = object(body.scope, ['origin', 'slug']);
@@ -47,7 +57,7 @@ export class WebAccess {
   #closed = false;
   #binding: BrowserBinding | null;
   #enrollment: { handle: BrowserBinding | null; controller: AbortController; done: Promise<void> } | null = null;
-  #logout: Promise<void> | null = null;
+  #logout: Promise<LogoutResult> | null = null;
 
   constructor(http: Http, response: AccessResponse, binding: BrowserBinding | null) {
     this.#http = http;
@@ -120,7 +130,7 @@ export class WebAccess {
   // Stop new use immediately. Server logout is authoritative, including while
   // enrollment is signing/committing; parent closure prevents late enrollment.
   // On failure keep local keys/selectors for explicit retry, never claim logout.
-  async logout(): Promise<void> {
+  async logout(): Promise<LogoutResult> {
     if (this.#logout !== null) return this.#logout;
     this.#closed = true;
     const enrollment = this.#enrollment;
@@ -138,10 +148,10 @@ export class WebAccess {
         if (failed instanceof RememberMeError && failed.code === 'denied' && handle?.binding !== null && handle?.binding !== undefined) await revoke(this.#http, handle);
         else throw failed;
       }
-      if (handle !== null && handle !== undefined) await handle.forgetLocal();
+      return forgetOwned(handle);
     })();
     this.#logout = operation;
-    try { await operation; }
+    try { return await operation; }
     catch (error) { this.#logout = null; throw error; }
   }
 }
@@ -175,10 +185,17 @@ export class BrowserClient {
     return new WebAccess(this.#http, response, handle);
   }
 
-  async forgetRemembered(signal?: AbortSignal): Promise<void> {
+  async forgetRemembered(signal?: AbortSignal): Promise<LogoutResult> {
     const handle = await BrowserBinding.load(this.#scope);
-    if (handle === null) return;
+    if (handle === null) return { localState: 'not-owned' };
+    return this.revokeSelection(handle, signal);
+  }
+
+  // A confirmation dialog must retain the selected handle, not silently adopt
+  // another tab's newer registration between showing the dialog and confirming.
+  async revokeSelection(handle: BrowserBinding, signal?: AbortSignal): Promise<LogoutResult> {
+    if (handle.scope.origin !== this.#scope.origin || handle.scope.slug !== this.#scope.slug) throw new RememberMeError('changed');
     await revoke(this.#http, handle, signal);
-    await handle.forgetLocal(); // CAS protects a newer enrollment in another tab.
+    return forgetOwned(handle); // CAS protects a newer enrollment in another tab.
   }
 }

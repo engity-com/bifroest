@@ -5,12 +5,23 @@
   "type": "module",
   "engines": { "node": ">=24.14.0" },
   "scripts": {
-    "build": "vite build",
+    "build": "npm run build:core && npm run build:app",
+    "build:core": "vite build",
+    "build:app": "vite build --config vite.app.config.ts",
     "check": "tsc --noEmit",
     "test": "vitest run && node test/restart.mjs",
     "test:browser:install": "playwright install chromium --only-shell"
   },
+  "dependencies": {
+    "@mantine/core": "9.7.3",
+    "@mantine/hooks": "9.7.3",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
   "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "@vitest/browser-playwright": "5.0.5",
     "playwright": "1.64.1",
     "typescript": "7.0.2",

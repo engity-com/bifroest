@@ -267,8 +267,23 @@ describe('browser HTTP RememberMe orchestration', () => {
       const newer = await BrowserBinding.prepare(scope, { explicitOptIn: true }); await newer.complete(next);
       return response;
     };
-    await expect(client.forgetRemembered()).rejects.toMatchObject({ code: 'changed' });
+    await expect(client.forgetRemembered()).resolves.toEqual({ localState: 'changed' });
     expect((await BrowserBinding.load(scope))?.binding).toEqual(next);
+  });
+
+  it('revokes the confirmed selection, not another tab registration created while a dialog was open', async () => {
+    const server = new Server(), client = server.client(), access = await client.password('alice', 'correct');
+    await access.remember({ explicitOptIn: true });
+    const selected = (await BrowserBinding.load(scope))!;
+    await selected.forgetLocal();
+    const next: Binding = { flow, sessionId, bindingId: token('bbr1.') };
+    const replacement = await BrowserBinding.prepare(scope, { explicitOptIn: true }); await replacement.complete(next);
+    await expect(client.revokeSelection(selected)).resolves.toEqual({ localState: 'changed' });
+    expect(server.bindings.size).toBe(0);
+    expect((await BrowserBinding.load(scope))?.binding).toEqual(next);
+    const requests = server.requests.length;
+    await expect(new BrowserClient({ ...scope, slug: 'Other' }, server.fetch).revokeSelection(selected)).rejects.toMatchObject({ code: 'changed' });
+    expect(server.requests).toHaveLength(requests);
   });
 
   it('rejects oversized, foreign-scope and redirected grant responses without leaking diagnostics', async () => {
