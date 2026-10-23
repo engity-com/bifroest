@@ -5,7 +5,7 @@ toc_depth: 5
 # HTTP / HTTPS
 
 !!! warning "Incremental browser UI; not a complete workspace yet"
-    Built browser resources now provide a React/Mantine password/RememberMe opt-in and recovery interface, served by Go through the same HTTPS boundary and authorizers as the existing protocols. The terminal UI, interactive/OIDC/key-login dialogs, imported keys and structured browser Management remain incomplete. Local password/interactive resumption is deliberately unavailable until native account-policy rechecks are implemented. Source-only Go builds without generated resources keep the SSH/HTTP APIs and discovery fallback, not an embedded UI. Keep HTTP omitted or disabled unless you intend to expose this incremental feature.
+    Built browser resources now provide React/Mantine password/RememberMe recovery and xterm shell/exec interfaces, served by Go through the same HTTPS boundary and authorizers as the existing protocols. Interactive/OIDC/key-login dialogs, imported keys and structured browser Management remain incomplete. Local password/interactive resumption is deliberately unavailable until native account-policy rechecks are implemented. Source-only Go builds without generated resources keep the SSH/HTTP APIs and discovery fallback, not an embedded UI. Keep HTTP omitted or disabled unless you intend to expose this incremental feature.
 
 HTTP is a separate incoming transport for the same [flows](../flow.md), not SSH tunneled over WebSocket. Omission of the root `http` block means disabled. Merely configuring domains, TLS or customization does not enable it. When the endpoint is available, all flows are HTTP-eligible by default unless their individual `http.enabled` is false; `ssh.enabled` remains independent.
 
@@ -330,7 +330,15 @@ Real Chromium tests cover these HTTP state transitions, cancellation/late replie
 
 The first React 19/Mantine 9 UI uses the same client, en-US message keys and memory-only auto/light/dark appearance. Passwords are not retained in application state, access tokens never enter rendered metadata, and disabled requesting-name collection omits the input and sends an empty name. A successful login stays usable when RememberMe cannot be confirmed. Unknown enrollment and unconfirmed logout remain visibly distinct from success; failed logout blocks new local actions while retaining the owned capability for retry. Remote revocation and explicit local-only removal have separate confirmation dialogs. A dialog retains its selected key/record, so another tab's replacement is not silently adopted. Native UI tests cover actual Go HTTPS, browser restart, unchecked opt-in, interrupted claims, local-only recovery, name-free input, customization, theme changes and CSP enforcement. Login itself still does not provision a workload or acquire an execution lease.
 
-Vite 8/Oxc/Rolldown builds the app and dependency-free client core without Webpack/Babel. Node/browser automation is build/test-only. Run the frontend build before Go compilation to embed the generated assets; an unbuilt source-only checkout remains API/SSH-capable. The terminal UI, interactive/OIDC/key dialogs, imported keys, structured Management and full release/SBOM preparation remain incomplete. See `web/README.md` for development and opt-in native tests.
+Vite 8/Oxc/Rolldown builds the app and dependency-free client core without Webpack/Babel. Node/browser automation is build/test-only. Run the frontend build before Go compilation to embed the generated assets; an unbuilt source-only checkout remains API/SSH-capable. Interactive/OIDC/key dialogs, imported keys, structured Management and full release/SBOM preparation remain incomplete. See `web/README.md` for development and opt-in native tests.
+
+### Owned xterm shell/command UI
+
+An authenticated terminal flow offers an explicit new shell/exec, optional PTY, keyboard/binary input, resize, input EOF and INT/TERM requests. Each start is a fresh shared-driver execution, not reattachment. No automatic reconnect or CLI-based Management workaround is implemented. The first open frame alone carries the tab-memory proof. Registration is not a provisioning guarantee; a clean/abnormal close without a validated exit remains unknown, not status zero. Final renderer jobs drain before publishing an exit status.
+
+Client buffering is bounded: 64 KiB queued stdin, conservative pacing below server byte/message/control budgets, 16 queued controls, native send-buffer backpressure checks, 64 output jobs/256 KiB and five-second render/write budgets. An oversized or stalled queue closes explicitly rather than silently truncating/replaying input. Scrollback is 1000 lines. Timers/resize observers/callbacks are drained or detached on cleanup; old xterm jobs drain before reset so output cannot bleed into a different execution/actor. Remote clipboard, window/title control and URL activation are not enabled. Theme follows the computed UI theme. New-access expiry or a deliberate fresh login does not replace an existing execution; its actor-at-start remains displayed independently of the current login.
+
+The locked xterm 6.0.0 documentOverride fallback has a precedence defect. A narrow version/count-guarded bundling correction, documented in `web/scripts/README.md`, preserves the per-instance Document adapter so style nodes receive the current nonce before insertion. No installed package/global DOM factory/CSP relaxation or upstream webpack build is used. Real Go HTTPS/Chromium tests cover split UTF-8/stderr, input/resize/signals, post-EOF output, validated status 7, actor-changing reauthentication without replacing the old execution, explicit disconnect, abrupt loss, exec/no-PTY and logout with retained sessions. They use a test backend through the real driver, not actual container/ConPTY processes.
 
 ## Browser resources and customization
 
@@ -342,7 +350,7 @@ The app exposes `third-party-licenses.txt` and a conservative `frontend-componen
 
 ## Schema examples
 
-These are complete, parser-checked configuration examples for HTTPS. Apart from the explicit dummy test case, startup requires the indicated certificate/key files or successful ACME issuance for every domain. OIDC device login and terminal execution are available through the protocols above. The built UI currently covers password/RememberMe only; terminal/other-login dialogs and structured browser Management remain incomplete.
+These are complete, parser-checked configuration examples for HTTPS. Apart from the explicit dummy test case, startup requires the indicated certificate/key files or successful ACME issuance for every domain. OIDC device login is available through the protocol above. The built UI covers password/RememberMe and shell/exec; other-login dialogs and structured browser Management remain incomplete.
 
 ### Explicit dummy TLS for local testing
 

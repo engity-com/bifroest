@@ -1,10 +1,10 @@
 # Browser application and client core
 
 The first React 19/Mantine 9 application supports password login, explicit
-RememberMe opt-in, saved-access resumption, confirmed logout/revocation and
-explicit local-only recovery. It uses en-US message keys and memory-only
-auto/light/dark appearance. Terminal UI, interactive/OIDC/key-login dialogs,
-imported keys and structured Management remain incomplete. Vite 8/Oxc/Rolldown
+RememberMe opt-in, saved-access resumption, confirmed logout/revocation,
+explicit local-only recovery and an owned xterm terminal. It uses en-US message
+keys and memory-only auto/light/dark appearance. Interactive/OIDC/key-login
+dialogs, imported keys and structured Management remain incomplete. Vite 8/Oxc/Rolldown
 builds the application and the independently tested, dependency-free HTTP/crypto
 core; there is no Webpack/Babel chain or production Node runtime.
 
@@ -58,7 +58,7 @@ or production CLI subprocess. This is not production HTTPS/login/UI coverage.
 Browser installation is an explicit development/test
 step and does not change the OS/browser trust store. Dependencies and compiler
 versions are locked. Go asset serving now supports per-file FS-before-embed
-overlays and ordered local customization. Xterm, remaining dialogs/Management and
+overlays and ordered local customization. Remaining dialogs/Management and
 complete release/SBOM integration remain subsequent steps.
 
 The dependency-free `web/go.mod` is a tooling boundary, not a second Go runtime
@@ -124,8 +124,49 @@ it actually showed, never silently adopting another tab's replacement.
 The UI leaves existing registrations unchanged on ordinary login. Remote revoke
 and local-only removal have separate confirmation dialogs; local removal never
 claims server logout. Interrupted setup stays visibly uncertain until explicitly
-reconciled. Interactive/OIDC/key-login dialogs, terminal UI and Management remain
+reconciled. Interactive/OIDC/key-login dialogs and Management remain
 subsequent work.
+
+## Terminal ownership and limits
+
+The xterm/fit modules load after terminal-flow authentication. `Start new
+execution` owns exactly one new WebSocket shell/exec, optionally with PTY; no
+automatic reconnect/reattach or management CLI fallback exists. The proof is
+resolved fresh only for the first open message, not stored in the URL,
+subprotocol, terminal output or serialized state. Resize, binary/text input,
+EOF half-close and INT/TERM requests use the existing strict Go wire contract.
+Input is copied/bounded to 64 KiB and paced (4-KiB chunks, conservative 40-KiB/s
+budget, small interactive frames no faster than 22 ms, controls at least 100 ms
+apart, 16 queued controls). Overflow closes with an explicit error instead of
+silently truncating/replaying a paste. Native socket buffering is capped before
+more sends, with a five-second blocked-write budget.
+
+Decoded output frames are at most 16 KiB, at most 64 jobs/256 KiB may queue behind
+one xterm writer, and each renderer job has a five-second budget. The original
+UTF-8 byte stream is passed to xterm without per-frame decoding. Final output is
+drained before a validated uint32 exit is published. Clean/abnormal close without
+an exit is unknown, not status zero. Timers, observers, socket callbacks and
+renderer generations are owned/disposed; old renderer jobs drain before reset so
+they cannot bleed into a new execution/actor. Scrollback is 1000 lines. Remote
+OSC clipboard requests, application-title mutation, window operations and link
+activation are not enabled. Theme follows the same computed UI color scheme.
+
+New-access expiry/reauthentication does not replace a running execution. The
+terminal keeps its immutable actor-at-start label while a fresh login is used
+only for a subsequent start. Explicit tab logout disconnects owned UI transports
+without session disposal or adopting another actor's stored binding. An
+uncertain enrollment's original parent is kept for logout/reconciliation instead
+of being lost through a new login.
+
+xterm 6.0.0's documentOverride precedence error requires a version/count-guarded
+local bundling correction; see `scripts/README.md`. The supported per-instance
+Document adapter nonces style nodes before insertion. No global DOM patch,
+unsafe-inline/eval, iframe or upstream build/webpack command is used. The app
+component inventory records the modification. Native Go HTTPS/Chromium tests
+verify actual xterm I/O, split UTF-8, stderr, resize/signal, post-EOF output,
+explicit exit, actor-changing reauth, new runs, abrupt loss, exec without PTY,
+logout, retained sessions and strict CSP. The backend is a test hook through the
+real service/recording/lease driver, not real Docker/Kubernetes/ConPTY coverage.
 
 ## Public resources and customization
 

@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
+import { exerciseTerminal } from './terminal-ui.mjs';
 
 const origin = process.argv[2];
 assert.match(origin, /^https:\/\/app\.example\.org:[0-9]+$/);
@@ -33,12 +34,12 @@ try {
     const handle = await BrowserBinding.load({ origin: location.origin, slug: 'Work' });
     return handle === null ? 'missing' : handle.binding === null ? 'pending' : 'ready';
   });
-  const login = async (page, remember) => {
-    await page.getByLabel('User name', { exact: true }).fill('alice');
+  const login = async (page, remember, user = 'alice') => {
+    await page.getByLabel('User name', { exact: true }).fill(user);
     await page.getByLabel('Password', { exact: true }).fill('correct');
     if (remember) await page.getByRole('checkbox', { name: 'Remember this browser', exact: true }).check();
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-    await page.getByRole('heading', { name: 'Signed in as alice', exact: true }).waitFor();
+    await page.getByRole('heading', { name: `Signed in as ${user}`, exact: true }).waitFor();
   };
   const logout = async page => {
     await page.getByRole('button', { name: 'Log out', exact: true }).click();
@@ -47,6 +48,7 @@ try {
   };
   async function exercise() {
   let page = await open();
+  if (process.argv[3] === 'terminal') { await exerciseTerminal(page, login); assert.deepEqual(errors, []); return; }
   if (process.argv[3] === 'name-free') {
     assert.equal(await page.getByLabel('User name', { exact: true }).count(), 0);
     await page.getByLabel('Password', { exact: true }).fill('correct');

@@ -29,5 +29,7 @@ export function writeFrontendNotices(output) {
     components.push({ name: metadata.name, version: metadata.version, license: metadata.license, integrity: entry.integrity ?? null, licenseTextSource: source });
   }
   writeFileSync(new URL('third-party-licenses.txt', output), 'Browser UI production dependency notices\n\n' + sections.join('\n\n====================\n\n'));
-  writeFileSync(new URL('frontend-components.json', output), JSON.stringify({ schema: 'bifroest-frontend-components-v1', components }, null, 2) + '\n');
+  writeFileSync(new URL('frontend-components.json', output), JSON.stringify({ schema: 'bifroest-frontend-components-v1', components,
+    localBundlingPatches: [{ component: '@xterm/xterm@6.0.0', description: 'Parenthesize documentOverride fallback in CoreBrowserService initialization; see web/scripts/README.md.' }],
+  }, null, 2) + '\n');
 }

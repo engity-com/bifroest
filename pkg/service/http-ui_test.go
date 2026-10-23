@@ -19,20 +19,25 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
+	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/https"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/webui"
 )
 
 func TestBrowserLoginUiWithRememberRecoveryAndStrictCsp(t *testing.T) {
-	testBrowserLoginUi(t, true)
+	testBrowserLoginUi(t, true, "profile")
 }
 
 func TestBrowserLoginUiPreservesDisabledRequestingName(t *testing.T) {
-	testBrowserLoginUi(t, false)
+	testBrowserLoginUi(t, false, "name-free")
 }
 
-func testBrowserLoginUi(t *testing.T, requestUser bool) {
+func TestBrowserTerminalUiFreshExecutionResizeSignalsExitAndDisconnect(t *testing.T) {
+	testBrowserLoginUi(t, true, "terminal")
+}
+
+func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	t.Helper()
 	if os.Getenv("BIFROEST_TEST_BROWSER_UI") != "1" {
 		t.Skip("set BIFROEST_TEST_BROWSER_UI=1 after building web/ and installing Chromium")
@@ -41,7 +46,17 @@ func testBrowserLoginUi(t *testing.T, requestUser bool) {
 	require.NoError(t, err)
 	core, err := os.ReadFile(filepath.Join(root, "var", "webui-client-build", "remember.js"))
 	require.NoError(t, err)
-	svc, _, _ := webTestFixture(t, func(conf *configuration.Configuration) { conf.Flows[0].Http.RequestUser = commonBool(requestUser) })
+	svc, _, _ := webTestFixture(t, func(conf *configuration.Configuration) {
+		conf.Flows[0].Http.RequestUser = commonBool(requestUser)
+		if mode == "terminal" {
+			settings := conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple)
+			settings.Entries = append(settings.Entries, configuration.AuthorizationSimpleEntry{Name: "bob", Password: bfcrypto.Password("plain:correct")})
+		}
+	})
+	var terminalCounters *terminalUiCounters
+	if mode == "terminal" {
+		terminalCounters = installTerminalUiBackend(svc)
+	}
 	settings := &configuration.Http{}
 	require.NoError(t, settings.SetDefaults())
 	settings.Enabled = true
@@ -117,13 +132,12 @@ func testBrowserLoginUi(t *testing.T, requestUser bool) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 75*time.Second)
 	defer cancel()
-	mode := "profile"
-	if !requestUser {
-		mode = "name-free"
-	}
 	command := exec.CommandContext(ctx, node, filepath.Join(root, "web", "test", "ui.mjs"), "https://app.example.org:"+port, mode)
 	command.Dir = filepath.Join(root, "web")
 	output, err := command.CombinedOutput()
+	if err != nil && terminalCounters != nil {
+		t.Logf("terminal backend runs=%d resizes=%d interrupts=%d", terminalCounters.runs.Load(), terminalCounters.resizes.Load(), terminalCounters.interrupts.Load())
+	}
 	require.NoError(t, err, "%s", output)
 	var result struct {
 		Success bool `json:"success"`
@@ -134,12 +148,29 @@ func testBrowserLoginUi(t *testing.T, requestUser bool) {
 	if !requestUser {
 		expected = 0
 	}
-	require.EqualValues(t, expected, interrupted.Load(), "the uncertain claim must commit once without automatic retry")
-	require.Equal(t, expected, webSessionCount(t, svc))
+	expectedInterrupt := expected
+	if mode == "terminal" {
+		expectedInterrupt = 0
+	}
+	require.EqualValues(t, expectedInterrupt, interrupted.Load(), "the uncertain claim must commit once without automatic retry")
+	expectedSessions := expected
+	if mode == "terminal" {
+		expectedSessions = 2
+	}
+	require.Equal(t, expectedSessions, webSessionCount(t, svc))
+	if terminalCounters != nil {
+		require.EqualValues(t, 4, terminalCounters.runs.Load())
+		require.Positive(t, terminalCounters.resizes.Load())
+		require.Positive(t, terminalCounters.interrupts.Load())
+	}
 	require.NoError(t, svc.sessions.FindAll(t.Context(), func(ctx context.Context, current session.Session) (bool, error) {
 		info, err := current.Info(ctx)
 		require.NoError(t, err)
-		require.Equal(t, session.StateNew, info.State(), "login UI must not provision a workload or acquire an execution lease")
+		if mode == "terminal" {
+			require.NotEqual(t, session.StateDisposed, info.State(), "disconnect/exit must preserve the shared session")
+		} else {
+			require.Equal(t, session.StateNew, info.State(), "login UI must not provision a workload or acquire an execution lease")
+		}
 		bindings, err := current.(session.BrowserBindingSession).BrowserBindings(ctx)
 		require.NoError(t, err)
 		require.Empty(t, bindings)
