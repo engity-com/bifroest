@@ -5,7 +5,7 @@ toc_depth: 5
 # HTTP / HTTPS
 
 !!! warning "Incremental browser UI; not a complete workspace yet"
-    Built browser resources now provide React/Mantine password/RememberMe recovery and xterm shell/exec interfaces, served by Go through the same HTTPS boundary and authorizers as the existing protocols. Interactive/OIDC/key-login dialogs, imported keys and structured browser Management remain incomplete. Local password/interactive resumption is deliberately unavailable until native account-policy rechecks are implemented. Source-only Go builds without generated resources keep the SSH/HTTP APIs and discovery fallback, not an embedded UI. Keep HTTP omitted or disabled unless you intend to expose this incremental feature.
+    Built browser resources provide React/Mantine password, Keyboard-Interactive/OIDC device, RememberMe recovery and xterm shell/exec interfaces through the same HTTPS boundary and authorizers as SSH. Public-key import/signing UI and structured browser Management remain incomplete. Local password/interactive resumption is deliberately unavailable until native account-policy rechecks are implemented. Source-only Go builds without generated resources keep the SSH/HTTP APIs and discovery fallback, not an embedded UI. Keep HTTP omitted or disabled unless you intend to expose this incremental feature.
 
 HTTP is a separate incoming transport for the same [flows](../flow.md), not SSH tunneled over WebSocket. Omission of the root `http` block means disabled. Merely configuring domains, TLS or customization does not enable it. When the endpoint is available, all flows are HTTP-eligible by default unless their individual `http.enabled` is false; `ssh.enabled` remains independent.
 
@@ -90,6 +90,14 @@ The server verifies against its stored challenge and exact key, rejects trailing
 OIDC uses the existing verified issuer/subject, token verification, session locks, refresh/pending/lost-access rules and claim separation. A fresh device login cannot overwrite an existing rotating refresh chain. HTTP permission issuance requires a valid normalized identity, never a guessed requesting name or decoded JWT fallback. Audit records distinguish `keyboard-interactive` and `public-key`; OIDC additionally retains its existing authorization kind.
 
 Tests exercise acknowledged multi-step messages and secret/echo prompts, replay/scope/peer rejection, one-time concurrent claims, late cancellation, capacity retention, strong signature formats and existing certificate rules. Real TLS/HTTP2 interactive/key logins and an SSH login select one persisted session. A local TLS IdP with signed ID tokens exercises device login, retained rotated grants and cancellation of a real outstanding token request. This remains server/protocol coverage, not a browser imported-key UI or shared-container E2E result.
+
+### Browser interactive/device dialogs
+
+The built UI's `Interactive / device login` method now drives Keyboard-Interactive and OIDC Device Flow through this API. Provider info/error text is displayed as plain text and requires acknowledgement, never rendered as HTML or sent to a terminal. Prompt `echo` selects a plain or password field; every response is cleared and belongs to exactly one sequence. Provider-supplied HTTPS verification links require a deliberate click, contain no embedded user credentials and use noopener/noreferrer. There is no iframe, automatic redirect or browser OAuth-token grant.
+
+The tab-only `bwl1.` permission is never exposed in UI state/serialization. The client enforces increasing steps 1–32, 8 KiB/message, 32 KiB total and 4096-byte answers. Pending polls are at least 1250 ms apart; 15-second polls while waiting for user input keep only the existing attempt alive, with the original hard expiry pinned. Poll is a one-time completed-login claim, not a retryable read: lost reply/claim outcomes require a fresh login, without replay or inferred access. Abort/failure only best-effort cancels the logical attempt using an independent bounded request. It never logs out existing grants or disposes a session/workload.
+
+Actual Go HTTPS/Chromium UI tests verify escaped provider markup, echo/secret transitions, interruption after a real final claim, fresh-login recovery, signed local IdP device login without a requesting name, remembered grant reuse and cancellation of a running IdP token request. Public-key private-material import/signing is still pending; no external IdP or native Local account-policy result is claimed.
 
 ## WebSocket terminal protocol
 
@@ -330,7 +338,7 @@ Real Chromium tests cover these HTTP state transitions, cancellation/late replie
 
 The first React 19/Mantine 9 UI uses the same client, en-US message keys and memory-only auto/light/dark appearance. Passwords are not retained in application state, access tokens never enter rendered metadata, and disabled requesting-name collection omits the input and sends an empty name. A successful login stays usable when RememberMe cannot be confirmed. Unknown enrollment and unconfirmed logout remain visibly distinct from success; failed logout blocks new local actions while retaining the owned capability for retry. Remote revocation and explicit local-only removal have separate confirmation dialogs. A dialog retains its selected key/record, so another tab's replacement is not silently adopted. Native UI tests cover actual Go HTTPS, browser restart, unchecked opt-in, interrupted claims, local-only recovery, name-free input, customization, theme changes and CSP enforcement. Login itself still does not provision a workload or acquire an execution lease.
 
-Vite 8/Oxc/Rolldown builds the app and dependency-free client core without Webpack/Babel. Node/browser automation is build/test-only. Run the frontend build before Go compilation to embed the generated assets; an unbuilt source-only checkout remains API/SSH-capable. Interactive/OIDC/key dialogs, imported keys, structured Management and full release/SBOM preparation remain incomplete. See `web/README.md` for development and opt-in native tests.
+Vite 8/Oxc/Rolldown builds the app and dependency-free client core without Webpack/Babel. Node/browser automation is build/test-only. Run the frontend build before Go compilation to embed the generated assets; an unbuilt source-only checkout remains API/SSH-capable. Public-key private-material import/signing, structured Management and full release/SBOM preparation remain incomplete. See `web/README.md` for development and opt-in native tests.
 
 ### Owned xterm shell/command UI
 
@@ -350,7 +358,7 @@ The app exposes `third-party-licenses.txt` and a conservative `frontend-componen
 
 ## Schema examples
 
-These are complete, parser-checked configuration examples for HTTPS. Apart from the explicit dummy test case, startup requires the indicated certificate/key files or successful ACME issuance for every domain. OIDC device login is available through the protocol above. The built UI covers password/RememberMe and shell/exec; other-login dialogs and structured browser Management remain incomplete.
+These are complete, parser-checked configuration examples for HTTPS. Apart from the explicit dummy test case, startup requires the indicated certificate/key files or successful ACME issuance for every domain. The built UI covers password/interactive/OIDC-device/RememberMe and shell/exec. Public-key import/signing UI and structured browser Management remain incomplete.
 
 ### Explicit dummy TLS for local testing
 

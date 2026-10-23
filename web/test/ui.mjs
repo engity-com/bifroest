@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
 import { exerciseTerminal } from './terminal-ui.mjs';
+import { exerciseDevice, exerciseInteractive, exerciseLostClaim } from './login-ui.mjs';
 
 const origin = process.argv[2];
 assert.match(origin, /^https:\/\/app\.example\.org:[0-9]+$/);
@@ -49,6 +50,9 @@ try {
   async function exercise() {
   let page = await open();
   if (process.argv[3] === 'terminal') { await exerciseTerminal(page, login); assert.deepEqual(errors, []); return; }
+  if (process.argv[3] === 'interactive') { await exerciseInteractive(page, login, logout); assert.deepEqual(errors, []); return; }
+  if (process.argv[3] === 'interactive-lost') { await exerciseLostClaim(page, login, logout); assert.deepEqual(errors, []); return; }
+  if (process.argv[3] === 'oidc' || process.argv[3] === 'oidc-cancel') { await exerciseDevice(page, process.argv[3] === 'oidc-cancel'); assert.deepEqual(errors, []); return; }
   if (process.argv[3] === 'name-free') {
     assert.equal(await page.getByLabel('User name', { exact: true }).count(), 0);
     await page.getByLabel('Password', { exact: true }).fill('correct');

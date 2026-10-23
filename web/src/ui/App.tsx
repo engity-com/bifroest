@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Anchor, Button, Checkbox, Modal, Paper, PasswordInput, SegmentedControl, TextInput, Title } from '@mantine/core';
 import { BrowserBinding, BrowserClient, RememberMeError } from '../remember';
 import type { AccessSnapshot, LogoutResult, Scope, WebAccess } from '../remember';
+import type { LoginStep } from '../remember';
+import { verificationLink } from '../login/links';
 import { t } from './messages';
 import type { Message } from './messages';
 import { TerminalPanel } from '../terminal/TerminalPanel';
@@ -12,7 +14,7 @@ type Notice = { key: Message; color: 'red' | 'yellow' | 'green' };
 
 function errorNotice(error: unknown): Notice {
   const code = error instanceof RememberMeError ? error.code : 'unavailable';
-  const key: Message = code === 'outcome-unknown' ? 'unknown' : code === 'already-remembered' ? 'already' : code === 'denied' ? 'denied' : code === 'rate-limited' ? 'limited' : code === 'cancelled' ? 'cancelled' : 'unavailable';
+  const key: Message = code === 'login-unknown' ? 'loginUnknown' : code === 'invalid-step' ? 'loginInvalidStep' : code === 'busy' ? 'loginBusy' : code === 'outcome-unknown' ? 'unknown' : code === 'already-remembered' ? 'already' : code === 'denied' ? 'denied' : code === 'rate-limited' ? 'limited' : code === 'cancelled' ? 'cancelled' : 'unavailable';
   return { key, color: code === 'denied' || code === 'unavailable' ? 'red' : 'yellow' };
 }
 
@@ -35,6 +37,10 @@ export function App({ metadata, title = t('brand'), scheme, onScheme }: {
   const [passwordKey, setPasswordKey] = useState(0);
   const [reauthenticate, setReauthenticate] = useState(false);
   const [rememberUncertain, setRememberUncertain] = useState(false);
+  const [loginMethod, setLoginMethod] = useState('password');
+  const [loginStep, setLoginStep] = useState<LoginStep | null>(null);
+  const pendingResponse = useRef<((value: string) => void) | null>(null);
+  const providerLink = loginStep?.kind === 'info' ? verificationLink(loginStep.message) : null;
 
   async function readSaved(current = generation.current) {
     try {
@@ -65,18 +71,41 @@ export function App({ metadata, title = t('brand'), scheme, onScheme }: {
     generation.current++;
     operation.current?.abort(); operation.current = null;
     setBusy(false); setNotice({ key: 'cancelled', color: 'yellow' });
+    setLoginStep(null);
     void readSaved();
   }
 
+  function requestStep(step: LoginStep, signal: AbortSignal): Promise<string> {
+    const current = generation.current;
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        signal.removeEventListener('abort', aborted); pendingResponse.current = null;
+        if (current === generation.current) setLoginStep(null);
+      };
+      const aborted = () => { cleanup(); reject(new RememberMeError('cancelled')); };
+      if (signal.aborted) { aborted(); return; }
+      signal.addEventListener('abort', aborted, { once: true });
+      pendingResponse.current = value => { cleanup(); resolve(value); };
+      setLoginStep(step);
+    });
+  }
+
+  function answerStep(form: HTMLFormElement) {
+    const field = form.elements.namedItem('answer') as HTMLInputElement | null;
+    const value = field?.value ?? '';
+    if (field !== null) field.value = '';
+    pendingResponse.current?.(value);
+  }
+
   async function login(form: HTMLFormElement) {
-    const password = form.elements.namedItem('password') as HTMLInputElement;
+    const password = form.elements.namedItem('password') as HTMLInputElement | null;
     const user = (form.elements.namedItem('user') as HTMLInputElement | null)?.value ?? '';
-    const secret = password.value;
-    password.value = ''; // Never put the password in React state or persistent storage.
+    const secret = password?.value ?? '';
+    if (password !== null) password.value = ''; // No answer/password in app state or persistent storage.
     setPasswordKey(value => value + 1); // Reset Mantine's internal uncontrolled input state too.
     const remember = optIn;
     await run(async (signal, current) => {
-      const result = await client.current.password(user, secret, signal);
+      const result = loginMethod === 'interactive' ? await client.current.interactive(user, requestStep, signal) : await client.current.password(user, secret, signal);
       if (current !== generation.current) return;
       access.current = result; setSnapshot(result.snapshot()); setClosing(false); setReauthenticate(false); setRememberUncertain(false);
       if (remember) {
@@ -155,8 +184,9 @@ export function App({ metadata, title = t('brand'), scheme, onScheme }: {
         {saved === 'unavailable' && <Alert color="yellow">{t('storageUnavailable')}</Alert>}
         <Paper withBorder p="lg"><form method="post" action="/_bifroest/api/v1/login/password" className="stack" onSubmit={event => { event.preventDefault(); void login(event.currentTarget); }}>
           <Title order={2}>{t('login')}</Title>
+          <SegmentedControl aria-label={t('loginMethod')} value={loginMethod} onChange={setLoginMethod} disabled={busy} data={[{ value: 'password', label: t('passwordMethod') }, { value: 'interactive', label: t('interactiveMethod') }]} />
           {metadata.requestUser && <TextInput name="user" label={t('user')} autoComplete="username" disabled={busy} />}
-          <PasswordInput key={passwordKey} name="password" label={t('password')} autoComplete="current-password" visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }} disabled={busy} />
+          {loginMethod === 'password' && <PasswordInput key={passwordKey} name="password" label={t('password')} autoComplete="current-password" visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }} disabled={busy} />}
           <Checkbox checked={optIn} onChange={event => setOptIn(event.currentTarget.checked)} disabled={busy || saved !== 'missing'} label={t('remember')} description={t('rememberHint')} />
           <div className="actions"><Button type="submit" disabled={busy}>{t('login')}</Button>{busy && <Button type="button" variant="default" onClick={cancel}>{t('cancel')}</Button>}</div>
         </form></Paper>
@@ -164,6 +194,14 @@ export function App({ metadata, title = t('brand'), scheme, onScheme }: {
       {metadata.publishedSlugs.length > 0 && <nav aria-label={t('discovery')}><Title order={2}>{t('discovery')}</Title><ul>{metadata.publishedSlugs.map(slug => <li key={slug}><Anchor href={`/${slug}`}>{slug}</Anchor></li>)}</ul></nav>}
       <footer className="caption"><Anchor href="/_bifroest/files/third-party-licenses.txt">{t('notices')}</Anchor></footer>
     </div>
+    <Modal lockScroll={false} opened={loginStep !== null} onClose={cancel} closeOnClickOutside={false} title={t('loginChallenge')} closeButtonProps={{ 'aria-label': t('cancel') }}>
+      {loginStep !== null && <form method="post" action="/_bifroest/api/v1/login/reply" className="stack" onSubmit={event => { event.preventDefault(); answerStep(event.currentTarget); }}>
+        <Alert color={loginStep.kind === 'error' ? 'red' : 'blue'}><p className="login-message">{loginStep.message}</p></Alert>
+        {providerLink !== null && <Anchor href={providerLink} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">{t('verificationLink')} ({new URL(providerLink).hostname})</Anchor>}
+        {loginStep.kind === 'prompt' && (loginStep.echo ? <TextInput key={`${generation.current}:${loginStep.sequence}`} name="answer" label={t('loginResponse')} autoComplete="off" data-autofocus /> : <PasswordInput key={`${generation.current}:${loginStep.sequence}`} name="answer" label={t('loginResponse')} autoComplete="off" data-autofocus visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }} />)}
+        <div className="actions"><Button type="submit">{t(loginStep.kind === 'prompt' ? 'loginReply' : 'loginContinue')}</Button><Button type="button" variant="default" onClick={cancel}>{t('cancel')}</Button></div>
+      </form>}
+    </Modal>
     <Modal lockScroll={false} opened={confirm !== null} onClose={() => setConfirm(null)} title={t(confirm === 'local' ? 'removeTitle' : 'forgetTitle')} closeButtonProps={{ 'aria-label': t('close') }}>
       <p>{t(confirm === 'local' ? 'removeWarning' : 'forgetWarning')}</p><div className="actions"><Button color="red" onClick={() => { void forget(); }}>{t(confirm === 'local' ? 'removeLocalOnly' : 'revoke')}</Button><Button variant="default" onClick={() => setConfirm(null)}>{t('cancel')}</Button></div>
     </Modal>
