@@ -10,6 +10,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/https"
+	"github.com/engity-com/bifroest/pkg/webui"
 )
 
 func (this *service) prepareHTTPS() error {
@@ -40,6 +41,11 @@ func (this *service) prepareHTTPS() error {
 		}
 	}
 	this.web = newWebService(this)
+	assets, err := webui.New(this.Configuration.Http)
+	if err != nil {
+		return fmt.Errorf("cannot prepare public browser assets: %w", err)
+	}
+	this.web.assets = assets
 	endpoint, err := https.NewEndpoint(this.Configuration.Http, https.EndpointOptions{ValidateKey: this.validateHTTPSKey, Handler: this.web})
 	if err != nil {
 		return fmt.Errorf("cannot prepare HTTPS endpoint: %w", err)
