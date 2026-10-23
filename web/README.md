@@ -1,9 +1,12 @@
-# Browser client core
+# Browser application and client core
 
-This is the independently testable browser RememberMe storage/signing and HTTP
-client core, not the React/Mantine UI. Production Go does not serve or
-embed these resources yet. Vite 8/Rolldown builds the dependency-free core; there
-is no Webpack or production Node runtime.
+The first React 19/Mantine 9 application supports password login, explicit
+RememberMe opt-in, saved-access resumption, confirmed logout/revocation and
+explicit local-only recovery. It uses en-US message keys and memory-only
+auto/light/dark appearance. Terminal UI, interactive/OIDC/key-login dialogs,
+imported keys and structured Management remain incomplete. Vite 8/Oxc/Rolldown
+builds the application and the independently tested, dependency-free HTTP/crypto
+core; there is no Webpack/Babel chain or production Node runtime.
 
 Use Node 24.14 or newer and this repository's Go toolchain for the native proof
 interoperability test. From `web/` (also native Windows/Nushell compatible):
@@ -16,6 +19,14 @@ npm test
 npm run build
 ```
 
+`build:core` writes `var/webui-client-build/`; `build:app` writes generated files
+to `pkg/webui/assets/` before Go embeds them. Generated bundles are ignored;
+only the source marker is tracked. Run the frontend build **before** building
+the Go binary. A source-only Go checkout still compiles for SSH/API development,
+but has no embedded UI until these resources are built. An `assetsDirectory`
+containing a complete app can also supply the UI. Full release-job preparation,
+aggregate SBOM/provenance integration and the remaining feature work are not done.
+
 The optional real HTTPS/client/WebSocket test additionally uses the Go service
 fixtures. After building, run the following from the repository root with
 `BIFROEST_TEST_BROWSER_CLIENT=1` and, if necessary, `BIFROEST_TEST_NODE` pointing at
@@ -24,6 +35,14 @@ the selected Node executable (set these through your native shell's environment)
 ```text
 go test -race ./pkg/service -run '^TestBrowserRememberMeClientAgainstRealHttpsAndWebSocket$' -count=1 -timeout=90s
 ```
+
+Set `BIFROEST_TEST_BROWSER_UI=1` for real UI/CSP/recovery tests and run
+`go test -race ./pkg/service -run '^TestBrowserLoginUi' -count=1 -timeout=90s`.
+These tests exercise the actual embedded app, not a Vite proxy, under real Go
+HTTPS with nonce-aware CSP, no unsafe-inline/eval and no framing. They cover
+unchecked opt-in, real profile restart, discarded claim responses, explicit
+local-only removal, disabled requesting-name collection, customization hooks,
+theme changes and rejection of non-nonced inline scripts.
 
 A requested browser run fails rather than skipping missing dependencies/assets.
 Without the explicit opt-in, ordinary Go tests remain independent of npm/browser
@@ -37,10 +56,10 @@ the real Go proof core supplies and verifies a challenge signed by the restarted
 browser client's persisted key. Its native helper is test-only, never a web-action
 or production CLI subprocess. This is not production HTTPS/login/UI coverage.
 Browser installation is an explicit development/test
-step and does not change the OS/browser trust store. Build output goes to the
-ignored `var/webui-client-build/` directory; dependencies and compiler versions are
-locked. React/Mantine, xterm, production asset serving and release/SBOM integration
-remain subsequent steps.
+step and does not change the OS/browser trust store. Dependencies and compiler
+versions are locked. Go asset serving now supports per-file FS-before-embed
+overlays and ordered local customization. Xterm, remaining dialogs/Management and
+complete release/SBOM integration remain subsequent steps.
 
 The dependency-free `web/go.mod` is a tooling boundary, not a second Go runtime
 or implementation: root `go test ./...` must not compile Go sources shipped in
@@ -97,5 +116,45 @@ a changed local generation is preserved rather than overwritten/deleted.
 deletion. An existing registration is not silently replaced/revoked by a new
 regular login; `already-remembered` requires an explicit user decision. Pending
 ambiguous state requires regular login/recovery, never selector-only access.
-The opt-in/recovery UI, interactive/OIDC/key-login dialogs, terminal UI and
-production asset integration remain subsequent work.
+Logout/revoke returns a separate local cleanup result after remote confirmation:
+a changed/newer record or local-storage failure is not misreported as a failed
+server revocation. A confirmation dialog calls `revokeSelection` with the handle
+it actually showed, never silently adopting another tab's replacement.
+
+The UI leaves existing registrations unchanged on ordinary login. Remote revoke
+and local-only removal have separate confirmation dialogs; local removal never
+claims server logout. Interrupted setup stays visibly uncertain until explicitly
+reconciled. Interactive/OIDC/key-login dialogs, terminal UI and Management remain
+subsequent work.
+
+## Public resources and customization
+
+Built bundles/images/fonts are served at `/_bifroest/files/<relative-resource>`;
+`index.html` is rendered only for canonical navigation paths with HTML Accept.
+JSON Accept keeps discovery metadata. Overlay files win per exact resource name,
+including hashed bundles; only absence permits embedded fallback. Unsafe existing
+files fail closed. Static responses are no-store even for hashed names, so an
+operator override is not hidden behind stale immutable caching. Root descriptors
+stay anchored until restart; updating individual files is visible, replacing the
+root directory requires restarting. Symlink and hard-link aliases, hidden/dot/
+device-name/encoded paths, directories and oversized files are rejected. Index
+input is limited to 512 KiB, ordinary resources to 8 MiB; there are at most 64
+custom CSS and 64 custom JS files.
+
+Go adds fresh per-document script/style nonces, including to trusted inline
+operator HTML and Mantine styles. Remote script tags are not granted a nonce;
+inline event handlers/eval/framing remain blocked. Missing head/body elements in
+an overlay are synthesized by the HTML parser. Ordered `customCss` is appended
+after built-in styles; deferred local `customJs` follows built-ins. Register
+`window.addEventListener('bifroest:configure', e => { e.detail.title = 'Brand'; })`
+at script load to customize the initial plain-text title. Initialization waits
+for DOMContentLoaded and dispatches this version-1 event before mount;
+`bifroest:ready` is emitted after React commit. Neither event exposes access tokens.
+Custom JS is trusted same-origin code and can use browser keys; non-exportability
+does not defend against malicious same-origin code.
+
+The app includes `third-party-licenses.txt` and a conservative production npm
+dependency inventory `frontend-components.json`. Builds fail on missing license
+texts except explicitly version/hash-bound supplements. See `licenses/README.md`
+for the documented license-text/source-code provenance distinction; this is not
+a claim of complete release SBOM or tarball/source verification.
