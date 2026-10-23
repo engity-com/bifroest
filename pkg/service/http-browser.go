@@ -23,6 +23,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/authentication"
 	"github.com/engity-com/bifroest/pkg/authorization"
 	bnet "github.com/engity-com/bifroest/pkg/net"
+	"github.com/engity-com/bifroest/pkg/webui"
 )
 
 const (
@@ -59,6 +60,7 @@ type webService struct {
 	closeErr        error
 	remember        map[[32]byte]*webRememberAttempt
 	rememberMutex   sync.Mutex // Durable binding commit/logout and linked-grant publication.
+	assets          *webui.Assets
 }
 
 func newWebService(svc *service) *webService {
@@ -157,6 +159,9 @@ func (this *webService) Close() error {
 		this.attempts = make(map[[32]byte]*webLoginAttempt)
 		this.remember = make(map[[32]byte]*webRememberAttempt)
 		this.mutex.Unlock()
+		if this.assets != nil {
+			this.closeErr = goerrors.Join(this.closeErr, this.assets.Close())
+		}
 	})
 	return this.closeErr
 }
@@ -172,6 +177,10 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !strings.HasPrefix(r.URL.Path, "/_bifroest/") {
 		this.describe(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, webui.Prefix) || strings.HasPrefix(r.URL.Path, webui.CustomPrefix) {
+		this.serveAsset(w, r)
 		return
 	}
 	if r.URL.Path == webAPI+"terminal" {
@@ -390,6 +399,11 @@ func (this *webService) describe(w http.ResponseWriter, r *http.Request) {
 		webError(w, http.StatusMethodNotAllowed, "GET required")
 		return
 	}
+	release, admitted := this.admitAsset(w, r)
+	if !admitted {
+		return
+	}
+	defer release()
 	slug, err := bnet.HttpSlugFromURL(r.URL)
 	if err != nil {
 		webError(w, http.StatusBadRequest, "invalid flow path")
@@ -404,13 +418,6 @@ func (this *webService) describe(w http.ResponseWriter, r *http.Request) {
 	links, err := this.service.Configuration.Flows.HttpDiscovery(host)
 	if err != nil {
 		webError(w, http.StatusServiceUnavailable, "discovery unavailable")
-		return
-	}
-	if slug == "" && !strings.Contains(r.Header.Get("Accept"), "application/json") {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if r.Method != http.MethodHead {
-			_ = webDiscoveryTemplate.Execute(w, links)
-		}
 		return
 	}
 	fixed, hasFixed, err := this.service.Configuration.Flows.ResolveHttpSlug(host, slug)
@@ -430,6 +437,19 @@ func (this *webService) describe(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	accept := r.Header.Get("Accept")
+	if !strings.Contains(accept, "application/json") && (strings.Contains(accept, "text/html") || slug == "") {
+		if this.serveDocument(w, r) {
+			return
+		}
+		if slug == "" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if r.Method != http.MethodHead {
+				_ = webDiscoveryTemplate.Execute(w, links)
+			}
+			return
+		}
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if r.Method == http.MethodHead {
 		return
@@ -442,7 +462,7 @@ func (this *webService) describe(w http.ResponseWriter, r *http.Request) {
 		InteractiveLogin  string   `json:"interactiveLogin"`
 		PublicKeyLogin    string   `json:"publicKeyLogin"`
 		FrontendAvailable bool     `json:"frontendAvailable"`
-	}{scope, requestUser, links, webAPI + "login/password", webAPI + "login/interactive", webAPI + "login/public-key", false})
+	}{scope, requestUser, links, webAPI + "login/password", webAPI + "login/interactive", webAPI + "login/public-key", this.assets != nil && this.assets.Available()})
 }
 
 // The current protocol has a flat string-only payload. Reject duplicate keys,

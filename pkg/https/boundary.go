@@ -2,6 +2,7 @@ package https
 
 import (
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/netip"
@@ -11,6 +12,17 @@ import (
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bnet "github.com/engity-com/bifroest/pkg/net"
 )
+
+// DocumentPolicy adds only a fresh server-generated nonce. Inline event handlers,
+// eval, framing and remote script/style URLs remain disallowed; callers must not
+// take this value from a request or persisted/browser authentication state.
+func DocumentPolicy(nonce string) (string, error) {
+	raw, err := base64.StdEncoding.Strict().DecodeString(nonce)
+	if err != nil || len(raw) != 32 || base64.StdEncoding.EncodeToString(raw) != nonce {
+		return "", fmt.Errorf("invalid document nonce")
+	}
+	return "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'nonce-" + nonce + "'; style-src 'self' 'nonce-" + nonce + "'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'", nil
+}
 
 // Boundary enforces the directly terminated HTTPS authority and browser origin.
 // Forwarded/X-Forwarded-* headers never substitute for TLS, SNI, Host or Origin.
