@@ -1,0 +1,20 @@
+{
+  "name": "@engity/bifroest-web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.14.0" },
+  "scripts": {
+    "build": "vite build",
+    "check": "tsc --noEmit",
+    "test": "vitest run && node test/restart.mjs",
+    "test:browser:install": "playwright install chromium --only-shell"
+  },
+  "devDependencies": {
+    "@vitest/browser-playwright": "5.0.5",
+    "playwright": "1.64.1",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  }
+}

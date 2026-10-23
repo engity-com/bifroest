@@ -1,5 +1,6 @@
 var
 .cache
+web/node_modules/
 __pycache__/
 .env
 docs/versions.json
