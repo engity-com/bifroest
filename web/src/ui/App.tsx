@@ -4,6 +4,7 @@ import { BrowserBinding, BrowserClient, RememberMeError } from '../remember';
 import type { AccessSnapshot, LogoutResult, Scope, WebAccess } from '../remember';
 import { t } from './messages';
 import type { Message } from './messages';
+import { TerminalPanel } from '../terminal/TerminalPanel';
 
 export interface LinkMetadata { readonly scope: Scope; readonly requestUser: boolean; readonly publishedSlugs: readonly string[]; }
 type Saved = 'loading' | 'missing' | 'ready' | 'pending' | 'unavailable';
@@ -32,6 +33,8 @@ export function App({ metadata, title = t('brand'), scheme, onScheme }: {
   const [confirm, setConfirm] = useState<'revoke' | 'local' | null>(null);
   const [optIn, setOptIn] = useState(false);
   const [passwordKey, setPasswordKey] = useState(0);
+  const [reauthenticate, setReauthenticate] = useState(false);
+  const [rememberUncertain, setRememberUncertain] = useState(false);
 
   async function readSaved(current = generation.current) {
     try {
@@ -75,12 +78,12 @@ export function App({ metadata, title = t('brand'), scheme, onScheme }: {
     await run(async (signal, current) => {
       const result = await client.current.password(user, secret, signal);
       if (current !== generation.current) return;
-      access.current = result; setSnapshot(result.snapshot()); setClosing(false);
+      access.current = result; setSnapshot(result.snapshot()); setClosing(false); setReauthenticate(false); setRememberUncertain(false);
       if (remember) {
         try {
           await result.remember({ explicitOptIn: true }, signal);
           if (current === generation.current) setNotice({ key: 'registered', color: 'green' });
-        } catch (error) { if (current === generation.current) setNotice(errorNotice(error)); }
+        } catch (error) { if (current === generation.current) { setNotice(errorNotice(error)); setRememberUncertain(error instanceof RememberMeError && error.code === 'outcome-unknown'); } }
       }
     });
   }
@@ -90,7 +93,7 @@ export function App({ metadata, title = t('brand'), scheme, onScheme }: {
       const result = await client.current.resume(signal);
       if (current !== generation.current) return;
       if (result === null) { setNotice({ key: 'denied', color: 'yellow' }); return; }
-      access.current = result; setSnapshot(result.snapshot()); setClosing(false);
+      access.current = result; setSnapshot(result.snapshot()); setClosing(false); setReauthenticate(false); setRememberUncertain(false);
     });
   }
 
@@ -107,7 +110,7 @@ export function App({ metadata, title = t('brand'), scheme, onScheme }: {
     try {
       const result = await selected.logout();
       if (current !== generation.current) return;
-      access.current = null; setSnapshot(null); setClosing(false); setOptIn(false);
+      access.current = null; setSnapshot(null); setClosing(false); setOptIn(false); setReauthenticate(false); setRememberUncertain(false);
       setNotice(cleanupNotice(result, 'loggedOut'));
     } catch { if (current === generation.current) setNotice({ key: 'logoutUnknown', color: 'red' }); }
     finally { if (current === generation.current) { setBusy(false); await readSaved(current); } }
@@ -142,10 +145,13 @@ export function App({ metadata, title = t('brand'), scheme, onScheme }: {
         <Title order={2}>{t(closing ? 'accessBlocked' : 'authenticated')} {snapshot.principal}</Title>
         <p>{t(snapshot.environment === 'management' ? 'management' : 'terminal')}</p>
         <p className="caption">{t('expires')}: <time dateTime={snapshot.expiresAt}>{new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(snapshot.expiresAt))}</time></p>
+        <Button variant="default" disabled={closing || busy || rememberUncertain} onClick={() => { setReauthenticate(true); setOptIn(false); void readSaved(); }}>{t('reauthenticate')}</Button>
         <Button onClick={() => { void logout(); }} disabled={closing && busy} color="red">{t(closing ? 'retryLogout' : 'logout')}</Button>
-      </Paper> : <>
-        {saved === 'ready' && <Paper withBorder p="lg" className="stack"><p>{t('saved')}</p><div className="actions"><Button disabled={busy} onClick={() => { void resume(); }}>{t('useSaved')}</Button><Button variant="default" disabled={busy} onClick={() => showConfirmation('revoke')}>{t('forgetSaved')}</Button><Button variant="subtle" disabled={busy} onClick={() => showConfirmation('local')}>{t('removeLocalOnly')}</Button></div></Paper>}
-        {saved === 'pending' && <Alert color="yellow"><p>{t('pending')}</p><Button variant="outline" disabled={busy} onClick={() => showConfirmation('local')}>{t('removeLocal')}</Button></Alert>}
+      </Paper> : null}
+      {snapshot !== null && snapshot.terminalAvailable && access.current !== null && <TerminalPanel access={access.current} disabled={closing || busy} />}
+      {(snapshot === null || reauthenticate) && <>
+        {saved === 'ready' && <Paper withBorder p="lg" className="stack"><p>{t('saved')}</p><div className="actions"><Button disabled={busy} onClick={() => { void resume(); }}>{t('useSaved')}</Button>{snapshot === null && <><Button variant="default" disabled={busy} onClick={() => showConfirmation('revoke')}>{t('forgetSaved')}</Button><Button variant="subtle" disabled={busy} onClick={() => showConfirmation('local')}>{t('removeLocalOnly')}</Button></>}</div></Paper>}
+        {saved === 'pending' && <Alert color="yellow"><p>{t('pending')}</p>{snapshot === null && <Button variant="outline" disabled={busy} onClick={() => showConfirmation('local')}>{t('removeLocal')}</Button>}</Alert>}
         {saved === 'unavailable' && <Alert color="yellow">{t('storageUnavailable')}</Alert>}
         <Paper withBorder p="lg"><form method="post" action="/_bifroest/api/v1/login/password" className="stack" onSubmit={event => { event.preventDefault(); void login(event.currentTarget); }}>
           <Title order={2}>{t('login')}</Title>
