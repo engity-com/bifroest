@@ -10,7 +10,7 @@ export interface Binding {
 }
 
 export class RememberMeError extends Error {
-  constructor(readonly code: 'opt-in-required' | 'unavailable' | 'changed' | 'invalid-proof' | 'denied' | 'rate-limited' | 'cancelled' | 'outcome-unknown' | 'already-remembered' | 'busy') {
+  constructor(readonly code: 'opt-in-required' | 'unavailable' | 'changed' | 'invalid-proof' | 'denied' | 'rate-limited' | 'cancelled' | 'outcome-unknown' | 'already-remembered' | 'busy' | 'login-unknown' | 'invalid-step') {
     // Never expose a browser/provider/storage error or persisted plaintext.
     super(`Browser RememberMe: ${code}`);
     this.name = 'RememberMeError';

@@ -3,6 +3,8 @@ import { Http, isToken, object, time } from './http';
 import { decode64, RememberMeError, validateBinding } from './protocol';
 import type { Transport } from './http';
 import type { Binding, ProofPurpose, Scope } from './protocol';
+import { interactive } from '../login/interactive';
+import type { StepHandler } from '../login/interactive';
 
 export interface AccessSnapshot {
   readonly scope: Scope;
@@ -159,6 +161,7 @@ export class WebAccess {
 export class BrowserClient {
   readonly #scope: Scope;
   readonly #http: Http;
+  #loginActive = false;
   constructor(scope: Scope, transport?: Transport) {
     this.#http = new Http(scope, transport);
     this.#scope = Object.freeze({ ...scope });
@@ -171,6 +174,18 @@ export class BrowserClient {
     const response = accessResponse(await this.#http.post('login/password', { user, password }, undefined, 200, signal), this.#scope);
     if (signal?.aborted) throw new RememberMeError('cancelled');
     return new WebAccess(this.#http, response, null);
+  }
+
+  async interactive(user: string, handler: StepHandler, signal?: AbortSignal): Promise<WebAccess> {
+    if (this.#loginActive) throw new RememberMeError('busy');
+    if (typeof user !== 'string' || !user.isWellFormed() || new TextEncoder().encode(user).byteLength > 256 || /[\p{Cc}]/u.test(user)) throw new RememberMeError('unavailable');
+    this.#loginActive = true;
+    try {
+      const value = await interactive(this.#http, user, handler, signal);
+      if (signal?.aborted) throw new RememberMeError('cancelled');
+      try { return new WebAccess(this.#http, accessResponse(value, this.#scope), null); }
+      catch { throw new RememberMeError('login-unknown'); }
+    } finally { this.#loginActive = false; }
   }
 
   async resume(signal?: AbortSignal): Promise<WebAccess | null> {

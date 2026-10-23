@@ -3,8 +3,9 @@
 The first React 19/Mantine 9 application supports password login, explicit
 RememberMe opt-in, saved-access resumption, confirmed logout/revocation,
 explicit local-only recovery and an owned xterm terminal. It uses en-US message
-keys and memory-only auto/light/dark appearance. Interactive/OIDC/key-login
-dialogs, imported keys and structured Management remain incomplete. Vite 8/Oxc/Rolldown
+keys and memory-only auto/light/dark appearance. Public-key private-material
+import/signing UI and structured Management remain incomplete. Keyboard-Interactive
+and OIDC device dialogs use the bounded existing server API. Vite 8/Oxc/Rolldown
 builds the application and the independently tested, dependency-free HTTP/crypto
 core; there is no Webpack/Babel chain or production Node runtime.
 
@@ -124,8 +125,35 @@ it actually showed, never silently adopting another tab's replacement.
 The UI leaves existing registrations unchanged on ordinary login. Remote revoke
 and local-only removal have separate confirmation dialogs; local removal never
 claims server logout. Interrupted setup stays visibly uncertain until explicitly
-reconciled. Interactive/OIDC/key-login dialogs and Management remain
-subsequent work.
+reconciled. Public-key import/signing UI and Management remain subsequent work.
+
+## Interactive and OIDC device login
+
+Choose `Interactive / device login` to use the same Keyboard-Interactive/OIDC
+authorizer path as SSH. Info/error steps require explicit acknowledgement;
+prompts honor `echo` with plain or password input. Provider text is React text,
+never HTML or terminal commands. HTTPS verification links are provider-supplied,
+opened only by an explicit click with noopener/noreferrer; no iframe, automatic
+redirect or OAuth token transfer is used. Disabled user collection still sends
+the original empty requesting name; verified principal comes only from Go.
+
+The client holds its `bwl1.` proof privately in the tab and handles one step and
+one reply at a time. It enforces canonical increasing sequence 1–32, 8-KiB messages,
+32-KiB cumulative text and 4096-byte well-formed answers. Ordinary pending polls
+are spaced at least 1250 ms; while a dialog waits, 15-second keepalives refresh
+only the existing attempt's idle budget, never its pinned hard expiry. There is
+one logical interactive operation per client with a ten-minute cap and no
+automatic retry of a failed reply or claim. Poll can consume the completed
+authorization exactly once, so a lost reply/claim reports `login-unknown`, does
+not adopt late access and requires fresh login. Abort and failure use an independent
+bounded best-effort `login/cancel`, not logout/session disposal. Replies/attempt
+tokens are never serialized, stored, reused for another step or fed to xterm.
+
+Native Go HTTPS/Chromium tests cover info/error/plaintext injection resistance,
+echo/secret transitions, one-time claim loss/recovery, actual signed local IdP
+device login with no requesting name, RememberMe grant reuse, and cancellation
+of a real in-flight IdP token request. The IdP is an owned test fixture; this does
+not claim external-provider, native Local account-policy or public-key UI coverage.
 
 ## Terminal ownership and limits
 

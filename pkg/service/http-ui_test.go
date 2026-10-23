@@ -12,18 +12,26 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/https"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/webui"
 )
+
+type uiInteractiveAuthorizer struct{ *webInteractionTestAuthorizer }
+
+func (this *uiInteractiveAuthorizer) ResumeSession(req authorization.SessionResumeRequest) (authorization.Authorization, error) {
+	return this.CloseableAuthorizer.(authorization.SessionResumer).ResumeSession(req)
+}
 
 func TestBrowserLoginUiWithRememberRecoveryAndStrictCsp(t *testing.T) {
 	testBrowserLoginUi(t, true, "profile")
@@ -37,6 +45,22 @@ func TestBrowserTerminalUiFreshExecutionResizeSignalsExitAndDisconnect(t *testin
 	testBrowserLoginUi(t, true, "terminal")
 }
 
+func TestBrowserInteractiveLoginUiPlainTextEchoAndCancel(t *testing.T) {
+	testBrowserLoginUi(t, true, "interactive")
+}
+
+func TestBrowserOidcDeviceLoginUiVerifiedIdentityAndRemember(t *testing.T) {
+	testBrowserLoginUi(t, false, "oidc")
+}
+
+func TestBrowserOidcDeviceCancelUiStopsProviderRequest(t *testing.T) {
+	testBrowserLoginUi(t, false, "oidc-cancel")
+}
+
+func TestBrowserInteractiveLostClaimUiDoesNotReplay(t *testing.T) {
+	testBrowserLoginUi(t, true, "interactive-lost")
+}
+
 func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	t.Helper()
 	if os.Getenv("BIFROEST_TEST_BROWSER_UI") != "1" {
@@ -46,13 +70,36 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	require.NoError(t, err)
 	core, err := os.ReadFile(filepath.Join(root, "var", "webui-client-build", "remember.js"))
 	require.NoError(t, err)
-	svc, _, _ := webTestFixture(t, func(conf *configuration.Configuration) {
-		conf.Flows[0].Http.RequestUser = commonBool(requestUser)
-		if mode == "terminal" {
-			settings := conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple)
-			settings.Entries = append(settings.Entries, configuration.AuthorizationSimpleEntry{Name: "bob", Password: bfcrypto.Password("plain:correct")})
-		}
-	})
+	var svc *service
+	var protocolHandler http.Handler
+	var provider *oidcAssociationProvider
+	if mode == "oidc" || mode == "oidc-cancel" {
+		svc, protocolHandler, provider, _ = webOidcLoginFixture(t, mode == "oidc-cancel")
+	} else {
+		svc, _, _ = webTestFixture(t, func(conf *configuration.Configuration) {
+			conf.Flows[0].Http.RequestUser = commonBool(requestUser)
+			if mode == "terminal" {
+				settings := conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple)
+				settings.Entries = append(settings.Entries, configuration.AuthorizationSimpleEntry{Name: "bob", Password: bfcrypto.Password("plain:correct")})
+			}
+		})
+		protocolHandler = svc.web
+	}
+	if mode == "interactive" {
+		delegate := svc.authorizer
+		svc.authorizer = &uiInteractiveAuthorizer{&webInteractionTestAuthorizer{CloseableAuthorizer: delegate, run: func(req authorization.InteractiveRequest) (authorization.Authorization, error) {
+			if err := req.SendInfo(`<b>plain provider text</b><script>window.providerInjected = true</script>`); err != nil {
+				return nil, err
+			}
+			if err := req.SendError("Provider warning, shown as text"); err != nil {
+				return nil, err
+			}
+			if _, err := req.Prompt("Echo is allowed for this response", true); err != nil {
+				return nil, err
+			}
+			return delegate.AuthorizeInteractive(req)
+		}}}
+	}
 	var terminalCounters *terminalUiCounters
 	if mode == "terminal" {
 		terminalCounters = installTerminalUiBackend(svc)
@@ -78,7 +125,18 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	httpListenerTestCertificate(t, &configuration.Configuration{Http: settings}, key)
 	var interrupt atomic.Bool
 	var interrupted atomic.Int32
+	if mode == "interactive-lost" {
+		interrupt.Store(true)
+	}
 	endpoint, err := https.NewEndpoint(settings, https.EndpointOptions{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if mode == "oidc-cancel" && r.URL.Path == "/_bifroest/test/provider-started" {
+			select {
+			case <-provider.deviceTokenStarted:
+				w.WriteHeader(http.StatusNoContent)
+			case <-r.Context().Done():
+			}
+			return
+		}
 		if r.URL.Path == "/_bifroest/test/interrupt-enrollment" && r.Method == http.MethodPost {
 			interrupt.Store(true)
 			w.WriteHeader(http.StatusNoContent)
@@ -91,7 +149,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 		}
 		if r.URL.Path == webAPI+"remember/prove" && interrupt.Load() {
 			recorder := httptest.NewRecorder()
-			svc.web.ServeHTTP(recorder, r)
+			protocolHandler.ServeHTTP(recorder, r)
 			for name, values := range recorder.Header() {
 				w.Header()[name] = values
 			}
@@ -106,7 +164,24 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 			_, _ = w.Write(recorder.Body.Bytes())
 			return
 		}
-		svc.web.ServeHTTP(w, r)
+		if mode == "interactive-lost" && r.URL.Path == webAPI+"login/poll" && interrupt.Load() {
+			recorder := httptest.NewRecorder()
+			protocolHandler.ServeHTTP(recorder, r)
+			for name, values := range recorder.Header() {
+				w.Header()[name] = values
+			}
+			if recorder.Code == http.StatusOK && strings.Contains(recorder.Body.String(), `"status":"authorized"`) && interrupt.CompareAndSwap(true, false) {
+				interrupted.Add(1)
+				w.Header().Set("Content-Length", "1000")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"status":`))
+				return
+			}
+			w.WriteHeader(recorder.Code)
+			_, _ = w.Write(recorder.Body.Bytes())
+			return
+		}
+		protocolHandler.ServeHTTP(w, r)
 	})})
 	require.NoError(t, err)
 	require.NoError(t, endpoint.Prepare(t.Context()))
@@ -144,16 +219,15 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	}
 	require.NoError(t, json.Unmarshal(output, &result), "%s", output)
 	require.True(t, result.Success)
-	expected := 1
-	if !requestUser {
-		expected = 0
-	}
-	expectedInterrupt := expected
-	if mode == "terminal" {
-		expectedInterrupt = 0
+	expectedInterrupt := 0
+	if mode == "profile" || mode == "interactive-lost" {
+		expectedInterrupt = 1
 	}
 	require.EqualValues(t, expectedInterrupt, interrupted.Load(), "the uncertain claim must commit once without automatic retry")
-	expectedSessions := expected
+	expectedSessions := 1
+	if mode == "name-free" || mode == "oidc-cancel" {
+		expectedSessions = 0
+	}
 	if mode == "terminal" {
 		expectedSessions = 2
 	}
@@ -162,6 +236,17 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 		require.EqualValues(t, 4, terminalCounters.runs.Load())
 		require.Positive(t, terminalCounters.resizes.Load())
 		require.Positive(t, terminalCounters.interrupts.Load())
+	}
+	if provider != nil {
+		if mode == "oidc-cancel" {
+			select {
+			case <-provider.deviceTokenCanceled:
+			case <-time.After(2 * time.Second):
+				t.Fatal("UI cancel did not stop provider token request")
+			}
+		} else {
+			require.EqualValues(t, 1, provider.logins.Load(), "remember/resume must reuse the retained grant, not request another device login")
+		}
 	}
 	require.NoError(t, svc.sessions.FindAll(t.Context(), func(ctx context.Context, current session.Session) (bool, error) {
 		info, err := current.Info(ctx)

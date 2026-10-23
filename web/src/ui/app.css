@@ -7,3 +7,4 @@ body { margin: 0; }
 .caption { font-size: .875rem; }
 .terminal-surface { height: 24rem; width: 100%; min-width: 0; overflow: hidden; }
 .terminal-panel { min-width: 0; }
+.login-message { white-space: pre-wrap; overflow-wrap: anywhere; }

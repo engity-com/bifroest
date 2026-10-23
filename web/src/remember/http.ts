@@ -4,7 +4,7 @@ import type { Scope } from './protocol';
 export type Transport = typeof fetch;
 const maximumResponseBytes = 64 << 10;
 
-export function isToken(value: unknown, prefix: 'bwa1.' | 'bwr1.'): value is string {
+export function isToken(value: unknown, prefix: 'bwa1.' | 'bwr1.' | 'bwl1.'): value is string {
   if (typeof value !== 'string' || !value.startsWith(prefix) || !/^[A-Za-z0-9_-]{43}$/.test(value.slice(5))) return false;
   try { return decode64(value.slice(5).replaceAll('-', '+').replaceAll('_', '/') + '=', 32).length === 32; }
   catch { return false; }
@@ -34,7 +34,7 @@ export class Http {
   }
 
   async post(action: string, fields: Record<string, string>, token: string | undefined, status: number, signal?: AbortSignal): Promise<unknown> {
-    const allowed = ['login/password', 'access', 'logout', 'remember/enroll', 'remember/resume', 'remember/revoke', 'remember/prove'];
+    const allowed = ['login/password', 'login/interactive', 'login/poll', 'login/reply', 'login/cancel', 'access', 'logout', 'remember/enroll', 'remember/resume', 'remember/revoke', 'remember/prove'];
     if (!allowed.includes(action)) throw new RememberMeError('unavailable');
     const deadline = AbortSignal.timeout(20_000);
     const stopped = signal === undefined ? deadline : AbortSignal.any([signal, deadline]);
@@ -43,7 +43,8 @@ export class Http {
     if (new TextEncoder().encode(body).byteLength > 16 << 10) throw new RememberMeError('unavailable');
     const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json' };
     if (token !== undefined) {
-      if (!isToken(token, action === 'remember/prove' ? 'bwr1.' : 'bwa1.')) throw new RememberMeError('unavailable');
+      const prefix = action === 'remember/prove' ? 'bwr1.' : ['login/poll', 'login/reply', 'login/cancel'].includes(action) ? 'bwl1.' : 'bwa1.';
+      if (!isToken(token, prefix)) throw new RememberMeError('unavailable');
       headers.Authorization = `Bearer ${token}`;
     }
     let response: Response | undefined;
