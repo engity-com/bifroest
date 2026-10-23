@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"unicode/utf8"
+
+	"github.com/engity-com/bifroest/pkg/authentication"
 )
 
 // Exact field names/types and duplicate/null/UTF16/trailing-data rejection must
@@ -84,9 +86,24 @@ func decodeBrowserBindings(raw []byte, flow, id string) ([]BrowserBinding, error
 	result := make([]BrowserBinding, 0, len(entries))
 	seen := make(map[string]bool)
 	for _, raw := range entries {
-		fields, err := browserBindingObject(raw, "id", "origin", "slug", "identity", "target", "user", "publicKey", "revision", "createdAt", "lastUsedAt", "expiresAt")
-		if err != nil || len(fields) != 11 {
+		fields, err := browserBindingObject(raw, "id", "origin", "slug", "identity", "target", "user", "publicKey", "revision", "createdAt", "lastUsedAt", "expiresAt", "credential")
+		if err != nil || len(fields) < 11 {
 			return nil, ErrInvalidBrowserBinding
+		}
+		for _, required := range []string{"id", "origin", "slug", "identity", "target", "user", "publicKey", "revision", "createdAt", "lastUsedAt", "expiresAt"} {
+			if _, present := fields[required]; !present {
+				return nil, ErrInvalidBrowserBinding
+			}
+		}
+		if credential, present := fields["credential"]; present {
+			values, err := browserBindingObject(credential, "kind", "method", "publicKey")
+			if err != nil || len(values) < 2 {
+				return nil, ErrInvalidBrowserBinding
+			}
+			var stored authentication.SessionCredential
+			if json.Unmarshal(credential, &stored) != nil || stored.Validate() != nil {
+				return nil, ErrInvalidBrowserBinding
+			}
 		}
 		identity, err := browserBindingObject(fields["identity"], "principal", "issuer", "subject")
 		if err != nil || len(identity) == 0 {

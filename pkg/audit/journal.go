@@ -72,7 +72,7 @@ func validateAuditEvent(event Event) error {
 		return errors.System.Newf("unknown audit event outcome %q", event.Outcome)
 	}
 	if event.AuthenticationMethod != "" && event.AuthenticationMethod != AuthenticationMethodPublicKey &&
-		event.AuthenticationMethod != AuthenticationMethodPassword && event.AuthenticationMethod != AuthenticationMethodKeyboardInteractive {
+		event.AuthenticationMethod != AuthenticationMethodPassword && event.AuthenticationMethod != AuthenticationMethodKeyboardInteractive && event.AuthenticationMethod != AuthenticationMethodBrowserRememberMe {
 		return errors.System.Newf("unknown audit authentication method %q", event.AuthenticationMethod)
 	}
 	if event.AuthenticationPhase != "" && event.AuthenticationPhase != AuthenticationPhaseCandidate &&

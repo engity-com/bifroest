@@ -38,6 +38,7 @@ type webLoginAttempt struct {
 	conn         *webLoginConnection
 	peer         netip.Addr
 	method       audit.AuthenticationMethod
+	primaryKey   ssh.PublicKey
 	expires      time.Time
 	stopContext  context.CancelFunc
 	stopShutdown func() bool
@@ -103,7 +104,7 @@ func (this *webService) startAttempt(r *http.Request, scope webScope, peer netip
 		return "", nil, err
 	}
 	expires, _ := ctx.Deadline()
-	attempt := &webLoginAttempt{conn: conn, peer: peer, method: method, expires: expires, stopContext: cancel, stopShutdown: stopShutdown, done: make(chan struct{})}
+	attempt := &webLoginAttempt{conn: conn, peer: peer, method: method, primaryKey: key, expires: expires, stopContext: cancel, stopShutdown: stopShutdown, done: make(chan struct{})}
 	attempt.idle = time.AfterFunc(webAttemptIdleTimeout, cancel)
 	this.mutex.Lock()
 	this.pruneLocked(time.Now())
@@ -321,7 +322,7 @@ func (this *webService) pollAttempt(w http.ResponseWriter, r *http.Request, atte
 		defer cancel()
 		stop := context.AfterFunc(attempt.conn.Lifetime(), cancel)
 		defer stop()
-		this.completeAuthentication(w, ctx, attempt.conn, auth, attempt.method)
+		this.completeAuthentication(w, ctx, attempt.conn, auth, attempt.method, attempt.primaryKey)
 	default:
 		pending := attempt.pending("")
 		attempt.mutex.Unlock()

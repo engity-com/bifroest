@@ -114,7 +114,15 @@ func (this *fs) UseBrowserBinding(ctx context.Context, id string, revision uint6
 	return this.useBrowserBinding(ctx, id, revision, idle, time.Time{})
 }
 
+func (this *fs) CheckBrowserBinding(ctx context.Context, id string, revision uint64, idle time.Duration) (BrowserBinding, error) {
+	return this.checkOrUseBrowserBinding(ctx, id, revision, idle, time.Time{}, false)
+}
+
 func (this *fs) useBrowserBinding(ctx context.Context, id string, revision uint64, idle time.Duration, now time.Time) (BrowserBinding, error) {
+	return this.checkOrUseBrowserBinding(ctx, id, revision, idle, now, true)
+}
+
+func (this *fs) checkOrUseBrowserBinding(ctx context.Context, id string, revision uint64, idle time.Duration, now time.Time, use bool) (BrowserBinding, error) {
 	if !validBrowserBindingID(id) || revision == 0 {
 		return BrowserBinding{}, ErrBrowserBindingDenied
 	}
@@ -155,6 +163,9 @@ func (this *fs) useBrowserBinding(ctx context.Context, id string, revision uint6
 				}
 			}
 			return BrowserBinding{}, ErrBrowserBindingDenied
+		}
+		if !use {
+			return binding, nil
 		}
 		binding.LastUsedAt = now
 		binding.ExpiresAt = now.Add(idle)

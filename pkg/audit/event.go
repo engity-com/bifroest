@@ -153,6 +153,7 @@ const (
 	AuthenticationMethodPublicKey           AuthenticationMethod = "public-key"
 	AuthenticationMethodPassword            AuthenticationMethod = "password"
 	AuthenticationMethodKeyboardInteractive AuthenticationMethod = "keyboard-interactive"
+	AuthenticationMethodBrowserRememberMe   AuthenticationMethod = "browser-remember-me"
 )
 
 type AuthenticationPhase string

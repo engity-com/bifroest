@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -19,19 +20,23 @@ import (
 
 const webAccessLifetime = 10 * time.Minute
 
+var errWebAccessDenied = errors.New("web access denied")
+
 // An ephemeral, tab-memory bearer proof, not RememberMe or session ownership.
 // Only a hash is indexed server-side. It never accepts a session ID as a proof.
 // Expiry prevents NEW access; logout additionally closes its own web children.
 type webAccess struct {
-	scope    webScope
-	auth     authorization.Authorization
-	identity authentication.Identity
-	target   session.Target
-	user     string
-	expires  time.Time
-	mutex    sync.Mutex
-	closed   bool
-	children map[*terminalConnection]struct{}
+	scope      webScope
+	auth       authorization.Authorization
+	identity   authentication.Identity
+	target     session.Target
+	user       string
+	credential authentication.SessionCredential
+	binding    *webBindingReference
+	expires    time.Time
+	mutex      sync.Mutex
+	closed     bool
+	children   map[*terminalConnection]struct{}
 }
 
 func webAccessKey(token string) ([32]byte, bool) {
@@ -45,7 +50,7 @@ func webAccessKey(token string) ([32]byte, bool) {
 	return sha256.Sum256([]byte(token)), true
 }
 
-func (this *webService) issue(scope webScope, base *environmentContext) (string, *webAccess, error) {
+func (this *webService) issue(scope webScope, base *environmentContext, credential authentication.SessionCredential, pinned *session.BrowserBindingSpec) (string, *webAccess, error) {
 	identity, err := base.Authentication()
 	if err != nil {
 		return "", nil, err
@@ -57,17 +62,20 @@ func (this *webService) issue(scope webScope, base *environmentContext) (string,
 	if err != nil {
 		return "", nil, err
 	}
+	if pinned != nil && (identity != pinned.Identity || target != pinned.Target || scope.Origin != pinned.Origin || scope.Slug != pinned.Slug || base.Connection().Remote().User() != pinned.User) {
+		return "", nil, errWebAccessDenied
+	}
 	var nonce [32]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return "", nil, err
 	}
 	token := "bwa1." + base64.RawURLEncoding.EncodeToString(nonce[:])
 	key, _ := webAccessKey(token)
-	access := &webAccess{scope: scope, auth: base.Authorization(), identity: identity, target: target, user: base.Connection().Remote().User(), expires: time.Now().Add(webAccessLifetime), children: make(map[*terminalConnection]struct{})}
+	access := &webAccess{scope: scope, auth: base.Authorization(), identity: identity, target: target, user: base.Connection().Remote().User(), credential: credential, expires: time.Now().Add(webAccessLifetime), children: make(map[*terminalConnection]struct{})}
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 	this.pruneLocked(time.Now())
-	if this.ctx.Err() != nil || base.Context().Err() != nil || len(this.access) >= webMaximumAccess {
+	if this.ctx.Err() != nil || base.Context().Err() != nil || this.service.sessionConnections.isRevoked(base.Authorization().FindSession()) || len(this.access) >= webMaximumAccess {
 		return "", nil, fmt.Errorf("web access unavailable")
 	}
 	if _, exists := this.access[key]; exists {
@@ -101,18 +109,18 @@ func (this *webService) target(base *environmentContext) (session.Target, error)
 func (this *webService) lookup(scope webScope, token string, includeExpired bool) (*webAccess, error) {
 	key, ok := webAccessKey(token)
 	if !ok {
-		return nil, fmt.Errorf("web access denied")
+		return nil, errWebAccessDenied
 	}
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 	access := this.access[key]
 	if this.ctx.Err() != nil || access == nil || access.scope != scope {
-		return nil, fmt.Errorf("web access denied")
+		return nil, errWebAccessDenied
 	}
 	access.mutex.Lock()
 	defer access.mutex.Unlock()
 	if access.closed || !includeExpired && !time.Now().Before(access.expires) {
-		return nil, fmt.Errorf("web access denied")
+		return nil, errWebAccessDenied
 	}
 	return access, nil
 }
@@ -142,9 +150,17 @@ func (this *webService) validate(base *environmentContext, access *webAccess) er
 }
 
 func (this *webService) logout(scope webScope, token string) error {
+	this.rememberMutex.Lock()
+	defer this.rememberMutex.Unlock()
 	access, err := this.lookup(scope, token, true)
 	if err != nil {
 		return err
+	}
+	access.mutex.Lock()
+	binding := access.binding
+	access.mutex.Unlock()
+	if binding != nil {
+		return this.revokeWebBinding(binding)
 	}
 	key, _ := webAccessKey(token)
 	this.mutex.Lock()
