@@ -28,12 +28,13 @@ var (
 // BrowserBindingSpec is immutable. These are verified server-side selectors,
 // not authorization from a client. Flow/session are the containing session.
 type BrowserBindingSpec struct {
-	Origin    string                  `json:"origin"`
-	Slug      string                  `json:"slug"`
-	Identity  authentication.Identity `json:"identity"`
-	Target    Target                  `json:"target"`
-	User      string                  `json:"user"`
-	PublicKey browserauth.PublicKey   `json:"publicKey"`
+	Origin     string                           `json:"origin"`
+	Slug       string                           `json:"slug"`
+	Identity   authentication.Identity          `json:"identity"`
+	Target     Target                           `json:"target"`
+	User       string                           `json:"user"`
+	PublicKey  browserauth.PublicKey            `json:"publicKey"`
+	Credential authentication.SessionCredential `json:"credential,omitzero"`
 }
 
 type BrowserBinding struct {
@@ -52,6 +53,9 @@ type BrowserBinding struct {
 type BrowserBindingSession interface {
 	BrowserBindings(context.Context) ([]BrowserBinding, error)
 	CreateBrowserBinding(context.Context, BrowserBindingSpec, time.Duration) (BrowserBinding, error)
+	// Check validates eligibility without renewing it or advancing the revision.
+	// An observed shorter-policy expiry is persisted, preventing later revival.
+	CheckBrowserBinding(context.Context, string, uint64, time.Duration) (BrowserBinding, error)
 	UseBrowserBinding(context.Context, string, uint64, time.Duration) (BrowserBinding, error)
 	RevokeBrowserBinding(context.Context, string) error
 }
@@ -80,6 +84,11 @@ func (this BrowserBindingSpec) Validate() error {
 		return ErrInvalidBrowserBinding
 	}
 	if _, err := this.PublicKey.Parse(); err != nil {
+		return ErrInvalidBrowserBinding
+	}
+	// Foundation-era records without primary provenance remain inspectable and
+	// revocable, but cannot authorize browser resumption or invent a method.
+	if !this.Credential.IsZero() && this.Credential.Validate() != nil {
 		return ErrInvalidBrowserBinding
 	}
 	return nil

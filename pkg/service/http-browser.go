@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	goerrors "errors"
 	"fmt"
@@ -16,7 +17,10 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/authentication"
 	"github.com/engity-com/bifroest/pkg/authorization"
 	bnet "github.com/engity-com/bifroest/pkg/net"
 )
@@ -53,16 +57,23 @@ type webService struct {
 	terminalTimings webTerminalTimings
 	closeOnce       sync.Once
 	closeErr        error
+	remember        map[[32]byte]*webRememberAttempt
+	rememberMutex   sync.Mutex // Durable binding commit/logout and linked-grant publication.
 }
 
 func newWebService(svc *service) *webService {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &webService{service: svc, ctx: ctx, cancel: cancel, operations: newConnectionLifecycle(), loginWorkers: newConnectionLifecycle(), peers: make(map[netip.Addr]*webPeerBudget), access: make(map[[32]byte]*webAccess), attempts: make(map[[32]byte]*webLoginAttempt), socketPeers: make(map[netip.Addr]int), terminalTimings: defaultWebTerminalTimings()}
+	return &webService{service: svc, ctx: ctx, cancel: cancel, operations: newConnectionLifecycle(), loginWorkers: newConnectionLifecycle(), peers: make(map[netip.Addr]*webPeerBudget), access: make(map[[32]byte]*webAccess), attempts: make(map[[32]byte]*webLoginAttempt), socketPeers: make(map[netip.Addr]int), terminalTimings: defaultWebTerminalTimings(), remember: make(map[[32]byte]*webRememberAttempt)}
 }
 
 // Lazy, bounded cleanup requires no per-token goroutines. Expired permissions
 // with running children remain addressable for logout, never for new access.
 func (this *webService) pruneLocked(now time.Time) {
+	for key, attempt := range this.remember {
+		if !attempt.claiming && !now.Before(attempt.proof.ExpiresAt()) {
+			delete(this.remember, key)
+		}
+	}
 	for key, attempt := range this.attempts {
 		attempt.mutex.Lock()
 		expired := !attempt.claiming && (attempt.consumed || attempt.conn.IsClosed())
@@ -109,7 +120,7 @@ func (this *webService) admit(peer netip.Addr, login bool) (func(), bool) {
 		budget.requests = 0
 		budget.logins = 0
 	}
-	if budget == nil || this.active >= webMaximumWorkers || budget.active >= webMaximumWorkersPerPeer || budget.requests >= webMaximumRequestsPerMinute || login && (budget.logins >= webMaximumLoginsPerMinute || len(this.access)+len(this.attempts)+this.active >= webMaximumAccess) || this.ctx.Err() != nil {
+	if budget == nil || this.active >= webMaximumWorkers || budget.active >= webMaximumWorkersPerPeer || budget.requests >= webMaximumRequestsPerMinute || login && (budget.logins >= webMaximumLoginsPerMinute || len(this.access)+len(this.attempts)+len(this.remember)+this.active >= webMaximumAccess) || this.ctx.Err() != nil {
 		this.mutex.Unlock()
 		release()
 		return nil, false
@@ -144,6 +155,7 @@ func (this *webService) Close() error {
 			attempt.stop()
 		}
 		this.attempts = make(map[[32]byte]*webLoginAttempt)
+		this.remember = make(map[[32]byte]*webRememberAttempt)
 		this.mutex.Unlock()
 	})
 	return this.closeErr
@@ -168,6 +180,7 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.URL.Path {
 	case webAPI + "login/password", webAPI + "login/interactive", webAPI + "login/public-key", webAPI + "login/poll", webAPI + "login/reply", webAPI + "login/cancel", webAPI + "access", webAPI + "logout":
+	case webAPI + "remember/enroll", webAPI + "remember/resume", webAPI + "remember/revoke", webAPI + "remember/prove":
 	default:
 		http.NotFound(w, r)
 		return
@@ -183,6 +196,7 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	isLogin := r.URL.Path == webAPI+"login/password" || r.URL.Path == webAPI+"login/interactive" || r.URL.Path == webAPI+"login/public-key"
+	isLogin = isLogin || strings.HasPrefix(r.URL.Path, webAPI+"remember/") && r.URL.Path != webAPI+"remember/prove"
 	release, ok := this.admit(peer, isLogin)
 	if !ok {
 		w.Header().Set("Retry-After", "60")
@@ -235,6 +249,10 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		this.handleAttempt(w, r, scope, peer, values)
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, webAPI+"remember/") {
+		this.handleRemember(w, r, scope, peer, values)
+		return
+	}
 	if len(values) != 1 {
 		webError(w, http.StatusBadRequest, "only slug is accepted")
 		return
@@ -242,7 +260,11 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	token := webBearer(r)
 	if r.URL.Path == webAPI+"logout" {
 		if err := this.logout(scope, token); err != nil {
-			webError(w, http.StatusUnauthorized, "web access denied")
+			if goerrors.Is(err, errWebAccessDenied) {
+				webError(w, http.StatusUnauthorized, "web access denied")
+			} else {
+				webError(w, http.StatusServiceUnavailable, "web logout could not be persisted")
+			}
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -300,7 +322,7 @@ func validWebLoginUser(user string) bool {
 
 // Every verified adapter converges here. An attempt token, certificate CA
 // signature or a public-key eligibility decision cannot substitute for proof.
-func (this *webService) completeAuthentication(w http.ResponseWriter, ctx context.Context, conn *webLoginConnection, auth authorization.Authorization, method audit.AuthenticationMethod) {
+func (this *webService) completeAuthentication(w http.ResponseWriter, ctx context.Context, conn *webLoginConnection, auth authorization.Authorization, method audit.AuthenticationMethod, primaryKey ...ssh.PublicKey) {
 	if auth == nil || !auth.IsAuthorized() || auth.FindSession() == nil {
 		webError(w, http.StatusUnauthorized, "authentication denied")
 		return
@@ -328,7 +350,14 @@ func (this *webService) completeAuthentication(w http.ResponseWriter, ctx contex
 		webError(w, http.StatusServiceUnavailable, "authentication unavailable")
 		return
 	}
-	token, access, err := this.issue(conn.scope, base)
+	credential := authentication.SessionCredential{Kind: authorization.KindOf(auth), Method: string(method)}
+	if method == audit.AuthenticationMethodPublicKey && len(primaryKey) == 1 && primaryKey[0] != nil {
+		credential.PublicKey = base64.StdEncoding.EncodeToString(primaryKey[0].Marshal())
+	}
+	if credential.Validate() != nil {
+		credential = authentication.SessionCredential{}
+	} // Unsupported adapters may log in without enabling RememberMe.
+	token, access, err := this.issue(conn.scope, base, credential, nil)
 	if err != nil {
 		webError(w, http.StatusServiceUnavailable, "web access unavailable")
 		return
@@ -493,6 +522,12 @@ func webRequestFields(path string) []string {
 		return []string{"user", "publicKey"}
 	case webAPI + "login/reply":
 		return []string{"sequence", "answer", "signature"}
+	case webAPI + "remember/enroll":
+		return []string{"publicKey"}
+	case webAPI + "remember/resume", webAPI + "remember/revoke":
+		return []string{"flow", "sessionId", "bindingId"}
+	case webAPI + "remember/prove":
+		return []string{"signature"}
 	default:
 		return nil
 	}

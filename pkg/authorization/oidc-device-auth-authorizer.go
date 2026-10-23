@@ -790,115 +790,11 @@ func (this *OidcDeviceAuthAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (
 	var selectedAuth *oidc
 	var selectedToken *oidcToken
 	restoreCandidate := func(ctx context.Context, candidate session.Session) (bool, error) {
-		unlock, err := this.lockSession(ctx, candidate)
-		if err != nil {
+		auth, token, err := this.restoreSessionAccess(ctx, req, candidate, req.RemotePublicKey())
+		if err != nil || auth == nil {
 			return false, err
 		}
-		defer unlock()
-		at, err := candidate.AuthorizationToken(ctx)
-		if err != nil {
-			return false, err
-		}
-		if len(at) == 0 {
-			return false, nil
-		}
-		var token oidcToken
-		if err := json.Unmarshal(at, &token); err != nil {
-			return false, err
-		}
-		if token.Token == nil || token.AccessToken == "" {
-			return false, nil
-		}
-		if token.Pending != nil {
-			if _, lost, err := this.refreshSession(ctx, candidate, &token, false); lost {
-				if this.OnLostAccess != nil {
-					this.OnLostAccess(candidate)
-				}
-				return false, nil
-			} else if err != nil {
-				return false, err
-			}
-			updated, err := this.readSessionToken(ctx, candidate)
-			if err != nil {
-				return false, err
-			}
-			token = *updated
-		}
-		if this.conf != nil && this.conf.ForceDisposeSessionOn != "never" && (token.Expiry.IsZero() || time.Now().Before(token.Expiry)) {
-			if _, lost, err := this.refreshSession(ctx, candidate, &token, false); lost {
-				if this.OnLostAccess != nil {
-					this.OnLostAccess(candidate)
-				}
-				return false, nil
-			} else if err != nil {
-				return false, err
-			}
-			updated, err := this.readSessionToken(ctx, candidate)
-			if err != nil {
-				return false, err
-			}
-			token = *updated
-		}
-		if !token.Expiry.IsZero() && !time.Now().Before(token.Expiry) {
-			if this.conf == nil || !this.conf.RefreshEnabled() {
-				return false, nil
-			}
-			if _, lost, err := this.refreshSession(ctx, candidate, &token, true); lost {
-				if this.OnLostAccess != nil {
-					this.OnLostAccess(candidate)
-				}
-				return false, nil
-			} else if err != nil {
-				return false, err
-			}
-			updated, err := this.readSessionToken(ctx, candidate)
-			if err != nil {
-				return false, err
-			}
-			token = *updated
-			if !token.Expiry.IsZero() && !time.Now().Before(token.Expiry) {
-				return false, nil
-			}
-		}
-		if this.conf != nil && this.conf.RefreshEnabled() && this.conf.RetrieveIdToken && token.IdToken != "" {
-			if _, err := this.verifyToken(ctx, &token); errors.IsType(err, errors.Expired) {
-				if _, lost, err := this.refreshSession(ctx, candidate, &token, true); lost {
-					if this.OnLostAccess != nil {
-						this.OnLostAccess(candidate)
-					}
-					return false, nil
-				} else if err != nil {
-					return false, err
-				}
-				updated, err := this.readSessionToken(ctx, candidate)
-				if err != nil {
-					return false, err
-				}
-				token = *updated
-			}
-		}
-		if !token.Expiry.IsZero() && !time.Now().Before(token.Expiry) {
-			return false, nil
-		}
-		auth, err := this.finalizeAuth(ctx, req.Connection().Logger(), &token, true)
-		if errors.IsType(err, errors.Expired) {
-			return false, nil
-		}
-		if err != nil {
-			return false, err
-		}
-		auth.remote = req.Connection().Remote()
-		auth.session = candidate
-		auth.sessionsPublicKey = req.RemotePublicKey()
-		accepted, err := req.Validate(auth)
-		if err != nil || !accepted {
-			return accepted, err
-		}
-		if err := this.updateSessionWith(ctx, &token, candidate); err != nil {
-			return false, err
-		}
-		selectedAuth = auth
-		selectedToken = &token
+		selectedAuth, selectedToken = auth, token
 		return true, nil
 	}
 	sess, err := req.Sessions().FindByPublicKey(req.Context(), req.RemotePublicKey(), (&session.FindOpts{}).WithPredicate(
