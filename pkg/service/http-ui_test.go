@@ -101,6 +101,15 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 					conf.Flows = append(conf.Flows, flow)
 				}
 			}
+			if mode == "management-actions" {
+				conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
+				worker := conf.Flows[0]
+				worker.Name = "worker"
+				worker.DiscoverAsSlug = "Worker"
+				worker.Environment.V = &configuration.EnvironmentDummy{}
+				worker.Authorization.V = &configuration.AuthorizationSimple{Entries: configuration.AuthorizationSimpleEntries{{Name: "bob", Password: bfcrypto.Password("plain:correct")}}}
+				conf.Flows = append(conf.Flows, worker)
+			}
 			if mode == "key" {
 				conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple).Entries[0].AuthorizedKeys = authorizedKeys
 			}
@@ -111,11 +120,16 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 		})
 		protocolHandler = svc.web
 	}
-	if mode == "management" {
+	if mode == "management" || mode == "management-actions" {
 		svc.environments = svc.environments.(*executionTestRepository).CloseableRepository
 		application := svc.managementApplication
 		svc.managementApplication = nil
 		t.Cleanup(func() { svc.managementApplication = application })
+	}
+	var actionTargets *actionUITargetRepository
+	if mode == "management-actions" {
+		actionTargets = &actionUITargetRepository{CloseableRepository: svc.environments}
+		svc.environments = actionTargets
 	}
 	if mode == "interactive" {
 		delegate := svc.authorizer
@@ -172,6 +186,28 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 		if r.URL.Path == "/_bifroest/test/interrupt-enrollment" && r.Method == http.MethodPost {
 			interrupt.Store(true)
 			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if mode == "management-actions" && r.URL.Path == "/_bifroest/test/interrupt-management-confirm" && r.Method == http.MethodPost {
+			interrupt.Store(true)
+			w.WriteHeader(204)
+			return
+		}
+		if mode == "management-actions" && r.URL.Path == webAPI+"management/sessions/confirm" && interrupt.Load() {
+			recorder := httptest.NewRecorder()
+			protocolHandler.ServeHTTP(recorder, r)
+			for name, values := range recorder.Header() {
+				w.Header()[name] = values
+			}
+			if recorder.Code == 200 && interrupt.CompareAndSwap(true, false) {
+				interrupted.Add(1)
+				w.Header().Set("Content-Length", "1000")
+				w.WriteHeader(200)
+				_, _ = w.Write([]byte(`{"status":`))
+				return
+			}
+			w.WriteHeader(recorder.Code)
+			_, _ = w.Write(recorder.Body.Bytes())
 			return
 		}
 		if r.URL.Path == "/_bifroest/test/client.js" {
@@ -252,7 +288,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	require.NoError(t, json.Unmarshal(output, &result), "%s", output)
 	require.True(t, result.Success)
 	expectedInterrupt := 0
-	if mode == "profile" || mode == "interactive-lost" {
+	if mode == "profile" || mode == "interactive-lost" || mode == "management-actions" {
 		expectedInterrupt = 1
 	}
 	require.EqualValues(t, expectedInterrupt, interrupted.Load(), "the uncertain claim must commit once without automatic retry")
@@ -260,7 +296,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	if mode == "name-free" || mode == "oidc-cancel" {
 		expectedSessions = 0
 	}
-	if mode == "terminal" || mode == "management" {
+	if mode == "terminal" || mode == "management" || mode == "management-actions" {
 		expectedSessions = 2
 	}
 	require.Equal(t, expectedSessions, webSessionCount(t, svc))
@@ -268,6 +304,9 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 		require.EqualValues(t, 4, terminalCounters.runs.Load())
 		require.Positive(t, terminalCounters.resizes.Load())
 		require.Positive(t, terminalCounters.interrupts.Load())
+	}
+	if actionTargets != nil {
+		require.EqualValues(t, 3, actionTargets.runs.Load())
 	}
 	if provider != nil {
 		if mode == "oidc-cancel" {
@@ -284,6 +323,12 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 		info, err := current.Info(ctx)
 		require.NoError(t, err)
 		switch mode {
+		case "management-actions":
+			if current.Flow() == "worker" {
+				require.Equal(t, session.StateDisposed, info.State())
+			} else {
+				require.Equal(t, session.StateAuthorized, info.State())
+			}
 		case "management":
 			require.Equal(t, session.StateAuthorized, info.State(), "management operations share session activation/activity")
 		case "terminal":

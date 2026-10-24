@@ -4,7 +4,8 @@ The first React 19/Mantine 9 application supports password login, explicit
 RememberMe opt-in, saved-access resumption, confirmed logout/revocation,
 explicit local-only recovery and an owned xterm terminal. It uses en-US message
 keys and memory-only auto/light/dark appearance. Local SSH-key import/signing now
-uses an owned Go/WASM worker; Management has an initial read-only structured view. Keyboard-Interactive
+uses an owned Go/WASM worker; Management has structured metadata and confirmed
+session disconnect/dispose actions. Keyboard-Interactive
 and OIDC device dialogs use the bounded existing server API. Vite 8/Oxc/Rolldown
 builds the application and the independently tested, dependency-free HTTP/crypto
 core; there is no Webpack/Babel chain or production Node runtime.
@@ -136,8 +137,8 @@ it actually showed, never silently adopting another tab's replacement.
 The UI leaves existing registrations unchanged on ordinary login. Remote revoke
 and local-only removal have separate confirmation dialogs; local removal never
 claims server logout. Interrupted setup stays visibly uncertain until explicitly
-reconciled. Management mutations, artifact transfer and client-side decryption
-remain subsequent work.
+reconciled. Artifact transfer/client-side decryption, exact forced-command
+equivalence and portable Go-client transport integration remain subsequent work.
 
 ## Interactive and OIDC device login
 
@@ -230,7 +231,7 @@ submit, bounded private IndexedDB schema and no private HTTP fields/CSP violatio
 RPC-fixture unit tests separately check bounds, explicit empty-cert rejection,
 one-shot use, cancellation and deadlines; they are not cryptographic runtime tests.
 
-## Structured Management (read-only stage)
+## Structured Management
 
 A Management environment uses the same login/RememberMe/access grant as terminal
 flows, not a second admin login. The authenticated UI loads the management panel
@@ -259,12 +260,12 @@ come only from an immutable stored association; legacy/anonymous sessions show
 no invented owner/principal. Damaged entries produce a partial-data warning, not
 private filesystem diagnostics or automatic cleanup.
 
-The initial adapter intentionally has no mutation, credential-detail or artifact
-route: `includingCredentials`/`allowArtifactTransfer` cannot be asserted by a client.
+The metadata adapter has no credential-detail or artifact route:
+`includingCredentials`/`allowArtifactTransfer` cannot be asserted by a client.
 Any forced-command credential fails closed for structured requests until an exact
 typed equivalence policy exists; keep using SSH with its existing restriction,
-not by removing that restriction. Disconnect/dispose confirmation, structured
-artifact streaming, Go-client/WASM transport reuse and client-only full artifact
+not by removing that restriction. Structured artifact streaming,
+Go-client/WASM transport reuse and client-only full artifact
 verification/decryption remain open. The current UI/JSON adapter is not presented
 as a completed portable management client.
 
@@ -273,6 +274,50 @@ request cancellation, strict final-audit refusal before output, preserved damage
 state, paging and forced-command denial. Actual Go HTTPS/Chromium exercises flow
 pagination, session tables/details, cookies/CSP boundaries and actor-changing
 reauth with cleared data while the CLI application is deliberately unavailable.
+
+### Confirmed session actions
+
+`Disconnect session connections` and `Dispose session` are available from the
+selected session detail. Opening the dialog makes an audited/recorded preparation
+read, not a target mutation. The server returns a one-minute one-use `bmc1.`
+permission, hash-indexed only in memory and bound to the exact original access,
+origin/slug, direct peer, action and immutable creation/association evidence for
+the target. It is not standalone authentication. At most 64 preparations/four per
+peer are retained; preparation also shares existing start/request budgets. Read
+activity never extends the pinned expiry. The dialog shows the fresh target,
+verified owner evidence and creation time, and requires typing the exact
+`flow/session ID`. Closing an unused dialog only cancels that preparation.
+
+`management/sessions/prepare`, `confirm` and `cancel` are fixed POST endpoints.
+Confirm/cancel use the original access bearer plus a body-only confirmation token;
+they accept no replacement action/target. A confirm consumes its one-use permission
+before any possible effect, including on failure, and retains its slot while the
+operation actually runs. Target generation is rechecked immediately before use
+and after the started-action audit; this is not a filesystem transaction against
+a privileged operator concurrently rewriting protected storage. A replaced target
+or the caller's own management session cannot be operated on. The shared SSH
+session-control implementation owns disconnect/revocation/disposal, cross-flow
+audit and durable-disposal-before-cleanup; the common task/recording/final-audit
+lifecycle remains mandatory. No CLI parser or new administrator role is used.
+
+Disconnect closes the current connection snapshot, but permits a deliberate new
+connection in the same session/workload. Dispose revokes access, stops refresh,
+persists disposal and performs normal environment/authorization cleanup; partial
+failure may already have revoked access or removed resources. Own browser logout
+is still not disposal. Any lost/malformed/cancelled commit response is
+`management-unknown`, never a replay, success or rollback. The local handle can
+confirm once and cannot turn later cancellation into undo. The UI retires stale
+results, clears old target data and allows explicit metadata reads. Authentication
+changes stay locked during commit/unknown outcome until the result is confirmed
+or the user explicitly dismisses the local warning (which confirms nothing).
+
+Actual HTTPS/Chromium drives two live WebSocket executions, unused-dialog cancel,
+typed-target confirmation, disconnect plus a new execution in the same session,
+and dispose with a deliberately lost successful response. It verifies revoked
+state through an explicit read and no automatic confirmation replay. Native/race
+tests cover concurrent one-shot claims, peer/scope/original-grant binding,
+self-protection, expiry/cancellation, bounded retention, changed generations and
+final-audit failure after a possible effect. Existing SSH controls remain covered.
 
 ## Terminal ownership and limits
 
