@@ -1,10 +1,8 @@
 package transport
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -12,31 +10,17 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
-
-	"github.com/fxamacker/cbor/v2"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/management/wire"
 )
 
-const WireAuditCommand = "_bifroest-management-audit-v1"
-const MaxAuditSnapshotBytes int64 = 1 << 30
-const maxAuditSnapshotFileBytes int64 = 17 << 20
-const maxAuditSnapshotHeaderBytes = 4 << 20
+const WireAuditCommand = wire.WireAuditCommand
+const MaxAuditSnapshotBytes = wire.MaxAuditSnapshotBytes
+const maxAuditSnapshotFileBytes = wire.MaxAuditSnapshotFileBytes
 
-type AuditSnapshotEntry struct {
-	Name   string `cbor:"1,keyasint"`
-	Size   int64  `cbor:"2,keyasint"`
-	SHA256 string `cbor:"3,keyasint"`
-}
-
-type AuditSnapshotHeader struct {
-	Version   uint8                `cbor:"1,keyasint"`
-	Name      string               `cbor:"2,keyasint"`
-	Producer  string               `cbor:"3,keyasint"`
-	Recipient string               `cbor:"4,keyasint"`
-	Files     []AuditSnapshotEntry `cbor:"5,keyasint"`
-}
+type AuditSnapshotEntry = wire.AuditSnapshotEntry
+type AuditSnapshotHeader = wire.AuditSnapshotHeader
 
 type AuditSnapshot struct {
 	header AuditSnapshotHeader
@@ -53,14 +37,7 @@ func (this *AuditSnapshot) Close() error {
 }
 
 func permittedAuditSnapshotName(name string, encrypted bool) bool {
-	if name == "head.cbor" {
-		return true
-	}
-	suffix := ".baudit"
-	if encrypted {
-		suffix = ".beaudit"
-	}
-	return name == "active"+suffix || strings.HasPrefix(name, "segment-") && strings.HasSuffix(name, suffix) && !strings.ContainsAny(name, "/\\")
+	return wire.PermittedAuditSnapshotName(name, encrypted)
 }
 
 // SnapshotAudit copies a live signed checkpoint into private temporary storage.
@@ -163,16 +140,7 @@ func (this *AuditSnapshot) StreamTo(output io.Writer) error {
 	if this == nil || this.root == "" || output == nil {
 		return fmt.Errorf("closed audit snapshot or missing output")
 	}
-	header, err := cbor.Marshal(this.header)
-	if err != nil || len(header) > maxAuditSnapshotHeaderBytes {
-		return fmt.Errorf("invalid audit snapshot header: %v", err)
-	}
-	var length [4]byte
-	binary.BigEndian.PutUint32(length[:], uint32(len(header)))
-	if _, err := io.Copy(output, bytes.NewReader(length[:])); err != nil {
-		return err
-	}
-	if _, err := io.Copy(output, bytes.NewReader(header)); err != nil {
+	if err := wire.WriteAuditSnapshotHeader(output, this.header); err != nil {
 		return err
 	}
 	producerDir := filepath.Join(this.Directory(), this.header.Producer)
@@ -191,59 +159,18 @@ func (this *AuditSnapshot) StreamTo(output io.Writer) error {
 }
 
 func ReadAuditSnapshot(input io.Reader, root string) (AuditSnapshotHeader, error) {
-	var length [4]byte
-	if _, err := io.ReadFull(input, length[:]); err != nil {
-		return AuditSnapshotHeader{}, err
-	}
-	size := binary.BigEndian.Uint32(length[:])
-	if size < 1 || size > maxAuditSnapshotHeaderBytes {
-		return AuditSnapshotHeader{}, fmt.Errorf("invalid audit snapshot header length")
-	}
-	encoded := make([]byte, size)
-	if _, err := io.ReadFull(input, encoded); err != nil {
-		return AuditSnapshotHeader{}, err
-	}
-	var header AuditSnapshotHeader
-	if err := cbor.Unmarshal(encoded, &header); err != nil {
-		return AuditSnapshotHeader{}, err
-	}
-	var producer audit.ProducerId
-	if header.Version != 1 || header.Name == "" || producer.Set(header.Producer) != nil || len(header.Files) == 0 {
-		return AuditSnapshotHeader{}, fmt.Errorf("unsupported audit snapshot header")
-	}
-	directory := filepath.Join(root, "journal", header.Producer)
-	if err := os.MkdirAll(directory, 0700); err != nil {
-		return AuditSnapshotHeader{}, err
-	}
-	seen := map[string]bool{}
-	var total int64
-	for _, entry := range header.Files {
-		if !permittedAuditSnapshotName(entry.Name, header.Recipient != "") || seen[entry.Name] || entry.Size <= 0 || entry.Size > maxAuditSnapshotFileBytes || total > MaxAuditSnapshotBytes-entry.Size {
-			return AuditSnapshotHeader{}, fmt.Errorf("invalid audit snapshot file entry %q", entry.Name)
-		}
-		seen[entry.Name] = true
-		total += entry.Size
-		path := filepath.Join(directory, entry.Name)
-		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-		if err != nil {
-			return AuditSnapshotHeader{}, err
-		}
-		hasher := sha256.New()
-		_, err = io.CopyN(io.MultiWriter(file, hasher), input, entry.Size)
-		closeErr := file.Close()
-		if err != nil || closeErr != nil {
-			return AuditSnapshotHeader{}, errors.Join(err, closeErr)
-		}
-		if hex.EncodeToString(hasher.Sum(nil)) != entry.SHA256 {
-			return AuditSnapshotHeader{}, fmt.Errorf("audit snapshot file %q has the wrong digest", entry.Name)
-		}
-	}
-	if !seen["head.cbor"] {
-		return AuditSnapshotHeader{}, fmt.Errorf("audit snapshot has no signed head")
-	}
-	var trailing [1]byte
-	if _, err := io.ReadFull(input, trailing[:]); err != io.EOF {
-		return AuditSnapshotHeader{}, fmt.Errorf("audit snapshot has trailing bytes or was truncated: %v", err)
-	}
-	return header, nil
+	return wire.ReadAuditSnapshot(input, &auditSnapshotFileSink{root: root})
+}
+
+// The native caller supplies private staging storage and owns its cleanup. A
+// successfully decoded transfer still needs successful SSH exit and independent
+// journal verification before its files can be treated as trusted evidence.
+type auditSnapshotFileSink struct{ root, directory string }
+
+func (this *auditSnapshotFileSink) Begin(header AuditSnapshotHeader) error {
+	this.directory = filepath.Join(this.root, "journal", header.Producer)
+	return os.MkdirAll(this.directory, 0700)
+}
+func (this *auditSnapshotFileSink) Open(entry AuditSnapshotEntry) (io.WriteCloser, error) {
+	return os.OpenFile(filepath.Join(this.directory, entry.Name), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 }

@@ -1,4 +1,4 @@
-package transport
+package wire
 
 import (
 	"bytes"
@@ -8,8 +8,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
-	"github.com/engity-com/bifroest/pkg/cli/model"
-	"github.com/engity-com/bifroest/pkg/recording"
+	"github.com/engity-com/bifroest/pkg/management/protocol"
 )
 
 const WireRecordingListStreamCommand = "_bifroest-management-recording-list-stream-v1"
@@ -48,7 +47,7 @@ func writeRecordingStreamFrame(output io.Writer, kind uint8, value any) error {
 	return err
 }
 
-func WriteRecordingStreamEntry(output io.Writer, entry model.RecordingView) error {
+func WriteRecordingStreamEntry(output io.Writer, entry protocol.RecordingView) error {
 	return writeRecordingStreamFrame(output, recordingStreamEntry, entry)
 }
 
@@ -62,7 +61,7 @@ func WriteRecordingStreamError(output io.Writer, err error) error {
 
 // DecodeRecordingListStream yields bounded individual entries and requires an
 // explicit, count-checked end frame followed by EOF. A partial stream is an error.
-func DecodeRecordingListStream(input io.Reader, consume func(model.RecordingView) error) error {
+func DecodeRecordingListStream(input io.Reader, consume func(protocol.RecordingView) error) error {
 	mode, err := (cbor.DecOptions{DupMapKey: cbor.DupMapKeyEnforcedAPF}).DecMode()
 	if err != nil {
 		return err
@@ -90,10 +89,10 @@ func DecodeRecordingListStream(input io.Reader, consume func(model.RecordingView
 		}
 		switch frame.Kind {
 		case recordingStreamEntry:
-			if count >= uint64(recording.MaximumSealedPageSize) {
+			if count >= uint64(protocol.MaximumRecordingPageSize) {
 				return fmt.Errorf("recording stream exceeds the maximum page size")
 			}
-			var entry model.RecordingView
+			var entry protocol.RecordingView
 			if err := mode.Unmarshal(frame.Payload, &entry); err != nil {
 				return err
 			}

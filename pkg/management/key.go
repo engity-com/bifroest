@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/engity-com/bifroest/pkg/cli/transport"
+	transport "github.com/engity-com/bifroest/pkg/management/wire"
 )
 
 func (target Target) ExportKey(ctx context.Context, args ...string) ([]byte, error) {

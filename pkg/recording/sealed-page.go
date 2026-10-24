@@ -11,11 +11,12 @@ import (
 	"strings"
 
 	"github.com/engity-com/bifroest/pkg/errors"
+	"github.com/engity-com/bifroest/pkg/management/protocol"
 )
 
 const (
 	DefaultSealedPageSize uint = 100
-	MaximumSealedPageSize uint = 1000
+	MaximumSealedPageSize      = protocol.MaximumRecordingPageSize
 )
 
 type SealedPageOptions struct {

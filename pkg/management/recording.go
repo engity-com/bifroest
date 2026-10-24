@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/engity-com/bifroest/pkg/cli/transport"
+	transport "github.com/engity-com/bifroest/pkg/management/wire"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/recording"
 )

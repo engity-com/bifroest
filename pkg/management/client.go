@@ -21,7 +21,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	cliformat "github.com/engity-com/bifroest/pkg/cli/format"
 	"github.com/engity-com/bifroest/pkg/cli/model"
-	"github.com/engity-com/bifroest/pkg/cli/transport"
+	transport "github.com/engity-com/bifroest/pkg/management/wire"
 )
 
 type Target struct {

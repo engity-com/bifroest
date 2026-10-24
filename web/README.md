@@ -315,6 +315,38 @@ remain closed. Native SSH/HTTP reference tests compare actual formats/columns,
 filter intersections and operation ceilings; a real Go/WASM key-login browser
 test checks the limited view and denied detail/mutation access.
 
+### Portable Go framing and artifact sinks
+
+`pkg/management/wire` now owns the existing management request/result, recording
+list/artifact and audit-snapshot framing. It imports only the portable protocol,
+CBOR and standard library, not CLI/configuration/SSH/recording/audit server code.
+The native Go management client uses it directly; `pkg/cli/transport` retains thin
+compatibility adapters plus real native snapshot capture/FS sinks. The original
+RecordingView tags/order and request wire bytes are pinned by compatibility tests.
+Shared recording-page limits keep selector and decoder bounds in sync. This is
+reuse of the existing implementation, not a second TypeScript artifact parser.
+
+Readers retain bounded frames and exact explicit end/count/EOF checks. Audit
+headers are completely validated before `AuditSnapshotSink.Begin`, including all
+names, duplicate entries, positive/per-file/total lengths, canonical digests and
+the required head. Duplicate CBOR header keys and nonportable/path/control names
+are rejected before storage effects. `Begin` receives an independent file-list
+copy; `Open` returns a provisional writer closed even on copy failure. Native
+staging uses exclusive creation, never overwriting existing files. The caller
+owns cleanup and publication: row callbacks or bytes received by a sink are not
+complete/trusted results. Even successful digest/end/EOF decoding still requires
+successful transport completion and independent full signature/producer/chain/
+checkpoint/decryption verification. The native client's existing SSH-exit,
+diagnostic-drain, cancellation and abort tests remain in force.
+
+Unit tests run natively and as actual Go/WASM under the pinned Node 24 runtime
+using the workspace Go runtime copies; this is not browser worker/UI integration.
+There is still **no public browser artifact route, artifact-key import/decryption
+UI or completed portable Go management client**. Typed transport/client lifecycle
+and immutable ReaderAt/full-verification integration remain subsequent work; no
+CLI arguments become a browser protocol, no server decryption/key upload or new
+management permissions are introduced here.
+
 ### Confirmed session actions
 
 `Disconnect session connections` and `Dispose session` are available from the

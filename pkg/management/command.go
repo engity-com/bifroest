@@ -11,7 +11,7 @@ import (
 	cli "github.com/echocat/cli4g"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/engity-com/bifroest/pkg/cli/transport"
+	transport "github.com/engity-com/bifroest/pkg/management/wire"
 )
 
 // sshCommand owns one invocation's connection, session and diagnostics. Callers
