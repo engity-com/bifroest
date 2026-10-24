@@ -5,6 +5,8 @@ import type { Transport } from './http';
 import type { Binding, ProofPurpose, Scope } from './protocol';
 import { interactive } from '../login/interactive';
 import type { StepHandler } from '../login/interactive';
+import { publicKeyLogin } from '../login/key';
+import type { LoginKey } from '../login/key';
 
 export interface AccessSnapshot {
   readonly scope: Scope;
@@ -182,6 +184,18 @@ export class BrowserClient {
     this.#loginActive = true;
     try {
       const value = await interactive(this.#http, user, handler, signal);
+      if (signal?.aborted) throw new RememberMeError('cancelled');
+      try { return new WebAccess(this.#http, accessResponse(value, this.#scope), null); }
+      catch { throw new RememberMeError('login-unknown'); }
+    } finally { this.#loginActive = false; }
+  }
+
+  async publicKey(user: string, key: LoginKey, signal?: AbortSignal): Promise<WebAccess> {
+    if (this.#loginActive) throw new RememberMeError('busy');
+    if (typeof user !== 'string' || !user.isWellFormed() || new TextEncoder().encode(user).byteLength > 256 || /[\p{Cc}]/u.test(user)) throw new RememberMeError('unavailable');
+    this.#loginActive = true;
+    try {
+      const value = await publicKeyLogin(this.#http, this.#scope, user, key, signal);
       if (signal?.aborted) throw new RememberMeError('cancelled');
       try { return new WebAccess(this.#http, accessResponse(value, this.#scope), null); }
       catch { throw new RememberMeError('login-unknown'); }
