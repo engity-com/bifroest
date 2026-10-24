@@ -21,6 +21,9 @@ bifroest run --configuration=/my/config.yaml
 <<property("ssh", "SSH", "connection/ssh.md")>>
 Defines how the SSH connections itself will behave.
 
+<<property("http", "HTTP / HTTPS", "connection/http.md")>>
+Optional HTTPS endpoint configuration, disabled by default. Enabled SSH/HTTPS inputs are jointly startup-critical. Discovery and password, interactive/OIDC-device and public-key authentication APIs are available; the browser workspace, public terminal protocol and RememberMe remain pending. See the linked HTTP reference for the current boundary and limits.
+
 <<property("session", "Session", "session/index.md")>>
 Defines where and how the sessions inside Bifröst are handled.
 

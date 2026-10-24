@@ -88,6 +88,29 @@ func TestFlowDetailsRedactNestedStructuralNames(t *testing.T) {
 	}
 }
 
+func TestFlowDetailsIncludeTransportSettingsWithoutWeakeningRedaction(t *testing.T) {
+	no := false
+	conf := &configuration.Configuration{Flows: configuration.Flows{{
+		Name: "browser", DiscoverAsSlug: "servers/Example",
+		Ssh: configuration.FlowSsh{Enabled: &no}, Http: configuration.FlowHttp{RequestUser: &no},
+		Authorization: configuration.Authorization{V: &configuration.AuthorizationNone{}},
+		Environment:   configuration.Environment{V: &configuration.EnvironmentDummy{}},
+	}}}
+	for _, includeCredentials := range []bool{false, true} {
+		var output bytes.Buffer
+		require.NoError(t, ShowFlow(&output, format.Json, conf, "browser", includeCredentials))
+		var settings map[string]any
+		require.NoError(t, json.Unmarshal(output.Bytes(), &settings))
+		require.Equal(t, false, settings["ssh"].(map[string]any)["enabled"])
+		require.Equal(t, false, settings["http"].(map[string]any)["requestUser"])
+		if includeCredentials {
+			require.Equal(t, "servers/Example", settings["discoverAsSlug"])
+		} else {
+			require.Equal(t, "***redacted***", settings["discoverAsSlug"])
+		}
+	}
+}
+
 func TestRedactSettingsDefaultsToNoPublicStrings(t *testing.T) {
 	settings := map[string]any{
 		"name": "private-name", "type": "private-type", "auditlog": "private-auditlog",

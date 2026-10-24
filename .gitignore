@@ -1,5 +1,9 @@
 var
 .cache
+web/node_modules/
+web/.vitest/
+pkg/webui/assets/*
+!pkg/webui/assets/README.txt
 __pycache__/
 .env
 docs/versions.json

@@ -1,7 +1,6 @@
 package authorization
 
 import (
-	essh "github.com/engity-com/ssh-server-go"
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/connection"
@@ -9,23 +8,30 @@ import (
 )
 
 type Request interface {
+	connection.Context
 	Sessions() session.Repository
-	Connection() connection.Connection
-	Context() essh.Context
 	Validate(Authorization) (bool, error)
 }
 
+// PublicKeyRequest may be an unsigned eligibility probe. Without an explicit
+// verified assertion, an accepted response is provisional: it must not allocate
+// persistent sessions, change credentials or register an authenticated connection.
 type PublicKeyRequest interface {
 	Request
 	RemotePublicKey() gossh.PublicKey
 }
 
-type verifiedPublicKeyRequest interface {
+// VerifiedPublicKeyRequest is implemented by trusted transport adapters only.
+// True means the adapter has checked a fresh signature proving possession of
+// this exact key for this attempt, not merely a certificate's CA signature.
+// Never obtain this flag from an unverified client payload.
+type VerifiedPublicKeyRequest interface {
+	PublicKeyRequest
 	PublicKeyVerified() bool
 }
 
 func isPublicKeyVerified(req PublicKeyRequest) bool {
-	verified, ok := req.(verifiedPublicKeyRequest)
+	verified, ok := req.(VerifiedPublicKeyRequest)
 	return ok && verified.PublicKeyVerified()
 }
 

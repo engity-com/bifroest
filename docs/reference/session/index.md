@@ -12,6 +12,8 @@ A session is grouping one or more connections of a user together. This enables t
 
 For OIDC, a remembered key can skip the browser step, but does not disable configured refresh-token checks or permit reuse of a disposed session.
 
+The filesystem repository also provides [identity/target association selection](fs.md#session-association-groundwork), used by primary Simple, htpasswd, Local, verified OIDC device logins and authenticated Bifröst-delegation logins with built-in environments. Each connection retains its own verified claims and restrictions. The [HTTP authentication APIs](../connection/http.md#interactive-and-public-key-login-protocol) share verified session selection with SSH and issue separate scoped ephemeral web proofs after password, interactive/OIDC or key possession verification. Anonymous web-to-SSH resumption, browser RememberMe, frontend and a browser workspace remain pending.
+
 ## Types
 
 1. `fs`: [Filesystem](fs.md) (default type)

@@ -10,6 +10,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/alternatives"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/imp"
+	"github.com/engity-com/bifroest/pkg/management/protocol"
 	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 )
@@ -20,6 +21,21 @@ var _ = RegisterRepository(NewManagementRepository)
 // running service instead of opening its exclusively locked repositories again.
 type ManagementCommandRunner interface {
 	RunManagementCommand(Task, bool, bool) (int, error)
+}
+
+// Optional structured capability. It receives verified task context and typed
+// data, never a client command string or a fabricated SSH session.
+type ManagementReadRunner interface {
+	RunManagementRead(TaskContext, protocol.ReadRequest, io.Writer, bool, bool) (int, error)
+}
+type ManagementReader interface {
+	ReadManagement(TaskContext, protocol.ReadRequest, io.Writer) (int, error)
+}
+type ManagementActionRunner interface {
+	RunManagementAction(TaskContext, protocol.SessionAction, io.Writer, bool, bool) (int, error)
+}
+type ManagementActor interface {
+	ActManagement(TaskContext, protocol.SessionAction, io.Writer) (int, error)
 }
 
 func NewManagementRepository(ctx context.Context, flow configuration.FlowName, conf *configuration.EnvironmentManagement, _ alternatives.Provider, _ imp.Imp) (*ManagementRepository, error) {
@@ -63,6 +79,28 @@ func (this *ManagementRepository) Cleanup(context.Context, *CleanupOpts) error {
 func (this *ManagementRepository) Close() error { return nil }
 
 type managementEnvironment struct{ repository *ManagementRepository }
+
+func (this *managementEnvironment) ReadManagement(task TaskContext, request protocol.ReadRequest, output io.Writer) (int, error) {
+	runner, ok := this.repository.runner.(ManagementReadRunner)
+	if !ok {
+		return -1, fmt.Errorf("management runner has no structured read capability")
+	}
+	if task.TaskType() != TaskTypeShell || task.Authorization() == nil || task.Authorization().Flow() != this.repository.flow {
+		return -1, fmt.Errorf("invalid structured management task")
+	}
+	return runner.RunManagementRead(task, request, output, this.repository.includingCredentials, this.repository.allowArtifactTransfer)
+}
+
+func (this *managementEnvironment) ActManagement(task TaskContext, request protocol.SessionAction, output io.Writer) (int, error) {
+	runner, ok := this.repository.runner.(ManagementActionRunner)
+	if !ok {
+		return -1, fmt.Errorf("management runner has no structured action capability")
+	}
+	if task.TaskType() != TaskTypeShell || task.Authorization() == nil || task.Authorization().Flow() != this.repository.flow {
+		return -1, fmt.Errorf("invalid structured management task")
+	}
+	return runner.RunManagementAction(task, request, output, this.repository.includingCredentials, this.repository.allowArtifactTransfer)
+}
 
 func (this *managementEnvironment) Banner(Request) (io.ReadCloser, error) { return nil, nil }
 

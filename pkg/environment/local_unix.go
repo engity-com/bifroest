@@ -12,13 +12,13 @@ import (
 	"syscall"
 
 	log "github.com/echocat/slf4g"
-	essh "github.com/engity-com/ssh-server-go"
 
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/sys"
+	"github.com/engity-com/bifroest/pkg/terminal"
 	"github.com/engity-com/bifroest/pkg/user"
 )
 
@@ -64,8 +64,13 @@ func (this *LocalRepository) new(u *user.User, sess session.Session, portForward
 	}
 }
 
-func (this *local) configureShellCmd(t Task, cmd *exec.Cmd) error {
-	raw := t.SshSession().RawCommand()
+func (this *local) configureShellCmd(t TaskContext, cmd *exec.Cmd) error {
+	stream, release, err := taskTerminal(t)
+	if err != nil {
+		return err
+	}
+	defer release()
+	raw := stream.RawCommand()
 	source := &this.repository.conf.ShellCommand
 	property := "shellCommand"
 	if raw != "" {
@@ -100,7 +105,7 @@ func (this *local) configureShellCmd(t Task, cmd *exec.Cmd) error {
 	return nil
 }
 
-func (this *local) createCmdAndEnv(t Task) (*exec.Cmd, *sys.EnvVars, func(), error) {
+func (this *local) createCmdAndEnv(t TaskContext) (*exec.Cmd, *sys.EnvVars, func(), error) {
 	creds := this.user.ToCredentials()
 	dir := this.user.HomeDir
 	if !this.repository.conf.Directory.IsZero() {
@@ -143,7 +148,7 @@ func (this *local) createCmdAndEnv(t Task) (*exec.Cmd, *sys.EnvVars, func(), err
 	return &cmd, &ev, func() {}, nil
 }
 
-func (this *local) runConPTY(Task, *exec.Cmd) (int, error) {
+func (this *local) runConPTY(TaskContext, *exec.Cmd, terminal.Stream) (int, error) {
 	return -1, errors.System.Newf("ConPTY is only available on Windows")
 }
 
@@ -160,8 +165,8 @@ func (this *local) getPathEnv() string {
 	return "/bin:/usr/bin"
 }
 
-func (this *local) signal(cmd *exec.Cmd, logger log.Logger, signal essh.Signal) {
-	err := signalProcessFromSsh(signal, func(sig sys.Signal) error {
+func (this *local) signal(cmd *exec.Cmd, logger log.Logger, signal terminal.Signal) {
+	err := signalProcessFromTerminal(signal, func(sig sys.Signal) error {
 		return sig.SendToProcess(cmd.Process)
 	})
 	if errors.Is(err, os.ErrProcessDone) {

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/pkg/management/protocol"
 )
 
 type FlowSummary struct {
@@ -13,22 +14,9 @@ type FlowSummary struct {
 	Environment   string                     `json:"environment" yaml:"environment"`
 }
 
-type SessionView struct {
-	ID           string     `json:"id" yaml:"id"`
-	Flow         string     `json:"flow" yaml:"flow"`
-	State        string     `json:"state" yaml:"state"`
-	User         string     `json:"user" yaml:"user"`
-	Remote       string     `json:"remote" yaml:"remote"`
-	CreatedAt    time.Time  `json:"createdAt" yaml:"createdAt"`
-	LastAccessed *time.Time `json:"lastAccessed,omitempty" yaml:"lastAccessed,omitempty"`
-	ValidUntil   *time.Time `json:"validUntil,omitempty" yaml:"validUntil,omitempty"`
-}
+type SessionView = protocol.SessionView
 
-type SessionActionResult struct {
-	ID     string `json:"id" yaml:"id"`
-	Flow   string `json:"flow" yaml:"flow"`
-	Action string `json:"action" yaml:"action"`
-}
+type SessionActionResult = protocol.SessionActionResult
 
 type AuditlogSummary struct {
 	Name             configuration.AuditlogName `json:"name" yaml:"name"`

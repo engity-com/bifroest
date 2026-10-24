@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	goerrors "errors"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	essh "github.com/engity-com/ssh-server-go"
 	gossh "golang.org/x/crypto/ssh"
 
+	"github.com/engity-com/bifroest/pkg/authentication"
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bconn "github.com/engity-com/bifroest/pkg/connection"
@@ -47,12 +49,15 @@ func (this *remote) String() string {
 
 type authorizeRequest struct {
 	service       *service
-	connection    *connection
+	connection    bconn.LifetimeAware
 	authorization authorization.Authorization
 }
 
 func (this *authorizeRequest) GetField(name string) (any, bool, error) {
 	switch name {
+	case "authentication":
+		identity, err := (&environmentContext{service: this.service, connection: this.connection, authorization: this.authorization}).Authentication()
+		return identity, true, err
 	case "connection":
 		return this.connection, true, nil
 	case "remote":
@@ -62,12 +67,19 @@ func (this *authorizeRequest) GetField(name string) (any, bool, error) {
 	}
 }
 
-func (this *authorizeRequest) Context() essh.Context {
-	return this.connection.context
+func (this *authorizeRequest) Context() context.Context {
+	return this.connection.Lifetime()
 }
 
 func (this *authorizeRequest) Connection() bconn.Connection {
 	return this.connection
+}
+
+func (this *authorizeRequest) Selection() bconn.Selection {
+	if selected, ok := this.connection.(bconn.SelectionProvider); ok {
+		return selected.Selection()
+	}
+	return bconn.Selection{Transport: bconn.TransportSsh}
 }
 
 func (this *authorizeRequest) Sessions() session.Repository {
@@ -192,13 +204,16 @@ func markInteractiveClientDisconnect(err error) error {
 
 type environmentContext struct {
 	service          *service
-	connection       *connection
+	connection       bconn.LifetimeAware
 	authorization    authorization.Authorization
-	executionContext essh.Context
+	executionContext context.Context
 }
 
 func (this *environmentContext) GetField(name string) (any, bool, error) {
 	switch name {
+	case "authentication":
+		identity, err := this.Authentication()
+		return identity, true, err
 	case "context":
 		return this.Context(), true, nil
 	case "connection":
@@ -214,11 +229,11 @@ func (this *environmentContext) GetField(name string) (any, bool, error) {
 	}
 }
 
-func (this *environmentContext) Context() essh.Context {
+func (this *environmentContext) Context() context.Context {
 	if this.executionContext != nil {
 		return this.executionContext
 	}
-	return this.connection.context
+	return this.connection.Lifetime()
 }
 
 func (this *environmentContext) Connection() bconn.Connection {
@@ -367,7 +382,7 @@ func (this *environmentTask) TaskType() environment.TaskType {
 	return this.taskType
 }
 
-func (this *environmentTask) EnvironmentVariables() configuration.EnvironmentVariables {
+func (this *environmentContext) EnvironmentVariables() configuration.EnvironmentVariables {
 	flowName := this.Authorization().Flow()
 	for i := range this.service.Configuration.Flows {
 		flow := &this.service.Configuration.Flows[i]
@@ -380,30 +395,38 @@ func (this *environmentTask) EnvironmentVariables() configuration.EnvironmentVar
 
 func newRememberMeNotificationContext(ctx essh.Context, auth authorization.Authorization, newSession bool, pub essh.PublicKey) *rememberMeNotificationContext {
 	return &rememberMeNotificationContext{
-		ctx,
-		newSession,
-		auth,
-		pub,
+		context:       ctx,
+		newSession:    newSession,
+		authorization: auth,
+		key:           pub,
 	}
 }
 
 type contextEnabled interface {
-	Context() essh.Context
+	Context() context.Context
 }
 
 type rememberMeNotificationContext struct {
-	context       essh.Context
-	newSession    bool
-	authorization authorization.Authorization
-	key           essh.PublicKey
+	context        essh.Context
+	newSession     bool
+	authorization  authorization.Authorization
+	key            essh.PublicKey
+	authentication func() (authentication.Identity, error)
 }
 
-func (this *rememberMeNotificationContext) Context() essh.Context {
+func (this *rememberMeNotificationContext) Context() context.Context {
 	return this.context
 }
 
 func (this *rememberMeNotificationContext) GetField(name string, ctx contextEnabled) (any, bool, error) {
 	switch name {
+	case "authentication":
+		if this.authentication != nil {
+			identity, err := this.authentication()
+			return identity, true, err
+		}
+		identity, err := authorization.AuthenticationOf(this.authorization)
+		return identity, true, err
 	case "authorization":
 		return this.authorization, true, nil
 	case "key":

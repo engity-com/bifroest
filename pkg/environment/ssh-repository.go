@@ -23,7 +23,6 @@ import (
 	"github.com/engity-com/bifroest/pkg/imp"
 	bnet "github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/session"
-	bfssh "github.com/engity-com/bifroest/pkg/ssh"
 )
 
 var _ = RegisterRepository(NewSshRepository)
@@ -185,17 +184,13 @@ func (this *SshRepository) resolveSettings(req Context) (*sshResolvedSettings, e
 	if err != nil {
 		return nil, fmt.Errorf("cannot render SSH target address: %w", err)
 	}
-	address, err := bfssh.ParseAddress(addressValue)
-	if err != nil {
-		return nil, fmt.Errorf("illegal rendered SSH target address %q: %w", addressValue, err)
-	}
-	user, err := this.conf.User.Render(req)
+	userValue, err := this.conf.User.Render(req)
 	if err != nil {
 		return nil, fmt.Errorf("cannot render SSH target user: %w", err)
 	}
-	user = strings.TrimSpace(user)
-	if user == "" {
-		return nil, fmt.Errorf("rendered SSH target user is empty")
+	address, user, err := resolveSshTarget(addressValue, userValue)
+	if err != nil {
+		return nil, err
 	}
 	connectTimeout, err := this.conf.ConnectTimeout.Render(req)
 	if err != nil {

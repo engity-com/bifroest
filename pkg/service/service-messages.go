@@ -28,7 +28,9 @@ func (this *service) showRememberMe(sshSess essh.Session, auth authorization.Aut
 	}
 	if pub != nil {
 		if v := this.Configuration.Ssh.Keys.RememberMeNotification; !v.IsZero() {
-			buf, err := v.Render(newRememberMeNotificationContext(ctx, auth, state == session.StateNew, pub))
+			notificationContext := newRememberMeNotificationContext(ctx, auth, state == session.StateNew, pub)
+			notificationContext.authentication = (&environmentContext{service: this, connection: this.connection(ctx), authorization: auth}).Authentication
+			buf, err := v.Render(notificationContext)
 			if err != nil {
 				return errors.Newf(errors.System, "cannot render remember me notification: %w", err)
 			}

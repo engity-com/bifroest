@@ -73,6 +73,8 @@ With `lostAccess`, a login without a refresh token is denied, and existing OIDC 
 
 If verification of a newly returned ID token temporarily fails (for example, because JWKS is unavailable), rotated credentials are stored as pending. They cannot authorize a reconnect or replace trusted claims until verification succeeds. Failure beyond `refreshToken.maxUnverifiedFor` disposes the session.
 
+An unsigned SSH remembered-key offer only checks for an eligible persisted session; it does not restore OIDC claims, contact the provider, refresh/promote credentials or report lost access. After SSH verifies possession of the key, Bifröst re-evaluates the authorization, including refresh and environment checks. The unsigned probe may therefore be accepted while the subsequent authenticated attempt is denied. Independent background refresh and its disposal deadlines remain active regardless of probes.
+
 <<property("refreshToken", "Refresh Token", "#device-auth-refresh-token", id_prefix="device-auth-", heading=4)>>
 Settings for refresh-token verification. Refresh is enabled when `forceDisposeSessionOn` is `lostAccess` or `refreshToken.mode` is `proactive`. When enabled, a login without a refresh token is denied.
 
@@ -94,6 +96,12 @@ Positive interval between refresh attempts when the token lifetime is unavailabl
 Positive maximum time without successful refresh verification during transient identity-provider failures before `lostAccess` forces session disposal.
 
 For `lostAccess`, a refresh is scheduled before this deadline if the configured access-token percentage would be later. A session that has already exceeded the deadline is disposed even if the identity provider becomes available again.
+
+### Session sharing
+
+With the filesystem session repository and built-in target resolvers, regular device logins with the same verified issuer/subject, flow and effective target can reuse a [session association](../session/fs.md#session-association-groundwork), independently of the requesting name. Each connection keeps its freshly verified claims. Configurations without verified identity artifacts retain their previous allocation path rather than inferring identity from a name or unverified JWT.
+
+The retained grant is checked under the same lock as reconnect and background refresh. A fresh login cannot replace a rotating refresh chain, bypass pending verification or reset the retained grant's verification deadline. With `lostAccess`, detected grant loss revokes the old session's connections; a regular fresh login may instead receive a new session. Temporary retained-grant verification failures fail the login without replacing its credentials. Only when both refresh and forced disposal are disabled can a newer verified login update the non-refreshing snapshot under that lock. Removed credentials are not restored. The [interactive HTTP protocol](../connection/http.md#interactive-and-public-key-login-protocol) now carries the same device flow through acknowledged plain-text instructions and cancellation, not a new redirect flow. Frontend and browser RememberMe remain pending.
 
 ### Session cleanup
 

@@ -76,11 +76,11 @@ func (this *SimpleAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriz
 	}
 	if accepted {
 		auth.authorizedKeyPolicy = policy
+		if !isPublicKeyVerified(req) {
+			return auth, nil
+		}
 		if isCertificate {
-			if !isPublicKeyVerified(req) {
-				return auth, nil
-			}
-			sess, err := this.ensureSessionFor(req, entry)
+			sess, err := this.ensureSessionFor(req, auth)
 			if err != nil {
 				return fail(err)
 			}
@@ -100,7 +100,7 @@ func (this *SimpleAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriz
 		if !accepted {
 			return Forbidden(req.Connection().Remote()), nil
 		}
-		sess, err = this.ensureSessionFor(req, entry)
+		sess, err = this.ensureSessionFor(req, auth)
 		if err != nil {
 			return fail(err)
 		}
@@ -193,7 +193,7 @@ func (this *SimpleAuthorizer) authorizedKeyPolicy(req PublicKeyRequest, entry *c
 	return policy, true, isCertificate, configured, nil
 }
 
-func (this *SimpleAuthorizer) ensureSessionFor(req Request, entry *configuration.AuthorizationSimpleEntry) (session.Session, error) {
+func (this *SimpleAuthorizer) ensureSessionFor(req Request, auth *simple) (session.Session, error) {
 	fail := func(err error) (session.Session, error) {
 		return nil, err
 	}
@@ -203,13 +203,16 @@ func (this *SimpleAuthorizer) ensureSessionFor(req Request, entry *configuration
 
 	buf := simpleToken{
 		User: simpleTokenUser{
-			Name: entry.Name,
+			Name: auth.entry.Name,
 		},
 		EnvVars: nil,
 	}
 	at, err := json.Marshal(buf)
 	if err != nil {
 		return failf("cannot marshal authorization token: %w", err)
+	}
+	if sess, handled, err := resolveAuthenticatedSession(req, auth, at); handled || err != nil {
+		return sess, err
 	}
 
 	sess, err := req.Sessions().FindByAccessToken(req.Context(), at, (&session.FindOpts{}).WithPredicate(
@@ -251,7 +254,7 @@ func (this *SimpleAuthorizer) AuthorizePassword(req PasswordRequest) (Authorizat
 		return Forbidden(req.Connection().Remote()), nil
 	}
 
-	sess, err := this.ensureSessionFor(req, entry)
+	sess, err := this.ensureSessionFor(req, auth)
 	if err != nil {
 		return failf("cannot create session: %w", err)
 	}
@@ -290,7 +293,7 @@ func (this *SimpleAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Auth
 		return Forbidden(req.Connection().Remote()), nil
 	}
 
-	sess, err := this.ensureSessionFor(req, entry)
+	sess, err := this.ensureSessionFor(req, auth)
 	if err != nil {
 		return failf("cannot create session: %w", err)
 	}

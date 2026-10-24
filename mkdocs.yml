@@ -149,6 +149,7 @@ nav:
       - Connections:
           - reference/connection/index.md
           - SSH: reference/connection/ssh.md
+          - HTTP / HTTPS (groundwork): reference/connection/http.md
       - reference/flow.md
       - Authorizations:
           - reference/authorization/index.md
@@ -238,6 +239,7 @@ nav:
       - Context Objects:
           - reference/context/index.md
           - Alternative Binary: reference/context/alternative-binary.md
+          - Authentication: reference/context/authentication.md
           - Authorization: reference/context/authorization.md
           - Authorization Request: reference/context/authorization-request.md
           - Connection: reference/context/connection.md
