@@ -16,11 +16,7 @@ type FlowSummary struct {
 
 type SessionView = protocol.SessionView
 
-type SessionActionResult struct {
-	ID     string `json:"id" yaml:"id"`
-	Flow   string `json:"flow" yaml:"flow"`
-	Action string `json:"action" yaml:"action"`
-}
+type SessionActionResult = protocol.SessionActionResult
 
 type AuditlogSummary struct {
 	Name             configuration.AuditlogName `json:"name" yaml:"name"`
