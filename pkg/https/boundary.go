@@ -21,8 +21,13 @@ func DocumentPolicy(nonce string) (string, error) {
 	if err != nil || len(raw) != 32 || base64.StdEncoding.EncodeToString(raw) != nonce {
 		return "", fmt.Errorf("invalid document nonce")
 	}
-	return "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'nonce-" + nonce + "'; style-src 'self' 'nonce-" + nonce + "'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'", nil
+	return "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'nonce-" + nonce + "'; style-src 'self' 'nonce-" + nonce + "'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; object-src 'none'", nil
 }
+
+// BrowserKeyWorkerPolicy applies only to the dedicated external worker response.
+// It allows WASM compilation there, never JavaScript eval or child workers, and
+// does not relax the owning document's policy.
+const BrowserKeyWorkerPolicy = "default-src 'none'; base-uri 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; worker-src 'none'; object-src 'none'"
 
 // Boundary enforces the directly terminated HTTPS authority and browser origin.
 // Forwarded/X-Forwarded-* headers never substitute for TLS, SNI, Host or Origin.

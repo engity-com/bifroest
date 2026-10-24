@@ -3,8 +3,8 @@
 The first React 19/Mantine 9 application supports password login, explicit
 RememberMe opt-in, saved-access resumption, confirmed logout/revocation,
 explicit local-only recovery and an owned xterm terminal. It uses en-US message
-keys and memory-only auto/light/dark appearance. Public-key private-material
-import/signing UI and structured Management remain incomplete. Keyboard-Interactive
+keys and memory-only auto/light/dark appearance. Local SSH-key import/signing now
+uses an owned Go/WASM worker; structured Management remains incomplete. Keyboard-Interactive
 and OIDC device dialogs use the bounded existing server API. Vite 8/Oxc/Rolldown
 builds the application and the independently tested, dependency-free HTTP/crypto
 core; there is no Webpack/Babel chain or production Node runtime.
@@ -27,6 +27,17 @@ the Go binary. A source-only Go checkout still compiles for SSH/API development,
 but has no embedded UI until these resources are built. An `assetsDirectory`
 containing a complete app can also supply the UI. Full release-job preparation,
 aggregate SBOM/provenance integration and the remaining feature work are not done.
+
+The app build also compiles `cmd/browser-key` with the pinned Go 1.27.3 toolchain
+and copies that toolchain's `lib/wasm/wasm_exec.js`. The runtime must match the
+reviewed SHA-256 in `scripts/browser-key.mjs`; no download or compatibility fallback
+is performed. In restricted environments set `BIFROEST_GO_WASM_EXEC` to an explicit
+operator-provided copy outside the output directory (the initial development
+copy lives under ignored `var/webui-toolchain/`). No global Go/Node files are
+changed. Source-only Go/SSH/API builds remain independent of this preparation.
+Go/WASM notices are appended to the public notices; a separate conservative
+component manifest records runtime/artifact hashes, Go version and actual external
+module dependencies. This is not complete release-wide source provenance/SBOM.
 
 The optional real HTTPS/client/WebSocket test additionally uses the Go service
 fixtures. After building, run the following from the repository root with
@@ -59,8 +70,8 @@ or production CLI subprocess. This is not production HTTPS/login/UI coverage.
 Browser installation is an explicit development/test
 step and does not change the OS/browser trust store. Dependencies and compiler
 versions are locked. Go asset serving now supports per-file FS-before-embed
-overlays and ordered local customization. Remaining dialogs/Management and
-complete release/SBOM integration remain subsequent steps.
+overlays and ordered local customization. Structured Management, further runtime
+coverage and complete release/SBOM integration remain subsequent steps.
 
 The dependency-free `web/go.mod` is a tooling boundary, not a second Go runtime
 or implementation: root `go test ./...` must not compile Go sources shipped in
@@ -125,7 +136,7 @@ it actually showed, never silently adopting another tab's replacement.
 The UI leaves existing registrations unchanged on ordinary login. Remote revoke
 and local-only removal have separate confirmation dialogs; local removal never
 claims server logout. Interrupted setup stays visibly uncertain until explicitly
-reconciled. Public-key import/signing UI and Management remain subsequent work.
+reconciled. Structured Management remains subsequent work.
 
 ## Interactive and OIDC device login
 
@@ -155,7 +166,7 @@ device login with no requesting name, RememberMe grant reuse, and cancellation
 of a real in-flight IdP token request. The IdP is an owned test fixture; this does
 not claim external-provider, native Local account-policy or public-key UI coverage.
 
-## Public-key client foundation (import UI still pending)
+## Public-key login and owned Go/WASM worker
 
 `BrowserClient.publicKey(user, key, signal)` accepts a trusted tab-local `LoginKey`
 adapter exposing only its canonical Base64 SSH public wire key and a scoped
@@ -169,7 +180,7 @@ be a strong canonical SSH wire signature, not WebCrypto P1363/ASN.1 or RSA/SHA-1
 No private key/passphrase property is serialized or sent to Go. Failed/ambiguous
 replies and final claims are not replayed; cancellation affects only the attempt.
 
-`pkg/browserkey` is the portable Go implementation intended for that future WASM
+`pkg/browserkey` is the portable Go implementation used by the dedicated WASM
 worker, not an HTTP private-key import endpoint. It reuses `x/crypto/ssh` parsers,
 decryption and original SSH signatures; public parsing/challenge encoding/proof
 verification are shared with the server. Imports are limited to one 64-KiB PEM
@@ -183,13 +194,40 @@ principal/CA/options/expiry rules remain authoritative. Every imported handle
 can attempt one context-checked signature, including on failure. Close drops
 references; Go/browser GC is not a physical-erasure guarantee.
 
+The `SSH key login` form selects a local private-key file, optional passphrase
+and optional matching user certificate. The app does not retain files/passphrases
+in application state, storage records or HTTP fields; submitted inputs and the
+component-local uncontrolled value are reset immediately. Private
+inputs have no form names and the key form uses native `method=dialog`, preventing
+a fallback native form upload. An explicitly selected empty certificate fails
+locally, never silently falling back to a raw key. All bytes go only through
+transferable buffers to an owned module worker after its runtime is ready.
+The worker uses the portable Go parser/signature implementation, clears temporary
+buffers, and is terminated after success, error, cancellation or deadline. RPCs
+are capped at 20 seconds and an imported worker has a two-minute hard lifetime;
+no detached/background import or reusable signing service is exposed. Close/GC
+is not a claim of physical secure erasure or hardware-backed key storage.
+
+Only the exact worker asset response enables `wasm-unsafe-eval`; the document
+still forbids both JavaScript eval and WASM compilation. The worker permits only
+same-origin modules/fetch and no child workers. WASM is downloaded lazily for
+key login (currently about 7.7 MB uncompressed, below the existing 8-MiB asset
+bound); it is neither a server subprocess nor a Node runtime. Speculative module
+preloading is disabled so shared chunks cannot crowd out ordered customizing
+scripts under unchanged shared per-peer admission limits. No automatic API retry
+or admission-limit increase is used.
+
 Native tests exercise all algorithms, encrypted imports, certificate matching,
 canonical/duplicate/foreign/expired challenges, one-shot concurrency and unchanged
 server policy. Actual TLS/HTTP2 tests import/decrypt a fixture locally, submit
 only public key/signature, and join the same session as SSH. The package compiles
-for JS/WASM. Chromium adapter tests currently use fixture signers, **not** a
-running Go/WASM import UI. Runtime bundling and a dedicated bounded/terminable
-worker are still pending; the document CSP is unchanged and not relaxed for WASM.
+for JS/WASM. Actual Go HTTPS/Chromium tests run the Go/WASM worker with encrypted
+Ed25519/RSA/NIST P-256/P-384/P-521 and plain Ed25519 files, wrong-passphrase local
+failure without an auth request, worker-boot cancellation, valid and expired
+certificates, independent RememberMe/reload/resume/logout, empty inputs after
+submit, bounded private IndexedDB schema and no private HTTP fields/CSP violations.
+RPC-fixture unit tests separately check bounds, explicit empty-cert rejection,
+one-shot use, cancellation and deadlines; they are not cryptographic runtime tests.
 
 ## Terminal ownership and limits
 

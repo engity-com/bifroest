@@ -5,12 +5,14 @@ import { join } from 'node:path';
 import { chromium } from 'playwright';
 import { exerciseTerminal } from './terminal-ui.mjs';
 import { exerciseDevice, exerciseInteractive, exerciseLostClaim } from './login-ui.mjs';
+import { exerciseKey } from './key-ui.mjs';
 
 const origin = process.argv[2];
 assert.match(origin, /^https:\/\/app\.example\.org:[0-9]+$/);
 const profile = await mkdtemp(join(tmpdir(), 'bifroest-ui-'));
 let context;
 const errors = [];
+const failedResources = [];
 try {
   const open = async () => {
     context = await chromium.launchPersistentContext(profile, { headless: true, ignoreHTTPSErrors: true, args: ['--host-resolver-rules=MAP app.example.org 127.0.0.1', '--no-proxy-server'] });
@@ -20,11 +22,13 @@ try {
     });
     const page = await context.newPage();
     page.on('pageerror', error => errors.push(error.message));
+    page.on('response', response => { if (response.status() >= 400) failedResources.push({ path: new URL(response.url()).pathname, status: response.status() }); });
     const response = await page.goto(`${origin}/Work`);
     assert.equal(response.status(), 200);
     const policy = response.headers()['content-security-policy'];
     assert(policy.includes("frame-ancestors 'none'") && policy.includes("'nonce-") && !policy.includes('unsafe-inline') && !policy.includes('unsafe-eval'));
-    await page.getByRole('heading', { name: 'Fixture brand', exact: true }).waitFor();
+    try { await page.getByRole('heading', { name: 'Fixture brand', exact: true }).waitFor(); }
+    catch (error) { throw new Error(JSON.stringify({ pageErrors: errors, failedResources, csp: await page.evaluate(() => window.cspViolations), root: await page.locator('#root').textContent() }), { cause: error }); }
     assert.equal(await page.locator('html').getAttribute('lang'), 'en-US');
     assert.equal(await page.locator('.workspace').evaluate(node => getComputedStyle(node).borderTopColor), 'rgb(1, 2, 3)');
     assert.equal(await page.evaluate(() => window.fixtureInline), true, 'trusted inline HTML extension needs the fresh document nonce');
@@ -49,6 +53,7 @@ try {
   };
   async function exercise() {
   let page = await open();
+  if (process.argv[3] === 'key') { await exerciseKey(page, process.argv[4], logout); assert.deepEqual(errors, []); return; }
   if (process.argv[3] === 'terminal') { await exerciseTerminal(page, login); assert.deepEqual(errors, []); return; }
   if (process.argv[3] === 'interactive') { await exerciseInteractive(page, login, logout); assert.deepEqual(errors, []); return; }
   if (process.argv[3] === 'interactive-lost') { await exerciseLostClaim(page, login, logout); assert.deepEqual(errors, []); return; }

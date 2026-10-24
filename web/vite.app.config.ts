@@ -2,6 +2,8 @@ import { defineConfig } from 'vite';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { writeFrontendNotices } from './scripts/frontend-notices.mjs';
 import { xtermDocumentPlugin } from './scripts/xterm-document.mjs';
+import { buildBrowserKey } from './scripts/browser-key.mjs';
+import { fileURLToPath } from 'node:url';
 
 const output = new URL('../pkg/webui/assets/', import.meta.url);
 const marker = readFileSync(new URL('README.txt', output));
@@ -12,7 +14,12 @@ export default defineConfig({
   base: '/_bifroest/files/',
   build: {
     target: 'es2022', outDir: '../pkg/webui/assets', emptyOutDir: true,
-    rolldownOptions: { onwarn(warning, handler) {
+    // Speculative shared-chunk fetches must not crowd out ordered operator
+    // scripts under the server's existing per-peer admission budget.
+    modulePreload: false,
+    rolldownOptions: { input: { index: fileURLToPath(new URL('index.html', import.meta.url)), 'browser-key-worker': fileURLToPath(new URL('src/login/key-worker.ts', import.meta.url)) },
+      output: { entryFileNames: chunk => chunk.name === 'browser-key-worker' ? 'browser-key-worker.js' : 'assets/[name]-[hash].js' },
+      onwarn(warning, handler) {
       // This bundle is client-only, not a React Server Components boundary.
       if (warning.code === 'MODULE_LEVEL_DIRECTIVE' && warning.message.includes('use client')) return;
       handler(warning);
@@ -22,5 +29,6 @@ export default defineConfig({
     mkdirSync(output, { recursive: true });
     writeFileSync(new URL('README.txt', output), marker);
     writeFrontendNotices(output);
+    buildBrowserKey(output);
   } }],
 });
