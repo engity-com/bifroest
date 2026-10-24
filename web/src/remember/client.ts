@@ -9,6 +9,8 @@ import { publicKeyLogin } from '../login/key';
 import type { LoginKey } from '../login/key';
 import { pageFields, sessionFields, page, detail } from '../management/protocol';
 import type { Page, PageOptions, SessionOptions, FlowSummary, SessionItem } from '../management/protocol';
+import { actionPreparation, actionResult, SessionActionConfirmation } from '../management/action';
+import type { SessionAction } from '../management/action';
 
 export interface AccessSnapshot {
   readonly scope: Scope;
@@ -100,6 +102,19 @@ export class WebAccess {
     if (typeof flow !== 'string' || !flow.isWellFormed() || new TextEncoder().encode(flow).length > 255 || /[\p{Cc}]/u.test(flow) || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/u.test(id)) throw new RememberMeError('unavailable');
     const result = detail(await this.#http.post('management/sessions/show', { flow, id }, this.#response.accessToken, 200, signal));
     if (this.#closed || result.flow !== flow || result.id !== id) throw new RememberMeError('denied'); return result;
+  }
+
+  async prepareSessionAction(action: SessionAction, flow: string, id: string, signal?: AbortSignal): Promise<SessionActionConfirmation> {
+    this.#managementAllowed();
+    if (!['disconnect', 'dispose'].includes(action) || typeof flow !== 'string' || !flow.isWellFormed() || new TextEncoder().encode(flow).length > 255 || /[\p{Cc}]/u.test(flow) || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/u.test(id)) throw new RememberMeError('unavailable');
+    const prepared = actionPreparation(await this.#http.post('management/sessions/prepare', { action, flow, id }, this.#response.accessToken, 202, signal), action, flow, id);
+    const handle = new SessionActionConfirmation(prepared.preview, async stopped => {
+      this.#managementAllowed();
+      const result = actionResult(await this.#http.post('management/sessions/confirm', { confirmationToken: prepared.confirmationToken }, this.#response.accessToken, 200, stopped), prepared.preview);
+      if (this.#closed) throw new RememberMeError('denied'); return result;
+    }, async () => { this.#managementAllowed(); await this.#http.post('management/sessions/cancel', { confirmationToken: prepared.confirmationToken }, this.#response.accessToken, 204); });
+    if (this.#closed || signal?.aborted) { await handle.cancel(); throw new RememberMeError('cancelled'); }
+    return handle;
   }
 
   async remember(options: { explicitOptIn: boolean }, signal?: AbortSignal): Promise<void> {

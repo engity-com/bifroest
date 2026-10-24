@@ -33,6 +33,7 @@ export function App({ metadata, title = t('brand'), scheme, onScheme }: {
   const [saved, setSaved] = useState<Saved>('loading');
   const [busy, setBusy] = useState(false);
   const [closing, setClosing] = useState(false);
+  const [managementLocked, setManagementLocked] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [confirm, setConfirm] = useState<'revoke' | 'local' | null>(null);
   const [optIn, setOptIn] = useState(false);
@@ -58,7 +59,7 @@ export function App({ metadata, title = t('brand'), scheme, onScheme }: {
   }, []);
 
   async function run(action: (signal: AbortSignal, current: number) => Promise<void>) {
-    if (operation.current !== null) return;
+    if (operation.current !== null || managementLocked) return;
     const controller = new AbortController(), current = ++generation.current;
     operation.current = controller;
     setBusy(true); setNotice(null);
@@ -151,6 +152,7 @@ export function App({ metadata, title = t('brand'), scheme, onScheme }: {
   }
 
   async function logout() {
+    if (managementLocked) return;
     const selected = access.current;
     if (selected === null) return;
     const current = ++generation.current;
@@ -194,11 +196,11 @@ export function App({ metadata, title = t('brand'), scheme, onScheme }: {
         <Title order={2}>{t(closing ? 'accessBlocked' : 'authenticated')} {snapshot.principal}</Title>
         <p>{t(snapshot.environment === 'management' ? 'management' : 'terminal')}</p>
         <p className="caption">{t('expires')}: <time dateTime={snapshot.expiresAt}>{new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(snapshot.expiresAt))}</time></p>
-        <Button variant="default" disabled={closing || busy || rememberUncertain} onClick={() => { setReauthenticate(true); setOptIn(false); void readSaved(); }}>{t('reauthenticate')}</Button>
-        <Button onClick={() => { void logout(); }} disabled={closing && busy} color="red">{t(closing ? 'retryLogout' : 'logout')}</Button>
+        <Button variant="default" disabled={closing || busy || rememberUncertain || managementLocked} onClick={() => { setReauthenticate(true); setOptIn(false); void readSaved(); }}>{t('reauthenticate')}</Button>
+        <Button onClick={() => { void logout(); }} disabled={closing && busy || managementLocked} color="red">{t(closing ? 'retryLogout' : 'logout')}</Button>
       </Paper> : null}
       {snapshot !== null && snapshot.terminalAvailable && access.current !== null && <TerminalPanel access={access.current} disabled={closing || busy} />}
-      {snapshot !== null && snapshot.environment === 'management' && access.current !== null && <Suspense fallback={<Alert>{t('managementLoading')}</Alert>}><ManagementPanel key={generation.current} access={access.current} disabled={closing || busy} /></Suspense>}
+      {snapshot !== null && snapshot.environment === 'management' && access.current !== null && <Suspense fallback={<Alert>{t('managementLoading')}</Alert>}><ManagementPanel key={generation.current} access={access.current} disabled={closing || busy} onActionLock={setManagementLocked} /></Suspense>}
       {(snapshot === null || reauthenticate) && <>
         {saved === 'ready' && <Paper withBorder p="lg" className="stack"><p>{t('saved')}</p><div className="actions"><Button disabled={busy} onClick={() => { void resume(); }}>{t('useSaved')}</Button>{snapshot === null && <><Button variant="default" disabled={busy} onClick={() => showConfirmation('revoke')}>{t('forgetSaved')}</Button><Button variant="subtle" disabled={busy} onClick={() => showConfirmation('local')}>{t('removeLocalOnly')}</Button></>}</div></Paper>}
         {saved === 'pending' && <Alert color="yellow"><p>{t('pending')}</p>{snapshot === null && <Button variant="outline" disabled={busy} onClick={() => showConfirmation('local')}>{t('removeLocal')}</Button>}</Alert>}
@@ -215,7 +217,7 @@ export function App({ metadata, title = t('brand'), scheme, onScheme }: {
             <label className="stack" htmlFor="key-certificate">{t('keyCertificateFile')}<input key={`certificate:${passwordKey}`} id="key-certificate" type="file" disabled={busy} /></label>
           </>}
           <Checkbox checked={optIn} onChange={event => setOptIn(event.currentTarget.checked)} disabled={busy || saved !== 'missing'} label={t('remember')} description={t('rememberHint')} />
-          <div className="actions"><Button type="submit" disabled={busy}>{t('login')}</Button>{busy && <Button type="button" variant="default" onClick={cancel}>{t('cancel')}</Button>}</div>
+          <div className="actions"><Button type="submit" disabled={busy || managementLocked}>{t('login')}</Button>{busy && <Button type="button" variant="default" onClick={cancel}>{t('cancel')}</Button>}</div>
         </form></Paper>
       </>}
       {metadata.publishedSlugs.length > 0 && <nav aria-label={t('discovery')}><Title order={2}>{t('discovery')}</Title><ul>{metadata.publishedSlugs.map(slug => <li key={slug}><Anchor href={`/${slug}`}>{slug}</Anchor></li>)}</ul></nav>}

@@ -4,7 +4,7 @@ import type { Scope } from './protocol';
 export type Transport = typeof fetch;
 const maximumResponseBytes = 64 << 10;
 
-export function isToken(value: unknown, prefix: 'bwa1.' | 'bwr1.' | 'bwl1.'): value is string {
+export function isToken(value: unknown, prefix: 'bwa1.' | 'bwr1.' | 'bwl1.' | 'bmc1.'): value is string {
   if (typeof value !== 'string' || !value.startsWith(prefix) || !/^[A-Za-z0-9_-]{43}$/.test(value.slice(5))) return false;
   try { return decode64(value.slice(5).replaceAll('-', '+').replaceAll('_', '/') + '=', 32).length === 32; }
   catch { return false; }
@@ -36,6 +36,7 @@ export class Http {
   async post(action: string, fields: Record<string, string>, token: string | undefined, status: number, signal?: AbortSignal): Promise<unknown> {
     const allowed = ['login/password', 'login/interactive', 'login/public-key', 'login/poll', 'login/reply', 'login/cancel', 'access', 'logout', 'remember/enroll', 'remember/resume', 'remember/revoke', 'remember/prove'];
     allowed.push('management/flows/list', 'management/sessions/list', 'management/sessions/show');
+    allowed.push('management/sessions/prepare', 'management/sessions/confirm', 'management/sessions/cancel');
     if (!allowed.includes(action)) throw new RememberMeError('unavailable');
     const deadline = AbortSignal.timeout(20_000);
     const stopped = signal === undefined ? deadline : AbortSignal.any([signal, deadline]);
