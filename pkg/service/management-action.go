@@ -86,7 +86,7 @@ func (this *service) managementActionTarget(ctx context.Context, caller session.
 }
 
 func (this *service) RunManagementAction(task environment.TaskContext, request protocol.SessionAction, output io.Writer, _ bool, _ bool) (int, error) {
-	if task == nil || task.Authorization() == nil || !task.Authorization().IsAuthorized() || task.Authorization().FindSession() == nil || !this.isManagementFlow(task.Authorization().Flow()) || managementReadPolicy(task.Authorization()) != nil || request.Validate() != nil {
+	if task == nil || task.Authorization() == nil || !task.Authorization().IsAuthorized() || task.Authorization().FindSession() == nil || !this.isManagementFlow(task.Authorization().Flow()) || managementActionPolicy(task.Authorization()) != nil || request.Validate() != nil {
 		return -1, errManagementPolicy
 	}
 	permission, ok := task.Context().Value(managementActionContextKey{}).(*webManagementConfirmation)

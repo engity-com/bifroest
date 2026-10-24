@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/management/protocol"
 	"github.com/engity-com/bifroest/pkg/session"
@@ -21,12 +22,21 @@ func (this *service) executeManagementRead(conn *terminalConnection, request pro
 	if err != nil {
 		return nil, err
 	}
+	if conn == nil {
+		return nil, errManagementPolicy
+	}
+	if _, err := managementReadCeiling(conn.authorization, request); err != nil {
+		return nil, err
+	}
 	return this.executeManagement(conn, &managementReadSource{request: request}, request)
 }
 
 func (this *service) executeManagementAction(conn *terminalConnection, permission *webManagementConfirmation) ([]byte, error) {
 	if permission == nil || permission.request.Validate() != nil {
 		return nil, errManagementConfirmation
+	}
+	if conn == nil || managementActionPolicy(conn.authorization) != nil {
+		return nil, errManagementPolicy
 	}
 	return this.executeManagement(conn, &managementReadSource{action: permission}, permission.request)
 }
@@ -54,7 +64,8 @@ func (this *service) executeManagement(conn *terminalConnection, source *managem
 	}
 	buffer := &managementByteStream{conn: conn, input: bytes.NewReader(input)}
 	source.stream = buffer
-	status, err := this.execute(&executionRequest{base: base, connection: conn, source: source, taskType: environment.TaskTypeShell, requestedTask: audit.SessionTaskExec, command: true})
+	key := authorization.AuthorizedKeyPolicyOf(conn.authorization)
+	status, err := this.execute(&executionRequest{base: base, connection: conn, source: source, taskType: environment.TaskTypeShell, requestedTask: audit.SessionTaskExec, command: true, forced: key != nil && key.ForcedCommand != nil})
 	if err != nil || status != 0 {
 		if err == nil {
 			err = fmt.Errorf("management returned a failure status")

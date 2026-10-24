@@ -8,6 +8,7 @@ export interface SessionItem {
   readonly id: string; readonly flow: string; readonly state: string; readonly user: string; readonly remote: string;
   readonly createdAt: string; readonly lastAccessed?: string; readonly validUntil?: string;
   readonly owner: { readonly issuer: string; readonly subject: string } | null;
+  readonly policyLimited?: boolean;
 }
 export interface Page<T> { readonly items: readonly T[]; readonly next: string; readonly skipped: number; }
 
@@ -30,13 +31,15 @@ function flow(value: unknown): FlowSummary {
   return Object.freeze({ name: text(row.name, 255), auditlog: text(row.auditlog, 255), authorization: text(row.authorization, 255), environment: text(row.environment, 255) });
 }
 export function session(value: unknown): SessionItem {
-  const optional = ['lastAccessed', 'validUntil'].filter(field => value !== null && typeof value === 'object' && Object.hasOwn(value, field));
+  const optional = ['lastAccessed', 'validUntil', 'policyLimited'].filter(field => value !== null && typeof value === 'object' && Object.hasOwn(value, field));
   const row = object(value, ['id', 'flow', 'state', 'user', 'remote', 'createdAt', 'owner', ...optional]);
   if (typeof row.id !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/u.test(row.id) || !['new', 'authorized', 'disposed'].includes(row.state as string)) throw new RememberMeError('unavailable');
   let owner: SessionItem['owner'] = null;
+  if (row.policyLimited !== undefined && row.policyLimited !== true) throw new RememberMeError('unavailable');
+  if (row.policyLimited === true && row.owner !== null) throw new RememberMeError('unavailable');
   if (row.owner !== null) { const selected = object(row.owner, ['issuer', 'subject']); owner = Object.freeze({ issuer: text(selected.issuer, 1024), subject: text(selected.subject, 1024) }); if (owner.issuer === '' || owner.subject === '') throw new RememberMeError('unavailable'); }
   return Object.freeze({ id: row.id, flow: text(row.flow, 255), state: row.state as string, user: text(row.user, 8192), remote: text(row.remote, 8192), createdAt: time(row.createdAt), owner,
-    ...(row.lastAccessed === undefined ? {} : { lastAccessed: time(row.lastAccessed) }), ...(row.validUntil === undefined ? {} : { validUntil: time(row.validUntil) }) });
+    ...(row.lastAccessed === undefined ? {} : { lastAccessed: time(row.lastAccessed) }), ...(row.validUntil === undefined ? {} : { validUntil: time(row.validUntil) }), ...(row.policyLimited === true ? { policyLimited: true } : {}) });
 }
 export function page<T>(value: unknown, kind: 'flows' | 'sessions', maximum: number): Page<T> {
   const envelope = object(value, ['version', 'operation', kind]);

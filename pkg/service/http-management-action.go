@@ -44,7 +44,7 @@ func (this *webService) handleManagementAction(w http.ResponseWriter, r *http.Re
 		webError(w, 401, "web access denied")
 		return
 	}
-	if !this.service.isManagementFlow(access.auth.Flow()) || managementReadPolicy(access.auth) != nil {
+	if !this.service.isManagementFlow(access.auth.Flow()) || managementActionPolicy(access.auth) != nil {
 		webError(w, 403, "management action denied")
 		return
 	}

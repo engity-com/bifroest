@@ -256,7 +256,7 @@ func TestWebManagementReadReportsDamagedEntriesWithoutPathsOrCleanup(t *testing.
 	require.NoError(t, err)
 }
 
-func TestWebManagementForcedCommandCredentialsFailClosed(t *testing.T) {
+func TestWebManagementForcedFlowReadCannotAccessSessionsOrMutations(t *testing.T) {
 	signer := webLoginTestSigner(t)
 	_, handler, _, _ := managementWebFixture(t, func(conf *configuration.Configuration) {
 		conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple).Entries[0].AuthorizedKeys = crypto.AuthorizedKeys(`command="flow ls" ` + strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey()))))
@@ -266,5 +266,9 @@ func TestWebManagementForcedCommandCredentialsFailClosed(t *testing.T) {
 	require.Equal(t, 202, answerWebStep(handler, attempt, "Work", step, signWebChallenge(t, signer, step)).Code)
 	token := webTestToken(t, finishWebAttempt(t, handler, attempt, "Work"))
 	code, _, _ := managementWebRead(t, handler, token, "flows/list", nil)
+	require.Equal(t, 200, code)
+	code, _, _ = managementWebRead(t, handler, token, "sessions/list", nil)
 	require.Equal(t, 403, code)
+	response := managementActionRequest(handler, token, "prepare", map[string]string{"action": "dispose", "flow": "worker", "id": "9c77b24c-62f4-44c2-aea3-771c75e5a107"})
+	require.Equal(t, 403, response.Code)
 }

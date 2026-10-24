@@ -171,7 +171,8 @@ type Owner struct {
 }
 type SessionItem struct {
 	SessionView
-	Owner *Owner `json:"owner"`
+	Owner         *Owner `json:"owner"`
+	PolicyLimited bool   `json:"policyLimited,omitempty"`
 }
 type Page[T any] struct {
 	Items   []T    `json:"items"`

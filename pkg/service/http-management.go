@@ -56,7 +56,8 @@ func (this *webService) handleManagement(w http.ResponseWriter, r *http.Request,
 		webError(w, http.StatusUnauthorized, "web access denied")
 		return
 	}
-	if !this.service.isManagementFlow(access.auth.Flow()) || managementReadPolicy(access.auth) != nil {
+	_, policyErr := managementReadCeiling(access.auth, request)
+	if !this.service.isManagementFlow(access.auth.Flow()) || policyErr != nil {
 		webError(w, http.StatusForbidden, "structured management is not available for this authorization")
 		return
 	}

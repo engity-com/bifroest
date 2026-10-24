@@ -14,8 +14,11 @@ export async function exerciseManagement(page, login, logout) {
   const flows = page.getByRole('table', { name: 'Configured flows (not public discovery links)', exact: true });
   try {await flows.getByText('manager00', { exact: true }).waitFor();} catch(error) {throw new Error(JSON.stringify({response:await first.text(),notices:await page.getByRole('status').allTextContents()}),{cause:error});}
   assert.equal(await flows.locator('tbody tr').count(), 20);
+  const secondReply=page.waitForResponse(response=>response.url().endsWith('/api/v1/management/flows/list'));
   await page.getByRole('button', { name: 'Next flow page', exact: true }).click();
-  await flows.getByText('manager20', { exact: true }).waitFor();
+  const second=await secondReply;
+  assert.equal(second.status(),200,await second.text());
+  try {await flows.getByText('manager20', { exact: true }).waitFor();} catch(error) {throw new Error(JSON.stringify({response:await second.text(),notices:await page.getByRole('status').allTextContents()}),{cause:error});}
   assert.equal(await flows.locator('tbody tr').count(), 1);
   await page.getByRole('button', { name: 'Load sessions', exact: true }).click();
   const sessions = page.getByRole('table', { name: 'Live session metadata', exact: true });

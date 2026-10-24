@@ -8,6 +8,7 @@ import { exerciseDevice, exerciseInteractive, exerciseLostClaim } from './login-
 import { exerciseKey } from './key-ui.mjs';
 import { exerciseManagement } from './management-ui.mjs';
 import { exerciseManagementActions } from './management-action-ui.mjs';
+import { exerciseManagementForced } from './management-forced-ui.mjs';
 
 const origin = process.argv[2];
 assert.match(origin, /^https:\/\/app\.example\.org:[0-9]+$/);
@@ -55,6 +56,7 @@ try {
   };
   async function exercise() {
   let page = await open();
+  if(process.argv[3]==='management-forced'){await exerciseManagementForced(page,process.argv[4],logout);assert.deepEqual(errors,[]);return;}
   if(process.argv[3]==='management-actions'){await exerciseManagementActions(page,login,logout);assert.deepEqual(errors,[]);return;}
   if (process.argv[3] === 'management') { await exerciseManagement(page, login, logout); assert.deepEqual(errors, []); return; }
   if (process.argv[3] === 'key') { await exerciseKey(page, process.argv[4], logout); assert.deepEqual(errors, []); return; }
