@@ -61,16 +61,25 @@ type webService struct {
 	remember        map[[32]byte]*webRememberAttempt
 	rememberMutex   sync.Mutex // Durable binding commit/logout and linked-grant publication.
 	assets          *webui.Assets
+	confirmations   map[[32]byte]*webManagementConfirmation
 }
 
 func newWebService(svc *service) *webService {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &webService{service: svc, ctx: ctx, cancel: cancel, operations: newConnectionLifecycle(), loginWorkers: newConnectionLifecycle(), peers: make(map[netip.Addr]*webPeerBudget), access: make(map[[32]byte]*webAccess), attempts: make(map[[32]byte]*webLoginAttempt), socketPeers: make(map[netip.Addr]int), terminalTimings: defaultWebTerminalTimings(), remember: make(map[[32]byte]*webRememberAttempt)}
+	return &webService{service: svc, ctx: ctx, cancel: cancel, operations: newConnectionLifecycle(), loginWorkers: newConnectionLifecycle(), peers: make(map[netip.Addr]*webPeerBudget), access: make(map[[32]byte]*webAccess), attempts: make(map[[32]byte]*webLoginAttempt), socketPeers: make(map[netip.Addr]int), terminalTimings: defaultWebTerminalTimings(), remember: make(map[[32]byte]*webRememberAttempt), confirmations: make(map[[32]byte]*webManagementConfirmation)}
 }
 
 // Lazy, bounded cleanup requires no per-token goroutines. Expired permissions
 // with running children remain addressable for logout, never for new access.
 func (this *webService) pruneLocked(now time.Time) {
+	for key, permission := range this.confirmations {
+		permission.access.mutex.Lock()
+		closed := permission.access.closed
+		permission.access.mutex.Unlock()
+		if !permission.claiming && (closed || !now.Before(permission.expires)) {
+			delete(this.confirmations, key)
+		}
+	}
 	for key, attempt := range this.remember {
 		if !attempt.claiming && !now.Before(attempt.proof.ExpiresAt()) {
 			delete(this.remember, key)
@@ -158,6 +167,7 @@ func (this *webService) Close() error {
 		}
 		this.attempts = make(map[[32]byte]*webLoginAttempt)
 		this.remember = make(map[[32]byte]*webRememberAttempt)
+		this.confirmations = make(map[[32]byte]*webManagementConfirmation)
 		this.mutex.Unlock()
 		if this.assets != nil {
 			this.closeErr = goerrors.Join(this.closeErr, this.assets.Close())
@@ -191,6 +201,7 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case webAPI + "login/password", webAPI + "login/interactive", webAPI + "login/public-key", webAPI + "login/poll", webAPI + "login/reply", webAPI + "login/cancel", webAPI + "access", webAPI + "logout":
 	case webAPI + "remember/enroll", webAPI + "remember/resume", webAPI + "remember/revoke", webAPI + "remember/prove":
 	case webAPI + "management/flows/list", webAPI + "management/sessions/list", webAPI + "management/sessions/show":
+	case webAPI + "management/sessions/prepare", webAPI + "management/sessions/confirm", webAPI + "management/sessions/cancel":
 	default:
 		http.NotFound(w, r)
 		return
@@ -207,6 +218,7 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	isLogin := r.URL.Path == webAPI+"login/password" || r.URL.Path == webAPI+"login/interactive" || r.URL.Path == webAPI+"login/public-key"
 	isLogin = isLogin || strings.HasPrefix(r.URL.Path, webAPI+"remember/") && r.URL.Path != webAPI+"remember/prove"
+	isLogin = isLogin || r.URL.Path == webAPI+"management/sessions/prepare"
 	release, ok := this.admit(peer, isLogin)
 	if !ok {
 		w.Header().Set("Retry-After", "60")
@@ -559,6 +571,10 @@ func webRequestFields(path string) []string {
 		return []string{"limit", "after", "flow", "user", "state"}
 	case webAPI + "management/sessions/show":
 		return []string{"flow", "id"}
+	case webAPI + "management/sessions/prepare":
+		return []string{"flow", "id", "action"}
+	case webAPI + "management/sessions/confirm", webAPI + "management/sessions/cancel":
+		return []string{"confirmationToken"}
 	default:
 		return nil
 	}

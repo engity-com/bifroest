@@ -42,6 +42,10 @@ func managementReadRequest(path string, values map[string]string) (protocol.Read
 }
 
 func (this *webService) handleManagement(w http.ResponseWriter, r *http.Request, scope webScope, values map[string]string) {
+	if r.URL.Path == webAPI+"management/sessions/prepare" || r.URL.Path == webAPI+"management/sessions/confirm" || r.URL.Path == webAPI+"management/sessions/cancel" {
+		this.handleManagementAction(w, r, scope, values)
+		return
+	}
 	request, err := managementReadRequest(r.URL.Path, values)
 	if err != nil {
 		webError(w, http.StatusBadRequest, "invalid structured management request")
@@ -56,15 +60,8 @@ func (this *webService) handleManagement(w http.ResponseWriter, r *http.Request,
 		webError(w, http.StatusForbidden, "structured management is not available for this authorization")
 		return
 	}
-	base, err := newWebLoginConnection(r.Context(), r, scope, access.user)
+	conn, transport, err := this.managementConnection(w, r, scope, access)
 	if err != nil {
-		webError(w, http.StatusBadRequest, "invalid request")
-		return
-	}
-	transport := &managementHTTPConnection{webLoginConnection: base, controller: http.NewResponseController(w)}
-	conn, err := this.connect(scope, webBearer(r), transport)
-	if err != nil {
-		_ = transport.Close()
 		webError(w, http.StatusForbidden, "management connection denied")
 		return
 	}
@@ -74,6 +71,10 @@ func (this *webService) handleManagement(w http.ResponseWriter, r *http.Request,
 		webError(w, http.StatusServiceUnavailable, "management operation could not be confirmed")
 		return
 	}
+	this.deliverManagement(w, conn, transport, data, 200)
+}
+
+func (this *webService) deliverManagement(w http.ResponseWriter, conn *terminalConnection, transport *managementHTTPConnection, data []byte, status int) {
 	if conn.IsClosed() || conn.Lifetime().Err() != nil || conn.check(false) != nil {
 		webError(w, http.StatusForbidden, "management access ended")
 		return
@@ -87,6 +88,7 @@ func (this *webService) handleManagement(w http.ResponseWriter, r *http.Request,
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.Header().Set("X-Bifroest-Connection-Id", conn.Id().String())
+	w.WriteHeader(status)
 	if _, err := w.Write(data); err == nil {
 		_ = transport.controller.Flush()
 	}
