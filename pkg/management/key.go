@@ -1,10 +1,10 @@
 package management
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 
+	managementclient "github.com/engity-com/bifroest/pkg/management/client"
 	transport "github.com/engity-com/bifroest/pkg/management/wire"
 )
 
@@ -17,13 +17,5 @@ func (target Target) ExportKey(ctx context.Context, args ...string) ([]byte, err
 		return nil, err
 	}
 	defer command.close()
-	content, err := command.readResponse(transport.MaxWireResultBytes, "key response", "remote key command failed")
-	if err != nil {
-		return nil, err
-	}
-	var result []byte
-	if err := transport.DecodeWireResult(bytes.NewReader(content), &result); err != nil {
-		return nil, err
-	}
-	return result, nil
+	return managementclient.ReadWireResult[[]byte](ctx, command.response("remote key command failed"))
 }

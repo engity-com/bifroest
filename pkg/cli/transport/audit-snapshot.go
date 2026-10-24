@@ -159,7 +159,13 @@ func (this *AuditSnapshot) StreamTo(output io.Writer) error {
 }
 
 func ReadAuditSnapshot(input io.Reader, root string) (AuditSnapshotHeader, error) {
-	return wire.ReadAuditSnapshot(input, &auditSnapshotFileSink{root: root})
+	return wire.ReadAuditSnapshot(input, NewAuditSnapshotFileSink(root))
+}
+
+// NewAuditSnapshotFileSink writes into caller-owned private staging storage. It
+// never publishes evidence or replaces existing files; callers own cleanup.
+func NewAuditSnapshotFileSink(root string) wire.AuditSnapshotSink {
+	return &auditSnapshotFileSink{root: root}
 }
 
 // The native caller supplies private staging storage and owns its cleanup. A

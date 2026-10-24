@@ -347,6 +347,42 @@ and immutable ReaderAt/full-verification integration remain subsequent work; no
 CLI arguments become a browser protocol, no server decryption/key upload or new
 management permissions are introduced here.
 
+### Portable response completion
+
+`pkg/management/client` now owns one already-open `Response` through typed
+decoding, transport `Complete` and local `Close`. It never opens a connection,
+interprets a command or retries/undoes an operation. Native metadata/public-key,
+recording-list/artifact, audit-snapshot and fixed version readers use this same
+core. Legacy wire encodings and native formatting remain outside its lifetime
+contract; a typed HTTP adapter can supply its own bounded structured decoder.
+
+`Complete` must report final operation success after joining the producer and
+diagnostics, not merely a valid payload/end frame/EOF. Decoder or sink failure
+calls `Abort` **before** waiting; cancellation can interrupt Read or Complete.
+Abort runs at most once and must unblock both without waiting for the receiver.
+The cancellation callback is joined before local release; Close also runs once.
+Any decoding/completion/abort/close error or cancellation observed through cleanup
+returns the zero typed result. Streaming callbacks/bytes remain provisional and
+caller-owned; they cannot be rolled back or published by this receiver. Local
+sinks must cooperate with cancellation: arbitrary blocked user writers cannot be
+forcibly interrupted by a Go library. Expected recording/audit selectors are
+checked before successful headers return; transport assertions remain untrusted.
+
+The native SSH adapter alone owns its single Wait/exit-status check, bounded
+diagnostics/drain, producer interruption and idempotent connection release. Its
+handshake/start cancellation watcher is joined too. Real SSH tests cover malformed
+data with EOF but a deliberately missing remote exit, fully valid data without an
+exit status, nonzero exit, cancellation, bounds and diagnostic-output failure.
+Portable lifecycle tests cover cancellation during reading/completion/cleanup,
+joined callbacks, simultaneous causes, provisional rows/headers and panic cleanup;
+they also execute as actual Go/WASM under Node. This is not browser integration.
+
+There is still no public browser artifact endpoint or complete Go/WASM browser
+client. A future HTTP adapter needs an equivalent **post-driver final-success**
+signal after recording seal/final audit; treating HTTP body EOF alone as Complete
+would violate this contract. Browser CLI arguments, private-key uploads and
+server-side decryption remain absent.
+
 ### Confirmed session actions
 
 `Disconnect session connections` and `Dispose session` are available from the
