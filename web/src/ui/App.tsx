@@ -14,7 +14,7 @@ type Notice = { key: Message; color: 'red' | 'yellow' | 'green' };
 
 function errorNotice(error: unknown): Notice {
   const code = error instanceof RememberMeError ? error.code : 'unavailable';
-  const key: Message = code === 'login-unknown' ? 'loginUnknown' : code === 'invalid-step' ? 'loginInvalidStep' : code === 'busy' ? 'loginBusy' : code === 'outcome-unknown' ? 'unknown' : code === 'already-remembered' ? 'already' : code === 'denied' ? 'denied' : code === 'rate-limited' ? 'limited' : code === 'cancelled' ? 'cancelled' : 'unavailable';
+  const key: Message = code === 'key-import' ? 'keyImportFailed' : code === 'login-unknown' ? 'loginUnknown' : code === 'invalid-step' ? 'loginInvalidStep' : code === 'busy' ? 'loginBusy' : code === 'outcome-unknown' ? 'unknown' : code === 'already-remembered' ? 'already' : code === 'denied' ? 'denied' : code === 'rate-limited' ? 'limited' : code === 'cancelled' ? 'cancelled' : 'unavailable';
   return { key, color: code === 'denied' || code === 'unavailable' ? 'red' : 'yellow' };
 }
 
@@ -102,10 +102,28 @@ export function App({ metadata, title = t('brand'), scheme, onScheme }: {
     const user = (form.elements.namedItem('user') as HTMLInputElement | null)?.value ?? '';
     const secret = password?.value ?? '';
     if (password !== null) password.value = ''; // No answer/password in app state or persistent storage.
+    const privateInput = form.querySelector<HTMLInputElement>('#key-private');
+    const certificateInput = form.querySelector<HTMLInputElement>('#key-certificate');
+    const passphraseInput = form.querySelector<HTMLInputElement>('#key-passphrase');
+    let privateFile = privateInput?.files?.[0] ?? null;
+    let certificateFile = certificateInput?.files?.[0] ?? null;
+    let passphrase = passphraseInput?.value ?? '';
+    if (privateInput !== null) privateInput.value = '';
+    if (certificateInput !== null) certificateInput.value = '';
+    if (passphraseInput !== null) passphraseInput.value = '';
     setPasswordKey(value => value + 1); // Reset Mantine's internal uncontrolled input state too.
     const remember = optIn;
     await run(async (signal, current) => {
-      const result = loginMethod === 'interactive' ? await client.current.interactive(user, requestStep, signal) : await client.current.password(user, secret, signal);
+      let result: WebAccess;
+      if (loginMethod === 'key') {
+        if (privateFile === null) throw new RememberMeError('key-import');
+        const { WasmLoginKey } = await import('../login/wasm-key');
+        let key: import('../login/wasm-key').WasmLoginKey;
+        try { key = await WasmLoginKey.import(privateFile, passphrase, certificateFile, metadata.scope, user, signal); }
+        finally { privateFile = null; certificateFile = null; passphrase = ''; }
+        try { result = await client.current.publicKey(user, key, signal); }
+        finally { key.close(); }
+      } else result = loginMethod === 'interactive' ? await client.current.interactive(user, requestStep, signal) : await client.current.password(user, secret, signal);
       if (current !== generation.current) return;
       access.current = result; setSnapshot(result.snapshot()); setClosing(false); setReauthenticate(false); setRememberUncertain(false);
       if (remember) {
@@ -182,11 +200,17 @@ export function App({ metadata, title = t('brand'), scheme, onScheme }: {
         {saved === 'ready' && <Paper withBorder p="lg" className="stack"><p>{t('saved')}</p><div className="actions"><Button disabled={busy} onClick={() => { void resume(); }}>{t('useSaved')}</Button>{snapshot === null && <><Button variant="default" disabled={busy} onClick={() => showConfirmation('revoke')}>{t('forgetSaved')}</Button><Button variant="subtle" disabled={busy} onClick={() => showConfirmation('local')}>{t('removeLocalOnly')}</Button></>}</div></Paper>}
         {saved === 'pending' && <Alert color="yellow"><p>{t('pending')}</p>{snapshot === null && <Button variant="outline" disabled={busy} onClick={() => showConfirmation('local')}>{t('removeLocal')}</Button>}</Alert>}
         {saved === 'unavailable' && <Alert color="yellow">{t('storageUnavailable')}</Alert>}
-        <Paper withBorder p="lg"><form method="post" action="/_bifroest/api/v1/login/password" className="stack" onSubmit={event => { event.preventDefault(); void login(event.currentTarget); }}>
+        <Paper withBorder p="lg"><form method={loginMethod === 'key' ? 'dialog' : 'post'} action={loginMethod === 'key' ? undefined : '/_bifroest/api/v1/login/password'} className="stack" onSubmit={event => { event.preventDefault(); void login(event.currentTarget); }}>
           <Title order={2}>{t('login')}</Title>
-          <SegmentedControl aria-label={t('loginMethod')} value={loginMethod} onChange={setLoginMethod} disabled={busy} data={[{ value: 'password', label: t('passwordMethod') }, { value: 'interactive', label: t('interactiveMethod') }]} />
+          <SegmentedControl aria-label={t('loginMethod')} value={loginMethod} onChange={setLoginMethod} disabled={busy} data={[{ value: 'password', label: t('passwordMethod') }, { value: 'interactive', label: t('interactiveMethod') }, { value: 'key', label: t('keyMethod') }]} />
           {metadata.requestUser && <TextInput name="user" label={t('user')} autoComplete="username" disabled={busy} />}
           {loginMethod === 'password' && <PasswordInput key={passwordKey} name="password" label={t('password')} autoComplete="current-password" visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }} disabled={busy} />}
+          {loginMethod === 'key' && <>
+            <Alert color="blue">{t('keyLocalOnly')}</Alert>
+            <label className="stack" htmlFor="key-private">{t('keyPrivateFile')}<input key={`private:${passwordKey}`} id="key-private" type="file" required disabled={busy} /></label>
+            <PasswordInput key={`passphrase:${passwordKey}`} id="key-passphrase" label={t('keyPassphrase')} autoComplete="off" visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }} disabled={busy} />
+            <label className="stack" htmlFor="key-certificate">{t('keyCertificateFile')}<input key={`certificate:${passwordKey}`} id="key-certificate" type="file" disabled={busy} /></label>
+          </>}
           <Checkbox checked={optIn} onChange={event => setOptIn(event.currentTarget.checked)} disabled={busy || saved !== 'missing'} label={t('remember')} description={t('rememberHint')} />
           <div className="actions"><Button type="submit" disabled={busy}>{t('login')}</Button>{busy && <Button type="button" variant="default" onClick={cancel}>{t('cancel')}</Button>}</div>
         </form></Paper>

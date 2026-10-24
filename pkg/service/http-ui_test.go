@@ -73,11 +73,19 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	var svc *service
 	var protocolHandler http.Handler
 	var provider *oidcAssociationProvider
+	var keyFixture string
+	var authorizedKeys bfcrypto.AuthorizedKeys
+	if mode == "key" {
+		keyFixture, authorizedKeys = browserKeyUiFixture(t)
+	}
 	if mode == "oidc" || mode == "oidc-cancel" {
 		svc, protocolHandler, provider, _ = webOidcLoginFixture(t, mode == "oidc-cancel")
 	} else {
 		svc, _, _ = webTestFixture(t, func(conf *configuration.Configuration) {
 			conf.Flows[0].Http.RequestUser = commonBool(requestUser)
+			if mode == "key" {
+				conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple).Entries[0].AuthorizedKeys = authorizedKeys
+			}
 			if mode == "terminal" {
 				settings := conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple)
 				settings.Entries = append(settings.Entries, configuration.AuthorizationSimpleEntry{Name: "bob", Password: bfcrypto.Password("plain:correct")})
@@ -207,7 +215,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 75*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, node, filepath.Join(root, "web", "test", "ui.mjs"), "https://app.example.org:"+port, mode)
+	command := exec.CommandContext(ctx, node, filepath.Join(root, "web", "test", "ui.mjs"), "https://app.example.org:"+port, mode, keyFixture)
 	command.Dir = filepath.Join(root, "web")
 	output, err := command.CombinedOutput()
 	if err != nil && terminalCounters != nil {

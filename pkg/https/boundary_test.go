@@ -2,6 +2,7 @@ package https
 
 import (
 	"crypto/tls"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +11,17 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/configuration"
 )
+
+func TestBrowserKeyWorkerCspDoesNotEnableDocumentEval(t *testing.T) {
+	policy, err := DocumentPolicy(base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	require.NoError(t, err)
+	require.Contains(t, policy, "worker-src 'self'")
+	require.NotContains(t, policy, "unsafe-eval")
+	require.NotContains(t, policy, "unsafe-inline")
+	require.Contains(t, BrowserKeyWorkerPolicy, "'wasm-unsafe-eval'")
+	require.NotContains(t, BrowserKeyWorkerPolicy, "'unsafe-eval'")
+	require.Contains(t, BrowserKeyWorkerPolicy, "worker-src 'none'")
+}
 
 func TestHTTPSBoundaryEnforcesHostSniOriginAndHeaders(t *testing.T) {
 	for _, test := range []struct {
