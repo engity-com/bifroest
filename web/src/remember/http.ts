@@ -35,6 +35,7 @@ export class Http {
 
   async post(action: string, fields: Record<string, string>, token: string | undefined, status: number, signal?: AbortSignal): Promise<unknown> {
     const allowed = ['login/password', 'login/interactive', 'login/public-key', 'login/poll', 'login/reply', 'login/cancel', 'access', 'logout', 'remember/enroll', 'remember/resume', 'remember/revoke', 'remember/prove'];
+    allowed.push('management/flows/list', 'management/sessions/list', 'management/sessions/show');
     if (!allowed.includes(action)) throw new RememberMeError('unavailable');
     const deadline = AbortSignal.timeout(20_000);
     const stopped = signal === undefined ? deadline : AbortSignal.any([signal, deadline]);

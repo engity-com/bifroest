@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Alert, Anchor, Button, Checkbox, Modal, Paper, PasswordInput, SegmentedControl, TextInput, Title } from '@mantine/core';
 import { BrowserBinding, BrowserClient, RememberMeError } from '../remember';
 import type { AccessSnapshot, LogoutResult, Scope, WebAccess } from '../remember';
@@ -7,6 +7,8 @@ import { verificationLink } from '../login/links';
 import { t } from './messages';
 import type { Message } from './messages';
 import { TerminalPanel } from '../terminal/TerminalPanel';
+
+const ManagementPanel = lazy(async () => ({ default: (await import('../management/ManagementPanel')).ManagementPanel }));
 
 export interface LinkMetadata { readonly scope: Scope; readonly requestUser: boolean; readonly publishedSlugs: readonly string[]; }
 type Saved = 'loading' | 'missing' | 'ready' | 'pending' | 'unavailable';
@@ -196,6 +198,7 @@ export function App({ metadata, title = t('brand'), scheme, onScheme }: {
         <Button onClick={() => { void logout(); }} disabled={closing && busy} color="red">{t(closing ? 'retryLogout' : 'logout')}</Button>
       </Paper> : null}
       {snapshot !== null && snapshot.terminalAvailable && access.current !== null && <TerminalPanel access={access.current} disabled={closing || busy} />}
+      {snapshot !== null && snapshot.environment === 'management' && access.current !== null && <Suspense fallback={<Alert>{t('managementLoading')}</Alert>}><ManagementPanel key={generation.current} access={access.current} disabled={closing || busy} /></Suspense>}
       {(snapshot === null || reauthenticate) && <>
         {saved === 'ready' && <Paper withBorder p="lg" className="stack"><p>{t('saved')}</p><div className="actions"><Button disabled={busy} onClick={() => { void resume(); }}>{t('useSaved')}</Button>{snapshot === null && <><Button variant="default" disabled={busy} onClick={() => showConfirmation('revoke')}>{t('forgetSaved')}</Button><Button variant="subtle" disabled={busy} onClick={() => showConfirmation('local')}>{t('removeLocalOnly')}</Button></>}</div></Paper>}
         {saved === 'pending' && <Alert color="yellow"><p>{t('pending')}</p>{snapshot === null && <Button variant="outline" disabled={busy} onClick={() => showConfirmation('local')}>{t('removeLocal')}</Button>}</Alert>}

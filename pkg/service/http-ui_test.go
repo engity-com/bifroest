@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -61,6 +62,10 @@ func TestBrowserInteractiveLostClaimUiDoesNotReplay(t *testing.T) {
 	testBrowserLoginUi(t, true, "interactive-lost")
 }
 
+func TestBrowserManagementUiStructuredTablesAndActorIsolation(t *testing.T) {
+	testBrowserLoginUi(t, true, "management")
+}
+
 func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	t.Helper()
 	if os.Getenv("BIFROEST_TEST_BROWSER_UI") != "1" {
@@ -83,6 +88,19 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	} else {
 		svc, _, _ = webTestFixture(t, func(conf *configuration.Configuration) {
 			conf.Flows[0].Http.RequestUser = commonBool(requestUser)
+			if mode == "management" {
+				base := conf.Flows[0]
+				base.Environment.V = &configuration.EnvironmentManagement{}
+				settings := base.Authorization.V.(*configuration.AuthorizationSimple)
+				settings.Entries = append(settings.Entries, configuration.AuthorizationSimpleEntry{Name: "bob", Password: bfcrypto.Password("plain:correct")})
+				conf.Flows = nil
+				for index := 20; index >= 0; index-- {
+					flow := base
+					flow.Name = configuration.FlowName(fmt.Sprintf("manager%02d", index))
+					flow.DiscoverAsSlug = ""
+					conf.Flows = append(conf.Flows, flow)
+				}
+			}
 			if mode == "key" {
 				conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple).Entries[0].AuthorizedKeys = authorizedKeys
 			}
@@ -92,6 +110,12 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 			}
 		})
 		protocolHandler = svc.web
+	}
+	if mode == "management" {
+		svc.environments = svc.environments.(*executionTestRepository).CloseableRepository
+		application := svc.managementApplication
+		svc.managementApplication = nil
+		t.Cleanup(func() { svc.managementApplication = application })
 	}
 	if mode == "interactive" {
 		delegate := svc.authorizer
@@ -236,7 +260,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	if mode == "name-free" || mode == "oidc-cancel" {
 		expectedSessions = 0
 	}
-	if mode == "terminal" {
+	if mode == "terminal" || mode == "management" {
 		expectedSessions = 2
 	}
 	require.Equal(t, expectedSessions, webSessionCount(t, svc))
@@ -259,9 +283,12 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	require.NoError(t, svc.sessions.FindAll(t.Context(), func(ctx context.Context, current session.Session) (bool, error) {
 		info, err := current.Info(ctx)
 		require.NoError(t, err)
-		if mode == "terminal" {
+		switch mode {
+		case "management":
+			require.Equal(t, session.StateAuthorized, info.State(), "management operations share session activation/activity")
+		case "terminal":
 			require.NotEqual(t, session.StateDisposed, info.State(), "disconnect/exit must preserve the shared session")
-		} else {
+		default:
 			require.Equal(t, session.StateNew, info.State(), "login UI must not provision a workload or acquire an execution lease")
 		}
 		bindings, err := current.(session.BrowserBindingSession).BrowserBindings(ctx)

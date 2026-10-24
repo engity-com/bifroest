@@ -4,7 +4,7 @@ The first React 19/Mantine 9 application supports password login, explicit
 RememberMe opt-in, saved-access resumption, confirmed logout/revocation,
 explicit local-only recovery and an owned xterm terminal. It uses en-US message
 keys and memory-only auto/light/dark appearance. Local SSH-key import/signing now
-uses an owned Go/WASM worker; structured Management remains incomplete. Keyboard-Interactive
+uses an owned Go/WASM worker; Management has an initial read-only structured view. Keyboard-Interactive
 and OIDC device dialogs use the bounded existing server API. Vite 8/Oxc/Rolldown
 builds the application and the independently tested, dependency-free HTTP/crypto
 core; there is no Webpack/Babel chain or production Node runtime.
@@ -136,7 +136,8 @@ it actually showed, never silently adopting another tab's replacement.
 The UI leaves existing registrations unchanged on ordinary login. Remote revoke
 and local-only removal have separate confirmation dialogs; local removal never
 claims server logout. Interrupted setup stays visibly uncertain until explicitly
-reconciled. Structured Management remains subsequent work.
+reconciled. Management mutations, artifact transfer and client-side decryption
+remain subsequent work.
 
 ## Interactive and OIDC device login
 
@@ -228,6 +229,50 @@ certificates, independent RememberMe/reload/resume/logout, empty inputs after
 submit, bounded private IndexedDB schema and no private HTTP fields/CSP violations.
 RPC-fixture unit tests separately check bounds, explicit empty-cert rejection,
 one-shot use, cancellation and deadlines; they are not cryptographic runtime tests.
+
+## Structured Management (read-only stage)
+
+A Management environment uses the same login/RememberMe/access grant as terminal
+flows, not a second admin login. The authenticated UI loads the management panel
+only for that environment. `Load flows`, paged sessions/filters and session details
+call fixed typed HTTP endpoints, never a terminal/SSH tunnel, CLI argument array
+or command interpreter. Results reset on fresh authentication; late/cancelled
+responses cannot appear under another actor. Data is live keyset paging rather
+than an immutable complete snapshot, with at most 20 rows and 64 KiB per result.
+Pagination cursors bind their operation/filters, but are selectors, not credentials.
+
+The three POST endpoints are `management/flows/list`, `management/sessions/list`
+and `management/sessions/show`, under the existing API prefix. Same-origin TLS,
+tab-only Authorization proof, no-cookie/no-redirect fetch, shared API/admission
+budgets and a 20-second request deadline remain unchanged. Each actual operation
+acquires a fresh shared session connection lease, is registered for logout/global
+revocation/disconnect, activates/touches only its own management session, and uses
+the common task audit/recording/seal/final-audit driver. The small internal byte
+capture is not a shell or a fabricated SSH session. Results stay buffered until
+the complete configured audit/recording policy has succeeded.
+
+Flow summaries and session view construction are shared Go operations with the
+existing CLI. `pkg/management/protocol` holds portable typed data and cursor rules;
+the existing SSH/CBOR formats and CLI behavior are retained. Session `user` and
+`remote` are explicitly original requesting metadata. Verified issuer/subject
+come only from an immutable stored association; legacy/anonymous sessions show
+no invented owner/principal. Damaged entries produce a partial-data warning, not
+private filesystem diagnostics or automatic cleanup.
+
+The initial adapter intentionally has no mutation, credential-detail or artifact
+route: `includingCredentials`/`allowArtifactTransfer` cannot be asserted by a client.
+Any forced-command credential fails closed for structured requests until an exact
+typed equivalence policy exists; keep using SSH with its existing restriction,
+not by removing that restriction. Disconnect/dispose confirmation, structured
+artifact streaming, Go-client/WASM transport reuse and client-only full artifact
+verification/decryption remain open. The current UI/JSON adapter is not presented
+as a completed portable management client.
+
+Tests include shared quota, own logout vs sibling grants, global revocation,
+request cancellation, strict final-audit refusal before output, preserved damaged
+state, paging and forced-command denial. Actual Go HTTPS/Chromium exercises flow
+pagination, session tables/details, cookies/CSP boundaries and actor-changing
+reauth with cleared data while the CLI application is deliberately unavailable.
 
 ## Terminal ownership and limits
 
