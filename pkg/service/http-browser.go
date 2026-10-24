@@ -190,6 +190,7 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case webAPI + "login/password", webAPI + "login/interactive", webAPI + "login/public-key", webAPI + "login/poll", webAPI + "login/reply", webAPI + "login/cancel", webAPI + "access", webAPI + "logout":
 	case webAPI + "remember/enroll", webAPI + "remember/resume", webAPI + "remember/revoke", webAPI + "remember/prove":
+	case webAPI + "management/flows/list", webAPI + "management/sessions/list", webAPI + "management/sessions/show":
 	default:
 		http.NotFound(w, r)
 		return
@@ -260,6 +261,10 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(r.URL.Path, webAPI+"remember/") {
 		this.handleRemember(w, r, scope, peer, values)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, webAPI+"management/") {
+		this.handleManagement(w, r, scope, values)
 		return
 	}
 	if len(values) != 1 {
@@ -548,6 +553,12 @@ func webRequestFields(path string) []string {
 		return []string{"flow", "sessionId", "bindingId"}
 	case webAPI + "remember/prove":
 		return []string{"signature"}
+	case webAPI + "management/flows/list":
+		return []string{"limit", "after"}
+	case webAPI + "management/sessions/list":
+		return []string{"limit", "after", "flow", "user", "state"}
+	case webAPI + "management/sessions/show":
+		return []string{"flow", "id"}
 	default:
 		return nil
 	}

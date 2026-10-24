@@ -19,7 +19,8 @@ type terminalTransport interface {
 	io.Closer
 }
 
-// terminalConnection is a post-authentication lease, not a browser credential.
+// terminalConnection is a neutral post-authentication lease, not a browser
+// credential. Its historical name also covers structured management requests.
 // The transport owns status delivery and must Close after its execution ends.
 // Reconnects acquire a new lease; they never attach to a previous execution.
 type terminalConnection struct {
