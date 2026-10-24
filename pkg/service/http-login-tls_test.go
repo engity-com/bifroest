@@ -2,8 +2,12 @@ package service
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
 	"io"
 	"net"
 	"net/http"
@@ -11,16 +15,30 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
 
+	"github.com/engity-com/bifroest/pkg/browserkey"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/crypto"
 	bnet "github.com/engity-com/bifroest/pkg/net"
 )
 
 func TestRealHttpsInteractiveAndKeyAttemptsOutliveTheirInitialRequest(t *testing.T) {
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	signer, err := ssh.NewSignerFromKey(private)
+	require.NoError(t, err)
+	ca := webLoginTestSigner(t)
+	certificate := &ssh.Certificate{Key: signer.PublicKey(), CertType: ssh.UserCert, ValidPrincipals: []string{"restricted-key-user"}, ValidBefore: uint64(time.Now().Add(time.Hour).Unix())}
+	require.NoError(t, certificate.SignCert(rand.Reader, ca))
+	block, err := ssh.MarshalPrivateKeyWithPassphrase(private, "local-only fixture", []byte("tab-only passphrase"))
+	require.NoError(t, err)
+	localKey := pem.EncodeToMemory(block)
 	var root *x509.Certificate
 	server := newAuthorizedKeysTestServerWithConfiguration(t, "", nil, func(conf *configuration.Configuration) {
 		conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple).Entries[0].Password = crypto.Password("plain:correct")
+		entry := &conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple).Entries[0]
+		entry.AuthorizedKeys = crypto.AuthorizedKeys(string(entry.AuthorizedKeys) + "\n" + string(ssh.MarshalAuthorizedKey(signer.PublicKey())) + "\ncert-authority " + string(ssh.MarshalAuthorizedKey(ca.PublicKey())))
 		conf.Flows[0].DiscoverAsSlug = "Work"
 		conf.Http = &configuration.Http{}
 		require.NoError(t, conf.Http.SetDefaults())
@@ -91,5 +109,22 @@ func TestRealHttpsInteractiveAndKeyAttemptsOutliveTheirInitialRequest(t *testing
 	require.Equal(t, http.StatusAccepted, answerWebStep(handler, key, "Work", proof, signWebChallenge(t, server.signer, proof)).Code)
 	two := webTestAccess(t, svc, webTestToken(t, finishWebAttempt(t, handler, key, "Work")), "Work")
 	require.Equal(t, one.auth.FindSession().Id(), two.auth.FindSession().Id())
+	// The portable client core imports/decrypts locally. Neither the private
+	// material nor passphrase is sent to the actual TLS/HTTP2 endpoint.
+	for _, cert := range [][]byte{nil, ssh.MarshalAuthorizedKey(certificate)} {
+		imported, err := browserkey.Import(localKey, []byte("tab-only passphrase"), cert, browserkey.Scope{Origin: "https://app.example.org", Slug: "Work", User: server.username})
+		require.NoError(t, err)
+		start := webAttemptRequest(handler, "public-key", "", map[string]string{"slug": "Work", "user": server.username, "publicKey": imported.PublicKey()})
+		require.Equal(t, http.StatusAccepted, start.Code)
+		var pending webLoginPending
+		require.NoError(t, json.Unmarshal(start.Body.Bytes(), &pending))
+		step := waitWebLoginStep(t, handler, pending.AttemptToken, "Work")
+		signature, err := imported.Sign(step.Challenge, pending.ExpiresAt)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusAccepted, answerWebStep(handler, pending.AttemptToken, "Work", step, signature).Code)
+		access := webTestAccess(t, svc, webTestToken(t, finishWebAttempt(t, handler, pending.AttemptToken, "Work")), "Work")
+		require.Equal(t, one.auth.FindSession().Id(), access.auth.FindSession().Id())
+		imported.Close()
+	}
 	require.Equal(t, 1, webSessionCount(t, svc))
 }
