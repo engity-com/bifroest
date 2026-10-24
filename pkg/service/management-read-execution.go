@@ -17,6 +17,21 @@ import (
 )
 
 func (this *service) executeManagementRead(conn *terminalConnection, request protocol.ReadRequest) ([]byte, error) {
+	request, err := request.Normalize()
+	if err != nil {
+		return nil, err
+	}
+	return this.executeManagement(conn, &managementReadSource{request: request}, request)
+}
+
+func (this *service) executeManagementAction(conn *terminalConnection, permission *webManagementConfirmation) ([]byte, error) {
+	if permission == nil || permission.request.Validate() != nil {
+		return nil, errManagementConfirmation
+	}
+	return this.executeManagement(conn, &managementReadSource{action: permission}, permission.request)
+}
+
+func (this *service) executeManagement(conn *terminalConnection, source *managementReadSource, payload any) ([]byte, error) {
 	if conn == nil || conn.service != this || conn.IsClosed() || !this.isManagementFlow(conn.authorization.Flow()) {
 		return nil, errManagementPolicy
 	}
@@ -29,20 +44,16 @@ func (this *service) executeManagementRead(conn *terminalConnection, request pro
 	if err := conn.activity(); err != nil {
 		return nil, err
 	}
-	request, err := request.Normalize()
-	if err != nil {
-		return nil, err
-	}
 	base := environmentContext{service: this, connection: conn, authorization: conn.authorization, executionContext: conn.Lifetime()}
 	if err := this.validateTerminalAuthorization(&base); err != nil {
 		return nil, err
 	}
-	input, err := json.Marshal(request)
+	input, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
 	buffer := &managementByteStream{conn: conn, input: bytes.NewReader(input)}
-	source := &managementReadSource{stream: buffer, request: request}
+	source.stream = buffer
 	status, err := this.execute(&executionRequest{base: base, connection: conn, source: source, taskType: environment.TaskTypeShell, requestedTask: audit.SessionTaskExec, command: true})
 	if err != nil || status != 0 {
 		if err == nil {
@@ -59,6 +70,7 @@ type managementReadSource struct {
 	stream     terminal.Stream
 	unrecorded terminal.Stream
 	request    protocol.ReadRequest
+	action     *webManagementConfirmation
 }
 
 func (this *managementReadSource) Terminal() terminal.Stream { return this.stream }
@@ -83,14 +95,22 @@ func (this *managementReadSource) Request(base environmentContext) environment.R
 }
 func (*managementReadSource) Prepared(session.State) error { return nil }
 func (this *managementReadSource) Run(env environment.Environment, base environmentContext, _ environment.TaskType) (int, error) {
-	runner, ok := env.(environment.ManagementReader)
-	if !ok {
-		return -1, fmt.Errorf("environment has no structured management capability")
-	}
 	// Record only the normalized typed request, never the slug/bearer or raw HTTP
 	// body. Keep its output private until capture/seal/final audit have succeeded.
 	if _, err := io.Copy(io.Discard, this.stream); err != nil {
 		return -1, err
+	}
+	if this.action != nil {
+		runner, ok := env.(environment.ManagementActor)
+		if !ok {
+			return -1, fmt.Errorf("environment has no structured action capability")
+		}
+		base.executionContext = context.WithValue(base.Context(), managementActionContextKey{}, this.action)
+		return runner.ActManagement(&managementReadTask{base}, this.action.request, this.stream)
+	}
+	runner, ok := env.(environment.ManagementReader)
+	if !ok {
+		return -1, fmt.Errorf("environment has no structured management capability")
 	}
 	return runner.ReadManagement(&managementReadTask{base}, this.request, this.stream)
 }
