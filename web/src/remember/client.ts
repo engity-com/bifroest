@@ -7,6 +7,8 @@ import { interactive } from '../login/interactive';
 import type { StepHandler } from '../login/interactive';
 import { publicKeyLogin } from '../login/key';
 import type { LoginKey } from '../login/key';
+import { pageFields, sessionFields, page, detail } from '../management/protocol';
+import type { Page, PageOptions, SessionOptions, FlowSummary, SessionItem } from '../management/protocol';
 
 export interface AccessSnapshot {
   readonly scope: Scope;
@@ -78,6 +80,26 @@ export class WebAccess {
   terminalToken(): string {
     if (this.#closed || !this.#response.terminalAvailable || Date.now() >= Date.parse(this.#response.expiresAt)) throw new RememberMeError('denied');
     return this.#response.accessToken; // Only the terminal wire adapter should consume this value.
+  }
+
+  #managementAllowed() {
+    if (this.#closed || this.#response.environment !== 'management' || Date.now() >= Date.parse(this.#response.expiresAt)) throw new RememberMeError('denied');
+  }
+  async managementFlows(options: PageOptions = {}, signal?: AbortSignal): Promise<Page<FlowSummary>> {
+    this.#managementAllowed(); const fields = pageFields(options);
+    const result = page<FlowSummary>(await this.#http.post('management/flows/list', fields, this.#response.accessToken, 200, signal), 'flows', Number(fields.limit));
+    if (this.#closed) throw new RememberMeError('denied'); return result;
+  }
+  async managementSessions(options: SessionOptions = {}, signal?: AbortSignal): Promise<Page<SessionItem>> {
+    this.#managementAllowed(); const fields = sessionFields(options);
+    const result = page<SessionItem>(await this.#http.post('management/sessions/list', fields, this.#response.accessToken, 200, signal), 'sessions', Number(fields.limit));
+    if (this.#closed) throw new RememberMeError('denied'); return result;
+  }
+  async managementSession(flow: string, id: string, signal?: AbortSignal): Promise<SessionItem> {
+    this.#managementAllowed();
+    if (typeof flow !== 'string' || !flow.isWellFormed() || new TextEncoder().encode(flow).length > 255 || /[\p{Cc}]/u.test(flow) || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/u.test(id)) throw new RememberMeError('unavailable');
+    const result = detail(await this.#http.post('management/sessions/show', { flow, id }, this.#response.accessToken, 200, signal));
+    if (this.#closed || result.flow !== flow || result.id !== id) throw new RememberMeError('denied'); return result;
   }
 
   async remember(options: { explicitOptIn: boolean }, signal?: AbortSignal): Promise<void> {
