@@ -155,6 +155,42 @@ device login with no requesting name, RememberMe grant reuse, and cancellation
 of a real in-flight IdP token request. The IdP is an owned test fixture; this does
 not claim external-provider, native Local account-policy or public-key UI coverage.
 
+## Public-key client foundation (import UI still pending)
+
+`BrowserClient.publicKey(user, key, signal)` accepts a trusted tab-local `LoginKey`
+adapter exposing only its canonical Base64 SSH public wire key and a scoped
+`sign(challenge, expiresAt, signal)` operation. It shares the bounded one-time
+attempt driver with interactive login, but accepts exactly one `public-key` proof
+step, has a two-minute hard cap and never falls back to a password/interactive
+prompt. It checks the original challenge domain, HTTPS origin/port, exact slug,
+original requesting name (including empty), exact key/certificate fingerprint,
+nonce, connection ID and pinned expiry before calling the signer. The reply must
+be a strong canonical SSH wire signature, not WebCrypto P1363/ASN.1 or RSA/SHA-1.
+No private key/passphrase property is serialized or sent to Go. Failed/ambiguous
+replies and final claims are not replayed; cancellation affects only the attempt.
+
+`pkg/browserkey` is the portable Go implementation intended for that future WASM
+worker, not an HTTP private-key import endpoint. It reuses `x/crypto/ssh` parsers,
+decryption and original SSH signatures; public parsing/challenge encoding/proof
+verification are shared with the server. Imports are limited to one 64-KiB PEM
+key, 4096-byte passphrase and optional single 12-KiB OpenSSH user certificate
+matching the private key. Supported keys are Ed25519, RSA 2048–8192 and NIST
+P-256/P-384/P-521. OpenSSH bcrypt is capped at 64 rounds before decryption.
+Unencrypted PKCS#1/SEC1/PKCS#8 and supported legacy PEM/OpenSSH encryption use the
+existing Go parser; encrypted PKCS#8, PPK, security keys and multi-key files are
+not supported. Certificate import is not trust/authorization: current server
+principal/CA/options/expiry rules remain authoritative. Every imported handle
+can attempt one context-checked signature, including on failure. Close drops
+references; Go/browser GC is not a physical-erasure guarantee.
+
+Native tests exercise all algorithms, encrypted imports, certificate matching,
+canonical/duplicate/foreign/expired challenges, one-shot concurrency and unchanged
+server policy. Actual TLS/HTTP2 tests import/decrypt a fixture locally, submit
+only public key/signature, and join the same session as SSH. The package compiles
+for JS/WASM. Chromium adapter tests currently use fixture signers, **not** a
+running Go/WASM import UI. Runtime bundling and a dedicated bounded/terminable
+worker are still pending; the document CSP is unchanged and not relaxed for WASM.
+
 ## Terminal ownership and limits
 
 The xterm/fit modules load after terminal-flow authentication. `Start new

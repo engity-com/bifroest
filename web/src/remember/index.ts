@@ -4,3 +4,4 @@ export type { Binding, Scope, ProofPurpose } from './protocol';
 export { BrowserClient, WebAccess } from './client';
 export type { AccessSnapshot, LogoutResult } from './client';
 export type { LoginStep, StepHandler } from '../login/interactive';
+export type { LoginKey } from '../login/key';

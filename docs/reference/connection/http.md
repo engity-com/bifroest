@@ -99,6 +99,12 @@ The tab-only `bwl1.` permission is never exposed in UI state/serialization. The 
 
 Actual Go HTTPS/Chromium UI tests verify escaped provider markup, echo/secret transitions, interruption after a real final claim, fresh-login recovery, signed local IdP device login without a requesting name, remembered grant reuse and cancellation of a running IdP token request. Public-key private-material import/signing is still pending; no external IdP or native Local account-policy result is claimed.
 
+### Portable public-key client foundation
+
+The browser client API now accepts a trusted tab-local key adapter, checks the original `bifroest-http-public-key-v1` challenge against exact origin/port, slug, original user, public key/certificate fingerprint and pinned expiry, and posts only the canonical public key plus one SSH wire signature. A key attempt accepts one proof step with a two-minute cap, never an interactive fallback. Ambiguous replies/final claims are not automatically repeated. This API is not yet a private-key import dialog or a running WASM worker.
+
+The portable `pkg/browserkey` Go core shares server public parsing/challenge encoding/verification and reuses existing SSH import/decryption/signature code. Native imports support Ed25519, RSA 2048–8192 and NIST ECDSA, one PEM key up to 64 KiB, passphrases up to 4096 bytes and an optional matching OpenSSH user certificate up to 12 KiB. OpenSSH bcrypt is capped at 64 rounds. Encrypted PKCS#8, PPK, security keys and multi-key files are not supported. The handle can attempt one exact-context proof, including on failure. Import does not establish certificate trust or replace current server policy; no server endpoint accepts private material. Native HTTPS/HTTP2 tests join the SSH session using locally decrypted raw/certificate keys, and JS/WASM compilation passes. Actual WASM runtime/import UI, worker lifecycle and its narrowly scoped CSP policy remain subsequent work; no document CSP relaxation is included here.
+
 ## WebSocket terminal protocol
 
 `GET /_bifroest/api/v1/terminal` accepts an HTTP/1.1 WebSocket upgrade with exactly the subprotocol `bifroest-terminal.v1`. Ordinary APIs continue to support HTTP/2; extended CONNECT/HTTP2 WebSockets are not implemented. The normal direct-TLS/Host/SNI/same-HTTPS-Origin boundary runs before upgrading. Query parameters and upgrade request bodies are forbidden. No compression is negotiated.
