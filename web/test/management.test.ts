@@ -22,6 +22,16 @@ function fixture(environment = 'management', changed?: (value: unknown) => unkno
 }
 
 describe('bounded structured management client (no command/CLI transport)', () => {
+  it('distinguishes forced-command withholding from absent identity and rejects contradictory disclosure', async () => {
+    const limited={...item,owner:null,remote:'',policyLimited:true};
+    const server=fixture('management',()=>({version:1,operation:'sessions.list',sessions:{items:[limited],next:'',skipped:0}}));
+    const access=await server.client.password('','');const page=await access.managementSessions();
+    expect(page.items[0]!.policyLimited).toBe(true);expect(page.items[0]!.owner).toBeNull();expect(page.items[0]!.remote).toBe('');
+    for(const changed of [{...item,policyLimited:true},{...limited,policyLimited:'true'},{...limited,policyLimited:false}]){
+      const bad=fixture('management',()=>({version:1,operation:'sessions.list',sessions:{items:[changed],next:'',skipped:0}}));
+      const selected=await bad.client.password('','');await expect(selected.managementSessions()).rejects.toMatchObject({code:'unavailable'});
+    }
+  });
   it('uses the existing opaque grant and keeps requester/verified owner distinct', async () => {
     const server = fixture(), access = await server.client.password('manager', 'secret');
     expect((await access.managementFlows()).items[0]!.environment).toBe('dummy');

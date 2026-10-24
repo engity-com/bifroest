@@ -262,9 +262,10 @@ private filesystem diagnostics or automatic cleanup.
 
 The metadata adapter has no credential-detail or artifact route:
 `includingCredentials`/`allowArtifactTransfer` cannot be asserted by a client.
-Any forced-command credential fails closed for structured requests until an exact
-typed equivalence policy exists; keep using SSH with its existing restriction,
-not by removing that restriction. Structured artifact streaming,
+Recognized forced read commands constrain the typed operation, data filters and
+returned fields as described below. Unsupported forms and all forced mutations
+stay fail-closed; continue using SSH with those restrictions rather than removing
+them. Structured artifact streaming,
 Go-client/WASM transport reuse and client-only full artifact
 verification/decryption remain open. The current UI/JSON adapter is not presented
 as a completed portable management client.
@@ -274,6 +275,45 @@ request cancellation, strict final-audit refusal before output, preserved damage
 state, paging and forced-command denial. Actual Go HTTPS/Chromium exercises flow
 pagination, session tables/details, cookies/CSP boundaries and actor-changing
 reauth with cleared data while the CLI application is deliberately unavailable.
+
+### Forced read ceilings (conservative subset)
+
+The server interprets only the **operator-configured** forced command, never a
+browser command. Recognized forms are `flow ls`, `session ls` and `session show`
+with one exact canonical session UUID. Supported output flags are `--format`
+`table`/`json`/`yaml`/`cbor`; session lists also support `--flow`, `--user` and
+`--state` with the same defaults as SSH (`active`). Unique `--name=value` and
+`--name value` forms use the same POSIX token splitting as the SSH adapter.
+Unknown options, duplicate flags, aliases/help/config-file expansion, shell
+operators, malformed inputs, dispatcher/wire names and mutations are not inferred
+as safe. Unsupported syntax remains denied even if another spelling might be
+valid over SSH. No general CLI parser or command execution handles HTTP data.
+
+Only the same operation is allowed; a session list cannot fetch details or prepare
+disconnect/disposal. A fixed session show must keep its exact UUID and cannot use
+an explicit HTTP flow to bypass the SSH global-ID ambiguity check. List results
+apply the intersection of requested and forced flow/requesting-user/state filters;
+requesting `all` or another user cannot broaden the ceiling, including subsequent
+pages. Caller-provided flags cannot replace configured restrictions.
+An additional `active` filter is accepted only if the forced list already uses
+`active`: unlike an ordinary state filter it also tests the exact validity
+deadline, so applying it to another forced state could disclose withheld or finer
+time information through row presence. For other forced states, explicitly select
+`all` or an ordinary exposed state rather than the UI's initial `active` filter.
+
+Forced session reads do not expose the additional stored association owner. A
+table list returns only its CLI data columns: ID, flow, state, requesting user and
+created time; remote/last-access/valid-until are withheld. Other recognized list
+formats and shows retain their normal base session metadata, never the extra
+owner. Table/CBOR time values are reduced to whole seconds, matching the SSH
+format rather than exposing finer precision. `policyLimited: true` explicitly
+distinguishes withheld data from absent evidence or an unlimited lifetime; the UI
+warns and disables mutation controls. Unrestricted permissions/data are unchanged.
+Audit tasks mark such reads as forced. This is not complete ForcedCommand parity:
+all mutation and dispatcher mappings, other CLI operations and unsupported forms
+remain closed. Native SSH/HTTP reference tests compare actual formats/columns,
+filter intersections and operation ceilings; a real Go/WASM key-login browser
+test checks the limited view and denied detail/mutation access.
 
 ### Confirmed session actions
 

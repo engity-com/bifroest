@@ -13,6 +13,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/environment"
+	managementpolicy "github.com/engity-com/bifroest/pkg/management/policy"
 	"github.com/engity-com/bifroest/pkg/management/protocol"
 	managementview "github.com/engity-com/bifroest/pkg/management/view"
 	"github.com/engity-com/bifroest/pkg/session"
@@ -21,10 +22,27 @@ import (
 var errManagementPolicy = errors.New("structured management is not allowed by the invocation policy")
 
 func managementReadPolicy(auth authorization.Authorization) error {
-	// A CLI forced command cannot be assumed equivalent to arbitrary typed
-	// operations. Keep SSH behavior; deny structured calls until explicit typed
-	// equivalence is implemented, including the legacy wire command case.
 	if policy := authorization.AuthorizedKeyPolicyOf(auth); policy != nil && policy.ForcedCommand != nil {
+		if _, err := managementpolicy.ForcedRead(*policy.ForcedCommand); err != nil {
+			return errManagementPolicy
+		}
+	}
+	return nil
+}
+
+func managementReadCeiling(auth authorization.Authorization, request protocol.ReadRequest) (*managementpolicy.ReadCeiling, error) {
+	if key := authorization.AuthorizedKeyPolicyOf(auth); key != nil && key.ForcedCommand != nil {
+		ceiling, err := managementpolicy.ForcedRead(*key.ForcedCommand)
+		if err != nil || !ceiling.Allows(request) {
+			return nil, errManagementPolicy
+		}
+		return &ceiling, nil
+	}
+	return nil, nil
+}
+
+func managementActionPolicy(auth authorization.Authorization) error {
+	if key := authorization.AuthorizedKeyPolicyOf(auth); key != nil && key.ForcedCommand != nil {
 		return errManagementPolicy
 	}
 	return nil
@@ -43,6 +61,10 @@ func (this *service) RunManagementRead(task environment.TaskContext, request pro
 	if err != nil {
 		return -1, err
 	}
+	ceiling, err := managementReadCeiling(task.Authorization(), request)
+	if err != nil {
+		return -1, err
+	}
 	ctx := task.Context()
 	if err := ctx.Err(); err != nil {
 		return -1, err
@@ -56,7 +78,7 @@ func (this *service) RunManagementRead(task environment.TaskContext, request pro
 		}
 		result.Flows = &page
 	case protocol.ListSessions:
-		page, err := this.managementSessionPage(ctx, request)
+		page, err := this.managementSessionPage(ctx, request, ceiling)
 		if err != nil {
 			return -1, err
 		}
@@ -70,9 +92,17 @@ func (this *service) RunManagementRead(task environment.TaskContext, request pro
 		if err != nil {
 			return -1, err
 		}
-		item, err := managementSessionItem(ctx, current)
+		if ceiling != nil {
+			if err := this.uniqueForcedSessionID(ctx, current); err != nil {
+				return -1, err
+			}
+		}
+		item, err := managementSessionItemWithOwner(ctx, current, ceiling == nil)
 		if err != nil {
 			return -1, err
+		}
+		if ceiling != nil {
+			item = ceiling.Project(item)
 		}
 		result.Session = &item
 	default:
@@ -141,6 +171,10 @@ func (this *service) managementFlowPage(ctx context.Context, request protocol.Re
 }
 
 func managementSessionItem(ctx context.Context, current session.Session) (protocol.SessionItem, error) {
+	return managementSessionItemWithOwner(ctx, current, true)
+}
+
+func managementSessionItemWithOwner(ctx context.Context, current session.Session, includeOwner bool) (protocol.SessionItem, error) {
 	var result protocol.SessionItem
 	info, err := current.Info(ctx)
 	if err != nil {
@@ -150,12 +184,14 @@ func managementSessionItem(ctx context.Context, current session.Session) (protoc
 	if err != nil {
 		return result, err
 	}
-	owner, err := session.AssociationOf(ctx, current)
-	if err != nil && !errors.Is(err, session.ErrAssociationUnavailable) {
-		return result, err
-	}
-	if owner != nil {
-		result.Owner = &protocol.Owner{Issuer: owner.Issuer, Subject: owner.Subject}
+	if includeOwner {
+		owner, err := session.AssociationOf(ctx, current)
+		if err != nil && !errors.Is(err, session.ErrAssociationUnavailable) {
+			return result, err
+		}
+		if owner != nil {
+			result.Owner = &protocol.Owner{Issuer: owner.Issuer, Subject: owner.Subject}
+		}
 	}
 	encoded, err := json.Marshal(result)
 	if err != nil || len(encoded) > 8<<10 {
@@ -164,7 +200,7 @@ func managementSessionItem(ctx context.Context, current session.Session) (protoc
 	return result, nil
 }
 
-func (this *service) managementSessionPage(ctx context.Context, request protocol.ReadRequest) (protocol.Page[protocol.SessionItem], error) {
+func (this *service) managementSessionPage(ctx context.Context, request protocol.ReadRequest, ceiling *managementpolicy.ReadCeiling) (protocol.Page[protocol.SessionItem], error) {
 	page := protocol.Page[protocol.SessionItem]{Items: make([]protocol.SessionItem, 0)}
 	flow, id, err := request.Cursor()
 	if err != nil {
@@ -187,7 +223,7 @@ func (this *service) managementSessionPage(ctx context.Context, request protocol
 		if key <= after {
 			return true, nil
 		}
-		item, err := managementSessionItem(ctx, current)
+		item, err := managementSessionItemWithOwner(ctx, current, ceiling == nil)
 		if err != nil {
 			if ctx.Err() != nil {
 				return false, ctx.Err()
@@ -197,6 +233,12 @@ func (this *service) managementSessionPage(ctx context.Context, request protocol
 		}
 		if request.User != "" && item.User != request.User || !managementview.MatchesState(item.SessionView, request.State, now) {
 			return true, nil
+		}
+		if ceiling != nil {
+			if ceiling.Flow != "" && item.Flow != ceiling.Flow || ceiling.User != "" && item.User != ceiling.User || !managementview.MatchesState(item.SessionView, ceiling.State, now) {
+				return true, nil
+			}
+			item = ceiling.Project(item)
 		}
 		items = insertRead(items, key, item, request.Limit+1)
 		return true, nil
@@ -213,4 +255,24 @@ func (this *service) managementSessionPage(ctx context.Context, request protocol
 		page.Items = append(page.Items, item.value)
 	}
 	return page, nil
+}
+
+func (this *service) uniqueForcedSessionID(ctx context.Context, target session.Session) error {
+	count := 0
+	err := this.sessions.FindAll(ctx, func(_ context.Context, current session.Session) (bool, error) {
+		if current.Id() == target.Id() {
+			count++
+			if current.Flow() != target.Flow() || count > 1 {
+				return false, errManagementPolicy
+			}
+		}
+		return true, nil
+	}, &session.FindOpts{DiagnosticConsumer: func(context.Context, session.FindDiagnostic) error { return nil }})
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return errManagementPolicy
+	}
+	return nil
 }

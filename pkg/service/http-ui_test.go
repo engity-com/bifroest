@@ -66,6 +66,10 @@ func TestBrowserManagementUiStructuredTablesAndActorIsolation(t *testing.T) {
 	testBrowserLoginUi(t, true, "management")
 }
 
+func TestBrowserManagementForcedReadUiWithholdsUnexposedIdentity(t *testing.T) {
+	testBrowserLoginUi(t, true, "management-forced")
+}
+
 func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	t.Helper()
 	if os.Getenv("BIFROEST_TEST_BROWSER_UI") != "1" {
@@ -80,7 +84,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	var provider *oidcAssociationProvider
 	var keyFixture string
 	var authorizedKeys bfcrypto.AuthorizedKeys
-	if mode == "key" {
+	if mode == "key" || mode == "management-forced" {
 		keyFixture, authorizedKeys = browserKeyUiFixture(t)
 	}
 	if mode == "oidc" || mode == "oidc-cancel" {
@@ -110,6 +114,19 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 				worker.Authorization.V = &configuration.AuthorizationSimple{Entries: configuration.AuthorizationSimpleEntries{{Name: "bob", Password: bfcrypto.Password("plain:correct")}}}
 				conf.Flows = append(conf.Flows, worker)
 			}
+			if mode == "management-forced" {
+				conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
+				settings := conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple)
+				settings.Entries = append(settings.Entries, configuration.AuthorizationSimpleEntry{Name: "bob", Password: bfcrypto.Password("plain:correct")})
+				var keys strings.Builder
+				for _, line := range strings.Split(strings.TrimSpace(string(authorizedKeys)), "\n") {
+					if !strings.HasPrefix(line, "cert-authority ") {
+						keys.WriteString(`command="session ls --user=alice --format=table" `)
+					}
+					keys.WriteString(line + "\n")
+				}
+				settings.Entries[0].AuthorizedKeys = bfcrypto.AuthorizedKeys(keys.String())
+			}
 			if mode == "key" {
 				conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple).Entries[0].AuthorizedKeys = authorizedKeys
 			}
@@ -120,7 +137,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 		})
 		protocolHandler = svc.web
 	}
-	if mode == "management" || mode == "management-actions" {
+	if mode == "management" || mode == "management-actions" || mode == "management-forced" {
 		svc.environments = svc.environments.(*executionTestRepository).CloseableRepository
 		application := svc.managementApplication
 		svc.managementApplication = nil
@@ -296,7 +313,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	if mode == "name-free" || mode == "oidc-cancel" {
 		expectedSessions = 0
 	}
-	if mode == "terminal" || mode == "management" || mode == "management-actions" {
+	if mode == "terminal" || mode == "management" || mode == "management-actions" || mode == "management-forced" {
 		expectedSessions = 2
 	}
 	require.Equal(t, expectedSessions, webSessionCount(t, svc))
@@ -323,6 +340,14 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 		info, err := current.Info(ctx)
 		require.NoError(t, err)
 		switch mode {
+		case "management-forced":
+			created, err := info.Created(t.Context())
+			require.NoError(t, err)
+			if created.Remote().User() == "alice" {
+				require.Equal(t, session.StateAuthorized, info.State())
+			} else {
+				require.Equal(t, session.StateNew, info.State())
+			}
 		case "management-actions":
 			if current.Flow() == "worker" {
 				require.Equal(t, session.StateDisposed, info.State())
