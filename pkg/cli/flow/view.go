@@ -3,7 +3,6 @@ package flow
 import (
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -11,27 +10,18 @@ import (
 	cliformat "github.com/engity-com/bifroest/pkg/cli/format"
 	"github.com/engity-com/bifroest/pkg/cli/model"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	managementview "github.com/engity-com/bifroest/pkg/management/view"
 )
 
 func ListFlows(output io.Writer, selected cliformat.Format, conf *configuration.Configuration) error {
-	if conf == nil {
-		return fmt.Errorf("missing configuration")
+	views, err := managementview.Flows(conf)
+	if err != nil {
+		return err
 	}
-	entries := make([]model.FlowSummary, 0, len(conf.Flows))
-	for _, flow := range conf.Flows {
-		authorization, environment := "", ""
-		if flow.Authorization.V != nil {
-			authorization = flow.Authorization.V.Types()[0]
-		}
-		if flow.Environment.V != nil {
-			environment = flow.Environment.V.Types()[0]
-		}
-		entries = append(entries, model.FlowSummary{
-			Name: flow.Name, Auditlog: flow.Auditlog,
-			Authorization: authorization, Environment: environment,
-		})
+	entries := make([]model.FlowSummary, 0, len(views))
+	for _, view := range views {
+		entries = append(entries, model.FlowSummary{Name: configuration.FlowName(view.Name), Auditlog: configuration.AuditlogName(view.Auditlog), Authorization: view.Authorization, Environment: view.Environment})
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	return cliformat.WriteFlowList(output, selected, entries)
 }
 
