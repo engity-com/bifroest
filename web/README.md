@@ -206,8 +206,8 @@ decoding; this is not a disk-backed or zero-copy streaming browser sink.
 Successful results explicitly carry `transport: 'complete'` and
 `evidence: 'unverified'`. Header Producer/Recipient/SHA256 values remain untrusted
 transport assertions, never signature/trust/decryption proof. The separate
-Recording/Audit evidence worker, tab-local decryption-key import and artifact UI
-are subsequent work, not silently performed by this API.
+Recording/Audit evidence worker below must be invoked separately; artifact UI
+is subsequent work, not silently performed by the transport API.
 
 The MISE app build adds `cmd/browser-transfer` and the one-shot
 `browser-transfer-worker.js`; only that exact worker and the existing key worker
@@ -216,6 +216,49 @@ existing policy. The runtime comes from the same version/hash-checked selected
 GOROOT as key login. The conservative transfer component manifest records its
 actual dependency versions, reviewed/pinned MIT license texts and WASM/runtime
 hashes; this is not complete release-wide source provenance/SBOM.
+
+## Client-only evidence API (no artifact UI yet)
+
+`verifyArtifact(received, options, localKey, signal)` owns a separate short-lived
+worker. It accepts only completed immutable transport Blobs, explicit options and
+an optional local File/passphrase. No bearer, URL, command, server action or key
+filename enters the RPC. File inputs are read with abort support, transferred as
+buffers and cleared where possible; worker termination retires the operation.
+This is tab memory only, not persistence or a physical secure-erasure guarantee.
+
+Options explicitly select an independent `producer` pin (or `allowUntrusted`),
+expected `recipient`, `level: 'outer' | 'private'`, export intent and, for Audit,
+`auditScope: 'complete' | 'captured-prefix'` plus private-field output opt-in.
+Transport-header identity hints are never copied into these expectations.
+Results keep signing trust, validation level, decryption and bytes-only source
+provenance separate. An outer result emits no export. Only successful private
+verification can return an output Blob; a failed key/producer/input/resource
+check returns neither metadata success nor partial plaintext. A zero private
+record count does not claim a matching key or any decrypted records.
+
+The Go adapter reuses native Cast/Recording and Audit-producer verifiers and
+exporters, not a second JS verifier. Recording passes share one owned immutable
+ReaderAt image; Audit uses immutable images plus the shared canonical native
+segment-name parser. Whole-file/chain/head checks and resource completion precede
+JSONL/Cast publication. Audit default output remains redacted even when supplied
+keys validate private semantics. Logical byte aliases make no filesystem claim;
+native inode/link/tree guards remain native and stricter where applicable.
+
+Local PEM/OpenSSH import shares the login parser's 64-KiB key / 4096-byte
+passphrase / bounded bcrypt envelope policy. Evidence age decryption accepts the
+existing Ed25519/RSA SSH identities only, matches their public fingerprint to the
+independent recipient expectation, and never sends private values to the server.
+Client raw input/output remain bounded at 64 MiB; writer failure discards the
+staged export. The Worker has a hard two-minute lifetime, with bounded boot.
+
+The larger evidence WASM is distributed as `browser-evidence.wasm.gz` (roughly
+3 MiB); the general 8-MiB asset limit is unchanged. Its loader enforces compressed
+EOF, gzip integrity and a separate 24-MiB decompressed limit before compilation.
+Only the exact external evidence-worker response gets narrow WASM CSP, never
+the parent document or ordinary scripts. Build manifests pin actual module
+versions and reviewed license text hashes (including nested compression-library
+notices), plus compressed/raw/runtime hashes. This is not full release SBOM or
+cryptographic supply-chain provenance.
 
 ## Interactive and OIDC device login
 

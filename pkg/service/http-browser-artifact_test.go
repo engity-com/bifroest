@@ -1,11 +1,14 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"net"
 	"net/http"
@@ -19,9 +22,11 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
 	"github.com/engity-com/bifroest/pkg/https"
 )
 
@@ -52,8 +57,19 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 		node, err = exec.LookPath("node")
 		require.NoError(t, err)
 	}
-	for _, mode := range []string{"normal", "held-success", "held-failure"} {
+	for _, mode := range []string{"normal", "encrypted", "held-success", "held-failure"} {
 		t.Run(mode, func(t *testing.T) {
+			var keyPath, recipient string
+			private := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x42}, ed25519.SeedSize))
+			public, err := ssh.NewPublicKey(private.Public())
+			require.NoError(t, err)
+			if mode == "encrypted" {
+				block, err := ssh.MarshalPrivateKeyWithPassphrase(private, "public browser test key", []byte("tab fixture secret"))
+				require.NoError(t, err)
+				keyPath = filepath.Join(t.TempDir(), "offline-key.pem")
+				require.NoError(t, os.WriteFile(keyPath, pem.EncodeToMemory(block), 0600))
+				recipient = ssh.FingerprintSHA256(public)
+			}
 			svc, _, _ := executionTestFixture(t, nil, func(conf *configuration.Configuration) {
 				conf.Http = &configuration.Http{}
 				require.NoError(t, conf.Http.SetDefaults())
@@ -64,6 +80,9 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 				httpListenerTestCertificate(t, conf, key)
 				conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{AllowArtifactTransfer: true}
 				conf.Flows[0].DiscoverAsSlug = "Work"
+				if mode == "encrypted" {
+					conf.Auditlogs[0].EncryptionPublicKey = bfcrypto.PublicKeys(string(ssh.MarshalAuthorizedKey(public)))
+				}
 			})
 			svc.environments = svc.environments.(*executionTestRepository).CloseableRepository
 			flow := svc.Configuration.Flows[0]
@@ -95,7 +114,7 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 					require.NoError(t, err)
 					require.Len(t, ids, 1)
 					w.Header().Set("Content-Type", "application/json")
-					_ = json.NewEncoder(w).Encode(map[string]string{"id": ids[0].String()})
+					_ = json.NewEncoder(w).Encode(map[string]string{"id": ids[0].String(), "producer": svc.auditIdentities[flow.Auditlog].ProducerId().String(), "recipient": recipient})
 					return
 				case "/_bifroest/test/artifact-arm":
 					gate := &artifactFinalAuditGate{delegate: delegate, entered: make(chan struct{}), release: make(chan struct{})}
@@ -152,7 +171,7 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 			require.NoError(t, err)
 			ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 			defer cancel()
-			command := exec.CommandContext(ctx, node, filepath.Join(root, "web", "test", "artifact-client.mjs"), "https://app.example.org:"+port, mode)
+			command := exec.CommandContext(ctx, node, filepath.Join(root, "web", "test", "artifact-client.mjs"), "https://app.example.org:"+port, mode, keyPath)
 			command.Dir = filepath.Join(root, "web")
 			output, err := command.CombinedOutput()
 			require.NoError(t, err, "%s", output)

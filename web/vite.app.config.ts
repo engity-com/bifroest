@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
+import { buildBrowserEvidence } from './scripts/browser-evidence.mjs';
 import { buildBrowserKey } from './scripts/browser-key.mjs';
 import { buildBrowserTransfer } from './scripts/browser-transfer.mjs';
 import { writeFrontendNotices } from './scripts/frontend-notices.mjs';
@@ -29,10 +30,15 @@ export default defineConfig({
         'browser-transfer-worker': fileURLToPath(
           new URL('src/artifacts/transfer-worker.ts', import.meta.url),
         ),
+        'browser-evidence-worker': fileURLToPath(
+          new URL('src/artifacts/evidence-worker.ts', import.meta.url),
+        ),
       },
       output: {
         entryFileNames: (chunk) =>
-          ['browser-key-worker', 'browser-transfer-worker'].includes(chunk.name)
+          ['browser-key-worker', 'browser-transfer-worker', 'browser-evidence-worker'].includes(
+            chunk.name,
+          )
             ? `${chunk.name}.js`
             : 'assets/[name]-[hash].js',
       },
@@ -55,6 +61,7 @@ export default defineConfig({
         writeFrontendNotices(output);
         buildBrowserKey(output);
         buildBrowserTransfer(output);
+        buildBrowserEvidence(output);
       },
     },
   ],

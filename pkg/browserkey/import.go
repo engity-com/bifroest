@@ -2,6 +2,7 @@ package browserkey
 
 import (
 	"bytes"
+	"crypto"
 	"encoding/pem"
 	"errors"
 
@@ -22,29 +23,12 @@ func Import(privateKey, passphrase, certificate []byte, scope Scope) (*Key, erro
 	if len(privateKey) == 0 || len(privateKey) > MaxPrivateKeyBytes || len(passphrase) > MaxPassphraseBytes || len(certificate) > MaxCertificateBytes || !scope.valid() {
 		return nil, ErrImport
 	}
-	trimmed := bytes.TrimSpace(privateKey)
-	if !bytes.HasPrefix(trimmed, []byte("-----BEGIN ")) || bytes.Count(trimmed, []byte("-----BEGIN ")) != 1 {
+	private, err := ParsePrivateKey(privateKey, passphrase)
+	if err != nil {
 		return nil, ErrImport
 	}
-	block, rest := pem.Decode(trimmed)
-	if block == nil || len(bytes.TrimSpace(rest)) != 0 {
-		return nil, ErrImport
-	}
-	defer clear(block.Bytes)
-	switch block.Type {
-	case "RSA PRIVATE KEY", "EC PRIVATE KEY", "PRIVATE KEY":
-	case "OPENSSH PRIVATE KEY":
-		if !boundedOpenSSH(block.Bytes) {
-			return nil, ErrImport
-		}
-	default:
-		return nil, ErrImport
-	}
-	signer, err := ssh.ParsePrivateKey(trimmed)
-	if _, encrypted := err.(*ssh.PassphraseMissingError); encrypted {
-		signer, err = ssh.ParsePrivateKeyWithPassphrase(trimmed, passphrase)
-	}
-	if err != nil || !supported(signer.PublicKey()) {
+	signer, err := ssh.NewSignerFromKey(private)
+	if err != nil {
 		return nil, ErrImport
 	}
 	key := signer.PublicKey()
@@ -66,6 +50,49 @@ func Import(privateKey, passphrase, certificate []byte, scope Scope) (*Key, erro
 		key = cert
 	}
 	return &Key{signer: signer, key: key, scope: scope}, nil
+}
+
+// ParsePrivateKey shares the bounded tab-local PEM/OpenSSH parser with evidence
+// decryption. It grants no login scope and opens no network or filesystem input.
+// Parsing a key never establishes possession, authorization or journal trust.
+func ParsePrivateKey(privateKey, passphrase []byte) (crypto.Signer, error) {
+	if len(privateKey) == 0 || len(privateKey) > MaxPrivateKeyBytes || len(passphrase) > MaxPassphraseBytes {
+		return nil, ErrImport
+	}
+	trimmed := bytes.TrimSpace(privateKey)
+	if !bytes.HasPrefix(trimmed, []byte("-----BEGIN ")) || bytes.Count(trimmed, []byte("-----BEGIN ")) != 1 {
+		return nil, ErrImport
+	}
+	block, rest := pem.Decode(trimmed)
+	if block == nil || len(bytes.TrimSpace(rest)) != 0 {
+		return nil, ErrImport
+	}
+	defer clear(block.Bytes)
+	switch block.Type {
+	case "RSA PRIVATE KEY", "EC PRIVATE KEY", "PRIVATE KEY":
+	case "OPENSSH PRIVATE KEY":
+		if !boundedOpenSSH(block.Bytes) {
+			return nil, ErrImport
+		}
+	default:
+		return nil, ErrImport
+	}
+	parsed, err := ssh.ParseRawPrivateKey(trimmed)
+	if _, encrypted := err.(*ssh.PassphraseMissingError); encrypted {
+		parsed, err = ssh.ParseRawPrivateKeyWithPassphrase(trimmed, passphrase)
+	}
+	if err != nil {
+		return nil, ErrImport
+	}
+	signer, err := ssh.NewSignerFromKey(parsed)
+	if err != nil || !supported(signer.PublicKey()) {
+		return nil, ErrImport
+	}
+	private, ok := parsed.(crypto.Signer)
+	if !ok {
+		return nil, ErrImport
+	}
+	return private, nil
 }
 
 // This is only an envelope/resource guard; x/crypto/ssh owns actual parsing,

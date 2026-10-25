@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
 
-const [origin, mode] = process.argv.slice(2);
+const [origin, mode, keyPath] = process.argv.slice(2);
 assert.match(origin, /^https:\/\/app\.example\.org:[0-9]+$/u);
-assert(['normal', 'held-success', 'held-failure'].includes(mode));
+assert(['normal', 'encrypted', 'held-success', 'held-failure'].includes(mode));
+const privateBytes = keyPath ? [...readFileSync(keyPath)] : [];
 const browser = await chromium.launch({
   headless: true,
   args: ['--host-resolver-rules=MAP app.example.org 127.0.0.1', '--no-proxy-server'],
@@ -15,7 +17,18 @@ try {
   ]);
   const page = await context.newPage();
   const errors = [];
+  const privateRequests = [];
   page.on('pageerror', (error) => errors.push(error.message));
+  page.on('request', (request) => {
+    const body = request.postData() ?? '';
+    if (
+      body.includes('PRIVATE KEY') ||
+      body.includes('tab fixture secret') ||
+      body.includes('wrong tab secret')
+    ) {
+      privateRequests.push(new URL(request.url()).pathname);
+    }
+  });
   const response = await page.goto(`${origin}/_bifroest/test/client.html`);
   assert.equal(response.status(), 200);
   assert(!response.headers()['content-security-policy'].includes('wasm-unsafe-eval'));
@@ -34,8 +47,8 @@ try {
   assert(policies.worker.includes('wasm-unsafe-eval'));
   assert(!policies.ordinary.includes('wasm-unsafe-eval'));
   const result = await page.evaluate(
-    async ({ mode }) => {
-      const { BrowserClient } = await import('/_bifroest/test/client.js');
+    async ({ mode, privateBytes }) => {
+      const { BrowserClient, verifyArtifact } = await import('/_bifroest/test/client.js');
       const violations = [];
       window.addEventListener('securitypolicyviolation', (event) =>
         violations.push(event.violatedDirective),
@@ -65,7 +78,7 @@ try {
         (response) => response.json(),
       );
       const selected = { kind: 'recording', auditlog: 'default', id: entry.id };
-      if (mode !== 'normal') {
+      if (mode !== 'normal' && mode !== 'encrypted') {
         await fetch('/_bifroest/test/artifact-arm', { method: 'POST', credentials: 'omit' });
         let settled = false;
         const operation = access.downloadArtifact(selected).then(
@@ -110,6 +123,83 @@ try {
         if (digest !== recording.metadata.SHA256 || recording.metadata.ID !== entry.id) {
           throw new Error('recording sink bytes or selectors differ from the completed transfer');
         }
+        const key =
+          mode === 'encrypted'
+            ? {
+                file: new File([new Uint8Array(privateBytes)], 'local-offline-key'),
+                passphrase: 'tab fixture secret',
+              }
+            : null;
+        const expected = {
+          producer: entry.producer,
+          allowUntrusted: false,
+          recipient: mode === 'encrypted' ? entry.recipient : '',
+          level: 'outer',
+          export: false,
+          sensitive: false,
+          auditScope: '',
+        };
+        const outer = await verifyArtifact(recording, expected, null, new AbortController().signal);
+        if (
+          outer.metadata.trust !== 'pinned' ||
+          outer.metadata.validation !== 'outer' ||
+          outer.output !== null
+        ) {
+          throw new Error(
+            'outer authentication must remain separate from private verification/export',
+          );
+        }
+        const verified = await verifyArtifact(
+          recording,
+          { ...expected, level: 'private', export: true },
+          key,
+          new AbortController().signal,
+        );
+        if (
+          verified.metadata.validation !== 'private' ||
+          verified.metadata.trust !== 'pinned' ||
+          !(verified.output instanceof Blob) ||
+          verified.output.size === 0 ||
+          verified.metadata.decryption !==
+            (mode === 'encrypted' ? 'authenticated' : 'not-encrypted')
+        ) {
+          throw new Error(
+            'the local evidence worker did not independently verify/decrypt the recording',
+          );
+        }
+        const exported = await verified.output.text();
+        if (
+          !exported.startsWith('{"version":3,') ||
+          !exported.includes('# bifroest:signature:v1 ')
+        ) {
+          throw new Error('recording export was not the verified native Cast export');
+        }
+        const bad = await verifyArtifact(
+          recording,
+          { ...expected, producer: 'a'.repeat(64), level: 'private', export: true },
+          key,
+          new AbortController().signal,
+        ).then(
+          () => 'unexpected success',
+          (error) => error.code,
+        );
+        if (bad !== 'verification') {
+          throw new Error('a wrong independent producer pin released verified output');
+        }
+        if (key !== null) {
+          const wrong = await verifyArtifact(
+            recording,
+            { ...expected, level: 'private', export: true },
+            { ...key, passphrase: 'wrong tab secret' },
+            new AbortController().signal,
+          ).then(
+            () => 'unexpected success',
+            (error) => error.code,
+          );
+          if (wrong !== 'key') {
+            throw new Error('a wrong local passphrase released plaintext');
+          }
+        }
         const audit = await access.downloadArtifact({ kind: 'audit', auditlog: 'default' });
         if (
           audit.transport !== 'complete' ||
@@ -123,6 +213,24 @@ try {
           audit.files.length !== audit.metadata.Files.length
         ) {
           throw new Error('audit sink omitted a declared immutable file');
+        }
+        const auditVerified = await verifyArtifact(
+          audit,
+          { ...expected, level: 'private', export: true, auditScope: 'complete' },
+          key,
+          new AbortController().signal,
+        );
+        if (
+          auditVerified.metadata.trust !== 'pinned' ||
+          auditVerified.metadata.validation !== 'private' ||
+          auditVerified.metadata.outputFormat !== 'jsonl' ||
+          !(auditVerified.output instanceof Blob)
+        ) {
+          throw new Error('the local evidence worker did not verify the audit byte inventory');
+        }
+        const lines = await auditVerified.output.text();
+        if (lines.includes('"flow"') || lines.includes('"sessionId"')) {
+          throw new Error('redacted audit export exposed private correlation fields');
         }
       }
       if (
@@ -138,11 +246,16 @@ try {
       }
       return { success: true, workerCount: workers.length };
     },
-    { mode },
+    { mode, privateBytes },
   );
   assert.equal(result.success, true);
   assert(result.workerCount >= 1);
   assert.deepEqual(errors, []);
+  assert.deepEqual(
+    privateRequests,
+    [],
+    'local evidence key/passphrase bytes must never enter HTTP',
+  );
   console.log(JSON.stringify(result));
 } finally {
   await browser.close();

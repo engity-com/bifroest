@@ -1,6 +1,7 @@
 import { object } from '../remember/http';
 import type { Scope } from '../remember/protocol';
 import { decode64, RememberMeError } from '../remember/protocol';
+import { readLocalBytes } from '../wasm/local-file';
 import type { LoginKey } from './key';
 
 export class WasmLoginKey implements LoginKey {
@@ -57,9 +58,11 @@ export class WasmLoginKey implements LoginKey {
       if (stopped.aborted) {
         throw new RememberMeError('cancelled');
       }
-      privateBytes = await readFile(privateFile, stopped);
+      privateBytes = await readLocalBytes(privateFile, stopped);
       certificate =
-        certificateFile === null ? new ArrayBuffer(0) : await readFile(certificateFile, stopped);
+        certificateFile === null
+          ? new ArrayBuffer(0)
+          : await readLocalBytes(certificateFile, stopped);
       if (privateBytes.byteLength > 64 << 10 || certificate.byteLength > 12 << 10) {
         throw new RememberMeError('key-import');
       }
@@ -142,50 +145,6 @@ export class WasmLoginKey implements LoginKey {
   toJSON() {
     return { publicKey: this.publicKey, fingerprint: this.fingerprint };
   }
-}
-
-function readFile(file: File, signal: AbortSignal): Promise<ArrayBuffer> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    const cleanup = () => {
-      signal.removeEventListener('abort', aborted);
-      reader.onload = null;
-      reader.onerror = null;
-      reader.onabort = null;
-    };
-    const failed = () => {
-      cleanup();
-      reject(new RememberMeError('key-import'));
-    };
-    const aborted = () => {
-      cleanup();
-      reader.abort();
-      reject(new RememberMeError('cancelled'));
-    };
-    reader.onload = () => {
-      const value = reader.result;
-      cleanup();
-      if (signal.aborted) {
-        reject(new RememberMeError('cancelled'));
-      } else if (value instanceof ArrayBuffer) {
-        resolve(value);
-      } else {
-        failed();
-      }
-    };
-    reader.onerror = failed;
-    reader.onabort = failed;
-    signal.addEventListener('abort', aborted, { once: true });
-    if (signal.aborted) {
-      aborted();
-      return;
-    }
-    try {
-      reader.readAsArrayBuffer(file);
-    } catch {
-      failed();
-    }
-  });
 }
 
 function exchange(

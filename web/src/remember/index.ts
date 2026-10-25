@@ -1,8 +1,16 @@
 export type {
+  EvidenceMetadata,
+  EvidenceOptions,
+  VerifiedArtifact,
+} from '../artifacts/evidence-protocol';
+export { EvidenceError } from '../artifacts/evidence-protocol';
+export type {
   ArtifactRequest,
   ReceivedArtifact,
   ReceivedArtifactFile,
 } from '../artifacts/protocol';
+export type { EvidenceKey } from '../artifacts/verify';
+export { verifyArtifact } from '../artifacts/verify';
 export type { LoginStep, StepHandler } from '../login/interactive';
 export type { LoginKey } from '../login/key';
 export type { AccessSnapshot, LogoutResult } from './client';
