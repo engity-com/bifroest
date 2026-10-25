@@ -7,3 +7,4 @@ docker-cli    29.7.2
 kind          0.33.0
 kubectl       1.37.0
 biome         2.6.3
+bun           1.4.4

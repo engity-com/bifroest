@@ -3,17 +3,18 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "packageManager": "bun@1.4.4",
   "engines": {
     "node": ">=24.14.0"
   },
   "scripts": {
-    "build": "npm run build:core && npm run build:app",
+    "build": "bun run build:core && bun run build:app",
     "build:core": "vite build",
     "build:app": "vite build --config vite.app.config.ts",
     "format": "biome format --write .",
     "lint": "biome lint .",
     "check": "biome check --error-on-warnings . && tsc --noEmit",
-    "test": "vitest run && node test/restart.mjs",
+    "test": "node --test test/frontend-notices.test.mjs && vitest run && node test/restart.mjs",
     "test:browser:install": "playwright install chromium --only-shell"
   },
   "dependencies": {
@@ -29,6 +30,7 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitest/browser-playwright": "5.0.5",
+    "jsonc-parser": "3.3.1",
     "playwright": "1.64.1",
     "typescript": "7.0.2",
     "vite": "8.3.5",

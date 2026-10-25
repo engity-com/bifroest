@@ -1,1 +1,1 @@
-export function writeFrontendNotices(output: URL): void;
+export function writeFrontendNotices(output: URL, root?: string): void;

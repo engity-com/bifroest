@@ -1,0 +1,3 @@
+[install]
+# Keep dependency paths identical for Vite, Node helpers and the notice inventory.
+linker = "hoisted"

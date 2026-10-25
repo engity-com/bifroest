@@ -16,23 +16,23 @@ run = "python -m pip install -r docs/requirements.txt"
 
 [tasks."install:web"]
 dir = "web"
-run = "npm ci --ignore-scripts --no-fund"
+run = "bun install --frozen-lockfile --ignore-scripts"
 
 [tasks."install:web:browser"]
 dir = "web"
-run = "npm run test:browser:install"
+run = "bun run test:browser:install"
 
 [tasks."build:web"]
 dir = "web"
-run = "npm run build"
+run = "bun run build"
 
 [tasks."lint:web"]
 dir = "web"
-run = "npm run check"
+run = "bun run check"
 
 [tasks."test:web"]
 dir = "web"
-run = "npm test"
+run = "bun run test"
 
 [tasks."lint"]
 run = [

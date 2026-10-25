@@ -10,7 +10,9 @@ and OIDC device dialogs use the bounded existing server API. Vite 8/Oxc/Rolldown
 builds the application and the independently tested, dependency-free HTTP/crypto
 core; there is no Webpack/Babel chain or production Node runtime.
 
-Use the repository-selected toolchains through MISE (Node 26.9.0, Biome 2.6.3), not globally selected runtimes. From the repository root (also native
+Use the repository-pinned Bun 1.4.4 and Biome 2.6.3 through MISE, with Node
+24.14 or newer also selected through MISE for the compatibility helpers. Do not
+rely on globally selected runtimes. From the repository root (also native
 Windows/Nushell compatible):
 
 ```text
@@ -35,10 +37,26 @@ mise run lint:biome
 ```
 
 `biome.json` uses the repository ignore rules; generated bundles, Go's pinned
-runtime, byte-exact audit/recording vectors and
+runtime, Bun's generated lockfile, byte-exact audit/recording vectors and
 `node_modules` are not reformatted. The few local suppressions explain
 intentional security behavior (actor-reset dependencies, void acknowledgements,
 cookie-only authentication rejection tests), not a disabled lint category.
+
+Bun is the package manager and script launcher: `install:web` uses the committed
+`bun.lock` with `--frozen-lockfile --ignore-scripts`. `bunfig.toml` explicitly keeps
+the hoisted dependency layout. Vite/Vitest and Go/WASM/interop helpers still run
+under Node; this is not a Bun runtime migration. Use `bun run test`, **not**
+`bun test`, to retain Vitest's real-browser tests and the restart helper.
+
+The build's conservative production license/component inventory reads `bun.lock`
+as checked JSONC, walks production dependencies and installed peers/optional
+dependencies, checks installed names/versions against lock entries and records
+the locked archive hashes.
+Development-only tools are excluded. Unsupported lock schemas, non-flat layouts,
+aliases/non-registry sources, missing packages or license texts fail the build
+instead of producing an incomplete manifest. Archive integrity is lockfile
+metadata, not an assertion that the installed tree or bundled output is byte-exact
+upstream source. The existing license-text supplement is not source provenance.
 
 `build:core` writes `var/webui-client-build/`; `build:app` writes generated files
 to `pkg/webui/assets/` before Go embeds them. Generated bundles are ignored;
@@ -79,7 +97,7 @@ local-only removal, disabled requesting-name collection, customization hooks,
 theme changes and rejection of non-nonced inline scripts.
 
 A requested browser run fails rather than skipping missing dependencies/assets.
-Without the explicit opt-in, ordinary Go tests remain independent of npm/browser
+Without the explicit opt-in, ordinary Go tests remain independent of Bun/browser
 installation. The owned self-signed HTTPS fixture is accepted only by that test
 browser context, without changing any OS trust store.
 

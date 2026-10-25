@@ -16,6 +16,7 @@ const profile = await mkdtemp(join(tmpdir(), 'bifroest-ui-'));
 let context;
 const errors = [];
 const failedResources = [];
+const loginResponses = [];
 try {
   const open = async () => {
     context = await chromium.launchPersistentContext(profile, {
@@ -32,8 +33,13 @@ try {
     const page = await context.newPage();
     page.on('pageerror', (error) => errors.push(error.message));
     page.on('response', (response) => {
+      const path = new URL(response.url()).pathname;
+      if (path.endsWith('/api/v1/login/password')) {
+        // Never log response bodies, credentials or Authorization headers.
+        loginResponses.push({ path, status: response.status() });
+      }
       if (response.status() >= 400) {
-        failedResources.push({ path: new URL(response.url()).pathname, status: response.status() });
+        failedResources.push({ path, status: response.status() });
       }
     });
     const response = await page.goto(`${origin}/Work`);
@@ -83,7 +89,21 @@ try {
       await page.getByRole('checkbox', { name: 'Remember this browser', exact: true }).check();
     }
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-    await page.getByRole('heading', { name: `Signed in as ${user}`, exact: true }).waitFor();
+    try {
+      await page.getByRole('heading', { name: `Signed in as ${user}`, exact: true }).waitFor();
+    } catch (error) {
+      throw new Error(
+        JSON.stringify({
+          pageErrors: errors,
+          failedResources,
+          loginResponses,
+          notices: await page.getByRole('status').allTextContents(),
+          headings: await page.getByRole('heading').allTextContents(),
+          csp: await page.evaluate(() => window.cspViolations),
+        }),
+        { cause: error },
+      );
+    }
   };
   const logout = async (page) => {
     await page.getByRole('button', { name: 'Log out', exact: true }).click();

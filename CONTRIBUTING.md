@@ -35,6 +35,20 @@ assets, dependencies and byte-exact audit/recording vectors are excluded. Biome
 is installed independently of frontend dependencies; Go formatting/linting stays
 with the Go tools.
 
+The frontend uses Bun for frozen, script-disabled dependency installation and
+script launching, with Node retained for Vite/Vitest and Go/WASM test helpers:
+
+```text
+mise run install:web
+mise run lint:web
+mise run install:web:browser
+mise run test:web
+mise run build:web
+```
+
+See [web/README.md](web/README.md) for build order, browser tests and dependency
+inventory constraints. Use `bun run test`, not Bun's separate `bun test` runner.
+
 ### PR Approval
 
 1. Changes are manually reviewed by [Engity's Bifröst](https://echocat.org) team members.

@@ -182,7 +182,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	assets, err := webui.New(settings)
 	require.NoError(t, err)
 	svc.web.assets = assets
-	require.True(t, assets.Available(), "requested UI test needs npm run build:app, not just the source marker")
+	require.True(t, assets.Available(), "requested UI test needs mise run build:web, not just the source marker")
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	httpListenerTestCertificate(t, &configuration.Configuration{Http: settings}, key)

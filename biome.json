@@ -10,6 +10,8 @@
     "includes": [
       "**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs,json,jsonc,yaml,yml}",
       "!!**/node_modules",
+      "!!**/.pyvenv",
+      "!!**/.venv",
       "!!**/vendor",
       "!!var",
       "!!pkg/webui/assets",
