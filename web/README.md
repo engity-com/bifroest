@@ -101,6 +101,28 @@ Without the explicit opt-in, ordinary Go tests remain independent of Bun/browser
 installation. The owned self-signed HTTPS fixture is accepted only by that test
 browser context, without changing any OS trust store.
 
+The opt-in `TestOpenSSHKubernetesBrowserSharedWorkload` uses the existing E2E
+harness to create and remove its own kind cluster, image and scoped kubeconfig,
+not the user's current Kubernetes context. It drives real OpenSSH and the built
+HTTPS/key-WASM/xterm UI against the same Kubernetes environment. It checks one
+session/Pod UID/target account, distinct connections across reload, shared marker
+state and preservation after browser logout, then verifies the signed recordings
+and audit correlations after shutdown. It is distinct from Dummy-backend tests.
+
+After `mise run build:web` and browser installation, select the runtime explicitly
+with `BIFROEST_E2E_RUNTIME=podman` (Docker is not required), set
+`BIFROEST_TEST_BROWSER_UI=1` and `BIFROEST_TEST_NODE` to `mise which node`, then run:
+
+```text
+mise x -- go test -tags=e2e -run '^TestOpenSSHKubernetesBrowserSharedWorkload$' ./test/e2e -count=1 -timeout=30m
+```
+
+Set environment variables using your native shell syntax. On Linux, choose a
+short private temporary parent such as `/tmp/opencode` for both `TMPDIR` and
+`GOTMPDIR`: long workspace paths can exceed the Unix socket-path limit used by
+the Podman API fixture. Existing `mise run test:e2e:kubernetes` remains the native
+SSH/recording baseline; its current selector does not include the browser test.
+
 Tests run in actual headless Chromium, including real IndexedDB structured cloning
 of non-exportable CryptoKeys and an actual browser-process restart using an owned
 temporary profile. The test fixture uses a secure-context loopback HTTP origin;

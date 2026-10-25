@@ -226,7 +226,20 @@ EOF is not disconnect; socket loss cancels the owning execution. Successful exit
 - A server Ping with a fresh nonce is sent every 15 seconds when no previous Ping is outstanding. Only its matching Pong extends the 45-second receive deadline; unrelated data and unsolicited Pongs do not. No browser unload callback is required. Heartbeats are transport liveness only: they do not renew session idle activity, ephemeral grant expiry or RememberMe.
 - Reader, heartbeat and signal-forwarding workers are owned/drained. Shutdown cancels even sockets that never sent open, closes authenticated transports and drains execution before closing repositories.
 
-Tests use real HTTPS/WebSocket connections and signed filesystem recordings for raw stdin/stdout/stderr, EOF, resize/signal capture, separate executions in one session, strict recording failure, redacted backend errors, proof/Origin/query rejection, quotas, expiry/logout/revocation, oversized/fragmented floods, bounded queues, slow-reader write timeout, missing Pong, abandoned open and shutdown. A real incoming SSH execution and two WebSocket executions use the same persisted session with the built-in Dummy backend. This is not a browser UI, Windows/ConPTY runtime or real shared Docker/Kubernetes container E2E claim.
+Tests use real HTTPS/WebSocket connections and signed filesystem recordings for raw stdin/stdout/stderr, EOF, resize/signal capture, separate executions in one session, strict recording failure, redacted backend errors, proof/Origin/query rejection, quotas, expiry/logout/revocation, oversized/fragmented floods, bounded queues, slow-reader write timeout, missing Pong, abandoned open and shutdown. The initial real SSH/two-WebSocket shared-session fixture uses the built-in Dummy backend; that fixture alone is not browser UI or container runtime evidence.
+
+The separate opt-in `TestOpenSSHKubernetesBrowserSharedWorkload` starts an owned
+kind cluster through the existing E2E harness, with its own kubeconfig and no use
+of the operator's current cluster. On Linux with rootless Podman it drives real
+OpenSSH and the actual HTTPS/key-WASM/xterm UI against one Kubernetes Pod. It checks
+the same persistent session, Pod UID, effective UID and shared marker state, but
+four distinct connections across browser reload/explicit reauthentication/logout
+and subsequent SSH. All four signed recordings and task/audit correlations are
+verified after shutdown. The container acquisition lease preserves the backend's
+neutral execution capability without SSH task stubs or extra quota references.
+This is not Docker-engine, Windows/ConPTY or macOS runtime evidence. See
+[`web/README.md`](https://github.com/engity-com/bifroest/blob/main/web/README.md)
+for prerequisites and the explicit browser E2E invocation.
 
 ## Properties
 

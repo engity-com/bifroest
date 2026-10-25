@@ -1,0 +1,129 @@
+import assert from 'node:assert/strict';
+import { chromium } from 'playwright';
+
+// This drives the actual built UI against the owned Bifröst binary and real
+// Kubernetes backend. It performs no SSH self-dial or management CLI action.
+const [origin, keyFile] = process.argv.slice(2);
+assert.match(origin, /^https:\/\/app\.example\.org:[0-9]+$/u);
+assert(keyFile);
+const browser = await chromium.launch({
+  headless: true,
+  args: ['--host-resolver-rules=MAP app.example.org 127.0.0.1', '--no-proxy-server'],
+});
+try {
+  const context = await browser.newContext({ ignoreHTTPSErrors: true });
+  await context.addInitScript(() => {
+    window.cspViolations = [];
+    window.addEventListener('securitypolicyviolation', (event) =>
+      window.cspViolations.push(event.violatedDirective),
+    );
+  });
+  const page = await context.newPage();
+  const errors = [];
+  const replies = [];
+  const controls = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('response', (response) => {
+    const path = new URL(response.url()).pathname;
+    if (path.includes('/api/') || response.status() >= 400) {
+      replies.push({ path, status: response.status() });
+    }
+  });
+  page.on('websocket', (socket) => {
+    socket.on('framereceived', ({ payload }) => {
+      if (typeof payload !== 'string') {
+        return;
+      }
+      try {
+        const body = JSON.parse(payload);
+        controls.push({ type: body.type, code: body.code, status: body.status }); // Never inspect/send the opening bearer frame.
+      } catch {
+        controls.push({ type: 'malformed' });
+      }
+    });
+  });
+  page.on('request', (request) => {
+    const body = request.postData() ?? '';
+    assert(!body.includes('PRIVATE KEY'), 'local login keys must not enter HTTP');
+    assert.equal(new URL(request.url()).search, '', 'no bearer may enter query strings');
+  });
+  const login = async () => {
+    const response = await page.goto(`${origin}/Work`);
+    assert.equal(response.status(), 200);
+    assert(!response.headers()['content-security-policy'].includes('wasm-unsafe-eval'));
+    await page.getByText('SSH key login', { exact: true }).click();
+    await page.getByLabel('User name', { exact: true }).fill('e2e');
+    await page.getByLabel('Private key file (local only)', { exact: true }).setInputFiles(keyFile);
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await page.getByRole('heading', { name: 'Signed in as e2e', exact: true }).waitFor();
+    await page.locator('[data-terminal-phase="idle"]').waitFor();
+    assert.equal(
+      await page.locator('[data-terminal-phase="connected"]').count(),
+      0,
+      'login/reload is not reattachment or execution',
+    );
+  };
+  const execute = async (marker, expectedExit, update) => {
+    await page.getByText('Command', { exact: true }).click();
+    const command = `/bin/sh -c '/usr/local/bin/e2e-helper environment; printf "account="; id -u; cat /home/e2e/bifroest-web-marker; ${update ? 'printf "web-owned\\n" > /home/e2e/bifroest-web-marker; ' : ''}printf "run=${marker}\\n"; exit ${expectedExit}'`;
+    await page.getByLabel('Command to execute', { exact: true }).fill(command);
+    await page.getByRole('checkbox', { name: 'Request a PTY', exact: true }).uncheck();
+    await page.locator('.terminal-surface').scrollIntoViewIfNeeded();
+    await page.getByRole('button', { name: 'Start new execution', exact: true }).click();
+    try {
+      await page.locator('[data-terminal-phase="exited"]').waitFor();
+      assert.match(
+        await page.locator('[data-terminal-phase="exited"]').textContent(),
+        new RegExp(`\\b${expectedExit}\\b`, 'u'),
+      );
+      await page.locator('.terminal-surface').scrollIntoViewIfNeeded();
+      await page.waitForFunction(
+        (marker) => document.querySelector('.xterm-rows')?.textContent?.includes(`run=${marker}`),
+        marker,
+      );
+    } catch (error) {
+      throw new Error(
+        JSON.stringify({
+          phase: await page.locator('[data-terminal-phase]').getAttribute('data-terminal-phase'),
+          notice: await page.locator('[data-terminal-phase]').textContent(),
+          output: await page.locator('.xterm-rows').textContent(),
+          csp: await page.evaluate(() => window.cspViolations),
+          errors,
+          replies,
+          controls,
+        }),
+        { cause: error },
+      );
+    }
+    const text = await page.locator('.xterm-rows').textContent();
+    assert(
+      text.includes(update ? 'ssh-owned' : 'web-owned'),
+      'the browser must see the previous execution marker in the same workload',
+    );
+    const session = /session=([0-9a-f-]{36})/u.exec(text)?.[1];
+    const connection = /connection=([0-9a-f-]{36})/u.exec(text)?.[1];
+    const account = /account=([0-9]+)/u.exec(text)?.[1];
+    assert(
+      session && connection && account,
+      'real workload output must contain separate session/connection/account IDs',
+    );
+    return { session, connection, account };
+  };
+  await login();
+  const first = await execute('web-a', 7, true);
+  // Reload destroys the tab's permission; explicitly log in and start anew.
+  await login();
+  const second = await execute('web-b', 0, false);
+  assert.equal(first.session, second.session);
+  assert.equal(first.account, second.account);
+  assert.notEqual(first.connection, second.connection);
+  await page.getByRole('button', { name: 'Log out', exact: true }).click();
+  await page.getByText('Logout confirmed.', { exact: true }).waitFor();
+  assert.equal(await page.locator('.xterm').count(), 0);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
+  assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+  console.log(JSON.stringify({ executions: [first, second] }));
+} finally {
+  await browser.close();
+}
