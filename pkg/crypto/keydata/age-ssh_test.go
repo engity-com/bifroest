@@ -1,4 +1,4 @@
-package crypto
+package keydata
 
 import (
 	"bytes"

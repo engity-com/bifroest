@@ -1,6 +1,9 @@
 package audit
 
-import "github.com/engity-com/bifroest/pkg/configuration"
+import (
+	"github.com/engity-com/bifroest/pkg/audit/evidence"
+	"github.com/engity-com/bifroest/pkg/configuration"
+)
 
 type EventName = string
 
@@ -163,15 +166,15 @@ const (
 	AuthenticationPhaseVerified  AuthenticationPhase = "verified"
 )
 
-type SessionTask string
+type SessionTask = evidence.SessionTask
 
 const MaxSessionSubsystemBytes = 256
 
 const (
-	SessionTaskShell     SessionTask = "shell"
-	SessionTaskExec      SessionTask = "exec"
-	SessionTaskSftp      SessionTask = "sftp"
-	SessionTaskSubsystem SessionTask = "subsystem"
+	SessionTaskShell     = evidence.SessionTaskShell
+	SessionTaskExec      = evidence.SessionTaskExec
+	SessionTaskSftp      = evidence.SessionTaskSftp
+	SessionTaskSubsystem = evidence.SessionTaskSubsystem
 )
 
 type ErrorCategory string
