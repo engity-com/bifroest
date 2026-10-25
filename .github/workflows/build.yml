@@ -17,10 +17,10 @@ on:
         type: string
       ref:
         type: string
-        default: ''
+        default: ""
       commit:
         type: string
-        default: ''
+        default: ""
       lint_go:
         type: boolean
         default: false
@@ -259,7 +259,7 @@ jobs:
 
   package:
     name: Package
-    needs: [ test-host, test-container, binary-host, binary-container ]
+    needs: [test-host, test-container, binary-host, binary-container]
     runs-on: ubuntu-latest
     permissions:
       contents: write

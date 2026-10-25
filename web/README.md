@@ -10,8 +10,7 @@ and OIDC device dialogs use the bounded existing server API. Vite 8/Oxc/Rolldown
 builds the application and the independently tested, dependency-free HTTP/crypto
 core; there is no Webpack/Babel chain or production Node runtime.
 
-Use the repository-selected toolchains through MISE (Node 24.14 or newer), not
-globally selected Node/npm versions. From the repository root (also native
+Use the repository-selected toolchains through MISE (Node 26.9.0, Biome 2.6.3), not globally selected runtimes. From the repository root (also native
 Windows/Nushell compatible):
 
 ```text
@@ -21,6 +20,25 @@ mise run install:web:browser
 mise run test:web
 mise run build:web
 ```
+
+The repository-root `biome.json` formats and lints owned TS/JS, JSON/JSONC and
+YAML files, including tests, declarations and build scripts. `mise run lint:biome`
+checks the whole repository without installing frontend dependencies;
+`mise run lint:web` checks
+formatting, recommended lint/import rules (warnings fail) and TypeScript types.
+The shared style uses two spaces, 100 columns, single JS quotes, semicolons,
+block statements and separate variable declarations. To format deliberately:
+
+```text
+mise run format
+mise run lint:biome
+```
+
+`biome.json` uses the repository ignore rules; generated bundles, Go's pinned
+runtime, byte-exact audit/recording vectors and
+`node_modules` are not reformatted. The few local suppressions explain
+intentional security behavior (actor-reset dependencies, void acknowledgements,
+cookie-only authentication rejection tests), not a disabled lint category.
 
 `build:core` writes `var/webui-client-build/`; `build:app` writes generated files
 to `pkg/webui/assets/` before Go embeds them. Generated bundles are ignored;

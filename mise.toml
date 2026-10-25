@@ -36,9 +36,16 @@ run = "npm test"
 
 [tasks."lint"]
 run = [
+    { task = "lint:biome" },
     { task = "lint:go" },
     { task = "lint:reuse" }
 ]
+
+[tasks."format"]
+run = "biome format --write ."
+
+[tasks."lint:biome"]
+run = "biome check --error-on-warnings ."
 
 [tasks."lint:go"]
 run = "golangci-lint run --color=always"
@@ -165,6 +172,7 @@ run = "kind delete cluster --name bifroest"
 env_file = ".env"
 
 [tool_alias]
+biome = "aqua:biomejs/biome"
 golangci-lint = "aqua:golangci/golangci-lint"
 go-licenses = "go:github.com/google/go-licenses/v2"
 syft = "aqua:anchore/syft"

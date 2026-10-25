@@ -8,7 +8,7 @@ on:
       - synchronize
       - ready_for_review
   schedule:
-    - cron: '17 3 * * 1'
+    - cron: "17 3 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -50,7 +50,7 @@ jobs:
           - podman
     env:
       BIFROEST_E2E_RUNTIME: ${{ matrix.runtime }}
-      CGO_ENABLED: '0'
+      CGO_ENABLED: "0"
     steps:
       - name: Install Podman
         if: matrix.runtime == 'podman'
@@ -103,7 +103,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      CGO_ENABLED: '0'
+      CGO_ENABLED: "0"
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -179,7 +179,7 @@ jobs:
     env:
       BIFROEST_E2E_RUNTIME: docker
       KIND_EXPERIMENTAL_PROVIDER: docker
-      CGO_ENABLED: '0'
+      CGO_ENABLED: "0"
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -233,7 +233,7 @@ jobs:
     env:
       BIFROEST_E2E_RUNTIME: podman
       KIND_EXPERIMENTAL_PROVIDER: podman
-      CGO_ENABLED: '0'
+      CGO_ENABLED: "0"
     steps:
       - name: Install Podman
         run: sudo apt-get update && sudo apt-get install --yes podman

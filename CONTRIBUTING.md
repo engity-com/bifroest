@@ -20,6 +20,21 @@ When submitting a PR make sure that it:
   > [!Note]
   > Signing off on a commit is different from signing a commit, such as with a GPG key.
 
+### Formatting and frontend tooling
+
+Use the repository-pinned tools through [MISE](https://mise.jdx.dev/):
+
+```text
+mise install
+mise run format
+mise run lint:biome
+```
+
+The root `biome.json` covers owned JS/TS, JSON/JSONC and YAML files. Generated
+assets, dependencies and byte-exact audit/recording vectors are excluded. Biome
+is installed independently of frontend dependencies; Go formatting/linting stays
+with the Go tools.
+
 ### PR Approval
 
 1. Changes are manually reviewed by [Engity's Bifröst](https://echocat.org) team members.

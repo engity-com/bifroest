@@ -3,20 +3,24 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24.14.0" },
+  "engines": {
+    "node": ">=24.14.0"
+  },
   "scripts": {
     "build": "npm run build:core && npm run build:app",
     "build:core": "vite build",
     "build:app": "vite build --config vite.app.config.ts",
-    "check": "tsc --noEmit",
+    "format": "biome format --write .",
+    "lint": "biome lint .",
+    "check": "biome check --error-on-warnings . && tsc --noEmit",
     "test": "vitest run && node test/restart.mjs",
     "test:browser:install": "playwright install chromium --only-shell"
   },
   "dependencies": {
-    "@xterm/xterm": "6.0.0",
-    "@xterm/addon-fit": "0.11.0",
     "@mantine/core": "9.7.3",
     "@mantine/hooks": "9.7.3",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
