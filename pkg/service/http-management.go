@@ -42,6 +42,10 @@ func managementReadRequest(path string, values map[string]string) (protocol.Read
 }
 
 func (this *webService) handleManagement(w http.ResponseWriter, r *http.Request, scope webScope, values map[string]string) {
+	if r.URL.Path == webAPI+"management/artifacts/recording" || r.URL.Path == webAPI+"management/artifacts/audit" {
+		this.handleManagementArtifact(w, r, scope, values)
+		return
+	}
 	if r.URL.Path == webAPI+"management/sessions/prepare" || r.URL.Path == webAPI+"management/sessions/confirm" || r.URL.Path == webAPI+"management/sessions/cancel" {
 		this.handleManagementAction(w, r, scope, values)
 		return

@@ -202,6 +202,7 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case webAPI + "remember/enroll", webAPI + "remember/resume", webAPI + "remember/revoke", webAPI + "remember/prove":
 	case webAPI + "management/flows/list", webAPI + "management/sessions/list", webAPI + "management/sessions/show":
 	case webAPI + "management/sessions/prepare", webAPI + "management/sessions/confirm", webAPI + "management/sessions/cancel":
+	case webAPI + "management/artifacts/recording", webAPI + "management/artifacts/audit":
 	default:
 		http.NotFound(w, r)
 		return
@@ -219,6 +220,7 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	isLogin := r.URL.Path == webAPI+"login/password" || r.URL.Path == webAPI+"login/interactive" || r.URL.Path == webAPI+"login/public-key"
 	isLogin = isLogin || strings.HasPrefix(r.URL.Path, webAPI+"remember/") && r.URL.Path != webAPI+"remember/prove"
 	isLogin = isLogin || r.URL.Path == webAPI+"management/sessions/prepare"
+	isLogin = isLogin || r.URL.Path == webAPI+"management/artifacts/recording" || r.URL.Path == webAPI+"management/artifacts/audit"
 	release, ok := this.admit(peer, isLogin)
 	if !ok {
 		w.Header().Set("Retry-After", "60")
@@ -571,6 +573,10 @@ func webRequestFields(path string) []string {
 		return []string{"limit", "after", "flow", "user", "state"}
 	case webAPI + "management/sessions/show":
 		return []string{"flow", "id"}
+	case webAPI + "management/artifacts/recording":
+		return []string{"auditlog", "id"}
+	case webAPI + "management/artifacts/audit":
+		return []string{"auditlog"}
 	case webAPI + "management/sessions/prepare":
 		return []string{"flow", "id", "action"}
 	case webAPI + "management/sessions/confirm", webAPI + "management/sessions/cancel":

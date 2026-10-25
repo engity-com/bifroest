@@ -37,6 +37,12 @@ type ManagementActionRunner interface {
 type ManagementActor interface {
 	ActManagement(TaskContext, protocol.SessionAction, io.Writer) (int, error)
 }
+type ManagementArtifactRunner interface {
+	RunManagementArtifact(TaskContext, protocol.ArtifactRequest, io.Writer, bool, bool) (int, error)
+}
+type ManagementArtifactReader interface {
+	ReadManagementArtifact(TaskContext, protocol.ArtifactRequest, io.Writer) (int, error)
+}
 
 func NewManagementRepository(ctx context.Context, flow configuration.FlowName, conf *configuration.EnvironmentManagement, _ alternatives.Provider, _ imp.Imp) (*ManagementRepository, error) {
 	if conf == nil {
@@ -103,6 +109,17 @@ func (this *managementEnvironment) ActManagement(task TaskContext, request proto
 }
 
 func (this *managementEnvironment) Banner(Request) (io.ReadCloser, error) { return nil, nil }
+
+func (this *managementEnvironment) ReadManagementArtifact(task TaskContext, request protocol.ArtifactRequest, output io.Writer) (int, error) {
+	runner, ok := this.repository.runner.(ManagementArtifactRunner)
+	if !ok {
+		return -1, fmt.Errorf("management runner has no artifact capability")
+	}
+	if task.TaskType() != TaskTypeShell || task.Authorization() == nil || task.Authorization().Flow() != this.repository.flow {
+		return -1, fmt.Errorf("invalid management artifact task")
+	}
+	return runner.RunManagementArtifact(task, request, output, this.repository.includingCredentials, this.repository.allowArtifactTransfer)
+}
 
 func (this *managementEnvironment) Run(task Task) (int, error) {
 	if task.TaskType() != TaskTypeShell || task.SshSession().Subsystem() != "" || task.SshSession().RawCommand() == "" {

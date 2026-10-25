@@ -42,21 +42,8 @@ func (this *service) executeManagementAction(conn *terminalConnection, permissio
 }
 
 func (this *service) executeManagement(conn *terminalConnection, source *managementReadSource, payload any) ([]byte, error) {
-	if conn == nil || conn.service != this || conn.IsClosed() || !this.isManagementFlow(conn.authorization.Flow()) {
+	if conn == nil || managementReadPolicy(conn.authorization) != nil {
 		return nil, errManagementPolicy
-	}
-	if err := managementReadPolicy(conn.authorization); err != nil {
-		return nil, err
-	}
-	if !conn.used.CompareAndSwap(false, true) {
-		return nil, fmt.Errorf("connection already has an execution")
-	}
-	if err := conn.activity(); err != nil {
-		return nil, err
-	}
-	base := environmentContext{service: this, connection: conn, authorization: conn.authorization, executionContext: conn.Lifetime()}
-	if err := this.validateTerminalAuthorization(&base); err != nil {
-		return nil, err
 	}
 	input, err := json.Marshal(payload)
 	if err != nil {
@@ -64,8 +51,7 @@ func (this *service) executeManagement(conn *terminalConnection, source *managem
 	}
 	buffer := &managementByteStream{conn: conn, input: bytes.NewReader(input)}
 	source.stream = buffer
-	key := authorization.AuthorizedKeyPolicyOf(conn.authorization)
-	status, err := this.execute(&executionRequest{base: base, connection: conn, source: source, taskType: environment.TaskTypeShell, requestedTask: audit.SessionTaskExec, command: true, forced: key != nil && key.ForcedCommand != nil})
+	status, err := this.executeManagementSource(conn, source)
 	if err != nil || status != 0 {
 		if err == nil {
 			err = fmt.Errorf("management returned a failure status")
@@ -73,6 +59,24 @@ func (this *service) executeManagement(conn *terminalConnection, source *managem
 		return nil, err
 	}
 	return buffer.result(), nil
+}
+
+func (this *service) executeManagementSource(conn *terminalConnection, source executionSource) (int, error) {
+	if conn == nil || conn.service != this || conn.IsClosed() || !this.isManagementFlow(conn.authorization.Flow()) {
+		return -1, errManagementPolicy
+	}
+	if !conn.used.CompareAndSwap(false, true) {
+		return -1, fmt.Errorf("connection already has an execution")
+	}
+	if err := conn.activity(); err != nil {
+		return -1, err
+	}
+	base := environmentContext{service: this, connection: conn, authorization: conn.authorization, executionContext: conn.Lifetime()}
+	if err := this.validateTerminalAuthorization(&base); err != nil {
+		return -1, err
+	}
+	key := authorization.AuthorizedKeyPolicyOf(conn.authorization)
+	return this.execute(&executionRequest{base: base, connection: conn, source: source, taskType: environment.TaskTypeShell, requestedTask: audit.SessionTaskExec, command: true, forced: key != nil && key.ForcedCommand != nil})
 }
 
 // The shared driver captures bounded structured bytes. This is neither a shell

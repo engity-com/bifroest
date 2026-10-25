@@ -10,15 +10,16 @@ and OIDC device dialogs use the bounded existing server API. Vite 8/Oxc/Rolldown
 builds the application and the independently tested, dependency-free HTTP/crypto
 core; there is no Webpack/Babel chain or production Node runtime.
 
-Use Node 24.14 or newer and this repository's Go toolchain for the native proof
-interoperability test. From `web/` (also native Windows/Nushell compatible):
+Use the repository-selected toolchains through MISE (Node 24.14 or newer), not
+globally selected Node/npm versions. From the repository root (also native
+Windows/Nushell compatible):
 
 ```text
-npm ci --ignore-scripts
-npm run check
-npm run test:browser:install
-npm test
-npm run build
+mise run install:web
+mise run lint:web
+mise run install:web:browser
+mise run test:web
+mise run build:web
 ```
 
 `build:core` writes `var/webui-client-build/`; `build:app` writes generated files
@@ -39,6 +40,8 @@ changed. Source-only Go/SSH/API builds remain independent of this preparation.
 Go/WASM notices are appended to the public notices; a separate conservative
 component manifest records runtime/artifact hashes, Go version and actual external
 module dependencies. This is not complete release-wide source provenance/SBOM.
+Run `mise run lint:reuse` only after the app build has finished: Vite replaces
+the generated output directory and restores its source marker during that build.
 
 The optional real HTTPS/client/WebSocket test additionally uses the Go service
 fixtures. After building, run the following from the repository root with
@@ -46,11 +49,11 @@ fixtures. After building, run the following from the repository root with
 the selected Node executable (set these through your native shell's environment):
 
 ```text
-go test -race ./pkg/service -run '^TestBrowserRememberMeClientAgainstRealHttpsAndWebSocket$' -count=1 -timeout=90s
+mise x -- go test -race ./pkg/service -run '^TestBrowserRememberMeClientAgainstRealHttpsAndWebSocket$' -count=1 -timeout=90s
 ```
 
 Set `BIFROEST_TEST_BROWSER_UI=1` for real UI/CSP/recovery tests and run
-`go test -race ./pkg/service -run '^TestBrowserLoginUi' -count=1 -timeout=90s`.
+`mise x -- go test -race ./pkg/service -run '^TestBrowserLoginUi' -count=1 -timeout=90s`.
 These tests exercise the actual embedded app, not a Vite proxy, under real Go
 HTTPS with nonce-aware CSP, no unsafe-inline/eval and no framing. They cover
 unchecked opt-in, real profile restart, discarded claim responses, explicit
@@ -265,10 +268,9 @@ The metadata adapter has no credential-detail or artifact route:
 Recognized forced read commands constrain the typed operation, data filters and
 returned fields as described below. Unsupported forms and all forced mutations
 stay fail-closed; continue using SSH with those restrictions rather than removing
-them. Structured artifact streaming,
-Go-client/WASM transport reuse and client-only full artifact
-verification/decryption remain open. The current UI/JSON adapter is not presented
-as a completed portable management client.
+them. Original artifact streaming uses separate typed endpoints below. Browser
+artifact UI/Go-WASM fetch integration and client-only full artifact verification/
+decryption remain open; the UI/JSON adapter is not a completed Go management client.
 
 Tests include shared quota, own logout vs sibling grants, global revocation,
 request cancellation, strict final-audit refusal before output, preserved damaged
@@ -339,13 +341,12 @@ successful transport completion and independent full signature/producer/chain/
 checkpoint/decryption verification. The native client's existing SSH-exit,
 diagnostic-drain, cancellation and abort tests remain in force.
 
-Unit tests run natively and as actual Go/WASM under the pinned Node 24 runtime
-using the workspace Go runtime copies; this is not browser worker/UI integration.
-There is still **no public browser artifact route, artifact-key import/decryption
-UI or completed portable Go management client**. Typed transport/client lifecycle
-and immutable ReaderAt/full-verification integration remain subsequent work; no
-CLI arguments become a browser protocol, no server decryption/key upload or new
-management permissions are introduced here.
+Unit tests run natively and as actual Go/WASM under the MISE-selected Node runtime
+using matching workspace Go runtime copies; this is not browser worker/UI
+integration. Typed original-artifact routes are described below. Artifact-key
+import/decryption UI, browser fetch/WASM integration and immutable ReaderAt/full-
+verification integration remain open. No CLI arguments become a browser protocol,
+and no server decryption/key upload or new management permissions are introduced.
 
 ### Portable response completion
 
@@ -377,11 +378,50 @@ Portable lifecycle tests cover cancellation during reading/completion/cleanup,
 joined callbacks, simultaneous causes, provisional rows/headers and panic cleanup;
 they also execute as actual Go/WASM under Node. This is not browser integration.
 
-There is still no public browser artifact endpoint or complete Go/WASM browser
-client. A future HTTP adapter needs an equivalent **post-driver final-success**
-signal after recording seal/final audit; treating HTTP body EOF alone as Complete
-would violate this contract. Browser CLI arguments, private-key uploads and
-server-side decryption remain absent.
+The typed HTTP artifact response below supplies an explicit **post-driver final-
+success** signal after recording seal/final audit; body EOF alone never counts.
+This is still not a complete Go/WASM browser client. Browser CLI arguments,
+private-key uploads and server-side decryption remain absent.
+
+### Typed original-artifact HTTPS streaming
+
+`management/artifacts/recording` accepts only `slug`, `auditlog`, canonical `id`;
+`management/artifacts/audit` accepts only `slug`, `auditlog`. These are fixed POSTs
+under the existing API prefix, with the same exact-scope tab bearer, direct TLS/
+Host/SNI/Origin/peer checks, shared admission/start budgets and 20-second deadline.
+The Management environment must enable its existing `allowArtifactTransfer` flag;
+`includingCredentials` does not grant transfers and neither flag can come from a
+request. All forced-command credentials remain denied for these operations.
+
+Each transfer acquires a fresh common lease and uses the same typed environment,
+activity/quota/revocation/task-audit/recording/seal/final-audit driver as SSH. The
+same original sealed-recording/signed-audit-snapshot writers serve both adapters,
+without CLI parsing or an SSH-shaped task. No server decryption identity is used.
+Transfers remain live children until response delivery/cleanup; own logout closes
+only the owning grant's children, not another grant or the session/workload.
+
+The response media type is `application/vnd.bifroest.management-transfer.v1`.
+A fixed magic precedes 32-KiB-bounded data frames containing the unchanged legacy
+artifact envelope. An empty data-end frame ends only data. After successful common
+driver completion and access checks, a separate bounded canonical CBOR completion
+binds the exact operation/auditlog/ID to data count and SHA-256, followed by HTTP
+body EOF. Absent/duplicate/mismatched/trailing/malformed completion fails closed.
+Data totals retain the native 32-GiB recording or 1-GiB audit plus bounded header
+limits; there is no whole-artifact server buffer or timeout/limit increase.
+
+The portable Go `NewHTTPTransferResponse` checks status/media/encoding, owns the
+body and implements the shared receiver's Read/Complete/Abort/Close contract. It
+does not open requests: the opening adapter must separately guarantee TLS/origin,
+scope/bearer, omitted cookies and redirect refusal. Staging bytes remain
+provisional until completion; its transport hash never replaces independent
+signature/producer/checkpoint/full-decryption verification on immutable inputs.
+
+Real TLS/HTTP2 tests transfer clear/encrypted signed artifacts with the CLI app
+unavailable, independently verify evidence, and prove data-end cannot bypass
+blocked/failed final audit, failed recording seal, logout/revocation/cancellation.
+Protocol/Go-WASM tests cover frame bounds, selectors, canonical completion, physical
+EOF and body ownership. This adds no artifact download button, browser fetch bridge
+or decryption/key-import UI; those remain subsequent work.
 
 ### Confirmed session actions
 

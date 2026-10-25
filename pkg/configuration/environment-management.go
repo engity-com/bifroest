@@ -5,7 +5,7 @@ import "gopkg.in/yaml.v3"
 var _ = RegisterEnvironmentV(func() EnvironmentV { return &EnvironmentManagement{} })
 
 // EnvironmentManagement makes the management commands available to
-// an explicitly authorized SSH flow.
+// an explicitly authorized management flow over SSH or HTTP.
 type EnvironmentManagement struct {
 	IncludingCredentials  bool `yaml:"includingCredentials,omitempty"`
 	AllowArtifactTransfer bool `yaml:"allowArtifactTransfer,omitempty"`
