@@ -272,10 +272,11 @@ journal readers can also validate private fields with supplied keys while still
 redacting their output. Decoder errors return zero results, not partial events.
 
 These unit codecs are not a complete portable journal verifier. The native
-offline/live readers still own segment selection, chain/checkpoint orchestration,
-materialization limits, file/alias guards and final tree revalidation. Portable
-immutable-snapshot readers and browser artifact/decryption UI remain separate
-work; neither a transport digest nor successful unit decoding replaces them.
+offline/live readers retain journal-root selection, cross-producer aggregation,
+file/alias guards and final journal-tree revalidation. The producer capability
+below composes the shared codecs without emulating these OS checks. Browser
+artifact/decryption UI remains separate work; a transport digest or successful
+unit decoding does not replace complete source verification.
 
 ### Shared segment scanning
 
@@ -291,5 +292,56 @@ with the inventory; later records are not exported or charged to selection/outpu
 budgets. Supplied keys validate private prefix fields even with redacted output.
 Callbacks are provisional until the caller's complete producer/journal checks,
 source revalidation and resource closes succeed. Cancellation or callback errors
-return zero scan state. This immutable per-segment image is not yet a complete
-portable producer inventory/snapshot capability or a browser decryption UI.
+return zero scan state. A segment image alone is not a complete producer
+inventory/snapshot capability or a browser decryption UI.
+
+### Producer snapshots and result ownership
+
+`AuditProducerSnapshot` supplies a captured raw signed head, an ordered published
+inventory, an optional immutable active image, source-specific `Revalidate`, and
+`Close`. `VerifyAuditProducerSnapshot`, `SelectAuditProducerRecords` and
+`VerifyAuditProducerIntegrity` take ownership and close it exactly once, including
+on invalid options, failed decoding or cancellation. Materialized records and
+summary state are released only after chain/head checks, source revalidation and
+successful close. Revalidation/close errors are retained together; no partial
+verification or JSONL result is returned on failure. Export after successful
+verification can still encounter writer errors: callers needing atomic output
+must stage and commit their destination separately.
+
+The two explicit modes have different proof scopes:
+
+- `AuditProducerComplete` checks the complete available chain and requires its
+  final record hash to equal the signed head.
+- `AuditProducerCapturedPrefix` exports only the captured signed prefix. It still
+  checks every published segment's full suffix, seal and physical hash. An
+  independent active body after an already reached head is outside that prefix.
+
+`CaptureAuditProducerHead` returns an immutable proof object, not an arbitrary
+checkpoint hash. Native live retries reuse that same object; a newer source head
+cannot substitute a newer checkpoint. The lower-level `Inspect` visitors remain
+provisional for native aggregate budgets. Ordinary clients should use the
+materializing Verify/Select entries rather than publishing visitor callbacks.
+
+Expected producer and recipient identities come from independent trusted input.
+The portable API requires a producer pin or explicit `AllowUntrusted`; the latter
+never becomes `Trusted` merely because the head and key agree. Legacy native
+integrity callers without a pin keep this untrusted self-consistency behavior.
+`Trusted` describes the signing producer only, not filesystem provenance,
+freshness or successful decryption. `PrivateRecordCount` counts private prefix
+events actually validated; zero records do not prove a matching decryption key.
+Output redaction is independent of that validation count.
+
+Selection uses the same native/portable implementation and limits only retained
+output, never verification scope: at most 250000 records or 64 MiB of record
+payloads are materialized. Integrity-only checks still count every prefix record;
+filtered/limited output cannot skip an invalid unselected record. JSONL envelope,
+chronological ordering, default redaction and existing frozen exports are shared.
+
+`AuditByteSnapshot` owns a copied head/inventory plus immutable segment images.
+It proves a fixed byte dataset, **not** paths, inodes or original hardlinks. Its
+logical active alias must equal the last published image. The native adapter
+instead retains real file identities/handles, external sorted inventories,
+Head/Tree revalidation, temporary-workspace policy and successful Close. A
+byte-identical copied native file is not a physical alias; live native sources
+keep their stricter Active/Published alias rejection. No virtual filesystem or
+second cryptographic verifier supplies those proofs.
