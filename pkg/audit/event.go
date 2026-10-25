@@ -1,220 +1,101 @@
 package audit
 
-import (
-	"github.com/engity-com/bifroest/pkg/audit/evidence"
-	"github.com/engity-com/bifroest/pkg/configuration"
-)
+import "github.com/engity-com/bifroest/pkg/audit/evidence"
 
-type EventName = string
-
-const (
-	EventNameAuthenticationFlowEvaluated               = "authentication.flow.evaluated"
-	EventNameAuthenticationFlowEvaluationsSuppressed   = "authentication.flow.evaluations-suppressed"
-	EventNameAuthenticationCompleted                   = "authentication.completed"
-	EventNameSessionPtyDecided                         = "session.pty.decided"
-	EventNameSessionAgentForwardingDecided             = "session.agent-forwarding.decided"
-	EventNameSessionRecordingStarted                   = "session.recording.started"
-	EventNameSessionRecordingCompleted                 = "session.recording.completed"
-	EventNameSessionRecordingIncomplete                = "session.recording.incomplete"
-	EventNameSessionRecordingFailed                    = "session.recording.failed"
-	EventNameSessionRecordingDeliveryFailed            = "session.recording.delivery.failed"
-	EventNameSessionRecordingDeliverySucceeded         = "session.recording.delivery.succeeded"
-	EventNameSessionTaskStarted                        = "session.task.started"
-	EventNameSessionTaskCompleted                      = "session.task.completed"
-	EventNamePortForwardingDirectDecided               = "port-forwarding.direct.decided"
-	EventNamePortForwardingDirectOpenFailed            = "port-forwarding.direct.open-failed"
-	EventNamePortForwardingDirectStarted               = "port-forwarding.direct.started"
-	EventNamePortForwardingDirectCompleted             = "port-forwarding.direct.completed"
-	EventNamePortForwardingReverseDecided              = "port-forwarding.reverse.decided"
-	EventNameConnectionClosed                          = "connection.closed"
-	EventNameSessionDisconnectStarted                  = "session.disconnect.started"
-	EventNameSessionDisconnectCompleted                = "session.disconnect.completed"
-	EventNameSessionDisposeStarted                     = "session.dispose.started"
-	EventNameSessionDisposeCompleted                   = "session.dispose.completed"
-	EventNameHousekeepingSessionDisposeStarted         = "housekeeping.session.dispose.started"
-	EventNameHousekeepingSessionDisposeCompleted       = "housekeeping.session.dispose.completed"
-	EventNameHousekeepingSessionDeleteStarted          = "housekeeping.session.delete.started"
-	EventNameHousekeepingSessionDeleteCompleted        = "housekeeping.session.delete.completed"
-	EventNameHousekeepingRecordingDeleteStarted        = "housekeeping.recording.delete.started"
-	EventNameHousekeepingRecordingDeleteCompleted      = "housekeeping.recording.delete.completed"
-	EventNameHousekeepingOrphanedSessionCleanupSkipped = "housekeeping.orphaned-session.cleanup.skipped"
-)
-
-var knownEventNames = [...]EventName{
-	EventNameAuthenticationFlowEvaluated,
-	EventNameAuthenticationFlowEvaluationsSuppressed,
-	EventNameAuthenticationCompleted,
-	EventNameSessionPtyDecided,
-	EventNameSessionAgentForwardingDecided,
-	EventNameSessionRecordingStarted,
-	EventNameSessionRecordingCompleted,
-	EventNameSessionRecordingIncomplete,
-	EventNameSessionRecordingFailed,
-	EventNameSessionRecordingDeliveryFailed,
-	EventNameSessionRecordingDeliverySucceeded,
-	EventNameSessionTaskStarted,
-	EventNameSessionTaskCompleted,
-	EventNamePortForwardingDirectDecided,
-	EventNamePortForwardingDirectOpenFailed,
-	EventNamePortForwardingDirectStarted,
-	EventNamePortForwardingDirectCompleted,
-	EventNamePortForwardingReverseDecided,
-	EventNameConnectionClosed,
-	EventNameSessionDisconnectStarted,
-	EventNameSessionDisconnectCompleted,
-	EventNameSessionDisposeStarted,
-	EventNameSessionDisposeCompleted,
-	EventNameHousekeepingSessionDisposeStarted,
-	EventNameHousekeepingSessionDisposeCompleted,
-	EventNameHousekeepingSessionDeleteStarted,
-	EventNameHousekeepingSessionDeleteCompleted,
-	EventNameHousekeepingRecordingDeleteStarted,
-	EventNameHousekeepingRecordingDeleteCompleted,
-	EventNameHousekeepingOrphanedSessionCleanupSkipped,
-}
-
-type EventReason = string
-
-const (
-	EventReasonRateLimit           = "rate-limit"
-	EventReasonJournalReserve      = "journal-reserve"
-	EventReasonSessionIncompatible = "session-incompatible"
-	EventReasonOIDCAccessLost      = "oidc-access-lost"
-	EventReasonAuthorizedKeyPolicy = "authorized-key-policy"
-	EventReasonEnvironmentPolicy   = "environment-policy"
-	EventReasonContextCanceled     = "context-canceled"
-	EventReasonDeadlineExceeded    = "deadline-exceeded"
-	EventReasonInvalidExitCode     = "invalid-exit-code"
-	EventReasonInvalidRequest      = "invalid-request"
-	EventReasonEnvironment         = "environment"
-	EventReasonDestinationConnect  = "destination-connect"
-	EventReasonDestinationRejected = "destination-rejected"
-	EventReasonChannelAccept       = "channel-accept"
-	EventReasonInvalidBind         = "invalid-bind"
-	EventReasonDisconnected        = "disconnected"
-	EventReasonMissingFlow         = "missing-flow"
-	EventReasonRetentionElapsed    = "retention-elapsed"
-	EventReasonExpired             = "expired"
-	EventReasonRecordingCreate     = "recording-create"
-	EventReasonRecordingCapture    = "recording-capture"
-	EventReasonRecordingSeal       = "recording-seal"
-	EventReasonAuditWrite          = "audit-write"
-	EventReasonSessionError        = "session-error"
-	EventReasonStartupRecovery     = "startup-recovery"
-)
-
-var knownEventReasons = [...]EventReason{
-	EventReasonRateLimit,
-	EventReasonJournalReserve,
-	EventReasonSessionIncompatible,
-	EventReasonOIDCAccessLost,
-	EventReasonAuthorizedKeyPolicy,
-	EventReasonEnvironmentPolicy,
-	EventReasonContextCanceled,
-	EventReasonDeadlineExceeded,
-	EventReasonInvalidExitCode,
-	EventReasonInvalidRequest,
-	EventReasonEnvironment,
-	EventReasonDestinationConnect,
-	EventReasonDestinationRejected,
-	EventReasonChannelAccept,
-	EventReasonInvalidBind,
-	EventReasonDisconnected,
-	EventReasonMissingFlow,
-	EventReasonRetentionElapsed,
-	EventReasonExpired,
-	EventReasonRecordingCreate,
-	EventReasonRecordingCapture,
-	EventReasonRecordingSeal,
-	EventReasonAuditWrite,
-	EventReasonSessionError,
-	EventReasonStartupRecovery,
-}
-
-type EventDomain string
-
-const (
-	EventDomainAuthentication EventDomain = "authentication"
-	EventDomainConnection     EventDomain = "connection"
-	EventDomainHousekeeping   EventDomain = "housekeeping"
-	EventDomainPortForwarding EventDomain = "port-forwarding"
-	EventDomainSession        EventDomain = "session"
-)
-
-type EventOutcome string
-
-const (
-	EventOutcomeSuccess  EventOutcome = "success"
-	EventOutcomeDenied   EventOutcome = "denied"
-	EventOutcomeFailure  EventOutcome = "failure"
-	EventOutcomeCanceled EventOutcome = "canceled"
-)
-
-type AuthenticationMethod string
-
-const (
-	AuthenticationMethodPublicKey           AuthenticationMethod = "public-key"
-	AuthenticationMethodPassword            AuthenticationMethod = "password"
-	AuthenticationMethodKeyboardInteractive AuthenticationMethod = "keyboard-interactive"
-	AuthenticationMethodBrowserRememberMe   AuthenticationMethod = "browser-remember-me"
-)
-
-type AuthenticationPhase string
-
-const (
-	AuthenticationPhaseCandidate AuthenticationPhase = "candidate"
-	AuthenticationPhaseVerified  AuthenticationPhase = "verified"
-)
-
+type Event = evidence.Event
+type EventName = evidence.EventName
+type EventReason = evidence.EventReason
+type EventDomain = evidence.EventDomain
+type EventOutcome = evidence.EventOutcome
+type AuthenticationMethod = evidence.AuthenticationMethod
+type AuthenticationPhase = evidence.AuthenticationPhase
 type SessionTask = evidence.SessionTask
-
-const MaxSessionSubsystemBytes = 256
-
-const (
-	SessionTaskShell     = evidence.SessionTaskShell
-	SessionTaskExec      = evidence.SessionTaskExec
-	SessionTaskSftp      = evidence.SessionTaskSftp
-	SessionTaskSubsystem = evidence.SessionTaskSubsystem
-)
-
-type ErrorCategory string
+type ErrorCategory = evidence.ErrorCategory
 
 const (
-	ErrorCategoryUnknown    ErrorCategory = "unknown"
-	ErrorCategorySystem     ErrorCategory = "system"
-	ErrorCategoryConfig     ErrorCategory = "config"
-	ErrorCategoryNetwork    ErrorCategory = "network"
-	ErrorCategoryUser       ErrorCategory = "user"
-	ErrorCategoryPermission ErrorCategory = "permission"
-	ErrorCategoryExpired    ErrorCategory = "expired"
+	EventNameAuthenticationFlowEvaluated               = evidence.EventNameAuthenticationFlowEvaluated
+	EventNameAuthenticationFlowEvaluationsSuppressed   = evidence.EventNameAuthenticationFlowEvaluationsSuppressed
+	EventNameAuthenticationCompleted                   = evidence.EventNameAuthenticationCompleted
+	EventNameSessionPtyDecided                         = evidence.EventNameSessionPtyDecided
+	EventNameSessionAgentForwardingDecided             = evidence.EventNameSessionAgentForwardingDecided
+	EventNameSessionRecordingStarted                   = evidence.EventNameSessionRecordingStarted
+	EventNameSessionRecordingCompleted                 = evidence.EventNameSessionRecordingCompleted
+	EventNameSessionRecordingIncomplete                = evidence.EventNameSessionRecordingIncomplete
+	EventNameSessionRecordingFailed                    = evidence.EventNameSessionRecordingFailed
+	EventNameSessionRecordingDeliveryFailed            = evidence.EventNameSessionRecordingDeliveryFailed
+	EventNameSessionRecordingDeliverySucceeded         = evidence.EventNameSessionRecordingDeliverySucceeded
+	EventNameSessionTaskStarted                        = evidence.EventNameSessionTaskStarted
+	EventNameSessionTaskCompleted                      = evidence.EventNameSessionTaskCompleted
+	EventNamePortForwardingDirectDecided               = evidence.EventNamePortForwardingDirectDecided
+	EventNamePortForwardingDirectOpenFailed            = evidence.EventNamePortForwardingDirectOpenFailed
+	EventNamePortForwardingDirectStarted               = evidence.EventNamePortForwardingDirectStarted
+	EventNamePortForwardingDirectCompleted             = evidence.EventNamePortForwardingDirectCompleted
+	EventNamePortForwardingReverseDecided              = evidence.EventNamePortForwardingReverseDecided
+	EventNameConnectionClosed                          = evidence.EventNameConnectionClosed
+	EventNameSessionDisconnectStarted                  = evidence.EventNameSessionDisconnectStarted
+	EventNameSessionDisconnectCompleted                = evidence.EventNameSessionDisconnectCompleted
+	EventNameSessionDisposeStarted                     = evidence.EventNameSessionDisposeStarted
+	EventNameSessionDisposeCompleted                   = evidence.EventNameSessionDisposeCompleted
+	EventNameHousekeepingSessionDisposeStarted         = evidence.EventNameHousekeepingSessionDisposeStarted
+	EventNameHousekeepingSessionDisposeCompleted       = evidence.EventNameHousekeepingSessionDisposeCompleted
+	EventNameHousekeepingSessionDeleteStarted          = evidence.EventNameHousekeepingSessionDeleteStarted
+	EventNameHousekeepingSessionDeleteCompleted        = evidence.EventNameHousekeepingSessionDeleteCompleted
+	EventNameHousekeepingRecordingDeleteStarted        = evidence.EventNameHousekeepingRecordingDeleteStarted
+	EventNameHousekeepingRecordingDeleteCompleted      = evidence.EventNameHousekeepingRecordingDeleteCompleted
+	EventNameHousekeepingOrphanedSessionCleanupSkipped = evidence.EventNameHousekeepingOrphanedSessionCleanupSkipped
+	EventReasonRateLimit                               = evidence.EventReasonRateLimit
+	EventReasonJournalReserve                          = evidence.EventReasonJournalReserve
+	EventReasonSessionIncompatible                     = evidence.EventReasonSessionIncompatible
+	EventReasonOIDCAccessLost                          = evidence.EventReasonOIDCAccessLost
+	EventReasonAuthorizedKeyPolicy                     = evidence.EventReasonAuthorizedKeyPolicy
+	EventReasonEnvironmentPolicy                       = evidence.EventReasonEnvironmentPolicy
+	EventReasonContextCanceled                         = evidence.EventReasonContextCanceled
+	EventReasonDeadlineExceeded                        = evidence.EventReasonDeadlineExceeded
+	EventReasonInvalidExitCode                         = evidence.EventReasonInvalidExitCode
+	EventReasonInvalidRequest                          = evidence.EventReasonInvalidRequest
+	EventReasonEnvironment                             = evidence.EventReasonEnvironment
+	EventReasonDestinationConnect                      = evidence.EventReasonDestinationConnect
+	EventReasonDestinationRejected                     = evidence.EventReasonDestinationRejected
+	EventReasonChannelAccept                           = evidence.EventReasonChannelAccept
+	EventReasonInvalidBind                             = evidence.EventReasonInvalidBind
+	EventReasonDisconnected                            = evidence.EventReasonDisconnected
+	EventReasonMissingFlow                             = evidence.EventReasonMissingFlow
+	EventReasonRetentionElapsed                        = evidence.EventReasonRetentionElapsed
+	EventReasonExpired                                 = evidence.EventReasonExpired
+	EventReasonRecordingCreate                         = evidence.EventReasonRecordingCreate
+	EventReasonRecordingCapture                        = evidence.EventReasonRecordingCapture
+	EventReasonRecordingSeal                           = evidence.EventReasonRecordingSeal
+	EventReasonAuditWrite                              = evidence.EventReasonAuditWrite
+	EventReasonSessionError                            = evidence.EventReasonSessionError
+	EventReasonStartupRecovery                         = evidence.EventReasonStartupRecovery
+	EventDomainAuthentication                          = evidence.EventDomainAuthentication
+	EventDomainConnection                              = evidence.EventDomainConnection
+	EventDomainHousekeeping                            = evidence.EventDomainHousekeeping
+	EventDomainPortForwarding                          = evidence.EventDomainPortForwarding
+	EventDomainSession                                 = evidence.EventDomainSession
+	EventOutcomeSuccess                                = evidence.EventOutcomeSuccess
+	EventOutcomeDenied                                 = evidence.EventOutcomeDenied
+	EventOutcomeFailure                                = evidence.EventOutcomeFailure
+	EventOutcomeCanceled                               = evidence.EventOutcomeCanceled
+	AuthenticationMethodPublicKey                      = evidence.AuthenticationMethodPublicKey
+	AuthenticationMethodPassword                       = evidence.AuthenticationMethodPassword
+	AuthenticationMethodKeyboardInteractive            = evidence.AuthenticationMethodKeyboardInteractive
+	AuthenticationMethodBrowserRememberMe              = evidence.AuthenticationMethodBrowserRememberMe
+	AuthenticationPhaseCandidate                       = evidence.AuthenticationPhaseCandidate
+	AuthenticationPhaseVerified                        = evidence.AuthenticationPhaseVerified
+	SessionTaskShell                                   = evidence.SessionTaskShell
+	SessionTaskExec                                    = evidence.SessionTaskExec
+	SessionTaskSftp                                    = evidence.SessionTaskSftp
+	SessionTaskSubsystem                               = evidence.SessionTaskSubsystem
+	MaxSessionSubsystemBytes                           = evidence.MaxSessionSubsystemBytes
+	ErrorCategoryUnknown                               = evidence.ErrorCategoryUnknown
+	ErrorCategorySystem                                = evidence.ErrorCategorySystem
+	ErrorCategoryConfig                                = evidence.ErrorCategoryConfig
+	ErrorCategoryNetwork                               = evidence.ErrorCategoryNetwork
+	ErrorCategoryUser                                  = evidence.ErrorCategoryUser
+	ErrorCategoryPermission                            = evidence.ErrorCategoryPermission
+	ErrorCategoryExpired                               = evidence.ErrorCategoryExpired
 )
 
-// Event is the domain payload accepted by a Recorder. The recorder adds common
-// metadata and the journal adds its persistence envelope.
-type Event struct {
-	Name                 EventName                        `json:"name"`
-	Domain               EventDomain                      `json:"domain,omitempty"`
-	Outcome              EventOutcome                     `json:"outcome,omitempty"`
-	Flow                 string                           `json:"flow,omitempty"`
-	ConnectionId         string                           `json:"connectionId,omitempty"`
-	SessionId            string                           `json:"sessionId,omitempty"`
-	OperationId          string                           `json:"operationId,omitempty"`
-	RecordingId          string                           `json:"recordingId,omitempty"`
-	RecordingDigest      string                           `json:"recordingDigest,omitempty"`
-	Target               configuration.AuditlogTargetName `json:"target,omitempty"`
-	AuthenticationMethod AuthenticationMethod             `json:"authenticationMethod,omitempty"`
-	AuthenticationPhase  AuthenticationPhase              `json:"authenticationPhase,omitempty"`
-	AuthorizationKind    string                           `json:"authorizationKind,omitempty"`
-	SessionTask          SessionTask                      `json:"sessionTask,omitempty"`
-	SessionSubsystem     string                           `json:"sessionSubsystem,omitempty"`
-	Reason               EventReason                      `json:"reason,omitempty"`
-	ErrorCategory        ErrorCategory                    `json:"errorCategory,omitempty"`
-	ExitCode             *int                             `json:"exitCode,omitempty"`
-	BytesRead            *int64                           `json:"bytesRead,omitempty"`
-	BytesWritten         *int64                           `json:"bytesWritten,omitempty"`
-	DurationMillis       *int64                           `json:"durationMillis,omitempty"`
-	Count                *uint64                          `json:"count,omitempty"`
-	Pty                  *bool                            `json:"pty,omitempty"`
-	AgentForwarding      *bool                            `json:"agentForwarding,omitempty"`
-	ForcedCommand        *bool                            `json:"forcedCommand,omitempty"`
-}
+var knownEventNames = evidence.KnownEventNames()
+var knownEventReasons = evidence.KnownEventReasons()

@@ -80,6 +80,7 @@ IDs and recording digest are text in the established audit Event schema, not
 | 19 | PTY | boolean | O |
 | 20 | agent forwarding | boolean | O |
 | 21 | forced command | boolean | O |
+| 22 | session subsystem | nonempty UTF-8 text | O |
 
 ### Seal (type 3)
 
@@ -124,7 +125,7 @@ The confidential part contains **every other** current `Event` field:
 `recordingDigest`, `target`, `authenticationMethod`, `authenticationPhase`,
 `authorizationKind`, `sessionTask`, `reason`, `errorCategory`, `exitCode`,
 `bytesRead`, `bytesWritten`, `durationMillis`, `count`, `pty`,
-`agentForwarding`, and `forcedCommand`. New fields default to confidential
+`agentForwarding`, `forcedCommand`, and `sessionSubsystem`. New fields default to confidential
 until explicitly classified and documented. Event values still obey their
 established type and validation rules; the current name and reason constants
 do not imply a closed set.
@@ -248,3 +249,30 @@ encrypted payloads it cannot attest to decrypted event semantics. Full
 verification decrypts/authenticates if needed and validates the private audit
 event. The [operational audit documentation](../reference/auditlog/index.md)
 explains verification and export of a complete journal.
+
+## Shared read-only unit codecs
+
+`pkg/audit/evidence` owns the event schema/validation, native wire types,
+domain-separated hashes and Header/Record/Seal/Head decoders. Native writers use
+the same signing-field codecs; native readers delegate to these decoders. The
+wire format and frozen vectors are unchanged. Journal signers, private-file
+policy, inventory and filesystem revalidation remain native.
+
+`NewPublicIdentity` checks a canonical Ed25519 public key against its producer
+ID and owns its public bytes. That consistency check does **not** establish
+producer trust: the expected ID must come from a separate trusted source.
+The decoder interface exposes only public-key bytes and signature verification,
+not signing or private-key loading.
+
+`DecodeAuditRecord` returns only public event fields unless sensitive decoding
+is requested. Clear private events are validated even when redacted; encrypted
+outer-only decoding cannot attest to private semantics. Sensitive decoding
+requires matching age identities and complete payload authentication. The native
+journal readers can also validate private fields with supplied keys while still
+redacting their output. Decoder errors return zero results, not partial events.
+
+These unit codecs are not a complete portable journal verifier. The native
+offline/live readers still own segment selection, chain/checkpoint orchestration,
+materialization limits, file/alias guards and final tree revalidation. Portable
+immutable-snapshot readers and browser artifact/decryption UI remain separate
+work; neither a transport digest nor successful unit decoding replaces them.
