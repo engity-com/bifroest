@@ -423,6 +423,43 @@ Protocol/Go-WASM tests cover frame bounds, selectors, canonical completion, phys
 EOF and body ownership. This adds no artifact download button, browser fetch bridge
 or decryption/key-import UI; those remain subsequent work.
 
+### Portable recording evidence verification (not yet browser UI)
+
+`pkg/recording/cast` now contains the existing complete Cast/v3 and native
+`.bcast`/`.becast` verification/decryption/export implementation, not a replacement
+parser. Native `pkg/recording` entry points delegate to the same code. Key values
+and age SSH payload cryptography live in `crypto/keydata`; `nativeformat` no
+longer imports native key files/bootstrap/OS code. Public producer/task data and
+Cast-signature consistency checks live in `audit/evidence`. Session, connection
+and recording IDs remain **distinct types** with their existing JSON/binary/
+MsgPack codecs; native names/APIs are aliases, not new wire schemas or a migration.
+
+Outer verification authenticates the signed committed envelope only. Complete
+native verification additionally decrypts/authenticates age through EOF, checks
+bounded single-frame Zstd/CBOR events, reconstructs Cast, verifies semantics/
+signature/digest/counts and checks the same physical input across passes. Export
+starts only after full verification and rereads the **same immutable ReaderAt**;
+an output failure can still leave a partial already-verified export, so callers
+own atomic staging/publication. Incremental renderer/decoder APIs are explicitly
+provisional and must never be presented as a full/trusted verification result.
+`Trusted` requires a separately expected producer; internal signature consistency
+or an artifact/transfer header never supplies that trust. Untrusted verification
+is still an explicit, separately labeled opt-in, not a fallback.
+
+Native identities/private-file ownership/mode/ACL/bootstrap policy, repositories,
+durable recording commit/recovery and restricted audit signers remain native.
+The shared signer interface grants no new server RPC/signing operation and the
+client verifier loads no key files. Frozen existing clear/encrypted vectors run
+as actual Go/WASM under MISE/Node, including full decryption and byte-identical
+Cast export, wrong/missing key/producer, tamper/truncation/trailing input, canceled
+verification, changed ReaderAt between passes and no plaintext before verification.
+
+This does not add the browser fetch/WASM bridge, key-input/decryption controls or
+verified artifact UI. Audit journal verification still uses its native immutable
+filesystem snapshot/tree checks; extracting a real portable journal-reader
+capability remains open. It must not be replaced with fake OS/process/filesystem
+stubs, transport hashes or a second implementation of journal verification.
+
 ### Confirmed session actions
 
 `Disconnect session connections` and `Dispose session` are available from the

@@ -1,4 +1,4 @@
-package recording
+package cast
 
 import (
 	"bytes"

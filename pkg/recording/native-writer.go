@@ -208,10 +208,10 @@ func (w *NativeRecordingWriter) WriteOutput(elapsed time.Duration, stream Output
 	if err := w.ready(); err != nil {
 		return err
 	}
-	if err := w.cast.validateOutputStream(stream); err != nil {
+	if err := w.cast.ValidateOutputStream(stream); err != nil {
 		return err
 	}
-	if err := w.cast.validateElapsed(elapsed); err != nil {
+	if err := w.cast.ValidateElapsed(elapsed); err != nil {
 		return err
 	}
 	for offset := 0; offset < len(data); {
@@ -236,7 +236,7 @@ func (w *NativeRecordingWriter) WriteResize(elapsed time.Duration, columns, rows
 	if !w.metadata.Pty || columns == 0 || rows == 0 || columns > MaximumCastTerminalDimension || rows > MaximumCastTerminalDimension {
 		return fmt.Errorf("invalid native recording resize")
 	}
-	if err := w.cast.validateElapsed(elapsed); err != nil {
+	if err := w.cast.ValidateElapsed(elapsed); err != nil {
 		return err
 	}
 	event := NativeCastEvent{Kind: NativeEventResize, Elapsed: elapsed, Columns: columns, Rows: rows}
@@ -254,7 +254,7 @@ func (w *NativeRecordingWriter) WriteMarker(elapsed time.Duration, label string)
 	if err := w.ready(); err != nil {
 		return err
 	}
-	if err := w.cast.validateElapsed(elapsed); err != nil {
+	if err := w.cast.ValidateElapsed(elapsed); err != nil {
 		return err
 	}
 	event := NativeCastEvent{Kind: NativeEventMarker, Elapsed: elapsed, Label: label}
@@ -289,7 +289,7 @@ func (w *NativeRecordingWriter) Flush() error {
 	if err != nil {
 		return w.poison(err)
 	}
-	lastElapsed := uint64(w.cast.lastElapsed)
+	lastElapsed := uint64(w.cast.LastElapsed())
 	chunk := nativeRecordingChunk{Sequence: w.chunkCount + 1, PreviousUnitHash: w.previousHash, DecodedLength: uint32(len(decoded)), CastHashState: checkpoint.State, CastHashBytes: checkpoint.Bytes, LastElapsedNanos: &lastElapsed}
 	if err := w.writeChunk(decoded, chunk); err != nil {
 		return w.poison(err)
