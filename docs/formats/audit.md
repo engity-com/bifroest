@@ -276,3 +276,20 @@ offline/live readers still own segment selection, chain/checkpoint orchestration
 materialization limits, file/alias guards and final tree revalidation. Portable
 immutable-snapshot readers and browser artifact/decryption UI remain separate
 work; neither a transport digest nor successful unit decoding replaces them.
+
+### Shared segment scanning
+
+`AuditSegmentImage` makes an owned copy of at most 17 MiB and exposes only
+read-only `ReaderAt` access. Mutation of its original input or a returned read
+buffer cannot change later verification reads. Native offline and live readers
+use `ScanAuditSegment` on that image; real file/inventory proofs stay native.
+
+The shared scanner validates the existing framing, signatures, hashes and event
+semantics. Active may stop at a captured signed checkpoint. Published segments
+must scan their complete suffix and seal and compare the physical segment hash
+with the inventory; later records are not exported or charged to selection/output
+budgets. Supplied keys validate private prefix fields even with redacted output.
+Callbacks are provisional until the caller's complete producer/journal checks,
+source revalidation and resource closes succeed. Cancellation or callback errors
+return zero scan state. This immutable per-segment image is not yet a complete
+portable producer inventory/snapshot capability or a browser decryption UI.

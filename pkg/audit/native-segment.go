@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/engity-com/bifroest/pkg/audit/evidence"
 	"github.com/engity-com/bifroest/pkg/nativeformat"
 )
 
@@ -21,7 +22,7 @@ const (
 	nativeActiveClear           = "active.baudit"
 	nativeActiveEncrypted       = "active.beaudit"
 	nativeTargetSize      int64 = 16 << 20
-	nativeMaxSize         int64 = 17 << 20
+	nativeMaxSize         int64 = evidence.MaxAuditSegmentBytes
 )
 
 type nativeSegmentState struct {
