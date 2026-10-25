@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import { buildBrowserKey } from './scripts/browser-key.mjs';
+import { buildBrowserTransfer } from './scripts/browser-transfer.mjs';
 import { writeFrontendNotices } from './scripts/frontend-notices.mjs';
 import { xtermDocumentPlugin } from './scripts/xterm-document.mjs';
 
@@ -25,10 +26,15 @@ export default defineConfig({
       input: {
         index: fileURLToPath(new URL('index.html', import.meta.url)),
         'browser-key-worker': fileURLToPath(new URL('src/login/key-worker.ts', import.meta.url)),
+        'browser-transfer-worker': fileURLToPath(
+          new URL('src/artifacts/transfer-worker.ts', import.meta.url),
+        ),
       },
       output: {
         entryFileNames: (chunk) =>
-          chunk.name === 'browser-key-worker' ? 'browser-key-worker.js' : 'assets/[name]-[hash].js',
+          ['browser-key-worker', 'browser-transfer-worker'].includes(chunk.name)
+            ? `${chunk.name}.js`
+            : 'assets/[name]-[hash].js',
       },
       onwarn(warning, handler) {
         // This bundle is client-only, not a React Server Components boundary.
@@ -48,6 +54,7 @@ export default defineConfig({
         writeFileSync(new URL('README.txt', output), marker);
         writeFrontendNotices(output);
         buildBrowserKey(output);
+        buildBrowserTransfer(output);
       },
     },
   ],

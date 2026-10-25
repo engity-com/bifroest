@@ -25,6 +25,7 @@ export class RememberMeError extends Error {
       | 'login-unknown'
       | 'invalid-step'
       | 'key-import'
+      | 'artifact-too-large'
       | 'management-unknown',
   ) {
     // Never expose a browser/provider/storage error or persisted plaintext.

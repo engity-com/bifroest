@@ -1,3 +1,8 @@
+export type {
+  ArtifactRequest,
+  ReceivedArtifact,
+  ReceivedArtifactFile,
+} from '../artifacts/protocol';
 export type { LoginStep, StepHandler } from '../login/interactive';
 export type { LoginKey } from '../login/key';
 export type { AccessSnapshot, LogoutResult } from './client';

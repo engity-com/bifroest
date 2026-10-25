@@ -27,6 +27,7 @@ func TestRecordingArtifactTransferVerifiesSizeAndDigest(t *testing.T) {
 	require.ErrorContains(t, err, "SHA-256")
 	_, err = ReadRecordingArtifact(bytes.NewReader(wire.Bytes()), &bytes.Buffer{}, 4)
 	require.ErrorContains(t, err, "oversized")
+	require.ErrorIs(t, err, ErrArtifactLimit)
 	_, err = ReadRecordingArtifact(bytes.NewReader(append(wire.Bytes(), 0)), &bytes.Buffer{}, 4096)
 	require.ErrorContains(t, err, "trailing")
 }

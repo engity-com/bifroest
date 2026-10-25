@@ -25,6 +25,7 @@ import (
 
 const Prefix = "/_bifroest/files/"
 const KeyWorkerPath = Prefix + "browser-key-worker.js"
+const TransferWorkerPath = Prefix + "browser-transfer-worker.js"
 const CustomPrefix = "/_bifroest/custom/"
 const maxFile = 8 << 20
 const maxIndex = 512 << 10

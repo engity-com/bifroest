@@ -1,3 +1,6 @@
+import type { ArtifactRequest, ReceivedArtifact } from '../artifacts/protocol';
+import { artifactFields } from '../artifacts/protocol';
+import { receiveArtifact } from '../artifacts/receive';
 import type { StepHandler } from '../login/interactive';
 import { interactive } from '../login/interactive';
 import type { LoginKey } from '../login/key';
@@ -136,6 +139,7 @@ export class WebAccess {
     done: Promise<void>;
   } | null = null;
   #logout: Promise<LogoutResult> | null = null;
+  #artifact: { controller: AbortController; done: Promise<ReceivedArtifact> } | null = null;
 
   constructor(http: Http, response: AccessResponse, binding: BrowserBinding | null) {
     this.#http = http;
@@ -169,6 +173,43 @@ export class WebAccess {
       Date.now() >= Date.parse(this.#response.expiresAt)
     ) {
       throw new RememberMeError('denied');
+    }
+  }
+
+  async downloadArtifact(
+    request: ArtifactRequest,
+    signal?: AbortSignal,
+  ): Promise<ReceivedArtifact> {
+    this.#managementAllowed();
+    const selected = Object.freeze({ ...request }) as ArtifactRequest;
+    artifactFields(selected);
+    if (this.#artifact !== null) {
+      throw new RememberMeError('busy');
+    }
+    const controller = new AbortController();
+    const stopped =
+      signal === undefined ? controller.signal : AbortSignal.any([signal, controller.signal]);
+    const operation = {
+      controller,
+      done: (async () => {
+        const result = await receiveArtifact(
+          selected,
+          (receiving) => this.#http.artifactImage(selected, this.#response.accessToken, receiving),
+          stopped,
+        );
+        if (this.#closed) {
+          throw new RememberMeError('denied');
+        }
+        return result;
+      })(),
+    };
+    this.#artifact = operation;
+    try {
+      return await operation.done;
+    } finally {
+      if (this.#artifact === operation) {
+        this.#artifact = null;
+      }
     }
   }
   async managementFlows(
@@ -430,6 +471,8 @@ export class WebAccess {
     this.#closed = true;
     const enrollment = this.#enrollment;
     enrollment?.controller.abort();
+    const artifact = this.#artifact;
+    artifact?.controller.abort();
     const operation = (async () => {
       let failed: unknown;
       try {
@@ -438,6 +481,7 @@ export class WebAccess {
         failed = error;
       }
       await enrollment?.done.catch(() => undefined);
+      await artifact?.done.catch(() => undefined);
       const handle = this.#binding ?? enrollment?.handle;
       if (failed !== undefined) {
         // A grant with no active children may already have been pruned. Prove

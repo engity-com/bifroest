@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url';
 const version = 'go1.27.3';
 const runtimeHash = '0c949f4996f9a89698e4b5c586de32249c3b69b7baadb64d220073cc04acba14';
 
-// Build-only subprocesses. Browser authentication never invokes a Go process.
-export function buildBrowserKey(output) {
+// Build-only subprocesses. Browser actions never invoke a Go process.
+export function browserGoToolchain(output) {
   const cwd = fileURLToPath(new URL('../../', import.meta.url));
   const env = { ...process.env, GOOS: 'js', GOARCH: 'wasm', CGO_ENABLED: '0' };
   const go = (args) =>
@@ -24,12 +24,25 @@ export function buildBrowserKey(output) {
   if (createHash('sha256').update(runtime).digest('hex') !== runtimeHash) {
     throw new Error('Go WASM runtime version/hash mismatch');
   }
+  copyFileSync(source, new URL('go-wasm-exec.js', output));
+  return {
+    cwd,
+    go,
+    version,
+    runtimeHash,
+    runtimeSource: process.env.BIFROEST_GO_WASM_EXEC
+      ? 'explicit operator-provided runtime override'
+      : 'MISE-selected GOROOT/lib/wasm/wasm_exec.js',
+  };
+}
+
+export function buildBrowserKey(output) {
+  const { cwd, go, version, runtimeHash, runtimeSource } = browserGoToolchain(output);
   const target = new URL('browser-key.wasm', output);
   go(['build', '-trimpath', '-ldflags=-s -w', '-o', fileURLToPath(target), './cmd/browser-key']);
   if (statSync(target).size > 8 << 20) {
     throw new Error('Browser key WASM exceeds public asset bound');
   }
-  copyFileSync(source, new URL('go-wasm-exec.js', output));
   const modules = [
     ...new Set(
       go([
@@ -58,7 +71,7 @@ export function buildBrowserKey(output) {
         schema: 'bifroest-browser-key-components-v1',
         toolchain: version,
         runtimeSHA256: runtimeHash,
-        runtimeSource: 'pinned toolchain asset (workspace copy during initial development)',
+        runtimeSource,
         modules,
         externalLicense: 'BSD-3-Clause',
         project: { module: 'github.com/engity-com/bifroest', license: 'Apache-2.0' },

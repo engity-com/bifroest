@@ -179,6 +179,44 @@ claims server logout. Interrupted setup stays visibly uncertain until explicitly
 reconciled. Artifact transfer/client-side decryption, exact forced-command
 equivalence and portable Go-client transport integration remain subsequent work.
 
+## Artifact transport core (no verification/decryption UI yet)
+
+`WebAccess.downloadArtifact({ kind: 'recording', auditlog, id }, signal)` and the
+`{ kind: 'audit', auditlog }` form use the existing fixed artifact POSTs and
+Management permission. No command, arbitrary path, decryption key or private
+credential field is accepted. A tab owns one active transfer per access object;
+logout aborts it and joins fetch cleanup without disposing the shared session.
+
+The opening adapter enforces exact HTTPS origin/path, no redirects/query/cookies,
+the transfer media type, no Content-Encoding and bounded actual EOF. Its body is
+still provisional: a short-lived Go/WASM worker reuses `management/client.Receive`
+and the native recording/audit wire decoders to check exact selectors, all data,
+post-driver completion and genuine EOF. DataEnd alone cannot release a result.
+The worker receives neither bearer nor private keys and is terminated before
+success/failure returns. Errors do not expose parser or storage diagnostics.
+
+The first adapter stages **tab memory only**, with 64 MiB of artifact payloads and
+a 72-MiB bounded framed response image. There is no OPFS/IndexedDB staging or
+persistent plaintext. Larger input returns `artifact-too-large`; the server's
+32-GiB recording/1-GiB audit limits and authorization remain unchanged. Native
+large-artifact support is not claimed as browser large-file support. The received
+Blobs are immutable, but the HTTP response is currently buffered before Go
+decoding; this is not a disk-backed or zero-copy streaming browser sink.
+
+Successful results explicitly carry `transport: 'complete'` and
+`evidence: 'unverified'`. Header Producer/Recipient/SHA256 values remain untrusted
+transport assertions, never signature/trust/decryption proof. The separate
+Recording/Audit evidence worker, tab-local decryption-key import and artifact UI
+are subsequent work, not silently performed by this API.
+
+The MISE app build adds `cmd/browser-transfer` and the one-shot
+`browser-transfer-worker.js`; only that exact worker and the existing key worker
+receive the narrow WASM CSP. Parent documents and other scripts retain their
+existing policy. The runtime comes from the same version/hash-checked selected
+GOROOT as key login. The conservative transfer component manifest records its
+actual dependency versions, reviewed/pinned MIT license texts and WASM/runtime
+hashes; this is not complete release-wide source provenance/SBOM.
+
 ## Interactive and OIDC device login
 
 Choose `Interactive / device login` to use the same Keyboard-Interactive/OIDC

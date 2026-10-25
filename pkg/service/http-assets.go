@@ -56,8 +56,8 @@ func (this *webService) serveAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", contentType)
-	if r.URL.Path == webui.KeyWorkerPath {
-		w.Header().Set("Content-Security-Policy", https.BrowserKeyWorkerPolicy)
+	if r.URL.Path == webui.KeyWorkerPath || r.URL.Path == webui.TransferWorkerPath {
+		w.Header().Set("Content-Security-Policy", https.BrowserWasmWorkerPolicy)
 	}
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	if r.Method != http.MethodHead {

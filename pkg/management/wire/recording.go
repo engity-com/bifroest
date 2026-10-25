@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 
@@ -13,6 +14,10 @@ import (
 
 const WireRecordingCommand = "_bifroest-management-recording-v1"
 const maxRecordingHeaderBytes = 4096
+
+// ErrArtifactLimit distinguishes an explicit receiver resource refusal from
+// malformed evidence or an unconfirmed transport. It is not a permission error.
+var ErrArtifactLimit = errors.New("artifact exceeds receiver limit")
 
 type RecordingArtifactHeader struct {
 	Version    uint8  `cbor:"1,keyasint"`
@@ -68,8 +73,11 @@ func ReadRecordingArtifact(input io.Reader, output io.Writer, maxBytes int64) (R
 	if err := cbor.Unmarshal(encoded, &header); err != nil {
 		return header, err
 	}
-	if header.Version != 1 || header.ID == "" || header.ProducerID == "" || header.Size <= 0 || header.Size > maxBytes {
+	if header.Version != 1 || header.ID == "" || header.ProducerID == "" || header.Size <= 0 {
 		return header, fmt.Errorf("unsupported or oversized Recording artifact")
+	}
+	if header.Size > maxBytes {
+		return header, fmt.Errorf("unsupported or oversized Recording artifact: %w", ErrArtifactLimit)
 	}
 	hasher := sha256.New()
 	if _, err := io.CopyN(io.MultiWriter(output, hasher), input, header.Size); err != nil {
