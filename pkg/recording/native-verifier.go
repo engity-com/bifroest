@@ -9,6 +9,7 @@ import (
 	"io"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	"github.com/engity-com/bifroest/pkg/management/protocol"
 	"github.com/engity-com/bifroest/pkg/nativeformat"
 )
 
@@ -29,7 +30,7 @@ type NativeRecordingVerification struct {
 
 const (
 	nativeRecordingAgePrefix            = "age-encryption.org/v1\n"
-	DefaultMaximumNativeRecordingBytes  = int64(32 << 30)
+	DefaultMaximumNativeRecordingBytes  = protocol.MaximumRecordingArtifactBytes
 	DefaultMaximumNativeRecordingChunks = 1 << 18
 )
 
