@@ -50,6 +50,26 @@ export async function exerciseManagementForced(page, file, logout) {
     .waitFor();
   assert.equal(await page.getByRole('region', { name: 'Session details', exact: true }).count(), 0);
   assert.equal(await page.getByRole('button', { name: 'Dispose session', exact: true }).count(), 0);
+  const artifacts = page.getByRole('region', {
+    name: 'Artifacts and client-side evidence',
+    exact: true,
+  });
+  await artifacts.getByRole('textbox', { name: 'Artifact auditlog', exact: true }).fill('default');
+  await artifacts
+    .getByRole('textbox', { name: 'Recording ID', exact: true })
+    .fill('34e34ab8-7457-4d88-a5e4-c57791775c3a');
+  await artifacts.getByRole('button', { name: 'Download into this tab', exact: true }).click();
+  await artifacts
+    .getByText('The artifact download could not be confirmed or is not permitted.', {
+      exact: false,
+    })
+    .waitFor();
+  assert.equal(
+    await artifacts
+      .getByRole('heading', { name: 'Independent verification expectations', exact: true })
+      .count(),
+    0,
+  );
   await logout(page);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
   assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);

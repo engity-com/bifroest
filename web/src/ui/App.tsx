@@ -21,6 +21,9 @@ import { t } from './messages';
 const ManagementPanel = lazy(async () => ({
   default: (await import('../management/ManagementPanel')).ManagementPanel,
 }));
+const ArtifactPanel = lazy(async () => ({
+  default: (await import('../artifacts/ArtifactPanel')).ArtifactPanel,
+}));
 
 export interface LinkMetadata {
   readonly scope: Scope;
@@ -427,6 +430,11 @@ export function App({
               access={access.current}
               disabled={closing || busy}
               onActionLock={setManagementLocked}
+            />
+            <ArtifactPanel
+              key={`artifacts:${generation.current}`}
+              access={access.current}
+              disabled={closing || busy || managementLocked}
             />
           </Suspense>
         )}

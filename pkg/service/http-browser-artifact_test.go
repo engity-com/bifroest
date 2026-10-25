@@ -57,13 +57,13 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 		node, err = exec.LookPath("node")
 		require.NoError(t, err)
 	}
-	for _, mode := range []string{"normal", "encrypted", "held-success", "held-failure"} {
+	for _, mode := range []string{"normal", "encrypted", "ui-clear", "ui-encrypted", "held-success", "held-failure"} {
 		t.Run(mode, func(t *testing.T) {
 			var keyPath, recipient string
 			private := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x42}, ed25519.SeedSize))
 			public, err := ssh.NewPublicKey(private.Public())
 			require.NoError(t, err)
-			if mode == "encrypted" {
+			if strings.HasSuffix(mode, "encrypted") {
 				block, err := ssh.MarshalPrivateKeyWithPassphrase(private, "public browser test key", []byte("tab fixture secret"))
 				require.NoError(t, err)
 				keyPath = filepath.Join(t.TempDir(), "offline-key.pem")
@@ -80,7 +80,11 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 				httpListenerTestCertificate(t, conf, key)
 				conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{AllowArtifactTransfer: true}
 				conf.Flows[0].DiscoverAsSlug = "Work"
-				if mode == "encrypted" {
+				if strings.HasPrefix(mode, "ui-") {
+					settings := conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple)
+					settings.Entries = append(settings.Entries, configuration.AuthorizationSimpleEntry{Name: "bob", Password: bfcrypto.Password("plain:correct")})
+				}
+				if strings.HasSuffix(mode, "encrypted") {
 					conf.Auditlogs[0].EncryptionPublicKey = bfcrypto.PublicKeys(string(ssh.MarshalAuthorizedKey(public)))
 				}
 			})
@@ -171,7 +175,11 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 			require.NoError(t, err)
 			ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 			defer cancel()
-			command := exec.CommandContext(ctx, node, filepath.Join(root, "web", "test", "artifact-client.mjs"), "https://app.example.org:"+port, mode, keyPath)
+			script := "artifact-client.mjs"
+			if strings.HasPrefix(mode, "ui-") {
+				script = "artifact-ui.mjs"
+			}
+			command := exec.CommandContext(ctx, node, filepath.Join(root, "web", "test", script), "https://app.example.org:"+port, mode, keyPath)
 			command.Dir = filepath.Join(root, "web")
 			output, err := command.CombinedOutput()
 			require.NoError(t, err, "%s", output)

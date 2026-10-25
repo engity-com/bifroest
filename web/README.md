@@ -206,18 +206,18 @@ decoding; this is not a disk-backed or zero-copy streaming browser sink.
 Successful results explicitly carry `transport: 'complete'` and
 `evidence: 'unverified'`. Header Producer/Recipient/SHA256 values remain untrusted
 transport assertions, never signature/trust/decryption proof. The separate
-Recording/Audit evidence worker below must be invoked separately; artifact UI
-is subsequent work, not silently performed by the transport API.
+Recording/Audit evidence worker below must be invoked separately. The built
+artifact view makes this an explicit action, never an implicit transport result.
 
 The MISE app build adds `cmd/browser-transfer` and the one-shot
-`browser-transfer-worker.js`; only that exact worker and the existing key worker
+`browser-transfer-worker.js`; only the three exact key/transfer/evidence workers
 receive the narrow WASM CSP. Parent documents and other scripts retain their
 existing policy. The runtime comes from the same version/hash-checked selected
 GOROOT as key login. The conservative transfer component manifest records its
 actual dependency versions, reviewed/pinned MIT license texts and WASM/runtime
 hashes; this is not complete release-wide source provenance/SBOM.
 
-## Client-only evidence API (no artifact UI yet)
+## Client-only evidence API
 
 `verifyArtifact(received, options, localKey, signal)` owns a separate short-lived
 worker. It accepts only completed immutable transport Blobs, explicit options and
@@ -259,6 +259,46 @@ the parent document or ordinary scripts. Build manifests pin actual module
 versions and reviewed license text hashes (including nested compression-library
 notices), plus compressed/raw/runtime hashes. This is not full release SBOM or
 cryptographic supply-chain provenance.
+
+## Artifact verification/decryption view
+
+The Management workspace lazily loads `ArtifactPanel`. Supply an exact auditlog
+and, for recordings, a canonical ID; there is no artifact discovery/listing,
+playback or plaintext preview yet. Download uses the existing `WebAccess` API,
+permission, quota and common server audit/recording lifecycle. Forced-command
+credentials still cannot transfer artifacts. No new endpoints or policy flags
+were introduced for the view.
+
+Unverified server hints/original files are labeled separately from independent
+producer/recipient expectations. Expectations start empty and selecting another
+artifact resets them, including untrusted/private/export/sensitive opt-ins. The
+user explicitly selects expected encryption and outer or full private validation.
+Only explicit untrusted mode permits a missing producer pin; results never call
+that producer independently trusted. Audit scope, missing freshness and bytes-only
+provenance are shown separately. Code served by the source server is not an
+independent offline verification environment.
+
+Full success can prepare a Cast/JSONL export without saving it automatically.
+Audit output is redacted by default; private verification does not opt into private
+output fields. Original bytes can also be saved deliberately, labeled unverified.
+One owned Blob URL is retained at a time and revoked on replacement, result/options
+change, discard, authentication/disabled transition or unmount. A browser save
+click is not filesystem-write confirmation; discarding tab data cannot delete
+previously saved files. Original inventories are displayed twenty files per page.
+
+Local file/passphrase inputs have no upload names and use a prevented dialog form,
+not a POST fallback. Inputs and Mantine's uncontrolled input state clear on submit,
+expectation change or cancel; reselect the key for every attempt. Errors expose no
+parser/private diagnostics or partial verified output. Generation/operation guards
+refuse late results and retain the cancellation slot until joined cleanup finishes.
+Logout, actor changes and disabled transitions retire workers, inputs, results and
+owned URLs. No authentication/secret/plaintext is persisted by this view.
+
+Actual HTTPS/Chromium/Go-WASM tests exercise clear/encrypted recording and audit,
+independent and wrong pins, wrong passphrases, explicit untrusted state, full vs
+outer, redacted/sensitive exports, captured scope, save/discard, cancellation,
+actor-change cleanup and logout during incomplete transfer. Separate local-URL
+tests cover ownership/failure/filename bounds, not a second cryptographic verifier.
 
 ## Interactive and OIDC device login
 
@@ -537,10 +577,10 @@ Real TLS/HTTP2 tests transfer clear/encrypted signed artifacts with the CLI app
 unavailable, independently verify evidence, and prove data-end cannot bypass
 blocked/failed final audit, failed recording seal, logout/revocation/cancellation.
 Protocol/Go-WASM tests cover frame bounds, selectors, canonical completion, physical
-EOF and body ownership. This adds no artifact download button, browser fetch bridge
-or decryption/key-import UI; those remain subsequent work.
+EOF and body ownership. The built artifact view and separate browser APIs above
+compose this streaming core without treating transport completion as evidence.
 
-### Portable recording evidence verification (not yet browser UI)
+### Portable recording evidence verification
 
 `pkg/recording/cast` now contains the existing complete Cast/v3 and native
 `.bcast`/`.becast` verification/decryption/export implementation, not a replacement
@@ -571,11 +611,11 @@ as actual Go/WASM under MISE/Node, including full decryption and byte-identical
 Cast export, wrong/missing key/producer, tamper/truncation/trailing input, canceled
 verification, changed ReaderAt between passes and no plaintext before verification.
 
-This does not add the browser fetch/WASM bridge, key-input/decryption controls or
-verified artifact UI. Audit journal verification still uses its native immutable
-filesystem snapshot/tree checks; extracting a real portable journal-reader
-capability remains open. It must not be replaced with fake OS/process/filesystem
-stubs, transport hashes or a second implementation of journal verification.
+The separate browser fetch/evidence workers and artifact view above use this
+core. Audit now shares its immutable byte/producer-snapshot capability with native
+real-file adapters; native filesystem/tree guards are not invented in the browser.
+No fake OS/process/filesystem stubs, transport trust pins or second journal
+verification implementation substitute for the native proofs.
 
 ### Confirmed session actions
 
