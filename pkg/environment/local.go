@@ -192,7 +192,13 @@ func (this *local) run(t TaskContext) (exitCode int, rErr error) {
 		}
 		return failf("cannot start process %v: %w", cmd.Args, err)
 	}
+	if fTty != nil {
+		// Only the child owns the slave after Start. Retaining the parent's slave
+		// keeps the master from reaching EOF after the child has exited.
+		_ = fTty.Close()
+	}
 	var outputDone chan error
+	var ptyOutputDone chan error
 	var outputWriting atomic.Int32
 	if stdoutRead != nil {
 		_ = stdoutWrite.Close()
@@ -235,9 +241,14 @@ func (this *local) run(t TaskContext) (exitCode int, rErr error) {
 	}()
 
 	if fPty != nil {
-		doCopy := func(from io.Reader, to io.Writer, name string) {
+		ptyOutputDone = make(chan error, 1)
+		doCopy := func(from io.Reader, to io.Writer, name string, output bool) {
 			defer activeRoutines.Done()
-			if _, err := io.Copy(to, from); this.isRelevantError(err) {
+			_, err := io.Copy(to, from)
+			if output {
+				ptyOutputDone <- err
+			}
+			if this.isRelevantError(err) {
 				copyDone <- err
 			} else {
 				copyDone <- nil
@@ -245,9 +256,9 @@ func (this *local) run(t TaskContext) (exitCode int, rErr error) {
 			l.Tracef("finished copy %s", name)
 		}
 		activeRoutines.Add(1)
-		go doCopy(fPty, sshSess, "pty -> ssh")
+		go doCopy(fPty, sshSess, "pty -> ssh", true)
 		activeRoutines.Add(1)
-		go doCopy(sshSess, fPty, "ssh -> pty")
+		go doCopy(sshSess, fPty, "ssh -> pty", false)
 	}
 
 	activeRoutines.Add(1)
@@ -256,6 +267,15 @@ func (this *local) run(t TaskContext) (exitCode int, rErr error) {
 		defer close(waitFinished)
 		waitErr := cmd.Wait()
 		var outputErr error
+		if ptyOutputDone != nil {
+			outputErr = waitLocalPtyOutput(t.Context(), ptyOutputDone, 2*time.Second, func() {
+				_ = fPty.Close()
+				_ = sshSess.Close()
+			})
+			if !this.isRelevantError(outputErr) {
+				outputErr = nil
+			}
+		}
 		if outputDone != nil {
 			timer := time.NewTimer(2 * time.Second)
 			defer timer.Stop()
@@ -323,6 +343,32 @@ func (this *local) run(t TaskContext) (exitCode int, rErr error) {
 				return -1, rErr
 			}
 		}
+	}
+}
+
+// Process exit alone does not prove terminal output delivery. The caller applies
+// the platform's ordinary PTY EOF/EIO classification; timeout/cancel must stay a
+// failure even if a previously blocked writer later reports success.
+func waitLocalPtyOutput(ctx context.Context, done <-chan error, timeout time.Duration, abort func()) error {
+	if err := ctx.Err(); err != nil {
+		abort()
+		return err
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		if canceled := ctx.Err(); canceled != nil {
+			abort()
+			return canceled
+		}
+		return err
+	case <-ctx.Done():
+		abort()
+		return ctx.Err()
+	case <-timer.C:
+		abort()
+		return errors.System.Newf("local PTY output did not complete before timeout")
 	}
 }
 
