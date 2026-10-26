@@ -175,24 +175,21 @@ func (this *webTerminalStream) writeOutput(channel byte, data []byte) (int, erro
 	if this.outputClosed {
 		return 0, io.ErrClosedPipe
 	}
+	// The frame allocation is constant regardless of caller data length. The
+	// socket write consumes the borrowed slice synchronously before reuse.
+	var message [webTerminalMessageLimit]byte
+	message[0] = channel
 	written := 0
 	for len(data) > 0 {
 		if err := this.ctx.Err(); err != nil {
 			return written, err
 		}
-		// Keep the allocation bound explicit, including for static range analysis.
-		n := len(data)
-		if n > webTerminalMessageLimit-1 {
-			n = webTerminalMessageLimit - 1
-		}
-		message := make([]byte, n+1)
-		message[0] = channel
-		copy(message[1:], data[:n])
+		n := copy(message[1:], data)
 		if err := this.socket.SetWriteDeadline(time.Now().Add(this.timings.write)); err != nil {
 			_ = this.Close()
 			return written, err
 		}
-		if err := this.socket.WriteMessage(websocket.BinaryMessage, message); err != nil {
+		if err := this.socket.WriteMessage(websocket.BinaryMessage, message[:n+1]); err != nil {
 			_ = this.Close()
 			return written, err
 		}

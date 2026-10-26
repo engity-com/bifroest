@@ -14,6 +14,7 @@
 *.baudit  binary
 
 # Browser inputs are hashed once and consumed on every binary build host.
+/.gitattributes text eol=lf
 /go.mod   text eol=lf
 /go.sum   text eol=lf
 /web/**   text=auto eol=lf

@@ -3,11 +3,14 @@ package https
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -164,7 +167,20 @@ func TestACMEStorageIsScopedToTheDirectoryAndRejectsReplacedDirectories(t *testi
 	_, err = separate.Certificate(context.Background(), "app.example.org", nil)
 	require.ErrorContains(t, err, "challenge publisher")
 	path := source.store.path
-	require.NoError(t, os.Rename(path, path+".moved"))
+	renameErr := os.Rename(path, path+".moved")
+	// Windows may enforce the anchor directly: EnsurePrivateDirectory's open
+	// handle denies deletion/rename. Accept only that exact native error, not an
+	// arbitrary permission or I/O failure, and prove the original store still works.
+	const windowsSharingViolation = syscall.Errno(32) // ERROR_SHARING_VIOLATION
+	if runtime.GOOS == "windows" && errors.Is(renameErr, windowsSharingViolation) {
+		require.DirExists(t, path)
+		require.NoDirExists(t, path+".moved")
+		require.NoError(t, source.store.check())
+		_, err = source.Certificate(context.Background(), "app.example.org", nil)
+		require.NoError(t, err)
+		return
+	}
+	require.NoError(t, renameErr)
 	require.NoError(t, os.Mkdir(path, 0700))
 	_, err = source.Certificate(context.Background(), "app.example.org", nil)
 	require.ErrorContains(t, err, "replaced")

@@ -129,11 +129,14 @@ func (this *FsRepository) dir(flow configuration.FlowName, id Id) (string, error
 	if err := flow.Validate(); err != nil {
 		return "", err
 	}
-	// Flow validation rejects separators/dot segments before any normalization.
-	// UUID.String reconstructs the fixed canonical representation from 16 bytes,
-	// never from request text. Base makes both single-component boundaries explicit
-	// to path analysis as well, without silently accepting invalid input aliases.
-	return filepath.Join(this.storage, filepath.Base(flow.String()), filepath.Base(id.String())), nil
+	// Reject invalid flows before any normalization. UUID.String reconstructs the
+	// canonical component from 16 bytes, never directly from request text. Enforce
+	// locality here too, rather than relying only on validation by callers/codecs.
+	flowName, sessionID := flow.String(), id.String()
+	if !filepath.IsLocal(flowName) || !filepath.IsLocal(sessionID) {
+		return "", fmt.Errorf("invalid session path component")
+	}
+	return filepath.Join(this.storage, flowName, sessionID), nil
 }
 
 func (this *FsRepository) file(flow configuration.FlowName, id Id, kind string) (string, error) {

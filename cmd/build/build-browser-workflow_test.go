@@ -68,7 +68,7 @@ func TestBrowserReleaseWorkflowBuildsOnceBeforeAllBinaryJobs(t *testing.T) {
 	require.Contains(t, string(tools), "nodejs 26.9.0")
 	attributes, err := gos.ReadFile("../../.gitattributes")
 	require.NoError(t, err)
-	for _, rule := range []string{"/go.mod   text eol=lf", "/go.sum   text eol=lf", "/web/**   text=auto eol=lf"} {
+	for _, rule := range []string{"/.gitattributes text eol=lf", "/go.mod   text eol=lf", "/go.sum   text eol=lf", "/web/**   text=auto eol=lf"} {
 		require.Contains(t, string(attributes), rule)
 	}
 }
