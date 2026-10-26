@@ -180,7 +180,11 @@ func (this *webTerminalStream) writeOutput(channel byte, data []byte) (int, erro
 		if err := this.ctx.Err(); err != nil {
 			return written, err
 		}
-		n := min(len(data), webTerminalMessageLimit-1)
+		// Keep the allocation bound explicit, including for static range analysis.
+		n := len(data)
+		if n > webTerminalMessageLimit-1 {
+			n = webTerminalMessageLimit - 1
+		}
 		message := make([]byte, n+1)
 		message[0] = channel
 		copy(message[1:], data[:n])

@@ -217,6 +217,46 @@ func TestWebSocketExecutionUsesSharedDriverRecordingAndInputHalfClose(t *testing
 	require.True(t, websocket.IsCloseError(err, websocket.CloseNormalClosure), "exit status must precede normal close: %v", err)
 }
 
+func TestWebSocketOutputChunksKeepTheExplicitAllocationBound(t *testing.T) {
+	payload := bytes.Repeat([]byte{0xff, 0, 'x'}, webTerminalMessageLimit)
+	fixture := newWebSocketFixture(t, func(task environment.TerminalTask) (int, error) {
+		if _, err := task.Terminal().Write(payload); err != nil {
+			return -1, err
+		}
+		_, err := task.Terminal().Stderr().Write(payload)
+		return 0, err
+	})
+	token := fixture.login(t)
+	conn := fixture.dial(t)
+	require.NoError(t, conn.WriteJSON(webSocketOpen(token)))
+	requireWebSocketReady(t, conn)
+	var output [2]bytes.Buffer
+	var frames [2]int
+	for {
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(3*time.Second)))
+		kind, data, err := conn.ReadMessage()
+		require.NoError(t, err)
+		if kind == websocket.TextMessage {
+			var status map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(data, &status))
+			require.Equal(t, `"exit"`, string(status["type"]))
+			require.Equal(t, "0", string(status["status"]))
+			break
+		}
+		require.Equal(t, websocket.BinaryMessage, kind)
+		require.Greater(t, len(data), 1)
+		require.LessOrEqual(t, len(data), webTerminalMessageLimit)
+		require.LessOrEqual(t, data[0], byte(1))
+		frames[data[0]]++
+		_, _ = output[data[0]].Write(data[1:])
+	}
+	for channel := range output {
+		require.Equal(t, payload, output[channel].Bytes())
+		require.Greater(t, frames[channel], 1)
+	}
+	require.Equal(t, recording.CastStatusCompleted, verifyOnlySessionRecording(t, fixture.svc, fixture.root).Cast.Result.Status)
+}
+
 func TestWebSocketNewConnectionStartsNewExecutionInOneSession(t *testing.T) {
 	var calls atomic.Int32
 	var mutex sync.Mutex

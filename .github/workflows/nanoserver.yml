@@ -52,6 +52,15 @@ jobs:
       - name: Install dependencies
         run: mise run install:go
 
+      - name: Install pinned browser toolchain
+        run: mise -C web install
+
+      - name: Install frozen browser dependencies
+        run: mise -C web run install:web
+
+      - name: Build browser before Go embedding
+        run: mise -C web run build:web
+
       - name: Set reproducible build time
         env:
           GITHUB_TOKEN: ${{ github.token }}

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	log "github.com/echocat/slf4g"
-	essh "github.com/engity-com/ssh-server-go"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/remotecommand"
@@ -305,11 +304,6 @@ func waitForKubernetesExecutionExitCode(ctx context.Context, executionId executi
 	}
 }
 
-type terminalQueueSizeFromSsh struct {
-	initial *remotecommand.TerminalSize
-	changes <-chan essh.Window
-}
-
 type terminalQueueSize struct {
 	ctx     context.Context
 	initial *remotecommand.TerminalSize
@@ -330,22 +324,6 @@ func (this *terminalQueueSize) Next() *remotecommand.TerminalSize {
 			return nil
 		}
 		return &remotecommand.TerminalSize{Width: uint16(win.Width), Height: uint16(win.Height)}
-	}
-}
-
-func (this *terminalQueueSizeFromSsh) Next() *remotecommand.TerminalSize {
-	if this.initial != nil {
-		result := this.initial
-		this.initial = nil
-		return result
-	}
-	win, ok := <-this.changes
-	if !ok {
-		return nil
-	}
-	return &remotecommand.TerminalSize{
-		Width:  uint16(win.Width),
-		Height: uint16(win.Height),
 	}
 }
 

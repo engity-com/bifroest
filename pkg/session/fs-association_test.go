@@ -470,7 +470,7 @@ func TestAssociatedSessionCreationPreviewUsesExactPersistedMetadata(t *testing.T
 	require.NoError(t, err)
 	metadata, err := info.Created(t.Context())
 	require.NoError(t, err)
-	require.Equal(t, at, metadata.At())
+	require.Equal(t, at.UTC(), metadata.At().UTC(), "the exact persisted instant, not its in-memory timezone pointer, must match")
 	request.Remote = associationRemote("")
 	second, created, err := repository.ResolveAssociatedSession(t.Context(), request)
 	require.NoError(t, err)

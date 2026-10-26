@@ -207,7 +207,7 @@ func TestForcedManagementReferenceSSHAndHTTPAgreeOnSupportedDataCeilings(t *test
 						require.Equal(t, rows[0].ID, item.ID)
 						require.Equal(t, rows[0].Flow, item.Flow)
 						require.Equal(t, rows[0].User, item.User)
-						require.Equal(t, rows[0].CreatedAt, item.CreatedAt)
+						require.Equal(t, rows[0].CreatedAt.UTC(), item.CreatedAt.UTC())
 						require.Equal(t, rows[0].Remote, item.Remote)
 					}
 				}
@@ -272,7 +272,7 @@ func TestForcedManagementShowReferenceSSHAndHTTPKeepExactIDAndPrecision(t *testi
 				decodeForcedReadReference(t, format, output, &row)
 				require.Equal(t, row.ID, item.ID)
 				require.Equal(t, row.Flow, item.Flow)
-				require.Equal(t, row.CreatedAt, item.CreatedAt)
+				require.Equal(t, row.CreatedAt.UTC(), item.CreatedAt.UTC())
 				require.Equal(t, row.Remote, item.Remote)
 			}
 		})

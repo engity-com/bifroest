@@ -126,23 +126,25 @@ type FsRepository struct {
 }
 
 func (this *FsRepository) dir(flow configuration.FlowName, id Id) (string, error) {
-	fs, err := flow.MarshalText()
-	if err != nil {
+	if err := flow.Validate(); err != nil {
 		return "", err
 	}
-	is, err := id.MarshalText()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(this.storage, string(fs), string(is)), nil
+	// Flow validation rejects separators/dot segments before any normalization.
+	// UUID.String reconstructs the fixed canonical representation from 16 bytes,
+	// never from request text. Base makes both single-component boundaries explicit
+	// to path analysis as well, without silently accepting invalid input aliases.
+	return filepath.Join(this.storage, filepath.Base(flow.String()), filepath.Base(id.String())), nil
 }
 
 func (this *FsRepository) file(flow configuration.FlowName, id Id, kind string) (string, error) {
+	if kind == "." || !filepath.IsLocal(kind) || strings.ContainsAny(kind, "/\\:\x00") {
+		return "", fmt.Errorf("invalid session file kind")
+	}
 	dir, err := this.dir(flow, id)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, kind), nil
+	return filepath.Join(dir, filepath.Base(kind)), nil
 }
 
 func (this *FsRepository) openRead(flow configuration.FlowName, id Id, kind string) (*os.File, string, error) {

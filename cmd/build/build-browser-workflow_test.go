@@ -16,12 +16,15 @@ func TestBrowserReleaseWorkflowBuildsOnceBeforeAllBinaryJobs(t *testing.T) {
 	require.NoError(t, err)
 	var workflow struct {
 		Jobs map[string]struct {
-			Needs any              `yaml:"needs"`
-			Steps []map[string]any `yaml:"steps"`
+			Needs any               `yaml:"needs"`
+			Steps []map[string]any  `yaml:"steps"`
+			Env   map[string]string `yaml:"env"`
 		} `yaml:"jobs"`
 	}
 	require.NoError(t, yaml.Unmarshal(raw, &workflow))
 	job := workflow.Jobs["browser"]
+	require.Equal(t, "0", job.Env["CGO_ENABLED"], "the plain browser runner does not provide native PAM headers")
+	require.NotEqual(t, "0", workflow.Jobs["test-container"].Env["CGO_ENABLED"], "native PAM compilation stays in the prepared container test job")
 	var commands []string
 	for _, step := range job.Steps {
 		if command, ok := step["run"].(string); ok {
@@ -68,4 +71,28 @@ func TestBrowserReleaseWorkflowBuildsOnceBeforeAllBinaryJobs(t *testing.T) {
 	for _, rule := range []string{"/go.mod   text eol=lf", "/go.sum   text eol=lf", "/web/**   text=auto eol=lf"} {
 		require.Contains(t, string(attributes), rule)
 	}
+}
+
+func TestNanoServerBuildPreparesPinnedFrontendBeforeNativeBinary(t *testing.T) {
+	raw, err := gos.ReadFile("../../.github/workflows/nanoserver.yml")
+	require.NoError(t, err)
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []map[string]any `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	require.NoError(t, yaml.Unmarshal(raw, &workflow))
+	var commands []string
+	for _, step := range workflow.Jobs["windows-local"].Steps {
+		if command, ok := step["run"].(string); ok {
+			commands = append(commands, command)
+		}
+	}
+	joined := strings.Join(commands, "\n")
+	for _, command := range []string{"mise -C web install", "mise -C web run install:web", "mise -C web run build:web", "mise run build:go:binary"} {
+		require.Contains(t, joined, command)
+	}
+	require.Less(t, strings.Index(joined, "mise -C web install"), strings.Index(joined, "mise -C web run install:web"))
+	require.Less(t, strings.Index(joined, "mise -C web run install:web"), strings.Index(joined, "mise -C web run build:web"))
+	require.Less(t, strings.Index(joined, "mise -C web run build:web"), strings.Index(joined, "mise run build:go:binary"))
 }

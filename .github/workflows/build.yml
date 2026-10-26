@@ -56,6 +56,9 @@ jobs:
       contents: read
     env:
       GITHUB_TOKEN: ""
+      # Browser integration uses the static build, like test-host. Native PAM
+      # compilation remains covered by test-container's prepared build image.
+      CGO_ENABLED: "0"
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
