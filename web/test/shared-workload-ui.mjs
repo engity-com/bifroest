@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 
 // This drives the actual built UI against the owned Bifröst binary and real
-// Kubernetes backend. It performs no SSH self-dial or management CLI action.
-const [origin, keyFile] = process.argv.slice(2);
+// Docker/Kubernetes backend. No SSH self-dial or management CLI web action.
+const [origin, keyFile, backend] = process.argv.slice(2);
 assert.match(origin, /^https:\/\/app\.example\.org:[0-9]+$/u);
 assert(keyFile);
+assert(['docker', 'kubernetes'].includes(backend));
 const browser = await chromium.launch({
   headless: true,
   args: ['--host-resolver-rules=MAP app.example.org 127.0.0.1', '--no-proxy-server'],
@@ -64,13 +65,24 @@ try {
     );
   };
   const execute = async (marker, expectedExit, update) => {
-    await page.getByText('Command', { exact: true }).click();
-    const command = `/bin/sh -c '/usr/local/bin/e2e-helper environment; printf "account="; id -u; cat /home/e2e/bifroest-web-marker; ${update ? 'printf "web-owned\\n" > /home/e2e/bifroest-web-marker; ' : ''}printf "run=${marker}\\n"; exit ${expectedExit}'`;
-    await page.getByLabel('Command to execute', { exact: true }).fill(command);
-    await page.getByRole('checkbox', { name: 'Request a PTY', exact: true }).uncheck();
+    const interactive = update && backend === 'docker';
+    const command = `/bin/sh -c '/usr/local/bin/e2e-helper environment; printf "account="; /usr/bin/id -u; printf "pty=%s\\n" "$([ -t 0 ] && printf true || printf false)"; /bin/cat /home/e2e/bifroest-web-marker; ${update ? 'printf "web-owned\\n" > /home/e2e/bifroest-web-marker; ' : ''}printf "run=${marker}\\n"; exit ${expectedExit}'`;
+    if (!interactive) {
+      await page.getByText('Command', { exact: true }).click();
+      await page.getByLabel('Command to execute', { exact: true }).fill(command);
+    }
+    await page
+      .getByRole('checkbox', { name: 'Request a PTY', exact: true })
+      .setChecked(interactive);
     await page.locator('.terminal-surface').scrollIntoViewIfNeeded();
     await page.getByRole('button', { name: 'Start new execution', exact: true }).click();
     try {
+      if (interactive) {
+        await page.locator('[data-terminal-phase="connected"]').waitFor();
+        await page.locator('.xterm-helper-textarea').focus();
+        await page.keyboard.type(`exec ${command}`);
+        await page.keyboard.press('Enter');
+      }
       await page.locator('[data-terminal-phase="exited"]').waitFor();
       assert.match(
         await page.locator('[data-terminal-phase="exited"]').textContent(),
@@ -96,6 +108,10 @@ try {
       );
     }
     const text = await page.locator('.xterm-rows').textContent();
+    assert(
+      text.includes(`pty=${interactive}`),
+      `the actual workload must confirm pty=${interactive}: ${JSON.stringify(text)}`,
+    );
     assert(
       text.includes(update ? 'ssh-owned' : 'web-owned'),
       'the browser must see the previous execution marker in the same workload',

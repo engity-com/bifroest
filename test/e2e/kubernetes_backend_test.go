@@ -28,7 +28,6 @@ type kubernetesFixture struct {
 	clusterCreated bool
 	environmentPod string
 	withBrowser    bool
-	browserOrigin  string
 }
 
 func TestOpenSSHKubernetesEnvironment(t *testing.T) {

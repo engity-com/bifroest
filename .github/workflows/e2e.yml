@@ -76,6 +76,31 @@ jobs:
       - name: Run end-to-end suite
         run: mise run test:e2e:${{ matrix.suite }}
 
+      - name: Prepare actual Docker browser E2E
+        if: matrix.suite == 'docker'
+        run: |
+          mise -C web install
+          mise -C web run install:web
+          mise -C web run build:web
+          mise -C web run install:web:browser
+
+      - name: Verify shared Docker workload through browser and OpenSSH
+        if: matrix.suite == 'docker'
+        shell: bash
+        env:
+          BIFROEST_TEST_BROWSER_UI: "1"
+        run: |
+          set -euo pipefail
+          export BIFROEST_TEST_NODE="$(mise -C web which node)"
+          mkdir -p var/e2e
+          mise x -- go test -json -count=1 -tags=e2e -timeout=15m -run '^TestOpenSSHDockerBrowserSharedWorkload$' ./test/e2e | tee var/e2e/docker-browser.json
+          mise x -- python - <<'PY'
+          import json, pathlib
+          events = [json.loads(line) for line in pathlib.Path('var/e2e/docker-browser.json').read_text().splitlines() if line.startswith('{')]
+          assert any(e.get('Action') == 'pass' and e.get('Test') == 'TestOpenSSHDockerBrowserSharedWorkload' for e in events), 'Docker browser E2E did not execute successfully'
+          assert not any(e.get('Action') in ('skip', 'fail', 'build-fail') for e in events), 'Docker browser E2E was skipped or failed'
+          PY
+
       - name: Collect runtime diagnostics
         if: failure()
         shell: bash

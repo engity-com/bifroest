@@ -731,6 +731,10 @@ func newDockerEnvironmentRecordingFixture(t *testing.T) (*fixture, error) {
 }
 
 func newDockerEnvironmentFixtureWithRecording(t *testing.T, recording bool) (*fixture, error) {
+	return newDockerEnvironmentExecutionFixture(t, recording, false)
+}
+
+func newDockerEnvironmentExecutionFixture(t *testing.T, recording, browser bool) (*fixture, error) {
 	t.Helper()
 	f, err := newFixture(t)
 	if err != nil {
@@ -783,13 +787,13 @@ func newDockerEnvironmentFixtureWithRecording(t *testing.T, recording bool) (*fi
 		}
 		f.recordingProducerID = recordingProducerID(t, filepath.Join(f.tempDir, "auditlog-key"))
 	}
-	if err := f.startHostBifroest(recording); err != nil {
+	if err := f.startHostBifroest(recording, browser); err != nil {
 		return f, err
 	}
 	return f, nil
 }
 
-func (f *fixture) startHostBifroest(recording bool) error {
+func (f *fixture) startHostBifroest(recording, browser bool) error {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return fmt.Errorf("reserve SSH listen port: %w", err)
@@ -825,6 +829,13 @@ func (f *fixture) startHostBifroest(recording bool) error {
 		yamlString(f.imageName),
 		yamlString(f.networkName),
 	)
+	if browser {
+		configuration, err = f.browserConfiguration(configuration)
+		if err != nil {
+			_ = listener.Close()
+			return err
+		}
+	}
 	if err := os.WriteFile(configurationPath, []byte(configuration), 0600); err != nil {
 		_ = listener.Close()
 		return fmt.Errorf("write Docker environment configuration: %w", err)
