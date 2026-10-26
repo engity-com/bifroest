@@ -38,6 +38,10 @@ func ForcedRead(raw string) (ReadCeiling, error) {
 	switch args[0] + " " + args[1] {
 	case "flow ls":
 		ceiling.Operation = protocol.ListFlows
+	case "audit ls":
+		// All four CLI formats expose exactly the same four summary fields.
+		// No settings, event selection, recording enumeration or transfer is implied.
+		ceiling.Operation = protocol.ListAuditlogs
 	case "session ls":
 		ceiling.Operation = protocol.ListSessions
 		ceiling.State = "active"

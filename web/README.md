@@ -296,7 +296,8 @@ client-selectable policy flags were introduced.
 `management/auditlogs/list` and `management/recordings/list` POSTs. They keep the
 existing Management metadata rights: `allowArtifactTransfer` is still required
 only for content transfer, while `includingCredentials` never expands the fixed
-DTOs. All forced-command credentials remain denied these new metadata operations.
+DTOs. A configured `audit ls` ceiling permits only the equivalent auditlog summary
+list; other forced commands and all forced recording enumeration remain denied.
 No private keys, credentials, paths or complete settings objects are returned.
 
 Pages are at most 20 entries/64 KiB, with existing operation/filter-bound `bmp1.`
@@ -577,7 +578,7 @@ reauth with cleared data while the CLI application is deliberately unavailable.
 ### Forced read ceilings (conservative subset)
 
 The server interprets only the **operator-configured** forced command, never a
-browser command. Recognized forms are `flow ls`, `session ls` and `session show`
+browser command. Recognized forms are `flow ls`, `audit ls`, `session ls` and `session show`
 with one exact canonical session UUID. Supported output flags are `--format`
 `table`/`json`/`yaml`/`cbor`; session lists also support `--flow`, `--user` and
 `--state` with the same defaults as SSH (`active`). Unique `--name=value` and
@@ -607,6 +608,20 @@ owner. Table/CBOR time values are reduced to whole seconds, matching the SSH
 format rather than exposing finer precision. `policyLimited: true` explicitly
 distinguishes withheld data from absent evidence or an unlimited lifetime; the UI
 warns and disables mutation controls. Unrestricted permissions/data are unchanged.
+
+`audit ls` permits only the existing four-field summary (name, audit enabled,
+recording enabled, encryption configured), including disabled configurations.
+These fields match SSH table/JSON/YAML/CBOR without extra projection or a new DTO.
+HTTP pagination only partitions the same complete name-ordered summary list;
+20-entry/64-KiB/cursor, quota, cancellation, recording and final-audit bounds stay.
+No settings, paths, keys, events, producers or recipient details become available.
+`includingCredentials` and `allowArtifactTransfer` cannot widen a forced summary
+read into another operation. In particular, selecting a row still only chooses
+download selectors; recording enumeration, audit/recording downloads and actions
+remain denied. Real SSH/HTTP comparisons cover all four formats; actual HTTPS/
+Go-WASM-key/Chromium covers 20+2 summary pages, explicit selection, denied transfers
+even when transfer is configured, no automatic requests and logout cleanup.
+
 Audit tasks mark such reads as forced. This is not complete ForcedCommand parity:
 all mutation and dispatcher mappings, other CLI operations and unsupported forms
 remain closed. Native SSH/HTTP reference tests compare actual formats/columns,

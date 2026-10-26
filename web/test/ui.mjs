@@ -6,7 +6,10 @@ import { chromium } from 'playwright';
 import { exerciseKey } from './key-ui.mjs';
 import { exerciseDevice, exerciseInteractive, exerciseLostClaim } from './login-ui.mjs';
 import { exerciseManagementActions } from './management-action-ui.mjs';
-import { exerciseManagementForced } from './management-forced-ui.mjs';
+import {
+  exerciseManagementForced,
+  exerciseManagementForcedAudit,
+} from './management-forced-ui.mjs';
 import { exerciseManagement } from './management-ui.mjs';
 import { exerciseTerminal } from './terminal-ui.mjs';
 
@@ -114,6 +117,11 @@ try {
     let page = await open();
     if (process.argv[3] === 'management-forced') {
       await exerciseManagementForced(page, process.argv[4], logout);
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.argv[3] === 'management-forced-audit') {
+      await exerciseManagementForcedAudit(page, process.argv[4], logout);
       assert.deepEqual(errors, []);
       return;
     }

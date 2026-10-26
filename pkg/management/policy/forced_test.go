@@ -18,6 +18,10 @@ func TestForcedReadRecognizesOnlyExplicitReadCeilings(t *testing.T) {
 		table     bool
 	}{
 		{"flow ls", protocol.ListFlows, false},
+		{"audit ls", protocol.ListAuditlogs, false},
+		{`audit ls --format='json'`, protocol.ListAuditlogs, false},
+		{"audit ls --format yaml", protocol.ListAuditlogs, false},
+		{"audit ls --format=cbor", protocol.ListAuditlogs, false},
 		{"  flow ls --format=json", protocol.ListFlows, false},
 		{`session ls --flow=work --user='ALICE' --state=all --format table`, protocol.ListSessions, true},
 		{"session ls --format=cbor", protocol.ListSessions, false},
@@ -38,6 +42,29 @@ func TestForcedReadRecognizesOnlyExplicitReadCeilings(t *testing.T) {
 	show, err := ForcedRead("session show " + id)
 	require.NoError(t, err)
 	require.False(t, show.Allows(protocol.ReadRequest{Operation: protocol.ShowSession, ID: "00000000-0000-0000-0000-000000000001"}))
+}
+
+func TestForcedAuditListGrantsOnlyTheExistingSummaryOperation(t *testing.T) {
+	for _, format := range []string{"table", "json", "yaml", "cbor"} {
+		rule, err := ForcedRead("audit ls --format=" + format)
+		require.NoError(t, err)
+		request, err := (protocol.ReadRequest{Operation: protocol.ListAuditlogs, Limit: 1}).Normalize()
+		require.NoError(t, err)
+		require.True(t, rule.Allows(request))
+		request.After = request.Next("default", "")
+		request, err = request.Normalize()
+		require.NoError(t, err)
+		require.True(t, rule.Allows(request), "paging may narrow the same complete SSH summary list")
+		for _, other := range []protocol.ReadOperation{protocol.ListFlows, protocol.ListSessions, protocol.ShowSession, protocol.ListRecordings, "sessions.dispose", "audit.export"} {
+			require.False(t, rule.Allows(protocol.ReadRequest{Operation: other}), format+"/"+string(other))
+		}
+	}
+	for _, raw := range []string{
+		"audit", "audit list", "audit show default", "audit events default", "audit export default", "audit ls default", "audit ls --name=default", "audit ls --flow=work", "audit ls --user=alice", "audit ls --state=all", "audit ls --limit=20", "audit ls --after=default", "audit ls --includingCredentials", "audit ls --configuration=private-file", "audit ls --format=json --format=yaml", "audit ls --format=internal-cbor", "audit ls --format=text", "audit ls --format=JSON", "audit ls --format=@private", "audit ls #comment", "audit ls && flow ls", "recording ls default --format=json",
+	} {
+		_, err := ForcedRead(raw)
+		require.Error(t, err, raw)
+	}
 }
 
 func TestForcedReadDeniesUnknownAmbiguousMutationAndDispatcherForms(t *testing.T) {

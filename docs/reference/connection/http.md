@@ -124,9 +124,10 @@ POSTs provide artifact catalogs under the same metadata authorization and driver
 not the content-transfer permission. Both accept string `limit`/`after`; recordings
 also require `auditlog`. The same 20-entry/64-KiB bounds apply. Cursors bind operation
 and filters; recording cursors bind auditlog and canonical recording ID. Selectors
-grant no permission, snapshot consistency or freshness. All forced-command
-credentials remain denied these two new operations; existing forced-read ceilings
-are not widened. `includingCredentials` does not add fields to these fixed DTOs.
+grant no permission, snapshot consistency or freshness. A configured `audit ls`
+ceiling permits the equivalent auditlog summaries only; all forced recording
+enumeration and other cross-operation requests remain denied.
+`includingCredentials` does not add fields to these fixed DTOs.
 
 Auditlog rows contain only name/enabled/recording-enabled/encryption-configured
 metadata, including disabled configurations. Recording rows reuse the existing Go
@@ -147,11 +148,22 @@ pages on authentication changes/logout and refuses late replies after cancellati
 
 ### Conservative ForcedCommand read equivalence
 
-Only trusted configured `flow ls`, `session ls` and `session show <canonical UUID>` forms are mapped to the corresponding typed read. Supported unique flags are `--format` (`table`/`json`/`yaml`/`cbor`) and, for session lists, the existing `--flow`/`--user`/`--state` filters. SSH-compatible POSIX token splitting accepts quoted values and `--flag=value`/`--flag value`; no browser-supplied command enters this parser. Unknown/duplicate options, file/config expansion, aliases, shell operators/command chains, malformed values, wire/dispatcher names and all mutation forms remain fail-closed. This subset does not claim every spelling accepted by the CLI.
+Only trusted configured `flow ls`, `audit ls`, `session ls` and `session show <canonical UUID>` forms are mapped to the corresponding typed read. Supported unique flags are `--format` (`table`/`json`/`yaml`/`cbor`) and, for session lists, the existing `--flow`/`--user`/`--state` filters. SSH-compatible POSIX token splitting accepts quoted values and `--flag=value`/`--flag value`; no browser-supplied command enters this parser. Unknown/duplicate options, file/config expansion, aliases, shell operators/command chains, malformed values, wire/dispatcher names and all mutation forms remain fail-closed. This subset does not claim every spelling accepted by the CLI.
 
 Requested filters are intersected with forced filters, including `active` as the forced list default. Paging or requesting `all`, another flow/user, a show or a mutation cannot widen that operation's authority. A fixed show retains its exact UUID and the CLI's global ambiguity refusal, even when HTTP supplies a flow. Forced session responses never add association issuer/subject. Table lists omit remote/last-access/valid-until metadata; other recognized formats/show retain only their existing base fields. Table/CBOR timestamps are second-precision as over SSH. `policyLimited: true` marks policy withholding explicitly, not missing ownership or an infinite lifetime; the UI labels it accordingly. Unrestricted reads remain unchanged and forced reads are audited as forced tasks.
 
 Real SSH/HTTP reference tests exercise all four formats and the forced override of a different client command. API tests verify filter intersections/defaults, paging, exact-ID/global ambiguity and blocked cross-operation/mutation access; actual HTTPS/Chromium signs in via Go/WASM with a forced key and verifies field withholding/denied access. Exact forced mutation/dispatcher equivalence and other operations remain pending. Keep using their existing SSH restrictions rather than removing them.
+
+For `audit ls`, all four SSH formats already expose exactly name/audit-enabled/
+recording-enabled/encryption-configured. The typed response reuses this exact
+summary, including disabled configurations; paging only partitions the same
+name-ordered list. It adds no settings, paths, credentials, event/producer/recipient
+details or new policy marker for fields that were never withheld. The same quota,
+20-entry/64-KiB response, cancellation, recording seal and final-audit checks apply.
+Other metadata, session actions, recording enumeration and artifact transfers
+remain denied even with `allowArtifactTransfer: true`; catalog selection is not
+permission or an automatic download. Native SSH/HTTP comparisons and real HTTPS/
+Go-WASM-key/Chromium tests exercise these boundaries and 20+2 summary pages.
 
 An extra `active` filter is allowed only when the forced list already selects `active`. This predicate also tests exact validity, not just the visible state; otherwise row presence could reveal a withheld or finer-grained deadline. For other forced states choose `all` or a normal state (`new`/`authorized`/`disposed`) explicitly, rather than the UI's initial `active` filter. Tests cover this refusal in every output format.
 
