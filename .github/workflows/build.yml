@@ -118,6 +118,7 @@ jobs:
     env:
       CGO_ENABLED: "0"
       GITHUB_TOKEN: ""
+      GOFLAGS: "-p=2"
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -137,6 +138,9 @@ jobs:
       - name: Install MISE
         uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
 
+      - name: Install pinned WebCrypto test runtime
+        run: mise -C web install node
+
       - name: Install dependencies
         run: mise run install:go
 
@@ -147,7 +151,7 @@ jobs:
       - name: Test
         env:
           MISE_GITHUB_TOKEN: ""
-        run: mise run test:go
+        run: mise -C web exec -- node scripts/native-go-tests.mjs
 
   test-container:
     name: Tests ${{ matrix.os }}

@@ -25,6 +25,17 @@ func TestBrowserReleaseWorkflowBuildsOnceBeforeAllBinaryJobs(t *testing.T) {
 	job := workflow.Jobs["browser"]
 	require.Equal(t, "0", job.Env["CGO_ENABLED"], "the plain browser runner does not provide native PAM headers")
 	require.NotEqual(t, "0", workflow.Jobs["test-container"].Env["CGO_ENABLED"], "native PAM compilation stays in the prepared container test job")
+	host := workflow.Jobs["test-host"]
+	require.Equal(t, "-p=2", host.Env["GOFLAGS"])
+	var hostCommands []string
+	for _, step := range host.Steps {
+		if command, ok := step["run"].(string); ok {
+			hostCommands = append(hostCommands, command)
+		}
+	}
+	hostJoined := strings.Join(hostCommands, "\n")
+	require.Contains(t, hostJoined, "mise -C web install node")
+	require.Contains(t, hostJoined, "mise -C web exec -- node scripts/native-go-tests.mjs")
 	var commands []string
 	for _, step := range job.Steps {
 		if command, ok := step["run"].(string); ok {

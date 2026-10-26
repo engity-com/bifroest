@@ -4,6 +4,7 @@ package browserauth
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -35,6 +36,8 @@ func TestChallengeInteroperatesWithNonExportableWebCryptoSigningKey(t *testing.T
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, node, "--input-type=module", "-e", webCryptoProofTestScript)
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
 	stdin, err := command.StdinPipe()
 	require.NoError(t, err)
 	stdout, err := command.StdoutPipe()
@@ -42,7 +45,10 @@ func TestChallengeInteroperatesWithNonExportableWebCryptoSigningKey(t *testing.T
 	require.NoError(t, command.Start())
 	t.Cleanup(func() { _ = stdin.Close(); _ = command.Process.Kill(); _ = command.Wait() })
 	scanner := bufio.NewScanner(stdout)
-	require.True(t, scanner.Scan(), "WebCrypto did not create its independent non-exportable keys")
+	if !scanner.Scan() {
+		processErr := command.Wait()
+		t.Fatalf("WebCrypto did not create its independent non-exportable keys: process=%v context=%v scan=%v stderr=%q", processErr, ctx.Err(), scanner.Err(), stderr.String())
+	}
 	var initial struct {
 		PublicKey             PublicKey `json:"publicKey"`
 		SigningExtractable    bool      `json:"signingExtractable"`
@@ -56,7 +62,10 @@ func TestChallengeInteroperatesWithNonExportableWebCryptoSigningKey(t *testing.T
 	challenge, err := NewChallenge(initial.PublicKey, proofTestContext())
 	require.NoError(t, err)
 	require.NoError(t, json.NewEncoder(stdin).Encode(base64.StdEncoding.EncodeToString(challenge.Bytes())))
-	require.True(t, scanner.Scan(), "WebCrypto did not return a possession signature")
+	if !scanner.Scan() {
+		processErr := command.Wait()
+		t.Fatalf("WebCrypto did not return a possession signature: process=%v context=%v scan=%v stderr=%q", processErr, ctx.Err(), scanner.Err(), stderr.String())
+	}
 	var encoded string
 	require.NoError(t, json.Unmarshal(scanner.Bytes(), &encoded))
 	signature, err := base64.StdEncoding.Strict().DecodeString(encoded)
