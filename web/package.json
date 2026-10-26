@@ -15,6 +15,7 @@
     "lint": "biome lint .",
     "check": "biome check --error-on-warnings . && tsc --noEmit",
     "test": "node --test test/frontend-notices.test.mjs && vitest run && node test/restart.mjs",
+    "test:release": "node --test test/browser-release.test.mjs",
     "test:browser:install": "playwright install chromium --only-shell"
   },
   "dependencies": {

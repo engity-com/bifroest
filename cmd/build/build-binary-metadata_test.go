@@ -22,6 +22,7 @@ func TestBinaryMetadataRestoresPackagingInputs(t *testing.T) {
 	binary.thirdPartyLicenseInventory = &thirdPartyLicenseInventory{modules: []thirdPartyLicenseModule{{
 		names: []string{"example.com/module"}, version: "v1.2.3", licenseExpression: "MIT",
 	}}}
+	testBrowserManifest(t, binary)
 	require.NoError(t, build.binary.save(binary, notice))
 
 	loaded, loadedNotice, err := build.binary.load(t.Context(), p)
@@ -43,6 +44,7 @@ func TestBinaryMetadataRejectsMissingAndModifiedInputs(t *testing.T) {
 
 	_, _, err := build.binary.load(t.Context(), p)
 	require.ErrorContains(t, err, "cannot load binary build metadata")
+	testBrowserManifest(t, binary)
 	require.NoError(t, build.binary.save(binary, notice))
 	require.NoError(t, gos.WriteFile(binary.filepath, []byte("modified binary"), 0644))
 	_, _, err = build.binary.load(t.Context(), p)
@@ -65,6 +67,7 @@ func TestBinaryMetadataRejectsWrongPlatformAndIncompleteInventory(t *testing.T) 
 	notice := testReleaseManifestFile(t, bc, p, buildArtifactTypeNotice, "bifroest-linux-armv6-generic.third-party-notices.txt", "notice", nil)
 	binary.thirdPartyNoticesFilepath = notice.filepath
 	binary.thirdPartyLicenseInventory = &thirdPartyLicenseInventory{modules: []thirdPartyLicenseModule{{names: []string{"example.com/module"}, licenseExpression: "MIT"}}}
+	testBrowserManifest(t, binary)
 	require.NoError(t, build.binary.save(binary, notice))
 	filename := build.binary.metadataFilepath(binary)
 	raw, err := gos.ReadFile(filename)

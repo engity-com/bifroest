@@ -12,3 +12,8 @@
 *.bcast   binary
 *.beaudit binary
 *.baudit  binary
+
+# Browser inputs are hashed once and consumed on every binary build host.
+/go.mod   text eol=lf
+/go.sum   text eol=lf
+/web/**   text=auto eol=lf

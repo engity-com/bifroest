@@ -19,3 +19,14 @@ before insertion. Real built-app Chromium tests must remain free of CSP
 violations. Remove/review this transformation when changing the locked xterm
 version. The app component inventory records the local bundling patch; this is
 not a claim of an unchanged upstream binary.
+
+## Release inventory
+
+`browser-release.mjs` inventories the exact generated files, conservative
+production npm/Go-WASM/runtime components, lockfiles, applicable project Go
+sources, build scripts and local bundling patches. Revision and relevant-input
+dirty status are explicit. A normal pinned MISE build creates `browser-build.json`;
+an explicit development runtime override does not become release-eligible.
+Asset hashes prove only those bytes, npm integrity identifies the locked source
+archive, and publisher license supplements prove text only. No signed source
+provenance, reproducibility or exact tree-shaken dependency claim is made.

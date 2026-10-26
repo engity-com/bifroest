@@ -189,6 +189,18 @@ relates every artifact to its platform, edition, media type and SHA-256 digest.
 Use [the checksum file](<<release_asset_url("bifroest-checksums.txt")>>) to verify
 all downloadable release assets.
 
+Builds with the embedded browser UI also include `BROWSER_BUILD.json` in the
+archive and beside the image's legal resources. The release manifest's
+`browserBuildDigest` binds that inventory per variant. It records the exact
+embedded asset hashes and conservative browser production/WASM dependency
+contexts, which are also included in the notices and both SBOM formats. Locked
+npm archive integrity is not a hash of the compiled JavaScript. This is unsigned
+build metadata, not a signed provenance, exact upstream-source correspondence,
+tree-shaken-usage or independently reproduced-build attestation. In particular,
+the documented `react-remove-scroll-bar@2.3.8` publisher supplement supplies
+license text only, not a verified npm-tarball/source match. Inspect the artifacts
+for the release you actually install; older releases may not contain this field.
+
 <<compliance_matrix()>>
 
 OCI entries link to the container package. The abbreviated digest identifies

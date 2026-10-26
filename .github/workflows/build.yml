@@ -49,6 +49,61 @@ env:
   BIFROEST_VENDOR: "Engity GmbH"
 
 jobs:
+  browser:
+    name: Browser assets and inventory
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GITHUB_TOKEN: ""
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.commit || inputs.ref }}
+
+      - name: Install MISE
+        uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
+
+      - name: Install pinned browser toolchain
+        run: mise -C web install
+
+      - name: Install frozen dependencies without lifecycle scripts
+        run: mise -C web run install:web
+
+      - name: Check browser sources
+        run: mise -C web run lint:web
+
+      - name: Build browser before any release binary
+        run: mise -C web run build:web
+
+      - name: Check browser build inventory
+        run: mise -C web exec -- bun run test:release
+
+      - name: Install Chromium
+        run: mise -C web run install:web:browser
+
+      - name: Test browser
+        run: mise -C web run test:web
+
+      - name: Test built HTTPS browser and shared Go core
+        env:
+          BIFROEST_TEST_BROWSER_UI: "1"
+          BIFROEST_TEST_BROWSER_CLIENT: "1"
+        run: |
+          export BIFROEST_TEST_NODE="$(mise -C web which node)"
+          mise -C web run test:go
+
+      - name: Upload exact browser assets for every binary host
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: browser-assets
+          path: pkg/webui/assets
+          retention-days: 1
+          if-no-files-found: error
+
   test-host:
     name: Tests ${{ matrix.os }}
     permissions:
@@ -66,7 +121,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.commit || inputs.ref }}
 
       - name: Cache Go
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -108,7 +163,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.commit || inputs.ref }}
 
       - name: Cache Go
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -157,6 +212,7 @@ jobs:
 
   binary-host:
     name: Binary ${{ matrix.os }}/${{ matrix.arch }}/${{ matrix.edition }}
+    needs: browser
     permissions:
       contents: read
     strategy:
@@ -170,7 +226,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.commit || inputs.ref }}
 
       - name: Cache Go
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -188,6 +244,12 @@ jobs:
 
       - name: Set reproducible build time
         run: mise run ci:write-build-epoch
+
+      - name: Download verified browser assets before Go embedding
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: browser-assets
+          path: pkg/webui/assets
 
       - name: Build binary
         run: mise run build:go:binary -- --os=${{ matrix.os }} --arch=${{ matrix.arch }} --edition=${{ matrix.edition }}
@@ -209,6 +271,7 @@ jobs:
 
   binary-container:
     name: Binary ${{ matrix.os }}/${{ matrix.arch }}/${{ matrix.edition }}
+    needs: browser
     permissions:
       contents: read
     strategy:
@@ -224,7 +287,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.commit || inputs.ref }}
 
       - name: Git configure
         run: git config --global --add safe.directory "$(pwd)"
@@ -245,6 +308,12 @@ jobs:
 
       - name: Set reproducible build time
         run: mise run ci:write-build-epoch
+
+      - name: Download verified browser assets before Go embedding
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: browser-assets
+          path: pkg/webui/assets
 
       - name: Build binary
         run: mise run build:go:binary -- --os=${{ matrix.os }} --arch=${{ matrix.arch }} --edition=${{ matrix.edition }}
@@ -274,7 +343,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.commit || inputs.ref }}
 
       - name: Git configure
         run: git config --global --add safe.directory "$(pwd)"

@@ -12,4 +12,5 @@ repository during this check; the license-source checkout identifies itself as
 and npm integrity remain locked separately. A version-specific supplement is
 accepted only for the declared MIT identifier and a matching text hash; future
 versions without their own license text must be reviewed again. Builds do not
-download license material. Release-wide provenance/SBOM integration remains open.
+download license material. Release notices/SBOMs preserve this caveat; their
+browser inventory is unsigned build metadata, not an exact-source attestation.

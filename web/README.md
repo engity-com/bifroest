@@ -349,6 +349,48 @@ outer, redacted/sensitive exports, captured scope, save/discard, cancellation,
 actor-change cleanup and logout during incomplete transfer. Separate local-URL
 tests cover ownership/failure/filename bounds, not a second cryptographic verifier.
 
+## Release build and inventories
+
+Use only the MISE-selected toolchains: `mise -C web install`, then
+`mise -C web run install:web`, `mise -C web run build:web` and
+`mise -C web exec -- bun run test:release`. The nested `web/.tool-versions`
+pins Node 26.9.0 without changing the root Go toolchain. Bun remains 1.4.4;
+installation is frozen and lifecycle scripts are disabled.
+
+The normal frontend build writes `browser-build.json`: exact asset lengths/
+SHA-256s, conservative npm/Go-WASM/runtime components, pinned toolchains, the
+checkout revision, explicit relevant-input dirty state, project Go/WASM inputs,
+lockfiles/build scripts and the local xterm bundling patch. It is **unsigned build
+metadata**, not a source-equivalence, tree-shaken-usage or reproducibility proof.
+Npm integrity describes the locked source archive, never the shipped bundle hash.
+License supplements remain text-only evidence with their original caveats.
+
+`cmd/build` refuses release binaries without this complete inventory, the expected
+revision, exact current inputs and the exact listed asset set; it checks again
+after compilation. API-only source development with direct `go build` remains
+available. An explicit `BIFROEST_GO_WASM_EXEC` development override intentionally
+does not produce a release-eligible manifest. Local modified inputs are marked
+dirty; GitHub Actions refuses dirty browser inputs.
+
+Binary-build metadata v2 binds the platform/revision/build time, binary, combined
+notices and a per-platform `.browser-build.json` sidecar by digest. A separate
+packaging host restores and validates these files; it neither rebuilds the UI nor
+substitutes its own frontend. Version-1 binary metadata cannot prove the browser
+inventory and must be rebuilt, not silently upgraded. Archives contain
+`BROWSER_BUILD.json`; images put it beside the existing release legal resources.
+The release manifest records `browserBuildDigest` for each archive variant.
+Third-party notices include all four frontend/WASM notice texts. SPDX 2.3 and
+CycloneDX 1.6 describe the embedded assets with their actual hashes and add separate
+browser dependency contexts, including modules absent from the native binary.
+Source archive integrity and asset bytes remain explicitly different evidence.
+
+The shared workflow builds/checks/tests one pinned browser bundle and downloads
+that exact artifact before Go embedding on each binary host/container. All
+checkouts prefer the resolved commit over a moving ref. Web-only changes trigger
+the existing backend/release checks. Configuration/unit/local packaging checks are
+not hosted Actions, Darwin-signing or Docker-engine execution evidence. No new
+publish operation or cryptographic source attestation is introduced here.
+
 ## Local recording playback
 
 After successful full private recording verification with export explicitly

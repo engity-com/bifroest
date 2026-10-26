@@ -3,12 +3,15 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import { buildBrowserEvidence } from './scripts/browser-evidence.mjs';
 import { buildBrowserKey } from './scripts/browser-key.mjs';
+import type { BrowserInputs } from './scripts/browser-release.mjs';
+import { captureBrowserInputs, writeBrowserRelease } from './scripts/browser-release.mjs';
 import { buildBrowserTransfer } from './scripts/browser-transfer.mjs';
 import { writeFrontendNotices } from './scripts/frontend-notices.mjs';
 import { xtermDocumentPlugin } from './scripts/xterm-document.mjs';
 
 const output = new URL('../pkg/webui/assets/', import.meta.url);
 const marker = readFileSync(new URL('README.txt', output));
+let browserInputs: BrowserInputs | undefined;
 const xtermVersion = JSON.parse(
   readFileSync(new URL('./node_modules/@xterm/xterm/package.json', import.meta.url), 'utf8'),
 ).version as string;
@@ -55,6 +58,11 @@ export default defineConfig({
     xtermDocumentPlugin(xtermVersion),
     {
       name: 'retain-embed-marker',
+      buildStart() {
+        if (!process.env.BIFROEST_GO_WASM_EXEC) {
+          browserInputs = captureBrowserInputs();
+        }
+      },
       closeBundle() {
         mkdirSync(output, { recursive: true });
         writeFileSync(new URL('README.txt', output), marker);
@@ -62,6 +70,13 @@ export default defineConfig({
         buildBrowserKey(output);
         buildBrowserTransfer(output);
         buildBrowserEvidence(output);
+        // Explicit development runtimes remain usable, never release-eligible.
+        if (!process.env.BIFROEST_GO_WASM_EXEC) {
+          if (browserInputs === undefined) {
+            throw new Error('Browser input snapshot unavailable');
+          }
+          writeBrowserRelease(output, undefined, browserInputs);
+        }
       },
     },
   ],

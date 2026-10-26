@@ -55,3 +55,20 @@ does not provide a conclusion.
 
 The documentation build toolchain is not embedded in or distributed with
 Bifröst artifacts and is therefore outside this artifact license policy.
+
+## Embedded browser components
+
+Browser-enabled builds additionally carry production npm, Go/WASM and Go-runtime
+notices, their reviewed component inventories and `BROWSER_BUILD.json`. Browser
+license decisions are scoped to that inventory rather than inferred from the
+native Go-module policy. SPDX/CycloneDX include separate browser dependency
+contexts and exact embedded-asset hashes; the conservative production inventory
+does not claim that every dependency survives tree shaking. Npm archive integrity
+is recorded as source metadata, not as the compiled asset hash.
+
+An explicit version/hash-bound publisher license-text supplement is used for
+`react-remove-scroll-bar@2.3.8`, whose npm archive lacks a license file. Its pinned
+publisher text is not proof of an exact npm-tarball/source match; that remains
+unverified. Builds do not fetch license material at runtime or silently approve a
+new version using this exception. The inventory is build metadata, not a signed
+source-provenance attestation.
