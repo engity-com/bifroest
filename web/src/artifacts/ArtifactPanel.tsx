@@ -13,6 +13,7 @@ import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
 import type { Message } from '../ui/messages';
 import { t } from '../ui/messages';
+import { ArtifactCatalog } from './ArtifactCatalog';
 import type { EvidenceOptions, VerifiedArtifact } from './evidence-protocol';
 import { EvidenceError, evidenceOptions } from './evidence-protocol';
 import { LocalArtifactDownload } from './local-download';
@@ -245,6 +246,19 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
     >
       <Title order={2}>{t('artifactTitle')}</Title>
       <Alert color="blue">{t('artifactIntroduction')}</Alert>
+      <ArtifactCatalog
+        access={access}
+        disabled={locked}
+        onSelect={(request) => {
+          if (disabled || operation.current !== null) {
+            return;
+          }
+          setKind(request.kind);
+          setAuditlog(request.auditlog);
+          setID(request.kind === 'recording' ? request.id : '');
+          selectionChanged();
+        }}
+      />
       {notice !== null && (
         <Alert role="status" color={notice === 'artifactCancelled' ? 'yellow' : 'red'}>
           {t(notice)}

@@ -54,6 +54,15 @@ export async function exerciseManagementForced(page, file, logout) {
     name: 'Artifacts and client-side evidence',
     exact: true,
   });
+  const catalog = artifacts.getByRole('region', {
+    name: 'Artifact catalog (server metadata)',
+    exact: true,
+  });
+  await catalog.getByRole('button', { name: 'Load auditlogs', exact: true }).click();
+  await catalog
+    .getByText('The catalog request could not be confirmed or is not permitted.', { exact: false })
+    .waitFor();
+  assert.equal(await catalog.getByRole('table').count(), 0);
   await artifacts.getByRole('textbox', { name: 'Artifact auditlog', exact: true }).fill('default');
   await artifacts
     .getByRole('textbox', { name: 'Recording ID', exact: true })

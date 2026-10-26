@@ -2,6 +2,20 @@ import assert from 'node:assert/strict';
 
 export async function exerciseManagementActions(page, login, logout) {
   let commits = 0;
+  const responses = [];
+  const networkFailures = [];
+  page.on('response', (response) => {
+    if (new URL(response.url()).pathname.includes('/management/')) {
+      responses.push(response);
+    }
+  });
+  page.on('requestfailed', (request) => {
+    networkFailures.push({
+      path: new URL(request.url()).pathname,
+      method: request.method(),
+      error: request.failure()?.errorText,
+    });
+  });
   page.on('request', (request) => {
     if (request.url().endsWith('/management/sessions/confirm')) {
       commits++;
@@ -59,7 +73,51 @@ export async function exerciseManagementActions(page, login, logout) {
     await row.waitFor();
     const id = await row.locator('td').first().textContent();
     await row.getByRole('button', { name: /^Session details / }).click();
-    await page.getByRole('region', { name: 'Session details', exact: true }).waitFor();
+    try {
+      await page.getByRole('region', { name: 'Session details', exact: true }).waitFor();
+    } catch (error) {
+      const replies = [];
+      for (const response of responses) {
+        const path = new URL(response.url()).pathname;
+        const headers = response.headers();
+        const reply = {
+          path,
+          status: response.status(),
+          mediaType: headers['content-type'],
+          length: headers['content-length'],
+        };
+        if (path.endsWith('/sessions/show') && response.status() === 200) {
+          try {
+            const body = await response.json();
+            // Only shape/selector diagnostics, never credentials, auth bodies,
+            // confirmation handles or arbitrary backend data.
+            reply.shape = {
+              fields: Object.keys(body),
+              version: body.version,
+              operation: body.operation,
+              sessionFields:
+                body.session === null || typeof body.session !== 'object'
+                  ? null
+                  : Object.keys(body.session),
+            };
+          } catch {
+            reply.shape = 'unavailable';
+          }
+        }
+        replies.push(reply);
+      }
+      throw new Error(
+        JSON.stringify({
+          step: 'session-details',
+          replies,
+          networkFailures,
+          notices: await page.getByRole('status').allTextContents(),
+          headings: await page.getByRole('heading').allTextContents(),
+          csp: await page.evaluate(() => window.cspViolations),
+        }),
+        { cause: error },
+      );
+    }
     return `worker/${id}`;
   }
   const id = await target();

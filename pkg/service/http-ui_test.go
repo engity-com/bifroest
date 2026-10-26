@@ -20,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
@@ -80,6 +81,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	core, err := os.ReadFile(filepath.Join(root, "var", "webui-client-build", "remember.js"))
 	require.NoError(t, err)
 	var svc *service
+	var lifecycleRecorder *recordingAuditRecorder
 	var protocolHandler http.Handler
 	var provider *oidcAssociationProvider
 	var keyFixture string
@@ -90,7 +92,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	if mode == "oidc" || mode == "oidc-cancel" {
 		svc, protocolHandler, provider, _ = webOidcLoginFixture(t, mode == "oidc-cancel")
 	} else {
-		svc, _, _ = webTestFixture(t, func(conf *configuration.Configuration) {
+		svc, _, lifecycleRecorder = webTestFixture(t, func(conf *configuration.Configuration) {
 			conf.Flows[0].Http.RequestUser = commonBool(requestUser)
 			if mode == "management" {
 				base := conf.Flows[0]
@@ -297,6 +299,13 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	output, err := command.CombinedOutput()
 	if err != nil && terminalCounters != nil {
 		t.Logf("terminal backend runs=%d resizes=%d interrupts=%d", terminalCounters.runs.Load(), terminalCounters.resizes.Load(), terminalCounters.interrupts.Load())
+	}
+	if err != nil && lifecycleRecorder != nil {
+		for _, event := range lifecycleRecorder.eventsSnapshot() {
+			if event.Name == audit.EventNameSessionTaskCompleted || event.Name == audit.EventNameSessionRecordingFailed || event.Name == audit.EventNameSessionRecordingIncomplete {
+				t.Logf("UI failure lifecycle: name=%s outcome=%s reason=%s category=%s session=%s connection=%s", event.Name, event.Outcome, event.Reason, event.ErrorCategory, event.SessionId, event.ConnectionId)
+			}
+		}
 	}
 	require.NoError(t, err, "%s", output)
 	var result struct {

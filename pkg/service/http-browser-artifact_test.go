@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -57,7 +58,7 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 		node, err = exec.LookPath("node")
 		require.NoError(t, err)
 	}
-	for _, mode := range []string{"normal", "encrypted", "ui-clear", "ui-encrypted", "held-success", "held-failure"} {
+	for _, mode := range []string{"normal", "encrypted", "ui-clear", "ui-encrypted", "catalog-clear", "catalog-encrypted", "held-success", "held-failure"} {
 		t.Run(mode, func(t *testing.T) {
 			var keyPath, recipient string
 			private := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x42}, ed25519.SeedSize))
@@ -70,7 +71,7 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 				require.NoError(t, os.WriteFile(keyPath, pem.EncodeToMemory(block), 0600))
 				recipient = ssh.FingerprintSHA256(public)
 			}
-			svc, _, _ := executionTestFixture(t, nil, func(conf *configuration.Configuration) {
+			svc, recorder, _ := executionTestFixture(t, nil, func(conf *configuration.Configuration) {
 				conf.Http = &configuration.Http{}
 				require.NoError(t, conf.Http.SetDefaults())
 				conf.Http.Enabled = true
@@ -80,15 +81,37 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 				httpListenerTestCertificate(t, conf, key)
 				conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{AllowArtifactTransfer: true}
 				conf.Flows[0].DiscoverAsSlug = "Work"
-				if strings.HasPrefix(mode, "ui-") {
+				if strings.HasPrefix(mode, "ui-") || strings.HasPrefix(mode, "catalog-") {
 					settings := conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple)
 					settings.Entries = append(settings.Entries, configuration.AuthorizationSimpleEntry{Name: "bob", Password: bfcrypto.Password("plain:correct")})
 				}
 				if strings.HasSuffix(mode, "encrypted") {
 					conf.Auditlogs[0].EncryptionPublicKey = bfcrypto.PublicKeys(string(ssh.MarshalAuthorizedKey(public)))
 				}
+				if strings.HasPrefix(mode, "catalog-") {
+					root := filepath.Dir(conf.Session.V.(*configuration.SessionFs).Storage)
+					for index := range 21 {
+						var current configuration.Auditlog
+						require.NoError(t, current.SetDefaults())
+						current.Name = configuration.AuditlogName(fmt.Sprintf("catalog%02d", index))
+						current.Enabled = index != 20
+						current.IdentityFile = filepath.Join(root, current.Name.String()+"-signer")
+						current.Directory = filepath.Join(root, current.Name.String()+"-journal")
+						current.Recording.Enabled = true
+						current.Recording.Directory = filepath.Join(root, current.Name.String()+"-recordings")
+						if strings.HasSuffix(mode, "encrypted") {
+							current.EncryptionPublicKey = bfcrypto.PublicKeys(string(ssh.MarshalAuthorizedKey(public)))
+						}
+						conf.Auditlogs = append(conf.Auditlogs, current)
+					}
+				}
 			})
 			svc.environments = svc.environments.(*executionTestRepository).CloseableRepository
+			if strings.HasPrefix(mode, "catalog-") {
+				for index := 1; index <= 21; index++ {
+					catalogRecording(t, svc, "catalog00", index)
+				}
+			}
 			flow := svc.Configuration.Flows[0]
 			delegate := svc.auditRecorders[flow.Auditlog]
 			auditGate := &browserArtifactAuditGate{delegate: delegate}
@@ -179,9 +202,19 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 			if strings.HasPrefix(mode, "ui-") {
 				script = "artifact-ui.mjs"
 			}
+			if strings.HasPrefix(mode, "catalog-") {
+				script = "catalog-ui.mjs"
+			}
 			command := exec.CommandContext(ctx, node, filepath.Join(root, "web", "test", script), "https://app.example.org:"+port, mode, keyPath)
 			command.Dir = filepath.Join(root, "web")
 			output, err := command.CombinedOutput()
+			if err != nil {
+				for _, event := range recorder.eventsSnapshot() {
+					if event.Name == audit.EventNameSessionTaskCompleted || event.Name == audit.EventNameSessionRecordingCompleted || event.Name == audit.EventNameSessionRecordingFailed || event.Name == audit.EventNameSessionRecordingIncomplete {
+						t.Logf("artifact failure lifecycle: name=%s outcome=%s reason=%s category=%s session=%s connection=%s", event.Name, event.Outcome, event.Reason, event.ErrorCategory, event.SessionId, event.ConnectionId)
+					}
+				}
+			}
 			require.NoError(t, err, "%s", output)
 			var result struct {
 				Success bool `json:"success"`

@@ -201,6 +201,7 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case webAPI + "login/password", webAPI + "login/interactive", webAPI + "login/public-key", webAPI + "login/poll", webAPI + "login/reply", webAPI + "login/cancel", webAPI + "access", webAPI + "logout":
 	case webAPI + "remember/enroll", webAPI + "remember/resume", webAPI + "remember/revoke", webAPI + "remember/prove":
 	case webAPI + "management/flows/list", webAPI + "management/sessions/list", webAPI + "management/sessions/show":
+	case webAPI + "management/auditlogs/list", webAPI + "management/recordings/list":
 	case webAPI + "management/sessions/prepare", webAPI + "management/sessions/confirm", webAPI + "management/sessions/cancel":
 	case webAPI + "management/artifacts/recording", webAPI + "management/artifacts/audit":
 	default:
@@ -221,6 +222,9 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	isLogin = isLogin || strings.HasPrefix(r.URL.Path, webAPI+"remember/") && r.URL.Path != webAPI+"remember/prove"
 	isLogin = isLogin || r.URL.Path == webAPI+"management/sessions/prepare"
 	isLogin = isLogin || r.URL.Path == webAPI+"management/artifacts/recording" || r.URL.Path == webAPI+"management/artifacts/audit"
+	// Recording metadata inspection can traverse large signed artifacts. Share
+	// the existing bounded heavy-operation admission budget, not only read RPS.
+	isLogin = isLogin || r.URL.Path == webAPI+"management/recordings/list"
 	release, ok := this.admit(peer, isLogin)
 	if !ok {
 		w.Header().Set("Retry-After", "60")
@@ -569,6 +573,10 @@ func webRequestFields(path string) []string {
 		return []string{"signature"}
 	case webAPI + "management/flows/list":
 		return []string{"limit", "after"}
+	case webAPI + "management/auditlogs/list":
+		return []string{"limit", "after"}
+	case webAPI + "management/recordings/list":
+		return []string{"auditlog", "limit", "after"}
 	case webAPI + "management/sessions/list":
 		return []string{"limit", "after", "flow", "user", "state"}
 	case webAPI + "management/sessions/show":

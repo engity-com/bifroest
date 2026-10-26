@@ -9,4 +9,4 @@ body { margin: 0; }
 .terminal-panel { min-width: 0; }
 .login-message { white-space: pre-wrap; overflow-wrap: anywhere; }
 .artifact-panel { min-width: 0; }
-.artifact-panel dd, .artifact-panel li { overflow-wrap: anywhere; }
+.artifact-panel dd, .artifact-panel li, .artifact-panel td { overflow-wrap: anywhere; }

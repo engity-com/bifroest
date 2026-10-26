@@ -36,6 +36,13 @@ func Flow(flow configuration.Flow) protocol.FlowSummary {
 	return protocol.FlowSummary{Name: flow.Name.String(), Auditlog: flow.Auditlog.String(), Authorization: authorization, Environment: environment}
 }
 
+func Auditlog(current configuration.Auditlog) protocol.AuditlogSummary {
+	return protocol.AuditlogSummary{
+		Name: current.Name.String(), Enabled: current.Enabled, RecordingEnabled: current.Recording.Enabled,
+		Encrypted: !current.EncryptionPublicKey.IsZero() || !current.EncryptionPublicKeyFile.IsZero(),
+	}
+}
+
 func Session(ctx context.Context, info session.Info) (protocol.SessionView, error) {
 	view := protocol.SessionView{ID: info.Id().String(), Flow: info.Flow().String(), State: info.State().String()}
 	created, err := info.Created(ctx)

@@ -250,6 +250,7 @@ export class Http {
       'remember/prove',
     ];
     allowed.push('management/flows/list', 'management/sessions/list', 'management/sessions/show');
+    allowed.push('management/auditlogs/list', 'management/recordings/list');
     allowed.push(
       'management/sessions/prepare',
       'management/sessions/confirm',

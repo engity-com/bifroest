@@ -11,7 +11,7 @@ import (
 )
 
 func managementReadRequest(path string, values map[string]string) (protocol.ReadRequest, error) {
-	request := protocol.ReadRequest{After: values["after"], Flow: values["flow"], User: values["user"], State: values["state"], ID: values["id"]}
+	request := protocol.ReadRequest{After: values["after"], Flow: values["flow"], User: values["user"], State: values["state"], ID: values["id"], Auditlog: values["auditlog"]}
 	switch path {
 	case webAPI + "management/flows/list":
 		request.Operation = protocol.ListFlows
@@ -19,6 +19,10 @@ func managementReadRequest(path string, values map[string]string) (protocol.Read
 		request.Operation = protocol.ListSessions
 	case webAPI + "management/sessions/show":
 		request.Operation = protocol.ShowSession
+	case webAPI + "management/auditlogs/list":
+		request.Operation = protocol.ListAuditlogs
+	case webAPI + "management/recordings/list":
+		request.Operation = protocol.ListRecordings
 	default:
 		return request, protocol.ErrRequest
 	}

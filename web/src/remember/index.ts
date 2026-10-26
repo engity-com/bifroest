@@ -13,6 +13,7 @@ export type { EvidenceKey } from '../artifacts/verify';
 export { verifyArtifact } from '../artifacts/verify';
 export type { LoginStep, StepHandler } from '../login/interactive';
 export type { LoginKey } from '../login/key';
+export type { AuditlogSummary, Page, PageOptions, RecordingSummary } from '../management/protocol';
 export type { AccessSnapshot, LogoutResult } from './client';
 export { BrowserClient, WebAccess } from './client';
 export type { Binding, ProofPurpose, Scope } from './protocol';

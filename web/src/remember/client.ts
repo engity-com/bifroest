@@ -8,13 +8,15 @@ import { publicKeyLogin } from '../login/key';
 import type { SessionAction } from '../management/action';
 import { actionPreparation, actionResult, SessionActionConfirmation } from '../management/action';
 import type {
+  AuditlogSummary,
   FlowSummary,
   Page,
   PageOptions,
+  RecordingSummary,
   SessionItem,
   SessionOptions,
 } from '../management/protocol';
-import { detail, page, pageFields, sessionFields } from '../management/protocol';
+import { auditlogName, detail, page, pageFields, sessionFields } from '../management/protocol';
 import type { Transport } from './http';
 import { Http, isToken, object, time } from './http';
 import type { Binding, ProofPurpose, Scope } from './protocol';
@@ -253,6 +255,72 @@ export class WebAccess {
     );
     if (this.#closed) {
       throw new RememberMeError('denied');
+    }
+    return result;
+  }
+  async managementAuditlogs(
+    options: PageOptions = {},
+    signal?: AbortSignal,
+  ): Promise<Page<AuditlogSummary>> {
+    this.#managementAllowed();
+    const fields = pageFields(options);
+    const result = page<AuditlogSummary>(
+      await this.#http.post(
+        'management/auditlogs/list',
+        fields,
+        this.#response.accessToken,
+        200,
+        signal,
+      ),
+      'auditlogs',
+      Number(fields.limit),
+    );
+    if (this.#closed) {
+      throw new RememberMeError('denied');
+    }
+    if (
+      result.items.some(
+        (row, index) => index > 0 && row.name <= (result.items[index - 1]?.name ?? ''),
+      ) ||
+      (result.next !== '' && (result.items.length === 0 || result.next === fields.after))
+    ) {
+      throw new RememberMeError('unavailable');
+    }
+    return result;
+  }
+  async managementRecordings(
+    auditlog: string,
+    options: PageOptions = {},
+    signal?: AbortSignal,
+  ): Promise<Page<RecordingSummary>> {
+    this.#managementAllowed();
+    const fields: Record<string, string> = {
+      ...pageFields(options),
+      auditlog: auditlogName(auditlog),
+    };
+    const result = page<RecordingSummary>(
+      await this.#http.post(
+        'management/recordings/list',
+        fields,
+        this.#response.accessToken,
+        200,
+        signal,
+      ),
+      'recordings',
+      Number(fields.limit),
+    );
+    if (this.#closed) {
+      throw new RememberMeError('denied');
+    }
+    if (
+      result.items.some(
+        (row, index) =>
+          row.auditlog !== fields.auditlog ||
+          (index > 0 && row.id <= (result.items[index - 1]?.id ?? '')),
+      ) ||
+      (result.next !== '' && (result.items.length === 0 || result.next === fields.after))
+    ) {
+      throw new RememberMeError('unavailable');
     }
     return result;
   }

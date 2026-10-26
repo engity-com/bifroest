@@ -16,6 +16,27 @@ export interface FlowSummary {
   readonly authorization: string;
   readonly environment: string;
 }
+// Server metadata only, never independent browser evidence or trust pins.
+export interface AuditlogSummary {
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly recordingEnabled: boolean;
+  readonly encrypted: boolean;
+}
+export interface RecordingSummary {
+  readonly auditlog: string;
+  readonly id: string;
+  readonly producerId: string;
+  readonly format: 'bcast/v1' | 'becast-cbor/v1';
+  readonly status: 'completed' | 'failed' | 'incomplete';
+  readonly startedAt: string;
+  readonly endedAt: string;
+  readonly containerBytes: number;
+  readonly chunkCount: number;
+  readonly encrypted: boolean;
+  readonly recipientFingerprint?: string;
+  readonly verificationScope: 'outer' | 'full';
+}
 export interface SessionItem {
   readonly id: string;
   readonly flow: string;
@@ -71,6 +92,93 @@ export function sessionFields(options: SessionOptions): Record<string, string> {
     user: text(options.user ?? '', 256),
     state,
   };
+}
+export function auditlogName(value: unknown): string {
+  if (
+    typeof value !== 'string' ||
+    !/^[A-Za-z0-9.-]{1,128}$/u.test(value) ||
+    value === '.' ||
+    value === '..'
+  ) {
+    throw new RememberMeError('unavailable');
+  }
+  return value;
+}
+function auditlog(value: unknown): AuditlogSummary {
+  const row = object(value, ['name', 'enabled', 'recordingEnabled', 'encrypted']);
+  if (
+    typeof row.enabled !== 'boolean' ||
+    typeof row.recordingEnabled !== 'boolean' ||
+    typeof row.encrypted !== 'boolean'
+  ) {
+    throw new RememberMeError('unavailable');
+  }
+  return Object.freeze({
+    name: auditlogName(row.name),
+    enabled: row.enabled,
+    recordingEnabled: row.recordingEnabled,
+    encrypted: row.encrypted,
+  });
+}
+function recording(value: unknown): RecordingSummary {
+  const optional =
+    value !== null && typeof value === 'object' && Object.hasOwn(value, 'recipientFingerprint')
+      ? ['recipientFingerprint']
+      : [];
+  const row = object(value, [
+    'auditlog',
+    'id',
+    'producerId',
+    'format',
+    'status',
+    'startedAt',
+    'endedAt',
+    'containerBytes',
+    'chunkCount',
+    'encrypted',
+    'verificationScope',
+    ...optional,
+  ]);
+  if (
+    typeof row.id !== 'string' ||
+    !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/u.test(row.id) ||
+    /^0{8}-(?:0{4}-){3}0{12}$/u.test(row.id) ||
+    typeof row.producerId !== 'string' ||
+    !/^[0-9a-f]{64}$/u.test(row.producerId) ||
+    /^0+$/u.test(row.producerId) ||
+    typeof row.status !== 'string' ||
+    !['completed', 'failed', 'incomplete'].includes(row.status) ||
+    typeof row.encrypted !== 'boolean' ||
+    row.format !== (row.encrypted ? 'becast-cbor/v1' : 'bcast/v1') ||
+    row.verificationScope !== (row.encrypted ? 'outer' : 'full') ||
+    !Number.isSafeInteger(row.containerBytes) ||
+    (row.containerBytes as number) < 1 ||
+    (row.containerBytes as number) > 32 * 2 ** 30 ||
+    !Number.isSafeInteger(row.chunkCount) ||
+    (row.chunkCount as number) < 1 ||
+    (row.encrypted &&
+      (typeof row.recipientFingerprint !== 'string' ||
+        !/^SHA256:[A-Za-z0-9+/]{43}$/u.test(row.recipientFingerprint))) ||
+    (!row.encrypted && row.recipientFingerprint !== undefined)
+  ) {
+    throw new RememberMeError('unavailable');
+  }
+  return Object.freeze({
+    auditlog: auditlogName(row.auditlog),
+    id: row.id,
+    producerId: row.producerId,
+    format: row.format as RecordingSummary['format'],
+    status: row.status as RecordingSummary['status'],
+    startedAt: time(row.startedAt),
+    endedAt: time(row.endedAt),
+    containerBytes: row.containerBytes as number,
+    chunkCount: row.chunkCount as number,
+    encrypted: row.encrypted,
+    verificationScope: row.verificationScope as RecordingSummary['verificationScope'],
+    ...(row.recipientFingerprint === undefined
+      ? {}
+      : { recipientFingerprint: row.recipientFingerprint as string }),
+  });
 }
 function flow(value: unknown): FlowSummary {
   const row = object(value, ['name', 'auditlog', 'authorization', 'environment']);
@@ -132,7 +240,11 @@ export function session(value: unknown): SessionItem {
     ...(row.policyLimited === true ? { policyLimited: true } : {}),
   });
 }
-export function page<T>(value: unknown, kind: 'flows' | 'sessions', maximum: number): Page<T> {
+export function page<T>(
+  value: unknown,
+  kind: 'flows' | 'sessions' | 'auditlogs' | 'recordings',
+  maximum: number,
+): Page<T> {
   const envelope = object(value, ['version', 'operation', kind]);
   if (envelope.version !== 1 || envelope.operation !== `${kind}.list`) {
     throw new RememberMeError('unavailable');
@@ -150,7 +262,15 @@ export function page<T>(value: unknown, kind: 'flows' | 'sessions', maximum: num
     throw new RememberMeError('unavailable');
   }
   const items = Object.freeze(
-    result.items.map((value) => (kind === 'flows' ? flow(value) : session(value))),
+    result.items.map((value) =>
+      kind === 'flows'
+        ? flow(value)
+        : kind === 'sessions'
+          ? session(value)
+          : kind === 'auditlogs'
+            ? auditlog(value)
+            : recording(value),
+    ),
   ) as readonly T[];
   return Object.freeze({ items, next: result.next, skipped: result.skipped as number });
 }

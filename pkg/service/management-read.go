@@ -49,7 +49,7 @@ func managementActionPolicy(auth authorization.Authorization) error {
 }
 
 // This is the shared environment capability, not a CLI command adapter. These
-// initial operations intentionally expose no credentials or artifact transfers.
+// operations intentionally expose no credentials or artifact content transfers.
 func (this *service) RunManagementRead(task environment.TaskContext, request protocol.ReadRequest, output io.Writer, _ bool, _ bool) (int, error) {
 	if task == nil || task.Authorization() == nil || !task.Authorization().IsAuthorized() || task.Authorization().FindSession() == nil || task.Authorization().FindSession().Flow() != task.Authorization().Flow() || !this.isManagementFlow(task.Authorization().Flow()) {
 		return -1, errManagementPolicy
@@ -83,6 +83,18 @@ func (this *service) RunManagementRead(task environment.TaskContext, request pro
 			return -1, err
 		}
 		result.Sessions = &page
+	case protocol.ListAuditlogs:
+		page, err := this.managementAuditlogPage(ctx, request)
+		if err != nil {
+			return -1, err
+		}
+		result.Auditlogs = &page
+	case protocol.ListRecordings:
+		page, err := this.managementRecordingPage(ctx, request)
+		if err != nil {
+			return -1, err
+		}
+		result.Recordings = &page
 	case protocol.ShowSession:
 		var id session.Id
 		if err := id.UnmarshalText([]byte(request.ID)); err != nil {

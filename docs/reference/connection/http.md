@@ -5,7 +5,7 @@ toc_depth: 5
 # HTTP / HTTPS
 
 !!! warning "Incremental browser UI; not a complete workspace yet"
-    Built browser resources provide React/Mantine password, Keyboard-Interactive/OIDC device, local SSH-key/WASM, RememberMe recovery, xterm shell/exec, structured Management metadata, confirmed session actions and client-only artifact verification/decryption/export through the same HTTPS boundary and authorizers as SSH. Artifact listing/playback, remaining forced-command equivalence and full release integration are incomplete. Local password/interactive resumption is deliberately unavailable until native account-policy rechecks are implemented. Source-only Go builds without generated resources keep the SSH/HTTP APIs and discovery fallback, not an embedded UI. Keep HTTP omitted or disabled unless you intend to expose this incremental feature.
+    Built browser resources provide React/Mantine password, Keyboard-Interactive/OIDC device, local SSH-key/WASM, RememberMe recovery, xterm shell/exec, structured Management metadata, paged artifact catalogs, confirmed session actions and client-only artifact verification/decryption/export through the same HTTPS boundary and authorizers as SSH. Playback, remaining forced-command equivalence and full release integration are incomplete. Local password/interactive resumption is deliberately unavailable until native account-policy rechecks are implemented. Source-only Go builds without generated resources keep the SSH/HTTP APIs and discovery fallback, not an embedded UI. Keep HTTP omitted or disabled unless you intend to expose this incremental feature.
 
 HTTP is a separate incoming transport for the same [flows](../flow.md), not SSH tunneled over WebSocket. Omission of the root `http` block means disabled. Merely configuring domains, TLS or customization does not enable it. When the endpoint is available, all flows are HTTP-eligible by default unless their individual `http.enabled` is false; `ssh.enabled` remains independent.
 
@@ -109,7 +109,7 @@ The worker receives only transferable tab-memory buffers after runtime readiness
 
 Actual Go HTTPS/Chromium tests execute all five key algorithms through Go/WASM, verify encrypted/plain imports, wrong-passphrase failure without an authentication request, boot cancellation, valid/expired certificate policy, RememberMe across reload and worker termination before success. The pinned runtime and Go/WASM artifact have public notices/component hashes. The roughly 7.7-MB WASM asset loads only for key import; Go/Node subprocesses are build/test tools, never web actions. Speculative module preloading is disabled to stay within unchanged shared asset/API admission budgets. Release-wide SBOM/provenance and other browser/OS runtime coverage remain open.
 
-### Structured Management: initial read-only operations
+### Structured Management: bounded read-only metadata
 
 An authenticated Management environment now provides structured flow summaries and session list/detail tables, without another administrator login, terminal commands, CLI parsing or SSH tunneling. The fixed POST routes are `/_bifroest/api/v1/management/flows/list`, `management/sessions/list` and `management/sessions/show` under the same API prefix. Every request carries the exact `slug` and existing `bwa1.` Authorization proof behind the unchanged TLS/Origin boundary; cookies and selectors alone grant nothing. There are no query credentials, dynamic command/argument fields, redirects or automatic retries.
 
@@ -118,6 +118,32 @@ List fields are canonical string `limit` (1–20, default 20) and `after`; sessi
 The CLI and HTTP share Go data-view builders. Original `user`/`remote` are not shown as verified identity. Stored association issuer/subject are reported separately when available; missing legacy/anonymous evidence never invents a principal. Damaged entries are skipped with a visible partial-data count, without private diagnostics or destructive repair. Metadata endpoints accept no credential-detail/artifact or client policy flags; session mutations use the separate confirmation protocol below. A conservative forced-read ceiling is supported as described next; other forced commands remain denied, with SSH behavior unchanged.
 
 Actual HTTPS/Chromium tests cover pagination, session tables/details and actor-changing reauthentication with cleared results while the CLI application is unavailable. Protocol tests additionally cover bounded selectors, shared quotas, cancellation/own logout/global revocation, sibling-grant preservation, strict final-audit refusal and damaged-state preservation. Typed original-artifact routes and the separate client-only evidence view are described below.
+
+The additional fixed `management/auditlogs/list` and `management/recordings/list`
+POSTs provide artifact catalogs under the same metadata authorization and driver,
+not the content-transfer permission. Both accept string `limit`/`after`; recordings
+also require `auditlog`. The same 20-entry/64-KiB bounds apply. Cursors bind operation
+and filters; recording cursors bind auditlog and canonical recording ID. Selectors
+grant no permission, snapshot consistency or freshness. All forced-command
+credentials remain denied these two new operations; existing forced-read ceilings
+are not widened. `includingCredentials` does not add fields to these fixed DTOs.
+
+Auditlog rows contain only name/enabled/recording-enabled/encryption-configured
+metadata, including disabled configurations. Recording rows reuse the existing Go
+`RecordingView`, native sealed page inventory and inspection/close paths. Native
+1000-row limits and evidence formats, including encrypted `becast-cbor/v1`, remain
+unchanged. One lookahead ID determines `next` without inspecting its content; every
+selected recording must pass the existing server inspection and cleanup before the
+page can be published. Corrupt selected evidence fails the entire page, with no
+partial JSON/private diagnostics or repair. Read quotas, cancellation and final
+audit/sealing remain mandatory. Recording pages also share the existing bounded
+heavy-operation start budget because inspecting signed artifacts can be expensive.
+
+The catalog is **server-reported metadata**, not independent browser evidence.
+Its `verificationScope`, producer and recipient claims never seed client trust.
+Choosing a row fills only download selectors and resets old local evidence/pins;
+it does not download, verify or decrypt automatically. The view clears actor-owned
+pages on authentication changes/logout and refuses late replies after cancellation.
 
 ### Conservative ForcedCommand read equivalence
 
@@ -149,8 +175,8 @@ Actual HTTPS/HTTP2 tests transfer clear/encrypted artifacts with the CLI applica
 
 ### Browser artifact verification and decryption
 
-The Management view accepts an exact auditlog and, for a recording, its canonical ID.
-There is no artifact listing or playback yet. Downloads stage only tab memory, at
+The Management view accepts a catalog selection or an exact auditlog/recording ID.
+Playback remains open. Downloads stage only tab memory, at
 most 64 MiB payload / 72 MiB framed response; larger artifacts require native tools.
 One short-lived bearer-free Go/WASM transport worker checks completed framing and
 real EOF. Its immutable Blobs remain explicitly **evidence-unverified**.
@@ -461,7 +487,7 @@ The app exposes `third-party-licenses.txt` and a conservative `frontend-componen
 
 ## Schema examples
 
-These are complete, parser-checked configuration examples for HTTPS. Apart from the explicit dummy test case, startup requires the indicated certificate/key files or successful ACME issuance for every domain. The built UI covers password/interactive/OIDC-device/local-key/RememberMe, shell/exec, structured Management metadata/confirmed session actions and client-only artifact verification/decryption/export. Artifact listing/playback, forced-command equivalence and release integration remain incomplete.
+These are complete, parser-checked configuration examples for HTTPS. Apart from the explicit dummy test case, startup requires the indicated certificate/key files or successful ACME issuance for every domain. The built UI covers password/interactive/OIDC-device/local-key/RememberMe, shell/exec, structured Management metadata/confirmed session actions, paged artifact catalogs and client-only artifact verification/decryption/export. Playback, forced-command equivalence and release integration remain incomplete.
 
 ### Explicit dummy TLS for local testing
 

@@ -284,12 +284,39 @@ cryptographic supply-chain provenance.
 
 ## Artifact verification/decryption view
 
-The Management workspace lazily loads `ArtifactPanel`. Supply an exact auditlog
-and, for recordings, a canonical ID; there is no artifact discovery/listing,
-playback or plaintext preview yet. Download uses the existing `WebAccess` API,
-permission, quota and common server audit/recording lifecycle. Forced-command
-credentials still cannot transfer artifacts. No new endpoints or policy flags
-were introduced for the view.
+The Management workspace lazily loads `ArtifactPanel`. Browse paged auditlog and
+sealed-recording metadata or supply an exact auditlog/recording ID manually.
+Playback and plaintext preview remain open. Download uses the existing `WebAccess`
+API, transfer permission, quota and common server audit/recording lifecycle.
+Forced-command credentials still cannot transfer artifacts; no new role or
+client-selectable policy flags were introduced.
+
+`WebAccess.managementAuditlogs(options, signal)` and
+`managementRecordings(auditlog, options, signal)` use the fixed
+`management/auditlogs/list` and `management/recordings/list` POSTs. They keep the
+existing Management metadata rights: `allowArtifactTransfer` is still required
+only for content transfer, while `includingCredentials` never expands the fixed
+DTOs. All forced-command credentials remain denied these new metadata operations.
+No private keys, credentials, paths or complete settings objects are returned.
+
+Pages are at most 20 entries/64 KiB, with existing operation/filter-bound `bmp1.`
+selectors; recording cursors additionally bind the selected auditlog and canonical
+recording ID. Old flow/session cursor filters and native 1000-row recording bounds
+are unchanged. Shared Go auditlog-view construction and native sealed inventory /
+recording inspection/close paths are reused, never a CLI subprocess or terminal
+table parser. Recording pages also use the existing heavy-operation start budget.
+One native lookahead ID determines `next`, but only displayed
+recordings are inspected. Corrupt selected evidence fails the whole buffered page;
+unselected lookahead content is not verified or promoted into evidence.
+
+Catalog rows are server metadata only, including `verificationScope`, producer ID
+and recipient. The native encrypted format remains `becast-cbor/v1`. Choosing a
+row sets only download selectors, clears old local evidence/expectations, and does
+not fetch content or populate trust pins. Disabled auditlogs remain visible as
+configuration metadata. Reads are explicit, never automatic on login/selection.
+Completed same-actor pages can remain visible while other artifact work disables
+selection; cancellation joins the owned request and rejects late/partial pages.
+Authentication changes/logout clear actor-owned catalog state.
 
 Unverified server hints/original files are labeled separately from independent
 producer/recipient expectations. Expectations start empty and selecting another
@@ -424,7 +451,7 @@ responses cannot appear under another actor. Data is live keyset paging rather
 than an immutable complete snapshot, with at most 20 rows and 64 KiB per result.
 Pagination cursors bind their operation/filters, but are selectors, not credentials.
 
-The three POST endpoints are `management/flows/list`, `management/sessions/list`
+The initial POST endpoints are `management/flows/list`, `management/sessions/list`
 and `management/sessions/show`, under the existing API prefix. Same-origin TLS,
 tab-only Authorization proof, no-cookie/no-redirect fetch, shared API/admission
 budgets and a 20-second request deadline remain unchanged. Each actual operation

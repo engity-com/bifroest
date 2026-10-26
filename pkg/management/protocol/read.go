@@ -23,9 +23,11 @@ var ErrRequest = errors.New("invalid structured management request")
 type ReadOperation string
 
 const (
-	ListFlows    ReadOperation = "flows.list"
-	ListSessions ReadOperation = "sessions.list"
-	ShowSession  ReadOperation = "sessions.show"
+	ListFlows      ReadOperation = "flows.list"
+	ListSessions   ReadOperation = "sessions.list"
+	ShowSession    ReadOperation = "sessions.show"
+	ListAuditlogs  ReadOperation = "auditlogs.list"
+	ListRecordings ReadOperation = "recordings.list"
 )
 
 type ReadRequest struct {
@@ -35,6 +37,7 @@ type ReadRequest struct {
 	Flow      string        `json:"flow,omitempty"`
 	User      string        `json:"user,omitempty"`
 	State     string        `json:"state,omitempty"`
+	Auditlog  string        `json:"auditlog,omitempty"`
 	ID        string        `json:"id,omitempty"`
 }
 
@@ -45,9 +48,16 @@ func (this ReadRequest) Normalize() (ReadRequest, error) {
 	if !text(this.Flow, 255) || !text(this.User, 256) || len(this.After) > MaximumCursorBytes {
 		return this, ErrRequest
 	}
+	if this.Auditlog != "" && this.Operation != ListRecordings {
+		return this, ErrRequest
+	}
 	switch this.Operation {
-	case ListFlows:
+	case ListFlows, ListAuditlogs:
 		if this.Flow != "" || this.User != "" || this.State != "" || this.ID != "" {
+			return this, ErrRequest
+		}
+	case ListRecordings:
+		if !ValidAuditlogName(this.Auditlog) || this.Flow != "" || this.User != "" || this.State != "" || this.ID != "" {
 			return this, ErrRequest
 		}
 	case ListSessions:
@@ -111,6 +121,10 @@ func (this ReadRequest) Next(flow, id string) string {
 }
 
 func (this ReadRequest) filter() [32]byte {
+	if this.Operation == ListRecordings {
+		raw, _ := json.Marshal(struct{ Auditlog string }{this.Auditlog})
+		return sha256.Sum256(raw)
+	}
 	raw, _ := json.Marshal(struct{ Flow, User, State string }{this.Flow, this.User, this.State})
 	return sha256.Sum256(raw)
 }
@@ -136,6 +150,14 @@ func (this ReadRequest) Cursor() (string, string, error) {
 	}
 	if this.Operation == ListFlows {
 		if selected.ID != "" {
+			return "", "", ErrRequest
+		}
+	} else if this.Operation == ListAuditlogs {
+		if selected.ID != "" || !ValidAuditlogName(selected.Flow) {
+			return "", "", ErrRequest
+		}
+	} else if this.Operation == ListRecordings {
+		if selected.Flow != this.Auditlog || !ValidAuditlogName(selected.Flow) || !ValidID(selected.ID) {
 			return "", "", ErrRequest
 		}
 	} else if this.Operation != ListSessions || !ValidID(selected.ID) {
@@ -180,9 +202,11 @@ type Page[T any] struct {
 	Skipped int    `json:"skipped"`
 }
 type ReadResult struct {
-	Version   int                `json:"version"`
-	Operation ReadOperation      `json:"operation"`
-	Flows     *Page[FlowSummary] `json:"flows,omitempty"`
-	Sessions  *Page[SessionItem] `json:"sessions,omitempty"`
-	Session   *SessionItem       `json:"session,omitempty"`
+	Version    int                    `json:"version"`
+	Operation  ReadOperation          `json:"operation"`
+	Flows      *Page[FlowSummary]     `json:"flows,omitempty"`
+	Sessions   *Page[SessionItem]     `json:"sessions,omitempty"`
+	Session    *SessionItem           `json:"session,omitempty"`
+	Auditlogs  *Page[AuditlogSummary] `json:"auditlogs,omitempty"`
+	Recordings *Page[RecordingView]   `json:"recordings,omitempty"`
 }
