@@ -79,3 +79,28 @@ func TestEvidenceBridgeUsesFrozenNativeCoreAndNeverReturnsPlaintextOnFailure(t *
 		require.Equal(t, map[string]any{"ok": false, "code": "verification"}, verify(js.Undefined(), nil), "one worker must never reuse imported keys or completed verification")
 	}
 }
+
+func TestPlaybackBridgeReusesVerifierWithoutBearerKeyOrPartialFrames(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "assets", "recording-format-vectors", "native-v1", "bcast-v1.cast"))
+	require.NoError(t, err)
+	for _, success := range []bool{true, false} {
+		used = false
+		content := bytes.Clone(data)
+		if !success {
+			content = content[:len(content)-10]
+		}
+		result := playback(js.Undefined(), []js.Value{js.ValueOf("34e34ab8-7457-4d88-a5e4-c57791775c3a"), js.ValueOf("95b9aca00d322047048950d19cc5aece6fa757edd9104a5521446a168792b298"), js.ValueOf(false), testBuffer(t, content)}).(map[string]any)
+		require.Equal(t, success, result["ok"])
+		if success {
+			var metadata browserevidence.PlaybackMetadata
+			require.NoError(t, json.Unmarshal([]byte(result["metadata"].(string)), &metadata))
+			require.Equal(t, "pinned", metadata.Trust)
+			require.EqualValues(t, 2, metadata.Frames)
+			require.EqualValues(t, 44, result["output"].(js.Value).Get("byteLength").Int())
+		} else {
+			require.NotContains(t, result, "metadata")
+			require.NotContains(t, result, "output")
+		}
+		require.Equal(t, map[string]any{"ok": false, "code": "verification"}, verify(js.Undefined(), nil))
+	}
+}

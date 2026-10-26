@@ -19,7 +19,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/session"
 )
 
-func catalogRecording(t *testing.T, svc *service, name configuration.AuditlogName, index int) recording.Id {
+func catalogRecording(t *testing.T, svc *service, name configuration.AuditlogName, index int, outputs ...[]byte) recording.Id {
 	t.Helper()
 	var id recording.Id
 	require.NoError(t, id.UnmarshalText([]byte(fmt.Sprintf("%08x-0000-4000-8000-000000000000", index))))
@@ -37,6 +37,9 @@ func catalogRecording(t *testing.T, svc *service, name configuration.AuditlogNam
 		recording.CastHeader{Version: 3, Terminal: recording.CastTerminal{Columns: 80, Rows: 24}, Timestamp: started.Unix()},
 		metadata, 300)
 	require.NoError(t, err)
+	for _, output := range outputs {
+		require.NoError(t, active.WriteOutput(100*time.Millisecond, recording.OutputStreamStdout, output))
+	}
 	status := uint32(0)
 	result := recording.CastResult{Status: recording.CastStatusCompleted, EndedAt: started.Add(time.Second)}
 	if repository.audited {

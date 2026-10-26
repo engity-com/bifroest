@@ -59,9 +59,15 @@ try {
   const page = await context.newPage();
   const errors = [];
   const requests = [];
+  const apiRequests = [];
+  let sockets = 0;
+  page.on('websocket', () => {
+    sockets++;
+  });
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('request', (request) => {
     if (new URL(request.url()).pathname.includes('/api/')) {
+      apiRequests.push(new URL(request.url()).pathname);
       const body = request.postData() ?? '';
       assert(
         !body.includes('PRIVATE KEY') &&
@@ -251,10 +257,64 @@ try {
   const cast = await save();
   assert.equal(cast.filename, `recording-${entry.id}.cast`);
   assert(cast.bytes.toString().includes('# bifroest:signature:v1 '));
+  const playback = panel.getByRole('region', { name: 'Local recording playback', exact: true });
+  const beforePlayback = apiRequests.length;
+  const titleBefore = await page.title();
+  const pagesBefore = context.pages().length;
+  await playback.getByRole('button', { name: 'Prepare local playback', exact: true }).click();
+  await playback.locator('[data-playback-phase="paused"]').waitFor();
+  assert.equal(
+    (await playback.locator('.xterm-rows').textContent()).includes('PLAYBACK_ONLY'),
+    false,
+    'preparation must not auto-play',
+  );
+  await playback.getByRole('button', { name: 'Play locally', exact: true }).click();
+  await playback.locator('[data-playback-phase="ended"]').waitFor();
+  await playback
+    .getByRole('region', { name: 'Read-only recording viewport', exact: true })
+    .scrollIntoViewIfNeeded();
+  await page.waitForFunction(() =>
+    document.querySelector('.playback-surface .xterm-rows')?.textContent?.includes('PLAYBACK_ONLY'),
+  );
+  assert.equal(await page.title(), titleBefore, 'recorded OSC title cannot rename the application');
+  const link = await playback
+    .locator('.xterm-rows')
+    .getByText('blocked-playback-link', { exact: true })
+    .boundingBox();
+  assert(link !== null);
+  await page.mouse.click(link.x + link.width / 2, link.y + link.height / 2);
+  assert.equal(context.pages().length, pagesBefore, 'recorded links cannot open windows');
+  assert.equal(
+    new URL(page.url()).origin,
+    origin,
+    'recorded links cannot navigate the existing page',
+  );
+  await playback.getByRole('button', { name: 'Reset playback to start', exact: true }).click();
+  await playback.locator('[data-playback-phase="paused"]').waitFor();
+  assert.equal(
+    (await playback.locator('.xterm-rows').textContent()).includes('PLAYBACK_ONLY'),
+    false,
+  );
+  await playback.getByRole('combobox', { name: 'Local playback speed', exact: true }).click();
+  await page.getByRole('option', { name: '2', exact: true }).click();
+  await playback.getByRole('button', { name: 'Play locally', exact: true }).click();
+  await playback.locator('[data-playback-phase="ended"]').waitFor();
+  await playback.getByRole('button', { name: 'Reset playback to start', exact: true }).click();
+  await playback.locator('[data-playback-phase="paused"]').waitFor();
+  await playback.getByRole('button', { name: 'Play locally', exact: true }).click();
+  await playback.getByRole('button', { name: 'Pause playback', exact: true }).click();
+  await playback.locator('[data-playback-phase="paused"]').waitFor();
+  assert.equal(apiRequests.length, beforePlayback, 'playback must not issue API requests');
+  assert.equal(sockets, 0, 'local playback must not open a live terminal socket');
   assert.equal(await page.evaluate(() => window.artifactURLs.size), 1);
   await panel
     .getByRole('checkbox', { name: 'Explicitly allow an untrusted producer', exact: false })
     .check();
+  assert.equal(
+    await panel.locator('.playback-surface .xterm').count(),
+    0,
+    'changing expectations must retire rendered private output',
+  );
   assert.equal(await result.count(), 0);
   assert.equal(
     await page.evaluate(() => window.artifactURLs.size),

@@ -4,6 +4,8 @@ export type {
   VerifiedArtifact,
 } from '../artifacts/evidence-protocol';
 export { EvidenceError } from '../artifacts/evidence-protocol';
+export type { PlaybackMetadata, PlaybackOptions } from '../artifacts/playback-protocol';
+export { prepareRecordingPlayback } from '../artifacts/prepare-playback';
 export type {
   ArtifactRequest,
   ReceivedArtifact,

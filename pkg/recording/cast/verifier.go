@@ -42,7 +42,29 @@ type CastVerification struct {
 	Trusted      bool
 }
 
+// CastEvent is a provisional decoded event. Data owns exact output bytes,
+// including invalid UTF-8 recovered from its validated Bifröst metadata. Elapsed
+// is cumulative, not the event's delta. No input events are ever accepted.
+type CastEvent struct {
+	Elapsed       time.Duration
+	Code          string
+	Stream        OutputStream
+	Data          []byte
+	Columns, Rows uint32
+}
+
 func VerifyCast(input io.Reader, options CastVerifyOptions) (*CastVerification, error) {
+	return verifyCast(input, options, nil)
+}
+
+// InspectCastEvents shares the complete verifier, not a second playback parser.
+// Callbacks are provisional until signature, physical EOF and all checks succeed.
+// Callers must stage/own callback data and publish nothing on any returned error.
+func InspectCastEvents(input io.Reader, options CastVerifyOptions, visit func(CastEvent) error) (*CastVerification, error) {
+	return verifyCast(input, options, visit)
+}
+
+func verifyCast(input io.Reader, options CastVerifyOptions, visit func(CastEvent) error) (*CastVerification, error) {
 	if input == nil {
 		return nil, errors.System.Newf("nil cast input")
 	}
@@ -136,6 +158,9 @@ func VerifyCast(input io.Reader, options CastVerifyOptions) (*CastVerification, 
 				}
 				return nil, errors.System.Newf("cannot check data after cast signature: %w", err)
 			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			return verification, nil
 		}
 		if resultSeen {
@@ -194,12 +219,27 @@ func VerifyCast(input io.Reader, options CastVerifyOptions) (*CastVerification, 
 			}
 			elapsed += interval
 			verification.EventCount++
+			event := CastEvent{Elapsed: elapsed, Code: code}
 			switch code {
 			case "o":
 				if err := validateCastOutputEvent(data, pending); err != nil {
 					return nil, err
 				}
 				verification.OutputEvents++
+				if visit != nil {
+					event.Stream = OutputStreamStdout
+					if verification.Metadata.Pty {
+						event.Stream = OutputStreamTerminal
+					}
+					if pending != nil {
+						event.Stream = pending.Stream
+					}
+					if pending != nil && len(pending.Raw) > 0 {
+						event.Data = bytes.Clone(pending.Raw)
+					} else {
+						event.Data = []byte(data)
+					}
+				}
 			case "i":
 				return nil, errors.System.Newf("bifroest cast contains a forbidden input event")
 			case "m":
@@ -217,9 +257,11 @@ func VerifyCast(input io.Reader, options CastVerifyOptions) (*CastVerification, 
 				if !verification.Metadata.Pty {
 					return nil, errors.System.Newf("non-PTY cast contains a resize event")
 				}
-				if err := validateResizeEvent(data); err != nil {
+				columns, rows, err := decodeResizeEvent(data)
+				if err != nil {
 					return nil, err
 				}
+				event.Columns, event.Rows = columns, rows
 				verification.ResizeEvents++
 			case "x":
 				if pending != nil {
@@ -234,6 +276,11 @@ func VerifyCast(input io.Reader, options CastVerifyOptions) (*CastVerification, 
 			default:
 				if pending != nil {
 					return nil, errors.System.Newf("cast event metadata does not describe an output event")
+				}
+			}
+			if visit != nil {
+				if err := visit(event); err != nil {
+					return nil, err
 				}
 			}
 			pending = nil
@@ -402,16 +449,21 @@ func validateCastOutputEvent(data string, eventMetadata *castEventMetadata) erro
 }
 
 func validateResizeEvent(data string) error {
+	_, _, err := decodeResizeEvent(data)
+	return err
+}
+
+func decodeResizeEvent(data string) (uint32, uint32, error) {
 	columnsText, rowsText, ok := strings.Cut(data, "x")
 	if !ok {
-		return errors.System.Newf("illegal resize event %q", data)
+		return 0, 0, errors.System.Newf("illegal resize event %q", data)
 	}
 	columns, columnsErr := strconv.ParseUint(columnsText, 10, 16)
 	rows, rowsErr := strconv.ParseUint(rowsText, 10, 16)
 	if columnsErr != nil || rowsErr != nil || columns == 0 || rows == 0 || fmt.Sprintf("%dx%d", columns, rows) != data {
-		return errors.System.Newf("illegal resize event %q", data)
+		return 0, 0, errors.System.Newf("illegal resize event %q", data)
 	}
-	return nil
+	return uint32(columns), uint32(rows), nil
 }
 
 func decodeCanonicalCastJSON(payload []byte, target any) error {

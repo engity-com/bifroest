@@ -83,6 +83,31 @@ export const messages = {
   managementReadOnly:
     'Structured management with your existing authorization. This is live paged metadata, not a complete snapshot. Session actions have separate one-time confirmation. Artifact transfer requires the existing artifact permission. Recognized forced read commands constrain operations, filters and fields; other forced commands and all forced mutations/artifact transfers remain blocked.',
   artifactTitle: 'Artifacts and client-side evidence',
+  playbackTitle: 'Local recording playback',
+  playbackLocalOnly:
+    'Prepare this fully verified local Cast export for a separate read-only viewer. The shared Go verifier checks its exact bytes again with your independent producer expectation. Playback does not connect, execute commands, send input/signals or upload plaintext. Output streams retain recorded order; browser timing is approximate. Source/decryption/freshness evidence remains in the result above.',
+  playbackPrepare: 'Prepare local playback',
+  playbackDiscard: 'Discard local playback',
+  playbackPreparing: 'Verifying and preparing a bounded local playback plan…',
+  playbackPlay: 'Play locally',
+  playbackPause: 'Pause playback',
+  playbackRestart: 'Reset playback to start',
+  playbackSpeed: 'Local playback speed',
+  playbackRecordedStatus: 'Verified recorded outcome / exit status (not a live execution)',
+  playbackPlaying: 'Local playback running',
+  playbackPaused: 'Local playback paused',
+  playbackEnded: 'Local playback finished; no live execution or new exit result was claimed',
+  playbackRenderFailed:
+    'Local rendering failed; no complete playback was claimed. Discard and prepare a fresh viewer.',
+  playbackResetting: 'Draining the local renderer before reset…',
+  playbackSeconds: 'seconds',
+  playbackViewport: 'Read-only recording viewport',
+  playbackLimit:
+    'This valid recording may exceed the local playback limits: 64 MiB plan/input, 100,000 events, 512 columns / 256 rows and 32,768 cells. Nothing was truncated or played; use native tools for larger recordings.',
+  playbackVerificationFailed:
+    'Local playback preparation could not verify the exact Cast/recording ID/independent producer. No playback data was released.',
+  playbackUnavailable:
+    'Local playback preparation or renderer initialization failed. No complete playback was claimed.',
   artifactIntroduction:
     'Browse server metadata or supply an exact auditlog and recording ID. Downloads still require the existing artifact-transfer permission. Data stays in tab memory (64 MiB maximum input/output) until you explicitly save a file. Nothing is automatically downloaded, verified, decrypted or saved; discarding this view cannot remove previously saved files.',
   artifactCatalog: 'Artifact catalog (server metadata)',

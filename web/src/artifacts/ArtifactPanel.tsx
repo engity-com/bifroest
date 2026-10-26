@@ -19,6 +19,7 @@ import { EvidenceError, evidenceOptions } from './evidence-protocol';
 import { LocalArtifactDownload } from './local-download';
 import type { ArtifactRequest, ReceivedArtifact } from './protocol';
 import { artifactFields } from './protocol';
+import { RecordingPlayer } from './RecordingPlayer';
 import type { EvidenceKey } from './verify';
 import { verifyArtifact } from './verify';
 
@@ -608,6 +609,20 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
               {t('artifactSaveExport')}
             </Button>
           )}
+          {verified.request.kind === 'recording' &&
+            verified.output !== null &&
+            metadata.validation === 'private' &&
+            metadata.outputFormat === 'cast' && (
+              <RecordingPlayer
+                source={verified.output}
+                expected={{
+                  id: verified.request.id,
+                  producer: untrusted ? '' : producer,
+                  allowUntrusted: untrusted,
+                }}
+                disabled={locked}
+              />
+            )}
         </section>
       )}
       {received !== null && (

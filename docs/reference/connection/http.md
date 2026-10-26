@@ -5,7 +5,7 @@ toc_depth: 5
 # HTTP / HTTPS
 
 !!! warning "Incremental browser UI; not a complete workspace yet"
-    Built browser resources provide React/Mantine password, Keyboard-Interactive/OIDC device, local SSH-key/WASM, RememberMe recovery, xterm shell/exec, structured Management metadata, paged artifact catalogs, confirmed session actions and client-only artifact verification/decryption/export through the same HTTPS boundary and authorizers as SSH. Playback, remaining forced-command equivalence and full release integration are incomplete. Local password/interactive resumption is deliberately unavailable until native account-policy rechecks are implemented. Source-only Go builds without generated resources keep the SSH/HTTP APIs and discovery fallback, not an embedded UI. Keep HTTP omitted or disabled unless you intend to expose this incremental feature.
+    Built browser resources provide React/Mantine password, Keyboard-Interactive/OIDC device, local SSH-key/WASM, RememberMe recovery, xterm shell/exec, structured Management metadata, paged artifact catalogs, confirmed session actions and client-only artifact verification/decryption/export/playback through the same HTTPS boundary and authorizers as SSH. Remaining forced-command equivalence and full release integration are incomplete. Local password/interactive resumption is deliberately unavailable until native account-policy rechecks are implemented. Source-only Go builds without generated resources keep the SSH/HTTP APIs and discovery fallback, not an embedded UI. Keep HTTP omitted or disabled unless you intend to expose this incremental feature.
 
 HTTP is a separate incoming transport for the same [flows](../flow.md), not SSH tunneled over WebSocket. Omission of the root `http` block means disabled. Merely configuring domains, TLS or customization does not enable it. When the endpoint is available, all flows are HTTP-eligible by default unless their individual `http.enabled` is false; `ssh.enabled` remains independent.
 
@@ -176,7 +176,7 @@ Actual HTTPS/HTTP2 tests transfer clear/encrypted artifacts with the CLI applica
 ### Browser artifact verification and decryption
 
 The Management view accepts a catalog selection or an exact auditlog/recording ID.
-Playback remains open. Downloads stage only tab memory, at
+Downloads stage only tab memory, at
 most 64 MiB payload / 72 MiB framed response; larger artifacts require native tools.
 One short-lived bearer-free Go/WASM transport worker checks completed framing and
 real EOF. Its immutable Blobs remain explicitly **evidence-unverified**.
@@ -204,6 +204,29 @@ validation. Saving an export or an explicitly unverified original requires anoth
 click. Owned Blob URLs and previous results are retired on option/actor changes,
 discard, cancellation or logout; previously saved files cannot be removed by clearing
 the view, and a save request does not confirm a successful filesystem write.
+
+### Local read-only recording playback
+
+Full private verification plus an explicitly prepared Cast export enables a
+separate local player, never an execution connection. Preparation and Play are
+separate user actions. A fresh existing Go/WASM evidence worker receives only the
+immutable local Blob and independent recording-ID/producer expectations, not a
+bearer, URL, key or server action. The shared Cast verifier's provisional event
+visitor stages exact output bytes/stream order/resize/timing; only final signature,
+real EOF and complete checks release a bounded rendering image. Server metadata
+never supplies trust pins. Outer/decryption/source/freshness evidence stays in the
+preceding result; rechecking the Cast does not manufacture those proofs.
+
+Local input/plan is bounded to 64 MiB, 100,000 events, 512 columns/256 rows and
+32,768 cells. Larger valid recordings are explicitly refused without changing
+native limits. A read-only xterm with bounded scrollback ignores clipboard/title/
+window/link host actions and has no stdin, socket, command, EOF or signal channel.
+Play/pause, 0.25–8x speed, joined reset and discard are local; browser timer precision
+is approximate. At most one bounded write is in flight, with a drain deadline;
+rendering failure is never successful playback. Recorded outcome/exit status is
+not a new live exit result. Expectation/source/actor changes and logout/cancel
+retire private images, workers, timers and viewport; no plaintext is uploaded or
+persisted, and no physical memory-erasure guarantee is made.
 
 ### One-time confirmation for session disconnect/dispose
 
@@ -487,7 +510,7 @@ The app exposes `third-party-licenses.txt` and a conservative `frontend-componen
 
 ## Schema examples
 
-These are complete, parser-checked configuration examples for HTTPS. Apart from the explicit dummy test case, startup requires the indicated certificate/key files or successful ACME issuance for every domain. The built UI covers password/interactive/OIDC-device/local-key/RememberMe, shell/exec, structured Management metadata/confirmed session actions, paged artifact catalogs and client-only artifact verification/decryption/export. Playback, forced-command equivalence and release integration remain incomplete.
+These are complete, parser-checked configuration examples for HTTPS. Apart from the explicit dummy test case, startup requires the indicated certificate/key files or successful ACME issuance for every domain. The built UI covers password/interactive/OIDC-device/local-key/RememberMe, shell/exec, structured Management metadata/confirmed session actions, paged artifact catalogs and client-only artifact verification/decryption/export/playback. Forced-command equivalence and release integration remain incomplete.
 
 ### Explicit dummy TLS for local testing
 

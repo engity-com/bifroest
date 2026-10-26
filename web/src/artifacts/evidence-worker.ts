@@ -1,5 +1,6 @@
 import { object } from '../remember/http';
 import { EvidenceError, evidenceMetadata, evidenceOptions } from './evidence-protocol';
+import { playbackMetadata, playbackOptions } from './playback-protocol';
 import type { ArtifactRequest } from './protocol';
 import { artifactFields, maximumBufferedArtifactBytes } from './protocol';
 
@@ -10,10 +11,11 @@ type Runtime = {
     exit: (code: number) => void;
   };
   bifroestEvidenceVerify: (...args: unknown[]) => unknown;
+  bifroestEvidencePlayback: (...args: unknown[]) => unknown;
 };
 const runtime = globalThis as unknown as Runtime;
 const worker = globalThis as unknown as {
-  postMessage(value: unknown): void;
+  postMessage(value: unknown, transfer?: Transferable[]): void;
   close(): void;
   onmessage: ((event: MessageEvent) => void) | null;
 };
@@ -35,6 +37,55 @@ async function process(event: MessageEvent) {
       throw new Error();
     }
     used = true;
+    if (event.data?.kind === 'playback') {
+      const body = object(event.data, ['kind', 'options', 'data']);
+      const options = playbackOptions(body.options);
+      if (
+        !(body.data instanceof Blob) ||
+        body.data.size < 1 ||
+        body.data.size > maximumBufferedArtifactBytes
+      ) {
+        throw new EvidenceError('limit');
+      }
+      const data = new Uint8Array(await body.data.arrayBuffer());
+      buffers.push(data);
+      const raw = runtime.bifroestEvidencePlayback(
+        options.id,
+        options.producer,
+        options.allowUntrusted,
+        data,
+      );
+      if (raw === null || typeof raw !== 'object') {
+        throw new Error();
+      }
+      if ('ok' in raw && raw.ok === false) {
+        const failure = object(raw, ['ok', 'code']);
+        failed(
+          ['input', 'limit', 'verification'].includes(String(failure.code))
+            ? (failure.code as EvidenceError['code'])
+            : 'verification',
+        );
+        return;
+      }
+      const result = object(raw, ['ok', 'metadata', 'output']);
+      if (
+        result.ok !== true ||
+        typeof result.metadata !== 'string' ||
+        !(result.output instanceof Uint8Array) ||
+        !(result.output.buffer instanceof ArrayBuffer) ||
+        result.output.byteOffset !== 0 ||
+        result.output.byteLength !== result.output.buffer.byteLength ||
+        result.output.byteLength > maximumBufferedArtifactBytes
+      ) {
+        throw new Error();
+      }
+      const metadata = playbackMetadata(options, JSON.parse(result.metadata));
+      worker.postMessage({ kind: 'prepared', metadata, output: result.output.buffer }, [
+        result.output.buffer,
+      ]);
+      worker.close();
+      return;
+    }
     const body = object(event.data, [
       'kind',
       'request',

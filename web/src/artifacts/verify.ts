@@ -12,9 +12,9 @@ export interface EvidenceKey {
   readonly passphrase: string;
 }
 
-function rpc(
+export function evidenceRPC(
   worker: Worker,
-  kind: 'ready' | 'verified',
+  kind: 'ready' | 'verified' | 'prepared',
   signal: AbortSignal,
   input?: unknown,
   transfer: Transferable[] = [],
@@ -161,7 +161,7 @@ export async function verifyArtifact(
       credentials: 'omit',
       name: 'bifroest-evidence',
     });
-    await rpc(worker, 'ready', AbortSignal.any([stopped, AbortSignal.timeout(20_000)]));
+    await evidenceRPC(worker, 'ready', AbortSignal.any([stopped, AbortSignal.timeout(20_000)]));
     if (stopped.aborted) {
       throw new EvidenceError('cancelled');
     }
@@ -169,7 +169,7 @@ export async function verifyArtifact(
     if (privateBytes.byteLength > 64 << 10 || stopped.aborted) {
       throw new EvidenceError('key');
     }
-    const result = await rpc(
+    const result = await evidenceRPC(
       worker,
       'verified',
       stopped,

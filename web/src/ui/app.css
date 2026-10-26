@@ -10,3 +10,4 @@ body { margin: 0; }
 .login-message { white-space: pre-wrap; overflow-wrap: anywhere; }
 .artifact-panel { min-width: 0; }
 .artifact-panel dd, .artifact-panel li, .artifact-panel td { overflow-wrap: anywhere; }
+.playback-surface { max-width: 100%; height: 24rem; overflow: auto; }

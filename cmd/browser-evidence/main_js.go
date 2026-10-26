@@ -125,8 +125,47 @@ func verify(_ js.Value, args []js.Value) (result any) {
 	return map[string]any{"ok": true, "metadata": string(metadata), "output": output}
 }
 
+func playback(_ js.Value, args []js.Value) (result any) {
+	result = failure("verification")
+	defer func() {
+		if recover() != nil {
+			result = failure("verification")
+		}
+	}()
+	if used {
+		return result
+	}
+	used = true
+	if len(args) != 4 || args[0].Type() != js.TypeString || args[1].Type() != js.TypeString || args[2].Type() != js.TypeBoolean || len(args[0].String()) != 36 || len(args[1].String()) > 64 {
+		return failure("input")
+	}
+	image := binary(args[3], int(browserevidence.MaximumInputBytes))
+	defer clear(image)
+	prepared, err := browserevidence.PreparePlayback(context.Background(), image, args[0].String(), args[1].String(), args[2].Bool())
+	if err != nil {
+		if errors.Is(err, browserevidence.ErrInput) {
+			return failure("input")
+		}
+		if errors.Is(err, browserevidence.ErrLimit) {
+			return failure("limit")
+		}
+		return result
+	}
+	defer clear(prepared.Frames)
+	metadata, err := json.Marshal(prepared.Metadata)
+	if err != nil {
+		return result
+	}
+	output := js.Global().Get("Uint8Array").New(len(prepared.Frames))
+	if js.CopyBytesToJS(output, prepared.Frames) != len(prepared.Frames) {
+		return result
+	}
+	return map[string]any{"ok": true, "metadata": string(metadata), "output": output}
+}
+
 func main() {
 	js.Global().Set("bifroestEvidenceVerify", js.FuncOf(verify))
+	js.Global().Set("bifroestEvidencePlayback", js.FuncOf(playback))
 	js.Global().Call("postMessage", map[string]any{"kind": "ready"})
 	select {}
 }

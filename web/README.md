@@ -286,7 +286,7 @@ cryptographic supply-chain provenance.
 
 The Management workspace lazily loads `ArtifactPanel`. Browse paged auditlog and
 sealed-recording metadata or supply an exact auditlog/recording ID manually.
-Playback and plaintext preview remain open. Download uses the existing `WebAccess`
+Local recording playback is described below. Download uses the existing `WebAccess`
 API, transfer permission, quota and common server audit/recording lifecycle.
 Forced-command credentials still cannot transfer artifacts; no new role or
 client-selectable policy flags were introduced.
@@ -348,6 +348,54 @@ independent and wrong pins, wrong passphrases, explicit untrusted state, full vs
 outer, redacted/sensitive exports, captured scope, save/discard, cancellation,
 actor-change cleanup and logout during incomplete transfer. Separate local-URL
 tests cover ownership/failure/filename bounds, not a second cryptographic verifier.
+
+## Local recording playback
+
+After successful full private recording verification with export explicitly
+requested, `RecordingPlayer` can prepare that immutable local Cast Blob. It does
+not automatically prepare or play, and outer-only/Audit results expose no player.
+`prepareRecordingPlayback(blob, { id, producer, allowUntrusted }, signal)` uses a
+fresh one-shot instance of the existing evidence worker, with independent caller
+expectations rather than server hints or a producer pin manufactured from metadata.
+It receives no bearer, URL, decryption key or server operation. The Go core checks
+the exact Cast/ID/producer/signature/real EOF again; no provisional frame escapes.
+This additional Cast check does not invent original-source, native outer-container,
+decryption or freshness evidence; those remain in the preceding evidence result.
+
+`cast.InspectCastEvents` is the existing complete Go verifier with a provisional
+event visitor, not a second Cast implementation. It preserves cumulative intervals,
+stdout/stderr/terminal identity, validated resize events and exact raw output bytes
+from signed Bifröst event metadata, including invalid UTF-8. Input events remain
+forbidden; markers/exit/unknown events retain timing but are not executed. The
+browser parses only a small fixed-header renderer transport, never Cast JSON or
+recording cryptography. Only complete success publishes an exclusively owned image.
+
+The adapter limits input/plan to 64 MiB, all visited events to 100,000, dimensions
+to 512 columns/256 rows and 32,768 cells. Valid recordings beyond these rendering
+bounds are rejected, not clamped/truncated; native limits stay unchanged. Worker
+boot/operation, compressed/decompressed WASM and document CSP bounds are unchanged.
+Output frames are copied before asynchronous rendering, never exposed as mutable
+views of the owned image; discard retires buffers where possible, not a physical
+memory-erasure guarantee.
+
+Playback uses a separate read-only xterm with bounded scrollback and no input,
+socket, EOF/signal, command or execution capability. Recorded links, titles, window
+operations and OSC 52 clipboard requests cannot activate host actions. Play/pause,
+0.25–8x local speed, reset and discard affect only this renderer. Timers use a
+monotonic clock with approximate browser scheduling, at most one <=64-KiB write
+and bounded work per turn. Reset joins outstanding output before clearing; failed
+or timed-out output cannot become successful completion or an unsafe reset.
+The recorded outcome/exit status remains distinct from local playback completion.
+Option/source changes, cancel, logout, actor changes and unmount retire workers,
+timers, images and the private viewport, without discarding the persistent workload
+or starting any network API/terminal operation.
+
+Native/actual WASM tests cover frozen byte-exact output/resize/timing, trust/ID/
+EOF/cancellation, genuine signed oversized/event-flood inputs and no partial plans.
+Browser lifecycle tests separately cover opaque wire ownership, timing/speed,
+drain/reset/timeout/dispose and bearer-free RPC, not a fake Cast verifier. Actual
+HTTPS/Chromium verifies/decrypts clear/encrypted originals and drives manual local
+play/reset/replay/pause, no API/socket calls, ignored OSC host actions and cleanup.
 
 ## Interactive and OIDC device login
 

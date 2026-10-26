@@ -107,6 +107,10 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 				}
 			})
 			svc.environments = svc.environments.(*executionTestRepository).CloseableRepository
+			var playbackID string
+			if strings.HasPrefix(mode, "ui-") {
+				playbackID = catalogRecording(t, svc, "default", 1, []byte("PLAYBACK_ONLY\r\n\x1b]0;must-not-rename-playback\x07\x1b]52;c;cHJpdmF0ZQ==\x07\x1b]8;;https://must-not-open.invalid/\x07blocked-playback-link\x1b]8;;\x07\r\n\xff")).String()
+			}
 			if strings.HasPrefix(mode, "catalog-") {
 				for index := 1; index <= 21; index++ {
 					catalogRecording(t, svc, "catalog00", index)
@@ -139,9 +143,13 @@ func TestBrowserArtifactTransferUsesGoWasmAndPostDriverCompletion(t *testing.T) 
 				case "/_bifroest/test/artifact-id":
 					ids, err := svc.recordingRepositories[flow.Auditlog].native.ListSealed(r.Context())
 					require.NoError(t, err)
-					require.Len(t, ids, 1)
+					id := playbackID
+					if id == "" {
+						require.Len(t, ids, 1)
+						id = ids[0].String()
+					}
 					w.Header().Set("Content-Type", "application/json")
-					_ = json.NewEncoder(w).Encode(map[string]string{"id": ids[0].String(), "producer": svc.auditIdentities[flow.Auditlog].ProducerId().String(), "recipient": recipient})
+					_ = json.NewEncoder(w).Encode(map[string]string{"id": id, "producer": svc.auditIdentities[flow.Auditlog].ProducerId().String(), "recipient": recipient})
 					return
 				case "/_bifroest/test/artifact-arm":
 					gate := &artifactFinalAuditGate{delegate: delegate, entered: make(chan struct{}), release: make(chan struct{})}
