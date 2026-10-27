@@ -92,11 +92,11 @@ func (this Groups) isEqualTo(other *Groups) bool {
 	}
 
 	for i, candidate := range this {
-		if candidate.IsEqualTo(&(*other)[i]) {
-			return true
+		if !candidate.IsEqualTo(&(*other)[i]) {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 func (this Groups) Clone() (*Groups, error) {
