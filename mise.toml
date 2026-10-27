@@ -1,18 +1,15 @@
 [tools]
-uv = "0.12.13"
 "pipx:reuse" = { version = "6.2.0", extras = "chardet", uvx_args = "--python 3.14" }
 
 [tasks."install"]
 run = [
     { task = "install:go" },
+    { task = "install:web" },
     { task = "install:docs" }
 ]
 
 [tasks."install:go"]
 run = "go mod download"
-
-[tasks."install:docs"]
-run = "python -m pip install -r docs/requirements.txt"
 
 [tasks."install:web"]
 dir = "web"
@@ -22,22 +19,14 @@ run = "bun install --frozen-lockfile --ignore-scripts"
 dir = "web"
 run = "bun run test:browser:install"
 
-[tasks."build:web"]
-dir = "web"
-run = "bun run build"
-
-[tasks."lint:web"]
-dir = "web"
-run = "bun run check"
-
-[tasks."test:web"]
-dir = "web"
-run = "bun run test"
+[tasks."install:docs"]
+run = "python -m pip install -r docs/requirements.txt"
 
 [tasks."lint"]
 run = [
     { task = "lint:biome" },
     { task = "lint:go" },
+    { task = "lint:web" },
     { task = "lint:reuse" }
 ]
 
@@ -53,9 +42,14 @@ run = "golangci-lint run --color=always"
 [tasks."lint:reuse"]
 run = "reuse lint --lines"
 
+[tasks."lint:web"]
+dir = "web"
+run = "bun run check"
+
 [tasks."test"]
 run = [
-    { task = "test:go" }
+    { task = "test:go" },
+    { task = "test:web" }
 ]
 
 [tasks."test:go"]
@@ -68,6 +62,10 @@ run = [
 [tasks."test:go:race"]
 depends = ["build:var"]
 run = "go test -race ./..."
+
+[tasks."test:web"]
+dir = "web"
+run = "bun run test"
 
 [tasks."test:e2e:local"]
 depends = ["build:var"]
@@ -115,6 +113,7 @@ run = [
 ]
 
 [tasks."build:go"]
+depends = ["build:web"]
 run = "go run ./cmd/build build --log.colorMode=always"
 
 [tasks."build:go:binary"]
@@ -122,6 +121,10 @@ run = "go run ./cmd/build build-binary --log.colorMode=always"
 
 [tasks."build:go:package"]
 run = "go run ./cmd/build package-binaries --log.colorMode=always"
+
+[tasks."build:web"]
+dir = "web"
+run = "bun run build"
 
 [tasks."build:docs"]
 run = [
