@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { exactArtifactSelection, workspace } from './workspace-ui.mjs';
 
 export async function forcedKeyLogin(page, file) {
   const fixture = JSON.parse(await readFile(file, 'utf8'));
@@ -27,6 +28,7 @@ export async function exerciseManagementForcedVersion(page, file, logout) {
   });
   await forcedKeyLogin(page, file);
   assert.deepEqual(calls, [], 'version metadata must require an explicit action');
+  await workspace(page, 'Server');
   const denied = page.waitForResponse(
     (response) => response.url().endsWith('/management/version/show') && response.status() === 403,
   );
@@ -71,12 +73,14 @@ export async function exerciseManagementForced(page, file, logout) {
     const { BrowserClient } = await import('/_bifroest/test/client.js');
     await new BrowserClient({ origin: location.origin, slug: 'Work' }).password('bob', 'correct');
   });
+  await workspace(page, 'Server');
   await page.getByRole('button', { name: 'Load flows', exact: true }).click();
   await page
     .getByText('The management request could not be confirmed or is not permitted.', {
       exact: false,
     })
     .waitFor();
+  await workspace(page, 'Sessions');
   await page.getByRole('combobox', { name: 'Session state', exact: true }).click();
   await page.getByRole('option', { name: 'all', exact: true }).click();
   await page.getByRole('button', { name: 'Load sessions', exact: true }).click();
@@ -102,6 +106,7 @@ export async function exerciseManagementForced(page, file, logout) {
     .waitFor();
   assert.equal(await page.getByRole('region', { name: 'Session details', exact: true }).count(), 0);
   assert.equal(await page.getByRole('button', { name: 'Dispose session', exact: true }).count(), 0);
+  await workspace(page, 'Recordings & audit');
   const artifacts = page.getByRole('region', {
     name: 'Artifacts and client-side evidence',
     exact: true,
@@ -115,6 +120,7 @@ export async function exerciseManagementForced(page, file, logout) {
     .getByText('The catalog request could not be confirmed or is not permitted.', { exact: false })
     .waitFor();
   assert.equal(await catalog.getByRole('table').count(), 0);
+  await exactArtifactSelection(page);
   await artifacts.getByRole('textbox', { name: 'Artifact auditlog', exact: true }).fill('default');
   await artifacts
     .getByRole('textbox', { name: 'Recording ID', exact: true })
@@ -162,6 +168,7 @@ export async function exerciseManagementForcedAudit(page, file, logout) {
     }
   });
   await forcedKeyLogin(page, file);
+  await workspace(page, 'Recordings & audit');
   const artifacts = page.getByRole('region', {
     name: 'Artifacts and client-side evidence',
     exact: true,
@@ -229,6 +236,14 @@ export async function exerciseManagementForcedAudit(page, file, logout) {
       .count(),
     0,
   );
+  for (const secret of [
+    'private audit directory',
+    'private identity file',
+    'private recipient file',
+  ]) {
+    assert(!(await catalog.textContent()).includes(secret));
+  }
+  await workspace(page, 'Server');
   await page.getByRole('button', { name: 'Load flows', exact: true }).click();
   await page
     .getByText('The management request could not be confirmed or is not permitted.', {
@@ -241,13 +256,6 @@ export async function exerciseManagementForcedAudit(page, file, logout) {
       .count(),
     0,
   );
-  for (const secret of [
-    'private audit directory',
-    'private identity file',
-    'private recipient file',
-  ]) {
-    assert(!(await catalog.textContent()).includes(secret));
-  }
   await logout(page);
   assert.equal(
     await page

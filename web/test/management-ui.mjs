@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { workspace } from './workspace-ui.mjs';
 
 export async function exerciseManagement(page, login, logout) {
   const bodyForFailure = async (response) => {
@@ -19,7 +20,9 @@ export async function exerciseManagement(page, login, logout) {
     }
   });
   await login(page, false);
-  await page.getByRole('heading', { name: 'Management overview', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Sessions', exact: true }).waitFor();
+  assert.equal(requests.length, 0, 'opening a workspace must not fetch metadata automatically');
+  await workspace(page, 'Server');
   await page.getByRole('button', { name: 'Load server version', exact: true }).click();
   const version = page.getByRole('region', { name: 'Server version', exact: true });
   await version
@@ -76,6 +79,7 @@ export async function exerciseManagement(page, login, logout) {
     );
   }
   assert.equal(await flows.locator('tbody tr').count(), 1);
+  await workspace(page, 'Sessions');
   await page.getByRole('button', { name: 'Load sessions', exact: true }).click();
   const sessions = page.getByRole('table', { name: 'Live session metadata', exact: true });
   await sessions.getByText('alice', { exact: true }).waitFor();
@@ -96,10 +100,12 @@ export async function exerciseManagement(page, login, logout) {
     .getByRole('button', { name: 'Sign in again for new connections', exact: true })
     .click();
   await login(page, false, 'bob');
+  await workspace(page, 'Server');
   assert.equal(await page.getByRole('region', { name: 'Server version', exact: true }).count(), 0);
   // No previous actor's result may appear under the newly authenticated actor.
   assert.equal(await page.getByRole('table').count(), 0);
   assert.equal(await page.getByRole('region', { name: 'Session details', exact: true }).count(), 0);
+  await workspace(page, 'Sessions');
   await page.getByRole('button', { name: 'Load sessions', exact: true }).click();
   await sessions.getByText('bob', { exact: true }).waitFor();
   assert.equal(await sessions.locator('tbody tr').count(), 2);

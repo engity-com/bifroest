@@ -6,6 +6,7 @@ import {
   Modal,
   Paper,
   PasswordInput,
+  Radio,
   SegmentedControl,
   TextInput,
   Title,
@@ -80,6 +81,9 @@ export function App({
   const [busy, setBusy] = useState(false);
   const [closing, setClosing] = useState(false);
   const [managementLocked, setManagementLocked] = useState(false);
+  const [workspaceView, setWorkspaceView] = useState<'sessions' | 'artifacts' | 'server'>(
+    'sessions',
+  );
   const [notice, setNotice] = useState<Notice | null>(null);
   const [confirm, setConfirm] = useState<'revoke' | 'local' | null>(null);
   const [optIn, setOptIn] = useState(false);
@@ -248,6 +252,7 @@ export function App({
         return;
       }
       access.current = result;
+      setWorkspaceView('sessions');
       setSnapshot(result.snapshot());
       setClosing(false);
       setReauthenticate(false);
@@ -281,6 +286,7 @@ export function App({
         return;
       }
       access.current = result;
+      setWorkspaceView('sessions');
       setSnapshot(result.snapshot());
       setClosing(false);
       setReauthenticate(false);
@@ -362,9 +368,14 @@ export function App({
   }
 
   return (
-    <main className="workspace">
+    <main className={`workspace ${snapshot === null ? 'workspace--login' : 'workspace--active'}`}>
       <header className="header">
-        <Title order={1}>{title}</Title>
+        <div className="brand">
+          <Title order={1} size="h2">
+            {title}
+          </Title>
+          <span className="caption subtle">{metadata.scope.slug || '/'}</span>
+        </div>
         <SegmentedControl
           aria-label={t('theme')}
           value={scheme}
@@ -377,47 +388,50 @@ export function App({
         />
       </header>
       <div className="stack">
-        <Alert color="blue">{t('partial')}</Alert>
         {notice !== null && (
           <Alert role="status" color={notice.color}>
             {t(notice.key)}
           </Alert>
         )}
         {snapshot !== null ? (
-          <Paper withBorder p="lg" className="stack">
-            <Title order={2}>
-              {t(closing ? 'accessBlocked' : 'authenticated')} {snapshot.principal}
-            </Title>
-            <p>{t(snapshot.environment === 'management' ? 'management' : 'terminal')}</p>
-            <p className="caption">
-              {t('expires')}:{' '}
-              <time dateTime={snapshot.expiresAt}>
-                {new Intl.DateTimeFormat('en-US', {
-                  dateStyle: 'medium',
-                  timeStyle: 'short',
-                }).format(new Date(snapshot.expiresAt))}
-              </time>
-            </p>
-            <Button
-              variant="default"
-              disabled={closing || busy || rememberUncertain || managementLocked}
-              onClick={() => {
-                setReauthenticate(true);
-                setOptIn(false);
-                void readSaved();
-              }}
-            >
-              {t('reauthenticate')}
-            </Button>
-            <Button
-              onClick={() => {
-                void logout();
-              }}
-              disabled={(closing && busy) || managementLocked}
-              color="red"
-            >
-              {t(closing ? 'retryLogout' : 'logout')}
-            </Button>
+          <Paper withBorder p="md" className="account-bar">
+            <div className="account-identity">
+              <Title order={2} size="h5">
+                {t(closing ? 'accessBlocked' : 'authenticated')} {snapshot.principal}
+              </Title>
+              <span className="caption subtle">
+                {t('expires')}:{' '}
+                <time dateTime={snapshot.expiresAt}>
+                  {new Intl.DateTimeFormat('en-US', {
+                    dateStyle: 'medium',
+                    timeStyle: 'short',
+                  }).format(new Date(snapshot.expiresAt))}
+                </time>
+              </span>
+            </div>
+            <div className="actions account-actions">
+              <Button
+                variant="default"
+                disabled={closing || busy || rememberUncertain || managementLocked}
+                onClick={() => {
+                  setReauthenticate(true);
+                  setOptIn(false);
+                  void readSaved();
+                }}
+              >
+                {t('reauthenticate')}
+              </Button>
+              <Button
+                onClick={() => {
+                  void logout();
+                }}
+                disabled={(closing && busy) || managementLocked}
+                variant="subtle"
+                color="red"
+              >
+                {t(closing ? 'retryLogout' : 'logout')}
+              </Button>
+            </div>
           </Paper>
         ) : null}
         {snapshot?.terminalAvailable && access.current !== null && (
@@ -425,17 +439,41 @@ export function App({
         )}
         {snapshot !== null && snapshot.environment === 'management' && access.current !== null && (
           <Suspense fallback={<Alert>{t('managementLoading')}</Alert>}>
-            <ManagementPanel
-              key={generation.current}
-              access={access.current}
-              disabled={closing || busy}
-              onActionLock={setManagementLocked}
-            />
-            <ArtifactPanel
-              key={`artifacts:${generation.current}`}
-              access={access.current}
-              disabled={closing || busy || managementLocked}
-            />
+            <nav className="workspace-nav" aria-label={t('workspaceNavigation')}>
+              {(['sessions', 'artifacts', 'server'] as const).map((view) => (
+                <Button
+                  key={view}
+                  variant={workspaceView === view ? 'filled' : 'subtle'}
+                  aria-current={workspaceView === view ? 'page' : undefined}
+                  disabled={managementLocked && view !== workspaceView}
+                  onClick={() => setWorkspaceView(view)}
+                >
+                  {t(
+                    view === 'sessions'
+                      ? 'workspaceSessions'
+                      : view === 'artifacts'
+                        ? 'workspaceArtifacts'
+                        : 'workspaceServer',
+                  )}
+                </Button>
+              ))}
+            </nav>
+            <div hidden={workspaceView === 'artifacts'}>
+              <ManagementPanel
+                key={generation.current}
+                access={access.current}
+                disabled={closing || busy}
+                onActionLock={setManagementLocked}
+                view={workspaceView === 'server' ? 'server' : 'sessions'}
+              />
+            </div>
+            <div hidden={workspaceView !== 'artifacts'}>
+              <ArtifactPanel
+                key={`artifacts:${generation.current}`}
+                access={access.current}
+                disabled={closing || busy || managementLocked}
+              />
+            </div>
           </Suspense>
         )}
         {(snapshot === null || reauthenticate) && (
@@ -488,7 +526,7 @@ export function App({
               </Alert>
             )}
             {saved === 'unavailable' && <Alert color="yellow">{t('storageUnavailable')}</Alert>}
-            <Paper withBorder p="lg">
+            <Paper withBorder p="lg" className="login-card">
               <form
                 method={loginMethod === 'key' ? 'dialog' : 'post'}
                 action={loginMethod === 'key' ? undefined : '/_bifroest/api/v1/login/password'}
@@ -499,17 +537,13 @@ export function App({
                 }}
               >
                 <Title order={2}>{t('login')}</Title>
-                <SegmentedControl
-                  aria-label={t('loginMethod')}
-                  value={loginMethod}
-                  onChange={setLoginMethod}
-                  disabled={busy}
-                  data={[
-                    { value: 'password', label: t('passwordMethod') },
-                    { value: 'interactive', label: t('interactiveMethod') },
-                    { value: 'key', label: t('keyMethod') },
-                  ]}
-                />
+                <Radio.Group label={t('loginMethod')} value={loginMethod} onChange={setLoginMethod}>
+                  <div className="login-methods">
+                    <Radio value="password" label={t('passwordMethod')} disabled={busy} />
+                    <Radio value="interactive" label={t('interactiveMethod')} disabled={busy} />
+                    <Radio value="key" label={t('keyMethod')} disabled={busy} />
+                  </div>
+                </Radio.Group>
                 {metadata.requestUser && (
                   <TextInput
                     name="user"
@@ -582,22 +616,31 @@ export function App({
           </>
         )}
         {metadata.publishedSlugs.length > 0 && (
-          <nav aria-label={t('discovery')}>
-            <Title order={2}>{t('discovery')}</Title>
-            <ul>
+          <nav className="access-links" aria-label={t('discovery')}>
+            <span className="caption subtle">{t('discovery')}</span>
+            <ul className="actions">
               {metadata.publishedSlugs.map((slug) => (
                 <li key={slug}>
-                  <Anchor href={`/${slug}`}>{slug}</Anchor>
+                  {managementLocked ? (
+                    <span aria-disabled="true">{slug}</span>
+                  ) : (
+                    <Anchor href={`/${slug}`}>{slug}</Anchor>
+                  )}
                 </li>
               ))}
             </ul>
           </nav>
         )}
-        <footer className="caption">
+        <footer className="caption workspace-footer">
+          <details>
+            <summary>{t('interfaceInformation')}</summary>
+            <p>{t('partial')}</p>
+          </details>
           <Anchor href="/_bifroest/files/third-party-licenses.txt">{t('notices')}</Anchor>
         </footer>
       </div>
       <Modal
+        classNames={{ content: 'confirmation-dialog' }}
         lockScroll={false}
         opened={loginStep !== null}
         onClose={cancel}
@@ -659,6 +702,7 @@ export function App({
         )}
       </Modal>
       <Modal
+        classNames={{ content: 'confirmation-dialog' }}
         lockScroll={false}
         opened={confirm !== null}
         onClose={() => setConfirm(null)}

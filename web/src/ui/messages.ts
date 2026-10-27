@@ -31,7 +31,7 @@ export const messages = {
     'The authentication sequence was invalid or exceeded its limits. No response was reused and no access was inferred.',
   loginBusy: 'A previous login is still completing cancellation. Wait before starting another.',
   rememberHint:
-    'Optional. Saves independent browser keys and encrypted access selectors, not your password or login key.',
+    'Optional. Uses secure browser key storage. Your password and login key are not saved.',
   saved: 'Saved browser access is available.',
   useSaved: 'Use saved access',
   forgetSaved: 'Forget saved browser access',
@@ -85,7 +85,40 @@ export const messages = {
   managementVersionTitle: 'Server version',
   managementVersionReported: 'Server-reported build metadata, not an independent attestation.',
   managementReadOnly:
-    'Structured management with your existing authorization. This is live paged metadata, not a complete snapshot. Session actions have separate one-time confirmation. Artifact transfer requires the existing artifact permission. Recognized forced read commands constrain operations, filters and fields; other forced commands and all forced mutations/artifact transfers remain blocked.',
+    'Your existing authorization applies to every request. Forced commands may limit operations and visible fields. Lists show live pages, not complete snapshots. Disconnect and disposal require a separate one-time confirmation; neither grants additional read or transfer permissions.',
+  workspaceNavigation: 'Workspace',
+  workspaceSessions: 'Sessions',
+  workspaceArtifacts: 'Recordings & audit',
+  workspaceServer: 'Server',
+  interfaceInformation: 'About this browser interface',
+  managementPolicyHelp: 'Permissions and list scope',
+  managementFlowListTitle: 'Configured flows',
+  managementSessionsEmpty:
+    'Load sessions to inspect their current state. No session action runs automatically.',
+  managementNoSessions: 'No sessions match these filters on this page.',
+  managementConfirmationExpires: 'This confirmation expires',
+  terminalConnectionHelp: 'What does connecting do?',
+  terminalInputControls: 'Input and signals',
+  artifactWorkflow: 'Recording and audit workflow',
+  artifactStepSelect: '1. Choose an artifact',
+  artifactStepVerify: '2. Verify locally',
+  artifactStepUse: '3. Review, save or play',
+  artifactChangeSelection: 'Change artifact selection',
+  artifactExactSelection: 'Enter an exact auditlog / recording ID',
+  artifactExplicitDownload:
+    'Review the selection, then download explicitly. Selecting a catalog entry does not start a transfer.',
+  artifactPinsInstruction:
+    'Enter fingerprints obtained through a trusted, independent channel. Server labels are not verification pins.',
+  artifactTrustHelp: 'Trust, source and freshness limits',
+  artifactCatalogHelp: 'What can this catalog prove?',
+  artifactPurpose: 'What would you like to do?',
+  artifactPurposeCheck: 'Check signatures only (no content or playback)',
+  artifactPurposeUse: 'Open content, prepare playback or export',
+  artifactPurposeUseHint:
+    'Fully verifies the content and prepares a local export in this tab. Saving and playback still require separate actions.',
+  artifactAdvancedVerification: 'Advanced verification options',
+  artifactCustomPurpose:
+    'Custom mode: full content verification without preparing an export. See advanced options below.',
   artifactTitle: 'Artifacts and client-side evidence',
   playbackTitle: 'Local recording playback',
   playbackLocalOnly:
@@ -113,7 +146,7 @@ export const messages = {
   playbackUnavailable:
     'Local playback preparation or renderer initialization failed. No complete playback was claimed.',
   artifactIntroduction:
-    'Browse server metadata or supply an exact auditlog and recording ID. Downloads still require the existing artifact-transfer permission. Data stays in tab memory (64 MiB maximum input/output) until you explicitly save a file. Nothing is automatically downloaded, verified, decrypted or saved; discarding this view cannot remove previously saved files.',
+    'Choose a recording or audit inventory, download it explicitly, then verify it in this tab. Playback requires full verification and a prepared export. Unsaved data stays in this tab (64 MiB limit).',
   artifactCatalog: 'Artifact catalog (server metadata)',
   artifactCatalogWarning:
     'These are live pages of server-reported metadata, not a complete snapshot or independent evidence. Server inspection claims, producer IDs and recipients do not establish browser trust or populate verification pins. Selecting a row only sets download selectors; it grants no transfer permission.',
@@ -299,16 +332,17 @@ export const messages = {
   terminalExec: 'Command',
   terminalCommand: 'Command to execute',
   terminalPty: 'Request a PTY',
-  terminalStart: 'Start new execution',
+  terminalStart: 'Connect',
   terminalDisconnect: 'Disconnect execution',
   terminalViewport: 'Terminal viewport',
   terminalActor: 'This execution was started as',
   terminalEof: 'Send input EOF',
   terminalInterrupt: 'Request INT signal',
   terminalTerminate: 'Request TERM signal',
-  terminalIdle: 'No execution started.',
+  terminalIdle: 'Not connected. Connect to start a new execution.',
   terminalConnecting: 'Connecting…',
-  terminalConnected: 'Execution connection registered; provisioning or execution may still fail.',
+  terminalConnected:
+    'Connection registered. Process startup may still fail; check the output below.',
   terminalFinishing: 'Draining final output; new input is disabled.',
   terminalExited: 'Validated exit status:',
   terminalDisconnected: 'Execution disconnected locally; no successful exit was claimed.',

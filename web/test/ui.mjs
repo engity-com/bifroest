@@ -14,6 +14,7 @@ import {
 } from './management-forced-ui.mjs';
 import { exerciseManagement } from './management-ui.mjs';
 import { exerciseTerminal } from './terminal-ui.mjs';
+import { loginLayout } from './workspace-ui.mjs';
 
 const origin = process.argv[2];
 assert.match(origin, /^https:\/\/app\.example\.org:[0-9]+$/);
@@ -87,6 +88,9 @@ try {
       true,
       'trusted inline HTML extension needs the fresh document nonce',
     );
+    if (process.argv[3] === 'management-actions') {
+      await loginLayout(page);
+    }
     return page;
   };
   const local = async (page) =>

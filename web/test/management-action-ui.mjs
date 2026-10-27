@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { captureLayout, sessionLayout, workspace } from './workspace-ui.mjs';
 
 export async function exerciseManagementActions(page, login, logout) {
   let commits = 0;
+  let managementCalls = 0;
   const responses = [];
   const networkFailures = [];
   page.on('response', (response) => {
@@ -17,11 +19,27 @@ export async function exerciseManagementActions(page, login, logout) {
     });
   });
   page.on('request', (request) => {
+    if (new URL(request.url()).pathname.includes('/api/v1/management/')) {
+      managementCalls++;
+    }
     if (request.url().endsWith('/management/sessions/confirm')) {
       commits++;
     }
   });
   await login(page, false);
+  await page.getByRole('heading', { name: 'Sessions', exact: true }).waitFor();
+  const heading = await page.getByRole('heading', { name: 'Sessions', exact: true }).boundingBox();
+  assert(heading && heading.y < 350, 'sessions must be in the initial desktop viewport');
+  assert.equal(
+    await page.getByRole('button', { name: 'Prepare session action', exact: true }).count(),
+    0,
+    'the exact-ID specialist path starts collapsed',
+  );
+  await captureLayout(page, 'sessions-initial');
+  for (const name of ['Server', 'Recordings & audit', 'Sessions']) {
+    await workspace(page, name);
+  }
+  assert.equal(managementCalls, 0, 'navigation must not automatically read, prepare or download');
   async function connection() {
     return page.evaluate(async () => {
       const { BrowserClient } = await import('/_bifroest/test/client.js');
@@ -121,6 +139,7 @@ export async function exerciseManagementActions(page, login, logout) {
     return `worker/${id}`;
   }
   const id = await target();
+  await sessionLayout(page, id.split('/')[1]);
   await page.getByRole('button', { name: 'Dispose session', exact: true }).click();
   let dialog = page.getByRole('dialog');
   await dialog.getByText(id, { exact: true }).waitFor();
@@ -171,6 +190,24 @@ export async function exerciseManagementActions(page, login, logout) {
   await dialog.getByLabel('Type the exact flow/session ID shown above', { exact: true }).fill(id);
   await dialog.getByRole('button', { name: 'Confirm session action', exact: true }).click();
   await page.getByText('The session action result is unknown.', { exact: false }).waitFor();
+  const navigation = page.getByRole('navigation', { name: 'Workspace', exact: true });
+  assert.equal(
+    await navigation.getByRole('button', { name: 'Recordings & audit', exact: true }).isEnabled(),
+    false,
+  );
+  assert.equal(
+    await navigation.getByRole('button', { name: 'Server', exact: true }).isEnabled(),
+    false,
+    'view changes cannot dismiss the unknown outcome or its action lock',
+  );
+  assert.equal(
+    await page
+      .getByRole('navigation', { name: 'Published access links', exact: true })
+      .getByRole('link')
+      .count(),
+    0,
+    'in-app access links cannot discard an unknown action outcome',
+  );
   await page.waitForFunction(() =>
     window.managementTargetSockets.every((socket) => socket.readyState === WebSocket.CLOSED),
   );

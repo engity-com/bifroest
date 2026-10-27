@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { captureLayout } from './workspace-ui.mjs';
 
 // Drives only the real application and its xterm textarea; no exposed emulator
 // internals, fake transport or CLI actions. The Go side supplies a test backend.
@@ -33,7 +34,7 @@ export async function exerciseTerminal(page, login) {
     await page.keyboard.press('Enter');
   };
   const start = async (number) => {
-    await page.getByRole('button', { name: 'Start new execution', exact: true }).click();
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
     await page.locator('[data-terminal-phase="connected"]').waitFor();
     await output(`EXECUTION_START:${number}`);
   };
@@ -41,13 +42,21 @@ export async function exerciseTerminal(page, login) {
   await start(1);
   await output('UTF8:€');
   await output('STDERR_MARKER');
+  const surface = await page.locator('.terminal-surface').boundingBox();
+  assert(
+    surface && surface.width > 1000 && surface.y < 550,
+    'desktop terminal must use the workspace, not the old narrow login column',
+  );
+  await captureLayout(page, 'terminal-desktop');
   assert.equal(
     await page.title(),
     'Fixture brand',
     'remote OSC title must not rename the application',
   );
   const pages = page.context().pages().length;
-  const link = await page.getByText('blocked-link', { exact: true }).boundingBox();
+  const renderedLink = page.locator('.xterm-rows').getByText('blocked-link', { exact: true });
+  await renderedLink.waitFor({ state: 'visible' });
+  const link = await renderedLink.boundingBox();
   assert(link !== null);
   // xterm intentionally delegates row pointer events to its screen element.
   await page.mouse.move(link.x + link.width / 2, link.y + link.height / 2);
@@ -57,6 +66,8 @@ export async function exerciseTerminal(page, login) {
   await output('STDIN:hello');
   await page.setViewportSize({ width: 500, height: 1000 });
   await output('RESIZE:');
+  await captureLayout(page, 'terminal-mobile');
+  await page.getByText('Input and signals', { exact: true }).click();
   await page.getByRole('button', { name: 'Request INT signal', exact: true }).click();
   await output('SIGNAL:INT');
   await page.getByRole('button', { name: 'Send input EOF', exact: true }).click();

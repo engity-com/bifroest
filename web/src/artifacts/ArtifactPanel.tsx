@@ -4,6 +4,7 @@ import {
   Checkbox,
   Paper,
   PasswordInput,
+  Radio,
   Select,
   TextInput,
   Title,
@@ -62,6 +63,8 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
   const [phase, setPhase] = useState<'downloading' | 'verifying' | null>(null);
   const [notice, setNotice] = useState<Message | null>(null);
   const [keyRevision, setKeyRevision] = useState(0);
+  const [selectionOpen, setSelectionOpen] = useState(true);
+  const [manualOpen, setManualOpen] = useState(false);
   const form = useRef<HTMLFormElement | null>(null);
   const operation = useRef<AbortController | null>(null);
   const generation = useRef(0);
@@ -179,6 +182,7 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
       const result = await access.downloadArtifact(selected, signal);
       if (current === generation.current && !signal.aborted) {
         setReceived(result);
+        setSelectionOpen(false);
       }
     });
   }
@@ -246,76 +250,101 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
       aria-label={t('artifactTitle')}
     >
       <Title order={2}>{t('artifactTitle')}</Title>
-      <Alert color="blue">{t('artifactIntroduction')}</Alert>
-      <ArtifactCatalog
-        access={access}
-        disabled={locked}
-        onSelect={(request) => {
-          if (disabled || operation.current !== null) {
-            return;
-          }
-          setKind(request.kind);
-          setAuditlog(request.auditlog);
-          setID(request.kind === 'recording' ? request.id : '');
-          selectionChanged();
-        }}
-      />
+      <p className="caption subtle">{t('artifactIntroduction')}</p>
+      <ol className="workflow-steps" aria-label={t('artifactWorkflow')}>
+        <li aria-current={received === null ? 'step' : undefined}>{t('artifactStepSelect')}</li>
+        <li aria-current={received !== null && verified === null ? 'step' : undefined}>
+          {t('artifactStepVerify')}
+        </li>
+        <li aria-current={verified !== null ? 'step' : undefined}>{t('artifactStepUse')}</li>
+      </ol>
+      <details
+        className="artifact-selection"
+        open={selectionOpen}
+        onToggle={(event) => setSelectionOpen(event.currentTarget.open)}
+      >
+        <summary>
+          {received === null
+            ? t('artifactStepSelect')
+            : `${t('artifactChangeSelection')}: ${received.request.auditlog}${received.request.kind === 'recording' ? ` / ${received.request.id}` : ''}`}
+        </summary>
+        <div className="artifact-selection-grid">
+          <ArtifactCatalog
+            access={access}
+            disabled={locked}
+            onSelect={(request) => {
+              if (disabled || operation.current !== null) {
+                return;
+              }
+              setKind(request.kind);
+              setAuditlog(request.auditlog);
+              setID(request.kind === 'recording' ? request.id : '');
+              selectionChanged();
+              setManualOpen(true);
+            }}
+          />
+          <details open={manualOpen} onToggle={(event) => setManualOpen(event.currentTarget.open)}>
+            <summary>{t('artifactExactSelection')}</summary>
+            <p className="caption subtle">{t('artifactExplicitDownload')}</p>
+            <form
+              method="dialog"
+              className="stack"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void download();
+              }}
+            >
+              <Select
+                label={t('artifactKind')}
+                value={kind}
+                disabled={locked}
+                data={[
+                  { value: 'recording', label: t('artifactRecording') },
+                  { value: 'audit', label: t('artifactAudit') },
+                ]}
+                onChange={(value) => {
+                  if (value === 'recording' || value === 'audit') {
+                    setKind(value);
+                    selectionChanged();
+                  }
+                }}
+              />
+              <TextInput
+                label={t('artifactAuditlog')}
+                value={auditlog}
+                required
+                maxLength={128}
+                disabled={locked}
+                onChange={(event) => {
+                  setAuditlog(event.currentTarget.value);
+                  selectionChanged();
+                }}
+              />
+              {kind === 'recording' && (
+                <TextInput
+                  label={t('artifactRecordingID')}
+                  value={id}
+                  required
+                  maxLength={36}
+                  disabled={locked}
+                  onChange={(event) => {
+                    setID(event.currentTarget.value);
+                    selectionChanged();
+                  }}
+                />
+              )}
+              <Button type="submit" disabled={locked}>
+                {t('artifactDownload')}
+              </Button>
+            </form>
+          </details>
+        </div>
+      </details>
       {notice !== null && (
         <Alert role="status" color={notice === 'artifactCancelled' ? 'yellow' : 'red'}>
           {t(notice)}
         </Alert>
       )}
-      <form
-        method="dialog"
-        className="stack"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void download();
-        }}
-      >
-        <Select
-          label={t('artifactKind')}
-          value={kind}
-          disabled={locked}
-          data={[
-            { value: 'recording', label: t('artifactRecording') },
-            { value: 'audit', label: t('artifactAudit') },
-          ]}
-          onChange={(value) => {
-            if (value === 'recording' || value === 'audit') {
-              setKind(value);
-              selectionChanged();
-            }
-          }}
-        />
-        <TextInput
-          label={t('artifactAuditlog')}
-          value={auditlog}
-          required
-          maxLength={128}
-          disabled={locked}
-          onChange={(event) => {
-            setAuditlog(event.currentTarget.value);
-            selectionChanged();
-          }}
-        />
-        {kind === 'recording' && (
-          <TextInput
-            label={t('artifactRecordingID')}
-            value={id}
-            required
-            maxLength={36}
-            disabled={locked}
-            onChange={(event) => {
-              setID(event.currentTarget.value);
-              selectionChanged();
-            }}
-          />
-        )}
-        <Button type="submit" disabled={locked}>
-          {t('artifactDownload')}
-        </Button>
-      </form>
       {phase !== null && (
         <div role="status" className="actions">
           <p>{t(phase === 'downloading' ? 'artifactDownloading' : 'artifactVerifying')}</p>
@@ -326,83 +355,89 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
       )}
       {received !== null && (
         <>
-          <Alert color="yellow">{t('artifactTransportComplete')}</Alert>
-          <section aria-label={t('artifactHints')}>
-            <Title order={3}>{t('artifactHints')}</Title>
-            <p>{t('artifactTransportWarning')}</p>
-            <dl>
-              <dt>{t('artifactSelected')}</dt>
-              <dd>
-                {received.request.auditlog}
-                {received.request.kind === 'recording' ? ` / ${received.request.id}` : ''}
-              </dd>
-              <dt>{t('artifactProducerHint')}</dt>
-              <dd>
-                {'ProducerID' in received.metadata
-                  ? received.metadata.ProducerID
-                  : received.metadata.Producer}
-              </dd>
-              {'Recipient' in received.metadata && (
-                <>
-                  <dt>{t('artifactRecipientHint')}</dt>
-                  <dd>{received.metadata.Recipient || t('artifactHintNone')}</dd>
-                </>
-              )}
-            </dl>
-            <ul>
-              {received.files.slice(filePage * 20, (filePage + 1) * 20).map((file) => (
-                <li key={file.name}>
-                  {file.name} ({new Intl.NumberFormat('en-US').format(file.data.size)}{' '}
-                  {t('artifactBytes')}){' '}
+          {verified === null && <Alert color="yellow">{t('artifactTransportComplete')}</Alert>}
+          <details className="context-help">
+            <summary>{t('artifactHints')}</summary>
+            <section aria-label={t('artifactHints')}>
+              <p>{t('artifactTransportWarning')}</p>
+              <dl>
+                <dt>{t('artifactSelected')}</dt>
+                <dd>
+                  {received.request.auditlog}
+                  {received.request.kind === 'recording' ? ` / ${received.request.id}` : ''}
+                </dd>
+                <dt>{t('artifactProducerHint')}</dt>
+                <dd>
+                  {'ProducerID' in received.metadata
+                    ? received.metadata.ProducerID
+                    : received.metadata.Producer}
+                </dd>
+                {'Recipient' in received.metadata && (
+                  <>
+                    <dt>{t('artifactRecipientHint')}</dt>
+                    <dd>{received.metadata.Recipient || t('artifactHintNone')}</dd>
+                  </>
+                )}
+              </dl>
+              <ul>
+                {received.files.slice(filePage * 20, (filePage + 1) * 20).map((file) => (
+                  <li key={file.name}>
+                    {file.name} ({new Intl.NumberFormat('en-US').format(file.data.size)}{' '}
+                    {t('artifactBytes')}){' '}
+                    <Button
+                      variant="subtle"
+                      disabled={locked}
+                      onClick={() =>
+                        save(
+                          file.data,
+                          file.name === 'recording' && received.request.kind === 'recording'
+                            ? `recording-${received.request.id}.bin`
+                            : file.name,
+                        )
+                      }
+                    >
+                      {t('artifactSaveOriginal')} {file.name}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+              <div className="actions">
+                {filePage > 0 && (
                   <Button
-                    variant="subtle"
+                    variant="default"
                     disabled={locked}
-                    onClick={() =>
-                      save(
-                        file.data,
-                        file.name === 'recording' && received.request.kind === 'recording'
-                          ? `recording-${received.request.id}.bin`
-                          : file.name,
-                      )
-                    }
+                    onClick={() => setFilePage((value) => value - 1)}
                   >
-                    {t('artifactSaveOriginal')} {file.name}
+                    {t('artifactPreviousFiles')}
                   </Button>
-                </li>
-              ))}
-            </ul>
-            <div className="actions">
-              {filePage > 0 && (
-                <Button
-                  variant="default"
-                  disabled={locked}
-                  onClick={() => setFilePage((value) => value - 1)}
-                >
-                  {t('artifactPreviousFiles')}
-                </Button>
-              )}
-              {(filePage + 1) * 20 < received.files.length && (
-                <Button
-                  variant="default"
-                  disabled={locked}
-                  onClick={() => setFilePage((value) => value + 1)}
-                >
-                  {t('artifactNextFiles')}
-                </Button>
-              )}
-            </div>
-          </section>
+                )}
+                {(filePage + 1) * 20 < received.files.length && (
+                  <Button
+                    variant="default"
+                    disabled={locked}
+                    onClick={() => setFilePage((value) => value + 1)}
+                  >
+                    {t('artifactNextFiles')}
+                  </Button>
+                )}
+              </div>
+            </section>
+          </details>
           <form
             ref={form}
             method="dialog"
-            className="stack"
+            className="stack artifact-verification"
             onSubmit={(event) => {
               event.preventDefault();
               void verify();
             }}
           >
             <Title order={3}>{t('artifactExpectations')}</Title>
-            <Alert color="blue">{t('artifactIndependentPins')}</Alert>
+            <p className="caption">{t('artifactPinsInstruction')}</p>
+            <details className="context-help">
+              <summary>{t('artifactTrustHelp')}</summary>
+              <p>{t('artifactIndependentPins')}</p>
+            </details>
             <Checkbox
               label={t('artifactAllowUntrusted')}
               checked={untrusted}
@@ -453,79 +488,108 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
                 }}
               />
             )}
-            <Select
-              label={t('artifactLevel')}
-              value={level}
-              disabled={locked}
-              data={[
-                { value: 'outer', label: t('artifactOuter') },
-                { value: 'private', label: t('artifactPrivate') },
-              ]}
+            <Radio.Group
+              label={t('artifactPurpose')}
+              value={
+                level === 'private' && exporting ? 'use' : level === 'outer' ? 'check' : 'advanced'
+              }
               onChange={(value) => {
-                setLevel(value === 'private' ? 'private' : 'outer');
+                setLevel(value === 'use' ? 'private' : 'outer');
+                setExporting(value === 'use');
                 invalidateResult();
               }}
-            />
-            {kind === 'audit' && (
-              <Select
-                label={t('artifactAuditScope')}
-                value={scope}
-                disabled={locked}
-                data={[
-                  { value: 'complete', label: t('artifactComplete') },
-                  { value: 'captured-prefix', label: t('artifactPrefix') },
-                ]}
-                onChange={(value) => {
-                  setScope(value === 'captured-prefix' ? 'captured-prefix' : 'complete');
-                  invalidateResult();
-                }}
-              />
-            )}
-            {level === 'private' && (
-              <>
-                <Checkbox
-                  label={t('artifactPrepareExport')}
-                  checked={exporting}
+            >
+              <div className="stack verification-purpose">
+                <Radio value="check" label={t('artifactPurposeCheck')} disabled={locked} />
+                <Radio
+                  value="use"
+                  label={t('artifactPurposeUse')}
+                  description={t('artifactPurposeUseHint')}
                   disabled={locked}
-                  onChange={(event) => {
-                    setExporting(event.currentTarget.checked);
+                />
+              </div>
+            </Radio.Group>
+            {level === 'private' && !exporting && (
+              <p className="caption subtle">{t('artifactCustomPurpose')}</p>
+            )}
+            <details>
+              <summary>{t('artifactAdvancedVerification')}</summary>
+              <div className="stack">
+                <Select
+                  label={t('artifactLevel')}
+                  value={level}
+                  disabled={locked}
+                  data={[
+                    { value: 'outer', label: t('artifactOuter') },
+                    { value: 'private', label: t('artifactPrivate') },
+                  ]}
+                  onChange={(value) => {
+                    setLevel(value === 'private' ? 'private' : 'outer');
                     invalidateResult();
                   }}
                 />
                 {kind === 'audit' && (
-                  <Checkbox
-                    label={t('artifactSensitive')}
-                    checked={sensitive}
+                  <Select
+                    label={t('artifactAuditScope')}
+                    value={scope}
                     disabled={locked}
-                    onChange={(event) => {
-                      setSensitive(event.currentTarget.checked);
+                    data={[
+                      { value: 'complete', label: t('artifactComplete') },
+                      { value: 'captured-prefix', label: t('artifactPrefix') },
+                    ]}
+                    onChange={(value) => {
+                      setScope(value === 'captured-prefix' ? 'captured-prefix' : 'complete');
                       invalidateResult();
                     }}
                   />
                 )}
-                {encryption === 'encrypted' && (
+                {level === 'private' && (
                   <>
-                    <Alert color="blue">{t('artifactKeyLocal')}</Alert>
-                    <label className="stack" htmlFor="evidence-private">
-                      {t('artifactKeyFile')}
-                      <input
-                        key={`private:${keyRevision}`}
-                        id="evidence-private"
-                        type="file"
-                        required
-                        disabled={locked}
-                      />
-                    </label>
-                    <PasswordInput
-                      key={`passphrase:${keyRevision}`}
-                      id="evidence-passphrase"
-                      label={t('artifactPassphrase')}
+                    <Checkbox
+                      label={t('artifactPrepareExport')}
+                      checked={exporting}
                       disabled={locked}
-                      autoComplete="off"
-                      visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }}
+                      onChange={(event) => {
+                        setExporting(event.currentTarget.checked);
+                        invalidateResult();
+                      }}
                     />
+                    {kind === 'audit' && (
+                      <Checkbox
+                        label={t('artifactSensitive')}
+                        checked={sensitive}
+                        disabled={locked}
+                        onChange={(event) => {
+                          setSensitive(event.currentTarget.checked);
+                          invalidateResult();
+                        }}
+                      />
+                    )}
                   </>
                 )}
+              </div>
+            </details>
+            {level === 'private' && encryption === 'encrypted' && (
+              <>
+                <Alert color="blue">{t('artifactKeyLocal')}</Alert>
+                <label className="stack" htmlFor="evidence-private">
+                  {t('artifactKeyFile')}
+                  <input
+                    key={`private:${keyRevision}`}
+                    id="evidence-private"
+                    type="file"
+                    required
+                    disabled={locked}
+                  />
+                </label>
+                <PasswordInput
+                  key={`passphrase:${keyRevision}`}
+                  id="evidence-passphrase"
+                  label={t('artifactPassphrase')}
+                  disabled={locked}
+                  autoComplete="off"
+                  visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }}
+                />
               </>
             )}
             <Button type="submit" disabled={locked}>
@@ -540,7 +604,7 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
           {metadata.trust === 'untrusted' && (
             <Alert color="yellow">{t('artifactUntrustedResult')}</Alert>
           )}
-          <dl>
+          <dl className="metadata-grid">
             <dt>{t('artifactTrust')}</dt>
             <dd>
               {t(metadata.trust === 'pinned' ? 'artifactPinnedResult' : 'artifactUntrustedResult')}
@@ -631,6 +695,7 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
           disabled={locked}
           onClick={() => {
             setReceived(null);
+            setSelectionOpen(true);
             invalidateResult();
           }}
         >

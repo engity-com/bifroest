@@ -20,10 +20,12 @@ export function ManagementPanel({
   access,
   disabled,
   onActionLock,
+  view,
 }: {
   access: WebAccess;
   disabled: boolean;
   onActionLock: (locked: boolean) => void;
+  view: 'sessions' | 'server';
 }) {
   const [flows, setFlows] = useState<Page<FlowSummary> | null>(null);
   const [version, setVersion] = useState<VersionInfo | null>(null);
@@ -234,29 +236,38 @@ export function ManagementPanel({
       : `${item.owner.issuer} / ${item.owner.subject}`;
   return (
     <Paper withBorder p="lg" className="stack" aria-label={t('managementTitle')}>
-      <Title order={2}>{t('managementTitle')}</Title>
-      <Alert color="blue">{t('managementReadOnly')}</Alert>
-      <Checkbox
-        label={t('managementVersionLong')}
-        checked={longVersion}
-        disabled={locked}
-        onChange={(event) => setLongVersion(event.currentTarget.checked)}
-      />
-      <Button
-        disabled={locked}
-        onClick={() => {
-          void loadVersion();
-        }}
-      >
-        {t('managementVersionLoad')}
-      </Button>
-      {version !== null && (
-        <section aria-label={t('managementVersionTitle')}>
-          <Title order={3}>{t('managementVersionTitle')}</Title>
-          <p>{t('managementVersionReported')}</p>
-          <pre>{version.text}</pre>
-        </section>
-      )}
+      <div className="section-heading">
+        <Title order={2}>
+          {t(view === 'server' ? 'workspaceServer' : 'managementSessionsTitle')}
+        </Title>
+        <details className="context-help">
+          <summary>{t('managementPolicyHelp')}</summary>
+          <p>{t('managementReadOnly')}</p>
+        </details>
+      </div>
+      <section hidden={view !== 'server'} className="stack">
+        <Title order={3}>{t('managementVersionTitle')}</Title>
+        <Checkbox
+          label={t('managementVersionLong')}
+          checked={longVersion}
+          disabled={locked}
+          onChange={(event) => setLongVersion(event.currentTarget.checked)}
+        />
+        <Button
+          disabled={locked}
+          onClick={() => {
+            void loadVersion();
+          }}
+        >
+          {t('managementVersionLoad')}
+        </Button>
+        {version !== null && (
+          <section aria-label={t('managementVersionTitle')}>
+            <p>{t('managementVersionReported')}</p>
+            <pre>{version.text}</pre>
+          </section>
+        )}
+      </section>
       {notice !== null && (
         <Alert role="status" color={notice.kind === 'confirmed' ? 'green' : 'yellow'}>
           <p>
@@ -285,228 +296,282 @@ export function ManagementPanel({
           {t('managementFailed')}
         </Alert>
       )}
-      <div className="actions">
-        <Button
-          disabled={locked}
-          onClick={() => {
-            void loadFlows();
-          }}
-        >
-          {t('managementFlows')}
-        </Button>
-        {busy && (
-          <Button variant="default" onClick={cancel}>
-            {t(sending.current ? 'managementStopWaiting' : 'managementCancel')}
+      <div hidden={view !== 'server'} className="stack">
+        <Title order={3}>{t('managementFlowListTitle')}</Title>
+        <div className="actions">
+          <Button
+            disabled={locked}
+            onClick={() => {
+              void loadFlows();
+            }}
+          >
+            {t('managementFlows')}
           </Button>
+        </div>
+        {flows !== null && (
+          <>
+            <div className="table-scroll">
+              <Table captionSide="top">
+                <caption>{t('managementFlowsCaption')}</caption>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>{t('managementFlow')}</Table.Th>
+                    <Table.Th>{t('managementAuthorization')}</Table.Th>
+                    <Table.Th>{t('managementEnvironment')}</Table.Th>
+                    <Table.Th>{t('managementAuditlog')}</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {flows.items.map((item) => (
+                    <Table.Tr key={item.name}>
+                      <Table.Td>{item.name}</Table.Td>
+                      <Table.Td>{item.authorization}</Table.Td>
+                      <Table.Td>{item.environment}</Table.Td>
+                      <Table.Td>{item.auditlog}</Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </div>
+            {flows.next !== '' && (
+              <Button
+                disabled={locked}
+                onClick={() => {
+                  void loadFlows(flows.next);
+                }}
+              >
+                {t('managementNextFlows')}
+              </Button>
+            )}
+          </>
         )}
       </div>
-      {flows !== null && (
-        <>
-          <Table captionSide="top">
-            <caption>{t('managementFlowsCaption')}</caption>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>{t('managementFlow')}</Table.Th>
-                <Table.Th>{t('managementAuthorization')}</Table.Th>
-                <Table.Th>{t('managementEnvironment')}</Table.Th>
-                <Table.Th>{t('managementAuditlog')}</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {flows.items.map((item) => (
-                <Table.Tr key={item.name}>
-                  <Table.Td>{item.name}</Table.Td>
-                  <Table.Td>{item.authorization}</Table.Td>
-                  <Table.Td>{item.environment}</Table.Td>
-                  <Table.Td>{item.auditlog}</Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-          {flows.next !== '' && (
-            <Button
-              disabled={locked}
-              onClick={() => {
-                void loadFlows(flows.next);
-              }}
-            >
-              {t('managementNextFlows')}
-            </Button>
-          )}
-        </>
-      )}
-      <Title order={3}>{t('managementSessionsTitle')}</Title>
-      <form
-        method="dialog"
-        className="stack"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void loadSessions();
-        }}
-      >
-        <TextInput
-          label={t('managementFlowFilter')}
-          value={flow}
-          onChange={(event) => setFlow(event.currentTarget.value)}
-          disabled={locked}
-          maxLength={255}
-        />
-        <TextInput
-          label={t('managementUserFilter')}
-          value={user}
-          onChange={(event) => setUser(event.currentTarget.value)}
-          disabled={locked}
-          maxLength={256}
-        />
-        <Select
-          label={t('managementStateFilter')}
-          value={state}
-          onChange={(value) => setState(value ?? 'active')}
-          data={['active', 'all', 'new', 'authorized', 'disposed']}
-          disabled={locked}
-        />
-        <Button type="submit" disabled={locked}>
-          {t('managementLoadSessions')}
+      {busy && (
+        <Button variant="default" onClick={cancel}>
+          {t(sending.current ? 'managementStopWaiting' : 'managementCancel')}
         </Button>
-      </form>
-      <section aria-label={t('managementDirectAction')} className="stack">
-        <Title order={3}>{t('managementDirectAction')}</Title>
-        <p>{t('managementDirectActionHint')}</p>
+      )}
+      <section hidden={view !== 'sessions'} className="stack">
         <form
           method="dialog"
-          className="stack"
+          className="session-filters"
           onSubmit={(event) => {
             event.preventDefault();
-            void prepare(actionKind, { flow: actionFlow, id: actionID });
+            void loadSessions();
           }}
         >
           <TextInput
-            label={t('managementActionFlow')}
-            value={actionFlow}
-            onChange={(event) => setActionFlow(event.currentTarget.value)}
+            label={t('managementFlowFilter')}
+            value={flow}
+            onChange={(event) => setFlow(event.currentTarget.value)}
             disabled={locked}
             maxLength={255}
-            required
           />
           <TextInput
-            label={t('managementActionID')}
-            value={actionID}
-            onChange={(event) => setActionID(event.currentTarget.value)}
+            label={t('managementUserFilter')}
+            value={user}
+            onChange={(event) => setUser(event.currentTarget.value)}
             disabled={locked}
-            maxLength={36}
-            required
-            pattern="[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+            maxLength={256}
           />
           <Select
-            label={t('managementActionKind')}
-            value={actionKind}
-            onChange={(value) => setActionKind(value === 'dispose' ? 'dispose' : 'disconnect')}
-            data={['disconnect', 'dispose']}
+            label={t('managementStateFilter')}
+            value={state}
+            onChange={(value) => setState(value ?? 'active')}
+            data={['active', 'all', 'new', 'authorized', 'disposed']}
             disabled={locked}
           />
-          <Button type="submit" disabled={locked || notice?.kind === 'unknown'}>
-            {t('managementPrepareAction')}
+          <Button type="submit" disabled={locked}>
+            {t('managementLoadSessions')}
           </Button>
         </form>
-      </section>
-      {sessions !== null && (
-        <>
-          {sessions.skipped > 0 && (
-            <Alert color="yellow">
-              {t('managementPartial')} ({sessions.skipped})
-            </Alert>
-          )}
-          {sessions.items.some((item) => item.policyLimited) && (
-            <Alert color="yellow">{t('managementLimited')}</Alert>
-          )}
-          <Table captionSide="top">
-            <caption>{t('managementSessionsCaption')}</caption>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>{t('managementSessionId')}</Table.Th>
-                <Table.Th>{t('managementFlow')}</Table.Th>
-                <Table.Th>{t('managementStateFilter')}</Table.Th>
-                <Table.Th>{t('managementUserFilter')}</Table.Th>
-                <Table.Th>{t('managementOwner')}</Table.Th>
-                <Table.Th>{t('managementCreated')}</Table.Th>
-                <Table.Th>{t('managementDetails')}</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
+        {sessions === null && <p className="empty-state">{t('managementSessionsEmpty')}</p>}
+        {sessions !== null && (
+          <>
+            {sessions.skipped > 0 && (
+              <Alert color="yellow">
+                {t('managementPartial')} ({sessions.skipped})
+              </Alert>
+            )}
+            {sessions.items.some((item) => item.policyLimited) && (
+              <Alert color="yellow">{t('managementLimited')}</Alert>
+            )}
+            <div className="table-scroll desktop-sessions">
+              <Table captionSide="top" className="session-table">
+                <caption>{t('managementSessionsCaption')}</caption>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>{t('managementSessionId')}</Table.Th>
+                    <Table.Th>{t('managementFlow')}</Table.Th>
+                    <Table.Th>{t('managementStateFilter')}</Table.Th>
+                    <Table.Th>{t('managementUserFilter')}</Table.Th>
+                    <Table.Th>{t('managementOwner')}</Table.Th>
+                    <Table.Th>{t('managementCreated')}</Table.Th>
+                    <Table.Th>{t('managementDetails')}</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {sessions.items.map((item) => (
+                    <Table.Tr key={`${item.flow}/${item.id}`}>
+                      <Table.Td>
+                        <span className="identifier">{item.id}</span>
+                      </Table.Td>
+                      <Table.Td>{item.flow}</Table.Td>
+                      <Table.Td>{item.state}</Table.Td>
+                      <Table.Td>{item.user || '—'}</Table.Td>
+                      <Table.Td>{ownerLabel(item)}</Table.Td>
+                      <Table.Td>{when(item.createdAt)}</Table.Td>
+                      <Table.Td>
+                        <Button
+                          disabled={locked}
+                          onClick={() => {
+                            void show(item);
+                          }}
+                          aria-label={`${t('managementDetails')} ${item.id}`}
+                        >
+                          {t('managementDetails')}
+                        </Button>
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </div>
+            <section className="stack mobile-sessions" aria-label={t('managementSessionsCaption')}>
               {sessions.items.map((item) => (
-                <Table.Tr key={`${item.flow}/${item.id}`}>
-                  <Table.Td>{item.id}</Table.Td>
-                  <Table.Td>{item.flow}</Table.Td>
-                  <Table.Td>{item.state}</Table.Td>
-                  <Table.Td>{item.user || '—'}</Table.Td>
-                  <Table.Td>{ownerLabel(item)}</Table.Td>
-                  <Table.Td>{when(item.createdAt)}</Table.Td>
-                  <Table.Td>
-                    <Button
-                      disabled={locked}
-                      onClick={() => {
-                        void show(item);
-                      }}
-                      aria-label={`${t('managementDetails')} ${item.id}`}
-                    >
-                      {t('managementDetails')}
-                    </Button>
-                  </Table.Td>
-                </Table.Tr>
+                <article key={`${item.flow}/${item.id}`} className="session-card stack">
+                  <div className="section-heading">
+                    <strong>{item.flow}</strong>
+                    <span>{item.state}</span>
+                  </div>
+                  <span className="identifier">{item.id}</span>
+                  <dl className="metadata-grid">
+                    <dt>{t('managementUserFilter')}</dt>
+                    <dd>{item.user || '—'}</dd>
+                    <dt>{t('managementOwner')}</dt>
+                    <dd>{ownerLabel(item)}</dd>
+                    <dt>{t('managementCreated')}</dt>
+                    <dd>{when(item.createdAt)}</dd>
+                  </dl>
+                  <Button
+                    variant="light"
+                    disabled={locked}
+                    onClick={() => {
+                      void show(item);
+                    }}
+                    aria-label={`${t('managementDetails')} ${item.id}`}
+                  >
+                    {t('managementDetails')}
+                  </Button>
+                </article>
               ))}
-            </Table.Tbody>
-          </Table>
-          {sessions.next !== '' && (
-            <Button
-              disabled={locked}
-              onClick={() => {
-                void loadSessions(true);
+            </section>
+            {sessions.items.length === 0 && (
+              <p className="empty-state">{t('managementNoSessions')}</p>
+            )}
+            {sessions.next !== '' && (
+              <Button
+                disabled={locked}
+                onClick={() => {
+                  void loadSessions(true);
+                }}
+              >
+                {t('managementNextSessions')}
+              </Button>
+            )}
+          </>
+        )}
+        {selected !== null && (
+          <section aria-label={t('managementDetails')} className="stack session-details">
+            <div className="section-heading">
+              <Title order={3}>{t('managementDetails')}</Title>
+              <Button variant="subtle" onClick={() => setSelected(null)}>
+                {t('close')}
+              </Button>
+            </div>
+            <span className="identifier">
+              {selected.flow}/{selected.id}
+            </span>
+            {selected.policyLimited && <Alert color="yellow">{t('managementLimited')}</Alert>}
+            <dl className="metadata-grid">
+              <dt>{t('managementRemote')}</dt>
+              <dd>{selected.remote}</dd>
+              <dt>{t('managementOwner')}</dt>
+              <dd>{ownerLabel(selected)}</dd>
+              <dt>{t('managementValidUntil')}</dt>
+              <dd>
+                {selected.validUntil === undefined
+                  ? t(selected.policyLimited ? 'managementWithheldOwner' : 'managementNoLimit')
+                  : when(selected.validUntil)}
+              </dd>
+            </dl>
+            <div className="actions">
+              <Button
+                disabled={locked || selected.policyLimited || notice?.kind === 'unknown'}
+                color="orange"
+                onClick={() => {
+                  void prepare('disconnect', selected);
+                }}
+              >
+                {t('managementDisconnect')}
+              </Button>
+              <Button
+                disabled={locked || selected.policyLimited || notice?.kind === 'unknown'}
+                color="red"
+                onClick={() => {
+                  void prepare('dispose', selected);
+                }}
+              >
+                {t('managementDispose')}
+              </Button>
+            </div>
+          </section>
+        )}
+        <details className="advanced-action">
+          <summary>{t('managementDirectAction')}</summary>
+          <section aria-label={t('managementDirectAction')} className="stack">
+            <p className="caption subtle">{t('managementDirectActionHint')}</p>
+            <form
+              method="dialog"
+              className="session-filters"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void prepare(actionKind, { flow: actionFlow, id: actionID });
               }}
             >
-              {t('managementNextSessions')}
-            </Button>
-          )}
-        </>
-      )}
-      {selected !== null && (
-        <section aria-label={t('managementDetails')} className="stack">
-          <Title order={3}>{selected.id}</Title>
-          {selected.policyLimited && <Alert color="yellow">{t('managementLimited')}</Alert>}
-          <dl>
-            <dt>{t('managementRemote')}</dt>
-            <dd>{selected.remote}</dd>
-            <dt>{t('managementOwner')}</dt>
-            <dd>{ownerLabel(selected)}</dd>
-            <dt>{t('managementValidUntil')}</dt>
-            <dd>
-              {selected.validUntil === undefined
-                ? t(selected.policyLimited ? 'managementWithheldOwner' : 'managementNoLimit')
-                : when(selected.validUntil)}
-            </dd>
-          </dl>
-          <div className="actions">
-            <Button
-              disabled={locked || selected.policyLimited || notice?.kind === 'unknown'}
-              color="orange"
-              onClick={() => {
-                void prepare('disconnect', selected);
-              }}
-            >
-              {t('managementDisconnect')}
-            </Button>
-            <Button
-              disabled={locked || selected.policyLimited || notice?.kind === 'unknown'}
-              color="red"
-              onClick={() => {
-                void prepare('dispose', selected);
-              }}
-            >
-              {t('managementDispose')}
-            </Button>
-          </div>
-        </section>
-      )}
+              <TextInput
+                label={t('managementActionFlow')}
+                value={actionFlow}
+                onChange={(event) => setActionFlow(event.currentTarget.value)}
+                disabled={locked}
+                maxLength={255}
+                required
+              />
+              <TextInput
+                label={t('managementActionID')}
+                value={actionID}
+                onChange={(event) => setActionID(event.currentTarget.value)}
+                disabled={locked}
+                maxLength={36}
+                required
+                pattern="[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+              />
+              <Select
+                label={t('managementActionKind')}
+                value={actionKind}
+                onChange={(value) => setActionKind(value === 'dispose' ? 'dispose' : 'disconnect')}
+                data={['disconnect', 'dispose']}
+                disabled={locked}
+              />
+              <Button type="submit" disabled={locked || notice?.kind === 'unknown'}>
+                {t('managementPrepareAction')}
+              </Button>
+            </form>
+          </section>
+        </details>
+      </section>
       <Modal
+        classNames={{ content: 'confirmation-dialog' }}
         lockScroll={false}
         opened={preview !== null}
         onClose={closeConfirmation}
@@ -545,7 +610,7 @@ export function ManagementPanel({
               </>
             )}
             <p>
-              {t('expires')}: {when(preview.expiresAt)}
+              {t('managementConfirmationExpires')}: {when(preview.expiresAt)}
             </p>
             <TextInput
               label={t('managementConfirmTarget')}

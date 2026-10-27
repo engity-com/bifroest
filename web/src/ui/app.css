@@ -1,13 +1,85 @@
 body { margin: 0; }
-.workspace { max-width: 42rem; margin: 3rem auto; padding: 0 1rem; }
-.header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 2rem; }
-.stack { display: flex; flex-direction: column; gap: 1rem; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+.workspace { --workspace-muted: #5c636a; width: min(100% - 2rem, 88rem); margin: 1.25rem auto; }
+html[data-mantine-color-scheme="dark"] .workspace { --workspace-muted: #adb5bd; }
+.workspace--login { max-width: 38rem; margin-top: clamp(1rem, 7vh, 5rem); }
+.header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 1.5rem; margin-bottom: 1.25rem; }
+.brand { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: .75rem; overflow-wrap: anywhere; }
+.stack { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
+.stack > p { margin: 0; }
+.workspace pre { max-width: 100%; overflow-x: auto; }
 .actions { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; }
-.subtle { color: var(--mantine-color-dimmed); }
+.subtle { color: var(--workspace-muted); }
 .caption { font-size: .875rem; }
-.terminal-surface { height: 24rem; width: 100%; min-width: 0; overflow: hidden; }
+.account-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 1rem; }
+.account-identity { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem 1rem; min-width: 0; overflow-wrap: anywhere; }
+.account-actions { gap: .25rem; }
+.workspace-nav { display: flex; flex-wrap: wrap; gap: .5rem; padding-bottom: .75rem; border-bottom: 1px solid var(--mantine-color-default-border); }
+.login-methods { display: flex; flex-wrap: wrap; gap: .75rem 1.25rem; margin-top: .5rem; }
+.access-links { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem 1rem; }
+.access-links ul { list-style: none; margin: 0; padding: 0; }
+.workspace-footer { display: flex; flex-wrap: wrap; align-items: start; justify-content: space-between; gap: .75rem; color: var(--workspace-muted); }
+.workspace-footer details { max-width: 45rem; }
+summary { cursor: pointer; font-weight: 500; }
+summary:focus-visible { outline: 2px solid var(--mantine-primary-color-filled); outline-offset: 4px; }
+details > summary + * { margin-top: .75rem; }
+.context-help { color: var(--workspace-muted); font-size: .875rem; }
+.context-help p { max-width: 65rem; }
+.section-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: .5rem 1rem; }
+.session-filters { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: .75rem; align-items: end; }
+.empty-state { padding: 2rem 1rem; text-align: center; color: var(--workspace-muted); border: 1px dashed var(--mantine-color-default-border); border-radius: var(--mantine-radius-md); }
+.table-scroll { max-width: 100%; overflow-x: auto; }
+.table-scroll table { min-width: 36rem; }
+.table-scroll th, .table-scroll td { overflow-wrap: anywhere; }
+.session-table { table-layout: fixed; }
+.session-table th:first-child { width: 25%; }
+.identifier { font-family: var(--mantine-font-family-monospace); overflow-wrap: anywhere; font-size: .875rem; }
+.mobile-sessions { display: none; }
+.session-card { padding: 1rem; border: 1px solid var(--mantine-color-default-border); border-radius: var(--mantine-radius-md); }
+.session-details { padding: 1rem; background: var(--mantine-color-default-hover); border-radius: var(--mantine-radius-md); }
+.metadata-grid { display: grid; grid-template-columns: minmax(8rem, 1fr) minmax(0, 3fr); gap: .5rem 1rem; margin: 0; }
+.metadata-grid dt { color: var(--workspace-muted); }
+.metadata-grid dd { margin: 0; overflow-wrap: anywhere; }
+.advanced-action { border-top: 1px solid var(--mantine-color-default-border); padding-top: 1rem; }
+.confirmation-dialog { overflow-wrap: anywhere; }
 .terminal-panel { min-width: 0; }
+.terminal-controls { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem 1rem; }
+.terminal-controls .terminal-command { flex: 1 1 18rem; }
+.terminal-status { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; font-size: .875rem; }
+.terminal-status p { margin: 0; }
+.terminal-surface { height: max(20rem, calc(100dvh - 24rem)); width: 100%; min-width: 0; overflow: hidden; }
 .login-message { white-space: pre-wrap; overflow-wrap: anywhere; }
 .artifact-panel { min-width: 0; }
 .artifact-panel dd, .artifact-panel li, .artifact-panel td { overflow-wrap: anywhere; }
+.workflow-steps { display: flex; flex-wrap: wrap; gap: .75rem 2rem; list-style: none; margin: 0; padding: .75rem 0; border-bottom: 1px solid var(--mantine-color-default-border); color: var(--workspace-muted); }
+.verification-purpose { margin-top: .75rem; }
+.workflow-steps [aria-current="step"] { color: var(--mantine-primary-color-filled); font-weight: 600; }
+.artifact-selection { border: 1px solid var(--mantine-color-default-border); border-radius: var(--mantine-radius-md); padding: 1rem; }
+.artifact-selection > summary { overflow-wrap: anywhere; }
+.artifact-selection-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 1.5rem; align-items: start; }
+.artifact-verification { max-width: 50rem; }
 .playback-surface { max-width: 100%; height: 24rem; overflow: auto; }
+@media (max-width: 60rem) {
+  .account-identity { flex-direction: column; align-items: start; }
+  .session-filters { grid-template-columns: 1fr 1fr; }
+  .artifact-selection-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 48rem) {
+  .workspace { width: calc(100% - 1rem); margin: .75rem auto; }
+  .workspace-nav { gap: .25rem; }
+  .workspace-nav > button { flex: 1 1 auto; }
+  .account-actions > button { white-space: normal; height: auto; min-height: 2.25rem; }
+  .login-methods { flex-direction: column; }
+  .session-filters { grid-template-columns: minmax(0, 1fr); }
+  .desktop-sessions { display: none; }
+  .mobile-sessions { display: flex; }
+  .metadata-grid { grid-template-columns: minmax(0, 1fr); gap: .25rem; }
+  .metadata-grid dd { margin-bottom: .5rem; }
+  .terminal-surface { height: max(20rem, calc(100dvh - 29rem)); }
+  .terminal-controls { align-items: center; }
+  .terminal-controls > .actions { width: 100%; }
+  .workspace .mantine-Button-root { max-width: 100%; height: auto; min-height: 2.25rem; }
+  .workspace .mantine-Button-label { white-space: normal; }
+  .workspace input[type="file"] { max-width: 100%; }
+}

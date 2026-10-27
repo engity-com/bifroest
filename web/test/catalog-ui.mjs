@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { workspace } from './workspace-ui.mjs';
 
 const [origin, mode] = process.argv.slice(2);
 assert.match(origin, /^https:\/\/app\.example\.org:[0-9]+$/u);
@@ -54,6 +55,7 @@ try {
   const response = await page.goto(`${origin}/Work`);
   assert.equal(response.status(), 200);
   await login('alice');
+  await workspace(page, 'Recordings & audit');
   const catalog = page.getByRole('region', {
     name: 'Artifact catalog (server metadata)',
     exact: true,
@@ -144,6 +146,7 @@ try {
   await panel
     .getByLabel('Expected recipient fingerprint', { exact: false })
     .fill(`SHA256:${'A'.repeat(43)}`);
+  await panel.locator('.artifact-selection > summary').click();
   await recordings.getByRole('button', { name: `Select recording ${id}`, exact: true }).click();
   assert.equal(
     await panel
@@ -178,6 +181,7 @@ try {
     .getByRole('button', { name: 'Sign in again for new connections', exact: true })
     .click();
   await login('bob');
+  await workspace(page, 'Recordings & audit');
   assert.equal(
     await catalog.getByRole('table').count(),
     0,

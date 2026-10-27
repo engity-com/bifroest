@@ -296,12 +296,17 @@ export function TerminalPanel({ access, disabled }: { access: WebAccess; disable
 
   return (
     <Paper withBorder p="lg" className="stack terminal-panel">
-      <Title order={2}>{t('terminalTitle')}</Title>
-      <p className="caption">{t('terminalFresh')}</p>
+      <div className="section-heading">
+        <Title order={2}>{t('terminalTitle')}</Title>
+        <details className="context-help">
+          <summary>{t('terminalConnectionHelp')}</summary>
+          <p>{t('terminalFresh')}</p>
+        </details>
+      </div>
       <form
         method="post"
         action="/_bifroest/api/v1/terminal"
-        className="stack"
+        className="terminal-controls"
         onSubmit={(event) => {
           event.preventDefault();
           void start(event.currentTarget);
@@ -320,6 +325,7 @@ export function TerminalPanel({ access, disabled }: { access: WebAccess; disable
         {kind === 'exec' && (
           <TextInput
             name="command"
+            className="terminal-command"
             label={t('terminalCommand')}
             autoComplete="off"
             disabled={running || disabled}
@@ -344,50 +350,59 @@ export function TerminalPanel({ access, disabled }: { access: WebAccess; disable
           </Button>
         </div>
       </form>
-      <p role="status" data-terminal-phase={state?.phase ?? 'idle'}>
-        {t(
-          unavailable ? 'terminalUnavailable' : !initialized ? 'terminalLoading' : statusKey(state),
-        )}
-        {state?.phase === 'exited'
-          ? ` ${new Intl.NumberFormat('en-US', { useGrouping: false }).format(state.status)}`
-          : ''}
-      </p>
-      {principal !== '' && (
-        <p className="caption">
-          {t('terminalActor')}: {principal}
+      <div className="terminal-status">
+        <p role="status" data-terminal-phase={state?.phase ?? 'idle'}>
+          {t(
+            unavailable
+              ? 'terminalUnavailable'
+              : !initialized
+                ? 'terminalLoading'
+                : statusKey(state),
+          )}
+          {state?.phase === 'exited'
+            ? ` ${new Intl.NumberFormat('en-US', { useGrouping: false }).format(state.status)}`
+            : ''}
         </p>
-      )}
-      <section className="terminal-surface" ref={container} aria-label={t('terminalViewport')} />
-      <div className="actions">
-        <Button
-          variant="default"
-          disabled={state?.phase !== 'connected' || inputClosed}
-          onClick={() => {
-            if (connection.current?.eof()) {
-              setInputClosed(true);
-              if (emulator.current) {
-                emulator.current.options.disableStdin = true;
-              }
-            }
-          }}
-        >
-          {t('terminalEof')}
-        </Button>
-        <Button
-          variant="default"
-          disabled={state?.phase !== 'connected'}
-          onClick={() => connection.current?.signal('INT')}
-        >
-          {t('terminalInterrupt')}
-        </Button>
-        <Button
-          variant="default"
-          disabled={state?.phase !== 'connected'}
-          onClick={() => connection.current?.signal('TERM')}
-        >
-          {t('terminalTerminate')}
-        </Button>
+        {principal !== '' && (
+          <p className="caption subtle">
+            {t('terminalActor')}: {principal}
+          </p>
+        )}
       </div>
+      <section className="terminal-surface" ref={container} aria-label={t('terminalViewport')} />
+      <details>
+        <summary>{t('terminalInputControls')}</summary>
+        <div className="actions">
+          <Button
+            variant="default"
+            disabled={state?.phase !== 'connected' || inputClosed}
+            onClick={() => {
+              if (connection.current?.eof()) {
+                setInputClosed(true);
+                if (emulator.current) {
+                  emulator.current.options.disableStdin = true;
+                }
+              }
+            }}
+          >
+            {t('terminalEof')}
+          </Button>
+          <Button
+            variant="default"
+            disabled={state?.phase !== 'connected'}
+            onClick={() => connection.current?.signal('INT')}
+          >
+            {t('terminalInterrupt')}
+          </Button>
+          <Button
+            variant="default"
+            disabled={state?.phase !== 'connected'}
+            onClick={() => connection.current?.signal('TERM')}
+          >
+            {t('terminalTerminate')}
+          </Button>
+        </div>
+      </details>
     </Paper>
   );
 }

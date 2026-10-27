@@ -113,7 +113,10 @@ export function ArtifactCatalog({
   return (
     <section className="stack" aria-label={t('artifactCatalog')}>
       <Title order={3}>{t('artifactCatalog')}</Title>
-      <Alert color="blue">{t('artifactCatalogWarning')}</Alert>
+      <details className="context-help">
+        <summary>{t('artifactCatalogHelp')}</summary>
+        <p>{t('artifactCatalogWarning')}</p>
+      </details>
       {((auditlogs !== null && auditlogs.skipped > 0) ||
         (recordings !== null && recordings.page.skipped > 0)) && (
         <Alert color="yellow">{t('managementPartial')}</Alert>
@@ -145,52 +148,54 @@ export function ArtifactCatalog({
       </div>
       {auditlogs !== null && (
         <>
-          <Table captionSide="top">
-            <caption>{t('artifactAuditlogCaption')}</caption>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>{t('artifactAuditlog')}</Table.Th>
-                <Table.Th>{t('artifactCatalogConfiguration')}</Table.Th>
-                <Table.Th>{t('artifactCatalogSelection')}</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {auditlogs.items.map((row) => (
-                <Table.Tr key={row.name}>
-                  <Table.Td>{row.name}</Table.Td>
-                  <Table.Td>
-                    {t(row.enabled ? 'artifactCatalogEnabled' : 'artifactCatalogDisabled')} /{' '}
-                    {t(
-                      row.recordingEnabled
-                        ? 'artifactCatalogRecordingOn'
-                        : 'artifactCatalogRecordingOff',
-                    )}{' '}
-                    / {t(row.encrypted ? 'artifactCatalogEncrypted' : 'artifactCatalogClear')}
-                  </Table.Td>
-                  <Table.Td>
-                    <div className="stack">
-                      <Button
-                        disabled={locked || !row.enabled}
-                        aria-label={`${t('artifactSelectAudit')} ${row.name}`}
-                        onClick={() => select({ kind: 'audit', auditlog: row.name })}
-                      >
-                        {t('artifactSelectAudit')}
-                      </Button>
-                      <Button
-                        disabled={locked || !row.enabled || !row.recordingEnabled}
-                        aria-label={`${t('artifactLoadRecordings')} ${row.name}`}
-                        onClick={() => {
-                          void loadRecordings(row.name);
-                        }}
-                      >
-                        {t('artifactLoadRecordings')}
-                      </Button>
-                    </div>
-                  </Table.Td>
+          <div className="table-scroll">
+            <Table captionSide="top">
+              <caption>{t('artifactAuditlogCaption')}</caption>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>{t('artifactAuditlog')}</Table.Th>
+                  <Table.Th>{t('artifactCatalogConfiguration')}</Table.Th>
+                  <Table.Th>{t('artifactCatalogSelection')}</Table.Th>
                 </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
+              </Table.Thead>
+              <Table.Tbody>
+                {auditlogs.items.map((row) => (
+                  <Table.Tr key={row.name}>
+                    <Table.Td>{row.name}</Table.Td>
+                    <Table.Td>
+                      {t(row.enabled ? 'artifactCatalogEnabled' : 'artifactCatalogDisabled')} /{' '}
+                      {t(
+                        row.recordingEnabled
+                          ? 'artifactCatalogRecordingOn'
+                          : 'artifactCatalogRecordingOff',
+                      )}{' '}
+                      / {t(row.encrypted ? 'artifactCatalogEncrypted' : 'artifactCatalogClear')}
+                    </Table.Td>
+                    <Table.Td>
+                      <div className="stack">
+                        <Button
+                          disabled={locked || !row.enabled}
+                          aria-label={`${t('artifactSelectAudit')} ${row.name}`}
+                          onClick={() => select({ kind: 'audit', auditlog: row.name })}
+                        >
+                          {t('artifactSelectAudit')}
+                        </Button>
+                        <Button
+                          disabled={locked || !row.enabled || !row.recordingEnabled}
+                          aria-label={`${t('artifactLoadRecordings')} ${row.name}`}
+                          onClick={() => {
+                            void loadRecordings(row.name);
+                          }}
+                        >
+                          {t('artifactLoadRecordings')}
+                        </Button>
+                      </div>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </div>
           {auditlogs.items.length === 0 && <p>{t('artifactCatalogEmpty')}</p>}
           {auditlogs.next !== '' && (
             <Button
@@ -209,55 +214,58 @@ export function ArtifactCatalog({
           <Title order={4}>
             {t('artifactRecordingCatalog')}: {recordings.auditlog}
           </Title>
-          <Table captionSide="top">
-            <caption>{t('artifactRecordingCaption')}</caption>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>{t('artifactRecordingID')}</Table.Th>
-                <Table.Th>{t('artifactCatalogRecordingMetadata')}</Table.Th>
-                <Table.Th>{t('artifactCatalogSelection')}</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {recordings.page.items.map((row) => (
-                <Table.Tr key={row.id}>
-                  <Table.Td>{row.id}</Table.Td>
-                  <Table.Td>
-                    {row.format} /{' '}
-                    {t(
-                      row.status === 'completed'
-                        ? 'artifactCatalogCompleted'
-                        : row.status === 'failed'
-                          ? 'artifactCatalogFailedStatus'
-                          : 'artifactCatalogIncomplete',
-                    )}
-                    <br />
-                    {when(row.startedAt)} /{' '}
-                    {new Intl.NumberFormat('en-US').format(row.containerBytes)} {t('artifactBytes')}
-                    <br />
-                    <span>
-                      {t(
-                        row.verificationScope === 'outer'
-                          ? 'artifactCatalogServerOuter'
-                          : 'artifactCatalogServerFull',
-                      )}
-                    </span>
-                  </Table.Td>
-                  <Table.Td>
-                    <Button
-                      disabled={locked}
-                      aria-label={`${t('artifactSelectRecording')} ${row.id}`}
-                      onClick={() =>
-                        select({ kind: 'recording', auditlog: row.auditlog, id: row.id })
-                      }
-                    >
-                      {t('artifactSelectRecording')}
-                    </Button>
-                  </Table.Td>
+          <div className="table-scroll">
+            <Table captionSide="top">
+              <caption>{t('artifactRecordingCaption')}</caption>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>{t('artifactRecordingID')}</Table.Th>
+                  <Table.Th>{t('artifactCatalogRecordingMetadata')}</Table.Th>
+                  <Table.Th>{t('artifactCatalogSelection')}</Table.Th>
                 </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
+              </Table.Thead>
+              <Table.Tbody>
+                {recordings.page.items.map((row) => (
+                  <Table.Tr key={row.id}>
+                    <Table.Td>{row.id}</Table.Td>
+                    <Table.Td>
+                      {row.format} /{' '}
+                      {t(
+                        row.status === 'completed'
+                          ? 'artifactCatalogCompleted'
+                          : row.status === 'failed'
+                            ? 'artifactCatalogFailedStatus'
+                            : 'artifactCatalogIncomplete',
+                      )}
+                      <br />
+                      {when(row.startedAt)} /{' '}
+                      {new Intl.NumberFormat('en-US').format(row.containerBytes)}{' '}
+                      {t('artifactBytes')}
+                      <br />
+                      <span>
+                        {t(
+                          row.verificationScope === 'outer'
+                            ? 'artifactCatalogServerOuter'
+                            : 'artifactCatalogServerFull',
+                        )}
+                      </span>
+                    </Table.Td>
+                    <Table.Td>
+                      <Button
+                        disabled={locked}
+                        aria-label={`${t('artifactSelectRecording')} ${row.id}`}
+                        onClick={() =>
+                          select({ kind: 'recording', auditlog: row.auditlog, id: row.id })
+                        }
+                      >
+                        {t('artifactSelectRecording')}
+                      </Button>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </div>
           {recordings.page.items.length === 0 && <p>{t('artifactCatalogEmpty')}</p>}
           {recordings.page.next !== '' && (
             <Button

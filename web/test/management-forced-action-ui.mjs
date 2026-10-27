@@ -56,6 +56,7 @@ export async function exerciseManagementForcedAction(page, file, logout) {
   }
   await connect();
   await connect();
+  await page.locator('.advanced-action > summary').click();
   const direct = page.getByRole('region', { name: 'Action on a known session', exact: true });
   await direct.waitFor();
   await direct.getByLabel('Target flow', { exact: false }).fill(flow);

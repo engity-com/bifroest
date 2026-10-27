@@ -146,6 +146,28 @@ Choosing a row fills only download selectors and resets old local evidence/pins;
 it does not download, verify or decrypt automatically. The view clears actor-owned
 pages on authentication changes/logout and refuses late replies after cancellation.
 
+### Browser workspace
+
+The browser workspace separates **Sessions**, **Recordings & audit** and
+**Server**. Opening or switching a view does not list, download, verify, execute
+or mutate anything automatically. The navigation stays in this tab; it does not
+create another login, role or authorization policy. Actor changes clear the
+previous actor's results, while switching views within one actor retains local
+results. A commit or unknown session-action outcome cannot be dismissed by
+switching views. The exact-ID action entry is a separate expandable path for
+credentials without list/show rights; normal session actions remain at the
+selected session. Narrow screens use session cards with the same permitted
+metadata instead of a table extending beyond the viewport.
+
+Recordings follow explicit selection/download, local verification and result
+steps. **Open content, prepare playback or export** explicitly selects full
+private verification and preparation of a local export; it does not save or play
+automatically. Signature-only checking remains the default, and advanced options
+retain independent verification-depth/export/redaction controls. No workflow
+choice adopts server-supplied producer/recipient hints as trusted expectations.
+The terminal uses a wider, viewport-adaptive work area; **Connect** still starts
+a new execution and never reattaches merely because of login or reload.
+
 ### Conservative ForcedCommand operation equivalence
 
 `POST /_bifroest/api/v1/management/version/show` is an explicit Management metadata

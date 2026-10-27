@@ -75,7 +75,7 @@ try {
       .getByRole('checkbox', { name: 'Request a PTY', exact: true })
       .setChecked(interactive);
     await page.locator('.terminal-surface').scrollIntoViewIfNeeded();
-    await page.getByRole('button', { name: 'Start new execution', exact: true }).click();
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
     try {
       if (interactive) {
         await page.locator('[data-terminal-phase="connected"]').waitFor();

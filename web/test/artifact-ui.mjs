@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
+import { captureLayout, exactArtifactSelection, workspace } from './workspace-ui.mjs';
 
 const [origin, mode, keyPath] = process.argv.slice(2);
 assert.match(origin, /^https:\/\/app\.example\.org:[0-9]+$/u);
@@ -86,6 +87,7 @@ try {
   await page.getByLabel('Password', { exact: true }).fill('correct');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await page.getByRole('heading', { name: 'Signed in as alice', exact: true }).waitFor();
+  await workspace(page, 'Server');
   await page.getByRole('button', { name: 'Load flows', exact: true }).click();
   await page
     .getByRole('table', { name: 'Configured flows (not public discovery links)', exact: true })
@@ -99,6 +101,7 @@ try {
     name: 'Artifacts and client-side evidence',
     exact: true,
   });
+  await exactArtifactSelection(page);
   try {
     await panel.getByRole('textbox', { name: 'Artifact auditlog', exact: true }).fill('default');
   } catch (error) {
@@ -121,6 +124,19 @@ try {
     0,
   );
   assert.equal(await panel.getByLabel('Expected producer ID', { exact: false }).inputValue(), '');
+  const callsBeforeNavigation = apiRequests.length;
+  await workspace(page, 'Server');
+  await workspace(page, 'Recordings & audit');
+  assert.equal(
+    apiRequests.length,
+    callsBeforeNavigation,
+    'switching views must not replay a transfer',
+  );
+  assert.equal(await panel.getByLabel('Expected producer ID', { exact: false }).inputValue(), '');
+  await captureLayout(page, `artifact-${mode}-verification`);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await captureLayout(page, `artifact-${mode}-mobile`);
+  await page.setViewportSize({ width: 1280, height: 720 });
   assert.equal(
     await panel.getByRole('combobox', { name: 'Expected encryption', exact: true }).inputValue(),
     '',
@@ -136,6 +152,12 @@ try {
     0,
   );
   const choose = async (label, option) => {
+    if (label === 'Verification depth' || label === 'Audit verification scope') {
+      const advanced = panel.getByText('Advanced verification options', { exact: true });
+      if (!(await advanced.locator('..').evaluate((node) => node.open))) {
+        await advanced.click();
+      }
+    }
     await panel.getByRole('combobox', { name: label, exact: true }).click();
     await page.getByRole('option', { name: option, exact: true }).click();
   };
@@ -200,14 +222,21 @@ try {
     await panel.getByRole('button', { name: 'Save checked export', exact: false }).count(),
     0,
   );
-  await choose('Verification depth', 'Full private semantics (decrypt when encrypted)');
-  assert.equal(await result.count(), 0, 'changing expectations must retire the old result');
   await panel
-    .getByRole('checkbox', {
-      name: 'Prepare a verified local export after full success',
-      exact: true,
-    })
+    .getByRole('radio', { name: 'Open content, prepare playback or export', exact: true })
     .check();
+  assert.equal(await result.count(), 0, 'changing expectations must retire the old result');
+  await panel.getByText('Advanced verification options', { exact: true }).click();
+  assert.equal(
+    await panel
+      .getByRole('checkbox', {
+        name: 'Prepare a verified local export after full success',
+        exact: true,
+      })
+      .isChecked(),
+    true,
+    'opening content is an explicit request to prepare a local export, never to auto-save or play',
+  );
   if (encrypted) {
     await localKey('wrong fixture secret');
     await verify();
@@ -333,6 +362,7 @@ try {
       .count(),
     0,
   );
+  await exactArtifactSelection(page);
   await choose('Artifact type', 'Audit inventory');
   assert.equal(await result.count(), 0);
   await panel.getByRole('button', { name: 'Download into this tab', exact: true }).click();
@@ -444,6 +474,7 @@ try {
   await page.getByLabel('Password', { exact: true }).fill('correct');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await page.getByRole('heading', { name: 'Signed in as bob', exact: true }).waitFor();
+  await workspace(page, 'Recordings & audit');
   assert.equal(
     await panel
       .getByRole('heading', { name: 'Independent verification expectations', exact: true })
@@ -451,6 +482,7 @@ try {
     0,
   );
   assert.equal(await page.evaluate(() => window.artifactURLs.size), 0);
+  await exactArtifactSelection(page);
   await panel.getByRole('textbox', { name: 'Artifact auditlog', exact: true }).fill('default');
   await choose('Artifact type', 'Audit inventory');
   await page.evaluate(() =>
