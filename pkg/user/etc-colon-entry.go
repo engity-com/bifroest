@@ -109,6 +109,9 @@ func (this *etcColonEntries[T, PT]) decode(expectedNumberOfColons int, allowBadN
 		bufs = append(bufs, entry)
 		lineNum++
 	}
+	if err := rd.Err(); err != nil {
+		return fmt.Errorf("cannot read entries at %s:%d: %w", from.Name(), lineNum, err)
+	}
 	*this = bufs
 	return nil
 }
