@@ -10,8 +10,8 @@ and OIDC device dialogs use the bounded existing server API. Vite 8/Oxc/Rolldown
 builds the application and the independently tested, dependency-free HTTP/crypto
 core; there is no Webpack/Babel chain or production Node runtime.
 
-Use the repository-pinned Bun 1.4.4 and Biome 2.6.3 through MISE, with Node
-24.14 or newer also selected through MISE for the compatibility helpers. Do not
+Use the repository-pinned Bun 1.4.4, Biome 2.6.3 and Node 26.9.0 through MISE.
+The root and nested Web Node pins agree. Do not
 rely on globally selected runtimes. From the repository root (also native
 Windows/Nushell compatible):
 
@@ -22,6 +22,11 @@ mise run install:web:browser
 mise run test:web
 mise run build:web
 ```
+
+The root `install`, `lint` and `test` tasks include their Web counterparts;
+Chromium installation remains an explicit `install:web:browser` step. The
+`build:go` task depends on `build:web`, so embedded resources precede the Go build.
+The split CI binary tasks consume the separately built, validated browser bundle.
 
 The repository-root `biome.json` formats and lints owned TS/JS, JSON/JSONC and
 YAML files, including tests, declarations and build scripts. `mise run lint:biome`
@@ -63,8 +68,9 @@ to `pkg/webui/assets/` before Go embeds them. Generated bundles are ignored;
 only the source marker is tracked. Run the frontend build **before** building
 the Go binary. A source-only Go checkout still compiles for SSH/API development,
 but has no embedded UI until these resources are built. An `assetsDirectory`
-containing a complete app can also supply the UI. Full release-job preparation,
-aggregate SBOM/provenance integration and the remaining feature work are not done.
+containing a complete app can also supply the UI. Release jobs include the browser
+bundle, combined notices and SPDX/CycloneDX inventory as described below. These
+unsigned inventories are not a signed source-provenance or reproducibility proof.
 
 The app build also compiles `cmd/browser-key` with the pinned Go 1.27.3 toolchain
 and copies that toolchain's `lib/wasm/wasm_exec.js`. The runtime must match the
@@ -150,8 +156,10 @@ or production CLI subprocess. This is not production HTTPS/login/UI coverage.
 Browser installation is an explicit development/test
 step and does not change the OS/browser trust store. Dependencies and compiler
 versions are locked. Go asset serving now supports per-file FS-before-embed
-overlays and ordered local customization. Structured Management, further runtime
-coverage and complete release/SBOM integration remain subsequent steps.
+overlays and ordered local customization. Structured Management, local artifact
+verification/decryption/playback and release inventories are implemented below;
+additional browser engines and OS-specific browser paths need separate runtime
+acceptance rather than being inferred from these Chromium fixtures.
 
 The dependency-free `web/go.mod` is a tooling boundary, not a second Go runtime
 or implementation: root `go test ./...` must not compile Go sources shipped in
@@ -216,10 +224,11 @@ it actually showed, never silently adopting another tab's replacement.
 The UI leaves existing registrations unchanged on ordinary login. Remote revoke
 and local-only removal have separate confirmation dialogs; local removal never
 claims server logout. Interrupted setup stays visibly uncertain until explicitly
-reconciled. Artifact transfer/client-side decryption, exact forced-command
-equivalence and portable Go-client transport integration remain subsequent work.
+reconciled. Artifact transfer, client-side verification/decryption and the shared
+portable Go transport receiver are implemented in the sections below. Exact
+ForcedCommand equivalence beyond the documented read subset remains incomplete.
 
-## Artifact transport core (no verification/decryption UI yet)
+## Artifact transport core
 
 `WebAccess.downloadArtifact({ kind: 'recording', auditlog, id }, signal)` and the
 `{ kind: 'audit', auditlog }` form use the existing fixed artifact POSTs and
@@ -372,8 +381,8 @@ tests cover ownership/failure/filename bounds, not a second cryptographic verifi
 
 Use only the MISE-selected toolchains: `mise -C web install`, then
 `mise -C web run install:web`, `mise -C web run build:web` and
-`mise -C web exec -- bun run test:release`. The nested `web/.tool-versions`
-pins Node 26.9.0 without changing the root Go toolchain. Bun remains 1.4.4;
+`mise -C web exec -- bun run test:release`. Both root and nested
+`web/.tool-versions` pin Node 26.9.0; the root Go pin remains 1.27.3. Bun is 1.4.4;
 installation is frozen and lifecycle scripts are disabled.
 
 The normal frontend build writes `browser-build.json`: exact asset lengths/
@@ -583,9 +592,10 @@ The metadata adapter has no credential-detail or artifact route:
 Recognized forced read commands constrain the typed operation, data filters and
 returned fields as described below. Unsupported forms and all forced mutations
 stay fail-closed; continue using SSH with those restrictions rather than removing
-them. Original artifact streaming uses separate typed endpoints below. Browser
-artifact UI/Go-WASM fetch integration and client-only full artifact verification/
-decryption remain open; the UI/JSON adapter is not a completed Go management client.
+them. Original artifact streaming uses separate typed endpoints below. The browser
+artifact UI uses the portable Go response receiver in a transport worker and the
+shared verification/decryption cores in a separate evidence worker. The metadata
+JSON adapter alone is not an artifact verifier or a general Go management client.
 
 Tests include shared quota, own logout vs sibling grants, global revocation,
 request cancellation, strict final-audit refusal before output, preserved damaged
@@ -672,9 +682,9 @@ diagnostic-drain, cancellation and abort tests remain in force.
 
 Unit tests run natively and as actual Go/WASM under the MISE-selected Node runtime
 using matching workspace Go runtime copies; this is not browser worker/UI
-integration. Typed original-artifact routes are described below. Artifact-key
-import/decryption UI, browser fetch/WASM integration and immutable ReaderAt/full-
-verification integration remain open. No CLI arguments become a browser protocol,
+integration by themselves. The actual browser artifact view above supplies local
+key import, fetch/WASM transport, immutable ReaderAt inputs and full verification/
+decryption through the shared Go cores. No CLI arguments become a browser protocol,
 and no server decryption/key upload or new management permissions are introduced.
 
 ### Portable response completion
@@ -709,7 +719,8 @@ they also execute as actual Go/WASM under Node. This is not browser integration.
 
 The typed HTTP artifact response below supplies an explicit **post-driver final-
 success** signal after recording seal/final audit; body EOF alone never counts.
-This is still not a complete Go/WASM browser client. Browser CLI arguments,
+The browser transport worker uses this receiver; evidence verification remains a
+separate operation, not an assertion made by this transport. Browser CLI arguments,
 private-key uploads and server-side decryption remain absent.
 
 ### Typed original-artifact HTTPS streaming
