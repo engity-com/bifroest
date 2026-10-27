@@ -87,8 +87,8 @@ github.com/docker/go-units v0.5.0 h1:69rxXcBk27SvSaaxTtLh/8llcHD8vYHT7WSdRZ/jvr4
 github.com/docker/go-units v0.5.0/go.mod h1:fgPhTUdO+D/Jk86RDLlptpiXQzgHJF7gydDDbaIK4Dk=
 github.com/ebitengine/purego v0.11.2 h1:WWiTx8rD8zYdOwSj8O/NiNbsOvSAgJMTlyV1XlbUSeU=
 github.com/ebitengine/purego v0.11.2/go.mod h1:DCHPP08djqhNSoTfImcnHYQRZmd0qhakvrozqaEYhGQ=
-github.com/echocat/cli4g v0.2.1 h1:Q2V1CDr8fwfwFHNRsjulQUxROd5t/S1vauQ+mAn3d8E=
-github.com/echocat/cli4g v0.2.1/go.mod h1:e5hNZi4mZPDqxrLnEJFCsvefS8DZ4q3vdvfboAl96yA=
+github.com/echocat/cli4g v0.3.0 h1:O0TcDawyzteMljKOrXNnlmI2ztNoNA+nxgJhNqWC0dg=
+github.com/echocat/cli4g v0.3.0/go.mod h1:rdhIfXvooWXr6OYa2SxaWaCp+0/vrWu99n2gRGe8338=
 github.com/echocat/slf4g v1.9.0 h1:LtQP6MlMsDYIaGtvY0w1PdNAnssmLlVesg/GRxVok7A=
 github.com/echocat/slf4g v1.9.0/go.mod h1:WhUEWD/lCkvO5jYIXV7Y4Iaam2t2rKfRHUJf73ef3TI=
 github.com/echocat/slf4g/native v1.9.0 h1:u+l6UmWXTZ99Z53VawPB+vupDZHF6YmG/p919b43FrE=
