@@ -4,9 +4,14 @@ import type { SessionItem } from './protocol';
 import { session } from './protocol';
 
 export type SessionAction = 'disconnect' | 'dispose';
+export interface ActionTarget {
+  readonly flow: string;
+  readonly id: string;
+  readonly details?: SessionItem;
+}
 export interface ActionPreview {
   readonly action: SessionAction;
-  readonly target: SessionItem;
+  readonly target: ActionTarget;
   readonly expiresAt: string;
 }
 export interface ActionResult {
@@ -88,10 +93,26 @@ export function actionPreparation(
   ) {
     throw new RememberMeError('unavailable');
   }
-  const target = session(result.target);
-  if (target.flow !== flow || target.id !== id) {
+  const fields = object(result.target, [
+    'flow',
+    'id',
+    ...(result.target !== null &&
+    typeof result.target === 'object' &&
+    Object.hasOwn(result.target, 'details')
+      ? ['details']
+      : []),
+  ]);
+  if (fields.flow !== flow || fields.id !== id) {
     throw new RememberMeError('denied');
   }
+  const details = fields.details === undefined ? undefined : session(fields.details);
+  if (
+    details !== undefined &&
+    (details.flow !== flow || details.id !== id || details.policyLimited)
+  ) {
+    throw new RememberMeError('denied');
+  }
+  const target = Object.freeze({ flow, id, ...(details === undefined ? {} : { details }) });
   return {
     confirmationToken: result.confirmationToken,
     preview: Object.freeze({ action, target, expiresAt: time(result.expiresAt) }),

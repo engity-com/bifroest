@@ -10,6 +10,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
 	"github.com/engity-com/bifroest/pkg/environment"
 	"github.com/engity-com/bifroest/pkg/management/protocol"
@@ -54,8 +55,8 @@ func managementSessionPin(ctx context.Context, current session.Session) ([32]byt
 	return sha256.Sum256(raw), nil
 }
 
-func (this *service) managementActionTarget(ctx context.Context, caller session.Session, request protocol.SessionAction) (session.Session, protocol.SessionItem, [32]byte, error) {
-	var empty protocol.SessionItem
+func (this *service) managementActionTarget(ctx context.Context, caller session.Session, request protocol.SessionAction, limited bool) (session.Session, protocol.ActionTarget, [32]byte, error) {
+	var empty protocol.ActionTarget
 	if request.Validate() != nil || configuration.FlowName(request.Flow).Validate() != nil {
 		return nil, empty, [32]byte{}, protocol.ErrRequest
 	}
@@ -70,13 +71,25 @@ func (this *service) managementActionTarget(ctx context.Context, caller session.
 	if err != nil {
 		return nil, empty, [32]byte{}, err
 	}
+	if current.Flow().String() != request.Flow || current.Id() != id {
+		return nil, empty, [32]byte{}, errManagementConfirmation
+	}
+	if limited {
+		if err := this.uniqueForcedSessionID(ctx, current); err != nil {
+			return nil, empty, [32]byte{}, err
+		}
+	}
 	before, err := managementSessionPin(ctx, current)
 	if err != nil {
 		return nil, empty, before, err
 	}
-	item, err := managementSessionItem(ctx, current)
-	if err != nil {
-		return nil, empty, before, err
+	item := protocol.ActionTarget{ID: request.ID, Flow: request.Flow}
+	if !limited {
+		details, err := managementSessionItem(ctx, current)
+		if err != nil {
+			return nil, empty, before, err
+		}
+		item.Details = &details
 	}
 	after, err := managementSessionPin(ctx, current)
 	if err != nil || before != after {
@@ -86,20 +99,40 @@ func (this *service) managementActionTarget(ctx context.Context, caller session.
 }
 
 func (this *service) RunManagementAction(task environment.TaskContext, request protocol.SessionAction, output io.Writer, _ bool, _ bool) (int, error) {
-	if task == nil || task.Authorization() == nil || !task.Authorization().IsAuthorized() || task.Authorization().FindSession() == nil || !this.isManagementFlow(task.Authorization().Flow()) || managementActionPolicy(task.Authorization()) != nil || request.Validate() != nil {
+	if task == nil || task.Authorization() == nil || !task.Authorization().IsAuthorized() || task.Authorization().FindSession() == nil || task.Authorization().FindSession().Flow() != task.Authorization().Flow() || !this.isManagementFlow(task.Authorization().Flow()) || managementActionPolicy(task.Authorization(), request) != nil {
 		return -1, errManagementPolicy
 	}
 	permission, ok := task.Context().Value(managementActionContextKey{}).(*webManagementConfirmation)
-	if !ok || permission == nil || !permission.claiming || permission.request != request || permission.connection != task.Connection().Id() {
+	if !ok || permission == nil || permission.preparing == permission.claiming || permission.request != request || permission.connection != task.Connection().Id() {
 		return -1, errManagementConfirmation
 	}
 	caller := task.Authorization().FindSession()
 	if caller.Flow() != permission.access.auth.FindSession().Flow() || caller.Id() != permission.access.auth.FindSession().Id() {
 		return -1, errManagementConfirmation
 	}
+	key := authorization.AuthorizedKeyPolicyOf(task.Authorization())
+	limited := key != nil && key.ForcedCommand != nil
+	if permission.preparing {
+		_, target, pin, err := this.managementActionTarget(task.Context(), caller, request, limited)
+		if err != nil {
+			return -1, err
+		}
+		encoded, err := json.Marshal(target)
+		if err != nil {
+			return -1, err
+		}
+		if _, err := output.Write(encoded); err != nil {
+			return -1, err
+		}
+		permission.pin = pin
+		return 0, nil
+	}
 	var current session.Session
 	check := func(ctx context.Context) error {
-		candidate, _, pin, err := this.managementActionTarget(ctx, caller, request)
+		if err := managementActionPolicy(task.Authorization(), request); err != nil {
+			return err
+		}
+		candidate, _, pin, err := this.managementActionTarget(ctx, caller, request, limited)
 		if err != nil {
 			return err
 		}

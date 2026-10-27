@@ -6,6 +6,7 @@ import { chromium } from 'playwright';
 import { exerciseKey } from './key-ui.mjs';
 import { exerciseDevice, exerciseInteractive, exerciseLostClaim } from './login-ui.mjs';
 import { exerciseManagementActions } from './management-action-ui.mjs';
+import { exerciseManagementForcedAction } from './management-forced-action-ui.mjs';
 import {
   exerciseManagementForced,
   exerciseManagementForcedAudit,
@@ -135,6 +136,14 @@ try {
   };
   async function exercise() {
     let page = await open();
+    if (
+      process.argv[3] === 'management-forced-disconnect' ||
+      process.argv[3] === 'management-forced-dispose'
+    ) {
+      await exerciseManagementForcedAction(page, process.argv[4], logout);
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (process.argv[3] === 'management-forced') {
       await exerciseManagementForced(page, process.argv[4], logout);
       assert.deepEqual(errors, []);

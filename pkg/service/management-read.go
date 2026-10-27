@@ -42,9 +42,15 @@ func managementReadCeiling(auth authorization.Authorization, request protocol.Re
 	return nil, nil
 }
 
-func managementActionPolicy(auth authorization.Authorization) error {
-	if key := authorization.AuthorizedKeyPolicyOf(auth); key != nil && key.ForcedCommand != nil {
+func managementActionPolicy(auth authorization.Authorization, request protocol.SessionAction) error {
+	if request.Validate() != nil {
 		return errManagementPolicy
+	}
+	if key := authorization.AuthorizedKeyPolicyOf(auth); key != nil && key.ForcedCommand != nil {
+		ceiling, err := managementpolicy.ForcedAction(*key.ForcedCommand)
+		if err != nil || !ceiling.Allows(request) {
+			return errManagementPolicy
+		}
 	}
 	return nil
 }

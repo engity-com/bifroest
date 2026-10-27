@@ -238,6 +238,15 @@ export const messages = {
   managementDispose: 'Dispose session',
   managementConfirmTitle: 'Confirm exact session action',
   managementConfirmTarget: 'Type the exact flow/session ID shown above',
+  managementDirectAction: 'Action on a known session',
+  managementDirectActionHint:
+    'Enter a known target. This does not list or inspect sessions, or grant additional permissions. Preparation alone does not change the target.',
+  managementActionFlow: 'Target flow',
+  managementActionID: 'Target session ID',
+  managementActionKind: 'Session action',
+  managementPrepareAction: 'Prepare session action',
+  managementActionNoDetails:
+    'Session details are not returned under this action-only policy. Only the exact action and target are confirmed.',
   managementConfirmAction: 'Confirm session action',
   managementDisconnectWarning:
     'Disconnect all connections present for this session when the action runs. The session, credentials and workload remain available for a new connection. This is not browser logout.',

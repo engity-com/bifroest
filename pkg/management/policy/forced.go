@@ -1,5 +1,5 @@
 // Package policy interprets a narrow, proven subset of operator-configured SSH
-// forced commands as read ceilings. It never parses a browser command or runs CLI.
+// forced commands as operation ceilings. It never parses a browser command or runs CLI.
 package policy
 
 import (

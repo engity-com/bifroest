@@ -79,6 +79,14 @@ func TestBrowserManagementForcedVersionUiKeepsShortOutputAndEscapesMetadata(t *t
 	testBrowserLoginUi(t, true, "management-forced-version")
 }
 
+func TestBrowserManagementForcedDisconnectUiHasNoInspectionGrant(t *testing.T) {
+	testBrowserLoginUi(t, true, "management-forced-disconnect")
+}
+
+func TestBrowserManagementForcedDisposeUiLostReplyIsNotReplayed(t *testing.T) {
+	testBrowserLoginUi(t, true, "management-forced-dispose")
+}
+
 func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure ...func(*configuration.Configuration)) {
 	t.Helper()
 	if os.Getenv("BIFROEST_TEST_BROWSER_UI") != "1" {
@@ -94,8 +102,9 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	var provider *oidcAssociationProvider
 	var keyFixture string
 	var authorizedKeys bfcrypto.AuthorizedKeys
+	forcedActionMode := mode == "management-forced-disconnect" || mode == "management-forced-dispose"
 	forcedReadMode := mode == "management-forced" || mode == "management-forced-audit" || mode == "management-forced-version"
-	if mode == "key" || forcedReadMode {
+	if mode == "key" || forcedReadMode || forcedActionMode {
 		keyFixture, authorizedKeys = browserKeyUiFixture(t)
 	}
 	if mode == "oidc" || mode == "oidc-cancel" {
@@ -116,7 +125,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 					conf.Flows = append(conf.Flows, flow)
 				}
 			}
-			if mode == "management-actions" {
+			if mode == "management-actions" || forcedActionMode {
 				conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
 				worker := conf.Flows[0]
 				worker.Name = "worker"
@@ -158,7 +167,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		})
 		protocolHandler = svc.web
 	}
-	if mode == "management" || mode == "management-actions" || forcedReadMode {
+	if mode == "management" || mode == "management-actions" || forcedReadMode || forcedActionMode {
 		svc.environments = svc.environments.(*executionTestRepository).CloseableRepository
 		application := svc.managementApplication
 		svc.managementApplication = nil
@@ -171,9 +180,30 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		svc.Version = versionMarkupTestVersion{}
 	}
 	var actionTargets *actionUITargetRepository
-	if mode == "management-actions" {
+	if mode == "management-actions" || forcedActionMode {
 		actionTargets = &actionUITargetRepository{CloseableRepository: svc.environments}
 		svc.environments = actionTargets
+	}
+	if forcedActionMode {
+		worker := webTestToken(t, webTestPassword(svc.web, "bob", "correct", "Worker"))
+		target := webTestAccess(t, svc, worker, "Worker").auth.FindSession()
+		action := strings.TrimPrefix(mode, "management-forced-")
+		var keys strings.Builder
+		for _, line := range strings.Split(strings.TrimSpace(string(authorizedKeys)), "\n") {
+			if !strings.HasPrefix(line, "cert-authority ") {
+				_, _ = fmt.Fprintf(&keys, "command=%q ", "session "+action+" "+target.Id().String())
+			}
+			keys.WriteString(line + "\n")
+		}
+		svc.Configuration.Flows[0].Authorization.V.(*configuration.AuthorizationSimple).Entries[0].AuthorizedKeys = bfcrypto.AuthorizedKeys(keys.String())
+		raw, err := os.ReadFile(keyFixture)
+		require.NoError(t, err)
+		var fixture map[string]string
+		require.NoError(t, json.Unmarshal(raw, &fixture))
+		fixture["action"], fixture["flow"], fixture["id"] = action, target.Flow().String(), target.Id().String()
+		raw, err = json.Marshal(fixture)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(keyFixture, raw, 0600))
 	}
 	if mode == "interactive" {
 		delegate := svc.authorizer
@@ -248,12 +278,12 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		if mode == "management-actions" && r.URL.Path == "/_bifroest/test/interrupt-management-confirm" && r.Method == http.MethodPost {
+		if (mode == "management-actions" || forcedActionMode) && r.URL.Path == "/_bifroest/test/interrupt-management-confirm" && r.Method == http.MethodPost {
 			interrupt.Store(true)
 			w.WriteHeader(204)
 			return
 		}
-		if mode == "management-actions" && r.URL.Path == webAPI+"management/sessions/confirm" && interrupt.Load() {
+		if (mode == "management-actions" || forcedActionMode) && r.URL.Path == webAPI+"management/sessions/confirm" && interrupt.Load() {
 			recorder := httptest.NewRecorder()
 			protocolHandler.ServeHTTP(recorder, r)
 			for name, values := range recorder.Header() {
@@ -355,7 +385,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	require.NoError(t, json.Unmarshal(output, &result), "%s", output)
 	require.True(t, result.Success)
 	expectedInterrupt := 0
-	if mode == "profile" || mode == "local-password-profile" || mode == "local-interactive-profile" || mode == "interactive-lost" || mode == "management-actions" {
+	if mode == "profile" || mode == "local-password-profile" || mode == "local-interactive-profile" || mode == "interactive-lost" || mode == "management-actions" || mode == "management-forced-dispose" {
 		expectedInterrupt = 1
 	}
 	require.EqualValues(t, expectedInterrupt, interrupted.Load(), "the uncertain claim must commit once without automatic retry")
@@ -363,7 +393,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	if mode == "name-free" || mode == "oidc-cancel" {
 		expectedSessions = 0
 	}
-	if mode == "terminal" || mode == "management" || mode == "management-actions" || mode == "management-forced" {
+	if mode == "terminal" || mode == "management" || mode == "management-actions" || mode == "management-forced" || forcedActionMode {
 		expectedSessions = 2
 	}
 	require.Equal(t, expectedSessions, webSessionCount(t, svc))
@@ -373,7 +403,11 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		require.Positive(t, terminalCounters.interrupts.Load())
 	}
 	if actionTargets != nil {
-		require.EqualValues(t, 3, actionTargets.runs.Load())
+		expectedRuns := 3
+		if mode == "management-forced-dispose" {
+			expectedRuns = 2
+		}
+		require.EqualValues(t, expectedRuns, actionTargets.runs.Load())
 	}
 	if provider != nil {
 		if mode == "oidc-cancel" {
@@ -399,12 +433,14 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 			} else {
 				require.Equal(t, session.StateNew, info.State())
 			}
-		case "management-actions":
+		case "management-actions", "management-forced-dispose":
 			if current.Flow() == "worker" {
 				require.Equal(t, session.StateDisposed, info.State())
 			} else {
 				require.Equal(t, session.StateAuthorized, info.State())
 			}
+		case "management-forced-disconnect":
+			require.Equal(t, session.StateAuthorized, info.State())
 		case "management":
 			require.Equal(t, session.StateAuthorized, info.State(), "management operations share session activation/activity")
 		case "terminal":

@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/engity-com/bifroest/pkg/authorization"
 	bconn "github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/management/protocol"
 )
@@ -24,6 +25,7 @@ type webManagementConfirmation struct {
 	pin        [32]byte
 	expires    time.Time
 	claiming   bool
+	preparing  bool
 	connection bconn.Id
 }
 
@@ -44,7 +46,7 @@ func (this *webService) handleManagementAction(w http.ResponseWriter, r *http.Re
 		webError(w, 401, "web access denied")
 		return
 	}
-	if !this.service.isManagementFlow(access.auth.Flow()) || managementActionPolicy(access.auth) != nil {
+	if !this.service.isManagementFlow(access.auth.Flow()) {
 		webError(w, 403, "management action denied")
 		return
 	}
@@ -59,33 +61,41 @@ func (this *webService) handleManagementAction(w http.ResponseWriter, r *http.Re
 			webError(w, 400, "invalid session action request")
 			return
 		}
+		if managementActionPolicy(access.auth, request) != nil {
+			webError(w, 403, "management action denied")
+			return
+		}
+		caller := access.auth.FindSession()
+		if caller == nil || caller.Flow().String() == request.Flow && caller.Id().String() == request.ID {
+			webError(w, 403, "management target is unavailable or self-protected")
+			return
+		}
 		conn, transport, err := this.managementConnection(w, r, scope, access)
 		if err != nil {
 			webError(w, 403, "management connection denied")
 			return
 		}
 		defer func() { _ = conn.Close(); <-conn.done }()
-		_, target, pin, err := this.service.managementActionTarget(conn.Lifetime(), access.auth.FindSession(), request)
-		if err != nil {
-			webError(w, 403, "management target is unavailable or self-protected")
-			return
-		}
-		// Preparation is a real, audited/recorded read, not a side-effect commit.
-		data, err := this.service.executeManagementRead(conn, protocol.ReadRequest{Operation: protocol.ShowSession, Flow: request.Flow, ID: request.ID})
+		// A real audited/recorded preparation, never an implicit ShowSession grant.
+		permission := &webManagementConfirmation{access: access, peer: peer, request: request, preparing: true, connection: conn.Id()}
+		data, err := this.service.executeManagementAction(conn, permission)
 		if err != nil {
 			webError(w, 503, "management preparation could not be confirmed")
 			return
 		}
-		var read protocol.ReadResult
-		if json.Unmarshal(data, &read) != nil || read.Session == nil || !read.Session.CreatedAt.Equal(target.CreatedAt) {
+		var target protocol.ActionTarget
+		if json.Unmarshal(data, &target) != nil || target.Flow != request.Flow || target.ID != request.ID {
 			webError(w, 503, "management target changed during preparation")
 			return
 		}
-		_, target, after, err := this.service.managementActionTarget(conn.Lifetime(), access.auth.FindSession(), request)
-		if err != nil || after != pin {
+		key := authorization.AuthorizedKeyPolicyOf(access.auth)
+		limited := key != nil && key.ForcedCommand != nil
+		_, _, pin, err := this.service.managementActionTarget(conn.Lifetime(), caller, request, limited)
+		if err != nil || pin != permission.pin || limited && target.Details != nil || managementActionPolicy(access.auth, request) != nil {
 			webError(w, 403, "management target changed during preparation")
 			return
 		}
+		permission.preparing = false
 		var nonce [32]byte
 		if _, err := rand.Read(nonce[:]); err != nil {
 			webError(w, 503, "management confirmation unavailable")
@@ -99,7 +109,7 @@ func (this *webService) handleManagementAction(w http.ResponseWriter, r *http.Re
 			webError(w, 503, "management confirmation could not be encoded")
 			return
 		}
-		permission := &webManagementConfirmation{access: access, peer: peer, request: request, pin: pin, expires: expires}
+		permission.expires = expires
 		this.mutex.Lock()
 		this.pruneLocked(time.Now())
 		count := 0
@@ -142,6 +152,12 @@ func (this *webService) handleManagementAction(w http.ResponseWriter, r *http.Re
 		delete(this.confirmations, index)
 		this.mutex.Unlock()
 		w.WriteHeader(204)
+		return
+	}
+	if managementActionPolicy(access.auth, permission.request) != nil {
+		delete(this.confirmations, index)
+		this.mutex.Unlock()
+		webError(w, 403, "management action denied")
 		return
 	}
 	permission.claiming = true // Consume before registration/IO/any possible effect.

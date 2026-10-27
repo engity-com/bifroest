@@ -22,12 +22,20 @@ type SessionActionResult struct {
 }
 
 type ActionPreparation struct {
-	Version           int         `json:"version"`
-	Status            string      `json:"status"`
-	ConfirmationToken string      `json:"confirmationToken"`
-	ExpiresAt         time.Time   `json:"expiresAt"`
-	Action            string      `json:"action"`
-	Target            SessionItem `json:"target"`
+	Version           int          `json:"version"`
+	Status            string       `json:"status"`
+	ConfirmationToken string       `json:"confirmationToken"`
+	ExpiresAt         time.Time    `json:"expiresAt"`
+	Action            string       `json:"action"`
+	Target            ActionTarget `json:"target"`
+}
+
+// Details are absent for an action-only forced command. The confirmation is
+// bound internally to a generation; this is not a session inspection capability.
+type ActionTarget struct {
+	ID      string       `json:"id"`
+	Flow    string       `json:"flow"`
+	Details *SessionItem `json:"details,omitempty"`
 }
 type ActionResult struct {
 	Version int                 `json:"version"`

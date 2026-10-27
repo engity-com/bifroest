@@ -42,6 +42,9 @@ export function ManagementPanel({
   const sending = useRef(false);
   const [preview, setPreview] = useState<ActionPreview | null>(null);
   const [typed, setTyped] = useState('');
+  const [actionFlow, setActionFlow] = useState('');
+  const [actionID, setActionID] = useState('');
+  const [actionKind, setActionKind] = useState<SessionAction>('disconnect');
   const [notice, setNotice] = useState<{
     kind: 'confirmed' | 'unknown';
     preview: ActionPreview;
@@ -60,6 +63,9 @@ export function ManagementPanel({
     setError(false);
     setPreview(null);
     setTyped('');
+    setActionFlow('');
+    setActionID('');
+    setActionKind('disconnect');
     setNotice(null);
     onActionLock(false);
     return () => {
@@ -147,7 +153,10 @@ export function ManagementPanel({
       }
     });
   }
-  async function prepare(action: SessionAction, item: SessionItem) {
+  async function prepare(
+    action: SessionAction,
+    item: { readonly flow: string; readonly id: string },
+  ) {
     if (notice?.kind === 'unknown') {
       return;
     }
@@ -360,6 +369,46 @@ export function ManagementPanel({
           {t('managementLoadSessions')}
         </Button>
       </form>
+      <section aria-label={t('managementDirectAction')} className="stack">
+        <Title order={3}>{t('managementDirectAction')}</Title>
+        <p>{t('managementDirectActionHint')}</p>
+        <form
+          method="dialog"
+          className="stack"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void prepare(actionKind, { flow: actionFlow, id: actionID });
+          }}
+        >
+          <TextInput
+            label={t('managementActionFlow')}
+            value={actionFlow}
+            onChange={(event) => setActionFlow(event.currentTarget.value)}
+            disabled={locked}
+            maxLength={255}
+            required
+          />
+          <TextInput
+            label={t('managementActionID')}
+            value={actionID}
+            onChange={(event) => setActionID(event.currentTarget.value)}
+            disabled={locked}
+            maxLength={36}
+            required
+            pattern="[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+          />
+          <Select
+            label={t('managementActionKind')}
+            value={actionKind}
+            onChange={(value) => setActionKind(value === 'dispose' ? 'dispose' : 'disconnect')}
+            data={['disconnect', 'dispose']}
+            disabled={locked}
+          />
+          <Button type="submit" disabled={locked || notice?.kind === 'unknown'}>
+            {t('managementPrepareAction')}
+          </Button>
+        </form>
+      </section>
       {sessions !== null && (
         <>
           {sessions.skipped > 0 && (
@@ -485,14 +534,16 @@ export function ManagementPanel({
             <p>
               {preview.target.flow}/{preview.target.id}
             </p>
-            <p>
-              {preview.target.owner === null
-                ? t('managementUnknownOwner')
-                : `${preview.target.owner.issuer} / ${preview.target.owner.subject}`}
-            </p>
-            <p>
-              {t('managementCreated')}: {when(preview.target.createdAt)}
-            </p>
+            {preview.target.details === undefined ? (
+              <Alert color="yellow">{t('managementActionNoDetails')}</Alert>
+            ) : (
+              <>
+                <p>{ownerLabel(preview.target.details)}</p>
+                <p>
+                  {t('managementCreated')}: {when(preview.target.details.createdAt)}
+                </p>
+              </>
+            )}
             <p>
               {t('expires')}: {when(preview.expiresAt)}
             </p>

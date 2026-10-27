@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-async function forcedKeyLogin(page, file) {
+export async function forcedKeyLogin(page, file) {
   const fixture = JSON.parse(await readFile(file, 'utf8'));
   await page.getByText('SSH key login', { exact: true }).click();
   await page.getByLabel('User name', { exact: true }).fill('alice');

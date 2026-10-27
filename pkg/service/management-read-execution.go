@@ -35,15 +35,29 @@ func (this *service) executeManagementAction(conn *terminalConnection, permissio
 	if permission == nil || permission.request.Validate() != nil {
 		return nil, errManagementConfirmation
 	}
-	if conn == nil || managementActionPolicy(conn.authorization) != nil {
+	if conn == nil || managementActionPolicy(conn.authorization, permission.request) != nil {
 		return nil, errManagementPolicy
 	}
-	return this.executeManagement(conn, &managementReadSource{action: permission}, permission.request)
+	phase := "confirm"
+	if permission.preparing {
+		phase = "prepare"
+	}
+	return this.executeManagement(conn, &managementReadSource{action: permission}, struct {
+		Phase string `json:"phase"`
+		protocol.SessionAction
+	}{phase, permission.request})
 }
 
 func (this *service) executeManagement(conn *terminalConnection, source *managementReadSource, payload any) ([]byte, error) {
-	if conn == nil || managementReadPolicy(conn.authorization) != nil {
+	if conn == nil {
 		return nil, errManagementPolicy
+	}
+	if source.action != nil {
+		if err := managementActionPolicy(conn.authorization, source.action.request); err != nil {
+			return nil, err
+		}
+	} else if _, err := managementReadCeiling(conn.authorization, source.request); err != nil {
+		return nil, err
 	}
 	input, err := json.Marshal(payload)
 	if err != nil {

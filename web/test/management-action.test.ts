@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { actionPreparation } from '../src/management/action';
 import { BrowserClient } from '../src/remember';
 import type { Transport } from '../src/remember/http';
 import { required } from './required';
@@ -21,7 +22,7 @@ function json(value: unknown, status = 200) {
     headers: { 'Content-Type': 'application/json' },
   });
 }
-function fixture() {
+function fixture(limited = false) {
   const records: { action: string; body: Record<string, string> }[] = [];
   let used = false;
   let drop = false;
@@ -56,7 +57,11 @@ function fixture() {
           confirmationToken,
           expiresAt: new Date(Date.now() + 60000).toISOString(),
           action: body.action,
-          target: changed ? { ...target, id: '00000000-0000-0000-0000-000000000001' } : target,
+          target: {
+            id: changed ? '00000000-0000-0000-0000-000000000001' : target.id,
+            flow: target.flow,
+            ...(limited ? {} : { details: target }),
+          },
         },
         202,
       );
@@ -92,18 +97,54 @@ function fixture() {
 }
 
 describe('one-time pinned management session action handle', () => {
+  it('rejects extra target fields, mismatched detail selectors and fabricated partial metadata', () => {
+    for (const invalid of [
+      { flow: target.flow, id: target.id, owner: null },
+      { flow: target.flow, id: target.id, details: null },
+      { flow: target.flow, id: target.id, details: { ...target, flow: 'different' } },
+      {
+        flow: target.flow,
+        id: target.id,
+        details: { ...target, policyLimited: true, owner: null },
+      },
+    ]) {
+      expect(() =>
+        actionPreparation(
+          {
+            version: 1,
+            status: 'confirmation-required',
+            action: 'dispose',
+            confirmationToken,
+            expiresAt: new Date(Date.now() + 60000).toISOString(),
+            target: invalid,
+          },
+          'dispose',
+          target.flow,
+          target.id,
+        ),
+      ).toThrow();
+    }
+  });
   it('confirms only its original action/target/access and never serializes either permission', async () => {
     const server = fixture();
     const access = await server.client.password('manager', 'secret');
     const handle = await access.prepareSessionAction('dispose', target.flow, target.id);
     expect(JSON.stringify(handle)).not.toContain(confirmationToken);
     expect(JSON.stringify(handle)).not.toContain(accessToken);
-    expect(required(handle.snapshot().target.owner).subject).toBe('verified');
+    expect(required(required(handle.snapshot().target.details).owner).subject).toBe('verified');
     expect(Object.isFrozen(handle.snapshot().target)).toBe(true);
     expect(await handle.confirm()).toEqual({ action: 'dispose', flow: target.flow, id: target.id });
     await expect(handle.confirm()).rejects.toMatchObject({ code: 'changed' });
     expect(await handle.cancel()).toBe(false);
     expect(server.records.filter((record) => record.action.endsWith('/confirm'))).toHaveLength(1);
+  });
+
+  it('confirms an action-only target without synthesizing session details', async () => {
+    const server = fixture(true);
+    const access = await server.client.password('manager', 'secret');
+    const handle = await access.prepareSessionAction('dispose', target.flow, target.id);
+    expect(handle.snapshot().target).toEqual({ flow: target.flow, id: target.id });
+    expect(await handle.confirm()).toEqual({ action: 'dispose', flow: target.flow, id: target.id });
   });
 
   it('reports a lost commit as outcome unknown without retry, cancel-as-undo or logout', async () => {
