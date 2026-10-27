@@ -134,7 +134,12 @@ short private temporary parent such as `/tmp/opencode` for both `TMPDIR` and
 the Podman API fixture. Existing `mise run test:e2e:kubernetes` and
 `mise run test:e2e:docker` remain the native SSH/recording baselines; their current
 selectors do not include the browser tests. CI selects the Docker browser test
-separately after building the frontend and installing Chromium.
+separately after building the frontend and installing Chromium. Both existing
+kind jobs now likewise require the Kubernetes browser test after their native
+SSH/recording baseline. The Docker-backed kind job runs on matching pull requests;
+the Podman-backed job retains its schedule/manual-only trigger. Missing test
+execution, a skip or a failure rejects the browser step; no user's kubeconfig
+context is adopted.
 
 Tests run in actual headless Chromium, including real IndexedDB structured cloning
 of non-exportable CryptoKeys and an actual browser-process restart using an owned

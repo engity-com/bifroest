@@ -226,6 +226,29 @@ jobs:
       - name: Run Kubernetes end-to-end suite
         run: mise run test:e2e:kubernetes
 
+      - name: Prepare actual Kubernetes browser E2E
+        run: |
+          mise -C web install
+          mise -C web run install:web
+          mise -C web run build:web
+          mise -C web run install:web:browser
+
+      - name: Verify shared Kubernetes workload through browser and OpenSSH
+        shell: bash
+        env:
+          BIFROEST_TEST_BROWSER_UI: "1"
+        run: |
+          set -euo pipefail
+          export BIFROEST_TEST_NODE="$(mise -C web which node)"
+          mkdir -p var/e2e
+          mise x -- go test -json -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHKubernetesBrowserSharedWorkload$' ./test/e2e | tee var/e2e/kubernetes-browser.json
+          mise x -- python - <<'PY'
+          import json, pathlib
+          events = [json.loads(line) for line in pathlib.Path('var/e2e/kubernetes-browser.json').read_text().splitlines() if line.startswith('{')]
+          assert any(e.get('Action') == 'pass' and e.get('Test') == 'TestOpenSSHKubernetesBrowserSharedWorkload' for e in events), 'Kubernetes browser E2E did not execute successfully'
+          assert not any(e.get('Action') in ('skip', 'fail', 'build-fail') for e in events), 'Kubernetes browser E2E was skipped or failed'
+          PY
+
       - name: Collect Kubernetes diagnostics
         if: failure()
         shell: bash
@@ -282,6 +305,29 @@ jobs:
 
       - name: Run Kubernetes end-to-end suite
         run: mise run test:e2e:kubernetes
+
+      - name: Prepare actual Kubernetes browser E2E
+        run: |
+          mise -C web install
+          mise -C web run install:web
+          mise -C web run build:web
+          mise -C web run install:web:browser
+
+      - name: Verify shared Kubernetes workload through browser and OpenSSH
+        shell: bash
+        env:
+          BIFROEST_TEST_BROWSER_UI: "1"
+        run: |
+          set -euo pipefail
+          export BIFROEST_TEST_NODE="$(mise -C web which node)"
+          mkdir -p var/e2e
+          mise x -- go test -json -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHKubernetesBrowserSharedWorkload$' ./test/e2e | tee var/e2e/kubernetes-browser.json
+          mise x -- python - <<'PY'
+          import json, pathlib
+          events = [json.loads(line) for line in pathlib.Path('var/e2e/kubernetes-browser.json').read_text().splitlines() if line.startswith('{')]
+          assert any(e.get('Action') == 'pass' and e.get('Test') == 'TestOpenSSHKubernetesBrowserSharedWorkload' for e in events), 'Kubernetes browser E2E did not execute successfully'
+          assert not any(e.get('Action') in ('skip', 'fail', 'build-fail') for e in events), 'Kubernetes browser E2E was skipped or failed'
+          PY
 
       - name: Collect Kubernetes diagnostics
         if: failure()
