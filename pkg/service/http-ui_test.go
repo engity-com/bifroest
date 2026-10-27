@@ -202,16 +202,32 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	httpListenerTestCertificate(t, &configuration.Configuration{Http: settings}, key)
 	var interrupt atomic.Bool
 	var interrupted atomic.Int32
+	var providerReplyBarriers atomic.Int32
 	if mode == "interactive-lost" {
 		interrupt.Store(true)
 	}
 	endpoint, err := https.NewEndpoint(settings, https.EndpointOptions{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if mode == "oidc-cancel" && r.URL.Path == "/_bifroest/test/provider-started" {
-			select {
-			case <-provider.deviceTokenStarted:
-				w.WriteHeader(http.StatusNoContent)
-			case <-r.Context().Done():
+		if mode == "oidc-cancel" && r.URL.Path == webAPI+"login/reply" {
+			// Deliver the real acknowledgement only after the provider request
+			// starts. An extra browser GET is not part of the cancellation proof.
+			recorder := httptest.NewRecorder()
+			protocolHandler.ServeHTTP(recorder, r)
+			if recorder.Code == http.StatusAccepted {
+				ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+				defer cancel()
+				select {
+				case <-provider.deviceTokenStarted:
+					providerReplyBarriers.Add(1)
+				case <-ctx.Done():
+					http.Error(w, "provider token request did not start", http.StatusServiceUnavailable)
+					return
+				}
 			}
+			for name, values := range recorder.Header() {
+				w.Header()[name] = values
+			}
+			w.WriteHeader(recorder.Code)
+			_, _ = w.Write(recorder.Body.Bytes())
 			return
 		}
 		if r.URL.Path == "/_bifroest/test/interrupt-enrollment" && r.Method == http.MethodPost {
@@ -348,6 +364,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	}
 	if provider != nil {
 		if mode == "oidc-cancel" {
+			require.EqualValues(t, 1, providerReplyBarriers.Load(), "cancel must follow one real reply and an active provider request")
 			select {
 			case <-provider.deviceTokenCanceled:
 			case <-time.After(2 * time.Second):

@@ -81,18 +81,16 @@ export async function exerciseDevice(page, cancel) {
   assert.match(target, /^https:\/\/127\.0\.0\.1:[0-9]+\/verify$/);
   assert.equal(await link.getAttribute('rel'), 'noopener noreferrer');
   assert.equal(await dialog.locator('iframe').count(), 0);
+  // The Go cancellation fixture holds this real reply until its provider call
+  // has started; no extra browser fetch or request replay is needed to observe it.
+  const providerStarted = cancel
+    ? page.waitForResponse(
+        (response) => response.url().endsWith('/api/v1/login/reply') && response.status() === 202,
+      )
+    : null;
   await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
   if (cancel) {
-    await page.evaluate(async () => {
-      const response = await fetch('/_bifroest/test/provider-started', {
-        credentials: 'omit',
-        mode: 'same-origin',
-        signal: AbortSignal.timeout(5000),
-      });
-      if (response.status !== 204) {
-        throw new Error('provider token request did not start');
-      }
-    });
+    await providerStarted;
     const stopped = page.waitForResponse(
       (response) => response.url().endsWith('/api/v1/login/cancel') && response.status() === 204,
     );

@@ -19,6 +19,7 @@ const profile = await mkdtemp(join(tmpdir(), 'bifroest-ui-'));
 let context;
 const errors = [];
 const failedResources = [];
+const failedRequests = [];
 const loginResponses = [];
 try {
   const open = async () => {
@@ -35,6 +36,13 @@ try {
     });
     const page = await context.newPage();
     page.on('pageerror', (error) => errors.push(error.message));
+    page.on('requestfailed', (request) => {
+      // Paths and transport errors only, never request bodies, tokens or headers.
+      failedRequests.push({
+        path: new URL(request.url()).pathname,
+        failure: request.failure()?.errorText,
+      });
+    });
     page.on('response', (response) => {
       const path = new URL(response.url()).pathname;
       if (path.endsWith('/api/v1/login/password')) {
@@ -289,6 +297,11 @@ try {
   }
   await exercise();
   console.log(JSON.stringify({ success: true }));
+} catch (error) {
+  throw new Error(
+    JSON.stringify({ mode: process.argv[3], pageErrors: errors, failedResources, failedRequests }),
+    { cause: error },
+  );
 } finally {
   await context?.close();
   await rm(profile, { recursive: true, force: true });
