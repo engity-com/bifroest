@@ -1,10 +1,20 @@
-import { Alert, Button, Modal, Paper, Select, Table, TextInput, Title } from '@mantine/core';
+import {
+  Alert,
+  Button,
+  Checkbox,
+  Modal,
+  Paper,
+  Select,
+  Table,
+  TextInput,
+  Title,
+} from '@mantine/core';
 import { useEffect, useRef, useState } from 'react';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
 import { t } from '../ui/messages';
 import type { ActionPreview, SessionAction, SessionActionConfirmation } from './action';
-import type { FlowSummary, Page, SessionItem, SessionOptions } from './protocol';
+import type { FlowSummary, Page, SessionItem, SessionOptions, VersionInfo } from './protocol';
 
 export function ManagementPanel({
   access,
@@ -16,6 +26,8 @@ export function ManagementPanel({
   onActionLock: (locked: boolean) => void;
 }) {
   const [flows, setFlows] = useState<Page<FlowSummary> | null>(null);
+  const [version, setVersion] = useState<VersionInfo | null>(null);
+  const [longVersion, setLongVersion] = useState(true);
   const [sessions, setSessions] = useState<Page<SessionItem> | null>(null);
   const [selected, setSelected] = useState<SessionItem | null>(null);
   const [flow, setFlow] = useState('');
@@ -40,6 +52,8 @@ export function ManagementPanel({
     request.current?.abort();
     request.current = null;
     setFlows(null);
+    setVersion(null);
+    setLongVersion(true);
     setSessions(null);
     setSelected(null);
     setBusy(false);
@@ -101,6 +115,14 @@ export function ManagementPanel({
       const result = await access.managementFlows({ after }, signal);
       if (current === generation.current) {
         setFlows(result);
+      }
+    });
+  }
+  async function loadVersion() {
+    await run(async (signal, current) => {
+      const result = await access.managementVersion(longVersion, signal);
+      if (current === generation.current) {
+        setVersion(result);
       }
     });
   }
@@ -205,6 +227,27 @@ export function ManagementPanel({
     <Paper withBorder p="lg" className="stack" aria-label={t('managementTitle')}>
       <Title order={2}>{t('managementTitle')}</Title>
       <Alert color="blue">{t('managementReadOnly')}</Alert>
+      <Checkbox
+        label={t('managementVersionLong')}
+        checked={longVersion}
+        disabled={locked}
+        onChange={(event) => setLongVersion(event.currentTarget.checked)}
+      />
+      <Button
+        disabled={locked}
+        onClick={() => {
+          void loadVersion();
+        }}
+      >
+        {t('managementVersionLoad')}
+      </Button>
+      {version !== null && (
+        <section aria-label={t('managementVersionTitle')}>
+          <Title order={3}>{t('managementVersionTitle')}</Title>
+          <p>{t('managementVersionReported')}</p>
+          <pre>{version.text}</pre>
+        </section>
+      )}
       {notice !== null && (
         <Alert role="status" color={notice.kind === 'confirmed' ? 'green' : 'yellow'}>
           <p>

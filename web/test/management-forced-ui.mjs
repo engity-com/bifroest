@@ -17,6 +17,54 @@ async function forcedKeyLogin(page, file) {
   await page.getByRole('heading', { name: 'Signed in as alice', exact: true }).waitFor();
 }
 
+export async function exerciseManagementForcedVersion(page, file, logout) {
+  const calls = [];
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.includes('/api/v1/management/')) {
+      calls.push({ path, body: JSON.parse(request.postData() ?? '{}') });
+    }
+  });
+  await forcedKeyLogin(page, file);
+  assert.deepEqual(calls, [], 'version metadata must require an explicit action');
+  const denied = page.waitForResponse(
+    (response) => response.url().endsWith('/management/version/show') && response.status() === 403,
+  );
+  await page.getByRole('button', { name: 'Load server version', exact: true }).click();
+  await denied;
+  assert.equal(await page.getByRole('region', { name: 'Server version', exact: true }).count(), 0);
+  await page
+    .getByRole('checkbox', { name: 'Include vendor, Go and feature details', exact: true })
+    .uncheck();
+  await page.getByRole('button', { name: 'Load server version', exact: true }).click();
+  const version = page.getByRole('region', { name: 'Server version', exact: true });
+  await version.locator('pre').waitFor();
+  const text = await version.locator('pre').textContent();
+  assert(text.includes('<b>version fixture</b><script>window.versionInjected = true</script>'));
+  assert(!text.includes('Go:') && !text.includes('Features:'));
+  assert.equal(await version.locator('b, script').count(), 0);
+  assert.equal(await page.evaluate(() => window.versionInjected), undefined);
+  assert.deepEqual(
+    calls.map((call) => call.body.long),
+    ['true', 'false'],
+  );
+  for (const call of calls) {
+    assert.equal(call.body.command, undefined);
+    assert.equal(call.body.args, undefined);
+  }
+  await page.getByRole('button', { name: 'Load flows', exact: true }).click();
+  await page
+    .getByText('The management request could not be confirmed or is not permitted.', {
+      exact: false,
+    })
+    .waitFor();
+  assert.equal(await page.getByRole('table').count(), 0);
+  await logout(page);
+  assert.equal(await page.getByRole('region', { name: 'Server version', exact: true }).count(), 0);
+  assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
+  assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+}
+
 export async function exerciseManagementForced(page, file, logout) {
   await forcedKeyLogin(page, file);
   await page.evaluate(async () => {

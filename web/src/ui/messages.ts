@@ -77,9 +77,13 @@ export const messages = {
   limited: 'Too many requests. Wait before trying again.',
   cancelled: 'Operation cancelled. Cancellation is not server logout.',
   partial:
-    'This is an incremental browser interface. Management actions require explicit confirmation; artifact verification/decryption is client-only. Full release integration remains pending.',
+    'This is an incremental browser interface. Management actions require explicit confirmation; artifact verification/decryption is client-only. Native authentication/forced-command parity and additional platform coverage remain incomplete.',
   managementTitle: 'Management overview',
   managementLoading: 'Loading management view…',
+  managementVersionLoad: 'Load server version',
+  managementVersionLong: 'Include vendor, Go and feature details',
+  managementVersionTitle: 'Server version',
+  managementVersionReported: 'Server-reported build metadata, not an independent attestation.',
   managementReadOnly:
     'Structured management with your existing authorization. This is live paged metadata, not a complete snapshot. Session actions have separate one-time confirmation. Artifact transfer requires the existing artifact permission. Recognized forced read commands constrain operations, filters and fields; other forced commands and all forced mutations/artifact transfers remain blocked.',
   artifactTitle: 'Artifacts and client-side evidence',

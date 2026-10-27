@@ -75,6 +75,10 @@ func TestBrowserManagementForcedAuditReadUiPagesWithoutTransfer(t *testing.T) {
 	testBrowserLoginUi(t, true, "management-forced-audit")
 }
 
+func TestBrowserManagementForcedVersionUiKeepsShortOutputAndEscapesMetadata(t *testing.T) {
+	testBrowserLoginUi(t, true, "management-forced-version")
+}
+
 func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	t.Helper()
 	if os.Getenv("BIFROEST_TEST_BROWSER_UI") != "1" {
@@ -90,7 +94,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	var provider *oidcAssociationProvider
 	var keyFixture string
 	var authorizedKeys bfcrypto.AuthorizedKeys
-	forcedReadMode := mode == "management-forced" || mode == "management-forced-audit"
+	forcedReadMode := mode == "management-forced" || mode == "management-forced-audit" || mode == "management-forced-version"
 	if mode == "key" || forcedReadMode {
 		keyFixture, authorizedKeys = browserKeyUiFixture(t)
 	}
@@ -122,15 +126,18 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 				conf.Flows = append(conf.Flows, worker)
 			}
 			if forcedReadMode {
-				conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{AllowArtifactTransfer: mode == "management-forced-audit"}
+				conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{AllowArtifactTransfer: mode == "management-forced-audit" || mode == "management-forced-version"}
 				settings := conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple)
 				settings.Entries = append(settings.Entries, configuration.AuthorizationSimpleEntry{Name: "bob", Password: bfcrypto.Password("plain:correct")})
 				var keys strings.Builder
 				for _, line := range strings.Split(strings.TrimSpace(string(authorizedKeys)), "\n") {
 					if !strings.HasPrefix(line, "cert-authority ") {
-						if mode == "management-forced-audit" {
+						switch mode {
+						case "management-forced-audit":
 							keys.WriteString(`command="audit ls" `)
-						} else {
+						case "management-forced-version":
+							keys.WriteString(`command="version --long=false" `)
+						default:
 							keys.WriteString(`command="session ls --user=alice --format=table" `)
 						}
 					}
@@ -156,6 +163,9 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	}
 	if mode == "management-forced-audit" {
 		addForcedAuditSummaries(svc)
+	}
+	if mode == "management-forced-version" {
+		svc.Version = versionMarkupTestVersion{}
 	}
 	var actionTargets *actionUITargetRepository
 	if mode == "management-actions" {
@@ -378,7 +388,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 		info, err := current.Info(ctx)
 		require.NoError(t, err)
 		switch mode {
-		case "management-forced", "management-forced-audit":
+		case "management-forced", "management-forced-audit", "management-forced-version":
 			created, err := info.Created(t.Context())
 			require.NoError(t, err)
 			if created.Remote().User() == "alice" {

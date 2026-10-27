@@ -13,6 +13,18 @@ import (
 func managementReadRequest(path string, values map[string]string) (protocol.ReadRequest, error) {
 	request := protocol.ReadRequest{After: values["after"], Flow: values["flow"], User: values["user"], State: values["state"], ID: values["id"], Auditlog: values["auditlog"]}
 	switch path {
+	case webAPI + "management/version/show":
+		request.Operation = protocol.ShowVersion
+		request.VersionDetail = "long"
+		if value, present := values["long"]; present {
+			switch value {
+			case "true":
+			case "false":
+				request.VersionDetail = "short"
+			default:
+				return request, protocol.ErrRequest
+			}
+		}
 	case webAPI + "management/flows/list":
 		request.Operation = protocol.ListFlows
 	case webAPI + "management/sessions/list":

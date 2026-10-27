@@ -15,8 +15,16 @@ import type {
   RecordingSummary,
   SessionItem,
   SessionOptions,
+  VersionInfo,
 } from '../management/protocol';
-import { auditlogName, detail, page, pageFields, sessionFields } from '../management/protocol';
+import {
+  auditlogName,
+  detail,
+  page,
+  pageFields,
+  sessionFields,
+  versionInfo,
+} from '../management/protocol';
 import type { Transport } from './http';
 import { Http, isToken, object, time } from './http';
 import type { Binding, ProofPurpose, Scope } from './protocol';
@@ -213,6 +221,26 @@ export class WebAccess {
         this.#artifact = null;
       }
     }
+  }
+  async managementVersion(long = true, signal?: AbortSignal): Promise<VersionInfo> {
+    this.#managementAllowed();
+    if (typeof long !== 'boolean') {
+      throw new RememberMeError('unavailable');
+    }
+    const result = versionInfo(
+      await this.#http.post(
+        'management/version/show',
+        { long: String(long) },
+        this.#response.accessToken,
+        200,
+        signal,
+      ),
+      long,
+    );
+    if (this.#closed) {
+      throw new RememberMeError('denied');
+    }
+    return result;
   }
   async managementFlows(
     options: PageOptions = {},

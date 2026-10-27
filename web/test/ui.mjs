@@ -9,6 +9,7 @@ import { exerciseManagementActions } from './management-action-ui.mjs';
 import {
   exerciseManagementForced,
   exerciseManagementForcedAudit,
+  exerciseManagementForcedVersion,
 } from './management-forced-ui.mjs';
 import { exerciseManagement } from './management-ui.mjs';
 import { exerciseTerminal } from './terminal-ui.mjs';
@@ -130,6 +131,11 @@ try {
     }
     if (process.argv[3] === 'management-forced-audit') {
       await exerciseManagementForcedAudit(page, process.argv[4], logout);
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.argv[3] === 'management-forced-version') {
+      await exerciseManagementForcedVersion(page, process.argv[4], logout);
       assert.deepEqual(errors, []);
       return;
     }

@@ -16,6 +16,28 @@ export interface FlowSummary {
   readonly authorization: string;
   readonly environment: string;
 }
+export interface VersionInfo {
+  readonly detail: 'long' | 'short';
+  readonly text: string;
+}
+
+export function versionInfo(value: unknown, long: boolean): VersionInfo {
+  const envelope = object(value, ['version', 'operation', 'versionInfo']);
+  const result = object(envelope.versionInfo, ['detail', 'text']);
+  if (
+    envelope.version !== 1 ||
+    envelope.operation !== 'version.show' ||
+    result.detail !== (long ? 'long' : 'short') ||
+    typeof result.text !== 'string' ||
+    !result.text.isWellFormed() ||
+    result.text.length === 0 ||
+    new TextEncoder().encode(result.text).length > 64 << 10 ||
+    /[\p{Cc}]/u.test(result.text.replace(/[\n\t]/gu, ''))
+  ) {
+    throw new RememberMeError('unavailable');
+  }
+  return Object.freeze({ detail: result.detail as VersionInfo['detail'], text: result.text });
+}
 // Server metadata only, never independent browser evidence or trust pins.
 export interface AuditlogSummary {
   readonly name: string;

@@ -18,6 +18,7 @@ type ReadCeiling struct {
 	Flow, User, State, ID string
 	TableList             bool
 	WholeSeconds          bool
+	VersionDetail         string
 }
 
 // ForcedRead accepts only spellings whose effective CLI operation is proven.
@@ -31,7 +32,28 @@ func ForcedRead(raw string) (ReadCeiling, error) {
 		return deny()
 	}
 	args, err := shlex.Split(raw, true)
-	if err != nil || len(args) < 2 {
+	if err != nil || len(args) == 0 {
+		return deny()
+	}
+	if args[0] == "version" {
+		ceiling := ReadCeiling{Operation: protocol.ShowVersion, VersionDetail: "long"}
+		if len(args) == 1 {
+			return ceiling, nil
+		}
+		if len(args) != 2 {
+			return deny()
+		}
+		switch args[1] {
+		case "--long", "--long=true":
+			return ceiling, nil
+		case "--long=false":
+			ceiling.VersionDetail = "short"
+			return ceiling, nil
+		default:
+			return deny()
+		}
+	}
+	if len(args) < 2 {
 		return deny()
 	}
 	ceiling := ReadCeiling{}
@@ -126,6 +148,13 @@ func ForcedRead(raw string) (ReadCeiling, error) {
 func (this ReadCeiling) Allows(request protocol.ReadRequest) bool {
 	if this.Operation != request.Operation || this.Operation == protocol.ShowSession && this.ID != request.ID {
 		return false
+	}
+	if this.Operation == protocol.ShowVersion {
+		detail := request.VersionDetail
+		if detail == "" {
+			detail = "long"
+		}
+		return this.VersionDetail == detail
 	}
 	// Active is not merely an exposed state value: it also queries the exact
 	// validity deadline. Do not turn hidden/second-precision metadata into a

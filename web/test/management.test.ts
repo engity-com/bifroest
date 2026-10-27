@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { versionInfo } from '../src/management/protocol';
 import { BrowserClient } from '../src/remember';
 import type { Transport } from '../src/remember/http';
 import { required } from './required';
@@ -47,6 +48,18 @@ function fixture(environment = 'management', changed?: (value: unknown) => unkno
     if (path === 'logout') {
       return new Response(null, { status: 204 });
     }
+    if (path === 'management/version/show') {
+      const result = {
+        version: 1,
+        operation: 'version.show',
+        versionInfo: {
+          detail: body.long === 'false' ? 'short' : 'long',
+          text:
+            body.long === 'false' ? 'Bifröst test\n' : 'Bifröst\nVersion: test\n\tfeature: test\n',
+        },
+      };
+      return json(changed?.(result) ?? result);
+    }
     const result =
       path === 'management/flows/list'
         ? {
@@ -78,6 +91,45 @@ function fixture(environment = 'management', changed?: (value: unknown) => unkno
 }
 
 describe('bounded structured management client (no command/CLI transport)', () => {
+  it('requests an exact long or short version as bounded server metadata only', async () => {
+    const server = fixture();
+    const access = await server.client.password('manager', 'secret');
+    expect((await access.managementVersion()).detail).toBe('long');
+    const short = await access.managementVersion(false);
+    expect(short).toEqual({ detail: 'short', text: 'Bifröst test\n' });
+    expect(Object.isFrozen(short)).toBe(true);
+    expect(server.requests.slice(1)).toEqual([
+      { path: 'management/version/show', body: { long: 'true', slug: 'Manage' } },
+      { path: 'management/version/show', body: { long: 'false', slug: 'Manage' } },
+    ]);
+    await access.logout();
+    await expect(access.managementVersion()).rejects.toMatchObject({ code: 'denied' });
+    const terminal = fixture('terminal');
+    await expect(
+      (await terminal.client.password('', '')).managementVersion(),
+    ).rejects.toMatchObject({ code: 'denied' });
+    expect(terminal.requests).toHaveLength(1);
+  });
+  it('rejects version mode substitution, unknown fields, controls and unbounded text', () => {
+    const good = {
+      version: 1,
+      operation: 'version.show',
+      versionInfo: { detail: 'short', text: 'Bifröst test\n' },
+    };
+    for (const value of [
+      { ...good, operation: 'flows.list' },
+      { ...good, version: 2 },
+      { ...good, versionInfo: { ...good.versionInfo, detail: 'long' } },
+      { ...good, versionInfo: { ...good.versionInfo, producerId: 'untrusted' } },
+      ...['', '\u0000', '\u001b[31m', '\r', '\ud800', 'v'.repeat((64 << 10) + 1)].map((text) => ({
+        ...good,
+        versionInfo: { ...good.versionInfo, text },
+      })),
+    ]) {
+      expect(() => versionInfo(value, false)).toThrow();
+    }
+    expect(versionInfo(good, false).text).toBe('Bifröst test\n');
+  });
   it('distinguishes forced-command withholding from absent identity and rejects contradictory disclosure', async () => {
     const limited = { ...item, owner: null, remote: '', policyLimited: true };
     const server = fixture('management', () => ({

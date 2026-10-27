@@ -17,6 +17,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/management/protocol"
 	managementview "github.com/engity-com/bifroest/pkg/management/view"
 	"github.com/engity-com/bifroest/pkg/session"
+	"github.com/engity-com/bifroest/pkg/sys"
 )
 
 var errManagementPolicy = errors.New("structured management is not allowed by the invocation policy")
@@ -71,6 +72,15 @@ func (this *service) RunManagementRead(task environment.TaskContext, request pro
 	}
 	result := protocol.ReadResult{Version: protocol.Version, Operation: request.Operation}
 	switch request.Operation {
+	case protocol.ShowVersion:
+		if this.Version == nil {
+			return -1, fmt.Errorf("management version metadata is unavailable")
+		}
+		format := sys.VersionFormatLong
+		if request.VersionDetail == "short" {
+			format = sys.VersionFormatShort
+		}
+		result.VersionInfo = &protocol.VersionInfo{Detail: request.VersionDetail, Text: sys.FormatVersion(this.Version, format) + "\n"}
 	case protocol.ListFlows:
 		page, err := this.managementFlowPage(ctx, request)
 		if err != nil {

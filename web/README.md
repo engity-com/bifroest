@@ -569,6 +569,14 @@ responses cannot appear under another actor. Data is live keyset paging rather
 than an immutable complete snapshot, with at most 20 rows and 64 KiB per result.
 Pagination cursors bind their operation/filters, but are selectors, not credentials.
 
+`management/version/show` returns the existing native `sys.FormatVersion` output
+as `versionInfo: { detail, text }`. Its optional string `long` selector accepts
+only `true` (the default) or `false`; it accepts no command, CLI arguments, cursor,
+artifact selector or policy override. Loading the version is an explicit action.
+The view renders plain text, labels it server-reported metadata rather than an
+independent attestation, and clears it on actor changes/logout. It uses the same
+connection quota, audit/recording and final-success gate as other metadata reads.
+
 The initial POST endpoints are `management/flows/list`, `management/sessions/list`
 and `management/sessions/show`, under the existing API prefix. Same-origin TLS,
 tab-only Authorization proof, no-cookie/no-redirect fetch, shared API/admission
@@ -606,8 +614,12 @@ reauth with cleared data while the CLI application is deliberately unavailable.
 ### Forced read ceilings (conservative subset)
 
 The server interprets only the **operator-configured** forced command, never a
-browser command. Recognized forms are `flow ls`, `audit ls`, `session ls` and `session show`
-with one exact canonical session UUID. Supported output flags are `--format`
+browser command. `version`, `version --long`, `version --long=true` and
+`version --long=false` retain their exact native long/short output mode. A fixed
+short version cannot request long details; no version permission can list flows,
+sessions, catalogs, transfer artifacts or mutate sessions. Other recognized forms
+are `flow ls`, `audit ls`, `session ls` and `session show` with one exact canonical
+session UUID. Supported output flags for these other reads are `--format`
 `table`/`json`/`yaml`/`cbor`; session lists also support `--flow`, `--user` and
 `--state` with the same defaults as SSH (`active`). Unique `--name=value` and
 `--name value` forms use the same POSIX token splitting as the SSH adapter.

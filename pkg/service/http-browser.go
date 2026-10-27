@@ -202,6 +202,7 @@ func (this *webService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case webAPI + "remember/enroll", webAPI + "remember/resume", webAPI + "remember/revoke", webAPI + "remember/prove":
 	case webAPI + "management/flows/list", webAPI + "management/sessions/list", webAPI + "management/sessions/show":
 	case webAPI + "management/auditlogs/list", webAPI + "management/recordings/list":
+	case webAPI + "management/version/show":
 	case webAPI + "management/sessions/prepare", webAPI + "management/sessions/confirm", webAPI + "management/sessions/cancel":
 	case webAPI + "management/artifacts/recording", webAPI + "management/artifacts/audit":
 	default:
@@ -573,6 +574,8 @@ func webRequestFields(path string) []string {
 		return []string{"signature"}
 	case webAPI + "management/flows/list":
 		return []string{"limit", "after"}
+	case webAPI + "management/version/show":
+		return []string{"long"}
 	case webAPI + "management/auditlogs/list":
 		return []string{"limit", "after"}
 	case webAPI + "management/recordings/list":

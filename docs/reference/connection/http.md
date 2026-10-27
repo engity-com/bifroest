@@ -148,7 +148,27 @@ pages on authentication changes/logout and refuses late replies after cancellati
 
 ### Conservative ForcedCommand read equivalence
 
-Only trusted configured `flow ls`, `audit ls`, `session ls` and `session show <canonical UUID>` forms are mapped to the corresponding typed read. Supported unique flags are `--format` (`table`/`json`/`yaml`/`cbor`) and, for session lists, the existing `--flow`/`--user`/`--state` filters. SSH-compatible POSIX token splitting accepts quoted values and `--flag=value`/`--flag value`; no browser-supplied command enters this parser. Unknown/duplicate options, file/config expansion, aliases, shell operators/command chains, malformed values, wire/dispatcher names and all mutation forms remain fail-closed. This subset does not claim every spelling accepted by the CLI.
+`POST /_bifroest/api/v1/management/version/show` is an explicit Management metadata
+read, with optional string `long: "true"` (default) or `long: "false"`. The fixed
+response adds `versionInfo: { detail, text }` to the versioned `version.show`
+envelope. Text comes from the same native `sys.FormatVersion` core as SSH, including
+its line framing; it is server-reported build metadata, not an independent source,
+runtime or signature attestation. The UI renders text only and clears it on actor
+change/logout. No CLI parser, subprocess, command/argument field, artifact request
+or new role is involved; normal read quotas, audit/recording and final-audit success
+remain mandatory before delivery.
+
+The operator-configured forms `version`, `version --long`, `version --long=true`
+and `version --long=false` permit only this operation and their exact long/short
+mode. In particular, a forced short version cannot expose vendor/Go/features via
+the long selector. Other operations, artifact transfers and mutations remain denied
+even if the environment enables transfer/credential inspection. Duplicate flags,
+unknown spellings/options and command chains remain rejected. Native SSH/HTTP
+reference tests compare exact bytes for all four accepted forms; actual HTTPS/
+key-WASM/Chromium tests exercise explicit selection, denial of long/cross-operation
+reads, plain-text rendering, CSP and logout cleanup without the CLI application.
+
+The other supported operator-configured forms are `flow ls`, `audit ls`, `session ls` and `session show <canonical UUID>`, each mapped to the corresponding typed read. Supported unique flags are `--format` (`table`/`json`/`yaml`/`cbor`) and, for session lists, the existing `--flow`/`--user`/`--state` filters. SSH-compatible POSIX token splitting accepts quoted values and `--flag=value`/`--flag value`; no browser-supplied command enters this parser. Unknown/duplicate options, file/config expansion, aliases, shell operators/command chains, malformed values, wire/dispatcher names and all mutation forms remain fail-closed. This subset does not claim every spelling accepted by the CLI.
 
 Requested filters are intersected with forced filters, including `active` as the forced list default. Paging or requesting `all`, another flow/user, a show or a mutation cannot widen that operation's authority. A fixed show retains its exact UUID and the CLI's global ambiguity refusal, even when HTTP supplies a flow. Forced session responses never add association issuer/subject. Table lists omit remote/last-access/valid-until metadata; other recognized formats/show retain only their existing base fields. Table/CBOR timestamps are second-precision as over SSH. `policyLimited: true` marks policy withholding explicitly, not missing ownership or an infinite lifetime; the UI labels it accordingly. Unrestricted reads remain unchanged and forced reads are audited as forced tasks.
 

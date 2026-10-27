@@ -20,6 +20,12 @@ export async function exerciseManagement(page, login, logout) {
   });
   await login(page, false);
   await page.getByRole('heading', { name: 'Management overview', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Load server version', exact: true }).click();
+  const version = page.getByRole('region', { name: 'Server version', exact: true });
+  await version
+    .getByText('Server-reported build metadata, not an independent attestation.', { exact: true })
+    .waitFor();
+  assert((await version.locator('pre').textContent()).includes('Version:  test'));
   assert.equal(await page.getByRole('heading', { name: 'Terminal', exact: true }).count(), 0);
   assert.equal(await page.getByRole('button', { name: /dispose|disconnect|delete/i }).count(), 0);
   const firstReply = page.waitForResponse((response) =>
@@ -90,6 +96,7 @@ export async function exerciseManagement(page, login, logout) {
     .getByRole('button', { name: 'Sign in again for new connections', exact: true })
     .click();
   await login(page, false, 'bob');
+  assert.equal(await page.getByRole('region', { name: 'Server version', exact: true }).count(), 0);
   // No previous actor's result may appear under the newly authenticated actor.
   assert.equal(await page.getByRole('table').count(), 0);
   assert.equal(await page.getByRole('region', { name: 'Session details', exact: true }).count(), 0);

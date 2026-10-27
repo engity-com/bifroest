@@ -28,17 +28,19 @@ const (
 	ShowSession    ReadOperation = "sessions.show"
 	ListAuditlogs  ReadOperation = "auditlogs.list"
 	ListRecordings ReadOperation = "recordings.list"
+	ShowVersion    ReadOperation = "version.show"
 )
 
 type ReadRequest struct {
-	Operation ReadOperation `json:"operation"`
-	Limit     int           `json:"limit,omitempty"`
-	After     string        `json:"after,omitempty"`
-	Flow      string        `json:"flow,omitempty"`
-	User      string        `json:"user,omitempty"`
-	State     string        `json:"state,omitempty"`
-	Auditlog  string        `json:"auditlog,omitempty"`
-	ID        string        `json:"id,omitempty"`
+	Operation     ReadOperation `json:"operation"`
+	Limit         int           `json:"limit,omitempty"`
+	After         string        `json:"after,omitempty"`
+	Flow          string        `json:"flow,omitempty"`
+	User          string        `json:"user,omitempty"`
+	State         string        `json:"state,omitempty"`
+	Auditlog      string        `json:"auditlog,omitempty"`
+	ID            string        `json:"id,omitempty"`
+	VersionDetail string        `json:"versionDetail,omitempty"`
 }
 
 func text(value string, maximum int) bool {
@@ -51,7 +53,21 @@ func (this ReadRequest) Normalize() (ReadRequest, error) {
 	if this.Auditlog != "" && this.Operation != ListRecordings {
 		return this, ErrRequest
 	}
+	if this.VersionDetail != "" && this.Operation != ShowVersion {
+		return this, ErrRequest
+	}
 	switch this.Operation {
+	case ShowVersion:
+		if this.Limit != 0 || this.After != "" || this.Flow != "" || this.User != "" || this.State != "" || this.ID != "" {
+			return this, ErrRequest
+		}
+		if this.VersionDetail == "" {
+			this.VersionDetail = "long"
+		}
+		if this.VersionDetail != "long" && this.VersionDetail != "short" {
+			return this, ErrRequest
+		}
+		return this, nil
 	case ListFlows, ListAuditlogs:
 		if this.Flow != "" || this.User != "" || this.State != "" || this.ID != "" {
 			return this, ErrRequest
@@ -202,11 +218,19 @@ type Page[T any] struct {
 	Skipped int    `json:"skipped"`
 }
 type ReadResult struct {
-	Version    int                    `json:"version"`
-	Operation  ReadOperation          `json:"operation"`
-	Flows      *Page[FlowSummary]     `json:"flows,omitempty"`
-	Sessions   *Page[SessionItem]     `json:"sessions,omitempty"`
-	Session    *SessionItem           `json:"session,omitempty"`
-	Auditlogs  *Page[AuditlogSummary] `json:"auditlogs,omitempty"`
-	Recordings *Page[RecordingView]   `json:"recordings,omitempty"`
+	Version     int                    `json:"version"`
+	Operation   ReadOperation          `json:"operation"`
+	Flows       *Page[FlowSummary]     `json:"flows,omitempty"`
+	Sessions    *Page[SessionItem]     `json:"sessions,omitempty"`
+	Session     *SessionItem           `json:"session,omitempty"`
+	Auditlogs   *Page[AuditlogSummary] `json:"auditlogs,omitempty"`
+	Recordings  *Page[RecordingView]   `json:"recordings,omitempty"`
+	VersionInfo *VersionInfo           `json:"versionInfo,omitempty"`
+}
+
+// VersionInfo is the exact native formatter output, not an independent build or
+// source attestation. Detail is the normalized selector used for this response.
+type VersionInfo struct {
+	Detail string `json:"detail"`
+	Text   string `json:"text"`
 }

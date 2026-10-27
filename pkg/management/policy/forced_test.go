@@ -118,3 +118,28 @@ func TestForcedReadDoesNotExposeValidityThroughAnAdditionalActivePredicate(t *te
 	require.True(t, rule.Allows(protocol.ReadRequest{Operation: protocol.ListSessions, State: "active"}))
 	require.True(t, rule.Allows(protocol.ReadRequest{Operation: protocol.ListSessions, State: "all"}))
 }
+
+func TestForcedVersionReadRetainsExactNativeLongShortOutputCeiling(t *testing.T) {
+	for _, test := range []struct{ command, detail string }{
+		{"version", "long"},
+		{"version --long", "long"},
+		{"version --long=true", "long"},
+		{`version '--long=false'`, "short"},
+	} {
+		ceiling, err := ForcedRead(test.command)
+		require.NoError(t, err)
+		require.Equal(t, protocol.ShowVersion, ceiling.Operation)
+		for _, detail := range []string{"long", "short"} {
+			request, err := (protocol.ReadRequest{Operation: protocol.ShowVersion, VersionDetail: detail}).Normalize()
+			require.NoError(t, err)
+			require.Equal(t, detail == test.detail, ceiling.Allows(request))
+		}
+		for _, operation := range []protocol.ReadOperation{protocol.ListFlows, protocol.ListSessions, protocol.ShowSession, protocol.ListAuditlogs, protocol.ListRecordings, "sessions.dispose", "artifact.download"} {
+			require.False(t, ceiling.Allows(protocol.ReadRequest{Operation: operation}))
+		}
+	}
+	for _, command := range []string{"version --long=false --long=true", "version --long=false --long=false", "version --long=false flow ls", "version --format=json", "version --long=FALSE", "version --long=0", "version --long false", "version --configuration=private.yaml", "version; flow ls", "version # comment", "version --long=false && flow ls"} {
+		_, err := ForcedRead(command)
+		require.Error(t, err, command)
+	}
+}
