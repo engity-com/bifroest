@@ -194,6 +194,18 @@ proof, returning a new opaque permission rather than reattaching an execution.
 `terminalToken` is intended solely for the first WebSocket open message. Existing
 executions are never automatically closed merely because this token/binding expires.
 
+Local password/keyboard-interactive RememberMe now supports the non-PAM Linux
+repository backend (`pamService: ""`). Enrollment/resumption use fresh readonly
+passwd/group/shadow snapshots before and after current policy validation, with
+the stored name/UID pinned and no primary-secret replay, cached-lookup fallback,
+historical environment or saved rights. Locks, expiry/required password changes,
+ambiguous or changed records, unavailable files and input limits fail closed;
+files are limited to 16 MiB/100000 records and use nonblocking opens/file locks.
+Rejected claims do not slide bindings or repair session/account state. PAM-backed
+and Windows SAM password resumption remain deliberately unavailable. Real owned
+TLS/HTTP2/WebSocket and Chromium profile-restart tests cover both supported methods,
+including logout without session/workload disposal; they create no host account.
+
 All requests use native same-origin fetch, omit credentials/cookies, reject
 redirects, bypass HTTP caching, carry proofs only in Authorization headers, and
 bound each request to 20 seconds and each JSON response to 64 KiB. No auth token

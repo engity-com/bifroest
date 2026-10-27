@@ -95,12 +95,23 @@ try {
       return handle === null ? 'missing' : handle.binding === null ? 'pending' : 'ready';
     });
   const login = async (page, remember, user = 'alice') => {
+    const nativeInteractive = process.argv[3] === 'local-interactive-profile';
+    if (nativeInteractive) {
+      await page.getByText('Interactive / device login', { exact: true }).click();
+    }
     await page.getByLabel('User name', { exact: true }).fill(user);
-    await page.getByLabel('Password', { exact: true }).fill('correct');
+    if (!nativeInteractive) {
+      await page.getByLabel('Password', { exact: true }).fill('correct');
+    }
     if (remember) {
       await page.getByRole('checkbox', { name: 'Remember this browser', exact: true }).check();
     }
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    if (nativeInteractive) {
+      const dialog = page.getByRole('dialog');
+      await dialog.getByLabel('Response', { exact: true }).fill('correct');
+      await dialog.getByRole('button', { name: 'Send response', exact: true }).click();
+    }
     try {
       await page.getByRole('heading', { name: `Signed in as ${user}`, exact: true }).waitFor();
     } catch (error) {

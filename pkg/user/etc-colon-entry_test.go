@@ -214,6 +214,19 @@ func TestEtcColonEntriesDecodeRejectsIncompleteReadsWithoutPublishing(t *testing
 	}
 }
 
+func TestEtcColonEntriesDecodeLimitCountsBlankAndInvalidRowsWithoutPartialPublication(t *testing.T) {
+	for _, input := range []string{"new:value\nnext:value\nlast:value\n", "new:value\n\n\n", "new:value\nmalformed\nlast:value\n"} {
+		previous := etcColonEntries[testEtcColonEntryValue, *testEtcColonEntryValue]{{entry: &testEtcColonEntryValue{b("previous"), b("value")}}}
+		actual := previous
+		err := actual.decodeWithLimit(2, false, true, namedReader{strings.NewReader(input), "bounded-fixture"}, 2)
+		require.Error(t, err)
+		require.Equal(t, previous, actual)
+	}
+	var actual etcColonEntries[testEtcColonEntryValue, *testEtcColonEntryValue]
+	require.NoError(t, actual.decodeWithLimit(2, false, true, namedReader{strings.NewReader("one:value\ntwo:value\n"), "bounded-fixture"}, 2))
+	require.Len(t, actual, 2)
+}
+
 func Test_etcColonEntries_encode(t *testing.T) {
 	testlog.Hook(t)
 

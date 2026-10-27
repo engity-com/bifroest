@@ -5,7 +5,7 @@ toc_depth: 5
 # HTTP / HTTPS
 
 !!! warning "Incremental browser UI; not a complete workspace yet"
-    Built browser resources provide React/Mantine password, Keyboard-Interactive/OIDC device, local SSH-key/WASM, RememberMe recovery, xterm shell/exec, structured Management metadata, paged artifact catalogs, confirmed session actions and client-only artifact verification/decryption/export/playback through the same HTTPS boundary and authorizers as SSH. Release jobs include the browser bundle, notices and SPDX/CycloneDX inventory, but do not supply signed source provenance. Remaining forced-command equivalence is incomplete. Local password/interactive resumption is deliberately unavailable until native account-policy rechecks are implemented. Source-only direct Go builds without generated resources keep the SSH/HTTP APIs and discovery fallback, not an embedded UI. Keep HTTP omitted or disabled unless you intend to expose this incremental feature.
+    Built browser resources provide React/Mantine password, Keyboard-Interactive/OIDC device, local SSH-key/WASM, RememberMe recovery, xterm shell/exec, structured Management metadata, paged artifact catalogs, confirmed session actions and client-only artifact verification/decryption/export/playback through the same HTTPS boundary and authorizers as SSH. Release jobs include the browser bundle, notices and SPDX/CycloneDX inventory, but do not supply signed source provenance. Remaining forced-command equivalence is incomplete. Local password/interactive RememberMe is supported for the non-PAM Linux repository backend; PAM-backed and Windows native logon-policy resumption remain unavailable. Source-only direct Go builds without generated resources keep the SSH/HTTP APIs and discovery fallback, not an embedded UI. Keep HTTP omitted or disabled unless you intend to expose this incremental feature.
 
 HTTP is a separate incoming transport for the same [flows](../flow.md), not SSH tunneled over WebSocket. Omission of the root `http` block means disabled. Merely configuring domains, TLS or customization does not enable it. When the endpoint is available, all flows are HTTP-eligible by default unless their individual `http.enabled` is false; `ssh.enabled` remains independent.
 
@@ -465,11 +465,11 @@ The local test CA verifies request signatures and nonces, CSR signatures and act
 Under `http.rememberMe`:
 
 <<property("idleTimeout", "Duration", "../data-type.md#duration", default="6h", id_prefix="rememberme-", heading=3)>>
-:   Positive **sliding unused timeout** for explicitly opted-in browser bindings. Successful fresh possession proof, current authorization and audit checks extend it. Expiry requires regular login again; it does not terminate already authenticated connections, dispose sessions/containers, or override shorter session limits and revocations. This setting alone does not enroll a browser or provide the still-pending opt-in/recovery UI.
+:   Positive **sliding unused timeout** for explicitly opted-in browser bindings. Successful fresh possession proof, current authorization and audit checks extend it. Expiry requires regular login again; it does not terminate already authenticated connections, dispose sessions/containers, or override shorter session limits and revocations. This setting alone does not enroll a browser; enrollment/recovery use the explicit UI actions below.
 
 ### Enrollment, resumption and revocation protocol
 
-These server APIs, the encrypted IndexedDB/password/RememberMe client core and the first explicit opt-in/recovery UI are implemented. Enabling HTTP, regular login or configuring `rememberMe.idleTimeout` does not silently enroll a browser. The checkbox starts unchecked; independent non-exportable signing/encryption keys are created only after opt-in. Imported primary private keys/passphrases must remain exclusively in the current tab; their UI is not implemented yet.
+These server APIs, the encrypted IndexedDB/password/RememberMe client core and the explicit opt-in/recovery UI are implemented. Enabling HTTP, regular login or configuring `rememberMe.idleTimeout` does not silently enroll a browser. The checkbox starts unchecked; independent non-exportable signing/encryption keys are created only after opt-in. Imported primary private keys/passphrases remain exclusively in the current tab through the local key-import UI described above.
 
 All paths below are `POST /_bifroest/api/v1/remember/<action>`, behind the same HTTPS Origin, exact string-only JSON parser, request deadlines and admission limits as login:
 
@@ -486,7 +486,29 @@ Sign the decoded bytes with the independent browser key using ECDSA P-256/SHA-25
 
 Successful enrollment returns 201 with `status: "remembered"`, `flow`, `sessionId`, `bindingId` and the unused `expiresAt`. Only then does the server persist the public-key binding and link the primary permission to it. Resume returns the normal authorized response with a **new ten-minute `bwa1.` permission**, not a session lease or reattachment. Before issuance the authorizer facade rechecks current HTTP selection, published-slug priority and requirements; authorizer-owned code re-evaluates credential/key/certificate policy and current claims, then the service checks session validity/revocation, normalized identity/principal, effective target, environment and audit policy. No saved Authorization rights snapshot becomes a new grant. OIDC uses the existing session lock, rotating grant, pending-verification and lost-access rules without extending an old verification deadline. Certificates must still be valid and trusted; forced-command, environment and PTY restrictions are recomputed from the exact primary key/certificate, not from another connection's session-creation evidence.
 
-Simple, htpasswd, OIDC-device and None authorizers support their applicable primary methods; Bifröst delegation requires its exact currently valid certificate. Local authorization supports key/certificate bindings only. **Local password/keyboard-interactive enrollment and resume fail closed on Unix and Windows** until secretless native PAM/account/logon-policy rechecks are available: account-name/UID/SID lookup alone cannot replace them. Regular primary login remains available. Third-party authorizers require an explicit trusted `SessionResumer` capability; diagnostic `RestoreFromSession` does not opt them in.
+Simple, htpasswd, OIDC-device and None authorizers support their applicable primary methods; Bifröst delegation requires its exact currently valid certificate. Local key/certificate bindings retain their current-key/certificate policy checks. **Local password/keyboard-interactive enrollment and resume are supported for Linux's repository backend with empty `pamService`**, using the explicit native account-policy checker. PAM-backed and Windows SAM password resumption still fail closed until their separate native adapters are available. Regular primary login is unchanged. Third-party authorizers require an explicit trusted `SessionResumer` capability; diagnostic `RestoreFromSession` or a name/UID/SID lookup alone does not opt them in.
+
+Repository-backed Local resumption reads only the stored name/UID selector and
+fresh native account data, not historical environment or key/rights snapshots.
+The corresponding current password/interactive permission and empty-password
+policy are evaluated with current identity/groups. Independent readonly snapshots
+before and after policy/environment validation reject account locks, expiry or
+required password changes, name/UID replacement, ambiguous/malformed records and
+unavailable/changed files. Group membership must be fully decodable rather than
+silently dropping malformed groups. File locks and special-file opens are nonblocking;
+each passwd/group/shadow file is bounded to 16 MiB and 100000 entries. Failure
+does not create/modify account files, repair retained session tokens or advance a
+binding's usage/revision. This rechecks eligibility for a new grant; it does not
+claim instantaneous revocation of already authenticated children when an external
+account file changes. Explicit logout and session-wide revocation retain their
+existing stronger controls.
+
+Linux tests use owned passwd/group/shadow fixtures through real TLS/HTTP2 and
+WebSockets, with independent binding signatures, lock-after-challenge refusal,
+unchanged rejected bindings, service restart and logout without disposal. Real
+Chromium UI tests separately cover password and keyboard-interactive opt-in,
+browser-profile restart/resumption, uncertain enrollment recovery and CSP. No
+host account is created and no PAM/macOS/Windows logon-policy result is inferred.
 
 Successful `revoke` returns 204 after durable binding removal and closes all linked web permissions/terminal children, never sibling bindings/grants or SSH connections. Ordinary `logout` has the same binding-scoped effect for an enrolled/resumed permission, and remains permission-scoped without a binding. Persistence failure is reported as 503, not acknowledged as durable logout; linked in-memory access is still closed. Binding expiry only denies future resumption, without terminating authenticated grants/connections or disposing the shared session/container. Session validity and session-wide revocation remain stronger controls.
 
@@ -504,7 +526,7 @@ Binding creation, inspection, successful use, expiry and storage revocation neve
 
 The standard-library-only `pkg/browserauth` core supports independent browser-generated ECDSA P-256 keys: canonical standard Base64 of WebCrypto's 65-byte uncompressed public point, and fixed 64-byte IEEE-P1363 `r || s` signatures using ECDSA/SHA-256. Challenges have a `bifroest-browser-remember-v1` zero-terminated domain prefix followed by server JSON binding purpose (`enroll`, `resume` or `revoke`), origin/slug, flow/session, target, exact public key, fresh 256-bit nonce and a one-minute expiry. Existing-binding challenges also pin binding ID and revision; enrollment has neither yet. Sign the exact supplied bytes, never reconstructed JSON. Each in-memory challenge accepts at most one verification attempt, including failed/expired signatures. Neither an SSH signature nor a certificate CA signature is a browser RememberMe proof.
 
-Tests cover restart persistence, atomic concurrent use/revocation, sliding and shortened idle deadlines, stale/expired use, session limits/disposal, anonymous isolation, unchanged session/tokens/quotas/SSH keys, bounded/strict/private storage and preservation during cleanup. An optional native Node/WebCrypto interoperability test generates separate non-exportable signing and AES-GCM keys, checks export denial and verifies its actual P-256 possession signature in Go (`BIFROEST_TEST_NODE` selects a required runtime). The core also cross-compiles for JS/WASM. This storage/proof test layer alone is not a browser-profile protection guarantee. The connected core and first opt-in UI have additional native tests below; the native Local password-account policy adapter remains pending.
+Tests cover restart persistence, atomic concurrent use/revocation, sliding and shortened idle deadlines, stale/expired use, session limits/disposal, anonymous isolation, unchanged session/tokens/quotas/SSH keys, bounded/strict/private storage and preservation during cleanup. An optional native Node/WebCrypto interoperability test generates separate non-exportable signing and AES-GCM keys, checks export denial and verifies its actual P-256 possession signature in Go (`BIFROEST_TEST_NODE` selects a required runtime). The core also cross-compiles for JS/WASM. This storage/proof test layer alone is not a browser-profile protection guarantee. The connected core and opt-in UI have additional native tests below; non-PAM Local account-policy coverage is described above, not inferred from this portable proof layer.
 
 ### Browser client core and first opt-in UI
 

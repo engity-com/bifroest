@@ -13,6 +13,7 @@ import (
 )
 
 const maximumPasswordPolicyFile = 16 << 20
+const maximumPasswordPolicyEntries = 100000
 
 // CheckPasswordAccount bypasses the debounced watcher without publishing into
 // its cache. Files are bounded, read-only and locked nonblockingly; absence or
@@ -52,13 +53,15 @@ func (this *EtcColonRepository) CheckPasswordAccount(ctx context.Context, name s
 		}
 		files = append(files, file)
 	}
-	if err := readPasswordPolicyEntries(ctx, files[0], &snapshot.handles.passwd); err != nil {
+	if err := readPasswordPolicyEntries(ctx, files[0], &snapshot.handles.passwd, snapshot.getAllowBadLine()); err != nil {
 		return nil, err
 	}
-	if err := readPasswordPolicyEntries(ctx, files[1], &snapshot.handles.group); err != nil {
+	// Group membership feeds policy templates. An undecodable group record must
+	// not silently become an absent membership in this fresh authorization view.
+	if err := readPasswordPolicyEntries(ctx, files[1], &snapshot.handles.group, false); err != nil {
 		return nil, err
 	}
-	if err := readPasswordPolicyEntries(ctx, files[2], &snapshot.handles.shadow); err != nil {
+	if err := readPasswordPolicyEntries(ctx, files[2], &snapshot.handles.shadow, snapshot.getAllowBadLine()); err != nil {
 		return nil, err
 	}
 	// A map's last-wins behavior cannot resolve an ambiguous native identity or
@@ -149,7 +152,7 @@ func openPasswordPolicyFile(path string) (*passwordPolicyFile, error) {
 	if err != nil || !before.Mode().IsRegular() || before.Size() < 0 || before.Size() > maximumPasswordPolicyFile {
 		return nil, ErrPasswordAccountPolicyUnavailable
 	}
-	file, err := os.Open(path)
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, ErrPasswordAccountPolicyUnavailable
 	}
@@ -177,12 +180,12 @@ type passwordPolicySource struct{ io.Reader }
 
 func (passwordPolicySource) Name() string { return "native account policy" }
 
-func readPasswordPolicyEntries[T any, PT etcColonEntryValue[T]](ctx context.Context, file *passwordPolicyFile, handle *etcColonRepositoryHandle[T, PT]) error {
+func readPasswordPolicyEntries[T any, PT etcColonEntryValue[T]](ctx context.Context, file *passwordPolicyFile, handle *etcColonRepositoryHandle[T, PT], allowBadEntries bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	reader := &io.LimitedReader{R: file, N: maximumPasswordPolicyFile + 1}
-	if err := handle.entries.decode(handle.numberOfColons, handle.owner.owner.getAllowBadName(), handle.owner.owner.getAllowBadLine(), passwordPolicySource{reader}); err != nil || reader.N == 0 {
+	if err := handle.entries.decodeWithLimit(handle.numberOfColons, handle.owner.owner.getAllowBadName(), allowBadEntries, passwordPolicySource{reader}, maximumPasswordPolicyEntries); err != nil || reader.N == 0 {
 		return ErrPasswordAccountPolicyUnavailable
 	}
 	return ctx.Err()

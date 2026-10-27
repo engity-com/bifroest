@@ -96,12 +96,19 @@ type etcUnixEntriesSource interface {
 }
 
 func (this *etcColonEntries[T, PT]) decode(expectedNumberOfColons int, allowBadName, allowBadEntries bool, from etcUnixEntriesSource) error {
+	return this.decodeWithLimit(expectedNumberOfColons, allowBadName, allowBadEntries, from, 0)
+}
+
+func (this *etcColonEntries[T, PT]) decodeWithLimit(expectedNumberOfColons int, allowBadName, allowBadEntries bool, from etcUnixEntriesSource, maximumEntries uint32) error {
 	rd := bufio.NewScanner(from)
 	rd.Split(bufio.ScanLines)
 
 	var bufs etcColonEntries[T, PT]
 	var lineNum uint32
 	for rd.Scan() {
+		if maximumEntries != 0 && lineNum >= maximumEntries {
+			return fmt.Errorf("too many account entries at %s", from.Name())
+		}
 		var entry etcColonEntry[T, PT]
 		if err := entry.decode(bytes.Clone(rd.Bytes()), expectedNumberOfColons, allowBadName, allowBadEntries); err != nil {
 			return fmt.Errorf("cannot parse entry at %s:%d: %w", from.Name(), lineNum, err)

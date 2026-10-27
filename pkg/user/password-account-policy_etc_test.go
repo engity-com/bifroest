@@ -97,15 +97,29 @@ func TestPasswordAccountPolicyRejectsReplacementAmbiguityAndMalformedTarget(t *t
 	}
 }
 
+func TestPasswordAccountPolicyDoesNotTreatMalformedMembershipAsAnAbsentGroup(t *testing.T) {
+	repository, _ := newPasswordPolicyFixture(t)
+	require.NoError(t, os.WriteFile(repository.GroupFilename, []byte("primary:x:1001:\nextra:x:not-a-gid:alice\n"), 0600))
+	current, err := CheckPasswordAccount(t.Context(), repository, "alice", 1001, PasswordAccountPolicy{})
+	require.Nil(t, current)
+	require.ErrorIs(t, err, ErrPasswordAccountPolicyUnavailable)
+}
+
 func TestPasswordAccountPolicyDoesNotCreateMissingFilesOrWaitForLocks(t *testing.T) {
-	for _, name := range []string{"missing", "locked", "oversized"} {
+	for _, name := range []string{"missing", "locked", "oversized", "too many rows", "special file"} {
 		t.Run(name, func(t *testing.T) {
 			repository, _ := newPasswordPolicyFixture(t)
-			if name == "missing" {
+			switch name {
+			case "missing":
 				create := true
 				repository.CreateFilesIfAbsent = &create
 				require.NoError(t, os.Remove(repository.ShadowFilename))
-			} else {
+			case "too many rows":
+				require.NoError(t, os.WriteFile(repository.ShadowFilename, []byte(strings.Repeat("\n", maximumPasswordPolicyEntries+1)), 0600))
+			case "special file":
+				require.NoError(t, os.Remove(repository.ShadowFilename))
+				require.NoError(t, syscall.Mkfifo(repository.ShadowFilename, 0600))
+			default:
 				file, err := os.OpenFile(repository.ShadowFilename, os.O_RDWR, 0600)
 				require.NoError(t, err)
 				defer file.Close()

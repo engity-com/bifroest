@@ -79,7 +79,7 @@ func TestBrowserManagementForcedVersionUiKeepsShortOutputAndEscapesMetadata(t *t
 	testBrowserLoginUi(t, true, "management-forced-version")
 }
 
-func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
+func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure ...func(*configuration.Configuration)) {
 	t.Helper()
 	if os.Getenv("BIFROEST_TEST_BROWSER_UI") != "1" {
 		t.Skip("set BIFROEST_TEST_BROWSER_UI=1 after building web/ and installing Chromium")
@@ -151,6 +151,9 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 			if mode == "terminal" {
 				settings := conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple)
 				settings.Entries = append(settings.Entries, configuration.AuthorizationSimpleEntry{Name: "bob", Password: bfcrypto.Password("plain:correct")})
+			}
+			for _, change := range configure {
+				change(conf)
 			}
 		})
 		protocolHandler = svc.web
@@ -352,7 +355,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string) {
 	require.NoError(t, json.Unmarshal(output, &result), "%s", output)
 	require.True(t, result.Success)
 	expectedInterrupt := 0
-	if mode == "profile" || mode == "interactive-lost" || mode == "management-actions" {
+	if mode == "profile" || mode == "local-password-profile" || mode == "local-interactive-profile" || mode == "interactive-lost" || mode == "management-actions" {
 		expectedInterrupt = 1
 	}
 	require.EqualValues(t, expectedInterrupt, interrupted.Load(), "the uncertain claim must commit once without automatic retry")

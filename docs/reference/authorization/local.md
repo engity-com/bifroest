@@ -62,6 +62,30 @@ If `true`, the user is allowed to use empty passwords.
 !!! danger
      This is explicitly not recommend.
 
+## Browser RememberMe
+
+Browser password/keyboard-interactive bindings are supported for Linux's
+repository-backed local authorization when `pamService` is empty. Both enrollment
+and resumption require a fresh independent browser-key proof and native account
+eligibility; a session ID or cached user lookup is not authentication. Current
+`password.allowed`, `password.interactiveAllowed` and `password.emptyAllowed`
+policies remain authoritative for the recorded primary method.
+
+The native checker rereads the configured passwd/group/shadow files before and
+after policy validation, pins the stored account name and UID, and rejects locks,
+expiry/required password changes, ambiguous or malformed account records and
+unavailable/changed files. The group database must be fully decodable; malformed
+membership records are not treated as absent groups. Reads are read-only, nonblocking for file locks and
+special-file opens, limited to 16 MiB and 100000 records per file. Failure grants
+no access and does not repair account or session state. Historical environment
+variables, primary passwords and authorization snapshots are not reused.
+
+This does not enable PAM-backed or Windows SAM password resumption; their native
+account/logon-policy adapters remain unavailable. Key/certificate bindings retain
+their existing current-key checks. RememberMe is opt-in and uses the common
+[HTTP binding lifecycle](../connection/http.md#rememberme), including independent
+browser keys and logout without session/workload disposal.
+
 ## Context
 
 This authorization will produce a context of type [Authorization Local](../context/authorization.md#local).
