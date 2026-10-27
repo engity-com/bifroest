@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 
 export async function exerciseManagement(page, login, logout) {
+  const bodyForFailure = async (response) => {
+    try {
+      return await response.text();
+    } catch {
+      return `DevTools body unavailable (HTTP ${response.status()})`;
+    }
+  };
   const requests = [];
   page.on('request', (request) => {
     if (request.url().includes('/api/v1/management/')) {
@@ -20,7 +27,11 @@ export async function exerciseManagement(page, login, logout) {
   );
   await page.getByRole('button', { name: 'Load flows', exact: true }).click();
   const first = await firstReply;
-  assert.equal(first.status(), 200, await first.text());
+  assert.equal(
+    first.status(),
+    200,
+    first.status() === 200 ? undefined : await bodyForFailure(first),
+  );
   const flows = page.getByRole('table', {
     name: 'Configured flows (not public discovery links)',
     exact: true,
@@ -30,7 +41,7 @@ export async function exerciseManagement(page, login, logout) {
   } catch (error) {
     throw new Error(
       JSON.stringify({
-        response: await first.text(),
+        response: await bodyForFailure(first),
         notices: await page.getByRole('status').allTextContents(),
       }),
       { cause: error },
@@ -42,13 +53,17 @@ export async function exerciseManagement(page, login, logout) {
   );
   await page.getByRole('button', { name: 'Next flow page', exact: true }).click();
   const second = await secondReply;
-  assert.equal(second.status(), 200, await second.text());
+  assert.equal(
+    second.status(),
+    200,
+    second.status() === 200 ? undefined : await bodyForFailure(second),
+  );
   try {
     await flows.getByText('manager20', { exact: true }).waitFor();
   } catch (error) {
     throw new Error(
       JSON.stringify({
-        response: await second.text(),
+        response: await bodyForFailure(second),
         notices: await page.getByRole('status').allTextContents(),
       }),
       { cause: error },

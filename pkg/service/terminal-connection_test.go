@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -77,8 +78,58 @@ func TestNeutralConnectionDirectDisposalAndParentCancelCloseTransport(t *testing
 			} else {
 				transport.stream.cancel()
 			}
-			require.Eventually(t, conn.IsClosed, 2*time.Second, 10*time.Millisecond)
+			require.Eventually(t, func() bool {
+				return conn.IsClosed() && errors.Is(transport.stream.Context().Err(), context.Canceled)
+			}, 2*time.Second, 10*time.Millisecond, "closing admission precedes actual transport cancellation")
 			require.ErrorIs(t, transport.stream.Context().Err(), context.Canceled)
 		})
 	}
+}
+
+type blockedTerminalClose struct {
+	terminalTransport
+	started chan struct{}
+	allow   chan struct{}
+}
+
+func (this *blockedTerminalClose) Close() error {
+	close(this.started)
+	<-this.allow
+	return this.terminalTransport.Close()
+}
+
+func TestNeutralConnectionClosingAdmissionDoesNotClaimCompletedTransportCleanup(t *testing.T) {
+	svc, _, _ := executionTestFixture(t, func(environment.TerminalTask) (int, error) { return 0, nil })
+	transport, auth := newExecutionTestLogin(t, svc, "run")
+	blocked := &blockedTerminalClose{terminalTransport: transport, started: make(chan struct{}), allow: make(chan struct{})}
+	t.Cleanup(func() {
+		select {
+		case <-blocked.allow:
+		default:
+			close(blocked.allow)
+		}
+	})
+	conn, err := svc.registerTerminalConnection(blocked, auth)
+	require.NoError(t, err)
+	_, err = auth.FindSession().Dispose(t.Context())
+	require.NoError(t, err)
+	select {
+	case <-blocked.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("disposed connection did not start transport cleanup")
+	}
+	require.True(t, conn.IsClosed(), "new operations must already be denied while cleanup is blocked")
+	require.NoError(t, transport.stream.Context().Err(), "the fixture holds actual transport cancellation")
+	select {
+	case <-conn.done:
+		t.Fatal("watcher claimed completion while its transport close was blocked")
+	default:
+	}
+	close(blocked.allow)
+	select {
+	case <-conn.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("transport cleanup did not complete after release")
+	}
+	require.ErrorIs(t, transport.stream.Context().Err(), context.Canceled)
 }
