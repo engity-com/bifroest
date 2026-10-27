@@ -101,10 +101,39 @@ func (this *Endpoint) Shutdown() error {
 	defer cancel()
 	err := this.server.Shutdown(ctx)
 	closeErr := this.server.Close()
-	if errors.Is(err, context.DeadlineExceeded) {
+	if ctx.Err() == context.DeadlineExceeded && onlyShutdownCause(err, context.DeadlineExceeded) || onlyShutdownCause(err, net.ErrClosed) {
 		err = nil
 	}
+	if onlyShutdownCause(closeErr, net.ErrClosed) {
+		closeErr = nil
+	}
 	return errors.Join(err, closeErr)
+}
+
+// The joint listener owner can stop accepting before net/http closes its own
+// listener wrapper. Only an exclusively benign cause is ignored: errors.Is on
+// a joined error would also hide an independent cleanup failure.
+func onlyShutdownCause(err, target error) bool {
+	if err == nil {
+		return false
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		found := false
+		for _, cause := range joined.Unwrap() {
+			if cause == nil {
+				continue
+			}
+			if !onlyShutdownCause(cause, target) {
+				return false
+			}
+			found = true
+		}
+		return found
+	}
+	if cause := errors.Unwrap(err); cause != nil {
+		return onlyShutdownCause(cause, target)
+	}
+	return err == target
 }
 
 func (this *Endpoint) Close() error {

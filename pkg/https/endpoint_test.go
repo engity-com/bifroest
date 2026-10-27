@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -146,5 +147,84 @@ func TestHTTPSEndpointForcedShutdownCancelsSlowRequest(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("client did not finish")
+	}
+}
+
+type endpointCloseErrorListener struct {
+	net.Listener
+	closeError error
+}
+
+func (this endpointCloseErrorListener) Close() error {
+	_ = this.Listener.Close()
+	return this.closeError
+}
+
+func TestHTTPSEndpointShutdownClassifiesClosedListenerWithoutDroppingOtherCauses(t *testing.T) {
+	genuine := errors.New("injected listener cleanup failure")
+	for _, test := range []struct {
+		name       string
+		closeError error
+		wantError  error
+	}{
+		{"already closed", net.ErrClosed, nil},
+		{"wrapped closed", fmt.Errorf("close fixture: %w", net.ErrClosed), nil},
+		{"genuine error", genuine, genuine},
+		{"unrelated listener deadline", context.DeadlineExceeded, context.DeadlineExceeded},
+		{"mixed error", errors.Join(net.ErrClosed, genuine), genuine},
+		{"wrapped mixed error", fmt.Errorf("close fixture: %w", errors.Join(net.ErrClosed, genuine)), genuine},
+		{"mixed deadline error", errors.Join(context.DeadlineExceeded, genuine), genuine},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			certificate := newTlsTestCertificate(t, []string{"app.example.org"}, true, nil)
+			conf := newTlsTestConfiguration(t, "app.example.org")
+			conf.Tls.Certificates = []configuration.HttpCertificate{certificate.configured}
+			endpoint, err := NewEndpoint(conf, EndpointOptions{})
+			require.NoError(t, err)
+			require.NoError(t, endpoint.Prepare(t.Context()))
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			done := make(chan error, 1)
+			go func() { done <- endpoint.Serve(endpointCloseErrorListener{listener, test.closeError}) }()
+			t.Cleanup(func() { _ = endpoint.Close() })
+			client := endpointTestClient(t, listener, certificate.root)
+			response, err := client.Get("https://app.example.org/")
+			require.NoError(t, err)
+			_, err = io.Copy(io.Discard, response.Body)
+			require.NoError(t, err)
+			require.NoError(t, response.Body.Close())
+			closeErr := endpoint.Close()
+			if test.wantError == nil {
+				require.NoError(t, closeErr)
+				require.NoError(t, endpoint.Close())
+			} else {
+				require.ErrorIs(t, closeErr, test.wantError)
+				require.ErrorIs(t, endpoint.Close(), test.wantError)
+			}
+			select {
+			case err := <-done:
+				require.ErrorIs(t, err, http.ErrServerClosed)
+			case <-time.After(5 * time.Second):
+				t.Fatal("HTTPS listener did not drain")
+			}
+		})
+	}
+}
+
+func TestHTTPShutdownCauseRequiresEveryLeafToMatch(t *testing.T) {
+	genuine := errors.New("genuine cleanup error")
+	for _, test := range []struct {
+		err  error
+		want bool
+	}{
+		{nil, false},
+		{net.ErrClosed, true},
+		{fmt.Errorf("wrapped: %w", net.ErrClosed), true},
+		{errors.Join(net.ErrClosed, net.ErrClosed), true},
+		{errors.Join(net.ErrClosed, genuine), false},
+		{fmt.Errorf("wrapped: %w", errors.Join(net.ErrClosed, genuine)), false},
+		{errors.Join(net.ErrClosed, context.DeadlineExceeded), false},
+	} {
+		require.Equal(t, test.want, onlyShutdownCause(test.err, net.ErrClosed), "%v", test.err)
 	}
 }
