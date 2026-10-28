@@ -84,8 +84,20 @@ depends = ["build:var"]
 run = "go test -v -count=1 -failfast -tags=e2e -timeout=30m -run '^TestOpenSSHKubernetesEnvironment(SessionRecording)?$' ./test/e2e"
 
 [tasks."test:e2e:authorization"]
-depends = ["build:var"]
+depends = ["build:var", "build:e2e:authorization"]
 run = "go test -v -count=1 -tags=e2e -timeout=5m -run '^Test(HtpasswdAuthorization|OIDC.*|SimpleRememberMe)$' ./test/e2e"
+
+[tasks."build:e2e:authorization"]
+description = "Warm fixture compilation before the unchanged authorization test deadline."
+depends = ["build:var"]
+env = { CGO_ENABLED = "0" }
+# Warm outputs are not fixture inputs. Each test still builds its own binaries,
+# private keys and unique version from this checkout; no shared executable replay.
+run = [
+    "mkdir -p var/e2e/authorization-build-cache",
+    "go build -tags local_build,local_kind -trimpath -ldflags='-s -w' -o var/e2e/authorization-build-cache/bifroest ./cmd/bifroest",
+    "go build -tags e2e -trimpath -ldflags='-s -w' -o var/e2e/authorization-build-cache/helper ./test/e2e/helper"
+]
 
 [tasks."test:e2e:pam"]
 depends = ["install:go", "build:web"]
