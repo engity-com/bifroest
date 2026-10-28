@@ -24,6 +24,16 @@ func TestBrowserPublicKeyUiWasmLocalImportProofCertificatesAndRemember(t *testin
 	testBrowserLoginUi(t, true, "key")
 }
 
+func TestBrowserPublicKeyAlgorithmsUiOpenShells(t *testing.T) {
+	for _, algorithm := range []string{"rsa", "p256", "p384", "p521"} {
+		t.Run(algorithm, func(t *testing.T) { testBrowserLoginUi(t, true, "key-"+algorithm) })
+	}
+}
+
+func TestBrowserPublicKeyCertificateWithoutPtyUiCannotOpenShell(t *testing.T) {
+	testBrowserLoginUi(t, true, "key-no-pty")
+}
+
 func browserKeyUiFixture(t *testing.T) (string, bfcrypto.AuthorizedKeys) {
 	t.Helper()
 	_, ed, err := ed25519.GenerateKey(rand.Reader)
@@ -53,8 +63,11 @@ func browserKeyUiFixture(t *testing.T) (string, bfcrypto.AuthorizedKeys) {
 	require.NoError(t, err)
 	ca := webLoginTestSigner(t)
 	authorized.WriteString("cert-authority " + string(ssh.MarshalAuthorizedKey(ca.PublicKey())))
-	for name, expires := range map[string]time.Time{"certificate": time.Now().Add(time.Hour), "expiredCertificate": time.Now().Add(-time.Hour)} {
+	for name, expires := range map[string]time.Time{"certificate": time.Now().Add(time.Hour), "noPtyCertificate": time.Now().Add(time.Hour), "expiredCertificate": time.Now().Add(-time.Hour)} {
 		cert := &ssh.Certificate{Key: signer.PublicKey(), CertType: ssh.UserCert, ValidPrincipals: []string{"alice"}, ValidBefore: uint64(expires.Unix())}
+		if name == "certificate" {
+			cert.Permissions.Extensions = map[string]string{"permit-pty": ""}
+		}
 		require.NoError(t, cert.SignCert(rand.Reader, ca))
 		fixture[name] = string(ssh.MarshalAuthorizedKey(cert))
 	}

@@ -200,24 +200,25 @@ export async function exerciseManagementActions(page, login, logout) {
     false,
     'view changes cannot dismiss the unknown outcome or its action lock',
   );
+  await page.getByRole('button', { name: 'Account', exact: true }).click();
+  const account = page.getByRole('dialog', { name: 'Account', exact: true });
   assert.equal(
-    await page
+    await account
       .getByRole('navigation', { name: 'Published access links', exact: true })
       .getByRole('link')
       .count(),
     0,
     'in-app access links cannot discard an unknown action outcome',
   );
+  assert.equal(
+    await account.getByRole('button', { name: 'Sign in again', exact: true }).isEnabled(),
+    false,
+  );
+  await account.getByRole('button', { name: 'Close', exact: true }).click();
   await page.waitForFunction(() =>
     window.managementTargetSockets.every((socket) => socket.readyState === WebSocket.CLOSED),
   );
   assert.equal(await page.getByRole('button', { name: 'Log out', exact: true }).isEnabled(), false);
-  assert.equal(
-    await page
-      .getByRole('button', { name: 'Sign in again for new connections', exact: true })
-      .isEnabled(),
-    false,
-  );
   await page.waitForTimeout(1300);
   assert.equal(commits, 2, 'no automatic confirmation replay after a lost response');
   await page.getByRole('combobox', { name: 'Session state', exact: true }).click();

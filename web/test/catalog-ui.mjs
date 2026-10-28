@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
-import { workspace } from './workspace-ui.mjs';
+import { reauthenticate, workspace } from './workspace-ui.mjs';
 
 const [origin, mode] = process.argv.slice(2);
 assert.match(origin, /^https:\/\/app\.example\.org:[0-9]+$/u);
@@ -177,9 +177,7 @@ try {
   assert.equal(recordPages[0].body.auditlog, 'catalog00');
   assert.equal(recordPages[0].body.after, '');
   assert.match(recordPages[1].body.after, /^bmp1\./u);
-  await page
-    .getByRole('button', { name: 'Sign in again for new connections', exact: true })
-    .click();
+  await reauthenticate(page);
   await login('bob');
   await workspace(page, 'Recordings & audit');
   assert.equal(

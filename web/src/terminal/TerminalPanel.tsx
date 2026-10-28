@@ -1,15 +1,6 @@
-import {
-  Button,
-  Checkbox,
-  Paper,
-  SegmentedControl,
-  TextInput,
-  Title,
-  useComputedColorScheme,
-} from '@mantine/core';
-import type { FitAddon } from '@xterm/addon-fit';
+import { useComputedColorScheme } from '@mantine/core';
 import type { IDisposable, ITheme, Terminal as Xterm } from '@xterm/xterm';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import '@xterm/xterm/css/xterm.css';
 import type { WebAccess } from '../remember';
 import type { Message } from '../ui/messages';
@@ -31,92 +22,103 @@ const light: ITheme = {
   selectionBackground: '#c4ddf0',
 };
 
-function flushRenderer(terminal: Xterm, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const finish = (error?: Error) => {
-      clearTimeout(timer);
-      signal.removeEventListener('abort', aborted);
-      error === undefined ? resolve() : reject(error);
-    };
-    const aborted = () => finish(new Error('terminal start cancelled'));
-    const timer = setTimeout(() => finish(new Error('terminal renderer did not drain')), 5000);
-    signal.addEventListener('abort', aborted, { once: true });
-    if (signal.aborted) {
-      aborted();
-      return;
-    }
-    try {
-      terminal.write('', () => finish());
-    } catch {
-      finish(new Error('terminal renderer unavailable'));
-    }
-  });
+export interface TerminalActions {
+  eof(): boolean;
+  signal(value: 'INT' | 'TERM'): boolean;
+  disconnect(): void;
 }
 
-function statusKey(state: TerminalState | null): Message {
-  if (state === null) {
-    return 'terminalIdle';
+export function terminalStatus(state: TerminalState): Message {
+  switch (state.phase) {
+    case 'connecting':
+      return 'terminalConnecting';
+    case 'connected':
+      return 'terminalConnected';
+    case 'finishing':
+      return 'terminalFinishing';
+    case 'exited':
+      return 'terminalExited';
+    case 'disconnected':
+      return 'terminalDisconnected';
+    default:
+      return state.reason === 'configuration'
+        ? 'terminalConfiguration'
+        : state.reason === 'access-required'
+          ? 'terminalAccessRequired'
+          : state.reason === 'input-limit'
+            ? 'terminalInputLimit'
+            : state.reason === 'output-limit'
+              ? 'terminalOutputLimit'
+              : state.reason === 'server-error'
+                ? 'terminalServerError'
+                : state.reason === 'protocol'
+                  ? 'terminalProtocol'
+                  : state.reason === 'timeout'
+                    ? 'terminalTimeout'
+                    : 'terminalInterrupted';
   }
-  if (state.phase === 'connecting') {
-    return 'terminalConnecting';
-  }
-  if (state.phase === 'connected') {
-    return 'terminalConnected';
-  }
-  if (state.phase === 'finishing') {
-    return 'terminalFinishing';
-  }
-  if (state.phase === 'exited') {
-    return 'terminalExited';
-  }
-  if (state.phase === 'disconnected') {
-    return 'terminalDisconnected';
-  }
-  return state.reason === 'configuration'
-    ? 'terminalConfiguration'
-    : state.reason === 'access-required'
-      ? 'terminalAccessRequired'
-      : state.reason === 'input-limit'
-        ? 'terminalInputLimit'
-        : state.reason === 'output-limit'
-          ? 'terminalOutputLimit'
-          : state.reason === 'server-error'
-            ? 'terminalServerError'
-            : state.reason === 'protocol'
-              ? 'terminalProtocol'
-              : state.reason === 'timeout'
-                ? 'terminalTimeout'
-                : 'terminalInterrupted';
 }
 
-export function TerminalPanel({ access, disabled }: { access: WebAccess; disabled: boolean }) {
+// The access and cancellation signal belong to this tab for its entire life.
+// A tab mounts one shell once. Changing focus, theme or the current login never
+// opens another connection or assigns a different actor to its existing output.
+export function TerminalPanel({
+  id,
+  access,
+  signal,
+  active,
+  inputAllowed,
+  focusOnActivate,
+  onState,
+  onActions,
+}: {
+  id: number;
+  access: WebAccess;
+  signal: AbortSignal;
+  active: boolean;
+  inputAllowed: boolean;
+  focusOnActivate: boolean;
+  onState: (id: number, state: TerminalState) => void;
+  onActions: (id: number, actions: TerminalActions | null) => void;
+}) {
   const container = useRef<HTMLElement | null>(null);
-  const currentAccess = useRef(access);
-  currentAccess.current = access;
   const emulator = useRef<Xterm | null>(null);
-  const fit = useRef<FitAddon | null>(null);
-  const connection = useRef<TerminalConnection | null>(null);
-  const pendingStart = useRef<AbortController | null>(null);
-  const alive = useRef(true);
+  const layout = useRef<(() => void) | null>(null);
+  const state = useRef<TerminalState>({ phase: 'connecting' });
+  const eof = useRef(false);
+  const interaction = useRef({ active, inputAllowed, focusOnActivate });
+  interaction.current = { active, inputAllowed, focusOnActivate };
   const palette = useComputedColorScheme('light');
   const currentPalette = useRef(palette);
   currentPalette.current = palette;
-  const [initialized, setInitialized] = useState(false);
-  const [unavailable, setUnavailable] = useState(false);
-  const [state, setState] = useState<TerminalState | null>(null);
-  const [kind, setKind] = useState('shell');
-  const [pty, setPty] = useState(true);
-  const [inputClosed, setInputClosed] = useState(false);
-  const [principal, setPrincipal] = useState('');
-  const running =
-    state?.phase === 'connecting' || state?.phase === 'connected' || state?.phase === 'finishing';
 
   useEffect(() => {
-    alive.current = true;
     let disposed = false;
+    let connection: TerminalConnection | null = null;
     let observer: ResizeObserver | undefined;
-    let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const subscriptions: IDisposable[] = [];
+    const updateInput = () => {
+      if (emulator.current) {
+        emulator.current.options.disableStdin =
+          !interaction.current.active ||
+          !interaction.current.inputAllowed ||
+          eof.current ||
+          state.current.phase !== 'connected';
+      }
+    };
+    const stop = () => {
+      disposed = true;
+      connection?.dispose();
+      onActions(id, null);
+      if (emulator.current) {
+        emulator.current.options.disableStdin = true;
+      }
+    };
+    signal.addEventListener('abort', stop, { once: true });
+    if (signal.aborted) {
+      stop();
+    }
     void Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit')])
       .then(([module, addon]) => {
         if (disposed || container.current === null) {
@@ -130,279 +132,154 @@ export function TerminalPanel({ access, disabled }: { access: WebAccess; disable
           cursorBlink: true,
           screenReaderMode: true,
           scrollback: 1000,
-          fontSize: 13,
+          fontSize: 14,
           fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
           documentOverride: noncedDocument(document, nonce),
           windowOptions: {},
           theme: currentPalette.current === 'dark' ? dark : light,
-          linkHandler: { activate() {} }, // No server-directed URLs, popups or clipboard addon.
+          linkHandler: { activate() {} },
         });
         emulator.current = terminal;
-        const addonFit = new addon.FitAddon();
-        fit.current = addonFit;
-        terminal.loadAddon(addonFit);
+        const fit = new addon.FitAddon();
+        terminal.loadAddon(fit);
         terminal.open(container.current);
-        subscriptions.push(terminal.parser.registerOscHandler(52, () => true)); // Ignore remote clipboard requests.
+        subscriptions.push(terminal.parser.registerOscHandler(52, () => true));
+        const mayInput = () =>
+          !disposed &&
+          interaction.current.active &&
+          interaction.current.inputAllowed &&
+          !eof.current;
         subscriptions.push(
           terminal.onData((value) => {
-            if (value.length > 64 << 10) {
-              connection.current?.input(new Uint8Array((64 << 10) + 1));
-              return;
+            if (mayInput()) {
+              connection?.input(
+                value.length > 64 << 10
+                  ? new Uint8Array((64 << 10) + 1)
+                  : new TextEncoder().encode(value),
+              );
             }
-            connection.current?.input(new TextEncoder().encode(value));
           }),
         );
         subscriptions.push(
           terminal.onBinary((value) => {
-            if (value.length > 64 << 10) {
-              connection.current?.input(new Uint8Array((64 << 10) + 1));
-              return;
+            if (mayInput()) {
+              connection?.input(
+                value.length > 64 << 10
+                  ? new Uint8Array((64 << 10) + 1)
+                  : Uint8Array.from(value, (character) => character.charCodeAt(0)),
+              );
             }
-            connection.current?.input(
-              Uint8Array.from(value, (character) => character.charCodeAt(0)),
-            );
           }),
         );
         const resize = () => {
-          if (disposed || container.current === null || container.current.clientWidth === 0) {
+          if (disposed || !container.current?.clientWidth || !container.current.clientHeight) {
             return;
           }
           try {
             const before = `${terminal.cols}:${terminal.rows}`;
-            addonFit.fit();
+            fit.fit();
             if (before !== `${terminal.cols}:${terminal.rows}`) {
-              connection.current?.resize(terminal.cols, terminal.rows);
+              connection?.resize(terminal.cols, terminal.rows);
             }
           } catch {
-            /* A hidden/resizing container is retried by the owned observer. */
+            /* A hidden pane is fitted when selected again. */
           }
         };
+        layout.current = resize;
         observer = new ResizeObserver(() => {
-          clearTimeout(resizeTimer);
-          resizeTimer = setTimeout(resize, 120);
+          clearTimeout(timer);
+          timer = setTimeout(resize, 120);
         });
         observer.observe(container.current);
         resize();
-        setInitialized(true);
+        if (disposed || signal.aborted) {
+          return;
+        }
+        connection = new TerminalConnection(
+          access,
+          { kind: 'shell', command: '', pty: true, columns: terminal.cols, rows: terminal.rows },
+          {
+            write(_channel, data, done) {
+              terminal.write(data, done);
+            },
+          },
+          (next) => {
+            if (disposed) {
+              return;
+            }
+            state.current = next;
+            updateInput();
+            onState(id, next);
+            if (
+              next.phase === 'connected' &&
+              interaction.current.active &&
+              interaction.current.inputAllowed &&
+              interaction.current.focusOnActivate
+            ) {
+              terminal.focus();
+            }
+          },
+        );
+        onActions(id, {
+          eof() {
+            if (!connection?.eof()) {
+              return false;
+            }
+            eof.current = true;
+            updateInput();
+            return true;
+          },
+          signal(value) {
+            return connection?.signal(value) ?? false;
+          },
+          disconnect() {
+            connection?.disconnect();
+          },
+        });
       })
       .catch(() => {
         if (!disposed) {
-          setUnavailable(true);
+          state.current = { phase: 'interrupted', reason: 'configuration' };
+          onState(id, state.current);
         }
       });
     return () => {
-      disposed = true;
-      clearTimeout(resizeTimer);
+      stop();
+      signal.removeEventListener('abort', stop);
+      clearTimeout(timer);
       observer?.disconnect();
-      alive.current = false;
-      pendingStart.current?.abort();
-      pendingStart.current = null;
-      connection.current?.dispose();
-      connection.current = null;
       for (const subscription of subscriptions) {
         subscription.dispose();
       }
       emulator.current?.dispose();
       emulator.current = null;
-      fit.current = null;
+      layout.current = null;
     };
-  }, []);
+  }, [id, access, signal, onState, onActions]);
+
   useEffect(() => {
-    if (emulator.current !== null) {
+    if (emulator.current) {
       emulator.current.options.theme = palette === 'dark' ? dark : light;
     }
   }, [palette]);
-
-  async function start(form: HTMLFormElement) {
-    if (running || disabled || emulator.current === null || pendingStart.current !== null) {
+  useEffect(() => {
+    if (emulator.current) {
+      emulator.current.options.disableStdin =
+        !active || !inputAllowed || eof.current || state.current.phase !== 'connected';
+    }
+    if (!active) {
       return;
     }
-    const terminal = emulator.current;
-    const selected = currentAccess.current;
-    const command = (form.elements.namedItem('command') as HTMLInputElement | null)?.value ?? '';
-    if (
-      !command.isWellFormed() ||
-      command.includes('\0') ||
-      new TextEncoder().encode(command).byteLength > 4096
-    ) {
-      setState({ phase: 'interrupted', reason: 'configuration' });
-      return;
-    }
-    const controller = new AbortController();
-    pendingStart.current = controller;
-    connection.current?.dispose();
-    connection.current = null;
-    terminal.options.disableStdin = true;
-    setState({ phase: 'connecting' });
-    try {
-      // Drain the old emulator job before reset: an interrupted write must not
-      // bleed output into a new execution/actor, even after driver disposal.
-      await flushRenderer(terminal, controller.signal);
-      if (!alive.current || controller.signal.aborted) {
-        return;
+    const frame = requestAnimationFrame(() => {
+      layout.current?.();
+      if (focusOnActivate && inputAllowed) {
+        emulator.current?.focus();
       }
-      terminal.reset();
-      try {
-        fit.current?.fit();
-      } catch {
-        /* Keep last valid dimensions if temporarily hidden. */
-      }
-      setInputClosed(false);
-      setPrincipal(selected.snapshot().principal);
-      connection.current = new TerminalConnection(
-        selected,
-        {
-          kind: kind === 'exec' ? 'exec' : 'shell',
-          command,
-          pty,
-          columns: terminal.cols,
-          rows: terminal.rows,
-        },
-        {
-          write(_channel, data, done) {
-            terminal.write(data, done);
-          },
-        },
-        (next) => {
-          terminal.options.disableStdin = next.phase !== 'connected';
-          setState(next);
-          if (next.phase === 'connected') {
-            container.current?.scrollIntoView({ block: 'nearest' });
-            terminal.focus();
-          }
-        },
-      );
-      terminal.focus();
-    } catch {
-      if (alive.current && !controller.signal.aborted) {
-        setState({ phase: 'interrupted', reason: 'access-required' });
-      }
-    } finally {
-      if (pendingStart.current === controller) {
-        pendingStart.current = null;
-      }
-    }
-  }
-
-  function disconnect() {
-    pendingStart.current?.abort();
-    pendingStart.current = null;
-    if (connection.current !== null) {
-      connection.current.disconnect();
-    } else {
-      setState({ phase: 'disconnected' });
-    }
-  }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [active, inputAllowed, focusOnActivate]);
 
   return (
-    <Paper withBorder p="lg" className="stack terminal-panel">
-      <div className="section-heading">
-        <Title order={2}>{t('terminalTitle')}</Title>
-        <details className="context-help">
-          <summary>{t('terminalConnectionHelp')}</summary>
-          <p>{t('terminalFresh')}</p>
-        </details>
-      </div>
-      <form
-        method="post"
-        action="/_bifroest/api/v1/terminal"
-        className="terminal-controls"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void start(event.currentTarget);
-        }}
-      >
-        <SegmentedControl
-          aria-label={t('terminalTask')}
-          value={kind}
-          onChange={setKind}
-          disabled={running || disabled}
-          data={[
-            { value: 'shell', label: t('terminalShell') },
-            { value: 'exec', label: t('terminalExec') },
-          ]}
-        />
-        {kind === 'exec' && (
-          <TextInput
-            name="command"
-            className="terminal-command"
-            label={t('terminalCommand')}
-            autoComplete="off"
-            disabled={running || disabled}
-          />
-        )}
-        <Checkbox
-          label={t('terminalPty')}
-          checked={pty}
-          onChange={(event) => setPty(event.currentTarget.checked)}
-          disabled={running || disabled}
-        />
-        <div className="actions">
-          <Button type="submit" disabled={!initialized || running || disabled}>
-            {t('terminalStart')}
-          </Button>
-          <Button
-            variant="default"
-            disabled={state?.phase !== 'connecting' && state?.phase !== 'connected'}
-            onClick={disconnect}
-          >
-            {t('terminalDisconnect')}
-          </Button>
-        </div>
-      </form>
-      <div className="terminal-status">
-        <p role="status" data-terminal-phase={state?.phase ?? 'idle'}>
-          {t(
-            unavailable
-              ? 'terminalUnavailable'
-              : !initialized
-                ? 'terminalLoading'
-                : statusKey(state),
-          )}
-          {state?.phase === 'exited'
-            ? ` ${new Intl.NumberFormat('en-US', { useGrouping: false }).format(state.status)}`
-            : ''}
-        </p>
-        {principal !== '' && (
-          <p className="caption subtle">
-            {t('terminalActor')}: {principal}
-          </p>
-        )}
-      </div>
-      <section className="terminal-surface" ref={container} aria-label={t('terminalViewport')} />
-      <details>
-        <summary>{t('terminalInputControls')}</summary>
-        <div className="actions">
-          <Button
-            variant="default"
-            disabled={state?.phase !== 'connected' || inputClosed}
-            onClick={() => {
-              if (connection.current?.eof()) {
-                setInputClosed(true);
-                if (emulator.current) {
-                  emulator.current.options.disableStdin = true;
-                }
-              }
-            }}
-          >
-            {t('terminalEof')}
-          </Button>
-          <Button
-            variant="default"
-            disabled={state?.phase !== 'connected'}
-            onClick={() => connection.current?.signal('INT')}
-          >
-            {t('terminalInterrupt')}
-          </Button>
-          <Button
-            variant="default"
-            disabled={state?.phase !== 'connected'}
-            onClick={() => connection.current?.signal('TERM')}
-          >
-            {t('terminalTerminate')}
-          </Button>
-        </div>
-      </details>
-    </Paper>
+    <section className="terminal-surface" ref={container} aria-label={t('terminalViewport')} />
   );
 }

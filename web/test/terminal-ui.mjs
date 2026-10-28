@@ -1,109 +1,126 @@
 import assert from 'node:assert/strict';
-import { captureLayout } from './workspace-ui.mjs';
+import { captureLayout, reauthenticate } from './workspace-ui.mjs';
 
-// Drives only the real application and its xterm textarea; no exposed emulator
-// internals, fake transport or CLI actions. The Go side supplies a test backend.
 export async function exerciseTerminal(page, login) {
+  let sockets = 0;
+  const openings = [];
+  page.on('websocket', (socket) => {
+    sockets++;
+    socket.on('framesent', ({ payload }) => {
+      if (typeof payload === 'string') {
+        const value = JSON.parse(payload);
+        if (value.type === 'open') {
+          openings.push({ task: value.task, command: value.command, pty: Boolean(value.pty) });
+        }
+      }
+    });
+  });
+  const pane = () => page.locator('[data-terminal-active="true"]');
   const output = async (text) => {
-    await page.locator('.terminal-surface').scrollIntoViewIfNeeded(); // xterm intentionally pauses off-screen DOM rendering.
-    try {
-      await page.waitForFunction(
-        (text) => document.querySelector('.xterm-rows')?.textContent?.includes(text),
-        text,
-        { timeout: 5000 },
-      );
-    } catch {
-      throw new Error(
-        JSON.stringify({
-          expected: text,
-          phase: await page.locator('[data-terminal-phase]').getAttribute('data-terminal-phase'),
-          output: await page.locator('.xterm-rows').textContent(),
-          viewport: await page.locator('.terminal-surface').evaluate((node) => ({
-            rectangle: node.getBoundingClientRect().toJSON(),
-            height: window.innerHeight,
-            rows: node.querySelector('.xterm-rows')?.childElementCount,
-          })),
-          csp: await page.evaluate(() => window.cspViolations),
-        }),
-      );
-    }
+    await pane().getByRole('region', { name: 'Terminal viewport', exact: true }).waitFor();
+    await page.waitForFunction(
+      (text) =>
+        document
+          .querySelector('[data-terminal-active="true"] .xterm-rows')
+          ?.textContent?.includes(text),
+      text,
+      { timeout: 5000 },
+    );
   };
   const type = async (text) => {
-    await page.locator('.xterm-helper-textarea').focus();
+    await pane().locator('.xterm-helper-textarea').focus();
     await page.keyboard.type(text);
     await page.keyboard.press('Enter');
   };
-  const start = async (number) => {
-    await page.getByRole('button', { name: 'Connect', exact: true }).click();
-    await page.locator('[data-terminal-phase="connected"]').waitFor();
-    await output(`EXECUTION_START:${number}`);
+  const action = async (name) => {
+    await page.getByRole('button', { name: 'Terminal actions', exact: true }).click();
+    await page.getByRole('menuitem', { name, exact: true }).click();
+  };
+  const select = async (number, user) => {
+    await page.getByRole('tab', { name: `Terminal ${number} ${user}`, exact: true }).click();
   };
   await login(page, false);
-  await start(1);
+  await output('EXECUTION_START:1');
+  assert.equal(sockets, 1, 'a confirmed login opens exactly one shell automatically');
+  assert.equal(
+    await page.getByRole('textbox', { name: 'Command to execute', exact: true }).count(),
+    0,
+  );
+  const geometry = await pane().locator('.terminal-surface').boundingBox();
+  const bar = await page.locator('.application-bar').boundingBox();
+  const viewport = page.viewportSize();
+  assert(
+    geometry &&
+      bar &&
+      geometry.width >= viewport.width - 16 &&
+      Math.abs(geometry.y - bar.height) < 6 &&
+      geometry.y + geometry.height >= viewport.height - 4,
+    'terminal must fill all space below the bar',
+  );
   await output('UTF8:€');
   await output('STDERR_MARKER');
-  const surface = await page.locator('.terminal-surface').boundingBox();
-  assert(
-    surface && surface.width > 1000 && surface.y < 550,
-    'desktop terminal must use the workspace, not the old narrow login column',
-  );
   await captureLayout(page, 'terminal-desktop');
-  assert.equal(
-    await page.title(),
-    'Fixture brand',
-    'remote OSC title must not rename the application',
-  );
-  const pages = page.context().pages().length;
-  const renderedLink = page.locator('.xterm-rows').getByText('blocked-link', { exact: true });
+  assert.equal(await page.title(), 'Fixture brand');
+  const renderedLink = pane().locator('.xterm-rows').getByText('blocked-link', { exact: true });
   await renderedLink.waitFor({ state: 'visible' });
   const link = await renderedLink.boundingBox();
-  assert(link !== null);
-  // xterm intentionally delegates row pointer events to its screen element.
-  await page.mouse.move(link.x + link.width / 2, link.y + link.height / 2);
+  assert(link);
+  const pages = page.context().pages().length;
   await page.mouse.click(link.x + link.width / 2, link.y + link.height / 2);
   assert.equal(page.context().pages().length, pages, 'remote links must not open windows');
   await type('hello');
   await output('STDIN:hello');
-  await page.setViewportSize({ width: 500, height: 1000 });
+  await page.setViewportSize({ width: 390, height: 844 });
   await output('RESIZE:');
   await captureLayout(page, 'terminal-mobile');
-  await page.getByText('Input and signals', { exact: true }).click();
-  await page.getByRole('button', { name: 'Request INT signal', exact: true }).click();
+  await page.setViewportSize({ width: 320, height: 640 });
+  await captureLayout(page, 'terminal-320');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await action('Request INT signal');
   await output('SIGNAL:INT');
-  await page.getByRole('button', { name: 'Send input EOF', exact: true }).click();
+  await action('Send input EOF');
   await output('OUTPUT_AFTER_EOF');
   await page.locator('[data-terminal-phase="exited"]').waitFor();
   assert((await page.locator('[data-terminal-phase="exited"]').textContent()).includes('7'));
-  await start(2);
-  await page
-    .getByRole('button', { name: 'Sign in again for new connections', exact: true })
-    .click();
+  await page.getByRole('button', { name: 'New terminal', exact: true }).click();
+  await output('EXECUTION_START:2');
+  await reauthenticate(page);
   await login(page, false, 'bob');
-  assert.equal(
-    await page.locator('[data-terminal-phase="connected"]').count(),
-    1,
-    'reauthentication must not replace the active execution',
-  );
-  await page.getByText('This execution was started as: alice', { exact: true }).waitFor();
+  await output('EXECUTION_START:3');
+  assert.equal(sockets, 3, 'reauthentication opens a new tab without replacing the old execution');
+  assert(!(await pane().locator('.xterm-rows').textContent()).includes('EXECUTION_START:2'));
+  await select(2, 'alice');
   await type('still-running');
   await output('STDIN:still-running');
-  await page.getByRole('button', { name: 'Disconnect execution', exact: true }).click();
-  await page.locator('[data-terminal-phase="disconnected"]').waitFor();
-  await start(3);
+  await select(3, 'bob');
   await type('drop');
-  await page.getByText('This execution was started as: bob', { exact: true }).waitFor();
   await page.locator('[data-terminal-phase="interrupted"]').waitFor();
-  assert.equal(
-    await page.locator('[data-terminal-phase="exited"]').count(),
-    0,
-    'a dropped connection must not invent exit zero',
+  assert.equal(sockets, 3, 'an interrupted shell must not be replayed automatically');
+  assert.equal(await page.locator('[data-terminal-phase="exited"]').count(), 0);
+  await select(2, 'alice');
+  await page.getByRole('button', { name: 'Close terminal 2', exact: true }).click();
+  const closing = page.getByRole('dialog', { name: 'Close this terminal?', exact: true });
+  await closing.getByText('Terminal 2 · alice', { exact: true }).waitFor();
+  await closing.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await type('kept-after-cancel');
+  await output('STDIN:kept-after-cancel');
+  await page.getByRole('button', { name: 'Close terminal 2', exact: true }).click();
+  await closing.getByRole('button', { name: 'Close terminal', exact: true }).click();
+  assert.equal(await page.getByRole('tab', { name: 'Terminal 2 alice', exact: true }).count(), 0);
+  await page.getByRole('button', { name: 'New terminal', exact: true }).click();
+  await output('EXECUTION_START:4');
+  await action('Send input EOF');
+  await page.locator('[data-terminal-phase="exited"]').waitFor();
+  await select(1, 'alice');
+  await output('EXECUTION_START:1');
+  assert(
+    (await pane().locator('.xterm-rows').textContent()).includes('STDIN:hello'),
+    'switching tabs retains its own original output',
   );
-  await page.getByText('Command', { exact: true }).click();
-  await page.getByLabel('Command to execute', { exact: true }).fill('printf fixture');
-  await page.getByRole('checkbox', { name: 'Request a PTY', exact: true }).uncheck();
-  await start(4);
-  await output('PTY:false');
-  await output('COMMAND:printf fixture');
+  assert.deepEqual(
+    openings,
+    Array.from({ length: 4 }, () => ({ task: 'shell', command: undefined, pty: true })),
+  );
   await page.getByRole('button', { name: 'Log out', exact: true }).click();
   await page.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
   assert.equal(await page.locator('.xterm').count(), 0);

@@ -57,32 +57,20 @@ try {
     await page.getByLabel('Private key file (local only)', { exact: true }).setInputFiles(keyFile);
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
     await page.getByRole('heading', { name: 'Signed in as e2e', exact: true }).waitFor();
-    await page.locator('[data-terminal-phase="idle"]').waitFor();
+    await page.getByRole('dialog', { name: 'Sign in', exact: true }).waitFor({ state: 'hidden' });
+    await page.locator('[data-terminal-phase="connected"]').waitFor();
     assert.equal(
-      await page.locator('[data-terminal-phase="connected"]').count(),
-      0,
-      'login/reload is not reattachment or execution',
+      await page.getByRole('tab').count(),
+      1,
+      'a fresh login/reload starts one new shell, not a reattachment',
     );
   };
   const execute = async (marker, expectedExit, update) => {
-    const interactive = update && backend === 'docker';
     const command = `/bin/sh -c '/usr/local/bin/e2e-helper environment; printf "account="; /usr/bin/id -u; printf "pty=%s\\n" "$([ -t 0 ] && printf true || printf false)"; /bin/cat /home/e2e/bifroest-web-marker; ${update ? 'printf "web-owned\\n" > /home/e2e/bifroest-web-marker; ' : ''}printf "run=${marker}\\n"; exit ${expectedExit}'`;
-    if (!interactive) {
-      await page.getByText('Command', { exact: true }).click();
-      await page.getByLabel('Command to execute', { exact: true }).fill(command);
-    }
-    await page
-      .getByRole('checkbox', { name: 'Request a PTY', exact: true })
-      .setChecked(interactive);
-    await page.locator('.terminal-surface').scrollIntoViewIfNeeded();
-    await page.getByRole('button', { name: 'Connect', exact: true }).click();
     try {
-      if (interactive) {
-        await page.locator('[data-terminal-phase="connected"]').waitFor();
-        await page.locator('.xterm-helper-textarea').focus();
-        await page.keyboard.type(`exec ${command}`);
-        await page.keyboard.press('Enter');
-      }
+      await page.locator('[data-terminal-active="true"] .xterm-helper-textarea').focus();
+      await page.keyboard.type(`exec ${command}`);
+      await page.keyboard.press('Enter');
       await page.locator('[data-terminal-phase="exited"]').waitFor();
       assert.match(
         await page.locator('[data-terminal-phase="exited"]').textContent(),
@@ -109,8 +97,8 @@ try {
     }
     const text = await page.locator('.xterm-rows').textContent();
     assert(
-      text.includes(`pty=${interactive}`),
-      `the actual workload must confirm pty=${interactive}: ${JSON.stringify(text)}`,
+      text.includes('pty=true'),
+      `the actual shell must confirm a PTY: ${JSON.stringify(text)}`,
     );
     assert(
       text.includes(update ? 'ssh-owned' : 'web-owned'),

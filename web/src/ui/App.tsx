@@ -15,7 +15,8 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { verificationLink } from '../login/links';
 import type { AccessSnapshot, LoginStep, LogoutResult, Scope, WebAccess } from '../remember';
 import { BrowserBinding, BrowserClient, RememberMeError } from '../remember';
-import { TerminalPanel } from '../terminal/TerminalPanel';
+import { TerminalWorkspace } from '../terminal/TerminalWorkspace';
+import { LoginChallenge } from './LoginChallenge';
 import type { Message } from './messages';
 import { t } from './messages';
 
@@ -88,7 +89,11 @@ export function App({
   const [confirm, setConfirm] = useState<'revoke' | 'local' | null>(null);
   const [optIn, setOptIn] = useState(false);
   const [passwordKey, setPasswordKey] = useState(0);
-  const [reauthenticate, setReauthenticate] = useState(false);
+  const [loginOpen, setLoginOpen] = useState(true);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [noticeOpen, setNoticeOpen] = useState(false);
+  const [authorizationEvent, setAuthorizationEvent] = useState(0);
+  const [workspaceEpoch, setWorkspaceEpoch] = useState(0);
   const [rememberUncertain, setRememberUncertain] = useState(false);
   const [loginMethod, setLoginMethod] = useState('password');
   const [loginStep, setLoginStep] = useState<LoginStep | null>(null);
@@ -255,7 +260,6 @@ export function App({
       setWorkspaceView('sessions');
       setSnapshot(result.snapshot());
       setClosing(false);
-      setReauthenticate(false);
       setRememberUncertain(false);
       if (remember) {
         try {
@@ -271,6 +275,10 @@ export function App({
             );
           }
         }
+      }
+      if (current === generation.current) {
+        setLoginOpen(false);
+        setAuthorizationEvent((value) => value + 1);
       }
     });
   }
@@ -289,8 +297,9 @@ export function App({
       setWorkspaceView('sessions');
       setSnapshot(result.snapshot());
       setClosing(false);
-      setReauthenticate(false);
+      setLoginOpen(false);
       setRememberUncertain(false);
+      setAuthorizationEvent((value) => value + 1);
     });
   }
 
@@ -325,7 +334,10 @@ export function App({
       setSnapshot(null);
       setClosing(false);
       setOptIn(false);
-      setReauthenticate(false);
+      setLoginOpen(true);
+      setAccountOpen(false);
+      setAuthorizationEvent(0);
+      setWorkspaceEpoch((value) => value + 1);
       setRememberUncertain(false);
       setNotice(cleanupNotice(result, 'loggedOut'));
     } catch {
@@ -367,60 +379,85 @@ export function App({
     setConfirm(value);
   }
 
+  function showLogin() {
+    if (closing || busy || rememberUncertain || managementLocked) {
+      return;
+    }
+    setAccountOpen(false);
+    setLoginOpen(true);
+    setOptIn(false);
+    void readSaved();
+  }
+  function closeLogin() {
+    if (operation.current !== null) {
+      cancel();
+    }
+    setLoginOpen(false);
+    setOptIn(false);
+    setPasswordKey((value) => value + 1);
+  }
+  useEffect(() => {
+    if (
+      !loginOpen &&
+      notice &&
+      ['unknown', 'logoutUnknown', 'localCleanupFailed'].includes(notice.key)
+    ) {
+      setNoticeOpen(true);
+    }
+  }, [loginOpen, notice]);
+
   return (
-    <main className={`workspace ${snapshot === null ? 'workspace--login' : 'workspace--active'}`}>
-      <header className="header">
-        <div className="brand">
-          <Title order={1} size="h2">
-            {title}
-          </Title>
-          <span className="caption subtle">{metadata.scope.slug || '/'}</span>
-        </div>
-        <SegmentedControl
-          aria-label={t('theme')}
-          value={scheme}
-          onChange={onScheme}
-          data={[
-            { value: 'auto', label: t('auto') },
-            { value: 'light', label: t('light') },
-            { value: 'dark', label: t('dark') },
-          ]}
-        />
-      </header>
-      <div className="stack">
-        {notice !== null && (
-          <Alert role="status" color={notice.color}>
-            {t(notice.key)}
-          </Alert>
-        )}
-        {snapshot !== null ? (
-          <Paper withBorder p="md" className="account-bar">
-            <div className="account-identity">
-              <Title order={2} size="h5">
-                {t(closing ? 'accessBlocked' : 'authenticated')} {snapshot.principal}
-              </Title>
-              <span className="caption subtle">
-                {t('expires')}:{' '}
-                <time dateTime={snapshot.expiresAt}>
-                  {new Intl.DateTimeFormat('en-US', {
-                    dateStyle: 'medium',
-                    timeStyle: 'short',
-                  }).format(new Date(snapshot.expiresAt))}
-                </time>
-              </span>
-            </div>
-            <div className="actions account-actions">
+    <>
+      <TerminalWorkspace
+        key={workspaceEpoch}
+        access={snapshot === null ? null : access.current}
+        authorizationEvent={authorizationEvent}
+        blocked={closing || busy || rememberUncertain || managementLocked}
+        focusBlocked={
+          loginOpen || loginStep !== null || accountOpen || noticeOpen || confirm !== null
+        }
+        title={title}
+        scope={metadata.scope.slug}
+        onSignIn={showLogin}
+        managementView={workspaceView}
+        onManagementView={setWorkspaceView}
+        notice={
+          notice !== null && !loginOpen && !noticeOpen ? (
+            <button
+              type="button"
+              className={`bar-notice bar-notice--${notice.color}`}
+              onClick={() => setNoticeOpen(true)}
+              aria-label={t('showNotice')}
+              title={t(notice.key)}
+            >
+              <span role="status">{t(notice.key)}</span>
+            </button>
+          ) : null
+        }
+        account={
+          <>
+            {snapshot !== null && (
               <Button
-                variant="default"
-                disabled={closing || busy || rememberUncertain || managementLocked}
-                onClick={() => {
-                  setReauthenticate(true);
-                  setOptIn(false);
-                  void readSaved();
-                }}
+                variant="subtle"
+                onClick={() => setAccountOpen(true)}
+                aria-label={t('account')}
               >
-                {t('reauthenticate')}
+                <Title order={2} size="h5">
+                  {t(closing ? 'accessBlocked' : 'authenticated')} {snapshot.principal}
+                </Title>
               </Button>
+            )}
+            {!snapshot && (
+              <Button
+                variant="subtle"
+                aria-label={t('openLogin')}
+                disabled={closing || busy || rememberUncertain || managementLocked}
+                onClick={showLogin}
+              >
+                {t('login')}
+              </Button>
+            )}
+            {snapshot && (
               <Button
                 onClick={() => {
                   void logout();
@@ -428,36 +465,24 @@ export function App({
                 disabled={(closing && busy) || managementLocked}
                 variant="subtle"
                 color="red"
+                aria-label={t(closing ? 'retryLogout' : 'logout')}
+                title={t(closing ? 'retryLogout' : 'logout')}
               >
-                {t(closing ? 'retryLogout' : 'logout')}
+                <span aria-hidden="true">↪</span>
               </Button>
-            </div>
-          </Paper>
-        ) : null}
-        {snapshot?.terminalAvailable && access.current !== null && (
-          <TerminalPanel access={access.current} disabled={closing || busy} />
-        )}
+            )}
+            <Button
+              variant="subtle"
+              onClick={() => setAccountOpen(true)}
+              aria-label={t('appearance')}
+            >
+              ⚙
+            </Button>
+          </>
+        }
+      >
         {snapshot !== null && snapshot.environment === 'management' && access.current !== null && (
           <Suspense fallback={<Alert>{t('managementLoading')}</Alert>}>
-            <nav className="workspace-nav" aria-label={t('workspaceNavigation')}>
-              {(['sessions', 'artifacts', 'server'] as const).map((view) => (
-                <Button
-                  key={view}
-                  variant={workspaceView === view ? 'filled' : 'subtle'}
-                  aria-current={workspaceView === view ? 'page' : undefined}
-                  disabled={managementLocked && view !== workspaceView}
-                  onClick={() => setWorkspaceView(view)}
-                >
-                  {t(
-                    view === 'sessions'
-                      ? 'workspaceSessions'
-                      : view === 'artifacts'
-                        ? 'workspaceArtifacts'
-                        : 'workspaceServer',
-                  )}
-                </Button>
-              ))}
-            </nav>
             <div hidden={workspaceView === 'artifacts'}>
               <ManagementPanel
                 key={generation.current}
@@ -476,149 +501,257 @@ export function App({
             </div>
           </Suspense>
         )}
-        {(snapshot === null || reauthenticate) && (
+      </TerminalWorkspace>
+      <Modal
+        classNames={{ content: 'confirmation-dialog login-dialog' }}
+        lockScroll={false}
+        opened={loginOpen && confirm === null}
+        onClose={closeLogin}
+        closeOnClickOutside={false}
+        closeOnEscape={!busy}
+        title={t(loginStep === null ? 'login' : 'loginChallenge')}
+        closeButtonProps={{ 'aria-label': t('close') }}
+      >
+        {notice && (
+          <Alert role="status" color={notice.color}>
+            {t(notice.key)}
+          </Alert>
+        )}
+        {loginStep !== null ? (
+          <LoginChallenge
+            key={`${generation.current}:${loginStep.sequence}`}
+            step={loginStep}
+            providerLink={providerLink}
+            onAnswer={answerStep}
+            onCancel={cancel}
+          />
+        ) : (
           <>
-            {saved === 'ready' && (
-              <Paper withBorder p="lg" className="stack">
-                <p>{t('saved')}</p>
-                <div className="actions">
-                  <Button
-                    disabled={busy}
-                    onClick={() => {
-                      void resume();
-                    }}
-                  >
-                    {t('useSaved')}
-                  </Button>
-                  {snapshot === null && (
-                    <>
-                      <Button
-                        variant="default"
-                        disabled={busy}
-                        onClick={() => showConfirmation('revoke')}
-                      >
-                        {t('forgetSaved')}
-                      </Button>
-                      <Button
-                        variant="subtle"
-                        disabled={busy}
-                        onClick={() => showConfirmation('local')}
-                      >
-                        {t('removeLocalOnly')}
-                      </Button>
-                    </>
-                  )}
-                </div>
-              </Paper>
-            )}
-            {saved === 'pending' && (
-              <Alert color="yellow">
-                <p>{t('pending')}</p>
-                {snapshot === null && (
-                  <Button
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() => showConfirmation('local')}
-                  >
-                    {t('removeLocal')}
-                  </Button>
-                )}
-              </Alert>
-            )}
-            {saved === 'unavailable' && <Alert color="yellow">{t('storageUnavailable')}</Alert>}
-            <Paper withBorder p="lg" className="login-card">
-              <form
-                method={loginMethod === 'key' ? 'dialog' : 'post'}
-                action={loginMethod === 'key' ? undefined : '/_bifroest/api/v1/login/password'}
-                className="stack"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void login(event.currentTarget);
-                }}
-              >
-                <Title order={2}>{t('login')}</Title>
-                <Radio.Group label={t('loginMethod')} value={loginMethod} onChange={setLoginMethod}>
-                  <div className="login-methods">
-                    <Radio value="password" label={t('passwordMethod')} disabled={busy} />
-                    <Radio value="interactive" label={t('interactiveMethod')} disabled={busy} />
-                    <Radio value="key" label={t('keyMethod')} disabled={busy} />
+            <div className="stack">
+              {saved === 'ready' && (
+                <Paper withBorder p="lg" className="stack">
+                  <p>{t('saved')}</p>
+                  <div className="actions">
+                    <Button
+                      disabled={busy}
+                      onClick={() => {
+                        void resume();
+                      }}
+                    >
+                      {t('useSaved')}
+                    </Button>
+                    {snapshot === null && (
+                      <>
+                        <Button
+                          variant="default"
+                          disabled={busy}
+                          onClick={() => showConfirmation('revoke')}
+                        >
+                          {t('forgetSaved')}
+                        </Button>
+                        <Button
+                          variant="subtle"
+                          disabled={busy}
+                          onClick={() => showConfirmation('local')}
+                        >
+                          {t('removeLocalOnly')}
+                        </Button>
+                      </>
+                    )}
                   </div>
-                </Radio.Group>
-                {metadata.requestUser && (
-                  <TextInput
-                    name="user"
-                    label={t('user')}
-                    autoComplete="username"
-                    disabled={busy}
-                  />
-                )}
-                {loginMethod === 'password' && (
-                  <PasswordInput
-                    key={passwordKey}
-                    name="password"
-                    label={t('password')}
-                    autoComplete="current-password"
-                    visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }}
-                    disabled={busy}
-                  />
-                )}
-                {loginMethod === 'key' && (
-                  <>
-                    <Alert color="blue">{t('keyLocalOnly')}</Alert>
-                    <label className="stack" htmlFor="key-private">
-                      {t('keyPrivateFile')}
-                      <input
-                        key={`private:${passwordKey}`}
-                        id="key-private"
-                        type="file"
-                        required
-                        disabled={busy}
-                      />
-                    </label>
+                </Paper>
+              )}
+              {saved === 'pending' && (
+                <Alert color="yellow">
+                  <p>{t('pending')}</p>
+                  {snapshot === null && (
+                    <Button
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => showConfirmation('local')}
+                    >
+                      {t('removeLocal')}
+                    </Button>
+                  )}
+                </Alert>
+              )}
+              {saved === 'unavailable' && <Alert color="yellow">{t('storageUnavailable')}</Alert>}
+              <Paper withBorder p="lg" className="login-card">
+                <form
+                  method={loginMethod === 'key' ? 'dialog' : 'post'}
+                  action={loginMethod === 'key' ? undefined : '/_bifroest/api/v1/login/password'}
+                  className="stack"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void login(event.currentTarget);
+                  }}
+                >
+                  <Radio.Group
+                    label={t('loginMethod')}
+                    value={loginMethod}
+                    onChange={setLoginMethod}
+                  >
+                    <div className="login-methods">
+                      <Radio value="password" label={t('passwordMethod')} disabled={busy} />
+                      <Radio value="interactive" label={t('interactiveMethod')} disabled={busy} />
+                      <Radio value="key" label={t('keyMethod')} disabled={busy} />
+                    </div>
+                  </Radio.Group>
+                  {metadata.requestUser && (
+                    <TextInput
+                      name="user"
+                      label={t('user')}
+                      autoComplete="username"
+                      disabled={busy}
+                    />
+                  )}
+                  {loginMethod === 'password' && (
                     <PasswordInput
-                      key={`passphrase:${passwordKey}`}
-                      id="key-passphrase"
-                      label={t('keyPassphrase')}
-                      autoComplete="off"
+                      key={passwordKey}
+                      name="password"
+                      label={t('password')}
+                      autoComplete="current-password"
                       visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }}
                       disabled={busy}
                     />
-                    <label className="stack" htmlFor="key-certificate">
-                      {t('keyCertificateFile')}
-                      <input
-                        key={`certificate:${passwordKey}`}
-                        id="key-certificate"
-                        type="file"
+                  )}
+                  {loginMethod === 'key' && (
+                    <>
+                      <Alert color="blue">{t('keyLocalOnly')}</Alert>
+                      <label className="stack" htmlFor="key-private">
+                        {t('keyPrivateFile')}
+                        <input
+                          key={`private:${passwordKey}`}
+                          id="key-private"
+                          type="file"
+                          required
+                          disabled={busy}
+                        />
+                      </label>
+                      <PasswordInput
+                        key={`passphrase:${passwordKey}`}
+                        id="key-passphrase"
+                        label={t('keyPassphrase')}
+                        autoComplete="off"
+                        visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }}
                         disabled={busy}
                       />
-                    </label>
-                  </>
-                )}
-                <Checkbox
-                  checked={optIn}
-                  onChange={(event) => setOptIn(event.currentTarget.checked)}
-                  disabled={busy || saved !== 'missing'}
-                  label={t('remember')}
-                  description={t('rememberHint')}
-                />
-                <div className="actions">
-                  <Button type="submit" disabled={busy || managementLocked}>
-                    {t('login')}
-                  </Button>
-                  {busy && (
-                    <Button type="button" variant="default" onClick={cancel}>
-                      {t('cancel')}
-                    </Button>
+                      <label className="stack" htmlFor="key-certificate">
+                        {t('keyCertificateFile')}
+                        <input
+                          key={`certificate:${passwordKey}`}
+                          id="key-certificate"
+                          type="file"
+                          disabled={busy}
+                        />
+                      </label>
+                    </>
                   )}
-                </div>
-              </form>
-            </Paper>
+                  <Checkbox
+                    checked={optIn}
+                    onChange={(event) => setOptIn(event.currentTarget.checked)}
+                    disabled={busy || saved !== 'missing'}
+                    label={t('remember')}
+                    description={t('rememberHint')}
+                  />
+                  <div className="actions">
+                    <Button type="submit" disabled={busy || managementLocked}>
+                      {t('login')}
+                    </Button>
+                    {busy && (
+                      <Button type="button" variant="default" onClick={cancel}>
+                        {t('cancel')}
+                      </Button>
+                    )}
+                  </div>
+                </form>
+              </Paper>
+            </div>
+            {metadata.publishedSlugs.length > 0 && (
+              <nav className="access-links" aria-label={t('discovery')}>
+                <span className="caption subtle">{t('discovery')}</span>
+                <ul className="actions">
+                  {metadata.publishedSlugs.map((slug) => (
+                    <li key={slug}>
+                      {managementLocked ? (
+                        <span aria-disabled="true">{slug}</span>
+                      ) : (
+                        <Anchor href={`/${slug}`}>{slug}</Anchor>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </nav>
+            )}
+            <footer className="caption workspace-footer">
+              <SegmentedControl
+                aria-label={t('theme')}
+                value={scheme}
+                onChange={onScheme}
+                data={[
+                  { value: 'auto', label: t('auto') },
+                  { value: 'light', label: t('light') },
+                  { value: 'dark', label: t('dark') },
+                ]}
+              />
+              <details>
+                <summary>{t('interfaceInformation')}</summary>
+                <p>{t('partial')}</p>
+              </details>
+              <Anchor href="/_bifroest/files/third-party-licenses.txt">{t('notices')}</Anchor>
+            </footer>
           </>
         )}
-        {metadata.publishedSlugs.length > 0 && (
-          <nav className="access-links" aria-label={t('discovery')}>
-            <span className="caption subtle">{t('discovery')}</span>
-            <ul className="actions">
+      </Modal>
+      <Modal
+        classNames={{ content: 'confirmation-dialog' }}
+        lockScroll={false}
+        opened={accountOpen}
+        onClose={() => setAccountOpen(false)}
+        title={t('account')}
+        closeButtonProps={{ 'aria-label': t('close') }}
+      >
+        <div className="stack">
+          {snapshot && (
+            <>
+              <p>{snapshot.principal}</p>
+              <p className="caption">
+                {t('expires')}:{' '}
+                <time dateTime={snapshot.expiresAt}>
+                  {new Intl.DateTimeFormat('en-US', {
+                    dateStyle: 'medium',
+                    timeStyle: 'short',
+                  }).format(new Date(snapshot.expiresAt))}
+                </time>
+              </p>
+            </>
+          )}
+          {snapshot && (
+            <Button
+              variant="default"
+              disabled={closing || busy || rememberUncertain || managementLocked}
+              onClick={showLogin}
+            >
+              {t('reauthenticate')}
+            </Button>
+          )}
+          <SegmentedControl
+            aria-label={t('theme')}
+            value={scheme}
+            onChange={onScheme}
+            data={[
+              { value: 'auto', label: t('auto') },
+              { value: 'light', label: t('light') },
+              { value: 'dark', label: t('dark') },
+            ]}
+          />
+          <details>
+            <summary>{t('interfaceInformation')}</summary>
+            <p>{t('partial')}</p>
+            <p>{t('terminalFresh')}</p>
+          </details>
+          <nav aria-label={t('discovery')}>
+            <ul>
               {metadata.publishedSlugs.map((slug) => (
                 <li key={slug}>
                   {managementLocked ? (
@@ -630,75 +763,20 @@ export function App({
               ))}
             </ul>
           </nav>
-        )}
-        <footer className="caption workspace-footer">
-          <details>
-            <summary>{t('interfaceInformation')}</summary>
-            <p>{t('partial')}</p>
-          </details>
           <Anchor href="/_bifroest/files/third-party-licenses.txt">{t('notices')}</Anchor>
-        </footer>
-      </div>
+        </div>
+      </Modal>
       <Modal
-        classNames={{ content: 'confirmation-dialog' }}
         lockScroll={false}
-        opened={loginStep !== null}
-        onClose={cancel}
-        closeOnClickOutside={false}
-        title={t('loginChallenge')}
-        closeButtonProps={{ 'aria-label': t('cancel') }}
+        opened={noticeOpen && !loginOpen}
+        onClose={() => setNoticeOpen(false)}
+        title={t('showNotice')}
+        closeButtonProps={{ 'aria-label': t('close') }}
       >
-        {loginStep !== null && (
-          <form
-            method="post"
-            action="/_bifroest/api/v1/login/reply"
-            className="stack"
-            onSubmit={(event) => {
-              event.preventDefault();
-              answerStep(event.currentTarget);
-            }}
-          >
-            <Alert color={loginStep.kind === 'error' ? 'red' : 'blue'}>
-              <p className="login-message">{loginStep.message}</p>
-            </Alert>
-            {providerLink !== null && (
-              <Anchor
-                href={providerLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                referrerPolicy="no-referrer"
-              >
-                {t('verificationLink')} ({new URL(providerLink).hostname})
-              </Anchor>
-            )}
-            {loginStep.kind === 'prompt' &&
-              (loginStep.echo ? (
-                <TextInput
-                  key={`${generation.current}:${loginStep.sequence}`}
-                  name="answer"
-                  label={t('loginResponse')}
-                  autoComplete="off"
-                  data-autofocus
-                />
-              ) : (
-                <PasswordInput
-                  key={`${generation.current}:${loginStep.sequence}`}
-                  name="answer"
-                  label={t('loginResponse')}
-                  autoComplete="off"
-                  data-autofocus
-                  visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }}
-                />
-              ))}
-            <div className="actions">
-              <Button type="submit">
-                {t(loginStep.kind === 'prompt' ? 'loginReply' : 'loginContinue')}
-              </Button>
-              <Button type="button" variant="default" onClick={cancel}>
-                {t('cancel')}
-              </Button>
-            </div>
-          </form>
+        {notice && (
+          <Alert role="status" color={notice.color}>
+            {t(notice.key)}
+          </Alert>
         )}
       </Modal>
       <Modal
@@ -724,6 +802,6 @@ export function App({
           </Button>
         </div>
       </Modal>
-    </main>
+    </>
   );
 }

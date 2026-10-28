@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { settledLogin } from './workspace-ui.mjs';
 
 export async function exerciseInteractive(page, login, logout) {
   await login(page, false);
@@ -40,7 +41,7 @@ export async function exerciseInteractive(page, login, logout) {
   );
   await dialog.getByLabel('Response', { exact: true }).fill('correct');
   await dialog.getByRole('button', { name: 'Send response', exact: true }).click();
-  await page.getByRole('heading', { name: 'Signed in as alice', exact: true }).waitFor();
+  await settledLogin(page, 'alice');
   await page.getByText('RememberMe setup confirmed for this browser.', { exact: true }).waitFor();
   assert.equal(await page.getByRole('dialog').count(), 0);
   await logout(page);
@@ -106,15 +107,11 @@ export async function exerciseDevice(page, cancel) {
       0,
     );
   } else {
-    await page
-      .getByRole('heading', { name: 'Signed in as verified-subject', exact: true })
-      .waitFor();
+    await settledLogin(page, 'verified-subject');
     await page.getByText('RememberMe setup confirmed for this browser.', { exact: true }).waitFor();
     await page.reload();
     await page.getByRole('button', { name: 'Use saved access', exact: true }).click();
-    await page
-      .getByRole('heading', { name: 'Signed in as verified-subject', exact: true })
-      .waitFor();
+    await settledLogin(page, 'verified-subject');
     await page.getByRole('button', { name: 'Log out', exact: true }).click();
     await page.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
   }
@@ -123,6 +120,10 @@ export async function exerciseDevice(page, cancel) {
 }
 
 export async function exerciseLostClaim(page, login, logout) {
+  let shells = 0;
+  page.on('websocket', () => {
+    shells++;
+  });
   await page.getByText('Interactive / device login', { exact: true }).click();
   await page.getByLabel('User name', { exact: true }).fill('alice');
   let polls = 0;
@@ -145,6 +146,7 @@ export async function exerciseLostClaim(page, login, logout) {
     0,
   );
   const before = polls;
+  assert.equal(shells, 0, 'an unconfirmed login response must never open a shell');
   await page.waitForTimeout(1600); // Deliberate quiet window: no automatic poll replay after the lost claim.
   assert.equal(polls, before);
   await page.getByText('Password login', { exact: true }).click();

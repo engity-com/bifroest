@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { settledLogin } from './workspace-ui.mjs';
 
 export async function exerciseKey(page, file, logout) {
   const fixture = JSON.parse(await readFile(file, 'utf8'));
@@ -47,7 +48,7 @@ export async function exerciseKey(page, file, logout) {
   };
   const signed = async () => {
     try {
-      await page.getByRole('heading', { name: 'Signed in as alice', exact: true }).waitFor();
+      await settledLogin(page, 'alice');
     } catch (error) {
       throw new Error(
         JSON.stringify({
@@ -146,11 +147,12 @@ export async function exerciseKey(page, file, logout) {
   await submit();
   await page.getByText('Access was denied.', { exact: false }).waitFor();
   assert.equal(page.workers().length, 0);
+  stage = 'certificate/pty';
   await select('ed', fixture.passphrase, 'certificate');
   await submit();
   await signed();
   await logout(page);
-  for (const name of ['plain', 'rsa', 'p256', 'p384', 'p521']) {
+  for (const name of ['plain']) {
     stage = name;
     await select(name, name === 'plain' ? '' : fixture.passphrase);
     await submit();
@@ -170,6 +172,60 @@ export async function exerciseKey(page, file, logout) {
       assert.deepEqual(Object.keys(body).sort(), ['publicKey', 'slug', 'user']);
     }
   }
+  assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
+  assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+}
+
+// Each algorithm / denied-PTY scenario owns its server and normal request budget.
+// The protocol/recovery test above must not become an artificial many-login burst
+// that spends the production per-peer asset/API limit before its last algorithm.
+export async function exerciseKeyVariant(page, file, variant, logout) {
+  const fixture = JSON.parse(await readFile(file, 'utf8'));
+  const denied = variant === 'no-pty';
+  let sockets = 0;
+  page.on('websocket', () => {
+    sockets++;
+  });
+  page.on('request', (request) => {
+    const body = request.postData() ?? '';
+    assert(
+      !body.includes('-----BEGIN') && !body.includes(fixture.passphrase),
+      'private material must stay in this tab',
+    );
+  });
+  await page.getByText('SSH key login', { exact: true }).click();
+  await page.getByLabel('User name', { exact: true }).fill('alice');
+  await page.getByLabel('Private key file (local only)', { exact: true }).setInputFiles({
+    name: 'local-key',
+    mimeType: 'application/octet-stream',
+    buffer: Buffer.from(fixture[denied ? 'ed' : variant]),
+  });
+  await page
+    .getByLabel('Key passphrase (optional, local only)', { exact: true })
+    .fill(fixture.passphrase);
+  if (denied) {
+    await page.getByLabel('SSH user certificate (optional)', { exact: true }).setInputFiles({
+      name: 'no-pty.pub',
+      mimeType: 'text/plain',
+      buffer: Buffer.from(fixture.noPtyCertificate),
+    });
+  }
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  if (denied) {
+    await page.getByRole('heading', { name: 'Signed in as alice', exact: true }).waitFor();
+    await page.getByRole('dialog', { name: 'Sign in', exact: true }).waitFor({ state: 'hidden' });
+    await page.locator('[data-terminal-phase="interrupted"]').waitFor();
+    assert.equal(await page.locator('[data-terminal-phase="exited"]').count(), 0);
+  } else {
+    await settledLogin(page, 'alice');
+  }
+  assert.equal(
+    sockets,
+    1,
+    'one confirmed login makes one shell attempt, with no PTY fallback or retry',
+  );
+  assert.equal(page.workers().length, 0);
+  await logout(page);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
   assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
 }

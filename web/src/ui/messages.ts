@@ -87,6 +87,25 @@ export const messages = {
   managementReadOnly:
     'Your existing authorization applies to every request. Forced commands may limit operations and visible fields. Lists show live pages, not complete snapshots. Disconnect and disposal require a separate one-time confirmation; neither grants additional read or transfer permissions.',
   workspaceNavigation: 'Workspace',
+  workspaceManagement: 'Management',
+  account: 'Account',
+  appearance: 'Appearance',
+  openLogin: 'Open sign-in',
+  showNotice: 'Notification details',
+  terminalTabs: 'Terminal tabs',
+  terminalNewTab: 'New terminal',
+  terminalCloseTab: 'Close terminal',
+  terminalActions: 'Terminal actions',
+  terminalCloseTitle: 'Close this terminal?',
+  terminalCloseWarning:
+    'This disconnects this execution. The server session and workload are kept. Other terminal tabs are not closed.',
+  terminalCloseConfirm: 'Close terminal',
+  terminalTabLimit:
+    'This window supports up to eight terminal tabs. Close a tab before opening another. Server connection limits still apply independently.',
+  terminalNoTab: 'No terminal open',
+  terminalNewTabHint: 'Use + in the bar to open a new shell.',
+  terminalSignedOut: 'Not signed in',
+  terminalSignInHint: 'Sign in to open your terminal.',
   workspaceSessions: 'Sessions',
   workspaceArtifacts: 'Recordings & audit',
   workspaceServer: 'Server',
@@ -322,7 +341,7 @@ export const messages = {
     'This flow selects Management. It uses your existing rights; no second administrator login is required.',
   terminal:
     'This flow selects a terminal environment. Server session, command and PTY policies still apply.',
-  reauthenticate: 'Sign in again for new connections',
+  reauthenticate: 'Sign in again',
   terminalTitle: 'Terminal',
   terminalLoading: 'Loading terminal…',
   terminalFresh:
@@ -341,8 +360,7 @@ export const messages = {
   terminalTerminate: 'Request TERM signal',
   terminalIdle: 'Not connected. Connect to start a new execution.',
   terminalConnecting: 'Connecting…',
-  terminalConnected:
-    'Connection registered. Process startup may still fail; check the output below.',
+  terminalConnected: 'Connected',
   terminalFinishing: 'Draining final output; new input is disabled.',
   terminalExited: 'Validated exit status:',
   terminalDisconnected: 'Execution disconnected locally; no successful exit was claimed.',

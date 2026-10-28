@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
-import { exerciseKey } from './key-ui.mjs';
+import { exerciseKey, exerciseKeyVariant } from './key-ui.mjs';
 import { exerciseDevice, exerciseInteractive, exerciseLostClaim } from './login-ui.mjs';
 import { exerciseManagementActions } from './management-action-ui.mjs';
 import { exerciseManagementForcedAction } from './management-forced-action-ui.mjs';
@@ -13,8 +13,9 @@ import {
   exerciseManagementForcedVersion,
 } from './management-forced-ui.mjs';
 import { exerciseManagement } from './management-ui.mjs';
+import { exerciseTerminalTabs } from './terminal-tabs-ui.mjs';
 import { exerciseTerminal } from './terminal-ui.mjs';
-import { loginLayout } from './workspace-ui.mjs';
+import { loginLayout, settledLogin } from './workspace-ui.mjs';
 
 const origin = process.argv[2];
 assert.match(origin, /^https:\/\/app\.example\.org:[0-9]+$/);
@@ -118,7 +119,7 @@ try {
       await dialog.getByRole('button', { name: 'Send response', exact: true }).click();
     }
     try {
-      await page.getByRole('heading', { name: `Signed in as ${user}`, exact: true }).waitFor();
+      await settledLogin(page, user, process.argv[3] === 'terminal');
     } catch (error) {
       throw new Error(
         JSON.stringify({
@@ -134,12 +135,21 @@ try {
     }
   };
   const logout = async (page) => {
+    const notification = page.getByRole('dialog', { name: 'Notification details', exact: true });
+    if (await notification.count()) {
+      await notification.getByRole('button', { name: 'Close', exact: true }).click();
+    }
     await page.getByRole('button', { name: 'Log out', exact: true }).click();
     await page.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
     assert.equal(await local(page), 'missing');
   };
   async function exercise() {
     let page = await open();
+    if (process.argv[3] === 'terminal-tabs') {
+      await exerciseTerminalTabs(page, login, logout);
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (
       process.argv[3] === 'management-forced-disconnect' ||
       process.argv[3] === 'management-forced-dispose'
@@ -175,6 +185,11 @@ try {
     }
     if (process.argv[3] === 'key') {
       await exerciseKey(page, process.argv[4], logout);
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.argv[3].startsWith('key-')) {
+      await exerciseKeyVariant(page, process.argv[4], process.argv[3].slice(4), logout);
       assert.deepEqual(errors, []);
       return;
     }
@@ -233,7 +248,7 @@ try {
     await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
     assert.equal(await local(page), 'ready');
     await page.getByRole('button', { name: 'Use saved access', exact: true }).click();
-    await page.getByRole('heading', { name: 'Signed in as alice', exact: true }).waitFor();
+    await settledLogin(page, 'alice');
     await logout(page);
     await page.evaluate(async () => {
       const response = await fetch('/_bifroest/test/interrupt-enrollment', {

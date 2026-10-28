@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { workspace } from './workspace-ui.mjs';
+import { reauthenticate, workspace } from './workspace-ui.mjs';
 
 export async function exerciseManagement(page, login, logout) {
   const bodyForFailure = async (response) => {
@@ -96,9 +96,7 @@ export async function exerciseManagement(page, login, logout) {
       .textContent()
       .then((text) => text.includes('plain:correct'))),
   );
-  await page
-    .getByRole('button', { name: 'Sign in again for new connections', exact: true })
-    .click();
+  await reauthenticate(page);
   await login(page, false, 'bob');
   await workspace(page, 'Server');
   assert.equal(await page.getByRole('region', { name: 'Server version', exact: true }).count(), 0);

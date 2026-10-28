@@ -5,7 +5,7 @@ toc_depth: 5
 # HTTP / HTTPS
 
 !!! warning "Incremental browser UI; not a complete workspace yet"
-    Built browser resources provide React/Mantine password, Keyboard-Interactive/OIDC device, local SSH-key/WASM, RememberMe recovery, xterm shell/exec, structured Management metadata, paged artifact catalogs, confirmed session actions and client-only artifact verification/decryption/export/playback through the same HTTPS boundary and authorizers as SSH. Release jobs include the browser bundle, notices and SPDX/CycloneDX inventory, but do not supply signed source provenance. Remaining forced-command equivalence is incomplete. Local password/interactive RememberMe is supported for the non-PAM Linux repository backend; PAM-backed and Windows native logon-policy resumption remain unavailable. Source-only direct Go builds without generated resources keep the SSH/HTTP APIs and discovery fallback, not an embedded UI. Keep HTTP omitted or disabled unless you intend to expose this incremental feature.
+    Built browser resources provide React/Mantine password, Keyboard-Interactive/OIDC device, local SSH-key/WASM, RememberMe recovery, xterm shell tabs, structured Management metadata, paged artifact catalogs, confirmed session actions and client-only artifact verification/decryption/export/playback through the same HTTPS boundary and authorizers as SSH. The separate terminal API supports shell/exec; the UI currently opens shells only. Release jobs include the browser bundle, notices and SPDX/CycloneDX inventory, but do not supply signed source provenance. Remaining forced-command equivalence is incomplete. Local password/interactive RememberMe is supported for the non-PAM Linux repository backend; PAM-backed and Windows native logon-policy resumption remain unavailable. Source-only direct Go builds without generated resources keep the SSH/HTTP APIs and discovery fallback, not an embedded UI. Keep HTTP omitted or disabled unless you intend to expose this incremental feature.
 
 HTTP is a separate incoming transport for the same [flows](../flow.md), not SSH tunneled over WebSocket. Omission of the root `http` block means disabled. Merely configuring domains, TLS or customization does not enable it. When the endpoint is available, all flows are HTTP-eligible by default unless their individual `http.enabled` is false; `ssh.enabled` remains independent.
 
@@ -149,7 +149,7 @@ pages on authentication changes/logout and refuses late replies after cancellati
 ### Browser workspace
 
 The browser workspace separates **Sessions**, **Recordings & audit** and
-**Server**. Opening or switching a view does not list, download, verify, execute
+**Server**. Switching existing views does not list, download, verify, execute
 or mutate anything automatically. The navigation stays in this tab; it does not
 create another login, role or authorization policy. Actor changes clear the
 previous actor's results, while switching views within one actor retains local
@@ -165,8 +165,26 @@ private verification and preparation of a local export; it does not save or play
 automatically. Signature-only checking remains the default, and advanced options
 retain independent verification-depth/export/redaction controls. No workflow
 choice adopts server-supplied producer/recipient hints as trusted expectations.
-The terminal uses a wider, viewport-adaptive work area; **Connect** still starts
-a new execution and never reattaches merely because of login or reload.
+The terminal fills the viewport below a compact status/tab bar. Sign-in,
+reauthentication, appearance and account details use dialogs. A confirmed
+terminal-capable sign-in or explicit RememberMe resume opens one new shell tab
+automatically. **+ / New terminal** opens another fresh shell with the current
+grant; selecting an existing tab never opens or reattaches a connection. There
+is no command/exec or PTY-toggle form in the UI; the existing wire protocol still
+supports these operations for other clients. The UI requests a shell with PTY
+and does not silently retry without PTY if the current key/environment denies it.
+
+Each in-page tab retains its own immutable access/actor, xterm, output and socket.
+Reauthentication opens a new tab without reassigning the old execution. Closing
+a live tab asks for confirmation and disconnects only that execution, never
+disposing its session/workload or another tab. Completed output remains until
+the user closes that tab. There are at most eight tabs per window as a local
+resource bound, independently of all server connection/admission quotas. Pending
+initialization is retired on cancellation/logout; uncertain authentication or
+RememberMe enrollment does not open a shell. Expiry does not terminate existing
+executions, and failed/dropped shells are never automatically retried. Reload
+loses the in-memory tabs: a subsequent confirmed login starts a fresh execution,
+not a reattachment.
 
 ### Conservative ForcedCommand operation equivalence
 
@@ -316,7 +334,7 @@ Browser WebSocket APIs cannot supply an ordinary Authorization header. The acces
 
 For exec, use `"task":"exec","command":"..."` instead; shell requests must omit `command`. `pty` and `environment` are optional. The empty slug selects the root. No client-selected session/connection ID, subsystem, private key or passphrase is accepted. Objects have exact case-sensitive field sets: unknown/duplicate/null fields, non-UTF8 controls and trailing JSON fail closed. Commands are limited to 4096 bytes without NUL. Terminal names are 1–128 ASCII letters/digits or `-_.+`; columns/rows must be positive uint16 values and optional `widthPixels`/`heightPixels` uint32 values. At most 32 environment strings are accepted, each `NAME=value`, with ASCII identifier names of at most 128 bytes, values of at most 2048 bytes, 8 KiB total and no NUL or case-insensitive duplicate names. Existing server/key/client environment-layer and forced-command policies still decide the effective environment/command.
 
-The server rechecks the scoped proof, authorization, session, identity, effective target and environment before acquiring a fresh shared connection quota. It replies `{"type":"ready","connectionId":"..."}` after registration, **not** as a promise that provisioning or execution will succeed. Each socket owns exactly one new shell/exec, with the shared task/audit/recording driver; reconnect or reload never reattaches to an old execution. Management flows are rejected here, not routed through CLI subprocesses or SSH tunnels. Their UI/protocol remains separate work.
+The server rechecks the scoped proof, authorization, session, identity, effective target and environment before acquiring a fresh shared connection quota. It replies `{"type":"ready","connectionId":"..."}` after registration, **not** as a promise that provisioning or execution will succeed. Each socket owns exactly one new shell/exec, with the shared task/audit/recording driver; reconnect or reload never reattaches to an old execution. Management flows are rejected here, not routed through CLI subprocesses or SSH tunnels; they use the separate structured HTTP interface.
 
 After open:
 
@@ -576,15 +594,15 @@ Before proof submission, failed enrollment may remove only its own newly created
 
 Real Chromium tests cover these HTTP state transitions, cancellation/late replies, lost responses, failed completion/logout, stale deletion, scope and bounded/redirected replies. An additional explicitly requested Go test serves the actual built client through an owned HTTPS fixture: password login, enrollment, browser-process restart, same-session resume, neutral WebSocket execution and binding logout/revoke all use the real Go HTTP authorizer/session boundary. Independent primary access survives. Cookie-free HTTP API requests, rejected cookie-only WebSockets and same-origin rejection before a foreign destination are verified. This is not React UI, real shared-container or native Local password-policy coverage. Test-only asset routes do not provide production asset serving.
 
-The first React 19/Mantine 9 UI uses the same client, en-US message keys and memory-only auto/light/dark appearance. Passwords are not retained in application state, access tokens never enter rendered metadata, and disabled requesting-name collection omits the input and sends an empty name. A successful login stays usable when RememberMe cannot be confirmed. Unknown enrollment and unconfirmed logout remain visibly distinct from success; failed logout blocks new local actions while retaining the owned capability for retry. Remote revocation and explicit local-only removal have separate confirmation dialogs. A dialog retains its selected key/record, so another tab's replacement is not silently adopted. Native UI tests cover actual Go HTTPS, browser restart, unchecked opt-in, interrupted claims, local-only recovery, name-free input, customization, theme changes and CSP enforcement. Login itself still does not provision a workload or acquire an execution lease.
+The React 19/Mantine 9 UI uses the same client, en-US message keys and memory-only auto/light/dark appearance. Passwords are not retained in application state, access tokens never enter rendered metadata, and disabled requesting-name collection omits the input and sends an empty name. A successful primary login remains known when RememberMe cannot be confirmed, but uncertain enrollment blocks new automatic shells until reconciliation. Unknown enrollment and unconfirmed logout remain visibly distinct from success; failed logout blocks new local actions while retaining the owned capability for retry. Remote revocation and explicit local-only removal have separate confirmation dialogs. A dialog retains its selected key/record, so another tab's replacement is not silently adopted. Native UI tests cover actual Go HTTPS, browser restart, unchecked opt-in, interrupted claims, local-only recovery, name-free input, customization, theme changes and CSP enforcement. The authentication API alone does not provision a workload or acquire an execution lease; after a confirmed terminal-capable login the built UI separately opens one fresh shell connection.
 
 Vite 8/Oxc/Rolldown builds the app and dependency-free HTTP client core without Webpack/Babel. App preparation builds the portable Go/WASM components and validates their pinned runtime. The Management panel loads only for an authenticated Management environment. Node/browser automation and Go build subprocesses are build/test-only. Release builds require frontend preparation and its exact asset/input inventory before Go compilation; an unbuilt source-only checkout using direct `go build` remains API/SSH-capable. Forced-command equivalence, signed source provenance and additional browser/OS runtime coverage remain incomplete. See `web/README.md` for development, an explicit non-release runtime-file override and opt-in native tests.
 
-### Owned xterm shell/command UI
+### Owned xterm shell tabs
 
-An authenticated terminal flow offers an explicit new shell/exec, optional PTY, keyboard/binary input, resize, input EOF and INT/TERM requests. Each start is a fresh shared-driver execution, not reattachment. No automatic reconnect or CLI-based Management workaround is implemented. The first open frame alone carries the tab-memory proof. Registration is not a provisioning guarantee; a clean/abnormal close without a validated exit remains unknown, not status zero. Final renderer jobs drain before publishing an exit status.
+The terminal-capable UI opens one shell after confirmed login and offers additional shells through the tab bar. Each uses PTY, keyboard/binary input and resize; input EOF and INT/TERM requests remain explicit actions in the active tab's menu. Each tab is a fresh shared-driver execution, not reattachment. There is no separate command-execution form, automatic reconnect or CLI-based Management workaround. The first open frame alone carries the tab-memory proof. Connected denotes connection registration, not a provisioning guarantee; a clean/abnormal close without a validated exit remains unknown, not status zero. Final renderer jobs drain before publishing an exit status.
 
-Client buffering is bounded: 64 KiB queued stdin, conservative pacing below server byte/message/control budgets, 16 queued controls, native send-buffer backpressure checks, 64 output jobs/256 KiB and five-second render/write budgets. An oversized or stalled queue closes explicitly rather than silently truncating/replaying input. Scrollback is 1000 lines. Timers/resize observers/callbacks are drained or detached on cleanup; old xterm jobs drain before reset so output cannot bleed into a different execution/actor. Remote clipboard, window/title control and URL activation are not enabled. Theme follows the computed UI theme. New-access expiry or a deliberate fresh login does not replace an existing execution; its actor-at-start remains displayed independently of the current login.
+Client buffering per shell is bounded: 64 KiB queued stdin, conservative pacing below server byte/message/control budgets, 16 queued controls, native send-buffer backpressure checks, 64 output jobs/256 KiB and five-second render/write budgets. An oversized or stalled queue closes explicitly rather than silently truncating/replaying input. Scrollback is 1000 lines per tab, with at most eight tabs per window. Timers/resize observers/callbacks are drained or detached on cleanup; each tab has its own renderer and immutable actor instead of resetting and reusing another execution's output. Hidden tabs keep their own output and are refitted when selected. Only the active tab accepts input; authentication/account/confirmation dialogs disable terminal input and cannot have focus stolen by a late connection callback. Remote clipboard, window/title control and URL activation are not enabled. Theme follows the computed UI theme. New-access expiry or a deliberate fresh login does not replace an existing execution; its actor-at-start remains displayed independently of the current login.
 
 The locked xterm 6.0.0 documentOverride fallback has a precedence defect. A narrow version/count-guarded bundling correction, documented in `web/scripts/README.md`, preserves the per-instance Document adapter so style nodes receive the current nonce before insertion. No installed package/global DOM factory/CSP relaxation or upstream webpack build is used. Real Go HTTPS/Chromium tests cover split UTF-8/stderr, input/resize/signals, post-EOF output, validated status 7, actor-changing reauthentication without replacing the old execution, explicit disconnect, abrupt loss, exec/no-PTY and logout with retained sessions. They use a test backend through the real driver, not actual container/ConPTY processes.
 
@@ -598,7 +616,7 @@ The app exposes production/WASM notices and conservative component inventories. 
 
 ## Schema examples
 
-These are complete, parser-checked configuration examples for HTTPS. Apart from the explicit dummy test case, startup requires the indicated certificate/key files or successful ACME issuance for every domain. The built UI covers password/interactive/OIDC-device/local-key/RememberMe, shell/exec, structured Management metadata/confirmed session actions, paged artifact catalogs and client-only artifact verification/decryption/export/playback. Forced-command equivalence and release integration remain incomplete.
+These are complete, parser-checked configuration examples for HTTPS. Apart from the explicit dummy test case, startup requires the indicated certificate/key files or successful ACME issuance for every domain. The built UI covers password/interactive/OIDC-device/local-key/RememberMe, shell tabs, structured Management metadata/confirmed session actions, paged artifact catalogs and client-only artifact verification/decryption/export/playback. The terminal API separately supports shell/exec. Forced-command equivalence and release integration remain incomplete.
 
 ### Explicit dummy TLS for local testing
 

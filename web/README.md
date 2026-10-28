@@ -870,9 +870,13 @@ final-audit failure after a possible effect. Existing SSH controls remain covere
 
 ## Terminal ownership and limits
 
-The xterm/fit modules load after terminal-flow authentication. `Start new
-execution` owns exactly one new WebSocket shell/exec, optionally with PTY; no
-automatic reconnect/reattach or management CLI fallback exists. The proof is
+The xterm/fit modules load after confirmed terminal-flow authentication. The UI
+opens one shell tab automatically; `+ / New terminal` opens another. Each tab
+owns exactly one WebSocket shell with PTY and its own immutable access, renderer
+and output. The terminal fills the viewport below the status/tab bar; sign-in
+and account settings are dialogs. There is no command/exec or PTY-toggle form
+in the UI, while the underlying client/server protocol keeps those capabilities.
+No automatic reconnect/reattach or management CLI fallback exists. The proof is
 resolved fresh only for the first open message, not stored in the URL,
 subprotocol, terminal output or serialized state. Resize, binary/text input,
 EOF half-close and INT/TERM requests use the existing strict Go wire contract.
@@ -887,14 +891,18 @@ one xterm writer, and each renderer job has a five-second budget. The original
 UTF-8 byte stream is passed to xterm without per-frame decoding. Final output is
 drained before a validated uint32 exit is published. Clean/abnormal close without
 an exit is unknown, not status zero. Timers, observers, socket callbacks and
-renderer generations are owned/disposed; old renderer jobs drain before reset so
-they cannot bleed into a new execution/actor. Scrollback is 1000 lines. Remote
+renderer generations are owned/disposed; a tab's renderer is never reused for a
+different execution/actor. Scrollback is 1000 lines per tab, with a local limit
+of eight tabs independently of the server quotas. Remote
 OSC clipboard requests, application-title mutation, window operations and link
 activation are not enabled. Theme follows the same computed UI color scheme.
 
 New-access expiry/reauthentication does not replace a running execution. The
-terminal keeps its immutable actor-at-start label while a fresh login is used
-only for a subsequent start. Explicit tab logout disconnects owned UI transports
+terminal keeps its immutable actor-at-start label while a confirmed fresh login
+opens a separate new tab. Selecting an existing tab sends no new open request;
+closing a live tab requires confirmation and affects only that transport.
+Pending/canceled initialization cannot dispatch its old grant later, and dialogs
+disable terminal input/focus capture. Explicit logout disconnects owned UI transports
 without session disposal or adopting another actor's stored binding. An
 uncertain enrollment's original parent is kept for logout/reconciliation instead
 of being lost through a new login.

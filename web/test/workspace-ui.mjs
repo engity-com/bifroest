@@ -2,6 +2,43 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
+export async function settledLogin(page, user, holding = false) {
+  await page.getByRole('heading', { name: `Signed in as ${user}`, exact: true }).waitFor();
+  await page.getByRole('dialog', { name: 'Sign in', exact: true }).waitFor({ state: 'hidden' });
+  if (await page.getByRole('button', { name: 'New terminal', exact: true }).count()) {
+    await page.waitForFunction(
+      () =>
+        document.querySelector('[data-terminal-active="true"]') !== null ||
+        document.body.textContent.includes(
+          'RememberMe setup may have created a server permission.',
+        ),
+    );
+    if (!holding && (await page.locator('[data-terminal-active="true"]').count())) {
+      await page.locator('[data-terminal-phase="exited"]').waitFor();
+    }
+  }
+}
+
+export async function reauthenticate(page) {
+  await page.getByRole('button', { name: 'Account', exact: true }).click();
+  await page
+    .getByRole('dialog', { name: 'Account', exact: true })
+    .getByRole('button', { name: 'Sign in again', exact: true })
+    .click();
+}
+
+export async function changeTheme(page, name) {
+  const login = page.getByRole('dialog', { name: 'Sign in', exact: true });
+  if (await login.count()) {
+    await login.getByText(name, { exact: true }).click();
+    return;
+  }
+  await page.getByRole('button', { name: 'Appearance', exact: true }).click();
+  const account = page.getByRole('dialog', { name: 'Account', exact: true });
+  await account.getByText(name, { exact: true }).click();
+  await account.getByRole('button', { name: 'Close', exact: true }).click();
+}
+
 export async function captureLayout(page, name) {
   const dimensions = await page.evaluate(() => ({
     width: innerWidth,
@@ -25,14 +62,14 @@ export async function captureLayout(page, name) {
       name === 'terminal-desktop' ||
       name.endsWith('-verification')
     ) {
-      await page.getByText('Dark', { exact: true }).click();
+      await changeTheme(page, 'Dark');
       await page.locator('html[data-mantine-color-scheme="dark"]').waitFor();
       await page.screenshot({
         path: join(directory, `${name}-dark.png`),
         fullPage: true,
         animations: 'disabled',
       });
-      await page.getByText('Auto', { exact: true }).click();
+      await changeTheme(page, 'Auto');
     }
     await page.evaluate(({ x, y }) => window.scrollTo(x, y), scroll);
   }

@@ -47,6 +47,10 @@ func TestBrowserTerminalUiFreshExecutionResizeSignalsExitAndDisconnect(t *testin
 	testBrowserLoginUi(t, true, "terminal")
 }
 
+func TestBrowserTerminalTabsUiBoundsAndCanceledInitialization(t *testing.T) {
+	testBrowserLoginUi(t, true, "terminal-tabs")
+}
+
 func TestBrowserInteractiveLoginUiPlainTextEchoAndCancel(t *testing.T) {
 	testBrowserLoginUi(t, true, "interactive")
 }
@@ -104,7 +108,8 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	var authorizedKeys bfcrypto.AuthorizedKeys
 	forcedActionMode := mode == "management-forced-disconnect" || mode == "management-forced-dispose"
 	forcedReadMode := mode == "management-forced" || mode == "management-forced-audit" || mode == "management-forced-version"
-	if mode == "key" || forcedReadMode || forcedActionMode {
+	keyMode := mode == "key" || strings.HasPrefix(mode, "key-")
+	if keyMode || forcedReadMode || forcedActionMode {
 		keyFixture, authorizedKeys = browserKeyUiFixture(t)
 	}
 	if mode == "oidc" || mode == "oidc-cancel" {
@@ -154,7 +159,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 				}
 				settings.Entries[0].AuthorizedKeys = bfcrypto.AuthorizedKeys(keys.String())
 			}
-			if mode == "key" {
+			if keyMode {
 				conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple).Entries[0].AuthorizedKeys = authorizedKeys
 			}
 			if mode == "terminal" {
@@ -402,6 +407,9 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		require.Positive(t, terminalCounters.resizes.Load())
 		require.Positive(t, terminalCounters.interrupts.Load())
 	}
+	if mode == "key-no-pty" {
+		require.Empty(t, auditEventsNamed(lifecycleRecorder.eventsSnapshot(), audit.EventNameSessionTaskStarted), "a certificate without permit-pty cannot start an execution through the UI")
+	}
 	if actionTargets != nil {
 		expectedRuns := 3
 		if mode == "management-forced-dispose" {
@@ -445,8 +453,10 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 			require.Equal(t, session.StateAuthorized, info.State(), "management operations share session activation/activity")
 		case "terminal":
 			require.NotEqual(t, session.StateDisposed, info.State(), "disconnect/exit must preserve the shared session")
+		case "key-no-pty":
+			require.Equal(t, session.StateNew, info.State(), "PTY denial must not activate the session")
 		default:
-			require.Equal(t, session.StateNew, info.State(), "login UI must not provision a workload or acquire an execution lease")
+			require.Equal(t, session.StateAuthorized, info.State(), "confirmed terminal-capable browser login opens a fresh shell")
 		}
 		bindings, err := current.(session.BrowserBindingSession).BrowserBindings(ctx)
 		require.NoError(t, err)

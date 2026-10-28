@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
-import { captureLayout, exactArtifactSelection, workspace } from './workspace-ui.mjs';
+import {
+  captureLayout,
+  exactArtifactSelection,
+  reauthenticate,
+  workspace,
+} from './workspace-ui.mjs';
 
 const [origin, mode, keyPath] = process.argv.slice(2);
 assert.match(origin, /^https:\/\/app\.example\.org:[0-9]+$/u);
@@ -467,9 +472,7 @@ try {
     .getByText('Signing producer matches the independent expected ID', { exact: true })
     .waitFor();
   await save();
-  await page
-    .getByRole('button', { name: 'Sign in again for new connections', exact: true })
-    .click();
+  await reauthenticate(page);
   await page.getByLabel('User name', { exact: true }).fill('bob');
   await page.getByLabel('Password', { exact: true }).fill('correct');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
