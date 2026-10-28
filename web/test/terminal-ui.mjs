@@ -88,18 +88,79 @@ export async function exerciseTerminal(page, login) {
   );
   await page.getByRole('button', { name: 'New terminal', exact: true }).click();
   await output('EXECUTION_START:2');
+
   await reauthenticate(page);
-  await login(page, false, 'bob');
+  const signIn = page.getByRole('dialog', { name: 'Sign in', exact: true });
+  const rejectedSecret = 'incorrect-reauth-must-not-reach-the-shell';
+  await signIn.getByLabel('User name', { exact: true }).fill('alice');
+  await signIn.getByLabel('Password', { exact: true }).focus();
+  await page.keyboard.type(rejectedSecret);
+  assert.equal(await signIn.getByLabel('Password', { exact: true }).inputValue(), rejectedSecret);
+  await signIn.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await signIn.getByText('Access was denied.', { exact: false }).waitFor();
+  assert.equal(sockets, 2, 'a rejected reauthentication cannot open another shell');
+  assert.equal(await signIn.getByLabel('Password', { exact: true }).inputValue(), '');
+  await signIn.getByRole('button', { name: 'Close', exact: true }).click();
+  await signIn.waitFor({ state: 'hidden' });
+  await page.getByRole('heading', { name: 'Signed in as alice', exact: true }).waitFor();
+  await page.locator('[data-terminal-phase="connected"]').waitFor();
+  await type('kept-after-rejected-reauth');
+  await output('STDIN:kept-after-rejected-reauth');
+  assert(!(await pane().locator('.xterm-rows').textContent()).includes(rejectedSecret));
+
+  await reauthenticate(page);
+  await signIn.getByText('Interactive / device login', { exact: true }).click();
+  await signIn.getByLabel('User name', { exact: true }).fill('alice');
+  await signIn.getByRole('button', { name: 'Sign in', exact: true }).click();
+  const challenge = page.getByRole('dialog', { name: 'Authentication step', exact: true });
+  const cancelledSecret = 'cancelled-reauth-must-stay-in-the-dialog';
+  await challenge.getByLabel('Response', { exact: true }).focus();
+  await page.keyboard.type(cancelledSecret);
+  assert.equal(
+    await challenge.getByLabel('Response', { exact: true }).inputValue(),
+    cancelledSecret,
+  );
+  const stopped = page.waitForResponse(
+    (response) => response.url().endsWith('/api/v1/login/cancel') && response.status() === 204,
+  );
+  await challenge.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await stopped;
+  await signIn.getByText('Operation cancelled.', { exact: false }).waitFor();
+  await signIn.getByRole('button', { name: 'Close', exact: true }).click();
+  await signIn.waitFor({ state: 'hidden' });
+  assert.equal(
+    sockets,
+    2,
+    'a canceled reauthentication keeps the old grant and tabs without autostart',
+  );
+  assert.equal(await page.getByRole('tab').count(), 2);
+  await page.getByRole('heading', { name: 'Signed in as alice', exact: true }).waitFor();
+  await type('kept-after-cancelled-reauth');
+  await output('STDIN:kept-after-cancelled-reauth');
+  assert(!(await pane().locator('.xterm-rows').textContent()).includes(cancelledSecret));
+
+  await page.getByRole('button', { name: 'New terminal', exact: true }).click();
   await output('EXECUTION_START:3');
-  assert.equal(sockets, 3, 'reauthentication opens a new tab without replacing the old execution');
+  assert.equal(
+    sockets,
+    3,
+    'the original confirmed grant can still open an explicit shell after rejected and canceled reauthentication',
+  );
+  await page.getByRole('tab', { name: 'Terminal 3 alice', exact: true }).waitFor();
+
+  await reauthenticate(page);
+  await signIn.getByText('Password login', { exact: true }).click();
+  await login(page, false, 'bob');
+  await output('EXECUTION_START:4');
+  assert.equal(sockets, 4, 'reauthentication opens a new tab without replacing the old execution');
   assert(!(await pane().locator('.xterm-rows').textContent()).includes('EXECUTION_START:2'));
   await select(2, 'alice');
   await type('still-running');
   await output('STDIN:still-running');
-  await select(3, 'bob');
+  await select(4, 'bob');
   await type('drop');
   await page.locator('[data-terminal-phase="interrupted"]').waitFor();
-  assert.equal(sockets, 3, 'an interrupted shell must not be replayed automatically');
+  assert.equal(sockets, 4, 'an interrupted shell must not be replayed automatically');
   assert.equal(await page.locator('[data-terminal-phase="exited"]').count(), 0);
   await select(2, 'alice');
   await page.getByRole('button', { name: 'Close terminal 2', exact: true }).click();
@@ -112,7 +173,7 @@ export async function exerciseTerminal(page, login) {
   await closing.getByRole('button', { name: 'Close terminal', exact: true }).click();
   assert.equal(await page.getByRole('tab', { name: 'Terminal 2 alice', exact: true }).count(), 0);
   await page.getByRole('button', { name: 'New terminal', exact: true }).click();
-  await output('EXECUTION_START:4');
+  await output('EXECUTION_START:5');
   await action('Send input EOF');
   await page.locator('[data-terminal-phase="exited"]').waitFor();
   await select(1, 'alice');
@@ -123,7 +184,7 @@ export async function exerciseTerminal(page, login) {
   );
   assert.deepEqual(
     openings,
-    Array.from({ length: 4 }, () => ({ task: 'shell', command: undefined, pty: true })),
+    Array.from({ length: 5 }, () => ({ task: 'shell', command: undefined, pty: true })),
   );
   await page.getByRole('button', { name: 'Log out', exact: true }).click();
   await page.getByRole('button', { name: 'Sign in', exact: true }).waitFor();

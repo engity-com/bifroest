@@ -403,7 +403,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	}
 	require.Equal(t, expectedSessions, webSessionCount(t, svc))
 	if terminalCounters != nil {
-		require.EqualValues(t, 4, terminalCounters.runs.Load())
+		require.EqualValues(t, 5, terminalCounters.runs.Load())
 		require.Positive(t, terminalCounters.resizes.Load())
 		require.Positive(t, terminalCounters.interrupts.Load())
 	}
