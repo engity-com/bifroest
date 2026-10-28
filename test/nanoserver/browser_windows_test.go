@@ -109,7 +109,7 @@ type nativeSSHProbe struct {
 	scanner    *bufio.Scanner
 }
 
-func startNativeSSH(t *testing.T, ctx context.Context, address string, fixture browserfixture.Fixture, keyFile, command string) *nativeSSHProbe {
+func startNativeSSH(t *testing.T, ctx context.Context, address string, fixture browserfixture.Fixture, keyFile, command string, pty bool) *nativeSSHProbe {
 	t.Helper()
 	raw, err := os.ReadFile(keyFile)
 	require.NoError(t, err)
@@ -133,6 +133,9 @@ func startNativeSSH(t *testing.T, ctx context.Context, address string, fixture b
 	output, err := current.StdoutPipe()
 	require.NoError(t, err)
 	current.Stderr = os.Stderr
+	if pty {
+		require.NoError(t, current.RequestPty("xterm", 25, 4096, ssh.TerminalModes{}))
+	}
 	require.NoError(t, current.Start(fixture.Probe+" "+command))
 	return &nativeSSHProbe{connection: connection, session: current, input: input, scanner: bufio.NewScanner(output)}
 }
@@ -243,10 +246,18 @@ func exerciseServerCoreBrowser(t *testing.T, parent context.Context, root, image
 		}
 		return nil
 	})
-	held := startNativeSSH(t, ctx, address, fixture, keyFile, "browser-hold")
+	held := startNativeSSH(t, ctx, address, fixture, keyFile, "browser-hold", false)
 	first := held.observe(t, "ssh-initial")
 	requireNativeIdentity(t, fixture, first, false)
 	require.Equal(t, "ssh-owned", first.Content)
+	// Exercise the real executable's ConPTY relay through SSH too. The existing
+	// environment.test.exe relay oracle alone does not cover CLI registration.
+	reference := startNativeSSH(t, ctx, address, fixture, keyFile, "browser-probe ssh-pty", true)
+	ptyReference := reference.observe(t, "ssh-pty")
+	requireNativeIdentity(t, fixture, ptyReference, true)
+	require.Equal(t, first.Session, ptyReference.Session)
+	require.NoError(t, reference.connection.SetDeadline(time.Now().Add(15*time.Second)))
+	require.NoError(t, reference.session.Wait())
 	node := os.Getenv("BIFROEST_TEST_NODE")
 	if node == "" {
 		var err error
@@ -319,6 +330,8 @@ func exerciseServerCoreBrowser(t *testing.T, parent context.Context, root, image
 	require.Empty(t, checkpoints)
 	require.Len(t, browser.Executions, 5)
 	expectations := map[string]nativeExecutionExpectation{first.Connection: {task: audit.SessionTaskExec, exit: nativeExit(0)}}
+	require.NotEqual(t, first.Connection, ptyReference.Connection)
+	expectations[ptyReference.Connection] = nativeExecutionExpectation{task: audit.SessionTaskExec, pty: true, exit: nativeExit(0)}
 	for _, execution := range browser.Executions {
 		requireNativeIdentity(t, fixture, execution.Probe, true)
 		require.Equal(t, first.Session, execution.Session)
@@ -331,7 +344,7 @@ func exerciseServerCoreBrowser(t *testing.T, parent context.Context, root, image
 	require.NoError(t, held.connection.SetDeadline(time.Now().Add(15*time.Second)))
 	require.NoError(t, held.input.Close())
 	require.NoError(t, held.session.Wait())
-	last := startNativeSSH(t, ctx, address, fixture, keyFile, "browser-probe ssh-final")
+	last := startNativeSSH(t, ctx, address, fixture, keyFile, "browser-probe ssh-final", false)
 	final := last.observe(t, "ssh-final")
 	requireNativeIdentity(t, fixture, final, false)
 	require.Equal(t, first.Session, final.Session)
@@ -448,5 +461,5 @@ func verifyNativeWindowsEvidence(t *testing.T, dir string, fixture browserfixtur
 	count := 0
 	require.NoError(t, repository.FindAll(t.Context(), func(context.Context, session.Session) (bool, error) { count++; return true, nil }, nil))
 	require.Equal(t, 1, count, "SSH/key-WASM/reloads must retain exactly one associated native session")
-	t.Logf("native Windows browser: SID=%s session=%s seven fresh connections, five real ConPTY shells, exact exits7/0, close/reload/logout isolation and signed audit/recordings", fixture.SID, id)
+	t.Logf("native Windows browser: SID=%s session=%s eight fresh connections, five real ConPTY shells plus native SSH PTY, exact exits7/0, close/reload/logout isolation and signed audit/recordings", fixture.SID, id)
 }

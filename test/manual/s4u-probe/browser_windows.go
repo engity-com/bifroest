@@ -293,7 +293,7 @@ func preflightBrowserService(fixture browserfixture.Fixture) (resultErr error) {
 func browserServiceStartDiagnostics(name string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	application, _ := exec.CommandContext(ctx, "wevtutil", "qe", "Application", "/q:*[System[Provider[@Name='"+name+"'] or Provider[@Name='engity-bifroest']]]", "/f:text", "/c:20", "/rd:true").CombinedOutput()
+	application, _ := exec.CommandContext(ctx, "wevtutil", "qe", "Application", "/q:*[System[Provider[@Name='"+name+"'] or Provider[@Name='engity-bifroest']]]", "/f:xml", "/c:20", "/rd:true").CombinedOutput()
 	connection, endpointErr := net.DialTimeout("tcp", "127.0.0.1:8443", 250*time.Millisecond)
 	if connection != nil {
 		_ = connection.Close()

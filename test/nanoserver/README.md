@@ -51,12 +51,13 @@ session/connection IDs and console dimensions. A changed size must reach the
 actual ConPTY before the helper confirms it. Profile-marker reads through an
 independent container inspection confirm that the workload survives each action.
 
-Five deliberate browser shells and two SSH executions must share exactly one
+Five deliberate browser shells and three SSH executions (including an actual
+SSH PTY reference using the real executable, not the test-binary relay) share one
 stored native session, have distinct connection IDs, and retain the same target
 SID. Browser exits 7 and 0 must be explicitly validated; live transport retirement
 must not infer a successful exit. After a clean Windows-service stop, the existing
 Go audit/recording verifiers check every signed artifact against the independent
-fixture producer pin and correlate all seven task/connection/operation records.
+fixture producer pin and correlate all eight task/connection/operation records.
 The copied session association must still identify the original local SID and
 must not be disposed. This does not enable Windows SAM password RememberMe or
 claim that service installation inside a container is the released image's default
