@@ -104,13 +104,9 @@ func exerciseSharedBrowserWorkload(t *testing.T, f *fixture, node, backend strin
 		if _, duplicate := wanted[e.Connection]; duplicate {
 			t.Fatalf("reattached execution %q", e.Connection)
 		}
-		expect := sharedExecutionExpectation{task: audit.SessionTaskExec}
+		expect := sharedExecutionExpectation{task: audit.SessionTaskShell, pty: true}
 		if index == 0 {
 			expect.exit = 7
-			if backend == "docker" {
-				expect.task = audit.SessionTaskShell
-				expect.pty = true
-			}
 		}
 		wanted[e.Connection] = expect
 	}

@@ -23,7 +23,14 @@ try {
   const errors = [];
   const replies = [];
   const controls = [];
+  const networkFailures = [];
   page.on('pageerror', (error) => errors.push(error.message));
+  page.on('requestfailed', (request) =>
+    networkFailures.push({
+      path: new URL(request.url()).pathname,
+      error: request.failure()?.errorText,
+    }),
+  );
   page.on('response', (response) => {
     const path = new URL(response.url()).pathname;
     if (path.includes('/api/') || response.status() >= 400) {
@@ -52,7 +59,22 @@ try {
     const response = await page.goto(`${origin}/Work`);
     assert.equal(response.status(), 200);
     assert(!response.headers()['content-security-policy'].includes('wasm-unsafe-eval'));
-    await page.getByText('SSH key login', { exact: true }).click();
+    try {
+      await page.getByText('SSH key login', { exact: true }).click();
+    } catch (error) {
+      throw new Error(
+        JSON.stringify({
+          stage: 'initial-login-view',
+          errors,
+          replies,
+          networkFailures,
+          headings: await page.getByRole('heading').allTextContents(),
+          root: (await page.locator('#root').textContent())?.slice(0, 1024),
+          csp: await page.evaluate(() => window.cspViolations),
+        }),
+        { cause: error },
+      );
+    }
     await page.getByLabel('User name', { exact: true }).fill('e2e');
     await page.getByLabel('Private key file (local only)', { exact: true }).setInputFiles(keyFile);
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
@@ -72,9 +94,15 @@ try {
       await page.keyboard.type(`exec ${command}`);
       await page.keyboard.press('Enter');
       await page.locator('[data-terminal-phase="exited"]').waitFor();
-      assert.match(
+      assert.equal(
+        await page
+          .locator('[data-terminal-phase="exited"]')
+          .getAttribute('data-terminal-exit-status'),
+        String(expectedExit),
+      );
+      assert.equal(
         await page.locator('[data-terminal-phase="exited"]').textContent(),
-        new RegExp(`\\b${expectedExit}\\b`, 'u'),
+        `Validated exit status: ${expectedExit}`,
       );
       await page.locator('.terminal-surface').scrollIntoViewIfNeeded();
       await page.waitForFunction(

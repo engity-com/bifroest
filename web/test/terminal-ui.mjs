@@ -81,7 +81,11 @@ export async function exerciseTerminal(page, login) {
   await action('Send input EOF');
   await output('OUTPUT_AFTER_EOF');
   await page.locator('[data-terminal-phase="exited"]').waitFor();
-  assert((await page.locator('[data-terminal-phase="exited"]').textContent()).includes('7'));
+  assert.equal(
+    await page.locator('[data-terminal-phase="exited"]').textContent(),
+    'Validated exit status: 7',
+    'the exact validated exit status is independent of the actor label',
+  );
   await page.getByRole('button', { name: 'New terminal', exact: true }).click();
   await output('EXECUTION_START:2');
   await reauthenticate(page);

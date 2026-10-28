@@ -194,22 +194,24 @@ export function TerminalWorkspace({
           <h1 title={title}>{title}</h1>
           <span>{scope || '/'}</span>
         </div>
-        <div
-          className="application-status"
-          role="status"
-          data-terminal-phase={selected?.state.phase}
-        >
+        <div className="application-status">
           {selected ? (
             <>
               <span className={`connection-dot connection-dot--${selected.state.phase}`} />
-              <span>
+              <span
+                role="status"
+                data-terminal-phase={selected.state.phase}
+                data-terminal-exit-status={
+                  selected.state.phase === 'exited' ? selected.state.status : undefined
+                }
+              >
                 {t(terminalStatus(selected.state))}
                 {selected.state.phase === 'exited' ? ` ${selected.state.status}` : ''}
               </span>
               <span className="terminal-owner">{selected.access.snapshot().principal}</span>
             </>
           ) : (
-            <span>
+            <span role="status">
               {t(
                 access?.snapshot().environment === 'management'
                   ? 'workspaceManagement'
