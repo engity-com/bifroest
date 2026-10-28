@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -16,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,6 +26,7 @@ import (
 	"time"
 	"unsafe"
 
+	clibase "github.com/echocat/cli4g"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -33,7 +36,11 @@ import (
 	"golang.org/x/term"
 
 	"github.com/engity-com/bifroest/pkg/audit"
+	bcli "github.com/engity-com/bifroest/pkg/cli"
+	cliCommon "github.com/engity-com/bifroest/pkg/cli/common"
+	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/engity-com/bifroest/test/nanoserver/browserfixture"
 )
 
@@ -185,7 +192,15 @@ func prepareBrowserConfiguration(binary string) (browserfixture.Fixture, error) 
 	if err := os.WriteFile(filepath.Join(root, "authorized-key"), public, 0600); err != nil {
 		return fixture, err
 	}
-	configuration := fmt.Sprintf(`startMessage: '{{""}}'
+	configuration := browserConfiguration(root, user, sid.String())
+	if err := os.WriteFile(filepath.Join(root, "configuration.yaml"), []byte(configuration), 0600); err != nil {
+		return fixture, err
+	}
+	return browserfixture.Fixture{Service: service, Root: root, User: user, SID: sid.String(), Probe: probe, Producer: identity.ProducerId().String(), Certificate: string(cert), HostKey: string(ssh.MarshalAuthorizedKey(hostKey.PublicKey().ToSsh()))}, nil
+}
+
+func browserConfiguration(root, user, sid string) string {
+	return fmt.Sprintf(`startMessage: '{{""}}'
 ssh:
   addresses: ["0.0.0.0:2222"]
   keys:
@@ -244,11 +259,54 @@ flows:
       shellCommand: ['C:\Windows\System32\cmd.exe', /D, /Q]
       execCommandPrefix: ['C:\Windows\System32\cmd.exe', /D, /Q, /C]
       banner: '{{""}}'
-`, filepath.Join(root, "host-key"), filepath.Join(root, "sessions"), filepath.Join(root, "audit-key"), filepath.Join(root, "auditlog"), filepath.Join(root, "recordings"), filepath.Join(root, "tls-cert"), filepath.Join(root, "tls-key"), browserfixture.Flow, filepath.Join(root, "authorized-key"), user, sid.String())
-	if err := os.WriteFile(filepath.Join(root, "configuration.yaml"), []byte(configuration), 0600); err != nil {
-		return fixture, err
+`, filepath.Join(root, "host-key"), filepath.Join(root, "sessions"), filepath.Join(root, "audit-key"), filepath.Join(root, "auditlog"), filepath.Join(root, "recordings"), filepath.Join(root, "tls-cert"), filepath.Join(root, "tls-key"), browserfixture.Flow, filepath.Join(root, "authorized-key"), user, sid)
+}
+
+func browserServiceArguments(fixture browserfixture.Fixture) []string {
+	return []string{"run", "--configuration=" + filepath.Join(fixture.Root, "configuration.yaml"), "--serviceName=" + fixture.Service}
+}
+
+// Parse exactly the real service CLI, but never call service.Run, bind a port,
+// provision an environment or register a Windows service. This is only a test
+// controller preflight; the acceptance path below still starts the real binary.
+func preflightBrowserService(fixture browserfixture.Fixture) (resultErr error) {
+	inService, err := svc.IsWindowsService()
+	if err != nil {
+		return err
 	}
-	return browserfixture.Fixture{Service: service, Root: root, User: user, SID: sid.String(), Probe: probe, Producer: identity.ProducerId().String(), Certificate: string(cert), HostKey: string(ssh.MarshalAuthorizedKey(hostKey.PublicKey().ToSsh()))}, nil
+	if inService {
+		return fmt.Errorf("browser bootstrap was unexpectedly classified as a Windows service")
+	}
+	called := false
+	app, err := bcli.NewApplication[clibase.NoOptions](nil, "native browser CLI preflight", func(_ context.Context, conf configuration.Configuration, _ sys.Version) error {
+		called = true
+		if len(conf.Flows) != 1 || conf.Flows[0].Name.String() != browserfixture.Flow {
+			return fmt.Errorf("unexpected native browser flow")
+		}
+		return nil
+	}).Create()
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, app.Close()) }()
+	if err := app.ParseAndExecute(context.Background(), &clibase.ParseOpts{Profiles: []string{cliCommon.ProfileExecutable}}, browserServiceArguments(fixture)...); err != nil {
+		return fmt.Errorf("native browser service CLI preflight: %w", err)
+	}
+	if !called {
+		return fmt.Errorf("native browser CLI did not reach its non-serving preflight runner")
+	}
+	return nil
+}
+
+func browserServiceStartDiagnostics(name string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	application, _ := exec.CommandContext(ctx, "wevtutil", "qe", "Application", "/q:*[System[Provider[@Name='"+name+"'] or Provider[@Name='engity-bifroest']]]", "/f:text", "/c:20", "/rd:true").CombinedOutput()
+	connection, endpointErr := net.DialTimeout("tcp", "127.0.0.1:8443", 250*time.Millisecond)
+	if connection != nil {
+		_ = connection.Close()
+	}
+	return fmt.Sprintf("own/default Bifroest application events: %s; native HTTPS listener present=%t", application, endpointErr == nil)
 }
 
 func serveBrowserContainer(binary string) (resultErr error) {
@@ -256,12 +314,15 @@ func serveBrowserContainer(binary string) (resultErr error) {
 	if err != nil {
 		return err
 	}
+	if err := preflightBrowserService(fixture); err != nil {
+		return err
+	}
 	manager, err := mgr.Connect()
 	if err != nil {
 		return err
 	}
 	defer func() { resultErr = errors.Join(resultErr, manager.Disconnect()) }()
-	service, err := manager.CreateService(fixture.Service, filepath.Join(filepath.Dir(fixture.Probe), "bifroest.exe"), mgr.Config{StartType: mgr.StartManual, ServiceStartName: "LocalSystem"}, "run", "--configuration="+filepath.Join(fixture.Root, "configuration.yaml"), "--serviceName="+fixture.Service)
+	service, err := manager.CreateService(fixture.Service, filepath.Join(filepath.Dir(fixture.Probe), "bifroest.exe"), mgr.Config{StartType: mgr.StartManual, ServiceStartName: "LocalSystem"}, browserServiceArguments(fixture)...)
 	if err != nil {
 		return err
 	}
@@ -277,7 +338,7 @@ func serveBrowserContainer(binary string) (resultErr error) {
 		return err
 	}
 	if err := service.Start(); err != nil {
-		return err
+		return fmt.Errorf("start owned native Windows service: %w; %s", err, browserServiceStartDiagnostics(fixture.Service))
 	}
 	stopped = false
 	raw, err := json.Marshal(fixture)

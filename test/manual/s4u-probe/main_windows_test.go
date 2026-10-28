@@ -3,8 +3,15 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/engity-com/bifroest/pkg/configuration"
+	"github.com/engity-com/bifroest/test/nanoserver/browserfixture"
 )
 
 func TestContainerAccountCreationRejectsHost(t *testing.T) {
@@ -36,4 +43,23 @@ func TestBrowserBootstrapRejectsHostBeforeNativeChanges(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "ContainerAdministrator") {
 		t.Fatalf("expected host bootstrap rejection before account/service/file changes, got %v", err)
 	}
+}
+
+func TestBrowserFixtureConfigurationAndRealCliPreflight(t *testing.T) {
+	root := t.TempDir()
+	const name = "bifroest-native-test"
+	const sid = "S-1-5-21-1-2-3-1001"
+	path := filepath.Join(root, "configuration.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(browserConfiguration(root, name, sid)), 0600))
+	var conf configuration.Configuration
+	require.NoError(t, conf.LoadFromFile(path))
+	require.Len(t, conf.Flows, 1)
+	local := conf.Flows[0].Environment.V.(*configuration.EnvironmentLocal)
+	user, err := local.Name.Render(nil)
+	require.NoError(t, err)
+	require.Equal(t, name, user)
+	uid, err := local.Uid.Render(nil)
+	require.NoError(t, err)
+	require.Equal(t, sid, uid)
+	require.NoError(t, preflightBrowserService(browserfixture.Fixture{Root: root, Service: "bifroest-browser-cli-preflight"}))
 }
