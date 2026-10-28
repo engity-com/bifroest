@@ -477,6 +477,13 @@ func printBrowserProbe(marker, write string) error {
 
 func runBrowserProbe(args []string) error {
 	switch {
+	case len(args) == 1 && args[0] == "browser-events":
+		fixture, err := readBrowserFixture()
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Println(browserServiceStartDiagnostics(fixture.Service))
+		return err
 	case len(args) == 1 && args[0] == "browser-inspect":
 		fixture, err := readBrowserFixture()
 		if err != nil {

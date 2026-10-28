@@ -171,6 +171,7 @@ func exerciseServerCoreBrowser(t *testing.T, parent context.Context, root, image
 	diagnosticDirectory := filepath.Join(root, "var", "e2e")
 	require.NoError(t, os.MkdirAll(diagnosticDirectory, 0700))
 	var diagnostics, trace bytes.Buffer
+	var fixture browserfixture.Fixture
 	t.Cleanup(func() {
 		if !t.Failed() {
 			return
@@ -181,11 +182,15 @@ func exerciseServerCoreBrowser(t *testing.T, parent context.Context, root, image
 		defer stop()
 		raw, _ := exec.CommandContext(cleanup, "docker", "logs", name).CombinedOutput()
 		_ = os.WriteFile(filepath.Join(diagnosticDirectory, "windows-browser-container.log"), raw, 0600)
+		if fixture.Service != "" {
+			events, err := exec.CommandContext(cleanup, "docker", "exec", name, `C:\smoke\s4u-probe.exe`, "browser-events").CombinedOutput()
+			_ = os.WriteFile(filepath.Join(diagnosticDirectory, "windows-browser-service-events.log"), events, 0600)
+			t.Logf("owned native service diagnostics (read error %v): %s", err, events)
+		}
 	})
 	h.mustDocker("run", "--detach", "--name", name, "--isolation="+isolation, "--user", "ContainerAdministrator", "--env", "BIFROEST_TEST_LOCAL_SAM_IN_CONTAINER=1", "--env", "BIFROEST_TEST_SERVERCORE_BROWSER=1", image, `C:\smoke\s4u-probe.exe`, "browser-serve", `C:\smoke\bifroest.exe`)
 	dir := t.TempDir()
 	fixtureFile := filepath.Join(dir, "fixture.json")
-	var fixture browserfixture.Fixture
 	h.ready(func() error {
 		if _, err := h.docker("cp", name+`:C:\smoke\browser-fixture.json`, fixtureFile); err != nil {
 			return err
