@@ -27,6 +27,13 @@ The GitHub Actions `Nano Server Integration` workflow runs this task on a dispos
 
 The required `servercore-native-browser` subtest starts the **real built Windows
 Bifroest executable** through its existing Windows service runner as LocalSystem.
+The registered command explicitly includes `--windowsService` and its registered
+`--serviceName`; parent-process detection alone is not reliable inside Server Core
+containers. The ordinary foreground default remains unchanged. A small marked
+LocalSystem preparation service creates the private fixture state with the correct
+native owner before the real gateway starts. It is only a file/bootstrap step,
+not a substitute gateway or an authorization server. Private-key owner/DACL checks
+remain unchanged; ContainerAdministrator-owned keys are not accepted by exception.
 Bootstrap requires ContainerAdministrator, an explicit container-only environment
 gate and the owned Server Core image marker. Only a new random container-local
 SAM account is used; no host service, account, logon right or TCB privilege is

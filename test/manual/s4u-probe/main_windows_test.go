@@ -70,3 +70,13 @@ func TestSystemBrowserDiagnosticsAreExplicitServiceArguments(t *testing.T) {
 	require.Equal(t, []string{"service", "owned", "result", "tests", "user", "servercore"}, probeServiceArguments("owned", "result", "tests", "user", true, false))
 	require.Equal(t, []string{"service", "owned", "result", "tests", "user"}, probeServiceArguments("owned", "result", "tests", "user", false, true))
 }
+
+func TestSystemPreparationRejectsControllerBeforeCreatingPrivateState(t *testing.T) {
+	sid, err := currentSID()
+	require.NoError(t, err)
+	if sid == "S-1-5-18" {
+		t.Skip("requires an ordinary test-host identity")
+	}
+	_, err = initializeSystemBrowserState(browserfixture.Fixture{Root: "must-not-be-created"})
+	require.ErrorContains(t, err, "LocalSystem")
+}

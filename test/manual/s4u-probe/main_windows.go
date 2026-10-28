@@ -75,6 +75,8 @@ type containerTestUserInfo struct {
 func main() {
 	var err error
 	switch {
+	case len(os.Args) == 4 && os.Args[1] == "browser-prepare":
+		err = svc.Run(os.Args[2], &browserPreparationService{input: os.Args[3]})
 	case len(os.Args) == 3 && os.Args[1] == "browser-serve":
 		err = serveBrowserContainer(os.Args[2])
 	case len(os.Args) == 2 && os.Args[1] == "browser-stop":

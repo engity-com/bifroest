@@ -38,9 +38,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	bcli "github.com/engity-com/bifroest/pkg/cli"
 	cliCommon "github.com/engity-com/bifroest/pkg/cli/common"
-	"github.com/engity-com/bifroest/pkg/configuration"
 	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
-	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/engity-com/bifroest/test/nanoserver/browserfixture"
 )
 
@@ -135,9 +133,6 @@ func prepareBrowserConfiguration(binary string) (browserfixture.Fixture, error) 
 	root := filepath.Join(base, service)
 	// Public executable access is a separate sibling, never inherited by keys,
 	// configuration, session tokens, audit journals or recordings.
-	if err := createBrowserDirectory(root, "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"); err != nil {
-		return fixture, err
-	}
 	bin := root + "-bin"
 	if err := createBrowserDirectory(bin, "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;"+sid.String()+")"); err != nil {
 		return fixture, err
@@ -151,6 +146,18 @@ func prepareBrowserConfiguration(binary string) (browserfixture.Fixture, error) 
 		return fixture, err
 	}
 	if err := copyBrowserExecutable(binary, filepath.Join(bin, "bifroest.exe")); err != nil {
+		return fixture, err
+	}
+	return prepareBrowserStateAsSystem(browserfixture.Fixture{Service: service, Root: root, User: user, SID: sid.String(), Probe: probe})
+}
+
+func initializeSystemBrowserState(fixture browserfixture.Fixture) (browserfixture.Fixture, error) {
+	current, err := currentSID()
+	if err != nil || current != "S-1-5-18" {
+		return fixture, fmt.Errorf("private fixture files require container LocalSystem")
+	}
+	root, user, sid := fixture.Root, fixture.User, fixture.SID
+	if err := createBrowserDirectory(root, "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"); err != nil {
 		return fixture, err
 	}
 	hostKey, err := browserPrivateKey(filepath.Join(root, "host-key"))
@@ -192,11 +199,12 @@ func prepareBrowserConfiguration(binary string) (browserfixture.Fixture, error) 
 	if err := os.WriteFile(filepath.Join(root, "authorized-key"), public, 0600); err != nil {
 		return fixture, err
 	}
-	configuration := browserConfiguration(root, user, sid.String())
+	configuration := browserConfiguration(root, user, sid)
 	if err := os.WriteFile(filepath.Join(root, "configuration.yaml"), []byte(configuration), 0600); err != nil {
 		return fixture, err
 	}
-	return browserfixture.Fixture{Service: service, Root: root, User: user, SID: sid.String(), Probe: probe, Producer: identity.ProducerId().String(), Certificate: string(cert), HostKey: string(ssh.MarshalAuthorizedKey(hostKey.PublicKey().ToSsh()))}, nil
+	fixture.Producer, fixture.Certificate, fixture.HostKey = identity.ProducerId().String(), string(cert), string(ssh.MarshalAuthorizedKey(hostKey.PublicKey().ToSsh()))
+	return fixture, nil
 }
 
 func browserConfiguration(root, user, sid string) string {
@@ -263,39 +271,23 @@ flows:
 }
 
 func browserServiceArguments(fixture browserfixture.Fixture) []string {
-	return []string{"run", "--configuration=" + filepath.Join(fixture.Root, "configuration.yaml"), "--serviceName=" + fixture.Service}
+	return []string{"run", "--configuration=" + filepath.Join(fixture.Root, "configuration.yaml"), "--windowsService", "--serviceName=" + fixture.Service}
 }
 
 // Parse exactly the real service CLI, but never call service.Run, bind a port,
 // provision an environment or register a Windows service. This is only a test
 // controller preflight; the acceptance path below still starts the real binary.
 func preflightBrowserService(fixture browserfixture.Fixture) (resultErr error) {
-	inService, err := svc.IsWindowsService()
-	if err != nil {
-		return err
-	}
-	if inService {
-		return fmt.Errorf("browser bootstrap was unexpectedly classified as a Windows service")
-	}
-	called := false
-	app, err := bcli.NewApplication[clibase.NoOptions](nil, "native browser CLI preflight", func(_ context.Context, conf configuration.Configuration, _ sys.Version) error {
-		called = true
-		if len(conf.Flows) != 1 || conf.Flows[0].Name.String() != browserfixture.Flow {
-			return fmt.Errorf("unexpected native browser flow")
-		}
-		return nil
-	}).Create()
+	app, err := bcli.NewApplication[clibase.NoOptions](nil, "native browser CLI preflight", nil).Create()
 	if err != nil {
 		return err
 	}
 	defer func() { resultErr = errors.Join(resultErr, app.Close()) }()
-	if err := app.ParseAndExecute(context.Background(), &clibase.ParseOpts{Profiles: []string{cliCommon.ProfileExecutable}}, browserServiceArguments(fixture)...); err != nil {
+	invocation, err := app.Parse(context.Background(), &clibase.ParseOpts{Profiles: []string{cliCommon.ProfileExecutable}}, browserServiceArguments(fixture)...)
+	if err != nil {
 		return fmt.Errorf("native browser service CLI preflight: %w", err)
 	}
-	if !called {
-		return fmt.Errorf("native browser CLI did not reach its non-serving preflight runner")
-	}
-	return nil
+	return invocation.Close()
 }
 
 func browserServiceStartDiagnostics(name string) string {
