@@ -189,6 +189,31 @@ func exerciseServerCoreBrowser(t *testing.T, parent context.Context, root, image
 			events, err := exec.CommandContext(cleanup, "docker", "exec", name, `C:\smoke\s4u-probe.exe`, "browser-events").CombinedOutput()
 			_ = os.WriteFile(filepath.Join(diagnosticDirectory, "windows-browser-service-events.log"), events, 0600)
 			t.Logf("owned native service diagnostics (read error %v): %s", err, events)
+			if raw, err := exec.CommandContext(cleanup, "docker", "exec", name, `C:\smoke\s4u-probe.exe`, "browser-stop").CombinedOutput(); err == nil {
+				_, _ = exec.CommandContext(cleanup, "docker", "wait", name).CombinedOutput()
+				copyPath := filepath.Join(diagnosticDirectory, "windows-browser-failed-audit")
+				if raw, err = exec.CommandContext(cleanup, "docker", "cp", name+":"+filepath.Join(fixture.Root, "auditlog"), copyPath).CombinedOutput(); err == nil {
+					var producer audit.ProducerId
+					if producer.Set(fixture.Producer) == nil {
+						journal, err := audit.VerifyJournals(cleanup, []audit.JournalSource{{Name: "default", Directory: copyPath, ExpectedProducerId: producer}})
+						if err != nil {
+							t.Logf("failure audit unavailable: %v", err)
+						} else {
+							for _, record := range journal.Records() {
+								event := record.Event
+								if event.Name == audit.EventNameSessionTaskStarted || event.Name == audit.EventNameSessionTaskCompleted {
+									raw, _ := json.Marshal(event)
+									t.Logf("verified native task observation: %s", raw)
+								}
+							}
+						}
+					}
+				} else {
+					t.Logf("failure audit copy unavailable: %v: %s", err, raw)
+				}
+			} else {
+				t.Logf("failure service stop unavailable: %v: %s", err, raw)
+			}
 		}
 	})
 	h.mustDocker("run", "--detach", "--name", name, "--isolation="+isolation, "--user", "ContainerAdministrator", "--env", "BIFROEST_TEST_LOCAL_SAM_IN_CONTAINER=1", "--env", "BIFROEST_TEST_SERVERCORE_BROWSER=1", image, `C:\smoke\s4u-probe.exe`, "browser-serve", `C:\smoke\bifroest.exe`)
@@ -254,6 +279,7 @@ func exerciseServerCoreBrowser(t *testing.T, parent context.Context, root, image
 	// environment.test.exe relay oracle alone does not cover CLI registration.
 	reference := startNativeSSH(t, ctx, address, fixture, keyFile, "browser-probe ssh-pty", true)
 	ptyReference := reference.observe(t, "ssh-pty")
+	t.Logf("actual native SSH PTY child observation: %+v", ptyReference)
 	requireNativeIdentity(t, fixture, ptyReference, true)
 	require.Equal(t, first.Session, ptyReference.Session)
 	require.NoError(t, reference.connection.SetDeadline(time.Now().Add(15*time.Second)))

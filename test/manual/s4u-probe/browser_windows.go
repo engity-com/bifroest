@@ -452,6 +452,18 @@ func browserProbe(marker, write string) (browserfixture.Probe, error) {
 		return browserfixture.Probe{}, err
 	}
 	pty := term.IsTerminal(int(os.Stdout.Fd()))
+	var mode uint32
+	stdoutError := ""
+	if err := windows.GetConsoleMode(windows.Handle(os.Stdout.Fd()), &mode); err != nil {
+		stdoutError = err.Error()
+	}
+	console, consoleColumns, consoleRows := false, 0, 0
+	consolePath, _ := windows.UTF16PtrFromString("CONOUT$")
+	if handle, err := windows.CreateFile(consolePath, windows.GENERIC_READ|windows.GENERIC_WRITE, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, 0, 0); err == nil {
+		console = true
+		consoleColumns, consoleRows, _ = term.GetSize(int(handle))
+		_ = windows.CloseHandle(handle)
+	}
 	cols, rows := 0, 0
 	if pty {
 		cols, rows, err = term.GetSize(int(os.Stdout.Fd()))
@@ -459,7 +471,7 @@ func browserProbe(marker, write string) (browserfixture.Probe, error) {
 			return browserfixture.Probe{}, err
 		}
 	}
-	return browserfixture.Probe{Marker: marker, Session: os.Getenv("BIFROEST_SESSION_ID"), Connection: os.Getenv("BIFROEST_CONNECTION_ID"), Execution: os.Getenv("BIFROEST_EXECUTION_ID"), SID: sid, User: os.Getenv("USERNAME"), Profile: profile, PID: os.Getpid(), Pty: pty, Columns: cols, Rows: rows, Content: string(content)}, nil
+	return browserfixture.Probe{Marker: marker, Session: os.Getenv("BIFROEST_SESSION_ID"), Connection: os.Getenv("BIFROEST_CONNECTION_ID"), Execution: os.Getenv("BIFROEST_EXECUTION_ID"), SID: sid, User: os.Getenv("USERNAME"), Profile: profile, PID: os.Getpid(), Pty: pty, Columns: cols, Rows: rows, Content: string(content), Term: os.Getenv("TERM"), StdinPty: term.IsTerminal(int(os.Stdin.Fd())), StdoutError: stdoutError, Console: console, ConsoleColumns: consoleColumns, ConsoleRows: consoleRows}, nil
 }
 
 func printBrowserProbe(marker, write string) error {

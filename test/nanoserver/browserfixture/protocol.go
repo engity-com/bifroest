@@ -25,18 +25,24 @@ type Fixture struct {
 }
 
 type Probe struct {
-	Marker     string `json:"marker"`
-	Session    string `json:"session"`
-	Connection string `json:"connection"`
-	Execution  string `json:"execution"`
-	SID        string `json:"sid"`
-	User       string `json:"user"`
-	Profile    string `json:"profile"`
-	PID        int    `json:"pid"`
-	Pty        bool   `json:"pty"`
-	Columns    int    `json:"columns"`
-	Rows       int    `json:"rows"`
-	Content    string `json:"content"`
+	Marker         string `json:"marker"`
+	Session        string `json:"session"`
+	Connection     string `json:"connection"`
+	Execution      string `json:"execution"`
+	SID            string `json:"sid"`
+	User           string `json:"user"`
+	Profile        string `json:"profile"`
+	PID            int    `json:"pid"`
+	Pty            bool   `json:"pty"`
+	Columns        int    `json:"columns"`
+	Rows           int    `json:"rows"`
+	Content        string `json:"content"`
+	Term           string `json:"term"`
+	StdinPty       bool   `json:"stdinPty"`
+	StdoutError    string `json:"stdoutError"`
+	Console        bool   `json:"console"`
+	ConsoleColumns int    `json:"consoleColumns"`
+	ConsoleRows    int    `json:"consoleRows"`
 }
 
 func Encode(probe Probe) (string, error) {
