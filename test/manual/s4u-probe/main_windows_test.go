@@ -63,3 +63,10 @@ func TestBrowserFixtureConfigurationAndRealCliPreflight(t *testing.T) {
 	require.Equal(t, sid, uid)
 	require.NoError(t, preflightBrowserService(browserfixture.Fixture{Root: root, Service: "bifroest-browser-cli-preflight"}))
 }
+
+func TestSystemBrowserDiagnosticsAreExplicitServiceArguments(t *testing.T) {
+	t.Setenv("BIFROEST_TEST_SERVERCORE_BROWSER_DIAGNOSTICS", "")
+	require.Equal(t, []string{"service", "owned", "result", "tests", "user", "servercore", "browser-diagnostics"}, probeServiceArguments("owned", "result", "tests", "user", true, true))
+	require.Equal(t, []string{"service", "owned", "result", "tests", "user", "servercore"}, probeServiceArguments("owned", "result", "tests", "user", true, false))
+	require.Equal(t, []string{"service", "owned", "result", "tests", "user"}, probeServiceArguments("owned", "result", "tests", "user", false, true))
+}

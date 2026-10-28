@@ -99,6 +99,8 @@ func main() {
 		err = svc.Run(os.Args[2], &probeService{resultPath: os.Args[3], testBinary: os.Args[4], user: os.Args[5]})
 	case len(os.Args) == 7 && os.Args[1] == "service" && os.Args[6] == "servercore":
 		err = svc.Run(os.Args[2], &probeService{resultPath: os.Args[3], testBinary: os.Args[4], user: os.Args[5], serverCore: true})
+	case len(os.Args) == 8 && os.Args[1] == "service" && os.Args[6] == "servercore" && os.Args[7] == "browser-diagnostics":
+		err = svc.Run(os.Args[2], &probeService{resultPath: os.Args[3], testBinary: os.Args[4], user: os.Args[5], serverCore: true, browserDiagnostics: true})
 	case len(os.Args) == 2 && os.Args[1] == "child":
 		var sid string
 		sid, err = currentSID()
@@ -262,13 +264,7 @@ func run(testBinary, user string, serverCore bool) error {
 		return fmt.Errorf("SCM access (run from an elevated Windows account): %w", err)
 	}
 	defer func() { _ = m.Disconnect() }()
-	args := []string{"service", name, resultPath}
-	if testBinary != "" {
-		args = append(args, testBinary, user)
-		if serverCore {
-			args = append(args, "servercore")
-		}
-	}
+	args := probeServiceArguments(name, resultPath, testBinary, user, serverCore, os.Getenv("BIFROEST_TEST_SERVERCORE_BROWSER_DIAGNOSTICS") == "1")
 	s, err := m.CreateService(name, exe, mgr.Config{
 		StartType:        mgr.StartManual,
 		ServiceStartName: "LocalSystem",
@@ -321,11 +317,26 @@ func run(testBinary, user string, serverCore bool) error {
 	return fmt.Errorf("temporary service %s did not stop within 180s; check and stop it before removing the executable", name)
 }
 
+func probeServiceArguments(name, resultPath, testBinary, user string, serverCore, browserDiagnostics bool) []string {
+	args := []string{"service", name, resultPath}
+	if testBinary != "" {
+		args = append(args, testBinary, user)
+		if serverCore {
+			args = append(args, "servercore")
+			if browserDiagnostics {
+				args = append(args, "browser-diagnostics")
+			}
+		}
+	}
+	return args
+}
+
 type probeService struct {
-	resultPath string
-	testBinary string
-	user       string
-	serverCore bool
+	resultPath         string
+	testBinary         string
+	user               string
+	serverCore         bool
+	browserDiagnostics bool
 }
 
 func (p *probeService) Execute(_ []string, _ <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
@@ -335,7 +346,7 @@ func (p *probeService) Execute(_ []string, _ <-chan svc.ChangeRequest, changes c
 	result := "PASS local S4U child process has foosel's SID\n"
 	if p.testBinary != "" {
 		diagnostics := ""
-		if p.serverCore && os.Getenv("BIFROEST_TEST_SERVERCORE_BROWSER_DIAGNOSTICS") == "1" {
+		if p.serverCore && p.browserDiagnostics {
 			diagnostics = browserSystemStartupDiagnostics()
 		}
 		pattern := "TestLocalWindows(S4ULogonAsUser|RunAsUser|ConPTYAsUser)$"
