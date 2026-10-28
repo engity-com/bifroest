@@ -309,6 +309,41 @@ func browserServiceStartDiagnostics(name string) string {
 	return fmt.Sprintf("own/default Bifroest application events: %s; native HTTPS listener present=%t", application, endpointErr == nil)
 }
 
+// Runs only inside the existing marked Server Core LocalSystem probe service.
+// Version/help never starts a gateway, creates sessions or authenticates a user.
+func browserSystemStartupDiagnostics() string {
+	service, serviceErr := svc.IsWindowsService()
+	sid, sidErr := currentSID()
+	var report strings.Builder
+	fmt.Fprintf(&report, "BROWSER_SYSTEM_DIAGNOSTICS_BEGIN\nserviceDetector=%t detectorError=%v processSID=%s sidError=%v\n", service, serviceErr, sid, sidErr)
+	if self, err := os.Executable(); err == nil {
+		if descriptor, err := windows.GetNamedSecurityInfo(self, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION); err == nil {
+			owner, _, err := descriptor.Owner()
+			fmt.Fprintf(&report, "controllerCreatedFileOwner=%v ownerError=%v\n", owner, err)
+		}
+		if file, err := bfcrypto.CreateProtectedTempFile(filepath.Dir(self), ".system-owner-*", 0600); err == nil {
+			descriptor, err := windows.GetSecurityInfo(windows.Handle(file.Fd()), windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+			if err == nil {
+				owner, _, ownerErr := descriptor.Owner()
+				fmt.Fprintf(&report, "systemCreatedFileOwner=%v ownerError=%v\n", owner, ownerErr)
+			}
+			_ = file.Close()
+			_ = os.Remove(file.Name())
+		}
+	}
+	for _, key := range []string{"USERPROFILE", "APPDATA", "LOCALAPPDATA", "USERNAME"} {
+		fmt.Fprintf(&report, "%s=%q\n", key, os.Getenv(key))
+	}
+	for _, args := range [][]string{{"version"}, {"run", "--help"}} {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		raw, err := exec.CommandContext(ctx, `C:\smoke\bifroest.exe`, args...).CombinedOutput()
+		cancel()
+		fmt.Fprintf(&report, "binaryArgs=%q error=%v output=%s\n", args, err, raw)
+	}
+	report.WriteString("BROWSER_SYSTEM_DIAGNOSTICS_END\n")
+	return report.String()
+}
+
 func serveBrowserContainer(binary string) (resultErr error) {
 	fixture, err := prepareBrowserConfiguration(binary)
 	if err != nil {

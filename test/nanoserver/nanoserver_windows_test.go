@@ -137,8 +137,14 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 		}
 	})
 	t.Run("servercore-s4u-and-local-pty", func(t *testing.T) {
-		dockerRun(t, serverCoreImage, []string{"--user", "ContainerAdministrator", "--env", "BIFROEST_TEST_LOCAL_SAM_IN_CONTAINER=1"},
+		output := dockerRun(t, serverCoreImage, []string{"--user", "ContainerAdministrator", "--env", "BIFROEST_TEST_LOCAL_SAM_IN_CONTAINER=1", "--env", "BIFROEST_TEST_SERVERCORE_BROWSER_DIAGNOSTICS=1"},
 			`C:\smoke\s4u-probe.exe`, "run-container-test", `C:\smoke\environment.test.exe`)
+		start := strings.Index(output, "BROWSER_SYSTEM_DIAGNOSTICS_BEGIN")
+		end := strings.Index(output, "BROWSER_SYSTEM_DIAGNOSTICS_END")
+		if start < 0 || end < start {
+			t.Fatalf("missing native System startup diagnostics: %s", output)
+		}
+		t.Log(output[start:end])
 	})
 	t.Run("servercore-native-browser", func(t *testing.T) {
 		exerciseServerCoreBrowser(t, ctx, root, serverCoreImage, isolation, browserKey)

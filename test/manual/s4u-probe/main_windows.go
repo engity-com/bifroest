@@ -334,6 +334,10 @@ func (p *probeService) Execute(_ []string, _ <-chan svc.ChangeRequest, changes c
 	var err error
 	result := "PASS local S4U child process has foosel's SID\n"
 	if p.testBinary != "" {
+		diagnostics := ""
+		if p.serverCore && os.Getenv("BIFROEST_TEST_SERVERCORE_BROWSER_DIAGNOSTICS") == "1" {
+			diagnostics = browserSystemStartupDiagnostics()
+		}
 		pattern := "TestLocalWindows(S4ULogonAsUser|RunAsUser|ConPTYAsUser)$"
 		if p.serverCore {
 			pattern = "^(TestLocalWindows(S4ULogonAsUser|RunAsUser|ConPTYAsUser|ConPTYDistinguishesShellExitFromRelayFailure)|TestLocalServerCore(ProviderAccountLifecycle|FailedUpdateRestoresManagedMembership|ProvisioningPrecedesSessionDispose|ConPTYBlockedOutputDoesNotHang|FailedSkelDisablesNewAccount|FailedDisplayDisablesNewAccount|UnmanagedNewAccountCanBeDisabled|ProcessCleanupWaitsForExit))$"
@@ -357,7 +361,7 @@ func (p *probeService) Execute(_ []string, _ <-chan svc.ChangeRequest, changes c
 				}
 			}
 		}
-		result = "PASS local Windows integration tests:\n" + string(output)
+		result = "PASS local Windows integration tests:\n" + diagnostics + string(output)
 	} else {
 		err = probe()
 	}
