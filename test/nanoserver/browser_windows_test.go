@@ -99,6 +99,7 @@ func requireNativeIdentity(t *testing.T, fixture browserfixture.Fixture, probe b
 	require.NotEmpty(t, probe.Profile)
 	canonicalNativeID(t, probe.Session)
 	canonicalNativeID(t, probe.Connection)
+	canonicalNativeID(t, probe.Execution)
 }
 
 type nativeSSHProbe struct {
@@ -298,6 +299,7 @@ func exerciseServerCoreBrowser(t *testing.T, parent context.Context, root, image
 			require.Equal(t, first.Session, current.Session)
 			require.Equal(t, first.Connection, current.Connection)
 			require.Equal(t, first.PID, current.PID)
+			require.Equal(t, first.Execution, current.Execution)
 			require.Equal(t, "web-owned", current.Content, "browser action must not replace/dispose the SSH workload")
 			require.Equal(t, "web-owned", strings.TrimSpace(h.mustDocker("exec", name, `C:\smoke\s4u-probe.exe`, "browser-inspect")), "independent container/profile probe")
 			_, err = fmt.Fprintf(input, "{\"checkpoint\":%q,\"success\":true}\n", message.Checkpoint)

@@ -459,7 +459,7 @@ func browserProbe(marker, write string) (browserfixture.Probe, error) {
 			return browserfixture.Probe{}, err
 		}
 	}
-	return browserfixture.Probe{Marker: marker, Session: os.Getenv("BIFROEST_SESSION_ID"), Connection: os.Getenv("BIFROEST_CONNECTION_ID"), SID: sid, User: os.Getenv("USERNAME"), Profile: profile, PID: os.Getpid(), Pty: pty, Columns: cols, Rows: rows, Content: string(content)}, nil
+	return browserfixture.Probe{Marker: marker, Session: os.Getenv("BIFROEST_SESSION_ID"), Connection: os.Getenv("BIFROEST_CONNECTION_ID"), Execution: os.Getenv("BIFROEST_EXECUTION_ID"), SID: sid, User: os.Getenv("USERNAME"), Profile: profile, PID: os.Getpid(), Pty: pty, Columns: cols, Rows: rows, Content: string(content)}, nil
 }
 
 func printBrowserProbe(marker, write string) error {

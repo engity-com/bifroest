@@ -115,6 +115,7 @@ try {
     assert(value.columns > 0 && value.rows > 0);
     assert.match(value.session, /^[0-9a-f-]{36}$/u);
     assert.match(value.connection, /^[0-9a-f-]{36}$/u);
+    assert.match(value.execution, /^[0-9a-f-]{36}$/u);
     assert.equal(value.content, 'web-owned');
     return value;
   }
@@ -221,6 +222,7 @@ try {
     'only five deliberately requested or confirmed-login shells are allowed',
   );
   assert.equal(new Set(executions.map((value) => value.connection)).size, 5);
+  assert.equal(new Set(executions.map((value) => value.execution)).size, 5);
   assert.equal(new Set(executions.map((value) => value.session)).size, 1);
   await page.getByRole('button', { name: 'Log out', exact: true }).click();
   await page.getByText('Logout confirmed.', { exact: true }).waitFor();

@@ -61,7 +61,7 @@ func (this *LocalRepository) new(user windowsLocalAccount, sess session.Session,
 	}
 }
 
-func (this *local) createCmdAndEnv(t TaskContext) (*exec.Cmd, *sys.EnvVars, func(), error) {
+func (this *local) createPlatformCmdAndEnv(t TaskContext) (*exec.Cmd, *sys.EnvVars, func(), error) {
 	token, release, err := this.user.logon()
 	if err != nil {
 		return nil, nil, nil, errors.System.Newf("cannot log on as local account %q: %w", this.user.Name, err)

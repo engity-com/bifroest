@@ -22,7 +22,6 @@ import (
 	"github.com/engity-com/bifroest/pkg/common"
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/net"
-	"github.com/engity-com/bifroest/pkg/session"
 	"github.com/engity-com/bifroest/pkg/ssh"
 	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/engity-com/bifroest/pkg/terminal"
@@ -71,8 +70,6 @@ func (this *local) run(t TaskContext) (exitCode int, rErr error) {
 		return fail(err)
 	}
 	defer release()
-
-	setReservedEnvironment(ev, localTargetOs, session.EnvName, sess.Id().String())
 
 	switch t.TaskType() {
 	case TaskTypeShell:

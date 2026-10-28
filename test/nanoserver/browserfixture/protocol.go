@@ -28,6 +28,7 @@ type Probe struct {
 	Marker     string `json:"marker"`
 	Session    string `json:"session"`
 	Connection string `json:"connection"`
+	Execution  string `json:"execution"`
 	SID        string `json:"sid"`
 	User       string `json:"user"`
 	Profile    string `json:"profile"`

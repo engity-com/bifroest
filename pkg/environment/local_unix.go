@@ -105,7 +105,7 @@ func (this *local) configureShellCmd(t TaskContext, cmd *exec.Cmd) error {
 	return nil
 }
 
-func (this *local) createCmdAndEnv(t TaskContext) (*exec.Cmd, *sys.EnvVars, func(), error) {
+func (this *local) createPlatformCmdAndEnv(t TaskContext) (*exec.Cmd, *sys.EnvVars, func(), error) {
 	creds := this.user.ToCredentials()
 	dir := this.user.HomeDir
 	if !this.repository.conf.Directory.IsZero() {

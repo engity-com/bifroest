@@ -131,6 +131,7 @@ func TestLocalUnixDirectoryOverride(t *testing.T) {
 	task := &sshTestTask{
 		context:       ctx,
 		targetUser:    dir,
+		connection:    &sshTestConnection{id: connection.MustNewId(), context: ctx},
 		authorization: &sshTestAuthorization{session: &sshTestStoredSession{id: session.MustNewId()}},
 		session:       newSshTestSession(ctx, "", nil),
 	}
