@@ -60,6 +60,10 @@ func (this *webTerminalInputBuffer) read(ctx context.Context, data []byte) (int,
 			return 0, err
 		}
 		this.mutex.Lock()
+		if err := ctx.Err(); err != nil {
+			this.mutex.Unlock()
+			return 0, err
+		}
 		if this.used != 0 {
 			n := min(len(data), this.used)
 			first := copy(data[:n], this.data[this.head:min(this.head+n, len(this.data))])

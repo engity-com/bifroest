@@ -61,6 +61,142 @@ func TestWebTerminalInputCancellationUnblocksReadAndDoesNotDeliverQueuedData(t *
 	input.end()
 }
 
+type terminalInputCheckedContext struct {
+	context.Context
+	checked chan struct{}
+	once    sync.Once
+}
+
+func (this *terminalInputCheckedContext) Err() error {
+	err := this.Context.Err()
+	this.once.Do(func() { close(this.checked) })
+	return err
+}
+
+func TestWebTerminalInputRechecksCancellationAfterWaitingForBufferLock(t *testing.T) {
+	input := newWebTerminalInputBuffer()
+	require.True(t, input.append([]byte("must-not-be-delivered")))
+	base, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	ctx := &terminalInputCheckedContext{Context: base, checked: make(chan struct{})}
+	type result struct {
+		n   int
+		err error
+	}
+	done := make(chan result, 1)
+	input.mutex.Lock()
+	go func() { n, err := input.read(ctx, make([]byte, 32)); done <- result{n, err} }()
+	<-ctx.checked // The first cancellation check happened before cancel.
+	cancel()
+	input.mutex.Unlock()
+	select {
+	case got := <-done:
+		require.Zero(t, got.n)
+		require.ErrorIs(t, got.err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("input reader did not stop after cancellation")
+	}
+	data := make([]byte, 32)
+	n, err := input.read(t.Context(), data)
+	require.NoError(t, err)
+	require.Equal(t, "must-not-be-delivered", string(data[:n]), "canceled reads must not consume queued input")
+}
+
+func TestWebTerminalInputConcurrentProducerAndReaderPreserveBytes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	input := newWebTerminalInputBuffer()
+	want := make([]byte, 8*webTerminalInputBytes)
+	for index := range want {
+		want[index] = byte(index*37 + index/251)
+	}
+	filled := make(chan struct{})
+	markFilled := sync.OnceFunc(func() { close(filled) })
+	consumed := make(chan struct{}, 1)
+	written := make(chan error, 1)
+	go func() {
+		for offset := 0; offset < len(want); {
+			n := min(997, len(want)-offset)
+			if input.append(want[offset : offset+n]) {
+				offset += n
+				continue
+			}
+			markFilled()
+			select {
+			case <-ctx.Done():
+				written <- ctx.Err()
+				return
+			case <-consumed:
+			}
+		}
+		input.end()
+		written <- nil
+	}()
+	select {
+	case <-filled: // The reader deliberately starts only after the bounded buffer fills.
+	case <-ctx.Done():
+		t.Fatal("producer did not reach the byte bound")
+	}
+	var got bytes.Buffer
+	data := make([]byte, 317)
+	for {
+		n, err := input.read(ctx, data)
+		_, _ = got.Write(data[:n])
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		select {
+		case consumed <- struct{}{}:
+		default:
+		}
+	}
+	require.NoError(t, <-written)
+	require.Equal(t, want, got.Bytes())
+}
+
+func FuzzWebTerminalInputBufferMatchesByteStream(f *testing.F) {
+	f.Add([]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
+	f.Add(bytes.Repeat([]byte{0, 0, 1, 3, 2, 4}, 1024))
+	f.Add(bytes.Repeat([]byte{255, 0, 127, 1}, 4096))
+	f.Fuzz(func(t *testing.T, operations []byte) {
+		if len(operations) > 32<<10 {
+			operations = operations[:32<<10]
+		}
+		input := newWebTerminalInputBuffer()
+		var want []byte
+		for index, operation := range operations {
+			if operation&1 == 0 {
+				data := bytes.Repeat([]byte{byte(index)}, 1+int(operation)*17)
+				accepted := len(data) <= webTerminalInputBytes-len(want)
+				require.Equal(t, accepted, input.append(data))
+				if accepted {
+					want = append(want, data...)
+				}
+			} else if len(want) > 0 {
+				data := make([]byte, 1+int(operation)*11)
+				n, err := input.read(t.Context(), data)
+				require.NoError(t, err)
+				require.Equal(t, min(len(data), len(want)), n)
+				require.Equal(t, want[:n], data[:n])
+				want = want[n:]
+			}
+		}
+		input.end()
+		var got bytes.Buffer
+		data := make([]byte, 317)
+		for {
+			n, err := input.read(t.Context(), data)
+			_, _ = got.Write(data[:n])
+			if err == io.EOF {
+				break
+			}
+			require.NoError(t, err)
+		}
+		require.True(t, bytes.Equal(want, got.Bytes()), "buffer differs from the reference byte stream")
+	})
+}
+
 func TestWebSocketTinyInputFramesSurviveDelayedExecutionStartup(t *testing.T) {
 	gate := make(chan struct{})
 	release := sync.OnceFunc(func() { close(gate) })
