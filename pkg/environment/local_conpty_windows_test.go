@@ -104,7 +104,7 @@ func TestLocalConPTYRelayExitStatusFailsClosed(t *testing.T) {
 
 func TestLocalConPTYRelayRoundTrip(t *testing.T) {
 	if os.Getenv("BIFROEST_CONPTY_RELAY_TEST_CHILD") == "1" {
-		code, err := RunLocalConPTYRelay(80, 25, []string{os.Args[0], "local-windows-identity-child"})
+		code, err := RunLocalConPTYRelay(80, 25, []string{os.Args[0], "local-windows-console-child"})
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -136,4 +136,38 @@ func TestLocalConPTYRelayRoundTrip(t *testing.T) {
 	}
 	_ = stdin.Close()
 	require.Contains(t, strings.ToUpper(stdout.String()), strings.ToUpper(self.User.Sid.String()))
+	require.Contains(t, stdout.String(), "native-console=80x25")
+}
+
+func TestLocalConPTYChildStandardHandlesAreClearedAndRestored(t *testing.T) {
+	for _, failure := range []string{"", "clear", "create"} {
+		t.Run(failure, func(t *testing.T) {
+			ids := []uint32{windows.STD_INPUT_HANDLE, windows.STD_OUTPUT_HANDLE, windows.STD_ERROR_HANDLE}
+			table := map[uint32]windows.Handle{ids[0]: 11, ids[1]: 22, ids[2]: 33}
+			created := false
+			err := withLocalConPTYChildStandardHandles(func(id uint32) (windows.Handle, error) { return table[id], nil }, func(id uint32, value windows.Handle) error {
+				if failure == "clear" && value == 0 && id == ids[1] {
+					return fmt.Errorf("clear failed")
+				}
+				table[id] = value
+				return nil
+			}, func() error {
+				created = true
+				for _, id := range ids {
+					require.Zero(t, table[id])
+				}
+				if failure == "create" {
+					return fmt.Errorf("create failed")
+				}
+				return nil
+			})
+			if failure == "" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+			require.Equal(t, failure != "clear", created)
+			require.Equal(t, map[uint32]windows.Handle{ids[0]: 11, ids[1]: 22, ids[2]: 33}, table)
+		})
+	}
 }
