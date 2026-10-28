@@ -18,6 +18,8 @@ const resizes = new EventEmitter();
 let sockets = 0;
 let page;
 const executions = [];
+const controls = [];
+let stage = 'startup';
 async function checkpoint(name) {
   const response = new Promise((resolve, reject) => {
     const closed = () => {
@@ -67,6 +69,23 @@ try {
   });
   page.on('websocket', (socket) => {
     sockets++;
+    const number = sockets;
+    socket.on('framereceived', ({ payload }) => {
+      if (typeof payload !== 'string') {
+        return;
+      }
+      const message = JSON.parse(payload);
+      if (['ready', 'error', 'exit'].includes(message.type)) {
+        controls.push({
+          socket: number,
+          type: message.type,
+          code: message.code,
+          status: message.status,
+          connectionId: message.connectionId,
+        });
+      }
+    });
+    socket.on('close', () => controls.push({ socket: number, type: 'closed' }));
     socket.on('framesent', ({ payload }) => {
       if (typeof payload !== 'string') {
         return;
@@ -87,21 +106,26 @@ try {
     await page.keyboard.press('Enter');
   }
   async function probe(marker, mode = 'browser-probe', args = '') {
+    stage = marker;
     await type(
       `${fixture.probe} ${mode} ${args ? `${args} ` : ''}${marker}${marker === 'web-a' ? ' web-owned' : ''}`,
     );
     await page.waitForFunction((marker) => {
       const text =
         document.querySelector('[data-terminal-active="true"] .xterm-rows')?.textContent ?? '';
-      return [...text.matchAll(/BIFROEST_NATIVE_PROBE=([A-Za-z0-9+/=]+);ENDPROBE/gu)].some(
-        (match) => {
-          try {
-            return JSON.parse(atob(match[1])).marker === marker;
-          } catch {
-            return false;
-          }
-        },
-      );
+      const observed = [
+        ...text.matchAll(/BIFROEST_NATIVE_PROBE=([A-Za-z0-9+/=]+);ENDPROBE/gu),
+      ].some((match) => {
+        try {
+          return JSON.parse(atob(match[1])).marker === marker;
+        } catch {
+          return false;
+        }
+      });
+      const phase = document
+        .querySelector('.application-status [data-terminal-phase]')
+        ?.getAttribute('data-terminal-phase');
+      return observed || ['interrupted', 'disconnected', 'exited'].includes(phase);
     }, marker);
     const text = await pane().locator('.xterm-rows').textContent();
     const observations = [...text.matchAll(/BIFROEST_NATIVE_PROBE=([A-Za-z0-9+/=]+);ENDPROBE/gu)]
@@ -187,6 +211,10 @@ try {
     'native ConPTY dimensions must actually change',
   );
   await page.getByRole('button', { name: 'New terminal', exact: true }).click();
+  await page.getByRole('tab', { name: `Terminal 2 ${fixture.user}`, exact: true }).waitFor();
+  await page.waitForFunction(
+    () => document.getElementById('terminal-tab-2')?.getAttribute('aria-selected') === 'true',
+  );
   await page.locator('[data-terminal-phase="connected"]').waitFor();
   const b = await probe('web-b');
   executions.push({ ...b, exit: null });
@@ -235,7 +263,7 @@ try {
 } catch (error) {
   console.error(
     JSON.stringify({
-      stage: 'native-windows-browser',
+      stage,
       errors,
       failures,
       sockets,
@@ -250,6 +278,7 @@ try {
           .catch(() => null)
       )?.slice(-4096),
       sizes: frames,
+      controls,
     }),
   );
   throw error;

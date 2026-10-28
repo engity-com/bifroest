@@ -195,7 +195,7 @@ func exerciseServerCoreBrowser(t *testing.T, parent context.Context, root, image
 				if raw, err = exec.CommandContext(cleanup, "docker", "cp", name+":"+filepath.Join(fixture.Root, "auditlog"), copyPath).CombinedOutput(); err == nil {
 					var producer audit.ProducerId
 					if producer.Set(fixture.Producer) == nil {
-						journal, err := audit.VerifyJournals(cleanup, []audit.JournalSource{{Name: "default", Directory: copyPath, ExpectedProducerId: producer}})
+						journal, err := audit.VerifyJournals(cleanup, []audit.JournalSource{{Name: "default", Directory: copyPath, ExpectedProducerId: producer, WithSensitive: true}})
 						if err != nil {
 							t.Logf("failure audit unavailable: %v", err)
 						} else {
@@ -284,6 +284,7 @@ func exerciseServerCoreBrowser(t *testing.T, parent context.Context, root, image
 	require.Equal(t, first.Session, ptyReference.Session)
 	require.NoError(t, reference.connection.SetDeadline(time.Now().Add(15*time.Second)))
 	require.NoError(t, reference.session.Wait())
+	require.NoError(t, reference.connection.Close(), "the completed reference transport must not retain a quota slot")
 	node := os.Getenv("BIFROEST_TEST_NODE")
 	if node == "" {
 		var err error
