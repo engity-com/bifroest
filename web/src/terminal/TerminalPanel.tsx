@@ -214,7 +214,8 @@ export function TerminalPanel({
               next.phase === 'connected' &&
               interaction.current.active &&
               interaction.current.inputAllowed &&
-              interaction.current.focusOnActivate
+              interaction.current.focusOnActivate &&
+              !document.activeElement?.closest('[role="tablist"]')
             ) {
               terminal.focus();
             }
@@ -272,7 +273,7 @@ export function TerminalPanel({
     }
     const frame = requestAnimationFrame(() => {
       layout.current?.();
-      if (focusOnActivate && inputAllowed) {
+      if (focusOnActivate && inputAllowed && !document.activeElement?.closest('[role="tablist"]')) {
         emulator.current?.focus();
       }
     });

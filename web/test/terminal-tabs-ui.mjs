@@ -45,8 +45,34 @@ export async function exerciseTerminalTabs(page, login, logout) {
     'local tab resources are bounded independently of server quotas',
   );
   const first = page.getByRole('tab', { name: 'Terminal 1 alice', exact: true });
-  await first.click();
+  await page.getByRole('tab', { name: 'Terminal 8 alice', exact: true }).evaluate((node) => {
+    node.focus();
+    node.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }),
+    );
+  });
+  await page.waitForFunction(
+    () => document.getElementById('terminal-tab-1')?.getAttribute('aria-selected') === 'true',
+  );
+  // Activate while returning keyboard focus to the bar in the same event turn.
+  // A queued terminal-focus frame must respect that newer focus owner.
+  await first.evaluate((node) => {
+    node.click();
+    node.focus();
+  });
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  );
+  assert.equal(
+    await first.evaluate((node) => node === document.activeElement),
+    true,
+    'a queued pane activation cannot steal newer tab-bar focus',
+  );
+  await first.focus();
   await first.press('ArrowRight');
+  await page.waitForFunction(
+    () => document.getElementById('terminal-tab-2')?.getAttribute('aria-selected') === 'true',
+  );
   assert.equal(
     await page
       .getByRole('tab', { name: 'Terminal 2 alice', exact: true })
