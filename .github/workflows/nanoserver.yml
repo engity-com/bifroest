@@ -27,6 +27,7 @@ on:
       - pkg/windowslocal/**
       - test/manual/s4u-probe/**
       - test/nanoserver/**
+      - web/**
   workflow_dispatch:
 
 permissions:
@@ -61,6 +62,9 @@ jobs:
       - name: Build browser before Go embedding
         run: mise -C web run build:web
 
+      - name: Install pinned Chromium for actual native browser test
+        run: mise -C web run install:web:browser
+
       - name: Set reproducible build time
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -89,4 +93,16 @@ jobs:
         env:
           GITHUB_TOKEN: ""
           MISE_GITHUB_TOKEN: ""
-        run: mise run test:e2e:nanoserver
+        shell: pwsh
+        run: |
+          $env:BIFROEST_TEST_NODE = (mise -C web which node).Trim()
+          mise run test:e2e:nanoserver
+
+      - name: Upload native Windows browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: native-windows-browser
+          path: var/e2e/windows-browser-*
+          if-no-files-found: ignore
+          retention-days: 7

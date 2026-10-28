@@ -69,10 +69,12 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 	}
 	run(t, root, "go", "build", "-o", filepath.Join(dir, "s4u-probe.exe"), "./test/manual/s4u-probe")
 	run(t, root, "go", "test", "-c", "-tags=nanoserver_integration", "-o", filepath.Join(dir, "environment.test.exe"), "./pkg/environment")
+	browserKey := prepareServerCoreBrowserKey(t, dir)
 	buildImage := func(base, kind string) string {
 		t.Helper()
 		dockerfile := fmt.Sprintf("FROM %s\nUSER ContainerAdministrator\nWORKDIR C:/smoke\nCOPY bifroest.exe C:/smoke/bifroest.exe\nCOPY environment.test.exe C:/smoke/environment.test.exe\nCOPY s4u-probe.exe C:/smoke/s4u-probe.exe\n", base)
 		if kind == "servercore" {
+			dockerfile += "COPY browser-authorized-key C:/smoke/browser-authorized-key\n"
 			dockerfile += "RUN cmd /C \"echo bifroest-servercore-integration > C:/smoke/servercore-container.marker\"\n"
 		}
 		if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(dockerfile), 0600); err != nil {
@@ -137,5 +139,8 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 	t.Run("servercore-s4u-and-local-pty", func(t *testing.T) {
 		dockerRun(t, serverCoreImage, []string{"--user", "ContainerAdministrator", "--env", "BIFROEST_TEST_LOCAL_SAM_IN_CONTAINER=1"},
 			`C:\smoke\s4u-probe.exe`, "run-container-test", `C:\smoke\environment.test.exe`)
+	})
+	t.Run("servercore-native-browser", func(t *testing.T) {
+		exerciseServerCoreBrowser(t, ctx, root, serverCoreImage, isolation, browserKey)
 	})
 }

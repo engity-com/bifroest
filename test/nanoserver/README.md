@@ -1,6 +1,6 @@
 # Nano Server local-environment integration
 
-This opt-in test runs the pinned `mcr.microsoft.com/windows/nanoserver:ltsc2022` image used by Bifroest. It checks that the Windows Bifroest executable starts in Nano Server, required DLL exports resolve at runtime, and ConPTY produces output. A new feature-gated Nano Server test exercises creation, managed-group enrollment, display-name update and deletion of a disposable local SAM account. A separate pinned Server Core LTSC2022 image verifies the temporary LocalSystem service, passwordless S4U, Exec and PTY with a local SAM account.
+This opt-in test runs the pinned `mcr.microsoft.com/windows/nanoserver:ltsc2022` image used by Bifroest. It checks that the Windows Bifroest executable starts in Nano Server, required DLL exports resolve at runtime, and ConPTY produces output. A new feature-gated Nano Server test exercises creation, managed-group enrollment, display-name update and deletion of a disposable local SAM account. A separate pinned Server Core LTSC2022 image verifies the temporary LocalSystem service, passwordless S4U, Exec and PTY with a local SAM account, followed by the actual embedded browser against the native Windows Bifroest service.
 
 These are opt-in capability tests, not proof that Nano Server SAM or S4U works on all runtimes, or a test of the released image's default entrypoint as a LocalSystem service. The default container startup does not run Bifroest as LocalSystem; runtime S4U with `environment.type: local` requires a proper service-based startup configuration. The SAM calls try `netapi32.dll` first, then `samcli.dll` from System32 if an export is unavailable; this fallback does not imply that undocumented APIs are officially supported.
 
@@ -10,6 +10,9 @@ The `cmd/build` binary stage requires `GITHUB_TOKEN`; the GitHub Actions workflo
 
 ```nu
 $env.BIFROEST_TEST_NANOSERVER = "1"
+mise run install:web
+mise run install:web:browser
+mise run build:web
 mise run build:go:binary -- --os=windows --arch=amd64 --edition=generic
 mise run test:e2e:nanoserver
 ```
@@ -19,3 +22,36 @@ Without `BIFROEST_TEST_NANOSERVER=1` the test is skipped. With it enabled, a mis
 The test uses the Windows/amd64 binary built by `cmd/build`, builds temporary test helpers and ephemeral images from both pinned bases, uses no writable host mounts and publishes no ports, then removes its image tags. Base images may remain in the Docker cache. Nano Server's built-in `ContainerUser` is not a local SAM account. The guarded Nano SAM lifecycle test runs as `ContainerAdministrator` and creates a random account and group **only inside a disposable Nano Server container**; it checks their SIDs, direct membership and display name, then deletes the account. The guarded Server Core helper likewise creates a random account only inside its disposable container and starts a temporary LocalSystem service to test S4U, user-profile loading, Exec and PTY. No host account or service is changed.
 
 The GitHub Actions `Nano Server Integration` workflow runs this task on a disposable `windows-2022` runner with process isolation, if its Windows Docker daemon is available. For Hyper-V isolation use a dedicated Windows Docker runner instead. A successful cross-build or a native Windows host test does **not** replace these container tests; the Nano SAM lifecycle and Server Core S4U tests must pass separately before claiming those capabilities for the tested runtime.
+
+## Actual Server Core / browser path
+
+The required `servercore-native-browser` subtest starts the **real built Windows
+Bifroest executable** through its existing Windows service runner as LocalSystem.
+Bootstrap requires ContainerAdministrator, an explicit container-only environment
+gate and the owned Server Core image marker. Only a new random container-local
+SAM account is used; no host service, account, logon right or TCB privilege is
+changed. Server state and keys are separate from the target-readable executable
+directory. The test client private key stays on the host, outside even the Docker
+build context; only its public key enters the image.
+
+Pinned host Chromium uses the embedded key-WASM/xterm UI over direct TLS/HTTP2 to
+the container's private IPv4 address (exact Host/SNI/Origin `app.example.org:8443`).
+No host ports are published and no SSH tunnel, iframe, management CLI web action
+or substitute test server is involved. A separate native Go SSH client keeps a
+real execution alive while the browser closes a live sibling tab, reloads and
+logs out. A native helper reports its actual process token SID, profile, reserved
+session/connection IDs and console dimensions. A changed size must reach the
+actual ConPTY before the helper confirms it. Profile-marker reads through an
+independent container inspection confirm that the workload survives each action.
+
+Five deliberate browser shells and two SSH executions must share exactly one
+stored native session, have distinct connection IDs, and retain the same target
+SID. Browser exits 7 and 0 must be explicitly validated; live transport retirement
+must not infer a successful exit. After a clean Windows-service stop, the existing
+Go audit/recording verifiers check every signed artifact against the independent
+fixture producer pin and correlate all seven task/connection/operation records.
+The copied session association must still identify the original local SID and
+must not be disposed. This does not enable Windows SAM password RememberMe or
+claim that service installation inside a container is the released image's default
+entrypoint. Native runtime results remain required; a cross-build alone is not
+acceptance.

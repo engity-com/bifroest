@@ -75,6 +75,12 @@ type containerTestUserInfo struct {
 func main() {
 	var err error
 	switch {
+	case len(os.Args) == 3 && os.Args[1] == "browser-serve":
+		err = serveBrowserContainer(os.Args[2])
+	case len(os.Args) == 2 && os.Args[1] == "browser-stop":
+		err = stopBrowserContainer()
+	case len(os.Args) >= 2 && strings.HasPrefix(os.Args[1], "browser-"):
+		err = runBrowserProbe(os.Args[1:])
 	case len(os.Args) == 2 && os.Args[1] == "run":
 		err = run("", targetUser, false)
 	case len(os.Args) == 3 && os.Args[1] == "run-test":
