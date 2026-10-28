@@ -13,6 +13,8 @@ import {
   exerciseManagementForcedVersion,
 } from './management-forced-ui.mjs';
 import { exerciseManagement } from './management-ui.mjs';
+import { exerciseTerminalExpiry } from './terminal-expiry-ui.mjs';
+import { exerciseLostTerminalLogout } from './terminal-logout-ui.mjs';
 import { exerciseTerminalTabs } from './terminal-tabs-ui.mjs';
 import { exerciseTerminal } from './terminal-ui.mjs';
 import { loginLayout, settledLogin } from './workspace-ui.mjs';
@@ -119,7 +121,11 @@ try {
       await dialog.getByRole('button', { name: 'Send response', exact: true }).click();
     }
     try {
-      await settledLogin(page, user, process.argv[3] === 'terminal');
+      await settledLogin(
+        page,
+        user,
+        ['terminal', 'terminal-expiry', 'terminal-logout-lost'].includes(process.argv[3]),
+      );
     } catch (error) {
       throw new Error(
         JSON.stringify({
@@ -145,6 +151,16 @@ try {
   };
   async function exercise() {
     let page = await open();
+    if (process.argv[3] === 'terminal-logout-lost') {
+      await exerciseLostTerminalLogout(page, login);
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.argv[3] === 'terminal-expiry') {
+      await exerciseTerminalExpiry(page, login, logout);
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (process.argv[3] === 'terminal-tabs') {
       await exerciseTerminalTabs(page, login, logout);
       assert.deepEqual(errors, []);

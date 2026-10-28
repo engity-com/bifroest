@@ -51,6 +51,14 @@ func TestBrowserTerminalTabsUiBoundsAndCanceledInitialization(t *testing.T) {
 	testBrowserLoginUi(t, true, "terminal-tabs")
 }
 
+func TestBrowserTerminalGrantExpiryUiKeepsExistingShell(t *testing.T) {
+	testBrowserLoginUi(t, true, "terminal-expiry")
+}
+
+func TestBrowserTerminalLostLogoutUiDoesNotClaimSuccessOrReplay(t *testing.T) {
+	testBrowserLoginUi(t, true, "terminal-logout-lost")
+}
+
 func TestBrowserInteractiveLoginUiPlainTextEchoAndCancel(t *testing.T) {
 	testBrowserLoginUi(t, true, "interactive")
 }
@@ -226,7 +234,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		}}}
 	}
 	var terminalCounters *terminalUiCounters
-	if mode == "terminal" {
+	if mode == "terminal" || mode == "terminal-expiry" || mode == "terminal-logout-lost" {
 		terminalCounters = installTerminalUiBackend(svc)
 	}
 	settings := &configuration.Http{}
@@ -255,6 +263,39 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		interrupt.Store(true)
 	}
 	endpoint, err := https.NewEndpoint(settings, https.EndpointOptions{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if mode == "terminal-logout-lost" && r.URL.Path == webAPI+"logout" && interrupt.CompareAndSwap(false, true) {
+			recorder := httptest.NewRecorder()
+			protocolHandler.ServeHTTP(recorder, r)
+			if recorder.Code != http.StatusNoContent {
+				http.Error(w, "logout fixture did not commit", http.StatusInternalServerError)
+				return
+			}
+			interrupted.Add(1)
+			// Commit through the real protocol, then reset the HTTP stream before
+			// delivering headers. No fake success/failure or handler replay.
+			panic(http.ErrAbortHandler)
+		}
+		if mode == "terminal-expiry" && r.URL.Path == "/_bifroest/test/expire-current-access" && r.Method == http.MethodPost {
+			// Test-only clock boundary: expire the real server grant without
+			// waiting ten minutes or changing a production timeout/policy.
+			svc.web.mutex.Lock()
+			if len(svc.web.access) != 1 {
+				svc.web.mutex.Unlock()
+				http.Error(w, "expected one original access grant", http.StatusInternalServerError)
+				return
+			}
+			var advanceTo int64
+			for _, access := range svc.web.access {
+				access.mutex.Lock()
+				advanceTo = access.expires.Add(time.Second).UnixMilli()
+				access.expires = time.Now().Add(-time.Second)
+				access.mutex.Unlock()
+			}
+			svc.web.mutex.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]int64{"advanceTo": advanceTo})
+			return
+		}
 		if mode == "oidc-cancel" && r.URL.Path == webAPI+"login/reply" {
 			// Deliver the real acknowledgement only after the provider request
 			// starts. An extra browser GET is not part of the cancellation proof.
@@ -390,7 +431,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	require.NoError(t, json.Unmarshal(output, &result), "%s", output)
 	require.True(t, result.Success)
 	expectedInterrupt := 0
-	if mode == "profile" || mode == "local-password-profile" || mode == "local-interactive-profile" || mode == "interactive-lost" || mode == "management-actions" || mode == "management-forced-dispose" {
+	if mode == "profile" || mode == "local-password-profile" || mode == "local-interactive-profile" || mode == "interactive-lost" || mode == "management-actions" || mode == "management-forced-dispose" || mode == "terminal-logout-lost" {
 		expectedInterrupt = 1
 	}
 	require.EqualValues(t, expectedInterrupt, interrupted.Load(), "the uncertain claim must commit once without automatic retry")
@@ -403,9 +444,18 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	}
 	require.Equal(t, expectedSessions, webSessionCount(t, svc))
 	if terminalCounters != nil {
-		require.EqualValues(t, 5, terminalCounters.runs.Load())
-		require.Positive(t, terminalCounters.resizes.Load())
-		require.Positive(t, terminalCounters.interrupts.Load())
+		switch mode {
+		case "terminal-expiry":
+			require.EqualValues(t, 2, terminalCounters.runs.Load(), "only the original login and fresh confirmed login may start shells")
+			require.Zero(t, terminalCounters.interrupts.Load(), "grant expiry must not signal an existing execution")
+		case "terminal-logout-lost":
+			require.EqualValues(t, 1, terminalCounters.runs.Load(), "unconfirmed logout must not dispatch any new shell")
+			require.Zero(t, terminalCounters.interrupts.Load())
+		default:
+			require.EqualValues(t, 5, terminalCounters.runs.Load())
+			require.Positive(t, terminalCounters.resizes.Load())
+			require.Positive(t, terminalCounters.interrupts.Load())
+		}
 	}
 	if mode == "key-no-pty" {
 		require.Empty(t, auditEventsNamed(lifecycleRecorder.eventsSnapshot(), audit.EventNameSessionTaskStarted), "a certificate without permit-pty cannot start an execution through the UI")

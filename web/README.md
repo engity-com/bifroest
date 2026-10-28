@@ -907,14 +907,25 @@ without session disposal or adopting another actor's stored binding. An
 uncertain enrollment's original parent is kept for logout/reconciliation instead
 of being lost through a new login.
 
+After the current access grant expires, **New terminal** opens the sign-in dialog
+without opening a socket; closing that dialog leaves existing shells usable. A
+fresh confirmed sign-in opens a new shell, never replaces or reattaches an old one.
+Rejected or canceled reauthentication preserves the old grant and tabs, and dialog
+input must not enter their terminal streams. A lost logout response leaves local
+access blocked and is never reported as confirmed logout or successful process
+exit. Only **Retry logout** sends another request; a denied retry is not proof of
+server revocation and does not unlock the existing local access.
+
 xterm 6.0.0's documentOverride precedence error requires a version/count-guarded
 local bundling correction; see `scripts/README.md`. The supported per-instance
 Document adapter nonces style nodes before insertion. No global DOM patch,
 unsafe-inline/eval, iframe or upstream build/webpack command is used. The app
 component inventory records the modification. Native Go HTTPS/Chromium tests
 verify actual xterm I/O, split UTF-8, stderr, resize/signal, post-EOF output,
-explicit exit, actor-changing reauth, new runs, abrupt loss, exec without PTY,
-logout, retained sessions and strict CSP. The backend is a test hook through the
+explicit exit, actor-changing/rejected/canceled reauth, grant expiry, new runs,
+abrupt loss, lost logout replies, retained sessions and strict CSP. These UI tests
+request shells with PTY; exec/non-PTY coverage belongs to the protocol tests, not
+the current UI. The backend is a test hook through the
 real service/recording/lease driver, not real Docker/Kubernetes/ConPTY coverage.
 
 ## Public resources and customization

@@ -186,6 +186,14 @@ executions, and failed/dropped shells are never automatically retried. Reload
 loses the in-memory tabs: a subsequent confirmed login starts a fresh execution,
 not a reattachment.
 
+With an expired grant, **New terminal** asks for a fresh sign-in before opening
+another connection; closing the dialog leaves the old shells usable. Rejected or
+canceled reauthentication also preserves existing tabs and their original grant,
+without forwarding dialog input into those terminal streams. A lost logout reply
+keeps local access blocked and does not claim successful logout or process exit.
+No automatic retry occurs. **Retry logout** is explicit; denial of that request
+does not itself prove server revocation or unblock local access.
+
 ### Conservative ForcedCommand operation equivalence
 
 `POST /_bifroest/api/v1/management/version/show` is an explicit Management metadata
