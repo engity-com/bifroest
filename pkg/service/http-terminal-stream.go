@@ -20,7 +20,7 @@ import (
 
 const (
 	webTerminalMessageLimit      = 16 << 10
-	webTerminalInputQueue        = 4 // At most 64 KiB of queued stdin, plus the current read.
+	webTerminalInputQueue        = 4 // Four 16-KiB blocks, bounded by bytes rather than input message count.
 	webTerminalControlQueue      = 16
 	webTerminalMessagesPerSecond = 128
 	webTerminalControlsPerSecond = 32
@@ -44,7 +44,7 @@ type webTerminalStream struct {
 	cancel                                      context.CancelFunc
 	timings                                     webTerminalTimings
 	open                                        webTerminalOpen
-	input                                       chan []byte
+	input                                       *webTerminalInputBuffer
 	windows                                     chan terminal.Window
 	signals                                     chan terminal.Signal
 	workers                                     sync.WaitGroup
@@ -52,7 +52,6 @@ type webTerminalStream struct {
 	writeMutex                                  sync.Mutex
 	outputClosed                                bool
 	readMutex                                   sync.Mutex
-	pending                                     []byte
 	signalMutex                                 sync.Mutex
 	signalStop, signalDone                      chan struct{}
 	pingMutex                                   sync.Mutex
@@ -63,7 +62,7 @@ type webTerminalStream struct {
 
 func newWebTerminalStream(ctx context.Context, socket *websocket.Conn, id bconn.Id, host bnet.Host, timings webTerminalTimings) *webTerminalStream {
 	ctx, cancel := context.WithCancel(ctx)
-	result := &webTerminalStream{socket: socket, id: id, remote: webRemote{host: host}, ctx: ctx, cancel: cancel, timings: timings, input: make(chan []byte, webTerminalInputQueue), windows: make(chan terminal.Window, webTerminalControlQueue), signals: make(chan terminal.Signal, webTerminalControlQueue)}
+	result := &webTerminalStream{socket: socket, id: id, remote: webRemote{host: host}, ctx: ctx, cancel: cancel, timings: timings, input: newWebTerminalInputBuffer(), windows: make(chan terminal.Window, webTerminalControlQueue), signals: make(chan terminal.Signal, webTerminalControlQueue)}
 	socket.SetReadLimit(webTerminalMessageLimit)
 	socket.SetPingHandler(func(value string) error {
 		if err := result.accountInbound(len(value), true); err != nil {
@@ -139,26 +138,7 @@ func (this *webTerminalStream) Read(data []byte) (int, error) {
 	}
 	this.readMutex.Lock()
 	defer this.readMutex.Unlock()
-	if err := this.ctx.Err(); err != nil {
-		return 0, err
-	}
-	if len(this.pending) == 0 {
-		select {
-		case <-this.ctx.Done():
-			return 0, this.ctx.Err()
-		case next, open := <-this.input:
-			if err := this.ctx.Err(); err != nil {
-				return 0, err
-			}
-			if !open {
-				return 0, io.EOF
-			}
-			this.pending = next
-		}
-	}
-	n := copy(data, this.pending)
-	this.pending = this.pending[n:]
-	return n, nil
+	return this.input.read(this.ctx, data)
 }
 func (this *webTerminalStream) Write(data []byte) (int, error) { return this.writeOutput(0, data) }
 func (this *webTerminalStream) Stderr() io.ReadWriter          { return webTerminalStderr{this} }
@@ -289,11 +269,7 @@ func (this *webTerminalStream) readLoop() {
 	defer func() { _ = this.Close() }()
 	defer close(this.windows)
 	eof := false
-	defer func() {
-		if !eof {
-			close(this.input)
-		}
-	}()
+	defer this.input.end()
 	for {
 		kind, data, err := this.socket.ReadMessage()
 		if err != nil {
@@ -307,11 +283,7 @@ func (this *webTerminalStream) readLoop() {
 			if eof || len(data) == 0 {
 				return
 			}
-			select {
-			case this.input <- data:
-			case <-this.ctx.Done():
-				return
-			default:
+			if !this.input.append(data) {
 				return
 			}
 		case websocket.TextMessage:
@@ -331,7 +303,7 @@ func (this *webTerminalStream) readLoop() {
 				if eof || len(values) != 1 {
 					return
 				}
-				close(this.input)
+				this.input.end()
 				eof = true
 			case "resize":
 				if !this.open.hasPty {

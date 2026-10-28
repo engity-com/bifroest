@@ -897,6 +897,13 @@ apart, 16 queued controls). Overflow closes with an explicit error instead of
 silently truncating/replaying a paste. Native socket buffering is capped before
 more sends, with a five-second blocked-write budget.
 
+The server input buffer has the same 64-KiB byte bound regardless of WebSocket
+message size. A fixed ring coalesces small messages while the native backend is
+starting instead of counting each keystroke as a separate storage slot. Existing
+per-message, message/byte-rate and connection limits remain unchanged. EOF drains
+the existing byte stream once; later stdin is rejected, and cancellation unblocks
+readers without returning an invented successful execution result.
+
 Decoded output frames are at most 16 KiB, at most 64 jobs/256 KiB may queue behind
 one xterm writer, and each renderer job has a five-second budget. The original
 UTF-8 byte stream is passed to xterm without per-frame decoding. Final output is

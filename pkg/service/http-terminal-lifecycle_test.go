@@ -123,7 +123,7 @@ func TestWebSocketFloodsAndInvalidControlsCancelExecution(t *testing.T) {
 			case "input queue":
 				kind = websocket.BinaryMessage
 				for range webTerminalInputQueue + 1 {
-					messages = append(messages, []byte("unconsumed"))
+					messages = append(messages, bytes.Repeat([]byte{'x'}, webTerminalMessageLimit))
 				}
 			case "control queue":
 				for range webTerminalControlQueue + 1 {
