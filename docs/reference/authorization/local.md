@@ -34,6 +34,12 @@ If set to a non-empty value, this [PAM](https://wiki.archlinux.org/title/PAM) se
 
 On macOS, PAM password and keyboard-interactive authentication runs both authentication and account-management checks. The generic edition fails closed when `pamService` is empty and loads the system PAM library dynamically without CGO. The default `sshd` service uses `/etc/pam.d/sshd`; review that service's policy before exposing Bifröst.
 
+PAM-enabled Linux builds also require both `pam_authenticate` and
+`pam_acct_mgmt` for primary password/keyboard-interactive login. Account denial,
+expiry or a required password change rejects login; account-phase prompts are
+not answered with the primary password. Both phases receive the direct peer in
+`PAM_RHOST`. No automatic password change, credential setup or PAM session is run.
+
 PAM is unavailable on Windows; a non-empty `pamService` is rejected there.
 
 ##### Default settings
@@ -41,6 +47,20 @@ PAM is unavailable on Windows; a non-empty `pamService` is rejected there.
 | <<dist("linux","extended")>> | <<dist("darwin")>> | <<else_ref()>> |
 | - | - | - |
 | `sshd` | `sshd` | _empty_ |
+
+<<property("pamAccountResumeAllowed", "bool", default=False)>>
+Explicitly permit secretless browser RememberMe account checks for the configured
+PAM service. This requires a PAM-enabled Linux build, a non-empty `pamService`
+and the fresh local passwd/group/shadow checker. Other builds reject `true` rather
+than ignoring it. The browser's separate RememberMe opt-in is still required.
+
+!!! warning "Review the PAM account stack before opting in"
+    Resumption runs `pam_acct_mgmt`, not `pam_authenticate`. It cannot repeat MFA
+    or secret-dependent restrictions found only in the PAM `auth` stack. Enable
+    this only when all restrictions required on resumption are enforced by the
+    service's `account` stack and the local account policy. Otherwise leave it
+    disabled and require a fresh regular login. A generic `pam_permit` account
+    stack is not proof of equivalent auth policy.
 
 ## Password
 
@@ -80,8 +100,21 @@ special-file opens, limited to 16 MiB and 100000 records per file. Failure grant
 no access and does not repair account or session state. Historical environment
 variables, primary passwords and authorization snapshots are not reused.
 
-This does not enable PAM-backed or Windows SAM password resumption; their native
-account/logon-policy adapters remain unavailable. Key/certificate bindings retain
+With [`pamAccountResumeAllowed`](#property-pamAccountResumeAllowed), PAM-backed
+Linux password/interactive bindings additionally open a new account-only PAM
+transaction, with the current direct peer in `PAM_RHOST`. The canonical `PAM_USER`
+must remain the pinned account name and UID. The local account is checked before
+and after PAM, and both native policy and PAM are rechecked after request/target
+validation. Changed identity, groups or environment fail closed. All account
+prompts are rejected, messages are bounded, and only the new transaction's
+environment is used. The original password and prior PAM environment are never
+available to this transaction. Failure to end PAM or cancellation grants no access.
+PAM calls are synchronous: a blocking native module cannot be forcibly canceled
+and is never abandoned in a detached worker.
+
+Without that explicit server opt-in PAM-backed resumption remains unavailable.
+Darwin PAM and Windows SAM password resumption remain unavailable.
+Key/certificate bindings retain
 their existing current-key checks. RememberMe is opt-in and uses the common
 [HTTP binding lifecycle](../connection/http.md#rememberme), including independent
 browser keys and logout without session/workload disposal.

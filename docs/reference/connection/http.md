@@ -5,7 +5,18 @@ toc_depth: 5
 # HTTP / HTTPS
 
 !!! warning "Incremental browser UI; not a complete workspace yet"
-    Built browser resources provide React/Mantine password, Keyboard-Interactive/OIDC device, local SSH-key/WASM, RememberMe recovery, xterm shell tabs, structured Management metadata, paged artifact catalogs, confirmed session actions and client-only artifact verification/decryption/export/playback through the same HTTPS boundary and authorizers as SSH. The separate terminal API supports shell/exec; the UI currently opens shells only. Release jobs include the browser bundle, notices and SPDX/CycloneDX inventory, but do not supply signed source provenance. Remaining forced-command equivalence is incomplete. Local password/interactive RememberMe is supported for the non-PAM Linux repository backend; PAM-backed and Windows native logon-policy resumption remain unavailable. Source-only direct Go builds without generated resources keep the SSH/HTTP APIs and discovery fallback, not an embedded UI. Keep HTTP omitted or disabled unless you intend to expose this incremental feature.
+    Built browser resources provide React/Mantine password, Keyboard-Interactive/OIDC device,
+    local SSH-key/WASM, RememberMe recovery, xterm shell tabs, structured Management metadata,
+    paged artifact catalogs, confirmed session actions and client-only artifact
+    verification/decryption/export/playback through the same HTTPS boundary and authorizers as
+    SSH. The separate terminal API supports shell/exec; the UI currently opens shells only.
+    Release jobs include the browser bundle, notices and SPDX/CycloneDX inventory, but do not
+    supply signed source provenance. Remaining forced-command equivalence is incomplete.
+    Local password/interactive RememberMe supports the non-PAM Linux repository backend;
+    PAM-enabled Linux requires explicit reviewed account-stack opt-in. Darwin PAM and Windows
+    native logon-policy resumption remain unavailable. Source-only direct Go builds without
+    generated resources keep the SSH/HTTP APIs and discovery fallback, not an embedded UI.
+    Keep HTTP omitted or disabled unless you intend to expose this incremental feature.
 
 HTTP is a separate incoming transport for the same [flows](../flow.md), not SSH tunneled over WebSocket. Omission of the root `http` block means disabled. Merely configuring domains, TLS or customization does not enable it. When the endpoint is available, all flows are HTTP-eligible by default unless their individual `http.enabled` is false; `ssh.enabled` remains independent.
 
@@ -546,7 +557,7 @@ Sign the decoded bytes with the independent browser key using ECDSA P-256/SHA-25
 
 Successful enrollment returns 201 with `status: "remembered"`, `flow`, `sessionId`, `bindingId` and the unused `expiresAt`. Only then does the server persist the public-key binding and link the primary permission to it. Resume returns the normal authorized response with a **new ten-minute `bwa1.` permission**, not a session lease or reattachment. Before issuance the authorizer facade rechecks current HTTP selection, published-slug priority and requirements; authorizer-owned code re-evaluates credential/key/certificate policy and current claims, then the service checks session validity/revocation, normalized identity/principal, effective target, environment and audit policy. No saved Authorization rights snapshot becomes a new grant. OIDC uses the existing session lock, rotating grant, pending-verification and lost-access rules without extending an old verification deadline. Certificates must still be valid and trusted; forced-command, environment and PTY restrictions are recomputed from the exact primary key/certificate, not from another connection's session-creation evidence.
 
-Simple, htpasswd, OIDC-device and None authorizers support their applicable primary methods; Bifröst delegation requires its exact currently valid certificate. Local key/certificate bindings retain their current-key/certificate policy checks. **Local password/keyboard-interactive enrollment and resume are supported for Linux's repository backend with empty `pamService`**, using the explicit native account-policy checker. PAM-backed and Windows SAM password resumption still fail closed until their separate native adapters are available. Regular primary login is unchanged. Third-party authorizers require an explicit trusted `SessionResumer` capability; diagnostic `RestoreFromSession` or a name/UID/SID lookup alone does not opt them in.
+Simple, htpasswd, OIDC-device and None authorizers support their applicable primary methods; Bifröst delegation requires its exact currently valid certificate. Local key/certificate bindings retain their current-key/certificate policy checks. **Local password/keyboard-interactive enrollment and resume are supported for Linux's repository backend with empty `pamService`**, using the explicit native account-policy checker. PAM-enabled Linux additionally supports the explicit server opt-in [`pamAccountResumeAllowed`](../authorization/local.md#property-pamAccountResumeAllowed), default false: fresh local policy plus a new account-only PAM transaction, not primary password replay or a general substitute for PAM-auth/MFA rules. Operators must review the PAM account stack before enabling it. Darwin PAM and Windows SAM password resumption remain unavailable. Linux primary PAM login now also enforces its account phase. Third-party authorizers require an explicit trusted `SessionResumer` capability; diagnostic `RestoreFromSession` or a name/UID/SID lookup alone does not opt them in.
 
 Repository-backed Local resumption reads only the stored name/UID selector and
 fresh native account data, not historical environment or key/rights snapshots.

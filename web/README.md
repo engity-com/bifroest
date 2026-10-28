@@ -201,10 +201,21 @@ the stored name/UID pinned and no primary-secret replay, cached-lookup fallback,
 historical environment or saved rights. Locks, expiry/required password changes,
 ambiguous or changed records, unavailable files and input limits fail closed;
 files are limited to 16 MiB/100000 records and use nonblocking opens/file locks.
-Rejected claims do not slide bindings or repair session/account state. PAM-backed
-and Windows SAM password resumption remain deliberately unavailable. Real owned
+Rejected claims do not slide bindings or repair session/account state. Real owned
 TLS/HTTP2/WebSocket and Chromium profile-restart tests cover both supported methods,
 including logout without session/workload disposal; they create no host account.
+
+PAM-enabled Linux also supports an explicit server-side `pamAccountResumeAllowed`
+opt-in, default false. This combines the fresh local checker with a new
+`pam_acct_mgmt` transaction before and after current request validation, retaining
+the exact name/UID and new PAM environment. It never calls `pam_authenticate`,
+answers a PAM prompt, reuses a historical environment, changes a password or opens
+a PAM session. Operators must ensure that the PAM account stack enforces all
+restrictions required during resumption; this is not general PAM-auth/MFA
+equivalence. Current method/empty-password policies still apply. Darwin PAM and
+Windows SAM password resumption remain unavailable. The isolated native
+`mise run test:e2e:pam` harness additionally verifies real PAM policy, service
+restart and browser profile recovery; see `test/pam/README.md` for its boundaries.
 
 All requests use native same-origin fetch, omit credentials/cookies, reject
 redirects, bypass HTTP caching, carry proofs only in Authorization headers, and

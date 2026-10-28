@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 
 	"github.com/engity-com/bifroest/pkg/session"
+	"github.com/engity-com/bifroest/pkg/sys"
 	"github.com/engity-com/bifroest/pkg/user"
 )
 
@@ -16,16 +18,27 @@ func (this *LocalAuthorizer) ResumeSession(req SessionResumeRequest) (Authorizat
 	if err != nil {
 		return nil, err
 	}
-	// PAM and native logon policy require their own verified adapters. Ordinary
-	// repository lookup/diagnostic restoration cannot substitute for them.
+	// Ordinary lookup/diagnostic restoration cannot substitute for fresh native
+	// policy. PAM account-only resumption additionally requires explicit opt-in.
 	if key == nil {
-		if this.conf == nil || this.conf.PamService != "" {
+		if this.conf == nil {
 			return nil, ErrSessionResumeUnavailable
 		}
 		if _, supported := this.userRepository.(user.PasswordAccountPolicyChecker); !supported {
 			return nil, ErrSessionResumeUnavailable
 		}
-		return this.resumeRepositoryPasswordAccount(req, sess)
+		if this.conf.PamService != "" {
+			if !this.conf.PamAccountResumeAllowed {
+				return nil, ErrSessionResumeUnavailable
+			}
+			return this.resumePasswordAccount(req, sess, func(name string, id user.Id, policy user.PasswordAccountPolicy) (*user.User, sys.EnvVars, error) {
+				return this.checkPamPasswordAccount(req, name, id, policy)
+			})
+		}
+		return this.resumePasswordAccount(req, sess, func(name string, id user.Id, policy user.PasswordAccountPolicy) (*user.User, sys.EnvVars, error) {
+			current, err := user.CheckPasswordAccount(req.Context(), this.userRepository, name, id, policy)
+			return current, nil, err
+		})
 	}
 	stored, err := this.RestoreFromSession(req.Context(), sess, nil)
 	if err != nil {
@@ -57,7 +70,9 @@ func (this *LocalAuthorizer) ResumeSession(req SessionResumeRequest) (Authorizat
 	return finishSessionResume(req, auth)
 }
 
-func (this *LocalAuthorizer) resumeRepositoryPasswordAccount(req SessionResumeRequest, sess session.Session) (Authorization, error) {
+type passwordResumeCheck func(string, user.Id, user.PasswordAccountPolicy) (*user.User, sys.EnvVars, error)
+
+func (this *LocalAuthorizer) resumePasswordAccount(req SessionResumeRequest, sess session.Session, nativeCheck passwordResumeCheck) (Authorization, error) {
 	raw, err := sess.AuthorizationToken(req.Context())
 	if err != nil {
 		return nil, err
@@ -70,23 +85,23 @@ func (this *LocalAuthorizer) resumeRepositoryPasswordAccount(req SessionResumeRe
 	if json.Unmarshal(raw, &token) != nil || token.User.Name == "" || token.User.Uid == nil {
 		return nil, ErrSessionResumeDenied
 	}
-	check := func(allowEmpty bool) (*user.User, error) {
-		current, err := user.CheckPasswordAccount(req.Context(), this.userRepository, token.User.Name, *token.User.Uid, user.PasswordAccountPolicy{AllowEmpty: allowEmpty})
+	check := func(allowEmpty bool) (*user.User, sys.EnvVars, error) {
+		current, env, err := nativeCheck(token.User.Name, *token.User.Uid, user.PasswordAccountPolicy{AllowEmpty: allowEmpty})
 		if errors.Is(err, user.ErrPasswordAccountPolicyUnavailable) {
-			return nil, ErrSessionResumeUnavailable
+			return nil, nil, ErrSessionResumeUnavailable
 		}
 		if errors.Is(err, user.ErrPasswordAccountPolicyDenied) {
-			return nil, ErrSessionResumeDenied
+			return nil, nil, ErrSessionResumeDenied
 		}
-		return current, err
+		return current, env, err
 	}
 	// This preliminary read grants nothing: policy templates must see current
 	// identity/groups before deciding whether the primary method is still allowed.
-	current, err := check(true)
+	current, env, err := check(true)
 	if err != nil {
 		return nil, err
 	}
-	auth := &local{user: current, remote: req.Connection().Remote(), flow: this.flow, session: sess}
+	auth := &local{user: current, envVars: env, remote: req.Connection().Remote(), flow: this.flow, session: sess}
 	setAuthorizationContext(req, auth)
 	allowed := this.conf.Password.Allowed
 	if req.ResumeCredential().Method == "keyboard-interactive" {
@@ -106,11 +121,11 @@ func (this *LocalAuthorizer) resumeRepositoryPasswordAccount(req SessionResumeRe
 	}
 	// Recheck after template/environment validation, for both empty-password
 	// policy values. A changed account must not escape through the earlier read.
-	checked, err := check(allowEmpty)
+	checked, checkedEnv, err := check(allowEmpty)
 	if err != nil {
 		return nil, err
 	}
-	if !current.IsEqualTo(checked) {
+	if !current.IsEqualTo(checked) || !maps.Equal(env, checkedEnv) {
 		return nil, fmt.Errorf("native account changed during policy validation: %w", ErrSessionResumeDenied)
 	}
 	return auth, req.Context().Err()
