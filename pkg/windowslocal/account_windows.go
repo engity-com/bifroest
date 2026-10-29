@@ -247,6 +247,10 @@ func netProc(name string) (*windows.LazyProc, error) {
 	return nil, errors.Join(errs...)
 }
 
+// Keep pointer-derived arguments stable while procedure lookup may grow the Go
+// stack. Keeping the uintptr slice alive is not enough to pin its referents.
+//
+//go:uintptrescapes
 func netCall(name string, args ...uintptr) error {
 	proc, err := netProc(name)
 	if err != nil {
