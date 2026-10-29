@@ -261,7 +261,10 @@ try {
     page = await open();
     await page.getByRole('button', { name: 'Use saved access', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Forget saved browser access', exact: true }).click();
-    await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page
+      .getByRole('dialog', { name: 'Revoke saved browser access?', exact: true })
+      .getByRole('button', { name: 'Cancel', exact: true })
+      .click();
     assert.equal(await local(page), 'ready');
     await page.getByRole('button', { name: 'Use saved access', exact: true }).click();
     await settledLogin(page, 'alice');
@@ -292,7 +295,7 @@ try {
     await page.reload();
     await page.getByRole('button', { name: 'Remove interrupted local setup', exact: true }).click();
     await page
-      .getByRole('dialog')
+      .getByRole('dialog', { name: 'Remove local data only?', exact: true })
       .getByRole('button', { name: 'Remove local data only', exact: true })
       .click();
     await page
@@ -316,7 +319,7 @@ try {
     await page.reload();
     await page.getByRole('button', { name: 'Forget saved browser access', exact: true }).click();
     await page
-      .getByRole('dialog')
+      .getByRole('dialog', { name: 'Revoke saved browser access?', exact: true })
       .getByRole('button', { name: 'Revoke browser permission', exact: true })
       .click();
     await page.getByText('Access was denied.', { exact: false }).waitFor();
@@ -325,9 +328,12 @@ try {
       'ready',
       'failed remote revoke must not silently delete local keys',
     );
-    await page.getByRole('button', { name: 'Remove local data only', exact: true }).click();
     await page
-      .getByRole('dialog')
+      .getByRole('dialog', { name: 'Sign in', exact: true })
+      .getByRole('button', { name: 'Remove local data only', exact: true })
+      .click();
+    await page
+      .getByRole('dialog', { name: 'Remove local data only?', exact: true })
       .getByRole('button', { name: 'Remove local data only', exact: true })
       .click();
     await page
