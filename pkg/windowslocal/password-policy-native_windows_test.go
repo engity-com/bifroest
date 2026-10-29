@@ -18,6 +18,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
 
 func TestS4UPolicyProbeFlagsDoNotPermitIdentificationOrBypass(t *testing.T) {
@@ -284,6 +285,31 @@ func TestLocalSAMPasswordPolicyNativeMatrix(t *testing.T) {
 				test.configure(t, account)
 			}
 			nativeSAMPolicyDecision(t, account, password, test.deny)
+		})
+	}
+	for _, passwordRequired := range []bool{false, true} {
+		name := "blank-password-not-required"
+		if passwordRequired {
+			name = "blank-password-required-flag"
+		}
+		t.Run(name, func(t *testing.T) {
+			key, err := registry.OpenKey(registry.LOCAL_MACHINE, `SYSTEM\CurrentControlSet\Control\Lsa`, registry.QUERY_VALUE)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, key.Close()) }()
+			limit, _, err := key.GetIntegerValue("LimitBlankPasswordUse")
+			require.NoError(t, err)
+			require.EqualValues(t, 1, limit, "the reference requires the existing default blank-network-password restriction; never change machine policy")
+			account, _ := newSAMPolicyAccount(t)
+			flags := uint32(0x221) // Set an empty password only on this newly owned test account.
+			setSAMPolicyInfo(t, account, 1008, unsafe.Pointer(&flags))
+			password := [1]uint16{0}
+			pointer := &password[0]
+			setSAMPolicyInfo(t, account, 1003, unsafe.Pointer(&pointer))
+			if passwordRequired {
+				flags = 0x201
+				setSAMPolicyInfo(t, account, 1008, unsafe.Pointer(&flags))
+			}
+			nativeSAMPolicyDecision(t, account, "", true)
 		})
 	}
 }

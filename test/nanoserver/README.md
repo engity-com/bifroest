@@ -72,7 +72,10 @@ only random container-local SAM accounts/groups. Each restriction must actually
 reject regular `LogonUserW` network authentication with the fixture's in-memory
 password before S4U observations are accepted as useful evidence. The matrix
 includes disabled/expired accounts, denied logon hours, workstation restriction,
-required password change and direct/group-based denied network-logon rights.
+required password change, direct/group-based denied network-logon rights and
+blank-password network rejection with and without the password-required flag.
+The latter verifies the existing `LimitBlankPasswordUse=1` setting read-only;
+it does not alter that machine policy.
 Only those newly created SID-bound records/rights are changed and cleaned up;
 host accounts, machine-wide security settings and privileges are not modified.
 
@@ -81,5 +84,5 @@ observed, including the actual resulting token SID. A denied reference followed
 by S4U success is logged as a policy gap, **not** converted into eligibility or a
 feature pass. Password/interactive RememberMe stays unavailable. This matrix is
 a prerequisite to a complete secretless policy adapter, not its implementation;
-blank passwords, lockout, elapsed password age, identity replacement, races and
+lockout, elapsed password age, identity replacement, races and
 cleanup/API failures still need additional strict coverage before activation.

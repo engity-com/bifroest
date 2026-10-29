@@ -154,7 +154,7 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 	t.Run("servercore-native-password-policy", func(t *testing.T) {
 		output := dockerRun(t, serverCoreImage, []string{"--user", "ContainerAdministrator", "--env", "BIFROEST_TEST_LOCAL_SAM_IN_CONTAINER=1", "--env", "BIFROEST_TEST_SERVERCORE_BROWSER=1"},
 			`C:\smoke\s4u-probe.exe`, "run-container-policy-test", `C:\smoke\windowslocal.test.exe`)
-		for _, name := range []string{"ordinary", "disabled", "account-expired", "outside-logon-hours", "wrong-workstation", "password-must-change", "network-logon-denied-direct", "network-logon-denied-via-group"} {
+		for _, name := range []string{"ordinary", "disabled", "account-expired", "outside-logon-hours", "wrong-workstation", "password-must-change", "network-logon-denied-direct", "network-logon-denied-via-group", "blank-password-not-required", "blank-password-required-flag"} {
 			if !strings.Contains(output, "--- PASS: TestLocalSAMPasswordPolicyNativeMatrix/"+name+" ") {
 				t.Fatalf("required native SAM policy reference %s did not pass: %s", name, output)
 			}

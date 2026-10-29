@@ -19,6 +19,12 @@ let sockets = 0;
 let page;
 const executions = [];
 const controls = [];
+const assetRequests = [];
+const pendingRequests = new Map();
+const workerEvents = [];
+let requestNumber = 0;
+let workerNumber = 0;
+let loginNumber = 0;
 let stage = 'startup';
 async function checkpoint(name) {
   const response = new Promise((resolve, reject) => {
@@ -57,10 +63,29 @@ try {
   });
   page = await context.newPage();
   page.on('pageerror', (error) => errors.push(error.message));
-  page.on('requestfailed', (request) =>
-    failures.push({ path: new URL(request.url()).pathname, error: request.failure()?.errorText }),
-  );
+  page.on('requestfailed', (request) => {
+    failures.push({
+      ...pendingRequests.get(request),
+      path: new URL(request.url()).pathname,
+      failedStage: stage,
+      error: request.failure()?.errorText,
+    });
+    pendingRequests.delete(request);
+  });
+  page.on('requestfinished', (request) => {
+    if (new URL(request.url()).pathname === '/_bifroest/files/browser-key.wasm') {
+      assetRequests.push({ ...pendingRequests.get(request), finishedStage: stage });
+    }
+    pendingRequests.delete(request);
+  });
+  page.on('worker', (worker) => {
+    const number = ++workerNumber;
+    const path = new URL(worker.url()).pathname;
+    workerEvents.push({ number, path, type: 'started', stage });
+    worker.on('close', () => workerEvents.push({ number, path, type: 'closed', stage }));
+  });
   page.on('request', (request) => {
+    pendingRequests.set(request, { request: ++requestNumber, startedStage: stage });
     assert(
       !(request.postData() ?? '').includes('PRIVATE KEY'),
       'private login keys stay in the browser tab',
@@ -144,6 +169,8 @@ try {
     return value;
   }
   async function login(navigate = true) {
+    const number = ++loginNumber;
+    stage = `login-${number}-begin`;
     if (navigate) {
       const response = await page.goto(`${origin}/Work`);
       assert.equal(response.status(), 200);
@@ -162,6 +189,7 @@ try {
       .waitFor();
     await dialog.waitFor({ state: 'hidden' });
     await page.locator('[data-terminal-phase="connected"]').waitFor();
+    stage = `login-${number}-connected`;
     assert.equal(
       await page.getByRole('tab').count(),
       1,
@@ -279,6 +307,8 @@ try {
       )?.slice(-4096),
       sizes: frames,
       controls,
+      assetRequests,
+      workerEvents,
     }),
   );
   throw error;
