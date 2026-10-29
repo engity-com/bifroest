@@ -167,3 +167,38 @@ error or cancellation closes an issued token and returns none. Failed cleanup
 does not imply successful physical release. This is not account-policy
 eligibility, does not verify the caller's target SID by itself, and grants or
 enables no TCB/logon privilege. Windows native revalidation remains required.
+
+The prospective password-checker context guard pins the caller from its initial
+check through delegation/join and its final check, without requiring an outer
+caller pin. It joins a separate pinned worker, checks
+the worker before/after native work and lets Go retire that OS thread instead of
+returning it to the scheduler pool. Cancellation never abandons the callback or
+cleanup. The join covers callback/cleanup completion, not a promise that physical
+OS-thread termination has already happened at return; native controls wait for
+that subsequent termination separately. Production guard code neither impersonates nor calls `RevertToSelf` nor
+enables privileges. Any thread token, even LocalSystem impersonation, is denied.
+
+Go parks its startup thread (`m0`) rather than physically terminating it. The
+guard therefore excludes that thread from native work: Windows records its ID
+during documented startup-thread package initialization; Linux models identify
+it by PID/TID. If a candidate is the startup thread, it remains pinned only as a
+temporary handoff reservation while a second candidate is joined; no native
+inspector/action runs on the reservation, and it is then unlocked unchanged.
+The handoff is bounded to one reservation. Unknown or contradictory placement
+denies instead of repeatedly dispatching. Actual native work still never unlocks
+its thread and must pass the existing physical-termination controls.
+Required owned-container controls cover a normal S4U/target-SID worker and real
+thread retirement, rejected caller impersonation with unchanged token identity/
+authentication/modification statistics, and rejected worker
+impersonation with retirement rather than reversion. Only those marked fixture
+threads deliberately adopt a token; fixture cleanup restores its own caller.
+This guard is not yet connected to password resumption or a complete policy
+checker. Its API/cleanup models and new native controls must pass independently.
+
+The fresh blank-password network-policy reader opens only the local LSA registry
+key with `QUERY_VALUE`, never create/set/remote-registry access. Only an actual
+`REG_DWORD` value `0` or `1` is known; missing values, other types, read/open/close
+failures and cancellation are unavailable, not an assumed Windows default.
+The existing owned-container `LimitBlankPasswordUse` positive/negative controls
+also verify this fresh reader after each change, while retaining their exact
+original-value restoration. This read alone is not account eligibility.

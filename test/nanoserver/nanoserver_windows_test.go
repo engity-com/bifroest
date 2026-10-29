@@ -165,6 +165,9 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 		if !strings.Contains(output, "--- PASS: TestLocalSAMLogonUIBlankPasswordObservation ") {
 			t.Fatalf("required local logon-UI observation did not execute: %s", output)
 		}
+		if !strings.Contains(output, "--- PASS: TestLocalSAMSystemContextIsolation ") {
+			t.Fatalf("required native system/thread-context control did not execute: %s", output)
+		}
 		t.Log(output)
 	})
 }

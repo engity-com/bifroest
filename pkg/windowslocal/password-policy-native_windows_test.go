@@ -390,6 +390,9 @@ func TestLocalSAMPasswordPolicyNativeMatrix(t *testing.T) {
 					actual, _, err := key.GetIntegerValue("LimitBlankPasswordUse")
 					require.NoError(t, err)
 					require.EqualValues(t, value, actual)
+					freshRestricted, err := inspectSAMBlankNetworkPolicy(t.Context())
+					require.NoError(t, err)
+					require.Equal(t, restricted, freshRestricted, "fresh read-only policy getter must observe this owned container's actual DWORD")
 					// Both outcomes are required for this same account/password:
 					// an unrelated account or password-change denial cannot pass.
 					nativeSAMPolicyDecision(t, account, password, restricted)
