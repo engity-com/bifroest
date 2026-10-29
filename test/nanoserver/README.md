@@ -97,3 +97,11 @@ structure-size/LUID/SID checks. Microsoft explicitly permits `PasswordLastSet` t
 remain uninitialized. A zero timestamp is recorded as missing evidence, never as
 a credential generation or permission; no profile, environment, secret or rights
 snapshot is read or replayed by this observation.
+
+The candidate additionally reads fresh `NetUserGetInfo(3)` and
+`NetUserModalsGet(0)` data, binds the returned RID to the selected SID and checks
+disabled/locked/expired accounts, forced password changes and password-age limits.
+In particular, the observed S4U password-must-change bypass must be rejected by
+this separate read. This remains a **preliminary restriction check**, not an
+eligibility interface: no missing blank-password, native logon-right, current
+identity/template or cleanup/cancellation proof is inferred from an empty reason.

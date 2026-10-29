@@ -201,6 +201,15 @@ func denySAMPolicyNetworkLogon(t *testing.T, account Account, throughGroup bool)
 
 func nativeSAMPolicyDecision(t *testing.T, account Account, password string, deny bool) {
 	t.Helper()
+	state, stateErr := inspectPreliminaryPasswordAccount(t.Context(), account)
+	require.NoError(t, stateErr)
+	reason := state.denialReason(time.Now())
+	if strings.HasSuffix(t.Name(), "/password-must-change") {
+		require.Equal(t, "password-must-change", reason, "fresh SAM must close the observed S4U must-change gap")
+	}
+	if !deny {
+		require.Empty(t, reason)
+	}
 	primary, primaryErr := ValidatePassword(account, password)
 	if primaryErr != nil {
 		// Account expiry and denied network logon are policy denials too, even
@@ -217,6 +226,7 @@ func nativeSAMPolicyDecision(t *testing.T, account Account, password string, den
 		PasswordMustChange string `json:"passwordMustChange,omitempty"`
 	}
 	results := []decision{{Kind: "LogonUserNetwork", Accepted: primary && primaryErr == nil}}
+	t.Logf("FRESH_SAM_RESTRICTION reason=%q passwordExpired=%t age=%d maxAge=%d (preliminary, no eligibility)", reason, state.PasswordExpired, state.PasswordAge, state.MaximumPasswordAge)
 	for _, flags := range []uint32{0, 2} {
 		token, err := s4uImpersonationTokenWithFlags(account.Name, flags)
 		accepted := err == nil && token != 0
@@ -285,13 +295,7 @@ func TestLocalSAMPasswordPolicyNativeMatrix(t *testing.T) {
 		{name: "password-must-change", deny: true, configure: func(t *testing.T, a Account) {
 			name, err := windows.UTF16PtrFromString(a.Name)
 			require.NoError(t, err)
-			type info3 struct {
-				userInfo2
-				UserID, PrimaryGroupID uint32
-				Profile, HomeDirDrive  *uint16
-				PasswordExpired        uint32
-			}
-			var value *info3
+			var value *userInfo3
 			err = netCall("NetUserGetInfo", 0, uintptr(unsafe.Pointer(name)), 3, uintptr(unsafe.Pointer(&value)))
 			runtime.KeepAlive(name)
 			require.NoError(t, err)
