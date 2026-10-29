@@ -4,6 +4,7 @@
 package windowslocal
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -25,22 +26,6 @@ var ErrNotFound = errors.New("local SAM account not found")
 type Account struct {
 	Name string
 	SID  string
-}
-
-type group struct {
-	Name string
-	SID  string
-}
-
-func (g group) GetField(name string) (any, bool, error) {
-	switch name {
-	case "name":
-		return g.Name, true, nil
-	case "gid":
-		return g.SID, true, nil
-	default:
-		return nil, false, fmt.Errorf("unknown group field %q", name)
-	}
 }
 
 // GetField implements the template context for a local account. Group data
@@ -318,12 +303,32 @@ func userDisplayName(name string) (string, error) {
 }
 
 func userGroups(name string) ([]group, error) {
-	username, _ := windows.UTF16PtrFromString(name)
+	return userGroupsContext(context.Background(), name)
+}
+
+func userGroupsContext(ctx context.Context, name string) (result []group, resultErr error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("missing native group lookup context")
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, ctx.Err())
+		if resultErr != nil {
+			result = nil
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	username, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		return nil, err
+	}
 	var info *groupInfo0
 	var read, total uint32
-	err := netCall("NetUserGetLocalGroups", 0, uintptr(unsafe.Pointer(username)), 0, 0, uintptr(unsafe.Pointer(&info)), 0xffffffff, uintptr(unsafe.Pointer(&read)), uintptr(unsafe.Pointer(&total)))
+	err = netCall("NetUserGetLocalGroups", 0, uintptr(unsafe.Pointer(username)), 0, 0, uintptr(unsafe.Pointer(&info)), 0xffffffff, uintptr(unsafe.Pointer(&read)), uintptr(unsafe.Pointer(&total)))
 	runtime.KeepAlive(username)
 	var names []string
+	err = errors.Join(err, ctx.Err())
 	if err == nil && read > 0 && info == nil {
 		err = errors.New("NetUserGetLocalGroups returned no data")
 	}
@@ -342,18 +347,27 @@ func userGroups(name string) ([]group, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	host, err := hostName()
 	if err != nil {
 		return nil, err
 	}
 	groups := make([]group, 0, len(names))
 	for _, name := range names {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !validName(name) {
 			return nil, fmt.Errorf("invalid local group name %q", name)
 		}
 		var found *windows.SID
 		var canonical string
 		for _, domain := range []string{host, "BUILTIN"} {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			sid, resolvedDomain, kind, err := windows.LookupSID("", domain+`\`+name)
 			if errors.Is(err, windows.ERROR_NONE_MAPPED) {
 				continue
@@ -363,6 +377,9 @@ func userGroups(name string) ([]group, error) {
 			}
 			if sid == nil || !sid.IsValid() || kind != windows.SidTypeAlias || !strings.EqualFold(resolvedDomain, domain) {
 				return nil, fmt.Errorf("group %q is not a local alias", name)
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
 			}
 			reverseName, reverseDomain, reverseKind, err := sid.LookupAccount("")
 			if err != nil || reverseKind != windows.SidTypeAlias || !strings.EqualFold(reverseDomain, domain) || !strings.EqualFold(reverseName, name) || !validName(reverseName) {

@@ -168,6 +168,9 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 		if !strings.Contains(output, "--- PASS: TestLocalSAMSystemContextIsolation ") {
 			t.Fatalf("required native system/thread-context control did not execute: %s", output)
 		}
+		if !strings.Contains(output, "--- PASS: TestLocalSAMFreshGroupMembership ") {
+			t.Fatalf("required fresh native group-membership control did not execute: %s", output)
+		}
 		t.Log(output)
 	})
 }

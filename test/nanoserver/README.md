@@ -221,3 +221,19 @@ remain explicit limitations. Repeated reads are not an atomic SAM/registry
 transaction or a password-generation/revocation proof. Fresh group/template/
 target/session authorization and final grant/race integration remain separate
 mandatory work, as does Darwin policy parity.
+
+The prospective group-binding reader rereads the existing direct local/BUILTIN
+aliases inside the same System/thread guard, binding the account name/SID before
+and after. It returns a copied, canonically ordered, request-local comparison
+value, never a persisted rights cache. Missing/ambiguous identities, native or
+cleanup errors and cancellation yield no value. Existing SSH/template group
+lookups keep their direct-membership scope and order; their shared native reader
+only gains optional context checkpoints. A required marked-container fixture
+creates one owned alias, observes add/remove of the same owned user SID without
+an intervening password login and removes that alias after SID verification.
+Cleanup responsibility is registered immediately after creation. If subsequent
+SID binding fails, cleanup reports the unresolved ownership and leaves the alias
+to the disposable container teardown instead of deleting by name alone.
+No deny/logon rights, host groups or machine policies are changed by this new
+fixture. This is not yet a complete group/template/target/grant integration, an
+atomic group snapshot or a native password-resume capability.
