@@ -124,6 +124,12 @@ func newTLS(conf *configuration.Http, source CertificateSource, now func() time.
 // Prepare only publishes a complete, valid set. Until then normal TLS handshakes
 // fail, while an actively installed ACME proof remains available via ALPN.
 func (this *TLS) Prepare(ctx context.Context) error {
+	this.mutex.RLock()
+	closed := this.closed
+	this.mutex.RUnlock()
+	if closed {
+		return ErrClosed
+	}
 	ctx, cancel := context.WithTimeout(ctx, this.startupTimeout)
 	stopClose := context.AfterFunc(this.lifetime, cancel)
 	defer stopClose()

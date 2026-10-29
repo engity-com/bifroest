@@ -365,6 +365,18 @@ func TestTlsHandshakeRechecksLifetimeAndCloseEvenAfterReadiness(t *testing.T) {
 	require.ErrorIs(t, manager.Prepare(context.Background()), ErrClosed)
 }
 
+func TestTlsPrepareRejectsPublishedCloseBeforeObservingCallerCancellation(t *testing.T) {
+	// Close publishes closed before canceling lifetime. Model that valid
+	// intermediate state with the preparation gate occupied, so the old select
+	// deterministically returns caller cancellation instead of the closed state.
+	manager := &TLS{closed: true, lifetime: context.Background(), startupTimeout: time.Second, preparing: make(chan struct{}, 1)}
+	manager.preparing <- struct{}{}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.ErrorIs(t, manager.Prepare(ctx), ErrClosed)
+	require.Len(t, manager.preparing, 1, "a closed manager must not acquire or alter the active preparation gate")
+}
+
 func testTlsHandshake(t *testing.T, serverConfig, clientConfig *tls.Config) (tls.ConnectionState, error, error) {
 	t.Helper()
 	left, right := net.Pipe()
