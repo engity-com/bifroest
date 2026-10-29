@@ -554,7 +554,16 @@ func testManagementClientUnlocksEncryptedIdentity(t *testing.T, passphrase strin
 	output.await(t, "Passphrase for SSH key")
 	_, err = io.WriteString(master, passphrase+"\n")
 	require.NoError(t, err)
-	require.NoError(t, awaitConsoleTestResult(t, done).err)
+	// The three-second input watchdog ends when the console has consumed its
+	// answer, not after the subsequent bcrypt KDF, SSH handshake and command.
+	// Keep the original five-second full-client context and real encrypted key.
+	output.await(t, "\n")
+	select {
+	case result := <-done:
+		require.NoError(t, result.err)
+	case <-ctx.Done():
+		t.Fatalf("management command did not finish within its existing context: %v", ctx.Err())
+	}
 	require.NoError(t, <-serverDone)
 	require.Contains(t, stdout.String(), "authenticated")
 	require.NotContains(t, output.String(), passphrase)

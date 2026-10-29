@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -66,7 +67,15 @@ func awaitConsoleTestResult(t *testing.T, done <-chan consoleTestResult) console
 	case result := <-done:
 		return result
 	case <-time.After(3 * time.Second):
-		t.Fatal("authentication input did not finish")
+		// Report only phase booleans, never a complete goroutine dump or input.
+		// A full-client test can still be deriving an encrypted key after the
+		// terminal has finished; retain the watchdog while distinguishing it.
+		stack := make([]byte, 1<<20)
+		stack = stack[:runtime.Stack(stack, true)]
+		t.Fatalf("authentication input did not finish (keyDerivation=%t, terminalRead=%t, sshHandshake=%t)",
+			bytes.Contains(stack, []byte("golang.org/x/crypto/ssh/internal/bcrypt_pbkdf.Key")),
+			bytes.Contains(stack, []byte("management.(*consoleInput).readLine")),
+			bytes.Contains(stack, []byte("golang.org/x/crypto/ssh.NewClientConn")))
 		return consoleTestResult{}
 	}
 }
