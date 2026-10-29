@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { isIP } from 'node:net';
 import { createInterface } from 'node:readline';
 import { chromium } from 'playwright';
+import { observePublicKeyWasm } from './public-wasm-diagnostics.mjs';
 
 const [address, fixtureFile, keyFile] = process.argv.slice(2);
 assert.equal(isIP(address), 4);
@@ -26,6 +27,11 @@ let requestNumber = 0;
 let workerNumber = 0;
 let loginNumber = 0;
 let stage = 'startup';
+let network;
+const milestones = [];
+function milestone(type) {
+  milestones.push({ type, stage, at: Math.round(performance.now()) });
+}
 async function checkpoint(name) {
   const response = new Promise((resolve, reject) => {
     const closed = () => {
@@ -62,6 +68,12 @@ try {
     );
   });
   page = await context.newPage();
+  network = await observePublicKeyWasm(page, origin, () => stage);
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame()) {
+      milestone('navigation');
+    }
+  });
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('requestfailed', (request) => {
     failures.push({
@@ -85,7 +97,15 @@ try {
     worker.on('close', () => workerEvents.push({ number, path, type: 'closed', stage }));
   });
   page.on('request', (request) => {
-    pendingRequests.set(request, { request: ++requestNumber, startedStage: stage });
+    const observation = { request: ++requestNumber, startedStage: stage };
+    if (new URL(request.url()).pathname === '/_bifroest/files/browser-key.wasm') {
+      try {
+        observation.owner = request.frame() === page.mainFrame() ? 'tab' : 'other';
+      } catch {
+        observation.owner = 'worker-or-unknown';
+      }
+    }
+    pendingRequests.set(request, observation);
     assert(
       !(request.postData() ?? '').includes('PRIVATE KEY'),
       'private login keys stay in the browser tab',
@@ -184,12 +204,14 @@ try {
       .getByLabel('Private key file (local only)', { exact: true })
       .setInputFiles(keyFile);
     await dialog.getByRole('button', { name: 'Sign in', exact: true }).click();
+    milestone('login-submitted');
     await page
       .getByRole('heading', { name: `Signed in as ${fixture.user}`, exact: true })
       .waitFor();
     await dialog.waitFor({ state: 'hidden' });
     await page.locator('[data-terminal-phase="connected"]').waitFor();
     stage = `login-${number}-connected`;
+    milestone('login-connected');
     assert.equal(
       await page.getByRole('tab').count(),
       1,
@@ -262,11 +284,13 @@ try {
   await page.locator('[data-terminal-phase="connected"]').waitFor();
   executions.push({ ...(await probe('web-before-reload')), exit: null });
   await page.reload();
+  milestone('reload-completed');
   await checkpoint('after-reload');
   await login(false);
   executions.push({ ...(await probe('web-after-reload')), exit: null });
   await page.getByRole('button', { name: 'Log out', exact: true }).click();
   await page.getByText('Logout confirmed.', { exact: true }).waitFor();
+  milestone('logout-confirmed');
   assert.equal(await page.locator('.xterm').count(), 0);
   await checkpoint('after-logout');
   await login(false);
@@ -284,6 +308,15 @@ try {
   await page.getByText('Logout confirmed.', { exact: true }).waitFor();
   assert.deepEqual(errors, []);
   assert.deepEqual(failures, []);
+  assert.equal(
+    assetRequests.length,
+    3,
+    'all three deliberately requested WASM downloads must finish',
+  );
+  assert(
+    assetRequests.every((request) => request.owner === 'tab'),
+    'public WASM downloads must belong to the tab',
+  );
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
   assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
   assert.equal((await context.cookies()).length, 0);
@@ -309,11 +342,15 @@ try {
       controls,
       assetRequests,
       workerEvents,
+      network: network?.events,
+      networkStartedAt: network?.startedAt,
+      milestones,
     }),
   );
   throw error;
 } finally {
   input.off('close', parentClosed);
   input.close();
+  await network?.close().catch(() => {});
   await browser.close();
 }

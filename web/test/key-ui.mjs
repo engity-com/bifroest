@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { observePublicKeyWasm } from './public-wasm-diagnostics.mjs';
 import { settledLogin } from './workspace-ui.mjs';
 
 export async function exerciseKey(page, file, logout) {
   const fixture = JSON.parse(await readFile(file, 'utf8'));
   const posts = [];
   let stage = 'boot';
+  const network = await observePublicKeyWasm(page, new URL(page.url()).origin, () => stage);
   const failures = [];
   const publicDownloads = [];
   let workerPolicy;
@@ -62,6 +64,7 @@ export async function exerciseKey(page, file, logout) {
         JSON.stringify({
           stage,
           failures,
+          network: network.events,
           notices: await page.getByRole('status').allTextContents(),
         }),
         { cause: error },
@@ -188,6 +191,11 @@ export async function exerciseKey(page, file, logout) {
     publicDownloads.length > 0 && publicDownloads.every(Boolean),
     'public WASM requests must be owned by the tab, not a retiring secret worker',
   );
+  assert(
+    network.events.some((event) => event.type === 'finished' && event.decodedBytes > 0),
+    'actual Chromium CDP must observe the public transport completion',
+  );
+  await network.close();
 }
 
 // Each algorithm / denied-PTY scenario owns its server and normal request budget.
