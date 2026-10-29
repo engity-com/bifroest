@@ -43,6 +43,7 @@ const (
 	darwinPamUser                int32 = 2
 	darwinPamRhost               int32 = 4
 	darwinPamSilent              int32 = -1 << 31
+	darwinPamDisallowNullAuthtok int32 = 1
 	darwinPamMaximumMessages           = 32
 	darwinPamMaximumMessageSize        = 512
 	darwinPamMaximumResponseSize       = 512
@@ -423,7 +424,7 @@ func (this *LocalAuthorizer) checkPassword(req PasswordRequest, requestedUsernam
 			return "", errors.New("unrecognized message style")
 		}
 	}
-	return authorizeWithDarwinPam(this.conf.PamService, requestedUsername, req.Connection().Remote().Host().String(), false, handler)
+	return authorizeWithDarwinPam(darwinPamOptions{Context: req.Context(), Service: this.conf.PamService, Username: requestedUsername, RemoteHost: req.Connection().Remote().Host().String(), Authenticate: true}, handler, startDarwinPam)
 }
 
 func (this *LocalAuthorizer) checkInteractive(req InteractiveRequest, requestedUsername string, validatePassword func(string, Request) (bool, error)) (username string, env sys.EnvVars, success bool, rErr error) {
@@ -457,67 +458,7 @@ func (this *LocalAuthorizer) checkInteractive(req InteractiveRequest, requestedU
 		}
 		return response, nil
 	}
-	return authorizeWithDarwinPam(this.conf.PamService, requestedUsername, req.Connection().Remote().Host().String(), true, handler)
-}
-
-func authorizeWithDarwinPam(service, requestedUsername, remoteHost string, interactive bool, handler func(int32, string) (string, error)) (username string, env sys.EnvVars, success bool, rErr error) {
-	accountPhase := false
-	conversation := func(style int32, message string) (string, error) {
-		if !accountPhase {
-			return handler(style, message)
-		}
-		switch style {
-		case darwinPamErrorMsg, darwinPamTextInfo:
-			if interactive {
-				return handler(style, message)
-			}
-			return "", nil
-		case darwinPamPromptEchoOff, darwinPamPromptEchoOn:
-			return "", errors.New("PAM account management requested an unsupported prompt")
-		default:
-			return "", errors.New("unrecognized message style")
-		}
-	}
-	t, err := startDarwinPamTransaction(service, requestedUsername, conversation)
-	if err != nil {
-		return "", nil, false, berrors.System.Newf("cannot start PAM transaction: %w", err)
-	}
-	defer func() {
-		if err := t.End(); err != nil {
-			rErr = errors.Join(rErr, berrors.System.Newf("cannot end PAM transaction: %w", err))
-			success = false
-		}
-	}()
-
-	if err := t.SetItem(darwinPamRhost, remoteHost); err != nil {
-		return "", nil, false, berrors.System.Newf("cannot set PAM_RHOST: %w", err)
-	}
-	flags := int32(0)
-	if !interactive {
-		flags = darwinPamSilent
-	}
-	if err := t.Authenticate(flags); err != nil {
-		if isDarwinPamDenial(err) {
-			return "", nil, false, nil
-		}
-		return "", nil, false, berrors.System.Newf("PAM authentication failed: %w", err)
-	}
-	accountPhase = true
-	if err := t.AcctMgmt(flags); err != nil {
-		if isDarwinPamDenial(err) {
-			return "", nil, false, nil
-		}
-		return "", nil, false, berrors.System.Newf("PAM account management failed: %w", err)
-	}
-	username, err = t.GetItem(darwinPamUser)
-	if err != nil {
-		return "", nil, false, berrors.System.Newf("cannot get PAM_USER: %w", err)
-	}
-	env, err = t.GetEnvList()
-	if err != nil {
-		return "", nil, false, berrors.System.Newf("cannot get PAM environment: %w", err)
-	}
-	return username, env, true, nil
+	return authorizeWithDarwinPam(darwinPamOptions{Context: req.Context(), Service: this.conf.PamService, Username: requestedUsername, RemoteHost: req.Connection().Remote().Host().String(), Authenticate: true, Interactive: true}, handler, startDarwinPam)
 }
 
 func isDarwinPamDenial(err error) bool {
