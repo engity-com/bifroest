@@ -1,0 +1,289 @@
+//go:build windows
+
+package windowslocal
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"runtime"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+	"unsafe"
+
+	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/windows"
+)
+
+func TestS4UPolicyProbeFlagsDoNotPermitIdentificationOrBypass(t *testing.T) {
+	for _, flags := range []uint32{0, 2} {
+		buffer, _, err := s4uLogonBufferWithFlags("owned-user", flags)
+		require.NoError(t, err)
+		auth := (*s4uAuth)(unsafe.Pointer(&buffer[0]))
+		require.EqualValues(t, 12, auth.MessageType)
+		require.Equal(t, flags, auth.Flags)
+	}
+	for _, flags := range []uint32{1, 4, 8, 0xffffffff} {
+		_, _, err := s4uLogonBufferWithFlags("owned-user", flags)
+		require.Error(t, err)
+	}
+}
+
+func requireSAMPolicyContainer(t *testing.T) {
+	t.Helper()
+	if os.Getenv("BIFROEST_TEST_SAM_POLICY_IN_CONTAINER") != "1" {
+		t.Skip("requires the owned Server Core LocalSystem policy harness")
+	}
+	self, err := windows.GetCurrentProcessToken().GetTokenUser()
+	require.NoError(t, err)
+	require.Equal(t, "S-1-5-18", self.User.Sid.String())
+	marker, err := os.ReadFile(`C:\smoke\servercore-container.marker`)
+	require.NoError(t, err)
+	require.Equal(t, "bifroest-servercore-integration", strings.TrimSpace(string(marker)))
+	containerAdmin, _, _, err := windows.LookupSID("", "ContainerAdministrator")
+	require.NoError(t, err)
+	require.Equal(t, "S-1-5-93-2-1", containerAdmin.String(), "never mutate a host SAM or host LSA policy")
+}
+
+func newSAMPolicyAccount(t *testing.T) (Account, string) {
+	t.Helper()
+	requireSAMPolicyContainer(t)
+	var nonce [8]byte
+	_, err := rand.Read(nonce[:])
+	require.NoError(t, err)
+	name := "bifp" + hex.EncodeToString(nonce[:])
+	var secret [24]byte
+	_, err = rand.Read(secret[:])
+	require.NoError(t, err)
+	password := "T3st!" + hex.EncodeToString(secret[:]) + "Z"
+	username, err := windows.UTF16PtrFromString(name)
+	require.NoError(t, err)
+	units, err := windows.UTF16FromString(password)
+	require.NoError(t, err)
+	defer clear(units)
+	info := userInfo1{Name: username, Password: &units[0], Priv: 1, Flags: 0x201}
+	var parameter uint32
+	err = netCall("NetUserAdd", 0, 1, uintptr(unsafe.Pointer(&info)), uintptr(unsafe.Pointer(&parameter)))
+	runtime.KeepAlive(username)
+	runtime.KeepAlive(units)
+	require.NoError(t, err, "create only the owned random policy account, parameter %d", parameter)
+	account, err := Lookup(name)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if _, err := currentAccount(account); err != nil {
+			t.Errorf("owned policy account identity changed before cleanup: %v", err)
+			return
+		}
+		err := netCall("NetUserDel", 0, uintptr(unsafe.Pointer(username)))
+		runtime.KeepAlive(username)
+		if err != nil {
+			t.Errorf("remove owned policy account: %v", err)
+		}
+	})
+	return account, password
+}
+
+func setSAMPolicyInfo(t *testing.T, account Account, level uint32, value unsafe.Pointer) {
+	t.Helper()
+	requireSAMPolicyContainer(t)
+	_, err := currentAccount(account)
+	require.NoError(t, err)
+	name, err := windows.UTF16PtrFromString(account.Name)
+	require.NoError(t, err)
+	var parameter uint32
+	err = netCall("NetUserSetInfo", 0, uintptr(unsafe.Pointer(name)), uintptr(level), uintptr(value), uintptr(unsafe.Pointer(&parameter)))
+	runtime.KeepAlive(name)
+	runtime.KeepAlive(value)
+	require.NoError(t, err, "set owned account level %d parameter %d", level, parameter)
+}
+
+func denySAMPolicyNetworkLogon(t *testing.T, account Account, throughGroup bool) {
+	t.Helper()
+	requireSAMPolicyContainer(t)
+	_, err := currentAccount(account)
+	require.NoError(t, err)
+	subject, err := windows.StringToSid(account.SID)
+	require.NoError(t, err)
+	if throughGroup {
+		groupName := "bifg" + strings.TrimPrefix(account.Name, "bifp")
+		name, err := windows.UTF16PtrFromString(groupName)
+		require.NoError(t, err)
+		info := struct{ Name *uint16 }{name}
+		var parameter uint32
+		require.NoError(t, netCall("NetLocalGroupAdd", 0, 0, uintptr(unsafe.Pointer(&info)), uintptr(unsafe.Pointer(&parameter))))
+		runtime.KeepAlive(name)
+		var kind uint32
+		var domain string
+		subject, domain, kind, err = windows.LookupSID("", groupName)
+		require.NoError(t, err)
+		host, err := hostName()
+		require.NoError(t, err)
+		require.True(t, strings.EqualFold(domain, host))
+		require.EqualValues(t, windows.SidTypeAlias, kind)
+		groupSID := subject.String()
+		t.Cleanup(func() {
+			current, _, _, err := windows.LookupSID("", groupName)
+			if err != nil || current.String() != groupSID {
+				t.Errorf("owned policy group identity changed: %v", err)
+				return
+			}
+			err = netCall("NetLocalGroupDel", 0, uintptr(unsafe.Pointer(name)))
+			runtime.KeepAlive(name)
+			if err != nil {
+				t.Errorf("remove owned policy group: %v", err)
+			}
+		})
+		member, err := windows.UTF16PtrFromString(host + `\` + account.Name)
+		require.NoError(t, err)
+		members := struct{ Name *uint16 }{member}
+		require.NoError(t, netCall("NetLocalGroupAddMembers", 0, uintptr(unsafe.Pointer(name)), 3, uintptr(unsafe.Pointer(&members)), 1))
+		runtime.KeepAlive(name)
+		runtime.KeepAlive(member)
+	}
+	advapi := windows.NewLazySystemDLL("advapi32.dll")
+	open, add, remove, closePolicy := advapi.NewProc("LsaOpenPolicy"), advapi.NewProc("LsaAddAccountRights"), advapi.NewProc("LsaRemoveAccountRights"), advapi.NewProc("LsaClose")
+	type objectAttributes struct {
+		Length                          uint32
+		Root                            windows.Handle
+		Name                            uintptr
+		Attributes                      uint32
+		SecurityDescriptor, SecurityQoS uintptr
+	}
+	attributes := objectAttributes{}
+	attributes.Length = uint32(unsafe.Sizeof(attributes))
+	var policy windows.Handle
+	status, _, _ := open.Call(0, uintptr(unsafe.Pointer(&attributes)), 0x811, uintptr(unsafe.Pointer(&policy))) // VIEW_LOCAL_INFORMATION | CREATE_ACCOUNT | LOOKUP_NAMES
+	require.Zerof(t, uint32(status), "LsaOpenPolicy NTSTATUS 0x%08x", uint32(status))
+	t.Cleanup(func() {
+		status, _, _ := closePolicy.Call(uintptr(policy))
+		if status != 0 {
+			t.Errorf("LsaClose: 0x%08x", uint32(status))
+		}
+	})
+	units, err := windows.UTF16FromString("SeDenyNetworkLogonRight")
+	require.NoError(t, err)
+	right := s4uUnicodeString{Length: uint16((len(units) - 1) * 2), MaximumLength: uint16(len(units) * 2), Buffer: &units[0]}
+	status, _, _ = add.Call(uintptr(policy), uintptr(unsafe.Pointer(subject)), uintptr(unsafe.Pointer(&right)), 1)
+	runtime.KeepAlive(subject)
+	runtime.KeepAlive(units)
+	require.Zerof(t, uint32(status), "LsaAddAccountRights owned SID: 0x%08x", uint32(status))
+	t.Cleanup(func() {
+		status, _, _ := remove.Call(uintptr(policy), uintptr(unsafe.Pointer(subject)), 0, uintptr(unsafe.Pointer(&right)), 1)
+		runtime.KeepAlive(subject)
+		runtime.KeepAlive(units)
+		if status != 0 {
+			t.Errorf("remove own network-deny right: 0x%08x", uint32(status))
+		}
+	})
+}
+
+func nativeSAMPolicyDecision(t *testing.T, account Account, password string, deny bool) {
+	t.Helper()
+	primary, primaryErr := ValidatePassword(account, password)
+	if primaryErr != nil {
+		// Account expiry and denied network logon are policy denials too, even
+		// though the primary API currently returns them as errors rather than false.
+		require.True(t, errors.Is(primaryErr, syscall.Errno(1385)) || errors.Is(primaryErr, syscall.Errno(1793)), "unexpected primary policy failure: %v", primaryErr)
+	}
+	require.Equal(t, !deny, primary && primaryErr == nil, "regular Network LogonUser is the native policy reference")
+	type decision struct {
+		Kind     string `json:"kind"`
+		Accepted bool   `json:"accepted"`
+		Error    string `json:"error,omitempty"`
+	}
+	results := []decision{{Kind: "LogonUserNetwork", Accepted: primary && primaryErr == nil}}
+	for _, flags := range []uint32{0, 2} {
+		token, err := s4uImpersonationTokenWithFlags(account.Name, flags)
+		accepted := err == nil && token != 0
+		if token != 0 {
+			if accepted {
+				user, lookupErr := token.GetTokenUser()
+				require.NoError(t, lookupErr)
+				require.Equal(t, account.SID, user.User.Sid.String())
+			}
+			require.NoError(t, token.Close())
+		}
+		if !deny {
+			require.NoError(t, err)
+			require.True(t, accepted)
+		}
+		result := decision{Kind: fmt.Sprintf("S4UNetworkFlags%d", flags), Accepted: accepted}
+		if err != nil {
+			result.Error = err.Error()
+		}
+		results = append(results, result)
+	}
+	raw, err := json.Marshal(results)
+	require.NoError(t, err)
+	// A successful observation is not a resume eligibility pass. In particular,
+	// S4U success in a denied primary case is recorded as a policy gap, not hidden.
+	t.Logf("NATIVE_SAM_POLICY_OBSERVATION %s", raw)
+}
+
+func TestLocalSAMPasswordPolicyNativeMatrix(t *testing.T) {
+	requireSAMPolicyContainer(t)
+	tests := []struct {
+		name      string
+		deny      bool
+		configure func(*testing.T, Account)
+	}{
+		{name: "ordinary", deny: false},
+		{name: "disabled", deny: true, configure: func(t *testing.T, a Account) {
+			flags := uint32(0x203)
+			setSAMPolicyInfo(t, a, 1008, unsafe.Pointer(&flags))
+		}},
+		{name: "account-expired", deny: true, configure: func(t *testing.T, a Account) {
+			expires := uint32(time.Now().Add(-time.Hour).Unix())
+			setSAMPolicyInfo(t, a, 1017, unsafe.Pointer(&expires))
+		}},
+		{name: "outside-logon-hours", deny: true, configure: func(t *testing.T, a Account) {
+			hours := [21]byte{}
+			info := struct {
+				UnitsPerWeek uint32
+				LogonHours   *byte
+			}{168, &hours[0]}
+			setSAMPolicyInfo(t, a, 1020, unsafe.Pointer(&info))
+			runtime.KeepAlive(hours)
+		}},
+		{name: "wrong-workstation", deny: true, configure: func(t *testing.T, a Account) {
+			name, err := windows.UTF16PtrFromString("BFST-OTHER")
+			require.NoError(t, err)
+			setSAMPolicyInfo(t, a, 1014, unsafe.Pointer(&name))
+			runtime.KeepAlive(name)
+		}},
+		{name: "password-must-change", deny: true, configure: func(t *testing.T, a Account) {
+			name, err := windows.UTF16PtrFromString(a.Name)
+			require.NoError(t, err)
+			type info3 struct {
+				userInfo2
+				UserID, PrimaryGroupID uint32
+				Profile, HomeDirDrive  *uint16
+				PasswordExpired        uint32
+			}
+			var value *info3
+			err = netCall("NetUserGetInfo", 0, uintptr(unsafe.Pointer(name)), 3, uintptr(unsafe.Pointer(&value)))
+			runtime.KeepAlive(name)
+			require.NoError(t, err)
+			require.NotNil(t, value)
+			defer func() { require.NoError(t, netCall("NetApiBufferFree", uintptr(unsafe.Pointer(value)))) }()
+			value.PasswordExpired = 1
+			setSAMPolicyInfo(t, a, 3, unsafe.Pointer(value))
+		}},
+		{name: "network-logon-denied-direct", deny: true, configure: func(t *testing.T, a Account) { denySAMPolicyNetworkLogon(t, a, false) }},
+		{name: "network-logon-denied-via-group", deny: true, configure: func(t *testing.T, a Account) { denySAMPolicyNetworkLogon(t, a, true) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			account, password := newSAMPolicyAccount(t)
+			if test.configure != nil {
+				test.configure(t, account)
+			}
+			nativeSAMPolicyDecision(t, account, password, test.deny)
+		})
+	}
+}

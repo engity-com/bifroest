@@ -63,3 +63,23 @@ must not be disposed. This does not enable Windows SAM password RememberMe or
 claim that service installation inside a container is the released image's default
 entrypoint. Native runtime results remain required; a cross-build alone is not
 acceptance.
+
+## Native password-policy observations (not RememberMe activation)
+
+The required `servercore-native-password-policy` test uses a separate owned
+Server Core container and the marked temporary LocalSystem service. It creates
+only random container-local SAM accounts/groups. Each restriction must actually
+reject regular `LogonUserW` network authentication with the fixture's in-memory
+password before S4U observations are accepted as useful evidence. The matrix
+includes disabled/expired accounts, denied logon hours, workstation restriction,
+required password change and direct/group-based denied network-logon rights.
+Only those newly created SID-bound records/rights are changed and cleaned up;
+host accounts, machine-wide security settings and privileges are not modified.
+
+Both existing S4U flags0 and `MSV1_0_S4U_LOGON_FLAG_CHECK_LOGONHOURS` (2) are
+observed, including the actual resulting token SID. A denied reference followed
+by S4U success is logged as a policy gap, **not** converted into eligibility or a
+feature pass. Password/interactive RememberMe stays unavailable. This matrix is
+a prerequisite to a complete secretless policy adapter, not its implementation;
+blank passwords, lockout, elapsed password age, identity replacement, races and
+cleanup/API failures still need additional strict coverage before activation.

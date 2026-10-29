@@ -69,11 +69,13 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 	}
 	run(t, root, "go", "build", "-o", filepath.Join(dir, "s4u-probe.exe"), "./test/manual/s4u-probe")
 	run(t, root, "go", "test", "-c", "-tags=nanoserver_integration", "-o", filepath.Join(dir, "environment.test.exe"), "./pkg/environment")
+	run(t, root, "go", "test", "-c", "-o", filepath.Join(dir, "windowslocal.test.exe"), "./pkg/windowslocal")
 	browserKey := prepareServerCoreBrowserKey(t, dir)
 	buildImage := func(base, kind string) string {
 		t.Helper()
 		dockerfile := fmt.Sprintf("FROM %s\nUSER ContainerAdministrator\nWORKDIR C:/smoke\nCOPY bifroest.exe C:/smoke/bifroest.exe\nCOPY environment.test.exe C:/smoke/environment.test.exe\nCOPY s4u-probe.exe C:/smoke/s4u-probe.exe\n", base)
 		if kind == "servercore" {
+			dockerfile += "COPY windowslocal.test.exe C:/smoke/windowslocal.test.exe\n"
 			dockerfile += "COPY browser-authorized-key C:/smoke/browser-authorized-key\n"
 			dockerfile += "RUN cmd /C \"echo bifroest-servercore-integration > C:/smoke/servercore-container.marker\"\n"
 		}
@@ -148,5 +150,15 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 	})
 	t.Run("servercore-native-browser", func(t *testing.T) {
 		exerciseServerCoreBrowser(t, ctx, root, serverCoreImage, isolation, browserKey)
+	})
+	t.Run("servercore-native-password-policy", func(t *testing.T) {
+		output := dockerRun(t, serverCoreImage, []string{"--user", "ContainerAdministrator", "--env", "BIFROEST_TEST_LOCAL_SAM_IN_CONTAINER=1", "--env", "BIFROEST_TEST_SERVERCORE_BROWSER=1"},
+			`C:\smoke\s4u-probe.exe`, "run-container-policy-test", `C:\smoke\windowslocal.test.exe`)
+		for _, name := range []string{"ordinary", "disabled", "account-expired", "outside-logon-hours", "wrong-workstation", "password-must-change", "network-logon-denied-direct", "network-logon-denied-via-group"} {
+			if !strings.Contains(output, "--- PASS: TestLocalSAMPasswordPolicyNativeMatrix/"+name+" ") {
+				t.Fatalf("required native SAM policy reference %s did not pass: %s", name, output)
+			}
+		}
+		t.Log(output)
 	})
 }

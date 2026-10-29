@@ -41,6 +41,8 @@ type s4uAuth struct {
 	Domain      s4uUnicodeString
 }
 
+const s4uLogonFlagCheckLogonHours uint32 = 0x2 // MSV1_0_S4U_LOGON_FLAG_CHECK_LOGONHOURS, Windows SDK NTSecAPI.h.
+
 type s4uTokenSource struct {
 	Name [8]byte
 	ID   windows.LUID
@@ -155,6 +157,15 @@ func profileDirectory(a Account) (home string, retErr error) {
 }
 
 func s4uLogonBuffer(name string) ([]uint64, int, error) {
+	return s4uLogonBufferWithFlags(name, 0)
+}
+
+// CHECK_LOGONHOURS is the only additional S4U flag examined by the native
+// policy tests. Identification/bypass modes must never be introduced here.
+func s4uLogonBufferWithFlags(name string, flags uint32) ([]uint64, int, error) {
+	if flags&^s4uLogonFlagCheckLogonHours != 0 {
+		return nil, 0, errors.New("unsupported local S4U flags")
+	}
 	user, err := windows.UTF16FromString(name)
 	if err != nil {
 		return nil, 0, err
@@ -173,12 +184,17 @@ func s4uLogonBuffer(name string) ([]uint64, int, error) {
 	copy(domainUnits, domain[:])
 	auth := (*s4uAuth)(unsafe.Pointer(&buffer[0]))
 	auth.MessageType = 12 // MsV1_0S4ULogon
+	auth.Flags = flags
 	auth.User = s4uUnicodeString{uint16((len(user) - 1) * 2), uint16(len(user) * 2), &userUnits[0]}
 	auth.Domain = s4uUnicodeString{2, 4, &domainUnits[0]}
 	return buffer, length, nil
 }
 
 func s4uImpersonationToken(name string) (result windows.Token, retErr error) {
+	return s4uImpersonationTokenWithFlags(name, 0)
+}
+
+func s4uImpersonationTokenWithFlags(name string, flags uint32) (result windows.Token, retErr error) {
 	originBytes := []byte("BifS4U\x00")
 	origin := s4uString{uint16(len(originBytes) - 1), uint16(len(originBytes)), &originBytes[0]}
 	var handle uintptr
@@ -207,7 +223,7 @@ func s4uImpersonationToken(name string) (result windows.Token, retErr error) {
 		return 0, fmt.Errorf("LsaLookupAuthenticationPackage: NTSTATUS 0x%08x", uint32(status))
 	}
 
-	buffer, length, err := s4uLogonBuffer(name)
+	buffer, length, err := s4uLogonBufferWithFlags(name, flags)
 	if err != nil {
 		return 0, err
 	}
