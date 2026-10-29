@@ -101,6 +101,11 @@ func newSAMPolicyAccountWithPassword(t *testing.T, withPassword bool) (Account, 
 	if !withPassword {
 		flags := uint32(0x221)
 		setSAMPolicyInfo(t, account, 1008, unsafe.Pointer(&flags))
+		setSAMPolicyPasswordExpired(t, account, false)
+		state, err := inspectPreliminaryPasswordAccount(t.Context(), account)
+		require.NoError(t, err)
+		require.False(t, state.PasswordExpired, "the blank-password reference must not be poisoned by initial password expiry")
+		require.Zero(t, state.Flags&0x800000)
 	}
 	return account, password
 }
@@ -117,6 +122,29 @@ func setSAMPolicyInfo(t *testing.T, account Account, level uint32, value unsafe.
 	runtime.KeepAlive(name)
 	runtime.KeepAlive(value)
 	require.NoError(t, err, "set owned account level %d parameter %d", level, parameter)
+}
+
+func setSAMPolicyPasswordExpired(t *testing.T, account Account, expired bool) {
+	t.Helper()
+	requireSAMPolicyContainer(t)
+	_, err := currentAccount(account)
+	require.NoError(t, err)
+	name, err := windows.UTF16PtrFromString(account.Name)
+	require.NoError(t, err)
+	var value *userInfo3
+	err = netCall("NetUserGetInfo", 0, uintptr(unsafe.Pointer(name)), 3, uintptr(unsafe.Pointer(&value)))
+	runtime.KeepAlive(name)
+	if value != nil {
+		defer func() { require.NoError(t, netCall("NetApiBufferFree", uintptr(unsafe.Pointer(value)))) }()
+	}
+	require.NoError(t, err)
+	require.NotNil(t, value)
+	value.PasswordExpired = 0
+	value.Flags &^= 0x800000
+	if expired {
+		value.PasswordExpired = 1
+	}
+	setSAMPolicyInfo(t, account, 3, unsafe.Pointer(value))
 }
 
 func denySAMPolicyNetworkLogon(t *testing.T, account Account, throughGroup bool) {
@@ -210,22 +238,29 @@ func nativeSAMPolicyDecision(t *testing.T, account Account, password string, den
 	if !deny {
 		require.Empty(t, reason)
 	}
-	primary, primaryErr := ValidatePassword(account, password)
+	var nativeStatus syscall.Errno
+	primary, primaryErr := validatePasswordObserved(account, password, func(accepted bool, nativeErr error) {
+		if !accepted {
+			_ = errors.As(nativeErr, &nativeStatus)
+		}
+	})
 	if primaryErr != nil {
 		// Account expiry and denied network logon are policy denials too, even
 		// though the primary API currently returns them as errors rather than false.
 		require.True(t, errors.Is(primaryErr, syscall.Errno(1385)) || errors.Is(primaryErr, syscall.Errno(1793)), "unexpected primary policy failure: %v", primaryErr)
 	}
-	require.Equal(t, !deny, primary && primaryErr == nil, "regular Network LogonUser is the native policy reference")
+	t.Logf("NATIVE_LOGON_REFERENCE accepted=%t nativeStatus=%d reason=%q", primary && primaryErr == nil, uint32(nativeStatus), reason)
+	require.Equal(t, !deny, primary && primaryErr == nil, "regular Network LogonUser is the native policy reference, native status=%d", uint32(nativeStatus))
 	type decision struct {
 		Kind               string `json:"kind"`
 		Accepted           bool   `json:"accepted"`
 		Error              string `json:"error,omitempty"`
+		NativeStatus       uint32 `json:"nativeStatus,omitempty"`
 		LogonDataSize      uint32 `json:"logonDataSize,omitempty"`
 		PasswordLastSet    string `json:"passwordLastSet,omitempty"`
 		PasswordMustChange string `json:"passwordMustChange,omitempty"`
 	}
-	results := []decision{{Kind: "LogonUserNetwork", Accepted: primary && primaryErr == nil}}
+	results := []decision{{Kind: "LogonUserNetwork", Accepted: primary && primaryErr == nil, NativeStatus: uint32(nativeStatus)}}
 	t.Logf("FRESH_SAM_RESTRICTION reason=%q passwordExpired=%t age=%d maxAge=%d (preliminary, no eligibility)", reason, state.PasswordExpired, state.PasswordAge, state.MaximumPasswordAge)
 	for _, flags := range []uint32{0, 2} {
 		token, err := s4uImpersonationTokenWithFlags(account.Name, flags)
@@ -293,16 +328,7 @@ func TestLocalSAMPasswordPolicyNativeMatrix(t *testing.T) {
 			runtime.KeepAlive(name)
 		}},
 		{name: "password-must-change", deny: true, configure: func(t *testing.T, a Account) {
-			name, err := windows.UTF16PtrFromString(a.Name)
-			require.NoError(t, err)
-			var value *userInfo3
-			err = netCall("NetUserGetInfo", 0, uintptr(unsafe.Pointer(name)), 3, uintptr(unsafe.Pointer(&value)))
-			runtime.KeepAlive(name)
-			require.NoError(t, err)
-			require.NotNil(t, value)
-			defer func() { require.NoError(t, netCall("NetApiBufferFree", uintptr(unsafe.Pointer(value)))) }()
-			value.PasswordExpired = 1
-			setSAMPolicyInfo(t, a, 3, unsafe.Pointer(value))
+			setSAMPolicyPasswordExpired(t, a, true)
 		}},
 		{name: "network-logon-denied-direct", deny: true, configure: func(t *testing.T, a Account) { denySAMPolicyNetworkLogon(t, a, false) }},
 		{name: "network-logon-denied-via-group", deny: true, configure: func(t *testing.T, a Account) { denySAMPolicyNetworkLogon(t, a, true) }},

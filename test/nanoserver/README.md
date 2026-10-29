@@ -76,6 +76,9 @@ required password change, direct/group-based denied network-logon rights and
 blank-password network rejection with and without the password-required flag.
 The latter creates new accounts without an initial password rather than resetting
 a strong password to empty (which would require weakening password complexity).
+Their initial password-expired marker is explicitly cleared and read back only
+on those owned fixture accounts; otherwise a forced-password-change rejection
+could be mistaken for a blank-password policy rejection.
 The same account must first authenticate with the blank restriction disabled and
 then fail with it enabled. These exact DWORD changes affect only the separate
 owned container's local registry view; the original value is restored and verified.
