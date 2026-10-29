@@ -287,7 +287,14 @@ export class Http {
     }
     let response: Response | undefined;
     let reader: ReadableStreamDefaultReader<Uint8Array<ArrayBufferLike>> | undefined;
+    const request = new AbortController();
+    const abort = () => request.abort();
+    let completed = false;
+    stopped.addEventListener('abort', abort, { once: true });
     try {
+      if (stopped.aborted) {
+        throw new RememberMeError('cancelled');
+      }
       response = await this.#transport(new URL(`/_bifroest/api/v1/${action}`, this.#scope.origin), {
         method: 'POST',
         headers,
@@ -297,7 +304,7 @@ export class Http {
         mode: 'same-origin',
         redirect: 'error',
         referrerPolicy: 'no-referrer',
-        signal: stopped,
+        signal: request.signal,
       });
       if (stopped.aborted) {
         throw new RememberMeError('cancelled');
@@ -312,6 +319,7 @@ export class Http {
         );
       }
       if (status === 204) {
+        completed = response.body === null;
         return undefined;
       }
       if (
@@ -329,6 +337,7 @@ export class Http {
           throw new RememberMeError('cancelled');
         }
         if (chunk.done) {
+          completed = true;
           break;
         }
         length += chunk.value.byteLength;
@@ -350,8 +359,16 @@ export class Http {
       }
       throw error instanceof RememberMeError ? error : new RememberMeError('unavailable');
     } finally {
+      // A completed body no longer belongs to the action's cancellation
+      // lifetime. Retiring that action must not cancel its already read receipt.
+      stopped.removeEventListener('abort', abort);
+      if (!completed) {
+        request.abort();
+      }
       if (reader !== undefined) {
-        await reader.cancel().catch(() => undefined);
+        if (!completed) {
+          await reader.cancel().catch(() => undefined);
+        }
         reader.releaseLock();
       } else if (response?.body !== null && response?.body !== undefined) {
         await response.body.cancel().catch(() => undefined);
