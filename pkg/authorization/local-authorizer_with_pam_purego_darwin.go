@@ -155,8 +155,9 @@ type darwinPamTransaction struct {
 	handler   func(int32, string) (string, error)
 	status    int32
 
-	mutex       sync.Mutex
-	callbackErr error
+	mutex            sync.Mutex
+	callbackErr      error
+	callbackFailures uint64
 }
 
 func startDarwinPamTransaction(service, username string, handler func(int32, string) (string, error)) (*darwinPamTransaction, error) {
@@ -198,14 +199,13 @@ func (this *darwinPamTransaction) errorFor(status int32) error {
 }
 
 func (this *darwinPamTransaction) call(operation func() int32) error {
+	if err := this.callbackFailure(); err != nil {
+		return err
+	}
 	status := operation()
 	this.status = status
-	this.mutex.Lock()
-	callbackErr := this.callbackErr
-	this.callbackErr = nil
-	this.mutex.Unlock()
-	if callbackErr != nil {
-		return callbackErr
+	if err := this.callbackFailure(); err != nil {
+		return err
 	}
 	if status != darwinPamSuccess {
 		return this.errorFor(status)
@@ -215,8 +215,19 @@ func (this *darwinPamTransaction) call(operation func() int32) error {
 
 func (this *darwinPamTransaction) setCallbackError(err error) {
 	this.mutex.Lock()
-	this.callbackErr = err
+	if err != nil {
+		this.callbackFailures++
+		if this.callbackErr == nil {
+			this.callbackErr = err
+		}
+	}
 	this.mutex.Unlock()
+}
+
+func (this *darwinPamTransaction) callbackFailure() error {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	return this.callbackErr
 }
 
 func (this *darwinPamTransaction) SetItem(item int32, value string) error {
@@ -243,6 +254,9 @@ func (this *darwinPamTransaction) GetItem(item int32) (string, error) {
 }
 
 func (this *darwinPamTransaction) GetEnvList() (map[string]string, error) {
+	if err := this.callbackFailure(); err != nil {
+		return nil, err
+	}
 	list := this.api.pamGetenvlist(this.handle)
 	if list == 0 {
 		this.status = darwinPamBufErr
@@ -256,6 +270,9 @@ func (this *darwinPamTransaction) GetEnvList() (map[string]string, error) {
 	for i := uintptr(0); ; i++ {
 		pointer := *(*uintptr)(unsafe.Pointer(list + i*pointerSize))
 		if pointer == 0 {
+			if err := this.callbackFailure(); err != nil {
+				return nil, err
+			}
 			return result, nil
 		}
 		value, err := darwinPamCStringUnbounded(this.api, pointer)
@@ -280,42 +297,67 @@ func (this *darwinPamTransaction) End() error {
 	this.mutex.Lock()
 	handle := this.handle
 	this.handle = 0
+	failuresBeforeEnd := this.callbackFailures
 	this.mutex.Unlock()
 	if handle == 0 {
 		return nil
 	}
 	status := this.api.pamEnd(handle, this.status)
 	darwinPamHandlers.Delete(this.handlerID)
+	this.mutex.Lock()
+	failedDuringEnd := this.callbackFailures != failuresBeforeEnd
+	this.mutex.Unlock()
+	var endErr, callbackErr error
 	if status != darwinPamSuccess {
-		return this.errorFor(status)
+		endErr = this.errorFor(status)
 	}
-	return nil
+	if failedDuringEnd {
+		callbackErr = &darwinPamError{code: darwinPamConvErr, message: "PAM cleanup conversation failed"}
+	}
+	// Prior callback failures remain sticky for every operation, but are not
+	// reclassified as cleanup errors after the caller already handled a denial.
+	return errors.Join(endErr, callbackErr)
 }
 
 func darwinPamConversation(numMessages int32, messages uintptr, responses *uintptr, appData uintptr) (result int32) {
 	result = darwinPamConvErr
+	var transaction *darwinPamTransaction
+	fail := func(status int32, err error) int32 {
+		if transaction != nil {
+			transaction.setCallbackError(err)
+		}
+		return status
+	}
 	defer func() {
 		if recover() != nil {
-			result = darwinPamConvErr
+			result = fail(darwinPamConvErr, &darwinPamError{code: darwinPamConvErr, message: "PAM conversation callback panicked"})
 		}
 	}()
+	// Resolve ownership before any framing rejection, so even failures which
+	// never reach the application handler poison the known transaction. Native
+	// module success must not erase a failed callback or publish an environment.
+	value, ok := darwinPamHandlers.Load(appData)
+	if ok {
+		transaction, _ = value.(*darwinPamTransaction)
+	}
 	if responses == nil {
-		return result
+		return fail(darwinPamConvErr, &darwinPamError{code: darwinPamConvErr, message: "PAM conversation has no response output"})
 	}
 	*responses = 0
 	if numMessages <= 0 || numMessages > darwinPamMaximumMessages || messages == 0 {
+		return fail(darwinPamConvErr, &darwinPamError{code: darwinPamConvErr, message: "invalid PAM conversation framing"})
+	}
+	if transaction == nil {
 		return result
 	}
-	value, ok := darwinPamHandlers.Load(appData)
-	if !ok {
-		return result
+	if transaction.callbackFailure() != nil {
+		return fail(darwinPamConvErr, &darwinPamError{code: darwinPamConvErr, message: "PAM conversation belongs to a failed transaction"})
 	}
-	transaction := value.(*darwinPamTransaction)
 	api := transaction.api
 	responseSize := unsafe.Sizeof(darwinPamResponse{})
 	responsePointer := api.calloc(uintptr(numMessages), responseSize)
 	if responsePointer == 0 {
-		return darwinPamBufErr
+		return fail(darwinPamBufErr, &darwinPamError{code: darwinPamBufErr, message: "cannot allocate PAM conversation responses"})
 	}
 	responseValues := unsafe.Slice((*darwinPamResponse)(unsafe.Pointer(responsePointer)), int(numMessages))
 	success := false
@@ -334,12 +376,12 @@ func darwinPamConversation(numMessages int32, messages uintptr, responses *uintp
 	messagePointers := unsafe.Slice((*uintptr)(unsafe.Pointer(messages)), int(numMessages))
 	for i, messagePointer := range messagePointers {
 		if messagePointer == 0 {
-			return darwinPamConvErr
+			return fail(darwinPamConvErr, &darwinPamError{code: darwinPamConvErr, message: "PAM conversation contains a nil message"})
 		}
 		message := (*darwinPamMessage)(unsafe.Pointer(messagePointer))
 		text, err := darwinPamCString(api, message.Message, darwinPamMaximumMessageSize)
 		if err != nil {
-			return darwinPamConvErr
+			return fail(darwinPamConvErr, err)
 		}
 		response, err := transaction.handler(message.Style, text)
 		if err != nil {
@@ -355,7 +397,7 @@ func darwinPamConversation(numMessages int32, messages uintptr, responses *uintp
 		}
 		allocated := api.calloc(uintptr(len(response)+1), 1)
 		if allocated == 0 {
-			return darwinPamBufErr
+			return fail(darwinPamBufErr, &darwinPamError{code: darwinPamBufErr, message: "cannot allocate PAM conversation answer"})
 		}
 		copy(unsafe.Slice((*byte)(unsafe.Pointer(allocated)), len(response)+1), response)
 		responseValues[i].Response = allocated
