@@ -74,10 +74,12 @@ password before S4U observations are accepted as useful evidence. The matrix
 includes disabled/expired accounts, denied logon hours, workstation restriction,
 required password change, direct/group-based denied network-logon rights and
 blank-password network rejection with and without the password-required flag.
-The latter verifies the existing `LimitBlankPasswordUse=1` setting read-only;
-it does not alter that machine policy.
+The latter temporarily enables `LimitBlankPasswordUse=1` only in that separate
+owned container's local registry view (the Server Core image may default to 0),
+then restores and verifies the original value. No host registry or host policy
+is accessed.
 Only those newly created SID-bound records/rights are changed and cleaned up;
-host accounts, machine-wide security settings and privileges are not modified.
+Host accounts, host security settings and privileges are not modified.
 
 Both existing S4U flags0 and `MSV1_0_S4U_LOGON_FLAG_CHECK_LOGONHOURS` (2) are
 observed, including the actual resulting token SID. A denied reference followed

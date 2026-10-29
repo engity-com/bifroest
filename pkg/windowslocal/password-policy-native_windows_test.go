@@ -287,18 +287,40 @@ func TestLocalSAMPasswordPolicyNativeMatrix(t *testing.T) {
 			nativeSAMPolicyDecision(t, account, password, test.deny)
 		})
 	}
+	// Windows containers may default this to zero. Tighten only this owned
+	// disposable container's registry view; never assume the host's default and
+	// never connect to a remote registry. Restore and verify the exact old value.
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `SYSTEM\CurrentControlSet\Control\Lsa`, registry.QUERY_VALUE|registry.SET_VALUE)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if err := key.Close(); err != nil {
+			t.Errorf("close owned container policy key: %v", err)
+		}
+	})
+	limit, kind, err := key.GetIntegerValue("LimitBlankPasswordUse")
+	require.NoError(t, err)
+	require.EqualValues(t, registry.DWORD, kind)
+	t.Cleanup(func() {
+		if err := key.SetDWordValue("LimitBlankPasswordUse", uint32(limit)); err != nil {
+			t.Errorf("restore owned container blank-password policy: %v", err)
+		} else {
+			actual, _, err := key.GetIntegerValue("LimitBlankPasswordUse")
+			if err != nil || actual != limit {
+				t.Errorf("container blank-password policy restore mismatch: %d: %v", actual, err)
+			}
+		}
+	})
+	require.NoError(t, key.SetDWordValue("LimitBlankPasswordUse", 1))
+	configured, _, err := key.GetIntegerValue("LimitBlankPasswordUse")
+	require.NoError(t, err)
+	require.EqualValues(t, 1, configured)
+	t.Logf("owned container blank-password policy: original=%d test=%d (restored and verified during cleanup)", limit, configured)
 	for _, passwordRequired := range []bool{false, true} {
 		name := "blank-password-not-required"
 		if passwordRequired {
 			name = "blank-password-required-flag"
 		}
 		t.Run(name, func(t *testing.T) {
-			key, err := registry.OpenKey(registry.LOCAL_MACHINE, `SYSTEM\CurrentControlSet\Control\Lsa`, registry.QUERY_VALUE)
-			require.NoError(t, err)
-			defer func() { require.NoError(t, key.Close()) }()
-			limit, _, err := key.GetIntegerValue("LimitBlankPasswordUse")
-			require.NoError(t, err)
-			require.EqualValues(t, 1, limit, "the reference requires the existing default blank-network-password restriction; never change machine policy")
 			account, _ := newSAMPolicyAccount(t)
 			flags := uint32(0x221) // Set an empty password only on this newly owned test account.
 			setSAMPolicyInfo(t, account, 1008, unsafe.Pointer(&flags))
