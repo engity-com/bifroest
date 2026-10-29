@@ -21,6 +21,7 @@ const executions = [];
 const controls = [];
 const assetRequests = [];
 const pendingRequests = new Map();
+const keyDownloads = new Map();
 const workerEvents = [];
 let requestNumber = 0;
 let workerNumber = 0;
@@ -62,6 +63,32 @@ try {
     );
   });
   page = await context.newPage();
+  // The key worker is retired immediately after signing. Complete the public
+  // WASM request's browser-observation lifecycle before allowing the real login
+  // start through, so retiring that worker cannot race DevTools' requestfinished
+  // bookkeeping. No response is mocked or changed, and nothing is retried.
+  await page.route('**/_bifroest/api/v1/login/public-key', async (route) => {
+    let timer;
+    try {
+      controls.push({ type: 'key-asset-barrier', pending: keyDownloads.size, stage });
+      await Promise.race([
+        Promise.all([...keyDownloads.values()].map((download) => download.promise)),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('key asset lifecycle did not finish')), 5000);
+        }),
+      ]);
+      await route.continue();
+    } catch {
+      failures.push({
+        path: '/_bifroest/api/v1/login/public-key',
+        failedStage: stage,
+        error: 'key asset lifecycle barrier failed',
+      });
+      await route.abort().catch(() => undefined);
+    } finally {
+      clearTimeout(timer);
+    }
+  });
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('requestfailed', (request) => {
     failures.push({
@@ -70,12 +97,16 @@ try {
       failedStage: stage,
       error: request.failure()?.errorText,
     });
+    keyDownloads.get(request)?.resolve();
+    keyDownloads.delete(request);
     pendingRequests.delete(request);
   });
   page.on('requestfinished', (request) => {
     if (new URL(request.url()).pathname === '/_bifroest/files/browser-key.wasm') {
       assetRequests.push({ ...pendingRequests.get(request), finishedStage: stage });
     }
+    keyDownloads.get(request)?.resolve();
+    keyDownloads.delete(request);
     pendingRequests.delete(request);
   });
   page.on('worker', (worker) => {
@@ -86,6 +117,9 @@ try {
   });
   page.on('request', (request) => {
     pendingRequests.set(request, { request: ++requestNumber, startedStage: stage });
+    if (new URL(request.url()).pathname === '/_bifroest/files/browser-key.wasm') {
+      keyDownloads.set(request, Promise.withResolvers());
+    }
     assert(
       !(request.postData() ?? '').includes('PRIVATE KEY'),
       'private login keys stay in the browser tab',
