@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -18,29 +17,15 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-type observedSAMLogonUI struct {
-	PasswordIsBlank bool `json:"passwordIsBlank"`
-	AccountDisabled bool `json:"accountDisabled"`
-}
-
 // Research only. System Informer's ntsam.h describes local-only class 29 as two
 // BOOLEANs, PasswordIsBlank and AccountIsDisabled. That is not a Microsoft API
 // compatibility guarantee. Query no password/hash/private/all-information class,
 // and infer no capability from an unsupported export/class or a zero value.
-func observeSAMLocalLogonUI(ctx context.Context, account Account) (result *observedSAMLogonUI, resultErr error) {
+func observeSAMLocalLogonUI(ctx context.Context, account Account) (*observedSAMLogonUI, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("missing SAM logon-UI observation context")
 	}
-	defer func() {
-		resultErr = errors.Join(resultErr, ctx.Err())
-		if resultErr != nil {
-			result = nil
-		}
-	}()
 	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if _, err := currentAccount(account); err != nil {
 		return nil, err
 	}
 	separator := strings.LastIndexByte(account.SID, '-')
@@ -59,6 +44,9 @@ func observeSAMLocalLogonUI(ctx context.Context, account Account) (result *obser
 	library := windows.NewLazySystemDLL("samlib.dll")
 	connect, openDomain, openUser, query, closeHandle, free := library.NewProc("SamConnect"), library.NewProc("SamOpenDomain"), library.NewProc("SamOpenUser"), library.NewProc("SamQueryInformationUser"), library.NewProc("SamCloseHandle"), library.NewProc("SamFreeMemory")
 	for _, procedure := range []*windows.LazyProc{connect, openDomain, openUser, query, closeHandle, free} {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if err := procedure.Find(); err != nil {
 			return nil, err
 		}
@@ -76,76 +64,40 @@ func observeSAMLocalLogonUI(ctx context.Context, account Account) (result *obser
 		Attributes                      uint32
 		SecurityDescriptor, SecurityQoS uintptr
 	}
-	attributes := objectAttributes{}
-	attributes.Length = uint32(unsafe.Sizeof(attributes))
-	var server windows.Handle
-	status, _, _ := connect.Call(0, uintptr(unsafe.Pointer(&server)), 0x21, uintptr(unsafe.Pointer(&attributes))) // local CONNECT | LOOKUP_DOMAIN only.
-	if server != 0 {
-		defer func() {
-			status, _, _ := closeHandle.Call(uintptr(server))
-			resultErr = errors.Join(resultErr, check("SamCloseHandle server", status))
-		}()
-	}
-	if err := check("SamConnect", status); err != nil {
-		return nil, err
-	}
-	if server == 0 {
-		return nil, fmt.Errorf("SamConnect returned no handle")
-	}
-	var domain windows.Handle
-	status, _, _ = openDomain.Call(uintptr(server), 0x200, uintptr(unsafe.Pointer(domainSID)), uintptr(unsafe.Pointer(&domain))) // DOMAIN_LOOKUP only.
-	runtime.KeepAlive(domainSID)
-	if domain != 0 {
-		defer func() {
-			status, _, _ := closeHandle.Call(uintptr(domain))
-			resultErr = errors.Join(resultErr, check("SamCloseHandle domain", status))
-		}()
-	}
-	if err := check("SamOpenDomain", status); err != nil {
-		return nil, err
-	}
-	if domain == 0 {
-		return nil, fmt.Errorf("SamOpenDomain returned no handle")
-	}
-	var user windows.Handle
-	status, _, _ = openUser.Call(uintptr(domain), 0x19, uintptr(rid), uintptr(unsafe.Pointer(&user))) // USER_READ_GENERAL | READ_LOGON | READ_ACCOUNT; no write or password rights.
-	if user != 0 {
-		defer func() {
-			status, _, _ := closeHandle.Call(uintptr(user))
-			resultErr = errors.Join(resultErr, check("SamCloseHandle user", status))
-		}()
-	}
-	if err := check("SamOpenUser", status); err != nil {
-		return nil, err
-	}
-	if user == 0 {
-		return nil, fmt.Errorf("SamOpenUser returned no handle")
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	var value *struct{ PasswordIsBlank, AccountIsDisabled uint8 }
-	status, _, _ = query.Call(uintptr(user), 29, uintptr(unsafe.Pointer(&value))) // ONLY UserLogonUIInformation, never an internal/all-information class.
-	if value != nil {
-		defer func() {
+	return observeSAMLogonUIFlow(ctx, samLogonUIOperations{
+		identity: func() error { _, err := currentAccount(account); return err },
+		connect: func() (uintptr, error) {
+			attributes := objectAttributes{}
+			attributes.Length = uint32(unsafe.Sizeof(attributes))
+			var handle windows.Handle
+			status, _, _ := connect.Call(0, uintptr(unsafe.Pointer(&handle)), 0x21, uintptr(unsafe.Pointer(&attributes))) // local CONNECT | LOOKUP_DOMAIN only.
+			return uintptr(handle), check("SamConnect", status)
+		},
+		openDomain: func(server uintptr) (uintptr, error) {
+			var handle windows.Handle
+			status, _, _ := openDomain.Call(server, 0x200, uintptr(unsafe.Pointer(domainSID)), uintptr(unsafe.Pointer(&handle))) // DOMAIN_LOOKUP only.
+			runtime.KeepAlive(domainSID)
+			return uintptr(handle), check("SamOpenDomain", status)
+		},
+		openUser: func(domain uintptr) (uintptr, error) {
+			var handle windows.Handle
+			status, _, _ := openUser.Call(domain, 0x19, uintptr(rid), uintptr(unsafe.Pointer(&handle))) // USER_READ_GENERAL | READ_LOGON | READ_ACCOUNT; no writes/password rights.
+			return uintptr(handle), check("SamOpenUser", status)
+		},
+		query: func(user uintptr) (*samLogonUIValue, error) {
+			var value *samLogonUIValue
+			status, _, _ := query.Call(user, 29, uintptr(unsafe.Pointer(&value))) // ONLY local UserLogonUIInformation, no internal/all-information class.
+			return value, check("SamQueryInformationUser logon-UI", status)
+		},
+		free: func(value *samLogonUIValue) error {
 			status, _, _ := free.Call(uintptr(unsafe.Pointer(value)))
-			resultErr = errors.Join(resultErr, check("SamFreeMemory logon-UI", status))
-		}()
-	}
-	if err := check("SamQueryInformationUser logon-UI", status); err != nil {
-		return nil, err
-	}
-	if value == nil {
-		return nil, fmt.Errorf("SamQueryInformationUser returned no logon-UI data")
-	}
-	if value.PasswordIsBlank > 1 || value.AccountIsDisabled > 1 {
-		return nil, fmt.Errorf("unsupported SAM logon-UI BOOLEAN layout")
-	}
-	result = &observedSAMLogonUI{PasswordIsBlank: value.PasswordIsBlank != 0, AccountDisabled: value.AccountIsDisabled != 0}
-	if _, err := currentAccount(account); err != nil {
-		return nil, err
-	}
-	return result, nil
+			return check("SamFreeMemory logon-UI", status)
+		},
+		close: func(handle uintptr) error {
+			status, _, _ := closeHandle.Call(handle)
+			return check("SamCloseHandle", status)
+		},
+	})
 }
 
 func TestLocalSAMLogonUIBlankPasswordObservation(t *testing.T) {

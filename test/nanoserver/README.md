@@ -145,3 +145,13 @@ cleanup errors yield no observation, not eligibility. This reverse-engineered
 header is not a Microsoft ABI/support or security-contract guarantee; neither
 its availability nor correct behavior is assumed before native execution, and
 even passing fixture observations do not activate password resumption.
+
+The native Query29 bindings use the same test-only synchronous operation flow as
+the portable fault models. Those models inject null outputs, errors with and
+without returned resources, invalid BOOLEANs, identity drift, cancellation at
+each boundary and every free/close failure. Each issued resource must receive
+exactly one cleanup attempt, and any cleanup error must discard the observation;
+the models do not claim successful native release after an error. Identity is
+rechecked after successful cleanup too. Model passes do not prove
+native ABI compatibility or reproduce an actual Windows API failure; the
+refactored Windows binding still requires its own fresh native run.
