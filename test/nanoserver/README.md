@@ -146,7 +146,7 @@ header is not a Microsoft ABI/support or security-contract guarantee; neither
 its availability nor correct behavior is assumed before native execution, and
 even passing fixture observations do not activate password resumption.
 
-The native Query29 bindings use the same test-only synchronous operation flow as
+The native Query29 bindings use the same private synchronous operation flow as
 the portable fault models. Those models inject null outputs, errors with and
 without returned resources, invalid BOOLEANs, identity drift, cancellation at
 each boundary and every free/close failure. Each issued resource must receive
