@@ -50,7 +50,7 @@ require (
 	github.com/tc-hib/winres v0.3.1
 	github.com/tg123/go-htpasswd v1.2.5
 	github.com/vmihailenco/msgpack/v5 v5.4.1
-	github.com/xtaci/smux v1.5.57
+	github.com/xtaci/smux v2.0.1+incompatible
 	golang.org/x/crypto v0.58.0
 	golang.org/x/net v0.61.0
 	golang.org/x/oauth2 v0.37.0
