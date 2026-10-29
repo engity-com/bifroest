@@ -3,6 +3,7 @@
 package windowslocal
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"runtime"
@@ -195,68 +196,92 @@ func s4uImpersonationToken(name string) (result windows.Token, retErr error) {
 }
 
 func s4uImpersonationTokenWithFlags(name string, flags uint32) (result windows.Token, retErr error) {
-	originBytes := []byte("BifS4U\x00")
-	origin := s4uString{uint16(len(originBytes) - 1), uint16(len(originBytes)), &originBytes[0]}
-	var handle uintptr
-	var mode uint64
-	status, _, _ := s4uRegister.Call(uintptr(unsafe.Pointer(&origin)), uintptr(unsafe.Pointer(&handle)), uintptr(unsafe.Pointer(&mode)))
-	runtime.KeepAlive(originBytes)
-	if status != 0 {
-		return 0, fmt.Errorf("LsaRegisterLogonProcess: NTSTATUS 0x%08x", uint32(status))
-	}
-	defer func() {
-		if status, _, _ := s4uDeregister.Call(handle); status != 0 {
-			retErr = errors.Join(retErr, fmt.Errorf("LsaDeregisterLogonProcess: NTSTATUS 0x%08x", uint32(status)))
-		}
-		if retErr != nil && result != 0 {
-			retErr = errors.Join(retErr, result.Close())
-			result = 0
-		}
-	}()
+	return s4uImpersonationTokenWithFlagsContext(context.Background(), name, flags)
+}
 
-	packageBytes := []byte("MICROSOFT_AUTHENTICATION_PACKAGE_V1_0\x00")
-	packageName := s4uString{uint16(len(packageBytes) - 1), uint16(len(packageBytes)), &packageBytes[0]}
-	var packageID uint32
-	status, _, _ = s4uLookupPackage.Call(handle, uintptr(unsafe.Pointer(&packageName)), uintptr(unsafe.Pointer(&packageID)))
-	runtime.KeepAlive(packageBytes)
-	if status != 0 {
-		return 0, fmt.Errorf("LsaLookupAuthenticationPackage: NTSTATUS 0x%08x", uint32(status))
+// This only acquires a context-bound native token. It does not establish the
+// caller's LocalSystem/thread or target-SID/account-policy contract; a higher
+// level checker must validate those boundaries and own/close a returned token.
+func s4uImpersonationTokenWithFlagsContext(ctx context.Context, name string, flags uint32) (windows.Token, error) {
+	if ctx == nil {
+		return 0, errors.New("missing local S4U context")
 	}
-
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	buffer, length, err := s4uLogonBufferWithFlags(name, flags)
 	if err != nil {
 		return 0, err
 	}
-	source := s4uTokenSource{}
-	copy(source.Name[:], "BifS4U")
-	if ok, _, callErr := s4uAllocateLUID.Call(uintptr(unsafe.Pointer(&source.ID))); ok == 0 {
-		return 0, fmt.Errorf("AllocateLocallyUniqueId: %w", s4uCallError(callErr))
-	}
-	var profile uintptr
-	var profileSize uint32
-	var logonID windows.LUID
-	var quota s4uQuotaLimits
-	var substatus uint32
-	status, _, _ = s4uLogon.Call(
-		handle, uintptr(unsafe.Pointer(&origin)), 3, // Network
-		uintptr(packageID), uintptr(unsafe.Pointer(&buffer[0])), uintptr(length), 0,
-		uintptr(unsafe.Pointer(&source)), uintptr(unsafe.Pointer(&profile)),
-		uintptr(unsafe.Pointer(&profileSize)), uintptr(unsafe.Pointer(&logonID)),
-		uintptr(unsafe.Pointer(&result)), uintptr(unsafe.Pointer(&quota)), uintptr(unsafe.Pointer(&substatus)),
-	)
-	runtime.KeepAlive(originBytes)
-	runtime.KeepAlive(buffer)
-	if profile != 0 {
-		if freeStatus, _, _ := s4uFreeBuffer.Call(profile); freeStatus != 0 {
-			retErr = fmt.Errorf("LsaFreeReturnBuffer: NTSTATUS 0x%08x", uint32(freeStatus))
+	for _, procedure := range []*windows.LazyProc{s4uRegister, s4uLookupPackage, s4uAllocateLUID, s4uLogon, s4uFreeBuffer, s4uDeregister} {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		if err := procedure.Find(); err != nil {
+			return 0, fmt.Errorf("local S4U API unavailable: %w", err)
 		}
 	}
-	if status != 0 {
-		retErr = errors.Join(retErr, fmt.Errorf("LsaLogonUser: NTSTATUS 0x%08x (substatus 0x%08x)", uint32(status), substatus))
-	} else if result == 0 {
-		retErr = errors.Join(retErr, errors.New("LsaLogonUser returned no token"))
+	originBytes := []byte("BifS4U\x00")
+	origin := s4uString{uint16(len(originBytes) - 1), uint16(len(originBytes)), &originBytes[0]}
+	packageBytes := []byte("MICROSOFT_AUTHENTICATION_PACKAGE_V1_0\x00")
+	packageName := s4uString{uint16(len(packageBytes) - 1), uint16(len(packageBytes)), &packageBytes[0]}
+	source := s4uTokenSource{}
+	copy(source.Name[:], "BifS4U")
+	statusError := func(operation string, status uintptr) error {
+		if status != 0 {
+			return fmt.Errorf("%s: NTSTATUS 0x%08x", operation, uint32(status))
+		}
+		return nil
 	}
-	return result, retErr
+	token, err := acquireS4UToken(ctx, s4uTokenOperations{
+		register: func() (uintptr, error) {
+			var handle uintptr
+			var mode uint64
+			status, _, _ := s4uRegister.Call(uintptr(unsafe.Pointer(&origin)), uintptr(unsafe.Pointer(&handle)), uintptr(unsafe.Pointer(&mode)))
+			runtime.KeepAlive(originBytes)
+			return handle, statusError("LsaRegisterLogonProcess", status)
+		},
+		lookupPackage: func(handle uintptr) (uint32, error) {
+			var packageID uint32
+			status, _, _ := s4uLookupPackage.Call(handle, uintptr(unsafe.Pointer(&packageName)), uintptr(unsafe.Pointer(&packageID)))
+			runtime.KeepAlive(packageBytes)
+			return packageID, statusError("LsaLookupAuthenticationPackage", status)
+		},
+		allocateLUID: func() error {
+			if ok, _, callErr := s4uAllocateLUID.Call(uintptr(unsafe.Pointer(&source.ID))); ok == 0 {
+				return fmt.Errorf("AllocateLocallyUniqueId: %w", s4uCallError(callErr))
+			}
+			return nil
+		},
+		logon: func(handle uintptr, packageID uint32) (s4uLogonOutput, error) {
+			var token windows.Token
+			var profile uintptr
+			var profileSize, substatus uint32
+			var logonID windows.LUID
+			var quota s4uQuotaLimits
+			status, _, _ := s4uLogon.Call(handle, uintptr(unsafe.Pointer(&origin)), 3, // Network, never interactive/identification or a password replay.
+				uintptr(packageID), uintptr(unsafe.Pointer(&buffer[0])), uintptr(length), 0,
+				uintptr(unsafe.Pointer(&source)), uintptr(unsafe.Pointer(&profile)), uintptr(unsafe.Pointer(&profileSize)),
+				uintptr(unsafe.Pointer(&logonID)), uintptr(unsafe.Pointer(&token)), uintptr(unsafe.Pointer(&quota)), uintptr(unsafe.Pointer(&substatus)))
+			runtime.KeepAlive(originBytes)
+			runtime.KeepAlive(buffer)
+			output := s4uLogonOutput{token: uintptr(token), profile: profile}
+			if status != 0 {
+				return output, fmt.Errorf("LsaLogonUser: NTSTATUS 0x%08x (substatus 0x%08x)", uint32(status), substatus)
+			}
+			return output, nil
+		},
+		freeProfile: func(profile uintptr) error {
+			status, _, _ := s4uFreeBuffer.Call(profile)
+			return statusError("LsaFreeReturnBuffer", status)
+		},
+		deregister: func(handle uintptr) error {
+			status, _, _ := s4uDeregister.Call(handle)
+			return statusError("LsaDeregisterLogonProcess", status)
+		},
+		closeToken: func(token uintptr) error { return windows.Token(token).Close() },
+	})
+	return windows.Token(token), err
 }
 
 func s4uCallError(err error) error {

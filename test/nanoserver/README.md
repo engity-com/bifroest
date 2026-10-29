@@ -155,3 +155,15 @@ the models do not claim successful native release after an error. Identity is
 rechecked after successful cleanup too. Model passes do not prove
 native ABI compatibility or reproduce an actual Windows API failure; the
 refactored Windows binding still requires its own fresh native run.
+
+The S4U token primitive also has a synchronous context-bound ownership flow.
+Existing profile/SSH callers retain flags `0`; the native policy matrix exercises
+the context-aware flags `0`/`2` paths. Cancellation is checked between native
+registration, package lookup, LUID allocation and network logon, and after
+cleanup. Profile buffers and registration outputs, including resources returned
+with an error, each receive one cleanup attempt. A token transfers to the caller
+only after successful profile cleanup/deregistration and a live context; any
+error or cancellation closes an issued token and returns none. Failed cleanup
+does not imply successful physical release. This is not account-policy
+eligibility, does not verify the caller's target SID by itself, and grants or
+enables no TCB/logon privilege. Windows native revalidation remains required.

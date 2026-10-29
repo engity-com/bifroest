@@ -263,7 +263,7 @@ func nativeSAMPolicyDecision(t *testing.T, account Account, password string, den
 	results := []decision{{Kind: "LogonUserNetwork", Accepted: primary && primaryErr == nil, NativeStatus: uint32(nativeStatus)}}
 	t.Logf("FRESH_SAM_RESTRICTION reason=%q passwordExpired=%t age=%d maxAge=%d (preliminary, no eligibility)", reason, state.PasswordExpired, state.PasswordAge, state.MaximumPasswordAge)
 	for _, flags := range []uint32{0, 2} {
-		token, err := s4uImpersonationTokenWithFlags(account.Name, flags)
+		token, err := s4uImpersonationTokenWithFlagsContext(t.Context(), account.Name, flags)
 		accepted := err == nil && token != 0
 		result := decision{Kind: fmt.Sprintf("S4UNetworkFlags%d", flags), Accepted: accepted}
 		if token != 0 {
