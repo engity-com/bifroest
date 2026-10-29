@@ -132,7 +132,13 @@ also have wider revocation effects and needs a separate design/security decision
 A separate required research observation queries **only local SAM class 29**
 (`UserLogonUIInformation`), described in System Informer's `ntsam.h` as the two
 booleans `PasswordIsBlank` and `AccountIsDisabled`. It compares owned strong,
-blank, blank-with-required-flag and disabled accounts. It requests read-only
+strong-with-not-required-flag, blank, blank-with-required-flag and disabled
+accounts. A same-account blank-to-strong reset retains `PASSWORD_NOT_REQUIRED`,
+requires a fresh query before any reference logon, one real strong-password logon
+and two further fresh query handles afterward, without a login-warmed cache as
+the only source of evidence.
+Only its own fixture password is changed; no machine password policy is relaxed.
+The query requests read-only
 user/domain access, never user-all/internal/password/hash/private information.
 Unknown exports/classes, non-BOOLEAN layouts, identity drift, cancellation and
 cleanup errors yield no observation, not eligibility. This reverse-engineered
