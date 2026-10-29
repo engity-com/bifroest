@@ -396,4 +396,6 @@ func TestLocalSAMPasswordPolicyNativeMatrix(t *testing.T) {
 			}
 		})
 	}
+	t.Run("actual-password-age-expiry", testNativeSAMPasswordAgeExpiry)
+	t.Run("actual-account-lockout", testNativeSAMActualLockout)
 }

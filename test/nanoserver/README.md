@@ -73,7 +73,8 @@ reject regular `LogonUserW` network authentication with the fixture's in-memory
 password before S4U observations are accepted as useful evidence. The matrix
 includes disabled/expired accounts, denied logon hours, workstation restriction,
 required password change, direct/group-based denied network-logon rights and
-blank-password network rejection with and without the password-required flag.
+blank-password network rejection with and without the password-required flag,
+actual elapsed password-age expiry and actual account lockout.
 The latter creates new accounts without an initial password rather than resetting
 a strong password to empty (which would require weakening password complexity).
 Their initial password-expired marker is explicitly cleared and read back only
@@ -91,8 +92,16 @@ observed, including the actual resulting token SID. A denied reference followed
 by S4U success is logged as a policy gap, **not** converted into eligibility or a
 feature pass. Password/interactive RememberMe stays unavailable. This matrix is
 a prerequisite to a complete secretless policy adapter, not its implementation;
-lockout, elapsed password age, identity replacement, races and
-cleanup/API failures still need additional strict coverage before activation.
+identity replacement, races and cleanup/API failures still need additional strict
+coverage before activation. New expiry/lockout references must pass natively too.
+
+The expiry/lockout fixtures first bind `NetUserModalsGet(2)` to their owned local
+SAM domain SID and machine name. Only that separate container's maximum password
+age or lockout threshold/window is tightened; scalar original policies are restored
+and read back. Minimum password age, minimum length, complexity and history are
+never lowered. The expiry fixture refuses an incompatible minimum age rather
+than weakening it. Lockout must follow an actual wrong-password logon, not an
+injected lockout flag. No host SAM policy is accessed.
 
 Accepted S4U tokens additionally expose only their own native logon-data size and
 nonsecret password timestamps through `LsaGetLogonSessionData`, with strict native
