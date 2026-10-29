@@ -262,8 +262,12 @@ func nativeSAMPolicyDecision(t *testing.T, account Account, password string, den
 	}
 	results := []decision{{Kind: "LogonUserNetwork", Accepted: primary && primaryErr == nil, NativeStatus: uint32(nativeStatus)}}
 	t.Logf("FRESH_SAM_RESTRICTION reason=%q passwordExpired=%t age=%d maxAge=%d (preliminary, no eligibility)", reason, state.PasswordExpired, state.PasswordAge, state.MaximumPasswordAge)
+	var flags2Error error
 	for _, flags := range []uint32{0, 2} {
 		token, err := s4uImpersonationTokenWithFlagsContext(t.Context(), account.Name, flags)
+		if flags == 2 {
+			flags2Error = err
+		}
 		accepted := err == nil && token != 0
 		result := decision{Kind: fmt.Sprintf("S4UNetworkFlags%d", flags), Accepted: accepted}
 		if token != 0 {
@@ -294,6 +298,27 @@ func nativeSAMPolicyDecision(t *testing.T, account Account, password string, den
 	// A successful observation is not a resume eligibility pass. In particular,
 	// S4U success in a denied primary case is recorded as a policy gap, not hidden.
 	t.Logf("NATIVE_SAM_POLICY_OBSERVATION %s", raw)
+	// Explicit independent policy comparisons on the same owned fixture, never
+	// an automatic retry of an unknown production login/mutation outcome.
+	for _, allowEmpty := range []bool{true, false} {
+		combinedErr := checkSAMPasswordRestrictions(t.Context(), account, allowEmpty)
+		if deny || password == "" && !allowEmpty {
+			require.Error(t, combinedErr, "combined fresh restrictions must reject native denials and disallowed real blank passwords")
+			combinedCauses := samPolicyErrorLeaves(combinedErr)
+			require.Len(t, combinedCauses, 1, "expected denial plus any additional API/cleanup/context failure must fail this reference")
+			if reason != "" || password == "" {
+				require.ErrorIs(t, combinedCauses[0], errSAMPasswordRestriction, "an unrelated API error cannot substitute for this controlled SAM/blank denial")
+			} else {
+				require.ErrorContains(t, flags2Error, "LsaLogonUser: NTSTATUS", "the direct flags2 reference must expose this native logon denial")
+				referenceCauses := samPolicyErrorLeaves(flags2Error)
+				require.Len(t, referenceCauses, 1, "the direct native reference must not hide additional cleanup/context failures")
+				require.EqualError(t, combinedCauses[0], referenceCauses[0].Error(), "combined rejection must match exactly the direct flags2 denial")
+			}
+		} else {
+			require.NoError(t, combinedErr)
+		}
+		t.Logf("COMBINED_SAM_RESTRICTIONS allowEmpty=%t accepted=%t error=%v; restriction proof only, no resume eligibility", allowEmpty, combinedErr == nil, combinedErr)
+	}
 	return uint32(nativeStatus)
 }
 

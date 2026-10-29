@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-// Shared by actual Windows probe bindings and portable failure models. These
+// Shared by actual Windows query bindings and portable failure models. These
 // are only two nonsecret observations, never an account-policy eligibility.
 type observedSAMLogonUI struct {
 	PasswordIsBlank bool `json:"passwordIsBlank"`

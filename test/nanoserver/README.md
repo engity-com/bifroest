@@ -202,3 +202,22 @@ failures and cancellation are unavailable, not an assumed Windows default.
 The existing owned-container `LimitBlankPasswordUse` positive/negative controls
 also verify this fresh reader after each change, while retaining their exact
 original-value restoration. This read alone is not account eligibility.
+
+A private combined restriction kernel now exercises those exact primitives
+together inside the isolated System/thread guard. It binds the same local
+name/SID, checks INFO3/Modals restrictions plus Query29 and the native blank
+network policy, uses Network-S4U flag `2`, validates the token SID and closes the
+token before repeating fresh restrictions/identity checks. Errors, cancellation
+and cleanup failures reject. The reference matrix compares both operator
+`AllowEmpty` choices on each owned fixture; native blank restrictions override
+operator allowance. Negative cases must report their controlled SAM/blank
+restriction or the direct flag-2 native logon error, not an unrelated API error.
+
+The Query29 flow and native binding are moved unchanged from test-only files
+into private package code so the models and prospective kernel share one
+implementation; no public capability or resume adapter is enabled. Query29's
+third-party ABI provenance, OS/build/architecture coverage and current snapshots
+remain explicit limitations. Repeated reads are not an atomic SAM/registry
+transaction or a password-generation/revocation proof. Fresh group/template/
+target/session authorization and final grant/race integration remain separate
+mandatory work, as does Darwin policy parity.
