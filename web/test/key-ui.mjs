@@ -7,10 +7,18 @@ export async function exerciseKey(page, file, logout) {
   const posts = [];
   let stage = 'boot';
   const failures = [];
+  const publicDownloads = [];
   let workerPolicy;
   page.on('request', (request) => {
     if (request.method() === 'POST') {
       posts.push({ url: request.url(), body: request.postData() ?? '' });
+    }
+    if (request.url().endsWith('/browser-key.wasm')) {
+      let ownedByTab = false;
+      try {
+        ownedByTab = request.frame() === page.mainFrame();
+      } catch {}
+      publicDownloads.push(ownedByTab);
     }
   });
   page.on('response', (response) => {
@@ -71,7 +79,7 @@ export async function exerciseKey(page, file, logout) {
   assert.equal(await page.locator('#key-passphrase').getAttribute('name'), null);
   assert.equal(await page.locator('#key-private').getAttribute('name'), null);
 
-  // Boot cancellation must terminate the worker before any import/API login.
+  // Public-download cancellation must precede any secret-key worker/import/API login.
   let entered;
   const blocked = new Promise((resolve) => {
     entered = resolve;
@@ -82,14 +90,16 @@ export async function exerciseKey(page, file, logout) {
   await select('ed');
   await submit();
   const route = await blocked;
-  const worker = page.workers()[0];
-  assert(worker);
-  const closed = new Promise((resolve) => worker.once('close', resolve));
+  assert.equal(
+    page.workers().length,
+    0,
+    'a blocked public download must not create a secret-key worker',
+  );
   await page.getByRole('button', { name: 'Cancel', exact: true }).last().click();
-  await closed;
   await route.abort().catch(() => undefined);
   await page.unroute('**/browser-key.wasm');
   assert.equal(posts.length, 0);
+  assert.equal(page.workers().length, 0);
 
   await select('ed', 'wrong passphrase');
   await submit();
@@ -174,6 +184,10 @@ export async function exerciseKey(page, file, logout) {
   }
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
   assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+  assert(
+    publicDownloads.length > 0 && publicDownloads.every(Boolean),
+    'public WASM requests must be owned by the tab, not a retiring secret worker',
+  );
 }
 
 // Each algorithm / denied-PTY scenario owns its server and normal request budget.

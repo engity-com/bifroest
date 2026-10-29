@@ -3,6 +3,7 @@ import type { Scope } from '../remember/protocol';
 import { decode64, RememberMeError } from '../remember/protocol';
 import { readLocalBytes } from '../wasm/local-file';
 import type { LoginKey } from './key';
+import { loadLoginWasm } from './wasm-image';
 
 export class WasmLoginKey implements LoginKey {
   readonly publicKey: string;
@@ -58,6 +59,7 @@ export class WasmLoginKey implements LoginKey {
       if (stopped.aborted) {
         throw new RememberMeError('cancelled');
       }
+      const wasm = await loadLoginWasm(stopped);
       privateBytes = await readLocalBytes(privateFile, stopped);
       certificate =
         certificateFile === null
@@ -76,7 +78,7 @@ export class WasmLoginKey implements LoginKey {
       });
       const selected = worker;
       stopped.addEventListener('abort', () => selected.terminate(), { once: true });
-      await exchange(worker, 'ready', undefined, stopped);
+      await exchange(worker, 'ready', { kind: 'boot', wasm }, stopped, [wasm]);
       const result = await exchange(
         worker,
         'imported',
@@ -104,7 +106,9 @@ export class WasmLoginKey implements LoginKey {
     } catch (error) {
       lifetime.abort();
       worker?.terminate();
-      throw error instanceof RememberMeError ? error : new RememberMeError('key-import');
+      throw error instanceof RememberMeError
+        ? error
+        : new RememberMeError(stopped.aborted ? 'cancelled' : 'key-import');
     } finally {
       if (password.byteLength) {
         password.fill(0);

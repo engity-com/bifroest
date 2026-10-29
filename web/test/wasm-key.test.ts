@@ -15,7 +15,6 @@ class LocalWorker extends EventTarget {
     super();
     LocalWorker.instances.push(this);
     expect(options).toMatchObject({ type: 'module', credentials: 'omit' });
-    queueMicrotask(() => this.send({ kind: 'ready' }));
   }
   send(value: unknown) {
     if (!this.terminated) {
@@ -24,7 +23,10 @@ class LocalWorker extends EventTarget {
   }
   postMessage(value: Record<string, unknown>) {
     this.requests.push(value);
-    if (value.kind === 'import') {
+    if (value.kind === 'boot') {
+      expect(value.wasm).toBeInstanceOf(ArrayBuffer);
+      queueMicrotask(() => this.send({ kind: 'ready' }));
+    } else if (value.kind === 'import') {
       queueMicrotask(() => {
         if (!LocalWorker.hold) {
           this.send(
@@ -53,6 +55,15 @@ afterEach(() => {
 
 function install() {
   vi.stubGlobal('Worker', LocalWorker);
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(
+      async () =>
+        new Response(new Uint8Array([0, 97, 115, 109]), {
+          headers: { 'Content-Type': 'application/wasm' },
+        }),
+    ),
+  );
 }
 function file(size = 20) {
   return new File([new Uint8Array(size)], 'private-file');
@@ -63,6 +74,14 @@ describe('owned WASM key worker lifecycle (RPC fixtures, not cryptographic tests
     install();
     const controller = new AbortController();
     const key = await WasmLoginKey.import(file(), 'tab secret', null, scope, '', controller.signal);
+    expect(LocalWorker.instances[0]?.requests.map((request) => request.kind)).toEqual([
+      'boot',
+      'import',
+    ]);
+    expect(Object.keys(required(LocalWorker.instances[0]?.requests[0])).sort()).toEqual([
+      'kind',
+      'wasm',
+    ]);
     expect(JSON.stringify(key)).toBe(JSON.stringify({ publicKey, fingerprint }));
     expect(JSON.stringify(key)).not.toContain('tab secret');
     expect(await key.sign('server-challenge', 'expiry', controller.signal)).toBe(
@@ -104,7 +123,11 @@ describe('owned WASM key worker lifecycle (RPC fixtures, not cryptographic tests
     LocalWorker.hold = true;
     const controller = new AbortController();
     const operation = WasmLoginKey.import(file(), 'secret', null, scope, '', controller.signal);
-    await vi.waitFor(() => expect(LocalWorker.instances[0]?.requests.length).toBe(1));
+    await vi.waitFor(() =>
+      expect(LocalWorker.instances[0]?.requests.some((request) => request.kind === 'import')).toBe(
+        true,
+      ),
+    );
     controller.abort();
     await expect(operation).rejects.toMatchObject({ code: 'cancelled' });
     expect(required(LocalWorker.instances[0]).terminated).toBe(true);
@@ -143,6 +166,32 @@ describe('owned WASM key worker lifecycle (RPC fixtures, not cryptographic tests
     expect(LocalWorker.instances).toHaveLength(0);
   });
 
+  it('cancels a pending public download before reading keys or creating a secret worker', async () => {
+    install();
+    const read = vi.fn();
+    class UnexpectedReader {
+      readAsArrayBuffer = read;
+    }
+    vi.stubGlobal('FileReader', UnexpectedReader);
+    const fetch = vi.fn(
+      (_url, options) =>
+        new Promise<Response>((_resolve, reject) => {
+          options.signal.addEventListener('abort', () => reject(new Error('provider detail')), {
+            once: true,
+          });
+        }),
+    );
+    vi.stubGlobal('fetch', fetch);
+    const controller = new AbortController();
+    const operation = WasmLoginKey.import(file(), 'secret', null, scope, '', controller.signal);
+    const observed = expect(operation).rejects.toMatchObject({ code: 'cancelled' });
+    controller.abort();
+    await observed;
+    expect(read).not.toHaveBeenCalled();
+    expect(LocalWorker.instances).toHaveLength(0);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
   it('enforces the bounded RPC deadline even if the worker does not answer', async () => {
     install();
     LocalWorker.hold = true;
@@ -161,7 +210,11 @@ describe('owned WASM key worker lifecycle (RPC fixtures, not cryptographic tests
       new AbortController().signal,
     );
     const observed = expect(operation).rejects.toMatchObject({ code: 'key-import' });
-    await vi.waitFor(() => expect(LocalWorker.instances[0]?.requests.length).toBe(1));
+    await vi.waitFor(() =>
+      expect(LocalWorker.instances[0]?.requests.some((request) => request.kind === 'import')).toBe(
+        true,
+      ),
+    );
     await vi.advanceTimersByTimeAsync(20_001);
     await observed;
     expect(required(LocalWorker.instances[0]).terminated).toBe(true);

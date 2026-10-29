@@ -1,5 +1,4 @@
 import { object } from '../remember/http';
-import { readBoundedWasmBody } from '../wasm/response-body';
 
 type Bridge = {
   Go: new () => {
@@ -17,6 +16,7 @@ const worker = globalThis as unknown as {
   onmessage: ((event: MessageEvent) => void) | null;
 };
 let imported = false;
+let booted = false;
 const fail = () => {
   worker.postMessage({ kind: 'failed' });
   worker.close();
@@ -26,6 +26,20 @@ const fail = () => {
 worker.onmessage = (event) => {
   try {
     const message = event.data as Record<string, unknown>;
+    if (!booted) {
+      const body = object(message, ['kind', 'wasm']);
+      if (
+        body.kind !== 'boot' ||
+        !(body.wasm instanceof ArrayBuffer) ||
+        body.wasm.byteLength === 0 ||
+        body.wasm.byteLength > 8 << 20
+      ) {
+        throw new Error();
+      }
+      booted = true;
+      void boot(body.wasm).catch(fail);
+      return;
+    }
     if (!imported) {
       const body = object(message, [
         'kind',
@@ -98,27 +112,10 @@ worker.onmessage = (event) => {
   }
 };
 
-async function boot() {
+async function boot(bytes: ArrayBuffer) {
   await import(/* @vite-ignore */ new URL('go-wasm-exec.js', location.href).href);
-  const response = await fetch(new URL('browser-key.wasm', location.href), {
-    credentials: 'omit',
-    mode: 'same-origin',
-    cache: 'no-store',
-    redirect: 'error',
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (
-    response.status !== 200 ||
-    response.redirected ||
-    !/^application\/wasm(?:;|$)/iu.test(response.headers.get('Content-Type') ?? '') ||
-    response.body === null
-  ) {
-    throw new Error();
-  }
-  const bytes = await readBoundedWasmBody(response.body);
   const go = new runtime.Go();
   go.exit = fail;
   const result = await WebAssembly.instantiate(bytes, go.importObject);
   void go.run(result.instance).catch(fail);
 }
-void boot().catch(fail);
