@@ -74,10 +74,12 @@ password before S4U observations are accepted as useful evidence. The matrix
 includes disabled/expired accounts, denied logon hours, workstation restriction,
 required password change, direct/group-based denied network-logon rights and
 blank-password network rejection with and without the password-required flag.
-The latter temporarily enables `LimitBlankPasswordUse=1` only in that separate
-owned container's local registry view (the Server Core image may default to 0),
-then restores and verifies the original value. No host registry or host policy
-is accessed.
+The latter creates new accounts without an initial password rather than resetting
+a strong password to empty (which would require weakening password complexity).
+The same account must first authenticate with the blank restriction disabled and
+then fail with it enabled. These exact DWORD changes affect only the separate
+owned container's local registry view; the original value is restored and verified.
+No host registry or host policy is accessed and password complexity is unchanged.
 Only those newly created SID-bound records/rights are changed and cleaned up;
 Host accounts, host security settings and privileges are not modified.
 
@@ -88,3 +90,10 @@ feature pass. Password/interactive RememberMe stays unavailable. This matrix is
 a prerequisite to a complete secretless policy adapter, not its implementation;
 lockout, elapsed password age, identity replacement, races and
 cleanup/API failures still need additional strict coverage before activation.
+
+Accepted S4U tokens additionally expose only their own native logon-data size and
+nonsecret password timestamps through `LsaGetLogonSessionData`, with strict native
+structure-size/LUID/SID checks. Microsoft explicitly permits `PasswordLastSet` to
+remain uninitialized. A zero timestamp is recorded as missing evidence, never as
+a credential generation or permission; no profile, environment, secret or rights
+snapshot is read or replayed by this observation.

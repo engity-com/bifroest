@@ -52,6 +52,10 @@ func requireSAMPolicyContainer(t *testing.T) {
 }
 
 func newSAMPolicyAccount(t *testing.T) (Account, string) {
+	return newSAMPolicyAccountWithPassword(t, true)
+}
+
+func newSAMPolicyAccountWithPassword(t *testing.T, withPassword bool) (Account, string) {
 	t.Helper()
 	requireSAMPolicyContainer(t)
 	var nonce [8]byte
@@ -68,6 +72,14 @@ func newSAMPolicyAccount(t *testing.T) (Account, string) {
 	require.NoError(t, err)
 	defer clear(units)
 	info := userInfo1{Name: username, Password: &units[0], Priv: 1, Flags: 0x201}
+	if !withPassword {
+		// Native creation without an initial password is distinct from resetting
+		// a strong password to empty, which the image's complexity filter rejects.
+		// This is only a new owned account; never weaken password complexity.
+		info.Password = nil
+		info.Flags |= 0x22 // UF_PASSWD_NOTREQD | UF_ACCOUNTDISABLE until owned setup is complete.
+		password = ""
+	}
 	var parameter uint32
 	err = netCall("NetUserAdd", 0, 1, uintptr(unsafe.Pointer(&info)), uintptr(unsafe.Pointer(&parameter)))
 	runtime.KeepAlive(username)
@@ -86,6 +98,10 @@ func newSAMPolicyAccount(t *testing.T) (Account, string) {
 			t.Errorf("remove owned policy account: %v", err)
 		}
 	})
+	if !withPassword {
+		flags := uint32(0x221)
+		setSAMPolicyInfo(t, account, 1008, unsafe.Pointer(&flags))
+	}
 	return account, password
 }
 
@@ -193,27 +209,36 @@ func nativeSAMPolicyDecision(t *testing.T, account Account, password string, den
 	}
 	require.Equal(t, !deny, primary && primaryErr == nil, "regular Network LogonUser is the native policy reference")
 	type decision struct {
-		Kind     string `json:"kind"`
-		Accepted bool   `json:"accepted"`
-		Error    string `json:"error,omitempty"`
+		Kind               string `json:"kind"`
+		Accepted           bool   `json:"accepted"`
+		Error              string `json:"error,omitempty"`
+		LogonDataSize      uint32 `json:"logonDataSize,omitempty"`
+		PasswordLastSet    string `json:"passwordLastSet,omitempty"`
+		PasswordMustChange string `json:"passwordMustChange,omitempty"`
 	}
 	results := []decision{{Kind: "LogonUserNetwork", Accepted: primary && primaryErr == nil}}
 	for _, flags := range []uint32{0, 2} {
 		token, err := s4uImpersonationTokenWithFlags(account.Name, flags)
 		accepted := err == nil && token != 0
+		result := decision{Kind: fmt.Sprintf("S4UNetworkFlags%d", flags), Accepted: accepted}
 		if token != 0 {
-			if accepted {
-				user, lookupErr := token.GetTokenUser()
-				require.NoError(t, lookupErr)
-				require.Equal(t, account.SID, user.User.Sid.String())
-			}
-			require.NoError(t, token.Close())
+			func() {
+				defer func() { require.NoError(t, token.Close()) }()
+				if accepted {
+					user, lookupErr := token.GetTokenUser()
+					require.NoError(t, lookupErr)
+					require.Equal(t, account.SID, user.User.Sid.String())
+					size, last, must := observeSAMPolicyLogonMetadata(t, token, account)
+					result.LogonDataSize = size
+					result.PasswordLastSet = fmt.Sprintf("%016x", uint64(last))
+					result.PasswordMustChange = fmt.Sprintf("%016x", uint64(must))
+				}
+			}()
 		}
 		if !deny {
 			require.NoError(t, err)
 			require.True(t, accepted)
 		}
-		result := decision{Kind: fmt.Sprintf("S4UNetworkFlags%d", flags), Accepted: accepted}
 		if err != nil {
 			result.Error = err.Error()
 		}
@@ -310,28 +335,35 @@ func TestLocalSAMPasswordPolicyNativeMatrix(t *testing.T) {
 			}
 		}
 	})
-	require.NoError(t, key.SetDWordValue("LimitBlankPasswordUse", 1))
-	configured, _, err := key.GetIntegerValue("LimitBlankPasswordUse")
-	require.NoError(t, err)
-	require.EqualValues(t, 1, configured)
-	t.Logf("owned container blank-password policy: original=%d test=%d (restored and verified during cleanup)", limit, configured)
+	t.Logf("owned container blank-password policy: original=%d (both reference values verified; restored during cleanup)", limit)
 	for _, passwordRequired := range []bool{false, true} {
 		name := "blank-password-not-required"
 		if passwordRequired {
 			name = "blank-password-required-flag"
 		}
 		t.Run(name, func(t *testing.T) {
-			account, _ := newSAMPolicyAccount(t)
-			flags := uint32(0x221) // Set an empty password only on this newly owned test account.
-			setSAMPolicyInfo(t, account, 1008, unsafe.Pointer(&flags))
-			password := [1]uint16{0}
-			pointer := &password[0]
-			setSAMPolicyInfo(t, account, 1003, unsafe.Pointer(&pointer))
+			account, password := newSAMPolicyAccountWithPassword(t, false)
 			if passwordRequired {
-				flags = 0x201
+				flags := uint32(0x201)
 				setSAMPolicyInfo(t, account, 1008, unsafe.Pointer(&flags))
 			}
-			nativeSAMPolicyDecision(t, account, "", true)
+			for _, restricted := range []bool{false, true} {
+				value := uint32(0)
+				phase := "restriction-disabled"
+				if restricted {
+					value = 1
+					phase = "restriction-enabled"
+				}
+				t.Run(phase, func(t *testing.T) {
+					require.NoError(t, key.SetDWordValue("LimitBlankPasswordUse", value))
+					actual, _, err := key.GetIntegerValue("LimitBlankPasswordUse")
+					require.NoError(t, err)
+					require.EqualValues(t, value, actual)
+					// Both outcomes are required for this same account/password:
+					// an unrelated account or password-change denial cannot pass.
+					nativeSAMPolicyDecision(t, account, password, restricted)
+				})
+			}
 		})
 	}
 }
