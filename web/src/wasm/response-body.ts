@@ -3,6 +3,7 @@
 // runtime owns key import and challenge verification.
 export async function readBoundedWasmBody(
   body: ReadableStream<Uint8Array>,
+  cancelOtherBranch?: () => Promise<void>,
 ): Promise<Uint8Array<ArrayBuffer>> {
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
@@ -23,7 +24,12 @@ export async function readBoundedWasmBody(
     }
   } finally {
     if (!completed) {
-      await reader.cancel().catch(() => undefined);
+      // When validating a cloned response, either tee cancellation alone can
+      // wait for the other branch. Start both attempts before joining them.
+      await Promise.allSettled([
+        Promise.resolve().then(() => reader.cancel()),
+        Promise.resolve().then(() => cancelOtherBranch?.()),
+      ]);
     }
     reader.releaseLock();
   }
@@ -34,4 +40,41 @@ export async function readBoundedWasmBody(
     offset += chunk.length;
   }
   return bytes;
+}
+
+// Consume the *original fetch response* through the browser's native body
+// consumer only after a clone has bounded the entire accepted image. An
+// unchecked arrayBuffer() must never run in parallel or replace the preflight.
+// Oversize stops validation and cancels both branches before native consumption.
+// This is transport framing, not WASM authenticity or artifact verification.
+export async function readBoundedWasmResponse(
+  response: Response,
+  abortIncomplete: () => void,
+): Promise<ArrayBuffer> {
+  let cancelled: Promise<void> | undefined;
+  const cancelOriginal = () => {
+    cancelled ??= (async () => {
+      try {
+        abortIncomplete();
+      } finally {
+        await response.body?.cancel();
+      }
+    })().catch(() => undefined);
+    return cancelled;
+  };
+  try {
+    const checking = response.clone();
+    if (checking.body === null) {
+      throw new Error('WASM response has no body');
+    }
+    const checked = await readBoundedWasmBody(checking.body, cancelOriginal);
+    const bytes = await response.arrayBuffer();
+    if (!(bytes instanceof ArrayBuffer) || bytes.byteLength !== checked.byteLength) {
+      throw new Error('WASM response length changed');
+    }
+    return bytes;
+  } catch (error) {
+    await cancelOriginal();
+    throw error;
+  }
 }

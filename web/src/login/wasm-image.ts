@@ -1,4 +1,4 @@
-import { readBoundedWasmBody } from '../wasm/response-body';
+import { readBoundedWasmResponse } from '../wasm/response-body';
 
 // The tab owns the public download, not the short-lived secret-key worker.
 // Retiring that worker after signing must not tear down a fetch owned by its
@@ -28,11 +28,11 @@ export async function loadLoginWasm(signal: AbortSignal): Promise<ArrayBuffer> {
     ) {
       throw new Error('Invalid WASM response');
     }
-    const bytes = await readBoundedWasmBody(response.body);
+    const bytes = await readBoundedWasmResponse(response, abort);
     if (stopped.aborted) {
       throw new Error('WASM download cancelled');
     }
-    return bytes.buffer;
+    return bytes;
   } catch (error) {
     download.abort();
     throw error;
