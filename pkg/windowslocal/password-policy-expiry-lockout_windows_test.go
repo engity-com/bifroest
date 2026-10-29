@@ -84,8 +84,10 @@ func testNativeSAMPasswordAgeExpiry(t *testing.T) {
 		require.NoError(t, err)
 		require.Zero(t, state.Flags&0x10000, "fixture password must not be marked never-expiring")
 		if state.PasswordAge > policy.MaximumPasswordAge && !time.Now().Before(notBefore) {
-			require.Equal(t, "password-expired", state.denialReason(time.Now()))
-			t.Logf("elapsed expiry fixture: age=%d maxAge=%d flags=0x%x; one final native reference, not an authentication retry", state.PasswordAge, state.MaximumPasswordAge, state.Flags)
+			// SAM may expose elapsed expiry through PasswordExpired as well as
+			// the age calculation; both must deny, with no manual flag injection.
+			require.Contains(t, []string{"password-expired", "password-must-change"}, state.denialReason(time.Now()))
+			t.Logf("elapsed expiry fixture: age=%d maxAge=%d passwordExpired=%t flags=0x%x; one final native reference, not an authentication retry", state.PasswordAge, state.MaximumPasswordAge, state.PasswordExpired, state.Flags)
 			break
 		}
 		if time.Now().After(deadline) {
@@ -99,7 +101,8 @@ func testNativeSAMPasswordAgeExpiry(t *testing.T) {
 		case <-timer.C:
 		}
 	}
-	nativeSAMPolicyDecision(t, account, password, true)
+	status := nativeSAMPolicyDecision(t, account, password, true)
+	require.Contains(t, []uint32{1330, 1907}, status, "elapsed password expiry must be the actual native denial, not an unrelated account/network restriction")
 }
 
 func testNativeSAMActualLockout(t *testing.T) {

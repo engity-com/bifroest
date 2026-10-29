@@ -227,7 +227,7 @@ func denySAMPolicyNetworkLogon(t *testing.T, account Account, throughGroup bool)
 	})
 }
 
-func nativeSAMPolicyDecision(t *testing.T, account Account, password string, deny bool) {
+func nativeSAMPolicyDecision(t *testing.T, account Account, password string, deny bool) uint32 {
 	t.Helper()
 	state, stateErr := inspectPreliminaryPasswordAccount(t.Context(), account)
 	require.NoError(t, stateErr)
@@ -294,6 +294,7 @@ func nativeSAMPolicyDecision(t *testing.T, account Account, password string, den
 	// A successful observation is not a resume eligibility pass. In particular,
 	// S4U success in a denied primary case is recorded as a policy gap, not hidden.
 	t.Logf("NATIVE_SAM_POLICY_OBSERVATION %s", raw)
+	return uint32(nativeStatus)
 }
 
 func TestLocalSAMPasswordPolicyNativeMatrix(t *testing.T) {
