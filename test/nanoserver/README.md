@@ -108,3 +108,14 @@ In particular, the observed S4U password-must-change bypass must be rejected by
 this separate read. This remains a **preliminary restriction check**, not an
 eligibility interface: no missing blank-password, native logon-right, current
 identity/template or cleanup/cancellation proof is inferred from an empty reason.
+
+An additional required **observation**, not an eligibility gate, queries only
+SAM domain creation/update metadata through the local client library with
+connect/lookup and read-other-parameters access. It records whether ordinary
+password/S4U logons leave that marker unchanged and whether a strong password
+reset on its own account changes it. Missing exports/unsupported metadata are
+reported explicitly as unavailable, not converted into permission. No user
+password/hash/private SAM information is queried. The documented SAMR RPC
+structure does not establish a stable local DLL ABI or complete update coverage;
+both need native evidence before any production use. A domain-wide marker would
+also have wider revocation effects and needs a separate design/security decision.

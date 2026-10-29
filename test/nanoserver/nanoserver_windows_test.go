@@ -159,6 +159,9 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 				t.Fatalf("required native SAM policy reference %s did not pass: %s", name, output)
 			}
 		}
+		if !strings.Contains(output, "--- PASS: TestLocalSAMDomainChangeMarkerObservation ") {
+			t.Fatalf("required metadata observation did not execute: %s", output)
+		}
 		t.Log(output)
 	})
 }
