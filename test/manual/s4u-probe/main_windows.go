@@ -374,7 +374,7 @@ func (p *probeService) Execute(_ []string, _ <-chan svc.ChangeRequest, changes c
 			pattern = "^(TestLocalWindows(S4ULogonAsUser|RunAsUser|ConPTYAsUser|ConPTYDistinguishesShellExitFromRelayFailure)|TestLocalServerCore(ProviderAccountLifecycle|FailedUpdateRestoresManagedMembership|ProvisioningPrecedesSessionDispose|ConPTYBlockedOutputDoesNotHang|FailedSkelDisablesNewAccount|FailedDisplayDisablesNewAccount|UnmanagedNewAccountCanBeDisabled|ProcessCleanupWaitsForExit))$"
 		}
 		if p.samPolicy {
-			pattern = "^TestLocalSAM(PasswordPolicyNativeMatrix|DomainChangeMarkerObservation)$"
+			pattern = "^TestLocalSAM(PasswordPolicyNativeMatrix|DomainChangeMarkerObservation|LogonUIBlankPasswordObservation)$"
 		}
 		cmd := exec.Command(p.testBinary, "-test.run="+pattern, "-test.v", "-test.timeout=150s")
 		cmd.Env = append(os.Environ(), "BIFROEST_TEST_LOCAL_WINDOWS_USER="+p.user)
@@ -392,7 +392,7 @@ func (p *probeService) Execute(_ []string, _ <-chan svc.ChangeRequest, changes c
 				required = append(required, "TestLocalWindowsConPTYDistinguishesShellExitFromRelayFailure", "TestLocalServerCoreProviderAccountLifecycle", "TestLocalServerCoreFailedUpdateRestoresManagedMembership", "TestLocalServerCoreProvisioningPrecedesSessionDispose", "TestLocalServerCoreConPTYBlockedOutputDoesNotHang", "TestLocalServerCoreFailedSkelDisablesNewAccount", "TestLocalServerCoreFailedDisplayDisablesNewAccount", "TestLocalServerCoreUnmanagedNewAccountCanBeDisabled", "TestLocalServerCoreProcessCleanupWaitsForExit")
 			}
 			if p.samPolicy {
-				required = []string{"TestLocalSAMPasswordPolicyNativeMatrix", "TestLocalSAMDomainChangeMarkerObservation"}
+				required = []string{"TestLocalSAMPasswordPolicyNativeMatrix", "TestLocalSAMDomainChangeMarkerObservation", "TestLocalSAMLogonUIBlankPasswordObservation"}
 			}
 			for _, test := range required {
 				if !strings.Contains(string(output), "--- PASS: "+test+" ") {

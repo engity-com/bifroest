@@ -128,3 +128,14 @@ password/hash/private SAM information is queried. The documented SAMR RPC
 structure does not establish a stable local DLL ABI or complete update coverage;
 both need native evidence before any production use. A domain-wide marker would
 also have wider revocation effects and needs a separate design/security decision.
+
+A separate required research observation queries **only local SAM class 29**
+(`UserLogonUIInformation`), described in System Informer's `ntsam.h` as the two
+booleans `PasswordIsBlank` and `AccountIsDisabled`. It compares owned strong,
+blank, blank-with-required-flag and disabled accounts. It requests read-only
+user/domain access, never user-all/internal/password/hash/private information.
+Unknown exports/classes, non-BOOLEAN layouts, identity drift, cancellation and
+cleanup errors yield no observation, not eligibility. This reverse-engineered
+header is not a Microsoft ABI/support or security-contract guarantee; neither
+its availability nor correct behavior is assumed before native execution, and
+even passing fixture observations do not activate password resumption.
