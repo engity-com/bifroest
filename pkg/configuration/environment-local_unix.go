@@ -50,6 +50,17 @@ func (this *EnvironmentLocal) UnmarshalYAML(node *yaml.Node) error {
 	})
 }
 
+func (this EnvironmentLocal) MarshalYAML() (any, error) {
+	// yaml's inline unmarshaler handling omits the named User struct from its
+	// encoder field list. Strip only that struct's decoding methods for output;
+	// preserve its individual template encoders and the existing flat schema.
+	type rawUser UserRequirementTemplate
+	return struct {
+		User                   rawUser `yaml:",inline"`
+		EnvironmentLocalCommon `yaml:",inline"`
+	}{User: rawUser(this.User), EnvironmentLocalCommon: this.EnvironmentLocalCommon}, nil
+}
+
 func (this EnvironmentLocal) IsEqualTo(other any) bool {
 	if other == nil {
 		return false
