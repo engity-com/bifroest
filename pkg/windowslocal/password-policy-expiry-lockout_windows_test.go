@@ -72,16 +72,24 @@ func testNativeSAMPasswordAgeExpiry(t *testing.T) {
 	setOwnedSAMPolicy(t, account, 0, unsafe.Pointer(&policy))
 	require.Equal(t, policy, readOwnedSAMPolicy[userModalsInfo0](t, account, 0), "length/history/minimum age remain byte-for-byte unchanged")
 	nativeSAMPolicyDecision(t, account, password, false)
+	// PasswordAge is a whole-second observation, not a precise expiration
+	// timestamp. The first observation equal to MaximumPasswordAge did not yet
+	// make Network LogonUser reject on the pinned native image. Test elapsed
+	// expiry away from that boundary, without retrying the reference logon or
+	// changing the production check's conservative >= decision.
+	notBefore := time.Now().Add(3 * time.Second)
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		state, err := inspectPreliminaryPasswordAccount(t.Context(), account)
 		require.NoError(t, err)
-		if state.PasswordAge >= 2 {
+		require.Zero(t, state.Flags&0x10000, "fixture password must not be marked never-expiring")
+		if state.PasswordAge > policy.MaximumPasswordAge && !time.Now().Before(notBefore) {
 			require.Equal(t, "password-expired", state.denialReason(time.Now()))
+			t.Logf("elapsed expiry fixture: age=%d maxAge=%d flags=0x%x; one final native reference, not an authentication retry", state.PasswordAge, state.MaximumPasswordAge, state.Flags)
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("owned account did not reach actual native password age2")
+			t.Fatal("owned account did not reach elapsed native password expiry beyond the whole-second boundary")
 		}
 		timer := time.NewTimer(100 * time.Millisecond)
 		select {
