@@ -20,6 +20,12 @@ func readConsoleTermios(fd int) (*unix.Termios, error) {
 	return unix.IoctlGetTermios(fd, unix.TIOCGETA)
 }
 
+func discardConsoleInput(_ int) error {
+	// Preserve Darwin's existing TIOCSETAF restore/flush contract. The separate
+	// Linux flipbuffer ioctl and its kernel-specific fix must not be guessed here.
+	return nil
+}
+
 func writeConsoleTermios(fd int, mode *unix.Termios, discard bool) error {
 	command := uint(unix.TIOCSETA)
 	if discard {
