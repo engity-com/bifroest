@@ -1,7 +1,7 @@
-import { Alert, Button, Table, Title } from '@mantine/core';
 import { useEffect, useRef, useState } from 'react';
 import type { AuditlogSummary, Page, RecordingSummary, WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
+import { Alert, Button, Table, Title } from '../ui/material';
 import { t } from '../ui/messages';
 import type { ArtifactRequest } from './protocol';
 

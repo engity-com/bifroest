@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   activeAccess,
+  answerAuthentication,
   captureLayout,
   chooseLoginMethod,
   duplicateTab,
@@ -55,7 +56,7 @@ export async function exerciseConnections(page, login) {
     assert.equal(response.request().headers().authorization, undefined);
     assert.equal(response.request().headers().cookie, undefined);
     await page.waitForFunction(
-      (slug) => document.querySelector('.login-dialog input[role="combobox"]')?.value === slug,
+      (slug) => document.querySelector('.login-dialog [role="combobox"]')?.textContent === slug,
       slug,
     );
     assert.equal(page.url(), documentURL, 'selecting a flow must not navigate/reload the document');
@@ -67,10 +68,7 @@ export async function exerciseConnections(page, login) {
   await chooseLoginMethod(page, 'Interactive / device login');
   await dialog.getByLabel('User name', { exact: true }).fill('bob');
   await dialog.getByRole('button', { name: 'Sign in', exact: true }).click();
-  const challenge = page.getByRole('dialog', { name: 'Authentication step', exact: true });
-  await challenge.getByText('Work · bob', { exact: true }).waitFor();
-  await challenge.getByLabel('Response', { exact: true }).fill('correct');
-  await challenge.getByRole('button', { name: 'Send response', exact: true }).click();
+  await answerAuthentication(page, 'correct', { kind: 'prompt', echo: false });
   await settledLogin(page, 'bob', true);
   await active('EXECUTION_START:2');
   await select(1, 'alice');

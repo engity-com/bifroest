@@ -272,6 +272,14 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 			if _, err := req.Prompt("Echo is allowed for this response", true); err != nil {
 				return nil, err
 			}
+			// Exercise secret -> public prompt ownership without treating either
+			// response as proof. Only the real delegate authenticates below.
+			if _, err := req.Prompt("Secret transition response", false); err != nil {
+				return nil, err
+			}
+			if _, err := req.Prompt("Public transition response", true); err != nil {
+				return nil, err
+			}
 			return delegate.AuthorizeInteractive(req)
 		}}}
 	}

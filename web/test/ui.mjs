@@ -21,6 +21,7 @@ import { exerciseLostTerminalLogout } from './terminal-logout-ui.mjs';
 import { exerciseTerminalTabs } from './terminal-tabs-ui.mjs';
 import { exerciseTerminal } from './terminal-ui.mjs';
 import {
+  answerAuthentication,
   changeTheme,
   chooseLoginMethod,
   loginLayout,
@@ -52,6 +53,13 @@ try {
       );
     });
     const page = await context.newPage();
+    const initializationErrors = [];
+    const initializationConsole = (message) => {
+      if (message.type() === 'error') {
+        initializationErrors.push(message.text().slice(0, 4096));
+      }
+    };
+    page.on('console', initializationConsole);
     page.on('pageerror', (error) => errors.push(error.message));
     page.on('requestfailed', (request) => {
       // Paths and transport errors only, never request bodies, tokens or headers.
@@ -80,17 +88,24 @@ try {
         !policy.includes('unsafe-eval'),
     );
     try {
-      await page.getByRole('main', { name: 'Fixture brand', exact: true }).waitFor();
+      // MUI correctly removes the background main from the accessibility tree
+      // while the initial sign-in dialog owns focus; it must still be rendered.
+      await page
+        .getByRole('main', { name: 'Fixture brand', exact: true, includeHidden: true })
+        .waitFor();
     } catch (error) {
       throw new Error(
         JSON.stringify({
           pageErrors: errors,
+          initializationErrors,
           failedResources,
           csp: await page.evaluate(() => window.cspViolations),
           root: await page.locator('#root').textContent(),
         }),
         { cause: error },
       );
+    } finally {
+      page.off('console', initializationConsole);
     }
     assert.equal(await page.locator('html').getAttribute('lang'), 'en-US');
     assert.equal(
@@ -127,9 +142,7 @@ try {
     }
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
     if (nativeInteractive) {
-      const dialog = page.getByRole('dialog');
-      await dialog.getByLabel('Response', { exact: true }).fill('correct');
-      await dialog.getByRole('button', { name: 'Send response', exact: true }).click();
+      await answerAuthentication(page, 'correct', { kind: 'prompt', echo: false });
     }
     try {
       await settledLogin(
@@ -375,6 +388,9 @@ try {
       .getByRole('button', { name: 'Remove local data only', exact: true })
       .click();
     await page
+      .getByRole('dialog', { name: 'Remove local data only?', exact: true, includeHidden: true })
+      .waitFor({ state: 'hidden' });
+    await page
       .getByText('Local setup removed. No server logout or revocation was claimed.', {
         exact: true,
       })
@@ -399,6 +415,13 @@ try {
       .getByRole('dialog', { name: 'Revoke saved browser access?', exact: true })
       .getByRole('button', { name: 'Revoke browser permission', exact: true })
       .click();
+    await page
+      .getByRole('dialog', {
+        name: 'Revoke saved browser access?',
+        exact: true,
+        includeHidden: true,
+      })
+      .waitFor({ state: 'hidden' });
     await page.getByText('Access was denied.', { exact: false }).waitFor();
     assert.equal(
       await local(page),
@@ -412,14 +435,18 @@ try {
       .getByRole('button', { name: 'Remove local data only', exact: true })
       .click();
     await page
+      .getByRole('dialog', { name: 'Remove local data only?', exact: true, includeHidden: true })
+      .waitFor({ state: 'hidden' });
+    await page
       .getByText('Local setup removed. No server logout or revocation was claimed.', {
         exact: true,
       })
       .waitFor();
     assert.equal(await local(page), 'missing');
+    await page.getByRole('dialog', { name: 'Sign in', exact: true }).waitFor({ state: 'visible' });
     await changeTheme(page, 'Dark');
-    await page.locator('html[data-mantine-color-scheme="dark"]').waitFor();
-    assert.equal(await page.locator('html').getAttribute('data-mantine-color-scheme'), 'dark');
+    await page.locator('html[data-color-scheme="dark"]').waitFor();
+    assert.equal(await page.locator('html').getAttribute('data-color-scheme'), 'dark');
     assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
     assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
     assert.deepEqual(errors, []);

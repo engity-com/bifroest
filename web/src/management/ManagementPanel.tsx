@@ -1,3 +1,6 @@
+import { useEffect, useRef, useState } from 'react';
+import type { WebAccess } from '../remember';
+import { RememberMeError } from '../remember';
 import {
   Alert,
   Button,
@@ -8,10 +11,7 @@ import {
   Table,
   TextInput,
   Title,
-} from '@mantine/core';
-import { useEffect, useRef, useState } from 'react';
-import type { WebAccess } from '../remember';
-import { RememberMeError } from '../remember';
+} from '../ui/material';
 import { t } from '../ui/messages';
 import type { ActionPreview, SessionAction, SessionActionConfirmation } from './action';
 import type { FlowSummary, Page, SessionItem, SessionOptions, VersionInfo } from './protocol';

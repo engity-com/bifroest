@@ -1,173 +1,118 @@
-import { ActionIcon, Menu, UnstyledButton } from '@mantine/core';
-import type { KeyboardEvent } from 'react';
+import CircleIcon from '@mui/icons-material/Circle';
+import CloseIcon from '@mui/icons-material/Close';
+import type { TabProps } from '@mui/material';
+import { Box, IconButton, Tab, Tooltip } from '@mui/material';
+import { forwardRef } from 'react';
+import { Menu } from '../ui/material';
 import { t } from '../ui/messages';
 import type { TerminalState } from './socket';
 
-export function ConnectionTab({
-  id,
-  kind,
-  scope,
-  principal,
-  state,
-  inputClosed,
-  active,
-  disabled,
-  full,
-  opened,
-  onSelect,
-  onMenu,
-  onKeyboard,
-  onDuplicate,
-  onClose,
-  onLogout,
-  onRenew,
-  onEof,
-  onSignal,
-  onDisconnect,
-}: {
+type Props = Omit<TabProps, 'id' | 'onSelect'> & {
   id: number;
-  kind: 'terminal' | 'management';
-  scope: string;
+  value: number;
   principal: string;
+  scope: string;
+  kind: 'terminal' | 'management';
   state: TerminalState;
-  inputClosed: boolean;
   active: boolean;
-  disabled: boolean;
-  full: boolean;
-  opened: boolean;
   onSelect: () => void;
-  onMenu: (open: boolean) => void;
-  onKeyboard: (event: KeyboardEvent) => void;
-  onDuplicate: () => void;
+  onMenu: (value: boolean) => void;
   onClose: () => void;
-  onLogout: () => void;
-  onRenew: () => void;
-  onEof: () => void;
-  onSignal: (signal: 'INT' | 'TERM') => void;
-  onDisconnect: () => void;
-}) {
+};
+
+// A genuine Material Tab, forwarded through MUI Tabs' selection/focus contract.
+// The default visible label is the verified principal only, not URL punctuation.
+export const ConnectionTab = forwardRef<HTMLDivElement, Props>(function ConnectionTab(
+  { id, principal, scope, kind, state, active, onSelect, onMenu, onClose, ...props },
+  ref,
+) {
+  const phase = kind === 'terminal' ? state.phase : 'connected';
   return (
-    <Menu
-      opened={opened}
-      onChange={onMenu}
-      position="bottom-start"
-      returnFocus={false}
-      transitionProps={{ duration: 0 }}
-    >
-      <Menu.ContextMenu>
-        <div className="connection-tab" data-active={active || undefined}>
-          <UnstyledButton
-            id={`terminal-tab-${id}`}
-            role="tab"
-            aria-label={`${t(kind === 'terminal' ? 'terminalTitle' : 'workspaceManagement')} ${id} ${principal}`}
-            aria-describedby={`connection-scope-${id}`}
-            aria-controls={`terminal-pane-${id}`}
-            aria-selected={active}
-            aria-haspopup="menu"
-            aria-expanded={opened}
-            tabIndex={active ? 0 : -1}
-            disabled={disabled}
-            title={`${scope || '/'} · ${principal} · ${kind === 'terminal' ? t('terminalTitle') : t('workspaceManagement')} ${id}`}
-            onClick={(event) => {
-              event.stopPropagation();
-              onSelect();
-            }}
-            onKeyDown={(event) => {
-              if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
-                event.preventDefault();
-                event.stopPropagation();
-                if (!disabled) {
-                  const bounds = event.currentTarget.getBoundingClientRect();
-                  event.currentTarget.dispatchEvent(
-                    new MouseEvent('contextmenu', {
-                      bubbles: true,
-                      cancelable: true,
-                      clientX: bounds.left,
-                      clientY: bounds.bottom,
-                    }),
-                  );
-                }
-              } else {
-                onKeyboard(event);
-              }
-            }}
+    <Menu.ContextMenu onOpen={() => onMenu(true)}>
+      <Tab
+        {...props}
+        ref={ref}
+        component="div"
+        id={`terminal-tab-${id}`}
+        aria-controls={`terminal-pane-${id}`}
+        aria-label={`${t(kind === 'terminal' ? 'terminalTitle' : 'workspaceManagement')} ${id} ${principal}`}
+        aria-selected={active}
+        aria-haspopup="menu"
+        onClick={onSelect}
+        onKeyDown={(event) => {
+          if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+            event.preventDefault();
+            event.stopPropagation();
+            const bounds = event.currentTarget.getBoundingClientRect();
+            if (!props.disabled) {
+              event.currentTarget.dispatchEvent(
+                new MouseEvent('contextmenu', {
+                  bubbles: true,
+                  cancelable: true,
+                  clientX: bounds.left,
+                  clientY: bounds.bottom,
+                }),
+              );
+            }
+          }
+        }}
+        label={
+          <Tooltip
+            title={[
+              principal,
+              scope || undefined,
+              `${t(kind === 'terminal' ? 'terminalTitle' : 'workspaceManagement')} ${id}`,
+              phase,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
           >
-            <span
-              className={`connection-dot connection-dot--${kind === 'terminal' ? state.phase : 'connected'}`}
-            />
-            <span id={`connection-scope-${id}`} className="tab-scope">
-              {scope || '/'}
-            </span>
-            <span className="tab-owner">{principal}</span>
-            {kind === 'management' && <span className="tab-kind">{t('workspaceManagement')}</span>}
-          </UnstyledButton>
-          <ActionIcon
-            variant="subtle"
-            color="gray"
-            size="xs"
-            className="connection-tab-close"
-            aria-label={`${t(kind === 'terminal' ? 'terminalCloseTab' : 'managementCloseTab')} ${id}`}
-            disabled={disabled}
-            onClick={(event) => {
-              event.stopPropagation();
-              onClose();
-            }}
-          >
-            ×
-          </ActionIcon>
-        </div>
-      </Menu.ContextMenu>
-      <Menu.Dropdown aria-label={t('connectionTabMenu')}>
-        <Menu.Label>
-          {scope || '/'} · {principal}
-        </Menu.Label>
-        <Menu.Item disabled={disabled || full} onClick={onDuplicate}>
-          {t('connectionDuplicate')}
-        </Menu.Item>
-        <Menu.Item disabled={disabled || full} onClick={onRenew}>
-          {t('reauthenticate')}
-        </Menu.Item>
-        {kind === 'terminal' && opened && (
-          <Menu.Sub closeDelay={150}>
-            <Menu.Sub.Target>
-              <Menu.Sub.Item disabled={disabled}>{t('terminalSpecial')}</Menu.Sub.Item>
-            </Menu.Sub.Target>
-            <Menu.Sub.Dropdown>
-              <Menu.Item
-                disabled={disabled || state.phase !== 'connected' || inputClosed}
-                onClick={onEof}
+            <Box
+              component="span"
+              sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, minWidth: 0 }}
+            >
+              <CircleIcon
+                sx={{
+                  fontSize: 9,
+                  color:
+                    phase === 'connected'
+                      ? 'success.main'
+                      : phase === 'connecting' || phase === 'finishing'
+                        ? 'warning.main'
+                        : phase === 'interrupted'
+                          ? 'error.main'
+                          : 'text.disabled',
+                }}
+              />
+              <Box
+                component="span"
+                sx={{
+                  maxWidth: 160,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
               >
-                {t('terminalEof')}
-              </Menu.Item>
-              <Menu.Item
-                disabled={disabled || state.phase !== 'connected'}
-                onClick={() => onSignal('INT')}
+                {principal}
+              </Box>
+              <IconButton
+                size="small"
+                component="span"
+                role="button"
+                tabIndex={-1}
+                aria-label={`${t(kind === 'terminal' ? 'terminalCloseTab' : 'managementCloseTab')} ${id}`}
+                disabled={props.disabled}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onClose();
+                }}
               >
-                {t('terminalInterrupt')}
-              </Menu.Item>
-              <Menu.Item
-                disabled={disabled || state.phase !== 'connected'}
-                onClick={() => onSignal('TERM')}
-              >
-                {t('terminalTerminate')}
-              </Menu.Item>
-              <Menu.Item
-                disabled={disabled || !['connecting', 'connected'].includes(state.phase)}
-                onClick={onDisconnect}
-              >
-                {t('terminalDisconnect')}
-              </Menu.Item>
-            </Menu.Sub.Dropdown>
-          </Menu.Sub>
-        )}
-        <Menu.Divider />
-        <Menu.Item disabled={disabled} onClick={onLogout}>
-          {t('logout')}
-        </Menu.Item>
-        <Menu.Item color="red" disabled={disabled} onClick={onClose}>
-          {t('close')}
-        </Menu.Item>
-      </Menu.Dropdown>
-    </Menu>
+                <CloseIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+            </Box>
+          </Tooltip>
+        }
+      />
+    </Menu.ContextMenu>
   );
-}
+});

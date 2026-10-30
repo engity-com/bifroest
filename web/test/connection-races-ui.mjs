@@ -4,6 +4,7 @@ import {
   activeAccess,
   duplicateTab,
   logoutAccess,
+  notification,
   settledLogin,
   terminalAction,
 } from './workspace-ui.mjs';
@@ -119,6 +120,7 @@ export async function exerciseConnectionRaces(page) {
     .getByText('RememberMe setup may have created a server permission.', { exact: false })
     .waitFor();
   await notice.getByRole('button', { name: 'Close', exact: true }).click();
+  await notice.waitFor({ state: 'hidden' });
   assert.equal(sockets, 3);
   assert.equal(await page.getByRole('tab').count(), 2);
   assert.equal(
@@ -128,6 +130,7 @@ export async function exerciseConnectionRaces(page) {
   await page.getByRole('button', { name: 'Notification details', exact: true }).click();
   await notice.waitFor({ state: 'visible' });
   await logoutAccess(page);
+  await notification(page, 'Logout confirmed.');
   await activeAccess(page, 'alice');
   await frames(page);
   assert.equal(

@@ -72,6 +72,30 @@ export async function exerciseCompactWorkspace(page) {
   await page.setViewportSize(viewport);
   await password();
   await output('EXECUTION_START:1');
+  const materialTab = page.getByRole('tab', { selected: true });
+  assert.equal(
+    (await materialTab.textContent()).trim(),
+    'alice',
+    'visible tab title is only the verified principal, without slash/dot/flow prefixes',
+  );
+  assert(await materialTab.evaluate((node) => node.classList.contains('MuiTab-root')));
+  assert.equal(
+    await materialTab
+      .getByRole('button', { name: 'Close terminal 1', exact: true })
+      .locator('svg')
+      .count(),
+    1,
+    'close is a Material SVG icon, not a font character',
+  );
+  const background = await pane().evaluate((node) => ({
+    surface: getComputedStyle(node.querySelector('.terminal-surface')).backgroundColor,
+    viewport: getComputedStyle(node.querySelector('.xterm-scrollable-element')).backgroundColor,
+  }));
+  assert.equal(
+    background.surface,
+    background.viewport,
+    'terminal-owned padding must have the terminal background',
+  );
   assert.equal(
     await page.locator('.application-brand,.application-status,.application-account').count(),
     0,
@@ -135,7 +159,7 @@ export async function exerciseCompactWorkspace(page) {
   await output('SIGNAL:INT');
   await page.getByRole('button', { name: 'New connection', exact: true }).click();
   await compact('compact-new-login');
-  assert.equal(await page.getByRole('tab').count(), 3);
+  assert.equal(await page.getByRole('tab', { includeHidden: true }).count(), 3);
   assert.equal(primaries, 1, 'plus itself must not reuse a grant or start another primary request');
   await password(true);
   await output('EXECUTION_START:4');

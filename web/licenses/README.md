@@ -1,5 +1,10 @@
 # License-text supplements
 
+The Material UI migration removed Mantine and `react-remove-scroll-bar` from the
+locked production tree. The following evidence is retained as historical
+documentation; it is no longer needed by the current browser bundle. The offline
+test retains the publisher-text hash check, not an installed-payload claim.
+
 `react-remove-scroll-bar@2.3.8` declares MIT in its npm metadata/archive but omits
 the license file. The checked-in text is the publisher repository's MIT notice:
 
@@ -17,8 +22,9 @@ The version-specific provenance bridge is recorded in
 - The publisher's retrievable 2.3.7 gitHead is
   `29e9fcd1eecf7d3b77a767941c4a57fe461fc1e4`. Comparing it with the pinned license
   source commit above changes **only `LICENSE`**; the source files are unchanged.
-- An offline test checks the installed 2.3.8 payload hashes, lock integrity and
-  supplement text against this recorded bridge. No build downloads are added.
+- Before removal, an offline test checked the installed 2.3.8 payload hashes,
+  lock integrity and supplement text against this bridge. No build downloads
+  were added.
 
 This strengthens the provenance of the publisher's MIT notice for the unchanged
 package payload. It is **not** a reproducible TypeScript-source/tarball match or

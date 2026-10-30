@@ -146,7 +146,11 @@ try {
   await captureLayout(page, `artifact-${mode}-mobile`);
   await page.setViewportSize({ width: 1280, height: 720 });
   assert.equal(
-    await panel.getByRole('combobox', { name: 'Expected encryption', exact: true }).inputValue(),
+    await panel
+      .getByRole('combobox', { name: 'Expected encryption', exact: true })
+      .locator('..')
+      .locator('input')
+      .inputValue(),
     '',
   );
   assert.equal(

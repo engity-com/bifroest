@@ -24,10 +24,21 @@ function productionDependencies(root) {
   ) {
     throw new Error('Unsupported or malformed Bun lockfile');
   }
-  // Never guess nested/isolated, alias, workspace, Git or file resolutions.
-  // Review this adapter when adding such dependencies or changing Bun's format.
-  if (Object.keys(lock.packages).some((name) => !packageName.test(name))) {
-    throw new Error('Frontend inventory requires a flat, hoisted Bun dependency tree');
+  // Bun's hoisted lock keys are package chains (including scoped names).
+  // Resolve each child from its actual ancestor, never from the root by guess.
+  const chains = new Map();
+  for (const key of Object.keys(lock.packages)) {
+    const parts = key.split('/');
+    const chain = [];
+    while (parts.length) {
+      const first = parts.shift();
+      const name = first.startsWith('@') ? `${first}/${parts.shift()}` : first;
+      if (!packageName.test(name)) {
+        throw new Error('Unsupported Bun package resolution');
+      }
+      chain.push(name);
+    }
+    chains.set(key, chain);
   }
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
   const direct = manifest.dependencies ?? {};
@@ -39,18 +50,28 @@ function productionDependencies(root) {
     throw new Error('Frontend manifest and Bun lockfile dependencies differ');
   }
   const selected = new Map();
-  function visit(name, optional = false) {
+  const visited = new Set();
+  function visit(name, optional = false, parent = []) {
     if (!packageName.test(name)) {
       throw new Error(`Unsupported frontend dependency name: ${name}`);
     }
-    if (selected.has(name)) {
+    let key = name;
+    for (let depth = parent.length; depth >= 0; depth--) {
+      const candidate = [...parent.slice(0, depth), name].join('/');
+      if (chains.has(candidate)) {
+        key = candidate;
+        break;
+      }
+    }
+    if (visited.has(key)) {
       return;
     }
-    const directory = join(root, 'node_modules', name);
+    const chain = chains.get(key) ?? [name];
+    const directory = join(root, ...chain.flatMap((part) => ['node_modules', part]));
     if (optional && !existsSync(join(directory, 'package.json'))) {
       return;
     }
-    const entry = lock.packages[name];
+    const entry = lock.packages[key];
     const metadata = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'));
     const integrity = entry?.[3];
     if (
@@ -69,17 +90,22 @@ function productionDependencies(root) {
     ) {
       throw new Error(`Frontend dependency/lock/license metadata is inconsistent: ${name}`);
     }
-    selected.set(name, { directory, metadata, integrity });
+    visited.add(key);
+    const identity = `${name}@${metadata.version}`;
+    if (selected.has(identity) && selected.get(identity).integrity !== integrity) {
+      throw new Error('Conflicting frontend archive integrities');
+    }
+    selected.set(identity, { directory, metadata, integrity });
     const details = entry[2];
     const optionalPeers = new Set(details.optionalPeers ?? []);
     for (const child of Object.keys(details.dependencies ?? {})) {
-      visit(child);
+      visit(child, false, chain);
     }
     for (const child of Object.keys(details.peerDependencies ?? {})) {
-      visit(child, optionalPeers.has(child));
+      visit(child, optionalPeers.has(child), chain);
     }
     for (const child of Object.keys(details.optionalDependencies ?? {})) {
-      visit(child, true);
+      visit(child, true, chain);
     }
   }
   for (const name of Object.keys(direct)) {

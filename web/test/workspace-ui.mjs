@@ -42,26 +42,32 @@ export async function activeAccessCount(page, user) {
 
 export async function chooseLoginMethod(page, name) {
   const input = page.getByRole('radio', { name, exact: true });
-  await input.locator('..').locator('label').click();
+  await input.click();
   assert.equal(await input.isChecked(), true);
 }
 
 export async function assertAccessActionsBlocked(page) {
   assert.equal(
-    await page.getByRole('button', { name: 'New connection', exact: true }).isEnabled(),
+    await page
+      .getByRole('button', { name: 'New connection', exact: true, includeHidden: true })
+      .isEnabled(),
     false,
   );
   assert.equal(
-    await page.getByRole('button', { name: 'Connection options', exact: true }).isEnabled(),
+    await page
+      .getByRole('button', { name: 'Connection options', exact: true, includeHidden: true })
+      .isEnabled(),
     false,
   );
-  for (const tab of await page.getByRole('tablist').getByRole('tab').all()) {
+  for (const tab of await page
+    .getByRole('tablist', { includeHidden: true })
+    .getByRole('tab', { includeHidden: true })
+    .all()) {
     assert.equal(await tab.isEnabled(), false);
   }
   await page
-    .getByRole('tablist')
-    .getByRole('tab', { selected: true })
-    .locator('..')
+    .getByRole('tablist', { includeHidden: true })
+    .getByRole('tab', { selected: true, includeHidden: true })
     .dispatchEvent('contextmenu');
   assert.equal(await page.getByRole('menuitem', { name: 'Log out', exact: true }).count(), 0);
   assert.equal(await page.getByRole('menuitem', { name: 'Duplicate', exact: true }).count(), 0);
@@ -81,8 +87,43 @@ export async function duplicateTab(page) {
 
 export async function terminalAction(page, name) {
   await tabMenu(page);
-  await page.getByRole('menuitem', { name: 'Special commands', exact: true }).hover();
   await page.getByRole('menuitem', { name, exact: true }).click();
+}
+
+export async function authenticationConsole(page, { text, kind, echo } = {}) {
+  const console = page.locator(
+    '[data-auth-terminal-active="true"] .authentication-surface[data-auth-ready="true"]',
+  );
+  await console.waitFor();
+  if (text !== undefined) {
+    await page.waitForFunction(
+      (text) =>
+        document
+          .querySelector('[data-auth-terminal-active="true"] .xterm-rows')
+          ?.textContent?.includes(text),
+      text,
+    );
+  }
+  if (kind !== undefined) {
+    assert.equal(await console.getAttribute('data-auth-kind'), kind);
+  }
+  if (echo !== undefined) {
+    assert.equal(await console.getAttribute('data-auth-echo'), String(echo));
+  }
+  assert.equal(
+    await page.getByRole('dialog', { name: 'Authentication step', exact: true }).count(),
+    0,
+  );
+  return console;
+}
+
+export async function answerAuthentication(page, answer = '', options = {}) {
+  const console = await authenticationConsole(page, options);
+  await console.locator('textarea').focus();
+  if (answer) {
+    await page.keyboard.type(answer);
+  }
+  await page.keyboard.press('Enter');
 }
 
 export async function logoutAccess(page) {
@@ -116,7 +157,30 @@ export async function changeTheme(page, name) {
     await login.getByRole('button', { name: 'Close', exact: true }).click();
     await login.waitFor({ state: 'hidden' });
   }
-  await page.getByRole('button', { name: 'Application menu', exact: true }).click();
+  const notice = page.getByRole('dialog', { name: 'Notification details', exact: true });
+  if (await notice.isVisible()) {
+    await notice.getByRole('button', { name: 'Close', exact: true }).click();
+    await notice.waitFor({ state: 'hidden' });
+  }
+  try {
+    await page.getByRole('button', { name: 'Application menu', exact: true }).click();
+  } catch (error) {
+    const dialogs = await page.locator('[role="dialog"]').evaluateAll((nodes) =>
+      nodes.map((node) => ({
+        title: document.getElementById(node.getAttribute('aria-labelledby'))?.textContent,
+        visible: node.getBoundingClientRect().height > 0,
+        hidden: node.closest('[aria-hidden="true"]') !== null,
+      })),
+    );
+    throw new Error(
+      JSON.stringify({
+        stage: 'appearance-owner',
+        dialogs,
+        rootHidden: await page.locator('#root').getAttribute('aria-hidden'),
+      }),
+      { cause: error },
+    );
+  }
   await page.getByRole('menuitem', { name: 'Appearance', exact: true }).click();
   const account = page.getByRole('dialog', { name: 'Appearance', exact: true });
   await account.getByText(name, { exact: true }).click();
@@ -151,7 +215,7 @@ export async function captureLayout(page, name) {
       name.endsWith('-verification')
     ) {
       await changeTheme(page, 'Dark');
-      await page.locator('html[data-mantine-color-scheme="dark"]').waitFor();
+      await page.locator('html[data-color-scheme="dark"]').waitFor();
       await page.screenshot({
         path: join(directory, `${name}-dark.png`),
         fullPage: true,

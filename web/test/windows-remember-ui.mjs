@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { chromium } from 'playwright';
 import {
+  answerAuthentication,
   chooseLoginMethod,
   duplicateTab,
   logoutAccess,
@@ -273,7 +274,7 @@ try {
     profiles.push(profile);
     stage = `primary-${method}`;
     page = await open(profile);
-    let dialog = page.getByRole('dialog', { name: 'Sign in', exact: true });
+    const dialog = page.getByRole('dialog', { name: 'Sign in', exact: true });
     if (method === 'interactive') {
       await chooseLoginMethod(page, 'Interactive / device login');
     }
@@ -290,9 +291,7 @@ try {
     }
     await dialog.getByRole('button', { name: 'Sign in', exact: true }).click();
     if (method === 'interactive') {
-      dialog = page.getByRole('dialog', { name: 'Authentication step', exact: true });
-      await dialog.getByLabel('Response', { exact: true }).fill(password);
-      await dialog.getByRole('button', { name: 'Send response', exact: true }).click();
+      await answerAuthentication(page, password, { kind: 'prompt', echo: false });
     }
     stage = `primary-${method}-connected`;
     await connected(page);

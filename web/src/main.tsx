@@ -1,63 +1,75 @@
+import createCache from '@emotion/cache';
+import { CacheProvider } from '@emotion/react';
 import {
-  ActionIcon,
-  Button,
+  CssBaseline,
   createTheme,
-  MantineProvider,
-  Modal,
-  PasswordInput,
-  Select,
-  TextInput,
-} from '@mantine/core';
-import { useMediaQuery } from '@mantine/hooks';
-import { useEffect, useState } from 'react';
+  GlobalStyles,
+  ThemeProvider,
+  useMediaQuery,
+} from '@mui/material';
+import { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import '@mantine/core/styles.css';
 import './ui/app.css';
 import { validateScope } from './remember/protocol';
 import { App } from './ui/App';
 import { type LinkMetadata, loadLinkMetadata } from './ui/link-metadata';
 import { t } from './ui/messages';
 
-const memoryScheme = {
-  get: () => 'auto' as const,
-  set() {},
-  subscribe() {},
-  unsubscribe() {},
-  clear() {},
-};
-
-const theme = createTheme({
-  primaryColor: 'blue',
-  defaultRadius: 'sm',
-  components: {
-    Button: Button.extend({ defaultProps: { size: 'sm' } }),
-    ActionIcon: ActionIcon.extend({ defaultProps: { radius: 'sm' } }),
-    TextInput: TextInput.extend({ defaultProps: { size: 'sm' } }),
-    PasswordInput: PasswordInput.extend({ defaultProps: { size: 'sm' } }),
-    Select: Select.extend({ defaultProps: { size: 'sm' } }),
-    Modal: Modal.extend({ defaultProps: { radius: 'md', centered: true } }),
-  },
+const cache = createCache({
+  key: 'bifroest',
+  nonce: document.querySelector<HTMLMetaElement>('meta[name="bifroest-nonce"]')?.content ?? '',
 });
 
 function Workspace({ metadata, title }: { metadata: LinkMetadata; title: string }) {
   const [scheme, setScheme] = useState('auto');
   const dark = useMediaQuery('(prefers-color-scheme: dark)');
+  const mode = scheme === 'auto' ? (dark ? 'dark' : 'light') : scheme === 'dark' ? 'dark' : 'light';
+  const theme = useMemo(
+    () =>
+      createTheme({
+        palette: { mode },
+        typography: {
+          fontFamily: 'Roboto, system-ui, sans-serif',
+          fontSize: 14,
+          button: { textTransform: 'none' },
+        },
+        components: {
+          MuiButton: { defaultProps: { disableElevation: true, size: 'small' } },
+          MuiTab: { styleOverrides: { root: { textTransform: 'none', minHeight: 48 } } },
+          MuiDialogTitle: { styleOverrides: { root: { fontSize: '1.125rem' } } },
+        },
+      }),
+    [mode],
+  );
+  useEffect(() => {
+    document.documentElement.dataset.colorScheme = mode;
+  }, [mode]);
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('bifroest:ready', { detail: { version: 1 } }));
   }, []);
   return (
-    <MantineProvider
-      theme={theme}
-      forceColorScheme={
-        scheme === 'auto' ? (dark ? 'dark' : 'light') : scheme === 'dark' ? 'dark' : 'light'
-      }
-      colorSchemeManager={memoryScheme}
-      getStyleNonce={() =>
-        document.querySelector<HTMLMetaElement>('meta[name="bifroest-nonce"]')?.content ?? ''
-      }
-    >
-      <App metadata={metadata} title={title} scheme={scheme} onScheme={setScheme} />
-    </MantineProvider>
+    <CacheProvider value={cache}>
+      <ThemeProvider theme={theme}>
+        <CssBaseline enableColorScheme />
+        <GlobalStyles
+          styles={{
+            ':root': {
+              '--app-border': theme.palette.divider,
+              '--app-hover': theme.palette.action.hover,
+              '--app-paper': theme.palette.background.paper,
+              '--app-body': theme.palette.background.default,
+              '--app-text': theme.palette.text.primary,
+              '--app-muted': theme.palette.text.secondary,
+              '--app-primary': theme.palette.primary.main,
+              '--app-success': theme.palette.success.main,
+              '--app-warning': theme.palette.warning.main,
+              '--app-error': theme.palette.error.main,
+            },
+          }}
+        />
+        <App metadata={metadata} title={title} scheme={scheme} onScheme={setScheme} />
+      </ThemeProvider>
+    </CacheProvider>
   );
 }
 

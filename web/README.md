@@ -1,12 +1,15 @@
 # Browser application and client core
 
-The first React 19/Mantine 9 application supports password login, explicit
+The React 19/Material UI 9 application supports password login, explicit
 RememberMe opt-in, saved-access resumption, confirmed logout/revocation,
 explicit local-only recovery and an owned xterm terminal. It uses en-US message
 keys and memory-only auto/light/dark appearance. Local SSH-key import/signing now
 uses an owned Go/WASM worker; Management has structured metadata and confirmed
 session disconnect/dispose actions. Keyboard-Interactive
-and OIDC device dialogs use the bounded existing server API. Vite 8/Oxc/Rolldown
+and OIDC device login use a local authentication-terminal tab and the bounded
+existing server API. Material tabs and SVG icons share one UI theme. Default tab
+labels show only the verified principal; flow/connection details stay in tooltips
+and menus. The terminal view owns its padding and matching background. Vite 8/Oxc/Rolldown
 builds the application and the independently tested, dependency-free HTTP/crypto
 core; there is no Webpack/Babel chain or production Node runtime.
 
@@ -387,7 +390,7 @@ click is not filesystem-write confirmation; discarding tab data cannot delete
 previously saved files. Original inventories are displayed twenty files per page.
 
 Local file/passphrase inputs have no upload names and use a prevented dialog form,
-not a POST fallback. Inputs and Mantine's uncontrolled input state clear on submit,
+not a POST fallback. Native inputs and component-local uncontrolled state clear on submit,
 expectation change or cancel; reselect the key for every attempt. Errors expose no
 parser/private diagnostics or partial verified output. Generation/operation guards
 refuse late results and retain the cancellation slot until joined cleanup finishes.
@@ -494,8 +497,16 @@ play/reset/replay/pause, no API/socket calls, ignored OSC host actions and clean
 
 Choose `Interactive / device login` to use the same Keyboard-Interactive/OIDC
 authorizer path as SSH. Info/error steps require explicit acknowledgement;
-prompts honor `echo` with plain or password input. Provider text is React text,
-never HTML or terminal commands. HTTPS verification links are provider-supplied,
+prompts honor `echo` in a local xterm authentication console, not a modal response
+form. This console has no WebAccess, WebSocket, remote command or recording sink.
+Provider text remains plain text: terminal controls are rendered visibly rather
+than interpreted, and secret answers never enter rendered output. A multiline
+paste cannot answer a later prompt. IME gestures retain their original prompt;
+overlapping paste/submission or a changed owner cancels the ambiguous attempt,
+including during xterm's delayed commit. Secret preedit never reaches xterm's
+visible composition node, and its secret-key screen-reader mirror is disabled;
+the prompt remains available in a separate safe live region. OS candidate popups
+are outside this application's control. HTTPS verification links are provider-supplied,
 opened only by an explicit click with noopener/noreferrer; no iframe, automatic
 redirect or OAuth token transfer is used. Disabled user collection still sends
 the original empty requesting name; verified principal comes only from Go.
@@ -503,14 +514,16 @@ the original empty requesting name; verified principal comes only from Go.
 The client holds its `bwl1.` proof privately in the tab and handles one step and
 one reply at a time. It enforces canonical increasing sequence 1–32, 8-KiB messages,
 32-KiB cumulative text and 4096-byte well-formed answers. Ordinary pending polls
-are spaced at least 1250 ms; while a dialog waits, 15-second keepalives refresh
+are spaced at least 1250 ms; while a prompt waits, 15-second keepalives refresh
 only the existing attempt's idle budget, never its pinned hard expiry. There is
 one logical interactive operation per client with a ten-minute cap and no
 automatic retry of a failed reply or claim. Poll can consume the completed
 authorization exactly once, so a lost reply/claim reports `login-unknown`, does
 not adopt late access and requires fresh login. Abort and failure use an independent
 bounded best-effort `login/cancel`, not logout/session disposal. Replies/attempt
-tokens are never serialized, stored, reused for another step or fed to xterm.
+tokens are never serialized, stored, reused for another step or passed to the
+renderer. Answers exist only transiently in the current local input/transport;
+they are never written to its transcript.
 
 Native Go HTTPS/Chromium tests cover info/error/plaintext injection resistance,
 echo/secret transitions, one-time claim loss/recovery, actual signed local IdP
@@ -961,7 +974,7 @@ input is limited to 512 KiB, ordinary resources to 8 MiB; there are at most 64
 custom CSS and 64 custom JS files.
 
 Go adds fresh per-document script/style nonces, including to trusted inline
-operator HTML and Mantine styles. Remote script tags are not granted a nonce;
+operator HTML and Material UI/Emotion styles. Remote script tags are not granted a nonce;
 inline event handlers/eval/framing remain blocked. Missing head/body elements in
 an overlay are synthesized by the HTML parser. Ordered `customCss` is appended
 after built-in styles; deferred local `customJs` follows built-ins. Register

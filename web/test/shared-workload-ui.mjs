@@ -25,6 +25,7 @@ try {
   const replies = [];
   const controls = [];
   const networkFailures = [];
+  const inputPrefixes = [];
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('requestfailed', (request) =>
     networkFailures.push({
@@ -39,6 +40,12 @@ try {
     }
   });
   page.on('websocket', (socket) => {
+    const index = inputPrefixes.push(Buffer.alloc(0)) - 1;
+    socket.on('framesent', ({ payload }) => {
+      if (typeof payload !== 'string') {
+        inputPrefixes[index] = Buffer.concat([inputPrefixes[index], payload]).subarray(0, 32);
+      }
+    });
     socket.on('framereceived', ({ payload }) => {
       if (typeof payload !== 'string') {
         return;
@@ -82,6 +89,14 @@ try {
     await activeAccess(page, 'e2e');
     await page.getByRole('dialog', { name: 'Sign in', exact: true }).waitFor({ state: 'hidden' });
     await page.locator('[data-terminal-phase="connected"]').waitFor();
+    // Transport admission is not shell readiness. Wait for the pinned fixture's
+    // actual ash prompt before sending any command; never retry that command.
+    await page.waitForFunction(() =>
+      document
+        .querySelector('[data-terminal-active="true"] .xterm-rows')
+        ?.textContent?.trimEnd()
+        .endsWith('~ $'),
+    );
     assert.equal(
       await page.getByRole('tab').count(),
       1,
@@ -120,6 +135,7 @@ try {
           errors,
           replies,
           controls,
+          sentInputPrefixes: inputPrefixes.map((prefix) => prefix.toString('utf8')),
         }),
         { cause: error },
       );

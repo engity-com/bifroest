@@ -1,6 +1,6 @@
-import { useComputedColorScheme } from '@mantine/core';
 import type { IDisposable, ITheme, Terminal as Xterm } from '@xterm/xterm';
 import { useEffect, useRef } from 'react';
+import { useComputedColorScheme } from '../ui/material';
 import '@xterm/xterm/css/xterm.css';
 import type { WebAccess } from '../remember';
 import type { Message } from '../ui/messages';
@@ -284,6 +284,7 @@ export function TerminalPanel({
     <section
       className="terminal-surface"
       ref={container}
+      style={{ backgroundColor: (palette === 'dark' ? dark : light).background, padding: 4 }}
       aria-label={t('terminalViewport')}
       onContextMenuCapture={(event) => {
         event.preventDefault();

@@ -1,3 +1,6 @@
+import { useEffect, useId, useRef, useState } from 'react';
+import type { WebAccess } from '../remember';
+import { RememberMeError } from '../remember';
 import {
   Alert,
   Button,
@@ -8,10 +11,7 @@ import {
   Select,
   TextInput,
   Title,
-} from '@mantine/core';
-import { useEffect, useId, useRef, useState } from 'react';
-import type { WebAccess } from '../remember';
-import { RememberMeError } from '../remember';
+} from '../ui/material';
 import type { Message } from '../ui/messages';
 import { t } from '../ui/messages';
 import { ArtifactCatalog } from './ArtifactCatalog';

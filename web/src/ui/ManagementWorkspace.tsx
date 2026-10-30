@@ -1,6 +1,6 @@
-import { Alert, Button } from '@mantine/core';
 import { lazy, Suspense, useCallback, useState } from 'react';
 import type { WebAccess } from '../remember';
+import { Alert, Button } from './material';
 import { t } from './messages';
 
 const ManagementPanel = lazy(async () => ({

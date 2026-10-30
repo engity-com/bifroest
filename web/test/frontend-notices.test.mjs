@@ -24,13 +24,13 @@ function fixture(t) {
     workspaces: { '': { ...manifest } },
     packages: {},
   };
-  function dependency(name, details = {}) {
-    lock.packages[name] = [`${name}@1.0.0`, '', details, integrity];
-    const directory = join(root, 'node_modules', name);
+  function dependency(name, details = {}, chain = [], version = '1.0.0') {
+    lock.packages[[...chain, name].join('/')] = [`${name}@${version}`, '', details, integrity];
+    const directory = join(root, ...[...chain, name].flatMap((part) => ['node_modules', part]));
     mkdirSync(directory, { recursive: true });
     writeFileSync(
       join(directory, 'package.json'),
-      JSON.stringify({ name, version: '1.0.0', license: 'MIT' }),
+      JSON.stringify({ name, version, license: 'MIT' }),
     );
     writeFileSync(join(directory, 'LICENSE'), `License of ${name}`);
   }
@@ -112,11 +112,36 @@ test('a stale production manifest fails', (t) => {
   assert.throws(f.run, /manifest and Bun lockfile/);
 });
 
-test('unknown nested lock layouts fail rather than selecting a wrong package', (t) => {
+test('nested versions follow the owning package; scoped chains and cycles stay bounded', (t) => {
   const f = fixture(t);
-  f.lock.packages['app/nested'] = ['nested@1.0.0', '', {}, integrity];
+  f.dependency('app', { dependencies: { '@scope/parent': '*', shared: '*' } });
+  f.dependency('shared');
+  f.dependency('@scope/parent', { dependencies: { shared: '*' } });
+  f.dependency('shared', { dependencies: { app: '*' } }, ['@scope/parent'], '2.0.0');
   f.save();
-  assert.throws(f.run, /flat, hoisted/);
+  assert.deepEqual(
+    f
+      .run()
+      .map((entry) => `${entry.name}@${entry.version}`)
+      .sort(),
+    ['@scope/parent@1.0.0', 'app@1.0.0', 'shared@1.0.0', 'shared@2.0.0'],
+  );
+  rmSync(join(f.root, 'node_modules/@scope/parent/node_modules/shared/package.json'));
+  assert.throws(
+    f.run,
+    /ENOENT/,
+    'a missing locked nested package must not fall back to another root version',
+  );
+});
+
+test('dev-only nested resolutions are not shipped or inventoried', (t) => {
+  const f = fixture(t);
+  f.lock.packages['compiler/nested'] = ['nested@2.0.0', '', {}, integrity];
+  f.save();
+  assert.deepEqual(
+    f.run().map((entry) => entry.name),
+    ['app'],
+  );
 });
 
 test('missing locks, aliases, unsupported sources, invalid integrity and version drift fail', (t) => {
@@ -145,7 +170,7 @@ test('a missing license text still blocks the build', (t) => {
   assert.deepEqual(readdirSync(f.output), []);
 });
 
-test('the recorded publisher MIT bridge matches the locked installed 2.3.8 payload offline', () => {
+test('the historical removed scroll-bar supplement retains its recorded publisher hash', () => {
   const root = fileURLToPath(new URL('../', import.meta.url));
   const evidence = JSON.parse(
     readFileSync(join(root, 'licenses/react-remove-scroll-bar-2.3.8-evidence.json'), 'utf8'),
@@ -153,16 +178,9 @@ test('the recorded publisher MIT bridge matches the locked installed 2.3.8 paylo
   const supplements = JSON.parse(readFileSync(join(root, 'licenses/supplements.json'), 'utf8'));
   const supplement = supplements['react-remove-scroll-bar@2.3.8'];
   const lock = parse(readFileSync(join(root, 'bun.lock'), 'utf8'));
-  const directory = join(root, 'node_modules/react-remove-scroll-bar');
-  const metadata = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'));
-  assert.equal(evidence.component, `${metadata.name}@${metadata.version}`);
-  assert.equal(metadata.license, evidence.declaredLicense);
-  assert.equal(metadata.license, supplement.license);
-  assert.equal(
-    metadata.dependencies['react-style-singleton'],
-    evidence.metadataDifferences['dependencies.react-style-singleton'][1],
-  );
-  assert.equal(lock.packages[metadata.name][3], evidence.archives['2.3.8'].integrity);
+  assert.equal(evidence.component, 'react-remove-scroll-bar@2.3.8');
+  assert.equal(evidence.declaredLicense, supplement.license);
+  assert.equal(lock.packages['react-remove-scroll-bar'], undefined, 'no longer a UI dependency');
   assert.equal(supplement.source, evidence.licenseSource);
   assert.equal(
     createHash('sha256')
@@ -170,35 +188,12 @@ test('the recorded publisher MIT bridge matches the locked installed 2.3.8 paylo
       .digest('hex'),
     evidence.licenseSha256,
   );
-  const files = [];
-  function visit(relative = '') {
-    for (const entry of readdirSync(join(directory, relative), { withFileTypes: true })) {
-      const name = relative === '' ? entry.name : `${relative}/${entry.name}`;
-      if (entry.isDirectory()) {
-        visit(name);
-      } else {
-        assert(entry.isFile(), 'the bridge covers regular package files only');
-        files.push(name);
-      }
-    }
-  }
-  visit();
-  assert.deepEqual(
-    files.filter((name) => name !== 'package.json').sort(),
-    Object.keys(evidence.identicalPayloadFiles).sort(),
-  );
   assert.equal(Object.keys(evidence.identicalPayloadFiles).length, 26);
   for (const [name, digest] of Object.entries(evidence.identicalPayloadFiles)) {
     assert.match(
       name,
       /^(?:README\.md|constants\/package\.json|dist\/(?:es5|es2015|es2019)\/[A-Za-z-]+\.(?:js|d\.ts))$/u,
     );
-    assert.equal(
-      createHash('sha256')
-        .update(readFileSync(join(directory, name)))
-        .digest('hex'),
-      digest,
-      name,
-    );
+    assert.match(digest, /^[a-f0-9]{64}$/u);
   }
 });

@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import {
   activeAccess,
+  authenticationConsole,
   captureLayout,
   chooseLoginMethod,
   duplicateTab,
   logoutAccess,
+  notification,
   reauthenticate,
   terminalAction,
 } from './workspace-ui.mjs';
@@ -119,22 +121,20 @@ export async function exerciseTerminal(page, login) {
   await chooseLoginMethod(page, 'Interactive / device login');
   await signIn.getByLabel('User name', { exact: true }).fill('alice');
   await signIn.getByRole('button', { name: 'Sign in', exact: true }).click();
-  const challenge = page.getByRole('dialog', { name: 'Authentication step', exact: true });
-  const cancelledSecret = 'cancelled-reauth-must-stay-in-the-dialog';
-  await challenge.getByLabel('Response', { exact: true }).focus();
+  const challenge = await authenticationConsole(page, { kind: 'prompt', echo: false });
+  const cancelledSecret = 'cancelled-reauth-must-stay-in-the-local-console';
+  await challenge.locator('textarea').focus();
   await page.keyboard.type(cancelledSecret);
   assert.equal(
-    await challenge.getByLabel('Response', { exact: true }).inputValue(),
-    cancelledSecret,
+    (await challenge.locator('.xterm-rows').textContent()).includes(cancelledSecret),
+    false,
   );
   const stopped = page.waitForResponse(
     (response) => response.url().endsWith('/api/v1/login/cancel') && response.status() === 204,
   );
-  await challenge.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('button', { name: 'Cancel authentication', exact: true }).click();
   await stopped;
-  await signIn.getByText('Operation cancelled.', { exact: false }).waitFor();
-  await signIn.getByRole('button', { name: 'Close', exact: true }).click();
-  await signIn.waitFor({ state: 'hidden' });
+  await notification(page, 'Operation cancelled.');
   assert.equal(
     sockets,
     2,

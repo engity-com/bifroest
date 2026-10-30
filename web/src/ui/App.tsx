@@ -1,3 +1,17 @@
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlineOutlined';
+import DescriptionIcon from '@mui/icons-material/Description';
+import LogoutIcon from '@mui/icons-material/Logout';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
+import PaletteIcon from '@mui/icons-material/Palette';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { verificationLink } from '../login/links';
+import type { AccessSnapshot, LoginStep, LogoutResult, WebAccess } from '../remember';
+import { BrowserBinding, BrowserClient, RememberMeError } from '../remember';
+import type { AuthenticationView } from '../terminal/AuthenticationTerminal';
+import { maximumTabs, TerminalWorkspace } from '../terminal/TerminalWorkspace';
+import { type LinkMetadata, loadLinkMetadata } from './link-metadata';
 import {
   ActionIcon,
   Alert,
@@ -14,14 +28,7 @@ import {
   TextInput,
   Tooltip,
   VisuallyHidden,
-} from '@mantine/core';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { verificationLink } from '../login/links';
-import type { AccessSnapshot, LoginStep, LogoutResult, WebAccess } from '../remember';
-import { BrowserBinding, BrowserClient, RememberMeError } from '../remember';
-import { maximumTabs, TerminalWorkspace } from '../terminal/TerminalWorkspace';
-import { LoginChallenge, ProviderInformation } from './LoginChallenge';
-import { type LinkMetadata, loadLinkMetadata } from './link-metadata';
+} from './material';
 import type { Message } from './messages';
 import { t } from './messages';
 
@@ -95,11 +102,18 @@ export function App({
   const [rememberUncertain, setRememberUncertain] = useState(false);
   const [loginMethod, setLoginMethod] = useState('password');
   const [loginStep, setLoginStep] = useState<LoginStep | null>(null);
-  const [loginUser, setLoginUser] = useState('');
   const [providerInformation, setProviderInformation] = useState<LoginStep | null>(null);
   const [loginPending, setLoginPending] = useState<'authentication' | 'remember' | null>(null);
-  const pendingResponse = useRef<((value: string) => void) | null>(null);
-  const providerLink = loginStep?.kind === 'info' ? verificationLink(loginStep.message) : null;
+  const [terminalLogin, setTerminalLogin] = useState<{
+    id: number;
+    scope: LinkMetadata['scope'];
+    user: string;
+  } | null>(null);
+  const pendingResponse = useRef<{
+    step: LoginStep;
+    generation: number;
+    answer: (value: string) => void;
+  } | null>(null);
 
   const readSaved = useCallback(async (current = generation.current) => {
     const scope = link.current.scope;
@@ -166,7 +180,6 @@ export function App({
       link.current = next;
       client.current = new BrowserClient(next.scope);
       setLoginMetadata(next);
-      setLoginUser('');
       setProviderInformation(null);
       setPasswordKey((value) => value + 1);
       setOptIn(false);
@@ -208,6 +221,7 @@ export function App({
     operation.current = null;
     setBusy(false);
     setLoginPending(null);
+    setTerminalLogin(null);
     setNotice({
       key: enrollmentMayHaveCommitted ? 'unknown' : 'cancelled',
       color: 'yellow',
@@ -229,7 +243,9 @@ export function App({
     return new Promise((resolve, reject) => {
       const cleanup = () => {
         signal.removeEventListener('abort', aborted);
-        pendingResponse.current = null;
+        if (pendingResponse.current?.step === step) {
+          pendingResponse.current = null;
+        }
         if (current === generation.current) {
           setLoginStep(null);
         }
@@ -243,9 +259,20 @@ export function App({
         return;
       }
       signal.addEventListener('abort', aborted, { once: true });
-      pendingResponse.current = (value) => {
-        cleanup();
-        resolve(value);
+      pendingResponse.current = {
+        step,
+        generation: current,
+        answer: (value) => {
+          if (
+            current !== generation.current ||
+            signal.aborted ||
+            pendingResponse.current?.step !== step
+          ) {
+            return;
+          }
+          cleanup();
+          resolve(value);
+        },
       };
       setLoginStep(step);
       // Retain only the current attempt's explicit provider instructions, never
@@ -256,19 +283,9 @@ export function App({
     });
   }
 
-  function answerStep(form: HTMLFormElement) {
-    const field = form.elements.namedItem('answer') as HTMLInputElement | null;
-    const value = field?.value ?? '';
-    if (field !== null) {
-      field.value = '';
-    }
-    pendingResponse.current?.(value);
-  }
-
   async function login(form: HTMLFormElement) {
     const password = form.elements.namedItem('password') as HTMLInputElement | null;
     const user = (form.elements.namedItem('user') as HTMLInputElement | null)?.value ?? '';
-    setLoginUser(user);
     setProviderInformation(null);
     const selectedClient = client.current;
     const selectedScope = link.current.scope;
@@ -291,10 +308,14 @@ export function App({
     if (passphraseInput !== null) {
       passphraseInput.value = '';
     }
-    setPasswordKey((value) => value + 1); // Reset Mantine's internal uncontrolled input state too.
+    setPasswordKey((value) => value + 1); // Also discard the input's internal uncontrolled state.
     const remember = optIn;
     await run(async (signal, current) => {
       setLoginPending('authentication');
+      if (loginMethod === 'interactive') {
+        setTerminalLogin({ id: current, scope: selectedScope, user });
+        setLoginOpen(false);
+      }
       let result: WebAccess;
       if (loginMethod === 'key') {
         if (privateFile === null) {
@@ -353,6 +374,7 @@ export function App({
         }
       }
       if (current === generation.current) {
+        setTerminalLogin(null);
         setProviderInformation(null);
         setLoginOpen(false);
         if (!uncertain) {
@@ -414,6 +436,7 @@ export function App({
       }
       setAuthorizationEvent((event) => (event === selected ? null : event));
       setSnapshot(null);
+      setTerminalLogin(null);
       setNoticeOpen(false);
       setClosing(false);
       setOptIn(false);
@@ -472,10 +495,9 @@ export function App({
     }
     setApplicationMenuOpen(false);
     setLoginOpen(true);
+    setTerminalLogin(null);
     setOptIn(false);
-    setLoginUser('');
     setProviderInformation(null);
-    setNotice(null);
     setNotice(null);
     if (scope && scope.origin === metadata.scope.origin && scope.slug !== link.current.scope.slug) {
       void chooseLink(scope.slug);
@@ -505,13 +527,36 @@ export function App({
   return (
     <>
       <TerminalWorkspace
+        authentication={
+          terminalLogin === null
+            ? null
+            : ({
+                ...terminalLogin,
+                step: loginStep,
+                pending: busy,
+                remembering: loginPending === 'remember',
+                message: !busy && notice ? t(notice.key) : null,
+                provider: providerInformation,
+                onAnswer: (value) => {
+                  const pending = pendingResponse.current;
+                  if (pending?.generation === terminalLogin.id && pending.step === loginStep) {
+                    pending.answer(value);
+                  }
+                },
+                onCancel: () => {
+                  if (generation.current === terminalLogin.id) {
+                    cancel();
+                  }
+                },
+              } satisfies AuthenticationView)
+        }
         authorizationEvent={authorizationEvent}
         retiredAccess={retiredAccess}
         unavailableAccess={closing || rememberUncertain ? access.current : null}
         blocked={closing || busy || rememberUncertain || managementLocked}
         focusBlocked={
           loginOpen ||
-          loginStep !== null ||
+          (loginStep !== null && terminalLogin === null) ||
           applicationMenuOpen ||
           appearanceOpen ||
           noticeOpen ||
@@ -536,7 +581,7 @@ export function App({
                 onClick={() => setNoticeOpen(true)}
                 aria-label={t('showNotice')}
               >
-                <span aria-hidden="true">{notice.color === 'green' ? '✓' : '!'}</span>
+                {notice.color === 'green' ? <CheckCircleIcon /> : <WarningAmberIcon />}
               </ActionIcon>
             </Tooltip>
           ) : null
@@ -549,13 +594,19 @@ export function App({
           >
             <Menu.Target>
               <ActionIcon variant="subtle" color="gray" size="lg" aria-label={t('applicationMenu')}>
-                ⋮
+                <MoreVertIcon />
               </ActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
-              <Menu.Item onClick={() => setAppearanceOpen(true)}>{t('appearance')}</Menu.Item>
+              <Menu.Item
+                icon={<PaletteIcon fontSize="small" />}
+                onClick={() => setAppearanceOpen(true)}
+              >
+                {t('appearance')}
+              </Menu.Item>
               <Menu.Item
                 component="a"
+                icon={<DescriptionIcon fontSize="small" />}
                 href="/_bifroest/files/third-party-licenses.txt"
                 target="_blank"
                 rel="noopener noreferrer"
@@ -572,246 +623,213 @@ export function App({
         padding="lg"
         centered
         lockScroll={false}
-        opened={loginOpen && confirm === null}
+        opened={loginOpen && terminalLogin === null && confirm === null}
         onClose={closeLogin}
         closeOnClickOutside={false}
         closeOnEscape={!busy}
-        title={t(
-          loginStep !== null || (loginPending !== null && loginMethod === 'interactive')
-            ? 'loginChallenge'
-            : 'login',
-        )}
+        title={t('login')}
         closeButtonProps={{ 'aria-label': t('close') }}
       >
-        {(loginStep !== null || loginPending !== null) && (
-          <Text size="sm" c="dimmed" mb="sm">
-            {loginMetadata.scope.slug || '/'}
-            {loginUser ? ` · ${loginUser}` : ''}
-          </Text>
-        )}
         {notice && loginOpen && (
           <Alert role="status" color={notice.color}>
             {t(notice.key)}
           </Alert>
         )}
-        {loginStep !== null ? (
-          <LoginChallenge
-            key={`${generation.current}:${loginStep.sequence}`}
-            step={loginStep}
-            providerLink={providerLink}
-            onAnswer={answerStep}
-            onCancel={cancel}
-          />
-        ) : loginPending !== null && loginMethod === 'interactive' ? (
-          <div className="stack" aria-busy="true">
-            {providerInformation !== null && (
-              <ProviderInformation
-                step={providerInformation}
-                providerLink={verificationLink(providerInformation.message)}
-              />
-            )}
-            <p role="status">
-              {t(loginPending === 'remember' ? 'loginRemembering' : 'loginWaiting')}
-            </p>
-            <Button variant="default" onClick={cancel}>
-              {t('cancel')}
-            </Button>
-          </div>
-        ) : (
-          <Stack gap="sm">
-            {linkChoices.length > 1 ? (
-              <Select
-                label={t('connectionLink')}
-                value={loginMetadata.scope.slug}
-                data={linkChoices.map((slug) => ({ value: slug, label: slug || '/' }))}
-                disabled={busy}
-                allowDeselect={false}
-                onChange={(value) => {
-                  if (value !== null) {
-                    void chooseLink(value);
-                  }
-                }}
-              />
-            ) : (
-              loginMetadata.scope.slug && (
-                <Text size="sm" c="dimmed">
-                  {loginMetadata.scope.slug}
-                </Text>
-              )
-            )}
-            {saved === 'ready' && (
-              <Group justify="space-between" gap="xs">
-                <Button
-                  variant="light"
-                  size="xs"
-                  disabled={busy}
-                  onClick={() => {
-                    void resume();
-                  }}
-                >
-                  {t('useSaved')}
-                </Button>
-                {snapshot === null && (
-                  <Menu>
-                    <Menu.Target>
-                      <ActionIcon
-                        variant="subtle"
-                        color="gray"
-                        size="sm"
-                        disabled={busy}
-                        aria-label={t('savedOptions')}
-                      >
-                        ⋯
-                      </ActionIcon>
-                    </Menu.Target>
-                    <Menu.Dropdown>
-                      <Menu.Item onClick={() => showConfirmation('revoke')}>
-                        {t('forgetSaved')}
-                      </Menu.Item>
-                      <Menu.Item onClick={() => showConfirmation('local')}>
-                        {t('removeLocalOnly')}
-                      </Menu.Item>
-                    </Menu.Dropdown>
-                  </Menu>
-                )}
-              </Group>
-            )}
-            {saved === 'pending' && (
-              <Alert color="yellow">
-                <p>{t('pending')}</p>
-                {snapshot === null && (
-                  <Button
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() => showConfirmation('local')}
-                  >
-                    {t('removeLocal')}
-                  </Button>
-                )}
-              </Alert>
-            )}
-            {saved === 'unavailable' && <Alert color="yellow">{t('storageUnavailable')}</Alert>}
-            <form
-              key={loginMetadata.scope.slug}
-              method={loginMethod === 'key' ? 'dialog' : 'post'}
-              action={loginMethod === 'key' ? undefined : '/_bifroest/api/v1/login/password'}
-              className="login-form"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void login(event.currentTarget);
+        <Stack gap="sm">
+          {linkChoices.length > 1 ? (
+            <Select
+              label={t('connectionLink')}
+              value={loginMetadata.scope.slug}
+              data={linkChoices.map((slug) => ({ value: slug, label: slug || '/' }))}
+              disabled={busy}
+              allowDeselect={false}
+              onChange={(value) => {
+                if (value !== null) {
+                  void chooseLink(value);
+                }
               }}
-            >
-              <SegmentedControl
-                aria-label={t('loginMethod')}
-                value={loginMethod}
-                onChange={setLoginMethod}
+            />
+          ) : (
+            loginMetadata.scope.slug && (
+              <Text size="sm" c="dimmed">
+                {loginMetadata.scope.slug}
+              </Text>
+            )
+          )}
+          {saved === 'ready' && (
+            <Group justify="space-between" gap="xs">
+              <Button
+                variant="light"
+                size="xs"
                 disabled={busy}
-                fullWidth
-                data={[
-                  {
-                    value: 'password',
-                    label: (
-                      <>
-                        <span aria-hidden="true">{t('loginPasswordTab')}</span>
-                        <VisuallyHidden>{t('passwordMethod')}</VisuallyHidden>
-                      </>
-                    ),
-                  },
-                  {
-                    value: 'interactive',
-                    label: (
-                      <>
-                        <span aria-hidden="true">{t('loginInteractiveTab')}</span>
-                        <VisuallyHidden>{t('interactiveMethod')}</VisuallyHidden>
-                      </>
-                    ),
-                  },
-                  {
-                    value: 'key',
-                    label: (
-                      <>
-                        <span aria-hidden="true">{t('loginKeyTab')}</span>
-                        <VisuallyHidden>{t('keyMethod')}</VisuallyHidden>
-                      </>
-                    ),
-                  },
-                ]}
-              />
-              {loginMetadata.requestUser && (
-                <TextInput
-                  name="user"
-                  label={t('user')}
-                  autoComplete="username"
-                  data-autofocus
-                  disabled={busy}
-                />
+                onClick={() => {
+                  void resume();
+                }}
+              >
+                {t('useSaved')}
+              </Button>
+              {snapshot === null && (
+                <Menu>
+                  <Menu.Target>
+                    <ActionIcon
+                      variant="subtle"
+                      color="gray"
+                      size="sm"
+                      disabled={busy}
+                      aria-label={t('savedOptions')}
+                    >
+                      <MoreVertIcon fontSize="small" />
+                    </ActionIcon>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    <Menu.Item
+                      icon={<LogoutIcon fontSize="small" />}
+                      onClick={() => showConfirmation('revoke')}
+                    >
+                      {t('forgetSaved')}
+                    </Menu.Item>
+                    <Menu.Item
+                      icon={<DeleteOutlineIcon fontSize="small" />}
+                      onClick={() => showConfirmation('local')}
+                    >
+                      {t('removeLocalOnly')}
+                    </Menu.Item>
+                  </Menu.Dropdown>
+                </Menu>
               )}
-              {loginMethod === 'password' && (
+            </Group>
+          )}
+          {saved === 'pending' && (
+            <Alert color="yellow">
+              <p>{t('pending')}</p>
+              {snapshot === null && (
+                <Button variant="outline" disabled={busy} onClick={() => showConfirmation('local')}>
+                  {t('removeLocal')}
+                </Button>
+              )}
+            </Alert>
+          )}
+          {saved === 'unavailable' && <Alert color="yellow">{t('storageUnavailable')}</Alert>}
+          <form
+            key={loginMetadata.scope.slug}
+            method={loginMethod === 'key' ? 'dialog' : 'post'}
+            action={loginMethod === 'key' ? undefined : '/_bifroest/api/v1/login/password'}
+            className="login-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void login(event.currentTarget);
+            }}
+          >
+            <SegmentedControl
+              aria-label={t('loginMethod')}
+              value={loginMethod}
+              onChange={setLoginMethod}
+              disabled={busy}
+              fullWidth
+              data={[
+                {
+                  value: 'password',
+                  label: (
+                    <>
+                      <span aria-hidden="true">{t('loginPasswordTab')}</span>
+                      <VisuallyHidden>{t('passwordMethod')}</VisuallyHidden>
+                    </>
+                  ),
+                },
+                {
+                  value: 'interactive',
+                  label: (
+                    <>
+                      <span aria-hidden="true">{t('loginInteractiveTab')}</span>
+                      <VisuallyHidden>{t('interactiveMethod')}</VisuallyHidden>
+                    </>
+                  ),
+                },
+                {
+                  value: 'key',
+                  label: (
+                    <>
+                      <span aria-hidden="true">{t('loginKeyTab')}</span>
+                      <VisuallyHidden>{t('keyMethod')}</VisuallyHidden>
+                    </>
+                  ),
+                },
+              ]}
+            />
+            {loginMetadata.requestUser && (
+              <TextInput
+                name="user"
+                label={t('user')}
+                autoComplete="username"
+                data-autofocus
+                disabled={busy}
+              />
+            )}
+            {loginMethod === 'password' && (
+              <PasswordInput
+                key={passwordKey}
+                name="password"
+                label={t('password')}
+                autoComplete="current-password"
+                visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }}
+                disabled={busy}
+              />
+            )}
+            {loginMethod === 'key' && (
+              <>
+                <Text size="xs" c="dimmed">
+                  {t('keyLocalHint')}
+                </Text>
+                <label className="stack" htmlFor="key-private">
+                  {t('keyPrivateFile')}
+                  <input
+                    key={`private:${passwordKey}`}
+                    id="key-private"
+                    type="file"
+                    required
+                    disabled={busy}
+                  />
+                </label>
                 <PasswordInput
-                  key={passwordKey}
-                  name="password"
-                  label={t('password')}
-                  autoComplete="current-password"
+                  key={`passphrase:${passwordKey}`}
+                  id="key-passphrase"
+                  label={t('keyPassphrase')}
+                  autoComplete="off"
                   visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }}
                   disabled={busy}
                 />
-              )}
-              {loginMethod === 'key' && (
-                <>
-                  <Text size="xs" c="dimmed">
-                    {t('keyLocalHint')}
-                  </Text>
-                  <label className="stack" htmlFor="key-private">
-                    {t('keyPrivateFile')}
-                    <input
-                      key={`private:${passwordKey}`}
-                      id="key-private"
-                      type="file"
-                      required
-                      disabled={busy}
-                    />
-                  </label>
-                  <PasswordInput
-                    key={`passphrase:${passwordKey}`}
-                    id="key-passphrase"
-                    label={t('keyPassphrase')}
-                    autoComplete="off"
-                    visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }}
+                <label className="stack" htmlFor="key-certificate">
+                  {t('keyCertificateFile')}
+                  <input
+                    key={`certificate:${passwordKey}`}
+                    id="key-certificate"
+                    type="file"
                     disabled={busy}
                   />
-                  <label className="stack" htmlFor="key-certificate">
-                    {t('keyCertificateFile')}
-                    <input
-                      key={`certificate:${passwordKey}`}
-                      id="key-certificate"
-                      type="file"
-                      disabled={busy}
-                    />
-                  </label>
-                </>
-              )}
-              {saved === 'missing' && (
-                <Checkbox
-                  checked={optIn}
-                  onChange={(event) => setOptIn(event.currentTarget.checked)}
-                  disabled={busy || saved !== 'missing'}
-                  label={t('remember')}
-                  size="sm"
-                />
-              )}
-              <Group justify="flex-end" gap="xs">
-                <Button type="submit" loading={busy} disabled={busy || managementLocked}>
-                  {t('login')}
+                </label>
+              </>
+            )}
+            {saved === 'missing' && (
+              <Checkbox
+                checked={optIn}
+                onChange={(event) => setOptIn(event.currentTarget.checked)}
+                disabled={busy || saved !== 'missing'}
+                label={t('remember')}
+                size="sm"
+              />
+            )}
+            <Group justify="flex-end" gap="xs">
+              <Button type="submit" loading={busy} disabled={busy || managementLocked}>
+                {t('login')}
+              </Button>
+              {busy && (
+                <Button type="button" variant="default" onClick={cancel}>
+                  {t('cancel')}
                 </Button>
-                {busy && (
-                  <Button type="button" variant="default" onClick={cancel}>
-                    {t('cancel')}
-                  </Button>
-                )}
-              </Group>
-            </form>
-          </Stack>
-        )}
+              )}
+            </Group>
+          </form>
+        </Stack>
       </Modal>
       <Modal
         classNames={{ content: 'confirmation-dialog' }}

@@ -1,10 +1,23 @@
-import { ActionIcon, Button, Menu, Modal } from '@mantine/core';
+import AddIcon from '@mui/icons-material/Add';
+import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
+import CloseIcon from '@mui/icons-material/Close';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import KeyboardReturnIcon from '@mui/icons-material/KeyboardReturn';
+import LinkOffIcon from '@mui/icons-material/LinkOff';
+import LoginIcon from '@mui/icons-material/Login';
+import LogoutIcon from '@mui/icons-material/Logout';
+import PowerSettingsNewIcon from '@mui/icons-material/PowerSettingsNew';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import StopIcon from '@mui/icons-material/Stop';
+import { Box, CircularProgress, IconButton, Tab, Tabs } from '@mui/material';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Scope, WebAccess } from '../remember';
 import { ManagementWorkspace } from '../ui/ManagementWorkspace';
+import { ActionIcon, Button, Menu, Modal } from '../ui/material';
 import { t } from '../ui/messages';
 import { canCloseView, ownerLocks } from '../ui/workspace-state';
+import { AuthenticationTerminal, type AuthenticationView } from './AuthenticationTerminal';
 import { ConnectionTab } from './ConnectionTab';
 import type { TerminalState } from './socket';
 import type { TerminalActions } from './TerminalPanel';
@@ -21,6 +34,7 @@ interface ShellTab {
 export const maximumTabs = 8;
 
 export function TerminalWorkspace({
+  authentication,
   authorizationEvent,
   retiredAccess,
   unavailableAccess,
@@ -36,6 +50,7 @@ export function TerminalWorkspace({
   onTabCount,
   onLogout,
 }: {
+  authentication: AuthenticationView | null;
   authorizationEvent: WebAccess | null;
   retiredAccess: WebAccess | null;
   unavailableAccess: WebAccess | null;
@@ -69,7 +84,10 @@ export function TerminalWorkspace({
     current.current = next;
     setTabs(next);
   }, []);
-  useEffect(() => onTabCount(tabs.length), [tabs.length, onTabCount]);
+  useEffect(
+    () => onTabCount(tabs.length + (authentication ? 1 : 0)),
+    [tabs.length, authentication, onTabCount],
+  );
   const lockOwner = useCallback(
     (owner: number, locked: boolean) => {
       actionOwners.current = ownerLocks(actionOwners.current, owner, locked);
@@ -299,90 +317,201 @@ export function TerminalWorkspace({
   const available = tabs
     .filter((tab, index) => tabs.findIndex((entry) => entry.access === tab.access) === index)
     .filter((tab) => Date.parse(tab.access.snapshot().expiresAt) > Date.now());
-  const keyboardTab = (event: React.KeyboardEvent, index: number) => {
-    if (blocked || focusBlocked) {
-      return;
-    }
-    const next =
-      event.key === 'ArrowRight'
-        ? (index + 1) % tabs.length
-        : event.key === 'ArrowLeft'
-          ? (index + tabs.length - 1) % tabs.length
-          : event.key === 'Home'
-            ? 0
-            : event.key === 'End'
-              ? tabs.length - 1
-              : -1;
-    const tab = tabs[next];
-    if (tab) {
-      event.preventDefault();
-      setFocusTerminal(false);
-      setActive(tab.id);
-      onSelectAccess(tab.access);
-      document.getElementById(`terminal-tab-${tab.id}`)?.focus();
-    }
-  };
+  const menuOwner = tabs.find((tab) => tab.id === menuTab);
 
   return (
     <main className="workspace terminal-workspace" aria-label={title}>
       <header className="application-bar">
         <div className="application-tabs">
-          <div
-            ref={tabList}
-            className="terminal-tab-list"
-            role="tablist"
-            aria-label={t('connectionTabs')}
+          <Menu
+            opened={menuOwner !== undefined}
+            onChange={(opened) => {
+              if (!opened && menuTab !== null) {
+                showTabMenu(menuTab, false);
+              }
+            }}
+            returnFocus={false}
           >
-            {tabs.map((tab, index) => (
-              <ConnectionTab
-                key={tab.id}
-                id={tab.id}
-                kind={tab.kind}
-                scope={tab.access.snapshot().scope.slug}
-                principal={tab.access.snapshot().principal}
-                state={tab.state}
-                inputClosed={tab.inputClosed}
-                active={active === tab.id}
-                disabled={blocked || focusBlocked}
-                full={tabs.length >= maximumTabs}
-                opened={menuTab === tab.id}
-                onSelect={() =>
-                  operate(tab.id, (entry) => {
-                    setFocusTerminal(true);
-                    setActive(entry.id);
-                    onSelectAccess(entry.access);
-                  })
-                }
-                onMenu={(value) => showTabMenu(tab.id, value)}
-                onKeyboard={(event) => keyboardTab(event, index)}
-                onDuplicate={() => operate(tab.id, (entry) => duplicateAccess(entry.access))}
-                onClose={() => operate(tab.id, requestClose)}
-                onLogout={() => operate(tab.id, (entry) => onLogout(entry.access))}
-                onRenew={() => operate(tab.id, (entry) => onSignIn(entry.access.snapshot().scope))}
-                onEof={() =>
-                  operate(tab.id, (entry) => {
-                    if (controls.current.get(entry.id)?.eof()) {
-                      updateTabs(
-                        current.current.map((item) =>
-                          item.id === entry.id ? { ...item, inputClosed: true } : item,
-                        ),
-                      );
+            <Tabs
+              ref={tabList}
+              className="terminal-tab-list"
+              aria-label={t('connectionTabs')}
+              value={authentication ? 'authentication' : (active ?? false)}
+              variant="scrollable"
+              scrollButtons="auto"
+              allowScrollButtonsMobile
+              selectionFollowsFocus
+              onChange={(event, id: number) =>
+                operate(id, (tab) => {
+                  setFocusTerminal(event.type === 'click');
+                  setActive(tab.id);
+                  onSelectAccess(tab.access);
+                })
+              }
+            >
+              {tabs.map((tab) => (
+                <ConnectionTab
+                  key={tab.id}
+                  id={tab.id}
+                  value={tab.id}
+                  kind={tab.kind}
+                  scope={tab.access.snapshot().scope.slug}
+                  principal={tab.access.snapshot().principal}
+                  state={tab.state}
+                  active={authentication === null && active === tab.id}
+                  disabled={blocked || focusBlocked}
+                  onSelect={() =>
+                    operate(tab.id, (entry) => {
+                      setFocusTerminal(true);
+                      setActive(entry.id);
+                      onSelectAccess(entry.access);
+                    })
+                  }
+                  onMenu={(value) => showTabMenu(tab.id, value)}
+                  onClose={() => operate(tab.id, requestClose)}
+                />
+              ))}
+              {authentication && (
+                <Tab
+                  value="authentication"
+                  component="div"
+                  id="authentication-tab"
+                  aria-label={`${t('authenticationTab')} ${authentication.user}`}
+                  aria-controls="authentication-pane"
+                  label={
+                    <Box
+                      component="span"
+                      sx={{ display: 'inline-flex', alignItems: 'center', gap: 1 }}
+                    >
+                      {authentication.pending ? (
+                        <CircularProgress size={14} />
+                      ) : (
+                        <LoginIcon fontSize="small" />
+                      )}
+                      {authentication.user || t('login')}
+                      <IconButton
+                        component="span"
+                        role="button"
+                        size="small"
+                        tabIndex={-1}
+                        aria-label={t('cancelAuthentication')}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          authentication.onCancel();
+                        }}
+                      >
+                        <CloseIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  }
+                />
+              )}
+            </Tabs>
+            <Menu.Dropdown aria-label={t('connectionTabMenu')}>
+              {menuOwner && (
+                <>
+                  <Menu.Label>
+                    {menuOwner.access.snapshot().principal}
+                    {menuOwner.access.snapshot().scope.slug
+                      ? ` · ${menuOwner.access.snapshot().scope.slug}`
+                      : ''}
+                  </Menu.Label>
+                  <Menu.Item
+                    icon={<ContentCopyIcon fontSize="small" />}
+                    disabled={blocked || focusBlocked || tabs.length >= maximumTabs}
+                    onClick={() => operate(menuOwner.id, (entry) => duplicateAccess(entry.access))}
+                  >
+                    {t('connectionDuplicate')}
+                  </Menu.Item>
+                  <Menu.Item
+                    icon={<RefreshIcon fontSize="small" />}
+                    disabled={blocked || focusBlocked || tabs.length >= maximumTabs}
+                    onClick={() =>
+                      operate(menuOwner.id, (entry) => onSignIn(entry.access.snapshot().scope))
                     }
-                  })
-                }
-                onSignal={(signal) =>
-                  operate(tab.id, (entry) => {
-                    controls.current.get(entry.id)?.signal(signal);
-                  })
-                }
-                onDisconnect={() =>
-                  operate(tab.id, (entry) => {
-                    controls.current.get(entry.id)?.disconnect();
-                  })
-                }
-              />
-            ))}
-          </div>
+                  >
+                    {t('reauthenticate')}
+                  </Menu.Item>
+                  {menuOwner.kind === 'terminal' && (
+                    <>
+                      <Menu.Divider />
+                      <Menu.Label>{t('terminalSpecial')}</Menu.Label>
+                      <Menu.Item
+                        icon={<KeyboardReturnIcon fontSize="small" />}
+                        disabled={
+                          blocked || menuOwner.state.phase !== 'connected' || menuOwner.inputClosed
+                        }
+                        onClick={() =>
+                          operate(menuOwner.id, (entry) => {
+                            if (controls.current.get(entry.id)?.eof()) {
+                              updateTabs(
+                                current.current.map((item) =>
+                                  item.id === entry.id ? { ...item, inputClosed: true } : item,
+                                ),
+                              );
+                            }
+                          })
+                        }
+                      >
+                        {t('terminalEof')}
+                      </Menu.Item>
+                      <Menu.Item
+                        icon={<StopIcon fontSize="small" />}
+                        disabled={blocked || menuOwner.state.phase !== 'connected'}
+                        onClick={() =>
+                          operate(menuOwner.id, (entry) => {
+                            controls.current.get(entry.id)?.signal('INT');
+                          })
+                        }
+                      >
+                        {t('terminalInterrupt')}
+                      </Menu.Item>
+                      <Menu.Item
+                        icon={<PowerSettingsNewIcon fontSize="small" />}
+                        disabled={blocked || menuOwner.state.phase !== 'connected'}
+                        onClick={() =>
+                          operate(menuOwner.id, (entry) => {
+                            controls.current.get(entry.id)?.signal('TERM');
+                          })
+                        }
+                      >
+                        {t('terminalTerminate')}
+                      </Menu.Item>
+                      <Menu.Item
+                        icon={<LinkOffIcon fontSize="small" />}
+                        disabled={
+                          blocked || !['connecting', 'connected'].includes(menuOwner.state.phase)
+                        }
+                        onClick={() =>
+                          operate(menuOwner.id, (entry) => {
+                            controls.current.get(entry.id)?.disconnect();
+                          })
+                        }
+                      >
+                        {t('terminalDisconnect')}
+                      </Menu.Item>
+                    </>
+                  )}
+                  <Menu.Divider />
+                  <Menu.Item
+                    icon={<LogoutIcon fontSize="small" />}
+                    disabled={blocked || focusBlocked}
+                    onClick={() => operate(menuOwner.id, (entry) => onLogout(entry.access))}
+                  >
+                    {t('logout')}
+                  </Menu.Item>
+                  <Menu.Item
+                    icon={<CloseIcon fontSize="small" />}
+                    color="red"
+                    disabled={blocked || focusBlocked}
+                    onClick={() => operate(menuOwner.id, requestClose)}
+                  >
+                    {t('close')}
+                  </Menu.Item>
+                </>
+              )}
+            </Menu.Dropdown>
+          </Menu>
           <Menu
             position="bottom-start"
             opened={newMenuOpen}
@@ -408,7 +537,7 @@ export function TerminalWorkspace({
                     onNewConnection();
                   }}
                 >
-                  +
+                  <AddIcon />
                 </ActionIcon>
                 <Menu.Target>
                   <ActionIcon
@@ -418,19 +547,24 @@ export function TerminalWorkspace({
                     aria-label={t('connectionOptions')}
                     disabled={blocked}
                   >
-                    ⌄
+                    <ArrowDropDownIcon />
                   </ActionIcon>
                 </Menu.Target>
               </ActionIcon.Group>
             </Menu.ContextMenu>
             <Menu.Dropdown>
-              <Menu.Item disabled={blocked || tabs.length >= maximumTabs} onClick={onNewConnection}>
+              <Menu.Item
+                icon={<AddIcon fontSize="small" />}
+                disabled={blocked || tabs.length >= maximumTabs}
+                onClick={onNewConnection}
+              >
                 {t('connectionNew')}
               </Menu.Item>
               {available.length > 0 && <Menu.Label>{t('connectionAvailable')}</Menu.Label>}
               {available.map((tab) => (
                 <Menu.Item
                   key={tab.id}
+                  icon={<LoginIcon fontSize="small" />}
                   disabled={blocked || tabs.length >= maximumTabs}
                   onClick={() => operate(tab.id, (entry) => duplicateAccess(entry.access))}
                 >
@@ -457,9 +591,11 @@ export function TerminalWorkspace({
             id={`terminal-pane-${tab.id}`}
             role="tabpanel"
             aria-labelledby={`terminal-tab-${tab.id}`}
-            hidden={active !== tab.id}
-            data-terminal-active={tab.kind === 'terminal' && active === tab.id}
-            data-connection-active={active === tab.id}
+            hidden={authentication !== null || active !== tab.id}
+            data-terminal-active={
+              authentication === null && tab.kind === 'terminal' && active === tab.id
+            }
+            data-connection-active={authentication === null && active === tab.id}
             data-connection-principal={tab.access.snapshot().principal}
             data-connection-scope={tab.access.snapshot().scope.slug}
             key={tab.id}
@@ -469,7 +605,7 @@ export function TerminalWorkspace({
                 id={tab.id}
                 access={tab.access}
                 signal={tab.cancellation.signal}
-                active={active === tab.id}
+                active={authentication === null && active === tab.id}
                 inputAllowed={
                   !blocked &&
                   !focusBlocked &&
@@ -487,6 +623,7 @@ export function TerminalWorkspace({
                 owner={tab.id}
                 access={tab.access}
                 active={
+                  authentication === null &&
                   active === tab.id &&
                   !focusBlocked &&
                   closing === null &&
@@ -498,7 +635,7 @@ export function TerminalWorkspace({
                 onActionLock={lockOwner}
               />
             )}
-            {tab.kind === 'terminal' && active === tab.id && (
+            {authentication === null && tab.kind === 'terminal' && active === tab.id && (
               <span
                 role="status"
                 className={
@@ -517,6 +654,21 @@ export function TerminalWorkspace({
             )}
           </div>
         ))}
+        {authentication && (
+          <div
+            id="authentication-pane"
+            className="terminal-pane"
+            role="tabpanel"
+            aria-labelledby="authentication-tab"
+            data-auth-terminal-active="true"
+          >
+            <AuthenticationTerminal
+              key={authentication.id}
+              view={authentication}
+              active={!focusBlocked}
+            />
+          </div>
+        )}
       </div>
       <Modal
         opened={closing !== null && !blocked}

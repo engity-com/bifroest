@@ -32,11 +32,21 @@ test('release inventory binds actual built assets, Go/project inputs and separat
     manifest.components.filter((component) => component.ecosystem === 'go-runtime').length,
     1,
   );
-  const supplemented = manifest.components.find(
-    (component) => component.name === 'react-remove-scroll-bar',
+  assert.equal(
+    manifest.components.some((component) => component.name === 'react-remove-scroll-bar'),
+    false,
   );
-  assert(supplemented.licenseTextSource.startsWith('https://'));
-  assert.equal(supplemented.version, '2.3.8');
+  for (const name of ['@mui/material', '@mui/icons-material', '@emotion/react']) {
+    const component = manifest.components.find((entry) => entry.name === name);
+    assert.equal(component.license, 'MIT');
+    assert.equal(component.licenseTextSource, 'npm archive');
+    assert.match(component.integrity, /^sha512-/u);
+  }
+  assert.equal(
+    manifest.components.filter((component) => component.name === 'react-is').length,
+    2,
+    'root and nested production versions have separate notices',
+  );
   assert(manifest.scope.includes('not-source-attestation'));
   writeBrowserRelease(pathToFileURL(`${output}/`));
   assert.equal(

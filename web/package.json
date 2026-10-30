@@ -19,8 +19,11 @@
     "test:browser:install": "playwright install chromium --only-shell"
   },
   "dependencies": {
-    "@mantine/core": "9.7.3",
-    "@mantine/hooks": "9.7.3",
+    "@emotion/cache": "11.14.0",
+    "@emotion/react": "11.14.0",
+    "@emotion/styled": "11.14.1",
+    "@mui/icons-material": "9.5.0",
+    "@mui/material": "9.5.0",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
     "react": "19.3.1",

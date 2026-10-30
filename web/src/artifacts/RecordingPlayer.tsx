@@ -1,6 +1,6 @@
-import { Alert, Button, Select, Title, useComputedColorScheme } from '@mantine/core';
 import type { IDisposable, Terminal as Xterm } from '@xterm/xterm';
 import { useEffect, useRef, useState } from 'react';
+import { Alert, Button, Select, Title, useComputedColorScheme } from '../ui/material';
 import '@xterm/xterm/css/xterm.css';
 import { noncedDocument } from '../terminal/document';
 import { t } from '../ui/messages';

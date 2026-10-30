@@ -137,7 +137,11 @@ try {
     .waitFor();
   assert.equal(await panel.getByLabel('Expected producer ID', { exact: false }).inputValue(), '');
   assert.equal(
-    await panel.getByRole('combobox', { name: 'Expected encryption', exact: true }).inputValue(),
+    await panel
+      .getByRole('combobox', { name: 'Expected encryption', exact: true })
+      .locator('..')
+      .locator('input')
+      .inputValue(),
     '',
   );
   await panel.getByRole('combobox', { name: 'Expected encryption', exact: true }).click();
@@ -170,7 +174,11 @@ try {
     .waitFor();
   assert.equal(await panel.getByLabel('Expected producer ID', { exact: false }).inputValue(), '');
   assert.equal(
-    await panel.getByRole('combobox', { name: 'Expected encryption', exact: true }).inputValue(),
+    await panel
+      .getByRole('combobox', { name: 'Expected encryption', exact: true })
+      .locator('..')
+      .locator('input')
+      .inputValue(),
     '',
   );
   assert.equal(
