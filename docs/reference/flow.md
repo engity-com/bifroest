@@ -14,8 +14,8 @@ Flows are tried in configuration order. A disabled transport or an unmet require
 4. Is the configured [environment](environment/index.md) compatible with this request and authorization?
 5. Can a compatible session be reused or a new one created?
 
-!!! warning "HTTP groundwork, not yet a browser endpoint"
-    The HTTP flow settings below define selection and validation in the shared core. The [root HTTP configuration](connection/http.md) is parsed, including domain-scoped discovery collision checks, but this version does **not** yet start an HTTP listener, serve a WebUI, or implement browser authentication. Explicitly enabling the root HTTP endpoint fails service startup instead of silently running SSH alone.
+!!! note "HTTP and SSH share selection and authorization rules"
+    The [root HTTP configuration](connection/http.md) starts the configured HTTPS/WebUI endpoint independently of SSH. Both transports use the shared flow, identity/target association, authorization and environment rules. Published links are discovery, not credentials. Configured incoming endpoints remain jointly startup-critical: a listener, TLS or configuration failure does not silently fall back to SSH-only operation. Browser authentication and new terminal executions retain the documented host/SNI/Origin/path and authorizer-specific eligibility boundaries.
 
 ## Configuration
 

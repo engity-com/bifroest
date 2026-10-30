@@ -113,7 +113,24 @@ PAM calls are synchronous: a blocking native module cannot be forcibly canceled
 and is never abandoned in a detached worker.
 
 Without that explicit server opt-in PAM-backed resumption remains unavailable.
-Darwin PAM and Windows SAM password resumption remain unavailable.
+
+Windows local SAM password/interactive bindings use the same original name/SID
+and fresh native restrictions, including disabled/locked/expired accounts,
+required password changes, real blank-password state and network-logon policy.
+They require an unimpersonated LocalSystem caller and the supported local SAM
+interfaces; missing APIs/rights, unknown policy, cancellation and cleanup errors
+refuse resumption without enabling privileges. A native blank-password network
+restriction overrides operator `password.emptyAllowed`. Current profile/groups
+and the existing method/target requirements are rechecked before access is
+issued. Request-local views do not survive into later bearer admissions, which
+use current native getters. No primary password, previous rights/environment or
+token is replayed or retained for this check.
+
+Darwin PAM password/interactive resumption remains unavailable: the validated
+account-policy APIs do not prove the actual current nonempty-password condition
+required by `password.emptyAllowed: false`. Accountstack opt-in is not that
+proof. Normal fresh PAM login remains supported; there is no empty/fabricated
+authentication attempt, hash-data fallback or policy relaxation.
 Key/certificate bindings retain
 their existing current-key checks. RememberMe is opt-in and uses the common
 [HTTP binding lifecycle](../connection/http.md#rememberme), including independent
