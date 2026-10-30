@@ -22,6 +22,7 @@ type local struct {
 	session             session.Session
 	sessionsPublicKey   ssh.PublicKey
 	authorizedKeyPolicy *AuthorizedKeyPolicy
+	passwordAccount     windowslocal.PasswordAccountView
 }
 
 func (*local) AuthorizationKind() string                      { return "local" }
@@ -37,6 +38,12 @@ func (this *local) AuthorizedKeyPolicy() *AuthorizedKeyPolicy { return this.auth
 func (this *local) GetField(name string, ce ContextEnabled) (any, bool, error) {
 	return getField(name, ce, this, func() (any, bool, error) {
 		if name == "user" {
+			var current interface {
+				GetField(string) (any, bool, error)
+			} = this.user
+			if this.passwordAccount != nil {
+				current = this.passwordAccount
+			}
 			if resolver, ok := ce.(interface {
 				ResolveLocalWindowsUserManaged(configuration.FlowName, windowslocal.Account) (bool, bool, error)
 			}); ok {
@@ -45,17 +52,19 @@ func (this *local) GetField(name string, ce ContextEnabled) (any, bool, error) {
 					return nil, false, err
 				}
 				if available {
-					return localWindowsUserWithManagement{this.user, managed}, true, nil
+					return localWindowsUserWithManagement{current, managed}, true, nil
 				}
 			}
-			return this.user, true, nil
+			return current, true, nil
 		}
 		return nil, false, fmt.Errorf("unknown field %q", name)
 	})
 }
 
 type localWindowsUserWithManagement struct {
-	windowslocal.Account
+	user interface {
+		GetField(string) (any, bool, error)
+	}
 	managed bool
 }
 
@@ -63,7 +72,7 @@ func (this localWindowsUserWithManagement) GetField(name string) (any, bool, err
 	if name == "managed" {
 		return this.managed, true, nil
 	}
-	return this.Account.GetField(name)
+	return this.user.GetField(name)
 }
 
 func (this *local) Dispose(ctx context.Context) (bool, error) {

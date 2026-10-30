@@ -21,13 +21,6 @@ import (
 
 var ErrNotFound = errors.New("local SAM account not found")
 
-// Account identifies a local SAM user. Callers must retain both fields when
-// passing an account to Disabled or ValidatePassword.
-type Account struct {
-	Name string
-	SID  string
-}
-
 // GetField implements the template context for a local account. Group data
 // includes direct local and BUILTIN aliases, not domain or nested membership.
 func (a Account) GetField(name string) (any, bool, error) {

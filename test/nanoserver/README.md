@@ -248,3 +248,39 @@ System/thread guard. A required owned-container control compares guarded and
 legacy lookup of the same fresh account's home after both complete cleanup.
 Portable fault models check each boundary, null output and combined cleanup
 errors; they do not promise physical release after a failed native cleanup API.
+
+Windows password/interactive resumption now assembles a request-local current
+account view from those shared native primitives. It restores only the retained
+name/SID selector, checks the original method and current empty-password rule,
+uses the existing environment/target validation, then rereads native state and
+requires equal identity, display/profile/shell/groups before returning. The view
+is cleared on every return path: later admissions with the same bearer use the
+normal fresh native getters, not an earlier group's request snapshot. The final
+session state is reloaded from its repository, not checked on an old FS object. Group
+rendering preserves the primary reader's order, including indexed templates;
+only the independent comparison reader normalizes its own copy. No view data,
+environment, token or primary password is persisted into the session.
+
+The additional `servercore-native-password-remember` case uses its own marked
+container, strong temporary account credential and private browser profiles.
+Passwords never enter fixture JSON, process arguments, diagnostics or browser
+storage; only protected owned temporary files supply the deliberate primary
+login. The archive is streamed directly into an already owner-protected host
+handle; no ordinary initial host password file is created. Each password/interactive flow must enroll explicitly, retain independent
+non-exportable IndexedDB keys, resume after browser/profile and real SCM service
+restart, reject the same account while disabled, and resume after exact flag
+restoration without another primary login. A membership-only fixture alias also
+gates `loginAllowed`: remove it and a new connection with the same bearer must
+receive `connection-denied` without another Remember proof; restore it and that
+same bearer must admit a new connection. No native rights are attached to this
+owned alias. Confirmed logout must remove the local registration. Ten fresh PTY executions share the same persisted session
+and are independently correlated to signed audit/recording evidence.
+
+Only the test variant permits expected restart stops and exposes the owned
+restart/disable/restore controls. It verifies the selected SID around mutations,
+restores and reads back original account flags, grants no privileges and changes
+no host account or machine policy. Both browser variants retain their separate
+two-minute harness budget; the legacy key-only case remains unchanged. Deliberate
+401 proof denials are asserted by request identity; no unrelated HTTP/network
+failure is ignored. This expanded native flow requires its own successful run,
+not a prior primitive/model pass.

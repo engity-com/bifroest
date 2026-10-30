@@ -89,6 +89,16 @@ func main() {
 		err = serveBrowserContainer(os.Args[2])
 	case len(os.Args) == 2 && os.Args[1] == "browser-stop":
 		err = stopBrowserContainer()
+	case len(os.Args) == 2 && os.Args[1] == "browser-restart":
+		err = restartRememberBrowserContainer()
+	case len(os.Args) == 2 && os.Args[1] == "browser-disable-owned-account":
+		err = toggleRememberBrowserAccount(true)
+	case len(os.Args) == 2 && os.Args[1] == "browser-restore-owned-account":
+		err = toggleRememberBrowserAccount(false)
+	case len(os.Args) == 2 && os.Args[1] == "browser-remove-owned-group":
+		err = toggleRememberBrowserGroup(false)
+	case len(os.Args) == 2 && os.Args[1] == "browser-add-owned-group":
+		err = toggleRememberBrowserGroup(true)
 	case len(os.Args) >= 2 && strings.HasPrefix(os.Args[1], "browser-"):
 		err = runBrowserProbe(os.Args[1:])
 	case len(os.Args) == 2 && os.Args[1] == "run":
@@ -374,7 +384,7 @@ func (p *probeService) Execute(_ []string, _ <-chan svc.ChangeRequest, changes c
 			pattern = "^(TestLocalWindows(S4ULogonAsUser|RunAsUser|ConPTYAsUser|ConPTYDistinguishesShellExitFromRelayFailure)|TestLocalServerCore(ProviderAccountLifecycle|FailedUpdateRestoresManagedMembership|ProvisioningPrecedesSessionDispose|ConPTYBlockedOutputDoesNotHang|FailedSkelDisablesNewAccount|FailedDisplayDisablesNewAccount|UnmanagedNewAccountCanBeDisabled|ProcessCleanupWaitsForExit))$"
 		}
 		if p.samPolicy {
-			pattern = "^TestLocalSAM(PasswordPolicyNativeMatrix|DomainChangeMarkerObservation|LogonUIBlankPasswordObservation|SystemContextIsolation|FreshGroupMembership|ContextBoundProfileDirectory)$"
+			pattern = "^TestLocalSAM(PasswordPolicyNativeMatrix|DomainChangeMarkerObservation|LogonUIBlankPasswordObservation|SystemContextIsolation|FreshGroupMembership|ContextBoundProfileDirectory|PasswordAccountView)$"
 		}
 		cmd := exec.Command(p.testBinary, "-test.run="+pattern, "-test.v", "-test.timeout=150s")
 		cmd.Env = append(os.Environ(), "BIFROEST_TEST_LOCAL_WINDOWS_USER="+p.user)
@@ -392,7 +402,7 @@ func (p *probeService) Execute(_ []string, _ <-chan svc.ChangeRequest, changes c
 				required = append(required, "TestLocalWindowsConPTYDistinguishesShellExitFromRelayFailure", "TestLocalServerCoreProviderAccountLifecycle", "TestLocalServerCoreFailedUpdateRestoresManagedMembership", "TestLocalServerCoreProvisioningPrecedesSessionDispose", "TestLocalServerCoreConPTYBlockedOutputDoesNotHang", "TestLocalServerCoreFailedSkelDisablesNewAccount", "TestLocalServerCoreFailedDisplayDisablesNewAccount", "TestLocalServerCoreUnmanagedNewAccountCanBeDisabled", "TestLocalServerCoreProcessCleanupWaitsForExit")
 			}
 			if p.samPolicy {
-				required = []string{"TestLocalSAMPasswordPolicyNativeMatrix", "TestLocalSAMDomainChangeMarkerObservation", "TestLocalSAMLogonUIBlankPasswordObservation", "TestLocalSAMSystemContextIsolation", "TestLocalSAMFreshGroupMembership", "TestLocalSAMContextBoundProfileDirectory"}
+				required = []string{"TestLocalSAMPasswordPolicyNativeMatrix", "TestLocalSAMDomainChangeMarkerObservation", "TestLocalSAMLogonUIBlankPasswordObservation", "TestLocalSAMSystemContextIsolation", "TestLocalSAMFreshGroupMembership", "TestLocalSAMContextBoundProfileDirectory", "TestLocalSAMPasswordAccountView"}
 			}
 			for _, test := range required {
 				if !strings.Contains(string(output), "--- PASS: "+test+" ") {

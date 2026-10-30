@@ -13,9 +13,9 @@ Bifröst executes user sessions within environments. These environments can eith
 3. `local`: [Local](local.md) executes on the host itself (same host on which Bifröst is running).
 4. `ssh`: [SSH](ssh.md) connects to another SSH server and forwards sessions and direct TCP channels.
 5. `dummy`: [Dummy](dummy.md) for demonstration purposes, it simply prints a message and exists immediately.
-6. `management`: [Management](management.md) provides authorized administrative commands via SSH without a shell.
+6. `management`: [Management](management.md) provides authorized structured administrative commands via SSH and HTTP without a shell.
 
-## Transport-independent terminal groundwork
+## Shared SSH and browser execution
 
 Built-in Local (Unix and Windows/ConPTY), Docker, Kubernetes, SSH-target and Dummy environments expose an optional `TerminalRunner.RunTerminal` capability. Its `TerminalTask` supplies authorized context and a `pkg/terminal.Stream`: execution-scoped stdin, stdout/stderr, input/output half-close, initial PTY settings, resize events, symbolic signals and cancellation. It does not require a source SSH session. Existing `Environment.Run(Task)` and third-party SSH environments remain compatible; the SSH adapter maps channel controls onto the same backend execution code. Agent forwarding and named SSH subsystems remain separate SSH-only capabilities. Management still uses its existing structured SSH command path, not a terminal-based web workaround.
 
@@ -27,8 +27,8 @@ Neutral registration rechecks authorization, immutable session ownership/target 
 
 The neutral path preserves principal/target contexts, forced commands and authorized-key environment layers, checks PTY permission and rejects invalid resize dimensions or non-symbolic signals even without recording. Strict audit/capture/seal failures close the owning connection; configured best-effort behavior remains separate from invalid client input. SSH agent/subsystem acknowledgements, remembered-key notifications and protocol exit-status delivery stay in the SSH adapter. Audit and recording formats are unchanged. Neutral terminal execution rejects Management environments rather than translating web actions into shell commands.
 
-!!! warning "Shared server execution core; no web terminal yet"
-    [HTTP authentication APIs](../connection/http.md#interactive-and-public-key-login-protocol) now support password, keyboard-interactive/OIDC-device and fresh public-key proof, with separate ephemeral web permissions. WebSocket execution, RememberMe, frontend/imported-key UI and structured browser Management actions remain missing. Service tests use real filesystem session quotas and signed recording files with neutral transports that implement no SSH session/context. They cover recording/audit correlation, policies, expiry, revocation and shutdown. Real HTTPS/HTTP2 interactive/key logins and SSH select one stored session; a local TLS IdP exercises device login and retained refresh grants. These are **not** browser or real shared Docker/Kubernetes workload tests. Windows/ConPTY runtime is not claimed; local Unix process tests require root and are skipped when unavailable.
+!!! note "The browser uses the same authorized execution core"
+    [HTTP authentication](../connection/http.md#interactive-and-public-key-login-protocol), WebSocket terminals, tab-local key import, opt-in RememberMe and structured browser Management actions use the same authorization, target/session ownership, quotas, audit and recording drivers as SSH. Each confirmed terminal start creates a fresh execution; reload is not reattachment. Browser Management does not run CLI subprocesses or gain additional transfer rights. Tests cover actual HTTPS browsers, shared Docker/Kubernetes workloads and marked Windows containers with real ConPTY and signed evidence correlation. RememberMe still has [authorizer/platform-specific eligibility limits](../connection/http.md); in particular, Darwin PAM password resumption remains fail-closed. A platform/model test is not a substitute for the corresponding native runtime acceptance or an independent security review.
 
 ## Examples
 

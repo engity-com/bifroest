@@ -148,7 +148,16 @@ func prepareBrowserConfiguration(binary string) (browserfixture.Fixture, error) 
 	if err := copyBrowserExecutable(binary, filepath.Join(bin, "bifroest.exe")); err != nil {
 		return fixture, err
 	}
-	return prepareBrowserStateAsSystem(browserfixture.Fixture{Service: service, Root: root, User: user, SID: sid.String(), Probe: probe})
+	fixture = browserfixture.Fixture{Service: service, Root: root, User: user, SID: sid.String(), Probe: probe, PasswordResume: os.Getenv("BIFROEST_TEST_SERVERCORE_BROWSER_PASSWORD") == "1"}
+	if fixture.PasswordResume {
+		if err := prepareRememberBrowserGroup(&fixture); err != nil {
+			return fixture, err
+		}
+		if err := prepareBrowserPassword(fixture); err != nil {
+			return fixture, err
+		}
+	}
+	return prepareBrowserStateAsSystem(fixture)
 }
 
 func initializeSystemBrowserState(fixture browserfixture.Fixture) (browserfixture.Fixture, error) {
@@ -199,75 +208,12 @@ func initializeSystemBrowserState(fixture browserfixture.Fixture) (browserfixtur
 	if err := os.WriteFile(filepath.Join(root, "authorized-key"), public, 0600); err != nil {
 		return fixture, err
 	}
-	configuration := browserConfiguration(root, user, sid)
+	configuration := browserConfigurationWithPassword(root, user, sid, fixture.PasswordResume, fixture.RememberGroupSID)
 	if err := os.WriteFile(filepath.Join(root, "configuration.yaml"), []byte(configuration), 0600); err != nil {
 		return fixture, err
 	}
 	fixture.Producer, fixture.Certificate, fixture.HostKey = identity.ProducerId().String(), string(cert), string(ssh.MarshalAuthorizedKey(hostKey.PublicKey().ToSsh()))
 	return fixture, nil
-}
-
-func browserConfiguration(root, user, sid string) string {
-	return fmt.Sprintf(`startMessage: '{{""}}'
-ssh:
-  addresses: ["0.0.0.0:2222"]
-  keys:
-    hostKeys: [%q]
-    rememberMeNotification: '{{""}}'
-  banner: '{{""}}'
-  idleTimeout: 30s
-  maxTimeout: 2m
-  gracefulShutdownTimeout: 3s
-session:
-  type: fs
-  storage: %q
-  maxConnections: 4
-  idleTimeout: 2m
-  maxTimeout: 5m
-auditlog:
-  - name: default
-    enabled: true
-    identityFile: %q
-    directory: %q
-    minimumFreeBytes: 1048576
-    recording:
-      enabled: true
-      directory: %q
-      maximumSpoolBytes: 16777216
-      retainFor: 1h
-      targets: false
-http:
-  enabled: true
-  addresses: ["0.0.0.0:8443"]
-  domains: [app.example.org]
-  tls:
-    certificates:
-      - certificateFile: %q
-        privateKeyFile: %q
-flows:
-  - name: %s
-    discoverAsSlug: Work
-    auditlog: default
-    authorization:
-      type: local
-      authorizedKeys: [%q]
-      password:
-        allowed: false
-        interactiveAllowed: false
-    environment:
-      type: local
-      name: %q
-      uid: %q
-      createIfAbsent: false
-      updateIfDifferent: false
-      deleteOnDispose: false
-      killProcessesOnDispose: false
-      deleteHomeTogetherWithUser: false
-      portForwardingAllowed: false
-      shellCommand: ['C:\Windows\System32\cmd.exe', /D, /Q]
-      execCommandPrefix: ['C:\Windows\System32\cmd.exe', /D, /Q, /C]
-      banner: '{{""}}'
-`, filepath.Join(root, "host-key"), filepath.Join(root, "sessions"), filepath.Join(root, "audit-key"), filepath.Join(root, "auditlog"), filepath.Join(root, "recordings"), filepath.Join(root, "tls-cert"), filepath.Join(root, "tls-key"), browserfixture.Flow, filepath.Join(root, "authorized-key"), user, sid)
 }
 
 func browserServiceArguments(fixture browserfixture.Fixture) []string {
@@ -382,6 +328,12 @@ func serveBrowserContainer(binary string) (resultErr error) {
 			return err
 		}
 		if status.State == svc.Stopped {
+			if fixture.PasswordResume && status.Win32ExitCode == 0 && status.ServiceSpecificExitCode == 0 {
+				if _, err := os.Stat(filepath.Join(fixture.Root, "owned-restart.marker")); err == nil {
+					time.Sleep(100 * time.Millisecond)
+					continue
+				}
+			}
 			stopped = true
 			if status.Win32ExitCode != 0 || status.ServiceSpecificExitCode != 0 {
 				log, _ := exec.Command("wevtutil", "qe", "Application", "/q:*[System[Provider[@Name='"+fixture.Service+"']]]", "/f:text", "/c:20", "/rd:true").CombinedOutput()

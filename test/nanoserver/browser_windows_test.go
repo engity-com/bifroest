@@ -158,6 +158,10 @@ func (this *nativeSSHProbe) observe(t *testing.T, marker string) browserfixture.
 }
 
 func exerciseServerCoreBrowser(t *testing.T, parent context.Context, root, image, isolation, keyFile string) {
+	exerciseServerCoreBrowserVariant(t, parent, root, image, isolation, keyFile, false)
+}
+
+func exerciseServerCoreBrowserVariant(t *testing.T, parent context.Context, root, image, isolation, keyFile string, passwordResume bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
 	defer cancel()
@@ -216,7 +220,12 @@ func exerciseServerCoreBrowser(t *testing.T, parent context.Context, root, image
 			}
 		}
 	})
-	h.mustDocker("run", "--detach", "--name", name, "--isolation="+isolation, "--user", "ContainerAdministrator", "--env", "BIFROEST_TEST_LOCAL_SAM_IN_CONTAINER=1", "--env", "BIFROEST_TEST_SERVERCORE_BROWSER=1", image, `C:\smoke\s4u-probe.exe`, "browser-serve", `C:\smoke\bifroest.exe`)
+	arguments := []string{"run", "--detach", "--name", name, "--isolation=" + isolation, "--user", "ContainerAdministrator", "--env", "BIFROEST_TEST_LOCAL_SAM_IN_CONTAINER=1", "--env", "BIFROEST_TEST_SERVERCORE_BROWSER=1"}
+	if passwordResume {
+		arguments = append(arguments, "--env", "BIFROEST_TEST_SERVERCORE_BROWSER_PASSWORD=1")
+	}
+	arguments = append(arguments, image, `C:\smoke\s4u-probe.exe`, "browser-serve", `C:\smoke\bifroest.exe`)
+	h.mustDocker(arguments...)
 	dir := t.TempDir()
 	fixtureFile := filepath.Join(dir, "fixture.json")
 	h.ready(func() error {
@@ -271,6 +280,10 @@ func exerciseServerCoreBrowser(t *testing.T, parent context.Context, root, image
 		}
 		return nil
 	})
+	if passwordResume {
+		exerciseNativePasswordRemember(t, ctx, h, address, fixtureFile, fixture, dir, client)
+		return
+	}
 	held := startNativeSSH(t, ctx, address, fixture, keyFile, "browser-hold", false)
 	first := held.observe(t, "ssh-initial")
 	requireNativeIdentity(t, fixture, first, false)

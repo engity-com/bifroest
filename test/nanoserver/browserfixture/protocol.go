@@ -14,14 +14,17 @@ const Suffix = ";ENDPROBE"
 const Flow = "native-windows-browser"
 
 type Fixture struct {
-	Service     string `json:"service"`
-	Root        string `json:"root"`
-	User        string `json:"user"`
-	SID         string `json:"sid"`
-	Probe       string `json:"probe"`
-	Producer    string `json:"producer"`
-	Certificate string `json:"certificate"`
-	HostKey     string `json:"hostKey"`
+	Service          string `json:"service"`
+	Root             string `json:"root"`
+	User             string `json:"user"`
+	SID              string `json:"sid"`
+	Probe            string `json:"probe"`
+	Producer         string `json:"producer"`
+	Certificate      string `json:"certificate"`
+	HostKey          string `json:"hostKey"`
+	PasswordResume   bool   `json:"passwordResume,omitempty"`
+	RememberGroup    string `json:"rememberGroup,omitempty"`
+	RememberGroupSID string `json:"rememberGroupSID,omitempty"`
 }
 
 type Probe struct {

@@ -151,6 +151,9 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 	t.Run("servercore-native-browser", func(t *testing.T) {
 		exerciseServerCoreBrowser(t, ctx, root, serverCoreImage, isolation, browserKey)
 	})
+	t.Run("servercore-native-password-remember", func(t *testing.T) {
+		exerciseServerCoreBrowserVariant(t, ctx, root, serverCoreImage, isolation, browserKey, true)
+	})
 	t.Run("servercore-native-password-policy", func(t *testing.T) {
 		output := dockerRun(t, serverCoreImage, []string{"--user", "ContainerAdministrator", "--env", "BIFROEST_TEST_LOCAL_SAM_IN_CONTAINER=1", "--env", "BIFROEST_TEST_SERVERCORE_BROWSER=1"},
 			`C:\smoke\s4u-probe.exe`, "run-container-policy-test", `C:\smoke\windowslocal.test.exe`)
@@ -173,6 +176,9 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 		}
 		if !strings.Contains(output, "--- PASS: TestLocalSAMContextBoundProfileDirectory ") {
 			t.Fatalf("required context-bound profile lifecycle did not execute: %s", output)
+		}
+		if !strings.Contains(output, "--- PASS: TestLocalSAMPasswordAccountView ") {
+			t.Fatalf("required fresh native password-account view did not execute: %s", output)
 		}
 		t.Log(output)
 	})
