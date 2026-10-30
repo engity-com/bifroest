@@ -18,11 +18,13 @@ import type { FlowSummary, Page, SessionItem, SessionOptions, VersionInfo } from
 
 export function ManagementPanel({
   access,
+  active,
   disabled,
   onActionLock,
   view,
 }: {
   access: WebAccess;
+  active: boolean;
   disabled: boolean;
   onActionLock: (locked: boolean) => void;
   view: 'sessions' | 'server';
@@ -42,6 +44,9 @@ export function ManagementPanel({
   const lastFilter = useRef<SessionOptions>({});
   const confirmation = useRef<SessionActionConfirmation | null>(null);
   const sending = useRef(false);
+  const preparing = useRef<number | null>(null);
+  const isActive = useRef(active);
+  isActive.current = active;
   const [preview, setPreview] = useState<ActionPreview | null>(null);
   const [typed, setTyped] = useState('');
   const [actionFlow, setActionFlow] = useState('');
@@ -79,6 +84,25 @@ export function ManagementPanel({
       onActionLock(false);
     };
   }, [access, onActionLock]);
+  useEffect(() => {
+    if (
+      active ||
+      sending.current ||
+      (preparing.current === null && confirmation.current === null)
+    ) {
+      return;
+    }
+    generation.current++;
+    request.current?.abort();
+    request.current = null;
+    preparing.current = null;
+    const handle = confirmation.current;
+    confirmation.current = null;
+    setPreview(null);
+    setTyped('');
+    setBusy(false);
+    void handle?.cancel(); // Retire only an unused preparation, never a mutation.
+  }, [active]);
   function cancel() {
     if (sending.current && preview !== null) {
       setNotice({ kind: 'unknown', preview });
@@ -159,18 +183,25 @@ export function ManagementPanel({
     action: SessionAction,
     item: { readonly flow: string; readonly id: string },
   ) {
-    if (notice?.kind === 'unknown') {
+    if (!isActive.current || notice?.kind === 'unknown') {
       return;
     }
     await run(async (signal, current) => {
-      const handle = await access.prepareSessionAction(action, item.flow, item.id, signal);
-      if (current !== generation.current) {
-        await handle.cancel();
-        return;
+      preparing.current = current;
+      try {
+        const handle = await access.prepareSessionAction(action, item.flow, item.id, signal);
+        if (current !== generation.current || !isActive.current) {
+          await handle.cancel();
+          return;
+        }
+        confirmation.current = handle;
+        setPreview(handle.snapshot());
+        setTyped('');
+      } finally {
+        if (preparing.current === current) {
+          preparing.current = null;
+        }
       }
-      confirmation.current = handle;
-      setPreview(handle.snapshot());
-      setTyped('');
     });
   }
   function closeConfirmation() {
@@ -188,6 +219,7 @@ export function ManagementPanel({
     const pinned = preview;
     if (
       disabled ||
+      !isActive.current ||
       request.current !== null ||
       handle === null ||
       pinned === null ||
@@ -573,7 +605,7 @@ export function ManagementPanel({
       <Modal
         classNames={{ content: 'confirmation-dialog' }}
         lockScroll={false}
-        opened={preview !== null}
+        opened={active && preview !== null}
         onClose={closeConfirmation}
         closeOnClickOutside={false}
         closeOnEscape={!sending.current}
@@ -589,6 +621,9 @@ export function ManagementPanel({
               void confirmAction();
             }}
           >
+            <p>
+              {access.snapshot().scope.slug || '/'} · {access.snapshot().principal}
+            </p>
             <Alert color={preview.action === 'dispose' ? 'red' : 'yellow'}>
               {t(
                 preview.action === 'dispose'

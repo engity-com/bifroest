@@ -5,8 +5,8 @@ import { createRoot } from 'react-dom/client';
 import '@mantine/core/styles.css';
 import './ui/app.css';
 import { validateScope } from './remember/protocol';
-import type { LinkMetadata } from './ui/App';
 import { App } from './ui/App';
+import { type LinkMetadata, loadLinkMetadata } from './ui/link-metadata';
 import { t } from './ui/messages';
 
 const memoryScheme = {
@@ -47,71 +47,7 @@ async function start() {
     const path = location.pathname;
     const scope = { origin: location.origin, slug: path === '/' ? '' : path.slice(1) };
     validateScope(scope);
-    const response = await fetch(path, {
-      headers: { Accept: 'application/json' },
-      credentials: 'omit',
-      cache: 'no-store',
-      mode: 'same-origin',
-      redirect: 'error',
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (
-      !response.ok ||
-      !response.headers.get('Content-Type')?.startsWith('application/json') ||
-      response.body === null
-    ) {
-      throw new Error();
-    }
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let length = 0;
-    try {
-      while (true) {
-        const chunk = await reader.read();
-        if (chunk.done) {
-          break;
-        }
-        length += chunk.value.byteLength;
-        if (length > 64 << 10) {
-          throw new Error();
-        }
-        chunks.push(chunk.value);
-      }
-    } finally {
-      await reader.cancel().catch(() => undefined);
-      reader.releaseLock();
-    }
-    const bytes = new Uint8Array(length);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    const body = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as Record<
-      string,
-      unknown
-    >;
-    const selected = body.scope as Record<string, unknown> | null;
-    if (
-      selected === null ||
-      typeof selected !== 'object' ||
-      selected.origin !== scope.origin ||
-      selected.slug !== scope.slug ||
-      typeof body.requestUser !== 'boolean'
-    ) {
-      throw new Error();
-    }
-    const links = body.publishedSlugs === undefined ? [] : body.publishedSlugs;
-    if (
-      !Array.isArray(links) ||
-      links.length > 1024 ||
-      !links.every(
-        (slug) =>
-          typeof slug === 'string' && /^[A-Za-z0-9]{1,64}(?:\/[A-Za-z0-9]{1,64})?$/.test(slug),
-      )
-    ) {
-      throw new Error();
-    }
+    const metadata = await loadLinkMetadata(scope);
     const customization = { version: 1, title: t('brand') };
     window.dispatchEvent(new CustomEvent('bifroest:configure', { detail: customization }));
     const title =
@@ -119,12 +55,7 @@ async function start() {
         ? customization.title
         : t('brand');
     document.title = title;
-    createRoot(container).render(
-      <Workspace
-        metadata={{ scope, requestUser: body.requestUser, publishedSlugs: links as string[] }}
-        title={title}
-      />,
-    );
+    createRoot(container).render(<Workspace metadata={metadata} title={title} />);
   } catch {
     container.textContent = t('loadFailed');
   }

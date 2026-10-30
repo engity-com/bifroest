@@ -35,7 +35,7 @@ export async function exerciseLostTerminalLogout(page, login) {
   await page.getByRole('button', { name: 'Account', exact: true }).click();
   const account = page.getByRole('dialog', { name: 'Account', exact: true });
   assert.equal(
-    await account.getByRole('button', { name: 'Sign in again', exact: true }).isEnabled(),
+    await account.getByRole('button', { name: 'Renew access', exact: true }).isEnabled(),
     false,
   );
   await account.getByRole('button', { name: 'Close', exact: true }).click();

@@ -36,7 +36,7 @@ The default value is different, depending on the platform Bifröst runs on:
 <<property("fileMode", "File Mode", "../data-type.md#file-mode", default="0600")>>
 All files/directories inside the session storage will be stored with this mode. Directories will always get the executable bit.
 
-## Shared SSH/browser session association
+## Shared SSH/browser session association { #session-association-groundwork }
 
 !!! note "Association is shared state, not a browser credential"
     Primary Simple, htpasswd, Local, verified OIDC device logins and authenticated Bifröst-delegation logins use the identity/target association selector with built-in environments and the filesystem repository. This includes passwords, keyboard-interactive credentials and verified configured keys/certificates where the authorizer supports them. OIDC requires a verified issuer/subject; configurations without verified identity artifacts retain their previous allocation path. [Browser authentication, fresh terminal executions and supported RememberMe methods](../connection/http.md) share this selector with SSH only after their own credential/possession and current eligibility checks. Known session IDs, browser selectors and matching associations do not authorize access.

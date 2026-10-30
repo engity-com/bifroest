@@ -23,7 +23,7 @@ export async function reauthenticate(page) {
   await page.getByRole('button', { name: 'Account', exact: true }).click();
   await page
     .getByRole('dialog', { name: 'Account', exact: true })
-    .getByRole('button', { name: 'Sign in again', exact: true })
+    .getByRole('button', { name: 'Renew access', exact: true })
     .click();
 }
 
@@ -34,7 +34,7 @@ export async function changeTheme(page, name) {
     return;
   }
   await page.getByRole('button', { name: 'Appearance', exact: true }).click();
-  const account = page.getByRole('dialog', { name: 'Account', exact: true });
+  const account = page.getByRole('dialog', { name: 'Appearance', exact: true });
   await account.getByText(name, { exact: true }).click();
   await account.getByRole('button', { name: 'Close', exact: true }).click();
 }
@@ -135,11 +135,11 @@ export async function workspace(page, name) {
 
 export async function exactArtifactSelection(page) {
   await workspace(page, 'Recordings & audit');
-  const selection = page.locator('.artifact-selection');
+  const selection = page.locator('[role="tabpanel"]:not([hidden]) .artifact-selection');
   if (!(await selection.evaluate((node) => node.open))) {
     await selection.locator(':scope > summary').click();
   }
-  const summary = page.getByText('Enter an exact auditlog / recording ID', { exact: true });
+  const summary = selection.getByText('Enter an exact auditlog / recording ID', { exact: true });
   if (!(await summary.locator('..').evaluate((node) => node.open))) {
     await summary.click();
   }

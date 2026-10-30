@@ -165,7 +165,7 @@ export async function exerciseTerminal(page, login) {
   await select(2, 'alice');
   await page.getByRole('button', { name: 'Close terminal 2', exact: true }).click();
   const closing = page.getByRole('dialog', { name: 'Close this terminal?', exact: true });
-  await closing.getByText('Terminal 2 · alice', { exact: true }).waitFor();
+  await closing.getByText('Terminal 2 · Work · alice', { exact: true }).waitFor();
   await closing.getByRole('button', { name: 'Cancel', exact: true }).click();
   await type('kept-after-cancel');
   await output('STDIN:kept-after-cancel');
@@ -185,6 +185,14 @@ export async function exerciseTerminal(page, login) {
   assert.deepEqual(
     openings,
     Array.from({ length: 5 }, () => ({ task: 'shell', command: undefined, pty: true })),
+  );
+  await page.getByRole('button', { name: 'Log out', exact: true }).click();
+  await page.getByRole('heading', { name: 'Signed in as bob', exact: true }).waitFor();
+  assert.equal(await page.getByRole('tab', { name: 'Terminal 1 alice', exact: true }).count(), 0);
+  assert.equal(
+    await page.getByRole('tab', { name: 'Terminal 4 bob', exact: true }).count(),
+    1,
+    'Alice logout must not retire the independent Bob access',
   );
   await page.getByRole('button', { name: 'Log out', exact: true }).click();
   await page.getByRole('button', { name: 'Sign in', exact: true }).waitFor();

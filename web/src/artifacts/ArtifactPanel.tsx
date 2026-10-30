@@ -9,7 +9,7 @@ import {
   TextInput,
   Title,
 } from '@mantine/core';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
 import type { Message } from '../ui/messages';
@@ -46,6 +46,8 @@ function failure(error: unknown): Message {
 }
 
 export function ArtifactPanel({ access, disabled }: { access: WebAccess; disabled: boolean }) {
+  const keyInputID = useId();
+  const passphraseInputID = useId();
   const [kind, setKind] = useState<'recording' | 'audit'>('recording');
   const [auditlog, setAuditlog] = useState('');
   const [id, setID] = useState('');
@@ -71,7 +73,7 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
   const downloads = useRef(new LocalArtifactDownload());
 
   function clearKey() {
-    for (const selector of ['#evidence-private', '#evidence-passphrase']) {
+    for (const selector of ['[name="evidence-private"]', '[name="evidence-passphrase"]']) {
       const input = form.current?.querySelector<HTMLInputElement>(selector);
       if (input) {
         input.value = '';
@@ -118,7 +120,7 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
       operation.current?.abort();
       operation.current = null;
       downloads.current.clear();
-      for (const selector of ['#evidence-private', '#evidence-passphrase']) {
+      for (const selector of ['[name="evidence-private"]', '[name="evidence-passphrase"]']) {
         const input = form.current?.querySelector<HTMLInputElement>(selector);
         if (input) {
           input.value = '';
@@ -193,9 +195,10 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
       return;
     }
     let key: EvidenceKey | null = null;
-    const file = form.current?.querySelector<HTMLInputElement>('#evidence-private')?.files?.[0];
+    const file = form.current?.querySelector<HTMLInputElement>('[name="evidence-private"]')
+      ?.files?.[0];
     const password =
-      form.current?.querySelector<HTMLInputElement>('#evidence-passphrase')?.value ?? '';
+      form.current?.querySelector<HTMLInputElement>('[name="evidence-passphrase"]')?.value ?? '';
     if (file !== undefined) {
       key = { file, passphrase: password };
     }
@@ -572,11 +575,12 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
             {level === 'private' && encryption === 'encrypted' && (
               <>
                 <Alert color="blue">{t('artifactKeyLocal')}</Alert>
-                <label className="stack" htmlFor="evidence-private">
+                <label className="stack" htmlFor={keyInputID}>
                   {t('artifactKeyFile')}
                   <input
                     key={`private:${keyRevision}`}
-                    id="evidence-private"
+                    id={keyInputID}
+                    name="evidence-private"
                     type="file"
                     required
                     disabled={locked}
@@ -584,7 +588,8 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
                 </label>
                 <PasswordInput
                   key={`passphrase:${keyRevision}`}
-                  id="evidence-passphrase"
+                  id={passphraseInputID}
+                  name="evidence-passphrase"
                   label={t('artifactPassphrase')}
                   disabled={locked}
                   autoComplete="off"

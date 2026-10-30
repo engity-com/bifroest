@@ -79,6 +79,33 @@ func TestBrowserManagementUiStructuredTablesAndActorIsolation(t *testing.T) {
 	testBrowserLoginUi(t, true, "management")
 }
 
+func TestBrowserConnectionWorkspaceUiKeepsFlowActorAndManagementContexts(t *testing.T) {
+	testBrowserLoginUi(t, true, "workspace", func(conf *configuration.Configuration) {
+		other := conf.Flows[0]
+		other.Name, other.DiscoverAsSlug = "other", "Other"
+		manager := conf.Flows[0]
+		manager.Name, manager.DiscoverAsSlug = "manage", "Manage"
+		manager.Environment.V = &configuration.EnvironmentManagement{}
+		conf.Flows = append(conf.Flows, other, manager)
+	})
+}
+
+func TestBrowserConnectionWorkspaceUiCancellationAndUnknownDoNotStartSiblingAccess(t *testing.T) {
+	testBrowserLoginUi(t, true, "workspace-races", func(conf *configuration.Configuration) {
+		other := conf.Flows[0]
+		other.Name, other.DiscoverAsSlug = "other", "Other"
+		conf.Flows = append(conf.Flows, other)
+	})
+}
+
+func TestBrowserManagementWorkspaceUiRetiresHiddenPreparationAndPinsActionOwner(t *testing.T) {
+	testBrowserLoginUi(t, true, "workspace-actions")
+}
+
+func TestBrowserManagementWorkspaceUiCloseDialogCannotRetireUnknownOwner(t *testing.T) {
+	testBrowserLoginUi(t, true, "workspace-actions-close")
+}
+
 func TestBrowserManagementForcedReadUiWithholdsUnexposedIdentity(t *testing.T) {
 	testBrowserLoginUi(t, true, "management-forced")
 }
@@ -115,6 +142,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	var keyFixture string
 	var authorizedKeys bfcrypto.AuthorizedKeys
 	forcedActionMode := mode == "management-forced-disconnect" || mode == "management-forced-dispose"
+	workspaceActionMode := mode == "workspace-actions" || mode == "workspace-actions-close"
 	forcedReadMode := mode == "management-forced" || mode == "management-forced-audit" || mode == "management-forced-version"
 	keyMode := mode == "key" || strings.HasPrefix(mode, "key-")
 	if keyMode || forcedReadMode || forcedActionMode {
@@ -138,7 +166,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 					conf.Flows = append(conf.Flows, flow)
 				}
 			}
-			if mode == "management-actions" || forcedActionMode {
+			if mode == "management-actions" || workspaceActionMode || forcedActionMode {
 				conf.Flows[0].Environment.V = &configuration.EnvironmentManagement{}
 				worker := conf.Flows[0]
 				worker.Name = "worker"
@@ -170,7 +198,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 			if keyMode {
 				conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple).Entries[0].AuthorizedKeys = authorizedKeys
 			}
-			if mode == "terminal" {
+			if mode == "terminal" || mode == "workspace" || mode == "workspace-races" || workspaceActionMode {
 				settings := conf.Flows[0].Authorization.V.(*configuration.AuthorizationSimple)
 				settings.Entries = append(settings.Entries, configuration.AuthorizationSimpleEntry{Name: "bob", Password: bfcrypto.Password("plain:correct")})
 			}
@@ -180,8 +208,10 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		})
 		protocolHandler = svc.web
 	}
-	if mode == "management" || mode == "management-actions" || forcedReadMode || forcedActionMode {
-		svc.environments = svc.environments.(*executionTestRepository).CloseableRepository
+	if mode == "management" || mode == "management-actions" || workspaceActionMode || forcedReadMode || forcedActionMode || mode == "workspace" {
+		if mode != "workspace" {
+			svc.environments = svc.environments.(*executionTestRepository).CloseableRepository
+		}
 		application := svc.managementApplication
 		svc.managementApplication = nil
 		t.Cleanup(func() { svc.managementApplication = application })
@@ -193,9 +223,17 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		svc.Version = versionMarkupTestVersion{}
 	}
 	var actionTargets *actionUITargetRepository
-	if mode == "management-actions" || forcedActionMode {
+	if mode == "management-actions" || workspaceActionMode || forcedActionMode {
 		actionTargets = &actionUITargetRepository{CloseableRepository: svc.environments}
 		svc.environments = actionTargets
+	}
+	if workspaceActionMode {
+		worker := webTestToken(t, webTestPassword(svc.web, "bob", "correct", "Worker"))
+		target := webTestAccess(t, svc, worker, "Worker").auth.FindSession()
+		keyFixture = filepath.Join(t.TempDir(), "action-target.json")
+		raw, err := json.Marshal(map[string]string{"flow": target.Flow().String(), "id": target.Id().String()})
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(keyFixture, raw, 0600))
 	}
 	if forcedActionMode {
 		worker := webTestToken(t, webTestPassword(svc.web, "bob", "correct", "Worker"))
@@ -234,7 +272,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		}}}
 	}
 	var terminalCounters *terminalUiCounters
-	if mode == "terminal" || mode == "terminal-expiry" || mode == "terminal-logout-lost" {
+	if mode == "terminal" || mode == "terminal-expiry" || mode == "terminal-logout-lost" || mode == "workspace" || mode == "workspace-races" {
 		terminalCounters = installTerminalUiBackend(svc)
 	}
 	settings := &configuration.Http{}
@@ -259,10 +297,54 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	var interrupt atomic.Bool
 	var interrupted atomic.Int32
 	var providerReplyBarriers atomic.Int32
+	var holdPreparation atomic.Bool
+	holdPreparation.Store(workspaceActionMode)
+	preparationEntered := make(chan struct{})
+	preparationReleased := make(chan struct{})
+	var preparationRelease atomic.Bool
+	releasePreparation := func() {
+		if preparationRelease.CompareAndSwap(false, true) {
+			close(preparationReleased)
+		}
+	}
+	t.Cleanup(releasePreparation)
 	if mode == "interactive-lost" {
 		interrupt.Store(true)
 	}
 	endpoint, err := https.NewEndpoint(settings, https.EndpointOptions{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if workspaceActionMode && r.URL.Path == "/_bifroest/test/preparation-entered" {
+			select {
+			case <-preparationEntered:
+				w.WriteHeader(204)
+			case <-r.Context().Done():
+			}
+			return
+		}
+		if workspaceActionMode && r.URL.Path == "/_bifroest/test/preparation-release" {
+			releasePreparation()
+			w.WriteHeader(204)
+			return
+		}
+		if workspaceActionMode && r.URL.Path == webAPI+"management/sessions/prepare" && holdPreparation.CompareAndSwap(true, false) {
+			recorder := httptest.NewRecorder()
+			protocolHandler.ServeHTTP(recorder, r)
+			if recorder.Code != 202 {
+				http.Error(w, "controlled preparation did not complete", 500)
+				return
+			}
+			close(preparationEntered)
+			select {
+			case <-preparationReleased:
+			case <-r.Context().Done():
+				return
+			}
+			for name, values := range recorder.Header() {
+				w.Header()[name] = values
+			}
+			w.WriteHeader(recorder.Code)
+			_, _ = w.Write(recorder.Body.Bytes())
+			return
+		}
 		if mode == "terminal-logout-lost" && r.URL.Path == webAPI+"logout" && interrupt.CompareAndSwap(false, true) {
 			recorder := httptest.NewRecorder()
 			protocolHandler.ServeHTTP(recorder, r)
@@ -324,12 +406,12 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		if (mode == "management-actions" || forcedActionMode) && r.URL.Path == "/_bifroest/test/interrupt-management-confirm" && r.Method == http.MethodPost {
+		if (mode == "management-actions" || workspaceActionMode || forcedActionMode) && r.URL.Path == "/_bifroest/test/interrupt-management-confirm" && r.Method == http.MethodPost {
 			interrupt.Store(true)
 			w.WriteHeader(204)
 			return
 		}
-		if (mode == "management-actions" || forcedActionMode) && r.URL.Path == webAPI+"management/sessions/confirm" && interrupt.Load() {
+		if (mode == "management-actions" || workspaceActionMode || forcedActionMode) && r.URL.Path == webAPI+"management/sessions/confirm" && interrupt.Load() {
 			recorder := httptest.NewRecorder()
 			protocolHandler.ServeHTTP(recorder, r)
 			for name, values := range recorder.Header() {
@@ -431,7 +513,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	require.NoError(t, json.Unmarshal(output, &result), "%s", output)
 	require.True(t, result.Success)
 	expectedInterrupt := 0
-	if mode == "profile" || mode == "local-password-profile" || mode == "local-interactive-profile" || mode == "interactive-lost" || mode == "management-actions" || mode == "management-forced-dispose" || mode == "terminal-logout-lost" {
+	if mode == "profile" || mode == "local-password-profile" || mode == "local-interactive-profile" || mode == "interactive-lost" || mode == "management-actions" || workspaceActionMode || mode == "workspace-races" || mode == "management-forced-dispose" || mode == "terminal-logout-lost" {
 		expectedInterrupt = 1
 	}
 	require.EqualValues(t, expectedInterrupt, interrupted.Load(), "the uncertain claim must commit once without automatic retry")
@@ -442,6 +524,15 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	if mode == "terminal" || mode == "management" || mode == "management-actions" || mode == "management-forced" || forcedActionMode {
 		expectedSessions = 2
 	}
+	if mode == "workspace" {
+		expectedSessions = 4
+	}
+	if mode == "workspace-races" {
+		expectedSessions = 2
+	}
+	if workspaceActionMode {
+		expectedSessions = 3
+	}
 	require.Equal(t, expectedSessions, webSessionCount(t, svc))
 	if terminalCounters != nil {
 		switch mode {
@@ -451,6 +542,10 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		case "terminal-logout-lost":
 			require.EqualValues(t, 1, terminalCounters.runs.Load(), "unconfirmed logout must not dispatch any new shell")
 			require.Zero(t, terminalCounters.interrupts.Load())
+		case "workspace-races":
+			require.EqualValues(t, 3, terminalCounters.runs.Load(), "retiring a pending/unknown candidate must never launch a sibling access")
+			require.Positive(t, terminalCounters.interrupts.Load())
+			require.Positive(t, terminalCounters.resizes.Load())
 		default:
 			require.EqualValues(t, 5, terminalCounters.runs.Load())
 			require.Positive(t, terminalCounters.resizes.Load())
@@ -464,6 +559,9 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		expectedRuns := 3
 		if mode == "management-forced-dispose" {
 			expectedRuns = 2
+		}
+		if workspaceActionMode {
+			expectedRuns = 0
 		}
 		require.EqualValues(t, expectedRuns, actionTargets.runs.Load())
 	}
@@ -491,7 +589,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 			} else {
 				require.Equal(t, session.StateNew, info.State())
 			}
-		case "management-actions", "management-forced-dispose":
+		case "management-actions", "management-forced-dispose", "workspace-actions", "workspace-actions-close":
 			if current.Flow() == "worker" {
 				require.Equal(t, session.StateDisposed, info.State())
 			} else {

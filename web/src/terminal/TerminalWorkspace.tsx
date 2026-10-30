@@ -1,52 +1,64 @@
 import { Button, Menu, Modal } from '@mantine/core';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { WebAccess } from '../remember';
+import type { Scope, WebAccess } from '../remember';
+import { ManagementWorkspace } from '../ui/ManagementWorkspace';
 import { t } from '../ui/messages';
+import { canCloseView, ownerLocks } from '../ui/workspace-state';
 import type { TerminalState } from './socket';
 import type { TerminalActions } from './TerminalPanel';
 import { TerminalPanel, terminalStatus } from './TerminalPanel';
 
 interface ShellTab {
   readonly id: number;
+  readonly kind: 'terminal' | 'management';
   readonly access: WebAccess;
   readonly cancellation: AbortController;
   readonly state: TerminalState;
   readonly inputClosed: boolean;
 }
-const maximumTabs = 8;
+export const maximumTabs = 8;
 
 export function TerminalWorkspace({
   access,
   authorizationEvent,
+  retiredAccess,
+  unavailableAccess,
   blocked,
   focusBlocked,
   title,
   scope,
   account,
   notice,
-  managementView,
-  onManagementView,
-  children,
   onSignIn,
+  onNewConnection,
+  onSelectAccess,
+  onActionLock,
+  onTabCount,
 }: {
   access: WebAccess | null;
-  authorizationEvent: number;
+  authorizationEvent: WebAccess | null;
+  retiredAccess: WebAccess | null;
+  unavailableAccess: WebAccess | null;
   blocked: boolean;
   focusBlocked: boolean;
   title: string;
   scope: string;
   account: ReactNode;
   notice: ReactNode;
-  managementView: 'sessions' | 'artifacts' | 'server';
-  onManagementView: (view: 'sessions' | 'artifacts' | 'server') => void;
-  children: ReactNode;
-  onSignIn: () => void;
+  onSignIn: (scope?: Scope) => void;
+  onNewConnection: () => void;
+  onSelectAccess: (access: WebAccess | null) => void;
+  onActionLock: (locked: boolean) => void;
+  onTabCount: (count: number) => void;
 }) {
   const [tabs, setTabs] = useState<readonly ShellTab[]>([]);
   const current = useRef<readonly ShellTab[]>([]);
   const nextID = useRef(0);
-  const lastAuthorization = useRef(0);
+  const lastAuthorization = useRef<WebAccess | null>(null);
+  const actionOwners = useRef<ReadonlySet<number>>(new Set());
+  const lastRetired = useRef<WebAccess | null>(null);
+  const tabList = useRef<HTMLDivElement | null>(null);
   const controls = useRef(new Map<number, TerminalActions>());
   const [active, setActive] = useState<number | null>(null);
   const [closing, setClosing] = useState<number | null>(null);
@@ -57,6 +69,25 @@ export function TerminalWorkspace({
     current.current = next;
     setTabs(next);
   }, []);
+  useEffect(() => onTabCount(tabs.length), [tabs.length, onTabCount]);
+  const lockOwner = useCallback(
+    (owner: number, locked: boolean) => {
+      actionOwners.current = ownerLocks(actionOwners.current, owner, locked);
+      if (locked) {
+        // Retire any older close intent. It must not outlive this action and
+        // later unmount its owner/unknown warning through a stale confirmation.
+        setClosing(null);
+        setLimit(false);
+        const tab = current.current.find((entry) => entry.id === owner);
+        if (tab) {
+          setActive(owner);
+          onSelectAccess(tab.access);
+        }
+      }
+      onActionLock(actionOwners.current.size > 0);
+    },
+    [onActionLock, onSelectAccess],
+  );
   const onState = useCallback(
     (id: number, state: TerminalState) => {
       updateTabs(current.current.map((tab) => (tab.id === id ? { ...tab, state } : tab)));
@@ -78,6 +109,7 @@ export function TerminalWorkspace({
       }
       const tab: ShellTab = {
         id: ++nextID.current,
+        kind: selected.snapshot().terminalAvailable ? 'terminal' : 'management',
         access: selected,
         cancellation: new AbortController(),
         state: { phase: 'connecting' },
@@ -85,40 +117,71 @@ export function TerminalWorkspace({
       };
       updateTabs([...current.current, tab]);
       setActive(tab.id);
+      onSelectAccess(selected);
       setFocusTerminal(true);
       setLimit(false);
     },
-    [updateTabs],
+    [updateTabs, onSelectAccess],
   );
   useEffect(() => {
-    if (!access || blocked || authorizationEvent === lastAuthorization.current) {
+    if (!authorizationEvent || blocked || authorizationEvent === lastAuthorization.current) {
       return;
     }
     lastAuthorization.current = authorizationEvent;
-    if (access.snapshot().terminalAvailable) {
-      open(access);
+    if (authorizationEvent === retiredAccess) {
+      return;
+    }
+    const snapshot = authorizationEvent.snapshot();
+    if (snapshot.terminalAvailable || snapshot.environment === 'management') {
+      open(authorizationEvent);
     } else {
       setActive(null);
     }
-  }, [access, authorizationEvent, blocked, open]);
+  }, [authorizationEvent, retiredAccess, blocked, open]);
+  useEffect(() => {
+    if (retiredAccess === null || retiredAccess === lastRetired.current) {
+      return;
+    }
+    lastRetired.current = retiredAccess;
+    const removed = current.current.filter((tab) => tab.access === retiredAccess);
+    for (const tab of removed) {
+      tab.cancellation.abort();
+    }
+    const remaining = current.current.filter((tab) => tab.access !== retiredAccess);
+    updateTabs(remaining);
+    const next = remaining.at(-1);
+    setActive(next?.id ?? null);
+    onSelectAccess(next?.access ?? null);
+    setClosing(null);
+    setLimit(false);
+    if (!next) {
+      nextID.current = 0;
+    }
+  }, [retiredAccess, onSelectAccess, updateTabs]);
   useEffect(() => {
     if (!blocked) {
       return;
     }
     // Do not let an unstarted/connecting old grant dispatch later during login
     // cancellation or an actor change. Already running shells remain owned.
-    const pending = current.current.filter((tab) => tab.state.phase === 'connecting');
+    const pending = current.current.filter(
+      (tab) => tab.kind === 'terminal' && tab.state.phase === 'connecting',
+    );
     for (const tab of pending) {
       tab.cancellation.abort();
     }
     if (pending.length) {
       const remaining = current.current.filter((tab) => !pending.includes(tab));
       updateTabs(remaining);
-      setActive((value) =>
-        remaining.some((tab) => tab.id === value) ? value : (remaining.at(-1)?.id ?? null),
-      );
+      if (pending.some((tab) => tab.id === active)) {
+        const next = remaining.at(-1);
+        setActive(next?.id ?? null);
+        if (next) {
+          onSelectAccess(next.access);
+        }
+      }
     }
-  }, [blocked, updateTabs]);
+  }, [blocked, active, onSelectAccess, updateTabs]);
   useEffect(
     () => () => {
       for (const tab of current.current) {
@@ -131,25 +194,47 @@ export function TerminalWorkspace({
   const selected = tabs.find((tab) => tab.id === active);
   const closingTab = tabs.find((tab) => tab.id === closing);
   useEffect(() => {
-    if (active !== null) {
+    const showActive = () => {
+      if (active === null) {
+        return;
+      }
       document
         .getElementById(`terminal-tab-${active}`)
         ?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    };
+    showActive();
+    const observer = new ResizeObserver(showActive);
+    if (tabList.current) {
+      observer.observe(tabList.current);
     }
+    return () => observer.disconnect();
   }, [active]);
   const remove = (id: number) => {
+    if (!canCloseView(blocked, focusBlocked, actionOwners.current)) {
+      return;
+    }
     const tab = current.current.find((entry) => entry.id === id);
     tab?.cancellation.abort();
     const remaining = current.current.filter((entry) => entry.id !== id);
     updateTabs(remaining);
     if (active === id) {
-      setActive(remaining.at(-1)?.id ?? null);
+      const next = remaining.at(-1);
+      setActive(next?.id ?? null);
+      if (next) {
+        onSelectAccess(next.access);
+      }
     }
     setClosing(null);
     setLimit(false);
   };
   const requestClose = (tab: ShellTab) => {
-    if (['connecting', 'connected', 'finishing'].includes(tab.state.phase)) {
+    if (!canCloseView(blocked, focusBlocked, actionOwners.current)) {
+      return;
+    }
+    if (
+      tab.kind === 'management' ||
+      ['connecting', 'connected', 'finishing'].includes(tab.state.phase)
+    ) {
       setClosing(tab.id);
     } else {
       remove(tab.id);
@@ -160,14 +245,17 @@ export function TerminalWorkspace({
       return;
     }
     if (!access || Date.parse(access.snapshot().expiresAt) <= Date.now()) {
-      onSignIn();
+      onSignIn(access?.snapshot().scope);
       return;
     }
-    if (access.snapshot().terminalAvailable) {
+    if (access.snapshot().terminalAvailable || access.snapshot().environment === 'management') {
       open(access);
     }
   };
   const keyboardTab = (event: React.KeyboardEvent, index: number) => {
+    if (blocked || focusBlocked) {
+      return;
+    }
     const next =
       event.key === 'ArrowRight'
         ? (index + 1) % tabs.length
@@ -183,6 +271,7 @@ export function TerminalWorkspace({
       event.preventDefault();
       setFocusTerminal(false);
       setActive(tab.id);
+      onSelectAccess(tab.access);
       document.getElementById(`terminal-tab-${tab.id}`)?.focus();
     }
   };
@@ -195,7 +284,7 @@ export function TerminalWorkspace({
           <span>{scope || '/'}</span>
         </div>
         <div className="application-status">
-          {selected ? (
+          {selected?.kind === 'terminal' ? (
             <>
               <span className={`connection-dot connection-dot--${selected.state.phase}`} />
               <span
@@ -213,7 +302,7 @@ export function TerminalWorkspace({
           ) : (
             <span role="status">
               {t(
-                access?.snapshot().environment === 'management'
+                selected?.kind === 'management'
                   ? 'workspaceManagement'
                   : access
                     ? 'terminalNoTab'
@@ -226,32 +315,49 @@ export function TerminalWorkspace({
           {notice}
           {account}
         </div>
-        <div className="application-tabs" hidden={!tabs.length && !access}>
-          <div className="terminal-tab-list" role="tablist" aria-label={t('terminalTabs')}>
+        <div className="application-tabs">
+          <div
+            ref={tabList}
+            className="terminal-tab-list"
+            role="tablist"
+            aria-label={t('connectionTabs')}
+          >
             {tabs.map((tab, index) => (
               <div className="terminal-tab" key={tab.id}>
                 <button
                   id={`terminal-tab-${tab.id}`}
                   type="button"
                   role="tab"
+                  aria-label={`${t(tab.kind === 'terminal' ? 'terminalTitle' : 'workspaceManagement')} ${tab.id} ${tab.access.snapshot().principal}`}
+                  aria-describedby={`connection-scope-${tab.id}`}
                   aria-controls={`terminal-pane-${tab.id}`}
                   aria-selected={active === tab.id}
                   tabIndex={active === tab.id ? 0 : -1}
+                  disabled={blocked || focusBlocked}
                   onKeyDown={(event) => keyboardTab(event, index)}
                   onClick={() => {
                     setFocusTerminal(true);
                     setActive(tab.id);
+                    onSelectAccess(tab.access);
                   }}
                 >
-                  <span className={`connection-dot connection-dot--${tab.state.phase}`} />
-                  {t('terminalTitle')} {tab.id}
+                  <span
+                    className={`connection-dot connection-dot--${tab.kind === 'terminal' ? tab.state.phase : 'connected'}`}
+                  />
+                  <span id={`connection-scope-${tab.id}`} className="tab-scope">
+                    {tab.access.snapshot().scope.slug || '/'}
+                  </span>
                   <span className="tab-owner">{tab.access.snapshot().principal}</span>
+                  <span>
+                    {t(tab.kind === 'terminal' ? 'terminalTitle' : 'workspaceManagement')}
+                    {tab.kind === 'terminal' ? ` ${tab.id}` : ''}
+                  </span>
                 </button>
                 <button
                   type="button"
                   className="terminal-tab-close"
-                  aria-label={`${t('terminalCloseTab')} ${tab.id}`}
-                  disabled={blocked}
+                  aria-label={`${t(tab.kind === 'terminal' ? 'terminalCloseTab' : 'managementCloseTab')} ${tab.id}`}
+                  disabled={blocked || focusBlocked}
                   onClick={() => requestClose(tab)}
                 >
                   ×
@@ -259,43 +365,31 @@ export function TerminalWorkspace({
               </div>
             ))}
           </div>
-          {access?.snapshot().terminalAvailable && (
+          {(access?.snapshot().terminalAvailable ||
+            access?.snapshot().environment === 'management') && (
             <Button
               variant="subtle"
               className="new-terminal"
-              aria-label={t('terminalNewTab')}
-              title={t('terminalNewTab')}
+              aria-label={t(
+                access.snapshot().terminalAvailable ? 'terminalNewTab' : 'managementOpenTab',
+              )}
+              title={`${t(access.snapshot().terminalAvailable ? 'terminalNewTab' : 'managementOpenTab')}: ${access.snapshot().scope.slug || '/'} · ${access.snapshot().principal}`}
               disabled={blocked || tabs.length >= maximumTabs}
               onClick={newTab}
             >
-              +
+              {t(access.snapshot().terminalAvailable ? 'terminalNewTab' : 'managementOpenTab')}
             </Button>
           )}
-          {access?.snapshot().environment === 'management' && (
-            <nav className="workspace-nav" aria-label={t('workspaceNavigation')}>
-              {(['sessions', 'artifacts', 'server'] as const).map((view) => (
-                <Button
-                  key={view}
-                  variant={active === null && managementView === view ? 'light' : 'subtle'}
-                  aria-current={active === null && managementView === view ? 'page' : undefined}
-                  disabled={blocked}
-                  onClick={() => {
-                    setActive(null);
-                    onManagementView(view);
-                  }}
-                >
-                  {t(
-                    view === 'sessions'
-                      ? 'workspaceSessions'
-                      : view === 'artifacts'
-                        ? 'workspaceArtifacts'
-                        : 'workspaceServer',
-                  )}
-                </Button>
-              ))}
-            </nav>
-          )}
-          {selected && (
+          <Button
+            variant="light"
+            className="new-connection"
+            aria-label={t('connectionNew')}
+            disabled={blocked || tabs.length >= maximumTabs}
+            onClick={onNewConnection}
+          >
+            + {t('connectionNew')}
+          </Button>
+          {selected?.kind === 'terminal' && (
             <Menu position="bottom-end" opened={toolsOpen} onChange={setToolsOpen}>
               <Menu.Target>
                 <Button variant="subtle" disabled={blocked} aria-label={t('terminalActions')}>
@@ -343,33 +437,37 @@ export function TerminalWorkspace({
       <div className="workspace-body">
         {tabs.map((tab) => (
           <div
-            className="terminal-pane"
+            className={tab.kind === 'terminal' ? 'terminal-pane' : 'management-workspace'}
             id={`terminal-pane-${tab.id}`}
             role="tabpanel"
             aria-labelledby={`terminal-tab-${tab.id}`}
             hidden={active !== tab.id}
-            data-terminal-active={active === tab.id}
+            data-terminal-active={tab.kind === 'terminal' && active === tab.id}
             key={tab.id}
           >
-            <TerminalPanel
-              id={tab.id}
-              access={tab.access}
-              signal={tab.cancellation.signal}
-              active={active === tab.id}
-              inputAllowed={!blocked && !focusBlocked && closing === null && !limit && !toolsOpen}
-              focusOnActivate={focusTerminal}
-              onState={onState}
-              onActions={onActions}
-            />
+            {tab.kind === 'terminal' ? (
+              <TerminalPanel
+                id={tab.id}
+                access={tab.access}
+                signal={tab.cancellation.signal}
+                active={active === tab.id}
+                inputAllowed={!blocked && !focusBlocked && closing === null && !limit && !toolsOpen}
+                focusOnActivate={focusTerminal}
+                onState={onState}
+                onActions={onActions}
+              />
+            ) : (
+              <ManagementWorkspace
+                owner={tab.id}
+                access={tab.access}
+                active={active === tab.id && !focusBlocked && closing === null && !limit}
+                disabled={unavailableAccess === tab.access}
+                onActionLock={lockOwner}
+              />
+            )}
           </div>
         ))}
-        <div
-          className="management-workspace"
-          hidden={active !== null || access?.snapshot().environment !== 'management'}
-        >
-          {children}
-        </div>
-        {!selected && access?.snapshot().environment !== 'management' && (
+        {!selected && (
           <div className="workspace-empty">
             <h2>{t('terminalNoTab')}</h2>
             <p>{t(access ? 'terminalNewTabHint' : 'terminalSignInHint')}</p>
@@ -377,28 +475,33 @@ export function TerminalWorkspace({
         )}
       </div>
       <Modal
-        opened={closing !== null}
+        opened={closing !== null && !blocked}
         onClose={() => setClosing(null)}
-        title={t('terminalCloseTitle')}
+        title={t(closingTab?.kind === 'management' ? 'managementCloseTitle' : 'terminalCloseTitle')}
         closeOnClickOutside={false}
         lockScroll={false}
       >
         {closingTab && (
           <p>
-            {t('terminalTitle')} {closingTab.id} · {closingTab.access.snapshot().principal}
+            {t(closingTab.kind === 'terminal' ? 'terminalTitle' : 'workspaceManagement')}{' '}
+            {closingTab.id} · {closingTab.access.snapshot().scope.slug || '/'} ·{' '}
+            {closingTab.access.snapshot().principal}
           </p>
         )}
-        <p>{t('terminalCloseWarning')}</p>
+        <p>
+          {t(closingTab?.kind === 'management' ? 'managementCloseWarning' : 'terminalCloseWarning')}
+        </p>
         <div className="actions">
           <Button
             color="red"
+            disabled={!canCloseView(blocked, focusBlocked, actionOwners.current)}
             onClick={() => {
               if (closing !== null) {
                 remove(closing);
               }
             }}
           >
-            {t('terminalCloseConfirm')}
+            {t(closingTab?.kind === 'management' ? 'close' : 'terminalCloseConfirm')}
           </Button>
           <Button variant="default" onClick={() => setClosing(null)}>
             {t('cancel')}

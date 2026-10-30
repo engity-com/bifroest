@@ -24,6 +24,10 @@ export const messages = {
   loginResponse: 'Response',
   loginReply: 'Send response',
   loginContinue: 'Continue',
+  loginRemembering:
+    'Sign-in was confirmed. Setting up the explicitly requested browser permission…',
+  loginWaiting:
+    'Waiting for the authentication service… Keep the provider page and code available until sign-in is confirmed.',
   verificationLink: 'Open provider-supplied HTTPS verification page',
   loginUnknown:
     'The login claim/reply result could not be confirmed. Do not replay it. Start a fresh login; no logout or session disposal was claimed.',
@@ -89,6 +93,20 @@ export const messages = {
   workspaceNavigation: 'Workspace',
   workspaceManagement: 'Management',
   account: 'Account',
+  connectionNew: 'New connection',
+  connectionTabs: 'Connections and terminals',
+  connectionLink: 'Access link / flow',
+  connectionLoginContext: 'Connecting to',
+  connectionRequestedUser: 'Requested user',
+  connectionExistingKept:
+    'This opens a new tab after sign-in. Existing connections keep their own identity and continue running.',
+  connectionLogoutScope:
+    'Log out closes only views and connections owned by this access. Other signed-in connections are kept; the session/workload is not disposed.',
+  managementOpenTab: 'Open management view',
+  managementCloseTab: 'Close management view',
+  managementCloseTitle: 'Close this management view?',
+  managementCloseWarning:
+    'Unsaved downloads, verification results and local playback in this view will be discarded. This does not log out the access, disconnect other tabs or dispose a server session.',
   appearance: 'Appearance',
   openLogin: 'Open sign-in',
   showNotice: 'Notification details',
@@ -101,9 +119,10 @@ export const messages = {
     'This disconnects this execution. The server session and workload are kept. Other terminal tabs are not closed.',
   terminalCloseConfirm: 'Close terminal',
   terminalTabLimit:
-    'This window supports up to eight terminal tabs. Close a tab before opening another. Server connection limits still apply independently.',
+    'This window supports up to eight terminal and management tabs. Close a tab before opening another. Server connection limits still apply independently.',
   terminalNoTab: 'No terminal open',
-  terminalNewTabHint: 'Use + in the bar to open a new shell.',
+  terminalNewTabHint:
+    'Open another view with this access, or choose New connection for another flow or sign-in.',
   terminalSignedOut: 'Not signed in',
   terminalSignInHint: 'Sign in to open your terminal.',
   workspaceSessions: 'Sessions',
@@ -341,7 +360,7 @@ export const messages = {
     'This flow selects Management. It uses your existing rights; no second administrator login is required.',
   terminal:
     'This flow selects a terminal environment. Server session, command and PTY policies still apply.',
-  reauthenticate: 'Sign in again',
+  reauthenticate: 'Renew access',
   terminalTitle: 'Terminal',
   terminalLoading: 'Loading terminal…',
   terminalFresh:

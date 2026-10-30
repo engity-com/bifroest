@@ -211,10 +211,18 @@ export async function exerciseManagementActions(page, login, logout) {
     'in-app access links cannot discard an unknown action outcome',
   );
   assert.equal(
-    await account.getByRole('button', { name: 'Sign in again', exact: true }).isEnabled(),
+    await account.getByRole('button', { name: 'Renew access', exact: true }).isEnabled(),
     false,
   );
   await account.getByRole('button', { name: 'Close', exact: true }).click();
+  assert.equal(
+    await page.getByRole('button', { name: 'New connection', exact: true }).isEnabled(),
+    false,
+    'another flow cannot dismiss an unknown action outcome',
+  );
+  for (const tab of await page.getByRole('tab').all()) {
+    assert.equal(await tab.isEnabled(), false);
+  }
   await page.waitForFunction(() =>
     window.managementTargetSockets.every((socket) => socket.readyState === WebSocket.CLOSED),
   );

@@ -77,6 +77,9 @@ func (this *executionTestRepository) Ensure(req environment.Request) (environmen
 	if err != nil {
 		return nil, err
 	}
+	if _, management := env.(environment.ManagementReader); management {
+		return env, nil // Keep the real structured capability in mixed-workspace fixtures.
+	}
 	if this.withoutTerminal {
 		return &struct{ environment.Environment }{env}, nil
 	}

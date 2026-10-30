@@ -472,6 +472,8 @@ try {
     .getByText('Signing producer matches the independent expected ID', { exact: true })
     .waitFor();
   await save();
+  const aliceURLs = await page.evaluate(() => window.artifactURLs.size);
+  assert(aliceURLs > 0, 'the original access owns its prepared local export');
   await reauthenticate(page);
   await page.getByLabel('User name', { exact: true }).fill('bob');
   await page.getByLabel('Password', { exact: true }).fill('correct');
@@ -484,7 +486,11 @@ try {
       .count(),
     0,
   );
-  assert.equal(await page.evaluate(() => window.artifactURLs.size), 0);
+  assert.equal(
+    await page.evaluate(() => window.artifactURLs.size),
+    aliceURLs,
+    'an additional actor gets a separate view, not ownership or destruction of the original export',
+  );
   await exactArtifactSelection(page);
   await panel.getByRole('textbox', { name: 'Artifact auditlog', exact: true }).fill('default');
   await choose('Artifact type', 'Audit inventory');
@@ -505,7 +511,23 @@ try {
     fetch('/_bifroest/test/artifact-release', { method: 'POST', credentials: 'omit' }),
   );
   await page.getByText('Logout confirmed.', { exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Signed in as alice', exact: true }).waitFor();
+  await result
+    .getByText('Signing producer matches the independent expected ID', { exact: true })
+    .waitFor();
+  assert.equal(
+    await page.evaluate(() => window.artifactURLs.size),
+    aliceURLs,
+    'Bob logout must leave only the original Alice-owned export intact',
+  );
+  await page.getByRole('button', { name: 'Log out', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Sign in', exact: true }).waitFor();
   assert.equal(await panel.count(), 0);
+  assert.equal(
+    await page.evaluate(() => window.artifactURLs.size),
+    0,
+    'owning access logout revokes every retained local export',
+  );
   assert.deepEqual(errors, []);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
   assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);

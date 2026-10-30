@@ -106,6 +106,17 @@ Tests exercise acknowledged multi-step messages and secret/echo prompts, replay/
 
 The built UI's `Interactive / device login` method now drives Keyboard-Interactive and OIDC Device Flow through this API. Provider info/error text is displayed as plain text and requires acknowledgement, never rendered as HTML or sent to a terminal. Prompt `echo` selects a plain or password field; every response is cleared and belongs to exactly one sequence. Provider-supplied HTTPS verification links require a deliberate click, contain no embedded user credentials and use noopener/noreferrer. There is no iframe, automatic redirect or browser OAuth-token grant.
 
+The dialog keeps the selected link and the **requested** user visible; that user
+is not presented as a verified principal or effective target. Prompt text is
+associated with the response field for assistive technology. A pending provider
+check has an explicit waiting view rather than returning to a disabled login
+form. The current attempt's verification instructions/link remain accessible
+while waiting, without retaining prompt answers or interpreting provider HTML.
+Cancellation stops that attempt, not another tab's existing access. If the primary
+login has already succeeded and RememberMe enrollment may have committed, cancel
+remains outcome-unknown: retain the owning access for explicit logout and block
+new actions instead of retrying or claiming revocation.
+
 The tab-only `bwl1.` permission is never exposed in UI state/serialization. The client enforces increasing steps 1–32, 8 KiB/message, 32 KiB total and 4096-byte answers. Pending polls are at least 1250 ms apart; 15-second polls while waiting for user input keep only the existing attempt alive, with the original hard expiry pinned. Poll is a one-time completed-login claim, not a retryable read: lost reply/claim outcomes require a fresh login, without replay or inferred access. Abort/failure only best-effort cancels the logical attempt using an independent bounded request. It never logs out existing grants or disposes a session/workload.
 
 Actual Go HTTPS/Chromium UI tests verify escaped provider markup, echo/secret transitions, interruption after a real final claim, fresh-login recovery, signed local IdP device login without a requesting name, remembered grant reuse and cancellation of a running IdP token request. Public-key/WASM UI coverage is described below; no external IdP or native Local account-policy result is claimed.
@@ -128,7 +139,7 @@ List fields are canonical string `limit` (1–20, default 20) and `after`; sessi
 
 The CLI and HTTP share Go data-view builders. Original `user`/`remote` are not shown as verified identity. Stored association issuer/subject are reported separately when available; missing legacy/anonymous evidence never invents a principal. Damaged entries are skipped with a visible partial-data count, without private diagnostics or destructive repair. Metadata endpoints accept no credential-detail/artifact or client policy flags; session mutations use the separate confirmation protocol below. Conservative forced-read and exact single-session action ceilings are supported as described next; other forced commands remain denied, with SSH behavior unchanged.
 
-Actual HTTPS/Chromium tests cover pagination, session tables/details and actor-changing reauthentication with cleared results while the CLI application is unavailable. Protocol tests additionally cover bounded selectors, shared quotas, cancellation/own logout/global revocation, sibling-grant preservation, strict final-audit refusal and damaged-state preservation. Typed original-artifact routes and the separate client-only evidence view are described below.
+Actual HTTPS/Chromium tests cover pagination, session tables/details and separate actor-bound management views while the CLI application is unavailable. A newly authenticated actor receives a fresh view, not another actor's results; switching back to an existing tab retains only that tab's original access-owned state. Protocol tests additionally cover bounded selectors, shared quotas, cancellation/own logout/global revocation, sibling-grant preservation, strict final-audit refusal and damaged-state preservation. Typed original-artifact routes and the separate client-only evidence view are described below.
 
 The additional fixed `management/auditlogs/list` and `management/recordings/list`
 POSTs provide artifact catalogs under the same metadata authorization and driver,
@@ -179,17 +190,43 @@ choice adopts server-supplied producer/recipient hints as trusted expectations.
 The terminal fills the viewport below a compact status/tab bar. Sign-in,
 reauthentication, appearance and account details use dialogs. A confirmed
 terminal-capable sign-in or explicit RememberMe resume opens one new shell tab
-automatically. **+ / New terminal** opens another fresh shell with the current
-grant; selecting an existing tab never opens or reattaches a connection. There
+automatically. **New terminal** opens another fresh shell with the **active tab's
+access**, not the last account that signed in. **New connection** opens an explicit
+link/flow and authentication selection. Its own bounded same-origin metadata
+request sends no bearer or cookies; a different link receives its own client and
+fresh sign-in/proof. Existing access is never reinterpreted for another scope.
+Selecting another flow does not navigate the document or close existing tabs.
+The address remains the workspace's starting link; it is not a serialized list
+of connections or authentication state. Selecting an existing tab never opens or
+reattaches a connection. There
 is no command/exec or PTY-toggle form in the UI; the existing wire protocol still
 supports these operations for other clients. The UI requests a shell with PTY
 and does not silently retry without PTY if the current key/environment denies it.
 
-Each in-page tab retains its own immutable access/actor, xterm, output and socket.
+Each terminal tab retains its own immutable access/actor, xterm, output and socket.
+Flow/link and principal are shown on its tab, and the active account controls
+follow that selection. Management sign-in opens a separate access-bound tab with
+its own Sessions, Recordings & audit and Server navigation. Its results and local
+artifact workflow remain mounted when an unrelated connection is opened or
+selected; they are never rebound to that connection. Only public discovery links
+and already known scopes are offered for new connections, not the privileged
+configured-flow list. Management retains all existing operation/transfer rules.
+
 Reauthentication opens a new tab without reassigning the old execution. Closing
 a live tab asks for confirmation and disconnects only that execution, never
 disposing its session/workload or another tab. Completed output remains until
-the user closes that tab. There are at most eight tabs per window as a local
+the user closes that tab. Closing a management view warns that its unsaved local
+downloads, verification results and playback are discarded; it is not server
+logout or session disposal. **Log out** targets the active access and retires its
+local views, not unrelated users/flows' tabs. Server binding-wide revocation, when
+applicable, retains the stronger binding-scoped semantics documented below.
+Appearance is a separate global dialog, not a connection/account switch.
+Opening a newly authenticated view is tied to that exact access object, not a
+counter replayed with whatever tab is selected later. An unadmitted RememberMe
+candidate remains separately owned for explicit cleanup; retiring it cannot
+launch another user's shell. If an unfinished terminal initialization is
+discarded, its fallback tab and active access are updated together.
+There are at most eight terminal and management tabs per window as a local
 resource bound, independently of all server connection/admission quotas. Pending
 initialization is retired on cancellation/logout; uncertain authentication or
 RememberMe enrollment does not open a shell. Expiry does not terminate existing
@@ -340,6 +377,18 @@ From a selected session detail or an explicitly entered known target, the browse
 The shared SSH session-control core enforces caller self-protection and cross-flow action audit. Disconnect closes the current registry snapshot without revocation/workload disposal, so a new connection can use the same session. Dispose revokes and closes connections, stops refresh, durably disposes before cleanup, then uses the normal environment/authorization lifecycle. Partial/final-audit failure may already have taken effect. Both typed actions still run the common quota/activation/task audit/recording/sealing/final-audit execution driver, without CLI parsing or a new role model.
 
 The dialog holds one opaque handle and the original actor, displays the exact target (and fresh owner/creation metadata only when permitted) and requires the exact typed `flow/session ID`. Any ambiguous commit response is outcome-unknown: no replay, success or rollback is inferred. Stop-waiting cannot undo an action. Explicit reads remain available only within the original read policy; reauthentication/logout are locked during commit/unknown outcome until success or explicit dismissal of the local warning. Actual Go HTTPS/Chromium tests prove unused cancel, two live executions being disconnected, a fresh execution in the same session, disposal with a lost success response, revoked-state inspection and no automatic retry. The same browser tests with action-only Go/WASM keys prove confirmation without hidden inspection requests or extra session metadata. Native tests cover one-shot races, scope/peer/parent-grant binding, self-protection, expiry, target replacement and final-audit failure after mutation.
+
+In a multi-connection workspace, leaving the preparation's view retires only its
+unused handle and rejects late preparation replies; it cannot open a portal over
+another actor's tab. Confirmation is accepted only in its original active view.
+Commit/unknown locks are aggregated by view owner, so cleanup of a sibling view
+does not unlock them. Their owning management tab remains selected and its local
+warning stays reachable. No confirmation is rebound to the current global access.
+Workspace-owned close/limit dialogs also suspend unused preparation. When an
+action lock is set, older close intents are retired; tab removal checks the live
+owner-lock set again when invoked, not just a button's earlier enabled state.
+An already opened close dialog therefore cannot remove the action owner or stand
+in for explicit dismissal of an unknown result.
 
 ## WebSocket terminal protocol
 

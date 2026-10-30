@@ -8,30 +8,20 @@ import {
   PasswordInput,
   Radio,
   SegmentedControl,
+  Select,
   TextInput,
   Title,
 } from '@mantine/core';
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { verificationLink } from '../login/links';
-import type { AccessSnapshot, LoginStep, LogoutResult, Scope, WebAccess } from '../remember';
+import type { AccessSnapshot, LoginStep, LogoutResult, WebAccess } from '../remember';
 import { BrowserBinding, BrowserClient, RememberMeError } from '../remember';
-import { TerminalWorkspace } from '../terminal/TerminalWorkspace';
-import { LoginChallenge } from './LoginChallenge';
+import { maximumTabs, TerminalWorkspace } from '../terminal/TerminalWorkspace';
+import { LoginChallenge, ProviderInformation } from './LoginChallenge';
+import { type LinkMetadata, loadLinkMetadata } from './link-metadata';
 import type { Message } from './messages';
 import { t } from './messages';
 
-const ManagementPanel = lazy(async () => ({
-  default: (await import('../management/ManagementPanel')).ManagementPanel,
-}));
-const ArtifactPanel = lazy(async () => ({
-  default: (await import('../artifacts/ArtifactPanel')).ArtifactPanel,
-}));
-
-export interface LinkMetadata {
-  readonly scope: Scope;
-  readonly requestUser: boolean;
-  readonly publishedSlugs: readonly string[];
-}
 type Saved = 'loading' | 'missing' | 'ready' | 'pending' | 'unavailable';
 type Notice = { key: Message; color: 'red' | 'yellow' | 'green' };
 
@@ -72,7 +62,13 @@ export function App({
   onScheme: (value: string) => void;
 }) {
   const client = useRef(new BrowserClient(metadata.scope));
+  const link = useRef(metadata);
+  const [loginMetadata, setLoginMetadata] = useState(metadata);
   const access = useRef<WebAccess | null>(null);
+  // An independently confirmed primary may still be enrolling RememberMe. Keep
+  // that owning grant recoverable without confusing it with an internal tab's
+  // active selection (for example when a connecting tab is retired).
+  const candidate = useRef<WebAccess | null>(null);
   const savedHandle = useRef<BrowserBinding | null>(null);
   const confirmationHandle = useRef<BrowserBinding | null>(null);
   const operation = useRef<AbortController | null>(null);
@@ -82,42 +78,42 @@ export function App({
   const [busy, setBusy] = useState(false);
   const [closing, setClosing] = useState(false);
   const [managementLocked, setManagementLocked] = useState(false);
-  const [workspaceView, setWorkspaceView] = useState<'sessions' | 'artifacts' | 'server'>(
-    'sessions',
-  );
   const [notice, setNotice] = useState<Notice | null>(null);
   const [confirm, setConfirm] = useState<'revoke' | 'local' | null>(null);
   const [optIn, setOptIn] = useState(false);
   const [passwordKey, setPasswordKey] = useState(0);
   const [loginOpen, setLoginOpen] = useState(true);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [noticeOpen, setNoticeOpen] = useState(false);
-  const [authorizationEvent, setAuthorizationEvent] = useState(0);
-  const [workspaceEpoch, setWorkspaceEpoch] = useState(0);
+  const [authorizationEvent, setAuthorizationEvent] = useState<WebAccess | null>(null);
+  const [retiredAccess, setRetiredAccess] = useState<WebAccess | null>(null);
+  const [tabCount, setTabCount] = useState(0);
   const [rememberUncertain, setRememberUncertain] = useState(false);
   const [loginMethod, setLoginMethod] = useState('password');
   const [loginStep, setLoginStep] = useState<LoginStep | null>(null);
+  const [loginUser, setLoginUser] = useState('');
+  const [providerInformation, setProviderInformation] = useState<LoginStep | null>(null);
+  const [loginPending, setLoginPending] = useState<'authentication' | 'remember' | null>(null);
   const pendingResponse = useRef<((value: string) => void) | null>(null);
   const providerLink = loginStep?.kind === 'info' ? verificationLink(loginStep.message) : null;
 
-  const readSaved = useCallback(
-    async (current = generation.current) => {
-      try {
-        const handle = await BrowserBinding.load(metadata.scope);
-        if (current !== generation.current) {
-          return;
-        }
-        savedHandle.current = handle;
-        setSaved(handle === null ? 'missing' : handle.binding === null ? 'pending' : 'ready');
-      } catch {
-        if (current === generation.current) {
-          savedHandle.current = null;
-          setSaved('unavailable');
-        }
+  const readSaved = useCallback(async (current = generation.current) => {
+    const scope = link.current.scope;
+    try {
+      const handle = await BrowserBinding.load(scope);
+      if (current !== generation.current || scope !== link.current.scope) {
+        return;
       }
-    },
-    [metadata.scope],
-  );
+      savedHandle.current = handle;
+      setSaved(handle === null ? 'missing' : handle.binding === null ? 'pending' : 'ready');
+    } catch {
+      if (current === generation.current && scope === link.current.scope) {
+        savedHandle.current = null;
+        setSaved('unavailable');
+      }
+    }
+  }, []);
   useEffect(() => {
     void readSaved();
     return () => {
@@ -126,8 +122,57 @@ export function App({
     };
   }, [readSaved]);
 
+  const selectAccess = useCallback((selected: WebAccess | null) => {
+    if (candidate.current !== null && candidate.current !== selected) {
+      return;
+    }
+    if (candidate.current === selected) {
+      candidate.current = null;
+    }
+    access.current = selected;
+    setSnapshot(selected?.snapshot() ?? null);
+    if (selected === null) {
+      setLoginOpen(true);
+    }
+  }, []);
+
+  const linkChoices = [
+    ...new Set([
+      metadata.scope.slug,
+      ...metadata.publishedSlugs,
+      loginMetadata.scope.slug,
+      ...loginMetadata.publishedSlugs,
+      ...(snapshot ? [snapshot.scope.slug] : []),
+    ]),
+  ];
+
+  async function chooseLink(slug: string) {
+    if (closing || busy || rememberUncertain || managementLocked || !linkChoices.includes(slug)) {
+      return;
+    }
+    if (slug === link.current.scope.slug) {
+      void readSaved();
+      return;
+    }
+    await run(async (signal, current) => {
+      const next = await loadLinkMetadata({ origin: metadata.scope.origin, slug }, signal);
+      if (current !== generation.current) {
+        return;
+      }
+      link.current = next;
+      client.current = new BrowserClient(next.scope);
+      setLoginMetadata(next);
+      setLoginUser('');
+      setProviderInformation(null);
+      setPasswordKey((value) => value + 1);
+      setOptIn(false);
+      savedHandle.current = null;
+      setSaved('loading');
+    });
+  }
+
   async function run(action: (signal: AbortSignal, current: number) => Promise<void>) {
-    if (operation.current !== null || managementLocked) {
+    if (operation.current !== null || managementLocked || rememberUncertain || closing) {
       return;
     }
     const controller = new AbortController();
@@ -145,18 +190,27 @@ export function App({
       if (current === generation.current) {
         operation.current = null;
         setBusy(false);
+        setLoginPending(null);
+        setProviderInformation(null);
         await readSaved(current);
       }
     }
   }
 
   function cancel() {
+    const enrollmentMayHaveCommitted = loginPending === 'remember';
     generation.current++;
     operation.current?.abort();
     operation.current = null;
     setBusy(false);
-    setNotice({ key: 'cancelled', color: 'yellow' });
+    setLoginPending(null);
+    setNotice({ key: enrollmentMayHaveCommitted ? 'unknown' : 'cancelled', color: 'yellow' });
+    if (enrollmentMayHaveCommitted) {
+      setRememberUncertain(true);
+      setLoginOpen(false);
+    }
     setLoginStep(null);
+    setProviderInformation(null);
     void readSaved();
   }
 
@@ -184,6 +238,11 @@ export function App({
         resolve(value);
       };
       setLoginStep(step);
+      // Retain only the current attempt's explicit provider instructions, never
+      // a prompt/answer. They remain available during subsequent device polling.
+      setProviderInformation(
+        step.kind === 'info' && verificationLink(step.message) !== null ? step : null,
+      );
     });
   }
 
@@ -199,6 +258,10 @@ export function App({
   async function login(form: HTMLFormElement) {
     const password = form.elements.namedItem('password') as HTMLInputElement | null;
     const user = (form.elements.namedItem('user') as HTMLInputElement | null)?.value ?? '';
+    setLoginUser(user);
+    setProviderInformation(null);
+    const selectedClient = client.current;
+    const selectedScope = link.current.scope;
     const secret = password?.value ?? '';
     if (password !== null) {
       password.value = ''; // No answer/password in app state or persistent storage.
@@ -221,6 +284,7 @@ export function App({
     setPasswordKey((value) => value + 1); // Reset Mantine's internal uncontrolled input state too.
     const remember = optIn;
     await run(async (signal, current) => {
+      setLoginPending('authentication');
       let result: WebAccess;
       if (loginMethod === 'key') {
         if (privateFile === null) {
@@ -233,7 +297,7 @@ export function App({
             privateFile,
             passphrase,
             certificateFile,
-            metadata.scope,
+            selectedScope,
             user,
             signal,
           );
@@ -243,25 +307,28 @@ export function App({
           passphrase = '';
         }
         try {
-          result = await client.current.publicKey(user, key, signal);
+          result = await selectedClient.publicKey(user, key, signal);
         } finally {
           key.close();
         }
       } else {
         result =
           loginMethod === 'interactive'
-            ? await client.current.interactive(user, requestStep, signal)
-            : await client.current.password(user, secret, signal);
+            ? await selectedClient.interactive(user, requestStep, signal)
+            : await selectedClient.password(user, secret, signal);
       }
       if (current !== generation.current) {
         return;
       }
       access.current = result;
-      setWorkspaceView('sessions');
+      candidate.current = result;
       setSnapshot(result.snapshot());
       setClosing(false);
       setRememberUncertain(false);
+      let uncertain = false;
       if (remember) {
+        setLoginPending('remember');
+        setProviderInformation(null);
         try {
           await result.remember({ explicitOptIn: true }, signal);
           if (current === generation.current) {
@@ -270,15 +337,17 @@ export function App({
         } catch (error) {
           if (current === generation.current) {
             setNotice(errorNotice(error));
-            setRememberUncertain(
-              error instanceof RememberMeError && error.code === 'outcome-unknown',
-            );
+            uncertain = error instanceof RememberMeError && error.code === 'outcome-unknown';
+            setRememberUncertain(uncertain);
           }
         }
       }
       if (current === generation.current) {
+        setProviderInformation(null);
         setLoginOpen(false);
-        setAuthorizationEvent((value) => value + 1);
+        if (!uncertain) {
+          setAuthorizationEvent(result);
+        }
       }
     });
   }
@@ -294,12 +363,12 @@ export function App({
         return;
       }
       access.current = result;
-      setWorkspaceView('sessions');
+      candidate.current = result;
       setSnapshot(result.snapshot());
       setClosing(false);
       setLoginOpen(false);
       setRememberUncertain(false);
-      setAuthorizationEvent((value) => value + 1);
+      setAuthorizationEvent(result);
     });
   }
 
@@ -331,13 +400,16 @@ export function App({
         return;
       }
       access.current = null;
+      if (candidate.current === selected) {
+        candidate.current = null;
+      }
+      setAuthorizationEvent((event) => (event === selected ? null : event));
       setSnapshot(null);
       setClosing(false);
       setOptIn(false);
-      setLoginOpen(true);
       setAccountOpen(false);
-      setAuthorizationEvent(0);
-      setWorkspaceEpoch((value) => value + 1);
+      setRetiredAccess(selected);
+      setLoginOpen(false); // The remaining active tab is selected by the workspace.
       setRememberUncertain(false);
       setNotice(cleanupNotice(result, 'loggedOut'));
     } catch {
@@ -379,13 +451,24 @@ export function App({
     setConfirm(value);
   }
 
-  function showLogin() {
+  function showLogin(scope = access.current?.snapshot().scope) {
     if (closing || busy || rememberUncertain || managementLocked) {
+      return;
+    }
+    if (tabCount >= maximumTabs) {
+      setNotice({ key: 'terminalTabLimit', color: 'yellow' });
+      setNoticeOpen(true);
       return;
     }
     setAccountOpen(false);
     setLoginOpen(true);
     setOptIn(false);
+    setLoginUser('');
+    setProviderInformation(null);
+    if (scope && scope.origin === metadata.scope.origin && scope.slug !== link.current.scope.slug) {
+      void chooseLink(scope.slug);
+      return;
+    }
     void readSaved();
   }
   function closeLogin() {
@@ -395,6 +478,7 @@ export function App({
     setLoginOpen(false);
     setOptIn(false);
     setPasswordKey((value) => value + 1);
+    setProviderInformation(null);
   }
   useEffect(() => {
     if (
@@ -409,18 +493,26 @@ export function App({
   return (
     <>
       <TerminalWorkspace
-        key={workspaceEpoch}
         access={snapshot === null ? null : access.current}
         authorizationEvent={authorizationEvent}
+        retiredAccess={retiredAccess}
+        unavailableAccess={closing || rememberUncertain ? access.current : null}
         blocked={closing || busy || rememberUncertain || managementLocked}
         focusBlocked={
-          loginOpen || loginStep !== null || accountOpen || noticeOpen || confirm !== null
+          loginOpen ||
+          loginStep !== null ||
+          accountOpen ||
+          appearanceOpen ||
+          noticeOpen ||
+          confirm !== null
         }
         title={title}
-        scope={metadata.scope.slug}
+        scope={snapshot?.scope.slug ?? loginMetadata.scope.slug}
         onSignIn={showLogin}
-        managementView={workspaceView}
-        onManagementView={setWorkspaceView}
+        onNewConnection={() => showLogin()}
+        onSelectAccess={selectAccess}
+        onActionLock={setManagementLocked}
+        onTabCount={setTabCount}
         notice={
           notice !== null && !loginOpen && !noticeOpen ? (
             <button
@@ -452,7 +544,7 @@ export function App({
                 variant="subtle"
                 aria-label={t('openLogin')}
                 disabled={closing || busy || rememberUncertain || managementLocked}
-                onClick={showLogin}
+                onClick={() => showLogin()}
               >
                 {t('login')}
               </Button>
@@ -466,42 +558,21 @@ export function App({
                 variant="subtle"
                 color="red"
                 aria-label={t(closing ? 'retryLogout' : 'logout')}
-                title={t(closing ? 'retryLogout' : 'logout')}
+                title={`${t(closing ? 'retryLogout' : 'logout')}: ${snapshot.scope.slug || '/'} · ${snapshot.principal}`}
               >
                 <span aria-hidden="true">↪</span>
               </Button>
             )}
             <Button
               variant="subtle"
-              onClick={() => setAccountOpen(true)}
+              onClick={() => setAppearanceOpen(true)}
               aria-label={t('appearance')}
             >
               ⚙
             </Button>
           </>
         }
-      >
-        {snapshot !== null && snapshot.environment === 'management' && access.current !== null && (
-          <Suspense fallback={<Alert>{t('managementLoading')}</Alert>}>
-            <div hidden={workspaceView === 'artifacts'}>
-              <ManagementPanel
-                key={generation.current}
-                access={access.current}
-                disabled={closing || busy}
-                onActionLock={setManagementLocked}
-                view={workspaceView === 'server' ? 'server' : 'sessions'}
-              />
-            </div>
-            <div hidden={workspaceView !== 'artifacts'}>
-              <ArtifactPanel
-                key={`artifacts:${generation.current}`}
-                access={access.current}
-                disabled={closing || busy || managementLocked}
-              />
-            </div>
-          </Suspense>
-        )}
-      </TerminalWorkspace>
+      />
       <Modal
         classNames={{ content: 'confirmation-dialog login-dialog' }}
         lockScroll={false}
@@ -509,9 +580,24 @@ export function App({
         onClose={closeLogin}
         closeOnClickOutside={false}
         closeOnEscape={!busy}
-        title={t(loginStep === null ? 'login' : 'loginChallenge')}
+        title={t(
+          loginStep !== null || (loginPending !== null && loginMethod === 'interactive')
+            ? 'loginChallenge'
+            : 'login',
+        )}
         closeButtonProps={{ 'aria-label': t('close') }}
       >
+        <div className="login-context">
+          <strong>
+            {t('connectionLoginContext')}: {loginMetadata.scope.slug || '/'}
+          </strong>
+          {loginUser && busy && (
+            <span>
+              {t('connectionRequestedUser')}: {loginUser}
+            </span>
+          )}
+          {snapshot && <p>{t('connectionExistingKept')}</p>}
+        </div>
         {notice && (
           <Alert role="status" color={notice.color}>
             {t(notice.key)}
@@ -525,9 +611,36 @@ export function App({
             onAnswer={answerStep}
             onCancel={cancel}
           />
+        ) : loginPending !== null && loginMethod === 'interactive' ? (
+          <div className="stack" aria-busy="true">
+            {providerInformation !== null && (
+              <ProviderInformation
+                step={providerInformation}
+                providerLink={verificationLink(providerInformation.message)}
+              />
+            )}
+            <p role="status">
+              {t(loginPending === 'remember' ? 'loginRemembering' : 'loginWaiting')}
+            </p>
+            <Button variant="default" onClick={cancel}>
+              {t('cancel')}
+            </Button>
+          </div>
         ) : (
           <>
             <div className="stack">
+              <Select
+                label={t('connectionLink')}
+                value={loginMetadata.scope.slug}
+                data={linkChoices.map((slug) => ({ value: slug, label: slug || '/' }))}
+                disabled={busy}
+                allowDeselect={false}
+                onChange={(value) => {
+                  if (value !== null) {
+                    void chooseLink(value);
+                  }
+                }}
+              />
               {saved === 'ready' && (
                 <Paper withBorder p="lg" className="stack">
                   <p>{t('saved')}</p>
@@ -578,6 +691,7 @@ export function App({
               {saved === 'unavailable' && <Alert color="yellow">{t('storageUnavailable')}</Alert>}
               <Paper withBorder p="lg" className="login-card">
                 <form
+                  key={loginMetadata.scope.slug}
                   method={loginMethod === 'key' ? 'dialog' : 'post'}
                   action={loginMethod === 'key' ? undefined : '/_bifroest/api/v1/login/password'}
                   className="stack"
@@ -597,7 +711,7 @@ export function App({
                       <Radio value="key" label={t('keyMethod')} disabled={busy} />
                     </div>
                   </Radio.Group>
-                  {metadata.requestUser && (
+                  {loginMetadata.requestUser && (
                     <TextInput
                       name="user"
                       label={t('user')}
@@ -655,7 +769,7 @@ export function App({
                     description={t('rememberHint')}
                   />
                   <div className="actions">
-                    <Button type="submit" disabled={busy || managementLocked}>
+                    <Button type="submit" loading={busy} disabled={busy || managementLocked}>
                       {t('login')}
                     </Button>
                     {busy && (
@@ -667,22 +781,6 @@ export function App({
                 </form>
               </Paper>
             </div>
-            {metadata.publishedSlugs.length > 0 && (
-              <nav className="access-links" aria-label={t('discovery')}>
-                <span className="caption subtle">{t('discovery')}</span>
-                <ul className="actions">
-                  {metadata.publishedSlugs.map((slug) => (
-                    <li key={slug}>
-                      {managementLocked ? (
-                        <span aria-disabled="true">{slug}</span>
-                      ) : (
-                        <Anchor href={`/${slug}`}>{slug}</Anchor>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </nav>
-            )}
             <footer className="caption workspace-footer">
               <SegmentedControl
                 aria-label={t('theme')}
@@ -698,7 +796,13 @@ export function App({
                 <summary>{t('interfaceInformation')}</summary>
                 <p>{t('partial')}</p>
               </details>
-              <Anchor href="/_bifroest/files/third-party-licenses.txt">{t('notices')}</Anchor>
+              <Anchor
+                href="/_bifroest/files/third-party-licenses.txt"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {t('notices')}
+              </Anchor>
             </footer>
           </>
         )}
@@ -715,6 +819,9 @@ export function App({
           {snapshot && (
             <>
               <p>{snapshot.principal}</p>
+              <p>
+                {t('connectionLoginContext')}: {snapshot.scope.slug || '/'}
+              </p>
               <p className="caption">
                 {t('expires')}:{' '}
                 <time dateTime={snapshot.expiresAt}>
@@ -729,12 +836,26 @@ export function App({
           {snapshot && (
             <Button
               variant="default"
-              disabled={closing || busy || rememberUncertain || managementLocked}
-              onClick={showLogin}
+              disabled={
+                closing || busy || rememberUncertain || managementLocked || tabCount >= maximumTabs
+              }
+              onClick={() => showLogin()}
             >
               {t('reauthenticate')}
             </Button>
           )}
+          <p className="caption">{t('connectionLogoutScope')}</p>
+        </div>
+      </Modal>
+      <Modal
+        classNames={{ content: 'confirmation-dialog' }}
+        lockScroll={false}
+        opened={appearanceOpen}
+        onClose={() => setAppearanceOpen(false)}
+        title={t('appearance')}
+        closeButtonProps={{ 'aria-label': t('close') }}
+      >
+        <div className="stack">
           <SegmentedControl
             aria-label={t('theme')}
             value={scheme}
@@ -750,20 +871,13 @@ export function App({
             <p>{t('partial')}</p>
             <p>{t('terminalFresh')}</p>
           </details>
-          <nav aria-label={t('discovery')}>
-            <ul>
-              {metadata.publishedSlugs.map((slug) => (
-                <li key={slug}>
-                  {managementLocked ? (
-                    <span aria-disabled="true">{slug}</span>
-                  ) : (
-                    <Anchor href={`/${slug}`}>{slug}</Anchor>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </nav>
-          <Anchor href="/_bifroest/files/third-party-licenses.txt">{t('notices')}</Anchor>
+          <Anchor
+            href="/_bifroest/files/third-party-licenses.txt"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {t('notices')}
+          </Anchor>
         </div>
       </Modal>
       <Modal

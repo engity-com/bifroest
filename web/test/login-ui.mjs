@@ -107,6 +107,18 @@ export async function exerciseDevice(page, cancel) {
       0,
     );
   } else {
+    await dialog.getByText('Waiting for the authentication service', { exact: false }).waitFor();
+    assert.equal(
+      await dialog.getByRole('link').getAttribute('href'),
+      target,
+      'the current provider link must remain available while waiting',
+    );
+    await dialog.getByText('test-code', { exact: false }).waitFor();
+    assert.equal(
+      await dialog.getByRole('radio').count(),
+      0,
+      'pending device auth is not a disabled new-login form',
+    );
     await settledLogin(page, 'verified-subject');
     await page.getByText('RememberMe setup confirmed for this browser.', { exact: true }).waitFor();
     await page.reload();

@@ -3,6 +3,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
+import { exerciseConnectionRaces, exerciseManagementOwner } from './connection-races-ui.mjs';
+import { exerciseConnections } from './connections-ui.mjs';
 import { exerciseKey, exerciseKeyVariant } from './key-ui.mjs';
 import { exerciseDevice, exerciseInteractive, exerciseLostClaim } from './login-ui.mjs';
 import { exerciseManagementActions } from './management-action-ui.mjs';
@@ -124,7 +126,9 @@ try {
       await settledLogin(
         page,
         user,
-        ['terminal', 'terminal-expiry', 'terminal-logout-lost'].includes(process.argv[3]),
+        ['terminal', 'terminal-expiry', 'terminal-logout-lost', 'workspace'].includes(
+          process.argv[3],
+        ),
       );
     } catch (error) {
       throw new Error(
@@ -145,12 +149,52 @@ try {
     if (await notification.count()) {
       await notification.getByRole('button', { name: 'Close', exact: true }).click();
     }
-    await page.getByRole('button', { name: 'Log out', exact: true }).click();
+    // Fixture cleanup deliberately logs out each independent access once. A
+    // scoped logout no longer closes another actor/flow's tabs as a side effect.
+    for (let remaining = 8; remaining > 0; remaining--) {
+      const logout = page.getByRole('button', { name: 'Log out', exact: true });
+      if (!(await logout.count())) {
+        break;
+      }
+      const before = await page.getByRole('tab').count();
+      const confirmed = page.waitForResponse(
+        (response) => response.url().endsWith('/api/v1/logout') && response.status() === 204,
+      );
+      await logout.click();
+      await confirmed;
+      await page.waitForFunction(
+        (before) =>
+          document.querySelectorAll('[role="tab"]').length < before ||
+          !document.querySelector('button[aria-label="Log out"]'),
+        before,
+      );
+    }
     await page.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
     assert.equal(await local(page), 'missing');
   };
   async function exercise() {
     let page = await open();
+    if (process.argv[3] === 'workspace-races') {
+      await exerciseConnectionRaces(page);
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.argv[3] === 'workspace-actions' || process.argv[3] === 'workspace-actions-close') {
+      await exerciseManagementOwner(
+        page,
+        process.argv[4],
+        login,
+        logout,
+        process.argv[3] === 'workspace-actions-close',
+      );
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.argv[3] === 'workspace') {
+      await exerciseConnections(page, login);
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (process.argv[3] === 'terminal-logout-lost') {
       await exerciseLostTerminalLogout(page, login);
       assert.deepEqual(errors, []);
