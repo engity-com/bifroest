@@ -68,93 +68,7 @@ type s4uProfileInfo struct {
 // profileDirectory loads the real profile for a key-only account without
 // knowing its password. S4U registration requires a LocalSystem process.
 func profileDirectory(a Account) (home string, retErr error) {
-	current, err := currentAccount(a)
-	if err != nil {
-		return "", err
-	}
-	expected, _ := windows.StringToSid(current.SID)
-	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
-	if err != nil {
-		return "", fmt.Errorf("resolve LocalSystem SID: %w", err)
-	}
-	self, err := windows.GetCurrentProcessToken().GetTokenUser()
-	if err != nil {
-		return "", fmt.Errorf("read process identity for local S4U: %w", err)
-	}
-	if self == nil || self.User.Sid == nil || !self.User.Sid.Equals(system) {
-		return "", errors.New("local S4U requires a LocalSystem process")
-	}
-
-	impersonation, err := s4uImpersonationToken(current.Name)
-	if err != nil {
-		return "", err
-	}
-	defer func() {
-		if err := impersonation.Close(); err != nil {
-			home = ""
-			retErr = errors.Join(retErr, fmt.Errorf("close S4U impersonation token: %w", err))
-		}
-	}()
-	var primary windows.Token
-	err = windows.DuplicateTokenEx(impersonation, windows.MAXIMUM_ALLOWED, nil, windows.SecurityImpersonation, windows.TokenPrimary, &primary)
-	if primary != 0 {
-		defer func() {
-			if err := primary.Close(); err != nil {
-				home = ""
-				retErr = errors.Join(retErr, fmt.Errorf("close S4U primary token: %w", err))
-			}
-		}()
-	}
-	if err != nil {
-		return "", fmt.Errorf("DuplicateTokenEx: %w", err)
-	}
-	if primary == 0 {
-		return "", errors.New("DuplicateTokenEx returned no token")
-	}
-	user, err := primary.GetTokenUser()
-	if err != nil {
-		return "", fmt.Errorf("read S4U token SID: %w", err)
-	}
-	if user == nil || user.User.Sid == nil || !user.User.Sid.Equals(expected) {
-		return "", errors.New("S4U token SID differs from local SAM account")
-	}
-	if _, err := currentAccount(a); err != nil {
-		return "", err
-	}
-
-	name, err := windows.UTF16PtrFromString(current.Name)
-	if err != nil {
-		return "", err
-	}
-	info := s4uProfileInfo{Flags: 1, UserName: name} // PI_NOUI
-	info.Size = uint32(unsafe.Sizeof(info))
-	ok, _, callErr := s4uLoadProfile.Call(uintptr(primary), uintptr(unsafe.Pointer(&info)))
-	runtime.KeepAlive(name)
-	if info.Profile != 0 {
-		defer func() {
-			if ok, _, err := s4uUnloadProfile.Call(uintptr(primary), uintptr(info.Profile)); ok == 0 {
-				home = ""
-				retErr = errors.Join(retErr, fmt.Errorf("UnloadUserProfile: %w", s4uCallError(err)))
-			}
-		}()
-	}
-	if ok == 0 {
-		return "", fmt.Errorf("LoadUserProfileW: %w", s4uCallError(callErr))
-	}
-	if info.Profile == 0 {
-		return "", errors.New("LoadUserProfileW returned no profile handle")
-	}
-	home, err = primary.GetUserProfileDirectory()
-	if err != nil {
-		return "", fmt.Errorf("GetUserProfileDirectoryW: %w", err)
-	}
-	if home == "" {
-		return "", errors.New("GetUserProfileDirectoryW returned an empty path")
-	}
-	if _, err := currentAccount(a); err != nil {
-		return "", err
-	}
-	return home, nil
+	return profileDirectoryContext(context.Background(), a)
 }
 
 func s4uLogonBuffer(name string) ([]uint64, int, error) {
@@ -189,10 +103,6 @@ func s4uLogonBufferWithFlags(name string, flags uint32) ([]uint64, int, error) {
 	auth.User = s4uUnicodeString{uint16((len(user) - 1) * 2), uint16(len(user) * 2), &userUnits[0]}
 	auth.Domain = s4uUnicodeString{2, 4, &domainUnits[0]}
 	return buffer, length, nil
-}
-
-func s4uImpersonationToken(name string) (result windows.Token, retErr error) {
-	return s4uImpersonationTokenWithFlags(name, 0)
 }
 
 func s4uImpersonationTokenWithFlags(name string, flags uint32) (result windows.Token, retErr error) {

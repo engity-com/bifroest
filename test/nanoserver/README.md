@@ -237,3 +237,14 @@ to the disposable container teardown instead of deleting by name alone.
 No deny/logon rights, host groups or machine policies are changed by this new
 fixture. This is not yet a complete group/template/target/grant integration, an
 atomic group snapshot or a native password-resume capability.
+
+The profile/home lookup retains flags `0`, Network logon, `PI_NOUI` and the same
+primary-token access as the existing key/SSH path. Its shared synchronous flow
+now accepts context checkpoints, owns outputs returned with errors, and joins
+profile unload then primary/impersonation-token close before final identity
+checks. Any API/cleanup/context failure discards the path. Existing callers use
+a background context; a prospective password checker runs it inside the strict
+System/thread guard. A required owned-container control compares guarded and
+legacy lookup of the same fresh account's home after both complete cleanup.
+Portable fault models check each boundary, null output and combined cleanup
+errors; they do not promise physical release after a failed native cleanup API.

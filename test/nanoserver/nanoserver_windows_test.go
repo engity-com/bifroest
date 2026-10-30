@@ -171,6 +171,9 @@ func TestPinnedNanoServerLocalEnvironment(t *testing.T) {
 		if !strings.Contains(output, "--- PASS: TestLocalSAMFreshGroupMembership ") {
 			t.Fatalf("required fresh native group-membership control did not execute: %s", output)
 		}
+		if !strings.Contains(output, "--- PASS: TestLocalSAMContextBoundProfileDirectory ") {
+			t.Fatalf("required context-bound profile lifecycle did not execute: %s", output)
+		}
 		t.Log(output)
 	})
 }
