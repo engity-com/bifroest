@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { test } from 'node:test';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { parse } from 'jsonc-parser';
 import { writeFrontendNotices } from '../scripts/frontend-notices.mjs';
 
 const integrity = `sha512-${Buffer.alloc(64, 1).toString('base64')}`;
@@ -141,4 +143,62 @@ test('a missing license text still blocks the build', (t) => {
   f.save();
   assert.throws(f.run, /license text missing/);
   assert.deepEqual(readdirSync(f.output), []);
+});
+
+test('the recorded publisher MIT bridge matches the locked installed 2.3.8 payload offline', () => {
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  const evidence = JSON.parse(
+    readFileSync(join(root, 'licenses/react-remove-scroll-bar-2.3.8-evidence.json'), 'utf8'),
+  );
+  const supplements = JSON.parse(readFileSync(join(root, 'licenses/supplements.json'), 'utf8'));
+  const supplement = supplements['react-remove-scroll-bar@2.3.8'];
+  const lock = parse(readFileSync(join(root, 'bun.lock'), 'utf8'));
+  const directory = join(root, 'node_modules/react-remove-scroll-bar');
+  const metadata = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'));
+  assert.equal(evidence.component, `${metadata.name}@${metadata.version}`);
+  assert.equal(metadata.license, evidence.declaredLicense);
+  assert.equal(metadata.license, supplement.license);
+  assert.equal(
+    metadata.dependencies['react-style-singleton'],
+    evidence.metadataDifferences['dependencies.react-style-singleton'][1],
+  );
+  assert.equal(lock.packages[metadata.name][3], evidence.archives['2.3.8'].integrity);
+  assert.equal(supplement.source, evidence.licenseSource);
+  assert.equal(
+    createHash('sha256')
+      .update(readFileSync(join(root, 'licenses', supplement.file)))
+      .digest('hex'),
+    evidence.licenseSha256,
+  );
+  const files = [];
+  function visit(relative = '') {
+    for (const entry of readdirSync(join(directory, relative), { withFileTypes: true })) {
+      const name = relative === '' ? entry.name : `${relative}/${entry.name}`;
+      if (entry.isDirectory()) {
+        visit(name);
+      } else {
+        assert(entry.isFile(), 'the bridge covers regular package files only');
+        files.push(name);
+      }
+    }
+  }
+  visit();
+  assert.deepEqual(
+    files.filter((name) => name !== 'package.json').sort(),
+    Object.keys(evidence.identicalPayloadFiles).sort(),
+  );
+  assert.equal(Object.keys(evidence.identicalPayloadFiles).length, 26);
+  for (const [name, digest] of Object.entries(evidence.identicalPayloadFiles)) {
+    assert.match(
+      name,
+      /^(?:README\.md|constants\/package\.json|dist\/(?:es5|es2015|es2019)\/[A-Za-z-]+\.(?:js|d\.ts))$/u,
+    );
+    assert.equal(
+      createHash('sha256')
+        .update(readFileSync(join(directory, name)))
+        .digest('hex'),
+      digest,
+      name,
+    );
+  }
 });
