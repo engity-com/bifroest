@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { chromium } from 'playwright';
+import { settledLogin } from './workspace-ui.mjs';
 
 const [address, fixtureFile, passwordFile] = process.argv.slice(2);
 assert.equal(isIP(address), 4);
@@ -28,6 +29,7 @@ let groupDenied = 0;
 let groupRejection;
 let credentialLeak = false;
 let context;
+let page;
 const profiles = [];
 
 async function checkpoint(name) {
@@ -211,7 +213,7 @@ async function noStoredKeys(page) {
 }
 
 async function connected(page) {
-  await page.getByRole('heading', { name: `Signed in as ${fixture.user}`, exact: true }).waitFor();
+  await settledLogin(page, fixture.user, true);
   await page.locator('[data-terminal-phase="connected"]').waitFor();
   assert.equal(await page.getByRole('tab').count(), 1);
 }
@@ -264,7 +266,7 @@ try {
     const profile = await mkdtemp(join(tmpdir(), `bifroest-owned-${method}-`));
     profiles.push(profile);
     stage = `primary-${method}`;
-    let page = await open(profile);
+    page = await open(profile);
     let dialog = page.getByRole('dialog', { name: 'Sign in', exact: true });
     if (method === 'interactive') {
       await dialog.getByText('Interactive / device login', { exact: true }).click();
@@ -286,9 +288,13 @@ try {
       await dialog.getByLabel('Response', { exact: true }).fill(password);
       await dialog.getByRole('button', { name: 'Send response', exact: true }).click();
     }
+    stage = `primary-${method}-connected`;
     await connected(page);
+    stage = `primary-${method}-enrollment-notice`;
     await page.getByText('RememberMe setup confirmed for this browser.', { exact: true }).waitFor();
+    stage = `primary-${method}-stored-keys`;
     await storedKeys(page);
+    stage = `primary-${method}-native-probe`;
     await probeAndExit(page, `${method}-initial`, true);
     await context.close();
     context = undefined;
@@ -384,6 +390,16 @@ try {
 } catch (error) {
   // Playwright action errors can include a fill() argument. Never forward their
   // message/stack or raw request bodies, credentials, cookies or bearer frames.
+  const privateMessage = typeof error?.message === 'string' ? error.message : '';
+  const reason = /strict mode violation/u.test(privateMessage)
+    ? 'ambiguous-selector'
+    : /Target .*closed|browser has been closed/u.test(privateMessage)
+      ? 'target-closed'
+      : /IDB|indexedDB|storage/u.test(privateMessage)
+        ? 'storage-operation'
+        : error?.name === 'AssertionError'
+          ? 'assertion'
+          : 'operation-failed';
   console.error(
     JSON.stringify({
       stage,
@@ -395,6 +411,17 @@ try {
       error: ['Error', 'TimeoutError', 'AssertionError'].includes(error?.name)
         ? error.name
         : 'FixtureError',
+      reason,
+      ui: await page
+        ?.evaluate(() => ({
+          phase:
+            document
+              .querySelector('.application-status [data-terminal-phase]')
+              ?.getAttribute('data-terminal-phase') ?? null,
+          dialogs: document.querySelectorAll('[role="dialog"]').length,
+          tabs: document.querySelectorAll('[role="tab"]').length,
+        }))
+        .catch(() => null),
     }),
   );
   process.exitCode = 1;

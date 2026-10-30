@@ -73,6 +73,11 @@ func exerciseNativePasswordRemember(t *testing.T, ctx context.Context, h windows
 	output, err := command.StdoutPipe()
 	require.NoError(t, err)
 	var diagnostics bytes.Buffer
+	t.Cleanup(func() {
+		if t.Failed() {
+			_ = os.WriteFile(filepath.Join(h.root, "var", "e2e", "windows-password-remember-ui.stderr.log"), diagnostics.Bytes(), 0600)
+		}
+	})
 	command.Stderr = &diagnostics
 	command.Cancel = input.Close
 	command.WaitDelay = 5 * time.Second
