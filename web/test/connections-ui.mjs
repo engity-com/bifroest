@@ -1,5 +1,15 @@
 import assert from 'node:assert/strict';
-import { captureLayout, exactArtifactSelection, settledLogin, workspace } from './workspace-ui.mjs';
+import {
+  activeAccess,
+  captureLayout,
+  chooseLoginMethod,
+  duplicateTab,
+  exactArtifactSelection,
+  logoutAccess,
+  settledLogin,
+  terminalAction,
+  workspace,
+} from './workspace-ui.mjs';
 
 export async function exerciseConnections(page, login) {
   const documentURL = page.url();
@@ -29,7 +39,7 @@ export async function exerciseConnections(page, login) {
       .getByRole('textbox', { name: /^Artifact auditlog/u });
   const select = async (id, user, kind) => {
     await tab(id, user, kind).click();
-    await page.getByRole('heading', { name: `Signed in as ${user}`, exact: true }).waitFor();
+    await activeAccess(page, user);
   };
   async function newConnection(slug) {
     await page.getByRole('button', { name: 'New connection', exact: true }).click();
@@ -44,24 +54,27 @@ export async function exerciseConnections(page, login) {
     const response = await metadata;
     assert.equal(response.request().headers().authorization, undefined);
     assert.equal(response.request().headers().cookie, undefined);
-    await dialog.getByText(`Connecting to: ${slug}`, { exact: true }).waitFor();
+    await page.waitForFunction(
+      (slug) => document.querySelector('.login-dialog input[role="combobox"]')?.value === slug,
+      slug,
+    );
     assert.equal(page.url(), documentURL, 'selecting a flow must not navigate/reload the document');
   }
   await login(page, false);
   await active('EXECUTION_START:1');
   await page.getByRole('button', { name: 'New connection', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Sign in', exact: true });
-  await dialog.getByRole('radio', { name: 'Interactive / device login', exact: true }).check();
+  await chooseLoginMethod(page, 'Interactive / device login');
   await dialog.getByLabel('User name', { exact: true }).fill('bob');
   await dialog.getByRole('button', { name: 'Sign in', exact: true }).click();
   const challenge = page.getByRole('dialog', { name: 'Authentication step', exact: true });
-  await challenge.getByText('Requested user: bob', { exact: true }).waitFor();
+  await challenge.getByText('Work · bob', { exact: true }).waitFor();
   await challenge.getByLabel('Response', { exact: true }).fill('correct');
   await challenge.getByRole('button', { name: 'Send response', exact: true }).click();
   await settledLogin(page, 'bob', true);
   await active('EXECUTION_START:2');
   await select(1, 'alice');
-  await page.getByRole('button', { name: 'New terminal', exact: true }).click();
+  await duplicateTab(page);
   await active('EXECUTION_START:3');
   assert.equal(
     await tab(3, 'alice').getAttribute('aria-selected'),
@@ -69,13 +82,12 @@ export async function exerciseConnections(page, login) {
     'another terminal must use the active Alice access, not the last Bob login',
   );
   await newConnection('Other');
-  await dialog.getByRole('radio', { name: 'Password login', exact: true }).check();
+  await chooseLoginMethod(page, 'Password login');
   await login(page, false, 'bob');
   await active('EXECUTION_START:4');
-  await page.getByRole('button', { name: 'New terminal', exact: true }).click();
+  await duplicateTab(page);
   await active('EXECUTION_START:5');
-  await page.getByRole('button', { name: 'Terminal actions', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Request INT signal', exact: true }).click();
+  await terminalAction(page, 'Request INT signal');
   await active('SIGNAL:INT');
   await newConnection('Manage');
   await login(page, false);
@@ -127,7 +139,7 @@ export async function exerciseConnections(page, login) {
   );
   await captureLayout(page, 'connections-management');
   await page.getByRole('button', { name: 'New connection', exact: true }).click();
-  await dialog.getByRole('radio', { name: 'Password login', exact: true }).check();
+  await chooseLoginMethod(page, 'Password login');
   await dialog.getByLabel('User name', { exact: true }).fill('bob');
   await dialog.getByLabel('Password', { exact: true }).fill('wrong');
   await dialog.getByRole('button', { name: 'Sign in', exact: true }).click();
@@ -138,14 +150,14 @@ export async function exerciseConnections(page, login) {
     'local-review-selection',
     'a rejected additional login must not retire another management context',
   );
-  await page.getByRole('button', { name: 'Log out', exact: true }).click();
+  await logoutAccess(page);
   await manager.waitFor({ state: 'detached' });
   assert.equal(
     await page.getByRole('tab').count(),
     5,
     'management logout must leave all unrelated terminal grants and tabs intact',
   );
-  await page.getByRole('button', { name: 'Log out', exact: true }).click();
+  await logoutAccess(page);
   await tab(5, 'bob').waitFor({ state: 'detached' });
   assert.equal(
     await page.getByRole('tab').count(),
@@ -153,7 +165,7 @@ export async function exerciseConnections(page, login) {
     'logout removes both Other views sharing that access, not Work/bob or Work/alice',
   );
   await select(2, 'bob');
-  await page.getByRole('button', { name: 'Log out', exact: true }).click();
+  await logoutAccess(page);
   await tab(2, 'bob').waitFor({ state: 'detached' });
   assert.equal(await page.getByRole('tab').count(), 2);
   await select(1, 'alice');
@@ -161,8 +173,8 @@ export async function exerciseConnections(page, login) {
   await page.keyboard.type('alive-after-unrelated-logouts');
   await page.keyboard.press('Enter');
   await active('STDIN:alive-after-unrelated-logouts');
-  await page.getByRole('button', { name: 'Log out', exact: true }).click();
-  await page.getByRole('dialog', { name: 'Sign in', exact: true }).waitFor();
+  await logoutAccess(page);
+  await page.locator('[data-connection-active="true"]').waitFor({ state: 'detached' });
   assert.equal(await page.getByRole('tab').count(), 0);
   assert.equal(page.url(), documentURL);
   assert.equal(sockets, 5);

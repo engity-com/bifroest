@@ -187,11 +187,20 @@ private verification and preparation of a local export; it does not save or play
 automatically. Signature-only checking remains the default, and advanced options
 retain independent verification-depth/export/redaction controls. No workflow
 choice adopts server-supplied producer/recipient hints as trusted expectations.
-The terminal fills the viewport below a compact status/tab bar. Sign-in,
-reauthentication, appearance and account details use dialogs. A confirmed
+The terminal fills the viewport below one compact tab bar, without a separate
+brand/account/status header. Sign-in uses a compact method/credential dialog;
+appearance and license links live in the global options menu, not its footer.
+A confirmed
 terminal-capable sign-in or explicit RememberMe resume opens one new shell tab
-automatically. **New terminal** opens another fresh shell with the **active tab's
-access**, not the last account that signed in. **New connection** opens an explicit
+automatically. The **+** next to the tabs opens a fresh sign-in. The adjacent
+arrow (or right-click/long-press on +) offers **New connection** and the currently
+signed-in access contexts. Selecting one opens a fresh view using exactly that
+access, not the last account that signed in. The tab's right-click/long-press
+menu (also ContextMenu key / Shift+F10) offers **Duplicate**, local close, scoped
+logout and terminal-only EOF/signal/disconnect commands. Duplicate starts a new
+execution, never reattaches or replays the previous command. Existing contexts
+are deduplicated by access identity, not by an assumed equivalence of their
+displayed user/flow names or permissions. **New connection** opens an explicit
 link/flow and authentication selection. Its own bounded same-origin metadata
 request sends no bearer or cookies; a different link receives its own client and
 fresh sign-in/proof. Existing access is never reinterpreted for another scope.
@@ -204,8 +213,8 @@ supports these operations for other clients. The UI requests a shell with PTY
 and does not silently retry without PTY if the current key/environment denies it.
 
 Each terminal tab retains its own immutable access/actor, xterm, output and socket.
-Flow/link and principal are shown on its tab, and the active account controls
-follow that selection. Management sign-in opens a separate access-bound tab with
+Flow/link and principal are shown on its tab; menu actions stay bound to that
+tab even if another actor signed in more recently. Management sign-in opens a separate access-bound tab with
 its own Sessions, Recordings & audit and Server navigation. Its results and local
 artifact workflow remain mounted when an unrelated connection is opened or
 selected; they are never rebound to that connection. Only public discovery links
@@ -217,10 +226,16 @@ a live tab asks for confirmation and disconnects only that execution, never
 disposing its session/workload or another tab. Completed output remains until
 the user closes that tab. Closing a management view warns that its unsaved local
 downloads, verification results and playback are discarded; it is not server
-logout or session disposal. **Log out** targets the active access and retires its
+logout or session disposal. Closing the last local tab leaves an empty window
+with +, without automatically starting a login or reusing a permission. Closing
+the window/tabs does not claim server revocation; explicit RememberMe remains
+opt-in and has its own durable lifecycle. **Log out** in a tab menu targets that access and retires its
 local views, not unrelated users/flows' tabs. Server binding-wide revocation, when
 applicable, retains the stronger binding-scoped semantics documented below.
-Appearance is a separate global dialog, not a connection/account switch.
+Appearance is a separate global dialog, not a connection/account switch. Critical
+candidate/logout recovery remains reachable through the notification dialog when
+no admitted tab can own its menu; its context is pinned to the operation's access,
+not whatever tab is selected later.
 Opening a newly authenticated view is tied to that exact access object, not a
 counter replayed with whatever tab is selected later. An unadmitted RememberMe
 candidate remains separately owned for explicit cleanup; retiring it cannot
@@ -234,13 +249,21 @@ executions, and failed/dropped shells are never automatically retried. Reload
 loses the in-memory tabs: a subsequent confirmed login starts a fresh execution,
 not a reattachment.
 
-With an expired grant, **New terminal** asks for a fresh sign-in before opening
+Inside the terminal, the browser context menu is suppressed without swallowing
+the terminal application's right-button down/up reporting. No clipboard read,
+automatic paste or remote clipboard write capability is added. Outside owned
+terminal/tab/menu targets, the normal browser context menu is unaffected.
+
+With an expired grant, **Duplicate** asks for a fresh sign-in before opening
 another connection; closing the dialog leaves the old shells usable. Rejected or
 canceled reauthentication also preserves existing tabs and their original grant,
 without forwarding dialog input into those terminal streams. A lost logout reply
 keeps local access blocked and does not claim successful logout or process exit.
 No automatic retry occurs. **Retry logout** is explicit; denial of that request
 does not itself prove server revocation or unblock local access.
+Fresh browser authentication still follows the common actor/flow/effective-target
+session association rules. It does not force a new server workload or dispose the
+existing session/container merely because the user selected +.
 
 ### Conservative ForcedCommand operation equivalence
 

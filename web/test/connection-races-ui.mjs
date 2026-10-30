@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { settledLogin } from './workspace-ui.mjs';
+import {
+  activeAccess,
+  duplicateTab,
+  logoutAccess,
+  settledLogin,
+  terminalAction,
+} from './workspace-ui.mjs';
 
 const frames = (page) =>
   page.evaluate(
@@ -86,17 +92,16 @@ export async function exerciseConnectionRaces(page) {
   await page.getByRole('option', { name: 'Other', exact: true }).click();
   await entering;
   await terminal(page, 2, 'bob').waitFor({ state: 'detached' });
-  await page.getByRole('heading', { name: 'Signed in as alice', exact: true }).waitFor();
+  await activeAccess(page, 'alice');
   release();
   await signIn.getByText('The operation could not be confirmed.', { exact: false }).waitFor();
   await signIn.getByRole('button', { name: 'Close', exact: true }).click();
   await page.unroute('**/Other');
   assert.equal(await terminal(page, 1, 'alice').getAttribute('aria-selected'), 'true');
-  await page.getByRole('button', { name: 'New terminal', exact: true }).click();
+  await duplicateTab(page);
   await activeOutput(page, 'EXECUTION_START:3');
   assert.equal(await terminal(page, 3, 'alice').getAttribute('aria-selected'), 'true');
-  await page.getByRole('button', { name: 'Terminal actions', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Request INT signal', exact: true }).click();
+  await terminalAction(page, 'Request INT signal');
   await activeOutput(page, 'SIGNAL:INT');
   await page.evaluate(async () => {
     const response = await fetch('/_bifroest/test/interrupt-enrollment', {
@@ -120,8 +125,10 @@ export async function exerciseConnectionRaces(page) {
     await page.getByRole('button', { name: 'New connection', exact: true }).isEnabled(),
     false,
   );
-  await page.getByRole('button', { name: 'Log out', exact: true }).click();
-  await page.getByRole('heading', { name: 'Signed in as alice', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Notification details', exact: true }).click();
+  await notice.waitFor({ state: 'visible' });
+  await logoutAccess(page);
+  await activeAccess(page, 'alice');
   await frames(page);
   assert.equal(
     sockets,
@@ -133,8 +140,8 @@ export async function exerciseConnectionRaces(page) {
   await page.keyboard.type('original-alice-still-running');
   await page.keyboard.press('Enter');
   await activeOutput(page, 'STDIN:original-alice-still-running');
-  await page.getByRole('button', { name: 'Log out', exact: true }).click();
-  await signIn.waitFor();
+  await logoutAccess(page);
+  await page.locator('[data-connection-active="true"]').waitFor({ state: 'detached' });
   assert.equal(await page.getByRole('tab').count(), 0);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
 }
@@ -194,14 +201,14 @@ export async function exerciseManagementOwner(page, fixture, login, logout, clos
       0,
     );
     await closing.getByRole('button', { name: 'Cancel', exact: true }).click();
-    await page.getByRole('heading', { name: 'Signed in as alice', exact: true }).waitFor();
+    await activeAccess(page, 'alice');
   } else {
     assert.equal(
       await page.getByRole('dialog').count(),
       0,
       'a late Alice preparation cannot open a portal over Bob',
     );
-    await page.getByRole('heading', { name: 'Signed in as bob', exact: true }).waitFor();
+    await activeAccess(page, 'bob');
   }
   assert.equal(commits, 0);
   await alice.click();

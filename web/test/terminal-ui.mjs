@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict';
-import { captureLayout, reauthenticate } from './workspace-ui.mjs';
+import {
+  activeAccess,
+  captureLayout,
+  chooseLoginMethod,
+  duplicateTab,
+  logoutAccess,
+  reauthenticate,
+  terminalAction,
+} from './workspace-ui.mjs';
 
 export async function exerciseTerminal(page, login) {
   let sockets = 0;
@@ -33,8 +41,7 @@ export async function exerciseTerminal(page, login) {
     await page.keyboard.press('Enter');
   };
   const action = async (name) => {
-    await page.getByRole('button', { name: 'Terminal actions', exact: true }).click();
-    await page.getByRole('menuitem', { name, exact: true }).click();
+    await terminalAction(page, name);
   };
   const select = async (number, user) => {
     await page.getByRole('tab', { name: `Terminal ${number} ${user}`, exact: true }).click();
@@ -86,7 +93,7 @@ export async function exerciseTerminal(page, login) {
     'Validated exit status: 7',
     'the exact validated exit status is independent of the actor label',
   );
-  await page.getByRole('button', { name: 'New terminal', exact: true }).click();
+  await duplicateTab(page);
   await output('EXECUTION_START:2');
 
   await reauthenticate(page);
@@ -102,14 +109,14 @@ export async function exerciseTerminal(page, login) {
   assert.equal(await signIn.getByLabel('Password', { exact: true }).inputValue(), '');
   await signIn.getByRole('button', { name: 'Close', exact: true }).click();
   await signIn.waitFor({ state: 'hidden' });
-  await page.getByRole('heading', { name: 'Signed in as alice', exact: true }).waitFor();
+  await activeAccess(page, 'alice');
   await page.locator('[data-terminal-phase="connected"]').waitFor();
   await type('kept-after-rejected-reauth');
   await output('STDIN:kept-after-rejected-reauth');
   assert(!(await pane().locator('.xterm-rows').textContent()).includes(rejectedSecret));
 
   await reauthenticate(page);
-  await signIn.getByText('Interactive / device login', { exact: true }).click();
+  await chooseLoginMethod(page, 'Interactive / device login');
   await signIn.getByLabel('User name', { exact: true }).fill('alice');
   await signIn.getByRole('button', { name: 'Sign in', exact: true }).click();
   const challenge = page.getByRole('dialog', { name: 'Authentication step', exact: true });
@@ -134,12 +141,12 @@ export async function exerciseTerminal(page, login) {
     'a canceled reauthentication keeps the old grant and tabs without autostart',
   );
   assert.equal(await page.getByRole('tab').count(), 2);
-  await page.getByRole('heading', { name: 'Signed in as alice', exact: true }).waitFor();
+  await activeAccess(page, 'alice');
   await type('kept-after-cancelled-reauth');
   await output('STDIN:kept-after-cancelled-reauth');
   assert(!(await pane().locator('.xterm-rows').textContent()).includes(cancelledSecret));
 
-  await page.getByRole('button', { name: 'New terminal', exact: true }).click();
+  await duplicateTab(page);
   await output('EXECUTION_START:3');
   assert.equal(
     sockets,
@@ -149,7 +156,7 @@ export async function exerciseTerminal(page, login) {
   await page.getByRole('tab', { name: 'Terminal 3 alice', exact: true }).waitFor();
 
   await reauthenticate(page);
-  await signIn.getByText('Password login', { exact: true }).click();
+  await chooseLoginMethod(page, 'Password login');
   await login(page, false, 'bob');
   await output('EXECUTION_START:4');
   assert.equal(sockets, 4, 'reauthentication opens a new tab without replacing the old execution');
@@ -172,7 +179,7 @@ export async function exerciseTerminal(page, login) {
   await page.getByRole('button', { name: 'Close terminal 2', exact: true }).click();
   await closing.getByRole('button', { name: 'Close terminal', exact: true }).click();
   assert.equal(await page.getByRole('tab', { name: 'Terminal 2 alice', exact: true }).count(), 0);
-  await page.getByRole('button', { name: 'New terminal', exact: true }).click();
+  await duplicateTab(page);
   await output('EXECUTION_START:5');
   await action('Send input EOF');
   await page.locator('[data-terminal-phase="exited"]').waitFor();
@@ -186,16 +193,16 @@ export async function exerciseTerminal(page, login) {
     openings,
     Array.from({ length: 5 }, () => ({ task: 'shell', command: undefined, pty: true })),
   );
-  await page.getByRole('button', { name: 'Log out', exact: true }).click();
-  await page.getByRole('heading', { name: 'Signed in as bob', exact: true }).waitFor();
+  await logoutAccess(page);
+  await activeAccess(page, 'bob');
   assert.equal(await page.getByRole('tab', { name: 'Terminal 1 alice', exact: true }).count(), 0);
   assert.equal(
     await page.getByRole('tab', { name: 'Terminal 4 bob', exact: true }).count(),
     1,
     'Alice logout must not retire the independent Bob access',
   );
-  await page.getByRole('button', { name: 'Log out', exact: true }).click();
-  await page.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
+  await logoutAccess(page);
+  await page.locator('[data-connection-active="true"]').waitFor({ state: 'detached' });
   assert.equal(await page.locator('.xterm').count(), 0);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
   assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);

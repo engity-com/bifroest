@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
-import { settledLogin } from './workspace-ui.mjs';
+import {
+  activeAccessCount,
+  chooseLoginMethod,
+  logoutAccess,
+  notification,
+  settledLogin,
+} from './workspace-ui.mjs';
 
 export async function exerciseInteractive(page, login, logout) {
   await login(page, false);
   await logout(page);
-  await page.getByText('Interactive / device login', { exact: true }).click();
+  await chooseLoginMethod(page, 'Interactive / device login');
   await page.getByLabel('User name', { exact: true }).fill('alice');
   await page.getByRole('checkbox', { name: 'Remember this browser', exact: true }).check();
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
@@ -42,7 +48,7 @@ export async function exerciseInteractive(page, login, logout) {
   await dialog.getByLabel('Response', { exact: true }).fill('correct');
   await dialog.getByRole('button', { name: 'Send response', exact: true }).click();
   await settledLogin(page, 'alice');
-  await page.getByText('RememberMe setup confirmed for this browser.', { exact: true }).waitFor();
+  await notification(page, 'RememberMe setup confirmed for this browser.');
   assert.equal(await page.getByRole('dialog').count(), 0);
   await logout(page);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
@@ -60,17 +66,14 @@ export async function exerciseInteractive(page, login, logout) {
   await page
     .getByText('Operation cancelled. Cancellation is not server logout.', { exact: true })
     .waitFor();
-  assert.equal(
-    await page.getByRole('heading', { name: 'Signed in as alice', exact: true }).count(),
-    0,
-  );
+  assert.equal(await activeAccessCount(page, 'alice'), 0);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
   assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
 }
 
 export async function exerciseDevice(page, cancel) {
   assert.equal(await page.getByLabel('User name', { exact: true }).count(), 0);
-  await page.getByText('Interactive / device login', { exact: true }).click();
+  await chooseLoginMethod(page, 'Interactive / device login');
   if (!cancel) {
     await page.getByRole('checkbox', { name: 'Remember this browser', exact: true }).check();
   }
@@ -100,12 +103,7 @@ export async function exerciseDevice(page, cancel) {
     await page
       .getByText('Operation cancelled. Cancellation is not server logout.', { exact: true })
       .waitFor();
-    assert.equal(
-      await page
-        .getByRole('heading', { name: 'Signed in as verified-subject', exact: true })
-        .count(),
-      0,
-    );
+    assert.equal(await activeAccessCount(page, 'verified-subject'), 0);
   } else {
     await dialog.getByText('Waiting for the authentication service', { exact: false }).waitFor();
     assert.equal(
@@ -120,12 +118,12 @@ export async function exerciseDevice(page, cancel) {
       'pending device auth is not a disabled new-login form',
     );
     await settledLogin(page, 'verified-subject');
-    await page.getByText('RememberMe setup confirmed for this browser.', { exact: true }).waitFor();
+    await notification(page, 'RememberMe setup confirmed for this browser.');
     await page.reload();
     await page.getByRole('button', { name: 'Use saved access', exact: true }).click();
     await settledLogin(page, 'verified-subject');
-    await page.getByRole('button', { name: 'Log out', exact: true }).click();
-    await page.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
+    await logoutAccess(page);
+    await page.locator('[data-connection-active="true"]').waitFor({ state: 'detached' });
   }
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
   assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
@@ -136,7 +134,7 @@ export async function exerciseLostClaim(page, login, logout) {
   page.on('websocket', () => {
     shells++;
   });
-  await page.getByText('Interactive / device login', { exact: true }).click();
+  await chooseLoginMethod(page, 'Interactive / device login');
   await page.getByLabel('User name', { exact: true }).fill('alice');
   let polls = 0;
   page.on('request', (request) => {
@@ -153,15 +151,12 @@ export async function exerciseLostClaim(page, login, logout) {
   await page
     .getByText('The login claim/reply result could not be confirmed.', { exact: false })
     .waitFor();
-  assert.equal(
-    await page.getByRole('heading', { name: 'Signed in as alice', exact: true }).count(),
-    0,
-  );
+  assert.equal(await activeAccessCount(page, 'alice'), 0);
   const before = polls;
   assert.equal(shells, 0, 'an unconfirmed login response must never open a shell');
   await page.waitForTimeout(1600); // Deliberate quiet window: no automatic poll replay after the lost claim.
   assert.equal(polls, before);
-  await page.getByText('Password login', { exact: true }).click();
+  await chooseLoginMethod(page, 'Password login');
   await login(page, false);
   await logout(page);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);

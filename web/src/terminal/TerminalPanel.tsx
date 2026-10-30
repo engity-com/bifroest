@@ -281,6 +281,13 @@ export function TerminalPanel({
   }, [active, inputAllowed, focusOnActivate]);
 
   return (
-    <section className="terminal-surface" ref={container} aria-label={t('terminalViewport')} />
+    <section
+      className="terminal-surface"
+      ref={container}
+      aria-label={t('terminalViewport')}
+      onContextMenuCapture={(event) => {
+        event.preventDefault();
+      }}
+    />
   );
 }

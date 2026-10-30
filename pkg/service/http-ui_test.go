@@ -47,6 +47,10 @@ func TestBrowserTerminalUiFreshExecutionResizeSignalsExitAndDisconnect(t *testin
 	testBrowserLoginUi(t, true, "terminal")
 }
 
+func TestBrowserCompactWorkspaceUiContextMenusMouseAndFreshLogin(t *testing.T) {
+	testBrowserLoginUi(t, true, "compact")
+}
+
 func TestBrowserTerminalTabsUiBoundsAndCanceledInitialization(t *testing.T) {
 	testBrowserLoginUi(t, true, "terminal-tabs")
 }
@@ -272,7 +276,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		}}}
 	}
 	var terminalCounters *terminalUiCounters
-	if mode == "terminal" || mode == "terminal-expiry" || mode == "terminal-logout-lost" || mode == "workspace" || mode == "workspace-races" {
+	if mode == "terminal" || mode == "terminal-expiry" || mode == "terminal-logout-lost" || mode == "workspace" || mode == "workspace-races" || mode == "compact" {
 		terminalCounters = installTerminalUiBackend(svc)
 	}
 	settings := &configuration.Http{}
@@ -544,6 +548,11 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 			require.Zero(t, terminalCounters.interrupts.Load())
 		case "workspace-races":
 			require.EqualValues(t, 3, terminalCounters.runs.Load(), "retiring a pending/unknown candidate must never launch a sibling access")
+			require.Positive(t, terminalCounters.interrupts.Load())
+			require.Positive(t, terminalCounters.resizes.Load())
+		case "compact":
+			require.EqualValues(t, 4, terminalCounters.runs.Load(), "one login, two explicit access reuses and one independent fresh login")
+			require.EqualValues(t, 2, terminalCounters.rightButtons.Load(), "terminal must receive exactly one SGR right down/up pair while browser context menu is suppressed")
 			require.Positive(t, terminalCounters.interrupts.Load())
 			require.Positive(t, terminalCounters.resizes.Load())
 		default:

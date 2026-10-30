@@ -1,16 +1,19 @@
 import {
+  ActionIcon,
   Alert,
-  Anchor,
   Button,
   Checkbox,
+  Group,
+  Menu,
   Modal,
-  Paper,
   PasswordInput,
-  Radio,
   SegmentedControl,
   Select,
+  Stack,
+  Text,
   TextInput,
-  Title,
+  Tooltip,
+  VisuallyHidden,
 } from '@mantine/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { verificationLink } from '../login/links';
@@ -23,7 +26,7 @@ import type { Message } from './messages';
 import { t } from './messages';
 
 type Saved = 'loading' | 'missing' | 'ready' | 'pending' | 'unavailable';
-type Notice = { key: Message; color: 'red' | 'yellow' | 'green' };
+type Notice = { key: Message; color: 'red' | 'yellow' | 'green'; context?: AccessSnapshot };
 
 function errorNotice(error: unknown): Notice {
   const code = error instanceof RememberMeError ? error.code : 'unavailable';
@@ -83,7 +86,7 @@ export function App({
   const [optIn, setOptIn] = useState(false);
   const [passwordKey, setPasswordKey] = useState(0);
   const [loginOpen, setLoginOpen] = useState(true);
-  const [accountOpen, setAccountOpen] = useState(false);
+  const [applicationMenuOpen, setApplicationMenuOpen] = useState(false);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [authorizationEvent, setAuthorizationEvent] = useState<WebAccess | null>(null);
@@ -132,7 +135,8 @@ export function App({
     access.current = selected;
     setSnapshot(selected?.snapshot() ?? null);
     if (selected === null) {
-      setLoginOpen(true);
+      setAuthorizationEvent(null);
+      setLoginOpen(false);
     }
   }, []);
 
@@ -204,7 +208,13 @@ export function App({
     operation.current = null;
     setBusy(false);
     setLoginPending(null);
-    setNotice({ key: enrollmentMayHaveCommitted ? 'unknown' : 'cancelled', color: 'yellow' });
+    setNotice({
+      key: enrollmentMayHaveCommitted ? 'unknown' : 'cancelled',
+      color: 'yellow',
+      ...(enrollmentMayHaveCommitted && candidate.current
+        ? { context: candidate.current.snapshot() }
+        : {}),
+    });
     if (enrollmentMayHaveCommitted) {
       setRememberUncertain(true);
       setLoginOpen(false);
@@ -332,11 +342,11 @@ export function App({
         try {
           await result.remember({ explicitOptIn: true }, signal);
           if (current === generation.current) {
-            setNotice({ key: 'registered', color: 'green' });
+            setNotice({ key: 'registered', color: 'green', context: result.snapshot() });
           }
         } catch (error) {
           if (current === generation.current) {
-            setNotice(errorNotice(error));
+            setNotice({ ...errorNotice(error), context: result.snapshot() });
             uncertain = error instanceof RememberMeError && error.code === 'outcome-unknown';
             setRememberUncertain(uncertain);
           }
@@ -380,11 +390,10 @@ export function App({
         : { key: success, color: 'green' };
   }
 
-  async function logout() {
+  async function logout(selected = access.current) {
     if (managementLocked) {
       return;
     }
-    const selected = access.current;
     if (selected === null) {
       return;
     }
@@ -393,7 +402,7 @@ export function App({
     operation.current = null;
     setClosing(true);
     setBusy(true);
-    setNotice({ key: 'logoutPending', color: 'yellow' });
+    setNotice({ key: 'logoutPending', color: 'yellow', context: selected.snapshot() });
     try {
       const result = await selected.logout();
       if (current !== generation.current) {
@@ -405,16 +414,17 @@ export function App({
       }
       setAuthorizationEvent((event) => (event === selected ? null : event));
       setSnapshot(null);
+      setNoticeOpen(false);
       setClosing(false);
       setOptIn(false);
-      setAccountOpen(false);
+      setApplicationMenuOpen(false);
       setRetiredAccess(selected);
       setLoginOpen(false); // The remaining active tab is selected by the workspace.
       setRememberUncertain(false);
-      setNotice(cleanupNotice(result, 'loggedOut'));
+      setNotice({ ...cleanupNotice(result, 'loggedOut'), context: selected.snapshot() });
     } catch {
       if (current === generation.current) {
-        setNotice({ key: 'logoutUnknown', color: 'red' });
+        setNotice({ key: 'logoutUnknown', color: 'red', context: selected.snapshot() });
       }
     } finally {
       if (current === generation.current) {
@@ -460,11 +470,13 @@ export function App({
       setNoticeOpen(true);
       return;
     }
-    setAccountOpen(false);
+    setApplicationMenuOpen(false);
     setLoginOpen(true);
     setOptIn(false);
     setLoginUser('');
     setProviderInformation(null);
+    setNotice(null);
+    setNotice(null);
     if (scope && scope.origin === metadata.scope.origin && scope.slug !== link.current.scope.slug) {
       void chooseLink(scope.slug);
       return;
@@ -493,7 +505,6 @@ export function App({
   return (
     <>
       <TerminalWorkspace
-        access={snapshot === null ? null : access.current}
         authorizationEvent={authorizationEvent}
         retiredAccess={retiredAccess}
         unavailableAccess={closing || rememberUncertain ? access.current : null}
@@ -501,80 +512,65 @@ export function App({
         focusBlocked={
           loginOpen ||
           loginStep !== null ||
-          accountOpen ||
+          applicationMenuOpen ||
           appearanceOpen ||
           noticeOpen ||
           confirm !== null
         }
         title={title}
-        scope={snapshot?.scope.slug ?? loginMetadata.scope.slug}
         onSignIn={showLogin}
         onNewConnection={() => showLogin()}
         onSelectAccess={selectAccess}
         onActionLock={setManagementLocked}
         onTabCount={setTabCount}
+        onLogout={(selected) => {
+          void logout(selected);
+        }}
         notice={
           notice !== null && !loginOpen && !noticeOpen ? (
-            <button
-              type="button"
-              className={`bar-notice bar-notice--${notice.color}`}
-              onClick={() => setNoticeOpen(true)}
-              aria-label={t('showNotice')}
-              title={t(notice.key)}
-            >
-              <span role="status">{t(notice.key)}</span>
-            </button>
+            <Tooltip label={t(notice.key)}>
+              <ActionIcon
+                variant="subtle"
+                color={notice.color}
+                size="lg"
+                onClick={() => setNoticeOpen(true)}
+                aria-label={t('showNotice')}
+              >
+                <span aria-hidden="true">{notice.color === 'green' ? '✓' : '!'}</span>
+              </ActionIcon>
+            </Tooltip>
           ) : null
         }
-        account={
-          <>
-            {snapshot !== null && (
-              <Button
-                variant="subtle"
-                onClick={() => setAccountOpen(true)}
-                aria-label={t('account')}
+        utilities={
+          <Menu
+            opened={applicationMenuOpen}
+            onChange={setApplicationMenuOpen}
+            position="bottom-end"
+          >
+            <Menu.Target>
+              <ActionIcon variant="subtle" color="gray" size="lg" aria-label={t('applicationMenu')}>
+                ⋮
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item onClick={() => setAppearanceOpen(true)}>{t('appearance')}</Menu.Item>
+              <Menu.Item
+                component="a"
+                href="/_bifroest/files/third-party-licenses.txt"
+                target="_blank"
+                rel="noopener noreferrer"
               >
-                <Title order={2} size="h5">
-                  {t(closing ? 'accessBlocked' : 'authenticated')} {snapshot.principal}
-                </Title>
-              </Button>
-            )}
-            {!snapshot && (
-              <Button
-                variant="subtle"
-                aria-label={t('openLogin')}
-                disabled={closing || busy || rememberUncertain || managementLocked}
-                onClick={() => showLogin()}
-              >
-                {t('login')}
-              </Button>
-            )}
-            {snapshot && (
-              <Button
-                onClick={() => {
-                  void logout();
-                }}
-                disabled={(closing && busy) || managementLocked}
-                variant="subtle"
-                color="red"
-                aria-label={t(closing ? 'retryLogout' : 'logout')}
-                title={`${t(closing ? 'retryLogout' : 'logout')}: ${snapshot.scope.slug || '/'} · ${snapshot.principal}`}
-              >
-                <span aria-hidden="true">↪</span>
-              </Button>
-            )}
-            <Button
-              variant="subtle"
-              onClick={() => setAppearanceOpen(true)}
-              aria-label={t('appearance')}
-            >
-              ⚙
-            </Button>
-          </>
+                {t('notices')}
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
         }
       />
       <Modal
         classNames={{ content: 'confirmation-dialog login-dialog' }}
+        size="sm"
+        padding="lg"
+        centered
         lockScroll={false}
         opened={loginOpen && confirm === null}
         onClose={closeLogin}
@@ -587,18 +583,13 @@ export function App({
         )}
         closeButtonProps={{ 'aria-label': t('close') }}
       >
-        <div className="login-context">
-          <strong>
-            {t('connectionLoginContext')}: {loginMetadata.scope.slug || '/'}
-          </strong>
-          {loginUser && busy && (
-            <span>
-              {t('connectionRequestedUser')}: {loginUser}
-            </span>
-          )}
-          {snapshot && <p>{t('connectionExistingKept')}</p>}
-        </div>
-        {notice && (
+        {(loginStep !== null || loginPending !== null) && (
+          <Text size="sm" c="dimmed" mb="sm">
+            {loginMetadata.scope.slug || '/'}
+            {loginUser ? ` · ${loginUser}` : ''}
+          </Text>
+        )}
+        {notice && loginOpen && (
           <Alert role="status" color={notice.color}>
             {t(notice.key)}
           </Alert>
@@ -627,8 +618,8 @@ export function App({
             </Button>
           </div>
         ) : (
-          <>
-            <div className="stack">
+          <Stack gap="sm">
+            {linkChoices.length > 1 ? (
               <Select
                 label={t('connectionLink')}
                 value={loginMetadata.scope.slug}
@@ -641,211 +632,186 @@ export function App({
                   }
                 }}
               />
-              {saved === 'ready' && (
-                <Paper withBorder p="lg" className="stack">
-                  <p>{t('saved')}</p>
-                  <div className="actions">
-                    <Button
-                      disabled={busy}
-                      onClick={() => {
-                        void resume();
-                      }}
-                    >
-                      {t('useSaved')}
-                    </Button>
-                    {snapshot === null && (
-                      <>
-                        <Button
-                          variant="default"
-                          disabled={busy}
-                          onClick={() => showConfirmation('revoke')}
-                        >
-                          {t('forgetSaved')}
-                        </Button>
-                        <Button
-                          variant="subtle"
-                          disabled={busy}
-                          onClick={() => showConfirmation('local')}
-                        >
-                          {t('removeLocalOnly')}
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                </Paper>
-              )}
-              {saved === 'pending' && (
-                <Alert color="yellow">
-                  <p>{t('pending')}</p>
-                  {snapshot === null && (
-                    <Button
-                      variant="outline"
-                      disabled={busy}
-                      onClick={() => showConfirmation('local')}
-                    >
-                      {t('removeLocal')}
-                    </Button>
-                  )}
-                </Alert>
-              )}
-              {saved === 'unavailable' && <Alert color="yellow">{t('storageUnavailable')}</Alert>}
-              <Paper withBorder p="lg" className="login-card">
-                <form
-                  key={loginMetadata.scope.slug}
-                  method={loginMethod === 'key' ? 'dialog' : 'post'}
-                  action={loginMethod === 'key' ? undefined : '/_bifroest/api/v1/login/password'}
-                  className="stack"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void login(event.currentTarget);
+            ) : (
+              loginMetadata.scope.slug && (
+                <Text size="sm" c="dimmed">
+                  {loginMetadata.scope.slug}
+                </Text>
+              )
+            )}
+            {saved === 'ready' && (
+              <Group justify="space-between" gap="xs">
+                <Button
+                  variant="light"
+                  size="xs"
+                  disabled={busy}
+                  onClick={() => {
+                    void resume();
                   }}
                 >
-                  <Radio.Group
-                    label={t('loginMethod')}
-                    value={loginMethod}
-                    onChange={setLoginMethod}
-                  >
-                    <div className="login-methods">
-                      <Radio value="password" label={t('passwordMethod')} disabled={busy} />
-                      <Radio value="interactive" label={t('interactiveMethod')} disabled={busy} />
-                      <Radio value="key" label={t('keyMethod')} disabled={busy} />
-                    </div>
-                  </Radio.Group>
-                  {loginMetadata.requestUser && (
-                    <TextInput
-                      name="user"
-                      label={t('user')}
-                      autoComplete="username"
-                      disabled={busy}
-                    />
-                  )}
-                  {loginMethod === 'password' && (
-                    <PasswordInput
-                      key={passwordKey}
-                      name="password"
-                      label={t('password')}
-                      autoComplete="current-password"
-                      visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }}
-                      disabled={busy}
-                    />
-                  )}
-                  {loginMethod === 'key' && (
-                    <>
-                      <Alert color="blue">{t('keyLocalOnly')}</Alert>
-                      <label className="stack" htmlFor="key-private">
-                        {t('keyPrivateFile')}
-                        <input
-                          key={`private:${passwordKey}`}
-                          id="key-private"
-                          type="file"
-                          required
-                          disabled={busy}
-                        />
-                      </label>
-                      <PasswordInput
-                        key={`passphrase:${passwordKey}`}
-                        id="key-passphrase"
-                        label={t('keyPassphrase')}
-                        autoComplete="off"
-                        visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }}
+                  {t('useSaved')}
+                </Button>
+                {snapshot === null && (
+                  <Menu>
+                    <Menu.Target>
+                      <ActionIcon
+                        variant="subtle"
+                        color="gray"
+                        size="sm"
                         disabled={busy}
-                      />
-                      <label className="stack" htmlFor="key-certificate">
-                        {t('keyCertificateFile')}
-                        <input
-                          key={`certificate:${passwordKey}`}
-                          id="key-certificate"
-                          type="file"
-                          disabled={busy}
-                        />
-                      </label>
-                    </>
-                  )}
-                  <Checkbox
-                    checked={optIn}
-                    onChange={(event) => setOptIn(event.currentTarget.checked)}
-                    disabled={busy || saved !== 'missing'}
-                    label={t('remember')}
-                    description={t('rememberHint')}
-                  />
-                  <div className="actions">
-                    <Button type="submit" loading={busy} disabled={busy || managementLocked}>
-                      {t('login')}
-                    </Button>
-                    {busy && (
-                      <Button type="button" variant="default" onClick={cancel}>
-                        {t('cancel')}
-                      </Button>
-                    )}
-                  </div>
-                </form>
-              </Paper>
-            </div>
-            <footer className="caption workspace-footer">
+                        aria-label={t('savedOptions')}
+                      >
+                        ⋯
+                      </ActionIcon>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      <Menu.Item onClick={() => showConfirmation('revoke')}>
+                        {t('forgetSaved')}
+                      </Menu.Item>
+                      <Menu.Item onClick={() => showConfirmation('local')}>
+                        {t('removeLocalOnly')}
+                      </Menu.Item>
+                    </Menu.Dropdown>
+                  </Menu>
+                )}
+              </Group>
+            )}
+            {saved === 'pending' && (
+              <Alert color="yellow">
+                <p>{t('pending')}</p>
+                {snapshot === null && (
+                  <Button
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => showConfirmation('local')}
+                  >
+                    {t('removeLocal')}
+                  </Button>
+                )}
+              </Alert>
+            )}
+            {saved === 'unavailable' && <Alert color="yellow">{t('storageUnavailable')}</Alert>}
+            <form
+              key={loginMetadata.scope.slug}
+              method={loginMethod === 'key' ? 'dialog' : 'post'}
+              action={loginMethod === 'key' ? undefined : '/_bifroest/api/v1/login/password'}
+              className="login-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void login(event.currentTarget);
+              }}
+            >
               <SegmentedControl
-                aria-label={t('theme')}
-                value={scheme}
-                onChange={onScheme}
+                aria-label={t('loginMethod')}
+                value={loginMethod}
+                onChange={setLoginMethod}
+                disabled={busy}
+                fullWidth
                 data={[
-                  { value: 'auto', label: t('auto') },
-                  { value: 'light', label: t('light') },
-                  { value: 'dark', label: t('dark') },
+                  {
+                    value: 'password',
+                    label: (
+                      <>
+                        <span aria-hidden="true">{t('loginPasswordTab')}</span>
+                        <VisuallyHidden>{t('passwordMethod')}</VisuallyHidden>
+                      </>
+                    ),
+                  },
+                  {
+                    value: 'interactive',
+                    label: (
+                      <>
+                        <span aria-hidden="true">{t('loginInteractiveTab')}</span>
+                        <VisuallyHidden>{t('interactiveMethod')}</VisuallyHidden>
+                      </>
+                    ),
+                  },
+                  {
+                    value: 'key',
+                    label: (
+                      <>
+                        <span aria-hidden="true">{t('loginKeyTab')}</span>
+                        <VisuallyHidden>{t('keyMethod')}</VisuallyHidden>
+                      </>
+                    ),
+                  },
                 ]}
               />
-              <details>
-                <summary>{t('interfaceInformation')}</summary>
-                <p>{t('partial')}</p>
-              </details>
-              <Anchor
-                href="/_bifroest/files/third-party-licenses.txt"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                {t('notices')}
-              </Anchor>
-            </footer>
-          </>
+              {loginMetadata.requestUser && (
+                <TextInput
+                  name="user"
+                  label={t('user')}
+                  autoComplete="username"
+                  data-autofocus
+                  disabled={busy}
+                />
+              )}
+              {loginMethod === 'password' && (
+                <PasswordInput
+                  key={passwordKey}
+                  name="password"
+                  label={t('password')}
+                  autoComplete="current-password"
+                  visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }}
+                  disabled={busy}
+                />
+              )}
+              {loginMethod === 'key' && (
+                <>
+                  <Text size="xs" c="dimmed">
+                    {t('keyLocalHint')}
+                  </Text>
+                  <label className="stack" htmlFor="key-private">
+                    {t('keyPrivateFile')}
+                    <input
+                      key={`private:${passwordKey}`}
+                      id="key-private"
+                      type="file"
+                      required
+                      disabled={busy}
+                    />
+                  </label>
+                  <PasswordInput
+                    key={`passphrase:${passwordKey}`}
+                    id="key-passphrase"
+                    label={t('keyPassphrase')}
+                    autoComplete="off"
+                    visibilityToggleButtonProps={{ 'aria-label': t('togglePassword') }}
+                    disabled={busy}
+                  />
+                  <label className="stack" htmlFor="key-certificate">
+                    {t('keyCertificateFile')}
+                    <input
+                      key={`certificate:${passwordKey}`}
+                      id="key-certificate"
+                      type="file"
+                      disabled={busy}
+                    />
+                  </label>
+                </>
+              )}
+              {saved === 'missing' && (
+                <Checkbox
+                  checked={optIn}
+                  onChange={(event) => setOptIn(event.currentTarget.checked)}
+                  disabled={busy || saved !== 'missing'}
+                  label={t('remember')}
+                  size="sm"
+                />
+              )}
+              <Group justify="flex-end" gap="xs">
+                <Button type="submit" loading={busy} disabled={busy || managementLocked}>
+                  {t('login')}
+                </Button>
+                {busy && (
+                  <Button type="button" variant="default" onClick={cancel}>
+                    {t('cancel')}
+                  </Button>
+                )}
+              </Group>
+            </form>
+          </Stack>
         )}
-      </Modal>
-      <Modal
-        classNames={{ content: 'confirmation-dialog' }}
-        lockScroll={false}
-        opened={accountOpen}
-        onClose={() => setAccountOpen(false)}
-        title={t('account')}
-        closeButtonProps={{ 'aria-label': t('close') }}
-      >
-        <div className="stack">
-          {snapshot && (
-            <>
-              <p>{snapshot.principal}</p>
-              <p>
-                {t('connectionLoginContext')}: {snapshot.scope.slug || '/'}
-              </p>
-              <p className="caption">
-                {t('expires')}:{' '}
-                <time dateTime={snapshot.expiresAt}>
-                  {new Intl.DateTimeFormat('en-US', {
-                    dateStyle: 'medium',
-                    timeStyle: 'short',
-                  }).format(new Date(snapshot.expiresAt))}
-                </time>
-              </p>
-            </>
-          )}
-          {snapshot && (
-            <Button
-              variant="default"
-              disabled={
-                closing || busy || rememberUncertain || managementLocked || tabCount >= maximumTabs
-              }
-              onClick={() => showLogin()}
-            >
-              {t('reauthenticate')}
-            </Button>
-          )}
-          <p className="caption">{t('connectionLogoutScope')}</p>
-        </div>
       </Modal>
       <Modal
         classNames={{ content: 'confirmation-dialog' }}
@@ -866,18 +832,6 @@ export function App({
               { value: 'dark', label: t('dark') },
             ]}
           />
-          <details>
-            <summary>{t('interfaceInformation')}</summary>
-            <p>{t('partial')}</p>
-            <p>{t('terminalFresh')}</p>
-          </details>
-          <Anchor
-            href="/_bifroest/files/third-party-licenses.txt"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {t('notices')}
-          </Anchor>
         </div>
       </Modal>
       <Modal
@@ -888,9 +842,32 @@ export function App({
         closeButtonProps={{ 'aria-label': t('close') }}
       >
         {notice && (
-          <Alert role="status" color={notice.color}>
-            {t(notice.key)}
-          </Alert>
+          <Stack
+            gap="sm"
+            className="access-notice"
+            data-access-principal={notice.context?.principal}
+          >
+            {notice.context && (
+              <Text size="sm" c="dimmed">
+                {notice.context.scope.slug || '/'} · {notice.context.principal}
+              </Text>
+            )}
+            <Alert role="status" color={notice.color}>
+              {t(notice.key)}
+            </Alert>
+            {snapshot && (rememberUncertain || closing) && (
+              <Button
+                color="red"
+                variant="light"
+                disabled={busy || managementLocked}
+                onClick={() => {
+                  void logout();
+                }}
+              >
+                {t(closing ? 'retryLogout' : 'logout')}
+              </Button>
+            )}
+          </Stack>
         )}
       </Modal>
       <Modal

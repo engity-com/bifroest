@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
+import { exerciseCompactWorkspace } from './compact-workspace-ui.mjs';
 import { exerciseConnectionRaces, exerciseManagementOwner } from './connection-races-ui.mjs';
 import { exerciseConnections } from './connections-ui.mjs';
 import { exerciseKey, exerciseKeyVariant } from './key-ui.mjs';
@@ -19,7 +20,14 @@ import { exerciseTerminalExpiry } from './terminal-expiry-ui.mjs';
 import { exerciseLostTerminalLogout } from './terminal-logout-ui.mjs';
 import { exerciseTerminalTabs } from './terminal-tabs-ui.mjs';
 import { exerciseTerminal } from './terminal-ui.mjs';
-import { loginLayout, settledLogin } from './workspace-ui.mjs';
+import {
+  changeTheme,
+  chooseLoginMethod,
+  loginLayout,
+  logoutAccess,
+  notification,
+  settledLogin,
+} from './workspace-ui.mjs';
 
 const origin = process.argv[2];
 assert.match(origin, /^https:\/\/app\.example\.org:[0-9]+$/);
@@ -33,6 +41,7 @@ try {
   const open = async () => {
     context = await chromium.launchPersistentContext(profile, {
       headless: true,
+      hasTouch: process.argv[3] === 'compact',
       ignoreHTTPSErrors: true,
       args: ['--host-resolver-rules=MAP app.example.org 127.0.0.1', '--no-proxy-server'],
     });
@@ -71,7 +80,7 @@ try {
         !policy.includes('unsafe-eval'),
     );
     try {
-      await page.getByRole('heading', { name: 'Fixture brand', exact: true }).waitFor();
+      await page.getByRole('main', { name: 'Fixture brand', exact: true }).waitFor();
     } catch (error) {
       throw new Error(
         JSON.stringify({
@@ -107,7 +116,7 @@ try {
   const login = async (page, remember, user = 'alice') => {
     const nativeInteractive = process.argv[3] === 'local-interactive-profile';
     if (nativeInteractive) {
-      await page.getByText('Interactive / device login', { exact: true }).click();
+      await chooseLoginMethod(page, 'Interactive / device login');
     }
     await page.getByLabel('User name', { exact: true }).fill(user);
     if (!nativeInteractive) {
@@ -146,34 +155,56 @@ try {
   };
   const logout = async (page) => {
     const notification = page.getByRole('dialog', { name: 'Notification details', exact: true });
-    if (await notification.count()) {
+    if (
+      (await notification.isVisible()) &&
+      !(await notification.getByRole('button', { name: 'Log out', exact: true }).count())
+    ) {
       await notification.getByRole('button', { name: 'Close', exact: true }).click();
     }
     // Fixture cleanup deliberately logs out each independent access once. A
     // scoped logout no longer closes another actor/flow's tabs as a side effect.
     for (let remaining = 8; remaining > 0; remaining--) {
-      const logout = page.getByRole('button', { name: 'Log out', exact: true });
-      if (!(await logout.count())) {
+      if (
+        !(await page.getByRole('tablist').getByRole('tab').count()) &&
+        !(
+          (await notification.isVisible()) &&
+          (await notification.getByRole('button', { name: 'Log out', exact: true }).count())
+        )
+      ) {
         break;
       }
       const before = await page.getByRole('tab').count();
+      const recovery = page.getByRole('dialog', { name: 'Notification details', exact: true });
+      const recovering = await recovery
+        .getByRole('button', { name: 'Log out', exact: true })
+        .count();
       const confirmed = page.waitForResponse(
         (response) => response.url().endsWith('/api/v1/logout') && response.status() === 204,
       );
-      await logout.click();
+      await logoutAccess(page);
       await confirmed;
-      await page.waitForFunction(
-        (before) =>
-          document.querySelectorAll('[role="tab"]').length < before ||
-          !document.querySelector('button[aria-label="Log out"]'),
-        before,
-      );
+      if (recovering) {
+        await recovery.waitFor({ state: 'hidden' });
+      } else {
+        await page.waitForFunction(
+          (before) =>
+            document.querySelectorAll('[role="tab"]').length < before ||
+            !document.querySelector('[data-connection-active="true"]'),
+          before,
+        );
+      }
     }
-    await page.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'New connection', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Sign in', exact: true }).waitFor();
     assert.equal(await local(page), 'missing');
   };
   async function exercise() {
     let page = await open();
+    if (process.argv[3] === 'compact') {
+      await exerciseCompactWorkspace(page);
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (process.argv[3] === 'workspace-races') {
       await exerciseConnectionRaces(page);
       assert.deepEqual(errors, []);
@@ -298,13 +329,14 @@ try {
     assert.equal(await local(page), 'missing');
     await logout(page);
     await login(page, true);
-    await page.getByText('RememberMe setup confirmed for this browser.', { exact: true }).waitFor();
+    await notification(page, 'RememberMe setup confirmed for this browser.');
     assert.equal(await local(page), 'ready');
     assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
     await context.close();
     page = await open();
     await page.getByRole('button', { name: 'Use saved access', exact: true }).waitFor();
-    await page.getByRole('button', { name: 'Forget saved browser access', exact: true }).click();
+    await page.getByRole('button', { name: 'Saved access options', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Forget saved browser access', exact: true }).click();
     await page
       .getByRole('dialog', { name: 'Revoke saved browser access?', exact: true })
       .getByRole('button', { name: 'Cancel', exact: true })
@@ -361,7 +393,8 @@ try {
       });
     });
     await page.reload();
-    await page.getByRole('button', { name: 'Forget saved browser access', exact: true }).click();
+    await page.getByRole('button', { name: 'Saved access options', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Forget saved browser access', exact: true }).click();
     await page
       .getByRole('dialog', { name: 'Revoke saved browser access?', exact: true })
       .getByRole('button', { name: 'Revoke browser permission', exact: true })
@@ -372,10 +405,8 @@ try {
       'ready',
       'failed remote revoke must not silently delete local keys',
     );
-    await page
-      .getByRole('dialog', { name: 'Sign in', exact: true })
-      .getByRole('button', { name: 'Remove local data only', exact: true })
-      .click();
+    await page.getByRole('button', { name: 'Saved access options', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Remove local data only', exact: true }).click();
     await page
       .getByRole('dialog', { name: 'Remove local data only?', exact: true })
       .getByRole('button', { name: 'Remove local data only', exact: true })
@@ -386,7 +417,7 @@ try {
       })
       .waitFor();
     assert.equal(await local(page), 'missing');
-    await page.getByText('Dark', { exact: true }).click();
+    await changeTheme(page, 'Dark');
     await page.locator('html[data-mantine-color-scheme="dark"]').waitFor();
     assert.equal(await page.locator('html').getAttribute('data-mantine-color-scheme'), 'dark');
     assert.deepEqual(await page.evaluate(() => window.cspViolations), []);

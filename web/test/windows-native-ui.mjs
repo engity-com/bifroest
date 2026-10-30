@@ -5,6 +5,13 @@ import { isIP } from 'node:net';
 import { createInterface } from 'node:readline';
 import { chromium } from 'playwright';
 import { observePublicKeyWasm } from './public-wasm-diagnostics.mjs';
+import {
+  activeAccess,
+  chooseLoginMethod,
+  duplicateTab,
+  logoutAccess,
+  notification,
+} from './workspace-ui.mjs';
 
 const [address, fixtureFile, keyFile] = process.argv.slice(2);
 assert.equal(isIP(address), 4);
@@ -168,7 +175,7 @@ try {
         }
       });
       const phase = document
-        .querySelector('.application-status [data-terminal-phase]')
+        .querySelector('[data-terminal-active="true"] [data-terminal-phase]')
         ?.getAttribute('data-terminal-phase');
       return observed || ['interrupted', 'disconnected', 'exited'].includes(phase);
     }, marker);
@@ -198,16 +205,17 @@ try {
       assert(!response.headers()['content-security-policy'].includes('wasm-unsafe-eval'));
     }
     const dialog = page.getByRole('dialog', { name: 'Sign in', exact: true });
-    await dialog.getByText('SSH key login', { exact: true }).click();
+    if (!(await dialog.isVisible())) {
+      await page.getByRole('button', { name: 'New connection', exact: true }).click();
+    }
+    await chooseLoginMethod(page, 'SSH key login');
     await dialog.getByLabel('User name', { exact: true }).fill(fixture.user);
     await dialog
       .getByLabel('Private key file (local only)', { exact: true })
       .setInputFiles(keyFile);
     await dialog.getByRole('button', { name: 'Sign in', exact: true }).click();
     milestone('login-submitted');
-    await page
-      .getByRole('heading', { name: `Signed in as ${fixture.user}`, exact: true })
-      .waitFor();
+    await activeAccess(page, fixture.user);
     await dialog.waitFor({ state: 'hidden' });
     await page.locator('[data-terminal-phase="connected"]').waitFor();
     stage = `login-${number}-connected`;
@@ -260,7 +268,7 @@ try {
     resized.columns !== a.columns || resized.rows !== a.rows,
     'native ConPTY dimensions must actually change',
   );
-  await page.getByRole('button', { name: 'New terminal', exact: true }).click();
+  await duplicateTab(page);
   await page.getByRole('tab', { name: `Terminal 2 ${fixture.user}`, exact: true }).waitFor();
   await page.waitForFunction(
     () => document.getElementById('terminal-tab-2')?.getAttribute('aria-selected') === 'true',
@@ -280,7 +288,7 @@ try {
   assert.equal(kept.connection, a.connection);
   await checkpoint('after-close');
   await exit(7);
-  await page.getByRole('button', { name: 'New terminal', exact: true }).click();
+  await duplicateTab(page);
   await page.locator('[data-terminal-phase="connected"]').waitFor();
   executions.push({ ...(await probe('web-before-reload')), exit: null });
   await page.reload();
@@ -288,8 +296,8 @@ try {
   await checkpoint('after-reload');
   await login(false);
   executions.push({ ...(await probe('web-after-reload')), exit: null });
-  await page.getByRole('button', { name: 'Log out', exact: true }).click();
-  await page.getByText('Logout confirmed.', { exact: true }).waitFor();
+  await logoutAccess(page);
+  await notification(page, 'Logout confirmed.');
   milestone('logout-confirmed');
   assert.equal(await page.locator('.xterm').count(), 0);
   await checkpoint('after-logout');
@@ -304,8 +312,8 @@ try {
   assert.equal(new Set(executions.map((value) => value.connection)).size, 5);
   assert.equal(new Set(executions.map((value) => value.execution)).size, 5);
   assert.equal(new Set(executions.map((value) => value.session)).size, 1);
-  await page.getByRole('button', { name: 'Log out', exact: true }).click();
-  await page.getByText('Logout confirmed.', { exact: true }).waitFor();
+  await logoutAccess(page);
+  await notification(page, 'Logout confirmed.');
   assert.deepEqual(errors, []);
   assert.deepEqual(failures, []);
   assert.equal(
@@ -329,7 +337,7 @@ try {
       failures,
       sockets,
       status: await page
-        ?.locator('.application-status')
+        ?.locator('[data-terminal-active="true"] [data-terminal-phase]')
         .textContent()
         .catch(() => null),
       output: (

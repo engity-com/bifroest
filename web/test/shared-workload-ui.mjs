@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { activeAccess, chooseLoginMethod, logoutAccess, notification } from './workspace-ui.mjs';
 
 // This drives the actual built UI against the owned Bifröst binary and real
 // Docker/Kubernetes backend. No SSH self-dial or management CLI web action.
@@ -60,7 +61,7 @@ try {
     assert.equal(response.status(), 200);
     assert(!response.headers()['content-security-policy'].includes('wasm-unsafe-eval'));
     try {
-      await page.getByText('SSH key login', { exact: true }).click();
+      await chooseLoginMethod(page, 'SSH key login');
     } catch (error) {
       throw new Error(
         JSON.stringify({
@@ -78,7 +79,7 @@ try {
     await page.getByLabel('User name', { exact: true }).fill('e2e');
     await page.getByLabel('Private key file (local only)', { exact: true }).setInputFiles(keyFile);
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-    await page.getByRole('heading', { name: 'Signed in as e2e', exact: true }).waitFor();
+    await activeAccess(page, 'e2e');
     await page.getByRole('dialog', { name: 'Sign in', exact: true }).waitFor({ state: 'hidden' });
     await page.locator('[data-terminal-phase="connected"]').waitFor();
     assert.equal(
@@ -149,8 +150,8 @@ try {
   assert.equal(first.session, second.session);
   assert.equal(first.account, second.account);
   assert.notEqual(first.connection, second.connection);
-  await page.getByRole('button', { name: 'Log out', exact: true }).click();
-  await page.getByText('Logout confirmed.', { exact: true }).waitFor();
+  await logoutAccess(page);
+  await notification(page, 'Logout confirmed.');
   assert.equal(await page.locator('.xterm').count(), 0);
   assert.deepEqual(errors, []);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);

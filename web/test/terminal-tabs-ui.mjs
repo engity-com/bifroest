@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { duplicateTab, tabMenu } from './workspace-ui.mjs';
 
 export async function exerciseTerminalTabs(page, login, logout) {
   let sockets = 0;
@@ -34,16 +35,18 @@ export async function exerciseTerminalTabs(page, login, logout) {
   await login(page, false);
   assert.equal(sockets, 1);
   for (let number = 2; number <= 8; number++) {
-    await page.getByRole('button', { name: 'New terminal', exact: true }).click();
+    await duplicateTab(page);
     await page.getByRole('tab', { name: `Terminal ${number} alice`, exact: true }).waitFor();
     await page.locator('[data-terminal-phase="exited"]').waitFor();
   }
   assert.equal(sockets, 8, 'each deliberate new tab owns exactly one new shell');
+  await tabMenu(page);
   assert.equal(
-    await page.getByRole('button', { name: 'New terminal', exact: true }).isEnabled(),
+    await page.getByRole('menuitem', { name: 'Duplicate', exact: true }).isEnabled(),
     false,
     'local tab resources are bounded independently of server quotas',
   );
+  await page.keyboard.press('Escape');
   const first = page.getByRole('tab', { name: 'Terminal 1 alice', exact: true });
   await page.getByRole('tab', { name: 'Terminal 8 alice', exact: true }).evaluate((node) => {
     node.focus();
@@ -91,7 +94,7 @@ export async function exerciseTerminalTabs(page, login, logout) {
   );
   assert.equal(sockets, 8, 'keyboard navigation cannot reconnect a tab');
   await page.getByRole('button', { name: 'Close terminal 1', exact: true }).click();
-  await page.getByRole('button', { name: 'New terminal', exact: true }).click();
+  await duplicateTab(page);
   await page.getByRole('tab', { name: 'Terminal 9 alice', exact: true }).waitFor();
   await page.locator('[data-terminal-phase="exited"]').waitFor();
   assert.equal(sockets, 9);

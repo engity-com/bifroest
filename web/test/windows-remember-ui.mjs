@@ -5,7 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { chromium } from 'playwright';
-import { settledLogin } from './workspace-ui.mjs';
+import {
+  chooseLoginMethod,
+  duplicateTab,
+  logoutAccess,
+  notification,
+  settledLogin,
+} from './workspace-ui.mjs';
 
 const [address, fixtureFile, passwordFile] = process.argv.slice(2);
 assert.equal(isIP(address), 4);
@@ -269,7 +275,7 @@ try {
     page = await open(profile);
     let dialog = page.getByRole('dialog', { name: 'Sign in', exact: true });
     if (method === 'interactive') {
-      await dialog.getByText('Interactive / device login', { exact: true }).click();
+      await chooseLoginMethod(page, 'Interactive / device login');
     }
     await dialog.getByLabel('User name', { exact: true }).fill(fixture.user);
     assert.equal(
@@ -291,7 +297,7 @@ try {
     stage = `primary-${method}-connected`;
     await connected(page);
     stage = `primary-${method}-enrollment-notice`;
-    await page.getByText('RememberMe setup confirmed for this browser.', { exact: true }).waitFor();
+    await notification(page, 'RememberMe setup confirmed for this browser.');
     stage = `primary-${method}-stored-keys`;
     await storedKeys(page);
     stage = `primary-${method}-native-probe`;
@@ -327,7 +333,7 @@ try {
         resolve();
       };
     });
-    await page.getByRole('button', { name: 'New terminal', exact: true }).click();
+    await duplicateTab(page);
     await rejected;
     assert.equal(
       resumes,
@@ -336,7 +342,7 @@ try {
     );
     await checkpoint(`add-group-${method}`);
     stage = `group-restored-${method}`;
-    await page.getByRole('button', { name: 'New terminal', exact: true }).click();
+    await duplicateTab(page);
     await page.locator('[data-terminal-phase="connected"]').waitFor();
     await probeAndExit(page, `${method}-group-restored`);
     assert.equal(resumes, proofsBefore, 'restored admission must still use that same bearer');
@@ -353,8 +359,8 @@ try {
     await page.getByRole('button', { name: 'Use saved access', exact: true }).click();
     await connected(page);
     await probeAndExit(page, `${method}-restored`);
-    await page.getByRole('button', { name: 'Log out', exact: true }).click();
-    await page.getByText('Logout confirmed.', { exact: true }).waitFor();
+    await logoutAccess(page);
+    await notification(page, 'Logout confirmed.');
     await page.reload();
     await noStoredKeys(page);
     assert.equal(
@@ -416,7 +422,7 @@ try {
         ?.evaluate(() => ({
           phase:
             document
-              .querySelector('.application-status [data-terminal-phase]')
+              .querySelector('[data-terminal-active="true"] [data-terminal-phase]')
               ?.getAttribute('data-terminal-phase') ?? null,
           dialogs: document.querySelectorAll('[role="dialog"]').length,
           tabs: document.querySelectorAll('[role="tab"]').length,

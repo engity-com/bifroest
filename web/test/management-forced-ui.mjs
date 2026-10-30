@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { exactArtifactSelection, workspace } from './workspace-ui.mjs';
+import {
+  activeAccess,
+  chooseLoginMethod,
+  exactArtifactSelection,
+  workspace,
+} from './workspace-ui.mjs';
 
 export async function forcedKeyLogin(page, file) {
   const fixture = JSON.parse(await readFile(file, 'utf8'));
-  await page.getByText('SSH key login', { exact: true }).click();
+  await chooseLoginMethod(page, 'SSH key login');
   await page.getByLabel('User name', { exact: true }).fill('alice');
   await page.getByLabel('Private key file (local only)', { exact: true }).setInputFiles({
     name: 'local-fixture',
@@ -15,7 +20,7 @@ export async function forcedKeyLogin(page, file) {
     .getByLabel('Key passphrase (optional, local only)', { exact: true })
     .fill(fixture.passphrase);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await page.getByRole('heading', { name: 'Signed in as alice', exact: true }).waitFor();
+  await activeAccess(page, 'alice');
 }
 
 export async function exerciseManagementForcedVersion(page, file, logout) {

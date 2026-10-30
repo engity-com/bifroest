@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
-import { reauthenticate, workspace } from './workspace-ui.mjs';
+import {
+  activeAccess,
+  logoutAccess,
+  notification,
+  reauthenticate,
+  workspace,
+} from './workspace-ui.mjs';
 
 const [origin, mode] = process.argv.slice(2);
 assert.match(origin, /^https:\/\/app\.example\.org:[0-9]+$/u);
@@ -50,7 +56,7 @@ try {
     await page.getByLabel('User name', { exact: true }).fill(user);
     await page.getByLabel('Password', { exact: true }).fill('correct');
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-    await page.getByRole('heading', { name: `Signed in as ${user}`, exact: true }).waitFor();
+    await activeAccess(page, user);
   };
   const response = await page.goto(`${origin}/Work`);
   assert.equal(response.status(), 200);
@@ -203,8 +209,8 @@ try {
   assert.equal(await catalog.getByRole('table').count(), 0);
   await catalog.getByRole('button', { name: 'Load auditlogs', exact: true }).click();
   await logs.getByText('catalog00', { exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Log out', exact: true }).click();
-  await page.getByText('Logout confirmed.', { exact: true }).waitFor();
+  await logoutAccess(page);
+  await notification(page, 'Logout confirmed.');
   assert.equal(await catalog.count(), 0);
   assert.deepEqual(errors, []);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);

@@ -11,6 +11,9 @@ export const messages = {
   remember: 'Remember this browser',
   loginMethod: 'Login method',
   passwordMethod: 'Password login',
+  loginPasswordTab: 'Password',
+  loginInteractiveTab: 'Interactive',
+  loginKeyTab: 'SSH key',
   interactiveMethod: 'Interactive / device login',
   keyMethod: 'SSH key login',
   keyPrivateFile: 'Private key file (local only)',
@@ -18,6 +21,7 @@ export const messages = {
   keyCertificateFile: 'SSH user certificate (optional)',
   keyLocalOnly:
     'Key files and passphrases stay in this tab. A short-lived Go/WASM worker signs one server challenge; only your public key/certificate and SSH signature are sent. Select files again for another login. RememberMe uses independent browser keys.',
+  keyLocalHint: 'Your private key and passphrase stay in this tab.',
   keyImportFailed:
     'The local key could not be imported or signed. Check the file, passphrase, matching certificate and supported limits (64 KiB key; bcrypt up to 64 rounds). No private key or passphrase was uploaded.',
   loginChallenge: 'Authentication step',
@@ -38,6 +42,7 @@ export const messages = {
     'Optional. Uses secure browser key storage. Your password and login key are not saved.',
   saved: 'Saved browser access is available.',
   useSaved: 'Use saved access',
+  savedOptions: 'Saved access options',
   forgetSaved: 'Forget saved browser access',
   forgetTitle: 'Revoke saved browser access?',
   forgetWarning:
@@ -94,6 +99,12 @@ export const messages = {
   workspaceManagement: 'Management',
   account: 'Account',
   connectionNew: 'New connection',
+  connectionOptions: 'Connection options',
+  connectionAvailable: 'Signed-in flows',
+  connectionTabMenu: 'Tab actions',
+  connectionDuplicate: 'Duplicate',
+  terminalSpecial: 'Special commands',
+  applicationMenu: 'Application menu',
   connectionTabs: 'Connections and terminals',
   connectionLink: 'Access link / flow',
   connectionLoginContext: 'Connecting to',

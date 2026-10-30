@@ -142,7 +142,7 @@ export async function exerciseManagementForcedAction(page, file, logout) {
     await page.evaluate(() => window.targetSockets.at(-1).close());
   } else {
     assert.equal(
-      await page.getByRole('button', { name: 'Log out', exact: true }).isEnabled(),
+      await page.getByRole('button', { name: 'Connection options', exact: true }).isEnabled(),
       false,
     );
     assert.equal(

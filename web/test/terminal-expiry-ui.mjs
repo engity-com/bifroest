@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { captureLayout } from './workspace-ui.mjs';
+import { captureLayout, duplicateTab } from './workspace-ui.mjs';
 
 export async function exerciseTerminalExpiry(page, login, logout) {
   let sockets = 0;
@@ -41,7 +41,7 @@ export async function exerciseTerminalExpiry(page, login, logout) {
   await page.clock.setFixedTime(new Date(expiry.advanceTo));
   await type('old-shell-after-grant-expiry');
   assert.equal(sockets, 1, 'grant expiry does not reconnect an existing execution');
-  await page.getByRole('button', { name: 'New terminal', exact: true }).click();
+  await duplicateTab(page);
   const signIn = page.getByRole('dialog', { name: 'Sign in', exact: true });
   await signIn.waitFor();
   assert.equal(sockets, 1, 'an expired grant must request authentication before another socket');
@@ -51,7 +51,7 @@ export async function exerciseTerminalExpiry(page, login, logout) {
   await type('old-shell-after-expired-dialog-cancel');
   assert.equal(await page.getByRole('tab').count(), 1);
   assert.equal(sockets, 1);
-  await page.getByRole('button', { name: 'New terminal', exact: true }).click();
+  await duplicateTab(page);
   await signIn.waitFor();
   await page.clock.setFixedTime(new Date());
   await login(page, false);

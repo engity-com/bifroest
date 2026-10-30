@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { observePublicKeyWasm } from './public-wasm-diagnostics.mjs';
-import { settledLogin } from './workspace-ui.mjs';
+import { activeAccess, chooseLoginMethod, notification, settledLogin } from './workspace-ui.mjs';
 
 export async function exerciseKey(page, file, logout) {
   const fixture = JSON.parse(await readFile(file, 'utf8'));
@@ -34,7 +34,7 @@ export async function exerciseKey(page, file, logout) {
     }
   });
   const choose = async () => {
-    await page.getByText('SSH key login', { exact: true }).click();
+    await chooseLoginMethod(page, 'SSH key login');
     await page.getByLabel('User name', { exact: true }).fill('alice');
   };
   const select = async (name, password = fixture.passphrase, certificate) => {
@@ -120,7 +120,7 @@ export async function exerciseKey(page, file, logout) {
   await page.getByRole('checkbox', { name: 'Remember this browser', exact: true }).check();
   await submit();
   await signed();
-  await page.getByText('RememberMe setup confirmed for this browser.', { exact: true }).waitFor();
+  await notification(page, 'RememberMe setup confirmed for this browser.');
   assert(
     workerPolicy.includes("'wasm-unsafe-eval'") &&
       !workerPolicy.includes("'unsafe-eval'") &&
@@ -215,7 +215,7 @@ export async function exerciseKeyVariant(page, file, variant, logout) {
       'private material must stay in this tab',
     );
   });
-  await page.getByText('SSH key login', { exact: true }).click();
+  await chooseLoginMethod(page, 'SSH key login');
   await page.getByLabel('User name', { exact: true }).fill('alice');
   await page.getByLabel('Private key file (local only)', { exact: true }).setInputFiles({
     name: 'local-key',
@@ -234,7 +234,7 @@ export async function exerciseKeyVariant(page, file, variant, logout) {
   }
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   if (denied) {
-    await page.getByRole('heading', { name: 'Signed in as alice', exact: true }).waitFor();
+    await activeAccess(page, 'alice');
     await page.getByRole('dialog', { name: 'Sign in', exact: true }).waitFor({ state: 'hidden' });
     await page.locator('[data-terminal-phase="interrupted"]').waitFor();
     assert.equal(await page.locator('[data-terminal-phase="exited"]').count(), 0);

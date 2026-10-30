@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
 import {
+  activeAccess,
   captureLayout,
   exactArtifactSelection,
+  logoutAccess,
+  notification,
   reauthenticate,
   workspace,
 } from './workspace-ui.mjs';
@@ -91,7 +94,7 @@ try {
   await page.getByLabel('User name', { exact: true }).fill('alice');
   await page.getByLabel('Password', { exact: true }).fill('correct');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await page.getByRole('heading', { name: 'Signed in as alice', exact: true }).waitFor();
+  await activeAccess(page, 'alice');
   await workspace(page, 'Server');
   await page.getByRole('button', { name: 'Load flows', exact: true }).click();
   await page
@@ -478,7 +481,7 @@ try {
   await page.getByLabel('User name', { exact: true }).fill('bob');
   await page.getByLabel('Password', { exact: true }).fill('correct');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await page.getByRole('heading', { name: 'Signed in as bob', exact: true }).waitFor();
+  await activeAccess(page, 'bob');
   await workspace(page, 'Recordings & audit');
   assert.equal(
     await panel
@@ -506,12 +509,12 @@ try {
     0,
     'an incomplete audited transfer must not expose files',
   );
-  await page.getByRole('button', { name: 'Log out', exact: true }).click();
+  await logoutAccess(page);
   await page.evaluate(() =>
     fetch('/_bifroest/test/artifact-release', { method: 'POST', credentials: 'omit' }),
   );
-  await page.getByText('Logout confirmed.', { exact: true }).waitFor();
-  await page.getByRole('heading', { name: 'Signed in as alice', exact: true }).waitFor();
+  await notification(page, 'Logout confirmed.');
+  await activeAccess(page, 'alice');
   await result
     .getByText('Signing producer matches the independent expected ID', { exact: true })
     .waitFor();
@@ -520,8 +523,8 @@ try {
     aliceURLs,
     'Bob logout must leave only the original Alice-owned export intact',
   );
-  await page.getByRole('button', { name: 'Log out', exact: true }).click();
-  await page.getByRole('dialog', { name: 'Sign in', exact: true }).waitFor();
+  await logoutAccess(page);
+  await page.locator('[data-connection-active="true"]').waitFor({ state: 'detached' });
   assert.equal(await panel.count(), 0);
   assert.equal(
     await page.evaluate(() => window.artifactURLs.size),

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -12,7 +13,7 @@ import (
 	"github.com/engity-com/bifroest/pkg/terminal"
 )
 
-type terminalUiCounters struct{ runs, resizes, interrupts atomic.Int32 }
+type terminalUiCounters struct{ runs, resizes, interrupts, rightButtons atomic.Int32 }
 
 // Test backend reached through the real shared execution/recording/lease driver,
 // not a browser-side command emulator or a claim of real container execution.
@@ -87,6 +88,17 @@ func installTerminalUiBackend(svc *service) *terminalUiCounters {
 			if string(line) == "drop" {
 				_ = stream.Close()
 				return -1, fmt.Errorf("test disconnect")
+			}
+			if string(line) == "mouse-on" {
+				_, _ = io.WriteString(stream, "\x1b[?1000h\x1b[?1006hMOUSE_TRACKING_ON\r\n")
+				line = line[:0]
+				continue
+			}
+			if count := strings.Count(string(line), "\x1b[<2;"); count > 0 {
+				counters.rightButtons.Add(int32(count))
+				_, _ = fmt.Fprintf(stream, "\x1b[?1000l\x1b[?1006lRIGHT_BUTTON_EVENTS:%d\r\n", count)
+				line = line[:0]
+				continue
 			}
 			_, _ = fmt.Fprintf(stream, "STDIN:%s\r\n", line)
 			line = line[:0]

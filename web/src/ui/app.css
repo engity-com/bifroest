@@ -61,62 +61,44 @@ details > summary + * { margin-top: .75rem; }
 .artifact-verification { max-width: 50rem; }
 .playback-surface { max-width: 100%; height: 24rem; overflow: auto; }
 .workspace.terminal-workspace { width: 100%; max-width: none; height: 100dvh; margin: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
-.application-bar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .25rem .75rem; padding: .25rem .5rem 0; border-bottom: 1px solid var(--mantine-color-default-border); background: var(--mantine-color-default); min-width: 0; }
-.application-brand { display: flex; align-items: baseline; gap: .5rem; min-width: 0; font-size: .75rem; color: var(--workspace-muted); }
-.application-brand h1 { font-size: .875rem; color: var(--mantine-color-text); font-weight: 600; margin: 0; max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.application-brand > span { min-width: 0; max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.application-status { display: flex; align-items: center; gap: .5rem; min-width: 0; font-size: .8125rem; overflow: hidden; white-space: nowrap; }
-.application-status > span:not(.connection-dot) { overflow: hidden; text-overflow: ellipsis; }
-.terminal-owner { color: var(--workspace-muted); }
+.application-bar { padding: .125rem .25rem 0; border-bottom: 1px solid var(--mantine-color-default-border); background: var(--mantine-color-body); min-width: 0; }
 .connection-dot { display: inline-block; flex-shrink: 0; width: .5rem; height: .5rem; border-radius: 50%; background: var(--mantine-color-gray-6); }
 .connection-dot--connected { background: var(--mantine-color-green-6); }
 .connection-dot--connecting, .connection-dot--finishing { background: var(--mantine-color-yellow-6); }
 .connection-dot--interrupted { background: var(--mantine-color-red-6); }
-.application-account { display: flex; gap: .125rem; align-items: center; min-width: 0; }
-.application-account .mantine-Button-root { height: 1.875rem; min-height: 1.875rem; padding-inline: .5rem; }
-.application-account h2 { font-size: .75rem; max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bar-notice { color: inherit; border: 0; background: transparent; max-width: 12rem; cursor: pointer; font-size: .75rem; overflow: hidden; }
-.bar-notice > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bar-notice--yellow { color: var(--mantine-color-yellow-8); }
-.bar-notice--red { color: var(--mantine-color-red-7); }
-.application-tabs { display: flex; align-items: center; gap: .25rem; grid-column: 1 / -1; min-width: 0; }
-.terminal-tab-list { display: flex; flex: 1 1 0; overflow-x: auto; min-width: 0; scrollbar-width: thin; }
-.terminal-tab { display: flex; flex-shrink: 0; align-items: stretch; border: 1px solid var(--mantine-color-default-border); border-bottom: 0; border-radius: .25rem .25rem 0 0; overflow: hidden; }
-.terminal-tab button { font: inherit; font-size: .8125rem; color: inherit; border: 0; background: transparent; cursor: pointer; }
-.terminal-tab [role="tab"] { display: flex; align-items: center; gap: .5rem; padding: .5rem .625rem; }
-.terminal-tab [aria-selected="true"] { background: var(--mantine-color-default-hover); font-weight: 600; }
+.application-tabs { display: flex; align-items: center; gap: .125rem; min-width: 0; }
+.terminal-tab-list { display: flex; flex: 0 1 auto; overflow-x: auto; min-width: 0; scrollbar-width: thin; }
+.connection-tab { display: flex; flex-shrink: 0; align-items: center; gap: .125rem; padding: .125rem .25rem .125rem 0; border-radius: var(--mantine-radius-sm) var(--mantine-radius-sm) 0 0; border: 1px solid transparent; border-bottom: 0; }
+.connection-tab:hover { background: var(--mantine-color-default-hover); }
+.connection-tab[data-active] { background: var(--mantine-color-default); border-color: var(--mantine-color-default-border); }
+.connection-tab [role="tab"] { display: flex; align-items: center; gap: .375rem; padding: .375rem .375rem .375rem .625rem; height: 2rem; font-size: .8125rem; white-space: nowrap; user-select: none; touch-action: pan-x; }
+.connection-tab [aria-selected="true"] { font-weight: 600; }
 .tab-owner { color: var(--workspace-muted); max-width: 8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-scope { max-width: 10rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.terminal-tab-close { padding: .25rem .5rem; }
-.terminal-tab button:focus-visible { outline: 2px solid var(--mantine-primary-color-filled); outline-offset: -2px; }
-.application-tabs .new-terminal, .application-tabs .new-connection { flex-shrink: 0; padding: 0 .625rem; font-size: .8125rem; }
-.application-tabs .workspace-nav { padding: 0; margin-left: auto; border: 0; flex-wrap: nowrap; }
-.application-tabs .workspace-nav button { font-size: .75rem; padding-inline: .5rem; }
+.tab-kind { color: var(--workspace-muted); font-size: .75rem; }
+.connection-tab button:focus-visible { outline: 2px solid var(--mantine-primary-color-filled); outline-offset: -2px; }
+.connection-add { flex-shrink: 0; }
+.connection-add > button:first-child { font-size: 1.375rem; }
+.workspace-utilities { display: flex; align-items: center; flex-shrink: 0; margin-left: auto; }
 .workspace-body { position: relative; min-height: 0; min-width: 0; overflow: hidden; }
 .terminal-pane { position: absolute; inset: 0; min-height: 0; min-width: 0; }
 .terminal-pane .terminal-surface { width: 100%; height: 100%; min-height: 0; padding: .25rem; }
 .management-workspace { height: 100%; overflow: auto; padding: 1rem; }
 .management-workspace > .workspace-nav { margin-bottom: 1rem; }
-.login-context { display: flex; flex-direction: column; gap: .375rem; margin-bottom: 1rem; font-size: .875rem; }
-.login-context p { margin: 0; color: var(--mantine-color-dimmed); }
+.terminal-state { position: absolute; right: .5rem; bottom: .5rem; max-width: calc(100% - 1rem); background: var(--mantine-color-default); border: 1px solid var(--mantine-color-default-border); border-radius: var(--mantine-radius-sm); padding: .375rem .625rem; font-size: .8125rem; pointer-events: none; }
+.terminal-state--quiet { width: 1px; height: 1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); }
 .workspace-empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 1rem; color: var(--workspace-muted); text-align: center; }
 .workspace-empty h2 { font-size: 1.125rem; margin: 0; }
 .login-dialog .login-card { padding: 0; border: 0; }
+.login-form { display: flex; flex-direction: column; gap: var(--mantine-spacing-sm); }
+.login-form label.stack { gap: .375rem; font-size: var(--mantine-font-size-sm); }
+.login-form input[type="file"] { width: 100%; font-size: var(--mantine-font-size-sm); border: 1px solid var(--mantine-color-default-border); border-radius: var(--mantine-radius-sm); padding: .375rem; }
+.login-form input[type="file"]::file-selector-button { font: inherit; border: 0; border-radius: var(--mantine-radius-sm); padding: .25rem .5rem; margin-right: .5rem; background: var(--mantine-color-default-hover); color: var(--mantine-color-text); cursor: pointer; }
 .confirmation-dialog input[type="file"] { max-width: 100%; }
 @media (max-width: 48rem) {
-  .application-bar { gap: .125rem .25rem; grid-template-columns: minmax(0, 1fr) auto; }
-  .application-brand h1 { max-width: 6rem; }
-  .application-brand > span { max-width: 4rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .application-status { grid-column: 1 / -1; grid-row: 2; min-height: 1.5rem; }
-  .application-account { grid-column: 2; grid-row: 1; }
-  .application-account h2 { max-width: 6rem; }
-  .application-tabs { grid-row: 3; }
-  .application-tabs { flex-wrap: wrap; }
-  .terminal-tab-list { flex: 1 0 100%; }
-  .application-tabs .new-connection { margin-left: auto; }
-  .application-account .bar-notice { max-width: 4rem; }
+  .tab-scope { max-width: 6rem; }
+  .tab-owner { max-width: 5rem; }
   .management-workspace { padding: .5rem; }
-  .terminal-workspace .application-tabs > button { min-height: 1.875rem; }
 }
 @media (max-width: 60rem) {
   .account-identity { flex-direction: column; align-items: start; }
@@ -137,7 +119,5 @@ details > summary + * { margin-top: .75rem; }
   .terminal-surface { height: max(20rem, calc(100dvh - 29rem)); }
   .terminal-controls { align-items: center; }
   .terminal-controls > .actions { width: 100%; }
-  .workspace .mantine-Button-root { max-width: 100%; height: auto; min-height: 2.25rem; }
-  .workspace .mantine-Button-label { white-space: normal; }
   .workspace input[type="file"] { max-width: 100%; }
 }

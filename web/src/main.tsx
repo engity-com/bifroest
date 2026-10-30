@@ -1,4 +1,13 @@
-import { MantineProvider } from '@mantine/core';
+import {
+  ActionIcon,
+  Button,
+  createTheme,
+  MantineProvider,
+  Modal,
+  PasswordInput,
+  Select,
+  TextInput,
+} from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -17,6 +26,19 @@ const memoryScheme = {
   clear() {},
 };
 
+const theme = createTheme({
+  primaryColor: 'blue',
+  defaultRadius: 'sm',
+  components: {
+    Button: Button.extend({ defaultProps: { size: 'sm' } }),
+    ActionIcon: ActionIcon.extend({ defaultProps: { radius: 'sm' } }),
+    TextInput: TextInput.extend({ defaultProps: { size: 'sm' } }),
+    PasswordInput: PasswordInput.extend({ defaultProps: { size: 'sm' } }),
+    Select: Select.extend({ defaultProps: { size: 'sm' } }),
+    Modal: Modal.extend({ defaultProps: { radius: 'md', centered: true } }),
+  },
+});
+
 function Workspace({ metadata, title }: { metadata: LinkMetadata; title: string }) {
   const [scheme, setScheme] = useState('auto');
   const dark = useMediaQuery('(prefers-color-scheme: dark)');
@@ -25,6 +47,7 @@ function Workspace({ metadata, title }: { metadata: LinkMetadata; title: string 
   }, []);
   return (
     <MantineProvider
+      theme={theme}
       forceColorScheme={
         scheme === 'auto' ? (dark ? 'dark' : 'light') : scheme === 'dark' ? 'dark' : 'light'
       }
