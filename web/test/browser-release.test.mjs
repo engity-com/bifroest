@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   cpSync,
@@ -17,6 +18,23 @@ import { captureBrowserInputs, writeBrowserRelease } from '../scripts/browser-re
 
 const output = fileURLToPath(new URL('../../pkg/webui/assets/', import.meta.url));
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+test('documentation favicon checkout preserves source bytes on CRLF-default build hosts', () => {
+  const root = fileURLToPath(new URL('../../', import.meta.url));
+  const file = 'HEAD:docs/assets/favicon.svg';
+  const canonical = execFileSync('git', ['cat-file', 'blob', file], { cwd: root });
+  const windowsCheckout = execFileSync(
+    'git',
+    ['-c', 'core.autocrlf=true', 'cat-file', '--filters', file],
+    { cwd: root },
+  );
+  assert(!canonical.includes(Buffer.from('\r\n')));
+  assert.deepEqual(
+    windowsCheckout,
+    canonical,
+    'the same raw browser input must be verified on Linux and Windows',
+  );
+});
 
 test('release inventory binds actual built assets, Go/project inputs and separate npm license provenance', () => {
   const raw = readFileSync(join(output, 'browser-build.json'));
