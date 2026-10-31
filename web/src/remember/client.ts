@@ -25,6 +25,7 @@ import {
   sessionFields,
   versionInfo,
 } from '../management/protocol';
+import { type KeepAlivePolicy, keepAlivePolicy } from '../terminal/keepalive';
 import type { Transport } from './http';
 import { Http, isToken, object, time } from './http';
 import type { Binding, ProofPurpose, Scope } from './protocol';
@@ -37,6 +38,7 @@ export interface AccessSnapshot {
   readonly expiresAt: string;
   readonly environment: 'terminal' | 'management';
   readonly terminalAvailable: boolean;
+  readonly keepAlive?: KeepAlivePolicy;
 }
 
 interface AccessResponse extends AccessSnapshot {
@@ -71,6 +73,7 @@ function accessResponse(value: unknown, scope: Scope): AccessResponse {
     'principal',
     'environment',
     'terminalAvailable',
+    'keepAlive',
   ]);
   const selected = object(body.scope, ['origin', 'slug']);
   if (
@@ -93,6 +96,7 @@ function accessResponse(value: unknown, scope: Scope): AccessResponse {
     principal: body.principal,
     environment: body.environment,
     terminalAvailable: body.terminalAvailable as boolean,
+    keepAlive: keepAlivePolicy(body.keepAlive),
   };
 }
 
@@ -158,8 +162,16 @@ export class WebAccess {
   }
 
   snapshot(): AccessSnapshot {
-    const { scope, principal, expiresAt, environment, terminalAvailable } = this.#response;
-    return Object.freeze({ scope, principal, expiresAt, environment, terminalAvailable });
+    const { scope, principal, expiresAt, environment, terminalAvailable, keepAlive } =
+      this.#response;
+    return Object.freeze({
+      scope,
+      principal,
+      expiresAt,
+      environment,
+      terminalAvailable,
+      ...(keepAlive ? { keepAlive } : {}),
+    });
   }
   toJSON(): AccessSnapshot {
     return this.snapshot();

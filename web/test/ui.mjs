@@ -6,6 +6,7 @@ import { chromium } from 'playwright';
 import { exerciseCompactWorkspace } from './compact-workspace-ui.mjs';
 import { exerciseConnectionRaces, exerciseManagementOwner } from './connection-races-ui.mjs';
 import { exerciseConnections } from './connections-ui.mjs';
+import { exerciseKeepAlive } from './keepalive-ui.mjs';
 import { exerciseKey, exerciseKeyDiagnostic, exerciseKeyVariant } from './key-ui.mjs';
 import { exerciseDevice, exerciseInteractive, exerciseLostClaim } from './login-ui.mjs';
 import { exerciseManagementActions } from './management-action-ui.mjs';
@@ -187,7 +188,7 @@ try {
       await settledLogin(
         page,
         user,
-        ['terminal', 'terminal-expiry', 'terminal-logout-lost', 'workspace'].includes(
+        ['terminal', 'terminal-expiry', 'terminal-logout-lost', 'workspace', 'keepalive'].includes(
           process.argv[3],
         ),
       );
@@ -252,6 +253,11 @@ try {
   };
   async function exercise() {
     let page = await open();
+    if (process.argv[3] === 'keepalive') {
+      await exerciseKeepAlive(page, login);
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (process.argv[3] === 'preferences') {
       await exercisePreferences(page);
       assert.deepEqual(errors, []);

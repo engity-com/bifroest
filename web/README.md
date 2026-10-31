@@ -36,10 +36,11 @@ remote-link restrictions remain unchanged.
 ## Non-authentication UI preferences
 
 At the user's explicit request, `localStorage` retains only the selected
-`auto`/`light`/`dark` theme and the original user name of a confirmed successful
+`auto`/`light`/`dark` theme, the last accepted editable keepalive interval, and the original user name of a confirmed successful
 primary login, separately for each access-link slug within the browser origin.
-The two owned key forms are `bifroest-ui-v1:theme` and
-`bifroest-ui-v1:username:<encoded-slug>`. Names are plaintext personal preferences,
+The owned key forms are `bifroest-ui-v1:theme`,
+`bifroest-ui-v1:username:<encoded-slug>` and
+`bifroest-ui-v1:keepalive:<encoded-slug>`. Names and intervals are plaintext personal preferences,
 not verified principals, effective target accounts, saved credentials or permissions.
 Stored values are validated and only prefill the editable field; they never start
 login or replace an existing tab's immutable actor. Denial and uncertain login
@@ -59,6 +60,31 @@ load. The **public** verification key is exportable so enrollment can send it to
 the server; `publicKey.extractable:true` does not expose the private key. These
 keys are independently generated, not the imported SSH key. Non-exportability is
 not hardware binding or protection against already-trusted/malicious same-origin code.
+
+## Authenticated flow keepalive
+
+`flow.http.keepAlive` defaults to editable `15s`; an evaluated `!10s` enforces
+`10s`. The server renders the template with the authenticated session context,
+never anonymous discovery. It accepts Go durations from `1s` to `5m`. Each new
+terminal and each live change checks the current flow policy again; auth-response
+metadata and browser preferences are not policy authority.
+
+The tab context menu's **Connection settings** changes the current socket without
+starting another execution. Requests and acknowledgements are correlated; a late
+acknowledgement cannot resolve another request. The UI saves only accepted free
+intervals, separately per origin/link. Enforced values override saved preferences
+without persisting policy/identity/credentials. Missing/corrupt preference storage
+does not change authentication. Actor changes/retired owners cannot save a late
+settings result, and settings input never enters the terminal stream.
+
+Server-native Ping/Pong avoids background-tab timer throttling. Only a matching
+random ping nonce proves liveness; the deadline is `max(45s, 3 * interval)`.
+Changing settings cannot fabricate a pong or count as session activity.
+Shortening a reply window first obtains a genuine matched Pong while preserving
+the old deadline. The bounded settings worker does not block the WebSocket reader.
+Idle/max timeouts, parent-grant expiry, revocation and RememberMe inactivity are unchanged.
+There are no keepalive keystrokes, shell commands, management polling, automatic
+reconnects or replays. HTTP-only management views have no synthetic keepalive job.
 
 ## Development
 

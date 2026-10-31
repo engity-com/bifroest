@@ -98,6 +98,73 @@ afterEach(() => {
 });
 
 describe('owned bounded browser terminal protocol', () => {
+  it('changes keepalive on the existing connection only after a correlated server acknowledgement', async () => {
+    const { socket, connection } = fixture();
+    socket.open();
+    socket.ready();
+    const applied = connection.setKeepAlive('10s');
+    vi.advanceTimersByTime(120);
+    expect(
+      socket.sent.map((value) => (typeof value === 'string' ? JSON.parse(value).type : 'input')),
+    ).toEqual(['open', 'keepalive']);
+    const control = JSON.parse(socket.sent[1] as string);
+    expect(control).toEqual({ type: 'keepalive', interval: '10s', requestId: '1' });
+    socket.message(
+      JSON.stringify({
+        type: 'keepalive',
+        requestId: '1',
+        keepAlive: { interval: '10s', locked: false },
+      }),
+    );
+    await expect(applied).resolves.toEqual({ interval: '10s', locked: false });
+    expect(connection.state()).toEqual({ phase: 'connected' });
+    expect(socket.closes).toBe(0);
+  });
+  it('does not send locked changes or invalid intervals', async () => {
+    const { socket, connection } = fixture();
+    socket.open();
+    socket.message(
+      JSON.stringify({
+        type: 'ready',
+        connectionId: uuid,
+        keepAlive: { interval: '10s', locked: true },
+      }),
+    );
+    await expect(connection.setKeepAlive('1s')).rejects.toMatchObject({ code: 'unavailable' });
+    expect(socket.sent).toHaveLength(1);
+    expect(connection.keepAliveSettings()).toEqual({ interval: '10s', locked: true });
+  });
+  it('does not let a late settings acknowledgement resolve a later request', async () => {
+    const { socket, connection } = fixture();
+    socket.open();
+    socket.ready();
+    const first = connection.setKeepAlive('10s').catch((error) => error.code);
+    vi.advanceTimersByTime(20_001);
+    expect(await first).toBe('unavailable');
+    let secondResolved = false;
+    const second = connection.setKeepAlive('20s').then((value) => {
+      secondResolved = true;
+      return value;
+    });
+    vi.advanceTimersByTime(120);
+    socket.message(
+      JSON.stringify({
+        type: 'keepalive',
+        requestId: '1',
+        keepAlive: { interval: '10s', locked: false },
+      }),
+    );
+    await Promise.resolve();
+    expect(secondResolved).toBe(false);
+    socket.message(
+      JSON.stringify({
+        type: 'keepalive',
+        requestId: '2',
+        keepAlive: { interval: '20s', locked: false },
+      }),
+    );
+    await expect(second).resolves.toEqual({ interval: '20s', locked: false });
+  });
   it('puts proof only into the first open frame, never URL or subprotocol', () => {
     const { socket, connection, endpoint, subprotocol } = fixture();
     expect(endpoint).toBe('wss://app.example.org:8443/_bifroest/api/v1/terminal');

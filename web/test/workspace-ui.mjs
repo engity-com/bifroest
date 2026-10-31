@@ -16,6 +16,11 @@ export async function assertUiPreferences(page, usernames = ['alice', 'bob', 'e2
   for (const [key, value] of Object.entries(state.values)) {
     if (key === 'bifroest-ui-v1:theme') {
       assert(['auto', 'light', 'dark'].includes(value));
+    } else if (key.startsWith('bifroest-ui-v1:keepalive:')) {
+      assert(
+        ['1s', '10s', '15s', '20s', '1m0s'].includes(value),
+        'only accepted fixture keepalive intervals may be stored',
+      );
     } else {
       assert(
         key.startsWith('bifroest-ui-v1:username:'),
@@ -221,13 +226,56 @@ export async function changeTheme(page, name) {
 }
 
 export async function captureLayout(page, name) {
-  const dimensions = await page.evaluate(() => ({
-    width: innerWidth,
-    content: document.documentElement.scrollWidth,
-  }));
+  const dimensions = await page.evaluate(() => {
+    const width = innerWidth;
+    const content = document.documentElement.scrollWidth;
+    const offenders =
+      content <= width
+        ? []
+        : [...document.querySelectorAll('body *')]
+            .flatMap((node) => {
+              const box = node.getBoundingClientRect();
+              if (box.width === 0 || box.height === 0 || box.right <= width + 1) {
+                return [];
+              }
+              const style = getComputedStyle(node);
+              let clipped = false;
+              for (
+                let parent = node.parentElement;
+                parent && parent !== document.body;
+                parent = parent.parentElement
+              ) {
+                if (
+                  ['hidden', 'clip', 'auto', 'scroll'].includes(getComputedStyle(parent).overflowX)
+                ) {
+                  clipped = true;
+                  break;
+                }
+              }
+              return [
+                {
+                  tag: node.tagName,
+                  classes: (node.getAttribute('class') ?? '').slice(0, 160),
+                  role: node.getAttribute('role'),
+                  left: box.left,
+                  right: box.right,
+                  width: box.width,
+                  top: box.top,
+                  position: style.position,
+                  visibility: style.visibility,
+                  opacity: style.opacity,
+                  overflowX: style.overflowX,
+                  clipped,
+                },
+              ];
+            })
+            .sort((a, b) => Number(a.clipped) - Number(b.clipped) || b.right - a.right)
+            .slice(0, 24);
+    return { width, content, offenders };
+  });
   assert(
     dimensions.content <= dimensions.width,
-    `${name}: page overflows (${dimensions.content}/${dimensions.width})`,
+    `${name}: page overflows (${dimensions.content}/${dimensions.width}); structural diagnostics=${JSON.stringify(dimensions.offenders)}`,
   );
   const directory = process.env.BIFROEST_TEST_UI_REVIEW_DIRECTORY;
   if (directory) {

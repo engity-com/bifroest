@@ -6,7 +6,9 @@ import type { WebAccess } from '../remember';
 import { reportUiError } from '../ui/error-report';
 import type { Message } from '../ui/messages';
 import { t } from '../ui/messages';
+import { preferredKeepAlive, saveKeepAlivePreference } from '../ui/preferences';
 import { noncedDocument } from './document';
+import type { KeepAlivePolicy } from './keepalive';
 import { ownTerminalKey } from './keyboard';
 import { installTerminalRenderer } from './renderer';
 import type { TerminalState } from './socket';
@@ -26,6 +28,8 @@ const light: ITheme = {
 };
 
 export interface TerminalActions {
+  keepAliveSettings(): KeepAlivePolicy;
+  setKeepAlive(interval: string): Promise<KeepAlivePolicy>;
   eof(): boolean;
   signal(value: 'INT' | 'TERM'): boolean;
   disconnect(): void;
@@ -203,6 +207,8 @@ export function TerminalPanel({
         if (disposed || signal.aborted) {
           return;
         }
+        const preferenceScope = access.snapshot().scope;
+        const requestedKeepAlive = preferredKeepAlive(preferenceScope);
         connection = new TerminalConnection(
           access,
           { kind: 'shell', command: '', pty: true, columns: terminal.cols, rows: terminal.rows },
@@ -216,6 +222,12 @@ export function TerminalPanel({
               return;
             }
             state.current = next;
+            if (next.phase === 'connected' && connection !== null) {
+              const applied = connection.keepAliveSettings();
+              if (!applied.locked && preferredKeepAlive(preferenceScope) === requestedKeepAlive) {
+                saveKeepAlivePreference(preferenceScope, applied.interval);
+              }
+            }
             if (next.phase === 'interrupted') {
               reportUiError('terminal', undefined, next.reason);
             }
@@ -231,8 +243,13 @@ export function TerminalPanel({
               terminal.focus();
             }
           },
+          undefined,
+          { keepAlive: requestedKeepAlive },
         );
+        const ownedConnection = connection;
         onActions(id, {
+          keepAliveSettings: () => ownedConnection.keepAliveSettings(),
+          setKeepAlive: (interval) => ownedConnection.setKeepAlive(interval),
           eof() {
             if (!connection?.eof()) {
               return false;

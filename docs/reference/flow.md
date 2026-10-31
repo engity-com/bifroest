@@ -65,6 +65,33 @@ Flows are tried in configuration order. A disabled transport or an unmet require
 
     Use boolean `true`/`false` for transport flags. Null blocks, null flags, quoted booleans, and unknown transport fields are rejected.
 
+<<property("keepAlive", "string", template_context="context/authorization.md", default="15s", id_prefix="http-", heading=4)>>
+:   Default transport keepalive interval for authenticated browser terminals. Use
+    a Go duration between `1s` and `5m`. A leading `!` makes the evaluated value
+    server-enforced: `"10s"` is editable in **Connection settings**, while
+    `"!10s"` is not. Quote values starting with `!` so YAML does not treat them
+    as tags. Null/non-string values and invalid or out-of-range durations fail.
+
+    Templates are rendered only after authentication, with the authenticated
+    connection/session context (including `.authentication`, `.authorization`
+    and `.session`). RememberMe resumption renders the current policy again.
+    New terminal connections and live setting changes re-evaluate that policy;
+    a stored preference or old UI policy cannot override an enforced value.
+
+    ```yaml
+    http:
+      keepAlive: '{{ if eq .authentication.principal "alice" }}10s{{ else }}!20s{{ end }}'
+    ```
+
+    Keepalive uses server-generated WebSocket Ping frames and matching browser
+    Pong replies, not JavaScript background timers or synthetic terminal input.
+    The reply deadline is at least `45s`, or three times the selected interval.
+    A shorter reply window is activated only after a fresh matching Pong; the
+    previous dead-peer deadline is not extended while waiting for that proof.
+    It does **not** renew session idle/maximum timeouts, access-token expiry or
+    RememberMe inactivity. Non-terminal HTTP views do not create background
+    operations or executions just to keep a session active.
+
 ## Example
 
 ```yaml

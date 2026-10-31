@@ -46,6 +46,7 @@ function fixture(limited = false) {
         expiresAt: new Date(Date.now() + 600000).toISOString(),
         environment: 'management',
         terminalAvailable: false,
+        keepAlive: { interval: '15s', locked: false },
       });
     }
     expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${accessToken}`);

@@ -98,6 +98,7 @@ class InteractiveServer {
         principal: 'verified-principal',
         environment: 'terminal',
         terminalAvailable: true,
+        keepAlive: { interval: '15s', locked: false },
       });
     }
     return json({}, 404);

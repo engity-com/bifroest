@@ -718,6 +718,13 @@ required input; it does not establish a principal, permissions or automatic logi
 Failed or uncertain logins do not replace it, and preference storage failure does
 not block authentication. Disabled requesting-name collection still omits the input
 and sends an empty name, never a stored or guessed principal.
+Authenticated flows may configure templated `http.keepAlive` (`15s` by default).
+`"10s"` is editable; `"!10s"` is enforced after template evaluation. Browser
+connection settings and stored interval preferences cannot override the current
+server policy. Durations are bounded to `1s`–`5m`. Server Ping/Pong keeps only
+the transport alive; idle/max lifetimes, grant expiry and RememberMe inactivity
+are not refreshed. Live changes use the existing authenticated socket, not a new
+execution, login, command or management operation.
 Passwords are not retained in application state and access tokens never enter
 rendered metadata or these preferences. A successful primary login remains known
 when RememberMe cannot be confirmed, but uncertain enrollment blocks new automatic

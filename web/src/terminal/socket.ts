@@ -1,5 +1,12 @@
 import type { AccessSnapshot } from '../remember';
 import { object } from '../remember/http';
+import { RememberMeError } from '../remember/protocol';
+import {
+  defaultKeepAlive,
+  type KeepAlivePolicy,
+  keepAliveDuration,
+  keepAlivePolicy,
+} from './keepalive';
 
 export type TerminalFailure =
   | 'protocol'
@@ -97,6 +104,14 @@ export class TerminalConnection {
   #lastControl = -Infinity;
   #blockedSince = 0;
   readonly #pty: boolean;
+  #keepAlive: KeepAlivePolicy;
+  #settingsSequence = 0;
+  #pendingSettings: {
+    id: string;
+    resolve: (value: KeepAlivePolicy) => void;
+    reject: (error: RememberMeError) => void;
+    timer: ReturnType<typeof setTimeout>;
+  } | null = null;
 
   constructor(
     access: TerminalAccess,
@@ -104,8 +119,14 @@ export class TerminalConnection {
     renderer: Renderer,
     onState: (state: TerminalState) => void,
     factory: SocketFactory = nativeSocket,
+    options: { keepAlive?: string | undefined } = {},
   ) {
     const scope = access.snapshot().scope;
+    this.#keepAlive = access.snapshot().keepAlive ?? defaultKeepAlive;
+    const preference =
+      !this.#keepAlive.locked && keepAliveDuration(options.keepAlive) !== null
+        ? options.keepAlive
+        : undefined;
     if (
       !access.snapshot().terminalAvailable ||
       !dimensions(task.columns, task.rows) ||
@@ -145,6 +166,7 @@ export class TerminalConnection {
             accessToken: proof(),
             task: task.kind,
             ...(task.kind === 'exec' ? { command: task.command } : {}),
+            ...(preference === undefined ? {} : { keepAlive: preference }),
             ...(task.pty
               ? { pty: { term: 'xterm-256color', columns: task.columns, rows: task.rows } }
               : {}),
@@ -172,6 +194,41 @@ export class TerminalConnection {
 
   state(): TerminalState {
     return this.#state;
+  }
+
+  keepAliveSettings(): KeepAlivePolicy {
+    return this.#keepAlive;
+  }
+
+  setKeepAlive(interval: string): Promise<KeepAlivePolicy> {
+    if (
+      !this.#ready ||
+      this.#stopped ||
+      this.#keepAlive.locked ||
+      keepAliveDuration(interval) === null ||
+      this.#pendingSettings !== null ||
+      this.#settingsSequence >= Number.MAX_SAFE_INTEGER
+    ) {
+      return Promise.reject(new RememberMeError('unavailable'));
+    }
+    const id = String(++this.#settingsSequence);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (this.#pendingSettings?.id === id) {
+          this.#pendingSettings = null;
+          reject(new RememberMeError('unavailable'));
+        }
+      }, 20_000);
+      this.#pendingSettings = { id, resolve, reject, timer };
+      if (
+        !this.#control({ type: 'keepalive', interval, requestId: id }) &&
+        this.#pendingSettings?.id === id
+      ) {
+        clearTimeout(timer);
+        this.#pendingSettings = null;
+        reject(new RememberMeError('cancelled'));
+      }
+    });
   }
 
   input(value: Uint8Array): boolean {
@@ -338,7 +395,11 @@ export class TerminalConnection {
       const message = JSON.parse(value) as Record<string, unknown>;
       switch (message?.type) {
         case 'ready':
-          object(message, ['type', 'connectionId']);
+          object(message, [
+            'type',
+            'connectionId',
+            ...(Object.hasOwn(message, 'keepAlive') ? ['keepAlive'] : []),
+          ]);
           if (
             this.#ready ||
             typeof message.connectionId !== 'string' ||
@@ -347,9 +408,32 @@ export class TerminalConnection {
             throw new Error();
           }
           this.#ready = true;
+          if (Object.hasOwn(message, 'keepAlive')) {
+            this.#keepAlive = keepAlivePolicy(message.keepAlive);
+          }
           clearTimeout(this.#openTimer);
           this.#publish({ phase: 'connected' });
           break;
+        case 'keepalive': {
+          object(message, ['type', 'requestId', 'keepAlive']);
+          if (
+            !this.#ready ||
+            typeof message.requestId !== 'string' ||
+            !/^[1-9][0-9]{0,15}$/u.test(message.requestId) ||
+            Number(message.requestId) > this.#settingsSequence
+          ) {
+            throw new Error();
+          }
+          const settings = keepAlivePolicy(message.keepAlive);
+          this.#keepAlive = settings;
+          const pending = this.#pendingSettings;
+          if (pending?.id === message.requestId) {
+            clearTimeout(pending.timer);
+            this.#pendingSettings = null;
+            pending.resolve(settings);
+          }
+          break;
+        }
         case 'exit':
           object(message, ['type', 'status']);
           if (
@@ -422,6 +506,12 @@ export class TerminalConnection {
     }
   }
   #stopSending(): void {
+    if (this.#pendingSettings !== null) {
+      const pending = this.#pendingSettings;
+      this.#pendingSettings = null;
+      clearTimeout(pending.timer);
+      pending.reject(new RememberMeError('cancelled'));
+    }
     clearTimeout(this.#openTimer);
     clearInterval(this.#sender);
     this.#proof = null;

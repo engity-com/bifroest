@@ -15,6 +15,7 @@ const webTerminalProtocol = "bifroest-terminal.v1"
 
 type webTerminalOpen struct {
 	slug, token, command string
+	keepAlive            string
 	exec                 bool
 	pty                  terminal.Pty
 	hasPty               bool
@@ -87,7 +88,7 @@ func webTerminalString(values map[string]json.RawMessage, name string, required 
 }
 
 func parseWebTerminalOpen(raw []byte) (webTerminalOpen, error) {
-	values, err := webTerminalObject(raw, "type", "slug", "accessToken", "task", "command", "pty", "environment")
+	values, err := webTerminalObject(raw, "type", "slug", "accessToken", "task", "command", "pty", "environment", "keepAlive")
 	if err != nil {
 		return webTerminalOpen{}, err
 	}
@@ -101,6 +102,9 @@ func parseWebTerminalOpen(raw []byte) (webTerminalOpen, error) {
 	}
 	if open.token, err = webTerminalString(values, "accessToken", true); err != nil {
 		return open, err
+	}
+	if open.keepAlive, err = webTerminalString(values, "keepAlive", false); err != nil || len(open.keepAlive) > 64 {
+		return open, fmt.Errorf("invalid keepAlive preference")
 	}
 	task, err := webTerminalString(values, "task", true)
 	if err != nil {

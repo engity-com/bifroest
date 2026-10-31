@@ -8,6 +8,7 @@ import LoginIcon from '@mui/icons-material/Login';
 import LogoutIcon from '@mui/icons-material/Logout';
 import PowerSettingsNewIcon from '@mui/icons-material/PowerSettingsNew';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import SettingsIcon from '@mui/icons-material/Settings';
 import StopIcon from '@mui/icons-material/Stop';
 import { Box, CircularProgress, IconButton, Tab, Tabs } from '@mui/material';
 import type { ReactNode } from 'react';
@@ -18,6 +19,7 @@ import { ActionIcon, Button, Menu, Modal } from '../ui/material';
 import { t } from '../ui/messages';
 import { canCloseView, ownerLocks } from '../ui/workspace-state';
 import { AuthenticationTerminal, type AuthenticationView } from './AuthenticationTerminal';
+import { ConnectionSettings } from './ConnectionSettings';
 import { ConnectionTab } from './ConnectionTab';
 import type { TerminalState } from './socket';
 import type { TerminalActions } from './TerminalPanel';
@@ -80,6 +82,20 @@ export function TerminalWorkspace({
   const [menuTab, setMenuTab] = useState<number | null>(null);
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const [focusTerminal, setFocusTerminal] = useState(true);
+  const [settingsTab, setSettingsTab] = useState<number | null>(null);
+  useEffect(() => {
+    if (blocked || focusBlocked || authentication !== null) {
+      setSettingsTab(null);
+    }
+  }, [blocked, focusBlocked, authentication]);
+  useEffect(() => {
+    if (
+      settingsTab !== null &&
+      !tabs.some((tab) => tab.id === settingsTab && tab.state.phase === 'connected')
+    ) {
+      setSettingsTab(null);
+    }
+  }, [settingsTab, tabs]);
   const updateTabs = useCallback((next: readonly ShellTab[]) => {
     current.current = next;
     setTabs(next);
@@ -264,7 +280,7 @@ export function TerminalWorkspace({
     }
   };
   const duplicateAccess = (selectedAccess: WebAccess) => {
-    if (blocked || focusBlocked || actionOwners.current.size > 0) {
+    if (blocked || focusBlocked || settingsTab !== null || actionOwners.current.size > 0) {
       return;
     }
     if (Date.parse(selectedAccess.snapshot().expiresAt) <= Date.now()) {
@@ -280,7 +296,7 @@ export function TerminalWorkspace({
   };
 
   const operate = (id: number, action: (tab: ShellTab) => void) => {
-    if (blocked || focusBlocked || actionOwners.current.size > 0) {
+    if (blocked || focusBlocked || settingsTab !== null || actionOwners.current.size > 0) {
       return;
     }
     const tab = current.current.find((entry) => entry.id === id);
@@ -308,7 +324,7 @@ export function TerminalWorkspace({
     }
   };
   const showConnectionMenu = () => {
-    if (blocked || focusBlocked || actionOwners.current.size > 0) {
+    if (blocked || focusBlocked || settingsTab !== null || actionOwners.current.size > 0) {
       return;
     }
     setMenuTab(null);
@@ -318,6 +334,8 @@ export function TerminalWorkspace({
     .filter((tab, index) => tabs.findIndex((entry) => entry.access === tab.access) === index)
     .filter((tab) => Date.parse(tab.access.snapshot().expiresAt) > Date.now());
   const menuOwner = tabs.find((tab) => tab.id === menuTab);
+  const settingsOwner = tabs.find((tab) => tab.id === settingsTab);
+  const settingsActions = settingsOwner ? controls.current.get(settingsOwner.id) : undefined;
 
   return (
     <main className="workspace terminal-workspace" aria-label={title}>
@@ -359,7 +377,7 @@ export function TerminalWorkspace({
                   principal={tab.access.snapshot().principal}
                   state={tab.state}
                   active={authentication === null && active === tab.id}
-                  disabled={blocked || focusBlocked}
+                  disabled={blocked || focusBlocked || settingsTab !== null}
                   onSelect={() =>
                     operate(tab.id, (entry) => {
                       setFocusTerminal(true);
@@ -434,6 +452,20 @@ export function TerminalWorkspace({
                   </Menu.Item>
                   {menuOwner.kind === 'terminal' && (
                     <>
+                      <Menu.Item
+                        icon={<SettingsIcon fontSize="small" />}
+                        disabled={blocked || menuOwner.state.phase !== 'connected'}
+                        onClick={() =>
+                          operate(menuOwner.id, (tab) => {
+                            setClosing(null);
+                            setLimit(false);
+                            setSettingsTab(tab.id);
+                            setFocusTerminal(false);
+                          })
+                        }
+                      >
+                        {t('connectionSettings')}
+                      </Menu.Item>
                       <Menu.Divider />
                       <Menu.Label>{t('terminalSpecial')}</Menu.Label>
                       <Menu.Item
@@ -530,7 +562,7 @@ export function TerminalWorkspace({
                   color="gray"
                   size="lg"
                   aria-label={t('connectionNew')}
-                  disabled={blocked || tabs.length >= maximumTabs}
+                  disabled={blocked || settingsTab !== null || tabs.length >= maximumTabs}
                   title={t('connectionNew')}
                   onClick={() => {
                     setNewMenuOpen(false);
@@ -545,7 +577,7 @@ export function TerminalWorkspace({
                     color="gray"
                     size="lg"
                     aria-label={t('connectionOptions')}
-                    disabled={blocked}
+                    disabled={blocked || settingsTab !== null}
                   >
                     <ArrowDropDownIcon />
                   </ActionIcon>
@@ -609,6 +641,7 @@ export function TerminalWorkspace({
                 inputAllowed={
                   !blocked &&
                   !focusBlocked &&
+                  settingsTab === null &&
                   closing === null &&
                   !limit &&
                   menuTab === null &&
@@ -670,6 +703,18 @@ export function TerminalWorkspace({
           </div>
         )}
       </div>
+      {settingsOwner && settingsActions && !blocked && !focusBlocked && authentication === null && (
+        <ConnectionSettings
+          key={settingsOwner.id}
+          access={settingsOwner.access}
+          signal={settingsOwner.cancellation.signal}
+          actions={settingsActions}
+          onClose={() => {
+            setSettingsTab(null);
+            setFocusTerminal(true);
+          }}
+        />
+      )}
       <Modal
         opened={closing !== null && !blocked}
         onClose={() => setClosing(null)}

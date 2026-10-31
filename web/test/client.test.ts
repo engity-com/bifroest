@@ -84,6 +84,7 @@ class Server {
       principal,
       environment: 'terminal',
       terminalAvailable: true,
+      keepAlive: { interval: '15s', locked: false },
     };
   }
 

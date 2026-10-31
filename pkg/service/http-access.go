@@ -32,6 +32,7 @@ type webAccess struct {
 	target     session.Target
 	user       string
 	credential authentication.SessionCredential
+	keepAlive  webKeepAlive
 	binding    *webBindingReference
 	expires    time.Time
 	mutex      sync.Mutex
@@ -65,13 +66,17 @@ func (this *webService) issue(scope webScope, base *environmentContext, credenti
 	if pinned != nil && (identity != pinned.Identity || target != pinned.Target || scope.Origin != pinned.Origin || scope.Slug != pinned.Slug || base.Connection().Remote().User() != pinned.User) {
 		return "", nil, errWebAccessDenied
 	}
+	keepAlive, err := this.keepAlivePolicy(base)
+	if err != nil {
+		return "", nil, err
+	}
 	var nonce [32]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return "", nil, err
 	}
 	token := "bwa1." + base64.RawURLEncoding.EncodeToString(nonce[:])
 	key, _ := webAccessKey(token)
-	access := &webAccess{scope: scope, auth: base.Authorization(), identity: identity, target: target, user: base.Connection().Remote().User(), credential: credential, expires: time.Now().Add(webAccessLifetime), children: make(map[*terminalConnection]struct{})}
+	access := &webAccess{scope: scope, auth: base.Authorization(), identity: identity, target: target, user: base.Connection().Remote().User(), credential: credential, keepAlive: webKeepAliveView(keepAlive), expires: time.Now().Add(webAccessLifetime), children: make(map[*terminalConnection]struct{})}
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 	this.pruneLocked(time.Now())

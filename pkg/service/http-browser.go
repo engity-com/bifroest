@@ -405,14 +405,15 @@ func (this *webService) accessResponse(access *webAccess, token string) any {
 		kind = "management"
 	}
 	return struct {
-		Status            string    `json:"status"`
-		AccessToken       string    `json:"accessToken,omitempty"`
-		ExpiresAt         time.Time `json:"expiresAt"`
-		Scope             webScope  `json:"scope"`
-		Principal         string    `json:"principal"`
-		Environment       string    `json:"environment"`
-		TerminalAvailable bool      `json:"terminalAvailable"`
-	}{"authorized", token, access.expires, access.scope, access.identity.Principal, kind, kind != "management"}
+		Status            string       `json:"status"`
+		AccessToken       string       `json:"accessToken,omitempty"`
+		ExpiresAt         time.Time    `json:"expiresAt"`
+		Scope             webScope     `json:"scope"`
+		Principal         string       `json:"principal"`
+		Environment       string       `json:"environment"`
+		TerminalAvailable bool         `json:"terminalAvailable"`
+		KeepAlive         webKeepAlive `json:"keepAlive"`
+	}{"authorized", token, access.expires, access.scope, access.identity.Principal, kind, kind != "management", access.keepAlive}
 }
 
 var webDiscoveryTemplate = htmltemplate.Must(htmltemplate.New("discovery").Parse(`<!doctype html><html lang="en-US"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Bifröst</title><h1>Bifröst</h1><p>Published access links. Each link still requires authorization.</p><ul>{{range .}}<li><a href="/{{.}}">{{.}}</a></li>{{else}}<li>No access links published on this host.</li>{{end}}</ul><p>The interactive browser interface is not available yet.</p></html>`))

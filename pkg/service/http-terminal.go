@@ -142,13 +142,29 @@ func (this *webService) serveWebSocketTerminal(w http.ResponseWriter, r *http.Re
 		return
 	}
 	defer func() { _ = conn.Close(); <-conn.done }()
-	releaseHandshake()
-	if err := stream.status(struct {
-		Type         string `json:"type"`
-		ConnectionId string `json:"connectionId"`
-	}{"ready", conn.Id().String()}); err != nil {
+	base := &environmentContext{service: this.service, connection: conn, authorization: access.auth, executionContext: conn.Lifetime()}
+	stream.pingMutex.Lock()
+	stream.configureKeepAlive = func(value string) (webKeepAlive, error) {
+		if err := conn.check(false); err != nil {
+			return webKeepAlive{}, err
+		}
+		return this.configureKeepAlive(base, stream, value)
+	}
+	stream.pingMutex.Unlock()
+	keepAlive, err := this.configureKeepAlive(base, stream, open.keepAlive)
+	if err != nil {
+		stream.fail("connection-denied")
 		return
 	}
+	releaseHandshake()
+	if err := stream.status(struct {
+		Type         string       `json:"type"`
+		ConnectionId string       `json:"connectionId"`
+		KeepAlive    webKeepAlive `json:"keepAlive"`
+	}{"ready", conn.Id().String(), keepAlive}); err != nil {
+		return
+	}
+	close(stream.settingsReady)
 	status, err := this.service.executeTerminal(conn, stream, open.exec)
 	if err != nil {
 		stream.fail("execution-failed")

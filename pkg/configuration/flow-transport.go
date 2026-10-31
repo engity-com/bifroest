@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/engity-com/bifroest/pkg/template"
 )
 
 // An absent switch means enabled, including for programmatically constructed
@@ -41,22 +43,31 @@ func (this FlowSsh) IsEqualTo(other any) bool {
 }
 
 type FlowHttp struct {
-	Enabled     *bool `yaml:"enabled,omitempty"`
-	RequestUser *bool `yaml:"requestUser,omitempty"`
+	Enabled     *bool           `yaml:"enabled,omitempty"`
+	RequestUser *bool           `yaml:"requestUser,omitempty"`
+	KeepAlive   template.String `yaml:"keepAlive,omitempty"`
 }
 
 func (this FlowHttp) IsEnabled() bool          { return this.Enabled == nil || *this.Enabled }
 func (this FlowHttp) RequestUserEnabled() bool { return this.RequestUser == nil || *this.RequestUser }
-func (this FlowHttp) IsZero() bool             { return this.Enabled == nil && this.RequestUser == nil }
+func (this FlowHttp) IsZero() bool {
+	return this.Enabled == nil && this.RequestUser == nil && this.KeepAlive.IsZero()
+}
 func (this *FlowHttp) SetDefaults() error {
 	*this = FlowHttp{}
 	return nil
 }
 func (this *FlowHttp) Trim() error { return this.Validate() }
-func (*FlowHttp) Validate() error  { return nil }
+func (this *FlowHttp) Validate() error {
+	if this.KeepAlive.IsHardCoded() {
+		_, err := this.ResolveKeepAlive(nil)
+		return err
+	}
+	return nil
+}
 func (this *FlowHttp) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *FlowHttp, node *yaml.Node) error {
-		if err := validateFlowTransportFields(node, "enabled", "requestUser"); err != nil {
+		if err := validateFlowTransportFields(node, "enabled", "requestUser", "keepAlive"); err != nil {
 			return err
 		}
 		type raw FlowHttp
@@ -66,9 +77,9 @@ func (this *FlowHttp) UnmarshalYAML(node *yaml.Node) error {
 func (this FlowHttp) IsEqualTo(other any) bool {
 	switch value := other.(type) {
 	case FlowHttp:
-		return this.IsEnabled() == value.IsEnabled() && this.RequestUserEnabled() == value.RequestUserEnabled()
+		return this.IsEnabled() == value.IsEnabled() && this.RequestUserEnabled() == value.RequestUserEnabled() && this.KeepAlive.IsEqualTo(value.KeepAlive)
 	case *FlowHttp:
-		return value != nil && this.IsEnabled() == value.IsEnabled() && this.RequestUserEnabled() == value.RequestUserEnabled()
+		return value != nil && this.IsEnabled() == value.IsEnabled() && this.RequestUserEnabled() == value.RequestUserEnabled() && this.KeepAlive.IsEqualTo(value.KeepAlive)
 	default:
 		return false
 	}
@@ -82,6 +93,12 @@ func validateFlowTransportFields(node *yaml.Node, known ...string) error {
 		value := node.Content[index+1]
 		if value.Kind == yaml.AliasNode && value.Alias != nil {
 			value = value.Alias
+		}
+		if node.Content[index].Value == "keepAlive" {
+			if value.Kind != yaml.ScalarNode || value.Tag != "!!str" {
+				return fmt.Errorf("[keepAlive] must be a string")
+			}
+			continue
 		}
 		if value.Tag != "!!bool" {
 			return fmt.Errorf("[%s] must be a boolean", node.Content[index].Value)

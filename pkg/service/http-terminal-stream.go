@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,6 +14,7 @@ import (
 	log "github.com/echocat/slf4g"
 	"github.com/gorilla/websocket"
 
+	"github.com/engity-com/bifroest/pkg/configuration"
 	bconn "github.com/engity-com/bifroest/pkg/connection"
 	bnet "github.com/engity-com/bifroest/pkg/net"
 	"github.com/engity-com/bifroest/pkg/terminal"
@@ -28,9 +30,10 @@ const (
 )
 
 type webTerminalTimings struct{ open, write, ping, pong time.Duration }
+type webKeepAliveRequest struct{ interval, id string }
 
 func defaultWebTerminalTimings() webTerminalTimings {
-	return webTerminalTimings{open: 5 * time.Second, write: 5 * time.Second, ping: 15 * time.Second, pong: 45 * time.Second}
+	return webTerminalTimings{open: 5 * time.Second, write: 5 * time.Second, ping: configuration.DefaultHttpKeepAlive, pong: 3 * configuration.DefaultHttpKeepAlive}
 }
 
 // This stream owns a single real WebSocket, not an SSH channel or saved terminal.
@@ -51,18 +54,26 @@ type webTerminalStream struct {
 	closed                                      atomic.Bool
 	writeMutex                                  sync.Mutex
 	outputClosed                                bool
+	finished                                    bool
 	readMutex                                   sync.Mutex
 	signalMutex                                 sync.Mutex
 	signalStop, signalDone                      chan struct{}
 	pingMutex                                   sync.Mutex
 	awaitingPong                                string
+	pingInterval, pongInterval                  time.Duration
+	lastPong                                    time.Time
+	heartbeatChanged                            chan struct{}
+	configureKeepAlive                          func(string) (webKeepAlive, error)
+	settingsReady                               chan struct{}
+	settings                                    chan webKeepAliveRequest
+	pongReceived                                chan struct{}
 	budgetSince                                 time.Time
 	budgetMessages, budgetControls, budgetBytes int
 }
 
 func newWebTerminalStream(ctx context.Context, socket *websocket.Conn, id bconn.Id, host bnet.Host, timings webTerminalTimings) *webTerminalStream {
 	ctx, cancel := context.WithCancel(ctx)
-	result := &webTerminalStream{socket: socket, id: id, remote: webRemote{host: host}, ctx: ctx, cancel: cancel, timings: timings, input: newWebTerminalInputBuffer(), windows: make(chan terminal.Window, webTerminalControlQueue), signals: make(chan terminal.Signal, webTerminalControlQueue)}
+	result := &webTerminalStream{socket: socket, id: id, remote: webRemote{host: host}, ctx: ctx, cancel: cancel, timings: timings, input: newWebTerminalInputBuffer(), windows: make(chan terminal.Window, webTerminalControlQueue), signals: make(chan terminal.Signal, webTerminalControlQueue), pingInterval: timings.ping, pongInterval: timings.pong, lastPong: time.Now(), heartbeatChanged: make(chan struct{}, 1), settingsReady: make(chan struct{}), settings: make(chan webKeepAliveRequest, webTerminalControlQueue), pongReceived: make(chan struct{})}
 	socket.SetReadLimit(webTerminalMessageLimit)
 	socket.SetPingHandler(func(value string) error {
 		if err := result.accountInbound(len(value), true); err != nil {
@@ -75,13 +86,14 @@ func newWebTerminalStream(ctx context.Context, socket *websocket.Conn, id bconn.
 			return err
 		}
 		result.pingMutex.Lock()
+		defer result.pingMutex.Unlock()
 		matched := result.awaitingPong != "" && value == result.awaitingPong
 		if matched {
 			result.awaitingPong = ""
-		}
-		result.pingMutex.Unlock()
-		if matched {
-			return socket.SetReadDeadline(time.Now().Add(timings.pong))
+			result.lastPong = time.Now()
+			close(result.pongReceived)
+			result.pongReceived = make(chan struct{})
+			return socket.SetReadDeadline(result.lastPong.Add(result.pongInterval))
 		}
 		return nil
 	})
@@ -119,9 +131,10 @@ func (this *webTerminalStream) readOpen() (webTerminalOpen, error) {
 }
 
 func (this *webTerminalStream) start() {
-	this.workers.Add(2)
+	this.workers.Add(3)
 	go this.readLoop()
 	go this.heartbeatLoop()
+	go this.keepAliveSettingsLoop()
 }
 func (this *webTerminalStream) stop() { _ = this.Close(); this.Signals(nil); this.workers.Wait() }
 func (this *webTerminalStream) Close() error {
@@ -152,7 +165,7 @@ func (this *webTerminalStream) CloseWrite() error {
 func (this *webTerminalStream) writeOutput(channel byte, data []byte) (int, error) {
 	this.writeMutex.Lock()
 	defer this.writeMutex.Unlock()
-	if this.outputClosed {
+	if this.outputClosed || this.finished {
 		return 0, io.ErrClosedPipe
 	}
 	// The frame allocation is constant regardless of caller data length. The
@@ -181,6 +194,9 @@ func (this *webTerminalStream) writeOutput(channel byte, data []byte) (int, erro
 func (this *webTerminalStream) status(value any) error {
 	this.writeMutex.Lock()
 	defer this.writeMutex.Unlock()
+	if this.finished {
+		return io.ErrClosedPipe
+	}
 	if err := this.ctx.Err(); err != nil {
 		return err
 	}
@@ -196,7 +212,16 @@ func (this *webTerminalStream) fail(code string) {
 	}{"error", code})
 }
 func (this *webTerminalStream) finish(status uint32) {
-	if err := this.status(struct {
+	this.writeMutex.Lock()
+	defer this.writeMutex.Unlock()
+	if this.finished || this.ctx.Err() != nil {
+		return
+	}
+	this.finished = true
+	if err := this.socket.SetWriteDeadline(time.Now().Add(this.timings.write)); err != nil {
+		return
+	}
+	if err := this.socket.WriteJSON(struct {
 		Type   string `json:"type"`
 		Status uint32 `json:"status"`
 	}{"exit", status}); err == nil {
@@ -290,7 +315,7 @@ func (this *webTerminalStream) readLoop() {
 			if len(data) > 1024 {
 				return
 			}
-			values, err := webTerminalObject(data, "type", "columns", "rows", "widthPixels", "heightPixels", "signal")
+			values, err := webTerminalObject(data, "type", "columns", "rows", "widthPixels", "heightPixels", "signal", "interval", "requestId")
 			if err != nil {
 				return
 			}
@@ -299,6 +324,29 @@ func (this *webTerminalStream) readLoop() {
 				return
 			}
 			switch control {
+			case "keepalive":
+				if len(values) != 3 {
+					return
+				}
+				interval, err := webTerminalString(values, "interval", true)
+				if err != nil || len(interval) == 0 || len(interval) > 64 {
+					return
+				}
+				requestID, err := webTerminalString(values, "requestId", true)
+				if err != nil || len(requestID) > 16 {
+					return
+				}
+				number, err := strconv.ParseUint(requestID, 10, 53)
+				if err != nil || number == 0 || strconv.FormatUint(number, 10) != requestID {
+					return
+				}
+				select {
+				case this.settings <- webKeepAliveRequest{interval: interval, id: requestID}:
+				case <-this.ctx.Done():
+					return
+				default:
+					return
+				}
 			case "eof":
 				if eof || len(values) != 1 {
 					return
@@ -310,6 +358,12 @@ func (this *webTerminalStream) readLoop() {
 					return
 				}
 				if _, exists := values["signal"]; exists {
+					return
+				}
+				if _, exists := values["interval"]; exists {
+					return
+				}
+				if _, exists := values["requestId"]; exists {
 					return
 				}
 				window, err := parseWebTerminalWindow(values)
@@ -354,27 +408,103 @@ func (this *webTerminalStream) readLoop() {
 func (this *webTerminalStream) heartbeatLoop() {
 	defer this.workers.Done()
 	defer func() { _ = this.Close() }()
-	ticker := time.NewTicker(this.timings.ping)
-	defer ticker.Stop()
+	interval := func() time.Duration { this.pingMutex.Lock(); defer this.pingMutex.Unlock(); return this.pingInterval }
+	timer := time.NewTimer(interval())
+	defer timer.Stop()
 	for {
 		select {
 		case <-this.ctx.Done():
 			return
-		case <-ticker.C:
-			this.pingMutex.Lock()
-			if this.awaitingPong != "" {
-				this.pingMutex.Unlock()
-				continue
-			}
-			var nonce [16]byte
-			if _, err := rand.Read(nonce[:]); err != nil {
-				this.pingMutex.Unlock()
+		case <-this.heartbeatChanged:
+			timer.Reset(interval())
+		case <-timer.C:
+			timer.Reset(interval())
+			if err := this.sendHeartbeat(); err != nil {
 				return
 			}
-			payload := hex.EncodeToString(nonce[:])
-			this.awaitingPong = payload
+		}
+	}
+}
+
+// Settings change transport cadence only. In particular, they never renew the
+// session/activity lease, and cannot move the last proven pong into the future.
+func (this *webTerminalStream) setKeepAliveInterval(ping, pong time.Duration) error {
+	this.pingMutex.Lock()
+	shorter := pong < this.pongInterval
+	fresh := this.pongReceived
+	this.pingMutex.Unlock()
+	if shorter {
+		// Keep the previous deadline intact until a real matching pong proves
+		// the peer is alive. The dedicated settings worker leaves the reader
+		// free to process that pong; no activity or liveness is fabricated.
+		if err := this.sendHeartbeat(); err != nil {
+			return err
+		}
+		select {
+		case <-fresh:
+		case <-this.ctx.Done():
+			return this.ctx.Err()
+		}
+	}
+	this.pingMutex.Lock()
+	this.pingInterval, this.pongInterval = ping, pong
+	err := this.socket.SetReadDeadline(this.lastPong.Add(pong))
+	this.pingMutex.Unlock()
+	if err != nil {
+		return err
+	}
+	select {
+	case this.heartbeatChanged <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+func (this *webTerminalStream) sendHeartbeat() error {
+	this.pingMutex.Lock()
+	if this.awaitingPong != "" {
+		this.pingMutex.Unlock()
+		return nil
+	}
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		this.pingMutex.Unlock()
+		return err
+	}
+	payload := hex.EncodeToString(nonce[:])
+	this.awaitingPong = payload
+	this.pingMutex.Unlock()
+	return this.socket.WriteControl(websocket.PingMessage, []byte(payload), time.Now().Add(this.timings.write))
+}
+
+func (this *webTerminalStream) keepAliveSettingsLoop() {
+	defer this.workers.Done()
+	defer func() { _ = this.Close() }()
+	select {
+	case <-this.settingsReady:
+	case <-this.ctx.Done():
+		return
+	}
+	for {
+		select {
+		case <-this.ctx.Done():
+			return
+		case request := <-this.settings:
+			this.pingMutex.Lock()
+			configure := this.configureKeepAlive
 			this.pingMutex.Unlock()
-			if err := this.socket.WriteControl(websocket.PingMessage, []byte(payload), time.Now().Add(this.timings.write)); err != nil {
+			if configure == nil {
+				return
+			}
+			settings, err := configure(request.interval)
+			if err != nil {
+				return
+			}
+			if err := this.status(struct {
+				Type      string       `json:"type"`
+				RequestID string       `json:"requestId"`
+				KeepAlive webKeepAlive `json:"keepAlive"`
+			}{"keepalive", request.id, settings}); err != nil {
 				return
 			}
 		}

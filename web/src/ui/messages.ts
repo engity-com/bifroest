@@ -7,6 +7,14 @@ export const messages = {
   chooseFlow: 'Choose a published link or open the address provided by your operator.',
   login: 'Sign in',
   user: 'User name',
+  connectionSettings: 'Connection settings',
+  keepAliveInterval: 'Keepalive interval',
+  keepAliveHelp:
+    'Go duration from 1s to 5m. Keeps the network connection alive; session idle, maximum and login lifetimes remain unchanged.',
+  keepAliveLocked: 'This interval is enforced by the flow and cannot be changed.',
+  keepAliveApply: 'Apply connection settings',
+  keepAliveFailed:
+    'Connection settings could not be applied. No connection was restarted or input replayed.',
   userRequired: 'Enter a user name before signing in.',
   password: 'Password',
   remember: 'Remember this browser',

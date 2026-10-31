@@ -284,7 +284,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		}}}
 	}
 	var terminalCounters *terminalUiCounters
-	if mode == "terminal" || mode == "terminal-expiry" || mode == "terminal-logout-lost" || mode == "workspace" || mode == "workspace-races" || mode == "compact" {
+	if mode == "terminal" || mode == "terminal-expiry" || mode == "terminal-logout-lost" || mode == "workspace" || mode == "workspace-races" || mode == "compact" || mode == "keepalive" {
 		terminalCounters = installTerminalUiBackend(svc)
 	}
 	settings := &configuration.Http{}
@@ -547,12 +547,18 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	if mode == "workspace-races" {
 		expectedSessions = 2
 	}
+	if mode == "keepalive" {
+		expectedSessions = 3
+	}
 	if workspaceActionMode {
 		expectedSessions = 3
 	}
 	require.Equal(t, expectedSessions, webSessionCount(t, svc))
 	if terminalCounters != nil {
 		switch mode {
+		case "keepalive":
+			require.EqualValues(t, 5, terminalCounters.runs.Load(), "keepalive settings may not restart or duplicate executions")
+			require.Zero(t, terminalCounters.interrupts.Load())
 		case "terminal-expiry":
 			require.EqualValues(t, 2, terminalCounters.runs.Load(), "only the original login and fresh confirmed login may start shells")
 			require.Zero(t, terminalCounters.interrupts.Load(), "grant expiry must not signal an existing execution")

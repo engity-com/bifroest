@@ -42,6 +42,7 @@ function fixture(environment = 'management', changed?: (value: unknown) => unkno
         principal: 'manager',
         environment,
         terminalAvailable: environment === 'terminal',
+        keepAlive: { interval: '15s', locked: false },
       });
     }
     expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${token}`);

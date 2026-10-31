@@ -1,8 +1,10 @@
 import type { Scope } from '../remember';
+import { keepAliveDuration } from '../terminal/keepalive';
 import { reportUiError } from './error-report';
 
 export const themePreferenceKey = 'bifroest-ui-v1:theme';
 export const usernamePreferencePrefix = 'bifroest-ui-v1:username:';
+export const keepAlivePreferencePrefix = 'bifroest-ui-v1:keepalive:';
 export type ThemePreference = 'auto' | 'light' | 'dark';
 export function isThemePreference(value: unknown): value is ThemePreference {
   return value === 'auto' || value === 'light' || value === 'dark';
@@ -65,6 +67,31 @@ export function saveSuccessfulUsername(scope: Scope, user: string): void {
   }
   try {
     localStorage.setItem(key, user);
+  } catch (error) {
+    reportUiError('preferences', error);
+  }
+}
+
+export function preferredKeepAlive(scope: Scope): string | undefined {
+  const userKey = usernameKey(scope);
+  if (userKey === null) {
+    return undefined;
+  }
+  try {
+    const value = localStorage.getItem(keepAlivePreferencePrefix + encodeURIComponent(scope.slug));
+    return keepAliveDuration(value) !== null ? (value ?? undefined) : undefined;
+  } catch (error) {
+    reportUiError('preferences', error);
+    return undefined;
+  }
+}
+
+export function saveKeepAlivePreference(scope: Scope, interval: string): void {
+  if (usernameKey(scope) === null || keepAliveDuration(interval) === null) {
+    return;
+  }
+  try {
+    localStorage.setItem(keepAlivePreferencePrefix + encodeURIComponent(scope.slug), interval);
   } catch (error) {
     reportUiError('preferences', error);
   }
