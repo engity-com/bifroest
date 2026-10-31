@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { fixtureShellPromptPattern } from './shared-workload-prompt.mjs';
-import { activeAccess, chooseLoginMethod, logoutAccess, notification } from './workspace-ui.mjs';
+import {
+  activeAccess,
+  assertUiPreferences,
+  chooseLoginMethod,
+  logoutAccess,
+  notification,
+} from './workspace-ui.mjs';
 
 // This drives the actual built UI against the owned Bifröst binary and real
 // Docker/Kubernetes backend. No SSH self-dial or management CLI web action.
@@ -193,7 +199,7 @@ try {
   assert.equal(await page.locator('.xterm').count(), 0);
   assert.deepEqual(errors, []);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
-  assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+  await assertUiPreferences(page, ['e2e']);
   console.log(JSON.stringify({ executions: [first, second] }));
 } finally {
   await browser.close();

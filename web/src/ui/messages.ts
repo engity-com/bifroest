@@ -7,6 +7,7 @@ export const messages = {
   chooseFlow: 'Choose a published link or open the address provided by your operator.',
   login: 'Sign in',
   user: 'User name',
+  userRequired: 'Enter a user name before signing in.',
   password: 'Password',
   remember: 'Remember this browser',
   loginMethod: 'Login method',
@@ -25,7 +26,7 @@ export const messages = {
   keyImportFailed:
     'The local key could not be imported or signed. Check the file, passphrase, matching certificate and supported limits (64 KiB key; bcrypt up to 64 rounds). No private key or passphrase was uploaded.',
   keyUnavailable:
-    'Key sign-in could not be completed. Open Details for the failed phase and safe diagnostic code. No claim is replayed automatically.',
+    'Key sign-in could not be completed. The browser error console contains a safe diagnostic code. No claim is replayed automatically.',
   keyDiagnosticDetails: 'Details',
   keyDiagnosticPrivacy:
     'This diagnostic code contains no key, passphrase, token or internal error text.',

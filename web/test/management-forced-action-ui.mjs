@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { forcedKeyLogin } from './management-forced-ui.mjs';
+import { assertUiPreferences } from './workspace-ui.mjs';
 
 export async function exerciseManagementForcedAction(page, file, logout) {
   const { action, flow, id } = JSON.parse(await readFile(file, 'utf8'));
@@ -161,5 +162,5 @@ export async function exerciseManagementForcedAction(page, file, logout) {
   await logout(page);
   assert.equal(await direct.getByLabel('Target session ID', { exact: false }).count(), 0);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
-  assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+  await assertUiPreferences(page);
 }

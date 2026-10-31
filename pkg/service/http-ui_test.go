@@ -538,7 +538,7 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 		require.Empty(t, auditEventsNamed(lifecycleRecorder.eventsSnapshot(), audit.EventNameAuthenticationCompleted), "a failed local key operation must not authenticate")
 		require.Empty(t, auditEventsNamed(lifecycleRecorder.eventsSnapshot(), audit.EventNameSessionTaskStarted), "a failed local key operation must not start a shell")
 	}
-	if mode == "terminal" || mode == "management" || mode == "management-actions" || mode == "management-forced" || forcedActionMode {
+	if mode == "terminal" || mode == "management" || mode == "management-actions" || mode == "management-forced" || mode == "preferences" || forcedActionMode {
 		expectedSessions = 2
 	}
 	if mode == "workspace" {

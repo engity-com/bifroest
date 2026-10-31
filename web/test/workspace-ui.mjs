@@ -2,6 +2,35 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
+// Storage is allowed only for the explicitly requested, non-auth UI prefs.
+// Reject any token/password/selector payload rather than dropping the old
+// no-local-login assertion just because username/theme persistence was added.
+export async function assertUiPreferences(page, usernames = ['alice', 'bob', 'e2e']) {
+  const state = await page.evaluate(() => ({
+    session: sessionStorage.length,
+    values: Object.fromEntries(
+      Object.keys(localStorage).map((key) => [key, localStorage.getItem(key)]),
+    ),
+  }));
+  assert.equal(state.session, 0, 'sessionStorage must not retain login data');
+  for (const [key, value] of Object.entries(state.values)) {
+    if (key === 'bifroest-ui-v1:theme') {
+      assert(['auto', 'light', 'dark'].includes(value));
+    } else {
+      assert(
+        key.startsWith('bifroest-ui-v1:username:'),
+        'only UI preference keys may be persisted',
+      );
+      const slug = decodeURIComponent(key.slice('bifroest-ui-v1:username:'.length));
+      assert(/^(?:[A-Za-z0-9]{1,64}(?:\/[A-Za-z0-9]{1,64})?)?$/u.test(slug));
+      assert(
+        usernames.includes(value),
+        'only original fixture usernames, never credentials/principals/tokens, may be persisted',
+      );
+    }
+  }
+}
+
 export async function settledLogin(page, user, holding = false) {
   await page.waitForFunction(
     (user) =>

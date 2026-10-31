@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
+import { reportUiError } from '../ui/error-report';
 import {
   Alert,
   Button,
@@ -147,6 +148,7 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
       await action(controller.signal, current);
     } catch (error) {
       if (current === generation.current) {
+        reportUiError('artifact', error);
         setNotice(failure(error));
       }
     } finally {
@@ -237,7 +239,8 @@ export function ArtifactPanel({ access, disabled }: { access: WebAccess; disable
     }
     try {
       downloads.current.save(data, filename);
-    } catch {
+    } catch (error) {
+      reportUiError('artifact-save', error);
       setNotice('artifactSaveFailed');
     }
   }

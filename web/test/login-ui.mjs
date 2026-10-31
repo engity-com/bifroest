@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   activeAccessCount,
   answerAuthentication,
+  assertUiPreferences,
   authenticationConsole,
   captureLayout,
   chooseLoginMethod,
@@ -220,7 +221,7 @@ export async function exerciseInteractive(page, login, logout) {
   assert.equal(await activeAccessCount(page, 'alice'), 0);
   await staleInput.dispose();
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
-  assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+  await assertUiPreferences(page);
 }
 
 export async function exerciseDevice(page, cancel) {
@@ -280,7 +281,7 @@ export async function exerciseDevice(page, cancel) {
     await page.locator('[data-connection-active="true"]').waitFor({ state: 'detached' });
   }
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
-  assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+  await assertUiPreferences(page);
 }
 
 export async function exerciseLostClaim(page, login, logout) {
@@ -314,5 +315,5 @@ export async function exerciseLostClaim(page, login, logout) {
   await login(page, false);
   await logout(page);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
-  assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+  await assertUiPreferences(page);
 }

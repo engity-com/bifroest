@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   activeAccess,
+  assertUiPreferences,
   authenticationConsole,
   captureLayout,
   chooseLoginMethod,
@@ -205,5 +206,5 @@ export async function exerciseTerminal(page, login) {
   await page.locator('[data-connection-active="true"]').waitFor({ state: 'detached' });
   assert.equal(await page.locator('.xterm').count(), 0);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
-  assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+  await assertUiPreferences(page);
 }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { reauthenticate, workspace } from './workspace-ui.mjs';
+import { assertUiPreferences, reauthenticate, workspace } from './workspace-ui.mjs';
 
 export async function exerciseManagement(page, login, logout) {
   const bodyForFailure = async (response) => {
@@ -118,5 +118,5 @@ export async function exerciseManagement(page, login, logout) {
     assert.equal(request.body.command, undefined);
   }
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
-  assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+  await assertUiPreferences(page);
 }

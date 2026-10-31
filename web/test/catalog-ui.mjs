@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import {
   activeAccess,
+  assertUiPreferences,
   logoutAccess,
   notification,
   reauthenticate,
@@ -222,7 +223,7 @@ try {
   assert.equal(await catalog.count(), 0);
   assert.deepEqual(errors, []);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
-  assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+  await assertUiPreferences(page);
   console.log(JSON.stringify({ success: true }));
 } finally {
   await browser.close();

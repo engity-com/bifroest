@@ -97,6 +97,9 @@ describe('real browser RememberMe keys and IndexedDB', () => {
     const initial = await rawRecord();
     expect(initial.signing.privateKey).toBeInstanceOf(CryptoKey);
     expect(initial.signing.privateKey.extractable).toBe(false);
+    expect(initial.signing.publicKey.type).toBe('public');
+    expect(initial.signing.publicKey.extractable).toBe(true);
+    expect(initial.signing.publicKey.usages).toEqual(['verify']);
     expect(initial.encryption.extractable).toBe(false);
     expect(initial.signing.privateKey.algorithm).toMatchObject({
       name: 'ECDSA',
@@ -302,6 +305,44 @@ describe('real browser RememberMe keys and IndexedDB', () => {
       blocked.mockRestore();
     }
     expect(await BrowserBinding.load(scope)).toBeNull();
+  });
+
+  it('refuses exportable private or encryption keys on load without replacing the stored record', async () => {
+    await BrowserBinding.prepare(scope, { explicitOptIn: true });
+    const original = await rawRecord();
+    const signing = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+      'sign',
+      'verify',
+    ]);
+    await rawRecord((record) => {
+      record.signing = signing;
+    });
+    await expect(BrowserBinding.load(scope)).rejects.toMatchObject({ code: 'unavailable' });
+    expect((await rawRecord()).signing.privateKey.extractable).toBe(true);
+    const encryption = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, [
+      'encrypt',
+      'decrypt',
+    ]);
+    const parameters = {
+      name: 'AES-GCM',
+      iv: original.iv,
+      additionalData: new TextEncoder().encode(
+        `bifroest-browser-state-v1\0${original.tag}\0${original.generation}`,
+      ),
+    };
+    const plaintext = await crypto.subtle.decrypt(
+      parameters,
+      original.encryption,
+      original.ciphertext,
+    );
+    const ciphertext = await crypto.subtle.encrypt(parameters, encryption, plaintext);
+    new Uint8Array(plaintext).fill(0);
+    await rawRecord((record) => {
+      Object.assign(record, original, { encryption, ciphertext });
+    });
+    await expect(BrowserBinding.load(scope)).rejects.toMatchObject({ code: 'unavailable' });
+    expect((await rawRecord()).encryption.extractable).toBe(true);
+    expect((await rawRecord()).generation).toBe(original.generation);
   });
 
   it('does not repair or overwrite malformed existing records, including missing generations', async () => {

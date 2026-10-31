@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
+import { reportUiError } from '../ui/error-report';
 import {
   Alert,
   Button,
@@ -105,6 +106,11 @@ export function ManagementPanel({
   }, [active]);
   function cancel() {
     if (sending.current && preview !== null) {
+      reportUiError(
+        'management-mutation',
+        new RememberMeError('management-unknown'),
+        'mutation-unknown',
+      );
       setNotice({ kind: 'unknown', preview });
       setPreview(null);
       confirmation.current = null;
@@ -133,6 +139,7 @@ export function ManagementPanel({
         current === generation.current &&
         !(error instanceof RememberMeError && error.code === 'cancelled')
       ) {
+        reportUiError('management-read', error);
         setError(true);
       }
     } finally {
@@ -240,8 +247,9 @@ export function ManagementPanel({
         setNotice({ kind: 'confirmed', preview: pinned });
         onActionLock(false);
       }
-    } catch {
+    } catch (error) {
       if (current === generation.current) {
+        reportUiError('management-mutation', error, 'mutation-unknown');
         setNotice({ kind: 'unknown', preview: pinned });
       }
     } finally {

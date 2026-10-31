@@ -16,12 +16,14 @@ import {
   exerciseManagementForcedVersion,
 } from './management-forced-ui.mjs';
 import { exerciseManagement } from './management-ui.mjs';
+import { exercisePreferences } from './preferences-ui.mjs';
 import { exerciseTerminalExpiry } from './terminal-expiry-ui.mjs';
 import { exerciseLostTerminalLogout } from './terminal-logout-ui.mjs';
 import { exerciseTerminalTabs } from './terminal-tabs-ui.mjs';
 import { exerciseTerminal } from './terminal-ui.mjs';
 import {
   answerAuthentication,
+  assertUiPreferences,
   changeTheme,
   chooseLoginMethod,
   loginLayout,
@@ -213,6 +215,11 @@ try {
   };
   async function exercise() {
     let page = await open();
+    if (process.argv[3] === 'preferences') {
+      await exercisePreferences(page);
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (process.argv[3] === 'compact') {
       await exerciseCompactWorkspace(page);
       assert.deepEqual(errors, []);
@@ -457,7 +464,7 @@ try {
     await page.locator('html[data-color-scheme="dark"]').waitFor();
     assert.equal(await page.locator('html').getAttribute('data-color-scheme'), 'dark');
     assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
-    assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+    await assertUiPreferences(page);
     assert.deepEqual(errors, []);
     if (process.env.BIFROEST_TEST_UI_SCREENSHOT) {
       await page.screenshot({ path: process.env.BIFROEST_TEST_UI_SCREENSHOT, fullPage: true });

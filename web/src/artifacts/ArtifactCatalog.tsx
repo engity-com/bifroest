@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AuditlogSummary, Page, RecordingSummary, WebAccess } from '../remember';
 import { RememberMeError } from '../remember';
+import { reportUiError } from '../ui/error-report';
 import { Alert, Button, Table, Title } from '../ui/material';
 import { t } from '../ui/messages';
 import type { ArtifactRequest } from './protocol';
@@ -67,6 +68,7 @@ export function ArtifactCatalog({
         current === generation.current &&
         !(error instanceof RememberMeError && error.code === 'cancelled')
       ) {
+        reportUiError('artifact-catalog', error);
         setFailed(true);
       }
     } finally {

@@ -122,6 +122,7 @@ export function TextInput({
   ref,
   maxLength,
   pattern,
+  'aria-label': ariaLabel,
   'data-autofocus': autofocus,
   ...props
 }: FieldProps) {
@@ -132,7 +133,7 @@ export function TextInput({
       size="small"
       inputRef={ref}
       autoFocus={autofocus ?? props.autoFocus}
-      slotProps={{ htmlInput: { maxLength, pattern } }}
+      slotProps={{ htmlInput: { maxLength, pattern, 'aria-label': ariaLabel } }}
     />
   );
 }

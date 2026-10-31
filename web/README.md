@@ -3,7 +3,7 @@
 The React 19/Material UI 9 application supports password login, explicit
 RememberMe opt-in, saved-access resumption, confirmed logout/revocation,
 explicit local-only recovery and an owned xterm terminal. It uses en-US message
-keys and memory-only auto/light/dark appearance. Local SSH-key import/signing now
+keys, auto/light/dark appearance and editable user-name preferences. Local SSH-key import/signing now
 uses an owned Go/WASM worker; Management has structured metadata and confirmed
 session disconnect/dispose actions. Keyboard-Interactive
 and OIDC device login use a local authentication-terminal tab and the bounded
@@ -12,6 +12,35 @@ labels show only the verified principal; flow/connection details stay in tooltip
 and menus. The terminal view owns its padding and matching background. Vite 8/Oxc/Rolldown
 builds the application and the independently tested, dependency-free HTTP/crypto
 core; there is no Webpack/Babel chain or production Node runtime.
+
+## Non-authentication UI preferences
+
+At the user's explicit request, `localStorage` retains only the selected
+`auto`/`light`/`dark` theme and the original user name of a confirmed successful
+primary login, separately for each access-link slug within the browser origin.
+The two owned key forms are `bifroest-ui-v1:theme` and
+`bifroest-ui-v1:username:<encoded-slug>`. Names are plaintext personal preferences,
+not verified principals, effective target accounts, saved credentials or permissions.
+Stored values are validated and only prefill the editable field; they never start
+login or replace an existing tab's immutable actor. Denial and uncertain login
+claims do not replace the last successful name. Storage failure does not deny an
+otherwise valid login. No password, primary SSH key, passphrase, bearer, selector
+or authorization snapshot is stored here; RememberMe remains independently opt-in.
+
+Visible requesting-name inputs are required and reject blank/whitespace-only
+values before authentication or local key import. A flow with `requestUser:false`
+still has no such field and sends the original empty requesting name, regardless
+of stored preferences. Successful saved-access resumption does not guess a
+requesting name from its possibly different verified principal.
+
+The IndexedDB RememberMe record is separate. Its P-256 private signing key and
+AES-GCM secret key are non-exportable and exportable replacements are refused on
+load. The **public** verification key is exportable so enrollment can send it to
+the server; `publicKey.extractable:true` does not expose the private key. These
+keys are independently generated, not the imported SSH key. Non-exportability is
+not hardware binding or protection against already-trusted/malicious same-origin code.
+
+## Development
 
 Use the repository-pinned Bun 1.4.4, Biome 2.6.3 and Node 26.9.0 through MISE.
 The root and nested Web Node pins agree. Do not
@@ -533,19 +562,21 @@ not claim external-provider, native Local account-policy or public-key UI covera
 
 ## Public-key login and owned Go/WASM worker
 
-Failed key sign-in offers an expandable **Details** section with a fixed public
-code such as `key/worker-start/key-import` or
-`key/browser-crypto/unavailable`. It identifies only the local phase and existing
-failure class: module loading, public WASM download, local file reading, worker
-startup, parsing/decryption, browser WebCrypto, challenge validation, signing,
-signature shape or authentication/result handling. It never includes a filename,
-key/passphrase, bearer, HTTP body, parser exception or stack trace. A diagnostic
-code is safe to report; do not send the key or passphrase.
+Displayed operation failures are also reported through `console.error` as Error
+objects with their public code/phase and sanitized original callsites from already
+loaded same-origin public JavaScript assets. Raw exceptions, causes, filenames,
+keys/passphrases, bearer tokens, HTTP bodies and provider/recording content are not
+handed to the console. Console retention must not keep secret-bearing objects alive.
+The login form retains only the concise error, not an expanded diagnostics panel.
+Key codes such as `key/worker-start/key-import` or
+`key/browser-crypto/unavailable` identify local module/download/file/worker/import,
+browser WebCrypto, challenge, signing, signature-shape or authentication phases.
+Only the safe diagnostic code should be reported; do not send a key or passphrase.
 
 This classification does not infer a cause from an arbitrary error message.
 For example, an import failure can still mean an incorrect passphrase,
 unsupported key/format, certificate mismatch or an input/cost bound. Existing
-`denied`, `cancelled` and `login-unknown` outcomes retain their meaning. Details
+`denied`, `cancelled` and `login-unknown` outcomes retain their meaning. Diagnostics
 never retry an operation, relax challenge checks or reconcile an uncertain claim.
 
 `BrowserClient.publicKey(user, key, signal)` accepts a trusted tab-local `LoginKey`

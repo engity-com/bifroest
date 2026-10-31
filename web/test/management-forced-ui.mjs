@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
   activeAccess,
+  assertUiPreferences,
   chooseLoginMethod,
   exactArtifactSelection,
   workspace,
@@ -69,7 +70,7 @@ export async function exerciseManagementForcedVersion(page, file, logout) {
   await logout(page);
   assert.equal(await page.getByRole('region', { name: 'Server version', exact: true }).count(), 0);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
-  assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+  await assertUiPreferences(page);
 }
 
 export async function exerciseManagementForced(page, file, logout) {
@@ -144,7 +145,7 @@ export async function exerciseManagementForced(page, file, logout) {
   );
   await logout(page);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
-  assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+  await assertUiPreferences(page);
 }
 
 export async function exerciseManagementForcedAudit(page, file, logout) {
@@ -269,5 +270,5 @@ export async function exerciseManagementForcedAudit(page, file, logout) {
     0,
   );
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
-  assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+  await assertUiPreferences(page);
 }

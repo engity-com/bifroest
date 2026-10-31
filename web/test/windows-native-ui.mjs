@@ -7,6 +7,7 @@ import { chromium } from 'playwright';
 import { observePublicKeyWasm } from './public-wasm-diagnostics.mjs';
 import {
   activeAccess,
+  assertUiPreferences,
   chooseLoginMethod,
   duplicateTab,
   logoutAccess,
@@ -326,7 +327,7 @@ try {
     'public WASM downloads must belong to the tab',
   );
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
-  assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+  await assertUiPreferences(page, [fixture.user]);
   assert.equal((await context.cookies()).length, 0);
   console.log(JSON.stringify({ executions }));
 } catch (error) {

@@ -6,6 +6,7 @@ import { useEffect, useRef } from 'react';
 import { verificationLink } from '../login/links';
 import { AuthenticationInput, authenticationText } from '../login/terminal-input';
 import type { LoginStep, Scope } from '../remember';
+import { reportUiError } from '../ui/error-report';
 import { t } from '../ui/messages';
 import { protectAuthenticationComposition } from './authentication-composition';
 import { noncedDocument } from './document';
@@ -102,6 +103,9 @@ export function AuthenticationTerminal({
                 ? 'remembering'
                 : 'waiting';
           if (shown.current !== key) {
+            if (owned.step?.kind === 'error') {
+              reportUiError('authentication-provider', undefined, 'provider-error');
+            }
             if (!nativeComposition?.check()) {
               return;
             }
@@ -199,8 +203,9 @@ export function AuthenticationTerminal({
         observer.observe(container.current);
         render();
       })
-      .catch(() => {
+      .catch((error) => {
         if (!disposed) {
+          reportUiError('authentication-terminal', error, 'configuration');
           current.current.view.onCancel();
         }
       });

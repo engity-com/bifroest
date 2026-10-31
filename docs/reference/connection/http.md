@@ -123,13 +123,15 @@ Actual Go HTTPS/Chromium UI tests verify escaped provider markup, echo/secret tr
 
 ### Portable public-key client foundation
 
-Failed local-key login exposes an expandable **Details** section containing only
-an allowlisted phase and existing failure code, for example
+Displayed operation failures are mirrored to the browser error console as Error
+objects with an allowlisted phase/code and sanitized callsites from already
+loaded public JavaScript assets. The form shows the concise error, not a details
+panel. Public-key examples are
 `key/wasm-download/key-import` or `key/challenge/invalid-proof`. This distinguishes
 local module/runtime/file/worker/import/signing failures, unavailable browser
 WebCrypto and rejected challenge/signature checks from authentication/result
-handling. Raw exceptions, parser messages, filenames, HTTP bodies, private keys,
-passphrases and bearer tokens are not rendered. Denial/cancellation/uncertain-claim
+handling. Raw exceptions, causes, parser messages, filenames, HTTP bodies, private keys,
+passphrases, bearer tokens and provider/recording content are not logged or rendered. Denial/cancellation/uncertain-claim
 semantics remain unchanged; a diagnostic code never permits replay or bypass.
 
 The browser client accepts a trusted tab-local key adapter, checks the original `bifroest-http-public-key-v1` challenge against exact origin/port, slug, original user, public key/certificate fingerprint and pinned expiry, and posts only the canonical public key plus one SSH wire signature. A key attempt accepts one proof step with a two-minute cap, never an interactive fallback. Ambiguous replies/final claims are not automatically repeated. The built UI now supplies this adapter through a short-lived Go/WASM worker and the `SSH key login` file/passphrase/certificate form.
@@ -698,7 +700,25 @@ Before proof submission, failed enrollment may remove only its own newly created
 
 Real Chromium tests cover these HTTP state transitions, cancellation/late replies, lost responses, failed completion/logout, stale deletion, scope and bounded/redirected replies. An additional explicitly requested Go test serves the actual built client through an owned HTTPS fixture: password login, enrollment, browser-process restart, same-session resume, neutral WebSocket execution and binding logout/revoke all use the real Go HTTP authorizer/session boundary. Independent primary access survives. Cookie-free HTTP API requests, rejected cookie-only WebSockets and same-origin rejection before a foreign destination are verified. This is not React UI, real shared-container or native Local password-policy coverage. Test-only asset routes do not provide production asset serving.
 
-The React 19/Material UI 9 UI uses the same client, en-US message keys and memory-only auto/light/dark appearance. Passwords are not retained in application state, access tokens never enter rendered metadata, and disabled requesting-name collection omits the input and sends an empty name. A successful primary login remains known when RememberMe cannot be confirmed, but uncertain enrollment blocks new automatic shells until reconciliation. Unknown enrollment and unconfirmed logout remain visibly distinct from success; failed logout blocks new local actions while retaining the owned capability for retry. Remote revocation and explicit local-only removal have separate confirmation dialogs. A dialog retains its selected key/record, so another tab's replacement is not silently adopted. Native UI tests cover actual Go HTTPS, browser restart, unchecked opt-in, interrupted claims, local-only recovery, name-free input, customization, theme changes and CSP enforcement. The authentication API alone does not provision a workload or acquire an execution lease; after a confirmed terminal-capable login the built UI separately opens one fresh shell connection.
+The React 19/Material UI 9 UI uses the same client and en-US message keys.
+Explicitly requested, non-authentication `localStorage` preferences retain only
+the auto/light/dark theme and last confirmed successful original requesting name
+per access-link slug within this browser origin. The name only prefills an editable
+required input; it does not establish a principal, permissions or automatic login.
+Failed or uncertain logins do not replace it, and preference storage failure does
+not block authentication. Disabled requesting-name collection still omits the input
+and sends an empty name, never a stored or guessed principal.
+Passwords are not retained in application state and access tokens never enter
+rendered metadata or these preferences. A successful primary login remains known
+when RememberMe cannot be confirmed, but uncertain enrollment blocks new automatic
+shells until reconciliation. Unknown enrollment and unconfirmed logout remain
+visibly distinct from success; failed logout retains the owned capability for retry.
+Remote revocation and explicit local-only removal have separate confirmation
+dialogs retaining their selected record. Native UI tests cover actual Go HTTPS,
+browser restart, opt-in, interrupted claims, local-only recovery, name-free input,
+preferences, customization, theme changes and CSP enforcement. Authentication alone
+does not provision a workload or acquire an execution lease; confirmed
+terminal-capable login separately opens one fresh shared-driver shell connection.
 
 Vite 8/Oxc/Rolldown builds the app and dependency-free HTTP client core without Webpack/Babel. App preparation builds the portable Go/WASM components and validates their pinned runtime. The Management panel loads only for an authenticated Management environment. Node/browser automation and Go build subprocesses are build/test-only. Release builds require frontend preparation and its exact asset/input inventory before Go compilation; an unbuilt source-only checkout using direct `go build` remains API/SSH-capable. Forced-command equivalence, signed source provenance and additional browser/OS runtime coverage remain incomplete. See `web/README.md` for development, an explicit non-release runtime-file override and opt-in native tests.
 

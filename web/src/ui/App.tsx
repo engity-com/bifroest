@@ -6,12 +6,13 @@ import MoreVertIcon from '@mui/icons-material/MoreVert';
 import PaletteIcon from '@mui/icons-material/Palette';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { type KeyLoginDiagnostic, keyLoginDiagnostic, keyLoginError } from '../login/diagnostic';
+import { keyLoginDiagnostic, keyLoginError, publicRememberErrorCode } from '../login/diagnostic';
 import { verificationLink } from '../login/links';
 import type { AccessSnapshot, LoginStep, LogoutResult, WebAccess } from '../remember';
 import { BrowserBinding, BrowserClient, RememberMeError } from '../remember';
 import type { AuthenticationView } from '../terminal/AuthenticationTerminal';
 import { maximumTabs, TerminalWorkspace } from '../terminal/TerminalWorkspace';
+import { reportUiError } from './error-report';
 import { type LinkMetadata, loadLinkMetadata } from './link-metadata';
 import {
   ActionIcon,
@@ -32,17 +33,18 @@ import {
 } from './material';
 import type { Message } from './messages';
 import { t } from './messages';
+import { preferredUsername, saveSuccessfulUsername } from './preferences';
 
 type Saved = 'loading' | 'missing' | 'ready' | 'pending' | 'unavailable';
 type Notice = {
   key: Message;
   color: 'red' | 'yellow' | 'green';
   context?: AccessSnapshot;
-  diagnostic?: KeyLoginDiagnostic;
 };
 
 function errorNotice(error: unknown): Notice {
-  const code = error instanceof RememberMeError ? error.code : 'unavailable';
+  reportUiError('application', error);
+  const code = publicRememberErrorCode(error) ?? 'unavailable';
   const diagnostic = keyLoginDiagnostic(error);
   const key: Message =
     code === 'key-import'
@@ -69,39 +71,12 @@ function errorNotice(error: unknown): Notice {
   return {
     key,
     color: code === 'denied' || code === 'unavailable' ? 'red' : 'yellow',
-    ...(diagnostic ? { diagnostic } : {}),
   };
 }
 
 function NoticeBody({ notice }: { notice: Notice }) {
-  return (
-    <>
-      {t(notice.key)}
-      {notice.diagnostic && (
-        <details className="login-diagnostic">
-          <summary>{t('keyDiagnosticDetails')}</summary>
-          <p>{t(keyDiagnosticMessages[notice.diagnostic.phase])}</p>
-          <code>
-            key/{notice.diagnostic.phase}/{notice.diagnostic.code}
-          </code>
-          <p>{t('keyDiagnosticPrivacy')}</p>
-        </details>
-      )}
-    </>
-  );
+  return <>{t(notice.key)}</>;
 }
-const keyDiagnosticMessages = {
-  module: 'keyDiagnosticModule',
-  'wasm-download': 'keyDiagnosticDownload',
-  'file-read': 'keyDiagnosticFile',
-  'worker-start': 'keyDiagnosticWorker',
-  'key-import': 'keyDiagnosticImport',
-  'browser-crypto': 'keyDiagnosticCrypto',
-  challenge: 'keyDiagnosticChallenge',
-  sign: 'keyDiagnosticSign',
-  signature: 'keyDiagnosticSignature',
-  authentication: 'keyDiagnosticAuthentication',
-} as const satisfies Record<KeyLoginDiagnostic['phase'], Message>;
 
 export function App({
   metadata,
@@ -117,6 +92,9 @@ export function App({
   const client = useRef(new BrowserClient(metadata.scope));
   const link = useRef(metadata);
   const [loginMetadata, setLoginMetadata] = useState(metadata);
+  const [loginUser, setLoginUser] = useState(() =>
+    metadata.requestUser ? preferredUsername(metadata.scope) : '',
+  );
   const access = useRef<WebAccess | null>(null);
   // An independently confirmed primary may still be enrolling RememberMe. Keep
   // that owning grant recoverable without confusing it with an internal tab's
@@ -167,8 +145,9 @@ export function App({
       }
       savedHandle.current = handle;
       setSaved(handle === null ? 'missing' : handle.binding === null ? 'pending' : 'ready');
-    } catch {
+    } catch (error) {
       if (current === generation.current && scope === link.current.scope) {
+        reportUiError('remember-storage', error);
         savedHandle.current = null;
         setSaved('unavailable');
       }
@@ -223,6 +202,7 @@ export function App({
       link.current = next;
       client.current = new BrowserClient(next.scope);
       setLoginMetadata(next);
+      setLoginUser(next.requestUser ? preferredUsername(next.scope) : '');
       setProviderInformation(null);
       setPasswordKey((value) => value + 1);
       setOptIn(false);
@@ -273,6 +253,7 @@ export function App({
         : {}),
     });
     if (enrollmentMayHaveCommitted) {
+      reportUiError('application', new RememberMeError('outcome-unknown'));
       setRememberUncertain(true);
       setLoginOpen(false);
     }
@@ -328,7 +309,15 @@ export function App({
 
   async function login(form: HTMLFormElement) {
     const password = form.elements.namedItem('password') as HTMLInputElement | null;
-    const user = (form.elements.namedItem('user') as HTMLInputElement | null)?.value ?? '';
+    const selectedLink = link.current;
+    const userInput = form.elements.namedItem('user') as HTMLInputElement | null;
+    const user = selectedLink.requestUser ? (userInput?.value ?? '') : '';
+    if (selectedLink.requestUser && user.trim().length === 0) {
+      setNotice({ key: 'userRequired', color: 'yellow' });
+      reportUiError('application', undefined, 'user-required');
+      userInput?.reportValidity();
+      return;
+    }
     setProviderInformation(null);
     const selectedClient = client.current;
     const selectedScope = link.current.scope;
@@ -400,6 +389,9 @@ export function App({
       if (current !== generation.current) {
         return;
       }
+      if (selectedLink.requestUser) {
+        saveSuccessfulUsername(selectedScope, user);
+      }
       access.current = result;
       candidate.current = result;
       setSnapshot(result.snapshot());
@@ -440,6 +432,7 @@ export function App({
         return;
       }
       if (result === null) {
+        reportUiError('application', new RememberMeError('denied'));
         setNotice({ key: 'denied', color: 'yellow' });
         return;
       }
@@ -454,6 +447,9 @@ export function App({
   }
 
   function cleanupNotice(result: LogoutResult, success: 'loggedOut' | 'remoteRevoked'): Notice {
+    if (result.localState === 'unavailable') {
+      reportUiError('remember-storage', new RememberMeError('unavailable'));
+    }
     return result.localState === 'changed'
       ? { key: 'newerKept', color: 'yellow' }
       : result.localState === 'unavailable'
@@ -494,8 +490,9 @@ export function App({
       setLoginOpen(false); // The remaining active tab is selected by the workspace.
       setRememberUncertain(false);
       setNotice({ ...cleanupNotice(result, 'loggedOut'), context: selected.snapshot() });
-    } catch {
+    } catch (error) {
       if (current === generation.current) {
+        reportUiError('logout', error, 'logout-unknown');
         setNotice({ key: 'logoutUnknown', color: 'red', context: selected.snapshot() });
       }
     } finally {
@@ -552,6 +549,7 @@ export function App({
       void chooseLink(scope.slug);
       return;
     }
+    setLoginUser(link.current.requestUser ? preferredUsername(link.current.scope) : '');
     void readSaved();
   }
   function closeLogin() {
@@ -809,6 +807,12 @@ export function App({
               <TextInput
                 name="user"
                 label={t('user')}
+                aria-label={t('user')}
+                required
+                pattern={'.*\\S.*'}
+                maxLength={256}
+                value={loginUser}
+                onChange={(event) => setLoginUser(event.currentTarget.value)}
                 autoComplete="username"
                 data-autofocus
                 disabled={busy}

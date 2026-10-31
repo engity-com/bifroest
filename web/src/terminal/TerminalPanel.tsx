@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import { useComputedColorScheme } from '../ui/material';
 import '@xterm/xterm/css/xterm.css';
 import type { WebAccess } from '../remember';
+import { reportUiError } from '../ui/error-report';
 import type { Message } from '../ui/messages';
 import { t } from '../ui/messages';
 import { noncedDocument } from './document';
@@ -208,6 +209,9 @@ export function TerminalPanel({
               return;
             }
             state.current = next;
+            if (next.phase === 'interrupted') {
+              reportUiError('terminal', undefined, next.reason);
+            }
             updateInput();
             onState(id, next);
             if (
@@ -238,8 +242,9 @@ export function TerminalPanel({
           },
         });
       })
-      .catch(() => {
+      .catch((error) => {
         if (!disposed) {
+          reportUiError('terminal', error, 'configuration');
           state.current = { phase: 'interrupted', reason: 'configuration' };
           onState(id, state.current);
         }

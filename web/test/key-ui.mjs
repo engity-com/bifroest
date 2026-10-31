@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { observePublicKeyWasm } from './public-wasm-diagnostics.mjs';
 import {
   activeAccess,
+  assertUiPreferences,
   captureLayout,
   chooseLoginMethod,
   notification,
@@ -18,6 +19,14 @@ export async function exerciseKeyDiagnostic(page, file, variant) {
     crypto: 'key/browser-crypto/unavailable',
   }[variant];
   assert(expected);
+  await page.evaluate(() => {
+    window.testUiConsoleErrors = [];
+    const original = console.error;
+    console.error = (...args) => {
+      window.testUiConsoleErrors.push(args);
+      original.apply(console, args);
+    };
+  });
   const requests = [];
   page.on('request', (request) => {
     if (request.url().includes('/api/v1/')) {
@@ -53,10 +62,45 @@ export async function exerciseKeyDiagnostic(page, file, variant) {
     .getByLabel('Key passphrase (optional, local only)', { exact: true })
     .fill(fixture.passphrase);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  const detail = page.locator('.login-diagnostic');
-  await detail.locator('summary').click();
-  await detail.getByText(expected, { exact: true }).waitFor();
-  const text = await detail.textContent();
+  await page.waitForFunction(
+    (expected) =>
+      window.testUiConsoleErrors.some(
+        ([label, error]) =>
+          typeof label === 'string' &&
+          label.startsWith('[Bifröst/') &&
+          error instanceof Error &&
+          `key/${error.phase}/${error.code}` === expected,
+      ),
+    expected,
+  );
+  assert.equal(
+    await page.locator('.login-diagnostic').count(),
+    0,
+    'debug details belong in the developer console, not the sign-in form',
+  );
+  const report = await page.evaluate((expected) => {
+    const [, error] = window.testUiConsoleErrors.find(
+      ([label, error]) =>
+        typeof label === 'string' &&
+        label.startsWith('[Bifröst/') &&
+        `key/${error.phase}/${error.code}` === expected,
+    );
+    return {
+      name: error.name,
+      message: error.message,
+      code: error.code,
+      phase: error.phase,
+      stack: error.stack,
+      fields: Object.getOwnPropertyNames(error),
+    };
+  }, expected);
+  const text = JSON.stringify(report);
+  assert.equal(report.name, 'KeyLoginError');
+  assert(
+    report.fields.every((name) =>
+      ['name', 'message', 'stack', 'context', 'code', 'phase'].includes(name),
+    ),
+  );
   for (const secret of [
     fixture.passphrase,
     '-----BEGIN',
@@ -264,7 +308,7 @@ export async function exerciseKey(page, file, logout) {
     }
   }
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
-  assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+  await assertUiPreferences(page);
   assert(
     publicDownloads.length > 0 && publicDownloads.every(Boolean),
     'public WASM requests must be owned by the tab, not a retiring secret worker',
@@ -327,5 +371,5 @@ export async function exerciseKeyVariant(page, file, variant, logout) {
   assert.equal(page.workers().length, 0);
   await logout(page);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
-  assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+  await assertUiPreferences(page);
 }

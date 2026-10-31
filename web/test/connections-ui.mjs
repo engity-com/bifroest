@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   activeAccess,
   answerAuthentication,
+  assertUiPreferences,
   captureLayout,
   chooseLoginMethod,
   duplicateTab,
@@ -182,6 +183,6 @@ export async function exerciseConnections(page, login) {
   );
   assert(requests.some((r) => r.slug === 'Other' && r.user === 'bob'));
   assert(requests.some((r) => r.slug === 'Manage' && r.user === 'alice'));
-  assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+  await assertUiPreferences(page);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
 }

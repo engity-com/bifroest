@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { assertAccessActionsBlocked, logoutAccess } from './workspace-ui.mjs';
+import { assertAccessActionsBlocked, assertUiPreferences, logoutAccess } from './workspace-ui.mjs';
 
 export async function exerciseLostTerminalLogout(page, login) {
   let sockets = 0;
@@ -52,5 +52,5 @@ export async function exerciseLostTerminalLogout(page, login) {
     'socket loss must not infer a successful process exit',
   );
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
-  assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+  await assertUiPreferences(page);
 }

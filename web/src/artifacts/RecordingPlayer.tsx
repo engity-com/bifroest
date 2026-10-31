@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Select, Title, useComputedColorScheme } from '../ui/material';
 import '@xterm/xterm/css/xterm.css';
 import { noncedDocument } from '../terminal/document';
+import { reportUiError } from '../ui/error-report';
 import { t } from '../ui/messages';
 import { EvidenceError } from './evidence-protocol';
 import type { PlaybackState } from './playback';
@@ -133,6 +134,9 @@ export function RecordingPlayer({
         },
         (next) => {
           if (current === generation.current) {
+            if (next.phase === 'failed') {
+              reportUiError('playback', undefined, 'render-failed');
+            }
             setState(next);
           }
         },
@@ -144,6 +148,7 @@ export function RecordingPlayer({
     } catch (error) {
       image?.dispose();
       if (current === generation.current && !controller.signal.aborted) {
+        reportUiError('playback', error);
         emulator.current?.dispose();
         emulator.current = null;
         for (const subscription of subscriptions.current) {

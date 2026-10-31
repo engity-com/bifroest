@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
 import {
   activeAccess,
+  assertUiPreferences,
   captureLayout,
   exactArtifactSelection,
   logoutAccess,
@@ -537,7 +538,7 @@ try {
   );
   assert.deepEqual(errors, []);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
-  assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+  await assertUiPreferences(page);
   assert.equal(
     await page.evaluate(() => window.artifactStorageWrites),
     0,

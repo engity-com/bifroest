@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { duplicateTab, tabMenu } from './workspace-ui.mjs';
+import { assertUiPreferences, duplicateTab, tabMenu } from './workspace-ui.mjs';
 
 export async function exerciseTerminalTabs(page, login, logout) {
   let sockets = 0;
@@ -102,5 +102,5 @@ export async function exerciseTerminalTabs(page, login, logout) {
   assert.equal(await page.getByRole('tab').count(), 0);
   assert.equal(await page.locator('.xterm').count(), 0);
   assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
-  assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+  await assertUiPreferences(page);
 }

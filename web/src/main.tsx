@@ -12,8 +12,10 @@ import { createRoot } from 'react-dom/client';
 import './ui/app.css';
 import { validateScope } from './remember/protocol';
 import { App } from './ui/App';
+import { reportUiError } from './ui/error-report';
 import { type LinkMetadata, loadLinkMetadata } from './ui/link-metadata';
 import { t } from './ui/messages';
+import { isThemePreference, preferredTheme, saveThemePreference } from './ui/preferences';
 
 const cache = createCache({
   key: 'bifroest',
@@ -21,7 +23,7 @@ const cache = createCache({
 });
 
 function Workspace({ metadata, title }: { metadata: LinkMetadata; title: string }) {
-  const [scheme, setScheme] = useState('auto');
+  const [scheme, setScheme] = useState(preferredTheme);
   const dark = useMediaQuery('(prefers-color-scheme: dark)');
   const mode = scheme === 'auto' ? (dark ? 'dark' : 'light') : scheme === 'dark' ? 'dark' : 'light';
   const theme = useMemo(
@@ -67,7 +69,17 @@ function Workspace({ metadata, title }: { metadata: LinkMetadata; title: string 
             },
           }}
         />
-        <App metadata={metadata} title={title} scheme={scheme} onScheme={setScheme} />
+        <App
+          metadata={metadata}
+          title={title}
+          scheme={scheme}
+          onScheme={(next) => {
+            if (isThemePreference(next)) {
+              setScheme(next);
+              saveThemePreference(next);
+            }
+          }}
+        />
       </ThemeProvider>
     </CacheProvider>
   );
@@ -91,7 +103,8 @@ async function start() {
         : t('brand');
     document.title = title;
     createRoot(container).render(<Workspace metadata={metadata} title={title} />);
-  } catch {
+  } catch (error) {
+    reportUiError('bootstrap', error);
     container.textContent = t('loadFailed');
   }
 }

@@ -32,4 +32,23 @@ describe('allowlisted local key diagnostics, never arbitrary internal errors', (
       keyLoginDiagnostic(new KeyLoginError('PRIVATE-SENTINEL' as never, 'key-import')),
     ).toBeUndefined();
   });
+  it('does not invoke changing code/phase accessors in diagnostic extraction or classification', () => {
+    const error = new KeyLoginError('unavailable', 'key-import');
+    let reads = 0;
+    Object.defineProperty(error, 'code', {
+      get: () => (++reads === 1 ? 'unavailable' : 'PRIVATE-SENTINEL'),
+    });
+    Object.defineProperty(error, 'phase', {
+      get: () => {
+        reads++;
+        return 'PRIVATE-SENTINEL';
+      },
+    });
+    expect(keyLoginDiagnostic(error)).toBeUndefined();
+    expect(keyLoginError(error, 'authentication')).toMatchObject({
+      code: 'key-import',
+      phase: 'authentication',
+    });
+    expect(reads).toBe(0);
+  });
 });

@@ -7,6 +7,7 @@ import { createInterface } from 'node:readline';
 import { chromium } from 'playwright';
 import {
   answerAuthentication,
+  assertUiPreferences,
   chooseLoginMethod,
   duplicateTab,
   logoutAccess,
@@ -366,7 +367,7 @@ try {
       await page.getByRole('button', { name: 'Use saved access', exact: true }).count(),
       0,
     );
-    assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+    await assertUiPreferences(page, [fixture.user]);
     assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
     assert.equal((await context.cookies()).length, 0);
     await context.close();
