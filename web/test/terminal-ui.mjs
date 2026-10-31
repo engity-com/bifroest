@@ -15,6 +15,7 @@ import {
 export async function exerciseTerminal(page, login) {
   let sockets = 0;
   const openings = [];
+  let functionInput = null;
   page.on('websocket', (socket) => {
     sockets++;
     socket.on('framesent', ({ payload }) => {
@@ -23,6 +24,8 @@ export async function exerciseTerminal(page, login) {
         if (value.type === 'open') {
           openings.push({ task: value.task, command: value.command, pty: Boolean(value.pty) });
         }
+      } else if (functionInput !== null) {
+        functionInput.push(Buffer.from(payload));
       }
     });
   });
@@ -32,7 +35,7 @@ export async function exerciseTerminal(page, login) {
     await page.waitForFunction(
       (text) =>
         document
-          .querySelector('[data-terminal-active="true"] .xterm-rows')
+          .querySelector('[data-terminal-active="true"] .xterm-accessibility-tree')
           ?.textContent?.includes(text),
       text,
       { timeout: 5000 },
@@ -71,7 +74,9 @@ export async function exerciseTerminal(page, login) {
   await output('STDERR_MARKER');
   await captureLayout(page, 'terminal-desktop');
   assert.equal(await page.title(), 'Fixture brand');
-  const renderedLink = pane().locator('.xterm-rows').getByText('blocked-link', { exact: true });
+  const renderedLink = pane()
+    .locator('.xterm-accessibility-tree')
+    .getByText('blocked-link', { exact: true });
   await renderedLink.waitFor({ state: 'visible' });
   const link = await renderedLink.boundingBox();
   assert(link);
@@ -80,6 +85,77 @@ export async function exerciseTerminal(page, login) {
   assert.equal(page.context().pages().length, pages, 'remote links must not open windows');
   await type('hello');
   await output('STDIN:hello');
+  await pane().locator('.xterm-helper-textarea').focus();
+  await page.evaluate(() => {
+    window.testTerminalKeys = [];
+    const input = document.querySelector('[data-terminal-active="true"] .xterm-helper-textarea');
+    for (const type of ['keydown', 'keyup']) {
+      input.addEventListener(
+        type,
+        (event) => {
+          if (/^F(?:7|10)$/u.test(event.key)) {
+            queueMicrotask(() =>
+              window.testTerminalKeys.push({
+                key: event.key,
+                type,
+                prevented: event.defaultPrevented,
+              }),
+            );
+          }
+        },
+        { capture: true },
+      );
+    }
+    window.testTerminalKeyBubbles = 0;
+    document.addEventListener('keydown', (event) => {
+      if (/^F(?:7|10)$/u.test(event.key)) {
+        window.testTerminalKeyBubbles++;
+      }
+    });
+  });
+  // The shell is already connected; attach to its existing socket rather than
+  // opening another execution merely to test keyboard delivery.
+  functionInput = [];
+  await page.keyboard.press('F7');
+  await page.keyboard.press('F10');
+  await page.waitForFunction(() => window.testTerminalKeys.length === 4);
+  assert.deepEqual(await page.evaluate(() => window.testTerminalKeys), [
+    { key: 'F7', type: 'keydown', prevented: true },
+    { key: 'F7', type: 'keyup', prevented: true },
+    { key: 'F10', type: 'keydown', prevented: true },
+    { key: 'F10', type: 'keyup', prevented: true },
+  ]);
+  assert.equal(await page.evaluate(() => window.testTerminalKeyBubbles), 0);
+  await page.waitForFunction(() =>
+    document.activeElement?.classList.contains('xterm-helper-textarea'),
+  );
+  assert.equal(await page.getByRole('menu', { includeHidden: true }).count(), 0);
+  // A subsequent ordinary command is the ordering barrier for the paced socket.
+  await type('after-function-keys');
+  await output('after-function-keys');
+  assert(
+    Buffer.concat(functionInput).includes(Buffer.from('\x1b[18~\x1b[21~')),
+    'F7/F10 must each reach the existing execution exactly once',
+  );
+  assert.equal(Buffer.concat(functionInput).toString().split('\x1b[18~').length - 1, 1);
+  assert.equal(Buffer.concat(functionInput).toString().split('\x1b[21~').length - 1, 1);
+  functionInput = null;
+  await pane().locator('[data-terminal-renderer="webgl"]').waitFor();
+  await pane()
+    .locator('.xterm-screen > canvas:not(.xterm-link-layer)')
+    .evaluate((canvas) => {
+      const gl = canvas.getContext('webgl2');
+      const loss = gl?.getExtension('WEBGL_lose_context');
+      if (!loss) {
+        throw new Error('the integration proof must exercise an actual GPU context loss');
+      }
+      loss.loseContext();
+    });
+  await pane().locator('[data-terminal-renderer="dom"]').waitFor();
+  await type('after-gpu-loss');
+  await output('after-gpu-loss');
+  await output('STDIN:hello');
+  assert.equal(sockets, 1, 'GPU context loss must keep the existing execution, input and buffer');
   await page.setViewportSize({ width: 390, height: 844 });
   await output('RESIZE:');
   await captureLayout(page, 'terminal-mobile');
@@ -116,7 +192,9 @@ export async function exerciseTerminal(page, login) {
   await page.locator('[data-terminal-phase="connected"]').waitFor();
   await type('kept-after-rejected-reauth');
   await output('STDIN:kept-after-rejected-reauth');
-  assert(!(await pane().locator('.xterm-rows').textContent()).includes(rejectedSecret));
+  assert(
+    !(await pane().locator('.xterm-accessibility-tree').textContent()).includes(rejectedSecret),
+  );
 
   await reauthenticate(page);
   await chooseLoginMethod(page, 'Interactive / device login');
@@ -145,7 +223,9 @@ export async function exerciseTerminal(page, login) {
   await activeAccess(page, 'alice');
   await type('kept-after-cancelled-reauth');
   await output('STDIN:kept-after-cancelled-reauth');
-  assert(!(await pane().locator('.xterm-rows').textContent()).includes(cancelledSecret));
+  assert(
+    !(await pane().locator('.xterm-accessibility-tree').textContent()).includes(cancelledSecret),
+  );
 
   await duplicateTab(page);
   await output('EXECUTION_START:3');
@@ -161,7 +241,11 @@ export async function exerciseTerminal(page, login) {
   await login(page, false, 'bob');
   await output('EXECUTION_START:4');
   assert.equal(sockets, 4, 'reauthentication opens a new tab without replacing the old execution');
-  assert(!(await pane().locator('.xterm-rows').textContent()).includes('EXECUTION_START:2'));
+  assert(
+    !(await pane().locator('.xterm-accessibility-tree').textContent()).includes(
+      'EXECUTION_START:2',
+    ),
+  );
   await select(2, 'alice');
   await type('still-running');
   await output('STDIN:still-running');
@@ -187,7 +271,7 @@ export async function exerciseTerminal(page, login) {
   await select(1, 'alice');
   await output('EXECUTION_START:1');
   assert(
-    (await pane().locator('.xterm-rows').textContent()).includes('STDIN:hello'),
+    (await pane().locator('.xterm-accessibility-tree').textContent()).includes('STDIN:hello'),
     'switching tabs retains its own original output',
   );
   assert.deepEqual(

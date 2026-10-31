@@ -7,6 +7,8 @@ import { reportUiError } from '../ui/error-report';
 import type { Message } from '../ui/messages';
 import { t } from '../ui/messages';
 import { noncedDocument } from './document';
+import { ownTerminalKey } from './keyboard';
+import { installTerminalRenderer } from './renderer';
 import type { TerminalState } from './socket';
 import { TerminalConnection } from './socket';
 
@@ -134,6 +136,7 @@ export function TerminalPanel({
           screenReaderMode: true,
           scrollback: 1000,
           fontSize: 14,
+          customGlyphs: true,
           fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
           documentOverride: noncedDocument(document, nonce),
           windowOptions: {},
@@ -144,12 +147,16 @@ export function TerminalPanel({
         const fit = new addon.FitAddon();
         terminal.loadAddon(fit);
         terminal.open(container.current);
+        subscriptions.push(installTerminalRenderer(terminal, container.current));
         subscriptions.push(terminal.parser.registerOscHandler(52, () => true));
         const mayInput = () =>
           !disposed &&
           interaction.current.active &&
           interaction.current.inputAllowed &&
           !eof.current;
+        terminal.attachCustomKeyEventHandler((event) =>
+          mayInput() && state.current.phase === 'connected' ? ownTerminalKey(event) : true,
+        );
         subscriptions.push(
           terminal.onData((value) => {
             if (mayInput()) {

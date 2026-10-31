@@ -27,7 +27,7 @@ export async function exerciseCompactWorkspace(page) {
     page.waitForFunction(
       (text) =>
         document
-          .querySelector('[data-terminal-active="true"] .xterm-rows')
+          .querySelector('[data-terminal-active="true"] .xterm-accessibility-tree')
           ?.textContent?.includes(text),
       text,
     );

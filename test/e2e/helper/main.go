@@ -57,6 +57,8 @@ func run(args []string) error {
 		return exitAfter(args[1], args[2])
 	case "pty":
 		return pty()
+	case "shell-cursor-regression":
+		return shellCursorRegression()
 	case "pty-size":
 		if len(args) != 3 {
 			return errors.New("usage: pty-size <columns> <rows>")

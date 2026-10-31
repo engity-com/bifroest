@@ -31,7 +31,7 @@ export async function exerciseConnections(page, login) {
     page.waitForFunction(
       (text) =>
         document
-          .querySelector('[data-terminal-active="true"] .xterm-rows')
+          .querySelector('[data-terminal-active="true"] .xterm-accessibility-tree')
           ?.textContent?.includes(text),
       text,
     );

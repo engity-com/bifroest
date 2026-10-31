@@ -13,6 +13,26 @@ and menus. The terminal view owns its padding and matching background. Vite 8/Ox
 builds the application and the independently tested, dependency-free HTTP/crypto
 core; there is no Webpack/Babel chain or production Node runtime.
 
+## Terminal keyboard and cell rendering
+
+While a live terminal owns focus, function/navigation keys are delivered through
+xterm's usual terminal translation and have their browser defaults cancelled on
+both keydown and keyup. This includes F7/F10 rather than also opening browser
+caret browsing or menus. Text entry, dead keys, AltGraph and IME composition keep
+the browser input path required by screen-reader mode. The handling is local to
+the active terminal; toolbar/tab/menu controls retain their keyboard behavior.
+Some OS/browser-reserved shortcuts never reach a page and cannot be intercepted.
+
+Live output and recording playback prefer the exactly pinned official xterm WebGL
+addon, with custom box-drawing glyphs filling physical cells. This avoids broken
+vertical lines and fractional-scale background seams from the DOM/font renderer.
+Pixel regression tests cover 100%, 125%, 150% and 200% display scales. Missing WebGL,
+an unavailable addon or context loss falls back to DOM rendering, without a new
+connection, replay, actor change or loss of the terminal buffer. The DOM fallback
+can retain font/scale-dependent line seams. The renderer creates no external
+requests beyond the same-origin frontend assets; existing CSP, OSC/clipboard and
+remote-link restrictions remain unchanged.
+
 ## Non-authentication UI preferences
 
 At the user's explicit request, `localStorage` retains only the selected

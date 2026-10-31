@@ -46,7 +46,11 @@ try {
       headless: true,
       hasTouch: process.argv[3] === 'compact',
       ignoreHTTPSErrors: true,
-      args: ['--host-resolver-rules=MAP app.example.org 127.0.0.1', '--no-proxy-server'],
+      args: [
+        '--host-resolver-rules=MAP app.example.org 127.0.0.1',
+        '--no-proxy-server',
+        ...(process.argv[3] === 'terminal' ? ['--enable-unsafe-swiftshader'] : []),
+      ],
     });
     await context.addInitScript(() => {
       window.cspViolations = [];

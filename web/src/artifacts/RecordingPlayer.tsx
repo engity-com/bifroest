@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Select, Title, useComputedColorScheme } from '../ui/material';
 import '@xterm/xterm/css/xterm.css';
 import { noncedDocument } from '../terminal/document';
+import { installTerminalRenderer } from '../terminal/renderer';
 import { reportUiError } from '../ui/error-report';
 import { t } from '../ui/messages';
 import { EvidenceError } from './evidence-protocol';
@@ -112,6 +113,7 @@ export function RecordingPlayer({
         rows: image.metadata.rows,
         documentOverride: noncedDocument(document, nonce),
         windowOptions: {},
+        customGlyphs: true,
         linkHandler: { activate() {} },
         theme: {
           background: currentPalette.current === 'dark' ? '#101820' : '#ffffff',
@@ -120,6 +122,7 @@ export function RecordingPlayer({
       });
       emulator.current = terminal;
       terminal.open(container.current);
+      subscriptions.current.push(installTerminalRenderer(terminal, container.current));
       subscriptions.current.push(terminal.parser.registerOscHandler(52, () => true));
       const info = image.metadata;
       const recording = new RecordingPlayback(

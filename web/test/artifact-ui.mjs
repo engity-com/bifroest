@@ -306,7 +306,7 @@ try {
   await playback.getByRole('button', { name: 'Prepare local playback', exact: true }).click();
   await playback.locator('[data-playback-phase="paused"]').waitFor();
   assert.equal(
-    (await playback.locator('.xterm-rows').textContent()).includes('PLAYBACK_ONLY'),
+    (await playback.locator('.xterm-accessibility-tree').textContent()).includes('PLAYBACK_ONLY'),
     false,
     'preparation must not auto-play',
   );
@@ -316,11 +316,13 @@ try {
     .getByRole('region', { name: 'Read-only recording viewport', exact: true })
     .scrollIntoViewIfNeeded();
   await page.waitForFunction(() =>
-    document.querySelector('.playback-surface .xterm-rows')?.textContent?.includes('PLAYBACK_ONLY'),
+    document
+      .querySelector('.playback-surface .xterm-accessibility-tree')
+      ?.textContent?.includes('PLAYBACK_ONLY'),
   );
   assert.equal(await page.title(), titleBefore, 'recorded OSC title cannot rename the application');
   const link = await playback
-    .locator('.xterm-rows')
+    .locator('.xterm-accessibility-tree')
     .getByText('blocked-playback-link', { exact: true })
     .boundingBox();
   assert(link !== null);
@@ -333,8 +335,14 @@ try {
   );
   await playback.getByRole('button', { name: 'Reset playback to start', exact: true }).click();
   await playback.locator('[data-playback-phase="paused"]').waitFor();
+  // Playback state and xterm's asynchronously updated accessibility view have
+  // separate completion events. Require the actual cleared view, not a delay.
+  await page.waitForFunction(() => {
+    const view = document.querySelector('.playback-surface .xterm-accessibility-tree');
+    return view !== null && !view.textContent.includes('PLAYBACK_ONLY');
+  });
   assert.equal(
-    (await playback.locator('.xterm-rows').textContent()).includes('PLAYBACK_ONLY'),
+    (await playback.locator('.xterm-accessibility-tree').textContent()).includes('PLAYBACK_ONLY'),
     false,
   );
   await playback.getByRole('combobox', { name: 'Local playback speed', exact: true }).click();

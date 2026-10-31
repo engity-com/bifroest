@@ -103,7 +103,7 @@ try {
         (pattern) =>
           new RegExp(pattern).test(
             document
-              .querySelector('[data-terminal-active="true"] .xterm-rows')
+              .querySelector('[data-terminal-active="true"] .xterm-accessibility-tree')
               ?.textContent?.trimEnd() ?? '',
           ),
         fixtureShellPromptPattern(backend),
@@ -115,7 +115,9 @@ try {
           backend,
           phase: await page.locator('[data-terminal-phase]').getAttribute('data-terminal-phase'),
           output: (
-            await page.locator('[data-terminal-active="true"] .xterm-rows').textContent()
+            await page
+              .locator('[data-terminal-active="true"] .xterm-accessibility-tree')
+              .textContent()
           ).slice(0, 4096),
           sentInputPrefixes: inputPrefixes.map((prefix) => prefix.toString('utf8')),
           csp: await page.evaluate(() => window.cspViolations),
@@ -150,7 +152,10 @@ try {
       );
       await page.locator('.terminal-surface').scrollIntoViewIfNeeded();
       await page.waitForFunction(
-        (marker) => document.querySelector('.xterm-rows')?.textContent?.includes(`run=${marker}`),
+        (marker) =>
+          [...document.querySelectorAll('.xterm-accessibility-tree > div')].some(
+            (row) => row.textContent.trim() === `run=${marker}`,
+          ),
         marker,
       );
     } catch (error) {
@@ -158,7 +163,7 @@ try {
         JSON.stringify({
           phase: await page.locator('[data-terminal-phase]').getAttribute('data-terminal-phase'),
           notice: await page.locator('[data-terminal-phase]').textContent(),
-          output: await page.locator('.xterm-rows').textContent(),
+          output: await page.locator('.xterm-accessibility-tree').textContent(),
           csp: await page.evaluate(() => window.cspViolations),
           errors,
           replies,
@@ -168,7 +173,7 @@ try {
         { cause: error },
       );
     }
-    const text = await page.locator('.xterm-rows').textContent();
+    const text = await page.locator('.xterm-accessibility-tree').textContent();
     assert(
       text.includes('pty=true'),
       `the actual shell must confirm a PTY: ${JSON.stringify(text)}`,

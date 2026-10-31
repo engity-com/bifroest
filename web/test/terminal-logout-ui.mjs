@@ -15,7 +15,7 @@ export async function exerciseLostTerminalLogout(page, login) {
   await login(page, false);
   await page.waitForFunction(() =>
     document
-      .querySelector('[data-terminal-active="true"] .xterm-rows')
+      .querySelector('[data-terminal-active="true"] .xterm-accessibility-tree')
       ?.textContent?.includes('EXECUTION_START:1'),
   );
   await logoutAccess(page);

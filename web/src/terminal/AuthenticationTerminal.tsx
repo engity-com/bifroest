@@ -10,6 +10,7 @@ import { reportUiError } from '../ui/error-report';
 import { t } from '../ui/messages';
 import { protectAuthenticationComposition } from './authentication-composition';
 import { noncedDocument } from './document';
+import { ownTerminalKey } from './keyboard';
 import '@xterm/xterm/css/xterm.css';
 
 export interface AuthenticationView {
@@ -90,6 +91,9 @@ export function AuthenticationTerminal({
         const fit = new addon.FitAddon();
         renderer.loadAddon(fit);
         renderer.open(container.current);
+        renderer.attachCustomKeyEventHandler((event) =>
+          current.current.active && current.current.view.pending ? ownTerminalKey(event) : true,
+        );
         container.current
           .querySelector('textarea')
           ?.setAttribute('aria-label', t('authenticationResponse'));

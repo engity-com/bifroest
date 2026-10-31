@@ -201,6 +201,16 @@ choice adopts server-supplied producer/recipient hints as trusted expectations.
 The terminal fills the viewport below one compact tab bar, without a separate
 brand/account/status header. Sign-in uses a compact method/credential dialog;
 appearance and license links live in the global options menu, not its footer.
+Within the focused live terminal, function/navigation keys (including F7/F10)
+cancel their browser defaults on keydown and keyup while retaining xterm's
+terminal sequences. Text, dead keys, AltGraph and IME input retain their normal
+input path; toolbar/tab shortcuts outside the terminal are unchanged. Shortcuts
+reserved by the OS/browser and not delivered to the page cannot be intercepted.
+Live terminals and recording playback prefer the pinned official xterm WebGL
+renderer with cell-filling box glyphs. Missing WebGL or context loss falls back
+to DOM rendering without reconnecting, replaying input or changing the actor or
+terminal buffer. The DOM fallback can still show font/scale-dependent seams.
+These rendering choices do not relax CSP, remote-link or OSC/clipboard limits.
 A confirmed
 terminal-capable sign-in or explicit RememberMe resume opens one new shell tab
 automatically. The **+** next to the tabs opens a fresh sign-in. The adjacent

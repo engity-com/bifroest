@@ -246,7 +246,8 @@ async function probeAndExit(page, marker, write = false) {
     (marker) =>
       [
         ...(
-          document.querySelector('[data-terminal-active="true"] .xterm-rows')?.textContent ?? ''
+          document.querySelector('[data-terminal-active="true"] .xterm-accessibility-tree')
+            ?.textContent ?? ''
         ).matchAll(/BIFROEST_NATIVE_PROBE=([A-Za-z0-9+/=]+);ENDPROBE/gu),
       ].some((match) => {
         try {
@@ -257,7 +258,7 @@ async function probeAndExit(page, marker, write = false) {
       }),
     marker,
   );
-  const text = await terminal.locator('.xterm-rows').textContent();
+  const text = await terminal.locator('.xterm-accessibility-tree').textContent();
   const values = [...text.matchAll(/BIFROEST_NATIVE_PROBE=([A-Za-z0-9+/=]+);ENDPROBE/gu)]
     .map((match) => JSON.parse(Buffer.from(match[1], 'base64').toString('utf8')))
     .filter((value) => value.marker === marker);

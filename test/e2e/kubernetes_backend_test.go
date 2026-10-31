@@ -447,6 +447,9 @@ func (k *kubernetesFixture) prepareImages() error {
 	if err := os.WriteFile(filepath.Join(targetContext, "e2e-helper"), mustRead(k.helper), 0755); err != nil {
 		return err
 	}
+	if err := os.WriteFile(filepath.Join(targetContext, "read-key-cursor.patch"), busyboxCursorPatch, 0644); err != nil {
+		return err
+	}
 	if err := k.buildImage(targetContext); err != nil {
 		return err
 	}

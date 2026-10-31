@@ -165,7 +165,8 @@ try {
     );
     await page.waitForFunction((marker) => {
       const text =
-        document.querySelector('[data-terminal-active="true"] .xterm-rows')?.textContent ?? '';
+        document.querySelector('[data-terminal-active="true"] .xterm-accessibility-tree')
+          ?.textContent ?? '';
       const observed = [
         ...text.matchAll(/BIFROEST_NATIVE_PROBE=([A-Za-z0-9+/=]+);ENDPROBE/gu),
       ].some((match) => {
@@ -180,7 +181,7 @@ try {
         ?.getAttribute('data-terminal-phase');
       return observed || ['interrupted', 'disconnected', 'exited'].includes(phase);
     }, marker);
-    const text = await pane().locator('.xterm-rows').textContent();
+    const text = await pane().locator('.xterm-accessibility-tree').textContent();
     const observations = [...text.matchAll(/BIFROEST_NATIVE_PROBE=([A-Za-z0-9+/=]+);ENDPROBE/gu)]
       .map((match) => JSON.parse(Buffer.from(match[1], 'base64').toString('utf8')))
       .filter((value) => value.marker === marker);
@@ -343,7 +344,7 @@ try {
         .catch(() => null),
       output: (
         await page
-          ?.locator('[data-terminal-active="true"] .xterm-rows')
+          ?.locator('[data-terminal-active="true"] .xterm-accessibility-tree')
           .textContent()
           .catch(() => null)
       )?.slice(-4096),

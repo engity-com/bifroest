@@ -11,7 +11,7 @@ export async function exerciseTerminalExpiry(page, login, logout) {
     page.waitForFunction(
       (text) =>
         document
-          .querySelector('[data-terminal-active="true"] .xterm-rows')
+          .querySelector('[data-terminal-active="true"] .xterm-accessibility-tree')
           ?.textContent?.includes(text),
       text,
       { timeout: 5000 },
