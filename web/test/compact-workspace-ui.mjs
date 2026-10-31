@@ -139,18 +139,76 @@ export async function exerciseCompactWorkspace(page) {
     .click({ button: 'right' });
   await page.getByRole('menuitem', { name: /^Work · alice/u }).waitFor();
   await page.keyboard.press('Escape');
+  await page.getByRole('menu', { includeHidden: true }).waitFor({ state: 'hidden' });
   const selected = page.getByRole('tab', { selected: true });
   await selected.focus();
   await selected.press('Shift+F10');
   await page.getByRole('menuitem', { name: 'Duplicate', exact: true }).waitFor();
   await page.keyboard.press('Escape');
+  await page.getByRole('menu', { includeHidden: true }).waitFor({ state: 'hidden' });
   const bounds = await selected.boundingBox();
+  const point = { x: bounds.x + 20, y: bounds.y + 15, id: await selected.getAttribute('id') };
+  // CDP does not perform Playwright actionability checks. An aria-hidden menu
+  // can still have a physical exit backdrop; require the actual hit target,
+  // not an arbitrary delay or a retry of the opening touch.
+  await page.waitForFunction(({ x, y, id }) => {
+    const target = document.elementFromPoint(x, y)?.closest('[role="tab"]');
+    return target?.id === id && target.getAttribute('aria-disabled') !== 'true';
+  }, point);
+  await page.evaluate(() => {
+    window.testTabTouchEvents = [];
+    for (const type of [
+      'pointerdown',
+      'pointermove',
+      'pointercancel',
+      'pointerup',
+      'touchstart',
+      'contextmenu',
+    ]) {
+      document.addEventListener(
+        type,
+        (event) => {
+          if (window.testTabTouchEvents.length < 32) {
+            window.testTabTouchEvents.push({
+              type,
+              primary: event.isPrimary ?? null,
+              button: event.button ?? null,
+              pointerType: event.pointerType ?? null,
+              tab: event.target.closest?.('[role="tab"]')?.id ?? null,
+              modal: Boolean(event.target.closest?.('.MuiModal-root')),
+            });
+          }
+        },
+        { capture: true },
+      );
+    }
+  });
   const session = await page.context().newCDPSession(page);
   await session.send('Input.dispatchTouchEvent', {
     type: 'touchStart',
-    touchPoints: [{ x: bounds.x + 20, y: bounds.y + 15 }],
+    touchPoints: [{ x: point.x, y: point.y }],
   });
-  await page.getByRole('menuitem', { name: 'Duplicate', exact: true }).waitFor();
+  try {
+    await page.waitForFunction(() =>
+      window.testTabTouchEvents.some((event) => event.type === 'pointerdown'),
+    );
+    const down = await page.evaluate(() =>
+      window.testTabTouchEvents.find((event) => event.type === 'pointerdown'),
+    );
+    assert.equal(down.tab, point.id, 'the original opening touch must reach the selected tab');
+    assert.equal(down.modal, false);
+    assert.equal(down.primary, true);
+    assert.equal(down.pointerType, 'touch');
+    await page.getByRole('menuitem', { name: 'Duplicate', exact: true }).waitFor();
+  } catch (error) {
+    throw new Error(
+      JSON.stringify({
+        stage: 'tab-touch-start',
+        events: await page.evaluate(() => window.testTabTouchEvents),
+      }),
+      { cause: error },
+    );
+  }
   await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await page.getByRole('menuitem', { name: 'Duplicate', exact: true }).waitFor();
   await page.keyboard.press('Escape');
