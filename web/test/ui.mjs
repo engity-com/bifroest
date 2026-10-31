@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
@@ -17,6 +17,7 @@ import {
 } from './management-forced-ui.mjs';
 import { exerciseManagement } from './management-ui.mjs';
 import { exercisePreferences } from './preferences-ui.mjs';
+import { installPreparationObserver } from './response-capture.mjs';
 import { exerciseTerminalExpiry } from './terminal-expiry-ui.mjs';
 import { exerciseLostTerminalLogout } from './terminal-logout-ui.mjs';
 import { exerciseTerminalTabs } from './terminal-tabs-ui.mjs';
@@ -33,6 +34,10 @@ import {
 } from './workspace-ui.mjs';
 
 const origin = process.argv[2];
+const faviconSource = await readFile(
+  new URL('../../docs/assets/favicon.svg', import.meta.url),
+  'utf8',
+);
 assert.match(origin, /^https:\/\/app\.example\.org:[0-9]+$/);
 const profile = await mkdtemp(join(tmpdir(), 'bifroest-ui-'));
 let context;
@@ -58,6 +63,9 @@ try {
         window.cspViolations.push(event.violatedDirective),
       );
     });
+    if (['management-forced-disconnect', 'management-forced-dispose'].includes(process.argv[3])) {
+      await context.addInitScript(installPreparationObserver);
+    }
     const page = await context.newPage();
     const initializationErrors = [];
     const initializationConsole = (message) => {
@@ -113,6 +121,31 @@ try {
     } finally {
       page.off('console', initializationConsole);
     }
+    const favicon = page.locator('link[rel="icon"]');
+    assert.equal(await favicon.getAttribute('type'), 'image/svg+xml');
+    const faviconURL = new URL(await favicon.getAttribute('href'), origin);
+    assert.equal(faviconURL.origin, origin);
+    assert.match(faviconURL.pathname, /^\/_bifroest\/files\/assets\/favicon-[A-Za-z0-9_-]+\.svg$/u);
+    assert.equal(faviconURL.search, '');
+    const image = await page.evaluate(async (url) => {
+      const response = await fetch(url, {
+        credentials: 'omit',
+        redirect: 'error',
+        mode: 'same-origin',
+      });
+      const svg = await response.text();
+      const image = new Image();
+      image.src = url;
+      await image.decode();
+      return { status: response.status, kind: response.headers.get('content-type'), svg };
+    }, faviconURL.href);
+    assert.equal(image.status, 200);
+    assert.equal(image.kind, 'image/svg+xml');
+    assert.equal(
+      image.svg,
+      faviconSource,
+      'reuse the documentation favicon unchanged under the real HTTPS/CSP boundary',
+    );
     assert.equal(await page.locator('html').getAttribute('lang'), 'en-US');
     assert.equal(
       await page.locator('.workspace').evaluate((node) => getComputedStyle(node).borderTopColor),

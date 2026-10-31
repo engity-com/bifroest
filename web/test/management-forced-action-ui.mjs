@@ -74,16 +74,16 @@ export async function exerciseManagementForcedAction(page, file, logout) {
   await denied;
   assert.equal(await page.getByRole('dialog').count(), 0);
   await choose(action);
-  const preparation = page.waitForResponse(
-    (response) => response.url().endsWith('/sessions/prepare') && response.status() === 202,
-  );
   await direct.getByRole('button', { name: 'Prepare session action', exact: true }).click();
-  const body = await (await preparation).json();
-  assert.deepEqual(body.target, { flow, id }, 'no ShowSession metadata in a preparation');
   let dialog = page.getByRole('dialog');
   await dialog
     .getByText('Session details are not returned under this action-only policy.', { exact: false })
     .waitFor();
+  assert.deepEqual(
+    await page.evaluate(() => globalThis.testPreparationReceipt),
+    { status: 202, target: { flow, id } },
+    'capture the real preparation before browser cleanup; no ShowSession metadata or hidden capture failure',
+  );
   assert.equal(
     await dialog.getByText('No verified association available', { exact: true }).count(),
     0,

@@ -28,6 +28,17 @@ test('release inventory binds actual built assets, Go/project inputs and separat
   }
   assert(manifest.inputs.some((input) => input.name === 'pkg/recording/cast/verifier.go'));
   assert(manifest.inputs.some((input) => input.name === 'web/bun.lock'));
+  const favicon = manifest.assets.find((asset) =>
+    /^assets\/favicon-[A-Za-z0-9_-]+\.svg$/u.test(asset.name),
+  );
+  assert(favicon, 'the documentation favicon must be a bundled local asset');
+  const faviconSource = readFileSync(new URL('../../docs/assets/favicon.svg', import.meta.url));
+  assert.deepEqual(readFileSync(join(output, favicon.name)), faviconSource);
+  assert(
+    manifest.inputs.some(
+      (input) => input.name === 'docs/assets/favicon.svg' && input.sha256 === hash(faviconSource),
+    ),
+  );
   assert.equal(
     manifest.components.filter((component) => component.ecosystem === 'go-runtime').length,
     1,
@@ -58,6 +69,7 @@ test('release inventory binds actual built assets, Go/project inputs and separat
 
 for (const mode of [
   'missing worker',
+  'missing favicon',
   'changed wasm',
   'changed runtime',
   'linked asset',
@@ -73,6 +85,14 @@ for (const mode of [
       const before = readFileSync(join(temporary, 'browser-build.json'));
       if (mode === 'missing worker') {
         unlinkSync(join(temporary, 'browser-key-worker.js'));
+      }
+      if (mode === 'missing favicon') {
+        const manifest = JSON.parse(before);
+        const favicon = manifest.assets.find((asset) =>
+          /^assets\/favicon-[A-Za-z0-9_-]+\.svg$/u.test(asset.name),
+        );
+        assert(favicon);
+        unlinkSync(join(temporary, favicon.name));
       }
       if (mode === 'changed wasm') {
         writeFileSync(join(temporary, 'browser-key.wasm'), 'tampered');
