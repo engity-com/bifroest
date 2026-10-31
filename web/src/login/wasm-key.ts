@@ -2,6 +2,7 @@ import { object } from '../remember/http';
 import type { Scope } from '../remember/protocol';
 import { decode64, RememberMeError } from '../remember/protocol';
 import { readLocalBytes } from '../wasm/local-file';
+import { KeyLoginError, type KeyLoginPhase, keyLoginError } from './diagnostic';
 import type { LoginKey } from './key';
 import { loadLoginWasm } from './wasm-image';
 
@@ -43,23 +44,25 @@ export class WasmLoginKey implements LoginKey {
       !passphrase.isWellFormed() ||
       user.length > 256
     ) {
-      throw new RememberMeError('key-import');
+      throw new KeyLoginError('key-import', 'key-import');
     }
     const password = new TextEncoder().encode(passphrase);
     if (password.length > 4096) {
       password.fill(0);
-      throw new RememberMeError('key-import');
+      throw new KeyLoginError('key-import', 'key-import');
     }
     let worker: Worker | undefined;
     const lifetime = new AbortController();
     const stopped = AbortSignal.any([signal, lifetime.signal, AbortSignal.timeout(120_000)]);
     let privateBytes: ArrayBuffer | undefined;
     let certificate: ArrayBuffer | undefined;
+    let phase: KeyLoginPhase = 'wasm-download';
     try {
       if (stopped.aborted) {
         throw new RememberMeError('cancelled');
       }
       const wasm = await loadLoginWasm(stopped);
+      phase = 'file-read';
       privateBytes = await readLocalBytes(privateFile, stopped);
       certificate =
         certificateFile === null
@@ -71,6 +74,7 @@ export class WasmLoginKey implements LoginKey {
       if (stopped.aborted) {
         throw new RememberMeError('cancelled');
       }
+      phase = 'worker-start';
       worker = new Worker('/_bifroest/files/browser-key-worker.js', {
         type: 'module',
         credentials: 'omit',
@@ -79,6 +83,7 @@ export class WasmLoginKey implements LoginKey {
       const selected = worker;
       stopped.addEventListener('abort', () => selected.terminate(), { once: true });
       await exchange(worker, 'ready', { kind: 'boot', wasm }, stopped, [wasm]);
+      phase = 'key-import';
       const result = await exchange(
         worker,
         'imported',
@@ -104,11 +109,10 @@ export class WasmLoginKey implements LoginKey {
       }
       return new WasmLoginKey(worker, lifetime, stopped, result.publicKey, result.fingerprint);
     } catch (error) {
+      const cancelled = stopped.aborted;
       lifetime.abort();
       worker?.terminate();
-      throw error instanceof RememberMeError
-        ? error
-        : new RememberMeError(stopped.aborted ? 'cancelled' : 'key-import');
+      throw cancelled ? new RememberMeError('cancelled') : keyLoginError(error, phase);
     } finally {
       if (password.byteLength) {
         password.fill(0);
@@ -138,6 +142,8 @@ export class WasmLoginKey implements LoginKey {
         throw new RememberMeError('invalid-proof');
       }
       return result.signature;
+    } catch (error) {
+      throw keyLoginError(error, 'sign', 'invalid-proof');
     } finally {
       this.close();
     }

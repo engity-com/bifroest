@@ -24,6 +24,31 @@ export const messages = {
   keyLocalHint: 'Your private key and passphrase stay in this tab.',
   keyImportFailed:
     'The local key could not be imported or signed. Check the file, passphrase, matching certificate and supported limits (64 KiB key; bcrypt up to 64 rounds). No private key or passphrase was uploaded.',
+  keyUnavailable:
+    'Key sign-in could not be completed. Open Details for the failed phase and safe diagnostic code. No claim is replayed automatically.',
+  keyDiagnosticDetails: 'Details',
+  keyDiagnosticPrivacy:
+    'This diagnostic code contains no key, passphrase, token or internal error text.',
+  keyDiagnosticModule:
+    'The local key module could not be loaded. Check deployment assets or reload this page deliberately. Authentication was not started.',
+  keyDiagnosticDownload:
+    'The public Go/WASM key runtime could not be downloaded or validated within its limits. Check network access, deployed assets and browser blocking extensions.',
+  keyDiagnosticFile:
+    'The browser could not read the selected local key or certificate file. Select the file again and check local file access.',
+  keyDiagnosticWorker:
+    'The isolated key worker or Go/WASM runtime could not start. Check browser support and worker/WASM content-security policy; no security policy was relaxed.',
+  keyDiagnosticImport:
+    'Local key parsing or decryption failed. Possible causes include the passphrase, unsupported key format/type, certificate mismatch or configured size/bcrypt limits. Raw parser details are not exposed.',
+  keyDiagnosticCrypto:
+    'The required browser WebCrypto operation is unavailable or failed. Check that this is a secure HTTPS browser context and that WebCrypto is enabled.',
+  keyDiagnosticChallenge:
+    'The signing challenge failed local context or expiry validation. Check the URL, flow, requesting name and browser/server clocks. No challenge check was bypassed.',
+  keyDiagnosticSign:
+    'The local signing worker could not complete this one-time proof. It was retired; no signature or secret was replayed.',
+  keyDiagnosticSignature:
+    'The local proof had an unsupported or invalid SSH signature shape. It was not accepted as authentication.',
+  keyDiagnosticAuthentication:
+    'Public-key authentication or its result could not be confirmed. Check server availability/policy with the operator. A lost claim must not be replayed.',
   loginChallenge: 'Authentication step',
   authenticationTab: 'Authentication',
   authenticationTerminal: 'Authentication terminal',

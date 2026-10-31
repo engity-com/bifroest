@@ -34,6 +34,12 @@ func TestBrowserPublicKeyCertificateWithoutPtyUiCannotOpenShell(t *testing.T) {
 	testBrowserLoginUi(t, true, "key-no-pty")
 }
 
+func TestBrowserPublicKeyUiSafeFailureDiagnostics(t *testing.T) {
+	for _, phase := range []string{"module", "download", "worker", "crypto"} {
+		t.Run(phase, func(t *testing.T) { testBrowserLoginUi(t, true, "key-diagnostic-"+phase) })
+	}
+}
+
 func browserKeyUiFixture(t *testing.T) (string, bfcrypto.AuthorizedKeys) {
 	t.Helper()
 	_, ed, err := ed25519.GenerateKey(rand.Reader)

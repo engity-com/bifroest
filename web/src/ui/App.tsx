@@ -6,6 +6,7 @@ import MoreVertIcon from '@mui/icons-material/MoreVert';
 import PaletteIcon from '@mui/icons-material/Palette';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { type KeyLoginDiagnostic, keyLoginDiagnostic, keyLoginError } from '../login/diagnostic';
 import { verificationLink } from '../login/links';
 import type { AccessSnapshot, LoginStep, LogoutResult, WebAccess } from '../remember';
 import { BrowserBinding, BrowserClient, RememberMeError } from '../remember';
@@ -33,10 +34,16 @@ import type { Message } from './messages';
 import { t } from './messages';
 
 type Saved = 'loading' | 'missing' | 'ready' | 'pending' | 'unavailable';
-type Notice = { key: Message; color: 'red' | 'yellow' | 'green'; context?: AccessSnapshot };
+type Notice = {
+  key: Message;
+  color: 'red' | 'yellow' | 'green';
+  context?: AccessSnapshot;
+  diagnostic?: KeyLoginDiagnostic;
+};
 
 function errorNotice(error: unknown): Notice {
   const code = error instanceof RememberMeError ? error.code : 'unavailable';
+  const diagnostic = keyLoginDiagnostic(error);
   const key: Message =
     code === 'key-import'
       ? 'keyImportFailed'
@@ -56,9 +63,45 @@ function errorNotice(error: unknown): Notice {
                     ? 'limited'
                     : code === 'cancelled'
                       ? 'cancelled'
-                      : 'unavailable';
-  return { key, color: code === 'denied' || code === 'unavailable' ? 'red' : 'yellow' };
+                      : diagnostic
+                        ? 'keyUnavailable'
+                        : 'unavailable';
+  return {
+    key,
+    color: code === 'denied' || code === 'unavailable' ? 'red' : 'yellow',
+    ...(diagnostic ? { diagnostic } : {}),
+  };
 }
+
+function NoticeBody({ notice }: { notice: Notice }) {
+  return (
+    <>
+      {t(notice.key)}
+      {notice.diagnostic && (
+        <details className="login-diagnostic">
+          <summary>{t('keyDiagnosticDetails')}</summary>
+          <p>{t(keyDiagnosticMessages[notice.diagnostic.phase])}</p>
+          <code>
+            key/{notice.diagnostic.phase}/{notice.diagnostic.code}
+          </code>
+          <p>{t('keyDiagnosticPrivacy')}</p>
+        </details>
+      )}
+    </>
+  );
+}
+const keyDiagnosticMessages = {
+  module: 'keyDiagnosticModule',
+  'wasm-download': 'keyDiagnosticDownload',
+  'file-read': 'keyDiagnosticFile',
+  'worker-start': 'keyDiagnosticWorker',
+  'key-import': 'keyDiagnosticImport',
+  'browser-crypto': 'keyDiagnosticCrypto',
+  challenge: 'keyDiagnosticChallenge',
+  sign: 'keyDiagnosticSign',
+  signature: 'keyDiagnosticSignature',
+  authentication: 'keyDiagnosticAuthentication',
+} as const satisfies Record<KeyLoginDiagnostic['phase'], Message>;
 
 export function App({
   metadata,
@@ -321,9 +364,11 @@ export function App({
         if (privateFile === null) {
           throw new RememberMeError('key-import');
         }
-        const { WasmLoginKey } = await import('../login/wasm-key');
         let key: import('../login/wasm-key').WasmLoginKey;
         try {
+          const { WasmLoginKey } = await import('../login/wasm-key').catch((error) => {
+            throw keyLoginError(error, 'module', 'unavailable');
+          });
           key = await WasmLoginKey.import(
             privateFile,
             passphrase,
@@ -332,6 +377,8 @@ export function App({
             user,
             signal,
           );
+        } catch (error) {
+          throw keyLoginError(error, 'key-import');
         } finally {
           privateFile = null;
           certificateFile = null;
@@ -339,6 +386,8 @@ export function App({
         }
         try {
           result = await selectedClient.publicKey(user, key, signal);
+        } catch (error) {
+          throw keyLoginError(error, 'authentication', 'unavailable');
         } finally {
           key.close();
         }
@@ -632,7 +681,7 @@ export function App({
       >
         {notice && loginOpen && (
           <Alert role="status" color={notice.color}>
-            {t(notice.key)}
+            <NoticeBody notice={notice} />
           </Alert>
         )}
         <Stack gap="sm">
@@ -871,7 +920,7 @@ export function App({
               </Text>
             )}
             <Alert role="status" color={notice.color}>
-              {t(notice.key)}
+              <NoticeBody notice={notice} />
             </Alert>
             {snapshot && (rememberUncertain || closing) && (
               <Button

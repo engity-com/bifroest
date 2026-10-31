@@ -114,8 +114,42 @@ describe('owned WASM key worker lifecycle (RPC fixtures, not cryptographic tests
     LocalWorker.rejectImport = true;
     await expect(
       WasmLoginKey.import(file(), 'wrong secret', null, scope, '', new AbortController().signal),
-    ).rejects.toMatchObject({ code: 'key-import' });
+    ).rejects.toMatchObject({ code: 'key-import', phase: 'key-import' });
     expect(required(LocalWorker.instances[0]).terminated).toBe(true);
+  });
+
+  it('classifies a failed public download without turning its own cleanup into caller cancellation', async () => {
+    install();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('PRIVATE-TRANSPORT-SENTINEL');
+      }),
+    );
+    await expect(
+      WasmLoginKey.import(file(), 'secret', null, scope, '', new AbortController().signal),
+    ).rejects.toMatchObject({ code: 'key-import', phase: 'wasm-download' });
+    expect(LocalWorker.instances).toHaveLength(0);
+  });
+
+  it('distinguishes local file read and worker construction failures without forwarding their text', async () => {
+    install();
+    const read = vi.spyOn(FileReader.prototype, 'readAsArrayBuffer').mockImplementation(() => {
+      throw new Error('PRIVATE-FILE-SENTINEL');
+    });
+    await expect(
+      WasmLoginKey.import(file(), 'secret', null, scope, '', new AbortController().signal),
+    ).rejects.toMatchObject({ code: 'key-import', phase: 'file-read' });
+    read.mockRestore();
+    class RejectedWorker {
+      constructor() {
+        throw new Error('PRIVATE-WORKER-SENTINEL');
+      }
+    }
+    vi.stubGlobal('Worker', RejectedWorker);
+    await expect(
+      WasmLoginKey.import(file(), 'secret', null, scope, '', new AbortController().signal),
+    ).rejects.toMatchObject({ code: 'key-import', phase: 'worker-start' });
   });
 
   it('retires an outstanding import immediately on caller abort', async () => {

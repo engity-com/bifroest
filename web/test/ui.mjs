@@ -6,7 +6,7 @@ import { chromium } from 'playwright';
 import { exerciseCompactWorkspace } from './compact-workspace-ui.mjs';
 import { exerciseConnectionRaces, exerciseManagementOwner } from './connection-races-ui.mjs';
 import { exerciseConnections } from './connections-ui.mjs';
-import { exerciseKey, exerciseKeyVariant } from './key-ui.mjs';
+import { exerciseKey, exerciseKeyDiagnostic, exerciseKeyVariant } from './key-ui.mjs';
 import { exerciseDevice, exerciseInteractive, exerciseLostClaim } from './login-ui.mjs';
 import { exerciseManagementActions } from './management-action-ui.mjs';
 import { exerciseManagementForcedAction } from './management-forced-action-ui.mjs';
@@ -289,6 +289,15 @@ try {
     }
     if (process.argv[3] === 'key') {
       await exerciseKey(page, process.argv[4], logout);
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.argv[3].startsWith('key-diagnostic-')) {
+      await exerciseKeyDiagnostic(
+        page,
+        process.argv[4],
+        process.argv[3].slice('key-diagnostic-'.length),
+      );
       assert.deepEqual(errors, []);
       return;
     }

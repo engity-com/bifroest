@@ -150,11 +150,22 @@ class KeyServer {
   }
 }
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
 describe('public-key login adapter (no imported-key UI/runtime claim)', () => {
+  it('diagnoses unavailable WebCrypto before contacting authentication or calling a signer', async () => {
+    const server = await new KeyServer().prepare();
+    vi.stubGlobal('crypto', { subtle: undefined });
+    await expect(server.client().publicKey('', server.key)).rejects.toMatchObject({
+      code: 'unavailable',
+      phase: 'browser-crypto',
+    });
+    expect(server.records).toHaveLength(0);
+    expect(server.signatureCalls).toBe(0);
+  });
   it('passes only public wire key and one SSH signature, preserving the original empty user', async () => {
     const server = await new KeyServer().prepare();
     const key = { ...server.key, privateKey: 'must-not-travel', passphrase: 'must-not-travel' };
@@ -204,6 +215,7 @@ describe('public-key login adapter (no imported-key UI/runtime claim)', () => {
       await server.prepare();
       await expect(server.client().publicKey('', server.key)).rejects.toMatchObject({
         code: 'invalid-proof',
+        phase: 'challenge',
       });
       expect(server.signatureCalls).toBe(0);
       expect(server.replies).toBe(0);

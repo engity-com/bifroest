@@ -2,6 +2,7 @@ import type { Http } from '../remember/http';
 import { object } from '../remember/http';
 import type { Scope } from '../remember/protocol';
 import { decode64, RememberMeError } from '../remember/protocol';
+import { KeyLoginError, keyLoginError } from './diagnostic';
 import { loginAttempt } from './interactive';
 
 // Trusted tab-local adapter, intended for the portable Go core in an owned WASM
@@ -65,7 +66,7 @@ function checkChallenge(
       throw new Error();
     }
   } catch {
-    throw new RememberMeError('invalid-proof');
+    throw new KeyLoginError('invalid-proof', 'challenge');
   }
 }
 
@@ -102,7 +103,7 @@ function checkSignature(encoded: string): void {
       throw new Error();
     }
   } catch {
-    throw new RememberMeError('invalid-proof');
+    throw new KeyLoginError('invalid-proof', 'signature');
   }
 }
 
@@ -118,7 +119,15 @@ export async function publicKeyLogin(
   if (bytes.length === 0) {
     throw new RememberMeError('invalid-proof');
   }
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  let digest: Uint8Array;
+  try {
+    if (typeof globalThis.crypto?.subtle?.digest !== 'function') {
+      throw new Error();
+    }
+    digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  } catch (error) {
+    throw keyLoginError(error, 'browser-crypto', 'unavailable');
+  }
   const fingerprint = `SHA256:${btoa(String.fromCharCode(...digest)).replace(/=+$/u, '')}`;
   return loginAttempt(
     http,

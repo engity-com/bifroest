@@ -123,6 +123,15 @@ Actual Go HTTPS/Chromium UI tests verify escaped provider markup, echo/secret tr
 
 ### Portable public-key client foundation
 
+Failed local-key login exposes an expandable **Details** section containing only
+an allowlisted phase and existing failure code, for example
+`key/wasm-download/key-import` or `key/challenge/invalid-proof`. This distinguishes
+local module/runtime/file/worker/import/signing failures, unavailable browser
+WebCrypto and rejected challenge/signature checks from authentication/result
+handling. Raw exceptions, parser messages, filenames, HTTP bodies, private keys,
+passphrases and bearer tokens are not rendered. Denial/cancellation/uncertain-claim
+semantics remain unchanged; a diagnostic code never permits replay or bypass.
+
 The browser client accepts a trusted tab-local key adapter, checks the original `bifroest-http-public-key-v1` challenge against exact origin/port, slug, original user, public key/certificate fingerprint and pinned expiry, and posts only the canonical public key plus one SSH wire signature. A key attempt accepts one proof step with a two-minute cap, never an interactive fallback. Ambiguous replies/final claims are not automatically repeated. The built UI now supplies this adapter through a short-lived Go/WASM worker and the `SSH key login` file/passphrase/certificate form.
 
 The portable `pkg/browserkey` Go core shares server public parsing/challenge encoding/verification and reuses existing SSH import/decryption/signature code. Imports support Ed25519, RSA 2048–8192 and NIST ECDSA, one PEM key up to 64 KiB, passphrases up to 4096 bytes and an optional matching OpenSSH user certificate up to 12 KiB. OpenSSH bcrypt is capped at 64 rounds. Encrypted PKCS#8, PPK, security keys and multi-key files are not supported. The handle can attempt one exact-context proof, including on failure. Import does not establish certificate trust or replace current server policy; no server endpoint accepts private material. Native HTTPS/HTTP2 tests join the SSH session using locally decrypted raw/certificate keys.

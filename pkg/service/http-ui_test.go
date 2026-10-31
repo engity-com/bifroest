@@ -533,6 +533,11 @@ func testBrowserLoginUi(t *testing.T, requestUser bool, mode string, configure .
 	if mode == "name-free" || mode == "oidc-cancel" {
 		expectedSessions = 0
 	}
+	if strings.HasPrefix(mode, "key-diagnostic-") {
+		expectedSessions = 0
+		require.Empty(t, auditEventsNamed(lifecycleRecorder.eventsSnapshot(), audit.EventNameAuthenticationCompleted), "a failed local key operation must not authenticate")
+		require.Empty(t, auditEventsNamed(lifecycleRecorder.eventsSnapshot(), audit.EventNameSessionTaskStarted), "a failed local key operation must not start a shell")
+	}
 	if mode == "terminal" || mode == "management" || mode == "management-actions" || mode == "management-forced" || forcedActionMode {
 		expectedSessions = 2
 	}

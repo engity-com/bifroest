@@ -533,6 +533,21 @@ not claim external-provider, native Local account-policy or public-key UI covera
 
 ## Public-key login and owned Go/WASM worker
 
+Failed key sign-in offers an expandable **Details** section with a fixed public
+code such as `key/worker-start/key-import` or
+`key/browser-crypto/unavailable`. It identifies only the local phase and existing
+failure class: module loading, public WASM download, local file reading, worker
+startup, parsing/decryption, browser WebCrypto, challenge validation, signing,
+signature shape or authentication/result handling. It never includes a filename,
+key/passphrase, bearer, HTTP body, parser exception or stack trace. A diagnostic
+code is safe to report; do not send the key or passphrase.
+
+This classification does not infer a cause from an arbitrary error message.
+For example, an import failure can still mean an incorrect passphrase,
+unsupported key/format, certificate mismatch or an input/cost bound. Existing
+`denied`, `cancelled` and `login-unknown` outcomes retain their meaning. Details
+never retry an operation, relax challenge checks or reconcile an uncertain claim.
+
 `BrowserClient.publicKey(user, key, signal)` accepts a trusted tab-local `LoginKey`
 adapter exposing only its canonical Base64 SSH public wire key and a scoped
 `sign(challenge, expiresAt, signal)` operation. It shares the bounded one-time

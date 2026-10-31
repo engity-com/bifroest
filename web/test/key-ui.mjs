@@ -1,7 +1,85 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { observePublicKeyWasm } from './public-wasm-diagnostics.mjs';
-import { activeAccess, chooseLoginMethod, notification, settledLogin } from './workspace-ui.mjs';
+import {
+  activeAccess,
+  captureLayout,
+  chooseLoginMethod,
+  notification,
+  settledLogin,
+} from './workspace-ui.mjs';
+
+export async function exerciseKeyDiagnostic(page, file, variant) {
+  const fixture = JSON.parse(await readFile(file, 'utf8'));
+  const expected = {
+    module: 'key/module/unavailable',
+    download: 'key/wasm-download/key-import',
+    worker: 'key/worker-start/key-import',
+    crypto: 'key/browser-crypto/unavailable',
+  }[variant];
+  assert(expected);
+  const requests = [];
+  page.on('request', (request) => {
+    if (request.url().includes('/api/v1/')) {
+      requests.push({ path: new URL(request.url()).pathname });
+    }
+  });
+  if (variant === 'module') {
+    await page.route('**/assets/wasm-key-*.js', (route) => route.abort());
+  } else if (variant === 'download') {
+    await page.route('**/browser-key.wasm', (route) =>
+      route.fulfill({ status: 503, body: 'unavailable' }),
+    );
+  } else if (variant === 'worker') {
+    await page.route('**/browser-key-worker.js', (route) =>
+      route.fulfill({
+        contentType: 'text/javascript',
+        body: 'self.postMessage({kind:"failed",detail:"PRIVATE-EXCEPTION-SENTINEL"}); self.close();',
+      }),
+    );
+  } else {
+    await page.evaluate(() =>
+      Object.defineProperty(crypto, 'subtle', { configurable: true, get: () => undefined }),
+    );
+  }
+  await chooseLoginMethod(page, 'SSH key login');
+  await page.getByLabel('User name', { exact: true }).fill('alice');
+  await page.getByLabel('Private key file (local only)', { exact: true }).setInputFiles({
+    name: 'PRIVATE-FILENAME-SENTINEL',
+    mimeType: 'application/octet-stream',
+    buffer: Buffer.from(fixture.ed),
+  });
+  await page
+    .getByLabel('Key passphrase (optional, local only)', { exact: true })
+    .fill(fixture.passphrase);
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  const detail = page.locator('.login-diagnostic');
+  await detail.locator('summary').click();
+  await detail.getByText(expected, { exact: true }).waitFor();
+  const text = await detail.textContent();
+  for (const secret of [
+    fixture.passphrase,
+    '-----BEGIN',
+    'PRIVATE-EXCEPTION-SENTINEL',
+    'PRIVATE-FILENAME-SENTINEL',
+  ]) {
+    assert(!text.includes(secret));
+  }
+  assert.equal(
+    await page.getByLabel('Key passphrase (optional, local only)', { exact: true }).inputValue(),
+    '',
+  );
+  assert.equal(await page.locator('#key-private').evaluate((input) => input.files.length), 0);
+  assert.equal(page.workers().length, 0);
+  assert.deepEqual(
+    requests,
+    [],
+    'local failures cannot contact authentication or replay any claim',
+  );
+  assert.equal(await page.getByRole('tab').count(), 0);
+  assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
+  await captureLayout(page, `key-diagnostic-${variant}`);
+}
 
 export async function exerciseKey(page, file, logout) {
   const fixture = JSON.parse(await readFile(file, 'utf8'));
