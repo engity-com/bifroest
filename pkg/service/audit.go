@@ -9,16 +9,13 @@ import (
 	"github.com/engity-com/bifroest/pkg/audit"
 	"github.com/engity-com/bifroest/pkg/authorization"
 	"github.com/engity-com/bifroest/pkg/configuration"
+	bconn "github.com/engity-com/bifroest/pkg/connection"
 	"github.com/engity-com/bifroest/pkg/errors"
 )
 
 func (this *service) recordFlowAudit(ctx context.Context, flow configuration.FlowName, event audit.Event) error {
 	fail := func(err error) error {
-		if sshContext, ok := ctx.(essh.Context); ok {
-			if conn := this.connection(sshContext); conn != nil {
-				_ = conn.Close()
-			}
-		}
+		this.closeAuditConnection(ctx)
 		return err
 	}
 	recorder := this.flowAuditRecorders[flow]
@@ -37,11 +34,7 @@ func (this *service) recordFlowAudit(ctx context.Context, flow configuration.Flo
 
 func (this *service) recordUnauthenticatedFlowAudit(ctx context.Context, flow configuration.FlowName, event audit.Event) error {
 	fail := func(err error) error {
-		if sshContext, ok := ctx.(essh.Context); ok {
-			if conn := this.connection(sshContext); conn != nil {
-				_ = conn.Close()
-			}
-		}
+		this.closeAuditConnection(ctx)
 		return err
 	}
 	recorder := this.flowAuditRecorders[flow]
@@ -158,13 +151,31 @@ func (this *failurePolicyAuditRecorder) handleFailure(err error) error {
 }
 
 func (this *service) authorizationAuditEvent(ctx essh.Context, auth authorization.Authorization, name audit.EventName, domain audit.EventDomain) audit.Event {
+	return authorizationAuditEventFor(this.connection(ctx), auth, name, domain)
+}
+
+type auditConnectionContextKey struct{}
+
+func (this *service) closeAuditConnection(ctx context.Context) {
+	if conn, ok := ctx.Value(auditConnectionContextKey{}).(managedConnection); ok && !isNilDependency(conn) {
+		_ = conn.Close()
+		return
+	}
+	if sshContext, ok := ctx.(essh.Context); ok {
+		if conn := this.connection(sshContext); conn != nil {
+			_ = conn.Close()
+		}
+	}
+}
+
+func authorizationAuditEventFor(conn bconn.Connection, auth authorization.Authorization, name audit.EventName, domain audit.EventDomain) audit.Event {
 	event := audit.Event{
 		Name:              name,
 		Domain:            domain,
 		Flow:              auth.Flow().String(),
 		AuthorizationKind: authorization.KindOf(auth),
 	}
-	if conn := this.connection(ctx); conn != nil {
+	if !isNilDependency(conn) {
 		event.ConnectionId = conn.Id().String()
 	}
 	if sess := auth.FindSession(); sess != nil {

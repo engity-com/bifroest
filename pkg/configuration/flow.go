@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/engity-com/bifroest/pkg/net"
 )
 
 // Flow represents a dedicated flow within the service.
@@ -25,6 +27,10 @@ type Flow struct {
 	// Auditlog references the audit log used by this flow.
 	Auditlog AuditlogName `yaml:"auditlog,omitempty"`
 
+	Ssh            FlowSsh  `yaml:"ssh,omitempty"`
+	Http           FlowHttp `yaml:"http,omitempty"`
+	DiscoverAsSlug string   `yaml:"discoverAsSlug,omitempty"`
+
 	// Requirement represents all rules the connection has to meet to be able to be accepted by this flow.
 	Requirement Requirement `yaml:"requirement,omitempty"`
 
@@ -39,6 +45,9 @@ func (this *Flow) SetDefaults() error {
 	return setDefaults(this,
 		noopSetDefault[Flow]("name"),
 		fixedDefault("auditlog", func(v *Flow) *AuditlogName { return &v.Auditlog }, DefaultAuditlogName),
+		func(v *Flow) (string, defaulter) { return "ssh", &v.Ssh },
+		func(v *Flow) (string, defaulter) { return "http", &v.Http },
+		noopSetDefault[Flow]("discoverAsSlug"),
 
 		func(v *Flow) (string, defaulter) { return "requirement", &v.Requirement },
 		func(v *Flow) (string, defaulter) { return "authorization", &v.Authorization },
@@ -50,6 +59,9 @@ func (this *Flow) Trim() error {
 	return trim(this,
 		noopTrim[Flow]("name"),
 		noopTrim[Flow]("auditlog"),
+		func(v *Flow) (string, trimmer) { return "ssh", &v.Ssh },
+		func(v *Flow) (string, trimmer) { return "http", &v.Http },
+		noopTrim[Flow]("discoverAsSlug"),
 
 		func(v *Flow) (string, trimmer) { return "requirement", &v.Requirement },
 		func(v *Flow) (string, trimmer) { return "authorization", &v.Authorization },
@@ -61,6 +73,11 @@ func (this *Flow) Validate() error {
 	return validate(this,
 		notZeroValidate("name", func(v *Flow) *FlowName { return &v.Name }),
 		func(v *Flow) (string, validator) { return "auditlog", &v.Auditlog },
+		func(v *Flow) (string, validator) { return "ssh", &v.Ssh },
+		func(v *Flow) (string, validator) { return "http", &v.Http },
+		func(v *Flow) (string, validator) {
+			return "discoverAsSlug", validatorFunc(func() error { return net.ValidateHttpSlug(v.DiscoverAsSlug) })
+		},
 
 		func(v *Flow) (string, validator) { return "requirement", &v.Requirement },
 		func(v *Flow) (string, validator) { return "authorization", &v.Authorization },
@@ -70,6 +87,24 @@ func (this *Flow) Validate() error {
 
 func (this *Flow) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *Flow, node *yaml.Node) error {
+		// Decode the effective fields first so YAML merge keys cannot hide a null
+		// transport block, for which yaml would skip its UnmarshalYAML method.
+		var fields map[string]yaml.Node
+		if err := node.Decode(&fields); err != nil {
+			return err
+		}
+		for _, key := range []string{"ssh", "http"} {
+			value, exists := fields[key]
+			if !exists {
+				continue
+			}
+			if value.Kind == yaml.AliasNode && value.Alias != nil {
+				value = *value.Alias
+			}
+			if value.Kind != yaml.MappingNode {
+				return reportYamlRelatedErrf(&value, "[%s] must be a mapping", key)
+			}
+		}
 		type raw Flow
 		return node.Decode((*raw)(target))
 	})
@@ -92,6 +127,8 @@ func (this Flow) IsEqualTo(other any) bool {
 func (this Flow) isEqualTo(other *Flow) bool {
 	return isEqual(&this.Name, &other.Name) &&
 		isEqual(&this.Auditlog, &other.Auditlog) &&
+		this.Ssh.IsEqualTo(other.Ssh) && this.Http.IsEqualTo(other.Http) &&
+		this.DiscoverAsSlug == other.DiscoverAsSlug &&
 		isEqual(&this.Requirement, &other.Requirement) &&
 		isEqual(&this.Authorization, &other.Authorization) &&
 		isEqual(&this.Environment, &other.Environment)

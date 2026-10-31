@@ -10,10 +10,10 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/engity-com/bifroest/pkg/audit/evidence"
 	"github.com/engity-com/bifroest/pkg/nativeformat"
 )
 
@@ -21,7 +21,7 @@ const (
 	nativeActiveClear           = "active.baudit"
 	nativeActiveEncrypted       = "active.beaudit"
 	nativeTargetSize      int64 = 16 << 20
-	nativeMaxSize         int64 = 17 << 20
+	nativeMaxSize         int64 = evidence.MaxAuditSegmentBytes
 )
 
 type nativeSegmentState struct {
@@ -38,34 +38,11 @@ type nativeSegmentEntry struct {
 }
 
 func nativeSegmentName(seq uint64, hash journalHash, encrypted bool) string {
-	ext := ".baudit"
-	if encrypted {
-		ext = ".beaudit"
-	}
-	return "segment-" + leftPadUint(seq, 20) + "-" + hash.String() + ext
+	return evidence.AuditSegmentName(seq, hash, encrypted)
 }
 
 func parseNativeSegmentName(name string, encrypted bool) (uint64, journalHash, bool) {
-	ext := ".baudit"
-	if encrypted {
-		ext = ".beaudit"
-	}
-	if !strings.HasPrefix(name, "segment-") || !strings.HasSuffix(name, ext) {
-		return 0, journalHash{}, false
-	}
-	middle := strings.TrimSuffix(strings.TrimPrefix(name, "segment-"), ext)
-	if len(middle) != 85 || middle[20] != '-' {
-		return 0, journalHash{}, false
-	}
-	seq, err := strconv.ParseUint(middle[:20], 10, 64)
-	if err != nil || seq == 0 {
-		return 0, journalHash{}, false
-	}
-	var hash journalHash
-	if hash.UnmarshalText([]byte(middle[21:])) != nil || nativeSegmentName(seq, hash, encrypted) != name {
-		return 0, journalHash{}, false
-	}
-	return seq, hash, true
+	return evidence.ParseAuditSegmentName(name, encrypted)
 }
 
 func nativeOpenRegular(path string) (*os.File, error) {

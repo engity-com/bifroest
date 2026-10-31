@@ -104,7 +104,7 @@ func TestRemoteVersionForwardsExplicitFormatWithLongServerDefault(t *testing.T) 
 
 func serveVersionRequest(ctx context.Context, conn net.Conn, config *ssh.ServerConfig, app *cli.Application[cli.NoOptions], commands chan<- string) error {
 	defer conn.Close()
-	_, channels, requests, err := ssh.NewServerConn(conn, config)
+	server, channels, requests, err := ssh.NewServerConn(conn, config)
 	if err != nil {
 		return err
 	}
@@ -133,7 +133,17 @@ func serveVersionRequest(ctx context.Context, conn net.Conn, config *ssh.ServerC
 			return err
 		}
 		_, err := channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
-		return err
+		if err != nil {
+			return err
+		}
+		if err := channel.Close(); err != nil {
+			return err
+		}
+		// Match the integrated management fixtures: let the client consume its
+		// exit status and close the transport before TCP teardown, which can
+		// otherwise discard status/window messages still in flight on Windows.
+		_ = server.Wait()
+		return nil
 	}
 	return fmt.Errorf("missing version exec request")
 }

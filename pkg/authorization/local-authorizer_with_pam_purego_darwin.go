@@ -43,6 +43,7 @@ const (
 	darwinPamUser                int32 = 2
 	darwinPamRhost               int32 = 4
 	darwinPamSilent              int32 = -1 << 31
+	darwinPamDisallowNullAuthtok int32 = 1
 	darwinPamMaximumMessages           = 32
 	darwinPamMaximumMessageSize        = 512
 	darwinPamMaximumResponseSize       = 512
@@ -154,8 +155,9 @@ type darwinPamTransaction struct {
 	handler   func(int32, string) (string, error)
 	status    int32
 
-	mutex       sync.Mutex
-	callbackErr error
+	mutex            sync.Mutex
+	callbackErr      error
+	callbackFailures uint64
 }
 
 func startDarwinPamTransaction(service, username string, handler func(int32, string) (string, error)) (*darwinPamTransaction, error) {
@@ -197,14 +199,13 @@ func (this *darwinPamTransaction) errorFor(status int32) error {
 }
 
 func (this *darwinPamTransaction) call(operation func() int32) error {
+	if err := this.callbackFailure(); err != nil {
+		return err
+	}
 	status := operation()
 	this.status = status
-	this.mutex.Lock()
-	callbackErr := this.callbackErr
-	this.callbackErr = nil
-	this.mutex.Unlock()
-	if callbackErr != nil {
-		return callbackErr
+	if err := this.callbackFailure(); err != nil {
+		return err
 	}
 	if status != darwinPamSuccess {
 		return this.errorFor(status)
@@ -214,8 +215,19 @@ func (this *darwinPamTransaction) call(operation func() int32) error {
 
 func (this *darwinPamTransaction) setCallbackError(err error) {
 	this.mutex.Lock()
-	this.callbackErr = err
+	if err != nil {
+		this.callbackFailures++
+		if this.callbackErr == nil {
+			this.callbackErr = err
+		}
+	}
 	this.mutex.Unlock()
+}
+
+func (this *darwinPamTransaction) callbackFailure() error {
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
+	return this.callbackErr
 }
 
 func (this *darwinPamTransaction) SetItem(item int32, value string) error {
@@ -242,6 +254,9 @@ func (this *darwinPamTransaction) GetItem(item int32) (string, error) {
 }
 
 func (this *darwinPamTransaction) GetEnvList() (map[string]string, error) {
+	if err := this.callbackFailure(); err != nil {
+		return nil, err
+	}
 	list := this.api.pamGetenvlist(this.handle)
 	if list == 0 {
 		this.status = darwinPamBufErr
@@ -255,6 +270,9 @@ func (this *darwinPamTransaction) GetEnvList() (map[string]string, error) {
 	for i := uintptr(0); ; i++ {
 		pointer := *(*uintptr)(unsafe.Pointer(list + i*pointerSize))
 		if pointer == 0 {
+			if err := this.callbackFailure(); err != nil {
+				return nil, err
+			}
 			return result, nil
 		}
 		value, err := darwinPamCStringUnbounded(this.api, pointer)
@@ -279,42 +297,67 @@ func (this *darwinPamTransaction) End() error {
 	this.mutex.Lock()
 	handle := this.handle
 	this.handle = 0
+	failuresBeforeEnd := this.callbackFailures
 	this.mutex.Unlock()
 	if handle == 0 {
 		return nil
 	}
 	status := this.api.pamEnd(handle, this.status)
 	darwinPamHandlers.Delete(this.handlerID)
+	this.mutex.Lock()
+	failedDuringEnd := this.callbackFailures != failuresBeforeEnd
+	this.mutex.Unlock()
+	var endErr, callbackErr error
 	if status != darwinPamSuccess {
-		return this.errorFor(status)
+		endErr = this.errorFor(status)
 	}
-	return nil
+	if failedDuringEnd {
+		callbackErr = &darwinPamError{code: darwinPamConvErr, message: "PAM cleanup conversation failed"}
+	}
+	// Prior callback failures remain sticky for every operation, but are not
+	// reclassified as cleanup errors after the caller already handled a denial.
+	return errors.Join(endErr, callbackErr)
 }
 
 func darwinPamConversation(numMessages int32, messages uintptr, responses *uintptr, appData uintptr) (result int32) {
 	result = darwinPamConvErr
+	var transaction *darwinPamTransaction
+	fail := func(status int32, err error) int32 {
+		if transaction != nil {
+			transaction.setCallbackError(err)
+		}
+		return status
+	}
 	defer func() {
 		if recover() != nil {
-			result = darwinPamConvErr
+			result = fail(darwinPamConvErr, &darwinPamError{code: darwinPamConvErr, message: "PAM conversation callback panicked"})
 		}
 	}()
+	// Resolve ownership before any framing rejection, so even failures which
+	// never reach the application handler poison the known transaction. Native
+	// module success must not erase a failed callback or publish an environment.
+	value, ok := darwinPamHandlers.Load(appData)
+	if ok {
+		transaction, _ = value.(*darwinPamTransaction)
+	}
 	if responses == nil {
-		return result
+		return fail(darwinPamConvErr, &darwinPamError{code: darwinPamConvErr, message: "PAM conversation has no response output"})
 	}
 	*responses = 0
 	if numMessages <= 0 || numMessages > darwinPamMaximumMessages || messages == 0 {
+		return fail(darwinPamConvErr, &darwinPamError{code: darwinPamConvErr, message: "invalid PAM conversation framing"})
+	}
+	if transaction == nil {
 		return result
 	}
-	value, ok := darwinPamHandlers.Load(appData)
-	if !ok {
-		return result
+	if transaction.callbackFailure() != nil {
+		return fail(darwinPamConvErr, &darwinPamError{code: darwinPamConvErr, message: "PAM conversation belongs to a failed transaction"})
 	}
-	transaction := value.(*darwinPamTransaction)
 	api := transaction.api
 	responseSize := unsafe.Sizeof(darwinPamResponse{})
 	responsePointer := api.calloc(uintptr(numMessages), responseSize)
 	if responsePointer == 0 {
-		return darwinPamBufErr
+		return fail(darwinPamBufErr, &darwinPamError{code: darwinPamBufErr, message: "cannot allocate PAM conversation responses"})
 	}
 	responseValues := unsafe.Slice((*darwinPamResponse)(unsafe.Pointer(responsePointer)), int(numMessages))
 	success := false
@@ -333,12 +376,12 @@ func darwinPamConversation(numMessages int32, messages uintptr, responses *uintp
 	messagePointers := unsafe.Slice((*uintptr)(unsafe.Pointer(messages)), int(numMessages))
 	for i, messagePointer := range messagePointers {
 		if messagePointer == 0 {
-			return darwinPamConvErr
+			return fail(darwinPamConvErr, &darwinPamError{code: darwinPamConvErr, message: "PAM conversation contains a nil message"})
 		}
 		message := (*darwinPamMessage)(unsafe.Pointer(messagePointer))
 		text, err := darwinPamCString(api, message.Message, darwinPamMaximumMessageSize)
 		if err != nil {
-			return darwinPamConvErr
+			return fail(darwinPamConvErr, err)
 		}
 		response, err := transaction.handler(message.Style, text)
 		if err != nil {
@@ -354,7 +397,7 @@ func darwinPamConversation(numMessages int32, messages uintptr, responses *uintp
 		}
 		allocated := api.calloc(uintptr(len(response)+1), 1)
 		if allocated == 0 {
-			return darwinPamBufErr
+			return fail(darwinPamBufErr, &darwinPamError{code: darwinPamBufErr, message: "cannot allocate PAM conversation answer"})
 		}
 		copy(unsafe.Slice((*byte)(unsafe.Pointer(allocated)), len(response)+1), response)
 		responseValues[i].Response = allocated
@@ -423,7 +466,7 @@ func (this *LocalAuthorizer) checkPassword(req PasswordRequest, requestedUsernam
 			return "", errors.New("unrecognized message style")
 		}
 	}
-	return authorizeWithDarwinPam(this.conf.PamService, requestedUsername, req.Connection().Remote().Host().String(), false, handler)
+	return authorizeWithDarwinPam(darwinPamOptions{Context: req.Context(), Service: this.conf.PamService, Username: requestedUsername, RemoteHost: req.Connection().Remote().Host().String(), Authenticate: true}, handler, startDarwinPam)
 }
 
 func (this *LocalAuthorizer) checkInteractive(req InteractiveRequest, requestedUsername string, validatePassword func(string, Request) (bool, error)) (username string, env sys.EnvVars, success bool, rErr error) {
@@ -457,67 +500,7 @@ func (this *LocalAuthorizer) checkInteractive(req InteractiveRequest, requestedU
 		}
 		return response, nil
 	}
-	return authorizeWithDarwinPam(this.conf.PamService, requestedUsername, req.Connection().Remote().Host().String(), true, handler)
-}
-
-func authorizeWithDarwinPam(service, requestedUsername, remoteHost string, interactive bool, handler func(int32, string) (string, error)) (username string, env sys.EnvVars, success bool, rErr error) {
-	accountPhase := false
-	conversation := func(style int32, message string) (string, error) {
-		if !accountPhase {
-			return handler(style, message)
-		}
-		switch style {
-		case darwinPamErrorMsg, darwinPamTextInfo:
-			if interactive {
-				return handler(style, message)
-			}
-			return "", nil
-		case darwinPamPromptEchoOff, darwinPamPromptEchoOn:
-			return "", errors.New("PAM account management requested an unsupported prompt")
-		default:
-			return "", errors.New("unrecognized message style")
-		}
-	}
-	t, err := startDarwinPamTransaction(service, requestedUsername, conversation)
-	if err != nil {
-		return "", nil, false, berrors.System.Newf("cannot start PAM transaction: %w", err)
-	}
-	defer func() {
-		if err := t.End(); err != nil {
-			rErr = errors.Join(rErr, berrors.System.Newf("cannot end PAM transaction: %w", err))
-			success = false
-		}
-	}()
-
-	if err := t.SetItem(darwinPamRhost, remoteHost); err != nil {
-		return "", nil, false, berrors.System.Newf("cannot set PAM_RHOST: %w", err)
-	}
-	flags := int32(0)
-	if !interactive {
-		flags = darwinPamSilent
-	}
-	if err := t.Authenticate(flags); err != nil {
-		if isDarwinPamDenial(err) {
-			return "", nil, false, nil
-		}
-		return "", nil, false, berrors.System.Newf("PAM authentication failed: %w", err)
-	}
-	accountPhase = true
-	if err := t.AcctMgmt(flags); err != nil {
-		if isDarwinPamDenial(err) {
-			return "", nil, false, nil
-		}
-		return "", nil, false, berrors.System.Newf("PAM account management failed: %w", err)
-	}
-	username, err = t.GetItem(darwinPamUser)
-	if err != nil {
-		return "", nil, false, berrors.System.Newf("cannot get PAM_USER: %w", err)
-	}
-	env, err = t.GetEnvList()
-	if err != nil {
-		return "", nil, false, berrors.System.Newf("cannot get PAM environment: %w", err)
-	}
-	return username, env, true, nil
+	return authorizeWithDarwinPam(darwinPamOptions{Context: req.Context(), Service: this.conf.PamService, Username: requestedUsername, RemoteHost: req.Connection().Remote().Host().String(), Authenticate: true, Interactive: true}, handler, startDarwinPam)
 }
 
 func isDarwinPamDenial(err error) bool {

@@ -75,6 +75,32 @@ type containerTestUserInfo struct {
 func main() {
 	var err error
 	switch {
+	case len(os.Args) == 3 && os.Args[1] == "run-container-policy-test":
+		if err = requireBrowserContainer(); err == nil {
+			var account string
+			account, err = prepareContainerTestUser()
+			if err == nil {
+				err = runProbe(os.Args[2], account, true, true)
+			}
+		}
+	case len(os.Args) == 4 && os.Args[1] == "browser-prepare":
+		err = svc.Run(os.Args[2], &browserPreparationService{input: os.Args[3]})
+	case len(os.Args) == 3 && os.Args[1] == "browser-serve":
+		err = serveBrowserContainer(os.Args[2])
+	case len(os.Args) == 2 && os.Args[1] == "browser-stop":
+		err = stopBrowserContainer()
+	case len(os.Args) == 2 && os.Args[1] == "browser-restart":
+		err = restartRememberBrowserContainer()
+	case len(os.Args) == 2 && os.Args[1] == "browser-disable-owned-account":
+		err = toggleRememberBrowserAccount(true)
+	case len(os.Args) == 2 && os.Args[1] == "browser-restore-owned-account":
+		err = toggleRememberBrowserAccount(false)
+	case len(os.Args) == 2 && os.Args[1] == "browser-remove-owned-group":
+		err = toggleRememberBrowserGroup(false)
+	case len(os.Args) == 2 && os.Args[1] == "browser-add-owned-group":
+		err = toggleRememberBrowserGroup(true)
+	case len(os.Args) >= 2 && strings.HasPrefix(os.Args[1], "browser-"):
+		err = runBrowserProbe(os.Args[1:])
 	case len(os.Args) == 2 && os.Args[1] == "run":
 		err = run("", targetUser, false)
 	case len(os.Args) == 3 && os.Args[1] == "run-test":
@@ -93,6 +119,10 @@ func main() {
 		err = svc.Run(os.Args[2], &probeService{resultPath: os.Args[3], testBinary: os.Args[4], user: os.Args[5]})
 	case len(os.Args) == 7 && os.Args[1] == "service" && os.Args[6] == "servercore":
 		err = svc.Run(os.Args[2], &probeService{resultPath: os.Args[3], testBinary: os.Args[4], user: os.Args[5], serverCore: true})
+	case len(os.Args) == 8 && os.Args[1] == "service" && os.Args[6] == "servercore" && os.Args[7] == "browser-diagnostics":
+		err = svc.Run(os.Args[2], &probeService{resultPath: os.Args[3], testBinary: os.Args[4], user: os.Args[5], serverCore: true, browserDiagnostics: true})
+	case len(os.Args) == 8 && os.Args[1] == "service" && os.Args[6] == "servercore" && os.Args[7] == "sam-policy":
+		err = svc.Run(os.Args[2], &probeService{resultPath: os.Args[3], testBinary: os.Args[4], user: os.Args[5], serverCore: true, samPolicy: true})
 	case len(os.Args) == 2 && os.Args[1] == "child":
 		var sid string
 		sid, err = currentSID()
@@ -160,6 +190,10 @@ func prepareContainerTestUser() (string, error) {
 }
 
 func run(testBinary, user string, serverCore bool) error {
+	return runProbe(testBinary, user, serverCore, false)
+}
+
+func runProbe(testBinary, user string, serverCore, samPolicy bool) error {
 	if user == "" || strings.ContainsAny(user, `\/@`) {
 		return fmt.Errorf("expected a bare local account name")
 	}
@@ -256,12 +290,9 @@ func run(testBinary, user string, serverCore bool) error {
 		return fmt.Errorf("SCM access (run from an elevated Windows account): %w", err)
 	}
 	defer func() { _ = m.Disconnect() }()
-	args := []string{"service", name, resultPath}
-	if testBinary != "" {
-		args = append(args, testBinary, user)
-		if serverCore {
-			args = append(args, "servercore")
-		}
+	args := probeServiceArguments(name, resultPath, testBinary, user, serverCore, !samPolicy && os.Getenv("BIFROEST_TEST_SERVERCORE_BROWSER_DIAGNOSTICS") == "1")
+	if samPolicy {
+		args = append(args, "sam-policy")
 	}
 	s, err := m.CreateService(name, exe, mgr.Config{
 		StartType:        mgr.StartManual,
@@ -315,11 +346,27 @@ func run(testBinary, user string, serverCore bool) error {
 	return fmt.Errorf("temporary service %s did not stop within 180s; check and stop it before removing the executable", name)
 }
 
+func probeServiceArguments(name, resultPath, testBinary, user string, serverCore, browserDiagnostics bool) []string {
+	args := []string{"service", name, resultPath}
+	if testBinary != "" {
+		args = append(args, testBinary, user)
+		if serverCore {
+			args = append(args, "servercore")
+			if browserDiagnostics {
+				args = append(args, "browser-diagnostics")
+			}
+		}
+	}
+	return args
+}
+
 type probeService struct {
-	resultPath string
-	testBinary string
-	user       string
-	serverCore bool
+	resultPath         string
+	testBinary         string
+	user               string
+	serverCore         bool
+	browserDiagnostics bool
+	samPolicy          bool
 }
 
 func (p *probeService) Execute(_ []string, _ <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
@@ -328,14 +375,24 @@ func (p *probeService) Execute(_ []string, _ <-chan svc.ChangeRequest, changes c
 	var err error
 	result := "PASS local S4U child process has foosel's SID\n"
 	if p.testBinary != "" {
+		diagnostics := ""
+		if p.serverCore && p.browserDiagnostics {
+			diagnostics = browserSystemStartupDiagnostics()
+		}
 		pattern := "TestLocalWindows(S4ULogonAsUser|RunAsUser|ConPTYAsUser)$"
 		if p.serverCore {
 			pattern = "^(TestLocalWindows(S4ULogonAsUser|RunAsUser|ConPTYAsUser|ConPTYDistinguishesShellExitFromRelayFailure)|TestLocalServerCore(ProviderAccountLifecycle|FailedUpdateRestoresManagedMembership|ProvisioningPrecedesSessionDispose|ConPTYBlockedOutputDoesNotHang|FailedSkelDisablesNewAccount|FailedDisplayDisablesNewAccount|UnmanagedNewAccountCanBeDisabled|ProcessCleanupWaitsForExit))$"
+		}
+		if p.samPolicy {
+			pattern = "^TestLocalSAM(PasswordPolicyNativeMatrix|DomainChangeMarkerObservation|LogonUIBlankPasswordObservation|SystemContextIsolation|FreshGroupMembership|ContextBoundProfileDirectory|PasswordAccountView)$"
 		}
 		cmd := exec.Command(p.testBinary, "-test.run="+pattern, "-test.v", "-test.timeout=150s")
 		cmd.Env = append(os.Environ(), "BIFROEST_TEST_LOCAL_WINDOWS_USER="+p.user)
 		if p.serverCore {
 			cmd.Env = append(cmd.Env, "BIFROEST_TEST_SERVERCORE_IN_CONTAINER=1")
+		}
+		if p.samPolicy {
+			cmd.Env = append(cmd.Env, "BIFROEST_TEST_SAM_POLICY_IN_CONTAINER=1")
 		}
 		output, runErr := cmd.CombinedOutput()
 		err = runErr
@@ -344,6 +401,9 @@ func (p *probeService) Execute(_ []string, _ <-chan svc.ChangeRequest, changes c
 			if p.serverCore {
 				required = append(required, "TestLocalWindowsConPTYDistinguishesShellExitFromRelayFailure", "TestLocalServerCoreProviderAccountLifecycle", "TestLocalServerCoreFailedUpdateRestoresManagedMembership", "TestLocalServerCoreProvisioningPrecedesSessionDispose", "TestLocalServerCoreConPTYBlockedOutputDoesNotHang", "TestLocalServerCoreFailedSkelDisablesNewAccount", "TestLocalServerCoreFailedDisplayDisablesNewAccount", "TestLocalServerCoreUnmanagedNewAccountCanBeDisabled", "TestLocalServerCoreProcessCleanupWaitsForExit")
 			}
+			if p.samPolicy {
+				required = []string{"TestLocalSAMPasswordPolicyNativeMatrix", "TestLocalSAMDomainChangeMarkerObservation", "TestLocalSAMLogonUIBlankPasswordObservation", "TestLocalSAMSystemContextIsolation", "TestLocalSAMFreshGroupMembership", "TestLocalSAMContextBoundProfileDirectory", "TestLocalSAMPasswordAccountView"}
+			}
 			for _, test := range required {
 				if !strings.Contains(string(output), "--- PASS: "+test+" ") {
 					err = fmt.Errorf("required test %s did not pass", test)
@@ -351,7 +411,7 @@ func (p *probeService) Execute(_ []string, _ <-chan svc.ChangeRequest, changes c
 				}
 			}
 		}
-		result = "PASS local Windows integration tests:\n" + string(output)
+		result = "PASS local Windows integration tests:\n" + diagnostics + string(output)
 	} else {
 		err = probe()
 	}

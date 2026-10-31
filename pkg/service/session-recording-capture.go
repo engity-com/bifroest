@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	goerrors "errors"
 	"io"
 	"reflect"
@@ -12,7 +13,9 @@ import (
 
 	"github.com/engity-com/bifroest/pkg/errors"
 	"github.com/engity-com/bifroest/pkg/recording"
+	bssh "github.com/engity-com/bifroest/pkg/ssh"
 	"github.com/engity-com/bifroest/pkg/sys"
+	"github.com/engity-com/bifroest/pkg/terminal"
 )
 
 type recordingSink interface {
@@ -22,10 +25,18 @@ type recordingSink interface {
 
 type recordedSession struct {
 	essh.Session
+	*terminalCapture
+	stderr  *recordedSessionStderr
+	pty     essh.Pty
+	windows <-chan essh.Window
+}
+
+// terminalCapture is shared by SSH and neutral execution streams. Recording
+// ordering/failure policy must not depend on the transport's channel methods.
+type terminalCapture struct {
 	sink      recordingSink
 	elapsed   func() time.Duration
 	onFailure func(error)
-	stderr    *recordedSessionStderr
 
 	mu                              sync.Mutex
 	failure                         error
@@ -34,8 +45,6 @@ type recordedSession struct {
 	stop                            chan struct{}
 	done                            chan struct{}
 	stopOnce                        sync.Once
-	pty                             essh.Pty
-	windows                         <-chan essh.Window
 	hasPty                          bool
 	columns                         uint32
 	rows                            uint32
@@ -43,7 +52,7 @@ type recordedSession struct {
 }
 
 type recordedSessionStderr struct {
-	session *recordedSession
+	capture *terminalCapture
 	stream  io.ReadWriter
 }
 
@@ -86,6 +95,10 @@ type recordedSessionPty struct {
 	hasPty  bool
 }
 
+func sessionRecordingTerminal(pty recordedSessionPty) (recording.CastTerminal, error) {
+	return executionRecordingTerminal(terminalRecordingPty{pty: bssh.TerminalPty(pty.pty), hasPty: pty.hasPty})
+}
+
 func newRecordedSession(session essh.Session, sink recordingSink, elapsed func() time.Duration, onFailure func(error)) (*recordedSession, error) {
 	if isNilDependency(session) {
 		return nil, errors.System.Newf("nil SSH session for Recording")
@@ -108,14 +121,39 @@ func newRecordedSessionWithPty(session essh.Session, snapshot recordedSessionPty
 		return nil, errors.System.Newf("nil Recording failure callback")
 	}
 
+	capture, err := newTerminalCapture(snapshot.hasPty, snapshot.pty.Window.Width, snapshot.pty.Window.Height, sink, elapsed, onFailure)
+	if err != nil {
+		return nil, err
+	}
+	result := &recordedSession{
+		Session:         session,
+		terminalCapture: capture,
+		pty:             clonePty(snapshot.pty),
+	}
+	result.stderr = &recordedSessionStderr{capture: capture, stream: session.Stderr()}
+	if snapshot.hasPty && snapshot.windows != nil {
+		windows := make(chan essh.Window, 1)
+		windows <- snapshot.pty.Window
+		result.windows = windows
+		go forwardCaptureWindows(capture, session.Context(), snapshot.windows, windows, snapshot.pty.Window, bssh.TerminalWindow)
+	} else {
+		close(result.done)
+	}
+	return result, nil
+}
+
+func newTerminalCapture(hasPty bool, width, height int, sink recordingSink, elapsed func() time.Duration, onFailure func(error)) (*terminalCapture, error) {
+	if isNilDependency(sink) || elapsed == nil || onFailure == nil {
+		return nil, errors.System.Newf("missing terminal Recording dependency")
+	}
 	var columns, rows uint32
-	if snapshot.hasPty {
+	if hasPty {
 		var err error
-		columns, err = initialWindowDimension(snapshot.pty.Window.Width, "width")
+		columns, err = initialWindowDimension(width, "width")
 		if err != nil {
 			return nil, err
 		}
-		rows, err = initialWindowDimension(snapshot.pty.Window.Height, "height")
+		rows, err = initialWindowDimension(height, "height")
 		if err != nil {
 			return nil, err
 		}
@@ -126,27 +164,16 @@ func newRecordedSessionWithPty(session essh.Session, snapshot recordedSessionPty
 	if rows == 0 {
 		rows = defaultSessionRecordingRows
 	}
-	result := &recordedSession{
-		Session:   session,
+	result := &terminalCapture{
 		sink:      sink,
 		elapsed:   elapsed,
 		onFailure: onFailure,
 		failed:    make(chan struct{}),
 		stop:      make(chan struct{}),
 		done:      make(chan struct{}),
-		pty:       clonePty(snapshot.pty),
-		hasPty:    snapshot.hasPty,
+		hasPty:    hasPty,
 		columns:   columns,
 		rows:      rows,
-	}
-	result.stderr = &recordedSessionStderr{session: result, stream: session.Stderr()}
-	if snapshot.hasPty && snapshot.windows != nil {
-		windows := make(chan essh.Window, 1)
-		windows <- snapshot.pty.Window
-		result.windows = windows
-		go result.forwardWindows(snapshot.windows, windows)
-	} else {
-		close(result.done)
 	}
 	return result, nil
 }
@@ -201,7 +228,7 @@ func (this *recordedSession) OriginalCommand() (string, bool) {
 	return "", false
 }
 
-func (this *recordedSession) write(target io.Writer, stream recording.OutputStream, value []byte) (int, error) {
+func (this *terminalCapture) write(target io.Writer, stream recording.OutputStream, value []byte) (int, error) {
 	this.mu.Lock()
 	if this.failure != nil {
 		failure := this.failure
@@ -219,7 +246,7 @@ func (this *recordedSession) write(target io.Writer, stream recording.OutputStre
 			this.mu.Unlock()
 			return 0, writeErr
 		}
-		invalidCountErr := errors.System.Newf("SSH session writer returned invalid byte count %d for empty write", n)
+		invalidCountErr := errors.System.Newf("execution writer returned invalid byte count %d for empty write", n)
 		failure := this.poisonLocked("output delivery", goerrors.Join(writeErr, invalidCountErr))
 		this.mu.Unlock()
 		this.onFailure(failure)
@@ -248,7 +275,7 @@ func (this *recordedSession) write(target io.Writer, stream recording.OutputStre
 		} else {
 			n = len(value)
 		}
-		invalidCountErr := errors.System.Newf("SSH session writer returned invalid byte count %d for %d-byte write", invalidCount, len(value))
+		invalidCountErr := errors.System.Newf("execution writer returned invalid byte count %d for %d-byte write", invalidCount, len(value))
 		failure := this.poisonLocked("output delivery", goerrors.Join(writeErr, invalidCountErr))
 		this.mu.Unlock()
 		this.onFailure(failure)
@@ -261,7 +288,7 @@ func (this *recordedSession) write(target io.Writer, stream recording.OutputStre
 	if writeErr == nil {
 		writeErr = io.ErrShortWrite
 	}
-	failure := this.poisonLocked("output delivery", errors.System.Newf("SSH session writer accepted %d of %d recorded bytes: %w", n, len(value), writeErr))
+	failure := this.poisonLocked("output delivery", errors.System.Newf("execution writer accepted %d of %d recorded bytes: %w", n, len(value), writeErr))
 	this.mu.Unlock()
 	this.onFailure(failure)
 	return n, failure
@@ -276,7 +303,7 @@ func normalizeSessionTerminalOutput(value []byte, precededByCarriageReturn bool)
 	return normalized
 }
 
-func (this *recordedSession) recordResize(window essh.Window) (error, bool) {
+func (this *terminalCapture) recordResize(window terminal.Window) (error, bool) {
 	this.mu.Lock()
 	if this.failure != nil {
 		failure := this.failure
@@ -313,7 +340,7 @@ func (this *recordedSession) recordResize(window essh.Window) (error, bool) {
 	return failure, true
 }
 
-func (this *recordedSession) stopAndWait() error {
+func (this *terminalCapture) stopAndWait() error {
 	this.mu.Lock()
 	this.stopped = true
 	failure := this.failure
@@ -340,13 +367,13 @@ func effectiveWindowDimension(current uint32, value int, name string) (uint32, e
 	return uint32(value), nil
 }
 
-func (this *recordedSession) poisonLocked(event string, cause error) error {
+func (this *terminalCapture) poisonLocked(event string, cause error) error {
 	this.failure = errors.System.Newf("cannot record session %s: %w", event, cause)
 	close(this.failed)
 	return this.failure
 }
 
-func (this *recordedSession) forwardWindows(source <-chan essh.Window, target chan essh.Window) {
+func forwardCaptureWindows[W comparable](this *terminalCapture, ctx context.Context, source <-chan W, target chan W, initial W, convert func(W) terminal.Window) {
 	var notifyFailure error
 	defer func() {
 		close(target)
@@ -364,18 +391,18 @@ func (this *recordedSession) forwardWindows(source <-chan essh.Window, target ch
 			}
 			if first {
 				first = false
-				if window == this.pty.Window {
+				if window == initial {
 					continue
 				}
 			}
-			if err, notify := this.recordResize(window); err != nil {
+			if err, notify := this.recordResize(convert(window)); err != nil {
 				if notify {
 					notifyFailure = err
 				}
 				return
 			}
-			coalesceWindow(target, window)
-		case <-this.Context().Done():
+			coalesceCaptureWindow(target, window)
+		case <-ctx.Done():
 			return
 		case <-this.failed:
 			return
@@ -391,10 +418,10 @@ func (this *recordedSessionStderr) Read(value []byte) (int, error) {
 
 func (this *recordedSessionStderr) Write(value []byte) (int, error) {
 	stream := recording.OutputStreamStderr
-	if this.session.hasPty {
+	if this.capture.hasPty {
 		stream = recording.OutputStreamTerminal
 	}
-	return this.session.write(this.stream, stream, value)
+	return this.capture.write(this.stream, stream, value)
 }
 
 func clonePty(value essh.Pty) essh.Pty {
@@ -414,6 +441,10 @@ func cloneTerminalModes(value map[uint8]uint32) map[uint8]uint32 {
 }
 
 func coalesceWindow(target chan essh.Window, window essh.Window) {
+	coalesceCaptureWindow(target, window)
+}
+
+func coalesceCaptureWindow[W any](target chan W, window W) {
 	select {
 	case target <- window:
 		return

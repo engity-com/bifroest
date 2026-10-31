@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	gos "os"
@@ -94,6 +95,13 @@ func (this *buildBinary) compile(ctx context.Context, p *bib.Platform) (*buildAr
 		return fail(err)
 	}
 	defer common.IgnoreCloseErrorIfFalse(&success, a)
+	manifest, browserRaw, err := readBrowserBuild(gos.DirFS("."), a.revision)
+	if err != nil {
+		return fail(err)
+	}
+	if err := stageBrowserBuild(a, manifest, browserRaw); err != nil {
+		return fail(err)
+	}
 
 	l := log.With("platform", p).
 		With("stage", buildStageBinary).
@@ -116,6 +124,13 @@ func (this *buildBinary) compile(ctx context.Context, p *bib.Platform) (*buildAr
 
 	if err := binary.Build(ctx, req); err != nil {
 		return fail(err)
+	}
+	_, currentBrowserRaw, err := readBrowserBuild(gos.DirFS("."), a.revision)
+	if err != nil {
+		return fail(err)
+	}
+	if !bytes.Equal(browserRaw, currentBrowserRaw) {
+		return fail(fmt.Errorf("browser inputs changed during binary compilation"))
 	}
 	if p.Os == sys.OsWindows {
 		if err := this.addWindowsResources(a); err != nil {

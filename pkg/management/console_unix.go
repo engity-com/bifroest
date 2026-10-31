@@ -62,7 +62,11 @@ func openConsoleInput(input uintptr, echo bool, output io.Writer) (*consoleInput
 }
 
 func (this *consoleInput) close(discard bool) error {
-	return errors.Join(writeConsoleTermios(this.fd, this.original, discard), unix.Close(this.fd))
+	return closeConsoleInputLifecycle(discard,
+		func() error { return discardConsoleInput(this.fd) },
+		func() error { return writeConsoleTermios(this.fd, this.original, discard) },
+		func() error { return unix.Close(this.fd) },
+	)
 }
 
 func (this *consoleInput) readLine(ctx context.Context) (line []byte, resultErr error) {

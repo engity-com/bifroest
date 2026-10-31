@@ -24,6 +24,7 @@ import (
 
 	bib "github.com/engity-com/bifroest/internal/build"
 	bbin "github.com/engity-com/bifroest/internal/build/binary"
+	"github.com/engity-com/bifroest/internal/build/browser"
 )
 
 const (
@@ -78,7 +79,9 @@ type thirdPartyModule struct {
 }
 
 type thirdPartyLicenseInventory struct {
-	modules []thirdPartyLicenseModule
+	modules       []thirdPartyLicenseModule
+	browser       *browser.Manifest
+	browserDigest string
 }
 
 type thirdPartyLicenseModule struct {
@@ -180,6 +183,10 @@ func (this *buildBinary) createThirdPartyNotices(ctx context.Context, req bbin.B
 		_ = target.Close()
 		return err
 	}
+	if err := appendBrowserNotices(artifact, gos.DirFS("."), target); err != nil {
+		_ = target.Close()
+		return err
+	}
 	if err := target.Close(); err != nil {
 		return fmt.Errorf("cannot close third-party notices %q: %w", targetName, err)
 	}
@@ -188,6 +195,8 @@ func (this *buildBinary) createThirdPartyNotices(ctx context.Context, req bbin.B
 		return err
 	}
 	artifact.thirdPartyLicenseInventory = inventory
+	inventory.browser = artifact.browserManifest
+	inventory.browserDigest = browserManifestDigest(artifact.browserManifestRaw)
 	success = true
 	return nil
 }

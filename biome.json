@@ -1,0 +1,53 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.6.3/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "root": ".",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "includes": [
+      "**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs,json,jsonc,yaml,yml}",
+      "!!**/node_modules",
+      "!!**/.pyvenv",
+      "!!**/.venv",
+      "!!**/vendor",
+      "!!var",
+      "!!pkg/webui/assets",
+      "!!docs/assets/audit-format-vectors",
+      "!!docs/assets/recording-format-vectors"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "useEditorconfig": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single",
+      "jsxQuoteStyle": "double",
+      "semicolons": "always"
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "style": {
+        "useBlockStatements": "error",
+        "useSingleVarDeclarator": "error"
+      }
+    }
+  },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  }
+}

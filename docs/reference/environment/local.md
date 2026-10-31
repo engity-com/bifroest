@@ -208,6 +208,7 @@ deleteOnDispose: "{{.user.managed}}"
 
 - On Linux and macOS, changing local accounts or impersonating a different user requires appropriate privileges, usually root. macOS account mutation is limited to the local `/Local/Default` Directory Services node.
 - On Windows, session processes for local accounts require Bifröst to run as LocalSystem. Only local SAM accounts are supported; S4U does not provide credentials for remote shares or EFS.
+- A manually registered Windows SCM command should use `run --windowsService --serviceName=<registered-name> --configuration=<path>`. The built-in Windows service installer supplies these arguments. This selects SCM dispatch explicitly without granting a logon right or changing the account used by the service. Foreground startup still uses its existing default detection; parent-process detection alone is unreliable in Windows containers. Private state/key files must be owned for the actual service identity, not accepted through a foreign-owner exception.
 - Windows interactive PTYs require Windows 10 1809 or Windows Server 2019 or later. Older versions support non-PTY commands and SFTP.
 - In Windows containers, accounts live inside the container. The default Nano Server entrypoint is not a LocalSystem service. The pinned Nano image has an isolated SAM capability test, but `samcli.dll` availability and runtime behavior have not yet been verified on every host.
 

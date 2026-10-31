@@ -114,11 +114,11 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 	}
 	candidate.authorizedKeyPolicy = policy
 
+	if !isPublicKeyVerified(req) {
+		return &candidate, nil
+	}
 	if isCertificate {
-		if !isPublicKeyVerified(req) {
-			return &candidate, nil
-		}
-		sess, err := this.ensureSessionFor(req, u)
+		sess, err := this.ensureSessionFor(req, &candidate)
 		if err != nil {
 			return fail(err)
 		}
@@ -132,7 +132,7 @@ func (this *LocalAuthorizer) AuthorizePublicKey(req PublicKeyRequest) (Authoriza
 		session.IsRemoteName(req.Connection().Remote().User()),
 	))
 	if errors.Is(err, session.ErrNoSuchSession) {
-		sess, err = this.ensureSessionFor(req, u)
+		sess, err = this.ensureSessionFor(req, &candidate)
 		if err != nil {
 			return fail(err)
 		}
@@ -207,7 +207,7 @@ func (this *LocalAuthorizer) getAuthorizedKeysFilesOf(req PublicKeyRequest, u *u
 	})
 }
 
-func (this *LocalAuthorizer) ensureSessionFor(req Request, u *user.User) (session.Session, error) {
+func (this *LocalAuthorizer) ensureSessionFor(req Request, auth *local) (session.Session, error) {
 	fail := func(err error) (session.Session, error) {
 		return nil, err
 	}
@@ -217,14 +217,17 @@ func (this *LocalAuthorizer) ensureSessionFor(req Request, u *user.User) (sessio
 
 	buf := localToken{
 		User: localTokenUser{
-			Name: u.Name,
-			Uid:  common.P(u.Uid),
+			Name: auth.user.Name,
+			Uid:  common.P(auth.user.Uid),
 		},
 		EnvVars: nil,
 	}
 	at, err := json.Marshal(buf)
 	if err != nil {
 		return failf("cannot marshal authorization token: %w", err)
+	}
+	if sess, handled, err := resolveAuthenticatedSession(req, auth, at); handled || err != nil {
+		return sess, err
 	}
 
 	sess, err := req.Sessions().FindByAccessToken(req.Context(), at, (&session.FindOpts{}).WithPredicate(
@@ -291,7 +294,7 @@ func (this *LocalAuthorizer) AuthorizePassword(req PasswordRequest) (Authorizati
 		return Forbidden(req.Connection().Remote()), nil
 	}
 
-	sess, err := this.ensureSessionFor(req, u)
+	sess, err := this.ensureSessionFor(req, &candidate)
 	if err != nil {
 		return failf("cannot create session: %w", err)
 	}
@@ -350,7 +353,7 @@ func (this *LocalAuthorizer) AuthorizeInteractive(req InteractiveRequest) (Autho
 		return Forbidden(req.Connection().Remote()), nil
 	}
 
-	sess, err := this.ensureSessionFor(req, u)
+	sess, err := this.ensureSessionFor(req, &candidate)
 	if err != nil {
 		return failf("cannot create session: %w", err)
 	}

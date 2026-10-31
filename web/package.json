@@ -1,0 +1,43 @@
+{
+  "name": "@engity/bifroest-web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.4",
+  "engines": {
+    "node": ">=24.14.0"
+  },
+  "scripts": {
+    "build": "bun run build:core && bun run build:app",
+    "build:core": "vite build",
+    "build:app": "vite build --config vite.app.config.ts",
+    "format": "biome format --write .",
+    "lint": "biome lint .",
+    "check": "biome check --error-on-warnings . && tsc --noEmit",
+    "test": "node --test test/frontend-notices.test.mjs test/public-wasm-diagnostics.test.mjs && vitest run && node test/restart.mjs",
+    "test:release": "node --test test/browser-release.test.mjs",
+    "test:browser:install": "playwright install chromium --only-shell"
+  },
+  "dependencies": {
+    "@emotion/cache": "11.14.0",
+    "@emotion/react": "11.14.0",
+    "@emotion/styled": "11.14.1",
+    "@mui/icons-material": "9.5.0",
+    "@mui/material": "9.5.0",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitest/browser-playwright": "5.0.5",
+    "jsonc-parser": "3.3.1",
+    "playwright": "1.64.1",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  }
+}

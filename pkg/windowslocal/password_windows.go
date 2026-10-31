@@ -18,6 +18,12 @@ var logonUser = windows.NewLazySystemDLL("advapi32.dll").NewProc("LogonUserW")
 // ValidatePassword authenticates against the local SAM, without S4U or a
 // persistent credential. An ordinary logon rejection returns false, nil.
 func ValidatePassword(a Account, password string) (valid bool, retErr error) {
+	return validatePasswordObserved(a, password, nil)
+}
+
+// The observer is only used by native policy-reference tests. It receives no
+// password or token, cannot change the result, and does not cause another logon.
+func validatePasswordObserved(a Account, password string, observed func(bool, error)) (valid bool, retErr error) {
 	current, err := currentAccount(a)
 	if err != nil {
 		return false, err
@@ -48,6 +54,9 @@ func ValidatePassword(a Account, password string) (valid bool, retErr error) {
 				retErr = errors.Join(retErr, err)
 			}
 		}()
+	}
+	if observed != nil {
+		observed(ok != 0, callErr)
 	}
 	if ok == 0 {
 		if invalidCredentials(callErr) {

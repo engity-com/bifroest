@@ -182,6 +182,8 @@ func (this *connection) Lifetime() context.Context {
 	return this.context
 }
 
+func (this *connection) IsClosed() bool { return this.closed.Load() }
+
 func (this *connection) doWithInterceptor(consumer func(session.ConnectionInterceptor) error) error {
 	if v := this.interceptorP.Load(); v != nil {
 		return consumer(*v)

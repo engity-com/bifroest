@@ -43,7 +43,7 @@ func processIsGoneOrZombie(pid int) bool {
 }
 
 func TestKillProcessGroupUsingNonLeaderReachesSiblings(t *testing.T) {
-	expectedEnv := "BIFROEST_TEST_EXECUTION=owned"
+	expectedEnv := "BIFROEST_TEST_EXECUTION=owned-" + strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	start := func(pgid int) *exec.Cmd {
 		cmd := exec.Command("sleep", "30")
 		cmd.Env = append(os.Environ(), expectedEnv)
@@ -62,8 +62,14 @@ func TestKillProcessGroupUsingNonLeaderReachesSiblings(t *testing.T) {
 	require.Equal(t, leader.Process.Pid, mustGetProcessGroup(t, leader.Process.Pid))
 	require.Equal(t, leader.Process.Pid, mustGetProcessGroup(t, target.Process.Pid))
 	require.Equal(t, leader.Process.Pid, mustGetProcessGroup(t, sibling.Process.Pid))
-	require.True(t, processHasEnvironment(leader.Process.Pid, expectedEnv))
-	require.True(t, processHasEnvironment(target.Process.Pid, expectedEnv))
+	// Start establishes the process/group, not successful observation of its
+	// environment through the process library. Require ownership readiness for
+	// every fixture member before exercising kill; never relax the real guard.
+	require.Eventually(t, func() bool {
+		return processHasEnvironment(leader.Process.Pid, expectedEnv) &&
+			processHasEnvironment(target.Process.Pid, expectedEnv) &&
+			processHasEnvironment(sibling.Process.Pid, expectedEnv)
+	}, 2*time.Second, 10*time.Millisecond)
 
 	require.NoError(t, (&imp{}).kill(context.Background(), processTarget{
 		pid:              target.Process.Pid,

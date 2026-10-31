@@ -1,0 +1,109 @@
+package main
+
+import (
+	gos "os"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
+)
+
+// These are configuration guards, not a claim that hosted Actions or native
+// Windows/macOS release signing ran on this local Linux test host.
+func TestBrowserReleaseWorkflowBuildsOnceBeforeAllBinaryJobs(t *testing.T) {
+	raw, err := gos.ReadFile("../../.github/workflows/build.yml")
+	require.NoError(t, err)
+	var workflow struct {
+		Jobs map[string]struct {
+			Needs any               `yaml:"needs"`
+			Steps []map[string]any  `yaml:"steps"`
+			Env   map[string]string `yaml:"env"`
+		} `yaml:"jobs"`
+	}
+	require.NoError(t, yaml.Unmarshal(raw, &workflow))
+	job := workflow.Jobs["browser"]
+	require.Equal(t, "0", job.Env["CGO_ENABLED"], "the plain browser runner does not provide native PAM headers")
+	require.NotEqual(t, "0", workflow.Jobs["test-container"].Env["CGO_ENABLED"], "native PAM compilation stays in the prepared container test job")
+	host := workflow.Jobs["test-host"]
+	require.Equal(t, "-p=2", host.Env["GOFLAGS"])
+	var hostCommands []string
+	for _, step := range host.Steps {
+		if command, ok := step["run"].(string); ok {
+			hostCommands = append(hostCommands, command)
+		}
+	}
+	hostJoined := strings.Join(hostCommands, "\n")
+	require.Contains(t, hostJoined, "mise -C web install node")
+	require.Contains(t, hostJoined, "mise -C web exec -- node scripts/native-go-tests.mjs")
+	var commands []string
+	for _, step := range job.Steps {
+		if command, ok := step["run"].(string); ok {
+			commands = append(commands, command)
+		}
+	}
+	joined := strings.Join(commands, "\n")
+	for _, command := range []string{"mise -C web install", "mise -C web run install:web", "mise -C web run lint:web", "mise -C web run build:web", "bun run test:release", "mise -C web run test:web", "mise -C web run test:go"} {
+		require.Contains(t, joined, command)
+	}
+	require.Less(t, strings.Index(joined, "run build:web"), strings.Index(joined, "bun run test:release"))
+	for _, name := range []string{"binary-host", "binary-container"} {
+		binary := workflow.Jobs[name]
+		require.Equal(t, "browser", binary.Needs)
+		download, compile := -1, -1
+		for index, step := range binary.Steps {
+			if with, ok := step["with"].(map[string]any); ok && with["name"] == "browser-assets" {
+				download = index
+				require.Equal(t, "pkg/webui/assets", with["path"])
+			}
+			if command, ok := step["run"].(string); ok && strings.Contains(command, "run build:go:binary") {
+				compile = index
+			}
+		}
+		require.NotEqual(t, -1, download)
+		require.Greater(t, compile, download)
+	}
+	for _, job := range workflow.Jobs {
+		for _, step := range job.Steps {
+			if uses, ok := step["uses"].(string); ok && strings.HasPrefix(uses, "actions/checkout@") {
+				with := step["with"].(map[string]any)
+				require.Equal(t, "${{ inputs.commit || inputs.ref }}", with["ref"])
+			}
+		}
+	}
+	filters, err := gos.ReadFile("../../.github/filters.yml")
+	require.NoError(t, err)
+	require.Contains(t, string(filters), `"web/**"`)
+	tools, err := gos.ReadFile("../../web/.tool-versions")
+	require.NoError(t, err)
+	require.Contains(t, string(tools), "nodejs 26.9.0")
+	attributes, err := gos.ReadFile("../../.gitattributes")
+	require.NoError(t, err)
+	for _, rule := range []string{"/.gitattributes text eol=lf", "/go.mod   text eol=lf", "/go.sum   text eol=lf", "/web/**   text=auto eol=lf"} {
+		require.Contains(t, string(attributes), rule)
+	}
+}
+
+func TestNanoServerBuildPreparesPinnedFrontendBeforeNativeBinary(t *testing.T) {
+	raw, err := gos.ReadFile("../../.github/workflows/nanoserver.yml")
+	require.NoError(t, err)
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []map[string]any `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	require.NoError(t, yaml.Unmarshal(raw, &workflow))
+	var commands []string
+	for _, step := range workflow.Jobs["windows-local"].Steps {
+		if command, ok := step["run"].(string); ok {
+			commands = append(commands, command)
+		}
+	}
+	joined := strings.Join(commands, "\n")
+	for _, command := range []string{"mise -C web install", "mise -C web run install:web", "mise -C web run build:web", "mise run build:go:binary"} {
+		require.Contains(t, joined, command)
+	}
+	require.Less(t, strings.Index(joined, "mise -C web install"), strings.Index(joined, "mise -C web run install:web"))
+	require.Less(t, strings.Index(joined, "mise -C web run install:web"), strings.Index(joined, "mise -C web run build:web"))
+	require.Less(t, strings.Index(joined, "mise -C web run build:web"), strings.Index(joined, "mise run build:go:binary"))
+}

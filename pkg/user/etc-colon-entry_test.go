@@ -4,8 +4,11 @@ package user
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/echocat/slf4g/sdk/testlog"
 	"github.com/stretchr/testify/require"
@@ -184,6 +187,44 @@ bar:c`,
 			}
 		})
 	}
+}
+
+func TestEtcColonEntriesDecodeRejectsIncompleteReadsWithoutPublishing(t *testing.T) {
+	readErr := errors.New("injected account-file read failure")
+	for _, test := range []struct {
+		name   string
+		reader io.Reader
+		cause  error
+	}{
+		{"read failure", io.MultiReader(strings.NewReader("new:value\n"), iotest.ErrReader(readErr)), readErr},
+		{"oversized line", strings.NewReader("new:value\n" + strings.Repeat("x", 64<<10) + ":value\n"), nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			previous := etcColonEntries[testEtcColonEntryValue, *testEtcColonEntryValue]{
+				{entry: &testEtcColonEntryValue{b("previous"), b("value")}},
+			}
+			actual := previous
+			err := actual.decode(2, false, true, namedReader{test.reader, "account-fixture"})
+			require.Error(t, err, "allowBadEntries must not turn incomplete IO into a partial account snapshot")
+			if test.cause != nil {
+				require.ErrorIs(t, err, test.cause)
+			}
+			require.Equal(t, previous, actual, "failed decoding must retain the last complete snapshot")
+		})
+	}
+}
+
+func TestEtcColonEntriesDecodeLimitCountsBlankAndInvalidRowsWithoutPartialPublication(t *testing.T) {
+	for _, input := range []string{"new:value\nnext:value\nlast:value\n", "new:value\n\n\n", "new:value\nmalformed\nlast:value\n"} {
+		previous := etcColonEntries[testEtcColonEntryValue, *testEtcColonEntryValue]{{entry: &testEtcColonEntryValue{b("previous"), b("value")}}}
+		actual := previous
+		err := actual.decodeWithLimit(2, false, true, namedReader{strings.NewReader(input), "bounded-fixture"}, 2)
+		require.Error(t, err)
+		require.Equal(t, previous, actual)
+	}
+	var actual etcColonEntries[testEtcColonEntryValue, *testEtcColonEntryValue]
+	require.NoError(t, actual.decodeWithLimit(2, false, true, namedReader{strings.NewReader("one:value\ntwo:value\n"), "bounded-fixture"}, 2))
+	require.Len(t, actual, 2)
 }
 
 func Test_etcColonEntries_encode(t *testing.T) {

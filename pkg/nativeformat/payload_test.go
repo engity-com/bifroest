@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	bfcrypto "github.com/engity-com/bifroest/pkg/crypto"
+	bfcrypto "github.com/engity-com/bifroest/pkg/crypto/keydata"
 )
 
 func TestNativePayloadCompressesBeforeIndependentAgeEncryption(t *testing.T) {

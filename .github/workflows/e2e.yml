@@ -8,7 +8,7 @@ on:
       - synchronize
       - ready_for_review
   schedule:
-    - cron: '17 3 * * 1'
+    - cron: "17 3 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -50,7 +50,7 @@ jobs:
           - podman
     env:
       BIFROEST_E2E_RUNTIME: ${{ matrix.runtime }}
-      CGO_ENABLED: '0'
+      CGO_ENABLED: "0"
     steps:
       - name: Install Podman
         if: matrix.runtime == 'podman'
@@ -75,6 +75,31 @@ jobs:
 
       - name: Run end-to-end suite
         run: mise run test:e2e:${{ matrix.suite }}
+
+      - name: Prepare actual Docker browser E2E
+        if: matrix.suite == 'docker'
+        run: |
+          mise -C web install
+          mise -C web run install:web
+          mise -C web run build:web
+          mise -C web run install:web:browser
+
+      - name: Verify shared Docker workload through browser and OpenSSH
+        if: matrix.suite == 'docker'
+        shell: bash
+        env:
+          BIFROEST_TEST_BROWSER_UI: "1"
+        run: |
+          set -euo pipefail
+          export BIFROEST_TEST_NODE="$(mise -C web which node)"
+          mkdir -p var/e2e
+          mise x -- go test -json -count=1 -tags=e2e -timeout=15m -run '^TestOpenSSHDockerBrowserSharedWorkload$' ./test/e2e | tee var/e2e/docker-browser.json
+          mise x -- python - <<'PY'
+          import json, pathlib
+          events = [json.loads(line) for line in pathlib.Path('var/e2e/docker-browser.json').read_text().splitlines() if line.startswith('{')]
+          assert any(e.get('Action') == 'pass' and e.get('Test') == 'TestOpenSSHDockerBrowserSharedWorkload' for e in events), 'Docker browser E2E did not execute successfully'
+          assert not any(e.get('Action') in ('skip', 'fail', 'build-fail') for e in events), 'Docker browser E2E was skipped or failed'
+          PY
 
       - name: Collect runtime diagnostics
         if: failure()
@@ -103,7 +128,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      CGO_ENABLED: '0'
+      CGO_ENABLED: "0"
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -131,6 +156,47 @@ jobs:
         with:
           name: e2e-authorization
           path: var/e2e/**/*
+          if-no-files-found: ignore
+          retention-days: 7
+
+  pam:
+    name: native PAM RememberMe with browser
+    needs: files-changed
+    if: always() && (github.event_name != 'pull_request' || needs.files-changed.outputs.go == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BIFROEST_E2E_RUNTIME: docker
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Cache Go
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install MISE
+        uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
+
+      - name: Prepare pinned browser toolchain
+        run: |
+          mise -C web install
+          mise run install:web
+          mise run install:web:browser
+
+      - name: Verify native PAM policy and actual browser resumption in owned container
+        run: mise run test:e2e:pam
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: e2e-native-pam-browser
+          path: var/e2e/pam-*
           if-no-files-found: ignore
           retention-days: 7
 
@@ -179,7 +245,7 @@ jobs:
     env:
       BIFROEST_E2E_RUNTIME: docker
       KIND_EXPERIMENTAL_PROVIDER: docker
-      CGO_ENABLED: '0'
+      CGO_ENABLED: "0"
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -200,6 +266,29 @@ jobs:
 
       - name: Run Kubernetes end-to-end suite
         run: mise run test:e2e:kubernetes
+
+      - name: Prepare actual Kubernetes browser E2E
+        run: |
+          mise -C web install
+          mise -C web run install:web
+          mise -C web run build:web
+          mise -C web run install:web:browser
+
+      - name: Verify shared Kubernetes workload through browser and OpenSSH
+        shell: bash
+        env:
+          BIFROEST_TEST_BROWSER_UI: "1"
+        run: |
+          set -euo pipefail
+          export BIFROEST_TEST_NODE="$(mise -C web which node)"
+          mkdir -p var/e2e
+          mise x -- go test -json -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHKubernetesBrowserSharedWorkload$' ./test/e2e | tee var/e2e/kubernetes-browser.json
+          mise x -- python - <<'PY'
+          import json, pathlib
+          events = [json.loads(line) for line in pathlib.Path('var/e2e/kubernetes-browser.json').read_text().splitlines() if line.startswith('{')]
+          assert any(e.get('Action') == 'pass' and e.get('Test') == 'TestOpenSSHKubernetesBrowserSharedWorkload' for e in events), 'Kubernetes browser E2E did not execute successfully'
+          assert not any(e.get('Action') in ('skip', 'fail', 'build-fail') for e in events), 'Kubernetes browser E2E was skipped or failed'
+          PY
 
       - name: Collect Kubernetes diagnostics
         if: failure()
@@ -233,7 +322,7 @@ jobs:
     env:
       BIFROEST_E2E_RUNTIME: podman
       KIND_EXPERIMENTAL_PROVIDER: podman
-      CGO_ENABLED: '0'
+      CGO_ENABLED: "0"
     steps:
       - name: Install Podman
         run: sudo apt-get update && sudo apt-get install --yes podman
@@ -257,6 +346,29 @@ jobs:
 
       - name: Run Kubernetes end-to-end suite
         run: mise run test:e2e:kubernetes
+
+      - name: Prepare actual Kubernetes browser E2E
+        run: |
+          mise -C web install
+          mise -C web run install:web
+          mise -C web run build:web
+          mise -C web run install:web:browser
+
+      - name: Verify shared Kubernetes workload through browser and OpenSSH
+        shell: bash
+        env:
+          BIFROEST_TEST_BROWSER_UI: "1"
+        run: |
+          set -euo pipefail
+          export BIFROEST_TEST_NODE="$(mise -C web which node)"
+          mkdir -p var/e2e
+          mise x -- go test -json -count=1 -tags=e2e -timeout=30m -run '^TestOpenSSHKubernetesBrowserSharedWorkload$' ./test/e2e | tee var/e2e/kubernetes-browser.json
+          mise x -- python - <<'PY'
+          import json, pathlib
+          events = [json.loads(line) for line in pathlib.Path('var/e2e/kubernetes-browser.json').read_text().splitlines() if line.startswith('{')]
+          assert any(e.get('Action') == 'pass' and e.get('Test') == 'TestOpenSSHKubernetesBrowserSharedWorkload' for e in events), 'Kubernetes browser E2E did not execute successfully'
+          assert not any(e.get('Action') in ('skip', 'fail', 'build-fail') for e in events), 'Kubernetes browser E2E was skipped or failed'
+          PY
 
       - name: Collect Kubernetes diagnostics
         if: failure()

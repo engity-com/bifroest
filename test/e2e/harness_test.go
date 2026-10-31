@@ -71,6 +71,7 @@ type fixture struct {
 	bifroestProc        *runningProcess
 	sessionStorage      string
 	recordingProducerID string
+	browserOrigin       string
 }
 
 type commandResult struct {

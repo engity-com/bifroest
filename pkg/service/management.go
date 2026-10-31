@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"unicode/utf8"
 
@@ -109,38 +110,45 @@ func (this *service) streamManagementAudit(task environment.Task, args []string)
 	if err := name.Validate(); err != nil {
 		return -1, err
 	}
+	if err := this.writeManagementAudit(task.Context(), name, task.SshSession()); err != nil {
+		return -1, err
+	}
+	return 0, nil
+}
+
+func (this *service) writeManagementAudit(ctx context.Context, name configuration.AuditlogName, output io.Writer) (resultErr error) {
 	identity := this.auditIdentities[name]
 	if identity == nil {
-		return -1, fmt.Errorf("auditlog %q has no active signing identity", name)
+		return fmt.Errorf("auditlog %q has no active signing identity", name)
 	}
 	for _, conf := range this.Configuration.Auditlogs {
 		if conf.Name != name {
 			continue
 		}
 		if !conf.Enabled {
-			return -1, fmt.Errorf("auditlog %q is disabled", name)
+			return fmt.Errorf("auditlog %q is disabled", name)
 		}
 		key, err := audit.ResolveEncryptionPublicKey(conf.EncryptionPublicKey, conf.EncryptionPublicKeyFile)
 		if err != nil {
-			return -1, err
+			return err
 		}
 		recipient, err := audit.EncryptionRecipientFingerprint(key)
 		if err != nil {
-			return -1, err
+			return err
 		}
-		snapshot, err := transport.SnapshotAudit(task.Context(), audit.JournalSource{
+		snapshot, err := transport.SnapshotAudit(ctx, audit.JournalSource{
 			Name: name.String(), Directory: conf.Directory, ExpectedProducerId: identity.ProducerId(), ExpectedEncryptionRecipient: recipient,
 		})
 		if err != nil {
-			return -1, err
+			return err
 		}
-		defer snapshot.Close()
-		if err := snapshot.StreamTo(task.SshSession()); err != nil {
-			return -1, err
+		defer func() { resultErr = errors.Join(resultErr, snapshot.Close()) }()
+		if err := snapshot.StreamTo(output); err != nil {
+			return err
 		}
-		return 0, nil
+		return nil
 	}
-	return -1, fmt.Errorf("auditlog %q does not exist", name)
+	return fmt.Errorf("auditlog %q does not exist", name)
 }
 
 func (this *service) streamManagementRecording(task environment.Task, args []string) (int, error) {
@@ -155,24 +163,31 @@ func (this *service) streamManagementRecording(task environment.Task, args []str
 	if err := id.UnmarshalText([]byte(args[2])); err != nil {
 		return -1, err
 	}
-	repository := this.recordingRepositories[name]
-	if repository == nil || repository.native == nil {
-		return -1, fmt.Errorf("auditlog %q has no active recording repository", name)
-	}
-	artifact, err := repository.native.OpenSealed(task.Context(), id)
-	if err != nil {
-		return -1, err
-	}
-	defer artifact.Close()
-	if artifact.Size() > recording.DefaultMaximumNativeRecordingBytes {
-		return -1, fmt.Errorf("recording exceeds the maximum supported artifact size")
-	}
-	if err := transport.WriteRecordingArtifact(task.SshSession(), transport.RecordingArtifactHeader{
-		Version: 1, ID: id.String(), ProducerID: artifact.ProducerId().String(), Size: artifact.Size(), SHA256: artifact.ArtifactDigest().String(),
-	}, artifact.Reader()); err != nil {
+	if err := this.writeManagementRecording(task.Context(), name, id, task.SshSession()); err != nil {
 		return -1, err
 	}
 	return 0, nil
+}
+
+func (this *service) writeManagementRecording(ctx context.Context, name configuration.AuditlogName, id recording.Id, output io.Writer) (resultErr error) {
+	repository := this.recordingRepositories[name]
+	if repository == nil || repository.native == nil {
+		return fmt.Errorf("auditlog %q has no active recording repository", name)
+	}
+	artifact, err := repository.native.OpenSealed(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, artifact.Close()) }()
+	if artifact.Size() > recording.DefaultMaximumNativeRecordingBytes {
+		return fmt.Errorf("recording exceeds the maximum supported artifact size")
+	}
+	if err := transport.WriteRecordingArtifact(output, transport.RecordingArtifactHeader{
+		Version: 1, ID: id.String(), ProducerID: artifact.ProducerId().String(), Size: artifact.Size(), SHA256: artifact.ArtifactDigest().String(),
+	}, artifact.Reader()); err != nil {
+		return err
+	}
+	return nil
 }
 
 type managementOutputMode uint8

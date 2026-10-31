@@ -2,11 +2,11 @@ name: "CodeQL"
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
   schedule:
-    - cron: '0 18 * * 0'
+    - cron: "0 18 * * 0"
 
 jobs:
   files-changed:
@@ -29,13 +29,13 @@ jobs:
   analyze:
     name: Analyze
     runs-on: ubuntu-latest
-    needs: [ files-changed ]
+    needs: [files-changed]
     if: needs.files-changed.outputs.go == 'true'
 
     strategy:
       fail-fast: false
       matrix:
-        language: ['go']
+        language: ["go"]
 
     steps:
       - name: Checkout repository

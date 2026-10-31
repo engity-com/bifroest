@@ -16,7 +16,7 @@ type Apr1 struct{}
 
 func (p *Apr1) Validate(password string, hash []byte) (bool, error) {
 	c := apr1_crypt.New()
-	if err := c.Verify(password, hash); errors.Is(err, crypt.ErrKeyMismatch) {
+	if err := c.Verify(string(hash), []byte(password)); errors.Is(err, crypt.ErrKeyMismatch) {
 		return false, nil
 	} else if err != nil {
 		return false, err

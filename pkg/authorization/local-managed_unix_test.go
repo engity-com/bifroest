@@ -3,10 +3,10 @@
 package authorization
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
-	essh "github.com/engity-com/ssh-server-go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/engity-com/bifroest/pkg/configuration"
@@ -20,7 +20,7 @@ type localManagedTestContext struct {
 	available bool
 }
 
-func (*localManagedTestContext) Context() essh.Context { return nil }
+func (*localManagedTestContext) Context() context.Context { return nil }
 
 func (this *localManagedTestContext) GetField(name string) (any, bool, error) {
 	if name == "authorization" {

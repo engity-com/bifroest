@@ -115,6 +115,22 @@ signatures and hashes without a key, verify and export private fields using
 the published test key, and reject missing or wrong keys in full mode. Normal
 tests never rewrite fixtures.
 
+`mise exec -- go test ./pkg/audit/evidence -count=1` exercises the same shared
+Header/Record/Seal/Head decoders directly against the unchanged clear and frozen
+encrypted units. Those tests also execute as actual `js/wasm` under the
+MISE-selected Node runtime with Go's matching WASM executor. They check the
+independent producer/recipient expectations, record/content/segment hashes,
+private-field validation versus redaction, wrong/missing keys and zero results
+on signature, framing or semantic failure. This proves portable unit-codec
+compatibility. Producer-snapshot tests additionally verify the complete frozen
+clear/encrypted byte inventories and export JSONL byte-identically to these
+fixtures. They also exercise multi-segment chains, complete versus captured-head
+scope, unselected corruption, independent trust/recipient policy, immutable
+inputs, selection/materialization limits, and no result on cancellation or
+Revalidate/Close failure. The same tests execute in actual Go/WASM. This is not
+browser fetch/worker/UI integration or proof of a downloaded dataset's original
+OS paths/inodes; native adapters retain those separate filesystem checks.
+
 Age encryption consumes fresh randomness. The encrypted `.beaudit`, its head
 (which signs its ciphertext-dependent chain tip), both JSONL exports, and the
 encrypted record and seal units have `reproducible: false`: they are **frozen

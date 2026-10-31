@@ -21,6 +21,8 @@ type Configuration struct {
 
 	Ssh Ssh `yaml:"ssh"`
 
+	Http *Http `yaml:"http,omitempty"`
+
 	// Session defines how new and existing sessions (a connection relates to) should be treated by the service.
 	// These session should not be mixed up with [ssh sessions].
 	//
@@ -42,6 +44,7 @@ func (this *Configuration) SetDefaults() error {
 	return setDefaults(this,
 		func(v *Configuration) (string, defaulter) { return "auditlog", &v.Auditlogs },
 		func(v *Configuration) (string, defaulter) { return "ssh", &v.Ssh },
+		fixedDefault("http", func(v *Configuration) **Http { return &v.Http }, (*Http)(nil)),
 		func(v *Configuration) (string, defaulter) { return "session", &v.Session },
 		func(v *Configuration) (string, defaulter) { return "flows", &v.Flows },
 		func(v *Configuration) (string, defaulter) { return "houseKeeping", &v.HouseKeeping },
@@ -54,6 +57,7 @@ func (this *Configuration) Trim() error {
 	return trim(this,
 		func(v *Configuration) (string, trimmer) { return "auditlog", &v.Auditlogs },
 		func(v *Configuration) (string, trimmer) { return "ssh", &v.Ssh },
+		func(v *Configuration) (string, trimmer) { return "http", v.Http },
 		func(v *Configuration) (string, trimmer) { return "session", &v.Session },
 		func(v *Configuration) (string, trimmer) { return "flows", &v.Flows },
 		func(v *Configuration) (string, trimmer) { return "houseKeeping", &v.HouseKeeping },
@@ -66,6 +70,7 @@ func (this *Configuration) Validate() error {
 	if err := validate(this,
 		func(v *Configuration) (string, validator) { return "auditlog", &v.Auditlogs },
 		func(v *Configuration) (string, validator) { return "ssh", &v.Ssh },
+		func(v *Configuration) (string, validator) { return "http", v.Http },
 		func(v *Configuration) (string, validator) { return "session", &v.Session },
 		func(v *Configuration) (string, validator) { return "flows", &v.Flows },
 		notZeroValidate("flows", func(v *Configuration) *Flows { return &v.Flows }),
@@ -77,6 +82,11 @@ func (this *Configuration) Validate() error {
 	}
 	if err := this.validateAuditlogReferences(); err != nil {
 		return err
+	}
+	if this.Http.IsEnabled() {
+		if err := this.Flows.ValidateHttpDiscovery(this.Http.Domains); err != nil {
+			return errors.Config.Newf("[http][domains] invalid flow discovery: %w", err)
+		}
 	}
 	return this.validateRecordingSessionStoragePathOverlaps()
 }
@@ -112,6 +122,13 @@ func (this *Configuration) validateRecordingSessionStoragePathOverlaps() error {
 
 func (this *Configuration) UnmarshalYAML(node *yaml.Node) error {
 	return unmarshalYAML(this, node, func(target *Configuration, node *yaml.Node) error {
+		fields, err := effectiveHttpFields(node)
+		if err != nil {
+			return err
+		}
+		if value, exists := fields["http"]; exists && value.Kind != yaml.MappingNode {
+			return reportYamlRelatedErrf(&value, "[http] must be a mapping")
+		}
 		type raw Configuration
 		return node.Decode((*raw)(target))
 	})
@@ -174,6 +191,7 @@ func (this Configuration) IsEqualTo(other any) bool {
 func (this Configuration) isEqualTo(other *Configuration) bool {
 	return isEqual(&this.Auditlogs, &other.Auditlogs) &&
 		isEqual(&this.Ssh, &other.Ssh) &&
+		this.Http.IsEqualTo(other.Http) &&
 		isEqual(&this.Session, &other.Session) &&
 		isEqual(&this.Flows, &other.Flows) &&
 		isEqual(&this.HouseKeeping, &other.HouseKeeping) &&

@@ -863,8 +863,18 @@ func TestOidcRotatedRefreshWaitsForJWKSBeforeTrustingCredentials(t *testing.T) {
 	// Reload the JSON into a new session and authorizer, as after a process restart.
 	reloaded := &authorizationRestoreTestSession{flow: "flow", token: append([]byte(nil), sess.token...)}
 	keysAvailable.Store(true)
-	next, lost, err = a.RefreshSession(ctx, reloaded)
+	// A restart also discards the old RemoteKeySet's in-flight failed JWKS fetch.
+	// Reusing a.verifier here can still join that completed failure while its
+	// asynchronous cleanup runs, which is not the restart this case promises.
+	restarted := &OidcDeviceAuthAuthorizer{
+		flow: a.flow, conf: a.conf, oauth2Config: a.oauth2Config,
+		verifier:   coidc.NewVerifier(server.URL, coidc.NewRemoteKeySet(ctx, server.URL+"/keys"), &coidc.Config{ClientID: "client"}),
+		OnVerified: a.OnVerified,
+	}
+	requestsBeforeRestart := jwksRequests.Load()
+	next, lost, err = restarted.RefreshSession(ctx, reloaded)
 	require.NoError(t, err)
+	require.Greater(t, jwksRequests.Load(), requestsBeforeRestart, "the restarted verifier must actually fetch the now-available signing keys")
 	require.False(t, lost)
 	require.True(t, next.After(time.Now()))
 	require.EqualValues(t, 1, exchanges.Load())
@@ -876,7 +886,7 @@ func TestOidcRotatedRefreshWaitsForJWKSBeforeTrustingCredentials(t *testing.T) {
 	require.Equal(t, "rotated-refresh", stored.RefreshToken)
 	require.Equal(t, idToken, stored.IdToken)
 	require.WithinDuration(t, time.Now(), stored.LastVerifiedAt, time.Second)
-	auth, err := a.RestoreFromSession(ctx, reloaded, &RestoreOpts{})
+	auth, err := restarted.RestoreFromSession(ctx, reloaded, &RestoreOpts{})
 	require.NoError(t, err)
 	require.Equal(t, "rotated-access", auth.(*oidc).token.AccessToken)
 	role, ok, err := auth.(*oidc).idToken.GetField("role")
@@ -1028,8 +1038,11 @@ type oidcRefreshTestPublicKeyRequest struct {
 }
 
 func (this oidcRefreshTestPublicKeyRequest) Sessions() session.Repository { return this.repository }
-func (this oidcRefreshTestPublicKeyRequest) Context() essh.Context        { return this.ctx }
-func (oidcRefreshTestPublicKeyRequest) RemotePublicKey() gossh.PublicKey  { return nil }
+func (this oidcRefreshTestPublicKeyRequest) Context() context.Context     { return this.ctx }
+
+// These existing refresh tests exercise the post-possession restoration path.
+func (oidcRefreshTestPublicKeyRequest) PublicKeyVerified() bool          { return true }
+func (oidcRefreshTestPublicKeyRequest) RemotePublicKey() gossh.PublicKey { return nil }
 func (oidcRefreshTestPublicKeyRequest) Connection() connection.Connection {
 	return oidcRefreshTestConnection{}
 }
