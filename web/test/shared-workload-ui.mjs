@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { fixtureShellPromptPattern } from './shared-workload-prompt.mjs';
 import { activeAccess, chooseLoginMethod, logoutAccess, notification } from './workspace-ui.mjs';
 
 // This drives the actual built UI against the owned Bifröst binary and real
@@ -91,12 +92,33 @@ try {
     await page.locator('[data-terminal-phase="connected"]').waitFor();
     // Transport admission is not shell readiness. Wait for the pinned fixture's
     // actual ash prompt before sending any command; never retry that command.
-    await page.waitForFunction(() =>
-      document
-        .querySelector('[data-terminal-active="true"] .xterm-rows')
-        ?.textContent?.trimEnd()
-        .endsWith('~ $'),
-    );
+    try {
+      await page.waitForFunction(
+        (pattern) =>
+          new RegExp(pattern).test(
+            document
+              .querySelector('[data-terminal-active="true"] .xterm-rows')
+              ?.textContent?.trimEnd() ?? '',
+          ),
+        fixtureShellPromptPattern(backend),
+      );
+    } catch (error) {
+      throw new Error(
+        JSON.stringify({
+          stage: 'fixture-shell-prompt',
+          backend,
+          phase: await page.locator('[data-terminal-phase]').getAttribute('data-terminal-phase'),
+          output: (
+            await page.locator('[data-terminal-active="true"] .xterm-rows').textContent()
+          ).slice(0, 4096),
+          sentInputPrefixes: inputPrefixes.map((prefix) => prefix.toString('utf8')),
+          csp: await page.evaluate(() => window.cspViolations),
+          errors,
+          controls,
+        }),
+        { cause: error },
+      );
+    }
     assert.equal(
       await page.getByRole('tab').count(),
       1,
