@@ -36,6 +36,14 @@ function Workspace({ metadata, title }: { metadata: LinkMetadata; title: string 
           button: { textTransform: 'none' },
         },
         components: {
+          MuiTooltip: {
+            styleOverrides: {
+              // The exit-transition portal otherwise retains stale desktop
+              // coordinates and can enlarge a resized mobile document while
+              // its tooltip is already closed/invisible.
+              popperClose: { display: 'none' },
+            },
+          },
           MuiButton: { defaultProps: { disableElevation: true, size: 'small' } },
           MuiTab: { styleOverrides: { root: { textTransform: 'none', minHeight: 48 } } },
           MuiDialogTitle: { styleOverrides: { root: { fontSize: '1.125rem' } } },

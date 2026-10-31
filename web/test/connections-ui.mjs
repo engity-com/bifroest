@@ -113,7 +113,23 @@ export async function exerciseConnections(page, login) {
   await captureLayout(page, 'connections-artifact-selection');
   await auditlogInput().fill('local-review-selection');
   await select(4, 'bob');
+  const closedHint = page
+    .locator('.MuiTooltip-popper')
+    .filter({ hasText: 'bob · Other · Terminal 4 · connected' });
+  await tab(4, 'bob').locator('span.MuiBox-root').first().hover();
+  await closedHint.waitFor({ state: 'visible' });
+  await page.mouse.move(5, 700);
+  await page
+    .locator('.MuiTooltip-popperClose')
+    .filter({ hasText: 'bob · Other · Terminal 4 · connected' })
+    .waitFor({ state: 'attached' });
+  assert.equal(
+    await closedHint.isVisible(),
+    false,
+    'a closed tooltip must not leave a layout box during its exit transition',
+  );
   await page.setViewportSize({ width: 390, height: 844 });
+  await captureLayout(page, 'connections-tooltip-exit-mobile');
   await page.waitForFunction(() => {
     const tab = document.querySelector('[role="tab"][aria-selected="true"]');
     const list = document.querySelector('.terminal-tab-list');
