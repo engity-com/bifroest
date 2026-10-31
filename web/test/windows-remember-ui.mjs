@@ -26,6 +26,7 @@ const input = createInterface({ input: process.stdin });
 const executions = [];
 const failures = [];
 const responses = [];
+const transportObservations = [];
 const expectedDenials = new Set();
 const requestIDs = new WeakMap();
 let requestNumber = 0;
@@ -104,10 +105,18 @@ async function open(profile) {
     }
   });
   page.on('response', (response) => {
+    const path = new URL(response.url()).pathname;
+    if (path.startsWith('/_bifroest/api/v1/') && transportObservations.length < 128) {
+      transportObservations.push({
+        path,
+        status: response.status(),
+        stage,
+        id: requestIDs.get(response.request()),
+      });
+    }
     if (response.status() < 400) {
       return;
     }
-    const path = new URL(response.url()).pathname;
     const id = requestIDs.get(response.request());
     const observation = { type: 'response', path, status: response.status(), stage, id };
     responses.push(observation);
@@ -355,21 +364,31 @@ try {
     await page.getByText('Access was denied.', { exact: false }).waitFor();
     assert.equal(await page.getByRole('tab').count(), 0);
     await checkpoint(`restore-${method}`);
-    stage = `restored-${method}`;
+    stage = `restored-${method}-resume`;
     await page.getByRole('button', { name: 'Use saved access', exact: true }).click();
+    stage = `restored-${method}-connected`;
     await connected(page);
+    stage = `restored-${method}-probe`;
     await probeAndExit(page, `${method}-restored`);
+    stage = `restored-${method}-logout`;
     await logoutAccess(page);
+    stage = `restored-${method}-logout-notice`;
     await notification(page, 'Logout confirmed.');
+    stage = `restored-${method}-reload`;
     await page.reload();
+    stage = `restored-${method}-fresh-login`;
+    await page.getByRole('dialog', { name: 'Sign in', exact: true }).waitFor({ state: 'visible' });
+    stage = `restored-${method}-no-stored-keys`;
     await noStoredKeys(page);
     assert.equal(
       await page.getByRole('button', { name: 'Use saved access', exact: true }).count(),
       0,
     );
+    stage = `restored-${method}-preferences`;
     await assertUiPreferences(page, [fixture.user]);
     assert.deepEqual(await page.evaluate(() => window.cspViolations), []);
     assert.equal((await context.cookies()).length, 0);
+    stage = `restored-${method}-close-profile`;
     await context.close();
     context = undefined;
   }
@@ -414,6 +433,8 @@ try {
       denied,
       failures,
       responses,
+      transportObservations,
+      completedExecutions: executions.length,
       error: ['Error', 'TimeoutError', 'AssertionError'].includes(error?.name)
         ? error.name
         : 'FixtureError',
@@ -426,6 +447,13 @@ try {
               ?.getAttribute('data-terminal-phase') ?? null,
           dialogs: document.querySelectorAll('[role="dialog"]').length,
           tabs: document.querySelectorAll('[role="tab"]').length,
+          readyState: document.readyState,
+          expectedPath: location.pathname === '/Work',
+          rootChildren: document.getElementById('root')?.childElementCount ?? 0,
+          newConnectionDisabled:
+            document.querySelector('button[aria-label="New connection"]')?.disabled ?? null,
+          notificationButton:
+            document.querySelector('button[aria-label="Notification details"]') !== null,
         }))
         .catch(() => null),
     }),

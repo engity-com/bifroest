@@ -4,6 +4,8 @@ import {
   assertUiPreferences,
   changeTheme,
   chooseLoginMethod,
+  logoutAccess,
+  notification,
   settledLogin,
 } from './workspace-ui.mjs';
 
@@ -100,6 +102,7 @@ export async function exercisePreferences(page) {
     '',
     'a different flow cannot adopt the other account preference',
   );
+  await page.getByRole('checkbox', { name: 'Remember this browser', exact: true }).check();
   await password('bob');
   await settledLogin(page, 'bob');
   await activeAccess(page, 'bob');
@@ -120,5 +123,39 @@ export async function exercisePreferences(page) {
     'no hidden preferred or fabricated principal is sent',
   );
   assert.equal(await pref('NameFree'), null);
+  await dialog().getByRole('button', { name: 'Close', exact: true }).click();
+  await dialog().waitFor({ state: 'hidden' });
+  await logoutAccess(page);
+  await notification(page, 'Logout confirmed.');
+  await page.reload();
+  await dialog().waitFor({ state: 'visible' });
+  assert.equal(await input().inputValue(), 'alice');
+  assert.equal(
+    await page.getByRole('button', { name: 'Use saved access', exact: true }).count(),
+    0,
+  );
+  assert.equal(
+    await page.evaluate(async () => {
+      const database = await new Promise((resolve, reject) => {
+        const request = indexedDB.open('bifroest-browser-remember-v1');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(new Error('storage'));
+      });
+      try {
+        return await new Promise((resolve, reject) => {
+          const request = database
+            .transaction('bindings', 'readonly')
+            .objectStore('bindings')
+            .count();
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(new Error('storage'));
+        });
+      } finally {
+        database.close();
+      }
+    }),
+    0,
+    'confirmed logout removes the registration, not the independent UI preferences',
+  );
   await assertUiPreferences(page);
 }
