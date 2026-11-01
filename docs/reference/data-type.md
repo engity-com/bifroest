@@ -89,6 +89,17 @@ Can be one of:
 * `at-least-384-bits`
 * `at-least-521-bits`
 
+## Enforceable {: #enforceable }
+
+`Enforceable<T>` adds an optional server-enforced value to type `T`. Without a
+prefix, the user may change the value. Prefix it with `!` to prevent changes.
+For example, an `Enforceable<Duration>` accepts `10s` or `"!10s"`.
+Only properties declared with this wrapper support enforcement.
+
+The marker is read after template evaluation, so templates can decide whether
+to enforce the value. The remaining value follows the inner type's rules.
+Quote YAML values starting with `!` so they are not interpreted as tags.
+
 ## Environment Variable Name {: #environment-variable-name }
 The name of an environment variable. It has to fulfill the portable ASCII pattern `[A-Za-z_][A-Za-z0-9_]*`.
 

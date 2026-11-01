@@ -2,6 +2,7 @@ package configuration
 
 import (
 	"fmt"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -43,9 +44,9 @@ func (this FlowSsh) IsEqualTo(other any) bool {
 }
 
 type FlowHttp struct {
-	Enabled     *bool             `yaml:"enabled,omitempty"`
-	RequestUser *bool             `yaml:"requestUser,omitempty"`
-	KeepAlive   template.Duration `yaml:"keepAlive,omitempty"`
+	Enabled     *bool                                                                      `yaml:"enabled,omitempty"`
+	RequestUser *bool                                                                      `yaml:"requestUser,omitempty"`
+	KeepAlive   template.Enforceable[template.Duration, time.Duration, *template.Duration] `yaml:"keepAlive,omitempty"`
 }
 
 func (this FlowHttp) IsEnabled() bool          { return this.Enabled == nil || *this.Enabled }

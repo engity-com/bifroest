@@ -46,12 +46,12 @@ func TestFlowHttpKeepAliveRejectsMistypedUnsafeAndPrivateTemplateOutput(t *testi
 		require.Error(t, yaml.Unmarshal([]byte("keepAlive: "+source), &conf), source)
 	}
 	for _, value := range []string{"0s", "-1s", "999ms", "5m1ns", "1h", "!", "!!10s", "PRIVATE-TOKEN", "!PRIVATE-TOKEN"} {
-		conf := FlowHttp{KeepAlive: template.MustNewDuration(value)}
+		conf := FlowHttp{KeepAlive: template.MustNewEnforceable[template.Duration](value)}
 		err := conf.Validate()
 		require.Error(t, err, value)
 		require.NotContains(t, err.Error(), "PRIVATE-TOKEN")
 	}
-	conf := FlowHttp{KeepAlive: template.MustNewDuration("{{.private}}")}
+	conf := FlowHttp{KeepAlive: template.MustNewEnforceable[template.Duration]("{{.private}}")}
 	_, err := conf.ResolveKeepAlive(map[string]any{"private": "PRIVATE-TOKEN"})
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), "PRIVATE-TOKEN")

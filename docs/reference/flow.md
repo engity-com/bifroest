@@ -85,9 +85,9 @@ Name requirements still apply: `^sso$` does not match an empty name; `^$` does.
 The requesting name is not the verified
 [principal](context/authentication.md#property-principal) or the target account.
 
-<<property("keepAlive", "Duration", "data-type.md#duration", template_context="context/authorization.md", default="15s", id_prefix="http-", heading=4)>>
+<<property("keepAlive", ref("Enforceable", "data-type.md#enforceable", ref("Duration", "data-type.md#duration")), template_context="context/authorization.md", default="15s", id_prefix="http-", heading=4)>>
 Browser terminal keepalive interval, from `1s` to `5m`. Users can change it in
-**Connection settings**. Prefix with `!` to enforce it, quoted in YAML: `"!10s"`.
+**Connection settings**, unless the value is enforced.
 
 The template is evaluated after authentication using the current session context.
 An enforced value overrides saved browser preferences. Keepalive preserves only

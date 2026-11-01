@@ -16,13 +16,21 @@ def properties(relative):
 
 
 class DocsConfigurationTypesTest(TestCase):
-    def test_keepalive_uses_the_shared_duration_type(self):
+    def test_keepalive_combines_the_shared_enforceable_and_duration_types(self):
         keepalive = next(
             call for call in properties('reference/flow.md')
             if ast.literal_eval(call.args[0]) == 'keepAlive'
         )
-        self.assertEqual('Duration', ast.literal_eval(keepalive.args[1]))
-        self.assertEqual('data-type.md#duration', ast.literal_eval(keepalive.args[2]))
+        enforceable = keepalive.args[1]
+        self.assertIsInstance(enforceable, ast.Call)
+        self.assertEqual('ref', enforceable.func.id)
+        self.assertEqual('Enforceable', ast.literal_eval(enforceable.args[0]))
+        self.assertEqual('data-type.md#enforceable', ast.literal_eval(enforceable.args[1]))
+        duration = enforceable.args[2]
+        self.assertIsInstance(duration, ast.Call)
+        self.assertEqual('ref', duration.func.id)
+        self.assertEqual('Duration', ast.literal_eval(duration.args[0]))
+        self.assertEqual('data-type.md#duration', ast.literal_eval(duration.args[1]))
 
     def test_acme_directory_uses_the_shared_url_type(self):
         directory = next(

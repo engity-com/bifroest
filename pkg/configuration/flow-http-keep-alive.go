@@ -22,7 +22,7 @@ func (this FlowHttp) ResolveKeepAlive(context any) (HttpKeepAlive, error) {
 	if this.KeepAlive.IsZero() {
 		return HttpKeepAlive{Interval: DefaultHttpKeepAlive}, nil
 	}
-	interval, locked, err := this.KeepAlive.RenderWithLock(context, 64)
+	interval, locked, err := this.KeepAlive.RenderBounded(context, 64)
 	if err != nil {
 		return HttpKeepAlive{}, fmt.Errorf("keepAlive template evaluation failed")
 	}
